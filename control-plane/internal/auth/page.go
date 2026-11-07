@@ -55,6 +55,8 @@ func LoginErrorBlock(code, lang string) string {
 		msg = t.ErrProvider
 	case "email_taken":
 		msg = t.ErrEmailTaken
+	case "claimed_by_other_tenant":
+		msg = t.ErrClaimedByOtherTenant
 	default:
 		return ""
 	}
@@ -93,6 +95,8 @@ type LoginStrings struct {
 	// ErrEmailTaken: a tenant-defined provider asserted an address that already
 	// belongs to an account on this deployment (docs/log/61 §61.11 rule 2').
 	ErrEmailTaken string
+	// ErrClaimedByOtherTenant: the person is still on another tenant's roster.
+	ErrClaimedByOtherTenant string
 	// The new-account notice. NewBody takes the email.
 	NewTitle, NewBody, NewNote, NewContinue, NewSwitch string
 	// The result page of a link flow (docs/log/61 §61.16 + decision 37).
@@ -119,6 +123,9 @@ var LoginText = map[string]LoginStrings{
 		ErrEmailTaken: "このメールアドレスは、すでにこのデプロイの別のサインイン方法で使われています。" +
 			"いつも使っているサインイン方法でサインインしたうえで、" +
 			"<b>設定 → アカウント → サインイン方法</b> からこの方式を追加してください。",
+		ErrClaimedByOtherTenant: "このアカウントは、いま別のテナントの名簿に載っているためサインインできません。" +
+			"所属するテナントの管理者に、もう一方のテナントから外してもらうよう依頼してください。" +
+			"外れたあとに、もう一度サインインしてください。",
 		NewTitle: "Agent Fleet — 新しいアカウント",
 		NewBody: "%s でサインインしました。このメールアドレスはこのデプロイで使われたことがないため、" +
 			"<b>新しいワークスペース</b>を作成しました。以前から使っているワークスペースがある場合、" +
@@ -159,6 +166,9 @@ var LoginText = map[string]LoginStrings{
 		ErrEmailTaken: "This email address is already used by another sign-in method on this deployment. " +
 			"Sign in the way you normally do, then add this method under " +
 			"<b>Settings → Account → Sign-in methods</b>.",
+		ErrClaimedByOtherTenant: "This account can't sign in right now because it is still on another " +
+			"tenant's roster. Ask your tenant's administrator to have the other tenant remove it, " +
+			"then sign in again.",
 		NewTitle: "Agent Fleet — New account",
 		NewBody: "You signed in as %s. That address hasn't been used on this deployment, " +
 			"so a <b>new workspace</b> was created. A workspace you already had is not " +

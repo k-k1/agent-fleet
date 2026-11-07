@@ -81,6 +81,9 @@ func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint strin
 // answering 500 would send an operator looking for a fault that does not exist.
 // The normal path refuses it at the callback, before a session exists.
 func identityErr(err error) *apiError {
+	if errors.Is(err, store.ErrClaimedByOtherTenant) {
+		return &apiError{http.StatusForbidden, "claimed_by_other_tenant", store.ErrClaimedByOtherTenant.Error()}
+	}
 	if errors.Is(err, store.ErrIdentityClaimed) {
 		return &apiError{http.StatusForbidden, "email_taken", store.ErrIdentityClaimed.Error()}
 	}
