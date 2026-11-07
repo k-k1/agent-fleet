@@ -382,9 +382,14 @@ describe("terminal clipboard keys", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
   });
 
-  const drag = (term: any, moved = true) => {
-    term.element.dispatchEvent(new MouseEvent("mousedown", { button: 0, clientX: 10, clientY: 10 }));
-    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0, clientX: moved ? 80 : 10, clientY: 10 }));
+  // Events bubble to document, like real ones: the gesture is completed by a document listener.
+  const down = (el: Element, o: MouseEventInit = {}) =>
+    el.dispatchEvent(new MouseEvent("mousedown", { button: 0, clientX: 10, clientY: 10, bubbles: true, ...o }));
+  const up = (el: Element | Document, o: MouseEventInit = {}) =>
+    el.dispatchEvent(new MouseEvent("mouseup", { button: 0, clientX: 80, clientY: 10, bubbles: true, ...o }));
+  const drag = (term: any, moved = true, o: MouseEventInit = {}) => {
+    down(term.element, o);
+    up(term.element, { clientX: moved ? 80 : 10, ...o });
   };
 
   it("OSC 52 right after a drag-release is written without a prompt, once", async () => {
@@ -425,6 +430,54 @@ describe("terminal clipboard keys", () => {
       }),
     ).toBe(1);
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("a shift-drag or a native selection leaves no prompt-free window", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const term: any = mount();
+    drag(term, true, { shiftKey: true });
+    await oscOf(term)("shift");
+    await settle();
+    expect(confirms.length).toBe(1);
+    disposeTerm("clip");
+    const t2: any = mount();
+    vi.spyOn(t2, "hasSelection").mockReturnValue(true);
+    vi.spyOn(t2, "getSelection").mockReturnValue("mine");
+    drag(t2);
+    expect(writeText).toHaveBeenCalledWith("mine"); // the real selection copy still works
+    await oscOf(t2)("attack");
+    await settle();
+    expect(confirms.length).toBe(2);
+    expect(writeText).not.toHaveBeenCalledWith("attack");
+  });
+
+  it("a release outside the pane completes its own drag; another pane's press is not borrowed", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const a: any = mount();
+    down(a.element);
+    up(document.body); // released outside the pane
+    await oscOf(a)("outside");
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("outside"));
+    expect(confirms.length).toBe(0);
+    // press in A, release outside (consumes A's press), press in B, release over A: no window for A.
+    down(a.element);
+    up(document.body);
+    await oscOf(a)("consume");
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const b: any = ensureTerm("clip2", el);
+    try {
+      down(b.element);
+      up(a.element);
+      await oscOf(a)("stolen");
+      await settle();
+      expect(confirms.length).toBe(1);
+      expect(writeText).not.toHaveBeenCalledWith("stolen");
+    } finally {
+      disposeTerm("clip2");
+    }
   });
 
   it("OSC 52 text is stripped of control characters and capped", async () => {

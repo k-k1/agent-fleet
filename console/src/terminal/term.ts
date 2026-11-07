@@ -45,6 +45,7 @@ interface Inst {
   rx?: boolean; // any PTY byte received on the CURRENT socket (see ensureAttached)
   connAt?: number; // ms when the CURRENT socket began connecting (stall watchdog — see ensureAttached)
   connWd?: ReturnType<typeof setTimeout>; // connect-stall watchdog timer (see attach)
+  cleanups?: (() => void)[]; // document-level listeners owned by this pane's terminal
   webgl?: WebglAddon | null; // live WebGL renderer addon (dropped while hidden — see hideTerm)
   canvas?: CanvasAddon | null; // 2D fallback renderer, when WebGL is unavailable/lost/over budget (see loadCanvas)
   replies?: ReplyGate; // mutes query answers in replayed / replaced-socket output (staleReplies.ts)
@@ -630,14 +631,34 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   // selection; right/middle click pastes. This is the reliable path even where the
   // browser reserves Ctrl+Shift+C (DevTools) outside fullscreen.
   if (term.element) {
-    let downAt: { x: number; y: number } | null = null;
+    // Drag tracking is document-level so a release outside the pane still completes (or
+    // discards) the press that started in this pane; a press elsewhere never counts here.
+    // Shift+drag and any xterm-side selection are the browser-native copy (copySelection):
+    // no tmux OSC 52 follows, so they must not leave a prompt-free window behind.
+    let downAt: { x: number; y: number; shift: boolean } | null = null;
+    const onDocUp = (ev: MouseEvent) => {
+      const d = downAt;
+      downAt = null;
+      if (!d || ev.button !== 0) return;
+      const dragged = Math.hypot(ev.clientX - d.x, ev.clientY - d.y) >= 3;
+      osc52GestureAt = dragged && !d.shift && !ev.shiftKey && !term.hasSelection() ? Date.now() : 0;
+    };
+    const discard = () => {
+      downAt = null;
+    };
     term.element.addEventListener("mousedown", (ev) => {
-      downAt = ev.button === 0 ? { x: ev.clientX, y: ev.clientY } : null;
+      downAt = ev.button === 0 ? { x: ev.clientX, y: ev.clientY, shift: ev.shiftKey } : null;
+      osc52GestureAt = 0;
+    });
+    document.addEventListener("mouseup", onDocUp);
+    window.addEventListener("blur", discard);
+    document.addEventListener("pointercancel", discard);
+    (it.cleanups ??= []).push(() => {
+      document.removeEventListener("mouseup", onDocUp);
+      window.removeEventListener("blur", discard);
+      document.removeEventListener("pointercancel", discard);
     });
     term.element.addEventListener("mouseup", (ev) => {
-      // A drag, not a click: pointer moved a few pixels between press and release.
-      if (ev.button === 0 && downAt && Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) >= 3) osc52GestureAt = Date.now();
-      downAt = null;
       if (ev.button === 0 && term.hasSelection()) copySelection(term, { fromMouseup: true });
     });
     term.element.addEventListener("contextmenu", (ev) => {
@@ -1540,6 +1561,8 @@ export function detach(paneId: string) {
   if (!it) return;
   clearHeartbeat(it);
   clearConnWd(it);
+  for (const fn of it.cleanups ?? []) fn();
+  it.cleanups = [];
   if (it.ws) {
     try {
       it.ws.onclose = null; // intentional detach — don't print "[disconnected]"
