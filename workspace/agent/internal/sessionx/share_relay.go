@@ -1,4 +1,4 @@
-package main
+package sessionx
 
 import (
 	"bytes"
@@ -15,6 +15,9 @@ import (
 // may carry. The Control Plane enforces the same list when the proposal is created and again
 // when it is approved (control-plane/session_share_proposal.go); this is the second check, on
 // the side that owns the files. Keep the two in step.
+// shareRelayMaxBody matches the Control Plane's proposal cap (32 KiB).
+const shareRelayMaxBody = 32 << 10
+
 var shareRelayFields = map[string][]string{
 	"turn":            {"op", "prompt", "clientMessageID"},
 	"respond":         {"id", "decision", "scope", "answers"},
@@ -60,9 +63,9 @@ func refuseShareRelay(path string, body []byte) (code, msg string) {
 	return "", ""
 }
 
-// guardShareRelay applies refuseShareRelay, and refuses terminal sessions, before the
+// GuardShareRelay applies refuseShareRelay, and refuses terminal sessions, before the
 // operation is claimed. Requests without the header (the owner's own Console) are untouched.
-func guardShareRelay(w http.ResponseWriter, r *http.Request) bool {
+func GuardShareRelay(w http.ResponseWriter, r *http.Request) bool {
 	if name := r.PathValue("name"); session.ValidName(name) {
 		if meta, ok := session.ReadMeta(name); ok && (meta.Kind == session.KindShell || meta.Kind == session.KindSSM) {
 			httpx.WriteErr(w, http.StatusBadRequest, "share_session_refused", "shared-session operations are not accepted on a terminal session")
@@ -72,7 +75,7 @@ func guardShareRelay(w http.ResponseWriter, r *http.Request) bool {
 	if r.Body == nil {
 		return true
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, shareOperationMaxBody+1))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, shareRelayMaxBody+1))
 	if err != nil {
 		httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "share_body_too_large", "operation body is too large")
 		return false

@@ -15,7 +15,7 @@ import (
 //
 // Attachments are refused for every action. A share has no area of files the proposer put
 // there, so any path would name the owner's own files; the Agent refuses them too
-// (workspace/agent/share_relay_guard.go, keep the field lists in step).
+// (workspace/agent/internal/sessionx/share_relay.go, keep the field lists in step).
 
 var errProposalAttachments = errors.New("attachments are not accepted on a shared-session proposal")
 
