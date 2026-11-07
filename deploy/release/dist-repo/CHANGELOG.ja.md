@@ -3,6 +3,14 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.42.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.42.0) — 2026-11-08
+
+このリリースの大半は、Control Plane・Agent・AWS テンプレートのセキュリティ診断にもとづく強化で、
+サインイン・Cookie・トークン・ターミナルのクリップボードの既定がより厳しくなりました。Console の
+ターミナルを開いたままでもアイドルのセッションは停止されるようになり、長い Bash コマンドや複数行の
+Bash コマンドでも許可カードの **許可** がまた効くようになりました。更新の前にアップグレードの注意を
+読んでください。`AUTH` の指定が必須になり、ECS では先に `10-data` をデプロイします。
+
 ## [0.41.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.41.0) — 2026-11-06
 
 ターミナル（CLI）の claude セッションを Anthropic API キーで動かせるようになり、サブスクリプションの
