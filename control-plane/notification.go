@@ -81,6 +81,35 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 	return drainAgentOutbox(ctx, a.store, res.rt, res.mv.MembershipID)
 }
 
+// agentEventIDPrefix namespaces the event ids a workspace's Agent sends. Every id the Control
+// Plane generates itself (schedules, usage, deadlines, hand-offs) is built from other prefixes,
+// so an id chosen inside a workspace can never equal one of them.
+const agentEventIDPrefix = "agent:"
+
+// agentNotificationRow turns one outbox entry into the row stored for membershipID. The stored
+// id carries agentEventIDPrefix and the row is unique per (membership, id), so the same id sent
+// twice by one Agent is still one row, and another member's Agent cannot take it over.
+func agentNotificationRow(in agentNotification, membershipID string) store.Notification {
+	payload, _ := json.Marshal(in.Payload)
+	// The Agent's outbox was session-only until workspace-level events appeared
+	// (arch-residue). An empty targetType therefore has to keep meaning "session",
+	// or an older Agent's events would all become untargeted after a CP upgrade.
+	// For a non-session target, leave id/kind empty rather than passing the
+	// (empty) session name through: the Console guards on target.type before
+	// navigating, and a "session" target with a blank id is one it cannot open.
+	targetType, targetID, targetKind := "session", in.SessionName, in.SessionKind
+	if in.TargetType != "" && in.TargetType != "session" {
+		targetType, targetID, targetKind = in.TargetType, "", ""
+	}
+	n := store.Notification{EventID: agentEventIDPrefix + in.ID, MembershipID: membershipID, Kind: in.Kind,
+		TargetType: targetType, TargetID: targetID, TargetKind: targetKind,
+		DisplayName: in.DisplayName, Payload: string(payload), CreatedAt: in.CreatedAt}
+	if n.CreatedAt == "" {
+		n.CreatedAt = store.NowTS()
+	}
+	return n
+}
+
 // drainAgentOutbox pulls the Agent's notification outbox into the store and acks it.
 //
 // It deliberately takes no *resolved, because it is also called just before a workspace
@@ -112,23 +141,7 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 	}
 	acked := make([]string, 0, len(body.Notifications))
 	for _, in := range body.Notifications {
-		payload, _ := json.Marshal(in.Payload)
-		// The Agent's outbox was session-only until workspace-level events appeared
-		// (arch-residue). An empty targetType therefore has to keep meaning "session",
-		// or an older Agent's events would all become untargeted after a CP upgrade.
-		// ⚠️ For a non-session target, leave id/kind empty rather than passing the
-		// (empty) session name through: the Console guards on target.type before
-		// navigating, and a "session" target with a blank id is one it cannot open.
-		targetType, targetID, targetKind := "session", in.SessionName, in.SessionKind
-		if in.TargetType != "" && in.TargetType != "session" {
-			targetType, targetID, targetKind = in.TargetType, "", ""
-		}
-		n := store.Notification{EventID: in.ID, MembershipID: membershipID, Kind: in.Kind,
-			TargetType: targetType, TargetID: targetID, TargetKind: targetKind,
-			DisplayName: in.DisplayName, Payload: string(payload), CreatedAt: in.CreatedAt}
-		if n.CreatedAt == "" {
-			n.CreatedAt = store.NowTS()
-		}
+		n := agentNotificationRow(in, membershipID)
 		if err := st.InsertNotification(ctx, n); err != nil {
 			return "offline"
 		}

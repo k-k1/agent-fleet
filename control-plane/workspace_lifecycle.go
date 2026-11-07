@@ -672,9 +672,9 @@ const memFloorBytes = 256 * mib
 // set a per-user value keeps exactly the behaviour they configured.
 //
 // A tenant_admin's per-user values are honored but clamped to the per-tenant caps
-// (tenantLimits.MaxWorkspace*) and, for memory, to the deployment hard ceiling
-// (memMaxBytes) and floor — so the shared host stays protected regardless of what was
-// entered. Best-effort: a store error falls back to the defaults rather than guessing.
+// (tenantLimits.MaxWorkspace*) and to the deployment hard ceilings (memMaxBytes,
+// cpuMaxUnits, diskMaxGB; memory also to its floor) — so the shared host and the
+// operator's bill stay protected regardless of what was entered. Best-effort: a store error falls back to the defaults rather than guessing.
 //
 // The axes are resolved together because they are read from the same two rows; the
 // runtime factory then maps them per backend (docker --memory/--cpus, ECS task size +
@@ -706,11 +706,17 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws store.Workspace) 
 		if lim.MaxWorkspaceCPU > 0 && cpuUnits > lim.MaxWorkspaceCPU {
 			cpuUnits = lim.MaxWorkspaceCPU
 		}
+		if m.cpuMaxUnits > 0 && cpuUnits > m.cpuMaxUnits {
+			cpuUnits = m.cpuMaxUnits
+		}
 	}
 	if ul.DiskGB > 0 {
 		diskGB = ul.DiskGB
 		if lim.MaxWorkspaceDiskGB > 0 && diskGB > lim.MaxWorkspaceDiskGB {
 			diskGB = lim.MaxWorkspaceDiskGB
+		}
+		if m.diskMaxGB > 0 && diskGB > m.diskMaxGB {
+			diskGB = m.diskMaxGB
 		}
 	}
 	return memBytes, cpuUnits, diskGB

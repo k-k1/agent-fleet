@@ -104,6 +104,15 @@ describe("drawioFrameSrcdoc", () => {
     expect(s).toContain("initialViewState");
   });
 
+  it("ignores messages from any window but its parent, and accepts boot once", () => {
+    const s = html();
+    // Order matters: the source check comes before anything reads the message.
+    const handler = s.slice(s.indexOf('window.addEventListener("message"'));
+    expect(handler.indexOf("e.source !== window.parent")).toBeGreaterThan(0);
+    expect(handler.indexOf("e.source !== window.parent")).toBeLessThan(handler.indexOf("e.data"));
+    expect(handler).toMatch(/if \(bootSeen\) return;\s*bootSeen = true;\s*boot\(m\.src\)/);
+  });
+
   it("catches failures with addEventListener rather than window.onerror", () => {
     // The viewer overwrites window.onerror (measured).
     const s = html();

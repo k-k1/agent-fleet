@@ -145,6 +145,9 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   var MSG = ${JSON.stringify(DRAWIO_MSG)};
   var viewer = null;
   var booted = false;
+  // The parent sends boot once per document. A second one is ignored even after a failed first
+  // evaluation, so nothing can re-run the 4 MB source or replace the viewer later.
+  var bootSeen = false;
   var dark = ${dark ? "true" : "false"};
   // The fit scale, and whether the user moved the view themselves. Once they have, a change in
   // the pane's size must not refit on its own: being reset while reading zoomed in is the worst
@@ -596,9 +599,14 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   var pending = null;
 
   window.addEventListener("message", function (e) {
+    // Only the embedding window is a peer. The frame has no origin to check, so the source is
+    // the one thing that tells the parent from any other window holding a reference to it.
+    if (e.source !== window.parent) return;
     var m = e.data;
     if (!m || m.af !== MSG) return;
     if (m.t === "boot") {
+      if (bootSeen) return;
+      bootSeen = true;
       boot(m.src);
       return;
     }

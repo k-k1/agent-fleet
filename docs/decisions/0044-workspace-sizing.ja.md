@@ -134,3 +134,13 @@ EFS のペナルティは 1 ファイル約 14.5 ms、帯域差は 1 MiB 約 1 m
 - `workspace/agent/scratch.go` — clone / worktree 作成後の best-effort 呼び出し
 - `deploy/aws/ecs/cfn/30-ingress.yaml` — `WsDiskGiB` の既定を 0 → 50
 - `workspace/workspace-notes.md` — 永続モデルの記述を ECS について書き換える（利用者への約束）
+
+## 追記（2026-11-07）— CPU とディスクのデプロイ単位の上限（#3507）
+
+決定 1 のユーザー別 CPU・ディスクは、既定で無制限のテナント上限でしか縛られていませんでした。
+メモリにだけは `AF_MAX_WORKSPACE_MEM` というデプロイ単位の上限があります。CPU とディスクにも同じ
+種類の上限を置きます: `AF_MAX_WORKSPACE_CPU`（既定 16384 Fargate 単位）と
+`AF_MAX_WORKSPACE_DISK_GB`（既定 1024 GiB・0 で無効）。`PUT /api/admin/user-limits` は上限を超える値を
+400 で断り、保存済みの値は `resolveWorkspaceSize` がコンテナ起動時に切り詰めます。既定値は
+Fargate の最大帯・標準の ecs-ec2 の最大スロット・2XL プリセットのいずれより上にあるので、
+標準構成で有効だったサイズは変わりません。
