@@ -502,6 +502,13 @@ their conversations elsewhere. Add the relay row with `sign` (or sign in the han
 - **The CP drops any `X-AF-Member-Origin` the browser sent** on every relay (REST, SSE and the preview
   relay), signs only the listed routes, and only for the caller's own workspace. REST and SSE also drop every
   cookie and the gateway identity headers, so the member's login cookie never reaches the workspace.
+- **Relayed request headers are an allow-list** (`control-plane/relay_headers.go`), not a denylist: content
+  negotiation, conditional and range headers, the WebSocket handshake (`Sec-*`), `X-Forwarded-Host` /
+  `-Proto` / `-Prefix`, and a few framework headers (`Next-*`, `Hx-*`, `Turbo-*`, CSRF tokens) reach the Agent
+  and a previewed app; anything else a front gateway adds (access-token, group and OIDC headers, for
+  example) is dropped. The name (never the value) of each dropped header is logged once per process
+  (`relay: dropped request header`), and `AF_RELAY_EXTRA_HEADERS` (comma-separated names, a trailing `*`
+  for a prefix) adds names an app needs.
 - **No signing for another page.** Before signing, the CP requires `application/json`, `Sec-Fetch-Site:
   same-origin` when sent, and an `Origin` of the Console's own host when sent, so a same-site preview app
   cannot have the browser make a signed member write. Every signing handler that takes JSON runs this check itself

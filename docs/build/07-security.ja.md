@@ -404,6 +404,13 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 - **CP はブラウザが送った `X-AF-Member-Origin` をすべての中継（REST・SSE・プレビュー）で捨て**、列挙した
   ルートだけを、呼び手自身の Workspace に対してだけ署名する。REST と SSE ではすべての Cookie とゲートウェイの
   identity ヘッダーも捨てるので、メンバーのログイン Cookie は Workspace に届かない。
+- **中継するリクエストヘッダーは許可リスト**（`control-plane/relay_headers.go`）で、拒否リストではない。
+  コンテンツネゴシエーション、条件付き・範囲リクエスト、WebSocket のハンドシェイク（`Sec-*`）、
+  `X-Forwarded-Host` / `-Proto` / `-Prefix`、フレームワーク用の少数のヘッダー（`Next-*`・`Hx-*`・`Turbo-*`・
+  CSRF トークン）だけが Agent とプレビューのアプリに届き、前段のゲートウェイが足したもの（アクセストークン・
+  グループ・OIDC のヘッダーなど）は捨てる。捨てたヘッダーの名前（値は出さない）をプロセスごとに 1 回ログに出し
+  （`relay: dropped request header`）、アプリが必要とする名前は `AF_RELAY_EXTRA_HEADERS`（カンマ区切り、
+  末尾 `*` で接頭辞）で足せる。
 - **別のページのためには署名しない。** 署名の前に CP は `application/json`、送られていれば `Sec-Fetch-Site:
   same-origin`、送られていれば Console 自身のホストの `Origin` を求めるので、same-site のプレビューアプリが
   ブラウザーに署名付きのメンバー書き込みをさせることはできない。JSON を受ける署名ハンドラーはどれもこの検査

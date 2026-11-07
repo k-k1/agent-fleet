@@ -648,16 +648,13 @@ func relayPreview(w http.ResponseWriter, r *http.Request, rt runtime.Runtime, o 
 // the signed-in person. On a preview HOST the browser does not even send the Console's
 // cookies (different origin), but a front auth gateway's headers and the path-mode
 // caller's cookies still arrive here, and this is the one place both are cleaned.
+//
+// What stays is an allow-list (relay_headers.go), not the denylist this used to be: the
+// headers a gateway adds are not a list anyone can keep complete.
 func stripConsoleCredentials(out *http.Request, in *http.Request, identityHeader string) {
 	out.Header.Del("Authorization")
 	// Only the CP makes this one (ADR 0113), and never for a preview.
 	out.Header.Del(memberOriginHeader)
-	for _, h := range []string{
-		"X-Forwarded-Email", "X-Forwarded-User", "X-Forwarded-Preferred-Username",
-		"X-Auth-Request-Email", "X-Auth-Request-User", "X-Auth-Request-Access-Token",
-	} {
-		out.Header.Del(h)
-	}
 	if identityHeader != "" {
 		out.Header.Del(identityHeader)
 	}
@@ -672,6 +669,7 @@ func stripConsoleCredentials(out *http.Request, in *http.Request, identityHeader
 	if len(kept) > 0 {
 		out.Header.Set("Cookie", strings.Join(kept, "; "))
 	}
+	keepAllowedRelayHeaders(out.Header)
 }
 
 // stripAppLoginCookies drops Set-Cookie lines that would (re)issue a login on the
