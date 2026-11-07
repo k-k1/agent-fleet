@@ -121,8 +121,7 @@ Parameters:
     Description: "Default size of a user's persistent home volume (gp3). PARAMETERS.md."
   # --- Scheduled execution (docs/log/38) ------------------------------------
   # !! EMPTY means "keep the product default" for all four; the defaults live in the CP
-  # (control-plane/main.go). Copying them here would freeze this deployment on whatever they
-  # were the day the stack was written.
+  # (control-plane/main.go), not here.
   SchedulerInterval:
     Type: String
     Default: ""
@@ -316,7 +315,7 @@ Parameters:
     Type: String
     Default: ""
     AllowedValues: ["", "0", "1"]
-    Description: AF_COOKIE_PURPOSE_KEYS, per-purpose cookie signing keys. Empty or 0 = off; set 1 only once no replica of the previous release remains. PARAMETERS.md.
+    Description: AF_COOKIE_PURPOSE_KEYS. Empty or 0 = off; 1 only after every task runs this release. PARAMETERS.md.
   GithubAllowedEmails:
     Type: String
     Default: ""
@@ -431,10 +430,8 @@ Conditions:
   # only when that IdP is actually configured.
   HasGoogle: !Not [!Equals [!Ref GoogleClientId, ""]]
   HasOidc: !Not [!Equals [!Ref OidcProviderId, ""]]
-  # The org list, not the client id - historically GITHUB_OAUTH_CLIENT_ID also drove
-  # the Console's git-connect device flow, which many deployments set without wanting a
-  # login. That flow reads the tenant's own app since docs/log/71, but the switch stays the
-  # org list: it is the thing that authorizes the sign-in.
+  # The org list, not the client id: GITHUB_OAUTH_CLIENT_ID also drove the git-connect
+  # device flow, which many deployments set without wanting a login (docs/log/71).
   HasGithub: !Not [!Equals [!Ref GithubAllowedOrgs, ""]]
   GithubLegacySecret: !And [!Condition HasGithub, !Not [!Condition GithubLoginSecretOn]]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
@@ -678,10 +675,8 @@ Resources:
         - Protocol: email
           Endpoint: !Ref CpAlarmEmail
 
-  # One breach is enough. The CP rate-limits this line to one a minute, so a single
-  # datapoint already means "for a whole minute, connections were failing" - not a
-  # blip. Waiting for a second period would only add five minutes to an outage in
-  # which the product returns 500 to everybody.
+  # One breach is enough: the CP rate-limits this line to one a minute, so a single
+  # datapoint already means a whole minute of failing connections.
   CpDbUnavailableAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: HasCpAlarms
@@ -929,9 +924,7 @@ Resources:
             - !If [HasRemoteEngineUrl, {Name: AF_REMOTE_ENGINE_URL, Value: !Ref RemoteEngineUrl}, !Ref "AWS::NoValue"]
             - !If [HasRemoteEngineKeys, {Name: AF_REMOTE_ENGINE_KEYS, Value: !Ref RemoteEngineKeys}, !Ref "AWS::NoValue"]
             # No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID: git OAuth apps are
-            # per-tenant rows (docs/log/71); the Bitbucket callback derives from PUBLIC_BASE_URL.
-            # AF_RUNTIME: PARAMETERS.md, `WsRuntime`. The AF_ECS_* below are shared by both
-            # (AF_ECS_WORKSPACE_SUBNETS: `WorkspaceSubnets`).
+            # per-tenant rows (docs/log/71). AF_RUNTIME and AF_ECS_*: PARAMETERS.md.
             - {Name: AF_RUNTIME, Value: !Ref WsRuntime}
             - {Name: AF_ECS_REGION, Value: !Ref "AWS::Region"}
             - {Name: AF_ECS_CLUSTER, Value: !ImportValue {"Fn::Sub": "${PlatformStackName}-ClusterName"}}
@@ -980,10 +973,8 @@ Resources:
             # condition on -- "0" IS the answer, and it is the one that hides the NSFW
             # search source. PARAMETERS.md.
             - {Name: AF_ENGINE_CIVITAI_RED, Value: !Ref CivitaiRed}
-            # Start returns as soon as the service is at desiredCount 1; the Agent
-            # readiness poll runs in the background for the log line only, on the
-            # AF_ECS_START_TIMEOUT_SEC budget (default 300s). Nothing waits on it,
-            # so it is deliberately longer than the ALB idle timeout above.
+            # Start returns at desiredCount 1; the Agent readiness poll only feeds a log
+            # line (AF_ECS_START_TIMEOUT_SEC, default 300s), so it may exceed the ALB idle timeout.
             - Name: AF_ECS_WORKSPACE_IMAGE
               Value: !Sub
                 - "${Uri}:${Tag}"
