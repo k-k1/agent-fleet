@@ -88,6 +88,7 @@ function clipFail(key: "term.copy_failed" | "term.paste_failed") {
 // command into what the member later pastes.
 export const OSC52_MAX_CHARS = 100_000;
 const OSC52_DENY_COOLDOWN_MS = 30_000;
+const OSC52_ALLOW_WINDOW_MS = 60_000;
 export function sanitizeOsc52(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "").slice(0, OSC52_MAX_CHARS);
@@ -550,12 +551,13 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     else if (pend.candidate !== undefined && n !== pend.candidate) pend.done = true; // a newer selection
   });
   // OSC 52 (clipboard write). tmux copy mode reaches the browser clipboard through this
-  // sequence, but any program in the workspace can emit it too, and the two are
-  // indistinguishable here. So a write needs the member's consent: a confirm prompt, and an
-  // "allow" is remembered for this pane only (closure state; gone when the pane is disposed,
-  // never persisted). Text is capped and stripped of control characters before it is offered.
+  // sequence, but any program of the member's (even `tmux set-buffer -w`, which bypasses
+  // `set-clipboard external`) can emit it too, and the two are indistinguishable here. So
+  // every payload needs the member's consent: a prompt whose focus starts on Cancel. The
+  // only memory is an explicit, separate "allow for a minute" choice, per pane, in memory.
+  // Text is capped and stripped of control characters before it is offered or written.
   // Ordinary selection copy (copySelection) is a user gesture and never comes through here.
-  let osc52Allowed = false;
+  let osc52AllowUntil = 0;
   let osc52Asking = false;
   let osc52DeniedAt = 0;
   try {
@@ -577,7 +579,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
         if (!navigator.clipboard?.writeText) clipFail("term.copy_failed");
         else navigator.clipboard.writeText(text).catch(() => clipFail("term.copy_failed"));
       };
-      if (osc52Allowed) {
+      if (Date.now() < osc52AllowUntil) {
         write();
         return true;
       }
@@ -589,13 +591,17 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
         title: tr("term.osc52_title"),
         body: tr("term.osc52_body", { count: text.length }),
         confirmLabel: tr("term.osc52_allow"),
+        danger: false,
+        safeFocus: true,
+        secondaryLabel: tr("term.osc52_allow_minute"),
+        onSecondary: () => {
+          osc52AllowUntil = Date.now() + OSC52_ALLOW_WINDOW_MS;
+        },
       }).then(
         (ok) => {
           osc52Asking = false;
-          if (ok) {
-            osc52Allowed = true;
-            write();
-          } else osc52DeniedAt = Date.now();
+          if (ok) write();
+          else osc52DeniedAt = Date.now();
         },
         () => {
           osc52Asking = false;

@@ -6,12 +6,15 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 
 const toasts: string[] = [];
 vi.mock("../ui/toast.ts", () => ({ toast: (m: string) => toasts.push(String(m)), dismissToast: () => {} }));
-const confirmAnswers: boolean[] = [];
+// "yes" = Allow (once), "minute" = the explicit time-boxed choice, false = Cancel.
+const confirmAnswers: (boolean | "minute")[] = [];
 const confirms: any[] = [];
 vi.mock("../ui/confirmBridge.ts", () => ({
   askConfirm: (o: any) => {
     confirms.push(o);
-    return Promise.resolve(confirmAnswers.length ? confirmAnswers.shift() : false);
+    const a = confirmAnswers.length ? confirmAnswers.shift() : false;
+    if (a === "minute") o.onSecondary?.();
+    return Promise.resolve(!!a);
   },
 }));
 
@@ -329,30 +332,61 @@ describe("terminal clipboard keys", () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 
-  it("OSC 52 write goes through after Allow, and is remembered for that pane only", async () => {
+  it("OSC 52 Allow covers that payload only; the next payload asks again", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const term: any = mount();
     confirmAnswers.push(true);
     await oscOf(term)("hello");
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("hello"));
-    await oscOf(term)("second");
-    expect(confirms.length).toBe(1); // not asked again
-    expect(writeText).toHaveBeenLastCalledWith("second");
-    // A fresh pane starts without consent.
-    disposeTerm("clip");
-    const t2: any = mount();
-    await oscOf(t2)("third");
+    expect(confirms[0].safeFocus).toBe(true);
+    await oscOf(term)("second"); // asked again, default answer is Cancel
     await settle();
     expect(confirms.length).toBe(2);
-    expect(writeText).not.toHaveBeenCalledWith("third");
+    expect(writeText).not.toHaveBeenCalledWith("second");
+  });
+
+  it("OSC 52 explicit 'allow for a minute' is time-boxed and per pane", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const term: any = mount();
+    confirmAnswers.push("minute");
+    await oscOf(term)("hello");
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("hello"));
+    await oscOf(term)("second");
+    expect(confirms.length).toBe(1);
+    expect(writeText).toHaveBeenLastCalledWith("second");
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 61_000);
+    await oscOf(term)("late");
+    await settle();
+    expect(confirms.length).toBe(2);
+    expect(writeText).not.toHaveBeenCalledWith("late");
+    vi.restoreAllMocks();
+    disposeTerm("clip");
+    const t2: any = mount();
+    await oscOf(t2)("other pane");
+    await settle();
+    expect(confirms.length).toBe(3);
+  });
+
+  it("OSC 52 burst while a prompt is pending shows one prompt", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const term: any = mount();
+    confirmAnswers.push(true);
+    const osc = oscOf(term);
+    await Promise.all([osc("a"), osc("b"), osc("c")]);
+    await settle();
+    expect(confirms.length).toBe(1);
+    expect(writeText).toHaveBeenCalledTimes(1);
   });
 
   it("OSC 52 text is stripped of control characters and capped", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const term: any = mount();
-    confirmAnswers.push(true);
+    confirmAnswers.push("minute");
     await oscOf(term)("a\x01b\x1bc\td\ne");
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("abc\td\ne"));
     await oscOf(term)("x".repeat(OSC52_MAX_CHARS + 50));
@@ -376,7 +410,7 @@ describe("terminal clipboard keys", () => {
 
   it("OSC 52 copy toasts when the clipboard API is missing or refuses (after Allow)", async () => {
     const term: any = mount();
-    confirmAnswers.push(true);
+    confirmAnswers.push("minute");
     const osc = oscOf(term);
     Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
     await osc("hi");
