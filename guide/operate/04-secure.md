@@ -303,6 +303,16 @@ only**, an attachment starts in **view-only** (it rejects every input from the u
 explicitly moved to user-control before they can operate it. Not putting CDP endpoints or cookies
 into answers, logs or commits is part of the agent-side instructions as well.
 
+## `AUTH=dev` is not a default
+
+`AUTH` has no default. `AUTH=dev` means no sign-in at all: every request is a fixed `super_admin`.
+Outside the native runtime the Control Plane therefore refuses to start when `AUTH` is unset, and
+accepts `AUTH=dev` only when `AF_ALLOW_INSECURE_DEV_AUTH=1` is also set (single-machine trials
+only). It then logs a `WARNING` at start-up and shows a banner in the administration screen. It
+refuses `AUTH=dev` altogether when `PUBLIC_BASE_URL` is https. The native runtime is single-user
+by design and takes `dev` without either step. Set `AUTH=oauth` or `AUTH=proxy` for anything
+shared.
+
 ## Development sign-in (dev OIDC IdP — super_admin only)
 
 The **Dev sign-in** section of the Admin modal switches the Control Plane's development OIDC IdP

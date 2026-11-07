@@ -174,7 +174,6 @@ func main() {
 		sessionCmd:  os.Getenv("WS_SESSION_CMD"),        // empty => claude
 		extraEnv:    envx.SplitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
 		portBase:    portBase,
-		authMode:    envx.Or("AUTH", "dev"), // dev (fixed id) | proxy (oauth2-proxy header) | oauth (CP-native Google)
 		devUser:     envx.Or("DEV_USER", "dev"),
 		emailHeader: envx.Or("AUTH_EMAIL_HEADER", "X-Forwarded-Email"),
 		// P3-2: provisioning policy + deployment super-admins.
@@ -182,6 +181,12 @@ func main() {
 		superAdmins:   envx.EmailSet(os.Getenv("SUPER_ADMIN_EMAILS")),
 		// P3-9: live activity tracking for idle-stop.
 		conns: newConnRegistry(),
+	}
+	// dev (fixed id, no auth) | proxy (oauth2-proxy header) | oauth (CP-native login); no default (#3485).
+	var authErr error
+	if mgr.authMode, authErr = auth.ResolveMode(os.Getenv("AUTH"), envx.Or("AF_RUNTIME", "local"),
+		os.Getenv(auth.AllowInsecureDevAuthEnv), os.Getenv("PUBLIC_BASE_URL")); authErr != nil {
+		log.Fatalf("auth mode: %v", authErr)
 	}
 	// GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
 	// (docs/log/71 §71.5). The GitHub device flow moved into the CP, where the app can be
@@ -308,6 +313,9 @@ func main() {
 	}
 	mgr.rtFactory = rtFactory
 	mgr.nativeRuntime = rtProfile == "native" || rtProfile == "wsl"
+	if mgr.authDevInsecure() {
+		log.Print(authDevLog)
+	}
 	if mgr.efsBackupMissing = efsBackupMissing(rtProfile, os.Getenv("AF_EFS_BACKUP")); mgr.efsBackupMissing {
 		log.Print(efsBackupMissingLog)
 	}

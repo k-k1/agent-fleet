@@ -108,7 +108,7 @@ everything else:
 | Variable | Decides |
 |---|---|
 | `AF_RUNTIME` | the deployment target; see [deploy-targets.md](deploy-targets.md). Rejected at boot if unknown |
-| `AUTH` | how people sign in: `dev` (single user), `oauth` (the Control Plane's own), `proxy` (an upstream gateway) |
+| `AUTH` | how people sign in: `oauth` (the Control Plane's own), `proxy` (an upstream gateway), `dev` (no sign-in, single user). **No default: the Control Plane refuses to start without it** (the native runtime takes `dev`). `dev` on Docker or a cloud runtime also needs `AF_ALLOW_INSECURE_DEV_AUTH=1`, and is refused when `PUBLIC_BASE_URL` is https |
 | `DATA_DIR` | where all persistent state lives (the thing to back up) |
 | `AF_MASTER_KEY` | the root of at-rest encryption. Lose it and the stored credentials are unrecoverable |
 | `AF_KEY_CUSTODIAN` | who holds the at-rest keys: `local` (the default, derived from `AF_MASTER_KEY`) or `kms` (AWS KMS, with `AF_KMS_KEY_ID`; [operate/12](../operate/12-keys.md#keys-at-rest-on-aws-kms)). Rejected at boot if unknown or incomplete |
