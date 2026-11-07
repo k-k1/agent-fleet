@@ -83,6 +83,15 @@ function setSession(it: Inst, name: string | null) {
 function clipFail(key: "term.copy_failed" | "term.paste_failed") {
   toast(tr(key), { kind: "error", key: "term-clipboard" });
 }
+// OSC 52 payload limits: anything longer is truncated, and control characters (other than
+// tab / newline) are removed so a write cannot smuggle escape sequences or a pending
+// command into what the member later pastes.
+export const OSC52_MAX_CHARS = 100_000;
+const OSC52_DENY_COOLDOWN_MS = 30_000;
+export function sanitizeOsc52(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "").slice(0, OSC52_MAX_CHARS);
+}
 // Selection identity, per terminal, by change events rather than text: selEpoch counts
 // onSelectionChange (the user's drag / double-click / select), copiedEpoch is the epoch whose
 // copy last succeeded. Copy-on-select leaves the highlight in place, and a program may redraw
@@ -540,30 +549,58 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     if (pend.expect && pend.candidate === undefined) pend.candidate = n;
     else if (pend.candidate !== undefined && n !== pend.candidate) pend.done = true; // a newer selection
   });
-  // OSC 52: with `set-clipboard on`, tmux emits the just-copied selection as an
-  // OSC 52 sequence to its outer terminal (us). xterm has no built-in OSC 52 handler,
-  // so a plain mouse drag-select in the terminal (which tmux, in mouse mode, turns into
-  // a copy-mode selection) would never reach the browser clipboard. Register one that
-  // decodes the base64 payload and writes it out — this is the copy half of the mouse
-  // clipboard for shell/ssm panes. (Shift+drag still does a browser-native selection
-  // handled by the mouseup path below; the two coexist.)
+  // OSC 52 (clipboard write). tmux copy mode reaches the browser clipboard through this
+  // sequence, but any program in the workspace can emit it too, and the two are
+  // indistinguishable here. So a write needs the member's consent: a confirm prompt, and an
+  // "allow" is remembered for this pane only (closure state; gone when the pane is disposed,
+  // never persisted). Text is capped and stripped of control characters before it is offered.
+  // Ordinary selection copy (copySelection) is a user gesture and never comes through here.
+  let osc52Allowed = false;
+  let osc52Asking = false;
+  let osc52DeniedAt = 0;
   try {
     term.parser.registerOscHandler(52, (data) => {
-      // data is "<targets>;<base64>" e.g. "c;SGVsbG8=". "?" is a read request — ignore.
+      // data is "<targets>;<base64>". "?" is a read request — never answered.
       const semi = data.indexOf(";");
       const b64 = semi >= 0 ? data.slice(semi + 1) : data;
       if (!b64 || b64 === "?") return true;
+      let text: string;
       try {
-        const bin = atob(b64);
-        const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-        const text = new TextDecoder().decode(bytes);
-        if (text) {
-          if (!navigator.clipboard?.writeText) clipFail("term.copy_failed");
-          else navigator.clipboard.writeText(text).catch(() => clipFail("term.copy_failed"));
-        }
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        text = new TextDecoder().decode(bytes);
       } catch {
-        clipFail("term.copy_failed");
+        return true; // malformed payload: drop it
       }
+      text = sanitizeOsc52(text);
+      if (!text) return true;
+      const write = () => {
+        if (!navigator.clipboard?.writeText) clipFail("term.copy_failed");
+        else navigator.clipboard.writeText(text).catch(() => clipFail("term.copy_failed"));
+      };
+      if (osc52Allowed) {
+        write();
+        return true;
+      }
+      // One prompt at a time, and none right after a refusal: output must not be able to
+      // stack dialogs on the member.
+      if (osc52Asking || Date.now() - osc52DeniedAt < OSC52_DENY_COOLDOWN_MS) return true;
+      osc52Asking = true;
+      askConfirm({
+        title: tr("term.osc52_title"),
+        body: tr("term.osc52_body", { count: text.length }),
+        confirmLabel: tr("term.osc52_allow"),
+      }).then(
+        (ok) => {
+          osc52Asking = false;
+          if (ok) {
+            osc52Allowed = true;
+            write();
+          } else osc52DeniedAt = Date.now();
+        },
+        () => {
+          osc52Asking = false;
+        },
+      );
       return true; // handled — don't fall through to the OSC fallback
     });
   } catch {}

@@ -6,8 +6,16 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 
 const toasts: string[] = [];
 vi.mock("../ui/toast.ts", () => ({ toast: (m: string) => toasts.push(String(m)), dismissToast: () => {} }));
+const confirmAnswers: boolean[] = [];
+const confirms: any[] = [];
+vi.mock("../ui/confirmBridge.ts", () => ({
+  askConfirm: (o: any) => {
+    confirms.push(o);
+    return Promise.resolve(confirmAnswers.length ? confirmAnswers.shift() : false);
+  },
+}));
 
-import { ensureTerm, disposeTerm } from "./term.ts";
+import { ensureTerm, disposeTerm, OSC52_MAX_CHARS } from "./term.ts";
 import { setSetting } from "../lib/settings.ts";
 
 type KeyHandler = (e: KeyboardEvent) => boolean;
@@ -35,6 +43,8 @@ const key = (code: string, o: KeyboardEventInit = {}) =>
 afterEach(() => {
   disposeTerm("clip");
   toasts.length = 0;
+  confirms.length = 0;
+  confirmAnswers.length = 0;
   vi.restoreAllMocks();
 });
 
@@ -300,16 +310,81 @@ describe("terminal clipboard keys", () => {
     expect(writeText).toHaveBeenCalledTimes(3);
   });
 
-  it("OSC 52 copy toasts when the clipboard API is missing or refuses", async () => {
+  const b64 = (t: string) => btoa(String.fromCharCode(...new TextEncoder().encode(t)));
+  const oscOf = (term: any) => (t: string) => new Promise<void>((r) => term.write(`\x1b]52;c;${b64(t)}\x07`, r));
+
+  it("OSC 52 without a member action never touches the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const term: any = mount();
-    const osc = (b64: string) => new Promise<void>((r) => term.write(`\x1b]52;c;${b64}\x07`, r));
+    const osc = oscOf(term);
+    await osc("hello"); // prompt is denied (default answer)
+    await settle();
+    expect(confirms.length).toBe(1);
+    expect(writeText).not.toHaveBeenCalled();
+    // After a refusal, further writes neither write nor re-prompt.
+    await osc("again");
+    await settle();
+    expect(confirms.length).toBe(1);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("OSC 52 write goes through after Allow, and is remembered for that pane only", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const term: any = mount();
+    confirmAnswers.push(true);
+    await oscOf(term)("hello");
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("hello"));
+    await oscOf(term)("second");
+    expect(confirms.length).toBe(1); // not asked again
+    expect(writeText).toHaveBeenLastCalledWith("second");
+    // A fresh pane starts without consent.
+    disposeTerm("clip");
+    const t2: any = mount();
+    await oscOf(t2)("third");
+    await settle();
+    expect(confirms.length).toBe(2);
+    expect(writeText).not.toHaveBeenCalledWith("third");
+  });
+
+  it("OSC 52 text is stripped of control characters and capped", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const term: any = mount();
+    confirmAnswers.push(true);
+    await oscOf(term)("a\x01b\x1bc\td\ne");
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("abc\td\ne"));
+    await oscOf(term)("x".repeat(OSC52_MAX_CHARS + 50));
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(writeText.mock.calls[1][0].length).toBe(OSC52_MAX_CHARS);
+  });
+
+  it("selection copy is unaffected by OSC 52 consent", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    setSetting("termCtrlCV", true);
+    const term: any = mount();
+    userSelect(term);
+    vi.spyOn(term, "hasSelection").mockReturnValue(true);
+    vi.spyOn(term, "getSelection").mockReturnValue("sel");
+    const h: KeyHandler = term._core._customKeyEventHandler;
+    h(key("KeyC", { ctrlKey: true }));
+    expect(writeText).toHaveBeenCalledWith("sel");
+    expect(confirms.length).toBe(0);
+  });
+
+  it("OSC 52 copy toasts when the clipboard API is missing or refuses (after Allow)", async () => {
+    const term: any = mount();
+    confirmAnswers.push(true);
+    const osc = oscOf(term);
     Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
-    await osc("aGk=");
-    expect(toasts.length).toBe(1);
+    await osc("hi");
+    await vi.waitFor(() => expect(toasts.length).toBe(1));
     Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockRejectedValue(new Error("no")) }, configurable: true });
-    await osc("aGk=");
+    await osc("hi");
     await vi.waitFor(() => expect(toasts.length).toBe(2));
-    await osc("?");
+    await new Promise<void>((r) => term.write("\x1b]52;c;?\x07", r));
     expect(toasts.length).toBe(2);
   });
 });
