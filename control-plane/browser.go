@@ -52,7 +52,7 @@ func (a browserAPI) rest(w http.ResponseWriter, r *http.Request, res *resolved) 
 		}
 	}
 
-	if unsafeRelayPath(r.URL.Path) {
+	if _, ok := relayTargetPath(r); !ok {
 		http.Error(w, "bad browser proxy path", http.StatusBadRequest)
 		return
 	}
@@ -93,7 +93,11 @@ func copyHeader(dst, src http.Header, name string) {
 }
 
 func browserAgentHTTPURL(endpoint string, r *http.Request) (string, error) {
-	target, err := url.Parse(strings.TrimRight(endpoint, "/") + strings.TrimPrefix(r.URL.Path, "/api"))
+	suffix, ok := relayTargetPath(r)
+	if !ok {
+		return "", errors.New("unsafe browser relay path")
+	}
+	target, err := url.Parse(strings.TrimRight(endpoint, "/") + suffix)
 	if err != nil {
 		return "", err
 	}

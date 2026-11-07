@@ -62,11 +62,7 @@ type agentKeyReport struct {
 
 // homeKeyHealthzClient is healthzClient that never follows a redirect: a 3xx to another
 // Agent would otherwise have that Agent's report read as this one's.
-var homeKeyHealthzClient = &http.Client{
-	Timeout:       healthzClient.Timeout,
-	Transport:     healthzClient.Transport,
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-}
+var homeKeyHealthzClient = newAgentClient(healthzClient.Timeout, healthzClient.Transport)
 
 // agentKeyState makes one /healthz call. ok is false while the Agent does not answer 200.
 func agentKeyState(ctx context.Context, rt runtime.Runtime) (agentKeyReport, bool) {

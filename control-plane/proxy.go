@@ -30,10 +30,7 @@ func newAgentProxyAPI(m *manager) agentProxyAPI { return agentProxyAPI{memberAut
 // not re-followed by the CP with the bearer attached — following would let an encoded
 // `..` reach Agent endpoints outside the CP's explicit route allowlist (and skip the
 // route-level audit classification).
-var agentRelayClient = &http.Client{
-	Transport:     newAnswerTransport(),
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-}
+var agentRelayClient = newAgentClient(0, newAnswerTransport())
 
 // unsafeRelayPath reports whether a decoded request path (or path suffix) contains a
 // dot-dot / dot / interior-empty segment. The Agent target URL is built by string
@@ -43,6 +40,55 @@ func unsafeRelayPath(path string) bool {
 	segs := strings.Split(path, "/")
 	for i, seg := range segs {
 		if seg == ".." || seg == "." {
+			return true
+		}
+		if seg == "" && i > 0 && i < len(segs)-1 {
+			return true // interior empty segment ("//")
+		}
+	}
+	return false
+}
+
+// relayTargetPath returns the escaped path suffix (the request path without its "/api"
+// prefix) to append to the Agent endpoint, and false when the request must be refused.
+//
+// The Agent URL has to be built from the ESCAPED path: the route allow-list is matched by
+// ServeMux per escaped segment, so a wildcard value may legitimately carry a decoded "/" (from
+// an encoded separator), and re-joining the decoded path would let the Agent route that request
+// somewhere the allow-list never saw. Beyond the escaped form, a segment that decodes to
+// something containing "/", "?" or "#" — or to text that is itself an encoded one of those
+// (double encoding) — is refused outright, as is a dot segment or an interior empty segment.
+func relayTargetPath(r *http.Request) (string, bool) {
+	esc := r.URL.EscapedPath()
+	if unsafeEscapedRelayPath(esc) {
+		return "", false
+	}
+	// The mux matches an encoded first segment ("/%61pi") as "api", so strip that segment by
+	// position rather than by comparing text; the rest keeps its escapes untouched.
+	rest := strings.TrimPrefix(esc, "/")
+	first, tail, _ := strings.Cut(rest, "/")
+	if seg, err := url.PathUnescape(first); err != nil || seg != "api" {
+		return "", false
+	}
+	if tail == "" && !strings.HasSuffix(esc, "/") {
+		return "", true
+	}
+	return "/" + tail, true
+}
+
+// unsafeEscapedRelayPath is unsafeRelayPath for an escaped path, segment by segment.
+func unsafeEscapedRelayPath(esc string) bool {
+	segs := strings.Split(esc, "/")
+	for i, raw := range segs {
+		seg, err := url.PathUnescape(raw)
+		if err != nil {
+			return true
+		}
+		if seg == ".." || seg == "." || strings.ContainsAny(seg, "/?#") {
+			return true
+		}
+		lower := strings.ToLower(seg)
+		if strings.Contains(lower, "%2f") || strings.Contains(lower, "%3f") || strings.Contains(lower, "%23") {
 			return true
 		}
 		if seg == "" && i > 0 && i < len(segs)-1 {
@@ -70,11 +116,12 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 			return
 		}
 	}
-	if unsafeRelayPath(r.URL.Path) {
+	suffix, ok := relayTargetPath(r)
+	if !ok {
 		http.Error(w, "bad proxy path", http.StatusBadRequest)
 		return
 	}
-	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
+	target := rt.Endpoint() + suffix
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
@@ -212,11 +259,12 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 		writeAPIErr(w, workspaceActivityAPIError(err))
 		return
 	}
-	if unsafeRelayPath(r.URL.Path) {
+	suffix, ok := relayTargetPath(r)
+	if !ok {
 		http.Error(w, "bad proxy path", http.StatusBadRequest)
 		return
 	}
-	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
+	target := rt.Endpoint() + suffix
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
