@@ -21,6 +21,13 @@ the way git does.
   matching `read:` / `write:` scopes (for example `read:pullrequest:bitbucket`, and
   `write:pipeline:bitbucket` to start or stop a pipeline — write does not imply read). A token without the pull-request scopes can list repositories
   but gets `403 Forbidden` from `bkt pr list`. The OAuth app's scopes are set by the tenant administrator. The same scope lets the Console's work-item panel post the report-back comment on a Bitbucket pull request: `pullrequest:write` on the OAuth app, `write:pullrequest:bitbucket` on an API token. The Console offers the comment only when the connection is known to hold it. A connection whose scopes are not known (it predates this, or Bitbucket named none) stays read-only until a work-item refresh learns them, and Bitbucket issues are never listed, so only pull requests can be commented on. If you add the scope to the app, re-connect Bitbucket.
+- **`gh pr edit` fails with the built-in GitHub OAuth App**: the token has the scopes `repo workflow`
+  only, and `gh pr edit` loads the pull request in a way that needs `read:org`, so it ends with
+  `GraphQL: … requires one of the following scopes: ['read:org']`, even on your own personal
+  repository. The token settings page the message links to does not apply to this token. Edit the
+  pull request through the REST API instead, which needs only `repo`:
+  `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>` (add `-f title="…"` to change
+  the title). A token you pasted with `read:org` is not affected.
 - **Bitbucket Data Center** (or any host other than bitbucket.org) is not connected through
   Settings. Set it up yourself (`bkt auth login`, or `BKT_HOST` and `BKT_TOKEN`); the
   `bkt` then runs as you configured it, without the saved connection.

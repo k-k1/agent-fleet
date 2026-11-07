@@ -126,6 +126,12 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
 - Present and usable: `gcc`/`g++`/`make`/`pkg-config` (so cgo, node-gyp and source-built wheels
   compile), `git`, `gh` (pre-authenticated through a wrapper — never run `gh auth login`), `go`,
   `python3` + `uv`, node via nvm, `chromium`, `rg`, `fd`, `jq`.
+- **`gh pr edit` fails with the built-in OAuth App token**, on your own personal repository too:
+  `GraphQL: … The 'login' field requires one of the following scopes: ['read:org']`. The token
+  carries `repo workflow` only, and `gh pr edit` loads the pull request over GraphQL (upstream
+  cli/cli#13575). The link in the error does not apply to this token. Edit over REST, which needs
+  only `repo`: `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>` (also
+  `-f title=…`). Put the file in `$AF_WORK_DIR`. A token the user pasted with wider scope does not hit this.
 - Outbound network may be restricted; an unreachable host is not necessarily an error. Do not try
   to reach other tenants' or users' data — containers are isolated.
 
