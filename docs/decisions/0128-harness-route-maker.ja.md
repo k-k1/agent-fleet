@@ -574,7 +574,7 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   `AF_WS_WORKLOAD_AWS` と同じ方式で、docker・ECS EC2/Fargate・Kubernetes・native に次の起動で届く。受け入れ確認の実施専用の
   スイッチで、既定はオフ。閉鎖を解くのは、証拠を添えた別の変更のまま。Agent の拒否メッセージは CP 側の変数名を示す。
 - 2026-11-08、拒否のワイヤ上のステータス（#3426、#3282）: 上の呼び出し元の拘束による拒否は 403 ではなく **401**
-  `route_caller_forbidden` である。ゲートウェイ内部の検査は forbidden として扱うが、書き出す拒否はすべて 401（待てば直りうる
+  `route_caller_forbidden` である。ゲートウェイ内部の検査は forbidden として扱うが、認証・接続に関する拒否は 401（待てば直りうる
   ものは 503）に直して `x-should-retry: false` を付ける。claude は 403 を約 7 回再試行するため。失効または停止したトークンは
   401 `route_token_invalid`。上の決定の本文は書き換えない。正は `workspace/agent/internal/routegw/bedrock.go` の
   `writeRefusal` / `wireStatus`。
