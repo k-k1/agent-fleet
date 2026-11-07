@@ -1769,6 +1769,17 @@ def check_redirects(files: list[str], f: Findings) -> None:
                                      + (r"(?![A-Za-z0-9_.-])" if old_anchor else r"(?![A-Za-z0-9_.#-])")),
                           lang_old, lang_new))
 
+    # Code also names a page without its extension: the Console's openGuidePage("member/14-preview-browser")
+    # adds ".md" (or ".ja.md") itself. That form is only matched as a whole string literal in code, where a
+    # page path cannot be mistaken for prose.
+    bare = []
+    for _, old, new in rows:
+        if "#" in old:
+            continue
+        old_bare, new_bare = old[: -len(".md")], new.partition("#")[0][: -len(".md")]
+        bare.append((re.compile(r"(?<=[\"'`])(?:guide/)?" + re.escape(old_bare) + r"(?=[\"'`])"),
+                     old_bare, new_bare))
+
     candidates = list(files)
     for rel_root, exts in REDIRECT_POINTER_ROOTS:
         base = os.path.join(ROOT, rel_root)
@@ -1814,7 +1825,8 @@ def check_redirects(files: list[str], f: Findings) -> None:
                     reported.add(line)
                     f.errors.append(f"{rel(path)}:{line}: link to '{key}{'#' + anchor if anchor else ''}' "
                                     f"moved to '{new}' (guide/_redirects.tsv)")
-        for rx, old, new in pairs:
+        code = path.endswith((".go", ".ts", ".tsx"))
+        for rx, old, new in pairs + (bare if code else []):
             if old.split("#")[0].rsplit("/", 1)[-1] not in body:
                 continue
             for m in rx.finditer(body):

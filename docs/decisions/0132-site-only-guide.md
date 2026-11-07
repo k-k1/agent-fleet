@@ -57,3 +57,19 @@ Also:
   wanted gone (the stage, bake and bridge) stays with them.
 - **Open the site inside the Console** (an iframe or the browser pane). The site sets `frame-ancestors 'none'`, and the
   browser pane is for the member's own apps.
+
+## Addendum (2026-11-07) — the old guide is replaced page by page, and the shipped copy stays until the user drops it
+
+The user clarified what "one place" means: the chapters of the current guide are hard to read and are to be replaced
+by task pages like "Use AWS SSO" (ADR 0131 §4), and the site is to carry those pages only. They also need the guide
+to stay readable inside a workspace in every release until then.
+
+- **The new pages are written into `guide/` in the layout of the page map**, and each change removes the sections of
+  the old chapters it replaces, adding their paths to `guide/_redirects.tsv`. Old chapters and new pages coexist in
+  `guide/` until the last chapter is gone.
+- **The shipped copy stays.** Whatever `guide/` holds ships, so the Console's **User guide** keeps working in every
+  release, with the new pages as they land. Decision 2 (removing the shipped copy) is the last step, and it happens
+  only when the user decides it; it may never happen.
+- **The site's `/docs/` is not published from `main` until the user says it is ready.** Previews show the work in
+  progress; the old layout is never published.
+- Decision 1 (the Console's Guide menu opens the site) waits for the site to be published.
