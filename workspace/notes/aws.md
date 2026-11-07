@@ -8,8 +8,8 @@ user-invocable: false
 Read when: a command touches the user's AWS accounts or resources (deploys, writes, and reads
 too — anything whose account matters), or an AWS command failed with "Unable to locate
 credentials", an SSO/token error, "The config profile (X) could not be found", or `af-aws-exec`
-exited 3. The member-side explanation is `member/16-cloud-accounts.md` in the user guide (section
-"Using the profiles from the terminal, SDKs and build tools").
+exited 3. The member-side explanation is `user/integrations/aws-sso.md` in the user guide, and every option,
+exit status and rule is in `ref/cli/af-aws-exec.md`.
 
 ## The trap
 

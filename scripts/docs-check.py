@@ -1323,7 +1323,9 @@ def check_notes(f: Findings) -> None:
     notes_dir = os.path.join(ROOT, "workspace", "notes")
     shelves = LIVING + ("decisions", "log")
     ref_re = re.compile(
-        r"`(" + "|".join(shelves) + r")/([A-Za-z0-9._-]+\.md)`"
+        # The task pages sit in subdirectories (user/integrations/aws-sso.md, ref/cli/af-aws-exec.md),
+        # so a path may go deeper than the shelf.
+        r"`(" + "|".join(shelves) + r")/((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md)`"
     )
     # The always-loaded policy is short; the procedures live in topic files under
     # `workspace/notes/`, shipped next to it as `/usr/local/share/agent-fleet/notes/`. The

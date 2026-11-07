@@ -15,7 +15,7 @@ The detailed rules for the AWS profiles registered under "AWS profiles/SSM" in S
 Each profile row has **Log in**, which signs you in to IAM Identity Center for that profile without leaving the
 Console. It opens a login window; the sign-in code is created only when you press **Log in** there, and only that
 window shows it. The login serves SSM sessions and `af-aws-exec` for that profile. The button is off for a profile
-without both an account and a role, and for one whose name another label also maps to ([from a terminal](../member/16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
+without both an account and a role, and for one whose name another label also maps to ([af-aws-exec](cli/af-aws-exec.md)).
 Beside the label, a badge shows the login state: **Signed in**, **Renews on use** (the access token has expired;
 while the portal session is open, the next use renews it) or **Not signed in**. It shows no time left: the
 workspace knows only the access token's expiry (about an hour), not when the portal session ends.

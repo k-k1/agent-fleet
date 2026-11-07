@@ -155,7 +155,7 @@ af-aws-exec --list   # 使えるプロファイルの一覧
 ```
 
 オプションや終了コード、ビルドツールや SDK から使うときの注意は
-[プロファイルを端末・SDK・ビルドツールから使う](../../member/16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う) にあります。
+[af-aws-exec](../../ref/cli/af-aws-exec.ja.md) にあります。
 
 ## 手元の PC で同じプロファイルを使う
 

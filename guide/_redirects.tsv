@@ -12,3 +12,4 @@ member/16-cloud-accounts.md#exporting-profiles-as-awsconfig	user/integrations/aw
 member/16-cloud-accounts.md#shared-sign-ins-one-login-for-several-profiles	user/integrations/aws-sso.md#use-several-profiles-with-one-login
 member/16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile	user/integrations/aws-sso.md#use-a-role-in-another-account
 member/16-cloud-accounts.md#the-aws-badge-in-the-ws-bar	ref/aws-profiles.md#aws-badge
+member/16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools	ref/cli/af-aws-exec.md

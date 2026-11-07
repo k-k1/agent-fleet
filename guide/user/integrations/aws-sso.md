@@ -156,7 +156,7 @@ af-aws-exec --list   # the profiles you can use
 ```
 
 The options, exit codes, and what to watch for with build tools and SDKs are in
-[Using the profiles from the terminal, SDKs and build tools](../../member/16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools).
+[af-aws-exec](../../ref/cli/af-aws-exec.md).
 
 ## Use the same profiles on your own computer
 

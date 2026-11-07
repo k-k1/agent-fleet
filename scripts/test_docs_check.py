@@ -142,6 +142,14 @@ class NotesTests(unittest.TestCase):
         for message in ("not in the image", "does not exist", "not shipped"):
             self.assertIn(message, errors)
 
+    def test_nested_guide_paths_are_checked(self):
+        (self.root / "guide/ref/cli").mkdir(parents=True)
+        (self.root / "guide/ref/cli/af-aws-exec.md").write_text("# af-aws-exec\n")
+        self.topic.write_text(self.valid + "\nRead:\n`ref/cli/af-aws-exec.md`")
+        self.assertEqual(self.errors(), "")
+        self.topic.write_text(self.valid + "\nRead:\n`ref/cli/af-aws-exec-typo.md`")
+        self.assertIn("does not exist", self.errors())
+
     def test_frontmatter_positive_controls(self):
         for old, new, error in (
             ("af-example", "af-wrong", "name must be"),

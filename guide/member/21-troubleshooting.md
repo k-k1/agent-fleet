@@ -599,7 +599,7 @@ an `edit` the other changes you asked for were applied. Either way, set the desc
   the command as you with the profile from ⚙ Settings:
   `af-aws-exec --profile <name> --account <id> -- <command>`. A plain `aws --profile` is only for
   the read-only lookups that chapter 16 allows after its isolation check
-  ([16](16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
+  ([af-aws-exec](../ref/cli/af-aws-exec.md)).
 - **`af-gcloud-exec` exit code 3** means a login only when the wrapper says so ("the login was
   requested in the Agent Fleet Console …", "Google Cloud login required …"). Log in from the toast
   or ⚙ Settings, or run the terminal command it printed, then run the command again. Otherwise the
