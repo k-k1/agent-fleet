@@ -372,6 +372,35 @@ role's permissions, so mark a profile only when you have checked them. A claude 
 the option appears only when at least one of your profiles is marked, and only once the route has passed its live
 acceptance (until then, only on a workspace whose operator enabled it for that run).
 
+**Before the first Bedrock call.** Two things on the AWS side, neither of which AF can do for you.
+
+- Submit Anthropic's use-case form in the Bedrock console,.
+- The first invocation of a model has to come from a principal that is allowed `aws-marketplace:Subscribe` (and
+  `aws-marketplace:ViewSubscriptions`). A role with only `bedrock:InvokeModel*` is refused with AccessDenied on that
+  first call. Make the first call once with a broader principal;
+  after that the narrow route role works.
+
+**Region and model.** The model is the one you choose in the launch dialog, and claude sends it to Bedrock as it is.
+Its default is a tier alias (Opus / Sonnet / Haiku), which claude turns into a Bedrock inference-profile ID for the
+route's region, and that ID may not exist there: in `ap-northeast-1` the default Sonnet ID failed on the first turn
+with `model_not_found`. When the account has no access to the model, claude falls back to older Opus versions, one
+gateway call (and one usage row) for each attempt. So use a region where the account has enabled the model, and pin it:
+register its full ID under **Additional Claude models** in Settings ([agents](09-agents.md)) and select that ID in the
+launch dialog. AF does not check the model against the account.
+
+**When a call is refused.** The gateway answers a refusal itself with HTTP 401 (a refusal that waiting may clear, 503),
+always with `x-should-retry: false`, so claude shows it once, with the code in the message, and does not retry.
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `route_token_invalid` (401) | The route token is missing, unknown, expired, or was revoked (the session stopped, or the profile or selection changed). | Start the session again. |
+| `route_caller_forbidden` (401) | The token was presented by a process outside the session it was issued to. The token is not revoked. | Call the model from the session's own terminal, not from another session. |
+| `route_session_ended`, `route_selection_changed`, `route_connection_changed` (401) | The session ended, no longer selects this route, or its profile was edited. The token is revoked. | Start a new session. |
+| `route_login_required`, `route_confirmation_required` (401) | The profile needs an SSO sign-in or your "Confirm before use" approval. | Sign in or allow it; the next call goes through. |
+| `route_upstream_unavailable`, `route_credentials_unavailable` (503) | Bedrock or the credentials could not be reached right now. | Try again in a moment. |
+
+A Bedrock answer such as AccessDenied or `model_not_found` is forwarded as it is; it is not a gateway code.
+
 **A read-only lookup with `aws --profile`.** `af-aws-exec` stays the way to run deployments, writes, build tools,
 SDK programs and scripts: it checks the account (`--account`), hands short-lived credentials to tools whose SDK cannot
 read an SSO profile (older SDKs such as the AWS SDK for Java v1, common in Gradle/Maven plugins), asks you in the
