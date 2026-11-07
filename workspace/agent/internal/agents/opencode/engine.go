@@ -223,6 +223,16 @@ func PushEngineProviders(engines []EngineProvider) error {
 	return ErrLiveConfigUnsupported
 }
 
+// derivedOutputCap is the output cap written when only the context window is known: a quarter of
+// the window, floored at 1024 and capped at opencode's own 32000 default, and never more than half
+// the window so a small engine keeps room for input (opencode's usable input is context minus
+// output). Without a cap, a window-only limit is rejected by opencode up to 2.2.5 and takes the
+// whole provider with it. Returns 0 (write no limit) when the window is below 2 tokens.
+func derivedOutputCap(ctx int) int {
+	out := min(max(ctx/4, 1024), 32000)
+	return min(out, ctx/2)
+}
+
 // engineProviderEntry is one provider as opencode reads it.
 func engineProviderEntry(e EngineProvider) map[string]any {
 	models := map[string]any{}
@@ -239,7 +249,8 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 			shown = label
 		}
 		m := map[string]any{"name": shown + " (self-hosted)"}
-		// Both numbers or neither, measured on opencode 2.2.5 and 2.2.6 (TestContractV2ModelLimits*):
+		// A `limit` always carries both numbers, measured on opencode 2.2.5 and 2.2.6
+		// (TestContractV2ModelLimits*):
 		//
 		//   - a model with no `limit` gets a 200000 window and a 32000 output cap: compaction waits
 		//     until about 170000 tokens and a turn asks for up to 32000 output, so on a smaller
@@ -247,18 +258,19 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 		//     this field exists to prevent. A declared window compacts before its context;
 		//   - a `limit` with a context and no output: up to 2.2.5 it is rejected, and opencode then
 		//     drops EVERY model of this provider ("Model unavailable"), not just that one. From
-		//     2.2.6 it is accepted with the 32000 default output, clamped to the window per turn,
-		//     so the cap is opencode's guess rather than the engine's.
+		//     2.2.6 it is accepted with the 32000 default output.
 		//
-		// So a stack that declares only one of them gets neither: today's behaviour, rather
-		// than a worse one dressed up as a fix.
-		//
+		// So a known window with an unknown output cap gets a derived cap (derivedOutputCap), which
+		// works on every 2.x; an unknown window gets no limit at all, as before.
 		// The model's own window wins over the engine's. With ADR 0072's catalogue an engine
 		// can offer several models with different `-c` values, and writing the engine-wide
 		// number against all of them would advertise the wrong context for every model but one.
 		ctx, out := e.ContextTokens, e.MaxOutputTokens
 		if w, ok := e.Windows[id]; ok && w.ContextTokens > 0 {
 			ctx, out = w.ContextTokens, w.MaxOutputTokens
+		}
+		if out <= 0 {
+			out = derivedOutputCap(ctx)
 		}
 		if ctx > 0 && out > 0 {
 			m["limit"] = map[string]any{"context": ctx, "output": out}

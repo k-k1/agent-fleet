@@ -88,16 +88,27 @@ func TestWriteEngineProvidersDeclaresTheWindow(t *testing.T) {
 	}
 }
 
-// Half a pair is not half a fix. A stack that declares one number and not the other gets
-// neither, which leaves today's behaviour (no limit at all) rather than the 768-token window
-// a context without an output cap produces.
-func TestWriteEngineProvidersOmitsAHalfDeclaredWindow(t *testing.T) {
+// A known window with no output cap gets a derived cap, so opencode (which rejects a
+// context-only limit up to 2.2.5) still compacts before llama-server's context. An unknown
+// window writes nothing, whatever the output cap says. The derived cap always leaves room for input.
+func TestWriteEngineProvidersDerivesTheOutputCap(t *testing.T) {
 	engineTestHome(t)
-	for _, e := range []EngineProvider{
-		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}},
-		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}, ContextTokens: 32768},
-		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}, MaxOutputTokens: 4096},
+	for _, c := range []struct {
+		ctx, out         int
+		wantCtx, wantOut float64 // 0 = no limit expected
+	}{
+		{0, 0, 0, 0},
+		{0, 4096, 0, 0},
+		{1, 0, 0, 0},
+		{2, 0, 2, 1},
+		{1500, 0, 1500, 750},
+		{8192, 0, 8192, 2048},
+		{32768, 0, 32768, 8192},
+		{131072, 0, 131072, 32000},
+		{1_000_000, 0, 1_000_000, 32000},
+		{32768, 4096, 32768, 4096},
 	} {
+		e := EngineProvider{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}, ContextTokens: c.ctx, MaxOutputTokens: c.out}
 		if _, _, err := WriteEngineProviders([]EngineProvider{e}); err != nil {
 			t.Fatal(err)
 		}
@@ -109,8 +120,15 @@ func TestWriteEngineProvidersOmitsAHalfDeclaredWindow(t *testing.T) {
 		if model == nil {
 			t.Fatalf("the model went missing: %v", entry)
 		}
-		if _, ok := model["limit"]; ok {
-			t.Errorf("ctx=%d out=%d wrote a limit anyway: %v", e.ContextTokens, e.MaxOutputTokens, model)
+		limit, _ := model["limit"].(map[string]any)
+		if c.wantCtx == 0 {
+			if limit != nil {
+				t.Errorf("ctx=%d out=%d wrote a limit anyway: %v", c.ctx, c.out, limit)
+			}
+			continue
+		}
+		if limit == nil || limit["context"] != c.wantCtx || limit["output"] != c.wantOut {
+			t.Errorf("ctx=%d out=%d: limit = %v, want context %v output %v", c.ctx, c.out, limit, c.wantCtx, c.wantOut)
 		}
 	}
 }
