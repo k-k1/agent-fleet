@@ -180,8 +180,6 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
   // a reloaded turn is still running on the backend; polling for the reply
   const [reattachKey, setReattachKey] = useState<string | null>(null);
   const reattaching = !!conversationId && reattachKey === conversationId;
-  // handoff: fire this first turn automatically once the conversation loads
-  const [pendingAuto, setPendingAuto] = useState<{ key: string; text: string } | null>(null);
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
   // The sentence being read (live karaoke, docs/log/19) and the most recent turn error. Both
   // are scoped to the conversation they came from, so after switching chats neither paints
@@ -282,15 +280,11 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
       clearAttachments();
       applyConv(null);
       setDraftAsst(null);
-      // One-shot seed (Phase C prefill, or a session handoff). auto=false prefills the
-      // composer for review; auto=true stashes the text to fire automatically once the
-      // conversation has loaded (handoff: calling an assistant directly). With no seed the
-      // persisted draft (which useDraft reloads on the key change) is left standing.
+      // One-shot seed (Phase C prefill, or a session handoff): prefilled for review, never
+      // sent without the member pressing Send. With no seed the persisted draft (which
+      // useDraft reloads on the key change) is left standing.
       const seed = takeChatSeed(conversationId);
-      if (seed) {
-        if (seed.auto) setPendingAuto({ key: conversationId, text: seed.text });
-        else setInput(seed.text);
-      }
+      if (seed) setInput(seed);
       // Load the conversation, retrying transient failures. When the workspace agent is
       // still booting (WS just started), the CP answers with an empty/gateway response
       // that api() resolves as { error } (NOT a throw) — reading that as "no id" would
@@ -645,8 +639,8 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
     }
   };
 
-  // source marks a turn the Console sends on the member's behalf (the handoff auto-send), so
-  // it stays out of the composer's ↑ history both locally and once stored.
+  // source marks a turn the Console sends on the member's behalf, so it stays out of the
+  // composer's ↑ history both locally and once stored.
   //
   // `retry` re-runs a turn that already failed: it carries the exact prompt that was sent (images
   // and source included) and touches neither the composer, its draft/attachments nor the
@@ -655,7 +649,7 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
     // Block a second turn on this conversation, whether it was started here or by another
     // pane whose turn is still running in the background (store busy).
     if (!paneKey || sending || compacting || (conversationId && storeBusy)) return;
-    // `override` drives the auto-sent handoff first turn (its text isn't in the composer).
+    // `override` sends text that isn't in the composer (e.g. a reply suggestion).
     const text = retry ? retry.prompt : (override ?? input).trim();
     const paths = retry ? [] : attachments.map((a) => a.path);
     if (!text && !paths.length) return;
@@ -838,22 +832,6 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
     teardown();
     bumpChatList(); // a new/updated thread should surface in the rail list
   };
-
-  // Handoff auto-send: fire the seeded first turn once the conversation has loaded and is
-  // idle. A ref keeps the effect calling the freshest send() without re-subscribing every
-  // render; setPendingAuto(null) makes it one-shot (a later re-open won't resend).
-  const sendRef = useRef(send);
-  sendRef.current = send;
-  useEffect(() => {
-    if (pendingAuto == null) return;
-    if (pendingAuto.key !== conversationId) return; // seeded for a chat this pane no longer shows
-    if (!conv || conv.in_progress) return; // wait for the conversation to exist and no turn to be running
-    if (sending || compacting) return;
-    const text = pendingAuto.text;
-    setPendingAuto(null);
-    void sendRef.current(text, "handoff");
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sendRef is a stable ref
-  }, [pendingAuto, conversationId, conv, sending, compacting]);
 
   // Stop the in-flight turn. The turn is now detached from its SSE request on the backend
   // (so a reload can't kill it), which means aborting the fetch alone no longer cancels the

@@ -294,12 +294,15 @@ func (a *mcpOAuthAPI) askConsent(w http.ResponseWriter, r *http.Request, req mcp
 		mcpShell
 		T                                mcpConsentStrings
 		Ticket, Action, Host, ClientName string
+		RedirectURI                      string
+		CIMD                             bool
 		Loopback, CanWrite               bool
 		Tenants                          []tenant
 		Scope                            string
 	}{
 		mcpShell: a.shell(r, lang), T: mcpConsentText[lang], Ticket: ticket, Action: mcpOAuthConsent,
 		Host: callbackHost(req.redirectURI), ClientName: req.cl.Name,
+		RedirectURI: req.redirectURI, CIMD: req.cl.CIMD,
 		Loopback: a.classifyRedirect(nil /* loopback needs no trusted list */, req.redirectURI) == redirectLoopback,
 		CanWrite: req.level >= scopeRank(scopeWrite), Scope: scopeRead,
 	}
@@ -551,6 +554,7 @@ func (a *mcpOAuthAPI) refuse(w http.ResponseWriter, r *http.Request, why string)
 
 type mcpConsentStrings struct {
 	Title, Heading, Lead, GoesTo, Local, Client, SelfDeclared, Tenant, Scope string
+	Registered, RegCIMD, RegDCR                                              string
 	Read, ReadHelp, Write, WriteHelp, Allow, Cancel, Footer                  string
 	// The memory endpoint's replacements for Heading, Lead, ReadHelp and WriteHelp.
 	MemoryHeading, MemoryLead, MemoryReadHelp, MemoryWriteHelp string
@@ -562,6 +566,7 @@ var mcpConsentText = map[string]mcpConsentStrings{
 		Lead:   "許可すると、このアプリはあなたとして MCP ツールを呼び出せます。心当たりがなければキャンセルしてください。",
 		GoesTo: "接続後の戻り先", Local: "このパソコン自身", Client: "アプリ名", SelfDeclared: "アプリ自身の申告であり、確認されたものではありません",
 		Tenant: "接続するテナント", Scope: "許可する範囲",
+		Registered: "登録方法", RegCIMD: "クライアント ID メタデータ文書（CIMD）。アプリの提供元が公開した文書を取得して確認済み", RegDCR: "動的クライアント登録（DCR）。誰でも認証なしで登録でき、内容は確認されていません",
 		Read: "read", ReadHelp: "セッションの状態や出力を読み取る。Agent Fleet のメモリ（一覧・検索・読み取り）も、テナントとあなたの設定で許されていれば読み取る", Write: "write", WriteHelp: "読み取りに加えて、セッションへの送信など操作を行う。許されていれば、メモリの保存と忘却もできる",
 		Allow: "許可する", Cancel: "キャンセル",
 		Footer:          "いつでも接続を取り消せます。admin:dangerous の権限は OAuth では付与されません。",
@@ -575,6 +580,7 @@ var mcpConsentText = map[string]mcpConsentStrings{
 		Lead:   "If you allow it, this app can call MCP tools as you. Cancel if you don't recognise it.",
 		GoesTo: "After connecting, you are sent back to", Local: "this computer itself", Client: "App name", SelfDeclared: "declared by the app itself, not verified",
 		Tenant: "Tenant to connect", Scope: "What to allow",
+		Registered: "Registered by", RegCIMD: "Client ID metadata document (CIMD), fetched from the app's publisher", RegDCR: "dynamic client registration (DCR): anyone can register without signing in, and nothing here is verified",
 		Read: "read", ReadHelp: "Read session status and output. Also reads your Agent Fleet memory (list, search, read) when your tenant and your own setting allow it", Write: "write", WriteHelp: "Read, plus act: send to sessions and similar. Also saves and forgets memories when allowed",
 		Allow: "Allow", Cancel: "Cancel",
 		Footer:          "You can revoke the connection at any time. The admin:dangerous tier is never granted over OAuth.",
@@ -589,7 +595,7 @@ var mcpConsentTmpl = template.Must(template.Must(template.Must(devIdPShellTmpl.C
 <html lang="{{.Lang}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.T.Title}}</title>
 <style>
-{{template "devidp-shell-css"}}.dest{padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:12px}
+{{template "devidp-shell-css"}}.uri{display:block;margin:6px 0;word-break:break-all;font-size:12px}.dest{padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:12px}
 .dest small,.cname small{display:block;color:var(--muted);font-size:12px}
 .host{font:600 20px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 .cname{margin-bottom:16px;font-size:14px;overflow-wrap:anywhere}
@@ -608,7 +614,7 @@ button.cancel:hover{text-decoration:underline}
 <div class="body">
 <h1>{{.T.Heading}}</h1>
 <p class="lead">{{.T.Lead}}</p>
-<div class="dest"><small>{{.T.GoesTo}}</small><div class="host">{{if .Loopback}}{{.T.Local}} ({{.Host}}){{else}}{{.Host}}{{end}}</div></div>
+<div class="dest"><small>{{.T.GoesTo}}</small><div class="host">{{if .Loopback}}{{.T.Local}} ({{.Host}}){{else}}{{.Host}}{{end}}</div><code class="uri">{{.RedirectURI}}</code><small>{{.T.Registered}}: {{if .CIMD}}{{.T.RegCIMD}}{{else}}{{.T.RegDCR}}{{end}}</small></div>
 {{if .ClientName}}<div class="cname"><small>{{.T.Client}} — {{.T.SelfDeclared}}</small>{{.ClientName}}</div>{{end}}
 <form method="post" action="{{.Action}}">
 <input type="hidden" name="ticket" value="{{.Ticket}}">

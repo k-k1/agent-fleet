@@ -521,6 +521,33 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_off", "this engine is switched off"})
 		return
 	}
+	// A ComfyUI engine is shared by every member with no user model of its own, so what may be
+	// relayed and whose jobs a caller may touch is decided here, before anything is woken
+	// (engine_comfy_guard.go).
+	var hook comfyResponseHook
+	var guardBody []byte
+	if eng.def.Provider == "comfy" {
+		var gerr *apiError
+		guardBody, gerr = comfyReadBody(r)
+		if gerr != nil {
+			writeAPIErr(w, gerr)
+			return
+		}
+		dec := comfyGuard(eng.jobOwners(), mv.MembershipID, r.Method, r.PathValue("path"),
+			r.Header.Get("Content-Type"), r.URL.Query(), r.URL.RawQuery, guardBody)
+		if dec.err != nil {
+			writeAPIErr(w, dec.err)
+			return
+		}
+		hook = dec.hook
+		if dec.body != nil {
+			guardBody = dec.body
+		}
+		if dec.ctype != "" {
+			r.Header.Set("Content-Type", dec.ctype)
+		}
+		r.Body = io.NopCloser(bytes.NewReader(guardBody))
+	}
 	// An engine whose catalogue is empty has nothing to answer with, and waking it would buy a
 	// GPU box to run `sleep infinity` (ADR 0072 decision 1). `engine_unavailable` rather than
 	// `engine_waking`: the sdcpp provider retries the second for a quarter of an hour, and no
@@ -592,11 +619,11 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 	eng.inflight.begin()
 	defer eng.inflight.end()
 
-	if engineWantsStream(body) {
+	if hook == nil && eng.def.Provider != "comfy" && engineWantsStream(body) {
 		g.streamed(w, r, eng, claims, mv, askForStreamUsage(body))
 		return
 	}
-	g.plain(w, r, eng, claims, mv, body)
+	g.plainHooked(w, r, eng, claims, mv, body, hook)
 }
 
 // --- the read-only window bounce (ADR 0093 decision 7, docs/log/99 §4.11) -----
@@ -1240,6 +1267,12 @@ func engineUpstreamErrorCode(body []byte) string {
 // does have to answer 503 when the wait runs out — which is why the streaming path exists.
 func (g engineGateway) plain(w http.ResponseWriter, r *http.Request, eng *engineRuntimeState,
 	claims engineSessionClaims, mv store.MembershipView, body []byte) {
+	g.plainHooked(w, r, eng, claims, mv, body, nil)
+}
+
+// plainHooked is plain with a response hook (see comfyResponseHook).
+func (g engineGateway) plainHooked(w http.ResponseWriter, r *http.Request, eng *engineRuntimeState,
+	claims engineSessionClaims, mv store.MembershipView, body []byte, hook comfyResponseHook) {
 
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(r.Context(), enginePlainHoldFor(eng))
@@ -1261,15 +1294,24 @@ func (g engineGateway) plain(w http.ResponseWriter, r *http.Request, eng *engine
 		return
 	}
 	defer start.resp.Body.Close()
+	rest, _ := io.ReadAll(start.resp.Body)
+	full := append(append([]byte{}, start.first...), rest...)
+	sent := full
+	if hook != nil {
+		if repl := hook(start.resp.StatusCode, full); repl != nil {
+			sent = repl
+		}
+	}
 	for k, vs := range start.resp.Header {
+		if hook != nil && strings.EqualFold(k, "Content-Length") {
+			continue
+		}
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
 	w.WriteHeader(start.resp.StatusCode)
-	rest, _ := io.ReadAll(start.resp.Body)
-	full := append(append([]byte{}, start.first...), rest...)
-	_, _ = w.Write(full)
+	_, _ = w.Write(sent)
 	g.recordUsage(r.Context(), eng, claims, mv, parseEngineUsage(full), time.Since(started),
 		start.resp.StatusCode < 300, r.Header.Get("X-AF-Model"))
 }

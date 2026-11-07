@@ -81,6 +81,9 @@ func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint strin
 // answering 500 would send an operator looking for a fault that does not exist.
 // The normal path refuses it at the callback, before a session exists.
 func identityErr(err error) *apiError {
+	if errors.Is(err, store.ErrClaimedByOtherTenant) {
+		return &apiError{http.StatusForbidden, "claimed_by_other_tenant", store.ErrClaimedByOtherTenant.Error()}
+	}
 	if errors.Is(err, store.ErrIdentityClaimed) {
 		return &apiError{http.StatusForbidden, "email_taken", store.ErrIdentityClaimed.Error()}
 	}
@@ -489,23 +492,49 @@ func (m *manager) shareLockFor(ownerMembershipID string) *sync.Mutex {
 // and deactivating that membership (docs/log/61 §61.10.6) is what revokes it — which
 // ListMemberships already enforces by only returning active rows.
 func (m *manager) resolveByMembership(ctx context.Context, identityID, membershipID string) (*resolved, *apiError) {
+	ident, mv, aerr := m.activeMembership(ctx, identityID, membershipID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return m.buildResolved(ctx, ident, mv)
+}
+
+// resolveByMembershipBrowser is resolveByMembership for a browser request that carries its own
+// session (the Jira / Bitbucket connection callbacks): the tenant's sign-in method and network
+// rules are applied the way resolveFull applies them, before a workspace is built.
+func (m *manager) resolveByMembershipBrowser(ctx context.Context, identityID, membershipID string) (*resolved, *apiError) {
+	ident, mv, aerr := m.activeMembership(ctx, identityID, membershipID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if aerr := m.checkTenantProvider(ctx, mv); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := m.checkTenantIP(ctx, ident, mv); aerr != nil {
+		return nil, aerr
+	}
+	return m.buildResolved(ctx, ident, mv)
+}
+
+// activeMembership returns the identity and its membership when the membership is still active.
+func (m *manager) activeMembership(ctx context.Context, identityID, membershipID string) (store.Identity, store.MembershipView, *apiError) {
 	ident, ok, err := m.store.GetIdentityByID(ctx, identityID)
 	if err != nil {
-		return nil, internalErr(err)
+		return store.Identity{}, store.MembershipView{}, internalErr(err)
 	}
 	if !ok {
-		return nil, &apiError{http.StatusUnauthorized, "unauthenticated", "identity not found"}
+		return store.Identity{}, store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "identity not found"}
 	}
 	ms, err := m.store.ListMemberships(ctx, identityID)
 	if err != nil {
-		return nil, internalErr(err)
+		return store.Identity{}, store.MembershipView{}, internalErr(err)
 	}
 	for _, mv := range ms {
 		if mv.MembershipID == membershipID {
-			return m.buildResolved(ctx, ident, mv)
+			return ident, mv, nil
 		}
 	}
-	return nil, &apiError{http.StatusForbidden, "forbidden_tenant", "membership not active"}
+	return store.Identity{}, store.MembershipView{}, &apiError{http.StatusForbidden, "forbidden_tenant", "membership not active"}
 }
 
 // resolve returns just the runtime (proxy/terminal handlers).

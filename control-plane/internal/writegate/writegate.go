@@ -50,7 +50,7 @@ func (p Policy) Check(r *http.Request) *Rejection {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
 		return nil
 	}
-	if p.Exempt(r.URL.Path) {
+	if p.Exempt(r.URL.EscapedPath()) {
 		return nil
 	}
 	if s := r.Header.Get("Sec-Fetch-Site"); s != "" && s != "same-origin" && s != "none" {

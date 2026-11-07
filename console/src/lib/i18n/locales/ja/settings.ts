@@ -73,6 +73,8 @@ export const settings = {
   "display.terminal": "ターミナル",
   "display.term_ctrl_cv": "Ctrl+C / Ctrl+V でコピー・貼り付け",
   "display.term_ctrl_cv_note": "選択中は Ctrl+C でコピー（未選択なら従来どおりプログラムを中断）、Ctrl+V で貼り付けます。オフにすると両方のキーをプログラムへ送ります。Ctrl+Shift+C / Ctrl+Shift+V は常に使えます。",
+  "display.term_drag_copy": "マウスドラッグ直後は確認なしでコピー",
+  "display.term_drag_copy_note": "オフ: ターミナル内のプログラム（tmux のコピーモードを含む）がクリップボードへ書き込むたびに確認します。オン: ターミナルでのドラッグ終了直後の書き込みは確認なしでコピーします。注意: マウス操作を受け取るプログラムは、ドラッグ直後のこのタイミングを使ってクリップボードを書き換えられます。",
   "display.font": "フォント",
   "display.font_size": "文字サイズ",
   "display.file_viewer": "ファイルビューア",

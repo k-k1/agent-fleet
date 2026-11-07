@@ -163,7 +163,9 @@ func (f *handoffLife) offer(extra map[string]any) *httptest.ResponseRecorder {
 		body[k] = v
 	}
 	rec := httptest.NewRecorder()
-	f.api.create(rec, httptest.NewRequest(http.MethodPost, "/api/session-handoff-offers", jsonBody(body)), f.ownerRes)
+	req := httptest.NewRequest(http.MethodPost, "/api/session-handoff-offers", jsonBody(body))
+	req.Header.Set("Content-Type", "application/json")
+	f.api.create(rec, req, f.ownerRes)
 	return rec
 }
 

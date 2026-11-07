@@ -3,6 +3,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserSurface, type BrowserSurfaceController } from "./BrowserSurface.tsx";
 
+// jsdom's isTrusted is not redefinable; a test event stands in for a trusted one by
+// carrying this marker.
+vi.mock("./interaction.ts", () => ({
+  isHumanEvent: (event: object) => (event as { human?: boolean }).human === true,
+}));
+
 class FakeResizeObserver {
   observe() {}
   disconnect() {}
@@ -128,6 +134,46 @@ describe("BrowserSurface drag and clipboard", () => {
     // A move with no button held is still a plain hover.
     await pointer("pointermove", { clientX: 320, clientY: 100, button: -1, buttons: 0 });
     expect(sent().filter((m) => m.type === "mouse" && m.event === "move").at(-1)).toMatchObject({ button: "none" });
+  });
+
+  // The Control Plane bounds idle-stop presence by these reports (#3462): only real
+  // (trusted) pointer-down / wheel / key count, mousemove alone and scripted events never.
+  describe("interaction reports", () => {
+    const trusted = <E extends Event>(event: E): E => {
+      (event as E & { human?: boolean }).human = true;
+      return event;
+    };
+    const reports = () => sent().filter((m) => m.type === "interaction");
+
+    it("reports a trusted pointer down, wheel and key, throttled", async () => {
+      vi.useFakeTimers();
+      try {
+        const down = () => act(async () => {
+          canvas().dispatchEvent(trusted(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerId: 1, button: 0, buttons: 1 })));
+        });
+        await down();
+        await down();
+        expect(reports()).toHaveLength(1); // throttled
+        vi.advanceTimersByTime(6_000);
+        await act(async () => { canvas().dispatchEvent(trusted(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 3 }))); });
+        expect(reports()).toHaveLength(2);
+        vi.advanceTimersByTime(6_000);
+        await act(async () => { ime().dispatchEvent(trusted(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true, cancelable: true }))); });
+        expect(reports()).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not report mousemove alone or script-dispatched events", async () => {
+      await act(async () => {
+        canvas().dispatchEvent(trusted(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, buttons: 0 })));
+        canvas().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerId: 1, button: 0, buttons: 1 }));
+        canvas().dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 3 }));
+        ime().dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true, cancelable: true }));
+      });
+      expect(reports()).toHaveLength(0);
+    });
   });
 
   // React registers `wheel` on the root with {passive: true}, so an onWheel prop

@@ -1058,34 +1058,30 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	mem, err := a.cp.Store().EnsureMembership(r.Context(), ident.ID, t.ID, role)
+	// InviteMember, not EnsureMembership: the add (or the re-activation of a removed
+	// member) runs under the identity's row lock and refuses a person who signs in through
+	// another tenant's own identity provider.
+	inv, err := a.cp.Store().InviteMember(r.Context(), ident.ID, t.ID, role)
 	if err != nil {
+		if errors.Is(err, store.ErrIdentityTenantBound) {
+			writeAPIErr(w, &APIError{http.StatusConflict, "identity_bound_to_other_tenant",
+				"this person already signs in through another tenant's identity provider"})
+			return
+		}
 		writeAPIErr(w, dataRootNameErr(err, http.StatusConflict, "user_key_reserved", "user_key_conflict"))
 		return
 	}
-	// ★ Re-inviting somebody who was removed puts them back. EnsureMembership
-	// deliberately does not reactivate (it also serves the auto-provisioning paths,
-	// where that would undo an offboarding on the person's next visit) — so an
-	// invite, which IS an explicit decision, does it here.
 	detail := "role=" + role
-	if mem.Status != "active" {
-		// The stored role is not restored: a removed tenant_admin comes back as the role
-		// this caller may grant (member unless a super_admin asked for tenant_admin).
-		if mem.Role != role {
-			if err := a.cp.Store().SetMembershipRole(r.Context(), mem.ID, role); err != nil {
-				writeAPIErr(w, internalErr(err))
-				return
-			}
-		}
-		if err := a.cp.Store().SetMembershipStatus(r.Context(), mem.ID, "active"); err != nil {
-			writeAPIErr(w, internalErr(err))
-			return
-		}
+	// ★ Re-inviting somebody who was removed puts them back (an invite IS an explicit
+	// decision; EnsureMembership, which also serves auto-provisioning, deliberately does
+	// not). The stored role is not restored: a removed tenant_admin comes back as the role
+	// this caller may grant (member unless a super_admin asked for tenant_admin).
+	if inv.Existed && inv.PrevStatus != "active" {
 		// The scheduler paused this person's schedules while they were away rather than
 		// deleting them; a restore is meant to give back what the removal took, so they
 		// resume here. A failure is recorded, not answered: the person IS back.
-		n, err := a.cp.ResumeSchedulesHeldByRemoval(r.Context(), mem.ID)
-		detail += "; restored; schedules resumed=" + strconv.Itoa(n)
+		n, err := a.cp.ResumeSchedulesHeldByRemoval(r.Context(), inv.Membership.ID)
+		detail += "; restored (previous role=" + inv.PrevRole + "); schedules resumed=" + strconv.Itoa(n)
 		if err != nil {
 			detail += " (resume failed: " + err.Error() + ")"
 		}
