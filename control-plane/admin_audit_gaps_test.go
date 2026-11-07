@@ -269,7 +269,7 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"POST /api/admin/engines/{key}/ingest/search":                 {exempt: exReadOnly},
 	"POST /api/admin/engines/{key}/ingest/versions":               {exempt: exReadOnly},
 	"POST /api/admin/engines/search":                              {exempt: exReadOnly},
-	"POST /api/admin/engines/{key}/models/{id}/complete":          {exempt: "KNOWN GAP: moves objects and declares catalogue rows without a record (engine_complete.go); tracked in a follow-up issue"},
+	"POST /api/admin/engines/{key}/models/{id}/complete":          {marker: `.model.complete`},
 }
 
 // roleRaceStore lets another change land between the handler's read of the membership and its

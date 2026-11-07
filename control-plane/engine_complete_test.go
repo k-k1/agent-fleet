@@ -10,6 +10,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -449,5 +450,44 @@ func TestCompleteNeverAsksAboutTheWholeCheckpointSlot(t *testing.T) {
 		if got, ok := files[""]; ok {
 			t.Errorf("%s put the unflagged slot on the wire as %+v", family, got)
 		}
+	}
+}
+
+// The press leaves one audit row per act it performs, under the same action family as the other
+// engine model handlers, and none when it only checked, found nothing to do, or was refused.
+func TestCompleteRouteRecordsOnlyWhatItDid(t *testing.T) {
+	h := newEngineLedgerHarness(t)
+	h.put("image/diffusion_models/anima_v1.safetensors", 4_180_000_000)
+	h.put("image/text_encoders/qwen_3_06b_base.safetensors", 1_190_000_000)
+	h.put("image/vae/qwen_image_vae.safetensors", 253_800_000)
+	h.row(t, store.EngineModel{ID: "anima_v1", Kind: "checkpoint", BaseModel: "anima",
+		Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/anima_v1.safetensors"}}})
+	press := func(id, body string) *httptest.ResponseRecorder {
+		return h.call(t, h.a.completeModel, "POST", "/api/admin/engines/image/models/"+id+"/complete",
+			body, map[string]string{"id": id})
+	}
+	rows := func() []store.AuditLog { return auditRowsOf(t, h.st, "", "engine.image.model.complete") }
+
+	if rec := press("anima_v1", `{"check":true}`); rec.Code != http.StatusOK || len(rows()) != 0 {
+		t.Fatalf("check = %d with %d rows, want 200 and none", rec.Code, len(rows()))
+	}
+	if rec := press("nope", `{}`); rec.Code != http.StatusNotFound || len(rows()) != 0 {
+		t.Fatalf("unknown row = %d with %d rows, want 404 and none", rec.Code, len(rows()))
+	}
+	if rec := press("anima_v1", `{}`); rec.Code != http.StatusOK {
+		t.Fatalf("complete = %d %s", rec.Code, rec.Body.String())
+	}
+	got := rows()
+	if len(got) != 2 {
+		t.Fatalf("rows after the act = %+v, want one per declared part", got)
+	}
+	for _, l := range got {
+		if l.ActorKind != "admin" || l.ActorID != "u1" ||
+			!strings.HasPrefix(l.Target, "anima_v1 declared image/") || strings.Contains(l.Detail, "{") {
+			t.Errorf("row %+v: want an admin row naming the model and the declared key", l)
+		}
+	}
+	if press("anima_v1", `{}`); len(rows()) != 2 {
+		t.Errorf("a press with nothing to do recorded %d rows, want the same 2", len(rows()))
 	}
 }
