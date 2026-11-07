@@ -44,7 +44,7 @@ var config = [][2]string{
 	{"receive.fsckObjects", "true"},
 }
 
-// Ensure sets each key in config on the bare repository
+// Ensure sets each key (a value reached through [include] counts as set, hence --includes) in config on the bare repository
 // at dir unless the repository already carries a value for it, so an operator's
 // explicit per-repository override survives every startup. `git config` takes its own
 // lock file, so running beside a push is safe: receive-pack reads the config once at
@@ -52,7 +52,7 @@ var config = [][2]string{
 func Ensure(ctx context.Context, dir string) error {
 	for _, kv := range config {
 		// Exit status 1 means "key not set"; anything else is a real failure.
-		err := exec.CommandContext(ctx, "git", "--git-dir", dir, "config", "--local", "--get", kv[0]).Run()
+		err := exec.CommandContext(ctx, "git", "--git-dir", dir, "config", "--local", "--includes", "--get", kv[0]).Run()
 		if err == nil {
 			continue
 		}

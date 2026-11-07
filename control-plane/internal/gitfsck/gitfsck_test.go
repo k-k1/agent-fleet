@@ -202,3 +202,22 @@ func TestBackfillReportsUnreadableTree(t *testing.T) {
 		t.Fatalf("ok=%d failed=%d, want 0/1", ok, failed)
 	}
 }
+
+// An operator may keep the override in a file pulled in with [include]; --local --get
+// alone does not follow it, and Ensure would append true/warn after the include.
+func TestEnsureHonoursIncludedOverride(t *testing.T) {
+	bare := newFsckBare(t, false)
+	policy := filepath.Join(bare, "policy.conf")
+	if err := os.WriteFile(policy, []byte("[receive]\n\tfsckObjects = false\n[receive \"fsck\"]\n\tbadTimezone = error\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fsckMust(t, bare, "", "config", "include.path", "policy.conf")
+	if err := Ensure(context.Background(), bare); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{"receive.fsckObjects": "false", "receive.fsck.badTimezone": "error", "receive.fsck.badDate": "warn"} {
+		if got := fsckMust(t, bare, "", "config", "--includes", "--get", k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+}
