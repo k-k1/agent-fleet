@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.42.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.42.0) — 2026-11-08
+
+This release is mostly security hardening from an assessment of the Control Plane, the Agent and the
+AWS templates, with stricter defaults for sign-in, cookies, tokens and the terminal clipboard. Idle
+sessions are now halted even with a Console terminal left open, and the permission card's **Allow**
+works again on long or multi-line Bash commands. Read the Upgrade notes before updating: `AUTH` must
+now be set, and ECS deployments deploy `10-data` first.
+
 ## [0.41.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.41.0) — 2026-11-06
 
 A Terminal (CLI) claude session can run on an Anthropic API key, and one that stops at its

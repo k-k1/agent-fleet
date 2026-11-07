@@ -199,7 +199,7 @@ VOICEVOX はこのゲートウェイの後ろではない: Console が CP に頼
 |--------|--------|------|
 | `oauth` | **CP 自身が OIDC クライアント**（§7.3.1）。`/login`・`/login/{slug}`・`/oauth2/{login,callback,logout,link}` を CP が所有し、成功で署名 cookie（HMAC-SHA256・`AF_COOKIE_SECRET`・HttpOnly・SameSite=Lax・公開 URL が HTTPS なら Secure・TTL `AF_SESSION_TTL` 既定 168h）を発行。compose と AWS のテンプレートが設定するのはこれ | セルフホスト本命。エッジで HTTPS 前提 |
 | `proxy` | 上流ゲートウェイの email ヘッダ（`AUTH_EMAIL_HEADER`・既定 `X-Forwarded-Email`）を信頼。**ヘッダ欠落は 401**（フォールバック無し）。ヘッダは消さないので、CP にはそのゲートウェイ経由でしか届かないこと | oauth2-proxy など既存ゲートの流用。**SAML IdP の正式な答えもこれ** — ブリッジする（[decisions/0043](../decisions/0043-login-idp.ja.md)）。AWS のテンプレートには無い |
-| `dev` | 固定ユーザー（`DEV_USER`・既定 `dev`）で、デプロイ管理者になる | ローカル開発のみ。**`AUTH` 未設定時の既定**。`native` はこれを要求する |
+| `dev` | 固定ユーザー（`DEV_USER`・既定 `dev`）で、デプロイ管理者になる | ローカル開発のみ。**既定値は無い**: `native`/`wsl` 以外では `AUTH` 未設定だと起動を拒否する（`native`/`wsl` は `dev` を要求し、未設定ならこれになる）。そこで `AUTH=dev` にするには `AF_ALLOW_INSECURE_DEV_AUTH=1` が要り、`WARNING` を記録して `deployment_warnings` に `auth_dev` を載せる（`internal/auth/authmode.go`・`master_key_guard.go`）。`PUBLIC_BASE_URL` が https なら常に拒否する（#3485） |
 
 **プロバイダ接続のコールバック**: Jira / Bitbucket の OAuth コールバック（`/api/oauth/{jira,bitbucket}/callback`）は
 ゲートの内側にある。開始時に開始者の identity と membership を記録し、コールバックは、セッションがその identity で、

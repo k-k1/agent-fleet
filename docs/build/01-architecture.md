@@ -108,7 +108,7 @@ the CLI agents, in tmux or under a managed driver, plus the working copies (~/re
 
 | Layer | Answers | How | Stored |
 |---|---|---|---|
-| **L1, Console** | who may use the Console at all | `AUTH=oauth` (the CP's own login with Google, GitHub or any OIDC provider; what the compose and AWS templates set) / `proxy` (trust an upstream gateway's email header) / `dev` (a fixed identity; the default when `AUTH` is unset, and the only mode `native` accepts) | a signed session cookie held by the CP |
+| **L1, Console** | who may use the Console at all | `AUTH=oauth` (the CP's own login with Google, GitHub or any OIDC provider; what the compose and AWS templates set) / `proxy` (trust an upstream gateway's email header) / `dev` (a fixed identity; the only mode `native` accepts, and taken there when `AUTH` is unset — elsewhere `AUTH` has no default and must be set) | a signed session cookie held by the CP |
 | **L2, agent** | as whom each user's agent runs | each person's own sign-in with the provider | inside the workspace: the CLI's own config, or `secrets.enc` |
 
 L2 is the user's own business; the Console's job is to **show its state and offer the

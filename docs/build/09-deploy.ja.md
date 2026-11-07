@@ -40,7 +40,7 @@ source_of_truth: "コード ＋ 各 runbook（`deploy/*/README.md`）"
 | `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | 空・`local`・`docker` = Docker Engine（既定）/ `ecs`・`aws` = Fargate 上の ECS / `ecs-ec2` = プールの EC2 スロット上の ECS（別名なし）/ `native`・`wsl` = サンドボックス化したホストプロセス（**`AUTH=dev` 必須**）/ `kubernetes`・`k8s` = Kubernetes クラスタ上の Workspace ごとの StatefulSet。**未知値は起動時に fail-fast**（`unknown AF_RUNTIME profile`・`runtime.NewFactory`） |
 | `Store` | `AF_DB`（SQLite のパス）/ `AF_DATABASE_URL`、または `AF_DB_HOST` ほか `AF_DB_*` | SQLite（既定・pure Go）/ Postgres |
 | `KeyCustodian` | `AF_MASTER_KEY`、次に `AF_KEY_CUSTODIAN` | 鍵あり = ローカル custodian、または `AF_KEY_CUSTODIAN=kms` + `AF_KMS_KEY_ID` で AWS KMS（master 鍵は引き続き必須）/ 未設定 = 暗号化なし（開発専用）。Vault は 📋（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)） |
-| `AuthGateway` | `AUTH` | `dev`（未設定時の既定）/ `oauth`（compose と AWS のテンプレートが設定する）/ `proxy`（[07 §7.3](07-security.ja.md)） |
+| `AuthGateway` | `AUTH` | `oauth`（compose と AWS のテンプレートが設定する）/ `proxy`（[07 §7.3](07-security.ja.md)）/ `dev`。既定値は無く、`native`/`wsl` 以外では未設定だと起動を拒否し、`dev` には `AF_ALLOW_INSECURE_DEV_AUTH=1` が要る |
 | エンジン | エンジン表: `AF_ENGINES_SSM_PARAM` か `AF_ENGINES_JSON`、加えて `AF_LLM_URL` / `AF_COMFY_URL` からの役割ごとの 1 行 | AWS では CP が要求時に起動するエンジン。どこでも、ネットワーク上で既に動いているサーバを URL で指せる |
 | Ingress / TLS | CP 外 | Caddy（compose）/ Tailscale Funnel（local）/ ALB + ACM（aws）/ クラスタの入口。GKE では Gateway API によるグローバル外部アプリケーションロードバランサ + Certificate Manager（kubernetes） |
 

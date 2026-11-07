@@ -12,6 +12,39 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.42.0](0.42.0.ja.md) — 2026-11-08
+
+**CLI ピン** — Claude Code 2.1.319 / OpenCode 2.2.6 / Copilot 1.0.107 / Antigravity 1.5.3
+
+**New / Improved**
+
+- **[設定]** 設定 › エージェント のカードを一度に描き、カードごとに **確認中…** のチップを出す ([#3385](https://github.com/k-k1/agent-fleet/issues/3385))
+- **[作業項目]** 詳細パネルに状態を色付きのピルで表示 ([#3542](https://github.com/k-k1/agent-fleet/issues/3542))
+- **[ターミナル]** セッションが止まったペインは固まらずにそう表示し、**再開** を案内 ([#3472](https://github.com/k-k1/agent-fleet/issues/3472))
+- **[ECS]** `30-ingress` のパラメータ `EgressEventRetentionDays` で egress イベントの保持日数を指定 ([#3403](https://github.com/k-k1/agent-fleet/issues/3403))
+- **[認証]** native 以外では `AUTH` の指定が必須。`AUTH=dev` は `AF_ALLOW_INSECURE_DEV_AUTH=1` が要り、https の背後では拒否 ([#3485](https://github.com/k-k1/agent-fleet/issues/3485))
+- **[認証]** 弱い `AF_MASTER_KEY` / `AF_COOKIE_SECRET` にバナー。用途別の Cookie 鍵（`AF_COOKIE_PURPOSE_KEYS`）を選んでオンにできる ([#3499](https://github.com/k-k1/agent-fleet/issues/3499))
+- **[セキュリティ]** ワークスペースのブリッジトークンを ECS のタスク定義から外し、メンバーごとのエポックと `af-cp advance-bridge-epochs` を追加 ([#3452](https://github.com/k-k1/agent-fleet/issues/3452))
+- **[ターミナル]** ターミナル内からのクリップボード書き込みは確認してから。**マウスドラッグ直後は確認なしでコピー** を選べる ([#3487](https://github.com/k-k1/agent-fleet/issues/3487), [#3518](https://github.com/k-k1/agent-fleet/issues/3518))
+- **[セッション]** ハンドオフの最初のメッセージは入力欄に入るだけで、送信はメンバーが押す ([#3488](https://github.com/k-k1/agent-fleet/issues/3488))
+- **[MCP]** MCP の OAuth で信頼するクライアントをコールバックのパスまで固定できる。使われない動的登録は 24 時間で期限切れ ([#3486](https://github.com/k-k1/agent-fleet/issues/3486))
+- **[監査]** ロールの変更・テナントの作成・メンバーの上限・ワークスペースの停止を監査に記録。claude の Bash 監査行はプログラムとサブコマンドだけ ([#3500](https://github.com/k-k1/agent-fleet/issues/3500), [#3501](https://github.com/k-k1/agent-fleet/issues/3501))
+- **[内部 git]** push で壊れたオブジェクトを検査 ([#3493](https://github.com/k-k1/agent-fleet/issues/3493))
+
+**Fixed**
+
+- **[リーパー]** 入力のないままつながったターミナル・ターミナルの自動応答・再接続・表示中のブラウザペインで、セッションとワークスペースがアイドルで止まらなかった ([#3460](https://github.com/k-k1/agent-fleet/issues/3460), [#3461](https://github.com/k-k1/agent-fleet/issues/3461), [#3473](https://github.com/k-k1/agent-fleet/issues/3473), [#3462](https://github.com/k-k1/agent-fleet/issues/3462))
+- **[ミラー]** 折り返し・複数行・「Dangerous rm operation」の Bash コマンドで許可カードの「許可」が失敗した ([#3491](https://github.com/k-k1/agent-fleet/issues/3491), [#3521](https://github.com/k-k1/agent-fleet/issues/3521))
+- **[ミラー]** 別のタブにいる間やバックグラウンド作業中に終わった応答が自動翻訳されなかった ([#3437](https://github.com/k-k1/agent-fleet/issues/3437))
+- **[opencode]** コンテキスト長はあるが出力上限が無いエンジンで compaction しなかった ([#3559](https://github.com/k-k1/agent-fleet/issues/3559))
+- **[セキュリティ]** 別サイトからの Cookie 書き込み、フレーム埋め込み、リダイレクト先と中継パスの検査、テナントの OIDC エンドポイント、Jira / Bitbucket のコールバックの結び付け ([#3448](https://github.com/k-k1/agent-fleet/issues/3448), [#3508](https://github.com/k-k1/agent-fleet/issues/3508), [#3490](https://github.com/k-k1/agent-fleet/issues/3490), [#3506](https://github.com/k-k1/agent-fleet/issues/3506), [#3481](https://github.com/k-k1/agent-fleet/issues/3481))
+- **[テナント]** 招待で別テナントの ID のメールが書き換わる、テナント IdP の ID が他テナントに所属できる、PAT と管理画面にテナントの規則がかからない、メンバーを外しても PAT と MCP の許可が残る。PAT は必ず期限付き ([#3451](https://github.com/k-k1/agent-fleet/issues/3451), [#3489](https://github.com/k-k1/agent-fleet/issues/3489), [#3450](https://github.com/k-k1/agent-fleet/issues/3450))
+- **[セキュリティ]** ComfyUI のジョブがメンバー間で見える、チャットの返信がシェル / SSM セッションに入る、共有の提案に表示されない項目、通知 ID の衝突 ([#3482](https://github.com/k-k1/agent-fleet/issues/3482), [#3507](https://github.com/k-k1/agent-fleet/issues/3507), [#3483](https://github.com/k-k1/agent-fleet/issues/3483))
+- **[プレビュー]** パス形式のプレビューはプレビュードメインへリダイレクト、無ければサンドボックス。描画した Markdown からフォーム・インラインスタイル・Console の API を指すメディアを除去 ([#3447](https://github.com/k-k1/agent-fleet/issues/3447), [#3449](https://github.com/k-k1/agent-fleet/issues/3449))
+- **[ファイル]** 名前の変更・アップロード・シンボリックリンクでファイルブラウザの拒否リストを越えられた、サブモジュールの準備で `.gitmodules` の名前を検査していなかった ([#3502](https://github.com/k-k1/agent-fleet/issues/3502), [#3484](https://github.com/k-k1/agent-fleet/issues/3484))
+- **[セキュリティ]** ログ・監査行・エラー本文・中継ヘッダの資格情報、取り込みのトークンを別ホストへ送りうる、スロットのロールが CP のパラメータを読める ([#3501](https://github.com/k-k1/agent-fleet/issues/3501), [#3453](https://github.com/k-k1/agent-fleet/issues/3453), [#3446](https://github.com/k-k1/agent-fleet/issues/3446))
+- **[ECS]** EFS のファイルシステムポリシーでアクセスポイントと TLS を必須に。`update.sh` の前に `10-data` をデプロイ ([#3445](https://github.com/k-k1/agent-fleet/issues/3445))
+
 ## [0.41.0](0.41.0.ja.md) — 2026-11-06
 
 **CLI ピン** — Claude Code 2.1.318 / Codex 0.167.0 / Copilot 1.0.106 / Antigravity 1.5.2 / Kiro 3.1.0

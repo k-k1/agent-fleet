@@ -13,6 +13,39 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.42.0](0.42.0.md) — 2026-11-08
+
+**CLI pins** — Claude Code 2.1.319, OpenCode 2.2.6, Copilot 1.0.107, Antigravity 1.5.3
+
+**New / Improved**
+
+- **[settings]** Settings › Agents draws every card at once with a **Checking…** chip per card ([#3385](https://github.com/k-k1/agent-fleet/issues/3385))
+- **[work items]** The detail panel shows the item's state as a coloured pill ([#3542](https://github.com/k-k1/agent-fleet/issues/3542))
+- **[terminal]** A pane whose session stopped says so and points at **Resume** instead of freezing ([#3472](https://github.com/k-k1/agent-fleet/issues/3472))
+- **[ecs]** `30-ingress` parameter `EgressEventRetentionDays` for the egress event retention ([#3403](https://github.com/k-k1/agent-fleet/issues/3403))
+- **[auth]** `AUTH` must be set outside native; `AUTH=dev` needs `AF_ALLOW_INSECURE_DEV_AUTH=1` and is refused behind https ([#3485](https://github.com/k-k1/agent-fleet/issues/3485))
+- **[auth]** Banner for a weak `AF_MASTER_KEY` / `AF_COOKIE_SECRET`; opt-in per-purpose cookie keys (`AF_COOKIE_PURPOSE_KEYS`) ([#3499](https://github.com/k-k1/agent-fleet/issues/3499))
+- **[security]** Workspace bridge tokens kept out of ECS task definitions, with a per-member epoch and `af-cp advance-bridge-epochs` ([#3452](https://github.com/k-k1/agent-fleet/issues/3452))
+- **[terminal]** Clipboard writes from inside the terminal ask first; optional **Copy without asking after a mouse drag** ([#3487](https://github.com/k-k1/agent-fleet/issues/3487), [#3518](https://github.com/k-k1/agent-fleet/issues/3518))
+- **[sessions]** A handoff's first message is prefilled and sent by the member, not automatically ([#3488](https://github.com/k-k1/agent-fleet/issues/3488))
+- **[MCP]** MCP OAuth trusted clients can be pinned to a callback path; idle dynamic registrations expire after 24 h ([#3486](https://github.com/k-k1/agent-fleet/issues/3486))
+- **[audit]** Role changes, tenant creation, member limits and workspace stops are audited; claude Bash audit rows keep program and subcommand only ([#3500](https://github.com/k-k1/agent-fleet/issues/3500), [#3501](https://github.com/k-k1/agent-fleet/issues/3501))
+- **[internal git]** Pushes are checked for malformed objects ([#3493](https://github.com/k-k1/agent-fleet/issues/3493))
+
+**Fixed**
+
+- **[reaper]** An attached but idle terminal, terminal auto-replies, reconnects or a visible browser pane kept sessions and workspaces from idling out ([#3460](https://github.com/k-k1/agent-fleet/issues/3460), [#3461](https://github.com/k-k1/agent-fleet/issues/3461), [#3473](https://github.com/k-k1/agent-fleet/issues/3473), [#3462](https://github.com/k-k1/agent-fleet/issues/3462))
+- **[mirror]** The permission card's Allow failed on wrapped, multi-line or "Dangerous rm operation" Bash commands ([#3491](https://github.com/k-k1/agent-fleet/issues/3491), [#3521](https://github.com/k-k1/agent-fleet/issues/3521))
+- **[mirror]** Automatic translation skipped replies finished on another tab or during background work ([#3437](https://github.com/k-k1/agent-fleet/issues/3437))
+- **[opencode]** No compaction on an engine with a context window but no output limit ([#3559](https://github.com/k-k1/agent-fleet/issues/3559))
+- **[security]** Cross-site cookie writes, framing, redirect and relay path checks, tenant OIDC endpoints, Jira/Bitbucket callback binding ([#3448](https://github.com/k-k1/agent-fleet/issues/3448), [#3508](https://github.com/k-k1/agent-fleet/issues/3508), [#3490](https://github.com/k-k1/agent-fleet/issues/3490), [#3506](https://github.com/k-k1/agent-fleet/issues/3506), [#3481](https://github.com/k-k1/agent-fleet/issues/3481))
+- **[tenants]** Invite rewriting another tenant's identity email, tenant-IdP identities in other tenants, tenant rules on PATs and admin gates, PATs and MCP grants surviving removal; PATs always expire ([#3451](https://github.com/k-k1/agent-fleet/issues/3451), [#3489](https://github.com/k-k1/agent-fleet/issues/3489), [#3450](https://github.com/k-k1/agent-fleet/issues/3450))
+- **[security]** ComfyUI jobs visible across members, chat replies into shell/SSM sessions, unshown fields in share proposals, notification id collisions ([#3482](https://github.com/k-k1/agent-fleet/issues/3482), [#3507](https://github.com/k-k1/agent-fleet/issues/3507), [#3483](https://github.com/k-k1/agent-fleet/issues/3483))
+- **[preview]** Path-form preview redirected to the preview domain, sandboxed without one; rendered Markdown drops forms, inline styles and Console-API media ([#3447](https://github.com/k-k1/agent-fleet/issues/3447), [#3449](https://github.com/k-k1/agent-fleet/issues/3449))
+- **[files]** File-browser denylist bypass via rename, upload or symlink; unchecked `.gitmodules` names when seeding submodules ([#3502](https://github.com/k-k1/agent-fleet/issues/3502), [#3484](https://github.com/k-k1/agent-fleet/issues/3484))
+- **[security]** Credentials in logs, audit rows, error bodies and relayed headers; ingest tokens sent to other hosts; slot role reading CP parameters ([#3501](https://github.com/k-k1/agent-fleet/issues/3501), [#3453](https://github.com/k-k1/agent-fleet/issues/3453), [#3446](https://github.com/k-k1/agent-fleet/issues/3446))
+- **[ecs]** EFS file-system policy requires access points and TLS; deploy `10-data` before `update.sh` ([#3445](https://github.com/k-k1/agent-fleet/issues/3445))
+
 ## [0.41.0](0.41.0.md) — 2026-11-06
 
 **CLI pins** — Claude Code 2.1.318, Codex 0.167.0, Copilot 1.0.106, Antigravity 1.5.2, Kiro 3.1.0
