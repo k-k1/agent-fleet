@@ -2,7 +2,8 @@
 
 English | [日本語](0129-provided-model-routes.ja.md)
 
-- Status: **proposed** (2026-11-06). Design only; nothing is built. Every `file:line` was read on `9434dae72`.
+- Status: **accepted** (2026-11-08; proposed 2026-11-06). The user took decisions D1–D7, the recommended option in
+  each (D6: R1, with R2 as an opt-in); open questions 1 and 2 are settled below. Nothing is built yet. Every `file:line` was read on `9434dae72`.
   **What is measured and what is not.** Claude Code's Bedrock wire (the variables, the Unix socket, the retry
   behaviour) was measured by ADR 0128's P2b against a stand-in gateway, never against real Bedrock. Nothing else in
   this record is measured: what Amazon Bedrock accepts, how it bills and attributes cost, and its quotas come from AWS's
@@ -11,6 +12,7 @@ English | [日本語](0129-provided-model-routes.ja.md)
   marked *(docs)* or *(unmeasured)* where it carries a decision. Reviewed by a separate session (codex `gpt-6.1-sol`);
   rounds 1 and 2 (ten and four findings, plus a nit) were checked against the tree and the cited pages and are folded
   into this text.
+- Follow-ups: #3578, #3579, #3580, #3581, #3582, #3583, #3584, #3585 (Q0–Q7)
 - Related: [0128](0128-harness-route-maker.md) (harness × route, the A2 gateway, the switch; decisions 3, 4, 5, 7, 10,
   11, 12, 14) / [0084](0084-engine-indicator-and-tenant-gate.md) (the engine's tenant gate and its four places) /
   [0048](0048-member-cloud-cost.md) (actual AWS cost from cost allocation tags, no apportionment) /
@@ -129,7 +131,7 @@ expire.
 - **D1a. Store a secret for every source** (an access key or a Bedrock long-term API key in the CP's encrypted store).
   Simple, and works on any runtime. A long-term key is an IAM user's, so billing cannot tell members apart, and the CP
   becomes the custodian of a standing secret the tenant has to rotate.
-- **D1b. Store no secret where an identity exists** *(recommended)*:
+- **D1b. Store no secret where an identity exists** *(taken, recommended)*:
   - `deployment`: the CP's own identity (the ECS task role `CpTaskRole`, `deploy/aws/ecs/cfn/20-platform.yaml:213`; IRSA
     on EKS) assumes a **route role** in the deployment's account that the stack defines with the least-privilege
     closure of D2's session policy and nothing else, and whose trust policy allows the CP role `sts:AssumeRole` and
@@ -174,7 +176,7 @@ an order of magnitude, and the budget alone does not say which one the tenant me
   Rejected for what it loses on the member's side: each harness needs a second configuration shape (a remote HTTPS
   base URL instead of the socket) that differs by source, and the bearer sits in a process environment with no caller
   binding, so the best-effort separation of one member's sessions from each other (what #3389 built) is gone.
-- **G3. A CP gateway, with the Agent forwarding** *(recommended)*:
+- **G3. A CP gateway, with the Agent forwarding** *(taken, recommended)*:
 
   ```
   harness ──Unix socket, route token (0128 P2b binding)──▶ Agent routegw
@@ -318,7 +320,7 @@ The gates follow ADR 0084: the super_admin decides per tenant, the tenant_admin 
 - **Levels:** the tenant's monthly ceiling (super_admin for `deployment`; the tenant_admin's optional one for `tenant`)
   and the member's monthly budget (tenant_admin). Both are checked; the tighter wins. The sum of member budgets may
   exceed the ceiling, which then acts as the pool.
-- **Pre-call admission, post-call settlement** *(recommended)*. Post-call accounting alone lets every call that starts
+- **Pre-call admission, post-call settlement** *(taken, recommended)*. Post-call accounting alone lets every call that starts
   under budget run, so the overshoot grows with concurrency and with the size of each call. Instead:
   - **The reservation is a proven upper bound, not an estimate**, computed and enforced by the CP per model and API:
     - *Output:* the request's own cap — `max_tokens` for an Anthropic invoke body, `inferenceConfig.maxTokens` for
@@ -385,7 +387,7 @@ The gates follow ADR 0084: the super_admin decides per tenant, the tenant_admin 
   ledger with `Route=bedrock-tenant` or `bedrock-deployment` and `Billing=metered`, as member calls already do. The CP's
   spend table holds the same call, by the same call id, for budgets and for the admin views; the ledger is the member's
   copy, the CP's is the one that enforces.
-- **The actual cost: IAM principal attribution with session tags** *(recommended)*. The CP assumes the route role once
+- **The actual cost: IAM principal attribution with session tags** *(taken, recommended)*. The CP assumes the route role once
   per (source, membership), with `RoleSessionName` = the membership id and session tags `af-membership` (the membership
   id) and `af-tenant` (the slug), and caches the credentials until five minutes before they expire (one STS call per
   member per hour, not per request, as the AWS page warns). Every call is then billed to a principal that carries the
@@ -428,7 +430,7 @@ does not change what a harness speaks. Each row still ships only after decision 
 | opencode | its own `amazon-bedrock` provider. The [v2 providers page](https://dev.opencode.ai/v2/docs/providers/), the one for the installed v2 line (v2.2.5), documents the default AWS credential chain, `AWS_BEARER_TOKEN_BEDROCK` for Bedrock API keys, and `providers.<id>.settings.baseURL` for a private endpoint; it states no precedence between credential sources, and says a Region alone does not activate the provider. The stronger claims (a bearer that outranks every other method, `endpoint` as an alias of `baseURL`, inference profile ARNs as model ids) are on the [v1 providers page](https://opencode.ai/docs/providers/) only, so they are not assumed for v2. On the installed pin, which API it calls (Converse or Invoke), whether a bearer alone activates it, whether `baseURL` takes the gateway, and whether it can use a Unix socket are all *unmeasured* until Q6 | Converse / ConverseStream (already on the gateway's allow-list), if that is what it sends | anything Converse serves: Claude, the GPT models with Converse, `gpt-oss`, others | none |
 | codex | a custom `model_providers.<id>` with `base_url` at the gateway, `wire_api = "responses"` (documented as "the only supported value"), and the bearer from `env_key` or `auth.command` (a command that prints a bearer, refreshed every 5 minutes by default), per the [configuration reference](https://developers.openai.com/codex/config-reference) *(docs)*. Unix socket support is *unmeasured* | Responses on `bedrock-runtime` (`/openai/v1/responses`); the gateway's allow-list gains that one `POST` | the OpenAI GPT models with Responses on `bedrock-runtime` (named by system profile, `us.openai.…` / `global.openai.…`); **not Claude**, which has no Responses API on Bedrock; **not `gpt-oss`** there, whose Responses API is on `bedrock-mantle` only ([API compatibility](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html), *docs*) | none (below) |
 
-- **No protocol translation in the gateway** *(recommended)*. Translating codex's Responses into Converse would make
+- **No protocol translation in the gateway** *(taken, recommended)*. Translating codex's Responses into Converse would make
   codex drive Claude, but the surface is large (tool calls, reasoning items, streaming event shapes, stored state),
   every codex release can move it, and codex's prompts and tools are tuned for OpenAI models; a member who wants Claude
   on Bedrock has claude and opencode. Each harness gets the models its own wire reaches, and the launch dialog offers
@@ -470,7 +472,7 @@ does not change what a harness speaks. Each row still ships only after decision 
   - **R1, a manual offer** "return to the subscription" once the limit episode's reset time has passed;
   - **R2, opt-in automatic return**, chosen in the switch confirmation, run at the first idle point after the reset;
   - **R3, none**.
-  - **Recommended: R1, and R2 as an opt-in that is preticked when the target is a provided route.** Returning moves
+  - **Taken (recommended): R1, and R2 as an opt-in that is preticked when the target is a provided route.** Returning moves
     spending off the payer who lent the route and is what the motivating use case asks for ("briefly"). R2 runs at most
     once per episode: if the first turn back hits the window again, the session stops with the offer, and it never
     alternates by itself.
@@ -525,9 +527,10 @@ Q1 depends on ADR 0128's claude `bedrock` row passing its own live gate, since i
 
 ## Open questions
 
-1. Whether a tenant on a deployment whose CP has no AWS identity may register a Bedrock long-term API key instead of a
+1. **Settled (2026-11-08): no**, not with D1b as accepted; revisit only when such a deployment asks.
+   Whether a tenant on a deployment whose CP has no AWS identity may register a Bedrock long-term API key instead of a
    role (D1), accepting that billing cannot tell its members apart.
-2. The default per-member budget when a tenant is first granted the source: zero (nobody until a tenant_admin acts) or
+2. **Settled (2026-11-08): zero.** The default per-member budget when a tenant is first granted the source: zero (nobody until a tenant_admin acts) or
    a tenant default chosen at grant time.
 3. The per-member concurrent-call cap (D4), set from Q1's measurements, and which APIs can prove an input bound
    tighter than the context window.
