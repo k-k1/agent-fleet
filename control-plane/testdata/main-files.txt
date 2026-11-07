@@ -153,6 +153,7 @@ oauth_jira_retry.go
 oauth_link.go
 oauth_mcp_client.go
 pat.go
+plaintext_sealed.go
 preview.go
 preview_grant.go
 preview_host.go

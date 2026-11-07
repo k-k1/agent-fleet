@@ -47,6 +47,17 @@ There are 2 secrets in `.env` that you generate yourself. The generation command
 - **`AF_MASTER_KEY`**: the root of all credential encryption (the master key for envelope encryption).
 - **`AF_COOKIE_SECRET`**: the signing key for login session cookies.
 
+Both must be **at least 32 random bytes — never a passphrase**. Generate each one with:
+
+```
+head -c 32 /dev/urandom | base64
+```
+
+A value that is shorter, or only a repeated pattern, still works in this release but is logged
+as a `WARNING` at start-up and shows a banner in the administration screen; a later release
+will refuse to start with it. What each requirement is and what changing each key costs:
+[04-secure.md](04-secure.md#the-deployment-keys-requirements-and-what-changing-them-costs).
+
 > The most important decision: **the moment you generate `AF_MASTER_KEY`, record a copy in a
 > password vault / secret manager and store it independently, separate from the data area.**
 > This key goes into neither `DATA_DIR` nor backup archives (deliberately, by design). If you

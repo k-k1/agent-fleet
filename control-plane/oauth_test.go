@@ -266,7 +266,7 @@ func TestGoogleTrustEmailVerified(t *testing.T) {
 			if ck == nil {
 				t.Fatal("no session cookie")
 			}
-			payload, ok := cfg.verifyCookie(ck.Value)
+			payload, ok := cfg.verifyCookie(cookiePurposeSession, ck.Value)
 			if !ok {
 				t.Fatal("session cookie does not verify")
 			}
@@ -371,7 +371,7 @@ func TestCallbackRejectsStateForUnconfiguredProvider(t *testing.T) {
 	// A validly signed state naming a provider this deployment doesn't have (it
 	// was removed from AF_OIDC_PROVIDERS, say).
 	b, _ := json.Marshal(oauthState{Nonce: "nonce123", Next: "/", Exp: time.Now().Add(time.Minute).Unix(), Prov: "gone"})
-	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(b)}
+	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(cookiePurposeState, b)}
 	if got := loginErrorOf(t, callback(t, cfg, st, "code", "nonce123")); got != "provider" {
 		t.Fatalf("error = %q, want provider", got)
 	}
@@ -409,7 +409,7 @@ func TestCallbackAcceptsPreP0StateCookie(t *testing.T) {
 	})
 	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified))
 	b, _ := json.Marshal(map[string]any{"n": "nonce123", "x": "/", "e": time.Now().Add(time.Minute).Unix()})
-	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(b)}
+	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(cookiePurposeState, b)}
 	w := callback(t, cfg, st, "code", "nonce123")
 	if ck := sessionCookieOf(t, w); ck == nil {
 		t.Fatalf("no session issued (error=%q)", loginErrorOf(t, w))
@@ -445,7 +445,7 @@ func TestLegacySessionCookieKeepsWorkingAndIsStillRechecked(t *testing.T) {
 	}))
 	legacy := func(email string) *http.Cookie {
 		b, _ := json.Marshal(map[string]any{"email": email, "exp": time.Now().Add(time.Hour).Unix()})
-		return &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
+		return &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)}
 	}
 	r := httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
 	r.AddCookie(legacy("yamada@acme.co.jp"))
@@ -482,7 +482,7 @@ func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 	call := func() int {
 		b, _ := json.Marshal(sessionClaims{Email: "yamada@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(), Prov: auth.GoogleProviderID, Sub: "s"})
 		r := httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
-		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)})
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)})
 		w := httptest.NewRecorder()
 		gate.ServeHTTP(w, r)
 		return w.Code

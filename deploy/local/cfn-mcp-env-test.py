@@ -62,7 +62,7 @@ def check(tpl):
                         fails.append("%s=%r for McpEnabled=%s McpOAuth=%s hosts=%r, want %r"
                                      % (var, got, en, oa, hosts, got_want))
     # Pass-throughs from the settings audit: empty by default (the CP reads empty as unset).
-    for name, var in (("SessionTtl", "AF_SESSION_TTL"), ("GithubAllowedEmails", "AF_GITHUB_ALLOWED_EMAILS"),
+    for name, var in (("SessionTtl", "AF_SESSION_TTL"), ("CookiePurposeKeys", "AF_COOKIE_PURPOSE_KEYS"), ("GithubAllowedEmails", "AF_GITHUB_ALLOWED_EMAILS"),
                       ("KmsDataKeyCacheTtl", "AF_KMS_DATA_KEY_CACHE_TTL")):
         if (P.get(name) or {}).get("Default") != "":
             fails.append("%s must default to empty" % name)

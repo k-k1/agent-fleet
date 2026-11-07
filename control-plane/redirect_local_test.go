@@ -89,7 +89,7 @@ func TestLoginStateDoesNotRevealTenantExistence(t *testing.T) {
 	})
 	cfg := oauthTestConfig(t, stubProvider("okta", idp, auth.TrustEmailVerified))
 	st, _ := startLogin(t, cfg, "?provider=okta&tenant=ghost")
-	payload, ok := cfg.verifyCookie(st.Value)
+	payload, ok := cfg.verifyCookie(cookiePurposeState, st.Value)
 	if !ok {
 		t.Fatal("state cookie does not verify")
 	}

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/keycheck"
 )
 
 // A deployment that signs real people in (AUTH other than dev) but has no AF_MASTER_KEY issues
@@ -81,6 +83,15 @@ func (m *manager) deploymentWarnings() []string {
 	if m.plaintextSecrets() {
 		out = append(out, deploymentWarnPlaintextSecrets)
 	}
+	if m.weakMasterKey {
+		out = append(out, deploymentWarnWeakMasterKey)
+	}
+	if m.weakCookieSecret {
+		out = append(out, deploymentWarnWeakCookieSecret)
+	}
+	if m.plaintextSealed.count() > 0 {
+		out = append(out, deploymentWarnPlaintextSealed)
+	}
 	if m.authDevInsecure() {
 		out = append(out, deploymentWarnAuthDev)
 	}
@@ -91,4 +102,30 @@ func (m *manager) deploymentWarnings() []string {
 		out = append(out, deploymentWarnMCPOAuthRegCap)
 	}
 	return out
+}
+
+// Deployment warning codes for weak keys; the Console renders them as
+// admin.deploy_warn_weak_master_key / admin.deploy_warn_weak_cookie_secret.
+const (
+	deploymentWarnWeakMasterKey    = "weak_master_key"
+	deploymentWarnWeakCookieSecret = "weak_cookie_secret"
+)
+
+const weakMasterKeyLog = "WARNING: AUTH=%s and AF_MASTER_KEY is shorter than 32 bytes of key material (or is a repeated pattern). " +
+	"Per-member keys derive from it, so it is only as strong as the value chosen. Generate one with `head -c 32 /dev/urandom | base64` " +
+	"and plan the rotation (guide/operate/04-secure.md, guide/operate/12-keys.md). A later release will refuse to start"
+
+const weakCookieSecretLog = "WARNING: AUTH=%s and AF_COOKIE_SECRET is shorter than 32 bytes of key material (or is a repeated pattern). " +
+	"Session, sign-in state and preview cookies are signed with it. Generate one with `head -c 32 /dev/urandom | base64`; " +
+	"changing it signs everyone out once (guide/operate/04-secure.md). A later release will refuse to start"
+
+// weakKeyChecks evaluates both secrets for a deployment signing real people in. AUTH=dev is
+// exempt: it has no authentication to protect.
+func weakKeyChecks(authMode, masterKey, cookieSecret string) (weakMaster, weakCookie bool) {
+	if authMode == "dev" {
+		return false, false
+	}
+	// decodeKey trims the cookie secret and treats whitespace only as unset (and AUTH=oauth
+	// then refuses to start), so the cookie check follows it.
+	return keycheck.Weak(masterKey), keycheck.Weak(strings.TrimSpace(cookieSecret))
 }

@@ -53,6 +53,8 @@ type config struct {
 	cookieSecret       []byte        // HMAC key for the signed session cookie
 	cookieSecure       bool          // Secure flag (true behind https Funnel)
 	sessionTTL         time.Duration // session cookie lifetime
+	legacyCookieUntil  time.Time     // with cookiePurposeKeys on: end of the window unlabelled cookies still verify
+	cookiePurposeKeys  bool          // AF_COOKIE_PURPOSE_KEYS: issue per-purpose labelled cookies (oauth.go)
 	allowEmails        map[string]bool
 	allowDomains       map[string]bool // allowed email domains (lowercased, no leading @)
 	allowEmailsFile    string          // emails.txt-style allowlist, read live per callback
@@ -229,6 +231,13 @@ func main() {
 	if mgr.plaintextSecrets() {
 		log.Printf(plaintextSecretsLog, mgr.authMode)
 	}
+	mgr.weakMasterKey, mgr.weakCookieSecret = weakKeyChecks(mgr.authMode, os.Getenv("AF_MASTER_KEY"), os.Getenv("AF_COOKIE_SECRET"))
+	if mgr.weakMasterKey {
+		log.Printf(weakMasterKeyLog, mgr.authMode)
+	}
+	if mgr.weakCookieSecret {
+		log.Printf(weakCookieSecretLog, mgr.authMode)
+	}
 
 	// MetadataStore (P3-1, docs/13): SQLite is the source of truth for the
 	// tenant/user/workspace records. Migrate, ensure the default tenant, then
@@ -262,6 +271,12 @@ func main() {
 	}
 	reconcileSSMSignIns(ctx, st)
 	mgr.store = st
+	if len(mgr.master32) > 0 && mgr.custodian != nil {
+		mgr.plaintextSealed.init(st)
+		if n := mgr.plaintextSealed.count(); n > 0 {
+			log.Printf(plaintextSealedLog, n)
+		}
+	}
 	mgr.tenantLogin = newTenantLoginCache(st)
 	// Tenant-defined login providers (docs/log/61 §61.11). Unlike the env providers built
 	// below, this set is read from the database on demand, so approving a subsidiary's
@@ -323,6 +338,11 @@ func main() {
 	}
 
 	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
+	if envBool("AF_COOKIE_PURPOSE_KEYS", false) {
+		log.Print("cookies: per-purpose keys on (AF_COOKIE_PURPOSE_KEYS)")
+	} else {
+		log.Print("cookies: single-key format; set AF_COOKIE_PURPOSE_KEYS=1 once every replica runs this version (guide/operate/04-secure.md)")
+	}
 	// Internal git provider: the clone host workspaces authenticate against is the
 	// public base's host (Caddy TLS terminus). Recorded on the manager so each
 	// workspace start injects a token for it (docs/reference/internal-git-provider).
@@ -354,6 +374,8 @@ func main() {
 		cookieSecret:       decodeKey(os.Getenv("AF_COOKIE_SECRET")),
 		cookieSecure:       strings.HasPrefix(publicBaseURL, "https"),
 		sessionTTL:         envx.DurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour),
+		cookiePurposeKeys:  envBool("AF_COOKIE_PURPOSE_KEYS", false),
+		legacyCookieUntil:  time.Now().Add(max(envx.DurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour), previewSessionTTL)),
 		allowEmails:        envx.EmailSet(os.Getenv("AF_OAUTH_ALLOWED_EMAILS")),
 		allowDomains:       envx.DomainSet(os.Getenv("AF_OAUTH_ALLOWED_DOMAINS")),
 		allowEmailsFile:    os.Getenv("AF_OAUTH_ALLOWED_EMAILS_FILE"),
