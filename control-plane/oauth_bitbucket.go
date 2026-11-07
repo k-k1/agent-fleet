@@ -47,11 +47,11 @@ type bbState struct {
 	// there would land on whatever tenant happens to come first for this person and
 	// exchange the code against another tenant's app (docs/log/71 §71.5).
 	tenantID string
-	// identityID and membershipID name the member who started the flow. The callback is
-	// auth-exempt (the provider redirects the browser to it), so these are what it checks the
-	// browser's session against and where the tokens are delivered: a flow finished in
-	// another member's browser would otherwise store this member's provider account in that
-	// member's workspace.
+	// identityID and membershipID name the member who started the flow. The callback is a
+	// browser redirect behind authGate, but the state alone does not say whose browser
+	// carries it, so these are what the session is checked against and where the tokens are
+	// delivered: a flow finished in another member's session would otherwise store the
+	// provider account in that member's workspace.
 	identityID, membershipID string
 	created                  time.Time
 }
@@ -90,13 +90,14 @@ var bbFlows = &bbFlowRegistry{states: map[string]bbState{}}
 // bbCallbackBind authorizes a Bitbucket / Jira callback and resolves the destination
 // workspace from the membership recorded at start. A non-empty message is the page to show,
 // and nothing may have been exchanged or stored by then. An absent, expired or other member's
-// session fails closed; so does a membership that is no longer active.
+// session fails closed; so does a membership that is no longer active, or one whose tenant
+// rules (sign-in method, network) the current session and address do not meet.
 func (c config) bbCallbackBind(r *http.Request, st bbState, t bbStrings) (*resolved, string) {
 	ident, ok := c.mcpClientCallbackCaller(r)
 	if !ok || st.identityID == "" || ident.ID != st.identityID {
 		return nil, t.sessionMismatch
 	}
-	res, aerr := c.mgr.resolveByMembership(r.Context(), st.identityID, st.membershipID)
+	res, aerr := c.mgr.resolveByMembershipBrowser(r.Context(), st.identityID, st.membershipID)
 	if aerr != nil {
 		return nil, t.workspaceResolveFailed + aerr.message
 	}
