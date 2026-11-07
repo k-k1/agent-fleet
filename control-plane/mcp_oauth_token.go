@@ -219,6 +219,10 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 			mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the tenant disabled this connection")
 			return
 		}
+		if errors.Is(err, store.ErrMCPOAuthClientGone) {
+			mcpTokenErr(w, http.StatusUnauthorized, "invalid_client", "the client registration no longer exists")
+			return
+		}
 		log.Printf("mcp oauth: create grant: %v", err)
 		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "could not create the grant")
 		return

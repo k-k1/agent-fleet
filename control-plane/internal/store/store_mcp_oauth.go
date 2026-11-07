@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // MCPOAuthClient is a dynamically registered client (RFC 7591) of the /mcp authorization
@@ -63,15 +64,51 @@ var ErrMCPOAuthDisabled = errors.New("mcp oauth: connection disabled or revoked"
 // of them has a grant, so none can be evicted.
 var ErrMCPOAuthClientCap = errors.New("mcp oauth: client registration limit reached")
 
+// ErrMCPOAuthClientGone: a dynamic registration was deleted (expired or evicted) before the
+// consent ticket, code or grant that names it could be written.
+var ErrMCPOAuthClientGone = errors.New("mcp oauth: client registration no longer exists")
+
+// clientIdleSQL selects registrations that nothing depends on: no grant, and no consent ticket or
+// authorization code that has not expired (a spent code counts until it expires, so an exchange
+// still in flight keeps its client). The placeholder is "now".
+const clientIdleSQL = `NOT EXISTS (SELECT 1 FROM mcp_oauth_grant g WHERE g.client_id=c.client_id)
+		    AND NOT EXISTS (SELECT 1 FROM mcp_oauth_token t WHERE t.client_id=c.client_id AND t.expires_at>?)`
+
+// lockClientCapTx takes the registration lock. Registration, eviction and prune hold it while
+// they delete clients, so a writer that takes it, then checks the client row, cannot be followed
+// by a delete that did not see its work (PostgreSQL READ COMMITTED snapshots are per statement).
+func lockClientCapTx(ctx context.Context, tx *sqlTx) error {
+	_, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_lock SET id=id WHERE id='client_cap'`)
+	return err
+}
+
+// requireClientTx locks and checks a dynamic registration. A CIMD client (an https URL) has no row, and an empty id names none.
+func requireClientTx(ctx context.Context, tx *sqlTx, clientID string) error {
+	if clientID == "" || strings.HasPrefix(clientID, "https://") {
+		return nil
+	}
+	if err := lockClientCapTx(ctx, tx); err != nil {
+		return err
+	}
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_oauth_client WHERE client_id=?`, clientID).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrMCPOAuthClientGone
+	}
+	return nil
+}
+
 // MCPOAuthStore holds the /mcp authorization server's clients, grants and tokens.
 type MCPOAuthStore interface {
 	GetTenantMCPOAuth(ctx context.Context, tenantID string) (bool, error)
 	// SetTenantMCPOAuth atomically gates issuance, revokes grants and audits the change.
 	SetTenantMCPOAuth(ctx context.Context, tenantID string, enabled bool, actorID string, now int64) error
 	// CreateMCPOAuthClient inserts a registration. At max registrations (counted in the same
-	// transaction as the insert) it first evicts the oldest one that never produced a grant and
-	// reports evicted; a client with a grant is never evicted, so when every registration has
-	// one it returns ErrMCPOAuthClientCap.
+	// transaction as the insert) it first evicts the oldest idle one and reports evicted. Idle
+	// means no grant and no unexpired consent ticket or code (c.CreatedAt is "now"), so a sign-in
+	// in progress keeps its client; when nothing is idle it returns ErrMCPOAuthClientCap.
 	CreateMCPOAuthClient(ctx context.Context, c MCPOAuthClient, max int) (evicted bool, err error)
 	GetMCPOAuthClient(ctx context.Context, clientID string) (MCPOAuthClient, bool, error)
 	// PruneMCPOAuth deletes clients registered before `clientsBefore` that never produced a
@@ -126,8 +163,8 @@ func (s *SQL) CreateMCPOAuthClient(ctx context.Context, c MCPOAuthClient, max in
 		// until they expire, so the oldest registration nobody used makes room instead.
 		res, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_client WHERE client_id=(
 		    SELECT c.client_id FROM mcp_oauth_client c
-		    WHERE NOT EXISTS (SELECT 1 FROM mcp_oauth_grant g WHERE g.client_id=c.client_id)
-		    ORDER BY c.created_at, c.client_id LIMIT 1)`)
+		    WHERE `+clientIdleSQL+`
+		    ORDER BY c.created_at, c.client_id LIMIT 1)`, c.CreatedAt)
 		if err != nil {
 			return false, err
 		}
@@ -166,14 +203,25 @@ func (s *SQL) PruneMCPOAuth(ctx context.Context, now, clientsBefore, grantsBefor
 		// A grant that ended long ago: revoked, or past its absolute lifetime, or idle out.
 		{`DELETE FROM mcp_oauth_grant WHERE (revoked_at<>0 AND revoked_at<?) OR abs_expires_at<? OR idle_expires_at<?`,
 			[]any{grantsBefore, grantsBefore, grantsBefore}},
-		{`DELETE FROM mcp_oauth_client WHERE created_at<? AND NOT EXISTS
-		    (SELECT 1 FROM mcp_oauth_grant g WHERE g.client_id=mcp_oauth_client.client_id)`, []any{clientsBefore}},
 	} {
 		if _, err := s.db.ExecContext(ctx, q.sql, q.args...); err != nil {
 			return err
 		}
 	}
-	return nil
+	// Under the registration lock, like eviction, and with the same notion of idle.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockClientCapTx(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_client WHERE created_at<? AND client_id IN (
+		    SELECT c.client_id FROM mcp_oauth_client c WHERE `+clientIdleSQL+`)`, clientsBefore, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQL) InsertMCPOAuthToken(ctx context.Context, t MCPOAuthToken) error {
@@ -187,6 +235,9 @@ func (s *SQL) InsertMCPOAuthToken(ctx context.Context, t MCPOAuthToken) error {
 	// by a late insert that a re-invite would then redeem.
 	if t.GrantID == "" {
 		if err := lockActiveMembershipTx(ctx, tx, t.MembershipID); err != nil {
+			return err
+		}
+		if err := requireClientTx(ctx, tx, t.ClientID); err != nil {
 			return err
 		}
 	}
@@ -306,6 +357,9 @@ func (s *SQL) createMCPOAuthGrant(ctx context.Context, g MCPOAuthGrant, needCode
 		return err
 	}
 	if needCode {
+		if err = requireClientTx(ctx, tx, g.ClientID); err != nil {
+			return err
+		}
 		var n int
 		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_oauth_token WHERE hash=? AND kind=?`, g.CodeHash, MCPOAuthCode).Scan(&n); err != nil {
 			return err

@@ -124,7 +124,8 @@ func (t trustedHosts) hostOnlyEntries() []string {
 // parseTrustedEntry validates one entry and returns its canonical (lower-cased) spelling. A
 // bare host trusts every path; an https URL with a path trusts that path prefix.
 func parseTrustedEntry(raw string) (string, error) {
-	h := strings.ToLower(strings.TrimSpace(raw))
+	raw = strings.TrimSpace(raw)
+	h := strings.ToLower(raw)
 	if strings.HasPrefix(h, trustedPrefixScheme) {
 		return parseTrustedPrefix(raw, h)
 	}
@@ -147,22 +148,29 @@ func parseTrustedEntry(raw string) (string, error) {
 	return h, nil
 }
 
+// parseTrustedPrefix canonicalises scheme and host to lower case; the path keeps its spelling,
+// because callback paths are case-sensitive and a folded path would trust a different one.
 func parseTrustedPrefix(raw, h string) (string, error) {
 	bad := func(why string) (string, error) { return "", errors.New(`"` + raw + `": ` + why) }
 	if strings.ContainsAny(h, "\\ ?#%@") || strings.Contains(h, "*") {
 		return bad("a URL prefix is host and path only: no query, fragment, user name, escapes or wildcards")
 	}
-	rest := h[len(trustedPrefixScheme):]
+	rest := raw[len(trustedPrefixScheme):]
 	i := strings.IndexByte(rest, '/')
 	if i < 0 || rest[i:] == "/" {
 		return bad("give a path (https://host/path), or the bare host name to trust every path")
 	}
-	host, p := rest[:i], rest[i:]
+	host, p := strings.ToLower(rest[:i]), rest[i:]
 	if strings.Contains(host, ":") {
 		return bad("a port is not accepted")
 	}
 	if net.ParseIP(host) != nil || !validHostName(host) {
 		return bad("not a valid host name")
+	}
+	for _, c := range []byte(p) {
+		if c <= 0x20 || c >= 0x7f {
+			return bad("the path must be plain ASCII")
+		}
 	}
 	for _, seg := range strings.Split(strings.TrimSuffix(p, "/")[1:], "/") {
 		if seg == "" || seg == "." || seg == ".." {

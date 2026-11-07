@@ -73,13 +73,38 @@ func TestMCPOAuthTrustedEntryValidation(t *testing.T) {
 		}
 	}
 	got, err := validateTrustedClientHosts([]string{"https://Claude.AI/Api/x", "claude.ai", "claude.ai"})
-	if err != nil || len(got) != 2 || got[0] != "claude.ai" || got[1] != "https://claude.ai/api/x" {
+	if err != nil || len(got) != 2 || got[0] != "claude.ai" || got[1] != "https://claude.ai/Api/x" {
 		t.Errorf("canonical form: %v %v", got, err)
 	}
 	// The lenient reader keeps prefix entries and drops what the validator refuses.
 	p := parseTrustedClientHosts("https://claude.ai/cb,claude.com,https://bad.example,*.x")
 	if len(p) != 2 || !p["https://claude.ai/cb"] || !p["claude.com"] {
 		t.Errorf("lenient parse: %v", p)
+	}
+}
+
+// Scheme and host are folded to lower case; the path keeps its spelling, so a case-sensitive
+// callback path matches only itself.
+func TestMCPOAuthTrustedPrefixPathIsCaseSensitive(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	got, err := validateTrustedClientHosts([]string{"HTTPS://Example.COM/OAuth/CallBack"})
+	if err != nil || len(got) != 1 || got[0] != "https://example.com/OAuth/CallBack" {
+		t.Fatalf("saved form: %v %v", got, err)
+	}
+	trusted := trustedHosts{got[0]: true}
+	for raw, want := range map[string]redirectClass{
+		"https://example.com/OAuth/CallBack":     redirectHosted,
+		"https://example.com/OAuth/CallBack/x":   redirectHosted,
+		"https://example.com/oauth/callback":     redirectRefused,
+		"https://example.com/OAuth/Callback":     redirectRefused,
+		"https://example.com/OAUTH/CALLBACK/sub": redirectRefused,
+	} {
+		if g := e.api.classifyRedirect(trusted, raw); g != want {
+			t.Errorf("classifyRedirect(%q) = %d, want %d", raw, g, want)
+		}
+	}
+	if _, err := parseTrustedEntry("https://example.com/caf\u00e9"); err == nil {
+		t.Error("a non-ASCII path was accepted")
 	}
 }
 
