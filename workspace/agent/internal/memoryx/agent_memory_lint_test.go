@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin/memberorigintest"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorylint"
 )
 
@@ -236,6 +237,9 @@ func TestAgentMemoryLintWithoutRepositoryRunsThreeChecks(t *testing.T) {
 // The term list answers only a member-origin request, round-trips, and refuses oversized input.
 func TestAgentMemoryLintTermsAreMemberEdited(t *testing.T) {
 	_, _, _ = agentMemTestEnv(t)
+	// Without a configured key the route answers 503 (the feature is off, not open); the 403 of
+	// a refused mark needs one, so the test installs its own instead of relying on the host's.
+	memberorigintest.Install(t)
 	if code, _ := memberDo(t, http.MethodPost, "/agents/memory/entries/lint-terms", map[string]any{"terms": []string{"x"}}); code != http.StatusForbidden {
 		t.Fatalf("unsigned save: %d, want 403", code)
 	}
