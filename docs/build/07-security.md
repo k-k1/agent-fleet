@@ -502,8 +502,8 @@ their conversations elsewhere. Add the relay row with `sign` (or sign in the han
 - **The CP drops any `X-AF-Member-Origin` the browser sent** on every relay (REST, SSE and the preview
   relay), signs only the listed routes, and only for the caller's own workspace. REST and SSE also drop every
   cookie and the gateway identity headers, so the member's login cookie never reaches the workspace.
-- **Relayed request headers are an allow-list** (`control-plane/relay_headers.go`), not a denylist: content
-  negotiation, conditional and range headers, the WebSocket handshake (`Sec-*`), `X-Forwarded-Host` /
+- **Relayed request headers are an allow-list** (`control-plane/internal/relayhdr`), not a denylist: content
+  negotiation, conditional and range headers, the WebSocket handshake, Fetch Metadata and Client Hints (`Sec-WebSocket-*`, `Sec-Fetch-*`, `Sec-CH-*`), `X-Forwarded-Host` /
   `-Proto` / `-Prefix`, and a few framework headers (`Next-*`, `Hx-*`, `Turbo-*`, CSRF tokens) reach the Agent
   and a previewed app; anything else a front gateway adds (access-token, group and OIDC headers, for
   example) is dropped. The name (never the value) of each dropped header is logged once per process

@@ -219,5 +219,3 @@ workspace_machine.go
 workspace_sizing.go
 workspace_stale.go
 ws_settings.go
-claude_audit_bash.go
-relay_headers.go

@@ -35,6 +35,8 @@ func TestLoggedURI(t *testing.T) {
 	}{
 		{"/preview-open-own?next=%2Fcb%3Fcode%3D" + sec + "%26a%3D1&port=3000", "/preview-open-own?next=%2Fcb%3F%3Credacted%3E&port=3000"},
 		{"/preview-open?next=%2Fcb%3Fsig%3D" + sec + "&owner=u&port=3000", "/preview-open?next=%2Fcb%3F%3Credacted%3E&owner=u&port=3000"},
+		{"/preview-open-own?next=%2Fplain&next=%2Fcb%3Fcode%3D" + sec, "/preview-open-own?next=%2Fplain&next=%2Fcb%3F%3Credacted%3E"},
+		{"/preview-open?next=%2Fcb%3Fsig%3D" + sec + "&next=%2Fplain", "/preview-open?next=%2Fcb%3F%3Credacted%3E&next=%2Fplain"},
 		{"/preview-open-own?next=%2Fplain&port=3000", "/preview-open-own?next=%2Fplain&port=3000"},
 		{"/x%0Afake%20entry?code=" + sec, "/x%0Afake%20entry?code=%3Credacted%3E"},
 		{"/api/oauth%0Ax/cb?code=" + sec, "/api/oauth%0Ax/cb?<redacted>"},

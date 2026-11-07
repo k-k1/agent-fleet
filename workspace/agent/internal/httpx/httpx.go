@@ -235,11 +235,16 @@ func LogRequests(next http.Handler) http.Handler {
 func LogURI(u *url.URL) string {
 	p := u.EscapedPath()
 	segs := strings.Split(p, "/")
+	// Classify by the decoded path (the mux matches on it: /pr%6fxy/ reaches the preview
+	// relay) and print the escaped one.
+	dsegs := strings.Split(u.Path, "/")
 	login := false
-	for i, s := range segs {
+	for _, s := range dsegs {
 		if s == "aws-login" || s == "gcp-login" {
 			login = true
 		}
+	}
+	for i, s := range segs {
 		if (s == "attempts" || s == "sessions-idempotency") && i+1 < len(segs) && segs[i+1] != "" {
 			sum := sha256.Sum256([]byte(segs[i+1]))
 			segs[i+1] = "ref:" + hex.EncodeToString(sum[:4])
@@ -250,7 +255,7 @@ func LogURI(u *url.URL) string {
 		if login {
 			return p + "?…"
 		}
-		if len(segs) > 1 && segs[1] == "proxy" {
+		if len(dsegs) > 1 && dsegs[1] == "proxy" {
 			return p + "?<redacted>"
 		}
 		return p + "?" + redactQuery(u.RawQuery)

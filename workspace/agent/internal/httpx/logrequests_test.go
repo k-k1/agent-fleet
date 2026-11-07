@@ -103,6 +103,12 @@ func TestLogURIRedactsQueries(t *testing.T) {
 	if got := LogURI(u); got != "/proxy/3000/auth/callback?<redacted>" {
 		t.Errorf("proxy: %q", got)
 	}
+	for _, raw := range []string{"/pr%6fxy/3000/cb?sig=SECRETVALUE", "/proxy%2F3000/cb?sig=SECRETVALUE"} {
+		u, _ = url.Parse(raw)
+		if got := LogURI(u); strings.Contains(got, "SECRETVALUE") {
+			t.Errorf("encoded proxy path %s: %q", raw, got)
+		}
+	}
 	u, _ = url.Parse("/sessions?all=1")
 	if got := LogURI(u); got != "/sessions?all=1" {
 		t.Errorf("plain: %q", got)

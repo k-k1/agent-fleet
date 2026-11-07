@@ -404,8 +404,8 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 - **CP はブラウザが送った `X-AF-Member-Origin` をすべての中継（REST・SSE・プレビュー）で捨て**、列挙した
   ルートだけを、呼び手自身の Workspace に対してだけ署名する。REST と SSE ではすべての Cookie とゲートウェイの
   identity ヘッダーも捨てるので、メンバーのログイン Cookie は Workspace に届かない。
-- **中継するリクエストヘッダーは許可リスト**（`control-plane/relay_headers.go`）で、拒否リストではない。
-  コンテンツネゴシエーション、条件付き・範囲リクエスト、WebSocket のハンドシェイク（`Sec-*`）、
+- **中継するリクエストヘッダーは許可リスト**（`control-plane/internal/relayhdr`）で、拒否リストではない。
+  コンテンツネゴシエーション、条件付き・範囲リクエスト、WebSocket のハンドシェイク・Fetch Metadata・Client Hints（`Sec-WebSocket-*`・`Sec-Fetch-*`・`Sec-CH-*`）、
   `X-Forwarded-Host` / `-Proto` / `-Prefix`、フレームワーク用の少数のヘッダー（`Next-*`・`Hx-*`・`Turbo-*`・
   CSRF トークン）だけが Agent とプレビューのアプリに届き、前段のゲートウェイが足したもの（アクセストークン・
   グループ・OIDC のヘッダーなど）は捨てる。捨てたヘッダーの名前（値は出さない）をプロセスごとに 1 回ログに出し

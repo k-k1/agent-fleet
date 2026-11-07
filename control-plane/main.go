@@ -824,9 +824,12 @@ func loggedURI(u *url.URL) string {
 	// The preview entry routes carry the previewed app's own query inside "next"
 	// (redirectToSubdomain moves it there), so the top-level names above do not see it.
 	if u.Path == previewOwnOpenPath || u.Path == previewOpenPath {
-		if nx := q.Get("next"); strings.Contains(nx, "?") {
-			q.Set("next", nx[:strings.Index(nx, "?")]+"?<redacted>")
-			hit = true
+		// Every value, not the first: a repeated "next" must not smuggle one past the check.
+		for i, nx := range q["next"] {
+			if j := strings.Index(nx, "?"); j >= 0 {
+				q["next"][i] = nx[:j] + "?<redacted>"
+				hit = true
+			}
 		}
 	}
 	if !hit {

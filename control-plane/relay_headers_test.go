@@ -27,7 +27,7 @@ var neededHeaders = map[string]string{
 	"Range": "bytes=0-9", "If-None-Match": `"etag"`, "If-Modified-Since": "Wed, 21 Oct 2015 07:28:00 GMT",
 	"Content-Type": "application/json", "Origin": "http://example.com", "Referer": "https://cp.example/x",
 	"User-Agent": "test-agent", "Last-Event-Id": "7", "Sec-Fetch-Site": "same-origin",
-	"Next-Action": "abc", "X-Requested-With": "XMLHttpRequest", "X-Csrf-Token": "synthetic-csrf",
+	"Next-Action": "abc", "X-Csrftoken": "synthetic-django-csrf", "X-Requested-With": "XMLHttpRequest", "X-Csrf-Token": "synthetic-csrf",
 }
 
 func putHeaders(r *http.Request, m map[string]string) {
@@ -173,22 +173,5 @@ func TestPreviewRelayWebSocketUpgrade(t *testing.T) {
 	}
 	if seen.Get("Origin") != "https://p-5173.example" || seen.Get("X-Forwarded-Host") != "p-5173.example" {
 		t.Errorf("handshake headers: %v", seen)
-	}
-}
-
-// AF_RELAY_EXTRA_HEADERS adds names and prefixes without widening the built-in list.
-func TestRelayExtraHeaders(t *testing.T) {
-	old := relayExtraHeaders
-	t.Cleanup(func() { relayExtraHeaders = old })
-	relayExtraHeaders = parseRelayExtraHeaders(" x-app-token ,X-Tenant-*")
-	for _, n := range []string{"X-App-Token", "X-Tenant-Id", "X-Tenant-"} {
-		if !relayHeaderAllowed(n) {
-			t.Errorf("%s should be allowed", n)
-		}
-	}
-	for _, n := range []string{"X-Forwarded-Access-Token", "X-Other"} {
-		if relayHeaderAllowed(n) {
-			t.Errorf("%s should not be allowed", n)
-		}
 	}
 }

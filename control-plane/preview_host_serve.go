@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/localredirect"
+	"github.com/k-k1/agent-fleet/control-plane/internal/relayhdr"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -649,7 +650,7 @@ func relayPreview(w http.ResponseWriter, r *http.Request, rt runtime.Runtime, o 
 // cookies (different origin), but a front auth gateway's headers and the path-mode
 // caller's cookies still arrive here, and this is the one place both are cleaned.
 //
-// What stays is an allow-list (relay_headers.go), not the denylist this used to be: the
+// What stays is an allow-list (internal/relayhdr), not the denylist this used to be: the
 // headers a gateway adds are not a list anyone can keep complete.
 func stripConsoleCredentials(out *http.Request, in *http.Request, identityHeader string) {
 	out.Header.Del("Authorization")
@@ -669,7 +670,7 @@ func stripConsoleCredentials(out *http.Request, in *http.Request, identityHeader
 	if len(kept) > 0 {
 		out.Header.Set("Cookie", strings.Join(kept, "; "))
 	}
-	keepAllowedRelayHeaders(out.Header)
+	relayhdr.KeepAllowed(out.Header)
 }
 
 // stripAppLoginCookies drops Set-Cookie lines that would (re)issue a login on the

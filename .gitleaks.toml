@@ -31,6 +31,9 @@ regexes = [
   # materialize_drift_test.go and relay_test.go in 2edc93bc1 / f1bbfa34e: a fake relay key that
   # is only counting hex digits, never a credential. Later commits use an af-test-fixture- value.
   '''0123456789abcdef0123456789abcdef0123456789abcdef(0123456789abcdef)?''',
+  # control-plane/claude_audit_test.go (d6e23f3a5): a made-up curl -u user:password fixture that the
+  # audit import must NOT record; not a credential.
+  '''me:hunter2''',
 ]
 
 [[allowlists]]

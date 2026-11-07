@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/claudeaudit"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -73,7 +74,7 @@ func extractClaudeAudits(msgs []ctTurn, tenantID, session string, fullBash bool)
 				target = p.Info
 			}
 			if p.Tool == "Bash" {
-				target = bashAuditTarget(p.Info, fullBash)
+				target = claudeaudit.BashTarget(p.Info, fullBash)
 			}
 			out = append(out, store.AuditLog{
 				TenantID: tenantID, ActorKind: "claude", ActorID: session,
