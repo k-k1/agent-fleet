@@ -1,4 +1,4 @@
-# Agent Fleet on Kubernetes — the `kubernetes` runtime profile
+# Deploy on Kubernetes (the `kubernetes` runtime profile)
 
 The runbook for running Agent Fleet on a Kubernetes cluster: the CP as a Deployment in the
 cluster, each workspace a StatefulSet at 0 or 1 replicas with two PersistentVolumeClaims.

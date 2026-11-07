@@ -1,4 +1,4 @@
-# Agent Fleet on a single EC2 VM (CloudFormation)
+# Deploy on a single EC2 VM with CloudFormation
 
 Spin up one Ubuntu 24.04 EC2 instance (Docker pre-installed via cloud-init), a
 stable Elastic IP, a Route53 A record, and an imported SSH key pair (generated

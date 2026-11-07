@@ -1653,6 +1653,36 @@ def _md_punct(c: str) -> bool:
     ).startswith("P")
 
 
+_TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{3,}")
+
+
+def check_tables(files: list[str], f: Findings) -> None:
+    """Is a table cut in two by a blank line?
+
+    A blank line ends a GFM table, so the rows after it render as one paragraph of pipes,
+    on GitHub, in the Console and on the docs site alike. A blank line between two rows is
+    therefore always a mistake, unless what follows is a new table with its own separator
+    row. The shipped runbooks are read as part of the guide, so they are checked too.
+    """
+    runbooks = [os.path.join(ROOT, p) for p in CLOSURE_EXEMPT if os.path.isfile(os.path.join(ROOT, p))]
+    for path in sorted(set(files + runbooks)):
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        fence = False
+        for i, line in enumerate(lines):
+            if line.lstrip().startswith("```"):
+                fence = not fence
+            if fence or line.strip() or not 0 < i < len(lines) - 1:
+                continue
+            prev, nxt = lines[i - 1].lstrip(), lines[i + 1].lstrip()
+            new_table = i + 2 < len(lines) and _TABLE_SEP.match(lines[i + 2])
+            if prev.startswith("|") and nxt.startswith("|") and not new_table:
+                f.errors.append(
+                    f"{rel(path)}:{i + 1}: blank line inside a table; the rows after it render "
+                    "as plain text with pipes. Remove the blank line"
+                )
+
+
 REDIRECTS = os.path.join(GUIDE, "_redirects.tsv")
 
 # Where a path into guide/ is written outside guide/ itself. All of these are read by
@@ -2159,6 +2189,8 @@ def main() -> int:
         check_knowledge(f)
     if run("notes"):
         check_notes(f)
+    if run("tables"):
+        check_tables(files + root, f)
     if run("redirects"):
         check_redirects(files + root, f)
     if run("emphasis"):
