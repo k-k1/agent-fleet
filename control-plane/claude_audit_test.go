@@ -56,7 +56,7 @@ func TestExtractClaudeAudits(t *testing.T) {
 // By default a Bash audit row names only the program, never its arguments; with full lines
 // on, the line is masked.
 func TestExtractClaudeAuditsBashTarget(t *testing.T) {
-	msgs := []ctTurn{{Role: "assistant", Parts: []ctPart{{Kind: "tool", Tool: "Bash", Info: "curl -u me:hunter2 https://x.test API_KEY=abc"}}}}
+	msgs := []ctTurn{{Role: "assistant", Parts: []ctPart{{Kind: "tool", Tool: "Bash", Info: "curl -u af-test-fixture-user:af-test-fixture-pass https://x.test API_KEY=abc"}}}}
 	if got := extractClaudeAudits(msgs, "t", "s", false); len(got) != 1 || got[0].Target != "curl" {
 		t.Fatalf("default: %+v", got)
 	}
