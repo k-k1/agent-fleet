@@ -424,11 +424,6 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if slug, _, ok := auth.ParseTenantProviderID(p.ID()); ok {
 		tenant = slug
 	}
-	// A hint for a tenant that does not exist is dropped rather than carried through
-	// the sign-in state into the post-login URL.
-	if tenant != "" && !c.tenantExists(r.Context(), tenant) {
-		tenant = ""
-	}
 	next := sanitizeNext(r.URL.Query().Get("next"))
 	nonce := randHex(16)
 	b, _ := json.Marshal(oauthState{
@@ -547,7 +542,14 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	c.issueSession(w, pr)
 	// Checked again after the hint is added: the value sent is the value judged.
-	next := localredirect.Safe(withTenantHint(sanitizeNext(st.Next), tenant))
+	// The existence check happens here, after authentication, and not when the
+	// state is minted: the state cookie is signed but readable, so dropping an
+	// unknown slug there would tell an anonymous caller which tenants exist.
+	hint := tenant
+	if hint != "" && !c.tenantExists(r.Context(), hint) {
+		hint = ""
+	}
+	next := localredirect.Safe(withTenantHint(sanitizeNext(st.Next), hint))
 	if isNew {
 		c.writeNewAccountPage(w, r, pr, next)
 		return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -853,14 +854,25 @@ func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 // old bookmarks — and any stale post-login next=/agent-fleet/… — would 404.
 // Redirect /agent-fleet[/…] -> /… (auth-exempt, so it fires before login and
 // the dead prefix never reaches next=).
+// stripLegacyPrefix removes the first path segment when it decodes to
+// "agent-fleet" and keeps the rest escaped as received. The mux matches on the
+// decoded segment, so a percent-encoded spelling of the prefix reaches the
+// handler too; trimming a literal prefix would leave it in place and redirect
+// to the same URL forever.
+func stripLegacyPrefix(escaped string) string {
+	rest := strings.TrimPrefix(escaped, "/")
+	seg, tail, _ := strings.Cut(rest, "/")
+	if d, err := url.PathUnescape(seg); err == nil && d == "agent-fleet" {
+		return "/" + tail
+	}
+	return escaped
+}
+
 func registerLegacyRedirect(mux *http.ServeMux) {
 	exemptExact("/agent-fleet")
 	exemptPrefix("/agent-fleet/")
 	legacyRedirect := func(w http.ResponseWriter, r *http.Request) {
-		dest := strings.TrimPrefix(r.URL.EscapedPath(), "/agent-fleet")
-		if !strings.HasPrefix(dest, "/") {
-			dest = "/" + dest
-		}
+		dest := stripLegacyPrefix(r.URL.EscapedPath())
 		if r.URL.RawQuery != "" {
 			dest += "?" + r.URL.RawQuery
 		}
