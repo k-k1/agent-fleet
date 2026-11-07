@@ -266,3 +266,25 @@ func printSealCounts(w io.Writer, counts []sealCounts) {
 		fmt.Fprintf(w, "%-30s %10d %8d %8d %7d\n", n.Name, n.Plaintext, n.Sealed, n.Changed, n.Failed)
 	}
 }
+
+// settingPairReader is implemented by the SQL store: value and key reference in one statement.
+type settingPairReader interface {
+	GetSettingPair(ctx context.Context, valueKey, refKey string) (value, ref string, err error)
+}
+
+// readSettingPair reads a sealed setting and its key reference setting. Against the SQL store
+// it is one read, because `rewrap-keys --seal-plaintext` rewrites both while the Control Plane
+// runs and two reads could pair an old value with the new reference. Another SettingsStore
+// (a test double) falls back to two reads.
+func readSettingPair(ctx context.Context, s store.SettingsStore, valueKey, refKey string) (value, ref string, err error) {
+	if pr, ok := s.(settingPairReader); ok {
+		return pr.GetSettingPair(ctx, valueKey, refKey)
+	}
+	if value, err = s.GetSetting(ctx, valueKey); err != nil {
+		return "", "", err
+	}
+	if ref, err = s.GetSetting(ctx, refKey); err != nil {
+		return "", "", err
+	}
+	return value, ref, nil
+}

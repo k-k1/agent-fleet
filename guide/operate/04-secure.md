@@ -91,6 +91,23 @@ this release a value that fails the check **does not stop the Control Plane**: i
 never logs the value. `deploy/aws/ecs/standup.sh` checks the stored parameters the same way and
 prints only OK or too short.
 
+### Switching to per-purpose cookie keys
+
+The Control Plane can sign the session, sign-in state and preview cookies with one key per
+purpose, so a cookie made for one purpose never verifies for another. Because a replica of the
+previous release cannot read the new format, switching is two steps and is **off by default**:
+
+1. Deploy this release to every replica. It reads both formats and still issues the old one,
+   so a rolling update signs nobody out.
+2. Once no replica of the previous release is left, set `AF_COOKIE_PURPOSE_KEYS=1` and restart
+   (replicas may be restarted one at a time; the two settings accept each other's cookies).
+   Cookies issued before the switch keep working for one session lifetime
+   (`AF_SESSION_TTL`, default 7 days) and then expire; sign-in states and preview tokens live
+   minutes. Until then the old format is not purpose-separated.
+
+Turning it off again is safe for this release, which reads both formats. Only rolling back to
+the previous release after step 2 signs people out, because it cannot read the new format.
+
 ### Values stored before the key was set
 
 A Control Plane that had no `AF_MASTER_KEY` stored some values unencrypted (tenant sign-in and

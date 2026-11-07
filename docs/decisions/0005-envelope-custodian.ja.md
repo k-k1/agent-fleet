@@ -241,4 +241,4 @@ migration 0091 / pg 0076 で `home_dek.confirm_epoch` を足す（後述）。
   導いた鍵で署名します。ラベルなしの形式は、セッションとプレビューの cookie に限り、起動から
   セッション 1 回分の期間だけ受け付けます。
 
-master 鍵から導く鍵は `control-plane/master_derivations.go` に 1 か所でまとめています。
+master 鍵から導く鍵は `docs/build/07-security.ja.md` §7.6.1 に 1 か所でまとめています。

@@ -220,16 +220,12 @@ func (t *engineHfTokens) stage(ctx context.Context) *apiError {
 // for the reason openTenantSecret gives: an anonymous fetch of a gated repository fails with a
 // 401 that names the licence, and nobody traces that back to a key change.
 func (t *engineHfTokens) plaintext(ctx context.Context) (string, *apiError) {
-	enc, err := t.settings.GetSetting(ctx, engineHfTokenSetting)
+	enc, ref, err := readSettingPair(ctx, t.settings, engineHfTokenSetting, engineHfTokenRefSetting)
 	if err != nil {
 		return "", &apiError{http.StatusInternalServerError, errCodeHfTokenStoreFailed, err.Error()}
 	}
 	if strings.TrimSpace(enc) == "" {
 		return "", nil
-	}
-	ref, err := t.settings.GetSetting(ctx, engineHfTokenRefSetting)
-	if err != nil {
-		return "", &apiError{http.StatusInternalServerError, errCodeHfTokenStoreFailed, err.Error()}
 	}
 	tok, err := t.sealer.openTenantSecret(ctx, enc, ref)
 	if err != nil {

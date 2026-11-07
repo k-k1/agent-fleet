@@ -303,4 +303,4 @@ decisions rely on.
   from `AF_COOKIE_SECRET` and a purpose label; the unlabelled format is accepted for session and
   preview cookies for one session lifetime after start-up.
 
-Derivations from the master key are listed in one place, `control-plane/master_derivations.go`.
+Derivations from the master key are listed in one place, `docs/build/07-security.ja.md` §7.6.1.

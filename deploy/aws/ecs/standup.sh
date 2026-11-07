@@ -203,7 +203,7 @@ key_too_short() {
   v=""
   [ "$n" -lt 32 ]
 }
-# The same rule the Control Plane applies at start-up (control-plane/key_strength.go), minus
+# The same rule the Control Plane applies at start-up (control-plane/internal/keycheck), minus
 # its repeated-byte check. This release only warns there; so does this, and it does not fail.
 for s in cookie-secret master-key; do
   if ! have_ssm "$SSM_PREFIX/$s"; then

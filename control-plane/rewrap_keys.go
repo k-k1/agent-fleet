@@ -117,12 +117,8 @@ func rewrapSettingPair(st *store.SQL, valueKey, refKey, keyRef string) rewrapTar
 		},
 		ids: settingIDs(st, valueKey),
 		load: func(ctx context.Context, _ string) (rewrapItem, bool, error) {
-			v, err := st.GetSetting(ctx, valueKey)
+			v, ref, err := st.GetSettingPair(ctx, valueKey, refKey)
 			if err != nil || v == "" {
-				return rewrapItem{}, false, err
-			}
-			ref, err := st.GetSetting(ctx, refKey)
-			if err != nil {
 				return rewrapItem{}, false, err
 			}
 			return rewrapItem{sealed: v, keyRef: ref}, true, nil

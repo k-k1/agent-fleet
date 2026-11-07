@@ -490,6 +490,27 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   導いた鍵のまま）。ホームは Agent の報告で確認され、その後は導いた鍵を受け取らない。
   Vault は 📋（[decisions/0005](../decisions/0005-envelope-custodian.ja.md) の 2026-10-04・2026-10-10 追記）。
 
+### 7.6.1 master 鍵から導く鍵
+
+方針: master 鍵から導く**新しい**鍵には専用のラベルを付け、`HMAC-SHA256(master, "af-<用途>/v<N>")` とし、同じ変更でこの一覧に加えます。鍵を用途をまたいで使い回さず、master のダイジェストそのものを鍵にしません。下の導出は方針より前からあるもので、変えると守っているものが無効になるため、そのままにします。`AF_COOKIE_SECRET` は別の秘密で、用途ごとの cookie 鍵は `oauth.go`（`cookiePurpose`）にあります。
+
+| ラベル | 用途 |
+|---|---|
+| `af-kek:<keyRef>` | per-tenant KEK of the local custodian (`custodian.go`) |
+| `<userKey>` (no label) | legacy per-member DEK (`dek.go`, `legacyDEK`) |
+| `af-token-signing-root/v<N>` | token signing root at `AF_TOKEN_SIGN_VERSION` >= 1 (`bridge_epoch.go`); the master itself at version 0 |
+| `af-git-token-sign/v1` | git HTTP token (`git_http.go`) |
+| `af-git-oauth-token-sign/v1` | Git OAuth bridge token (`git_oauth_bridge.go`) |
+| `af-memo-token-sign/v1` | memo token (`memo_bridge.go`) |
+| `af-schedule-token-sign/v1` | schedule token (`schedule_bridge.go`) |
+| `af-mcp-token-sign/v1` | MCP token (`internal/mcpsrv/mcp_server_bridge.go`) |
+| `af-docs-token-sign/v1` | docs token (`docs_bridge.go`) |
+| `af-engine-token-sign/v1` | engine token (`engine_token.go`) |
+| `af-aws-profiles-token-sign/v1` | AWS profiles token (`aws_profiles_bridge.go`) |
+| `af-gcp-profiles-token-sign/v1` | GCP profiles token (`gcp_profiles_bridge.go`) |
+| `af-branch-rules-token-sign/v1` | branch rules token (`tenant_branch_rules.go`) |
+| `af-member-origin-sign/v<N>` | member-origin Ed25519 seed (`member_origin.go`) |
+
 ## 7.7 監査
 
 - 器は監査ログ（`audit_log`・[06](06-data.ja.md)）。actor の種類は user / admin / mcp / system、

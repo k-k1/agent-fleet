@@ -114,9 +114,10 @@ func (c config) oauthRedirectURI() string {
 
 // --- signed cookies (HMAC-SHA256, stdlib only) -----------------------------
 
-// cookiePurpose labels what a signed cookie is for. Each purpose signs with its own key,
-// HMAC(AF_COOKIE_SECRET, "af-cookie/v1/<purpose>"), so a value minted for one purpose never
-// verifies for another, whatever its payload says. The purposes are the whole list:
+// cookiePurpose labels what a signed cookie is for. With AF_COOKIE_PURPOSE_KEYS on, each
+// purpose signs with its own key, HMAC(AF_COOKIE_SECRET, "af-cookie/v1/<purpose>"), so a value
+// minted for one purpose never verifies for another, whatever its payload says. The purposes
+// are the whole list:
 //
 //	session        the signed-in session (af_session)
 //	state          the sign-in / account-link state (af_oauth_state)
@@ -135,13 +136,12 @@ const (
 // (base64url has none), so the two cannot be confused.
 const cookieFormatV2 = "v2."
 
-// legacyCookiePurpose says which purposes still accept the unlabelled format during the
-// transition. Only values that were already out in browsers at deploy time qualify: the
-// session and preview cookies. A sign-in state lives ten minutes and a preview token thirty
-// seconds, so a person mid-login at deploy simply starts again.
-func legacyCookiePurpose(p cookiePurpose) bool {
-	return p == cookiePurposeSession || p == cookiePurposePreview
-}
+// Two-stage switch (guide/operate/04-secure.md). A replica of the previous release cannot read
+// the labelled format, so a rolling update that issued it at once would sign people out
+// whenever a request met an old replica. Stage one: this release reads both formats and
+// keeps issuing the unlabelled one (cookiePurposeKeys off). Stage two, once every replica runs
+// this release: AF_COOKIE_PURPOSE_KEYS=1 issues the labelled format and accepts the
+// unlabelled one until legacyCookieUntil.
 
 func (c config) cookieKey(p cookiePurpose) []byte {
 	mac := hmac.New(sha256.New, c.cookieSecret)
@@ -149,24 +149,34 @@ func (c config) cookieKey(p cookiePurpose) []byte {
 	return mac.Sum(nil)
 }
 
-// signCookie returns "v2." base64(payload) "." base64(HMAC(purpose key, payload)).
-func (c config) signCookie(p cookiePurpose, payload []byte) string {
-	mac := hmac.New(sha256.New, c.cookieKey(p))
+func (c config) cookieMAC(key, payload []byte) string {
+	mac := hmac.New(sha256.New, key)
 	mac.Write(payload)
-	return cookieFormatV2 + base64.RawURLEncoding.EncodeToString(payload) + "." +
+	return base64.RawURLEncoding.EncodeToString(payload) + "." +
 		base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// verifyCookie checks s for purpose p. The unlabelled format (the raw secret signs the
-// payload) is accepted only for legacyCookiePurpose purposes and only until
+// signCookie returns "v2." base64(payload) "." base64(HMAC(purpose key, payload)) once
+// cookiePurposeKeys is on, and the unlabelled base64(payload) "." base64(HMAC(secret, payload))
+// before.
+func (c config) signCookie(p cookiePurpose, payload []byte) string {
+	if !c.cookiePurposeKeys {
+		return c.cookieMAC(c.cookieSecret, payload)
+	}
+	return cookieFormatV2 + c.cookieMAC(c.cookieKey(p), payload)
+}
+
+// verifyCookie checks s for purpose p. A labelled value always verifies against its own
+// purpose key only. An unlabelled one (the raw secret signs the payload, any purpose) is
+// accepted while cookiePurposeKeys is off, and after it is turned on only until
 // legacyCookieUntil, one session lifetime after this process started, by which time every
-// cookie the previous version issued has expired. A zero legacyCookieUntil accepts none.
+// cookie issued before has expired. A zero legacyCookieUntil then accepts none.
 func (c config) verifyCookie(p cookiePurpose, s string) ([]byte, bool) {
 	key := c.cookieKey(p)
 	if rest, ok := strings.CutPrefix(s, cookieFormatV2); ok {
 		s = rest
 	} else {
-		if !legacyCookiePurpose(p) || !time.Now().Before(c.legacyCookieUntil) {
+		if c.cookiePurposeKeys && !time.Now().Before(c.legacyCookieUntil) {
 			return nil, false
 		}
 		key = c.cookieSecret

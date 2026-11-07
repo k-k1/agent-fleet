@@ -123,13 +123,11 @@ inbox_recipes.go
 inbox_stream.go
 internal_git.go
 internal_git_browse.go
-key_strength.go
 limit_board.go
 limits.go
 login_provider_api.go
 main.go
 manager.go
-master_derivations.go
 master_key_guard.go
 mcp_agent_text.go
 mcp_oauth.go

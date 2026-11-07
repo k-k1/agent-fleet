@@ -260,3 +260,25 @@ func TestSealPlaintextMainNeedsAKey(t *testing.T) {
 		t.Errorf("exit %d, want 2", code)
 	}
 }
+
+// The pair swap leaves a reference that changed meanwhile, and the pair read sees both rows.
+func TestSwapSettingPairRespectsAChangedRef(t *testing.T) {
+	ctx := context.Background()
+	st := ssmAPIStores(t)["sqlite"]
+	must(t, st.SetSetting(ctx, "v", "plain"))
+	must(t, st.SetSetting(ctx, "r", "someone-set-this"))
+	if ok, err := st.SwapSettingPair(ctx, "v", "r", "plain", "sealed", "deployment"); err != nil || ok {
+		t.Fatalf("swap with a non-empty ref = %v, %v; want false", ok, err)
+	}
+	v, r, err := st.GetSettingPair(ctx, "v", "r")
+	if err != nil || v != "plain" || r != "someone-set-this" {
+		t.Errorf("pair after refused swap = %q %q %v; want both untouched", v, r, err)
+	}
+	must(t, st.SetSetting(ctx, "r", ""))
+	if ok, err := st.SwapSettingPair(ctx, "v", "r", "plain", "sealed", "deployment"); err != nil || !ok {
+		t.Fatalf("swap with an empty ref = %v, %v; want true", ok, err)
+	}
+	if v, r, _ := st.GetSettingPair(ctx, "v", "r"); v != "sealed" || r != "deployment" {
+		t.Errorf("pair after swap = %q %q", v, r)
+	}
+}

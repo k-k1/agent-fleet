@@ -235,8 +235,9 @@ func (s *SQL) SealPlaintextValue(ctx context.Context, table, id, oldValue, seale
 }
 
 // SwapSettingPair is SwapSetting for a value whose key reference is a second setting (the
-// engine tokens): both are written in one transaction, only while the value still is old
-// and the reference setting is empty or absent.
+// engine tokens): both are written in one transaction, only while the value still is old and
+// the reference setting is empty or absent. A reference that changed to anything non-empty in
+// the meantime is left alone and the swap reports false.
 func (s *SQL) SwapSettingPair(ctx context.Context, valueKey, refKey, old, value, ref string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -250,11 +251,45 @@ func (s *SQL) SwapSettingPair(ctx context.Context, valueKey, refKey, old, value,
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM deployment_setting WHERE key=?`, refKey); err != nil {
+	// An existing empty row is updated; an absent one is inserted. Either statement touches
+	// nothing when the reference is already non-empty.
+	res, err = tx.ExecContext(ctx, `UPDATE deployment_setting SET value=? WHERE key=? AND value=''`, ref, refKey)
+	if err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployment_setting(key, value) VALUES(?, ?)`, refKey, ref); err != nil {
+	if n, err := res.RowsAffected(); err != nil {
 		return false, err
+	} else if n == 0 {
+		res, err = tx.ExecContext(ctx, `INSERT INTO deployment_setting(key, value) VALUES(?, ?) ON CONFLICT(key) DO NOTHING`, refKey, ref)
+		if err != nil {
+			return false, err
+		}
+		if n, err := res.RowsAffected(); err != nil || n != 1 {
+			return false, err
+		}
 	}
 	return true, tx.Commit()
+}
+
+// GetSettingPair reads a sealed setting and its key reference setting in one statement, so a
+// seal that commits between two reads cannot pair an old value with a new reference.
+func (s *SQL) GetSettingPair(ctx context.Context, valueKey, refKey string) (value, ref string, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM deployment_setting WHERE key IN (?, ?)`, valueKey, refKey)
+	if err != nil {
+		return "", "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return "", "", err
+		}
+		switch k {
+		case valueKey:
+			value = v
+		case refKey:
+			ref = v
+		}
+	}
+	return value, ref, rows.Err()
 }
