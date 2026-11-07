@@ -514,12 +514,14 @@ the body, so it cannot mangle legitimate agent traffic. Requires `WafRateLimitPe
 ### ALB header hygiene and `AlbAccessLogBucket`
 
 The ALB always runs with `routing.http.drop_invalid_header_fields.enabled` set to `true`: a
-request carrying a malformed HTTP header is dropped at the load balancer instead of being
-forwarded to the Control Plane (the AWS default is `false`). Real browsers and the Agent's own
-clients never send one. There is no parameter for it; reverting means editing the template.
+header field the ALB considers invalid is removed and the request is still forwarded to the
+Control Plane without it (the AWS default, `false`, passes such fields through). The request is
+not rejected. Real browsers and the Agent's own clients do not send invalid fields. There is no
+parameter for it, so reverting means editing the template.
 
-`AlbAccessLogBucket` turns on ALB access logs. Empty (the default) = off, which is what a stack
-created before this parameter does after an update. Give it the NAME of an S3 bucket (no `s3://`,
+`AlbAccessLogBucket` turns on ALB access logs. Empty (the default) = off: the template then states
+`access_logs.s3.enabled=false` explicitly, so clearing the parameter on a stack that had logs on
+turns them off (an attribute left out of the template keeps its current value). Give it the NAME of an S3 bucket (no `s3://`,
 no prefix) in the same region as the stack, and the logs land under `AWSLogs/<account>/`. The
 bucket is yours, not the stack's, and the ALB can only write if the bucket policy allows it:
 for a region that has an ELB account id, grant `s3:PutObject` on
