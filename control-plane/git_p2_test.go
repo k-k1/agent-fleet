@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -170,5 +171,21 @@ func TestGitGCSweep(t *testing.T) {
 	newGitGC(newP2Env(t).st, dataRoot, 0, 0).sweep(context.Background())
 	if _, err := os.Stat(bare); err != nil {
 		t.Fatalf("bare gone after gc: %v", err)
+	}
+}
+
+// A repository created through the API must already verify incoming objects.
+func TestInternalGitCreateEnablesFsck(t *testing.T) {
+	e := newP2Env(t)
+	e.g.publicBaseURL = "https://af.example"
+	w, r := e.req("POST", "/api/internal-git/repos", map[string]string{"name": "fresh"})
+	e.g.withMembership(e.g.repoCreate)(w, r)
+	if w.Code != 200 {
+		t.Fatalf("create: want 200 got %d (%s)", w.Code, w.Body.String())
+	}
+	dir := filepath.Join(e.g.dataRoot, "git", "default", "fresh.git")
+	out, err := exec.Command("git", "--git-dir", dir, "config", "--local", "receive.fsckObjects").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "true" {
+		t.Fatalf("receive.fsckObjects = %q, %v; want true", out, err)
 	}
 }
