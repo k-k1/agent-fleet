@@ -799,17 +799,20 @@ var secretQueryKeys = map[string]bool{
 }
 
 // loggedURI is the request URI as the access log may record it. The whole query goes on an
-// OAuth or dev-IdP path; elsewhere only the credential-bearing parameters.
+// OAuth or dev-IdP path; elsewhere only the credential-bearing parameters. The path is
+// always the escaped form: a decoded path can carry control characters that split one log
+// entry into several, and this runs before authentication.
 func loggedURI(u *url.URL) string {
 	if u.RawQuery == "" {
 		return u.RequestURI()
 	}
+	ep := u.EscapedPath()
 	if strings.Contains(u.Path, "oauth") || u.Path == devIdPPath || strings.HasPrefix(u.Path, devIdPPath+"/") {
-		return u.Path + "?<redacted>"
+		return ep + "?<redacted>"
 	}
 	q, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
-		return u.Path + "?<redacted>"
+		return ep + "?<redacted>"
 	}
 	hit := false
 	for k := range q {
@@ -818,10 +821,18 @@ func loggedURI(u *url.URL) string {
 			hit = true
 		}
 	}
+	// The preview entry routes carry the previewed app's own query inside "next"
+	// (redirectToSubdomain moves it there), so the top-level names above do not see it.
+	if u.Path == previewOwnOpenPath || u.Path == previewOpenPath {
+		if nx := q.Get("next"); strings.Contains(nx, "?") {
+			q.Set("next", nx[:strings.Index(nx, "?")]+"?<redacted>")
+			hit = true
+		}
+	}
 	if !hit {
 		return u.RequestURI()
 	}
-	return u.Path + "?" + q.Encode()
+	return ep + "?" + q.Encode()
 }
 
 // statusWriter captures the response status for the access log.

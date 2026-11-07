@@ -219,7 +219,7 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		c.writeLinkResult(w, r, linkErrTaken, p.Label(auth.PreferredUILang(r)), next)
 		return
 	case err != nil:
-		log.Printf("oauth: link attach %s/%s: %v", pr.Provider, pr.Subject, err)
+		log.Printf("oauth: link attach %s/%q: %v", pr.Provider, pr.Subject, err)
 		c.writeLinkResult(w, r, linkErrFailed, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}
