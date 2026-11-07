@@ -145,6 +145,24 @@ func (r *connRegistry) addConn(wsID, session string, attention bool) {
 	r.mu.Unlock()
 }
 
+// addAttentionConnAt registers a long-lived attention connection that is not a
+// terminal (the visible browser pane) and raises the workspace input clock to `at`
+// without moving it backwards. Unlike addConn it does not stamp "now": the pane's
+// presence is the member's last real interaction, not the act of showing it.
+func (r *connRegistry) addAttentionConnAt(wsID string, at time.Time) {
+	if r == nil || wsID == "" {
+		return
+	}
+	r.mu.Lock()
+	r.wsConns[wsID]++
+	r.wsAttn[wsID]++
+	r.lastSeen[wsID] = time.Now()
+	if at.After(r.lastInput[wsID]) {
+		r.lastInput[wsID] = at
+	}
+	r.mu.Unlock()
+}
+
 func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 	if r == nil || wsID == "" {
 		return
