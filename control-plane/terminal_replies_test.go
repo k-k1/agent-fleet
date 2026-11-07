@@ -139,7 +139,7 @@ func TestAddConnOptSkipsInputClocks(t *testing.T) {
 }
 
 // A connection flap must not cost the protection of someone who typed a moment ago,
-// whichever socket closes first (#3530 review).
+// whichever socket closes first.
 func TestAutoReconnectKeepsRecentInputAcrossFlap(t *testing.T) {
 	grace := 30 * time.Minute
 	old := presenceGrace
