@@ -265,6 +265,39 @@ Cognito / GitLab が設定だけで載る（`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID
 - **id token の署名検証は行わない**（意図どおり）。認可コードフロー・client secret 付き・
   トークンエンドポイントから TLS 直受けのため。テナント id はそのペイロードから読む。
   **フロントチャネルの経路を足すなら JWKS 検証が必須**。JWT ライブラリ依存はゼロ。
+- **テナント定義 provider の issuer はテナント側の第三者**なので、CP は discovery 文書が
+  指す先を信用しない。issuer は `https` 必須（loopback の `http` は env 設定の provider だけ）。
+  テナント provider の issuer への通信（discovery・token・userinfo）は、dial 時に非公開宛先を
+  拒否し（`egressallow.AddrRefused`：gateway relay の広い範囲で private を含む。§7.8 の forward proxy が拒否する
+  loopback・link-local・未指定より広い）、リダイレクトを辿らないクライアントで行う。
+  authorization・token・userinfo の各 endpoint は `https` で、issuer の登録可能ドメイン
+  （Public Suffix 考慮）上にあること。issuer と endpoint でドメインが分かれる IdP ファミリー
+  （Google の `googleapis.com`、Cognito 既定の `amazoncognito.com`、Microsoft の userinfo 用
+  `graph.microsoft.com` とソブリンクラウドの相当ドメイン）を例外として組み込む。独自ドメインの
+  Cognito など endpoint が別の場所にある IdP は、運用者が `AF_TENANT_IDP_ENDPOINT_DOMAINS`
+  （CSV）にそのドメインを列挙して承認する。判断はテナントのフォームではなくデプロイ設定に置き、
+  スキーマ変更は要らない。それ以外はサインインが失敗してログに残る。保存時の pairwise 確認は
+  discovery の 1 項目を読むだけで endpoint を呼ばないため、endpoint の固定は掛けない。規則より前に作られて違反する行は削除も書き換えもしない：
+  保存・承認済みのまま、https でない issuer はボタンが隠れて警告ログ、issuer のサイト外の endpoint は
+  サインインが理由付きのログと共に失敗する。行（または IdP の discovery 文書）を直せば戻る。
+  env 設定の provider は変更なし。
+- **テナント行が申告したドメインは、デプロイ自身のものと突き合わせて表示する。** テナント間の
+  「1 ドメイン 1 テナント」検査に加え、承認画面（レジスタ、および super_admin が見るときのテナント
+  一覧）で、申告ドメインのうち `AF_OAUTH_ALLOWED_DOMAINS`・許可ファイルの `@domain` 行・env
+  provider 自身のドメイン一覧・`SUPER_ADMIN_EMAILS` のアドレスのドメインに含まれるものを、
+  どれに当たるかとともに示す。拒否ではなく警告で、保存せず読むたびに再計算する（行を変えなくても
+  デプロイ側の一覧は変わるため）。ゲートは super_admin の承認であり、共有ドメイン上の子会社が自前の
+  IdP を使うことは正当にありうる。同じ重なりは、保存と承認のときにテナントを持たないデプロイ全体の別の監査行として残す（読めるのは super_admin だけ）。テナント管理者には
+  デプロイのログインドメインが漏れるため見せない。
+- **認可コードフローは、開始したブラウザに結び付ける。** サインインごとに PKCE verifier
+  （RFC 7636、S256）と、OIDC で `openid` スコープがあるときは nonce を作り、どちらも署名済み
+  state cookie に持つ。authorize 要求に `code_challenge` と `nonce`、token 要求に `code_verifier`
+  を載せ、ID token に `nonce` があれば照合する（IdP が返さなくても拒否はしない）。コードが
+  別のブラウザに漏れても、そこでは引き換えられない。Google・env の OIDC・GitHub・テナント
+  定義の provider のすべてに適用する。`code_challenge` を拒否する IdP は provider ごとに
+  `AF_OIDC_<ID>_PKCE=off`（GitHub は `AF_GITHUB_PKCE=off`）で外せる。テナント行には外す手段は
+  ない。CP 更新時に進行中だったサインインの state cookie には verifier が無く、期限切れと同じ
+  「session」エラーでログイン画面に戻す。アカウント連携フローは対象外。
 
 **GitHub だけは専用アダプタ**（OIDC ではない）。許可は**独立した 2 つの門の AND**:
 
@@ -467,6 +500,11 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 | GitHub でサインイン中の人の access token | **プロセス内メモリのみ** | CP のみ。再起動で消え、その人は再ログインを求められる |
 | PAT | DB に SHA-256 ハッシュのみ | 平文は発行時 1 回だけ表示 |
 
+テナントの MCP サーバーのヘッダー値は、入力した宛先に結び付く。保存済みサーバーの URL が別のホストまたは
+ポートに変わるとき、または https から平文 http に下がるとき、マスクされた（`***`）値は保存行から補われず `mcp_header_secret_reenter` で拒否する
+（Console はフォーム上でその行を空にする）。編集の監査行には変更前後の URL を残す。client secret は
+同様に issuer と client id に結び付く。
+
 ⚠️ **`AF_MASTER_KEY` が無いと保管庫は平文になる。** マスター鍵が無ければ DEK も無く、agent は同じ
 保管庫を暗号化せずに `secrets.json` として書く。`AUTH=dev` ではそれが意図どおり。それ以外の `AUTH` では
 CP は起動するが、起動時に `WARNING` をログに出し、super_admin の `GET /api/admin/tenants` の
@@ -556,8 +594,15 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 実装済み:
 
 - **forward proxy**。同じバイナリのサブコマンド（`egress-proxy`・`AF_EGRESS_LISTEN` 既定 `:3128`）。
-  CONNECT / HTTP 要求のホスト名で判定し、**TLS は復号しない**。loopback・link-local（クラウドの
-  メタデータのアドレスを含む）・未指定アドレスは、どのモードでも検査して拒否する設計である。
+  CONNECT / HTTP 要求のホスト名で判定し、**TLS は復号しない**。内部宛先は log-only を含む
+  どのモードでも拒否する。検査は dial 自体に掛けた `net.Dialer.Control` フックで行い（CONNECT 経路と、
+  平文 HTTP 用の専用 transport が共用する）、名前を別に引き直した結果ではなく実際に接続する
+  アドレスを判定する。拒否するのは loopback（proxy ホスト自身）・link-local（クラウドの
+  メタデータのアドレスを含む）・未指定アドレスで、IPv4-mapped IPv6 アドレスは対応する IPv4
+  アドレスとして判定する（`egressallow.ProxyAddrRefused`）。private（RFC 1918・ユニークローカル）は
+  意図的に拒否しない：Workspace は proxy 経由で社内 Git・MCP・クラスタ内サービスへ届く。AWS gateway
+  relay とテナント定義 OIDC の issuer（§7.3.1）はより広い範囲（`egressallow.AddrRefused`：private・
+  共有アドレス空間などの非公開レンジ）を拒否する。
 - イベントは CP へ（`POST /internal/egress`・`AF_EGRESS_TOKEN`）送って日次集計（`egress_daily`）、
   ポリシーは `GET /internal/egress/policy` で配る。
   報告は at-least-once：proxy は 10 秒ごとに送信し（タイムアウト 10 秒・固定間隔・バックオフ

@@ -310,6 +310,48 @@ need no edit.
   over TLS. The tenant id is read from its payload. **If a front-channel path is ever
   added, JWKS verification becomes mandatory.** There is no JWT library dependency at
   all.
+- **A tenant-defined provider's issuer is a tenant-side party**, so the CP does not trust
+  where its discovery document points. The issuer must be `https` (the loopback `http`
+  carve-out is for env-configured providers only). Every request to a tenant provider's
+  issuer, discovery and token and userinfo alike, goes through a client that refuses
+  non-public destinations at dial time (`egressallow.AddrRefused`: the gateway relay's wide set, private ranges included, which is
+  wider than the forward proxy's loopback / link-local / unspecified in §7.8)
+  and never follows a redirect. The authorization, token and userinfo endpoints must be
+  `https` and on the issuer's registrable domain (public-suffix aware), with built-in
+  exceptions for IdP families that split the two (Google's `googleapis.com`, Cognito's
+  default `amazoncognito.com`, Microsoft's `graph.microsoft.com` for userinfo and its
+  sovereign-cloud equivalents). An IdP whose endpoints live elsewhere, such as a Cognito pool
+  behind its own domain, is admitted by the operator listing that domain in
+  `AF_TENANT_IDP_ENDPOINT_DOMAINS` (CSV); the decision stays in deployment configuration
+  rather than a tenant form, which needs no schema change. Anything else fails the sign-in
+  and is logged. The save-time pairwise probe reads one discovery field and calls no endpoint,
+  so it is not subject to the endpoint pin. A tenant row that
+  predates the rules and fails them is not deleted or rewritten: it stays stored and
+  approved, a non-https issuer hides its button with a logged warning, and an endpoint
+  outside the issuer's site fails the sign-in with a logged reason; editing the row (or the
+  IdP's discovery document) fixes it.
+  Env-configured providers are unchanged.
+- **A tenant row's claimed domains are shown against the deployment's own.** Besides the
+  one-domain-one-tenant check among tenants, the approval views (the register, and the
+  tenant's list when the caller is a super_admin) list each claimed domain that is also in
+  `AF_OAUTH_ALLOWED_DOMAINS`, an `@domain` line of the allowlist file, an env provider's own
+  domain list, or the domain of a `SUPER_ADMIN_EMAILS` address, and say which. It is a
+  warning, not a refusal, and is recomputed on every read rather than stored (the
+  deployment's lists change without the row changing): approval by a super_admin is the
+  gate, and a deployment may legitimately let a subsidiary on a shared domain use its own
+  IdP. The same overlap is written as a separate deployment-wide audit row (no tenant) at save and at approval, so only a super_admin reads it. A
+  tenant administrator is not shown it, since it would reveal the deployment's login domains.
+- **The authorization-code flow is bound to the browser that started it.** Each sign-in
+  carries a PKCE verifier (RFC 7636, S256) and, for OIDC with the `openid` scope, a nonce,
+  both kept in the signed state cookie; the authorize request sends `code_challenge` and
+  `nonce`, the token request sends `code_verifier`, and the ID token's `nonce` is compared
+  when it carries one (an IdP that does not echo it is not refused). A code that leaks to
+  another browser therefore cannot be redeemed there. It applies to Google, env OIDC,
+  GitHub and tenant-defined providers alike. An IdP that rejects `code_challenge` is opted
+  out per provider with `AF_OIDC_<ID>_PKCE=off` (GitHub: `AF_GITHUB_PKCE=off`); tenant rows
+  have no opt-out. A sign-in that was in flight when the CP was updated has a state cookie
+  without a verifier and is sent back to the login page with the "session" error, like an
+  expired one. The account-link flow is not covered.
 
 **GitHub is a separate adapter** — it is not OIDC. Permission is **the AND of two
 independent gates**:
@@ -568,6 +610,12 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 | A signed-in GitHub user's access token | **process memory only** | the CP only; lost on restart, and that person is asked to sign in again |
 | Personal access tokens | only a SHA-256 hash, in the database | shown in plaintext exactly once, at issue |
 
+A tenant MCP server's header values stay with the destination they were entered for: when the
+URL of a stored server moves to a different host or port, or from https down to plain http, a masked (`***`) value is refused with
+`mcp_header_secret_reenter` instead of being filled in from the stored row (the Console blanks
+those rows in the form), and the audit line of the edit records the old and the new URL. A
+client secret is bound the same way to its issuer and client id.
+
 ⚠️ **Without `AF_MASTER_KEY` the store is plaintext.** No master key means no DEK, and the
 agent then writes the same store as `secrets.json`, unencrypted. That is the intent under
 `AUTH=dev` (which is itself opt-in outside native, above). Under any other `AUTH` the CP starts anyway but logs a `WARNING` at start-up and
@@ -672,9 +720,16 @@ Implemented:
 
 - **A forward proxy**, run as a subcommand of the same binary (`egress-proxy`,
   `AF_EGRESS_LISTEN`, default `:3128`). It decides by the host name of the CONNECT or
-  HTTP request and **does not decrypt TLS**. It is designed to check for loopback,
-  link-local (the cloud metadata address included) and unspecified destinations and
-  refuse them in every mode.
+  HTTP request and **does not decrypt TLS**. It refuses internal destinations in every
+  mode, including log-only. The check is a `net.Dialer.Control` hook on the dial itself (the
+  CONNECT path and a dedicated plain-HTTP transport share it), so it judges the address
+  that is actually connected, not a separate lookup of the name. The refused ranges are
+  loopback (the proxy host itself), link-local (the cloud metadata address included) and
+  unspecified, with an IPv4-mapped IPv6 address judged as the IPv4 address it names
+  (`egressallow.ProxyAddrRefused`). Private ranges (RFC 1918, unique-local) are deliberately
+  not refused: workspaces reach internal Git, MCP and cluster services through the proxy.
+  The AWS gateway relay refuses the wider set (`egressallow.AddrRefused`: private, shared
+  address space and the other non-public ranges), and so do tenant-defined OIDC issuers (§7.3.1).
 - Events go to the CP (`POST /internal/egress`, `AF_EGRESS_TOKEN`) and are aggregated
   daily (`egress_daily`); the policy is served back from `GET /internal/egress/policy`.
   Reporting is at-least-once: the proxy flushes every 10 s (10 s request timeout, fixed

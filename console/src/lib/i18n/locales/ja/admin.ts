@@ -120,6 +120,7 @@ export const admin = {
   "admin.mcp_oauth_secret_hint":
     "confidential クライアントのときだけ入力します。シークレットは暗号化して保存され、Agent Fleet のコントロールプレーンの外には出ません。トークンの要求はコントロールプレーンが行うので、コントロールプレーンから認可サーバーに到達できる必要があります。public クライアントなら空のままにしてください。",
   "admin.mcp_oauth_secret_drop": "保存したシークレットを削除する",
+  "admin.mcp_headers_host_moved": "URL が別のホストを指しているため、保存済みのヘッダー値を消しました。新しいホスト向けの値を入力し直してください。",
   "admin.mcp_oauth_secret_reenter": "issuer かクライアント ID を変えたので、保存したシークレットは使えません。シークレットを入力し直すか、削除して public クライアントにしてください。",
   "admin.mcp_oauth_note":
     "資格情報は配布しません。各メンバーが「設定 > 接続 > MCP サーバー（セッションで使う）」から自分のアカウントでサインインし、サインインした人のセッションにだけこのサーバーが届きます。",
@@ -643,6 +644,9 @@ export const admin = {
     "このサインイン方法を削除します。この方式で入っていた人はサインインできなくなりますが、" +
     "ワークスペース・home・保存済みの認証情報は残ります。",
   "admin.idp_register": "テナント定義のサインイン方法",
+  "admin.idp_domain_overlap": "このサインイン方式が申告したドメインは、デプロイ自体のログインドメインと重なっています。承認前に確認してください:",
+  "admin.idp_overlap_login_domains": "デプロイのログイン許可",
+  "admin.idp_overlap_super_admin": "デプロイ管理者のドメイン",
   "admin.idp_pending_count": "承認待ち {n} 件",
   "admin.idp_register_none": "テナントが定義したサインイン方法はまだありません。",
   "admin.idp_register_hint":

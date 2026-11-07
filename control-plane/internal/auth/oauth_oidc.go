@@ -2,19 +2,25 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"io"
 	"log"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 )
 
 // Generic OIDC login client (docs/log/61 §61.6 + ADR0043 decision 1). One implementation
@@ -60,7 +66,17 @@ var ErrNotAllowed = errors.New("principal not allowed")
 
 // oidcHTTPClient bounds every IdP call: an unresponsive IdP must not pin a CP
 // request goroutine (http.DefaultClient has no timeout).
-var oidcHTTPClient = &http.Client{Timeout: 20 * time.Second}
+const oidcClientTimeout = 20 * time.Second
+
+// NewTenantHTTPClient builds the client a tenant-defined provider (and the save-time
+// issuer probe) reaches its issuer with: public addresses only, no redirects (see
+// egressallow.NewPublicOnlyClient). It is a variable only so tests can aim a provider at a
+// local stub; nothing else assigns it.
+var NewTenantHTTPClient = func(timeout time.Duration) *http.Client {
+	return egressallow.NewPublicOnlyClient(timeout)
+}
+
+var oidcHTTPClient = &http.Client{Timeout: oidcClientTimeout}
 
 type Endpoints struct {
 	Issuer    string `json:"issuer"`
@@ -118,6 +134,16 @@ type OIDCProvider struct {
 	DBAllowed     func(ctx context.Context, email string) bool
 
 	HTTPClient *http.Client
+	// PinEndpointHosts makes discovery refuse an authorization / token / userinfo endpoint
+	// that is not https or whose host is outside the issuer's site (endpointHostAllowed).
+	// Set for tenant-defined providers only: their issuer is a tenant-side party, and the
+	// CP posts that tenant's client secret to whatever the discovery document names.
+	// Env-configured providers are the operator's own and keep their endpoints as given.
+	PinEndpointHosts bool
+	// NoPKCE turns off the S256 code_challenge for an IdP that rejects the parameter
+	// (AF_OIDC_<ID>_PKCE=off). PKCE is on by default: it is what stops an authorization
+	// code that leaks to another browser from being redeemed there.
+	NoPKCE bool
 
 	mu    sync.Mutex
 	ep    Endpoints
@@ -203,13 +229,125 @@ func (p *OIDCProvider) endpoints(ctx context.Context) (Endpoints, error) {
 		!strings.Contains(ep.Issuer, "{tenantid}") {
 		return Endpoints{}, fmt.Errorf("discovery %s: issuer mismatch (got %q)", du, ep.Issuer)
 	}
+	if p.PinEndpointHosts {
+		if err := checkEndpointHosts(p.Issuer, ep); err != nil {
+			return Endpoints{}, fmt.Errorf("discovery %s: %w", du, err)
+		}
+	}
 	p.ep, p.epExp = ep, time.Now().Add(oidcDiscoveryTTL)
 	return ep, nil
 }
 
+// endpointHostFamilies lists the IdP families whose endpoints legitimately live on a
+// different site than their issuer: Google's token and userinfo endpoints are on
+// googleapis.com, a Cognito user pool's issuer is on amazonaws.com while its default hosted
+// endpoints are on amazoncognito.com, and Microsoft's v2 discovery names Graph for userinfo
+// (graph.microsoft.com/oidc/userinfo) with the sovereign clouds alike. Each pair is
+// (issuer host suffix, endpoint host suffix).
+var endpointHostFamilies = [][2]string{
+	{"google.com", "googleapis.com"},
+	{"amazonaws.com", "amazoncognito.com"},
+	{"login.microsoftonline.com", "graph.microsoft.com"},
+	{"login.microsoftonline.us", "graph.microsoft.us"},
+	{"login.partner.microsoftonline.cn", "microsoftgraph.chinacloudapi.cn"},
+}
+
+// TenantEndpointDomainsEnv lists domains (CSV) the operator has approved as endpoint hosts for
+// every tenant-defined issuer, on top of the built-in families. It is how a Cognito user pool
+// behind its own domain, or any other IdP whose endpoints live on a different site from its
+// issuer, is admitted without a schema change: the decision is the operator's, in deployment
+// configuration, not the tenant's in a form.
+const TenantEndpointDomainsEnv = "AF_TENANT_IDP_ENDPOINT_DOMAINS"
+
+// hostInDomain reports host == domain or a subdomain of it.
+func hostInDomain(host, domain string) bool {
+	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
+// endpointHostAllowed reports whether an endpoint host belongs with the issuer's host: the
+// same registrable domain (public-suffix aware, so two tenants of a shared hosting domain
+// are different sites), or a pair in endpointHostFamilies.
+func endpointHostAllowed(issuerHost, endpointHost string) bool {
+	issuerHost, endpointHost = strings.ToLower(issuerHost), strings.ToLower(endpointHost)
+	if issuerHost == "" || endpointHost == "" {
+		return false
+	}
+	if _, err := netip.ParseAddr(issuerHost); err == nil {
+		return issuerHost == endpointHost // an IP literal has no registrable domain
+	}
+	if _, err := netip.ParseAddr(endpointHost); err == nil {
+		return false
+	}
+	if a, err := publicsuffix.EffectiveTLDPlusOne(issuerHost); err == nil {
+		if b, err := publicsuffix.EffectiveTLDPlusOne(endpointHost); err == nil && a == b {
+			return true
+		}
+	} else if issuerHost == endpointHost {
+		return true // a bare suffix has no registrable domain: exact match only
+	}
+	for _, f := range endpointHostFamilies {
+		if hostInDomain(issuerHost, f[0]) && hostInDomain(endpointHost, f[1]) {
+			return true
+		}
+	}
+	for _, d := range envx.SplitCSV(os.Getenv(TenantEndpointDomainsEnv)) {
+		if hostInDomain(endpointHost, strings.ToLower(strings.TrimPrefix(strings.TrimSpace(d), "."))) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkEndpointHosts applies endpointHostAllowed, and https, to the three endpoints a login
+// uses. An empty userinfo endpoint is fine (the id_token carries the claims).
+func checkEndpointHosts(issuer string, ep Endpoints) error {
+	iu, err := url.Parse(issuer)
+	if err != nil {
+		return fmt.Errorf("issuer %q is not a URL", issuer)
+	}
+	for _, e := range []struct{ name, raw string }{
+		{"authorization_endpoint", ep.Authorize}, {"token_endpoint", ep.Token}, {"userinfo_endpoint", ep.Userinfo},
+	} {
+		if e.raw == "" {
+			continue
+		}
+		u, err := url.Parse(e.raw)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+			return fmt.Errorf("%s is not an https URL", e.name)
+		}
+		if !endpointHostAllowed(iu.Hostname(), u.Hostname()) {
+			return fmt.Errorf("%s host %q is outside the issuer's domain", e.name, u.Hostname())
+		}
+	}
+	return nil
+}
+
 // --- authorize -------------------------------------------------------------
 
+// NewFlow implements FlowProvider: a PKCE verifier unless the provider opted out, and a
+// nonce when the scope asks for an ID token.
+func (p *OIDCProvider) NewFlow() FlowParams {
+	var f FlowParams
+	if !p.NoPKCE {
+		f.CodeVerifier = newVerifier()
+	}
+	for _, sc := range strings.Fields(p.Scope) {
+		if sc == "openid" {
+			f.Nonce = newNonce()
+			break
+		}
+	}
+	return f
+}
+
+// AuthorizeURL is the plain authorize request, without PKCE or nonce; the login handler
+// uses AuthorizeURLFlow.
 func (p *OIDCProvider) AuthorizeURL(ctx context.Context, state, redirectURI string) (string, error) {
+	return p.AuthorizeURLFlow(ctx, state, redirectURI, FlowParams{})
+}
+
+// AuthorizeURLFlow adds code_challenge (S256) and nonce for the parts of f that are set.
+func (p *OIDCProvider) AuthorizeURLFlow(ctx context.Context, state, redirectURI string, f FlowParams) (string, error) {
 	ep, err := p.endpoints(ctx)
 	if err != nil {
 		return "", err
@@ -226,6 +364,13 @@ func (p *OIDCProvider) AuthorizeURL(ctx context.Context, state, redirectURI stri
 	}
 	for k, vs := range p.ExtraAuth {
 		q[k] = vs
+	}
+	if f.CodeVerifier != "" {
+		q.Set("code_challenge", PKCEChallenge(f.CodeVerifier))
+		q.Set("code_challenge_method", "S256")
+	}
+	if f.Nonce != "" {
+		q.Set("nonce", f.Nonce)
 	}
 	sep := "?"
 	if strings.Contains(ep.Authorize, "?") {
@@ -261,6 +406,7 @@ type oidcClaims struct {
 	PreferredUsername string   `json:"preferred_username"`
 	UPN               string   `json:"upn"` // Entra's user Principal name
 	TID               string   `json:"tid"` // Entra tenant id (never in userinfo)
+	Nonce             string   `json:"nonce"`
 	// raw is the same payload as a plain object. AF_OIDC_<ID>_LINK_CLAIM and
 	// tenant_idp.link_claim name a claim at RUNTIME, so it cannot be a struct field
 	// — see claimString.
@@ -301,7 +447,15 @@ func decodeIDTokenClaims(idToken string) (oidcClaims, error) {
 	return c, nil
 }
 
+// Exchange is the plain code exchange, without a verifier or nonce.
 func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (Principal, error) {
+	return p.ExchangeFlow(ctx, code, redirectURI, FlowParams{})
+}
+
+// ExchangeFlow sends code_verifier when f carries one, and compares the ID token's nonce
+// with f.Nonce when the token carries a nonce at all (an IdP that does not echo one is
+// not refused: the nonce is defence in depth behind the signed state, not a requirement).
+func (p *OIDCProvider) ExchangeFlow(ctx context.Context, code, redirectURI string, f FlowParams) (Principal, error) {
 	ep, err := p.endpoints(ctx)
 	if err != nil {
 		return Principal{}, err
@@ -309,6 +463,9 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (
 	form := url.Values{
 		"code": {code}, "client_id": {p.ClientID}, "client_secret": {p.ClientSecret},
 		"redirect_uri": {redirectURI}, "grant_type": {"authorization_code"},
+	}
+	if f.CodeVerifier != "" {
+		form.Set("code_verifier", f.CodeVerifier)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.Token, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -342,6 +499,9 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (
 		if idc, err = decodeIDTokenClaims(tok.IDToken); err != nil {
 			log.Printf("oauth: provider %s: %v (continuing with userinfo)", p.ProviderID, err)
 		}
+	}
+	if f.Nonce != "" && idc.Nonce != "" && subtle.ConstantTimeCompare([]byte(idc.Nonce), []byte(f.Nonce)) != 1 {
+		return Principal{}, ErrNonceMismatch
 	}
 	// Tenant pinning (decision 7): with ALLOWED_TIDS set, the token must name one of
 	// those tenants. A missing tid is a denial, not a pass — a personal Microsoft
@@ -518,6 +678,15 @@ func oidcEnv(id, key string) string {
 	return strings.TrimSpace(os.Getenv("AF_OIDC_" + strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_" + key))
 }
 
+// pkceOptOut reads an AF_*_PKCE value: only an explicit off / false / 0 / no disables PKCE.
+func pkceOptOut(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "false", "0", "no", "disabled":
+		return true
+	}
+	return false
+}
+
 // ValidProviderID keeps ids to what can round-trip through an env var name and a
 // URL query parameter.
 func ValidProviderID(id string) bool {
@@ -533,6 +702,14 @@ func ValidProviderID(id string) bool {
 		}
 	}
 	return true
+}
+
+// ValidTenantIssuerURL is ValidIssuerURL without the loopback carve-out: a tenant-defined
+// issuer must be https. The carve-out exists for a developer's local IdP, which is the
+// operator's own (env) configuration; a tenant row that names loopback names the CP host.
+func ValidTenantIssuerURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme == "https" && u.Hostname() != ""
 }
 
 // ValidIssuerURL requires an https issuer, with the customary loopback carve-out
@@ -675,6 +852,9 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 		// still real — naming `email` here makes rule 1.5 an email join for every
 		// provider sharing that realm — so the guide says so in as many words.
 		p.LinkClaim = strings.ToLower(oidcEnv(id, "LINK_CLAIM"))
+		// AF_OIDC_<ID>_PKCE=off is the per-provider opt-out for an IdP that rejects
+		// code_challenge; anything else (or unset) keeps PKCE on.
+		p.NoPKCE = pkceOptOut(oidcEnv(id, "PKCE"))
 		if v := oidcEnv(id, "PROMPT"); v != "" {
 			p.Prompt = strings.TrimSpace(strings.ToLower(v))
 			if p.Prompt == "none" || p.Prompt == "-" {
@@ -700,7 +880,10 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 // app registration a different `sub` for the same person (docs/log/61 §61.17.4 (b)).
 // Read from discovery, never guessed from the hostname.
 func IssuerUsesPairwiseSubjects(ctx context.Context, issuer string) (bool, error) {
-	probe := &OIDCProvider{ProviderID: "probe", Issuer: issuer}
+	// The issuer is what a tenant administrator typed, so the probe is held to the same
+	// public-only, no-redirect client as a tenant provider's own discovery. It reads one field
+	// and calls no endpoint, so the endpoint-host pin is not applied to it.
+	probe := &OIDCProvider{ProviderID: "probe", Issuer: issuer, HTTPClient: NewTenantHTTPClient(5 * time.Second)}
 	ep, err := probe.endpoints(ctx)
 	if err != nil {
 		return false, err

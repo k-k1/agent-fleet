@@ -38,10 +38,13 @@ type tenantIdPAPI struct {
 	// deployment itself uses is the commonest form of that, and the DB rows alone
 	// would not see it.
 	provs []auth.LoginProvider
+	// deployDomains reads the deployment's own login domains for the overlap warning
+	// (tenant_idp_overlap.go); nil means no warning is computed.
+	deployDomains deploymentDomains
 }
 
 func newTenantIdPAPI(m *manager, provs []auth.LoginProvider) tenantIdPAPI {
-	return tenantIdPAPI{memberAuth{m}, provs}
+	return tenantIdPAPI{memberAuth: memberAuth{m}, provs: provs}
 }
 
 // tenantIdPBody is the wire shape. Secret is write-only: it is never returned, and
@@ -79,6 +82,9 @@ type tenantIdPBody struct {
 	// provider. An approved row whose issuer stopped resolving shows no button, and
 	// without this the tenant cannot tell that from "not approved yet".
 	Usable bool `json:"usable,omitempty"`
+	// DomainOverlaps is read-only and sent to a super_admin only (the queue, and the list
+	// when the caller is one): a claimed domain the deployment itself signs people in on.
+	DomainOverlaps []domainOverlap `json:"domain_overlaps,omitempty"`
 }
 
 func (a tenantIdPAPI) rowToBody(row store.TenantIdP, slug string, usable bool) tenantIdPBody {
@@ -101,7 +107,7 @@ func (a tenantIdPAPI) rowToBody(row store.TenantIdP, slug string, usable bool) t
 
 // list (GET /api/admin/tenants/{slug}/idp) — the tenant's own providers.
 func (a tenantIdPAPI) list(w http.ResponseWriter, r *http.Request) {
-	_, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+	ident, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -113,7 +119,11 @@ func (a tenantIdPAPI) list(w http.ResponseWriter, r *http.Request) {
 	out := make([]tenantIdPBody, 0, len(rows))
 	for _, row := range rows {
 		id := auth.TenantProviderID(t.Slug, row.Name)
-		out = append(out, a.rowToBody(row, t.Slug, a.mgr.tenantIdP.ProviderFor(r.Context(), id) != nil))
+		body := a.rowToBody(row, t.Slug, a.mgr.tenantIdP.ProviderFor(r.Context(), id) != nil)
+		if ident.Role == "super_admin" {
+			body.DomainOverlaps = a.overlapsFor(row.AllowedDomains)
+		}
+		out = append(out, body)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providers": out, "tenant": t.Slug})
 }
@@ -130,7 +140,9 @@ func (a tenantIdPAPI) queue(w http.ResponseWriter, r *http.Request, _ store.Iden
 	for _, row := range rows {
 		slug := tenants[row.TenantID].Slug
 		id := auth.TenantProviderID(slug, row.Name)
-		out = append(out, a.rowToBody(row, slug, a.mgr.tenantIdP.ProviderFor(r.Context(), id) != nil))
+		body := a.rowToBody(row, slug, a.mgr.tenantIdP.ProviderFor(r.Context(), id) != nil)
+		body.DomainOverlaps = a.overlapsFor(row.AllowedDomains)
+		out = append(out, body)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return statusRank(out[i].Status) < statusRank(out[j].Status)
@@ -283,6 +295,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 	a.audit(r, ident, t.ID, action, auth.TenantProviderID(t.Slug, row.Name),
 		"kind="+row.Kind+" issuer="+row.Issuer+" trust="+row.Trust+" orgs="+row.AllowedOrgs+
 			" domains="+row.AllowedDomains+" link_claim="+row.LinkClaim+" status="+row.Status)
+	a.auditOverlap(r, ident, t.Slug, action, auth.TenantProviderID(t.Slug, row.Name), row.AllowedDomains)
 	writeJSON(w, http.StatusOK, a.rowToBody(row, t.Slug, false))
 }
 
@@ -430,6 +443,9 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mgr.tenantIdP.Invalidate()
 	a.audit(r, ident, t.ID, "tenant_idp."+status, auth.TenantProviderID(t.Slug, row.Name), "issuer="+row.Issuer)
+	if status == "active" {
+		a.auditOverlap(r, ident, t.Slug, "tenant_idp.active", auth.TenantProviderID(t.Slug, row.Name), row.AllowedDomains)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": row.ID, "status": status})
 }
 
@@ -617,9 +633,9 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 		return &apiError{http.StatusBadRequest, "tenant_idp_kind_invalid",
 			"kind must be " + auth.TenantIdPKindOIDC + " or " + auth.TenantIdPKindGitHub}
 	}
-	if !auth.ValidIssuerURL(b.Issuer) {
+	if !auth.ValidTenantIssuerURL(b.Issuer) {
 		return &apiError{http.StatusBadRequest, "tenant_idp_issuer_invalid",
-			"issuer must be the IdP's https issuer URL (http is accepted only for loopback)"}
+			"issuer must be the IdP's https issuer URL"}
 	}
 	// Decision 7, on the DB side: a multi-tenant Entra endpoint accepts every Microsoft
 	// account in the world, and a personal account can rewrite its own email — so the
@@ -658,4 +674,66 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 			"list the email domains this sign-in method may admit (an empty list would admit nobody)"}
 	}
 	return nil
+}
+
+// domainOverlap says that a domain a tenant-defined sign-in method claims is also one the
+// deployment itself signs people in on (Source is auth.OverlapLoginDomains or
+// auth.OverlapSuperAdmin). It is a warning for the super_admin who approves the row, not a
+// refusal and not stored: the deployment's lists change without the row changing, so it is
+// recomputed on every read.
+type domainOverlap struct {
+	Domain string `json:"domain"`
+	Source string `json:"source"`
+}
+
+// deploymentDomains reads the deployment's own login domains live (auth.DeploymentDomains).
+type deploymentDomains func() map[string]map[string]bool
+
+func newDeploymentDomains(cfg config) deploymentDomains {
+	return func() map[string]map[string]bool {
+		var sa map[string]bool
+		if cfg.mgr != nil {
+			sa = cfg.mgr.superAdmins
+		}
+		return auth.DeploymentDomains(cfg.allowDomains, cfg.allowEmailsFile, cfg.providers, sa)
+	}
+}
+
+// overlapsFor lists the claimed domains that are also deployment login domains, sorted.
+// Empty when the API was built without a deployment view (tests, AUTH=dev).
+func (a tenantIdPAPI) overlapsFor(allowedDomains string) []domainOverlap {
+	if a.deployDomains == nil {
+		return nil
+	}
+	have := a.deployDomains()
+	var out []domainOverlap
+	for _, d := range splitDomainCSV(allowedDomains) {
+		var srcs []string
+		for s := range have[d] {
+			srcs = append(srcs, s)
+		}
+		sort.Strings(srcs)
+		for _, s := range srcs {
+			out = append(out, domainOverlap{Domain: d, Source: s})
+		}
+	}
+	return out
+}
+
+// auditOverlap records a claimed-domain overlap as its own deployment-wide audit row
+// (tenant_id empty), never in the tenant-scoped row of the same action. A tenant_admin reads
+// their tenant's audit rows (REST and MCP alike) and would otherwise learn which of the domains
+// they claim are the deployment's login or super_admin domains, which the form withholds from
+// them; deployment-wide rows are listed for a super_admin only.
+func (a tenantIdPAPI) auditOverlap(r *http.Request, ident store.Identity, slug, action, target, allowedDomains string) {
+	o := a.overlapsFor(allowedDomains)
+	if len(o) == 0 {
+		return
+	}
+	parts := make([]string, len(o))
+	for i, v := range o {
+		parts[i] = v.Domain + ":" + v.Source
+	}
+	a.audit(r, ident, "", "tenant_idp.domain_overlap", target,
+		"tenant="+slug+" action="+action+" domain_overlaps="+strings.Join(parts, ","))
 }

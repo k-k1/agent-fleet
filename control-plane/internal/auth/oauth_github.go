@@ -106,6 +106,10 @@ type GitHubProvider struct {
 	TTL   time.Duration
 	Grace time.Duration
 
+	// NoPKCE turns off the S256 code_challenge (AF_GITHUB_PKCE=off), for a GitHub
+	// Enterprise Server release whose OAuth App endpoints reject the parameter.
+	NoPKCE bool
+
 	WebBase    string // overridden in tests
 	APIBase    string
 	HTTPClient *http.Client
@@ -157,12 +161,28 @@ func (p *GitHubProvider) API() string {
 
 // --- authorize --------------------------------------------------------------
 
-func (p *GitHubProvider) AuthorizeURL(_ context.Context, state, redirectURI string) (string, error) {
+// NewFlow implements FlowProvider. GitHub's OAuth is not OIDC, so there is no nonce.
+func (p *GitHubProvider) NewFlow() FlowParams {
+	if p.NoPKCE {
+		return FlowParams{}
+	}
+	return FlowParams{CodeVerifier: newVerifier()}
+}
+
+func (p *GitHubProvider) AuthorizeURL(ctx context.Context, state, redirectURI string) (string, error) {
+	return p.AuthorizeURLFlow(ctx, state, redirectURI, FlowParams{})
+}
+
+func (p *GitHubProvider) AuthorizeURLFlow(_ context.Context, state, redirectURI string, f FlowParams) (string, error) {
 	q := url.Values{
 		"client_id":    {p.ClientID},
 		"redirect_uri": {redirectURI},
 		"scope":        {GithubScopes},
 		"state":        {state},
+	}
+	if f.CodeVerifier != "" {
+		q.Set("code_challenge", PKCEChallenge(f.CodeVerifier))
+		q.Set("code_challenge_method", "S256")
 	}
 	return p.Web() + "/login/oauth/authorize?" + q.Encode(), nil
 }
@@ -170,7 +190,11 @@ func (p *GitHubProvider) AuthorizeURL(_ context.Context, state, redirectURI stri
 // --- token exchange ---------------------------------------------------------
 
 func (p *GitHubProvider) Exchange(ctx context.Context, code, redirectURI string) (Principal, error) {
-	token, err := p.ExchangeCode(ctx, code, redirectURI)
+	return p.ExchangeFlow(ctx, code, redirectURI, FlowParams{})
+}
+
+func (p *GitHubProvider) ExchangeFlow(ctx context.Context, code, redirectURI string, f FlowParams) (Principal, error) {
+	token, err := p.ExchangeCodeVerifier(ctx, code, redirectURI, f.CodeVerifier)
 	if err != nil {
 		return Principal{}, err
 	}
@@ -202,9 +226,17 @@ func (p *GitHubProvider) Exchange(ctx context.Context, code, redirectURI string)
 // application/x-www-form-urlencoded — a JSON decode then succeeds on nothing and
 // yields an empty token rather than an error (§61.7).
 func (p *GitHubProvider) ExchangeCode(ctx context.Context, code, redirectURI string) (string, error) {
+	return p.ExchangeCodeVerifier(ctx, code, redirectURI, "")
+}
+
+// ExchangeCodeVerifier is ExchangeCode plus the PKCE code_verifier, when there is one.
+func (p *GitHubProvider) ExchangeCodeVerifier(ctx context.Context, code, redirectURI, verifier string) (string, error) {
 	form := url.Values{
 		"client_id": {p.ClientID}, "client_secret": {p.ClientSecret},
 		"code": {code}, "redirect_uri": {redirectURI},
+	}
+	if verifier != "" {
+		form.Set("code_verifier", verifier)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.Web()+"/login/oauth/access_token", strings.NewReader(form.Encode()))
@@ -534,6 +566,7 @@ func NewGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 		Grace:         envx.DurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), GithubDefaultGrace),
 		cache:         map[string]*githubMembership{},
 	}
+	p.NoPKCE = pkceOptOut(os.Getenv("AF_GITHUB_PKCE"))
 	if len(p.AllowEmails) == 0 && len(p.AllowDomains) == 0 && !deployHasList {
 		log.Printf("WARNING: github login has no email allowlist (AF_GITHUB_ALLOWED_DOMAINS) — anyone in %s can sign in, and a member whose primary GitHub address is outside your company domain lands in a NEW workspace rather than their existing one",
 			strings.Join(orgs, ", "))

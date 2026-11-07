@@ -289,6 +289,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (decision 30). The queue is deployment-wide.
 	idp := newTenantIdPAPI(cfg.mgr, cfg.providers)
+	idp.deployDomains = newDeploymentDomains(cfg)
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/idp", idp.list)
 	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp", idp.upsert)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/idp/{id}", idp.upsert)

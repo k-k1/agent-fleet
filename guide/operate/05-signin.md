@@ -189,6 +189,9 @@ AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
   IdP that rejects it). `AF_OIDC_ENTRA_ALLOWED_EMAILS` / `_ALLOWED_DOMAINS` narrow the allowlist
   for this provider alone; when set, they **replace** the deployment-wide list for it rather
   than adding to it.
+- PKCE is on for every provider. `AF_OIDC_ENTRA_PKCE=off` (GitHub: `AF_GITHUB_PKCE=off`) stops
+  sending `code_challenge` / `code_verifier` for an IdP that rejects them; the default is the
+  safe one, so set it only if sign-in fails at the authorize step after an upgrade.
 
 The CP reads `<issuer>/.well-known/openid-configuration` lazily, on the first sign-in through
 this button, and caches it for 24 hours. So a wrong issuer does not show up at startup: it shows

@@ -292,7 +292,7 @@ func BuildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string)
 	if row.ClientID == "" || secret == "" {
 		return nil, errors.New("client_id / client_secret are required")
 	}
-	if !ValidIssuerURL(row.Issuer) {
+	if !ValidTenantIssuerURL(row.Issuer) {
 		return nil, fmt.Errorf("issuer %q is not an https URL", row.Issuer)
 	}
 	tids := envx.EmailSet(row.AllowedTIDs)
@@ -337,6 +337,10 @@ func BuildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string)
 		AllowedTIDs:  tids,
 		AllowDomains: domains,
 		LinkClaim:    row.LinkClaim,
+		// The issuer is the tenant's own party: every request goes to a public address only,
+		// is never redirected, and discovery may not point the endpoints off the issuer's site.
+		HTTPClient:       NewTenantHTTPClient(oidcClientTimeout),
+		PinEndpointHosts: true,
 	}, nil
 }
 

@@ -62,6 +62,7 @@ const (
 	codeMCPOAuthSecret    = "mcp_oauth_user_secret"
 	codeMCPOAuthClient    = "mcp_oauth_client_invalid"
 	codeMCPOAuthReenter   = "mcp_oauth_secret_reenter"
+	codeMCPHeaderReenter  = "mcp_header_secret_reenter"
 )
 
 // mcpAuthOAuth marks a definition each member signs in to with OAuth (ADR 0119 decision 9). It
@@ -414,6 +415,69 @@ func mergeHeaders(incoming, stored map[string]string) map[string]string {
 	return out
 }
 
+// urlHostChanged reports whether a stored header value could reach a different destination
+// when a server URL changes from oldURL to newURL: another host, another effective port under
+// the same scheme, or a step from https down to anything else (the values would then travel in
+// the clear). An upgrade to https on the same host with default ports is not a change, a path
+// or query change is not, and a default port equals the explicit one.
+func urlHostChanged(oldURL, newURL string) bool {
+	o, err1 := url.Parse(strings.TrimSpace(oldURL))
+	n, err2 := url.Parse(strings.TrimSpace(newURL))
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	if !strings.EqualFold(o.Hostname(), n.Hostname()) {
+		return true
+	}
+	fromScheme, toScheme := strings.ToLower(o.Scheme), strings.ToLower(n.Scheme)
+	if fromScheme == "https" && toScheme != "https" {
+		return true
+	}
+	// Same scheme: the effective ports must match. A scheme upgrade: only a port that is not
+	// its own scheme's default counts, so an explicit :80 or :443 reads the same as none.
+	if fromScheme == toScheme {
+		return effectivePort(o) != effectivePort(n)
+	}
+	return nonDefaultPort(o) != nonDefaultPort(n)
+}
+
+func nonDefaultPort(u *url.URL) string {
+	if p := u.Port(); p != effectivePortDefault(u) {
+		return p
+	}
+	return ""
+}
+
+func effectivePortDefault(u *url.URL) string {
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}
+
+// maskedHeaderNames lists the header names whose incoming value is the stored-value stand-in,
+// sorted. Names only: a value never goes into an error or an audit line.
+func maskedHeaderNames(incoming map[string]string) []string {
+	var out []string
+	for k, v := range incoming {
+		if isMaskedHeader(v) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // stripValues keeps the header NAMES and drops every value. It is what user_secret=1
 // stores: the tenant describes WHICH headers the server needs, each member supplies the
 // values into their own encrypted store (docs/log/48 §5.2). Dropping values on the way in
@@ -607,6 +671,18 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A header value entered for one host is not carried to another: with the URL host changed,
+	// a masked value (the stand-in for a stored secret) is refused rather than filled in from
+	// the stored row, the same shape as a client secret whose issuer changed. A user_secret row
+	// keeps no values at all, so there is nothing to carry.
+	if stored != nil && !b.UserSecret && urlHostChanged(stored.URL, b.URL) {
+		if names := maskedHeaderNames(b.Headers); len(names) > 0 {
+			writeAPIErr(w, &APIError{http.StatusBadRequest, codeMCPHeaderReenter,
+				"enter the header values again: the server URL points at a different host, so the stored values " +
+					"are not carried over (" + strings.Join(names, ", ") + ")"})
+			return
+		}
+	}
 	headers := mergeHeaders(b.Headers, storedHeaders)
 	if b.UserSecret {
 		headers = stripValues(headers)
@@ -643,8 +719,12 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Audit detail names the server and the flags, never a header value (docs/log/48 §9).
+	changed := ""
+	if stored != nil && stored.URL != row.URL {
+		changed = " old_url=" + stored.URL + " host_changed=" + boolStr(urlHostChanged(stored.URL, row.URL))
+	}
 	a.auditMCP(r.Context(), ident, t.ID, "mcp.upsert", row.Name,
-		"url="+row.URL+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth+
+		"url="+row.URL+changed+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth+
 			" oauth_client="+row.OAuthClientID+" confidential="+boolStr(row.OAuthSecretEnc != ""))
 	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
 }

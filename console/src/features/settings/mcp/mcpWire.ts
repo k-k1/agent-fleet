@@ -477,6 +477,10 @@ export interface TenantForm {
   label: string; // the display name
   nameEdited: boolean;
   url: string;
+  // The URL as loaded ("" for a new distribution). The control plane keeps a stored header
+  // value only while the URL host is unchanged, so the form blanks the stored values when the
+  // host moves away from this one (tenantUrlPatch).
+  origUrl: string;
   auth: AuthMode;
   token: string;
   headers: KV[];
@@ -506,6 +510,7 @@ export const emptyTenantForm = (): TenantForm => ({
   label: "",
   nameEdited: false,
   url: "",
+  origUrl: "",
   auth: "none",
   token: "",
   headers: [],
@@ -530,6 +535,7 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   label: s.label || "",
   nameEdited: true,
   url: s.url || "",
+  origUrl: s.url || "",
   auth: s.auth === "oauth" ? "oauth" : authOf(toKV(s.headers), !!s.user_secret),
   token: "",
   headers: toKV(s.headers),
@@ -547,6 +553,43 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   oauthOrigIssuer: s.oauth_client?.issuer || "",
   oauthOrigClientId: s.oauth_client?.client_id || "",
 });
+
+// urlMoved mirrors the control plane's urlHostChanged: another host, another effective port
+// under the same scheme, or https stepped down to anything else. An upgrade to https with
+// default ports, and a path or query change, are not a move. An unparseable URL counts as moved.
+const urlMoved = (oldRaw: string, newRaw: string): boolean => {
+  try {
+    const o = new URL(oldRaw.trim());
+    const n = new URL(newRaw.trim());
+    if (o.hostname.toLowerCase() !== n.hostname.toLowerCase()) return true;
+    if (o.protocol === "https:" && n.protocol !== "https:") return true;
+    // new URL() drops a port that is its own scheme's default, so an explicit :80 / :443 and an
+    // omitted port already read the same here; the control plane normalises the same way.
+    const eff = (u: URL) => u.port || (u.protocol === "https:" ? "443" : "80");
+    if (o.protocol === n.protocol) return eff(o) !== eff(n);
+    return o.port !== n.port; // scheme upgrade: only a non-default port, on either side, counts
+  } catch {
+    return true;
+  }
+};
+
+// tenantHostMoved: an existing distribution whose URL now names a different host than the one
+// it was loaded with. A half-typed URL that does not parse yet counts as moved, because the
+// stored values must not survive while the field passes through such states.
+export const tenantHostMoved = (f: TenantForm, url: string = f.url): boolean =>
+  f.id !== "" && f.origUrl !== "" && urlMoved(f.origUrl, url);
+
+// tenantUrlPatch is the form change for a typed URL. Once the host has moved, every stored
+// (masked) header value is blanked so the admin has to enter it again for the new host; the
+// control plane refuses the masked values anyway (mcp_header_secret_reenter). Values the admin
+// typed are theirs and stay, and the blanking is not undone by typing the old host back: the
+// values are gone from the form, and re-entering them is the safe direction.
+export const tenantUrlPatch = (f: TenantForm, url: string): Partial<TenantForm> => {
+  if (!tenantHostMoved(f, url) || f.userSecret) return { url };
+  const isMasked = (v: string) => v === MASKED || BEARER_MASKED_RE.test(v);
+  if (!f.headers.some((r) => isMasked(r.v))) return { url };
+  return { url, headers: f.headers.map((r) => (isMasked(r.v) ? { ...r, v: "" } : r)) };
+};
 
 // tenantOAuthSecretReentry: the stored secret no longer applies (the issuer or client id changed)
 // and no new one is typed. Saving would be refused, so the form asks for the secret instead.

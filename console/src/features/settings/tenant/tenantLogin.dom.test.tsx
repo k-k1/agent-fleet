@@ -343,3 +343,30 @@ describe("suspending a sign-in method", () => {
     expect(document.body.textContent).not.toContain("停止すると");
   });
 });
+
+describe("SignInMethodRegister domain overlap", () => {
+  it("shows the approving super_admin which claimed domains the deployment itself signs in on", async () => {
+    api.mockResolvedValueOnce({
+      providers: [
+        {
+          ...ROW,
+          domain_overlaps: [
+            { domain: "login.example", source: "login_domains" },
+            { domain: "root.example", source: "super_admin" },
+          ],
+        },
+      ],
+    });
+    await mount();
+    const warn = document.querySelector(".idp-overlap");
+    expect(warn).not.toBeNull();
+    expect(warn!.textContent).toContain("login.example");
+    expect(warn!.textContent).toContain("root.example");
+  });
+
+  it("shows nothing when nothing overlaps", async () => {
+    api.mockResolvedValueOnce({ providers: [ROW] });
+    await mount();
+    expect(document.querySelector(".idp-overlap")).toBeNull();
+  });
+});
