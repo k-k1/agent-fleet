@@ -94,6 +94,12 @@ type WorkspaceStore interface {
 	GetWorkspaceAutoStopByMembership(ctx context.Context, membershipID string) (WorkspaceAutoStop, bool, error)
 	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
 	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)
+	// RecordSessionInput publishes "a human typed in this session's terminal at `at`" for
+	// every CP replica. Monotonic: an older `at` never lowers the stored value.
+	RecordSessionInput(ctx context.Context, workspaceID, session, at string) error
+	// SessionHasRecentInput reports whether any replica published input for the session
+	// later than cutoff (tier 1 of the idle reaper, before it halts the session).
+	SessionHasRecentInput(ctx context.Context, workspaceID, session, cutoff string) (bool, error)
 	ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, ownerMembershipID, operationID, cutoff, now string) (bool, error)
 	ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, operationID string) error
 	ClearWorkspaceIdleStop(ctx context.Context, workspaceID string) error
@@ -202,6 +208,36 @@ func (s *SQL) WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutof
 	var one int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM workspace_activity
 		WHERE workspace_id=? AND (last_seen_at > ? OR connected_until > ?)`, workspaceID, cutoff, now).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *SQL) RecordSessionInput(ctx context.Context, workspaceID, session, at string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO workspace_session_input
+		(workspace_id, session, last_input_at) VALUES(?,?,?)
+		ON CONFLICT(workspace_id, session) DO UPDATE SET
+		 last_input_at=CASE WHEN workspace_session_input.last_input_at > excluded.last_input_at
+		                    THEN workspace_session_input.last_input_at ELSE excluded.last_input_at END`,
+		workspaceID, session, at)
+	if err != nil {
+		return err
+	}
+	// Bound the table: rows of long-deleted sessions are far past any grace, so drop this
+	// workspace's rows a week stale each time one is written. Best effort.
+	if t, perr := time.Parse(time.RFC3339Nano, at); perr == nil {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM workspace_session_input
+			WHERE workspace_id=? AND last_input_at < ?`, workspaceID,
+			t.UTC().Add(-7*24*time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00"))
+	}
+	return nil
+}
+
+func (s *SQL) SessionHasRecentInput(ctx context.Context, workspaceID, session, cutoff string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM workspace_session_input
+		WHERE workspace_id=? AND session=? AND last_input_at > ?`, workspaceID, session, cutoff).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

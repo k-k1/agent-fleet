@@ -68,6 +68,7 @@ completely separated per tenant.
 | `session` | **A mirror of the agent's session list**, not the truth. PK (`workspace_id`, `name`), plus `kind`, `dir`, `repo`, `label`, `state` and `last_seen`. `carried` is the question, plan or permission that was still waiting when the session was folded away, and `studio` is the image studio the session is bound to. Both exist because a stopped workspace's list is built from this table alone |
 | `wrapped_dek` | Envelope encryption: the per-workspace DEK wrapped by the per-tenant KEK, plus `key_ref` and `key_version` |
 | `workspace_activity` | One row per workspace: `last_seen_at` and `connected_until`, **written by every CP replica**, so that an idle stop on one replica sees a connection held on another |
+| `workspace_session_input` | One row per (workspace, session): `last_input_at`, the last terminal keystroke, **written by the replica that holds the terminal** (throttled to the 5 s heartbeat) and read by tier 1 of the idle reaper on any replica before it halts a session |
 | `workspace_stop_intent` | The atomic claim an idle stop takes before it stops a workspace, so that new activity arriving on another replica cannot race it |
 
 **Access and audit**
