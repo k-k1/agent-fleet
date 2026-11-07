@@ -20,7 +20,7 @@ af-aws-exec --help
 af-aws-exec --version
 ```
 
-Everything after `--` is the command to run.
+Everything after `--` is the command to run. Give only one of `--login` and `--no-login`: when both are given, the last one wins.
 
 ## Options
 
@@ -57,13 +57,18 @@ Before running the command, it prints one line to standard error (`-q` turns it 
 af-aws-exec: running as arn:aws:sts::222222222222:assumed-role/AWSReservedSSO_Developer_…/you@example.com in region ap-northeast-1 (expires …)
 ```
 
-That line shows which account and role the command actually runs as.
+That line shows which account and role the command actually runs as. `(expires …)` appears only when the credentials carry an expiry; with no region set, the line reads `in region (none)`.
 
 ## Reading `--list`
 
-One profile per line: `name  account  role  (label)`. A profile that was not written to `~/.aws/config` shows the
-reason as `(not exported: …)`: two labels that map to the same name, a definition of the same name in your own
-`~/.aws`, and so on.
+One profile per line, tab-separated: name, account, role and label. The label is quoted inside parentheses (for
+example `prod-app  111111111111  Developer  ("prod app")`).
+
+- A profile that assumes a role shows `("label", role assumed from <source>)`
+- A profile set to confirm before use says after its label that it is not written to `~/.aws/config`
+- A profile that was not written to `~/.aws/config` is listed after the others as `name  (not exported: reason)`, with
+  no account or role columns. The reasons include two labels that map to the same name, a definition of the same name
+  in your own `~/.aws`, a missing account or role, and a clash with a `[DEFAULT]` line
 
 ## Profile names and ~/.aws/config
 
