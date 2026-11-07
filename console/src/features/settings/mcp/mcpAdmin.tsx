@@ -22,6 +22,8 @@ import {
   withDerivedId,
   emptyTenantForm,
   tenantFormOf,
+  tenantHostMoved,
+  tenantUrlPatch,
   tenantFormValid,
   tenantOAuthClientValid,
   tenantOAuthSecretReentry,
@@ -352,9 +354,12 @@ export function McpAdminForm({
               className="cinput"
               placeholder="https://"
               value={form.url}
-              onChange={(e) => patch({ url: e.target.value })}
+              onChange={(e) => patch(tenantUrlPatch(form, e.target.value))}
             />
           </Field>
+          {tenantHostMoved(form) && !form.userSecret && form.auth !== "oauth" && form.headers.length > 0 && (
+            <span className="ps-note-warn">{tr("admin.mcp_headers_host_moved")}</span>
+          )}
 
           {/* The credential decision comes BEFORE the authentication, because it decides what
               the rows even ask for (name+value vs name only). OAuth distributes no credential,

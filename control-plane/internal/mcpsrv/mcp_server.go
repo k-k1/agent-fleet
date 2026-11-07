@@ -62,6 +62,7 @@ const (
 	codeMCPOAuthSecret    = "mcp_oauth_user_secret"
 	codeMCPOAuthClient    = "mcp_oauth_client_invalid"
 	codeMCPOAuthReenter   = "mcp_oauth_secret_reenter"
+	codeMCPHeaderReenter  = "mcp_header_secret_reenter"
 )
 
 // mcpAuthOAuth marks a definition each member signs in to with OAuth (ADR 0119 decision 9). It
@@ -414,6 +415,40 @@ func mergeHeaders(incoming, stored map[string]string) map[string]string {
 	return out
 }
 
+// urlHostChanged reports whether two server URLs point at a different host or port. The scheme
+// and the path do not count, and a default port equals the explicit one.
+func urlHostChanged(oldURL, newURL string) bool {
+	return urlAuthority(oldURL) != urlAuthority(newURL)
+}
+
+func urlAuthority(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "?" + raw
+	}
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if strings.EqualFold(u.Scheme, "https") {
+			port = "443"
+		}
+	}
+	return strings.ToLower(u.Hostname()) + ":" + port
+}
+
+// maskedHeaderNames lists the header names whose incoming value is the stored-value stand-in,
+// sorted. Names only: a value never goes into an error or an audit line.
+func maskedHeaderNames(incoming map[string]string) []string {
+	var out []string
+	for k, v := range incoming {
+		if isMaskedHeader(v) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // stripValues keeps the header NAMES and drops every value. It is what user_secret=1
 // stores: the tenant describes WHICH headers the server needs, each member supplies the
 // values into their own encrypted store (docs/log/48 §5.2). Dropping values on the way in
@@ -607,6 +642,18 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A header value entered for one host is not carried to another: with the URL host changed,
+	// a masked value (the stand-in for a stored secret) is refused rather than filled in from
+	// the stored row, the same shape as a client secret whose issuer changed. A user_secret row
+	// keeps no values at all, so there is nothing to carry.
+	if stored != nil && !b.UserSecret && urlHostChanged(stored.URL, b.URL) {
+		if names := maskedHeaderNames(b.Headers); len(names) > 0 {
+			writeAPIErr(w, &APIError{http.StatusBadRequest, codeMCPHeaderReenter,
+				"enter the header values again: the server URL points at a different host, so the stored values " +
+					"are not carried over (" + strings.Join(names, ", ") + ")"})
+			return
+		}
+	}
 	headers := mergeHeaders(b.Headers, storedHeaders)
 	if b.UserSecret {
 		headers = stripValues(headers)
@@ -643,8 +690,12 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Audit detail names the server and the flags, never a header value (docs/log/48 §9).
+	changed := ""
+	if stored != nil && stored.URL != row.URL {
+		changed = " old_url=" + stored.URL + " host_changed=" + boolStr(urlHostChanged(stored.URL, row.URL))
+	}
 	a.auditMCP(r.Context(), ident, t.ID, "mcp.upsert", row.Name,
-		"url="+row.URL+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth+
+		"url="+row.URL+changed+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth+
 			" oauth_client="+row.OAuthClientID+" confidential="+boolStr(row.OAuthSecretEnc != ""))
 	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
 }

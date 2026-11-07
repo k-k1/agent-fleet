@@ -488,6 +488,11 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 | GitHub でサインイン中の人の access token | **プロセス内メモリのみ** | CP のみ。再起動で消え、その人は再ログインを求められる |
 | PAT | DB に SHA-256 ハッシュのみ | 平文は発行時 1 回だけ表示 |
 
+テナントの MCP サーバーのヘッダー値は、入力した宛先に結び付く。保存済みサーバーの URL が別のホストまたは
+ポートに変わるとき、マスクされた（`***`）値は保存行から補われず `mcp_header_secret_reenter` で拒否する
+（Console はフォーム上でその行を空にする）。編集の監査行には変更前後の URL を残す。client secret は
+同様に issuer と client id に結び付く。
+
 ⚠️ **`AF_MASTER_KEY` が無いと保管庫は平文になる。** マスター鍵が無ければ DEK も無く、agent は同じ
 保管庫を暗号化せずに `secrets.json` として書く。`AUTH=dev` ではそれが意図どおり。それ以外の `AUTH` では
 CP は起動するが、起動時に `WARNING` をログに出し、super_admin の `GET /api/admin/tenants` の

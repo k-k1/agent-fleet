@@ -117,6 +117,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_oauth_secret_hint":
     "Only for a confidential client. The secret is stored encrypted and never leaves Agent Fleet's control plane, which then runs the token requests, so the control plane must be able to reach the authorization server. Leave it empty for a public client.",
   "admin.mcp_oauth_secret_drop": "Remove the stored secret",
+  "admin.mcp_headers_host_moved": "The URL points at a different host, so the stored header values were cleared. Enter them again for the new host.",
   "admin.mcp_oauth_secret_reenter": "The issuer or client ID changed, so the stored secret no longer applies. Enter the secret again, or remove it to make this a public client.",
   "admin.mcp_oauth_note":
     "No credential is distributed. Each member signs in with their own account from Settings > Connections > MCP servers (used by sessions), and the server reaches their sessions only after they have.",

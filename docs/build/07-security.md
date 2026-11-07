@@ -596,6 +596,12 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 | A signed-in GitHub user's access token | **process memory only** | the CP only; lost on restart, and that person is asked to sign in again |
 | Personal access tokens | only a SHA-256 hash, in the database | shown in plaintext exactly once, at issue |
 
+A tenant MCP server's header values stay with the destination they were entered for: when the
+URL of a stored server moves to a different host or port, a masked (`***`) value is refused with
+`mcp_header_secret_reenter` instead of being filled in from the stored row (the Console blanks
+those rows in the form), and the audit line of the edit records the old and the new URL. A
+client secret is bound the same way to its issuer and client id.
+
 ⚠️ **Without `AF_MASTER_KEY` the store is plaintext.** No master key means no DEK, and the
 agent then writes the same store as `secrets.json`, unencrypted. That is the intent under
 `AUTH=dev` (which is itself opt-in outside native, above). Under any other `AUTH` the CP starts anyway but logs a `WARNING` at start-up and

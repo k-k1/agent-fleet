@@ -211,6 +211,7 @@ export const errors = {
   "err.mcp_oauth_authorization_header": "OAuth のサーバーには固定のヘッダを付けられません。外すか、別の認証を選んでください",
   "err.mcp_oauth_client_invalid": "テナントのクライアントには、クライアント ID と https の URL の認可サーバー（issuer）が必要です。OAuth のサーバーにだけ設定できます",
   "err.mcp_oauth_client_tenant_only": "テナントが登録したクライアントは、テナント配布のサーバーにだけ設定できます",
+  "err.mcp_header_secret_reenter": "ヘッダーの値を入力し直してください。サーバー URL が別のホストを指しているため、保存済みの値は引き継がれません",
   "err.mcp_oauth_secret_reenter": "クライアントシークレットを入力し直してください。issuer かクライアント ID が変わったか、シークレットが保存されていません",
   "err.mcp_oauth_user_secret": "OAuth のサーバーでは、メンバーにヘッダの値を入力させられません。「認証の値は各メンバーが入力する」を外すか、別の認証を選んでください",
   "err.oauth_not_required": "このサーバーは OAuth を求めていません",
