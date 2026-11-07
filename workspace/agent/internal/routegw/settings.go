@@ -1,6 +1,7 @@
 package routegw
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -15,13 +16,16 @@ import (
 // gateway that cannot see Settings refuses rather than trust a copy it cannot date.
 //
 // A failed pull never replaces the copy, so it can never turn a refused profile into an allowed
-// one; Fresh after a failed pull answers from the last copy within MaxAge, as Get does.
+// one; Fresh after a failed or timed-out pull answers from the last copy within MaxAge, as Get
+// does.
 type SettingsSource struct {
 	// Pull fetches the list from the Control Plane; ok is false when it could not.
 	Pull        func() (map[string]awsx.Profile, bool)
 	Now         func() time.Time
 	MinInterval time.Duration
 	MaxAge      time.Duration
+	// Wait bounds how long a caller waits for a pull (0: defaultSettingsWait).
+	Wait time.Duration
 
 	mu      sync.Mutex
 	last    map[string]awsx.Profile
@@ -63,23 +67,50 @@ func (s *SettingsSource) Fresh() (map[string]awsx.Profile, bool) {
 	return s.currentLocked()
 }
 
-// pullAfterLocked returns once a pull numbered above n has finished, starting one when none is
-// running. s.mu is held on entry and on return, and released while a pull runs.
+// pullAfterLocked waits until a pull numbered above n has finished, starting one when none is
+// running, or until Wait has passed. s.mu is held on entry and on return, and released while
+// waiting. The pull runs on its own goroutine: the real one takes the ~/.aws/config lock before
+// its HTTP fetch, and a lock another process holds would otherwise hang every create and start.
+// A caller that gives up answers from the last copy, as after a failed pull; a pull that never
+// returns keeps later callers on that copy until MaxAge, and then they refuse.
 func (s *SettingsSource) pullAfterLocked(n uint64) {
+	var timeout <-chan time.Time
 	for s.finished <= n {
-		if ch := s.flight; ch != nil {
-			s.mu.Unlock()
-			<-ch
-			s.mu.Lock()
-			continue
+		if s.flight == nil {
+			s.started++
+			ch := make(chan struct{})
+			s.flight = ch
+			t := s.now()
+			s.lastTry = t
+			go s.runPull(ch, t)
 		}
-		s.started++
-		ch := make(chan struct{})
-		s.flight = ch
-		t := s.now()
-		s.lastTry = t
+		ch := s.flight
+		if timeout == nil {
+			tm := time.NewTimer(s.wait())
+			defer tm.Stop()
+			timeout = tm.C
+		}
 		s.mu.Unlock()
-		m, ok := s.runPull(ch)
+		select {
+		case <-ch:
+			s.mu.Lock()
+		case <-timeout:
+			s.mu.Lock()
+			return
+		}
+	}
+}
+
+// runPull runs one pull and publishes it. A panic in Pull is logged and counts as a failed pull:
+// it runs off the request's goroutine, where nothing else would recover it.
+func (s *SettingsSource) runPull(ch chan struct{}, t time.Time) {
+	var m map[string]awsx.Profile
+	ok := false
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("route gateway: settings pull panicked: %v", r)
+			ok = false
+		}
 		s.mu.Lock()
 		// Dated by when the pull began: the CP read it no earlier than that.
 		if ok {
@@ -88,25 +119,21 @@ func (s *SettingsSource) pullAfterLocked(n uint64) {
 		s.finished = s.started
 		s.flight = nil
 		close(ch)
-	}
-}
-
-// runPull calls Pull with s.mu released. On a panic it closes the flight so no waiter is left
-// blocked, and leaves s.mu held: the panic unwinds through the caller's deferred Unlock.
-func (s *SettingsSource) runPull(ch chan struct{}) (m map[string]awsx.Profile, ok bool) {
-	done := false
-	defer func() {
-		if !done {
-			s.mu.Lock()
-			s.finished = s.started
-			s.flight = nil
-			close(ch)
-		}
+		s.mu.Unlock()
 	}()
 	m, ok = s.Pull()
-	done = true
-	return m, ok
 }
+
+func (s *SettingsSource) wait() time.Duration {
+	if s.Wait > 0 {
+		return s.Wait
+	}
+	return defaultSettingsWait
+}
+
+// defaultSettingsWait is longer than the bridge's own 10 s HTTP timeout, so a pull that is only
+// slow is still waited for.
+const defaultSettingsWait = 15 * time.Second
 
 func (s *SettingsSource) currentLocked() (map[string]awsx.Profile, bool) {
 	if s.last == nil || s.now().Sub(s.lastOK) > s.MaxAge {

@@ -86,6 +86,9 @@ const credReserve = 5 * time.Minute
 // credMaxAge bounds credentials that report no expiry.
 const credMaxAge = 5 * time.Minute
 
+// credShortReuse is how long credentials already inside credReserve are reused (credUsableUntil).
+const credShortReuse = 30 * time.Second
+
 // askEvery is how often one session's call may file a confirmation request: a harness that
 // retries a refused call must not put a card back every time.
 const askEvery = 10 * time.Second
@@ -301,7 +304,9 @@ type call struct {
 // revoked on the spot: it is what makes "revoked when the session ends, the selection changes or
 // the connection changes" take effect on the next call, not on a timer. caller is the calling
 // process as pinned at accept (ok false: unknown).
-func (g *Gateway) authorize(token string, caller procID, callerOK bool) (*call, *refusal) {
+// fresh reads Settings through FreshSettings: what a call that is about to resolve credentials
+// is checked with (credentials says when).
+func (g *Gateway) authorize(token string, caller procID, callerOK, fresh bool) (*call, *refusal) {
 	b, ok := g.d.Registry.Lookup(token)
 	if !ok {
 		return nil, &refusal{http.StatusUnauthorized, "route_token_invalid", "the route token is unknown, expired or revoked; restart the session"}
@@ -324,9 +329,7 @@ func (g *Gateway) authorize(token string, caller procID, callerOK bool) (*call, 
 	if m.Route == nil || m.Route.Route != b.Route || m.Route.Connection != b.Connection {
 		return revoke(http.StatusUnauthorized, "route_selection_changed", "the session no longer selects this route connection")
 	}
-	// A call that will resolve credentials reads Settings fresh: new credentials are never had on
-	// a copy up to Settings' interval old. Calls on cached credentials keep the interval.
-	c, ref := g.resolve(m.Route, !g.credsCached(b.Identity, b.Region))
+	c, ref := g.resolve(m.Route, fresh)
 	if ref != nil {
 		// A deleted profile, a lost mark and a bad region all end the token; only an unreadable
 		// Settings list is left for the next call to settle.
@@ -366,27 +369,28 @@ func (g *Gateway) approvalRefusal(c connection, m session.Meta) *refusal {
 	return &refusal{http.StatusForbidden, "route_confirmation_required", msg}
 }
 
-// credsCached reports whether credentials for this identity and region are cached and usable
-// now, i.e. whether a call would be served without resolving them.
-func (g *Gateway) credsCached(identity, region string) bool {
-	now := g.d.Now()
-	g.credMu.Lock()
-	defer g.credMu.Unlock()
-	e, ok := g.creds[credKey(identity, region)]
-	return ok && now.Before(e.usable)
-}
-
 func credKey(identity, region string) string { return identity + "|" + region }
 
+// errNeedFresh is credentials' answer to a call checked against the interval-capped Settings
+// when the credentials have to be resolved: the call is checked again with FreshSettings first.
+var errNeedFresh = &refusal{http.StatusServiceUnavailable, routes.CodeRouteUnavailable, "settings must be read fresh"}
+
 // credentials returns the call's credentials, from memory until shortly before they expire. The
-// cache key is the profile's identity, so an edited profile never reads the old one's.
-func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
+// cache key is the profile's identity, so an edited profile never reads the old one's. fresh says
+// c was authorized with FreshSettings; without it a cache miss resolves nothing and answers
+// errNeedFresh, decided here under credMu rather than earlier, so time spent between the check and
+// this point (reading the request body) can never put new credentials on a stale Settings copy.
+func (g *Gateway) credentials(c *call, fresh bool) (awsx.RouteCredentials, *refusal) {
 	key := credKey(c.b.Identity, c.conn.region)
 	now := g.d.Now()
 	g.credMu.Lock()
 	if e, ok := g.creds[key]; ok && now.Before(e.usable) {
 		g.credMu.Unlock()
 		return e.c, nil
+	}
+	if !fresh {
+		g.credMu.Unlock()
+		return awsx.RouteCredentials{}, errNeedFresh
 	}
 	delete(g.creds, key)
 	// One resolution per key at a time, outside credMu: it starts the AWS CLI, which can be slow,
@@ -407,10 +411,7 @@ func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
 	defer func() {
 		g.credMu.Lock()
 		if ref == nil {
-			usable := now.Add(credMaxAge)
-			if !cr.Expires.IsZero() {
-				usable = cr.Expires.Add(-credReserve)
-			}
+			usable := credUsableUntil(now, cr.Expires)
 			if now.Before(usable) {
 				g.creds[key] = cachedCreds{c: cr, usable: usable}
 			}
@@ -435,6 +436,28 @@ func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
 			"could not get credentials for profile %q: %v", c.conn.profile.Name, err)}
 	}
 	return cr, ref
+}
+
+// credUsableUntil is how long resolved credentials are reused. Normally until credReserve before
+// they expire; credentials already inside the reserve (the AWS CLI may hand back the same ones
+// until it refreshes them) are still reused for credShortReuse, never closer than credShortReuse
+// to their expiry. Without that, every call on them would resolve again, and each resolution
+// costs an AWS CLI run and a fresh Settings pull: a pull per model call.
+func credUsableUntil(now, expires time.Time) time.Time {
+	if expires.IsZero() {
+		return now.Add(credMaxAge)
+	}
+	if u := expires.Add(-credReserve); now.Before(u) {
+		return u
+	}
+	return minTime(now.Add(credShortReuse), expires.Add(-credShortReuse))
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // credFlight is one in-progress resolution that concurrent callers of the same key wait on.

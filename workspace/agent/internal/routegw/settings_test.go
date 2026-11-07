@@ -2,6 +2,7 @@ package routegw
 
 import (
 	"context"
+	"io"
 	"maps"
 	"net/http"
 	"sync"
@@ -85,8 +86,9 @@ func TestSettingsSourceFreshWaitsOutAnEarlierPullAndCoalesces(t *testing.T) {
 		close(release)
 		wg.Wait()
 		synctest.Wait()
-		if !first["p"].ModelRoute {
-			t.Fatal("the first caller did not get its own pull")
+		// The first caller may answer with the second pull's copy already: newer is never wrong.
+		if first == nil {
+			t.Fatal("the first caller got nothing")
 		}
 		for i, m := range got {
 			if m["p"].ModelRoute {
@@ -99,31 +101,74 @@ func TestSettingsSourceFreshWaitsOutAnEarlierPullAndCoalesces(t *testing.T) {
 	})
 }
 
-// A Pull that panics does not leave later callers blocked on its flight.
+// A Pull that panics counts as a failed pull: it neither crashes the Agent nor leaves later
+// callers blocked on its flight.
 func TestSettingsSourceSurvivesAPanickingPull(t *testing.T) {
+	var mu sync.Mutex
 	boom := true
-	s := &SettingsSource{MinInterval: time.Minute, MaxAge: time.Hour,
+	s := &SettingsSource{MinInterval: time.Minute, MaxAge: time.Hour, Wait: 5 * time.Second,
 		Pull: func() (map[string]awsx.Profile, bool) {
+			mu.Lock()
+			defer mu.Unlock()
 			if boom {
 				panic("pull")
 			}
 			return map[string]awsx.Profile{"p": {ID: "1"}}, true
 		}}
-	func() {
-		defer func() { _ = recover() }()
-		s.Fresh()
-	}()
-	boom = false
-	done := make(chan bool)
-	go func() { _, ok := s.Fresh(); done <- ok }()
-	select {
-	case ok := <-done:
-		if !ok {
-			t.Fatal("the pull after a panic served nothing")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Fresh blocked after a panicking pull")
+	if _, ok := s.Fresh(); ok {
+		t.Fatal("a panicking pull served a list")
 	}
+	mu.Lock()
+	boom = false
+	mu.Unlock()
+	if _, ok := s.Fresh(); !ok {
+		t.Fatal("the pull after a panic served nothing")
+	}
+}
+
+// A pull that never returns (the ~/.aws/config lock held by another process) does not hang its
+// callers: they give up after Wait and answer from the last copy, and refuse once it is older
+// than MaxAge.
+func TestSettingsSourceBoundsAPullThatNeverReturns(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var mu sync.Mutex
+		pulls := 0
+		hang := make(chan struct{})
+		defer close(hang)
+		s := &SettingsSource{MinInterval: 30 * time.Second, MaxAge: 10 * time.Minute, Wait: 15 * time.Second,
+			Pull: func() (map[string]awsx.Profile, bool) {
+				mu.Lock()
+				pulls++
+				first := pulls == 1
+				mu.Unlock()
+				if !first {
+					<-hang
+				}
+				return map[string]awsx.Profile{"p": {ID: "1", ModelRoute: true}}, true
+			}}
+		if _, ok := s.Get(); !ok {
+			t.Fatal("first pull")
+		}
+		start := time.Now()
+		for range 3 {
+			if m, ok := s.Fresh(); !ok || !m["p"].ModelRoute {
+				t.Fatalf("Fresh on a hung pull: %+v ok=%v", m, ok)
+			}
+		}
+		if waited := time.Since(start); waited != 45*time.Second {
+			t.Fatalf("three Fresh calls on a hung pull took %v, want 3 × Wait", waited)
+		}
+		mu.Lock()
+		n := pulls
+		mu.Unlock()
+		if n != 2 {
+			t.Fatalf("pulls = %d, want 2 (the hung one is waited on, not doubled)", n)
+		}
+		time.Sleep(10 * time.Minute)
+		if _, ok := s.Fresh(); ok {
+			t.Fatal("a copy older than MaxAge was served while the pull hangs")
+		}
+	})
 }
 
 // The gateway on the real SettingsSource: a profile unmarked, edited or deleted is enforced at
@@ -149,13 +194,7 @@ func TestAChangeIsEnforcedAtOnceOnCreateStartAndCredentialResolution(t *testing.
 	}
 	setup := func(t *testing.T) (*env, session.Meta, string) {
 		e := newEnv(t)
-		src := &SettingsSource{Now: e.g.d.Now, MinInterval: 30 * time.Second, MaxAge: 15 * time.Minute,
-			Pull: func() (map[string]awsx.Profile, bool) {
-				e.mu.Lock()
-				defer e.mu.Unlock()
-				return maps.Clone(e.settings), true
-			}}
-		e.g.d.Settings, e.g.d.FreshSettings = src.Get, src.Fresh
+		useSettingsSource(e)
 		// Credentials usable for 2 s, so a call 3 s on has to resolve them again.
 		e.credExp = e.now.Add(credReserve + 2*time.Second)
 		m := e.session("s1", "p1", "")
@@ -204,5 +243,120 @@ func TestAChangeIsEnforcedAtOnceOnCreateStartAndCredentialResolution(t *testing.
 				t.Fatalf("credentials were resolved %d times, want 1 (none after the change)", n)
 			}
 		})
+	}
+}
+
+// useSettingsSource puts e's gateway on a real SettingsSource that pulls e.settings.
+func useSettingsSource(e *env) *SettingsSource {
+	src := &SettingsSource{Now: e.g.d.Now, MinInterval: 30 * time.Second, MaxAge: 15 * time.Minute,
+		Pull: func() (map[string]awsx.Profile, bool) {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			return maps.Clone(e.settings), true
+		}}
+	e.g.d.Settings, e.g.d.FreshSettings = src.Get, src.Fresh
+	return src
+}
+
+// The decision to read Settings fresh is taken where credentials are resolved, not at the check:
+// a call checked on cached credentials whose body arrives after they lapsed resolves nothing on
+// that check. Here the body is held until the per-call check has run, the profile is unmarked and
+// the credentials lapse; the call must be refused and resolve nothing.
+func TestCredentialsLapsingWhileTheBodyArrivesAreNotResolvedOnAStaleCheck(t *testing.T) {
+	e := newEnv(t)
+	src := useSettingsSource(e)
+	checked := make(chan struct{}, 16)
+	e.g.d.Settings = func() (map[string]awsx.Profile, bool) {
+		m, ok := src.Get()
+		select {
+		case checked <- struct{}{}:
+		default:
+		}
+		return m, ok
+	}
+	e.credExp = e.now.Add(credReserve + 2*time.Second)
+	tok := e.issue(e.session("s1", "p1", ""))
+	if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 200 {
+		t.Fatalf("before = %d", resp.StatusCode)
+	}
+	for len(checked) > 0 {
+		<-checked
+	}
+
+	pr, pw := io.Pipe()
+	req, _ := http.NewRequest("POST", SocketBaseURL+invokePath(), pr)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	type result struct {
+		status int
+		body   string
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := e.client.Do(req)
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		done <- result{status: resp.StatusCode, body: string(b)}
+	}()
+	select {
+	case <-checked: // the per-call check ran on cached credentials; the body is still held
+	case <-time.After(10 * time.Second):
+		t.Fatal("the call was never checked")
+	}
+	e.mu.Lock()
+	p := e.settings["bedrock-invoke"]
+	p.ModelRoute = false
+	e.settings["bedrock-invoke"] = p
+	e.mu.Unlock()
+	e.advance(3 * time.Second) // inside Settings' interval, past the credentials' use
+	_, _ = pw.Write([]byte(`{}`))
+	_ = pw.Close()
+	r := <-done
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if r.status != http.StatusUnauthorized || codeOf(t, r.body) != routes.CodeRouteForbidden {
+		t.Fatalf("the call = %d %s", r.status, r.body)
+	}
+	if _, n := e.counts(); n != 1 {
+		t.Fatalf("credentials were resolved %d times, want 1 (none for the stale check)", n)
+	}
+}
+
+// Credentials already inside credReserve are reused for credShortReuse rather than resolved, with
+// a fresh Settings pull, on every call.
+func TestShortLivedCredentialsAreReusedBriefly(t *testing.T) {
+	e := newEnv(t)
+	pulls := 0
+	src := useSettingsSource(e)
+	inner := src.Pull
+	src.Pull = func() (map[string]awsx.Profile, bool) { pulls++; return inner() }
+	e.credExp = e.now.Add(4 * time.Minute)
+	tok := e.issue(e.session("s1", "p1", ""))
+	before := pulls
+	for range 5 {
+		if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 200 {
+			t.Fatalf("call = %d", resp.StatusCode)
+		}
+	}
+	if _, n := e.counts(); n != 1 || pulls-before != 1 {
+		t.Fatalf("five calls on credentials with 4 min left: %d resolutions, %d pulls; want 1 and 1", n, pulls-before)
+	}
+	e.advance(credShortReuse)
+	e.call(tok, invokePath(), `{}`)
+	if _, n := e.counts(); n != 2 {
+		t.Fatalf("resolutions after credShortReuse = %d, want 2", n)
+	}
+	// Never used within credShortReuse of their expiry.
+	if u := credUsableUntil(e.now, e.now.Add(40*time.Second)); u != e.now.Add(10*time.Second) {
+		t.Fatalf("usable until %v for 40 s left", u.Sub(e.now))
+	}
+	if u := credUsableUntil(e.now, e.now.Add(20*time.Second)); u.After(e.now) {
+		t.Fatalf("credentials with 20 s left were cached for %v", u.Sub(e.now))
 	}
 }
