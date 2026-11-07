@@ -2,7 +2,8 @@
 
 English | [日本語](0117-background-memory-skill-review.ja.md)
 
-- Status: **accepted** (2026-10-18; proposed 2026-10-18, the owner answered the six open questions the same
+- Status: **accepted, mostly superseded by [0130](0130-cultivated-memory.md)** (2026-11-07; see the note at
+  the end). Originally accepted 2026-10-18 (proposed 2026-10-18; the owner answered the six open questions the same
   day). P0 (measurement, #2319), P1 (trigger, helper turn and pending queue, #2320), P2 (approval and publish,
   #2321) are built, first released in v0.32.0; the separate switch for the automatic loop (#2358) and the
   per-kind deny-all check (#2357) are built too, first released in v0.32.1. The review runs on claude only. Not built: P3 (the `auto` publish mode) and P4
@@ -607,3 +608,13 @@ killed, and a child holding its output no longer holds the call open), counts as
 ends the run with the failure text "the helper call timed out" once the attempt budget is gone. The
 Console's "Suggest memories now" watch still ends after about 3 minutes; it now says the review is
 still running instead of falling silent. No decision above changes.
+
+**Note (2026-11-07): [0130](0130-cultivated-memory.md) removes this review in the next release.** On one
+measured workspace the review sat at `off` with 25 proposals unanswered for 17 days, all of them
+creates; the structural causes are in 0130's Context. Decisions 1–3 (trigger, input, helper turn), 6
+(`off`/`propose`/`auto`) and 7–9 (skills, failure modes, phases) are superseded and their surfaces
+removed (0130 decision 2, #3440); the pending queue is exported, not dropped. Decision 4 (the model
+proposes, AF applies) and decision 5 (history, run revert, rejected hashes, no revival) carry over to
+0130's consolidator; run revert moves to the change list. `memory.review` stays in the ledger enum.
+P3 (#2322) and P4 (#2323) are not built under this record; 0130 steps 3 and 4 (#3497, #3498) take
+their place.
