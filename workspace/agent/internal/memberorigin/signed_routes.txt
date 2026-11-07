@@ -1,0 +1,37 @@
+# The member-origin signed routes, in the Agent's own paths (no /api prefix).
+#
+# One list, checked by a test in each Go module, because the two sides live in different
+# modules and cannot import each other:
+#   - workspace/agent: TestSignedRoutesMatchRequireRegistrations — every route registered behind
+#     memberorigin.Require (routes.go) is listed here, and every entry is registered.
+#   - control-plane:   TestSignedRoutesMatchRelayRows — every relay row with `sign` and every
+#     direct signing call is listed here, and every entry is signed.
+# Adding a signed route on one side without a line here, or a line without both sides, fails
+# one of the two tests. See docs/build/07-security.md §7.5.1.
+#
+# Columns: METHOD PATH CP-SIDE [conditional]
+#   CP-SIDE      relay   a relay row with `sign` in control-plane/relays*.go (CP path = /api + PATH)
+#                direct  a CP handler that signs itself; a fourth column names the Go function
+#                        (Type.method) whose body calls memberOriginSign for this route
+#   conditional  the Agent asks for the mark only for part of what the request does
+#                (memberorigin.RequireBody), so no memberorigin.Require wraps the route
+POST /agents/memory-review/proposals/approve relay
+POST /agents/memory-review/proposals/list relay
+POST /agents/memory-review/proposals/reject relay
+POST /agents/memory-review/proposals/reject-all relay
+POST /agents/memory-review/run relay
+POST /agents/memory-review/runs/revert relay
+POST /agents/memory/af-import relay
+POST /agents/memory/auto-sync relay
+POST /agents/memory/entries/member-save relay
+POST /agents/memory/entries/pin relay
+POST /agents/memory/entries/project-move relay
+POST /agents/memory/entries/purge relay
+POST /agents/memory/entries/revert relay
+POST /agents/memory/import relay
+POST /agents/memory/import/apply relay
+POST /agents/memory/snapshots relay
+POST /sessions/{name}/handoff-push direct sessionHandoffAPI.pushThenRecheck
+POST /work-items/comment direct workItemsAPI.comment
+POST /work-items/merge direct workItemsAPI.merge
+PUT /env/ui-prefs relay conditional

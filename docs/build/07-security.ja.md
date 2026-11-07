@@ -372,10 +372,25 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 ### 7.5.1 メンバー由来の印
 
 メンバー自身の Console からの要求だけを受け付けるべきルートには、CP が印を付ける
-（[decisions/0113](../decisions/0113-member-origin-mark.ja.md)）。現在はメンバー専用のメモリ書き込み
-`entries/pin`・`entries/revert`（忘れさせるも含む）・`entries/member-save`・`entries/project-move`（作業コピーを失った
-プロジェクトのメモリの移動、[decisions/0108](../decisions/0108-af-owned-agent-memory.ja.md) の 2026-10-14 の注）・
-`entries/purge`（履歴の消去、#1982）が対象。
+（[decisions/0113](../decisions/0113-member-origin-mark.ja.md)）。手書きの一覧はずれるので、この章はルートを
+列挙しない。正はコードで、3 か所ある。
+
+- `control-plane/relays*.go` の `sign` 付きのリレー行。
+- CP のハンドラが直接署名するもの（リレー経路以外の `memberOriginSign`：作業項目のコメントとマージ、
+  セッション引き継ぎの push）。
+- Agent 側では、`workspace/agent/routes.go` で `memberorigin.Require` の内側に登録されたルートと、
+  `PUT /env/ui-prefs` の条件付き検査（`ui_prefs.go`。メンバーの判断であるスイッチを入れる書き込みのときだけ印を求める）。
+
+両方のモジュールが突き合わせる、チェックイン済みの一覧は
+`workspace/agent/internal/memberorigin/signed_routes.txt` ひとつ
+（`control-plane` の `TestSignedRoutesMatchRelayRows`、`workspace/agent` の
+`TestSignedRoutesMatchRequireRegistrations`。2 つのモジュールは互いを import できないので、同じファイルをそれぞれが
+検査する）。片側だけ署名するルートがあれば、どちらかのテストが落ちる。
+
+**新しいルートに印が要るとき**：その操作がメンバー自身の判断で、セッションにやらせてはいけないとき。どのセッションも
+リレーと同じ `AGENT_TOKEN` を持つため。典型は、メンバーのメモリへの書き込み、メンバーの名前で成果を公開する操作、
+会話を外へ送るスイッチ。`sign` 付きのリレー行を足し（またはハンドラで署名し）、Agent のルートを
+`memberorigin.Require` で包み、一覧に 1 行足す。
 
 - **非対称にするのは、Agent がセッションに対して秘密を守れないから**（同じ uid、§7.2）。CP はトークン署名
   マスターから導出した Ed25519 鍵で署名し、Agent は公開鍵だけを持って起動する（`AF_MEMBER_ORIGIN_KEYS` と
@@ -417,9 +432,18 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
   これらのルートで 503。印がない、または `AGENT_TOKEN` / `X-AF-Relay` だけなら 403。
 - **ローテーション**：Workspace は現在と次の鍵を持って起動するので、`AF_MEMBER_ORIGIN_KEY_VERSION` を 1 つ
   上げても直前の版で起動した Workspace はそのまま使える。再起動前に 2 回目を上げると使えない。
-- **限界**：署名するのはこの 3 ルートだけで、claude と muse の取り込みはまだ署名なしで作者をメンバーと記録
-  する（#2014）。印が決めるのは Agent のルートで、ストアのファイルではない（セッションは今も直接書ける）。強さは
-  CP のメンバー認証と同じ（`AUTH=dev` では何も足さない）。侵害された CP は対象外。
+- **限界**：
+  - **意図して署名していないメンバーの操作。** claude と muse のメモリ取り込みは、印なしで作者をメンバーと記録する
+    （#2014）。AWS の使用前確認の承認（`POST /aws-confirm/{id}/approve`）も署名していない。止めるのは不注意や
+    気づかない利用であり、突破しようとするセッションではない
+    （[decisions/0126](../decisions/0126-aws-runs-in-the-mirror-and-confirm-before-use.ja.md) の決めたこと 6、
+    `SECURITY.md` の「Known residual risks」）。
+  - **印が守るのはルートで、ファイルではない。** セッションは Agent の uid が書けるファイルを何でも書けるので、
+    ストアのファイルやほかの状態ファイルは対象外。`~/.config/agent-fleet/ui-prefs.json` がその一例で、
+    `PUT /env/ui-prefs` の印はルートを守るだけであり、ファイルを直接書き換えるセッションは止められない。
+    今このルートが守るスイッチはバックグラウンドのメモリレビュー（廃止は #3440）と Muse Code の contributor モード。
+    印が防ぐのはセッションがルートを使うことで、ファイルへの書き込みではない。
+  - 強さは CP のメンバー認証と同じ（`AUTH=dev` では何も足さない）。侵害された CP は対象外。
 
 ## 7.6 シークレット管理と封筒暗号
 
@@ -428,7 +452,8 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 
 | シークレット | 保管 | 露出範囲 |
 |-------------|------|----------|
-| git 資格情報とプロバイダのキー（GitHub・Bitbucket・Jira・opencode のプロバイダ・MCP の秘密など） | Workspace home の**暗号化ストア** `~/.config/agent-fleet/secrets.enc`（AES-256-GCM・0600） | 当該ユーザーのみ。git は資格情報ヘルパ（`workspace-agent cred`）が都度復号して stdout に出したものを読み、他のキーは必要なプロセスへ注入する。**平文ファイルを作らない** |
+| git 資格情報とプロバイダのキー（GitHub・Bitbucket・Jira・opencode のプロバイダなど） | Workspace home の**暗号化ストア** `~/.config/agent-fleet/secrets.enc`（AES-256-GCM・0600） | 当該ユーザーのみ。git は資格情報ヘルパ（`workspace-agent cred`）が都度復号して stdout に出したものを読み、他のキーは必要なプロセスへ注入する。**平文ファイルを作らない** |
+| メンバーの MCP サーバーの秘密（ヘッダと環境変数の値） | 暗号化ストア、**および各エージェント CLI 自身の設定ファイルへ平文（0600）で home 内に**（`workspace/agent/internal/mcpreg/materialize*.go`。CLI が読む必要があるため） | 当該ユーザーのみ。これらの設定ファイルは home のバックアップとスナップショットに入り、Workspace の DEK を捨てても消えない。MCP の秘密の保管は #1056 |
 | エージェント自身の資格情報ファイル | エージェントの設定ディレクトリ（home 外・ブラウザの範囲外、§7.2） | 当該ユーザーのみ |
 | システム秘密——ログインの client secret・マスター鍵（`AF_MASTER_KEY`）・cookie secret | git 管理外の env ファイル。AWS では `/af-cp/` 配下の SSM SecureString（DB パスワードは RDS 管理の secret） | CP のみ。**マスター鍵はデータ領域の外で保管し、バックアップに含めない**＝失えば crypto-shred |
 | テナントの秘密——テナント IdP や git OAuth アプリの client secret、MCP サーバーの資格情報 | DB（テナント鍵で封印） | CP のみ。UI へは返さない |
