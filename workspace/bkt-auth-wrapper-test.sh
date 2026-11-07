@@ -44,6 +44,8 @@ set +x
   echo "USERNAME=${BKT_USERNAME-<unset>}"
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/bkt.seen"
+[ -z "${STUB_BKT_OUT-}" ] || echo "$STUB_BKT_OUT"
+[ -z "${STUB_BKT_ERR-}" ] || echo "$STUB_BKT_ERR" >&2
 exit "${STUB_BKT_EXIT:-0}"
 STUB
 chmod +x "$T/bin/"*
@@ -183,6 +185,36 @@ rm -f "$T/agent.leak"
 run -- pr list
 [ ! -f "$T/agent.leak" ] || fail "BKT_TOKEN visible to a helper"
 expect helperenv TOKEN fake-api-tok
+
+# 11. A missing-scope 403 on the injected connection gets one line naming the scope and who adds
+#     it; bkt's own error, its stdout and its exit status pass through unchanged.
+scope403='Error: 403 Forbidden: Your credentials lack one or more required privilege scopes.'
+reset
+printf 'username=x-token-auth\npassword=fake-oauth-tok\n' >"$T/git.out"
+run STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" STUB_BKT_OUT='{"partial":true}' -- pr create --title t
+[ "$rc" = 1 ] || fail "scope oauth: exit status $rc, want 1 from bkt"
+[ "$(cat "$T/out")" = '{"partial":true}' ] || fail "scope oauth: stdout changed: $(cat "$T/out")"
+[ "$(sed -n 1p "$T/err")" = "$scope403" ] || fail "scope oauth: bkt's error not passed first"
+grep -q 'Pull requests: Read and Write' "$T/err" || fail "scope oauth: hint does not name the PR scope"
+grep -q 'OAuth consumer' "$T/err" || fail "scope oauth: hint does not say who adds it"
+[ "$(wc -l <"$T/err")" = 2 ] || fail "scope oauth: want exactly one hint line"
+no_leak scope-oauth fake-oauth-tok
+
+reset
+printf 'username=x-bitbucket-api-token-auth\npassword=fake-git-tok\n' >"$T/git.out"
+printf 'username=me@example.com\npassword=fake-api-tok\n' >"$T/agent.out"
+run STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- --json pipeline list
+grep -q 'read:pipeline:bitbucket' "$T/err" || fail "scope api: hint does not name the pipeline scope"
+grep -q 'new API token' "$T/err" || fail "scope api: hint does not say to mint a new token"
+no_leak scope-api fake-api-tok
+
+# 12. Other errors get no hint, and neither does a 403 on the user's own setup (BKT_TOKEN).
+reset
+printf 'username=x-token-auth\npassword=fake-oauth-tok\n' >"$T/git.out"
+run STUB_BKT_EXIT=1 STUB_BKT_ERR='Error: 404 Not Found' -- pr view 1
+[ "$(cat "$T/err")" = 'Error: 404 Not Found' ] || fail "404: stderr changed: $(cat "$T/err")"
+run BKT_TOKEN=mine STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- pr create
+[ "$(cat "$T/err")" = "$scope403" ] || fail "own token: hint added to the user's own setup"
 
 if [ "$fails" != 0 ]; then
   echo "bkt-auth-wrapper-test: $fails failure(s)" >&2
