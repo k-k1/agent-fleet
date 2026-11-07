@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/termreply"
 )
 
 // agentProxyAPI is the set of pass-through proxies to the Workspace Agent. Resolution
@@ -418,7 +420,7 @@ func isTerminalInput(mt int, data []byte) bool {
 }
 
 // isTerminalPresence is isTerminalInput minus the frames xterm.js writes by itself
-// (isAutomaticTerminalReply). The bytes are still relayed unchanged; only the presence
+// (termreply.IsAutoReplyOnly). The bytes are still relayed unchanged; only the presence
 // clock skips them. A frame that does not parse, or carries anything beyond recognised
 // replies, counts.
 func isTerminalPresence(mt int, data []byte) bool {
@@ -429,7 +431,7 @@ func isTerminalPresence(mt int, data []byte) bool {
 	if json.Unmarshal(data, &f) != nil || f.Type != "input" {
 		return false
 	}
-	return !isAutomaticTerminalReply(f.Data)
+	return !termreply.IsAutoReplyOnly(f.Data)
 }
 
 func relay(src, dst *websocket.Conn, errc chan<- error, onInput func()) {

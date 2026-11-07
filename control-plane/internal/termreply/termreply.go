@@ -1,4 +1,6 @@
-package main
+// Package termreply recognises the replies a terminal emulator writes by itself, which are
+// not evidence of a person at the keyboard.
+package termreply
 
 import "regexp"
 
@@ -36,13 +38,13 @@ var terminalReplyRe = regexp.MustCompile(
 		`|\x1bP(?:>\|[\x20-\x7e]*|[01]\$r[\x20-\x7e]*)\x1b\\` +
 		`)`)
 
-// isAutomaticTerminalReply reports whether an input payload consists ENTIRELY of
+// IsAutoReplyOnly reports whether an input payload consists ENTIRELY of
 // recognised terminal reply sequences (one or more, back to back). Anything else — a
 // printable byte, Enter, Ctrl-C, an arrow key, a lone ESC, a paste, a reply followed
 // by a real key — is not, and counts as presence. When in doubt answer false: a
 // misclassified keystroke would let the reaper halt a session someone is typing in.
 // An empty payload is false for the same reason.
-func isAutomaticTerminalReply(data string) bool {
+func IsAutoReplyOnly(data string) bool {
 	if data == "" {
 		return false
 	}
