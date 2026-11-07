@@ -790,7 +790,8 @@ func logRequests(next http.Handler) http.Handler {
 // secretQueryKeys are query parameters that carry a credential wherever they appear: an
 // authorization code, a state, a client secret or a token. An app on a preview host receives
 // its OAuth callback (?code=…&state=…) on a path nobody here can predict, so the redaction is by
-// parameter name and not only by path.
+// parameter name and not only by path. The Agent keeps the same list (httpx.secretQueryKeys);
+// both are compared with scripts/fixtures/secret-query-keys.txt by their tests.
 var secretQueryKeys = map[string]bool{
 	"code": true, "state": true, "client_secret": true, "client_assertion": true,
 	"access_token": true, "id_token": true, "refresh_token": true, "token": true, "t": true,

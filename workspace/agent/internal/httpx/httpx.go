@@ -228,6 +228,10 @@ func LogRequests(next http.Handler) http.Handler {
 //
 // The key after "sessions-idempotency" is replaced the same way: a handoff launch's key
 // carries the recipient's take token (issue #2040).
+//
+// The query of a preview relay request (/proxy/{port}/…) belongs to the app being previewed
+// (OAuth callbacks, reset links) and is never logged. Elsewhere the parameters named in
+// secretQueryKeys are redacted by name.
 func LogURI(u *url.URL) string {
 	p := u.EscapedPath()
 	segs := strings.Split(p, "/")
@@ -246,7 +250,40 @@ func LogURI(u *url.URL) string {
 		if login {
 			return p + "?…"
 		}
-		return p + "?" + u.RawQuery
+		if len(segs) > 1 && segs[1] == "proxy" {
+			return p + "?<redacted>"
+		}
+		return p + "?" + redactQuery(u.RawQuery)
 	}
 	return p
+}
+
+// secretQueryKeys are query parameters that carry a credential wherever they appear.
+// The control plane keeps the same list (secretQueryKeys in control-plane/main.go); the
+// two modules cannot import each other, so both tests compare their list with
+// scripts/fixtures/secret-query-keys.txt.
+var secretQueryKeys = map[string]bool{
+	"code": true, "state": true, "client_secret": true, "client_assertion": true,
+	"access_token": true, "id_token": true, "refresh_token": true, "token": true, "t": true,
+	"code_verifier": true, "session_state": true,
+}
+
+// redactQuery masks the value of every credential-named parameter. A query that does not
+// parse is dropped whole: when in doubt, redact.
+func redactQuery(raw string) string {
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return "<redacted>"
+	}
+	hit := false
+	for k := range q {
+		if secretQueryKeys[strings.ToLower(k)] {
+			q.Set(k, "<redacted>")
+			hit = true
+		}
+	}
+	if !hit {
+		return raw
+	}
+	return q.Encode()
 }
