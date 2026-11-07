@@ -13,7 +13,7 @@ import (
 
 func stateOf(t *testing.T, cfg config, ck *http.Cookie) oauthState {
 	t.Helper()
-	payload, ok := cfg.verifyCookie(ck.Value)
+	payload, ok := cfg.verifyCookie(cookiePurposeState, ck.Value)
 	if !ok {
 		t.Fatal("state cookie does not verify")
 	}
@@ -103,7 +103,7 @@ func TestCallbackWithoutVerifierFailsCleanly(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{idTokenClaims: okClaims(), userinfoClaims: okClaims()})
 	cfg := oauthTestConfig(t, stubProvider("corp", idp, auth.TrustEmailVerified))
 	b, _ := json.Marshal(oauthState{Nonce: "n1", Next: "/", Exp: time.Now().Add(time.Minute).Unix(), Prov: "corp"})
-	w := callback(t, cfg, &http.Cookie{Name: stateCookie, Value: cfg.signCookie(b)}, "code", "n1")
+	w := callback(t, cfg, &http.Cookie{Name: stateCookie, Value: cfg.signCookie(cookiePurposeState, b)}, "code", "n1")
 	if sessionCookieOf(t, w) != nil || loginErrorOf(t, w) != "session" {
 		t.Fatalf("want the session error without a session, got error=%q", loginErrorOf(t, w))
 	}
