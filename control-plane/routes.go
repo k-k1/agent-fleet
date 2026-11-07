@@ -105,9 +105,11 @@ func exemptPrefix(prefixes ...string) {
 // segment, so a prefix test on the decoded path would exempt a request the mux sends elsewhere.
 func isAuthExempt(p string) bool {
 	p, ok := canonicalRoutePath(p)
-	if !ok {
-		return false
-	}
+	return ok && isCanonicalExempt(p)
+}
+
+// isCanonicalExempt is isAuthExempt for a path already reduced by canonicalRoutePath.
+func isCanonicalExempt(p string) bool {
 	authExemptMu.Lock()
 	defer authExemptMu.Unlock()
 	if authExemptExact[p] {
@@ -122,26 +124,27 @@ func isAuthExempt(p string) bool {
 }
 
 // canonicalRoutePath maps an escaped request path to the plain path the exemption registry is
-// written in, or false when the path has no such form (an invalid escape, or an encoded "/"
-// inside a segment).
+// written in, in the order ServeMux works: the ESCAPED path is cleaned first, then each segment
+// is decoded on its own. It returns false for an invalid escape, for an encoded "/" inside a
+// segment, and for a dot segment that only appears after decoding ("%2e%2e"): the mux does not
+// fold those, so no exempt route can be assumed to be what it reaches.
 func canonicalRoutePath(escaped string) (string, bool) {
-	segs := strings.Split(escaped, "/")
+	if escaped == "" {
+		return "/", true
+	}
+	clean := path.Clean(escaped)
+	if strings.HasSuffix(escaped, "/") && clean != "/" {
+		clean += "/"
+	}
+	segs := strings.Split(clean, "/")
 	for i, raw := range segs {
 		seg, err := url.PathUnescape(raw)
-		if err != nil || strings.Contains(seg, "/") {
+		if err != nil || strings.Contains(seg, "/") || seg == "." || seg == ".." {
 			return "", false
 		}
 		segs[i] = seg
 	}
-	p := strings.Join(segs, "/")
-	if p == "" {
-		return "/", true
-	}
-	clean := path.Clean(p)
-	if strings.HasSuffix(p, "/") && clean != "/" {
-		clean += "/"
-	}
-	return clean, true
+	return strings.Join(segs, "/"), true
 }
 
 // --- Per-feature route registration --------------------------------------------

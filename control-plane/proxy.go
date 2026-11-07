@@ -63,7 +63,17 @@ func relayTargetPath(r *http.Request) (string, bool) {
 	if unsafeEscapedRelayPath(esc) {
 		return "", false
 	}
-	return strings.TrimPrefix(esc, "/api"), true
+	// The mux matches an encoded first segment ("/%61pi") as "api", so strip that segment by
+	// position rather than by comparing text; the rest keeps its escapes untouched.
+	rest := strings.TrimPrefix(esc, "/")
+	first, tail, _ := strings.Cut(rest, "/")
+	if seg, err := url.PathUnescape(first); err != nil || seg != "api" {
+		return "", false
+	}
+	if tail == "" && !strings.HasSuffix(esc, "/") {
+		return "", true
+	}
+	return "/" + tail, true
 }
 
 // unsafeEscapedRelayPath is unsafeRelayPath for an escaped path, segment by segment.

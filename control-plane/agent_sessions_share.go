@@ -225,12 +225,16 @@ func (m *manager) invalidatesSessionsOnWrite(next http.Handler) http.Handler {
 // git, engine gateway) cannot, except /mcp and the token-authenticated /internal/* routes (session
 // tools, schedule run-now), which authenticate inside the handler. Deriving this from the registry
 // keeps a newly exempted public route from becoming an anonymous cache-flush.
-func writeMayChangeSessions(path string) bool {
+func writeMayChangeSessions(escaped string) bool {
+	path, ok := canonicalRoutePath(escaped)
+	if !ok {
+		return true // no plain form: when in doubt, invalidate
+	}
 	if strings.HasPrefix(path, "/internal/engine/") {
 		return false
 	}
 	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") || strings.HasPrefix(path, "/internal/") {
 		return true
 	}
-	return !isAuthExempt(path)
+	return !isCanonicalExempt(path)
 }

@@ -107,20 +107,19 @@ func TestBrowserAgentHTTPURLKeepsEscapedPath(t *testing.T) {
 
 func TestCanonicalRoutePath(t *testing.T) {
 	for in, want := range map[string]string{
-		"/":                    "/",
-		"/login":               "/login",
-		"/brand/a%20b.png":     "/brand/a b.png",
-		"/%6Cogin":             "/login",
-		"/brand/%2e%2e/secret": "/secret",
-		"/brand/../x":          "/x",
-		"/brand//x":            "/brand/x",
-		"/login/":              "/login/",
+		"/":                "/",
+		"/login":           "/login",
+		"/brand/a%20b.png": "/brand/a b.png",
+		"/%6Cogin":         "/login",
+		"/brand/../x":      "/x",
+		"/brand//x":        "/brand/x",
+		"/login/":          "/login/",
 	} {
 		if got, ok := canonicalRoutePath(in); !ok || got != want {
 			t.Errorf("canonicalRoutePath(%q) = %q, %v; want %q", in, got, ok, want)
 		}
 	}
-	for _, in := range []string{"/brand/a%2Fb", "/brand/a%2fb", "/brand/%zz"} {
+	for _, in := range []string{"/brand/a%2Fb", "/brand/a%2fb", "/brand/%zz", "/brand/%2e%2e/x", "/private/%2E%2E/healthz"} {
 		if got, ok := canonicalRoutePath(in); ok {
 			t.Errorf("canonicalRoutePath(%q) = %q, want refusal", in, got)
 		}
@@ -220,5 +219,79 @@ func TestAgentClientsRefuseRedirects(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Errorf("a client followed the redirect (%d hits)", hits.Load())
+	}
+}
+
+// An exempt answer must name a route the mux really reaches: for every variant that is exempt,
+// the mux's pattern must equal the pattern of the plain path the exemption was decided on.
+func TestAuthExemptAgreesWithMux(t *testing.T) {
+	_, mux := smokeEnv(t)
+	for _, p := range []string{
+		"/healthz", "/%68ealthz", "/private/%2e%2e/healthz", "/private/%2E%2E/manifest.webmanifest",
+		"/private/../healthz", "/oauth2/x", "/%6Fauth2/x", "/oauth2/%2e%2e/index.html",
+		"/brand/logo.png", "/brand/%2e%2e/index.html", "/brand/..%2findex.html",
+		"/login", "/login/acme", "/login/%2e%2e/x", "/internal/egress", "/%69nternal/egress",
+		"/mcp", "/%6dcp", "/git/default/repo.git/info/refs", "/agent-fleet/old",
+	} {
+		if !isAuthExempt(p) {
+			continue
+		}
+		plain, _ := canonicalRoutePath(p)
+		_, got := mux.Handler(httptest.NewRequest(http.MethodGet, p, nil))
+		_, want := mux.Handler(httptest.NewRequest(http.MethodGet, plain, nil))
+		if got != want {
+			t.Errorf("%q is auth-exempt as %q but the mux serves it with %q (plain: %q)", p, plain, got, want)
+		}
+	}
+	for _, p := range []string{"/private/%2e%2e/healthz", "/private/%2E%2E/manifest.webmanifest"} {
+		if isAuthExempt(p) {
+			t.Errorf("isAuthExempt(%q) = true", p)
+		}
+	}
+}
+
+// writeMayChangeSessions sees the same representation as the exemption check.
+func TestWriteMayChangeSessionsEncodedPrefixes(t *testing.T) {
+	smokeEnv(t)
+	for p, want := range map[string]bool{
+		"/mcp":                        true,
+		"/%6dcp":                      true,
+		"/%6Dcp/sub":                  true,
+		"/internal/schedules/a/run":   true,
+		"/%69nternal/schedules/a/run": true,
+		"/internal/engine/token":      false,
+		"/internal/%65ngine/token":    false,
+		"/%69nternal/%65ngine/token":  false,
+		"/internal/%2e%2e/x":          true,
+		"/api/sessions":               true,
+		"/oauth2/callback":            false,
+		"/%6Fauth2/callback":          false,
+	} {
+		if got := writeMayChangeSessions(p); got != want {
+			t.Errorf("writeMayChangeSessions(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// An encoded /api prefix matches the relay's route in the mux, so the relay must strip it too.
+func TestRelayTargetPathEncodedAPIPrefix(t *testing.T) {
+	for in, want := range map[string]string{
+		"/%61pi/fs/file":     "/fs/file",
+		"/%61%70%69/fs/file": "/fs/file",
+		"/api/fs/file":       "/fs/file",
+		"/%61pi/fs/a%20b":    "/fs/a%20b",
+		"/%41pi/fs/file":     "",
+	} {
+		r := httptest.NewRequest(http.MethodGet, in+"?path=a%23b.md", nil)
+		got, ok := relayTargetPath(r)
+		if want == "" {
+			if ok {
+				t.Errorf("relayTargetPath(%q) = %q, want refusal", in, got)
+			}
+			continue
+		}
+		if !ok || got != want {
+			t.Errorf("relayTargetPath(%q) = %q, %v; want %q", in, got, ok, want)
+		}
 	}
 }
