@@ -22,6 +22,7 @@ import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.t
 import { setupStickyHeadings } from "./parts/mdStickyHeadings.ts";
 import { addCopyButton, addQuoteCopyButton } from "./parts/mdCopyButtons.ts";
 import { wireImages, wireLinks } from "./parts/mdLinks.ts";
+import { wireExternalImages } from "./parts/mdExternalImages.ts";
 import {
   ensurePreviewInfo,
   hasPreviewLinks,
@@ -179,6 +180,7 @@ export function MarkdownView({
     if (frontMatter) renderFrontMatter(el, frontMatter.attributes, frontMatter.lenient);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)
+    wireExternalImages(el); // also while streaming: a deferred image would otherwise stay blank
 
     if (streaming) {
       el.querySelectorAll<HTMLElement>("pre > code").forEach((code) => {

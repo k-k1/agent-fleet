@@ -42,6 +42,24 @@ export function isInternalMediaUrl(url: string): boolean {
   return u.pathname.startsWith(dir) && blockedPath(u.pathname.slice(dir.length));
 }
 
+/**
+ * True when `url` would be fetched from another origin (http(s), protocol-relative, any
+ * other network scheme). data: and blob: carry their bytes and never leave the browser.
+ * Relative URLs resolve against the document base and so count as the Console's own.
+ */
+export function isExternalMediaUrl(url: string): boolean {
+  const v = url.trim();
+  if (!v) return false;
+  let u: URL;
+  try {
+    u = new URL(v, document.baseURI);
+  } catch {
+    return false;
+  }
+  if (u.protocol === "data:" || u.protocol === "blob:") return false;
+  return u.origin !== window.location.origin;
+}
+
 function srcsetUrls(value: string): string[] {
   return value
     .split(",")
@@ -52,6 +70,43 @@ function srcsetUrls(value: string): string[] {
 // Attributes that make an element fetch a resource on display.
 const FETCH_ATTRS = new Set(["src", "srcset", "poster", "background", "href", "xlink:href"]);
 const FETCH_ATTRS_ANCHOR_SAFE = new Set(["href", "xlink:href"]); // only fetches on <image> (SVG)
+
+// Where an external image's URL waits until the reader clicks it (see parts/mdExternalImages.ts).
+// The prefix is reserved: the sanitizer drops it from author HTML, so only this module sets it.
+export const EXT_ATTR_PREFIX = "data-md-ext-";
+const DEFERRABLE = ["src", "srcset"] as const;
+
+/**
+ * Keeps an external image from loading on display. <img> and the <source>s of a <picture>
+ * hand their src / srcset to data-md-ext-* (one external candidate defers both attributes, so
+ * the browser cannot pick the other one); every other element that would fetch an external
+ * resource (video, audio, poster, background, SVG <image>) loses the URL. CSS url()s in an
+ * inline style are scrubbed of external hosts. Same-origin URLs are left alone: the callers
+ * judge those with isInternalMediaUrl.
+ */
+export function deferExternalMedia(el: Element): void {
+  const tag = el.localName;
+  const src = el.getAttribute("src");
+  const srcset = el.getAttribute("srcset");
+  const external = (src != null && isExternalMediaUrl(src)) || (srcset != null && srcsetUrls(srcset).some(isExternalMediaUrl));
+  if (external) {
+    const deferrable = tag === "img" || (tag === "source" && el.parentNode?.nodeName.toLowerCase() === "picture");
+    for (const name of DEFERRABLE) {
+      const v = el.getAttribute(name);
+      if (v == null) continue;
+      if (deferrable) el.setAttribute(EXT_ATTR_PREFIX + name, v);
+      el.removeAttribute(name);
+    }
+  }
+  const dropped = ["poster", "background"];
+  if (tag === "image") dropped.push("href", "xlink:href");
+  for (const name of dropped) {
+    const v = el.getAttribute(name);
+    if (v != null && isExternalMediaUrl(v)) el.removeAttribute(name);
+  }
+  const style = el.getAttribute("style");
+  if (style && /url|image|\\|@/i.test(style)) el.setAttribute("style", scrubCssUrls(style, (u) => isInternalMediaUrl(u) || isExternalMediaUrl(u)));
+}
 
 export interface SanitizeOptions {
   /**
@@ -71,6 +126,10 @@ function instance() {
   const p = DOMPurify(window);
   p.addHook("uponSanitizeAttribute", (node, data) => {
     const name = data.attrName;
+    if (name.startsWith(EXT_ATTR_PREFIX)) {
+      data.keepAttr = false;
+      return;
+    }
     if (!FETCH_ATTRS.has(name)) return;
     if (FETCH_ATTRS_ANCHOR_SAFE.has(name) && node.nodeName.toLowerCase() !== "image") return;
     const value = data.attrValue;
@@ -82,6 +141,11 @@ function instance() {
       return isInternalMediaUrl(u);
     });
     if (bad) data.keepAttr = false;
+  });
+  // After the element's own attributes were judged above, so only an external URL that
+  // survived them (never an /api/ one) can be deferred to click-to-load.
+  p.addHook("afterSanitizeAttributes", (node) => {
+    if (node.nodeType === 1) deferExternalMedia(node as Element);
   });
   purifier = p;
   return p;
@@ -136,7 +200,7 @@ const URL_STRING_FUNCS = new Set(["image-set", "-webkit-image-set", "src", "imag
  * (escapes, quoted parentheses, comments) so spelling tricks cannot hide a URL; a url() whose
  * token never terminates is dropped too.
  */
-export function scrubCssUrls(input: string): string {
+export function scrubCssUrls(input: string, blocked: (url: string) => boolean = isInternalMediaUrl): string {
   // CSS Syntax input preprocessing: CR, CRLF and FF are newlines (so `\` + FF is a line
   // continuation inside a string) and NUL is U+FFFD. Done up front so the escape handling
   // below sees what the browser sees; the returned text is the normalized one.
@@ -162,7 +226,7 @@ export function scrubCssUrls(input: string): string {
       const { value, end } = cssString(css, i);
       const top = stack[stack.length - 1] ?? "";
       if ((atImport && stack.length === 0) || URL_STRING_FUNCS.has(top)) {
-        if (isInternalMediaUrl(value.trim())) {
+        if (blocked(value.trim())) {
           cut(i, end);
           continue;
         }
@@ -217,7 +281,7 @@ export function scrubCssUrls(input: string): string {
           }
           if (end < css.length) end++;
         }
-        if (isInternalMediaUrl(value.trim())) cut(start, end);
+        if (blocked(value.trim())) cut(start, end);
         else i = end;
         continue;
       }
