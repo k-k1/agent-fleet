@@ -775,12 +775,17 @@ class RedirectTests(unittest.TestCase):
             (self.guide / rel).write_text(body)
         (self.root / "control-plane").mkdir()
         (self.root / "control-plane/hint.go").write_text('const hint = "see guide/member/08-terminal.md"\n')
+        (self.root / "console").mkdir()
+        (self.root / "console/menu.ts").write_text(
+            'openGuidePage("member/08-terminal");\n'
+            'const note = "member/08-terminal-tips";\n'  # a different page that shares the prefix
+        )
         self.addCleanup(patch.stopall)
         patch.object(check, "ROOT", str(self.root)).start()
         patch.object(check, "GUIDE", str(self.guide)).start()
         patch.object(check, "DOCS", str(self.root / "docs")).start()
         patch.object(check, "REDIRECTS", str(self.guide / "_redirects.tsv")).start()
-        patch.object(check, "REDIRECT_POINTER_ROOTS", (("control-plane", (".go",)),)).start()
+        patch.object(check, "REDIRECT_POINTER_ROOTS", (("control-plane", (".go",)), ("console", (".ts",)))).start()
 
     def errors(self, rows):
         (self.guide / "_redirects.tsv").write_text("# header\n" + rows)
@@ -796,6 +801,11 @@ class RedirectTests(unittest.TestCase):
                       "'user/files/terminal.md#copy-and-paste'", out)
         self.assertIn("control-plane/hint.go:1: 'member/08-terminal.md' moved to 'user/files/terminal.md'", out)
         self.assertNotIn("README.ja.md", out)  # it already points at the new page
+
+    def test_page_named_without_extension_in_code(self):
+        out = self.errors("member/08-terminal.md\tuser/files/terminal.md\n")
+        self.assertIn("console/menu.ts:1: 'member/08-terminal' moved to 'user/files/terminal'", out)
+        self.assertNotIn("console/menu.ts:2", out)
 
     def test_old_page_must_be_gone(self):
         (self.guide / "member/08-terminal.md").write_text("# Terminal\n")
