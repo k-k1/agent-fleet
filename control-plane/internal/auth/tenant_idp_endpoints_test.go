@@ -15,7 +15,7 @@ import (
 func tenantRow(issuer string) store.TenantIdP {
 	return store.TenantIdP{
 		Name: "idp1", Kind: TenantIdPKindOIDC, Issuer: issuer, ClientID: "c",
-		Trust: TrustIssuer, AllowedDomains: "sub.example.org",
+		Trust: TrustIssuer, AllowedDomains: "sub.example.org", AllowedTIDs: "tid1",
 	}
 }
 
@@ -134,5 +134,52 @@ func TestTenantProviderClientIsPublicOnlyAndDoesNotRedirect(t *testing.T) {
 	resp, err := c.Get("https://idp.example.org/")
 	if err != nil || resp.StatusCode != 302 || redirects != 1 {
 		t.Fatalf("redirect must be returned, not followed: resp=%v err=%v hits=%d", resp, err, redirects)
+	}
+}
+
+// Discovery documents in the shape the real IdPs publish them. Each must pass the pin for a
+// tenant row whose issuer is the document's own.
+func TestTenantDiscoveryRealWorldShapes(t *testing.T) {
+	cases := []struct {
+		name, issuer, doc string
+		ok                bool
+	}{
+		{"entra common", "https://login.microsoftonline.com/common/v2.0",
+			`{"issuer":"https://login.microsoftonline.com/{tenantid}/v2.0","authorization_endpoint":"https://login.microsoftonline.com/common/oauth2/v2.0/authorize","token_endpoint":"https://login.microsoftonline.com/common/oauth2/v2.0/token","userinfo_endpoint":"https://graph.microsoft.com/oidc/userinfo"}`, true},
+		{"entra single tenant", "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0",
+			`{"issuer":"https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0","authorization_endpoint":"https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/oauth2/v2.0/authorize","token_endpoint":"https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/oauth2/v2.0/token","userinfo_endpoint":"https://graph.microsoft.com/oidc/userinfo"}`, true},
+		{"google", "https://accounts.google.com",
+			`{"issuer":"https://accounts.google.com","authorization_endpoint":"https://accounts.google.com/o/oauth2/v2/auth","token_endpoint":"https://oauth2.googleapis.com/token","userinfo_endpoint":"https://openidconnect.googleapis.com/v1/userinfo"}`, true},
+		{"cognito default domain", "https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_AbCdEf",
+			`{"issuer":"https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_AbCdEf","authorization_endpoint":"https://pool.auth.ap-northeast-1.amazoncognito.com/oauth2/authorize","token_endpoint":"https://pool.auth.ap-northeast-1.amazoncognito.com/oauth2/token","userinfo_endpoint":"https://pool.auth.ap-northeast-1.amazoncognito.com/oauth2/userInfo"}`, true},
+		{"okta", "https://dev-1.okta.com/oauth2/default",
+			`{"issuer":"https://dev-1.okta.com/oauth2/default","authorization_endpoint":"https://dev-1.okta.com/oauth2/default/v1/authorize","token_endpoint":"https://dev-1.okta.com/oauth2/default/v1/token","userinfo_endpoint":"https://dev-1.okta.com/oauth2/default/v1/userinfo"}`, true},
+		{"cognito custom domain, not approved", "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_x",
+			`{"issuer":"https://cognito-idp.us-east-1.amazonaws.com/us-east-1_x","authorization_endpoint":"https://login.corp.example/oauth2/authorize","token_endpoint":"https://login.corp.example/oauth2/token"}`, false},
+	}
+	for _, c := range cases {
+		p, err := BuildTenantProvider(tenantRow(c.issuer), store.TenantRef{Slug: "sub"}, "s")
+		if err != nil {
+			t.Fatal(err)
+		}
+		op := p.(*OIDCProvider)
+		op.HTTPClient = discoveryClient(c.doc)
+		if _, err := op.endpoints(context.Background()); (err == nil) != c.ok {
+			t.Errorf("%s: err = %v, want ok=%v", c.name, err, c.ok)
+		}
+	}
+	// The operator approves the custom domain in deployment configuration.
+	t.Setenv(TenantEndpointDomainsEnv, "login.corp.example")
+	p, _ := BuildTenantProvider(tenantRow("https://cognito-idp.us-east-1.amazonaws.com/us-east-1_x"), store.TenantRef{Slug: "sub"}, "s")
+	op := p.(*OIDCProvider)
+	op.HTTPClient = discoveryClient(`{"issuer":"https://cognito-idp.us-east-1.amazonaws.com/us-east-1_x","authorization_endpoint":"https://login.corp.example/oauth2/authorize","token_endpoint":"https://login.corp.example/oauth2/token"}`)
+	if _, err := op.endpoints(context.Background()); err != nil {
+		t.Errorf("an operator-approved endpoint domain must pass: %v", err)
+	}
+	// ...and only that domain: a sibling is still refused.
+	op.HTTPClient = discoveryClient(`{"issuer":"https://cognito-idp.us-east-1.amazonaws.com/us-east-1_x","authorization_endpoint":"https://login.corp.example/oauth2/authorize","token_endpoint":"https://other.example/oauth2/token"}`)
+	op.ep = Endpoints{}
+	if _, err := op.endpoints(context.Background()); err == nil {
+		t.Error("an unlisted domain must still be refused")
 	}
 }

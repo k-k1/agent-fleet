@@ -240,12 +240,24 @@ func (p *OIDCProvider) endpoints(ctx context.Context) (Endpoints, error) {
 
 // endpointHostFamilies lists the IdP families whose endpoints legitimately live on a
 // different site than their issuer: Google's token and userinfo endpoints are on
-// googleapis.com, and a Cognito user pool's issuer is on amazonaws.com while its hosted
-// endpoints are on amazoncognito.com. Each pair is (issuer host suffix, endpoint host suffix).
+// googleapis.com, a Cognito user pool's issuer is on amazonaws.com while its default hosted
+// endpoints are on amazoncognito.com, and Microsoft's v2 discovery names Graph for userinfo
+// (graph.microsoft.com/oidc/userinfo) with the sovereign clouds alike. Each pair is
+// (issuer host suffix, endpoint host suffix).
 var endpointHostFamilies = [][2]string{
 	{"google.com", "googleapis.com"},
 	{"amazonaws.com", "amazoncognito.com"},
+	{"login.microsoftonline.com", "graph.microsoft.com"},
+	{"login.microsoftonline.us", "graph.microsoft.us"},
+	{"login.partner.microsoftonline.cn", "microsoftgraph.chinacloudapi.cn"},
 }
+
+// TenantEndpointDomainsEnv lists domains (CSV) the operator has approved as endpoint hosts for
+// every tenant-defined issuer, on top of the built-in families. It is how a Cognito user pool
+// behind its own domain, or any other IdP whose endpoints live on a different site from its
+// issuer, is admitted without a schema change: the decision is the operator's, in deployment
+// configuration, not the tenant's in a form.
+const TenantEndpointDomainsEnv = "AF_TENANT_IDP_ENDPOINT_DOMAINS"
 
 // hostInDomain reports host == domain or a subdomain of it.
 func hostInDomain(host, domain string) bool {
@@ -275,6 +287,11 @@ func endpointHostAllowed(issuerHost, endpointHost string) bool {
 	}
 	for _, f := range endpointHostFamilies {
 		if hostInDomain(issuerHost, f[0]) && hostInDomain(endpointHost, f[1]) {
+			return true
+		}
+	}
+	for _, d := range envx.SplitCSV(os.Getenv(TenantEndpointDomainsEnv)) {
+		if hostInDomain(endpointHost, strings.ToLower(strings.TrimPrefix(strings.TrimSpace(d), "."))) {
 			return true
 		}
 	}
@@ -864,8 +881,9 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 // Read from discovery, never guessed from the hostname.
 func IssuerUsesPairwiseSubjects(ctx context.Context, issuer string) (bool, error) {
 	// The issuer is what a tenant administrator typed, so the probe is held to the same
-	// public-only, no-redirect client as a tenant provider's own discovery.
-	probe := &OIDCProvider{ProviderID: "probe", Issuer: issuer, HTTPClient: NewTenantHTTPClient(5 * time.Second), PinEndpointHosts: true}
+	// public-only, no-redirect client as a tenant provider's own discovery. It reads one field
+	// and calls no endpoint, so the endpoint-host pin is not applied to it.
+	probe := &OIDCProvider{ProviderID: "probe", Issuer: issuer, HTTPClient: NewTenantHTTPClient(5 * time.Second)}
 	ep, err := probe.endpoints(ctx)
 	if err != nil {
 		return false, err

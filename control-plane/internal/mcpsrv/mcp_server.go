@@ -415,25 +415,38 @@ func mergeHeaders(incoming, stored map[string]string) map[string]string {
 	return out
 }
 
-// urlHostChanged reports whether two server URLs point at a different host or port. The scheme
-// and the path do not count, and a default port equals the explicit one.
+// urlHostChanged reports whether a stored header value could reach a different destination
+// when a server URL changes from oldURL to newURL: another host, another effective port under
+// the same scheme, or a step from https down to anything else (the values would then travel in
+// the clear). An upgrade to https on the same host with default ports is not a change, a path
+// or query change is not, and a default port equals the explicit one.
 func urlHostChanged(oldURL, newURL string) bool {
-	return urlAuthority(oldURL) != urlAuthority(newURL)
+	o, err1 := url.Parse(strings.TrimSpace(oldURL))
+	n, err2 := url.Parse(strings.TrimSpace(newURL))
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	if !strings.EqualFold(o.Hostname(), n.Hostname()) {
+		return true
+	}
+	fromScheme, toScheme := strings.ToLower(o.Scheme), strings.ToLower(n.Scheme)
+	if fromScheme == "https" && toScheme != "https" {
+		return true
+	}
+	if fromScheme == toScheme {
+		return effectivePort(o) != effectivePort(n)
+	}
+	return o.Port() != n.Port() // scheme upgraded: only an explicit, different port moves it
 }
 
-func urlAuthority(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return "?" + raw
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
 	}
-	port := u.Port()
-	if port == "" {
-		port = "80"
-		if strings.EqualFold(u.Scheme, "https") {
-			port = "443"
-		}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
 	}
-	return strings.ToLower(u.Hostname()) + ":" + port
+	return "80"
 }
 
 // maskedHeaderNames lists the header names whose incoming value is the stored-value stand-in,

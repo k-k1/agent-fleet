@@ -554,15 +554,20 @@ export const tenantFormOf = (s: TenantServer): TenantForm => ({
   oauthOrigClientId: s.oauth_client?.client_id || "",
 });
 
-// urlAuthority is the host and effective port of a server URL, lowercased ("" when it does not
-// parse): the part of the URL that decides where a stored header value would be sent.
-const urlAuthority = (raw: string): string => {
+// urlMoved mirrors the control plane's urlHostChanged: another host, another effective port
+// under the same scheme, or https stepped down to anything else. An upgrade to https with
+// default ports, and a path or query change, are not a move. An unparseable URL counts as moved.
+const urlMoved = (oldRaw: string, newRaw: string): boolean => {
   try {
-    const u = new URL(raw.trim());
-    const port = u.port || (u.protocol === "https:" ? "443" : "80");
-    return u.hostname.toLowerCase() + ":" + port;
+    const o = new URL(oldRaw.trim());
+    const n = new URL(newRaw.trim());
+    if (o.hostname.toLowerCase() !== n.hostname.toLowerCase()) return true;
+    if (o.protocol === "https:" && n.protocol !== "https:") return true;
+    const eff = (u: URL) => u.port || (u.protocol === "https:" ? "443" : "80");
+    if (o.protocol === n.protocol) return eff(o) !== eff(n);
+    return o.port !== n.port;
   } catch {
-    return "";
+    return true;
   }
 };
 
@@ -570,7 +575,7 @@ const urlAuthority = (raw: string): string => {
 // it was loaded with. A half-typed URL that does not parse yet counts as moved, because the
 // stored values must not survive while the field passes through such states.
 export const tenantHostMoved = (f: TenantForm, url: string = f.url): boolean =>
-  f.id !== "" && f.origUrl !== "" && urlAuthority(url) !== urlAuthority(f.origUrl);
+  f.id !== "" && f.origUrl !== "" && urlMoved(f.origUrl, url);
 
 // tenantUrlPatch is the form change for a typed URL. Once the host has moved, every stored
 // (masked) header value is blanked so the admin has to enter it again for the new host; the

@@ -15,6 +15,7 @@ func TestURLHostChanged(t *testing.T) {
 		{"https://mcp.example.com/a", "https://mcp.example.com/b"},
 		{"https://MCP.example.com", "https://mcp.example.com:443/x"},
 		{"http://mcp.example.com", "http://mcp.example.com:80"},
+		{"http://mcp.example.com", "https://mcp.example.com"}, // upgrade to TLS on default ports
 		{"https://mcp.example.com/a?x=1", "https://mcp.example.com/a?x=2"},
 	}
 	for _, c := range same {
@@ -26,7 +27,9 @@ func TestURLHostChanged(t *testing.T) {
 		{"https://mcp.example.com", "https://mcp2.example.com"},
 		{"https://mcp.example.com", "https://mcp.example.com:8443"},
 		{"https://mcp.example.com", "https://mcp.example.net"},
-		{"http://mcp.example.com", "https://mcp.example.com"}, // 80 -> 443
+		{"https://mcp.example.com:8443", "http://mcp.example.com:8443"}, // TLS down to plain, same port
+		{"https://mcp.example.com", "http://mcp.example.com"},
+		{"http://mcp.example.com:8080", "https://mcp.example.com:9443"},
 	}
 	for _, c := range diff {
 		if !urlHostChanged(c[0], c[1]) {

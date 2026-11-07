@@ -65,17 +65,17 @@ func fakeDNS(t *testing.T, ip [4]byte) *net.Resolver {
 func TestEgressDialControlRefusedRanges(t *testing.T) {
 	refused := []string{
 		"127.0.0.1:80", "[::1]:80", "0.0.0.0:80", "169.254.169.254:80", "[fe80::1%eth0]:80",
-		"10.1.2.3:80", "172.16.0.1:80", "192.168.1.1:80", "[fd00::1]:80", "100.64.0.1:80",
-		"198.18.0.1:80", "240.0.0.1:80", "224.0.0.1:80", "[::ffff:127.0.0.1]:80", "[::ffff:10.0.0.1]:80",
-		"not-an-address",
+		"[::ffff:127.0.0.1]:80", "[::ffff:169.254.169.254]:80", "[ff02::1]:80", "not-an-address",
 	}
 	for _, a := range refused {
-		if err := egressallow.DialControl("tcp", a, nil); !errors.Is(err, egressallow.ErrRefusedAddr) {
+		if err := egressallow.ProxyDialControl("tcp", a, nil); !errors.Is(err, egressallow.ErrRefusedAddr) {
 			t.Errorf("%s: want refused, got %v", a, err)
 		}
 	}
-	for _, a := range []string{"93.184.216.34:443", "[2606:4700::1111]:443", "203.0.113.7:80"} {
-		if err := egressallow.DialControl("tcp", a, nil); err != nil {
+	// Private ranges stay reachable through the proxy (internal Git, MCP, cluster services).
+	for _, a := range []string{"93.184.216.34:443", "[2606:4700::1111]:443", "203.0.113.7:80",
+		"10.1.2.3:80", "172.16.0.1:80", "192.168.1.1:80", "[fd00::1]:80", "100.64.0.1:80"} {
+		if err := egressallow.ProxyDialControl("tcp", a, nil); err != nil {
 			t.Errorf("%s: want allowed, got %v", a, err)
 		}
 	}
@@ -169,5 +169,16 @@ func TestEgressProxyRelaysAllowedDestination(t *testing.T) {
 	line, _ := br.ReadString('\n')
 	if !strings.Contains(line, "200") {
 		t.Fatalf("CONNECT: got %q", line)
+	}
+}
+
+// The look-ahead used by engine ingest keeps the proxy's scope: internal HTTPS mirrors on
+// private addresses stay acceptable, loopback and metadata do not.
+func TestInternalEgressDestKeepsProxyScope(t *testing.T) {
+	for host, want := range map[string]bool{"10.0.0.5": false, "192.168.1.9": false, "93.184.216.34": false,
+		"127.0.0.1": true, "169.254.169.254": true, "0.0.0.0": true} {
+		if got := internalEgressDest(host); got != want {
+			t.Errorf("internalEgressDest(%s) = %v, want %v", host, got, want)
+		}
 	}
 }

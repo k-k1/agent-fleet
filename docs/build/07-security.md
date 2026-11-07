@@ -318,7 +318,13 @@ need no edit.
   and never follows a redirect. The authorization, token and userinfo endpoints must be
   `https` and on the issuer's registrable domain (public-suffix aware), with two built-in
   exceptions for IdP families that split the two (Google's `googleapis.com`, Cognito's
-  `amazoncognito.com`); anything else fails the sign-in and is logged. A tenant row that
+  default `amazoncognito.com`, Microsoft's `graph.microsoft.com` for userinfo and its
+  sovereign-cloud equivalents). An IdP whose endpoints live elsewhere, such as a Cognito pool
+  behind its own domain, is admitted by the operator listing that domain in
+  `AF_TENANT_IDP_ENDPOINT_DOMAINS` (CSV); the decision stays in deployment configuration
+  rather than a tenant form, which needs no schema change. Anything else fails the sign-in
+  and is logged. The save-time pairwise probe reads one discovery field and calls no endpoint,
+  so it is not subject to the endpoint pin. A tenant row that
   predates the rules and fails them is not deleted or rewritten: it stays stored and
   approved, a non-https issuer hides its button with a logged warning, and an endpoint
   outside the issuer's site fails the sign-in with a logged reason; editing the row (or the
@@ -597,7 +603,7 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 | Personal access tokens | only a SHA-256 hash, in the database | shown in plaintext exactly once, at issue |
 
 A tenant MCP server's header values stay with the destination they were entered for: when the
-URL of a stored server moves to a different host or port, a masked (`***`) value is refused with
+URL of a stored server moves to a different host or port, or from https down to plain http, a masked (`***`) value is refused with
 `mcp_header_secret_reenter` instead of being filled in from the stored row (the Console blanks
 those rows in the form), and the audit line of the edit records the old and the new URL. A
 client secret is bound the same way to its issuer and client id.
@@ -673,13 +679,12 @@ Implemented:
   mode, including log-only. The check is a `net.Dialer.Control` hook on the dial itself (the
   CONNECT path and a dedicated plain-HTTP transport share it), so it judges the address
   that is actually connected, not a separate lookup of the name. The refused ranges are
-  the gateway relay's (`egressallow.AddrRefused`): anything that is not global unicast
-  (unspecified, multicast, the whole `0.0.0.0/8`), loopback, link-local (the cloud metadata
-  address included), private (RFC 1918 and IPv6 unique-local), and `100.64.0.0/10`,
-  `192.0.0.0/24`, `198.18.0.0/15`, `240.0.0.0/4`; an IPv4-mapped IPv6 address is judged as
-  the IPv4 address it names. The relay is IPv4-only and refuses IPv6 outright; the proxy
-  carries IPv6 and applies the same classes to it. A workspace that reaches a private
-  host (an internal service on the same network) must bypass the proxy with `NO_PROXY`.
+  loopback (the proxy host itself), link-local (the cloud metadata address included) and
+  unspecified, with an IPv4-mapped IPv6 address judged as the IPv4 address it names
+  (`egressallow.ProxyAddrRefused`). Private ranges (RFC 1918, unique-local) are deliberately
+  not refused: workspaces reach internal Git, MCP and cluster services through the proxy.
+  The AWS gateway relay refuses the wider set (`egressallow.AddrRefused`: private, shared
+  address space and the other non-public ranges), and so do tenant-defined OIDC issuers (§7.3.1).
 - Events go to the CP (`POST /internal/egress`, `AF_EGRESS_TOKEN`) and are aggregated
   daily (`egress_daily`); the policy is served back from `GET /internal/egress/policy`.
   Reporting is at-least-once: the proxy flushes every 10 s (10 s request timeout, fixed

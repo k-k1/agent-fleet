@@ -20,6 +20,14 @@ describe("tenant form URL host change", () => {
     }
   });
 
+  it("treats https stepped down to plain http as a move, and an upgrade to https as none", () => {
+    const f = { ...loaded(), url: "https://m.example.com:8443/mcp", origUrl: "https://m.example.com:8443/mcp" };
+    expect(tenantHostMoved(f, "http://m.example.com:8443/mcp")).toBe(true);
+    expect(tenantHostMoved(f, "http://m.example.com/mcp")).toBe(true);
+    const plain = { ...loaded(), origUrl: "http://m.example.com/mcp" };
+    expect(tenantHostMoved(plain, "https://m.example.com/mcp")).toBe(false);
+  });
+
   it("blanks the masked values when the host or port changes, and only those", () => {
     const f = loaded();
     for (const url of ["https://n.example.com/mcp", "https://m.example.com:8443/mcp", "https://m.example.net/mcp"]) {

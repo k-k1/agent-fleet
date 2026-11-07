@@ -44,7 +44,7 @@ type egressProxy struct {
 	cur   atomic.Pointer[proxyPolicy]
 	batch *egressBatcher
 	// dial and rt are nil in production. A test that needs a resolver of its own sets them,
-	// built on newEgressDialer so egressallow.DialControl is still the thing under test.
+	// built on newEgressDialer so egressallow.ProxyDialControl is still the thing under test.
 	dial *net.Dialer
 	rt   *http.Transport
 }
@@ -147,14 +147,14 @@ func (p *egressProxy) decide(host string) bool {
 
 // internalEgressDest is a look-ahead for callers that judge a destination without
 // connecting (engine_ingest): true when any address the name resolves to is refused. It is
-// advisory; a connection that matters is checked by egressallow.DialControl at dial time.
+// advisory; a connection that matters is checked by egressallow.ProxyDialControl at dial time.
 func internalEgressDest(host string) bool {
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return false // unresolvable: let the dial fail on its own
 	}
 	for _, ip := range ips {
-		if a, ok := netip.AddrFromSlice(ip); ok && egressallow.AddrRefused(a) {
+		if a, ok := netip.AddrFromSlice(ip); ok && egressallow.ProxyAddrRefused(a) {
 			return true
 		}
 	}
@@ -163,11 +163,11 @@ func internalEgressDest(host string) bool {
 
 // newEgressDialer builds the dialer the CONNECT path and the plain-HTTP transport share.
 func newEgressDialer() *net.Dialer {
-	return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second, Control: egressallow.DialControl}
+	return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second, Control: egressallow.ProxyDialControl}
 }
 
 // newEgressTransport is the plain-HTTP upstream. Proxy is nil so the proxy's own
-// environment never chains it onward, and the dial goes through egressallow.DialControl.
+// environment never chains it onward, and the dial goes through egressallow.ProxyDialControl.
 func newEgressTransport() *http.Transport {
 	return &http.Transport{
 		Proxy:                 nil,
@@ -179,7 +179,7 @@ func newEgressTransport() *http.Transport {
 	}
 }
 
-// upstreamFailed answers a failed upstream connect: 403 when egressallow.DialControl refused the
+// upstreamFailed answers a failed upstream connect: 403 when egressallow.ProxyDialControl refused the
 // address, 502 otherwise.
 func upstreamFailed(w http.ResponseWriter, err error, msg string) {
 	if errors.Is(err, egressallow.ErrRefusedAddr) {

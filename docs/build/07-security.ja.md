@@ -271,8 +271,12 @@ Cognito / GitLab が設定だけで載る（`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID
   拒否し（`egressallow.AddrRefused`、§7.8 と同じレンジ）、リダイレクトを辿らないクライアントで行う。
   authorization・token・userinfo の各 endpoint は `https` で、issuer の登録可能ドメイン
   （Public Suffix 考慮）上にあること。issuer と endpoint でドメインが分かれる IdP ファミリー
-  （Google の `googleapis.com`、Cognito の `amazoncognito.com`）だけを例外として組み込む。
-  それ以外はサインインが失敗してログに残る。規則より前に作られて違反する行は削除も書き換えもしない：
+  （Google の `googleapis.com`、Cognito 既定の `amazoncognito.com`、Microsoft の userinfo 用
+  `graph.microsoft.com` とソブリンクラウドの相当ドメイン）を例外として組み込む。独自ドメインの
+  Cognito など endpoint が別の場所にある IdP は、運用者が `AF_TENANT_IDP_ENDPOINT_DOMAINS`
+  （CSV）にそのドメインを列挙して承認する。判断はテナントのフォームではなくデプロイ設定に置き、
+  スキーマ変更は要らない。それ以外はサインインが失敗してログに残る。保存時の pairwise 確認は
+  discovery の 1 項目を読むだけで endpoint を呼ばないため、endpoint の固定は掛けない。規則より前に作られて違反する行は削除も書き換えもしない：
   保存・承認済みのまま、https でない issuer はボタンが隠れて警告ログ、issuer のサイト外の endpoint は
   サインインが理由付きのログと共に失敗する。行（または IdP の discovery 文書）を直せば戻る。
   env 設定の provider は変更なし。
@@ -489,7 +493,7 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 | PAT | DB に SHA-256 ハッシュのみ | 平文は発行時 1 回だけ表示 |
 
 テナントの MCP サーバーのヘッダー値は、入力した宛先に結び付く。保存済みサーバーの URL が別のホストまたは
-ポートに変わるとき、マスクされた（`***`）値は保存行から補われず `mcp_header_secret_reenter` で拒否する
+ポートに変わるとき、または https から平文 http に下がるとき、マスクされた（`***`）値は保存行から補われず `mcp_header_secret_reenter` で拒否する
 （Console はフォーム上でその行を空にする）。編集の監査行には変更前後の URL を残す。client secret は
 同様に issuer と client id に結び付く。
 
@@ -551,13 +555,12 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   CONNECT / HTTP 要求のホスト名で判定し、**TLS は復号しない**。内部宛先は log-only を含む
   どのモードでも拒否する。検査は dial 自体に掛けた `net.Dialer.Control` フックで行い（CONNECT 経路と、
   平文 HTTP 用の専用 transport が共用する）、名前を別に引き直した結果ではなく実際に接続する
-  アドレスを判定する。拒否するレンジは gateway relay と同じ（`egressallow.AddrRefused`）：
-  global unicast でないもの（未指定・マルチキャスト・`0.0.0.0/8` 全体）、loopback、link-local
-  （クラウドのメタデータのアドレスを含む）、private（RFC 1918 と IPv6 ユニークローカル）、
-  `100.64.0.0/10`・`192.0.0.0/24`・`198.18.0.0/15`・`240.0.0.0/4`。IPv4-mapped IPv6 アドレスは
-  対応する IPv4 アドレスとして判定する。relay は IPv4 専用で IPv6 を一律拒否し、proxy は IPv6 も
-  運ぶので同じ分類を適用する。同じネットワーク上の内部サービスなど private なホストへ届かせる
-  Workspace は `NO_PROXY` で proxy を迂回させる。
+  アドレスを判定する。拒否するのは loopback（proxy ホスト自身）・link-local（クラウドの
+  メタデータのアドレスを含む）・未指定アドレスで、IPv4-mapped IPv6 アドレスは対応する IPv4
+  アドレスとして判定する（`egressallow.ProxyAddrRefused`）。private（RFC 1918・ユニークローカル）は
+  意図的に拒否しない：Workspace は proxy 経由で社内 Git・MCP・クラスタ内サービスへ届く。AWS gateway
+  relay とテナント定義 OIDC の issuer（§7.3.1）はより広い範囲（`egressallow.AddrRefused`：private・
+  共有アドレス空間などの非公開レンジ）を拒否する。
 - イベントは CP へ（`POST /internal/egress`・`AF_EGRESS_TOKEN`）送って日次集計（`egress_daily`）、
   ポリシーは `GET /internal/egress/policy` で配る。
   報告は at-least-once：proxy は 10 秒ごとに送信し（タイムアウト 10 秒・固定間隔・バックオフ
