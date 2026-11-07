@@ -467,9 +467,10 @@ memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-age
   cookie and the gateway identity headers, so the member's login cookie never reaches the workspace.
 - **No signing for another page.** Before signing, the CP requires `application/json`, `Sec-Fetch-Site:
   same-origin` when sent, and an `Origin` of the Console's own host when sent, so a same-site preview app
-  cannot have the browser make a signed member write. Every signing handler runs this check itself
+  cannot have the browser make a signed member write. Every signing handler that takes JSON runs this check itself
   (`memberOriginRequestCheck`), including `POST /api/session-handoff-offers` (its push-first step), so the
-  guarantee does not depend on the global write gate or its exemptions. An app in the path-form preview runs on the
+  guarantee does not depend on the global write gate or its exemptions. (The multipart upload route has its own variant: `multipart/form-data` plus the
+  `X-AF-Console` custom header, which forces a preflight, and the same `Sec-Fetch-Site` / `Origin` checks.) An app in the path-form preview runs on the
   Console's origin and is not covered by this check; what limits it is below.
 - **A session handoff needs a member action in the Console.** The Console's "Hand off to another agent…"
   opens an operator chat whose first prompt is only put in the composer; the turn (which reads the source

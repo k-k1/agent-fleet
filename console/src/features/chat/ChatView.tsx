@@ -639,8 +639,8 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
     }
   };
 
-  // source marks a turn the Console sends on the member's behalf (the handoff auto-send), so
-  // it stays out of the composer's ↑ history both locally and once stored.
+  // source marks a turn the Console sends on the member's behalf, so it stays out of the
+  // composer's ↑ history both locally and once stored.
   //
   // `retry` re-runs a turn that already failed: it carries the exact prompt that was sent (images
   // and source included) and touches neither the composer, its draft/attachments nor the
@@ -649,7 +649,7 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
     // Block a second turn on this conversation, whether it was started here or by another
     // pane whose turn is still running in the background (store busy).
     if (!paneKey || sending || compacting || (conversationId && storeBusy)) return;
-    // `override` drives the auto-sent handoff first turn (its text isn't in the composer).
+    // `override` sends text that isn't in the composer (e.g. a reply suggestion).
     const text = retry ? retry.prompt : (override ?? input).trim();
     const paths = retry ? [] : attachments.map((a) => a.path);
     if (!text && !paths.length) return;
