@@ -1,4 +1,5 @@
-package main
+// Package shareproposal validates the payload of a shared-session proposal.
+package shareproposal
 
 import (
 	"bytes"
@@ -17,7 +18,7 @@ import (
 // there, so any path would name the owner's own files; the Agent refuses them too
 // (workspace/agent/internal/sessionx/share_relay.go, keep the field lists in step).
 
-var errProposalAttachments = errors.New("attachments are not accepted on a shared-session proposal")
+var ErrAttachments = errors.New("attachments are not accepted on a shared-session proposal")
 
 type proposalAnswer struct {
 	Text    string `json:"text,omitempty"`
@@ -58,15 +59,15 @@ func strictProposalDecode(raw []byte, dst any) error {
 	return nil
 }
 
-// normalizeProposalPayload validates payload for action and returns the canonical bytes to
+// Normalize validates payload for action and returns the canonical bytes to
 // store and relay. The error text is safe to show the proposer.
-func normalizeProposalPayload(action string, payload []byte) ([]byte, error) {
+func Normalize(action string, payload []byte) ([]byte, error) {
 	var probe map[string]json.RawMessage
 	if json.Unmarshal(payload, &probe) != nil {
 		return nil, errors.New("payload must be a JSON object")
 	}
 	if _, has := probe["attachments"]; has {
-		return nil, errProposalAttachments
+		return nil, ErrAttachments
 	}
 	var v any
 	switch action {
@@ -125,6 +126,6 @@ func normalizeProposalPayload(action string, payload []byte) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// proposalSessionRefused reports session kinds that never accept a proposal: shell and ssm
+// SessionRefused reports session kinds that never accept a proposal: shell and ssm
 // are plain terminals, where an approved "prompt" is a command typed into the owner's shell.
-func proposalSessionRefused(kind string) bool { return kind == "shell" || kind == "ssm" }
+func SessionRefused(kind string) bool { return kind == "shell" || kind == "ssm" }

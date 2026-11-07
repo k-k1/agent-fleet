@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/shareproposal"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -834,14 +835,14 @@ func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{400, "bad_proposal", "invalid proposal"})
 		return
 	}
-	if proposalSessionRefused(c.Kind) {
+	if shareproposal.SessionRefused(c.Kind) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "proposal_session_refused", "proposals are not accepted for terminal sessions"})
 		return
 	}
-	payload, perr := normalizeProposalPayload(in.Action, in.Payload)
+	payload, perr := shareproposal.Normalize(in.Action, in.Payload)
 	if perr != nil {
 		code := "bad_proposal"
-		if errors.Is(perr, errProposalAttachments) {
+		if errors.Is(perr, shareproposal.ErrAttachments) {
 			code = "proposal_attachments_refused"
 		}
 		writeAPIErr(w, &apiError{http.StatusBadRequest, code, "invalid proposal: " + perr.Error()})
@@ -892,7 +893,7 @@ func (a sessionShareAPI) listProposals(w http.ResponseWriter, r *http.Request, _
 		refused := ""
 		if p.Ciphertext != "" {
 			body, _ = a.openProposal(r.Context(), p)
-			if norm, nerr := normalizeProposalPayload(p.Action, body); nerr != nil {
+			if norm, nerr := shareproposal.Normalize(p.Action, body); nerr != nil {
 				refused = nerr.Error()
 			} else {
 				body = norm
@@ -902,7 +903,7 @@ func (a sessionShareAPI) listProposals(w http.ResponseWriter, r *http.Request, _
 		item := map[string]any{"id": p.ID, "sessionId": p.CatalogID, "proposerUserKey": proposer.UserKey, "proposerEmail": proposer.Email, "action": p.Action, "payload": body, "status": p.Status, "createdAt": p.CreatedAt, "expiresAt": p.ExpiresAt}
 		if cat, found, _ := a.mgr.store.GetSharedSessionCatalog(r.Context(), p.CatalogID); found {
 			item["sessionName"], item["sessionKind"], item["sessionTitle"] = cat.Name, cat.Kind, cat.Title
-			if proposalSessionRefused(cat.Kind) {
+			if shareproposal.SessionRefused(cat.Kind) {
 				refused = "terminal session"
 			}
 		}
@@ -1013,14 +1014,14 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 	// Proposals stored before the allow-list existed may carry fields the card never showed.
-	if body, err = normalizeProposalPayload(p.Action, body); err != nil {
+	if body, err = shareproposal.Normalize(p.Action, body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, "proposal_invalid", "the proposal carries content that cannot be relayed; reject it: " + err.Error()})
 		return
 	}
 	if cat, found, cerr := a.mgr.store.GetSharedSessionCatalog(r.Context(), p.CatalogID); cerr != nil {
 		writeAPIErr(w, internalErr(cerr))
 		return
-	} else if found && proposalSessionRefused(cat.Kind) {
+	} else if found && shareproposal.SessionRefused(cat.Kind) {
 		writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, "proposal_session_refused", "proposals are not accepted for terminal sessions; reject it"})
 		return
 	}
