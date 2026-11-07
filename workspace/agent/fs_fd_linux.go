@@ -481,8 +481,11 @@ type uploadDir struct {
 }
 
 // openUploadDir opens rel (browse-root-relative, "" for the root itself) as a directory fd.
-// A symlinked component yields ELOOP, which the caller reports as a refusal.
-func openUploadDir(rel string) (*uploadDir, error) {
+// A symlinked component yields ELOOP, which the caller reports as a refusal. With create, a
+// missing folder is made one component at a time with mkdirat on the fd of its parent, so no
+// path string is ever re-resolved and a parent swapped for a link yields ELOOP before anything
+// is created.
+func openUploadDir(rel string, create bool) (*uploadDir, error) {
 	root, err := absoluteTrustedRoot(browseRoot())
 	if err != nil {
 		return nil, err
@@ -491,12 +494,35 @@ func openUploadDir(rel string) (*uploadDir, error) {
 	if err != nil {
 		return nil, err
 	}
-	dirFD, err := openat2NoSymlinks(rootFD, strings.Trim(rel, "/"), unix.O_RDONLY|unix.O_DIRECTORY)
-	if err != nil {
-		_ = unix.Close(rootFD)
-		return nil, err
+	rel = strings.Trim(rel, "/")
+	if !create || rel == "" {
+		dirFD, err := openat2NoSymlinks(rootFD, rel, unix.O_RDONLY|unix.O_DIRECTORY)
+		if err != nil {
+			_ = unix.Close(rootFD)
+			return nil, err
+		}
+		return &uploadDir{rootFD: rootFD, dirFD: dirFD}, nil
 	}
-	return &uploadDir{rootFD: rootFD, dirFD: dirFD}, nil
+	cur, owned := rootFD, false
+	for _, comp := range strings.Split(rel, "/") {
+		next, err := openat2NoSymlinks(cur, comp, unix.O_RDONLY|unix.O_DIRECTORY)
+		if errors.Is(err, unix.ENOENT) {
+			if merr := unix.Mkdirat(cur, comp, 0o700); merr != nil && !errors.Is(merr, unix.EEXIST) {
+				err = merr
+			} else {
+				next, err = openat2NoSymlinks(cur, comp, unix.O_RDONLY|unix.O_DIRECTORY)
+			}
+		}
+		if owned {
+			_ = unix.Close(cur)
+		}
+		if err != nil {
+			_ = unix.Close(rootFD)
+			return nil, err
+		}
+		cur, owned = next, true
+	}
+	return &uploadDir{rootFD: rootFD, dirFD: cur}, nil
 }
 
 func (d *uploadDir) close() {
@@ -510,6 +536,9 @@ func (d *uploadDir) exists(name string) bool {
 	return unix.Fstatat(d.dirFD, name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil
 }
 
+// closeTemp is a seam so a test can make the close of a finished temp file fail.
+var closeTemp = func(f *os.File) error { return f.Close() }
+
 var errUploadTooLarge = errors.New("upload exceeds the size cap")
 var errUploadExists = errors.New("destination exists")
 
@@ -522,7 +551,10 @@ func (d *uploadDir) store(name string, src io.Reader, max int64, overwrite bool)
 		return err
 	}
 	n, err := io.Copy(tmp, io.LimitReader(src, max+1))
-	_ = tmp.Close()
+	// A copy failure wins; otherwise a failed close (a delayed write error) is a failed store.
+	if cerr := closeTemp(tmp); err == nil {
+		err = cerr
+	}
 	if err == nil && n > max {
 		err = errUploadTooLarge
 	}

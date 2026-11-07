@@ -843,7 +843,11 @@ func TestOutDirGoesThroughTheBrowseGate(t *testing.T) {
 		}
 		return filepath.Join(root, p), p, true
 	}
-	t.Cleanup(func() { BrowseWritablePath = oldWrite })
+	oldOpen := BrowseOpenDir
+	BrowseOpenDir = func(rel string) (DirSink, error) {
+		return &recordingSink{files: map[string][]byte{}}, os.MkdirAll(filepath.Join(root, rel), 0o700)
+	}
+	t.Cleanup(func() { BrowseWritablePath, BrowseOpenDir = oldWrite, oldOpen })
 
 	dir, rel, err := jobOutputDir(JobSpec{OutDir: "pictures/posters"})
 	if err != nil {
@@ -1032,24 +1036,25 @@ func TestAnimaIsWrittenInTagsAndSentences(t *testing.T) {
 	}
 }
 
-// The gate runs again after the folder is created: a folder that only becomes unacceptable once
-// it exists (a link in its place) must not be written into.
-func TestOutDirIsJudgedAgainAfterItIsCreated(t *testing.T) {
+// Creating the folder is the Agent seam's job (fds, no symlink on the way); when it refuses, the
+// out_dir is refused, and without the seam nothing is created from a path string here.
+func TestOutDirCreationGoesThroughTheSeam(t *testing.T) {
 	withJobQueue(t)
 	root := t.TempDir()
-	calls := 0
-	oldWrite := BrowseWritablePath
-	BrowseWritablePath = func(p string) (string, string, bool) {
-		calls++
-		return filepath.Join(root, p), p, calls == 1
-	}
-	t.Cleanup(func() { BrowseWritablePath = oldWrite })
+	oldW, oldO := BrowseWritablePath, BrowseOpenDir
+	BrowseWritablePath = func(p string) (string, string, bool) { return filepath.Join(root, p), p, true }
+	t.Cleanup(func() { BrowseWritablePath, BrowseOpenDir = oldW, oldO })
 
+	BrowseOpenDir = nil
 	if _, _, err := resolveOutDir("pictures"); err == nil {
-		t.Fatal("a folder the gate refused after creation was accepted")
+		t.Error("an out_dir was accepted with no seam to create it")
 	}
-	if calls != 2 {
-		t.Errorf("gate called %d times, want 2", calls)
+	BrowseOpenDir = func(string) (DirSink, error) { return nil, errors.New("symlink") }
+	if _, _, err := resolveOutDir("pictures"); err == nil {
+		t.Error("an out_dir the seam refused was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(root, "pictures")); err == nil {
+		t.Error("a folder was created from the path string")
 	}
 }
 
@@ -1121,7 +1126,14 @@ func TestOutDirThatBecomesUnacceptableBeforeStoreFailsTheJob(t *testing.T) {
 	p := newGateProvider(t)
 	withStubProvider(t, p)
 	root := t.TempDir()
-	outDirSeams(t, root, func(string) (DirSink, error) { return nil, errors.New("symlink") })
+	calls := 0
+	outDirSeams(t, root, func(string) (DirSink, error) {
+		calls++
+		if calls == 1 {
+			return &recordingSink{files: map[string][]byte{}}, nil // the enqueue-time creation
+		}
+		return nil, errors.New("symlink") // the store-time open, after the folder was swapped
+	})
 
 	res := enqueue(t, q, JobSpec{OutDir: "pictures"})
 	<-p.begun

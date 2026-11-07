@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path"
@@ -308,14 +307,11 @@ func safeWritableResolvedBrowsePath(p string) (full, rel string, ok bool) {
 
 // openOutDirSink is imagegen.BrowseOpenDir: the gate again, then the folder as an fd.
 func openOutDirSink(rel string) (imagegen.DirSink, error) {
-	full, rel, ok := safeWritableResolvedBrowsePath(rel)
+	_, rel, ok := safeWritableResolvedBrowsePath(rel)
 	if !ok || rel == "" {
 		return nil, errors.New("out_dir is not a folder this workspace may write to")
 	}
-	if err := os.MkdirAll(full, 0o700); err != nil {
-		return nil, err
-	}
-	d, err := openUploadDir(rel)
+	d, err := openUploadDir(rel, true)
 	if err != nil {
 		return nil, errors.New("out_dir is not a folder this workspace may write to")
 	}
@@ -609,28 +605,21 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
 		return
 	}
-	switch fi, err := os.Stat(dirFull); {
-	case err == nil && !fi.IsDir():
-		httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
-		return
-	case errors.Is(err, fs.ErrNotExist):
-		if err := os.MkdirAll(dirFull, 0o700); err != nil {
-			httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", "could not create "+dirRel)
-			return
-		}
-	case err != nil:
-		httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
-		return
-	}
-	// Written through an fd opened with no symlink on the way, so a folder that is (or became) a
-	// link is refused instead of followed into a place the denylist was not judged against.
-	dir, err := openUploadDir(dirRel)
+	// Opened (and, when missing, created component by component) through fds with no symlink on
+	// the way, so a folder that is or became a link is refused before anything is created or
+	// written in a place the denylist was not judged against.
+	dir, err := openUploadDir(dirRel, true)
 	if err != nil {
-		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EXDEV) {
+		switch {
+		case errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EXDEV):
 			httpx.WriteErr(w, http.StatusForbidden, "denied", "symlinked destination folders are not allowed")
-			return
+		case errors.Is(err, unix.ENOTDIR):
+			httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
+		case errors.Is(err, unix.EACCES), errors.Is(err, unix.EPERM), errors.Is(err, unix.EROFS):
+			httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", "could not create "+dirRel)
+		default:
+			httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
 		}
-		httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
 		return
 	}
 	defer dir.close()

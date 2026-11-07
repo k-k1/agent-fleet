@@ -372,3 +372,55 @@ func TestOutDirSinkWritesBeneathAnOrdinaryFolderAndRefusesLinks(t *testing.T) {
 		t.Error("a path through a link to an ordinary folder was accepted")
 	}
 }
+
+// A parent that became a link after the path was checked must not get a sub-folder created
+// beyond it, by upload or by an out_dir.
+func TestMissingDestinationIsNotCreatedThroughASwappedParent(t *testing.T) {
+	home := hardeningHome(t)
+	mustMkdir(t, filepath.Join(home, ".ssh"))
+	if err := os.Symlink(filepath.Join(home, ".ssh"), filepath.Join(home, "swapped")); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(home, "out")); err != nil {
+		t.Fatal(err)
+	}
+	// Straight into the fd-based creation, as if the gate had passed just before the swap.
+	for _, rel := range []string{"swapped/new/sub", "out/new/sub"} {
+		if d, err := openUploadDir(rel, true); err == nil {
+			d.close()
+			t.Errorf("%s was opened for creation through a link", rel)
+		}
+	}
+	for _, p := range []string{filepath.Join(home, ".ssh", "new"), filepath.Join(outside, "new")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s was created through a swapped parent", p)
+		}
+	}
+	// Ordinary creation of several missing levels still works.
+	d, err := openUploadDir("a/b/c", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.close()
+	if fi, err := os.Stat(filepath.Join(home, "a", "b", "c")); err != nil || !fi.IsDir() {
+		t.Errorf("nested folder not created: %v", err)
+	}
+}
+
+func TestUploadStoreFailsWhenClosingTheTempFileFails(t *testing.T) {
+	home := hardeningHome(t)
+	closeTemp = func(f *os.File) error { _ = f.Close(); return syscall.EIO }
+	t.Cleanup(func() { closeTemp = func(f *os.File) error { return f.Close() } })
+
+	rec := uploadOnePNG(t, "docs", "late.png")
+	if rec.Code == http.StatusOK {
+		t.Fatalf("upload reported success after a close failure (%s)", rec.Body.String())
+	}
+	ents, _ := os.ReadDir(filepath.Join(home, "docs"))
+	for _, e := range ents {
+		if e.Name() != "a.txt" {
+			t.Errorf("left behind: %s", e.Name())
+		}
+	}
+}
