@@ -60,6 +60,12 @@ func wordEnd(s string, i int) int {
 	var q byte
 	for i < len(s) {
 		c := s[i]
+		// An expansion ($(...), ${...}, $((...)), backticks) can hold spaces, quotes and a
+		// whole pipeline; nothing here pretends to parse it, so the word runs to the end of
+		// the line. Single quotes do not expand.
+		if q != '\'' && (c == '`' || (c == '$' && i+1 < len(s) && (s[i+1] == '(' || s[i+1] == '{'))) {
+			return len(s)
+		}
 		switch {
 		case q == '\'':
 			if c == '\'' {

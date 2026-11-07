@@ -95,3 +95,31 @@ func TestShellEscapesAndConcatenation(t *testing.T) {
 		}
 	}
 }
+
+// An expansion is not parsed: the word runs to the end of the line, so the default target
+// omits it and the full line masks from the value to the end.
+func TestShellExpansionsFailSafe(t *testing.T) {
+	for _, c := range []struct{ info, def, full string }{
+		{`PASSWORD=$(echo hunter2 | base64) curl https://example.test`, "", "PASSWORD=***"},
+		{`PASSWORD=$(printf first second) curl https://example.test`, "", "PASSWORD=***"},
+		{`deploy --password $(echo hunter2)`, "deploy", "deploy --password ***"},
+		{`PASSWORD="$(printf "%s" "my verysecret")" curl https://example.test`, "", "PASSWORD=***"},
+		{"PASSWORD=`echo first second` curl https://example.test", "", "PASSWORD=***"},
+		{`PASSWORD=${SECRET:-first second} curl https://example.test`, "", "PASSWORD=***"},
+		{`PASSWORD=$((1 + 2)) curl https://example.test`, "", "PASSWORD=***"},
+		{`echo $(cat secret-file hunter2)`, "echo", `echo $(cat secret-file hunter2)`},
+	} {
+		if got := ProgramTarget(c.info); got != c.def {
+			t.Errorf("ProgramTarget(%q) = %q, want %q", c.info, got, c.def)
+		}
+		got := MaskCommandSecrets(c.info)
+		if got != c.full {
+			t.Errorf("MaskCommandSecrets(%q) = %q, want %q", c.info, got, c.full)
+		}
+		for _, leak := range []string{"hunter2", "first", "second", "verysecret"} {
+			if strings.Contains(got, leak) && !strings.Contains(c.full, leak) {
+				t.Errorf("%q leaked %q: %q", c.info, leak, got)
+			}
+		}
+	}
+}
