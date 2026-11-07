@@ -533,11 +533,18 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 			writeAPIErr(w, gerr)
 			return
 		}
-		gerr, hook = comfyGuard(eng.jobOwners(), mv.MembershipID, r.Method, r.PathValue("path"),
-			r.URL.Query(), r.URL.RawQuery, guardBody)
-		if gerr != nil {
-			writeAPIErr(w, gerr)
+		dec := comfyGuard(eng.jobOwners(), mv.MembershipID, r.Method, r.PathValue("path"),
+			r.Header.Get("Content-Type"), r.URL.Query(), r.URL.RawQuery, guardBody)
+		if dec.err != nil {
+			writeAPIErr(w, dec.err)
 			return
+		}
+		hook = dec.hook
+		if dec.body != nil {
+			guardBody = dec.body
+		}
+		if dec.ctype != "" {
+			r.Header.Set("Content-Type", dec.ctype)
 		}
 		r.Body = io.NopCloser(bytes.NewReader(guardBody))
 	}

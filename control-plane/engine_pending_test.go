@@ -68,7 +68,7 @@ func pendingEngine(t *testing.T, ssmc engineSSMAPI) (engineGateway, *engineRunti
 
 func pendingAsk(t *testing.T, g engineGateway, e *engineRuntimeState, model string) *apiError {
 	t.Helper()
-	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 	// An image request names no model — ComfyUI's API has no such field — so the Agent states
 	// it in the header the usage accounting already reads.
 	r.Header.Set("X-AF-Model", model)
@@ -149,7 +149,7 @@ func TestEngineServeAnswersWakingWhileTheModelIsStillSyncing(t *testing.T) {
 	ask := func(model string) *httptest.ResponseRecorder {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 		r.SetPathValue("key", "image")
 		r.SetPathValue("path", "prompt")
 		r.Header.Set("Authorization", "Bearer "+tok)
@@ -339,7 +339,7 @@ func TestEngineGatewayHoldsOnlyTheModelThatIsMissing(t *testing.T) {
 	}
 	// A request naming no model at all is not this check's business: an image request that
 	// carries no header, and every chat request that names nothing, go to the engine as before.
-	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 	if aerr := g.pendingGuard(t.Context(), e, []byte(`{}`), r); aerr != nil {
 		t.Errorf("a request naming no model was held: %v", aerr.message)
 	}
