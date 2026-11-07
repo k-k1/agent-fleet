@@ -142,12 +142,26 @@ func TestMCPOAuthClientCapAndPrune(t *testing.T) {
 	ctx := context.Background()
 	for name, st := range homeOpStores(t) {
 		for i, id := range []string{"c1", "c2"} {
-			if err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: id, RedirectURIs: "[]", CreatedAt: int64(100 + i)}, 2); err != nil {
-				t.Fatalf("%s: %v", name, err)
+			if ev, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: id, RedirectURIs: "[]", CreatedAt: int64(100 + i)}, 2); err != nil || ev {
+				t.Fatalf("%s: %v evicted=%v", name, err, ev)
 			}
 		}
-		if err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c3", RedirectURIs: "[]", CreatedAt: 1}, 2); !errors.Is(err, ErrMCPOAuthClientCap) {
-			t.Errorf("%s: third client over a cap of 2: %v", name, err)
+		// At the cap the oldest grant-less registration makes room instead of the call failing.
+		if ev, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c3", RedirectURIs: "[]", CreatedAt: 200}, 2); err != nil || !ev {
+			t.Fatalf("%s: third client over a cap of 2: %v evicted=%v", name, err, ev)
+		}
+		if _, ok, _ := st.GetMCPOAuthClient(ctx, "c1"); ok {
+			t.Errorf("%s: the oldest grant-less client was not evicted", name)
+		}
+		if _, ok, _ := st.GetMCPOAuthClient(ctx, "c2"); !ok {
+			t.Errorf("%s: a newer client was evicted", name)
+		}
+		// c3 stands in for c2 below: drop it so the rest of the test is unchanged.
+		if _, err := st.db.ExecContext(ctx, `DELETE FROM mcp_oauth_client WHERE client_id='c3'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c1", RedirectURIs: "[]", CreatedAt: 100}, 2); err != nil {
+			t.Fatal(err)
 		}
 		// c1 has a grant, c2 has none: only c2 goes once both are older than the cutoff.
 		if err := st.CreateMCPOAuthGrant(ctx, MCPOAuthGrant{ID: "g", ClientID: "c1", IdentityID: "i", MembershipID: "m",
@@ -181,13 +195,21 @@ func TestMCPOAuthClientCapHoldsUnderConcurrency(t *testing.T) {
 				}
 			}
 		}
+		// One registration with a grant is immune; the other slot churns.
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "keep", RedirectURIs: "[]"}, 2); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateMCPOAuthGrant(ctx, MCPOAuthGrant{ID: "kg", ClientID: "keep", IdentityID: "i", MembershipID: "m",
+			Scope: "read", Resource: "r", IdleExpiresAt: 9999, AbsExpiresAt: 9999}); err != nil {
+			t.Fatal(err)
+		}
 		var ok, capped, other atomic.Int32
 		var wg sync.WaitGroup
 		for i := 0; i < 8; i++ {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c" + string(rune('a'+i)), RedirectURIs: "[]"}, 1)
+				_, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c" + string(rune('a'+i)), RedirectURIs: "[]", CreatedAt: int64(i)}, 2)
 				switch {
 				case err == nil:
 					ok.Add(1)
@@ -199,8 +221,29 @@ func TestMCPOAuthClientCapHoldsUnderConcurrency(t *testing.T) {
 			}(i)
 		}
 		wg.Wait()
-		if ok.Load() != 1 || capped.Load() != 7 || other.Load() != 0 {
-			t.Errorf("%s: ok=%d capped=%d other=%d, want 1/7/0", name, ok.Load(), capped.Load(), other.Load())
+		var n int
+		if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_oauth_client`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if ok.Load() != 8 || capped.Load() != 0 || other.Load() != 0 || n != 2 {
+			t.Errorf("%s: ok=%d capped=%d other=%d rows=%d, want 8/0/0/2", name, ok.Load(), capped.Load(), other.Load(), n)
+		}
+		if _, found, _ := st.GetMCPOAuthClient(ctx, "keep"); !found {
+			t.Errorf("%s: a client with a grant was evicted", name)
+		}
+		// With every registration holding a grant the cap is a refusal again.
+		if _, err := st.db.ExecContext(ctx, `DELETE FROM mcp_oauth_client WHERE client_id<>'keep'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "g2", RedirectURIs: "[]"}, 2); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateMCPOAuthGrant(ctx, MCPOAuthGrant{ID: "kg2", ClientID: "g2", IdentityID: "i", MembershipID: "m",
+			Scope: "read", Resource: "r", IdleExpiresAt: 9999, AbsExpiresAt: 9999}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "g3", RedirectURIs: "[]"}, 2); !errors.Is(err, ErrMCPOAuthClientCap) {
+			t.Errorf("%s: all-granted cap: %v", name, err)
 		}
 	}
 }

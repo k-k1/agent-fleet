@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -23,7 +24,7 @@ import (
 )
 
 const (
-	// mcpOAuthTrustedSetting holds a JSON array of host names. Even "none" is stored ("[]"), so
+	// mcpOAuthTrustedSetting holds a JSON array of entries (host names or https URL prefixes). Even "none" is stored ("[]"), so
 	// an empty value always means "nothing saved" and the two never share a spelling.
 	mcpOAuthTrustedSetting = "mcp_oauth_trusted_hosts"
 
@@ -32,8 +33,10 @@ const (
 	trustSourceDefault = "default"
 )
 
-// trustedHosts is the set of exact host names that may receive a sign-in redirect and serve
-// client metadata. The nil set trusts nothing, which leaves loopback clients only.
+// trustedHosts is the set of trusted-client entries. Each key is either a bare host name
+// ("claude.ai": any https path on that host) or an https URL prefix
+// ("https://claude.ai/api/mcp/auth_callback": that path and the segments below it). The nil set
+// trusts nothing, which leaves loopback clients only.
 type trustedHosts map[string]bool
 
 func (t trustedHosts) sorted() []string {
@@ -45,31 +48,142 @@ func (t trustedHosts) sorted() []string {
 	return out
 }
 
-// validateTrustedClientHosts is parseTrustedClientHosts without the leniency: an entry the
-// parser would skip is an error here, so a typo is reported instead of silently narrowing (or,
-// after a fallback, widening) the list. It returns the lower-cased, de-duplicated, sorted hosts.
-// An empty input is valid and means "none".
+const trustedPrefixScheme = "https://"
+
+// splitTrustedEntry returns the host and, for a URL-prefix entry, its path ("" for a bare host).
+// Entries are validated or lenient-parsed before they get here, so it does no checking.
+func splitTrustedEntry(e string) (host, prefix string) {
+	rest, ok := strings.CutPrefix(e, trustedPrefixScheme)
+	if !ok {
+		return e, ""
+	}
+	i := strings.IndexByte(rest, '/')
+	return rest[:i], rest[i:]
+}
+
+// hostTrusted reports whether any entry names this host. It gates fetching a client-metadata
+// document and re-admitting a recorded grant host, where only the host is known; the redirect
+// itself is checked by admits.
+func (t trustedHosts) hostTrusted(host string) bool {
+	if t[host] {
+		return true
+	}
+	for e := range t {
+		if h, p := splitTrustedEntry(e); p != "" && h == host {
+			return true
+		}
+	}
+	return false
+}
+
+// admits reports whether an https redirect URI (already canonical: no userinfo, no explicit
+// port) is covered by an entry. A bare-host entry covers every path. A prefix entry covers its
+// own path and the path segments below it, so "/cb" admits "/cb" and "/cb/x" but never
+// "/cbx". The path is compared parsed, and only when it is spelled plainly: a path with
+// non-default escapes (%2f, %2e), dot segments or empty segments is refused, because the
+// browser and this check could otherwise disagree about where a segment ends.
+func (t trustedHosts) admits(u *url.URL) bool {
+	if t[u.Host] {
+		return true
+	}
+	if u.RawPath != "" || u.Path == "" || u.Path[0] != '/' || strings.Contains(u.Path, "//") {
+		return false
+	}
+	for _, seg := range strings.Split(u.Path, "/") {
+		if seg == "." || seg == ".." {
+			return false
+		}
+	}
+	for e := range t {
+		h, p := splitTrustedEntry(e)
+		if p == "" || h != u.Host {
+			continue
+		}
+		if strings.HasSuffix(p, "/") {
+			if strings.HasPrefix(u.Path, p) {
+				return true
+			}
+		} else if u.Path == p || strings.HasPrefix(u.Path, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOnlyEntries lists the bare-host entries: the ones that trust every path on a host.
+func (t trustedHosts) hostOnlyEntries() []string {
+	var out []string
+	for _, e := range t.sorted() {
+		if _, p := splitTrustedEntry(e); p == "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// parseTrustedEntry validates one entry and returns its canonical (lower-cased) spelling. A
+// bare host trusts every path; an https URL with a path trusts that path prefix.
+func parseTrustedEntry(raw string) (string, error) {
+	h := strings.ToLower(strings.TrimSpace(raw))
+	if strings.HasPrefix(h, trustedPrefixScheme) {
+		return parseTrustedPrefix(raw, h)
+	}
+	switch {
+	case h == "":
+		return "", errors.New("a host name is empty")
+	case strings.Contains(h, "://"):
+		return "", errors.New(`"` + raw + `": only https is supported (give the host name, or an https URL with a path)`)
+	case strings.ContainsAny(h, ":/@?#\\ "):
+		return "", errors.New(`"` + raw + `": give the bare host name, or an https URL with a path`)
+	case strings.Contains(h, "*"):
+		return "", errors.New(`"` + raw + `": wildcards are not supported, list each exact host`)
+	case h == "none":
+		return "", errors.New(`"none" is not a host: save an empty list to trust no hosted client`)
+	case net.ParseIP(h) != nil:
+		return "", errors.New(`"` + raw + `": an IP address is not accepted, use a host name`)
+	case !validHostName(h):
+		return "", errors.New(`"` + raw + `" is not a valid host name (letters, digits and hyphens in dot-separated labels)`)
+	}
+	return h, nil
+}
+
+func parseTrustedPrefix(raw, h string) (string, error) {
+	bad := func(why string) (string, error) { return "", errors.New(`"` + raw + `": ` + why) }
+	if strings.ContainsAny(h, "\\ ?#%@") || strings.Contains(h, "*") {
+		return bad("a URL prefix is host and path only: no query, fragment, user name, escapes or wildcards")
+	}
+	rest := h[len(trustedPrefixScheme):]
+	i := strings.IndexByte(rest, '/')
+	if i < 0 || rest[i:] == "/" {
+		return bad("give a path (https://host/path), or the bare host name to trust every path")
+	}
+	host, p := rest[:i], rest[i:]
+	if strings.Contains(host, ":") {
+		return bad("a port is not accepted")
+	}
+	if net.ParseIP(host) != nil || !validHostName(host) {
+		return bad("not a valid host name")
+	}
+	for _, seg := range strings.Split(strings.TrimSuffix(p, "/")[1:], "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return bad("the path must not contain empty or dot segments")
+		}
+	}
+	return trustedPrefixScheme + host + p, nil
+}
+
+// validateTrustedClientHosts is the lenient parser without the leniency: an entry the parser
+// would skip is an error here, so a typo is reported instead of silently narrowing (or, after a
+// fallback, widening) the list. It returns the lower-cased, de-duplicated, sorted entries. An
+// empty input is valid and means "none".
 func validateTrustedClientHosts(in []string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, raw := range in {
-		h := strings.ToLower(strings.TrimSpace(raw))
-		switch {
-		case h == "":
-			return nil, errors.New("a host name is empty")
-		case strings.Contains(h, "://"):
-			return nil, errors.New(`"` + raw + `": give the host name only, without a scheme (https is implied)`)
-		case strings.ContainsAny(h, ":/@?#\\ "):
-			return nil, errors.New(`"` + raw + `": give the bare host name, without a port, path or user name`)
-		case strings.Contains(h, "*"):
-			return nil, errors.New(`"` + raw + `": wildcards are not supported, list each exact host`)
-		case h == "none":
-			return nil, errors.New(`"none" is not a host: save an empty list to trust no hosted client`)
-		case net.ParseIP(h) != nil:
-			return nil, errors.New(`"` + raw + `": an IP address is not accepted, use a host name`)
-		case !validHostName(h):
-			return nil, errors.New(`"` + raw + `" is not a valid host name (letters, digits and hyphens in dot-separated labels)`)
+		e, err := parseTrustedEntry(raw)
+		if err != nil {
+			return nil, err
 		}
-		seen[h] = true
+		seen[e] = true
 	}
 	return trustedHosts(seen).sorted(), nil
 }
@@ -154,6 +268,10 @@ type mcpOAuthTrustedView struct {
 	// Fallback is what a reset would put back, and FallbackSource says where it comes from.
 	Fallback       []string `json:"fallback"`
 	FallbackSource string   `json:"fallback_source"`
+	// HostOnly lists the entries in force that name a bare host and therefore trust every path
+	// on it. The Console warns about them: whoever controls any path there can register a
+	// client that is accepted.
+	HostOnly []string `json:"host_only"`
 	// Served is false when this deployment does not run the OAuth server, so the list has no
 	// effect yet.
 	Served bool `json:"served"`
@@ -170,7 +288,11 @@ func (a *mcpOAuthAPI) trustedView(ctx context.Context) (mcpOAuthTrustedView, err
 	if err != nil {
 		return mcpOAuthTrustedView{}, err
 	}
-	return mcpOAuthTrustedView{Hosts: t.sorted(), Source: src, Fallback: a.fallback.sorted(),
+	hostOnly := t.hostOnlyEntries()
+	if hostOnly == nil {
+		hostOnly = []string{}
+	}
+	return mcpOAuthTrustedView{Hosts: t.sorted(), HostOnly: hostOnly, Source: src, Fallback: a.fallback.sorted(),
 		FallbackSource: a.fallbackSource, Served: a.issuer != "", Unreadable: errors.Is(serr, errTrustedCorrupt)}, nil
 }
 

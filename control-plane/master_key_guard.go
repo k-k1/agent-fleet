@@ -1,5 +1,7 @@
 package main
 
+import "time"
+
 // A deployment that signs real people in (AUTH other than dev) but has no AF_MASTER_KEY issues
 // no DEK, and every Workspace then writes its credential store — git tokens, the Claude token,
 // API keys, MCP and chat connections — as plaintext JSON in the member's home. That is the intended dev behaviour and a
@@ -44,6 +46,15 @@ func efsBackupMissing(runtime, marker string) bool {
 	return (runtime == "ecs" || runtime == "ecs-ec2") && marker == "missing"
 }
 
+// deploymentWarnMCPOAuthRegCap is the code for "dynamic client registration met the deployment
+// cap recently", rendered as admin.deploy_warn_mcp_oauth_reg_cap. It means unauthenticated
+// registrations are being evicted (or, with every slot granted, refused): either a flood, or a
+// deployment that outgrew the cap.
+const deploymentWarnMCPOAuthRegCap = "mcp_oauth_reg_cap"
+
+// mcpOAuthRegCapWindow is how long a cap hit keeps the warning up.
+const mcpOAuthRegCapWindow = 24 * time.Hour
+
 // deploymentWarnings lists the deployment-level problems a super_admin must see. Never nil,
 // so the wire always carries an array.
 func (m *manager) deploymentWarnings() []string {
@@ -53,6 +64,9 @@ func (m *manager) deploymentWarnings() []string {
 	}
 	if m.efsBackupMissing {
 		out = append(out, deploymentWarnEfsBackupMissing)
+	}
+	if at := m.mcpOAuthCapHitAt.Load(); at != 0 && time.Since(time.Unix(at, 0)) < mcpOAuthRegCapWindow {
+		out = append(out, deploymentWarnMCPOAuthRegCap)
 	}
 	return out
 }

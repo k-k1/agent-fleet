@@ -186,9 +186,13 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 		mcpTokenErr(w, http.StatusBadRequest, "invalid_grant", "the membership is no longer active")
 		return
 	}
-	host := ""
+	host, redirectPath := "", ""
 	if u, err := url.Parse(c.RedirectURI); err == nil {
-		host = u.Host
+		host, redirectPath = u.Host, u.EscapedPath()
+	}
+	via := "dcr"
+	if strings.HasPrefix(c.ClientID, "https://") {
+		via = "cimd"
 	}
 	g := store.MCPOAuthGrant{
 		ID: store.NewID(), ClientID: c.ClientID, ClientName: c.ClientName, RedirectHost: host,
@@ -199,7 +203,8 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 	// Audited before anything leaves: no row, no token. The rows name the client, the grant and
 	// the scope, never a token.
 	if err := a.audit(ctx, g.TenantID, g.IdentityID, "mcp.oauth.grant", g.ID,
-		"created client="+strconv.Quote(g.ClientID)+" redirect_host="+strconv.Quote(host)+" scope="+strconv.Quote(g.Scope)); err != nil {
+		"created client="+strconv.Quote(g.ClientID)+" via="+via+" redirect_host="+strconv.Quote(host)+
+			" redirect_path="+strconv.Quote(redirectPath)+" scope="+strconv.Quote(g.Scope)); err != nil {
 		log.Printf("mcp oauth: audit: %v", err)
 		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "audit unavailable")
 		return
@@ -421,10 +426,12 @@ func (a *mcpOAuthAPI) revoke(w http.ResponseWriter, r *http.Request) {
 // grantHostAllowed re-applies the redirect rule to the host a grant recorded (host[:port], as
 // exchangeCode stored it).
 func (a *mcpOAuthAPI) grantHostAllowed(trusted trustedHosts, host string) bool {
-	scheme := "https"
 	if h := strings.Trim(strings.Split(host, "]")[0], "["); h == "localhost" || h == "127.0.0.1" || h == "::1" ||
 		strings.HasPrefix(host, "127.0.0.1:") || strings.HasPrefix(host, "localhost:") {
-		scheme = "http"
+		return a.classifyRedirect(trusted, "http://"+host+"/") != redirectRefused
 	}
-	return a.classifyRedirect(trusted, scheme+"://"+host+"/") != redirectRefused
+	// Only the host is recorded, so any entry naming it keeps the grant refreshable; the full
+	// URI was checked when the code was exchanged.
+	u, ok := parseCanonicalRedirect("https://" + host + "/")
+	return ok && u.Host == u.Hostname() && trusted.hostTrusted(u.Host)
 }

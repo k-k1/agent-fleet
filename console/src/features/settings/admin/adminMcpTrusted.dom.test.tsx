@@ -74,6 +74,22 @@ afterEach(() => {
 });
 
 describe("McpTrustedHostsView", () => {
+  it("warns about bare-host entries (any path) and names them", async () => {
+    api.mockResolvedValue(
+      view("default", ["chatgpt.com", "https://claude.ai/api/mcp/auth_callback"], { host_only: ["chatgpt.com"] }),
+    );
+    await mount();
+    const alert = host!.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("chatgpt.com");
+    expect(alert?.textContent).not.toContain("claude.ai");
+  });
+
+  it("shows no host-only warning when every entry is a URL prefix", async () => {
+    api.mockResolvedValue(view("admin", ["https://claude.ai/x"], { host_only: [] }));
+    await mount();
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("shows the list in effect and its source; reset is off while nothing is saved", async () => {
     api.mockResolvedValue(view("default", ["chatgpt.com", "claude.ai", "claude.com"]));
     await mount();

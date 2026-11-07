@@ -23,6 +23,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
     "This deployment has no master key (AF_MASTER_KEY), so members' stored credentials (git tokens, the Claude token, API keys, MCP and chat connections) are kept unencrypted in their homes. Set the key in the Control Plane's environment and restart it, then stop and start every existing workspace (a running one has no key yet), and only then have members reconnect what they had stored. The old unencrypted file stays in each home and in backups until deleted, so delete it and rotate those credentials.",
   "admin.deploy_warn_efs_backup_missing":
     "This deployment keeps member data on EFS (Persistence=retain) but its data stack has no daily EFS backup: the backup vault and plan were added in 0.26.0 and are not created by updating the other stacks. Homes and Claude state are not protected against deletion or corruption. Update the data stack with a change set that adds only the four EfsBackup* resources (see the EFS backup section of the ECS deployment runbook), then run update.sh again so this notice clears.",
+  "admin.deploy_warn_mcp_oauth_reg_cap":
+    "MCP OAuth dynamic client registration has hit its deployment-wide cap in the last 24 hours, so unused registrations are being evicted to make room (clients that have a connection are never evicted). Registration needs no sign-in, so this is either a flood of registrations or a deployment that has outgrown the cap. Check the source addresses in the access log; unused registrations also expire after 24 hours.",
   "admin.mode_sessions": "Sessions",
   "admin.mode_usage": "Running time",
   "admin.mode_audit": "Audit",
@@ -943,8 +945,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.reason_hint.cache_partial": "Too many to check at once; only what was checked is covered. Survey again after deleting to see the rest. Cannot be undone",
   "admin.mode_mcp_trusted": "MCP sign-in hosts",
   "admin.mcptrust_title": "Trusted MCP client hosts",
-  "admin.mcptrust_note": "Hosts that may receive the sign-in redirect and serve client metadata when an MCP client connects to this deployment's /mcp with OAuth. Exact host names only (no scheme, port, path or wildcard); loopback clients are always allowed. To let another Agent Fleet deployment sign in to this one's /mcp, add its host here. The change applies to the next request, with no restart.",
-  "admin.mcptrust_hosts": "Hosts (one per line)",
+  "admin.mcptrust_note": "Hosts that may receive the sign-in redirect and serve client metadata when an MCP client connects to this deployment's /mcp with OAuth. One entry per line: either an exact host name (any path on that host is accepted) or an https URL prefix such as https://example.com/oauth/callback (only that path and the segments below it are accepted). No port, query or wildcard. Prefer URL prefixes: a bare host trusts every path on it, including paths that other parties control. Loopback clients are always allowed. To let another Agent Fleet deployment sign in to this one's /mcp, add its host here. The change applies to the next request, with no restart.",
+  "admin.mcptrust_hosts": "Hosts or URL prefixes (one per line)",
+  "admin.mcptrust_host_only_warn": "These entries trust every path on the host, so anyone who controls any path there can have a client accepted: {hosts}. Replace them with URL prefixes (https://host/path) where the client's callback path is known.",
   "admin.mcptrust_source_admin": "In effect: the list saved here.",
   "admin.mcptrust_source_env": "In effect: AF_MCP_OAUTH_TRUSTED_HOSTS from the Control Plane's environment (nothing is saved here).",
   "admin.mcptrust_source_default": "In effect: the built-in default (nothing is saved here and AF_MCP_OAUTH_TRUSTED_HOSTS is unset).",

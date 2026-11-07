@@ -59,7 +59,8 @@ type MCPOAuthAccess struct {
 // ErrMCPOAuthDisabled rejects a grant whose tenant disabled OAuth during issuance.
 var ErrMCPOAuthDisabled = errors.New("mcp oauth: connection disabled or revoked")
 
-// ErrMCPOAuthClientCap: the registration table already holds the maximum number of clients.
+// ErrMCPOAuthClientCap: the registration table holds the maximum number of clients and every one
+// of them has a grant, so none can be evicted.
 var ErrMCPOAuthClientCap = errors.New("mcp oauth: client registration limit reached")
 
 // MCPOAuthStore holds the /mcp authorization server's clients, grants and tokens.
@@ -67,9 +68,11 @@ type MCPOAuthStore interface {
 	GetTenantMCPOAuth(ctx context.Context, tenantID string) (bool, error)
 	// SetTenantMCPOAuth atomically gates issuance, revokes grants and audits the change.
 	SetTenantMCPOAuth(ctx context.Context, tenantID string, enabled bool, actorID string, now int64) error
-	// CreateMCPOAuthClient returns ErrMCPOAuthClientCap at max registrations (counted in the
-	// same transaction as the insert).
-	CreateMCPOAuthClient(ctx context.Context, c MCPOAuthClient, max int) error
+	// CreateMCPOAuthClient inserts a registration. At max registrations (counted in the same
+	// transaction as the insert) it first evicts the oldest one that never produced a grant and
+	// reports evicted; a client with a grant is never evicted, so when every registration has
+	// one it returns ErrMCPOAuthClientCap.
+	CreateMCPOAuthClient(ctx context.Context, c MCPOAuthClient, max int) (evicted bool, err error)
 	GetMCPOAuthClient(ctx context.Context, clientID string) (MCPOAuthClient, bool, error)
 	// PruneMCPOAuth deletes clients registered before `clientsBefore` that never produced a
 	// grant, grants that ended before `grantsBefore`, and tokens expired by `now`.
@@ -104,29 +107,43 @@ type MCPOAuthStore interface {
 	RevokeMCPOAuthGrantOf(ctx context.Context, id, identityID, reason string, now int64) (bool, error)
 }
 
-func (s *SQL) CreateMCPOAuthClient(ctx context.Context, c MCPOAuthClient, max int) error {
+func (s *SQL) CreateMCPOAuthClient(ctx context.Context, c MCPOAuthClient, max int) (evicted bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 	// Serialises registrations across connections and Control Planes; see mcp_oauth_lock.
 	if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_lock SET id=id WHERE id='client_cap'`); err != nil {
-		return err
+		return false, err
 	}
 	var n int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_oauth_client`).Scan(&n); err != nil {
-		return err
+		return false, err
 	}
 	if n >= max {
-		return ErrMCPOAuthClientCap
+		// Refusing at the cap would let unauthenticated registrations lock every new client out
+		// until they expire, so the oldest registration nobody used makes room instead.
+		res, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_client WHERE client_id=(
+		    SELECT c.client_id FROM mcp_oauth_client c
+		    WHERE NOT EXISTS (SELECT 1 FROM mcp_oauth_grant g WHERE g.client_id=c.client_id)
+		    ORDER BY c.created_at, c.client_id LIMIT 1)`)
+		if err != nil {
+			return false, err
+		}
+		if k, err := res.RowsAffected(); err != nil {
+			return false, err
+		} else if k == 0 {
+			return false, ErrMCPOAuthClientCap
+		}
+		evicted = true
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO mcp_oauth_client(client_id, name, redirect_uris, created_at) VALUES(?, ?, ?, ?)`,
 		c.ClientID, c.Name, c.RedirectURIs, c.CreatedAt); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit()
+	return evicted, tx.Commit()
 }
 
 func (s *SQL) GetMCPOAuthClient(ctx context.Context, clientID string) (MCPOAuthClient, bool, error) {
