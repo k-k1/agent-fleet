@@ -252,7 +252,19 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 // never matches. A Bash payload with no command (command == "") is refused: when in doubt the
 // answer is "no match". The dialog is read as drawn; a command the dialog shortens or reflows
 // beyond a wrap does not reconstruct and is refused too.
+//
+// Limit: a screen drawn identically for P wrapped by the terminal and for Q with a real newline
+// where a wrap was possible (a pane-wide line, or a next word that would not have fit) cannot be
+// told apart by any reading of the screen, and matches. Everything else that differs by a
+// newline, or by lines after the first, is refused.
 func (m PermissionMenu) CheckTargetCommand(detail, cwd, command string) TargetCheck {
+	// A bare "Bash" (the hook saw an empty command) names nothing to compare; it is not the
+	// untargeted case that CheckTarget lets through.
+	if tool, _, _ := strings.Cut(detail, " · "); strings.TrimSpace(tool) == "Bash" {
+		if _, _, ok := payloadTarget(detail); !ok || strings.TrimSpace(command) == "" {
+			return TargetDiffers
+		}
+	}
 	return m.checkTarget(detail, cwd, &command)
 }
 

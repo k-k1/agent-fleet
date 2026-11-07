@@ -184,7 +184,7 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 	st, _ := status.Read(sid)
 	// The pending-permission payload is what the card shows, and only claude's status hook
 	// writes it, so it also keeps every other kind's pane out of reach of these digits.
-	detail, hasPerm := status.ReadPendingPermission(sid)
+	detail, command, hasPerm := status.ReadPendingPermissionCommand(sid)
 	if effectiveModal(sid, st.State) != "permission" || !hasPerm {
 		httpx.WriteErr(w, http.StatusConflict, "no_permission", "no pending permission prompt (already handled?)")
 		return
@@ -203,7 +203,6 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "not_running", err.Error())
 		return
 	}
-	command, _ := status.ReadPendingPermissionCommand(sid)
 	keys, code := permissionKeys(name, req.Choice, detail, command, meta.Dir)
 	// The hook and the terminal do not take permRespondLock, so the prompt can change while the
 	// pane is captured; the menu just read may then be the next prompt's. Re-check after the

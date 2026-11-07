@@ -187,8 +187,7 @@ func permissionSession(t *testing.T, name string) string {
 	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude})
 	sid := session.UUID(dir, name)
 	status.Persist(sid, "permission")
-	status.WritePendingPermissionCommand(sid, "echo live-check-3357")
-	status.WritePendingPermission(sid, "Bash · echo live-check-3357")
+	status.WritePendingPermissionCommand(sid, "Bash · echo live-check-3357", "echo live-check-3357")
 	t.Cleanup(func() { permDecided.Delete(name) })
 	return sid
 }
@@ -420,15 +419,25 @@ func TestPermissionAnswerIsBoundToTheDialogOnScreen(t *testing.T) {
 	}
 }
 
+// replaceCommandLine swaps the dialog's command line, which is the LAST occurrence: the first is
+// the transcript line above the dialog.
+func replaceCommandLine(pane, old, repl string) string {
+	i := strings.LastIndex(pane, old)
+	if i < 0 {
+		panic("command line not in fixture")
+	}
+	return pane[:i] + repl + pane[i+len(old):]
+}
+
 // The same hard-newline case through the card and the bridge button (review round 2).
 func TestPermissionAnswerRefusesJoinedHardNewline(t *testing.T) {
 	logPath := fakeTmux(t)
 	withTempHome(t)
 	a := strings.Repeat("a", 40)
-	pane := strings.Replace(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " echo "+a+"\n rm -rf build\n", 1)
+	pane := replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " echo "+a+"\n rm -rf build\n")
 	stubPane(t, pane)
 	sid := permissionSession(t, "slot87")
-	status.WritePendingPermission(sid, "Bash · echo "+a+" rm -rf build")
+	status.WritePendingPermissionCommand(sid, "Bash · echo "+a+" rm -rf build", "echo "+a+" rm -rf build")
 	tok := permissionToken(sid)
 	meta, _ := session.ReadMeta("slot87")
 	if rec := postPermission("slot87", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
@@ -447,10 +456,10 @@ func TestPermissionAnswerRefusesWrappedSuffix(t *testing.T) {
 	logPath := fakeTmux(t)
 	withTempHome(t)
 	first := "echo " + strings.Repeat("a", 73)
-	pane := strings.Replace(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+first+"\n && rm -rf build\n", 1)
+	pane := replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+first+"\n && rm -rf build\n")
 	stubPane(t, pane)
 	sid := permissionSession(t, "slot88")
-	status.WritePendingPermission(sid, "Bash · "+first)
+	status.WritePendingPermissionCommand(sid, "Bash · "+first, first)
 	tok := permissionToken(sid)
 	meta, _ := session.ReadMeta("slot88")
 	if rec := postPermission("slot88", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
@@ -469,10 +478,10 @@ func TestPermissionAnswerRefusesUnknownWidthContinuation(t *testing.T) {
 	logPath := fakeTmux(t)
 	withTempHome(t)
 	first := "echo " + strings.Repeat("a", 73) + "\u0301"
-	pane := strings.Replace(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+first+"\n && rm -rf build\n", 1)
+	pane := replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+first+"\n && rm -rf build\n")
 	stubPane(t, pane)
 	sid := permissionSession(t, "slot89")
-	status.WritePendingPermission(sid, "Bash · "+first)
+	status.WritePendingPermissionCommand(sid, "Bash · "+first, first)
 	tok := permissionToken(sid)
 	meta, _ := session.ReadMeta("slot89")
 	if rec := postPermission("slot89", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
@@ -505,24 +514,69 @@ func TestPermissionKeysHoldsTheDialogToTheWholeCommand(t *testing.T) {
 	}
 }
 
-// The hook records the whole command beside the one-line payload, and a prompt for another tool
-// never inherits an earlier command.
+// The hook records the whole command in the same record as the one-line payload, and a prompt for
+// another tool never inherits an earlier command.
 func TestPermissionPayloadCarriesTheCommand(t *testing.T) {
 	withTempHome(t)
 	sid := "sid-3521"
-	status.WriteLastTool(sid, "Bash · a")
-	status.WriteLastToolCommand(sid, "a\nb")
+	status.WriteLastToolCommand(sid, "Bash · a", "a\nb")
 	applyPendingPayloads(sid, "permission", hookInput{})
-	if c, _ := status.ReadPendingPermissionCommand(sid); c != "a\nb" {
-		t.Fatalf("command not carried: %q", c)
+	d, c, _ := status.ReadPendingPermissionCommand(sid)
+	if d != "Bash · a" || c != "a\nb" {
+		t.Fatalf("not carried: %q %q", d, c)
 	}
-	status.WriteLastTool(sid, "Edit · /x")
-	status.WriteLastToolCommand(sid, "")
+	if d, _ := status.ReadPendingPermission(sid); d != "Bash · a" {
+		t.Fatalf("display payload carries the command: %q", d)
+	}
+	status.WriteLastToolCommand(sid, "Edit · /x", "")
 	applyPendingPayloads(sid, "permission", hookInput{})
-	if c, ok := status.ReadPendingPermissionCommand(sid); ok {
+	if _, c, _ := status.ReadPendingPermissionCommand(sid); c != "" {
 		t.Fatalf("stale command kept: %q", c)
 	}
 	if got := bashCommand("Edit", "x"); got != "" {
 		t.Fatalf("bashCommand(Edit) = %q", got)
+	}
+}
+
+// #3521 review: the command is one record with the payload, so the prompt token of P cannot
+// answer a record that now holds Q's command; and Q's extra lines are refused by both answer paths.
+func TestPermissionAnswerIsBoundToTheWholeRecord(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	pane := replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " echo live-check-3357\n rm -rf build\n")
+	stubPane(t, pane)
+	sid := permissionSession(t, "slot90") // P = `echo live-check-3357`
+	tokP := permissionToken(sid)
+	meta, _ := session.ReadMeta("slot90")
+	// Same first line, Q's screen has an extra line: refused by the card and the button.
+	if rec := postPermission("slot90", `{"choice":"allow","expect":"`+tokP+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+		t.Fatalf("card: %d %s", rec.Code, rec.Body.String())
+	}
+	if out, err := answerClaudePermission(meta, claude.PermAllow, tokP, true); err != nil || !strings.Contains(out, "not the one this button") {
+		t.Fatalf("button: %q %v", out, err)
+	}
+	// Q's record replaces P's (command and payload together, new token): P's token is stale.
+	time.Sleep(10 * time.Millisecond)
+	status.WritePendingPermissionCommand(sid, "Bash · echo live-check-3357", "echo live-check-3357\nrm -rf build")
+	if rec := postPermission("slot90", `{"choice":"allow","expect":"`+tokP+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "permission_changed") {
+		t.Fatalf("card, stale token: %d %s", rec.Code, rec.Body.String())
+	}
+	if out, _ := answerClaudePermission(meta, claude.PermAllow, tokP, true); strings.Contains(out, "Allowed") {
+		t.Fatalf("button, stale token: %q", out)
+	}
+	// Control: Q's own token with Q's command matches.
+	if rec := postPermission("slot90", `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("control: %d %s", rec.Code, rec.Body.String())
+	}
+	_ = logPath
+}
+
+// A Bash payload with no command (the hook saw an empty one) is refused, not left unchecked.
+func TestPermissionKeysRefusesBareBash(t *testing.T) {
+	stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
+	for _, d := range []string{"Bash", "Bash · "} {
+		if keys, code := permissionKeys("s", claude.PermAllow, d, "", ""); code != "target_mismatch" || keys != nil {
+			t.Errorf("%q: keys=%v code=%q", d, keys, code)
+		}
 	}
 }

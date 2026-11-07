@@ -310,3 +310,16 @@ func TestCheckTargetCommandNewlineAtPaneEdge(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckTargetCommandRefusesBareBash(t *testing.T) {
+	m := menuFixture(t, "bash_ask_rule_af_label.txt")
+	for _, c := range [][2]string{{"Bash", ""}, {"Bash", "  "}, {"Bash · ", ""}, {"Bash", "echo live-check-3357"}} {
+		if got := m.CheckTargetCommand(c[0], "", c[1]); got != TargetDiffers {
+			t.Errorf("%q %q: %v", c[0], c[1], got)
+		}
+	}
+	// Other tools stay untargeted-friendly.
+	if got := m.CheckTargetCommand("Claude needs your permission", "", ""); got != TargetUnchecked {
+		t.Errorf("prose: %v", got)
+	}
+}
