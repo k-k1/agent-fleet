@@ -55,8 +55,8 @@ func TestTenantIdPQueueShowsDomainOverlapWithDeployment(t *testing.T) {
 		got[o.Domain] = o.Source
 	}
 	want := map[string]string{
-		"login.example": overlapLoginDomains, "filed.example": overlapLoginDomains,
-		"envidp.example": overlapLoginDomains, "root.example": overlapSuperAdmin,
+		"login.example": auth.OverlapLoginDomains, "filed.example": auth.OverlapLoginDomains,
+		"envidp.example": auth.OverlapLoginDomains, "root.example": auth.OverlapSuperAdmin,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("overlaps = %v, want %v", got, want)

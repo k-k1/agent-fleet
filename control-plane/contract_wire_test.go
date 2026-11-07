@@ -59,7 +59,7 @@ func cpContractFamilies() []contractFamily {
 			tsKeys: keySet("id", "name", "label_ja", "label_en", "kind", "issuer", "client_id",
 				"client_secret", "trust", "allowed_tids", "allowed_domains", "allowed_orgs",
 				"link_claim", "provider_id", "tenant_slug", "status", "has_secret",
-				"approved_by", "approved_at", "usable"),
+				"approved_by", "approved_at", "usable", "domain_overlaps"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
 				// Audit timestamps; the screen draws none of them (`approved_at` it does
@@ -227,7 +227,7 @@ var tenantIdPBinding = map[string]string{
 	"LinkClaim": "link_claim", "ProviderID": "provider_id", "TenantSlug": "tenant_slug",
 	"Status": "status", "HasSecret": "has_secret", "ApprovedBy": "approved_by",
 	"ApprovedAt": "approved_at", "CreatedBy": "created_by", "CreatedAt": "created_at",
-	"UpdatedAt": "updated_at", "Usable": "usable",
+	"UpdatedAt": "updated_at", "Usable": "usable", "DomainOverlaps": "domain_overlaps",
 }
 
 var ssmHostBinding = map[string]string{

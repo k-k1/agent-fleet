@@ -673,3 +673,59 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 	}
 	return nil
 }
+
+// domainOverlap says that a domain a tenant-defined sign-in method claims is also one the
+// deployment itself signs people in on (Source is auth.OverlapLoginDomains or
+// auth.OverlapSuperAdmin). It is a warning for the super_admin who approves the row, not a
+// refusal and not stored: the deployment's lists change without the row changing, so it is
+// recomputed on every read.
+type domainOverlap struct {
+	Domain string `json:"domain"`
+	Source string `json:"source"`
+}
+
+// deploymentDomains reads the deployment's own login domains live (auth.DeploymentDomains).
+type deploymentDomains func() map[string]map[string]bool
+
+func newDeploymentDomains(cfg config) deploymentDomains {
+	return func() map[string]map[string]bool {
+		var sa map[string]bool
+		if cfg.mgr != nil {
+			sa = cfg.mgr.superAdmins
+		}
+		return auth.DeploymentDomains(cfg.allowDomains, cfg.allowEmailsFile, cfg.providers, sa)
+	}
+}
+
+// overlapsFor lists the claimed domains that are also deployment login domains, sorted.
+// Empty when the API was built without a deployment view (tests, AUTH=dev).
+func (a tenantIdPAPI) overlapsFor(allowedDomains string) []domainOverlap {
+	if a.deployDomains == nil {
+		return nil
+	}
+	have := a.deployDomains()
+	var out []domainOverlap
+	for _, d := range splitDomainCSV(allowedDomains) {
+		var srcs []string
+		for s := range have[d] {
+			srcs = append(srcs, s)
+		}
+		sort.Strings(srcs)
+		for _, s := range srcs {
+			out = append(out, domainOverlap{Domain: d, Source: s})
+		}
+	}
+	return out
+}
+
+// overlapAuditDetail renders overlaps for an audit line ("" when none).
+func overlapAuditDetail(o []domainOverlap) string {
+	if len(o) == 0 {
+		return ""
+	}
+	parts := make([]string, len(o))
+	for i, v := range o {
+		parts[i] = v.Domain + ":" + v.Source
+	}
+	return " domain_overlaps=" + strings.Join(parts, ",")
+}
