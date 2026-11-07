@@ -92,13 +92,34 @@ func TestConsoleFrameHeaders(t *testing.T) {
 		t.Errorf("X-Frame-Options = %q", rec.Header().Get("X-Frame-Options"))
 	}
 	csp := rec.Header().Get("Content-Security-Policy")
-	for _, want := range []string{"frame-ancestors 'self'", "object-src 'none'", "base-uri 'self'"} {
+	for _, want := range []string{"frame-ancestors 'self'", "object-src 'none'", "base-uri 'self'", "script-src 'self' 'wasm-unsafe-eval'"} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("CSP %q lacks %q", csp, want)
 		}
 	}
-	if strings.Contains(csp, "script-src") {
-		t.Errorf("script-src must not be enforced yet: %q", csp)
+	if strings.Contains(csp, "'unsafe-inline'") || strings.Contains(csp, "'unsafe-eval'") {
+		t.Errorf("the Console shell must not allow inline or eval script: %q", csp)
+	}
+	// The built draw.io viewer documents run inline script by design; they get their own
+	// policy and may be framed by the Console (SAMEORIGIN), unlike every other response.
+	for _, p := range []string{"/drawio-frame-light.html", "/drawio-frame-dark.html"} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))
+		if rec.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
+			t.Errorf("%s: X-Frame-Options = %q", p, rec.Header().Get("X-Frame-Options"))
+		}
+		got := rec.Header().Get("Content-Security-Policy")
+		for _, want := range []string{"default-src 'none'", "script-src 'unsafe-inline'", "connect-src 'none'", "frame-ancestors 'self'"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: CSP %q lacks %q", p, got, want)
+			}
+		}
+	}
+	// A look-alike path is an ordinary Console response.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/drawio-frame-light.html/x", nil))
+	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Errorf("look-alike path got %q", rec.Header().Get("Content-Security-Policy"))
 	}
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/preview/3000/", nil))

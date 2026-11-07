@@ -403,7 +403,7 @@ var (
 )
 
 // rewriteIndexHTML brands the Console shell: the tab title, the PWA theme colour, the iOS
-// home-screen name, plus a window.__AF_BRAND the app itself reads (src/lib/brand.ts) for
+// home-screen name, plus a JSON data block (#af-brand) the app itself reads (src/lib/brand.ts) for
 // the titles it sets at run time.
 //
 // The count is for the caller's drift check — 3 means every anchor was found.
@@ -431,9 +431,11 @@ func (b brandConfig) rewriteIndexHTML(src []byte) ([]byte, int) {
 	return []byte(s), hits
 }
 
-// bootScript hands the branding to the app before the bundle loads. json.Marshal escapes
-// "<", ">" and "&" as unicode escapes, so an operator's label cannot close the script
-// element.
+// bootScript hands the branding to the app before the bundle loads, as a JSON data block
+// (src/lib/brand.ts reads #af-brand). It is not executable script: the Console's CSP is
+// script-src 'self', which would block an inline `window.__AF_BRAND = …` assignment.
+// json.Marshal escapes "<", ">" and "&" as unicode escapes, so an operator's label cannot
+// close the script element.
 func (b brandConfig) bootScript() string {
 	j, err := json.Marshal(struct {
 		Label string `json:"label"`
@@ -443,7 +445,7 @@ func (b brandConfig) bootScript() string {
 	if err != nil {
 		return ""
 	}
-	return "<script>window.__AF_BRAND=" + string(j) + ";</script>\n"
+	return `<script type="application/json" id="af-brand">` + string(j) + "</script>\n"
 }
 
 // rewriteManifest brands the PWA manifest — the install prompt's name, the launcher's

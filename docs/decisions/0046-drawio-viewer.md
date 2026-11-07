@@ -249,3 +249,16 @@ It requires self-hosting the drawio webapp (`draw.war`, 53 MB), which puts distr
 another league. Raise a separate ADR when it is started. The save machinery itself can use docs/44's
 revision/conflict machinery as is, so it is worth recording only that **the hard part is distributing
 the editor, not saving**.
+
+## Note 2026-11-08 — the frame is a built file, not a srcdoc
+
+Decision 2 put the frame in a sandboxed `srcdoc` iframe. The Console now enforces
+`script-src 'self' 'wasm-unsafe-eval'` (#3454), and an `about:srcdoc` document inherits its
+embedder's CSP (measured in headless Chromium: both the boot script and the inline evaluation of
+the viewer source were blocked). The frame therefore loads from `drawio-frame-light.html` /
+`drawio-frame-dark.html`, emitted at build time by `console/scripts/afDrawioFrames.js` from the
+same `drawioFrameSrcdoc()`; the sandbox (no `allow-same-origin`), `connect-src 'none'` and the
+parent-fetches-everything rule are unchanged. A document loaded by URL carries the CSP of its own
+response, which `writegate.FrameHeaders` sets for those two paths (`script-src 'unsafe-inline'`,
+`frame-ancestors 'self'`). The paths are auth-exempt: they hold public viewer code and load into an
+origin-less frame that cannot count on the session cookie.
