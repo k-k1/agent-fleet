@@ -380,23 +380,33 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 	pending := make(chan struct{}, 1)
 	stop := make(chan struct{})
 	done := make(chan struct{})
-	// Attaching counts as presence (addConn stamps it in memory); publish it too.
-	m.publishSessionInput(wsID, session)
-	lastPublished := time.Now()
+	// Only real keystrokes are published, never the attach itself: a Console tab left
+	// open reconnects on its own, and an attach stamp would keep refreshing the shared
+	// clock with nobody typing, so tier 1 on another replica could never halt.
 	go func() {
 		defer close(done)
+		var lastPublished time.Time
+		var trailing <-chan time.Time
 		for {
 			select {
 			case <-stop:
 				return
+			case <-trailing:
+				trailing = nil
+				lastPublished = time.Now()
+				m.publishSessionInput(wsID, session)
 			case <-pending:
 				// Tier 1 on another replica reads this per-session stamp before
-				// halting (sessionInputElsewhere). Throttled to the heartbeat so a
-				// typing burst is not one DB write per keystroke; the stamp may lag a
-				// keystroke by that long, which the 30-minute grace absorbs.
-				if time.Since(lastPublished) >= workspacePresenceHeartbeat {
+				// halting (sessionInputElsewhere). At most one write per interval,
+				// and a keystroke that lands inside it is published when the
+				// interval ends: dropping it would leave the stamp stale for good
+				// if the user then stops typing.
+				if wait := sessionInputPublishInterval - time.Since(lastPublished); wait <= 0 {
 					lastPublished = time.Now()
+					trailing = nil
 					m.publishSessionInput(wsID, session)
+				} else if trailing == nil {
+					trailing = time.After(wait)
 				}
 				// The shared watermark (last_seen_at). force=false coalesces it
 				// to once per 5s, so most rounds return after a lock and a map
@@ -419,6 +429,9 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 			}
 		}, nil
 }
+
+// sessionInputPublishInterval bounds how often one terminal writes the shared stamp.
+var sessionInputPublishInterval = workspacePresenceHeartbeat
 
 // publishSessionInput writes the shared per-session input stamp that tier 1 on other
 // replicas consults. Best effort: a failed write only means a remote reaper may judge the

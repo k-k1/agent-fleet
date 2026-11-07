@@ -781,23 +781,30 @@ func TestReaperTier1SparesSessionTypedAtOnAnotherReplica(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		typeOnA   bool // a terminal is attached on A and a keystroke arrives
+		attachOnA bool // a terminal is attached on A but nobody types
 		breakLook bool // the shared lookup errors
 		wantHalt  bool
 	}{
 		{name: "typing on another replica", typeOnA: true},
 		{name: "nobody anywhere", wantHalt: true},
+		{name: "attached but silent on another replica", attachOnA: true, wantHalt: true},
 		{name: "shared lookup fails", breakLook: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, ws, managerB := reaperLifecycleFixture(t)
 			managerA := &manager{store: st, conns: newConnRegistry()}
-			if tc.typeOnA {
+			if tc.typeOnA || tc.attachOnA {
 				release, noteInput, err := managerA.trackWorkspaceTerminal(context.Background(), ws.ID, "s")
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer release()
-				noteInput()
+				if tc.typeOnA {
+					noteInput()
+					// The publish runs off the keystroke path: wait for the keystroke
+					// itself to move the shared stamp (nothing else has written it).
+					waitSessionStamp(t, st, ws.ID, "s", true)
+				}
 			}
 			if tc.breakLook {
 				managerB.store = failingSessionInputStore{Store: st}
@@ -842,4 +849,49 @@ func TestSessionInputWatermarkIsMonotonic(t *testing.T) {
 	if ok, _ := st.SessionHasRecentInput(ctx, ws.ID, "other", leaseTS(now.Add(-time.Minute))); ok {
 		t.Fatal("stamp leaked to another session")
 	}
+}
+
+func waitSessionStamp(t *testing.T, st store.Store, wsID, session string, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		ok, err := st.SessionHasRecentInput(context.Background(), wsID, session, leaseTS(time.Now().Add(-time.Minute)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("shared session stamp recent=%v never became %v", ok, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A keystroke that lands inside the publish interval must still reach the shared stamp
+// once the interval ends, even if the user then goes quiet.
+func TestTerminalInputInsideThrottleIsPublishedLater(t *testing.T) {
+	old := sessionInputPublishInterval
+	sessionInputPublishInterval = 400 * time.Millisecond
+	defer func() { sessionInputPublishInterval = old }()
+	st, ws, _ := reaperLifecycleFixture(t)
+	m := &manager{store: st, conns: newConnRegistry()}
+	release, noteInput, err := m.trackWorkspaceTerminal(context.Background(), ws.ID, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	noteInput() // published at once
+	waitSessionStamp(t, st, ws.ID, "s", true)
+	first := time.Now()
+	// Age the stored stamp so only a second publish can make it recent again.
+	if _, err := st.DB().ExecContext(context.Background(),
+		`UPDATE workspace_session_input SET last_input_at=? WHERE workspace_id=?`,
+		leaseTS(first.Add(-time.Hour)), ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitSessionStamp(t, st, ws.ID, "s", false)
+	noteInput() // inside the interval, then silence
+	waitSessionStamp(t, st, ws.ID, "s", true)
 }

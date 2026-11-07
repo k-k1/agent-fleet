@@ -221,7 +221,17 @@ func (s *SQL) RecordSessionInput(ctx context.Context, workspaceID, session, at s
 		 last_input_at=CASE WHEN workspace_session_input.last_input_at > excluded.last_input_at
 		                    THEN workspace_session_input.last_input_at ELSE excluded.last_input_at END`,
 		workspaceID, session, at)
-	return err
+	if err != nil {
+		return err
+	}
+	// Bound the table: rows of long-deleted sessions are far past any grace, so drop this
+	// workspace's rows a week stale each time one is written. Best effort.
+	if t, perr := time.Parse(time.RFC3339Nano, at); perr == nil {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM workspace_session_input
+			WHERE workspace_id=? AND last_input_at < ?`, workspaceID,
+			t.UTC().Add(-7*24*time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00"))
+	}
+	return nil
 }
 
 func (s *SQL) SessionHasRecentInput(ctx context.Context, workspaceID, session, cutoff string) (bool, error) {

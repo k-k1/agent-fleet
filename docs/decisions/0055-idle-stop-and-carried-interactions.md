@@ -344,8 +344,7 @@ WebSocket lives on one replica, so in an HA deployment another replica's reaper 
 was typing. The workspace activity watermark cannot answer this (any ingress request moves it, so it would spare every
 session), hence a per-session stamp, `workspace_session_input.last_input_at`.
 
-- The replica holding the terminal publishes it on attach and then at most once per presence heartbeat while keystrokes
-  arrive (never one write per keystroke).
+- The replica holding the terminal publishes it only on real keystrokes (never on attach, so auto-reconnecting idle tabs cannot refresh it), at most once per presence heartbeat, with a trailing write for a keystroke inside the interval (never one write per keystroke). Rows older than a week are dropped on write.
 - Before `haltSession`, the reaper checks it against `presenceGrace`. A recent stamp restarts the session's idle clock;
   a failed lookup does not halt (logged). The local `watchingSession` check stays the fast path.
 - With `presenceGrace` disabled (attached means watched) attachment is replica-local, so the shared check answers
