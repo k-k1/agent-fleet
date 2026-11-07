@@ -109,7 +109,7 @@ func TestConsoleFrameHeaders(t *testing.T) {
 			t.Errorf("%s: X-Frame-Options = %q", p, rec.Header().Get("X-Frame-Options"))
 		}
 		got := rec.Header().Get("Content-Security-Policy")
-		for _, want := range []string{"default-src 'none'", "script-src 'unsafe-inline'", "connect-src 'none'", "frame-ancestors 'self'"} {
+		for _, want := range []string{"default-src 'none'", "script-src 'unsafe-inline'", "connect-src 'none'", "frame-ancestors 'self'", "sandbox allow-scripts"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s: CSP %q lacks %q", p, got, want)
 			}

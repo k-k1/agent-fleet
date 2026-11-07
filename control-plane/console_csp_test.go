@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/writegate"
 )
 
 // Executable <script> elements: those without type, or with a JavaScript type. A
@@ -90,12 +92,62 @@ func TestStaticServesBaseBootstrapAtShellPaths(t *testing.T) {
 	}
 }
 
-func TestDrawioFramesAreAuthExempt(t *testing.T) {
-	mux := http.NewServeMux()
-	registerStatic(mux, config{consoleDir: t.TempDir()})
-	for _, p := range []string{"/drawio-frame-light.html", "/drawio-frame-dark.html"} {
-		if !isAuthExempt(p) {
-			t.Errorf("%s must load without a session cookie (opaque-origin frame)", p)
+// The two built draw.io documents go through the real handler chain with no cookie: served 200 with
+// their own CSP (including sandbox, so the server response alone guarantees an opaque origin), while
+// look-alikes and every other Console path stay behind the gate.
+func TestDrawioFramesThroughTheRealChain(t *testing.T) {
+	cfg, _ := smokeEnvWith(t)
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"index.html":              "<html>shell</html>",
+		"drawio-frame-light.html": "<html>light-frame</html>",
+		"drawio-frame-dark.html":  "<html>dark-frame</html>",
+		"other.html":              "<html>other</html>",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
 		}
+	}
+	cfg.consoleDir = dir
+	h := cfg.authGate(writegate.FrameHeaders(buildMux(cfg)))
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		return rec
+	}
+	for path, body := range map[string]string{
+		"/drawio-frame-light.html": "light-frame",
+		"/drawio-frame-dark.html":  "dark-frame",
+	} {
+		rec := get(path)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), body) {
+			t.Fatalf("GET %s = %d %q", path, rec.Code, rec.Body.String())
+		}
+		csp := rec.Header().Get("Content-Security-Policy")
+		for _, want := range []string{"sandbox allow-scripts", "script-src 'unsafe-inline'", "connect-src 'none'"} {
+			if !strings.Contains(csp, want) {
+				t.Errorf("%s: CSP %q lacks %q", path, csp, want)
+			}
+		}
+		if rec.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
+			t.Errorf("%s: X-Frame-Options = %q", path, rec.Header().Get("X-Frame-Options"))
+		}
+	}
+	// Not exempt: must not serve the body to an anonymous caller (401 or a redirect to /login).
+	for _, path := range []string{
+		"/drawio-frame-light.html/", "/drawio-frame-light.html/x", "/Drawio-Frame-Light.html",
+		"/DRAWIO-FRAME-DARK.HTML", "/drawio-frame-light.htm", "/drawio-frame-light.html%2f",
+		"/drawio-frame-light%2ehtml/../other.html", "/x/../other.html", "/other.html", "/", "/api/whoami",
+	} {
+		rec := get(path)
+		b := rec.Body.String()
+		if rec.Code == 200 && (strings.Contains(b, "frame") || strings.Contains(b, "other") || strings.Contains(b, "shell")) {
+			t.Errorf("GET %s served to an anonymous caller: %d %q", path, rec.Code, b)
+		}
+	}
+	// A canonical-form redirect is a redirect, not the document.
+	rec := get("/x/../drawio-frame-light.html")
+	if rec.Code < 300 || rec.Code >= 400 || strings.Contains(rec.Body.String(), "light-frame") {
+		t.Errorf("non-canonical path: %d %q", rec.Code, rec.Body.String())
 	}
 }

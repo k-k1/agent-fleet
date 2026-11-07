@@ -78,11 +78,14 @@ const consoleCSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'; 
 
 // DrawioFrameCSP is the policy of the two built draw.io viewer documents. They run an inline boot
 // script and evaluate the viewer source posted in by the Console as an inline script, so they need
-// 'unsafe-inline' — safe only because the frame is sandboxed without allow-same-origin (opaque
-// origin), cannot fetch (connect-src 'none') and may be framed by the Console alone. A srcdoc
-// could not carry this: it inherits the embedder's script-src 'self'.
+// 'unsafe-inline'. That is safe only with an opaque origin, which the response's own
+// `sandbox allow-scripts` guarantees (a meta CSP cannot carry sandbox): opening the URL directly or
+// framing it without a sandbox attribute still cannot reach the Console's storage. connect-src is
+// 'none' and frame-ancestors 'self'. A srcdoc could not carry this: it inherits the embedder's
+// script-src 'self'.
 const DrawioFrameCSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
-	"img-src data: blob:; font-src data:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'"
+	"img-src data: blob:; font-src data:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; " +
+	"sandbox allow-scripts"
 
 // IsDrawioFramePath reports whether p is one of the built draw.io viewer documents
 // (console/scripts/afDrawioFrames.js emits them at the Console root).
