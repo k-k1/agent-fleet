@@ -555,3 +555,13 @@ release.
 4. **The model**: a Haiku / GPT Luna class model by default, with supersede and merge escalated, gated
    by an offline comparison at the start of step 3 (decision 6). The monthly token cap is set when that
    comparison has a measured cost.
+
+## Notes
+
+- **2026-11-08 — decision 3 "Counters" built (#3442).** `.usage-v2/reads/<name>` and `.usage-v2/hits/<name>`
+  are written beside the legacy `.usage/<name>`; `confirmed/` and `stale/` are in the layout (cleared with the
+  rest) but nothing appends to them until `memory_feedback`. A reads file's mtime is touched past the cap.
+  Forget, re-create and a restore clear every counter of the name. A project move clears the source and
+  the destination, exactly as it does the legacy file, rather than carrying counts over. Purge and bundles
+  need no change: purge rewrites history and leaves live memories (and so their counters) alone, and
+  bundles carry only the git history, never the sidecars.
