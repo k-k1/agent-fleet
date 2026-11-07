@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/localredirect"
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -889,18 +890,29 @@ func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 // old bookmarks — and any stale post-login next=/agent-fleet/… — would 404.
 // Redirect /agent-fleet[/…] -> /… (auth-exempt, so it fires before login and
 // the dead prefix never reaches next=).
+// stripLegacyPrefix removes the first path segment when it decodes to
+// "agent-fleet" and keeps the rest escaped as received. The mux matches on the
+// decoded segment, so a percent-encoded spelling of the prefix reaches the
+// handler too; trimming a literal prefix would leave it in place and redirect
+// to the same URL forever.
+func stripLegacyPrefix(escaped string) string {
+	rest := strings.TrimPrefix(escaped, "/")
+	seg, tail, _ := strings.Cut(rest, "/")
+	if d, err := url.PathUnescape(seg); err == nil && d == "agent-fleet" {
+		return "/" + tail
+	}
+	return escaped
+}
+
 func registerLegacyRedirect(mux *http.ServeMux) {
 	exemptExact("/agent-fleet")
 	exemptPrefix("/agent-fleet/")
 	legacyRedirect := func(w http.ResponseWriter, r *http.Request) {
-		dest := strings.TrimPrefix(r.URL.Path, "/agent-fleet")
-		if !strings.HasPrefix(dest, "/") {
-			dest = "/" + dest
-		}
+		dest := stripLegacyPrefix(r.URL.EscapedPath())
 		if r.URL.RawQuery != "" {
 			dest += "?" + r.URL.RawQuery
 		}
-		http.Redirect(w, r, dest, http.StatusFound)
+		http.Redirect(w, r, localredirect.Safe(dest), http.StatusFound)
 	}
 	mux.HandleFunc("/agent-fleet", legacyRedirect)
 	mux.HandleFunc("/agent-fleet/", legacyRedirect)

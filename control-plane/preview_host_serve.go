@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/localredirect"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -384,14 +385,14 @@ func writePreviewCORS(h http.Header, origin string) {
 	h.Add("Vary", "Origin")
 }
 
-// safePreviewNext keeps the post-handshake destination on the preview host: a
-// same-origin absolute path, never a scheme or a protocol-relative URL.
+// safePreviewNext keeps the post-handshake destination on the preview host (a
+// same-origin path via localredirect.Safe) and never the handshake callback itself.
 func safePreviewNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") ||
-		strings.HasPrefix(next, "/\\") || next == previewAuthCallbackPath {
+	n := localredirect.Safe(next)
+	if n == previewAuthCallbackPath || strings.HasPrefix(n, previewAuthCallbackPath+"?") {
 		return "/"
 	}
-	return next
+	return n
 }
 
 // --- Console-origin half (registered on the normal mux, inside authGate) ---------

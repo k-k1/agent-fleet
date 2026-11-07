@@ -182,7 +182,9 @@ Sharing does not give access to your workspace, only to the conversation.
 4. Pick the **permission**.
    - **View only**: reading, nothing else.
    - **Can propose**: the recipient can **propose** something to send, and **it does not reach
-     the agent until you approve it**.
+     the agent until you approve it**. The approval card shows the session, the action, the text
+     and who proposed it. Proposals carry text and replies only: attachments are refused, and
+     terminal (shell / ssm) sessions accept no proposals.
 5. **"Unshare"** in the share list ends it.
 
 **Being shared with**

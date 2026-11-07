@@ -94,6 +94,9 @@ type CP interface {
 	StartCleanHomeByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
 	StartDestroyWorkspaceByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)
+	// WorkspaceCeilings are the deployment's hard ceilings for a per-workspace CPU request
+	// (Fargate units) and working disk (GiB); 0 = none. SetUserLimit rejects above them.
+	WorkspaceCeilings() (cpuUnits, diskGB int)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
 	EvictMembershipCache(membershipID string)
 	// RotateGitToken bumps the membership's internal git token epoch, which kills the
