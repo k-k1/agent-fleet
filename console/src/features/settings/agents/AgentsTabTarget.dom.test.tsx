@@ -74,7 +74,7 @@ describe("Settings > Agents target", () => {
     expect(scrolled[0].opts).toEqual({ block: "start", behavior: "auto" });
   });
 
-  it("waits for the cards: a running workspace renders them only after the connection snapshot", async () => {
+  it("draws every card with a checking chip while the snapshot is out, and lands the deep-link at once", async () => {
     wsState = "running";
     let release: (v: unknown) => void = () => {};
     api.mockImplementation((path: string) =>
@@ -83,13 +83,19 @@ describe("Settings > Agents target", () => {
     useSettingsUI.getState().openSettings("agents", { target: "claude" });
     await mount();
     await flushed();
-    expect(card("claude")).toBeNull();
-    expect(scrolled).toEqual([]);
-    expect(useSettingsUI.getState().settingsTarget).toBe("claude"); // not consumed while loading
-    await act(async () => release({}));
-    await flushed();
+    expect(card("claude")).not.toBeNull();
+    expect(host!.textContent).not.toContain("Loading");
+    // Every card says "checking", none claims "not connected" while the probe is out.
+    expect(host!.querySelectorAll(".p-card").length).toBeGreaterThanOrEqual(9);
+    expect(host!.querySelectorAll(".p-status").length).toBe(host!.querySelectorAll(".p-card").length);
+    expect(Array.from(host!.querySelectorAll(".p-status")).every((e) => e.textContent === "Checking…")).toBe(true);
+    expect(host!.textContent).not.toContain("Not connected");
     expect(scrolled.map((s) => s.id)).toEqual(["claude"]);
     expect(useSettingsUI.getState().settingsTarget).toBeNull();
+    await act(async () => release({}));
+    await flushed();
+    expect(host!.textContent).not.toContain("Checking");
+    expect(host!.textContent).toContain("Not connected");
   });
 
   it("draws the cards at once from the last snapshot while the refetch is still out", async () => {

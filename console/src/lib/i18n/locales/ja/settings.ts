@@ -156,6 +156,8 @@ export const settings = {
   // --- 接続カード共通（providerCard.tsx / conn 状態）---
   "conn.connected": "接続済み",
   "conn.disconnected": "未接続",
+  "conn.checking": "確認中…",
+  "conn.checking_note": "接続を確認しています…",
   "conn.connect": "接続",
   "conn.connect_failed": "接続に失敗: {msg}",
   "conn.expired": "認証切れ",

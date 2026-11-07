@@ -1,3 +1,4 @@
+import { ConnChecking } from "../parts/providerCard.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { api, apiJSON, errDetail, isTransientErr } from "../../../core/api/client.ts";
@@ -264,15 +265,16 @@ export function AgentsTab() {
     </section>
   );
 
-  // While running but the connection snapshot hasn't loaded yet, hold the cards back a
-  // beat (avoids a flash of "not connected" idle flows). Stopped renders the cards immediately
-  // (degraded): their launch defaults are reachable, connection waits for start.
-  const loading = running && !conns;
+  // Running but the connection snapshot has not arrived: the cards draw at once with a
+  // "checking…" chip (ConnChecking) rather than hiding the list or claiming "not connected".
+  // They get running=false meanwhile, which is what keeps their login flows from flashing.
+  const checking = running && !conns;
+  const cardsRunning = running && !checking;
 
   // A deep-link from elsewhere (the transcript's Re-authenticate button) names the agent card to
-  // land on; the cards only exist once the connection snapshot has loaded.
+  // land on; the cards exist from the first render, so the target needs no snapshot.
   const rootRef = useRef<HTMLDivElement>(null);
-  useSettingsTarget(rootRef, !loading);
+  useSettingsTarget(rootRef, true);
 
   return (
     <div className="conns" ref={rootRef}>
@@ -285,14 +287,11 @@ export function AgentsTab() {
           </Button>
         </div>
       )}
-      {loading ? (
-        <p className="muted pad">{tr("common.loading")}</p>
-      ) : (
-        <>
+      <ConnChecking.Provider value={checking}>
           {running && <p className="muted ds-note">{tr("agents.note_apply")}</p>}
-          <ClaudeCard running={running} st={conns?.claude} reload={reload} claude={claude} updateClaude={updateClaude} />
+          <ClaudeCard running={cardsRunning} st={conns?.claude} reload={reload} claude={claude} updateClaude={updateClaude} />
           <CodexCard
-            running={running}
+            running={cardsRunning}
             st={conns?.codex}
             reload={reload}
             codex={codex}
@@ -300,22 +299,21 @@ export function AgentsTab() {
             agents={agents}
             updateAgents={updateAgents}
           />
-          <CursorCard running={running} st={conns?.cursor} reload={reload} />
-          <CopilotCard running={running} st={conns?.copilot} agents={agents} updateAgents={updateAgents} />
-          <KiroCard running={running} st={conns?.kiro} reload={reload} />
-          <AgyCard running={running} st={conns?.agy} reload={reload} agents={agents} updateAgents={updateAgents} />
+          <CursorCard running={cardsRunning} st={conns?.cursor} reload={reload} />
+          <CopilotCard running={cardsRunning} st={conns?.copilot} agents={agents} updateAgents={updateAgents} />
+          <KiroCard running={cardsRunning} st={conns?.kiro} reload={reload} />
+          <AgyCard running={cardsRunning} st={conns?.agy} reload={reload} agents={agents} updateAgents={updateAgents} />
           <OpencodeCard
-            running={running}
+            running={cardsRunning}
             st={conns?.opencode}
             reload={reload}
             agents={agents}
             updateAgents={updateAgents}
           />
-          <LcppCard running={running} st={conns?.lcpp} reload={reload} />
-          <MuseCard running={running} st={conns?.muse} reload={reload} />
+          <LcppCard running={cardsRunning} st={conns?.lcpp} reload={reload} />
+          <MuseCard running={cardsRunning} st={conns?.muse} reload={reload} />
           {running && agents === false && <p className="muted ds-note">{tr("agents.rtk_unsupported")}</p>}
-        </>
-      )}
+      </ConnChecking.Provider>
     </div>
   );
 }

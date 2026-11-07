@@ -159,6 +159,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   // --- shared connection cards ---
   "conn.connected": "Connected",
   "conn.disconnected": "Not connected",
+  "conn.checking": "Checking…",
+  "conn.checking_note": "Checking the connection…",
   "conn.connect": "Connect",
   "conn.connect_failed": "Failed to connect: {msg}",
   "conn.expired": "Login expired",
