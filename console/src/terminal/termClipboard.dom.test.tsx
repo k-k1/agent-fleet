@@ -382,6 +382,51 @@ describe("terminal clipboard keys", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
   });
 
+  const drag = (term: any, moved = true) => {
+    term.element.dispatchEvent(new MouseEvent("mousedown", { button: 0, clientX: 10, clientY: 10 }));
+    term.element.dispatchEvent(new MouseEvent("mouseup", { button: 0, clientX: moved ? 80 : 10, clientY: 10 }));
+  };
+
+  it("OSC 52 right after a drag-release is written without a prompt, once", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const term: any = mount();
+    const osc = oscOf(term);
+    drag(term);
+    await osc("dragged");
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("dragged"));
+    expect(confirms.length).toBe(0);
+    await osc("second"); // gesture was consumed
+    await settle();
+    expect(confirms.length).toBe(1);
+    expect(writeText).not.toHaveBeenCalledWith("second");
+  });
+
+  it("OSC 52 without a gesture, after the window, or after a mere click still prompts", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    // Fresh pane per case: a refused prompt starts a cooldown that would mask the next one.
+    const prompted = async (arrange: (term: any) => void) => {
+      disposeTerm("clip");
+      confirms.length = 0;
+      const term: any = mount();
+      arrange(term);
+      await oscOf(term)("x");
+      await settle();
+      return confirms.length;
+    };
+    expect(await prompted(() => {})).toBe(1);
+    expect(await prompted((t) => drag(t, false))).toBe(1); // click, no movement
+    expect(
+      await prompted((t) => {
+        const now = Date.now();
+        drag(t);
+        vi.spyOn(Date, "now").mockReturnValue(now + 5000);
+      }),
+    ).toBe(1);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it("OSC 52 text is stripped of control characters and capped", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });

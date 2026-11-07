@@ -88,6 +88,7 @@ function clipFail(key: "term.copy_failed" | "term.paste_failed") {
 // command into what the member later pastes.
 export const OSC52_MAX_CHARS = 100_000;
 const OSC52_DENY_COOLDOWN_MS = 30_000;
+const OSC52_GESTURE_MS = 800;
 const OSC52_ALLOW_WINDOW_MS = 60_000;
 export function sanitizeOsc52(text: string): string {
   // eslint-disable-next-line no-control-regex
@@ -557,6 +558,15 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   // only memory is an explicit, separate "allow for a minute" choice, per pane, in memory.
   // Text is capped and stripped of control characters before it is offered or written.
   // Ordinary selection copy (copySelection) is a user gesture and never comes through here.
+  // Member gesture: the release of a left-button drag in this pane. tmux (mouse on) turns a
+  // plain drag into a copy-mode selection and emits OSC 52 when the button is released, so a
+  // write arriving within OSC52_GESTURE_MS of that release is the member's own copy and skips
+  // the prompt. Single-use: the first write consumes it, a second in the window prompts.
+  // Residual: a program that emits OSC 52 inside that window can ride the gesture. The window
+  // covers the websocket round trip (release report out, tmux's OSC 52 back; tmux itself
+  // answers within milliseconds); copy-mode keys (Enter / y) are not treated as gestures
+  // because ordinary typing would then open the same window.
+  let osc52GestureAt = 0;
   let osc52AllowUntil = 0;
   let osc52Asking = false;
   let osc52DeniedAt = 0;
@@ -580,6 +590,12 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
         else navigator.clipboard.writeText(text).catch(() => clipFail("term.copy_failed"));
       };
       if (Date.now() < osc52AllowUntil) {
+        write();
+        return true;
+      }
+      const gesture = osc52GestureAt;
+      osc52GestureAt = 0; // consumed (or stale) either way
+      if (gesture && Date.now() - gesture <= OSC52_GESTURE_MS) {
         write();
         return true;
       }
@@ -614,7 +630,14 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   // selection; right/middle click pastes. This is the reliable path even where the
   // browser reserves Ctrl+Shift+C (DevTools) outside fullscreen.
   if (term.element) {
+    let downAt: { x: number; y: number } | null = null;
+    term.element.addEventListener("mousedown", (ev) => {
+      downAt = ev.button === 0 ? { x: ev.clientX, y: ev.clientY } : null;
+    });
     term.element.addEventListener("mouseup", (ev) => {
+      // A drag, not a click: pointer moved a few pixels between press and release.
+      if (ev.button === 0 && downAt && Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) >= 3) osc52GestureAt = Date.now();
+      downAt = null;
       if (ev.button === 0 && term.hasSelection()) copySelection(term, { fromMouseup: true });
     });
     term.element.addEventListener("contextmenu", (ev) => {
