@@ -15,6 +15,15 @@ GitHub を接続していれば、セッションの `gh` はサインイン済�
 `bkt pr create`・`bkt pipeline` などに `auth login` は要りません。どちらも保存済みの接続を使い、
 git と同じ要領で更新されます。
 
+**GitHub: `gh pr edit` が失敗することがあります。** 組み込みの GitHub OAuth App のトークンの scope は
+`repo workflow` だけで、`gh pr edit` はプルリクエストを `read:org` が要り得る方法で読み込むため、自分の個人リポジトリでも
+`GraphQL: … requires one of the following scopes: ['read:org']` で失敗することがあります。メッセージのリンク先
+（トークン設定ページ）はこのトークンには当てはまりません。代わりに、`repo` だけで足りる REST API で
+編集してください:
+`gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>`（タイトルも変えるなら `-f title="…"` を追加）。
+これで `read:org` 不足のエラーは避けられます。`read:org` を持つトークンを自分で貼っていればそのエラーは出ませんが、
+`gh pr edit` はほかの理由（たとえば対象 PR のチームレビュアーにアクセスできない場合）でも失敗し得ます。
+
 - **スコープ**: `bkt` は接続に与えられた権限の範囲でしか動きません。プルリクエストと
   パイプラインには、Bitbucket の OAuth アプリに `repository`・`pullrequest:write`・`pipeline`（読み取り）・
   `account` が、パイプラインの開始・停止にはさらに `pipeline:write` が必要です。貼り付けた API トークンには

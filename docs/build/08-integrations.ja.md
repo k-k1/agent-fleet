@@ -100,8 +100,9 @@ CP ネイティブ実装。フロー・許可リスト・プロバイダ・authG
 
 **知っておくべき制約:**
 
-- **スコープ**: トークンの scope は device flow のもの。`gh` の大半は動くが、org 系の呼び出しは
-  `read:org` が無く失敗し得る。広げる設定は無く、必要な人は scope の広いトークンを貼る。
+- **スコープ**: トークンの scope は device flow のもの。`gh` の大半は動くが、`gh pr edit` は PR を GraphQL で
+  読み込むため `read:org` が無く失敗する（個人リポジトリでも。上流 cli/cli#13575）。`read:org` が要る項目を読む呼び出しは失敗し得る。
+  回避策は `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>`。広げる設定は無く、必要な人は scope の広いトークンを貼る。
 - **GitHub Enterprise 非対応** — ラッパーは github.com のトークンだけを注入する。
 - **明示トークン優先**: `GH_TOKEN` か `GITHUB_TOKEN` が既にあればラッパーは上書きしない。
 - **コスト**: `gh` 呼び出しごとにヘルパーを 1 回起動する（git の push / fetch と同程度）。

@@ -15,6 +15,16 @@ Once GitHub is connected, `gh` in a session is already signed in. Once Bitbucket
 `bkt pipeline` and so on need no `auth login`. Both use your saved connection and renew it
 the way git does.
 
+**GitHub: `gh pr edit` can fail.** The built-in GitHub OAuth App token has the scopes `repo workflow`
+only, and `gh pr edit` loads the pull request in a way that can need `read:org`, so it may end with
+`GraphQL: … requires one of the following scopes: ['read:org']`, even on your own personal
+repository. The token settings page the message links to does not apply to this token. Edit the
+pull request through the REST API instead, which needs only `repo`:
+`gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>` (add `-f title="…"` to change
+the title). This avoids the `read:org` error; a token you pasted with `read:org` does not hit that
+one, though `gh pr edit` can still fail for other reasons (for example, no access to a team
+reviewer on the pull request).
+
 - **Scopes**: `bkt` can do only what the connection was granted. For pull requests and
   pipelines the Bitbucket OAuth app needs `repository`, `pullrequest:write`, `pipeline` (read)
   and `account`, plus `pipeline:write` to start or stop a pipeline; a pasted API token needs the
