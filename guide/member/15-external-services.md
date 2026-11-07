@@ -196,6 +196,10 @@ replies.
 - **Driving from chat**: turn on **"Reply to steer"** (opt-in) and replies in the thread become input to that
   session as-is. Questions can be answered with choice buttons, plan approvals with "Approve / Reject" buttons,
   and permission requests with "Allow / Deny" buttons (button coverage varies by agent kind).
+  Replies are accepted only for the session kinds that can receive messages from other sessions: a reply to a
+  shell or SSM session is refused with a note in the thread and never typed into the terminal. Chat traffic
+  does not pass through your tenant's allowed-networks restriction (it comes from your bot, not a browser),
+  so that refusal is what keeps a chat reply from reaching a raw terminal.
 - **Fleet operator**: write in the standing thread "🛰 Fleet Operator" to talk with the
   [11 Running many sessions](11-many-sessions.md) from chat (the same conversation as the operator on the Console
   side). Destructive operations initiated from chat (deletion etc.) pause for an "Approve / Reject" button
