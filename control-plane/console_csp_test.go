@@ -133,20 +133,29 @@ func TestDrawioFramesThroughTheRealChain(t *testing.T) {
 			t.Errorf("%s: X-Frame-Options = %q", path, rec.Header().Get("X-Frame-Options"))
 		}
 	}
-	// Not exempt: must not serve the body to an anonymous caller (401 or a redirect to /login).
+	// Not exempt: with no cookie and no Accept header the gate answers 401, exactly. Anything else
+	// (200, 404, 5xx, a redirect) means the gate was bypassed or the path reached something.
 	for _, path := range []string{
 		"/drawio-frame-light.html/", "/drawio-frame-light.html/x", "/Drawio-Frame-Light.html",
 		"/DRAWIO-FRAME-DARK.HTML", "/drawio-frame-light.htm", "/drawio-frame-light.html%2f",
-		"/drawio-frame-light%2ehtml/../other.html", "/x/../other.html", "/other.html", "/", "/api/whoami",
+		"/drawio-frame-light%2ehtml/../other.html", "/x/%2e%2e/drawio-frame-light.html",
+		"/x/%252e%252e/drawio-frame-light.html", "/drawio-frame-light%252ehtml",
+		"/x/../other.html", "/other.html", "/", "/api/whoami",
 	} {
-		rec := get(path)
-		b := rec.Body.String()
-		if rec.Code == 200 && (strings.Contains(b, "frame") || strings.Contains(b, "other") || strings.Contains(b, "shell")) {
-			t.Errorf("GET %s served to an anonymous caller: %d %q", path, rec.Code, b)
+		if rec := get(path); rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s = %d %q, want 401 from the gate", path, rec.Code, rec.Body.String())
 		}
 	}
+	// A browser navigation (Accept: text/html) is sent to the login page instead.
+	req := httptest.NewRequest("GET", "/other.html", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), "/login") {
+		t.Errorf("HTML navigation to /other.html = %d Location=%q, want 302 to /login", rec.Code, rec.Header().Get("Location"))
+	}
 	// A canonical-form redirect is a redirect, not the document.
-	rec := get("/x/../drawio-frame-light.html")
+	rec = get("/x/../drawio-frame-light.html")
 	if rec.Code < 300 || rec.Code >= 400 || strings.Contains(rec.Body.String(), "light-frame") {
 		t.Errorf("non-canonical path: %d %q", rec.Code, rec.Body.String())
 	}
