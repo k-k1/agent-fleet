@@ -47,7 +47,13 @@ type bbState struct {
 	// there would land on whatever tenant happens to come first for this person and
 	// exchange the code against another tenant's app (docs/log/71 §71.5).
 	tenantID string
-	created  time.Time
+	// identityID and membershipID name the member who started the flow. The callback is
+	// auth-exempt (the provider redirects the browser to it), so these are what it checks the
+	// browser's session against and where the tokens are delivered: a flow finished in
+	// another member's browser would otherwise store this member's provider account in that
+	// member's workspace.
+	identityID, membershipID string
+	created                  time.Time
 }
 
 // bbFlowRegistry owns the in-flight OAuth CSRF states. They live in process memory, so
@@ -80,6 +86,22 @@ func (b *bbFlowRegistry) take(state string) (bbState, bool) {
 }
 
 var bbFlows = &bbFlowRegistry{states: map[string]bbState{}}
+
+// bbCallbackBind authorizes a Bitbucket / Jira callback and resolves the destination
+// workspace from the membership recorded at start. A non-empty message is the page to show,
+// and nothing may have been exchanged or stored by then. An absent, expired or other member's
+// session fails closed; so does a membership that is no longer active.
+func (c config) bbCallbackBind(r *http.Request, st bbState, t bbStrings) (*resolved, string) {
+	ident, ok := c.mcpClientCallbackCaller(r)
+	if !ok || st.identityID == "" || ident.ID != st.identityID {
+		return nil, t.sessionMismatch
+	}
+	res, aerr := c.mgr.resolveByMembership(r.Context(), st.identityID, st.membershipID)
+	if aerr != nil {
+		return nil, t.workspaceResolveFailed + aerr.message
+	}
+	return res, ""
+}
 
 func (c config) bbRedirectURI() string {
 	return c.mgr.gitOAuthRedirectURI(gitOAuthBitbucket)
@@ -129,7 +151,8 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 	}
 	state := randHex(16)
 	bbFlows.put(state, bbState{
-		user: ident.UserKey, tenant: tenantSel(r), tenantID: mv.TenantID, created: time.Now(),
+		user: ident.UserKey, tenant: tenantSel(r), tenantID: mv.TenantID,
+		identityID: ident.ID, membershipID: mv.MembershipID, created: time.Now(),
 	})
 
 	au := bbAuthorizeURL + "?client_id=" + url.QueryEscape(key) +
@@ -146,6 +169,13 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	st, ok := bbFlows.take(state)
 	if !ok {
 		bbCallbackPage(w, t.stateMismatch)
+		return
+	}
+	// Before anything is exchanged or stored: the browser must be the member who started
+	// the flow, and the tokens go to the workspace of the membership recorded at start.
+	res, msg := c.bbCallbackBind(r, st, t)
+	if msg != "" {
+		bbCallbackPageLink(w, msg, t.backLink)
 		return
 	}
 	if code == "" {
@@ -197,11 +227,6 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
 		"expires_in": tok.ExpiresIn, "scopes": strings.TrimSpace(tok.Scopes),
 	})
-	res, aerr := c.mgr.resolveFull(r.Context(), st.user, "", st.tenant)
-	if aerr != nil {
-		bbCallbackPage(w, t.workspaceResolveFailed+aerr.message)
-		return
-	}
 	rt := res.rt
 	// Withdraw the cached posting capability before and after the Agent stores the new token (#2709).
 	resetWorkItemCommentCapability(r.Context(), c.mgr.store, res.mv.MembershipID)
@@ -252,6 +277,9 @@ type bbStrings struct {
 	// so a retried exchange that Atlassian already honoured can only be fixed by starting
 	// over, and the page has to say where.
 	codeConsumed, tryAgain, backLink string
+	// sessionMismatch is shown when the browser is not signed in as the member who started
+	// the connection.
+	sessionMismatch string
 }
 
 func oauthCallbackText(lang, provider string) bbStrings {
@@ -269,6 +297,7 @@ func oauthCallbackText(lang, provider string) bbStrings {
 			codeConsumed:           provider + " already used this authorization code, or it has expired. Start the connection again from the Console (Settings > Connections).",
 			tryAgain:               "This is often a temporary network problem. Start the connection again from the Console (Settings > Connections).",
 			backLink:               "Back to the Console",
+			sessionMismatch:        "This connection was started by a different account, or your Console session has expired. Nothing was saved. Sign in to the Console as the member who started it, then connect again (Settings > Connections).",
 		}
 	}
 	return bbStrings{
@@ -284,6 +313,7 @@ func oauthCallbackText(lang, provider string) bbStrings {
 		codeConsumed:           provider + " がこの認可コードをすでに使用したか、期限が切れています。Console（設定 > 接続）から接続をやり直してください。",
 		tryAgain:               "一時的なネットワークの問題のことがあります。Console（設定 > 接続）から接続をやり直してください。",
 		backLink:               "Console に戻る",
+		sessionMismatch:        "この接続は別のアカウントで開始されたか、Console のセッションが切れています。何も保存していません。開始した本人として Console にサインインし、もう一度接続してください（設定 > 接続）。",
 	}
 }
 
