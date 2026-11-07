@@ -329,6 +329,7 @@ export function TenantSignInMethods({
             <IdPForm key={row.id} form={form} setForm={setForm} busy={busy} onSave={save} onCancel={() => setForm(null)} />
           ) : (
             <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " off")}>
+              <OverlapWarning row={row} />
               {toggles(row.provider_id || "")}
               <span className="as-name mono" title={row.provider_id}>
                 {row.name}
@@ -570,6 +571,26 @@ function IdPForm({
 // sign-up being enabled is the typical case). So approved rows remain, together with who
 // approved them and when, and that list is what periodic review works from. Pending rows come
 // first because someone is waiting on them.
+// OverlapWarning shows, to the approving super_admin, the claimed domains that are also the
+// deployment's own login domains or a deployment administrator's. Approval is the only gate on
+// such a claim, so it is stated next to the Approve button rather than left to a log line.
+function OverlapWarning({ row }: { row: TenantIdP }) {
+  const tr = useT();
+  const o = row.domain_overlaps || [];
+  if (o.length === 0) return null;
+  return (
+    <p className="admin-hint idp-overlap" role="alert" style={{ flexBasis: "100%" }}>
+      {tr("admin.idp_domain_overlap")}{" "}
+      {o.map((v, i) => (
+        <span key={v.domain + v.source}>
+          {i > 0 && ", "}
+          <code>{v.domain}</code> ({tr(v.source === "super_admin" ? "admin.idp_overlap_super_admin" : "admin.idp_overlap_login_domains")})
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function SignInMethodRegister() {
   const tr = useT();
   const toast = useToast();
@@ -631,6 +652,7 @@ export function SignInMethodRegister() {
       <p className="admin-hint">{tr("admin.idp_register_hint")}</p>
       {rows.map((row) => (
         <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " off")}>
+          <OverlapWarning row={row} />
           <span className="as-name mono" title={row.provider_id}>
             {row.tenant_slug}
           </span>

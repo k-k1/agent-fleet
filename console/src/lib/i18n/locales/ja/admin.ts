@@ -637,6 +637,9 @@ export const admin = {
     "このサインイン方法を削除します。この方式で入っていた人はサインインできなくなりますが、" +
     "ワークスペース・home・保存済みの認証情報は残ります。",
   "admin.idp_register": "テナント定義のサインイン方法",
+  "admin.idp_domain_overlap": "このサインイン方式が申告したドメインは、デプロイ自体のログインドメインと重なっています。承認前に確認してください:",
+  "admin.idp_overlap_login_domains": "デプロイのログイン許可",
+  "admin.idp_overlap_super_admin": "デプロイ管理者のドメイン",
   "admin.idp_pending_count": "承認待ち {n} 件",
   "admin.idp_register_none": "テナントが定義したサインイン方法はまだありません。",
   "admin.idp_register_hint":

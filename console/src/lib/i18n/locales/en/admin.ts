@@ -639,6 +639,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.idp_delete_body":
     "This removes the sign-in method. People who used it can no longer sign in, but their workspaces, homes and stored credentials are kept.",
   "admin.idp_register": "Tenant-defined sign-in methods",
+  "admin.idp_domain_overlap": "Domains this sign-in method claims overlap the deployment's own login domains. Check before approving:",
+  "admin.idp_overlap_login_domains": "deployment login allowlist",
+  "admin.idp_overlap_super_admin": "a deployment administrator's domain",
   "admin.idp_pending_count": "{n} waiting for approval",
   "admin.idp_register_none": "No tenant has defined a sign-in method yet.",
   "admin.idp_register_hint":

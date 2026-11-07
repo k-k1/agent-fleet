@@ -324,6 +324,16 @@ need no edit.
   outside the issuer's site fails the sign-in with a logged reason; editing the row (or the
   IdP's discovery document) fixes it.
   Env-configured providers are unchanged.
+- **A tenant row's claimed domains are shown against the deployment's own.** Besides the
+  one-domain-one-tenant check among tenants, the approval views (the register, and the
+  tenant's list when the caller is a super_admin) list each claimed domain that is also in
+  `AF_OAUTH_ALLOWED_DOMAINS`, an `@domain` line of the allowlist file, an env provider's own
+  domain list, or the domain of a `SUPER_ADMIN_EMAILS` address, and say which. It is a
+  warning, not a refusal, and is recomputed on every read rather than stored (the
+  deployment's lists change without the row changing): approval by a super_admin is the
+  gate, and a deployment may legitimately let a subsidiary on a shared domain use its own
+  IdP. The same overlap is written to the audit line of the save and of the approval. A
+  tenant administrator is not shown it, since it would reveal the deployment's login domains.
 
 **GitHub is a separate adapter** — it is not OIDC. Permission is **the AND of two
 independent gates**:
