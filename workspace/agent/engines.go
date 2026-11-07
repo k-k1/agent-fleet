@@ -334,34 +334,11 @@ func syncEngineProviders() {
 		if e.api() != engineAPIChat {
 			continue
 		}
-		ctxTokens, maxOut, windows := e.ContextTokens, e.MaxOutputTokens, engineModelWindows(e)
-		// The one bounce ADR 0093's phase 0 adds (decision 7, docs/log/99 §4.11): while the box
-		// is warm enough to answer, the window it actually started with replaces the catalogue's
-		// declared one — for the ONE model that answer describes. Asleep, forbidden, or a Control
-		// Plane too old for the route all answer 0 here, and the catalogue's number is left
-		// standing exactly as before this existed.
-		if id, nctx := engineWarmWindow(e); nctx > 0 {
-			if id == "" {
-				// No model row to pin the measurement to (an engine with no model_rows at all) —
-				// the engine-wide fallback is the only number this row has, so that is what gets
-				// corrected.
-				ctxTokens = nctx
-			} else {
-				// A model row exists, and per-model ALWAYS wins over the engine-wide fallback
-				// (engineProviderEntry's own rule). Writing only windows[id] keeps every OTHER
-				// model on this router at its own declared window — /props described this one
-				// model, not the others, and the engine-wide ctxTokens must not move on the
-				// strength of a measurement that was never about it.
-				out := maxOut
-				if w, ok := windows[id]; ok && w.MaxOutputTokens > 0 {
-					out = w.MaxOutputTokens
-				}
-				if windows == nil {
-					windows = map[string]opencode.EngineModelWindow{}
-				}
-				windows[id] = opencode.EngineModelWindow{ContextTokens: nctx, MaxOutputTokens: out}
-			}
-		}
+		// While the box is warm enough to answer, the window it started with replaces the
+		// catalogue's declared one (ADR 0093 phase 0); asleep, forbidden or an old Control Plane
+		// answer 0 and the catalogue's number stands.
+		id, nctx := engineWarmWindow(e)
+		ctxTokens, maxOut, windows := mergeWarmWindow(e, id, nctx)
 		providers = append(providers, opencode.EngineProvider{
 			Key: e.Key, Provider: e.Provider, BaseURL: base + e.BaseURL, Models: e.Models,
 			ContextTokens: ctxTokens, MaxOutputTokens: maxOut,
@@ -413,6 +390,37 @@ func engineModelLabels(e engineCatalogRow) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// mergeWarmWindow is the window an engine row is written with once the box has answered
+// (id, nctx; nctx 0 = it did not, and the catalogue's numbers stand). See the notes inline.
+func mergeWarmWindow(e engineCatalogRow, id string, nctx int) (ctxTokens, maxOut int, windows map[string]opencode.EngineModelWindow) {
+	ctxTokens, maxOut, windows = e.ContextTokens, e.MaxOutputTokens, engineModelWindows(e)
+	if nctx <= 0 {
+		return
+	}
+	if id == "" {
+		// No model row to pin the measurement to (an engine with no model_rows at all): the
+		// engine-wide fallback is the only number this row has, so that is what gets corrected.
+		ctxTokens = nctx
+		if maxOut >= nctx {
+			maxOut = 0 // does not fit under the measured window; engineProviderEntry derives one
+		}
+		return
+	}
+	// Per-model ALWAYS wins over the engine-wide fallback. Writing only windows[id] keeps every
+	// OTHER model on this router at its own declared window: /props described this one model.
+	// Only the model's own output cap is carried; engineProviderEntry falls back to the engine's
+	// (when it fits under nctx) or derives one, the same as for a stopped engine.
+	out := 0
+	if w, ok := windows[id]; ok && w.MaxOutputTokens > 0 {
+		out = w.MaxOutputTokens
+	}
+	if windows == nil {
+		windows = map[string]opencode.EngineModelWindow{}
+	}
+	windows[id] = opencode.EngineModelWindow{ContextTokens: nctx, MaxOutputTokens: out}
+	return
 }
 
 func engineModelWindows(e engineCatalogRow) map[string]opencode.EngineModelWindow {
