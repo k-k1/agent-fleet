@@ -43,6 +43,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const resolver = useRef<((v: boolean) => void) | null>(null);
 
   const askConfirm = useCallback<ConfirmFn>((opts) => {
+    // A prompt raised by program output never replaces a dialog the member is already
+    // answering: the swap would keep focus on the (relabelled) confirm button and let the
+    // member's pending Enter / Space approve the program's request.
+    if (opts.safeFocus && resolver.current) return Promise.resolve(false);
     return new Promise<boolean>((resolve) => {
       resolver.current?.(false); // a prior request that never settled → false
       resolver.current = resolve;

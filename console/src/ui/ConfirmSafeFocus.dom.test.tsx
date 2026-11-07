@@ -39,6 +39,26 @@ describe("ConfirmProvider safeFocus", () => {
     expect(result).toBe(false);
   });
 
+  it("does not replace a confirm that is already open", async () => {
+    await mount();
+    let first: boolean | undefined;
+    let second: boolean | undefined;
+    await act(async () => {
+      askConfirm({ title: "t", body: "b", confirmLabel: "Go" }).then((v) => (first = v));
+    });
+    expect(document.activeElement).toBe(btn("Go"));
+    await act(async () => {
+      askConfirm({ title: "x", body: "y", confirmLabel: "Allow", safeFocus: true }).then((v) => (second = v));
+    });
+    expect(second).toBe(false); // refused, never shown
+    expect(btn("Allow")).toBeUndefined();
+    expect(btn("Go")).toBeDefined();
+    expect(document.activeElement).toBe(btn("Go"));
+    expect(first).toBeUndefined(); // original still pending, not cancelled
+    await act(async () => btn("Go").click());
+    expect(first).toBe(true);
+  });
+
   it("without safeFocus the confirm button is focused", async () => {
     await mount();
     await act(async () => {
