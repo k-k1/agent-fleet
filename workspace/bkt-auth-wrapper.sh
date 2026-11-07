@@ -66,8 +66,15 @@ if [ "$method" = basic ]; then export BKT_USERNAME="$user"; else unset BKT_USERN
 # connection lacks the scope, so one line after bkt's own error says what to add and who adds it.
 # Only stderr passes through the filter; stdout stays bkt's, so --json output is untouched.
 sub=""
+skip=""
 for a in "$@"; do
-  case "$a" in -*) ;; *) sub="$a"; break ;; esac
+  if [ -n "$skip" ]; then skip=""; continue; fi
+  case "$a" in
+    # bkt's global flags that take a separate value; the value is not the subcommand.
+    -c | --context | --format | --jq | --template) skip=1 ;;
+    -*) ;;
+    *) sub="$a"; break ;;
+  esac
 done
 case "$method:$sub" in
   bearer:pr) need="Pull requests: Read and Write" ;;
@@ -82,8 +89,41 @@ if [ "$method" = bearer ]; then
 else
   hint="bkt: the Bitbucket API token saved in Settings lacks a scope for this command. Create a new API token with $need and paste it in Settings > Connections. Retrying with another credential will not help."
 fi
-{ "$real" "$@" 2>&1 1>&3 3>&- |
-  HINT="$hint" awk '{ print; fflush() }
+
+# bkt no longer replaces this process, so a signal sent to the wrapper's PID (a caller's timeout
+# or cancel) is forwarded, or bkt would outlive the caller and keep calling the API. The filter
+# reads a FIFO rather than sitting in a pipeline so bkt's PID is known, and it runs without the
+# token in its environment. Any setup failure falls back to plain bkt.
+command -v awk >/dev/null 2>&1 || exec "$real" "$@"
+d="$(mktemp -d 2>/dev/null)" || exec "$real" "$@"
+if ! mkfifo "$d/err" 2>/dev/null; then rm -rf "$d"; exec "$real" "$@"; fi
+(
+  unset BKT_TOKEN BKT_USERNAME
+  HINT="$hint" exec awk '{ print; fflush() }
     tolower($0) ~ /lack one or more required privilege scopes/ { hit = 1 }
-    END { if (hit) print ENVIRON["HINT"] }' >&2
-  exit "${PIPESTATUS[0]}"; } 3>&1
+    END { if (hit) print ENVIRON["HINT"] }' <"$d/err" >&2
+) &
+fpid=$!
+# A background job's stdin defaults to /dev/null; <&0 keeps the caller's.
+"$real" "$@" <&0 2>"$d/err" &
+pid=$!
+caught=""
+for s in TERM INT HUP; do
+  # shellcheck disable=SC2064 # expand $s and $pid now
+  trap "caught=1; kill -s $s $pid 2>/dev/null" "$s"
+done
+# wait returns early when a trapped signal arrives; wait again for bkt's own status.
+signalled=""
+while :; do
+  caught=""
+  wait "$pid"
+  rc=$?
+  [ -n "$caught" ] || break
+  signalled=1
+done
+# The filter ends at EOF, which a process bkt left behind holding stderr can postpone; after a
+# forwarded signal the caller wants out now, so the filter is stopped rather than awaited.
+[ -z "$signalled" ] || kill "$fpid" 2>/dev/null
+wait "$fpid"
+rm -rf "$d"
+exit "$rc"

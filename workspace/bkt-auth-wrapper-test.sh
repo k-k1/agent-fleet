@@ -44,6 +44,16 @@ set +x
   echo "USERNAME=${BKT_USERNAME-<unset>}"
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/bkt.seen"
+[ -z "${STUB_BKT_STDIN-}" ] || cat >"$STUB_DIR/bkt.stdin"
+if [ -n "${STUB_BKT_SLEEP-}" ]; then
+  echo $$ >"$STUB_DIR/bkt.pid"
+  # The sleep is left running on purpose: it holds stderr open after bkt dies, as a process
+  # bkt leaves behind would, and the wrapper must not wait for it.
+  trap 'echo TERM >"$STUB_DIR/bkt.sig"; exit 143' TERM
+  sleep "$STUB_BKT_SLEEP" &
+  echo $! >"$STUB_DIR/sleep.pid"
+  wait
+fi
 [ -z "${STUB_BKT_OUT-}" ] || echo "$STUB_BKT_OUT"
 [ -z "${STUB_BKT_ERR-}" ] || echo "$STUB_BKT_ERR" >&2
 exit "${STUB_BKT_EXIT:-0}"
@@ -215,6 +225,58 @@ run STUB_BKT_EXIT=1 STUB_BKT_ERR='Error: 404 Not Found' -- pr view 1
 [ "$(cat "$T/err")" = 'Error: 404 Not Found' ] || fail "404: stderr changed: $(cat "$T/err")"
 run BKT_TOKEN=mine STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- pr create
 [ "$(cat "$T/err")" = "$scope403" ] || fail "own token: hint added to the user's own setup"
+
+# 13. Global flags that take a value are not the subcommand.
+reset
+printf 'username=x-token-auth\npassword=fake-oauth-tok\n' >"$T/git.out"
+run STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- --format json pr create
+grep -q 'Pull requests: Read and Write' "$T/err" || fail "--format value taken as the subcommand"
+run STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- --template pr pipeline list
+grep -q 'Pipelines: Read' "$T/err" || fail "--template value taken as the subcommand"
+run STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- --jq=.x -c work pipeline list
+grep -q 'Pipelines: Read' "$T/err" || fail "-c value taken as the subcommand"
+
+# 14. The filter runs without the token in its environment.
+reset
+printf 'username=x-token-auth\npassword=fake-oauth-tok\n' >"$T/git.out"
+cat >"$T/bin/awk" <<'STUB'
+#!/bin/sh
+[ -z "${BKT_TOKEN-}" ] || echo leaked >"$STUB_DIR/awk.leak"
+exec /usr/bin/awk "$@"
+STUB
+chmod +x "$T/bin/awk"
+rm -f "$T/awk.leak"
+run STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- pr create
+[ ! -f "$T/awk.leak" ] || fail "BKT_TOKEN visible to the stderr filter"
+grep -q 'Pull requests' "$T/err" || fail "awk stub: filter did not run"
+rm -f "$T/bin/awk"
+
+# 15. stdin still reaches bkt (a background job would otherwise read /dev/null).
+reset
+printf 'username=x-token-auth\npassword=fake-oauth-tok\n' >"$T/git.out"
+rm -f "$T/bkt.stdin"
+echo 'body from stdin' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" \
+  AF_BKT_REAL="$T/bin/bkt-real" STUB_BKT_STDIN=1 bash "$WRAPPER" pr create >/dev/null 2>"$T/err"
+[ "$(cat "$T/bkt.stdin" 2>/dev/null)" = 'body from stdin' ] || fail "stdin did not reach bkt"
+
+# 16. SIGTERM to the wrapper's own PID reaches bkt, and the wrapper exits with bkt's status.
+reset
+printf 'username=x-token-auth\npassword=fake-oauth-tok\n' >"$T/git.out"
+rm -f "$T/bkt.pid" "$T/bkt.sig" "$T/sleep.pid"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_BKT_REAL="$T/bin/bkt-real" \
+  STUB_BKT_SLEEP=30 bash "$WRAPPER" pr list >/dev/null 2>"$T/err" &
+wpid=$!
+for _ in $(seq 50); do [ -s "$T/bkt.pid" ] && break; sleep 0.1; done
+start=$SECONDS
+kill -TERM "$wpid"
+wait "$wpid"
+rc=$?
+[ $((SECONDS - start)) -lt 10 ] || fail "after SIGTERM the wrapper waited for bkt's leftover child"
+kill "$(cat "$T/sleep.pid")" 2>/dev/null || true
+[ -f "$T/bkt.sig" ] || fail "SIGTERM to the wrapper did not reach bkt"
+[ "$rc" = 143 ] || fail "after SIGTERM: exit status $rc, want 143"
+bpid="$(cat "$T/bkt.pid" 2>/dev/null)"
+if [ -n "$bpid" ] && kill -0 "$bpid" 2>/dev/null; then fail "bkt outlived the wrapper"; kill "$bpid"; fi
 
 if [ "$fails" != 0 ]; then
   echo "bkt-auth-wrapper-test: $fails failure(s)" >&2
