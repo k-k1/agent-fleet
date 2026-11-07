@@ -299,8 +299,13 @@ decisions rely on.
   `deployment_warnings` reports the remainder. The columns that can hold one are listed in
   `store.sealedColumns` (`Plain`); the two key tables (`wrapped_dek`, `home_dek`) cannot,
   because their writers refuse to run without a key.
-- **Cookie purposes.** Session, sign-in state and preview cookies each sign with a key derived
-  from `AF_COOKIE_SECRET` and a purpose label; the unlabelled format is accepted for session and
-  preview cookies for one session lifetime after start-up.
+- **Cookie purposes.** Session, sign-in state, preview and preview-token cookies can each sign
+  with a key derived from `AF_COOKIE_SECRET` and a purpose label. A replica of the previous
+  release cannot read the labelled format, so the switch is two-stage and off by default
+  (`AF_COOKIE_PURPOSE_KEYS`; ECS parameter `CookiePurposeKeys`): this release reads both formats
+  and keeps issuing the old one; once every replica runs it, the flag switches issuing, and the
+  unlabelled format is then accepted for all four purposes for one session lifetime. Purpose
+  separation is therefore active only after the second step.
 
-Derivations from the master key are listed in one place, `docs/build/07-security.ja.md` §7.6.1.
+New keys derived from the master key use HKDF-SHA256 with a label (see `docs/build/07-security.md`
+§7.6.1, which lists every existing derivation; those stay HMAC for compatibility).

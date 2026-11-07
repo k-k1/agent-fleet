@@ -237,8 +237,12 @@ migration 0091 / pg 0076 で `home_dek.confirm_epoch` を足す（後述）。
   （ローカルでも KMS でも）読み戻しを確認しながら封じ、残りは `deployment_warnings` の `plaintext_sealed` が
   知らせます。該当する列は `store.sealedColumns` の `Plain` に並べてあります。鍵の表（`wrapped_dek`、`home_dek`）
   は、書く側が鍵なしでは動かないので対象外です。
-- **cookie の用途。** セッション・サインイン state・プレビューの各 cookie は、`AF_COOKIE_SECRET` と用途のラベルから
-  導いた鍵で署名します。ラベルなしの形式は、セッションとプレビューの cookie に限り、起動から
-  セッション 1 回分の期間だけ受け付けます。
+- **cookie の用途。** セッション・サインイン state・プレビュー・プレビュートークンの各 cookie は、
+  `AF_COOKIE_SECRET` と用途のラベルから導いた鍵で署名できます。前のリリースのレプリカは
+  ラベル付きの形式を読めないため、切り替えは 2 段階で既定はオフです（`AF_COOKIE_PURPOSE_KEYS`、ECS では
+  パラメータ `CookiePurposeKeys`）。このリリースは両方の形式を読み、発行は従来の形式のままです。
+  全レプリカがこのリリースになったらフラグで発行を切り替え、以後は 4 つの用途すべてについて、
+  ラベルなしの形式をセッション 1 回分の期間だけ受け付けます。用途の分離は第 2 段階のあとに有効になります。
 
-master 鍵から導く鍵は `docs/build/07-security.ja.md` §7.6.1 に 1 か所でまとめています。
+master 鍵から導く新しい鍵は、ラベル付きの HKDF-SHA256 を使います（既存の導出は `docs/build/07-security.ja.md`
+§7.6.1 に一覧があり、互換性のため HMAC のままです）。

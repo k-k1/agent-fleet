@@ -601,7 +601,7 @@ credentials as exposed and rotate them.
 
 ### 7.6.1 Keys derived from the master key
 
-Policy: a **new** key derived from the master key takes its own label, `HMAC-SHA256(master, "af-<purpose>/v<N>")`, and is added to this list in the same change. Never reuse a key across purposes and never use the master digest itself as a key. The derivations below predate the policy and stay as they are, because changing one invalidates what it protects. `AF_COOKIE_SECRET` is a separate secret; its per-purpose cookie keys are described in `oauth.go` (`cookiePurpose`).
+Policy: a **new** key derived from the master key is derived with HKDF-SHA256 (RFC 5869) from the master, with a label of its own (`af-<purpose>/v<N>`) as the `info` input, and is added to this list in the same change. Never reuse a key across purposes and never use the master digest itself as a key. The HMAC derivations below predate the policy and stay as they are, because changing one invalidates what it protects. `AF_COOKIE_SECRET` is a separate secret; its per-purpose cookie keys are described in `oauth.go` (`cookiePurpose`).
 
 | Label | Key for |
 |---|---|

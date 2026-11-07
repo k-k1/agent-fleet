@@ -99,7 +99,7 @@ previous release cannot read the new format, switching is two steps and is **off
 
 1. Deploy this release to every replica. It reads both formats and still issues the old one,
    so a rolling update signs nobody out.
-2. Once no replica of the previous release is left, set `AF_COOKIE_PURPOSE_KEYS=1` and restart
+2. Once no replica of the previous release is left, set `AF_COOKIE_PURPOSE_KEYS=1` (on ECS, the `CookiePurposeKeys` parameter of the ingress stack, then update it) and restart
    (replicas may be restarted one at a time; the two settings accept each other's cookies).
    Cookies issued before the switch keep working for one session lifetime
    (`AF_SESSION_TTL`, default 7 days) and then expire; sign-in states and preview tokens live

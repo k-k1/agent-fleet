@@ -312,6 +312,11 @@ Parameters:
     Type: String
     Default: ""
     Description: AF_SESSION_TTL, how long a sign-in cookie lives (Go duration, e.g. 72h). Empty = 168h.
+  CookiePurposeKeys:
+    Type: String
+    Default: ""
+    AllowedValues: ["", "0", "1"]
+    Description: AF_COOKIE_PURPOSE_KEYS, per-purpose cookie signing keys. Empty or 0 = off; set 1 only once no replica of the previous release remains. PARAMETERS.md.
   GithubAllowedEmails:
     Type: String
     Default: ""
@@ -900,6 +905,7 @@ Resources:
             - {Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs}
             - {Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains}
             - {Name: AF_SESSION_TTL, Value: !Ref SessionTtl}
+            - {Name: AF_COOKIE_PURPOSE_KEYS, Value: !Ref CookiePurposeKeys}
             - {Name: AF_GITHUB_ALLOWED_EMAILS, Value: !Ref GithubAllowedEmails}
             - {Name: AF_KMS_DATA_KEY_CACHE_TTL, Value: !Ref KmsDataKeyCacheTtl}
             - !If [McpOn, {Name: AF_MCP_ENABLED, Value: "true"}, !Ref "AWS::NoValue"]
