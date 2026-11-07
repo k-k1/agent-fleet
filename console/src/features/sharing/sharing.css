@@ -238,3 +238,7 @@
 .share-busy .codicon {
   animation: codicon-spin 1.2s steps(12) infinite;
 }
+.share-proposal-meta { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0; }
+.share-proposal-meta dt { color: var(--muted, inherit); }
+.share-proposal-meta dd { margin: 0; overflow-wrap: anywhere; }
+.share-proposal-attachments { margin: 0; padding-left: 16px; }

@@ -1,26 +1,17 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
-import { Button, IconButton } from "../../ui/Button.tsx";
+import { IconButton } from "../../ui/Button.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { startSharedSessionsPolling, startMySharesPolling, useMySharesStore, useSharedSessionsStore } from "./store.ts";
 import { pendingHandoffCount, startHandoffPolling, useHandoffStore } from "./handoffStore.ts";
 import { HandoffInboxModal } from "./HandoffInboxModal.tsx";
+import { ProposalCard, type Proposal } from "./ProposalCard.tsx";
 import { ShareListModal } from "./ShareListModal.tsx";
 import { SharedProjectNode } from "./SharedProjectNode.tsx";
 import { groupedSharedSessions } from "./sharedProject.ts";
 import "./sharing.css";
-
-interface Proposal {
-  id: string;
-  sessionId: string;
-  proposerUserKey: string;
-  action: string;
-  payload?: { prompt?: string; feedback?: string };
-  status: string;
-  expiresAt: string;
-}
 
 export const SharedSessionsSection = memo(function SharedSessionsSection() {
   const tr = useT();
@@ -83,17 +74,7 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
       {open && (
         <Modal title={tr("share.pending_title")} onClose={() => setOpen(false)} className="share-proposals-modal">
           <div className="ui-modal-body">
-            {proposals.map((p) => (
-              <article className="share-proposal-card" key={p.id}>
-                <strong>{p.proposerUserKey}</strong>
-                <p>{p.payload?.prompt || p.payload?.feedback || p.action}</p>
-                {p.status === "processing" && <p className="muted">{tr("share.outcome_unknown")}</p>}
-                <div className="ui-modal-actions">
-                  {p.status === "pending" && <Button onClick={() => void decide(p.id, "reject")}>{tr("share.reject")}</Button>}
-                  <Button variant="primary" onClick={() => void decide(p.id, "approve")}>{p.status === "processing" ? tr("share.reconcile") : tr("share.approve")}</Button>
-                </div>
-              </article>
-            ))}
+            {proposals.map((p) => <ProposalCard key={p.id} p={p} onDecide={(id, d) => void decide(id, d)} />)}
           </div>
         </Modal>
       )}
