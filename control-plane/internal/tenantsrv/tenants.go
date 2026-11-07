@@ -439,7 +439,7 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	_, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
 		return
 	}
@@ -473,7 +473,18 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	a.auditAdmin(r, t.ID, caller.ID, "workspace.stop", ident.UserKey, "")
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": body.UserKey, "tenant": t.Slug})
+}
+
+// auditAdmin records a completed admin write. Best-effort like the neighbouring handlers
+// (tenant.limits, membership.add): the change has already happened, and the answer a
+// successful call gives does not depend on the row.
+func (a Admin) auditAdmin(r *http.Request, tenantID, actorID, action, target, detail string) {
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
+		Action: action, Target: target, Detail: detail, At: store.NowTS(),
+	})
 }
 
 // CleanHome (POST /api/admin/clean-home {tenant_slug,user_key}) wipes a
@@ -888,7 +899,7 @@ func destroyedDetail(detail string, leftovers []string) string {
 }
 
 // CreateTenant (POST /api/admin/tenants {slug,name}).
-func (a Admin) CreateTenant(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a Admin) CreateTenant(w http.ResponseWriter, r *http.Request, caller store.Identity) {
 	var body struct {
 		Slug string `json:"slug"`
 		Name string `json:"name"`
@@ -918,6 +929,7 @@ func (a Admin) CreateTenant(w http.ResponseWriter, r *http.Request, _ store.Iden
 		writeAPIErr(w, dataRootNameErr(err, http.StatusBadRequest, "tenant_slug_reserved", "tenant_slug_conflict"))
 		return
 	}
+	a.auditAdmin(r, t.ID, caller.ID, "tenant.create", t.Slug, "name="+t.Name)
 	writeJSON(w, http.StatusOK, map[string]any{"slug": t.Slug, "name": t.Name})
 }
 
@@ -1725,7 +1737,7 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	_, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
 		return
 	}
@@ -1767,6 +1779,9 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 	// ephemeral storage), so drop the cached runtime — the new values reach the next
 	// container start. Also compute the effective post-clamp values so the caller sees
 	// what will actually be applied rather than what they typed.
+	a.auditAdmin(r, t.ID, caller.ID, "member.limits", ident.UserKey,
+		fmt.Sprintf("max_sessions=%d disk_gb=%d mem_limit=%d cpu_limit=%d slot_class=%q",
+			q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass))
 	a.cp.EvictMembershipCache(mem.ID)
 	effMem, effCPU, effDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	effClass, classNote := a.cp.ResolveSlotClass(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
@@ -1797,7 +1812,7 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 // role (member | tenant_admin). super_admin only: minting a tenant_admin is a
 // privilege escalation kept to the deployment operator (a tenant_admin cannot
 // promote others). Deployment-wide super_admin stays env-only (SUPER_ADMIN_EMAILS).
-func (a Admin) SetMembershipRole(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a Admin) SetMembershipRole(w http.ResponseWriter, r *http.Request, caller store.Identity) {
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
@@ -1842,10 +1857,20 @@ func (a Admin) SetMembershipRole(w http.ResponseWriter, r *http.Request, _ store
 		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member of " + t.Slug})
 		return
 	}
-	if err := a.cp.Store().SetMembershipRole(r.Context(), mem.ID, role); err != nil {
-		writeAPIErr(w, internalErr(err))
+	// Granting tenant_admin is a privilege change: the request is recorded first and the
+	// change is refused when that record cannot be written.
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.role", Target: ident.UserKey,
+	})
+	if !ok {
 		return
 	}
+	if err := a.cp.Store().SetMembershipRole(r.Context(), mem.ID, role); err != nil {
+		refuseIrreversible(w, r, in, internalErr(err))
+		return
+	}
+	in.Done(r.Context(), "from="+mem.Role+" to="+role, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": body.UserKey, "tenant": t.Slug, "role": role})
 }
 
