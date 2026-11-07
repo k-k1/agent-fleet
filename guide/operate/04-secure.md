@@ -71,6 +71,51 @@ from the master key, so the effective strength is equivalent to the single `AF_M
 AWS that key can be held by KMS instead ([12 Keys at rest](12-keys.md)). Details in `docs/build/07-security.md`
 §7.6.
 
+## The deployment keys: requirements and what changing them costs
+
+Two secrets protect everything else, and both are only as strong as the value you chose.
+
+| | `AF_MASTER_KEY` | `AF_COOKIE_SECRET` |
+|---|---|---|
+| What it protects | the root of every sealed value (client secrets, MCP headers, handoffs, inbox) and of the per-member credential-store keys and the tokens workspaces use to call back into the Control Plane | the signature on the session, sign-in state and preview cookies |
+| Requirement | **at least 32 random bytes**, written as hex or base64 (a raw string must be at least 43 characters). Never a passphrase. | the same |
+| Generate | `head -c 32 /dev/urandom \| base64` | `head -c 32 /dev/urandom \| base64` |
+| What changing it costs | **Do not change it on a running deployment.** Everything sealed under the old value stops opening and there is no re-keying command; see [12 Keys at rest](12-keys.md). | everybody signs in again, once (see "The emergency stop" below) |
+
+The start-up check only measures length (and rejects a value made of a few repeated bytes); it
+cannot tell a long passphrase from random bytes, which is why the value must be generated. In
+this release a value that fails the check **does not stop the Control Plane**: it logs a
+`WARNING` and the administration screen shows a banner (`weak_master_key`,
+`weak_cookie_secret` in `deployment_warnings`). A later release will refuse to start under any
+`AUTH` other than `dev`, so replace a flagged value at your next planned window. The check
+never logs the value. `deploy/aws/ecs/standup.sh` checks the stored parameters the same way and
+prints only OK or too short.
+
+### Values stored before the key was set
+
+A Control Plane that had no `AF_MASTER_KEY` stored some values unencrypted (tenant sign-in and
+Git OAuth client secrets, MCP headers and client secrets, the engine tokens, handoffs, share
+proposals and inbox messages). **Setting the key later does not seal them**: they are read as
+they are. While any remain, the Control Plane logs a `WARNING` at start-up and the
+administration screen shows a banner (`plaintext_sealed`).
+
+Seal them with the Control Plane's own configuration and database, when no administrator is
+editing:
+
+```
+af-cp rewrap-keys --seal-plaintext --dry-run   # count only, change nothing
+af-cp rewrap-keys --seal-plaintext
+```
+
+It works with the local key custodian and with `AF_KEY_CUSTODIAN=kms` (it seals under the one
+configured), writes row by row, opens each sealed value again and compares it before writing,
+and exits 0 only when a final read-only pass finds nothing left. The banner clears within a few
+minutes (or at the next restart). Run it, then `af-cp rewrap-keys` as described in
+[12](12-keys.md) if you also use KMS. These values were readable in the database and its
+backups until now, so **also rotate them at their issuer** (the IdP and Git OAuth client
+secrets, the MCP tokens, the Hugging Face / Civitai / ComfyUI tokens), and delete backups you
+no longer need.
+
 ## Operating egress control
 
 There is a mechanism for controlling outbound traffic (egress) from Workspaces. It is a

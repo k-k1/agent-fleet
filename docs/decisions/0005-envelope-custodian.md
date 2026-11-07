@@ -281,3 +281,26 @@ migration.
 Verified by unit tests (SQLite and Postgres for the store; fakes for the runtimes). No real ECS,
 EFS, EBS, EKS or KMS run: `ecs`, `ecs-ec2` and `kubernetes` proofs are unverified on a real
 deployment.
+
+## Addendum (2026-11-07) — key requirements and sealing unsealed values (#3499)
+
+This changes no decision above. It records three hardening steps around the keys the
+decisions rely on.
+
+- **Key strength.** `AF_MASTER_KEY` and `AF_COOKIE_SECRET` should be at least 32 random bytes
+  (hex or base64; a raw string of at least 43 characters). The start-up check measures length
+  and rejects a few repeated bytes, and in this release it only logs a `WARNING` and adds
+  `weak_master_key` / `weak_cookie_secret` to `deployment_warnings`. Refusing to start under
+  `AUTH` other than `dev` is a later release.
+- **Values stored without a key.** A value written while no master key was set keeps an empty
+  `key_ref` and stays readable as it is after the key is configured. `af-cp rewrap-keys
+  --seal-plaintext` seals each such value (local or KMS custodian) under the reference its
+  writer would have used, with a read-back check, and `plaintext_sealed` in
+  `deployment_warnings` reports the remainder. The columns that can hold one are listed in
+  `store.sealedColumns` (`Plain`); the two key tables (`wrapped_dek`, `home_dek`) cannot,
+  because their writers refuse to run without a key.
+- **Cookie purposes.** Session, sign-in state and preview cookies each sign with a key derived
+  from `AF_COOKIE_SECRET` and a purpose label; the unlabelled format is accepted for session and
+  preview cookies for one session lifetime after start-up.
+
+Derivations from the master key are listed in one place, `control-plane/master_derivations.go`.

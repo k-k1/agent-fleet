@@ -223,3 +223,22 @@ migration 0091 / pg 0076 で `home_dek.confirm_epoch` を足す（後述）。
 
 検証は単体テスト（ストアは SQLite と Postgres、ランタイムはフェイク）。実際の ECS・EFS・EBS・EKS・KMS では
 試していない。`ecs`・`ecs-ec2`・`kubernetes` の証明は実配備では未検証。
+
+## 追記（2026-11-07）— 鍵の要件と、封じられていない値の封じ込み（#3499）
+
+上の決定は変えません。決定が前提とする鍵まわりの、3 つの強化を記録します。
+
+- **鍵の強度。** `AF_MASTER_KEY` と `AF_COOKIE_SECRET` は、ランダムな 32 バイト以上（hex か base64。生の文字列なら
+  43 文字以上）とします。起動時の検査は長さを測り、数種類のバイトの繰り返しを弾きます。このリリースでは
+  `WARNING` をログに出し、`deployment_warnings` に `weak_master_key` / `weak_cookie_secret` を加えるだけです。
+  `AUTH` が `dev` 以外での起動拒否は、後のリリースで行います。
+- **鍵なしで保存された値。** マスターキーが無いあいだに書かれた値は `key_ref` が空のままで、鍵を設定したあとも
+  そのまま読めます。`af-cp rewrap-keys --seal-plaintext` が、そうした値を 1 件ずつ、書いた側が使ったはずの参照で
+  （ローカルでも KMS でも）読み戻しを確認しながら封じ、残りは `deployment_warnings` の `plaintext_sealed` が
+  知らせます。該当する列は `store.sealedColumns` の `Plain` に並べてあります。鍵の表（`wrapped_dek`、`home_dek`）
+  は、書く側が鍵なしでは動かないので対象外です。
+- **cookie の用途。** セッション・サインイン state・プレビューの各 cookie は、`AF_COOKIE_SECRET` と用途のラベルから
+  導いた鍵で署名します。ラベルなしの形式は、セッションとプレビューの cookie に限り、起動から
+  セッション 1 回分の期間だけ受け付けます。
+
+master 鍵から導く鍵は `control-plane/master_derivations.go` に 1 か所でまとめています。
