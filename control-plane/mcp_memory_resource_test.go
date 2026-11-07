@@ -36,7 +36,7 @@ func (e *mcpOAuthEnv) allowExternalMemory() {
 	}
 }
 
-var memoryToolNames = []string{"memory_projects", "memory_index", "memory_search", "memory_read", "memory_save", "memory_forget"}
+var memoryToolNames = []string{"memory_projects", "memory_index", "memory_search", "memory_read", "memory_save", "memory_patch", "memory_forget"}
 
 // onlyMemoryTools fails unless names is exactly the six memory tools.
 func onlyMemoryTools(t *testing.T, names map[string]bool) {

@@ -118,7 +118,7 @@ func TestMemoryToolsFollowTheScopeTier(t *testing.T) {
 			t.Errorf("%s must be listed at read and write", n)
 		}
 	}
-	for _, n := range []string{"memory_save", "memory_forget"} {
+	for _, n := range []string{"memory_save", "memory_patch", "memory_forget"} {
 		if r[n] || !w[n] {
 			t.Errorf("%s: read=%v write=%v", n, r[n], w[n])
 		}
@@ -146,6 +146,40 @@ func TestMemoryToolsProxyToTheAgent(t *testing.T) {
 	if cp.gotMethod != "POST" || cp.gotPath != "/agents/memory/external/entries" || json.Unmarshal([]byte(cp.gotBody), &got) != nil ||
 		got["project"] != "demo-0123456789ab" || got["client"] != "claude-code/9.9" || got["name"] != "n1" {
 		t.Fatalf("save proxied as %s %s %s", cp.gotMethod, cp.gotPath, cp.gotBody)
+	}
+}
+
+// memory_patch reaches the Agent's external patch route with its edits intact, relays the
+// description only when given, and is audited as its own action.
+func TestMemoryPatchProxiesToTheAgent(t *testing.T) {
+	st := memStore(t)
+	cp := newMemCP(t, st, "running")
+	cp.answer = `{"name":"n1","scope":"project","revision":2,"project":"demo-0123456789ab"}`
+	_, isErr := memCall(t, cp, "write", "memory_patch", map[string]any{
+		"name": "n1", "scope": "project", "project": "demo-0123456789ab", "revision": 1,
+		"edits": []map[string]string{{"old": "a", "new": "b"}}})
+	if isErr {
+		t.Fatal("patch failed")
+	}
+	var got map[string]any
+	if cp.gotMethod != "POST" || cp.gotPath != "/agents/memory/external/patch" || json.Unmarshal([]byte(cp.gotBody), &got) != nil ||
+		got["project"] != "demo-0123456789ab" || got["client"] != "claude-code/9.9" || got["revision"] != float64(1) {
+		t.Fatalf("patch proxied as %s %s %s", cp.gotMethod, cp.gotPath, cp.gotBody)
+	}
+	if _, has := got["description"]; has {
+		t.Errorf("an omitted description was relayed: %s", cp.gotBody)
+	}
+	edits, _ := got["edits"].([]any)
+	if len(edits) != 1 || edits[0].(map[string]any)["old"] != "a" || edits[0].(map[string]any)["new"] != "b" {
+		t.Errorf("edits = %v", got["edits"])
+	}
+	memCall(t, cp, "write", "memory_patch", map[string]any{"name": "n1", "scope": "user", "revision": 2, "description": "new"})
+	if err := json.Unmarshal([]byte(cp.gotBody), &got); err != nil || got["description"] != "new" {
+		t.Errorf("description not relayed: %s", cp.gotBody)
+	}
+	rows, err := st.ListAuditByTenant(context.Background(), cp.tenantID, 10)
+	if err != nil || len(rows) != 2 || rows[0].Action != "memory.entry.patch" {
+		t.Fatalf("audit rows: %+v %v", rows, err)
 	}
 }
 
@@ -273,7 +307,7 @@ func TestMemoryToolsRelayRepositoryAndRequireScopeOnWrites(t *testing.T) {
 		if _, ok := props["repository"]; !ok {
 			t.Errorf("%s has no repository argument", tl.name)
 		}
-		if tl.name == "memory_save" || tl.name == "memory_forget" {
+		if tl.name == "memory_save" || tl.name == "memory_patch" || tl.name == "memory_forget" {
 			req, _ := tl.schema["required"].([]string)
 			if !strings.Contains(strings.Join(req, ","), "scope") {
 				t.Errorf("%s does not require scope: %v", tl.name, req)
@@ -302,7 +336,7 @@ func TestTenantSwitchWithholdsTheMemoryTools(t *testing.T) {
 		}
 		return out
 	}
-	if got := listed(); len(got) != 6 {
+	if got := listed(); len(got) != 7 {
 		t.Fatalf("a new tenant must keep the tools (default on): %v", got)
 	}
 	if err := st.SetTenantExternalMemory(ctx, cp.tenantID, false); err != nil {
@@ -330,7 +364,7 @@ func TestTenantSwitchWithholdsTheMemoryTools(t *testing.T) {
 	if err := st.SetTenantExternalMemory(ctx, cp.tenantID, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := listed(); len(got) != 6 {
+	if got := listed(); len(got) != 7 {
 		t.Fatalf("switch back on: %v", got)
 	}
 	if _, isErr := memCall(t, cp, "read", "memory_index", nil); isErr || cp.calls != 1 {
@@ -355,7 +389,7 @@ func TestMemoryToolsFailClosedWithoutAMembership(t *testing.T) {
 // server's own tools (#2766).
 func TestMemoryToolsSteerSessionsToTheLocalTools(t *testing.T) {
 	tools := memoryTools()
-	if len(tools) != 6 {
+	if len(tools) != 7 {
 		t.Fatalf("memory tools: %d", len(tools))
 	}
 	for _, tl := range tools {

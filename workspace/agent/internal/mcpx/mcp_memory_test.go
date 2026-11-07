@@ -15,7 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-var memoryToolNames = []string{"memory_index", "memory_search", "memory_read", "memory_save", "memory_forget"}
+var memoryToolNames = []string{"memory_index", "memory_search", "memory_read", "memory_save", "memory_patch", "memory_forget"}
 
 // memoryTestEnv serves the real memoryx routes as the Agent, so the tools are exercised end to
 // end: argument relay, owner resolution, the store and its error answers. The calling session
@@ -61,6 +61,7 @@ func memoryTestEnv(t *testing.T) {
 	mux.HandleFunc("GET /agents/memory/entries/search", memoryx.HandleAgentMemorySearch)
 	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
 	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
+	mux.HandleFunc("POST /agents/memory/entries/patch", memoryx.HandleAgentMemoryPatch)
 	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -192,6 +193,47 @@ func TestMemoryToolsRoundTrip(t *testing.T) {
 	}
 	if r = callMemoryTool(t, "memory_read", map[string]any{"name": "go-test-cap"}); !r.IsError || !strings.Contains(r.Text, "memory_not_found") {
 		t.Fatalf("read after forget = %+v", r)
+	}
+}
+
+// memory_patch end to end: the edits array and the optional description reach the Agent, an
+// omitted description keeps the stored one, and refusals come back as the Agent worded them.
+func TestMemoryPatchTool(t *testing.T) {
+	memoryTestEnv(t)
+	r := callMemoryTool(t, "memory_save", map[string]any{"name": "go-test-cap", "description": "cap parallelism", "type": "feedback", "body": "Run go test with -p 2.\nSecond line."})
+	if r.IsError {
+		t.Fatalf("save = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_patch", map[string]any{"name": "go-test-cap", "revision": 1,
+		"edits": []map[string]string{{"old": "-p 2", "new": "-p 1"}}})
+	if r.IsError || !strings.Contains(r.Text, `"revision":2`) {
+		t.Fatalf("patch = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_read", map[string]any{"name": "go-test-cap"})
+	if !strings.Contains(r.Text, "Run go test with -p 1.\nSecond line.") || !strings.Contains(r.Text, "description: cap parallelism") {
+		t.Fatalf("read after patch = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_patch", map[string]any{"name": "go-test-cap", "revision": 2, "description": "new words"})
+	if r.IsError || !strings.Contains(r.Text, `"revision":3`) {
+		t.Fatalf("description-only patch = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_patch", map[string]any{"name": "go-test-cap", "revision": 1, "edits": []map[string]string{{"old": "Second", "new": "Third"}}})
+	if !r.IsError || !strings.Contains(r.Text, "memory_conflict") {
+		t.Fatalf("stale patch = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_patch", map[string]any{"name": "absent", "revision": 1, "edits": []map[string]string{{"old": "a", "new": "b"}}})
+	if !r.IsError || !strings.Contains(r.Text, "memory_not_found") {
+		t.Fatalf("missing patch = %+v", r)
+	}
+	key := "AKIA" + "QWERTYUIOPASDFGH"
+	r = callMemoryTool(t, "memory_patch", map[string]any{"name": "go-test-cap", "revision": 3, "edits": []map[string]string{{"old": "Third", "new": "use " + key}}})
+	if !r.IsError || strings.Contains(r.Text, key) {
+		t.Fatalf("secret patch = %+v", r)
+	}
+	// The memory the new-name hint points at.
+	r = callMemoryTool(t, "memory_save", map[string]any{"name": "go-test-cap-limit", "description": "d", "body": "b"})
+	if r.IsError || !strings.Contains(r.Text, "prefer memory_patch on go-test-cap") {
+		t.Fatalf("near-name save = %+v", r)
 	}
 }
 

@@ -18,6 +18,7 @@ const (
 	mcpToolMemorySearch = "memory_search"
 	mcpToolMemoryRead   = "memory_read"
 	mcpToolMemorySave   = "memory_save"
+	mcpToolMemoryPatch  = "memory_patch"
 	mcpToolMemoryForget = "memory_forget"
 )
 
@@ -46,7 +47,7 @@ type mcpMemoryProject struct {
 // (memoryx.AgentMemoryEnabled), so turning it off refuses sessions launched while it was on.
 var mcpAgentMemoryEnabled bool
 
-// mcpMemoryCall dispatches the five memory tools.
+// mcpMemoryCall dispatches the memory tools.
 func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte {
 	if !selfReportOnly() {
 		return mcpToolErr(id, name+" はセッション側の Agent Fleet サーバー専用です")
@@ -65,6 +66,10 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		Kinds       []string `json:"kinds"`
 		Revision    int      `json:"revision"`
 		Budget      int      `json:"budget"`
+		Edits       []struct {
+			Old string `json:"old"`
+			New string `json:"new"`
+		} `json:"edits"`
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -115,6 +120,18 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 			"type": a.Type, "kinds": a.Kinds, "body": a.Body, "revision": a.Revision,
 		})
 		out, err := agentDo(http.MethodPost, "/agents/memory/entries", body)
+		if err != nil {
+			return mcpToolErr(id, mcpMemoryErr(err))
+		}
+		return mcpTextResult(id, mcpMemoryFormatSave(out))
+	case mcpToolMemoryPatch:
+		// description is relayed only when given: the Agent reads an absent field as "keep".
+		m := map[string]any{"session": owner, "scope": a.Scope, "name": a.Name, "revision": a.Revision, "edits": a.Edits}
+		if a.Description != "" {
+			m["description"] = a.Description
+		}
+		body, _ := json.Marshal(m)
+		out, err := agentDo(http.MethodPost, "/agents/memory/entries/patch", body)
 		if err != nil {
 			return mcpToolErr(id, mcpMemoryErr(err))
 		}
@@ -384,6 +401,28 @@ func agentMemoryTools() []toolSpec {
 						"revision":    map[string]any{"type": "integer", "minimum": 0, "description": "Revision you read (0 or omitted creates)"},
 					},
 					"required": []string{"name", "description", "body"},
+				},
+			}
+		}, ownArgs: true, handle: handle},
+		{name: mcpToolMemoryPatch, session: func() map[string]any {
+			return map[string]any{
+				"name": "memory_patch",
+				"description": "Agent Fleet memory: change part of an existing memory without re-sending it. Each edit replaces the one place where `old` occurs in the body with `new`; every `old` must be non-empty, occur exactly once and not overlap another edit, and all edits are matched against the text you read and applied together or not at all. " +
+					"Pass the revision you read (a stale one is refused, so read again). It never creates a memory (use memory_save), keeps every field you do not name, and has the same secret scan and history as memory_save.",
+				"inputSchema": map[string]any{
+					"type": "object", "additionalProperties": false,
+					"properties": map[string]any{
+						"name":     memoryStringArg("Memory name"),
+						"scope":    memoryScopeArg(),
+						"revision": map[string]any{"type": "integer", "minimum": 1, "description": "Revision you read"},
+						"edits": map[string]any{"type": "array", "minItems": 1, "maxItems": 50, "description": "Replacements of the body, matched against the same original text",
+							"items": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
+								"old": memoryStringArg("Exact text to replace; must occur exactly once in the body"),
+								"new": memoryStringArg("Replacement text (empty deletes)"),
+							}, "required": []string{"old", "new"}}},
+						"description": memoryStringArg("A new one-line description; omit to keep the current one"),
+					},
+					"required": []string{"name", "revision"},
 				},
 			}
 		}, ownArgs: true, handle: handle},

@@ -555,3 +555,13 @@ release.
 4. **The model**: a Haiku / GPT Luna class model by default, with supersede and merge escalated, gated
    by an offline comparison at the start of step 3 (decision 6). The monthly token cap is set when that
    comparison has a measured cost.
+
+## Implementation notes
+
+- **2026-11-08, `memory_patch` (decision 4, #3441).** Shipped on both memory surfaces: the af server's
+  tool and the external `/mcp` tool (audited as `memory.entry.patch`). A patch matches every `old`
+  against the same original body, counts a self-overlapping `old` ("aa" in "aaa") as matching more than
+  once, and trims the result like a save does. The "near name" hint of `memory_save` is a warning line
+  in the save answer, not a field: name words of three characters or more found in another memory's name
+  or description, at least half of them and at least two (one for a one-word name), with `memory_search`'s
+  field weights; same scope, at most three names, and only for agent and external callers.

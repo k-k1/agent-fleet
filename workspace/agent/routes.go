@@ -539,14 +539,16 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/search", memoryx.HandleAgentMemorySearch)
 	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
 	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
+	mux.HandleFunc("POST /agents/memory/entries/patch", memoryx.HandleAgentMemoryPatch)
 	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
-	// The same five operations for a client outside Agent Fleet (#1988), reached only through the
+	// The same operations for a client outside Agent Fleet (#1988), reached only through the
 	// CP's /mcp. They name the project themselves and answer to the externalMemory setting.
 	mux.HandleFunc("GET /agents/memory/external/projects", memoryx.HandleAgentMemoryExternalProjects)
 	mux.HandleFunc("GET /agents/memory/external/entries", memoryx.HandleAgentMemoryExternalIndex)
 	mux.HandleFunc("GET /agents/memory/external/search", memoryx.HandleAgentMemoryExternalSearch)
 	mux.HandleFunc("GET /agents/memory/external/read", memoryx.HandleAgentMemoryExternalRead)
 	mux.HandleFunc("POST /agents/memory/external/entries", memoryx.HandleAgentMemoryExternalSave)
+	mux.HandleFunc("POST /agents/memory/external/patch", memoryx.HandleAgentMemoryExternalPatch)
 	mux.HandleFunc("POST /agents/memory/external/forget", memoryx.HandleAgentMemoryExternalForget)
 	// The member's after-the-fact view of those writes (ADR 0108 decision 8). These are for the
 	// Console, so control-plane/routes.go relays them. The member writes (revert, pin,
