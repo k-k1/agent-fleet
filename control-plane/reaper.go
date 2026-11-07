@@ -179,6 +179,24 @@ func (r *connRegistry) addConnOpt(wsID, session string, attention, stampInput bo
 	r.mu.Unlock()
 }
 
+// addAttentionConnAt registers a long-lived attention connection that is not a
+// terminal (the visible browser pane) and raises the workspace input clock to `at`
+// without moving it backwards. Unlike addConn it does not stamp "now": the pane's
+// presence is the member's last real interaction, not the act of showing it.
+func (r *connRegistry) addAttentionConnAt(wsID string, at time.Time) {
+	if r == nil || wsID == "" {
+		return
+	}
+	r.mu.Lock()
+	r.wsConns[wsID]++
+	r.wsAttn[wsID]++
+	r.lastSeen[wsID] = time.Now()
+	if at.After(r.lastInput[wsID]) {
+		r.lastInput[wsID] = at
+	}
+	r.mu.Unlock()
+}
+
 func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 	if r == nil || wsID == "" {
 		return
@@ -262,7 +280,8 @@ func (r *connRegistry) snapshot(wsID string) (conns int, lastSeen time.Time, ok 
 	return r.wsConns[wsID], ls, has
 }
 
-// noteInput records a terminal keystroke — the one signal that says a human is
+// noteInput records a terminal keystroke (or a reported interaction on the visible
+// browser pane, browserViewer.noteInteraction) — the one signal that says a human is
 // actually there. Pings and resizes deliberately do NOT come through here: a
 // background tab sends both, and counting them would restore exactly the "an
 // open socket warms the workspace forever" behaviour this exists to remove.

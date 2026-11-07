@@ -387,7 +387,10 @@ is open in the Console is spared from the halt only while someone has typed into
 terminal within the presence grace; a tab left open without typing does not pin it. Only
 keystrokes and pastes count: the terminal's own automatic replies (focus reports, device-attribute
 and cursor-position answers, colour-query responses) and the Console's automatic reconnects of an
-open pane do not. This is
+open terminal pane do not. A visible browser pane follows the same rule: it counts only within the
+presence grace of the last click, scroll, key press or paste on it (becoming visible again after a
+tab switch is not itself interaction), so a foreground tab on a screen that never locks does not pin
+the Workspace. This is
 effective for saving resources. For the meaning of the env vars, see
 `deploy/compose/.env.example`; for how it works, see
 `docs/build/09-deploy.md` §9.4.
