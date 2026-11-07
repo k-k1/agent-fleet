@@ -29,7 +29,10 @@ export type BrowserOutbound =
   | { type: "navigate"; path: string }
   | { type: "reload"; ignoreCache: boolean }
   | { type: "history"; direction: "back" | "forward" }
-  | { type: "visibility"; visible: boolean };
+  | { type: "visibility"; visible: boolean }
+  // A member really used the pane (pointer down, wheel, key, paste). The Control Plane
+  // consumes it to bound idle-stop presence; it is never forwarded to the Agent.
+  | { type: "interaction" };
 
 export interface BrowserSnapshot {
   state: BrowserPageState;
