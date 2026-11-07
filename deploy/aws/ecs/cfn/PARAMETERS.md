@@ -511,6 +511,24 @@ Add AWS's managed IP reputation list (known scanners/botnets). Matches on the SO
 the body, so it cannot mangle legitimate agent traffic. Requires `WafRateLimitPer5Min` > 0
 (that is what creates the web ACL).
 
+### ALB header hygiene and `AlbAccessLogBucket`
+
+The ALB always runs with `routing.http.drop_invalid_header_fields.enabled` set to `true`: a
+request carrying a malformed HTTP header is dropped at the load balancer instead of being
+forwarded to the Control Plane (the AWS default is `false`). Real browsers and the Agent's own
+clients never send one. There is no parameter for it; reverting means editing the template.
+
+`AlbAccessLogBucket` turns on ALB access logs. Empty (the default) = off, which is what a stack
+created before this parameter does after an update. Give it the NAME of an S3 bucket (no `s3://`,
+no prefix) in the same region as the stack, and the logs land under `AWSLogs/<account>/`. The
+bucket is yours, not the stack's, and the ALB can only write if the bucket policy allows it:
+for a region that has an ELB account id, grant `s3:PutObject` on
+`arn:aws:s3:::<bucket>/AWSLogs/<account>/*` to that principal, and for regions from 2022 on to
+the `logdelivery.elasticloadbalancing.amazonaws.com` service principal (AWS's "Enable access
+logs for your Application Load Balancer" page has the exact statements). Without the grant, the
+stack update fails when it applies the attribute. Logs hold client IPs and request paths, so
+set a lifecycle rule on the bucket. SSE-S3 is the only bucket encryption the ALB can write to.
+
 ## Public host and preview subdomains
 
 ### `Fqdn` / `HostedZoneId`

@@ -151,6 +151,10 @@ Parameters:
     Default: "off"
     AllowedValues: [ "off", "on" ]
     Description: "on = AWS managed IP reputation list; needs WafRateLimitPer5Min > 0."
+  AlbAccessLogBucket:
+    Type: String
+    Default: ""
+    Description: "S3 bucket for ALB access logs (empty = off). PARAMETERS.md."
   Fqdn:
     Type: String
     Description: >-
@@ -473,6 +477,7 @@ Conditions:
   ComfyApiKeyOn: !Equals [ !Ref ComfyApiKey, "on" ]
   RemoteEngineTokenOn: !Equals [ !Ref RemoteEngineToken, "on" ]
   HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
+  HasAlbLogs: !Not [ !Equals [ !Ref AlbAccessLogBucket, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
 
@@ -499,6 +504,15 @@ Resources:
       # only for a NEW long-poll, never to let a handler block longer (docs/log/62 sec.62.5).
       LoadBalancerAttributes:
         - { Key: idle_timeout.timeout_seconds, Value: "60" }
+        - { Key: routing.http.drop_invalid_header_fields.enabled, Value: "true" }
+        - Fn::If:
+            - HasAlbLogs
+            - { Key: access_logs.s3.enabled, Value: "true" }
+            - !Ref AWS::NoValue
+        - Fn::If:
+            - HasAlbLogs
+            - { Key: access_logs.s3.bucket, Value: !Ref AlbAccessLogBucket }
+            - !Ref AWS::NoValue
 
   # --- WAF (only when WafRateLimitPer5Min > 0) --------------------------------
   WebAcl:
