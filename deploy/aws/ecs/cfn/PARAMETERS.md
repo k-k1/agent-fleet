@@ -129,8 +129,25 @@ events to an object store before it purges them. The templates wire an optional 
 | 10-data | `EgressArchiveRetentionDays` | `365` | Days before S3 expires an archived day (prefix `egress/`). Only read with `EgressArchive=create`. |
 | 20-platform | `EgressArchiveBucket` | empty | The 10-data output. Non-empty adds the managed policy `CpEgressArchivePolicy` to the CP task role. |
 | 30-ingress | `EgressArchiveBucket` | empty | The same output. Non-empty sets `AF_EGRESS_ARCHIVE_URL=s3://<bucket>` on the CP. |
+| 30-ingress | `EgressEventRetentionDays` | empty | Whole days the CP keeps raw events (`AF_EGRESS_EVENT_RETENTION_DAYS`, #3403). Empty sets no variable and keeps the CP's default, 30. `0` keeps them forever. Digits only (at most 5). A plain parameter: `update.sh` never overrides it, so it survives updates. |
 
-The last two are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
+**Retention and the archive are two clocks.** `EgressEventRetentionDays` is how long a raw event
+stays in the CP's database; the purger archives each whole UTC day older than that, then deletes
+it. `EgressArchiveRetentionDays` is how long S3 keeps an archived day. Both are minimum
+thresholds, not exact lifetimes: with the archive on, the cutoff rounds down to a UTC midnight, so
+the database keeps events up to about a day longer, and a slow purge or a failed archive write
+keeps them longer still (the CP never deletes what it did not archive). The S3 clock is the
+lifecycle rule's, measured from the object's own creation: a day object that already exists is
+verified and reused, not rewritten, so it does not restart at the database delete. S3 expires
+an archived day 365 days (the default) after the object was created, and the deletion itself can
+lag that date; the time left after the database delete can be shorter than 365 days, since the
+object may already be older. `0` never purges, so nothing is archived either; with no archive,
+events are deleted from the cutoff on (the purger runs periodically, so not at that instant). The CP ignores a
+value that is not a number and uses 30, so a typo cannot switch deletion off.
+`EgressArchive=existing` does not manage the bucket, so `EgressArchiveRetentionDays` does not
+apply to it: its lifecycle is whatever that bucket already has.
+
+The two `EgressArchiveBucket` rows (20-platform and 30-ingress) are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
 output after deploying it (never the capture, so a rebuilt data stack cannot leave a stale
 name) and names it for both stacks even when empty (an omitted parameter keeps its previous
 value), and `update.sh` passes it to the 20-platform change set and to 30-ingress, and clears
@@ -877,7 +894,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 Parameters not named in `--parameter-overrides` keep the stack's previous value, so nothing
 else moves. Unknown or new parameters on `update.sh`'s own run get the template default (off).
-Template-size note: the template keeps about 1.2 KB under the 51,200-byte wall (see the
+Template-size note: the template keeps about 1 KB under the 51,200-byte wall (see the
 README); `deploy/local/cfn-cp-settings-env-test.py` fails below 1 KiB. Write new
 parameters in block style (`Default:` on its own line): `standup.sh`'s preflight reads
 required parameters line by line and reports every flow-style one as missing. Parameters have been paid

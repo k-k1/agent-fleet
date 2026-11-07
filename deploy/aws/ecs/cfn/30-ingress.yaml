@@ -25,7 +25,7 @@ Parameters:
     Type: String
     Default: ""
     AllowedValues: [ "", "off", present, missing ]
-    Description: Daily EFS backup state of the data stack, set by update.sh/standup.sh (PARAMETERS.md).
+    Description: EFS backup state of the data stack, set by update.sh (PARAMETERS.md).
   CustodianKmsKeyArn:
     Type: String
     Default: ""
@@ -43,7 +43,7 @@ Parameters:
   WsTaskCpu:
     Type: String
     Default: "1024"
-    Description: "Default Fargate CPU units for a workspace task (1024 = 1 vCPU). PARAMETERS.md."
+    Description: "Default workspace task CPU units (1024 = 1 vCPU). PARAMETERS.md."
   WsTaskMemory:
     Type: String
     Default: "2048"
@@ -51,7 +51,7 @@ Parameters:
   WsDiskGiB:
     Type: String
     Default: "50"
-    Description: "Default per-workspace working disk in GiB (0 = Fargate's 20). PARAMETERS.md."
+    Description: "Default workspace disk in GiB (0 = 20). PARAMETERS.md."
   WsRuntime:
     Type: String
     Default: ecs
@@ -75,6 +75,11 @@ Parameters:
     Default: ""
     AllowedPattern: "^([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])?$"
     Description: 10-data's EgressArchiveBucket output, set like WorkspaceSubnets. Empty = archive off. PARAMETERS.md.
+  EgressEventRetentionDays:
+    Type: String
+    Default: ""
+    AllowedPattern: "^([0-9]{1,5})?$"
+    Description: "AF_EGRESS_EVENT_RETENTION_DAYS; empty = default. PARAMETERS.md"
   Ec2SlotLaunchTemplate:
     Type: String
     Default: ""
@@ -84,7 +89,7 @@ Parameters:
   Ec2SlotTypes:
     Type: String
     Default: "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
-    Description: "Slot sizes/classes the pool may run (instanceType:memoryMiB[:vcpu] or id|label|arch|ladder). PARAMETERS.md."
+    Description: "Slot sizes/classes the pool may run. PARAMETERS.md."
   Ec2SlotAmiArm64:
     Type: String
     Default: ""
@@ -98,7 +103,7 @@ Parameters:
   Ec2MaxSlots:
     Type: String
     Default: "8"
-    Description: "Hard cap on pool instances = concurrently running workspaces. PARAMETERS.md."
+    Description: "Hard cap on pool instances (= running workspaces). PARAMETERS.md."
   Ec2HostReserveMb:
     Type: String
     Default: auto
@@ -110,7 +115,7 @@ Parameters:
   Ec2SlotTerminateAfterSec:
     Type: String
     Default: "0"
-    Description: "Idle seconds (clock of Ec2SlotSleepSec) before the slot root is deleted; 0 = never. PARAMETERS.md."
+    Description: "Idle seconds before the slot root is deleted; 0 = never. PARAMETERS.md."
   Ec2HibernateAfterSec:
     Type: String
     Default: "0"
@@ -129,7 +134,7 @@ Parameters:
   ScheduleWakeTimeout:
     Type: String
     Default: ""
-    Description: "How long one schedule fire waits for the woken Agent (Go duration, default 300s). PARAMETERS.md."
+    Description: "Wait for the woken Agent per fire (default 300s). PARAMETERS.md."
   ScheduleSettle:
     Type: String
     Default: ""
@@ -137,7 +142,7 @@ Parameters:
   ScheduleJitter:
     Type: String
     Default: ""
-    Description: "Deterministic spread on CRON fires (Go duration, default 2m; 0 = exact). PARAMETERS.md."
+    Description: "Spread on CRON fires (default 2m; 0 = exact). PARAMETERS.md."
 
   # --- WAF (optional, OFF by default) ---------------------------------------
   # !! ONLY rate limiting and IP reputation, never the signature rule sets: PARAMETERS.md, "WAF".
@@ -167,11 +172,11 @@ Parameters:
   PreviewDomain:
     Type: String
     Default: ""
-    Description: "Preview parent domain: SIBLING of Fqdn, inside a zone you own, or ACM stalls. Empty = off. PARAMETERS.md."
+    Description: "Preview parent domain, a SIBLING of Fqdn. Empty = off. PARAMETERS.md."
   PreviewHostedZoneId:
     Type: String
     Default: ""
-    Description: "Hosted zone of PreviewDomain when not the Console's. Empty = HostedZoneId. PARAMETERS.md."
+    Description: "Hosted zone of PreviewDomain if not HostedZoneId. PARAMETERS.md."
   CpPort:
     Type: Number
     Default: 8099
@@ -189,7 +194,7 @@ Parameters:
   SsmPrefix:
     Type: String
     Default: /af-cp
-    Description: "SSM SecureString prefix of the CP secrets (cookie-secret, master-key, IdP and engine secrets). PARAMETERS.md."
+    Description: "SSM SecureString prefix of the CP secrets. PARAMETERS.md."
   GoogleClientId:
     Type: String
     Default: ""
@@ -425,6 +430,7 @@ Conditions:
   HasWorkspaceSubnets: !Not [!Equals [!Ref WorkspaceSubnets, ""]]
   HasEgressGw: !Not [!Equals [!Ref EgressTokenSecretArn, ""]]
   HasEgressArchive: !Not [!Equals [!Ref EgressArchiveBucket, ""]]
+  HasEgressEventRetention: !Not [!Equals [!Ref EgressEventRetentionDays, ""]]
   # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
   # parameter that doesn't exist stops the task from starting - so wire each one in
   # only when that IdP is actually configured.
@@ -932,6 +938,7 @@ Resources:
             - !If [HasWorkspaceSubnets, {Name: AF_ECS_WORKSPACE_SUBNETS, Value: !Ref WorkspaceSubnets}, !Ref "AWS::NoValue"]
             - !If [HasEgressGw, {Name: AF_EGRESS_PROXY_ADDR, Value: !Ref EgressProxyAddr}, !Ref "AWS::NoValue"]
             - !If [HasEgressArchive, {Name: AF_EGRESS_ARCHIVE_URL, Value: !Sub "s3://${EgressArchiveBucket}"}, !Ref "AWS::NoValue"]
+            - !If [HasEgressEventRetention, {Name: AF_EGRESS_EVENT_RETENTION_DAYS, Value: !Ref EgressEventRetentionDays}, !Ref "AWS::NoValue"]
             - {Name: AF_ECS_SECURITY_GROUP, Value: !ImportValue {"Fn::Sub": "${NetworkStackName}-WsSgId"}}
             - {Name: AF_EFS_BACKUP, Value: !Ref EfsBackup}
             - {Name: AF_ECS_EFS_ID, Value: !ImportValue {"Fn::Sub": "${DataStackName}-EfsId"}}
