@@ -196,3 +196,17 @@ func TestWordWrappedBlankNext(t *testing.T) {
 		}
 	}
 }
+
+// One command may mix a word wrap (space swallowed) and a hard wrap of a long word (no space).
+func TestMatchLogicalLineMixedWrap(t *testing.T) {
+	lines := []string{" echo abcdefghijk", " abcdefghijklmnopqr", " st"}
+	target := "echo abcdefghijk abcdefghijklmnopqrst"
+	eq := func(s string) bool { return s == target }
+	if got := matchLogicalLine(lines, target, false, 20, eq); got != TargetMatches {
+		t.Errorf("mixed wrap: got %v, want TargetMatches", got)
+	}
+	other := "echo abcdefghijk abcdefghijklmnopqrsx"
+	if got := matchLogicalLine(lines, other, false, 20, func(s string) bool { return s == other }); got != TargetDiffers {
+		t.Errorf("mixed wrap, other target: got %v, want TargetDiffers", got)
+	}
+}
