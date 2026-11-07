@@ -189,6 +189,11 @@ VOICEVOX はこのゲートウェイの後ろではない: Console が CP に頼
 | `proxy` | 上流ゲートウェイの email ヘッダ（`AUTH_EMAIL_HEADER`・既定 `X-Forwarded-Email`）を信頼。**ヘッダ欠落は 401**（フォールバック無し）。ヘッダは消さないので、CP にはそのゲートウェイ経由でしか届かないこと | oauth2-proxy など既存ゲートの流用。**SAML IdP の正式な答えもこれ** — ブリッジする（[decisions/0043](../decisions/0043-login-idp.ja.md)）。AWS のテンプレートには無い |
 | `dev` | 固定ユーザー（`DEV_USER`・既定 `dev`）で、デプロイ管理者になる | ローカル開発のみ。**`AUTH` 未設定時の既定**。`native` はこれを要求する |
 
+**プロバイダ接続のコールバック**: Jira / Bitbucket の OAuth コールバック（`/api/oauth/{jira,bitbucket}/callback`）は
+ゲートの内側にある。開始時に開始者の identity と membership を記録し、コールバックは、セッションがその identity で、
+membership が有効で、そのテナントのログイン方式・接続元ルールを現在のセッションが満たすときだけコードを交換する。
+トークンはその membership の Workspace に入る。それ以外はエラー表示で何も保存しないので、本人としてサインインし直して接続し直す。
+
 **authGate の要点**（`oauth` モード）:
 
 - 全リクエストを検査し、**受信した識別ヘッダを必ず削除**してから検証済みのものを自ら注入する

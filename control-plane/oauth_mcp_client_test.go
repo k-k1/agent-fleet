@@ -62,6 +62,8 @@ func newMCPClientAgent(t *testing.T) *mcpClientAgent {
 			_, _ = w.Write([]byte(a.callbackBody))
 		case r.Method == http.MethodDelete:
 			_, _ = w.Write([]byte(a.disconnectBody))
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/connections/"):
+			_, _ = w.Write([]byte(`{}`)) // the Jira / Bitbucket token save
 		default:
 			http.NotFound(w, r)
 		}

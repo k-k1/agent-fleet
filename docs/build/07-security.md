@@ -213,6 +213,13 @@ Selected by `AUTH`. All three sanitise the resolved email into the identity key
 | `proxy` | Trust an upstream gateway's email header (`AUTH_EMAIL_HEADER`, default `X-Forwarded-Email`). **A missing header is a 401 — there is no fallback.** The header is not stripped, so the CP must be reachable only through that gateway | an existing gate such as oauth2-proxy. **This is also the answer for a SAML IdP**: bridge it ([decisions/0043](../decisions/0043-login-idp.md)). The AWS template does not offer it |
 | `dev` | A fixed user (`DEV_USER`, default `dev`), who is a deployment administrator | local development only, and **the default when `AUTH` is unset**. `native` requires it |
 
+**Provider connection callbacks.** The Jira and Bitbucket OAuth callbacks (`/api/oauth/{jira,bitbucket}/callback`)
+sit behind the gate. Each flow records the starting identity and membership, and the callback
+exchanges the code only when the session is that identity, the membership is still active and
+its tenant's sign-in method and network rules admit the current session; the tokens go to that
+membership's workspace. Anything else shows an error and stores nothing, so the member signs in
+as themselves and connects again.
+
 **The auth gate**, in `oauth` mode:
 
 - It inspects every request and **always deletes any inbound identity header** before
