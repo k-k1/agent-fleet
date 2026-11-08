@@ -10,6 +10,18 @@ English | [日本語](README.ja.md)
 Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
 Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
 
+## Code
+
+| Page | What you can do |
+|---|---|
+| [Connect a Git service](code/connect-git.md) | Connect GitHub or Bitbucket to clone and push private repositories |
+| [Clone a repository](code/clone.md) | Bring a repository into the workspace, or start from nothing |
+| [Use the built-in Git](code/internal-git.md) | Keep repositories inside the tenant, with no external service |
+| [Launch a session from a repository](code/launch-from-repo.md) | Launch a session from a repository row and read the row's badges |
+| [Initialize Git Flow](code/git-flow.md) | Make the branches started from issues follow git-flow |
+| [Commit in the commit graph](code/commit.md) | Read history and diffs, and commit without opening a terminal |
+| [Use a Subversion repository](code/svn.md) | Check out a Subversion repository and work in it from a session |
+
 ## Integrations
 
 | Page | What you can do |

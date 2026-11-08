@@ -376,14 +376,14 @@ Cloning, submodules and authentication on a private repository.
 
 ### Cloning fails
 
-- Private repositories need a GitHub / Bitbucket **connection** first (⚙ Settings → "Git hosting" tab; [06](06-code.md#connect-a-git-provider)). Check whether it says "Not connected".
+- Private repositories need a GitHub / Bitbucket **connection** first (⚙ Settings → "Git hosting" tab; [Connect a Git service](../user/code/connect-git.md)). Check whether it says "Not connected".
 - Double-check the spelling of the URL and branch name.
-- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([06](06-code.md#submodules-and-git-lfs)).
+- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([Clone a repository](../user/code/clone.md#submodules-and-git-lfs)).
 
 ### A session says the submodules are missing / broken
 
 - A large submodule may not finish fetching inside the launch. The fetch keeps going in the
-  background, and the notification center tells you when it lands ([06](06-code.md#submodules-and-git-lfs)).
+  background, and the notification center tells you when it lands ([Clone a repository](../user/code/clone.md#submodules-and-git-lfs)).
 - A submodule left half-fetched is repaired the next time a session launches in that working
   copy. To fix it right away, run `git submodule update --init --recursive` there in a terminal.
 
@@ -391,7 +391,7 @@ Cloning, submodules and authentication on a private repository.
 
 In ⚙ Settings → the "Git hosting" tab, check that the provider in question is **"Connected"**.
 If it isn't, connect via OAuth or a token. Once connected, authentication is transparent, so
-from then on you can clone / push without entering tokens ([06](06-code.md#connect-a-git-provider)).
+from then on you can clone / push without entering tokens ([Connect a Git service](../user/code/connect-git.md)).
 
 ## Preview and browser
 
@@ -671,11 +671,11 @@ and follow you on other devices and browsers ([20](20-settings.md#opening-it-and
 **Q. If I stop the workspace, is my work lost?**
 No. Clones, uncommitted changes, the session list, and connections all remain. However,
 uncommitted changes exist only inside the workspace, so commit / push for long-term safekeeping
-([01](01-first-day.md#at-the-end-of-the-day-is-it-ok-to-stop-the-workspace) · [06](06-code.md#push-and-authentication)).
+([01](01-first-day.md#at-the-end-of-the-day-is-it-ok-to-stop-the-workspace) · [Connect a Git service](../user/code/connect-git.md#push)).
 
 **Q. Is it OK to run several tasks at the same time?**
 Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are
-created by default ([03](03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work) · [06](06-code.md#launch-a-session-from-a-repository-row)).
+created by default ([03](03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work) · [Launch a session from a repository](../user/code/launch-from-repo.md)).
 
 **Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
 Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),

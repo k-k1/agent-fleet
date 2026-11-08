@@ -128,6 +128,14 @@ const exact = {
           aws: { connected: false },
         }
       : {}),
+    // The user guide's code pages (SHOT_CODE_GUIDE): GitHub not connected yet, so its card shows
+    // the two ways in, and Bitbucket connected with an account and its commit identity.
+    ...(process.env.SHOT_CODE_GUIDE
+      ? {
+          github: { connected: false },
+          bitbucket: { connected: true, username: "demo-user", email: "demo@example.com", commitName: "Demo User", commitEmail: "demo@example.com" },
+        }
+      : {}),
   }),
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
@@ -379,7 +387,15 @@ const exact = {
     method === "POST" ? {} : fx.imagegenKnowledge(LOCALE, q.get("scope") || "family", q.get("key") || ""),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
-  "/api/internal-git/repos": () => ({ repos: [] }),
+  "/api/internal-git/repos": () => ({ repos: process.env.SHOT_CODE_GUIDE ? fx.codeGuideInternalRepos() : [] }),
+  // The clone dialog's picker for the code pages (SHOT_CODE_GUIDE): Bitbucket's repositories and
+  // the branches of the one the scene picks.
+  ...(process.env.SHOT_CODE_GUIDE
+    ? {
+        "/api/connections/git/bitbucket.org/repos": () => ({ repos: fx.codeGuideRemoteRepos() }),
+        "/api/connections/git/bitbucket.org/branches": () => fx.codeGuideBranches(),
+      }
+    : {}),
   "/api/pat": () => ({}),
   "/api/tts/dict": () => ({ entries: [] }),
   "/api/workspace/stats": () => fx.stats(),

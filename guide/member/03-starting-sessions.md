@@ -72,7 +72,7 @@ never need to operate that keep-alive mechanism yourself.
   ([10 Chat and memos](10-chat-memo.md)).
 - **Launch an agent in a repository**: search for and pick a cloned repository, and you move
   straight on to **"Start working"** (agent, model, worktree, first prompt). This is the same
-  screen as "Launch" on a repository row ([06](06-code.md#launch-a-session-from-a-repository-row)).
+  screen as "Launch" on a repository row ([Launch a session from a repository](../user/code/launch-from-repo.md)).
 - **Clone a new repository…**: sits below the repository list. Clone by picking from a
   connection or entering a URL by hand; when it completes you continue straight into
   "Start working" (you can specify a new branch, and the worktree folder name is generated
@@ -130,7 +130,7 @@ repository's folders.
 
 The standalone "Add" under **Repositories** in the left pane also lets you specify a different
 folder name when you specify a new branch or when a working copy with the same name already
-exists ([06](06-code.md)). This is a separate path from creating a worktree in "Start working".
+exists ([Clone a repository](../user/code/clone.md#start-on-a-new-branch)). This is a separate path from creating a worktree in "Start working".
 
 ## Starting from the issue tracker
 
@@ -188,7 +188,7 @@ workspace is stopped.
   the title, e.g. `feature/45-empty-list` or `fix/PROJ-123`. A repository that declares git-flow
   or a Bitbucket branching model gets its own prefixes and base, and the dialog says where the
   base came from. A repository whose `origin` has `develop` but declares nothing gets an offer to
-  [initialize Git Flow](06-code.md#initialize-git-flow). A name outside the rules only gets a note; nothing is refused. The template is
+  [initialize Git Flow](../user/code/git-flow.md). A name outside the rules only gets a note; nothing is refused. The template is
   in the settings tab; your tenant administrator may also set team defaults, which a repository's
   declaration and your own template override. A pull request launches on its own head branch instead (below).
   An agent asks the same rules through the af tool `branch_name`, so a skill that creates

@@ -2338,3 +2338,34 @@ export function wsGuideDatabases() {
     ],
   };
 }
+
+// ---- user guide: code pages (SHOT_CODE_GUIDE) ------------------------------------------------
+// GET /api/internal-git/repos — console/src/features/settings/workspace/InternalReposTab.tsx.
+// The second one was created by someone else, so its rename / delete buttons are hidden.
+export function codeGuideInternalRepos() {
+  return [
+    { name: "prototype-ui", clone_url: "https://fleet.example.com/git/demo/prototype-ui.git", default_branch: "main", created_at: ago(60 * 24 * 3), can_manage: true },
+    { name: "shared-scripts", clone_url: "https://fleet.example.com/git/demo/shared-scripts.git", default_branch: "main", created_at: ago(60 * 24 * 20), can_manage: false },
+  ];
+}
+
+// GET /api/connections/git/{host}/repos — console/src/features/repos/RepoPicker.tsx RepoItem.
+export function codeGuideRemoteRepos() {
+  return [
+    { full_name: "acme/payments-api", clone_url: "https://bitbucket.org/acme/payments-api.git", private: true, updated_at: ago(40) },
+    { full_name: "acme/mobile-app", clone_url: "https://bitbucket.org/acme/mobile-app.git", private: true, updated_at: ago(60 * 5) },
+    { full_name: "acme/docs-site", clone_url: "https://bitbucket.org/acme/docs-site.git", private: false, updated_at: ago(60 * 24 * 2) },
+  ];
+}
+
+// GET /api/connections/git/{host}/branches?repo=… — the Branch objects BranchList renders.
+export function codeGuideBranches() {
+  return {
+    default: "main",
+    branches: [
+      { name: "main", default: true },
+      { name: "develop" },
+      { name: "feature/refund-api" },
+    ],
+  };
+}

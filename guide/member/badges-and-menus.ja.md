@@ -74,7 +74,7 @@ PR を開きます。origin が github.com か bitbucket.org の作業コピー�
 | 未コミット | コミットしていない変更がある |
 | 親= | 親と同じコミット（ここでの「親」は親の作業コピーのブランチの upstream、たとえば `origin/develop`。upstream が無いときは親の作業コピーの HEAD。比較先はバッジのツールチップに出ます。親の作業コピーにある未 push のコミットは比較に入りません） |
 | 未取込 N | 親に含まれないworktree固有のコミットがN件ある |
-| 親+N・FF可 | worktreeのHEADは親に含まれており、親が N コミット先行している。メニューの **「origin/develop を Fast-Forward で取り込む」**（upstream が無いときは「親を Fast-Forward で取り込む」）で取り込めます（[06](06-code.ja.md)） |
+| 親+N・FF可 | worktreeのHEADは親に含まれており、親が N コミット先行している。メニューの **「origin/develop を Fast-Forward で取り込む」**（upstream が無いときは「親を Fast-Forward で取り込む」）で取り込めます（[リポジトリからセッションを起動する](../user/code/launch-from-repo.ja.md#行のバッジを読む)） |
 | 分岐 N↕M・FF不可 | worktreeと親の双方に固有コミットがあり、マージかリベースが必要 |
 | 比較不可 | detached HEADなどで親との関係を判定できない |
 | ↑N | originよりNコミット先行している |
@@ -190,7 +190,7 @@ Fast-Forward（worktree では **「origin/develop を Fast-Forward で取り込
 できます。**「この作業コピーのアーカイブ済みセッション」** は、その作業コピーに絞ったアーカイブを開きます。
 Subversion の作業コピーでは、Git の項目の代わりに **「更新（svn）」**・**「ロックを解除（svn）」**・
 **「再認証（svn）」**・**「ログを表示」**・**「ローカルの変更」** が出ます
-（[06](06-code.ja.md#subversionsvnリポジトリ)）。停止は、その行とその下にぶら下がっている作業コピーで動いているセッションを並べたモーダルを
+（[Subversion のリポジトリを使う](../user/code/svn.ja.md)）。停止は、その行とその下にぶら下がっている作業コピーで動いているセッションを並べたモーダルを
 開きます（[05](05-stopping-and-tidying.ja.md#セッションを止める片付ける)）。削除は、
 その行の下にぶら下がっている作業コピーも一覧で出る確認画面を開きます（[05](05-stopping-and-tidying.ja.md#ひと仕事ぶんをまとめて消す作業コピーの削除)）。通常クリックは
 行を展開／折りたたみます。Ctrl／⌘+クリックまたは中クリックはコミットグラフを新しいペインで開きます。
@@ -270,4 +270,4 @@ Subversion の作業コピーでは、Git の項目の代わりに **「更新�
 
 ---
 
-関連: [セッション](03-starting-sessions.ja.md)・[リポジトリとgit](06-code.ja.md)・[ファイル](07-files.ja.md)
+関連: [セッション](03-starting-sessions.ja.md)・[リポジトリからセッションを起動する](../user/code/launch-from-repo.ja.md)・[ファイル](07-files.ja.md)

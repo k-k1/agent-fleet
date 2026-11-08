@@ -32,7 +32,7 @@ Next comes a two-way choice: **"Where do you want to start?"** (you can use both
 - **Ask AI a question or for a translation**: "Start chatting" opens a chat with the
   assistant right away. You need neither git nor a terminal ([10 Chat and memos](10-chat-memo.md)).
 - **Develop in a repository**: "Go to dev setup" expands the remaining steps.
-  1. **Connect a git provider** (optional): sign in to GitHub / Bitbucket. It is required if you'll clone or push private repositories ([06 Repositories and git](06-code.md)).
+  1. **Connect a git provider** (optional): sign in to GitHub / Bitbucket. It is required if you'll clone or push private repositories ([Connect a Git service](../user/code/connect-git.md)).
   2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([03 Starting sessions](03-starting-sessions.md)).
 
 The card leaves Home once you create your first session or start your first chat. From then
@@ -71,11 +71,11 @@ Open **"Add"** from **Repositories** in the left pane, leave **Kind** on **Git**
 repository (or paste its clone URL) and press **"Clone"**. When it finishes, the repository
 appears in the **Repositories** list, and **"Launch"** on that row starts your first session. Private
 repositories need the "Connect a git provider" step above. The options (branch, folder name),
-the pitfalls, and the built-in git provider are in [06 Repositories and git](06-code.md#clone-a-repository).
+the pitfalls, and the built-in git provider are in [Clone a repository](../user/code/clone.md).
 
 Starting something that does not exist anywhere yet? There is nothing to clone: use
 **"+ Start" → "Start in a new folder…"** to create an empty folder that is already a git repository
-([06](06-code.md#starting-with-nothing-to-import-from-a-new-folder)).
+([Clone a repository](../user/code/clone.md#start-from-nothing)).
 
 ## At the end of the day — is it OK to stop the workspace?
 
@@ -95,7 +95,7 @@ inactivity (idle auto-stop). It saves resources, so if stopping it explicitly fe
 chore, it's fine to just leave it.
 
 However, **uncommitted changes exist only inside the workspace**. For long-running work,
-committing and pushing frequently is the safe habit ([06](06-code.md)).
+committing and pushing frequently is the safe habit ([Connect a Git service](../user/code/connect-git.md#push)).
 
 ### "A new version is available" and the **Restart needed** badge
 

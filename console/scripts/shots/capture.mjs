@@ -738,6 +738,94 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // Settings › Git hosting for the user guide's code pages: GitHub not connected yet (its two
+    // ways in), Bitbucket connected with its commit identity, and the saved Subversion servers.
+    name: "code-git-hosting",
+    guide: true,
+    stubEnv: { SHOT_CODE_GUIDE: "1" },
+    clip: ".conns",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "git",
+    width: 1500,
+    height: 1800,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      // The tab is longer than the modal's fixed height: let the modal grow so nothing scrolls away.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 3000,
+  },
+  {
+    // Settings › Internal repos with two repositories: one the member may rename and delete, one
+    // created by someone else (no rename / delete buttons).
+    name: "code-internal-repos",
+    guide: true,
+    stubEnv: { SHOT_CODE_GUIDE: "1" },
+    clip: ".conns",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "internalrepos",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 3000,
+  },
+  {
+    // The rail's "Add" dialog on its Git kind: a Bitbucket repository picked, GitHub not connected.
+    name: "code-clone",
+    guide: true,
+    stubEnv: { SHOT_CODE_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = async (f) => { for (let i = 0; i < 50 && !f(); i++) await new Promise((r) => setTimeout(r, 200)); return f(); };
+      const add = await wait(() => document.querySelector('button.ui-btn[title="追加"], button.ui-btn[title="Add"]'));
+      add?.click();
+      await wait(() => document.querySelector('.repopicker .branch-item[title="acme/payments-api"]'));
+      await new Promise((r) => setTimeout(r, 1500));
+      document.querySelector('.repopicker .branch-item[title="acme/payments-api"]')?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Initialize Git Flow, opened from a repository row's menu: develop exists only on origin, so
+    // the dialog shows its origin-only note under the field.
+    name: "code-gitflow",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const find = () => [...document.querySelectorAll(".repo-row")].find((el) => /platform-infra/.test(el.textContent || ""));
+      for (let i = 0; i < 50 && !find(); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = find();
+      row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 200, clientY: 300 }));
+      await new Promise((r) => setTimeout(r, 600));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /Git Flow/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2500,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------
