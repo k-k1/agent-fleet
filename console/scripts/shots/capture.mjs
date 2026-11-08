@@ -738,6 +738,68 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // A plan awaiting approval, with the buttons the plans page names.
+    name: "conv-plan",
+    guide: true,
+    stubEnv: { SHOT_PLAN: "1" },
+    clip: ".mt-plan",
+    pad: 8,
+    ready: "!!document.querySelector('.mt-plan-approve')",
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    settle: 2500,
+  },
+  {
+    // The skill / command picker opened from the composer (the session idle, so the composer is free).
+    name: "conv-skills",
+    guide: true,
+    stubEnv: { SHOTS_IDLE: "1" },
+    clip: [".mirror-skill-btn", ".mirror-skills"],
+    pad: 8,
+    ready: "!!document.querySelector('.mirror-skill-btn:not([disabled])')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".mirror-skill-btn")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // The session menu's Markdown export: the three choices under their caption.
+    name: "conv-export",
+    guide: true,
+    // The caption and its three items only; the action tags the first and the last.
+    clip: ["#shot-export-from", "#shot-export-to"],
+    pad: 4,
+    ready: "!!document.querySelector('.sess-menu-btn')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      // The rail can still be filling in on a busy host: retry the click until the menu shows.
+      let cap;
+      for (let i = 0; i < 20 && !cap; i++) {
+        const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+          /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+        if (!document.querySelector(".sess-menu")) row?.querySelector(".sess-menu-btn")?.click();
+        await new Promise((r) => setTimeout(r, 500));
+        cap = [...document.querySelectorAll(".ui-menu-caption")].find((el) => /Markdown/.test(el.textContent || ""));
+      }
+      if (cap) {
+        cap.id = "shot-export-from";
+        let last = cap;
+        for (let el = cap.nextElementSibling, n = 0; el && n < 3; el = el.nextElementSibling, n++) last = el;
+        last.id = "shot-export-to";
+      }
+    })()`,
+    settle: 1200,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

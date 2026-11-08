@@ -333,7 +333,7 @@ to improve the product. It is off by default, and each session keeps the mode it
 with across a stop and start. See [Agents reference](../ref/agents.md) for the details.
 
 In a running muse session the **`/`** button beside the input lists the session's own skills,
-and picking one runs it ([04](04-conversation.md#calling-a-skill-or-a-command); what the list
+and picking one runs it ([Call a skill or a command](../user/sessions/skills.md); what the list
 holds is in the [Agents reference](../ref/agents.md)). When a usage limit stops a muse turn, the
 session resumes by itself once the limit resets (the states are in the same reference).
 

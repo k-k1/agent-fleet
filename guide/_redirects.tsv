@@ -51,3 +51,17 @@ member/20-settings.md#toolchains	user/workspace/toolchains.md
 member/20-settings.md#databases	user/workspace/databases.md#manage-them-from-the-console
 member/20-settings.md#export-import	user/workspace/export-import.md
 member/20-settings.md#danger-zone	user/workspace/recreate.md
+member/04-conversation.md#reading-and-replying-to-a-running-agents-conversation	user/sessions/reply.md
+member/04-conversation.md#questions-and-plans-left-by-a-stopped-session	user/sessions/reply.md#answer-the-cards-a-stopped-session-left
+member/04-conversation.md#stopping-a-turn-when-something-is-queued	user/sessions/queue.md#stop-a-turn-when-something-is-queued
+member/04-conversation.md#holding-follow-ups-before-sending-send-queue	user/sessions/queue.md#hold-follow-ups-in-the-waiting-list
+member/04-conversation.md#reusing-something-you-sent-earlier	user/sessions/reply.md#reuse-something-you-sent-earlier
+member/04-conversation.md#writing-comments-on-a-plan	user/sessions/plans.md#comment-on-a-plan
+member/04-conversation.md#having-another-session-review-the-plan	user/sessions/plans.md#have-another-session-review-it
+member/04-conversation.md#calling-a-skill-or-a-command	user/sessions/skills.md
+member/04-conversation.md#reply-suggestions	user/sessions/reply.md#use-reply-suggestions
+member/04-conversation.md#branch-from-a-past-message	user/sessions/branch-message.md
+member/04-conversation.md#highlighting-a-line-in-a-conversation	user/sessions/reply.md#highlight-a-line-in-the-conversation
+member/04-conversation.md#seeing-what-a-session-changed	user/sessions/changes.md
+member/04-conversation.md#saving-a-conversation-as-markdown	user/sessions/export.md
+member/04-conversation.md#reading-an-answer-in-your-own-language-translation	user/sessions/translate.md

@@ -22,9 +22,9 @@ If a feature ships and does not appear here, it is not done
 | Run in a fresh git worktree | member | Start dialog | [06 Repositories and git](../member/06-code.md) |
 | Chat mirror — follow and steer a running agent | member | main area | [04 Conversation](../member/04-conversation.md) |
 | Answer a question, plan, or permission prompt | member | mirror | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents ask |
-| Answer a question or plan left by a stopped session | member | mirror, the carried card | [04 Conversation](../member/04-conversation.md#questions-and-plans-left-by-a-stopped-session) |
-| Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [04 Conversation](../member/04-conversation.md#holding-follow-ups-before-sending-send-queue) |
-| Have another session review a plan | member | the plan card | [04 Conversation](../member/04-conversation.md#having-another-session-review-the-plan) |
+| Answer a question or plan left by a stopped session | member | mirror, the carried card | [Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left) |
+| Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [Hold what you send, stop a turn](../user/sessions/queue.md#hold-follow-ups-in-the-waiting-list) |
+| Have another session review a plan | member | the plan card | [Comment on a plan, have it reviewed](../user/sessions/plans.md#have-another-session-review-it) |
 | Skill / command picker | member | mirror composer | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
 | Live terminal attached to a session | member | main area | [08 Terminal](../member/08-terminal.md) |
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [08 Terminal](../member/08-terminal.md) |
@@ -36,14 +36,14 @@ If a feature ships and does not appear here, it is not done
 | Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#stopping-and-tidying-up-sessions) |
 | Hand a conversation to a new session | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move) |
 | Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move) |
-| Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [04 Conversation](../member/04-conversation.md#saving-a-conversation-as-markdown) |
+| Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [Save a conversation as Markdown](../user/sessions/export.md) |
 | Fork from a past message | member | mirror, on a past message | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
 | Hand a session to another member | member | session ⋯ menu or handoff proposal card → Hand off to a member | [12 Working with others](../member/12-collaboration.md#handing-a-session-to-another-member) |
 | Share a session read-only | member | Shared sessions | [12 Working with others](../member/12-collaboration.md) |
 | Highlights | member | mirror, on a selection | [04 Conversation](../member/04-conversation.md) |
 | Changed files | member | strip under the mirror header | [04 Conversation](../member/04-conversation.md) |
 | Context usage gauge | member | session header | [09 Agents](../member/09-agents.md) |
-| Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [04 Conversation](../member/04-conversation.md#reading-an-answer-in-your-own-language-translation) |
+| Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [Read an answer in your own language](../user/sessions/translate.md) |
 | Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [Have a session make images](../user/images/from-session.md) |
 | Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [11 Running many sessions](../member/11-many-sessions.md#starting-sessions-from-a-session-child-sessions) |
 | Abort detection and auto-resume | member | automatic | [04 Conversation](../member/04-conversation.md) |

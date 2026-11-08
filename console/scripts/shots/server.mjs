@@ -427,6 +427,11 @@ const re = [
     /^\/api\/sessions\/([^/]+)\/messages$/,
     (m) => {
       const body = fx.messages(LOCALE, decodeURIComponent(m[1]));
+      // SHOT_PLAN: the mirror session waits on a plan instead of a question (the guide's plan page).
+      if (process.env.SHOT_PLAN && body.status === "question") {
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return { ...rest, status: "plan", mode: "plan", pendingPlan: fx.pendingPlan(LOCALE) };
+      }
       if (!IDLE) return body;
       const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
       return { ...rest, status: body.status === "question" ? "idle" : body.status };

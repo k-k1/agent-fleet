@@ -147,7 +147,7 @@ were launched in is gone (shell falls back to home); see
 ## Stopping a turn, and messages sent while one runs
 
 How Stop treats a waiting queue is explained in
-[04 Talking to a session](../member/04-conversation.md#stopping-a-turn-when-something-is-queued);
+[Hold what you send, stop a turn](../user/sessions/queue.md#stop-a-turn-when-something-is-queued);
 this is what differs by kind.
 
 **Managed**

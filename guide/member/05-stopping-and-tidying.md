@@ -261,7 +261,7 @@ the new session starts from, and in what happens to the original.
 
 | | Handoff | Branch here | Move |
 |---|---|---|---|
-| Where | **⋯** menu, **"Hand off to another agent…"** | **"Branch here"** under one of your past messages ([04 Conversation](04-conversation.md#branch-from-a-past-message)) | **⋯** menu, **"Move to another agent…"** |
+| Where | **⋯** menu, **"Hand off to another agent…"** | **"Branch here"** under one of your past messages ([Branch from a past message](../user/sessions/branch-message.md)) | **⋯** menu, **"Move to another agent…"** |
 | Who prepares the context | The Fleet Operator writes a summary, and you review it | Nobody: the conversation is copied as it is | The Workspace writes the conversation to a handover file; no AI summarises it |
 | Target agent | Any connected agent | The same agent | Another kind of agent only |
 | The original session | Stays as it is | Stays as it is | Stops and takes no more input |
@@ -285,7 +285,7 @@ which offers the session to someone it is shared with instead
 
 **When you want the conversation itself rather than a summary, branch instead of handing
 off.** In the chat view, **"Branch here"** on one of your past messages
-([04 Conversation](04-conversation.md#branch-from-a-past-message)) opens a new session with the
+([Branch from a past message](../user/sessions/branch-message.md)) opens a new session with the
 conversation up to that point copied as-is, on the same agent. The exact wording and the
 fine details survive, which is what you want for "redo it from that instruction".
 
@@ -319,7 +319,7 @@ The dialog shows, before you confirm:
 - **The agents it can move to**: which kinds can be a source or a target is in the
   [Agents reference](../ref/agents.md#moving-a-session-to-another-agent). The same
   agent is never offered (it draws on the same account's quota); to continue in the same kind,
-  use **"Branch here"** ([04 Conversation](04-conversation.md#branch-from-a-past-message)) where the kind supports it. Agents that cannot read the file, or
+  use **"Branch here"** ([Branch from a past message](../user/sessions/branch-message.md)) where the kind supports it. Agents that cannot read the file, or
   are not connected, are listed with the reason. For claude, codex, muse, copilot and agy the
   dialog also shows each agent's current usage (copilot's as its one monthly pool); for the
   others it says nothing about quota.
