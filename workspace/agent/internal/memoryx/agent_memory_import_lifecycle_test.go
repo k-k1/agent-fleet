@@ -112,3 +112,93 @@ func TestMuseImportIgnoresLifecycleWrites(t *testing.T) {
 		t.Errorf("update dropped or changed lifecycle fields: %+v", got)
 	}
 }
+
+// Each field the signature covers, edited alone in AF, must read as changed; every lifecycle
+// field, written alone or all together, must not.
+func TestImportStateSignatureFields(t *testing.T) {
+	e := newMuseImportEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	t0 := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	rel, _ := agentMemScopeDir(agentMemScopeProject, c)
+	save := func(name string, req agentMemSaveReq) {
+		t.Helper()
+		req.Name, req.Revision = name, 1
+		if _, err := agentMemSave(c, req, t0.Add(2*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := func(name string) agentMemSaveReq {
+		return agentMemSaveReq{Description: "d", Type: "user", Body: "v1"}
+	}
+	edits := map[string]func(*agentMemSaveReq){
+		"description": func(r *agentMemSaveReq) { r.Description = "other" },
+		"type":        func(r *agentMemSaveReq) { r.Type = "feedback" },
+		"kinds":       func(r *agentMemSaveReq) { r.Kinds = []string{"claude"} },
+		"body":        func(r *agentMemSaveReq) { r.Body = "v2" },
+	}
+	lifeOnly := map[string]func(*agentMemEntry){
+		"reasons":    func(m *agentMemEntry) { m.Reasons = []agentMemReason{{By: "lint", Rule: "missing-path", Revision: 1}} },
+		"status":     func(m *agentMemEntry) { m.Status, m.StatusBy = "quiet", "member" },
+		"kind":       func(m *agentMemEntry) { m.MemKind = "lesson" },
+		"anchors":    func(m *agentMemEntry) { m.Anchors = []string{"docs/x.md"} },
+		"superseded": func(m *agentMemEntry) { m.SupersededBy = &agentMemSuperseded{Memory: "keeper"} },
+		"invalid_at": func(m *agentMemEntry) { m.InvalidAt = "2026-11-01T00:00:00Z" },
+		"all":        importLifeMut,
+	}
+	for n := range edits {
+		_ = os.Chtimes(e.note("e-"+n, "d", "user", "v1"), t0, t0)
+	}
+	_ = os.Chtimes(e.note("e-pin", "d", "user", "v1"), t0, t0)
+	for n := range lifeOnly {
+		_ = os.Chtimes(e.note("l-"+n, "d", "user", "v1"), t0, t0)
+	}
+	var all []string
+	for n := range edits {
+		all = append(all, "e-"+n)
+	}
+	all = append(all, "e-pin")
+	for n := range lifeOnly {
+		all = append(all, "l-"+n)
+	}
+	e.apply(t0.Add(time.Hour), all...)
+	for n, edit := range edits {
+		r := base("")
+		edit(&r)
+		save("e-"+n, r)
+	}
+	if _, err := agentMemPin(agentMemPinReq{Scope: agentMemScopeProject, Project: e.pid, Name: "e-pin", Pinned: true}, t0.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for n, mut := range lifeOnly {
+		lifeSet(t, c, agentMemScopeProject, "l-"+n, mut)
+	}
+	for n := range edits {
+		if st := agentMemImportStateFor(rel, "e-"+n); st != agentMemImportChanged {
+			t.Errorf("an AF edit of %s alone: state = %v, want changed", n, st)
+		}
+	}
+	if st := agentMemImportStateFor(rel, "e-pin"); st != agentMemImportChanged {
+		t.Errorf("a pin alone: state = %v, want changed", st)
+	}
+	for n := range lifeOnly {
+		if st := agentMemImportStateFor(rel, "l-"+n); st != agentMemImportIntact {
+			t.Errorf("a %s write alone: state = %v, want intact", n, st)
+		}
+	}
+}
+
+// A history longer than the walk bound answers Unknown, never Intact or Changed.
+func TestImportStateWalkIsBounded(t *testing.T) {
+	e := newMuseImportEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	t0 := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	rel, _ := agentMemScopeDir(agentMemScopeProject, c)
+	_ = os.Chtimes(e.note("deep", "d", "user", "v1"), t0, t0)
+	e.apply(t0.Add(time.Hour), "deep")
+	for i := 0; i < agentMemImportMaxWalk; i++ {
+		lifeSet(t, c, agentMemScopeProject, "deep", func(m *agentMemEntry) { m.InvalidAt = t0.Add(time.Duration(i) * time.Minute).Format(time.RFC3339) })
+	}
+	if st := agentMemImportStateFor(rel, "deep"); st != agentMemImportUnknown {
+		t.Errorf("state = %v, want unknown", st)
+	}
+}
