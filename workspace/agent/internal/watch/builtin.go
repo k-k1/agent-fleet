@@ -84,6 +84,9 @@ func BuiltinID(purpose string, subject SubjectID) string {
 // (from their retired record when there is one), present ones take the spec's owner and
 // routes, and the rest are retired.
 func (e *Engine) SyncBuiltins(purpose string, specs []BuiltinSpec) {
+	if purpose == "" {
+		return // "" is a session's own watches, which no sweep may retire
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.load()
@@ -91,7 +94,7 @@ func (e *Engine) SyncBuiltins(purpose string, specs []BuiltinSpec) {
 	want := map[string]BuiltinSpec{}
 	var order []string
 	for _, sp := range specs {
-		if purpose == "" || !TokenOK(string(sp.Subject)) {
+		if !TokenOK(string(sp.Subject)) {
 			continue
 		}
 		id := BuiltinID(purpose, sp.Subject)
@@ -351,7 +354,10 @@ func sameSub(a, b Subscription) bool {
 		return false
 	}
 	for i := range a.Pending {
-		if a.Pending[i].Type != b.Pending[i].Type || a.Pending[i].Version != b.Pending[i].Version {
+		// Summary and Count can move within one version (fewer threads): saved, so a restart
+		// does not word the notice with the older count.
+		pa, pb := a.Pending[i], b.Pending[i]
+		if pa.Type != pb.Type || pa.Version != pb.Version || pa.Summary != pb.Summary || pa.Count != pb.Count {
 			return false
 		}
 	}
@@ -391,17 +397,23 @@ func (e *Engine) takeTombLocked(owner string, ev Event, now time.Time) bool {
 		delete(e.state.Tombs, k)
 		return false
 	}
-	switch ev.Type {
-	case typeChecksFailed, typeReady:
-		if t.Version != ev.Version && !strings.HasPrefix(t.Version, ev.Version+":") {
-			return false
-		}
-	case typeThreads:
-		if ev.Count > t.Count {
-			return false
-		}
+	if !t.standsFor(ev) {
+		return false
 	}
 	delete(e.state.Tombs, k)
+	return true
+}
+
+// standsFor reports whether what a watch told (t) is what a built-in's ev would tell. Change
+// requests, conflicts and closes have versions the two cannot compare, so any of the type
+// counts.
+func (t Tomb) standsFor(ev Event) bool {
+	switch ev.Type {
+	case typeChecksFailed, typeReady:
+		return t.Version == ev.Version || strings.HasPrefix(t.Version, ev.Version+":")
+	case typeThreads:
+		return ev.Count <= t.Count
+	}
 	return true
 }
 
@@ -466,9 +478,17 @@ func (e *Engine) noteUserDeliveryLocked(owner string, evs []Event, now time.Time
 				continue
 			}
 			matched = true
+			told := Tomb{Version: ev.Version, Count: ev.Count}
 			if j := slices.IndexFunc(s.Pending, func(p Event) bool { return p.Type == typ }); j >= 0 {
-				s.setTold(s.Pending[j])
-				s.Pending = slices.Delete(s.Pending, j, j+1)
+				if told.standsFor(s.Pending[j]) {
+					s.setTold(s.Pending[j])
+					s.Pending = slices.Delete(s.Pending, j, j+1)
+					continue
+				}
+				// The built-in already holds a newer state (another head, more threads) than the
+				// watch told: that stays owed. The tomb still covers the told one should a later
+				// observation show it.
+				e.addTombLocked(owner, typ, ev, now)
 				continue
 			}
 			if !s.SentAt.IsZero() && now.Sub(s.SentAt) < tombWindow {

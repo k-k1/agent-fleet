@@ -48,7 +48,15 @@ func (m *memStore) Load() (State, bool) {
 	_ = json.Unmarshal(b, &out)
 	return out, true
 }
-func (m *memStore) Save(s State) error { m.st = s; m.saved++; return nil }
+// Save keeps a deep copy, as a disk would: the engine's later changes in memory must not show
+// up in what was saved.
+func (m *memStore) Save(s State) error {
+	b, _ := json.Marshal(s)
+	m.st = State{}
+	_ = json.Unmarshal(b, &m.st)
+	m.saved++
+	return nil
+}
 
 type fakeSink struct {
 	answer    Readiness

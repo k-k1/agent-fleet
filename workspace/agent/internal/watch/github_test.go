@@ -448,6 +448,9 @@ func TestGitHubThreadsOnlyWhenAskedAndOnlyOnARise(t *testing.T) {
 		for _, e := range evs {
 			if e.Type == typeThreads {
 				v = e.Version
+				if e.Count != c {
+					t.Fatalf("count %d carried as %d", c, e.Count)
+				}
 			}
 		}
 		versions = append(versions, v)

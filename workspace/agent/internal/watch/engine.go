@@ -675,8 +675,8 @@ func cloneSub(s Subscription) Subscription {
 
 // releaseLocked undoes one claim whose delivery failed or was not saved. It undoes the claim
 // only, not the subscription: a feature may have changed its owner or routes, observed a newer
-// state or retired it while the delivery ran, and none of that may be lost. Told cannot have
-// moved meanwhile: only deliver, on the engine's one tick goroutine, records a delivery.
+// state or retired it while the delivery ran, and none of that may be lost. A type whose Told
+// moved meanwhile (an observation took a watch's tomb for a newer state) keeps the newer record.
 func (e *Engine) releaseLocked(c claimed) {
 	var s *Subscription
 	if i := e.subIndexLocked(c.sub.ID); i >= 0 {
@@ -689,6 +689,9 @@ func (e *Engine) releaseLocked(c claimed) {
 	}
 	for i := len(c.evs) - 1; i >= 0; i-- {
 		ev := c.evs[i]
+		if v, ok := s.Told[ev.Type]; !ok || v != ev.Version {
+			continue
+		}
 		if prev, ok := c.sub.Told[ev.Type]; ok {
 			s.Told[ev.Type] = prev
 		} else {

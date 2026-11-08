@@ -282,6 +282,9 @@ func TestPRConditionsKeepTheFeedbackVersions(t *testing.T) {
 	}
 	open.ChecksPending = false
 	open.ChangesRequested, open.UnresolvedThreads, open.Conflict = true, 2, true
+	if evs, _, _ := PRConditions("github:o/r#1", &branchpr.PR{State: "open", UnresolvedThreads: 4}, nil, now); len(evs) != 1 || evs[0].Count != 4 {
+		t.Fatalf("threads count not carried: %+v", evs)
+	}
 	got := step(open)
 	if got["pr.checks.failed"] != "h1" || got["pr.review.changes_requested"] != "1" || got["pr.review.threads_unresolved"] != "1" || got["pr.conflict"] != "1" {
 		t.Fatalf("got %v", got)
@@ -525,5 +528,87 @@ func TestALiveBuiltinNoSweepNamesLapses(t *testing.T) {
 	}
 	if e.subIndexLocked(BuiltinID("kept", "fake:o/r#2")) < 0 {
 		t.Fatal("a built-in its feature still sweeps lapsed")
+	}
+}
+
+func TestAWatchTellingAnOlderStateLeavesTheBuiltinsNewerOneOwed(t *testing.T) {
+	src := &fakeSource{hint: Hint{After: time.Minute}}
+	sink := &fakeSink{answer: Wait}
+	e, _, c := newTestEngine(src, sink)
+	if _, err := e.Subscribe(context.Background(), Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.checks.failed"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h2")) // the cache is ahead of the watch's backed-off reads
+	sink.answer = Ready
+	src.events = []Event{ev("pr.checks.failed", "h1:fp")}
+	e.Tick(context.Background()) // the watch tells h1 and ends
+	c.add(time.Minute)
+	e.Tick(context.Background())
+	if strings.Join(sink.told, ",") != "a:pr.checks.failed:h1:fp,a:pr.checks.failed:h2" {
+		t.Fatalf("told = %v", sink.told)
+	}
+}
+
+func TestAReleasedClaimKeepsATellRecordedWhileItRan(t *testing.T) {
+	sink := &fakeSink{answer: Ready, injectErr: errors.New("busy")}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h1"))
+	sink.onInject = func() {
+		// While h1 is being injected, the session's own watch tells h2 and the cache shows it.
+		e.mu.Lock()
+		e.addTombLocked("a", "pr.checks.failed", ev("pr.checks.failed", "h2:fp"), e.now())
+		e.mu.Unlock()
+		observe(e, ev("pr.checks.failed", "h2"))
+	}
+	e.Tick(context.Background())
+	sink.onInject, sink.injectErr = nil, nil
+	observe(e, ev("pr.checks.failed", "h2"))
+	e.Tick(context.Background())
+	if len(sink.told) != 0 {
+		t.Fatalf("h2, told by the watch, came again from the built-in: %v", sink.told)
+	}
+}
+
+func TestAnEmptyPurposeRetiresNoWatch(t *testing.T) {
+	e, _, _ := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
+	if _, err := e.Subscribe(context.Background(), Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.SyncBuiltins("", nil)
+	if len(e.List("a")) != 1 {
+		t.Fatal("SyncBuiltins with no purpose retired a session's own watch")
+	}
+}
+
+func TestAFallingCountIsSaved(t *testing.T) {
+	e, st, _ := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
+	e.SyncBuiltins("review", []BuiltinSpec{{Subject: bSubject, Owner: "a", Types: []string{"pr.review.*"}}})
+	observe(e, threadsEv("1", 3))
+	observe(e, threadsEv("1", 2))
+	if p := st.st.Subs[0].Pending; len(p) != 1 || p[0].Count != 2 {
+		t.Fatalf("on disk: %+v", p)
+	}
+}
+
+func TestARouteChangedWhileReadinessWasAskedIsNotDeliveredTheOldWay(t *testing.T) {
+	sink := &fakeSink{answer: Ready}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	sp := ciSpec("a")
+	e.SyncBuiltins("ci", []BuiltinSpec{sp})
+	observe(e, ev("pr.checks.failed", "h1"))
+	sink.onReady = func() {
+		sp.Notify = NotifyMember
+		e.SyncBuiltins("ci", []BuiltinSpec{sp})
+	}
+	e.Tick(context.Background())
+	if len(sink.told) != 0 {
+		t.Fatalf("injected into the session after the route moved to the member: %v", sink.told)
+	}
+	sink.onReady = nil
+	e.Tick(context.Background())
+	if strings.Join(sink.member, ",") != "a:pr.checks.failed:h1" {
+		t.Fatalf("member = %v", sink.member)
 	}
 }
