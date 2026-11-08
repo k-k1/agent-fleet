@@ -362,83 +362,9 @@ Connect a Discord / Slack bot to follow session progress in chat and drive it by
 
 ### MCP servers (used by sessions)
 
-The tab is named **MCP servers (used by sessions)**: these are servers *your sessions use*. To let an outside app drive this Workspace, see [MCP tokens & apps](#mcp-tokens-apps) under **Outside access**.
-
-**Register the MCP servers you want to use here** and they become available to your assistants and sessions.
-This is where you add tools Agent Fleet does not ship with, such as an internal wiki, an issue tracker, a document
-search.
-
-- **Display name and ID**: the form starts with the **display name**, which the list shows prominently. The
-  **ID** (the server key written into every CLI's configuration) is filled in from the display name, or from the
-  URL host when the display name has nothing a key can use (a Japanese-only name, say), until you type in the ID
-  field yourself. Editing an existing server never changes its ID.
-- **Transport**: **remote (HTTP)** (URL) is the default; **stdio** (run an executable inside the workspace:
-  command, arguments, environment variables) is the second choice. A plain `http://` URL to a host other than
-  this machine is accepted but gets a warning, because the token and every request would travel unencrypted.
-  **Environment variable and header values are stored encrypted**. The configuration handed to the CLI that
-  runs the server can still contain them (in an owner-only file in your home, never in a repository). Put
-  credentials in the authentication, not in the URL.
-- **Authentication** (remote servers): **None**; **Bearer token**, one field that is sent as
-  `Authorization: Bearer <token>` (a pasted `Bearer ` prefix is removed); or **Custom headers**, any name/value
-  pairs. A saved token is never shown again: the field reads "Saved", leaving it blank keeps the token, and typing
-  a new one replaces it. A server whose stored `Authorization` is anything other than a Bearer token (`Token ...`,
-  say) opens as Custom headers. **OAuth** is for servers that only accept an OAuth sign-in: nothing is typed in the
-  form (no static header is allowed with it). Save the server, then press **Sign in** on its row.
-  The server's authorization server opens in a **new tab** (Sign in does not wait for the status to load). When it
-  is done, that tab shows the result and says it can be closed, and the row in your original Console tab updates by
-  itself. Only if the browser blocks the new tab does the sign-in open in the current tab, after telling you. The row shows
-  **Connected** with when the access token expires (it renews itself), the scopes granted and how the client was
-  identified (a client ID document Agent Fleet publishes, dynamic registration, or a client ID you entered).
-  Other row states: **Not signed in**, **Sign in again** (the saved sign-in can no longer be renewed) and **More
-  permission needed** (the server asked for a scope you did not grant). If the authorization server offers no
-  automatic registration, Sign in asks for a **client ID** (and a secret, if it has one) registered by hand. If a
-  sign-in through the client ID document did not finish, the row offers **Retry with dynamic registration**. A sign-in that was started and never came back (the
-  authorization server refused the client on its own error page, say) shows an **unfinished sign-in** note on the
-  row: press Sign in again, retry with dynamic registration, or ask the server's operator to trust this deployment's
-  host. To sign in to another Agent Fleet deployment, its administrator has to add this deployment's host to that
-  deployment's trusted client hosts setting.
-  **Disconnect** deletes the saved sign-in and revokes it at the authorization server when that supports it.
-  The sign-in lives in your workspace's encrypted store only. Sessions and assistants use it through a small
-  relay inside your workspace: the CLI's configuration names a local address (`127.0.0.1`, never reachable from
-  outside the container) and a private key instead of the server and a token, and the relay adds the access token,
-  renews it when needed and forwards the request. The token itself is never written into a CLI's configuration, so
-  a session can use the sign-in without being able to read it. An OAuth server is handed to sessions and
-  assistants **only while you are signed in**: signing in puts it into the configuration of every agent kind,
-  and disconnecting or **Sign in again** takes it out. Like any server, it is picked up **from the next session you
-  start**. A session that is already running when you disconnect, or whose sign-in can no longer be renewed, gets an
-  error from the relay telling you to sign in again in the Console (Settings > Connections > MCP servers (used by sessions)). If the
-  server answers that a tool needs more permission, the call fails with the server's own answer and the row shows
-  **More permission needed**, and its **Approve the extra permission** button signs in again asking for that permission on top of what you already granted. The relay's port is remembered across restarts of the Agent; if that port is taken at
-  start-up, a new one is chosen (with a new private key) and the configurations are rewritten, so sessions started before that need a restart.
-  The key is written into every agent's server entry as a plain header; that each CLI really sends it was only spot-checked against a local test server, not for every agent. A request without it is answered with a bare 403, so a server that stays unreachable from one agent while others reach it points here.
-  A **tenant**-distributed server can use OAuth too. Its administrator distributes no credential: the row
-  offers **Sign in** like one of your own, the sign-in is yours alone, and the server reaches your sessions only
-  after you have signed in. If the administrator stops distributing it, moves it to another URL or takes OAuth
-  off it, your sign-in to it is disconnected at your workspace's next fetch (within 5 minutes), and a new URL needs a new sign-in.
-  When the administrator registered a client for it, the row says the client was identified by **a client your tenant
-  registered**; changing that client also disconnects your sign-in.
-- **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
-  stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The
-  summary line beside the title shows the current values, for example "Assistant, Sessions · Every agent · default
-  timeout". It opens by itself when you edit a server whose values are not the defaults.
-- **Connection test**: reports the server name, version, tool count and round-trip time.
-  If the server answers that it needs an **OAuth sign-in**, the test says so instead of reporting a failure
-  and lists what it found: the authorization server, how a client can register with it, and the scopes.
-  For a saved server whose authentication is **OAuth**, the report has a **Sign in** button.
-- **Enabled / disabled**: disabling keeps the definition but stops handing it out.
-- Sessions pick it up **from the next session you start**. For assistants, choose it in the assistant's own
-  edit form under "MCP servers" ([10](10-chat-memo.md)).
-- Entries are labelled by origin: **user** (yours), **tenant** (distributed by an admin: a user entry with the
-  same name is not used; some are distributed such that only the values are asked of each member), and
-  **built-in** (Agent Fleet's own server and the ops & monitoring integrations).
-- On a deployment with restricted egress, you get a flow to **request access** for the host and wait for an
-  admin to approve it.
-- MCP definitions committed in a repository (`.mcp.json` and friends) are shown in **Project settings**, from
-  the repository row's menu, with per-agent status and warnings (a secret already under Git, a name clash,
-  files that disagree with each other).
-
-> **Agent Fleet's own MCP** is the "built-in" entry handed to every session from the start, with no setup needed.
-> It is what lets a session report that it finished, or propose a handoff to the next session.
+The MCP servers your sessions and assistants use: registering one, the three origins, the connection test and the
+OAuth sign-in are in [Add an MCP server to your sessions](../user/integrations/mcp-servers.md). To let an outside app
+drive this Workspace, see [MCP tokens & apps](#mcp-tokens-apps) under **Outside access**.
 
 ### AWS profiles/SSM
 
@@ -464,7 +390,7 @@ they work, and the WS bar's Google Cloud badge, are in
 
 ### MCP tokens & apps
 
-The **MCP tokens & apps** tab sits in the **Outside access** group, not under Connections, because it points the other way: it holds the personal access tokens and connected apps that *use this Workspace*. To register servers your sessions call, see [MCP servers (used by sessions)](#mcp-servers-used-by-sessions).
+The **MCP tokens & apps** tab sits in the **Outside access** group, not under Connections, because it points the other way: it holds the personal access tokens and connected apps that *use this Workspace*. To register servers your sessions call, see [MCP servers (used by sessions)](../user/integrations/mcp-servers.md).
 
 Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
 → [19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)

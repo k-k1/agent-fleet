@@ -402,6 +402,33 @@ const SCENES = [
     settle: 2500,
   },
   {
+    name: "mcp-settings",
+    guide: true,
+    // One row per origin plus a remote server signed in with OAuth (server.mjs).
+    stubEnv: { SHOT_MCP_GUIDE: "1" },
+    clip: ".mcp-list",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "mcp",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      // The modal is a fixed 760 px tall; let it grow so the whole list (and the OAuth row's
+      // sign-in panel at the bottom) is on screen for the clip.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "2000px"; m.style.maxHeight = "none"; }
+      await new Promise((r) => setTimeout(r, 300));
+      document.querySelector(".mcp-list")?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
     name: "ssm-start",
     guide: true,
     stubEnv: { SHOT_SSM_HOSTS: "1" },

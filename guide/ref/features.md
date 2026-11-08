@@ -128,7 +128,7 @@ explains them.
 | Integration servers and tokens | member | MCP servers (used by sessions) / Outside access → MCP tokens & apps |
 | Connect a remote MCP client by signing in (OAuth, when the deployment enables it) — Connected apps, Recent calls | member | Outside access → MCP tokens & apps ([19](../member/19-outside-access.md#connecting-a-remote-mcp-client-by-signing-in-oauth)) |
 | The "via MCP" badge on input sent through `/mcp` | member | input bubble in the mirror ([19](../member/19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)) |
-| Sign in to a registered MCP server that needs OAuth (Sign in, sign in again, approve extra permission) | member | MCP servers (used by sessions) → Authentication → OAuth ([20](../member/20-settings.md#mcp-servers-used-by-sessions)) |
+| Sign in to a registered MCP server that needs OAuth (Sign in, sign in again, approve extra permission) | member | MCP servers (used by sessions) → Authentication → OAuth ([20](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)) |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |
 | Limit board: publish where you stand on usage limits, and see what teammates publish to you | member | Limit board |
