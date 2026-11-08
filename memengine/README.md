@@ -1,0 +1,41 @@
+# memengine
+
+The model-facing core of cultivated memory ([ADR 0130](../docs/decisions/0130-cultivated-memory.md),
+decisions 6 and 8): two bounded model calls with fixed JSON schemas, the deterministic validation every
+answer must pass, and the model as a plug-in.
+
+- **Own module, no dependency on this repository.** `independence_test.go` fails on any import of an
+  `github.com/k-k1/agent-fleet/...` package, and on a `require`/`replace` in `go.mod`. The directory
+  name is neutral on purpose: the module is meant to be split into its own repository with its history
+  once a second consumer exists or the format reaches v1.
+- **Classify** (`classify.go`): one observation plus snippets of at most `MaxSnippets` memories of the
+  topic in, `add | patch | supersede | merge | no-op` out. `Operation.Escalates` marks supersede and
+  merge as the larger tier's.
+- **Patch** (`patch.go`): one note in, `{old, new}` edits out, never a body. `ApplyEdits` checks that
+  each `old` occurs exactly once, edits do not overlap, and the patch applies.
+- **Invalid output is dropped, not retried** (`ErrInvalid`).
+- **Model** (`model.go`): a one-shot command, prompt on stdin, JSON on stdout, configured by argv. It
+  accepts the `claude -p --output-format json` envelope and records the token usage it reports. No SDK,
+  no key.
+
+## Gold-set evaluation
+
+```
+cd memengine
+go run ./cmd/goldeval -cases cases.jsonl -inputs inputs.jsonl -out run \
+  -tier small='env CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p --output-format json --tools "" --system-prompt "You output only the JSON object asked for." --no-session-persistence --disable-slash-commands --strict-mcp-config --setting-sources "" --model haiku' \
+  -tier large='... --model sonnet'
+```
+
+`cases.jsonl` is the member-labelled gold set. `inputs.jsonl` holds, per case id, the memories it cites
+(`name`, `scope`, `revision`, `cited_revision`, `revision_mismatch`, `description`, `body`). Both are
+private and stay out of the repository. Answers and usage go to `-out/<tier>.run.json`, the scores to
+`report.md` and `report.json`; a rerun reuses answers already there (`-resume=false` to pay again).
+
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` matters for cost: without it every call carries the host's project and
+user instruction files (about 9–19 k input tokens measured), with it about 0.9 k.
+
+Scoring is per labelled operation: wrong changes, missed fixes, invalid outputs, tokens per call; for patch
+cases also lost facts and new facts missing. Must-survive items are prose, so the fact check is anchor-based
+(see `internal/goldset/facts.go`) and is calibrated against the member's own reference patches, which must
+lose nothing. Tier agreement is reported as a secondary measure only.
