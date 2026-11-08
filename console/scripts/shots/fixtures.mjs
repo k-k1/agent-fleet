@@ -159,6 +159,18 @@ export function sessions(locale) {
   ];
 }
 
+// The sessions guide's budget page (SHOT_SESSIONS_GUIDE): the stopped opencode session was
+// stopped by a $5.00 budget it went past, so its menu offers "raise budget & resume".
+export function sessionsBudgetStopped(locale) {
+  return sessions(locale).map((s) =>
+    s.name === "so5nw6k" ? { ...s, spendCapUsd: 5, spendCapHitAt: ago(40) } : s,
+  );
+}
+
+export function sessionSpendGuide(name) {
+  return { name, spendCapUsd: 5, spendCapHitAt: ago(40), hardFactor: 2, spendUsd: 5.18, priced: true, children: [], childrenUsd: 0 };
+}
+
 // ---- the scripted mirror conversation (claude session sk4rq2f) --------------------
 
 const DIFF_OLD = `export function validateCart(cart: Cart): Result {

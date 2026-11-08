@@ -45,7 +45,7 @@ merely opening the bell marks nothing as read. This is the one place that descri
 
 A row can also carry **"Shared"** (visible to another member;
 see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Locked against deletion"** (excluded from deletion and
-automatic tidying; see [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
+automatic tidying; see [Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion)).
 
 A row can grow a **second line** with links. The first is the GitHub or Bitbucket pull request
 of the branch the session works on. The icon says open, draft, merged or closed, and an open one
@@ -165,11 +165,11 @@ connection. Not this deployment's engine."** together with the model the last ch
   parent whose children have all gone quiet ([11](11-many-sessions.md#starting-sessions-from-a-session-child-sessions)).
 - **"Paused"** on a schedule row: that schedule is suspended ([11](11-many-sessions.md)).
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
-  stopped; **"Raise budget & resume…"** in its menu carries on ([05](05-stopping-and-tidying.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
+  stopped; **"Raise budget & resume…"** in its menu carries on ([Stop a session that spends too much with a budget](../user/sessions/budget.md#when-it-stops)).
 - **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
   ([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
 - **"Safe" / "Review" / "Keep"** in the cleanup modal: whether it is fine to tidy away
-  ([05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
+  ([Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup)).
 
 ## Right-click menus
 
@@ -177,13 +177,13 @@ connection. Not this deployment's engine."** together with the model the last ch
 
 Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
 rename, rename the branch, hand the conversation off (to another agent, or **Hand off to a member…**), **move it to another agent**
-([05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move)), **Share…**, **set / clear the delete lock**,
+([Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent)), **Share…**, **set / clear the delete lock**,
 **"Export as Markdown"** (three choices, [04](04-conversation.md#saving-a-conversation-as-markdown)),
 archive / delete, and recreate. **"Menu of repository {name}"** moves to the left pane and opens the menu of
 the repository the session belongs to (not shown for a session without a repository, on a phone, or while the
 workspace is stopped; if the left pane is hiding that repository, a notice says why). On a stopped session whose
 worktree has been deleted, **"Recreate working copy (worktree)…"** recreates the worktree at its original path
-so the session can resume ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)). A session that was moved carries a line under its row,
+so the session can resume ([Stop and resume a session](../user/sessions/stop-resume.md#folder-missing-cant-resume-and-the-row-will-not-open)). A session that was moved carries a line under its row,
 **"Moved to …"** (click to open the target) or **"Move to … unfinished"** (click to retry or cancel), and its
 menu offers **"Open the session it moved to"** and **"Resume here anyway…"**, or **"Retry or cancel the
 move…"**, instead of resume. For a session that doesn't belong to a repository, **assignment to a working
@@ -192,7 +192,7 @@ automatically).
 If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
 absent for sessions that have not, and while the workspace is stopped; see [Use the image gallery](../user/images/gallery.md)).
 **"Spend budget…"** sets the session's budget; on a session its budget stopped it reads **"Raise budget &
-resume…"** ([05](05-stopping-and-tidying.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
+resume…"** ([Stop a session that spends too much with a budget](../user/sessions/budget.md#when-it-stops)).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
 a new one in the same place. When there is no working folder, resume, handoff, and recreate are not shown.
 
@@ -205,9 +205,9 @@ filtered to it. A Subversion working copy has **"Update (svn)"**, **"Clean up lo
 **"Re-authenticate (svn)"**, **"Show log"** and **"Local changes"** instead of the Git items
 ([06](06-code.md#subversion-svn-repositories)). Stop
 opens a modal listing the sessions running in that row and in the copies nested under it
-([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)); Delete opens a confirmation
+([Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy)); Delete opens a confirmation
 that also lists the copies nested under that row
-([05](05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy)). A normal click expands / collapses the row.
+([Clear away finished sessions](../user/sessions/cleanup.md#delete-one-jobs-working-copies)). A normal click expands / collapses the row.
 Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 
 ### Files / folders

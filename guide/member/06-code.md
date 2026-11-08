@@ -161,11 +161,11 @@ depending on state and location.
 - **Assignment to a working set** ([11](11-many-sessions.md#narrowing-the-view-with-working-sets))
 - **Launch shell**: opens a shell session in that copy (the other kinds launch from the **▾** next to "Launch")
 - **Start an image studio**: begins an image studio in that copy ([Finish an image in the studio](../user/images/studio.md)); shown only while the workspace is running and image generation is available
-- **Stop the sessions below**: stops every session running in that copy and in the copies nested under it, from one modal ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)); shown while any is running, with the count
-- **Archive all stopped sessions**: archives every stopped session of that copy in one go; shown while any is stopped, with the count ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions))
+- **Stop the sessions below**: stops every session running in that copy and in the copies nested under it, from one modal ([Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy)); shown while any is running, with the count
+- **Archive all stopped sessions**: archives every stopped session of that copy in one go; shown while any is stopped, with the count ([Clear away finished sessions](../user/sessions/cleanup.md#archive-and-restore))
 - **Archived sessions of this working copy**: opens the archive list narrowed to that copy, to restore or delete from
-- **Lock against deletion** / **Unlock (allow deletion)**: marks the working copy (worktrees included) as one that must not go away. A lock icon appears on the row and automatic tidying skips it ([05](05-stopping-and-tidying.md#locking-something-against-deletion)); **Delete the working copy** stays greyed out until you unlock
-- **Delete the working copy** (only for working copies that can be deleted; [05](05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy))
+- **Lock against deletion** / **Unlock (allow deletion)**: marks the working copy (worktrees included) as one that must not go away. A lock icon appears on the row and automatic tidying skips it ([Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion)); **Delete the working copy** stays greyed out until you unlock
+- **Delete the working copy** (only for working copies that can be deleted; [Clear away finished sessions](../user/sessions/cleanup.md#delete-one-jobs-working-copies))
 
 ### Initialize Git Flow
 

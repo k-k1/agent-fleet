@@ -10,6 +10,16 @@ English | [日本語](README.ja.md)
 Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
 Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
 
+## Sessions
+
+| Page | What you can do |
+|---|---|
+| [Stop and resume a session](sessions/stop-resume.md) | Pause a session and later carry on from where it stopped |
+| [Stop when done, or keep a session awake](sessions/auto-stop.md) | Have a session stop once its work is done, or keep a long job from being stopped |
+| [Clear away finished sessions](sessions/cleanup.md) | Archive sessions and delete working copies and branches you no longer need, and restore them from the trash |
+| [Stop a session that spends too much with a budget](sessions/budget.md) | Stop a session when its estimated spend reaches a budget |
+| [Hand off to another session or agent](sessions/handoff.md) | Continue a conversation in a new session or with another kind of agent |
+
 ## Integrations
 
 | Page | What you can do |

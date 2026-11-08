@@ -738,6 +738,46 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // The cleanup window, opened from the trash icon in the Repositories heading: the two stages
+    // and the candidates with their safety rating.
+    name: "sessions-cleanup",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const sel = '[aria-label="掃除を開く（点検・整理）"], [aria-label="Open cleanup (survey & tidy)"]';
+      for (let i = 0; i < 50 && !document.querySelector(sel); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(sel)?.click();
+      // The window opens with "surveying…" and grows when the candidates arrive: wait for them.
+      for (let i = 0; i < 50 && !document.querySelector(".clean-modal .clean-row"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2500,
+  },
+  {
+    // "Raise budget & resume" on a session its spend budget stopped (SHOT_SESSIONS_GUIDE).
+    name: "sessions-budget",
+    guide: true,
+    stubEnv: { SHOT_SESSIONS_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /在庫同期バッチの調査|Stock sync batch triage/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /予算を上げて再開|Raise budget/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2000,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

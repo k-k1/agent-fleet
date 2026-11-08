@@ -142,7 +142,7 @@ notifications.
 A stopped session of any kind with a conversation can be resumed, except that claude, codex,
 opencode, copilot, cursor, kiro, agy, lcpp and muse cannot resume when the working folder they
 were launched in is gone (shell falls back to home); see
-[05 Stopping and tidying up](../member/05-stopping-and-tidying.md#when-you-can-and-cant-resume).
+[Stop and resume a session](../user/sessions/stop-resume.md#folder-missing-cant-resume-and-the-row-will-not-open).
 
 ## Stopping a turn, and messages sent while one runs
 
@@ -201,7 +201,7 @@ reports to the sender:
 
 ## Moving a session to another agent
 
-A move ([05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move))
+A move ([Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent))
 has two sides, and a kind can be on one without the other.
 
 | Kind | As the source | As the target |
