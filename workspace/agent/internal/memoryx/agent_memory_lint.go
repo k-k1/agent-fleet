@@ -149,6 +149,18 @@ func (r agentMemLintRepo) Paths() ([]string, error) {
 	return paths, nil
 }
 
+// ReadFile returns one blob of the pinned revision (`git show <oid>:<path>`), never a working
+// copy's file, so the .gitignore rules the path check applies are the revision's own.
+func (r agentMemLintRepo) ReadFile(path string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
+	defer cancel()
+	out, err := agentMemLintGit(ctx, r.gitDir, nil, "cat-file", "blob", r.ref+":"+path)
+	if err != nil {
+		return nil, errors.New("git cat-file failed")
+	}
+	return out, nil
+}
+
 // FindSymbols streams `git grep -o -w -F` over the ref in chunks and keeps only which symbols
 // occurred, so a symbol found in thousands of places costs a set entry, not memory.
 func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
