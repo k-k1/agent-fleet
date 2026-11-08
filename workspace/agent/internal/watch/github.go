@@ -145,6 +145,11 @@ type ghCursor struct {
 	Runs    ghCached[ghCheckRuns] `json:"runs"`
 	Status  ghCached[ghStatus]    `json:"status"`
 	Reviews ghCached[[]ghReview]  `json:"reviews"`
+	// Later pages, by path, with their own ETags: a PR with many checks would otherwise spend
+	// counted requests on every read even when nothing changed.
+	RunPages    map[string]ghCached[ghCheckRuns] `json:"run_pages,omitempty"`
+	StatusPages map[string]ghCached[ghStatus]    `json:"status_pages,omitempty"`
+	ReviewPages map[string]ghCached[[]ghReview]  `json:"review_pages,omitempty"`
 }
 
 type ghCached[T any] struct {
@@ -241,7 +246,7 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 		if err := g.cached(ctx, fmt.Sprintf("/repos/%s/commits/%s/status?per_page=100", repo, head), &cur.Status); err != nil {
 			return nil, raw, Hint{}, err
 		}
-		runs, status, err := g.allChecks(ctx, repo, head, cur.Runs.Val, cur.Status.Val)
+		runs, status, err := g.allChecks(ctx, repo, head, &cur)
 		if err != nil {
 			return nil, raw, Hint{}, err
 		}
@@ -280,7 +285,7 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 	if err := g.cached(ctx, fmt.Sprintf("/repos/%s/pulls/%d/reviews?per_page=100", repo, n), &cur.Reviews); err != nil {
 		return nil, raw, Hint{}, err
 	}
-	reviews, err := g.allReviews(ctx, repo, n, cur.Reviews.Val)
+	reviews, err := g.allReviews(ctx, repo, n, &cur)
 	if err != nil {
 		return nil, raw, Hint{}, err
 	}
@@ -473,61 +478,60 @@ var errRejected = &ErrRefused{"GitHub rejected the connection's token; reconnect
 // ghMaxPages bounds how far a list is followed: 1,000 checks or reviews on one PR.
 const ghMaxPages = 10
 
-// allChecks completes the first pages of check runs and statuses with the pages after them.
-// The first page carries the ETag; later pages are read only when the first one says there are
-// more, so a PR with many checks costs more but is never judged on its first hundred.
-func (g *GitHub) allChecks(ctx context.Context, repo, head string, runs ghCheckRuns, st ghStatus) (ghCheckRuns, ghStatus, error) {
-	out := ghCheckRuns{Total: runs.Total, Runs: append([]ghCheckRun(nil), runs.Runs...)}
-	for page := 2; len(out.Runs) < out.Total && page <= ghMaxPages; page++ {
-		var more ghCheckRuns
-		if err := g.page(ctx, fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100&page=%d", repo, head, page), &more); err != nil {
-			return runs, st, err
+// allChecks completes the first pages of check runs and statuses with the pages after them,
+// each read conditionally with its own ETag, so a PR is never judged on its first hundred
+// checks and an unchanged page stays free.
+func (g *GitHub) allChecks(ctx context.Context, repo, head string, cur *ghCursor) (ghCheckRuns, ghStatus, error) {
+	runs := ghCheckRuns{Total: cur.Runs.Val.Total, Runs: append([]ghCheckRun(nil), cur.Runs.Val.Runs...)}
+	runPages := map[string]ghCached[ghCheckRuns]{}
+	for page := 2; len(runs.Runs) < runs.Total && page <= ghMaxPages; page++ {
+		path := fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100&page=%d", repo, head, page)
+		c := cur.RunPages[path]
+		if err := cachedDecode(g, ctx, path, &c); err != nil {
+			return ghCheckRuns{}, ghStatus{}, err
 		}
-		if len(more.Runs) == 0 {
+		runPages[path] = c
+		if len(c.Val.Runs) == 0 {
 			break
 		}
-		out.Runs = append(out.Runs, more.Runs...)
+		runs.Runs = append(runs.Runs, c.Val.Runs...)
 	}
-	outSt := ghStatus{Total: st.Total, Statuses: append([]ghStatusItem(nil), st.Statuses...)}
-	for page := 2; len(outSt.Statuses) < outSt.Total && page <= ghMaxPages; page++ {
-		var more ghStatus
-		if err := g.page(ctx, fmt.Sprintf("/repos/%s/commits/%s/status?per_page=100&page=%d", repo, head, page), &more); err != nil {
-			return runs, st, err
+	st := ghStatus{Total: cur.Status.Val.Total, Statuses: append([]ghStatusItem(nil), cur.Status.Val.Statuses...)}
+	statusPages := map[string]ghCached[ghStatus]{}
+	for page := 2; len(st.Statuses) < st.Total && page <= ghMaxPages; page++ {
+		path := fmt.Sprintf("/repos/%s/commits/%s/status?per_page=100&page=%d", repo, head, page)
+		c := cur.StatusPages[path]
+		if err := cachedDecode(g, ctx, path, &c); err != nil {
+			return ghCheckRuns{}, ghStatus{}, err
 		}
-		if len(more.Statuses) == 0 {
+		statusPages[path] = c
+		if len(c.Val.Statuses) == 0 {
 			break
 		}
-		outSt.Statuses = append(outSt.Statuses, more.Statuses...)
+		st.Statuses = append(st.Statuses, c.Val.Statuses...)
 	}
-	return out, outSt, nil
+	cur.RunPages, cur.StatusPages = runPages, statusPages
+	return runs, st, nil
 }
 
 // allReviews follows the reviews list past its first page (it has no total, so a full page
 // means there may be more).
-func (g *GitHub) allReviews(ctx context.Context, repo string, n int, first []ghReview) ([]ghReview, error) {
-	out := append([]ghReview(nil), first...)
-	last := len(first)
+func (g *GitHub) allReviews(ctx context.Context, repo string, n int, cur *ghCursor) ([]ghReview, error) {
+	out := append([]ghReview(nil), cur.Reviews.Val...)
+	pages := map[string]ghCached[[]ghReview]{}
+	last := len(out)
 	for page := 2; last == 100 && page <= ghMaxPages; page++ {
-		var more []ghReview
-		if err := g.page(ctx, fmt.Sprintf("/repos/%s/pulls/%d/reviews?per_page=100&page=%d", repo, n, page), &more); err != nil {
+		path := fmt.Sprintf("/repos/%s/pulls/%d/reviews?per_page=100&page=%d", repo, n, page)
+		c := cur.ReviewPages[path]
+		if err := cachedDecode(g, ctx, path, &c); err != nil {
 			return nil, err
 		}
-		out = append(out, more...)
-		last = len(more)
+		pages[path] = c
+		out = append(out, c.Val...)
+		last = len(c.Val)
 	}
+	cur.ReviewPages = pages
 	return out, nil
-}
-
-// page reads one later page, unconditionally.
-func (g *GitHub) page(ctx context.Context, path string, v any) error {
-	status, _, err := g.get(ctx, path, "", v)
-	if err != nil {
-		return err
-	}
-	if status != http.StatusOK {
-		return fmt.Errorf("GitHub answered %d for %s", status, path)
-	}
-	return nil
 }
 
 func (g *GitHub) do(ctx context.Context, path, etag, tok string) (*http.Response, error) {

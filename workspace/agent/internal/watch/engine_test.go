@@ -465,3 +465,35 @@ func TestGoneOwnerIsForgotten(t *testing.T) {
 		t.Fatalf("left=%d forgot=%v", len(e.List("a")), sink.forgot)
 	}
 }
+
+func TestLastUnwatchForgetsTheOwner(t *testing.T) {
+	sink := &fakeSink{answer: Wait}
+	e, _, _ := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, sink)
+	ctx := context.Background()
+	a, _ := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+	b, _ := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+	e.Unsubscribe("a", a.ID)
+	if len(sink.forgot) != 0 {
+		t.Fatal("forgot an owner that still has a watch")
+	}
+	e.Unsubscribe("a", b.ID)
+	if strings.Join(sink.forgot, ",") != "a" {
+		t.Fatalf("forgot = %v", sink.forgot)
+	}
+}
+
+func TestAnEmptyVersionIsStillDeliveredOnce(t *testing.T) {
+	src := &fakeSource{events: []Event{ev("pr.merged", "")}, hint: Hint{After: time.Minute}}
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(src, sink)
+	ctx := context.Background()
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}, Until: UntilDeadline}); err != nil {
+		t.Fatal(err)
+	}
+	e.Tick(ctx)
+	c.add(2 * time.Minute)
+	e.Tick(ctx)
+	if len(sink.told) != 1 {
+		t.Fatalf("told = %v", sink.told)
+	}
+}

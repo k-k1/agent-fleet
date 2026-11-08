@@ -291,7 +291,7 @@ func TestGitHubReadsEveryPageOfChecks(t *testing.T) {
 	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
 	f.bodies[reviewsPath] = []any{}
 	g := newTestGitHub(t, f)
-	evs, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	evs, cur, _, err := g.Poll(context.Background(), "github:o/r#7", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,6 +300,16 @@ func TestGitHubReadsEveryPageOfChecks(t *testing.T) {
 	}
 	if !strings.Contains(evs[0].Summary, "failed (1 of 150)") || evs[0].Data[0].Text != "job120" {
 		t.Fatalf("summary %q data %+v", evs[0].Summary, evs[0].Data)
+	}
+	// Nothing changed: the second page is asked with its ETag too, and costs nothing.
+	spent := g.spent
+	evs2, _, _, err := g.Poll(context.Background(), "github:o/r#7", cur)
+	if err != nil || types(evs2) != types(evs) {
+		t.Fatalf("second poll: %v %s", err, types(evs2))
+	}
+	if g.spent != spent || f.served["/repos/o/r/commits/abc1234def/check-runs?per_page=100&page=2"] != 1 {
+		t.Fatalf("an unchanged later page was counted: spent %d -> %d, page 2 served %d times",
+			spent, g.spent, f.served["/repos/o/r/commits/abc1234def/check-runs?per_page=100&page=2"])
 	}
 }
 

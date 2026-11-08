@@ -153,7 +153,7 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 		return Subscription{}, &ErrRefused{fmt.Sprintf("unknown source %q", r.Source)}
 	}
 	if len(r.Ref) > maxRefLen {
-		return Subscription{}, &ErrRefused{fmt.Sprintf("ref is longer than %d characters", maxRefLen)}
+		return Subscription{}, &ErrRefused{fmt.Sprintf("ref is longer than %d bytes", maxRefLen)}
 	}
 	if err := checkTypes(r.Types, src.Types()); err != nil {
 		return Subscription{}, err
@@ -236,20 +236,31 @@ func (e *Engine) limitsLocked(owner string) error {
 }
 
 // Unsubscribe ends one of owner's subscriptions, pending events included. It reports whether
-// there was one.
+// there was one. When it was the owner's last, the sink forgets the owner, as on expiry, so a
+// later watch is not held back by an earlier start.
 func (e *Engine) Unsubscribe(owner, id string) bool {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	found, last := false, true
 	e.load()
 	for i, s := range e.state.Subs {
 		if s.ID == id && s.Owner == owner && !s.Done {
 			e.state.Subs = append(e.state.Subs[:i], e.state.Subs[i+1:]...)
 			e.dropUnwatchedLocked()
 			e.save()
-			return true
+			found = true
+			break
 		}
 	}
-	return false
+	for _, s := range e.state.Subs {
+		if s.Owner == owner {
+			last = false
+		}
+	}
+	e.mu.Unlock()
+	if found && last {
+		e.sink.Forget(owner)
+	}
+	return found
 }
 
 // Listed is one subscription with its subject's health, for list_watches.
@@ -560,7 +571,7 @@ func (e *Engine) matchLocked(id SubjectID, events []Event) {
 			if !selects(s.Types, ev.Type) || !TokenOK(ev.Type) {
 				continue
 			}
-			if s.Told[ev.Type] == ev.Version {
+			if v, ok := s.Told[ev.Type]; ok && v == ev.Version {
 				continue
 			}
 			replaced := false
