@@ -443,3 +443,66 @@ func TestReplayClassificationIsValidOnlyFromAClassifyOnlyFile(t *testing.T) {
 		t.Error("a classify-only source validates the classification")
 	}
 }
+
+func TestDuplicateAnswersAreAnError(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, ls ...AnswerLine) string {
+		var b strings.Builder
+		for _, l := range ls {
+			j, _ := json.Marshal(l)
+			b.Write(j)
+			b.WriteByte('\n')
+		}
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte(b.String()), 0o644)
+		return p
+	}
+	a := AnswerLine{CaseID: "A1", Call: "classify", Output: "{}"}
+	b := AnswerLine{CaseID: "A1", Call: "patch", Output: "{}"}
+	if _, _, err := LoadAnswerFiles([]string{write("one.jsonl", a, b)}); err != nil {
+		t.Fatalf("the same case with two different calls is fine: %v", err)
+	}
+	if _, _, err := LoadAnswerFiles([]string{write("x.jsonl", a, a)}); err == nil || !strings.Contains(err.Error(), "A1") {
+		t.Errorf("two answers for one (case, call) in one file must be an error naming the case: %v", err)
+	}
+	_, _, err := LoadAnswerFiles([]string{write("c1.jsonl", a), write("c2.jsonl", a)})
+	if err == nil || !strings.Contains(err.Error(), "c1.jsonl") || !strings.Contains(err.Error(), "c2.jsonl") {
+		t.Errorf("the same (case, call) in two files must be an error naming both files: %v", err)
+	}
+}
+
+func TestSplitIsDeterministicAndPartitions(t *testing.T) {
+	// Pinned values: a change of the hash rule would silently re-draw every
+	// earlier TUNE/HELD-OUT comparison.
+	for id, want := range map[string]string{"a": SplitTune, "e": SplitHeldOut, "f": SplitHeldOut, "h": SplitTune} {
+		if got := SplitOf(id); got != want {
+			t.Errorf("SplitOf(%q) = %s, want %s", id, got, want)
+		}
+	}
+	s := &Set{}
+	for i := 0; i < 200; i++ {
+		s.Cases = append(s.Cases, Case{ID: "C" + strings.Repeat("x", i%7) + string(rune('a'+i%26)) + string(rune('A'+i/26))})
+	}
+	n := len(s.Cases)
+	tune := &Set{Cases: append([]Case(nil), s.Cases...)}
+	held := &Set{Cases: append([]Case(nil), s.Cases...)}
+	all := &Set{Cases: append([]Case(nil), s.Cases...)}
+	tune.Only(SplitTune)
+	held.Only(SplitHeldOut)
+	all.Only(SplitAll)
+	if len(all.Cases) != n || len(tune.Cases)+len(held.Cases) != n || len(tune.Cases) < n/4 || len(held.Cases) < n/4 {
+		t.Fatalf("halves must partition the set: %d + %d of %d", len(tune.Cases), len(held.Cases), n)
+	}
+	for _, c := range tune.Cases {
+		if SplitOf(c.ID) != SplitTune {
+			t.Errorf("%s in tune", c.ID)
+		}
+	}
+	r := &TierRun{Name: "t", Classify: []ClassifyOutcome{{Case: "h"}, {Case: "e"}}, Patch: []PatchOutcome{{Case: "e"}, {Case: "a"}}}
+	if got := r.Only(SplitTune); len(got.Classify) != 1 || got.Classify[0].Case != "h" || len(got.Patch) != 1 || got.Patch[0].Case != "a" {
+		t.Errorf("run not restricted: %+v", got)
+	}
+	if len(r.Classify) != 2 {
+		t.Error("Only must not modify the run it is called on")
+	}
+}

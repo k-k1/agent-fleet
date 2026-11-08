@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/memengine"
@@ -39,16 +42,36 @@ func TestResolveTier(t *testing.T) {
 	}
 }
 
-// The shipped examples must stay loadable.
+// The shipped defaults must stay loadable.
 func TestExamplesLoad(t *testing.T) {
-	cfg, err := memengine.LoadConfig("../../models.example.json")
+	cfg, err := memengine.LoadConfig("../../models.json")
 	if err != nil || len(cfg.Candidates) == 0 {
 		t.Fatalf("%v", err)
 	}
 	if _, err := memengine.NewPipeline(cfg); err != nil {
-		t.Errorf("the example roles do not resolve: %v", err)
+		t.Errorf("the shipped roles do not resolve: %v", err)
 	}
-	if _, err := goldset.LoadBar("../../bar.example.json"); err != nil {
+	if _, err := goldset.LoadBar("../../bar.json"); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestExportPromptsSplitNeverLeaksTheOtherHalf(t *testing.T) {
+	dir := t.TempDir()
+	var cs, in string
+	for _, id := range []string{"a", "e", "f", "h"} { // a, h: tune; e, f: held-out
+		cs += `{"id":"` + id + `","observation":"o","memories":[],"label":{"operation":"add","ok":"OK"}}` + "\n"
+		in += `{"id":"` + id + `","memories":[]}` + "\n"
+	}
+	os.WriteFile(filepath.Join(dir, "c.jsonl"), []byte(cs), 0o644)
+	os.WriteFile(filepath.Join(dir, "i.jsonl"), []byte(in), 0o644)
+	exportPrompts([]string{"-cases", filepath.Join(dir, "c.jsonl"), "-inputs", filepath.Join(dir, "i.jsonl"), "-out", dir, "-split", "tune"})
+	b, err := os.ReadFile(filepath.Join(dir, "prompts-classify.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if strings.Count(got, `"case_id"`) != 2 || !strings.Contains(got, `"case_id":"a"`) || !strings.Contains(got, `"case_id":"h"`) || strings.Contains(got, `"case_id":"e"`) {
+		t.Errorf("tune export must hold exactly the tune cases:\n%s", got)
 	}
 }
