@@ -6,7 +6,7 @@ audience: "anyone talking to a running agent"
 
 English | [日本語](04-conversation.ja.md)
 
-This chapter is about the conversation view of a session: reading and replying to the agent, queueing follow-ups, plans, reply suggestions, what to do when a turn is interrupted, and saving or translating a conversation. To start a session, see [03 Starting sessions](03-starting-sessions.md); to stop or tidy one up, see [05 Stopping and tidying up](05-stopping-and-tidying.md).
+This chapter is about the conversation view of a session: reading and replying to the agent, queueing follow-ups, plans, reply suggestions, what to do when a turn is interrupted, and saving or translating a conversation. To start a session, see [Start a session](../user/sessions/start.md); to stop or tidy one up, see [05 Stopping and tidying up](05-stopping-and-tidying.md).
 
 ## Reading and replying to a running agent's conversation
 
@@ -326,7 +326,7 @@ again.
 
 ---
 
-Related: [03 Starting sessions](03-starting-sessions.md) for launching ·
+Related: [Start a session](../user/sessions/start.md) for launching ·
 [05 Stopping and tidying up](05-stopping-and-tidying.md) for resuming ·
 [ref/features.md](../ref/features.md) for the catalogue ·
 [ref/agents.md](../ref/agents.md) for which agents support what

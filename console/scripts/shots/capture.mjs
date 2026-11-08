@@ -43,6 +43,19 @@ const mirrorOf = (s) => pane("p0", s, { kind: "terminal", chat: true });
 const FOCUS_TREE = { assistant: 1, workitems: 0, memos: 0, schedules: 0, repos: 1, files: 0 };
 const SHOW_TOOLS = { assistant: 1, workitems: 1, memos: 1, schedules: 1, repos: 1, files: 0 };
 
+// Open the Start hub. Right after boot the bar can still read the workspace as not running and
+// ask to start it; cancel that and click again once the state has loaded.
+const OPEN_START_HUB = `
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 10; i++) {
+        document.querySelector(".ws-newsession")?.click();
+        await wait(700);
+        const c = document.querySelector(".ui-confirm");
+        if (!c) break;
+        [...c.querySelectorAll("button")].find((b) => /キャンセル|Cancel/.test(b.textContent || ""))?.click();
+        await wait(1000);
+      }`;
+
 const SCENES = [
   {
     name: "console",
@@ -737,6 +750,97 @@ const SCENES = [
       await new Promise((r) => setTimeout(r, 1500));
     })()`,
     settle: 2500,
+  },
+  {
+    // The Start hub opened from the WS bar: where to work (chat, shell, home, a repository).
+    name: "sessions-start",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${OPEN_START_HUB}
+    })()`,
+    settle: 1500,
+  },
+  {
+    // "Start work" for a repository as it opens: agent, model, first prompt, and the folded
+    // Location and Details sections with their summaries.
+    name: "sessions-launch",
+    guide: true,
+    // The hub stays open under the dialog; the action tags the top one.
+    clip: "#shot-launch",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1800,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${OPEN_START_HUB}
+      [...document.querySelectorAll(".start-row")].find((el) => el.textContent.includes("webshop"))?.click();
+      await wait(1200);
+      const ms = document.querySelectorAll(".ui-modal");
+      if (ms.length) ms[ms.length - 1].id = "shot-launch";
+    })()`,
+    settle: 1500,
+  },
+  {
+    // "Start work" for a repository with its Location section unfolded: new worktree or this copy,
+    // the base branch and the working directory.
+    name: "sessions-location",
+    guide: true,
+    clip: ".launch-sec.open",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${OPEN_START_HUB}
+      [...document.querySelectorAll(".start-row")].find((el) => el.textContent.includes("webshop"))?.click();
+      await wait(1200);
+      // The first section in the dialog is Location.
+      document.querySelector(".launch-sec-head")?.click();
+      await wait(600);
+      document.querySelector(".launch-sec.open")?.scrollIntoView({ block: "center" });
+    })()`,
+    settle: 1800,
+  },
+  {
+    // A GitHub issue's detail opened from the work-item list, with "Start this ticket".
+    name: "sessions-issue",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    // The repository section stays open so the repositories have loaded before the detail
+    // opens; the start section picks its default repository when it mounts.
+    sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 1, files: 0 },
+    width: 1400,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 1500));
+      [...document.querySelectorAll(".wi-row")].find((el) => el.textContent.includes("#312"))?.click();
+    })()`,
+    settle: 1800,
+  },
+  {
+    // The session rows of the repository tree, for their state badges.
+    name: "sessions-status",
+    guide: true,
+    clip: "#shot-sess-list",
+    pad: 4,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 600));
+      const rows = [...document.querySelectorAll(".sess-row")];
+      const box = rows[0]?.closest(".sess-list.proj-tree");
+      if (box) box.id = "shot-sess-list";
+    })()`,
+    settle: 1200,
   },
 ];
 

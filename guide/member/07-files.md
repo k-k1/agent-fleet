@@ -115,7 +115,7 @@ assistant chat, the document viewer), it turns these into links:
   It stays plain text in the chat and in the document viewer.
 - **Ticket numbers** (`#956`, `owner/name#956`, a Jira key, and both ends of a range such as
   `#573-#598`) open the ticket's details, by the rules in
-  [03 Starting sessions](03-starting-sessions.md#from-a-ticket-number-in-the-conversation). In a file's preview a
+  [Start from an issue or a ticket](../user/sessions/from-issues.md#open-from-an-issue-number-in-the-conversation). In a file's preview a
   `#956` is read against the working copy the file is in: only for a file under `~/repos/<name>/`
   whose origin is on github.com or bitbucket.org. A file in a Git repository nested inside the
   copy (a submodule, a vendored clone) or outside `~/repos` gets no ticket links at all, and the
