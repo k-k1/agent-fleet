@@ -28,6 +28,7 @@ type feedbackFixture struct {
 	member  []notice.Event
 	once    map[string]bool
 	now     time.Time
+	watched map[string]bool // "session|owner/repo#N|type" the session watches itself
 }
 
 func newFeedbackFixture(t *testing.T) *feedbackFixture {
@@ -69,6 +70,10 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 		return nil
 	}
 	prFeedback = &prFeedbackState{}
+	ow := prFeedbackWatched
+	prFeedbackWatched = func(name, linkKey, typ string) bool { return f.watched[name+"|"+linkKey+"|"+typ] }
+	f.watched = map[string]bool{}
+	t.Cleanup(func() { prFeedbackWatched = ow })
 	t.Cleanup(func() {
 		prFeedbackEnabled, prFeedbackLookup, prFeedbackBBLookup, prFeedbackAlive, prFeedbackReady, prFeedbackBusy,
 			prFeedbackInject, prFeedbackStart, prFeedbackPut = oe, ol, ob, oa, or, obz, oi, os, op
@@ -530,5 +535,60 @@ func testMergeToldBeforeTheList(t *testing.T, role string) {
 	}
 	if len(told) != 1 || told[0] != "pr-merged|pr-merged|github:o/r#9|2026-11-04T08:00:00Z" {
 		t.Fatalf("told %v: the merge is told where it is recorded, under the list's own key", told)
+	}
+}
+
+func TestPRFeedbackLeavesAPRTheSessionWatchesToTheWatchEngine(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	failing(f.pr(1, "h1"), "unit")
+	f.watched["a|o/r#1|pr.checks.completed"] = true
+	f.ticks(3)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v though the session watches its PR's checks", f.sent)
+	}
+	// The watch ended: the head already told by the engine is not told again.
+	f.watched["a|o/r#1|pr.checks.completed"] = false
+	f.ticks(3)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v after the watch ended", f.sent)
+	}
+}
+
+func TestPRFeedbackReviewIsLeftOnlyWhenEveryPartIsWatched(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	pr := f.pr(1, "h1")
+	pr.ChangesRequested = true
+	// Only threads are watched: the change request is not the engine's to tell.
+	f.watched["a|o/r#1|pr.review.threads_unresolved"] = true
+	f.ticks(2)
+	if len(f.sent) != 1 || !strings.Contains(f.sent[0], "kind=pr-feedback") {
+		t.Fatalf("sent %v: a change request the watch does not cover must still be told", f.sent)
+	}
+	// New threads, now covered: left to the engine.
+	pr.UnresolvedThreads = 2
+	f.ticks(3)
+	if len(f.sent) != 1 {
+		t.Fatalf("sent %v: covered new threads were told twice", f.sent)
+	}
+	// New threads with only change requests watched: they must still be told.
+	f.watched["a|o/r#1|pr.review.threads_unresolved"] = false
+	f.watched["a|o/r#1|pr.review.changes_requested"] = true
+	pr.UnresolvedThreads = 3
+	f.ticks(3)
+	if len(f.sent) != 2 {
+		t.Fatalf("sent %v: uncovered new threads were lost", f.sent)
+	}
+}
+
+func TestPRFeedbackCIIsLeftToAFailedChecksWatch(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	failing(f.pr(1, "h1"), "unit")
+	f.watched["a|o/r#1|pr.checks.failed"] = true
+	f.ticks(3)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v though the session watches failed checks", f.sent)
 	}
 }

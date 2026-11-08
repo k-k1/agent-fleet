@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"sort"
@@ -17,14 +18,19 @@ import (
 	"time"
 )
 
-// GitHub event types this source produces. pr.review.threads_unresolved needs GraphQL and comes
-// with the branchpr work of step 1b; until then watch refuses it here.
+// GitHub event types this source produces over REST. pr.review.threads_unresolved needs
+// GraphQL (REST has no resolved state for a thread); it is offered only when Threads is set.
 var githubTypes = []string{
 	"pr.checks.completed", "pr.checks.failed",
 	"pr.conflict", "pr.mergeable", "pr.ready",
 	"pr.merged", "pr.closed",
 	"pr.review.changes_requested",
 }
+
+const typeThreads = "pr.review.threads_unresolved"
+
+// ghThreadFailLimit is how many threads reads in a row may fail before the whole read fails.
+const ghThreadFailLimit = 3
 
 // Poll intervals the source suggests.
 const (
@@ -44,6 +50,9 @@ type GitHub struct {
 	Token func() (string, error)
 	// Renew returns a fresh token after GitHub rejected the given one.
 	Renew func(rejected string) (string, error)
+	// Threads counts a PR's unresolved review threads. It is read only for a subject whose
+	// watches ask for pr.review.threads_unresolved, and each read is one counted request.
+	Threads func(ctx context.Context, repo string, number int) (int, error)
 	// API is the REST base; tests point it at a local server.
 	API    string
 	Client *http.Client
@@ -62,7 +71,13 @@ func NewGitHub(token func() (string, error), renew func(string) (string, error))
 
 func (g *GitHub) Kind() string { return "github" }
 
-func (g *GitHub) Types() []string { return append([]string(nil), githubTypes...) }
+func (g *GitHub) Types() []string {
+	t := append([]string(nil), githubTypes...)
+	if g.Threads != nil {
+		t = append(t, typeThreads)
+	}
+	return t
+}
 
 var (
 	ghRepoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -145,6 +160,12 @@ type ghCursor struct {
 	Runs    ghCached[ghCheckRuns] `json:"runs"`
 	Status  ghCached[ghStatus]    `json:"status"`
 	Reviews ghCached[[]ghReview]  `json:"reviews"`
+	// ThreadEpisode counts the times the unresolved threads went back to zero, and ThreadHigh is
+	// the most seen since: the version of pr.review.threads_unresolved, so a rise is news and a
+	// fall is not.
+	ThreadEpisode int `json:"thread_episode,omitempty"`
+	ThreadHigh    int `json:"thread_high,omitempty"`
+	ThreadFails   int `json:"thread_fails,omitempty"` // consecutive failed threads reads
 	// Later pages, by path, with their own ETags: a PR with many checks would otherwise spend
 	// counted requests on every read even when nothing changed.
 	RunPages    map[string]ghCached[ghCheckRuns] `json:"run_pages,omitempty"`
@@ -209,7 +230,7 @@ type ghReview struct {
 	} `json:"user"`
 }
 
-func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage) ([]Event, json.RawMessage, Hint, error) {
+func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
 	repo, n, ok := parseGHSubject(subject)
 	if !ok {
 		return nil, raw, Hint{}, fmt.Errorf("not a github subject: %s", subject)
@@ -297,6 +318,40 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 		events = append(events, ev("pr.review.changes_requested", strconv.FormatInt(id, 10),
 			fmt.Sprintf("Changes were requested on %s.", ref), data))
 	}
+	if g.Threads != nil && selects(want, typeThreads) {
+		count, err := g.Threads(ctx, repo, n)
+		if err != nil {
+			// The REST answers and their ETags stay good: only the threads are unknown this
+			// round. A failure that persists fails the whole read, so it shows in
+			// list_watches and backs off instead of going silent.
+			cur.ThreadFails++
+			if cur.ThreadFails >= ghThreadFailLimit {
+				return nil, raw, Hint{}, fmt.Errorf("unresolved review threads could not be read %d times: %w", cur.ThreadFails, err)
+			}
+			if cur.ThreadFails == 1 {
+				log.Printf("watch: unresolved threads of %s: %v", ref, err)
+			}
+			goto done
+		}
+		cur.ThreadFails = 0
+		g.charge()
+		switch {
+		case count == 0 && cur.ThreadHigh > 0:
+			cur.ThreadEpisode++
+			cur.ThreadHigh = 0
+		case count > cur.ThreadHigh:
+			cur.ThreadHigh = count
+		}
+		if count > 0 {
+			events = append(events, ev(typeThreads, fmt.Sprintf("%d.%d", cur.ThreadEpisode, cur.ThreadHigh),
+				fmt.Sprintf("%s has %d unresolved review thread(s).", ref, count), nil))
+		}
+	} else {
+		// Not read this round: a later run of failures starts counting from zero.
+		cur.ThreadFails = 0
+	}
+
+done:
 	out, _ := json.Marshal(cur)
 	hint := Hint{After: ghOpenAfter}
 	if busy {
@@ -574,6 +629,16 @@ func (g *GitHub) account(resp *http.Response) {
 	if resp.StatusCode != http.StatusNotModified {
 		g.spent++
 	}
+}
+
+// charge counts one request made outside get (the threads read) against the source's share.
+func (g *GitHub) charge() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.clock().Sub(g.windowStart) >= time.Hour {
+		g.windowStart, g.spent = g.clock(), 0
+	}
+	g.spent++
 }
 
 func (g *GitHub) overBudget() (time.Time, bool) {

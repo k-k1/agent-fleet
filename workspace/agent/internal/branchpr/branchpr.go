@@ -15,6 +15,7 @@ package branchpr
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -302,13 +303,118 @@ func (c *Cache) refresh(due []Key) {
 				continue // keeps its last answer, and stays due
 			}
 			if e := c.entries[k]; e != nil {
-				e.pr = got[k]
-				e.fetched = now
+				c.storeLocked(k, e, got[k], now)
 			}
 		}
 		c.mu.Unlock()
 	}
 }
+
+// storeLocked records pr as k's answer and hands it to every other entry that holds the same PR,
+// so a PR asked by number (a watch) and by branch (a session row) is one answer: whichever read
+// it last keeps the other fresh, and a Lookup does not ask GitHub again within its TTL. A branch
+// entry is matched by the PR it last held, so a branch that moved to another PR keeps its old
+// answer for one TTL more at worst.
+func (c *Cache) storeLocked(k Key, e *entry, pr *PR, now time.Time) {
+	e.pr, e.fetched = pr, now
+	if pr == nil || pr.Number <= 0 {
+		return
+	}
+	for ok, oe := range c.entries {
+		if ok == k || oe == e || !strings.EqualFold(ok.Repo, k.Repo) {
+			continue
+		}
+		same := ok.Number == pr.Number || (ok.Number == 0 && oe.pr != nil && oe.pr.Number == pr.Number)
+		if same {
+			oe.pr, oe.fetched = pr, now
+		}
+	}
+}
+
+// Fetch answers keys from the cache when every entry is fresh, and otherwise asks the provider
+// now and waits for the answer, for a caller that cannot act on a stale or missing entry (the watch engine's first read of a subject, ADR 0133 rule 6.2). The
+// answers are stored as a background refresh would store them. A key GitHub could not answer
+// is absent from the result; a PR that does not exist answers nil.
+func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
+	if len(keys) == 0 {
+		return map[Key]*PR{}, nil
+	}
+	if len(keys) > c.batch {
+		return nil, fmt.Errorf("at most %d keys per fetch", c.batch)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	c.mu.Lock()
+	for k, e := range c.entries {
+		if now.Sub(e.asked) > forgetAfter {
+			delete(c.entries, k)
+		}
+	}
+	c.mu.Unlock()
+	// Fresh answers are as good as a call, and a hold after an error or a rate limit applies to
+	// Fetch as it does to the background refresh.
+	c.mu.Lock()
+	cached, allFresh := map[Key]*PR{}, true
+	for _, k := range keys {
+		e := c.entries[k]
+		if e == nil || !e.fresh(now, c.openTTL) {
+			allFresh = false
+			break
+		}
+		e.asked = now
+		cached[k] = e.pr
+	}
+	hold := c.holdUntil
+	c.mu.Unlock()
+	if allFresh {
+		return cached, nil
+	}
+	if now.Before(hold) {
+		return nil, fmt.Errorf("the provider is held off until %s after an error", hold.Format(time.RFC3339))
+	}
+	token, err := c.Token()
+	if err != nil {
+		return nil, err
+	}
+	if token == "" {
+		return nil, errNotConnected
+	}
+	got, failed, _, err := c.fetch(token, keys)
+	if errors.Is(err, errUnauthorized) && c.Renew != nil {
+		if nt, rerr := c.Renew(token); rerr == nil && nt != "" && nt != token {
+			got, failed, _, err = c.fetch(nt, keys)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	now = time.Now()
+	out := map[Key]*PR{}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, k := range keys {
+		if failed[k] {
+			continue
+		}
+		e := c.entries[k]
+		if e == nil {
+			e = &entry{}
+			c.entries[k] = e
+		}
+		e.asked = now
+		c.storeLocked(k, e, got[k], now)
+		out[k] = got[k]
+	}
+	return out, nil
+}
+
+// errNotConnected is Fetch's answer when the provider has no credential.
+var errNotConnected = errors.New("not connected")
+
+// ErrNotConnected reports whether err is Fetch's "not connected" answer.
+func ErrNotConnected(err error) bool { return errors.Is(err, errNotConnected) }
 
 // prFields is what one PR node answers, for a branch's list and for a PR asked by number alike.
 var prFields = fmt.Sprintf("id number title state isDraft url mergeable reviewDecision closedAt headRepositoryOwner{login} "+

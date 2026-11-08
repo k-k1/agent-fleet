@@ -134,12 +134,21 @@ func (e *Engine) save() bool {
 // Request is one watch call.
 type Request struct {
 	Owner       string
+	Requester   string // set when the owner is not the session that asked
 	Source      string
 	Ref         string
 	DefaultRepo string
 	Types       []string
 	Until       string
 	Lifetime    time.Duration // 0 = DefaultLifetime
+}
+
+// maker is the session that made the request.
+func (r Request) maker() string {
+	if r.Requester != "" {
+		return r.Requester
+	}
+	return r.Owner
 }
 
 // maxRefLen bounds the reference a session may pass; it is kept on disk and shown back.
@@ -176,6 +185,12 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if err := e.checkLimits(r.Owner); err != nil {
 		return Subscription{}, err
 	}
+	e.mu.Lock()
+	err := e.requesterLimitLocked(r.maker())
+	e.mu.Unlock()
+	if err != nil {
+		return Subscription{}, err
+	}
 	res, err := src.Resolve(ctx, r.Ref, r.DefaultRepo)
 	if err != nil {
 		return Subscription{}, err
@@ -185,13 +200,16 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	}
 	now := e.now()
 	sub := Subscription{
-		ID: newID(), Owner: r.Owner, Source: r.Source, Subject: res.Subject, Ref: r.Ref, URL: res.URL,
+		ID: newID(), Owner: r.Owner, Requester: r.Requester, Source: r.Source, Subject: res.Subject, Ref: r.Ref, URL: res.URL,
 		Types: append([]string(nil), r.Types...), Until: until, Created: now.UTC(), Expires: now.Add(life).UTC(),
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.load()
 	if err := e.limitsLocked(r.Owner); err != nil {
+		return Subscription{}, err
+	}
+	if err := e.requesterLimitLocked(r.maker()); err != nil {
 		return Subscription{}, err
 	}
 	e.state.Subs = append(e.state.Subs, sub)
@@ -213,6 +231,21 @@ func (e *Engine) checkLimits(owner string) error {
 	defer e.mu.Unlock()
 	e.load()
 	return e.limitsLocked(owner)
+}
+
+// requesterLimitLocked counts every watch a session made, its own and those it made for its
+// parent, against that session's limit, so a child adds at most MaxPerOwner watches in all.
+func (e *Engine) requesterLimitLocked(requester string) error {
+	n := 0
+	for _, s := range e.state.Subs {
+		if !s.Done && (s.Owner == requester || s.Requester == requester) {
+			n++
+		}
+	}
+	if n >= MaxPerOwner {
+		return &ErrRefused{fmt.Sprintf("this session already has %d watches of its own or for its parent, the limit", MaxPerOwner)}
+	}
+	return nil
 }
 
 func (e *Engine) limitsLocked(owner string) error {
@@ -261,6 +294,25 @@ func (e *Engine) Unsubscribe(owner, id string) bool {
 		e.sink.Forget(owner)
 	}
 	return found
+}
+
+// Watching reports whether owner has a live subscription to subject that selects typ. The PR
+// feedback watch asks it so a session that watches its own PR is not told twice.
+// A subscription past its deadline, or whose owner is gone, does not count: the engine drops it
+// on its next tick without telling anyone.
+func (e *Engine) Watching(owner string, subject SubjectID, typ string) bool {
+	e.mu.Lock()
+	now := e.now()
+	e.load()
+	found := false
+	for _, s := range e.state.Subs {
+		if s.Owner == owner && s.Subject == subject && !s.Done && now.Before(s.Expires) && selects(s.Types, typ) {
+			found = true
+			break
+		}
+	}
+	e.mu.Unlock()
+	return found && e.sink.OwnerExists(owner)
 }
 
 // Listed is one subscription with its subject's health, for list_watches.
@@ -321,7 +373,7 @@ func (e *Engine) Tick(ctx context.Context) {
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, e.pollTimeout)
-		evs, cur, hint, err := src.Poll(pctx, d.id, d.cursor)
+		evs, cur, hint, err := src.Poll(pctx, d.id, d.cursor, d.want)
 		cancel()
 		if err != nil && ctx.Err() != nil {
 			break // cut off by the tick's deadline, not the provider's fault: no backoff
@@ -526,15 +578,18 @@ type dueSubject struct {
 	id     SubjectID
 	source string
 	cursor json.RawMessage
+	want   []string
 }
 
 // dueLocked lists the subjects whose next read has come, least recently read first so one busy
 // subject cannot keep the rest waiting, at most maxPollsPerTick of them.
 func (e *Engine) dueLocked(now time.Time) []dueSubject {
 	srcOf := map[SubjectID]string{}
+	want := map[SubjectID][]string{}
 	for _, s := range e.state.Subs {
 		if !s.Done {
 			srcOf[s.Subject] = s.Source
+			want[s.Subject] = append(want[s.Subject], s.Types...)
 		}
 	}
 	var out []dueSubject
@@ -543,7 +598,7 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 		if !ok || now.Before(ss.NextPoll) {
 			continue
 		}
-		out = append(out, dueSubject{id, src, ss.Cursor})
+		out = append(out, dueSubject{id, src, ss.Cursor, want[id]})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := e.state.Subjects[out[i].id].LastPoll, e.state.Subjects[out[j].id].LastPoll

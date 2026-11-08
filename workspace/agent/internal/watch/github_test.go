@@ -107,7 +107,7 @@ func TestGitHubPollReportsChecksAndUses304(t *testing.T) {
 	f.bodies[reviewsPath] = []any{}
 	g := newTestGitHub(t, f)
 
-	evs, cur, hint, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	evs, cur, hint, err := g.Poll(context.Background(), "github:o/r#7", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestGitHubPollReportsChecksAndUses304(t *testing.T) {
 	v1 := evs[0].Version
 
 	// Nothing changed: every endpoint answers 304, the events are the same.
-	evs2, _, _, err := g.Poll(context.Background(), "github:o/r#7", cur)
+	evs2, _, _, err := g.Poll(context.Background(), "github:o/r#7", cur, nil)
 	if err != nil || f.n304 != 4 || types(evs2) != types(evs) || evs2[0].Version != v1 {
 		t.Fatalf("second poll: err=%v 304s=%d events=%s", err, f.n304, types(evs2))
 	}
@@ -137,7 +137,7 @@ func TestGitHubPollReportsChecksAndUses304(t *testing.T) {
 		map[string]any{"id": 1, "name": "build", "status": "completed", "conclusion": "success", "completed_at": "t1"},
 		map[string]any{"id": 3, "name": "lint", "status": "completed", "conclusion": "success", "completed_at": "t3"},
 	}}
-	evs3, _, _, _ := g.Poll(context.Background(), "github:o/r#7", cur)
+	evs3, _, _, _ := g.Poll(context.Background(), "github:o/r#7", cur, nil)
 	if types(evs3) != "pr.checks.completed,pr.mergeable,pr.ready" || evs3[0].Version == v1 {
 		t.Fatalf("re-run: %s %v", types(evs3), evs3)
 	}
@@ -156,7 +156,7 @@ func TestGitHubPollRunningChecksConflictAndReviews(t *testing.T) {
 		map[string]any{"id": 12, "state": "APPROVED", "user": map[string]any{"login": "other"}},
 	}
 	g := newTestGitHub(t, f)
-	evs, _, hint, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	evs, _, hint, err := g.Poll(context.Background(), "github:o/r#7", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestGitHubPollMergedIsSettled(t *testing.T) {
 	f := newFakeGitHub()
 	f.bodies[pullPath] = map[string]any{"state": "closed", "merged": true, "head": map[string]any{"sha": "abc1234def"}}
 	g := newTestGitHub(t, f)
-	evs, _, hint, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	evs, _, hint, err := g.Poll(context.Background(), "github:o/r#7", nil, nil)
 	if err != nil || types(evs) != "pr.merged" || !hint.Settled {
 		t.Fatalf("merged: %v %s %+v", err, types(evs), hint)
 	}
@@ -213,7 +213,7 @@ func TestGitHubRateLimitAndBudget(t *testing.T) {
 	f.headers.Set("X-RateLimit-Remaining", "0")
 	f.headers.Set("X-RateLimit-Reset", "2000000000")
 	g := newTestGitHub(t, f)
-	_, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	_, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil, nil)
 	var rl *ErrRateLimited
 	if !errors.As(err, &rl) || rl.Until.Unix() != 2000000000 {
 		t.Fatalf("primary limit: %v", err)
@@ -291,7 +291,7 @@ func TestGitHubReadsEveryPageOfChecks(t *testing.T) {
 	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
 	f.bodies[reviewsPath] = []any{}
 	g := newTestGitHub(t, f)
-	evs, cur, _, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	evs, cur, _, err := g.Poll(context.Background(), "github:o/r#7", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestGitHubReadsEveryPageOfChecks(t *testing.T) {
 	}
 	// Nothing changed: the second page is asked with its ETag too, and costs nothing.
 	spent := g.spent
-	evs2, _, _, err := g.Poll(context.Background(), "github:o/r#7", cur)
+	evs2, _, _, err := g.Poll(context.Background(), "github:o/r#7", cur, nil)
 	if err != nil || types(evs2) != types(evs) {
 		t.Fatalf("second poll: %v %s", err, types(evs2))
 	}
@@ -322,12 +322,12 @@ func TestGitHubReadyNeedsEveryCheckGreen(t *testing.T) {
 	f.bodies[statusPath] = map[string]any{"total_count": 1, "statuses": []any{map[string]any{"context": "ci", "state": "pending"}}}
 	f.bodies[reviewsPath] = []any{}
 	g := newTestGitHub(t, f)
-	evs, cur, _, _ := g.Poll(context.Background(), "github:o/r#7", nil)
+	evs, cur, _, _ := g.Poll(context.Background(), "github:o/r#7", nil, nil)
 	if got := types(evs); got != "pr.mergeable" {
 		t.Fatalf("pending status: %s", got)
 	}
 	f.bodies[statusPath] = map[string]any{"total_count": 1, "statuses": []any{map[string]any{"context": "ci", "state": "success", "updated_at": "u"}}}
-	evs, _, _, _ = g.Poll(context.Background(), "github:o/r#7", cur)
+	evs, _, _, _ = g.Poll(context.Background(), "github:o/r#7", cur, nil)
 	if got := types(evs); got != "pr.checks.completed,pr.mergeable,pr.ready" {
 		t.Fatalf("all green: %s", got)
 	}
@@ -351,7 +351,7 @@ func TestGitHubForbiddenWithoutRateLimitIsAnError(t *testing.T) {
 	f := newFakeGitHub()
 	f.status[pullPath] = http.StatusForbidden
 	g := newTestGitHub(t, f)
-	_, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	_, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil, nil)
 	var rl *ErrRateLimited
 	if err == nil || errors.As(err, &rl) {
 		t.Fatalf("plain 403: %v", err)
@@ -359,7 +359,7 @@ func TestGitHubForbiddenWithoutRateLimitIsAnError(t *testing.T) {
 	f.headers.Set("Retry-After", "30")
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	g.now = func() time.Time { return now }
-	if _, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil); !errors.As(err, &rl) || !rl.Until.Equal(now.Add(30*time.Second)) {
+	if _, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil, nil); !errors.As(err, &rl) || !rl.Until.Equal(now.Add(30*time.Second)) {
 		t.Fatalf("secondary limit: %v", err)
 	}
 }
@@ -408,5 +408,94 @@ func TestSafeURLRefusesWhitespaceAndControls(t *testing.T) {
 	}
 	if SafeURL("https://x.test/run/1?a=b") == "" {
 		t.Error("a plain https URL was refused")
+	}
+}
+
+func TestGitHubThreadsOnlyWhenAskedAndOnlyOnARise(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(true), "blocked")
+	f.bodies[runsPath] = map[string]any{"total_count": 0, "check_runs": []any{}}
+	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
+	f.bodies[reviewsPath] = []any{}
+	g := newTestGitHub(t, f)
+	if strings.Contains(strings.Join(g.Types(), ","), typeThreads) {
+		t.Fatal("threads offered without a reader")
+	}
+	count, reads := 0, 0
+	g.Threads = func(_ context.Context, repo string, n int) (int, error) {
+		reads++
+		if repo != "o/r" || n != 7 {
+			t.Errorf("threads asked for %s#%d", repo, n)
+		}
+		return count, nil
+	}
+	if !strings.Contains(strings.Join(g.Types(), ","), typeThreads) {
+		t.Fatal("threads not offered with a reader")
+	}
+	_, cur, _, _ := g.Poll(context.Background(), "github:o/r#7", nil, []string{"pr.merged"})
+	if reads != 0 {
+		t.Fatal("threads read though nobody asked for them")
+	}
+	versions := []string{}
+	for _, c := range []int{1, 2, 1, 0, 1} {
+		count = c
+		var evs []Event
+		evs, cur, _, _ = g.Poll(context.Background(), "github:o/r#7", cur, []string{"pr.review.*"})
+		v := "-"
+		for _, e := range evs {
+			if e.Type == typeThreads {
+				v = e.Version
+			}
+		}
+		versions = append(versions, v)
+	}
+	// 1 and 2 are news; falling back to 1 is not; a new episode after zero is.
+	if got := strings.Join(versions, ","); got != "0.1,0.2,0.2,-,1.1" {
+		t.Fatalf("versions = %s", got)
+	}
+}
+
+func TestGitHubThreadsFailureKeepsTheRestOfThePoll(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(false), "dirty")
+	f.bodies[runsPath] = map[string]any{"total_count": 0, "check_runs": []any{}}
+	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
+	f.bodies[reviewsPath] = []any{}
+	g := newTestGitHub(t, f)
+	g.Threads = func(context.Context, string, int) (int, error) { return 0, errors.New("graphql down") }
+	evs, cur, _, err := g.Poll(context.Background(), "github:o/r#7", nil, []string{"pr.*"})
+	if err != nil || types(evs) != "pr.conflict" || len(cur) == 0 {
+		t.Fatalf("a threads failure lost the REST answers: %v %s", err, types(evs))
+	}
+}
+
+func TestGitHubPersistentThreadsFailureFailsTheRead(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(true), "clean")
+	f.bodies[runsPath] = map[string]any{"total_count": 0, "check_runs": []any{}}
+	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
+	f.bodies[reviewsPath] = []any{}
+	g := newTestGitHub(t, f)
+	fail := true
+	g.Threads = func(context.Context, string, int) (int, error) {
+		if fail {
+			return 0, errors.New("graphql down")
+		}
+		return 0, nil
+	}
+	var cur json.RawMessage
+	for i := 1; i < ghThreadFailLimit; i++ {
+		var err error
+		if _, cur, _, err = g.Poll(context.Background(), "github:o/r#7", cur, []string{typeThreads}); err != nil {
+			t.Fatalf("failure %d failed the read: %v", i, err)
+		}
+	}
+	if _, _, _, err := g.Poll(context.Background(), "github:o/r#7", cur, []string{typeThreads}); err == nil {
+		t.Fatal("a persistent threads failure stayed invisible")
+	}
+	// The failed read did not keep its cursor; one success resets the count.
+	fail = false
+	if _, cur, _, err := g.Poll(context.Background(), "github:o/r#7", cur, []string{typeThreads}); err != nil || strings.Contains(string(cur), "thread_fails") {
+		t.Fatalf("a success did not reset: %v %s", err, cur)
 	}
 }

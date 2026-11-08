@@ -23,6 +23,7 @@ const watchCallTimeout = 40 * time.Second
 
 type watchArgs struct {
 	Source         string   `json:"source,omitempty"`
+	Notify         string   `json:"notify,omitempty"`
 	Ref            string   `json:"ref"`
 	Types          []string `json:"types"`
 	Until          string   `json:"until,omitempty"`
@@ -90,7 +91,8 @@ func watchSchema() map[string]any {
 		"name": mcpToolWatch,
 		"description": "Agent Fleet: get a notice in this session when a pull request changes, instead of polling it yourself (no `gh pr checks --watch` in the background). " +
 			"The notice arrives as your next input once you are idle, even after a restart; a stopped session is started for it. " +
-			"Types: pr.checks.completed, pr.checks.failed, pr.conflict, pr.mergeable, pr.ready, pr.merged, pr.closed, pr.review.changes_requested, or a prefix like pr.checks.*. " +
+			"Types: pr.checks.completed, pr.checks.failed, pr.conflict, pr.mergeable, pr.ready, pr.merged, pr.closed, pr.review.changes_requested, pr.review.threads_unresolved, or a prefix like pr.checks.*. " +
+			"notify parent sends the notices to the session that started you instead; that watch then belongs to it. " +
 			"A condition that already holds is reported at once. until first (default) ends the watch after one notice; deadline keeps it until it expires (default 7 days, at most 30).",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
@@ -100,6 +102,7 @@ func watchSchema() map[string]any {
 				"until":            map[string]any{"type": "string", "enum": []string{"first", "deadline"}},
 				"expires_in_hours": map[string]any{"type": "integer", "minimum": 1, "maximum": 720},
 				"source":           map[string]any{"type": "string", "enum": []string{"github"}, "description": "default github"},
+				"notify":           map[string]any{"type": "string", "enum": []string{"self", "parent"}, "description": "default self"},
 			},
 			"required": []string{"ref", "types"},
 		},

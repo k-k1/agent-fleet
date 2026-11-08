@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchpr"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -61,6 +62,7 @@ func watchEngine() *watch.Engine {
 		gh := watch.NewGitHub(githubToken, func(rejected string) (string, error) {
 			return gitx.RenewRejectedGitHubToken(context.Background(), rejected)
 		})
+		gh.Threads = watchThreads
 		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh)
 	})
 	return watchEngineInst
@@ -77,6 +79,29 @@ func StartWatchEngine() {
 			time.Sleep(watchInterval)
 		}
 	}()
+}
+
+// watchThreads reads a PR's unresolved review threads through the session list's PR cache: the
+// answer refreshes the row's entry too, so the list does not ask GitHub for the same PR again
+// (ADR 0133 rule 6.2).
+func watchThreads(ctx context.Context, repo string, number int) (int, error) {
+	k := branchpr.Key{Repo: repo, Number: number}
+	got, err := sessionPRs.Fetch(ctx, []branchpr.Key{k})
+	switch {
+	case branchpr.ErrNotConnected(err):
+		return 0, &watch.ErrRefused{Reason: "GitHub is not connected (Settings > Connections)"}
+	case err != nil:
+		return 0, err
+	}
+	pr, ok := got[k]
+	if !ok {
+		return 0, errors.New("GitHub did not answer for the PR's review threads")
+	}
+	if pr == nil {
+		// Not "no threads": GitHub could not show the PR, which must not reset the count.
+		return 0, errors.New("GitHub did not return the PR for its review threads")
+	}
+	return pr.UnresolvedThreads, nil
 }
 
 // watchSink delivers into the owning session.
@@ -187,6 +212,7 @@ func (s *watchSink) wake(m session.Meta, now time.Time) {
 // watchReq is POST /sessions/{name}/watches.
 type watchReq struct {
 	Source         string   `json:"source"`
+	Notify         string   `json:"notify"`
 	Ref            string   `json:"ref"`
 	Types          []string `json:"types"`
 	Until          string   `json:"until"`
@@ -216,10 +242,29 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_expiry", "expires_in_hours must be between 1 and 720")
 		return
 	}
+	owner, requester := name, ""
+	switch strings.TrimSpace(req.Notify) {
+	case "", "self":
+	case "parent":
+		// The parent is the session that started this one; a handoff's predecessor is not.
+		p := stalledTreeParent(m)
+		if p == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "no_parent", "notify parent needs a session started by another session")
+			return
+		}
+		if pm, ok := session.ReadMeta(p); !ok || pm.Archived {
+			httpx.WriteErr(w, http.StatusBadRequest, "no_parent", "the parent session "+p+" is gone")
+			return
+		}
+		owner, requester = p, name
+	default:
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_notify", "notify must be self or parent")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	sub, err := watchEngine().Subscribe(ctx, watch.Request{
-		Owner: name, Source: src, Ref: strings.TrimSpace(req.Ref), DefaultRepo: linkRepoOf(m.Dir, src),
+		Owner: owner, Requester: requester, Source: src, Ref: strings.TrimSpace(req.Ref), DefaultRepo: linkRepoOf(m.Dir, src),
 		Types: req.Types, Until: strings.TrimSpace(req.Until), Lifetime: time.Duration(req.ExpiresInHours) * time.Hour,
 	})
 	if err != nil {
@@ -232,6 +277,12 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, watchCreateResp{Watch: sub})
+}
+
+// watchingPR reports whether name watches the GitHub PR "owner/repo#N" for typ, so the PR
+// feedback watch does not tell it the same thing a second time.
+func watchingPR(name, linkKey, typ string) bool {
+	return watchEngine().Watching(name, watch.SubjectID("github:"+strings.ToLower(linkKey)), typ)
 }
 
 // HandleWatchList (GET /sessions/{name}/watches) lists the session's watches.
