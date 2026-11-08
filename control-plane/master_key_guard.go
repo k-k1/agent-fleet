@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -111,13 +112,37 @@ const (
 	deploymentWarnWeakCookieSecret = "weak_cookie_secret"
 )
 
-const weakMasterKeyLog = "WARNING: AUTH=%s and AF_MASTER_KEY is shorter than 32 bytes of key material (or is a repeated pattern). " +
-	"Per-member keys derive from it, so it is only as strong as the value chosen. Generate one with `head -c 32 /dev/urandom | base64` " +
-	"and plan the rotation (guide/operate/04-secure.md, guide/operate/12-keys.md). A later release will refuse to start"
+// weakKeyRefusal is the error the Control Plane stops with when a deployment signing real
+// people in has a key that fails keycheck. It names the variable, never the value or a digest
+// of it. nil means start.
+//
+// Changing AF_MASTER_KEY on a running deployment makes what was sealed under the old value
+// unreadable, so the message points at the guide's rotation notes instead of just saying
+// "generate a new one".
+func weakKeyRefusal(authMode string, weakMaster, weakCookie bool) error {
+	var names []string
+	if weakMaster {
+		names = append(names, "AF_MASTER_KEY")
+	}
+	if weakCookie {
+		names = append(names, "AF_COOKIE_SECRET")
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return fmt.Errorf("AUTH=%s and %s shorter than 32 bytes of key material (or a repeated pattern): refusing to start. "+
+		"Generate each with `head -c 32 /dev/urandom | base64`; do not replace AF_MASTER_KEY on a deployment that "+
+		"already holds sealed values before reading guide/operate/04-secure.md and guide/operate/12-keys.md "+
+		"(changing AF_COOKIE_SECRET only signs everyone out once). AUTH=dev is exempt",
+		authMode, strings.Join(names, " and ")+weakKeyVerb(len(names)))
+}
 
-const weakCookieSecretLog = "WARNING: AUTH=%s and AF_COOKIE_SECRET is shorter than 32 bytes of key material (or is a repeated pattern). " +
-	"Session, sign-in state and preview cookies are signed with it. Generate one with `head -c 32 /dev/urandom | base64`; " +
-	"changing it signs everyone out once (guide/operate/04-secure.md). A later release will refuse to start"
+func weakKeyVerb(n int) string {
+	if n == 1 {
+		return " is"
+	}
+	return " are"
+}
 
 // weakKeyChecks evaluates both secrets for a deployment signing real people in. AUTH=dev is
 // exempt: it has no authentication to protect.

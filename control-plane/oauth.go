@@ -114,7 +114,7 @@ func (c config) oauthRedirectURI() string {
 
 // --- signed cookies (HMAC-SHA256, stdlib only) -----------------------------
 
-// cookiePurpose labels what a signed cookie is for. With AF_COOKIE_PURPOSE_KEYS on, each
+// cookiePurpose labels what a signed cookie is for. Unless AF_COOKIE_PURPOSE_KEYS=0, each
 // purpose signs with its own key, HMAC(AF_COOKIE_SECRET, "af-cookie/v1/<purpose>"), so a value
 // minted for one purpose never verifies for another, whatever its payload says. The purposes
 // are the whole list:
@@ -136,12 +136,12 @@ const (
 // (base64url has none), so the two cannot be confused.
 const cookieFormatV2 = "v2."
 
-// Two-stage switch (guide/operate/04-secure.md). A replica of the previous release cannot read
-// the labelled format, so a rolling update that issued it at once would sign people out
-// whenever a request met an old replica. Stage one: this release reads both formats and
-// keeps issuing the unlabelled one (cookiePurposeKeys off). Stage two, once every replica runs
-// this release: AF_COOKIE_PURPOSE_KEYS=1 issues the labelled format and accepts the
-// unlabelled one until legacyCookieUntil.
+// Per-purpose keys are the default. A replica older than the release that reads the labelled
+// format (0.42.0) cannot read it, so a rolling update from before that release would sign
+// people out whenever a request met an old replica: update to 0.42.0 first
+// (guide/operate/04-secure.md). AF_COOKIE_PURPOSE_KEYS=0 keeps issuing the unlabelled format for
+// one more release; either setting accepts both formats on read, the unlabelled one until
+// legacyCookieUntil when per-purpose keys are on.
 
 func (c config) cookieKey(p cookiePurpose) []byte {
 	mac := hmac.New(sha256.New, c.cookieSecret)

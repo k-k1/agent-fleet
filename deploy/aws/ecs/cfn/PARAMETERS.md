@@ -904,12 +904,12 @@ for by moving prose out of the template, so the next one needs the same.
 
 Pass-throughs for CP variables the operator guide calls configurable and that had no ECS
 route. All four default to empty, and the CP treats an empty value as unset (`envx.DurationOr`,
-`envx.EmailSet`, `kmsCacheTTL`), so a stack that predates them behaves as before.
+`envx.EmailSet`, `kmsCacheTTL`). `CookiePurposeKeys` is the exception to "behaves as before": unset now means on.
 
 | Parameter | CP variable | Empty means |
 |---|---|---|
 | `SessionTtl` | `AF_SESSION_TTL`, a Go duration (`72h`), how long the signed sign-in cookie stays valid | 168h |
-| `CookiePurposeKeys` | `AF_COOKIE_PURPOSE_KEYS`, `1` signs the session / sign-in state / preview cookies with one key per purpose. Set it only after every task runs a release that reads both formats (a rolling update has finished); see `guide/operate/04-secure.md`, "Switching to per-purpose cookie keys" | off (cookies keep the single-key format) |
+| `CookiePurposeKeys` | `AF_COOKIE_PURPOSE_KEYS`, `0` opts out of signing the session / sign-in state / preview cookies with one key per purpose, for one release. Update every task to 0.42.0 or later before this release; see `guide/operate/04-secure.md`, "Per-purpose cookie keys" | on (one key per purpose) |
 | `GithubAllowedEmails` | `AF_GITHUB_ALLOWED_EMAILS`, comma list admitted by GitHub sign-in besides the org / domain lists | nobody by email |
 | `KmsDataKeyCacheTtl` | `AF_KMS_DATA_KEY_CACHE_TTL`, a Go duration, `0s` = no cache (kms custodian only) | 5m |
 

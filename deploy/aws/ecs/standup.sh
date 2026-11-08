@@ -204,7 +204,8 @@ key_too_short() {
   [ "$n" -lt 32 ]
 }
 # The same rule the Control Plane applies at start-up (control-plane/internal/keycheck), minus
-# its repeated-byte check. This release only warns there; so does this, and it does not fail.
+# its repeated-byte check. The CP refuses to start on such a value; this only warns, so a stand-up
+# can still finish and the operator sees the problem before the first task does.
 for s in cookie-secret master-key; do
   if ! have_ssm "$SSM_PREFIX/$s"; then
     say_missing "no SSM $SSM_PREFIX/$s (README §30-ingress stand-up, step 2)"
@@ -212,7 +213,7 @@ for s in cookie-secret master-key; do
   fi
   key_too_short "$SSM_PREFIX/$s" && rc=0 || rc=$?
   case "$rc" in
-    0) echo "    ⚠ SSM $SSM_PREFIX/$s is shorter than 32 bytes of key material: generate a new one (guide/operate/04-secure.md, \"The deployment keys\")" ;;
+    0) echo "    ⚠ SSM $SSM_PREFIX/$s is shorter than 32 bytes of key material: the Control Plane will refuse to start with it; generate a new one (guide/operate/04-secure.md, \"The deployment keys\")" ;;
     2) echo "    ⚠ SSM $SSM_PREFIX/$s could not be read to check its length (needs ssm:GetParameter and kms:Decrypt)" ;;
   esac
 done

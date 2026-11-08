@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// This release only warns (log line + deployment_warnings); refusing to start under AUTH other
-// than dev is a later release, so nothing here may be wired to log.Fatal yet.
+// The Control Plane refuses to start under AUTH other than dev when either key fails this
+// check (weakKeyRefusal in the main package).
 //
 // The rule: the value must be at least 32 bytes of key material, either
 //   - hex or base64 text that decodes to >= minKeyBytes bytes, or
