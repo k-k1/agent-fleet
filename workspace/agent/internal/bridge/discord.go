@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -292,19 +293,32 @@ func (d *discordProvider) postRangeToThread(session, threadID string, msgs []out
 // (report_to == ""); operator/MCP injections are badged elsewhere and chat-origin replies
 // already show a 👀. Best-effort per provider.
 func MirrorUserInput(sessionName, text string) {
+	MirrorUserInputContext(context.Background(), sessionName, text)
+}
+
+// MirrorUserInputContext is MirrorUserInput whose wait for the credential store (the
+// in-process mutex and the cross-process flock) ends with ctx. The chat HTTP calls that follow
+// carry their own timeouts, so ctx bounds only the one wait that has none; a mirror that
+// times out is skipped.
+func MirrorUserInputContext(ctx context.Context, sessionName, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
 	}
-	mirrorDiscordInput(sessionName, text)
-	mirrorSlackInput(sessionName, text)
+	// One read serves both providers: ctx bounds only this wait, so a slow Discord post can
+	// never use up the budget a later store wait would need.
+	s, err := secrets.LoadContext(ctx)
+	if err != nil {
+		return
+	}
+	mirrorDiscordInput(s, sessionName, text)
+	mirrorSlackInput(s, sessionName, text)
 }
 
 // mirrorDiscordInput is the Discord half of MirrorUserInput: gated on channel + thread mode,
 // not opted out (MirrorInputOff), and an existing thread (an echo never creates one).
-func mirrorDiscordInput(sessionName, text string) {
-	s, err := secrets.Load()
-	if err != nil || s.Discord == nil {
+func mirrorDiscordInput(s *secrets.Data, sessionName, text string) {
+	if s.Discord == nil {
 		return
 	}
 	d := s.Discord

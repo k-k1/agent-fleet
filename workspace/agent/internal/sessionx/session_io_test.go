@@ -507,6 +507,10 @@ esac
 	t.Setenv("TMUX_TEST_STDIN", stdinPath)
 	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	// The delivery goroutine keeps writing session status under HOME after the second Enter
+	// this test waits for; join it before the temp dirs go (#3421). Registered after the
+	// Setenv calls, so it runs first.
+	t.Cleanup(WaitInitialDeliveries)
 
 	// An unknown session name fails immediately rather than waiting: the delivery loop would
 	// just sit there silently for 30 seconds.
