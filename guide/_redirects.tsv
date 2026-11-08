@@ -25,3 +25,17 @@ member/20-settings.md#mcp-servers-used-by-sessions	user/integrations/mcp-servers
 member/20-settings.md#issue-tracker	user/integrations/issue-tracker.md
 member/15-external-services.md#use-jira-in-a-session	user/integrations/jira.md
 member/15-external-services.md#use-confluence-in-a-session	user/integrations/confluence.md
+member/17-workspace-environment.md#environment-settings-and-recreating-the-workspace	user/workspace/toolchains.md
+member/17-workspace-environment.md#recreating-the-workspace-danger-zone	user/workspace/recreate.md#recreate
+member/17-workspace-environment.md#cleaning-home-an-even-deeper-reset	user/workspace/recreate.md#clean-home
+member/17-workspace-environment.md#running-database-backed-tests	user/workspace/databases.md
+member/17-workspace-environment.md#mysql	user/workspace/databases.md#use-mysql
+member/17-workspace-environment.md#console-databases-tab	user/workspace/databases.md#manage-them-from-the-console
+member/17-workspace-environment.md#trying-aws-code-against-a-local-emulator-ministack	user/workspace/aws-emulator.md
+member/20-settings.md#cloud-cost	user/workspace/cost.md#see-the-cloud-cost
+member/20-settings.md#running-time	user/workspace/cost.md#see-the-running-time
+member/20-settings.md#machine	user/workspace/machine.md
+member/20-settings.md#toolchains	user/workspace/toolchains.md
+member/20-settings.md#databases	user/workspace/databases.md#manage-them-from-the-console
+member/20-settings.md#export-import	user/workspace/export-import.md
+member/20-settings.md#danger-zone	user/workspace/recreate.md

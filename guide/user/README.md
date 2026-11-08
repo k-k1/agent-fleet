@@ -21,3 +21,15 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Connect an issue tracker](integrations/issue-tracker.md) | List your Jira issues and GitHub issues in the left rail and start sessions from them |
 | [Use Jira](integrations/jira.md) | Have agents read, file and update Jira issues |
 | [Use Confluence](integrations/confluence.md) | Have agents find and write Confluence pages |
+
+## Workspace
+
+| Page | What you can do |
+|---|---|
+| [Recreate the workspace](workspace/recreate.md) | Rebuild a broken environment from the latest image |
+| [Change the machine size](workspace/machine.md) | Check the machine's size and how memory and disk are used, and free disk space |
+| [Choose your toolchains](workspace/toolchains.md) | Pick the Node.js, Java and Go versions and the time zone |
+| [Run database-backed tests](workspace/databases.md) | Run tests against PostgreSQL and MySQL inside the workspace |
+| [Try AWS code against a local emulator](workspace/aws-emulator.md) | Try AWS code without touching a real account |
+| [Export and import your settings](workspace/export-import.md) | Take your settings to another environment or account |
+| [See running time and cloud cost](workspace/cost.md) | See when the workspace was running and what it costs |

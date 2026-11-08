@@ -92,7 +92,8 @@ The container is shared, so pass `--port` / `--cdp-port` that nothing else is li
 
 Scenes marked `guide: true` are for the rewritten guide and the public docs site (ADR 0131). The
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
-`aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`) runs on its own:
+`aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, and the workspace pages'
+`ws-recreate`, `ws-machine`, `ws-toolchains`, `ws-databases`) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -101,6 +102,7 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-toas
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ssm-hosts --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ssm-start --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only gcp-settings --out <dir>   # and gcp-badge, gcp-toast
+node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that
