@@ -42,6 +42,7 @@ type Selection struct {
 const (
 	CodeBadRoute         = "bad_route"
 	CodeRouteUnsupported = "route_unsupported"
+	CodeRouteUnavailable = "route_connection_unavailable"
 )
 
 var snapshot = func() (c struct {

@@ -66,6 +66,7 @@ var workspaceRoutes = map[string]bool{
 	// Provided model routes (AF_ROUTE_ISSUE_TOKEN, then the route token; ADR 0129). Registered
 	// only with AF_PROVIDED_ROUTES=1.
 	"POST /internal/route/token": true,
+	"POST /internal/route/check": true,
 	"/route/v1/{path...}":        true,
 	// Internal git: smart HTTP and LFS (the Basic git token).
 	"POST /git/{slug}/{repo}/info/lfs/objects/batch":     true,

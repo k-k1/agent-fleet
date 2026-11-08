@@ -96,10 +96,10 @@ func TestProvidedRoutesPriceFromTheBedrockList(t *testing.T) {
 	}
 }
 
-// Q0 catalogues the provided ids and offers them nowhere: no harness declares one, so a create
-// naming one is refused as a route the harness does not accept, the same refusal as any other
-// undeclared route.
-func TestProvidedRoutesAreCataloguedButNotSelectable(t *testing.T) {
+// The provided ids are catalogued from Q0 and declared only from their phase: Q1 opens
+// bedrock-deployment to claude (behind its own gate and the CP's check), and a create naming a
+// route its harness does not declare is refused as any undeclared route is.
+func TestProvidedRoutesAreDeclaredByPhase(t *testing.T) {
 	for id, tier := range map[string]routes.Tier{
 		usagex.RouteBedrockTenant:     routes.TierTenantKey,
 		usagex.RouteBedrockDeployment: routes.TierDeployment,
@@ -108,14 +108,17 @@ func TestProvidedRoutesAreCataloguedButNotSelectable(t *testing.T) {
 		if !ok || r.Wire != routes.WireBedrock || r.Credential != tier {
 			t.Errorf("%s: %+v ok=%v, want wire bedrock and tier %s", id, r, ok, tier)
 		}
+		// Q1 opens bedrock-deployment to claude alone; bedrock-tenant waits for its phase.
+		declared := id == usagex.RouteBedrockDeployment
 		for _, k := range buildRouteCatalog().Kinds {
-			if slices.Contains(k.Routes, id) {
-				t.Errorf("kind %q declares %s before its phase (ADR 0129 D7)", k.Kind, id)
+			if slices.Contains(k.Routes, id) != (declared && k.Kind == session.KindClaude) {
+				t.Errorf("kind %q declares %s: %v (ADR 0129 D7)", k.Kind, id, slices.Contains(k.Routes, id))
 			}
 		}
 		claude, _ := sessionxRoutesOf(session.KindClaude)
-		if code, err := routes.CheckStatic(session.KindClaude, &routes.Selection{Route: id}, claude); code != routes.CodeRouteUnsupported || err == nil {
-			t.Errorf("claude on %s: code %q err %v, want %s", id, code, err, routes.CodeRouteUnsupported)
+		code, err := routes.CheckStatic(session.KindClaude, &routes.Selection{Route: id}, claude)
+		if declared && (code != "" || err != nil) || !declared && (code != routes.CodeRouteUnsupported || err == nil) {
+			t.Errorf("claude on %s: code %q err %v", id, code, err)
 		}
 	}
 }

@@ -137,6 +137,9 @@ type Store interface {
 	SettleProvidedRouteCall(ctx context.Context, callID string, finalMicro int64) (bool, error)
 	ListInFlightProvidedRouteCalls(ctx context.Context, limit int) ([]store.ProvidedRouteCall, error)
 	GetProvidedRoutePeriod(ctx context.Context, tenantID, membershipID, source, month string) (store.ProvidedRoutePeriod, error)
+	SetProvidedRouteGrant(ctx context.Context, tenantID, source string, granted bool, ceilingMicro *int64) error
+	SetProvidedRouteMemberPolicy(ctx context.Context, tenantID, source string, membersOnly bool, defaultMicro int64) error
+	SetProvidedRouteMember(ctx context.Context, tenantID, membershipID, source string, granted bool, budgetMicro *int64) error
 }
 
 // Deps is what the Control Plane hands the gateway: its store and the bridge-token machinery,
@@ -347,7 +350,9 @@ func (g *Gateway) budgetRefusal(ctx context.Context, use routeUse, level string,
 	}
 	p, _ := g.d.Store.GetProvidedRoutePeriod(ctx, use.mv.TenantID, mid, providedroutes.SourceDeployment, month)
 	used := p.SpentMicro + p.ReservedMicro
-	msg := fmt.Sprintf("%s on the deployment's Bedrock route is used up: ≈%s of %s used in %s; it resets on %s",
+	// "spend limit" is what the Agent's claude adapter reads in the turn's error to open a spend
+	// limit episode (one that waiting does not clear before the reset): keep the words.
+	msg := fmt.Sprintf("you have hit %s, the spend limit of the deployment's Bedrock route: ≈%s of %s used in %s; it resets on %s",
 		name, usd(used), usd(limit), month, reset.Format("2006-01-02 15:04 UTC"))
 	if next > 0 {
 		msg += fmt.Sprintf(" (the next call could cost up to %s)", usd(next))

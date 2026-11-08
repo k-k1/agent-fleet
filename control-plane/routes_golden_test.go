@@ -60,7 +60,9 @@ func routeSwitches(t *testing.T) []routeSwitch {
 		// gateway, its token and the deployment source's admin routes, and nothing else.
 		{name: "provided-routes", env: map[string]string{"AF_PROVIDED_ROUTES": "1"},
 			routes: []string{"GET /api/admin/provided-routes/deployment", "PUT /api/admin/provided-routes/deployment",
-				"POST /internal/route/token", "ANY /route/v1/{path...}"}},
+				"POST /internal/route/token", "POST /internal/route/check", "ANY /route/v1/{path...}",
+				"GET /api/admin/tenants/{slug}/provided-routes/deployment", "PUT /api/admin/tenants/{slug}/provided-routes/deployment/grant",
+				"PUT /api/admin/tenants/{slug}/provided-routes/deployment/policy", "PUT /api/admin/tenants/{slug}/provided-routes/deployment/members"}},
 		// No engine switch: a CP with a store always builds an engine registry, possibly empty,
 		// so the admin panel can give it a LAN ComfyUI without a restart (#957). The gateway's
 		// routes are therefore part of the base table.

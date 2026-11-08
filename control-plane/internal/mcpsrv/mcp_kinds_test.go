@@ -3,6 +3,7 @@ package mcpsrv
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -148,5 +149,40 @@ func TestCreateSessionRefusesUnregisteredKind(t *testing.T) {
 		if _, err := memberTool(t, "create_session").run(ctx, a, &Resolved{}, map[string]any{"kind": k}); err != nil || raw == nil {
 			t.Errorf("create_session(kind=%q) = %v (sent %q), want it forwarded", k, err, raw)
 		}
+	}
+}
+
+// routeRefusingCP refuses every provided route the way the CP's pre-wake check does.
+type routeRefusingCP struct {
+	bodyCP
+	asked *[]string
+}
+
+func (c routeRefusingCP) ProvidedRouteErr(_ context.Context, mid, route string) error {
+	*c.asked = append(*c.asked, mid+"|"+route)
+	if route == "bedrock-deployment" {
+		return errors.New("this tenant is not granted the deployment's Bedrock route")
+	}
+	return nil
+}
+
+// create_session asks the CP about the selected route before the Agent is called (ADR 0129 D3),
+// and a refusal sends nothing to the Agent.
+func TestCreateSessionRefusesAnUnusableProvidedRoute(t *testing.T) {
+	var raw []byte
+	var asked []string
+	a := API{cp: routeRefusingCP{bodyCP: bodyCP{body: &raw}, asked: &asked}}
+	res := &Resolved{}
+	res.MV.MembershipID = "m1"
+	ctx := withMCPCall(context.Background(), mcpCallInfo{patID: "grant_k"})
+	_, err := memberTool(t, "create_session").run(ctx, a, res, map[string]any{"route": "bedrock-deployment"})
+	if err == nil || !strings.Contains(err.Error(), "not granted") || raw != nil {
+		t.Fatalf("create_session on a refused route = %v, Agent body %q", err, raw)
+	}
+	if _, err := memberTool(t, "create_session").run(ctx, a, res, map[string]any{"route": "anthropic-api"}); err != nil || raw == nil {
+		t.Fatalf("create_session on anthropic-api = %v, Agent body %q", err, raw)
+	}
+	if len(asked) != 2 || asked[0] != "m1|bedrock-deployment" {
+		t.Fatalf("asked = %v", asked)
 	}
 }

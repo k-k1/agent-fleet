@@ -43,7 +43,7 @@ func TestClaudeDeclaresItsRoutesAndIsAnAdapter(t *testing.T) {
 	}
 	got := ra.Routes()
 	slices.Sort(got)
-	if !slices.Equal(got, []string{RouteAPI, RouteSubscription, RouteBedrock}) {
+	if !slices.Equal(got, []string{RouteAPI, RouteSubscription, RouteBedrock, RouteBedrockDeployment}) {
 		t.Errorf("Routes = %v", got)
 	}
 }

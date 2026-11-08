@@ -45,6 +45,7 @@ func agentDeps(ensureAWSCLI func() (string, error)) Deps {
 		},
 	}
 	return Deps{
+		CP:            newCPRoutes(),
 		Settings:      src.Get,
 		FreshSettings: src.Fresh,
 		Roots:         paneRoots,

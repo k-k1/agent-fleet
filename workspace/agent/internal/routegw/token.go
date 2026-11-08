@@ -152,6 +152,20 @@ func (r *Registry) RevokeSession(name string) int {
 	return r.RevokeIf(func(b Binding) bool { return b.Session == name })
 }
 
+// Bindings is the bindings of the live tokens.
+func (r *Registry) Bindings() []Binding {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	out := make([]Binding, 0, len(r.byKey))
+	for _, e := range r.byKey {
+		if now.Before(e.expires) {
+			out = append(out, e.b)
+		}
+	}
+	return out
+}
+
 // Len is the number of tokens held, expired ones included until they are swept.
 func (r *Registry) Len() int {
 	r.mu.Lock()

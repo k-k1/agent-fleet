@@ -202,3 +202,29 @@ func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
 		}
 	}
 }
+
+// A provided route the deployment does not serve (its switch is off) is refused on POST
+// /api/sessions and at a schedule's fire before the Workspace is touched (ADR 0129 D3); the
+// gateway's own reasons are TestProvidedRouteCreateRefusal's.
+func TestCreatePathsRefuseAnUnservedProvidedRoute(t *testing.T) {
+	prev := activeProvidedRouteGateway.Load()
+	activeProvidedRouteGateway.Store(nil)
+	t.Cleanup(func() { activeProvidedRouteGateway.Store(prev) })
+	f := newHandoffLife(t)
+	rc := f.recipientWorkspace()
+	rec := rc.create(t, map[string]any{"kind": "claude", "dir": "/repos/app", "route": map[string]any{"route": "bedrock-deployment"}})
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"route_connection_unavailable"`) {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(rc.bodies) != 0 {
+		t.Fatalf("the refused create reached the Agent: %v", rc.bodies)
+	}
+	for _, mode := range []string{"new", "reuse"} {
+		// A zero wakeFirer would panic on the first store call: the refusal has to come first.
+		_, _, err := (&wakeFirer{}).fire(t.Context(), store.Schedule{ID: "s", SessionMode: mode, AgentKind: "claude",
+			Route: "bedrock-deployment"}, time.Now())
+		if err == nil || !strings.Contains(err.Error(), "route_connection_unavailable") {
+			t.Errorf("fire %s = %v", mode, err)
+		}
+	}
+}

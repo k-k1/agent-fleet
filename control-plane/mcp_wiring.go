@@ -134,6 +134,13 @@ func (d cpDeps) AgentText(ctx context.Context, rt runtime.Runtime, method, path 
 	return agentText(ctx, rt, method, path, body)
 }
 
+func (d cpDeps) ProvidedRouteErr(ctx context.Context, membershipID, route string) error {
+	if aerr := providedRouteCreateRefusal(ctx, membershipID, route); aerr != nil {
+		return errors.New(aerr.message)
+	}
+	return nil
+}
+
 func (d cpDeps) ScheduleGuardErr(ctx context.Context, membershipID, repoName, sessionName string) error {
 	return scheduleGuardErr(ctx, d.m.store, membershipID, repoName, sessionName)
 }

@@ -714,11 +714,11 @@
             "type": "string"
           },
           "route": {
-            "description": "explicit model route id (optional; omit to keep the kind's own default resolution). claude accepts anthropic-subscription, anthropic-api or bedrock, opencode accepts bedrock (with an amazon-bedrock/<id> model); all Terminal sessions only, and bedrock only on a workspace where its acceptance switch is set. Any other kind, or a route the kind does not declare, is refused with the reason, never run on the default route instead.",
+            "description": "explicit model route id (optional; omit to keep the kind's own default resolution). claude accepts anthropic-subscription, anthropic-api, bedrock or bedrock-deployment (Bedrock the deployment pays for, within the budget your tenant administrator sets), opencode accepts bedrock (with an amazon-bedrock/<id> model); all Terminal sessions only, and bedrock / bedrock-deployment only on a workspace where their acceptance switch is set. Any other kind, or a route the kind does not declare, is refused with the reason, never run on the default route instead.",
             "type": "string"
           },
           "route_connection": {
-            "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset); bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own)",
+            "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset); bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own); bedrock-deployment takes none",
             "type": "string"
           },
           "subdir": {

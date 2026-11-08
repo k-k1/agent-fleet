@@ -112,6 +112,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRefusal(w, &refusal{http.StatusRequestEntityTooLarge, "route_request_too_large", "the request is larger than the gateway forwards"})
 		return
 	}
+	if c.provided {
+		g.forward(w, r, c, modelID, op, body)
+		return
+	}
 	creds, ref := g.credentials(c, false)
 	if ref == errNeedFresh {
 		// The credentials have to be resolved: check the call again against Settings as they are
@@ -207,7 +211,14 @@ func (g *Gateway) record(c *call, modelID, op string, resp *http.Response, obs *
 	if u.Known {
 		measured = usagex.MeasuredExact
 	}
-	call := chatx.RandUUID()
+	call, route := chatx.RandUUID(), usagex.RouteBedrock
+	if c.provided {
+		// The CP's call id, so the ledger row and the CP's reservation are one call (ADR 0129 D2).
+		route = usagex.RouteBedrockDeployment
+		if id := resp.Header.Get(cpCallHeader); cpCallIDRe.MatchString(id) {
+			call = id
+		}
+	}
 	row := usagex.Record{
 		TS:   g.d.Now().UTC().Format(time.RFC3339),
 		Call: call,
@@ -217,7 +228,7 @@ func (g *Gateway) record(c *call, modelID, op string, resp *http.Response, obs *
 		Trigger: usagex.TriggerUser,
 		Kind:    c.meta.Kind,
 		Model:   modelID, ModelRaw: modelID, ModelSrc: usagex.ModelReported,
-		Route: usagex.RouteBedrock, Billing: usagex.BillingMetered,
+		Route: route, Billing: usagex.BillingMetered,
 		Ref: c.b.Session,
 		In:  u.In, Out: u.Out, CacheRead: u.CacheRead, CacheCreate: u.CacheCreate,
 		Spend: usagex.Spend(u.In, u.CacheCreate, u.Out),

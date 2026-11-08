@@ -13,9 +13,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
+	"github.com/k-k1/agent-fleet/control-plane/internal/providedroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/routegateway"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -58,11 +61,23 @@ func providedRouteRoutes(mux *http.ServeMux, mgr *manager, g *routegateway.Gatew
 	// Session-exempt like /engine/: the caller is a Workspace with a bearer, not a browser.
 	exemptPrefix(routegateway.Prefix+"/", "/internal/route/")
 	mux.HandleFunc("POST /internal/route/token", g.Issue)
+	mux.HandleFunc("POST /internal/route/check", g.Check)
 	mux.HandleFunc(routegateway.Prefix+"/{path...}", g.Serve)
 	a := providedRouteAdmin{memberAuth{mgr}, g}
 	mux.HandleFunc("GET /api/admin/provided-routes/deployment", a.withSuperAdmin(a.get))
 	mux.HandleFunc("PUT /api/admin/provided-routes/deployment", a.withSuperAdmin(a.put))
+	// Per tenant: the super_admin's grant and ceiling, the tenant_admin's policy and budgets
+	// (ADR 0129 D3). tenant_admin routes are gated mid-handler like engine-access.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/provided-routes/deployment", a.tenantView)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/provided-routes/deployment/grant", a.putGrant)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/provided-routes/deployment/policy", a.putPolicy)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/provided-routes/deployment/members", a.putMember)
+	activeProvidedRouteGateway.Store(g)
 }
+
+// activeProvidedRouteGateway is the gateway the create paths ask (providedRouteCreateRefusal),
+// set when its routes are registered.
+var activeProvidedRouteGateway atomic.Pointer[routegateway.Gateway]
 
 // drainProvidedRoutes is the shutdown hook: a no-op when the gateway is off.
 func drainProvidedRoutes() {
@@ -79,7 +94,10 @@ func providedRouteIssueEnv(root []byte, at func([]byte) []byte, membershipID str
 	if !routegateway.Enabled() {
 		return nil
 	}
-	return []string{"AF_ROUTE_ISSUE_TOKEN=" + routegateway.MintIssueToken(at(routegateway.SignKey(root)), membershipID)}
+	// The claude bedrock-deployment row's acceptance gate (ADR 0128 decision 14) rides the same
+	// switch: a Workspace started by a CP that serves the route is the one that may offer it.
+	return []string{"AF_ROUTE_ISSUE_TOKEN=" + routegateway.MintIssueToken(at(routegateway.SignKey(root)), membershipID),
+		"AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE=1"}
 }
 
 // providedRouteAdmin is the super_admin's registration of the deployment source (ADR 0129 D1b;
@@ -120,7 +138,7 @@ func (a providedRouteAdmin) put(w http.ResponseWriter, r *http.Request, ident st
 		return
 	}
 	src, err := a.g.PutDeploymentSource(r.Context(), in)
-	var invalid *routegateway.InvalidSourceError
+	var invalid *routegateway.InvalidInputError
 	if errors.As(err, &invalid) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "invalid_source", err.Error()})
 		return
@@ -136,4 +154,167 @@ func (a providedRouteAdmin) put(w http.ResponseWriter, r *http.Request, ident st
 		HTTPStatus: http.StatusOK, At: store.NowTS()})
 	v := routegateway.ViewSource(src)
 	writeJSON(w, http.StatusOK, deploymentSourceAnswer{Source: &v})
+}
+
+// decodeAdminBody reads one JSON object with no unknown fields and nothing after it.
+func decodeAdminBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil || dec.More() {
+		msg := "invalid body: more than one JSON value"
+		if err != nil {
+			msg = "invalid body: " + err.Error()
+		}
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", msg})
+		return false
+	}
+	return true
+}
+
+// writeRouteAdminErr answers an admin write's error: the input's own as 400, the store's as 500.
+func writeRouteAdminErr(w http.ResponseWriter, err error) {
+	var invalid *routegateway.InvalidInputError
+	if errors.As(err, &invalid) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "invalid_input", err.Error()})
+		return
+	}
+	writeAPIErr(w, internalErr(err))
+}
+
+func microDetail(v *int64) string {
+	if v == nil {
+		return "none"
+	}
+	return strconv.FormatInt(*v, 10)
+}
+
+func (a providedRouteAdmin) tenantView(w http.ResponseWriter, r *http.Request) {
+	_, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	members, err := a.mgr.store.ListMembersByTenant(r.Context(), t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	v, err := a.g.View(r.Context(), t.ID, members)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+// putGrant is the super_admin's: a tenant_admin can narrow the grant, never give it.
+func (a providedRouteAdmin) putGrant(w http.ResponseWriter, r *http.Request) {
+	ident, ok := a.superAdminFor(w, r)
+	if !ok {
+		return
+	}
+	t, found, err := a.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	var in routegateway.GrantInput
+	if !decodeAdminBody(w, r, &in) {
+		return
+	}
+	if err := a.g.SetGrant(r.Context(), t.ID, in); err != nil {
+		writeRouteAdminErr(w, err)
+		return
+	}
+	a.audit(r, ident, t.ID, "provided_route.deployment_grant", t.Slug,
+		fmt.Sprintf("granted=%t ceiling_micro=%s", in.Granted, microDetail(in.CeilingMicro)))
+	writeJSON(w, http.StatusOK, in)
+}
+
+func (a providedRouteAdmin) putPolicy(w http.ResponseWriter, r *http.Request) {
+	ident, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	var in routegateway.PolicyInput
+	if !decodeAdminBody(w, r, &in) {
+		return
+	}
+	if err := a.g.SetPolicy(r.Context(), t.ID, in); err != nil {
+		writeRouteAdminErr(w, err)
+		return
+	}
+	a.audit(r, ident, t.ID, "provided_route.deployment_policy", t.Slug,
+		fmt.Sprintf("members_only=%t member_default_micro=%d", in.MembersOnly, in.MemberDefaultMicro))
+	writeJSON(w, http.StatusOK, in)
+}
+
+func (a providedRouteAdmin) putMember(w http.ResponseWriter, r *http.Request) {
+	ident, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	var in routegateway.MemberInput
+	if !decodeAdminBody(w, r, &in) {
+		return
+	}
+	// The membership id comes from the client: it is checked against THIS tenant's roster, so
+	// no tenant_admin writes a budget onto another tenant's seat.
+	members, err := a.mgr.store.ListMembersByTenant(r.Context(), t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	var target *store.MemberInfo
+	for i := range members {
+		if members[i].MembershipID == in.MembershipID {
+			target = &members[i]
+			break
+		}
+	}
+	if target == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_member", "no such member in this tenant"})
+		return
+	}
+	if err := a.g.SetMember(r.Context(), t.ID, in); err != nil {
+		writeRouteAdminErr(w, err)
+		return
+	}
+	a.audit(r, ident, t.ID, "provided_route.deployment_member", target.UserKey,
+		fmt.Sprintf("granted=%t budget_micro=%s", in.Granted, microDetail(in.BudgetMicro)))
+	writeJSON(w, http.StatusOK, in)
+}
+
+func (a providedRouteAdmin) audit(r *http.Request, ident store.Identity, tenantID, action, target, detail string) {
+	_ = a.mgr.store.InsertAudit(context.WithoutCancel(r.Context()), store.AuditLog{ID: store.NewID(), TenantID: tenantID,
+		ActorKind: "user", ActorID: ident.ID, Action: action, Target: target, Detail: detail,
+		HTTPStatus: http.StatusOK, At: store.NowTS()})
+}
+
+// providedRouteCreateRefusal is ADR 0129 D3's "before waking the Workspace" for every create
+// path (REST and the Console, MCP create_session, a schedule's create, update and fire): a
+// selection naming a provided route the member cannot use now is refused here, as an unknown
+// route is. nil for every other route. The Agent's bind, the token endpoint and every call check
+// again; this only keeps a doomed create from waking a stopped Workspace.
+func providedRouteCreateRefusal(ctx context.Context, membershipID, route string) *apiError {
+	route = strings.TrimSpace(route)
+	if providedroutes.SourceOf(route) == "" {
+		return nil
+	}
+	g := activeProvidedRouteGateway.Load()
+	if g == nil {
+		return &apiError{http.StatusConflict, agentroutes.CodeRouteUnavailable,
+			"route " + route + " is not offered by this deployment (its provided routes are off)"}
+	}
+	if _, ref := g.Usable(ctx, membershipID, route); ref != nil {
+		status := ref.Status
+		if status == http.StatusUnauthorized {
+			status = http.StatusForbidden
+		}
+		return &apiError{status, ref.Code, ref.Message}
+	}
+	return nil
 }

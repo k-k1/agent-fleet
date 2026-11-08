@@ -62,6 +62,8 @@ type Deps struct {
 	Roots func(session string) []int
 	// ProcRoot is where process parents are read (/proc; a test may point it elsewhere).
 	ProcRoot string
+	// CP is the Control Plane's side of the provided routes (cproutes.go); nil refuses them.
+	CP CPRoutes
 }
 
 // Gateway checks and forwards model calls.
@@ -76,6 +78,8 @@ type Gateway struct {
 	credMu sync.Mutex
 	creds  map[string]cachedCreds
 	flight map[string]*credFlight
+
+	prov provState
 }
 
 type cachedCreds struct {
@@ -135,7 +139,8 @@ func New(d Deps) *Gateway {
 		d.ProcRoot = "/proc"
 	}
 	return &Gateway{d: d, asked: map[string]time.Time{}, creds: map[string]cachedCreds{}, flight: map[string]*credFlight{},
-		spool: &rowSpool{dir: d.SpoolDir, append: d.Append}}
+		spool: &rowSpool{dir: d.SpoolDir, append: d.Append},
+		prov:  provState{toks: map[string]heldCPToken{}, checks: map[string]cachedCheck{}}}
 }
 
 // Registry is the gateway's token registry.
@@ -220,6 +225,9 @@ func (c connection) fingerprint() string {
 // selection already bound is accepted only while its binding still holds, so a session forked or
 // recreated from one keeps the account it started on.
 func (g *Gateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
+	if isProvided(sel.Route) {
+		return g.bindProvided(sel)
+	}
 	c, ref := g.resolve(&sel, true)
 	if ref != nil {
 		return sel, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
@@ -245,6 +253,9 @@ func (g *Gateway) IssueLoopback(m session.Meta) (Issued, *agents.RouteRefusal) {
 }
 
 func (g *Gateway) issue(m session.Meta, transport string) (Issued, *agents.RouteRefusal) {
+	if m.Route != nil && isProvided(m.Route.Route) {
+		return g.issueProvided(m, transport)
+	}
 	c, ref := g.resolve(m.Route, true)
 	if ref != nil {
 		return Issued{}, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
@@ -320,7 +331,10 @@ var _ agents.RouteGateway = (*Gateway)(nil)
 // CheckRoute is agents.RouteChecker for the bedrock route: the live half of ADR 0128 decision 12
 // for a selection, before anything starts. The model is not checked here: Bedrock's model list
 // is per account and region and the gateway never calls it.
-func (g *Gateway) CheckRoute(_ context.Context, sel agents.RouteSelection, _ string) *agents.RouteRefusal {
+func (g *Gateway) CheckRoute(_ context.Context, sel agents.RouteSelection, model string) *agents.RouteRefusal {
+	if isProvided(sel.Route) {
+		return g.checkProvided(sel, model)
+	}
 	if _, ref := g.resolve(&sel, true); ref != nil {
 		return &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
 	}
@@ -333,6 +347,8 @@ type call struct {
 	meta  session.Meta
 	conn  connection
 	token string
+	// provided: forwarded to the CP (cproutes.go), never signed here.
+	provided bool
 }
 
 // authorize is the check every upstream call runs, in this order, and the reason a token is
@@ -363,6 +379,10 @@ func (g *Gateway) authorize(token string, caller procID, transport string, calle
 	}
 	if m.Route == nil || m.Route.Route != b.Route || m.Route.Connection != b.Connection {
 		return revoke(http.StatusUnauthorized, "route_selection_changed", "the session no longer selects this route connection")
+	}
+	if isProvided(b.Route) {
+		// The CP checks the rest on every call: grant, source, contract and budget.
+		return &call{b: b, meta: m, token: token, provided: true}, nil
 	}
 	c, ref := g.resolve(m.Route, fresh)
 	if ref != nil {
@@ -526,6 +546,7 @@ func (g *Gateway) Sweep() (dropped int) {
 	// ended (remain-on-exit), and a root that is gone must let the token expire.
 	alive := func(b Binding) bool { return len(liveRoots(g.d.ProcRoot, g.d.Roots(b.Session))) > 0 }
 	n, _ := g.d.Registry.Sweep(keep, alive)
+	g.renewProvided(alive)
 	g.spool.replay()
 	g.credMu.Lock()
 	now := g.d.Now()

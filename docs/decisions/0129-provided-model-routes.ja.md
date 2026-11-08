@@ -572,3 +572,23 @@ Q1 は、同じアダプタとソケットを使うので、ADR 0128 の claude 
   min(期限, 25 秒) で、その後も走っている呼び出しは予約額で精算する。呼び出し ID は CP が作って `X-Af-Route-Call` で
   返すので、Agent の台帳行は CP の ID を持つ。AWS の 2,048 文字の上限を超えるセッションポリシーは登録時に拒み、
   切り詰めない。Agent の転送、作成経路での拒否、グラントと予算の REST、スタックは続くパートで作る。
+- 2026-11-08、Q1 その 2（#3579）: Agent の転送とゲート。引き続き `AF_PROVIDED_ROUTES=1` の下にある。claude は
+  `bedrock-deployment` を宣言し、受け入れのゲートはそれ専用の `AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE=1`。スイッチを
+  入れた CP が Workspace の起動時に `AF_ROUTE_ISSUE_TOKEN` と並べて設定する。メンバー自身の経路の
+  `AF_CLAUDE_BEDROCK_ROUTE` とは互いに開け合わない。起動は bedrock と同じ（ソケット上のゲートウェイ bearer、CLI が
+  モデルを選ぶあらゆる経路にモデルを固定）。`routegw` は確認を通った呼び出しを、`AF_CP_INTERNAL_URL`（無ければ公開
+  ベース）の CP の `/route/v1` へ、署名の代わりに CP ルートトークンを付けて転送し、セッションが動いている間はスイープで
+  そのトークンを更新する。台帳行は `Route=bedrock-deployment` で、CP の呼び出し ID を持つ。選択の接続は CP の
+  バインディング（`<source id>#<fingerprint>`）で、発行トークンで呼ぶ新しい `POST /internal/route/check` が答える。
+  Agent の bind・check・起動はこれに聞き、起動ダイアログはこれが「使える」と答えている間だけ経路を出す（30 秒
+  キャッシュ）。起こす前の拒否も同じ確認で、REST と Console の作成、MCP の `create_session`、スケジュールの毎回の
+  実行で行う（スケジュールの保存では拒まない。今月使い切った予算は来月戻る）。確認は、予算かテナントの上限を
+  もう使い切ったメンバーと、ソースのリストに無いモデルも拒む。spend limit のエピソードに Agent 専用のコードは要らない。
+  CP の 503 のメッセージが "the spend limit" と書き、claude アダプタのトランスクリプトの目印がそれを「待っても
+  晴れない上限」と既に読む。グラントと予算の REST は、どれも監査行を書く:
+  `PUT /api/admin/tenants/{slug}/provided-routes/deployment/grant`（super_admin: 許可と上限。0 より大きい上限の無い
+  許可は拒む）、`.../policy`（tenant_admin: 許可したメンバーだけか、メンバーの既定）、`.../members`（tenant_admin:
+  このテナントのメンバーの許可と上書き）、そして同じものの `GET`（今月の支出付きのテナントの一覧）。作っていないもの:
+  グラントや予算が変わったときにイベントストリームで Console に知らせること（ADR 0084 決定 8 の 4 つ目の場所）と
+  Console の画面。CFN スタックはその 3 で作る。スイッチを入れる前に起動した Workspace はゲートも発行トークンも
+  持たないので、CP の作成時の確認は通り、Agent の bind で失敗する（Stop → Start を求める）。再起動するまでそのまま。

@@ -273,6 +273,11 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"POST /api/admin/engines/{key}/ingest/versions":               {exempt: exReadOnly},
 	"POST /api/admin/engines/search":                              {exempt: exReadOnly},
 	"POST /api/admin/engines/{key}/models/{id}/complete":          {marker: `.model.complete`},
+
+	// The deployment route's grants and budgets per tenant (provided_routes.go).
+	"PUT /api/admin/tenants/{slug}/provided-routes/deployment/grant":   {marker: `provided_route.deployment_grant`},
+	"PUT /api/admin/tenants/{slug}/provided-routes/deployment/policy":  {marker: `provided_route.deployment_policy`},
+	"PUT /api/admin/tenants/{slug}/provided-routes/deployment/members": {marker: `provided_route.deployment_member`},
 }
 
 // roleRaceStore lets another change land between the handler's read of the membership and its

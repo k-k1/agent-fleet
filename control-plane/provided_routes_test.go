@@ -30,7 +30,7 @@ func TestProvidedRoutesOffByDefault(t *testing.T) {
 	}
 	t.Setenv(routegateway.EnvSwitch, "1")
 	env := providedRouteIssueEnv([]byte("root"), at, "m1")
-	if len(env) != 1 || !strings.HasPrefix(env[0], "AF_ROUTE_ISSUE_TOKEN=afri_") {
+	if len(env) != 2 || !strings.HasPrefix(env[0], "AF_ROUTE_ISSUE_TOKEN=afri_") || env[1] != "AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE=1" {
 		t.Fatalf("switch on: %v", env)
 	}
 	if mid, ok := routegateway.VerifyIssueToken(routegateway.SignKey([]byte("root")), strings.TrimPrefix(env[0], "AF_ROUTE_ISSUE_TOKEN=")); !ok || mid != "m1" {
@@ -125,4 +125,161 @@ type failingSourceStore struct{ routegateway.Store }
 
 func (failingSourceStore) PutProvidedRouteSource(context.Context, store.ProvidedRouteSourceInput) (store.ProvidedRouteSource, error) {
 	return store.ProvidedRouteSource{}, errors.New("database is locked")
+}
+
+// providedRouteTenantFixture is a CP with the gateway's routes on, a registered deployment
+// source, and a tenant with a tenant_admin, a member and a super_admin.
+func providedRouteTenantFixture(t *testing.T) (st *store.SQL, mux *http.ServeMux, tn store.Tenant, member string) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mgr := p3Manager(t, st)
+	mgr.master32 = []byte(strings.Repeat("r", 32))
+	if _, err := st.UpsertIdentity(ctx, "root@x", "root-x", "super_admin"); err != nil {
+		t.Fatal(err)
+	}
+	if tn, err = st.CreateTenant(ctx, "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct{ email, key, role string }{{"boss@x", "boss-x", "tenant_admin"}, {"m@x", "m-x", "member"}} {
+		id, err := st.UpsertIdentity(ctx, p.email, p.key, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mv, err := st.EnsureMembership(ctx, id.ID, tn.ID, p.role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.role == "member" {
+			member = mv.ID
+		}
+	}
+	restoreAuthExemptions(t)
+	prev := activeProvidedRouteGateway.Load()
+	t.Cleanup(func() { activeProvidedRouteGateway.Store(prev) })
+	g := routegateway.New(providedRouteDeps(mgr, nil, routegateway.Config{MaxInFlight: 4}))
+	mux = http.NewServeMux()
+	providedRouteRoutes(mux, mgr, g)
+	if _, err := g.PutDeploymentSource(ctx, routegateway.SourceInput{RoleARN: "arn:aws:iam::123456789012:role/af-model-route/bedrock",
+		Region: "us-east-1", Models: []string{"us.anthropic.claude-opus-5-5"}}); err != nil {
+		t.Fatal(err)
+	}
+	return st, mux, tn, member
+}
+
+func routeAdminDo(mux *http.ServeMux, method, path, who, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("X-Forwarded-Email", who)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	return w
+}
+
+// The super_admin grants with a ceiling; the tenant_admin narrows and budgets, never grants; every
+// write leaves an audit row.
+func TestProvidedRouteTenantAdmin(t *testing.T) {
+	st, mux, tn, member := providedRouteTenantFixture(t)
+	base := "/api/admin/tenants/" + tn.Slug + "/provided-routes/deployment"
+	grant := `{"granted":true,"ceiling_micro":50000000}`
+	if w := routeAdminDo(mux, "PUT", base+"/grant", "boss@x", grant); w.Code != http.StatusForbidden {
+		t.Fatalf("a tenant_admin granted: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/grant", "root@x", `{"granted":true}`); w.Code != http.StatusBadRequest ||
+		!strings.Contains(w.Body.String(), "invalid_input") {
+		t.Fatalf("a grant without a ceiling: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/grant", "root@x", grant+` {}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("trailing JSON: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", "/api/admin/tenants/nope/provided-routes/deployment/grant", "root@x", grant); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown tenant: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/grant", "root@x", grant); w.Code != 200 {
+		t.Fatalf("grant: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/policy", "m@x", `{"members_only":false,"member_default_micro":1}`); w.Code != http.StatusForbidden {
+		t.Fatalf("a member set the policy: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/policy", "boss@x", `{"members_only":true,"member_default_micro":20000000}`); w.Code != 200 {
+		t.Fatalf("policy: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/members", "boss@x", `{"membership_id":"elsewhere","granted":true}`); w.Code != http.StatusNotFound {
+		t.Fatalf("a seat of no tenant: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/members", "boss@x", `{"membership_id":"`+member+`","granted":true,"budget_micro":-5}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("a negative budget: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/members", "boss@x", `{"membership_id":"`+member+`","granted":true,"budget_micro":7000000}`); w.Code != 200 {
+		t.Fatalf("member: %d %s", w.Code, w.Body)
+	}
+	w := routeAdminDo(mux, "GET", base, "boss@x", "")
+	var v routegateway.TenantView
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || !v.Granted || *v.CeilingMicro != 50_000_000 || !v.MembersOnly ||
+		v.MemberDefaultMicro != 20_000_000 || len(v.Members) != 2 {
+		t.Fatalf("view: %d %s", w.Code, w.Body)
+	}
+	for _, m := range v.Members {
+		if m.MembershipID == member && (!m.Granted || m.EffectiveMicro != 7_000_000) {
+			t.Fatalf("member view = %+v", m)
+		}
+	}
+	logs, err := st.ListAuditByTenant(context.Background(), tn.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, l := range logs {
+		seen[l.Action] = true
+	}
+	for _, a := range []string{"provided_route.deployment_grant", "provided_route.deployment_policy", "provided_route.deployment_member"} {
+		if !seen[a] {
+			t.Errorf("no %s audit row in %+v", a, logs)
+		}
+	}
+	if len(logs) != 3 {
+		t.Errorf("refused writes left audit rows: %+v", logs)
+	}
+}
+
+// The create paths' pre-wake refusal: nothing for another route, the switch-off refusal when the
+// gateway is not running, and the gateway's own reasons when it is.
+func TestProvidedRouteCreateRefusal(t *testing.T) {
+	ctx := context.Background()
+	prev := activeProvidedRouteGateway.Load()
+	activeProvidedRouteGateway.Store(nil)
+	if aerr := providedRouteCreateRefusal(ctx, "m1", "bedrock-deployment"); aerr == nil || aerr.status != http.StatusConflict ||
+		aerr.code != "route_connection_unavailable" {
+		t.Fatalf("switch off: %+v", aerr)
+	}
+	activeProvidedRouteGateway.Store(prev)
+	_, mux, tn, member := providedRouteTenantFixture(t)
+	for _, route := range []string{"", "bedrock", "anthropic-api"} {
+		if aerr := providedRouteCreateRefusal(ctx, member, route); aerr != nil {
+			t.Fatalf("%q refused: %+v", route, aerr)
+		}
+	}
+	if aerr := providedRouteCreateRefusal(ctx, member, " bedrock-deployment "); aerr == nil || aerr.code != "route_not_granted" ||
+		aerr.status != http.StatusForbidden {
+		t.Fatalf("not granted: %+v", aerr)
+	}
+	base := "/api/admin/tenants/" + tn.Slug + "/provided-routes/deployment"
+	routeAdminDo(mux, "PUT", base+"/grant", "root@x", `{"granted":true,"ceiling_micro":50000000}`)
+	if aerr := providedRouteCreateRefusal(ctx, member, "bedrock-deployment"); aerr == nil || aerr.code != "route_budget_exhausted" {
+		t.Fatalf("budget zero: %+v", aerr)
+	}
+	routeAdminDo(mux, "PUT", base+"/policy", "boss@x", `{"members_only":false,"member_default_micro":1000000}`)
+	if aerr := providedRouteCreateRefusal(ctx, member, "bedrock-deployment"); aerr != nil {
+		t.Fatalf("usable: %+v", aerr)
+	}
+	// MCP create_session and a schedule's fire reach the same refusal.
+	if err := (cpDeps{}).ProvidedRouteErr(ctx, "no-such-membership", "bedrock-deployment"); err == nil {
+		t.Fatal("MCP: an unknown membership passed")
+	}
 }

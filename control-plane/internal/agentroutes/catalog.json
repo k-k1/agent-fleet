@@ -71,7 +71,8 @@
       "routes": [
         "anthropic-api",
         "anthropic-subscription",
-        "bedrock"
+        "bedrock",
+        "bedrock-deployment"
       ]
     },
     {

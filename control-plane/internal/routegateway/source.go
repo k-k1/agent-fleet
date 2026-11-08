@@ -74,29 +74,29 @@ type SourceInput struct {
 	Active *bool `json:"active"`
 }
 
-// InvalidSourceError is a registration the input itself makes impossible: the admin API answers
-// it 400, and anything else PutDeploymentSource returns (the store's) 500, so a database outage
-// is never read as a bad model list.
-type InvalidSourceError struct{ Err error }
+// InvalidInputError is an admin write the input itself makes impossible (a registration, a
+// grant, a budget): the admin API answers it 400, and anything else these writes return (the
+// store's) 500, so a database outage is never read as a bad model list.
+type InvalidInputError struct{ Err error }
 
-func (e *InvalidSourceError) Error() string { return e.Err.Error() }
-func (e *InvalidSourceError) Unwrap() error { return e.Err }
+func (e *InvalidInputError) Error() string { return e.Err.Error() }
+func (e *InvalidInputError) Unwrap() error { return e.Err }
 
 // PutDeploymentSource registers or edits the deployment source and sets its activation.
 func (g *Gateway) PutDeploymentSource(ctx context.Context, in SourceInput) (store.ProvidedRouteSource, error) {
 	region := strings.TrimSpace(in.Region)
 	if region == "" || strings.ContainsAny(region, ", ") {
-		return store.ProvidedRouteSource{}, &InvalidSourceError{fmt.Errorf("a deployment source calls exactly one Region")}
+		return store.ProvidedRouteSource{}, &InvalidInputError{fmt.Errorf("a deployment source calls exactly one Region")}
 	}
 	// The closure must be buildable and fit AWS's session policy limit, or no call could run.
 	if _, err := providedroutes.SessionPolicy(in.RoleARN, region, in.Models); err != nil {
-		return store.ProvidedRouteSource{}, &InvalidSourceError{err}
+		return store.ProvidedRouteSource{}, &InvalidInputError{err}
 	}
 	// The store runs the same check; running it first is what makes its refusal a 400 here (an
 	// unpriced model) rather than a store error.
 	payer := providedroutes.Payer{RoleARN: in.RoleARN, Regions: []string{region}}
 	if err := providedroutes.Validate(providedroutes.SourceDeployment, payer, providedroutes.NormalizeAllowList(in.Models)); err != nil {
-		return store.ProvidedRouteSource{}, &InvalidSourceError{err}
+		return store.ProvidedRouteSource{}, &InvalidInputError{err}
 	}
 	put := store.ProvidedRouteSourceInput{Source: providedroutes.SourceDeployment, Name: strings.TrimSpace(in.Name),
 		RoleARN: in.RoleARN, Regions: []string{region}, AllowList: in.Models}
