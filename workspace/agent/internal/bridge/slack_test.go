@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -242,7 +243,7 @@ func TestSlackMirrorInput(t *testing.T) {
 	s.Slack = &secrets.SlackCreds{BotToken: "xoxb-tok", ChannelID: "C1", UserID: "U9", Threads: true}
 	_ = s.Save()
 	slackThreads.save(threadMap{"s1": {Channel: "C1", Thread: "1001"}})
-	mirrorSlackInput("s1", "手動入力")
+	mirrorSlackInput(context.Background(), "s1", "手動入力")
 	if posts.len() == 0 || posts.all()[0].threadTS != "1001" || !strings.Contains(posts.all()[0].text, "手動入力") {
 		t.Fatalf("mirror should echo into the thread: %+v", posts.all())
 	}
@@ -250,7 +251,7 @@ func TestSlackMirrorInput(t *testing.T) {
 	posts.reset()
 	s.Slack.MirrorInputOff = true
 	_ = s.Save()
-	mirrorSlackInput("s1", "また入力")
+	mirrorSlackInput(context.Background(), "s1", "また入力")
 	if posts.len() != 0 {
 		t.Fatalf("opted-out mirror must not post: %+v", posts.all())
 	}
