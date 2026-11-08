@@ -36,7 +36,7 @@ The row's badges also tell you about unpushed changes and changes you have not b
 |---|---|
 | My templates | Your own. Create one with "**New template**"; change it with "**Edit**" and "**Delete**" |
 | This repository (.agent-fleet/launch-prompts.md) | One entry per `## heading` of that file committed in the repository. Shared with everyone who clones it, read-only here |
-| History | The first prompts of your recent launches in this repository (8 at most). "**Save as template**" keeps one as yours |
+| History | The first prompts of your recent launches in this repository (8 at most). "**Delete**" forgets one; "**Save as template**" keeps one as yours |
 
 - Type to filter, **↑ / ↓** to pick, **Enter** to insert, **Esc** to close
 - The full text of the highlighted entry shows in the preview beside the list. On a phone, the first tap previews and "**Insert**" inserts
@@ -95,12 +95,12 @@ Right-click a row for this menu. Some items are hidden depending on state and lo
 | Skills… | Check the skills the repository gives each agent ([09](../../member/09-agents.md)) |
 | Share… | Share this working copy's sessions with other members ([12](../../member/12-collaboration.md#sharing-a-conversation-shared-sessions)) |
 | Launch Shell | Opens a shell session in that working copy |
-| Start an image studio | Starts an image studio in that working copy ([Finish an image in the studio](../images/studio.md)). Shown only while image generation is available |
+| Start an image studio | Starts an image studio in that working copy ([Finish an image in the studio](../images/studio.md)). Shown only while the workspace is running and image generation is available |
 | Working sets | Assigns the copy to a working set ([11](../../member/11-many-sessions.md#narrowing-the-view-with-working-sets)) |
 | Stop the sessions below | Stops the sessions running in that working copy and the ones under it, together ([05](../../member/05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)) |
 | Archive all stopped sessions | Archives the stopped sessions of that working copy together |
 | Archived sessions of this working copy | Opens the archive list narrowed to that working copy |
-| Lock against deletion, Unlock (allow deletion) | Keeps the working copy out of automatic tidying and stops it being deleted ([05](../../member/05-stopping-and-tidying.md#locking-something-against-deletion)) |
+| Lock against deletion, Unlock (allow deletion) | Keeps the working copy out of automatic tidying and stops it being deleted. A lock icon appears on the row, and "Delete the working copy" stays greyed out until you unlock ([05](../../member/05-stopping-and-tidying.md#locking-something-against-deletion)) |
 | Delete the working copy | [05](../../member/05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy) |
 
 - "Stop the sessions below" and "Archive all stopped sessions" appear, with a count, only when there is something to act on
