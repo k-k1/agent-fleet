@@ -110,7 +110,7 @@ older than 0.42.0 cannot read the labelled format, so:
 
 To keep issuing the old format for one more release, set `AF_COOKIE_PURPOSE_KEYS=0` (on ECS, the
 `CookiePurposeKeys` parameter of the ingress stack to `0`, then update it). That opt-out goes away
-in a later release, together with the old format itself. Only rolling back to a release before
+in a later release, together with the old format itself. Do not lower `AF_SESSION_TTL` in the same update: it shortens the window in which old-format cookies are accepted. Only rolling back to a release before
 0.42.0 after the labelled format was issued signs people out.
 
 ### Values stored before the key was set

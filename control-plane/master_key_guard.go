@@ -84,12 +84,6 @@ func (m *manager) deploymentWarnings() []string {
 	if m.plaintextSecrets() {
 		out = append(out, deploymentWarnPlaintextSecrets)
 	}
-	if m.weakMasterKey {
-		out = append(out, deploymentWarnWeakMasterKey)
-	}
-	if m.weakCookieSecret {
-		out = append(out, deploymentWarnWeakCookieSecret)
-	}
 	if m.plaintextSealed.count() > 0 {
 		out = append(out, deploymentWarnPlaintextSealed)
 	}
@@ -104,13 +98,6 @@ func (m *manager) deploymentWarnings() []string {
 	}
 	return out
 }
-
-// Deployment warning codes for weak keys; the Console renders them as
-// admin.deploy_warn_weak_master_key / admin.deploy_warn_weak_cookie_secret.
-const (
-	deploymentWarnWeakMasterKey    = "weak_master_key"
-	deploymentWarnWeakCookieSecret = "weak_cookie_secret"
-)
 
 // weakKeyRefusal is the error the Control Plane stops with when a deployment signing real
 // people in has a key that fails keycheck. It names the variable, never the value or a digest
@@ -131,7 +118,7 @@ func weakKeyRefusal(authMode string, weakMaster, weakCookie bool) error {
 		return nil
 	}
 	return fmt.Errorf("AUTH=%s and %s shorter than 32 bytes of key material (or a repeated pattern): refusing to start. "+
-		"Generate each with `head -c 32 /dev/urandom | base64`; do not replace AF_MASTER_KEY on a deployment that "+
+		"Generate a new value with `head -c 32 /dev/urandom | base64`; do not replace AF_MASTER_KEY on a deployment that "+
 		"already holds sealed values before reading guide/operate/04-secure.md and guide/operate/12-keys.md "+
 		"(changing AF_COOKIE_SECRET only signs everyone out once). AUTH=dev is exempt",
 		authMode, strings.Join(names, " and ")+weakKeyVerb(len(names)))

@@ -232,8 +232,8 @@ func main() {
 	if mgr.plaintextSecrets() {
 		log.Printf(plaintextSecretsLog, mgr.authMode)
 	}
-	mgr.weakMasterKey, mgr.weakCookieSecret = weakKeyChecks(mgr.authMode, os.Getenv("AF_MASTER_KEY"), os.Getenv("AF_COOKIE_SECRET"))
-	if err := weakKeyRefusal(mgr.authMode, mgr.weakMasterKey, mgr.weakCookieSecret); err != nil {
+	weakMaster, weakCookie := weakKeyChecks(mgr.authMode, os.Getenv("AF_MASTER_KEY"), os.Getenv("AF_COOKIE_SECRET"))
+	if err := weakKeyRefusal(mgr.authMode, weakMaster, weakCookie); err != nil {
 		log.Fatalf("deployment keys: %v", err)
 	}
 

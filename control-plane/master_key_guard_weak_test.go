@@ -17,17 +17,6 @@ func TestWeakKeyChecksSkipsDev(t *testing.T) {
 	}
 }
 
-func TestWeakKeyWarningsOnWire(t *testing.T) {
-	m := &manager{authMode: "dev", nativeRuntime: true, weakMasterKey: true, weakCookieSecret: true}
-	got := strings.Join(m.deploymentWarnings(), ",")
-	if !strings.Contains(got, deploymentWarnWeakMasterKey) || !strings.Contains(got, deploymentWarnWeakCookieSecret) {
-		t.Errorf("deploymentWarnings = %q, want both weak-key codes", got)
-	}
-	if w := (&manager{authMode: "dev", nativeRuntime: true}).deploymentWarnings(); len(w) != 0 {
-		t.Errorf("a clean manager warns: %v", w)
-	}
-}
-
 func TestWeakKeyRefusal(t *testing.T) {
 	strong := "Zm9vYmFyYmF6cXV4MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3A"
 	for _, tc := range []struct {
