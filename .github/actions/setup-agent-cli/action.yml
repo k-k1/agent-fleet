@@ -132,7 +132,7 @@ runs:
               release_build="$(sed -n 's/^ARG AGY_RELEASE_BUILD=//p' workspace/Dockerfile | head -1)"
               test -n "$sha" && test -n "$release_build"
               tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-              curl -fsSL "https://storage.googleapis.com/antigravity-public/antigravity-cli/${SPEC}-${release_build}/${asset}" -o "$tmp/agy.tgz"
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 "https://storage.googleapis.com/antigravity-public/antigravity-cli/${SPEC}-${release_build}/${asset}" -o "$tmp/agy.tgz"
               echo "$sha  $tmp/agy.tgz" | sha256sum -c -
               tar -xzf "$tmp/agy.tgz" -C "$tmp" antigravity
               install -m 0755 "$tmp/antigravity" "$bin_dir/agy"
@@ -152,7 +152,7 @@ runs:
               sha="$(sed -n "s/^ARG $sha_arg=//p" workspace/Dockerfile | head -1)"
               test -n "$sha"
               tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-              curl -fsSL "https://downloads.cursor.com/lab/${SPEC}/linux/${asset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 "https://downloads.cursor.com/lab/${SPEC}/linux/${asset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
               echo "$sha  $tmp/cursor.tgz" | sha256sum -c -
               dir="$HOME/.local/share/cursor-agent/versions/$SPEC"
               mkdir -p "$dir"
@@ -172,7 +172,7 @@ runs:
             esac
             if [ "$VERSION_INPUT" = latest ]; then
               manifest="$(mktemp)"
-              curl -fsSL https://prod.download.cli.kiro.dev/stable/latest/manifest.json -o "$manifest"
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 "https://prod.download.cli.kiro.dev/stable/latest/manifest.json" -o "$manifest"
               read -r download sha < <(jq -r --arg arch "$arch" '.packages[] | select(.os == "linux" and .architecture == $arch and .fileType == "zip" and .variant == "headless") | "\(.download) \(.sha256)"' "$manifest" | head -1)
               rm -f "$manifest"
               test -n "${download:-}" && test -n "${sha:-}"
@@ -183,7 +183,7 @@ runs:
               url="https://prod.download.cli.kiro.dev/stable/${SPEC}/${asset}"
             fi
             tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-            curl -fsSL "$url" -o "$tmp/kiro.zip"
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 "$url" -o "$tmp/kiro.zip"
             echo "$sha  $tmp/kiro.zip" | sha256sum -c -
             unzip -q "$tmp/kiro.zip" -d "$tmp"
             # 3.x ships a single kiro-cli; 2.x also shipped kiro-cli-chat and kiro-cli-term.

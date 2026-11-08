@@ -521,7 +521,7 @@ jobs:
           # CJK font (noto_cjk pin) raw URL reachability
           NOTO="$(sed -n 's/^ARG NOTO_CJK_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"
           test -n "$NOTO"
-          curl -fsSI -o /dev/null "https://raw.githubusercontent.com/notofonts/noto-cjk/$NOTO/Sans/Variable/OTC/NotoSansCJK-VF.otf.ttc"
+          curl -fsSI --retry 3 -o /dev/null "https://raw.githubusercontent.com/notofonts/noto-cjk/$NOTO/Sans/Variable/OTC/NotoSansCJK-VF.otf.ttc"
 
   # Gate (c): the fully-baked internal build (self-host / run-dev with
   # BAKE_AGENT_CLIS=1) and e2e-smoke pass unchanged. NOTE: the Dockerfile ARG
