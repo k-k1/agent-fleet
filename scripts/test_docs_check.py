@@ -1,5 +1,6 @@
 """Regression and positive-control fixtures for the shipped policy gate."""
 import importlib.util
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -759,6 +760,28 @@ class TableTests(unittest.TestCase):
 
     def test_code_fence(self):
         self.assertEqual(self.errors("```\n| 1 |\n\n| 2 |\n```\n"), "")
+
+
+class TaskPageVocabTests(unittest.TestCase):
+    """Slang on a task page is an error; on an old chapter it stays a warning."""
+
+    def run_vocab(self, rel_path):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / rel_path
+            path.parent.mkdir(parents=True)
+            path.write_text("トークンが届く道具\n")
+            findings = check.Findings()
+            with patch.object(check, "GUIDE", tmp), patch.object(check, "ROOT", str(Path(tmp).parent)), \
+                    patch.object(check, "rel", lambda p: "guide/" + os.path.relpath(p, tmp)):
+                check.check_vocab([str(path)], findings, strict=False)
+            return findings
+
+    def test_task_page_errors_old_chapter_warns(self):
+        task = self.run_vocab("user/a.ja.md")
+        self.assertTrue(any("道具" in e for e in task.errors), task.errors + task.warns)
+        old = self.run_vocab("member/a.ja.md")
+        self.assertEqual(old.errors, [])
+        self.assertTrue(any("道具" in w for w in old.warns))
 
 
 class HistoryTests(unittest.TestCase):

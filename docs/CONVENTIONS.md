@@ -315,6 +315,10 @@ Terms are decided by the "Screen" column of `guide/ref/glossary.md`. This sectio
   buttons that open a dialog. Everywhere else use the majority form (`送信`,
   `セッションを削除`, `API トークン`).
 - **Kana.** Write すでに and ない in hiragana, not 既に / 無い.
+- **Words Japanese engineers use.** Write the term an engineer would say, usually the katakana loanword: ツール, not
+  道具; インスタンス, not 箱; S3 Bucket, not バケツ. A plain native word that only translates the English reads as
+  odd. `docs-check.py` (vocab) refuses the ones met so far; add a word to its `SLANG_BANNED` when a review finds
+  another.
 - **ログイン and サインイン are verbs.** Write 「ログインしていないとき」「ほかのプロファイルでログインしていれば」, not
   「ログインが無いとき」「ログインを持つ」「ログインを使い回す」. A noun use that reads naturally stays
   (「ログインが切れる」「ログインを承認する」), and so do UI labels such as 「専用のサインイン」.
