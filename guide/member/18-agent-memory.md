@@ -12,7 +12,7 @@ Two features keep what agents learn. **Agent memory** is Agent Fleet's own memor
 ## Agent memory
 
 Agent Fleet's own shared memory: the memory every kind of agent reads and writes with the af tools
-`memory_index` / `memory_search` / `memory_read` / `memory_save` / `memory_patch` / `memory_forget`. It is per project (a worktree shares its
+`memory_index` / `memory_search` / `memory_read` / `memory_save` / `memory_patch` / `memory_feedback` / `memory_forget`. It is per project (a worktree shares its
 repository's), plus one user-wide scope, so what one agent learns survives a switch of kind, a handoff and a child of
 another kind. **It is off by default.** Turn it on in the [Settings](#settings) view. The version history of the memory the agents keep in their own files is
 [Memory snapshots](#memory-snapshots), further down.
@@ -249,6 +249,22 @@ The panel (and `af-memory lint`) also shows **proposed retired terms**, read fro
 a fully superseded ADR, or an `AF_*` key that a recent commit removed and no file mentions any more. Each comes with its
 evidence (the ADR's status line, or the commit) and is shown only when a memory in the scope uses it. A proposal never
 enters your list by itself: **Add to list** appends it, **Reject** remembers it so it is not proposed again.
+
+### Reasons from lint and from readers
+
+`af-memory lint --apply` (same scope flags) writes what the report finds. Each link, path, symbol, ADR or retired-term
+finding becomes a `reasons` entry on the memory (a size finding does not), so the memory is shown as *suspect* wherever an
+agent reads it and is not written back to Claude. Each memory changes in one commit authored `lint`, which also raises
+its revision, and only if it is still at the revision that was checked; at most 100 memories are written per run, and
+running it again continues. A lint reason is removed when the memory has been changed by someone since and the rule no
+longer fires; a rule that could not run (no repository) removes nothing. When a missing path was moved by a git rename on
+the default branch, lint replaces only that path in the body (and in `anchors`), as its own commit that names the renaming
+commit, and the change can be reverted like any other.
+
+Agents report a memory that failed them with `memory_feedback` (the revision they read, `stale` or `wrong`, and a note).
+A report on the current revision adds a `feedback` reason, which any change of the body clears; a report on an older
+revision is only kept as an observation. One report per session per revision counts. A confirmation counts but never
+clears a reason, and agents are only asked to report the negative case.
 
 ### Settings
 

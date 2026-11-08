@@ -188,6 +188,7 @@
       "memory_read#1",
       "memory_save#1",
       "memory_patch#1",
+      "memory_feedback#1",
       "memory_forget#1",
       "search_sessions#1",
       "create_session#2",
@@ -231,6 +232,7 @@
       "memory_read#1",
       "memory_save#1",
       "memory_patch#1",
+      "memory_feedback#1",
       "memory_forget#1",
       "search_sessions#1",
       "create_session#2",
@@ -317,6 +319,7 @@
       "memory_read#1",
       "memory_save#1",
       "memory_patch#1",
+      "memory_feedback#1",
       "memory_forget#1"
     ],
     "session-peer": [
@@ -1669,6 +1672,51 @@
         "type": "object"
       },
       "name": "list_watches"
+    },
+    "memory_feedback#1": {
+      "description": "Agent Fleet memory: report that a memory you relied on is wrong or out of date. Pass the revision you read and a one-line note saying what no longer holds. A report on the current revision marks the memory as suspect until it is fixed; one on an older revision is only kept as an observation. Report only what failed you: there is no need to confirm a memory that was right.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Memory name",
+            "type": "string"
+          },
+          "note": {
+            "description": "One line: what no longer holds (required for stale and wrong)",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Revision you read",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scope": {
+            "description": "project (this working copy's repository, shared by its worktrees) or user (every project)",
+            "enum": [
+              "project",
+              "user"
+            ],
+            "type": "string"
+          },
+          "verdict": {
+            "description": "stale: was true once, no longer; wrong: never held",
+            "enum": [
+              "stale",
+              "wrong",
+              "confirmed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "revision",
+          "verdict"
+        ],
+        "type": "object"
+      },
+      "name": "memory_feedback"
     },
     "memory_forget#1": {
       "description": "Agent Fleet memory: remove a memory that is wrong or obsolete, for every kind. History keeps it. Pass the revision you read.",

@@ -26,6 +26,8 @@ func lintAgent(t *testing.T) (*Client, *[]string) {
 				return
 			}
 			io.WriteString(w, `{"scope":"project","project":{"id":"demo-0123456789ab","display":"demo"},"ref":"origin/main","commit":"abc123","terms":1,"report":{"checked":2,"findings":[{"memory":"a","check":"broken-link","subject":"ghost","line":3}],"counts":{"broken-link":1},"proposals":[{"term":"AF_OLD_SWITCH","kind":"removed-key","evidence":"removed in abc1234: drop it","memories":["a","b"]}]}}`)
+		case "/agents/memory/entries/lint-apply":
+			io.WriteString(w, `{"scope":"user","marked":2,"renamed":1,"changed":0,"deferred":0}`)
 		default:
 			w.WriteHeader(404)
 		}
@@ -65,5 +67,33 @@ func TestAFMemoryLint(t *testing.T) {
 	}
 	if code, _, _ := run(c, "lint", "--user", "--project", "demo"); code != 2 {
 		t.Errorf("--user with --project: %d, want 2", code)
+	}
+}
+
+// --apply posts the scope to lint-apply before it prints the report; without it nothing is posted.
+func TestAFMemoryLintApply(t *testing.T) {
+	c, reqs := lintAgent(t)
+	code, out, errw := run(c, "lint", "--user", "--apply")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errw)
+	}
+	if !strings.Contains(out, "2 marked, 1 renamed") {
+		t.Errorf("out = %s", out)
+	}
+	posted := false
+	for _, r := range *reqs {
+		posted = posted || r == "POST /agents/memory/entries/lint-apply"
+	}
+	if !posted {
+		t.Errorf("no apply request: %v", *reqs)
+	}
+	c, reqs = lintAgent(t)
+	if code, _, _ := run(c, "lint", "--user"); code != 0 {
+		t.Fatal("plain lint failed")
+	}
+	for _, r := range *reqs {
+		if strings.HasPrefix(r, "POST") {
+			t.Errorf("a plain lint wrote: %s", r)
+		}
 	}
 }

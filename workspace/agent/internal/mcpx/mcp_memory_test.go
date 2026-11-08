@@ -15,7 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-var memoryToolNames = []string{"memory_index", "memory_search", "memory_read", "memory_save", "memory_patch", "memory_forget"}
+var memoryToolNames = []string{"memory_index", "memory_search", "memory_read", "memory_save", "memory_patch", "memory_feedback", "memory_forget"}
 
 // memoryTestEnv serves the real memoryx routes as the Agent, so the tools are exercised end to
 // end: argument relay, owner resolution, the store and its error answers. The calling session
@@ -62,6 +62,7 @@ func memoryTestEnv(t *testing.T) {
 	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
 	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
 	mux.HandleFunc("POST /agents/memory/entries/patch", memoryx.HandleAgentMemoryPatch)
+	mux.HandleFunc("POST /agents/memory/entries/feedback", memoryx.HandleAgentMemoryFeedback)
 	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -495,5 +496,38 @@ func TestMemorySaveKindAndAnchors(t *testing.T) {
 	}
 	if r = callMemoryTool(t, "memory_save", map[string]any{"name": "k1", "description": "d", "body": "b3", "revision": 2, "kind": "mood"}); !r.IsError || !strings.Contains(r.Text, "kind must be one of") {
 		t.Fatalf("bad kind = %+v", r)
+	}
+}
+
+// memory_feedback end to end: a stale report on the current revision marks the memory (the read
+// shows the suspect reason), one on an older revision is an observation only, and a confirmation
+// changes nothing visible.
+func TestMemoryFeedbackTool(t *testing.T) {
+	memoryTestEnv(t)
+	r := callMemoryTool(t, "memory_save", map[string]any{"name": "fb", "description": "d", "type": "feedback", "body": "v1"})
+	if r.IsError {
+		t.Fatalf("save = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_save", map[string]any{"name": "fb", "description": "d", "type": "feedback", "body": "v2", "revision": 1})
+	if r.IsError {
+		t.Fatalf("save v2 = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_feedback", map[string]any{"name": "fb", "revision": 1, "verdict": "stale", "note": "v1 text"})
+	if r.IsError || !strings.Contains(r.Text, `"outcome":"observation"`) {
+		t.Fatalf("older report = %+v", r)
+	}
+	if r = callMemoryTool(t, "memory_read", map[string]any{"name": "fb"}); strings.Contains(r.Text, "suspect") {
+		t.Fatalf("an observation marked the memory: %+v", r)
+	}
+	r = callMemoryTool(t, "memory_feedback", map[string]any{"name": "fb", "revision": 2, "verdict": "wrong", "note": "does not hold"})
+	if r.IsError || !strings.Contains(r.Text, `"outcome":"counted"`) {
+		t.Fatalf("current report = %+v", r)
+	}
+	if r = callMemoryTool(t, "memory_read", map[string]any{"name": "fb"}); !strings.Contains(r.Text, "suspect") || !strings.Contains(r.Text, "does not hold") {
+		t.Fatalf("read after a report = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_feedback", map[string]any{"name": "fb", "revision": 2, "verdict": "stale"})
+	if !r.IsError {
+		t.Fatalf("a duplicate or noteless report was accepted: %+v", r)
 	}
 }

@@ -544,6 +544,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
 	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
 	mux.HandleFunc("POST /agents/memory/entries/patch", memoryx.HandleAgentMemoryPatch)
+	mux.HandleFunc("POST /agents/memory/entries/feedback", memoryx.HandleAgentMemoryFeedback)
 	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
 	// The same operations for a client outside Agent Fleet (#1988), reached only through the
 	// CP's /mcp. They name the project themselves and answer to the externalMemory setting.
@@ -583,6 +584,7 @@ func buildMux() *http.ServeMux {
 	// The read-only lint report (ADR 0130 decision 5) and the member's retired-term list it
 	// reads; the list is edited only behind the member-origin mark.
 	mux.HandleFunc("GET /agents/memory/entries/lint", memoryx.HandleAgentMemoryMemberLint)
+	mux.HandleFunc("POST /agents/memory/entries/lint-apply", memoryx.HandleAgentMemoryLintApply)
 	mux.HandleFunc("GET /agents/memory/entries/lint-terms", memoryx.HandleAgentMemoryLintTerms)
 	mux.Handle("POST /agents/memory/entries/lint-terms", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryLintTermsSave)))
 	mux.HandleFunc("GET /agents/memory/entries/member-latest", memoryx.HandleAgentMemoryMemberLatest)

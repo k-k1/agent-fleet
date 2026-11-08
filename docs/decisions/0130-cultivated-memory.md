@@ -641,3 +641,20 @@ release.
   text, type, kinds, provenance and pin equal its parent's, so lifecycle fields (imports never take them from outside,
   `kind` and `anchors` included) and the revision, `updated` and author a lifecycle write moves are not compared.
   A body, description, type or pin change still counts. The preservation contract of decision 3 is unchanged.
+
+- **2026-11-08 — decisions 4 and 5 step 2 built: `memory_feedback`, lint reasons, `lint-rename` (#3496).**
+  `memory_feedback` is on the af server's session tools only (not the external `/mcp` tools). A report on the
+  current revision adds a `confirmed` or `stale` count (`.usage-v2`; the confirmed file's mtime is the last
+  confirmation) and, for `stale`/`wrong`, a `feedback` reason; the reason write is a published change that does **not**
+  raise the revision, so other sessions that read the same revision can still report on it (one report per session per
+  revision). An older revision is an observation only. Every report is recorded in `.usage-v2/feedback/<name>` (session,
+  revision, verdict, time; at most 200 lines), which is also how the duplicate is found. Lint writes with
+  `af-memory lint --apply` (`POST /agents/memory/entries/lint-apply`): findings of the link, path, symbol, ADR and
+  retired-term checks become `lint` reasons (an oversize body does not), one commit per memory authored `lint`,
+  compare-and-swap on the checked revision, revision incremented, at most 100 memories per run. A reason names the
+  revision that first carries it (the lint write's own), so "newer" never counts lint's own increment; it is cleared
+  only when the memory has since moved on and the rule no longer fires, and a rule that did not run (no repository, a
+  skipped check) clears nothing. `lint-rename` replaces only the renamed path (whole-path matches, also in `anchors`),
+  with the renaming commit in an `AF-Lint-Rename` trailer; it reads file renames from the last 2,000 non-merge commits.
+  Not built: scheduling (nothing runs lint by itself yet), baselines for "exists but changed" and checks of stored
+  anchors beyond the ones lint extracts from the body, directory renames.

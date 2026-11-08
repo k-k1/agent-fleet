@@ -1,7 +1,8 @@
 package afmemory
 
-// `af-memory lint`: the read-only lint report over AF-owned memory (ADR 0130 decision 5, step 1).
-// It asks the Agent for the report of one scope at a time and prints it; nothing is written, and
+// `af-memory lint`: the lint report over AF-owned memory (ADR 0130 decision 5). It asks the Agent
+// for the report of one scope at a time and prints it; nothing is written unless --apply is given
+// (step 2: reasons and renames, as changes authored `lint`), and
 // the exit status says whether the command worked, not whether anything was found.
 
 import (
@@ -9,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorylint"
@@ -30,8 +32,9 @@ func cmdLint(c *Client, args []string, out io.Writer) error {
 	user := fs.Bool("user", false, "")
 	proj := fs.String("project", "", "")
 	asJSON := fs.Bool("json", false, "")
+	apply := fs.Bool("apply", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || (*user && *proj != "") {
-		return &usageError{"lint takes --user or --project <id|name>, not both (neither lints every scope), and optionally --json"}
+		return &usageError{"lint takes --user or --project <id|name>, not both (neither lints every scope), and optionally --json and --apply"}
 	}
 	var projects struct {
 		Projects []struct {
@@ -70,6 +73,21 @@ func cmdLint(c *Client, args []string, out io.Writer) error {
 	}
 	var reports []lintScopeReport
 	for _, q := range queries {
+		if *apply {
+			// Reasons and renames first, so the report printed below is the state after them.
+			var res struct{ Marked, Renamed, Changed, Deferred int }
+			body := map[string]string{"scope": "user"}
+			if strings.HasPrefix(q, "scope=project&project=") {
+				id, _ := url.QueryUnescape(strings.TrimPrefix(q, "scope=project&project="))
+				body = map[string]string{"scope": "project", "project": id}
+			}
+			if err := c.do("POST", "/agents/memory/entries/lint-apply", body, &res); err != nil {
+				return err
+			}
+			if !*asJSON {
+				fmt.Fprintf(out, "applied (%s): %d marked, %d renamed, %d moved since the check, %d deferred\n", q, res.Marked, res.Renamed, res.Changed, res.Deferred)
+			}
+		}
 		var r lintScopeReport
 		if err := c.do("GET", "/agents/memory/entries/lint?"+q, nil, &r); err != nil {
 			return err

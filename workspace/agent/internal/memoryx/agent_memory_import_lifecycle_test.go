@@ -202,3 +202,56 @@ func TestImportStateWalkIsBounded(t *testing.T) {
 		t.Errorf("state = %v, want unknown", st)
 	}
 }
+
+// Lint writing reasons into an imported memory (#3496) must not make the re-import read it as
+// edited in AF (#3637): the real writer, not a hand-made lifecycle change.
+func TestMuseImportStaysCleanAfterLintWritesReasons(t *testing.T) {
+	e := newMuseImportEnv(t)
+	t0 := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	if err := agentMemLintSaveTerms(agentMemLintTermsDoc{Terms: []string{"legacyterm"}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chtimes(e.note("keep", "d", "user", "uses the legacyterm"), t0, t0)
+	e.apply(t0.Add(time.Hour), "keep")
+	out, err := agentMemLintApply(agentMemScopeProject, e.pid, t0.Add(2*time.Hour))
+	if err != nil || out.Marked != 1 {
+		t.Fatalf("lint apply: %+v %v", out, err)
+	}
+	c := agentMemCallerT(t, "claude-main")
+	if g := lifeStored(t, c, agentMemScopeProject, "keep"); len(g.Reasons) != 1 || g.Reasons[0].By != "lint" {
+		t.Fatalf("keep = %+v", g.agentMemLife)
+	}
+	if it := e.item(e.preview(), "keep"); it.Status != claudeImportUnchanged {
+		t.Errorf("unchanged source = %+v", it)
+	}
+	later := t0.Add(5 * time.Hour)
+	_ = os.Chtimes(e.note("keep", "d", "user", "uses the legacyterm, longer"), later, later)
+	if it := e.item(e.preview(), "keep"); it.Status != claudeImportUpdate {
+		t.Errorf("a source change after lint's write = %+v, want update", it)
+	}
+}
+
+// A rename by lint changes the body, so it stays visible to change detection while reasons do not.
+func TestMuseImportReadsALintRenameAsAnAFEdit(t *testing.T) {
+	e := newMuseImportEnv(t)
+	t0 := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	for p, body := range map[string]string{"docs/old.md": "same text\n"} {
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(e.clone, p)), 0o755)
+		_ = os.WriteFile(filepath.Join(e.clone, p), []byte(body), 0o644)
+	}
+	for _, a := range [][]string{{"add", "-A"}, {"commit", "--quiet", "-m", "add"}, {"mv", "docs/old.md", "docs/new.md"}, {"commit", "--quiet", "-m", "rename"},
+		{"update-ref", "refs/remotes/origin/main", "HEAD"}, {"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"}} {
+		e.git(a...)
+	}
+	_ = os.Chtimes(e.note("keep", "d", "user", "Read docs/old.md first."), t0, t0)
+	e.apply(t0.Add(time.Hour), "keep")
+	out, err := agentMemLintApply(agentMemScopeProject, e.pid, t0.Add(2*time.Hour))
+	if err != nil || out.Renamed != 1 {
+		t.Fatalf("lint apply: %+v %v", out, err)
+	}
+	later := t0.Add(5 * time.Hour)
+	_ = os.Chtimes(e.note("keep", "d", "user", "Read docs/old.md first, longer."), later, later)
+	if it := e.item(e.preview(), "keep"); it.Status != museImportDiverged || it.Reason != "af_changed" {
+		t.Errorf("after a rename = %+v, want diverged af_changed", it)
+	}
+}

@@ -2240,6 +2240,77 @@
 ## list_watches not-object [1]
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_watches: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_feedback absent
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries/feedback {"name":"","note":"","revision":0,"scope":"","session":"slot01","verdict":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_feedback empty {}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries/feedback {"name":"","note":"","revision":0,"scope":"","session":"slot01","verdict":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_feedback unknown {"zz_unknown":1}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_feedback not-object [1]
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for memory_feedback: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_feedback badtype-name {"name":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback の引数を読めません: json: cannot unmarshal array into Go struct field .name of type string","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_feedback badtype-note {"note":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback の引数を読めません: json: cannot unmarshal array into Go struct field .note of type string","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_feedback badtype-revision {"revision":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback の引数を読めません: json: cannot unmarshal array into Go struct field .revision of type int","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_feedback badtype-scope {"scope":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback の引数を読めません: json: cannot unmarshal array into Go struct field .scope of type string","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_feedback badtype-verdict {"verdict":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback の引数を読めません: json: cannot unmarshal array into Go struct field .verdict of type string","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_feedback full {"name":"child01","note":"v","revision":2,"scope":"project","verdict":"stale"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_feedback はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_feedback","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries/feedback {"name":"child01","note":"v","revision":2,"scope":"project","session":"slot01","verdict":"stale"}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## memory_forget absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_forget はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
