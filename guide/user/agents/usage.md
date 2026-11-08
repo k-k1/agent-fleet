@@ -36,7 +36,8 @@ Agents whose account allowance can be read get a **usage chip** on the WS bar. W
 [Agents reference](../../ref/agents.md).
 
 - Only the two most recently used stay on the bar. The rest fold into "**+N**" on the right; press it to open them
-- A chip nearing its cap (95% or more, say) comes out even if you have not used that agent lately
+- A folded chip keeps reading its usage, so opening "+N" costs no fresh fetch
+- A chip nearing its cap (95% or more, say) or holding a Full reset comes out even if you have not used that agent lately
 - On a phone they stack inside "⋯" and do not fold
 
 Choose how a chip is shown under "**On the WS bar**" in its dropdown.
@@ -80,7 +81,7 @@ The **API-equivalent cost (est.)** is a guide: tokens times each model's publish
 **It is not what a subscription bills you.** It shows what this use would have cost on the API.
 
 - Cache writes are priced at 1.25 times the rate, cache reads at 0.1 times
-- Rates for Anthropic models come from a built-in table, the rest from the models.dev catalog. Use through opencode is priced at opencode's rates
+- Rates for Anthropic models come from a built-in table, the rest from the models.dev catalog. The Agent fetches the catalog once a day; where it cannot, it reads the copy opencode keeps. Use through opencode is priced at opencode's rates
 - Hover an amount to see which rate was used and where it came from. For claude's auxiliary calls and opencode sessions, the amount the agent reported appears too (it is not added to the estimate)
 - Models missing from the catalog are not estimated. It says "N% of the consumption (… tokens) runs on models with no price on file", and that share is left out of the estimate
 - The catalog's date shows too. A newer catalog changes past estimates as well

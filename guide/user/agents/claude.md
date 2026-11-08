@@ -22,7 +22,7 @@ It runs in Terminal (CLI), and the session view mirrors the conversation.
 
 Work on the **Claude Code** card in **⚙Settings → Agents**.
 
-![The Claude Code card in Settings > Agents: connected, with the account's email, the plan, "Expires in 12 day(s)", and the Re-authenticate and Disconnect buttons](../../assets/agents-claude-en-light.webp)
+![The Claude Code card in Settings > Agents: connected, with the account's email, the plan, "Expires in 2 day(s)", and the Re-authenticate and Disconnect buttons](../../assets/agents-claude-en-light.webp)
 
 1. Press "**Connect via OAuth**". The sign-in page opens in a new tab; if it does not, open it from "**the sign-in link ↗**"
 2. Approve in your own browser

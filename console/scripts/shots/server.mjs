@@ -123,7 +123,7 @@ const exact = {
     // The agent pages of the user guide (SHOT_AGENTS_GUIDE): a Claude card that shows its account,
     // plan and expiry. Every other scene keeps the bare "connected" it was taken with.
     ...(process.env.SHOT_AGENTS_GUIDE
-      ? { claude: { connected: true, email: "demo@example.com", plan: "max", days_left: 12 } }
+      ? { claude: { connected: true, email: "demo@example.com", plan: "max", days_left: 2 } }
       : {}),
     ...(process.env.SHOT_OPS
       ? {
