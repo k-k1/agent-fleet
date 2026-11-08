@@ -28,7 +28,7 @@ func TestBitbucketPollReportsFromTheCache(t *testing.T) {
 	pr := bbOpen()
 	b := bbSource(&pr)
 	evs, cur, hint, err := b.Poll(context.Background(), "bitbucket:w/r#4", nil, nil)
-	if err != nil || types(evs) != "pr.checks.completed,pr.mergeable,pr.ready" || hint.After != bbOpenAfter {
+	if err != nil || types(evs) != "pr.checks.completed,pr.mergeable,pr.ready" || hint.After != bbOpenAfter || evs[0].Failed {
 		t.Fatalf("green PR: %v %s %v", err, types(evs), hint)
 	}
 	v1 := evs[0].Version
@@ -37,7 +37,7 @@ func TestBitbucketPollReportsFromTheCache(t *testing.T) {
 	pr.Checks, pr.ChecksDigest = "failure", "d2"
 	pr.FailingChecks = []branchpr.Check{{Name: "unit", URL: "https://ci.test/1"}}
 	evs, cur, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
-	if types(evs) != "pr.checks.completed,pr.checks.failed,pr.mergeable" || evs[0].Version == v1 || evs[1].Data[0].Text != "unit" {
+	if types(evs) != "pr.checks.completed,pr.checks.failed,pr.mergeable" || evs[0].Version == v1 || evs[1].Data[0].Text != "unit" || !evs[0].Failed {
 		t.Fatalf("failed checks: %s %+v", types(evs), evs)
 	}
 

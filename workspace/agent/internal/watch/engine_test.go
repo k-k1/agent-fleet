@@ -15,6 +15,7 @@ type fakeSource struct {
 	hint   Hint
 	err    error
 	polls  int
+	want   []string
 }
 
 func (f *fakeSource) Kind() string { return "fake" }
@@ -29,6 +30,7 @@ func (f *fakeSource) Resolve(_ context.Context, ref, _ string) (Resolved, error)
 }
 func (f *fakeSource) Poll(_ context.Context, id SubjectID, cur json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
 	f.polls++
+	f.want = want
 	return f.events, cur, f.hint, f.err
 }
 
@@ -57,6 +59,10 @@ type fakeSink struct {
 	forgot    []string
 	injectErr error
 	onInject  func()
+	member    []string // what went to the member, owner:type:version
+	notifyErr error
+	// answers overrides answer per owner.
+	answers map[string]Readiness
 }
 
 func (f *fakeSink) OwnerExists(o string) bool { return !f.gone[o] }
@@ -65,18 +71,33 @@ func (f *fakeSink) Ready(owner string, _ time.Time) Readiness {
 		f.asked = map[string]int{}
 	}
 	f.asked[owner]++
+	if r, ok := f.answers[owner]; ok {
+		return r
+	}
 	return f.answer
 }
 func (f *fakeSink) Forget(owner string) { f.forgot = append(f.forgot, owner) }
-func (f *fakeSink) Inject(sub Subscription, ev Event) error {
+func (f *fakeSink) Inject(sub Subscription, evs []Event) error {
 	if f.onInject != nil {
 		f.onInject()
 	}
 	if f.injectErr != nil {
 		return f.injectErr
 	}
-	f.told = append(f.told, sub.Owner+":"+ev.Type+":"+ev.Version)
-	f.notices = append(f.notices, Notice(sub, ev))
+	for _, ev := range evs {
+		f.told = append(f.told, sub.Owner+":"+ev.Type+":"+ev.Version)
+		f.notices = append(f.notices, Notice(sub, ev))
+	}
+	return nil
+}
+
+func (f *fakeSink) Notify(sub Subscription, evs []Event) error {
+	if f.notifyErr != nil {
+		return f.notifyErr
+	}
+	for _, ev := range evs {
+		f.member = append(f.member, sub.Owner+":"+ev.Type+":"+ev.Version)
+	}
 	return nil
 }
 

@@ -32,6 +32,9 @@ type Event struct {
 	Summary string     `json:"summary"`
 	Data    []DataItem `json:"data,omitempty"`
 	At      time.Time  `json:"at"`
+	// Failed marks a pr.checks.completed whose result is a failure, so a session's watch on
+	// completed checks is known to have told what a built-in's pr.checks.failed would.
+	Failed bool `json:"failed,omitempty"`
 }
 
 // DataItem is one piece of provider text: a check name and its link, a reviewer's login.
@@ -121,6 +124,25 @@ type Subscription struct {
 	// disk before the injection, so a crash in between loses that notice instead of repeating
 	// it; a load drops it.
 	Done bool `json:"done,omitempty"`
+
+	// Built-in subscriptions only (builtin.go); a session's watch leaves them empty.
+	// Builtin is the purpose that keeps the subscription.
+	Builtin string `json:"builtin,omitempty"`
+	// Notify is NotifyMember for one delivered to the member; Fallback NotifyMember sends to the
+	// member when the owner is archived or takes no prompt.
+	Notify   string `json:"notify,omitempty"`
+	Fallback string `json:"fallback,omitempty"`
+	// Max caps the deliveries, Sent counts them; SentAt is the last one into the owner session.
+	Max    int       `json:"max,omitempty"`
+	Sent   int       `json:"sent,omitempty"`
+	SentAt time.Time `json:"sent_at,omitempty"`
+	// Combine delivers every pending event in one notice.
+	Combine bool `json:"combine,omitempty"`
+	// Baseline types take the first observed state as told; Observed marks that it was seen.
+	Baseline []string `json:"baseline,omitempty"`
+	Observed bool     `json:"observed,omitempty"`
+	// Tag is the feature's own key for the subject, for the sink.
+	Tag string `json:"tag,omitempty"`
 }
 
 // tokenRE is the header token set of ADR 0133 §5: nothing in it can close a notice header or

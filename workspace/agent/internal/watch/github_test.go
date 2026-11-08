@@ -115,6 +115,9 @@ func TestGitHubPollReportsChecksAndUses304(t *testing.T) {
 	if got := types(evs); got != "pr.checks.completed,pr.checks.failed,pr.mergeable" {
 		t.Fatalf("events = %s", got)
 	}
+	if !evs[0].Failed {
+		t.Fatal("a failed completed run is not marked Failed, so a watch on completed checks would not stand in for a built-in's failure notice")
+	}
 	if !strings.Contains(evs[0].Summary, "failed (1 of 2)") || len(evs[0].Data) != 1 || evs[0].Data[0].Text != "lint\nfoo" {
 		t.Fatalf("checks event = %+v", evs[0])
 	}
@@ -138,7 +141,7 @@ func TestGitHubPollReportsChecksAndUses304(t *testing.T) {
 		map[string]any{"id": 3, "name": "lint", "status": "completed", "conclusion": "success", "completed_at": "t3"},
 	}}
 	evs3, _, _, _ := g.Poll(context.Background(), "github:o/r#7", cur, nil)
-	if types(evs3) != "pr.checks.completed,pr.mergeable,pr.ready" || evs3[0].Version == v1 {
+	if types(evs3) != "pr.checks.completed,pr.mergeable,pr.ready" || evs3[0].Version == v1 || evs3[0].Failed {
 		t.Fatalf("re-run: %s %v", types(evs3), evs3)
 	}
 }

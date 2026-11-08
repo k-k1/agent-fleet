@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -21,8 +23,12 @@ const (
 	Wait Readiness = iota
 	// Ready: inject now.
 	Ready
-	// Gone: the owner no longer exists or was archived; its subscriptions end.
+	// Gone: the owner no longer exists; its subscriptions end.
 	Gone
+	// Unreachable: the owner exists but can never take a notice (archived, or a kind that takes
+	// no prompt). A session's watches end as for Gone; a built-in with a member Fallback goes to
+	// the member instead.
+	Unreachable
 )
 
 // Sink delivers events to the session that owns a subscription. Its methods are called without
@@ -36,8 +42,11 @@ type Sink interface {
 	Ready(owner string, now time.Time) Readiness
 	// Forget drops whatever the sink keeps about an owner whose subscriptions ended.
 	Forget(owner string)
-	// Inject tells the owner about ev.
-	Inject(sub Subscription, ev Event) error
+	// Inject tells the owner about evs: one event, or every pending one of a Combine built-in.
+	Inject(sub Subscription, evs []Event) error
+	// Notify tells the member about evs, for a built-in delivered to the member or falling back
+	// to it. It must be safe to repeat: a claim released after a failed save is offered again.
+	Notify(sub Subscription, evs []Event) error
 }
 
 // Store persists the engine's state across Agent restarts.
@@ -50,6 +59,11 @@ type Store interface {
 type State struct {
 	Subs     []Subscription             `json:"subs"`
 	Subjects map[SubjectID]SubjectState `json:"subjects"`
+	// Built-in bookkeeping (builtin.go): retired subscriptions by ID, the cursor of each subject a
+	// built-in observes, and the watch deliveries that stand in for a built-in's next notice.
+	Retired map[string]Subscription       `json:"retired,omitempty"`
+	Cursors map[SubjectID]json.RawMessage `json:"builtin_cursors,omitempty"`
+	Tombs   map[string]Tomb               `json:"tombs,omitempty"`
 }
 
 // SubjectState is the engine's bookkeeping for one subject, shared by every subscription to it.
@@ -105,6 +119,9 @@ func (e *Engine) load() {
 	}
 	if e.state.Subjects == nil {
 		e.state.Subjects = map[SubjectID]SubjectState{}
+	}
+	if e.state.Cursors == nil {
+		e.state.Cursors = map[SubjectID]json.RawMessage{}
 	}
 	// A Done subscription was claimed for an injection the Agent did not live to confirm.
 	var keep []Subscription
@@ -252,7 +269,7 @@ func (e *Engine) sourceLimitLocked(src Source) error {
 	}
 	n := 0
 	for _, s := range e.state.Subs {
-		if !s.Done && s.Source == src.Kind() {
+		if !s.Done && s.Builtin == "" && s.Source == src.Kind() {
 			n++
 		}
 	}
@@ -267,7 +284,7 @@ func (e *Engine) sourceLimitLocked(src Source) error {
 func (e *Engine) requesterLimitLocked(requester string) error {
 	n := 0
 	for _, s := range e.state.Subs {
-		if !s.Done && (s.Owner == requester || s.Requester == requester) {
+		if !s.Done && s.Builtin == "" && (s.Owner == requester || s.Requester == requester) {
 			n++
 		}
 	}
@@ -280,7 +297,7 @@ func (e *Engine) requesterLimitLocked(requester string) error {
 func (e *Engine) limitsLocked(owner string) error {
 	total, n := 0, 0
 	for _, s := range e.state.Subs {
-		if s.Done {
+		if s.Done || s.Builtin != "" {
 			continue
 		}
 		total++
@@ -305,7 +322,7 @@ func (e *Engine) Unsubscribe(owner, id string) bool {
 	found, last := false, true
 	e.load()
 	for i, s := range e.state.Subs {
-		if s.ID == id && s.Owner == owner && !s.Done {
+		if s.ID == id && s.Owner == owner && !s.Done && s.Builtin == "" {
 			e.state.Subs = append(e.state.Subs[:i], e.state.Subs[i+1:]...)
 			e.dropUnwatchedLocked()
 			e.save()
@@ -314,7 +331,7 @@ func (e *Engine) Unsubscribe(owner, id string) bool {
 		}
 	}
 	for _, s := range e.state.Subs {
-		if s.Owner == owner {
+		if s.Owner == owner && s.Builtin == "" {
 			last = false
 		}
 	}
@@ -359,7 +376,7 @@ func (e *Engine) List(owner string) []Listed {
 	e.load()
 	out := []Listed{}
 	for _, s := range e.state.Subs {
-		if s.Owner != owner || s.Done {
+		if s.Owner != owner || s.Done || s.Builtin != "" {
 			continue
 		}
 		ss := e.state.Subjects[s.Subject]
@@ -378,6 +395,9 @@ func (e *Engine) Tick(ctx context.Context) {
 	now := e.now()
 	ended := e.expireLocked(now)
 	dirty := len(ended) > 0
+	if e.pruneBuiltinLocked(now) {
+		dirty = true
+	}
 	due := e.dueLocked(now)
 	e.mu.Unlock()
 	for _, o := range ended {
@@ -451,39 +471,68 @@ func (e *Engine) Tick(ctx context.Context) {
 	e.deliver(cands, now)
 }
 
-// candidate is the first pending event of one owner's subscription.
+// candidate is what one subscription offers this tick: its first pending event, or every
+// pending one of a Combine built-in.
 type candidate struct {
-	subID string
-	owner string
-	key   string // type|version of the event
+	subID  string
+	owner  string
+	key    string // the offered events' type|version, joined
+	member bool   // delivered to the member: no readiness to ask
 }
 
-// candidatesLocked picks, per owner, the first pending event of its oldest subscription that has
-// one: one notice per owner per tick, the next waits for the turn the first one starts.
+// offer is what s delivers next.
+func (s Subscription) offer() []Event {
+	if s.Combine {
+		return s.Pending
+	}
+	return s.Pending[:1]
+}
+
+func eventsKey(evs []Event) string {
+	var b strings.Builder
+	for i, ev := range evs {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(ev.Type + "|" + ev.Version)
+	}
+	return b.String()
+}
+
+// candidatesLocked picks, per owner, the offer of its oldest subscription to that session that
+// has one: one notice per owner per tick, the next waits for the turn the first one starts.
+// What goes to the member waits for no turn, so every such subscription offers.
 func (e *Engine) candidatesLocked() []candidate {
 	seen := map[string]bool{}
 	var out []candidate
 	for _, s := range e.state.Subs {
-		if s.Done || len(s.Pending) == 0 || seen[s.Owner] {
+		if s.Done || len(s.Pending) == 0 {
+			continue
+		}
+		if s.Notify == NotifyMember {
+			out = append(out, candidate{s.ID, s.Owner, eventsKey(s.offer()), true})
+			continue
+		}
+		if seen[s.Owner] {
 			continue
 		}
 		seen[s.Owner] = true
-		ev := s.Pending[0]
-		out = append(out, candidate{s.ID, s.Owner, ev.Type + "|" + ev.Version})
+		out = append(out, candidate{s.ID, s.Owner, eventsKey(s.offer()), false})
 	}
 	return out
 }
 
-// claimed is an event recorded as told on disk and about to be injected.
+// claimed is an offer recorded as told on disk and about to be delivered.
 type claimed struct {
 	sub    Subscription // as it was before the claim
-	ev     Event
+	evs    []Event
 	wasEnd bool
+	member bool
 }
 
 // deliver asks each candidate's owner whether it can take a notice (without the lock), claims
-// the ready ones on disk, injects them, and releases a claim whose injection failed. A crash
-// between the claim and the injection loses that one notice rather than repeating it, as the
+// the ready ones on disk, delivers them, and releases a claim whose delivery failed. A crash
+// between the claim and the delivery loses that one notice rather than repeating it, as the
 // PR feedback watch does.
 func (e *Engine) deliver(cands []candidate, now time.Time) {
 	if len(cands) == 0 {
@@ -491,7 +540,9 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 	}
 	ready := map[string]Readiness{}
 	for _, c := range cands {
-		ready[c.owner] = e.sink.Ready(c.owner, now)
+		if _, asked := ready[c.owner]; !c.member && !asked {
+			ready[c.owner] = e.sink.Ready(c.owner, now)
+		}
 	}
 
 	e.mu.Lock()
@@ -499,38 +550,69 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 	var gone []string
 	changed := false
 	for _, c := range cands {
-		switch ready[c.owner] {
-		case Gone:
-			if e.dropOwnerLocked(c.owner) {
-				changed = true
-			}
-			gone = append(gone, c.owner)
-		case Ready:
-			i := e.subIndexLocked(c.subID)
-			if i < 0 {
-				continue // unwatched since the candidates were picked
-			}
-			s := &e.state.Subs[i]
-			if len(s.Pending) == 0 || s.Pending[0].Type+"|"+s.Pending[0].Version != c.key {
-				continue // replaced by a newer state; the next tick offers that one
-			}
-			before := cloneSub(*s)
-			ev := s.Pending[0]
-			s.Pending = s.Pending[1:]
-			if s.Told == nil {
-				s.Told = map[string]string{}
-			}
-			s.Told[ev.Type] = ev.Version
-			end := s.Until == UntilFirst
-			if end {
-				s.Done = true
-			}
-			claims = append(claims, claimed{before, ev, end})
-			changed = true
+		i := e.subIndexLocked(c.subID)
+		if i < 0 {
+			continue // unwatched since the candidates were picked
 		}
+		s := &e.state.Subs[i]
+		member := c.member
+		if !member {
+			switch r := ready[c.owner]; {
+			case r == Ready:
+			case (r == Gone || r == Unreachable) && s.Builtin == "":
+				if e.dropOwnerLocked(c.owner) {
+					changed = true
+				}
+				gone = append(gone, c.owner)
+				continue
+			case r == Unreachable && s.Fallback == NotifyMember:
+				member = true
+			default:
+				// Waiting, or a built-in with nowhere else to go: its feature retires it once the
+				// owner stops holding the subject.
+				continue
+			}
+		}
+		if len(s.Pending) == 0 || eventsKey(s.offer()) != c.key {
+			continue // replaced by a newer state; the next tick offers that one
+		}
+		evs := append([]Event(nil), s.offer()...)
+		if s.Builtin != "" && !member {
+			// The session's own watch tells it these; recorded as told so they do not come again
+			// once that watch ends.
+			var left []Event
+			for _, ev := range evs {
+				if e.coveredLocked(s.Owner, s.Subject, ev.Type, now) {
+					s.setTold(ev)
+					s.dropPending(ev.Type)
+					changed = true
+				} else {
+					left = append(left, ev)
+				}
+			}
+			if evs = left; len(evs) == 0 {
+				continue
+			}
+		}
+		before := cloneSub(*s)
+		for _, ev := range evs {
+			s.setTold(ev)
+			s.dropPending(ev.Type)
+		}
+		end := false
+		if s.Builtin != "" {
+			s.Sent++
+			if !member {
+				s.SentAt = now.UTC()
+			}
+		} else if s.Until == UntilFirst {
+			s.Done, end = true, true
+		}
+		claims = append(claims, claimed{before, evs, end, member})
+		changed = true
 	}
 	if changed && !e.save() {
-		// Not on disk: injecting now could repeat after a restart. Undo and try next tick.
+		// Not on disk: delivering now could repeat after a restart. Undo and try next tick.
 		for _, c := range claims {
 			e.restoreLocked(c.sub)
 		}
@@ -542,21 +624,37 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 	}
 
 	for _, c := range claims {
-		err := e.sink.Inject(c.sub, c.ev)
+		var err error
+		if c.member {
+			err = e.sink.Notify(c.sub, c.evs)
+		} else {
+			err = e.sink.Inject(c.sub, c.evs)
+		}
 		e.mu.Lock()
 		if err != nil {
 			e.restoreLocked(c.sub)
-		} else if c.wasEnd {
-			if i := e.subIndexLocked(c.sub.ID); i >= 0 {
-				e.state.Subs = append(e.state.Subs[:i], e.state.Subs[i+1:]...)
-				e.dropUnwatchedLocked()
+		} else {
+			if c.sub.Builtin == "" {
+				e.noteUserDeliveryLocked(c.sub.Owner, c.evs, now)
+			}
+			if c.wasEnd {
+				if i := e.subIndexLocked(c.sub.ID); i >= 0 {
+					e.state.Subs = append(e.state.Subs[:i], e.state.Subs[i+1:]...)
+					e.dropUnwatchedLocked()
+				}
 			}
 		}
 		e.save()
 		e.mu.Unlock()
 		if err != nil {
-			log.Printf("watch: could not deliver %s to %s: %v", c.ev.Type, c.sub.Owner, err)
+			log.Printf("watch: could not deliver %s to %s: %v", eventsKey(c.evs), c.sub.Owner, err)
 		}
+	}
+}
+
+func (s *Subscription) dropPending(typ string) {
+	if j := slices.IndexFunc(s.Pending, func(p Event) bool { return p.Type == typ }); j >= 0 {
+		s.Pending = slices.Delete(s.Pending, j, j+1)
 	}
 }
 
@@ -591,7 +689,7 @@ func (e *Engine) subIndexLocked(id string) int {
 func (e *Engine) dropOwnerLocked(owner string) bool {
 	var keep []Subscription
 	for _, s := range e.state.Subs {
-		if s.Owner != owner {
+		if s.Owner != owner || s.Builtin != "" {
 			keep = append(keep, s)
 		}
 	}
@@ -616,7 +714,7 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 	srcOf := map[SubjectID]string{}
 	want := map[SubjectID][]string{}
 	for _, s := range e.state.Subs {
-		if !s.Done {
+		if !s.Done && s.Builtin == "" {
 			srcOf[s.Subject] = s.Source
 			want[s.Subject] = append(want[s.Subject], s.Types...)
 		}
@@ -648,7 +746,7 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 func (e *Engine) matchLocked(id SubjectID, events []Event) {
 	for i := range e.state.Subs {
 		s := &e.state.Subs[i]
-		if s.Subject != id || s.Done {
+		if s.Subject != id || s.Done || s.Builtin != "" {
 			continue
 		}
 		for _, ev := range events {
@@ -687,6 +785,10 @@ func (e *Engine) expireLocked(now time.Time) []string {
 	var keep []Subscription
 	exists := map[string]bool{}
 	for _, s := range e.state.Subs {
+		if s.Builtin != "" {
+			keep = append(keep, s) // its feature retires it
+			continue
+		}
 		ok, seen := exists[s.Owner]
 		if !seen {
 			ok = e.sink.OwnerExists(s.Owner)
@@ -703,7 +805,9 @@ func (e *Engine) expireLocked(now time.Time) []string {
 	e.dropUnwatchedLocked()
 	left := map[string]bool{}
 	for _, s := range keep {
-		left[s.Owner] = true
+		if s.Builtin == "" {
+			left[s.Owner] = true
+		}
 	}
 	var ended []string
 	for o := range exists {
@@ -718,7 +822,9 @@ func (e *Engine) expireLocked(now time.Time) []string {
 func (e *Engine) dropUnwatchedLocked() {
 	live := map[SubjectID]bool{}
 	for _, s := range e.state.Subs {
-		live[s.Subject] = true
+		if s.Builtin == "" {
+			live[s.Subject] = true
+		}
 	}
 	for id := range e.state.Subjects {
 		if !live[id] {

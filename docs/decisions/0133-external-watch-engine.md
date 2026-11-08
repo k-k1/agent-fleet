@@ -154,8 +154,10 @@ something an adapter does on its own.
   re-run on the same commit or a second conflict is therefore a new event, and the same state seen twice is not.
 - **The first poll after `watch`** evaluates the current state: a condition that already holds (the checks on the
   current head have completed) is delivered at once, so a `watch` made a moment too late does not wait forever.
-  Built-in subscriptions instead take the first state they see as the baseline, because a PR first seen already
-  merged is history, not news.
+  Built-in subscriptions instead take the first state they see of a terminal condition (`pr.merged`, `pr.closed`)
+  as the baseline, because a PR first seen already merged is history, not news. Their other conditions (a failed
+  CI run, a change request, a conflict, ready to merge) are delivered on first sight, as #3129 and #3131 did; what
+  those features already told is carried into the engine's record when they move, so nothing is told again.
 - **While the workspace is stopped** nothing polls, because the engine lives in the Agent. Subscriptions stay on disk;
   when the workspace starts, the engine polls every live subscription once before it returns to its schedule, and
   delivers only the latest state per subject and type. That start-up poll covers whatever pokes would have said, so
@@ -287,7 +289,11 @@ The table is a direction, not a commitment; each source is its own change with i
    §3).
 3. **Move #3129 and #3131 onto the engine** as built-in subscriptions with the member as `Fallback`. #3129 keeps its
    `prFeedback` switch, its review-notice cap (`Until`: 3 deliveries) and its watch on held PR links; #3131 has no
-   switch and keeps none. This needs no webhooks, so it comes before them.
+   switch and keeps none. This needs no webhooks, so it comes before them. A built-in is not polled by a source: its
+   feature states the set it wants on each sweep (the owner can change, the delivery record stays with the PR) and
+   feeds the PR it already read from the session list's `branchpr` caches, so it costs no request of its own and
+   counts against no watch limit. A session that watches the same PR and type itself hears it from its own watch,
+   and the built-in stays quiet.
 4. **Webhook ingress on the Control Plane** (GitHub App first; repository webhooks where an App cannot be installed;
    Bitbucket repository webhooks), forwarding pokes only, with the secrets of §4.
 5. **Sources a member adds** (§8), behind the tenant switch, with the environment allowlist for stdio servers.

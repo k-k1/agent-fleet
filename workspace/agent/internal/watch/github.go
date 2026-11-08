@@ -282,7 +282,9 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 				result = fmt.Sprintf("failed (%d of %d)", len(cs.failed), cs.total)
 			}
 			sum := fmt.Sprintf("Checks on %s finished on %s: %s.", ref, short(head), result)
-			events = append(events, ev("pr.checks.completed", version, sum, cs.failed))
+			completed := ev("pr.checks.completed", version, sum, cs.failed)
+			completed.Failed = len(cs.failed) > 0
+			events = append(events, completed)
 			if len(cs.failed) > 0 {
 				checksOK = false
 				events = append(events, ev("pr.checks.failed", version, sum, cs.failed))
