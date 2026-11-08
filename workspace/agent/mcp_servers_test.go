@@ -185,3 +185,26 @@ func TestMCPServerTestEndpointReportsFailure(t *testing.T) {
 		t.Fatalf("a broken command was reported as success: %+v", res)
 	}
 }
+
+// A built-in row has no local opt-out. The refusal carries its own code so the Console does not
+// show the "not editable" text (which is what edit/delete of a tenant or built-in row answers).
+func TestMCPServerBuiltinToggleAndEditCodes(t *testing.T) {
+	h := smokeHandler(t)
+	code := func(w interface{ Bytes() []byte }) string {
+		var e struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(w.Bytes(), &e)
+		return e.Error.Code
+	}
+	w := smokeDo(t, h, "POST", "/mcp-servers/af/enabled", "smoke-token", `{"enabled":false}`)
+	if w.Code != http.StatusForbidden || code(w.Body) != "mcp_not_toggleable" {
+		t.Fatalf("toggle builtin: %d %s, want 403 mcp_not_toggleable", w.Code, w.Body.String())
+	}
+	w = smokeDo(t, h, "DELETE", "/mcp-servers/af", "smoke-token", "")
+	if w.Code != http.StatusForbidden || code(w.Body) != "mcp_read_only" {
+		t.Fatalf("delete builtin: %d %s, want 403 mcp_read_only", w.Code, w.Body.String())
+	}
+}

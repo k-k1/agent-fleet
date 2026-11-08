@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -757,5 +758,23 @@ func TestProbeHTTPReportsServerError(t *testing.T) {
 	}
 	if !strings.Contains(res.Detail, "nope") {
 		t.Fatalf("the response body is missing from detail: %q", res.Detail)
+	}
+}
+
+// A built-in has no local opt-out, and the refusal must not be the "not editable" one whose
+// message used to promise a disable.
+func TestSetEnabledBuiltinIsNotToggleable(t *testing.T) {
+	withTempHome(t)
+	s, _ := secrets.Load()
+	s.PagerDuty = &secrets.PagerDutyCreds{APIKey: "k"}
+	if err := s.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	err := SetEnabled(BuiltinPagerDuty, false)
+	if !errors.Is(err, ErrNotToggleable) || errors.Is(err, ErrReadOnly) {
+		t.Fatalf("SetEnabled(builtin) err = %v, want ErrNotToggleable only", err)
+	}
+	if strings.Contains(ErrReadOnly.Error(), "disabled") || strings.Contains(ErrNotToggleable.Error(), "editable") {
+		t.Fatalf("messages contradict: %q / %q", ErrReadOnly, ErrNotToggleable)
 	}
 }

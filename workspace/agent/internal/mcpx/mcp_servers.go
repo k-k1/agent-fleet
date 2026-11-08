@@ -26,12 +26,13 @@ import (
 )
 
 // Wire error codes. The per-rule validation codes live in mcpreg (ValidationError.Code)
-// so the reason survives to the Console; these three are the store-level outcomes.
+// so the reason survives to the Console; these are the store-level outcomes.
 // Adding or renaming one means updating "err.<code>" in
 // console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time.
 const (
 	errCodeMCPNotFound = "mcp_not_found"
 	errCodeMCPReadOnly = "mcp_read_only"
+	errCodeMCPNoToggle = "mcp_not_toggleable"
 	errCodeMCPInvalid  = "mcp_invalid"
 	errCodeMCPConflict = "mcp_name_taken"
 )
@@ -196,6 +197,8 @@ func writeMCPErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, mcpreg.ErrNotFound):
 		httpx.WriteErr(w, http.StatusNotFound, errCodeMCPNotFound, err.Error())
+	case errors.Is(err, mcpreg.ErrNotToggleable):
+		httpx.WriteErr(w, http.StatusForbidden, errCodeMCPNoToggle, err.Error())
 	case errors.Is(err, mcpreg.ErrReadOnly):
 		httpx.WriteErr(w, http.StatusForbidden, errCodeMCPReadOnly, err.Error())
 	case errors.Is(err, mcpreg.ErrNameTaken):
