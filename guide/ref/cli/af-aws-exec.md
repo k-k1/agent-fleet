@@ -373,7 +373,7 @@ script in a shell session) and continues once you approve. If it has given up by
 - **Ctrl-C** stops waiting: the command exits with code 3 and the request stays in the Console.
 - `--login` runs the device-code login in that terminal instead (it prints the URL and code there). That is also what
   happens when the Console cannot be asked at all, and for the profiles the Console does not cover.
-- Outside a workspace nothing changes: the terminal login starts at a terminal, and the command exits with code 3
+- Outside a workspace, the terminal login starts at a terminal, and the command exits with code 3
   without one.
 
 ## The config the command gets

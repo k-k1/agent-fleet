@@ -315,6 +315,9 @@ Terms are decided by the "Screen" column of `guide/ref/glossary.md`. This sectio
   buttons that open a dialog. Everywhere else use the majority form (`送信`,
   `セッションを削除`, `API トークン`).
 - **Kana.** Write すでに and ない in hiragana, not 既に / 無い.
+- **ログイン and サインイン are verbs.** Write 「ログインしていないとき」「ほかのプロファイルでログインしていれば」, not
+  「ログインが無いとき」「ログインを持つ」「ログインを使い回す」. A noun use that reads naturally stays
+  (「ログインが切れる」「ログインを承認する」), and so do UI labels such as 「専用のサインイン」.
 - **Button form.** Buttons use the noun form only (`削除`, `停止`, `再開`). The する form
   (`削除する`) is allowed only on a confirmation dialog's execute button.
 - **Boilerplate becomes sentences.** Rewrite noun-ended fixed phrases as sentences
