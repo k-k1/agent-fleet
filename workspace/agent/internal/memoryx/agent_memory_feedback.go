@@ -153,7 +153,8 @@ func agentMemFeedback(c agentMemCaller, req agentMemFeedbackReq, now time.Time) 
 			return res, nil
 		}
 	}
-	if len(records) < agentMemFeedbackMaxRecords {
+	recorded := len(records) < agentMemFeedbackMaxRecords
+	if recorded {
 		if err := agentMemFeedbackAppend(rel, req.Name, agentMemFeedbackRecord{
 			Session: c.Session, Revision: req.Revision, Verdict: req.Verdict, At: now.UTC().Format(time.RFC3339)}); err != nil {
 			return agentMemFeedbackResult{}, err
@@ -165,11 +166,17 @@ func agentMemFeedback(c agentMemCaller, req agentMemFeedbackReq, now time.Time) 
 		return res, nil
 	}
 	res.Outcome = "counted"
+	// Past the record cap a duplicate cannot be told apart any more, so the counters (which count
+	// one report per session per revision) are left alone; the reason below dedupes by value.
 	if req.Verdict == agentMemVerdictConfirmed {
-		agentMemRecordCounter(rel, agentMemCounterConfirmed, req.Name, true)
+		if recorded {
+			agentMemRecordCounter(rel, agentMemCounterConfirmed, req.Name, true)
+		}
 		return res, nil
 	}
-	agentMemRecordCounter(rel, agentMemCounterStale, req.Name, false)
+	if recorded {
+		agentMemRecordCounter(rel, agentMemCounterStale, req.Name, false)
+	}
 	reason := agentMemReason{By: agentMemFeedbackReasonBy, Rule: req.Verdict, Note: req.Note, Revision: e.Revision}
 	for _, r := range e.Reasons {
 		if r == reason {

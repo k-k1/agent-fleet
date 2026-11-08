@@ -50,11 +50,24 @@ var agentMemLintReasonChecks = map[string]bool{
 	memorylint.CheckRetiredTerm: true,
 }
 
-// agentMemLintRepoRules are the rules that only a complete repository read can clear.
-var agentMemLintRepoRules = map[string]bool{
-	memorylint.CheckMissingPath: true,
-	memorylint.CheckMissingSym:  true,
-	memorylint.CheckMissingADR:  true,
+// agentMemLintRepoHealth says which repository rules actually ran: the path and ADR rules need the
+// tree to have been read, the symbol rule also its own search. A degradation note elsewhere (an
+// unreadable .gitignore, a proposal source) only makes the report report more, never less, so it
+// does not stop a reason from being cleared.
+func agentMemLintRepoHealth(repo memorylint.Repo, skipped []string) (pathsOK, symsOK bool) {
+	if repo == nil {
+		return false, false
+	}
+	pathsOK, symsOK = true, true
+	for _, s := range skipped {
+		switch {
+		case strings.HasPrefix(s, "repository checks"):
+			pathsOK, symsOK = false, false
+		case strings.HasPrefix(s, "symbol checks"):
+			symsOK = false
+		}
+	}
+	return pathsOK, symsOK && pathsOK
 }
 
 // agentMemLintNote is a finding's subject as a one-line reason note.
@@ -158,8 +171,16 @@ func agentMemLintApply(scope, project string, now time.Time) (agentMemLintApplyO
 			}
 		}
 	}
-	ranRepo := repo != nil && len(wire.Report.Skipped) == 0
-	ran := func(rule string) bool { return !agentMemLintRepoRules[rule] || ranRepo }
+	pathsOK, symsOK := agentMemLintRepoHealth(repo, wire.Report.Skipped)
+	ran := func(rule string) bool {
+		switch rule {
+		case memorylint.CheckMissingPath, memorylint.CheckMissingADR:
+			return pathsOK
+		case memorylint.CheckMissingSym:
+			return symsOK
+		}
+		return true
+	}
 	if repo == nil {
 		out.Notes = append(out.Notes, "repository checks did not run: no path, symbol or ADR reason was added or cleared")
 	}
@@ -219,7 +240,9 @@ func agentMemLintWrite(lc agentMemCaller, scope string, checked agentMemEntry, n
 	if err != nil {
 		return false, err
 	}
-	if !exists || cur.Withheld || cur.Entry.Revision != checked.Revision {
+	// A feedback reason is written without a revision bump, so the revision alone cannot see it:
+	// a changed reason set is a change since the check as well.
+	if !exists || cur.Withheld || cur.Entry.Revision != checked.Revision || !agentMemReasonsEqual(cur.Entry.Reasons, checked.Reasons) {
 		return false, errAgentMemLintMoved
 	}
 	e := cur.Entry
@@ -353,7 +376,7 @@ func agentMemLintApplyRenames(repo agentMemLintRepo, wire agentMemLintWire, es [
 			byMem[f.Memory] = append(byMem[f.Memory], f.Subject)
 		}
 	}
-	if len(byMem) == 0 || len(wire.Report.Skipped) > 0 {
+	if pathsOK, _ := agentMemLintRepoHealth(repo, wire.Report.Skipped); len(byMem) == 0 || !pathsOK {
 		return 0, nil
 	}
 	ren, err := repo.Renames()
@@ -412,6 +435,8 @@ func agentMemLintApplyRenames(repo agentMemLintRepo, wire agentMemLintWire, es [
 			}
 			if changed {
 				cur.Updated = now.UTC().Format(time.RFC3339)
+				// A body change clears a feedback reason, as in save and patch (decision 3).
+				agentMemDropFeedbackReasons(&cur.agentMemLife)
 			}
 			return changed, trailers
 		}, agentMemOpLintRename)

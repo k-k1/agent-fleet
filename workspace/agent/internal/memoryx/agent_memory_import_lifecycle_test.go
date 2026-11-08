@@ -230,3 +230,28 @@ func TestMuseImportStaysCleanAfterLintWritesReasons(t *testing.T) {
 		t.Errorf("a source change after lint's write = %+v, want update", it)
 	}
 }
+
+// A rename by lint changes the body, so it stays visible to change detection while reasons do not.
+func TestMuseImportReadsALintRenameAsAnAFEdit(t *testing.T) {
+	e := newMuseImportEnv(t)
+	t0 := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	for p, body := range map[string]string{"docs/old.md": "same text\n"} {
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(e.clone, p)), 0o755)
+		_ = os.WriteFile(filepath.Join(e.clone, p), []byte(body), 0o644)
+	}
+	for _, a := range [][]string{{"add", "-A"}, {"commit", "--quiet", "-m", "add"}, {"mv", "docs/old.md", "docs/new.md"}, {"commit", "--quiet", "-m", "rename"},
+		{"update-ref", "refs/remotes/origin/main", "HEAD"}, {"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"}} {
+		e.git(a...)
+	}
+	_ = os.Chtimes(e.note("keep", "d", "user", "Read docs/old.md first."), t0, t0)
+	e.apply(t0.Add(time.Hour), "keep")
+	out, err := agentMemLintApply(agentMemScopeProject, e.pid, t0.Add(2*time.Hour))
+	if err != nil || out.Renamed != 1 {
+		t.Fatalf("lint apply: %+v %v", out, err)
+	}
+	later := t0.Add(5 * time.Hour)
+	_ = os.Chtimes(e.note("keep", "d", "user", "Read docs/old.md first, longer."), later, later)
+	if it := e.item(e.preview(), "keep"); it.Status != museImportDiverged || it.Reason != "af_changed" {
+		t.Errorf("after a rename = %+v, want diverged af_changed", it)
+	}
+}

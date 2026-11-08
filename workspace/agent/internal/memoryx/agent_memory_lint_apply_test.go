@@ -351,3 +351,80 @@ func TestLintReplacePathBoundaries(t *testing.T) {
 		}
 	}
 }
+
+// A feedback reason is written without a revision bump; a lint write computed before it must not
+// overwrite it.
+func TestLintWriteDoesNotDropAConcurrentFeedbackReason(t *testing.T) {
+	e := newLintApplyEnv(t, map[string]string{"docs/real.md": "x\n"})
+	e.save("m", "v1", 0)
+	checked := e.stored("m")
+	if _, err := agentMemFeedback(e.c, agentMemFeedbackReq{Scope: agentMemScopeProject, Name: "m", Revision: 1, Verdict: "wrong", Note: "n"}, laNow); err != nil {
+		t.Fatal(err)
+	}
+	wrote, err := agentMemLintWrite(agentMemLintCaller(e.c), agentMemScopeProject, checked, laNow,
+		func(cur *agentMemEntry) (bool, []string) { cur.Reasons = nil; return true, nil }, agentMemOpLint)
+	if wrote || err != errAgentMemLintMoved {
+		t.Fatalf("wrote=%v err=%v", wrote, err)
+	}
+	if g := e.stored("m"); len(g.Reasons) != 1 || g.Reasons[0].By != "feedback" {
+		t.Errorf("reasons = %+v", g.Reasons)
+	}
+}
+
+func TestLintRenameDropsFeedbackReasons(t *testing.T) {
+	e := lintRenameFixture(t)
+	e.save("m", "Read docs/old.md first.", 0)
+	if _, err := agentMemFeedback(e.c, agentMemFeedbackReq{Scope: agentMemScopeProject, Name: "m", Revision: 1, Verdict: "wrong", Note: "the old path"}, laNow); err != nil {
+		t.Fatal(err)
+	}
+	e.apply()
+	g := e.stored("m")
+	if g.Body != "Read docs/new.md first." || len(g.Reasons) != 0 {
+		t.Errorf("body %q reasons %+v", g.Body, g.Reasons)
+	}
+}
+
+func TestLintRepoHealthIsPerRule(t *testing.T) {
+	repo := agentMemLintRepo{}
+	cases := []struct {
+		name           string
+		skipped        []string
+		paths, symbols bool
+		nilRepo        bool
+	}{
+		{"clean", nil, true, true, false},
+		{"unreadable gitignore only", []string{"git-ignored paths are not skipped: .gitignore unreadable: x"}, true, true, false},
+		{"symbol search failed", []string{"symbol checks: git grep failed"}, true, false, false},
+		{"tree unreadable", []string{"repository checks: git ls-tree: x"}, false, false, false},
+		{"no repository", nil, false, false, true},
+	}
+	for _, tc := range cases {
+		var r any = repo
+		p, s := false, false
+		if tc.nilRepo {
+			p, s = agentMemLintRepoHealth(nil, tc.skipped)
+		} else {
+			p, s = agentMemLintRepoHealth(r.(agentMemLintRepo), tc.skipped)
+		}
+		if p != tc.paths || s != tc.symbols {
+			t.Errorf("%s: paths=%v symbols=%v", tc.name, p, s)
+		}
+	}
+}
+
+// Past the record cap a report is still applied, but the counters stay put.
+func TestFeedbackPastTheRecordCapDoesNotCount(t *testing.T) {
+	c, rel := fbSetup(t)
+	fbSave(t, c, "m", "body", 0)
+	for i := 0; i < agentMemFeedbackMaxRecords; i++ {
+		if err := agentMemFeedbackAppend(rel, "m", agentMemFeedbackRecord{Session: fmt.Sprintf("s%d", i), Revision: 1, Verdict: "confirmed", At: "2026-11-08T00:00:00Z"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res, err := fbReport(c, "m", 1, "confirmed", ""); err != nil || res.Outcome != "counted" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if n := agentMemCounterCount(rel, agentMemCounterConfirmed, "m"); n != 0 {
+		t.Errorf("confirmed = %d past the cap", n)
+	}
+}
