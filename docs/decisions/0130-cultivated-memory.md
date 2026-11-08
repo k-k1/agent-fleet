@@ -691,4 +691,4 @@ release.
   from `workspace/` alone, so it holds a byte-for-byte mirror of the engine's sources
   (`workspace/agent/internal/memengine`, `scripts/sync-memengine.sh`, a test that fails on drift) rather than a
   `replace` to a directory outside the image's build context. Not built: the Console approval UI and toggle, the
-  daily notice (a gated hook exists), the ledger entry for the tokens, codex/Gemini runners.
+  daily notice (a gated hook exists), the ledger entry for the tokens, codex/Gemini runners. Follow-ups: #3696 (the replacement writer that would let a supersede apply).
