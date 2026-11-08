@@ -52,6 +52,9 @@ export interface FileViewerShellProps {
   /** Hands out the scroll-position-memory ref per surface (owned by FileView). A different
    *  surface means a different memory, so each branch asks for a different name. */
   scrollMemory: ScrollMemoryFactory;
+  /** The split view's scroll sync positions the preview, so its remembered position must
+   *  not be restored over it (it is still recorded). */
+  previewFollowsEditor?: boolean;
 }
 
 export function FileViewerShell(props: FileViewerShellProps) {
@@ -93,7 +96,7 @@ export function FileViewerShell(props: FileViewerShellProps) {
       ) : props.preview === "slides" ? (
         <MarpView source={props.previewSource} />
       ) : props.preview === "normal" ? (
-        <div className="md-scroll" ref={props.scrollMemory("preview")}>
+        <div className="md-scroll" ref={props.scrollMemory("preview", { restore: !props.previewFollowsEditor })}>
           <FileMarkdownView source={props.previewSource} sourceLines filePath={filePath} nestedRepo={props.nestedRepo} onOpenFile={props.onOpenFile} onOpenDir={props.onOpenDir} />
         </div>
       ) : (

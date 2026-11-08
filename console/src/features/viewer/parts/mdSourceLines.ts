@@ -113,7 +113,10 @@ export function tagSourceLines(root: HTMLElement, body: string, options: SourceL
       const el = children[k]!;
       ci = k + 1;
       tag(el, at);
-      if (token.type === "list") walkList(token as Tokens.List, el, at, at + token.raw.length);
+      // A nested list's raw is de-indented, so its length undercounts the span it covers in
+      // the source; only a verbatim raw gives a trustworthy end, otherwise the parent's does.
+      const verbatim = body.startsWith(token.raw, at);
+      if (token.type === "list") walkList(token as Tokens.List, el, at, verbatim ? at + token.raw.length : to);
     }
   };
 
@@ -124,8 +127,8 @@ export function tagSourceLines(root: HTMLElement, body: string, options: SourceL
     list.items.forEach((item, i) => {
       const at = findRaw(body, item.raw, pos, to);
       if (at < 0) return;
-      const end = Math.min(to, at + item.raw.length);
-      pos = end;
+      const end = body.startsWith(item.raw, at) ? Math.min(to, at + item.raw.length) : to;
+      pos = end === to ? at + 1 : end;
       const li = items[i]!;
       tag(li, at);
       // The item's first block shares the item's line; only what follows it adds anchors.

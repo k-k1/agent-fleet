@@ -29,6 +29,8 @@ export interface CodeEditorHandle {
   applyEdit(edit: { from: number; to: number; insert: string }): boolean;
   /** The element that scrolls (CodeMirror's scrollDOM). */
   scroller: HTMLElement;
+  /** The whole editor (view.dom): the scroller plus its panels, such as search. */
+  host: HTMLElement;
   /** The 1-based source line at the top of the viewport, with the fraction of
    *  that line already scrolled past (12.25 = a quarter into line 12). */
   topLine(): number;
@@ -231,9 +233,6 @@ export const editorHighlightStyle = HighlightStyle.define([
 
 export const editorHighlighting: Extension = syntaxHighlighting(editorHighlightStyle);
 
-/** Scroll a 1-based line into view and put the cursor on it. The cursor is what
- *  marks the line: `basicSetup`'s active-line highlight follows it, which is the
- *  editing surface's equivalent of CodeView's target-line row. */
 /** The fractional 1-based line at the top of the viewport. Document heights are
  *  measured from the document top, so the scroller's own padding and the
  *  editor's top margin are taken out through documentTop. */
@@ -258,6 +257,9 @@ export function scrollLineToTop(view: EditorView, line: number): void {
   scroller.scrollTop = docTop + block.top + frac * block.height;
 }
 
+/** Scroll a 1-based line into view and put the cursor on it. The cursor is what
+ *  marks the line: `basicSetup`'s active-line highlight follows it, which is the
+ *  editing surface's equivalent of CodeView's target-line row. */
 export function revealLine(view: EditorView, line: number): void {
   const position = lineStartOf(view.state, line);
   view.dispatch({
@@ -368,6 +370,7 @@ export function CodeEditor({
         return view.state.doc !== before;
       },
       scroller: view.scrollDOM,
+      host: view.dom,
       topLine: () => viewportTopLine(view),
       scrollToLine: (line) => scrollLineToTop(view, line),
       lineCount: () => view.state.doc.lines,

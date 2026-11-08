@@ -61,6 +61,8 @@ export function topToLine(anchors: readonly LineAnchor[], top: number): number {
 /** What the sync needs from the editor (CodeEditorHandle provides it). */
 export interface SyncEditor {
   scroller: HTMLElement;
+  /** Input anywhere in here (the search panel too) makes the editor the driver. */
+  host: HTMLElement;
   topLine(): number;
   scrollToLine(line: number): void;
   lineCount(): number;
@@ -86,19 +88,31 @@ export function measureAnchors(scroller: HTMLElement, lineCount: number): LineAn
 const atTop = (el: HTMLElement) => el.scrollTop <= 1;
 const atBottom = (el: HTMLElement) => el.scrollTop >= el.scrollHeight - el.clientHeight - 1;
 
+/** The installed sync. `lead` hands the driver to a side for a change made without input
+ *  on it — an accepted AI suggestion is applied from a panel outside both sides. */
+export interface SplitScrollSync {
+  lead(side: SyncSide): void;
+  dispose(): void;
+}
+
 /** Install the sync on `container`, which holds both the editor and the preview. The
  *  preview scroller is looked up on every pass: the renderer replaces it when the file
- *  reloads. Returns the cleanup. `initial` is the side whose position is kept when the
- *  split opens — the one that was on screen before. */
+ *  reloads. `initial` is the side whose position is kept when the split opens — the one that
+ *  was on screen before. */
 export function installSplitScrollSync(
   container: HTMLElement,
   editor: SyncEditor,
   findPreview: () => HTMLElement | null,
   initial: SyncSide = "editor",
-): () => void {
+): SplitScrollSync {
   let driver: SyncSide = initial;
   let frame = 0;
   let observed: Element | null = null;
+  // Anchor offsets are in content coordinates, so scrolling never moves them: measure once
+  // and re-measure only when the content changes (a scroll pass would otherwise query and
+  // measure every tagged block of the document each frame).
+  let anchors: LineAnchor[] | null = null;
+  let anchorsFor: HTMLElement | null = null;
 
   const sync = () => {
     frame = 0;
@@ -117,28 +131,39 @@ export function installSplitScrollSync(
       follow.scrollTop = follow.scrollHeight;
       return;
     }
-    const anchors = measureAnchors(preview, editor.lineCount());
+    if (!anchors || anchorsFor !== preview) {
+      anchors = measureAnchors(preview, editor.lineCount());
+      anchorsFor = preview;
+    }
     if (driver === "editor") preview.scrollTop = lineToTop(anchors, editor.topLine());
     else editor.scrollToLine(topToLine(anchors, preview.scrollTop));
   };
   const schedule = () => {
     if (!frame) frame = requestAnimationFrame(sync);
   };
+  const remeasure = () => {
+    anchors = null;
+    schedule();
+  };
 
   // A re-render (debounced typing), a mermaid diagram or an image landing changes the
-  // preview's height under a still scroll position; realign from whichever side leads.
-  const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+  // preview's height under a still scroll position; realign from whichever side leads. The
+  // mutation observer catches a re-render that happens to keep the height.
+  const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(remeasure);
+  const mutation = typeof MutationObserver === "undefined" ? null : new MutationObserver(remeasure);
   const observe = (preview: HTMLElement) => {
     const content = preview.firstElementChild;
-    if (!resize || !content || content === observed) return;
-    if (observed) resize.unobserve(observed);
-    resize.observe(content);
+    if (!content || content === observed) return;
+    if (observed) resize?.unobserve(observed);
+    resize?.observe(content);
+    mutation?.disconnect();
+    mutation?.observe(content, { childList: true });
     observed = content;
   };
 
   const sideOf = (target: EventTarget | null): SyncSide | null => {
     if (!(target instanceof Node)) return null;
-    if (editor.scroller.contains(target)) return "editor";
+    if (editor.host.contains(target)) return "editor";
     const preview = findPreview();
     return preview && preview.contains(target) ? "preview" : null;
   };
@@ -166,11 +191,18 @@ export function installSplitScrollSync(
     });
   });
 
-  return () => {
-    for (const type of input) container.removeEventListener(type, claim, { capture: true });
-    container.removeEventListener("scroll", onScroll, { capture: true });
-    if (frame) cancelAnimationFrame(frame);
-    if (openFrame) cancelAnimationFrame(openFrame);
-    resize?.disconnect();
+  return {
+    lead(side) {
+      driver = side;
+      schedule();
+    },
+    dispose() {
+      for (const type of input) container.removeEventListener(type, claim, { capture: true });
+      container.removeEventListener("scroll", onScroll, { capture: true });
+      if (frame) cancelAnimationFrame(frame);
+      if (openFrame) cancelAnimationFrame(openFrame);
+      resize?.disconnect();
+      mutation?.disconnect();
+    },
   };
 }

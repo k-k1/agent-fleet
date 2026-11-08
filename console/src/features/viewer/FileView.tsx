@@ -23,7 +23,7 @@ import { registerPaneViewActions } from "./paneViewActions.ts";
 import { dismissSoftKeyboard, escapeHtml } from "./parts/fileDom.ts";
 import { useFileContent, type FileData } from "./parts/useFileContent.ts";
 import { useScrollMemory } from "./parts/useScrollMemory.ts";
-import { installSplitScrollSync, type SyncSide } from "./parts/splitScrollSync.ts";
+import { installSplitScrollSync, type SplitScrollSync, type SyncSide } from "./parts/splitScrollSync.ts";
 import { scrollMemoryKey } from "./scrollMemory.ts";
 import { useSelectionPill } from "./parts/useSelectionPill.ts";
 import {
@@ -352,16 +352,22 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   if (!surfaces.split) lastSoloSideRef.current = surfaces.preview ? "preview" : "editor";
   const [editorHandleEpoch, setEditorHandleEpoch] = useState(0);
   const scrollSyncOn = surfaces.split && surfaces.preview === "normal";
+  const scrollSyncRef = useRef<SplitScrollSync | null>(null);
   useEffect(() => {
     const box = surfacesBoxRef.current;
     const handle = editorHandleRef.current;
     if (!scrollSyncOn || !box || !handle) return;
-    return installSplitScrollSync(
+    const sync = installSplitScrollSync(
       box,
       handle,
       () => box.querySelector<HTMLElement>(":scope > .file-viewer-shell .md-scroll"),
       lastSoloSideRef.current,
     );
+    scrollSyncRef.current = sync;
+    return () => {
+      sync.dispose();
+      if (scrollSyncRef.current === sync) scrollSyncRef.current = null;
+    };
   }, [scrollSyncOn, editorHandleEpoch]);
 
   // Focus follows the mode, but only when the user asked for the mode (docs/log/44
@@ -543,7 +549,11 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
       editorHandleRef.current ? (edit) => editorHandleRef.current!.applyEdit(edit) : undefined,
     );
     if (code) setEditorNotice(suggestErrText(tr, code));
-    else setSuggestOpen(false);
+    else {
+      setSuggestOpen(false);
+      // The edit scrolled the editor to the change, from a panel outside both sides.
+      scrollSyncRef.current?.lead("editor");
+    }
   };
 
   const changeMode = (next: "view" | "edit") => {
@@ -821,6 +831,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
           targetLine={targetLine}
           targetColumn={targetColumn}
           scrollMemory={scrollMemory}
+          previewFollowsEditor={scrollSyncOn}
         />
       </div>
 

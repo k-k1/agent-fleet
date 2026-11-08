@@ -38,12 +38,19 @@ export type ScrollMemoryRef = (el: HTMLElement | null) => (() => void) | void;
  *  get the same function object: hand React a new function every render and it detaches and
  *  re-attaches, running the cleanup every render
  *  ([[react-ref-callback-identity-cleanup]]). */
-export type ScrollMemoryFactory = (surface: string) => ScrollMemoryRef;
+export type ScrollMemoryFactory = (surface: string, options?: ScrollMemoryOptions) => ScrollMemoryRef;
+
+export interface ScrollMemoryOptions {
+  /** false: record the position but never restore it, for a surface something else
+   *  positions (the split view's preview, which follows the editor). Default true. */
+  restore?: boolean;
+}
 
 const noop: ScrollMemoryRef = () => {};
 
-export function scrollMemoryRef(key: string | null): ScrollMemoryRef {
+export function scrollMemoryRef(key: string | null, options: ScrollMemoryOptions = {}): ScrollMemoryRef {
   if (!key) return noop;
+  const restore = options.restore ?? true;
   return (el) => {
     if (!el) return;
     let target = loadScrollPos(key);
@@ -104,6 +111,7 @@ export function scrollMemoryRef(key: string | null): ScrollMemoryRef {
     };
 
     const arm = () => {
+      if (!restore) return;
       target = loadScrollPos(key);
       if (target == null || target <= 0) return;
       if (Math.abs(el.scrollTop - target) <= 1) return; // already there
@@ -153,11 +161,13 @@ export function scrollMemoryRef(key: string | null): ScrollMemoryRef {
 export function useScrollMemory(baseKey: string | null): ScrollMemoryFactory {
   return useMemo(() => {
     const refs = new Map<string, ScrollMemoryRef>();
-    return (surface: string) => {
-      let ref = refs.get(surface);
+    return (surface: string, options?: ScrollMemoryOptions) => {
+      // Same storage key either way; a separate ref so switching the option re-attaches.
+      const id = options?.restore === false ? `${surface}\u0000record-only` : surface;
+      let ref = refs.get(id);
       if (!ref) {
-        ref = scrollMemoryRef(baseKey ? `${baseKey}\u0000${surface}` : null);
-        refs.set(surface, ref);
+        ref = scrollMemoryRef(baseKey ? `${baseKey}\u0000${surface}` : null, options);
+        refs.set(id, ref);
       }
       return ref;
     };
