@@ -52,6 +52,23 @@ Home and End move between them.
   memory holds every word it returns the ones that hold some and says so. A pin is recorded as a change by you ("pin changed") and can be
   reverted; an agent's later update of a pinned memory keeps the pin, and the af memory tools offer agents no way to pin or unpin.
 
+- **Kind and lifecycle fields (optional)**: a memory file can carry `kind` (`preference`, `lesson`, `procedure`, `state`
+  or `log`: how it goes stale), `anchors` (the paths, symbols, test names, ADR numbers and commands it depends on),
+  and a lifecycle: `status` (`active`, `quiet` or `archived`) with `status_by`, `superseded_by` (a memory, or a
+  repository document), `invalid_at` and `reasons` (open doubts; a memory with any is *suspect*). An agent may set
+  `kind` and `anchors` with `memory_save` (leave them out to keep what is there); the lifecycle fields are set by lint,
+  feedback, the consolidator or you, never by an agent and never by an import. A memory with none of them behaves as
+  before. What agents see follows one rule on every path (`memory_index`, `memory_search`, `memory_read`, the external
+  memory tools, the local-model session prompt and the write-back to Claude): an **archived** or **superseded** memory is
+  not listed, not found by search and not injected, and `memory_read` answers with a stub (name, status, what replaced
+  it, reasons) instead of the text; a **quiet** memory or a `log` is not in the described part of the index, even when
+  pinned, but is in the names-only list, in search and in `memory_read`; a **suspect** memory is shown with its reasons
+  on every line, hit and read. Your own views (the list, history, diff, restore and exports) show everything. The
+  write-back to Claude skips archived, superseded, quiet, log and suspect memories, and **removes** a copy Agent Fleet
+  wrote earlier when its memory stops qualifying (shown in the preview as **remove**); a copy you edited in Claude is
+  kept, shown as a conflict, and left out of `MEMORY.md`. Reverting a change restores the earlier version whole, these
+  fields included.
+
 - **Forget, Unforget and history**: **Forget this memory** removes it from every agent's view. The **Forgotten** chip
   lists the ones you can **Unforget**, on the row or in the detail pane (the text comes back as it was before; if it now
   looks like a secret, use **Revert this change** on its forget entry in the Changes view, where you can confirm). Both are the same revert and forget as in

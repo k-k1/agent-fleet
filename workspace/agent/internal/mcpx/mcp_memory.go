@@ -36,6 +36,62 @@ type mcpMemoryEntry struct {
 	Body          string   `json:"body"`
 	Snippets      []string `json:"snippets"`
 	MatchedTerms  []string `json:"matchedTerms"`
+
+	// The lifecycle fields of ADR 0130 decision 3. All are absent on a memory that has none.
+	MemKind      string               `json:"kind"`
+	Anchors      []string             `json:"anchors"`
+	Status       string               `json:"status"`
+	SupersededBy *mcpMemorySuperseded `json:"supersededBy"`
+	Reasons      []mcpMemoryReason    `json:"reasons"`
+	// Stub is the answer of a read of an archived or superseded memory: no text.
+	Stub bool `json:"stub"`
+}
+
+type mcpMemoryReason struct {
+	By   string `json:"by"`
+	Rule string `json:"rule"`
+	Note string `json:"note"`
+}
+
+type mcpMemorySuperseded struct {
+	Memory   string `json:"memory"`
+	Document *struct {
+		Repo    string `json:"repo"`
+		Path    string `json:"path"`
+		Heading string `json:"heading"`
+		Commit  string `json:"commit"`
+	} `json:"document"`
+}
+
+// mcpMemoryReasonsText is the prefix of a suspect memory's line, hit and read. It must stay
+// identical to memoryx.agentMemReasonsText, which the index budget measures.
+func mcpMemoryReasonsText(rs []mcpMemoryReason) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		p := r.By + " " + r.Rule
+		if r.Note != "" {
+			p += ": " + r.Note
+		}
+		parts = append(parts, p)
+	}
+	s := strings.Join(parts, "; ")
+	if r := []rune(s); len(r) > 160 {
+		s = string(r[:160]) + "…"
+	}
+	return "[suspect: " + s + "] "
+}
+
+func (s *mcpMemorySuperseded) String() string {
+	switch {
+	case s == nil:
+		return ""
+	case s.Document != nil:
+		return fmt.Sprintf("document %s:%s (%s)", s.Document.Repo, s.Document.Path, s.Document.Commit)
+	}
+	return "memory " + s.Memory
 }
 
 type mcpMemoryProject struct {
@@ -66,6 +122,9 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		Kinds       []string `json:"kinds"`
 		Revision    int      `json:"revision"`
 		Budget      int      `json:"budget"`
+		// Absent keeps what the memory has; present (even empty) sets it.
+		MemKind *string   `json:"kind"`
+		Anchors *[]string `json:"anchors"`
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -111,10 +170,17 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		}
 		return mcpTextResult(id, mcpMemoryFormatRead(out))
 	case mcpToolMemorySave:
-		body, _ := json.Marshal(map[string]any{
+		m := map[string]any{
 			"session": owner, "scope": a.Scope, "name": a.Name, "description": a.Description,
 			"type": a.Type, "kinds": a.Kinds, "body": a.Body, "revision": a.Revision,
-		})
+		}
+		if a.MemKind != nil {
+			m["kind"] = *a.MemKind
+		}
+		if a.Anchors != nil {
+			m["anchors"] = *a.Anchors
+		}
+		body, _ := json.Marshal(m)
 		out, err := agentDo(http.MethodPost, "/agents/memory/entries", body)
 		if err != nil {
 			return mcpToolErr(id, mcpMemoryErr(err))
@@ -247,7 +313,7 @@ func mcpMemoryFormatIndex(raw string) string {
 		return b.String()
 	}
 	for _, e := range v.Entries {
-		fmt.Fprintf(&b, "- [%s] %s — %s%s\n", e.Scope, e.Name, e.Description, mcpMemoryTags(e))
+		fmt.Fprintf(&b, "- [%s] %s — %s%s%s\n", e.Scope, e.Name, mcpMemoryReasonsText(e.Reasons), e.Description, mcpMemoryTags(e))
 	}
 	// The Agent already ranked and cut; render exactly that and add nothing back.
 	if len(v.More) > 0 {
@@ -298,7 +364,7 @@ func mcpMemoryFormatSearch(raw string) string {
 		b.WriteString("No memory contains every word of the query; these contain some of them (matched words in brackets), best first:\n")
 	}
 	for _, e := range v.Hits {
-		fmt.Fprintf(&b, "- [%s] %s — %s%s", e.Scope, e.Name, e.Description, mcpMemoryTags(e))
+		fmt.Fprintf(&b, "- [%s] %s — %s%s%s", e.Scope, e.Name, mcpMemoryReasonsText(e.Reasons), e.Description, mcpMemoryTags(e))
 		if len(e.MatchedTerms) > 0 {
 			fmt.Fprintf(&b, " [matched: %s]", strings.Join(e.MatchedTerms, ", "))
 		}
@@ -316,7 +382,31 @@ func mcpMemoryFormatRead(raw string) string {
 		return raw
 	}
 	var b strings.Builder
+	if e.Stub {
+		// No text: an archived or superseded memory must not come back as current.
+		fmt.Fprintf(&b, "name: %s\nscope: %s\nrevision: %d\nstatus: %s\n", e.Name, e.Scope, e.Revision, e.Status)
+		if e.SupersededBy != nil {
+			fmt.Fprintf(&b, "superseded by: %s\n", e.SupersededBy)
+		}
+		for _, r := range e.Reasons {
+			fmt.Fprintf(&b, "open doubt: %s %s: %s\n", r.By, r.Rule, r.Note)
+		}
+		b.WriteString("\nThis memory is archived or superseded, so its text is not shown and must not be relied on. Use what replaced it, or ask your user.\n")
+		return b.String()
+	}
+	if len(e.Reasons) > 0 {
+		b.WriteString("This memory is suspect: " + strings.TrimSpace(mcpMemoryReasonsText(e.Reasons)) + " Check it before relying on it.\n")
+	}
 	fmt.Fprintf(&b, "name: %s\nscope: %s\nrevision: %d\ndescription: %s\n", e.Name, e.Scope, e.Revision, e.Description)
+	if e.MemKind != "" {
+		fmt.Fprintf(&b, "kind: %s\n", e.MemKind)
+	}
+	if e.Status != "" {
+		fmt.Fprintf(&b, "status: %s\n", e.Status)
+	}
+	if len(e.Anchors) > 0 {
+		fmt.Fprintf(&b, "anchors: %s\n", strings.Join(e.Anchors, ", "))
+	}
 	if e.Type != "" {
 		fmt.Fprintf(&b, "type: %s\n", e.Type)
 	}
@@ -407,6 +497,8 @@ func agentMemoryTools() []toolSpec {
 						"body":        memoryStringArg("The memory itself, Markdown"),
 						"type":        map[string]any{"type": "string", "enum": []string{"user", "feedback", "project", "reference"}},
 						"kinds":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only for these agent kinds (e.g. claude); omit when it applies to all"},
+						"kind":        map[string]any{"type": "string", "enum": []string{"preference", "lesson", "procedure", "state", "log"}, "description": "How this memory goes stale; omit to keep the current one. A log is history and is never in the described part of the index"},
+						"anchors":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "What this memory depends on (paths, symbols, test names, ADR numbers, commands); omit to keep the current ones, [] clears them"},
 						"scope":       memoryScopeArg(),
 						"revision":    map[string]any{"type": "integer", "minimum": 0, "description": "Revision you read (0 or omitted creates)"},
 					},

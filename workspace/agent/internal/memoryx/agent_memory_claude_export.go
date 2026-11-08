@@ -308,8 +308,11 @@ type agentMemExportItem struct {
 	data     []byte // the file to write
 	nativeFH string // sha256 of the native file the evaluation saw, "" when absent
 	locked   bool   // never overwritten, even when named (a symlink or unreadable leaf)
-	entry    *agentMemEntry
-	native   *agentMemExportNative
+	// withdrawn marks a copy AF wrote earlier whose memory is no longer eligible (ADR 0130
+	// decision 3): it is removed when nobody edited it, and otherwise reported and left out of MEMORY.md.
+	withdrawn bool
+	entry     *agentMemEntry
+	native    *agentMemExportNative
 }
 
 type agentMemExportPreview struct {
@@ -556,10 +559,17 @@ func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportP
 	}
 
 	afNames := map[string]bool{}
+	withdrawn := map[string]bool{}
 	for i := range es {
 		e := es[i]
 		if !agentMemAppliesTo(e, "claude") {
 			pv.NotForClaude++
+			continue
+		}
+		// One predicate decides what AF selects, which copies it wrote earlier are withdrawn
+		// and what MEMORY.md lists (the natives loop below handles the copies).
+		if !agentMemWriteBackEligible(e) {
+			withdrawn[e.Name] = true
 			continue
 		}
 		afNames[e.Name] = true
@@ -653,9 +663,12 @@ func agentMemExportBuild(projectID, slug string, mem *os.File) (*agentMemExportP
 		switch {
 		case n.bad != "":
 			it.Status, it.Reason = claudeExportNativeOnly, n.bad
-		case n.parsed && agentMemExportOwn(n.source, projectID, name) && !protected[name]:
+		case n.parsed && agentMemExportOwn(n.source, projectID, name) && (!protected[name] || withdrawn[name]):
+			it.withdrawn = withdrawn[name]
 			if n.afHash == n.hash {
 				it.Status = claudeExportRemove
+			} else if it.withdrawn {
+				it.Status, it.Reason = claudeExportConflict, "withdrawn_but_changed"
 			} else {
 				it.Status, it.Reason = claudeExportConflict, "forgotten_but_changed"
 			}
@@ -779,7 +792,7 @@ func (pv *agentMemExportPreview) indexText(over map[string]bool, failed map[stri
 	var rest []kept
 	for i := range pv.Items {
 		it := &pv.Items[i]
-		if seen[it.Name] {
+		if seen[it.Name] || it.withdrawn {
 			continue
 		}
 		n := it.native

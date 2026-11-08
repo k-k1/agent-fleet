@@ -435,3 +435,65 @@ func TestMemoryReadDescriptionSaysOmittedScopeSearchesBoth(t *testing.T) {
 	}
 	t.Fatal("no memory_read tool")
 }
+
+// A suspect memory carries its reasons on every line; memoryx pins the same literal
+// (TestVisibilityIndexAndInjection) because the index budget is measured on it.
+func TestMemoryIndexLineCarriesReasons(t *testing.T) {
+	out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"sus","scope":"project","description":"d","updated":"2026-11-08T00:00:00Z","reasons":[{"by":"lint","rule":"path-missing","note":"gone.md is not on main","revision":1}]}]}`)
+	if want := "- [project] sus — [suspect: lint path-missing: gone.md is not on main] d (2026-11-08)\n"; !strings.Contains(out, want) {
+		t.Fatalf("index = %q, want a line %q", out, want)
+	}
+	hits := mcpMemoryFormatSearch(`{"hits":[{"name":"sus","scope":"project","description":"d","reasons":[{"by":"feedback","rule":"stale","note":""}],"snippets":[]}]}`)
+	if !strings.Contains(hits, "- [project] sus — [suspect: feedback stale] d") {
+		t.Fatalf("search = %q", hits)
+	}
+	// A memory with no reasons prints as it always did.
+	if out := mcpMemoryFormatIndex(`{"project":{"display":"p"},"entries":[{"name":"n","scope":"user","description":"d"}]}`); !strings.Contains(out, "- [user] n — d\n") {
+		t.Fatalf("plain line changed: %q", out)
+	}
+}
+
+// An archived or superseded memory reads as a stub: why it is gone, never its text. A suspect one
+// reads in full, led by its reasons.
+func TestMemoryReadStubAndSuspect(t *testing.T) {
+	stub := mcpMemoryFormatRead(`{"name":"old","scope":"project","revision":4,"status":"archived","supersededBy":{"memory":"new"},"stub":true,"reasons":[{"by":"member","rule":"wrong","note":"n"}]}`)
+	for _, want := range []string{"name: old", "status: archived", "superseded by: memory new", "open doubt: member wrong: n", "text is not shown"} {
+		if !strings.Contains(stub, want) {
+			t.Errorf("stub lacks %q:\n%s", want, stub)
+		}
+	}
+	doc := mcpMemoryFormatRead(`{"name":"old","scope":"project","revision":4,"status":"archived","stub":true,"supersededBy":{"document":{"repo":"r","path":"docs/a.md","commit":"0123abc"}}}`)
+	if !strings.Contains(doc, "superseded by: document r:docs/a.md (0123abc)") {
+		t.Errorf("document target: %s", doc)
+	}
+	sus := mcpMemoryFormatRead(`{"name":"n","scope":"user","revision":2,"description":"d","body":"the text","kind":"lesson","anchors":["a.go","b.go"],"reasons":[{"by":"lint","rule":"path-missing","note":"x"}]}`)
+	if !strings.HasPrefix(sus, "This memory is suspect: [suspect: lint path-missing: x]") || !strings.Contains(sus, "the text") ||
+		!strings.Contains(sus, "kind: lesson") || !strings.Contains(sus, "anchors: a.go, b.go") {
+		t.Errorf("suspect read:\n%s", sus)
+	}
+}
+
+// kind and anchors reach the store from memory_save, a save that names neither keeps them, and a
+// bad value is refused with the field named.
+func TestMemorySaveKindAndAnchors(t *testing.T) {
+	memoryTestEnv(t)
+	r := callMemoryTool(t, "memory_save", map[string]any{
+		"name": "k1", "description": "d", "body": "b", "kind": "procedure", "anchors": []string{"docs/a.md", "go test ./..."},
+	})
+	if r.IsError {
+		t.Fatalf("save = %+v", r)
+	}
+	r = callMemoryTool(t, "memory_read", map[string]any{"name": "k1"})
+	if !strings.Contains(r.Text, "kind: procedure") || !strings.Contains(r.Text, "anchors: docs/a.md, go test ./...") {
+		t.Fatalf("read = %s", r.Text)
+	}
+	if r = callMemoryTool(t, "memory_save", map[string]any{"name": "k1", "description": "d", "body": "b2", "revision": 1}); r.IsError {
+		t.Fatalf("resave = %+v", r)
+	}
+	if r = callMemoryTool(t, "memory_read", map[string]any{"name": "k1"}); !strings.Contains(r.Text, "kind: procedure") || !strings.Contains(r.Text, "anchors: docs/a.md") {
+		t.Fatalf("a save that names neither lost them: %s", r.Text)
+	}
+	if r = callMemoryTool(t, "memory_save", map[string]any{"name": "k1", "description": "d", "body": "b3", "revision": 2, "kind": "mood"}); !r.IsError || !strings.Contains(r.Text, "kind must be one of") {
+		t.Fatalf("bad kind = %+v", r)
+	}
+}

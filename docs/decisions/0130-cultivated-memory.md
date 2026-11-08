@@ -558,6 +558,25 @@ release.
 
 ## Notes
 
+- **2026-11-08 — decision 3 "Schema" and "Visibility" built (#3495).** The frontmatter keys are `kind`, `anchors`,
+  `status`, `status_by`, `superseded_by`, `invalid_at` and `reasons` (the Go field for `kind` is `MemKind`, because
+  `Kinds` already means the agent kinds a memory is for). Structured values are one-line JSON in the file (a valid YAML
+  flow value); the wire is camelCase. `superseded_by` is the union of decision 11: `{"memory": name, "scope"?}` or
+  `{"document": {repo, path, heading, commit}}`. One schema (`agentMemLifeProblems`) is checked on every file a write
+  publishes, inside `agentMemApplyLocked`, so no writer can skip it; a reader drops a value that does not fit instead of
+  failing (version skew, hand edits), and the writers' check reads strictly. Only `kind` and `anchors` are on the
+  `memory_save` request (absent keeps, present and empty clears); `agentMemLife` is embedded in the entry, so save,
+  patch, pin, the imports and the project move keep every field they do not name, and revert restores the stored
+  version whole. A feedback reason is dropped by any body change of `memory_save` or `memory_patch`; nothing writes one
+  yet (#3496). Visibility: `agentMemExcluded` (archived, or any `superseded_by`; `invalid_at` alone does not exclude),
+  `agentMemDescribable` (not quiet, not a `log`) and `agentMemWriteBackEligible` are the only predicates; the index,
+  search, read (a stub with name, scope, revision, status, `superseded_by` and reasons), the external routes, lcpp's
+  injection, the near-name hint, patch (an agent cannot patch what it cannot see) and the write-back all use them. The
+  names-only tail also lists quiet memories and logs, and a pinned quiet memory is not counted as a pin that did not
+  fit. A copy the write-back withdrew and that was edited on the native side is the conflict `withdrawn_but_changed`; it
+  cannot be overwritten and is not listed in `MEMORY.md`. A lifecycle write marks an imported memory as changed, so a
+  later re-import of the same file is `diverged` until the member decides (the importers compare stored bytes).
+
 - **2026-11-08 — decision 3 "Counters" built (#3442).** `.usage-v2/reads/<name>` and `.usage-v2/hits/<name>`
   are written beside the legacy `.usage/<name>`; `confirmed/` and `stale/` are in the layout (cleared with the
   rest) but nothing appends to them until `memory_feedback`. A reads file's mtime is touched past the cap.

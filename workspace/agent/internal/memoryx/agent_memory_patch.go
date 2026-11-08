@@ -136,7 +136,7 @@ func agentMemPatch(c agentMemCaller, req agentMemPatchReq, now time.Time) (agent
 		return agentMemWriteResult{}, err
 	}
 	// A memory an outside client may not read is as good as missing to it.
-	if exists && !cur.Withheld && c.Kind == agentMemExternalKind && !agentMemAppliesTo(cur.Entry, c.Kind) {
+	if exists && !cur.Withheld && (c.Kind == agentMemExternalKind && !agentMemAppliesTo(cur.Entry, c.Kind) || agentMemExcluded(cur.Entry)) {
 		exists = false
 	}
 	switch {
@@ -168,6 +168,9 @@ func agentMemPatch(c agentMemCaller, req agentMemPatchReq, now time.Time) (agent
 	stamp := now.UTC().Format(time.RFC3339)
 	e := cur.Entry // every field the patch does not name is kept (ADR 0130 decision 3)
 	e.Body, e.Revision = body, cur.Entry.Revision+1
+	if body != cur.Entry.Body {
+		agentMemDropFeedbackReasons(&e.agentMemLife)
+	}
 	e.AuthorKind, e.AuthorSession, e.Updated = c.Kind, c.Session, stamp
 	if req.Description != nil {
 		e.Description = *req.Description
@@ -229,7 +232,7 @@ func agentMemNearNames(c agentMemCaller, scope, name string) []string {
 	}
 	var near []agentMemScored
 	for _, e := range es {
-		if e.Name == name || !agentMemAppliesTo(e, c.Kind) {
+		if e.Name == name || !agentMemAppliesTo(e, c.Kind) || agentMemExcluded(e) {
 			continue
 		}
 		e.Body = "" // the ranking of a name hint is name and description only

@@ -680,7 +680,7 @@ func agentMemMoveSame(a, b agentMemEntry) bool {
 	// The pin and the import provenance are part of the memory: a copy that lacks them is not the
 	// same, or removing the source would drop the member's pin or the import's source hash.
 	if a.Description != b.Description || a.Type != b.Type || strings.TrimRight(a.Body, "\n") != strings.TrimRight(b.Body, "\n") ||
-		a.Pinned != b.Pinned || a.Source != b.Source || a.SourceHash != b.SourceHash {
+		a.Pinned != b.Pinned || a.Source != b.Source || a.SourceHash != b.SourceHash || !agentMemLifeSame(a.agentMemLife, b.agentMemLife) {
 		return false
 	}
 	ka, kb := append([]string(nil), a.Kinds...), append([]string(nil), b.Kinds...)
