@@ -96,6 +96,7 @@ default run skips them, so name them in `--only` and pass `--out`. A scene with 
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only tracker-settings --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-toast --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ssm-hosts --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ssm-start --out <dir>

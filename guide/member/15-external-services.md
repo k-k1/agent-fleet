@@ -8,6 +8,8 @@ English | [日本語](15-external-services.ja.md)
 
 This chapter covers the outside services you use from a session: the `gh`, `bkt`, `jira` and `confluence` CLIs, the other CLIs that are already signed in, the Discord / Slack chat bridge, and wiring monitoring tools into a conversation. AWS and Google Cloud are in [16 Cloud accounts](16-cloud-accounts.md).
 
+Using Jira and Confluence in a session is covered in [Use Jira](../user/integrations/jira.md) and [Use Confluence](../user/integrations/confluence.md).
+
 ## Use `gh` and `bkt` in a session
 
 Once GitHub is connected, `gh` in a session is already signed in. Once Bitbucket Cloud
@@ -35,140 +37,6 @@ reviewer on the pull request).
   Settings. Set it up yourself (`bkt auth login`, or `BKT_HOST` and `BKT_TOKEN`); the
   `bkt` then runs as you configured it, without the saved connection.
 
-## Use `jira` in a session
-
-Once Jira is connected (Settings, **Issue tracker**), `jira`, the Jira CLI, works in every session
-and for every agent, with no `jira init` token prompt and no login. It uses your saved connection,
-and an OAuth connection is renewed on each call, so an expired token never means restarting the
-session. You can view, list, create, edit, comment on and transition issues:
-`jira issue view PROJ-1`, `jira issue list -p PROJ`, `jira issue create -p PROJ`,
-`jira issue comment add PROJ-1 "…"`, `jira issue move PROJ-1 "In Progress"`.
-
-- **Creating issues**: `jira issue create -p PROJ …` works without `jira init`; name the project with
-  `-p` (or set a default project, below). If `jira` cannot work out the issue types it needs, it prints a
-  one-line hint and fails with `invalid issue types in config`. Run the `jira init` command the hint
-  names, as printed; `jira board list -p PROJ` shows the exact board name it wants.
-- **Parent issues**: `jira issue create … -P PARENT-1` (or `--parent`) sets the parent (epic or
-  parent of a sub-task). `jira` alone can drop it without an error when its config has no epic
-  link; the wrapper adjusts its config so that the parent is sent as the standard parent field. This has
-  not been confirmed against every kind of Jira project yet, so check the parent of the new issue.
-  If the config cannot be adjusted (for example a `-c` file), the wrapper warns that the parent may be missing.
-- **Assigning**: looking up an assignee (`jira issue assign`, and `-a` / `--assignee` of
-  `issue edit`, `create` and `move`) searches users in the default or `-p` project, so it needs a
-  project. With no default project (no `jira init` yet), `jira issue assign PROJ-1 <user>`
-  takes the project from the issue key's prefix for you. The other commands print a one-line hint:
-  pass `-p PROJ` or run `jira init --project PROJ --board "PROJ board"`. An explicit `-p` is never
-  overridden.
-- **Project, board, sprints and epics**: run `jira init --project PROJ --board "PROJ board"` once
-  (add `--force` to replace an earlier setup). It writes your default project, board, issue types
-  and epic fields, which `jira sprint list` and the epic commands need, and it asks no questions.
-  Without it, pass `-p PROJ` to each command. For a second board (or a project the first
-  setup does not cover), make a configuration file of its own in the folder where `jira` keeps its
-  files: `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`,
-  then use `jira -c ~/.config/agent-fleet/jira/other-board.yml …`. Your connection is used only with
-  configuration files in that folder; one anywhere else runs without it. (When `jira` itself suggests such a
-  command, for example for another project's issue types, run it as printed.)
-- **Markdown in comments and descriptions**: `comment add`, and the description of `issue create`
-  (`-b`, `-T`, or a pipe) and `issue edit -b`, are converted from Markdown to Jira's document format
-  by Agent Fleet, so `code` and **bold** right next to Japanese text, a list straight after a
-  paragraph, and a table (a `| a | b |` header row followed by a `|---|---|` delimiter row) show as
-  written; a table inside a list or a quote shows as a line per row, as Jira allows none there. When the issue is created but its description cannot be set, `jira`
-  says so and exits with status 3: the issue exists, so do not create it again; set the
-  description with `jira issue edit PROJ-1 --no-input -b "…"`. `issue edit -b` also exits with
-  status 3 when only the description could not be set; the other changes were applied, so run just
-  that `issue edit` again. If the issue type requires a
-  description when an issue is created, `create` sends it through the Jira CLI's own conversion and
-  says so. In an interactive terminal without `--no-input`, with `--help`, `--web`, `--debug` or a
-  configuration of your own, the Jira CLI is used as before. To turn the conversion off entirely,
-  set `AF_JIRA_ADF=0`.
-- **Flaky network to Atlassian**: reading commands (`issue view` / `issue list`, `board`, `sprint`,
-  `epic` and `project list`, `me`) are re-run up to twice after a connection reset or timeout, and
-  only the last attempt's output is shown. Commands that change something are never re-run, so after
-  a failed **or timed-out** `issue create` or `comment add` check Jira before running it again (for
-  example with the JQL `project = PROJ AND creator = currentUser() AND created >= -15m`). `comment edit` and
-  `comment delete` retry on their own; "probably already deleted" means the delete went through.
-  When no terminal is attached, a call that gets no answer is stopped rather than left waiting: after
-  about two minutes for a command that changes something, after about 45 seconds per attempt for a
-  reading one (which is then re-run as above). The command that changes something exits with status
-  124 and says that the issue or comment may exist; for `issue create` it also lists the issues you
-  created in the last 15 minutes with exactly that summary ("possible matches", or "no matching issue
-  found"), still with status 124. If the authorization expired or was revoked, `jira` prints "the Jira
-  connection is unusable" instead of asking for an API token: reconnect Jira in Settings. In output
-  that is not a terminal, links to issues point at your Jira site.
-- **Using an Atlassian MCP tool instead**: `jira` is the default because it works for every agent and
-  renews the token itself, while an MCP connector serves one agent and needs a session restart when
-  its login expires. To prefer the MCP route, say so in **⚙Settings → "Agent instructions"**, for
-  example: "For Jira, use the Atlassian MCP tool instead of the `jira` CLI." Agents that have the
-  connector follow it; the others keep using `jira`. Without such a line, an agent uses an MCP tool
-  only for what the CLI cannot do.
-- **Editing and deleting comments**: `jira issue comment edit PROJ-1 10001 -b "…"` and
-  `jira issue comment delete PROJ-1 10001`. `jira` itself has only `comment add`; these two are
-  added by Agent Fleet. `edit` takes the new text from `-b`, `-T FILE` (`-` reads stdin) or a pipe,
-  and sends it as Markdown converted for Jira, so it is also how a comment posted garbled before
-  0.36.0 is repaired. Find the comment ID with `jira issue view PROJ-1 --raw` (`fields.comment.comments[].id`).
-  Jira usually lets you change only your own comments (someone else's answers 403 unless your account may manage all comments), and agents
-  are told to edit or delete only a comment they posted in that session or one you named. They
-  work with your saved connection only: not with `--debug`, `JIRA_API_TOKEN` or a configuration of your
-  own, where plain `jira` answers that it has no such command.
-- **`--debug` runs without your connection**: jira's debug output prints the authorization
-  header, so a debug run gets no token from the connection.
-- **What it can change** is what your connection can. The CLI writes to Jira as you, so creating,
-  editing and moving issues needs an account that is allowed to.
-- **With OAuth, boards, sprints and epics** need the Jira Software scopes on the tenant's Jira app.
-  Your tenant administrator turns them on, and you then **reconnect Jira** once. Until then those
-  commands, and `jira init`, fail with an authorization error; Settings › Issue tracker shows
-  "Boards, sprints and epics: not available" on the Jira card, and `jira` prints the same
-  explanation before running those commands. Links the CLI prints point at
-  `api.atlassian.com` rather than your site.
-- **Jira Data Center** (or another Jira) is not connected through Settings. Set it up yourself
-  (`jira init` with your own `--server`, a configuration file of your own, or
-  `JIRA_API_TOKEN`); `jira` then runs as you configured it, without the saved connection.
-
-## Use `confluence` in a session
-
-Once Jira is connected with OAuth or an API token (Settings, **Issue tracker**), `confluence`, the
-Confluence CLI, works in a session for every agent, with no `confluence init` and no login. It uses
-the same Atlassian connection as `jira` and renews it when it is about to expire, so you never
-restart a session for it: `confluence search "release notes"`, `confluence read PAGE_ID`,
-`confluence space-lookup KEY`, `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`.
-`confluence --help` lists the rest.
-
-- **OAuth needs the Confluence scopes**, which the tenant administrator turns on (the *Confluence*
-  option on the tenant's Jira card, after adding the scopes to the Atlassian app). You then
-  **reconnect Jira** once. Until then `confluence` prints one line saying the Atlassian
-  authorization has no Confluence scopes and does not run; Jira keeps working, and Settings › Issue
-  tracker shows "Confluence: not available". An API-token connection needs nothing extra.
-- **Page commands need the newer page scopes.** Atlassian has removed the old page endpoints that
-  the Confluence CLI uses for `read`, `info`, `create`, `create-child`, `update`, `edit` and
-  `space-lookup`, so the workspace answers these itself over Confluence's current (v2) API, with the
-  same command line and the same kind of output (`--format markdown` works for reading and
-  writing; Japanese text, emoji, tables, lists and `code` / **bold** next to Japanese are kept).
-  They need the granular scopes `read:page`, `write:page` and `read:space` on top of the old ones.
-  If your connection predates them, the command prints one line saying so and Settings › Issue
-  tracker shows a "Confluence: search and comments work, but …" note; the tenant administrator adds the scopes
-  to the Atlassian app, then you **reconnect Jira**. Search, comments and attachments are unaffected.
-- **Reads survive a flaky network.** Read-only commands (`search`, `read`, `info`, `spaces`, `find`,
-  `children`, `comments`, versions, properties, and `attachments` without a download) are re-run up
-  to twice after a connection reset or timeout, and only the last attempt's output is shown. When the
-  output is not a terminal, one attempt is bounded by `AF_CONFLUENCE_TIMEOUT` seconds (default 60,
-  `0` = none).
-- **Writes are sent once.** If the network drops after a create or update was sent, the command says
-  the result is unknown instead of retrying; check the page before repeating it. An update that
-  collides with someone else's edit is refused as a version conflict and overwrites nothing.
-- **Still on the old endpoints:** `move`, `delete`, `children`, `find`, `spaces`, `copy-tree`,
-  page versions and properties / front matter. These can answer "410 … removed" until
-  the Confluence CLI moves them to the new API. Folders are separate: the workspace refuses
-  `create --type folder`, and listing a folder's children uses the CLI's own v2 call, which needs
-  `read:hierarchical-content:confluence` (not requested).
-- **What it can change** is what your connection can: the CLI writes as you.
-- **Your own setup is never overridden.** If you set `CONFLUENCE_DOMAIN`, `CONFLUENCE_API_TOKEN` (or
-  any other `CONFLUENCE_*` variable that names a host or a credential), pass `--profile`, or have run
-  `confluence init` (a `config.json` in `~/.config/confluence-cli`), `confluence` runs exactly as you
-  configured it, without the saved connection. Confluence Data Center is set up that way.
-- **An expired or revoked authorization** prints a line telling you to reconnect Jira in Settings
-  instead of the CLI's own "run `confluence init`".
-- Page links the CLI prints point at your Confluence site.
-
 ## CLIs that are already signed in
 
 These commands in a session or terminal use a connection you made in Settings, for every agent. You never log
@@ -179,15 +47,15 @@ them in from the terminal, and an expiring token is renewed on use.
 | `git` | **Git hosting** (GitHub, Bitbucket) | [06](06-code.md#connect-a-git-provider) |
 | `gh` | **Git hosting**, GitHub | [15](15-external-services.md#use-gh-and-bkt-in-a-session) |
 | `bkt` | **Git hosting**, Bitbucket Cloud (bitbucket.org) | [15](15-external-services.md#use-gh-and-bkt-in-a-session) |
-| `jira` | **Issue tracker**, Jira | [15](15-external-services.md#use-jira-in-a-session) |
-| `confluence` | **Issue tracker**, Jira (the same Atlassian connection) | [15](15-external-services.md#use-confluence-in-a-session) |
+| `jira` | **Issue tracker**, Jira | [Use Jira](../user/integrations/jira.md) |
+| `confluence` | **Issue tracker**, Jira (the same Atlassian connection) | [Use Confluence](../user/integrations/confluence.md) |
 | `af-aws-exec --profile <name> -- <command>` | **AWS profiles/SSM**, after **Log in** on the profile | [af-aws-exec](../ref/cli/af-aws-exec.md) |
 | `af-gcloud-exec --profile <name> -- <command>` | **Google Cloud**, after **Log in** on the profile | [16](16-cloud-accounts.md#running-a-command-as-a-profile) |
 
 Agents are told to use `bkt` rather than a Bitbucket or Atlassian MCP server, and `jira` by default for Jira. The
 CLIs read your saved connection on every call and renew it when it is about to expire, while an MCP connector's
 expired login needs the session restarted. To have agents prefer an Atlassian MCP tool for Jira, see
-[15](15-external-services.md#use-jira-in-a-session) ("Using an Atlassian MCP tool instead").
+[Use Jira](../user/integrations/jira.md#have-agents-use-the-atlassian-mcp-tool).
 
 ## Connecting Discord / Slack (chat bridge)
 

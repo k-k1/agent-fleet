@@ -439,6 +439,45 @@ func TestResumeRefusedForItsConfigReopensWithoutServers(t *testing.T) {
 	}
 }
 
+// A stored session the host still knows is reopened as is: same id, no session/start. Without
+// this, a driver that skipped the resume and always started fresh would still pass every live
+// test, because a host that keeps no turnless session cannot tell the two apart.
+func TestOpenSessionResumeSuccessKeepsTheStoredSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	const stored = "01a0c1d6-0000-7000-8000-0000000000c9"
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c7"}
+	host := newTestHandle(t, h)
+	writeSession(h.slotSid, museSession{ID: stored, Path: "/tmp/s.jsonl"})
+	var resumed, started int
+	host.Handle(msp.MethodSessionResume, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.SessionResumeParams
+		if err := json.Unmarshal(m.Params, &p); err != nil {
+			t.Errorf("session/resume params: %v", err)
+		}
+		if p.SessionID != stored {
+			t.Errorf("resumed %q, want the stored %q", p.SessionID, stored)
+		}
+		resumed++
+		return resumedSession(), nil
+	})
+	host.Handle(msp.MethodSessionStart, func(msptest.Message) (any, *msp.Error) {
+		started++
+		return nil, &msp.Error{Code: msp.ErrCodeInternal, Message: "unexpected session/start"}
+	})
+	refuseSessionRead(t, host)
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	h.mu.Lock()
+	sid := h.sid
+	h.mu.Unlock()
+	if sid != stored || resumed != 1 || started != 0 {
+		t.Errorf("sid=%q resumed=%d started=%d; want the stored sid, one resume, no start", sid, resumed, started)
+	}
+}
+
 // Only a refusal of the config is retried bare. Any other failure keeps its own meaning:
 // sessionNotFound still falls back to a fresh start, and anything else still fails the open
 // rather than being papered over by a second call.

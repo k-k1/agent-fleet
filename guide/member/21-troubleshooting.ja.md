@@ -539,7 +539,7 @@ Jira のカードに **「ボード・スプリント・エピック: 利用で�
 スプリント・エピックのコマンドは認可エラーで失敗し、`jira` も先に同じ説明を出します。テナント管理者が Atlassian
 アプリにスコープを追加し、テナントの Jira カードで Jira Software のオプションにチェックを入れてから、
 **Jira をつなぎ直して**ください（一度だけ）。それまで `jira init` を繰り返す必要はありません。課題の表示・一覧・
-作成・コメントにはスコープは要りません（[15](15-external-services.ja.md#セッションで-jira-を使う)）。
+作成・コメントにはスコープは要りません（[Jira を使う](../user/integrations/jira.ja.md#ボードスプリントエピックを使う)）。
 
 ### `jira issue create`（や `comment add`）が終了コード 124 でタイムアウトした
 
@@ -549,7 +549,7 @@ Jira のカードに **「ボード・スプリント・エピック: 利用で�
 （検索できないとき＝「could not look for the issue」もあるので、頼り切らないでください）。
 先に Jira で確かめ（たとえば JQL `project = PROJ AND creator = currentUser() AND created >= -15m`）、
 なければ作り直します。読み取りだけのコマンドは、タイムアウトや接続リセットのあと自動でやり直されます
-（[15](15-external-services.ja.md#セッションで-jira-を使う)）。
+（[Jira を使う](../user/integrations/jira.ja.md#書き込みが終了コード-124-で終わった)）。
 
 ### `jira` が終了コード 3 で終わった（説明文が設定されていない）
 
@@ -557,7 +557,7 @@ Jira のカードに **「ボード・スプリント・エピック: 利用で�
 `jira` から表示されます。`create` で作成された課題のキーを読み取れなかったときはそう表示されるので、Jira で課題を
 探してください（たとえば上の JQL）。`create` のあとは**課題がすでにある**ので作り直さないでください。`edit` のあとは、
 ほかの変更は反映済みです。どちらも `jira issue edit PROJ-1 --no-input -b "…"` で説明文を設定します
-（[15](15-external-services.ja.md#セッションで-jira-を使う)）。
+（[Jira を使う](../user/integrations/jira.ja.md#課題を作ったら終了コード-3-で終わった)）。
 
 ### AWS のコマンドが「Unable to locate credentials」と言う／`af-aws-exec`・`af-gcloud-exec` が止まる
 

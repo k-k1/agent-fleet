@@ -228,6 +228,11 @@ answer. A project without git, an orphaned project (its working copy is gone) an
 term and size checks only, and the report says what it skipped. A path or name that was renamed is reported as missing:
 treat a finding as a question, not a verdict.
 
+The panel (and `af-memory lint`) also shows **proposed retired terms**, read from the same default branch: the name of
+a fully superseded ADR, or an `AF_*` key that a recent commit removed and no file mentions any more. Each comes with its
+evidence (the ADR's status line, or the commit) and is shown only when a memory in the scope uses it. A proposal never
+enters your list by itself: **Add to list** appends it, **Reject** remembers it so it is not proposed again.
+
 ### Settings
 
 **It is off by default.** Turn on "Let sessions use Agent Fleet memory" first, here in this view: on reaches sessions

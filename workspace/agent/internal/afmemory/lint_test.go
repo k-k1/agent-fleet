@@ -25,7 +25,7 @@ func lintAgent(t *testing.T) (*Client, *[]string) {
 				io.WriteString(w, `{"scope":"user","terms":1,"report":{"checked":1,"findings":[{"memory":"u1","check":"oversize","subject":"5000"}],"counts":{"oversize":1},"skipped":["repository checks (paths, symbols, ADRs): user scope: no repository"]}}`)
 				return
 			}
-			io.WriteString(w, `{"scope":"project","project":{"id":"demo-0123456789ab","display":"demo"},"ref":"origin/main","commit":"abc123","terms":1,"report":{"checked":2,"findings":[{"memory":"a","check":"broken-link","subject":"ghost","line":3}],"counts":{"broken-link":1}}}`)
+			io.WriteString(w, `{"scope":"project","project":{"id":"demo-0123456789ab","display":"demo"},"ref":"origin/main","commit":"abc123","terms":1,"report":{"checked":2,"findings":[{"memory":"a","check":"broken-link","subject":"ghost","line":3}],"counts":{"broken-link":1},"proposals":[{"term":"AF_OLD_SWITCH","kind":"removed-key","evidence":"removed in abc1234: drop it","memories":["a","b"]}]}}`)
 		default:
 			w.WriteHeader(404)
 		}
@@ -42,7 +42,7 @@ func TestAFMemoryLint(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errw)
 	}
-	for _, want := range []string{"== demo: 2 memories, 1 finding(s)  [origin/main @ abc123]", "broken-link    a:3  ghost", "== user", "oversize       u1  5000 bytes", "skipped: repository checks"} {
+	for _, want := range []string{"== demo: 2 memories, 1 finding(s)  [origin/main @ abc123]", "broken-link    a:3  ghost", "== user", "oversize       u1  5000 bytes", "skipped: repository checks", `propose        "AF_OLD_SWITCH"  removed-key`, "evidence: removed in abc1234: drop it", "used by: a, b"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
 		}
@@ -57,7 +57,7 @@ func TestAFMemoryLint(t *testing.T) {
 	}
 
 	*reqs = nil
-	if code, out, _ := run(c, "lint", "--project", "demo", "--json"); code != 0 || !strings.Contains(out, `"broken-link"`) || len(*reqs) != 2 {
+	if code, out, _ := run(c, "lint", "--project", "demo", "--json"); code != 0 || !strings.Contains(out, `"broken-link"`) || !strings.Contains(out, `"proposals"`) || len(*reqs) != 2 {
 		t.Errorf("--project: %d reqs=%v\n%s", code, *reqs, out)
 	}
 	if code, _, e := run(c, "lint", "--project", "nope"); code != 1 || !strings.Contains(e, `no project "nope"`) {

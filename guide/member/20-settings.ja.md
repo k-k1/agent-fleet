@@ -314,37 +314,8 @@ PagerDuty / Grafana / CloudWatch / AWS を接続し、**SRE アシスタント**
 
 ### 課題管理
 
-左ペインの**課題管理**に並ぶ作業項目（Jira の課題、GitHub の Issue とプルリクエスト、
-Bitbucket のプルリクエスト）の取得元です。行からそのままセッションを起こせます。
-
-- **保存クエリ**がすべてです。GitHub の検索構文・Jira の JQL・Bitbucket の絞り込み式を
-  そのまま保存します。**保存クエリを作るまで一度も取りに行きません。**
-  ここが唯一の絞り込みで、全件は取り込みません。
-- **GitHub は `assignee:` だけではプルリクエストが出ません。** GitHub は PR の作者を
-  アサインにしないので、`assignee:@me` だけのクエリでは Issue しか並びません。既定の
-  `is:open (is:issue OR is:pull-request) involves:@me`（`is:issue` も `is:pull-request` も無い検索を
-  拒否する GitHub アカウントがあります）なら、自分が作成・アサイン・メンション・コメントした項目を拾います。
-  **自分へのレビュー依頼は含まれない**ので、`is:open review-requested:@me` を 2 本目として
-  足してください（両方に当たった項目も 1 行にまとまります）。`OR` と括弧も使えます。
-  GitHub が拒否したクエリは、行にその理由が出ます（「github rejected the query: …」）。種別を書いていないことだけが理由で
-  拒否されたときは、`(is:issue OR is:pull-request) (<あなたのクエリ>)` として 1 回だけやり直します。
-- **Jira** はここで接続します。**OAuth** か、**メールアドレス＋API トークン**
-  （メールアドレスも資格情報の片割れです）。この接続で、セッションの `jira` CLI にもサインイン済みになります
-  （[15](15-external-services.ja.md#セッションで-jira-を使う)）。Jira Software のスコープが無い OAuth 接続では、カードに
-  「ボード・スプリント・エピック: 利用できません。」と、テナント管理者に追加してもらうものが出ます。同じ接続で `confluence` CLI にもサインイン済みになります
-  （[15](15-external-services.ja.md#セッションで-confluence-を使う)）。Confluence のスコープが無い OAuth 接続では
-  カードに「Confluence: 利用できません。」、ページ用スコープより前の接続では「Confluence: 検索とコメントは使えますが…」と出ます。
-  **GitHub と Bitbucket は「Git ホスティング」の連携に相乗り**するので、ここでの接続は要りません。
-- **Bitbucket** にはアカウントを横断する検索が無いので、クエリは手で書くのではなく
-  **接続済みのリポジトリの一覧から組み立てます**（何を出すか × 対象）。Bitbucket の項目は
-  **読み取りだけ**で、書き戻しはしません。
-- **ブランチ名テンプレート**：行から起こしたセッションが切るブランチ。空欄なら既定の
-  `{prefix}{ref}-{slug}`（例: `feature/45-empty-list`、`fix/PROJ-123`）です。使えるのは `{ref}` `{num}`
-  `{key}` `{project}` `{type}` `{prefix}` `{slug}` で、欄の下の例に実際の結果が出ます。リポジトリ側の
-  規則（git-flow など）があれば、起動時はそちらが優先されます。
-
-一覧そのものと、行からセッションを起こす手順は
-[03 セッションを始める](03-starting-sessions.ja.md#課題管理から始める)にあります。
+左ペインの**課題管理**に課題やプルリクエストを出すための、Jira の接続です。接続と保存クエリは
+[課題管理サービスを接続する](../user/integrations/issue-tracker.ja.md) にあります。
 
 ### チャット連携
 
