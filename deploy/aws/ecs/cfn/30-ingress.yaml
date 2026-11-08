@@ -829,7 +829,7 @@ Resources:
             # ECS/awsvpc: bind non-loopback; CpSg limits 8099 to the ALB SG.
             - {Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}"}
             - {Name: WS_DATA, Value: /tmp}   # unused for state now (store = RDS/Postgres, below)
-            # RDS Postgres metadata store; the password arrives as a secret, never in the DSN.
+            # RDS Postgres metadata store; the password arrives as a secret, never hardcoded in a plaintext URL/env value.
             - {Name: AF_DB_HOST, Value: !ImportValue {"Fn::Sub": "${DataStackName}-DbEndpoint"}}
             - {Name: AF_DB_PORT, Value: !ImportValue {"Fn::Sub": "${DataStackName}-DbPort"}}
             - {Name: AF_DB_NAME, Value: agentfleet}
@@ -893,7 +893,7 @@ Resources:
             - !If [HasComfyUrl, {Name: AF_COMFY_URL, Value: !Ref ComfyUrl}, !Ref "AWS::NoValue"]
             - !If [HasRemoteEngineUrl, {Name: AF_REMOTE_ENGINE_URL, Value: !Ref RemoteEngineUrl}, !Ref "AWS::NoValue"]
             - !If [HasRemoteEngineKeys, {Name: AF_REMOTE_ENGINE_KEYS, Value: !Ref RemoteEngineKeys}, !Ref "AWS::NoValue"]
-            # No BITBUCKET_OAUTH_* / GITHUB_OAUTH_CLIENT_ID (per-tenant rows). AF_RUNTIME and AF_ECS_*: PARAMETERS.md.
+            # No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID (per-tenant rows). AF_RUNTIME and AF_ECS_*: PARAMETERS.md.
             - {Name: AF_RUNTIME, Value: !Ref WsRuntime}
             - {Name: AF_ECS_REGION, Value: !Ref "AWS::Region"}
             - {Name: AF_ECS_CLUSTER, Value: !ImportValue {"Fn::Sub": "${PlatformStackName}-ClusterName"}}
@@ -931,6 +931,7 @@ Resources:
             - !If [HasScheduleSettle, {Name: AF_SCHEDULE_SETTLE, Value: !Ref ScheduleSettle}, !Ref "AWS::NoValue"]
             - !If [HasScheduleJitter, {Name: AF_SCHEDULE_JITTER, Value: !Ref ScheduleJitter}, !Ref "AWS::NoValue"]
             # --- Speech: the VOICEVOX engine of 50-tts (ADR 0070). Unset = Polly only. ---
+            # AF_TTS_ECS_CLUSTER / _REGION are deliberately absent: they fall back to AF_ECS_* (same cluster).
             - !If [HasTtsEcsService, {Name: AF_TTS_ECS_SERVICE, Value: !Ref TtsEcsService}, !Ref "AWS::NoValue"]
             - !If [HasVoicevoxUrl, {Name: AF_VOICEVOX_URL, Value: !Ref VoicevoxUrl}, !Ref "AWS::NoValue"]
             # --- Self-hosted inference engines: the table 60-engines wrote (ADR 0071). Unset = no engines. ---
