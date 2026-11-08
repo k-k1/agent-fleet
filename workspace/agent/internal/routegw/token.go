@@ -52,6 +52,9 @@ type Binding struct {
 	Region     string
 	// Identity is awsx.ProfileIdentity when the token was issued.
 	Identity string
+	// Model is the one Bedrock model id the session's calls may name, "" for none pinned
+	// (pinnedModel).
+	Model string
 }
 
 type entry struct {

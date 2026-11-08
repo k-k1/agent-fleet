@@ -179,8 +179,9 @@ func (agentImpl) ResolveRoute(m session.Meta, _ agents.TurnInfo) agents.Resolved
 	return agents.ResolvedRoute{Route: m.Route.Route, Connection: m.Route.Connection}
 }
 
-// CheckRoute implements agents.RouteChecker: the live half of the validation. The model needs
-// no check (both routes serve every Claude model the CLI offers).
+// CheckRoute implements agents.RouteChecker: the live half of the validation. The Anthropic routes
+// serve every Claude model the CLI offers; bedrock needs an explicit Bedrock model id
+// (bedrockModelRefusal).
 func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, model string) *agents.RouteRefusal {
 	if ref := checkRouteSelection(sel); ref != nil {
 		return ref
@@ -197,6 +198,9 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, model 
 	case RouteBedrock:
 		if !bedrockOpen() {
 			return bedrockGated()
+		}
+		if ref := bedrockModelRefusal(model); ref != nil {
+			return ref
 		}
 		gw := agents.CurrentRouteGateway()
 		if gw == nil {
@@ -291,6 +295,9 @@ func bedrockPlan(m session.Meta) (agents.RoutePlan, error) {
 	if !bedrockOpen() {
 		return agents.RoutePlan{}, bedrockGated()
 	}
+	if ref := bedrockModelRefusal(m.Model); ref != nil {
+		return agents.RoutePlan{}, ref
+	}
 	gw := agents.CurrentRouteGateway()
 	if gw == nil {
 		return agents.RoutePlan{}, noGateway()
@@ -305,11 +312,45 @@ func bedrockPlan(m session.Meta) (agents.RoutePlan, error) {
 		"ANTHROPIC_UNIX_SOCKET=" + g.Socket,
 		"AWS_REGION=" + g.Region,
 	}
+	for _, name := range bedrockModelPins {
+		values = append(values, name+"="+m.Model)
+	}
 	return agents.RoutePlan{
 		Env:      append([]string{"AWS_BEARER_TOKEN_BEDROCK=" + g.Token}, values...),
 		Unset:    overridesExcept("CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_UNIX_SOCKET", "AWS_BEARER_TOKEN_BEDROCK"),
 		Settings: values,
 	}, nil
+}
+
+// bedrockModelPins are the variables through which the CLI picks a model id other than --model's:
+// the tier aliases (a subagent asking for haiku or sonnet, /model opus), the small/fast model of
+// background calls, and subagents' own model. A bedrock launch sets every one of them to the
+// session's model, in the environment and pinned in the flag layer, so every call the CLI makes
+// names the id the member chose.
+//
+// Measured (claude 2.1.319, a stand-in Bedrock on the socket, ADR 0128 note of 2026-11-08): with
+// an alias or no model, a 403 or 400 walks a ladder of older ids (opus 5.5 down to 4, then sonnet
+// 4.5: nine calls), which CLAUDE_CODE_NO_MODEL_FALLBACK and CLAUDE_CODE_DISABLE_MODEL_ACCESS_FALLBACK
+// do not stop; an explicit Bedrock id is sent verbatim and once. With --model alone, a subagent
+// asking for haiku or sonnet still called the CLI's own ids for that tier and their ladder.
+var bedrockModelPins = []string{
+	"ANTHROPIC_MODEL",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL",
+	"ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+}
+
+// bedrockModelRefusal requires the bedrock route's model to be a Bedrock id of an Anthropic model
+// (routes.ParseBedrockAnthropicModelID). A tier alias or a claude-… id is refused rather than
+// mapped: the CLI maps them with a Region prefix guessed from AWS_REGION that the account may not
+// serve (#3282: apac.… in ap-northeast-1 was model_not_found), and an alias falls back through
+// older models on a denial, one billed gateway call each.
+func bedrockModelRefusal(model string) *agents.RouteRefusal {
+	if _, err := routes.ParseBedrockAnthropicModelID(model); err != nil {
+		return &agents.RouteRefusal{Status: http.StatusBadRequest, Code: routes.CodeRouteModel,
+			Message: "the bedrock route runs on the Bedrock model id you choose, used for every call of the session: " + err.Error() +
+				". Use a foundation-model id (anthropic.…) or a system inference profile id (us./eu./apac./jp./au./us-gov./global.anthropic.…) that your account serves in the region; tier aliases, claude-… ids and ARNs are refused"}
+	}
+	return nil
 }
 
 func noGateway() *agents.RouteRefusal {
