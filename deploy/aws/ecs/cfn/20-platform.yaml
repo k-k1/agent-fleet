@@ -24,23 +24,20 @@ Parameters:
     Description: >-
       10-data's EgressArchiveBucket output, set by standup.sh. Empty (default) = the CP task role
       gets no archive grant. cfn/PARAMETERS.md, "The egress archive".
+  MasterKeyKmsKeyArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^(arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+)?$"
+    Description: CMK of /af-cp/master-key; empty = aws/ssm (PARAMETERS.md, "Keys at rest").
 
 Conditions:
   HasEgressArchive: !Not [ !Equals [ !Ref EgressArchiveBucket, "" ] ]
+  HasMasterKeyCmk: !Not [ !Equals [ !Ref MasterKeyKmsKeyArn, "" ] ]
 
 Resources:
   # --- CFN template staging ---
-  # CloudFormation refuses a template body over 51,200 bytes; anything bigger has to be
-  # handed over via S3 (`aws cloudformation deploy --s3-bucket`). 30-ingress crossed that
-  # line on 2026-09-01 (54,681 bytes) and every path that deploys it - standup.sh and
-  # update.sh, i.e. stand-up AND every release - stopped working at that moment. Nobody
-  # saw it because the CLI refuses on file size before it calls the API, and the last
-  # successful deploy predates the growth (docs/log/73 sec.73.7.2: stand-up had never been
-  # exercised end to end).
-  #
-  # !! The bucket lives HERE, in 20-platform, because that stack is created before
-  # 30-ingress and outlives it. Putting it in 30-ingress would need the bucket to deploy
-  # the stack that creates the bucket.
+  # Templates over 51,200 bytes go via S3 (docs/log/73 sec.73.7.2); the bucket is here because
+  # it must exist before 30-ingress deploys and outlive it.
   CfnTemplates:
     Type: AWS::S3::Bucket
     DeletionPolicy: Delete
@@ -159,9 +156,7 @@ Resources:
         Namespace: !GetAtt Namespace.Arn
 
   # --- IAM: Control Plane execution role (ECR pull + logs + the CP's own secrets) ---
-  # New workspace tasks run as WsExecRole; task definitions registered earlier (and the
-  # services running them) still name this role: it keeps /af-ws/* for one release, until
-  # every workspace service has moved. PARAMETERS.md, "Execution roles".
+  # Keeps /af-ws/* for one release (older task definitions still name it): PARAMETERS.md, "Execution roles".
   ExecRole:
     Type: AWS::IAM::Role
     Properties:
@@ -179,16 +174,24 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # CP master key, cookie secret and OAuth client secrets (`secrets: valueFrom`);
-              # /af-ws/* is transitional (see above).
+              # CP master key, cookie secret, OAuth client secrets; /af-ws/* is transitional.
               - Effect: Allow
                 Action: [ ssm:GetParameters ]
                 Resource:
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-cp/*"
-              # Reads the RDS-managed master password (Secrets Manager) to inject
-              # AF_DB_PASSWORD into the CP task (P3-7 stage 3a). RDS-managed secrets are
-              # named rds!db-*; scope to that prefix.
+              # Secret injection decrypts /af-cp/master-key as this role: no grant, no CP task.
+              - !If
+                - HasMasterKeyCmk
+                - Effect: Allow
+                  Action: [ kms:Decrypt ]
+                  Resource: !Ref MasterKeyKmsKeyArn
+                  Condition:
+                    StringEquals:
+                      kms:ViaService: !Sub "ssm.${AWS::Region}.amazonaws.com"
+                      kms:EncryptionContext:PARAMETER_ARN: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-cp/master-key"
+                - !Ref "AWS::NoValue"
+              # AF_DB_PASSWORD for the CP task: the RDS-managed secret (named rds!db-*).
               - Effect: Allow
                 Action: [ secretsmanager:GetSecretValue ]
                 Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*"

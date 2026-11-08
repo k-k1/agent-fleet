@@ -860,6 +860,59 @@ task: only as part of a RunTask (ecs:CreateAction), so no task that exists can b
 in this cluster, and only the keys EcsTagServiceOnCreate (20-platform) allows on a workspace
 service. `deploy/local/cfn-cp-ec2-scope-test.py` holds the allowed calls and the denied ones.
 
+### `MasterKeyKmsKeyArn` (20-platform): a customer-managed key for `/af-cp/master-key`
+
+Empty (the default) = today's behaviour: the SecureString is encrypted with the AWS-managed
+`aws/ssm` key and the template grants no `kms:*` anywhere. A KMS **key** ARN (symmetric, this
+account and region; an alias or wildcard is refused by the pattern, because IAM matches a key's
+calls against the key ARN only) adds one statement to `ExecRole`'s `ssm-read` policy:
+`kms:Decrypt` on exactly that key, `kms:ViaService = ssm.<region>.amazonaws.com`, and
+`kms:EncryptionContext:PARAMETER_ARN` = the `/af-cp/master-key` parameter ARN.
+
+- **Only `ExecRole`.** The `AF_MASTER_KEY` secret is injected by ECS at task start, as the
+  execution role; the CP task role (`CpTaskRole`) never reads the parameter and gets nothing.
+  `WsExecRole` stays without any `/af-cp` or kms access.
+- **Only the master key.** The context pins the grant to that one parameter; `cookie-secret` and
+  the client secrets stay on `aws/ssm` (a CMK for them is a template edit, not a parameter).
+- **Default `SsmPrefix` only.** The grant names `/af-cp/master-key`, like `ExecRole`'s own
+  `/af-cp/*` read; a deployment with another `SsmPrefix` is not supported.
+- **Standard partition only** (`arn:aws:`): the rest of the template assumes it.
+- **In place.** The parameter changes one inline policy; no role is replaced, no export moves.
+- Setting it does not touch the parameter: the existing value, still under `aws/ssm`, keeps
+  working. Clearing it while the parameter is still under the CMK makes the next CP task fail to
+  start (`ResourceInitializationError`: cannot retrieve the secret).
+
+Operator steps, in this order so the CP never loses access:
+
+1. Create a symmetric key in the deployment's account and region. Its key policy must let the
+   account's IAM grant use (the default "Enable IAM policies" root statement) **or** name
+   `af-<20-platform stack>-exec` (the `ExecRole`) with `kms:Decrypt`. Whoever runs step 3 also
+   needs `kms:Encrypt` (and `kms:GenerateDataKey`) on it; whoever runs `standup.sh` to check the
+   length needs `kms:Decrypt`.
+2. Deploy 20-platform with `MasterKeyKmsKeyArn=<key ARN>` on the running stack. `update.sh` does
+   **not** read the captured parameter file for 20-platform and `deploy` keeps the previous
+   value of any parameter it is not given, so editing the capture and running `update.sh` does
+   nothing (silently). Run it explicitly, then check the policy:
+   `aws cloudformation deploy --stack-name <20-platform stack> --template-file deploy/aws/ecs/cfn/20-platform.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides MasterKeyKmsKeyArn=<key ARN>`
+   (other parameters keep their values; `update.sh` passes `EgressArchiveBucket` itself, so keep
+   it as is). Confirm with `aws iam get-role-policy --role-name af-<20-platform stack>-exec --policy-name ssm-read`
+   that a `kms:Decrypt` statement is there before step 3. The captured file plus `standup.sh`
+   is the rebuild path: put the value in the capture for the next stand-up.
+3. Re-encrypt the value under the new key, keeping the value:
+   `aws ssm put-parameter --type SecureString --overwrite --name /af-cp/master-key --key-id <key ARN> --value "$(aws ssm get-parameter --with-decryption --name /af-cp/master-key --query Parameter.Value --output text)"`
+   (a fresh deployment just runs the README's `put-parameter` with `--key-id` and no `--overwrite`).
+   Never generate a new value: everything sealed under the old one stops opening
+   ([12 Keys at rest](../../../../guide/operate/12-keys.md)).
+4. Start a new CP task (a new deployment) and check it reaches RUNNING. A running task already
+   holds the value; only a start decrypts.
+
+Back out in the reverse order: re-put the parameter without `--key-id` (the default `aws/ssm`),
+check a new CP task starts, and only then clear the parameter, with the same explicit
+`deploy ... --parameter-overrides MasterKeyKmsKeyArn=` (empty) command as step 2. Not verified on a live deployment
+(#3470): the encryption-context name and the grant come from the SSM documentation and the
+offline test `deploy/local/cfn-exec-role-split-test.py`. If a task start is `AccessDenied` on
+`kms:Decrypt`, the first suspect is the `PARAMETER_ARN` condition.
+
 ## MCP (`/mcp`) and MCP OAuth
 
 ### `McpEnabled` / `McpOAuth` / `McpOAuthTrustedHosts`

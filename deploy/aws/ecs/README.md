@@ -174,6 +174,10 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
    ```
+   To encrypt `master-key` with your own KMS key instead of `aws/ssm`, add `--key-id <key ARN>`
+   to its `put-parameter` and set 20-platform's `MasterKeyKmsKeyArn` to the same ARN **first**
+   (the execution role's `kms:Decrypt` grant must exist before the CP task starts). Order, key
+   policy and back-out: `cfn/PARAMETERS.md`, "`MasterKeyKmsKeyArn`".
    ⚠️ The **git providers' OAuth apps are not deployment configuration** (docs/log/71). A
    tenant administrator registers GitHub and Bitbucket in the Console under **Tenant
    settings → Integrations → Git provider OAuth**; there is no CFN parameter and no SSM

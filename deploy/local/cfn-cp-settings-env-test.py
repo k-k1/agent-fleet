@@ -24,6 +24,7 @@ exit 0 pass, 1 a check failed, 2 the check could not run.
 import copy
 import fnmatch
 import importlib.util
+import json
 import os
 import sys
 
@@ -96,6 +97,9 @@ def exec_role_patterns():
         if p["PolicyName"] != "ssm-read":
             continue
         for st in p["PolicyDocument"]["Statement"]:
+            if "Action" not in st:  # an `!If` statement: only the optional kms grant may be one
+                assert '"ssm:Get' not in json.dumps(st), "ssm grant hidden in an !If: %r" % st
+                continue
             acts = st["Action"] if isinstance(st["Action"], list) else [st["Action"]]
             if "ssm:GetParameters" in acts:
                 res = st["Resource"] if isinstance(st["Resource"], list) else [st["Resource"]]
