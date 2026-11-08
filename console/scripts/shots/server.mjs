@@ -163,7 +163,23 @@ const exact = {
   "/api/stats": () => fx.stats(),
   // Settings > AWS profiles/SSM reads these three as bare arrays (SsmTab.tsx reload()); an object
   // renders "unexpected response" in the tab.
-  "/api/ssm/hosts": () => [],
+  // Fictional SSM hosts and instances for the user guide's SSM page, served only to a run that
+  // asks (SHOT_SSM_HOSTS): every other scene keeps the empty host list it was taken with.
+  "/api/ssm/hosts": () =>
+    process.env.SHOT_SSM_HOSTS
+      ? [
+          { id: "h1", alias: "web-01", profileId: "p2", region: "", instanceId: "i-0a1b2c3d4e5f60001", documentName: "", createdAt: "2026-10-01T00:00:00Z" },
+          { id: "h2", alias: "batch-01", profileId: "p2", region: "", instanceId: "i-0a1b2c3d4e5f60002", documentName: "", createdAt: "2026-10-01T00:00:00Z" },
+          { id: "h3", alias: "prod-web-01", profileId: "p1", region: "", instanceId: "i-0f9e8d7c6b5a40001", documentName: "", createdAt: "2026-10-01T00:00:00Z" },
+        ]
+      : [],
+  "/api/ssm/instances": () => ({
+    instances: [
+      { instanceId: "i-0a1b2c3d4e5f60001", name: "web-01", computerName: "ip-10-0-1-11.ec2.internal", ipAddress: "10.0.1.11", platformName: "Amazon Linux", pingStatus: "Online" },
+      { instanceId: "i-0a1b2c3d4e5f60003", name: "worker-02", computerName: "ip-10-0-2-24.ec2.internal", ipAddress: "10.0.2.24", platformName: "Amazon Linux", pingStatus: "Online" },
+      { instanceId: "i-0a1b2c3d4e5f60004", name: "", computerName: "ip-10-0-3-7.ec2.internal", ipAddress: "10.0.3.7", platformName: "Ubuntu", pingStatus: "Online" },
+    ],
+  }),
   // Settings > Skills (#2792): one kind with every scope group, so the tab renders all its
   // headings (the heading-spacing check walks them, #2813).
   "/api/skills/catalog": () => ({
