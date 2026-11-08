@@ -140,7 +140,7 @@ already in place. It is drawn **whether or not the workspace is running**, becau
 work on happens before a session exists, which is exactly when the workspace tends to be stopped.
 
 **Nothing is listed until you register a saved query** (⚙ Settings →
-[Issue tracker](20-settings.md#issue-tracker)). That query is the whole of the filtering; nothing is
+[Issue tracker](../user/integrations/issue-tracker.md#choose-what-the-list-shows)). That query is the whole of the filtering; nothing is
 synced in bulk.
 
 ### Reading the list

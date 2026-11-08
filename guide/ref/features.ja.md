@@ -56,9 +56,9 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [06 リポジトリと git](../member/06-code.ja.md) |
 | worktree | メンバー | 各リポジトリの下 | [06 リポジトリと git](../member/06-code.ja.md) |
 | サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-gh-と-bkt-を使う)。サインイン済みの CLI の一覧は [15](../member/15-external-services.ja.md#サインイン済みの-cli) |
-| サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-jira-を使う) |
-| サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-confluence-を使う) |
-| Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-jira-を使う) |
+| サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md) |
+| サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [Confluence を使う](../user/integrations/confluence.ja.md) |
+| Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
 | Subversion の作業コピー — 更新、ログを表示、ローカルの変更 | メンバー | リポジトリ → SVN の行 | [06 リポジトリと git](../member/06-code.ja.md#subversionsvnリポジトリ) |
 | ファイルツリーとビューア | メンバー | ファイル | [07 ファイル](../member/07-files.ja.md) |
 | フォルダを zip でダウンロードする | メンバー | ファイルツリーまたはギャラリー → 右クリック → zip でダウンロード | [07 ファイル](../member/07-files.ja.md#フォルダを-zip-でダウンロードする) |
@@ -126,7 +126,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 連携サーバーとトークン | メンバー | MCP サーバー（セッションで使う） / 外部からのアクセス → MCP トークン・接続アプリ |
 | サインインでリモート MCP クライアントを接続する（OAuth。配備が有効にしているとき）— 接続済みアプリ、最近の呼び出し | メンバー | 外部からのアクセス → MCP トークン・接続アプリ（[19](../member/19-outside-access.ja.md#サインインでリモート-mcp-クライアントを接続するoauth)）
 | `/mcp` から送った入力の「MCP 経由」バッジ | メンバー | ミラーの入力の吹き出し（[19](../member/19-outside-access.ja.md#外部の-claude-から自分のワークスペースを操作するmcp)）
-| OAuth が要る登録済み MCP サーバーにサインインする（サインイン・もう一度サインイン・追加の権限を許可する） | メンバー | MCP サーバー（セッションで使う） → 認証 → OAuth（[20](../member/20-settings.ja.md#mcp-サーバーセッションで使う)）
+| OAuth が要る登録済み MCP サーバーにサインインする（サインイン・もう一度サインイン・追加の権限を許可する） | メンバー | MCP サーバー（セッションで使う） → 認証 → OAuth（[セッションに MCP サーバーを追加する](../user/integrations/mcp-servers.ja.md#oauth-のサーバーにサインインする)）
 | 課題管理の接続 | メンバー | 課題管理 |
 | 使用量 | メンバー | エージェント使用量 |
 | 利用枠ボード: 利用上限に対する自分の状況を公開し、メンバーが自分に公開している状況を見る | メンバー | 利用枠ボード |
