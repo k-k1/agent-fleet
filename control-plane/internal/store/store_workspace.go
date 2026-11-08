@@ -92,6 +92,13 @@ type WorkspaceStore interface {
 	// read as the previous launch's stop.
 	ClearWorkspaceAutoStop(ctx context.Context, workspaceID string) error
 	GetWorkspaceAutoStopByMembership(ctx context.Context, membershipID string) (WorkspaceAutoStop, bool, error)
+	// ClaimImageRefresh records "the Control Plane is about to restart this workspace onto
+	// image identity target" and reports whether this caller won. It wins only when the
+	// stored target differs (or there is none), so one image is attempted at most once per
+	// workspace across replicas and across failed starts (#3656). The claim is never released.
+	ClaimImageRefresh(ctx context.Context, workspaceID, target, now string) (bool, error)
+	// GetImageRefreshTarget is the image identity last claimed for the workspace.
+	GetImageRefreshTarget(ctx context.Context, workspaceID string) (string, bool, error)
 	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
 	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)
 	// RecordSessionInput publishes "a human typed in this session's terminal at `at`" for
@@ -333,6 +340,7 @@ func deleteWorkspaceTx(ctx context.Context, tx *sqlTx, workspaceID string) error
 	for _, stmt := range []string{
 		`DELETE FROM workspace_stop_intent WHERE workspace_id=?`,
 		`DELETE FROM workspace_auto_stop WHERE workspace_id=?`,
+		`DELETE FROM workspace_image_refresh WHERE workspace_id=?`,
 		`DELETE FROM workspace_activity WHERE workspace_id=?`,
 		`DELETE FROM preview_temp_port WHERE workspace_id=?`,
 		`DELETE FROM preview_epoch WHERE workspace_id=?`,
@@ -563,4 +571,28 @@ func scanWorkspace(row scanner) (Workspace, error) {
 		&ws.Network, &ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt,
 		&ws.LastActiveAt, &ws.PreviewSlug)
 	return ws, err
+}
+
+// ClaimImageRefresh is a single conditional upsert, so two replicas racing on the same
+// target cannot both get true.
+func (s *SQL) ClaimImageRefresh(ctx context.Context, workspaceID, target, now string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO workspace_image_refresh(workspace_id, target, attempted_at)
+		VALUES(?, ?, ?)
+		ON CONFLICT(workspace_id) DO UPDATE SET target=excluded.target, attempted_at=excluded.attempted_at
+		WHERE workspace_image_refresh.target <> excluded.target`, workspaceID, target, now)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return err == nil && n > 0, err
+}
+
+// GetImageRefreshTarget returns the target last claimed by ClaimImageRefresh.
+func (s *SQL) GetImageRefreshTarget(ctx context.Context, workspaceID string) (string, bool, error) {
+	var t string
+	err := s.db.QueryRowContext(ctx, `SELECT target FROM workspace_image_refresh WHERE workspace_id=?`, workspaceID).Scan(&t)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return t, err == nil, err
 }

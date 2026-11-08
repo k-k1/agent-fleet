@@ -107,7 +107,13 @@ The commands are in the runbook's "Upgrade" section.
   exact `aws cloudformation deploy` command to run on its own; then run `update.sh` again.
   **Running workspaces are not upgraded automatically**: each picks the new image up on its
   next Start. The users concerned see a "Restart needed" badge in the Console, so when to take the
-  restart is their call, not yours.
+  restart is their call, not yours. A member can opt in to **automatic image refresh**
+  (Settings > Toolchains, off by default): the reaper then restarts that member's stale workspace
+  once it has been quiet for `image_refresh_quiet` (a tenant limit; `AF_IMAGE_REFRESH_QUIET` sets the
+  deployment default, 15 minutes, `0` = never). It honours every idle-stop activity signal, including
+  those held on another Control Plane replica, restarts and never recreates, and tries each image
+  at most once per workspace: a failed start leaves the workspace stopped. Each one writes a
+  `workspace.image_refresh` audit row and one notice to the member.
   **Data stack and the EFS backup:** `update.sh` does not update the data stack. A
   `Persistence=retain` deployment stood up before v0.26.0 has no daily EFS backup until
   that stack is updated by hand; `update.sh` warns when it finds this (read-only check) and

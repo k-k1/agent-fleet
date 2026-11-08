@@ -37,6 +37,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "memory-review": "noti.kind_memory_review",
   "start-deadline": "noti.kind_start_deadline",
   "agent-silent-stop": "noti.kind_agent_silent_stop",
+  "image-refresh": "noti.kind_image_refresh",
   "aws-login-required": "noti.kind_aws_login_required",
   "aws-sso-expiring": "noti.kind_aws_sso_expiring",
   "aws-use-confirm": "noti.kind_aws_use_confirm",
@@ -66,7 +67,7 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   // showing nothing but a timestamp — which is what a member saw. Clicking it opens nothing by
   // design (below), so the list of what has to be reinstalled has to be ON the row or it is
   // nowhere.
-  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "agent-silent-stop" || n.kind === "member-home-full" || n.kind === "member-boot-install" || n.kind === "member-agent-silent" || n.kind === "memory-sync" || n.kind === "memory-review") return notificationWording(n).body;
+  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "agent-silent-stop" || n.kind === "image-refresh" || n.kind === "member-home-full" || n.kind === "member-boot-install" || n.kind === "member-agent-silent" || n.kind === "memory-sync" || n.kind === "memory-review") return notificationWording(n).body;
   // The message is the point of a terminal notification; the kind label alone says nothing.
   if (n.kind === "terminal-notification") {
     const text = terminalNotificationText(n.payload);
@@ -422,6 +423,21 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       title: t("notif.member_agent_silent.title", { name }),
       body: t("notif.member_agent_silent.body", { name }),
       speech: t("notif.member_agent_silent.speech", { name }),
+    };
+  }
+  // The Control Plane restarted an idle workspace onto a new image on the member's opt-in
+  // (control-plane/image_refresh.go); "failed" means the start did not come up and the
+  // workspace was left stopped.
+  if (n.kind === "image-refresh") {
+    const failed = n.payload.outcome === "failed";
+    const at = typeof n.payload.at === "string" ? new Date(n.payload.at).toLocaleString() : "";
+    const hash = typeof n.payload.image === "string" ? n.payload.image : "";
+    const ref = typeof n.payload.ref === "string" ? n.payload.ref : "";
+    const image = ref ? `${ref} (${hash})` : hash;
+    return {
+      title: t(failed ? "notif.image_refresh.title_failed" : "notif.image_refresh.title"),
+      body: t(failed ? "notif.image_refresh.body_failed" : "notif.image_refresh.body", { image, at }),
+      speech: t(failed ? "notif.image_refresh.speech_failed" : "notif.image_refresh.speech"),
     };
   }
   if (n.kind === "agent-silent-stop") {

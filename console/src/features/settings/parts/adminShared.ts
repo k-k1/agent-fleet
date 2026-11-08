@@ -21,6 +21,7 @@ export interface Tenant {
   max_workspace_mem?: number; // per-workspace RAM cap in bytes (0 = no tenant cap)
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
+  image_refresh_quiet?: string;
   /** tier1 timeout used only while waiting on a human decision (docs/log/75).
    *  Empty = follow session_idle_timeout. */
   interaction_idle_timeout?: string;

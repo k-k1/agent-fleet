@@ -168,6 +168,7 @@ export function TenantLimits({
   const [maxWsMemMb, setMaxWsMemMb] = useState<number | string>(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
+  const [refreshQuiet, setRefreshQuiet] = useState(tenant?.image_refresh_quiet || "");
   // A clock used only while waiting on a human decision (question, plan approval, permission).
   // Empty means: follow the session-halt timeout above.
   const [interIdle, setInterIdle] = useState(tenant?.interaction_idle_timeout || "");
@@ -196,6 +197,7 @@ export function TenantLimits({
     setMaxWsMemMb(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
     setSessIdle(tenant?.session_idle_timeout || "");
     setWsIdle(tenant?.ws_idle_timeout || "");
+    setRefreshQuiet(tenant?.image_refresh_quiet || "");
     setInterIdle(tenant?.interaction_idle_timeout || "");
     setBgHold(tenant?.background_hold_max || "");
     setHomeHib(tenant?.home_hibernate_after || "");
@@ -217,6 +219,7 @@ export function TenantLimits({
       max_workspace_mem: Math.round(+maxWsMemMb || 0) * 1048576,
       session_idle_timeout: sessIdle.trim(),
       ws_idle_timeout: wsIdle.trim(),
+      image_refresh_quiet: refreshQuiet.trim(),
       interaction_idle_timeout: interIdle.trim(),
       background_hold_max: bgHold.trim(),
       home_hibernate_after: homeHib.trim(),
@@ -313,11 +316,16 @@ export function TenantLimits({
             <span className="af-cap">{tr("admin.ws_stop")}</span>
             <input type="text" placeholder={tr("admin.idle_ph_60m")} value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
           </label>
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.image_refresh_quiet")}</span>
+            <input type="text" placeholder={tr("admin.image_refresh_quiet_ph")} value={refreshQuiet} onChange={(e) => setRefreshQuiet(e.target.value)} />
+          </label>
         </div>
         <p className="admin-hint">
           {tr("admin.idle_hint_1")}<code>30m</code> / <code>2h</code> / <code>90s</code>{tr("admin.idle_hint_2")}<code>0</code>{tr("admin.idle_hint_3")}
         </p>
         <p className="admin-hint">{tr("admin.interaction_hint")}</p>
+        <p className="admin-hint">{tr("admin.image_refresh_hint")}</p>
       </div>
 
       {/* Only the EC2 slot pool has somewhere cheaper to put a home; on the other

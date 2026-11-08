@@ -80,3 +80,15 @@ restart) is explicit — from the Console, by hand, or when idle.**
   interrupts running sessions. That is exactly why applying is not automated and is limited to the
   Console with a warning, by hand, or when idle. Decoupling long-lived workspaces from the restart
   (a separate slice/scope) is future work.
+
+## Note (2026-11-08) — a workspace image is refreshed automatically only on the member's opt-in (#3656)
+
+This decision keeps *applying* explicit: nothing restarts the host-resident `af` by itself. It is
+unchanged. The rule has a sibling for the workspaces themselves ("a running workspace takes a new
+image only on its next Start, shown as Restart needed"), and that one now has an opt-in exception.
+A member can switch on **automatic image refresh**; the Control Plane's reaper then restarts that
+member's workspace onto the new image once it is stale and has been quiet for `image_refresh_quiet`
+(default 15 min). It never recreates, never acts while any activity signal of the idle-stop reaper
+is present (including another replica's), tries each image at most once per workspace, leaves the
+workspace stopped if the start fails, and records an audit row and a one-time notice. The default
+stays explicit, and so does the host-level restart this ADR is about.

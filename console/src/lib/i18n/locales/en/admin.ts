@@ -334,6 +334,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
     "Only hibernation is automatic; nothing is ever destroyed this way. The unit goes up to hours, so write days as a multiple of 24h. Enter 0 to never hibernate this tenant's homes.",
   // Home backups (ADR 0045 決定 17). Losing a whole AZ is a story only this runtime has,
   // so lead with why it exists. Say "how far back" rather than "RPO".
+  "admin.image_refresh_quiet": "Quiet time before an automatic image refresh",
+  "admin.image_refresh_quiet_ph": "e.g. 15m (empty = 15m, 0 = never)",
+  "admin.image_refresh_hint":
+    "Only members who switched on \u201cRestart automatically onto a new image\u201d are affected. A workspace with an outdated image is restarted (never recreated) once nothing has been active for this long: no working or waiting session, no open terminal, preview or browser pane, no recent request. At most one attempt per image.",
   "admin.backup_title": "Keep a spare copy of each home",
   "admin.backup_every": "Copy every",
   "admin.backup_ph": "e.g. 24h (empty = deploy default)",

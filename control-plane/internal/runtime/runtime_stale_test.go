@@ -238,3 +238,45 @@ func TestTTLCache(t *testing.T) {
 		t.Fatalf("empty result not cached: fails=%d", fails)
 	}
 }
+
+// StaleTarget names the image a Start would launch from now, on the same probe Stale reads,
+// so the automatic image refresh's one-attempt-per-image rule keys on the content and not on
+// a tag. Unknown is "" and the refresh never acts on it.
+func TestStaleTargetFollowsContent(t *testing.T) {
+	orig := Freshness
+	defer func() { Freshness = orig }()
+	now := time.Unix(1000, 0)
+	Freshness = &TTLCache{m: map[string]TTLEntry{}, now: func() time.Time { return now }}
+
+	fp := "layers-a"
+	d := &dockerRuntime{image: "agent-fleet/workspace:dev", name: "af-ws-x", dataDir: t.TempDir()}
+	d.inspect = func(context.Context, string, string, string) string { return fp }
+	ctx := context.Background()
+	if got := d.StaleTarget(ctx); got != "layers-a" {
+		t.Fatalf("docker target = %q", got)
+	}
+	fp = "layers-b"
+	now = now.Add(2 * time.Minute)
+	if got := d.StaleTarget(ctx); got != "layers-b" {
+		t.Fatalf("docker target after rebuild = %q", got)
+	}
+	fp = ""
+	now = now.Add(2 * time.Minute)
+	if got := d.StaleTarget(ctx); got != "" {
+		t.Fatalf("unresolvable image: target = %q, want empty", got)
+	}
+
+	dir := t.TempDir()
+	n := &nativeRuntime{agentBin: filepath.Join(dir, "missing"), dataDir: dir}
+	if got := n.StaleTarget(ctx); got != "" {
+		t.Fatalf("native with no binary: target = %q, want empty", got)
+	}
+	bin := filepath.Join(dir, "workspace-agent")
+	if err := os.WriteFile(bin, []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	n.agentBin = bin
+	if got := n.StaleTarget(ctx); got == "" || got != n.spawnStamp() {
+		t.Fatalf("native target = %q", got)
+	}
+}

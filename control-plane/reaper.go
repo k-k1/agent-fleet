@@ -600,7 +600,11 @@ type reaper struct {
 	backupDef      time.Duration
 	// backgroundDef is the deployment default of background_hold_max (0 = unbounded).
 	backgroundDef time.Duration
-	bootTime      time.Time
+	// refreshDef is the deployment default of image_refresh_quiet (#3656).
+	refreshDef time.Duration
+	// refreshStart replaces the real Start of the image refresh in tests.
+	refreshStart func(ctx context.Context, ws store.Workspace) *apiError
+	bootTime     time.Time
 
 	// idleSince tracks, per live claude session, when it was first observed
 	// idle-and-unattached. Reset when it goes busy/attached/away. Reaper is the
@@ -618,6 +622,7 @@ func newReaper(mgr *manager, interval, sessionDef, interactionDef, wsDef, hibDef
 		hibDef:         hibDef,
 		backupDef:      backupDef,
 		backgroundDef:  backgroundDef,
+		refreshDef:     defaultImageRefreshQuiet,
 		bootTime:       time.Now(),
 		idleSince:      map[string]time.Time{},
 	}
@@ -655,6 +660,7 @@ func (rp *reaper) sweep(ctx context.Context) {
 		cl.hibernate, cl.hibernateOn = idleTimeout(lim.HomeHibernateAfter, rp.hibDef)
 		cl.backup, cl.backupOn = idleTimeout(lim.HomeBackupEvery, rp.backupDef)
 		cl.bgMax = backgroundHoldMax(lim, rp.backgroundDef)
+		cl.refresh, cl.refreshOn = idleTimeout(lim.ImageRefreshQuiet, rp.refreshDef)
 		if !cl.anyOn() {
 			continue // nothing enabled for this tenant
 		}
@@ -689,7 +695,11 @@ type tierClocks struct {
 	// bgMax is background_hold_max, not a tier: how long background work may hold the
 	// Workspace (0 = unbounded). Rides here so every activity test in a sweep sees one value.
 	bgMax time.Duration
+	// refresh is the quiet period before an opted-in workspace is restarted onto a new
+	// image (image_refresh.go). Not a tier of the stop series: it restarts, it frees nothing.
+	refresh time.Duration
 
+	refreshOn     bool
 	sessionOn     bool
 	interactionOn bool
 	wsOn          bool
@@ -710,7 +720,7 @@ func (c tierClocks) tier1For(s sessionWire) (time.Duration, bool) {
 }
 
 func (c tierClocks) anyOn() bool {
-	return c.sessionOn || c.interactionOn || c.wsOn || c.hibernateOn || c.backupOn
+	return c.sessionOn || c.interactionOn || c.wsOn || c.hibernateOn || c.backupOn || c.refreshOn
 }
 
 func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tierClocks, live map[string]bool) {
@@ -812,20 +822,23 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 	// redoes the decision, so the screen for "why won't it stop" cannot give a
 	// different answer than the reaper. Recorded even when wsOn is false —
 	// "nothing scheduled" and "the feature is off" are not the same thing.
+	// The image refresh (image_refresh.go) is not on this forecast: it is a restart that
+	// frees nothing, and it leaves an audit row and a notice for "why did it restart".
 	rp.mgr.putIdleForecast(ws.ID, idleForecast{
 		Enabled:    cl.wsOn,
 		StopAt:     base.Add(cl.ws),
 		Holders:    holdersOf(sessions, watched, now, env.RepoJobs, env.ImageJobs, cl.bgMax),
 		ObservedAt: now,
 	})
-	if !cl.wsOn {
+	if cl.wsOn && !watched && !busy && now.Sub(base) >= cl.ws {
+		rp.stopWorkspace(ctx, rt, ws, cl.ws, cl.bgMax)
 		return
 	}
-	if watched || busy {
-		return // being watched or actively working
-	}
-	if now.Sub(base) >= cl.ws {
-		rp.stopWorkspace(ctx, rt, ws, cl.ws, cl.bgMax)
+	// Past tier 2 on purpose: a workspace that is cold enough to stop is stopped, and its
+	// next Start picks the new image up anyway. The refresh only applies to one that is
+	// quiet but not yet due to stop.
+	if cl.refreshOn && !watched && !busy && now.Sub(base) >= cl.refresh {
+		rp.refreshImage(ctx, rt, ws, cl)
 	}
 }
 
@@ -884,29 +897,37 @@ func (rp *reaper) haltSession(ctx context.Context, rt runtime.Runtime, ws store.
 // replica, so a direct Runtime.Stop could otherwise cross an approved shared
 // operation or another holder's recreate/clean/start.
 func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws store.Workspace, wsTO, bgMax time.Duration) {
+	rp.stopWorkspaceIf(ctx, rt, ws, wsTO, bgMax, nil)
+}
+
+// stopWorkspaceIf is stopWorkspace with a last word for the caller and a result. still, when
+// non-nil, runs under the fences after every activity signal was re-read, and a false stops
+// nothing. The result is true only when the workspace was actually stopped and recorded as
+// such: the image refresh starts it again on that, and on nothing else.
+func (rp *reaper) stopWorkspaceIf(ctx context.Context, rt runtime.Runtime, ws store.Workspace, wsTO, bgMax time.Duration, still func(context.Context) bool) bool {
 	lock := rp.mgr.startLockFor(ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
 	lease, err := acquireWorkspaceLifecycleLease(ctx, rp.mgr.store, ws.MembershipID)
 	if err != nil {
 		log.Printf("idle-stop: lifecycle busy %s: %v", ws.ContainerName, err)
-		return
+		return false
 	}
 	defer lease.Close()
 	releaseFence, err := rp.mgr.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
 		log.Printf("idle-stop: runtime fence %s: %v", ws.ContainerName, err)
-		return
+		return false
 	}
 	defer releaseFence()
 	if err := lease.checkpoint(ctx); err != nil {
 		log.Printf("idle-stop: lifecycle lost %s: %v", ws.ContainerName, err)
-		return
+		return false
 	}
 	// A start/recreate may have won the local lock while this sweep was waiting.
 	// Never turn its non-running transitional state into a fresh Stop.
 	if rt.State(lease.Context()) != "running" {
-		return
+		return false
 	}
 	// The initial idle decision was made before potentially waiting on three
 	// fences. Re-read every activity signal while we own them; otherwise a proxy
@@ -915,30 +936,33 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 	freshWS, ok, err := rp.mgr.store.GetWorkspaceByMembership(lease.Context(), ws.MembershipID)
 	if err != nil || !ok {
 		log.Printf("idle-stop: refresh workspace %s: found=%v err=%v", ws.ContainerName, ok, err)
-		return
+		return false
 	}
 	env, err := rp.mgr.agentSessionsEnv(lease.Context(), rt)
 	if err != nil {
 		log.Printf("idle-stop: refresh sessions %s: %v", ws.ContainerName, err)
-		return
+		return false
 	}
 	if env.holdsWorkspace(bgMax) {
-		return
+		return false
 	}
 	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
 	if rp.mgr.conns.watched(ws.ID, presenceGrace, time.Now()) ||
 		time.Since(rp.idleBase(seen, lastSeen, freshWS.LastActiveAt)) < wsTO {
-		return
+		return false
 	}
 	checkNow := time.Now().UTC()
 	recent, err := rp.mgr.store.WorkspaceHasRecentActivity(lease.Context(), ws.ID,
 		leaseTS(checkNow.Add(-wsTO)), leaseTS(checkNow))
 	if err != nil {
 		log.Printf("idle-stop: shared activity %s: %v", ws.ContainerName, err)
-		return
+		return false
 	}
 	if recent {
-		return
+		return false
+	}
+	if still != nil && !still(lease.Context()) {
+		return false
 	}
 	claimed, err := rp.mgr.store.ClaimWorkspaceIdleStop(lease.Context(), ws.ID, ws.MembershipID,
 		lease.token, leaseTS(checkNow.Add(-wsTO)), leaseTS(checkNow))
@@ -946,7 +970,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 		if err != nil {
 			log.Printf("idle-stop: claim %s: %v", ws.ContainerName, err)
 		}
-		return
+		return false
 	}
 	defer func() {
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -957,7 +981,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 	// irreversible Runtime call so an expired old holder cannot resume into Stop.
 	if err := lease.checkpoint(ctx); err != nil {
 		log.Printf("idle-stop: lifecycle lost after claim %s: %v", ws.ContainerName, err)
-		return
+		return false
 	}
 	// Drain the outbox before stopping. Agent notifications are drained only when
 	// the Console comes to look, so without this "stopped with your question
@@ -971,20 +995,21 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 	// passing through the CP (an agent pressing Generate in a studio). Ask the Agent once more
 	// right before the irreversible Stop.
 	if env, err := rp.mgr.agentSessionsEnv(lease.Context(), rt); err != nil || env.holdsWorkspace(bgMax) {
-		return
+		return false
 	}
 	if err := rt.Stop(lease.Context()); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
-		return
+		return false
 	}
 	if err := lease.checkpoint(ctx); err != nil {
 		log.Printf("idle-stop: lifecycle lost after stop %s: %v", ws.ContainerName, err)
-		return
+		return false
 	}
 	if err := rp.mgr.store.SetWorkspaceState(ctx, ws.ID, "stopped"); err != nil {
 		log.Printf("idle-stop: mark stopped %s: %v", ws.ContainerName, err)
 	}
 	log.Printf("idle-stop: stopped cold workspace %s (tenant %s)", ws.ContainerName, ws.TenantID)
+	return true
 }
 
 // hibernatingRuntime is the optional capability behind tier 3: a runtime that can park a

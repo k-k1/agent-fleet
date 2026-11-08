@@ -21,6 +21,10 @@ type wsSettings struct {
 	// (workspaceExtraEnv only emits AF_AGENT_SELF_UPDATE=1 when the tenant allows it).
 	AgentUpdate bool `json:"agentUpdate"`
 
+	// AutoImageRefresh: let the Control Plane restart this workspace onto a new image by
+	// itself once it has been quiet (image_refresh.go, #3656). Off by default, per member.
+	AutoImageRefresh bool `json:"autoImageRefresh,omitempty"`
+
 	// --- Preview subdomains (docs/log/81) ---------------------------------------
 	// PreviewPorts are the ports the host-based preview may expose (empty = the default
 	// 3000,8080). A subdomain for a port not listed answers 404 rather than "not allowed":
@@ -102,6 +106,7 @@ func (a wsSettingsAPI) get(w http.ResponseWriter, r *http.Request, res *resolved
 	out := map[string]any{
 		"agentUpdate":      st.AgentUpdate,
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
+		"autoImageRefresh": st.AutoImageRefresh,
 	}
 	a.addPreview(r, res, st, out)
 	a.addDevIdP(r, res, out)
@@ -302,6 +307,9 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 	if v, ok := body["agentUpdate"].(bool); ok {
 		st.AgentUpdate = v && a.tenantAllowsAgentUpdate(r, res.ws)
 	}
+	if v, ok := body["autoImageRefresh"].(bool); ok {
+		st.AutoImageRefresh = v
+	}
 	// Preview (docs/log/81). The values are stored even on a deployment without host-based
 	// preview (AF_PREVIEW_DOMAIN unset): a setting that merely has no effect is easier to
 	// explain than one that silently disappears because of how the deployment is built.
@@ -340,6 +348,7 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 	body2 := map[string]any{
 		"agentUpdate":      st.AgentUpdate,
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
+		"autoImageRefresh": st.AutoImageRefresh,
 	}
 	a.addPreview(r, res, st, body2)
 	a.addDevIdP(r, res, body2)

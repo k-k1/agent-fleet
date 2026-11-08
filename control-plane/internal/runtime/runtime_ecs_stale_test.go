@@ -351,3 +351,52 @@ func TestECSEC2TaskDefReuseSeesTheImageStamp(t *testing.T) {
 		t.Errorf("the new revision carries the old stamp %q", got)
 	}
 }
+
+// StaleTarget is what the automatic image refresh keys its one-attempt rule on: it follows
+// the content, ignores a provenance-only re-push, delegates on ecs-ec2, and is "" whenever
+// the tag cannot be read (the refresh never acts on that).
+func TestECSStaleTarget(t *testing.T) {
+	orig := Freshness
+	defer func() { Freshness = orig }()
+	Freshness = &TTLCache{m: map[string]TTLEntry{}}
+	ctx := context.Background()
+	reg := &fakeECR{manifest: index("sha256:aaaa0001", "sha256:bbbb0001", false), digest: "sha256:index0001"}
+	rt, _ := newStaleTestECS(t, reg)
+	ec2 := &ecsEC2Runtime{base: rt}
+
+	first := rt.StaleTarget(ctx)
+	if first == "" || ec2.StaleTarget(ctx) != first {
+		t.Fatalf("target = %q, ec2 = %q", first, ec2.StaleTarget(ctx))
+	}
+	if rt.StaleTargetRef() != ecrTestImage || ec2.StaleTargetRef() != ecrTestImage {
+		t.Fatal("display ref is not the configured image")
+	}
+	reset := func() { Freshness = &TTLCache{m: map[string]TTLEntry{}} }
+	reg.manifest, reg.digest = index("sha256:aaaa0001", "sha256:bbbb0001", true), "sha256:index0002"
+	reset()
+	if got := rt.StaleTarget(ctx); got != first {
+		t.Fatal("provenance-only re-push changed the target")
+	}
+	reg.manifest, reg.digest = index("sha256:aaaa0002", "sha256:bbbb0001", false), "sha256:index0003"
+	reset()
+	if got := rt.StaleTarget(ctx); got == "" || got == first {
+		t.Fatalf("new content: target = %q", got)
+	}
+	reg.err = fmt.Errorf("AccessDeniedException")
+	reset()
+	if got := rt.StaleTarget(ctx); got != "" {
+		t.Fatalf("unreadable tag: target = %q, want empty", got)
+	}
+	reg.err = nil
+	rt.ecr = nil
+	reset()
+	if got := rt.StaleTarget(ctx); got != "" {
+		t.Fatalf("no ECR client: target = %q, want empty", got)
+	}
+	rt.ecr = reg
+	rt.cfg.workspaceImage = "ghcr.io/k-k1/agent-fleet/workspace:0.2.0"
+	reset()
+	if got := rt.StaleTarget(ctx); got != "" {
+		t.Fatalf("non-ECR registry: target = %q, want empty", got)
+	}
+}

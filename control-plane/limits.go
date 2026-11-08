@@ -84,6 +84,11 @@ type tenantLimits struct {
 	// (AF_ECS_EC2_BACKUP_KEEP). ecs-ec2 only; "" => deployment default, "0" => no
 	// backups for this tenant.
 	HomeBackupEvery string `json:"home_backup_every,omitempty"`
+	// ImageRefreshQuiet is how long a workspace must have shown no activity before the
+	// automatic image refresh (#3656) may restart it onto a new image. Only a member who
+	// switched the refresh on is ever touched. "" => deployment default
+	// (AF_IMAGE_REFRESH_QUIET, 15m), "0" => never for this tenant.
+	ImageRefreshQuiet string `json:"image_refresh_quiet,omitempty"`
 	// AllowAgentSelfUpdate: the operator gate for member-driven CLI self-update
 	// (claude/opencode/codex). When true the CP injects AF_AGENT_SELF_UPDATE_ALLOWED=1
 	// so a member who opted in (toolchains.agentUpdate) gets the baked /usr/local CLIs
