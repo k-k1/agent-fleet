@@ -301,7 +301,7 @@ session search this workspace's past conversations with the `search_sessions` to
 limit resets, and auto-resume of an interrupted turn.
 → [09 Agents](09-agents.md), [11 Running many sessions](11-many-sessions.md#messages-between-sessions),
 [11 Running many sessions](11-many-sessions.md#starting-sessions-from-a-session-child-sessions),
-[13 Images](13-images.md#having-a-session-generate-an-image)
+[Have a session make images](../user/images/from-session.md)
 
 ### Git hosting
 

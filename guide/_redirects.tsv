@@ -33,3 +33,7 @@ member/15-external-services.md#amazon-managed-grafana-issuing-the-token	user/int
 member/15-external-services.md#other-tools-zabbix-and-the-like	user/integrations/ops-monitoring.md#use-other-monitoring-tools
 member/20-settings.md#ops--monitoring	user/integrations/ops-monitoring.md
 member/20-settings.md#chat	user/integrations/chat-bridge.md
+member/13-images.md#image-gallery	user/images/gallery.md
+member/13-images.md#image-generation	user/images/generate.md
+member/13-images.md#studio-refine-the-draft-by-talking-to-an-agent	user/images/studio.md
+member/13-images.md#having-a-session-generate-an-image	user/images/from-session.md

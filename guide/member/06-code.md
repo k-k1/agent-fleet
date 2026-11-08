@@ -160,7 +160,7 @@ depending on state and location.
 - **Share…**: share this working copy's (project's) sessions with another member ([12](12-collaboration.md#sharing-a-conversation-shared-sessions))
 - **Assignment to a working set** ([11](11-many-sessions.md#narrowing-the-view-with-working-sets))
 - **Launch shell**: opens a shell session in that copy (the other kinds launch from the **▾** next to "Launch")
-- **Start an image studio**: begins an image studio in that copy ([13](13-images.md#studio-refine-the-draft-by-talking-to-an-agent)); shown only while the workspace is running and image generation is available
+- **Start an image studio**: begins an image studio in that copy ([Finish an image in the studio](../user/images/studio.md)); shown only while the workspace is running and image generation is available
 - **Stop the sessions below**: stops every session running in that copy and in the copies nested under it, from one modal ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)); shown while any is running, with the count
 - **Archive all stopped sessions**: archives every stopped session of that copy in one go; shown while any is stopped, with the count ([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions))
 - **Archived sessions of this working copy**: opens the archive list narrowed to that copy, to restore or delete from
