@@ -1199,7 +1199,11 @@ as the execution role itself, and no per-task value (session policy, session tag
 tag) reaches that request for a condition to compare with `/af-ws/<name>/`. The only per-workspace
 option is a role per workspace, which would give the CP task role `iam:CreateRole`,
 `iam:PutRolePolicy`, `iam:DeleteRole` and a wider `iam:PassRole`: a privilege-escalation surface
-the CP does not have today (it only passes three fixed roles), so it was not adopted. The ids and the `ExecRoleArn` export are kept, so no stack update removes an export
+the CP does not have today (it only passes three fixed roles), so it was not adopted. This is
+reasoned from the ECS/IAM model, not tested live; revisit if ECS gains a per-task value usable
+in the execution role's IAM context.
+
+The ids and the `ExecRoleArn` export are kept, so no stack update removes an export
 that is still imported, and the update order does not matter for task starts.
 
 `SlotRole` (40-ec2-pool) carries an explicit Deny of `ssm:GetParameter*` on `/af-cp` and
