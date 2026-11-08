@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp/msptest"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -240,5 +241,175 @@ func awaitFork(t *testing.T, ch <-chan msp.SessionForkParams) msp.SessionForkPar
 	case <-time.After(5 * time.Second):
 		t.Fatal("session/fork was never sent")
 		return msp.SessionForkParams{}
+	}
+}
+
+// forkedHost wires a fake host that forks to a fixed id and records every session/resume it is
+// sent. A nil handler result means "accept".
+func forkedHost(t *testing.T, h *threadHandle, onResume func(msp.SessionResumeParams) *msp.Error) (sent <-chan msp.SessionResumeParams, left chan string) {
+	t.Helper()
+	left = make(chan string, 4)
+	host := newTestHandle(t, h)
+	host.Handle(msp.MethodSessionFork, func(msptest.Message) (any, *msp.Error) {
+		return map[string]any{
+			"session": map[string]any{
+				"sessionId": forkedSID, "path": "/tmp/fork.jsonl",
+				"status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 0,
+			},
+			"history": map[string]any{}, "pendingRequests": []any{}, "viewCursor": "c1",
+		}, nil
+	})
+	host.Handle(msp.MethodSessionLeave, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.SessionLeaveParams
+		_ = json.Unmarshal(m.Params, &p)
+		left <- p.SessionID
+		return map[string]any{}, nil
+	})
+	resumes := make(chan msp.SessionResumeParams, 8)
+	host.Handle(msp.MethodSessionResume, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.SessionResumeParams
+		if err := json.Unmarshal(m.Params, &p); err != nil {
+			t.Errorf("session/resume params: %v", err)
+		}
+		resumes <- p
+		if onResume != nil {
+			if e := onResume(p); e != nil {
+				return nil, e
+			}
+		}
+		return resumedSession(), nil
+	})
+	refuseSessionRead(t, host)
+	return resumes, left
+}
+
+const forkedSID = "01a0c1d6-0000-7000-8000-00000000e10f"
+
+func registerWikiServer(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/bin/true",
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindMuse},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+}
+
+// session/fork has no config member, so the servers ride a session/resume of the NEW id.
+func TestForkedSlotGetsTheServersByResumingTheNewSession(t *testing.T) {
+	registerWikiServer(t)
+	srcSlot := "00000000-0000-5000-8000-00000000e101"
+	writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e109", Path: "/tmp/src.jsonl"})
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e102", forkFrom: srcSlot, sessionMCP: true}
+	sent, left := forkedHost(t, h, nil)
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	select {
+	case sid := <-left:
+		if sid != forkedSID {
+			t.Errorf("left %q, want the forked session %q", sid, forkedSID)
+		}
+	default:
+		t.Fatal("the fork was resumed without being unloaded first: the host refuses that with a configuration conflict")
+	}
+	select {
+	case p := <-sent:
+		if p.SessionID != forkedSID {
+			t.Errorf("resumed %q, want the forked session %q", p.SessionID, forkedSID)
+		}
+		if p.Config == nil {
+			t.Fatal("the post-fork resume carried no MCP servers")
+		}
+		if _, ok := p.Config.MCPServers["wiki"]; !ok {
+			t.Errorf("servers = %+v", p.Config.MCPServers)
+		}
+		af, ok := p.Config.MCPServers[mcpreg.AFServerName()]
+		if !ok {
+			t.Fatalf("the af server is not on the post-fork resume: %+v", p.Config.MCPServers)
+		}
+		if af.Env[agents.SessionNameEnvVar] != h.name {
+			t.Errorf("af server serves %q, want %q", af.Env[agents.SessionNameEnvVar], h.name)
+		}
+	default:
+		t.Fatal("no session/resume followed the fork: the forked session has none of af's tools")
+	}
+	if stored, _ := readSession(h.slotSid); stored.ID != forkedSID {
+		t.Errorf("stored session = %q, want %q", stored.ID, forkedSID)
+	}
+}
+
+// Without the sessionMcp grant nothing may be put on the wire, so there is no resume at all.
+func TestForkedSlotWithoutTheGrantSendsNoResume(t *testing.T) {
+	registerWikiServer(t)
+	srcSlot := "00000000-0000-5000-8000-00000000e111"
+	writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e119", Path: "/tmp/src.jsonl"})
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e112", forkFrom: srcSlot}
+	sent, left := forkedHost(t, h, nil)
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	select {
+	case p := <-sent:
+		t.Errorf("a session/resume was sent without the grant: %+v", p)
+	case sid := <-left:
+		t.Errorf("the fork %q was unloaded without the grant", sid)
+	default:
+	}
+}
+
+// The fork exists once the host has answered it; a host that will not take the servers costs the
+// tools, not the session.
+func TestForkedSlotSurvivesARefusedPostForkResume(t *testing.T) {
+	for name, code := range map[string]int{"invalid params": msp.ErrCodeInvalidParams, "internal": msp.ErrCodeInternal} {
+		t.Run(name, func(t *testing.T) {
+			// Each case needs a slot with no stored session, or openSession resumes instead of forking.
+			registerWikiServer(t)
+			srcSlot := "00000000-0000-5000-8000-00000000e121"
+			writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e129", Path: "/tmp/src.jsonl"})
+			h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e122", forkFrom: srcSlot, sessionMCP: true}
+			sent, _ := forkedHost(t, h, func(msp.SessionResumeParams) *msp.Error {
+				return &msp.Error{Code: code, Message: "no"}
+			})
+			if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
+				t.Fatalf("a refused post-fork resume failed the open: %v", err)
+			}
+			if n := len(sent); n != 1 {
+				t.Errorf("session/resume sent %d times, want exactly one (no bare retry)", n)
+			}
+			if stored, _ := readSession(h.slotSid); stored.ID != forkedSID {
+				t.Errorf("stored session = %q, want the fork %q", stored.ID, forkedSID)
+			}
+		})
+	}
+}
+
+// The host unloads asynchronously: until it has, the resume answers a retryable runtime_busy.
+// Giving up on the first one would leave the fork without servers on every fork.
+func TestForkedSlotRetriesTheResumeWhileTheHostIsUnloading(t *testing.T) {
+	registerWikiServer(t)
+	forkLeavePoll = time.Millisecond
+	t.Cleanup(func() { forkLeavePoll = 100 * time.Millisecond })
+	srcSlot := "00000000-0000-5000-8000-00000000e131"
+	writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e139", Path: "/tmp/src.jsonl"})
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e132", forkFrom: srcSlot, sessionMCP: true}
+	calls := 0
+	sent, _ := forkedHost(t, h, func(msp.SessionResumeParams) *msp.Error {
+		calls++
+		if calls < 3 {
+			return &msp.Error{Code: msp.ErrCodeCommandRejected, Message: "a session/leave is in progress",
+				Data: json.RawMessage(`{"reason":"runtime_busy","retryable":true}`)}
+		}
+		return nil
+	})
+	if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	if n := len(sent); n != 3 {
+		t.Errorf("session/resume sent %d times, want 3 (two busy, one accepted)", n)
 	}
 }

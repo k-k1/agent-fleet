@@ -776,6 +776,82 @@ func TestLiveSessionForkReturnsANewSession(t *testing.T) {
 	t.Logf("forked %s -> %s (path %s)", srcID, res.Session.SessionID, res.Session.Path)
 }
 
+// The servers reach a forked session through a session/leave and a session/resume of the new id
+// in the same host (session/fork has no config member). Free: no turn, so no server is spawned.
+//
+// It shows that the host accepts the resume once the fork is unloaded, and reports the same
+// session back with the fork's own turn count and forked-from link. That the config is READ is
+// shown by TestLiveSessionResumeAcceptsMCPServerConfig's control, not repeated here. Whether the
+// forked run then lists af's tools needs a turn and is not asserted. The source is turnless, so
+// "history is still there" is only the turn count (0) and the forked-from link.
+func TestLiveForkedSessionAcceptsMCPServerConfigOnResume(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "afprobe-stdio", Transport: mcpreg.TransportStdio, Command: "/bin/true",
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindMuse},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	cl, srcID, granted := h.cl, h.sid, h.sessionMCP
+	h.mu.Unlock()
+	if !granted {
+		t.Skip("the host did not grant sessionMcp")
+	}
+	cfg := h.sessionConfig()
+	if cfg == nil || len(cfg.MCPServers) == 0 {
+		t.Fatal("no servers to send: the resume below would prove nothing")
+	}
+
+	var forked msp.SessionForkResult
+	if err := cl.CallInto(msp.MethodSessionFork, msp.SessionForkParams{
+		CommandID: msp.NewCommandID(), SessionID: srcID,
+	}, callTimeout, &forked); err != nil {
+		t.Fatalf("session/fork: %v", err)
+	}
+	fid := forked.Session.SessionID
+
+	// Measured, muse 1.4.14: resuming the loaded fork with servers is refused
+	// (session_configuration_conflict), because its runtime was built without any. The fork has
+	// to be unloaded first, and the resume then rebuilds the runtime with the config.
+	if err := cl.CallInto(msp.MethodSessionLeave, msp.SessionLeaveParams{
+		CommandID: msp.NewCommandID(), SessionID: fid,
+	}, callTimeout, nil); err != nil {
+		t.Fatalf("session/leave on the fork: %v", err)
+	}
+
+	var res msp.SessionResumeResult
+	var rerr error
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		// The leave completes asynchronously; until then the resume answers runtime_busy.
+		rerr = cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+			CommandID: msp.NewCommandID(), SessionID: fid, Config: cfg,
+		}, callTimeout, &res)
+		if rerr == nil || !strings.Contains(rerr.Error(), "runtime_busy") {
+			break
+		}
+	}
+	if rerr != nil {
+		t.Fatalf("the host refused session/resume with AF's MCP servers on the left fork: %v", rerr)
+	}
+	if res.Session.SessionID != fid {
+		t.Errorf("resumed %s, asked for the fork %s", res.Session.SessionID, fid)
+	}
+	if res.Session.TurnCount != forked.Session.TurnCount {
+		t.Errorf("turn count %d after the resume, %d at the fork", res.Session.TurnCount, forked.Session.TurnCount)
+	}
+	if res.Session.ForkedFrom == nil || res.Session.ForkedFrom.SessionID != srcID {
+		t.Errorf("forkedFrom = %+v after the resume, want the source %q", res.Session.ForkedFrom, srcID)
+	}
+
+}
+
 // TestLiveImagePasteReachesTheModel spends exactly ONE subscription turn on the last thing
 // standing between the image-paste work (P2-15) and its row in the capability table: whether a
 // pasted image actually REACHES the model. The driver half — reading the file and sending an

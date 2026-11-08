@@ -1789,5 +1789,66 @@ func (h *threadHandle) forkSession(cl *msp.Client) error {
 	if err := openStore(h.forkFrom).ForkAt(h.slotSid, h.forkAt); err != nil {
 		log.Printf("muse: %s: fork: transcript copy failed: %v", h.name, err)
 	}
+	h.attachServersToFork(cl, res.Session.SessionID)
 	return nil
+}
+
+// attachServersToFork gives a just-forked session its MCP servers. `session/fork` has no
+// `config` member, and the host keeps a session's servers only for the life of its process, so
+// without this the forked session's first turn runs without af's tools (no af_report, no peer
+// messages).
+//
+// A `session/resume` with the config is refused while the fork is still loaded
+// (`session_configuration_conflict`, measured on muse 1.4.14: its runtime was built without
+// servers), so the fork is unloaded with `session/leave` first and then resumed. The leave
+// finishes asynchronously; the resume answers a retryable `runtime_busy` until it has.
+//
+// Never fatal: the fork and its stored id already exist, and a failure here costs only the
+// tools until the next reopen, which takes the resume path in openSession and sends them again.
+// A refused config is logged and not retried bare, since that resume would add nothing.
+func (h *threadHandle) attachServersToFork(cl *msp.Client, sid string) {
+	cfg := h.sessionConfig()
+	if cfg == nil {
+		return
+	}
+	fail := func(err error) {
+		log.Printf("muse: %s: fork: the MCP servers could not be attached (%v); the forked session runs without them until it is reopened: %s",
+			h.name, err, strings.Join(serverNames(cfg), ", "))
+	}
+	if err := cl.CallInto(msp.MethodSessionLeave, msp.SessionLeaveParams{CommandID: msp.NewCommandID(), SessionID: sid}, callTimeout, nil); err != nil {
+		fail(err)
+		return
+	}
+	var res msp.SessionResumeResult
+	var err error
+	for deadline := time.Now().Add(forkLeaveWait); ; time.Sleep(forkLeavePoll) {
+		err = cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+			CommandID: msp.NewCommandID(),
+			SessionID: sid,
+			Config:    cfg,
+		}, callTimeout, &res)
+		if err == nil || !hostBusy(err) || !time.Now().Before(deadline) {
+			break
+		}
+	}
+	if err != nil {
+		fail(err)
+	}
+}
+
+// How long attachServersToFork waits for the host to finish unloading the fork, and how often
+// it asks. Variables so a test need not sit through them.
+var (
+	forkLeaveWait = 10 * time.Second
+	forkLeavePoll = 100 * time.Millisecond
+)
+
+// hostBusy reports a rejection the host itself marks retryable (`runtime_busy`).
+func hostBusy(err error) bool {
+	var e *msp.Error
+	if !errors.As(err, &e) || e.Code != msp.ErrCodeCommandRejected {
+		return false
+	}
+	d := e.Detail()
+	return d != nil && d.Retryable != nil && *d.Retryable
 }
