@@ -30,7 +30,7 @@ Seventeen checks:
   labels     a quoted bold label in member/ and admin/ exists in the Console's catalogue
   size       a guide chapter stays within CHAPTER_LINE_BUDGET lines (warning only)
   history    task pages (user/, ref/cli/ and the ref pages written for them) carry no ADR numbers, journal
-             paths, issue numbers or dates
+             paths, issue numbers or dates, and their titles no preamble or trailing parenthesis
 
 ref is checked at three levels. (a) Axis coverage: the agent columns cover the session
 kind constants, the deployment rows cover the runtime profiles. (b) Row agreement:
@@ -117,7 +117,7 @@ VOCAB_BANNED = (
     (re.compile(r"(?<![\w/])/internal/[a-z]"), "an internal API path"),
 )
 # Developer slang that leaks out of ADRs and commit messages. The glossary's words are
-# instance (箱), S3 bucket (バケツ), copy / mirror (鏡) and family (族); these are checked
+# instance (箱), S3 bucket (バケツ), copy / mirror (鏡), family (族) and tool (道具); these are checked
 # on every guide/ shelf, operate/ and ref/ included, because a reader at a shell is still
 # a reader. Compounds that are ordinary Japanese (ごみ箱, 受信箱, 空の箱) are excluded.
 SLANG_BANNED = (
@@ -125,6 +125,7 @@ SLANG_BANNED = (
     (re.compile(r"バケツ"), "「バケツ」(write S3 Bucket)"),
     (re.compile(r"(?<!眼)鏡"), "「鏡」(write ミラー or 複製)"),
     (re.compile(r"(?<![家親民貴一水部])族"), "「族」(write ファミリー, or 系統 on the image pane)"),
+    (re.compile(r"道具"), "「道具」(write ツール)"),
     (re.compile(r"\b(?:GPU|engine|fleet's) box(?:es)?\b|\bwhich box\b|\bbuy(?:s|ing)? (?:a|the) box\b"),
      "\"box\" (write instance)"),
 )
@@ -649,6 +650,10 @@ def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
         banned = list(SLANG_BANNED)
         if sh in READER_FACING:
             banned += list(VOCAB_BANNED)
+        # A task page is written to the current rules, so a hit there is an error even
+        # without --strict; the old chapters only warn until they are rewritten.
+        g = os.path.relpath(path, GUIDE).replace(os.sep, "/")
+        task = any(g.startswith(t) for t in TASK_PAGES)
         for pattern, label in banned:
             hit = pattern.search(body)
             if hit:
@@ -656,7 +661,7 @@ def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
                     f"{src}: {label} appears on a reader-facing shelf"
                     f" ({hit.group(0)})"
                 )
-                (f.error if strict else f.warn)(msg)
+                (f.error if strict or task else f.warn)(msg)
 
 
 def check_frozen(files: list[str], f: Findings) -> None:
@@ -1723,6 +1728,14 @@ def check_history(files: list[str], f: Findings) -> None:
                 continue
             if fence:
                 continue
+            if line.startswith("# "):
+                title = line[2:].strip()
+                if re.search(r"社内|自社|御社|\bin-house\b|\byour company", title):
+                    f.errors.append(f"{rel(path)}:{i}: the title carries a preamble ({title}); name the task only "
+                                    "(CONVENTIONS §12)")
+                if re.search(r"[）)]$", title):
+                    f.errors.append(f"{rel(path)}:{i}: the title ends in a parenthesis ({title}); put the tool's "
+                                    "name in the verb phrase (CONVENTIONS §12)")
             text = re.sub(r"`[^`]*`", "", line)
             for pat, what in _HISTORY:
                 m = pat.search(text)
