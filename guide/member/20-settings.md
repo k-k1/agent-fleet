@@ -394,153 +394,28 @@ scale.
 
 ### Cloud cost
 
-What your own workspace costs to run in the cloud. **The tab is only there on a deployment running on
-AWS**, because nowhere else has a cloud bill to read.
-
-- The figure is **what is directly attributable to your workspace** (its slot hours, its persistent
-  home volume and that volume's snapshots), and the screen labels it "directly attributable to your
-  workspace (shared not included)". Shared infrastructure (NAT, DNS, load balancer, database, the idle
-  slot pool) is deliberately **never divided up between members**, so this is **not** the full cost of
-  running your workspace, and it is not "your cost".
-- **It runs about 24 hours behind, and the current day is not final**: the most recent days still
-  move.
-- A **date range**, the **daily trend** and **what it was spent on**. Amounts are in the currency the
-  bill is in (US dollars); nothing is converted.
-- **Nothing at all is available from before the day cost attribution was switched on**: it only
-  counts from that moment and cannot be backfilled. The screen says which day that is.
+The cloud cost attached directly to your workspace (deployments on AWS only). How to read it is in
+[See running time and cloud cost](../user/workspace/cost.md#see-the-cloud-cost).
 
 ### Running time
 
-When your workspace was actually running, as a grid of 24 hours (down) by date (across). Each
-square is one hour.
-
-- **The colour is not money.** Cloud costs are only available per day, so there is no such thing as
-  an hourly charge here (that is the Cloud cost tab next door). What this shows is how long the
-  workspace ran and how many sessions were open, usually the *reason* a particular day's cost
-  looks the way it does.
-- **There are three kinds of square.** Grey means **stopped**, a coloured square means **running**
-  (warmer = more sessions), and a **blank square means "not recorded"**: the control plane was not
-  watching that hour. Blank and grey do not mean the same thing.
-- **You can switch what the shading means**: sessions open / sessions actually working / running
-  time.
-- Point at a square and the detail for that hour appears below it (minutes running, peak count).
-  **Table** shows the same thing as numbers.
-- Times are shown in **your device's time zone**.
-- **Hours from before recording started stay blank** and cannot be filled in later.
+When your workspace was running, as a grid of hours. How to read it is in
+[See running time and cloud cost](../user/workspace/cost.md#see-the-running-time).
 
 ### Machine
 
-**What your workspace runs on.** Read-only: the size and the kind of machine are your tenant
-administrator's to set.
-
-- **Instance type / architecture / vCPU / memory / home disk.** On a cloud deployment each member gets a
-  instance to themselves, so these are that instance's figures.
-- Each value says whether it was **measured** (read inside the container) or **configured** (what the next
-  start will use). While the workspace is stopped everything is configured.
-- **The architecture matters.** JDKs, Node.js and the agent CLIs are downloaded as the build for that
-  architecture, and a tool whose build cannot run there is left out rather than installed broken
-  (what is installed is under Toolchains).
-- **Memory leads with what this workspace may spend, not what the instance has.** Part of the instance is held back
-  for the host's own daemons, so where both are known you get `6.5 GiB (instance has 8 GiB)`. The first number is
-  the one to look at when a build is being killed.
-- A size or class your admin changes applies **at the next start**, so when the running instance and the
-  configuration disagree, **both** are shown.
-- **Usage**: a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
-  home disk's usage. **The disk figure is only yours on an instance of your own**; on a shared host it is
-  the whole filesystem home sits on (labelled so, and never coloured as a warning), because other
-  members fill it too. On an instance of your own a notice appears once when free space drops below
-  about 2 GiB (or usage passes 90%), and again only after the disk has had real headroom (above about
-  3 GiB free and under 85%) and filled up again. **The ceilings are the rows above** (this workspace's memory limit and its core
-  count), so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
-  unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
-  it could not read**, and it says so when a process was killed for memory during the window.
-- **Memory pressure** (under the usage charts): the share of time tasks in your workspace waited on memory
-  (Linux pressure-stall information, "some" and "full"), next to how quickly the workspace's own Agent
-  answers. It is for measurement only: nothing is warned, refused or stopped because of it, and it is not
-  coloured. Where the machine cannot report it (a cgroup the Agent cannot confirm is its own, an older
-  kernel), the row says "Cannot be measured on this machine" instead of drawing a calm line.
-  An operator can switch the sampler off by starting the workspace with `AF_MEM_PRESSURE=off` in its
-  environment (exactly `off`; any other value, or none, leaves it on); the row is then not shown.
-  The Control Plane also passes the memory limit it asked the runtime for as `AF_WS_MEMORY_LIMIT_BYTES`
-  (bytes; absent where no limit is requested). The Agent compares it with its cgroup's `memory.max` and
-  writes "agree", "disagree" or "unknown" to its log; a disagreement never stops the sampler.
-- **Where home went**: all of your home broken down by category: working-copy source, build output
-  inside working copies (`node_modules`, `.next`, `target`, `.gradle`, `build`, `dist` that hold no tracked
-  file), tool caches (`~/.cache`, `~/.npm`, `~/.gradle`, `~/.m2`, …), runtimes and tools (`~/.local`,
-  `~/.nvm`, …), `~/.af-work`, the trash, Agent Fleet's own data, and the rest. Each category says how much
-  the cleanups that exist today can free and where; build output has no cleanup of its own yet. Below it,
-  the working copies with the most build output and every `~/.af-work` folder with its size and last
-  change. **"Measure"** walks home in the background — a few minutes on a large one — and the screen keeps
-  the last result. Counted like `du -sx ~`: allocated space, hard links once, no symlink followed and no
-  other disk such as `/scratch`.
-- **Disk used by Agent Fleet**: what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
-  down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
-  sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after
-  14 on their own; **"Open cleanup"** closes Settings and opens the cleanup modal, where the deleted
-  sessions' share and the trash can be tidied up ([05 Stopping and tidying up](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
-  Working copies and tool caches are not counted here.
-- **Tool caches**: the caches go, npm (including npx), uv, pip and Maven keep in your home (`~/.cache/go-build`,
-  `~/.npm/_cacache`, `~/.npm/_npx`, `~/.m2/repository`, …). They grow without limit (tens of GB is common) and are never emptied
-  automatically. **"Measure"** counts them (it reads every file, so only on a press); **"Empty"** deletes
-  one after a confirmation. The next build or install that needs it is slower once. A cache a running
-  build or install is using shows **"In use"** and cannot be emptied until that finishes.
-  A `~/.m2/repository` or `~/.npm/_npx` that is a symlink is not listed and cannot be emptied here,
-  so the link's target is never touched; empty it from a terminal if you need to.
-  Old versions of the Copilot and Cursor CLIs are not listed here: they are removed automatically when
-  the Workspace starts, keeping the current version, the pinned one, and any a running session still uses.
-- **Leftover files**, meaning things nothing reads again: throwaway profiles that killed headless Chromium
-  runs left under `~/.config/chromium-headless` and `~/.cache/chromium-headless`, `~/.af-work` folders
-  whose session (in the trash included) and working copy are gone or whose session was archived 7 or more days ago, Node.js patches a newer patch of the
-  same major replaced, and Kiro versions other than the installed and the pinned one. The Agent removes
-  them each time it starts and once a day after that; this section is for a workspace that runs for weeks without a restart.
-  **"Measure"** counts what would go now, and **"Delete"** removes one kind right away, without a
-  confirmation (except the archived-sessions row below), because unlike a tool cache nothing gets slower afterwards. Anything in use by a
-  process or changed within the last hour is kept. The Agent log names every folder it removes.
-  **`~/.af-work` is a throwaway area, not a place for files you want to keep.** At startup the Agent
-  removes only the session folders it created itself (they carry a hidden `.af-session-workdir` marker).
-  A folder you made there by hand, or one created before the marker existed, is never removed at
-  startup; it is counted here and goes only when you press **"Delete"**. Keep anything you care about
-  elsewhere, for example under `~/repos` or a folder of your own in your home directory. An archived
-  session's folder is removed 7 days after you archive it (sessions that were archived before this existed
-  get their 7 days from the first pass that sees them); a locked session's folder stays while it is locked.
-  When you need the space before then, the row **"Work folders of archived sessions"** counts the folders
-  still inside their 7 days, and its **"Delete"** removes them now, after a confirmation. It is never run
-  at startup. The removal cannot be undone and nothing goes to the trash; the sessions stay on the shelf
-  and can be restored, but a restored session starts with an empty `$AF_WORK_DIR`. Locked sessions,
-  folders in use and folders changed within the last hour are kept.
-- The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
+The size of the machine your workspace runs on, its memory and disk usage, and how to free disk space:
+[See your machine and its usage](../user/workspace/machine.md).
 
 ### Toolchains
 
-Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
-"install failed" with the reason and is tried again at the next start; what to do is in
-[21](21-troubleshooting.md#starting-a-session-says-the-agents-cli-could-not-be-installed); one whose upgrade at the start was
-skipped because the home disk was full shows "upgrade skipped: home disk full, old version in use" and keeps working at the
-installed version), **agent CLI updates** (off by
-default), and applying an Agent Fleet update.
-The Java picker offers both Eclipse Temurin and Amazon Corretto for each major ("Temurin 21",
-"Corretto 21"); the two can be installed side by side.
-The Java and Node.js rows show the exact version in use (for example `21.0.11+10`, `v22.23.4`;
-Corretto shows its own numbering, such as `21.0.13.0.11`).
-When a newer patch of that version is out, an **Update to …** button downloads it into your home volume;
-sessions started afterwards use it, with no Stop → Start. For a Java or Node.js version that is
-not installed yet, the button names the version it will install (for example
-**Install 17.0.21+9**). Older Node.js patches that Agent Fleet installed are removed at the next
-workspace start; versions you installed yourself with nvm, and exact versions pinned by an
-nvm alias or a `.nvmrc`, are kept.
-**Installed versions** lists the JDKs and Node.js versions on disk with their size. **Uninstall**
-removes one from your home volume, after asking; for Node.js that is every patch of the major, including
-ones you installed with nvm. Versions provided by the workspace image, the
-selected version (unless the image also has it) and one being installed cannot be removed.
-→ [17 Workspace environment](17-workspace-environment.md#environment-settings-and-recreating-the-workspace)
+The time zone, the Node.js / Java / Go versions, tool versions and agent CLI updates:
+[Choose your toolchains](../user/workspace/toolchains.md).
 
 ### Databases
 
-PostgreSQL and MySQL for this workspace, which is what database-backed tests run against. Each engine's
-state, version, memory, port and connection URL, with installing, starting and stopping it,
-creating, deleting and resetting a database by name, a shell already connected to one, and
-**Start with the workspace** (off by default). The same things from a terminal are `af-db`.
-→ [17 Workspace environment](17-workspace-environment.md#running-database-backed-tests)
+This workspace's PostgreSQL and MySQL:
+[Run database-backed tests](../user/workspace/databases.md#manage-them-from-the-console).
 
 ### Preview subdomains
 
@@ -560,36 +435,13 @@ is stopped). → [06 Repositories and git](06-code.md)
 
 ### Export / import
 
-Collect your own settings into **a single file**, take it away, and read it back on another deployment or
-account. It carries four things: **personal settings** (display, keys, notifications, agent defaults, …),
-your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and your **agent instructions**.
-
-- **Connections (Git / agent / AWS tokens and API keys, Google logins) are NOT included.** Sign in again wherever you
-  import. The flip side is that **this file is safe to hand to someone else**: handing a team the whole
-  set of SSM registrations works.
-- Importing only **adds**. A profile with the same name, or the same host (alias + instance), is left as it
-  is and reported back as "already there". A Google Cloud profile counts as already there when one with the
-  same label (ignoring case) exists; one without a label or project is skipped. An assume-role AWS profile is
-  imported only when an SSO profile with exactly its source's label and the same sign-in already exists or is in
-  the same file.
-- Personal settings are **merged onto** what you have now. Things that accumulate (learned quick replies,
-  key bindings) are never emptied just because the imported file has none.
-- Agent instructions are the one exception: they **replace** the text you have now (you are asked to
-  confirm first).
-- The result stays on screen as counts, and **what did not go in is on the same line**.
-- If the current AWS profiles cannot be read, nothing AWS-related is added (otherwise everything would be
-  created a second time); try again.
-- **Coming from your own machine's `~/.aws/config` rather than another Agent Fleet?** The AWS profiles/SSM tab
-  reads that file directly (the link is on this tab too). → [Use AWS SSO](../user/integrations/aws-sso.md#import-from-your-own-awsconfig)
-- **Google Cloud profiles from your own gcloud configurations?** The Google Cloud tab reads
-  `~/.config/gcloud/configurations/config_<name>` files directly. → [Use Google Cloud](../user/integrations/gcloud.md#import-from-your-own-gcloud-configurations)
+Your settings in one file, to take to another environment and read back:
+[Export and import your settings](../user/workspace/export-import.md).
 
 ### Danger zone
 
-**Recreate the workspace** (delete `~/repos` only and rebuild from the latest image) and **clean home** (a
-deeper reset that also removes home except logins and connections). Both lose uncommitted changes. The tab
-appears only on deployments that can perform them.
-→ [17 Workspace environment](17-workspace-environment.md#recreating-the-workspace-danger-zone)
+Recreating the workspace and cleaning home (on deployments that can). What stays and what goes is in
+[Recreate the workspace](../user/workspace/recreate.md).
 
 ---
 

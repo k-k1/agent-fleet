@@ -2250,3 +2250,91 @@ export function imagegenStatusLive(locale) {
     ],
   };
 }
+
+// ---- user guide: the workspace pages (SHOT_WS_GUIDE in server.mjs) ----
+// A member's own EC2 box, measured while it runs: the machine tab's first group.
+const GIB = 1024 ** 3;
+export function wsGuideMachine() {
+  return {
+    runtime: "ecs-ec2",
+    running: true,
+    measured: {
+      arch: "arm64",
+      vcpu: 4,
+      mem_max: 14.5 * GIB,
+      mem_total: 16 * GIB,
+      disk_total: 100 * GIB,
+      instance_type: "m7g.xlarge",
+    },
+    declared: { instance_type: "m7g.xlarge", arch: "arm64", vcpu: 4, slot_mem_mib: 16384, home_gib: 100, dedicated: true },
+  };
+}
+
+// Node.js 22 and Temurin 21 installed and in use; Temurin 21 has a newer patch out, so the
+// Java row shows its update button.
+export function wsGuideToolchains() {
+  return {
+    timezone: "Asia/Tokyo",
+    tz_options: ["Asia/Tokyo", "UTC", "America/Los_Angeles", "Europe/London"],
+    node: "22",
+    node_options: ["system", "20", "22", "24"],
+    node_installed: ["22"],
+    node_versions: { 22: "v22.23.4" },
+    go: "system",
+    go_options: ["system"],
+    java: "21",
+    java_available: ["17", "21", "25", "corretto-17", "corretto-21"],
+    java_installed: ["21"],
+    java_versions: { 21: "21.0.11+10" },
+  };
+}
+
+export function wsGuideLatest(kind, major) {
+  if (kind === "jdk" && major === "21") return { major, current: "21.0.11+10", latest: "21.0.12+7", update_available: true };
+  if (kind === "node" && major === "22") return { major, current: "v22.23.4", latest: "v22.23.4", update_available: false };
+  return {};
+}
+
+// Postgres running with one working copy's database and one named database; MySQL never started.
+export function wsGuideDatabases() {
+  const sock = "/home/dev/.local/state/af-db/run/postgres-17";
+  const pg = (name) => ({
+    urlSocket: `postgres://postgres:demo-pass@/${name}?host=${sock}&port=5432&sslmode=disable`,
+    urlTcp: `postgres://postgres:demo-pass@127.0.0.1:5432/${name}?sslmode=disable`,
+  });
+  return {
+    engines: [
+      {
+        engine: "postgres",
+        major: "17",
+        installed: true,
+        state: "running",
+        version: "17.6",
+        rssBytes: 47_000_000,
+        port: 5432,
+        datadir: "/home/dev/.local/state/af-db/postgres-17/data",
+        autostart: false,
+        databases: [
+          { name: "af_webshop_3f9a1c", dir: "/home/dev/repos/webshop", ...pg("af_webshop_3f9a1c") },
+          { name: "scratch", dir: "", ...pg("scratch") },
+        ],
+        lastUsedAt: "2026-11-08T09:12:00Z",
+        lastError: "",
+      },
+      {
+        engine: "mysql",
+        major: "8.4",
+        installed: false,
+        state: "absent",
+        version: "",
+        rssBytes: 0,
+        port: 0,
+        datadir: "",
+        autostart: false,
+        databases: [],
+        lastUsedAt: "",
+        lastError: "",
+      },
+    ],
+  };
+}

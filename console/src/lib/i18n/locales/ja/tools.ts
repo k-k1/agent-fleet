@@ -390,7 +390,7 @@ export const tools = {
   "env.agent_update_title": "エージェント CLI の更新",
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",
   "env.agent_update_note":
-    "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。オフ（既定）では、システムが焼いたイメージ版に固定されます。オンにすると次の起動時にそれぞれ最新へ更新します（Stop → Start で反映／オフに戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。",
+    "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ Cursor / rtk。オフ（既定）では、システムが焼いたイメージ版に固定されます。オンにすると次の起動時にそれぞれ最新へ更新します（Stop → Start で反映／オフに戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。",
   // --- データベース（features/settings/workspace/EnvTabDatabases.tsx — ADR 0086 P1 決定 9）---
   "env.db_title": "データベース",
   "env.db_intro":
