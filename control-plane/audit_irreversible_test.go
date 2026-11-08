@@ -49,6 +49,7 @@ func wantAuditUnavailable(t *testing.T, what string, w *httptest.ResponseRecorde
 }
 
 func TestIrreversibleAdminActionsRefuseWithoutAnAuditRecord(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("clean home", func(t *testing.T) {
@@ -150,6 +151,7 @@ func TestIrreversibleAdminActionsRefuseWithoutAnAuditRecord(t *testing.T) {
 // outcome row failing, the action goes ahead, answers as it would, and leaves the request on
 // record. A handler that refused on every audit error would pass the test above.
 func TestIrreversibleAdminActionKeepsTheRequestWhenTheOutcomeWriteFails(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := &destroyingFactory{leftovers: []string{"efs:/home/leaver"}}
 	st, mgr, victim, tn := destroyFixture(t, f)
@@ -170,6 +172,7 @@ func TestIrreversibleAdminActionKeepsTheRequestWhenTheOutcomeWriteFails(t *testi
 // With the store healthy, a request row precedes the outcome row, and a refusal after the
 // request still closes it with the reason.
 func TestIrreversibleAdminActionWritesRequestThenOutcome(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := &destroyingFactory{err: errors.New("ec2: volume busy")}
 	st, mgr, victim, tn := destroyFixture(t, f)
@@ -212,6 +215,7 @@ func callRemoveMembership(mgr *manager, body string) *httptest.ResponseRecorder 
 // Purging a model's files cannot be undone either; forgetting the row alone can, and is not
 // held to this.
 func TestEngineModelPurgeRefusesWithoutAnAuditRecord(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineModelAdminAPI(t)
 	if err := st.PutEngineModel(t.Context(), store.EngineModel{Role: "image", ID: "tmp-model", Kind: "checkpoint",
 		BaseModel: "flux1", Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/tmp.safetensors"}}}); err != nil {
@@ -255,6 +259,7 @@ func (catalogUnreadableStore) ListEngineModels(context.Context, string) ([]store
 // client was answered: 200 with nothing else, 502 when the active set could not be
 // published, and "unknown" — not "no file" — when the catalogue could not be read.
 func TestEngineModelPurgeWritesOnePairWithTheAnsweredOutcome(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name       string
 		setup      func(a *engineAdminAPI, e *engineRuntimeState)
@@ -312,6 +317,7 @@ func TestEngineModelPurgeWritesOnePairWithTheAnsweredOutcome(t *testing.T) {
 // Issue #1334: a runtime with no slot pool has nothing to terminate, and says so with a 404
 // even when the audit log is down. The intent write used to come first and answer 503.
 func TestTerminatePoolSlotWithNoPoolIs404EvenWithTheAuditLogDown(t *testing.T) {
+	t.Parallel()
 	st, adm := poolSlotFixture(t, &destroyingFactory{})
 	adm.mgr.store = auditFailingStore{st, failEveryAudit}
 	if w := callTerminateSlot(adm, "i-x"); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"no_pool"`) {
@@ -344,6 +350,7 @@ func auditPair(t *testing.T, st store.Store, tenantID, action string) (req, out 
 
 // Issue #1334: deleting a tenant's sign-in method loses its client secret and its approval.
 func TestTenantIdPDeleteRefusesWithoutAnAuditRecord(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := p3Store(t)
 	mgr := p4Manager(t, st)
@@ -382,6 +389,7 @@ func TestTenantIdPDeleteRefusesWithoutAnAuditRecord(t *testing.T) {
 // Issue #1334: deleting an internal repository removes the bare and its LFS objects, and a
 // rename breaks every clone's origin; neither happens without a record of who asked.
 func TestInternalGitDeleteAndRenameRefuseWithoutAnAuditRecord(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newP2Env(t)
 	e.seedRepo(t, "keep")
@@ -422,6 +430,7 @@ func TestInternalGitDeleteAndRenameRefuseWithoutAnAuditRecord(t *testing.T) {
 // A rename that fails on disk after the request was recorded closes it with the failure,
 // so the lone request row does not read as an outcome that was lost.
 func TestInternalGitRenameFailureClosesTheRequest(t *testing.T) {
+	t.Parallel()
 	e := newP2Env(t)
 	e.seedRepo(t, "gone")
 	if err := os.RemoveAll(filepath.Join(e.g.dataRoot, "git", "default", "gone.git")); err != nil {

@@ -75,7 +75,7 @@ func TestEgressBatcher(t *testing.T) {
 
 func TestEgressStore(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestEgressStore(t *testing.T) {
 // would-block audit row per host.
 func TestEgressIngestHandler(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestEgressIngestHandler(t *testing.T) {
 
 func TestAllowlistStore(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestAllowlistStore(t *testing.T) {
 
 func TestEffectivePolicyEndpoint(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 // without them cuts every workspace off from its CP the moment the mode is enforce.
 func TestEgressPolicyAlwaysAdmitsCPHosts(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestNormalizeEgressEntryTCP(t *testing.T) {
 
 func TestPolicyEndpointServesTCPEntriesSeparately(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestPolicyEndpointServesTCPEntriesSeparately(t *testing.T) {
 	}
 
 	// With none, the body has no tcp key: the bytes an older agent was served.
-	st2, _ := store.OpenSQLite(filepath.Join(t.TempDir(), "cp2.db"))
+	st2, _ := openMigratedSQLite(filepath.Join(t.TempDir(), "cp2.db"))
 	defer st2.Close()
 	_ = st2.Migrate(ctx)
 	w2 := httptest.NewRecorder()
@@ -493,7 +493,7 @@ func TestPolicyEndpointServesTCPEntriesSeparately(t *testing.T) {
 // the admin list, and cannot be activated again.
 func TestStoredPrivateTCPEntryIsFlaggedAndNotShipped(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

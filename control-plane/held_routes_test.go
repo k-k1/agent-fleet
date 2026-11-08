@@ -122,7 +122,7 @@ func postHeld(t *testing.T, url string) *http.Response {
 func heldTestCP(t *testing.T, agentURL string) *httptest.Server {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

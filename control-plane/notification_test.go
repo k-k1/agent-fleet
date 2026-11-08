@@ -11,7 +11,7 @@ import (
 )
 
 func TestNotificationStoreMembershipSeenAndDedup(t *testing.T) {
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestNotificationStoreMembershipSeenAndDedup(t *testing.T) {
 }
 
 func TestUsageNotificationStateRoundTrip(t *testing.T) {
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestUsageNotificationStateRoundTrip(t *testing.T) {
 }
 
 func TestUsageObservationCreatesOneResetNotification(t *testing.T) {
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

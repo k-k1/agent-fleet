@@ -46,7 +46,7 @@ func (h *pathHits) get(path string) int {
 func newHandoffAPIFixture(t *testing.T, sessions []map[string]any) handoffAPIFixture {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -186,7 +186,7 @@ func TestSharedTranscriptDTOKeepsDeclinedFlag(t *testing.T) {
 
 func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestFreshCatalogThrottlesInventoryButNotAuthorization(t *testing.T) {
 
 func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 // sessions the owner put away lingering forever (docs/log/59 §1).
 func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +547,7 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 
 func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +618,7 @@ func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 
 func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +660,7 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 
 func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,7 +709,7 @@ func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
 
 func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -821,7 +821,7 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 
 func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -927,7 +927,7 @@ func TestSharedHandoffProposalsShowContentAndDropUnknownFields(t *testing.T) {
 
 func TestSharedHandoffProposalsAuthorize(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

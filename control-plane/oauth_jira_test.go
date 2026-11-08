@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -213,12 +214,11 @@ func fastJiraRetry(t *testing.T) *[]time.Duration {
 // resetThenServe resets the TCP connection for the first n requests (hijack + close, so
 // the client sees "connection reset"/EOF exactly as on the affected deployments), then
 // answers with ok. hits counts every request.
-func resetThenServe(t *testing.T, n int, ok func(w http.ResponseWriter)) (*int, func()) {
+func resetThenServe(t *testing.T, n int, ok func(w http.ResponseWriter)) (*atomic.Int32, func()) {
 	t.Helper()
-	hits := 0
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		if hits <= n {
+		if int(hits.Add(1)) <= n {
 			conn, _, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				t.Errorf("hijack: %v", err)
@@ -247,8 +247,8 @@ func TestJiraExchangeCodeSucceedsAfterResets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exchange after 2 resets: %v", err)
 	}
-	if tok.AccessToken != "at" || *hits != 3 {
-		t.Errorf("tok=%+v hits=%d, want success on the third attempt", tok, *hits)
+	if tok.AccessToken != "at" || hits.Load() != 3 {
+		t.Errorf("tok=%+v hits=%d, want success on the third attempt", tok, hits.Load())
 	}
 	if len(*slept) != 2 || (*slept)[1] <= (*slept)[0] {
 		t.Errorf("backoff = %v, want two growing delays", *slept)
@@ -262,8 +262,8 @@ func TestJiraExchangeCodeGivesUpOnPersistentResets(t *testing.T) {
 	if _, err := jiraExchangeCode(context.Background(), "cid", "s", "c", "https://af.example/cb"); err == nil {
 		t.Fatal("persistent resets reported as success")
 	}
-	if *hits != jiraExchangeRetry.attempts {
-		t.Errorf("hits = %d, want %d", *hits, jiraExchangeRetry.attempts)
+	if int(hits.Load()) != jiraExchangeRetry.attempts {
+		t.Errorf("hits = %d, want %d", hits.Load(), jiraExchangeRetry.attempts)
 	}
 }
 
@@ -321,8 +321,8 @@ func TestJiraRefreshGrantSucceedsAfterResets(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("refresh after 3 resets: %v", aerr)
 	}
-	if tok.RefreshToken != "rt2" || *hits != 4 || len(*slept) != 3 {
-		t.Errorf("tok=%+v hits=%d sleeps=%v", tok, *hits, *slept)
+	if tok.RefreshToken != "rt2" || hits.Load() != 4 || len(*slept) != 3 {
+		t.Errorf("tok=%+v hits=%d sleeps=%v", tok, hits.Load(), *slept)
 	}
 }
 
