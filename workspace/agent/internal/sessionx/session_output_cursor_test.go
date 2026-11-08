@@ -107,6 +107,9 @@ func TestOutputTurnCursor(t *testing.T) {
 		{"working, last is a user turn", []transcript.Turn{a, u}, "working", 2},
 		{"idle counts everything", []transcript.Turn{u, a}, "idle", 2},
 		{"stopped counts everything", []transcript.Turn{u, a}, "stopped", 2},
+		{"question counts everything", []transcript.Turn{u, a}, "question", 2},
+		{"permission counts everything", []transcript.Turn{u, a}, "permission", 2},
+		{"limited counts everything", []transcript.Turn{u, a}, "limited", 2},
 		{"only turn is held back", []transcript.Turn{a}, "working", 0},
 	} {
 		if got := outputTurnCursor(tc.turns, tc.state); got != tc.want {

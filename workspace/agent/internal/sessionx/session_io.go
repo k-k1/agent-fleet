@@ -1470,11 +1470,18 @@ func sessionInputReady(meta session.Meta, alive bool) bool {
 // outputTurnCursor is the /output cursor for a kind read through generic transcript turns. A
 // turn has no completeness marker, and an assistant turn the session is still writing grows
 // without changing the turn count, so a cursor that counted it would make the next
-// continue-read skip the rest of that turn. While the session is neither idle nor stopped the
-// last assistant turn is therefore left out, and the next read re-sends that one turn whole.
+// continue-read skip the rest of that turn. While the session is "working" the last assistant
+// turn is therefore left out, and the next read re-sends that one turn whole. Only "working"
+// holds back: a session parked on a question, approval or limit has a finished last turn, and
+// holding it back would re-send it on every poll indefinitely.
+//
+// The state is read before the transcript, so the remaining race is one-directional: a turn
+// that starts growing between an idle verdict and the transcript read is still counted and its
+// rest skipped (narrow), while working-then-finished only repeats a finished turn once
+// (harmless). Do not swap the read order; that would make the harmless direction the lossy one.
 func outputTurnCursor(turns []transcript.Turn, state string) int {
 	n := len(turns)
-	if n > 0 && turns[n-1].Role == "assistant" && state != "idle" && state != "stopped" {
+	if n > 0 && turns[n-1].Role == "assistant" && state == "working" {
 		return n - 1
 	}
 	return n
