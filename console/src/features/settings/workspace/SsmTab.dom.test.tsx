@@ -213,6 +213,18 @@ describe("SsmTab profile row Log out", () => {
     expect(calls.filter((c) => c.path === "api/aws-login/profiles").length).toBeGreaterThan(asked);
     expect(logouts()).toHaveLength(1);
   });
+  it("gives every row action (Log in, Log out, Edit, Delete) the one shared button class", async () => {
+    states = [{ name: "prod-app", state: "signed_in" }];
+    await mount();
+    const head = host.querySelector(".ssm-item-head")!;
+    const labels = [t("ssm.login"), t("awslogin.logout"), t("ssm.edit"), t("common.delete")];
+    const btns = Array.from(head.querySelectorAll<HTMLButtonElement>("button"));
+    expect(btns.map((b) => b.textContent?.trim())).toEqual(labels);
+    for (const b of btns) expect(b.classList.contains("ssm-row-action")).toBe(true);
+    // Delete stays the destructive one.
+    expect(btns[3].classList.contains("danger")).toBe(true);
+    expect(btns.slice(0, 3).some((b) => b.classList.contains("danger"))).toBe(false);
+  });
   it("keeps the button off while its logout runs, so a second press sends nothing", async () => {
     states = [{ name: "prod-app", state: "signed_in" }];
     let open!: () => void;

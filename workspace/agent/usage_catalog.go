@@ -68,6 +68,9 @@ var usageRouteProviders = map[string][]string{
 	usagex.RouteOpencodeZen: {"opencode"},
 	usagex.RouteOpencodeGo:  {"opencode-go"},
 	usagex.RouteBedrock:     {"amazon-bedrock"},
+	// A provided route is priced from the same list as the member's own Bedrock (ADR 0129 D4).
+	usagex.RouteBedrockTenant:     {"amazon-bedrock"},
+	usagex.RouteBedrockDeployment: {"amazon-bedrock"},
 }
 
 // usageCatalogFallback is the order of primary providers to consult when the kind does not

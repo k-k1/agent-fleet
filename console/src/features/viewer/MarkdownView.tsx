@@ -21,7 +21,8 @@ import { renderEmoji } from "./parts/mdEmoji.ts";
 import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.ts";
 import { setupStickyHeadings } from "./parts/mdStickyHeadings.ts";
 import { addCopyButton, addQuoteCopyButton } from "./parts/mdCopyButtons.ts";
-import { wireImages, wireLinks } from "./parts/mdLinks.ts";
+import { resolveImageSrc, wireImages, wireLinks } from "./parts/mdLinks.ts";
+import { wireExternalImages } from "./parts/mdExternalImages.ts";
 import {
   ensurePreviewInfo,
   hasPreviewLinks,
@@ -179,6 +180,15 @@ export function MarkdownView({
     if (frontMatter) renderFrontMatter(el, frontMatter.attributes, frontMatter.lenient);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)
+    // Also while streaming: a deferred image would otherwise stay blank. Outside streaming a
+    // restored src takes the repo-path rule of wireImages; while streaming nothing rewrites it.
+    wireExternalImages(el, streaming
+        ? undefined
+        : (src) => {
+            const next = resolveImageSrc(src, basePath);
+            return next === undefined ? src : next; // null stays null: dropped
+          },
+    );
 
     if (streaming) {
       el.querySelectorAll<HTMLElement>("pre > code").forEach((code) => {

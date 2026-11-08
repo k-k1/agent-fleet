@@ -388,7 +388,7 @@ const mcpInstructions = "Agent Fleet operations MCP. It lets you observe and ste
 
 // mcpMemoryInstructions is mcpInstructions for the memory-only endpoint.
 const mcpMemoryInstructions = "Agent Fleet memory MCP. It serves only the memory shared by every agent kind " +
-	"(memory_projects, memory_index, memory_search, memory_read; memory_save and memory_forget with write access)."
+	"(memory_projects, memory_index, memory_search, memory_read; memory_save, memory_patch and memory_forget with write access)."
 
 func (a API) instructions() string {
 	if a.memoryOnly {

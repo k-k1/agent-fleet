@@ -12,8 +12,11 @@
 //     three ways here: (a) keep it off the toolbar, (b) blank the URL, (c) the parent does not
 //     grant allow-popups in the sandbox.
 //
-// Because it is a srcdoc, the iframe has no origin (the parent does not grant
-// allow-same-origin). The frame fetches nothing at all by itself: both the diagram XML and the
+// The document is a built file (scripts/afDrawioFrames.js emits it from drawioFrameSrcdoc), not a
+// srcdoc: a srcdoc inherits the Console's `script-src 'self'`, which would block both the boot
+// script and the evaluation of the viewer source. Loaded from its own URL it carries the CSP of
+// its own response (writegate.DrawioFrame). Sandboxed without allow-same-origin, the iframe has
+// no origin (the parent does not grant it). The frame fetches nothing at all by itself: both the diagram XML and the
 // 4 MB viewer source are fetched by the parent and passed in by postMessage, so the CSP stays
 // at default-src 'none' and script-src needs no external origin.
 //
@@ -22,6 +25,11 @@
 // pass `/assets/*` through, the request 401s, and render then runs with GraphViewer undefined
 // and misreports the file as not interpretable as a diagram (measured). Fetching is the
 // parent's job, since it holds the credentials; the frame only receives.
+
+/** The built file for a theme, relative to the Console root (resolved against <base> by the iframe). */
+export function drawioFrameFile(dark: boolean): string {
+  return dark ? "drawio-frame-dark.html" : "drawio-frame-light.html";
+}
 
 /** Messages parent → frame and frame → parent. `af` keeps them apart from other postMessages. */
 export const DRAWIO_MSG = "af-drawio" as const;

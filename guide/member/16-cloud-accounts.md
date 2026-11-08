@@ -173,7 +173,12 @@ other AWS operation. A profile that is not marked is refused as a route, with th
 token is tied to one session, to the profile as it is now and to the route the session selected, and it is served only to
 that session's own processes (the gateway listens on a socket in the workspace and checks which process is calling; another
 session that copies the token is refused). It ends when the session is stopped, deleted, archived or recreated, when the
-selection changes, and when the profile is edited, unmarked or deleted; one that nothing ended runs out ten minutes after its
+selection changes, and when the profile is edited, unmarked or deleted. A create or a start, and any model call that needs
+new AWS credentials, reads Settings again first, so a change you saved before it is enforced at once when that read
+succeeds; a session that is already running and still has credentials the gateway holds can make further calls for up to
+30 seconds after the change. When the read fails (the workspace cannot reach the Control Plane, or the read takes longer
+than 15 seconds), the gateway uses the last list it read successfully, for creates, starts and new credentials as well as
+for calls, until 15 minutes after that read, and then refuses every call. A token that nothing ended runs out ten minutes after its
 session stops running. A profile that is set to
 "Confirm before use" is asked about in the same way as above when the session starts, and is checked again on every model
 call: until you allow it, each call fails at once with the reason. The mark is only your statement: AF cannot read the

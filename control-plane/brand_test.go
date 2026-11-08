@@ -110,7 +110,7 @@ func TestRewriteIndexHTMLHitsEveryAnchorInTheRealShell(t *testing.T) {
 		"<title>[dev] Agent Fleet",
 		`content="` + b.hex + `"`,
 		`name="apple-mobile-web-app-title" content="[dev] Agent Fleet"`,
-		`window.__AF_BRAND={"label":"dev"`,
+		`<script type="application/json" id="af-brand">{"label":"dev"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("rewritten shell is missing %q", want)

@@ -21,6 +21,16 @@
       "credential": "aws-profile-ref"
     },
     {
+      "id": "bedrock-deployment",
+      "wire": "bedrock",
+      "credential": "deployment"
+    },
+    {
+      "id": "bedrock-tenant",
+      "wire": "bedrock",
+      "credential": "tenant-key"
+    },
+    {
       "id": "chatgpt-subscription",
       "wire": "openai-responses",
       "credential": "existing-connection"

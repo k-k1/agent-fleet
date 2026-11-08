@@ -169,6 +169,25 @@ func HandleAgentMemorySave(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
+// HandleAgentMemoryPatch applies old/new edits to an existing memory's body and publishes it.
+func HandleAgentMemoryPatch(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, agentMemSaveMaxRequest)
+	var req agentMemPatchReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	c, ok := agentMemCallerFrom(w, req.Session)
+	if !ok {
+		return
+	}
+	res, err := agentMemPatch(c, req, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 // HandleAgentMemoryForget removes a memory from what is published.
 func HandleAgentMemoryForget(w http.ResponseWriter, r *http.Request) {
 	var req agentMemForgetReq
