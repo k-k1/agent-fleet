@@ -209,6 +209,11 @@ func agentMemRefuseRevival(rel, name string) error {
 // reviewTrailerCommit finds the newest commit on main whose message carries trailer key = value
 // as an agent-memory change by the review, or "". git's --grep only narrows the candidates.
 func reviewTrailerCommit(key, value string) (string, error) {
+	return trailerCommitBy(key, value, ReviewAuthorKind)
+}
+
+// trailerCommitBy is reviewTrailerCommit for any author kind.
+func trailerCommitBy(key, value, authorKind string) (string, error) {
 	agentMemMu.RLock()
 	defer agentMemMu.RUnlock()
 	if !memoryHasCommits() {
@@ -225,7 +230,7 @@ func reviewTrailerCommit(key, value string) (string, error) {
 			continue
 		}
 		tr := agentMemTrailers(f[1])
-		if tr["AF-Trigger"] == memoryTriggerAgentMemory && tr[key] == value && tr["AF-Author-Kind"] == ReviewAuthorKind {
+		if tr["AF-Trigger"] == memoryTriggerAgentMemory && tr[key] == value && tr["AF-Author-Kind"] == authorKind {
 			return f[0], nil
 		}
 	}

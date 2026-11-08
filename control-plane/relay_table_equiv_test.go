@@ -208,6 +208,11 @@ var frozenMemberOriginRoutes = map[string]bool{
 	// Undoing a past review run (ADR 0117 decision 5): it writes into every kind's memory, so a
 	// session's own AGENT_TOKEN must not be able to do it.
 	"POST /api/agents/memory-review/runs/revert": true,
+	// The member's decisions on the consolidator's proposals (ADR 0130 decision 7): an agent must
+	// not approve, reject or retry its own.
+	"POST /api/agents/memory-consolidation/proposals/approve": true,
+	"POST /api/agents/memory-consolidation/proposals/reject":  true,
+	"POST /api/agents/memory-consolidation/proposals/retry":   true,
 	// Importing AF memory out of a bundle (#1983).
 	"POST /api/agents/memory/af-import": true,
 	// The member's part in what the Agent memory switch does by itself with claude's native
@@ -384,6 +389,10 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/aws-confirm/{id}/deny":    true,
 	// ADR 0130 decision 5: the member's retired-term list for the memory lint report.
 	"POST /api/agents/memory/entries/lint-terms": true,
+	// ADR 0130 decisions 6 and 7: the member's decisions on the consolidator's proposals.
+	"POST /api/agents/memory-consolidation/proposals/approve": true,
+	"POST /api/agents/memory-consolidation/proposals/reject":  true,
+	"POST /api/agents/memory-consolidation/proposals/retry":   true,
 }
 
 // auditAddedSinceTheFreeze are routes that existed at the freeze and that the frozen switch

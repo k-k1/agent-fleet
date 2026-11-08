@@ -668,3 +668,27 @@ release.
   be scored; the small tier's `supersede` and `merge` answers are the ones decision 6 escalates. Measured on the
   59-case set with `claude -p` (haiku as the small tier, sonnet as the larger): the results are in the PR; the
   scheduler, ripeness rules, approval UI and the AF adapter that queues proposals are later PRs.
+
+- **2026-11-09 — decisions 6 and 7: the Agent adapter built (#3497, third PR).** `workspace/agent/internal/memconsol`
+  collects observations (`stale`/`wrong` feedback reasons, lint reasons, the exported 0117 queue read-only), groups
+  them deterministically by suspect memory (the name, then `memory_search`'s ranking), and applies decision 6's
+  ripeness (one report, 3 open observations, 24 h) oldest observation first inside a per-run token budget; the run
+  report records each delayed topic with its cause (`budget`, `interrupted`, `run-failed`; the status adds
+  `workspace-stopped` and `never-idle`). A run starts only from the existing polling loop shape (15 min without a
+  turn, at most every 3 h, all figures in `config.json`), behind the ui-prefs switch `memoryConsolidation` (off by
+  default; turning it on needs the member-origin mark; the Console control is the next PR). It calls the engine with
+  the claude CLI headless (`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`); roles are data in `models.json` (default small
+  `claude:haiku`, large `claude:sonnet`). Haiku does not meet the patch bar yet, which is acceptable only because
+  **nothing is applied without approval**: a run writes proposals into `af-memory.work/consolidation/proposals/` and
+  nothing else, and the one function that publishes is reached from the member-origin approve route. Approval
+  re-validates against the current revision, then publishes through the store's patch/save path authored
+  `consolidator` (so it is in the change list and revertible); a create is held to no revival inside the store lock
+  both when queued and when approved. A model or runner error, or a retired model, ends the run with nothing queued
+  from the failed call and no fallback model. Decisions taken: the engine cannot write a replacement, so a supersede
+  or merge (and an add with no exported candidate) is queued as **advice** about one target that the member applies
+  by hand, and a create exists only for an exported 0117 create; the deterministic checks cover schema, size, secret
+  scan, links the edit adds and the edits applying, but not repository paths (lint's job). The Agent module compiles
+  from `workspace/` alone, so it holds a byte-for-byte mirror of the engine's sources
+  (`workspace/agent/internal/memengine`, `scripts/sync-memengine.sh`, a test that fails on drift) rather than a
+  `replace` to a directory outside the image's build context. Not built: the Console approval UI and toggle, the
+  daily notice (a gated hook exists), the ledger entry for the tokens, codex/Gemini runners.

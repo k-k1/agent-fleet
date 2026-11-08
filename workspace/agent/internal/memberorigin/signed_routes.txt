@@ -15,6 +15,9 @@
 #                        (Type.method) whose body calls memberOriginSign for this route
 #   conditional  the Agent asks for the mark only for part of what the request does
 #                (memberorigin.RequireBody), so no memberorigin.Require wraps the route
+POST /agents/memory-consolidation/proposals/approve relay
+POST /agents/memory-consolidation/proposals/reject relay
+POST /agents/memory-consolidation/proposals/retry relay
 POST /agents/memory-review/runs/revert relay
 POST /agents/memory/af-import relay
 POST /agents/memory/auto-sync relay
