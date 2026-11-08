@@ -55,6 +55,9 @@ type Binding struct {
 	// Model is the one Bedrock model id the session's calls may name, "" for none pinned
 	// (pinnedModel).
 	Model string
+	// Transport is where the token is served: transportUnix (the socket) or transportTCP (the
+	// loopback port, for a harness that cannot use a socket). Empty reads as the socket.
+	Transport string
 }
 
 type entry struct {

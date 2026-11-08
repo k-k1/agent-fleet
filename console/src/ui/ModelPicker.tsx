@@ -20,11 +20,14 @@ interface ModelPickerProps {
   kind: string;
   model: string;
   onChange: (model: string) => void;
+  /** Narrows the live catalog to the ids a chosen model route can run ("" is the default entry). */
+  filter?: (id: string) => boolean;
 }
 
-export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
+export function ModelPicker({ kind, model, onChange, filter }: ModelPickerProps) {
   const tr = useT();
-  const options = useModelOptions(kind);
+  const fetched = useModelOptions(kind);
+  const options = useMemo(() => (fetched && filter ? fetched.filter(([v]) => filter(v)) : fetched), [fetched, filter]);
   // claude's registered full ids: asked for whenever there is one, not only once one is chosen,
   // because the retiring mark on the <option> is there to warn BEFORE the pick.
   const claudeInfos = useModelInfos(kind, kind === "claude" && !!options?.some(([v]) => !CLAUDE_ALIASES.includes(v)));
@@ -50,9 +53,9 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
     // in options, and for a kind with none (requiresConcreteModel — lcpp) there is nothing to
     // rescue, only a not-yet-resolved selection about to be auto-picked
     // (useAutoConcreteModel) — appending ["", ""] here would flash a blank row in the combo.
-    if (hidden || !model) return options;
+    if (hidden || !model || (filter && !filter(model))) return options;
     return options.some(([v]) => v === model) ? options : [...options, [model, model] as ModelOption];
-  }, [kind, model, options, hidden]);
+  }, [kind, model, options, hidden, filter]);
 
   if (!options) return null;
   if (kind !== "claude") {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 // The module's hook fetches through the API client, which reads the browser's storage on load.
 vi.mock("../../core/api/client.ts", () => ({ api: vi.fn() }));
-const { bedrockConnection, bedrockModelOk, markedProfiles, regionOk, routeSelectionBody } = await import("./bedrockProfiles.ts");
+const { bedrockConnection, bedrockModelOk, markedProfiles, regionOk, routeModelFilter, routeSelectionBody } = await import("./bedrockProfiles.ts");
 
 describe("bedrockProfiles", () => {
   it("keeps only marked, well-formed profiles", () => {
@@ -35,6 +35,17 @@ describe("bedrockProfiles", () => {
     expect(routeSelectionBody("anthropic-api")).toEqual({ route: "anthropic-api" });
     expect(routeSelectionBody("anthropic-api", "")).toEqual({ route: "anthropic-api" });
   });
+
+  it("narrows opencode's models to the chosen route", () => {
+    const ids = ["", "opencode/big-pickle", "amazon-bedrock/anthropic.claude-sonnet-4-6", "amazon-bedrock/"];
+    // bedrock chosen: its models only, and not opencode's default ("").
+    expect(ids.filter(routeModelFilter("opencode", "bedrock")!)).toEqual(["amazon-bedrock/anthropic.claude-sonnet-4-6"]);
+    // not chosen, whatever the reason (none picked, not offered, Managed, loading): never the route's models.
+    expect(ids.filter(routeModelFilter("opencode", "")!)).toEqual(["", "opencode/big-pickle"]);
+    // a kind with no route-only models: no narrowing.
+    expect(routeModelFilter("claude", "bedrock")).toBeUndefined();
+  });
+
   // The same cases as routes.TestParseBedrockModelID / TestParseBedrockAnthropicModelID: the
   // Console and the Agent have to agree, or a launch the dialog allows is refused.
   it("accepts Anthropic Bedrock ids only", () => {

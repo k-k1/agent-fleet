@@ -589,3 +589,10 @@ release.
   publish and forget-hook code stays in place for now (decision 6 and `memory_patch` decide what remains of
   it); the Agent no longer installs the forget hook. The deny-all one-shot (`chatx/chat_denyall.go`) stays on
   the same terms, with no production caller until the decision 6 consolidation needs it.
+
+- **2026-11-08 — decision 5 "Step 1 — report only" built (#3443).** `internal/memorylint` is the pure checks (it
+  imports no AF package, and a test fails if it does); the Agent feeds it bodies, names and a by-ref repository
+  reader pinned to one commit, and the report is `af-memory lint` and Import & export → Memory lint report. The
+  member-edited retired-term list is a file beside the store, outside any memory's history. Proposing retired
+  terms from the repository (a superseded ADR, a removed key) is not built: it is the optional half of decision 5
+  (#3571).

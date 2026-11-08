@@ -22,7 +22,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindRoutes, useKindCatalogVersion } from "../../agents/kindCatalog.ts";
-import { bedrockConnection, bedrockModelOk, regionOk, rememberBedrockModel, rememberedBedrockModel, useModelRouteProfiles } from "./bedrockProfiles.ts";
+import { bedrockConnection, bedrockModelOk, regionOk, rememberBedrockModel, rememberedBedrockModel, routeModelFilter, useModelRouteProfiles } from "./bedrockProfiles.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -380,10 +380,24 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   const modelRouteProfiles = useModelRouteProfiles(declaredRoutes.includes("bedrock"));
   const routeOptions = declaredRoutes.filter((r) => r !== "bedrock" || (modelRouteProfiles?.length ?? 0) > 0);
   const bedrockPick = modelRouteProfiles?.find((p) => p.id === bedrockProfile) ?? modelRouteProfiles?.[0];
-  const onBedrock = route === "bedrock" && routeOptions.includes("bedrock") && !!bedrockPick;
+  // claude on bedrock runs on the one Bedrock id typed beside the region (#3587); a kind with route
+  // models of its own (opencode: amazon-bedrock/…) picks one in the model picker instead.
+  const onBedrock = route === "bedrock" && routeOptions.includes("bedrock") && !!bedrockPick && kind === "claude";
   const bedrockModel = bedrockPick ? (bedrockModels[bedrockPick.id] ?? rememberedBedrockModel(bedrockPick.id)) : "";
   const bedrockModelBad = onBedrock && !bedrockModelOk(bedrockModel.trim());
-  const bedrockBlocked = (onBedrock && !regionOk(bedrockRegion)) || bedrockModelBad;
+  const bedrockBlocked = (route === "bedrock" && routeOptions.includes("bedrock") && !regionOk(bedrockRegion)) || bedrockModelBad;
+  // The models the chosen route can run (opencode on bedrock: its amazon-bedrock models only). A
+  // model the route cannot run is dropped when the route changes, and such a route does not
+  // launch until one of its own is picked: the Agent would refuse the kind's default.
+  const chosenRoute = routeOptions.includes(route) ? route : "";
+  const modelFilter = useMemo(() => routeModelFilter(kind, chosenRoute), [kind, chosenRoute]);
+  const routeModelBlocked = !!modelFilter && !!chosenRoute && !modelFilter(model);
+  useEffect(() => {
+    if (modelFilter && model && !modelFilter(model)) {
+      setModel("");
+      setEffort("");
+    }
+  }, [modelFilter, model]);
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
@@ -633,7 +647,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       effort: hasEffort ? effort : "",
       route: routeOptions.includes(route) ? route : undefined,
       routeConnection:
-        onBedrock && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
+        route === "bedrock" && routeOptions.includes(route) && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
       startMode: hasStartMode ? startMode : "normal",
       skipPermissions: hasPermChoice ? skipPerm : undefined,
       prompt: prompt.trim(),
@@ -671,7 +685,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked;
+  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -740,11 +754,13 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
             <ModelPicker
               kind={kind}
               model={model}
+              filter={modelFilter}
               onChange={(next) => {
                 setModel(next);
                 setEffort("");
               }}
             />
+            {routeModelBlocked && <span className="ui-field-hint">{tr("launch.bedrock_model_needed")}</span>}
           </div>
         )}
 

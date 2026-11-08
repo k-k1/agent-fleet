@@ -89,8 +89,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRefusal(w, &refusal{http.StatusUnauthorized, "route_token_invalid", "a route token is required (Authorization: Bearer)"})
 		return
 	}
-	caller, callerOK := requestPeer(r)
-	c, ref := g.authorize(token, caller, callerOK, false)
+	caller, transport, callerOK := requestPeer(r)
+	c, ref := g.authorize(token, caller, transport, callerOK, false)
 	if ref != nil {
 		log.Printf("route gateway: refused (%s)", ref.code)
 		writeRefusal(w, ref)
@@ -116,7 +116,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ref == errNeedFresh {
 		// The credentials have to be resolved: check the call again against Settings as they are
 		// now, then resolve on that check alone.
-		if c, ref = g.authorize(token, caller, callerOK, true); ref == nil {
+		if c, ref = g.authorize(token, caller, transport, callerOK, true); ref == nil {
 			creds, ref = g.credentials(c, true)
 		}
 	}
