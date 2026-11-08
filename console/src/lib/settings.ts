@@ -100,12 +100,10 @@ export {
   normalizeAssistantOrder,
   normalizeClaudeCustomModels,
   normalizeExternalMemory,
-  normalizeMemoryReview,
   streamReplies,
   type AgentLaunchDefault,
   type AgentLaunchDefaults,
   type ExternalMemoryMode,
-  type MemoryReviewMode,
   type StreamRepliesMode,
   type TtsCharConf,
 } from "./settings/normalize.ts";

@@ -23,7 +23,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -255,30 +254,34 @@ func chatAutoTurnModel() string {
 	return sessionx.VisibleModel(session.KindClaude, strings.TrimSpace(v))
 }
 
-// memoryReviewNeedsMark says whether replacing the prefs `before` with `after` would arm the
-// background memory review: the mode becomes "propose", AF memory is switched on while the mode
-// already is, or automatic review is switched on (memoryReviewAuto). Every way into the enabled
-// state (uiprefs.MemoryReviewEnabled) or into the automatic loop (uiprefs.MemoryReviewAutoEnabled)
-// is one of these. Turning anything off, or any write that leaves it as it was, needs nothing.
-func memoryReviewNeedsMark(before, after map[string]any) bool {
-	mode := func(m map[string]any) string { s, _ := m["memoryReview"].(string); return s }
-	memory := func(m map[string]any) bool { b, _ := m["agentMemory"].(bool); return b }
-	auto := func(m map[string]any) bool { b, _ := m["memoryReviewAuto"].(bool); return b }
-	if auto(after) && !auto(before) {
-		return true
-	}
-	if mode(after) != "propose" {
-		return false
-	}
-	return mode(before) != "propose" || (memory(after) && !memory(before))
-}
-
 // museContributorNeedsMark says whether replacing `before` with `after` switches Muse Code's
 // contributor mode on (museContributorMode, #2535). Only a boolean true is on, the reading
 // uiprefs.MuseContributorMode applies, so a write of any other value cannot slip past as "not on".
 func museContributorNeedsMark(before, after map[string]any) bool {
 	on := func(m map[string]any) bool { b, _ := m["museContributorMode"].(bool); return b }
 	return on(after) && !on(before)
+}
+
+// retiredPrefKeys are ui-prefs keys of removed features.
+var retiredPrefKeys = []string{"memoryReview", "memoryReviewAuto"}
+
+// dropRetiredPrefs returns body without the retired keys; body itself when it holds none.
+func dropRetiredPrefs(body []byte, obj map[string]any) []byte {
+	found := false
+	for _, k := range retiredPrefKeys {
+		if _, ok := obj[k]; ok {
+			delete(obj, k)
+			found = true
+		}
+	}
+	if !found {
+		return body
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
@@ -301,18 +304,20 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_json", "body must be a JSON object")
 		return
 	}
-	// Turning the memory review on sends other sessions' conversations to a model provider, so it
-	// is the member's decision and not a session's: AGENT_TOKEN, which every session's shell
-	// holds, can call this route, so a write that would switch the review on needs the Control
-	// Plane's mark (ADR 0113), which the CP puts on every relayed prefs write. Muse Code's
-	// contributor mode is the same decision about the member's own conversations: on, the vendor
-	// may use them to improve its product.
+	// Muse Code's contributor mode is a decision about the member's own conversations (on, the
+	// vendor may use them to improve its product), so it is the member's and not a session's:
+	// AGENT_TOKEN, which every session's shell holds, can call this route, so a write that would
+	// switch it on needs the Control Plane's mark (ADR 0113), which the CP puts on every relayed
+	// prefs write.
 	// The mark guards this route, not ui-prefs.json: a session that can write the file can set
 	// the same switches without it (07-security §7.5.1, Limits).
 	prev := uiprefs.Read()
-	if (memoryReviewNeedsMark(prev, obj) || museContributorNeedsMark(prev, obj)) && !memberorigin.RequireBody(w, r, body) {
+	if museContributorNeedsMark(prev, obj) && !memberorigin.RequireBody(w, r, body) {
 		return
 	}
+	// The retired memory review keys (ADR 0130 decision 2) are dropped on save, whatever sent
+	// them: nothing reads them any more, and a stale Console would otherwise keep writing them.
+	body = dropRetiredPrefs(body, obj)
 	if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
@@ -335,10 +340,7 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	fleetSpawnBefore := uiprefs.FleetSpawn()
 	sessionSearchBefore := uiprefs.SessionSearch()
 	agentMemoryBefore := uiprefs.AgentMemory()
-	memoryReviewAutoBefore := uiprefs.MemoryReviewAutoEnabled()
-	// Serialized with the review's claim and dispatch, so that once an "off" is written no further
-	// window is claimed and no call is started (ADR 0117 note, #2358).
-	if err := memreview.WithSwitchWrite(func() error { return uiprefs.WriteAtomic(body) }); err != nil {
+	if err := uiprefs.WriteAtomic(body); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
@@ -362,11 +364,6 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	}
 	// The memory guidance block follows the same switch (ADR 0108 decision 5): written while it
 	// is on, removed when it goes off. Sessions already running have read their instructions.
-	// Turning automatic review on starts looking at once instead of at the next wake-up. Turning the
-	// review on alone arms nothing in the loop; it is the separate switch that does.
-	if !memoryReviewAutoBefore && uiprefs.MemoryReviewAutoEnabled() && memreview.DefaultLoop != nil {
-		memreview.DefaultLoop.Wake()
-	}
 	if uiprefs.AgentMemory() != agentMemoryBefore {
 		reconcileAgentInstructions()
 		// The import (on) or write-back (off) of claude's native memory follows the switch

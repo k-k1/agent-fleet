@@ -9,7 +9,6 @@ package main
 var mutatingRelayAuditExempt = routeReasons(
 	routeGroup{"a read, a preview or an LLM suggestion sent as POST: nothing is changed", []string{
 		"POST /api/cleanup/home/measure",
-		"POST /api/agents/memory-review/proposals/list",
 		"POST /api/branch-rules/preview",
 		"POST /api/fs/imagesize",
 		"POST /api/fs/resolve",

@@ -227,7 +227,7 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     useSettingsUI.getState().openTenantSettings("members", { slug: n.payload.tenantSlug, userKey: n.target.id });
     return { opened: true };
   }
-  // The background memory review's proposals are decided in one place (ADR 0117 decision 6).
+  // A notification of the retired memory review (ADR 0130 decision 2) leads to the change list.
   if (n.kind === "memory-review") {
     useSettingsUI.getState().openSettings("memory:changes");
     return { opened: true };
