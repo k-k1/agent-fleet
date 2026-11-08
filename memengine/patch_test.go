@@ -2,6 +2,7 @@ package memengine
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +90,16 @@ func TestParsePatch(t *testing.T) {
 		if _, err := ParsePatch(in, req); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: want ErrInvalid, got %v", name, err)
 		}
+	}
+}
+
+func TestApplyEditsRejectsHugeTexts(t *testing.T) {
+	big := strings.Repeat("x", MaxEditBytes+1)
+	body := "head\n" + big
+	if _, _, err := ApplyEdits(body, "d", []Edit{{Old: s("head"), New: s(big)}}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("huge new: %v", err)
+	}
+	if _, _, err := ApplyEdits(body, "d", []Edit{{Old: s(big), New: s("y")}}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("huge old: %v", err)
 	}
 }

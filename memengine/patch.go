@@ -23,6 +23,10 @@ const PatchSchema = `{
   ]
 }`
 
+// MaxEditBytes bounds one old or new text. A patch is a small fix; the largest
+// reference edit in the gold set is under 1 KB.
+const MaxEditBytes = 8 << 10
+
 // MaxEdits bounds one answer. A patch call fixes one place or a handful.
 const MaxEdits = 12
 
@@ -40,7 +44,10 @@ type PatchAnswer struct {
 	Edits []Edit `json:"edits"`
 }
 
-// Prompt renders the request.
+// Prompt renders the request. The whole body is sent: an edit must be copied
+// exactly from the note, so a truncated body would make correct edits invalid.
+// A very large note therefore costs a large call; lint already flags bodies
+// over 4,096 bytes.
 func (r PatchRequest) Prompt() string {
 	var b strings.Builder
 	b.WriteString("You maintain a project's long-lived memory notes. Fold one observation into one existing note as the smallest set of exact text edits.\n\n")
@@ -107,6 +114,9 @@ func ApplyEdits(body, description string, edits []Edit) (string, string, error) 
 		}
 		if e.Old == nil || e.New == nil {
 			return "", "", invalid("edit %d: old and new are both required", i)
+		}
+		if len(*e.Old) > MaxEditBytes || len(*e.New) > MaxEditBytes {
+			return "", "", invalid("edit %d: old or new is over %d bytes", i, MaxEditBytes)
 		}
 		if *e.Old == "" {
 			return "", "", invalid("edit %d: old is empty", i)

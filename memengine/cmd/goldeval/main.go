@@ -49,11 +49,12 @@ func runLive() {
 	var tiers tierFlags
 	cases := flag.String("cases", "cases.jsonl", "gold set (JSONL)")
 	inputs := flag.String("inputs", "inputs.jsonl", "memories the cases cite (JSONL)")
-	out := flag.String("out", "run", "directory for outputs and the report")
+	out := flag.String("out", "run", "directory for outputs and the report; keep it outside the repository (it holds memory text)")
 	workers := flag.Int("workers", 3, "model calls in flight per tier")
 	limit := flag.Int("limit", 0, "run only the first N cases (a pilot); 0 means all")
 	timeout := flag.Duration("timeout", 3*time.Minute, "per-call timeout")
 	resume := flag.Bool("resume", true, "reuse answers already in -out instead of calling again")
+	conditioned := flag.Bool("gold-conditioned", false, "also make a patch call for every case labelled supersede or merge (as replay does), scored on validity and kept facts only")
 	cfgPath := flag.String("config", "", "model config (roles, runners, candidates); built-in runners without it")
 	barPath := flag.String("bar", "", "thresholds file; adds pass/fail per candidate and a suggested role mapping")
 	flag.Var(&tiers, "tier", "<runner>:<model id> (e.g. claude:<id>), or name=command; repeatable. Default: the config's candidates")
@@ -64,7 +65,13 @@ func runLive() {
 	}
 	if len(tiers) == 0 {
 		for _, c := range cfg.Candidates {
-			if r, _, ok := memengine.SplitTier(c.Tier); ok && !cfg.Runners[r].Session {
+			r, _, ok := memengine.SplitTier(c.Tier)
+			switch {
+			case !ok:
+				fmt.Fprintf(os.Stderr, "goldeval: skipping candidate %q: not <runner>:<model id>\n", c.Tier)
+			case cfg.Runners[r].Session:
+				fmt.Fprintf(os.Stderr, "goldeval: candidate %q is session-only; score it with `goldeval score`\n", c.Tier)
+			default:
 				tiers = append(tiers, c.Tier)
 			}
 		}
@@ -94,7 +101,7 @@ func runLive() {
 		if *resume {
 			prev = loadRun(path)
 		}
-		if prev == nil || prev.Baseline.TotalInput() == 0 {
+		if prev == nil || (prev.Baseline.TotalInput() == 0 && len(prev.Classify) == 0 && len(prev.Patch) == 0) {
 			// The fixed overhead of the command, from a prompt with no content. A
 			// retired model fails here, before anything is scored: there is no
 			// fallback to another model.
@@ -107,7 +114,7 @@ func runLive() {
 			}
 			prev.Baseline = rep.Usage
 		}
-		run := goldset.Run(ctx, name, cmd, set, *workers, prev, func(s string) { fmt.Fprintln(os.Stderr, s) })
+		run := goldset.RunWith(ctx, name, cmd, set, *workers, prev, *conditioned, func(s string) { fmt.Fprintln(os.Stderr, s) })
 		run.Model, run.Runner, run.Date, run.GoldHash = model, runner, time.Now().UTC().Format("2006-01-02"), set.GoldHash
 		saveRun(path, run)
 	}

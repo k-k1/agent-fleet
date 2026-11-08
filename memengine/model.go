@@ -11,6 +11,32 @@ import (
 	"time"
 )
 
+// MaxOutputBytes caps what one call may write to stdout. A runaway model is a
+// failed call (not an invalid output) and the process is killed, so it cannot
+// exhaust the memory of a shared host.
+const MaxOutputBytes = 1 << 20
+
+// limitWriter keeps at most left bytes and, past the limit, cancels the call.
+type limitWriter struct {
+	w      *bytes.Buffer
+	left   int
+	over   bool
+	cancel context.CancelFunc
+}
+
+func (l *limitWriter) Write(p []byte) (int, error) {
+	if len(p) > l.left {
+		l.over = true
+		if l.cancel != nil {
+			l.cancel()
+		}
+		p = p[:l.left]
+	}
+	l.left -= len(p)
+	l.w.Write(p)
+	return len(p), nil
+}
+
 // Reply is what one model call returned.
 type Reply struct {
 	// Text is the model's answer, with any command envelope and code fence
@@ -32,7 +58,8 @@ type Model interface {
 // Command is a Model backed by a one-shot command: the prompt goes to stdin,
 // the answer comes from stdout, and argv is the whole configuration. Nothing
 // else (no environment, no key) is injected, so a model is swapped by
-// changing argv.
+// changing argv. The command inherits the parent's environment unchanged (a
+// CLI needs its own login to run); the engine adds nothing to it.
 //
 // Stdout is either the answer JSON itself, or an envelope object with a string
 // "result" and an optional "usage" object, which is the shape of
@@ -59,8 +86,11 @@ func (c Command) Call(ctx context.Context, prompt string) (Reply, error) {
 	// A killed command can leave a grandchild holding the pipes open; do not wait for it.
 	cmd.WaitDelay = time.Second
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
+	lim := &limitWriter{w: &out, left: MaxOutputBytes, cancel: cancel}
+	cmd.Stdout, cmd.Stderr = lim, &limitWriter{w: &errb, left: 64 << 10}
+	if err := cmd.Run(); lim.over {
+		return Reply{}, fmt.Errorf("memengine: model command wrote more than %d bytes: killed", MaxOutputBytes)
+	} else if err != nil {
 		return Reply{Raw: out.Bytes()}, fmt.Errorf("memengine: model command failed: %w: %s", err, firstLine(errb.String()))
 	}
 	return ParseReply(out.Bytes())
@@ -162,17 +192,54 @@ func codexJSONL(text string) (string, Usage, bool, bool, error) {
 	return answer, u, known, true, nil
 }
 
-// ExtractJSON returns the outermost JSON object in s, tolerating a code fence
-// or a sentence around it. When there is none it returns s trimmed, and the
-// schema check rejects it.
+// ExtractJSON returns the first balanced JSON object in s that parses,
+// tolerating a code fence or prose around it (braces inside strings are
+// skipped, and a brace group that is not JSON, such as `{x}` in a sentence,
+// is passed over). When there is none it returns s trimmed, and the schema
+// check rejects it.
 func ExtractJSON(s string) string {
 	s = strings.TrimSpace(s)
-	i := strings.IndexByte(s, '{')
-	j := strings.LastIndexByte(s, '}')
-	if i < 0 || j < i {
-		return s
+	for from := 0; ; {
+		i := strings.IndexByte(s[from:], '{')
+		if i < 0 {
+			return s
+		}
+		i += from
+		if j := balancedEnd(s, i); j > 0 && json.Valid([]byte(s[i:j])) {
+			return s[i:j]
+		}
+		from = i + 1
 	}
-	return s[i : j+1]
+}
+
+// balancedEnd returns the index just past the object that starts at s[i], or
+// -1 when it never closes.
+func balancedEnd(s string, i int) int {
+	depth, inStr, esc := 0, false, false
+	for k := i; k < len(s); k++ {
+		c := s[k]
+		switch {
+		case inStr:
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+		case c == '"':
+			inStr = true
+		case c == '{':
+			depth++
+		case c == '}':
+			depth--
+			if depth == 0 {
+				return k + 1
+			}
+		}
+	}
+	return -1
 }
 
 func firstLine(s string) string {

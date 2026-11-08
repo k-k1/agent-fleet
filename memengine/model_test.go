@@ -66,10 +66,14 @@ func TestCommandFailureAndTimeout(t *testing.T) {
 
 func TestExtractJSON(t *testing.T) {
 	for in, want := range map[string]string{
-		`{"a":1}`:                   `{"a":1}`,
-		"```json\n{\"a\":1}\n```":   `{"a":1}`,
-		`Here: {"a":{"b":2}} done.`: `{"a":{"b":2}}`,
-		`no object`:                 `no object`,
+		`{"a":1}`:                    `{"a":1}`,
+		"```json\n{\"a\":1}\n```":    `{"a":1}`,
+		`Here: {"a":{"b":2}} done.`:  `{"a":{"b":2}}`,
+		`no object`:                  `no object`,
+		`Schema {"a": ...}: {"a":1}`: `{"a":1}`,
+		`{"a":1} then use {x} here`:  `{"a":1}`,
+		`{"s":"a } b { c"} tail }`:   `{"s":"a } b { c"}`,
+		`{"a":1} {"b":2}`:            `{"a":1}`,
 	} {
 		if got := ExtractJSON(in); got != want {
 			t.Errorf("ExtractJSON(%q) = %q, want %q", in, got, want)
@@ -123,5 +127,20 @@ func TestUsageUnknownIsValid(t *testing.T) {
 	env, _ := ParseReply([]byte(`{"result":"{\"edits\":[]}"}`))
 	if env.UsageKnown || env.Text != `{"edits":[]}` {
 		t.Errorf("envelope without usage: %+v", env)
+	}
+}
+
+// A runaway model must not be able to fill the host's memory: past the cap the
+// call fails (an error, not an invalid output) and the process is killed.
+func TestRunawayOutputIsCappedAndKilled(t *testing.T) {
+	c := sh(`cat >/dev/null; yes '{"x":1}'`)
+	c.Timeout = 30 * time.Second
+	start := time.Now()
+	_, err := c.Call(context.Background(), "p")
+	if err == nil || errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "more than") {
+		t.Fatalf("want a capped-output error, got %v", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Errorf("took %v: the process was not killed at the cap", time.Since(start))
 	}
 }

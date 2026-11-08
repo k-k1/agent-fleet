@@ -100,6 +100,9 @@ func excerpt(s string, n int) string {
 	return strings.TrimSpace(string(r[:n])) + " …"
 }
 
+// ParseClassify validates (Reason is advisory and unused by the engine, so an
+// absent one is accepted; it is there to make the model commit to an answer).
+//
 // ParseClassify validates a model's text against the schema and the request:
 // a known operation, targets that name memories the call was shown, and a
 // target count that fits the operation.

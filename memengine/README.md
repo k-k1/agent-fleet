@@ -65,6 +65,10 @@ by adding a `-tier`. Token usage is parsed per CLI by a small adapter (`memengin
 envelope, codex `--json` events); a CLI that reports none is valid and shows `n/a`. The codex adapter is
 covered by a fixture only, not yet run against the CLI.
 
+Keep `-out` outside the repository: the run files hold the models' raw answers, which quote memory text
+(`memengine/run/` is git-ignored as a backstop). `-gold-conditioned` makes the live run also make the patch
+call for supersede/merge cases, as replay does (validity and kept facts only).
+
 `cases.jsonl` is the member-labelled gold set. `inputs.jsonl` holds, per case id, the memories it cites
 (`name`, `scope`, `revision`, `cited_revision`, `revision_mismatch`, `description`, `body`). Both are
 private and stay out of the repository. Answers and usage go to `-out/<tier>.run.json`, the scores to
