@@ -328,13 +328,16 @@
   color: var(--muted);
   font-size: 12px;
 }
+/* Repo commit-identity line under the commit box (ChangesView). */
 .repo-identity {
-  margin-top: 2px;
+  margin-top: 6px;
+  font-size: 11px;
 }
 .ri-line {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  width: 100%;
   background: none;
   border: none;
   color: var(--muted);
@@ -343,25 +346,29 @@
   cursor: pointer;
   padding: 2px 0;
   min-width: 0;
+  text-align: left;
 }
 .ri-line:hover {
   color: var(--fg);
 }
 .ri-who {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ri-src {
   flex: none;
-  border: 1px solid var(--border2);
-  border-radius: 999px;
-  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
   font-size: 10px;
+  color: var(--muted2);
 }
 .ri-edit {
   display: flex;
-  gap: 4px;
+  gap: 5px;
   align-items: center;
   flex-wrap: wrap;
 }

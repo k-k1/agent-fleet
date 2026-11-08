@@ -16,6 +16,12 @@ chip row, ending with the + attach button
   border-top: 1px solid var(--border);
   background: var(--bar);
 }
+/* Width is scarce on a phone: tighten the row gaps to give the space back to the textarea. */
+@media (max-width: 760px) {
+  .mirror-compose {
+    gap: 5px;
+  }
+}
 /* Pasted-image attachment strip above the composer input. */
 .mirror-attach {
   flex: 0 0 100%;
@@ -193,6 +199,11 @@ chip row, ending with the + attach button
   justify-content: center;
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+@media (max-width: 760px) {
+  .mirror-attach-btn {
+    width: 24px;
+  }
 }
 .mirror-attach-btn:disabled {
   opacity: 0.4;

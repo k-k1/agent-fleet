@@ -64,6 +64,11 @@ history button
   gap: 2px;
   flex: none;
 }
+@media (max-width: 760px) {
+  .mirror-hist {
+    display: flex;
+  }
+}
 .mirror-hist-btn {
   width: 34px;
   flex: 1;
@@ -130,8 +135,15 @@ history button
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* With no Ctrl key the key hint is noise, and the width is worth more to the query field: the
+   search is left by tapping away or by ✕. */
+@media (max-width: 760px) {
+  .mirror-histsearch-hint {
+    display: none;
+  }
+}
 /* Tap entry point for the search, shown only where there is no Ctrl key (phone width, see
-   responsive.css). Same metrics as the + and / buttons it sits with. */
+   the media rule below). Same metrics as the + and / buttons it sits with. */
 .mirror-hsearch-btn {
   display: none;
   flex: none;
@@ -141,6 +153,12 @@ history button
   justify-content: center;
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+@media (max-width: 760px) {
+  .mirror-hsearch-btn {
+    width: 24px;
+    display: inline-flex;
+  }
 }
 .mirror-hsearch-btn.on {
   border-color: var(--accent);

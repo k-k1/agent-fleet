@@ -179,6 +179,15 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* Options wrap to a single column on a phone, so truncation buys little: drop the two-line
+   clamp so the whole text is readable before tapping. */
+@media (max-width: 760px) {
+  .mq-opt-desc {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
+}
 /* The option's preview (an ASCII mockup, a code snippet). Whitespace is the content, so
    it is NEVER re-flowed — long lines scroll sideways and a tall mockup scrolls inside its
    own box rather than pushing the other option off the screen. Unlike the description it
