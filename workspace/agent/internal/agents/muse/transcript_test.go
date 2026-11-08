@@ -854,3 +854,163 @@ func TestEarlierHistorySummaryCountsTheKeptMessages(t *testing.T) {
 		t.Errorf("earlierHistory = %+v", p)
 	}
 }
+
+// The store holds an agentMessage from its `started` revision (empty text, inProgress), so its
+// in-flight fragments must still render, in place, until the item completes.
+func TestStartedItemStreamsItsFragmentsInPlace(t *testing.T) {
+	user := item(msp.ItemKindUserMessage, "u-1", 1)
+	user.Text = sp("hi")
+	started := item(msp.ItemKindAgentMessage, "a-1", 1)
+	started.Status = msp.ItemStatusInProgress
+	started.Text = sp("")
+	items := []msp.Item{user, started}
+	frags := map[string]string{"a-1": "par" + "tial"}
+
+	turns := turnsFromItems(withStreamingText(items, frags))
+	turns = appendStreaming(turns, items, frags)
+	if len(turns) != 2 || turns[1].Text != "partial" || len(turns[1].Parts) != 1 {
+		t.Fatalf("started item's fragments not rendered in place: %+v", turns)
+	}
+
+	// Once completed the stored text wins and a late fragment is not added again.
+	done := item(msp.ItemKindAgentMessage, "a-1", 2)
+	done.Text = sp("partial answer")
+	items = []msp.Item{user, done}
+	turns = turnsFromItems(withStreamingText(items, frags))
+	turns = appendStreaming(turns, items, frags)
+	if len(turns) != 2 || turns[1].Text != "partial answer" || len(turns[1].Parts) != 1 {
+		t.Errorf("completed text duplicated or lost: %+v", turns)
+	}
+}
+
+// An update revision of an in-progress item must not end its stream.
+func TestUpdatedInProgressItemKeepsFragments(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	storesMu.Lock()
+	stores = map[string]*store{}
+	storesMu.Unlock()
+	h := &threadHandle{slotSid: "sid-upd"}
+	host := newTestHandle(t, h)
+	h.onDelta(msp.ItemDeltaParams{ItemID: "a-1", Delta: "x", SessionID: h.sid})
+	started := item(msp.ItemKindAgentMessage, "a-1", 1)
+	started.Status = msp.ItemStatusInProgress
+	host.Notify(msp.NotificationItemStarted, msp.ItemStartedParams{Item: started, SessionID: h.sid})
+	deadline := time.After(5 * time.Second)
+	for {
+		if items, _ := openStore("sid-upd").Items(); len(items) == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("started item never reached the store")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if h.streamingText()["a-1"] != "x" {
+		t.Errorf("fragments dropped by a non-terminal revision: %v", h.streamingText())
+	}
+}
+
+// A failed agentMessage is a discarded draft: only the completed message is the answer.
+func TestFailedAgentMessageIsNotAnswerText(t *testing.T) {
+	user := item(msp.ItemKindUserMessage, "u-1", 1)
+	user.Text = sp("hi")
+	draft := item(msp.ItemKindAgentMessage, "a-1", 2)
+	draft.Status = msp.ItemStatusFailed
+	draft.Text = sp("discarded draft")
+	final := item(msp.ItemKindAgentMessage, "a-2", 1)
+	final.Text = sp("real answer")
+
+	turns := turnsFromItems([]msp.Item{user, draft, final})
+	if len(turns) != 2 || turns[1].Text != "real answer" || len(turns[1].Parts) != 1 {
+		t.Errorf("failed draft leaked into the answer: %+v", turns)
+	}
+}
+
+// The whole path: a delta, item/started, the store's fold and Transcript's overlay; then the
+// completed item, which must show once; then a turn end, which must empty the buffer.
+func TestTranscriptStreamsThroughStartedItemEndToEnd(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	storesMu.Lock()
+	stores = map[string]*store{}
+	storesMu.Unlock()
+	m := metaFor(t, "muse-stream-e2e")
+	h := &threadHandle{name: m.Name, slotSid: slotSid(m)}
+	host := newTestHandle(t, h)
+	registerHandle(t, m.Name, h)
+
+	user := item(msp.ItemKindUserMessage, "u-1", 1)
+	user.Text = sp("hi")
+	host.Notify(msp.NotificationItemStarted, msp.ItemStartedParams{Item: user, SessionID: h.sid})
+	started := item(msp.ItemKindAgentMessage, "a-1", 1)
+	started.Status = msp.ItemStatusInProgress
+	started.Text = sp("")
+	host.Notify(msp.NotificationItemStarted, msp.ItemStartedParams{Item: started, SessionID: h.sid})
+	host.Notify(msp.NotificationItemDelta, msp.ItemDeltaParams{ItemID: "a-1", Delta: "par", SessionID: h.sid})
+	host.Notify(msp.NotificationItemDelta, msp.ItemDeltaParams{ItemID: "a-1", Delta: "tial", SessionID: h.sid})
+
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for !ok() {
+			select {
+			case <-deadline:
+				t.Fatalf("timed out: %s", what)
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+	waitFor("started item and deltas", func() bool {
+		items, _ := openStore(slotSid(m)).Items()
+		return len(items) == 2 && h.streamingText()["a-1"] == "partial"
+	})
+	td, _ := New().Transcript(m)
+	if len(td.Turns) != 2 || td.Turns[1].Text != "partial" || len(td.Turns[1].Parts) != 1 {
+		t.Fatalf("in-flight text not rendered: %+v", td.Turns)
+	}
+
+	done := item(msp.ItemKindAgentMessage, "a-1", 2)
+	done.Text = sp("partial answer")
+	host.Notify(msp.NotificationItemCompleted, msp.ItemCompletedParams{Item: done, SessionID: h.sid})
+	waitFor("completed revision", func() bool {
+		items, _ := openStore(slotSid(m)).Items()
+		return len(items) == 2 && str(items[1].Text) == "partial answer"
+	})
+	td, _ = New().Transcript(m)
+	if len(td.Turns) != 2 || td.Turns[1].Text != "partial answer" || len(td.Turns[1].Parts) != 1 {
+		t.Errorf("completed text duplicated or lost: %+v", td.Turns)
+	}
+}
+
+// A turn that ends with an item still in flight must not keep its fragments forever.
+func TestTurnEndDropsFragmentsOfUnfinishedItems(t *testing.T) {
+	h := &threadHandle{slotSid: "sid-end", running: true, runGen: 1}
+	h.onDelta(msp.ItemDeltaParams{ItemID: "a-1", Delta: "x"})
+	h.settleIdle(1)
+	if f := h.streamingText(); len(f) != 0 {
+		t.Errorf("fragments survived the end of the turn: %v", f)
+	}
+}
+
+// Every terminal status other than completed and cancelled is a discarded draft, and a draft
+// that is the only agentMessage must not leave an empty assistant turn behind.
+func TestDiscardedDraftsAreHiddenAndOpenNoTurn(t *testing.T) {
+	user := item(msp.ItemKindUserMessage, "u-1", 1)
+	user.Text = sp("hi")
+	for _, st := range []msp.ItemStatus{msp.ItemStatusFailed, msp.ItemStatusTimedOut, msp.ItemStatusRejected, "somethingNew"} {
+		draft := item(msp.ItemKindAgentMessage, "a-1", 2)
+		draft.Status = st
+		draft.Text = sp("discarded draft")
+		turns := turnsFromItems([]msp.Item{user, draft})
+		if len(turns) != 1 || turns[0].Role != "user" {
+			t.Errorf("%s: want only the user turn, got %+v", st, turns)
+		}
+	}
+	cancelled := item(msp.ItemKindAgentMessage, "a-1", 2)
+	cancelled.Status = msp.ItemStatusCancelled
+	cancelled.Text = sp("said before the interrupt")
+	turns := turnsFromItems([]msp.Item{user, cancelled})
+	if len(turns) != 2 || turns[1].Text != "said before the interrupt" {
+		t.Errorf("cancelled text lost: %+v", turns)
+	}
+}
