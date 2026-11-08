@@ -142,6 +142,14 @@ Check the network block from a workspace shell: `curl -s -o /dev/null -m 3 -w '%
 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token` must not
 print `200`.
 
+## Provided model routes
+
+This template does not offer provided routes (ADR 0129: Bedrock the deployment pays for). The
+Control Plane would need an AWS identity of its own to assume the route role, and the template
+attaches no instance profile and creates no route role. A stored access key is not an option:
+ADR 0129 rules it out. The ECS stack's `ProvidedRoutes=on` is the supported way
+(`deploy/aws/ecs/cfn/PARAMETERS.md`, "Provided routes").
+
 ## Notes
 
 - `LatestUbuntuAmi` resolves via a Canonical-published SSM public parameter, so

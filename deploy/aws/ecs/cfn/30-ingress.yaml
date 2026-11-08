@@ -307,6 +307,11 @@ Parameters:
     Type: String
     Default: ""
     Description: AF_MCP_OAUTH_TRUSTED_HOSTS (comma list). Empty = the CP default. PARAMETERS.md.
+  ProvidedRoutes:
+    Type: String
+    Default: "off"
+    AllowedValues: ["off", "on"]
+    Description: on = AF_PROVIDED_ROUTES=1 (ADR 0129), the route role and the internal CP path. PARAMETERS.md.
   SessionTtl:
     Type: String
     Default: ""
@@ -452,6 +457,7 @@ Conditions:
   McpOn: !Equals [!Ref McpEnabled, "on"]
   McpOAuthOn: !Equals [!Ref McpOAuth, "on"]
   HasMcpTrustedHosts: !Not [!Equals [!Ref McpOAuthTrustedHosts, ""]]
+  ProvidedRoutesOn: !Equals [!Ref ProvidedRoutes, "on"]
   HasSessionIdleTimeout: !Not [!Equals [!Ref SessionIdleTimeout, ""]]
   HasInteractionIdleTimeout: !Not [!Equals [!Ref InteractionIdleTimeout, ""]]
   HasWsIdleTimeout: !Not [!Equals [!Ref WsIdleTimeout, ""]]
@@ -825,6 +831,7 @@ Resources:
               Tag: !Ref ImageTag
           PortMappings:
             - ContainerPort: !Ref CpPort
+            - !If [ProvidedRoutesOn, {Name: cp-internal, ContainerPort: 8098, AppProtocol: http}, !Ref "AWS::NoValue"]
           Environment:
             # ECS/awsvpc: bind non-loopback; CpSg limits 8099 to the ALB SG.
             - {Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}"}
@@ -876,6 +883,11 @@ Resources:
             - !If [McpOn, {Name: AF_MCP_ENABLED, Value: "true"}, !Ref "AWS::NoValue"]
             - !If [McpOAuthOn, {Name: AF_MCP_OAUTH, Value: "1"}, !Ref "AWS::NoValue"]
             - !If [HasMcpTrustedHosts, {Name: AF_MCP_OAUTH_TRUSTED_HOSTS, Value: !Ref McpOAuthTrustedHosts}, !Ref "AWS::NoValue"]
+            # ADR 0129 D2: Workspaces reach the CP over Service Connect, never the 60 s ALB; PARAMETERS.md.
+            - !If [ProvidedRoutesOn, {Name: AF_PROVIDED_ROUTES, Value: "1"}, !Ref "AWS::NoValue"]
+            - !If [ProvidedRoutesOn, {Name: AF_PROVIDED_ROUTE_DEADLINE, Value: 15m}, !Ref "AWS::NoValue"]
+            - !If [ProvidedRoutesOn, {Name: AF_CP_INTERNAL_LISTEN, Value: "0.0.0.0:8098"}, !Ref "AWS::NoValue"]
+            - !If [ProvidedRoutesOn, {Name: AF_CP_INTERNAL_URL, Value: "http://af-cp-internal:8098"}, !Ref "AWS::NoValue"]
             - !If [HasSessionIdleTimeout, {Name: AF_SESSION_IDLE_TIMEOUT, Value: !Ref SessionIdleTimeout}, !Ref "AWS::NoValue"]
             - !If [HasInteractionIdleTimeout, {Name: AF_INTERACTION_IDLE_TIMEOUT, Value: !Ref InteractionIdleTimeout}, !Ref "AWS::NoValue"]
             - !If [HasWsIdleTimeout, {Name: AF_WS_IDLE_TIMEOUT, Value: !Ref WsIdleTimeout}, !Ref "AWS::NoValue"]
@@ -1015,6 +1027,13 @@ Resources:
       ServiceConnectConfiguration:
         Enabled: true
         Namespace: !ImportValue {"Fn::Sub": "${PlatformStackName}-NamespaceArn"}
+        Services: !If
+          - ProvidedRoutesOn
+          - - PortName: cp-internal
+              DiscoveryName: af-cp-internal
+              ClientAliases: [{Port: 8098, DnsName: af-cp-internal}]
+              Timeout: {IdleTimeoutSeconds: 960, PerRequestTimeoutSeconds: 0}
+          - !Ref "AWS::NoValue"
 
   DnsRecord:
     Type: AWS::Route53::RecordSet
@@ -1026,7 +1045,64 @@ Resources:
         DNSName: !GetAtt Alb.DNSName
         HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
 
+  # ADR 0129 (D1b, D2, D5): PARAMETERS.md, "Provided routes".
+  CpInternalFromWs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: ProvidedRoutesOn
+    Properties:
+      GroupId: !ImportValue {"Fn::Sub": "${NetworkStackName}-CpSgId"}
+      SourceSecurityGroupId: !ImportValue {"Fn::Sub": "${NetworkStackName}-WsSgId"}
+      IpProtocol: tcp
+      FromPort: 8098
+      ToPort: 8098
+      Description: Workspace listener from workspaces
+  DeploymentRouteRole:
+    Type: AWS::IAM::Role
+    Condition: ProvidedRoutesOn
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-route-${AWS::Region}"
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {AWS: !ImportValue {"Fn::Sub": "${PlatformStackName}-CpTaskRoleArn"}}
+            Action: [sts:AssumeRole, sts:TagSession]
+            Condition:
+              "Null": {aws:RequestTag/af-membership: "false"}
+              ForAllValues:StringEquals: {aws:TagKeys: [af-membership, af-tenant]}
+      Policies:
+        - PolicyName: invoke
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - "arn:aws:bedrock:*::foundation-model/*"
+                  - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+              - Effect: Allow
+                Action: bedrock:GetInferenceProfile
+                Resource: !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+  CpAssumeRoutePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: ProvidedRoutesOn
+    Properties:
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-route-${AWS::Region}"
+      Roles:
+        - !Select [1, !Split ["/", !ImportValue {"Fn::Sub": "${PlatformStackName}-CpTaskRoleArn"}]]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [sts:AssumeRole, sts:TagSession]
+            Resource: !GetAtt DeploymentRouteRole.Arn
+
 Outputs:
+  DeploymentRouteRoleArn:
+    Condition: ProvidedRoutesOn
+    Description: role_arn for PUT /api/admin/provided-routes/deployment
+    Value: !GetAtt DeploymentRouteRole.Arn
   Url:
     Value: !Sub "https://${Fqdn}"
   AlbDnsName:

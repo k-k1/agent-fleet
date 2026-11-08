@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -281,5 +282,46 @@ func TestProvidedRouteCreateRefusal(t *testing.T) {
 	// MCP create_session and a schedule's fire reach the same refusal.
 	if err := (cpDeps{}).ProvidedRouteErr(ctx, "no-such-membership", "bedrock-deployment"); err == nil {
 		t.Fatal("MCP: an unknown membership passed")
+	}
+}
+
+// The switch is confirmed in the log: one line when it takes effect, one when it is set but the
+// CP has nothing to serve it from, none when it is off.
+func TestProvidedRoutesLogTheSwitch(t *testing.T) {
+	var buf strings.Builder
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+	t.Setenv(routegateway.EnvSwitch, "1")
+	registerProvidedRouteRoutes(http.NewServeMux(), config{mgr: &manager{}})
+	if !strings.Contains(buf.String(), "AF_PROVIDED_ROUTES=1 is set but this Control Plane has no store") {
+		t.Fatalf("skipped: log = %q", buf.String())
+	}
+	buf.Reset()
+	prev, prevGW := activeProvidedRoutes.Load(), activeProvidedRouteGateway.Load()
+	activeProvidedRoutes.Store(nil)
+	t.Cleanup(func() { activeProvidedRoutes.Store(prev); activeProvidedRouteGateway.Store(prevGW) })
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restoreAuthExemptions(t)
+	mgr := p3Manager(t, st)
+	mgr.master32 = []byte(strings.Repeat("r", 32))
+	registerProvidedRouteRoutes(http.NewServeMux(), config{mgr: mgr})
+	if activeProvidedRoutes.Load() == nil || !strings.Contains(buf.String(), "provided routes: on (AF_PROVIDED_ROUTES=1)") ||
+		!strings.Contains(buf.String(), "upstream deadline 15m0s") {
+		t.Fatalf("on: log = %q", buf.String())
+	}
+	t.Setenv(routegateway.EnvSwitch, "")
+	buf.Reset()
+	registerProvidedRouteRoutes(http.NewServeMux(), config{mgr: mgr})
+	if buf.Len() != 0 {
+		t.Fatalf("off logged %q", buf.String())
 	}
 }

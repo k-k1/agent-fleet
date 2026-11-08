@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,12 +48,21 @@ func providedRouteDeps(mgr *manager, assumer routegateway.Assumer, cfg routegate
 // admin routes when AF_PROVIDED_ROUTES=1. Off, nothing is registered: a 404 is what a deployment
 // that never asked for provided routes answers.
 func registerProvidedRouteRoutes(mux *http.ServeMux, cfg config) {
-	if !routegateway.Enabled() || cfg.mgr == nil || cfg.mgr.store == nil {
+	if !routegateway.Enabled() {
 		return
 	}
-	g := routegateway.New(providedRouteDeps(cfg.mgr, routegateway.NewSTSAssumer(), routegateway.ConfigFromEnv()))
+	// One line either way: the log is how an operator confirms the switch took effect.
+	if cfg.mgr == nil || cfg.mgr.store == nil {
+		log.Printf("provided routes: %s=1 is set but this Control Plane has no store; the route gateway is not registered", routegateway.EnvSwitch)
+		return
+	}
+	rc := routegateway.ConfigFromEnv()
+	g := routegateway.New(providedRouteDeps(cfg.mgr, routegateway.NewSTSAssumer(), rc))
 	providedRouteRoutes(mux, cfg.mgr, g)
 	if activeProvidedRoutes.CompareAndSwap(nil, g) {
+		log.Printf("provided routes: on (%s=1): the route gateway serves %s/ (in-flight cap %d per member, upstream deadline %s, drain %s); "+
+			"the deployment source is registered with PUT /api/admin/provided-routes/deployment", routegateway.EnvSwitch, routegateway.Prefix,
+			rc.MaxInFlight, rc.Deadline, rc.Drain)
 		go g.Run(context.Background())
 	}
 }
