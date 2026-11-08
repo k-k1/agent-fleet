@@ -240,15 +240,14 @@
   padding: 6px 8px 2px;
 }
 .acct-theme-seg {
-  display: flex;
+  /* display comes from .choice-seg (inline-flex), which is on the same element. */
   width: 100%;
   margin-bottom: 8px;
 }
-/* Split the full width evenly. `.choice-seg .seg-btn { flex: 0 0 auto }` further down has
-   the same specificity and would win on order, so .acct-menu is added to beat it. Without
-   the even split the buttons keep their text width and the leftover space on the right
-   reads as dead, unclickable area inside the same-colored frame — all the more visible
-   since the popover widened to fit the swatches on one row. */
+/* Split the full width evenly. `.choice-seg .seg-btn { flex: 0 0 auto }` (ui/ui.css) would
+   otherwise keep the buttons at their text width and leave dead, unclickable space on the
+   right inside the same-colored frame — all the more visible since the popover widened to
+   fit the swatches on one row. The extra .acct-menu is what out-ranks it. */
 .acct-menu .acct-theme-seg .seg-btn {
   flex: 1;
 }
@@ -427,14 +426,6 @@
   font-size: 13px;
 }
 
-.choice-seg {
-  display: inline-flex;
-}
-.choice-seg .seg-btn {
-  flex: 0 0 auto;
-  padding: 5px 16px;
-  font-size: 12px;
-}
 .nav-toggle {
   display: inline-flex;
   align-items: center;
