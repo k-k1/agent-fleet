@@ -395,7 +395,9 @@ func (g *Gateway) Issue(w http.ResponseWriter, r *http.Request) {
 		Route       string `json:"route"`
 		Binding     string `json:"binding"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil || dec.More() {
 		writeRouteRefusal(w, &routeRefusal{status: http.StatusBadRequest, code: "route_bad_request", msg: "invalid body"})
 		return
 	}
@@ -667,6 +669,14 @@ func (g *Gateway) admit(ctx context.Context, use routeUse, model, op string, res
 	if !adm.Admitted {
 		release()
 		return "", g.budgetRefusal(ctx, use, adm.Refused, reserve)
+	}
+	// A drain that began while the row was being written may have taken its snapshot before the
+	// row existed, and its settlement then matched nothing. The call has not been dispatched, so
+	// it is settled here at zero; without this the row waits for the orphan sweep (deadline+1m).
+	if g.draining.Load() {
+		g.settle(callID, reserve, 0)
+		return "", &routeRefusal{status: http.StatusServiceUnavailable, code: "route_draining",
+			msg: "the Control Plane is restarting; send the message again in a moment"}
 	}
 	return callID, nil
 }

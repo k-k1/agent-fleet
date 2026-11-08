@@ -83,9 +83,16 @@ func TestUpstreamHeaders(t *testing.T) {
 	}
 	for _, h := range []string{"X-Amz-Security-Token", "X-Amz-Date", "X-Amz-Target", "X-Amzn-Bedrock-GuardrailIdentifier",
 		"X-Amzn-Bedrock-Service-Tier", "X-Amzn-Bedrock-PerformanceConfig-Latency", "X-Af-Membership", "X-Af-Tenant",
-		"X-Region", "Aws-Region", "X-Role-Arn", "X-External-Id", "Externalid", "X-Session-Tags", "Tag"} {
+		"X-Region", "Aws-Region", "X-Region-Override", "Role", "X-Role-Arn", "X-Rolearn", "X-External-Id", "Externalid", "X-Session-Tags", "Tag"} {
 		if _, ref := UpstreamHeaders(http.Header{h: {"v"}}); codeOf(ref) != CodeRequestRefused {
 			t.Errorf("%s: %v", h, ref)
+		}
+	}
+	// The words count as dash-separated name segments only: a header that merely contains the
+	// letters is dropped, not refused.
+	for _, h := range []string{"X-Parole-Id", "X-Regional-Hint", "X-Controller", "X-Stages"} {
+		if out, ref := UpstreamHeaders(http.Header{h: {"v"}}); ref != nil || out.Get(h) != "" {
+			t.Errorf("%s: %v %v", h, out, ref)
 		}
 	}
 	if out, _ := UpstreamHeaders(http.Header{}); out.Get("Content-Type") != "application/json" {

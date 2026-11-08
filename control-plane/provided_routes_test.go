@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -99,4 +100,29 @@ func TestProvidedRouteDeploymentSourceAdmin(t *testing.T) {
 	if w := do("GET", "root@x", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"binding":"`+out.Source.Binding+`"`) {
 		t.Fatalf("get: %d %s", w.Code, w.Body)
 	}
+	if w := do("PUT", "root@x", `{"role_arn":"not-an-arn","region":"us-east-1","models":["us.anthropic.claude-opus-5-5"]}`); w.Code != 400 ||
+		!strings.Contains(w.Body.String(), "invalid_source") {
+		t.Fatalf("a bad role ARN: %d %s", w.Code, w.Body)
+	}
+	if w := do("PUT", "root@x", body+` {"region":"eu-west-1"}`); w.Code != 400 {
+		t.Fatalf("trailing JSON was accepted: %d %s", w.Code, w.Body)
+	}
+	// A store that cannot take the write is the server's failure, never a bad registration.
+	deps := providedRouteDeps(mgr, nil, routegateway.Config{})
+	deps.Store = failingSourceStore{deps.Store}
+	failing := http.NewServeMux()
+	providedRouteRoutes(failing, mgr, routegateway.New(deps))
+	r := httptest.NewRequest("PUT", "/api/admin/provided-routes/deployment", strings.NewReader(body))
+	r.Header.Set("X-Forwarded-Email", "root@x")
+	fw := httptest.NewRecorder()
+	failing.ServeHTTP(fw, r)
+	if fw.Code != http.StatusInternalServerError {
+		t.Fatalf("a store failure answered %d %s", fw.Code, fw.Body)
+	}
+}
+
+type failingSourceStore struct{ routegateway.Store }
+
+func (failingSourceStore) PutProvidedRouteSource(context.Context, store.ProvidedRouteSourceInput) (store.ProvidedRouteSource, error) {
+	return store.ProvidedRouteSource{}, errors.New("database is locked")
 }

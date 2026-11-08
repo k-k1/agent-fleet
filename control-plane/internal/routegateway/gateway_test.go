@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -693,6 +694,40 @@ func TestProvidedRouteGatewayOrphansAndDrain(t *testing.T) {
 	}
 }
 
+// admitDrainingStore starts the drain while the admission row is being written: the window in
+// which a Drain snapshot cannot see the call yet.
+type admitDrainingStore struct {
+	Store
+	g *Gateway
+}
+
+func (s admitDrainingStore) AdmitProvidedRouteCall(ctx context.Context, c store.ProvidedRouteCall, lim store.ProvidedRouteLimits) (store.ProvidedRouteAdmission, error) {
+	adm, err := s.Store.AdmitProvidedRouteCall(ctx, c, lim)
+	s.g.draining.Store(true)
+	return adm, err
+}
+
+// A call admitted while a drain starts is settled at once, never dispatched, and does not wait
+// for the orphan sweep.
+func TestProvidedRouteGatewayAdmittedDuringDrain(t *testing.T) {
+	e := newPREnv(t)
+	e.g.d.Store = admitDrainingStore{Store: e.st, g: e.g}
+	resp, body := e.call(e.token(e.source().Binding(), TokenTTL), streamPath(prTestModel), prStreamBody, nil)
+	if resp.StatusCode != 503 || refusalCode(t, resp, body) != "route_draining" {
+		t.Fatalf("admitted during drain: %d %s", resp.StatusCode, body)
+	}
+	if e.up.n() != 0 || e.assumer.count() != 0 {
+		t.Fatalf("a call admitted during the drain was dispatched (%d upstream, %d STS)", e.up.n(), e.assumer.count())
+	}
+	left, err := e.st.ListInFlightProvidedRouteCalls(context.Background(), 0)
+	if err != nil || len(left) != 0 {
+		t.Fatalf("left in flight: %+v %v", left, err)
+	}
+	if p := e.memberPeriod(); p.SpentMicro != 0 || p.ReservedMicro != 0 {
+		t.Fatalf("an undispatched call cost the member: %+v", p)
+	}
+}
+
 // The token endpoint mints on the Agent's issuing token after the same checks a call runs, and
 // what it mints is accepted by the gateway.
 func TestProvidedRouteTokenIssue(t *testing.T) {
@@ -726,6 +761,21 @@ func TestProvidedRouteTokenIssue(t *testing.T) {
 	}
 	if resp, body := e.call(out.Token, streamPath(prTestModel), prStreamBody, nil); resp.StatusCode != 200 {
 		t.Fatalf("minted token refused: %d %s", resp.StatusCode, body)
+	}
+	good := `{"session":"s1","incarnation":"i1","route":"` + providedroutes.RouteDeployment + `","binding":"` + src.Binding() + `"}`
+	for _, raw := range []string{good + ` {"session":"s2"}`, good + `x`,
+		`{"session":"s1","incarnation":"i1","route":"` + providedroutes.RouteDeployment + `","binding":"` + src.Binding() + `","model":"x"}`} {
+		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/internal/route/token", strings.NewReader(raw))
+		req.Header.Set("Authorization", "Bearer "+issuer)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if refusalCode(t, resp, b) != "route_bad_request" {
+			t.Errorf("%s: %d %s", raw, resp.StatusCode, b)
+		}
 	}
 	if resp, _ := issue(out.Token, src.Binding()); resp.StatusCode != 401 {
 		t.Fatalf("a route token bought another: %d", resp.StatusCode)
@@ -790,8 +840,9 @@ func TestPutDeploymentSource(t *testing.T) {
 		{RoleARN: prTestRole, Region: "us-east-1", Models: []string{"anthropic.claude-unpriced-x"}},
 		{RoleARN: "not-an-arn", Region: "us-east-1", Models: []string{prTestModel}},
 	} {
-		if _, err := e.g.PutDeploymentSource(ctx, in); err == nil {
-			t.Errorf("%+v was registered", in)
+		var invalid *InvalidSourceError
+		if _, err := e.g.PutDeploymentSource(ctx, in); !errors.As(err, &invalid) {
+			t.Errorf("%+v: %v, want an InvalidSourceError", in, err)
 		}
 	}
 	if got := e.source(); got.PolicyVersion != src.PolicyVersion || len(got.Regions) != 1 {

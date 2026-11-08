@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,13 +111,22 @@ func (a providedRouteAdmin) put(w http.ResponseWriter, r *http.Request, ident st
 	var in routegateway.SourceInput
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&in); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid body: " + err.Error()})
+	if err := dec.Decode(&in); err != nil || dec.More() {
+		msg := "invalid body: more than one JSON value"
+		if err != nil {
+			msg = "invalid body: " + err.Error()
+		}
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", msg})
 		return
 	}
 	src, err := a.g.PutDeploymentSource(r.Context(), in)
-	if err != nil {
+	var invalid *routegateway.InvalidSourceError
+	if errors.As(err, &invalid) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "invalid_source", err.Error()})
+		return
+	}
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
 		return
 	}
 	_ = a.mgr.store.InsertAudit(context.WithoutCancel(r.Context()), store.AuditLog{ID: store.NewID(), ActorKind: "user", ActorID: ident.ID,

@@ -105,8 +105,9 @@ var passHeaders = []string{"Content-Type", "Accept", "X-Amzn-Bedrock-Accept"}
 // refusedHeaderRe is a caller header that tries to say something the CP decides: an AWS
 // credential, date or target (x-amz-*), a Bedrock option outside passHeaders (a guardrail, a
 // service tier, a latency profile: priced outside the table, or reaching other resources), an AF
-// identity claim (x-af-*), or a Region, role, external id or tag under any name.
-var refusedHeaderRe = regexp.MustCompile(`(?i)^(x-amz-|x-amzn-|x-af-)|region|role|external-?id|(^|-)tags?($|-)`)
+// identity claim (x-af-*), or a Region, role, external id or tag as a dash-separated name segment
+// (X-Role-Arn, Aws-Region), so a harmless header that merely contains the letters passes.
+var refusedHeaderRe = regexp.MustCompile(`(?i)^(x-amz-|x-amzn-|x-af-)|(^|-)(region|role|role-?arn|external-?id|tags?)($|-)`)
 
 // UpstreamHeaders is the header set the CP sends upstream from the caller's: content-type,
 // accept and passHeaders, nothing else. Authorization is never among them; the CP signs a fresh
