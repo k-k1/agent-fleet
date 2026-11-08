@@ -18,7 +18,7 @@ Once it has stopped, you can raise the budget and carry on.
 | — | When its estimated spend reaches the budget, stops once the current turn ends |
 | Raise the budget and resume | Carries on from where it stopped |
 
-If one turn alone runs on to **twice** the budget, the session is stopped at once, mid-turn.
+If one turn alone runs on to **twice** the budget, the session is stopped at once, mid-turn. The notification then reads "Halted mid-turn: far past its budget".
 Both stops are **the resumable stop**, which keeps the conversation.
 
 ## Set a budget
@@ -61,7 +61,7 @@ The spend is **an estimate** and **not your bill**.
 
 - It is an estimate at list price from the session's own transcript, or the CLI's own reported cost where it gives one (opencode)
 - On a subscription plan, it is what the same use would cost through the API
-- For Claude Code, it includes the session's subagents and Workflow agents. The usage view does not count those yet, so there a session that delegated work shows less than its budget figure
+- For Claude Code, it includes the session's subagents and Workflow agents. The usage view's totals include them too
 - A fork starts from $0: the history it copied is not charged to it
 
 Some sessions are never stopped by a budget.

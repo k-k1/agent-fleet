@@ -59,6 +59,7 @@ The original session then stops and takes no more input, so only one session wri
 
 - Only a session whose conversation the Workspace can read. shell and ssm cannot be moved
 - It has to be idle, stopped, or stopped at a usage or spend limit
+- A stopped Managed cursor session cannot be moved: its conversation lived only in the running agent, and nothing of it is left once it stops
 - A move is refused while a turn is running, or while a question, a plan or a permission prompt is waiting for you. Let the turn end or stop it, and answer first
 - Which kinds can be a source or a target is in the [Agents reference](../../ref/agents.md#moving-a-session-to-another-agent). The same agent is never offered as a target (it draws on the same account's quota)
 
@@ -66,7 +67,7 @@ The original session then stops and takes no more input, so only one session wri
 
 | Item | What it says |
 |---|---|
-| The agents it can move to | Agents that cannot take it, or are not connected, are listed with the reason. For claude, codex, muse, copilot and agy, the current usage is shown too |
+| The agents it can move to | Agents that cannot take it, or are not connected, are listed with the reason. For claude, codex, muse, copilot and agy, the current usage is shown too (copilot's as its one monthly pool) |
 | The working copy's state | Uncommitted changes. The move never commits, stashes or discards them: the new session takes them over as they are, so tidy them first if you need to |
 | Instructions not yet sent, messages from other sessions not yet delivered | They go into the handover file, and the new session receives them |
 | The handover file's size | Past the guideline size it is still written in full |
