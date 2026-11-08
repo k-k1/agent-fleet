@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // Rollup of the usage ledger (docs/log/46 §3-c / ADR0029 §8).
 //
@@ -79,7 +79,7 @@ type usageAgg struct {
 	// CostEstUSD is the estimate derived from the price table (usage_price.go). It is a
 	// separate value from the measured cost and is never added to it. It is not written to the
 	// rollup: prices get revised, so it is recomputed with the current table on every read
-	// (handleUsageSeries adds it per sample).
+	// (HandleSeries adds it per sample).
 	CostEstUSD float64 `json:"cost_est_usd,omitempty"`
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/workitems"
 	"net/http"
 
@@ -113,7 +114,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /session-search/turns", sessionsearch.HandleWindow)
 	// Per-feature usage time series (docs/log/46 P3 / ADR0029), aggregated server-side.
 	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
-	mux.HandleFunc("GET /usage/series", handleUsageSeries)
+	mux.HandleFunc("GET /usage/series", usagesvc.HandleSeries)
 	mux.HandleFunc("GET /sessions/cleanup", sessionx.HandleSessionsCleanup)
 	mux.HandleFunc("DELETE /sessions/{name}", handleDeleteSession)
 	// Cleanup archive (docs/log/32): the gz safety net for destructive tidy-up.

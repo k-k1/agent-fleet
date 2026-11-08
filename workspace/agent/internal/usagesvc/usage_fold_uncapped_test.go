@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ func lineTurns(n int) []transcript.Turn {
 // visible: the uncapped numbering is shifted by the hidden count, which put the newest turns
 // past the old watermark.
 func TestFoldAfterCapRemovedDoesNotRecount(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "cl01", Kind: session.KindClaude}
 	all := lineTurns(12) // 12 logical turns, the last still open
 	capped := all[16:]   // the reader saw only the newest 4 logical turns

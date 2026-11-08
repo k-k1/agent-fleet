@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"testing"
@@ -14,7 +14,7 @@ import (
 // bedrock call itself, so the claude transcript's turns on bedrock reach no ledger row, while the
 // watermark still moves past them; a turn of another route is written as before.
 func TestBedrockTranscriptTurnsAreLeftToTheGatewayRows(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	stamp := func(route, billing string, tt transcript.Turn) transcript.Turn {
 		tt.Route, tt.Billing = route, billing
 		return tt
@@ -112,7 +112,7 @@ func TestReplayedGatewayRowsCountOnce(t *testing.T) {
 // their own (the provider id names no route on its own), so they take the session's selection and
 // are left to the gateway's rows; a Zen call, which proves its route per call, still counts.
 func TestOpencodeBedrockTurnsAreLeftToTheGatewayRows(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "ocbed01", Kind: session.KindOpencode,
 		Route: &routes.Selection{Route: usagex.RouteBedrock, Connection: "p1@eu-west-1#00112233aabbccdd"}}
 	zen := asst("opencode/big-pickle", 3, 2, 0, 0, false)

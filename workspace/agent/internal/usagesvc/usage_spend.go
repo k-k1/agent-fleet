@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // The spend the per-session budget compares with (#1054, session.Spend).
 //
@@ -19,7 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-func sessionSpend(m session.Meta) session.Spend {
+func SessionSpend(m session.Meta) session.Spend {
 	return spendOfRows(m, foldTurnRows(sessionx.UsageTurns(m), true), subagentSpendRows(m))
 }
 

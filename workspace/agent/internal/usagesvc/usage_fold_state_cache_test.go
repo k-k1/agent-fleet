@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"fmt"
@@ -15,7 +15,7 @@ import (
 // cacheFixture is n claude sessions, each with one closed turn in its transcript.
 func cacheFixture(t *testing.T, n int) []session.Meta {
 	t.Helper()
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	cfg := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 	dropUsageStateCache()
@@ -80,7 +80,7 @@ func TestFoldStateCacheMatchesDisk(t *testing.T) {
 	if disk := readUsageFoldState(); !reflect.DeepEqual(cached, disk) {
 		t.Fatalf("cache differs from disk:\n cache %+v\n disk  %+v", cached, disk)
 	}
-	finalizeSessionUsage(ms[0])
+	FinalizeSessionUsage(ms[0])
 	cached = cachedState()
 	if _, ok := cached.Sessions[ms[0].Name]; ok {
 		t.Fatal("finalize left the deleted session's mark in the cache")
@@ -152,7 +152,7 @@ func TestMeasureUsageStateSize(t *testing.T) {
 	if os.Getenv("AF_MEASURE_USAGE_STATE") == "" {
 		t.Skip("measurement, no assertions: set AF_MEASURE_USAGE_STATE=1")
 	}
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	dropUsageStateCache()
 	t.Cleanup(dropUsageStateCache)
 	const sessions, agentsPer = 1400, 3

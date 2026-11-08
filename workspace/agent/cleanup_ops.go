@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"io"
 	"log"
 	"net/http"
@@ -123,7 +124,7 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 		m = halted
 	}
 	// Called after the halt so the final events written on exit are in the transcript first.
-	finalizeSessionUsage(m)
+	usagesvc.FinalizeSessionUsage(m)
 	// What the archive is about to hold. Taken BEFORE reading, so the archive holds at least
 	// this much; anything beyond it at removal time was written after, and is not in the gz.
 	before := transcriptSizes(m)

@@ -1,6 +1,6 @@
 package main
 
-// The Agent's own copy of the models.dev catalog (Issue #972). usage_catalog.go used to find a
+// The Agent's own copy of the models.dev catalog (Issue #972). internal/usagesvc/usage_catalog.go used to find a
 // price catalog only where opencode happened to have left one, so a workspace that never ran
 // opencode had no prices at all — and the recommended one-shot model (chatx's
 // recommendedUtilityModel) now follows "the cheapest model this account lists", which needs a
@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"io"
 	"log"
 	"net/http"
@@ -104,14 +105,14 @@ func fetchModelsDev(ctx context.Context, url, path string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: HTTP %d", url, resp.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, usageCatalogMaxBytes+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, usagesvc.CatalogMaxBytes+1))
 	if err != nil {
 		return err
 	}
-	if len(b) > usageCatalogMaxBytes {
-		return fmt.Errorf("GET %s: larger than %d bytes", url, usageCatalogMaxBytes)
+	if len(b) > usagesvc.CatalogMaxBytes {
+		return fmt.Errorf("GET %s: larger than %d bytes", url, usagesvc.CatalogMaxBytes)
 	}
-	if parseUsageCatalog(b, usageCatalogOriginFetched, time.Now()) == nil {
+	if !usagesvc.ValidFetchedCatalog(b) {
 		return fmt.Errorf("GET %s: not a models.dev catalog", url)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

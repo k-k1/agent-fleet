@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"fmt"
@@ -17,7 +17,7 @@ import (
 // its own row sequence: a session whose watermark predates the change gets each agent row once,
 // its own rows are not renumbered, and repeated or out-of-order flushes add nothing twice.
 func TestFoldSubagentTranscriptsOnceEach(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	cfg := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 	born := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
@@ -184,7 +184,7 @@ func sidechainSums(m session.Meta) (rows, in, out int) {
 // When that turn grows later (a long tool run, an approval wait) only the difference is added:
 // the ledger ends at the same totals as one fold of the finished turn.
 func TestFoldSubagentTurnThatGrowsAfterItWasFolded(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "grow3054", Kind: session.KindClaude, Model: "claude-opus-5"}
 	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
 	// The same logical turn, a second assistant event six minutes on: input is the newest
@@ -220,7 +220,7 @@ func TestFoldSubagentTurnThatGrowsAfterItWasFolded(t *testing.T) {
 // A copy of the agent found later can put an older turn in front of those already recorded; the
 // recorded ones keep their identity, the older one is folded once.
 func TestFoldSubagentOlderTurnFromALaterCopy(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "copy3054", Kind: session.KindClaude, Model: "claude-opus-5"}
 	older := agentTurn("old", "2026-10-30T09:00:00Z", 1000, 10)
 	late := agentTurn("late", "2026-10-30T09:05:00Z", 2000, 20)
@@ -243,7 +243,7 @@ func TestFoldSubagentOlderTurnFromALaterCopy(t *testing.T) {
 // as it was: the turn grew in between, and a recomputed difference under the same Idx would
 // have been accepted next to the first one.
 func TestFoldSubagentReplaysAnInterruptedBatchAsItWas(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "crash3054", Kind: session.KindClaude, Model: "claude-opus-5"}
 	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
 	b := transcript.Turn{Role: "assistant", Model: "claude-opus-5", InTok: 2600, OutTok: 30,
@@ -288,7 +288,7 @@ func TestFoldSubagentReplaysAnInterruptedBatchAsItWas(t *testing.T) {
 // A later copy that fills events into a turn already recorded, at either end, adds only what
 // was missing and does not make a second turn.
 func TestFoldSubagentLaterCopyFillsARecordedTurn(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "fill3054", Kind: session.KindClaude, Model: "claude-opus-5"}
 	ev := func(id string, in, out int) transcript.Turn {
 		return transcript.Turn{Role: "assistant", Model: "claude-opus-5", InTok: in, OutTok: out,
@@ -317,7 +317,7 @@ func TestFoldSubagentLaterCopyFillsARecordedTurn(t *testing.T) {
 // A batch saved before its append, where the append never happened, is written on the next pass
 // instead of being lost with the totals already advanced.
 func TestFoldSubagentWritesABatchSavedBeforeAnAppendThatFailed(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "wal3054", Kind: session.KindClaude, Model: "claude-opus-5"}
 	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
 	foldAgent(t, m, "s1", a)
@@ -347,7 +347,7 @@ func TestFoldSubagentWritesABatchSavedBeforeAnAppendThatFailed(t *testing.T) {
 // of a recorded turn and after it, so neither its first nor its last event is the recorded one.
 // Its own event is still inside, and it is matched by that.
 func TestFoldSubagentMatchesATurnByAnyOfItsEvents(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "both3054", Kind: session.KindClaude, Model: "claude-opus-5"}
 	ev := func(id string, in, out int) transcript.Turn {
 		return transcript.Turn{Role: "assistant", Model: "claude-opus-5", InTok: in, OutTok: out,
@@ -369,7 +369,7 @@ func TestFoldSubagentMatchesATurnByAnyOfItsEvents(t *testing.T) {
 // Two event ids whose hashes agree on their first 32 bits are still two events: a short hash
 // would have read the second turn as the first and subtracted its totals.
 func TestFoldSubagentEventHashDoesNotCollideOn32Bits(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "hash3054", Kind: session.KindClaude, Model: "claude-opus-5"}
 	seen := map[string]string{}
 	var x, y string
