@@ -11,7 +11,7 @@ import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProfileLoginModal, type LoginProfile } from "../../awslogin/ProfileLoginModal.tsx";
 import { useProfileLogout } from "../../awslogin/useProfileLogout.tsx";
-import { awsProfileName, validExternalId, validRoleArn, validSessionName } from "../../../lib/awsRoleChain.ts";
+import { awsProfileName, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
 import { useAwsLoginStore } from "../../awslogin/store.ts";
 import { useSettingsUI } from "../store.ts";
 import { AwsConfigImport } from "./AwsConfigImport.tsx";

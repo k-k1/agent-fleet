@@ -13,7 +13,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { GCP_REGION_CODES, gcpZonesOf } from "../../../lib/gcpRegions.ts";
+import { GCP_REGION_CODES, gcpZonesOf } from "./gcpRegions.ts";
 import { GcpConfigImport } from "./GcpConfigImport.tsx";
 import { RecentCloudRuns } from "../../cloudruns/cloudRuns.tsx";
 import { Field, Meta } from "../parts/mcpForm.tsx";

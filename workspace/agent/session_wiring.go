@@ -20,6 +20,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routegw"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 )
 
 func init() { sessionx.Configure(sessionDeps()) }
@@ -42,7 +43,7 @@ func sessionDeps() sessionx.Deps {
 		MaxUploadBytes: maxUploadBytes,
 		ReadRoots:      allowedReadRoots,
 
-		IsSvnRepo:       isSvnRepo,
+		IsSvnRepo:       svnx.IsRepo,
 		RepoJobsRunning: repoJobsRunning,
 		ImageJobsActive: imagegen.ActiveJobs,
 

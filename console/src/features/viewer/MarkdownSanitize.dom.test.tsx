@@ -9,7 +9,7 @@ const mermaidRender = vi.fn(async () => ({ svg: '<svg data-ok="1"></svg>' }));
 vi.mock("mermaid", () => ({ default: { initialize: vi.fn(), render: mermaidRender } }));
 
 const { MarkdownView } = await import("./MarkdownView.tsx");
-const { sanitizeMarkdownHtml, isInternalMediaUrl, scrubCssUrls } = await import("../../lib/sanitize.ts");
+const { sanitizeMarkdownHtml, isInternalMediaUrl, scrubCssUrls } = await import("./sanitize.ts");
 
 let host: HTMLDivElement;
 let root: Root;

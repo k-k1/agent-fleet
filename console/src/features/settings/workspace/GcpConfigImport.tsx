@@ -21,7 +21,7 @@ import {
   type GcpReason,
   type GcpRowEdit,
   type NativeGcpConfig,
-} from "../../../lib/gcloudConfigImport.ts";
+} from "./gcloudConfigImport.ts";
 import { executeGcpPlan, loadGcpProfiles, type GcpExecRow } from "./gcpImportExec.ts";
 
 type Tr = ReturnType<typeof useT>;

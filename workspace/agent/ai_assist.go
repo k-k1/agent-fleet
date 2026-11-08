@@ -14,7 +14,7 @@ package main
 //     answers source:"unknown" instead of paying to find out DURING this request.
 //   - for every feature that came back unknown, chatx.WarmOneShotKind fires AFTER the response
 //     is written (a detached goroutine, not on the request's own timeline) so the NEXT poll
-//     (~10s later, lib/aiAssistResolution.ts) has a real answer.
+//     (~10s later, features/settings/personal/aiAssistResolution.ts) has a real answer.
 //   - the model NAME is not answered here at all. The Console already fetches
 //     /agents/{kind}/models to draw §1's model rows (useModelOptions(kind) in
 //     lib/agentModels.ts), so it draws THIS row's label from that same catalog — the extra

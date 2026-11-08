@@ -151,7 +151,8 @@ work you could simply do.
   `[agent-fleet:notice kind=watch …]` line into *your own* session when it happens (once you are
   idle; a stopped session is started). Do not run `gh pr checks --watch` in the background for
   this. `until: first` (default) ends after one notice; `deadline` keeps it (`expires_in_hours`, ≤ 720).
-  `list_watches` / `unwatch` manage them. GitHub only for now. A child can pass `notify: parent`
+  `list_watches` / `unwatch` manage them. GitHub and Bitbucket (`source: bitbucket`; no
+  `pr.review.threads_unresolved` there). A child can pass `notify: parent`
   so its PR's notices go to the session that started it (the watch then belongs to the parent);
   a parent running an issue round can ask its children to do that instead of polling their PRs.
 - **`list_child_sessions` is how you get a name back.** `create_session` hands one out once, and a

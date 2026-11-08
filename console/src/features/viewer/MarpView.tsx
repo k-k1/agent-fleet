@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
-import { deferExternalMedia, scrubCssUrls, stripInternalMedia } from "../../lib/sanitize.ts";
+import { deferExternalMedia, scrubCssUrls, stripInternalMedia } from "./sanitize.ts";
 import { wireExternalImages } from "./parts/mdExternalImages.ts";
 
 // Custom Marp themes live as CSS files (each with a `/* @theme name */` header) in

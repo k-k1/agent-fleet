@@ -1,6 +1,6 @@
 // Imperative pass that inserts the front matter and the repaired-table notes after the
 // Markdown has rendered. The body is sanitized innerHTML, so it cannot be React nodes.
-import { type TableRepair } from "../../../lib/markdown.ts";
+import { type TableRepair } from "../markdown.ts";
 import { t } from "../../../lib/i18n/index.ts";
 
 // Front matter belongs above the document as a compact property list. It is

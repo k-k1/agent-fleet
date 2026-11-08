@@ -7,7 +7,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
-import { parseAwsIni } from "../../../lib/awsConfigIni.ts";
+import { parseAwsIni } from "./awsConfigIni.ts";
 import {
   MAX_BYTES,
   MAX_PROFILES,
@@ -21,8 +21,8 @@ import {
   type Reason,
   type RowEdit,
   safeKey,
-} from "../../../lib/awsConfigImport.ts";
-import { planSsmImport } from "../../../lib/settingsBundle.ts";
+} from "./awsConfigImport.ts";
+import { planSsmImport } from "./settingsBundle.ts";
 import { executeSsmPlan, loadSignIns, loadSsmLists, type ExecRow } from "./ssmImportExec.ts";
 import { signInSaveError } from "./ssmSignIns.ts";
 

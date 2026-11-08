@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { groupRefs, laneColor, laneCount, layoutGraph } from "../../lib/gitgraph.ts";
-import type { GraphCommit, GraphRow, RefChip } from "../../lib/gitgraph.ts";
+import { groupRefs, laneColor, laneCount, layoutGraph } from "./gitgraph.ts";
+import type { GraphCommit, GraphRow, RefChip } from "./gitgraph.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -162,7 +162,7 @@ function CommitRow({
   );
 }
 
-// RefBadge draws one grouped chip (lib/gitgraph groupRefs). The kind is carried by a
+// RefBadge draws one grouped chip (./gitgraph groupRefs). The kind is carried by a
 // leading icon rather than spelled into the label — a tag reads "🏷 v0.5.0", not
 // "refs/tags/v0.5.0" — and a local branch whose remotes sit on this same commit gets a
 // cloud marker instead of a second "origin/…" chip beside it.

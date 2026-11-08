@@ -39,7 +39,7 @@ import { assistantName, assistantDesc } from "../chat/assistantI18n.ts";
 import { openAssistantDraft } from "../chat/open.ts";
 import type { Assistant } from "../../types/assistant.ts";
 import type { SsmHost } from "../../types/session.ts";
-import { deriveRepoName } from "../../lib/reponame.ts";
+import { deriveRepoName } from "./reponame.ts";
 
 interface StartModalProps {
   /** Connection-gated coding-agent kinds (claude / codex / agy / opencode). */

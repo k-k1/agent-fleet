@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { t } from "../../../lib/i18n/index.ts";
-import { AI_ASSIST_FEATURES } from "../../../lib/aiAssistFeatures.ts";
+import { AI_ASSIST_FEATURES } from "./aiAssistFeatures.ts";
 
 const apiMock = vi.fn();
 vi.mock("../../../core/api/client.ts", () => ({
