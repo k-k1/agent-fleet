@@ -51,7 +51,7 @@ Each one goes away once the tenant administrator has fixed the app and you **rec
 
 | What the card says | What does not work |
 |---|---|
-| Boards, sprints and epics: not available. | The board, sprint and epic commands of `jira` |
+| Boards, sprints and epics: not available. | The board, sprint and epic commands of `jira`, and `jira init` |
 | Confluence: not available. | Every `confluence` command |
 | Confluence: search and comments work, but … | Reading, creating and updating pages with `confluence` |
 
@@ -69,7 +69,7 @@ source, a display name and the search query.
 |---|---|---|
 | Jira | JQL | `assignee = currentUser() AND statusCategory != Done` |
 | GitHub | GitHub search syntax | `is:open (is:issue OR is:pull-request) involves:@me` |
-| Bitbucket | Built by picking from your connected repositories | Pick "For my review" or another option under "What to list", then the repository |
+| Bitbucket | Built by picking from your connected repositories, or written yourself | Pick "For my review" or another option under "What to list", then the repository (or the workspace, for pull requests you authored) |
 
 ### Tips for GitHub queries
 
@@ -89,7 +89,7 @@ The "**Branch name template**" in "Saved queries" sets the branch name of a sess
 ## Start a session from the list
 
 How to read the list and start a session from a row is in [Starting sessions](../../member/03-starting-sessions.md#starting-from-the-issue-tracker).
-The first instruction carries the issue's key, title and URL, and the agent reads the description and comments with `jira` or `gh`.
+The first instruction carries the issue's key, title and URL, and the agent reads the description and comments with `jira`, `gh` or `bkt`.
 
 ## When it goes wrong
 

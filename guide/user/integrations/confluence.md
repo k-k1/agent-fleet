@@ -18,7 +18,7 @@ Connect Jira, and the same Atlassian connection lets agents find, read and write
 | Ask for what you need | Writes to Confluence as your Atlassian account |
 | Reconnect when the connection breaks | Says so and stops when the connection cannot be used |
 
-`confluence` works in every agent's sessions. The token is renewed before it expires, so you never restart a session for it.
+`confluence` works in every agent's sessions. An OAuth token is checked on every call and renewed before it expires, so you never restart a session for it.
 
 ## Before you start
 

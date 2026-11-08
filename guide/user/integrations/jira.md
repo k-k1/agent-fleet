@@ -19,7 +19,7 @@ inside a session.
 | Reconnect when the connection breaks | Says so and stops when the connection cannot be used |
 
 `jira` runs with the permissions of the Jira account you connected. Agents already know how to use it, so there is no
-command to teach them. The token is renewed on every call, so an expired token never means restarting the session.
+command to teach them. An OAuth token is checked on every call and renewed before it expires, so you never restart a session for it.
 
 ## Before you start
 
@@ -51,6 +51,7 @@ Agents can do things like these.
 
 - **What is written carries your name.** It reaches as far as your Jira account is allowed
 - **Comments and descriptions can be Markdown.** `code` and **bold** next to Japanese text, lists and tables show in Jira as written
+- **Find a comment's ID** with `jira issue view PROJ-1 --raw` (`.fields.comment.comments[].id`)
 - **Only certain comments get edited or deleted.** Agents are told to edit or delete only a comment they posted in that
   session, or one you named
 - **Check the parent of an issue that was created with one.** Agent Fleet adjusts the call so that the parent is sent,
@@ -78,7 +79,7 @@ jira -c ~/.config/agent-fleet/jira/other-board.yml sprint list
 
 > [!NOTE]
 > With an OAuth connection, the tenant's Atlassian app needs the Jira Software scopes. Without them, the Jira card in
-> Settings › "Issue tracker" says "**Boards, sprints and epics: not available.**" Have the tenant administrator add
+> Settings › "Issue tracker" says "**Boards, sprints and epics: not available.**", and those commands and `jira init` fail. Have the tenant administrator add
 > them, then reconnect Jira.
 
 ## Have agents use the Atlassian MCP tool
@@ -123,9 +124,9 @@ stopped after about two minutes. The issue or comment may exist, so check Jira b
 - For `issue create`, the issues you created with the same summary in the last 15 minutes are listed as "possible matches"
 - Reading commands are re-run up to twice after a connection drop. Writes are never re-run
 
-### "invalid issue types in config"
+### "this config has no issue types"
 
-`jira` could not work out the project's issue types. Run `jira init` as the one-line hint printed with it says.
+`jira issue create` needs the project's issue types, and `jira` could not get them. Run `jira init` as the hint printed with it says.
 
 ### Assigning someone asks for a project
 
