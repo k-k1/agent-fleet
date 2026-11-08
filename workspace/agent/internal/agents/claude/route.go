@@ -339,6 +339,11 @@ var bedrockModelPins = []string{
 	"ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
 }
 
+// RouteOwnsModels implements agents.RouteModelOwner: a bedrock session's model is a Bedrock id
+// that CheckRoute checks against the route (bedrockModelRefusal). A live catalogue of claude's
+// first-party ids would refuse every one of them before that check is reached.
+func (agentImpl) RouteOwnsModels(route string) bool { return route == RouteBedrock }
+
 // bedrockModelRefusal requires the bedrock route's model to be a Bedrock id of an Anthropic model
 // (routes.ParseBedrockAnthropicModelID). A tier alias or a claude-… id is refused rather than
 // mapped: the CLI maps them with a Region prefix guessed from AWS_REGION that the account may not
@@ -410,6 +415,9 @@ func settingsConflict(route string, files []string) *agents.RouteRefusal {
 	names := routeOverrides
 	var keys []string
 	if route == RouteBedrock {
+		// The model pins too: in the managed layer one outranks the flag-layer pin, and the
+		// session's calls would then name a model the gateway refuses (route_model_not_selected).
+		names = append(slices.Clone(routeOverrides), bedrockModelPins...)
 		keys = settingsConflictBedrockKeys
 	}
 	for _, f := range files {
@@ -442,7 +450,7 @@ func settingsConflict(route string, files []string) *agents.RouteRefusal {
 		}
 		if hit != "" {
 			return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteSettings,
-				Message: f + " sets " + hit + ", which the CLI re-applies over the session's route credential; remove it, or start the session without an explicit route"}
+				Message: f + " sets " + hit + ", which the CLI re-applies over what the session's route sets (its credential, endpoint or pinned model); remove it, or start the session without an explicit route"}
 		}
 	}
 	return nil

@@ -225,6 +225,7 @@ and does not retry. (Requests the gateway cannot forward keep their own status: 
 | `route_login_required`, `route_confirmation_required` (401) | The profile needs an SSO sign-in or your "Confirm before use" approval. | Sign in or allow it; the next call goes through. |
 | `route_connection_unavailable` (503) | The Agent cannot read the AWS profiles in Settings right now. | Try again in a moment. |
 | `route_upstream_unavailable`, `route_credentials_unavailable` (503) | Bedrock or the credentials could not be reached right now. | Try again in a moment. |
+| `route_model_mismatch` (400, at launch) | A claude session on this route was started with a model that is not a Bedrock model ID: empty, a tier alias such as `opus`, a `claude-…` ID or an ARN (from the launch dialog, the REST API, the af MCP tools or a schedule). Nothing was started. | Send a Bedrock model ID such as `us.anthropic.…` as the model. |
 | `route_model_not_selected` (404) | The call named a model other than the Bedrock model ID the session was started with. Nothing was sent to AWS; the token stays valid. | Start a new session with the other ID. |
 
 A Bedrock answer such as AccessDenied or `model_not_found` is forwarded as it is; it is not a gateway code.

@@ -183,6 +183,12 @@ func TestBedrockSettingsConflicts(t *testing.T) {
 		`{"awsCredentialExport":"/bin/creds"}`,
 		`{"awsAuthRefresh":"aws sso login"}`,
 		`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"}}`,
+		// A model pin set in a settings file would outrank the flag-layer pin from the managed
+		// layer and leave subagents on an id the gateway refuses.
+		`{"env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"us.anthropic.claude-opus-4-1"}}`,
+		`{"env":{"ANTHROPIC_SMALL_FAST_MODEL":"us.anthropic.claude-haiku-4-5"}}`,
+		`{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"sonnet"}}`,
+		`{"env":{"ANTHROPIC_MODEL":"opus"}}`,
 	} {
 		writeFile(t, user, body)
 		m := bedrockMeta(t, "bed-sc")
@@ -194,10 +200,12 @@ func TestBedrockSettingsConflicts(t *testing.T) {
 		if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, testBedrockModel); ref == nil || ref.Code != routes.CodeRouteSettings {
 			t.Errorf("%s: CheckRoute = %v", body, ref)
 		}
-		// The env names concern every route; the AWS credential commands only bedrock.
+		// The provider and credential env names concern every route; the AWS credential commands
+		// and the model pins only bedrock.
 		api := session.Meta{Kind: session.KindClaude, Name: "api-sc", Dir: t.TempDir(), Route: sel(RouteAPI, "")}
 		_, apiErr := launchOf(t, api)
-		if strings.Contains(body, `"aws`) != (apiErr == nil) {
+		bedrockOnly := strings.Contains(body, `"aws`) || strings.Contains(body, "_MODEL")
+		if bedrockOnly != (apiErr == nil) {
 			t.Errorf("%s: anthropic-api launch err = %v", body, apiErr)
 		}
 	}

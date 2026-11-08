@@ -217,6 +217,7 @@ ID だと、最初のターンで AccessDenied や `model_not_found` のよう�
 | `route_login_required`、`route_confirmation_required`（401） | プロファイルに SSO サインイン、または「使用前に確認」の承認が要る。 | サインインまたは許可すると、次の呼び出しは通る。 |
 | `route_connection_unavailable`（503） | Agent がいま設定の AWS プロファイルを読めない。 | 少し待ってやり直す。 |
 | `route_upstream_unavailable`、`route_credentials_unavailable`（503） | いま Bedrock または資格情報に届かない。 | 少し待ってやり直す。 |
+| `route_model_mismatch`（400、起動時） | このルートの claude のセッションを、Bedrock のモデル ID ではないモデルで始めようとした。空、`opus` のようなティア名、`claude-…` の ID、ARN のどれか（起動ダイアログ、REST API、af の MCP ツール、スケジュールのどれからでも）。何も起動していない。 | `us.anthropic.…` のような Bedrock のモデル ID をモデルとして送る。 |
 | `route_model_not_selected`（404） | セッションを始めたときの Bedrock のモデル ID と違うモデルを名指しした。AWS には何も送っていない。トークンは失効しない。 | その ID で新しいセッションを始める。 |
 
 AccessDenied や `model_not_found` のような Bedrock の答えはそのまま転送されます。ゲートウェイのコードではありません。
