@@ -778,3 +778,23 @@ func TestSetEnabledBuiltinIsNotToggleable(t *testing.T) {
 		t.Fatalf("messages contradict: %q / %q", ErrReadOnly, ErrNotToggleable)
 	}
 }
+
+// The Console keeps the toggle on tenant rows on the premise that SetEnabled accepts them.
+func TestSetEnabledTenantRecordsOptOut(t *testing.T) {
+	withTempHome(t)
+	if err := writeTenantCache([]ServerDef{{ID: "t1", Name: "tickets", Enabled: true}}, 1); err != nil {
+		t.Fatalf("seed tenant cache: %v", err)
+	}
+	if err := SetEnabled("t1", false); err != nil {
+		t.Fatalf("SetEnabled(tenant, false): %v", err)
+	}
+	if !loadOptOut()["t1"] {
+		t.Fatal("opt-out not recorded")
+	}
+	if err := SetEnabled("t1", true); err != nil {
+		t.Fatalf("SetEnabled(tenant, true): %v", err)
+	}
+	if loadOptOut()["t1"] {
+		t.Fatal("opt-out not cleared")
+	}
+}

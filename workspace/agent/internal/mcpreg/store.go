@@ -350,7 +350,7 @@ func Create(in ServerDef) (ServerDef, error) {
 }
 
 // Update replaces a user-scope definition. Masked secret values keep their stored
-// counterparts. Tenant and builtin rows are read-only (use SetEnabled).
+// counterparts. Tenant rows are read-only locally (use SetEnabled); builtin rows are read-only, period.
 func Update(id string, in ServerDef) (ServerDef, error) {
 	s, err := secrets.Load()
 	if err != nil {

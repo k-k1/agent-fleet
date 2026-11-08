@@ -27,6 +27,8 @@ const server = (over: Partial<McpServer>): McpServer => ({
 });
 
 async function mount(s: McpServer) {
+  act(() => root?.unmount());
+  host?.remove();
   setLocale("en");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -53,8 +55,6 @@ describe("enable/disable control by origin", () => {
   it("tenant and user rows keep it", async () => {
     await mount(server({ origin: "tenant" }));
     expect(labels()).toContain("Disable");
-    act(() => root!.unmount());
-    host!.remove();
     await mount(server({ origin: "user", editable: true, enabled: false }));
     expect(labels()).toContain("Enable");
   });
