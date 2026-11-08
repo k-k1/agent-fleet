@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -138,7 +139,7 @@ func (r agentMemLintRepo) Paths() ([]string, error) {
 	defer cancel()
 	out, err := agentMemLintGit(ctx, r.gitDir, nil, "ls-tree", "-r", "--name-only", "-z", r.ref)
 	if err != nil {
-		return nil, errors.New("git ls-tree failed")
+		return nil, fmt.Errorf("git ls-tree: %w", err)
 	}
 	var paths []string
 	for _, p := range strings.Split(string(out), "\x00") {
@@ -149,14 +150,14 @@ func (r agentMemLintRepo) Paths() ([]string, error) {
 	return paths, nil
 }
 
-// ReadFile returns one blob of the pinned revision (`git show <oid>:<path>`), never a working
+// ReadFile returns one blob of the pinned revision (`git cat-file blob <oid>:<path>`), never a working
 // copy's file, so the .gitignore rules the path check applies are the revision's own.
 func (r agentMemLintRepo) ReadFile(path string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
 	out, err := agentMemLintGit(ctx, r.gitDir, nil, "cat-file", "blob", r.ref+":"+path)
 	if err != nil {
-		return nil, errors.New("git cat-file failed")
+		return nil, fmt.Errorf("git cat-file blob: %w", err)
 	}
 	return out, nil
 }

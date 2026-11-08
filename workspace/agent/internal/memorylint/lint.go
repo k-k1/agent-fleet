@@ -290,6 +290,8 @@ const journalDir = "docs/log"
 
 // found reports whether the revision holds p. Beyond an exact file or directory it accepts a
 // numbered short reference (see hasNumbered) and a path the revision's .gitignore files ignore.
+// A path absent from the tree is taken to be a directory when matching dir-only rules ("build/"):
+// the revision cannot say, and the ignored build outputs this exists for are directories.
 func (rc *repoCtx) found(p string) bool {
 	return rc.hasPath(p) || rc.hasNumbered(p) || rc.ignore.ignored(p, !rc.files[p])
 }

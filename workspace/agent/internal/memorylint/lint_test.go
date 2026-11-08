@@ -235,9 +235,9 @@ var shortRefRepo = fakeRepo{paths: []string{
 // directory and a non-numeric tail are still reported.
 func TestNumberedShortReferences(t *testing.T) {
 	body := "docs/log/99 docs/log/099 docs/log/7 docs/build/92 guide/admin/03 guide/admin/NN docs/51x docs/log/NN docs/99\n" +
-		"negative: docs/log/9999 docs/build/93 guide/admin/04 docs/log/99x docs/log/9-9 guide/nowhere/03"
+		"negative: docs/log/9999 docs/build/93 guide/admin/04 docs/log/99x docs/log/9-9 guide/nowhere/03 docs/build/1 docs/log/9"
 	rep := Lint([]Memory{{"m", body}}, Options{}, shortRefRepo)
-	want := []string{"docs/51x", "docs/log/9999", "docs/build/93", "guide/admin/04", "docs/log/99x", "docs/log/9-9", "guide/nowhere/03"}
+	want := []string{"docs/51x", "docs/log/9999", "docs/build/93", "guide/admin/04", "docs/log/99x", "docs/log/9-9", "guide/nowhere/03", "docs/build/1", "docs/log/9"}
 	if got := subjects(rep, "m", CheckMissingPath); !sameSet(got, want) {
 		t.Fatalf("missing-path = %v, want %v", got, want)
 	}
@@ -297,6 +297,20 @@ func TestGitIgnoreNeedsReadableRevisionRules(t *testing.T) {
 	}
 	if len(rep.Skipped) != 1 || !strings.Contains(rep.Skipped[0], "boom") {
 		t.Fatalf("skipped = %v", rep.Skipped)
+	}
+}
+
+// Nothing below an ignored directory is re-included, while a negation under a non-ignored parent
+// works.
+func TestIgnoreCannotReincludeUnderIgnoredDir(t *testing.T) {
+	set := &ignoreSet{files: []ignoreFile{{rules: parseIgnore("build/\n!build/keep\n*.log\n!keep.log\n")}}}
+	for _, c := range []struct {
+		p   string
+		ign bool
+	}{{"build/keep", true}, {"build/keep/x", true}, {"sub/keep.log", false}, {"sub/other.log", true}} {
+		if got := set.ignored(c.p, false); got != c.ign {
+			t.Errorf("ignored(%q) = %v, want %v", c.p, got, c.ign)
+		}
 	}
 }
 
