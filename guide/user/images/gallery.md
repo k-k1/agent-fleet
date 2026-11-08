@@ -18,7 +18,7 @@ The gallery lays out a folder's pictures as cards so you can compare them. You s
 | Right-click a card | You can send it to a session, rename it, delete it and more |
 | Keep the gallery open while you work | New pictures join the grid, highlighted |
 
-![The image gallery. The header shows the folder and image counts and the total size (11 images, 12 MB), the sort switch and the tile size; below it the breadcrumb, then the "Up" card, a card for the trial folder and cards for the generated pictures](../../assets/images-gallery-en-light.webp)
+![The image gallery. The header shows the folder and image counts and the total size (1 folder, 11 images, 12 MB), the sort switch and the tile size; below it the breadcrumb, then the "Up" card, a card for the trial folder and cards for the generated pictures](../../assets/images-gallery-en-light.webp)
 
 ## Open the gallery
 

@@ -16,7 +16,7 @@ Say "read `docs/chars/aoi.md` and put her in a harbour at dusk", then "darker", 
 |---|---|
 | Attach an agent to the studio | Receives its role and reads the draft with the studio's tools |
 | Say what you want drawn | Reads the material and rewrites the prompt and settings |
-| Press the trial and enqueue buttons | Runs one trial of the current draft, only when asked |
+| Ask for a trial in the conversation | Runs one trial of the current draft, only when asked |
 | Say what you think of the results | Uses it for the next rewrite; records it in the knowledge notes when asked |
 
 - **You are always the one who presses generate.** The agent never draws picture after picture on its own
@@ -44,7 +44,7 @@ The dialog asks what starting a session asks.
 |---|---|
 | Execution method | "**Terminal (CLI)**" or "**Managed**" |
 | Agent, "**Agent model**", effort, permission prompts | As when starting a session |
-| "**Image model**" | The draft's model. Prompts are written differently for each model, so it is chosen before you begin |
+| "**Image model**" | The draft's model. Prompts are written differently for each model, so you cannot start until one is chosen |
 | "**Repository (working folder)**" and subfolder | Where the agent reads its material. "**Home (no repository)**" can be chosen too |
 | "**Open in a worktree**" | The default depends on the working copy; see below |
 
@@ -113,7 +113,7 @@ You can lock (🔒, "**Lock (keep the agent from changing it)**") each field.
 | Enqueue N pictures | You only |
 
 - An agent's trial draws **exactly the draft on screen, once**. The agent has no say in what the trial uses
-- Turn the agent's trials off with "**Let the agent run a trial**" (on by default) in the gear's "**Studio settings**". The change applies from the agent's next trial
+- Turn the agent's trials off with "**Let the agent run a trial**" (on by default) in the gear's "**Studio settings**". The change applies from the agent's next trial. While it is off, the agent is told it is not allowed to run trials
 - In a studio session the agent cannot use the image generation tool (`generate_image`), so pictures are only made through this pane's buttons. An image tool of the CLI's own (codex's built-in one, for example) is outside this rule
 
 ## Go back to an earlier draft
@@ -156,7 +156,7 @@ There is one note per model and one per family, which the agent and you grow tog
 | Prompts | Ways of writing that work well |
 | Records | What you noticed, appended over time |
 
-- They live in `~/imagegen-knowledge/`, as `families/<family>.md` and `models/<model>.md`. That is outside `~/repos`, so Recreate does not remove them
+- They live in `~/imagegen-knowledge/`, as `families/<family>.md` and `models/<model>.md` (the family and model IDs). That is outside `~/repos`, so Recreate does not remove them
 - The agent writes only when told to remember something, or when you say what you think of a result. It writes only to the note of the model picked in the studio or of its family
 - Deleting is yours to do. They are ordinary files, so you can open and edit them from the file tree
 - Where the file tree does not show the whole home folder, edit all four sections in the pane's "Notes"
