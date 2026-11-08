@@ -123,7 +123,7 @@ explains them.
 | Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([09](../member/09-agents.md#muse-code)) |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
-| AWS profiles and SSM | member | AWS profiles/SSM ([16](../member/16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)) |
+| AWS profiles and SSM | member | AWS profiles/SSM ([Use AWS SSO](../user/integrations/aws-sso.md), [Log in to EC2 with SSM](../user/integrations/aws-ssm.md)) |
 | Google Cloud profiles | member | Google Cloud ([16](../member/16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)) |
 | Integration servers and tokens | member | MCP servers (used by sessions) / Outside access → MCP tokens & apps |
 | Connect a remote MCP client by signing in (OAuth, when the deployment enables it) — Connected apps, Recent calls | member | Outside access → MCP tokens & apps ([19](../member/19-outside-access.md#connecting-a-remote-mcp-client-by-signing-in-oauth)) |

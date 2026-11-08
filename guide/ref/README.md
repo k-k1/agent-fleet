@@ -21,6 +21,7 @@ fact has one copy, readable from four directions.
 | [limits.md](limits.md) | What is the default, and what is the ceiling? |
 | [cli/](cli/README.md) | What does this `af-` command do, and what are its options? |
 | [aws-profiles.md](aws-profiles.md) | What are the detailed rules for importing AWS profiles, shared sign-ins and roles? |
+| [aws-ssm.md](aws-ssm.md) | How is an SSM host's region chosen, and what are the rules for searching AWS and importing ~/.ssh/config? |
 | [bedrock-route.md](bedrock-route.md) | How do I run claude or opencode on Amazon Bedrock with an AWS profile, and why was a call refused? |
 | [glossary.md](glossary.md) | What is this word, on screen and in the code? |
 | [browser-pane.md](browser-pane.md) | How do I show a running web app to a person? |
