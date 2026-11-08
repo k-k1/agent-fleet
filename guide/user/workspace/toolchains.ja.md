@@ -88,7 +88,7 @@ Agent Fleet が入れた古い Node.js のパッチは、次にワークスペ�
 - 定期実行で起動したときのように、人が見ていない起動では更新しません。home ディスクの空きが少ないときも更新しません
 - この項目は、管理者が許可しているときだけ出ます
 
-Kiro と Muse Code はこの設定の対象外です。版はイメージで決まります（Muse Code は [Muse Code](../../member/09-agents.ja.md#muse-code) を参照）。
+Kiro と Muse Code はこの設定の対象外です。版はイメージで決まります（Muse Code は [Muse Code](../agents/muse.ja.md#更新する) を参照）。
 
 ## Agent Fleet を更新する
 

@@ -738,6 +738,53 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // Settings › Agents › the Claude Code card for the user guide's agent pages: connected, with the
+    // account, plan and expiry, and Re-authenticate / Disconnect. Behavior stays closed: open, the
+    // card is taller than the modal.
+    name: "agents-claude",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="claude"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      document.querySelector('.p-card[data-settings-target="claude"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Agent instructions: where the instructions go, one row per agent.
+    name: "agents-instructions",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: ".settings-modal .instr-targets",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "instructions",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      document.querySelector(".settings-modal .instr-targets")?.scrollIntoView({ block: "end" });
+    })()`,
+    settle: 2500,
+  },
+
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

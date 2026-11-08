@@ -123,7 +123,7 @@ header says the same four things for the engine it is about to use
 ([Generate images](../user/images/generate.md)).
 
 When you have set **your own llama.cpp connection** in ⚙ Settings → Agents
-([09](09-agents.md#lcpp)), the **Chat** pill reports that connection instead of the deployment's
+([09](../user/agents/lcpp.md#connect-to-your-own-llama-server)), the **Chat** pill reports that connection instead of the deployment's
 engine: **Connected**, **Not reachable** or **Checking**, and its popover says **"Your own
 connection. Not this deployment's engine."** together with the model the last check found
 (**"Model: …"**). With your own connection set and **"Use llama.cpp"** Off, no Chat pill is shown.

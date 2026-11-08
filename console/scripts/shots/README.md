@@ -94,7 +94,7 @@ Scenes marked `guide: true` are for the rewritten guide and the public docs site
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
 `aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `chat-settings`, `ops-settings`,
 `images-gallery`, `images-settings`, and the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
-`ws-databases`) runs on its own:
+`ws-databases`, and the agent pages' `agents-claude`, `agents-instructions`) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -108,6 +108,7 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only ops-sett
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-studio,images-form --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-gallery --out <dir>   # and images-settings
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only agents-claude --out <dir>  # and agents-instructions, one per run
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that

@@ -42,7 +42,7 @@ If a feature ships and does not appear here, it is not done
 | Share a session read-only | member | Shared sessions | [12 Working with others](../member/12-collaboration.md) |
 | Highlights | member | mirror, on a selection | [04 Conversation](../member/04-conversation.md) |
 | Changed files | member | strip under the mirror header | [04 Conversation](../member/04-conversation.md) |
-| Context usage gauge | member | session header | [09 Agents](../member/09-agents.md) |
+| Context usage gauge | member | session header | [09 Agents](../user/agents/usage.md#see-how-long-the-conversation-is) |
 | Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [04 Conversation](../member/04-conversation.md#reading-an-answer-in-your-own-language-translation) |
 | Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [Have a session make images](../user/images/from-session.md) |
 | Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [11 Running many sessions](../member/11-many-sessions.md#starting-sessions-from-a-session-child-sessions) |
@@ -106,7 +106,7 @@ If a feature ships and does not appear here, it is not done
 | Cleanup and the trash | member | Clean up | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
 | Keyboard system | member | Settings → Keyboard | [02 Console basics](../member/02-console-basics.md) |
 | Text-to-speech | member | Settings → Read aloud | [20 Settings](../member/20-settings.md) |
-| Skills views — each agent's skills, read-only: personal (Settings) and a repository's (project tree → Skills…) | member | Settings → Skills; repository row menu → Skills… | [20 Settings](../member/20-settings.md#skills); [09 Agents](../member/09-agents.md) |
+| Skills views — each agent's skills, read-only: personal (Settings) and a repository's (project tree → Skills…) | member | Settings → Skills; repository row menu → Skills… | [Bring your Claude Code setup](../user/agents/bring-claude-setup.md#check-your-skills) |
 
 ## Personal settings
 
@@ -121,7 +121,7 @@ explains them.
 | Agent Fleet shared memory management | member | Agent memory ([18](../member/18-agent-memory.md#agent-memory)) |
 | Version history of agents' own memory | member | Memory snapshots ([18](../member/18-agent-memory.md#memory-snapshots)) |
 | Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([18](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)) |
-| Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([09](../member/09-agents.md#muse-code)) |
+| Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([09](../user/agents/muse.md#behavior)) |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
 | AWS profiles and SSM | member | AWS profiles/SSM ([Use AWS SSO](../user/integrations/aws-sso.md), [Log in to EC2 with SSM](../user/integrations/aws-ssm.md)) |

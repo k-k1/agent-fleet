@@ -120,6 +120,11 @@ const exact = {
           slack: { connected: false },
         }
       : {}),
+    // The agent pages of the user guide (SHOT_AGENTS_GUIDE): a Claude card that shows its account,
+    // plan and expiry. Every other scene keeps the bare "connected" it was taken with.
+    ...(process.env.SHOT_AGENTS_GUIDE
+      ? { claude: { connected: true, email: "demo@example.com", plan: "max", days_left: 12 } }
+      : {}),
     ...(process.env.SHOT_OPS
       ? {
           pagerduty: { connected: true },
@@ -399,6 +404,14 @@ const exact = {
       "8080": "https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com",
     },
   }),
+  // Settings › Agents (the Claude card's behavior) and Settings › Agent instructions for the user
+  // guide's agent pages, served only to a run that asks (SHOT_AGENTS_GUIDE).
+  ...(process.env.SHOT_AGENTS_GUIDE
+    ? {
+        "/api/claude/settings": () => fx.agentsGuideClaudeSettings(),
+        "/api/user-notes": () => fx.agentsGuideUserNotes(LOCALE),
+      }
+    : {}),
   // Settings › Machine, Toolchains and Databases for the user guide's workspace pages, served only
   // to a run that asks (SHOT_WS_GUIDE): without it these tabs stay as empty as they always were.
   ...(process.env.SHOT_WS_GUIDE

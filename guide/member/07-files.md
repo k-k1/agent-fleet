@@ -217,7 +217,7 @@ the source).
 when nothing is selected). Write the instruction, generate with **Ctrl+Enter**, review the diff
 and choose **Apply** or **Reject**; nothing is rewritten on its own (if the text moved on after
 generation, it tells you to regenerate). The tokens it spends are recorded in ⚙ Settings → Agent usage
-as **"Edit suggestions (editor)"** ([20](20-settings.md#agent-usage)).
+as **"Edit suggestions (editor)"** ([20](../user/agents/usage.md#see-what-your-tokens-went-on)).
 
 ## Send a file to a session / chat
 

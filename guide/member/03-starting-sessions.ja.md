@@ -15,18 +15,18 @@ audience: "AI との会話を始め、追いかけるすべての人"
 
 - **claude**：Claude Code を起動。
 - **codex**：Codex を起動。
-- **cursor**：Cursor を起動（Cursor プランが必要。接続すると並びます。[09](09-agents.ja.md)）。
-- **copilot**：GitHub Copilot を起動（GitHub 連携に相乗り。[09](09-agents.ja.md)）。
-- **kiro**：Kiro を起動（デバイスフローのログインが必要。接続すると並びます。[09](09-agents.ja.md)）。
+- **cursor**：Cursor を起動（Cursor プランが必要。接続すると並びます。[09](../user/agents/cursor.ja.md)）。
+- **copilot**：GitHub Copilot を起動（GitHub 連携に相乗り。[09](../user/agents/copilot.ja.md)）。
+- **kiro**：Kiro を起動（デバイスフローのログインが必要。接続すると並びます。[09](../user/agents/kiro.ja.md)）。
 - **agy**：Antigravity を起動（実験枠。接続すると並びます）。
 - **opencode**：OpenCode を起動。
 - **lcpp**：フリート自前の llama.cpp エンジンをマネージドのセッションとして起動（ログイン不要。
-  ⚙設定 → エージェントの **「llama.cpp を使う」** がオンのあいだ「はじめる」に並びます。[09](09-agents.ja.md#lcpp)）。
-- **muse**：Muse Code をマネージドのセッションとして起動（導入してログインすると並びます。[09](09-agents.ja.md#muse-code)）。
+  ⚙設定 → エージェントの **「llama.cpp を使う」** がオンのあいだ「はじめる」に並びます。[09](../user/agents/lcpp.ja.md)）。
+- **muse**：Muse Code をマネージドのセッションとして起動（導入してログインすると並びます。[09](../user/agents/muse.ja.md)）。
 - **shell**：通常のシェル（bash）。「はじめる」からすぐ開けます。
 
 claude / codex / cursor / opencode / copilot / kiro / agy は、対応するエージェントを接続すると「はじめる」に並びます
-（接続は [09 エージェント](09-agents.ja.md)）。lcpp と muse は自前の端末を持たず、常にマネージドで
+（接続は [09 エージェント](../user/agents/choose.ja.md)）。lcpp と muse は自前の端末を持たず、常にマネージドで
 動きます。（別ホストへ入る **ssm** は
 [16 クラウドのアカウント](16-cloud-accounts.ja.md)。）
 

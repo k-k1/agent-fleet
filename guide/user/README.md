@@ -10,6 +10,24 @@ English | [日本語](README.ja.md)
 Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
 Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
 
+## Agents
+
+| Page | What you can do |
+|---|---|
+| [Choose an agent](agents/choose.md) | Pick and connect the agents that match your subscriptions, and set default and excluded models |
+| [Connect Claude](agents/claude.md) | Run Claude Code in sessions, and use Remote control |
+| [Connect Codex](agents/codex.md) | Run Codex on a ChatGPT subscription or an API key |
+| [Connect OpenCode](agents/opencode.md) | Switch between models from many providers with OpenCode |
+| [Connect GitHub Copilot](agents/copilot.md) | Run the Copilot CLI on your GitHub connection alone |
+| [Connect Cursor](agents/cursor.md) | Run the Cursor CLI on your Cursor account |
+| [Connect Kiro](agents/kiro.md) | Install Kiro and run it on a Builder ID or similar |
+| [Connect Antigravity](agents/agy.md) | Run the Antigravity CLI on a Google account (experimental) |
+| [Connect Muse Code](agents/muse.md) | Install Muse Code and run it on a Meta account or an API key |
+| [Use lcpp](agents/lcpp.md) | Run sessions on the deployment's llama.cpp engine or your own llama-server |
+| [Check prices and usage](agents/usage.md) | See model list prices, what is left of your allowance and what your tokens went on; save with RTK |
+| [Write down how you work, once](agents/instructions.md) | Write your standing requests once so that every agent gets them |
+| [Bring your Claude Code setup](agents/bring-claude-setup.md) | Use your own skills, subagents and hooks in the workspace |
+
 ## Integrations
 
 | Page | What you can do |

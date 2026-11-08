@@ -41,7 +41,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | セッションの読み取り共有 | メンバー | 共有セッション | [12 他の人と扱う](../member/12-collaboration.ja.md) |
 | マーカー | メンバー | ミラーの選択範囲 | [04 会話](../member/04-conversation.ja.md) |
 | 変更ファイル | メンバー | ミラーのヘッダ下の帯 | [04 会話](../member/04-conversation.ja.md) |
-| コンテキスト使用量ゲージ | メンバー | セッションのヘッダ | [09 エージェント](../member/09-agents.ja.md) |
+| コンテキスト使用量ゲージ | メンバー | セッションのヘッダ | [09 エージェント](../user/agents/usage.ja.md#会話の長さを見る) |
 | 回答を自分の言語で読む（翻訳・ターンを使わない）| メンバー | ミラーの回答の下 | [04 会話](../member/04-conversation.ja.md#回答を自分の言語で読む翻訳) |
 | セッションに画像を作らせる（`generate_image`）| メンバー | スタジオに付けたセッション以外で、頼むだけ | [セッションに画像を作らせる](../user/images/from-session.ja.md) |
 | セッションから別のセッションを起こす（子セッション）— 別のエージェントに仕事を渡し、起こしたものの面倒を見る | メンバー | 設定 → エージェント → セッション、あとはどのセッションでも頼むだけ | [11 たくさんのセッションを動かす](../member/11-many-sessions.ja.md#セッションから別のセッションを起こす子セッション) |
@@ -105,7 +105,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 掃除とごみ箱 | メンバー | 掃除 | [05 止める・片付ける](../member/05-stopping-and-tidying.ja.md) |
 | キーボード操作体系 | メンバー | 設定 → キー操作 | [02 Console の基本](../member/02-console-basics.ja.md) |
 | 音声読み上げ | メンバー | 設定 → 読み上げ | [20 設定](../member/20-settings.ja.md) |
-| スキルの表示 — 各エージェントのスキルを読み取り専用で（個人は設定、リポジトリのものはプロジェクトツリー → スキル…） | メンバー | 設定 → スキル、リポジトリ行のメニュー → スキル… | [20 設定](../member/20-settings.ja.md#スキル)、[09 エージェント](../member/09-agents.ja.md) |
+| スキルの表示 — 各エージェントのスキルを読み取り専用で（個人は設定、リポジトリのものはプロジェクトツリー → スキル…） | メンバー | 設定 → スキル、リポジトリ行のメニュー → スキル… | [手元の Claude Code の設定を持ち込む](../user/agents/bring-claude-setup.ja.md#スキルを確かめる) |
 
 ## 自分の設定
 
@@ -119,7 +119,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | Agent Fleet 共有メモリの管理 | メンバー | エージェントメモリ（[18](../member/18-agent-memory.ja.md#エージェントメモリ)） |
 | エージェント自前のメモリの版管理 | メンバー | メモリのスナップショット（[18](../member/18-agent-memory.ja.md#メモリのスナップショット)） |
 | Agent Fleet の外のエージェントから Agent Fleet のメモリを使う（既定はオフ）| メンバー | エージェントメモリ → 設定（[18](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う)） |
-| Muse Code の contributor モード（既定はオフ）| メンバー | エージェント → Muse Code → 動作（[09](../member/09-agents.ja.md#muse-code)）
+| Muse Code の contributor モード（既定はオフ）| メンバー | エージェント → Muse Code → 動作（[09](../user/agents/muse.ja.md#動作設定)）
 | Git ホスティングの接続 | メンバー | Git ホスティング |
 | 内部リポジトリ | メンバー | 内部リポジトリ |
 | AWS プロファイルと SSM | メンバー | AWS プロファイル/SSM（[AWS SSO を使う](../user/integrations/aws-sso.ja.md)、[SSM で EC2 にログインする](../user/integrations/aws-ssm.ja.md)） |

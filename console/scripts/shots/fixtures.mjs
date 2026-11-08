@@ -2338,3 +2338,45 @@ export function wsGuideDatabases() {
     ],
   };
 }
+
+// ---- user guide: the agent pages (SHOT_AGENTS_GUIDE in server.mjs) ----
+// The Claude card's behavior toggles, in the shape GET api/claude/settings answers.
+export function agentsGuideClaudeSettings() {
+  return {
+    remoteControlAtStartup: false,
+    agentPushNotifEnabled: true,
+    idleCompaction: true,
+    rtk_available: true,
+    rtk_enabled: true,
+  };
+}
+
+// Settings › Agent instructions: a short body and one row per agent kind, with Cursor unsupported
+// and lcpp taking it through the system prompt. Paths are where each kind's driver writes them.
+export function agentsGuideUserNotes(locale) {
+  const ja = locale === "ja";
+  const text = ja
+    ? "報告は日本語で、結論から書いてください。\n破壊的な操作（force push・削除）の前は、必ず確認してください。\nテストを足したら、実行した結果も報告に入れてください。\n"
+    : "Report in English, conclusion first.\nAlways confirm before anything destructive (force push, deletion).\nWhen you add tests, include the run's result in your report.\n";
+  const bytes = new TextEncoder().encode(text).byteLength;
+  const row = (kind, delivery, path) => ({ kind, supported: true, delivery, path, on: true, applied: true });
+  return {
+    text,
+    bytes,
+    max_bytes: 8192,
+    enabled: true,
+    path: "/home/dev/.config/agent-fleet/user-notes.md",
+    fleet_bytes: 9100,
+    targets: [
+      row("claude", "file", "/var/lib/af/claude/CLAUDE.md"),
+      row("codex", "compose", "/home/dev/.codex/AGENTS.md"),
+      { kind: "cursor", supported: false, reason: "no_user_scope", on: false, applied: false },
+      row("agy", "compose", "/home/dev/.gemini/AGENTS.md"),
+      row("copilot", "file", "/home/dev/.copilot/instructions/agent-fleet-user.instructions.md"),
+      row("kiro", "file", "/home/dev/.kiro/steering/agent-fleet-user.md"),
+      row("opencode", "compose", "/home/dev/.config/opencode/AGENTS.md"),
+      { kind: "lcpp", supported: true, delivery: "prompt", on: true, applied: true },
+      row("muse", "compose", "/home/dev/.config/muse/AGENTS.md"),
+    ],
+  };
+}

@@ -18,19 +18,19 @@ with its own independent conversation and working folder.
 
 - **claude**: launches Claude Code.
 - **codex**: launches Codex.
-- **cursor**: launches Cursor (needs a Cursor plan; appears once connected; [09](09-agents.md)).
-- **copilot**: launches GitHub Copilot (rides on the GitHub connection; [09](09-agents.md)).
-- **kiro**: launches Kiro (needs a device-flow sign-in; appears once connected; [09](09-agents.md)).
+- **cursor**: launches Cursor (needs a Cursor plan; appears once connected; [09](../user/agents/cursor.md)).
+- **copilot**: launches GitHub Copilot (rides on the GitHub connection; [09](../user/agents/copilot.md)).
+- **kiro**: launches Kiro (needs a device-flow sign-in; appears once connected; [09](../user/agents/kiro.md)).
 - **agy**: launches Antigravity (experimental slot; appears once connected).
 - **opencode**: launches OpenCode.
 - **lcpp**: the fleet's own llama.cpp engine, run as a Managed session (no sign-in; it is in "Start"
-  while **"Use llama.cpp"** is On in ⚙ Settings → Agents; [09](09-agents.md#lcpp)).
+  while **"Use llama.cpp"** is On in ⚙ Settings → Agents; [09](../user/agents/lcpp.md)).
 - **muse**: launches Muse Code as a Managed session (appears once Muse Code is installed and you are
-  signed in; [09](09-agents.md#muse-code)).
+  signed in; [09](../user/agents/muse.md)).
 - **shell**: a plain shell (bash). Opens right away from "Start".
 
 claude / codex / cursor / opencode / copilot / kiro / agy appear in "Start" once you connect the corresponding
-agent (connections: [09 Agents](09-agents.md)). lcpp and muse have no terminal of their own and always
+agent (connections: [09 Agents](../user/agents/choose.md)). lcpp and muse have no terminal of their own and always
 run Managed. (**ssm**, which logs in to another host, is
 covered in [16 Cloud accounts](16-cloud-accounts.md).)
 
