@@ -333,13 +333,8 @@
   font-size: 11px;
   line-height: 1.4;
 }
-/* The rail's caption row grows a button that opens the overview. */
-.lm-cap {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-}
+/* The rail's caption row grows a button that opens the overview. (`.lm-cap` itself is in
+   app/app.css.) */
 .lm-cap-actions {
   display: flex;
   align-items: center;

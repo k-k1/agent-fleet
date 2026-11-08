@@ -17,14 +17,8 @@
      long-press from turning a swipe-scroll into a selection. */
   user-select: none;
 }
-/* Make the file view an inline-size container so its minimap can shrink when the
-   pane is narrow (split panes), where a fixed 110px eats too much of the code
-   width. Both names stay on the element: a bare `container: filepane` here would
-   drop the `paneview` name set above (line 11) and the @container paneview
-   queries (header collapse, .file-mine-remote-diff below) would stop matching. */
-.fileview {
-  container: paneview filepane / inline-size;
-}
+/* The `filepane` container (set on .fileview in shell.css) lets the minimap shrink when the
+   pane is narrow (split panes), where a fixed 110px eats too much of the code width. */
 @container filepane (max-width: 460px) {
   .fileview .minimap {
     width: 72px;
