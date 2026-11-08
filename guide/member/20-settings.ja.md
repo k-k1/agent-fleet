@@ -299,7 +299,7 @@ claude / codex / opencode / GitHub Copilot / Cursor / Kiro（と実験枠の Ant
 
 GitHub / Bitbucket の連携です（clone / push の認証）。**GitHub の連携は GitHub Copilot の接続も兼ねます**。
 同じ連携で、各セッションの `gh`（Bitbucket Cloud なら `bkt` も）にサインイン済みになります
-（[GitHub・Bitbucket の CLI を使う](../user/integrations/gh-bkt.ja.md)）。GitHub が接続を更新できないときは、タブに「GitHub の接続を更新できませんでした。
+（[GitHub の CLI を使う](../user/integrations/github-cli.ja.md)、[Bitbucket の CLI を使う](../user/integrations/bitbucket-cli.ja.md)）。GitHub が接続を更新できないときは、タブに「GitHub の接続を更新できませんでした。
 認可が期限切れになったか、取り消されています。切断してから、もう一度 GitHub に接続してください。」と出ます。
 Jira と Bitbucket の接続は、開始した本人の Console セッションでだけ完了します。別のアカウントでサインインしている、
 またはセッションが切れているときは何も保存されません。本人としてサインインし直して、もう一度接続してください。

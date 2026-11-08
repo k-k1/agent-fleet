@@ -10,7 +10,8 @@ What this chapter covered now lives on one page per task. AWS and Google Cloud a
 
 | What you want to do | Page |
 |---|---|
-| Have agents handle pull requests with `gh` and `bkt` | [Use the GitHub and Bitbucket CLIs](../user/integrations/gh-bkt.md) |
+| Have agents handle GitHub pull requests with `gh` | [Use the GitHub CLI](../user/integrations/github-cli.md) |
+| Have agents handle Bitbucket pull requests and pipelines with `bkt` | [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md) |
 | Have agents handle Jira issues | [Use Jira](../user/integrations/jira.md) |
 | Have agents handle Confluence pages | [Use Confluence](../user/integrations/confluence.md) |
 | Look up the CLIs that need no login | [Commands](../ref/cli/README.md#clis-that-are-already-signed-in) |

@@ -56,7 +56,7 @@ If a feature ships and does not appear here, it is not done
 | Start from an empty folder | member | Repositories → new folder | [06 Repositories and git](../member/06-code.md) |
 | Commit graph, diff, stage and commit | member | Commit graph | [06 Repositories and git](../member/06-code.md) |
 | Worktrees | member | under each repository | [06 Repositories and git](../member/06-code.md) |
-| Use `gh` and `bkt` in a session, already signed in | member | any session | [Use the GitHub and Bitbucket CLIs](../user/integrations/gh-bkt.md); the list of signed-in CLIs is in [Commands](cli/README.md#clis-that-are-already-signed-in) |
+| Use `gh` and `bkt` in a session, already signed in | member | any session | [Use the GitHub CLI](../user/integrations/github-cli.md), [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md); the list of signed-in CLIs is in [Commands](cli/README.md#clis-that-are-already-signed-in) |
 | Use `jira` in a session, already signed in | member | any session | [Use Jira](../user/integrations/jira.md) |
 | Use `confluence` in a session, already signed in (the Jira connection) | member | any session | [Use Confluence](../user/integrations/confluence.md) |
 | Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [Use Jira](../user/integrations/jira.md#ask-an-agent) |

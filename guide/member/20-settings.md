@@ -307,7 +307,7 @@ limit resets, and auto-resume of an interrupted turn.
 
 GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
 The same connection signs in `gh`, and for Bitbucket Cloud `bkt`, in every session
-([Use the GitHub and Bitbucket CLIs](../user/integrations/gh-bkt.md)). If GitHub cannot renew the connection, the tab says
+([Use the GitHub CLI](../user/integrations/github-cli.md), [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md)). If GitHub cannot renew the connection, the tab says
 "GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub
 again."
 Jira and Bitbucket connections finish only in the Console session of the member who started them. If the browser

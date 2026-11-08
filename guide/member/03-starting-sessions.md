@@ -197,7 +197,7 @@ workspace is stopped.
   branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
   nothing is written for you. On a Bitbucket pull request the button appears only when the
   connection is known to hold the pull request write scope (`pullrequest:write`; see
-  [Bitbucket scopes](../user/integrations/gh-bkt.md#bitbucket-scopes)); otherwise Agent Fleet only reads from Bitbucket.
+  [Bitbucket scopes](../user/integrations/bitbucket-cli.md#scopes)); otherwise Agent Fleet only reads from Bitbucket.
 - A session is linked to more than the ticket it was started from. A session started by another
   session watches its parent's tickets; an agent that names its branch after a ticket with
   `branch_name` is working on it. The pull request of a session's branch is linked to it, and so

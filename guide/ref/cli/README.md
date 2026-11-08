@@ -26,8 +26,8 @@ them in from the terminal, and an expiring token is renewed on use.
 | Command | Connection it uses | Details |
 |---|---|---|
 | `git` | **Git hosting** (GitHub, Bitbucket) | [Repositories and git](../../member/06-code.md#connect-a-git-provider) |
-| `gh` | **Git hosting**, GitHub | [Use the GitHub and Bitbucket CLIs](../../user/integrations/gh-bkt.md) |
-| `bkt` | **Git hosting**, Bitbucket Cloud (bitbucket.org) | [Use the GitHub and Bitbucket CLIs](../../user/integrations/gh-bkt.md) |
+| `gh` | **Git hosting**, GitHub | [Use the GitHub CLI](../../user/integrations/github-cli.md) |
+| `bkt` | **Git hosting**, Bitbucket Cloud (bitbucket.org) | [Use the Bitbucket CLI](../../user/integrations/bitbucket-cli.md) |
 | `jira` | **Issue tracker**, Jira | [Use Jira](../../user/integrations/jira.md) |
 | `confluence` | **Issue tracker**, Jira (the same Atlassian connection) | [Use Confluence](../../user/integrations/confluence.md) |
 | `af-aws-exec --profile <name> -- <command>` | **AWS profiles/SSM**, after you log in to the profile | [af-aws-exec](af-aws-exec.md) |

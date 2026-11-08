@@ -25,8 +25,8 @@ source_of_truth: "各コマンドの --help"
 | コマンド | 使う接続 | 詳しく |
 |---|---|---|
 | `git` | **Git ホスティング**（GitHub、Bitbucket） | [リポジトリと git](../../member/06-code.ja.md#git-プロバイダを接続する) |
-| `gh` | **Git ホスティング**の GitHub | [GitHub・Bitbucket の CLI を使う](../../user/integrations/gh-bkt.ja.md) |
-| `bkt` | **Git ホスティング**の Bitbucket Cloud（bitbucket.org） | [GitHub・Bitbucket の CLI を使う](../../user/integrations/gh-bkt.ja.md) |
+| `gh` | **Git ホスティング**の GitHub | [GitHub の CLI を使う](../../user/integrations/github-cli.ja.md) |
+| `bkt` | **Git ホスティング**の Bitbucket Cloud（bitbucket.org） | [Bitbucket の CLI を使う](../../user/integrations/bitbucket-cli.ja.md) |
 | `jira` | **課題管理**の Jira | [Jira を使う](../../user/integrations/jira.ja.md) |
 | `confluence` | **課題管理**の Jira（同じ Atlassian 接続） | [Confluence を使う](../../user/integrations/confluence.ja.md) |
 | `af-aws-exec --profile <名前> -- <コマンド>` | **AWS プロファイル/SSM**。プロファイルにログインしたあと | [af-aws-exec](af-aws-exec.ja.md) |

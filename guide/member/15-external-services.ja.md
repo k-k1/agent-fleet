@@ -10,7 +10,8 @@ audience: "セッションをワークスペースの外のサービスとつな
 
 | やりたいこと | ページ |
 |---|---|
-| エージェントに `gh` や `bkt` でプルリクエストを扱ってもらう | [GitHub・Bitbucket の CLI を使う](../user/integrations/gh-bkt.ja.md) |
+| エージェントに `gh` で GitHub のプルリクエストを扱ってもらう | [GitHub の CLI を使う](../user/integrations/github-cli.ja.md) |
+| エージェントに `bkt` で Bitbucket のプルリクエストやパイプラインを扱ってもらう | [Bitbucket の CLI を使う](../user/integrations/bitbucket-cli.ja.md) |
 | エージェントに Jira の課題を扱ってもらう | [Jira を使う](../user/integrations/jira.ja.md) |
 | エージェントに Confluence のページを扱ってもらう | [Confluence を使う](../user/integrations/confluence.ja.md) |
 | ログインなしで使える CLI を調べる | [コマンド](../ref/cli/README.ja.md#サインイン済みの-cli) |

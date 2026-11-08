@@ -55,7 +55,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [06 リポジトリと git](../member/06-code.ja.md) |
 | コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [06 リポジトリと git](../member/06-code.ja.md) |
 | worktree | メンバー | 各リポジトリの下 | [06 リポジトリと git](../member/06-code.ja.md) |
-| サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [GitHub・Bitbucket の CLI を使う](../user/integrations/gh-bkt.ja.md)。サインイン済みの CLI の一覧は [コマンド](cli/README.ja.md#サインイン済みの-cli) |
+| サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [GitHub の CLI を使う](../user/integrations/github-cli.ja.md)、[Bitbucket の CLI を使う](../user/integrations/bitbucket-cli.ja.md)。サインイン済みの CLI の一覧は [コマンド](cli/README.ja.md#サインイン済みの-cli) |
 | サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md) |
 | サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [Confluence を使う](../user/integrations/confluence.ja.md) |
 | Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
