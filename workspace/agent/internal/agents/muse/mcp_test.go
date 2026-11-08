@@ -289,3 +289,92 @@ func TestBuiltinAFCarriesItsOwnSessionName(t *testing.T) {
 		t.Errorf("an unnamed session's af server was given AF_SESSION_NAME=%q", v)
 	}
 }
+
+// resumeCapture makes the host answer session/resume and hands back what it was sent.
+func resumeCapture(t *testing.T, host *msptest.Host) <-chan msp.SessionResumeParams {
+	t.Helper()
+	ch := make(chan msp.SessionResumeParams, 1)
+	host.Handle(msp.MethodSessionResume, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.SessionResumeParams
+		if err := json.Unmarshal(m.Params, &p); err != nil {
+			t.Errorf("session/resume params: %v", err)
+		}
+		ch <- p
+		return map[string]any{
+			"session": map[string]any{
+				"sessionId": "01a0c1d6-0000-7000-8000-0000000000c8", "path": "/tmp/s.jsonl",
+				"status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 1,
+			},
+			"history": map[string]any{"mode": "inline", "items": []any{}}, "pendingRequests": []any{}, "viewCursor": "c1",
+		}, nil
+	})
+	return ch
+}
+
+// A reopened session is the common case, not the edge: every idle stop ends the host, and the
+// next prompt resumes the stored session in a new one. The host does not keep a session's MCP
+// config across processes (measured: the resumed run's toolset held muse's built-ins only), so
+// a resume without the servers leaves the session with no af tool at all — it cannot report,
+// message a peer or read its memory, and tells its user the tools "do not exist".
+func TestSessionResumeCarriesTheRegistrysServers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/bin/true",
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindMuse},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c3", sessionMCP: true}
+	host := newTestHandle(t, h)
+	writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000c8", Path: "/tmp/s.jsonl"})
+	sent := resumeCapture(t, host)
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	p := <-sent
+	if p.SessionID != "01a0c1d6-0000-7000-8000-0000000000c8" {
+		t.Fatalf("resumed %q, not the stored session", p.SessionID)
+	}
+	if p.Config == nil {
+		t.Fatal("session/resume carried no MCP servers: the reopened session has none of af's tools")
+	}
+	if _, ok := p.Config.MCPServers["wiki"]; !ok {
+		t.Errorf("servers = %+v", p.Config.MCPServers)
+	}
+	// The builtin af server is the one whose absence was observed, and the one that must be
+	// told which session it serves.
+	var af *msp.SessionMCPServerConfig
+	for name, cfg := range p.Config.MCPServers {
+		if name == mcpreg.AFServerName() {
+			c := cfg
+			af = &c
+		}
+	}
+	if af == nil {
+		t.Fatalf("the af server is not on the resume: %+v", p.Config.MCPServers)
+	}
+	if af.Env[agents.SessionNameEnvVar] != h.name {
+		t.Errorf("af server on resume serves %q, want %q", af.Env[agents.SessionNameEnvVar], h.name)
+	}
+}
+
+// The grant rule holds on the resume path as well: a host that did not grant `sessionMcp` gets
+// no config there either.
+func TestNoServersOnResumeWithoutTheGrant(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c4"} // sessionMCP false
+	host := newTestHandle(t, h)
+	writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000c8", Path: "/tmp/s.jsonl"})
+	sent := resumeCapture(t, host)
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	if p := <-sent; p.Config != nil {
+		t.Errorf("servers were sent on resume to a host that did not grant sessionMcp: %+v", p.Config)
+	}
+}

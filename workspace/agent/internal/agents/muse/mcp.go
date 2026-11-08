@@ -3,8 +3,9 @@ package muse
 // Integration (MCP) servers, on the wire (ADR 0095 decision 11).
 //
 // muse is the first kind whose servers AF does not WRITE anywhere. Every other kind gets a
-// native config file that `mcpreg` materialises; here they ride `session/start.config.mcpServers`,
-// which gate B1-4 measured end to end: with `sessionMcp` requested and granted, a stdio server
+// native config file that `mcpreg` materialises; here they ride `session/start.config.mcpServers`
+// — and `session/resume`'s, because the host forgets them with its process — which gate
+// B1-4 measured end to end: with `sessionMcp` requested and granted, a stdio server
 // passed only on the wire logged muse's own handshake (`clientInfo {"name":"tbh"}`, MCP
 // 2025-06-18), received `MUSE_SESSION_ID` and the config's `env` additions, and its tool reached
 // the model as `mcp__<server>.<tool>`. `MUSE_ENABLE_SESSION_MCP` is not needed.
