@@ -41,9 +41,10 @@ type PR struct {
 	// issues a PR closes, as "owner/repo#N") and never leave the Agent: the row does not draw them.
 	Title  string   `json:"-"`
 	Closes []string `json:"-"`
-	// Mergeable ("MERGEABLE", "CONFLICTING", "UNKNOWN" while GitHub computes it), ReviewDecision
-	// ("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", or "" when no review is required) and
-	// Head (the head commit) decide the ready-to-merge notification; GitHub only, never on the wire.
+	// Mergeable ("MERGEABLE", "CONFLICTING", "UNKNOWN" while GitHub computes it or a Bitbucket
+	// conflict read failed), ReviewDecision ("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED",
+	// or "" when no review is required; Bitbucket never says ""), and Head (the head commit)
+	// decide the ready-to-merge notification. Never on the wire.
 	Mergeable      string `json:"-"`
 	ReviewDecision string `json:"-"`
 	Head           string `json:"-"`
@@ -67,6 +68,10 @@ type PR struct {
 	// rollup says "failure" as soon as one check fails, and a notice sent then would name the
 	// first failure of several. Never on the wire.
 	ChecksPending bool `json:"-"`
+	// ChecksDigest fingerprints every check of the head with its state and update time
+	// (Bitbucket; "" on GitHub, whose watch source reads REST itself), so a re-run on the same
+	// commit is a new result for a watch. Never on the wire.
+	ChecksDigest string `json:"-"`
 }
 
 // Check is one failed check of a PR's head commit. URL is the provider's, unchecked: whoever
@@ -186,6 +191,16 @@ type Cache struct {
 	entries   map[Key]*entry
 	inflight  bool
 	holdUntil time.Time
+	// watched is when Fetch last asked about a key: a PR a watch reads.
+	watched map[Key]time.Time
+}
+
+// watchedRecently reports whether a watch read k within the last hour.
+func (c *Cache) watchedRecently(k Key) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	at, ok := c.watched[k]
+	return ok && time.Since(at) < forgetAfter
 }
 
 // errUnauthorized marks a 401 from the API: the token was rejected.
@@ -342,6 +357,19 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	if len(keys) > c.batch {
 		return nil, fmt.Errorf("at most %d keys per fetch", c.batch)
 	}
+	c.mu.Lock()
+	if c.watched == nil {
+		c.watched = map[Key]time.Time{}
+	}
+	for k, at := range c.watched {
+		if time.Since(at) >= forgetAfter {
+			delete(c.watched, k)
+		}
+	}
+	for _, k := range keys {
+		c.watched[k] = time.Now()
+	}
+	c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

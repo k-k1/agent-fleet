@@ -351,8 +351,11 @@ conflict, the pull request becoming ready to merge, being merged or closed, a re
 for changes, or new unresolved review threads. `list_watches` shows its watches and `unwatch` ends one. This needs no setting:
 the agent decides when to use it.
 
-- **GitHub only for now.** The pull request is read with your GitHub connection, so an agent
-  can only watch what your connection can read.
+- **GitHub and Bitbucket.** The pull request is read with your own connection, so an agent can
+  only watch what your connection can read. On Bitbucket, new unresolved review threads cannot
+  be watched (Bitbucket does not report which threads are resolved), a pull request counts as
+  ready to merge only once someone approved it, and a watched pull request is read about every
+  5 minutes, to stay within Bitbucket's hourly request limit.
 - **When it is told.** As with PR feedback, only once the session is idle and can take input,
   and **a stopped session is started and then told**, one at a time. A condition that already
   holds when the agent asks is told at once.

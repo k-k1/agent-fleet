@@ -71,7 +71,9 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 	}
 	prFeedback = &prFeedbackState{}
 	ow := prFeedbackWatched
-	prFeedbackWatched = func(name, linkKey, typ string) bool { return f.watched[name+"|"+linkKey+"|"+typ] }
+	prFeedbackWatched = func(name, provider, linkKey, typ string) bool {
+		return provider == "github" && f.watched[name+"|"+linkKey+"|"+typ]
+	}
 	f.watched = map[string]bool{}
 	t.Cleanup(func() { prFeedbackWatched = ow })
 	t.Cleanup(func() {
