@@ -49,9 +49,9 @@ func reviewEntries(ms []memoryx.ConsolMemory) []memoryx.ReviewEntry {
 }
 
 // BuildTopics groups observations. An observation's topic is its suspect memory when that memory
-// exists in the scope; an exported create that names a memory that does not exist is attached to
-// the best-ranked existing memory when one shares words with it, and otherwise is a topic of its
-// own. The result is ordered by topic id, so the same inputs always give the same topics.
+// exists in the scope; an exported proposal (of any op) that names a memory that does not exist is
+// attached to the best-ranked existing memory when one shares words with it, and otherwise is a
+// topic of its own. The result is ordered by topic id, so the same inputs always give the same topics.
 func BuildTopics(obs []Observation, memories map[string][]memoryx.ConsolMemory) []Topic {
 	byID := map[string]*Topic{}
 	for _, o := range obs {
@@ -123,7 +123,8 @@ func open(st *ObsState, memRev int) bool {
 	if st == nil {
 		return true
 	}
-	if st.Dropped >= maxDropped {
+	// The engine gave up on it at one revision; a changed memory is a new question.
+	if st.Dropped >= maxDropped && memRev == st.DroppedRev {
 		return false
 	}
 	if st.Covered == nil {

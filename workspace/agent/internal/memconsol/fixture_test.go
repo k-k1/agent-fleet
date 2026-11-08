@@ -28,6 +28,8 @@ type fakeStore struct {
 	mems      map[string][]memoryx.ConsolMemory // by ScopeKey
 	forgotten map[string]bool                   // ScopeKey + "/" + name
 	published []memoryx.ConsolItem
+	pubIDs    map[string]string // publish id -> commit
+	failAt    int               // 1-based Publish call that fails with a store error; 0 never
 	pubErr    error
 }
 
@@ -82,8 +84,30 @@ func (f *fakeStore) Publish(id string, it memoryx.ConsolItem, now time.Time) (me
 	if f.pubErr != nil {
 		return memoryx.ConsolPublished{}, f.pubErr
 	}
+	if f.failAt > 0 && len(f.published)+1 == f.failAt {
+		f.failAt = 0
+		return memoryx.ConsolPublished{}, errors.New("disk full")
+	}
 	f.published = append(f.published, it)
-	return memoryx.ConsolPublished{Commit: strings.Repeat("a", 40), Revision: it.Revision + 1}, nil
+	if f.pubIDs == nil {
+		f.pubIDs = map[string]string{}
+	}
+	commit := fmt.Sprintf("%040x", len(f.published))
+	f.pubIDs[id] = commit
+	// Publishing moves the memory on, as the real store does.
+	k := ScopeKey(it.Scope, it.ProjectID)
+	for i := range f.mems[k] {
+		if f.mems[k][i].Name == it.Name {
+			f.mems[k][i].Revision++
+		}
+	}
+	return memoryx.ConsolPublished{Commit: commit, Revision: it.Revision + 1}, nil
+}
+
+func (f *fakeStore) Published(id string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pubIDs[id], nil
 }
 
 func (f *fakeStore) Validate(scope, name, description, memType, body string) error {
@@ -225,3 +249,5 @@ func exported(n int, op, name, reason, body string, created time.Time) memreview
 }
 
 func exportPathForTest() string { return memreview.ExportPath() }
+
+func statStateFile() (os.FileInfo, error) { return os.Stat(statePath()) }

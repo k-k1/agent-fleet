@@ -76,6 +76,8 @@ type ObsState struct {
 	// Dropped counts engine answers about it that failed validation; at maxDropped it is left
 	// alone until the evidence changes (a changed note is a different id).
 	Dropped int `json:"dropped,omitempty"`
+	// DroppedRev is the revision of its memory when it was last dropped.
+	DroppedRev int `json:"droppedRev,omitempty"`
 }
 
 const maxDropped = 2
@@ -91,6 +93,9 @@ type TriggerState struct {
 	// StoppedGap is set when a tick found the previous one far in the past (the workspace was
 	// stopped or the Agent was down); cleared by the next run.
 	StoppedGap bool `json:"stoppedGap,omitempty"`
+	// LastStamp is when the trigger last recorded first sightings of observations, so a wait
+	// that began while no run was possible still counts from when the reason appeared.
+	LastStamp time.Time `json:"lastStamp,omitempty"`
 }
 
 // State is the consolidator's own bookkeeping, one file under Dir. It never holds memory text.

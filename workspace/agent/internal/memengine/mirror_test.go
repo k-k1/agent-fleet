@@ -12,7 +12,8 @@ import (
 // ../../../../memengine cannot be a `replace` target. This directory is that module's non-test
 // sources, copied by scripts/sync-memengine.sh; the test makes a drifting copy a red build. Where
 // the engine directory is not there (a build context of workspace/ only) there is nothing to
-// compare with and the test skips.
+// compare with and the test skips. It compares the top-level non-test .go files only: the
+// engine's cmd/ and internal/ (the gold-set tooling) are deliberately not mirrored.
 func TestMirrorMatchesEngine(t *testing.T) {
 	src := filepath.Join("..", "..", "..", "..", "memengine")
 	ents, err := os.ReadDir(src)

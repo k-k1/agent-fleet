@@ -83,6 +83,26 @@ func tickInterval() time.Duration {
 	return tickEvery
 }
 
+const stampEvery = 10 * time.Minute
+
+// stampSightings records when each current observation was first seen, between runs, so a wait of
+// 24 h counts from when the reason appeared and not from the first run that happened to look.
+func stampSightings(now time.Time) {
+	in, err := Gather(now)
+	if err != nil {
+		return
+	}
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	st, err := loadState()
+	if err != nil {
+		return
+	}
+	Reconcile(st, in, now)
+	st.Trigger.LastStamp = now
+	_ = st.save()
+}
+
 var runMu sync.Mutex // one run at a time
 
 // Start launches the polling loop, the same shape as the memory snapshot loop (the Agent's
@@ -135,8 +155,14 @@ func Tick(ctx context.Context, now time.Time) (Report, bool) {
 	if !st.Trigger.LastTick.IsZero() && now.Sub(st.Trigger.LastTick) > 10*tickInterval() {
 		st.Trigger.StoppedGap = true
 	}
+	enabled := d.Enabled()
+	if !enabled {
+		// Off: nothing is recorded, so a switched-off consolidator costs no disk write per tick.
+		stateMu.Unlock()
+		return Report{}, false
+	}
 	st.Trigger.LastTick = now
-	dec := Decide(d.Enabled(), now, st.Trigger.LastRun, last, busy, cfg)
+	dec := Decide(enabled, now, st.Trigger.LastRun, last, busy, cfg)
 	switch dec.Reason {
 	case "busy", "not-idle":
 		st.Trigger.BusyTicks++
@@ -144,8 +170,12 @@ func Tick(ctx context.Context, now time.Time) (Report, bool) {
 	if dec.Run {
 		st.Trigger.LastRun = now
 	}
+	stamp := !dec.Run && now.Sub(st.Trigger.LastStamp) >= stampEvery
 	_ = st.save()
 	stateMu.Unlock()
+	if stamp {
+		stampSightings(now)
+	}
 	if !dec.Run {
 		return Report{}, false
 	}

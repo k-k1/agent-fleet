@@ -359,10 +359,13 @@ func Retry(id string, now time.Time) (Proposal, int, error) {
 		return Proposal{}, 0, err
 	}
 	if p.Status == StatusPending && !now.Before(p.Expires) {
-		p.Status = StatusExpired
+		p.Status, p.Decided = StatusExpired, now
+		if err := saveProposal(p); err != nil {
+			return p, 0, err
+		}
 	}
 	switch p.Status {
-	case StatusRejected, StatusExpired, StatusRefused:
+	case StatusRejected, StatusExpired, StatusRefused, StatusPartial:
 	default:
 		return p, 0, ErrNotPending
 	}
@@ -401,17 +404,38 @@ func Approve(id string, now time.Time) (Proposal, error) {
 	if p.Status != StatusPending || !now.Before(p.Expires) {
 		return p, ErrNotPending
 	}
+	// An item an earlier, cut-off approval already published is found by its trailer and skipped:
+	// its memory has moved on (that was the publish), so re-validating it would call the proposal
+	// stale against its own write.
 	publishable := 0
-	for _, it := range p.Items {
-		if it.Op == OpPatch || it.Op == OpCreate {
-			publishable++
-			if pr := validateItem(p.Scope, p.ProjectID, it); pr != nil {
-				p.Status, p.Decided, p.Reason = StatusRefused, now, pr.Error()
-				if err := saveProposal(p); err != nil {
-					return p, err
-				}
-				return p, pr
+	for i := range p.Items {
+		it := &p.Items[i]
+		if it.Op != OpPatch && it.Op != OpCreate {
+			continue
+		}
+		publishable++
+		it.PublishID = publishID(p.ID, i)
+		if it.Commit == "" {
+			c, err := store.Published(it.PublishID)
+			if err != nil {
+				return p, err
 			}
+			it.Commit = c
+		}
+		if it.Commit != "" {
+			continue
+		}
+		if pr := validateItem(p.Scope, p.ProjectID, *it); pr != nil {
+			p.Status, p.Decided, p.Reason = StatusRefused, now, pr.Error()
+			for j := range p.Items {
+				if p.Items[j].Commit != "" {
+					p.Status = StatusPartial
+				}
+			}
+			if err := saveProposal(p); err != nil {
+				return p, err
+			}
+			return p, pr
 		}
 	}
 	if publishable == 0 {
@@ -423,7 +447,10 @@ func Approve(id string, now time.Time) (Proposal, error) {
 		if it.Op != OpPatch && it.Op != OpCreate {
 			continue
 		}
-		it.PublishID = publishID(p.ID, i)
+		if it.Commit != "" {
+			done++
+			continue
+		}
 		ci := memoryx.ConsolItem{Op: it.Op, Scope: p.Scope, ProjectID: p.ProjectID, Name: it.Name, Revision: it.Revision,
 			Description: it.Description, Type: it.Type, Body: it.Body}
 		for _, e := range it.Edits {
@@ -451,6 +478,10 @@ func Approve(id string, now time.Time) (Proposal, error) {
 		}
 		it.Commit = res.Commit
 		done++
+		// Written down at once: a stop before the next item must not lose that this one is out.
+		if err := saveProposal(p); err != nil {
+			return p, err
+		}
 	}
 	p.Status, p.Decided = StatusApproved, now
 	return p, saveProposal(p)
@@ -509,6 +540,11 @@ func View(id string, now time.Time) (ProposalView, error) {
 			iv.Diff = lineDiff(st.Body, body)
 		case OpCreate:
 			iv.Diff = lineDiff("", it.Body)
+			if it.Commit == "" {
+				if pr := validateItem(p.Scope, p.ProjectID, it); pr != nil {
+					iv.Stale = pr.Msg
+				}
+			}
 		}
 		v.Views = append(v.Views, iv)
 	}

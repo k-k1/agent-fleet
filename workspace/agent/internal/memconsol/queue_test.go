@@ -291,7 +291,7 @@ func TestRetiredModelFailsTheTickSafely(t *testing.T) {
 func TestStoppedGapIsReported(t *testing.T) {
 	f := env(t)
 	f.wrong("a", "x", 1)
-	enabled, busy, last := false, false, time.Time{}
+	enabled, busy, last := true, true, time.Time{}
 	tickEnv(t, &enabled, &busy, &last, &scriptModel{}, nil)
 	Tick(context.Background(), t0)
 	Tick(context.Background(), t0.Add(9*time.Hour))

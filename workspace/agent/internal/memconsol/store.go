@@ -15,6 +15,8 @@ type Store interface {
 	Memories(scope, projectID string) ([]memoryx.ConsolMemory, error)
 	Target(scope, projectID, name string) (memoryx.ReviewTargetState, error)
 	Publish(proposalID string, it memoryx.ConsolItem, now time.Time) (memoryx.ConsolPublished, error)
+	// Published is the commit that already published the item with this id, "" if none did.
+	Published(publishID string) (string, error)
 	Validate(scope, name, description, memType, body string) error
 }
 
@@ -30,6 +32,7 @@ func (memoryxStore) Target(scope, projectID, name string) (memoryx.ReviewTargetS
 func (memoryxStore) Publish(id string, it memoryx.ConsolItem, now time.Time) (memoryx.ConsolPublished, error) {
 	return memoryx.PublishConsolidation(id, it, now)
 }
+func (memoryxStore) Published(id string) (string, error) { return memoryx.ConsolCommitOf(id) }
 func (memoryxStore) Validate(scope, name, description, memType, body string) error {
 	return memoryx.ValidateReviewMemory(scope, name, description, memType, nil, body)
 }

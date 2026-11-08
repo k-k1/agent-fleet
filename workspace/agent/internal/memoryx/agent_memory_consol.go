@@ -14,7 +14,6 @@ package memoryx
 
 import (
 	"errors"
-	"net/http"
 	"os"
 	"sort"
 	"time"
@@ -209,11 +208,11 @@ func consolCaller(scope, projectID, proposalID string) (agentMemCaller, error) {
 	return c, nil
 }
 
-// ConsolErrStatus maps a refusal to the HTTP status the approve route answers with.
-func ConsolErrStatus(err error) int {
-	var rf *ReviewRefusal
-	if errors.As(err, &rf) {
-		return http.StatusConflict
+// ConsolCommitOf is the commit that published the proposal item with this id, "" when none did.
+// It is how an approval that was cut off half-way finds what it already wrote.
+func ConsolCommitOf(publishID string) (string, error) {
+	if !reviewIDRe.MatchString(publishID) {
+		return "", nil
 	}
-	return http.StatusInternalServerError
+	return trailerCommitBy(consolProposalTrailer, publishID, ConsolidatorAuthorKind)
 }

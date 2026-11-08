@@ -9,7 +9,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 )
 
 // DecideMaxRequest bounds the body memberorigin.Require buffers on the decision routes.
@@ -184,7 +183,6 @@ func decide(w http.ResponseWriter, r *http.Request, f func(id string) (any, erro
 	}
 	out, err := f(req.ID)
 	var pr *Problem
-	var rf *memoryx.ReviewRefusal
 	switch {
 	case err == nil:
 		httpx.WriteJSON(w, http.StatusOK, out)
@@ -194,8 +192,6 @@ func decide(w http.ResponseWriter, r *http.Request, f func(id string) (any, erro
 		httpx.WriteErr(w, http.StatusConflict, "not_pending", "the proposal was decided or has expired")
 	case errors.As(err, &pr):
 		httpx.WriteErr(w, http.StatusConflict, pr.Kind, pr.Msg)
-	case errors.As(err, &rf):
-		httpx.WriteErr(w, http.StatusConflict, rf.Kind, rf.Msg)
 	default:
 		internalErr(w, "the decision could not be made", err)
 	}

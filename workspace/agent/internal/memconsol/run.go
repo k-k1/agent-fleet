@@ -80,7 +80,9 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 		clock = time.Now
 	}
 	rep := Report{ID: newID(), Started: in.Now, Status: RunIdle, Handled: []string{}, Queued: []string{}, Delayed: []Delay{}, Models: in.Roles}
+	spent := 0
 	finish := func(err error) (Report, error) {
+		rep.Tokens = spent
 		rep.Finished = clock()
 		if werr := writeReport(rep); werr != nil && err == nil {
 			err = werr
@@ -128,7 +130,8 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 		}
 		r := RipeTopic{Topic: t, Open: open, Take: take, Oldest: open[0].FirstSeen}
 		for _, o := range take {
-			r.Estimate += estimateTokens(classifyRequest(t, o).Prompt()) + 200
+			// Twice: a supersede or merge answer is classified again by the large tier.
+			r.Estimate += 2 * (estimateTokens(classifyRequest(t, o).Prompt()) + 200)
 		}
 		if len(t.Memories) > 0 {
 			r.Estimate += estimateTokens(t.Memories[0].Body) + 800
@@ -146,7 +149,6 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 	}
 	rep.Status = RunOK
 
-	spent := 0
 	for k, r := range run {
 		if err := ctx.Err(); err != nil {
 			rep.Status = RunCut
@@ -174,7 +176,6 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 			return finish(nil)
 		}
 	}
-	rep.Tokens = spent
 	return finish(nil)
 }
 
@@ -320,7 +321,6 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 		targets = append(targets, n)
 	}
 	sort.Strings(targets)
-	revs := map[string]int{}
 	for _, name := range targets {
 		cs := patchObs[name]
 		m, ok := findMem(t.Memories, name)
@@ -383,13 +383,12 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 			continue
 		}
 		items = append(items, it)
-		revs[m.Name] = m.Revision
 		for _, c := range cs {
 			used = append(used, c.obs)
 		}
 	}
 
-	w.commit(st, t, items, used, covered, dropped, revs)
+	w.commit(t, items, used, covered, dropped)
 	return nil
 }
 
@@ -427,7 +426,7 @@ func noteItem(c classified, targets ...string) Item {
 
 // commit queues the topic's proposal and records coverage, under the state lock so a concurrent
 // Retry or approval sees one consistent file.
-func (w *worker) commit(st *State, t Topic, items []Item, used []Observation, covered map[string]string, dropped map[string]bool, revs map[string]int) {
+func (w *worker) commit(t Topic, items []Item, used []Observation, covered map[string]string, dropped map[string]bool) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	cur, err := loadState()
@@ -480,6 +479,7 @@ func (w *worker) commit(st *State, t Topic, items []Item, used []Observation, co
 				cur.Observations[o.ID] = s
 			}
 			s.Dropped++
+			s.DroppedRev, _ = memoryRev(t, o.Memory)
 		}
 	}
 	_ = cur.save()
