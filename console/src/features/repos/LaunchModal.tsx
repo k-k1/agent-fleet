@@ -22,7 +22,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindRoutes, useKindCatalogVersion } from "../../agents/kindCatalog.ts";
-import { bedrockConnection, regionOk, useModelRouteProfiles } from "./bedrockProfiles.ts";
+import { bedrockConnection, regionOk, routeModelFilter, useModelRouteProfiles } from "./bedrockProfiles.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -378,6 +378,18 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   const routeOptions = declaredRoutes.filter((r) => r !== "bedrock" || (modelRouteProfiles?.length ?? 0) > 0);
   const bedrockPick = modelRouteProfiles?.find((p) => p.id === bedrockProfile) ?? modelRouteProfiles?.[0];
   const bedrockBlocked = route === "bedrock" && routeOptions.includes("bedrock") && !regionOk(bedrockRegion);
+  // The models the chosen route can run (opencode on bedrock: its amazon-bedrock models only). A
+  // model the route cannot run is dropped when the route changes, and such a route does not
+  // launch until one of its own is picked: the Agent would refuse the kind's default.
+  const chosenRoute = routeOptions.includes(route) ? route : "";
+  const modelFilter = useMemo(() => routeModelFilter(kind, chosenRoute), [kind, chosenRoute]);
+  const routeModelBlocked = !!modelFilter && !!chosenRoute && !modelFilter(model);
+  useEffect(() => {
+    if (modelFilter && model && !modelFilter(model)) {
+      setModel("");
+      setEffort("");
+    }
+  }, [modelFilter, model]);
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
@@ -662,7 +674,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked;
+  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -731,11 +743,13 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
             <ModelPicker
               kind={kind}
               model={model}
+              filter={modelFilter}
               onChange={(next) => {
                 setModel(next);
                 setEffort("");
               }}
             />
+            {routeModelBlocked && <span className="ui-field-hint">{tr("launch.bedrock_model_needed")}</span>}
           </div>
         )}
 

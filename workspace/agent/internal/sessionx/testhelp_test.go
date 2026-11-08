@@ -60,7 +60,8 @@ func withTempHome(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Cleanup(chatx.WaitInterimDeliveries)
-	t.Cleanup(WaitInputMirrors) // same reason; this one is the secrets store (measured: secrets.enc.lock)
+	t.Cleanup(WaitInitialDeliveries) // when_ready delivery persists session status under HOME
+	t.Cleanup(WaitInputMirrors)      // same reason; this one is the secrets store (measured: secrets.enc.lock)
 	return dir
 }
 

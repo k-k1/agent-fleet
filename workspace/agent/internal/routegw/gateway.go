@@ -53,6 +53,9 @@ type Deps struct {
 	Client   *http.Client
 	// Socket is the Unix socket a session is told to call; set by Start once it listens.
 	Socket func() string
+	// Loopback is the base URL of the loopback TCP listener ("http://127.0.0.1:<port>"), for a
+	// harness that cannot use a Unix socket; set by Start once it listens, "" when it does not.
+	Loopback func() string
 	// Roots is the root processes of a session's running runtime (its launch pane's process),
 	// none when it is not running. A call is served only to a process in that tree, and a token
 	// is renewed only while there is one.
@@ -231,6 +234,17 @@ func (g *Gateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agent
 // Agent's own launch code calls it; there is no HTTP route that mints, because the Agent's HTTP
 // token is in every session's shell.
 func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
+	return g.issue(m, transportUnix)
+}
+
+// IssueLoopback is Issue for a harness that can only speak TCP (opencode): the token is served
+// on the loopback port only, to a caller /proc attributes to the session's tree (peer_tcp.go),
+// and the grant's BaseURL is that port.
+func (g *Gateway) IssueLoopback(m session.Meta) (Issued, *agents.RouteRefusal) {
+	return g.issue(m, transportTCP)
+}
+
+func (g *Gateway) issue(m session.Meta, transport string) (Issued, *agents.RouteRefusal) {
 	c, ref := g.resolve(m.Route, true)
 	if ref != nil {
 		return Issued{}, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
@@ -248,12 +262,17 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	}
 	inc := awsx.Incarnation(m)
 	b := Binding{Session: m.Name, Incarnation: inc, Route: RouteBedrock, Connection: m.Route.Connection,
-		ProfileID: c.profile.ID, Region: c.region, Identity: awsx.ProfileIdentity(c.settings, c.profile)}
-	sock := ""
-	if g.d.Socket != nil {
+		ProfileID: c.profile.ID, Region: c.region, Identity: awsx.ProfileIdentity(c.settings, c.profile), Transport: transport}
+	sock, base, listening := "", SocketBaseURL, false
+	switch {
+	case transport == transportTCP && g.d.Loopback != nil:
+		base = g.d.Loopback()
+		listening = base != ""
+	case transport != transportTCP && g.d.Socket != nil:
 		sock = g.d.Socket()
+		listening = sock != ""
 	}
-	if sock == "" {
+	if !listening {
 		return Issued{}, &agents.RouteRefusal{Status: http.StatusServiceUnavailable, Code: routes.CodeRouteUnavailable,
 			Message: "the route gateway is not listening"}
 	}
@@ -261,7 +280,7 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	if err != nil {
 		return Issued{}, &agents.RouteRefusal{Status: http.StatusInternalServerError, Code: routes.CodeRouteUnavailable, Message: err.Error()}
 	}
-	return Issued{Socket: sock, BaseURL: SocketBaseURL, Token: tok, Region: c.region, Expires: exp}, nil
+	return Issued{Socket: sock, BaseURL: base, Token: tok, Region: c.region, Expires: exp}, nil
 }
 
 // SocketBaseURL is the base URL a harness is given beside the socket. The connection goes to
@@ -303,18 +322,18 @@ type call struct {
 // authorize is the check every upstream call runs, in this order, and the reason a token is
 // revoked on the spot: it is what makes "revoked when the session ends, the selection changes or
 // the connection changes" take effect on the next call, not on a timer. caller is the calling
-// process as pinned at accept (ok false: unknown).
+// process as pinned at accept (ok false: unknown) and transport the listener it came in on.
 // fresh reads Settings through FreshSettings: what a call that is about to resolve credentials
 // is checked with (credentials says when).
-func (g *Gateway) authorize(token string, caller procID, callerOK, fresh bool) (*call, *refusal) {
+func (g *Gateway) authorize(token string, caller procID, transport string, callerOK, fresh bool) (*call, *refusal) {
 	b, ok := g.d.Registry.Lookup(token)
 	if !ok {
 		return nil, &refusal{http.StatusUnauthorized, "route_token_invalid", "the route token is unknown, expired or revoked; restart the session"}
 	}
 	// Before anything that reads the owner's state or files an approval request on its behalf.
 	// The token is not revoked: a process that only read it must not be able to end the owner's
-	// route by presenting it.
-	if !callerOK || !inTree(g.d.ProcRoot, caller, g.d.Roots(b.Session)) {
+	// route by presenting it. A token is served only on the transport it was issued for.
+	if !callerOK || transport != bindingTransport(b) || !inTree(g.d.ProcRoot, caller, g.d.Roots(b.Session)) {
 		return nil, &refusal{http.StatusForbidden, "route_caller_forbidden",
 			"this route token belongs to another session's process; only the session it was issued to may use it"}
 	}
@@ -346,6 +365,14 @@ func (g *Gateway) authorize(token string, caller procID, callerOK, fresh bool) (
 		return nil, g.approvalRefusal(c, m)
 	}
 	return &call{b: b, meta: m, conn: c, token: token}, nil
+}
+
+// bindingTransport is the transport b's token is served on; empty is the socket.
+func bindingTransport(b Binding) string {
+	if b.Transport == "" {
+		return transportUnix
+	}
+	return b.Transport
 }
 
 // approvalRefusal files the confirmation request (at most once per askEvery per session and

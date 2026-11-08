@@ -36,6 +36,9 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 		{"GET", "/api/agents/memory/entries/purge-preview", "GET /api/agents/memory/entries/purge-preview"},
 		{"POST", "/api/agents/memory/entries/purge", "POST /api/agents/memory/entries/purge"},
 		{"GET", "/api/agents/memory/entries/member-read", "GET /api/agents/memory/entries/member-read"},
+		{"GET", "/api/agents/memory/entries/lint", "GET /api/agents/memory/entries/lint"},
+		{"GET", "/api/agents/memory/entries/lint-terms", "GET /api/agents/memory/entries/lint-terms"},
+		{"POST", "/api/agents/memory/entries/lint-terms", "POST /api/agents/memory/entries/lint-terms"},
 		{"GET", "/api/agents/memory/entries/projects", "GET /api/agents/memory/entries/projects"},
 		{"GET", "/api/agents/memory/entries/project-move-preview", "GET /api/agents/memory/entries/project-move-preview"},
 		{"POST", "/api/agents/memory/entries/project-move", "POST /api/agents/memory/entries/project-move"},
@@ -127,6 +130,11 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/pin", nil)
 	if action, target, ok = auditActionTarget(req); !ok || action != "memory.entry.pin" || target != "" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.entry.pin with an empty target", action, target, ok)
+	}
+	// The retired-term list save is audited with no target (ADR 0130).
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/lint-terms", nil)
+	if action, target, ok = auditActionTarget(req); !ok || action != "memory.lint_terms.save" || target != "" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.lint_terms.save with an empty target", action, target, ok)
 	}
 	// A member save is audited by project id only; the memory name never reaches the ledger.
 	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/member-save?project=agent-fleet-0123456789ab&name=ghp_secretlooking", nil)

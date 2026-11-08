@@ -332,7 +332,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session")
 			return
 		}
-		go deliverInitialPrompt(name, body.Prompt)
+		deliverInitialPromptAsync(name, body.Prompt)
 		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"queued": name})
 		return
 	}
@@ -594,11 +594,70 @@ var inputMirrors sync.WaitGroup
 // WaitInputMirrors blocks until every in-flight input mirror has finished (test-only).
 func WaitInputMirrors() { inputMirrors.Wait() }
 
+// Bounds on the detached mirrors. A mirror is a best-effort echo of what the user typed, so
+// when it cannot run promptly it is dropped, never queued behind the input path: blocking
+// the caller adds latency before the user's keystroke echoes, and an unbounded queue only
+// moves the goroutine pile elsewhere. Both are vars so tests can shrink them.
+var (
+	// maxInputMirrors caps the mirrors in flight. Each one is one credential-store read plus a
+	// few chat HTTP calls (10 s each), so a healthy fleet never has more than a handful.
+	maxInputMirrors = 16
+	// inputMirrorLockWait bounds the wait on the credential store's mutex / flock, the only
+	// step with no timeout of its own.
+	inputMirrorLockWait = 15 * time.Second
+
+	inputMirrorMu        sync.Mutex
+	inputMirrorsInFlight int
+)
+
+// mirrorUserInputAsync starts a detached mirror unless maxInputMirrors are already in flight,
+// in which case it drops this one with a log line. The slot and the WaitGroup entry are
+// released by the same deferred call, so no exit path leaks either.
 func mirrorUserInputAsync(name, prompt string) {
+	if !acquireInputMirrorSlot() {
+		log.Printf("input mirror for %s dropped: %d mirrors already in flight", name, maxInputMirrors)
+		return
+	}
 	inputMirrors.Add(1)
 	go func() {
 		defer inputMirrors.Done()
-		bridge.MirrorUserInput(name, prompt)
+		defer releaseInputMirrorSlot()
+		ctx, cancel := context.WithTimeout(context.Background(), inputMirrorLockWait)
+		defer cancel()
+		bridge.MirrorUserInputContext(ctx, name, prompt)
+	}()
+}
+
+func acquireInputMirrorSlot() bool {
+	inputMirrorMu.Lock()
+	defer inputMirrorMu.Unlock()
+	if inputMirrorsInFlight >= maxInputMirrors {
+		return false
+	}
+	inputMirrorsInFlight++
+	return true
+}
+
+func releaseInputMirrorSlot() {
+	inputMirrorMu.Lock()
+	inputMirrorsInFlight--
+	inputMirrorMu.Unlock()
+}
+
+// initialDeliveries counts the detached when_ready deliveries (deliverInitialPrompt). Like
+// inputMirrors, production never waits; a test must, because delivery writes the session's
+// status under HOME (markSessionWorking, settleInitialPrompt) after the tmux traffic a test
+// can observe has already finished.
+var initialDeliveries sync.WaitGroup
+
+// WaitInitialDeliveries blocks until every detached when_ready delivery has finished (test-only).
+func WaitInitialDeliveries() { initialDeliveries.Wait() }
+
+func deliverInitialPromptAsync(name, prompt string) {
+	initialDeliveries.Add(1)
+	go func() {
+		defer initialDeliveries.Done()
+		deliverInitialPrompt(name, prompt)
 	}()
 }
 

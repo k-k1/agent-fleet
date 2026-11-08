@@ -545,6 +545,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.bedrock_region_placeholder": "the profile's region",
   "launch.bedrock_region_invalid": "Not an AWS region (for example us-east-1). Leave it empty to use the profile's own.",
   "launch.bedrock_hint": "Only profiles you marked as a model route in Settings > AWS profiles/SSM. The region is optional; empty uses the profile's own. The calls go through the workspace's route gateway, so the session never receives AWS credentials.",
+  "launch.bedrock_model_needed": "Pick an Amazon Bedrock model (amazon-bedrock/…): on this route opencode runs only those.",
   "launch.field.permissions": "Tool permissions",
   "launch.mode_normal": "Normal",
   "launch.field.location": "Location",

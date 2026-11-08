@@ -37,6 +37,10 @@ func (f *fakeGateway) Issue(m session.Meta) (agents.RouteGrant, *agents.RouteRef
 		Token: testBearer, Region: "eu-west-1"}, nil
 }
 
+func (f *fakeGateway) IssueLoopback(session.Meta) (agents.RouteGrant, *agents.RouteRefusal) {
+	panic("claude never asks for a loopback grant: it uses the socket")
+}
+
 func (f *fakeGateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
 	if f.refuse != nil {
 		return sel, f.refuse
