@@ -438,6 +438,7 @@ func (h *threadHandle) hostLost(cl *msp.Client) {
 	h.starting = ""
 	h.sentImages = nil // nothing this host was sent can be echoed any more
 	h.bg = nil         // its tasks went with it; a resume rebuilds from the next host's fold
+	h.streaming = nil  // fragments of items the dead host will never complete
 	h.mu.Unlock()
 	if wasRunning {
 		// A turn cut off by a dead host is aborted, not failed: a resend fixes it, and the
@@ -615,7 +616,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	}
 }
 
-// onItem persists one item and drops any streaming buffer it had. A store failure is logged
+// onItem persists one item and drops its streaming buffer once the item is terminal. A store failure is logged
 // once and never fails the turn: the host owns the conversation of record, and refusing to
 // carry on because AF could not mirror a line would trade a rendering gap for a dead session.
 func (h *threadHandle) onItem(it msp.Item) {
@@ -785,6 +786,7 @@ func (h *threadHandle) settleIdle(gen uint64) {
 		return
 	}
 	h.running, h.turnID, h.turnModel = false, "", ""
+	h.streaming = nil // an item still in flight when the turn ends will not complete
 	h.state = agents.TurnCompleted
 	h.settleHeadLocked()
 	h.dropResumedLocked(true)
@@ -830,6 +832,7 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 	h.settleHeadLocked()
 	h.dropResumedLocked(true)
 	h.running, h.state, h.turnID = false, st, ""
+	h.streaming = nil // an item still in flight when the turn ends will not complete
 	if newest {
 		h.limit = limit
 		if p.TurnID != "" {

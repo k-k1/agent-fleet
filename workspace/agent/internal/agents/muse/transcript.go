@@ -345,15 +345,25 @@ func turnsWithCommentary(items []msp.Item, cs *commentarySet) []transcript.Turn 
 			assistant = -1
 
 		case msp.ItemKindAgentMessage:
-			t := openAssistant(it)
+			// Only a completed, in-progress or cancelled message (or a record with no status) is answer text. Any other
+			// terminal status (failed, timedOut, rejected, or a value a newer host adds) is
+			// a draft the host discarded, e.g. a stream-guard resample; the host commits it
+			// with empty text, but a revision that still carries the partial text must not
+			// read as part of the answer. A cancelled one stays: it is what the agent had
+			// said when the member interrupted it.
 			text := str(it.Text)
-			// A failed agentMessage is a draft the host discarded (a stream-guard resample,
-			// say); the host commits it with empty text, but a revision that still carries
-			// the partial text must not read as part of the answer. A cancelled one stays:
-			// it is what the agent had said when the member interrupted it.
-			if it.Status == msp.ItemStatusFailed {
-				text = ""
+			discarded := false
+			switch it.Status {
+			case "", msp.ItemStatusCompleted, msp.ItemStatusInProgress, msp.ItemStatusCancelled:
+			default:
+				text, discarded = "", true
 			}
+			// A discarded draft with nothing to show does not open a turn of its own: an
+			// empty bubble is all it would add. Its tokens only count when a turn is open.
+			if discarded && assistant < 0 {
+				continue
+			}
+			t := openAssistant(it)
 			if strings.TrimSpace(text) != "" {
 				t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: text})
 				t.Text = joinText(t.Text, text)
@@ -630,6 +640,8 @@ func withStreamingText(items []msp.Item, fragments map[string]string) []msp.Item
 		if it.Kind != msp.ItemKindAgentMessage || it.Status != msp.ItemStatusInProgress || strings.TrimSpace(frag) == "" {
 			continue
 		}
+		// Deltas concatenate to the completed text (MSP INV-005), so the stored partial and
+		// the fragment converge and the longer one is the newer.
 		if len(frag) <= len(str(it.Text)) {
 			continue
 		}
@@ -648,7 +660,8 @@ func withStreamingText(items []msp.Item, fragments map[string]string) []msp.Item
 // the rendered turns (a delta that outran its item/started). Fragments of persisted items are
 // not handled here: an in-progress one is rendered in place by withStreamingText, and a
 // terminal one is a delta that arrived after its own completion, which re-appending would
-// duplicate.
+// duplicate. Only agentMessage fragments are rendered while persisted; a reasoning or
+// toolCall item that is already stored shows nothing until it completes.
 func appendStreaming(turns []transcript.Turn, items []msp.Item, fragments map[string]string) []transcript.Turn {
 	known := make(map[string]bool, len(items))
 	for _, it := range items {
