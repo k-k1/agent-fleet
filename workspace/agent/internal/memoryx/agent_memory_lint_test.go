@@ -295,3 +295,34 @@ func TestAgentMemoryLintReaderIsPinnedToACommit(t *testing.T) {
 		t.Errorf("commit = %q", w.Commit)
 	}
 }
+
+// Numbered short references and git-ignored paths are not missing, judged by the .gitignore the
+// revision commits: a working copy that edited or deleted its .gitignore changes nothing. A real
+// miss and a number with no file are still reported.
+func TestAgentMemoryLintShortRefsAndIgnoredPathsByRevision(t *testing.T) {
+	_, clone, _ := agentMemTestEnv(t)
+	agentMemLintOrigin(t, clone, map[string]string{
+		".gitignore":              "node_modules\n/console/dist/\n",
+		"console/src/app.tsx":     "export const App = 1\n",
+		"docs/log/99-lcpp.md":     "# 99\n",
+		"guide/admin/03-setup.md": "# 03\n",
+	})
+	if err := os.WriteFile(filepath.Join(clone, ".gitignore"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := agentMemCallerT(t, "claude-main")
+	agentMemLintSaveBody(t, c, "m", "docs/log/99 docs/51 guide/admin/03 console/dist console/node_modules/x/y.js "+
+		"docs/log/9999 console/src/gone.tsx")
+	AgentMemoryEnabled = func() bool { return false }
+	w := agentMemLintGet(t, "scope=project&project="+c.Project.ID)
+	got := agentMemLintSubjects(w, "m", "missing-path")
+	want := map[string]bool{"docs/51": true, "docs/log/9999": true, "console/src/gone.tsx": true}
+	if len(got) != len(want) {
+		t.Fatalf("missing-path = %v (skipped %v)", got, w.Report.Skipped)
+	}
+	for _, s := range got {
+		if !want[s] {
+			t.Errorf("unexpected %q in %v", s, got)
+		}
+	}
+}
