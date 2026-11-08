@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -146,6 +147,76 @@ func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
 	h2.mu.Unlock()
 	if secondSid != firstSid {
 		t.Errorf("the reload started a new conversation: %s then %s", firstSid, secondSid)
+	}
+}
+
+// `session/resume` carries the registry's servers, the way a stopped session is reopened. Free,
+// like the start test: no turn, so no server is spawned and no quota is spent.
+//
+// It resumes the session the same host has just started rather than one a dropped host left:
+// the host keeps no turnless session across processes (measured, muse 1.4.14: the reload after
+// DropHandle answers sessionNotFound, which is also why TestLiveResumeAfterDropReloadsTheSameSession
+// fails there), and a turn would cost the member's quota.
+//
+// The control is what makes "accepted" mean "read": the same resume with the settings file's
+// transport spelling has to be REFUSED, and a good one right after it accepted again. A host
+// that ignored `config` on resume would accept the bad one; a refusal for some other reason
+// (the session no longer resumable) would also refuse the good one after it.
+func TestLiveSessionResumeAcceptsMCPServerConfig(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "afprobe-stdio", Transport: mcpreg.TransportStdio, Command: "/bin/true",
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindMuse},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	cl, sid, granted := h.cl, h.sid, h.sessionMCP
+	h.mu.Unlock()
+	if !granted {
+		t.Fatal("the host did not grant sessionMcp, so no server could ever be passed")
+	}
+	cfg := h.sessionConfig()
+	if cfg == nil || len(cfg.MCPServers) == 0 {
+		t.Fatal("no servers to send: the resume below would prove nothing")
+	}
+
+	var res msp.SessionResumeResult
+	if err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+		CommandID: msp.NewCommandID(), SessionID: sid, Config: cfg,
+	}, callTimeout, &res); err != nil {
+		t.Fatalf("the host refused session/resume with AF's MCP server config: %v", err)
+	}
+	if res.Session.SessionID != sid {
+		t.Errorf("resumed %s, asked for %s", res.Session.SessionID, sid)
+	}
+	t.Logf("session/resume accepted %d server(s) for %s", len(cfg.MCPServers), sid)
+
+	url := "https://mcp.example.invalid/mcp"
+	mode := msp.SessionMCPServerModeOptional
+	err = cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+		CommandID: msp.NewCommandID(),
+		SessionID: sid,
+		Config: &msp.SessionConfig{MCPServers: map[string]msp.SessionMCPServerConfig{
+			"afprobe-http": {Transport: "streamable_http", URL: &url, Mode: &mode},
+		}},
+	}, callTimeout, nil)
+	if err == nil {
+		t.Error("session/resume accepted an undeclared transport: the host may not read config on resume at all")
+	} else {
+		t.Logf("session/resume refused the file spelling: %v", err)
+	}
+	if err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+		CommandID: msp.NewCommandID(), SessionID: sid, Config: cfg,
+	}, callTimeout, nil); err != nil {
+		t.Errorf("a good config was refused right after the bad one, so that refusal may not have been about the config: %v", err)
 	}
 }
 

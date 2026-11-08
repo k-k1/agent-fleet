@@ -289,3 +289,180 @@ func TestBuiltinAFCarriesItsOwnSessionName(t *testing.T) {
 		t.Errorf("an unnamed session's af server was given AF_SESSION_NAME=%q", v)
 	}
 }
+
+// resumeCapture makes the host answer session/resume and hands back what it was sent.
+func resumeCapture(t *testing.T, host *msptest.Host) <-chan msp.SessionResumeParams {
+	t.Helper()
+	ch := make(chan msp.SessionResumeParams, 1)
+	host.Handle(msp.MethodSessionResume, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.SessionResumeParams
+		if err := json.Unmarshal(m.Params, &p); err != nil {
+			t.Errorf("session/resume params: %v", err)
+		}
+		ch <- p
+		return resumedSession(), nil
+	})
+	refuseSessionRead(t, host)
+	return ch
+}
+
+func resumedSession() map[string]any {
+	return map[string]any{
+		"session": map[string]any{
+			"sessionId": "01a0c1d6-0000-7000-8000-0000000000c8", "path": "/tmp/s.jsonl",
+			"status": "idle", "createdAt": "", "updatedAt": "", "turnCount": 1,
+		},
+		"history": map[string]any{"mode": "inline", "items": []any{}}, "pendingRequests": []any{}, "viewCursor": "c1",
+	}
+}
+
+// refuseSessionRead fails the test on a session/read: the resume serves inline history, so a
+// read means the resume path changed — and without a handler the fake host would just let the
+// call time out, which reads as a slow test rather than a failing one.
+func refuseSessionRead(t *testing.T, host *msptest.Host) {
+	t.Helper()
+	host.Handle(msp.MethodSessionRead, func(msptest.Message) (any, *msp.Error) {
+		t.Error("session/read was called on a resume that served inline history")
+		return nil, &msp.Error{Code: msp.ErrCodeInvalidParams, Message: "unexpected"}
+	})
+}
+
+// A reopened session is the common case, not the edge: every idle stop ends the host, and the
+// next prompt resumes the stored session in a new one. The host does not keep a session's MCP
+// config across processes (measured: the resumed run's toolset held muse's built-ins only), so
+// a resume without the servers leaves the session with no af tool at all — it cannot report,
+// message a peer or read its memory, and tells its user the tools "do not exist".
+func TestSessionResumeCarriesTheRegistrysServers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/bin/true",
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindMuse},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c3", sessionMCP: true}
+	host := newTestHandle(t, h)
+	writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000c8", Path: "/tmp/s.jsonl"})
+	sent := resumeCapture(t, host)
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	p := <-sent
+	if p.SessionID != "01a0c1d6-0000-7000-8000-0000000000c8" {
+		t.Fatalf("resumed %q, not the stored session", p.SessionID)
+	}
+	if p.Config == nil {
+		t.Fatal("session/resume carried no MCP servers: the reopened session has none of af's tools")
+	}
+	if _, ok := p.Config.MCPServers["wiki"]; !ok {
+		t.Errorf("servers = %+v", p.Config.MCPServers)
+	}
+	// The builtin af server is the one whose absence was observed, and the one that must be
+	// told which session it serves.
+	var af *msp.SessionMCPServerConfig
+	for name, cfg := range p.Config.MCPServers {
+		if name == mcpreg.AFServerName() {
+			c := cfg
+			af = &c
+		}
+	}
+	if af == nil {
+		t.Fatalf("the af server is not on the resume: %+v", p.Config.MCPServers)
+	}
+	if af.Env[agents.SessionNameEnvVar] != h.name {
+		t.Errorf("af server on resume serves %q, want %q", af.Env[agents.SessionNameEnvVar], h.name)
+	}
+}
+
+// The grant rule holds on the resume path as well: a host that did not grant `sessionMcp` gets
+// no config there either.
+func TestNoServersOnResumeWithoutTheGrant(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c4"} // sessionMCP false
+	host := newTestHandle(t, h)
+	writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000c8", Path: "/tmp/s.jsonl"})
+	sent := resumeCapture(t, host)
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+		t.Fatalf("openSession: %v", err)
+	}
+	if p := <-sent; p.Config != nil {
+		t.Errorf("servers were sent on resume to a host that did not grant sessionMcp: %+v", p.Config)
+	}
+}
+
+// A config the host will not decode refuses the whole resume, and before the servers rode the
+// resume that same session reopened fine. The resume is retried once without them, so one bad
+// member integration degrades the session to "no MCP tools" instead of failing to open it.
+func TestResumeRefusedForItsConfigReopensWithoutServers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/bin/true",
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindMuse},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c5", sessionMCP: true}
+	host := newTestHandle(t, h)
+	writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000c8", Path: "/tmp/s.jsonl"})
+	var withConfig, without int
+	host.Handle(msp.MethodSessionResume, func(m msptest.Message) (any, *msp.Error) {
+		var p msp.SessionResumeParams
+		if err := json.Unmarshal(m.Params, &p); err != nil {
+			t.Errorf("session/resume params: %v", err)
+		}
+		if p.Config != nil {
+			withConfig++
+			return nil, &msp.Error{Code: msp.ErrCodeInvalidParams, Message: "invalid session/resume config"}
+		}
+		without++
+		return resumedSession(), nil
+	})
+	refuseSessionRead(t, host)
+
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err != nil {
+		t.Fatalf("one refused integration failed the whole open: %v", err)
+	}
+	if withConfig != 1 || without != 1 {
+		t.Errorf("resumes with config = %d, without = %d; want one of each", withConfig, without)
+	}
+	h.mu.Lock()
+	sid := h.sid
+	h.mu.Unlock()
+	if sid != "01a0c1d6-0000-7000-8000-0000000000c8" {
+		t.Errorf("sid = %q: the stored session was not reopened", sid)
+	}
+}
+
+// Only a refusal of the config is retried bare. Any other failure keeps its own meaning:
+// sessionNotFound still falls back to a fresh start, and anything else still fails the open
+// rather than being papered over by a second call.
+func TestResumeOtherFailuresAreNotRetriedWithoutServers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "wiki", Transport: mcpreg.TransportStdio, Command: "/bin/true",
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindMuse},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	h := &threadHandle{slotSid: "00000000-0000-5000-8000-0000000000c6", sessionMCP: true}
+	host := newTestHandle(t, h)
+	writeSession(h.slotSid, museSession{ID: "01a0c1d6-0000-7000-8000-0000000000c8", Path: "/tmp/s.jsonl"})
+	calls := 0
+	host.Handle(msp.MethodSessionResume, func(msptest.Message) (any, *msp.Error) {
+		calls++
+		return nil, &msp.Error{Code: msp.ErrCodeInternal, Message: "boom"}
+	})
+	if err := h.openSession(h.cl, agents.ThreadSettings{Model: "muse-spark-1.3"}); err == nil {
+		t.Fatal("an internal error on resume opened the session")
+	}
+	if calls != 1 {
+		t.Errorf("session/resume called %d times, want 1", calls)
+	}
+}
