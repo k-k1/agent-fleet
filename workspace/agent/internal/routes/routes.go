@@ -40,9 +40,11 @@ const (
 	TierMemberKey Tier = "member-key"
 	// TierAWSProfile: an AWSProfileRef (profile and region).
 	TierAWSProfile Tier = "aws-profile-ref"
-	// TierTenantKey: a key an administrator configured once for the tenant.
+	// TierTenantKey: a credential an administrator configured once for the tenant: a key, or for
+	// bedrock-tenant a cross-account role the tenant's account pays for (ADR 0129 decision 1).
 	TierTenantKey Tier = "tenant-key"
-	// TierDeployment: a route the deployment provides (the engine), which follows its own gates.
+	// TierDeployment: a route the deployment provides and pays for (the engine, bedrock-deployment),
+	// which follows its own gates.
 	TierDeployment Tier = "deployment"
 )
 
@@ -54,12 +56,20 @@ type Route struct {
 }
 
 // catalogue is sorted by id. The ids are the vocabulary the usage ledger already records
-// (usagex.Route*); TestCatalogueCoversLedgerRoutes holds the two together.
+// (usagex.Route*); TestRouteAdaptersDeclareCataloguedRoutes holds the two together.
+//
+// The three Bedrock ids are one wire with three payers (ADR 0129 decision 1): bedrock is the
+// member's own profile, bedrock-tenant and bedrock-deployment are the provided routes. They are
+// separate ids so "who pays" is in every ledger rollup key without a new field. A provided id is
+// catalogued before any harness declares it, so a selection naming one is refused like any route
+// a harness does not accept.
 var catalogue = []Route{
 	{"af-engine-llm", WireOpenAIChat, TierDeployment},
 	{"anthropic-api", WireAnthropicMessages, TierMemberKey},
 	{"anthropic-subscription", WireAnthropicMessages, TierExistingConnection},
 	{"bedrock", WireBedrock, TierAWSProfile},
+	{"bedrock-deployment", WireBedrock, TierDeployment},
+	{"bedrock-tenant", WireBedrock, TierTenantKey},
 	{"chatgpt-subscription", WireOpenAIResponses, TierExistingConnection},
 	{"member-llamacpp", WireOpenAIChat, TierMemberKey},
 	{"openai-api", WireOpenAIResponses, TierMemberKey},
