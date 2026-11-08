@@ -146,6 +146,12 @@ work you could simply do.
 - **`link_work_item`** links *your own* session to an issue, ticket or PR you were not launched for
   (`role`: working default / reviewing / watching; `remove: true` unlinks). `branch_name` with an
   item and your branch's PR are linked for you.
+- **`watch` instead of polling a PR yourself.** `watch {ref: owner/repo#45 | #45 | PR URL, types:
+  [pr.checks.completed, pr.conflict, pr.ready, pr.merged, …]}` injects a
+  `[agent-fleet:notice kind=watch …]` line into *your own* session when it happens (once you are
+  idle; a stopped session is started). Do not run `gh pr checks --watch` in the background for
+  this. `until: first` (default) ends after one notice; `deadline` keeps it (`expires_in_hours`, ≤ 720).
+  `list_watches` / `unwatch` manage them. GitHub only for now.
 - **`list_child_sessions` is how you get a name back.** `create_session` hands one out once, and a
   compaction takes it away — every other tool here needs that name. It also carries each child's
   state, when its last turn ended, and how many slots you have left.

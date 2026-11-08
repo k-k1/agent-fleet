@@ -23,6 +23,7 @@ func mcpStdioToolList() []map[string]any {
 		}
 		tools = append(tools, mcpStdioFleetObserveTools()...)
 		tools = append(tools, mcpStdioBranchTools()...)
+		tools = append(tools, mcpStdioWatchTools()...)
 		if mcpAgentMemoryEnabled {
 			tools = append(tools, mcpStdioMemoryTools()...)
 		}

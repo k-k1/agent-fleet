@@ -2220,6 +2220,26 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_schedules: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: list_schedules","type":"text"}],"isError":true,"resultType":"complete"}}
+## list_watches absent
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> GET /sessions/slot01/watches
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## list_watches empty {}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> GET /sessions/slot01/watches
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## list_watches unknown {"zz_unknown":1}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for list_watches","type":"text"}],"isError":true,"resultType":"complete"}}
+## list_watches not-object [1]
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for list_watches: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 ## memory_forget absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_forget はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -3751,6 +3771,35 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: stop_session_after_turn","type":"text"}],"isError":true,"resultType":"complete"}}
+## unwatch absent
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> DELETE /sessions/slot01/watches/
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## unwatch empty {}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> DELETE /sessions/slot01/watches/
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## unwatch unknown {"zz_unknown":1}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for unwatch","type":"text"}],"isError":true,"resultType":"complete"}}
+## unwatch not-object [1]
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for unwatch: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+## unwatch badtype-id {"id":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"id\" for unwatch: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## unwatch full {"id":"v"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> DELETE /sessions/slot01/watches/v
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## update_memo absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはメモの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -3988,3 +4037,44 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: update_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
+## watch absent
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /sessions/slot01/watches {"ref":"","types":null}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## watch empty {}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /sessions/slot01/watches {"ref":"","types":null}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## watch unknown {"zz_unknown":1}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for watch","type":"text"}],"isError":true,"resultType":"complete"}}
+## watch not-object [1]
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for watch: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+## watch badtype-expires_in_hours {"expires_in_hours":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"expires_in_hours\" for watch: got a JSON array, want int","type":"text"}],"isError":true,"resultType":"complete"}}
+## watch badtype-ref {"ref":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"ref\" for watch: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## watch badtype-source {"source":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"source\" for watch: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## watch badtype-types {"types":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"types\" for watch: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## watch badtype-until {"until":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"until\" for watch: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## watch full {"expires_in_hours":2,"ref":"v","source":"github","types":["v"],"until":"first"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /sessions/slot01/watches {"source":"github","ref":"v","types":["v"],"until":"first","expires_in_hours":2}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}

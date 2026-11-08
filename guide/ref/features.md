@@ -96,6 +96,7 @@ If a feature ships and does not appear here, it is not done
 | Red dot on a session with an unread notification | member | left pane, tabs | [03 Starting sessions](../member/03-starting-sessions.md#reading-state-badges-and-notifications) |
 | Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [03 Starting sessions](../member/03-starting-sessions.md#from-a-row-to-a-session); [repos.md](repos.md) for which providers |
 | Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../member/20-settings.md#notifications) |
+| A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [11 Running many sessions](../member/11-many-sessions.md#a-session-watching-a-pull-request-itself) |
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
