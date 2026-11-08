@@ -58,6 +58,8 @@ type Options struct {
 	// RetiredTerms is the member-maintained list. Matching ignores case and, for a term made of
 	// word characters, requires word boundaries, so "muse" does not hit "museum".
 	RetiredTerms []string
+	// RejectedTerms are retired-term proposals the member turned down; they are not proposed again.
+	RejectedTerms []string
 	// MaxBytes overrides DefaultMaxBytes when positive.
 	MaxBytes int
 	// ADRDir overrides DefaultADRDir when non-empty.
@@ -82,6 +84,9 @@ type Report struct {
 	// Skipped names the checks that did not run and why, so an empty result is never mistaken
 	// for a clean one.
 	Skipped []string `json:"skipped,omitempty"`
+	// Proposals are retired-term candidates read from the revision, each with its evidence. They
+	// are never applied: the member accepts one into the list or rejects it.
+	Proposals []Proposal `json:"proposals,omitempty"`
 }
 
 // Lint checks every memory. Findings are ordered by memory name, then check, then position, so
@@ -168,6 +173,21 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 		}
 	}
 
+	if rc != nil {
+		var cands []candidate
+		if fr, ok := repo.(FileReader); ok && rc.hasADRs {
+			c, notes := supersededADRCandidates(rc, fr, rc.adrDir)
+			cands = append(cands, c...)
+			rep.Skipped = append(rep.Skipped, notes...)
+		}
+		if kh, ok := repo.(KeyHistory); ok {
+			c, notes := removedKeyCandidates(repo, kh)
+			cands = append(cands, c...)
+			rep.Skipped = append(rep.Skipped, notes...)
+		}
+		rep.Proposals = buildProposals(cands, mems, opts.RetiredTerms, opts.RejectedTerms)
+	}
+
 	checkOrder := map[string]int{CheckBrokenLink: 0, CheckMissingPath: 1, CheckMissingSym: 2, CheckMissingADR: 3, CheckRetiredTerm: 4, CheckOversizeBody: 5}
 	sort.SliceStable(rep.Findings, func(i, j int) bool {
 		a, b := rep.Findings[i], rep.Findings[j]
@@ -195,6 +215,7 @@ type repoCtx struct {
 	topDirs map[string]bool
 	adrs    map[string]bool
 	hasADRs bool
+	adrDir  string // with a trailing slash
 	// numbered maps a directory to the numbers (leading zeros trimmed) of its entries named
 	// "<number>-...", so a short reference "docs/log/99" finds "docs/log/99-name.md".
 	numbered map[string]map[string]bool
@@ -215,7 +236,7 @@ func loadRepo(repo Repo, adrDir string) (*repoCtx, []string, error) {
 		adrDir = DefaultADRDir
 	}
 	adrDir = strings.Trim(adrDir, "/") + "/"
-	rc := &repoCtx{files: make(map[string]bool, len(paths)), dirs: map[string]bool{}, topDirs: map[string]bool{}, adrs: map[string]bool{}, numbered: map[string]map[string]bool{}}
+	rc := &repoCtx{adrDir: adrDir, files: make(map[string]bool, len(paths)), dirs: map[string]bool{}, topDirs: map[string]bool{}, adrs: map[string]bool{}, numbered: map[string]map[string]bool{}}
 	var ignoreFiles []string
 	for _, p := range paths {
 		rc.files[p] = true
