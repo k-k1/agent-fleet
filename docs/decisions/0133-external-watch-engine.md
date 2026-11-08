@@ -22,11 +22,11 @@ schedule, de-duplication and delivery:
 
 | Feature | What it watches | How |
 |---|---|---|
-| `internal/branchpr` | GitHub (GraphQL, batched) and Bitbucket PR state | poll; open PRs every 2 min (`openTTL`), settled ones every 10 min, backoff 5 / 15 min |
-| PR feedback watch (#3129, `sessionx/pr_feedback.go`) | CI failure and requested changes on a session's own PR | reads the `branchpr` cache; injects a notice into the owning session; off by default |
-| PR notices (#3131, `sessionx/session_pr_notices.go`) | ready to merge, merged, closed | reads the same cache; writes the notification outbox for the member |
+| `internal/branchpr` | GitHub (GraphQL, batched) and Bitbucket PR state | a cache filled on demand (when the session list is read, or by #3129), not a loop of its own; GitHub: open PRs 2 min (`openTTL`), settled 10 min, backoff 5 / 15 min; Bitbucket: open PRs 5 min, conflict checks 15 min, backoff 10 min after a 403 |
+| PR feedback watch (#3129, `sessionx/pr_feedback.go`) | CI failure, requested changes and new unresolved review threads on a session's own PR (at most 3 review notices per PR); merge or close of PR links the session holds | reads the `branchpr` cache; injects a notice into the owning session, or tells the member when that session is archived or cannot take prompts; off by default (the `prFeedback` switch) |
+| PR notices (#3131, `sessionx/session_pr_notices.go`) | ready to merge (`pr-ready`), merged, closed | reads the same cache whenever it is recorded; writes the notification outbox for the member; no switch |
 | Stalled-tree watch (#2397, `sessionx/stalled_tree.go`) | a parent and all its children idle | its own loop; injects a notice |
-| Work item inbox (ADR 0061, `internal/workitems`) | GitHub / Bitbucket / Jira items for the member | its own queries and caches |
+| Work item inbox (ADR 0061, `internal/workitems`) | GitHub / Bitbucket / Jira items for the member | the Control Plane owns the schedule, saved queries and cache; the Agent only resolves the queries with the member's tokens |
 
 None of them can be asked for by a session ("tell me when #3606's checks finish"), none tells a session about success
 or a conflict (#3129 tells only failures, and tells the member about conflicts), and none can be reached by a parent
@@ -81,8 +81,8 @@ type Event struct {
     Source  string          // "github"
     Subject SubjectID       // "github:k-k1/agent-fleet#3606"
     Type    string          // shared vocabulary, §3: "pr.checks.completed"
-    Version string          // de-duplication key: head SHA, updated_at, delivery ID
-    Summary string          // one line a session can act on
+    Version string          // de-duplication key: a fingerprint of the state, §5
+    Summary string          // one line composed from fields the adapter controls, rule 6.5
     Data    json.RawMessage // provider detail (failed jobs, URLs)
     At      time.Time
 }
@@ -91,8 +91,9 @@ type Subscription struct {
     Owner   SessionRef      // who asked
     Subject SubjectID
     Types   []string        // patterns: "pr.checks.*"
-    Until   UntilRule       // first match | subject closed | deadline
+    Until   UntilRule       // first match | n deliveries | subject closed | deadline
     Notify  SinkRef         // self | parent | member
+    Fallback SinkRef        // built-in subscriptions only: where to deliver when the session cannot take it (§5)
 }
 ```
 
@@ -104,53 +105,78 @@ again in 15 s", "settled: 10 min", "rate limited until T").
 
 Event types are namespaced and shared across providers, so a session subscribes to `pr.checks.completed` whether the
 PR is on GitHub or Bitbucket. The first set: `pr.checks.completed` (with the overall result and the failed checks),
-`pr.checks.failed`, `pr.conflict`, `pr.mergeable`, `pr.merged`, `pr.closed`, `pr.review.changes_requested`,
+`pr.checks.failed`, `pr.conflict`, `pr.mergeable`, `pr.ready` (open, not draft, checks green, mergeable, and approved
+or no review required), `pr.merged`, `pr.closed`, `pr.review.changes_requested`, `pr.review.threads_unresolved`,
 `issue.transitioned`, `deploy.completed`, `deploy.failed`. A provider-specific condition gets a provider-prefixed type
 (`github.workflow_run.completed`) until a second provider needs it. Adding a type is a code review decision, not
 something an adapter does on its own.
 
 ### 4. Where it runs
 
-- **Polling runs in the workspace Agent.** The credentials (Settings > Connections), the sessions and the existing
+- **Polling runs in the workspace Agent.** The credentials ("Settings > Connections"), the sessions and the existing
   `branchpr` cache are there, so a poll costs no new hop.
-- **Webhooks are received by the Control Plane**, verified and parsed into the same `Event`, and forwarded to the
-  workspaces that hold a subscription for that subject. A webhook only shortens the wait: the engine still polls a
-  subscribed subject at a long interval, because webhooks can be lost.
-- A session sees the same `Event` either way and cannot tell, and need not care, which path delivered it.
+- **Webhooks are received by the Control Plane** and verified, and are only a **poke**: the Control Plane forwards
+  `(source, subject)` and nothing of the payload to the workspaces that registered that subject, and the engine polls
+  the subject at once with the member's own token. Events therefore always come from a poll, so the data a session
+  sees is always what the member's own connection can read, and a workspace that registered a subject it cannot read
+  learns no more than that something changed. The Agent registers a subject with the Control Plane when its first
+  subscription is made and withdraws it with the last.
+- A webhook only shortens the wait: the engine still polls a subscribed subject at a long interval, because webhooks
+  can be lost.
 
 ### 5. Delivery
 
-- **Into a session**: a notice in the same form as the stalled-tree and PR feedback ones
-  (`[agent-fleet:notice kind=watch source=github type=pr.checks.completed subject=…]` and the one-line summary),
-  injected only when the session is idle and can take input. A stopped session is started and told once ready, one at a
+- **Into a session**: a notice in the same form as the stalled-tree and PR feedback ones,
+  `[agent-fleet:notice kind=watch source=github type=pr.checks.completed subject=… reply=none]`, then the one-line
+  `Summary`, then `Data` under a line that labels it as data, not instructions (rule 6.5). Header values are tokens
+  from a fixed ASCII set (letters, digits, `.:/#_-`); a value outside it is refused when the subscription is made or
+  the event is dropped, so nothing can close the header early or start a new line. The notice is injected only when
+  the session is idle and can take input. A stopped session is started and told once ready, one at a
   time, as #3129 already does. An archived session's subscriptions end.
 - **To a parent**: a child may subscribe with `Notify: parent`, so an issue round's parent hears about its children's
-  PRs without owning them.
+  PRs without owning them. The parent is the session that started the child (`Origin` is a session, not a handoff).
+  Such a subscription belongs to the parent: it counts against the parent's limit, is listed and ended by the parent,
+  and ends when the parent is archived, not when the child is.
 - **To the member**: the notification outbox (`internal/notice`), as #3131 does today.
-- **Once**: an event is delivered once per subscription and `Version`, recorded on disk, so a restart repeats nothing.
+- **When the session cannot take it**: a subscription a session made ends with that session. A built-in subscription
+  (step 3) names a `Fallback`, the member, as #3129 does today for an archived session or a kind that cannot take
+  prompts.
+- **Once**: an event is delivered once per subscription, `Type` and `Version`, recorded on disk, so a restart repeats
+  nothing. `Version` is a fingerprint of the state that produced the event (for checks: head SHA, the checks' result
+  and the run attempt; for conflicts and reviews: an episode counter that moves each time the condition returns), so a
+  re-run on the same commit or a second conflict is a new event, and the same state seen twice is not.
+- **The first poll after `watch`** evaluates the current state: a condition that already holds (the checks on the
+  current head have completed) is delivered at once, so a `watch` made a moment too late does not wait forever.
+  Built-in subscriptions instead take the first state they see as the baseline, because a PR first seen already
+  merged is history, not news.
 - **While the workspace is stopped** nothing polls, because the engine lives in the Agent. Subscriptions stay on disk;
   when the workspace starts, the engine polls every live subscription once before it returns to its schedule, and
-  delivers only the latest state per subject. Webhook events for a stopped workspace are held by the Control Plane
-  (newest per subject, bounded) and handed over at start; they never wake the workspace. Anything that must act while
+  delivers only the latest state per subject and type. Pokes for a stopped workspace are held by the Control Plane as
+  a set of subjects and handed over at start; they never wake the workspace. Anything that must act while
   the workspace is stopped is an ADR 0021 schedule (§7).
 
 ### 6. Rules the engine enforces
 
 1. **Authorisation at subscribe time and at every delivery**: `Resolve` checks that the subscriber's own connection
-   can read the subject. A subject in another tenant, or one the member's token cannot see, is refused. A webhook
-   event is forwarded only to workspaces whose subscriptions were authorised that way.
+   can read the subject. A subject in another tenant, or one the member's token cannot see, is refused. Every event
+   comes from a poll made with that connection (§4), so a revoked token or a lost repository access stops delivery
+   at the next poll.
 2. **Limits**: at most 20 live subscriptions per session and 200 per workspace (`watch` refuses the next one and
-   says which limit was hit). The engine's own requests may use at most 10% of a connection's hourly request budget
-   (one token is one GitHub rate limit, whoever uses it); replies that do not count against the provider's limit,
-   such as GitHub's `304`, do not count against this budget either. All three numbers are settings with these
-   defaults.
+   says which limit was hit). Where the provider states an hourly limit, the engine's own requests may use at most
+   10% of it per connection (one token is one GitHub rate limit, whoever uses it); replies that do not count against
+   the provider's limit, such as GitHub's `304`, do not count against this budget either, and secondary-limit replies
+   (`Retry-After`) are obeyed. Bitbucket's 1,000 requests an hour are already mostly spent by `branchpr`, so its
+   source reads through the `branchpr` cache and shortens the cache's interval for subscribed PRs within that budget
+   instead. A provider without a stated hourly limit (Jira, CloudFormation, an HTTP endpoint) gets 30 requests a
+   minute per connection. All these numbers are settings with these defaults.
 3. **Expiry**: every subscription has a deadline, 7 days by default and at most 30 days, and ends with its owner.
 4. **Fail quietly, not wrongly**: an adapter error backs off and is visible in `list_watches`; it never produces an
    event that did not happen.
 5. **Provider text is data, not instructions.** A notice is read by an agent, and titles, comments, job logs and
    anything an external source (§8) returns can be written by someone other than the member. `Summary` is composed
    by the adapter from fields it controls (state, result, counts, numbers, the subject's reference); free text goes
-   only into `Data`, is cut to a fixed length, and the notice marks it as untrusted data.
+   only into `Data`. In the notice, `Data` is at most 2 KiB; each value is quoted, stripped of control and
+   line-separator characters and cut to 100 characters; only `https://` URLs are kept.
 
 ### 7. Time, and how it relates to ADR 0021
 
@@ -159,33 +185,49 @@ The engine's `time` source holds timers that live inside a running workspace ("i
 only the Control Plane is alive while a workspace is stopped, and the 0021 scheduler already wakes workspaces and
 drives sessions there.
 
-- A time watch asked for with `wake` is not kept by the engine: the Agent registers it as an ADR 0021 schedule through
-  the existing schedule bridge, and its delivery comes back through the watch sinks.
+- Every time watch is kept by the engine, fires from the engine while the workspace runs, is listed by
+  `list_watches` and ends like any other subscription.
+- A time watch asked for with `wake` also gets a counterpart on the Control Plane: a schedule whose only action is to
+  wake the workspace and tell the engine that the watch is due, not a prompt into a session. The engine records the
+  counterpart's ID and deletes it when the watch fires, is ended with `unwatch` or ends with its owner, as
+  `rate_limit_resume.go` does for its wake-ups today. Delivery then follows §5 (idle sessions only, `Notify: member`
+  included). The counterpart is a new kind of schedule target, so it is not shown in the member's scheduled-execution
+  list. Where the Control Plane's scheduler is not running, `watch` refuses `wake` instead of accepting a timer that
+  would never fire.
 - A time watch without `wake` that falls due while the workspace is stopped is delivered at the next start, marked
   late, or dropped when its subscription expired in the meantime.
 - The 0021 scheduler stays the only component that wakes a workspace.
 
 ### 8. Sources a member adds
 
-A member may register an MCP server from Settings > Connections > MCP servers as a watch source. The feature is off
+A member may register an MCP server from "Settings > Connections > MCP servers" as a watch source. The feature is off
 for a tenant until an administrator enables it.
 
 - **Contract**: the server exposes two tools with the shape of §2: `watch_resolve(ref)` returns a subject or a
   refusal, and `watch_poll(subjects, cursors)` returns events, cursors and hints. External sources poll only; the
   Control Plane receives no webhooks for them.
-- **Caller**: the engine in the Agent calls these tools, never a session. The server receives subject references and
-  its own cursors, nothing else: no session content, and no credentials other than those of its own MCP server
-  connection.
+- **Caller**: the engine in the Agent calls these tools, never a session. A server registered as a watch source is
+  therefore not handed to sessions: its definition has its own watch-source target, and `Targets.Session` is off for
+  it. `Resolve` still checks the server's `Kinds` against the subscribing session's kind, and a `ref` is at most 200
+  characters from the header token set (§5), so `watch` cannot carry session text to a server the session could not
+  reach.
+- **What the server receives**: subject references and its own cursors, nothing else: no session content, and no
+  credentials other than those of its own MCP server connection. A local (stdio) server is started with an
+  environment built from an allowlist (`PATH`, `HOME`, `LANG`, `TMPDIR`, the isolation variables the workspace sets
+  for every MCP server) plus its own configured variables, never the Agent's own environment, which holds the
+  secret-store keys and the Agent's internal tokens. The existing stdio dialer and probe pass the Agent's environment
+  as is; step 5 changes both.
 - **Namespace**: its event types must be `ext.<source>.*` and its subjects `ext:<source>:…`. Anything else is dropped
   and counted as an error, so an external source cannot pose as `pr.merged` or speak about another source's subject.
 - **Reach**: its events go only to subscriptions owned by the registering member's sessions (self, parent) or to that
   member. They are never forwarded to the Control Plane, another member or another workspace.
-- **Output**: `Summary` is capped at 200 characters and `Data` at 8 KiB, and both are treated as provider free text
-  under rule 6.5.
+- **Output**: the engine, not the server, composes `Summary` from `source`, `type` and `subject`. Whatever summary the
+  server returns goes into `Data` with the rest, and all of it is provider free text under rule 6.5.
 - **Budget**: a call times out after 10 s; a subject is polled at most once a minute whatever the `Hint` says; one call
-  carries at most 50 subjects and returns at most 20 events. Five consecutive failures pause the source; the pause is
+  carries at most 20 subjects and returns at most 20 events. A subject's cursor advances only when all of its events
+  were returned; the rest are asked for again in the next call. Five consecutive failures pause the source; the pause is
   shown in `list_watches` and lifted by the member.
-- **Isolation**: a local (stdio) server runs as a child of the Agent with the same user and limits as the MCP servers
+- **Isolation**: beyond the environment above, a local server runs with the same user and limits as the MCP servers
   sessions start, so the workspace container is its sandbox, as it is for every process the member runs; being a
   source gives it no extra privilege. A remote server is reached the way sessions reach it.
 
@@ -197,7 +239,7 @@ for a tenant until an administrator enables it.
 | Trackers | Jira, GitHub / Bitbucket issues: transitions, assignment, a new comment that mentions the session's item |
 | CI on its own | GitHub Actions / Bitbucket Pipelines runs not tied to a PR (nightly, release workflows), a release tag published |
 | Deployments | CloudFormation stack status, ECS service steady state, a Kubernetes rollout, a container image becoming available in a registry |
-| Agent Fleet itself | a peer session going idle or finishing, a child's turn ending, quota windows reopening (`limitepoch`), a long background command exiting |
+| Agent Fleet itself | a peer session going idle or finishing, a child's turn ending, quota windows reopening (`sessionx/rate_limit_resume.go`), a long background command exiting |
 | Endpoints | an HTTP health check turning green after a deploy, a certificate nearing expiry |
 | Time | "at 03:00" and "in 20 minutes" as a time source that feeds scheduled execution (ADR 0021) rather than replacing it (§7) |
 | Security feeds | a new advisory for a dependency, a new finding in the published images' vulnerability scan (#3339) |
@@ -206,14 +248,20 @@ The table is a direction, not a commitment; each source is its own change with i
 
 ### 10. Steps
 
-1. **Engine + `github` source + MCP tools** (`watch`, `unwatch`, `list_watches`). The `github` poller adds REST with
-   conditional requests (`If-None-Match`; a `304` does not count against GitHub's primary rate limit) and adaptive
-   intervals for subscribed PRs, next to the batched GraphQL that `branchpr` uses for the session list.
-2. **`bitbucket` source** (Bitbucket has no ETag: adaptive intervals only).
-3. **Webhook ingress on the Control Plane** (GitHub App first; repository webhooks where an App cannot be installed;
-   Bitbucket repository webhooks).
-4. **Move #3129 and #3131 onto the engine** as built-in subscriptions, keeping their member-facing switches.
-5. **Sources a member adds** (§8), behind the tenant switch.
+1. **Engine + `github` source + MCP tools** (`watch`, `unwatch`, `list_watches`). For subscribed PRs the `github`
+   poller adds REST with conditional requests (`If-None-Match`; a `304` does not count against GitHub's primary rate
+   limit) and adaptive intervals. The PR itself does not change its ETag when a check finishes, so each PR takes
+   several endpoints: the PR (`pulls/{n}`), its head's check runs and combined status, and its reviews. What it
+   fetches is written back into the `branchpr` cache, so the same PR is not fetched twice. Until step 3, a session's
+   own subscription to its PR's checks or reviews suppresses #3129's notice for that session and PR, so it is not told
+   twice.
+2. **`bitbucket` source** (Bitbucket has no ETag: adaptive intervals within the `branchpr` budget, rule 6.2).
+3. **Move #3129 and #3131 onto the engine** as built-in subscriptions with the member as `Fallback`. #3129 keeps its
+   `prFeedback` switch, its review-notice cap (`Until`: 3 deliveries) and its watch on held PR links; #3131 has no
+   switch and keeps none. This needs no webhooks, so it comes before them.
+4. **Webhook ingress on the Control Plane** (GitHub App first; repository webhooks where an App cannot be installed;
+   Bitbucket repository webhooks), forwarding pokes only (§4).
+5. **Sources a member adds** (§8), behind the tenant switch, with the environment allowlist for stdio servers.
 6. **The `time` source** (§7), then further sources from §9 one at a time.
 
 ## Rejected
@@ -239,9 +287,9 @@ The table is a direction, not a commitment; each source is its own change with i
 - The engine becomes a shared dependency of several Agent features; its store and scheduler need their own tests and
   measurements (requests per hour per connection, delivery delay).
 - Webhook ingress adds a public, unauthenticated-by-session endpoint to the Control Plane, guarded by signature checks;
-  it gets its own security review in step 3.
+  it gets its own security review in step 4.
 - Sources a member adds put member-chosen code in the engine's path. §8 confines what they can emit and to whom; step 5
-  gets its own security review, like step 3.
+  gets its own security review, like step 4.
 
 ## Open questions
 
