@@ -64,8 +64,9 @@ type Source interface {
 	// It is the only place a source decides access. defaultRepo qualifies a bare "#12".
 	Resolve(ctx context.Context, ref, defaultRepo string) (Resolved, error)
 	// Poll reads one subject. cursor is what the previous Poll returned for it (nil the first
-	// time); the events are every condition that holds now.
-	Poll(ctx context.Context, subject SubjectID, cursor json.RawMessage) ([]Event, json.RawMessage, Hint, error)
+	// time); the events are every condition that holds now. want are the type patterns the
+	// subject's subscriptions ask for, so a source can skip a costly read nobody needs.
+	Poll(ctx context.Context, subject SubjectID, cursor json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error)
 }
 
 // ErrRefused is a Resolve answer the caller should show as is: the reference is malformed, the
@@ -102,11 +103,14 @@ type Subscription struct {
 	Source  string    `json:"source"`
 	Subject SubjectID `json:"subject"`
 	Ref     string    `json:"ref"` // the reference as the session gave it, for list_watches
-	URL     string    `json:"url,omitempty"`
-	Types   []string  `json:"types"`
-	Until   string    `json:"until"`
-	Created time.Time `json:"created"`
-	Expires time.Time `json:"expires"`
+	// Requester is the session that asked when it is not the owner: a child that subscribed
+	// with notify parent. The subscription belongs to the owner (ADR 0133 §5).
+	Requester string    `json:"requester,omitempty"`
+	URL       string    `json:"url,omitempty"`
+	Types     []string  `json:"types"`
+	Until     string    `json:"until"`
+	Created   time.Time `json:"created"`
+	Expires   time.Time `json:"expires"`
 	// Told is the version last delivered per event type. Sources report only what holds now,
 	// so the last version per type is all de-duplication needs, and it cannot grow.
 	Told map[string]string `json:"told,omitempty"`

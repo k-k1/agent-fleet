@@ -81,12 +81,19 @@ var (
 	prFeedbackBBLookup = func(keys []branchpr.Key, now time.Time) map[branchpr.Key]*branchpr.PR {
 		return lookupBitbucketPRs(keys, now)
 	}
-	prFeedbackAlive  = SessionAlive
-	prFeedbackReady  = func(m session.Meta) bool { ready, _ := peerDeliveryReady(m); return ready }
-	prFeedbackBusy   = managedBusy
-	prFeedbackInject = injectSessionPrompt
-	prFeedbackStart  = startSessionInProcess
-	prFeedbackPut    = notice.PutOnce
+	prFeedbackAlive   = SessionAlive
+	prFeedbackReady   = func(m session.Meta) bool { ready, _ := peerDeliveryReady(m); return ready }
+	prFeedbackBusy    = managedBusy
+	prFeedbackInject  = injectSessionPrompt
+	prFeedbackStart   = startSessionInProcess
+	prFeedbackPut     = notice.PutOnce
+	prFeedbackWatched = func(name, linkKey, what string) bool {
+		if what == "ci" {
+			return watchingPR(name, linkKey, "pr.checks.failed")
+		}
+		// A review item is a change request or new unresolved threads; a watch on either covers it.
+		return watchingPR(name, linkKey, "pr.review.changes_requested") || watchingPR(name, linkKey, "pr.review.threads_unresolved")
+	}
 )
 
 // prFeedbackBranch remembers the branch PR key each session's row last asked (annotateLinks), so
@@ -550,6 +557,14 @@ func prFeedbackTick(now time.Time) {
 		for _, it := range items {
 			if sentTo[owner.name] {
 				break
+			}
+			if w.provider == "github" && prFeedbackWatched(owner.name, w.linkKey, it.what) {
+				// The session watches this PR itself and hears it from the watch engine; recorded
+				// as told so it does not come again once the watch ends.
+				r := s.records[id]
+				it.apply(&r)
+				s.records[id], dirty = r, true
+				continue
 			}
 			// Claimed on disk before the send, and released if it fails: a crash between the
 			// two loses this one notice rather than sending it twice, as the peer spool does.

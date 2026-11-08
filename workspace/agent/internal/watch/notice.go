@@ -20,8 +20,13 @@ const (
 // data so the reading agent does not take it for instructions.
 func Notice(sub Subscription, ev Event) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[agent-fleet:notice kind=watch source=%s type=%s subject=%s watch=%s reply=none] %s",
-		token(ev.Source), token(ev.Type), token(string(ev.Subject)), token(sub.ID), CleanText(ev.Summary, 300))
+	forPart := ""
+	if sub.Requester != "" {
+		// A child's watch delivered to its parent: say whose PR it is.
+		forPart = " for=" + token(sub.Requester)
+	}
+	fmt.Fprintf(&b, "[agent-fleet:notice kind=watch source=%s type=%s subject=%s watch=%s%s reply=none] %s",
+		token(ev.Source), token(ev.Type), token(string(ev.Subject)), token(sub.ID), forPart, CleanText(ev.Summary, 300))
 	if u := SafeURL(sub.URL); u != "" {
 		b.WriteString(" " + u)
 	}

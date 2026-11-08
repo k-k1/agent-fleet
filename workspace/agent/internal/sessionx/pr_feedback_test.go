@@ -28,6 +28,7 @@ type feedbackFixture struct {
 	member  []notice.Event
 	once    map[string]bool
 	now     time.Time
+	watched map[string]bool // "session|owner/repo#N|ci" the session watches itself
 }
 
 func newFeedbackFixture(t *testing.T) *feedbackFixture {
@@ -69,6 +70,10 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 		return nil
 	}
 	prFeedback = &prFeedbackState{}
+	ow := prFeedbackWatched
+	prFeedbackWatched = func(name, linkKey, what string) bool { return f.watched[name+"|"+linkKey+"|"+what] }
+	f.watched = map[string]bool{}
+	t.Cleanup(func() { prFeedbackWatched = ow })
 	t.Cleanup(func() {
 		prFeedbackEnabled, prFeedbackLookup, prFeedbackBBLookup, prFeedbackAlive, prFeedbackReady, prFeedbackBusy,
 			prFeedbackInject, prFeedbackStart, prFeedbackPut = oe, ol, ob, oa, or, obz, oi, os, op
@@ -530,5 +535,22 @@ func testMergeToldBeforeTheList(t *testing.T, role string) {
 	}
 	if len(told) != 1 || told[0] != "pr-merged|pr-merged|github:o/r#9|2026-11-04T08:00:00Z" {
 		t.Fatalf("told %v: the merge is told where it is recorded, under the list's own key", told)
+	}
+}
+
+func TestPRFeedbackLeavesAPRTheSessionWatchesToTheWatchEngine(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	failing(f.pr(1, "h1"), "unit")
+	f.watched["a|o/r#1|ci"] = true
+	f.ticks(3)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v though the session watches its PR's checks", f.sent)
+	}
+	// The watch ended: the head already told by the engine is not told again.
+	f.watched["a|o/r#1|ci"] = false
+	f.ticks(3)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v after the watch ended", f.sent)
 	}
 }

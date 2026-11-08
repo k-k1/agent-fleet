@@ -1,6 +1,7 @@
 package branchpr
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -570,5 +571,40 @@ func TestChecksPastTheContextsReadStillHoldTheFailure(t *testing.T) {
 	q, _ := query([]Key{{Repo: "o/r", Branch: "a"}})
 	if !strings.Contains(q, "checkRunCountsByState{state count} statusContextCountsByState{state count}") {
 		t.Errorf("query %s lacks the counts", q)
+	}
+}
+
+func TestFetchWaitsAndSharesTheAnswerWithTheBranchEntry(t *testing.T) {
+	var calls atomic.Int32
+	srv := server(t, &calls, http.StatusOK, nil) // answers r0 with PR #100 on branch lookups
+	c := newTestCache(srv.URL, "tok")
+	branch := Key{Repo: "o/r", Branch: "a"}
+	now := time.Now()
+	c.Lookup([]Key{branch}, now) // the row's entry learns it is PR #100
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d", calls.Load())
+	}
+
+	byNumber := Key{Repo: "O/R", Number: 100}
+	t.Setenv("BRANCHPR_TEST_BODY", `{"data":{"r0":{"owner":{"login":"o"},"pullRequest":`+
+		strings.Replace(prNode(100, "MERGED", false, "o", "SUCCESS"), `"number"`, `"reviewThreads":{"nodes":[{"isResolved":false},{"isResolved":true}]},"number"`, 1)+`}}}`)
+	got, err := c.Fetch(context.Background(), []Key{byNumber})
+	if err != nil || got[byNumber] == nil || got[byNumber].State != "merged" || got[byNumber].UnresolvedThreads != 1 {
+		t.Fatalf("Fetch = %+v, %v", got[byNumber], err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("Fetch did not ask GitHub: calls = %d", calls.Load())
+	}
+	// The row's entry got the same answer and is fresh: its next lookup asks nothing.
+	row := c.Lookup([]Key{branch}, time.Now())
+	if row[branch] == nil || row[branch].State != "merged" || calls.Load() != 2 {
+		t.Fatalf("branch entry = %+v, calls = %d", row[branch], calls.Load())
+	}
+}
+
+func TestFetchNotConnected(t *testing.T) {
+	c := newTestCache("http://127.0.0.1:1", "")
+	if _, err := c.Fetch(context.Background(), []Key{{Repo: "o/r", Number: 1}}); !ErrNotConnected(err) {
+		t.Fatalf("err = %v", err)
 	}
 }

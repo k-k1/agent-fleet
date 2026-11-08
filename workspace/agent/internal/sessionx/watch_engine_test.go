@@ -110,7 +110,7 @@ func (stubSource) Resolve(_ context.Context, ref, def string) (watch.Resolved, e
 	}
 	return watch.Resolved{Subject: "github:o/r#1"}, nil
 }
-func (stubSource) Poll(context.Context, watch.SubjectID, json.RawMessage) ([]watch.Event, json.RawMessage, watch.Hint, error) {
+func (stubSource) Poll(context.Context, watch.SubjectID, json.RawMessage, []string) ([]watch.Event, json.RawMessage, watch.Hint, error) {
 	return nil, nil, watch.Hint{}, nil
 }
 
@@ -173,5 +173,60 @@ func TestWatchRoutesCreateListDelete(t *testing.T) {
 	}
 	if rec := do("GET", "/sessions/a/watches", ""); strings.Contains(rec.Body.String(), created.Watch.ID) {
 		t.Fatalf("still listed: %s", rec.Body)
+	}
+}
+
+func TestWatchNotifyParentBelongsToTheParent(t *testing.T) {
+	newWatchFixture(t)
+	dir := t.TempDir()
+	session.WriteMeta(session.Meta{Name: "p", Kind: session.KindClaude, Dir: dir})
+	session.WriteMeta(session.Meta{Name: "c", Kind: session.KindClaude, Dir: dir, OriginSession: "p", Origin: session.OriginSession})
+	session.WriteMeta(session.Meta{Name: "h", Kind: session.KindClaude, Dir: dir, OriginSession: "p", Origin: session.OriginUser})
+	useWatchEngine(t, watch.New(watchDiskStore{}, newWatchSink(), stubSource{}))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sessions/{name}/watches", HandleWatchCreate)
+	mux.HandleFunc("GET /sessions/{name}/watches", HandleWatchList)
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return rec
+	}
+	rec := do("POST", "/sessions/c/watches", `{"ref":"o/r#1","types":["pr.merged"],"notify":"parent"}`)
+	if rec.Code != 200 {
+		t.Fatalf("child notify parent: %d %s", rec.Code, rec.Body)
+	}
+	var created struct{ Watch watch.Subscription }
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.Watch.Owner != "p" || created.Watch.Requester != "c" {
+		t.Fatalf("owner %q requester %q", created.Watch.Owner, created.Watch.Requester)
+	}
+	if !strings.Contains(do("GET", "/sessions/p/watches", "").Body.String(), created.Watch.ID) ||
+		strings.Contains(do("GET", "/sessions/c/watches", "").Body.String(), created.Watch.ID) {
+		t.Fatal("the watch is not listed by the parent alone")
+	}
+	// A handoff successor and a top-level session have no parent to notify.
+	for _, n := range []string{"h", "p"} {
+		if rec := do("POST", "/sessions/"+n+"/watches", `{"ref":"o/r#1","types":["pr.merged"],"notify":"parent"}`); rec.Code != 400 {
+			t.Fatalf("%s notify parent: %d %s", n, rec.Code, rec.Body)
+		}
+	}
+	// The child being archived does not end it; the parent being archived does.
+	session.WriteMeta(session.Meta{Name: "c", Kind: session.KindClaude, Dir: dir, Archived: true})
+	watchEngine().Tick(context.Background())
+	if !strings.Contains(do("GET", "/sessions/p/watches", "").Body.String(), created.Watch.ID) {
+		t.Fatal("archiving the child ended the parent's watch")
+	}
+}
+
+func TestWatchingPRMatchesTheSubjectCaseInsensitively(t *testing.T) {
+	newWatchFixture(t)
+	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir()})
+	e := watch.New(watchDiskStore{}, newWatchSink(), stubSource{})
+	useWatchEngine(t, e)
+	if _, err := e.Subscribe(context.Background(), watch.Request{Owner: "a", Source: "github", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !watchingPR("a", "O/R#1", "pr.merged") || watchingPR("a", "o/r#1", "pr.checks.failed") || watchingPR("b", "o/r#1", "pr.merged") {
+		t.Fatal("watchingPR answered wrongly")
 	}
 }

@@ -15,6 +15,7 @@ package branchpr
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -302,13 +303,87 @@ func (c *Cache) refresh(due []Key) {
 				continue // keeps its last answer, and stays due
 			}
 			if e := c.entries[k]; e != nil {
-				e.pr = got[k]
-				e.fetched = now
+				c.storeLocked(k, e, got[k], now)
 			}
 		}
 		c.mu.Unlock()
 	}
 }
+
+// storeLocked records pr as k's answer and hands it to every other entry that holds the same PR,
+// so a PR asked by number (a watch) and by branch (a session row) is one answer: whichever read
+// it last keeps the other fresh, and neither asks GitHub again within its TTL.
+func (c *Cache) storeLocked(k Key, e *entry, pr *PR, now time.Time) {
+	e.pr, e.fetched = pr, now
+	if pr == nil || pr.Number <= 0 {
+		return
+	}
+	for ok, oe := range c.entries {
+		if ok == k || oe == e || !strings.EqualFold(ok.Repo, k.Repo) {
+			continue
+		}
+		same := ok.Number == pr.Number || (ok.Number == 0 && oe.pr != nil && oe.pr.Number == pr.Number)
+		if same {
+			oe.pr, oe.fetched = pr, now
+		}
+	}
+}
+
+// Fetch asks GitHub about keys now and waits for the answer, for a caller that cannot act on a
+// stale or missing entry (the watch engine's first read of a subject, ADR 0133 rule 6.2). The
+// answers are stored as a background refresh would store them. A key GitHub could not answer
+// is absent from the result; a PR that does not exist answers nil.
+func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
+	if len(keys) == 0 {
+		return map[Key]*PR{}, nil
+	}
+	if len(keys) > c.batch {
+		return nil, fmt.Errorf("at most %d keys per fetch", c.batch)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	token, err := c.Token()
+	if err != nil {
+		return nil, err
+	}
+	if token == "" {
+		return nil, errNotConnected
+	}
+	got, failed, _, err := c.fetch(token, keys)
+	if errors.Is(err, errUnauthorized) && c.Renew != nil {
+		if nt, rerr := c.Renew(token); rerr == nil && nt != "" && nt != token {
+			got, failed, _, err = c.fetch(nt, keys)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	out := map[Key]*PR{}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, k := range keys {
+		if failed[k] {
+			continue
+		}
+		e := c.entries[k]
+		if e == nil {
+			e = &entry{}
+			c.entries[k] = e
+		}
+		e.asked = now
+		c.storeLocked(k, e, got[k], now)
+		out[k] = got[k]
+	}
+	return out, nil
+}
+
+// errNotConnected is Fetch's answer when the provider has no credential.
+var errNotConnected = errors.New("not connected")
+
+// ErrNotConnected reports whether err is Fetch's "not connected" answer.
+func ErrNotConnected(err error) bool { return errors.Is(err, errNotConnected) }
 
 // prFields is what one PR node answers, for a branch's list and for a PR asked by number alike.
 var prFields = fmt.Sprintf("id number title state isDraft url mergeable reviewDecision closedAt headRepositoryOwner{login} "+

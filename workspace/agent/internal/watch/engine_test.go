@@ -27,7 +27,7 @@ func (f *fakeSource) Resolve(_ context.Context, ref, _ string) (Resolved, error)
 	}
 	return Resolved{Subject: SubjectID("fake:" + ref)}, nil
 }
-func (f *fakeSource) Poll(_ context.Context, id SubjectID, cur json.RawMessage) ([]Event, json.RawMessage, Hint, error) {
+func (f *fakeSource) Poll(_ context.Context, id SubjectID, cur json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
 	f.polls++
 	return f.events, cur, f.hint, f.err
 }
