@@ -27,7 +27,7 @@ Parameters:
   MasterKeyKmsKeyArn:
     Type: String
     Default: ""
-    AllowedPattern: "^(arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+)?$"
+    AllowedPattern: "^(arn:aws:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+)?$"
     Description: CMK of /af-cp/master-key; empty = aws/ssm (PARAMETERS.md, "Keys at rest").
 
 Conditions:
