@@ -94,7 +94,7 @@ export function FileViewerShell(props: FileViewerShellProps) {
         <MarpView source={props.previewSource} />
       ) : props.preview === "normal" ? (
         <div className="md-scroll" ref={props.scrollMemory("preview")}>
-          <FileMarkdownView source={props.previewSource} filePath={filePath} nestedRepo={props.nestedRepo} onOpenFile={props.onOpenFile} onOpenDir={props.onOpenDir} />
+          <FileMarkdownView source={props.previewSource} sourceLines filePath={filePath} nestedRepo={props.nestedRepo} onOpenFile={props.onOpenFile} onOpenDir={props.onOpenDir} />
         </div>
       ) : (
         <CodeView

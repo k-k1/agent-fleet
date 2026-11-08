@@ -192,7 +192,8 @@ the original from **Download** in the info bar.
 
 Switch to editing with **View / Edit / Split** at the top of the viewer and you can fix the file
 right there, with no need to start a session for a small change (on `.md`, "Split" puts the editor
-and the preview side by side).
+and the preview side by side, and scrolling either one scrolls the other to the same place in
+the source).
 
 - **Save with Ctrl/⌘+S** (or the Save button). The status line shows "Unsaved changes",
   "Saving", "Saved".
