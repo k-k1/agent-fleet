@@ -9,6 +9,8 @@ import {
   pickerTokenAt,
   slashTokenAt,
   splitDoubleTrigger,
+  splitWords,
+  wordMatchCost,
 } from "./skillPicker.ts";
 import type { SessionSkill } from "../../core/api/client.ts";
 
@@ -102,6 +104,99 @@ describe("filterSkills", () => {
     expect(filterSkills(mixed, "sim").map((s) => s.name)).toEqual(["simulate", "simplify"]);
     // name-substring rank ("a"): own before bundled, then the description-only match last
     expect(filterSkills(mixed, "a").map((s) => s.name)).toEqual(["handoff", "simulate", "dataviz", "simplify"]);
+  });
+});
+
+describe("splitWords", () => {
+  it("splits kebab, snake, dotted, namespaced, camelCase and PascalCase names the same way", () => {
+    for (const n of ["issue-to-pr", "issue_to_pr", "issue.to.pr", "issueToPr", "IssueToPr", "ISSUE_TO_PR"]) {
+      expect(splitWords(n)).toEqual(["issue", "to", "pr"]);
+    }
+    expect(splitWords("plugin:skill-doctor")).toEqual(["plugin", "skill", "doctor"]);
+    expect(splitWords("HTMLParser2Go")).toEqual(["html", "parser", "2", "go"]);
+  });
+  it("returns no words for an empty or separator-only string", () => {
+    expect(splitWords("")).toEqual([]);
+    expect(splitWords("-_-")).toEqual([]);
+  });
+  it("keeps non-Latin runs as words instead of dropping them", () => {
+    expect(splitWords("レビュー-v2")).toEqual(["レビュー", "v", "2"]);
+  });
+});
+
+describe("wordMatchCost", () => {
+  it("matches word prefixes in order, whatever separator either side uses", () => {
+    for (const q of ["iss-t", "iss_t", "issT", "issto", "itp", "i-t-p", "issue-to-pr", "isspr"]) {
+      expect(wordMatchCost("issue-to-pr", q)).toBeGreaterThanOrEqual(0);
+    }
+    for (const n of ["issue_to_pr", "IssueToPr", "issueToPr"]) expect(wordMatchCost(n, "iss-t")).toBe(0);
+  });
+  it("counts skipped words as the cost", () => {
+    expect(wordMatchCost("issue-to-pr", "iss-t")).toBe(0);
+    expect(wordMatchCost("issue-to-pr", "to-pr")).toBe(1);
+    expect(wordMatchCost("issue-to-pr", "isspr")).toBe(1);
+  });
+  it("rejects segments that do not start on a word, and plain subsequences", () => {
+    expect(wordMatchCost("issue-rounds", "iss-t")).toBe(-1);
+    expect(wordMatchCost("issue-to-pr", "ssue")).toBe(-1);
+    expect(wordMatchCost("fewer-permission-prompts", "iss")).toBe(-1);
+    expect(wordMatchCost("issue-to-pr", "pr-to")).toBe(-1); // order matters
+    expect(wordMatchCost("issue-to-pr", "-")).toBe(-1);
+    expect(wordMatchCost("---", "a")).toBe(-1); // a name made of separators only has no words
+  });
+  it("does not count unused trailing words, and matches digit words", () => {
+    expect(wordMatchCost("issue-to-pr", "issue")).toBe(0);
+    expect(wordMatchCost("deploy-v2", "d-2")).toBe(1);
+  });
+  it("treats a stray capital mid-word as a word break, so it misses (deliberate)", () => {
+    // "IsST" splits into "is" + "st"; no word after "issue" starts with "st". Honouring capitals
+    // is what makes "issT" and "IssueToPr" work, so this miss is the accepted trade-off.
+    expect(wordMatchCost("issue-to-pr", "IsST")).toBe(-1);
+  });
+});
+
+describe("filterSkills word matching", () => {
+  const skills = [
+    sk("issue-rounds", "Issue を子に配る"),
+    sk("issue-to-pr", "要望を Issue に"),
+    sk("fewer-permission-prompts"),
+    sk("security-assessment", "issue の候補"),
+    sk("code-review"),
+    sk("prereview"),
+  ];
+  it("selects issue-to-pr first for iss-t (and its snake/camel spellings)", () => {
+    for (const q of ["iss-t", "iss_t", "issT", "isst", "itp"]) {
+      expect(filterSkills(skills, q)[0].name).toBe("issue-to-pr");
+    }
+    expect(filterSkills(skills, "iss-t").map((s) => s.name)).toEqual(["issue-to-pr"]);
+  });
+  it("ranks a word-boundary hit above a mid-word substring", () => {
+    expect(filterSkills(skills, "rev").map((s) => s.name)).toEqual(["code-review", "prereview"]);
+  });
+  it("keeps the plain prefix rank on top and the substring/description ranks below", () => {
+    expect(filterSkills(skills, "iss").map((s) => s.name)).toEqual([
+      "issue-rounds",
+      "issue-to-pr",
+      "fewer-permission-prompts",
+      "security-assessment",
+    ]);
+  });
+  it("keeps own skills ahead of CLI-bundled ones even when the bundled one skips fewer words", () => {
+    const cli = (name: string): SessionSkill => ({ ...sk(name), source: "cli" });
+    const list = [cli("t_p"), sk("issue-to-pr")];
+    expect(filterSkills(list, "t-p").map((s) => s.name)).toEqual(["issue-to-pr", "t_p"]);
+  });
+  it("accepts an all-caps query (Caps Lock on)", () => {
+    for (const q of ["ISST", "ISS-T", "ITP"]) expect(wordMatchCost("issue-to-pr", q)).toBe(0);
+    expect(filterSkills(skills, "ISS-T").map((s) => s.name)).toEqual(["issue-to-pr"]);
+  });
+  it("keeps input order for equal rank, tier and cost", () => {
+    const list = [sk("b-x"), sk("a-x"), sk("c-x")];
+    expect(filterSkills(list, "x").map((s) => s.name)).toEqual(["b-x", "a-x", "c-x"]);
+  });
+  it("prefers fewer skipped words within the word rank", () => {
+    const list = [sk("issue-to-pr"), sk("to-pr-helper")];
+    expect(filterSkills(list, "t-p").map((s) => s.name)).toEqual(["to-pr-helper", "issue-to-pr"]);
   });
 });
 
