@@ -117,6 +117,15 @@
 .dialog-secondary {
   color: var(--dialog-muted, var(--muted));
 }
+/* The ConfirmDialog box (ui/ConfirmDialog.tsx); its title/body/actions are .confirm-* in
+   settings/parts/common.css. */
+.confirm {
+  width: min(420px, 92vw);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+}
 .ui-modal {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -821,14 +830,13 @@
    hue, so no separate light override is needed here. */
 .ui-seg.big .seg-btn.kind:not(.active) .seg-ic { color: var(--kind); }
 
-/* Inline link-styled button (hints that point at another screen). */
+/* Inline link-styled button (help text and hints that point at another screen). */
 .linklike {
   background: none;
   border: none;
   color: var(--accent);
   font: inherit;
-  font-size: inherit;
-  padding: 0 2px;
+  padding: 0;
   cursor: pointer;
   text-decoration: underline;
 }
@@ -840,6 +848,7 @@
   gap: 6px;
   font-size: 12px;
   color: var(--muted);
+  margin-top: 8px;
 }
 
 /* SSM quick-connect cards (StartModal): frequently-used / all hosts as one-click tiles. */
@@ -1031,6 +1040,22 @@
   background: var(--sel-bg);
   color: var(--sel-fg);
   font-weight: 600;
+}
+/* Choice segmented control (`ui-seg|seg choice-seg`: account menu, inbox, Settings). Placed
+   after both `.ui-seg` and `.seg` so it wins their `display` and the `.ui-seg .seg-btn`
+   padding, which it ties on specificity. */
+.choice-seg {
+  display: inline-flex;
+  /* With many options (six TTS voices, say) a narrow width clips them against .seg's
+     overflow:hidden, so min-width:0 lets this shrink as a flex child and the overflow
+     wraps instead. */
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.choice-seg .seg-btn {
+  flex: 0 0 auto;
+  padding: 5px 16px;
+  font-size: 12px;
 }
 
 /* ---- Kbd (keycap chips for shortcut hints — which-key / palette / cheat-sheet) ---- */
