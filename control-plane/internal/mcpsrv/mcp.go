@@ -302,12 +302,21 @@ func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) 
 		tr.rec.Reason = "pat unknown or revoked"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
 	}
+	capDays, err := a.cp.PATMaxDaysFor(r.Context(), p.ID)
+	if err != nil {
+		// The cap cannot be read, so the token cannot be shown to be inside it: refuse rather
+		// than honor it uncapped.
+		tr.rec.Reason = "store error"
+		return nil, internalErr(err)
+	}
+	// The cap is re-applied on every use, measured from creation, so lowering it (deployment or
+	// tenant) also ends tokens issued under a looser one. The earlier of that and the token's own
+	// expiry wins.
 	expiry := p.ExpiresAt
-	if expiry == "" {
-		// Issued before tokens had a maximum lifetime. Capped from creation, not from now,
-		// so an old non-expiring token stops working at once rather than getting a fresh term.
-		if c, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
-			expiry = c.AddDate(0, 0, a.cp.PATMaxDays()).UTC().Format(time.RFC3339)
+	if c, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
+		capped := c.AddDate(0, 0, capDays).UTC()
+		if e, err := time.Parse(time.RFC3339, expiry); expiry == "" || (err == nil && capped.Before(e)) {
+			expiry = capped.Format(time.RFC3339)
 		}
 	}
 	if expiry == "" {
