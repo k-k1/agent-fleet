@@ -33,7 +33,7 @@ or a conflict (#3129 tells only failures, and tells the member about conflicts),
 that does not own the PR. Each new provider or condition so far has meant another loop, another store and another
 once-only marker.
 
-More watches are coming. Besides CI and PRs, the user named deployments; other candidates are listed in §7.
+More watches are coming. Besides CI and PRs, the user named deployments; other candidates are listed in §9.
 
 ## Decision
 
@@ -128,19 +128,68 @@ something an adapter does on its own.
   PRs without owning them.
 - **To the member**: the notification outbox (`internal/notice`), as #3131 does today.
 - **Once**: an event is delivered once per subscription and `Version`, recorded on disk, so a restart repeats nothing.
+- **While the workspace is stopped** nothing polls, because the engine lives in the Agent. Subscriptions stay on disk;
+  when the workspace starts, the engine polls every live subscription once before it returns to its schedule, and
+  delivers only the latest state per subject. Webhook events for a stopped workspace are held by the Control Plane
+  (newest per subject, bounded) and handed over at start; they never wake the workspace. Anything that must act while
+  the workspace is stopped is an ADR 0021 schedule (§7).
 
 ### 6. Rules the engine enforces
 
 1. **Authorisation at subscribe time and at every delivery**: `Resolve` checks that the subscriber's own connection
    can read the subject. A subject in another tenant, or one the member's token cannot see, is refused. A webhook
    event is forwarded only to workspaces whose subscriptions were authorised that way.
-2. **Limits**: subscriptions per session and per workspace, and request budgets per connection (one token is one
-   GitHub rate limit, whoever uses it).
-3. **Expiry**: every subscription has a deadline (default 7 days) and ends with its owner.
+2. **Limits**: at most 20 live subscriptions per session and 200 per workspace (`watch` refuses the next one and
+   says which limit was hit). The engine's own requests may use at most 10% of a connection's hourly request budget
+   (one token is one GitHub rate limit, whoever uses it); replies that do not count against the provider's limit,
+   such as GitHub's `304`, do not count against this budget either. All three numbers are settings with these
+   defaults.
+3. **Expiry**: every subscription has a deadline, 7 days by default and at most 30 days, and ends with its owner.
 4. **Fail quietly, not wrongly**: an adapter error backs off and is visible in `list_watches`; it never produces an
    event that did not happen.
+5. **Provider text is data, not instructions.** A notice is read by an agent, and titles, comments, job logs and
+   anything an external source (§8) returns can be written by someone other than the member. `Summary` is composed
+   by the adapter from fields it controls (state, result, counts, numbers, the subject's reference); free text goes
+   only into `Data`, is cut to a fixed length, and the notice marks it as untrusted data.
 
-### 7. Sources this is meant to absorb
+### 7. Time, and how it relates to ADR 0021
+
+The engine's `time` source holds timers that live inside a running workspace ("in 20 minutes", "at 15:00") and fires
+`time.fired` through the same sinks as any other event. It **feeds** the ADR 0021 scheduler and does not replace it:
+only the Control Plane is alive while a workspace is stopped, and the 0021 scheduler already wakes workspaces and
+drives sessions there.
+
+- A time watch asked for with `wake` is not kept by the engine: the Agent registers it as an ADR 0021 schedule through
+  the existing schedule bridge, and its delivery comes back through the watch sinks.
+- A time watch without `wake` that falls due while the workspace is stopped is delivered at the next start, marked
+  late, or dropped when its subscription expired in the meantime.
+- The 0021 scheduler stays the only component that wakes a workspace.
+
+### 8. Sources a member adds
+
+A member may register an MCP server from Settings > Connections > MCP servers as a watch source. The feature is off
+for a tenant until an administrator enables it.
+
+- **Contract**: the server exposes two tools with the shape of §2: `watch_resolve(ref)` returns a subject or a
+  refusal, and `watch_poll(subjects, cursors)` returns events, cursors and hints. External sources poll only; the
+  Control Plane receives no webhooks for them.
+- **Caller**: the engine in the Agent calls these tools, never a session. The server receives subject references and
+  its own cursors, nothing else: no session content, and no credentials other than those of its own MCP server
+  connection.
+- **Namespace**: its event types must be `ext.<source>.*` and its subjects `ext:<source>:…`. Anything else is dropped
+  and counted as an error, so an external source cannot pose as `pr.merged` or speak about another source's subject.
+- **Reach**: its events go only to subscriptions owned by the registering member's sessions (self, parent) or to that
+  member. They are never forwarded to the Control Plane, another member or another workspace.
+- **Output**: `Summary` is capped at 200 characters and `Data` at 8 KiB, and both are treated as provider free text
+  under rule 6.5.
+- **Budget**: a call times out after 10 s; a subject is polled at most once a minute whatever the `Hint` says; one call
+  carries at most 50 subjects and returns at most 20 events. Five consecutive failures pause the source; the pause is
+  shown in `list_watches` and lifted by the member.
+- **Isolation**: a local (stdio) server runs as a child of the Agent with the same user and limits as the MCP servers
+  sessions start, so the workspace container is its sandbox, as it is for every process the member runs; being a
+  source gives it no extra privilege. A remote server is reached the way sessions reach it.
+
+### 9. Sources this is meant to absorb
 
 | Area | Examples |
 |---|---|
@@ -150,12 +199,12 @@ something an adapter does on its own.
 | Deployments | CloudFormation stack status, ECS service steady state, a Kubernetes rollout, a container image becoming available in a registry |
 | Agent Fleet itself | a peer session going idle or finishing, a child's turn ending, quota windows reopening (`limitepoch`), a long background command exiting |
 | Endpoints | an HTTP health check turning green after a deploy, a certificate nearing expiry |
-| Time | "at 03:00" and "in 20 minutes" as a time source, which lets scheduled execution (ADR 0021) and "remind me" share the same delivery |
+| Time | "at 03:00" and "in 20 minutes" as a time source that feeds scheduled execution (ADR 0021) rather than replacing it (§7) |
 | Security feeds | a new advisory for a dependency, a new finding in the published images' vulnerability scan (#3339) |
 
 The table is a direction, not a commitment; each source is its own change with its own review.
 
-### 8. Steps
+### 10. Steps
 
 1. **Engine + `github` source + MCP tools** (`watch`, `unwatch`, `list_watches`). The `github` poller adds REST with
    conditional requests (`If-None-Match`; a `304` does not count against GitHub's primary rate limit) and adaptive
@@ -164,7 +213,8 @@ The table is a direction, not a commitment; each source is its own change with i
 3. **Webhook ingress on the Control Plane** (GitHub App first; repository webhooks where an App cannot be installed;
    Bitbucket repository webhooks).
 4. **Move #3129 and #3131 onto the engine** as built-in subscriptions, keeping their member-facing switches.
-5. Further sources from §7 one at a time.
+5. **Sources a member adds** (§8), behind the tenant switch.
+6. **The `time` source** (§7), then further sources from §9 one at a time.
 
 ## Rejected
 
@@ -174,6 +224,11 @@ The table is a direction, not a commitment; each source is its own change with i
   internet; a lost delivery is a silent miss. Kept as the fast path, not the only path.
 - **Polling from the Control Plane.** The member's credentials and the sessions live in the workspace; polling from
   the Control Plane would mean holding member tokens centrally for a feature that does not need them there.
+- **Replacing the ADR 0021 scheduler with the `time` source.** The engine runs in the Agent, which is not alive while
+  a workspace is stopped; replacing the scheduler would mean moving the engine, or a copy of it, onto the Control
+  Plane, and rewriting a scheduler that already works.
+- **Built-in sources only.** Every niche system (an in-house deploy tool, a team's status page) would need a change to
+  Agent Fleet itself. The namespace, reach and budget rules of §8 keep a member's source from affecting anyone else.
 - **Letting adapters invent event types.** Leads to one name per provider for the same condition, and to sessions that
   must know which provider they are talking to.
 
@@ -185,10 +240,10 @@ The table is a direction, not a commitment; each source is its own change with i
   measurements (requests per hour per connection, delivery delay).
 - Webhook ingress adds a public, unauthenticated-by-session endpoint to the Control Plane, guarded by signature checks;
   it gets its own security review in step 3.
+- Sources a member adds put member-chosen code in the engine's path. §8 confines what they can emit and to whom; step 5
+  gets its own security review, like step 3.
 
 ## Open questions
 
-- Whether the time source (§7) should replace the scheduler of ADR 0021 or only feed it.
-- Whether a member can add their own source as an external process (for example an MCP server exposing `poll`), and
-  how such a source is sandboxed.
-- The default subscription limits and the default expiry.
+None left. The three raised in the draft are answered in §6 (limits and expiry), §7 (time and ADR 0021) and §8
+(sources a member adds).
