@@ -412,9 +412,16 @@ func TestCheckTargetCommandClippedDialog(t *testing.T) {
 	if got := threeRules.CheckTargetCommand(detail, "", full); got != TargetDiffers {
 		t.Errorf("three dashed rules: got %v, want TargetDiffers", got)
 	}
-	// A clipped body never answers for a file tool.
-	if got := m.CheckTargetCommand("Edit · /home/dev/repos/demo/src/ui/MonthlyTrend.dom.test.tsx", "/home/dev/repos/demo", ""); got != TargetDiffers {
-		t.Errorf("Edit payload on a clipped Bash dialog: got %v, want TargetDiffers", got)
+	// A clipped body never answers for a file tool, even with a command that matches the tail and a
+	// target that is the command's own first line: only the tool check refuses the last case.
+	for _, c := range []struct{ detail, command string }{
+		{"Edit · /home/dev/repos/demo/src/ui/MonthlyTrend.dom.test.tsx", ""},
+		{"Edit · /home/dev/repos/demo/src/ui/MonthlyTrend.dom.test.tsx", full},
+		{"Edit · " + strings.TrimPrefix(detail, "Bash · "), full},
+	} {
+		if got := m.CheckTargetCommand(c.detail, "/home/dev/repos/demo", c.command); got != TargetDiffers {
+			t.Errorf("%q on a clipped Bash dialog: got %v, want TargetDiffers", c.detail, got)
+		}
 	}
 }
 
@@ -449,8 +456,9 @@ func TestCheckTargetCommandClippedAboveCommand(t *testing.T) {
 	if got := c.CheckTargetCommand(detail, "", full); got != TargetMatches {
 		t.Errorf("same command: got %v, want TargetMatches", got)
 	}
-	// With the whole command on screen, a longer command with the same end is refused.
-	if got := c.CheckTargetCommand(detail, "", "cat > note.txt <<'EOF'\nfirst\nhello\nEOF\nls -l note.txt"); got != TargetDiffers {
+	// With the whole command on screen, a longer command whose end is that whole screen is refused:
+	// a suffix comparison (the clipped-tail rule) would accept it, so this pins the whole one.
+	if got := c.CheckTargetCommand(detail, "", "cat > note.txt <<'EOF'\n"+full); got != TargetDiffers {
 		t.Errorf("command with an extra line: got %v, want TargetDiffers", got)
 	}
 }
@@ -520,8 +528,8 @@ func TestCheckTargetCommandSwallowedIndent(t *testing.T) {
 			t.Errorf("indent %q: got %v, want TargetDiffers", indent, got)
 		}
 	}
-	// Three blanks are the fewest that push the 59-column word past the 65 columns left beside
-	// the bar (wordWrapRun); this pins that edge.
+	// Three blanks are the fewest with which the line and the 59-column word fill the 64 columns
+	// that wordWrapRun counts as the edge (2+3+59); this pins that edge.
 	if got := m.CheckTargetCommand(detail, "", strings.Replace(full, shown, ` │   expect(host.querySelector`, 1)); got != TargetMatches {
 		t.Errorf("indent of 3: got %v, want TargetMatches", got)
 	}
