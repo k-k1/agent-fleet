@@ -171,3 +171,18 @@ func toEdits(rs []RefEdit) []memengine.Edit {
 	}
 	return out
 }
+
+// ConditionedTarget is the memory a gold-conditioned patch call works on for a
+// case the member labelled supersede or merge: the first memory it cites.
+// Such a call has no reference edits, so only its validity and the facts it
+// keeps can be scored.
+func (s *Set) ConditionedTarget(c Case) (Memory, bool) {
+	if c.Label.Operation != memengine.OpSupersede && c.Label.Operation != memengine.OpMerge {
+		return Memory{}, false
+	}
+	ms := s.Inputs[c.ID].Memories
+	if len(ms) == 0 {
+		return Memory{}, false
+	}
+	return ms[0], true
+}

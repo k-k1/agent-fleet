@@ -52,6 +52,11 @@ type TierScore struct {
 	Classify map[memengine.Operation]ClassifyScore `json:"classify"`
 	Total    ClassifyScore                         `json:"classify_total"`
 	Patch    PatchScore                            `json:"patch"`
+	// PatchConditioned scores gold-conditioned patch calls on supersede/merge
+	// cases (validity and kept facts only).
+	PatchConditioned PatchScore `json:"patch_gold_conditioned"`
+	Mode             string     `json:"mode"`
+	GoldConditioned  bool       `json:"gold_conditioned"`
 	// Tokens per call: all input tokens the command reported, and the same
 	// minus the command's fixed overhead (Baseline), which is not the prompt.
 	ClassifyCalls, PatchCalls int
@@ -68,7 +73,7 @@ type TierScore struct {
 
 // ScoreTier scores one tier's run.
 func ScoreTier(r *TierRun) TierScore {
-	ts := TierScore{Name: r.Name, Classify: map[memengine.Operation]ClassifyScore{}, BaselineInput: r.Baseline.TotalInput()}
+	ts := TierScore{Name: r.Name, Mode: r.Mode, GoldConditioned: r.GoldConditioned, Classify: map[memengine.Operation]ClassifyScore{}, BaselineInput: r.Baseline.TotalInput()}
 	var cIn, cOut, pIn, pOut int
 	for _, o := range r.Classify {
 		s := ts.Classify[o.Label]
@@ -111,6 +116,9 @@ func ScoreTier(r *TierRun) TierScore {
 	}
 	for _, o := range r.Patch {
 		p := &ts.Patch
+		if o.Conditioned {
+			p = &ts.PatchConditioned
+		}
 		p.Calls++
 		switch o.Status {
 		case StatusApplied:
@@ -241,6 +249,20 @@ func Markdown(tiers []TierScore, ref PatchScore, agree [][3]int, notes []string)
 	row("reference (member's own patch)", ref)
 	for _, t := range tiers {
 		row(t.Name, t.Patch)
+	}
+	for _, t := range tiers {
+		if t.PatchConditioned.Calls > 0 {
+			p := t.PatchConditioned
+			fmt.Fprintf(&b, "\nGold-conditioned patch calls on supersede/merge cases (%s; the gold label decided that the call happens; validity and kept facts only): %d calls, %d applied, %d empty, %d invalid, %d errors, %s lost items.\n", t.Name, p.Calls, p.Applied, p.Missed, p.Invalid, p.Errors, pct(p.LostItems, p.VerifiableItems))
+		}
+	}
+	b.WriteString("\n## Run mode\n\n| tier | mode |\n|---|---|\n")
+	for _, t := range tiers {
+		m := "live (one-shot command per call)"
+		if t.Mode == "replay" {
+			m = "replay (answered as a session; it saw earlier cases, so not fully comparable)"
+		}
+		fmt.Fprintf(&b, "| %s | %s |\n", t.Name, m)
 	}
 	if len(tiers) > 0 {
 		fmt.Fprintf(&b, "\nMust-survive items the fact check could not verify (no anchor): %d of %d across the reference patches.\n", ref.UnverifiedItems, ref.UnverifiedItems+ref.VerifiableItems)

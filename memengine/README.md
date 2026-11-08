@@ -45,3 +45,19 @@ Scoring is per labelled operation: wrong changes, missed fixes, invalid outputs,
 cases also lost facts and new facts missing. Must-survive items are prose, so the fact check is anchor-based
 (see `internal/goldset/facts.go`) and is calibrated against the member's own reference patches, which must
 lose nothing. Tier agreement is reported as a secondary measure only.
+
+## Replay mode (models that can only answer as sessions)
+
+```
+goldeval export-prompts -cases cases.jsonl -inputs inputs.jsonl -out run/prompts.jsonl
+goldeval score -cases cases.jsonl -inputs inputs.jsonl -out run/full -answers run/answers-X.jsonl -tier agy:x
+```
+
+`prompts.jsonl` has one line per call, `{case_id, call, prompt, schema}`, the prompt being the exact text the
+one-shot runner sends (it already asks for one JSON object and nothing else). Patch prompts depend on the
+classify answer in a live pipeline, so they are exported for every case whose gold label is patch,
+supersede or merge (`gold_conditioned: true` on the last two) and are reported as such: the supersede/merge
+rows are scored on validity and kept facts only. `score` reads `{case_id, call, output[, usage]}` lines, runs
+the same validation and scoring as a live run, and refreshes the combined report. Usage is optional and shows
+`n/a` when absent. The report records each tier's mode: a replay tier is a session that saw earlier cases,
+so it is not fully comparable with a live one.

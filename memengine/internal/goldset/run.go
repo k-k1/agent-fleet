@@ -3,6 +3,7 @@ package goldset
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -34,7 +35,8 @@ type ClassifyOutcome struct {
 type PatchOutcome struct {
 	Case         string           `json:"case"`
 	Target       string           `json:"target"`
-	NG           bool             `json:"ng,omitempty"` // the member marked the proposal NG; see Label.Notes
+	Conditioned  bool             `json:"gold_conditioned,omitempty"` // a patch call on a supersede/merge case: no reference edits
+	NG           bool             `json:"ng,omitempty"`               // the member marked the proposal NG; see Label.Notes
 	Status       string           `json:"status"`
 	Detail       string           `json:"detail,omitempty"`
 	Edits        []memengine.Edit `json:"edits,omitempty"`
@@ -49,10 +51,17 @@ type PatchOutcome struct {
 
 // TierRun is everything one tier produced.
 type TierRun struct {
-	Name     string            `json:"name"`
-	Baseline memengine.Usage   `json:"baseline"` // a trivial call: the command's fixed overhead
-	Classify []ClassifyOutcome `json:"classify"`
-	Patch    []PatchOutcome    `json:"patch"`
+	Name string `json:"name"`
+	// Mode is "live" (a one-shot command per call) or "replay" (answers made
+	// elsewhere, e.g. by an agent session that saw earlier cases, so its scores
+	// are not fully comparable).
+	Mode string `json:"mode"`
+	// GoldConditioned: patch calls were also made for supersede/merge cases,
+	// with the gold label deciding that a patch call happens.
+	GoldConditioned bool              `json:"gold_conditioned,omitempty"`
+	Baseline        memengine.Usage   `json:"baseline"` // a trivial call: the command's fixed overhead
+	Classify        []ClassifyOutcome `json:"classify"`
+	Patch           []PatchOutcome    `json:"patch"`
 }
 
 func statusOf(err error) string {
@@ -77,8 +86,11 @@ func ClassifyCase(ctx context.Context, m memengine.Model, s *Set, c Case) Classi
 
 // PatchCase runs one patch call on a case labelled patch. ok is false when the
 // case has no resolvable target memory.
-func PatchCase(ctx context.Context, m memengine.Model, s *Set, c Case) (PatchOutcome, bool) {
+func PatchCase(ctx context.Context, m memengine.Model, s *Set, c Case, conditioned bool) (PatchOutcome, bool) {
 	tgt, ok := s.PatchTarget(c)
+	if conditioned {
+		tgt, ok = s.ConditionedTarget(c)
+	}
 	if !ok {
 		return PatchOutcome{}, false
 	}
@@ -87,9 +99,11 @@ func PatchCase(ctx context.Context, m memengine.Model, s *Set, c Case) (PatchOut
 	if err != nil {
 		o := PatchOutcome{Case: c.ID, Target: tgt.Name, NG: c.Label.OK == "NG", Usage: rep.Usage, Raw: string(rep.Raw)}
 		o.Status, o.Detail = statusOf(err), err.Error()
+		o.Conditioned = conditioned
 		return o, true
 	}
 	o := ScorePatch(c, tgt, ans.Edits)
+	o.Conditioned = conditioned
 	o.Usage, o.Raw = rep.Usage, string(rep.Raw)
 	return o, true
 }
@@ -113,7 +127,8 @@ func ScorePatch(c Case, tgt Memory, edits []memengine.Edit) PatchOutcome {
 	refBody, refDesc, _ := memengine.ApplyEdits(tgt.Body, tgt.Description, toEdits(c.Edits))
 	fc := CheckFacts(c.MustSurvive, body+"\n"+desc, tgt.Body+"\n"+tgt.Description, refBody+"\n"+refDesc)
 	o.Lost, o.NewMissing, o.Verifiable, o.Unverifiable = fc.Lost, fc.NewMissing, fc.Verifiable, fc.Unverifiable
-	o.WrongChange = offTargetDestructive(tgt, c.Edits, edits)
+	// Without reference edits there is nothing to compare an edit with.
+	o.WrongChange = len(c.Edits) > 0 && offTargetDestructive(tgt, c.Edits, edits)
 	return o
 }
 
@@ -167,10 +182,16 @@ func textOf(m Memory, field string) string {
 // Calls whose key is in done are skipped, so an interrupted run resumes
 // without paying twice.
 func Run(ctx context.Context, name string, m memengine.Model, s *Set, workers int, prev *TierRun, progress func(string)) *TierRun {
+	return RunWith(ctx, name, m, s, workers, prev, false, progress)
+}
+
+// RunWith is Run with the choice of gold-conditioned patch calls: also one for
+// every case labelled supersede or merge.
+func RunWith(ctx context.Context, name string, m memengine.Model, s *Set, workers int, prev *TierRun, conditioned bool, progress func(string)) *TierRun {
 	if workers < 1 {
 		workers = 1
 	}
-	run := &TierRun{Name: name}
+	run := &TierRun{Name: name, Mode: "live", GoldConditioned: conditioned}
 	have := map[string]bool{}
 	if prev != nil {
 		run.Baseline = prev.Baseline
@@ -183,7 +204,7 @@ func Run(ctx context.Context, name string, m memengine.Model, s *Set, workers in
 		for _, o := range prev.Patch {
 			if o.Status != StatusError {
 				run.Patch = append(run.Patch, o)
-				have["p:"+o.Case+":"+o.Target] = true
+				have["p:"+o.Case+":"+o.Target+fmt.Sprint(o.Conditioned)] = true
 			}
 		}
 	}
@@ -212,9 +233,20 @@ func Run(ctx context.Context, name string, m memengine.Model, s *Set, workers in
 				}
 			})
 		}
-		if tgt, ok := s.PatchTarget(c); ok && !have["p:"+c.ID+":"+tgt.Name] {
+		for _, cond := range []bool{false, true} {
+			cond := cond
+			tgt, ok := s.PatchTarget(c)
+			if cond {
+				if !conditioned {
+					continue
+				}
+				tgt, ok = s.ConditionedTarget(c)
+			}
+			if !ok || have["p:"+c.ID+":"+tgt.Name+fmt.Sprint(cond)] {
+				continue
+			}
 			spawn(func() {
-				o, _ := PatchCase(ctx, m, s, c)
+				o, _ := PatchCase(ctx, m, s, c, cond)
 				mu.Lock()
 				run.Patch = append(run.Patch, o)
 				mu.Unlock()

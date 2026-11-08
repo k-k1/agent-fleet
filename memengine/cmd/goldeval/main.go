@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +31,22 @@ func (t *tierFlags) String() string     { return strings.Join(*t, ",") }
 func (t *tierFlags) Set(v string) error { *t = append(*t, v); return nil }
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "export-prompts":
+			exportPrompts(os.Args[2:])
+			return
+		case "score":
+			scoreAnswers(os.Args[2:])
+			return
+		case "run":
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+		}
+	}
+	runLive()
+}
+
+func runLive() {
 	var tiers tierFlags
 	cases := flag.String("cases", "cases.jsonl", "gold set (JSONL)")
 	inputs := flag.String("inputs", "inputs.jsonl", "memories the cases cite (JSONL)")
@@ -85,6 +102,22 @@ func main() {
 		saveRun(path, run)
 		runs = append(runs, run)
 	}
+	writeReport(*out, set)
+}
+
+// writeReport scores every tier run found in dir (live and replay alike) and
+// writes report.md and report.json, one column per tier name.
+func writeReport(dir string, set *goldset.Set) {
+	files, _ := filepath.Glob(filepath.Join(dir, "*.run.json"))
+	sort.Strings(files)
+	var runs []*goldset.TierRun
+	for _, f := range files {
+		if r := loadRun(f); r != nil {
+			runs = append(runs, r)
+		}
+	}
+	// Live tiers first, so "tier 1" is the small live tier.
+	sort.SliceStable(runs, func(i, j int) bool { return (runs[i].Mode != "replay") && (runs[j].Mode == "replay") })
 	var scores []goldset.TierScore
 	for _, r := range runs {
 		scores = append(scores, goldset.ScoreTier(r))
@@ -95,16 +128,74 @@ func main() {
 		agree = append(agree, [3]int{s, b, i})
 	}
 	ref := goldset.Reference(set)
-	notes := []string{notesOf(set)}
-	md := goldset.Markdown(scores, ref, agree, notes)
-	if err := os.WriteFile(filepath.Join(*out, "report.md"), []byte(md), 0o644); err != nil {
+	md := goldset.Markdown(scores, ref, agree, []string{notesOf(set)})
+	if err := os.WriteFile(filepath.Join(dir, "report.md"), []byte(md), 0o644); err != nil {
 		fatal(err.Error())
 	}
 	js, _ := json.MarshalIndent(map[string]any{"tiers": scores, "reference": ref}, "", "  ")
-	if err := os.WriteFile(filepath.Join(*out, "report.json"), js, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "report.json"), js, 0o644); err != nil {
 		fatal(err.Error())
 	}
 	fmt.Print(md)
+}
+
+// exportPrompts writes prompts.jsonl: every call as the one-shot runner would
+// send it, for models that can only answer as sessions.
+func exportPrompts(args []string) {
+	fs := flag.NewFlagSet("export-prompts", flag.ExitOnError)
+	cases := fs.String("cases", "cases.jsonl", "gold set (JSONL)")
+	inputs := fs.String("inputs", "inputs.jsonl", "memories the cases cite (JSONL)")
+	out := fs.String("out", "run/prompts.jsonl", "file to write")
+	fs.Parse(args)
+	set, err := goldset.Load(*cases, *inputs)
+	if err != nil {
+		fatal(err.Error())
+	}
+	var b strings.Builder
+	n := 0
+	for _, p := range goldset.Prompts(set) {
+		j, _ := json.Marshal(p)
+		b.Write(j)
+		b.WriteByte('\n')
+		n++
+	}
+	if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
+		fatal(err.Error())
+	}
+	if err := os.WriteFile(*out, []byte(b.String()), 0o644); err != nil {
+		fatal(err.Error())
+	}
+	fmt.Fprintf(os.Stderr, "wrote %d prompts to %s\n", n, *out)
+}
+
+// scoreAnswers scores a recorded answers file with the same validation and
+// scoring as a live run, then refreshes the combined report.
+func scoreAnswers(args []string) {
+	fs := flag.NewFlagSet("score", flag.ExitOnError)
+	cases := fs.String("cases", "cases.jsonl", "gold set (JSONL)")
+	inputs := fs.String("inputs", "inputs.jsonl", "memories the cases cite (JSONL)")
+	out := fs.String("out", "run", "directory holding the tier runs and the report")
+	answers := fs.String("answers", "", "JSONL of {case_id, call, output[, usage]}")
+	tier := fs.String("tier", "", "tier name (a report column)")
+	fs.Parse(args)
+	if *answers == "" || *tier == "" {
+		fatal("score needs --answers and --tier")
+	}
+	set, err := goldset.Load(*cases, *inputs)
+	if err != nil {
+		fatal(err.Error())
+	}
+	as, err := goldset.LoadAnswers(*answers)
+	if err != nil {
+		fatal(err.Error())
+	}
+	run := goldset.RunWith(context.Background(), *tier, goldset.NewReplay(set, as), set, 1, nil, true, nil)
+	run.Mode = "replay"
+	if err := os.MkdirAll(*out, 0o755); err != nil {
+		fatal(err.Error())
+	}
+	saveRun(filepath.Join(*out, strings.NewReplacer(":", "_", "/", "_").Replace(*tier)+".run.json"), run)
+	writeReport(*out, set)
 }
 
 func notesOf(s *goldset.Set) string {

@@ -273,3 +273,81 @@ func TestReportKeyedByTierAndUsageUnknown(t *testing.T) {
 		t.Errorf("report:\n%s", md)
 	}
 }
+
+func synthWithSupersede() *Set {
+	s := synth()
+	m := Memory{Name: "old-rule", Scope: "project", Revision: 1, CitedRevision: 1, Description: "d", Body: "Use the old branch.\nKeep the audit log.\n"}
+	c := Case{ID: "S1", Observation: "The old branch is gone.", Label: Label{Operation: memengine.OpSupersede, OK: "OK"},
+		Memories: []MemRef{{Name: m.Name, Scope: m.Scope, Revision: 1}}, MustSurvive: []string{"keep the audit log"}}
+	s.Cases = append(s.Cases, c)
+	s.Inputs["S1"] = Input{ID: "S1", Memories: []Memory{m}}
+	return s
+}
+
+func TestPromptsAreGoldConditioned(t *testing.T) {
+	s := synthWithSupersede()
+	var got []string
+	for _, p := range Prompts(s) {
+		got = append(got, p.CaseID+"/"+p.Call+map[bool]string{true: "*"}[p.GoldConditioned])
+		if p.Prompt == "" || p.Schema == "" {
+			t.Errorf("%s/%s lacks prompt or schema", p.CaseID, p.Call)
+		}
+		if !strings.Contains(p.Prompt, "Reply with one JSON object and nothing else") {
+			t.Errorf("%s/%s does not tell the model to answer with one JSON object", p.CaseID, p.Call)
+		}
+	}
+	want := "P1/classify P1/patch A1/classify N1/classify S1/classify S1/patch*"
+	if strings.Join(got, " ") != want {
+		t.Errorf("got %v, want %s", got, want)
+	}
+}
+
+func TestReplayScoresLikeALiveRun(t *testing.T) {
+	s := synthWithSupersede()
+	answer := func(p string) string {
+		switch {
+		case strings.Contains(p, "Fold one observation") && strings.Contains(p, "old branch"):
+			return `{"edits":[{"old":"Use the old branch.\n","new":"Use main.\n"}]}`
+		case strings.Contains(p, "Fold one observation"):
+			return `{"edits":[{"old":"Never raise the timeout.\n","new":"Never raise the timeout.\nThe trunk is main.\n"}]}`
+		case strings.Contains(p, "old branch is gone"):
+			return `{"operation":"supersede","targets":["old-rule"],"reason":"r"}`
+		case strings.Contains(p, "trunk branch is main"):
+			return `{"operation":"patch","targets":["retry-rule"],"reason":"r"}`
+		case strings.Contains(p, "new durable lesson"):
+			return `{"operation":"add","targets":[],"reason":"r"}`
+		}
+		return `{"operation":"no-op","targets":[],"reason":"r"}`
+	}
+	var lines []AnswerLine
+	for _, p := range Prompts(s) {
+		lines = append(lines, AnswerLine{CaseID: p.CaseID, Call: p.Call, Output: answer(p.Prompt)})
+	}
+	rr := RunWith(context.Background(), "agy:x", NewReplay(s, lines), s, 1, nil, true, nil)
+	rr.Mode = "replay"
+	rs := ScoreTier(rr)
+	live := ScoreTier(RunWith(context.Background(), "live", funcModel(func(p string) (memengine.Reply, error) { return reply(answer(p), 1, 1), nil }), s, 1, nil, true, nil))
+	if rs.Total != live.Total || rs.Patch != live.Patch {
+		t.Errorf("replay %+v / %+v differs from live %+v / %+v", rs.Total, rs.Patch, live.Total, live.Patch)
+	}
+	if rs.Total.Wrong+rs.Total.Missed+rs.Total.Invalid+rs.Total.Errors != 0 {
+		t.Errorf("%+v", rs.Total)
+	}
+	if rs.UsageKnown || rs.Mode != "replay" || rs.PatchConditioned.Calls != 1 || rs.PatchConditioned.Applied != 1 || rs.PatchConditioned.LostItems != 0 {
+		t.Errorf("replay tier: %+v", rs)
+	}
+	if rs.Patch.Calls != 1 {
+		t.Errorf("conditioned calls must not enter the patch-label row: %+v", rs.Patch)
+	}
+	md := Markdown([]TierScore{live, rs}, Reference(s), nil, nil)
+	if !strings.Contains(md, "| agy:x | replay (") || !strings.Contains(md, "Gold-conditioned patch calls") {
+		t.Errorf("report does not record the mode or the conditioning:\n%s", md)
+	}
+	// An unanswered call is a failed call, and a garbled one an invalid output.
+	partial := append([]AnswerLine{}, lines[:1]...)
+	partial = append(partial, AnswerLine{CaseID: "A1", Call: "classify", Output: "I would add it."})
+	ps := ScoreTier(RunWith(context.Background(), "p", NewReplay(s, partial), s, 1, nil, true, nil))
+	if ps.Total.Errors != 2 || ps.Total.Invalid != 1 {
+		t.Errorf("partial: %+v", ps.Total)
+	}
+}
