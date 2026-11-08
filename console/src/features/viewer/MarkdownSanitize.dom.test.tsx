@@ -90,9 +90,11 @@ describe("media from the Console's own paths", () => {
       ].join("\n\n"),
     );
     const imgs = [...host.querySelectorAll("img")];
-    expect(imgs).toHaveLength(5);
-    expect(imgs.slice(0, 4).map((i) => i.hasAttribute("src"))).toEqual([false, false, false, false]);
-    expect(imgs[4]?.getAttribute("src")).toBe("https://example.com/p.png");
+    // The /api/ ones are removed outright (no placeholder, nothing to click); the external
+    // one is deferred to click-to-load (MarkdownExternalImages.dom.test.tsx).
+    expect(imgs).toHaveLength(4);
+    expect(imgs.map((i) => i.hasAttribute("src"))).toEqual([false, false, false, false]);
+    expect(host.querySelectorAll(".md-ext-img")).toHaveLength(1);
   });
 
   it("removes raw-HTML media, srcset, poster and background on internal URLs", () => {
@@ -102,7 +104,7 @@ describe("media from the Console's own paths", () => {
         `<table background="${origin}/api/bg"><tr><td>x</td></tr></table>`,
     );
     expect(html).not.toMatch(/\/api\/|\/oauth2\/|\/login/);
-    expect(html).toContain("https://e.example/a.png");
+    expect(html).toContain("data-md-ext-src=\"https://e.example/a.png\"");
   });
 
   it("in normal display, relative / root-relative non-<img src> URLs are judged as written", async () => {
@@ -115,7 +117,7 @@ describe("media from the Console's own paths", () => {
       ].join("\n\n"),
     );
     expect(host.innerHTML).not.toMatch(/\/api\/|\/oauth2\/|\/login|api\/au/);
-    expect(host.querySelector("img")?.getAttribute("srcset")).toBeNull();
+    expect(host.querySelector("img")?.getAttribute("srcset") ?? null).toBeNull();
   });
 
   it("removes an SVG <image> href that points into the Console", () => {
