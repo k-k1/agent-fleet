@@ -305,15 +305,20 @@ func MirrorUserInputContext(ctx context.Context, sessionName, text string) {
 	if text == "" {
 		return
 	}
-	mirrorDiscordInput(ctx, sessionName, text)
-	mirrorSlackInput(ctx, sessionName, text)
+	// One read serves both providers: ctx bounds only this wait, so a slow Discord post can
+	// never use up the budget a later store wait would need.
+	s, err := secrets.LoadContext(ctx)
+	if err != nil {
+		return
+	}
+	mirrorDiscordInput(s, sessionName, text)
+	mirrorSlackInput(s, sessionName, text)
 }
 
 // mirrorDiscordInput is the Discord half of MirrorUserInput: gated on channel + thread mode,
 // not opted out (MirrorInputOff), and an existing thread (an echo never creates one).
-func mirrorDiscordInput(ctx context.Context, sessionName, text string) {
-	s, err := secrets.LoadContext(ctx)
-	if err != nil || s.Discord == nil {
+func mirrorDiscordInput(s *secrets.Data, sessionName, text string) {
+	if s.Discord == nil {
 		return
 	}
 	d := s.Discord

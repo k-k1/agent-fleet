@@ -243,7 +243,7 @@ func TestSlackMirrorInput(t *testing.T) {
 	s.Slack = &secrets.SlackCreds{BotToken: "xoxb-tok", ChannelID: "C1", UserID: "U9", Threads: true}
 	_ = s.Save()
 	slackThreads.save(threadMap{"s1": {Channel: "C1", Thread: "1001"}})
-	mirrorSlackInput(context.Background(), "s1", "手動入力")
+	mirrorSlackInput(s, "s1", "手動入力")
 	if posts.len() == 0 || posts.all()[0].threadTS != "1001" || !strings.Contains(posts.all()[0].text, "手動入力") {
 		t.Fatalf("mirror should echo into the thread: %+v", posts.all())
 	}
@@ -251,7 +251,7 @@ func TestSlackMirrorInput(t *testing.T) {
 	posts.reset()
 	s.Slack.MirrorInputOff = true
 	_ = s.Save()
-	mirrorSlackInput(context.Background(), "s1", "また入力")
+	mirrorSlackInput(s, "s1", "また入力")
 	if posts.len() != 0 {
 		t.Fatalf("opted-out mirror must not post: %+v", posts.all())
 	}
@@ -311,5 +311,36 @@ func TestSlackMentionTimeGate(t *testing.T) {
 	slackThreads.save(threadMap{"s1": {Channel: "C1", Thread: "1001", LastPostAt: time.Now().Add(-2 * mentionQuietWindow).UTC().Format(time.RFC3339)}})
 	if !sp.shouldMention(Message{Kind: "answer-ready", SessionName: "s1"}) {
 		t.Fatal("after a lull the read-only event must mention again")
+	}
+}
+
+// The store wait budget is spent once, up front: a Discord post that outlasts it must not
+// cost the Slack mirror its echo (#3421 review).
+func TestMirrorUserInputSlowDiscordDoesNotStarveSlack(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(slow.Close)
+	old := discordAPIBase
+	discordAPIBase = slow.URL
+	t.Cleanup(func() { discordAPIBase = old })
+	posts := fakeSlack(t, "xoxb-tok")
+	s := &secrets.Data{
+		Discord: &secrets.DiscordCreds{Token: "tok", ChannelID: "42", Threads: true},
+		Slack:   &secrets.SlackCreds{BotToken: "xoxb-tok", ChannelID: "C1", UserID: "U9", Threads: true},
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	saveThreads(threadMap{"s1": {Channel: "42", Thread: "t9"}})
+	slackThreads.save(threadMap{"s1": {Channel: "C1", Thread: "1001"}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	MirrorUserInputContext(ctx, "s1", "hello")
+	if posts.len() == 0 {
+		t.Fatal("slack mirror lost after a slow discord post consumed the shared deadline")
 	}
 }

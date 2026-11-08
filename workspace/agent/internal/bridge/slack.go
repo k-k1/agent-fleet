@@ -14,7 +14,6 @@ package bridge
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -431,9 +430,8 @@ func (sp *slackProvider) postRangeToThread(session, channel, rootTS string, msgs
 // mirrorSlackInput echoes a Console-typed prompt into the session's Slack thread (docs/log/37
 // Fix ②). Best-effort, gated the same way as Discord: channel+thread mode, not opted out,
 // and a thread already exists (an echo never creates one). Called from MirrorUserInput.
-func mirrorSlackInput(ctx context.Context, sessionName, text string) {
-	s, err := secrets.LoadContext(ctx)
-	if err != nil || s.Slack == nil {
+func mirrorSlackInput(s *secrets.Data, sessionName, text string) {
+	if s.Slack == nil {
 		return
 	}
 	sl := s.Slack
