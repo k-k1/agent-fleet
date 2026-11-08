@@ -192,6 +192,6 @@ func (c testCustodian) Unwrap(_ context.Context, keyRef, ciphertext string) ([]b
 	return body, nil
 }
 
-func (c testCP) PATMaxDays() int { return 365 }
+func (c testCP) PATMaxDaysFor(context.Context, string) (int, error) { return 365, nil }
 
 func (c testCP) BearerEntryAllowed(context.Context, string) bool { return true }

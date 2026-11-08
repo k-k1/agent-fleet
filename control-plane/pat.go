@@ -17,6 +17,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/tenantsrv"
 )
 
 // Personal Access Tokens (docs/decisions/0006, P3-6). A user issues PATs in the
@@ -93,7 +94,7 @@ func newPATAPI(m *manager) patAPI { return patAPI{memberAuth{m}, m.store} }
 // the largest value accepted (ten years keeps every computed expiry a four-digit RFC3339 year).
 const (
 	defaultPATMaxDays = 365
-	hardPATMaxDays    = 3650
+	hardPATMaxDays    = tenantsrv.MaxPATDays
 )
 
 // parsePATMaxDays validates AF_PAT_MAX_DAYS: "" is the default, anything else must be an integer in
@@ -119,17 +120,53 @@ func (m *manager) patMaxLifetimeDays() int {
 	return defaultPATMaxDays
 }
 
-// PATMaxDays implements mcpsrv.CP.
-func (d cpDeps) PATMaxDays() int { return d.m.patMaxLifetimeDays() }
+// effectivePATCap is the lower of the deployment cap and a tenant's pat_max_days. A tenant value
+// outside 1..hardPATMaxDays (unset, 0, negative, absurd) is "no tenant cap", so a missing or
+// unreadable limits blob can only ever fall back to the deployment cap, never to no cap at all.
+func (m *manager) effectivePATCap(tenantLimitsJSON string) int {
+	capDays := m.patMaxLifetimeDays()
+	if t := parseLimits(tenantLimitsJSON).PATMaxDays; t >= 1 && t <= hardPATMaxDays && t < capDays {
+		capDays = t
+	}
+	return capDays
+}
 
-// patEffectiveExpiry is the stored expiry, or for a token issued before the cap existed
-// (no expiry) its creation time plus the cap — the same rule mcpsrv enforces on use.
+// patCapForTenant resolves the cap that applies to a tenant, by id. An empty id (a token bound to
+// no membership) has no tenant to ask and gets the deployment cap. A store error is returned, not
+// swallowed: the caller authenticates with this and must fail closed.
+func (m *manager) patCapForTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return m.patMaxLifetimeDays(), nil
+	}
+	t, err := m.store.GetTenant(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	return m.effectivePATCap(t.Limits), nil
+}
+
+// PATMaxDaysFor implements mcpsrv.CP: the cap on use for one stored PAT. The tenant is the one the
+// PAT's own membership belongs to (resolved from the token, never from anything the caller sent),
+// so a super_admin's token is capped by the tenant it was issued under like anyone else's; a token
+// with no membership gets the deployment cap only.
+func (d cpDeps) PATMaxDaysFor(ctx context.Context, patID string) (int, error) {
+	tenantID, err := d.m.store.PATTenantID(ctx, patID)
+	if err != nil {
+		return 0, err
+	}
+	return d.m.patCapForTenant(ctx, tenantID)
+}
+
+// patEffectiveExpiry is when the token stops working: its stored expiry or its creation time plus
+// the cap, whichever is first — the same rule mcpsrv enforces on use.
 func patEffectiveExpiry(p store.PAT, maxDays int) string {
-	if p.ExpiresAt != "" {
+	c, err := time.Parse(time.RFC3339, p.CreatedAt)
+	if err != nil {
 		return p.ExpiresAt
 	}
-	if c, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
-		return c.AddDate(0, 0, maxDays).UTC().Format(time.RFC3339)
+	capped := c.AddDate(0, 0, maxDays).UTC()
+	if e, err := time.Parse(time.RFC3339, p.ExpiresAt); p.ExpiresAt == "" || (err == nil && capped.Before(e)) {
+		return capped.Format(time.RFC3339)
 	}
 	return p.ExpiresAt
 }
@@ -153,23 +190,47 @@ func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident store.Identit
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	// Each token is shown with the cap of the tenant it was issued under; max_ttl_days is the
+	// cap for the tenant the Console has selected (the deployment's when none resolves).
+	capByMembership := map[string]int{}
+	capOf := func(p store.PAT) int {
+		if v, ok := capByMembership[p.MembershipID]; ok {
+			return v
+		}
+		v := a.mgr.patMaxLifetimeDays()
+		if tid, err := a.store.PATTenantID(r.Context(), p.ID); err == nil {
+			if c, err := a.mgr.patCapForTenant(r.Context(), tid); err == nil {
+				v = c
+			}
+		}
+		capByMembership[p.MembershipID] = v
+		return v
+	}
+	maxTTL := a.mgr.patMaxLifetimeDays()
+	if ms, aerr := a.mgr.membershipsFor(r.Context(), ident); aerr == nil {
+		if mv, aerr := selectMembership(ms, r.Header.Get("X-AF-Tenant")); aerr == nil {
+			if c, err := a.mgr.patCapForTenant(r.Context(), mv.TenantID); err == nil {
+				maxTTL = c
+			}
+		}
+	}
 	out := make([]map[string]any, 0, len(pats))
 	for _, p := range pats {
 		out = append(out, map[string]any{
 			"id": p.ID, "name": p.Name, "scope": p.Scope, "endpoint": p.Resource,
-			"created_at": p.CreatedAt, "expires_at": patEffectiveExpiry(p, a.mgr.patMaxLifetimeDays()),
+			"created_at": p.CreatedAt, "expires_at": patEffectiveExpiry(p, capOf(p)),
 			"revoked_at": p.RevokedAt, "last_used_at": p.LastUsedAt,
 			"revoked": p.RevokedAt != "",
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": out, "ceiling": ceilingScope(ident.Role),
-		"max_ttl_days": a.mgr.patMaxLifetimeDays()})
+		"max_ttl_days": maxTTL})
 }
 
 // create (POST /api/pat {name, scope, tenant, ttl_days, endpoint}) mints a token.
 // scope is clamped to the issuer's ceiling. ttl_days: omitted/0 = 90 days (or the
-// deployment cap when that is lower), positive = that many days up to the cap; a negative
-// value or one above the cap is refused. endpoint is "mcp" (the
+// effective cap when that is lower), positive = that many days up to the cap (the lower of the
+// deployment's and the tenant's pat_max_days); a negative value or one above the cap is refused. endpoint is "mcp" (the
 // default, /mcp) or "memory" (/mcp/memory only, #2764). Returns the secret once.
 func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var body struct {
@@ -221,7 +282,11 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 		return
 	}
 
-	maxDays := a.mgr.patMaxLifetimeDays()
+	maxDays, err := a.mgr.patCapForTenant(r.Context(), mv.TenantID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
 	days := 90
 	if days > maxDays {
 		days = maxDays

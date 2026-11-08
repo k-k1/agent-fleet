@@ -46,6 +46,7 @@ export interface Tenant {
   allow_engine_llm?: boolean;
   allow_engine_image?: boolean;
   terminal_history_retention_days?: number;
+  pat_max_days?: number;
   // Per-tenant login rules, stored as CSV (docs/log/61 §61.9.7).
   allowed_providers?: string;
   auto_join_domains?: string;
