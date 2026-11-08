@@ -493,11 +493,6 @@ func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	memberLimit, aerr := memberLimitParam(r)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
 	rows, err := a.mgr.store.ListUsage(r.Context(), tenantID, from, to)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -523,6 +518,12 @@ func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
 		"from": from, "to": to, "days": days, "totals": aggregateUsage(rows),
 	}
 	if months > 0 {
+		// Validated only where used: a CSV or months-less request ignores member_limit.
+		memberLimit, aerr := memberLimitParam(r)
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
 		sp := newMonthSpan(months, monthsNow())
 		mrows, err := a.mgr.store.ListUsage(r.Context(), tenantID, sp.From, sp.To)
 		if err != nil {

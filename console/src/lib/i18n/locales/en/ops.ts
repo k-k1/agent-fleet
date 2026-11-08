@@ -260,7 +260,6 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "monthly.members_capped": "Showing the top {shown} of {total} members.",
   "monthly.members_hours_title": "Running hours by member and month",
   "monthly.members_cost_title": "Cloud cost by member and month",
-  "monthly.member_hours_title": "Running hours by month",
   "cost.no_records": "No cost recorded for this range.",
   "cost.load_error": "Could not load cloud cost.",
   "cost.lag": "Cost Explorer runs about {h} hours behind.",

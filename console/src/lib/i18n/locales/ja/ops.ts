@@ -257,7 +257,6 @@ export const ops = {
   "monthly.members_capped": "上位 {shown} 人を表示（全 {total} 人）。",
   "monthly.members_hours_title": "メンバー別・月別の稼働時間",
   "monthly.members_cost_title": "メンバー別・月別のクラウドコスト",
-  "monthly.member_hours_title": "月別の稼働時間",
   "cost.no_records": "この期間の費用はありません。",
   "cost.load_error": "クラウド費用を取得できませんでした。",
   "cost.lag": "Cost Explorer は約 {h} 時間遅れです。",

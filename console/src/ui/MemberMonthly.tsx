@@ -32,7 +32,7 @@ export function usageMemberRows(list: any[] | undefined): MemberMonths[] {
 /** Wire rows of `monthly_members` from /api/admin/cloud-cost. */
 export function costMemberRows(list: any[] | undefined): MemberMonths[] {
   return (list || []).map((m) => ({
-    id: m.membership_id,
+    id: m.membership_id || `${m.tenant}|${m.user_key}`,
     name: m.user_key || "",
     email: m.email,
     tenant: m.tenant,
@@ -76,7 +76,10 @@ export function MemberMonthlyTable({
       latest: (a, b) => latest(b) - latest(a),
       change: (a, b) => latestChange(b) - latestChange(a),
     };
-    return out.sort((a, b) => cmp[sort](a, b) || a.name.localeCompare(b.name));
+    // Ties fall back to tenant then name, the order the server sorts in.
+    return out.sort(
+      (a, b) => cmp[sort](a, b) || (a.tenant || "").localeCompare(b.tenant || "") || a.name.localeCompare(b.name),
+    );
   }, [members, sort]);
   if (members.length === 0) return null;
   const heads = members[0].months;

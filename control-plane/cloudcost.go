@@ -731,11 +731,6 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	memberLimit, aerr := memberLimitParam(r)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
 	totals, err := a.mgr.store.CloudCostTotals(r.Context(), tenantID, from, to)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -782,6 +777,11 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		// reserved memberships would otherwise be counted as people's spend.
 		if sysErr != nil {
 			writeAPIErr(w, internalErr(sysErr))
+			return
+		}
+		memberLimit, aerr := memberLimitParam(r)
+		if aerr != nil {
+			writeAPIErr(w, aerr)
 			return
 		}
 		sp := newMonthSpan(months, monthsNow())

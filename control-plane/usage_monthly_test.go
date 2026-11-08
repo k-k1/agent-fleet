@@ -474,3 +474,54 @@ func TestMemberUsageMonthlyForTheDetailView(t *testing.T) {
 		t.Errorf("super months = %v", m)
 	}
 }
+
+func TestMemberLimitIsValidatedOnlyWhereUsed(t *testing.T) {
+	freezeMonths(t, "2026-08-20")
+	st, mgr, tn, mem := cloudCostFixture(t)
+	seedMonthlyCost(t, st, tn, mem)
+	_, _ = st.UpsertIdentity(context.Background(), "root@acme.co.jp", "root-acme-co-jp", "super_admin")
+	api := newAdminAPI(mgr)
+	for _, bad := range []string{"bogus", "-1", "0", "501", "99999999999999999999", "+5"} {
+		if got := adminGet(api.usage, "/api/admin/usage?months=2&member_limit="+bad, "root@acme.co.jp"); got["_status"].(float64) != 400 {
+			t.Errorf("usage member_limit=%s status %v", bad, got["_status"])
+		}
+		if got := adminGet(api.cloudCost, "/api/admin/cloud-cost?months=2&member_limit="+bad, "root@acme.co.jp"); got["_status"].(float64) != 400 {
+			t.Errorf("cost member_limit=%s status %v", bad, got["_status"])
+		}
+	}
+	// Without months (or for CSV) the parameter is not read at all.
+	if got := adminGet(api.cloudCost, "/api/admin/cloud-cost?member_limit=0", "root@acme.co.jp"); got["_status"].(float64) != 200 {
+		t.Errorf("cost without months status %v", got["_status"])
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/usage?format=csv&member_limit=bogus", nil)
+	r.Header.Set("X-Forwarded-Email", "root@acme.co.jp")
+	w := httptest.NewRecorder()
+	api.usage(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("csv status %d", w.Code)
+	}
+}
+
+func TestCloudCostMonthlyMembersKeepsARemovedMember(t *testing.T) {
+	freezeMonths(t, "2026-08-20")
+	st, mgr, tn, mem := cloudCostFixture(t)
+	seedMonthlyCost(t, st, tn, mem)
+	if err := st.PutCloudCost(context.Background(), []string{"2026-08-05"}, []store.CloudCostRow{
+		{Day: "2026-08-05", MembershipID: "gone-membership", TenantID: tn.ID, Service: "EC2", Unblended: 400_000, Currency: "USD"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := adminGet(newAdminAPI(mgr).cloudCost, "/api/admin/cloud-cost?tenant=sales&months=2", "boss@acme.co.jp")
+	var found bool
+	for _, m := range membersOf(t, got) {
+		if m["membership_id"] == "gone-membership" {
+			found = true
+			if m["user_key"] != "" || memberMonths(m)[1]["unblended_micro"].(float64) != 400_000 {
+				t.Errorf("removed member = %v", m)
+			}
+		}
+	}
+	if !found {
+		t.Error("a removed member's spend must stay visible")
+	}
+}
