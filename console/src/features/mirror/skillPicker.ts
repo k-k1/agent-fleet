@@ -122,14 +122,20 @@ export function splitWords(text: string): string[] {
 // consumed as the prefixes of one or more successive name words, and a segment always starts on a
 // new word. Words may be skipped. So for "issue-to-pr": "iss-t", "iss_to", "issTo", "issto",
 // "itp", "to-pr" and "isspr" all match, while "iss-r" does not (no word after "issue" starts with
-// "r"). Returns the number of skipped words for the best split (0 = every word from the first one
-// on was used in order), or -1 for no match.
+// "r"). Returns the number of words skipped before or between the matched ones for the best split
+// (0 = matched from the first word with nothing skipped; unused trailing words are free), or -1
+// for no match. Because a capital starts a word, a stray capital mid-word ("IsST") splits the
+// segment and misses; that is the price of honouring "issT" and "IssueToPr" as typed.
 // A plain subsequence ("every character somewhere, in order") is deliberately not accepted: with
 // short queries it lights up most of the list ("/iss" would hit every name with i…s…s), which is
 // the noise this matcher exists to avoid.
 export function wordMatchCost(name: string, query: string): number {
-  const words = splitWords(name);
-  const segs = splitWords(query);
+  return wordCost(splitWords(name), splitWords(query));
+}
+
+// wordCost: wordMatchCost on already split words, so filterSkills splits the query once per
+// keystroke rather than once per skill.
+function wordCost(words: string[], segs: string[]): number {
   if (segs.length === 0 || words.length === 0) return -1;
   const memo = new Map<string, number>();
   // best(si, ci, wi): least skipped words to match segs[si] from character ci on, using words
@@ -164,12 +170,14 @@ export function wordMatchCost(name: string, query: string): number {
 // An empty query returns everything in that tier order (the API's name order within a tier).
 export function filterSkills(skills: SessionSkill[], query: string): SessionSkill[] {
   const q = query.trim().toLowerCase();
+  // Split the query before lower-casing it: its capitals are word breaks ("issT").
+  const segs = splitWords(query.trim());
   const tier = (s: SessionSkill): number => (isCli(s) ? 1 : 0);
   const rank = (s: SessionSkill): { r: number; c: number } => {
     if (!q) return { r: 0, c: 0 };
     const nm = s.name.toLowerCase();
     if (nm.startsWith(q)) return { r: 0, c: 0 };
-    const c = wordMatchCost(s.name, query.trim());
+    const c = wordCost(splitWords(s.name), segs);
     if (c >= 0) return { r: 1, c };
     if (nm.includes(q)) return { r: 2, c: 0 };
     if ((s.description || "").toLowerCase().includes(q)) return { r: 3, c: 0 };
@@ -178,6 +186,7 @@ export function filterSkills(skills: SessionSkill[], query: string): SessionSkil
   return skills
     .map((s) => ({ s, ...rank(s), t: tier(s) }))
     .filter((x) => x.r >= 0)
+    // Tier before cost: a CLI-bundled skill never jumps an own one, however clean its word match.
     .sort((a, b) => a.r - b.r || a.t - b.t || a.c - b.c)
     .map((x) => x.s);
 }
