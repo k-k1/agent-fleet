@@ -322,38 +322,8 @@ real data. CloudWatch and AWS only need a profile picked from your SSM connectio
 
 ### Issue tracker
 
-Where the work items in the left rail's **Issue tracker** section come from (Jira issues, GitHub
-issues and pull requests, Bitbucket pull requests), so that a session can be started from a row.
-
-- **Saved queries** are the whole of it: GitHub search syntax, Jira JQL or a Bitbucket filter
-  expression, saved exactly as written. **Nothing is fetched until you save one**, and the query is
-  the only filter, and nothing is synced in bulk.
-- **GitHub: `assignee:` lists no pull request.** GitHub does not make a PR's author its assignee, so a
-  query of `assignee:@me` alone shows issues and nothing else. The default `is:open (is:issue OR is:pull-request) involves:@me`
-  (GitHub rejects some accounts' searches that name neither `is:issue` nor `is:pull-request`)
-  covers what you authored, are assigned, were mentioned in or commented on. **Reviews requested of
-  you are not in it**. Add `is:open review-requested:@me` as a second query (an item matched by both
-  still takes one row). `OR` and parentheses work too. A query GitHub rejects shows its reason on the row
-  ("github rejected the query: …"); one GitHub rejects only because it names neither type is retried once as
-  `(is:issue OR is:pull-request) (<your query>)`.
-- **Jira** is connected here, either with **OAuth** or with **your email address and an API token**
-  (the address is half of that credential). The connection also signs in the `jira` CLI in sessions
-  ([15](15-external-services.md#use-jira-in-a-session)). An OAuth connection without the Jira Software scopes says on its card
-  "Boards, sprints and epics: not available.", with what your tenant administrator has to add. The same connection signs in the `confluence` CLI
-  ([15](15-external-services.md#use-confluence-in-a-session)); an OAuth connection without the Confluence
-  scopes says "Confluence: not available.", and one that predates the page scopes says "Confluence: search
-  and comments work, but …". **GitHub and
-  Bitbucket ride on the Git hosting connection**, so they need nothing of their own.
-- **Bitbucket** has no search across an account, so its query is **assembled from your connected
-  repositories** (what to list × which target) instead of being typed by hand. Bitbucket items are
-  **read only**: nothing is written back to them.
-- **Branch name template**: what a session started from a row branches as. Empty means the
-  default `{prefix}{ref}-{slug}` (e.g. `feature/45-empty-list`, `fix/PROJ-123`); the placeholders
-  are `{ref}` `{num}` `{key}` `{project}` `{type}` `{prefix}` `{slug}`, and the example under the
-  field shows what yours produces. A repository's own rules (git-flow and the like) win at launch.
-
-See [03 Starting sessions](03-starting-sessions.md#starting-from-the-issue-tracker) for the list itself and for
-starting a session from a row.
+The Jira connection behind the left rail's **Issue tracker**. Connecting it and saving queries are in
+[Connect an issue tracker](../user/integrations/issue-tracker.md).
 
 ### Chat
 
