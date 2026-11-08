@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"encoding/json"
@@ -46,7 +46,7 @@ func TestSafeBrowsePath(t *testing.T) {
 
 		// absolute under the scratch base → served, display path is the absolute path
 		{"abs in scratch", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", true},
-		{"abs in staged docs", agentFleetDocsRoot() + "/guide/member/README.md", agentFleetDocsRoot() + "/guide/member/README.md", agentFleetDocsRoot() + "/guide/member/README.md", true},
+		{"abs in staged docs", AgentFleetDocsRoot() + "/guide/member/README.md", AgentFleetDocsRoot() + "/guide/member/README.md", AgentFleetDocsRoot() + "/guide/member/README.md", true},
 		{"abs in codex generated images", codexGeneratedImagesRoot() + "/job/image.png", codexGeneratedImagesRoot() + "/job/image.png", codexGeneratedImagesRoot() + "/job/image.png", true},
 
 		// absolute outside every allowed root → refused
@@ -54,23 +54,23 @@ func TestSafeBrowsePath(t *testing.T) {
 		{"abs scratch traversal escapes", scratch + "/../../etc/passwd", "", "", false},
 	}
 	for _, c := range cases {
-		full, rel, ok := safeBrowsePath(c.p)
+		full, rel, ok := SafeBrowsePath(c.p)
 		if ok != c.wantOK {
-			t.Errorf("%s: safeBrowsePath(%q) ok = %v, want %v", c.name, c.p, ok, c.wantOK)
+			t.Errorf("%s: SafeBrowsePath(%q) ok = %v, want %v", c.name, c.p, ok, c.wantOK)
 			continue
 		}
 		if !ok {
 			continue
 		}
 		if full != filepath.Clean(c.wantFull) || rel != c.wantRel {
-			t.Errorf("%s: safeBrowsePath(%q) = (%q, %q), want (%q, %q)", c.name, c.p, full, rel, filepath.Clean(c.wantFull), c.wantRel)
+			t.Errorf("%s: SafeBrowsePath(%q) = (%q, %q), want (%q, %q)", c.name, c.p, full, rel, filepath.Clean(c.wantFull), c.wantRel)
 		}
 	}
 }
 
 func TestSafeWritableBrowsePathRefusesReadOnlyRoots(t *testing.T) {
 	t.Setenv("AF_BROWSE_ROOT", t.TempDir())
-	for _, p := range []string{scratchRoot() + "/note.txt", agentFleetDocsRoot() + "/guide/member/README.md"} {
+	for _, p := range []string{scratchRoot() + "/note.txt", AgentFleetDocsRoot() + "/guide/member/README.md"} {
 		if _, _, ok := safeWritableBrowsePath(p); ok {
 			t.Errorf("safeWritableBrowsePath(%q) unexpectedly allowed an absolute read-only path", p)
 		}
@@ -97,7 +97,7 @@ func TestHandleFSFileScratchpad(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/fs/file?path="+url.QueryEscape(abs), nil)
-	handleFSFile(rr, req)
+	HandleFile(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -134,7 +134,7 @@ func TestHandleFSFileCodexGeneratedImageSharedRelativeToBrowseRoot(t *testing.T)
 	rel := ".codex/generated_images/job/image.png"
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/fs/file?path="+url.QueryEscape(rel), nil)
-	handleFSFile(rr, req)
+	HandleFile(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -178,7 +178,7 @@ func TestFSTreeCarriesMtimeOnFilesAndDirs(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handleFSTree(rr, httptest.NewRequest(http.MethodGet, "/api/fs/tree?path=", nil))
+	HandleTree(rr, httptest.NewRequest(http.MethodGet, "/api/fs/tree?path=", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -219,7 +219,7 @@ func TestFSTreeCarriesMtimeOnFilesAndDirs(t *testing.T) {
 func treeEntries(t *testing.T, query string) map[string]fsEntry {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handleFSTree(rec, httptest.NewRequest("GET", "/api/fs/tree?"+query, nil))
+	HandleTree(rec, httptest.NewRequest("GET", "/api/fs/tree?"+query, nil))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
 	}

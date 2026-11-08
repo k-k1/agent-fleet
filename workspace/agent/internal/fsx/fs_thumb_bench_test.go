@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // Where the ~95 ms of a cold thumbnail actually goes (fs_thumb.go's warming notes give the
 // total; these split it). The gallery warms a folder in the background, so this cost is only

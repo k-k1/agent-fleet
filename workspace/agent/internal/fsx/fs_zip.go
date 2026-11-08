@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // A folder as one zip (GET /fs/download-zip, ADR 0111).
 //
@@ -72,7 +72,7 @@ var (
 	zipMaxBytes      int64 = 512 << 20
 	zipBuildLimit          = 45 * time.Second
 	zipTransferLimit       = 15 * time.Minute // a stalled client cannot hold the slot longer
-	// Directory entries read per batch, as handleFSImages does, so a million-entry folder is
+	// Directory entries read per batch, as HandleImages does, so a million-entry folder is
 	// never in memory whole.
 	zipReadBatch = 256
 	// One build at a time, Agent-wide, held from the walk until the temp file is gone: the
@@ -110,16 +110,16 @@ func resolveZipRoot(input string) (zipRoot, *fsAPIError) {
 		return zipRoot{}, aerr
 	}
 	if !strings.HasPrefix(input, "/") {
-		browse, err := absoluteTrustedRoot(browseRoot())
+		browse, err := absoluteTrustedRoot(BrowseRoot())
 		if err != nil {
-			return zipRoot{}, fsErr(500, errCodeFSReadFailed, "cannot resolve browse root")
+			return zipRoot{}, fsErr(500, deps.ErrCodeFSReadFailed, "cannot resolve browse root")
 		}
-		if isDenied(input) {
-			return zipRoot{}, fsErr(403, errCodeFSDenied, "folder path is denied")
+		if IsDenied(input) {
+			return zipRoot{}, fsErr(403, deps.ErrCodeFSDenied, "folder path is denied")
 		}
 		return zipRoot{root: browse, relative: input, browse: true}, nil
 	}
-	for i, raw := range allowedReadRoots() {
+	for i, raw := range AllowedReadRoots() {
 		root, err := absoluteTrustedRoot(raw)
 		if err != nil {
 			continue
@@ -129,14 +129,14 @@ func resolveZipRoot(input string) (zipRoot, *fsAPIError) {
 			continue
 		}
 		if rel == "" {
-			return zipRoot{}, fsErr(400, errCodeFSBadPath, "choose a folder inside the root, not the root itself")
+			return zipRoot{}, fsErr(400, deps.ErrCodeFSBadPath, "choose a folder inside the root, not the root itself")
 		}
-		if i == 0 && isDenied(rel) {
-			return zipRoot{}, fsErr(403, errCodeFSDenied, "folder path is denied")
+		if i == 0 && IsDenied(rel) {
+			return zipRoot{}, fsErr(403, deps.ErrCodeFSDenied, "folder path is denied")
 		}
 		return zipRoot{root: root, relative: rel, browse: i == 0}, nil
 	}
-	return zipRoot{}, fsErr(400, errCodeFSBadPath, "absolute path is outside allowed read roots")
+	return zipRoot{}, fsErr(400, deps.ErrCodeFSBadPath, "absolute path is outside allowed read roots")
 }
 
 // zipNameProblem says why an entry name cannot go into an archive, or "" when it can. The name
@@ -191,7 +191,7 @@ type zipPlan struct {
 }
 
 func tooLarge(format string, a ...any) *fsAPIError {
-	return fsErr(http.StatusRequestEntityTooLarge, errCodeZipTooLarge, fmt.Sprintf(format, a...))
+	return fsErr(http.StatusRequestEntityTooLarge, deps.ErrCodeZipTooLarge, fmt.Sprintf(format, a...))
 }
 
 // ctxLimitErr turns the walk's context ending into the answer: the time budget is a size
@@ -208,7 +208,7 @@ func ctxLimitErr(ctx context.Context) *fsAPIError {
 // it actually reads.
 func planZip(ctx context.Context, startFD int, zr zipRoot, base string, startMod time.Time) (*zipPlan, *fsAPIError) {
 	if p := zipNameProblem(base); p != "" {
-		return nil, fsErr(422, errCodeZipUnsafe, fmt.Sprintf("folder name %q cannot be zipped: %s", base, p))
+		return nil, fsErr(422, deps.ErrCodeZipUnsafe, fmt.Sprintf("folder name %q cannot be zipped: %s", base, p))
 	}
 	plan := &zipPlan{excluded: map[string]bool{}}
 	seen := map[string]struct{}{base: {}}
@@ -271,7 +271,7 @@ func planZip(ctx context.Context, startFD int, zr zipRoot, base string, startMod
 					plan.skipped++
 					continue
 				}
-				if zr.browse && isDenied(path.Join(zr.relative, rel)) {
+				if zr.browse && IsDenied(path.Join(zr.relative, rel)) {
 					plan.excluded[name] = true
 					continue
 				}
@@ -282,11 +282,11 @@ func planZip(ctx context.Context, startFD int, zr zipRoot, base string, startMod
 				zname := base + "/" + rel
 				if p := zipNameProblem(zname); p != "" {
 					f.Close()
-					return nil, fsErr(422, errCodeZipUnsafe, fmt.Sprintf("%q cannot be zipped: %s", rel, p))
+					return nil, fsErr(422, deps.ErrCodeZipUnsafe, fmt.Sprintf("%q cannot be zipped: %s", rel, p))
 				}
 				if _, dup := seen[zname]; dup {
 					f.Close()
-					return nil, fsErr(422, errCodeZipUnsafe, fmt.Sprintf("%q appears twice in the archive", rel))
+					return nil, fsErr(422, deps.ErrCodeZipUnsafe, fmt.Sprintf("%q appears twice in the archive", rel))
 				}
 				seen[zname] = struct{}{}
 				if plan.names += len(zname); plan.names > zipMaxNameBytes {
@@ -321,7 +321,7 @@ func planZip(ctx context.Context, startFD int, zr zipRoot, base string, startMod
 			if rerr != nil || len(ents) == 0 {
 				if rerr != nil && !errors.Is(rerr, io.EOF) {
 					f.Close()
-					return nil, fsErr(500, errCodeFSReadFailed, "cannot read folder "+fmt.Sprintf("%q", d.rel))
+					return nil, fsErr(500, deps.ErrCodeFSReadFailed, "cannot read folder "+fmt.Sprintf("%q", d.rel))
 				}
 				break
 			}
@@ -349,15 +349,15 @@ func zipOpenError(err error, rel, what string) *fsAPIError {
 	case errors.Is(err, unix.ENOENT), errors.Is(err, unix.ENOTDIR), errors.Is(err, unix.ELOOP), errors.Is(err, unix.EXDEV):
 		if rel == "" {
 			if errors.Is(err, unix.ELOOP) {
-				return fsErr(400, errCodeFSSymlinkNotAllowed, "symlinks are not allowed")
+				return fsErr(400, deps.ErrCodeFSSymlinkNotAllowed, "symlinks are not allowed")
 			}
-			return fsErr(404, errCodeZipNotDir, "not a folder")
+			return fsErr(404, deps.ErrCodeZipNotDir, "not a folder")
 		}
-		return fsErr(409, errCodeZipChanged, fmt.Sprintf("%s %q changed while the archive was being made; try again", what, rel))
+		return fsErr(409, deps.ErrCodeZipChanged, fmt.Sprintf("%s %q changed while the archive was being made; try again", what, rel))
 	case errors.Is(err, unix.EACCES), errors.Is(err, unix.EPERM):
-		return fsErr(403, errCodeFSDenied, fmt.Sprintf("cannot read %s %q", what, rel))
+		return fsErr(403, deps.ErrCodeFSDenied, fmt.Sprintf("cannot read %s %q", what, rel))
 	}
-	return fsErr(500, errCodeFSReadFailed, fmt.Sprintf("cannot read %s %q: %v", what, rel, err))
+	return fsErr(500, deps.ErrCodeFSReadFailed, fmt.Sprintf("cannot read %s %q: %v", what, rel, err))
 }
 
 type zipWriteErr struct{ err error }
@@ -471,7 +471,7 @@ func zipOpenFile(startFD int, e zipEntry) (*os.File, *fsAPIError) {
 	var st unix.Stat_t
 	if err := unix.Fstat(ffd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink > 1 {
 		f.Close()
-		return nil, fsErr(409, errCodeZipChanged, fmt.Sprintf("file %q changed while the archive was being made; try again", e.rel))
+		return nil, fsErr(409, deps.ErrCodeZipChanged, fmt.Sprintf("file %q changed while the archive was being made; try again", e.rel))
 	}
 	return f, nil
 }
@@ -536,11 +536,11 @@ func zipBuildError(ctx context.Context, err error, rel string) *fsAPIError {
 	case errors.Is(err, errZipOutputCap):
 		return tooLarge("the archive would be larger than %d MB", zipOutputCap()>>20)
 	case errors.Is(err, unix.ENOSPC):
-		return fsErr(507, errCodeZipNoSpace, "no space left for the archive")
+		return fsErr(507, deps.ErrCodeZipNoSpace, "no space left for the archive")
 	}
 	var we zipWriteErr
 	if errors.As(err, &we) {
-		return fsErr(500, errCodeFSWriteFailed, "cannot write the archive")
+		return fsErr(500, deps.ErrCodeFSWriteFailed, "cannot write the archive")
 	}
 	return zipOpenError(err, rel, "file")
 }
@@ -608,7 +608,7 @@ type fsZipCheck struct {
 	Skipped  int      `json:"skipped"`
 }
 
-func handleFSDownloadZip(w http.ResponseWriter, r *http.Request) {
+func HandleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		// ServeMux sends HEAD to a GET pattern; answering it would mean building the archive
 		// for nothing.
@@ -628,7 +628,7 @@ func handleFSDownloadZip(w http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 		return
 	case <-time.After(zipSlotWait):
-		httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeZipBusy, "another folder is being zipped; try again in a moment")
+		httpx.WriteErr(w, http.StatusServiceUnavailable, deps.ErrCodeZipBusy, "another folder is being zipped; try again in a moment")
 		return
 	}
 
@@ -648,7 +648,7 @@ func handleFSDownloadZip(w http.ResponseWriter, r *http.Request) {
 	defer unix.Close(startFD)
 	var startStat unix.Stat_t
 	if err := unix.Fstat(startFD, &startStat); err != nil {
-		writeFSError(w, fsErr(500, errCodeFSReadFailed, "cannot stat folder"))
+		writeFSError(w, fsErr(500, deps.ErrCodeFSReadFailed, "cannot stat folder"))
 		return
 	}
 	base := path.Base(zr.relative)
@@ -682,7 +682,7 @@ func handleFSDownloadZip(w http.ResponseWriter, r *http.Request) {
 
 	tmp, err := newZipTemp()
 	if err != nil {
-		writeFSError(w, fsErr(500, errCodeFSWriteFailed, "cannot create the archive's temp file"))
+		writeFSError(w, fsErr(500, deps.ErrCodeFSWriteFailed, "cannot create the archive's temp file"))
 		return
 	}
 	defer tmp.Close()
@@ -695,7 +695,7 @@ func handleFSDownloadZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		writeFSError(w, fsErr(500, errCodeFSReadFailed, "cannot read the archive back"))
+		writeFSError(w, fsErr(500, deps.ErrCodeFSReadFailed, "cannot read the archive back"))
 		return
 	}
 

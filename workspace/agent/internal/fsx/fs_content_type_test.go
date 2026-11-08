@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"net/http/httptest"
@@ -18,7 +18,7 @@ func TestFSDownloadSVGContentType(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/fs/download?path=d.svg", nil)
-	handleFSDownload(rec, req)
+	HandleDownload(rec, req)
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}

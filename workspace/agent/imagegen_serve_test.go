@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,7 +16,7 @@ import (
 // browse root and outside every fsDeny prefix, so the mirror's existing FileCard can fetch it
 // with no new route and no frontend change. That is the opposite of codex's own
 // generated_images, which lives under the denied `.codex` and needs the narrow exception in
-// fs.go — so it is worth holding down rather than assuming.
+// internal/fsx/fs.go — so it is worth holding down rather than assuming.
 func TestGeneratedImageIsServableFromTheBrowseRoot(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
@@ -34,15 +35,15 @@ func TestGeneratedImageIsServableFromTheBrowseRoot(t *testing.T) {
 	// sessionx.toBrowseRel's (TestResolveUserFilesMapsAGeneratedImage); what matters here is
 	// that the result is a path this handler will actually serve.
 	rel := ".cache/agent-fleet/generated/sid-1/image-1.png"
-	if got := filepath.Join(browseRoot(), rel); got != abs {
+	if got := filepath.Join(fsx.BrowseRoot(), rel); got != abs {
 		t.Fatalf("the relative path this test asserts (%q) is not where the image was written (%q)", got, abs)
 	}
-	if isDenied(rel) {
+	if fsx.IsDenied(rel) {
 		t.Fatalf("%q is denylisted — the card would show and never open", rel)
 	}
 
 	rr := httptest.NewRecorder()
-	handleFSDownload(rr, httptest.NewRequest(http.MethodGet, "/api/fs/download?path="+url.QueryEscape(rel), nil))
+	fsx.HandleDownload(rr, httptest.NewRequest(http.MethodGet, "/api/fs/download?path="+url.QueryEscape(rel), nil))
 	if rr.Code != http.StatusOK || rr.Body.String() != "PNG" {
 		t.Fatalf("download = %d %q, want 200 with the file", rr.Code, rr.Body.String())
 	}

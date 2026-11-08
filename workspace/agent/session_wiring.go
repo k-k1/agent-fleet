@@ -17,6 +17,7 @@ package main
 // and the raw developer message is exposed — both fail quietly.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routegw"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -40,9 +41,9 @@ func sessionDeps() sessionx.Deps {
 		FirstNonEmpty:    firstNonEmpty,
 		SplitFrontmatter: splitFrontmatter,
 
-		BrowseRoot:     browseRoot,
-		MaxUploadBytes: maxUploadBytes,
-		ReadRoots:      allowedReadRoots,
+		BrowseRoot:     fsx.BrowseRoot,
+		MaxUploadBytes: fsx.MaxUploadBytes,
+		ReadRoots:      fsx.AllowedReadRoots,
 
 		IsSvnRepo:       svnx.IsRepo,
 		RepoJobsRunning: repoJobsRunning,

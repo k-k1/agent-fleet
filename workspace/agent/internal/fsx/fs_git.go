@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"bytes"
@@ -28,10 +28,10 @@ type fileChange struct {
 	Untracked bool   `json:"untracked"`
 }
 
-// handleFSChanges aggregates `git status` across every working copy under
+// HandleChanges aggregates `git status` across every working copy under
 // ~/repos, returning home-relative paths so the Console can show "changed files
 // only" alongside the home tree.
-func handleFSChanges(w http.ResponseWriter, r *http.Request) {
+func HandleChanges(w http.ResponseWriter, r *http.Request) {
 	root := gitx.ReposRoot()
 	ents, err := os.ReadDir(root)
 	if err != nil {
@@ -79,12 +79,12 @@ func emptyMarks() lineMarksWire {
 	return lineMarksWire{Added: []int{}, Modified: []int{}, Deleted: []int{}}
 }
 
-// handleFSLineMarks returns gutter marks for a working-tree file under ~/repos,
+// HandleLineMarks returns gutter marks for a working-tree file under ~/repos,
 // computed against HEAD: which new-file lines are added/modified and where
 // deletions occurred. Untracked files mark every line added. Non-repo paths (or
 // clean files) return empty marks. The Console overlays these in the viewer.
-func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
-	_, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+func HandleLineMarks(w http.ResponseWriter, r *http.Request) {
+	_, rel, ok := SafeBrowsePath(r.URL.Query().Get("path"))
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -169,11 +169,11 @@ func parseDiffMarks(diff string) (added, modified, deleted []int) {
 // the Agent) and reads at most the /fs/file size limit through a fixed buffer: anything larger,
 // or unreadable, is 0 lines and the viewer shows no marks.
 func countFileLines(rel string) int {
-	root, err := absoluteTrustedRoot(browseRoot())
+	root, err := absoluteTrustedRoot(BrowseRoot())
 	if err != nil {
 		return 0
 	}
-	opened, aerr := openFDFile(fdReadPath{root: root, relative: filepath.ToSlash(rel), display: rel, browseRoot: true})
+	opened, aerr := openFDFile(fdReadPath{root: root, relative: filepath.ToSlash(rel), display: rel, BrowseRoot: true})
 	if aerr != nil {
 		return 0
 	}

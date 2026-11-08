@@ -5,6 +5,7 @@ package main
 // chatx cannot import main, so this is the only way (internal/chatx/deps.go).
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"strings"
 	"time"
@@ -99,7 +100,7 @@ func init() {
 			sessionx.SweepRouteGuards(now)
 		},
 		NormalizeKind:          sessionx.NormalizeKind,
-		SafeBrowsePath:         safeBrowsePath,
+		SafeBrowsePath:         fsx.SafeBrowsePath,
 		MaybePushOperatorReply: maybePushOperatorReply,
 		// The far side (rate_limit_resume.go) is a var, so what is passed is a reader rather
 		// than the value. Receiving it into an alias variable makes a copy, and later writes

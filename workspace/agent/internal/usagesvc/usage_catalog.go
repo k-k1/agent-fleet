@@ -340,7 +340,7 @@ func usageCatalogOrderOn(kind, route string) []string {
 // CatalogLookup looks a price up in the catalog. Test-only: production code reaches the catalog
 // through usageCatalogLookupOn; this export exists for package main's model-picker tests.
 //
-// It ref says whose provider's value was
+// The returned ref says whose provider's value was
 // taken and is shown on screen: an amount whose price source is unknown cannot be checked.
 func CatalogLookup(kind, model string) (usagePrice, string, bool) {
 	return usageCatalogLookupOn(kind, "", model)

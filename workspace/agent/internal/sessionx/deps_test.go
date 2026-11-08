@@ -111,7 +111,7 @@ func testDeps() Deps {
 			return meta, strings.TrimLeft(body, "\n")
 		},
 
-		// A copy of fs.go. With no env set it falls back to homeDir() (the tests set a temp HOME).
+		// A copy of internal/fsx/fs.go. With no env set it falls back to homeDir() (the tests set a temp HOME).
 		BrowseRoot: func() string {
 			p("BrowseRoot")
 			if r := os.Getenv("AF_BROWSE_ROOT"); r != "" {
@@ -120,7 +120,7 @@ func testDeps() Deps {
 			return homeDir()
 		},
 
-		// A copy of fs.go's allowedReadRoots. The docs root is the fixed container path; no
+		// A copy of internal/fsx/fs.go's allowedReadRoots. The docs root is the fixed container path; no
 		// test edits a file there.
 		ReadRoots: func() []string {
 			p("ReadRoots")

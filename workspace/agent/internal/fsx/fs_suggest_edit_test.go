@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // Unit tests for the editor's AI edit suggestion (docs/log/44 Phase 4). The LLM is swapped out at
 // the editSuggestLLM seam, pinning input validation, JSON extraction, cleanup (summary clamp, CR
@@ -117,7 +117,7 @@ func suggestEditDo(t *testing.T, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPost, "/fs/suggest-edit", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handleFSSuggestEdit(w, r)
+	HandleSuggestEdit(w, r)
 	return w
 }
 
@@ -175,14 +175,6 @@ func TestHandleFSSuggestEdit(t *testing.T) {
 		if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "generation_failed") {
 			t.Fatalf("failure case: %d %s", w.Code, w.Body.String())
 		}
-	}
-}
-
-func TestFSSuggestEditRouteRegistered(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/fs/suggest-edit", nil)
-	_, pattern := buildMux().Handler(req)
-	if pattern != "POST /fs/suggest-edit" {
-		t.Fatalf("route pattern=%q", pattern)
 	}
 }
 

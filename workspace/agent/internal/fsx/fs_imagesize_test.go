@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ func imageSizeRequest(t *testing.T, paths ...string) map[string]fsImageSize {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/fs/imagesize", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	handleFSImageSize(rec, req)
+	HandleImageSize(rec, req)
 	if rec.Code != 200 {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}

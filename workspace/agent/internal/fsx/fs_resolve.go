@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // Resolving path references (POST /fs/resolve).
 //
@@ -18,7 +18,7 @@ package main
 //     "repos/<name>" out of cwd with a regex, while here .git is walked upwards to the right
 //     root for a worktree and for a subfolder launch alike (.git is a file in a worktree and a
 //     directory in a normal clone).
-//   - safeBrowsePath already knows the readable places outside home (scratch, the role-scoped
+//   - SafeBrowsePath already knows the readable places outside home (scratch, the role-scoped
 //     docs mount). The Console has no such knowledge and misreads an absolute path as
 //     repository-relative.
 //   - Only hits come back. A directory listing (thousands of entries for node_modules) is never
@@ -31,6 +31,7 @@ package main
 // absolute for the scratch / docs mounts).
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -60,7 +61,7 @@ type fsResolveEntry struct {
 	Type string `json:"type"` // "file" | "dir"
 }
 
-func handleFSResolve(w http.ResponseWriter, r *http.Request) {
+func HandleResolve(w http.ResponseWriter, r *http.Request) {
 	var req fsResolveRequest
 	if serr := httpx.DecodeStrictJSON(r, &req, fsResolveMaxBody); serr != nil {
 		httpx.WriteErr(w, serr.Status, serr.Code, serr.Message)
@@ -88,7 +89,7 @@ func fsResolveBases(cwd string) (cwdFull, repoFull string) {
 	if cwd == "" {
 		return "", ""
 	}
-	full, _, ok := safeBrowsePath(cwd)
+	full, _, ok := SafeBrowsePath(cwd)
 	if !ok {
 		return "", ""
 	}
@@ -102,7 +103,7 @@ func fsResolveBases(cwd string) (cwdFull, repoFull string) {
 // which is a DIRECTORY in a normal clone and a FILE in a worktree. Bounded by the browse
 // root, so it can never answer with somebody's home or /. "" when dir is not in a repo.
 func fsRepoRoot(dir string) string {
-	root := browseRoot()
+	root := BrowseRoot()
 	rroot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		rroot = root
@@ -135,7 +136,7 @@ func fsRepoRoot(dir string) string {
 //	             root — which is what a reply written from a subfolder, or one quoting a
 //	             path out of a repo-root-relative document, actually means.
 //
-// Every candidate goes through safeBrowsePath, so the denylist, the browse root and the
+// Every candidate goes through SafeBrowsePath, so the denylist, the browse root and the
 // read-only roots decide what may be answered about at all.
 func fsResolveRef(ref, cwdFull, repoFull string) (fsResolveEntry, bool) {
 	ref = strings.TrimSpace(ref)
@@ -145,7 +146,7 @@ func fsResolveRef(ref, cwdFull, repoFull string) (fsResolveEntry, bool) {
 	var cands []string
 	switch {
 	case strings.HasPrefix(ref, "~/"):
-		cands = append(cands, filepath.Join(homeDir(), ref[2:]))
+		cands = append(cands, filepath.Join(paths.HomeDir(), ref[2:]))
 	case filepath.IsAbs(ref):
 		cands = append(cands, filepath.Clean(ref))
 		if repoFull != "" {
@@ -160,7 +161,7 @@ func fsResolveRef(ref, cwdFull, repoFull string) (fsResolveEntry, bool) {
 		}
 	}
 	for _, cand := range cands {
-		full, rel, ok := safeBrowsePath(cand)
+		full, rel, ok := SafeBrowsePath(cand)
 		if !ok || !fsQueryResolvedOK(cand, full) {
 			continue
 		}

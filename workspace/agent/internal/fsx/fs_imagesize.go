@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // A picture's width and height, read from its header (POST /fs/imagesize, ADR 0080 decision 16).
 //
@@ -63,7 +63,7 @@ type fsImageSizeResponse struct {
 	Sizes map[string]fsImageSize `json:"sizes"`
 }
 
-func handleFSImageSize(w http.ResponseWriter, r *http.Request) {
+func HandleImageSize(w http.ResponseWriter, r *http.Request) {
 	var req fsImageSizeRequest
 	if serr := httpx.DecodeStrictJSON(r, &req, imageSizeMaxBody); serr != nil {
 		httpx.WriteErr(w, serr.Status, serr.Code, serr.Message)

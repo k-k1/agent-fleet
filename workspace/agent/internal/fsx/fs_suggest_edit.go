@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // AI edit suggestions for the editor (docs/log/44 Phase 4). The Console's file pane sends a
 // selection and an instruction; this returns the replacement text and a summary as JSON.
@@ -216,14 +216,14 @@ var editSuggestLLM = func(ctx context.Context, req *editSuggestRequest) (string,
 	return chatx.OneShotHeadless(ctx, usagex.FeatureSuggestEdit, chatx.OneShotProse, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
 }
 
-// handleFSSuggestEdit — POST /fs/suggest-edit (docs/log/44 Phase 4). The response carries
+// HandleSuggestEdit — POST /fs/suggest-edit (docs/log/44 Phase 4). The response carries
 // only {"summary":…,"replacement":…}: the envelope (paneId/requestId/sourceRevision) stays
 // off the wire because the Console holds it from request time and merges it into the reply.
-func handleFSSuggestEdit(w http.ResponseWriter, r *http.Request) {
+func HandleSuggestEdit(w http.ResponseWriter, r *http.Request) {
 	// Settings > AI assistance > file edit suggestions: this feature can be turned off on
 	// its own (docs/log/84).
 	if !uiprefs.EditSuggest() {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "edit suggestion is turned off")
+		httpx.WriteErr(w, http.StatusBadRequest, deps.ErrCodeTitleFeatureDisabled, "edit suggestion is turned off")
 		return
 	}
 	var req editSuggestRequest
@@ -232,7 +232,7 @@ func handleFSSuggestEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := req.validate(); err != nil {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeFSBadRequest, err.Error())
+		httpx.WriteErr(w, http.StatusBadRequest, deps.ErrCodeFSBadRequest, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), editSuggestTimeout)

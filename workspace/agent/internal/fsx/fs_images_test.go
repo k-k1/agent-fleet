@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"context"
@@ -32,7 +32,7 @@ func putFile(t *testing.T, root, rel string, age time.Duration) {
 func imagesRequest(t *testing.T, query url.Values) (int, fsImagesResponse) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handleFSImages(rec, httptest.NewRequest("GET", "/fs/images?"+query.Encode(), nil))
+	HandleImages(rec, httptest.NewRequest("GET", "/fs/images?"+query.Encode(), nil))
 	var out fsImagesResponse
 	if rec.Code == 200 {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
@@ -279,7 +279,7 @@ func TestFSTreeAliasedStartKeepsDenylist(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	handleFSTree(rec, httptest.NewRequest("GET", "/fs/tree?path=alias&peek=4", nil))
+	HandleTree(rec, httptest.NewRequest("GET", "/fs/tree?path=alias&peek=4", nil))
 	var out struct{ Entries []fsEntry }
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())

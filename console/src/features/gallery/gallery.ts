@@ -59,7 +59,7 @@ export const GALLERY_TILES: readonly GalleryTile[] = ["s", "m", "l"];
  * the lightbox's placeholder and the listing's `warm=` too (decision 14).
  *
  * Only two answers, 256 and 512, and both are warmed when a picture is generated
- * (workspace/agent fs_thumb.go, warmCardEdges). The cache is keyed on the edge, so a third
+ * (workspace/agent internal/fsx/fs_thumb.go, warmCardEdges). The cache is keyed on the edge, so a third
  * value would be a third decode of every picture and one no warm-up fills.
  *
  *   - s (~110 CSS px): 256 at any density; 220 device px fit.

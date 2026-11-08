@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"bufio"
@@ -16,7 +16,7 @@ import (
 )
 
 // Recursive filename search for the Console file browser (the FILES improvements): the
-// tree endpoint (handleFSTree) is one level deep, so the rail's filter could only
+// tree endpoint (HandleTree) is one level deep, so the rail's filter could only
 // match already-expanded rows. This walks the whole subtree so a query matches
 // every file under the root — not just what's loaded.
 //
@@ -32,13 +32,13 @@ const (
 	fsSearchTimeout      = 5 * time.Second
 )
 
-// handleFSSearch: GET /fs/search?path=<root>&q=<query>&limit=<n>
+// HandleSearch: GET /fs/search?path=<root>&q=<query>&limit=<n>
 // Returns home-relative paths of files under <root> whose path (relative to the
 // root) contains <query>, case-insensitively.
-func handleFSSearch(w http.ResponseWriter, r *http.Request) {
+func HandleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	qPath := r.URL.Query().Get("path")
-	full, rel, ok := safeBrowsePath(qPath)
+	full, rel, ok := SafeBrowsePath(qPath)
 	if !ok || isCodexGeneratedImagesPath(full) || !fsQueryResolvedOK(qPath, full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -110,7 +110,7 @@ func handleFSSearch(w http.ResponseWriter, r *http.Request) {
 		if rel != "" {
 			homeRel = path.Join(rel, line)
 		}
-		if isDenied(homeRel) || (denyBase != nil && isDenied(path.Join(*denyBase, line))) {
+		if IsDenied(homeRel) || (denyBase != nil && IsDenied(path.Join(*denyBase, line))) {
 			continue
 		}
 		results = append(results, homeRel)
@@ -122,5 +122,5 @@ func handleFSSearch(w http.ResponseWriter, r *http.Request) {
 	cancel() // stop rg once we've collected enough / hit the timeout
 	_ = cmd.Wait()
 	sort.Strings(results)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": results, "truncated": truncated, "root": browseRoot()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": results, "truncated": truncated, "root": BrowseRoot()})
 }

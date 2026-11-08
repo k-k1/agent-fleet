@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"encoding/json"
@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// exercises handleFSSearch end-to-end: rg walk, per-repo .gitignore pruning
+// exercises HandleSearch end-to-end: rg walk, per-repo .gitignore pruning
 // (node_modules skipped), denylist, and home-relative path mapping.
 func TestHandleFSSearch(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
@@ -39,7 +39,7 @@ func TestHandleFSSearch(t *testing.T) {
 	search := func(root, q string) (results []string, truncated bool) {
 		req := httptest.NewRequest("GET", "/fs/search?path="+root+"&q="+q, nil)
 		w := httptest.NewRecorder()
-		handleFSSearch(w, req)
+		HandleSearch(w, req)
 		if w.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 		}

@@ -45,14 +45,14 @@ type Deps struct {
 	FirstNonEmpty    func(vals ...string) string
 	SplitFrontmatter func(s string) (map[string]string, string)
 
-	// --- Files (fs.go) ---
+	// --- Files (internal/fsx/fs.go) ---
 	//
 	// BrowseRoot is the root that attachments and pasted images are stored under.
 	// MaxUploadBytes is the size cap, and an unwired 0 means "a cap of 0 bytes" = reject
 	// everything, so the zero value is not allowed.
 	BrowseRoot     func() string
 	MaxUploadBytes func() int64
-	// ReadRoots are the roots the file reader serves from, browse root first (fs.go
+	// ReadRoots are the roots the file reader serves from, browse root first (internal/fsx/fs.go
 	// allowedReadRoots). The changed-files list spells its FileView paths against them.
 	ReadRoots func() []string
 

@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func doAgentFSPut(t *testing.T, body, contentType string) *httptest.ResponseReco
 		req.Header.Set("Content-Type", contentType)
 	}
 	rec := httptest.NewRecorder()
-	handleFSFilePut(rec, req)
+	HandleFilePut(rec, req)
 	return rec
 }
 
@@ -64,7 +64,7 @@ func TestFSFileGetRevisionAndEditability(t *testing.T) {
 	for _, queryPath := range []string{"note.md", filepath.Join(root, "note.md")} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(queryPath), nil)
-		handleFSFile(rec, req)
+		HandleFile(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET %q: status=%d body=%s", queryPath, rec.Code, rec.Body.String())
 		}
@@ -96,7 +96,7 @@ func TestFSFileEmptyFileIsEditableAndSavable(t *testing.T) {
 		t.Fatal(err)
 	}
 	get := httptest.NewRecorder()
-	handleFSFile(get, httptest.NewRequest(http.MethodGet, "/fs/file?path=empty.txt", nil))
+	HandleFile(get, httptest.NewRequest(http.MethodGet, "/fs/file?path=empty.txt", nil))
 	var payload map[string]any
 	if get.Code != http.StatusOK || json.Unmarshal(get.Body.Bytes(), &payload) != nil {
 		t.Fatalf("GET status=%d body=%s", get.Code, get.Body.String())
@@ -129,7 +129,7 @@ func TestFSFileGetEditabilityReasons(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+tc.name, nil))
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+tc.name, nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: status=%d body=%s", tc.name, rec.Code, rec.Body.String())
 		}
@@ -157,7 +157,7 @@ func TestFSFileReadOnlyRootNeverReturnsRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+path, nil))
+	HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+path, nil))
 	var got map[string]any
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -194,16 +194,16 @@ func TestFSFileSymlinksDeniedForGetDownloadAndPut(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, endpoint+path, nil)
 			if strings.Contains(endpoint, "download") {
-				handleFSDownload(rec, req)
+				HandleDownload(rec, req)
 			} else {
-				handleFSFile(rec, req)
+				HandleFile(rec, req)
 			}
-			if rec.Code != http.StatusBadRequest || responseErrorCode(t, rec) != errCodeFSSymlinkNotAllowed {
+			if rec.Code != http.StatusBadRequest || responseErrorCode(t, rec) != deps.ErrCodeFSSymlinkNotAllowed {
 				t.Errorf("%s %s: status=%d body=%s", endpoint, path, rec.Code, rec.Body.String())
 			}
 		}
 		rec := doAgentFSPut(t, putJSONBody(path, "new\n", fileRevision([]byte("old\n"))), "application/json")
-		if rec.Code != http.StatusBadRequest || responseErrorCode(t, rec) != errCodeFSSymlinkNotAllowed {
+		if rec.Code != http.StatusBadRequest || responseErrorCode(t, rec) != deps.ErrCodeFSSymlinkNotAllowed {
 			t.Errorf("PUT %s: status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 	}
@@ -223,7 +223,7 @@ func TestCodexGeneratedImagesAreReadOnlyAndNotEnumerable(t *testing.T) {
 	}
 
 	get := httptest.NewRecorder()
-	handleFSFile(get, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(image), nil))
+	HandleFile(get, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(image), nil))
 	if get.Code != http.StatusOK {
 		t.Fatalf("generated image GET: status=%d body=%s", get.Code, get.Body.String())
 	}
@@ -240,9 +240,9 @@ func TestCodexGeneratedImagesAreReadOnlyAndNotEnumerable(t *testing.T) {
 		httpReq := httptest.NewRequest(http.MethodGet, endpoint+url.QueryEscape(codexGeneratedImagesRoot()), nil)
 		if strings.Contains(endpoint, "search") {
 			httpReq.URL.RawQuery += "&q=result"
-			handleFSSearch(rec, httpReq)
+			HandleSearch(rec, httpReq)
 		} else {
-			handleFSTree(rec, httpReq)
+			HandleTree(rec, httpReq)
 		}
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s generated-images root: status=%d body=%s", endpoint, rec.Code, rec.Body.String())
@@ -255,8 +255,8 @@ func TestCodexGeneratedImagesAreReadOnlyAndNotEnumerable(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(path), nil))
-		if rec.Code != http.StatusForbidden || responseErrorCode(t, rec) != errCodeFSDenied {
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(path), nil))
+		if rec.Code != http.StatusForbidden || responseErrorCode(t, rec) != deps.ErrCodeFSDenied {
 			t.Errorf("GET %s: status=%d body=%s", name, rec.Code, rec.Body.String())
 		}
 	}
@@ -264,8 +264,8 @@ func TestCodexGeneratedImagesAreReadOnlyAndNotEnumerable(t *testing.T) {
 		t.Fatal(err)
 	}
 	symlink := httptest.NewRecorder()
-	handleFSFile(symlink, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(filepath.Join(dir, "linked.png")), nil))
-	if symlink.Code != http.StatusBadRequest || responseErrorCode(t, symlink) != errCodeFSSymlinkNotAllowed {
+	HandleFile(symlink, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(filepath.Join(dir, "linked.png")), nil))
+	if symlink.Code != http.StatusBadRequest || responseErrorCode(t, symlink) != deps.ErrCodeFSSymlinkNotAllowed {
 		t.Fatalf("GET generated-image symlink: status=%d body=%s", symlink.Code, symlink.Body.String())
 	}
 }
@@ -281,7 +281,7 @@ func TestFSFilePathAndDenylistValidation(t *testing.T) {
 	}
 	base := fileRevision([]byte("old\n"))
 	denied := doAgentFSPut(t, putJSONBody(".ssh/config", "new\n", base), "application/json")
-	if denied.Code != http.StatusForbidden || responseErrorCode(t, denied) != errCodeFSDenied {
+	if denied.Code != http.StatusForbidden || responseErrorCode(t, denied) != deps.ErrCodeFSDenied {
 		t.Fatalf("denylist: status=%d body=%s", denied.Code, denied.Body.String())
 	}
 
@@ -292,17 +292,17 @@ func TestFSFilePathAndDenylistValidation(t *testing.T) {
 	}
 	for _, path := range badPaths {
 		rec := doAgentFSPut(t, putJSONBody(path, "new\n", base), "application/json")
-		if rec.Code != http.StatusBadRequest || responseErrorCode(t, rec) != errCodeFSBadPath {
+		if rec.Code != http.StatusBadRequest || responseErrorCode(t, rec) != deps.ErrCodeFSBadPath {
 			t.Errorf("path %q: status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 	}
 
 	for _, path := range []string{".ssh/config", "/etc/passwd"} {
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+path, nil))
-		wantStatus, wantCode := http.StatusForbidden, errCodeFSDenied
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+path, nil))
+		wantStatus, wantCode := http.StatusForbidden, deps.ErrCodeFSDenied
 		if strings.HasPrefix(path, "/") {
-			wantStatus, wantCode = http.StatusBadRequest, errCodeFSBadPath
+			wantStatus, wantCode = http.StatusBadRequest, deps.ErrCodeFSBadPath
 		}
 		if rec.Code != wantStatus || responseErrorCode(t, rec) != wantCode {
 			t.Errorf("GET %q: status=%d body=%s", path, rec.Code, rec.Body.String())
@@ -319,7 +319,7 @@ func TestFSFilePutCASAndPermissionPreservation(t *testing.T) {
 	}
 
 	conflict := doAgentFSPut(t, putJSONBody("a.txt", "new\n", fileRevision([]byte("stale\n"))), "application/json")
-	if conflict.Code != http.StatusConflict || responseErrorCode(t, conflict) != errCodeFSRevisionConflict {
+	if conflict.Code != http.StatusConflict || responseErrorCode(t, conflict) != deps.ErrCodeFSRevisionConflict {
 		t.Fatalf("conflict: status=%d body=%s", conflict.Code, conflict.Body.String())
 	}
 	if got, _ := os.ReadFile(path); string(got) != "old\n" {
@@ -357,7 +357,7 @@ func TestFSFilePutRequiresExistingRegularFile(t *testing.T) {
 	}
 	for _, path := range []string{"missing.txt", "dir", "pipe"} {
 		rec := doAgentFSPut(t, putJSONBody(path, "new\n", fileRevision(nil)), "application/json")
-		if rec.Code != http.StatusNotFound || responseErrorCode(t, rec) != errCodeFSNotFile {
+		if rec.Code != http.StatusNotFound || responseErrorCode(t, rec) != deps.ErrCodeFSNotFile {
 			t.Errorf("%s: status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 	}
@@ -372,10 +372,10 @@ func TestFSFilePutCurrentFileValidationPrecedesCAS(t *testing.T) {
 		code string
 		http int
 	}{
-		{"large", bytes.Repeat([]byte("x"), maxEditorFileBytes+1), errCodeFSTooLarge, 413},
-		{"nul", []byte{'x', 0}, errCodeFSBinaryNotSupported, 415},
-		{"utf8", []byte{0xff}, errCodeFSBinaryNotSupported, 415},
-		{"cr", []byte("x\r\n"), errCodeFSUnsupportedNewline, 415},
+		{"large", bytes.Repeat([]byte("x"), maxEditorFileBytes+1), deps.ErrCodeFSTooLarge, 413},
+		{"nul", []byte{'x', 0}, deps.ErrCodeFSBinaryNotSupported, 415},
+		{"utf8", []byte{0xff}, deps.ErrCodeFSBinaryNotSupported, 415},
+		{"cr", []byte("x\r\n"), deps.ErrCodeFSUnsupportedNewline, 415},
 	}
 	for _, tc := range cases {
 		path := tc.name + ".txt"
@@ -400,24 +400,24 @@ func TestFSFilePutStrictJSON(t *testing.T) {
 		code                    string
 		okContent               string
 	}{
-		{"lone high", valid(`"\ud800"`), "application/json", 400, errCodeFSBadRequest, ""},
-		{"lone low", valid(`"\udc00"`), "application/json", 400, errCodeFSBadRequest, ""},
-		{"bad pair", valid(`"\ud800\u0041"`), "application/json", 400, errCodeFSBadRequest, ""},
+		{"lone high", valid(`"\ud800"`), "application/json", 400, deps.ErrCodeFSBadRequest, ""},
+		{"lone low", valid(`"\udc00"`), "application/json", 400, deps.ErrCodeFSBadRequest, ""},
+		{"bad pair", valid(`"\ud800\u0041"`), "application/json", 400, deps.ErrCodeFSBadRequest, ""},
 		{"pair", valid(`"\ud83d\ude00"`), "application/json", 0, "", "😀"},
 		{"literal replacement", valid(`"�"`), "application/json", 0, "", "�"},
 		{"escaped replacement", valid(`"\ufffd"`), "application/json", 0, "", "�"},
 		{"escaped backslash", valid(`"\\ud800"`), "application/json", 0, "", `\ud800`},
-		{"unknown field", strings.TrimSuffix(valid(`""`), "}") + `,"extra":1}`, "application/json", 400, errCodeFSBadRequest, ""},
-		{"second value", valid(`""`) + `{}`, "application/json", 400, errCodeFSBadRequest, ""},
-		{"trailing garbage", valid(`""`) + `x`, "application/json", 400, errCodeFSBadRequest, ""},
-		{"missing field", `{"path":"a.txt","content":""}`, "application/json", 400, errCodeFSBadRequest, ""},
-		{"wrong type", `{"path":1,"content":"","baseDiskRevision":"` + validRev + `"}`, "application/json", 400, errCodeFSBadRequest, ""},
-		{"bad revision", `{"path":"a.txt","content":"","baseDiskRevision":"SHA256:00"}`, "application/json", 400, errCodeFSBadRequest, ""},
-		{"nul", valid(`"\u0000"`), "application/json", 415, errCodeFSBinaryNotSupported, ""},
-		{"cr", valid(`"\r\n"`), "application/json", 415, errCodeFSUnsupportedNewline, ""},
-		{"media", valid(`""`), "text/plain", 415, errCodeFSUnsupportedMedia, ""},
-		{"media extra param", valid(`""`), "application/json; charset=utf-8; version=1", 415, errCodeFSUnsupportedMedia, ""},
-		{"empty body", "", "application/json", 400, errCodeFSBadRequest, ""},
+		{"unknown field", strings.TrimSuffix(valid(`""`), "}") + `,"extra":1}`, "application/json", 400, deps.ErrCodeFSBadRequest, ""},
+		{"second value", valid(`""`) + `{}`, "application/json", 400, deps.ErrCodeFSBadRequest, ""},
+		{"trailing garbage", valid(`""`) + `x`, "application/json", 400, deps.ErrCodeFSBadRequest, ""},
+		{"missing field", `{"path":"a.txt","content":""}`, "application/json", 400, deps.ErrCodeFSBadRequest, ""},
+		{"wrong type", `{"path":1,"content":"","baseDiskRevision":"` + validRev + `"}`, "application/json", 400, deps.ErrCodeFSBadRequest, ""},
+		{"bad revision", `{"path":"a.txt","content":"","baseDiskRevision":"SHA256:00"}`, "application/json", 400, deps.ErrCodeFSBadRequest, ""},
+		{"nul", valid(`"\u0000"`), "application/json", 415, deps.ErrCodeFSBinaryNotSupported, ""},
+		{"cr", valid(`"\r\n"`), "application/json", 415, deps.ErrCodeFSUnsupportedNewline, ""},
+		{"media", valid(`""`), "text/plain", 415, deps.ErrCodeFSUnsupportedMedia, ""},
+		{"media extra param", valid(`""`), "application/json; charset=utf-8; version=1", 415, deps.ErrCodeFSUnsupportedMedia, ""},
+		{"empty body", "", "application/json", 400, deps.ErrCodeFSBadRequest, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -440,21 +440,21 @@ func TestFSFilePutStrictJSON(t *testing.T) {
 	invalidUTF8 = append(invalidUTF8, []byte(`","baseDiskRevision":"`+validRev+`"}`)...)
 	req := httptest.NewRequest(http.MethodPut, "/fs/file", bytes.NewReader(invalidUTF8))
 	req.Header.Set("Content-Type", "application/json")
-	if _, aerr := decodeFSFilePUT(req); aerr == nil || aerr.code != errCodeFSBadRequest {
+	if _, aerr := decodeFSFilePUT(req); aerr == nil || aerr.code != deps.ErrCodeFSBadRequest {
 		t.Fatalf("invalid UTF-8 error=%+v", aerr)
 	}
 
 	req = httptest.NewRequest(http.MethodPut, "/fs/file", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.ContentLength = maxFSFilePUTBodyBytes + 1
-	if _, aerr := decodeFSFilePUT(req); aerr == nil || aerr.status != 413 || aerr.code != errCodeFSTooLarge {
+	if _, aerr := decodeFSFilePUT(req); aerr == nil || aerr.status != 413 || aerr.code != deps.ErrCodeFSTooLarge {
 		t.Fatalf("wire limit error=%+v", aerr)
 	}
 
 	req = httptest.NewRequest(http.MethodPut, "/fs/file", bytes.NewReader(make([]byte, maxFSFilePUTBodyBytes+1)))
 	req.Header.Set("Content-Type", "application/json")
 	req.ContentLength = -1 // exercise the streaming/chunked limit, not the declaration shortcut
-	if _, aerr := decodeFSFilePUT(req); aerr == nil || aerr.status != 413 || aerr.code != errCodeFSTooLarge {
+	if _, aerr := decodeFSFilePUT(req); aerr == nil || aerr.status != 413 || aerr.code != deps.ErrCodeFSTooLarge {
 		t.Fatalf("streaming wire limit error=%+v", aerr)
 	}
 }
@@ -470,7 +470,7 @@ func TestFSFilePutDecodedContentLimit(t *testing.T) {
 	content := strings.Repeat("x", maxEditorFileBytes+1)
 	req = httptest.NewRequest(http.MethodPut, "/fs/file", strings.NewReader(putJSONBody("a.txt", content, fileRevision(nil))))
 	req.Header.Set("Content-Type", "application/json")
-	if _, aerr := decodeFSFilePUT(req); aerr == nil || aerr.status != 413 || aerr.code != errCodeFSTooLarge {
+	if _, aerr := decodeFSFilePUT(req); aerr == nil || aerr.status != 413 || aerr.code != deps.ErrCodeFSTooLarge {
 		t.Fatalf("decoded limit error=%+v", aerr)
 	}
 }
@@ -495,14 +495,14 @@ func TestFSFileAtomicFailureClassification(t *testing.T) {
 			mutate: func(ops *fsAtomicWriteOps) {
 				ops.fsync = func(int) error { return errors.New("injected temp fsync") }
 			},
-			wantCode: errCodeFSWriteFailed, wantContent: "old\n",
+			wantCode: deps.ErrCodeFSWriteFailed, wantContent: "old\n",
 		},
 		{
 			name: "rename before namespace change",
 			mutate: func(ops *fsAtomicWriteOps) {
 				ops.renameat = func(int, string, int, string) error { return errors.New("injected rename") }
 			},
-			wantCode: errCodeFSWriteFailed, wantContent: "old\n",
+			wantCode: deps.ErrCodeFSWriteFailed, wantContent: "old\n",
 		},
 		{
 			name: "parent fsync after rename",
@@ -516,7 +516,7 @@ func TestFSFileAtomicFailureClassification(t *testing.T) {
 					return unix.Fsync(fd)
 				}
 			},
-			wantCode: errCodeFSWriteStateUnknown, wantContent: "new\n",
+			wantCode: deps.ErrCodeFSWriteStateUnknown, wantContent: "new\n",
 		},
 	}
 	for _, tc := range tests {
@@ -630,7 +630,7 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 	if got := <-first; got.err != nil {
 		t.Fatalf("first PUT: %+v", got.err)
 	}
-	if got := <-second; got.err == nil || got.err.code != errCodeFSRevisionConflict {
+	if got := <-second; got.err == nil || got.err.code != deps.ErrCodeFSRevisionConflict {
 		t.Fatalf("second PUT: %+v", got)
 	}
 	if got, _ := os.ReadFile(target); string(got) != "first\n" {
@@ -773,7 +773,7 @@ func TestFSFilePutCancelledBeforeLockDoesNotWrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, aerr = putFSFile(ctx, directPut("a.txt", "new\n", []byte("old\n")), service)
-	if aerr == nil || aerr.status != 499 || aerr.code != errCodeFSWriteCancelled {
+	if aerr == nil || aerr.status != 499 || aerr.code != deps.ErrCodeFSWriteCancelled {
 		t.Fatalf("cancelled PUT error=%+v", aerr)
 	}
 	if writeTouched.Load() {
@@ -807,8 +807,8 @@ func TestFSFilePutHandlerHonorsRequestCancellation(t *testing.T) {
 		strings.NewReader(putJSONBody("a.txt", "new\n", fileRevision([]byte("old\n"))))).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	handleFSFilePut(rec, req)
-	if rec.Code != 499 || responseErrorCode(t, rec) != errCodeFSWriteCancelled {
+	HandleFilePut(rec, req)
+	if rec.Code != 499 || responseErrorCode(t, rec) != deps.ErrCodeFSWriteCancelled {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if got, err := os.ReadFile(target); err != nil || string(got) != "old\n" {
@@ -918,7 +918,7 @@ func TestReadStableFileSnapshotRetriesAndBounds(t *testing.T) {
 			_ = f.Close()
 		},
 	})
-	if aerr == nil || aerr.code != errCodeFSReadFailed || calls != 2 {
+	if aerr == nil || aerr.code != deps.ErrCodeFSReadFailed || calls != 2 {
 		t.Fatalf("unstable read: calls=%d error=%+v", calls, aerr)
 	}
 }
@@ -942,7 +942,7 @@ func TestFSFileGetMetaOmitsContentOnly(t *testing.T) {
 		responses := make([]map[string]any, 2)
 		for i, query := range []string{"/fs/file?path=" + name, "/fs/file?path=" + name + "&meta=1"} {
 			rec := httptest.NewRecorder()
-			handleFSFile(rec, httptest.NewRequest(http.MethodGet, query, nil))
+			HandleFile(rec, httptest.NewRequest(http.MethodGet, query, nil))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("%s: status=%d body=%s", query, rec.Code, rec.Body.String())
 			}
@@ -978,7 +978,7 @@ func TestFSFileGetMetaReadOnlyRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(path)+"&meta=1", nil))
+	HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(path)+"&meta=1", nil))
 	var got map[string]any
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -1015,14 +1015,14 @@ func TestFSFileGetMetaSharesErrorContract(t *testing.T) {
 		status int
 		code   string
 	}{
-		{"link.txt", http.StatusBadRequest, errCodeFSSymlinkNotAllowed},
-		{".ssh/config", http.StatusForbidden, errCodeFSDenied},
-		{"/etc/passwd", http.StatusBadRequest, errCodeFSBadPath},
-		{"missing.txt", http.StatusNotFound, errCodeFSNotFile},
+		{"link.txt", http.StatusBadRequest, deps.ErrCodeFSSymlinkNotAllowed},
+		{".ssh/config", http.StatusForbidden, deps.ErrCodeFSDenied},
+		{"/etc/passwd", http.StatusBadRequest, deps.ErrCodeFSBadPath},
+		{"missing.txt", http.StatusNotFound, deps.ErrCodeFSNotFile},
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(tc.path)+"&meta=1", nil))
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(tc.path)+"&meta=1", nil))
 		if rec.Code != tc.status || responseErrorCode(t, rec) != tc.code {
 			t.Errorf("meta GET %q: status=%d body=%s", tc.path, rec.Code, rec.Body.String())
 		}
@@ -1058,7 +1058,7 @@ func TestFSFileMarksNestedGitRoot(t *testing.T) {
 		"notes/a.md":                            false,
 	} {
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(rel), nil))
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(rel), nil))
 		var got struct {
 			NestedRepo bool `json:"nestedRepo"`
 		}
@@ -1111,7 +1111,7 @@ func TestAgentMemoryFilesAreReadOnlyAndNothingElseOpens(t *testing.T) {
 		{".codex/memories/MEMORY.md", "codex memory\n"}, // the strip's home-relative spelling
 	} {
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(c.query), nil))
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(c.query), nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET %s: status=%d body=%s", c.query, rec.Code, rec.Body.String())
 		}
@@ -1126,25 +1126,25 @@ func TestAgentMemoryFilesAreReadOnlyAndNothingElseOpens(t *testing.T) {
 
 	for name, p := range refused {
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(p), nil))
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(p), nil))
 		if rec.Code == http.StatusOK {
 			t.Errorf("GET %s (%s) was served: body=%s", name, p, rec.Body.String())
 		}
 	}
 
 	put := doAgentFSPut(t, putJSONBody(".codex/memories/MEMORY.md", "new\n", fileRevision([]byte("codex memory\n"))), "application/json")
-	if put.Code != http.StatusForbidden || responseErrorCode(t, put) != errCodeFSDenied {
+	if put.Code != http.StatusForbidden || responseErrorCode(t, put) != deps.ErrCodeFSDenied {
 		t.Errorf("PUT codex memory: status=%d body=%s", put.Code, put.Body.String())
 	}
 
 	for _, dir := range []string{filepath.Dir(claudeMem), filepath.Dir(codexMem)} {
 		tree := httptest.NewRecorder()
-		handleFSTree(tree, httptest.NewRequest(http.MethodGet, "/fs/tree?path="+url.QueryEscape(dir), nil))
+		HandleTree(tree, httptest.NewRequest(http.MethodGet, "/fs/tree?path="+url.QueryEscape(dir), nil))
 		if tree.Code == http.StatusOK {
 			t.Errorf("tree %s was listed: body=%s", dir, tree.Body.String())
 		}
 		search := httptest.NewRecorder()
-		handleFSSearch(search, httptest.NewRequest(http.MethodGet, "/fs/search?q=note&path="+url.QueryEscape(dir), nil))
+		HandleSearch(search, httptest.NewRequest(http.MethodGet, "/fs/search?q=note&path="+url.QueryEscape(dir), nil))
 		if search.Code == http.StatusOK {
 			t.Errorf("search %s was served: body=%s", dir, search.Body.String())
 		}
@@ -1155,8 +1155,8 @@ func TestAgentMemoryFilesAreReadOnlyAndNothingElseOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 	sym := httptest.NewRecorder()
-	handleFSFile(sym, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(link), nil))
-	if sym.Code != http.StatusBadRequest || responseErrorCode(t, sym) != errCodeFSSymlinkNotAllowed {
+	HandleFile(sym, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(link), nil))
+	if sym.Code != http.StatusBadRequest || responseErrorCode(t, sym) != deps.ErrCodeFSSymlinkNotAllowed {
 		t.Errorf("GET symlink in memory: status=%d body=%s", sym.Code, sym.Body.String())
 	}
 }
@@ -1185,7 +1185,7 @@ func TestAgentMemorySymlinkedRootDoesNotExposeItsTarget(t *testing.T) {
 		".codex/memories/auth.json",
 	} {
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(q), nil))
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(q), nil))
 		if rec.Code == http.StatusOK {
 			t.Errorf("GET %s was served: body=%s", q, rec.Body.String())
 		}
@@ -1209,12 +1209,12 @@ func TestAgentMemoryOnABrowsablePathStaysEditable(t *testing.T) {
 	}
 	for _, q := range []string{rel, filepath.Join(home, rel)} {
 		path, aerr := resolveFDReadPath(q)
-		if aerr != nil || !path.browseRoot || path.readOnly {
+		if aerr != nil || !path.BrowseRoot || path.readOnly {
 			t.Errorf("resolveFDReadPath(%s) = %+v, %v; want the ordinary browse path", q, path, aerr)
 		}
 	}
 	rec := httptest.NewRecorder()
-	handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(rel), nil))
+	HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(rel), nil))
 	var payload map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
@@ -1247,7 +1247,7 @@ func TestAgentMemoryThroughASymlinkedConfigDirUnderHome(t *testing.T) {
 	}
 	for _, q := range []string{"claude-state/projects/-x/memory/note.md", filepath.Join(home, "claude-state/projects/-x/memory/note.md"), mem} {
 		rec := httptest.NewRecorder()
-		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(q), nil))
+		HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(q), nil))
 		var payload map[string]any
 		_ = json.Unmarshal(rec.Body.Bytes(), &payload)
 		if rec.Code != http.StatusOK || payload["content"] != "memory\n" || payload["editabilityReason"] != "read_only_root" {
@@ -1255,7 +1255,7 @@ func TestAgentMemoryThroughASymlinkedConfigDirUnderHome(t *testing.T) {
 		}
 	}
 	rec := httptest.NewRecorder()
-	handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape("claude-state/settings.json"), nil))
+	HandleFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape("claude-state/settings.json"), nil))
 	if rec.Code == http.StatusOK {
 		t.Errorf("settings behind the link was served: %s", rec.Body.String())
 	}

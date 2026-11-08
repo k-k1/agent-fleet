@@ -55,7 +55,7 @@ const mechanismAccount = "oauth"
 const mechanismAPIKey = "api_key"
 
 // authPath is muse's credential file. Both this and DataHome are on the Agent's file
-// deny-list, so nothing else in AF can read it (fs.go).
+// deny-list, so nothing else in AF can read it (internal/fsx/fs.go).
 func authPath() string { return filepath.Join(ConfigHome(), "auth.json") }
 
 // credential is what auth.json says about the Meta provider, minus every secret: this struct

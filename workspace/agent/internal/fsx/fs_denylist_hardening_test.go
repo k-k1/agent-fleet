@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // Denylist hardening for the file browser's mutating and secondary paths: ancestors of denied
 // entries, symlinks, and the unbounded line-marks read. Each refused case has an allowed twin so
@@ -57,7 +57,7 @@ func TestFSRenameRefusesAncestorsOfDeniedEntries(t *testing.T) {
 		{".local", "moved"},
 		{"docs", ".local/share"},
 	} {
-		rec := fsCall(handleFSRename, "/fs/rename?from="+c.from+"&to="+c.to)
+		rec := fsCall(HandleRename, "/fs/rename?from="+c.from+"&to="+c.to)
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("rename %s -> %s: status %d, want 403 (%s)", c.from, c.to, rec.Code, rec.Body.String())
 		}
@@ -72,14 +72,14 @@ func TestFSRenameRefusesAncestorsOfDeniedEntries(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, ".local"), filepath.Join(home, "alias")); err != nil {
 		t.Fatal(err)
 	}
-	if rec := fsCall(handleFSRename, "/fs/rename?from=alias/share&to=moved"); rec.Code != http.StatusForbidden {
+	if rec := fsCall(HandleRename, "/fs/rename?from=alias/share&to=moved"); rec.Code != http.StatusForbidden {
 		t.Errorf("rename via alias: status %d, want 403", rec.Code)
 	}
 }
 
 func TestFSRenameStillMovesOrdinaryFolders(t *testing.T) {
 	home := hardeningHome(t)
-	if rec := fsCall(handleFSRename, "/fs/rename?from=docs&to=docs2"); rec.Code != http.StatusOK {
+	if rec := fsCall(HandleRename, "/fs/rename?from=docs&to=docs2"); rec.Code != http.StatusOK {
 		t.Fatalf("status %d (%s)", rec.Code, rec.Body.String())
 	}
 	if _, err := os.Stat(filepath.Join(home, "docs2", "a.txt")); err != nil {
@@ -93,7 +93,7 @@ func TestFSDeleteRefusesAncestorsOfDeniedEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{".config", ".local", ".local/share", "alias/share"} {
-		if rec := fsCall(handleFSDelete, "/fs/delete?path="+p); rec.Code != http.StatusForbidden {
+		if rec := fsCall(HandleDelete, "/fs/delete?path="+p); rec.Code != http.StatusForbidden {
 			t.Errorf("delete %s: status %d, want 403 (%s)", p, rec.Code, rec.Body.String())
 		}
 	}
@@ -106,7 +106,7 @@ func TestFSDeleteRefusesAncestorsOfDeniedEntries(t *testing.T) {
 
 func TestFSDeleteStillRemovesOrdinaryFolders(t *testing.T) {
 	home := hardeningHome(t)
-	if rec := fsCall(handleFSDelete, "/fs/delete?path=docs"); rec.Code != http.StatusOK {
+	if rec := fsCall(HandleDelete, "/fs/delete?path=docs"); rec.Code != http.StatusOK {
 		t.Fatalf("status %d (%s)", rec.Code, rec.Body.String())
 	}
 	if _, err := os.Stat(filepath.Join(home, "docs")); err == nil {
@@ -117,14 +117,14 @@ func TestFSDeleteStillRemovesOrdinaryFolders(t *testing.T) {
 func TestFSMkdirAndNewFileRefuseAncestors(t *testing.T) {
 	hardeningHome(t)
 	for _, p := range []string{".local/share", ".config"} {
-		if rec := fsCall(handleFSMkdir, "/fs/mkdir?path="+p); rec.Code == http.StatusOK {
+		if rec := fsCall(HandleMkdir, "/fs/mkdir?path="+p); rec.Code == http.StatusOK {
 			t.Errorf("mkdir %s succeeded", p)
 		}
 	}
-	if rec := fsCall(handleFSNewFile, "/fs/newfile?path=docs/n.txt"); rec.Code != http.StatusOK {
+	if rec := fsCall(HandleNewFile, "/fs/newfile?path=docs/n.txt"); rec.Code != http.StatusOK {
 		t.Errorf("new file in an ordinary folder: %d", rec.Code)
 	}
-	if rec := fsCall(handleFSMkdir, "/fs/mkdir?path=docs/sub"); rec.Code != http.StatusOK {
+	if rec := fsCall(HandleMkdir, "/fs/mkdir?path=docs/sub"); rec.Code != http.StatusOK {
 		t.Errorf("mkdir in an ordinary folder: %d", rec.Code)
 	}
 }
@@ -188,12 +188,12 @@ func TestWritableResolvedGateForGeneratedOutDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"lnk", "lnk2", ".config", ".local/share"} {
-		if _, _, ok := safeWritableResolvedBrowsePath(p); ok {
+		if _, _, ok := SafeWritableResolvedBrowsePath(p); ok {
 			t.Errorf("%s was accepted as an output folder", p)
 		}
 	}
 	for _, p := range []string{"docs", "generated/new/folder"} {
-		if _, _, ok := safeWritableResolvedBrowsePath(p); !ok {
+		if _, _, ok := SafeWritableResolvedBrowsePath(p); !ok {
 			t.Errorf("%s was refused", p)
 		}
 	}
@@ -269,7 +269,7 @@ func TestFSSearchFromSymlinkToHomeHidesDeniedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	handleFSSearch(rec, httptest.NewRequest("GET", "/fs/search?path=lnk&q=needle", nil))
+	HandleSearch(rec, httptest.NewRequest("GET", "/fs/search?path=lnk&q=needle", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -284,7 +284,7 @@ func TestFSSearchFromSymlinkToHomeHidesDeniedFiles(t *testing.T) {
 func lineMarksFor(t *testing.T, path string) lineMarksWire {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handleFSLineMarks(rec, httptest.NewRequest("GET", "/fs/linemarks?path="+path, nil))
+	HandleLineMarks(rec, httptest.NewRequest("GET", "/fs/linemarks?path="+path, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -345,7 +345,7 @@ func TestCountFileLinesBoundary(t *testing.T) {
 
 func TestOutDirSinkWritesBeneathAnOrdinaryFolderAndRefusesLinks(t *testing.T) {
 	home := hardeningHome(t)
-	sink, err := openOutDirSink("gen/new/folder")
+	sink, err := OpenOutDirSink("gen/new/folder")
 	if err != nil {
 		t.Fatalf("an ordinary new folder was refused: %v", err)
 	}
@@ -365,10 +365,10 @@ func TestOutDirSinkWritesBeneathAnOrdinaryFolderAndRefusesLinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, "docs"), filepath.Join(home, "swapped")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openOutDirSink("swapped"); err == nil {
+	if _, err := OpenOutDirSink("swapped"); err == nil {
 		t.Error("a symlinked out_dir was opened for writing")
 	}
-	if _, _, ok := safeWritableResolvedBrowsePath("swapped/sub"); ok {
+	if _, _, ok := SafeWritableResolvedBrowsePath("swapped/sub"); ok {
 		t.Error("a path through a link to an ordinary folder was accepted")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
@@ -462,29 +463,29 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /git/identity", gitx.HandleGlobalIdentityPut)
 	// File browser (docs/17 P3-5 stage 2 + the FILES improvements): read tree/file, download raw,
 	// upload into a dir, git-changes filter + viewer line marks.
-	mux.HandleFunc("GET /fs/tree", handleFSTree)
-	mux.HandleFunc("GET /fs/search", handleFSSearch)
-	mux.HandleFunc("GET /fs/file", handleFSFile)
-	mux.HandleFunc("PUT /fs/file", handleFSFilePut)
-	// Resolves path references in mirror text (fs_resolve.go) — read-only, stat only.
-	mux.HandleFunc("POST /fs/resolve", handleFSResolve)
+	mux.HandleFunc("GET /fs/tree", fsx.HandleTree)
+	mux.HandleFunc("GET /fs/search", fsx.HandleSearch)
+	mux.HandleFunc("GET /fs/file", fsx.HandleFile)
+	mux.HandleFunc("PUT /fs/file", fsx.HandleFilePut)
+	// Resolves path references in mirror text (internal/fsx/fs_resolve.go) — read-only, stat only.
+	mux.HandleFunc("POST /fs/resolve", fsx.HandleResolve)
 	// The editor's AI edit suggestion (docs/log/44 Phase 4) — a read-only generation channel
 	// that never touches the fs.
-	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(handleFSSuggestEdit))
-	mux.HandleFunc("GET /fs/download", handleFSDownload)
+	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(fsx.HandleSuggestEdit))
+	mux.HandleFunc("GET /fs/download", fsx.HandleDownload)
 	// A folder as one zip (ADR 0111): read-only, bounded on every axis, built into a temp file.
-	mux.HandleFunc("GET /fs/download-zip", handleFSDownloadZip)
-	// A picture's width and height from its header, many paths per request (fs_imagesize.go).
-	mux.HandleFunc("POST /fs/imagesize", handleFSImageSize)
-	// Every picture under a folder, a bounded walk, flattened into one list (fs_images.go).
-	mux.HandleFunc("GET /fs/images", handleFSImages)
-	mux.HandleFunc("POST /fs/upload", handleFSUpload)
-	mux.HandleFunc("GET /fs/changes", handleFSChanges)
-	mux.HandleFunc("GET /fs/linemarks", handleFSLineMarks)
-	mux.HandleFunc("POST /fs/mkdir", handleFSMkdir)
-	mux.HandleFunc("POST /fs/newfile", handleFSNewFile)
-	mux.HandleFunc("POST /fs/rename", handleFSRename)
-	mux.HandleFunc("DELETE /fs/delete", handleFSDelete)
+	mux.HandleFunc("GET /fs/download-zip", fsx.HandleDownloadZip)
+	// A picture's width and height from its header, many paths per request (internal/fsx/fs_imagesize.go).
+	mux.HandleFunc("POST /fs/imagesize", fsx.HandleImageSize)
+	// Every picture under a folder, a bounded walk, flattened into one list (internal/fsx/fs_images.go).
+	mux.HandleFunc("GET /fs/images", fsx.HandleImages)
+	mux.HandleFunc("POST /fs/upload", fsx.HandleUpload)
+	mux.HandleFunc("GET /fs/changes", fsx.HandleChanges)
+	mux.HandleFunc("GET /fs/linemarks", fsx.HandleLineMarks)
+	mux.HandleFunc("POST /fs/mkdir", fsx.HandleMkdir)
+	mux.HandleFunc("POST /fs/newfile", fsx.HandleNewFile)
+	mux.HandleFunc("POST /fs/rename", fsx.HandleRename)
+	mux.HandleFunc("DELETE /fs/delete", fsx.HandleDelete)
 
 	// Claude settings (Remote Control / notifications / RTK hook) — Console toggles.
 	mux.HandleFunc("GET /claude/settings", claude.HandleSettingsGet)

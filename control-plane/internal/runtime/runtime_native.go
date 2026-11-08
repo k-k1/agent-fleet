@@ -296,7 +296,7 @@ func (n *nativeRuntime) DocsRoot() string {
 
 // setDocsEnv is the CP's own AGENT_DOCS_DIR, before the deployment overlay: the staged
 // guide (stageWorkspaceDocs); the agent's fixed container path is overridden via
-// AGENT_DOCS_DIR (agent fs.go — NOT the CP-side AF_DOCS_DIR, which names the staging source).
+// AGENT_DOCS_DIR (agent internal/fsx/fs.go — NOT the CP-side AF_DOCS_DIR, which names the staging source).
 func (n *nativeRuntime) setDocsEnv(env map[string]string) {
 	if docs := filepath.Join(n.dataDir, "docs"); isDirPath(docs) {
 		env["AGENT_DOCS_DIR"] = docs
