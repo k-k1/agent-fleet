@@ -50,7 +50,7 @@ read or receive one kind of external state.
                           de-duplication, expiry, persistence across restarts
         ^  normalised Event
    Source adapters (per provider): github, bitbucket, jira, aws-cfn, http, ...
-        ^                   ^
+        ^
    Poll (Agent side)  <--  poke (subject only) <-- Webhook (Control Plane side)
 ```
 
@@ -173,13 +173,16 @@ something an adapter does on its own.
    the provider's limit, such as GitHub's `304`, do not count against this budget either, and secondary-limit replies
    (`Retry-After`) are obeyed. Bitbucket's 1,000 requests an hour are already mostly spent by `branchpr`, so its
    source reads through the `branchpr` cache and shortens the cache's interval for subscribed PRs within that budget
-   instead. `branchpr` needs three changes for that, made in steps 1 and 2: entries indexed by PR number as well as by
-   branch, so a watch and the session list share one entry; a refresh the engine can wait for, for the first poll
-   after `watch` and for a poke, since a lookup today never waits on the network; and a shorter conflict-check
-   interval for subscribed Bitbucket PRs. A fourth change serves every provider: `branchpr` keeps a fingerprint of
-   all the head's checks (each check's identity, state and completion or update time, which it does not request from
-   Bitbucket today), because §5's `Version` cannot be computed from the failing checks alone. A provider without a stated hourly limit (Jira, CloudFormation, an HTTP endpoint) gets 30 requests a
+   instead. A provider without a stated hourly limit (Jira, CloudFormation, an HTTP endpoint) gets 30 requests a
    minute per connection. All these numbers are settings with these defaults.
+
+   Sharing `branchpr` with the engine needs four changes to it, made in steps 1 and 2:
+   - entries indexed by PR number as well as by branch, so a watch and the session list share one entry;
+   - a refresh the engine can wait for, for the first poll after `watch` and for a poke, since a lookup today never
+     waits on the network;
+   - a fingerprint of all the head's checks (each check's identity, state and completion or update time, which it
+     does not request from Bitbucket today), because §5's `Version` cannot be computed from the failing checks alone;
+   - a shorter conflict-check interval for subscribed Bitbucket PRs.
 3. **Expiry**: every subscription has a deadline, 7 days by default and at most 30 days, and ends with its owner.
 4. **Fail quietly, not wrongly**: an adapter error backs off and is visible in `list_watches`; it never produces an
    event that did not happen.
@@ -273,7 +276,8 @@ The table is a direction, not a commitment; each source is its own change with i
    poller adds REST with conditional requests (`If-None-Match`; a `304` does not count against GitHub's primary rate
    limit) and adaptive intervals. The PR itself does not change its ETag when a check finishes, so each PR takes
    several endpoints: the PR (`pulls/{n}`), its head's check runs and combined status, and its reviews. What it
-   fetches is written back into the `branchpr` cache, so the same PR is not fetched twice. Until step 3, a session's
+   fetches is written back into the `branchpr` cache (with the `branchpr` changes of rule 6.2), so the same PR is not
+   fetched twice. Until step 3, a session's
    own subscription to its PR's checks or reviews suppresses #3129's notice for that session and PR, so it is not told
    twice.
 2. **`bitbucket` source** (Bitbucket has no ETag: adaptive intervals within the `branchpr` budget and the `branchpr`
