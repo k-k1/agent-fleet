@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -428,16 +429,26 @@ func agentMemResolveChange(commitArg string) (commit, rel string, err error) {
 	return commit, rel, nil
 }
 
-// agentMemLatestChange is the newest agent-memory commit on main for one memory path, decided
-// by the same trailer parsing the list uses: git's --grep only narrows the candidates, since it
-// also matches a quoted line in a message body and misses a line with trailing blanks.
+// agentMemLatestChange is the newest agent-memory commit on main for one memory path.
 func agentMemLatestChange(rel string) (string, error) {
+	cs, err := agentMemChangesOf(rel)
+	if err != nil || len(cs) == 0 {
+		return "", err
+	}
+	return cs[0], nil
+}
+
+// agentMemChangesOf lists the agent-memory commits on main for one memory path, newest first,
+// decided by the same trailer parsing the list uses: git's --grep only narrows the candidates,
+// since it also matches a quoted line in a message body and misses a line with trailing blanks.
+func agentMemChangesOf(rel string) ([]string, error) {
 	path := agentMemRepoPrefix + "/" + rel
 	log, err := memoryGitRun("log", memoryBranch, "-F", "--grep=AF-Memory: "+path,
 		"--format=%H"+memoryFldSep+"%B"+memoryRecSep)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
+	var out []string
 	for _, rec := range strings.Split(log, memoryRecSep) {
 		f := strings.SplitN(strings.TrimSpace(rec), memoryFldSep, 2)
 		if len(f) < 2 {
@@ -445,10 +456,10 @@ func agentMemLatestChange(rel string) (string, error) {
 		}
 		tr := agentMemTrailers(f[1])
 		if tr["AF-Trigger"] == memoryTriggerAgentMemory && tr["AF-Memory"] == path {
-			return f[0], nil
+			out = append(out, f[0])
 		}
 	}
-	return "", nil
+	return out, nil
 }
 
 // agentMemImportState is what the history says about the AF copy of rel ("projects/<id>/<name>.md",
@@ -467,24 +478,64 @@ const (
 	agentMemImportChanged
 )
 
+// agentMemImportSig is what the import carries and AF's own writers can change: the text, the
+// type, the kinds, the provenance and the pin. The lifecycle fields (imports never take them from
+// outside) and the bookkeeping a lifecycle write moves (revision, updated, author) are left out,
+// so that a lint or consolidation write does not read as the member having edited the copy.
+// ok is false for a file that does not parse.
+func agentMemImportSig(b []byte) (string, bool) {
+	e, ok := agentMemParse(b)
+	if !ok {
+		return "", false
+	}
+	ks := append([]string(nil), e.Kinds...)
+	sort.Strings(ks)
+	v, _ := json.Marshal([]any{e.Name, e.Description, e.Type, ks, e.Source, e.SourceHash, e.Pinned,
+		strings.TrimRight(e.Body, "\n")})
+	return string(v), true
+}
+
+// agentMemImportStateOf walks the memory's history from the newest change. A change that only
+// moved lifecycle fields is skipped; the first one that moved anything else decides "changed",
+// and an import reached through skips only decides "intact" when the file still has its text.
 func agentMemImportStateOf(rel string, current []byte) agentMemImportState {
-	commit, err := agentMemLatestChange(rel)
-	if err != nil || commit == "" {
+	commits, err := agentMemChangesOf(rel)
+	if err != nil || len(commits) == 0 {
 		return agentMemImportUnknown
 	}
-	msg, err := memoryGitRun("log", "-1", "--format=%B", commit)
-	if err != nil {
-		return agentMemImportUnknown
-	}
-	if agentMemTrailers(msg)["AF-Op"] != "import" {
-		return agentMemImportChanged
-	}
-	b, ok, err := agentMemBlob(commit, rel)
-	switch {
-	case err != nil || !ok:
-		return agentMemImportUnknown
-	case bytes.Equal(b, current):
-		return agentMemImportIntact
+	curSig, parsed := agentMemImportSig(current)
+	for i, commit := range commits {
+		msg, err := memoryGitRun("log", "-1", "--format=%B", commit)
+		if err != nil {
+			return agentMemImportUnknown
+		}
+		b, ok, err := agentMemBlob(commit, rel)
+		if err != nil || !ok {
+			return agentMemImportUnknown
+		}
+		if i == 0 && bytes.Equal(b, current) {
+			if agentMemTrailers(msg)["AF-Op"] == "import" {
+				return agentMemImportIntact
+			}
+		} else if sig, sok := agentMemImportSig(b); !parsed || !sok || sig != curSig {
+			return agentMemImportChanged
+		} else if agentMemTrailers(msg)["AF-Op"] == "import" {
+			return agentMemImportIntact
+		}
+		// A non-import change counts as AF's own unless it left the signature as its parent had it.
+		if i+1 == len(commits) {
+			return agentMemImportChanged
+		}
+		prev, ok, err := agentMemBlob(commits[i+1], rel)
+		if err != nil {
+			return agentMemImportUnknown
+		}
+		if !ok || !parsed {
+			return agentMemImportChanged
+		}
+		if ps, pok := agentMemImportSig(prev); !pok || ps != curSig {
+			return agentMemImportChanged
+		}
 	}
 	return agentMemImportChanged
 }
