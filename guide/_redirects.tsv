@@ -15,6 +15,12 @@ member/16-cloud-accounts.md#the-aws-badge-in-the-ws-bar	ref/aws-profiles.md#aws-
 member/16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools	ref/cli/af-aws-exec.md
 member/16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm	user/integrations/aws-ssm.md
 member/16-cloud-accounts.md#importing-ssm-hosts-from-sshconfig	ref/aws-ssm.md#ssh-config-import
+member/16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec	user/integrations/gcloud.md
+member/16-cloud-accounts.md#importing-profiles-from-gcloud-configurations	user/integrations/gcloud.md#import-from-your-own-gcloud-configurations
+member/16-cloud-accounts.md#running-a-command-as-a-profile	ref/cli/af-gcloud-exec.md
+member/16-cloud-accounts.md#logging-in	user/integrations/gcloud.md#log-in
+member/16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar	user/integrations/gcloud.md#the-google-cloud-badge-in-the-ws-bar
+member/16-cloud-accounts.md#when-it-stops	user/integrations/gcloud.md#when-it-goes-wrong
 member/20-settings.md#mcp-servers-used-by-sessions	user/integrations/mcp-servers.md
 member/20-settings.md#issue-tracker	user/integrations/issue-tracker.md
 member/15-external-services.md#use-jira-in-a-session	user/integrations/jira.md

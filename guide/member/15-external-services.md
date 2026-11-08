@@ -50,7 +50,7 @@ them in from the terminal, and an expiring token is renewed on use.
 | `jira` | **Issue tracker**, Jira | [Use Jira](../user/integrations/jira.md) |
 | `confluence` | **Issue tracker**, Jira (the same Atlassian connection) | [Use Confluence](../user/integrations/confluence.md) |
 | `af-aws-exec --profile <name> -- <command>` | **AWS profiles/SSM**, after **Log in** on the profile | [af-aws-exec](../ref/cli/af-aws-exec.md) |
-| `af-gcloud-exec --profile <name> -- <command>` | **Google Cloud**, after **Log in** on the profile | [16](16-cloud-accounts.md#running-a-command-as-a-profile) |
+| `af-gcloud-exec --profile <name> -- <command>` | **Google Cloud**, after **Log in** on the profile | [af-gcloud-exec](../ref/cli/af-gcloud-exec.md) |
 
 Agents are told to use `bkt` rather than a Bitbucket or Atlassian MCP server, and `jira` by default for Jira. The
 CLIs read your saved connection on every call and renew it when it is about to expire, while an MCP connector's

@@ -337,12 +337,8 @@ SSM ホスト（個別）の登録です。プロファイルは **IAM Identity 
 
 ### Google Cloud
 
-`af-gcloud-exec` がコマンドを実行するときに使う Google Cloud のプロファイルです。ラベル（プロファイルの名前はここから作られ、
-横に表示されます）とプロジェクト、任意で割り当てプロジェクト・ログインする Google アカウント・権限を借用するサービス
-アカウント・リージョン・ゾーンを登録します。Google の認証情報はここに保存せず、サービスアカウントキーも受け付けません。
-同じ名前になる 2 つのラベルは、片方の名前を変えるまでワークスペースで使えず、行にそう表示されます。使える行には
-**ログイン**・**再ログイン**・**ログアウト**があり、その動きと WS バーの Google Cloud バッジは
-[16 クラウドのアカウント](16-cloud-accounts.ja.md#google-cloud-で自分としてコマンドを実行するaf-gcloud-exec) にあります。
+`af-gcloud-exec` がコマンドを実行するときに使う Google Cloud のプロファイルです。登録・取り込み・ログインと、WS バーの
+Google Cloud バッジは [Google Cloud を使う](../user/integrations/gcloud.ja.md) にあります。
 
 ---
 
@@ -556,7 +552,7 @@ Client ID（**コピー**ボタン付き。client secret は表示しません�
 - **別の Agent Fleet ではなく、手元の PC の `~/.aws/config` から移るとき**は、AWS プロファイル/SSM のタブで
   そのファイルを直接読めます（このタブにも入口があります）。→ [AWS SSO を使う](../user/integrations/aws-sso.ja.md#手元の-awsconfig-から取り込む)
 - **手元の PC の gcloud の構成から Google Cloud プロファイルを作るとき**は、Google Cloud のタブで
-  `~/.config/gcloud/configurations/config_<名前>` を直接読めます。→ [16 クラウドのアカウント](16-cloud-accounts.ja.md#gcloud-の構成から取り込む)
+  `~/.config/gcloud/configurations/config_<名前>` を直接読めます。→ [Google Cloud を使う](../user/integrations/gcloud.ja.md#手元の-gcloud-の構成から取り込む)
 
 ### 危険な操作
 

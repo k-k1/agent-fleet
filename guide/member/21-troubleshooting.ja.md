@@ -571,7 +571,7 @@ Jira のカードに **「ボード・スプリント・エピック: 利用で�
   （「the login was requested in the Agent Fleet Console …」「Google Cloud login required …」）だけです。
   トーストか ⚙設定からログインするか、表示された端末用のコマンドを実行してから、もう一度実行してください。
   それ以外は、コマンド自身の終了コードです。そのコマンドのエラーを読んでください
-  （[16](16-cloud-accounts.ja.md#止まったとき)）。
+  （[Google Cloud を使う](../user/integrations/gcloud.ja.md#困ったとき)）。
 
 ## 端末とスマホ
 
