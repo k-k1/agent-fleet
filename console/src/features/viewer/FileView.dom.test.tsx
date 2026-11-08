@@ -14,6 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { EditorView } from "@codemirror/view";
 import { revisionOf } from "../editor/buffer.ts";
 import { clearDirtyRegistryForTests, hasDirtyEditors } from "../editor/dirtyRegistry.ts";
+import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
 
 const MARP = "---\nmarp: true\n---\n\n# Deck\n\nbody\n";
 const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
@@ -115,6 +116,8 @@ afterEach(() => {
   root = null;
   host.remove();
   clearDirtyRegistryForTests();
+  // An unmount with unsaved edits keeps the buffer for the view to come back to.
+  clearEditorSlotsForTests();
 });
 
 describe("markdown mode controls", () => {
@@ -402,6 +405,21 @@ describe("the buffer behind the preview", () => {
     await act(async () => {
       editorView().dispatch({ changes: { from: 0, insert: "x" } });
     });
+    expect(hasDirtyEditors()).toBe(true);
+  });
+
+  it("keeps an unsaved edit when the view is unmounted and comes back (tab switch)", async () => {
+    // A tabbed cell renders only its selected view, so switching away unmounts FileView.
+    await render({});
+    await act(async () => {
+      editorView().dispatch({ changes: { from: 0, insert: "# Edited\n" } });
+    });
+    act(() => root!.unmount());
+    expect(hasDirtyEditors()).toBe(true); // reload / close / logout still ask
+
+    root = createRoot(host);
+    await render({});
+    expect(editorView().state.doc.toString()).toBe("# Edited\n" + PLAIN_MD);
     expect(hasDirtyEditors()).toBe(true);
   });
 
