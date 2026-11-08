@@ -279,11 +279,24 @@ func (h *threadHandle) openSession(cl *msp.Client, st agents.ThreadSettings) err
 		// The servers go on the resume too: the host keeps a session's MCP config only for the
 		// life of its process, so a session reopened by a new host without them has none of af's
 		// tools — no af_report, no peer messages — and says so as if it were a setting.
+		cfg := h.sessionConfig()
 		err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
 			CommandID: msp.NewCommandID(),
 			SessionID: prev.ID,
-			Config:    h.sessionConfig(),
+			Config:    cfg,
 		}, callTimeout, &res)
+		if cfg != nil && msp.HasCode(err, msp.ErrCodeInvalidParams) {
+			// A config the host will not decode refuses the whole resume (measured: an undeclared
+			// transport answers -32602 "invalid session/resume config"), and that error fails the
+			// open outright. One member integration must not cost them the session, so reopen it
+			// without servers — degraded, as it was before servers rode the resume — and say which.
+			log.Printf("muse: %s: the host refused the MCP servers on session/resume (%v); reopening without them: %s",
+				h.name, err, strings.Join(serverNames(cfg), ", "))
+			err = cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+				CommandID: msp.NewCommandID(),
+				SessionID: prev.ID,
+			}, callTimeout, &res)
+		}
 		if err == nil {
 			items, ok := h.resumeHistory(cl, prev.ID, res.History)
 			h.mu.Lock()

@@ -21,6 +21,7 @@ package muse
 
 import (
 	"os"
+	"sort"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
@@ -131,4 +132,15 @@ func copyMap(m map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// serverNames lists a config's server names, sorted, for a log line. Names only: the
+// definitions carry tokens.
+func serverNames(cfg *msp.SessionConfig) []string {
+	names := make([]string, 0, len(cfg.MCPServers))
+	for name := range cfg.MCPServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
