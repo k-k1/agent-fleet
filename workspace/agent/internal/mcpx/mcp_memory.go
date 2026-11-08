@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	mcpToolMemoryIndex  = "memory_index"
-	mcpToolMemorySearch = "memory_search"
-	mcpToolMemoryRead   = "memory_read"
-	mcpToolMemorySave   = "memory_save"
-	mcpToolMemoryPatch  = "memory_patch"
-	mcpToolMemoryForget = "memory_forget"
+	mcpToolMemoryIndex    = "memory_index"
+	mcpToolMemorySearch   = "memory_search"
+	mcpToolMemoryRead     = "memory_read"
+	mcpToolMemorySave     = "memory_save"
+	mcpToolMemoryPatch    = "memory_patch"
+	mcpToolMemoryForget   = "memory_forget"
+	mcpToolMemoryFeedback = "memory_feedback"
 )
 
 // mcpMemoryEntry is the part of the Agent's answer these tools print.
@@ -206,6 +207,22 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 			return mcpToolErr(id, mcpMemoryErr(err))
 		}
 		return mcpTextResult(id, mcpMemoryFormatSave(out))
+	case mcpToolMemoryFeedback:
+		var f struct {
+			Verdict string `json:"verdict"`
+			Note    string `json:"note"`
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &f); err != nil {
+				return mcpToolErr(id, name+" の引数を読めません: "+err.Error())
+			}
+		}
+		body, _ := json.Marshal(map[string]any{"session": owner, "scope": a.Scope, "name": a.Name, "revision": a.Revision, "verdict": f.Verdict, "note": f.Note})
+		out, err := agentDo(http.MethodPost, "/agents/memory/entries/feedback", body)
+		if err != nil {
+			return mcpToolErr(id, mcpMemoryErr(err))
+		}
+		return mcpTextResult(id, out)
 	case mcpToolMemoryForget:
 		body, _ := json.Marshal(map[string]any{"session": owner, "scope": a.Scope, "name": a.Name, "revision": a.Revision})
 		out, err := agentDo(http.MethodPost, "/agents/memory/entries/forget", body)
@@ -519,6 +536,24 @@ func agentMemoryTools() []toolSpec {
 						"description": memoryStringArg("A new one-line description; omit to keep the current one"),
 					},
 					"required": []string{"name", "revision"},
+				},
+			}
+		}, ownArgs: true, handle: handle},
+		{name: mcpToolMemoryFeedback, session: func() map[string]any {
+			return map[string]any{
+				"name": "memory_feedback",
+				"description": "Agent Fleet memory: report that a memory you relied on is wrong or out of date. Pass the revision you read and a one-line note saying what no longer holds. " +
+					"A report on the current revision marks the memory as suspect until it is fixed; one on an older revision is only kept as an observation. Report only what failed you: there is no need to confirm a memory that was right.",
+				"inputSchema": map[string]any{
+					"type": "object", "additionalProperties": false,
+					"properties": map[string]any{
+						"name":     memoryStringArg("Memory name"),
+						"scope":    memoryScopeArg(),
+						"revision": map[string]any{"type": "integer", "minimum": 1, "description": "Revision you read"},
+						"verdict":  map[string]any{"type": "string", "enum": []string{"stale", "wrong", "confirmed"}, "description": "stale: was true once, no longer; wrong: never held"},
+						"note":     memoryStringArg("One line: what no longer holds (required for stale and wrong)"),
+					},
+					"required": []string{"name", "revision", "verdict"},
 				},
 			}
 		}, ownArgs: true, handle: handle},

@@ -101,7 +101,7 @@ func walkAdvertisedToolVariants(t *testing.T, visit func(t *testing.T, tools []m
 // hand-written approximation would have accepted enum:null, which Anthropic rejects
 // before starting the Claude turn.
 func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
-	const expectedAdvertisedToolCount = 74
+	const expectedAdvertisedToolCount = 75
 
 	advertised := make(map[string]struct{})
 	walkAdvertisedToolVariants(t, func(t *testing.T, tools []map[string]any) {

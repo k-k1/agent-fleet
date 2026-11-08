@@ -48,13 +48,16 @@ type agentMemCounter string
 const (
 	agentMemCounterReads agentMemCounter = "reads" // memory_read; its mtime is the last read
 	agentMemCounterHits  agentMemCounter = "hits"  // returned search hits
-	// confirmed and stale are laid out here so that forget and re-create already clear them;
-	// nothing appends to them until memory_feedback (#3496).
+	// confirmed and stale count memory_feedback verdicts on the current revision; the confirmed
+	// file's mtime is the last confirmation. feedback is the record of every report (one JSON line
+	// each: session, revision, verdict, time), kept for the decision 11 evidence and to count one
+	// report per session per revision.
 	agentMemCounterConfirmed agentMemCounter = "confirmed"
 	agentMemCounterStale     agentMemCounter = "stale"
+	agentMemCounterFeedback  agentMemCounter = "feedback"
 )
 
-var agentMemCounters = []agentMemCounter{agentMemCounterReads, agentMemCounterHits, agentMemCounterConfirmed, agentMemCounterStale}
+var agentMemCounters = []agentMemCounter{agentMemCounterReads, agentMemCounterHits, agentMemCounterConfirmed, agentMemCounterStale, agentMemCounterFeedback}
 
 func agentMemCounterRel(scopeRel string, k agentMemCounter) string {
 	return scopeRel + "/" + agentMemUsageV2Dir + "/" + string(k)

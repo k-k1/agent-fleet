@@ -365,16 +365,24 @@ type agentMemLintWire struct {
 
 // agentMemMemberLint lints one scope. Read-only.
 func agentMemMemberLint(scope, project string) (agentMemLintWire, error) {
+	out, _, _, _, err := agentMemLintCollect(scope, project)
+	return out, err
+}
+
+// agentMemLintCollect runs the checks and also hands back what the apply step needs: the entries
+// as loaded (their revisions are the ones the findings were computed on), the caller of the scope
+// and the repository reader (nil when the repository checks did not run).
+func agentMemLintCollect(scope, project string) (agentMemLintWire, []agentMemEntry, agentMemCaller, memorylint.Repo, error) {
 	out := agentMemLintWire{Scope: scope}
 	c, err := agentMemMemberCaller(scope, project)
 	if err != nil {
-		return out, err
+		return out, nil, c, nil, err
 	}
 	agentMemMu.RLock()
 	es, withheld, err := agentMemLoadScope(scope, c)
 	agentMemMu.RUnlock()
 	if err != nil {
-		return out, err
+		return out, nil, c, nil, err
 	}
 	mems := make([]memorylint.Memory, 0, len(es))
 	for _, e := range es {
@@ -403,7 +411,7 @@ func agentMemMemberLint(scope, project string) (agentMemLintWire, error) {
 		out.Report.Skipped = append(out.Report.Skipped, "repository checks (paths, symbols, ADRs): "+why)
 	}
 	sort.Strings(out.Report.Skipped)
-	return out, nil
+	return out, es, c, repo, nil
 }
 
 // HandleAgentMemoryMemberLint serves the report to the Console and the CLI. Not gated by the
@@ -456,4 +464,30 @@ func HandleAgentMemoryLintTermsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, doc)
+}
+
+// agentMemLintApplyReq names the scope one run covers.
+type agentMemLintApplyReq struct {
+	Scope   string `json:"scope"`
+	Project string `json:"project,omitempty"`
+}
+
+// HandleAgentMemoryLintApply publishes lint's findings as reasons and applies its renames for one
+// scope (decision 5, step 2). It answers to the memory switch and needs no member: what it writes
+// is what the read-only report already says, as changes authored `lint` that a member can revert.
+func HandleAgentMemoryLintApply(w http.ResponseWriter, r *http.Request) {
+	if !agentMemRequireEnabled(w) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, agentMemSaveMaxRequest)
+	var req agentMemLintApplyReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	out, err := agentMemLintApply(req.Scope, req.Project, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }

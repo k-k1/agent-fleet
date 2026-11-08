@@ -40,7 +40,7 @@ var agentMemMember = agentMemCaller{Session: "console", Kind: "member"}
 var (
 	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9_][a-z0-9._-]{0,63})\.md$`)
 	agentMemCommitRe   = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
-	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true, "pin": true}
+	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true, "pin": true, "lint": true, "lint-rename": true}
 )
 
 // agentMemChangeView is one published change as the Console lists it.
