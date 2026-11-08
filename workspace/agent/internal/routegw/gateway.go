@@ -262,7 +262,7 @@ func (g *Gateway) issue(m session.Meta, transport string) (Issued, *agents.Route
 	}
 	inc := awsx.Incarnation(m)
 	b := Binding{Session: m.Name, Incarnation: inc, Route: RouteBedrock, Connection: m.Route.Connection,
-		ProfileID: c.profile.ID, Region: c.region, Identity: awsx.ProfileIdentity(c.settings, c.profile), Transport: transport}
+		ProfileID: c.profile.ID, Region: c.region, Identity: awsx.ProfileIdentity(c.settings, c.profile), Model: pinnedModel(m), Transport: transport}
 	sock, base, listening := "", SocketBaseURL, false
 	switch {
 	case transport == transportTCP && g.d.Loopback != nil:
@@ -281,6 +281,22 @@ func (g *Gateway) issue(m session.Meta, transport string) (Issued, *agents.Route
 		return Issued{}, &agents.RouteRefusal{Status: http.StatusInternalServerError, Code: routes.CodeRouteUnavailable, Message: err.Error()}
 	}
 	return Issued{Socket: sock, BaseURL: base, Token: tok, Region: c.region, Expires: exp}, nil
+}
+
+// pinnedModel is the model id a session's calls are held to: its model when that is a bare
+// Bedrock model id (routes.ParseBedrockModelID), which is what the claude bedrock route requires
+// and pins for every call the CLI makes. A model in another form (opencode's
+// "amazon-bedrock/<id>", where the harness picks among its own catalogue) pins nothing.
+//
+// Holding the calls to it here, not only in the CLI's settings, is what makes "the session runs
+// on the model the member chose" hold whatever the CLI does: a later CLI that adds a tier
+// variable, /model to an id the member types, or a subagent definition naming its own id is
+// refused before it reaches Bedrock, instead of becoming another model on the member's bill.
+func pinnedModel(m session.Meta) string {
+	if _, err := routes.ParseBedrockModelID(m.Model); err != nil {
+		return ""
+	}
+	return m.Model
 }
 
 // SocketBaseURL is the base URL a harness is given beside the socket. The connection goes to

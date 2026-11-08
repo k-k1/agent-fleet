@@ -658,6 +658,12 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
   const profileSelect = () =>
     [...document.querySelectorAll<HTMLSelectElement>("select")].find((s) => [...s.options].some((o) => o.value === "p-marked"));
   const regionInput = () => document.querySelector<HTMLInputElement>('input[aria-label="Region"]');
+  const modelInput = () => document.querySelector<HTMLInputElement>('input[aria-label="Bedrock model ID"]');
+  const type = async (el: HTMLInputElement, value: string) =>
+    act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
   const choose = async (sel: HTMLSelectElement, value: string) =>
     act(async () => {
       sel.value = value;
@@ -692,6 +698,7 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     await choose(sel, "bedrock");
     const prof = must(profileSelect(), "the profile picker");
     expect([...prof.options].map((o) => o.value)).toEqual(["p-marked"]);
+    await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
     await click(byText("Start in a worktree"));
     expect(launchedWith().route).toBe("bedrock");
     expect(launchedWith().routeConnection).toBe("p-marked@");
@@ -704,6 +711,7 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     await expand("More");
     await settle();
     await choose(must(routeSelect(), "the route picker"), "bedrock");
+    await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
     const region = must(regionInput(), "the region field");
     await act(async () => {
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -730,6 +738,45 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     await click(byText("Start in a worktree"));
     expect(launchedWith().route).toBe("anthropic-api");
     expect(launchedWith().routeConnection).toBeUndefined();
+  });
+
+  // #3587: Claude Code maps an alias to an id of its own and walks a fallback ladder on a denial, so
+  // the route takes only a Bedrock id, typed here, and sends it as the session's model.
+  it("requires a Bedrock model id, sends it as the model and remembers it per profile", async () => {
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await expand("More");
+    await settle();
+    expect(modelInput()).toBeNull();
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    const field = must(modelInput(), "the model id field");
+    expect(field.value).toBe("");
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    for (const bad of ["opus", "claude-opus-4-6", "arn:aws:bedrock:eu-west-1:000000000000:inference-profile/eu.anthropic.claude-opus-5-5", "eu.anthropic.claude-opus-5-5[1m]", "eu.amazon.nova-pro-v1:0"]) {
+      await type(field, bad);
+      expect(byText("Start in a worktree").disabled).toBe(true);
+      expect(field.getAttribute("aria-invalid")).toBe("true");
+    }
+    await type(field, " eu.anthropic.claude-opus-5-5 ");
+    expect(byText("Start in a worktree").disabled).toBe(false);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().route).toBe("bedrock");
+    expect(launchedWith().model).toBe("eu.anthropic.claude-opus-5-5");
+    expect(localStorage.getItem("af.bedrock-model.p-marked")).toBe("eu.anthropic.claude-opus-5-5");
+  });
+
+  it("starts from the id last launched with the profile", async () => {
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+    localStorage.setItem("af.bedrock-model.p-marked", "anthropic.claude-sonnet-4-5-20250929-v1:0");
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await expand("More");
+    await settle();
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    expect(must(modelInput(), "the model id field").value).toBe("anthropic.claude-sonnet-4-5-20250929-v1:0");
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().model).toBe("anthropic.claude-sonnet-4-5-20250929-v1:0");
   });
 });
 

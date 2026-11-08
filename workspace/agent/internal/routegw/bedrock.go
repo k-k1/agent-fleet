@@ -96,6 +96,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRefusal(w, ref)
 		return
 	}
+	// Before the body is read and credentials are resolved: no other model is ever called on the
+	// session's behalf. 404, which the CLI shows as "model not available" and does not walk a
+	// fallback ladder on (measured, 2.1.319); the token stays, since the session's own model
+	// still works.
+	if c.b.Model != "" && modelID != c.b.Model {
+		log.Printf("route gateway: refused (route_model_not_selected)")
+		writeRefusal(w, &refusal{http.StatusNotFound, "route_model_not_selected",
+			"this session runs on " + c.b.Model + " only (chosen at launch); start a new session to use " + modelID})
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
