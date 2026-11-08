@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -933,6 +934,14 @@ func registerStatic(mux *http.ServeMux, cfg config) {
 	// logged-out deep link round-trips through /login?next=… and lands here.
 	shell := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		// index.html pulls its <base href> bootstrap in as "?af-bootstrap": a query-only URL
+		// keeps the document's own path, which a path-relative one would lose behind a
+		// path-stripping proxy before the bootstrap has set <base> (public/base-bootstrap.js).
+		if r.URL.Query().Has("af-bootstrap") {
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			http.ServeFile(w, r, filepath.Join(cfg.consoleDir, "base-bootstrap.js"))
+			return
+		}
 		serveConsoleIndex(w, r, cfg)
 	}
 	mux.HandleFunc("GET /open/browser-attachment/{id}", shell)
@@ -951,6 +960,9 @@ func registerStatic(mux *http.ServeMux, cfg config) {
 	// login page already shows an anonymous caller — no tenant, session or workspace data
 	// is in it — so exempting costs nothing that /brand/ has not already given away.
 	exemptExact("/manifest.webmanifest")
+	// The built draw.io viewer documents load into an origin-less sandboxed frame, so they
+	// cannot count on the session cookie; they hold public viewer code and no data.
+	exemptExact("/drawio-frame-light.html", "/drawio-frame-dark.html")
 	mux.HandleFunc("GET /{$}", shell)
 	mux.HandleFunc("GET /manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
 		serveConsoleManifest(w, r, cfg)

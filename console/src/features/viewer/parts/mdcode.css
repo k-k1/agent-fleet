@@ -139,3 +139,19 @@
   user-select: none;
 }
 .markdown .md-task-box.is-checked { color: var(--accent); }
+
+/* Click-to-load placeholder for an external image (see mdExternalImages.ts). */
+.markdown .md-ext-img {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.35em 0.7em;
+  border: 1px dashed var(--border, currentColor);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.markdown .md-ext-img:hover { color: var(--accent); }

@@ -215,6 +215,12 @@
 ## read memory_index full {"budget":2,"project":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/entries?budget=2\u0026project=v\u0026repository=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
+## read memory_patch absent
+<- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_patch"}}
+## read memory_patch unknown {"zz_unknown":1}
+<- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_patch"}}
+## read memory_patch full {"description":"v","edits":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v"}
+<- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_patch"}}
 ## read memory_projects absent
 -> AGENT ["GET","/agents/memory/external/projects",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -549,6 +555,14 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_index","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write memory_index full {"budget":2,"project":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/entries?budget=2\u0026project=v\u0026repository=v",""]
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
+## write memory_patch absent
+-> AGENT ["POST","/agents/memory/external/patch","{\"client\":\"\",\"edits\":null,\"name\":\"\",\"project\":\"\",\"repository\":\"\",\"revision\":0,\"scope\":\"\"}"]
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
+## write memory_patch unknown {"zz_unknown":1}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_patch","type":"text"}],"isError":true,"resultType":"complete"}}
+## write memory_patch full {"description":"v","edits":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v"}
+-> AGENT ["POST","/agents/memory/external/patch","{\"client\":\"\",\"description\":\"v\",\"edits\":[],\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_projects absent
 -> AGENT ["GET","/agents/memory/external/projects",""]
@@ -900,6 +914,14 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_index","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous memory_index full {"budget":2,"project":"v","repository":"v"}
 -> AGENT ["GET","/agents/memory/external/entries?budget=2\u0026project=v\u0026repository=v",""]
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
+## admin:dangerous memory_patch absent
+-> AGENT ["POST","/agents/memory/external/patch","{\"client\":\"\",\"edits\":null,\"name\":\"\",\"project\":\"\",\"repository\":\"\",\"revision\":0,\"scope\":\"\"}"]
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
+## admin:dangerous memory_patch unknown {"zz_unknown":1}
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_patch","type":"text"}],"isError":true,"resultType":"complete"}}
+## admin:dangerous memory_patch full {"description":"v","edits":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v"}
+-> AGENT ["POST","/agents/memory/external/patch","{\"client\":\"\",\"description\":\"v\",\"edits\":[],\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_projects absent
 -> AGENT ["GET","/agents/memory/external/projects",""]

@@ -1,14 +1,8 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = registered without a method.
-# count: 436
+# count: 432
 GET /agents/kinds
-GET /agents/memory-review
-POST /agents/memory-review/proposals/approve
-POST /agents/memory-review/proposals/list
-POST /agents/memory-review/proposals/reject
-POST /agents/memory-review/proposals/reject-all
-POST /agents/memory-review/run
 POST /agents/memory-review/runs/revert
 POST /agents/memory/af-import
 GET /agents/memory/af-import/preview
@@ -36,6 +30,7 @@ GET /agents/memory/entries/member-latest
 GET /agents/memory/entries/member-read
 POST /agents/memory/entries/member-save
 GET /agents/memory/entries/member-search
+POST /agents/memory/entries/patch
 POST /agents/memory/entries/pin
 POST /agents/memory/entries/project-move
 GET /agents/memory/entries/project-move-preview
@@ -49,6 +44,7 @@ GET /agents/memory/export
 GET /agents/memory/external/entries
 POST /agents/memory/external/entries
 POST /agents/memory/external/forget
+POST /agents/memory/external/patch
 GET /agents/memory/external/projects
 GET /agents/memory/external/read
 GET /agents/memory/external/search

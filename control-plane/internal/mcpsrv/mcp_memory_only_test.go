@@ -32,7 +32,7 @@ func TestMemoryOnlyHandlerServesOnlyMemoryTools(t *testing.T) {
 		return out
 	}
 	full, mem := names(New(cp)), names(New(cp).MemoryOnly())
-	if got := strings.Join(mem, ","); got != "memory_forget,memory_index,memory_projects,memory_read,memory_save,memory_search" {
+	if got := strings.Join(mem, ","); got != "memory_forget,memory_index,memory_patch,memory_projects,memory_read,memory_save,memory_search" {
 		t.Fatalf("memory-only tools = %s", got)
 	}
 	if len(full) <= len(mem) {

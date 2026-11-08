@@ -572,3 +572,23 @@ None of these was exercised against AWS; each is also linked at the claim it sup
 - Codex: [Configuration reference](https://developers.openai.com/codex/config-reference) (`model_providers`, `wire_api`,
   `auth`, `model_providers.amazon-bedrock.aws`).
 - Local CLIs: `codex --help`, `codex exec --help` (0.167.0); `opencode --version` (v2.2.5); `claude --version` (2.1.318).
+
+## Notes
+
+- 2026-11-08, Q0 (#3578): data and catalogue only; nothing in the request path reads any of it. The route catalogue
+  has `bedrock-tenant` (tier `tenant-key`, whose wording now covers a role as well as a key) and `bedrock-deployment`
+  (tier `deployment`); no harness declares either, so every create path refuses them as `route_unsupported`, the same
+  refusal as any undeclared route. The ledger records them as route ids of their own and prices them from the same
+  models.dev `amazon-bedrock` list as `bedrock`. The CP's price-and-limits table is `control-plane/internal/routeprice`
+  (`bedrock.json`, generated from that list, Anthropic and OpenAI models only): it is not the Agent's `usage_price.go`,
+  which re-prices every read from a mutable catalogue with no version, while D4 needs a table the member cannot edit
+  and a version frozen on each reservation; the version is a hash of the file, so no edit can forget to bump it. The
+  one-hour cache write, which the source does not state, is filled at Anthropic's 2x input for Anthropic models, and
+  an absent five-minute write reads as 1.25x input, as in `usage_price.go`. The payer fingerprint
+  (`internal/providedroutes`) hashes the role ARN, the external id's version and the normalized Region set, nothing
+  else. The store (`migrations/0126`, `migrations-pg/0111`) holds sources, grants (plain flags, no row = off), member
+  budgets (default zero), monthly periods keyed by UTC admission month at member and tenant level, and per-call
+  reservations, all in integer micro-USD; admission and settlement exist as store transactions with tests on both
+  dialects, including two CP handles racing at the edge of each level. The per-member in-flight cap is counted from
+  in-flight reservation rows under the member's month lock, so two admissions straddling a month boundary at the same
+  instant can each pass a cap of one.

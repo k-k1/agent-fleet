@@ -9,7 +9,21 @@ import { create } from "zustand";
 
 type InjectedBrand = { label?: string; color?: string; name?: string };
 
-const injected = (globalThis as { __AF_BRAND?: InjectedBrand }).__AF_BRAND;
+// The Control Plane writes the brand as a JSON data block, not as script: the Console's CSP
+// is script-src 'self'. globalThis.__AF_BRAND stays as the test seam.
+function readInjected(): InjectedBrand | undefined {
+  const el = typeof document !== "undefined" ? document.getElementById("af-brand") : null;
+  if (el?.textContent) {
+    try {
+      return JSON.parse(el.textContent) as InjectedBrand;
+    } catch {
+      /* a malformed block is the same as none: fall back to the shipped names */
+    }
+  }
+  return (globalThis as { __AF_BRAND?: InjectedBrand }).__AF_BRAND;
+}
+
+const injected = readInjected();
 
 /** Short deployment label ("dev", "staging"). Empty on an unbranded deployment. */
 export const brandLabel = injected?.label?.trim() || "";

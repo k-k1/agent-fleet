@@ -129,12 +129,6 @@ PUT /api/admin/user-limits
 GET /api/admin/workspace-sizing
 DELETE /api/admin/workspaces
 GET /api/agents/kinds
-GET /api/agents/memory-review
-POST /api/agents/memory-review/proposals/approve
-POST /api/agents/memory-review/proposals/list
-POST /api/agents/memory-review/proposals/reject
-POST /api/agents/memory-review/proposals/reject-all
-POST /api/agents/memory-review/run
 POST /api/agents/memory-review/runs/revert
 POST /api/agents/memory/af-import
 GET /api/agents/memory/af-import/preview

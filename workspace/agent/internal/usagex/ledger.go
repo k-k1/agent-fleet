@@ -96,6 +96,11 @@ const (
 	// RouteBedrock is a call the AF route gateway forwarded to Amazon Bedrock (ADR 0128 P2a). The
 	// gateway sees every call, so its rows are metered.
 	RouteBedrock = "bedrock"
+	// RouteBedrockTenant and RouteBedrockDeployment are Bedrock calls on a provided route (ADR 0129
+	// decision 1): the tenant's or the deployment's account pays. They never share a rollup key
+	// with RouteBedrock, which is the member's own account.
+	RouteBedrockTenant     = "bedrock-tenant"
+	RouteBedrockDeployment = "bedrock-deployment"
 )
 
 // Billing values: how a call was charged (ADR 0128 decision 8). Empty means "not recorded"

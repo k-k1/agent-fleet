@@ -650,7 +650,15 @@ func dropGatewayCounted(m session.Meta, recs []usagex.Record) []usagex.Record {
 }
 
 // gatewayCounted reports that the route's calls are written to the ledger by the route gateway.
-func gatewayCounted(route string) bool { return route == usagex.RouteBedrock }
+// The provided Bedrock routes are listed before they carry traffic (ADR 0129 D5: routegw writes
+// the forwarded call's row too), so the day they do, their transcript rows are not counted twice.
+func gatewayCounted(route string) bool {
+	switch route {
+	case usagex.RouteBedrock, usagex.RouteBedrockTenant, usagex.RouteBedrockDeployment:
+		return true
+	}
+	return false
+}
 
 // foldUsageSource is the seam the tests use to count transcript parses and to write between the
 // stamp and the parse.

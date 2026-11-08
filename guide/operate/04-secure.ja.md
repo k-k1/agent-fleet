@@ -202,8 +202,8 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   配備側では機能フラグ（`AF_MCP_ENABLED`）と、ingress で `/mcp` を通すかどうかが効きます。
   スコープ（read / write / admin:dangerous）と有効期限は利用者が選び、失効も本人が行えます。
   この入口から、メンバーは自分のエージェントに自分の Agent Fleet メモリを使わせることもできます。メンバーごとの別設定で、
-  既定はオフです（[メンバー編](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う) 設定 > エージェントメモリ > 設定）。外からの保存と忘却は監査されます（`memory.entry.save` /
-  `memory.entry.forget`、実行者は `mcp`、対象はプロジェクト ID）。テナント管理者はテナント全体でこれをブロックでき
+  既定はオフです（[メンバー編](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う) 設定 > エージェントメモリ > 設定）。外からの保存・部分編集・忘却は監査されます（`memory.entry.save` /
+  `memory.entry.patch` / `memory.entry.forget`、実行者は `mcp`、対象はプロジェクト ID）。テナント管理者はテナント全体でこれをブロックでき
   （[管理 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用)）、`AF_MCP_ENABLED` はエンドポイント全体を止めます。
 
 ### リモート MCP クライアント向けのサインイン（OAuth）
@@ -234,7 +234,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   `AUTH=oauth` と `AUTH=dev` では Console 自身のセッションゲートが、探索・`token`・`register`・`revoke` を素通しにし、`authorize` と `consent` はゲートの内側に置きます。
   **`AUTH=proxy`** ではゲートウェイ側で同じ設定が必要です。`/mcp-oauth/authorize` と `/mcp-oauth/consent` はゲートウェイを**通し**（メンバーの
   識別ヘッダーはそこで付きます）、残りの 6 パスと `/mcp`・`/mcp/memory` はゲートウェイを**迂回**させます。
-- **2 つのリソース。** `/mcp` はすべてのツールを、`/mcp/memory` は外部メモリの 6 つのツールだけを提供します。後者は、claude.ai が
+- **2 つのリソース。** `/mcp` はすべてのツールを、`/mcp/memory` は外部メモリの 7 つのツールだけを提供します。後者は、claude.ai が
   メンバーのワークスペースのセッションにも渡してしまうコネクタ向けです。それぞれ専用のメタデータ文書と 401 チャレンジを持ち、相手のトークンを
   拒否します。OAuth のコード・グラント・トークンはクライアントが求めたリソースに結び付き（リフレッシュでも変わりません）、Personal Access Token は
   1 つのエンドポイント向けに発行されます（既定は `mcp`。分離前に発行したトークンもすべて `mcp`）。テナントのスイッチ、メンバーのメモリ設定、
@@ -346,7 +346,7 @@ Admin モーダルの**開発用ログイン**で、Control Plane の開発用 O
   cookie を付けて Console へリクエストできます。Control Plane は、cookie 認証の書き込みのうち
   `Sec-Fetch-Site` が `same-origin` でないもの、`Origin` が Console 自身のホストでないものを 403 で拒否し、
   `/api/` のボディに `application/json`（アップロードは `multipart/form-data`）を要求し、
-  `X-Frame-Options: DENY` と `frame-ancestors 'self'` を返します。これらは安全網です。より強い構成は、
+  `X-Frame-Options: DENY` と `frame-ancestors 'self'` を返し、Console のシェルには `script-src 'self'`（同一オリジンのスクリプトのみ、インラインなし）が付きます。これらは安全網です。より強い構成は、
   `AF_PREVIEW_DOMAIN` を別の登録可能ドメインに置くこと（例: Console が `af.example.com`、プレビューが
   `*.af-preview.example.net`）で、cookie がそもそも送られなくなります。cookie 名は `af_session` で
   `__Host-` 接頭辞はまだ付かないため、`__Host-` 名は現時点では選べません。`AUTH=proxy` の背後では、ゲートウェイが

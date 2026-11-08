@@ -266,6 +266,11 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 		// A grant written for a membership deleted between the roster check and the insert
 		// has no membership left to cascade from; the tenant id still reaches it.
 		`DELETE FROM engine_access_grant WHERE tenant_id=?`,
+		// Provided routes: the tenant's own sources, its grants and its members' budgets. The
+		// spend and reservation rows are history and stay.
+		`DELETE FROM provided_route_source WHERE tenant_id=?`,
+		`DELETE FROM provided_route_grant WHERE tenant_id=?`,
+		`DELETE FROM provided_route_member WHERE tenant_id=?`,
 		`DELETE FROM tenant_branch_rules WHERE tenant_id=?`,
 		`DELETE FROM tenant_member_defaults WHERE tenant_id=?`,
 		`DELETE FROM limit_board_tenant WHERE tenant_id=?`,

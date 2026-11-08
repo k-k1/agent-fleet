@@ -36,8 +36,6 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
     "Enables/disables the assistant chat's \"refresh\" button, which re-derives the work plan from the recent exchange. Separate from the automatic summary carry-forward (context compaction). This is the button you press explicitly. Turn it off and the button is hidden.",
   "aiassist.note_mirror_translate":
     "Shows a \"Translate\" button on mirror answers that came back in another language. Tokens are spent only when you press it, and no session turn is used. A translation is kept until that session is deleted, so the same text with the same agent/model is free from the second press on. Changing this feature's agent or model means there is no translation yet for that combination, so the next press generates a fresh one (the earlier agent/model's translation is not lost; it comes back if you switch back).",
-  "aiassist.note_memory_review":
-    "Has an agent with no tools and no MCP servers read excerpts of finished sessions, and lists what is worth keeping as proposals. Nothing reaches memory until you approve it. Conversation excerpts (parts that look like secrets are left out) are sent to the provider of the agent chosen here, and tokens are spent. It runs only on agents that can be run with their tools switched off; choose another and the review does not run.",
   "aiassist.set_in_memory_settings": "Switch it in the Agent memory settings",
   "aiassist.mirror_auto_translate": "Translate automatically",
   "aiassist.note_mirror_auto_translate":

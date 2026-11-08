@@ -90,19 +90,6 @@ func frozenAuditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// Only a commit id is copied into the ledger: the hint is free text the Agent never
 			// reads, so anything else is recorded as an empty target.
 			return "memory.entry.revert", auditCommitHint(q.Get("commit")), true
-		case p == "/api/agents/memory-review/run":
-			// ADR 0117: the member starts a review of one session now. The Console repeats the
-			// session name in the query; only a name-shaped value is recorded, never a body.
-			return "memory.review.run", auditSessionNameHint(q.Get("session")), true
-		case p == "/api/agents/memory-review/proposals/approve":
-			// ADR 0117: the member publishes one proposed memory. The Console repeats the proposal
-			// id in the query; only an id-shaped value is recorded, never text.
-			return "memory.review.approve", auditReviewIDHint(q.Get("id")), true
-		case p == "/api/agents/memory-review/proposals/reject":
-			return "memory.review.reject", auditReviewIDHint(q.Get("id")), true
-		case p == "/api/agents/memory-review/proposals/reject-all":
-			// The hint is the run whose proposals are rejected, empty for all of them.
-			return "memory.review.reject_all", auditReviewIDHint(q.Get("run")), true
 		case p == "/api/agents/memory-review/runs/revert":
 			return "memory.review.revert_run", auditReviewIDHint(q.Get("run")), true
 		case p == "/api/agents/memory/entries/pin":
@@ -208,28 +195,19 @@ func frozenAuditActionTarget(r *http.Request) (action, target string, ok bool) {
 
 // The old member_origin.go maps, frozen.
 var frozenMemberOriginRoutes = map[string]bool{
-	// Every settings write is signed, because some settings are the member's alone: turning the
-	// memory review on (ADR 0117) sends other sessions' conversations to a model provider, and a
-	// session holds the same AGENT_TOKEN the relay uses. The Agent asks for the mark only on a
-	// write that arms such a setting (workspace/agent/ui_prefs.go); the rest ignore it.
-	"PUT /api/env/ui-prefs": true,
-	// "Review now" for one session (ADR 0117): it spends tokens and sends an excerpt to a model
-	// provider, so a session's own AGENT_TOKEN must not be able to start it.
-	"POST /api/agents/memory-review/run":           true,
+	// Every settings write is signed, because some settings are the member's alone: Muse
+	// Code's contributor mode is one, and a session holds the same AGENT_TOKEN the relay uses.
+	// The Agent asks for the mark only on a write that arms such a setting (workspace/agent/ui_prefs.go); the rest ignore it.
+	"PUT /api/env/ui-prefs":                        true,
 	"POST /api/agents/memory/entries/pin":          true,
 	"POST /api/agents/memory/entries/lint-terms":   true, // added after the freeze (ADR 0130)
 	"POST /api/agents/memory/entries/revert":       true,
 	"POST /api/agents/memory/entries/member-save":  true,
 	"POST /api/agents/memory/entries/purge":        true,
 	"POST /api/agents/memory/entries/project-move": true,
-	// The member's decisions on what the review proposed (ADR 0117 decision 6): approving
-	// publishes into every kind's memory, and the list returns text nobody has published, so a
-	// session's own AGENT_TOKEN must not be able to do either.
-	"POST /api/agents/memory-review/proposals/list":       true,
-	"POST /api/agents/memory-review/proposals/approve":    true,
-	"POST /api/agents/memory-review/proposals/reject":     true,
-	"POST /api/agents/memory-review/proposals/reject-all": true,
-	"POST /api/agents/memory-review/runs/revert":          true,
+	// Undoing a past review run (ADR 0117 decision 5): it writes into every kind's memory, so a
+	// session's own AGENT_TOKEN must not be able to do it.
+	"POST /api/agents/memory-review/runs/revert": true,
 	// Importing AF memory out of a bundle (#1983).
 	"POST /api/agents/memory/af-import": true,
 	// The member's part in what the Agent memory switch does by itself with claude's native
@@ -477,8 +455,9 @@ var auditAddedSinceTheFreeze = map[string]bool{
 	"POST /api/repos/{name}/lock":               true,
 }
 
-// minFrozenAuditedRoutes is how many golden routes the frozen switch audits (57 when it was frozen).
-const minFrozenAuditedRoutes = 57
+// minFrozenAuditedRoutes is how many golden routes the frozen switch audits (57 when it was frozen;
+// 54 after the memory review's four audited routes were removed, ADR 0130 decision 2).
+const minFrozenAuditedRoutes = 54
 
 // withoutPattern is r as a test builds it by hand: the path values set, no pattern.
 func withoutPattern(r *http.Request) *http.Request {

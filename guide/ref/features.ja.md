@@ -117,7 +117,6 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | エージェントへの指示 | メンバー | エージェントへの指示 |
 | Agent Fleet 共有メモリの管理 | メンバー | エージェントメモリ（[18](../member/18-agent-memory.ja.md#エージェントメモリ)） |
 | エージェント自前のメモリの版管理 | メンバー | メモリのスナップショット（[18](../member/18-agent-memory.ja.md#メモリのスナップショット)） |
-| メモリの提案 — 終わったセッションがメモリを提案し、あなたが承認する（既定はオフ）| メンバー | エージェントメモリ → 設定（[18](../member/18-agent-memory.ja.md#設定)） |
 | Agent Fleet の外のエージェントから Agent Fleet のメモリを使う（既定はオフ）| メンバー | エージェントメモリ → 設定（[18](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う)） |
 | Muse Code の contributor モード（既定はオフ）| メンバー | エージェント → Muse Code → 動作（[09](../member/09-agents.ja.md#muse-code)）
 | Git ホスティングの接続 | メンバー | Git ホスティング |

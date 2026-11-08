@@ -633,3 +633,22 @@ table from becoming a menu of models that fail on the first message, which is wh
   refusals go out as 401 (503 for what waiting may clear) with `x-should-retry: false`, because claude retries a 403 about seven times
   (measured). A revoked or stopped token is 401 `route_token_invalid`; refusals about the request itself (404, 400, 413) keep their status. The decision text above is left as written;
   `writeRefusal` / `wireStatus` in `workspace/agent/internal/routegw/bedrock.go` are the authority.
+- 2026-11-08, Settings staleness (#3425, from the #3282 live gate): the gateway checked creates, starts and calls against a
+  Settings copy pulled at most every 30 s, so an unmark served a turn 3 s later, a create 8 s later was accepted and a start
+  in the same second as a role edit was accepted. The Control Plane pushes no AWS-profile change to the Agent (the bridge
+  is pull-only, `cloudbridge.Poll` every five minutes), so the gateway now forces a pull where it matters: `CheckRoute`,
+  `Bind` and `Issue` (create, start, resume) and any call that is about to resolve credentials read Settings from a pull
+  that began after they were asked (`SettingsSource.Fresh`). Concurrent callers share that pull; one already running is
+  waited out, since it may have read Settings before the edit, so a burst costs at most two pulls. A forced pull also
+  becomes the copy every later call is checked against. **Residual window:** a call of an already running session on
+  credentials the gateway still holds is checked against a copy up to 30 s old, so it can be served up to 30 s after the
+  change unless a create, start or credential resolution pulled in between; a pull per model call was rejected because a
+  streaming harness makes many calls per turn. Fail closed as before: a failed pull never replaces the copy, a forced
+  pull that fails answers from the last copy, and nothing is served once no pull has succeeded for 15 minutes, which is
+  how long a change can go unseen while the Agent cannot reach the Control Plane: in that state a create, a start and a
+  credential resolution are also allowed on the last copy. A caller waits for a pull at most 15 s (the real pull takes the
+  `~/.aws/config` lock before its HTTP timeout applies), then treats it as failed. Whether a call needs the fresh check is
+  decided where credentials are resolved, under the cache lock, not at the per-call check, so credentials lapsing while
+  the request body arrives are never resolved on the older copy. Credentials already inside the five-minute reserve are
+  reused for 30 s (never closer than 30 s to their expiry) rather than resolved, with a pull, on every call. The guide
+  (chapter 16, en and ja) states both windows.
