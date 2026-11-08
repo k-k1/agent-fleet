@@ -42,8 +42,9 @@ export function CarriedBlock({
   carried: CarriedInteraction;
   session: string;
   agentName: string;
-  /** Resolves repository paths in the lead text to file links, as on the live question card. */
+  /** The session's repository, whose origin resolves `#N` work-item references in the lead text. */
   repo?: string | null;
+  /** Opens a file linked from the lead text; without it file links report they cannot open here. */
   onOpenFile?: (path: string, line?: number, column?: number) => void;
   /** Send/discard was accepted — retract the card and let polling take over. */
   onDone: () => void;

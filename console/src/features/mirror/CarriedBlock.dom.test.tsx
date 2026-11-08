@@ -8,9 +8,9 @@
 // 2. Approval must go through a confirm. A prose approval alone makes claude execute the plan
 //    (measured, docs/log/75 §75.10 E), so it is an irreversible decision.
 //
-// It also pins that a carried question's lead text renders as Markdown, as the live card does.
+// It also pins that the lead text renders as Markdown, as on the live question card.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
@@ -23,6 +23,8 @@ vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
   sessionCarriedAnswer: (...args: unknown[]) => sessionCarriedAnswer(...(args as [])),
   apiJSON: (...args: unknown[]) => apiJSON(...(args as [])),
+  // A repo link checks its target with a parent listing before it opens (statRepoTarget).
+  api: async () => ({ entries: [{ name: "a.md", type: "file" }] }),
   errText: (e: { message?: string }) => e?.message || "",
 }));
 
@@ -33,16 +35,24 @@ let host: HTMLDivElement | null = null;
 const errors: string[] = [];
 let done = 0;
 
+// MarkdownView (the lead text, an inline plan) needs a toast host, as in the app.
+const providers = (node: ReactNode) => (
+  <ToastProvider>
+    <ConfirmProvider>{node}</ConfirmProvider>
+  </ToastProvider>
+);
+
 function mount(
   carried: Parameters<typeof CarriedBlock>[0]["carried"],
   onReviewPlan?: (plan: string) => Promise<void>,
+  extra: Partial<Parameters<typeof CarriedBlock>[0]> = {},
 ) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   act(() =>
     root!.render(
-      <ConfirmProvider>
+      providers(
         <CarriedBlock
           carried={carried}
           session="s1"
@@ -50,8 +60,9 @@ function mount(
           onDone={() => done++}
           onError={(m) => errors.push(m)}
           onReviewPlan={onReviewPlan}
-        />
-      </ConfirmProvider>,
+          {...extra}
+        />,
+      ),
     ),
   );
 }
@@ -101,34 +112,40 @@ describe("CarriedBlock", () => {
   });
 
   it("renders a carried question's lead text as Markdown, not as raw markup", () => {
-    // MarkdownView needs a toast host; the other cases render no Markdown and mount without one.
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-    act(() =>
-      root!.render(
-        <ToastProvider>
-          <ConfirmProvider>
-            <CarriedBlock
-              carried={{
-                kind: "question",
-                text: "**大事**なこと:\n- `opus` は断る\n- ID を固定する",
-                questions: [{ question: "どっち？", options: [{ label: "A" }, { label: "B" }] }],
-              }}
-              session="s1"
-              agentName="claude"
-              onDone={() => done++}
-              onError={(m) => errors.push(m)}
-            />
-          </ConfirmProvider>
-        </ToastProvider>,
-      ),
-    );
+    mount({
+      kind: "question",
+      text: "**大事**なこと:\n- `opus` は断る\n- ID を固定する",
+      questions: [{ question: "どっち？", options: [{ label: "A" }, { label: "B" }] }],
+    });
     const lead = document.querySelector(".mt-carried-text")!;
     expect(lead.querySelector("strong")?.textContent).toBe("大事");
     expect(lead.querySelector("code")?.textContent).toBe("opus");
     expect(lead.querySelectorAll("li")).toHaveLength(2);
     expect(lead.textContent).not.toContain("**");
+  });
+
+  it("opens a repository file linked from the lead text through onOpenFile", async () => {
+    const opened: string[] = [];
+    mount(
+      { kind: "question", text: "[設計](/docs/a.md) を見て", questions: [{ question: "どっち？", options: [{ label: "A" }] }] },
+      undefined,
+      { repo: "fleet", onOpenFile: (path) => opened.push(path) },
+    );
+    const a = document.querySelector<HTMLAnchorElement>(".mt-carried-text a.repo-link");
+    expect(a).not.toBeNull();
+    await act(async () => {
+      a!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toContain("docs/a.md");
+  });
+
+  // Text is the turn's pending-text for every kind (status.PromoteCarried), i.e. the
+  // assistant's prose, so a plan or permission card renders it as Markdown too.
+  it("renders the lead text of a carried plan as Markdown as well", () => {
+    mount({ kind: "plan", plan: "# 計画", text: "**前置き**" });
+    expect(document.querySelector(".mt-carried-text strong")?.textContent).toBe("前置き");
   });
 
   it("sends with free text alone (the notes shape of an AUQ with previews)", async () => {
@@ -159,11 +176,10 @@ describe("CarriedBlock", () => {
   });
 
   it("approving does nothing when the plan was replaced or the card went away while the dialog was open", async () => {
-    const card = (plan: string) => (
-      <ConfirmProvider>
-        <CarriedBlock carried={{ kind: "plan", plan }} session="s1" agentName="claude" onDone={() => done++} onError={(m) => errors.push(m)} />
-      </ConfirmProvider>
-    );
+    const card = (plan: string) =>
+      providers(
+        <CarriedBlock carried={{ kind: "plan", plan }} session="s1" agentName="claude" onDone={() => done++} onError={(m) => errors.push(m)} />,
+      );
     mount({ kind: "plan", plan: "# 計画" });
     click(byText(/承認して実行|Approve and run/));
     await act(async () => {});
@@ -173,7 +189,7 @@ describe("CarriedBlock", () => {
 
     click(byText(/承認して実行|Approve and run/));
     await act(async () => {});
-    await act(async () => root!.render(<ConfirmProvider>{null}</ConfirmProvider>));
+    await act(async () => root!.render(providers(null)));
     await answerConfirm(true);
     expect(sessionCarriedAnswer).not.toHaveBeenCalled();
   });
