@@ -321,7 +321,7 @@ func checkMoveRequest(ctx context.Context, src session.Meta, req moveRequest) er
 		return &moveError{Status: http.StatusBadRequest, Code: "move_missing_dir", Message: "the working folder does not exist"}
 	}
 	// Before the source is closed: a target that would refuse its selection must not cost a move.
-	if ref := checkRouteLive(ctx, req.Kind, req.Route, req.Model); ref != nil {
+	if ref := checkRouteLive(ctx, req.Kind, req.Route, req.Model, req.Driver); ref != nil {
 		return &moveError{Status: ref.Status, Code: ref.Code, Message: ref.Message}
 	}
 	return nil

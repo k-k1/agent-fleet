@@ -9,8 +9,9 @@ import (
 )
 
 // RouteGrant is what the AF route gateway (ADR 0128 decision 7, A2) gives one launch: the Unix
-// socket to call, the base URL to put in front of the operation paths, the bearer, the region
-// the calls go to, and when the bearer ends unless the gateway renews it.
+// socket to call (empty for a loopback grant), the base URL to put in front of the operation
+// paths, the bearer, the region the calls go to, and when the bearer ends unless the gateway
+// renews it.
 type RouteGrant struct {
 	Socket  string
 	BaseURL string
@@ -25,6 +26,9 @@ type RouteGrant struct {
 type RouteGateway interface {
 	// Issue mints the bearer for m's stored selection, after every check a call repeats.
 	Issue(m session.Meta) (RouteGrant, *RouteRefusal)
+	// IssueLoopback is Issue for a harness that can only speak TCP: the grant has no Socket, its
+	// BaseURL is the gateway's loopback port, and the token is served there only.
+	IssueLoopback(m session.Meta) (RouteGrant, *RouteRefusal)
 	// Bind is the stored form of an accepted selection, bound to the connection's identity.
 	Bind(sel RouteSelection) (RouteSelection, *RouteRefusal)
 	// CheckRoute is the live half of decision 12 for a selection the gateway serves.

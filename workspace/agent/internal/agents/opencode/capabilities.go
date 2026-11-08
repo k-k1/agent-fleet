@@ -19,10 +19,27 @@ import (
 // is never swallowed here: session create validates it against the full, unshaped catalog.
 // The route is reported because the empty-menu rescue may have re-shaped with Zen, and the
 // Console has to be able to say so (docs/log/103).
+//
+// The bedrock route's models (BedrockRouteModels) follow the shaped menu while that route is
+// offered; they are usable only on it, so the billing preference does not apply to them and the
+// Console shows them only with the route chosen.
 func (agentImpl) ListModels(q agents.ModelQuery) agents.ModelListing {
 	ids := Models()
 	list, route := CatalogWithRoute(ids, q.CatalogPref)
-	return agents.ModelListing{Models: list, Enumerated: len(ids), Listed: ids, Route: route}
+	listed := ids
+	if extra := BedrockRouteModels(); len(extra) > 0 {
+		have := make(map[string]bool, len(list))
+		for _, m := range list {
+			have[m.ID] = true
+		}
+		listed = append(append([]string(nil), ids...), extra...)
+		for _, id := range extra {
+			if !have[id] {
+				list = append(list, agents.ModelChoice{ID: id, Label: id})
+			}
+		}
+	}
+	return agents.ModelListing{Models: list, Enumerated: len(ids), Listed: listed, Route: route}
 }
 
 // PaneMode is agents.PaneModeReader: this package's PaneMode.

@@ -74,6 +74,12 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name)) || ManagedAlive(m)))
 		return
 	}
+	// A route that holds only under one execution method (agents.RouteDriverChecker) refuses the
+	// switch before anything is stopped.
+	if ref := checkRouteDriver(m.Kind, m.Route, target); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	if target == session.DriverManaged {
 		if _, ok := driverOf(m); !ok {
 			httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",

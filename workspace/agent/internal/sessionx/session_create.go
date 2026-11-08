@@ -372,6 +372,11 @@ func (c *createRun) checkModel() bool {
 
 // resolveLiveCatalogModel resolves an explicit model against the kind's live catalog, if it has one.
 func (c *createRun) resolveLiveCatalogModel() bool {
+	// A route that owns its models (agents.RouteModelOwner) checks the model in checkRoute: the
+	// kind's catalogue describes its default resolution, not that route.
+	if routeOwnsModels(c.req.Kind, c.req.Route) {
+		return true
+	}
 	if cat, ok := liveCatalogs[NormalizeKind(c.req.Kind)]; ok && strings.TrimSpace(c.req.Model) != "" {
 		choices := cat.choices(c)
 		model, err := resolveLiveModel(c.req.Model, choices)
