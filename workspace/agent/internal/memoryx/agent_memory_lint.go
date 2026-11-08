@@ -179,7 +179,8 @@ func (r agentMemLintRepo) ReadFile(path string) ([]byte, error) {
 }
 
 // agentMemLintKeyRe is the shape of a configuration key the history scan looks for: the
-// workspace's environment variables.
+// workspace's environment variables (at least three characters after AF_, which leaves out
+// short names such as AF_ID that occur everywhere).
 var agentMemLintKeyRe = regexp.MustCompile(`\bAF_[A-Z][A-Z0-9_]{2,}\b`)
 
 const (
@@ -195,8 +196,14 @@ func (r agentMemLintRepo) RemovedKeys() ([]memorylint.RemovedKey, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "--git-dir="+r.gitDir, "log", "-n", strconv.Itoa(agentMemLintKeyCommits),
-		"--no-merges", "-p", "-U0", "--no-color", "--no-ext-diff", "--format=%x01%h%x02%s", r.ref, "--", ".", ":(exclude)docs/log")
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+		"--no-merges", "-p", "-U0", "--no-color", "--no-ext-diff", "--format=%x01%h%x02%s", r.ref, "--", ":(exclude,top)docs/log")
+	// A work tree in the environment must not narrow the pathspec to a subtree.
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "GIT_WORK_TREE=") && !strings.HasPrefix(e, "GIT_DIR=") {
+			cmd.Env = append(cmd.Env, e)
+		}
+	}
+	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, errors.New("git log failed")
@@ -225,12 +232,17 @@ func (r agentMemLintRepo) RemovedKeys() ([]memorylint.RemovedKey, error) {
 			}
 		}
 	}
+	scanErr := sc.Err()
 	_, _ = io.Copy(io.Discard, stdout)
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() != nil {
 			return nil, errors.New("git log timed out")
 		}
 		return nil, fmt.Errorf("git log: %w", err)
+	}
+	if scanErr != nil {
+		// A line past the buffer ends the scan early: say so rather than propose from half a history.
+		return nil, fmt.Errorf("git log output could not be read: %w", scanErr)
 	}
 	return out, nil
 }

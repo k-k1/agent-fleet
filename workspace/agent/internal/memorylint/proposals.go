@@ -77,9 +77,7 @@ func supersededADRCandidates(rc *repoCtx, fr FileReader, adrDir string) ([]candi
 			continue
 		}
 		status := strings.TrimSpace(sm[1])
-		if len(status) > maxEvidence {
-			status = status[:maxEvidence] + "..."
-		}
+		status = clip(status, maxEvidence)
 		out = append(out, candidate{
 			term:     strings.ReplaceAll(m[2], "-", " "),
 			kind:     ProposalSupersededADR,
@@ -114,9 +112,7 @@ func removedKeyCandidates(repo Repo, kh KeyHistory) ([]candidate, []string) {
 			continue
 		}
 		subj := k.Subject
-		if len(subj) > 100 {
-			subj = subj[:100] + "..."
-		}
+		subj = clip(subj, 100)
 		out = append(out, candidate{k.Key, ProposalRemovedKey, fmt.Sprintf("removed in %s: %s", k.Commit, subj)})
 	}
 	return out, nil
@@ -154,4 +150,12 @@ func buildProposals(cands []candidate, mems []Memory, listed, rejected []string)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Term < out[j].Term })
 	return out
+}
+
+// clip shortens s to n runes, never cutting inside a character.
+func clip(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "..."
+	}
+	return s
 }
