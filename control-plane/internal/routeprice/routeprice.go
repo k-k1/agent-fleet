@@ -2,7 +2,7 @@
 // route may call (ADR 0129 D4): per model, the largest output a request may ask for, the context
 // window, and every billed rate, plus one version for the whole table.
 //
-// It exists beside the Agent's ledger pricing (workspace/agent usage_price.go, usage_catalog.go)
+// It exists beside the Agent's ledger pricing (workspace/agent internal/usagesvc/usage_price.go, internal/usagesvc/usage_catalog.go)
 // rather than reusing it, because the two answer different questions. The ledger re-prices every
 // read with whatever catalogue the workspace holds today, and nothing in it is versioned. A budget
 // admission has to price a call before it runs, with a table the member cannot edit, and freeze
@@ -62,7 +62,7 @@ type Model struct {
 	MaxOutput     int64  `json:"max_output"`
 }
 
-// cacheWriteMult is the five-minute cache write against input, the multiplier usage_price.go
+// cacheWriteMult is the five-minute cache write against input, the multiplier internal/usagesvc/usage_price.go
 // applies when the source states no write rate. Used only for a rate the table leaves empty.
 const cacheWriteMult = 1.25
 

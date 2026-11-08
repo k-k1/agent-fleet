@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"encoding/json"
@@ -78,7 +78,7 @@ func TestAggregateUsageRowsCountsDistinctCalls(t *testing.T) {
 
 // Only completed days are folded. Today stays raw, since rows are still being added.
 func TestEnsureUsageRollupsOnlyFoldsCompletedDays(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	yesterday, today := daysAgo(1), daysAgo(0)
 	writeUsageDay(t, yesterday, at(row("a", usagex.FeatureTitleSession, session.KindClaude, "haiku", 10), yesterday))
 	writeUsageDay(t, today, at(row("b", usagex.FeatureTitleSession, session.KindClaude, "haiku", 20), today))
@@ -103,7 +103,7 @@ func TestEnsureUsageRollupsOnlyFoldsCompletedDays(t *testing.T) {
 
 // The rollup stays after raw expires out of its retention window (kept forever, ADR0029 §7-4).
 func TestRollupSurvivesRawPrune(t *testing.T) {
-	dir := useIsolatedUsageDir(t)
+	dir := UseIsolatedUsageDir(t)
 	old := daysAgo(2)
 	writeUsageDay(t, old, at(row("a", usagex.FeatureSession, session.KindClaude, "haiku", 500), old))
 	ensureUsageRollups()
@@ -128,7 +128,7 @@ func TestRollupSurvivesRawPrune(t *testing.T) {
 // A folded day is not read from raw as well (regression for the state where both the rollup
 // and raw are present).
 func TestCollectUsageSamplesDoesNotDoubleCount(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	yesterday := daysAgo(1)
 	writeUsageDay(t, yesterday, at(row("a", usagex.FeatureTitleSession, session.KindClaude, "haiku", 300), yesterday))
 	ensureUsageRollups() // raw is left in place
@@ -148,7 +148,7 @@ func TestCollectUsageSamplesDoesNotDoubleCount(t *testing.T) {
 // every past consumption onto the introduction day and makes the series meaningless. Cut by
 // the row's ts.
 func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	today := daysAgo(0)
 	old1, old2 := daysAgo(40), daysAgo(41)
 	// All three rows are appended to today's file, but the consumption happened on other days.
@@ -184,7 +184,7 @@ func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
 // The same shape as above: the consumption day survives folding (the rollup key is the day of
 // the row's ts).
 func TestRollupKeysByConsumptionDay(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	fileDay, consumed := daysAgo(1), daysAgo(30)
 	writeUsageDay(t, fileDay, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 700), consumed))
 	ensureUsageRollups()
@@ -252,7 +252,7 @@ func getSeries(t *testing.T, query string) usageSeriesResp {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/usage/series?"+query, nil)
 	rec := httptest.NewRecorder()
-	handleUsageSeries(rec, req)
+	HandleSeries(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -264,7 +264,7 @@ func getSeries(t *testing.T, query string) usageSeriesResp {
 }
 
 func TestUsageSeriesAggregation(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(1)
 	writeUsageDay(t, day,
 		at(row("c1", usagex.FeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 100), day),
@@ -330,7 +330,7 @@ func TestUsageSeriesAggregation(t *testing.T) {
 }
 
 func TestUsageSeriesHourBucket(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(0) // today stays raw, so hour granularity is available
 	r1 := row("c1", usagex.FeatureAssistantChat, session.KindClaude, "haiku", 10)
 	r1.TS = day + "T01:30:00Z"
@@ -363,7 +363,7 @@ func TestUsageSeriesHourBucket(t *testing.T) {
 // Asking for a folded day at hour granularity must say truncated, not "there was no
 // consumption".
 func TestUsageSeriesHourReportsTruncationAfterPrune(t *testing.T) {
-	dir := useIsolatedUsageDir(t)
+	dir := UseIsolatedUsageDir(t)
 	old := daysAgo(2)
 	writeUsageDay(t, old, at(row("a", usagex.FeatureAssistantChat, session.KindClaude, "haiku", 100), old))
 	ensureUsageRollups()
@@ -380,14 +380,14 @@ func TestUsageSeriesHourReportsTruncationAfterPrune(t *testing.T) {
 }
 
 func TestUsageSeriesRejectsBadParams(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	for _, q := range []string{
 		"bucket=week", "by=nope", "split=nope", "filter=nope:1",
 		"from=2026-13-99", "to=nope", "from=2026-07-10&to=2026-07-01", "include=nothing",
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/usage/series?"+q, nil)
 		rec := httptest.NewRecorder()
-		handleUsageSeries(rec, req)
+		HandleSeries(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%q: status = %d, want 400 (body=%s)", q, rec.Code, rec.Body.String())
 		}
@@ -397,14 +397,14 @@ func TestUsageSeriesRejectsBadParams(t *testing.T) {
 // The aggregation API returns no raw log. Bodies were never recorded in the first place, and
 // session names and conversation ids do not leave the bucket either.
 func TestUsageSeriesDoesNotLeakRefs(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(0)
 	r := at(row("c1", usagex.FeatureTitleSession, session.KindClaude, "haiku", 10), day)
 	r.Ref = "slot-secret"
 	writeUsageDay(t, day, r)
 	req := httptest.NewRequest(http.MethodGet, "/usage/series?from="+day+"&to="+day, nil)
 	rec := httptest.NewRecorder()
-	handleUsageSeries(rec, req)
+	HandleSeries(rec, req)
 	if body := rec.Body.String(); strings.Contains(body, "slot-secret") {
 		t.Fatalf("the ref leaked into the response: %s", body)
 	}
@@ -415,7 +415,7 @@ func TestUsageSeriesDoesNotLeakRefs(t *testing.T) {
 // the Console draw them as current, and the user hammers "refresh" until it catches up (this
 // was an actual complaint).
 func TestUsageSeriesReportsFolding(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	resetUsageFold(t)
 	day := daysAgo(0)
 
@@ -488,7 +488,7 @@ func TestCallsGoToTheDominantModelRow(t *testing.T) {
 
 // The same thing through the API: with `by=model` the dominant model must not look like calls 0.
 func TestUsageSeriesCallsFollowDominantModel(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(0)
 	writeUsageDay(t, day,
 		at(modelRow("c1", "a-model-20260101", "a-model", 100), day),
@@ -508,7 +508,7 @@ func TestUsageSeriesCallsFollowDominantModel(t *testing.T) {
 // the consumption that should have gone into that month marked folded and gone from the
 // aggregate, never to come back once raw is pruned.
 func TestRollupKeepsStateWhenMonthWriteFails(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(1)
 	writeUsageDay(t, day, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 500), day))
 	// Block the month file's path with a directory (the rename then always fails).
@@ -540,7 +540,7 @@ func TestRollupKeepsStateWhenMonthWriteFails(t *testing.T) {
 // before the UTC date boundary can land after the fold. The folding side holds usageMu and
 // checks that the day can no longer grow before reading it.
 func TestRollupRefusesToReadTheOpenDay(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	today, yesterday := daysAgo(0), daysAgo(1)
 	writeUsageDay(t, today, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 10), today))
 	writeUsageDay(t, yesterday, at(row("c2", usagex.FeatureSession, session.KindClaude, "haiku", 20), yesterday))
@@ -557,7 +557,7 @@ func TestRollupRefusesToReadTheOpenDay(t *testing.T) {
 // P3-9: days with no consumption come back zero-filled too. Dropping them turns "two days far
 // apart" into adjacent bars and the empty stretch vanishes from the picture.
 func TestUsageSeriesFillsEmptyBuckets(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	from, gap, to := daysAgo(4), daysAgo(2), daysAgo(0)
 	writeUsageDay(t, to,
 		at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 100), from),
@@ -588,7 +588,7 @@ func TestUsageSeriesFillsEmptyBuckets(t *testing.T) {
 // At a density where filling is pointless (90 days x hour) it is not filled. It stops filling
 // rather than truncating, so all the real data always comes back.
 func TestUsageSeriesDoesNotFillAbsurdRanges(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(0)
 	writeUsageDay(t, day, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 10), day))
 	got := getSeries(t, "from="+daysAgo(89)+"&to="+day+"&bucket=hour")

@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // The price catalog (docs/log/46 §5-c). The built-in table (usage_price.go) carries only
 // Anthropic's primary prices, which left codex / opencode consumption unpriced. This fills
@@ -31,14 +31,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// usageCatalogMaxBytes caps what is read as a catalog, so that an upstream file growing
+// CatalogMaxBytes caps what is read as a catalog, so that an upstream file growing
 // without bound does not drag this process's memory with it (the shared host is
 // memory-constrained).
-const usageCatalogMaxBytes = 64 << 20
+const CatalogMaxBytes = 64 << 20
 
 // usageCatalogProviders is, per kind, the priority order of the providers the consumption
 // actually went through. A kind that is absent here consults usageCatalogFallback only.
@@ -139,7 +140,7 @@ var (
 const (
 	usageCatalogOriginEnv      = "env"
 	usageCatalogOriginFile     = "file"
-	usageCatalogOriginFetched  = "fetched"
+	CatalogOriginFetched       = "fetched"
 	usageCatalogOriginOpencode = "opencode"
 )
 
@@ -154,7 +155,7 @@ func usageCatalogFiles() []struct{ path, origin string } {
 		out = append(out, struct{ path, origin string }{v, usageCatalogOriginEnv})
 	}
 	out = append(out, struct{ path, origin string }{filepath.Join(usagex.Dir(), "catalog.json"), usageCatalogOriginFile})
-	out = append(out, struct{ path, origin string }{modelsDevPath(), usageCatalogOriginFetched})
+	out = append(out, struct{ path, origin string }{deps.ModelsDevPath(), CatalogOriginFetched})
 	cache := os.Getenv("XDG_CACHE_HOME")
 	if cache == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -179,7 +180,7 @@ func loadUsageCatalog() *usageCatalog {
 	usageCatalogChecked = time.Now()
 	for _, f := range usageCatalogFiles() {
 		st, err := os.Stat(f.path)
-		if err != nil || st.IsDir() || st.Size() == 0 || st.Size() > usageCatalogMaxBytes {
+		if err != nil || st.IsDir() || st.Size() == 0 || st.Size() > CatalogMaxBytes {
 			continue
 		}
 		if usageCatalogCache != nil && usageCatalogSrc == f.path && usageCatalogAt.Equal(st.ModTime()) {
@@ -235,7 +236,7 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 		return nil
 	}
 	want := usageCatalogIndexed()
-	wantFamily := modelFamilyIndexed()
+	wantFamily := deps.ModelFamilyIndexed()
 	price := map[string]usagePrice{}
 	family := map[string]string{}
 	deprecated := map[string]bool{}
@@ -333,9 +334,9 @@ func usageCatalogOrderOn(kind, route string) []string {
 	return out
 }
 
-// usageCatalogLookup looks a price up in the catalog. ref says whose provider's value was
+// CatalogLookup looks a price up in the catalog. ref says whose provider's value was
 // taken and is shown on screen: an amount whose price source is unknown cannot be checked.
-func usageCatalogLookup(kind, model string) (usagePrice, string, bool) {
+func CatalogLookup(kind, model string) (usagePrice, string, bool) {
 	return usageCatalogLookupOn(kind, "", model)
 }
 
@@ -344,7 +345,7 @@ func usageCatalogLookupOn(kind, route, model string) (usagePrice, string, bool) 
 	return p, ref, ok
 }
 
-// usageCatalogLookupStatus is usageCatalogLookup plus whether upstream marks the matched row
+// usageCatalogLookupStatus is CatalogLookup plus whether upstream marks the matched row
 // deprecated — which a ledger does not care about and a recommendation does.
 func usageCatalogLookupStatus(kind, model string) (p usagePrice, ref string, deprecated, ok bool) {
 	return usageCatalogLookupStatusOn(kind, "", model)
@@ -397,7 +398,7 @@ type usageCatalogMeta struct {
 	Fetched string `json:"fetched,omitempty"` // the source file's mtime (RFC3339)
 }
 
-func usageCatalogInfo() *usageCatalogMeta {
+func CatalogInfo() *usageCatalogMeta {
 	cat := loadUsageCatalog()
 	if cat == nil {
 		return nil
@@ -407,6 +408,53 @@ func usageCatalogInfo() *usageCatalogMeta {
 		m.Fetched = cat.modTime.UTC().Format(time.RFC3339)
 	}
 	return m
+}
+
+// CatalogFamily is the family ("glm", "kimi-k2") the catalog gives "provider/model id", or "" when
+// there is no catalog or it does not describe that id. Main's model_provider.go turns it into a
+// maker's brand mark.
+func CatalogFamily(key string) string {
+	cat := loadUsageCatalog()
+	if cat == nil {
+		return ""
+	}
+	return cat.family[key]
+}
+
+// FillCatalogModelInfo writes into info what the catalog says about one model on the kind's own
+// billing providers (see usageCatalogRouteRow), and leaves info alone when it says nothing.
+func FillCatalogModelInfo(info *agents.ModelInfo, kind, model string) {
+	row, provider, ok := usageCatalogRouteRow(kind, model)
+	if !ok {
+		return
+	}
+	if row.price != nil {
+		info.Price = &agents.ModelPrice{In: row.price.In, Out: row.price.Out}
+		if row.cacheReadKnown {
+			cr := row.price.CacheRead
+			info.Price.CacheRead = &cr
+		}
+		info.PriceFrom = provider
+	}
+	info.Context = row.context
+	info.Released = row.released
+	info.Deprecated = row.deprecated
+}
+
+// CatalogListPrice is main's modelListPrice: ok=false when there is no catalog, no price for
+// the id, or upstream marks it deprecated.
+func CatalogListPrice(kind, model string) (float64, bool) {
+	p, _, deprecated, ok := usageCatalogLookupStatus(kind, model)
+	if !ok || deprecated {
+		return 0, false
+	}
+	return p.In + p.Out/10, true
+}
+
+// ValidFetchedCatalog reports whether b parses as a models.dev catalog with something priced in
+// it, so a bad download is not stored over a good copy.
+func ValidFetchedCatalog(b []byte) bool {
+	return parseUsageCatalog(b, CatalogOriginFetched, time.Now()) != nil
 }
 
 // keys orders the index keys deterministically, for tests and debugging.

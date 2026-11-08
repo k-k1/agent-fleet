@@ -1,27 +1,13 @@
-package main
+package usagesvc
 
 import (
 	"encoding/json"
 	"math"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
-
-// useUsageCatalog installs the given JSON as the catalog (the real machine's catalog is
-// never visible to the test).
-func useUsageCatalog(t *testing.T, body string) {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), "models.json")
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("AF_USAGE_CATALOG", p)
-	resetUsageCatalogCache(t)
-}
 
 // A minimal copy of the real catalog's shape (models.dev). The case that actually occurs
 // in the field is the same model id living under both a first-party and a reseller
@@ -49,8 +35,8 @@ const catalogFixture = `{
 // The cheap reseller / router price must never be picked up: doing so quietly reports a
 // false amount. The provider to look under is decided from the kind.
 func TestUsageCatalogPicksProviderByKind(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, catalogFixture)
+	UseIsolatedUsageDir(t)
+	UseUsageCatalog(t, catalogFixture)
 
 	cases := []struct {
 		kind, model string
@@ -95,8 +81,8 @@ func TestUsageCatalogPicksProviderByKind(t *testing.T) {
 // Cache unit prices come from the upstream catalog rather than from a multiplier; only a
 // missing entry falls back to the multiplier.
 func TestUsageCatalogCachePrices(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, catalogFixture)
+	UseIsolatedUsageDir(t)
+	UseUsageCatalog(t, catalogFixture)
 	a := usageAgg{In: 1_000_000, Out: 1_000_000, CacheRead: 1_000_000, CacheCreate: 1_000_000}
 	got, _, ok := usageEstCostUSD(session.KindCodex, "gpt-5.6-terra", a)
 	if !ok {
@@ -118,8 +104,8 @@ func TestUsageCatalogCachePrices(t *testing.T) {
 // the built-in table alone. This depends on an upstream internal file, so if it gives way
 // the whole usage screen goes down with it.
 func TestUsageCatalogBestEffort(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, "{ this is not json")
+	UseIsolatedUsageDir(t)
+	UseUsageCatalog(t, "{ this is not json")
 	if cat := loadUsageCatalog(); cat != nil {
 		t.Fatal("broken JSON was accepted as a catalog")
 	}
@@ -127,7 +113,7 @@ func TestUsageCatalogBestEffort(t *testing.T) {
 		t.Fatalf("did not fall back to the built-in table: src=%q ok=%v", src, ok)
 	}
 	// An unfamiliar shape (the provider is there but has no models) also counts as no catalog.
-	useUsageCatalog(t, `{"anthropic": {"models": {}}}`)
+	UseUsageCatalog(t, `{"anthropic": {"models": {}}}`)
 	if cat := loadUsageCatalog(); cat != nil {
 		t.Fatal("an empty catalog is being treated as present")
 	}
@@ -136,8 +122,8 @@ func TestUsageCatalogBestEffort(t *testing.T) {
 // The response carries the unit prices used and what the catalog declared. An amount with
 // no stated source cannot be checked, and would change silently when the catalog updates.
 func TestUsageSeriesReportsPricesAndCatalog(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, catalogFixture)
+	UseIsolatedUsageDir(t)
+	UseUsageCatalog(t, catalogFixture)
 	day := daysAgo(0)
 	mk := func(call, kind, model string, in int) usagex.Record {
 		return usagex.Record{

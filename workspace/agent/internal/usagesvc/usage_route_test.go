@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"encoding/json"
@@ -184,8 +184,8 @@ const routeCatalogFixture = `{
 // Existing data prices exactly as before: with no route, the lookup is the kind's. A recorded
 // route is tried first and the kind's table is the fallback.
 func TestPriceLookupRouteFirstThenKind(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, routeCatalogFixture)
+	UseIsolatedUsageDir(t)
+	UseUsageCatalog(t, routeCatalogFixture)
 
 	// Empty route: identical to usagePriceOf, and still the kind's gateway price.
 	p, src, ok := usagePriceOfOn(session.KindOpencode, "", "glm-5.2")

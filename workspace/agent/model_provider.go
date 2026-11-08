@@ -31,6 +31,7 @@ package main
 // whose makers have no logo in the icon set anyway.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"sort"
 	"strings"
 )
@@ -173,17 +174,16 @@ func modelVendorForName(name string) string {
 // through (that is where a gateway-only id like "glm-5-free" is described) and otherwise
 // scanning the indexed providers in a fixed order.
 func modelCatalogFamily(route, name string) string {
-	cat := loadUsageCatalog()
-	if cat == nil || len(cat.family) == 0 || name == "" {
+	if name == "" {
 		return ""
 	}
 	if route != "" {
-		if f := cat.family[route+"/"+name]; f != "" {
+		if f := usagesvc.CatalogFamily(route + "/" + name); f != "" {
 			return f
 		}
 	}
 	for _, p := range modelFamilyProviders {
-		if f := cat.family[p+"/"+name]; f != "" {
+		if f := usagesvc.CatalogFamily(p + "/" + name); f != "" {
 			return f
 		}
 	}

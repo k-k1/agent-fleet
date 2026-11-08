@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ func asstCost(model string, in, out, read int, cost float64) transcript.Turn {
 // opencode reports each message's own cost (one LLM call each). A turn's cost is the sum of
 // its messages, it lands in cost_usd only, and re-folding never adds it twice.
 func TestFoldOpencodeReportedCost(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	const model = "big-pickle"
 	turns := []transcript.Turn{
 		{Role: "user", Text: "1"},
@@ -76,7 +76,7 @@ func TestFoldOpencodeReportedCost(t *testing.T) {
 
 // A kind that reports no cost keeps an empty cost_usd.
 func TestFoldWithoutReportedCostLeavesCostEmpty(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	turns := []transcript.Turn{
 		{Role: "user", Text: "1"},
 		asst("claude-haiku-4-5", 100, 10, 0, 20, false),
@@ -117,7 +117,7 @@ func foldOnce(t *testing.T, m session.Meta, turns []transcript.Turn, includeTrai
 // The session ends on a billed call with nothing to display, with no assistant turn after it:
 // the settle on archive/delete still records its cost, once — main and sidechain alike.
 func TestFoldTrailingCostOnlySettles(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "oc02", Kind: session.KindOpencode, Model: "opencode/big-pickle"}
 	turns := []transcript.Turn{
 		{Role: "user", Text: "1"},
@@ -207,7 +207,7 @@ func TestFoldCostOnlyKeepsLogicalTurns(t *testing.T) {
 // A watermark written before cost-only rows existed: the logical turns are not folded again,
 // and the cost-only rows are taken once.
 func TestFoldCostOnlyAgainstOldWatermark(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "oc03", Kind: session.KindOpencode}
 	turns := []transcript.Turn{
 		{Role: "user", Text: "1"},
@@ -243,7 +243,7 @@ func TestFoldCostOnlyAgainstOldWatermark(t *testing.T) {
 // The same session moves to another conversation (a new one, a relaunch that could not resume):
 // its cost-only rows are told apart by message id, not by count or time, so the new one folds.
 func TestFoldCostOnlyAfterConversationSwap(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "oc04", Kind: session.KindOpencode}
 	a := []transcript.Turn{{Role: "user", Text: "1"}, costOnlyID("msg_a", 0.5, false, "2026-10-04T00:00:01Z"), {Role: "user", Text: "2"}}
 	b := []transcript.Turn{{Role: "user", Text: "1"}, costOnlyID("msg_b", 0.75, false, "2026-10-04T01:00:01Z"), {Role: "user", Text: "2"}}
@@ -271,7 +271,7 @@ func TestFoldCostOnlyAfterConversationSwap(t *testing.T) {
 // The append succeeded and the watermark write did not: the next pass re-appends the cost-only
 // row, and the aggregation still counts its cost once (Key dedup).
 func TestFoldCostOnlyCrashWindowIsNotDoubleCounted(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	m := session.Meta{Name: "oc05", Kind: session.KindOpencode}
 	turns := []transcript.Turn{
 		{Role: "user", Text: "1"},

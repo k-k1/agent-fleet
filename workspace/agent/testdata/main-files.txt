@@ -97,13 +97,7 @@ terminal_history.go
 tool_caches.go
 toolchain_uninstall.go
 ui_prefs.go
-usage_catalog.go
-usage_dedup.go
-usage_fold.go
-usage_price.go
-usage_rollup.go
-usage_series.go
-usage_spend.go
+usage_wiring.go
 version_lookup.go
 workspace_machine.go
 workspace_stats.go

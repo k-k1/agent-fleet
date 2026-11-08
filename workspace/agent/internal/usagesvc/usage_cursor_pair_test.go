@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // A cursor turn is two ledger rows: the fold's measured=none call and the stop hook's
 // tokens-only row. The hook measured the turn, so it must not also count as unmeasured (#2495).
@@ -50,7 +50,7 @@ func TestCursorTurnMeasuredByHookIsNotUnmeasured(t *testing.T) {
 		}
 		for _, tc := range tests {
 			t.Run(fmt.Sprintf("%s/ago%d", tc.name, ago), func(t *testing.T) {
-				useIsolatedUsageDir(t)
+				UseIsolatedUsageDir(t)
 				writeUsageDay(t, day, tc.rows...)
 				for _, bucket := range []string{"day", "hour"} {
 					got := getSeries(t, "from="+day+"&to="+day+"&bucket="+bucket)
