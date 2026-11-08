@@ -818,7 +818,7 @@ function ProfileSection({
             )
           )}
           <button
-            className="ghost ssm-login ssm-signin-login"
+            className="ghost ssm-row-action ssm-login ssm-signin-login"
             title={loginMember ? tr("ssm.sign_in_login_title", { signIn: si.name }) : tr("ssm.login_off_incomplete")}
             disabled={busy || !loginMember}
             onClick={() =>
@@ -830,7 +830,7 @@ function ProfileSection({
           </button>
           {loginMember && !relogin && (st === "signed_in" || st === "renew") && (
             <button
-              className="ghost ssm-logout ssm-signin-logout"
+              className="ghost ssm-row-action ssm-logout ssm-signin-logout"
               title={tr("awslogin.logout_title")}
               disabled={busy || loggingOut[loginMember.name] === true}
               onClick={() => void logout(loginMember, candidates.slice(1).map((m) => String(m.name))).then((done) => done && loadStates())}
@@ -839,7 +839,7 @@ function ProfileSection({
             </button>
           )}
           <button
-            className="ghost ssm-edit ssm-signin-edit"
+            className="ghost ssm-row-action ssm-edit ssm-signin-edit"
             title={tr("ssm.sign_in_edit_title")}
             disabled={busy || !si.id || editingSignIn?.id === si.id}
             onClick={() => startEditSignIn(si)}
@@ -897,7 +897,7 @@ function ProfileSection({
         )}
         {!grouped && (
           <button
-            className="ghost ssm-login"
+            className="ghost ssm-row-action ssm-login"
             title={loginOff(p) || tr("ssm.login_title")}
             disabled={busy || loginOff(p) !== null}
             onClick={() => {
@@ -912,7 +912,7 @@ function ProfileSection({
             names the source and the chains following it), so it needs a source to end. */}
         {!grouped && p.name && !reloginNeeded.has(loginTarget(p).id) && !(isChained(p) && isChained(loginTarget(p))) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
           <button
-            className="ghost ssm-logout"
+            className="ghost ssm-row-action ssm-logout"
             title={tr("awslogin.logout_title")}
             disabled={busy || loggingOut[p.name] === true}
             onClick={() => void logout(p).then((done) => done && loadStates())}
@@ -921,14 +921,14 @@ function ProfileSection({
           </button>
         )}
         <button
-          className="ghost ssm-edit"
+          className="ghost ssm-row-action ssm-edit"
           title={tr("ssm.edit_profile_title")}
           disabled={busy || editing?.id === p.id}
           onClick={() => startEdit(p)}
         >
           {tr("ssm.edit")}
         </button>
-        <button className="ghost danger ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(p.id)}>
+        <button className="ghost danger ssm-row-action ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(p.id)}>
           {tr("common.delete")}
         </button>
       </div>
@@ -1281,14 +1281,14 @@ function HostSection({
                 <div className="ssm-item-head">
                   <span className="ssm-alias">{h.alias}</span>
                   <button
-                    className="ghost ssm-edit push"
+                    className="ghost ssm-row-action ssm-edit push"
                     title={tr("ssm.edit_host_title")}
                     disabled={busy || editing === h.id}
                     onClick={() => startEdit(h)}
                   >
                     {tr("ssm.edit")}
                   </button>
-                  <button className="ghost danger ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(h.id)}>
+                  <button className="ghost danger ssm-row-action ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(h.id)}>
                     {tr("common.delete")}
                   </button>
                 </div>
