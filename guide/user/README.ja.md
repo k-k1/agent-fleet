@@ -21,3 +21,28 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [課題管理サービスを接続する](integrations/issue-tracker.ja.md) | Jira の課題や GitHub の Issue を左ペインに並べ、そこからセッションを始める |
 | [Jira を使う](integrations/jira.ja.md) | エージェントに、Jira の課題を読んだり起票したりしてもらう |
 | [Confluence を使う](integrations/confluence.ja.md) | エージェントに、Confluence のページを探したり書いたりしてもらう |
+| [GitHub の CLI を使う](integrations/github-cli.ja.md) | エージェントに、`gh` で GitHub のプルリクエストを作ったり読んだりしてもらう |
+| [Bitbucket の CLI を使う](integrations/bitbucket-cli.ja.md) | エージェントに、`bkt` で Bitbucket のプルリクエストを作ったり、パイプラインを見たりしてもらう |
+| [Discord・Slack とつなぐ](integrations/chat-bridge.ja.md) | セッションの通知を Discord や Slack で受け、返信やボタンで答える |
+| [監視ツールとつなぐ](integrations/ops-monitoring.ja.md) | PagerDuty・Grafana・CloudWatch・AWS を見ながら、アシスタントにインシデントの整理を手伝ってもらう |
+
+## 画像
+
+| ページ | できること |
+|---|---|
+| [画像ギャラリーを使う](images/gallery.ja.md) | フォルダの画像をカードで並べて見比べる |
+| [画像を生成する](images/generate.ja.md) | エージェントを使わずに、配備のエンジンで絵をまとめて作る |
+| [スタジオで画像を仕上げる](images/studio.ja.md) | エージェントと話しながら、画像生成の下書きを直す |
+| [セッションに画像を作らせる](images/from-session.ja.md) | 会話の中で、エージェントに画像を作ってもらう |
+
+## ワークスペース
+
+| ページ | できること |
+|---|---|
+| [ワークスペースを作り直す](workspace/recreate.ja.md) | 壊れた環境を、最新のイメージで作り直す |
+| [マシンと使用状況を見る](workspace/machine.ja.md) | マシンの大きさと、メモリ・ディスクの使い方を確かめ、ディスクの空きを作る |
+| [ツールチェーンを選ぶ](workspace/toolchains.ja.md) | Node.js・Java・Go のバージョンとタイムゾーンを選ぶ |
+| [データベースを使うテストを動かす](workspace/databases.ja.md) | ワークスペースの中の PostgreSQL と MySQL でテストを動かす |
+| [AWS のコードを手元のエミュレーターで試す](workspace/aws-emulator.ja.md) | 本物のアカウントに触らずに、AWS のコードを試す |
+| [設定を書き出す・取り込む](workspace/export-import.ja.md) | 自分の設定を、別の環境やアカウントへ持っていく |
+| [稼働時間とクラウド費用を見る](workspace/cost.ja.md) | ワークスペースがいつ動いていて、いくらかかっているかを見る |

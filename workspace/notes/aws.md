@@ -207,8 +207,8 @@ for an approval nobody sees, and a code from you is exactly what the user is tol
 ## A local emulator is not the user's account
 
 To try AWS code without an account, the user may run MiniStack (an AWS API emulator) in the
-workspace; the setup is `member/17-workspace-environment.md`, "Trying AWS code against a local emulator
-(MiniStack)". Reach it only through a dedicated profile, under a name used nowhere else, that carries
+workspace; the setup is `user/workspace/aws-emulator.md` in the guide, "Try AWS code against a
+local emulator". Reach it only through a dedicated profile, under a name used nowhere else, that carries
 its `endpoint_url` and dummy keys (`aws --profile ministack …`), never by exporting dummy keys. Name
 that profile on every command: where the workspace's own role is handed back, or on the native
 runtime, a command that leaves it out runs against real AWS. A client that does not read

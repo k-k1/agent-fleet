@@ -63,7 +63,7 @@ which is easy to mistake for "there is nothing assigned to me".
 (`pullrequest:write` on the OAuth app), which means a tenant administrator widening the scope
 and **every member re-authorising**; reading was added without it on purpose. The Console
 offers the button on a Bitbucket row only when the connection is known to hold that scope, and
-otherwise Agent Fleet only reads ([15](../member/15-external-services.md)). Bitbucket issues are
+otherwise Agent Fleet only reads ([Bitbucket scopes](../user/integrations/bitbucket-cli.md#scopes)). Bitbucket issues are
 never listed, so only pull requests can be commented on.
 
 ## Issue trackers are a separate axis

@@ -66,7 +66,7 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
 - Pressure: `cat /sys/fs/cgroup/memory.events` — rising `high`/`max`/`oom` means you are hitting
   the cap (the kernel throttles, then OOM-kills; a build dying with code 137 = OOM-killed).
 - Cores: `nproc` (or `cat /sys/fs/cgroup/cpu.max`).
-- The Console shows the same live (WS-bar resource chip, Settings > Environment). Near the cap,
+- The Console shows the same live (WS-bar resource chip, Settings > Machine). Near the cap,
   apply the build rules in `/usr/local/share/agent-fleet/notes/build.md`.
 
 ## Disk
@@ -119,7 +119,7 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   (Postgres) / `AF_DB_URL_MYSQL`; or pass `"$(af-db url)"` as your own variable. Client:
   `workspace-agent install-pg-client`. **Stop before heavy builds** (`af-db down`) — Postgres
   holds ≈ 47 MB and MySQL ≈ 226 MB of cgroup memory; both idle-stop after 30 min. Manage
-  both from the **Settings → Toolchains → Databases** card. For other DB servers (`sqlite3`,
+  both from the **Settings → Databases** tab. For other DB servers (`sqlite3`,
   `redis-cli`, …): run tests against a service the user provides, or skip and say so.
 - `ss`, `lsof`, `netstat` are **not installed**; probe a port with
   `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/`.

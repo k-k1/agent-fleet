@@ -2212,3 +2212,129 @@ export function movePreview(locale, name) {
     sizeBytes: 48213,
   };
 }
+
+// ---- user guide: images (SHOT_GALLERY, SHOT_IMAGE_SETTINGS) ---------------------------------
+// The image-generation pane's output folder as the gallery lists it (GET fs/tree with mtime, and
+// a subfolder card's cover and count). The pictures are the stub's colour swatches.
+export function galleryTree(p) {
+  const now = Math.floor(Date.now() / 1000);
+  const root = ".cache/agent-fleet/generated/console";
+  if (p === root) {
+    const pics = Array.from({ length: 11 }, (_, i) => ({
+      name: `image-17579${String(40 - i).padStart(2, "0")}00-1.png`,
+      type: "file",
+      size: 1_150_000 + i * 7_300,
+      mtime: now - 60 * (3 + i * 7),
+    }));
+    return {
+      path: p,
+      entries: [
+        { name: "trial", type: "dir", mtime: now - 120, images: 6, preview: [{ name: "image-1757939000-1.png", mtime: now - 120 }] },
+        ...pics,
+      ],
+    };
+  }
+  return null;
+}
+
+// The status a current Agent sends, for the Agents tab's provider order: the deployment's engine
+// row marked as such, then the two CLI routes.
+export function imagegenStatusLive(locale) {
+  const st = imagegenStatus(locale);
+  return {
+    ...st,
+    providers: [
+      ...st.providers.map((p) => ({ ...p, kind: "comfy", fleet: true })),
+      { id: "codex", kind: "codex", fleet: false, models: [] },
+      { id: "agy", kind: "agy", fleet: false, models: [] },
+    ],
+  };
+}
+
+// ---- user guide: the workspace pages (SHOT_WS_GUIDE in server.mjs) ----
+// A member's own EC2 box, measured while it runs: the machine tab's first group.
+const GIB = 1024 ** 3;
+export function wsGuideMachine() {
+  return {
+    runtime: "ecs-ec2",
+    running: true,
+    measured: {
+      arch: "arm64",
+      vcpu: 4,
+      mem_max: 14.5 * GIB,
+      mem_total: 16 * GIB,
+      disk_total: 100 * GIB,
+      instance_type: "m7g.xlarge",
+    },
+    declared: { instance_type: "m7g.xlarge", arch: "arm64", vcpu: 4, slot_mem_mib: 16384, home_gib: 100, dedicated: true },
+  };
+}
+
+// Node.js 22 and Temurin 21 installed and in use; Temurin 21 has a newer patch out, so the
+// Java row shows its update button.
+export function wsGuideToolchains() {
+  return {
+    timezone: "Asia/Tokyo",
+    tz_options: ["Asia/Tokyo", "UTC", "America/Los_Angeles", "Europe/London"],
+    node: "22",
+    node_options: ["system", "20", "22", "24"],
+    node_installed: ["22"],
+    node_versions: { 22: "v22.23.4" },
+    go: "system",
+    go_options: ["system"],
+    java: "21",
+    java_available: ["17", "21", "25", "corretto-17", "corretto-21"],
+    java_installed: ["21"],
+    java_versions: { 21: "21.0.11+10" },
+  };
+}
+
+export function wsGuideLatest(kind, major) {
+  if (kind === "jdk" && major === "21") return { major, current: "21.0.11+10", latest: "21.0.12+7", update_available: true };
+  if (kind === "node" && major === "22") return { major, current: "v22.23.4", latest: "v22.23.4", update_available: false };
+  return {};
+}
+
+// Postgres running with one working copy's database and one named database; MySQL never started.
+export function wsGuideDatabases() {
+  const sock = "/home/dev/.local/state/af-db/run/postgres-17";
+  const pg = (name) => ({
+    urlSocket: `postgres://postgres:demo-pass@/${name}?host=${sock}&port=5432&sslmode=disable`,
+    urlTcp: `postgres://postgres:demo-pass@127.0.0.1:5432/${name}?sslmode=disable`,
+  });
+  return {
+    engines: [
+      {
+        engine: "postgres",
+        major: "17",
+        installed: true,
+        state: "running",
+        version: "17.6",
+        rssBytes: 47_000_000,
+        port: 5432,
+        datadir: "/home/dev/.local/state/af-db/postgres-17/data",
+        autostart: false,
+        databases: [
+          { name: "af_webshop_3f9a1c", dir: "/home/dev/repos/webshop", ...pg("af_webshop_3f9a1c") },
+          { name: "scratch", dir: "", ...pg("scratch") },
+        ],
+        lastUsedAt: "2026-11-08T09:12:00Z",
+        lastError: "",
+      },
+      {
+        engine: "mysql",
+        major: "8.4",
+        installed: false,
+        state: "absent",
+        version: "",
+        rssBytes: 0,
+        port: 0,
+        datadir: "",
+        autostart: false,
+        databases: [],
+        lastUsedAt: "",
+        lastError: "",
+      },
+    ],
+  };
+}

@@ -21,7 +21,7 @@ answer must pass, and the model as a plug-in.
 ## Roles, not models
 
 The engine knows two roles: `small` (the default for every operation) and `large` (the escalation for
-supersede and merge, `Pipeline`). A config file (`models.example.json`) maps each role to a candidate
+supersede and merge, `Pipeline`). The shipped config (`models.json`) maps each role to a candidate
 `<runner>:<model id>`; a runner is an argv template with `{model}` in it (`claude` and `codex` are built in,
 a session runner such as `agy-session` is replay-only). No model ID is in the code (`TestNoModelIDsInCode`),
 so a lineup change is a data change, and tests use fake runners only.
@@ -44,11 +44,11 @@ nothing is applied, and the other role's model is never tried in its place (`Tes
 
 ## The bar is data
 
-`bar.example.json` holds, per operation, the maximum wrong changes, the maximum invalid or failed answers,
+`bar.json` holds, per operation, the maximum wrong changes, the maximum invalid or failed answers,
 the minimum fix rate (correct answers, or applied patches for `patch-call`) and, for `patch-call`, the
 maximum lost facts; and which operations each role must pass. `report.md` shows pass/fail per candidate per
-operation and suggests the cheapest passing candidate for each role. The values in the example are a
-starting proposal, not decisions.
+operation and suggests the cheapest passing candidate for each role. The shipped values were adopted by the member on 2026-11-09 as proposed
+(ADR 0130, note of that date); the roles in `models.json` are `small` = `claude:haiku`, `large` = `claude:sonnet`.
 
 ## Gold-set evaluation
 
@@ -82,6 +82,16 @@ cases also lost facts and new facts missing. Must-survive items are prose, so th
 (see `internal/goldset/facts.go`) and is calibrated against the member's own reference patches, which must
 lose nothing. Tier agreement is reported as a secondary measure only.
 
+## Tuning the classify prompt without overfitting
+
+`-split tune|heldout|all` (live runs and `score`) keeps one deterministic half of the gold set: a case is TUNE
+or HELD-OUT by the low bit of the first byte of SHA-256(case id), so the halves cannot be chosen by looking at
+scores and survive additions to the set. Iterate on `tune` only, then report both halves; use one `-out` per
+prompt version and split (a rerun reuses answers already there, whatever the prompt). Run-to-run noise on the
+small halves is several cases, so a single run proves little; the prompt must stay generic (no memory names,
+paths or phrases from the private set). `score` refuses two answers for the same (case, call), within a file or
+across files, rather than letting the last one win.
+
 ## Replay mode (models that can only answer as sessions)
 
 ```
@@ -90,7 +100,7 @@ goldeval score -cases cases.jsonl -inputs inputs.jsonl -out run/full \
   -answers run/answers-X-classify.jsonl -answers run/answers-X-patch.jsonl -tier <runner>:<model id>
 ```
 
-`export-prompts` writes two files, one line per call, `{case_id, call, prompt, schema}`, each prompt being the
+`export-prompts` writes two files (`-split tune` writes only the TUNE half: use it while iterating, so the session never sees the held-out prompts), one line per call, `{case_id, call, prompt, schema}`, each prompt being the
 exact text the one-shot runner sends (it already asks for one JSON object and nothing else):
 
 - `prompts-classify.jsonl`: all classify calls and nothing else.

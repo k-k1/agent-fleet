@@ -2,6 +2,10 @@
 // one warning that applies to all of them, and copy-ready app configuration for the common
 // stacks (templates live in devIdpSnippets.ts). The client secret is deliberately absent: the
 // API never returns it, and no snippet writes it as a value.
+import type { WsSettings } from "../api.ts";
+
+/** The slice of the ws-settings reply this section reads. */
+export type DevIdpAu = Pick<WsSettings, "devIdpIssuer" | "devIdpClientId" | "previewPorts" | "previewUrls">;
 import { useId, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -22,7 +26,7 @@ import {
 // `# …` / `// …` lines read as comments; nothing fancier, so a line never gets mis-coloured.
 const isComment = (s: string) => /^\s*(#|\/\/)/.test(s);
 
-export function DevIdpSection({ au, rotate }: { au: any; rotate: () => void }) {
+export function DevIdpSection({ au, rotate }: { au: DevIdpAu; rotate: () => void }) {
   const tr = useT();
   const toast = useToast();
   // "Copied" only after the clipboard accepted it: the API is absent outside secure contexts
@@ -84,7 +88,7 @@ function Examples({
   clientId,
   copy,
 }: {
-  au: any;
+  au: DevIdpAu;
   issuer: string;
   discovery: string;
   clientId: string;
