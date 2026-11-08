@@ -326,3 +326,64 @@ func TestAgentMemoryLintShortRefsAndIgnoredPathsByRevision(t *testing.T) {
 		}
 	}
 }
+
+// Proposals over a real repository: a removed AF_* key is proposed with its commit and a fully
+// superseded ADR with its status line, both read from origin/main (the working copy still has the
+// key). Rejecting one is remembered by the list file; a save that omits "rejected" keeps it.
+func TestAgentMemoryLintProposesRetiredTermsAndRemembersRejections(t *testing.T) {
+	_, clone, _ := agentMemTestEnv(t)
+	agentMemLintOrigin(t, clone, map[string]string{
+		"deploy/env.example": "AF_LEGACY_SWITCH=1\nAF_KEPT_KEY=1\n",
+		"docs/decisions/0027-operator-interaction-graph.md": "# 0027\n\n- Status: **superseded (2026-09-20, by 0096)**.\n",
+		"docs/decisions/0130-cultivated-memory.md":          "# 0130\n\n- Status: accepted\n",
+	})
+	agentMemLintOrigin(t, clone, map[string]string{"deploy/env.example": "AF_KEPT_KEY=1\n"})
+	// The working copy brings the key back: only origin/main counts.
+	if err := os.WriteFile(filepath.Join(clone, "deploy", "env.example"), []byte("AF_LEGACY_SWITCH=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := agentMemCallerT(t, "claude-main")
+	agentMemLintSaveBody(t, c, "m", "set AF_LEGACY_SWITCH and AF_KEPT_KEY; the operator interaction graph is gone")
+	AgentMemoryEnabled = func() bool { return false }
+	terms := func() map[string][]string {
+		code, b := memberDo(t, http.MethodGet, "/agents/memory/entries/lint-terms", nil)
+		out := map[string][]string{}
+		if code != http.StatusOK || json.Unmarshal(b, &out) != nil {
+			t.Fatalf("terms: %d %s", code, b)
+		}
+		return out
+	}
+	byTerm := func() map[string]memorylint.Proposal {
+		out := map[string]memorylint.Proposal{}
+		for _, p := range agentMemLintGet(t, "scope=project&project="+c.Project.ID).Report.Proposals {
+			out[p.Term] = p
+		}
+		return out
+	}
+	got := byTerm()
+	if len(got) != 2 || got["AF_LEGACY_SWITCH"].Evidence == "" || !strings.Contains(got["operator interaction graph"].Evidence, "superseded") {
+		t.Fatalf("proposals = %+v", got)
+	}
+	if len(terms()["terms"]) != 0 {
+		t.Fatal("a proposal entered the list by itself")
+	}
+	if code, b := markedDoJSON(t, "/agents/memory/entries/lint-terms", `{"terms":[],"rejected":["AF_LEGACY_SWITCH"]}`); code != http.StatusOK {
+		t.Fatalf("reject: %d %s", code, b)
+	}
+	// A later save that only edits terms keeps the rejection; accepting adds to the list.
+	if code, b := markedDoJSON(t, "/agents/memory/entries/lint-terms", `{"terms":["operator interaction graph"]}`); code != http.StatusOK {
+		t.Fatalf("accept: %d %s", code, b)
+	}
+	if got := byTerm(); len(got) != 0 {
+		t.Errorf("rejected/accepted terms proposed again: %+v", got)
+	}
+	if r := terms()["rejected"]; len(r) != 1 || r[0] != "AF_LEGACY_SWITCH" {
+		t.Errorf("rejected = %v", r)
+	}
+	if code, _ := markedDoJSON(t, "/agents/memory/entries/lint-terms", `{"terms":[],"rejected":[]}`); code != http.StatusOK {
+		t.Fatal("clear")
+	}
+	if len(byTerm()) != 2 {
+		t.Errorf("an empty rejected list should clear the rejections")
+	}
+}

@@ -332,3 +332,87 @@ func TestParseIgnorePatterns(t *testing.T) {
 		}
 	}
 }
+
+type proposalRepo struct {
+	fileRepo
+	keys    []RemovedKey
+	keysErr error
+}
+
+func (r proposalRepo) RemovedKeys() ([]RemovedKey, error) { return r.keys, r.keysErr }
+
+func (r proposalRepo) FindSymbols(syms []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, s := range syms {
+		out[s] = r.symbols[s]
+	}
+	return out, nil
+}
+
+var proposalFixture = proposalRepo{
+	fileRepo: fileRepo{
+		fakeRepo: fakeRepo{
+			paths: []string{
+				"docs/decisions/0027-operator-interaction-graph.md",
+				"docs/decisions/0027-operator-interaction-graph.ja.md",
+				"docs/decisions/0117-background-memory-review.md",
+				"docs/decisions/0130-cultivated-memory.md",
+				"docs/decisions/0140-unused-old-thing.md",
+				"docs/decisions/0150-single.md",
+			},
+			symbols: map[string]bool{"AF_STILL_HERE": true},
+		},
+		files: map[string]string{
+			"docs/decisions/0027-operator-interaction-graph.md": "# 0027. x\n\n- Status: **superseded (2026-09-20, by [0096](0096-fleet-session-graph.md))**. Only Phase 0.\n",
+			"docs/decisions/0117-background-memory-review.md":   "# 0117\n\n- Status: **accepted, mostly superseded by [0130](x.md)**\n",
+			"docs/decisions/0130-cultivated-memory.md":          "# 0130\n\n- Status: accepted\n",
+			"docs/decisions/0140-unused-old-thing.md":           "# 0140\n\n- Status: superseded by 0141\n",
+			"docs/decisions/0150-single.md":                     "# 0150\n\n- Status: superseded by 0151\n",
+		},
+	},
+	keys: []RemovedKey{
+		{"AF_OLD_SWITCH", "abc1234", "remove the old switch"},
+		{"AF_STILL_HERE", "def5678", "touch it"},
+		{"AF_UNUSED_KEY", "0123abc", "drop"},
+	},
+}
+
+// Proposals carry evidence and are only the candidates a memory uses; a partly superseded ADR,
+// a key still in the tree, an unused candidate, a one-word name, a listed or a rejected term
+// are not proposed.
+func TestRetiredTermProposals(t *testing.T) {
+	mems := []Memory{
+		{"a", "the Operator Interaction Graph view; set AF_OLD_SWITCH=1 and AF_STILL_HERE"},
+		{"b", "background memory review is mostly alive; AF_OLD_SWITCH_V2 is another key; single"},
+	}
+	rep := Lint(mems, Options{}, proposalFixture)
+	if len(rep.Proposals) != 2 {
+		t.Fatalf("proposals = %+v", rep.Proposals)
+	}
+	p0, p1 := rep.Proposals[0], rep.Proposals[1]
+	if p0.Term != "AF_OLD_SWITCH" || p0.Kind != ProposalRemovedKey || !strings.Contains(p0.Evidence, "abc1234") || len(p0.Memories) != 1 || p0.Memories[0] != "a" {
+		t.Errorf("key proposal = %+v", p0)
+	}
+	if p1.Term != "operator interaction graph" || p1.Kind != ProposalSupersededADR ||
+		!strings.Contains(p1.Evidence, "ADR 27") || !strings.Contains(p1.Evidence, "superseded (2026-09-20") {
+		t.Errorf("adr proposal = %+v", p1)
+	}
+	// Listed and rejected terms drop out, case-insensitively; a proposal never edits the list.
+	rep = Lint(mems, Options{RetiredTerms: []string{"af_old_switch"}, RejectedTerms: []string{"Operator Interaction Graph"}}, proposalFixture)
+	if len(rep.Proposals) != 0 {
+		t.Errorf("listed/rejected still proposed: %+v", rep.Proposals)
+	}
+	// A repository that cannot name its history or read files proposes nothing and says why.
+	bad := proposalFixture
+	bad.keysErr = errors.New("git log timed out")
+	bad.fileRepo.err = errors.New("boom")
+	rep = Lint(mems, Options{}, bad)
+	if len(rep.Proposals) != 0 || len(rep.Skipped) < 2 {
+		t.Errorf("proposals = %+v skipped = %v", rep.Proposals, rep.Skipped)
+	}
+	// Without the optional interfaces nothing is proposed and nothing is skipped.
+	rep = Lint(mems, Options{}, proposalFixture.fakeRepo)
+	if len(rep.Proposals) != 0 || len(rep.Skipped) != 0 {
+		t.Errorf("plain repo: %+v %v", rep.Proposals, rep.Skipped)
+	}
+}

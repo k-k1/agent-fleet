@@ -21,3 +21,7 @@ member/16-cloud-accounts.md#running-a-command-as-a-profile	ref/cli/af-gcloud-exe
 member/16-cloud-accounts.md#logging-in	user/integrations/gcloud.md#log-in
 member/16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar	user/integrations/gcloud.md#the-google-cloud-badge-in-the-ws-bar
 member/16-cloud-accounts.md#when-it-stops	user/integrations/gcloud.md#when-it-goes-wrong
+member/20-settings.md#mcp-servers-used-by-sessions	user/integrations/mcp-servers.md
+member/20-settings.md#issue-tracker	user/integrations/issue-tracker.md
+member/15-external-services.md#use-jira-in-a-session	user/integrations/jira.md
+member/15-external-services.md#use-confluence-in-a-session	user/integrations/confluence.md

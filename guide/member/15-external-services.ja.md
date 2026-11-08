@@ -8,6 +8,8 @@ audience: "セッションをワークスペースの外のサービスとつな
 
 この章は、セッションから使う外部サービスを扱います。`gh`・`bkt`・`jira`・`confluence` の CLI、ほかのログイン済み CLI、Discord / Slack のチャット連携、監視ツールを会話につなぐ方法です。AWS と Google Cloud は [16 クラウドのアカウント](16-cloud-accounts.ja.md) にあります。
 
+Jira と Confluence をセッションで使う方法は [Jira を使う](../user/integrations/jira.ja.md) と [Confluence を使う](../user/integrations/confluence.ja.md) にあります。
+
 ## セッションで `gh` と `bkt` を使う
 
 GitHub を接続していれば、セッションの `gh` はサインイン済みです。Bitbucket Cloud
@@ -37,135 +39,6 @@ git と同じ要領で更新されます。
   自分で設定してください（`bkt auth login`、または `BKT_HOST` と `BKT_TOKEN`）。設定があると
   その場合 `bkt` は、保存済みの接続を使わず、あなたの設定どおりに動きます。
 
-## セッションで `jira` を使う
-
-Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jira` はどのセッションでも、どの
-エージェントでも使えます。`jira init` でトークンを聞かれることも、ログインもありません。
-保存済みの接続を使い、OAuth 接続は呼び出しのたびに更新されるので、トークンの期限切れで
-セッションを再起動する必要はありません。課題の表示・一覧・作成・編集・コメント・遷移が
-できます: `jira issue view PROJ-1`、`jira issue list -p PROJ`、`jira issue create -p PROJ`、
-`jira issue comment add PROJ-1 "…"`、`jira issue move PROJ-1 "In Progress"`。
-
-- **課題の作成**: `jira issue create -p PROJ …` は `jira init` なしで使えます。`-p` でプロジェクトを
-  指定してください（または下記の既定プロジェクトを設定します）。必要な課題タイプを `jira` が判断できない
-  ときは 1 行のヒントを出し、`invalid issue types in config` で失敗します。その場合はヒントが示す
-  `jira init` を、表示されたとおりに実行してください（正確なボード名は `jira board list -p PROJ` で
-  分かります）。
-- **親課題**: `jira issue create … -P PARENT-1`（または `--parent`）で親（エピックやサブタスクの親）を
-  指定できます。設定にエピックリンクがないと、`jira` 単体では親がエラーなしで捨てられることがあり、ラッパーは
-  標準の親フィールドで送るよう設定を調整します。すべての種類のプロジェクトでの動作はまだ確認できて
-  いないため、作成された課題の親を必ず確認してください。設定を調整できないとき（`-c` のファイルなど）は、
-  親が付かない可能性をラッパーが警告します。
-- **担当者の指定**: 担当者の検索（`jira issue assign`、および `issue edit`・`create`・`move` の
-  `-a` / `--assignee`）は、既定プロジェクトか `-p` のプロジェクトを対象にするため、
-  プロジェクトが必要です。既定プロジェクトがない（まだ `jira init` していない）ときは、
-  `jira issue assign PROJ-1 <ユーザー>` が課題キーの接頭辞からプロジェクトを補います。
-  ほかのコマンドは 1 行のヒントを出します: `-p PROJ` を付けるか、
-  `jira init --project PROJ --board "PROJ board"` を実行してください。明示した `-p` は上書きしません。
-- **プロジェクト・ボード・スプリント・エピック**: 一度 `jira init --project PROJ --board "PROJ board"`
-  を実行してください（前の設定を置き換えるときは `--force` を付けます）。既定のプロジェクト・
-  ボード・課題タイプ・エピック用フィールドが書き込まれ、`jira sprint list`・エピック系のコマンドが
-  使えるようになります。質問はされません。実行しない場合は、コマンドごとに `-p PROJ` を
-  付けてください。2 つ目のボード（や、最初の設定が対象にしていないプロジェクト）には、`jira` がファイルを置くフォルダに
-  専用の設定ファイルを作ります:
-  `jira init -c ~/.config/agent-fleet/jira/other-board.yml --project PROJ --board "Other board"`
-  で作り、`jira -c ~/.config/agent-fleet/jira/other-board.yml …` で使います。接続が使われるのはそのフォルダの
-  設定ファイルだけで、ほかの場所のものは接続なしで動きます。（別プロジェクトの課題タイプなどで `jira` 自身が
-  コマンドを提案したときは、表示どおりに実行してください。）
-- **コメントや説明文の Markdown**: `comment add` と、`issue create`（`-b`、`-T`、パイプ）・`issue edit -b`
-  の説明文は、Agent Fleet が Markdown を Jira の文書形式に変換して送ります。日本語にくっついた `code` や
-  **太字**、段落の直後のリスト、表（見出し行 `| a | b |` の次に区切り行 `|---|---|`）も、書いたとおりに表示されます（リストや引用の中の表は
-  Jira が受け付けないので、1 行ずつのテキストになります）。課題は作成できたのに説明文を設定できなかった
-  ときは、`jira` がそう表示して終了コード 3 で終わります。課題はもうあるので作り直さず、
-  `jira issue edit PROJ-1 --no-input -b "…"` で説明文を設定してください。`issue edit -b` も、説明文だけ設定できな
-  かったときは終了コード 3 で終わります（ほかの変更は反映済みなので、その `issue edit` だけやり直します）。作成時に説明文が必須の課題タイプでは、
-  `create` は Jira CLI 自身の変換で送り、その旨を表示します。`--no-input` なしの対話的な端末、`--help`、
-  `--web`、`--debug`、自分で用意した設定では、これまでどおり Jira CLI がそのまま使われます。この変換を
-  まったく使わないときは `AF_JIRA_ADF=0` を設定してください。
-- **Atlassian への通信が不安定なとき**: 読み取り系のコマンド（`issue view` / `issue list`、`board`・`sprint`・
-  `epic`・`project` の `list`、`me`）は、接続のリセットやタイムアウトの後に最大 2 回やり直され、最後の
-  実行の出力だけが表示されます。変更を伴うコマンドは決してやり直されないので、`issue create` や
-  `comment add` が失敗した、または時間切れになったら、再実行する前に Jira を確認してください
-  （例: JQL `project = PROJ AND creator = currentUser() AND created >= -15m`）。`comment edit` と `comment delete` は
-  自分でやり直し、「probably already deleted」と出たときは削除は通っています。
-  端末のない実行では、応答のない呼び出しは待ち続けずに止められます。変更を伴うコマンドは約 2 分、
-  読み取り系は 1 回あたり約 45 秒で、読み取り系は上のとおりやり直されます。変更を伴うコマンドは
-  終了コード 124 で、課題やコメントが作られている可能性があると表示します（`issue create` では、直近 15 分以内に
-  自分が同じ件名で作成した課題を「possible matches」として併記し、見つからなければ「no matching issue found」と出します。
-  終了コードは 124 のままです）。認可の期限切れや取り消しのときは、API トークンを求める代わりに
-  「the Jira connection is unusable」と表示するので、設定で Jira を接続し直してください。
-  端末ではない出力では、課題へのリンクがお使いの Jira サイトを指します。
-- **代わりに Atlassian MCP ツールを使う**: `jira` が既定なのは、どのエージェントでも使え、トークンも
-  自動で更新されるからです。MCP コネクタは 1 つのエージェントにしか使えず、ログインが切れるとセッションの
-  再起動が要ります。MCP を優先したいときは、**⚙設定 →「エージェントへの指示」** に書いてください。例:
-  「Jira は `jira` CLI ではなく Atlassian MCP ツールを使うこと。」コネクタを持つエージェントはそれに従い、
-  持たないエージェントは `jira` を使い続けます。この一文がなければ、MCP ツールを使うのは CLI にできない
-  操作だけです。
-- **コメントの編集と削除**: `jira issue comment edit PROJ-1 10001 -b "…"` と
-  `jira issue comment delete PROJ-1 10001`。`jira` 本体にあるのは `comment add` だけで、この 2 つは
-  Agent Fleet が足したものです。`edit` は新しい本文を `-b`、`-T FILE`（`-` は標準入力）またはパイプで
-  受け取り、Markdown を Jira 用に変換して送るので、0.36.0 より前に崩れて投稿されたコメントの直しにも使えます。
-  コメント ID は `jira issue view PROJ-1 --raw` の `fields.comment.comments[].id` で分かります。
-  Jira で変更できるのは通常、自分のコメントだけです（他人のものは、コメント管理の権限がなければ 403）。エージェントには、そのセッションで
-  自分が投稿したコメントか、あなたが指名したコメントだけを編集・削除するよう伝えてあります。
-  使えるのは保存済みの接続だけで、`--debug`、`JIRA_API_TOKEN`、自分で用意した設定では
-  `jira` 本体が「そのコマンドはない」と答えます。
-- **`--debug` では接続を使いません**: jira のデバッグ出力は認可ヘッダーまで表示するので、
-  デバッグ実行には接続のトークンを渡しません。
-- **変更できる範囲**は接続の権限どおりです。CLI はあなたとして Jira に書き込むので、課題の
-  作成・編集・遷移にはそれが許されたアカウントが必要です。
-- **OAuth でボード・スプリント・エピックを使う**には、テナントの Jira アプリに Jira Software の
-  スコープが要ります。
-  テナント管理者が有効にしたあと、あなたが一度 **Jira を接続し直して**
-  ください。それまでは、これらのコマンドと `jira init` は認可エラーになります。設定 > 課題管理の
-  Jira カードに「ボード・スプリント・エピック: 利用できません」と出て、`jira` もそれらの
-  コマンドの前に同じ説明を表示します。また、CLI が
-  表示するリンクはサイトではなく `api.atlassian.com` を指します。
-- **Jira Data Center**（またはほかの Jira）は設定画面からは接続できません。自分で設定して
-  ください（自分の `--server` を付けた `jira init`、自分で用意した設定ファイル、
-  または `JIRA_API_TOKEN`）。その場合 `jira` は、保存済みの接続を使わず、あなたの設定どおりに動きます。
-
-## セッションで `confluence` を使う
-
-Jira を OAuth または API トークンでつなぐ（設定 > **課題管理**）と、Confluence の CLI である
-`confluence` が、どのエージェントのセッションでも `confluence init` もログインもなしで動きます。
-`jira` と同じ Atlassian の接続を使い、期限が近づけば更新するので、そのためにセッションを再起動する
-必要はありません: `confluence search "リリースノート"`、`confluence read PAGE_ID`、`confluence space-lookup KEY`、
-`confluence create "タイトル" SPACE --content "…"`、`confluence update PAGE_ID …`。
-そのほかは `confluence --help` で確認できます。
-
-- **OAuth では Confluence のスコープが要ります。** テナント管理者が有効にします（Atlassian アプリに
-  スコープを追加したあと、テナントの Jira カードの *Confluence* にチェックを入れます）。そのあと
-  あなたが一度 **Jira を接続し直して**ください。それまで `confluence` は、Atlassian の認可に
-  Confluence のスコープがないという 1 行を表示して、実行しません。Jira はそのまま使え、設定 > 課題管理に
-  「Confluence: 利用できません」と出ます。API トークンの接続には追加の作業は要りません。
-- **ページ操作には新しいページ用スコープが要ります。** Confluence CLI が `read`・`info`・`create`・
-  `create-child`・`update`・`edit`・`space-lookup` で使う旧ページ API は Atlassian で廃止されたため、
-  これらはワークスペース側が Confluence の現行（v2）API で処理します。コマンドの書き方と出力の形は
-  同じです（読み書きとも `--format markdown` が使え、日本語・絵文字・表・リスト、日本語に隣接する
-  `code` や **太字** もそのまま保たれます）。従来のスコープに加えて、細粒度スコープ `read:page`・
-  `write:page`・`read:space` が必要です。接続がそれより前のものだと、コマンドはその旨を 1 行表示し、
-  設定 > 課題管理には「Confluence: 検索とコメントは使えますが…」と出ます。テナント管理者が Atlassian アプリに
-  スコープを追加したあと、あなたが **Jira を接続し直して**ください。検索・コメント・添付は影響を受けません。
-- **読み取りは不安定な回線でもやり直します。** 読み取り系のコマンド（`search`・`read`・`info`・`spaces`・
-  `find`・`children`・`comments`・版・プロパティ、ダウンロードしない `attachments`）は、接続のリセットや
-  タイムアウトのあと最大 2 回やり直され、最後の実行の出力だけが表示されます。出力が端末でないとき、
-  1 回の上限は `AF_CONFLUENCE_TIMEOUT` 秒（既定 60、`0` = 無制限）です。
-- **書き込みは 1 回だけ送ります。** 作成や更新を送ったあとで通信が切れた場合、再送せず「結果が不明」と
-  表示します。繰り返す前にページを確認してください。他の人の編集とぶつかった更新はバージョン競合として
-  拒否され、何も上書きしません。
-- **旧エンドポイントのままのコマンド:** `move`・`delete`・`children`・`find`・`spaces`・`copy-tree`・
-  ページの版・プロパティ（front matter）。フォルダは別扱いで、`create --type folder` はこの経路が拒否し、フォルダの子の一覧は CLI 自身の v2 呼び出しで `read:hierarchical-content:confluence`（af は求めない）が要ります。Confluence CLI が新 API に対応するまで「410 …
-  removed」で失敗することがあります。
-- **変更できる範囲**は、あなたの接続でできる範囲です。CLI はあなたとして書き込みます。
-- **あなた自身の設定は上書きしません。** `CONFLUENCE_DOMAIN`・`CONFLUENCE_API_TOKEN`（ほか、ホストや
-  認証情報を決める `CONFLUENCE_*` 変数）を設定した、`--profile` を付けた、`confluence init` を実行した
-  （`~/.config/confluence-cli` に `config.json` がある）場合、`confluence` は保存済みの接続を使わず、
-  あなたの設定どおりに動きます。Confluence Data Center はこの方法で設定します。
-- **認可が期限切れ・取り消し**のときは、CLI 自身の「`confluence init` を実行してください」ではなく、
-  設定で Jira を接続し直すよう伝える 1 行を表示します。
-- CLI が表示するページのリンクは、あなたの Confluence サイトを指します。
-
 ## サインイン済みの CLI
 
 次のコマンドは、セッションでも端末でも、どのエージェントでも、設定でつないだ接続を使います。端末でログインする
@@ -176,15 +49,15 @@ Jira を OAuth または API トークンでつなぐ（設定 > **課題管理*
 | `git` | **Git ホスティング**（GitHub、Bitbucket） | [06](06-code.ja.md#git-プロバイダを接続する) |
 | `gh` | **Git ホスティング**の GitHub | [15](15-external-services.ja.md#セッションで-gh-と-bkt-を使う) |
 | `bkt` | **Git ホスティング**の Bitbucket Cloud（bitbucket.org） | [15](15-external-services.ja.md#セッションで-gh-と-bkt-を使う) |
-| `jira` | **課題管理**の Jira | [15](15-external-services.ja.md#セッションで-jira-を使う) |
-| `confluence` | **課題管理**の Jira（同じ Atlassian 接続） | [15](15-external-services.ja.md#セッションで-confluence-を使う) |
+| `jira` | **課題管理**の Jira | [Jira を使う](../user/integrations/jira.ja.md) |
+| `confluence` | **課題管理**の Jira（同じ Atlassian 接続） | [Confluence を使う](../user/integrations/confluence.ja.md) |
 | `af-aws-exec --profile <名前> -- <コマンド>` | **AWS プロファイル/SSM**。プロファイルの**ログイン**のあと | [af-aws-exec](../ref/cli/af-aws-exec.ja.md) |
 | `af-gcloud-exec --profile <名前> -- <コマンド>` | **Google Cloud**。プロファイルの**ログイン**のあと | [af-gcloud-exec](../ref/cli/af-gcloud-exec.ja.md) |
 
 エージェントには、Bitbucket では Bitbucket や Atlassian の MCP サーバーではなく `bkt` を、Jira では既定で `jira` を使うよう
 伝えてあります。CLI は呼び出しのたびに保存済みの接続を読み、期限が近ければ更新しますが、MCP コネクタはログインが切れると
 セッションの再起動が必要になるためです。Jira で Atlassian MCP ツールを優先させたいときは
-[15](15-external-services.ja.md#セッションで-jira-を使う)（「代わりに Atlassian MCP ツールを使う」）を見てください。
+[Jira を使う](../user/integrations/jira.ja.md#atlassian-の-mcp-ツールを使わせたいとき) を見てください。
 
 ## Discord / Slack と連携する（チャットブリッジ）
 
@@ -249,7 +122,7 @@ AMG のトークンの有効期限は**最長 30 日**です。切れたら新�
 ### その他のツール（Zabbix など）
 
 カードのないツール（Zabbix や、ターミナル（CLI）セッション専用の Grafana / PagerDuty / CloudWatch サーバーなど）は、
-設定 > 接続 > [MCP サーバー（セッションで使う）](20-settings.ja.md#mcp-サーバーセッションで使う) に MCP サーバーとして登録します。**詳細設定**の
+設定 > 接続 > [MCP サーバー（セッションで使う）](../user/integrations/mcp-servers.ja.md#詳細設定) に MCP サーバーとして登録します。**詳細設定**の
 **対象**で、ターミナル（CLI）などのエージェントセッションなら**セッション**（次に起動するセッションから使えます）、チャットなら
 **アシスタント**を選びます。アシスタントの場合は、さらにアシスタントの編集フォームの「MCP サーバー（任意）」で選びます。
 編集できるのは自分で作ったアシスタントだけで、組み込みのもの（SRE アシスタント・フリート・オペレーター・Agent Fleet アシスタント）は

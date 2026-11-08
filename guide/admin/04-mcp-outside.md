@@ -16,7 +16,7 @@ Tenant settings → **"Operations → MCP distribution"** distributes an MCP ser
 the tenant.
 A distributed server appears in each member's ⚙ Settings → Connections → MCP servers (used by sessions) labelled **tenant**,
 ready to use from their assistants and sessions (what they see:
-[member/20 Settings](../member/20-settings.md#mcp-servers-used-by-sessions)).
+[Add an MCP server to your sessions](../user/integrations/mcp-servers.md)).
 
 ### Only remote (HTTP) can be distributed
 
@@ -49,7 +49,7 @@ is offered a token-only field; otherwise your token is stored encrypted and show
 `Bearer ***`. **OAuth** distributes no credential at all, so the credential choice disappears and
 no header can be added: each member's row offers **Sign in**, the grant stays in that member's
 workspace, and the server reaches a member's sessions only after they have signed in (what they see:
-[member/20 Settings](../member/20-settings.md#mcp-servers-used-by-sessions)). Switching an existing distribution to
+[Add an MCP server to your sessions](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)). Switching an existing distribution to
 OAuth deletes the header values stored for it. Changing its URL, switching OAuth off or deleting it
 disconnects every member's sign-in at their next fetch. If you registered a client for Agent Fleet at the server's
 authorization server, enter its **client ID** and the **issuer** it is registered at; members' sign-ins then use it
@@ -144,5 +144,5 @@ and they can act on it as-is.
 ---
 
 - Previously: [03 Audit and usage](03-audit-usage.md)
-- What members see: [member/20 Settings](../member/20-settings.md#mcp-servers-used-by-sessions)
+- What members see: [Add an MCP server to your sessions](../user/integrations/mcp-servers.md)
 
