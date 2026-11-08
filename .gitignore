@@ -29,6 +29,9 @@ control-plane/control-plane
 workspace/agent/agent
 /tmp/af-cp
 
+# Gold-set run outputs hold memory text (model answers quote it); never commit them.
+memengine/run/
+
 # Python bytecode cache. scripts/docs-check.py は import されると生成する。
 __pycache__/
 *.pyc

@@ -182,6 +182,30 @@ jobs:
       - name: lint the product modules
         run: go run .
 
+  # The cultivated-memory engine (ADR 0130 decision 8): a separate module with no
+  # dependency on this repository. Its tests include the one that fails on any
+  # import of an agent-fleet package.
+  memengine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: memengine
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: memengine/go.mod
+          # No dependencies, so no go.sum and nothing to cache (see release-scan).
+          cache: false
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+
   control-plane:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}

@@ -1,0 +1,16 @@
+{
+  "roles": {
+    "small": "claude:haiku",
+    "large": "claude:sonnet"
+  },
+  "runners": {
+    "agy-session": {"session": true}
+  },
+  "candidates": [
+    {"tier": "claude:haiku", "cost": 1},
+    {"tier": "claude:sonnet", "cost": 3},
+    {"tier": "agy-session:gemini-3.8-flash-low", "cost": 1},
+    {"tier": "agy-session:gemini-3.8-flash-medium", "cost": 1.5},
+    {"tier": "agy-session:gpt-oss-120b-medium", "cost": 1}
+  ]
+}
