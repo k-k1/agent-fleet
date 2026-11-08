@@ -110,6 +110,10 @@ type tenantLimits struct {
 	// history into the workspace home volume for this many days. 0 keeps the
 	// standard short-lived /tmp history only.
 	TerminalHistoryRetentionDays int `json:"terminal_history_retention_days,omitempty"`
+	// PATMaxDays caps the lifetime of a PAT issued under this tenant, in days. The cap in force is
+	// the lower of this and the deployment's (AF_PAT_MAX_DAYS); it applies at issuance and on every
+	// use of an existing token, measured from the token's creation. 0 = no tenant cap.
+	PATMaxDays int `json:"pat_max_days,omitempty"`
 	// AllowEngineLLM and AllowEngineImage gate USE of the deployment's self-hosted
 	// engines (ADR 0084 decision 7) — unlike AllowEngineIngest above, which only gates
 	// adding models to the catalogue. These are *bool, not bool: the capability they

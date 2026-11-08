@@ -208,6 +208,10 @@ type ClientIP struct {
 	Forwarded bool
 }
 
+// MaxPATDays is the largest pat_max_days a tenant may set. pat.go's hardPATMaxDays is this value,
+// so the deployment cap and a tenant's can never be given different ceilings.
+const MaxPATDays = 3650
+
 // Limits is the read/input projection of the CP's tenantLimits (limits.go). It has
 // no json tags on purpose: this package never encodes it — StoreTenantLimits hands it
 // back to the CP, which marshals the real struct. The field set must stay identical,
@@ -231,6 +235,7 @@ type Limits struct {
 	AllowAgentSelfUpdate         bool
 	AllowEngineIngest            bool
 	TerminalHistoryRetentionDays int
+	PATMaxDays                   int
 	// AllowEngineLLM / AllowEngineImage: see limits.go's tenantLimits, the field's only
 	// encoder. *bool, not bool — nil means "nobody has said anything" and resolves to
 	// allowed (ADR 0084 decision 7).

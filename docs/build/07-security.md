@@ -442,7 +442,8 @@ data from a place they should not**.
   network rule everywhere; `ingestAdminFor` is bound to the selected tenant (`X-AF-Tenant`)
   instead of scanning every membership for a grant. *Using* a PAT on `/mcp` stays exempt, as
   above; what bounds it is revocation (membership deactivation, an allowlist removal noticed
-  on the token's next use) and the `AF_PAT_MAX_DAYS` lifetime cap.
+  on the token's next use) and the lifetime cap: the lower of `AF_PAT_MAX_DAYS` and the token's
+  tenant's `pat_max_days` (#3465), re-applied from the token's creation on every use.
 - **The workspace listener reads no forwarding header at all** (`AF_CP_INTERNAL_LISTEN`,
   [09 §9.3](09-deploy.md)). Its client is the connection's own address whatever the hop
   count says, and it removes the identity header and every forwarded-for/-host/-proto

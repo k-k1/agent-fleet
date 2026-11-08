@@ -159,6 +159,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
 			"allow_engine_ingest":             lim.AllowEngineIngest,
 			"terminal_history_retention_days": lim.TerminalHistoryRetentionDays,
+			"pat_max_days":                    lim.PATMaxDays,
 			// Per-tenant login rules (docs/log/61 §61.9.7), for the admin editor.
 			"allowed_providers": t.AllowedProviders,
 			"auto_join_domains": t.AutoJoinDomains,
@@ -1568,6 +1569,9 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		// tenant_admins may add to it.
 		AllowEngineIngest            bool `json:"allow_engine_ingest"`
 		TerminalHistoryRetentionDays int  `json:"terminal_history_retention_days"`
+		// Longest a PAT issued in this tenant may live, in days (lower of this and the
+		// deployment's AF_PAT_MAX_DAYS wins); 0 = no tenant cap.
+		PATMaxDays int `json:"pat_max_days"`
 		// Operator gate for USING the deployment's self-hosted engines (ADR 0084 decision
 		// 7), as opposed to AllowEngineIngest above which only gates adding to the
 		// catalogue. *bool, matching tenantLimits: nil resolves to allowed. This handler
@@ -1583,6 +1587,11 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 	}
 	if d := body.TerminalHistoryRetentionDays; d != 0 && d != 1 && d != 7 && d != 30 {
 		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_retention", "terminal history retention must be 0, 1, 7, or 30 days"})
+		return
+	}
+	if d := body.PATMaxDays; d != 0 && (d < 1 || d > MaxPATDays) {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_pat_max_days",
+			"pat_max_days must be 0 (no tenant cap) or between 1 and " + strconv.Itoa(MaxPATDays)})
 		return
 	}
 	// The int quotas were stored with NO validation at all. 0 means unlimited on every
@@ -1648,6 +1657,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
 		AllowEngineIngest:            body.AllowEngineIngest,
 		TerminalHistoryRetentionDays: body.TerminalHistoryRetentionDays,
+		PATMaxDays:                   body.PATMaxDays,
 		AllowEngineLLM:               body.AllowEngineLLM,
 		AllowEngineImage:             body.AllowEngineImage,
 	}
@@ -1699,6 +1709,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
 		"allow_engine_ingest":             body.AllowEngineIngest,
 		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,
+		"pat_max_days":                    body.PATMaxDays,
 		"allow_engine_llm":                body.AllowEngineLLM,
 		"allow_engine_image":              body.AllowEngineImage,
 	}
