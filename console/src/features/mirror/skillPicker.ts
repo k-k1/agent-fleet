@@ -98,25 +98,87 @@ export function collapseCli(items: SessionSkill[], showAll: boolean): { shown: S
   return { shown: own, hidden: items.length - own.length };
 }
 
-// filterSkills: order by prefix match > name substring > description substring. Case-insensitive.
-// Within one rank the user's own entries (project/user/foreign) come before the CLI-bundled
-// ones, so `/sim` lists a project "simulate" ahead of the shipped "simplify". An empty query
-// returns everything in that tier order (the API's name order within a tier).
+// Word separators in a skill name or a query: kebab, snake, dotted, namespaced ("plugin:skill")
+// and path-like names all split the same way, so the user never has to know which one a name uses.
+const WORD_SEPARATORS = /[-_.:/\s]+/;
+// One word inside a separator-free run: an acronym ("HTML" in "HTMLParser"), a capitalised or
+// lower-case word, a digit run, or a run of anything else (kana/kanji names stay one word each
+// instead of being dropped).
+const WORD_PIECE = /\p{Lu}+(?!\p{Ll})|\p{Lu}?\p{Ll}+|\p{N}+|[^\p{Lu}\p{Ll}\p{N}]+/gu;
+
+// splitWords: lower-cased words of a name or a query, split on separators and on camelCase /
+// PascalCase / digit boundaries. "issue-to-pr", "issue_to_pr" and "IssueToPr" all give
+// ["issue", "to", "pr"].
+export function splitWords(text: string): string[] {
+  const out: string[] = [];
+  for (const part of text.split(WORD_SEPARATORS)) {
+    for (const w of part.match(WORD_PIECE) ?? []) out.push(w.toLowerCase());
+  }
+  return out;
+}
+
+// wordMatchCost: does the query read as word prefixes of the name, in order? Each query segment
+// (the query split by splitWords, so a typed "-", "_" or capital letter is a word break) is
+// consumed as the prefixes of one or more successive name words, and a segment always starts on a
+// new word. Words may be skipped. So for "issue-to-pr": "iss-t", "iss_to", "issTo", "issto",
+// "itp", "to-pr" and "isspr" all match, while "iss-r" does not (no word after "issue" starts with
+// "r"). Returns the number of skipped words for the best split (0 = every word from the first one
+// on was used in order), or -1 for no match.
+// A plain subsequence ("every character somewhere, in order") is deliberately not accepted: with
+// short queries it lights up most of the list ("/iss" would hit every name with i…s…s), which is
+// the noise this matcher exists to avoid.
+export function wordMatchCost(name: string, query: string): number {
+  const words = splitWords(name);
+  const segs = splitWords(query);
+  if (segs.length === 0 || words.length === 0) return -1;
+  const memo = new Map<string, number>();
+  // best(si, ci, wi): least skipped words to match segs[si] from character ci on, using words
+  // from wi on. Names are a handful of words, so the memoised search is trivially small.
+  const best = (si: number, ci: number, wi: number): number => {
+    if (si === segs.length) return 0;
+    const key = si + ":" + ci + ":" + wi;
+    const hit = memo.get(key);
+    if (hit !== undefined) return hit;
+    const seg = segs[si];
+    let res = Infinity;
+    for (let j = wi; j < words.length; j++) {
+      const w = words[j];
+      // Try every prefix length of this word that the segment shares from ci.
+      for (let k = 1; k <= w.length && ci + k <= seg.length && w[k - 1] === seg[ci + k - 1]; k++) {
+        const rest = ci + k === seg.length ? best(si + 1, 0, j + 1) : best(si, ci + k, j + 1);
+        res = Math.min(res, j - wi + rest);
+      }
+    }
+    memo.set(key, res);
+    return res;
+  };
+  const cost = best(0, 0, 0);
+  return Number.isFinite(cost) ? cost : -1;
+}
+
+// filterSkills: order by name prefix > word-prefix match (wordMatchCost) > name substring >
+// description substring. Case-insensitive. Within one rank the user's own entries
+// (project/user/foreign) come before the CLI-bundled ones, so `/sim` lists a project "simulate"
+// ahead of the shipped "simplify"; inside the word-match rank fewer skipped words then win, so
+// "/t-p" lists "to-pr-helper" (nothing skipped) ahead of "issue-to-pr" (one word skipped).
+// An empty query returns everything in that tier order (the API's name order within a tier).
 export function filterSkills(skills: SessionSkill[], query: string): SessionSkill[] {
   const q = query.trim().toLowerCase();
   const tier = (s: SessionSkill): number => (isCli(s) ? 1 : 0);
-  const rank = (s: SessionSkill): number => {
-    if (!q) return 0;
+  const rank = (s: SessionSkill): { r: number; c: number } => {
+    if (!q) return { r: 0, c: 0 };
     const nm = s.name.toLowerCase();
-    if (nm.startsWith(q)) return 0;
-    if (nm.includes(q)) return 1;
-    if ((s.description || "").toLowerCase().includes(q)) return 2;
-    return -1;
+    if (nm.startsWith(q)) return { r: 0, c: 0 };
+    const c = wordMatchCost(s.name, query.trim());
+    if (c >= 0) return { r: 1, c };
+    if (nm.includes(q)) return { r: 2, c: 0 };
+    if ((s.description || "").toLowerCase().includes(q)) return { r: 3, c: 0 };
+    return { r: -1, c: 0 };
   };
   return skills
-    .map((s) => ({ s, r: rank(s), t: tier(s) }))
+    .map((s) => ({ s, ...rank(s), t: tier(s) }))
     .filter((x) => x.r >= 0)
-    .sort((a, b) => a.r - b.r || a.t - b.t)
+    .sort((a, b) => a.r - b.r || a.t - b.t || a.c - b.c)
     .map((x) => x.s);
 }
 
