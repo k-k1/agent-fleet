@@ -633,3 +633,11 @@ release.
   enters the list: accepting posts the member's list plus the term, rejecting records it in the same list file
   (`rejected`; a save that omits it keeps it), and both go through the existing member-origin `lint-terms` route.
   Not built: branches the default moved away from.
+
+- **2026-11-08 — imports ignore lifecycle writes when judging whether AF moved on (#3637).** The claude and muse
+  imports decide "the AF copy is still the import's own text" from the history (`agentMemImportStateOf`). A lifecycle
+  write is a later commit that moves the revision and the lifecycle fields, so the copy read as edited in AF: muse
+  reported `diverged`/`af_changed`, the automatic claude import `conflict`. The walk now skips a change whose
+  text, type, kinds, provenance and pin equal its parent's, so lifecycle fields (imports never take them from outside,
+  `kind` and `anchors` included) and the revision, `updated` and author a lifecycle write moves are not compared.
+  A body, description, type or pin change still counts. The preservation contract of decision 3 is unchanged.

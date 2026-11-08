@@ -238,8 +238,6 @@ func agentMemParseLifeField(l *agentMemLife, key, raw string, problems *[]string
 			l.SupersededBy = &s
 		} else if strings.TrimSpace(raw) != "" {
 			bad()
-		} else if strings.TrimSpace(raw) != "" {
-			bad()
 		}
 	default:
 		return false
