@@ -5,7 +5,9 @@ import {
   clearDirtyRegistryForTests,
   confirmDirtyNavigation,
   currentDirtyGuardRequest,
+  dirtyPaneIds,
   discardDirtyGuardRequest,
+  saveDirtyGuardRequest,
 } from "./dirtyRegistry.ts";
 import {
   getEditableFile,
@@ -16,7 +18,7 @@ import {
   type SuggestEditResult,
 } from "./api.ts";
 import { revisionOf } from "./buffer.ts";
-import { useFileEditor } from "./useFileEditor.ts";
+import { clearParkedEditorsForTests, useFileEditor } from "./useFileEditor.ts";
 
 vi.mock("./api.ts", () => ({
   getEditableFile: vi.fn(),
@@ -85,6 +87,7 @@ afterEach(async () => {
   renderer = null;
   editor = null;
   clearDirtyRegistryForTests();
+  clearParkedEditorsForTests();
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
 });
 
@@ -645,5 +648,94 @@ describe("useFileEditor AI suggestion (docs/log/44 §4)", () => {
     expect(code).toBeNull();
     expect(editor!.model!.suggestion).toBeNull();
     expect(editor!.suggesting).toBe(false);
+  });
+});
+
+// A tabbed cell renders only its selected view, so a tab switch unmounts the editor and
+// coming back mounts a new one for the same view id and file.
+describe("useFileEditor across unmount (tab switch)", () => {
+  const unmount = async () => {
+    await act(async () => {
+      renderer?.unmount();
+    });
+    renderer = null;
+  };
+
+  it("keeps an unsaved edit and its guard, and hands it back on remount", async () => {
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await unmount();
+    expect(dirtyPaneIds()).toEqual(["p1"]);
+
+    const back = await renderEditor();
+    expect(back.model?.content).toBe("mine\n");
+    expect(back.model?.dirty).toBe(true);
+    expect(dirtyPaneIds()).toEqual(["p1"]);
+  });
+
+  it("parks nothing for a clean editor", async () => {
+    await renderEditor();
+    await unmount();
+    expect(dirtyPaneIds()).toEqual([]);
+    const back = await renderEditor();
+    expect(back.model?.content).toBe(baseContent);
+  });
+
+  it("saves a parked edit from the guard and then lets it go", async () => {
+    vi.mocked(putFile).mockResolvedValue({ ok: true, path: initial.path, size: 5, revision: revisionOf("mine\n") });
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await unmount();
+
+    const decision = confirmDirtyNavigation("reload");
+    const request = currentDirtyGuardRequest()!;
+    await act(async () => {
+      await saveDirtyGuardRequest(request.id);
+    });
+    await expect(decision).resolves.toBe(true);
+    expect(vi.mocked(putFile)).toHaveBeenCalledWith(initial.path, "mine\n", initial.revision);
+    expect(dirtyPaneIds()).toEqual([]);
+    // Let go, not kept: the next mount starts from the file it was given, not the saved buffer
+    // (the disk may have moved on since).
+    const back = await renderEditor();
+    expect(back.model?.content).toBe(baseContent);
+  });
+
+  it("discards a parked edit from the guard and then lets it go", async () => {
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await unmount();
+
+    const decision = confirmDirtyNavigation("layout");
+    const request = currentDirtyGuardRequest()!;
+    await act(async () => {
+      await discardDirtyGuardRequest(request.id);
+    });
+    await expect(decision).resolves.toBe(true);
+    expect(dirtyPaneIds()).toEqual([]);
+    const back = await renderEditor();
+    expect(back.model?.content).toBe(baseContent);
+    expect(back.model?.dirty).toBe(false);
+  });
+
+  it("adopts the outcome of a save that was still in flight when it unmounted", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    await unmount();
+
+    await renderEditor();
+    await act(async () => {
+      pendingPut.resolve({ ok: true, path: initial.path, size: 5, revision: revisionOf("mine\n") });
+      await pendingPut.promise;
+    });
+    expect(editor!.model?.content).toBe("mine\n");
+    expect(editor!.model?.dirty).toBe(false);
+    expect(editor!.model?.baseDiskRevision).toBe(revisionOf("mine\n"));
   });
 });

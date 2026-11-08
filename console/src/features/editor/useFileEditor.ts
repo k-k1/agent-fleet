@@ -52,6 +52,28 @@ interface InitialEditableFile {
   revision: string;
 }
 
+// An editor whose view was unmounted with work still unsaved (a tabbed cell renders only its
+// selected view, so switching tabs unmounts it). Its refs and dirty-registry entry outlive the
+// component: the entry keeps close / reload / logout guarded, and its save and discard keep
+// working on these refs. Remounting the same view on the same file adopts it. Without it the
+// buffer is React state only, and a tab switch drops unsaved work with no prompt.
+interface ParkedEditor {
+  path: string;
+  model: { current: FileEditorModel | null };
+  saving: { current: Promise<boolean> | null };
+  mergeMine: { current: string | null };
+  recovery: RecoveryCoordinator;
+  unregister: (() => void) | null;
+}
+
+/** By view id. A view shows one file at a time, and retargeting a dirty view is guarded. */
+const parkedEditors = new Map<string, ParkedEditor>();
+
+/** Test hook. */
+export function clearParkedEditorsForTests(): void {
+  parkedEditors.clear();
+}
+
 const isCleanForFollow = (model: FileEditorModel): boolean =>
   !model.dirty && CLEAN_PHASES.includes(model.phase);
 
@@ -82,21 +104,52 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const mountedRef = useRef(true);
   const recoveryRef = useRef<RecoveryCoordinator | null>(null);
   if (!recoveryRef.current) recoveryRef.current = new RecoveryCoordinator();
+  // Set while unmounting with unsaved work, so the registration's cleanup leaves the entry.
+  const parkingRef = useRef<ParkedEditor | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
+    parkingRef.current = null;
     return () => {
       mountedRef.current = false;
+      const current = modelRef.current;
+      if (current && (current.dirty || savingRef.current)) {
+        const parked: ParkedEditor = {
+          path: current.path,
+          model: modelRef,
+          saving: savingRef,
+          mergeMine: mergeMineRef,
+          recovery: recoveryRef.current!,
+          unregister: null,
+        };
+        parkingRef.current = parked;
+        parkedEditors.set(paneId, parked);
+        return;
+      }
       recoveryRef.current?.invalidate();
     };
+    // paneId names the view for its whole life (Pane keys FileView by file, and the view id
+    // never changes under a mounted view).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A parked editor that has become clean (saved, or discarded by a guard) holds nothing worth
+  // keeping: drop it and its registry entry.
+  const releaseIfSettled = useCallback(() => {
+    const parked = parkingRef.current;
+    if (mountedRef.current || !parked || parkedEditors.get(paneId) !== parked) return;
+    if (modelRef.current?.dirty || savingRef.current) return;
+    parkedEditors.delete(paneId);
+    parked.unregister?.();
+  }, [paneId]);
+
   const setModel = useCallback((next: FileEditorModel) => {
-    if (!mountedRef.current) return;
+    // Parked, the refs are still the buffer of record: the guard's save / discard run on them.
     modelRef.current = next;
-    setReactModel(next);
     notifyDirtyEditorChanged();
-  }, []);
+    if (mountedRef.current) setReactModel(next);
+    else releaseIfSettled();
+  }, [releaseIfSettled]);
 
   useEffect(() => {
     if (!initial) {
@@ -104,6 +157,30 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       modelRef.current = null;
       setReactModel(null);
       return;
+    }
+    const held = parkedEditors.get(paneId);
+    if (held && held.model !== modelRef) {
+      if (held.path === initial.path) {
+        // Back on the same file: take the parked buffer over. A save still in flight finishes
+        // on the parked refs first, so its outcome is what gets adopted.
+        parkedEditors.delete(paneId);
+        let alive = true;
+        const adopt = () => {
+          if (!alive || !mountedRef.current) return;
+          held.recovery.invalidate();
+          held.unregister?.();
+          mergeMineRef.current = held.mergeMine.current;
+          if (held.model.current) setModel(held.model.current);
+        };
+        if (held.saving.current) void held.saving.current.finally(adopt);
+        else adopt();
+        if (held.saving.current) return () => {
+          // Unmounted again before the save settled: put it back rather than lose it.
+          alive = false;
+          if (!parkedEditors.has(paneId)) parkedEditors.set(paneId, held);
+        };
+        return;
+      }
     }
     const current = modelRef.current;
     if (current?.path === initial.path) return;
@@ -240,8 +317,9 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       return await operation;
     } finally {
       savingRef.current = null;
+      releaseIfSettled();
     }
-  }, [recoverConflict, recoverUnknown, setModel]);
+  }, [recoverConflict, recoverUnknown, releaseIfSettled, setModel]);
 
   const edit = useCallback((content: string) => {
     const current = modelRef.current;
@@ -290,13 +368,19 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
 
   useEffect(() => {
     if (!initial) return;
-    return registerDirtyEditor({
+    const unregister = registerDirtyEditor({
       paneId,
       label: initial.path,
       isDirty: () => !!modelRef.current?.dirty,
       save,
       discard,
     });
+    return () => {
+      // Declared after the mount effect, so on unmount its cleanup has already decided.
+      const parked = parkingRef.current;
+      if (parked && !mountedRef.current) parked.unregister = unregister;
+      else unregister();
+    };
   }, [discard, initial, paneId, save]);
 
   const resaveUnknown = useCallback(async () => {
