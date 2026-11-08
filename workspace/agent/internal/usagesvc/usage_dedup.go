@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // (ref, idx) deduplication for the ledger (docs/log/46 §3-b / ADR0029 §5).
 //

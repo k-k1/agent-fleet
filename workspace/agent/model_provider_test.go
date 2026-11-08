@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,8 +49,8 @@ const providerCatalogFixture = `{
 }`
 
 func TestResolveModelProvider(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, providerCatalogFixture)
+	usagesvc.UseIsolatedUsageDir(t)
+	usagesvc.UseUsageCatalog(t, providerCatalogFixture)
 
 	cases := []struct {
 		name, kind, id, want string
@@ -87,13 +88,13 @@ func TestResolveModelProvider(t *testing.T) {
 // the id's own leading segment has to carry what it can. This is the degraded path the
 // picker runs on for most users, so it gets its own test rather than being assumed.
 func TestResolveModelProviderWithoutCatalog(t *testing.T) {
-	useIsolatedUsageDir(t)
+	usagesvc.UseIsolatedUsageDir(t)
 	t.Setenv("AF_USAGE_CATALOG", "/nonexistent/models.json")
 	t.Setenv("XDG_CACHE_HOME", t.TempDir()) // keep the machine's own opencode cache out of it
-	resetUsageCatalogCache(t)
+	usagesvc.ResetUsageCatalogCache(t)
 
-	if cat := loadUsageCatalog(); cat != nil {
-		t.Fatalf("expected no catalog, got one from %q", cat.origin) // the premise of this test
+	if info := usagesvc.CatalogInfo(); info != nil {
+		t.Fatalf("expected no catalog, got one from %q", info.Origin) // the premise of this test
 	}
 	cases := []struct{ kind, id, want string }{
 		{"opencode", "opencode-go/glm-5.2", "zhipuai"},
@@ -172,18 +173,17 @@ func TestModelVendorForNamePrefersTheLongestLine(t *testing.T) {
 // whose makers — Tencent, Xiaomi, inclusionAI, Meituan — have no logo upstream either) so
 // that normal churn does not fail it.
 func TestResolveModelProviderAgainstRealCatalog(t *testing.T) {
-	// Resolve the machine's own cache path BEFORE isolating: useIsolatedUsageDir repoints
+	// Resolve the machine's own cache path BEFORE isolating: usagesvc.UseIsolatedUsageDir repoints
 	// HOME and XDG_CACHE_HOME at temp dirs, which is what the other tests want and would
 	// silently turn this one into a permanent skip.
 	real := realOpencodeCatalogPath()
-	useIsolatedUsageDir(t)
+	usagesvc.UseIsolatedUsageDir(t)
 	if real == "" {
 		t.Skip("no models.dev catalog on this machine (opencode never ran here)")
 	}
 	t.Setenv("AF_USAGE_CATALOG", real)
-	resetUsageCatalogCache(t)
-	cat := loadUsageCatalog()
-	if cat == nil {
+	usagesvc.ResetUsageCatalogCache(t)
+	if usagesvc.CatalogInfo() == nil {
 		t.Skipf("the catalog at %s did not parse as one", real)
 	}
 

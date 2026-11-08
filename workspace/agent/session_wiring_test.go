@@ -32,6 +32,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"reflect"
 	"runtime"
 	"testing"
@@ -56,12 +57,12 @@ func TestSessionWiringIsLive(t *testing.T) {
 		"RepoJobsRunning": func(t *testing.T) { sameSessionFunc(t, w.RepoJobsRunning, repoJobsRunning) },
 		"ImageJobsActive": func(t *testing.T) { sameSessionFunc(t, w.ImageJobsActive, imagegen.ActiveJobs) },
 
-		"FinalizeSessionUsage":  func(t *testing.T) { sameSessionFunc(t, w.FinalizeSessionUsage, finalizeSessionUsage) },
-		"MaybeFoldSessionUsage": func(t *testing.T) { sameSessionFunc(t, w.MaybeFoldSessionUsage, maybeFoldSessionUsage) },
+		"FinalizeSessionUsage":  func(t *testing.T) { sameSessionFunc(t, w.FinalizeSessionUsage, usagesvc.FinalizeSessionUsage) },
+		"MaybeFoldSessionUsage": func(t *testing.T) { sameSessionFunc(t, w.MaybeFoldSessionUsage, usagesvc.MaybeFoldSessionUsage) },
 
 		"RemoveTerminalHistory": func(t *testing.T) { sameSessionFunc(t, w.RemoveTerminalHistory, removeTerminalHistory) },
 		"TrashSession":          func(t *testing.T) { sameSessionFunc(t, w.TrashSession, trashSession) },
-		"SessionSpend":          func(t *testing.T) { sameSessionFunc(t, w.SessionSpend, sessionSpend) },
+		"SessionSpend":          func(t *testing.T) { sameSessionFunc(t, w.SessionSpend, usagesvc.SessionSpend) },
 		"ToolchainShellPrefix":  func(t *testing.T) { sameSessionFunc(t, w.ToolchainShellPrefix, toolchainShellPrefix) },
 		"EndRouteTokens":        func(t *testing.T) { sameSessionFunc(t, w.EndRouteTokens, endRouteTokens) },
 

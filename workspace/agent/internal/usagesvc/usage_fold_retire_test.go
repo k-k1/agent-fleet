@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"fmt"
@@ -67,7 +67,7 @@ func concat(parts ...[]transcript.Turn) []transcript.Turn {
 }
 
 func TestRetiredAgentMarkKeepsNoIDsAndFoldsOnce(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "retire3081", Kind: session.KindClaude, Model: "claude-opus-5"}
 	const id = "/subagents/agent-r.jsonl"
 	turns := concat(agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20), agentTurn("b", "2026-10-30T09:05:00Z", 2500, 30))
@@ -97,7 +97,7 @@ func TestRetiredAgentMarkKeepsNoIDsAndFoldsOnce(t *testing.T) {
 }
 
 func TestRetiredAgentMarkFoldsLateAppendsAndCopiesExactly(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "retirelate3081", Kind: session.KindClaude, Model: "claude-opus-5"}
 	const id = "/subagents/agent-l.jsonl"
 	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
@@ -139,7 +139,7 @@ func TestRetiredAgentMarkFoldsLateAppendsAndCopiesExactly(t *testing.T) {
 // written (the growth would be lost for good) nor its stamp kept: the full read that follows
 // folds the growth exactly.
 func TestRetiredAgentMarkHoldsAReadThatLacksARecordedTurn(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "retirehold3081", Kind: session.KindClaude, Model: "claude-opus-5"}
 	const id = "/subagents/agent-h.jsonl"
 	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
@@ -168,7 +168,7 @@ func TestAgentMarkRetiresOnlyAfterTheQuietPeriod(t *testing.T) {
 		age     time.Duration
 		retired bool
 	}{{usageAgentQuiet - time.Minute, false}, {usageAgentQuiet + time.Minute, true}} {
-		useTempUsageDir(t)
+		UseTempUsageDir(t)
 		const id = "/subagents/agent-e.jsonl"
 		turns := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
 		mod := time.Now().Add(-tc.age)
@@ -181,7 +181,7 @@ func TestAgentMarkRetiresOnlyAfterTheQuietPeriod(t *testing.T) {
 }
 
 func TestRetiredAgentMarkReplaysAnInterruptedBatch(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "retirecrash3081", Kind: session.KindClaude, Model: "claude-opus-5"}
 	const id = "/subagents/agent-c.jsonl"
 	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
@@ -221,7 +221,7 @@ func TestRetiredAgentMarkReplaysAnInterruptedBatch(t *testing.T) {
 // A state.json written before retirement existed (ids, no total) still loads, folds without a
 // duplicate, and retires once quiet.
 func TestStateWrittenBeforeRetirementStillLoads(t *testing.T) {
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	m := session.Meta{Name: "retirecompat3081", Kind: session.KindClaude, Model: "claude-opus-5"}
 	const id = "/subagents/agent-o.jsonl"
 	turns := concat(agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20), agentTurn("b", "2026-10-30T09:05:00Z", 2500, 30))
@@ -249,7 +249,7 @@ func TestStateWrittenBeforeRetirementStillLoads(t *testing.T) {
 // quiet, leave a file whose size does not depend on the turns.
 func TestStateSizeIsBoundedOverManyTurns(t *testing.T) {
 	size := func(turnsPerAgent int, mod time.Time) int64 {
-		useTempUsageDir(t)
+		UseTempUsageDir(t)
 		m := session.Meta{Name: "retiresize3081", Kind: session.KindClaude, Model: "claude-opus-5"}
 		for a := 0; a < 20; a++ {
 			var turns []transcript.Turn

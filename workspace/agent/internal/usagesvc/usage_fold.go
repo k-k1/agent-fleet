@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // Folds a session's own usage from its transcript into the ledger (docs/log/46 §3-b /
 // ADR0029 §5).
@@ -553,10 +553,10 @@ func usageTriggerFromTurnSource(src string) string {
 	return usagex.TriggerUser
 }
 
-// usageMeasuredForKind is the measurement accuracy per kind (docs/log/46 §1-c): the kind's own
+// MeasuredForKind is the measurement accuracy per kind (docs/log/46 §1-c): the kind's own
 // agents.UsageMeasurer, by exact registry key. An alias, an unregistered kind and a kind that
 // declares nothing read none, never the exact kind they resemble.
-func usageMeasuredForKind(kind string) string {
+func MeasuredForKind(kind string) string {
 	if a, ok := sessionx.RegisteredAgent(kind); ok {
 		if u, ok := a.(agents.UsageMeasurer); ok {
 			return u.UsageMeasured()
@@ -1033,7 +1033,7 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 		Spend:    usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out),
 		CostUSD:  r.CostUSD,
 		OK:       true,
-		Measured: usageMeasuredForKind(m.Kind),
+		Measured: MeasuredForKind(m.Kind),
 	}
 	if rec.TS == "" {
 		rec.TS = time.Now().UTC().Format(time.RFC3339)
@@ -1174,9 +1174,9 @@ func foldAllSessions(force bool) int {
 	return n
 }
 
-// maybeFoldSessionUsage is the fold-on-read: it runs only when usage is read, at most once
+// MaybeFoldSessionUsage is the fold-on-read: it runs only when usage is read, at most once
 // every 60 seconds.
-func maybeFoldSessionUsage() { startFoldSessionUsage(false) }
+func MaybeFoldSessionUsage() { startFoldSessionUsage(false) }
 
 // startFoldSessionUsage starts the fold-on-read.
 //
@@ -1228,10 +1228,10 @@ func startFoldSessionUsage(force bool) bool {
 	return true
 }
 
-// finalizeSessionUsage is the settle (fold-on-delete) called just before the transcript
+// FinalizeSessionUsage is the settle (fold-on-delete) called just before the transcript
 // disappears. It folds the open trailing turn too: the transcript will not grow any more,
 // so there is no double-counting risk. Without it the last turn never reaches the ledger.
-func finalizeSessionUsage(m session.Meta) {
+func FinalizeSessionUsage(m session.Meta) {
 	if !usagex.Enabled() {
 		return
 	}

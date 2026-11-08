@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"math"
@@ -34,7 +34,7 @@ func TestUsageNormalizeModel(t *testing.T) {
 // spend but are billed, so deriving the amount from spend makes a long conversation look
 // cheaper — the easiest mistake to make here.
 func TestUsageEstCostUSD(t *testing.T) {
-	useIsolatedUsageDir(t) // look at the bare state with no catalog (built-in table only)
+	UseIsolatedUsageDir(t) // look at the bare state with no catalog (built-in table only)
 	// claude-sonnet-5 = $2/MTok in, $10/MTok out
 	a := usageAgg{In: 1_000_000, Out: 1_000_000, CacheCreate: 1_000_000, CacheRead: 1_000_000}
 	got, src, ok := usageEstCostUSD(session.KindClaude, "claude-sonnet-5", a)
@@ -62,7 +62,7 @@ func TestUsageEstCostUSD(t *testing.T) {
 // holds even when a self-hosted model's name collides with a real, priced catalog/builtin
 // entry — the kind check must short-circuit before either table is ever consulted.
 func TestUsageEstCostUSDLcppIsGPUBilledNotDoubleCounted(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	a := usageAgg{In: 1_000_000, Out: 1_000_000, CacheCreate: 1_000_000, CacheRead: 1_000_000}
 
 	// Positive: a plain self-hosted model name prices at exactly $0, and is reported as
@@ -104,7 +104,7 @@ func TestUsageEstCostUSDLcppIsGPUBilledNotDoubleCounted(t *testing.T) {
 // usageNormalizeModel only strips an 8-digit date, so "-1" is not folded away and an
 // unlisted version comes out unpriced.
 func TestUsageEstCostUSDFable51CacheRead(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	a := usageAgg{CacheRead: 1_000_000}
 	got, src, ok := usageEstCostUSD(session.KindClaude, "claude-fable-5-1", a)
 	if !ok {
@@ -122,7 +122,7 @@ func TestUsageEstCostUSDFable51CacheRead(t *testing.T) {
 // value separate from the measured one. Consumption that could not be priced is declared
 // in unpriced_spend.
 func TestUsageSeriesEstimatesSessionCost(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(0)
 	sess := usagex.Record{
 		TS: day + "T12:00:00Z", Call: "s1", Feature: usagex.FeatureSession, Kind: session.KindClaude,

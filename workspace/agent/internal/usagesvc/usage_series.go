@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // GET /usage/series — the per-feature usage time series (docs/log/46 §4 / ADR0029 §8).
 //
@@ -193,7 +193,7 @@ type usageSample struct {
 	Agg usageAgg
 }
 
-func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
+func HandleSeries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	bucket := q.Get("bucket")
 	if bucket == "" {
@@ -311,7 +311,7 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 		}
 		observeUsageCoverage(resp.Coverage, s.Key)
 	}
-	resp.Catalog = usageCatalogInfo()
+	resp.Catalog = CatalogInfo()
 	sort.Strings(order)
 	// Buckets with no consumption are filled with zero. Dropping them draws two distant days as
 	// adjacent bars and the picture stops reading as a time axis (a four-day gap becomes

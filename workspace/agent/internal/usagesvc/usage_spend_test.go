@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"math"
@@ -119,7 +119,7 @@ func TestSessionSpendCountsSubagentTranscripts(t *testing.T) {
 	write(filepath.Join(proj, sid, "subagents", "workflows", "wf_x", "agent-b1.jsonl"),
 		claudeUserLine(at(2*time.Minute))+claudeUsageLine(at(150*time.Second), "b1", 0, 100_000))
 
-	sp := sessionSpend(m)
+	sp := SessionSpend(m)
 	if want := 5 + 10 + 2.50; !spendNear(sp.USD, want) {
 		t.Fatalf("spend = %v, want %v (main + subagent + Workflow agent)", sp.USD, want)
 	}
@@ -145,7 +145,7 @@ func TestSessionSpendCountsSubagentTranscripts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sp := sessionSpend(m); !spendNear(sp.USD, 22.50) {
+	if sp := SessionSpend(m); !spendNear(sp.USD, 22.50) {
 		t.Fatalf("spend after the agent grew = %v, want 22.50", sp.USD)
 	}
 
@@ -154,7 +154,7 @@ func TestSessionSpendCountsSubagentTranscripts(t *testing.T) {
 	if err := os.MkdirAll(unreadable, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if sp := sessionSpend(m); !spendNear(sp.USD, 22.50) {
+	if sp := SessionSpend(m); !spendNear(sp.USD, 22.50) {
 		t.Fatalf("spend with an unreadable agent = %v, want 22.50", sp.USD)
 	}
 	_, cached := subagentRowsCache.Cached(m.Name, unreadable)
@@ -211,7 +211,7 @@ func TestSessionSpendUsesReadableCopiesOfAnAgent(t *testing.T) {
 	if err := os.WriteFile(good, []byte(claudeUserLine(ts)+claudeUsageLine(ts, "g1", 1_000_000, 0)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if sp := sessionSpend(m); !spendNear(sp.USD, 5) {
+	if sp := SessionSpend(m); !spendNear(sp.USD, 5) {
 		t.Fatalf("spend = %v, want the readable copy's $5", sp.USD)
 	}
 	n := subagentRowsCache.Len(m.Name)
@@ -258,24 +258,24 @@ func TestSessionSpendKeepsTheLastCompleteFoldThroughPartialReads(t *testing.T) {
 	// Both copies hold the same call: $5, counted once.
 	write(a, shared)
 	write(b, shared)
-	if sp := sessionSpend(m); !spendNear(sp.USD, 5) {
+	if sp := SessionSpend(m); !spendNear(sp.USD, 5) {
 		t.Fatalf("complete read = %v, want 5", sp.USD)
 	}
 	// a unreadable, b grows by a $5 call: the partial read prices it.
 	unreadable(a)
 	write(b, shared+claudeUserLine(at(3*time.Minute))+claudeUsageLine(at(4*time.Minute), "s2", 1_000_000, 0))
-	if sp := sessionSpend(m); !spendNear(sp.USD, 10) {
+	if sp := SessionSpend(m); !spendNear(sp.USD, 10) {
 		t.Fatalf("partial read = %v, want 10", sp.USD)
 	}
 	// Both unreadable: the last complete fold stands in rather than $0.
 	unreadable(b)
-	if sp := sessionSpend(m); !spendNear(sp.USD, 5) {
+	if sp := SessionSpend(m); !spendNear(sp.USD, 5) {
 		t.Fatalf("total failure = %v, want the last complete fold's 5", sp.USD)
 	}
 	// Both readable again: everything, once.
 	write(a, shared)
 	write(b, shared+claudeUserLine(at(3*time.Minute))+claudeUsageLine(at(4*time.Minute), "s2", 1_000_000, 0))
-	if sp := sessionSpend(m); !spendNear(sp.USD, 10) {
+	if sp := SessionSpend(m); !spendNear(sp.USD, 10) {
 		t.Fatalf("recovered = %v, want 10", sp.USD)
 	}
 }

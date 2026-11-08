@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // The price table and the estimated API-equivalent cost (docs/log/46 §9-2).
 //

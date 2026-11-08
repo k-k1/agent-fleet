@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // Regression for (ref, idx) deduplication (usage_dedup.go / docs/log/46 §7-4).
 //
@@ -29,7 +29,7 @@ func sessionRow(call, ref string, idx int, day string, spend int) usagex.Record 
 
 // Drops a re-append inside the same raw file (fold-on-read running right after a crash).
 func TestUsageSeriesDropsDuplicateSessionRows(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(0)
 	writeUsageDay(t, day,
 		sessionRow("c1", "slot01", 1, day, 100),
@@ -55,7 +55,7 @@ func TestUsageSeriesDropsDuplicateSessionRows(t *testing.T) {
 // original. Rollup runs per file, so unless the watermark is carried across files the
 // consumption is counted twice.
 func TestRollupDropsDuplicatesAcrossFileDays(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	d2, d1 := daysAgo(2), daysAgo(1)
 	writeUsageDay(t, d2,
 		sessionRow("c1", "slot01", 1, d2, 100),
@@ -88,7 +88,7 @@ func TestRollupDropsDuplicatesAcrossFileDays(t *testing.T) {
 // only the duplicate sits in a raw file that has not been rolled up. Unless the watermark is
 // carried over from the rollup state, nothing can drop this duplicate.
 func TestDedupSpansRolledAndRawBoundary(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	yesterday, today := daysAgo(1), daysAgo(0)
 	writeUsageDay(t, yesterday,
 		sessionRow("c1", "slot01", 1, yesterday, 100),
@@ -149,7 +149,7 @@ func TestUsageDedupKeepsLegitimateRows(t *testing.T) {
 // On a version bump, a rollup that may already have folded duplicates in is rebuilt from raw.
 // The aggregate is a sum and cannot be subtracted from, so rebuilding is the only way to drop it.
 func TestRollupRebuildPurgesLegacyDuplicates(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(1)
 	writeUsageDay(t, day,
 		sessionRow("c1", "slot01", 1, day, 100),
@@ -184,7 +184,7 @@ func TestRollupRebuildPurgesLegacyDuplicates(t *testing.T) {
 // is gone costs more. Instead the watermark is restored from the rolled-up files still visible,
 // so duplicates arriving later can still be dropped.
 func TestRollupRebuildKeepsDataWhenRawIsPruned(t *testing.T) {
-	dir := useIsolatedUsageDir(t)
+	dir := UseIsolatedUsageDir(t)
 	gone, kept := daysAgo(3), daysAgo(2)
 	writeUsageDay(t, gone, sessionRow("c0", "slot99", 1, gone, 700))
 	writeUsageDay(t, kept, sessionRow("c1", "slot01", 1, kept, 100))
@@ -219,7 +219,7 @@ func TestRollupRebuildKeepsDataWhenRawIsPruned(t *testing.T) {
 // Reproduces the real crash window end to end: fold → die before the watermark is written → the
 // next pass re-appends the same turns. The ledger holds them twice; the series counts them once.
 func TestFoldCrashWindowIsNotDoubleCounted(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	turns := []transcript.Turn{
 		{Role: "user", Text: "1"},
 		asst("claude-haiku-4-5", 100, 10, 0, 0, false),
@@ -262,7 +262,7 @@ func TestFoldCrashWindowIsNotDoubleCounted(t *testing.T) {
 // The hashed key exists so that a ref is never left in cleartext in a store with no expiry
 // (ADR0029 §8: no ref in the rollup). Check that no session name appears in the index file.
 func TestUsageDedupIndexDoesNotStoreRefNames(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(1)
 	writeUsageDay(t, day, sessionRow("c1", "slot-secret", 1, day, 100))
 	ensureUsageRollups()

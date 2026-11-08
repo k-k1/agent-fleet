@@ -621,7 +621,7 @@ func (b *transcriptBuilder) add(r Record) {
 			t.InTok = r.Usage.PromptTokens
 			t.OutTok = r.Usage.CompletionTokens
 			// ADR 0093 decision 8: this kind's own window, never a guess — session_usage.go's
-			// AggregateUsage and usage_fold.go's foldTurnRows both read CtxWindow>0 as
+			// AggregateUsage and internal/usagesvc/usage_fold.go's foldTurnRows both read CtxWindow>0 as
 			// WindowSource="recorded" automatically, the same way codex/opencode's own
 			// transcript parsers already do (opencode/transcript.go, codex/transcript.go).
 			if r.Window > 0 {

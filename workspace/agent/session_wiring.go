@@ -21,6 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routegw"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 )
 
 func init() { sessionx.Configure(sessionDeps()) }
@@ -47,9 +48,9 @@ func sessionDeps() sessionx.Deps {
 		RepoJobsRunning: repoJobsRunning,
 		ImageJobsActive: imagegen.ActiveJobs,
 
-		FinalizeSessionUsage:  finalizeSessionUsage,
-		MaybeFoldSessionUsage: maybeFoldSessionUsage,
-		SessionSpend:          sessionSpend,
+		FinalizeSessionUsage:  usagesvc.FinalizeSessionUsage,
+		MaybeFoldSessionUsage: usagesvc.MaybeFoldSessionUsage,
+		SessionSpend:          usagesvc.SessionSpend,
 
 		RemoveTerminalHistory: removeTerminalHistory,
 		TrashSession:          trashSession,

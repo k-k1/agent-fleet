@@ -475,7 +475,7 @@ type TextReader interface {
 }
 
 // LegacyCappedUsage marks an Agent whose usage fold once read a capped transcript, so its
-// older watermarks count from the first visible turn (see rebaseCappedMark in usage_fold.go).
+// older watermarks count from the first visible turn (see rebaseCappedMark in internal/usagesvc/usage_fold.go).
 type LegacyCappedUsage interface {
 	LegacyCappedUsage()
 }

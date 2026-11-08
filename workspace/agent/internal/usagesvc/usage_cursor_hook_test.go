@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // The aggregation side of cursor's stop-hook rows (#2286): the hook adds tokens to a turn the
 // transcript fold already counts as a call, and a redelivered stop must not count twice.
@@ -21,7 +21,7 @@ func hookRow(day, generation string) usagex.Record {
 
 // The fold writes the turn's call (measured none, no tokens); the hook row adds the tokens.
 func TestCursorHookRowAddsTokensWithoutAddingACall(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(0)
 	fold := at(row("fold-1", usagex.FeatureSession, session.KindCursor, "", 0), day)
 	fold.Ref, fold.Idx, fold.Measured = "slot01", 1, usagex.MeasuredNone
@@ -35,7 +35,7 @@ func TestCursorHookRowAddsTokensWithoutAddingACall(t *testing.T) {
 
 // An interrupted or retried delivery appends the same generation twice; one is counted.
 func TestCursorHookRowIsCountedOncePerGeneration(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	day := daysAgo(0)
 	writeUsageDay(t, day, hookRow(day, "gen-1"), hookRow(day, "gen-1"), hookRow(day, "gen-2"))
 	got := getSeries(t, "from="+day+"&to="+day)

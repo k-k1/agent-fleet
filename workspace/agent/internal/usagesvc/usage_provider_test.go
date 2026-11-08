@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 // Regression cover for capturing usage at the provider layer (docs/log/46 §3-a, review P2-7 /
 // P3-11).
@@ -59,7 +59,7 @@ func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
 // the ledger. Only a stub CLI at the head of PATH, so no auth and no billing (the real CLI is
 // exercised by the live tests).
 func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
-	useIsolatedUsageDir(t)
+	UseIsolatedUsageDir(t)
 	bin := t.TempDir()
 	// Emit one assistant event, then die without a result (the shape of a user stop or an OOM).
 	stub := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '" +
@@ -100,7 +100,7 @@ func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 // fills that path's stops and abnormal exits entirely with measured=none, so the AST is watched.
 func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "internal/chatx/chat_providers.go", nil, 0)
+	f, err := parser.ParseFile(fset, "../chatx/chat_providers.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestClaudeLedgerTokensUsesCallTotals(t *testing.T) {
 // field names of the ledger record for anything body-shaped.
 func TestUsageRecordHasNoContentFields(t *testing.T) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "internal/usagex/ledger.go", nil, 0)
+	f, err := parser.ParseFile(fset, "../usagex/ledger.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

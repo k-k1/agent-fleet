@@ -1,4 +1,4 @@
-package main
+package usagesvc
 
 import (
 	"os"
@@ -28,7 +28,7 @@ type skipFixture struct {
 
 func newSkipFixture(t *testing.T) *skipFixture {
 	t.Helper()
-	useTempUsageDir(t)
+	UseTempUsageDir(t)
 	cfg := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 	f := &skipFixture{t: t, born: time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)}
