@@ -48,6 +48,9 @@ type ProvidedRouteStore interface {
 	AdmitProvidedRouteCall(ctx context.Context, c ProvidedRouteCall, lim ProvidedRouteLimits) (ProvidedRouteAdmission, error)
 	SettleProvidedRouteCall(ctx context.Context, callID string, finalMicro int64) (bool, error)
 	GetProvidedRouteCall(ctx context.Context, callID string) (ProvidedRouteCall, error)
+	// ListInFlightProvidedRouteCalls lists every call still in flight, oldest first, at most
+	// limit of them: what the orphan sweep and a draining CP settle.
+	ListInFlightProvidedRouteCalls(ctx context.Context, limit int) ([]ProvidedRouteCall, error)
 	// GetProvidedRoutePeriod reads one level's month; membershipID "" is the tenant level. A month
 	// nobody spent in reads as zero.
 	GetProvidedRoutePeriod(ctx context.Context, tenantID, membershipID, source, month string) (ProvidedRoutePeriod, error)
@@ -646,20 +649,50 @@ func (s *SQL) SettleProvidedRouteCall(ctx context.Context, callID string, finalM
 	return true, tx.Commit()
 }
 
-func (s *SQL) GetProvidedRouteCall(ctx context.Context, callID string) (ProvidedRouteCall, error) {
+const providedRouteCallCols = `call_id, membership_id, tenant_id, source, binding, model, api, month, price_version,
+	reserved_micro, final_micro, state, admitted_at, settled_at, cp_instance`
+
+func scanProvidedRouteCall(sc interface{ Scan(...any) error }) (ProvidedRouteCall, error) {
 	var c ProvidedRouteCall
 	var final sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT call_id, membership_id, tenant_id, source, binding, model, api, month, price_version,
-		reserved_micro, final_micro, state, admitted_at, settled_at, cp_instance FROM provided_route_call WHERE call_id=?`, callID).
-		Scan(&c.CallID, &c.MembershipID, &c.TenantID, &c.Source, &c.Binding, &c.Model, &c.API, &c.Month, &c.PriceVersion,
-			&c.ReservedMicro, &final, &c.State, &c.AdmittedAt, &c.SettledAt, &c.CPInstance)
-	if errors.Is(err, sql.ErrNoRows) {
-		return c, ErrProvidedRouteCallNotFound
-	}
+	err := sc.Scan(&c.CallID, &c.MembershipID, &c.TenantID, &c.Source, &c.Binding, &c.Model, &c.API, &c.Month, &c.PriceVersion,
+		&c.ReservedMicro, &final, &c.State, &c.AdmittedAt, &c.SettledAt, &c.CPInstance)
 	if final.Valid {
 		c.FinalMicro = &final.Int64
 	}
 	return c, err
+}
+
+func (s *SQL) GetProvidedRouteCall(ctx context.Context, callID string) (ProvidedRouteCall, error) {
+	c, err := scanProvidedRouteCall(s.db.QueryRowContext(ctx, `SELECT `+providedRouteCallCols+` FROM provided_route_call WHERE call_id=?`, callID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, ErrProvidedRouteCallNotFound
+	}
+	return c, err
+}
+
+// ListInFlightProvidedRouteCalls reads in-flight rows through the state index. The caller judges
+// each row's age from AdmittedAt parsed as a time: RFC 3339 with fractional seconds does not sort
+// as text.
+func (s *SQL) ListInFlightProvidedRouteCalls(ctx context.Context, limit int) ([]ProvidedRouteCall, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+providedRouteCallCols+` FROM provided_route_call WHERE state=?
+		ORDER BY admitted_at, call_id LIMIT ?`, providedroutes.StateInFlight, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProvidedRouteCall
+	for rows.Next() {
+		c, err := scanProvidedRouteCall(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 func (s *SQL) GetProvidedRoutePeriod(ctx context.Context, tenantID, membershipID, source, month string) (ProvidedRoutePeriod, error) {

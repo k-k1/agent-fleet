@@ -173,3 +173,26 @@ func (m Model) UpperBoundMicroUSD(outputCap int64) (int64, error) {
 	// Tokens times USD per million tokens is micro-USD.
 	return int64(math.Ceil(float64(m.ContextWindow)*m.MaxInputRate() + float64(outputCap)*m.MaxOutputRate())), nil
 }
+
+// Usage is a call's complete terminal token counts, as the upstream reported them at its end.
+// CacheWrite does not say which TTL was written, so it is priced at the dearer of the two.
+type Usage struct {
+	In, Out, CacheRead, CacheWrite int64
+}
+
+// PriceMicroUSD is what u costs at this row's list price, in micro-USD, rounded up. The rates are
+// the long-context tier's once the request's whole input (plain, cache read and cache write)
+// exceeds the tier's threshold, as Bedrock bills it. A settlement prices complete totals only
+// (ADR 0129 D4); anything less settles at the reservation and never reaches this.
+func (m Model) PriceMicroUSD(u Usage) int64 {
+	r := m.Rates
+	total := u.In + u.CacheRead + u.CacheWrite
+	for _, t := range m.Tiers {
+		if total > t.AboveInputTokens {
+			r = t.Rates
+		}
+	}
+	write := max(r.cacheWriteRate(), r.CacheWrite1h)
+	return int64(math.Ceil(float64(u.In)*r.Input + float64(u.Out)*r.Output + float64(u.CacheRead)*r.CacheRead +
+		float64(u.CacheWrite)*write))
+}

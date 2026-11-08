@@ -327,6 +327,12 @@ func TestProvidedRouteAdmissionAndSettlement(t *testing.T) {
 		if !ok {
 			t.Fatal("c1 did not settle")
 		}
+		// What the orphan sweep reads: c3 alone is still in flight.
+		inflight, err := st.ListInFlightProvidedRouteCalls(ctx, 0)
+		mustDo(t, err)
+		if len(inflight) != 1 || inflight[0].CallID != "c3" || inflight[0].ReservedMicro != 40 || inflight[0].State != providedroutes.StateInFlight {
+			t.Fatalf("in flight = %+v, want c3", inflight)
+		}
 		if again, err := st.SettleProvidedRouteCall(ctx, "c1", 25); err != nil || again {
 			t.Fatalf("a duplicate settlement: %v %v, want no change", again, err)
 		}

@@ -32,6 +32,7 @@ func buildMux(cfg config) *http.ServeMux {
 	// `engines` stream (ADR 0084 decision 1), so this one has to run first and hand it down
 	// through cfg rather than each building (and running) its own.
 	cfg.engineReg = registerEngineRoutes(mux, cfg)
+	registerProvidedRouteRoutes(mux, cfg)
 	registerEventsRoutes(mux, cfg)
 	registerSessionRoutes(mux, cfg)
 	registerAgentRelays(mux, cfg)

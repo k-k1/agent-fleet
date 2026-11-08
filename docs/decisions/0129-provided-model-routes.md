@@ -592,3 +592,22 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   dialects, including two CP handles racing at the edge of each level. The per-member in-flight cap is counted from
   in-flight reservation rows under the member's month lock, so two admissions straddling a month boundary at the same
   instant can each pass a cap of one.
+- 2026-11-08, Q1 part 1 (#3579): the CP route gateway for the `deployment` source, behind `AF_PROVIDED_ROUTES=1`
+  (off: nothing registered, no issuing token injected). Choices the decisions above left open, taken by the user on
+  2026-11-08: **(A)** a deployment source calls exactly one Region in Q1, refused otherwise at registration; a system
+  inference profile's destination Regions are a wildcard in the foundation-model ARN of the session policy, narrowed by
+  the `bedrock:InferenceProfileArn` condition, because which Regions a profile routes to is the profile's. **(B)** a
+  call settles at zero only when Bedrock answered a non-2xx whose whole body was read and is one AWS JSON error, with
+  no event-stream framing and no usage; everything else without complete terminal totals settles at the reservation
+  (the live gate checks one 429 or 400 in Cost Explorer). **(C)** the issuing credential is a bridge family of its own,
+  `AF_ROUTE_ISSUE_TOKEN` (`afri_`), buying `afr_` route tokens at `POST /internal/route/token`, both under the bridge
+  epoch. **(D)** the deployment source is registered by a super_admin over REST (`PUT
+  /api/admin/provided-routes/deployment`, audit row `provided_route.deployment_source.put`); the stack only grants the
+  IAM. It is active on registration with no probe call: the role is the operator's own, and the first member call is
+  the minimal model call. Defaults, accepted the same day: per-member in-flight cap 4
+  (`AF_PROVIDED_ROUTE_MAX_IN_FLIGHT`), upstream deadline 15 minutes (`AF_PROVIDED_ROUTE_DEADLINE`), an orphan is an
+  in-flight row no call of this process holds and admitted before now − deadline − 1 minute (no CP-instance registry
+  exists to say "instance gone"; the deadline bounds it), shutdown drain min(deadline, 25 s) and then the calls still
+  running settle at their reservation. The CP generates the call id and returns it in `X-Af-Route-Call`, so the Agent's
+  ledger row carries the CP's id. A session policy above AWS's 2,048-character limit is refused at registration, never
+  cut. Agent forwarding, the create-path refusal, grants and budgets over REST, and the stack follow in the next parts.

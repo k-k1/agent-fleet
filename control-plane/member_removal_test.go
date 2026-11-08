@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
+	"github.com/k-k1/agent-fleet/control-plane/internal/providedroutes"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routegateway"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 	"github.com/k-k1/agent-fleet/control-plane/internal/tenantsrv"
@@ -61,6 +63,23 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	master := mgr.tokenSigningRoot()
+	// A granted deployment source, so a route call gets past the grant to the contract.
+	prSrc, err := st.PutProvidedRouteSource(ctx, store.ProvidedRouteSourceInput{Source: providedroutes.SourceDeployment,
+		RoleARN: "arn:aws:iam::123456789012:role/af-model-route/bedrock", Regions: []string{"us-east-1"},
+		AllowList: []string{"us.anthropic.claude-opus-5-5"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProvidedRouteSourceActive(ctx, prSrc.ID, prSrc.Fingerprint, true); err != nil {
+		t.Fatal(err)
+	}
+	ceiling := int64(100_000_000)
+	if err := st.SetProvidedRouteGrant(ctx, dt.ID, providedroutes.SourceDeployment, true, &ceiling); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProvidedRouteMemberPolicy(ctx, dt.ID, providedroutes.SourceDeployment, false, ceiling); err != nil {
+		t.Fatal(err)
+	}
 	// The epoch the tokens below are minted under. Removal and re-activation each advance the
 	// membership's epochs (issue #3452), so the tokens of the first phases must not come back.
 	var ep int64
@@ -86,6 +105,11 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 			return mintEngineSessionToken(k(engineSignKey(master)), mem.ID, "s1", "llm", time.Now().Add(time.Hour))
 		})},
 		{"/git/", gitAuth},
+		{"/internal/route/", bearer(func() string { return routegateway.MintIssueToken(k(routegateway.SignKey(master)), mem.ID) })},
+		{"/route/v1/", bearer(func() string {
+			return routegateway.MintToken(k(routegateway.SignKey(master)), routegateway.Claims{MembershipID: mem.ID, Session: "s1",
+				Route: providedroutes.RouteDeployment, Binding: prSrc.Binding(), Expires: time.Now().Add(time.Hour)})
+		})},
 	}
 	// One request per workspaceRoutes pattern, as the Agent sends it.
 	samples := []struct{ method, path string }{
@@ -121,6 +145,10 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 		{"GET", "/git/default/r.git/info/lfs/locks"},
 		{"POST", "/git/default/r.git/info/lfs/locks/verify"},
 		{"POST", "/git/default/r.git/info/lfs/locks/l1/unlock"},
+		// The body "{}" has no session (the token route) and no output cap (the gateway): both
+		// answer 400 once the token and the membership pass.
+		{"POST", "/internal/route/token"},
+		{"POST", "/route/v1/model/us.anthropic.claude-opus-5-5/invoke"},
 	}
 	send := func(method, path string) (pattern string, code int, body string) {
 		req := httptest.NewRequest(method, path, strings.NewReader("{}"))

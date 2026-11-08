@@ -56,6 +56,11 @@ func routeSwitches(t *testing.T) []routeSwitch {
 		// is set; the link itself is read per request.
 		{name: "update", env: map[string]string{"AF_SELF_LINK": filepath.Join(t.TempDir(), "af")},
 			routes: []string{"POST /api/update/apply", "GET /api/update/status"}},
+		// Provided model routes (ADR 0129 Q1): the acceptance switch registers the CP route
+		// gateway, its token and the deployment source's admin routes, and nothing else.
+		{name: "provided-routes", env: map[string]string{"AF_PROVIDED_ROUTES": "1"},
+			routes: []string{"GET /api/admin/provided-routes/deployment", "PUT /api/admin/provided-routes/deployment",
+				"POST /internal/route/token", "ANY /route/v1/{path...}"}},
 		// No engine switch: a CP with a store always builds an engine registry, possibly empty,
 		// so the admin panel can give it a LAN ComfyUI without a restart (#957). The gateway's
 		// routes are therefore part of the base table.
@@ -68,6 +73,7 @@ func routeSwitches(t *testing.T) []routeSwitch {
 var routeSwitchOffEnv = []string{
 	"AF_MCP_ENABLED",
 	"AF_SELF_LINK",
+	"AF_PROVIDED_ROUTES",
 	"AF_ENGINES_SSM_PARAM", "AF_ENGINES_JSON", "AF_COMFY_URL", "AF_LLM_URL",
 	"AF_REMOTE_ENGINE_URL", "AF_REMOTE_ENGINE_TOKEN",
 }

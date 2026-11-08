@@ -159,6 +159,7 @@ preview_grant.go
 preview_host.go
 preview_host_serve.go
 preview_relay_error.go
+provided_routes.go
 proxy.go
 reaper.go
 relays.go
