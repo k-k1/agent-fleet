@@ -58,6 +58,18 @@ func TestCheckCreateRoute(t *testing.T) {
 	if code, _ := CheckCreateRoute("claude", &Selection{Route: "vertex"}); code != CodeRouteUnsupported {
 		t.Errorf("claude on vertex: %q, want %s", code, CodeRouteUnsupported)
 	}
+	// The provided Bedrock routes (ADR 0129) are catalogued from Q0 and declared by no harness
+	// until their phase, so every kind refuses them as a route it does not accept.
+	for _, id := range []string{"bedrock-tenant", "bedrock-deployment"} {
+		if !slices.ContainsFunc(Routes(), func(r Route) bool { return r.ID == id && r.Wire == "bedrock" }) {
+			t.Errorf("%s is not in the snapshot as a bedrock route", id)
+		}
+		for _, k := range agentkinds.All() {
+			if code, err := CheckCreateRoute(k.Kind, &Selection{Route: id}); code != CodeRouteUnsupported || err == nil {
+				t.Errorf("%s on %s: %q %v, want %s", k.Kind, id, code, err, CodeRouteUnsupported)
+			}
+		}
+	}
 	if code, err := CheckCreateRoute("", &Selection{Route: "anthropic-subscription"}); code != "" || err != nil {
 		t.Errorf("empty kind (claude) on anthropic-subscription: %q %v", code, err)
 	}

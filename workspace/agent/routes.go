@@ -539,14 +539,16 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/search", memoryx.HandleAgentMemorySearch)
 	mux.HandleFunc("GET /agents/memory/entries/read", memoryx.HandleAgentMemoryRead)
 	mux.HandleFunc("POST /agents/memory/entries", memoryx.HandleAgentMemorySave)
+	mux.HandleFunc("POST /agents/memory/entries/patch", memoryx.HandleAgentMemoryPatch)
 	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
-	// The same five operations for a client outside Agent Fleet (#1988), reached only through the
+	// The same operations for a client outside Agent Fleet (#1988), reached only through the
 	// CP's /mcp. They name the project themselves and answer to the externalMemory setting.
 	mux.HandleFunc("GET /agents/memory/external/projects", memoryx.HandleAgentMemoryExternalProjects)
 	mux.HandleFunc("GET /agents/memory/external/entries", memoryx.HandleAgentMemoryExternalIndex)
 	mux.HandleFunc("GET /agents/memory/external/search", memoryx.HandleAgentMemoryExternalSearch)
 	mux.HandleFunc("GET /agents/memory/external/read", memoryx.HandleAgentMemoryExternalRead)
 	mux.HandleFunc("POST /agents/memory/external/entries", memoryx.HandleAgentMemoryExternalSave)
+	mux.HandleFunc("POST /agents/memory/external/patch", memoryx.HandleAgentMemoryExternalPatch)
 	mux.HandleFunc("POST /agents/memory/external/forget", memoryx.HandleAgentMemoryExternalForget)
 	// The member's after-the-fact view of those writes (ADR 0108 decision 8). These are for the
 	// Console, so control-plane/routes.go relays them. The member writes (revert, pin,
@@ -554,24 +556,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
 	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
 	mux.Handle("POST /agents/memory/entries/revert", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryRevert)))
-	// The background memory review (ADR 0117): the member's "Review now" for a session, which
-	// spends tokens and sends an excerpt to a model provider, so it answers only a member-origin
-	// mark; and its status, which reads only counts and states. Outside /agents/memory/ on
-	// purpose: these are not memory tools and no MCP tool reaches them.
-	mux.Handle("POST /agents/memory-review/run", memberorigin.Require(memreview.RunMaxRequest, http.HandlerFunc(memreview.HandleRun)))
-	mux.HandleFunc("GET /agents/memory-review", memreview.HandleStatus)
-	// What the member does with the queue the review fills. Every route answers only the mark,
-	// the list too: it returns text the model drew from other sessions' conversations that the
-	// member has not published (it is a POST because the mark signs JSON requests).
-	for route, h := range map[string]http.HandlerFunc{
-		"POST /agents/memory-review/proposals/list":       memreview.HandleProposals,
-		"POST /agents/memory-review/proposals/approve":    memreview.HandleApprove,
-		"POST /agents/memory-review/proposals/reject":     memreview.HandleReject,
-		"POST /agents/memory-review/proposals/reject-all": memreview.HandleRejectAll,
-		"POST /agents/memory-review/runs/revert":          memreview.HandleRevertRun,
-	} {
-		mux.Handle(route, memberorigin.Require(memreview.DecideMaxRequest, h))
-	}
+	// Undo what one past review run published (ADR 0117 decision 5, kept by ADR 0130 decision 2):
+	// the review itself is gone, its published history stays revertible. A member write, so only
+	// the member-origin mark gets through; outside /agents/memory/ on purpose, no MCP tool reaches it.
+	mux.Handle("POST /agents/memory-review/runs/revert", memberorigin.Require(memreview.DecideMaxRequest, http.HandlerFunc(memreview.HandleRevertRun)))
 	// The member's list of every memory, and the pin (#1703). No MCP tool
 	// reaches the pin route.
 	mux.HandleFunc("GET /agents/memory/entries/list", memoryx.HandleAgentMemoryList)
@@ -588,6 +576,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/projects", memoryx.HandleAgentMemoryMemberProjects)
 	mux.HandleFunc("GET /agents/memory/entries/project-move-preview", memoryx.HandleAgentMemoryMemberMovePreview)
 	mux.Handle("POST /agents/memory/entries/project-move", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryMemberMove)))
+	// The read-only lint report (ADR 0130 decision 5) and the member's retired-term list it
+	// reads; the list is edited only behind the member-origin mark.
+	mux.HandleFunc("GET /agents/memory/entries/lint", memoryx.HandleAgentMemoryMemberLint)
+	mux.HandleFunc("GET /agents/memory/entries/lint-terms", memoryx.HandleAgentMemoryLintTerms)
+	mux.Handle("POST /agents/memory/entries/lint-terms", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryLintTermsSave)))
 	mux.HandleFunc("GET /agents/memory/entries/member-latest", memoryx.HandleAgentMemoryMemberLatest)
 	mux.HandleFunc("GET /agents/memory/entries/member-forgotten", memoryx.HandleAgentMemoryMemberForgotten)
 	// The member's purge of one memory's past revisions from the history (#1982): a read-only

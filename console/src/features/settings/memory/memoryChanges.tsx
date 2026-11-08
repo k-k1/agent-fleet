@@ -18,7 +18,6 @@ import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { AutoSyncPanel, useFlipAgentMemory } from "./memoryAutoSync.tsx";
 import { ExternalMemoryHelpLink } from "./ExternalMemoryHelpLink.tsx";
-import { revertRun } from "./memoryReviewQueue.ts";
 import type { ChangeDiff, MemoryChange, RunRevertReport, SecretFinding } from "./memoryTypes.ts";
 
 // An unknown op from a newer Agent is printed raw rather than breaking the row.
@@ -100,6 +99,10 @@ export function ChangeDiffBody({ commit }: { commit: string }) {
     );
   return <Diff text={diff.diff} embedded wrap />;
 }
+
+// The ids go in the query as well as the body: the CP audit ledger reads the URL only, never the body.
+const revertRun = (run: string) =>
+  apiJSON("api/agents/memory-review/runs/revert?run=" + encodeURIComponent(run), "POST", { run });
 
 /** Rows per page of the Changes view. */
 const PAGE = 100;
@@ -236,9 +239,10 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
 
   const selected = changes?.find((c) => c.commit === sel) ?? null;
 
-  // Undoes everything the background review published in one run (ADR 0117 decision 5): each
-  // commit that is still its memory's newest change, as a new change. An edited one is left and
-  // reported below, never overwritten.
+  // Undoes everything one past review run published (ADR 0117 decision 5, kept by ADR 0130
+  // decision 2: the review itself is removed, its changes stay revertible): each commit that is
+  // still its memory's newest change, as a new change. An edited one is left and reported below,
+  // never overwritten.
   const undoRun = async (c: MemoryChange) => {
     if (!c.reviewRun) return;
     const ok = await askConfirm({

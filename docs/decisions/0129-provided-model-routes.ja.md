@@ -536,3 +536,21 @@ Q1 は、同じアダプタとソケットを使うので、ADR 0128 の claude 
 - Codex: [Configuration reference](https://developers.openai.com/codex/config-reference)（`model_providers`、`wire_api`、
   `auth`、`model_providers.amazon-bedrock.aws`）。
 - 手元の CLI: `codex --help`、`codex exec --help`（0.167.0）、`opencode --version`（v2.2.5）、`claude --version`（2.1.318）。
+
+## 注記
+
+- 2026-11-08、Q0（#3578）：データとカタログだけで、リクエストの経路はまだどれも読まない。ルートカタログに
+  `bedrock-tenant`（tier `tenant-key`。その説明はキーだけでなくロールも含むよう書き直した）と `bedrock-deployment`
+  （tier `deployment`）を足した。どの harness も宣言しないので、どの作成経路でも宣言されていないルートと同じ
+  `route_unsupported` で断られる。台帳はこれらを独立したルート id として記録し、`bedrock` と同じ models.dev の
+  `amazon-bedrock` の表で値付けする。CP の価格・上限表は `control-plane/internal/routeprice`（`bedrock.json`、同じ表から
+  生成、Anthropic と OpenAI のモデルだけ）。Agent の `usage_price.go` を使わないのは、あちらが毎回の読み取りで
+  版のない可変カタログから値付けし直すのに対し、D4 はメンバーが編集できない表と予約ごとに凍結する版を要るから。版は
+  ファイルのハッシュなので、上げ忘れが起きない。出典に無い 1 時間キャッシュ書き込みは Anthropic のモデルに入力の
+  2 倍を入れ、5 分の書き込みが無いものは `usage_price.go` と同じく入力の 1.25 倍と読む。支払者フィンガープリント
+  （`internal/providedroutes`）はロール ARN、外部 ID の版、正規化した Region の集合だけをハッシュする。ストア
+  （`migrations/0126`、`migrations-pg/0111`）はソース、グラント（素の真偽値、行が無ければ off）、メンバー予算
+  （既定 0）、UTC の受付月で切った月次の行（メンバーとテナントの 2 段）、呼び出しごとの予約を、すべて整数の
+  マイクロ USD で持つ。受付と精算はストアのトランザクションとして作り、両方の方言で、各段の上限ぎりぎりを 2 つの
+  CP ハンドルが競るテストを置いた。メンバーの同時実行上限は、メンバーの月の行のロックの下で in_flight の予約行を
+  数えるので、月の境目をまたいで同じ瞬間に来た 2 件はそれぞれ上限 1 を通りうる。

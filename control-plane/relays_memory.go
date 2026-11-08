@@ -1,7 +1,7 @@
 package main
 
 // memoryRelays are agent memory: the 0022 version control, AF-owned memory (ADR 0108), the
-// background review (ADR 0117), and the imports and exports between stores and environments.
+// undo of a past review run (ADR 0117), and the imports and exports between stores and environments.
 //
 // The member-only writes are signed (ADR 0113): a session holds the same AGENT_TOKEN the relay
 // uses, so without the mark it could act as the member. A route that is not signed here never
@@ -36,25 +36,21 @@ var memoryRelays = []agentRelay{
 	{route: "GET /api/agents/memory/entries/list"},
 	// Pinning or unpinning (#1703): the project id is the hint, never the free-text memory name.
 	{route: "POST /api/agents/memory/entries/pin", audit: auditAs("memory.entry.pin", queryShaped("project", auditProjectHint)), sign: signBody},
-	// The background memory review (ADR 0117): the member's "Review now" for one session, and the
-	// review's status. "Review now" spends tokens and sends an excerpt to a model provider, so a
-	// session's own AGENT_TOKEN must not be able to start it; the session name is the hint.
-	{route: "GET /api/agents/memory-review"},
-	{route: "POST /api/agents/memory-review/run", audit: auditAs("memory.review.run", queryShaped("session", auditSessionNameHint)), sign: signBody},
-	// The member's decisions on the queue the review fills (ADR 0117 decision 6): approving
-	// publishes into every kind's memory, and the list returns text nobody has published, so a
-	// session's own AGENT_TOKEN must not be able to do either. The decisions are audited with a
-	// proposal or run id (the run is empty for "reject all"); the list changes nothing.
-	{route: "POST /api/agents/memory-review/proposals/list", sign: signBody},
-	{route: "POST /api/agents/memory-review/proposals/approve", audit: auditAs("memory.review.approve", queryShaped("id", auditReviewIDHint)), sign: signBody},
-	{route: "POST /api/agents/memory-review/proposals/reject", audit: auditAs("memory.review.reject", queryShaped("id", auditReviewIDHint)), sign: signBody},
-	{route: "POST /api/agents/memory-review/proposals/reject-all", audit: auditAs("memory.review.reject_all", queryShaped("run", auditReviewIDHint)), sign: signBody},
+	// Undoing what one past review run published (ADR 0117 decision 5, kept by ADR 0130 decision 2:
+	// the review itself is removed, its published history stays revertible). A member write, so
+	// signed; the audit target is the run id.
 	{route: "POST /api/agents/memory-review/runs/revert", audit: auditAs("memory.review.revert_run", queryShaped("run", auditReviewIDHint)), sign: signBody},
 	// The member's create/edit (#1997), audited under the project id.
 	{route: "POST /api/agents/memory/entries/member-save", audit: auditAs("memory.entry.save", queryShaped("project", auditProjectHint)), sign: signBody},
 	{route: "GET /api/agents/memory/entries/member-read"},
 	{route: "GET /api/agents/memory/entries/member-search"},
 	{route: "GET /api/agents/memory/entries/member-latest"},
+	// The read-only lint report (ADR 0130 decision 5) and the member's retired-term list. The
+	// list shapes what the report calls retired, so its save carries the member-origin mark; it
+	// names no project or memory, so the audit row has no target.
+	{route: "GET /api/agents/memory/entries/lint"},
+	{route: "GET /api/agents/memory/entries/lint-terms"},
+	{route: "POST /api/agents/memory/entries/lint-terms", audit: auditAs("memory.lint_terms.save", nil), sign: signBody},
 	{route: "GET /api/agents/memory/entries/member-forgotten"},
 	// The member's purge of one memory's past revisions from the history (#1982); the preview
 	// only reads.

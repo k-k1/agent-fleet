@@ -43,14 +43,10 @@ func TestMemberOriginWireVector(t *testing.T) {
 // The CP signs exactly these routes, and each is a relayed route of the real mux.
 func TestMemberOriginRoutesAreTheMemberWrites(t *testing.T) {
 	want := []string{
-		"POST /api/agents/memory-review/proposals/approve",
-		"POST /api/agents/memory-review/proposals/list",
-		"POST /api/agents/memory-review/proposals/reject",
-		"POST /api/agents/memory-review/proposals/reject-all",
-		"POST /api/agents/memory-review/run",
 		"POST /api/agents/memory-review/runs/revert",
 		"POST /api/agents/memory/af-import",
 		"POST /api/agents/memory/auto-sync",
+		"POST /api/agents/memory/entries/lint-terms",
 		"POST /api/agents/memory/entries/member-save",
 		"POST /api/agents/memory/entries/pin",
 		"POST /api/agents/memory/entries/project-move",
@@ -583,7 +579,7 @@ func TestHashedUploadRefusedWhenNoDeadlineCanBeSet(t *testing.T) {
 }
 
 // Every settings write is signed, a mark a browser sent on it is replaced, and the Agent receives
-// the same body: the Agent asks for the mark only when the write arms the memory review.
+// the same body: the Agent asks for the mark only when the write arms a member-only setting (Muse contributor mode).
 func TestRelaySignsSettingsWrites(t *testing.T) {
 	var gotMark, gotBody, gotMethod string
 	proxy, res, _, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -594,7 +590,7 @@ func TestRelaySignsSettingsWrites(t *testing.T) {
 	defer cleanup()
 	t.Setenv(memberOriginKeyVersionEnv, "")
 	pub := memberOriginKey(proxy.mgr.tokenSignMaster(), 1).Public().(ed25519.PublicKey)
-	body := `{"agentMemory":true,"memoryReview":"propose"}`
+	body := `{"agentMemory":true,"museContributorMode":true}`
 	req := httptest.NewRequest(http.MethodPut, "/api/env/ui-prefs", strings.NewReader(body))
 	req.Header.Set(memberOriginHeader, "v1.forged.byTheBrowser")
 	req.Header.Set("Content-Type", "application/json")

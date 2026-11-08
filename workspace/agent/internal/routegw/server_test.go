@@ -48,6 +48,14 @@ func TestStartServesOnAUnixSocketAndStops(t *testing.T) {
 	if is.Socket != SocketPath() || is.BaseURL != SocketBaseURL {
 		t.Fatalf("issued %q %q", is.Socket, is.BaseURL)
 	}
+	// The loopback listener runs beside it, for a harness that cannot use a socket.
+	loop, lref := g.IssueLoopback(e.session("s2", "p1", ""))
+	if lref != nil || !strings.HasPrefix(loop.BaseURL, "http://127.0.0.1:") || loop.Socket != "" {
+		t.Fatalf("IssueLoopback while running = %+v %+v", loop, lref)
+	}
+	if resp, _ := loopbackCall(t, loop.BaseURL, loop.Token, invokePath()); resp.StatusCode != 200 {
+		t.Fatalf("through the real loopback listener = %d", resp.StatusCode)
+	}
 	fi, err := os.Stat(is.Socket)
 	if err != nil || fi.Mode()&os.ModeSocket == 0 || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("socket %v %v", fi, err)
@@ -83,6 +91,10 @@ func TestStartServesOnAUnixSocketAndStops(t *testing.T) {
 	}
 	if _, err := os.Lstat(is.Socket); err == nil {
 		t.Fatal("the socket is left behind after stop")
+	}
+	if c, err := net.DialTimeout("tcp", strings.TrimPrefix(loop.BaseURL, "http://"), time.Second); err == nil {
+		c.Close()
+		t.Fatal("the loopback port still accepts after stop")
 	}
 	// A stale socket from an Agent that died is replaced; a file that is not a socket is not ours.
 	ln, err := net.Listen("unix", SocketPath())

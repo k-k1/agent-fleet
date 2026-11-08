@@ -21,7 +21,8 @@ import (
 //
 // Measured (claude 2.1.318): with CLAUDE_CODE_USE_BEDROCK=1, ANTHROPIC_UNIX_SOCKET carries the
 // Bedrock model calls over the socket, the base URL's host and port are never dialled, and the
-// peer credentials name the claude process itself.
+// peer credentials name the claude process itself. A harness that cannot use a Unix socket
+// (opencode) calls a loopback port instead, attributed through /proc (peer_tcp.go).
 
 type peerKey struct{}
 
@@ -37,21 +38,35 @@ type procID struct {
 // connection lives on in a process it handed the descriptor to; the pid alone could then name
 // a later process of the owner's tree.
 type peer struct {
-	id procID
-	ok bool
+	id        procID
+	ok        bool
+	transport string
 }
+
+// The transports a token can be issued for. A token is served only on the one it was issued
+// for: a harness on the Unix socket never has a reason to call the loopback port, and the
+// weaker TCP attribution (peer_tcp.go) must not become a second way in for its token.
+const (
+	transportUnix = "unix"
+	transportTCP  = "tcp"
+)
 
 // connContext records the connection's peer process for every request it carries.
 func connContext(ctx context.Context, c net.Conn) context.Context {
 	id, ok := peerOf(c)
-	return context.WithValue(ctx, peerKey{}, peer{id: id, ok: ok})
+	t := transportUnix
+	if _, isTCP := c.(*net.TCPConn); isTCP {
+		t = transportTCP
+	}
+	return context.WithValue(ctx, peerKey{}, peer{id: id, ok: ok, transport: t})
 }
 
-// requestPeer is the calling process of r; ok is false when the kernel did not say (a TCP
-// connection, a platform without SO_PEERCRED), and such a caller is refused.
-func requestPeer(r *http.Request) (procID, bool) {
+// requestPeer is the calling process of r and the transport it came in on; ok is false when the
+// kernel did not say (a platform without SO_PEERCRED, a TCP peer /proc does not name), and such
+// a caller is refused.
+func requestPeer(r *http.Request) (procID, string, bool) {
 	p, _ := r.Context().Value(peerKey{}).(peer)
-	return p.id, p.ok && p.id.pid > 1
+	return p.id, p.transport, p.ok && p.id.pid > 1
 }
 
 // maxTreeDepth bounds the walk up the process tree: a real chain from a pane to a model call is

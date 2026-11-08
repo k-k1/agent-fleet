@@ -83,7 +83,8 @@ func TestRouteAdaptersDeclareCataloguedRoutes(t *testing.T) {
 			}
 		}
 	}
-	for _, id := range []string{usagex.RouteOpencodeZen, usagex.RouteOpencodeGo, usagex.RouteAFEngineLLM, usagex.RouteMemberLcpp} {
+	for _, id := range []string{usagex.RouteOpencodeZen, usagex.RouteOpencodeGo, usagex.RouteAFEngineLLM, usagex.RouteMemberLcpp,
+		usagex.RouteBedrock, usagex.RouteBedrockTenant, usagex.RouteBedrockDeployment} {
 		if _, ok := routes.Lookup(id); !ok {
 			t.Errorf("usagex records route %q, which is not in routes.Catalogue", id)
 		}

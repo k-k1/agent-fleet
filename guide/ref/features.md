@@ -119,7 +119,6 @@ explains them.
 | Instructions to agents | member | Agent instructions |
 | Agent Fleet shared memory management | member | Agent memory ([18](../member/18-agent-memory.md#agent-memory)) |
 | Version history of agents' own memory | member | Memory snapshots ([18](../member/18-agent-memory.md#memory-snapshots)) |
-| Memory suggestions — finished sessions propose memories for you to approve (off by default) | member | Agent memory → Settings ([18](../member/18-agent-memory.md#settings)) |
 | Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([18](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)) |
 | Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([09](../member/09-agents.md#muse-code)) |
 | Git hosting connections | member | Git hosting |

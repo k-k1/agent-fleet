@@ -1,5 +1,5 @@
 ---
-audience: "anyone running claude on Amazon Bedrock with one of their AWS profiles"
+audience: "anyone running claude or opencode on Amazon Bedrock with one of their AWS profiles"
 source_of_truth: "the AWS profiles/SSM tab of the Console's Settings, the claude launch dialog, and the route gateway in the workspace"
 ---
 
@@ -7,7 +7,7 @@ source_of_truth: "the AWS profiles/SSM tab of the Console's Settings, the claude
 
 English | [日本語](bedrock-route.ja.md)
 
-A claude session can run its models on Amazon Bedrock with one of your Settings > "AWS profiles/SSM" profiles. The
+A claude or opencode session can run its models on Amazon Bedrock with one of your Settings > "AWS profiles/SSM" profiles. The
 session never receives AWS credentials: a gateway in the workspace signs each model call.
 
 ## The mark and the gateway
@@ -28,12 +28,20 @@ Mark the profile "Model route" in its form under Settings > "AWS profiles/SSM".
 - **The token ends** when the session is stopped, deleted, archived or recreated, when the selection changes, and
   when the profile is edited, unmarked or deleted. One that nothing ended runs out ten minutes after its session stops
   running.
+- **When a change takes effect**: a create or a start, and any model call that needs new AWS credentials, reads
+  Settings again first, so a change you saved before it is enforced at once when that read succeeds. A session that is
+  already running and still has credentials the gateway holds can make further calls for up to 30 seconds after the
+  change. When the read fails (the workspace cannot reach the Control Plane, or the read takes longer than 15
+  seconds), the gateway uses the last list it read successfully, for creates, starts and new credentials as well as for
+  calls, until 15 minutes after that read, and then refuses every call.
 - **A profile set to "Confirm before use"** is asked about when the session starts, and is checked again on
   every model call: until you allow it, each call fails at once with the reason.
 - **To use it**: in the launch dialog of a claude session, choose **Amazon Bedrock** under **Model route** (see
   [the claude routes](agents.md#claude-the-api-key-route)). The option appears only when at least one of your
   profiles is marked. The route is not offered generally yet: for now it appears only on a workspace whose operator
   has turned it on.
+- **opencode**: a Terminal (CLI) session can choose it the same way, with one of the **amazon-bedrock/…** models
+  ([opencode: the Amazon Bedrock route](agents.md#opencode-the-amazon-bedrock-route)).
 
 ## Before the first Bedrock call
 

@@ -13,7 +13,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -85,9 +84,6 @@ func gracefulShutdown(budget time.Duration) {
 	// A background English-slug one-shot (branch_slug_ai.go) is a CLI no request owns; cancel it
 	// rather than leave it running past the Agent's exit.
 	englishSlugs.shutdown(min(2*time.Second, time.Until(deadline)))
-	// The same for the memory review: no new helper call, and the one in flight is killed with
-	// its context rather than left as an orphaned CLI.
-	shutdownMemoryReview(min(2*time.Second, time.Until(deadline)))
 	// Carry pending interactions over (docs/log/75 §75.6.3, trigger 2). It must run
 	// BEFORE the aborts and the kills, because for everything but claude this is the
 	// last chance: claude's pending state stays in the home volume as pending-*, so a
@@ -145,14 +141,6 @@ func gracefulShutdown(budget time.Duration) {
 func shutdownManaged(lifecycles []agents.ManagedLifecycle) {
 	for _, lc := range lifecycles {
 		lc.Shutdown()
-	}
-}
-
-// shutdownMemoryReview stops the background memory review taking work and cancels the helper call
-// in flight (the run record keeps the interrupted attempt for the next start to settle).
-func shutdownMemoryReview(budget time.Duration) {
-	if memreview.DefaultLoop != nil {
-		memreview.DefaultLoop.Shutdown(budget)
 	}
 }
 

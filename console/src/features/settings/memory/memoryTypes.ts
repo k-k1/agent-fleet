@@ -123,7 +123,11 @@ export interface PurgePreview {
   changes: { commit: string; at: string; op: string; authorKind: string }[];
   changesTotal: number;
   snapshots: number;
-  refs: { name: string; kind: "main" | "branch" | "import" | "rescue"; affected: number }[];
+  refs: {
+    name: string;
+    kind: "main" | "branch" | "import" | "rescue";
+    affected: number;
+  }[];
   findings: SecretFinding[];
   plan: string;
 }
@@ -150,7 +154,8 @@ export interface ClaudeImportSource {
   project?: MemoryChangeProject;
   reason?: string;
 }
-export type ClaudeImportStatus = "new" | "update" | "unchanged" | "forgotten" | "secret" | "invalid";
+export type ClaudeImportStatus =
+  "new" | "update" | "unchanged" | "forgotten" | "secret" | "invalid";
 /** One claude file in a preview. Findings are masked by the Agent; a hit is never importable. */
 export interface ClaudeImportItem {
   name: string;
@@ -204,7 +209,10 @@ export interface MuseImportItem extends Omit<ClaudeImportItem, "status"> {
   /** No frontmatter: name from the file name, description from the first line, no type. */
   derived?: boolean;
 }
-export interface MuseImportPreview extends Omit<ClaudeImportPreview, "slug" | "items" | "counts"> {
+export interface MuseImportPreview extends Omit<
+  ClaudeImportPreview,
+  "slug" | "items" | "counts"
+> {
   scope: MuseScope;
   dir: string;
   target: "project" | "user";
@@ -219,7 +227,14 @@ export interface ClaudeExportSource {
   /** no_root: no main working copy is recorded, so claude's directory is unknown. */
   reason?: string;
 }
-export type ClaudeExportStatus = "new" | "update" | "remove" | "conflict" | "secret" | "unchanged" | "native_only";
+export type ClaudeExportStatus =
+  | "new"
+  | "update"
+  | "remove"
+  | "conflict"
+  | "secret"
+  | "unchanged"
+  | "native_only";
 export interface ClaudeExportItem {
   name: string;
   status: ClaudeExportStatus;
@@ -327,7 +342,8 @@ export interface MoveResultItem {
 }
 
 /** One memory of a memory bundle's AF store (`af-import/preview`, #1983). */
-export type BundleStatus = "new" | "unchanged" | "exists" | "forgotten" | "secret" | "invalid";
+export type BundleStatus =
+  "new" | "unchanged" | "exists" | "forgotten" | "secret" | "invalid";
 export interface BundleItem {
   name: string;
   status: BundleStatus;
@@ -372,7 +388,8 @@ export interface BundleResult {
 
 /** Where the Agent memory switch's reconciler is (`auto-sync`, #1972). */
 /** "unreadable": the Agent's state file cannot be read, so the phase is unknown and native memory stays off. */
-export type AutoSyncPhase = "off" | "importing" | "on" | "writing_back" | "unreadable";
+export type AutoSyncPhase =
+  "off" | "importing" | "on" | "writing_back" | "unreadable";
 
 export interface AutoSyncProject {
   id: string;
@@ -432,51 +449,6 @@ export interface AutoSyncPreview {
   noRoot?: number;
 }
 
-/** The background memory review's status (ADR 0117): counts and states, never text. `pending` is
- *  the queue length, stale proposals included. */
-export interface ReviewStatus {
-  mode: string;
-  enabled: boolean;
-  pending: number;
-  releasePending?: number;
-}
-
-/** The live memory a proposal is about. */
-export interface ProposalCurrent {
-  revision: number;
-  type?: string;
-  description?: string;
-  body?: string;
-  withheld?: boolean;
-}
-
-/** One proposal of the background review waiting for the member's decision. `withheld` means it
- *  matches a secret rule now: its name, text and diff are not sent, and it can still be rejected.
- *  `stale` proposals cannot be approved: `staleReason` says why (changed | forgotten | secret |
- *  invalid). `diff` is a unified diff from the live text to the proposed one. */
-export interface MemoryProposal {
-  id: string;
-  runId: string;
-  session: string;
-  op: "create" | "update" | "forget" | string;
-  scope: string;
-  projectId?: string;
-  project?: string;
-  name: string;
-  type?: string;
-  description?: string;
-  body?: string;
-  reason: string;
-  evidence: number[];
-  baseRevision?: number;
-  created: string;
-  withheld?: boolean;
-  state: "pending" | "stale" | string;
-  staleReason?: string;
-  current?: ProposalCurrent;
-  diff: string;
-}
-
 /** What "revert this run" did to one commit of the run. */
 export interface RunRevertItem {
   commit: string;
@@ -490,4 +462,29 @@ export interface RunRevertItem {
 export interface RunRevertReport {
   run: string;
   items: RunRevertItem[];
+}
+
+/** One finding of the read-only lint report (member `entries/lint`, ADR 0130 decision 5). */
+export interface LintFinding {
+  memory: string;
+  check: string;
+  /** The anchor, term or link target; the size in bytes for `oversize`. */
+  subject: string;
+  line?: number;
+}
+
+export interface LintReport {
+  scope: string;
+  project?: MemoryChangeProject;
+  /** The ref and commit the repository checks read; absent when they did not run. */
+  ref?: string;
+  commit?: string;
+  withheld?: number;
+  terms: number;
+  report: {
+    checked: number;
+    findings: LintFinding[];
+    counts: Record<string, number>;
+    skipped?: string[];
+  };
 }

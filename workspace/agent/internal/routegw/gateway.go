@@ -34,6 +34,10 @@ type Deps struct {
 	// Settings is the member's Settings profiles as fresh as the Agent can make them; ok false
 	// means it cannot say (the CP has been unreachable too long), and the call is refused.
 	Settings func() (map[string]awsx.Profile, bool)
+	// FreshSettings is Settings from a pull that began after the call: what a create, a start and
+	// a credential resolution are checked against, so a profile edit, unmark or delete the member
+	// saved before them is enforced at once rather than after Settings' interval. Nil: Settings.
+	FreshSettings func() (map[string]awsx.Profile, bool)
 	// Held and Ask are ADR 0126's approval: Held reads a grant without waiting; Ask files the
 	// request so the member sees it.
 	Held func(settings map[string]awsx.Profile, profile string, m session.Meta, now time.Time) bool
@@ -49,6 +53,9 @@ type Deps struct {
 	Client   *http.Client
 	// Socket is the Unix socket a session is told to call; set by Start once it listens.
 	Socket func() string
+	// Loopback is the base URL of the loopback TCP listener ("http://127.0.0.1:<port>"), for a
+	// harness that cannot use a Unix socket; set by Start once it listens, "" when it does not.
+	Loopback func() string
 	// Roots is the root processes of a session's running runtime (its launch pane's process),
 	// none when it is not running. A call is served only to a process in that tree, and a token
 	// is renewed only while there is one.
@@ -82,6 +89,9 @@ const credReserve = 5 * time.Minute
 // credMaxAge bounds credentials that report no expiry.
 const credMaxAge = 5 * time.Minute
 
+// credShortReuse is how long credentials already inside credReserve are reused (credUsableUntil).
+const credShortReuse = 30 * time.Second
+
 // askEvery is how often one session's call may file a confirmation request: a harness that
 // retries a refused call must not put a card back every time.
 const askEvery = 10 * time.Second
@@ -114,6 +124,9 @@ func New(d Deps) *Gateway {
 	}
 	if d.Client == nil {
 		d.Client = upstreamClient()
+	}
+	if d.FreshSettings == nil {
+		d.FreshSettings = d.Settings
 	}
 	if d.Roots == nil {
 		d.Roots = func(string) []int { return nil }
@@ -149,8 +162,9 @@ type connection struct {
 
 // resolve is the part of the check that depends on Settings and the selection alone, shared by
 // issuing a token and by every call: the selection is this route on this connection, the profile
-// is one of the member's own, marked as a model route, and a region is known.
-func (g *Gateway) resolve(sel *routes.Selection) (connection, *refusal) {
+// is one of the member's own, marked as a model route, and a region is known. fresh reads
+// Settings through FreshSettings rather than the interval-capped Settings.
+func (g *Gateway) resolve(sel *routes.Selection, fresh bool) (connection, *refusal) {
 	if sel == nil || sel.Route != RouteBedrock {
 		return connection{}, &refusal{http.StatusUnauthorized, routes.CodeBadRoute, "the session does not select the bedrock route"}
 	}
@@ -158,7 +172,11 @@ func (g *Gateway) resolve(sel *routes.Selection) (connection, *refusal) {
 	if !ok {
 		return connection{}, &refusal{http.StatusUnauthorized, routes.CodeRouteUnavailable, "the session's route connection is not an AWS profile reference"}
 	}
-	settings, ok := g.d.Settings()
+	read := g.d.Settings
+	if fresh {
+		read = g.d.FreshSettings
+	}
+	settings, ok := read()
 	if !ok {
 		return connection{}, &refusal{http.StatusServiceUnavailable, routes.CodeRouteUnavailable,
 			"the Agent cannot read the AWS profiles in Settings right now; the route is refused until it can"}
@@ -202,7 +220,7 @@ func (c connection) fingerprint() string {
 // selection already bound is accepted only while its binding still holds, so a session forked or
 // recreated from one keeps the account it started on.
 func (g *Gateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
-	c, ref := g.resolve(&sel)
+	c, ref := g.resolve(&sel, true)
 	if ref != nil {
 		return sel, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
 	}
@@ -216,7 +234,18 @@ func (g *Gateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agent
 // Agent's own launch code calls it; there is no HTTP route that mints, because the Agent's HTTP
 // token is in every session's shell.
 func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
-	c, ref := g.resolve(m.Route)
+	return g.issue(m, transportUnix)
+}
+
+// IssueLoopback is Issue for a harness that can only speak TCP (opencode): the token is served
+// on the loopback port only, to a caller /proc attributes to the session's tree (peer_tcp.go),
+// and the grant's BaseURL is that port.
+func (g *Gateway) IssueLoopback(m session.Meta) (Issued, *agents.RouteRefusal) {
+	return g.issue(m, transportTCP)
+}
+
+func (g *Gateway) issue(m session.Meta, transport string) (Issued, *agents.RouteRefusal) {
+	c, ref := g.resolve(m.Route, true)
 	if ref != nil {
 		return Issued{}, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
 	}
@@ -233,12 +262,17 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	}
 	inc := awsx.Incarnation(m)
 	b := Binding{Session: m.Name, Incarnation: inc, Route: RouteBedrock, Connection: m.Route.Connection,
-		ProfileID: c.profile.ID, Region: c.region, Identity: awsx.ProfileIdentity(c.settings, c.profile)}
-	sock := ""
-	if g.d.Socket != nil {
+		ProfileID: c.profile.ID, Region: c.region, Identity: awsx.ProfileIdentity(c.settings, c.profile), Transport: transport}
+	sock, base, listening := "", SocketBaseURL, false
+	switch {
+	case transport == transportTCP && g.d.Loopback != nil:
+		base = g.d.Loopback()
+		listening = base != ""
+	case transport != transportTCP && g.d.Socket != nil:
 		sock = g.d.Socket()
+		listening = sock != ""
 	}
-	if sock == "" {
+	if !listening {
 		return Issued{}, &agents.RouteRefusal{Status: http.StatusServiceUnavailable, Code: routes.CodeRouteUnavailable,
 			Message: "the route gateway is not listening"}
 	}
@@ -246,7 +280,7 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	if err != nil {
 		return Issued{}, &agents.RouteRefusal{Status: http.StatusInternalServerError, Code: routes.CodeRouteUnavailable, Message: err.Error()}
 	}
-	return Issued{Socket: sock, BaseURL: SocketBaseURL, Token: tok, Region: c.region, Expires: exp}, nil
+	return Issued{Socket: sock, BaseURL: base, Token: tok, Region: c.region, Expires: exp}, nil
 }
 
 // SocketBaseURL is the base URL a harness is given beside the socket. The connection goes to
@@ -271,7 +305,7 @@ var _ agents.RouteGateway = (*Gateway)(nil)
 // for a selection, before anything starts. The model is not checked here: Bedrock's model list
 // is per account and region and the gateway never calls it.
 func (g *Gateway) CheckRoute(_ context.Context, sel agents.RouteSelection, _ string) *agents.RouteRefusal {
-	if _, ref := g.resolve(&sel); ref != nil {
+	if _, ref := g.resolve(&sel, true); ref != nil {
 		return &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
 	}
 	return nil
@@ -288,16 +322,18 @@ type call struct {
 // authorize is the check every upstream call runs, in this order, and the reason a token is
 // revoked on the spot: it is what makes "revoked when the session ends, the selection changes or
 // the connection changes" take effect on the next call, not on a timer. caller is the calling
-// process as pinned at accept (ok false: unknown).
-func (g *Gateway) authorize(token string, caller procID, callerOK bool) (*call, *refusal) {
+// process as pinned at accept (ok false: unknown) and transport the listener it came in on.
+// fresh reads Settings through FreshSettings: what a call that is about to resolve credentials
+// is checked with (credentials says when).
+func (g *Gateway) authorize(token string, caller procID, transport string, callerOK, fresh bool) (*call, *refusal) {
 	b, ok := g.d.Registry.Lookup(token)
 	if !ok {
 		return nil, &refusal{http.StatusUnauthorized, "route_token_invalid", "the route token is unknown, expired or revoked; restart the session"}
 	}
 	// Before anything that reads the owner's state or files an approval request on its behalf.
 	// The token is not revoked: a process that only read it must not be able to end the owner's
-	// route by presenting it.
-	if !callerOK || !inTree(g.d.ProcRoot, caller, g.d.Roots(b.Session)) {
+	// route by presenting it. A token is served only on the transport it was issued for.
+	if !callerOK || transport != bindingTransport(b) || !inTree(g.d.ProcRoot, caller, g.d.Roots(b.Session)) {
 		return nil, &refusal{http.StatusForbidden, "route_caller_forbidden",
 			"this route token belongs to another session's process; only the session it was issued to may use it"}
 	}
@@ -312,7 +348,7 @@ func (g *Gateway) authorize(token string, caller procID, callerOK bool) (*call, 
 	if m.Route == nil || m.Route.Route != b.Route || m.Route.Connection != b.Connection {
 		return revoke(http.StatusUnauthorized, "route_selection_changed", "the session no longer selects this route connection")
 	}
-	c, ref := g.resolve(m.Route)
+	c, ref := g.resolve(m.Route, fresh)
 	if ref != nil {
 		// A deleted profile, a lost mark and a bad region all end the token; only an unreadable
 		// Settings list is left for the next call to settle.
@@ -329,6 +365,14 @@ func (g *Gateway) authorize(token string, caller procID, callerOK bool) (*call, 
 		return nil, g.approvalRefusal(c, m)
 	}
 	return &call{b: b, meta: m, conn: c, token: token}, nil
+}
+
+// bindingTransport is the transport b's token is served on; empty is the socket.
+func bindingTransport(b Binding) string {
+	if b.Transport == "" {
+		return transportUnix
+	}
+	return b.Transport
 }
 
 // approvalRefusal files the confirmation request (at most once per askEvery per session and
@@ -352,15 +396,28 @@ func (g *Gateway) approvalRefusal(c connection, m session.Meta) *refusal {
 	return &refusal{http.StatusForbidden, "route_confirmation_required", msg}
 }
 
+func credKey(identity, region string) string { return identity + "|" + region }
+
+// errNeedFresh is credentials' answer to a call checked against the interval-capped Settings
+// when the credentials have to be resolved: the call is checked again with FreshSettings first.
+var errNeedFresh = &refusal{http.StatusServiceUnavailable, routes.CodeRouteUnavailable, "settings must be read fresh"}
+
 // credentials returns the call's credentials, from memory until shortly before they expire. The
-// cache key is the profile's identity, so an edited profile never reads the old one's.
-func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
-	key := c.b.Identity + "|" + c.conn.region
+// cache key is the profile's identity, so an edited profile never reads the old one's. fresh says
+// c was authorized with FreshSettings; without it a cache miss resolves nothing and answers
+// errNeedFresh, decided here under credMu rather than earlier, so time spent between the check and
+// this point (reading the request body) can never put new credentials on a stale Settings copy.
+func (g *Gateway) credentials(c *call, fresh bool) (awsx.RouteCredentials, *refusal) {
+	key := credKey(c.b.Identity, c.conn.region)
 	now := g.d.Now()
 	g.credMu.Lock()
 	if e, ok := g.creds[key]; ok && now.Before(e.usable) {
 		g.credMu.Unlock()
 		return e.c, nil
+	}
+	if !fresh {
+		g.credMu.Unlock()
+		return awsx.RouteCredentials{}, errNeedFresh
 	}
 	delete(g.creds, key)
 	// One resolution per key at a time, outside credMu: it starts the AWS CLI, which can be slow,
@@ -381,10 +438,7 @@ func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
 	defer func() {
 		g.credMu.Lock()
 		if ref == nil {
-			usable := now.Add(credMaxAge)
-			if !cr.Expires.IsZero() {
-				usable = cr.Expires.Add(-credReserve)
-			}
+			usable := credUsableUntil(now, cr.Expires)
 			if now.Before(usable) {
 				g.creds[key] = cachedCreds{c: cr, usable: usable}
 			}
@@ -409,6 +463,28 @@ func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
 			"could not get credentials for profile %q: %v", c.conn.profile.Name, err)}
 	}
 	return cr, ref
+}
+
+// credUsableUntil is how long resolved credentials are reused. Normally until credReserve before
+// they expire; credentials already inside the reserve (the AWS CLI may hand back the same ones
+// until it refreshes them) are still reused for credShortReuse, never closer than credShortReuse
+// to their expiry. Without that, every call on them would resolve again, and each resolution
+// costs an AWS CLI run and a fresh Settings pull: a pull per model call.
+func credUsableUntil(now, expires time.Time) time.Time {
+	if expires.IsZero() {
+		return now.Add(credMaxAge)
+	}
+	if u := expires.Add(-credReserve); now.Before(u) {
+		return u
+	}
+	return minTime(now.Add(credShortReuse), expires.Add(-credShortReuse))
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // credFlight is one in-progress resolution that concurrent callers of the same key wait on.

@@ -163,7 +163,7 @@ func TestBrandAdminAPIChangesWhatIsServed(t *testing.T) {
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if !strings.Contains(rec.Body.String(), "<title>Agent Fleet — Console") ||
-		strings.Contains(rec.Body.String(), "__AF_BRAND") {
+		strings.Contains(rec.Body.String(), "af-brand") {
 		t.Errorf("reset did not return the shipped shell: %s", rec.Body.String())
 	}
 }

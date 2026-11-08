@@ -98,6 +98,7 @@ export const viewer = {
   "view.reveal_in_files": "{path} をファイル一覧で表示",
   "view.cannot_resolve_link": "リンク先を解決できません: {href}",
   "view.cannot_load": "読み込めません",
+  "view.ext_image_load": "外部画像を読み込む（{host}）",
   "view.lines_meta": " · {n} 行",
   "view.doc.loading": "文書を変換しています…",
   "view.doc.simple_preview_note": "簡易プレビューです。書式・図形・画像は再現されません（原本はダウンロードしてください）。",

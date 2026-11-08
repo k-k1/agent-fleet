@@ -182,7 +182,7 @@ func checkRouteSwitch(ctx context.Context, m session.Meta, want string) (routes.
 	}
 	// Decision 12, Agent side, before anything is stopped: permission is use, the connection is
 	// available, the model is valid on the new route, and a start on it would be accepted.
-	if ref := checkRouteLive(ctx, m.Kind, &target, m.Model); ref != nil {
+	if ref := checkRouteLive(ctx, m.Kind, &target, m.Model, m.DriverKind()); ref != nil {
 		return routes.Selection{}, fromRefusal(ref)
 	}
 	if b, ok := a.(agents.RouteBinder); ok {

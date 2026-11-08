@@ -67,7 +67,6 @@ main.go
 mcp_wiring.go
 memo_paste.go
 memory_autosync.go
-memory_review_notice.go
 memory_wiring.go
 model_catalog_fetch.go
 model_info.go

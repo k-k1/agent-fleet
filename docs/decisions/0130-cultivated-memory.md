@@ -565,3 +565,34 @@ release.
   the destination, exactly as it does the legacy file, rather than carrying counts over. Purge and bundles
   need no change: purge rewrites history and leaves live memories (and so their counters) alone, and
   bundles carry only the git history, never the sidecars.
+
+- **2026-11-08 — decision 4 `memory_patch` built (#3441).** Shipped on both memory surfaces: the af server's
+  tool and the external `/mcp` tool (audited as `memory.entry.patch`). A patch matches every `old`
+  against the same original body, counts a self-overlapping `old` ("aa" in "aaa") as matching more than
+  once, and keeps the body exactly as the edits leave it (no trim; an omitted `new` is refused, an empty one deletes). The "near name" hint of `memory_save` is a warning line
+  in the save answer, not a field: name words of three characters or more found in another memory's name
+  or description, at least half of them and at least two (one for a one-word name), with `memory_search`'s
+  field weights; same scope, at most three names, and only for agent and external callers.
+
+- **2026-11-08 — decision 2 built (#3440).** The review loop, "Review now", the proposals list, approve
+  and reject routes, the review switch and the AI-assist row, the ui-prefs keys and the count notification are
+  gone; `POST /agents/memory-review/runs/revert` stays, behind the member-origin mark, and its button lives in
+  the change list. A stored `memoryReview` / `memoryReviewAuto` is ignored on read and dropped by the Agent on
+  the next ui-prefs save, whichever Console sent it; an older Console calling a removed route gets a 404 (the
+  Control Plane no longer relays it; the Agent's mux would 404 too). The export is `af-memory.work/review-queue-export-v1.json` under the Claude config directory
+  (`workspace/agent/internal/memreview/export.go`): written with fsync and rename, then the whole review state
+  directory (queue, rejected hashes, run records, watermarks, counter) is removed, so nothing can re-dispatch an
+  old run. It is written on every workspace that has a review state directory, also when the queue is empty,
+  and never on one that has none. A stop between the write and the removal leaves a valid export that the next
+  start does not rewrite. Queue files that cannot be parsed are counted in `unreadable`. Unqueued replies that
+  only an open run record held were never visible to the member and are dropped with it. The `memoryx` review
+  publish and forget-hook code stays in place for now (decision 6 and `memory_patch` decide what remains of
+  it); the Agent no longer installs the forget hook. The deny-all one-shot (`chatx/chat_denyall.go`) stays on
+  the same terms, with no production caller until the decision 6 consolidation needs it.
+
+- **2026-11-08 — decision 5 "Step 1 — report only" built (#3443).** `internal/memorylint` is the pure checks (it
+  imports no AF package, and a test fails if it does); the Agent feeds it bodies, names and a by-ref repository
+  reader pinned to one commit, and the report is `af-memory lint` and Import & export → Memory lint report. The
+  member-edited retired-term list is a file beside the store, outside any memory's history. Proposing retired
+  terms from the repository (a superseded ADR, a removed key) is not built: it is the optional half of decision 5
+  (#3571).

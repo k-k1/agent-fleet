@@ -386,6 +386,13 @@ type agentMemExternalSaveReq struct {
 	Client     string `json:"client"`
 }
 
+type agentMemExternalPatchReq struct {
+	agentMemPatchReq
+	Project    string `json:"project"`
+	Repository string `json:"repository"`
+	Client     string `json:"client"`
+}
+
 type agentMemExternalForgetReq struct {
 	agentMemForgetReq
 	Project    string `json:"project"`
@@ -424,6 +431,36 @@ func HandleAgentMemoryExternalSave(w http.ResponseWriter, r *http.Request) {
 	req.Session = ""
 	c.trailers = agentMemExternalTrailers(req.Client)
 	res, err := agentMemSave(c, req.agentMemSaveReq, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, agentMemExternalWrote(res, c))
+}
+
+// HandleAgentMemoryExternalPatch patches a memory through the tools' own patch.
+func HandleAgentMemoryExternalPatch(w http.ResponseWriter, r *http.Request) {
+	if !agentMemExternalAllow(w, true) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, agentMemSaveMaxRequest)
+	var req agentMemExternalPatchReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if err := agentMemExternalWriteScope(req.Scope, req.Project, req.Repository); err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	// A patch never creates, so it never starts a project (the second argument of save's caller).
+	c, err := agentMemExternalCallerFor(req.Project, req.Repository, false)
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	req.Session = ""
+	c.trailers = agentMemExternalTrailers(req.Client)
+	res, err := agentMemPatch(c, req.agentMemPatchReq, time.Now())
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return

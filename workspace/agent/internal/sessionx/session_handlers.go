@@ -1016,7 +1016,7 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// A fork inherits the selection (ADR 0128 decision 13) and is checked again like a create:
 	// the connection may have expired or been revoked since the source was made.
-	if ref := checkRouteLive(r.Context(), src.Kind, src.Route, src.Model); ref != nil {
+	if ref := checkRouteLive(r.Context(), src.Kind, src.Route, src.Model, src.DriverKind()); ref != nil {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
@@ -1514,7 +1514,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// The slot keeps its explicit selection, and a selection that no longer holds is found here,
 	// not after the old identity is archived and killed.
-	if ref := checkRouteLive(r.Context(), m.Kind, m.Route, m.Model); ref != nil {
+	if ref := checkRouteLive(r.Context(), m.Kind, m.Route, m.Model, m.DriverKind()); ref != nil {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}

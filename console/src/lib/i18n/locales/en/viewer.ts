@@ -100,6 +100,7 @@ export const viewer: Record<keyof typeof jaViewer, string> = {
   "view.reveal_in_files": "Show {path} in the file browser",
   "view.cannot_resolve_link": "Cannot resolve link: {href}",
   "view.cannot_load": "Cannot load",
+  "view.ext_image_load": "Load external image ({host})",
   "view.lines_meta": " · {n} lines",
   "view.doc.loading": "Converting the document…",
   "view.doc.simple_preview_note": "A simple preview: formatting, shapes and images are not reproduced (download the original to see them).",
