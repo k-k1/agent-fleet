@@ -5,7 +5,7 @@ package usagesvc
 // usagesvc does not import main (the dependency already runs the other way), so "call
 // something in main" arrives as a value wired once at boot (main's usage_wiring.go). Configure
 // panics on a gap: an unwired ModelsDevPath would read the operator's catalog slot as the
-// fetched copy's, and an unwired ModelFamilyIndexed would silently index no families.
+// fetched copy's.
 
 import (
 	"fmt"
@@ -18,9 +18,6 @@ type Deps struct {
 	// ModelsDevPath is where main's daily models.dev refresh stores the fetched catalog
 	// (model_catalog_fetch.go); usagesvc reads it as one of the catalog sources.
 	ModelsDevPath func() string
-	// ModelFamilyIndexed is the set of providers whose model families the catalog parser
-	// indexes (model_provider.go's modelFamilyProviders).
-	ModelFamilyIndexed func() map[string]bool
 }
 
 var deps Deps

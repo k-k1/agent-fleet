@@ -3,12 +3,12 @@ package usagesvc
 // testsupport.go — fixtures that tests in this package and in package main share (main's model
 // catalog tests read the same price catalog and ledger directory). They live in a non-test file
 // only because a _test.go helper cannot be imported across packages; nothing in production calls
-// them.
+// them. It deliberately does not import "testing" (the production binary would link it): TB is
+// the slice of testing.TB these helpers use, and a *testing.T satisfies it.
 
 import (
 	"os"
 	"path/filepath"
-	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -28,7 +28,7 @@ import (
 // Clearing `usageFoldRunning` instead of waiting does not fix the leak, it erases its traces —
 // the goroutine keeps running, and the double-start guard is dropped so a second one may run.
 // Waiting is the correct fix.
-func UseTempUsageDir(t testing.TB) string {
+func UseTempUsageDir(t TB) string {
 	t.Helper()
 	waitUsageFoldIdle(t) // collect a fold an earlier test started, before swapping the ledger
 	dir := t.TempDir()
@@ -52,7 +52,7 @@ func UseTempUsageDir(t testing.TB) string {
 // the price catalog also reads the opencode cache under XDG_CACHE_HOME, so unless that is swapped
 // too the expected values move with the real catalog on the dev machine (i.e. the test ends up
 // inspecting the environment).
-func UseIsolatedUsageDir(t testing.TB) string {
+func UseIsolatedUsageDir(t TB) string {
 	t.Helper()
 	dir := UseTempUsageDir(t)
 	t.Setenv("HOME", t.TempDir())
@@ -67,7 +67,7 @@ func UseIsolatedUsageDir(t testing.TB) string {
 
 // ResetUsageCatalogCache drops the in-process cache so an earlier test's catalog does not leak
 // into the next one. Also registered as a Cleanup so it takes effect on both sides.
-func ResetUsageCatalogCache(t testing.TB) {
+func ResetUsageCatalogCache(t TB) {
 	t.Helper()
 	clear := func() {
 		usageCatalogMu.Lock()
@@ -81,11 +81,11 @@ func ResetUsageCatalogCache(t testing.TB) {
 
 // UseUsageCatalog installs the given JSON as the catalog (the real machine's catalog is
 // never visible to the test).
-func UseUsageCatalog(t testing.TB, body string) {
+func UseUsageCatalog(t TB, body string) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "models.json")
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v", err)
 	}
 	t.Setenv("AF_USAGE_CATALOG", p)
 	ResetUsageCatalogCache(t)
@@ -100,7 +100,7 @@ func UseUsageCatalog(t testing.TB, body string) {
 // The limit is chosen to cover a bulk fold on a real machine (a dev box with hundreds of sessions
 // in HOME). Measured 2026-09-02: 0.58 s for 200 synthetic sessions of one transcript each. Real
 // transcripts are an order of magnitude larger (measured on the code side: 158 sessions, ~20 s).
-func waitUsageFoldIdle(t testing.TB) {
+func waitUsageFoldIdle(t TB) {
 	t.Helper()
 	if !waitForIdle(usageFoldRunning.Load, usageFoldWaitBudget, time.Now, time.Sleep) {
 		t.Fatalf("the bulk fold did not finish in %s (cannot move on leaving a running writer behind)",
@@ -136,4 +136,13 @@ func waitForIdle(busy func() bool, budget time.Duration, now func() time.Time, s
 		sleep(10 * time.Millisecond)
 	}
 	return true
+}
+
+// TB is the part of testing.TB the fixtures in this file use.
+type TB interface {
+	Helper()
+	Fatalf(format string, args ...any)
+	Setenv(key, value string)
+	TempDir() string
+	Cleanup(func())
 }

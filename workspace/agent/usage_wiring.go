@@ -11,7 +11,6 @@ func init() { usagesvc.Configure(usageDeps()) }
 
 func usageDeps() usagesvc.Deps {
 	return usagesvc.Deps{
-		ModelsDevPath:      modelsDevPath,
-		ModelFamilyIndexed: modelFamilyIndexed,
+		ModelsDevPath: modelsDevPath,
 	}
 }

@@ -17,17 +17,6 @@ func init() { Configure(testDeps()) }
 func testDeps() Deps {
 	return Deps{
 		ModelsDevPath: func() string { return filepath.Join(usagex.Dir(), "models.dev.json") },
-		ModelFamilyIndexed: func() map[string]bool {
-			m := map[string]bool{}
-			for _, p := range []string{
-				"anthropic", "openai", "google", "google-vertex", "alibaba", "zhipuai", "moonshotai",
-				"deepseek", "xai", "mistral", "minimax", "cohere", "nvidia", "meta", "amazon-bedrock",
-				"opencode", "opencode-go", "github-copilot", "openrouter",
-			} {
-				m[p] = true
-			}
-			return m
-		},
 	}
 }
 

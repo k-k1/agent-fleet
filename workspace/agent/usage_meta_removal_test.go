@@ -27,6 +27,21 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
+		// Resolve each file's imports to the package path, so an aliased import
+		// (u "…/usagesvc") is read the same as the plain one.
+		pkgOf := map[string]string{}
+		for _, im := range af.Imports {
+			path := strings.Trim(im.Path.Value, `"`)
+			local := path[strings.LastIndex(path, "/")+1:]
+			if im.Name != nil {
+				local = im.Name.Name
+			}
+			pkgOf[local] = path
+		}
+		isPkg := func(x ast.Expr, suffix string) bool {
+			id, ok := x.(*ast.Ident)
+			return ok && strings.HasSuffix(pkgOf[id.Name], suffix)
+		}
 		for _, d := range af.Decls {
 			fd, ok := d.(*ast.FuncDecl)
 			if !ok || fd.Body == nil {
@@ -42,11 +57,11 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 				case *ast.SelectorExpr:
 					// RemoveMetaAndLineage (ADR 0096 decision 6) is RemoveMeta plus a
 					// fleet-graph erasure; this invariant applies to both equally.
-					if x, ok := fn.X.(*ast.Ident); ok && x.Name == "session" &&
+					if isPkg(fn.X, "/internal/session") &&
 						(fn.Sel.Name == "RemoveMeta" || fn.Sel.Name == "RemoveMetaAndLineage") {
 						removes = true
 					}
-					if x, ok := fn.X.(*ast.Ident); ok && x.Name == "usagesvc" && fn.Sel.Name == "FinalizeSessionUsage" {
+					if isPkg(fn.X, "/internal/usagesvc") && fn.Sel.Name == "FinalizeSessionUsage" {
 						finalizes = true
 					}
 				case *ast.Ident:

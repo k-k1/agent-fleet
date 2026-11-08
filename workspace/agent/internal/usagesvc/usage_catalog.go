@@ -106,7 +106,7 @@ func usageCatalogIndexed() map[string]bool {
 type usageCatalog struct {
 	price map[string]usagePrice
 	// family is "provider/model id" -> the model's family ("glm", "kimi-k2", "gpt-codex"),
-	// for the providers in modelFamilyProviders only. It is what model_provider.go turns into
+	// for the providers in familyProviders only. It is what model_provider.go turns into
 	// the maker's brand mark; it is indexed here rather than in a second pass so the 4MB file
 	// is decoded once (this host is memory-constrained).
 	family map[string]string
@@ -155,6 +155,9 @@ func usageCatalogFiles() []struct{ path, origin string } {
 		out = append(out, struct{ path, origin string }{v, usageCatalogOriginEnv})
 	}
 	out = append(out, struct{ path, origin string }{filepath.Join(usagex.Dir(), "catalog.json"), usageCatalogOriginFile})
+	if deps.ModelsDevPath == nil {
+		panic("usagesvc: used before Configure (ModelsDevPath unwired)")
+	}
 	out = append(out, struct{ path, origin string }{deps.ModelsDevPath(), CatalogOriginFetched})
 	cache := os.Getenv("XDG_CACHE_HOME")
 	if cache == "" {
@@ -236,7 +239,7 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 		return nil
 	}
 	want := usageCatalogIndexed()
-	wantFamily := deps.ModelFamilyIndexed()
+	wantFamily := familyIndexed()
 	price := map[string]usagePrice{}
 	family := map[string]string{}
 	deprecated := map[string]bool{}
@@ -334,7 +337,10 @@ func usageCatalogOrderOn(kind, route string) []string {
 	return out
 }
 
-// CatalogLookup looks a price up in the catalog. ref says whose provider's value was
+// CatalogLookup looks a price up in the catalog. Test-only: production code reaches the catalog
+// through usageCatalogLookupOn; this export exists for package main's model-picker tests.
+//
+// It ref says whose provider's value was
 // taken and is shown on screen: an amount whose price source is unknown cannot be checked.
 func CatalogLookup(kind, model string) (usagePrice, string, bool) {
 	return usageCatalogLookupOn(kind, "", model)
@@ -410,15 +416,46 @@ func CatalogInfo() *usageCatalogMeta {
 	return m
 }
 
-// CatalogFamily is the family ("glm", "kimi-k2") the catalog gives "provider/model id", or "" when
-// there is no catalog or it does not describe that id. Main's model_provider.go turns it into a
-// maker's brand mark.
-func CatalogFamily(key string) string {
+// familyProviders is whose model lists get their families indexed out of the catalog:
+// the makers (to place a bare id like codex's "gpt-5.6-luna") and the gateways (to place
+// "opencode-go/glm-5.2", whose family only exists under the gateway's own entry). Listing
+// them keeps the index around 20 providers instead of all 212 — the agent holds it for the
+// life of the catalog cache.
+var familyProviders = []string{
+	"anthropic", "openai", "google", "google-vertex", "alibaba", "zhipuai", "moonshotai",
+	"deepseek", "xai", "mistral", "minimax", "cohere", "nvidia", "meta", "amazon-bedrock",
+	"opencode", "opencode-go", "github-copilot", "openrouter",
+}
+
+func familyIndexed() map[string]bool {
+	m := make(map[string]bool, len(familyProviders))
+	for _, p := range familyProviders {
+		m[p] = true
+	}
+	return m
+}
+
+// CatalogFamily is the family ("glm", "kimi-k2") the catalog gives a model, or "" when there is
+// no catalog or it does not describe it. It prefers the route the model is actually offered
+// through (where a gateway-only id like "glm-5-free" is described) and otherwise scans the
+// indexed providers in a fixed order. The catalog is loaded once for the whole lookup. Main's
+// model_provider.go turns the family into a maker's brand mark.
+func CatalogFamily(route, name string) string {
 	cat := loadUsageCatalog()
-	if cat == nil {
+	if cat == nil || len(cat.family) == 0 || name == "" {
 		return ""
 	}
-	return cat.family[key]
+	if route != "" {
+		if f := cat.family[route+"/"+name]; f != "" {
+			return f
+		}
+	}
+	for _, p := range familyProviders {
+		if f := cat.family[p+"/"+name]; f != "" {
+			return f
+		}
+	}
+	return ""
 }
 
 // FillCatalogModelInfo writes into info what the catalog says about one model on the kind's own

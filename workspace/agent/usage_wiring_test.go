@@ -19,11 +19,6 @@ func TestUsageWiringIsLive(t *testing.T) {
 				t.Errorf("ModelsDevPath() = %q, want %q", got, want)
 			}
 		},
-		"ModelFamilyIndexed": func(t *testing.T) {
-			if got, want := w.ModelFamilyIndexed(), modelFamilyIndexed(); !reflect.DeepEqual(got, want) || len(got) == 0 {
-				t.Errorf("ModelFamilyIndexed() = %v, want %v (non-empty)", got, want)
-			}
-		},
 	}
 	typ := reflect.TypeOf(w)
 	for i := 0; i < typ.NumField(); i++ {

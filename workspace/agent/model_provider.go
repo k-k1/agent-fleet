@@ -105,17 +105,6 @@ var modelGateways = map[string]bool{
 	"github-copilot": true,
 }
 
-// modelFamilyProviders is whose model lists get their families indexed out of the catalog:
-// the makers (to place a bare id like codex's "gpt-5.6-luna") and the gateways (to place
-// "opencode-go/glm-5.2", whose family only exists under the gateway's own entry). Listing
-// them keeps the index around 20 providers instead of all 212 — the agent holds it for the
-// life of the catalog cache.
-var modelFamilyProviders = []string{
-	"anthropic", "openai", "google", "google-vertex", "alibaba", "zhipuai", "moonshotai",
-	"deepseek", "xai", "mistral", "minimax", "cohere", "nvidia", "meta", "amazon-bedrock",
-	"opencode", "opencode-go", "github-copilot", "openrouter",
-}
-
 // modelKindVendor is the maker a CLI implies on its own, for ids no catalog can place: codex
 // only ever runs OpenAI models, agy only Google's. Gateways are deliberately absent — opencode,
 // copilot and cursor each route to many makers, so falling back to their own mark would
@@ -125,15 +114,6 @@ var modelKindVendor = map[string]string{
 	"codex":  "openai",
 	"agy":    "google",
 	"kiro":   "amazon-bedrock",
-}
-
-// modelFamilyIndexed is the set form of modelFamilyProviders, for the catalog parser.
-func modelFamilyIndexed() map[string]bool {
-	m := make(map[string]bool, len(modelFamilyProviders))
-	for _, p := range modelFamilyProviders {
-		m[p] = true
-	}
-	return m
 }
 
 // modelVendorKeys is modelVendorFamilies' keys, longest first (ties broken alphabetically so
@@ -174,20 +154,7 @@ func modelVendorForName(name string) string {
 // through (that is where a gateway-only id like "glm-5-free" is described) and otherwise
 // scanning the indexed providers in a fixed order.
 func modelCatalogFamily(route, name string) string {
-	if name == "" {
-		return ""
-	}
-	if route != "" {
-		if f := usagesvc.CatalogFamily(route + "/" + name); f != "" {
-			return f
-		}
-	}
-	for _, p := range modelFamilyProviders {
-		if f := usagesvc.CatalogFamily(p + "/" + name); f != "" {
-			return f
-		}
-	}
-	return ""
+	return usagesvc.CatalogFamily(route, name)
 }
 
 // resolveModelProvider answers which maker's mark belongs to a launch id, or "" when nothing
