@@ -473,6 +473,14 @@ export interface LintFinding {
   line?: number;
 }
 
+/** A retired-term candidate read from the default branch; it enters the list only when accepted. */
+export interface LintProposal {
+  term: string;
+  kind: string;
+  evidence: string;
+  memories: string[];
+}
+
 export interface LintReport {
   scope: string;
   project?: MemoryChangeProject;
@@ -486,5 +494,6 @@ export interface LintReport {
     findings: LintFinding[];
     counts: Record<string, number>;
     skipped?: string[];
+    proposals?: LintProposal[];
   };
 }

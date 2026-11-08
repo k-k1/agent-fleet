@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -116,9 +117,19 @@ func TestLiveResumeIsIdempotent(t *testing.T) {
 	}
 }
 
-// Dropping the handle and resuming again has to RELOAD the stored session, which is the path
-// a workspace restart takes. A fresh id here would mean the member's history silently split.
-func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
+// Dropping the handle and resuming again must leave the slot on one conversation that the next
+// resume will find, which is the path a workspace restart takes.
+//
+// muse 1.4.14 does not reliably keep a turnless session across processes (measured: the same
+// binary answered sessionNotFound in some runs, so openSession started a fresh session, and
+// reloaded the session in the others), and a turn to make it reloadable would cost the member's
+// quota. So two outcomes are accepted: the same id (the host reloaded it), or a different id
+// that is the one now persisted for the slot. A different id is
+// only legitimate when the host really does not know the old one, so the test asks the new host
+// directly (session/resume is free) and fails if it could have reloaded it. Reloading a session
+// that has had a turn is covered by TestResumeBackfillsWhatTheMirrorMissed and
+// TestOpenSessionResumeSuccessKeepsTheStoredSession.
+func TestLiveResumeAfterDropKeepsOneStoredConversation(t *testing.T) {
 	liveGate(t)
 	m := liveMeta(t)
 
@@ -142,10 +153,104 @@ func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
 	}
 	h2 := th2.(*threadHandle)
 	h2.mu.Lock()
-	secondSid := h2.sid
+	cl2, secondSid := h2.cl, h2.sid
 	h2.mu.Unlock()
-	if secondSid != firstSid {
-		t.Errorf("the reload started a new conversation: %s then %s", firstSid, secondSid)
+	if secondSid == "" {
+		t.Fatal("no muse session id after the resume that followed DropHandle")
+	}
+	if secondSid == firstSid {
+		t.Logf("the host reloaded the turnless session %s", firstSid)
+		return
+	}
+	stored, ok := readSession(slotSid(m))
+	if !ok || stored.ID != secondSid {
+		t.Errorf("the reload started a new conversation %s (was %s) that is not the stored one: %+v (ok=%v)",
+			secondSid, firstSid, stored, ok)
+		return
+	}
+	// The fallback is only right if the host really cannot reopen the old session. A host that
+	// could would mean the driver skipped the resume and split the history.
+	var res msp.SessionResumeResult
+	err = cl2.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+		CommandID: msp.NewCommandID(),
+		SessionID: firstSid,
+	}, callTimeout, &res)
+	if err == nil {
+		t.Fatalf("the new host can resume %s, yet the driver started %s instead", firstSid, secondSid)
+	}
+	if !msp.HasCode(err, msp.ErrCodeSessionNotFound) {
+		t.Fatalf("probing session/resume(%s): %v; want sessionNotFound", firstSid, err)
+	}
+	t.Logf("the host does not keep the turnless session %s; a fresh one, %s, is stored for the next resume", firstSid, secondSid)
+}
+
+// `session/resume` carries the registry's servers, the way a stopped session is reopened. Free,
+// like the start test: no turn, so no server is spawned and no quota is spent.
+//
+// It resumes the session the same host has just started rather than one a dropped host left:
+// muse 1.4.14 does not reliably keep a turnless session across processes (measured: the reload
+// after DropHandle sometimes answers sessionNotFound, and TestLiveResumeAfterDropKeepsOneStoredConversation
+// then takes its fallback branch), and a turn would cost the member's quota.
+//
+// The control is what makes "accepted" mean "read": the same resume with the settings file's
+// transport spelling has to be REFUSED, and a good one right after it accepted again. A host
+// that ignored `config` on resume would accept the bad one; a refusal for some other reason
+// (the session no longer resumable) would also refuse the good one after it.
+func TestLiveSessionResumeAcceptsMCPServerConfig(t *testing.T) {
+	liveGate(t)
+	m := liveMeta(t)
+	if _, err := mcpreg.Create(mcpreg.ServerDef{
+		Name: "afprobe-stdio", Transport: mcpreg.TransportStdio, Command: "/bin/true",
+		Enabled: true, Targets: mcpreg.Targets{Session: true}, Kinds: []string{session.KindMuse},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	th, err := NewDriver().Resume(m)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	h := th.(*threadHandle)
+	h.mu.Lock()
+	cl, sid, granted := h.cl, h.sid, h.sessionMCP
+	h.mu.Unlock()
+	if !granted {
+		t.Fatal("the host did not grant sessionMcp, so no server could ever be passed")
+	}
+	cfg := h.sessionConfig()
+	if cfg == nil || len(cfg.MCPServers) == 0 {
+		t.Fatal("no servers to send: the resume below would prove nothing")
+	}
+
+	var res msp.SessionResumeResult
+	if err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+		CommandID: msp.NewCommandID(), SessionID: sid, Config: cfg,
+	}, callTimeout, &res); err != nil {
+		t.Fatalf("the host refused session/resume with AF's MCP server config: %v", err)
+	}
+	if res.Session.SessionID != sid {
+		t.Errorf("resumed %s, asked for %s", res.Session.SessionID, sid)
+	}
+	t.Logf("session/resume accepted %d server(s) for %s", len(cfg.MCPServers), sid)
+
+	url := "https://mcp.example.invalid/mcp"
+	mode := msp.SessionMCPServerModeOptional
+	err = cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+		CommandID: msp.NewCommandID(),
+		SessionID: sid,
+		Config: &msp.SessionConfig{MCPServers: map[string]msp.SessionMCPServerConfig{
+			"afprobe-http": {Transport: "streamable_http", URL: &url, Mode: &mode},
+		}},
+	}, callTimeout, nil)
+	if err == nil {
+		t.Error("session/resume accepted an undeclared transport: the host may not read config on resume at all")
+	} else {
+		t.Logf("session/resume refused the file spelling: %v", err)
+	}
+	if err := cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+		CommandID: msp.NewCommandID(), SessionID: sid, Config: cfg,
+	}, callTimeout, nil); err != nil {
+		t.Errorf("a good config was refused right after the bad one, so that refusal may not have been about the config: %v", err)
 	}
 }
 

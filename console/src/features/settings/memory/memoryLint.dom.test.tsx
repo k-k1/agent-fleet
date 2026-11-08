@@ -162,3 +162,68 @@ describe("LintPanel", () => {
     );
   });
 });
+
+describe("LintPanel retired-term proposals", () => {
+  const withProposal = () =>
+    api.mockImplementation(async (path: string) => {
+      if (path.startsWith("api/agents/memory/entries/projects"))
+        return {
+          projects: [{ project: proj, count: 3, orphaned: false, live: true }],
+        };
+      if (path.startsWith("api/agents/memory/entries/lint-terms"))
+        return { terms: ["muse"], rejected: ["old"] };
+      return {
+        ...userReport,
+        report: {
+          ...userReport.report,
+          proposals: [
+            {
+              term: "AF_OLD_SWITCH",
+              kind: "removed-key",
+              evidence: "removed in abc1234: drop it",
+              memories: ["a"],
+            },
+          ],
+        },
+      };
+    });
+  const button = (re: RegExp) =>
+    Array.from(document.body.querySelectorAll("button")).find((b) =>
+      re.test(b.textContent ?? ""),
+    )!;
+
+  it("shows the evidence and writes nothing until the member decides", async () => {
+    withProposal();
+    await mount();
+    expect(document.body.textContent).toContain("AF_OLD_SWITCH");
+    expect(document.body.textContent).toContain("removed in abc1234");
+    expect(apiJSON).not.toHaveBeenCalled();
+  });
+
+  it("accepting appends to the stored list, rejecting records the term", async () => {
+    withProposal();
+    apiJSON.mockResolvedValue({
+      terms: ["muse", "AF_OLD_SWITCH"],
+      rejected: ["old"],
+    });
+    await mount();
+    await act(async () => button(/^(Add to list|一覧に追加)$/).click());
+    await flush();
+    expect(apiJSON).toHaveBeenLastCalledWith(
+      "api/agents/memory/entries/lint-terms",
+      "POST",
+      { terms: ["muse", "AF_OLD_SWITCH"], rejected: ["old"] },
+    );
+    apiJSON.mockResolvedValue({
+      terms: ["muse", "AF_OLD_SWITCH"],
+      rejected: ["old", "AF_OLD_SWITCH"],
+    });
+    await act(async () => button(/^(Reject|却下)$/).click());
+    await flush();
+    expect(apiJSON).toHaveBeenLastCalledWith(
+      "api/agents/memory/entries/lint-terms",
+      "POST",
+      { terms: ["muse", "AF_OLD_SWITCH"], rejected: ["old", "AF_OLD_SWITCH"] },
+    );
+  });
+});

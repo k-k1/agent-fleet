@@ -3,8 +3,9 @@ package muse
 // Integration (MCP) servers, on the wire (ADR 0095 decision 11).
 //
 // muse is the first kind whose servers AF does not WRITE anywhere. Every other kind gets a
-// native config file that `mcpreg` materialises; here they ride `session/start.config.mcpServers`,
-// which gate B1-4 measured end to end: with `sessionMcp` requested and granted, a stdio server
+// native config file that `mcpreg` materialises; here they ride `session/start.config.mcpServers`
+// — and `session/resume`'s, because the host forgets them with its process — which gate
+// B1-4 measured end to end: with `sessionMcp` requested and granted, a stdio server
 // passed only on the wire logged muse's own handshake (`clientInfo {"name":"tbh"}`, MCP
 // 2025-06-18), received `MUSE_SESSION_ID` and the config's `env` additions, and its tool reached
 // the model as `mcp__<server>.<tool>`. `MUSE_ENABLE_SESSION_MCP` is not needed.
@@ -20,6 +21,7 @@ package muse
 
 import (
 	"os"
+	"sort"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
@@ -130,4 +132,15 @@ func copyMap(m map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// serverNames lists a config's server names, sorted, for a log line. Names only: the
+// definitions carry tokens.
+func serverNames(cfg *msp.SessionConfig) []string {
+	names := make([]string, 0, len(cfg.MCPServers))
+	for name := range cfg.MCPServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

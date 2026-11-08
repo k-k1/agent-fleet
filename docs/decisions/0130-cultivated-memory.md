@@ -617,3 +617,19 @@ release.
   member-edited retired-term list is a file beside the store, outside any memory's history. Proposing retired
   terms from the repository (a superseded ADR, a removed key) is not built: it is the optional half of decision 5
   (#3571).
+
+- **2026-11-08 — decision 5 path check, two false positives removed (#3610).** The `missing-path` check no longer
+  reports a numbered short reference (`docs/log/99`, `guide/admin/03`: the last segment is a bare number, or the
+  literal `NN`, and the directory holds an entry `<number>-*`, leading zeros compared as for ADR numbers) or a
+  path the revision's own `.gitignore` files ignore (`console/dist`, `console/node_modules/...`; the rules are read
+  as blobs of the pinned commit, never from the working tree). `docs/<number>` is read as a journal number and
+  resolved in `docs/log`. A number with no entry, or a real miss, is still reported.
+
+- **2026-11-08 — decision 5 retired-term proposals built (#3571).** `memorylint` returns `proposals`, read by ref
+  from the default branch only: the slug of an ADR whose status begins "superseded" (a partly superseded one, or
+  a one-word name, is not proposed), and an `AF_*` key that a removed line of the last 300 commits (journals
+  excluded) carried and no file of the revision mentions now. Each carries its evidence, and is shown only when
+  a memory in the scope uses it, so a term retired in one place but absent here costs nothing. A proposal never
+  enters the list: accepting posts the member's list plus the term, rejecting records it in the same list file
+  (`rejected`; a save that omits it keeps it), and both go through the existing member-origin `lint-terms` route.
+  Not built: branches the default moved away from.

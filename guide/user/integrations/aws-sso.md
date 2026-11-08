@@ -201,5 +201,5 @@ that are already open keep the old settings.
 
 ## Related
 
-- [Logging in to another in-house host (SSM)](../../member/16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm)
+- [Log in to EC2 with SSM](aws-ssm.md)
 - [AWS profiles reference](../../ref/aws-profiles.md): the detailed rules for import, export and shared sign-ins

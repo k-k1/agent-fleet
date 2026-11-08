@@ -114,4 +114,11 @@ func printLint(out io.Writer, r lintScopeReport) {
 		}
 		fmt.Fprintf(out, "   %-14s %s%s  %s\n", f.Check, f.Memory, pos, strings.TrimSpace(subj))
 	}
+	if len(r.Report.Proposals) > 0 {
+		fmt.Fprintf(out, "   retired-term proposals (nothing is applied; accept or reject them in the Console, Import & export > Memory lint report):\n")
+		for _, p := range r.Report.Proposals {
+			fmt.Fprintf(out, "   propose        %q  %s\n                  evidence: %s\n                  used by: %s\n",
+				p.Term, p.Kind, p.Evidence, strings.Join(p.Memories, ", "))
+		}
+	}
 }
