@@ -107,9 +107,9 @@ Event types are namespaced and shared across providers, so a session subscribes 
 PR is on GitHub or Bitbucket. The first set: `pr.checks.completed` (with the overall result and the failed checks),
 `pr.checks.failed`, `pr.conflict`, `pr.mergeable`, `pr.ready` (open, not draft, checks green, mergeable, and approved
 or no review required), `pr.merged`, `pr.closed`, `pr.review.changes_requested`, `pr.review.threads_unresolved`,
-`issue.transitioned`, `deploy.completed`, `deploy.failed`. On Bitbucket, `pr.ready`, `pr.mergeable` and
-`pr.review.threads_unresolved` stay unavailable until its source reads mergeability, approvals and comment threads
-(step 2); `watch` refuses a type the subject's source cannot produce rather than accepting a watch that never fires. A provider-specific condition gets a provider-prefixed type
+`issue.transitioned`, `deploy.completed`, `deploy.failed`. `watch` refuses a type the subject's source cannot produce rather than accepting a watch that never fires. On
+Bitbucket that is `pr.review.threads_unresolved`: its pull request has no resolved-thread state, and reading every
+comment page of every subscribed PR does not fit its hourly budget (rule 6.2). A provider-specific condition gets a provider-prefixed type
 (`github.workflow_run.completed`) until a second provider needs it. Adding a type is a code review decision, not
 something an adapter does on its own.
 
@@ -176,7 +176,9 @@ something an adapter does on its own.
    instead. `branchpr` needs three changes for that, made in steps 1 and 2: entries indexed by PR number as well as by
    branch, so a watch and the session list share one entry; a refresh the engine can wait for, for the first poll
    after `watch` and for a poke, since a lookup today never waits on the network; and a shorter conflict-check
-   interval for subscribed Bitbucket PRs. A provider without a stated hourly limit (Jira, CloudFormation, an HTTP endpoint) gets 30 requests a
+   interval for subscribed Bitbucket PRs. A fourth change serves every provider: `branchpr` keeps a fingerprint of
+   all the head's checks (each check's identity, state and completion or update time, which it does not request from
+   Bitbucket today), because §5's `Version` cannot be computed from the failing checks alone. A provider without a stated hourly limit (Jira, CloudFormation, an HTTP endpoint) gets 30 requests a
    minute per connection. All these numbers are settings with these defaults.
 3. **Expiry**: every subscription has a deadline, 7 days by default and at most 30 days, and ends with its owner.
 4. **Fail quietly, not wrongly**: an adapter error backs off and is visible in `list_watches`; it never produces an
@@ -229,7 +231,10 @@ for a tenant until an administrator enables it.
   environment built from an allowlist (`PATH`, `HOME`, `LANG`, `TMPDIR`), the variables `mcpreg.ForwardEnvNames`
   forwards to every definition (the isolation flag) and its own configured variables, never the Agent's own
   environment, which holds the secret-store keys and the Agent's internal tokens. The existing stdio dialer and probe
-  pass the Agent's environment as is to every server; step 5 builds it per definition instead. Built-in servers keep
+  pass the Agent's environment as is to every server; step 5 builds it per definition instead. The same step makes the
+  Console's connection test (`HandleServerTest`) take the origin from the store alone: a stored built-in is tested
+  exactly as stored, and anything else is a member's server, whatever the request says, so a request cannot have an
+  arbitrary command started with the built-in environment. Built-in servers keep
   what `ForwardEnvNames` gives them (the built-in `af` server needs the Agent's token, the ops servers the
   secret-store keys), so only member-added servers lose access.
 - **Namespace**: its event types must be `ext.<source>.*` and its subjects `ext:<source>:…`. Anything else is dropped
@@ -272,8 +277,9 @@ The table is a direction, not a commitment; each source is its own change with i
    own subscription to its PR's checks or reviews suppresses #3129's notice for that session and PR, so it is not told
    twice.
 2. **`bitbucket` source** (Bitbucket has no ETag: adaptive intervals within the `branchpr` budget and the `branchpr`
-   changes of rule 6.2; mergeability, approvals and comment threads read so that the types §3 lists as
-   unavailable on Bitbucket become available).
+   changes of rule 6.2; mergeability and approval filled in from the conflict and participant reads `branchpr`
+   already makes, so `pr.mergeable` and `pr.ready` work on Bitbucket; `pr.review.threads_unresolved` stays refused,
+   §3).
 3. **Move #3129 and #3131 onto the engine** as built-in subscriptions with the member as `Fallback`. #3129 keeps its
    `prFeedback` switch, its review-notice cap (`Until`: 3 deliveries) and its watch on held PR links; #3131 has no
    switch and keeps none. This needs no webhooks, so it comes before them.
