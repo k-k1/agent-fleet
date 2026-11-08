@@ -62,6 +62,12 @@ func buildSQLiteTemplate() {
 		sqliteTemplateErr = err
 		return
 	}
+	// Pin the invariant instead of trusting the driver: a leftover -wal would hold pages
+	// the copy lacks.
+	if _, err := os.Stat(path + "-wal"); err == nil {
+		sqliteTemplateErr = fmt.Errorf("template still has a -wal file after Close; the main file is not the whole database")
+		return
+	}
 	sqliteTemplateDB, sqliteTemplateErr = os.ReadFile(path)
 }
 
