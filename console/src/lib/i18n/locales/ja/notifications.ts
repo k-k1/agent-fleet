@@ -252,4 +252,8 @@ export const notifications = {
   "notif.aws_confirm.body": "セッションを開いて許可か拒否を選んでください",
   "notif.aws_confirm.speech": "エージェントが確認付きの AWS プロファイルを使おうとしています。",
   "noti.kind_aws_use_confirm": "AWS プロファイルの使用確認",
+  "noti.kind_memory_consolidation": "メモリの提案",
+  "notif.memory_consolidation.title": "承認待ちのメモリの提案が {n} 件あります",
+  "notif.memory_consolidation.body": "設定 > エージェントメモリ > 提案 で確認できます。承認するまでメモリは変わりません。",
+  "notif.memory_consolidation.speech": "承認待ちのメモリの提案があります。",
 };

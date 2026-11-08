@@ -254,4 +254,8 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "notif.aws_confirm.body": "Open the session to allow or deny it",
   "notif.aws_confirm.speech": "An agent asks to use a protected AWS profile.",
   "noti.kind_aws_use_confirm": "AWS profile use to confirm",
+  "noti.kind_memory_consolidation": "Memory suggestions",
+  "notif.memory_consolidation.title": "{n} memory suggestions are waiting for your review",
+  "notif.memory_consolidation.body": "Review them in Settings > Agent memory > Suggestions. Nothing changes until you approve.",
+  "notif.memory_consolidation.speech": "Memory suggestions are waiting for your review.",
 };

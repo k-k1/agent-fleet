@@ -613,3 +613,15 @@ lint とフィードバックの理由はすぐに見える（決定 3）。数�
   コンテキストの外へ `replace` する代わりに、エンジンのソースをバイト単位で写したミラー
   （`workspace/agent/internal/memengine`、`scripts/sync-memengine.sh`、ずれたら落ちるテスト）を持つ。未実装: Console の承認 UI と
   切り替え、毎日の通知（ゲート付きのフックはある）、トークンの台帳記録、codex/Gemini のランナー。 フォローアップ: #3696（supersede を適用できるようにする置き換え先の書き込み）。
+
+- **2026-11-09 — 決定 6・7: Console 側を実装（#3497、4 本目の PR）。** 設定 › エージェントメモリ › 設定に `memoryConsolidation` の
+  スイッチ（既定オフ。書き込みは Agent が member-origin の印を求める署名付き ui-prefs 中継）と、`GET /api/agents/memory-consolidation`
+  による状況（前回の実行、次に実行できる最短の時刻、承認待ちの件数、熟して待っているトピックとその理由）を追加。新しい「提案」ビューは
+  提案（承認待ち・処理済み・期限切れ）を変更一覧と同じレイアウトで並べ、項目ごとに対象のリビジョン、根拠、観測、Agent の差分を出す。
+  承認（書き込みを示す確認のあと）・却下・再試行は既存の署名付き中継の行を使い、監査のヒントとして提案 ID をクエリに載せる。新しいルートも
+  一括操作もない。リビジョンの不一致、forgotten/exists/invalid/secret、期限切れ・処理済みの断りは文章にし、get ルートが古いと報告した項目を
+  持つ提案は承認を無効にする。patch も create もない提案（supersede、merge、候補のない add）は助言として表示し、承認はない（#3696）。
+  毎日の通知は `maybeNotice` を Agent の通知 outbox（種別 `memory-consolidation`、対象はワークスペース、payload は `{pending: n}` のみ）に
+  つないだもの。スイッチがオンであることを条件に加え、実行後だけでなく有効な tick ごとに確認し、時刻は `state.json` に残るので再起動をまたぐ。
+  通知の行は「提案」を開くだけで、何も決めない。未実装: supersede/merge の書き込み（#3696）、codex/Gemini のランナー、トークンの台帳記録。
+  実機で未確認: 本物のモデル実行、稼働中の Agent から Console へ通知が届くこと。

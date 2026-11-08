@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin/memberorigintest"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memengine"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 )
 
 func queued(t *testing.T, f *fakeStore) Proposal {
@@ -301,23 +302,64 @@ func TestStoppedGapIsReported(t *testing.T) {
 	}
 }
 
-// The daily notice hook: nothing without a hook, at most once per NoticeEvery while any proposal is
-// pending, never with none pending.
+// The daily notice hook: nothing without a hook or with the switch off, at most once per NoticeEvery
+// while any proposal is pending, never with none pending, and the day's notice survives a restart
+// (the gate is read from state.json, not from memory).
 func TestNoticeHookIsGatedDaily(t *testing.T) {
 	f := env(t)
-	queued(t, f)
 	cfg := DefaultConfig()
 	calls := 0
-	d := Deps{Notice: func(n int) { calls += n }}
-	maybeNotice(Deps{}, cfg, t0)
+	on := true
+	d := Deps{Enabled: func() bool { return on }, Notice: func(n int) { calls += n }}
+
+	// Nothing pending: no notice, and the day is not spent.
+	maybeNotice(d, cfg, t0)
+	if calls != 0 {
+		t.Fatalf("notice with nothing pending: %d", calls)
+	}
+	queued(t, f)
+
+	// Switch off, or no hook: no notice, and the day is not spent.
+	on = false
+	maybeNotice(d, cfg, t0)
+	on = true
+	maybeNotice(Deps{Enabled: d.Enabled}, cfg, t0)
+	if calls != 0 {
+		t.Fatalf("notice while off or unwired: %d", calls)
+	}
+
 	maybeNotice(d, cfg, t0)
 	maybeNotice(d, cfg, t0.Add(time.Hour))
 	if calls != 1 {
 		t.Fatalf("notice calls = %d", calls)
 	}
+	// A restart forgets every variable but the state file.
+	st, err := loadState()
+	if err != nil || st.Trigger.LastNotice.IsZero() {
+		t.Fatalf("the notice time is not persisted: %+v, %v", st.Trigger, err)
+	}
+	maybeNotice(d, cfg, t0.Add(23*time.Hour))
+	if calls != 1 {
+		t.Fatalf("a second notice inside the day: %d", calls)
+	}
 	maybeNotice(d, cfg, t0.Add(25*time.Hour))
 	if calls != 2 {
 		t.Fatalf("after a day: %d", calls)
+	}
+}
+
+// The production notice is the count and nothing else.
+func TestRaiseNoticeCarriesOnlyTheCount(t *testing.T) {
+	env(t)
+	t.Setenv("HOME", t.TempDir())
+	raiseNotice(3)
+	evs := notice.List()
+	if len(evs) != 1 {
+		t.Fatalf("outbox = %v", evs)
+	}
+	ev := evs[0]
+	if ev.Kind != NoticeKind || ev.TargetType != "workspace" || len(ev.Payload) != 1 || ev.Payload["pending"] != float64(3) { // read back from JSON
+		t.Fatalf("event = %+v", ev)
 	}
 }
 
