@@ -281,6 +281,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget"
     ],
     "mcp memory=true member read": [
@@ -330,6 +331,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget"
     ],
     "mcp memory=true super_admin admin:dangerous": [
@@ -363,6 +365,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget",
       "list_workspaces",
       "get_usage",
@@ -428,6 +431,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget",
       "list_workspaces",
       "get_usage",
@@ -471,6 +475,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget",
       "list_workspaces",
       "get_usage",
@@ -536,6 +541,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget",
       "list_workspaces",
       "get_usage",
@@ -563,6 +569,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget"
     ],
     "memory memory=true member read": [
@@ -577,6 +584,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget"
     ],
     "memory memory=true super_admin admin:dangerous": [
@@ -585,6 +593,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget"
     ],
     "memory memory=true super_admin read": [
@@ -599,6 +608,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget"
     ],
     "memory memory=true tenant_admin admin:dangerous": [
@@ -607,6 +617,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget"
     ],
     "memory memory=true tenant_admin read": [
@@ -621,6 +632,7 @@
       "memory_search",
       "memory_read",
       "memory_save",
+      "memory_patch",
       "memory_forget"
     ]
   },
@@ -1045,6 +1057,69 @@
         "type": "object"
       },
       "name": "memory_index"
+    },
+    "memory_patch": {
+      "description": "Change part of an existing Agent Fleet memory without re-sending it. Each edit replaces the one place where `old` occurs in the body with `new`; every `old` must be non-empty, occur exactly once and not overlap another edit, and all edits are matched against the text you read and applied together or not at all. Pass the revision you read (1 or more; a stale one is refused, so read again). It never creates a memory (use memory_save) and keeps every field you do not name. Pass `repository` = the output of `git remote get-url origin` in the repository you are working in; the project is found from it. scope is required (\"project\" or \"user\"). Same secret scan and history as memory_save; needs write access to be allowed in Settings > Agent memory. Inside an Agent Fleet session, use the af server's own memory tools instead; these are for agents outside Agent Fleet.",
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "a new one-line description (optional; omit to keep the current one)",
+            "type": "string"
+          },
+          "edits": {
+            "description": "replacements of the body, all matched against the same original text",
+            "items": {
+              "properties": {
+                "new": {
+                  "description": "replacement text (empty deletes)",
+                  "type": "string"
+                },
+                "old": {
+                  "description": "exact text to replace; must occur exactly once in the body",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "old",
+                "new"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "memory name",
+            "type": "string"
+          },
+          "project": {
+            "description": "project id from memory_projects (optional when `repository` is given; if both are given they must name the same project)",
+            "type": "string"
+          },
+          "repository": {
+            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work), or a project's `remote` exactly as memory_projects lists it (host/owner/repo)",
+            "type": "string"
+          },
+          "revision": {
+            "description": "the revision you read (0 to create)",
+            "type": "integer"
+          },
+          "scope": {
+            "description": "required: project (a fact about the repository; needs `repository` or `project`) or user (a fact that holds in every project)",
+            "enum": [
+              "user",
+              "project"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "revision",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "name": "memory_patch"
     },
     "memory_projects": {
       "description": "List the projects of the member's Agent Fleet memory (id, display name, repository, memory count; a count of 0 is a repository cloned in the workspace that holds no memory yet, which a save starts). Each project's `remote` is what the other memory tools match `repository` against; an id can be passed as `project` instead. Needs \"Use AF memory from outside Agent Fleet\" in Settings > Agent memory, and the tenant administrator must allow it; the workspace must be running. Inside an Agent Fleet session, use the af server's own memory tools instead; these are for agents outside Agent Fleet.",
