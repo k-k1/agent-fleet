@@ -420,7 +420,7 @@ describe("MemberCostPanel", () => {
     await mount(<MemberCostPanel slug="sales" userKey="w@acme.co.jp" />);
     const urls = api.mock.calls.map((c) => String(c[0]));
     // user_key can be an email address, so the URL is always built with escaping.
-    expect(urls).toContain("api/admin/tenants/sales/members/w%40acme.co.jp/cost");
+    expect(urls).toContain("api/admin/tenants/sales/members/w%40acme.co.jp/cost?months=6");
     // The list endpoint (every member of the tenant) is not called: one person is not fetched by
     // fetching everyone.
     expect(urls.some((u) => u.startsWith("api/admin/cloud-cost"))).toBe(false);

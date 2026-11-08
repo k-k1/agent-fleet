@@ -1233,3 +1233,18 @@
   font-size: 11px;
   align-self: center;
 }
+
+/* Monthly trend (MonthlyTrend.tsx): month, bar, value, change against the previous month. */
+.monthly-trend .mt-note { margin: 0 0 6px; font-size: 0.8rem; }
+.monthly-trend .mt-row {
+  display: grid;
+  grid-template-columns: 5.5em minmax(60px, 1fr) minmax(8em, auto) 5em;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.monthly-trend .mt-bar { background: var(--surface-2, rgba(128, 128, 128, 0.12)); border-radius: 3px; height: 10px; }
+.monthly-trend .mt-fill { display: block; height: 100%; background: var(--accent, #4c8bf5); border-radius: 3px; }
+.monthly-trend .mt-row.partial .mt-fill { opacity: 0.55; }
+.monthly-trend .mt-val, .monthly-trend .mt-chg { text-align: right; }
+.monthly-trend .mt-shared { grid-column: 2 / -1; font-size: 0.75rem; text-align: right; }

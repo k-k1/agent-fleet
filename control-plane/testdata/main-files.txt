@@ -220,3 +220,4 @@ workspace_machine.go
 workspace_sizing.go
 workspace_stale.go
 ws_settings.go
+usage_monthly.go

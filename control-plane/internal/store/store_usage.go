@@ -89,6 +89,9 @@ type EngineHourCounters struct {
 type UsageStore interface {
 	AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error
 	ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error)
+	// ListUsageMember returns one membership's own per-day rows in the window. Scoped by
+	// membership only, never by tenant: rows of a destroyed workspace are still theirs.
+	ListUsageMember(ctx context.Context, membershipID, fromDay, toDay string) ([]UsageRow, error)
 	// AddUsageHour accumulates one sample into the (membership, hour) bucket: sums add,
 	// peaks take the max. membershipID=="" writes the sampler heartbeat for the hour.
 	AddUsageHour(ctx context.Context, membershipID, tenantID, hour string, d UsageHourCounters) error
@@ -152,6 +155,26 @@ func (s *SQL) ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([
 		var u UsageRow
 		if err := rows.Scan(&u.TenantID, &u.TenantSlug, &u.MembershipID,
 			&u.UserKey, &u.Email, &u.Day, &u.RunningSecs); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// ListUsageMember is ListUsage narrowed to one membership.
+func (s *SQL) ListUsageMember(ctx context.Context, membershipID, fromDay, toDay string) ([]UsageRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT tenant_id, membership_id, day, running_secs FROM usage_daily
+		 WHERE membership_id=? AND day BETWEEN ? AND ? ORDER BY day`, membershipID, fromDay, toDay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UsageRow
+	for rows.Next() {
+		var u UsageRow
+		if err := rows.Scan(&u.TenantID, &u.MembershipID, &u.Day, &u.RunningSecs); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
