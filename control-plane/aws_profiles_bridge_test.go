@@ -208,3 +208,34 @@ func TestWorkspaceEnvCarriesTheBedrockGate(t *testing.T) {
 		}
 	}
 }
+
+// opencode's bedrock gate travels the same way and independently of claude's: each harness row
+// passes its own live acceptance (ADR 0128 P2c).
+func TestWorkspaceEnvCarriesTheOpencodeBedrockGate(t *testing.T) {
+	_, mgr, mv := bridgeEnv(t)
+	ws := store.Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID}
+	has := func(name string) bool {
+		for _, kv := range mgr.workspaceExtraEnv(context.Background(), ws) {
+			if strings.HasPrefix(kv, name+"=") {
+				if kv != name+"=1" {
+					t.Errorf("unexpected value %q", kv)
+				}
+				return true
+			}
+		}
+		return false
+	}
+	t.Setenv("AF_WS_CLAUDE_BEDROCK_ROUTE", "")
+	for _, c := range []struct {
+		set  string
+		want bool
+	}{{"", false}, {"1", true}, {"true", false}, {"0", false}, {" 1", false}} {
+		t.Setenv("AF_WS_OPENCODE_BEDROCK_ROUTE", c.set)
+		if got := has("AF_OPENCODE_BEDROCK_ROUTE"); got != c.want {
+			t.Errorf("AF_WS_OPENCODE_BEDROCK_ROUTE=%q: injected = %v, want %v", c.set, got, c.want)
+		}
+		if has("AF_CLAUDE_BEDROCK_ROUTE") {
+			t.Errorf("AF_WS_OPENCODE_BEDROCK_ROUTE=%q opened the claude gate too", c.set)
+		}
+	}
+}

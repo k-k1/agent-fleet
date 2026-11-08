@@ -338,7 +338,8 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// answers "when, and with how many sessions open", and only one of them has a
 	// heartbeat series telling the reader which hours were observed at all.
 	mux.HandleFunc("GET /api/admin/usage/hourly", adm.adminUsageHourly)
-	mux.HandleFunc("GET /api/usage/me/hourly", adm.withMembership(adm.myUsageHourly)) // the caller's OWN occupancy
+	mux.HandleFunc("GET /api/usage/me/monthly", adm.withMembership(adm.myUsageMonthly)) // the caller's OWN monthly hours
+	mux.HandleFunc("GET /api/usage/me/hourly", adm.withMembership(adm.myUsageHourly))   // the caller's OWN occupancy
 	// Cloud cost — the AWS invoice (docs/log/67 + ADR 0048). Deliberately NOT folded into
 	// /api/admin/usage: that one is occupancy in seconds and exists everywhere, this one
 	// is money and exists only on AWS. Same reason the Console gives them different names.

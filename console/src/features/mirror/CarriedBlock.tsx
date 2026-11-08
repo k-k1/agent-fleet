@@ -22,11 +22,14 @@ import { carriedDraftKey } from "./questionDraft.ts";
 import { useQuestionTranslate } from "./questionTranslate.ts";
 import type { TranscriptTranslateWiring } from "./useTranslate.ts";
 import { PlanBlock } from "./transcript/blocks.tsx";
+import { MarkdownView } from "../viewer/MarkdownView.tsx";
 
 export function CarriedBlock({
   carried,
   session,
   agentName,
+  repo = null,
+  onOpenFile,
   onDone,
   onError,
   onOpenPlan,
@@ -39,6 +42,10 @@ export function CarriedBlock({
   carried: CarriedInteraction;
   session: string;
   agentName: string;
+  /** The session's repository, whose origin resolves `#N` work-item references in the lead text. */
+  repo?: string | null;
+  /** Opens a file linked from the lead text; without it file links report they cannot open here. */
+  onOpenFile?: (path: string, line?: number, column?: number) => void;
   /** Send/discard was accepted — retract the card and let polling take over. */
   onDone: () => void;
   onError: (message: string, code?: string) => void;
@@ -111,7 +118,12 @@ export function CarriedBlock({
         <div className="mt-carried-note muted">
           <Icon name="info" /> {tr("mirror.carried_note")}
         </div>
-        {carried.text && <div className="mt-carried-text">{tx?.lead ?? carried.text}</div>}
+        {/* The lead is the assistant's own Markdown, rendered as on the live question card. */}
+        {carried.text && (
+          <div className="mt-carried-text">
+            <MarkdownView source={tx?.lead ?? carried.text} repo={repo} onOpenFile={onOpenFile} workItemRefs previewLinks />
+          </div>
+        )}
         {carried.kind === "question" && (
           <PendingQuestions
             questions={carried.questions || []}

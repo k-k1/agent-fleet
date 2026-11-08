@@ -27,9 +27,14 @@ let tree: Record<string, string[]> = {};
 let lcppModels: { id: string; label: string }[] = [];
 // The member's Settings AWS profiles (GET api/ssm/profiles), for the bedrock route's picker.
 let ssmProfiles: unknown[] = [];
+// opencode's launch model catalog (GET /agents/opencode/models).
+let opencodeModels: { id: string; label: string }[] = [];
 const apiMock = vi.fn(async (url: string) => {
   if (url.includes("api/ssm/profiles")) {
     return ssmProfiles;
+  }
+  if (url.includes("agents/opencode/models")) {
+    return { models: opencodeModels };
   }
   if (url.includes("fs/tree")) {
     const path = decodeURIComponent(new URLSearchParams(url.split("?")[1]).get("path") || "");
@@ -653,6 +658,12 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
   const profileSelect = () =>
     [...document.querySelectorAll<HTMLSelectElement>("select")].find((s) => [...s.options].some((o) => o.value === "p-marked"));
   const regionInput = () => document.querySelector<HTMLInputElement>('input[aria-label="Region"]');
+  const modelInput = () => document.querySelector<HTMLInputElement>('input[aria-label="Bedrock model ID"]');
+  const type = async (el: HTMLInputElement, value: string) =>
+    act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
   const choose = async (sel: HTMLSelectElement, value: string) =>
     act(async () => {
       sel.value = value;
@@ -687,6 +698,7 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     await choose(sel, "bedrock");
     const prof = must(profileSelect(), "the profile picker");
     expect([...prof.options].map((o) => o.value)).toEqual(["p-marked"]);
+    await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
     await click(byText("Start in a worktree"));
     expect(launchedWith().route).toBe("bedrock");
     expect(launchedWith().routeConnection).toBe("p-marked@");
@@ -699,6 +711,7 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     await expand("More");
     await settle();
     await choose(must(routeSelect(), "the route picker"), "bedrock");
+    await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
     const region = must(regionInput(), "the region field");
     await act(async () => {
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -726,4 +739,150 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     expect(launchedWith().route).toBe("anthropic-api");
     expect(launchedWith().routeConnection).toBeUndefined();
   });
+
+  // #3587: Claude Code maps an alias to an id of its own and walks a fallback ladder on a denial, so
+  // the route takes only a Bedrock id, typed here, and sends it as the session's model.
+  it("requires a Bedrock model id, sends it as the model and remembers it per profile", async () => {
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await expand("More");
+    await settle();
+    expect(modelInput()).toBeNull();
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    const field = must(modelInput(), "the model id field");
+    expect(field.value).toBe("");
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    for (const bad of ["opus", "claude-opus-4-6", "arn:aws:bedrock:eu-west-1:000000000000:inference-profile/eu.anthropic.claude-opus-5-5", "eu.anthropic.claude-opus-5-5[1m]", "eu.amazon.nova-pro-v1:0"]) {
+      await type(field, bad);
+      expect(byText("Start in a worktree").disabled).toBe(true);
+      expect(field.getAttribute("aria-invalid")).toBe("true");
+    }
+    await type(field, " eu.anthropic.claude-opus-5-5 ");
+    expect(byText("Start in a worktree").disabled).toBe(false);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().route).toBe("bedrock");
+    expect(launchedWith().model).toBe("eu.anthropic.claude-opus-5-5");
+    expect(localStorage.getItem("af.bedrock-model.p-marked")).toBe("eu.anthropic.claude-opus-5-5");
+  });
+
+  it("starts from the id last launched with the profile", async () => {
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+    localStorage.setItem("af.bedrock-model.p-marked", "anthropic.claude-sonnet-4-5-20250929-v1:0");
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await expand("More");
+    await settle();
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    expect(must(modelInput(), "the model id field").value).toBe("anthropic.claude-sonnet-4-5-20250929-v1:0");
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().model).toBe("anthropic.claude-sonnet-4-5-20250929-v1:0");
+  });
 });
+
+// opencode on the bedrock route (ADR 0128 P2c): the model picker offers the route's own models
+// only (opencode's default is not on the route), the dialog does not start until one is picked,
+// and without the route those models are not offered at all.
+describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
+  const catalog = parseKindCatalog({
+    kinds: [{ kind: "opencode", managedOnly: false, managedDefault: false, mcpClient: "yes", routes: ["bedrock"] }],
+  });
+  const routeSelect = () =>
+    [...document.querySelectorAll<HTMLSelectElement>("select")].find((s) => [...s.options].some((o) => o.value === "bedrock"));
+  const choose = async (sel: HTMLSelectElement, value: string) =>
+    act(async () => {
+      sel.value = value;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  const modelInput = () => must(document.querySelector<HTMLInputElement>('input[role="combobox"]'), "the model picker");
+  const listed = async (): Promise<string[]> => {
+    const input = modelInput();
+    await act(async () => {
+      input.focus();
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    const rows = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((o) => o.textContent ?? "");
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      input.blur();
+    });
+    return rows;
+  };
+  beforeEach(() => {
+    opencodeModels = [
+      { id: "opencode/big-pickle", label: "opencode/big-pickle" },
+      { id: "amazon-bedrock/anthropic.claude-sonnet-4-6", label: "amazon-bedrock/anthropic.claude-sonnet-4-6" },
+    ];
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+  });
+  afterEach(() => {
+    ssmProfiles = [];
+    opencodeModels = [];
+    act(() => setKindCatalog(null));
+  });
+
+  it("never offers the route's models without a marked profile", async () => {
+    ssmProfiles = [];
+    await act(async () => setKindCatalog(catalog));
+    await render(["opencode"]);
+    await expand("More");
+    await settle();
+    expect(routeSelect()).toBeUndefined();
+    const plain = await listed();
+    expect(plain.some((t) => t.includes("big-pickle"))).toBe(true);
+    expect(plain.some((t) => t.includes("amazon-bedrock/"))).toBe(false);
+  });
+
+  it("never offers the route's models on a Managed launch", async () => {
+    // A kind that can run Managed: the default launch is Managed, where no route is offered.
+    await act(async () =>
+      setKindCatalog(parseKindCatalog({ kinds: [{ kind: "opencode", managedOnly: false, managedDefault: true, mcpClient: "yes", routes: ["bedrock"] }] })),
+    );
+    await render(["opencode"]);
+    await expand("More");
+    await settle();
+    expect(routeSelect()).toBeUndefined();
+    expect((await listed()).some((t) => t.includes("amazon-bedrock/"))).toBe(false);
+    // Terminal, bedrock chosen: offered; back to Managed: gone again.
+    await click(byText("Terminal (CLI)"));
+    await settle();
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    await settle();
+    expect((await listed()).some((t) => t.includes("amazon-bedrock/"))).toBe(true);
+    await click(byText("Managed"));
+    await settle();
+    expect(routeSelect()).toBeUndefined();
+    const managed = await listed();
+    expect(managed.some((t) => t.includes("amazon-bedrock/"))).toBe(false);
+    expect(managed.some((t) => t.includes("big-pickle"))).toBe(true);
+  });
+
+  it("offers the route's models only on the route, and needs one to start", async () => {
+    await act(async () => setKindCatalog(catalog));
+    await render(["opencode"]);
+    await expand("More");
+    await settle();
+    const before = await listed();
+    expect(before.some((t) => t.includes("big-pickle"))).toBe(true);
+    expect(before.some((t) => t.includes("amazon-bedrock/"))).toBe(false);
+
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    await settle();
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    const on = await listed();
+    expect(on.some((t) => t.includes("big-pickle"))).toBe(false);
+    expect(on.some((t) => t.includes("amazon-bedrock/anthropic.claude-sonnet-4-6"))).toBe(true);
+
+    const input = modelInput();
+    await act(async () => {
+      input.focus();
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    await click(must([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.includes("amazon-bedrock/")), "the bedrock model"));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().route).toBe("bedrock");
+    expect(launchedWith().routeConnection).toBe("p-marked@");
+    expect(launchedWith().model).toBe("amazon-bedrock/anthropic.claude-sonnet-4-6");
+  });
+});
+

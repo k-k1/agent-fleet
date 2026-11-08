@@ -134,6 +134,11 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if err := PrepareStart(spec); err != nil {
 		return agents.LaunchPlan{}, err
 	}
+	// An explicit route runs on a private server in this pane, with none of the workspace's
+	// provider keys or engine token (route.go).
+	if m.Route != nil {
+		return buildRouteLaunch(spec, m, ocSid)
+	}
 	// The fleet's own inference engines (ADR 0071): env() already carries a workspace-scoped
 	// engine token (it has to, for the managed route's shared daemon), and this route can do
 	// better — a tmux session is its own process, so it gets a token scoped to THIS session,
@@ -153,9 +158,18 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	} else {
 		markSlotMode(ocSid, modeStandalone)
 	}
+	resume, fork, err := standaloneTarget(m, ocSid)
+	if err != nil {
+		return agents.LaunchPlan{}, err
+	}
+	return agents.LaunchPlan{Program: buildProgramV2(spec, m.Model, m.Mode, resume, fork), Cwd: m.CWD(), Env: envs}, nil
+}
+
+// standaloneTarget is what a --standalone launch of slot m opens: the conversation to resume, or
+// the source to fork on the first launch of a forked slot, or neither for a fresh one.
+func standaloneTarget(m session.Meta, ocSid string) (resume string, fork bool, err error) {
 	// Resume the slot's OWN opencode conversation: the plugin-captured per-slot id, else a
 	// conversation in the store this slot itself opened — never an older one from the same dir.
-	resume := ""
 	if info, err := storeSession(m); err == nil && info != nil {
 		resume = info.ID
 	} else if err != nil {
@@ -165,17 +179,16 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// diverge (`--session <src> --fork`). opencode materializes the fork as a NEW
 	// session at boot; the plugin records its id for this slot, so later launches
 	// resume the fork normally (ForkFrom is then ignored, like claude's).
-	fork := false
 	if resume == "" && m.ForkFrom != "" {
 		// `--session <src> --fork` has no "fork up to here" argument — only the serve API
 		// does (docs/log/55 §55.5). Refuse rather than launch a CLI fork that would quietly
 		// copy the WHOLE conversation when the user asked for a point.
 		if m.ForkAt != "" {
-			return agents.LaunchPlan{}, agents.ErrForkAtManagedOnly
+			return "", false, agents.ErrForkAtManagedOnly
 		}
 		resume, fork = m.ForkFrom, true
 	}
-	return agents.LaunchPlan{Program: buildProgramV2(spec, m.Model, m.Mode, resume, fork), Cwd: m.CWD(), Env: envs}, nil
+	return resume, fork, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

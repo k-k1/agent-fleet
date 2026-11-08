@@ -107,3 +107,35 @@ func TestReplayedGatewayRowsCountOnce(t *testing.T) {
 		t.Fatal("another call was dropped")
 	}
 }
+
+// opencode on bedrock (ADR 0128 P2c): its store writes the amazon-bedrock calls with no route of
+// their own (the provider id names no route on its own), so they take the session's selection and
+// are left to the gateway's rows; a Zen call, which proves its route per call, still counts.
+func TestOpencodeBedrockTurnsAreLeftToTheGatewayRows(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "ocbed01", Kind: session.KindOpencode,
+		Route: &routes.Selection{Route: usagex.RouteBedrock, Connection: "p1@eu-west-1#00112233aabbccdd"}}
+	zen := asst("opencode/big-pickle", 3, 2, 0, 0, false)
+	zen.Route = usagex.RouteOpencodeZen
+	turns := []transcript.Turn{
+		{Role: "user", Text: "1"},
+		asst("anthropic.claude-sonnet-4-6", 11, 5, 0, 0, false),
+		{Role: "user", Text: "2"},
+		zen,
+	}
+	usageFoldMu.Lock()
+	st := readUsageFoldState()
+	n, err := foldSessionUsageWithTurns(m, &st, turns, true)
+	usageFoldMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("rows written = %d, want only the Zen call's", n)
+	}
+	for _, r := range usagex.ReadRows() {
+		if r.Ref == m.Name && r.Route != usagex.RouteOpencodeZen {
+			t.Errorf("a bedrock transcript row reached the ledger: %+v", r)
+		}
+	}
+}

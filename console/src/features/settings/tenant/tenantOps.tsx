@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText, rel } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { RangePresets } from "../../../ui/RangePresets.tsx";
+import { MonthlyTrend, usageMonthRows } from "../../../ui/MonthlyTrend.tsx";
 import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { fmtDateTime, DATETIME_FULL, compareText } from "../../../lib/intl.ts";
 import { useLocale, useT } from "../../../lib/i18n/index.ts";
@@ -281,6 +282,7 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
     if (f) qs.set("from", f);
     if (t) qs.set("to", t);
     if (tenant) qs.set("tenant", tenant);
+    qs.set("months", "6");
     return qs.toString();
   }, [from, to, tenant]);
 
@@ -385,6 +387,10 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
             <div className="us-range muted">{tr("admin.range", { from: data.from, to: data.to })}</div>
           )}
         </div>
+
+        {data?.monthly && (
+          <MonthlyTrend title={tr("monthly.hours_title")} rows={usageMonthRows(data.monthly)} format={fmtHrs} />
+        )}
 
         {data === null ? (
           <p className="muted">{tr("common.loading")}</p>

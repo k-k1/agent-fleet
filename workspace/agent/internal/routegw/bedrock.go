@@ -89,11 +89,21 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRefusal(w, &refusal{http.StatusUnauthorized, "route_token_invalid", "a route token is required (Authorization: Bearer)"})
 		return
 	}
-	caller, callerOK := requestPeer(r)
-	c, ref := g.authorize(token, caller, callerOK, false)
+	caller, transport, callerOK := requestPeer(r)
+	c, ref := g.authorize(token, caller, transport, callerOK, false)
 	if ref != nil {
 		log.Printf("route gateway: refused (%s)", ref.code)
 		writeRefusal(w, ref)
+		return
+	}
+	// Before the body is read and credentials are resolved: no other model is ever called on the
+	// session's behalf. 404, which the CLI shows as "model not available" and does not walk a
+	// fallback ladder on (measured, 2.1.319); the token stays, since the session's own model
+	// still works.
+	if c.b.Model != "" && modelID != c.b.Model {
+		log.Printf("route gateway: refused (route_model_not_selected)")
+		writeRefusal(w, &refusal{http.StatusNotFound, "route_model_not_selected",
+			"this session runs on " + c.b.Model + " only (chosen at launch); start a new session to use " + modelID})
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
@@ -106,7 +116,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ref == errNeedFresh {
 		// The credentials have to be resolved: check the call again against Settings as they are
 		// now, then resolve on that check alone.
-		if c, ref = g.authorize(token, caller, callerOK, true); ref == nil {
+		if c, ref = g.authorize(token, caller, transport, callerOK, true); ref == nil {
 			creds, ref = g.credentials(c, true)
 		}
 	}

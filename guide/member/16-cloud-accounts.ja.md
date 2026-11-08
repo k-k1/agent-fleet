@@ -189,20 +189,24 @@ claude のセッションは、起動ダイアログの **モデルのルート*
   だけのロールが最初の呼び出しで AccessDenied になりました。最初の 1 回だけより広い権限の主体で呼び出しておくと、
   その後は絞ったルート用ロールで動きました。
 
-**リージョンとモデル。** モデルは起動ダイアログで選んだものです。既定はティア名（Opus / Sonnet / Haiku）で、claude が
-ルートのリージョン向けの Bedrock 推論プロファイル ID に変換しますが、その ID がそのリージョンに無いことがあります。
-この確認では `ap-northeast-1` で既定の Sonnet の ID が最初のターンで `model_not_found` になりました。アカウントにモデルへの
-アクセスが無いとき、claude は古い Opus へ順にフォールバックし、試行ごとにゲートウェイへの呼び出しと使用量の行が 1 つずつ
-付きました。これは CLI の挙動で、変わることがあります。アカウントでモデルを有効にしたリージョンを使ってください。起動
-ダイアログに出るのはティア名と、設定の **追加の Claude モデル**（[エージェント](09-agents.ja.md)）に登録した ID です。
-設定が受け付けるのは `claude-` で始まる ID（例: `claude-opus-4-8`）だけで、`us.anthropic.…` のような AWS 推論プロファイル ID は
-登録できません。登録した `claude-…` の ID をこのルートで claude が正しい Bedrock の ID に変換するかは確かめていません。
-AF はモデルがアカウントで使えるかを確かめず、ルートごとにモデルを固定することもしません。
+**リージョンとモデル。** このルートの claude のセッションでは、リージョンの横の **Bedrock のモデル ID** 欄にモデルを Bedrock の表記どおりに
+入力します。`anthropic.claude-sonnet-4-5-20250929-v1:0` のようなモデル ID か、同じ ID の前に `us.`、`eu.`、`apac.`、
+`jp.`、`au.`、`us-gov.`、`global.` が付いたシステム推論プロファイル ID（例: `us.anthropic.claude-opus-4-6-v1`）です。
+この欄は必須で、このルートを選んでいる間は起動ダイアログの通常のモデル選択は隠れます。ルートのリージョンの Bedrock
+コンソールに出ていて、アカウントがアクセスできる ID を選んでください。セッションはサブエージェントや claude 自身の小さな
+裏方の呼び出しも含めてすべての呼び出しにその 1 つの ID を使い、ほかのモデルへ切り替えることはありません。別のモデルを
+名指しする呼び出しは、AWS へ届く前にゲートウェイが拒否します（`route_model_not_selected`）。ティア名（Opus / Sonnet /
+Haiku）、`claude-…` の ID、ARN は起動の時点で断ります。それらだと claude が自分で Bedrock の ID を選び、アカウントが
+使えなければ古いモデルを順に試して、試行ごとにゲートウェイへの呼び出しと使用量の行が 1 つずつ付くからです。AF は ID が
+アカウントで使えるかを確かめられません（ルートのロールはモデルの呼び出ししかできません）。アカウントやリージョンが使えない
+ID だと、最初のターンで AccessDenied や `model_not_found` のような Bedrock 自身の答えで失敗するので、別の ID で新しい
+セッションを始めてください。ダイアログは最後に使った ID をプロファイルごとにこのブラウザに覚えます。REST API や af の MCP
+ツールからは、ルートと一緒に ID を `model` として送ります。
 
 **呼び出しが拒否されたとき。** 認証や接続に関する拒否はゲートウェイ自身が HTTP 401（待てば直りうるものは 503）で返し、
 必ず `x-should-retry: false` を付けます。claude は再試行せず、メッセージ中のコードとともに 1 回だけ表示します。
-（転送できない要求は固有のステータスのままです: `route_operation_not_allowed` は 404、`route_bad_model` は 400、
-`route_request_too_large` は 413。）
+（転送できない要求は固有のステータスのままです: `route_operation_not_allowed` と `route_model_not_selected` は 404、
+`route_bad_model` は 400、`route_request_too_large` は 413。）
 
 | コード | 意味 | 対処 |
 |---|---|---|
@@ -213,6 +217,8 @@ AF はモデルがアカウントで使えるかを確かめず、ルートご�
 | `route_login_required`、`route_confirmation_required`（401） | プロファイルに SSO サインイン、または「使用前に確認」の承認が要る。 | サインインまたは許可すると、次の呼び出しは通る。 |
 | `route_connection_unavailable`（503） | Agent がいま設定の AWS プロファイルを読めない。 | 少し待ってやり直す。 |
 | `route_upstream_unavailable`、`route_credentials_unavailable`（503） | いま Bedrock または資格情報に届かない。 | 少し待ってやり直す。 |
+| `route_model_mismatch`（400、起動時） | このルートの claude のセッションを、Bedrock のモデル ID ではないモデルで始めようとした。空、`opus` のようなティア名、`claude-…` の ID、ARN のどれか（起動ダイアログ、REST API、af の MCP ツール、スケジュールのどれからでも）。何も起動していない。 | `us.anthropic.…` のような Bedrock のモデル ID をモデルとして送る。 |
+| `route_model_not_selected`（404） | セッションを始めたときの Bedrock のモデル ID と違うモデルを名指しした。AWS には何も送っていない。トークンは失効しない。 | その ID で新しいセッションを始める。 |
 
 AccessDenied や `model_not_found` のような Bedrock の答えはそのまま転送されます。ゲートウェイのコードではありません。
 

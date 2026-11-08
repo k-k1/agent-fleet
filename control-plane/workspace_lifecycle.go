@@ -571,6 +571,10 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 	if os.Getenv("AF_WS_CLAUDE_BEDROCK_ROUTE") == "1" {
 		env = append(env, "AF_CLAUDE_BEDROCK_ROUTE=1")
 	}
+	// The same for opencode's bedrock row, which passes its own acceptance (ADR 0128 P2c).
+	if os.Getenv("AF_WS_OPENCODE_BEDROCK_ROUTE") == "1" {
+		env = append(env, "AF_OPENCODE_BEDROCK_ROUTE=1")
+	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
 	// clone/push authenticate transparently. Deterministic per epoch, so re-injection

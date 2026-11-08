@@ -10,8 +10,14 @@ import (
 
 // peerOf pins the connecting process: its pid from the kernel (SO_PEERCRED, taken at connect
 // and not forgeable by the caller) and its start time, read so that it provably belongs to that
-// process (peerStart). Only a Unix socket has a peer.
+// process (peerStart). A loopback TCP connection's peer is read from /proc (tcpPeer); any other
+// connection has none.
 func peerOf(c net.Conn) (procID, bool) {
+	if tc, ok := c.(*net.TCPConn); ok {
+		local, _ := tc.LocalAddr().(*net.TCPAddr)
+		remote, _ := tc.RemoteAddr().(*net.TCPAddr)
+		return tcpPeer("/proc", local, remote)
+	}
 	uc, ok := c.(*net.UnixConn)
 	if !ok {
 		return procID{}, false

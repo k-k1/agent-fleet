@@ -553,6 +553,11 @@ export const sessions = {
   "launch.bedrock_region_placeholder": "プロファイルのリージョン",
   "launch.bedrock_region_invalid": "AWS のリージョンではありません（例: us-east-1）。空にするとプロファイル自身のリージョンを使います。",
   "launch.bedrock_hint": "設定 > AWS プロファイル/SSM で「モデルのルート」の印を付けたプロファイルだけが出ます。リージョンは任意で、空ならプロファイル自身のものです。呼び出しはワークスペースのルートゲートウェイを通るので、セッションには AWS の資格情報が渡りません。",
+  "launch.field.bedrock_model": "Bedrock のモデル ID",
+  // model-id-lint:allow examples of the Bedrock id form in help text; they choose no model
+  "launch.bedrock_model_hint": "必須です。このリージョンでアカウントが使えるモデル ID か、システム推論プロファイルの ID を Bedrock の表記どおりに入れます（例: us.anthropic.claude-opus-4-6-v1、anthropic.claude-sonnet-4-5-20250929-v1:0）。セッションはサブエージェントも含めてすべての呼び出しにこの 1 つのモデルを使い、ほかのモデルへは切り替えません。",
+  "launch.bedrock_model_invalid": "Bedrock 上の Anthropic のモデル ID ではありません。anthropic.… か <スコープ>.anthropic.…（スコープ: us、eu、apac、jp、au、us-gov、global）で入れてください。opus のような別名、claude-… の ID、ARN は使えません。",
+  "launch.bedrock_model_needed": "Amazon Bedrock のモデル（amazon-bedrock/…）を選んでください。このルートの opencode はそれしか使えません。",
   "launch.field.permissions": "権限確認",
   "launch.mode_normal": "通常",
   "launch.field.location": "場所",

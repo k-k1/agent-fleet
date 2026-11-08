@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api, errText } from "../../core/api/client.ts";
 import { RangePresets } from "../../ui/RangePresets.tsx";
+import { MonthlyTrend, costMonthRows } from "../../ui/MonthlyTrend.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtNum } from "../../lib/intl.ts";
@@ -126,6 +127,9 @@ function useCostRange() {
       const p = new URLSearchParams();
       if (from) p.set("from", from);
       if (to) p.set("to", to);
+      // The monthly trend is independent of the range: the last six UTC months, aggregated by
+      // the server.
+      p.set("months", "6");
       for (const [k, v] of Object.entries(extra || {})) if (v) p.set(k, v);
       const s = p.toString();
       return s ? "?" + s : "";
@@ -303,6 +307,15 @@ function CostOneBody({ data, from, totalLabelKey }: { data: any; from: string; t
       {/* The caveats always travel with the numbers. Without them a 0 covering a period before the
           tags were activated reads as "it was free", and that 0 never corrects itself. */}
       <CostNotes meta={meta} from={from} />
+
+      {data?.monthly && (
+        <MonthlyTrend
+          title={tr("monthly.cost_title")}
+          rows={costMonthRows(data.monthly)}
+          format={(v) => fmtMoney(v, currency)}
+          note={tr("monthly.cost_scope")}
+        />
+      )}
 
       {data === null ? (
         <p className="muted">{tr("common.loading")}</p>
@@ -486,6 +499,14 @@ export function CloudCostAdminView({
           <div className="cc-total-lab muted">{tr("cost.attributed_label")}</div>
         </div>
         <CostNotes meta={meta} from={from} />
+        {data?.monthly && (
+          <MonthlyTrend
+            title={tr("monthly.cost_title")}
+            rows={costMonthRows(data.monthly, (v) => tr("monthly.shared", { v: fmtMoney(v, currency) }))}
+            format={(v) => fmtMoney(v, currency)}
+            note={tr("monthly.cost_scope")}
+          />
+        )}
         {data === null ? (
           <p className="muted">{tr("common.loading")}</p>
         ) : members.length === 0 ? (

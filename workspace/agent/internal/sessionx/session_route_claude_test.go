@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -292,5 +293,45 @@ func TestSweepRouteGuardsIgnoresAStaleStoppedAt(t *testing.T) {
 	SweepRouteGuards(time.Now())
 	if tmuxx.HasSession(session.TmuxName(running.Name)) {
 		t.Error("a running session with a stale StoppedAt escaped the guard")
+	}
+}
+
+// claude's bedrock model is a Bedrock id checked by the route (CheckRoute), never by a live
+// catalogue of claude's own ids, which lists none: with a catalogue row for claude, a bedrock
+// create must still reach the route's check, and a create without the route must not skip it.
+func TestClaudeBedrockOwnsItsModel(t *testing.T) {
+	p := newCreateProbe(t)
+	openOpencodeBedrock(t)
+	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
+	prev, had := liveCatalogs[session.KindClaude]
+	liveCatalogs[session.KindClaude] = liveCatalog{choices: func(*createRun) []agents.ModelChoice {
+		return []agents.ModelChoice{{ID: "opus"}}
+	}}
+	t.Cleanup(func() {
+		if had {
+			liveCatalogs[session.KindClaude] = prev
+		} else {
+			delete(liveCatalogs, session.KindClaude)
+		}
+	})
+	var launched []session.Meta
+	launchTmuxFn = func(m session.Meta, _ bool) error { launched = append(launched, m); return nil }
+	route := map[string]any{"route": "bedrock", "connection": "prof1@eu-west-1"}
+	const model = "eu.anthropic.claude-opus-5-5"
+
+	rec := p.post(map[string]any{"kind": "claude", "dir": p.repo, "model": model, "route": route}, "")
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("bedrock create with a Bedrock id: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(launched) != 1 || launched[0].Model != model {
+		t.Fatalf("launched %+v", launched)
+	}
+	rec = p.post(map[string]any{"kind": "claude", "dir": p.repo, "model": "opus", "route": route}, "")
+	if rec.Code != http.StatusBadRequest || routeCode(t, rec.Body.String()) != routes.CodeRouteModel {
+		t.Fatalf("an alias on bedrock: %d %s, want 400 %s", rec.Code, rec.Body.String(), routes.CodeRouteModel)
+	}
+	rec = p.post(map[string]any{"kind": "claude", "dir": p.repo, "model": model}, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("a Bedrock id with no route skipped the catalogue: %d %s", rec.Code, rec.Body.String())
 	}
 }

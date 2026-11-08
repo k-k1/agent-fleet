@@ -1201,3 +1201,39 @@ func TestSpoolReplayAfterATruncatedLedgerWrite(t *testing.T) {
 		t.Fatalf("ledger after the replay = %+v, want the seed and the recovered row", rows)
 	}
 }
+
+// A session whose model is a Bedrock id (the claude bedrock route) is held to it: a call naming
+// another model is refused before anything leaves the Agent, the token stays for the session's
+// own model, and a model in another form (opencode's provider-prefixed id) pins nothing.
+func TestCallsAreHeldToTheSessionsModel(t *testing.T) {
+	e := newEnv(t)
+	m := e.session("pinned", "p1", "")
+	m.Model = "anthropic.claude-sonnet-4-5-20250929-v1:0" // testModel, unescaped
+	e.mu.Lock()
+	e.metas["pinned"] = m
+	e.mu.Unlock()
+	tok := e.issue(m)
+	for _, other := range []string{"us.anthropic.claude-opus-5", "anthropic.claude-sonnet-4-5-20250929-v1%3A1",
+		"arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Aapplication-inference-profile%2Fabc"} {
+		resp, body := e.call(tok, "/model/"+other+"/invoke-with-response-stream", `{}`)
+		if resp.StatusCode != http.StatusNotFound || codeOf(t, body) != "route_model_not_selected" {
+			t.Errorf("%s: %d %s, want 404 route_model_not_selected", other, resp.StatusCode, body)
+		}
+	}
+	if n := e.upstreamCalls(); n != 0 {
+		t.Fatalf("a call for another model reached Bedrock (%d upstream calls)", n)
+	}
+	if resp, body := e.call(tok, invokePath(), `{}`); resp.StatusCode != 200 {
+		t.Fatalf("the session's own model after a refusal: %d %s", resp.StatusCode, body)
+	}
+
+	o := e.session("opencode", "p1", "")
+	o.Kind, o.Model = session.KindOpencode, "amazon-bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0"
+	e.mu.Lock()
+	e.metas["opencode"] = o
+	e.mu.Unlock()
+	otok := e.issue(o)
+	if resp, body := e.call(otok, "/model/us.anthropic.claude-opus-5/invoke", `{}`); resp.StatusCode != 200 {
+		t.Fatalf("a session without a pinned model was held to one: %d %s", resp.StatusCode, body)
+	}
+}

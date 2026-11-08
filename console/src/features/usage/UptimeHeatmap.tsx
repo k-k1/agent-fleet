@@ -33,6 +33,7 @@ import {
 } from "./uptime.ts";
 import type { UptimeCell, UptimeMetric, UptimeResponse } from "./uptime.ts";
 import { RangePresets } from "../../ui/RangePresets.tsx";
+import { MonthlyTrend, usageMonthRows } from "../../ui/MonthlyTrend.tsx";
 import "./uptime.css";
 
 const METRICS: [UptimeMetric, MsgKey][] = [
@@ -513,6 +514,18 @@ function UptimeRangeBar({
 export function MyUptimeView() {
   const tr = useT();
   const { range, setRange, applied, data, err, loading, apply } = useUptime("api/usage/me/hourly");
+  // The caller's own hours per month; the endpoint returns nothing about anyone else.
+  const [monthly, setMonthly] = useState<any[] | null>(null);
+  const [monthlyErr, setMonthlyErr] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api("api/usage/me/monthly?months=6")
+      .then((d) => alive && (d?.error ? setMonthlyErr(true) : setMonthly(d?.monthly || [])))
+      .catch(() => alive && setMonthlyErr(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
   return (
     <div className="admin-stage">
       <section className="admin-panel">
@@ -522,6 +535,14 @@ export function MyUptimeView() {
         {err && <p className="form-err">{err}</p>}
       </section>
       <section className="admin-panel">
+        {monthly && (
+          <MonthlyTrend
+            title={tr("monthly.hours_title")}
+            rows={usageMonthRows(monthly)}
+            format={(v) => (v / 3600).toFixed(v < 3600 ? 2 : 1) + " h"}
+          />
+        )}
+        {monthlyErr && <p className="form-err">{tr("monthly.load_error")}</p>}
         <UptimeHeatmap data={data} from={applied.from} to={applied.to} />
       </section>
     </div>

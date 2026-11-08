@@ -209,6 +209,25 @@ export** once it has finished.
 - **From a terminal**: `af-memory export-sources`, `af-memory export --project <id|name> --dry-run` (preview) and
   `af-memory export --project <id|name> [--overwrite <name>]...` (write back).
 
+### Lint report
+
+**Import & export → Memory lint report** (and `af-memory lint [--user | --project <id|name>] [--json]` from a
+terminal) checks the memories of one scope and writes nothing: no memory changes, no read is counted as a use, and no
+working copy is touched. It reports, per memory:
+
+- a `[[link]]` to a memory that does not exist;
+- a repository path (only a path whose first folder exists in the repository), a `Test*` or code-shaped `symbol` in
+  backticks, or an `ADR 0123` that is missing from the project's default branch;
+- a term from your **retired terms** list (one per line, edited in the same panel; case-insensitive, whole words for
+  plain words). Nothing is ever added to the list for you;
+- a body over 4,096 bytes, the part other sessions see in recall.
+
+The repository is read by ref, from `origin`'s default branch in the repository's git directory, never through a
+working copy and without fetching, so the report says which ref and commit it read: a stale clone gives a stale
+answer. A project without git, an orphaned project (its working copy is gone) and the user scope get the link,
+term and size checks only, and the report says what it skipped. A path or name that was renamed is reported as missing:
+treat a finding as a question, not a verdict.
+
 ### Settings
 
 **It is off by default.** Turn on "Let sessions use Agent Fleet memory" first, here in this view: on reaches sessions

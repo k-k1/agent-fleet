@@ -473,7 +473,8 @@ func hoursOf(secs int) float64 {
 	return h
 }
 
-// usage (GET /api/admin/usage?from=&to=&tenant=&format=json|csv).
+// usage (GET /api/admin/usage?from=&to=&tenant=&months=&format=json|csv). months=N adds
+// `monthly`: the last N UTC months (see usage_monthly.go), independent of from/to.
 // Returns the per-day rows (for a dashboard chart) and per-member totals (for a
 // table); format=csv streams the daily rows as a spreadsheet.
 func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
@@ -482,6 +483,11 @@ func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to, aerr := usageRange(r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	months, aerr := monthsParam(r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -507,9 +513,19 @@ func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
 			"day": u.Day, "running_secs": u.RunningSecs, "running_hours": hoursOf(u.RunningSecs),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"from": from, "to": to, "days": days, "totals": aggregateUsage(rows),
-	})
+	}
+	if months > 0 {
+		sp := newMonthSpan(months, monthsNow())
+		mrows, err := a.mgr.store.ListUsage(r.Context(), tenantID, sp.From, sp.To)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		resp["monthly"] = monthlyUsage(withoutSystemTenants(mrows), sp)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func writeUsageCSV(w http.ResponseWriter, rows []store.UsageRow) {

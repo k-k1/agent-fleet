@@ -21,6 +21,9 @@ import (
 
 const testBearer = "afrt_test0bedrock0bearer0not0a0secret"
 
+// testBedrockModel is a system inference profile id in the fixtures' region.
+const testBedrockModel = "eu.anthropic.claude-opus-5-5"
+
 // fakeGateway stands in for internal/routegw behind the agents seam.
 type fakeGateway struct {
 	issued  []session.Meta
@@ -35,6 +38,10 @@ func (f *fakeGateway) Issue(m session.Meta) (agents.RouteGrant, *agents.RouteRef
 	}
 	return agents.RouteGrant{Socket: "/state/route-gateway.sock", BaseURL: "http://af-route-gateway.invalid",
 		Token: testBearer, Region: "eu-west-1"}, nil
+}
+
+func (f *fakeGateway) IssueLoopback(session.Meta) (agents.RouteGrant, *agents.RouteRefusal) {
+	panic("claude never asks for a loopback grant: it uses the socket")
 }
 
 func (f *fakeGateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
@@ -60,7 +67,7 @@ func withGateway(t *testing.T, g agents.RouteGateway) {
 
 func bedrockMeta(t *testing.T, name string) session.Meta {
 	return session.Meta{Kind: session.KindClaude, Name: name, Dir: t.TempDir(), CreatedAt: "2026-11-06T09:00:00Z",
-		Route: sel(RouteBedrock, routes.AWSConnection("p1", "eu-west-1"))}
+		Model: testBedrockModel, Route: sel(RouteBedrock, routes.AWSConnection("p1", "eu-west-1"))}
 }
 
 // The launch: the bearer rides this pane's environment only; the gateway's socket, base URL and
@@ -80,7 +87,10 @@ func TestBedrockLaunch(t *testing.T) {
 		t.Fatalf("issued = %+v, want one bearer for the stored selection", gw.issued)
 	}
 	wantEnv := []string{"AWS_BEARER_TOKEN_BEDROCK=" + testBearer, "CLAUDE_CODE_USE_BEDROCK=1",
-		"ANTHROPIC_BEDROCK_BASE_URL=http://af-route-gateway.invalid", "ANTHROPIC_UNIX_SOCKET=/state/route-gateway.sock", "AWS_REGION=eu-west-1"}
+		"ANTHROPIC_BEDROCK_BASE_URL=http://af-route-gateway.invalid", "ANTHROPIC_UNIX_SOCKET=/state/route-gateway.sock", "AWS_REGION=eu-west-1",
+		"ANTHROPIC_MODEL=" + testBedrockModel, "ANTHROPIC_DEFAULT_OPUS_MODEL=" + testBedrockModel, "ANTHROPIC_DEFAULT_SONNET_MODEL=" + testBedrockModel,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + testBedrockModel, "ANTHROPIC_DEFAULT_FABLE_MODEL=" + testBedrockModel,
+		"ANTHROPIC_SMALL_FAST_MODEL=" + testBedrockModel, "CLAUDE_CODE_SUBAGENT_MODEL=" + testBedrockModel}
 	if !slices.Equal(plan.Env, wantEnv) {
 		t.Errorf("env = %v\nwant %v", plan.Env, wantEnv)
 	}
@@ -129,7 +139,7 @@ func TestBedrockLaunchRefusals(t *testing.T) {
 	if !errors.As(err, &ref) || ref.Code != routes.CodeRouteUnavailable {
 		t.Fatalf("no gateway: err = %v", err)
 	}
-	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, ""); ref == nil || ref.Code != routes.CodeRouteUnavailable {
+	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, testBedrockModel); ref == nil || ref.Code != routes.CodeRouteUnavailable {
 		t.Fatalf("no gateway: CheckRoute = %v", ref)
 	}
 	unmarked := &agents.RouteRefusal{Status: http.StatusForbidden, Code: routes.CodeRouteForbidden, Message: "profile \"x\" is not marked as a model route"}
@@ -137,21 +147,21 @@ func TestBedrockLaunchRefusals(t *testing.T) {
 	if _, err := launchOf(t, m); !errors.As(err, &ref) || ref != unmarked {
 		t.Fatalf("an unmarked profile: err = %v", err)
 	}
-	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, ""); ref != unmarked {
+	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, testBedrockModel); ref != unmarked {
 		t.Fatalf("CheckRoute of an unmarked profile = %v", ref)
 	}
 	// A malformed reference is refused by the adapter itself, before the gateway is asked.
 	gw := &fakeGateway{}
 	withGateway(t, gw)
 	for _, conn := range []string{"", "p1", "p1@eu-west-1@x", "p/1@eu-west-1"} {
-		if ref := (agentImpl{}).CheckRoute(context.Background(), *sel(RouteBedrock, conn), ""); ref == nil {
+		if ref := (agentImpl{}).CheckRoute(context.Background(), *sel(RouteBedrock, conn), testBedrockModel); ref == nil {
 			t.Errorf("connection %q was accepted", conn)
 		}
 	}
 	if len(gw.checked) != 0 {
 		t.Errorf("the gateway was asked about a malformed reference: %+v", gw.checked)
 	}
-	if ref := (agentImpl{}).CheckRoute(context.Background(), *sel(RouteBedrock, "p1@"), ""); ref != nil {
+	if ref := (agentImpl{}).CheckRoute(context.Background(), *sel(RouteBedrock, "p1@"), testBedrockModel); ref != nil {
 		t.Errorf("the profile's own region (empty) was refused: %v", ref)
 	}
 	if len(gw.checked) != 1 || gw.checked[0].Connection != "p1@" {
@@ -173,6 +183,12 @@ func TestBedrockSettingsConflicts(t *testing.T) {
 		`{"awsCredentialExport":"/bin/creds"}`,
 		`{"awsAuthRefresh":"aws sso login"}`,
 		`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"}}`,
+		// A model pin set in a settings file would outrank the flag-layer pin from the managed
+		// layer and leave subagents on an id the gateway refuses.
+		`{"env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"us.anthropic.claude-opus-4-1"}}`,
+		`{"env":{"ANTHROPIC_SMALL_FAST_MODEL":"us.anthropic.claude-haiku-4-5"}}`,
+		`{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"sonnet"}}`,
+		`{"env":{"ANTHROPIC_MODEL":"opus"}}`,
 	} {
 		writeFile(t, user, body)
 		m := bedrockMeta(t, "bed-sc")
@@ -181,13 +197,15 @@ func TestBedrockSettingsConflicts(t *testing.T) {
 		if !errors.As(err, &ref) || ref.Code != routes.CodeRouteSettings {
 			t.Errorf("%s: bedrock err = %v, want %s", body, err, routes.CodeRouteSettings)
 		}
-		if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, ""); ref == nil || ref.Code != routes.CodeRouteSettings {
+		if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, testBedrockModel); ref == nil || ref.Code != routes.CodeRouteSettings {
 			t.Errorf("%s: CheckRoute = %v", body, ref)
 		}
-		// The env names concern every route; the AWS credential commands only bedrock.
+		// The provider and credential env names concern every route; the AWS credential commands
+		// and the model pins only bedrock.
 		api := session.Meta{Kind: session.KindClaude, Name: "api-sc", Dir: t.TempDir(), Route: sel(RouteAPI, "")}
 		_, apiErr := launchOf(t, api)
-		if strings.Contains(body, `"aws`) != (apiErr == nil) {
+		bedrockOnly := strings.Contains(body, `"aws`) || strings.Contains(body, "_MODEL")
+		if bedrockOnly != (apiErr == nil) {
 			t.Errorf("%s: anthropic-api launch err = %v", body, apiErr)
 		}
 	}
@@ -340,7 +358,7 @@ func TestBedrockReleaseGate(t *testing.T) {
 			t.Errorf("%s with the gate closed = %v", what, ref)
 		}
 	}
-	gated("CheckRoute", agentImpl{}.CheckRoute(context.Background(), *m.Route, ""))
+	gated("CheckRoute", agentImpl{}.CheckRoute(context.Background(), *m.Route, testBedrockModel))
 	_, ref := agentImpl{}.BindRoute(*m.Route)
 	gated("BindRoute", ref)
 	_, err := launchOf(t, m)
@@ -354,7 +372,61 @@ func TestBedrockReleaseGate(t *testing.T) {
 	if !slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) {
 		t.Error("open, but not offered")
 	}
-	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, ""); ref != nil {
+	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, testBedrockModel); ref != nil {
 		t.Errorf("open: CheckRoute = %v", ref)
+	}
+}
+
+// The bedrock route runs on one Bedrock model id the member chose: anything the CLI would map or
+// fall back from (no model, a tier alias, a claude-… id) is refused at the check and at the
+// launch, and the chosen id is pinned for every way the CLI picks a model, in the environment and
+// in the flag layer, beside --model.
+func TestBedrockModelIsRequiredAndPinned(t *testing.T) {
+	isolateSlot(t)
+	isolateClaudeConfig(t)
+	gw := &fakeGateway{}
+	withGateway(t, gw)
+	for _, model := range []string{"", "opus", "sonnet[1m]", "claude-opus-5-5", "us.anthropic.claude-opus-5-5[1m]",
+		"arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc", "global.openai.gpt-oss-120b-1:0"} {
+		m := bedrockMeta(t, "bed-model")
+		m.Model = model
+		if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, model); ref == nil || ref.Code != routes.CodeRouteModel {
+			t.Errorf("CheckRoute with model %q = %v, want %s", model, ref, routes.CodeRouteModel)
+		}
+		var ref *agents.RouteRefusal
+		if _, err := launchOf(t, m); !errors.As(err, &ref) || ref.Code != routes.CodeRouteModel {
+			t.Errorf("launch with model %q: err = %v, want %s", model, err, routes.CodeRouteModel)
+		}
+	}
+	if len(gw.checked) != 0 || len(gw.issued) != 0 {
+		t.Errorf("the gateway was asked about a session it must not run: checked %v, issued %v", gw.checked, gw.issued)
+	}
+	for _, model := range []string{"anthropic.claude-opus-4-6-v1", "global.anthropic.claude-opus-5-5", "apac.anthropic.claude-sonnet-4-5-20250929-v1:0"} {
+		m := bedrockMeta(t, "bed-model-ok")
+		m.Model = model
+		plan, err := launchOf(t, m)
+		if err != nil {
+			t.Fatalf("%s: %v", model, err)
+		}
+		if !strings.Contains(plan.Program, "--model '"+model+"'") {
+			t.Errorf("%s: --model is not the chosen id: %q", model, plan.Program)
+		}
+		env, _ := launchSettingsOf(t, plan.Program)["env"].(map[string]any)
+		for _, name := range bedrockModelPins {
+			if !slices.Contains(plan.Env, name+"="+model) {
+				t.Errorf("%s: %s is not set in the pane's environment: %v", model, name, plan.Env)
+			}
+			if env[name] != model {
+				t.Errorf("%s: flag layer %s = %v", model, name, env[name])
+			}
+			if strings.Contains(plan.Program, "-u "+name+" ") {
+				t.Errorf("%s: %s is removed by the launch", model, name)
+			}
+		}
+	}
+	// The Anthropic routes take any Claude model, as before.
+	withAPIKey(t, "sk-ant-api03-test-0123456789abcdef", nil)
+	if ref := (agentImpl{}).CheckRoute(context.Background(), *sel(RouteAPI, ""), "opus"); ref != nil {
+		t.Errorf("anthropic-api with opus = %v", ref)
 	}
 }

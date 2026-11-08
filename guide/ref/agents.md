@@ -261,7 +261,10 @@ login. A session with no route behaves as before.
   profiles marked as a model route ([cloud accounts](../member/16-cloud-accounts.md)). **It is not offered yet**: it waits
   for its live acceptance run, and until then a workspace offers it only when its operator has set
   `AF_CLAUDE_BEDROCK_ROUTE=1` for that run (on a Control Plane that is `AF_WS_CLAUDE_BEDROCK_ROUTE=1`, which reaches a workspace at its next Start; a workspace already running needs Stop → Start). Where it is offered, pick **Amazon Bedrock** under
-  **Model route**, then the profile; the region is optional (empty uses the profile's own). The session never
+  **Model route**, then the profile; the region is optional (empty uses the profile's own). The **Bedrock model ID** is
+  required: a model ID or system inference profile ID as Bedrock writes it (`anthropic.…`, `us.anthropic.…`, …; not
+  `opus` or `claude-…`, not an ARN). claude is started on that ID alone (`--model` and its `ANTHROPIC_*_MODEL`
+  variables), so subagents use it too and nothing falls back to another model. The session never
   receives AWS credentials: the workspace's route gateway signs each model call, and the session holds only a
   bearer that works from its own processes and ends with it. The CLI's header reads "Amazon Bedrock". A refused
   call (profile unmarked, edited or deleted, confirmation not yet given, SSO sign-in needed) fails at once with the
@@ -296,6 +299,32 @@ login. A session with no route behaves as before.
   booked resume could not be cancelled at once, the band says that too: the cancellation is retried and a
   resume that fires first is ignored. The usage-credit setting is the other way to carry on; past the
   window it is also billed at API rates. A switch is one-way: there is no switch back (start a new session, or move it).
+
+## opencode: the Amazon Bedrock route
+
+opencode can run on Amazon Bedrock with one of your Settings > AWS profiles/SSM profiles marked as a model
+route, like claude's bedrock route above. **It is not offered yet**: it waits for its own live acceptance run, and
+until then a workspace offers it only when its operator has set `AF_OPENCODE_BEDROCK_ROUTE=1` for that run (on a
+Control Plane that is `AF_WS_OPENCODE_BEDROCK_ROUTE=1`, which reaches a workspace at its next Start; a workspace
+already running needs Stop → Start). claude's switch does not open it.
+
+- **Terminal (CLI) only.** A Managed opencode session shares one opencode server with every other Managed session,
+  which cannot carry a route of its own, so the route is not offered for a Managed launch and a switch to Managed is
+  refused.
+- Where it is offered, pick **Amazon Bedrock** under **Model route**, then the profile (the region is optional), and
+  then one of the **amazon-bedrock/…** models: on this route the model picker lists only those, and the dialog does
+  not start until one is chosen (opencode's own default model is not on the route). Without the route, these models
+  are not listed.
+- The session runs its own private opencode server in its pane (not the workspace's shared one) and never receives
+  AWS credentials: the route gateway signs each model call, and the session holds only a bearer that works from its
+  own processes and ends with it. Inside the session only Amazon Bedrock models can be chosen, and the title is
+  generated on the session's model.
+- A refused call (profile unmarked, edited or deleted, confirmation not yet given, SSO sign-in needed) fails at once
+  with the reason; it is not retried. An opencode config file (yours, or the working copy's `opencode.json[c]` or
+  `.opencode/opencode.json[c]`) that sets `enabled_providers` refuses the launch, and stops a running session, because
+  it would override the route's provider pin.
+- Usage is recorded once per model call, by the gateway, as Amazon Bedrock, metered; opencode's own cost display for
+  these calls is not used.
 
 ## Choosing one
 

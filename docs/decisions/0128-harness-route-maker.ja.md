@@ -592,3 +592,81 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   置き換えず、強制した取得が失敗すれば最後の写しで答え（その間は作成・開始・認証情報の取得もその写しで許される）、成功した
   取得が 15 分ないと何も通さない。取得を待つのは最大 15 秒（実際の取得は HTTP のタイムアウトの前に `~/.aws/config` の
   ロックを取る）で、それを過ぎたら失敗として扱う。ガイド（16 章、英日）が両方の窓を書いている。
+- 2026-11-08、P2c（#3282）: opencode を `bedrock` でゲートウェイ経由で動かす（ターミナル専用）。**先に実測した**（イメージの
+  ピンである opencode 2.2.6 を `env -i`・専用の HOME と XDG ディレクトリで、`opencode run --standalone` と、専用 tmux サーバ内の
+  対話 TUI で実行。ループバックのポートと Unix ソケットで待ち受け、本物の AWS イベントストリームで応答し、メソッド・パス・
+  `Authorization`・`x-amz-*` ヘッダ・呼び出し元プロセスを記録するスタンドインのゲートウェイ相手。AWS は使っていない）:
+  (1) 組み込みの `amazon-bedrock` プロバイダは **ConverseStream**（`POST <baseURL>/model/<id>/converse-stream`）をモデル呼び出し
+  ごとに 1 回送り、ストリームの `metadata` イベントがターンのトークン数として表示される。(2) `AWS_BEARER_TOKEN_BEDROCK` だけで
+  プロバイダが有効になり（`amazon-bedrock/…` のモデルが 152 件出る）、`Authorization: Bearer` として送られる。静的キー、
+  `~/.aws/credentials` の default と別プロファイル、`AWS_PROFILE` をすべて置いても、どの呼び出しもベアラーで、`x-amz-*` ヘッダは
+  無かった。`providers.amazon-bedrock.settings.auth = "bearer"` でベアラーが無いと呼び出しは失敗し（"bearer auth requires apiKey"）、
+  何も送られない。(3) `providers.amazon-bedrock.settings.baseURL`（v2 の形）と `provider.amazon-bedrock.options.baseURL`（v1 の形）の
+  どちらでも呼び出しはゲートウェイへ向く。インライン設定（`OPENCODE_CONFIG_CONTENT`）はプロバイダの設定についてはグローバルと
+  プロジェクトのファイルに勝つ（ファイルの `baseURL` と `apiKey` は使われなかった）が、`enabled_providers` については**勝たない**
+  （グローバルやプロジェクトのファイルの一覧がインラインのものを置き換えた）。`OPENCODE_CONFIG_DIR` は読まれる。
+  (4) **Unix ソケットは使えない**。`unix://` のベース URL は拒否され（"protocol must be http:, https: or s3:"、タイムアウトまで再試行）、
+  `http+unix://` はソケットに届かず、ソケットを指定する設定も無い。(5) `x-should-retry: false` 付きの 401 または 503 は 1 回だけ
+  送られ、ターンはゲートウェイのメッセージですぐ失敗する（`Error: <message>`）。(6) モデル呼び出しは `--standalone` が起動する
+  専用の `serve --stdio` 子プロセスから出る。その親は TUI、つまりペインのプロセスで、起動ペインのプロセス木の中にある。
+  (7) セッションのタイトルは `small_model` で作られ、既定では OpenAI のモデルを `<baseURL>/responses`（または
+  `global.openai.gpt-6-luna` で `converse-stream`）へ送り、その後セッションのモデルにフォールバックする。`small_model` を固定すると
+  セッションのモデルのままになる。**ゲートウェイ**: 一時的なループバックのポート（`127.0.0.1:0`）に 2 つ目のリスナーを置く。
+  そこへの接続は `/proc` で呼び出し元を特定する。クライアント側の端は `/proc/net/tcp{,6}` の確立済みの行で、ローカルアドレスが
+  ゲートウェイから見た相手、リモートがゲートウェイ自身のものであること。その inode をちょうど 1 つのプロセスが開いていること
+  （fork で受け継がれたソケットは拒否）。そのプロセスを開始時刻で固定し、ソケットのときと同じく、セッションの起動ペインの
+  プロセス木をたどる。トークンは発行された経路（TCP は `IssueLoopback`、ソケットは `Issue`）を記録し、その経路でだけ使える。
+  `SO_PEERCRED` より 1 点弱い。持ち主を読むのは接続時ではなく accept 時なので、accept より前に接続済みソケットを別のプロセスへ
+  渡したクライアントは、渡した先のプロセスとみなされる（同じユーザーはソケットでも `SCM_RIGHTS` で同じことができる）。
+  許可リストは変更不要だった（`converse-stream` は転送済みで、その `metadata` の使用量も読み取り済み）。**アダプタ**: `Routes()` は
+  `bedrock`。Agent に `AF_OPENCODE_BEDROCK_ROUTE=1` があるときだけ、提示・確認・結び付け・起動する（`AF_WS_OPENCODE_BEDROCK_ROUTE=1` で
+  起動した Control Plane が次のワークスペース起動で付ける）。claude の閉鎖とは独立。`agents.RouteDriverChecker`（作成・フォーク・
+  作り直し・移動・毎回の開始・実行方式の切り替えで問う）がマネージドでの実行を拒否する。共有 serve はどのセッションの
+  プロセス木にも無く、環境も 1 つしかない。`agents.RouteModelOwner` により、モデルの確認は種別のライブカタログではなくルートが
+  行い、モデルは `amazon-bedrock/<id>` でなければならない（opencode の既定モデルはこのルートに無い）。起動は `--standalone`
+  （af の共有 serve は使わない）で、ペインにはベアラーと `AWS_REGION` を渡し、ワークスペースのプロバイダキーやエンジントークンは
+  渡さない。`OPENCODE_CONFIG`・`OPENCODE_CONFIG_DIR`・`OPENCODE_CLI_CONFIG_CONTENT` を unset し、毎回の起動でインライン設定を付ける
+  （新規セッションでは設定に混ぜ、再開では API の手順の前に export する）: `enabled_providers: ["amazon-bedrock"]`、`small_model` =
+  セッションのモデル、プロバイダの `baseURL`（ループバックのポート）と `auth: "bearer"`。`enabled_providers` を設定するグローバルや
+  プロジェクトの設定ファイルがあると、作成・開始・起動でルートを拒否し、動作中のセッションはルート監視の巡回が止める
+  （`route_settings_conflict`）。**台帳**: opencode は amazon-bedrock の呼び出しを経路なしで書くので、畳み込みはそれをセッションの
+  選択の下に置き、ゲートウェイの行に任せる（`dropGatewayCounted`、変更なし）。**メニュー（決定 11 の `keepInMenu`）**: ルートが提示
+  されている間（閉鎖が開いていて、ゲートウェイが動作中）、種別のメニューに opencode の amazon-bedrock のモデルも並ぶ。これは
+  プレースホルダのベアラー、AWS の資格情報チェーンを隠した環境、同じプロバイダ固定で `opencode models --standalone` から読む
+  （10 分キャッシュ）。Console はルートを選んだときだけそれを出し、それ以外では隠す。ルートの無いセッションについての
+  `keepInMenu` と `AF_OPENCODE_SHOW_BEDROCK` は変わらない。実測していないこと: 本物の Bedrock（決定 14）、動作中のワークスペースでの
+  ほかのセッションのプロセスに対する呼び出し元の束縛、利用者がプロバイダの外へ出ようとしたときの TUI 自身のモデル選択の挙動、
+  `amazon-bedrock` の OpenAI モデルがターンで `converse-stream` と `responses` のどちらを使うか（ゲートウェイは `responses` を、4 つの
+  操作を示す 404 で拒否する）。ADR 0129 の H 行と Q6 は、この経路と束縛をスタンドイン相手の実測として使える。
+  レビュー 1 巡目（#3593）: 4 点を直した。(1) インラインの固定を上書きする設定ファイルの項目は `enabled_providers` だけではなかった
+  （2.2.6 で 2 本のスタンドイン相手に再実測）。プロバイダ配下のモデル別の接続先（`providers.amazon-bedrock.models.<id>.settings.baseURL`、
+  v1 では `provider.amazon-bedrock.models.<id>.options.baseURL`）は、インラインのプロバイダの `baseURL` を越えて、そのモデルの呼び出しを
+  ベアラー付きで自分の URL へ送った。`policies` または `experimental.policies` の `provider.use` の許可規則は、インラインの
+  `enabled_providers` の横でほかのプロバイダをすべて戻した（インラインの拒否規則では戻らなかった）。`providers`/`provider` の下に
+  `amazon-bedrock` の項目を持つ、または action がプロバイダの操作・ワイルドカード・欠落の規則を持つグローバルやプロジェクトの
+  ファイルは、`enabled_providers` と同じくルートを拒否する。(2) ペインの `XDG_CONFIG_HOME` を、それらの検査が読むディレクトリに
+  固定した。tmux サーバから受け継いだ値で、検査していないファイルを opencode に読ませることはできない。(3) TCP の持ち主はプロセスと
+  して固定する。fd の表を読む前と後に開始時刻を読み、一致しなければならない。その間に owner の木の新しいプロセスが pid を再利用しても、
+  古いソケットの証拠を引き継げない。(4) Console は、そのルートが選ばれていないとき（マネージド、印付きプロファイルなし、
+  プロファイル読み込み中）は常にルートのモデルを隠す。その起動でルートが提示されているときに限らない。
+  #3425 のマージ後: `IssueLoopback` とループバックのポートへの呼び出しは、ソケットと同じ `issue` / `authorize` の経路を通るので、
+  発行時と資格情報の解決前の最新の Settings による確認と、資格情報の再利用もそのまま効く。
+- 2026-11-08、Bedrock のモデル固定（#3587）: Unix ソケット上の Bedrock の代役（本物の AWS なし。`env -i`、専用の `HOME`）に
+  Claude Code 2.1.319 を `CLAUDE_CODE_USE_BEDROCK=1` でつないで測った。モデルなし、または別名（`opus`）だと、403 や 400 の
+  たびにリージョンの `<スコープ>.anthropic.claude-opus-5-5` から Sonnet 4.5 の ID まで最大 9 個の ID を順に試す。
+  `CLAUDE_CODE_NO_MODEL_FALLBACK` と `CLAUDE_CODE_DISABLE_MODEL_ACCESS_FALLBACK`（`1` でも `true` でも）では止まらない。
+  Claude Code のカタログにある Anthropic 直の ID（`claude-opus-5-5`）はリージョンのスコープ（`us.`、`eu.`、ap-northeast-1 なら
+  `apac.`）に書き換えられ、カタログにない ID は入力どおりに出て無効になる。Bedrock の ID（`anthropic.…`、`us.`、`eu.`、
+  `global.…`）は拒否されてもそのまま 1 回だけ出て、フォールバックしない。404 は 2 回（ストリーム、続いてストリームでない
+  invoke が 1 回）で、順に試すことはない。`--model` だけでは足りず、`haiku` や `sonnet` を頼むサブエージェントは自前の ID を
+  解決する。`ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL`、`ANTHROPIC_SMALL_FAST_MODEL`、
+  `CLAUDE_CODE_SUBAGENT_MODEL` を選んだ ID にそろえると、すべての呼び出し（本体のターン、サブエージェント、`--model opus`）が
+  その ID を名指しし、拒否は 1 回で終わった。**決定**: claude の `bedrock` ルートでは、セッションのモデルはプロバイダが
+  `anthropic` の Bedrock モデル ID かシステム推論プロファイル ID でなければならない（`routes.ParseBedrockAnthropicModelID`。
+  汎用の `routes.ParseBedrockModelID` は ADR 0129 の許可リストが使い回す形）。別名、`claude-…` の ID、`[1m]` の接尾辞、ARN は
+  `CheckRoute` と起動で `route_model_mismatch`（400）として断る。起動は `--model <id>` を渡し、上の 7 つの変数を環境変数と
+  `--settings` の層の両方で同じ ID にする。ゲートウェイのトークンはその ID を持ち、別のモデルを名指しする呼び出しには AWS へ
+  出す前に **404** `route_model_not_selected` を返す。利用者は起動ダイアログのリージョンの横に ID を入力する（AWS
+  プロファイルごとに覚えるのはブラウザだけ）。REST・MCP・スケジュールは `model` として送る。ID を AWS 側では確かめない。
+  ルートのロールは `bedrock:InvokeModel*` しか持たず推論プロファイルを列挙できないので、アカウントとリージョンがその ID を
+  使えるかは Bedrock の応答で分かる。測っていないもの: 本物の Bedrock と、1 ターンを超える TUI。

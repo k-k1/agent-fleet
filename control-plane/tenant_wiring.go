@@ -411,6 +411,7 @@ func tenantLimitsOut(l tenantLimits) tenantsrv.Limits {
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
 		AllowEngineIngest:            l.AllowEngineIngest,
 		TerminalHistoryRetentionDays: l.TerminalHistoryRetentionDays,
+		PATMaxDays:                   l.PATMaxDays,
 		AllowEngineLLM:               l.AllowEngineLLM,
 		AllowEngineImage:             l.AllowEngineImage,
 	}
@@ -436,6 +437,7 @@ func tenantLimitsIn(l tenantsrv.Limits) tenantLimits {
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
 		AllowEngineIngest:            l.AllowEngineIngest,
 		TerminalHistoryRetentionDays: l.TerminalHistoryRetentionDays,
+		PATMaxDays:                   l.PATMaxDays,
 		AllowEngineLLM:               l.AllowEngineLLM,
 		AllowEngineImage:             l.AllowEngineImage,
 	}
