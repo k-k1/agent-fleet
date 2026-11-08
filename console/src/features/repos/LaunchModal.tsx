@@ -380,9 +380,10 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   const modelRouteProfiles = useModelRouteProfiles(declaredRoutes.includes("bedrock"));
   const routeOptions = declaredRoutes.filter((r) => r !== "bedrock" || (modelRouteProfiles?.length ?? 0) > 0);
   const bedrockPick = modelRouteProfiles?.find((p) => p.id === bedrockProfile) ?? modelRouteProfiles?.[0];
-  // claude on bedrock runs on the one Bedrock id typed beside the region (#3587); a kind with route
-  // models of its own (opencode: amazon-bedrock/…) picks one in the model picker instead.
-  const onBedrock = route === "bedrock" && routeOptions.includes("bedrock") && !!bedrockPick && kind === "claude";
+  // A kind without route models of its own (claude) runs on bedrock on the one Bedrock id typed
+  // beside the region (#3587); one with them (opencode: amazon-bedrock/…) picks one in the model
+  // picker instead.
+  const onBedrock = route === "bedrock" && routeOptions.includes("bedrock") && !!bedrockPick && !agentOf(kind).routeModelPrefix?.bedrock;
   const bedrockModel = bedrockPick ? (bedrockModels[bedrockPick.id] ?? rememberedBedrockModel(bedrockPick.id)) : "";
   const bedrockModelBad = onBedrock && !bedrockModelOk(bedrockModel.trim());
   const bedrockBlocked = (route === "bedrock" && routeOptions.includes("bedrock") && !regionOk(bedrockRegion)) || bedrockModelBad;
