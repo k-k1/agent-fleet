@@ -146,7 +146,7 @@ No agent is connected. Sign in to one under Connections in ⚙ Settings ([Agents
 
 ### A codex session will not switch to Terminal (CLI)
 
-When it says "Stop this codex session first, then switch it to terminal execution", stop the session, wait about a minute,
+When it says "Stop this codex session first, then switch it to terminal execution (about a minute after the stop).", stop the session, wait about a minute,
 and switch.
 
 ## Related

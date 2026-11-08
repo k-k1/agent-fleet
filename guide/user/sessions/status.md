@@ -37,7 +37,7 @@ The other states (usage limits, spend limits, background work, handoffs, abnorma
 can carry are in [Icons, badges, and menus](../../member/badges-and-menus.md#session-display).
 
 - Running sessions are refreshed every 4 seconds
-- Opening a row shows a **Chat** / **Terminal** switch at the top. "Chat" shows the conversation tidied up turn by turn
+- A Managed session opens straight on its conversation. A Terminal (CLI) session shows a **Chat** / **Terminal** switch at the top, and "Chat" shows the conversation tidied up turn by turn
 - Opening a stopped session shows "**Viewing history (resume to type)**", and it is read-only
 
 > [!NOTE]

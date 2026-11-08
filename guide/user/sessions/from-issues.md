@@ -116,7 +116,7 @@ Besides the ticket it was started from, a session is linked to tickets and pull 
 
 - Linked items show on the session's row; press one to open its detail. They stay when the session moves to another branch
 - An item's detail lists its sessions with how each is linked (started for, created, working on, reviewing, watching)
-- An archived session can be restored from **Sessions already on this** in the detail, after a confirmation. One without its working folder can be read but not resumed
+- An archived session can be restored from **Sessions already on this** in the detail, after a confirmation. One without its working folder can be read but not resumed. A deleted session is marked "Deleted"
 - A pull request that was merged or closed when last seen shows faintly at the end of the row
 - While the workspace is stopped, the links as of the last time it ran are shown
 
@@ -163,7 +163,7 @@ In the mirror and in assistant chats, the issue references an agent writes becom
 | Written as | Becomes a link when |
 |---|---|
 | `#956` | Read as a number on the session's working copy `origin` (github.com, bitbucket.org), merged and closed ones included. In a range (`#573-#598`) both ends are links |
-| `owner/name#956` | Always, even in a chat with no working copy |
+| `owner/name#956` | Even in a chat with no working copy, except for the name of a Bitbucket repository |
 | `PROJ-123` | The list has an issue of the same project, or the key belongs to a project your Jira connection can see |
 | A number or key in backquotes | Only when it is in the issue tracker list |
 
