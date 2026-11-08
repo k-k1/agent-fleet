@@ -410,7 +410,8 @@ client is served.
   domain can still send the member's cookie to the Console. The Control Plane refuses cookie-authenticated
   writes whose `Sec-Fetch-Site` is not `same-origin` or whose `Origin` is not the Console's own host (403),
   requires `application/json` (or `multipart/form-data` for uploads) on `/api/` bodies, and answers
-  `X-Frame-Options: DENY` plus `frame-ancestors 'self'`. Those checks are the safety net; the stronger
+  `X-Frame-Options: DENY` plus `frame-ancestors 'self'`, and the Console shell carries `script-src 'self'`
+  (own-origin scripts only, no inline). Those checks are the safety net; the stronger
   layout is `AF_PREVIEW_DOMAIN` under a different registrable domain (for example the Console at
   `af.example.com`, previews under `*.af-preview.example.net`), where the cookie is never sent at all.
   The cookie is named `af_session` and carries no `__Host-` prefix yet, so a `__Host-` name is not an

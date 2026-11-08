@@ -69,16 +69,45 @@ func (p Policy) Check(r *http.Request) *Rejection {
 	return nil
 }
 
-// FrameHeaders adds the framing and plugin protections to every Console response: a same-site
-// page must not be able to frame the Console, and the Console has no <object>/<embed> use.
-// script-src is deliberately absent: index.html carries an inline bootstrap. The path-form
-// preview serves the user's own app and keeps its own policy.
+// consoleCSP is the policy of every Console response. script-src 'self' holds because the shell
+// carries no inline script (the <base href> bootstrap is public/base-bootstrap.js); the draw.io
+// viewer frame, which does need inline script, is a separate document with its own policy
+// (DrawioFrameCSP). 'wasm-unsafe-eval' is for the document viewer's WebAssembly module
+// (anydoc); it allows compiling wasm only, not eval() or new Function(). The path-form preview serves the user's own app and keeps its own policy.
+const consoleCSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'; script-src 'self' 'wasm-unsafe-eval'"
+
+// DrawioFrameCSP is the policy of the two built draw.io viewer documents. They run an inline boot
+// script and evaluate the viewer source posted in by the Console as an inline script, so they need
+// 'unsafe-inline'. That is safe only with an opaque origin, which the response's own
+// `sandbox allow-scripts` guarantees (a meta CSP cannot carry sandbox): opening the URL directly or
+// framing it without a sandbox attribute still cannot reach the Console's storage. connect-src is
+// 'none' and frame-ancestors 'self'. A srcdoc could not carry this: it inherits the embedder's
+// script-src 'self'.
+const DrawioFrameCSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+	"img-src data: blob:; font-src data:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; " +
+	"sandbox allow-scripts"
+
+// IsDrawioFramePath reports whether p is one of the built draw.io viewer documents
+// (console/scripts/afDrawioFrames.js emits them at the Console root).
+func IsDrawioFramePath(p string) bool {
+	return p == "/drawio-frame-light.html" || p == "/drawio-frame-dark.html"
+}
+
+// FrameHeaders adds the framing, plugin and script protections to every Console response: a
+// same-site page must not be able to frame the Console, the Console has no <object>/<embed> use,
+// and it runs script from its own origin only.
 func FrameHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/preview/") {
-			h := w.Header()
+		h := w.Header()
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/preview/"):
+		case IsDrawioFramePath(r.URL.Path):
+			// Framed by the Console itself, so DENY would break it.
+			h.Set("X-Frame-Options", "SAMEORIGIN")
+			h.Set("Content-Security-Policy", DrawioFrameCSP)
+		default:
 			h.Set("X-Frame-Options", "DENY")
-			h.Set("Content-Security-Policy", "frame-ancestors 'self'; object-src 'none'; base-uri 'self'")
+			h.Set("Content-Security-Policy", consoleCSP)
 		}
 		next.ServeHTTP(w, r)
 	})

@@ -346,7 +346,7 @@ Admin モーダルの**開発用ログイン**で、Control Plane の開発用 O
   cookie を付けて Console へリクエストできます。Control Plane は、cookie 認証の書き込みのうち
   `Sec-Fetch-Site` が `same-origin` でないもの、`Origin` が Console 自身のホストでないものを 403 で拒否し、
   `/api/` のボディに `application/json`（アップロードは `multipart/form-data`）を要求し、
-  `X-Frame-Options: DENY` と `frame-ancestors 'self'` を返します。これらは安全網です。より強い構成は、
+  `X-Frame-Options: DENY` と `frame-ancestors 'self'` を返し、Console のシェルには `script-src 'self'`（同一オリジンのスクリプトのみ、インラインなし）が付きます。これらは安全網です。より強い構成は、
   `AF_PREVIEW_DOMAIN` を別の登録可能ドメインに置くこと（例: Console が `af.example.com`、プレビューが
   `*.af-preview.example.net`）で、cookie がそもそも送られなくなります。cookie 名は `af_session` で
   `__Host-` 接頭辞はまだ付かないため、`__Host-` 名は現時点では選べません。`AUTH=proxy` の背後では、ゲートウェイが
