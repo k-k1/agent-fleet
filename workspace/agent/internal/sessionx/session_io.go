@@ -27,6 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // PaneMode reads the session's CURRENT permission/collaboration mode straight from the
@@ -1466,10 +1467,23 @@ func sessionInputReady(meta session.Meta, alive bool) bool {
 	return PaneMode(meta.Kind, session.TmuxName(meta.Name)) != ""
 }
 
+// outputTurnCursor is the /output cursor for a kind read through generic transcript turns. A
+// turn has no completeness marker, and an assistant turn the session is still writing grows
+// without changing the turn count, so a cursor that counted it would make the next
+// continue-read skip the rest of that turn. While the session is neither idle nor stopped the
+// last assistant turn is therefore left out, and the next read re-sends that one turn whole.
+func outputTurnCursor(turns []transcript.Turn, state string) int {
+	n := len(turns)
+	if n > 0 && turns[n-1].Role == "assistant" && state != "idle" && state != "stopped" {
+		return n - 1
+	}
+	return n
+}
+
 // HandleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the
 // session's assistant text appended since the cursor, plus a new cursor and the
-// current status. cursor is a line index into claude's jsonl transcript, or a turn
-// count for the other transcript-capable kinds.
+// current status. cursor is a line index into claude's jsonl transcript, or a count of
+// completed turns for the other transcript-capable kinds (see outputTurnCursor).
 //
 // peek_from=<session> makes it a peer peek (session_peek.go): the policy, the caps, the
 // rate limit and the audit record are all applied here, not by the caller.
@@ -1536,7 +1550,7 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	var raw string
 	var cursor int
 	// codex/opencode: their stores aren't claude's jsonl — build the flattened assistant
-	// output from the generic Transcript() turns instead (cursor = turn count), so the
+	// output from the generic Transcript() turns instead (cursor = completed-turn count), so the
 	// drive tools (MCP get_session_output) work for every transcript-capable kind.
 	if !terminalTraits(meta.Kind).TranscriptLines {
 		td, _ := AgentOf(meta.Kind).Transcript(meta)
@@ -1550,7 +1564,7 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 				gb.WriteString(t.Text)
 			}
 		}
-		raw, cursor = gb.String(), len(td.Turns)
+		raw, cursor = gb.String(), outputTurnCursor(td.Turns, state)
 	} else {
 		sid := session.UUID(meta.Dir, name)
 		tlines := claude.TranscriptLines(sid)
