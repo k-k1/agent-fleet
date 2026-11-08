@@ -68,7 +68,20 @@ done
 if [ ! -x "$DEST/etcd" ]; then
   echo "==> etcd $ETCD_VERSION ($ARCH)"
   tgz="etcd-$ETCD_VERSION-linux-$ARCH.tar.gz"
-  curl -fsSL --retry 4 --retry-all-errors -o "$TMP/$tgz" "https://github.com/etcd-io/etcd/releases/download/$ETCD_VERSION/$tgz"
+  # GitHub Releases answers 504 for long stretches; etcd's own mirror serves the same
+  # tarball. Each source gets a fresh file so a partial download is never reused, and
+  # the pinned sha256 check applies to whichever source delivered.
+  fetched=""
+  for url in "https://github.com/etcd-io/etcd/releases/download/$ETCD_VERSION/$tgz" \
+             "https://storage.googleapis.com/etcd/$ETCD_VERSION/$tgz"; do
+    rm -f "$TMP/$tgz"
+    if curl -fsSL --retry 4 --retry-all-errors -o "$TMP/$tgz" "$url"; then
+      fetched=1
+      break
+    fi
+    echo "k8s-test-binaries: etcd download failed from $url" >&2
+  done
+  [ -n "$fetched" ] || { echo "k8s-test-binaries: etcd download failed from every source" >&2; exit 1; }
   check "$TMP/$tgz" etcd
   tar -xzf "$TMP/$tgz" -C "$TMP" "etcd-$ETCD_VERSION-linux-$ARCH/etcd"
   mv "$TMP/etcd-$ETCD_VERSION-linux-$ARCH/etcd" "$DEST/etcd"
