@@ -46,6 +46,15 @@ func buildProgram(model, mode string, ocid string, fork bool) string {
 // failure stops the launch, prints the reason in the pane and leaves a non-zero status; the
 // line's final status is the TUI's, because the caller appends the exit recorder after it.
 func buildProgramV2(spec LaunchSpec, model, mode, ocid string, fork bool) string {
+	return buildProgramV2With(spec, model, mode, ocid, fork, nil)
+}
+
+// buildProgramV2With is buildProgramV2 with extra inline config (an explicit route's provider
+// pin, route.go). Inline config is the layer that outranks the global and project config files
+// for these keys (measured on 2.2.6), so it rides OPENCODE_CONFIG_CONTENT on every launch: merged
+// into a fresh session's config, and exported in front of a resume so the API steps and the TUI
+// read it too. None of it is secret; the route's bearer stays in the pane's environment.
+func buildProgramV2With(spec LaunchSpec, model, mode, ocid string, fork bool, extra map[string]any) string {
 	agent := ""
 	switch mode {
 	case "plan":
@@ -55,10 +64,15 @@ func buildProgramV2(spec LaunchSpec, model, mode, ocid string, fork bool) string
 	}
 	tui := []string{spec.shellBin(), "--standalone", envOr("AGENT_OPENCODE_FLAGS", "--auto")}
 	if ocid == "" {
-		if cfg := freshSessionConfig(model, agent); cfg != "" {
+		if cfg := freshSessionConfigWith(model, agent, extra); cfg != "" {
 			tui = append([]string{"OPENCODE_CONFIG_CONTENT=" + session.ShellQuote(cfg)}, tui...)
 		}
 		return strings.Join(tui, " ")
+	}
+	prefix := ""
+	if len(extra) > 0 {
+		b, _ := json.Marshal(extra)
+		prefix = "export OPENCODE_CONFIG_CONTENT=" + session.ShellQuote(string(b)) + "; "
 	}
 
 	ses := session.ShellQuote(ocid)
@@ -83,7 +97,7 @@ func buildProgramV2(spec LaunchSpec, model, mode, ocid string, fork bool) string
 		switches = append(switches, api("agent", string(b)))
 	}
 	if !fork && len(switches) == 0 {
-		return strings.Join(append(tui, "--session", ses), " ")
+		return prefix + strings.Join(append(tui, "--session", ses), " ")
 	}
 	fail := func(what string) string {
 		return `echo "agent-fleet: opencode ` + what + `: $AF_OC_OUT" >&2; sleep 5; false`
@@ -94,9 +108,9 @@ func buildProgramV2(spec LaunchSpec, model, mode, ocid string, fork bool) string
 	}
 	run := strings.Join(append(tui, "--session", target), " ")
 	if !fork {
-		return "AF_OC_SES=" + ses + "; if " + cond + "; then " + run + "; else " + fail("could not apply the model or agent") + "; fi"
+		return prefix + "AF_OC_SES=" + ses + "; if " + cond + "; then " + run + "; else " + fail("could not apply the model or agent") + "; fi"
 	}
-	return `AF_OC_OUT=$(` + spec.shellBin() + ` api --standalone POST /api/session/` + ses + `/fork -d '{}' 2>&1); ` +
+	return prefix + `AF_OC_OUT=$(` + spec.shellBin() + ` api --standalone POST /api/session/` + ses + `/fork -d '{}' 2>&1); ` +
 		`AF_OC_SES=$(printf '%s' "$AF_OC_OUT" | grep -o '"id":"ses_[A-Za-z0-9]*"' | head -n 1 | cut -d'"' -f4); ` +
 		`if [ -z "$AF_OC_SES" ]; then ` + fail("fork failed") + `; elif ` + cond + `; then ` + run +
 		`; else ` + fail("could not apply the model or agent") + `; fi`
@@ -104,8 +118,14 @@ func buildProgramV2(spec LaunchSpec, model, mode, ocid string, fork bool) string
 
 // freshSessionConfig is the inline config that picks the model and primary agent of a
 // session that does not exist yet; empty when neither is chosen.
-func freshSessionConfig(model, agent string) string {
-	cfg := map[string]string{}
+func freshSessionConfig(model, agent string) string { return freshSessionConfigWith(model, agent, nil) }
+
+// freshSessionConfigWith is freshSessionConfig with extra inline config merged in.
+func freshSessionConfigWith(model, agent string, extra map[string]any) string {
+	cfg := map[string]any{}
+	for k, v := range extra {
+		cfg[k] = v
+	}
 	if _, _, ok := splitModel(model); ok {
 		cfg["model"] = strings.TrimSpace(model)
 	}

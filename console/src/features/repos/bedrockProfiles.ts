@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
+import { agentOf } from "../../agents/registry.ts";
 
 /** A Settings AWS profile the member marked as a model route (ADR 0128 decision 11, option C2):
  *  the only kind the bedrock route accepts. */
@@ -60,4 +61,18 @@ export function useModelRouteProfiles(enabled: boolean): ModelRouteProfile[] | n
 /** The create body's `route` object: the id, and the connection only when the route takes one. */
 export function routeSelectionBody(route: string, connection?: string): { route: string; connection?: string } {
   return connection ? { route, connection } : { route };
+}
+
+/** Which of a kind's models the launch dialog offers for the chosen route (ADR 0128 decision 6),
+ *  or undefined when the kind has no route-only models. A route with a model prefix (the kind's
+ *  routeModelPrefix; opencode on bedrock: amazon-bedrock/) offers only ids under it, so the kind's
+ *  own default ("") is left out. With no such route chosen (none picked, none offered on this
+ *  launch, a Managed launch, profiles still loading) every route-only id is left out: the Agent
+ *  lists them whenever the route is open, and they cannot run without it. */
+export function routeModelFilter(kind: string, route: string): ((id: string) => boolean) | undefined {
+  const prefixes = Object.values(agentOf(kind).routeModelPrefix ?? {});
+  if (!prefixes.length) return undefined;
+  const own = agentOf(kind).routeModelPrefix?.[route] ?? "";
+  if (own) return (id) => id.startsWith(own) && id.length > own.length;
+  return (id) => !prefixes.some((p) => id.startsWith(p));
 }

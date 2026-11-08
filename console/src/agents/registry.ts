@@ -133,6 +133,10 @@ export interface AgentDescriptor {
   // differs from the compact label set it — claude "Claude Code", copilot "GitHub
   // Copilot". The tight chips (LayoutMap, kt-full) always show `label`.
   displayName?: string;
+  // Model routes (ADR 0128) whose models are this kind's ids under one prefix: on that route the
+  // launch dialog offers only those ids, and without it it hides them. opencode: its
+  // amazon-bedrock provider on the bedrock route.
+  routeModelPrefix?: Record<string, string>;
   assistantName: string; // how the agent signs its chat turns ("Claude" / "Codex" / …)
   short: string; // 2-char abbrev for tight headers (cc/cx/oc/sh/aw)
   cssClass: string; // .kind-<slug> color class slug
@@ -523,6 +527,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
   opencode: {
     id: "opencode",
     icon: "brand:opencode",
+    routeModelPrefix: { bedrock: "amazon-bedrock/" },
     label: "OpenCode",
     assistantName: "OpenCode",
     short: "oc",

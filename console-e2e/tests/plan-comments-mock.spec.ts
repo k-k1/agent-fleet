@@ -44,8 +44,10 @@ function planKey(session: string, plan: string): string {
 
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
-    const pathname = new URL(req.url || "/", "http://local").pathname;
-    const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+    const u = new URL(req.url || "/", "http://local");
+    const pathname = u.pathname;
+    // index.html loads its bootstrap script as "?af-bootstrap"; answer it as the Control Plane does.
+    const relative = u.search === "?af-bootstrap" ? "base-bootstrap.js" : pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     const file = path.join(dist, relative);
     if (!file.startsWith(dist) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       res.writeHead(404).end();

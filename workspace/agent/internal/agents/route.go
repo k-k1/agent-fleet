@@ -129,3 +129,19 @@ type RouteSwitcher interface {
 	// only when the harness can show the subscription is what it runs on.
 	SwitchTarget(m session.Meta) (RouteSelection, *RouteRefusal)
 }
+
+// RouteDriverChecker is an optional capability of a RouteAdapter: whether a route may run under an
+// execution method. A route whose isolation holds only for the harness's own process in a pane
+// (decision 5: a shared daemon carries one credential and sits in no session's process tree)
+// refuses the other methods. Asked at create, fork, recreate, move, every start and an
+// execution-method switch, with the method the session will run under.
+type RouteDriverChecker interface {
+	CheckRouteDriver(route, driver string) *RouteRefusal
+}
+
+// RouteModelOwner is an optional capability of a RouteAdapter: the route, not the kind's live
+// catalogue, decides which models a session on it may name. A create with such a selection skips
+// the catalogue lookup and leaves the model to the adapter's CheckRoute.
+type RouteModelOwner interface {
+	RouteOwnsModels(route string) bool
+}

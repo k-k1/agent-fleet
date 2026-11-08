@@ -576,6 +576,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/projects", memoryx.HandleAgentMemoryMemberProjects)
 	mux.HandleFunc("GET /agents/memory/entries/project-move-preview", memoryx.HandleAgentMemoryMemberMovePreview)
 	mux.Handle("POST /agents/memory/entries/project-move", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryMemberMove)))
+	// The read-only lint report (ADR 0130 decision 5) and the member's retired-term list it
+	// reads; the list is edited only behind the member-origin mark.
+	mux.HandleFunc("GET /agents/memory/entries/lint", memoryx.HandleAgentMemoryMemberLint)
+	mux.HandleFunc("GET /agents/memory/entries/lint-terms", memoryx.HandleAgentMemoryLintTerms)
+	mux.Handle("POST /agents/memory/entries/lint-terms", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryLintTermsSave)))
 	mux.HandleFunc("GET /agents/memory/entries/member-latest", memoryx.HandleAgentMemoryMemberLatest)
 	mux.HandleFunc("GET /agents/memory/entries/member-forgotten", memoryx.HandleAgentMemoryMemberForgotten)
 	// The member's purge of one memory's past revisions from the history (#1982): a read-only
