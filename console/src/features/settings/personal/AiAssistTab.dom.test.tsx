@@ -70,45 +70,12 @@ describe("AiAssistTab per-feature cards", () => {
     }
   });
 
-  // ADR 0117: the memory review is switched on under Agent memory, so its card only appears once it
-  // is on, carries no switch of its own, and says plainly when no agent can run it.
-  describe("the memory review card", () => {
-    const label = () => t(AI_ASSIST_FEATURES.find((f) => f.id === "memory.review")!.labelKey);
-    const has = () => [...host.querySelectorAll(".ds-label")].some((el) => el.textContent === label());
-
-    it("is absent while the review is off, and there is no control that turns it on here", async () => {
-      setSetting("memoryReview", "off");
-      await render();
-      expect(has()).toBe(false);
-    });
-
-    it("appears when on, with agent pins and no switch", async () => {
-      setSetting("memoryReview", "propose");
-      await render();
-      expect(has()).toBe(true);
-      const card = cardFor("memory.review");
-      expect(card.textContent).toContain(t("aiassist.feature_agent"));
-      expect(card.textContent).toContain(t("aiassist.set_in_memory_settings"));
-      // OnOff draws two buttons labelled on / off; this card draws neither.
-      expect(card.textContent).not.toContain(t("common.on"));
-      expect(card.textContent).not.toContain(t("common.off"));
-    });
-
-    it("says so when the Agent reports that no agent can run it deny-all", async () => {
-      apiMock.mockImplementation((p: string) =>
-        Promise.resolve(
-          p === "api/ai-assist/resolution"
-            ? { features: [{ feature: "memory.review", enabled: true, source: "unavailable" }] }
-            : {},
-        ),
-      );
-      setSetting("memoryReview", "propose");
-      await render();
-      await act(async () => {
-        await Promise.resolve();
-      });
-      expect(cardFor("memory.review").textContent).toContain(t("aiassist.currently_using_denied"));
-    });
+  // ADR 0130 decision 2: the memory review is gone, so it has no card, whatever an old ui-prefs file
+  // still says. Its `memory.review` ledger value stays for past usage rows only.
+  it("has no memory review card", async () => {
+    await render();
+    expect(AI_ASSIST_FEATURES.some((f) => f.id === "memory.review")).toBe(false);
+    expect(host.textContent).not.toContain(t("usage.val.feature.memory.review"));
   });
 
   // 103-impl-review 重大2: useAiAssistResolution used to be called INSIDE AiFeatureCard, so 8

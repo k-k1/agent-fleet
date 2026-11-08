@@ -82,11 +82,6 @@ func TestMemberWriteRoutesRequireTheMark(t *testing.T) {
 		"/agents/memory/entries/project-move",
 		"/agents/memory/snapshots",
 		"/agents/memory/import/apply",
-		"/agents/memory-review/run",
-		"/agents/memory-review/proposals/list",
-		"/agents/memory-review/proposals/approve",
-		"/agents/memory-review/proposals/reject",
-		"/agents/memory-review/proposals/reject-all",
 		"/agents/memory-review/runs/revert",
 	} {
 		req := httptest.NewRequest(http.MethodPost, p, strings.NewReader(`{}`))
@@ -114,18 +109,10 @@ func TestMemberWriteRoutesAdmitAMarkedRequest(t *testing.T) {
 		"/agents/memory/entries/project-move",
 		"/agents/memory/import/apply",
 		"/agents/memory/snapshots",
-		"/agents/memory-review/proposals/list",
-		"/agents/memory-review/proposals/approve",
-		"/agents/memory-review/proposals/reject",
-		"/agents/memory-review/proposals/reject-all",
 		"/agents/memory-review/runs/revert",
 	} {
-		// reject-all with an empty body would reject the whole queue; a malformed run id is
-		// the validation error that proves the request got past the mark without touching it.
+		// An empty body is a validation error past the mark (the run id is malformed).
 		body := `{}`
-		if p == "/agents/memory-review/proposals/reject-all" {
-			body = `{"run":"nope"}`
-		}
 		req := httptest.NewRequest(http.MethodPost, p, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer agent-token")
 		req.Header.Set("Content-Type", "application/json")
@@ -140,12 +127,7 @@ func TestMemberWriteRoutesAdmitAMarkedRequest(t *testing.T) {
 			}
 			continue
 		}
-		// The queue list takes no input: it answers 200 past the mark.
-		want := http.StatusBadRequest
-		if p == "/agents/memory-review/proposals/list" {
-			want = http.StatusOK
-		}
-		if w.Code != want || strings.Contains(w.Body.String(), "member_origin") {
+		if w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "member_origin") {
 			t.Errorf("%s with a mark: %d %s", p, w.Code, w.Body)
 		}
 	}
@@ -258,5 +240,31 @@ func TestImportApplyTakesALargeMarkedSelection(t *testing.T) {
 	buildMux().ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "member_origin") {
 		t.Fatalf("large marked apply: %d %.200s, want the handler's 400", w.Code, w.Body)
+	}
+}
+
+// The review's routes are gone (ADR 0130 decision 2): an older Console that still calls one gets a
+// plain 404, with or without the mark. Only the run revert remains.
+func TestRemovedMemoryReviewRoutesAnswer404(t *testing.T) {
+	s := memberorigintest.Install(t)
+	mux := buildMux()
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/agents/memory-review"},
+		{"POST", "/agents/memory-review/run"},
+		{"POST", "/agents/memory-review/proposals/list"},
+		{"POST", "/agents/memory-review/proposals/approve"},
+		{"POST", "/agents/memory-review/proposals/reject"},
+		{"POST", "/agents/memory-review/proposals/reject-all"},
+	} {
+		body := `{}`
+		req := httptest.NewRequest(c.method, c.path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer agent-token")
+		req.Header.Set("Content-Type", "application/json")
+		s.Sign(req, []byte(body))
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s %s: %d %s, want 404", c.method, c.path, w.Code, w.Body)
+		}
 	}
 }

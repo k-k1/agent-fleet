@@ -59,7 +59,6 @@ const VALID_OVERRIDES: Obj = {
   readerFont: "ゴシック",
   opencodeCatalog: "go",
   externalMemory: "read",
-  memoryReview: "propose",
   outputLanguage: "ja",
   ttsProvider: "polly",
   ttsLang: "en",
