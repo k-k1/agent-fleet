@@ -323,3 +323,72 @@ func TestCheckTargetCommandRefusesBareBash(t *testing.T) {
 		t.Errorf("prose: %v", got)
 	}
 }
+
+// A Bash dialog taller than the pane (a heredoc on a phone-width pane) has its top rule, title
+// and first command lines drawn nowhere: Claude Code uses the alternate screen, so they are not
+// in tmux's history either. Captured live from claude 2.1.319 on a 67x54 pane.
+func TestCheckTargetCommandClippedDialog(t *testing.T) {
+	m := menuFixture(t, "bash_clipped_tall_command.txt")
+	if m.BodyOK || !m.Clipped {
+		t.Fatalf("BodyOK=%v Clipped=%v, want a clipped body", m.BodyOK, m.Clipped)
+	}
+	b, err := os.ReadFile(filepath.Join("testdata", "permmenu", "bash_clipped_tall_command.cmd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := string(b)
+	first, _, _ := strings.Cut(full, "\n")
+	detail := "Bash · " + string([]rune(first)[:100]) + "…"
+	if got := m.CheckTargetCommand(detail, "", full); got != TargetMatches {
+		t.Errorf("same command: got %v, want TargetMatches", got)
+	}
+	// A different tail, the same tail with a line changed, and a payload from another command.
+	if got := m.CheckTargetCommand(detail, "", full+"\nrm -rf build"); got != TargetDiffers {
+		t.Errorf("extra last line: got %v, want TargetDiffers", got)
+	}
+	changed := strings.Replace(full, `toContain("nodata")`, `toContain("data")`, 1)
+	if got := m.CheckTargetCommand(detail, "", changed); got != TargetDiffers {
+		t.Errorf("changed visible line: got %v, want TargetDiffers", got)
+	}
+	if got := m.CheckTargetCommand("Bash · ls", "", full); got != TargetDiffers {
+		t.Errorf("payload of another command: got %v, want TargetDiffers", got)
+	}
+	// The one-line check has nothing to compare its target with and stays closed.
+	if got := m.CheckTarget(detail, ""); got != TargetDiffers {
+		t.Errorf("CheckTarget: got %v, want TargetDiffers", got)
+	}
+	// Too short a visible tail is no evidence.
+	short := m
+	short.Body = m.Body[len(m.Body)-9:]
+	if got := short.CheckTargetCommand(detail, "", full); got != TargetDiffers {
+		t.Errorf("two-line tail: got %v, want TargetDiffers", got)
+	}
+}
+
+// A wrap swallows the whole run of blanks at the break, not one space: the command line
+// " │     expect(…classN" is drawn as " │" over "expect(…classN" (captured live from claude
+// 2.1.319 on a 67x54 pane; the dialog is clipped too). A run too short to have pushed the word
+// to the next line is refused; a longer one draws the same screen and cannot be told apart.
+func TestCheckTargetCommandSwallowedIndent(t *testing.T) {
+	m := menuFixture(t, "bash_clipped_swallowed_indent.txt")
+	b, err := os.ReadFile(filepath.Join("testdata", "permmenu", "bash_clipped_swallowed_indent.cmd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := string(b)
+	first, _, _ := strings.Cut(full, "\n")
+	detail := "Bash · " + first
+	if got := m.CheckTargetCommand(detail, "", full); got != TargetMatches {
+		t.Errorf("same command: got %v, want TargetMatches", got)
+	}
+	const shown = ` │     expect(host.querySelector`
+	for _, indent := range []string{` │expect(host.querySelector`, ` │ expect(host.querySelector`} {
+		other := strings.Replace(full, shown, indent, 1)
+		if other == full {
+			t.Fatal("fixture command lacks the indented line")
+		}
+		if got := m.CheckTargetCommand(detail, "", other); got != TargetDiffers {
+			t.Errorf("indent %q: got %v, want TargetDiffers", indent, got)
+		}
+	}
+}
