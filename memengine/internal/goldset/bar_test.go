@@ -11,7 +11,7 @@ import (
 
 func tier(name, mode, hash string, wrongNoop, correctNoop int, applied, calls int) TierScore {
 	return TierScore{
-		Name: name, Mode: mode, GoldHash: hash,
+		Name: name, Mode: mode, GoldHash: hash, ClassifyValid: true,
 		Classify: map[memengine.Operation]ClassifyScore{
 			memengine.OpNoop: {Cases: 10, Correct: correctNoop, Wrong: wrongNoop},
 			memengine.OpAdd:  {Cases: 4, Correct: 4},

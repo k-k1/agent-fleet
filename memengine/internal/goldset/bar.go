@@ -65,6 +65,10 @@ func (b Bar) Judge(ts TierScore) map[string]Verdict {
 			out[op] = th.check(p.WrongChange, p.Invalid+p.Errors, p.LostItems, rate(p.Applied, p.Calls))
 			continue
 		}
+		if !ts.ClassifyValid {
+			out[op] = Verdict{Reason: "classification not valid (replay answers not from the classify-only file)"}
+			continue
+		}
 		s, ok := ts.Classify[memengine.Operation(op)]
 		if !ok {
 			out[op] = Verdict{Reason: "no cases"}

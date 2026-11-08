@@ -155,33 +155,36 @@ func writeReport(dir string, set *goldset.Set, cfg memengine.Config, barPath str
 	fmt.Print(md)
 }
 
-// exportPrompts writes prompts.jsonl: every call as the one-shot runner would
-// send it, for models that can only answer as sessions.
+// exportPrompts writes the two prompt files a replay session answers. They are
+// separate on purpose: a patch line exists only for cases whose gold label is
+// patch, supersede or merge, so a session that saw it next to its classify
+// line could read the label off it. Answer the classify file completely, in a
+// fresh session, before handing over the patch file.
 func exportPrompts(args []string) {
 	fs := flag.NewFlagSet("export-prompts", flag.ExitOnError)
 	cases := fs.String("cases", "cases.jsonl", "gold set (JSONL)")
 	inputs := fs.String("inputs", "inputs.jsonl", "memories the cases cite (JSONL)")
-	out := fs.String("out", "run/prompts.jsonl", "file to write")
+	out := fs.String("out", "run", "directory for prompts-classify.jsonl and prompts-patch.jsonl")
 	fs.Parse(args)
 	set, err := goldset.Load(*cases, *inputs)
 	if err != nil {
 		fatal(err.Error())
 	}
-	var b strings.Builder
-	n := 0
-	for _, p := range goldset.Prompts(set) {
-		j, _ := json.Marshal(p)
-		b.Write(j)
-		b.WriteByte('\n')
-		n++
-	}
-	if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
+	if err := os.MkdirAll(*out, 0o755); err != nil {
 		fatal(err.Error())
 	}
-	if err := os.WriteFile(*out, []byte(b.String()), 0o644); err != nil {
-		fatal(err.Error())
+	for name, lines := range map[string][]goldset.PromptLine{"prompts-classify.jsonl": goldset.ClassifyPrompts(set), "prompts-patch.jsonl": goldset.PatchPrompts(set)} {
+		var b strings.Builder
+		for _, p := range lines {
+			j, _ := json.Marshal(p)
+			b.Write(j)
+			b.WriteByte('\n')
+		}
+		if err := os.WriteFile(filepath.Join(*out, name), []byte(b.String()), 0o644); err != nil {
+			fatal(err.Error())
+		}
+		fmt.Fprintf(os.Stderr, "wrote %d prompts to %s\n", len(lines), filepath.Join(*out, name))
 	}
-	fmt.Fprintf(os.Stderr, "wrote %d prompts to %s\n", n, *out)
 }
 
 // scoreAnswers scores a recorded answers file with the same validation and
@@ -191,7 +194,8 @@ func scoreAnswers(args []string) {
 	cases := fs.String("cases", "cases.jsonl", "gold set (JSONL)")
 	inputs := fs.String("inputs", "inputs.jsonl", "memories the cases cite (JSONL)")
 	out := fs.String("out", "run", "directory holding the tier runs and the report")
-	answers := fs.String("answers", "", "JSONL of {case_id, call, output[, usage]}")
+	var answers tierFlags
+	fs.Var(&answers, "answers", "JSONL of {case_id, call, output[, usage]}; repeatable (the classify answers and the patch answers)")
 	tier := fs.String("tier", "", "<runner>:<model id> (a report column), e.g. agy-session:some-model")
 	cfgPath := fs.String("config", "", "model config (for candidate costs)")
 	barPath := fs.String("bar", "", "thresholds file")
@@ -200,19 +204,20 @@ func scoreAnswers(args []string) {
 	if err != nil {
 		fatal(err.Error())
 	}
-	if *answers == "" || *tier == "" {
+	if len(answers) == 0 || *tier == "" {
 		fatal("score needs --answers and --tier")
 	}
 	set, err := goldset.Load(*cases, *inputs)
 	if err != nil {
 		fatal(err.Error())
 	}
-	as, err := goldset.LoadAnswers(*answers)
+	as, srcs, err := goldset.LoadAnswerFiles(answers)
 	if err != nil {
 		fatal(err.Error())
 	}
 	run := goldset.RunWith(context.Background(), *tier, goldset.NewReplay(set, as), set, 1, nil, true, nil)
 	run.Mode = "replay"
+	run.AnswerFiles = srcs
 	run.Runner, run.Model, _ = memengine.SplitTier(*tier)
 	run.Date, run.GoldHash = time.Now().UTC().Format("2006-01-02"), set.GoldHash
 	if err := os.MkdirAll(*out, 0o755); err != nil {

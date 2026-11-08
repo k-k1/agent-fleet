@@ -321,10 +321,11 @@ func TestReplayScoresLikeALiveRun(t *testing.T) {
 	}
 	var lines []AnswerLine
 	for _, p := range Prompts(s) {
-		lines = append(lines, AnswerLine{CaseID: p.CaseID, Call: p.Call, Output: answer(p.Prompt)})
+		lines = append(lines, AnswerLine{CaseID: p.CaseID, Call: p.Call, Output: AnswerText(answer(p.Prompt))})
 	}
 	rr := RunWith(context.Background(), "agy:x", NewReplay(s, lines), s, 1, nil, true, nil)
 	rr.Mode = "replay"
+	rr.AnswerFiles = []AnswerSource{{File: "c.jsonl", ClassifyOnly: true, Classify: 4}, {File: "p.jsonl", Patch: 2}}
 	rs := ScoreTier(rr)
 	live := ScoreTier(RunWith(context.Background(), "live", funcModel(func(p string) (memengine.Reply, error) { return reply(answer(p), 1, 1), nil }), s, 1, nil, true, nil))
 	if rs.Total != live.Total || rs.Patch != live.Patch {
@@ -349,5 +350,96 @@ func TestReplayScoresLikeALiveRun(t *testing.T) {
 	ps := ScoreTier(RunWith(context.Background(), "p", NewReplay(s, partial), s, 1, nil, true, nil))
 	if ps.Total.Errors != 2 || ps.Total.Invalid != 1 {
 		t.Errorf("partial: %+v", ps.Total)
+	}
+}
+
+// The classify file must not carry the label: patch lines exist only for
+// patch/supersede/merge cases, so they live in their own file.
+func TestClassifyFileHasNoPatchLines(t *testing.T) {
+	s := synthWithSupersede()
+	cl, pa := ClassifyPrompts(s), PatchPrompts(s)
+	if len(cl) != len(s.Cases) {
+		t.Errorf("%d classify lines for %d cases", len(cl), len(s.Cases))
+	}
+	for _, l := range cl {
+		if l.Call != "classify" || l.GoldConditioned {
+			t.Errorf("the classify file holds %+v", l.CaseID+"/"+l.Call)
+		}
+	}
+	if len(pa) != 2 {
+		t.Errorf("%d patch lines", len(pa))
+	}
+	for _, l := range pa {
+		if l.Call != "patch" {
+			t.Errorf("the patch file holds a %s line", l.Call)
+		}
+	}
+}
+
+func TestAnswerOutputMayBeAStringOrAnObject(t *testing.T) {
+	var ls []AnswerLine
+	in := `[{"case_id":"A","call":"classify","output":"{\"operation\":\"add\"}"},
+	      {"case_id":"B","call":"classify","output":{"operation":"add","targets":[ ],"reason":"r"}},
+	      {"case_id":"C","call":"patch","output":{"edits":[]}},
+	      {"case_id":"D","call":"classify","output":null}]`
+	if err := json.Unmarshal([]byte(in), &ls); err != nil {
+		t.Fatal(err)
+	}
+	if string(ls[0].Output) != `{"operation":"add"}` || string(ls[1].Output) != `{"operation":"add","targets":[],"reason":"r"}` || string(ls[2].Output) != `{"edits":[]}` || ls[3].Output != "" {
+		t.Errorf("%v", ls)
+	}
+	// An object answer is validated like any other: replay, then score.
+	s := synthWithSupersede()
+	rep := NewReplay(s, []AnswerLine{{CaseID: "A1", Call: "classify", Output: ls[1].Output}})
+	o := ClassifyCase(context.Background(), rep, s, s.Cases[1])
+	if o.Status != StatusOK || o.Pred != memengine.OpAdd {
+		t.Errorf("%+v", o)
+	}
+}
+
+func TestReplayClassificationIsValidOnlyFromAClassifyOnlyFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, ls ...AnswerLine) string {
+		var b strings.Builder
+		for _, l := range ls {
+			j, _ := json.Marshal(l)
+			b.Write(j)
+			b.WriteByte('\n')
+		}
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte(b.String()), 0o644)
+		return p
+	}
+	cl := AnswerLine{CaseID: "A1", Call: "classify", Output: "{}"}
+	pa := AnswerLine{CaseID: "P1", Call: "patch", Output: "{}"}
+	_, split, err := LoadAnswerFiles([]string{write("c.jsonl", cl), write("p.jsonl", pa)})
+	if err != nil || !ClassifyValid(split) || split[0].Hash == "" || split[0].File != "c.jsonl" {
+		t.Fatalf("%+v %v", split, err)
+	}
+	_, mixed, _ := LoadAnswerFiles([]string{write("m.jsonl", cl, pa)})
+	if ClassifyValid(mixed) {
+		t.Error("a file mixing classify and patch calls must not validate the classification")
+	}
+	if ClassifyValid(nil) || ClassifyValid([]AnswerSource{{File: "p", Patch: 1}}) {
+		t.Error("no classify answers, no validity")
+	}
+
+	s := synth()
+	r := RunWith(context.Background(), "agy-session:x", NewReplay(s, nil), s, 1, nil, true, nil)
+	r.Mode, r.AnswerFiles = "replay", mixed
+	ts := ScoreTier(r)
+	if ts.ClassifyValid {
+		t.Fatal("the mixed source must make classification invalid")
+	}
+	md := Markdown([]TierScore{ts}, Reference(s), nil, nil)
+	if !strings.Contains(md, "classification scores NOT valid") {
+		t.Errorf("the report must say so:\n%s", md)
+	}
+	if v := (Bar{Operations: map[string]Threshold{"add": {}}}).Judge(ts)["add"]; v.Pass || !strings.Contains(v.Reason, "not valid") {
+		t.Errorf("a replay tier with unvalidated classification must not pass: %+v", v)
+	}
+	r.AnswerFiles = split
+	if !ScoreTier(r).ClassifyValid || !strings.Contains(Markdown([]TierScore{ScoreTier(r)}, Reference(s), nil, nil), "classification scores valid, answered from a classify-only file") {
+		t.Error("a classify-only source validates the classification")
 	}
 }

@@ -57,7 +57,11 @@ type TierScore struct {
 	PatchConditioned              PatchScore `json:"patch_gold_conditioned"`
 	Mode                          string     `json:"mode"`
 	Model, Runner, Date, GoldHash string
-	GoldConditioned               bool `json:"gold_conditioned"`
+	// ClassifyValid is true for a live tier and for a replay tier whose classify
+	// answers came from the classify-only file.
+	ClassifyValid   bool
+	AnswerFiles     []AnswerSource
+	GoldConditioned bool `json:"gold_conditioned"`
 	// Tokens per call: all input tokens the command reported, and the same
 	// minus the command's fixed overhead (Baseline), which is not the prompt.
 	ClassifyCalls, PatchCalls int
@@ -74,7 +78,7 @@ type TierScore struct {
 
 // ScoreTier scores one tier's run.
 func ScoreTier(r *TierRun) TierScore {
-	ts := TierScore{Name: r.Name, Model: r.Model, Runner: r.Runner, Date: r.Date, GoldHash: r.GoldHash, Mode: r.Mode, GoldConditioned: r.GoldConditioned, Classify: map[memengine.Operation]ClassifyScore{}, BaselineInput: r.Baseline.TotalInput()}
+	ts := TierScore{Name: r.Name, ClassifyValid: r.Mode != "replay" || ClassifyValid(r.AnswerFiles), AnswerFiles: r.AnswerFiles, Model: r.Model, Runner: r.Runner, Date: r.Date, GoldHash: r.GoldHash, Mode: r.Mode, GoldConditioned: r.GoldConditioned, Classify: map[memengine.Operation]ClassifyScore{}, BaselineInput: r.Baseline.TotalInput()}
 	var cIn, cOut, pIn, pOut int
 	for _, o := range r.Classify {
 		s := ts.Classify[o.Label]
@@ -264,6 +268,20 @@ func Markdown(tiers []TierScore, ref PatchScore, agree [][3]int, notes []string)
 			m = "replay (answered as a session; it saw earlier cases, so not fully comparable)"
 		}
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n", t.Name, dash(t.Model), dash(t.Runner), m, dash(t.Date), dash(t.GoldHash))
+	}
+	for _, t := range tiers {
+		if t.Mode != "replay" {
+			continue
+		}
+		var from []string
+		for _, a := range t.AnswerFiles {
+			from = append(from, fmt.Sprintf("%s (%s, %d classify, %d patch)", a.File, a.Hash, a.Classify, a.Patch))
+		}
+		if t.ClassifyValid {
+			fmt.Fprintf(&b, "\n%s: classification scores valid, answered from a classify-only file: %s.\n", t.Name, strings.Join(from, "; "))
+		} else {
+			fmt.Fprintf(&b, "\n%s: **classification scores NOT valid**: the classify answers did not come from a classify-only file (%s), so the gold label may have been readable from a patch line. Only its patch-call rows mean anything.\n", t.Name, dash(strings.Join(from, "; ")))
+		}
 	}
 	if len(tiers) > 0 {
 		fmt.Fprintf(&b, "\nMust-survive items the fact check could not verify (no anchor): %d of %d across the reference patches.\n", ref.UnverifiedItems, ref.UnverifiedItems+ref.VerifiableItems)

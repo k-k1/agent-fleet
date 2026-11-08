@@ -62,6 +62,10 @@ type TierRun struct {
 	Runner   string `json:"runner,omitempty"`
 	Date     string `json:"date,omitempty"`
 	GoldHash string `json:"gold_hash,omitempty"`
+	// AnswerFiles records, for a replay tier, where the answers came from. The
+	// classification scores are valid only when the classify answers came from
+	// a classify-only file (ClassifyValid).
+	AnswerFiles []AnswerSource `json:"answer_files,omitempty"`
 	// GoldConditioned: patch calls were also made for supersede/merge cases,
 	// with the gold label deciding that a patch call happens.
 	GoldConditioned bool              `json:"gold_conditioned,omitempty"`
