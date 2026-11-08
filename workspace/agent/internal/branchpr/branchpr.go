@@ -418,7 +418,13 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	out := map[Key]*PR{}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.markWatchedLocked(keys, now)
+	var answered []Key
+	for _, k := range keys {
+		if !failed[k] {
+			answered = append(answered, k)
+		}
+	}
+	c.markWatchedLocked(answered, now)
 	for _, k := range keys {
 		if failed[k] {
 			continue

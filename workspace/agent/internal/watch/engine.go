@@ -187,6 +187,9 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	}
 	e.mu.Lock()
 	err := e.requesterLimitLocked(r.maker())
+	if err == nil {
+		err = e.sourceLimitLocked(src)
+	}
 	e.mu.Unlock()
 	if err != nil {
 		return Subscription{}, err

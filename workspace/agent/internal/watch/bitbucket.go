@@ -136,7 +136,7 @@ type bbCursor struct {
 // MaxSubscriptions bounds the live Bitbucket watches of a workspace: a watched open PR the list
 // does not show costs about 50 requests an hour of the account's 1,000, which the list already
 // spends most of.
-func (b *Bitbucket) MaxSubscriptions() int { return bbMaxSubscriptions }
+func (Bitbucket) MaxSubscriptions() int { return bbMaxSubscriptions }
 
 const bbMaxSubscriptions = 10
 
