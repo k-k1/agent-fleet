@@ -169,7 +169,20 @@ export type GrafanaPut = { url: string; token: string };
 export type AwsMcpPut = AwsProfileBody & { endpoint: string; write: boolean };
 
 /** What every ops PUT answers: the new status (never the key or token). */
-export type OpsConnReply = { connected: boolean; host?: string; url?: string; profile?: string };
+export type OpsConnReply = {
+  connected: boolean;
+  /** PagerDuty EU override. */
+  host?: string;
+  /** Grafana. */
+  url?: string;
+  /** CloudWatch / AWS MCP. */
+  profile?: string;
+  region?: string;
+  sso?: boolean;
+  /** AWS MCP only: the normalised endpoint region and the write opt-in, both always sent. */
+  endpoint?: string;
+  write?: boolean;
+};
 
 export const listSsmProfilePicks = (): Promise<Reply<SsmProfilePick[]>> => api("api/ssm/profiles");
 
