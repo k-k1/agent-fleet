@@ -156,6 +156,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			"background_hold_max":             lim.BackgroundHoldMax,
 			"home_hibernate_after":            lim.HomeHibernateAfter,
 			"home_backup_every":               lim.HomeBackupEvery,
+			"image_refresh_quiet":             lim.ImageRefreshQuiet,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
 			"allow_engine_ingest":             lim.AllowEngineIngest,
 			"terminal_history_retention_days": lim.TerminalHistoryRetentionDays,
@@ -1562,6 +1563,10 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		HomeHibernateAfter string `json:"home_hibernate_after"`
 		// Tier-4 home backup (ecs-ec2 only): the tenant's RPO. Same resolution.
 		HomeBackupEvery string `json:"home_backup_every"`
+		// Automatic image refresh (#3656): how long a workspace must be quiet before a
+		// member who opted in is restarted onto a new image. "" => deployment default
+		// (15m), "0" => never for this tenant.
+		ImageRefreshQuiet string `json:"image_refresh_quiet"`
 		// Operator gate for member CLI self-update (claude/opencode/codex).
 		AllowAgentSelfUpdate bool `json:"allow_agent_self_update"`
 		// Operator gate for taking models into the engine catalogue (ADR 0072 open
@@ -1614,7 +1619,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		}
 	}
 	// Reject unparseable durations up front (empty stays empty = use default).
-	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.BackgroundHoldMax, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
+	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.BackgroundHoldMax, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery, body.ImageRefreshQuiet} {
 		if v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
 				writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_duration", "invalid idle timeout: " + v})
@@ -1654,6 +1659,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		WSIdleTimeout:                body.WSIdleTimeout,
 		HomeHibernateAfter:           body.HomeHibernateAfter,
 		HomeBackupEvery:              body.HomeBackupEvery,
+		ImageRefreshQuiet:            body.ImageRefreshQuiet,
 		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
 		AllowEngineIngest:            body.AllowEngineIngest,
 		TerminalHistoryRetentionDays: body.TerminalHistoryRetentionDays,
@@ -1706,6 +1712,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		"background_hold_max":             body.BackgroundHoldMax,
 		"home_hibernate_after":            body.HomeHibernateAfter,
 		"home_backup_every":               body.HomeBackupEvery,
+		"image_refresh_quiet":             body.ImageRefreshQuiet,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
 		"allow_engine_ingest":             body.AllowEngineIngest,
 		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,

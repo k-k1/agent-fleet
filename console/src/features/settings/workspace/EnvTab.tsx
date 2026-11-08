@@ -81,6 +81,12 @@ export function EnvTab() {
     else toast(tr("common.save_failed"));
   };
 
+  const setAutoImageRefresh = async (on: boolean) => {
+    const res = await apiJSON("api/env/ws-settings", "PUT", { autoImageRefresh: on });
+    if (res && !res.error) setAu(res);
+    else toast(tr("common.save_failed"));
+  };
+
   const update = async (patch: Record<string, string>) => {
     const next = {
       node: d.node || "",
@@ -112,6 +118,7 @@ export function EnvTab() {
         <p className="muted pad">{tr("common.loading")}</p>
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
+      {au && <AutoImageRefreshRow au={au} onChange={setAutoImageRefresh} />}
       {/* cliRelease rides on ws-settings, which is already fetched above — so the row costs
           no extra request and is there whether the workspace runs or not. */}
       <ToolVersions running={running} cliRelease={au?.cliRelease} />
@@ -825,6 +832,22 @@ function InstalledVersions({ gen, running, reload }: { gen: number; running: boo
           {list.node.map((e) => row("node", e))}
         </tbody>
       </table>
+    </section>
+  );
+}
+
+// AutoImageRefreshRow is the opt-in for the Control Plane to restart this workspace onto a
+// new image by itself once it has been quiet (control-plane/image_refresh.go). Off by default.
+// CP-owned like the row below, so it can be changed while the workspace is stopped.
+function AutoImageRefreshRow({ au, onChange }: { au: any; onChange: (on: boolean) => void }) {
+  const tr = useT();
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("env.auto_refresh_title")}</h4>
+      <Row label={tr("env.auto_refresh_label")}>
+        <OnOff value={!!au.autoImageRefresh} onChange={onChange} />
+      </Row>
+      <p className="muted ds-note">{tr("env.auto_refresh_note")}</p>
     </section>
   );
 }

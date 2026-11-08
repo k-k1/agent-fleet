@@ -105,6 +105,15 @@ func (e *ecsRuntime) Stale(ctx context.Context) bool {
 	return now != "" && now != was
 }
 
+// StaleTarget is the fingerprint of the image the tag resolves to now, on the cache Stale
+// reads. "" = unknown.
+func (e *ecsRuntime) StaleTarget(ctx context.Context) string {
+	return Freshness.get(ecrFingerprintKey(e.cfg.workspaceImage), ecsStaleTTL, func() string { return e.imageFingerprint(ctx) })
+}
+
+// StaleTarget on the EC2 launch type delegates, like Stale.
+func (e *ecsEC2Runtime) StaleTarget(ctx context.Context) string { return e.base.StaleTarget(ctx) }
+
 // Stale on the EC2 launch type is the same question with the same answer: both adapters
 // register one task definition family per workspace and both launch e.cfg.workspaceImage,
 // so the base implementation reads the right revision. Written out rather than inherited

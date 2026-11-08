@@ -449,7 +449,11 @@ func main() {
 		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
 		// deployment that has not thought about retention should not be paying for it.
 		backupDef := time.Duration(runtime.EnvInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
-		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef, bgDef).run(context.Background())
+		rp := newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef, bgDef)
+		// Automatic image refresh (#3656): the quiet period a member who opted in waits
+		// before a stale workspace is restarted. "0" turns it off for the deployment.
+		rp.refreshDef = intervalOff(os.Getenv("AF_IMAGE_REFRESH_QUIET"), defaultImageRefreshQuiet)
+		go rp.run(context.Background())
 	}
 	// Not behind AF_IDLE_SWEEP_INTERVAL: switching idle-stop off must not leave a removed
 	// member's workspace running (member_removal.go).

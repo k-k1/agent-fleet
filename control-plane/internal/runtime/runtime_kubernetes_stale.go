@@ -47,6 +47,18 @@ func (k *kubeRuntime) Stale(ctx context.Context) bool {
 	return now != "" && now != was
 }
 
+// StaleTarget is the fingerprint the configured tag resolves to now, on the cache Stale
+// reads. "" = unknown.
+func (k *kubeRuntime) StaleTarget(ctx context.Context) string {
+	return Freshness.get(k.staleImageKey(), kubeStaleTTL, func() string {
+		img, err := k.pins.resolve(ctx, k.cfg.image)
+		if err != nil {
+			return ""
+		}
+		return img.fingerprint
+	})
+}
+
 // primeStale records what Start just launched, so a cached pre-start value cannot make a
 // fresh start look stale for a minute. An empty fingerprint is recorded too: keeping the
 // previous start's would be a claim about an image this start did not run.

@@ -383,6 +383,10 @@ export const tools = {
   "env.persona_add": "追加",
   "env.persona_remove": "削除",
   "env.toolchains_title": "言語ランタイムとタイムゾーン",
+  "env.auto_refresh_title": "イメージの自動更新",
+  "env.auto_refresh_label": "使われていないとき、新しいイメージへ自動で再起動する",
+  "env.auto_refresh_note":
+    "オフ（既定）：動作中のワークスペースは、あなたが再起動するまで今のイメージのままです（「再起動が必要」）。オン：イメージが古く、しばらく何も動いていないとき（作業中・質問待ちのセッション、開いているターミナル・プレビュー・ブラウザペイン、直近のリクエストがない）に、ワークスペースを再起動します。再作成はしないのでファイルは残り、通知が 1 回届きます。セッションは再開できます。同じイメージにつき自動の試行は 1 回だけで、起動に失敗したときは停止したままになります。",
   "env.agent_update_title": "エージェント CLI の更新",
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",
   "env.agent_update_note":

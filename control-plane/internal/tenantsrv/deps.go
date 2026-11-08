@@ -232,6 +232,7 @@ type Limits struct {
 	BackgroundHoldMax            string
 	HomeHibernateAfter           string
 	HomeBackupEvery              string
+	ImageRefreshQuiet            string
 	AllowAgentSelfUpdate         bool
 	AllowEngineIngest            bool
 	TerminalHistoryRetentionDays int

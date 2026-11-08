@@ -143,6 +143,18 @@ describe("notification row headings", () => {
     setLocale("ja");
   });
 
+  it("an image-refresh notice names the image, and a failed one says the workspace is stopped", () => {
+    setLocale("en");
+    const ok = { kind: "image-refresh", displayName: "", payload: { image: "abc123", at: "2026-11-08T12:00:00Z", outcome: "ok" } };
+    expect(notificationWording(ok).title).toBe(en["notif.image_refresh.title"]);
+    expect(notificationWording(ok).body).toContain("abc123");
+    expect(notificationRowSubtitle(ok)).toBe(notificationWording(ok).body);
+    const bad = { ...ok, payload: { ...ok.payload, outcome: "failed" } };
+    expect(notificationWording(bad).title).toBe(en["notif.image_refresh.title_failed"]);
+    expect(notificationKindLabel("image-refresh")).toBe(en["noti.kind_image_refresh"]);
+    setLocale("ja");
+  });
+
   it("an agent-silent-stop names the minutes in both languages and the row carries the body", () => {
     setLocale("en");
     const n = { kind: "agent-silent-stop", displayName: "", payload: { silentMinutes: 30 } };

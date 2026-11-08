@@ -509,6 +509,15 @@ func (n *nativeRuntime) Stale(context.Context) bool {
 	return was != "" && was != "bin:" && was != now
 }
 
+// StaleTarget is what a fresh Start would spawn from (see spawnStamp); "" when unreadable.
+func (n *nativeRuntime) StaleTarget(context.Context) string {
+	s := n.spawnStamp()
+	if s == "bin:" {
+		return ""
+	}
+	return s
+}
+
 // bootPhasePath is the file mirrorBootProgress keeps the latest boot-install
 // phase line in, so a separate GET /api/workspace request (possibly served by a
 // different runtime instance) can read it back via BootPhase() without shared

@@ -117,6 +117,7 @@ home_dek_status.go
 home_operation.go
 httpapi.go
 idle_forecast.go
+image_refresh.go
 inbox.go
 inbox_launch.go
 inbox_recipes.go
