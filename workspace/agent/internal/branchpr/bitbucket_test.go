@@ -730,3 +730,107 @@ func TestBitbucketUnreadStatusPagesAreNotGreen(t *testing.T) {
 		t.Fatalf("checks = %q pending %v: pages past the bound are not green", state, pending)
 	}
 }
+
+func TestBitbucketReviewDecisionNeedsAnApproval(t *testing.T) {
+	cases := map[string]string{
+		`[{"state":"approved","approved":true}]`:               "APPROVED",
+		`[{"state":null,"approved":false}]`:                    "REVIEW_REQUIRED",
+		`[{"state":"approved"},{"state":"changes_requested"}]`: "CHANGES_REQUESTED",
+		`[]`: "REVIEW_REQUIRED",
+	}
+	for parts, want := range cases {
+		pr := strings.TrimSuffix(bbPR(4, "OPEN", false, "a", "w/r"), "}") + `,"participants":` + parts + `}`
+		got, _, err := parseBitbucketPulls([]byte(`{"values":[`+pr+`]}`), "w/r", []Key{{Repo: "w/r", Branch: "a"}})
+		if err != nil || got[Key{Repo: "w/r", Branch: "a"}].pr.ReviewDecision != want {
+			t.Errorf("%s: decision %q, want %q (err %v)", parts, got[Key{Repo: "w/r", Branch: "a"}].pr.ReviewDecision, want, err)
+		}
+	}
+}
+
+func TestBitbucketConflictKnownAndTheWatchedInterval(t *testing.T) {
+	b := &bbServer{conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `{"values":[]}`}}
+	c := newBBCache(t, b)
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	if conflict, known := bb.conflictKnown("Bearer bb", "w/r", 4, "c0ffee4"); conflict || !known {
+		t.Fatalf("a read: conflict=%v known=%v", conflict, known)
+	}
+	// Six minutes on: past the watched interval, inside the normal one.
+	bb.mu.Lock()
+	e := bb.conflicts["w/r#4"]
+	e.at = time.Now().Add(-6 * time.Minute)
+	bb.conflicts["w/r#4"] = e
+	bb.mu.Unlock()
+	reads := func() int {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		n := 0
+		for _, p := range b.paths {
+			if strings.HasSuffix(p, "/pullrequests/4/conflicts") {
+				n++
+			}
+		}
+		return n
+	}
+	bb.conflictKnown("Bearer bb", "w/r", 4, "c0ffee4")
+	if reads() != 1 {
+		t.Fatalf("an unwatched PR was re-read inside its interval: %d", reads())
+	}
+	c.mu.Lock()
+	c.watched = map[Key]time.Time{{Repo: "w/r", Number: 4}: time.Now()}
+	c.mu.Unlock()
+	bb.conflictKnown("Bearer bb", "w/r", 4, "c0ffee4")
+	if reads() != 2 {
+		t.Fatalf("a watched PR was not re-read after the watched interval: %d", reads())
+	}
+	// A failed read with nothing read before for this head is not known.
+	b.mu.Lock()
+	b.conflicts = nil
+	b.mu.Unlock()
+	if _, known := bb.conflictKnown("Bearer bb", "w/r", 4, "f00d"); known {
+		t.Fatal("a failed first read claimed to know")
+	}
+}
+
+func TestBitbucketRollupDigestMovesWithAReRun(t *testing.T) {
+	page := func(updated string) [][]byte {
+		return [][]byte{[]byte(`{"values":[{"state":"SUCCESSFUL","key":"build","name":"build","updated_on":"` + updated + `"}]}`)}
+	}
+	a, b2 := rollupPages(page("t1"), "", false), rollupPages(page("t2"), "", false)
+	if a.state != "success" || a.digest == "" || a.digest == b2.digest {
+		t.Fatalf("digests %q %q (state %q)", a.digest, b2.digest, a.state)
+	}
+	if again := rollupPages(page("t1"), "", false); again.digest != a.digest {
+		t.Fatal("the same statuses gave another digest")
+	}
+}
+
+func TestBitbucketFailedReReadIsNotKnown(t *testing.T) {
+	b := &bbServer{conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `{"values":[]}`}}
+	c := newBBCache(t, b)
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	if _, known := bb.conflictKnown("Bearer bb", "W/R", 4, "c0ffee4"); !known {
+		t.Fatal("a good read is not known")
+	}
+	bb.mu.Lock()
+	e := bb.conflicts["w/r#4"]
+	e.at = time.Now().Add(-time.Hour)
+	bb.conflicts["w/r#4"] = e
+	bb.mu.Unlock()
+	b.mu.Lock()
+	b.conflicts = nil
+	b.mu.Unlock()
+	if conflict, known := bb.conflictKnown("Bearer bb", "w/r", 4, "c0ffee4"); conflict || known {
+		t.Fatalf("a failed re-read: conflict=%v known=%v", conflict, known)
+	}
+	if _, known := bb.conflictKnown("Bearer bb", "w/r", 4, "c0ffee4"); known {
+		t.Fatal("the cached failure claimed to know")
+	}
+}
+
+func TestBitbucketClosedPRCarriesItsLastUpdate(t *testing.T) {
+	pr := strings.TrimSuffix(bbPR(4, "DECLINED", false, "a", "w/r"), "}") + `,"updated_on":"2026-11-08T10:00:00Z"}`
+	got, _, err := parseBitbucketPulls([]byte(`{"values":[`+pr+`]}`), "w/r", []Key{{Repo: "w/r", Branch: "a"}})
+	if err != nil || got[Key{Repo: "w/r", Branch: "a"}].pr.ClosedAt != "2026-11-08T10:00:00Z" {
+		t.Fatalf("closedAt = %+v err %v", got[Key{Repo: "w/r", Branch: "a"}].pr, err)
+	}
+}

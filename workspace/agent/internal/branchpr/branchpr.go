@@ -41,13 +41,14 @@ type PR struct {
 	// issues a PR closes, as "owner/repo#N") and never leave the Agent: the row does not draw them.
 	Title  string   `json:"-"`
 	Closes []string `json:"-"`
-	// Mergeable ("MERGEABLE", "CONFLICTING", "UNKNOWN" while GitHub computes it), ReviewDecision
-	// ("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", or "" when no review is required) and
-	// Head (the head commit) decide the ready-to-merge notification; GitHub only, never on the wire.
+	// Mergeable ("MERGEABLE", "CONFLICTING", "UNKNOWN" while GitHub computes it or while the
+	// latest Bitbucket conflict read of the head failed), ReviewDecision ("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED",
+	// or "" when no review is required; Bitbucket never says ""), and Head (the head commit)
+	// decide the ready-to-merge notification. Never on the wire.
 	Mergeable      string `json:"-"`
 	ReviewDecision string `json:"-"`
 	Head           string `json:"-"`
-	// ClosedAt is when a merged or closed PR was closed (GitHub; "" on Bitbucket), so a PR
+	// ClosedAt is when a merged or closed PR was closed (Bitbucket: its last update), so a PR
 	// reopened and closed again tells apart from its first close. Never on the wire.
 	ClosedAt string `json:"-"`
 	// ChangesRequested and Conflict are what the row's chip adds to the CI mark: a reviewer asked
@@ -67,6 +68,10 @@ type PR struct {
 	// rollup says "failure" as soon as one check fails, and a notice sent then would name the
 	// first failure of several. Never on the wire.
 	ChecksPending bool `json:"-"`
+	// ChecksDigest fingerprints every check of the head with its state and update time
+	// (Bitbucket; "" on GitHub, whose watch source reads REST itself), so a re-run on the same
+	// commit is a new result for a watch. Never on the wire.
+	ChecksDigest string `json:"-"`
 }
 
 // Check is one failed check of a PR's head commit. URL is the provider's, unchecked: whoever
@@ -186,6 +191,21 @@ type Cache struct {
 	entries   map[Key]*entry
 	inflight  bool
 	holdUntil time.Time
+	// watched is when Fetch last asked about a key: a PR a watch reads.
+	watched map[Key]time.Time
+}
+
+// watchedFor is how long a key counts as watched after Fetch last read it. A live watch reads
+// once a minute, so a short window ends soon after the watch does.
+const watchedFor = 15 * time.Minute
+
+// watchedRecently reports whether a watch read k within watchedFor.
+func (c *Cache) watchedRecently(k Key) bool {
+	k.Repo = strings.ToLower(k.Repo)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	at, ok := c.watched[k]
+	return ok && time.Since(at) < watchedFor
 }
 
 // errUnauthorized marks a 401 from the API: the token was rejected.
@@ -342,6 +362,7 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	if len(keys) > c.batch {
 		return nil, fmt.Errorf("at most %d keys per fetch", c.batch)
 	}
+
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -369,6 +390,9 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	hold := c.holdUntil
 	c.mu.Unlock()
 	if allFresh {
+		c.mu.Lock()
+		c.markWatchedLocked(keys, now)
+		c.mu.Unlock()
 		return cached, nil
 	}
 	if now.Before(hold) {
@@ -394,6 +418,13 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	out := map[Key]*PR{}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var answered []Key
+	for _, k := range keys {
+		if !failed[k] {
+			answered = append(answered, k)
+		}
+	}
+	c.markWatchedLocked(answered, now)
 	for _, k := range keys {
 		if failed[k] {
 			continue
@@ -408,6 +439,23 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 		out[k] = got[k]
 	}
 	return out, nil
+}
+
+// markWatchedLocked records keys a watch has read: only reads that answered count, so a fetch
+// refused by a hold does not shorten anyone's intervals.
+func (c *Cache) markWatchedLocked(keys []Key, now time.Time) {
+	if c.watched == nil {
+		c.watched = map[Key]time.Time{}
+	}
+	for k, at := range c.watched {
+		if now.Sub(at) >= watchedFor {
+			delete(c.watched, k)
+		}
+	}
+	for _, k := range keys {
+		k.Repo = strings.ToLower(k.Repo)
+		c.watched[k] = now
+	}
 }
 
 // errNotConnected is Fetch's answer when the provider has no credential.

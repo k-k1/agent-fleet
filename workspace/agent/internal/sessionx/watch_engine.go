@@ -63,7 +63,8 @@ func watchEngine() *watch.Engine {
 			return gitx.RenewRejectedGitHubToken(context.Background(), rejected)
 		})
 		gh.Threads = watchThreads
-		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh)
+		bb := &watch.Bitbucket{Read: watchBitbucketPR}
+		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb)
 	})
 	return watchEngineInst
 }
@@ -102,6 +103,21 @@ func watchThreads(ctx context.Context, repo string, number int) (int, error) {
 		return 0, errors.New("GitHub did not return the PR for its review threads")
 	}
 	return pr.UnresolvedThreads, nil
+}
+
+// watchBitbucketPR reads one Bitbucket PR through the session list's Bitbucket cache, so a watch
+// and the list's rows share one answer and one budget.
+func watchBitbucketPR(ctx context.Context, repo string, number int) (*branchpr.PR, error) {
+	k := branchpr.Key{Repo: repo, Number: number}
+	got, err := sessionBBPRs.Fetch(ctx, []branchpr.Key{k})
+	if err != nil {
+		return nil, err
+	}
+	pr, ok := got[k]
+	if !ok {
+		return nil, errors.New("Bitbucket did not answer for the pull request this time")
+	}
+	return pr, nil
 }
 
 // watchSink delivers into the owning session.
@@ -279,10 +295,10 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, watchCreateResp{Watch: sub})
 }
 
-// watchingPR reports whether name watches the GitHub PR "owner/repo#N" for typ, so the PR
+// watchingPR reports whether name watches the provider's PR "owner/repo#N" for typ, so the PR
 // feedback watch does not tell it the same thing a second time.
-func watchingPR(name, linkKey, typ string) bool {
-	return watchEngine().Watching(name, watch.SubjectID("github:"+strings.ToLower(linkKey)), typ)
+func watchingPR(name, provider, linkKey, typ string) bool {
+	return watchEngine().Watching(name, watch.SubjectID(provider+":"+strings.ToLower(linkKey)), typ)
 }
 
 // HandleWatchList (GET /sessions/{name}/watches) lists the session's watches.
