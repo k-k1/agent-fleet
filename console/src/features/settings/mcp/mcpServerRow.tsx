@@ -80,13 +80,17 @@ export function ServerRow({
               {tr("mcp.enter_secrets")}
             </button>
           )}
-          <button
-            className={"ghost mcp-btn" + (s.enabled ? "" : " on")}
-            onClick={() => onToggle(!s.enabled)}
-            title={s.enabled ? tr("mcp.disable") : tr("mcp.enable")}
-          >
-            {s.enabled ? tr("mcp.disable") : tr("mcp.enable")}
-          </button>
+          {/* The Agent refuses a toggle on a built-in row (mcpreg.SetEnabled); only user and
+              tenant rows have a local on/off. */}
+          {s.origin !== "builtin" && (
+            <button
+              className={"ghost mcp-btn" + (s.enabled ? "" : " on")}
+              onClick={() => onToggle(!s.enabled)}
+              title={s.enabled ? tr("mcp.disable") : tr("mcp.enable")}
+            >
+              {s.enabled ? tr("mcp.disable") : tr("mcp.enable")}
+            </button>
+          )}
           {s.editable && (
             <button className="ghost danger ssm-del" onClick={del}>
               {tr("common.delete")}

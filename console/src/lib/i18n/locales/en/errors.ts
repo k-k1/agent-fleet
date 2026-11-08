@@ -192,7 +192,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.conn_slack_app_token_required": "Receiving replies needs an app-level token (xapp-).",
   // MCP registry (docs/log/48)
   "err.mcp_not_found": "MCP server not found.",
-  "err.mcp_read_only": "This server is not editable (it can only be disabled).",
+  "err.mcp_read_only": "This server is not editable.",
+  "err.mcp_not_toggleable": "A built-in server cannot be disabled or enabled.",
   "err.mcp_name_taken": "A server with this name is already registered.",
   "err.mcp_invalid": "The MCP server definition is invalid.",
   "err.mcp_name_invalid": "Use 1-48 characters of letters, digits, dash or underscore, starting with a letter or digit.",

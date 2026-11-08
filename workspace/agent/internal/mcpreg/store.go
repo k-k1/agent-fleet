@@ -29,7 +29,12 @@ import (
 var ErrNotFound = errors.New("MCP server not found")
 
 // ErrReadOnly is returned when a tenant/builtin row is edited or deleted locally.
-var ErrReadOnly = errors.New("this server is not editable (it can only be disabled)")
+// It must not promise a disable: whether that works depends on the origin (ErrNotToggleable).
+var ErrReadOnly = errors.New("this server is not editable")
+
+// ErrNotToggleable is returned when a built-in row is switched on or off. A built-in's
+// availability is its connection status, so it has no local opt-out.
+var ErrNotToggleable = errors.New("this server cannot be disabled or enabled")
 
 // ErrNameTaken is returned when a name already exists in the effective registry.
 var ErrNameTaken = errors.New("a server with this name is already registered")
@@ -345,7 +350,7 @@ func Create(in ServerDef) (ServerDef, error) {
 }
 
 // Update replaces a user-scope definition. Masked secret values keep their stored
-// counterparts. Tenant and builtin rows are read-only (use SetEnabled).
+// counterparts. Tenant rows are read-only locally (use SetEnabled); builtin rows are read-only, period.
 func Update(id string, in ServerDef) (ServerDef, error) {
 	s, err := secrets.Load()
 	if err != nil {
@@ -512,7 +517,7 @@ func SetEnabled(id string, on bool) error {
 		}
 	}
 	if IsBuiltin(id) {
-		return ErrReadOnly
+		return ErrNotToggleable
 	}
 	return ErrNotFound
 }

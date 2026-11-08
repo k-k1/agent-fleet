@@ -190,7 +190,8 @@ export const errors = {
   "err.conn_slack_app_token_required": "返信の受信には App-level トークン（xapp-）が必要です",
   // MCP レジストリ（docs/log/48 / workspace/agent/mcp_servers.go + internal/mcpreg/def.go）
   "err.mcp_not_found": "MCP サーバーが見つかりません",
-  "err.mcp_read_only": "このサーバーは編集できません（無効化だけが可能です）",
+  "err.mcp_read_only": "このサーバーは編集できません",
+  "err.mcp_not_toggleable": "組み込みサーバーは無効化・有効化できません",
   "err.mcp_name_taken": "同じ名前のサーバーがすでに登録されています",
   "err.mcp_invalid": "MCP サーバーの定義が不正です",
   "err.mcp_name_invalid": "名前は英数字・ハイフン・アンダースコア 48 文字以内で、先頭は英数字にしてください",

@@ -2,7 +2,7 @@ package mcpx
 
 // The REST face of the MCP registry (docs/log/48 P0 / ADR0031): user-scoped CRUD plus a
 // connection test. Tenant-distributed entries (from the CP) and built-in integrations mix
-// into the listing read-only, and can only be disabled.
+// into the listing read-only; tenant rows can only be disabled, built-ins not at all.
 //
 // Secrets (env and header values) are never returned outward: GET always masks, and when a
 // PUT sends a masked value straight back the stored value is kept (the same practice
@@ -26,12 +26,13 @@ import (
 )
 
 // Wire error codes. The per-rule validation codes live in mcpreg (ValidationError.Code)
-// so the reason survives to the Console; these three are the store-level outcomes.
+// so the reason survives to the Console; these are the store-level outcomes.
 // Adding or renaming one means updating "err.<code>" in
 // console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time.
 const (
 	errCodeMCPNotFound = "mcp_not_found"
 	errCodeMCPReadOnly = "mcp_read_only"
+	errCodeMCPNoToggle = "mcp_not_toggleable"
 	errCodeMCPInvalid  = "mcp_invalid"
 	errCodeMCPConflict = "mcp_name_taken"
 )
@@ -134,6 +135,7 @@ type mcpEnabledReq struct {
 
 // HandleServerEnabled is the one edit a member has over a tenant-distributed
 // server: turn it off locally (docs/log/48 §4). For user rows it is just the flag.
+// A toggle of a built-in id is refused with mcp_not_toggleable.
 func HandleServerEnabled(w http.ResponseWriter, r *http.Request) {
 	var req mcpEnabledReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -196,6 +198,8 @@ func writeMCPErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, mcpreg.ErrNotFound):
 		httpx.WriteErr(w, http.StatusNotFound, errCodeMCPNotFound, err.Error())
+	case errors.Is(err, mcpreg.ErrNotToggleable):
+		httpx.WriteErr(w, http.StatusForbidden, errCodeMCPNoToggle, err.Error())
 	case errors.Is(err, mcpreg.ErrReadOnly):
 		httpx.WriteErr(w, http.StatusForbidden, errCodeMCPReadOnly, err.Error())
 	case errors.Is(err, mcpreg.ErrNameTaken):
