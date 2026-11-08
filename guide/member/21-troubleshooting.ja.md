@@ -566,7 +566,7 @@ Jira のカードに **「ボード・スプリント・エピック: 利用で�
   ⚙設定のプロファイルを使って、あなたとして実行してください:
   `af-aws-exec --profile <名前> --account <ID> -- <コマンド>`。素の `aws --profile` を使えるのは、16 章の
   分離の確認を済ませたうえでの読み取りだけの調べものに限られます
-  （[16](16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う)）。
+  （[af-aws-exec](../ref/cli/af-aws-exec.ja.md)）。
 - **`af-gcloud-exec` の終了コード 3** がログインを意味するのは、ラッパーがそう言っているとき
   （「the login was requested in the Agent Fleet Console …」「Google Cloud login required …」）だけです。
   トーストか ⚙設定からログインするか、表示された端末用のコマンドを実行してから、もう一度実行してください。

@@ -181,7 +181,7 @@ them in from the terminal, and an expiring token is renewed on use.
 | `bkt` | **Git hosting**, Bitbucket Cloud (bitbucket.org) | [15](15-external-services.md#use-gh-and-bkt-in-a-session) |
 | `jira` | **Issue tracker**, Jira | [15](15-external-services.md#use-jira-in-a-session) |
 | `confluence` | **Issue tracker**, Jira (the same Atlassian connection) | [15](15-external-services.md#use-confluence-in-a-session) |
-| `af-aws-exec --profile <name> -- <command>` | **AWS profiles/SSM**, after **Log in** on the profile | [16](16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools) |
+| `af-aws-exec --profile <name> -- <command>` | **AWS profiles/SSM**, after **Log in** on the profile | [af-aws-exec](../ref/cli/af-aws-exec.md) |
 | `af-gcloud-exec --profile <name> -- <command>` | **Google Cloud**, after **Log in** on the profile | [16](16-cloud-accounts.md#running-a-command-as-a-profile) |
 
 Agents are told to use `bkt` rather than a Bitbucket or Atlassian MCP server, and `jira` by default for Jira. The
@@ -245,7 +245,7 @@ replies.
 The card needs the same kind of service account token as self-hosted Grafana (no IAM or SigV4 setup).
 Issue it from AMG's own Grafana admin UI (Administration → Service accounts; administrator required), or,
 if you have the IAM permissions, with the AWS CLI's `aws grafana create-workspace-service-account-token`
-(run it as a profile with `af-aws-exec`, see [16](16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
+(run it as a profile with `af-aws-exec`, see [af-aws-exec](../ref/cli/af-aws-exec.md)).
 AMG tokens last **30 days at most**; paste a new one into the card when the old one expires.
 
 ### Other tools (Zabbix and the like)
@@ -265,4 +265,4 @@ experiment with writes, do it explicitly in a dedicated assistant or session.
 
 To read CloudWatch Logs from a Terminal (CLI) session with no connection at all, ask the agent to use the
 `aws` CLI as a profile through `af-aws-exec` (`aws logs tail`, `aws logs filter-log-events`, Logs Insights);
-the profile needs only read access to the logs ([16](16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools)).
+the profile needs only read access to the logs ([af-aws-exec](../ref/cli/af-aws-exec.md)).

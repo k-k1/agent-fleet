@@ -258,7 +258,7 @@ login. A session with no route behaves as before.
   remain covered by stopping the session instead: a managed settings file (the CLI's documentation ranks it above the launch-flag layer; not measured here), and a settings file that
   sets `ANTHROPIC_API_KEY` for an anthropic-api session (the key itself is never put on a command line).
 - **amazon bedrock.** A third route runs claude on Amazon Bedrock with one of your Settings > AWS profiles/SSM
-  profiles marked as a model route ([cloud accounts](../member/16-cloud-accounts.md)). **It is not offered yet**: it waits
+  profiles marked as a model route ([Amazon Bedrock route](bedrock-route.md)). **It is not offered yet**: it waits
   for its live acceptance run, and until then a workspace offers it only when its operator has set
   `AF_CLAUDE_BEDROCK_ROUTE=1` for that run (on a Control Plane that is `AF_WS_CLAUDE_BEDROCK_ROUTE=1`, which reaches a workspace at its next Start; a workspace already running needs Stop → Start). Where it is offered, pick **Amazon Bedrock** under
   **Model route**, then the profile; the region is optional (empty uses the profile's own). The **Bedrock model ID** is

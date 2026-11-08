@@ -315,6 +315,9 @@ Terms are decided by the "Screen" column of `guide/ref/glossary.md`. This sectio
   buttons that open a dialog. Everywhere else use the majority form (`送信`,
   `セッションを削除`, `API トークン`).
 - **Kana.** Write すでに and ない in hiragana, not 既に / 無い.
+- **ログイン and サインイン are verbs.** Write 「ログインしていないとき」「ほかのプロファイルでログインしていれば」, not
+  「ログインが無いとき」「ログインを持つ」「ログインを使い回す」. A noun use that reads naturally stays
+  (「ログインが切れる」「ログインを承認する」), and so do UI labels such as 「専用のサインイン」.
 - **Button form.** Buttons use the noun form only (`削除`, `停止`, `再開`). The する form
   (`削除する`) is allowed only on a confirmation dialog's execute button.
 - **Boilerplate becomes sentences.** Rewrite noun-ended fixed phrases as sentences
@@ -348,6 +351,12 @@ until they are rewritten.
 - **Leave out** preamble ("your company's…"), how secrets are handled (that is one cross-cutting page, "How
   credentials are handled"), spec edge cases (they go to `guide/ref/`) and design reasons (they stay in
   `docs/decisions/`).
+- **No history.** No ADR numbers, links or paths into `docs/`, issue numbers, or the date and version something was
+  measured with. The reader wants the rule as it is now; when a fact rests on one observation, say so in words
+  ("seen in one account") without the story. `docs-check.py --only history` enforces this on the pages listed in its
+  `TASK_PAGES`.
+- **Exit statuses are numbers with their name**: "exits with status 4", 「終了コード 4 で終わります」, not "exits
+  with 4" or 「4 で終わります」.
 - **Material for contributors is not published.** A procedure that only someone changing Agent Fleet runs, such as
   verifying a template on real infrastructure, belongs in `docs/`, even when it sits in a runbook today.
 - UI labels are quoted from the catalogues (§4, §5).

@@ -142,6 +142,14 @@ class NotesTests(unittest.TestCase):
         for message in ("not in the image", "does not exist", "not shipped"):
             self.assertIn(message, errors)
 
+    def test_nested_guide_paths_are_checked(self):
+        (self.root / "guide/ref/cli").mkdir(parents=True)
+        (self.root / "guide/ref/cli/af-aws-exec.md").write_text("# af-aws-exec\n")
+        self.topic.write_text(self.valid + "\nRead:\n`ref/cli/af-aws-exec.md`")
+        self.assertEqual(self.errors(), "")
+        self.topic.write_text(self.valid + "\nRead:\n`ref/cli/af-aws-exec-typo.md`")
+        self.assertIn("does not exist", self.errors())
+
     def test_frontmatter_positive_controls(self):
         for old, new, error in (
             ("af-example", "af-wrong", "name must be"),
@@ -751,6 +759,30 @@ class TableTests(unittest.TestCase):
 
     def test_code_fence(self):
         self.assertEqual(self.errors("```\n| 1 |\n\n| 2 |\n```\n"), "")
+
+
+class HistoryTests(unittest.TestCase):
+    """A task page carries no ADR numbers, journal paths, issue numbers or dates."""
+
+    def errors(self, rel_path, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / rel_path
+            path.parent.mkdir(parents=True)
+            path.write_text(body)
+            findings = check.Findings()
+            with patch.object(check, "GUIDE", tmp), patch.object(check, "ROOT", tmp):
+                check.check_history([str(path)], findings)
+            return "\n".join(findings.errors)
+
+    def test_each_kind_is_caught(self):
+        for text, what in (("(ADR 0128)", "an ADR number"), ("see docs/log/x.md", "a path into docs/"),
+                           ("fixed in #3463", "an issue number"), ("measured on 2026-11-06", "a date")):
+            self.assertIn(what, self.errors("user/a.md", text + "\n"))
+
+    def test_code_anchors_and_old_chapters_are_left_alone(self):
+        body = "`2026-11-06`\n```\nADR 0128\n```\n[x](#section-123)\n"
+        self.assertEqual(self.errors("ref/cli/a.md", body), "")
+        self.assertEqual(self.errors("member/16-x.md", "(ADR 0128)\n"), "")
 
 
 if __name__ == "__main__":

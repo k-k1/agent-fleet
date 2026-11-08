@@ -178,7 +178,7 @@ Jira を OAuth または API トークンでつなぐ（設定 > **課題管理*
 | `bkt` | **Git ホスティング**の Bitbucket Cloud（bitbucket.org） | [15](15-external-services.ja.md#セッションで-gh-と-bkt-を使う) |
 | `jira` | **課題管理**の Jira | [15](15-external-services.ja.md#セッションで-jira-を使う) |
 | `confluence` | **課題管理**の Jira（同じ Atlassian 接続） | [15](15-external-services.ja.md#セッションで-confluence-を使う) |
-| `af-aws-exec --profile <名前> -- <コマンド>` | **AWS プロファイル/SSM**。プロファイルの**ログイン**のあと | [16](16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う) |
+| `af-aws-exec --profile <名前> -- <コマンド>` | **AWS プロファイル/SSM**。プロファイルの**ログイン**のあと | [af-aws-exec](../ref/cli/af-aws-exec.ja.md) |
 | `af-gcloud-exec --profile <名前> -- <コマンド>` | **Google Cloud**。プロファイルの**ログイン**のあと | [16](16-cloud-accounts.ja.md#プロファイルとしてコマンドを実行する) |
 
 エージェントには、Bitbucket では Bitbucket や Atlassian の MCP サーバーではなく `bkt` を、Jira では既定で `jira` を使うよう
@@ -243,7 +243,7 @@ Jira を OAuth または API トークンでつなぐ（設定 > **課題管理*
 カードに入れるのは、セルフホストの Grafana と同じ種類のサービスアカウントトークンです（IAM や SigV4 の設定は不要）。
 AMG の Grafana 管理画面（Administration → Service accounts。管理者権限が必要）で発行するか、IAM 権限があれば
 AWS CLI の `aws grafana create-workspace-service-account-token` で発行します
-（`af-aws-exec` でプロファイルを指定して実行します。[16](16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う)）。
+（`af-aws-exec` でプロファイルを指定して実行します。[af-aws-exec](../ref/cli/af-aws-exec.ja.md)）。
 AMG のトークンの有効期限は**最長 30 日**です。切れたら新しいものをカードに貼り直してください。
 
 ### その他のツール（Zabbix など）
@@ -262,4 +262,4 @@ AMG のトークンの有効期限は**最長 30 日**です。切れたら新�
 
 接続なしでターミナル（CLI）のセッションから CloudWatch Logs を読むには、エージェントに `af-aws-exec` 経由で
 プロファイルを指定して `aws` CLI を使わせます（`aws logs tail`、`aws logs filter-log-events`、Logs Insights）。
-プロファイルに必要なのはログの読み取り権限だけです（[16](16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う)）。
+プロファイルに必要なのはログの読み取り権限だけです（[af-aws-exec](../ref/cli/af-aws-exec.ja.md)）。
