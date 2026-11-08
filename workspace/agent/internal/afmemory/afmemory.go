@@ -46,6 +46,10 @@ Usage:
                                              preview: what a write-back would do, nothing written
   af-memory export --project <id|name> [--overwrite <name>]...
                                              copy AF memory into claude's own memory (claude only)
+  af-memory lint [--user | --project <id|name>] [--json]
+                                             read-only report: broken [[links]], paths and symbols
+                                             missing from the default branch, retired terms,
+                                             bodies over 4,096 bytes (nothing is written)
   af-memory --help
 
 <slug> is a name from import-sources. The import needs "Agent Fleet memory" turned on in
@@ -60,6 +64,10 @@ personal: muse's notes for all projects, into AF's USER scope, which every proje
 never imported unless you pass --into-user. A note needs no frontmatter: its name is the file
 name ("a/b.md" becomes "a--b"), its description the first non-empty line, and it has no type.
 Same switch and secret scan as import.
+
+lint reads every memory of the scope (no use is counted) and the project's origin default branch by
+ref; it never touches a working copy. A project without git, an orphaned one and the user scope get
+the link, term and size checks only. The retired-term list is edited in Settings > Agent memory.
 
 export is the other direction, one-shot: new and changed AF memories become files in claude's
 memory directory for the project, MEMORY.md is regenerated, and claude's memory is snapshotted
@@ -114,6 +122,8 @@ func Main(c *Client, args []string, out, errw io.Writer) int {
 		err = cmdExportSources(c, out)
 	case "export":
 		err = cmdExport(c, args[1:], out)
+	case "lint":
+		err = cmdLint(c, args[1:], out)
 	default:
 		fmt.Fprint(errw, usage)
 		return 2
