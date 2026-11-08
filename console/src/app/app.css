@@ -246,6 +246,10 @@
   border-bottom: 1px solid var(--border2);
 }
 .lm-cap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
   color: var(--muted2);
   font-size: 10px;
   margin-bottom: 4px;

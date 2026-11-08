@@ -391,12 +391,17 @@
   overflow: auto;
   padding: 6px 10px;
 }
+/* Loading / error placeholder `<pre>` of the diff panes and memory-change views. It was
+   composed with the viewer's `.filebody` skin: the viewer sheet loads later, so its
+   box, `font` and `white-space: pre` won over the plain text style. */
 .diff {
+  flex: 1;
   margin: 0;
-  font-family: var(--mono);
-  font-size: 12px;
+  overflow: auto;
+  padding: 8px 12px;
+  font: 12px/1.45 var(--mono);
   color: var(--muted);
-  white-space: pre-wrap;
+  white-space: pre;
 }
 .commit-detail .cd-head {
   padding: 4px 0 10px;
