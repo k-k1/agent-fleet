@@ -31,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -425,6 +426,8 @@ type agentMemEntry struct {
 	// rank or list. It is not stored in the memory file.
 	Uses int    `json:"uses,omitempty"`
 	Body string `json:"body,omitempty"`
+	// agentMemLife is the optional classification and lifecycle frontmatter (ADR 0130 decision 3).
+	agentMemLife
 }
 
 // agentMemRender writes an entry as frontmatter plus body. String values are written as
@@ -460,6 +463,9 @@ func agentMemRender(e agentMemEntry) []byte {
 	if e.Pinned {
 		b.WriteString("pinned: true\n")
 	}
+	var lf strings.Builder
+	agentMemRenderLife(&lf, e.agentMemLife)
+	b.WriteString(lf.String())
 	b.WriteString("---\n")
 	b.WriteString(strings.TrimRight(e.Body, "\n"))
 	b.WriteString("\n")
@@ -471,32 +477,28 @@ func agentMemRender(e agentMemEntry) []byte {
 // still loads. A missing or invalid revision reads as 1, never 0: 0 means "create", and a
 // hand-made file must not be overwritable by a blind create.
 func agentMemParse(b []byte) (agentMemEntry, bool) {
+	e, _, ok := agentMemParseStrict(b)
+	return e, ok
+}
+
+// agentMemParseStrict is agentMemParse that also names the lifecycle keys whose value does not
+// fit the schema (the entry has them dropped). The writers' check uses it.
+func agentMemParseStrict(b []byte) (agentMemEntry, []string, bool) {
 	var e agentMemEntry
+	var problems []string
 	s := strings.ReplaceAll(string(b), "\r\n", "\n")
 	rest, ok := strings.CutPrefix(s, "---\n")
 	if !ok {
-		return e, false
+		return e, nil, false
 	}
 	head, body, ok := strings.Cut(rest, "\n---\n")
 	if !ok {
 		head, ok = strings.CutSuffix(rest, "\n---")
 		if !ok {
-			return e, false
+			return e, nil, false
 		}
 	}
-	unq := func(v string) string {
-		v = strings.TrimSpace(v)
-		if strings.HasPrefix(v, `"`) {
-			var out string
-			if json.Unmarshal([]byte(v), &out) == nil {
-				return out
-			}
-		}
-		if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
-			return strings.ReplaceAll(v[1:len(v)-1], "''", "'")
-		}
-		return v
-	}
+	unq := agentMemUnquote
 	// claude writes its memory type as `metadata:` with an indented `type:`; a top-level type wins.
 	inMeta, metaType, topType := false, "", false
 	for _, line := range strings.Split(head, "\n") {
@@ -545,6 +547,8 @@ func agentMemParse(b []byte) (agentMemEntry, bool) {
 			e.SourceHash = unq(v)
 		case "pinned":
 			e.Pinned = unq(v) == "true"
+		default:
+			agentMemParseLifeField(&e.agentMemLife, strings.TrimSpace(k), v, &problems)
 		}
 	}
 	if !topType {
@@ -553,8 +557,28 @@ func agentMemParse(b []byte) (agentMemEntry, bool) {
 	if e.Revision < 1 {
 		e.Revision = 1
 	}
+	if e.Status == "" && e.StatusBy != "" {
+		e.StatusBy = "" // who set a status that is not there; the writers refuse it
+		problems = append(problems, agentMemKeyStatusBy)
+	}
 	e.Body = strings.TrimRight(body, "\n")
-	return e, true
+	return e, problems, true
+}
+
+// agentMemUnquote reads a frontmatter scalar: a JSON string, a single-quoted YAML string or a
+// plain one.
+func agentMemUnquote(v string) string {
+	v = strings.TrimSpace(v)
+	if strings.HasPrefix(v, `"`) {
+		var out string
+		if json.Unmarshal([]byte(v), &out) == nil {
+			return out
+		}
+	}
+	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
+		return strings.ReplaceAll(v[1:len(v)-1], "''", "'")
+	}
+	return v
 }
 
 // agentMemScanText scans text the way a write is judged: NUL is refused outright, because the
@@ -590,8 +614,9 @@ func agentMemWarmScan(c agentMemCaller) {
 // agentMemPublished is every value of an entry a reader is shown, decoded. It is what gets
 // scanned: the raw file can hide a value behind a JSON escape (\u0041) or an escaped quote.
 func agentMemPublished(e agentMemEntry) string {
-	return strings.Join(append([]string{e.Name, e.Scope, e.Description, e.Type,
-		e.AuthorKind, e.AuthorSession, e.Created, e.Updated, e.Source, e.SourceHash, e.Body}, e.Kinds...), "\n")
+	return strings.Join(append(append([]string{e.Name, e.Scope, e.Description, e.Type,
+		e.AuthorKind, e.AuthorSession, e.Created, e.Updated, e.Source, e.SourceHash, e.Body}, e.Kinds...),
+		agentMemLifeStrings(e.agentMemLife)...), "\n")
 }
 
 // agentMemClean says whether a stored file may be shown (ADR 0108 decision 9: what already
@@ -738,13 +763,17 @@ func agentMemListIndex(c agentMemCaller, budget int) (agentMemIndex, error) {
 			agentMemSetUses(es, rel)
 		}
 		for _, e := range es {
-			if agentMemAppliesTo(e, c.Kind) {
+			// Archived and superseded memories are not in the index at all, not even by name.
+			if agentMemAppliesTo(e, c.Kind) && !agentMemExcluded(e) {
 				e.Body = ""
 				all = append(all, e)
 			}
 		}
 	}
 	agentMemRank(all)
+	// Placement: what may be described comes first, so a quiet memory or a log falls to the
+	// names-only tail whatever its pin (agentMemBudgetIndex stops describing at the first of them).
+	sort.SliceStable(all, func(i, j int) bool { return agentMemDescribable(all[i]) && !agentMemDescribable(all[j]) })
 	out.Entries, out.More, out.Omitted, out.PinnedOmitted = agentMemBudgetIndex(all, budget)
 	out.Truncated = len(out.Entries) < len(all)
 	return out, nil
@@ -797,6 +826,11 @@ func agentMemRead(c agentMemCaller, scope, name string) (agentMemEntry, error) {
 		// limited to other kinds is not readable by name either, and is not counted as a use.
 		if c.Kind == agentMemExternalKind && !agentMemAppliesTo(l.Entry, c.Kind) {
 			continue
+		}
+		// An archived or superseded memory answers with a stub, never its text, so an old name
+		// or a [[link]] cannot bring it back as current. It is not a use.
+		if agentMemExcluded(l.Entry) {
+			return agentMemStubOf(l.Entry), nil
 		}
 		// Counted under the read lock: a forget or re-create (write lock) cannot slip between the
 		// read and the count and leave this use on a newer memory.
@@ -875,6 +909,10 @@ type agentMemSaveReq struct {
 	Kinds       []string `json:"kinds"`
 	Body        string   `json:"body"`
 	Revision    int      `json:"revision"`
+	// MemKind (`kind`) and Anchors are the only lifecycle-schema fields an agent may set. Absent
+	// means keep what the memory has; present and empty clears it.
+	MemKind *string   `json:"kind"`
+	Anchors *[]string `json:"anchors"`
 }
 
 // agentMemForgetReq removes a memory from what is published; history keeps it.
@@ -959,7 +997,7 @@ func agentMemValidate(req *agentMemSaveReq) error {
 		}
 	}
 	req.Kinds = kinds
-	return nil
+	return agentMemValidateLifeReq(req)
 }
 
 // agentMemDefaultScope is the project when there is one: what an agent learns is usually
@@ -1033,6 +1071,12 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	findings = append(findings, agentMemScanText("name", req.Name)...)
 	findings = append(findings, agentMemScanText("description", req.Description)...)
 	findings = append(findings, agentMemScanText("body", req.Body)...)
+	if req.MemKind != nil {
+		findings = append(findings, agentMemScanText("kind", *req.MemKind)...)
+	}
+	if req.Anchors != nil {
+		findings = append(findings, agentMemScanText("anchors", strings.Join(*req.Anchors, "\n"))...)
+	}
 	if len(findings) > 0 {
 		return agentMemWriteResult{}, &agentMemSecretErr{Findings: findings}
 	}
@@ -1056,6 +1100,10 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	}
 	base := cur.Entry.Revision
 	switch {
+	case exists && agentMemExcluded(cur.Entry) && c.Kind != agentMemMember.Kind:
+		// Same rule as memory_patch: what an agent cannot see it cannot rewrite.
+		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+			"this memory is archived or superseded; ask your user to restore it before changing it")
 	case exists && req.Revision == 0:
 		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
 			"the memory already exists at revision %d; read it and pass that revision to update it", base)
@@ -1085,9 +1133,21 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	if exists {
 		e.Created, e.Source, e.SourceHash = cur.Entry.Created, cur.Entry.Source, cur.Entry.SourceHash
 		e.Pinned = cur.Entry.Pinned
+		// Every field the save does not name is kept (ADR 0130 decision 3), the lifecycle
+		// ones included. A feedback reason goes with any change of the body.
+		e.agentMemLife = cur.Entry.agentMemLife
+		if req.Body != cur.Entry.Body {
+			agentMemDropFeedbackReasons(&e.agentMemLife)
+		}
 		if c.keepKinds {
 			e.Kinds = cur.Entry.Kinds
 		}
+	}
+	if req.MemKind != nil {
+		e.MemKind = *req.MemKind
+	}
+	if req.Anchors != nil {
+		e.Anchors = *req.Anchors
 	}
 	data := agentMemRender(e)
 	repoRel := rel + "/" + req.Name + ".md"
@@ -1284,6 +1344,14 @@ type agentMemChange struct {
 // store, staging and the index are put back, so a later snapshot cannot commit the change
 // either.
 func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMemCaller, now time.Time, extra ...string) (string, error) {
+	// The one schema every writer's output passes, whoever wrote it (ADR 0130 decision 3).
+	for _, ch := range changes {
+		if !ch.Delete && strings.HasSuffix(ch.Rel, ".md") {
+			if err := agentMemCheckLife(ch.Data); err != nil {
+				return "", err
+			}
+		}
+	}
 	if err := memoryEnsureRepo(); err != nil {
 		return "", err
 	}

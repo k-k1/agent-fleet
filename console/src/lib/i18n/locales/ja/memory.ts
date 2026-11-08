@@ -377,6 +377,7 @@ export const memory = {
   "mem.ce_reason_not_written_by_af": "Agent Fleet が書いていない Claude のファイル",
   "mem.ce_reason_changed_since_write": "書き込み後に Claude 側で変わっています",
   "mem.ce_reason_forgotten_but_changed": "Agent Fleet では忘れ済みですが Claude 側で変わっています",
+  "mem.ce_reason_withdrawn_but_changed": "エージェントへの共有対象から外れました（アーカイブ・置き換え済み・静か・ログ・要確認）が、Claude 側で変わっています",
   "mem.ce_reason_af_withheld": "Agent Fleet 側の写しは秘密情報の検査で保留中です",
   "mem.ce_reason_symlink": "通常のファイルではありません",
   "mem.ce_reason_too_large": "大きすぎます",

@@ -1761,12 +1761,30 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "anchors": {
+            "description": "What this memory depends on (paths, symbols, test names, ADR numbers, commands); omit to keep the current ones, [] clears them",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "description": "The memory itself, Markdown",
             "type": "string"
           },
           "description": {
             "description": "One line used to decide relevance, about 150 characters",
+            "type": "string"
+          },
+          "kind": {
+            "description": "How this memory goes stale; omit to keep the current one. A log is history and is never in the described part of the index",
+            "enum": [
+              "preference",
+              "lesson",
+              "procedure",
+              "state",
+              "log"
+            ],
             "type": "string"
           },
           "kinds": {

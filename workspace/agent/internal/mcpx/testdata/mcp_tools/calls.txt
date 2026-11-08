@@ -2469,6 +2469,13 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for memory_save: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_save badtype-anchors {"anchors":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save の引数を読めません: json: cannot unmarshal array into Go struct field .anchors of type string","type":"text"}],"isError":true,"resultType":"complete"}}
 ## memory_save badtype-body {"body":[[{}]]}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -2483,6 +2490,13 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-memory session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save の引数を読めません: json: cannot unmarshal array into Go struct field .description of type string","type":"text"}],"isError":true,"resultType":"complete"}}
+## memory_save badtype-kind {"kind":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save の引数を読めません: json: cannot unmarshal array into Go struct field .kind of type string","type":"text"}],"isError":true,"resultType":"complete"}}
 ## memory_save badtype-kinds {"kinds":[[{}]]}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -2518,13 +2532,125 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-memory session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save の引数を読めません: json: cannot unmarshal array into Go struct field .type of type string","type":"text"}],"isError":true,"resultType":"complete"}}
-## memory_save full {"body":"v","description":"v","kinds":["v"],"name":"child01","revision":2,"scope":"project","type":"user"}
+## memory_save full {"anchors":["v"],"body":"v","description":"v","kind":"preference","kinds":["v"],"name":"child01","revision":2,"scope":"project","type":"user"}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-memory session-all session-all-write]
-  -> POST /agents/memory/entries {"body":"v","description":"v","kinds":["v"],"name":"child01","revision":2,"scope":"project","session":"slot01","type":"user"}
+  -> POST /agents/memory/entries {"anchors":["v"],"body":"v","description":"v","kind":"preference","kinds":["v"],"name":"child01","revision":2,"scope":"project","session":"slot01","type":"user"}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind= {"kind":""}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=claude {"kind":"claude"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"claude","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=codex {"kind":"codex"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"codex","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=opencode {"kind":"opencode"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"opencode","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=agy {"kind":"agy"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"agy","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=copilot {"kind":"copilot"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"copilot","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=cursor {"kind":"cursor"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"cursor","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=kiro {"kind":"kiro"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"kiro","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=lcpp {"kind":"lcpp"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"lcpp","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=muse {"kind":"muse"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"muse","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=shell {"kind":"shell"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"shell","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=ssm {"kind":"ssm"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"ssm","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=Codex {"kind":"Codex"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"Codex","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## memory_save kind=nope {"kind":"nope"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"memory_save はセッション側の Agent Fleet サーバー専用です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-search session-spawn session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-memory session-all session-all-write]
+  -> POST /agents/memory/entries {"body":"","description":"","kind":"nope","kinds":null,"name":"","revision":0,"scope":"","session":"slot01","type":""}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## memory_search absent
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]

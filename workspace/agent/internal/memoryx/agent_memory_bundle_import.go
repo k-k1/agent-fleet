@@ -372,6 +372,8 @@ func agentMemBundleEvaluate(raw []byte, f agentMemBundleFile, importID, scope, r
 		typ = ""
 	}
 	source := "bundle:" + importID + ":" + srcRel + "/" + f.name + "@" + strconv.Itoa(e.Revision)
+	// No lifecycle fields are taken from the bundle: an import never takes them from outside, and a
+	// bundle only ever creates (an existing name is never replaced), so a new memory starts plain.
 	c := agentMemEntry{
 		Name: f.name, Scope: scope, Description: desc, Type: typ, Kinds: e.Kinds,
 		AuthorKind: agentMemUnknown, AuthorSession: agentMemUnknown,

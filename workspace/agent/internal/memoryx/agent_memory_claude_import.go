@@ -779,6 +779,8 @@ func agentMemImportWriteTo(p *agentMemProject, rel string, it *agentMemImportIte
 	e.Created, e.Updated = stamp, stamp
 	if it.live != nil {
 		e.Revision, e.Created, e.Kinds, e.Pinned = it.live.Revision+1, it.live.Created, it.live.Kinds, it.live.Pinned
+		// An import never takes lifecycle fields from outside and keeps the ones the memory has.
+		e.agentMemLife = it.live.agentMemLife
 	} else {
 		if _, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(rel), e.Name+".md")); err != nil {
 			return "", err

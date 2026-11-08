@@ -104,7 +104,7 @@ func ReviewSnapshotFor(sessionName string) (ReviewSnapshot, error) {
 			agentMemSetUses(es, rel)
 		}
 		for _, e := range es {
-			if agentMemAppliesTo(e, c.Kind) {
+			if agentMemAppliesTo(e, c.Kind) && !agentMemExcluded(e) {
 				all = append(all, e)
 			}
 		}
