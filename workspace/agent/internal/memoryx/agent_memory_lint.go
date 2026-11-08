@@ -22,7 +22,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -53,21 +55,35 @@ func agentMemLintTermsPath() string {
 	return filepath.Join(claude.ConfigDir(), agentMemLintTermsFile)
 }
 
+// agentMemLintTermsDoc is the list file and the wire body of the terms routes. Rejected holds
+// retired-term proposals the member turned down; on a save a nil Rejected leaves the stored set
+// as it is, so a client that only edits terms cannot clear it.
 type agentMemLintTermsDoc struct {
-	Terms []string `json:"terms"`
+	Terms    []string `json:"terms"`
+	Rejected []string `json:"rejected,omitempty"`
 }
 
 // agentMemLintLoadTerms reads the member's list; a missing or unreadable file is an empty list.
-func agentMemLintLoadTerms() []string {
+func agentMemLintLoadTerms() []string { return agentMemLintLoadDoc().Terms }
+
+// agentMemLintLoadDoc reads the list file whole; both slices are non-nil.
+func agentMemLintLoadDoc() agentMemLintTermsDoc {
+	d := agentMemLintTermsDoc{Terms: []string{}, Rejected: []string{}}
 	b, ok, err := agentMemReadFile(agentMemLintTermsPath())
 	if err != nil || !ok {
-		return []string{}
+		return d
 	}
-	var d agentMemLintTermsDoc
-	if json.Unmarshal(b, &d) != nil || d.Terms == nil {
-		return []string{}
+	var f agentMemLintTermsDoc
+	if json.Unmarshal(b, &f) != nil {
+		return d
 	}
-	return d.Terms
+	if f.Terms != nil {
+		d.Terms = f.Terms
+	}
+	if f.Rejected != nil {
+		d.Rejected = f.Rejected
+	}
+	return d
 }
 
 // agentMemLintCleanTerms trims, drops blanks and duplicates (case-insensitively) and refuses a
@@ -95,8 +111,8 @@ func agentMemLintCleanTerms(in []string) ([]string, error) {
 
 // agentMemLintSaveTerms replaces the list. Written to a temporary file and renamed, so a reader
 // never sees half a list.
-func agentMemLintSaveTerms(terms []string) error {
-	b, err := json.MarshalIndent(agentMemLintTermsDoc{Terms: terms}, "", "  ")
+func agentMemLintSaveTerms(doc agentMemLintTermsDoc) error {
+	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -158,6 +174,63 @@ func (r agentMemLintRepo) ReadFile(path string) ([]byte, error) {
 	out, err := agentMemLintGit(ctx, r.gitDir, nil, "cat-file", "blob", r.ref+":"+path)
 	if err != nil {
 		return nil, fmt.Errorf("git cat-file blob: %w", err)
+	}
+	return out, nil
+}
+
+// agentMemLintKeyRe is the shape of a configuration key the history scan looks for: the
+// workspace's environment variables.
+var agentMemLintKeyRe = regexp.MustCompile(`\bAF_[A-Z][A-Z0-9_]{2,}\b`)
+
+const (
+	// agentMemLintKeyCommits bounds how far back the scan reads; older removals are not proposed.
+	agentMemLintKeyCommits = 300
+	agentMemLintKeyMax     = 2000
+)
+
+// RemovedKeys lists AF_* keys that appear on a removed line of the last commits of the pinned
+// revision, newest removal first, each with its commit. The caller checks they are gone from the
+// current files. The journals are left out of the scan: they quote old keys while describing them.
+func (r agentMemLintRepo) RemovedKeys() ([]memorylint.RemovedKey, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "--git-dir="+r.gitDir, "log", "-n", strconv.Itoa(agentMemLintKeyCommits),
+		"--no-merges", "-p", "-U0", "--no-color", "--no-ext-diff", "--format=%x01%h%x02%s", r.ref, "--", ".", ":(exclude)docs/log")
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, errors.New("git log failed")
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, errors.New("git log failed")
+	}
+	var out []memorylint.RemovedKey
+	seen := map[string]bool{}
+	commit, subject := "", ""
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 64<<10), 4<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if rest, ok := strings.CutPrefix(line, "\x01"); ok {
+			commit, subject, _ = strings.Cut(rest, "\x02")
+			continue
+		}
+		if !strings.HasPrefix(line, "-") || strings.HasPrefix(line, "---") || len(out) >= agentMemLintKeyMax {
+			continue
+		}
+		for _, k := range agentMemLintKeyRe.FindAllString(line, -1) {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, memorylint.RemovedKey{Key: k, Commit: commit, Subject: subject})
+			}
+		}
+	}
+	_, _ = io.Copy(io.Discard, stdout)
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return nil, errors.New("git log timed out")
+		}
+		return nil, fmt.Errorf("git log: %w", err)
 	}
 	return out, nil
 }
@@ -296,7 +369,8 @@ func agentMemMemberLint(scope, project string) (agentMemLintWire, error) {
 		mems = append(mems, memorylint.Memory{Name: e.Name, Body: e.Body})
 	}
 	out.Project, out.Withheld = c.Project, withheld
-	terms := agentMemLintLoadTerms()
+	doc := agentMemLintLoadDoc()
+	terms := doc.Terms
 	out.Terms = len(terms)
 
 	var repo memorylint.Repo
@@ -312,7 +386,7 @@ func agentMemMemberLint(scope, project string) (agentMemLintWire, error) {
 			out.Commit = oid[:12]
 		}
 	}
-	out.Report = memorylint.Lint(mems, memorylint.Options{RetiredTerms: terms}, repo)
+	out.Report = memorylint.Lint(mems, memorylint.Options{RetiredTerms: terms, RejectedTerms: doc.Rejected}, repo)
 	if repo == nil {
 		out.Report.Skipped = append(out.Report.Skipped, "repository checks (paths, symbols, ADRs): "+why)
 	}
@@ -334,7 +408,7 @@ func HandleAgentMemoryMemberLint(w http.ResponseWriter, r *http.Request) {
 
 // HandleAgentMemoryLintTerms returns the member's retired-term list.
 func HandleAgentMemoryLintTerms(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, agentMemLintTermsDoc{Terms: agentMemLintLoadTerms()})
+	httpx.WriteJSON(w, http.StatusOK, agentMemLintLoadDoc())
 }
 
 // HandleAgentMemoryLintTermsSave replaces the list. Member-origin only: the list decides what
@@ -358,9 +432,16 @@ func HandleAgentMemoryLintTermsSave(w http.ResponseWriter, r *http.Request) {
 		agentMemWriteErr(w, err)
 		return
 	}
-	if err := agentMemLintSaveTerms(terms); err != nil {
+	doc := agentMemLintTermsDoc{Terms: terms, Rejected: agentMemLintLoadDoc().Rejected}
+	if req.Rejected != nil {
+		if doc.Rejected, err = agentMemLintCleanTerms(req.Rejected); err != nil {
+			agentMemWriteErr(w, err)
+			return
+		}
+	}
+	if err := agentMemLintSaveTerms(doc); err != nil {
 		agentMemWriteErr(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, agentMemLintTermsDoc{Terms: terms})
+	httpx.WriteJSON(w, http.StatusOK, doc)
 }
