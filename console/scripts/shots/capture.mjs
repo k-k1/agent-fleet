@@ -379,6 +379,56 @@ const SCENES = [
     settle: 4000,
   },
   {
+    name: "gcp-settings",
+    guide: true,
+    // The Google Cloud profiles exist only in a run that sets this (server.mjs).
+    stubEnv: { SHOT_GCP: "1" },
+    clip: ".settings-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "gcp",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    name: "gcp-badge",
+    guide: true,
+    stubEnv: { SHOT_GCP: "1" },
+    // Wider than aws-badge: with both cloud badges a 1400 px bar folds them behind ⋯.
+    clip: [".ws-gcp-btn", ".ws-gcp-pop"],
+    pad: 24,
+    sections: FOCUS_TREE,
+    width: 1800,
+    height: 760,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      // The badge appears only once the profiles' login states have loaded.
+      for (let i = 0; i < 50 && !document.querySelector(".ws-gcp-btn"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".ws-gcp-btn")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    name: "gcp-toast",
+    guide: true,
+    stubEnv: { SHOT_GCP: "1", SHOT_GCP_LOGIN_REQUEST: "1" },
+    clip: ".ui-toast",
+    pad: 12,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    settle: 6000,
+  },
+  {
     name: "ssm-hosts",
     guide: true,
     stubEnv: { SHOT_SSM_HOSTS: "1" },

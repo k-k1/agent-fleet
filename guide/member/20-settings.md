@@ -450,13 +450,8 @@ in and out work, and the two types, is in [Use AWS SSO](../user/integrations/aws
 
 ### Google Cloud
 
-Your Google Cloud profiles, which `af-gcloud-exec` runs commands with: a label (the profile's name is made from
-it and shown beside it), the project, and optionally a quota project, the Google account to sign in as, a
-service account to impersonate, a region and a zone. No Google credentials are stored here, and
-service-account keys are not accepted. Two labels that make the same name are not available in the workspace
-until you rename one; the row says so. Each available row has **Log in**, **Log in again** and **Log out**; how
-they work, and the WS bar's Google Cloud badge, are in
-[16 Cloud accounts](16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec).
+Your Google Cloud profiles, which `af-gcloud-exec` runs commands with. Adding, importing and logging in, and the WS
+bar's Google Cloud badge, are in [Use Google Cloud](../user/integrations/gcloud.md).
 
 ---
 
@@ -692,7 +687,7 @@ your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and you
 - **Coming from your own machine's `~/.aws/config` rather than another Agent Fleet?** The AWS profiles/SSM tab
   reads that file directly (the link is on this tab too). → [Use AWS SSO](../user/integrations/aws-sso.md#import-from-your-own-awsconfig)
 - **Google Cloud profiles from your own gcloud configurations?** The Google Cloud tab reads
-  `~/.config/gcloud/configurations/config_<name>` files directly. → [16 Cloud accounts](16-cloud-accounts.md#importing-profiles-from-gcloud-configurations)
+  `~/.config/gcloud/configurations/config_<name>` files directly. → [Use Google Cloud](../user/integrations/gcloud.md#import-from-your-own-gcloud-configurations)
 
 ### Danger zone
 

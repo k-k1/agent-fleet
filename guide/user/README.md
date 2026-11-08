@@ -16,3 +16,4 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 |---|---|
 | [Use AWS SSO](integrations/aws-sso.md) | Have agents run AWS commands with your permissions |
 | [Log in to EC2 with SSM](integrations/aws-ssm.md) | Log in to an EC2 host from a terminal in your browser |
+| [Use Google Cloud](integrations/gcloud.md) | Have agents run Google Cloud commands with your permissions |

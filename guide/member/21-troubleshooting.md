@@ -604,7 +604,7 @@ an `edit` the other changes you asked for were applied. Either way, set the desc
   requested in the Agent Fleet Console …", "Google Cloud login required …"). Log in from the toast
   or ⚙ Settings, or run the terminal command it printed, then run the command again. Otherwise the
   status is the command's own: read that command's error
-  ([16](16-cloud-accounts.md#when-it-stops)).
+  ([Use Google Cloud](../user/integrations/gcloud.md#when-it-goes-wrong)).
 
 ## Terminal and phone
 

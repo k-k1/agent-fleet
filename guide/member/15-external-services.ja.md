@@ -179,7 +179,7 @@ Jira を OAuth または API トークンでつなぐ（設定 > **課題管理*
 | `jira` | **課題管理**の Jira | [15](15-external-services.ja.md#セッションで-jira-を使う) |
 | `confluence` | **課題管理**の Jira（同じ Atlassian 接続） | [15](15-external-services.ja.md#セッションで-confluence-を使う) |
 | `af-aws-exec --profile <名前> -- <コマンド>` | **AWS プロファイル/SSM**。プロファイルの**ログイン**のあと | [af-aws-exec](../ref/cli/af-aws-exec.ja.md) |
-| `af-gcloud-exec --profile <名前> -- <コマンド>` | **Google Cloud**。プロファイルの**ログイン**のあと | [16](16-cloud-accounts.ja.md#プロファイルとしてコマンドを実行する) |
+| `af-gcloud-exec --profile <名前> -- <コマンド>` | **Google Cloud**。プロファイルの**ログイン**のあと | [af-gcloud-exec](../ref/cli/af-gcloud-exec.ja.md) |
 
 エージェントには、Bitbucket では Bitbucket や Atlassian の MCP サーバーではなく `bkt` を、Jira では既定で `jira` を使うよう
 伝えてあります。CLI は呼び出しのたびに保存済みの接続を読み、期限が近ければ更新しますが、MCP コネクタはログインが切れると

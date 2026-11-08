@@ -122,7 +122,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | Git ホスティングの接続 | メンバー | Git ホスティング |
 | 内部リポジトリ | メンバー | 内部リポジトリ |
 | AWS プロファイルと SSM | メンバー | AWS プロファイル/SSM（[AWS SSO を使う](../user/integrations/aws-sso.ja.md)、[SSM で EC2 にログインする](../user/integrations/aws-ssm.ja.md)） |
-| Google Cloud のプロファイル | メンバー | Google Cloud（[16](../member/16-cloud-accounts.ja.md#google-cloud-で自分としてコマンドを実行するaf-gcloud-exec)） |
+| Google Cloud のプロファイル | メンバー | Google Cloud（[Google Cloud を使う](../user/integrations/gcloud.ja.md)） |
 | 連携サーバーとトークン | メンバー | MCP サーバー（セッションで使う） / 外部からのアクセス → MCP トークン・接続アプリ |
 | サインインでリモート MCP クライアントを接続する（OAuth。配備が有効にしているとき）— 接続済みアプリ、最近の呼び出し | メンバー | 外部からのアクセス → MCP トークン・接続アプリ（[19](../member/19-outside-access.ja.md#サインインでリモート-mcp-クライアントを接続するoauth)）
 | `/mcp` から送った入力の「MCP 経由」バッジ | メンバー | ミラーの入力の吹き出し（[19](../member/19-outside-access.ja.md#外部の-claude-から自分のワークスペースを操作するmcp)）
