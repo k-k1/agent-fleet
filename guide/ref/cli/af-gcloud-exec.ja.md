@@ -74,6 +74,9 @@ prod-app    (not exported: Settings labels Prod App / prod-app all map to this n
 - 使えないプロファイルは、一覧の後ろに `名前  (not exported: 理由)` の形で出ます。理由は、同じ名前になるラベルが 2 つある、
   gcloud が受け付けない値がある、などです
 
+名前は、ラベルを英小文字・数字・`-` だけにしたものです。数字で始まる名前には先頭に `p` が付き、日本語だけのラベルのように
+使える文字がないものは `p-` に短い符号が続く名前になります。名前は設定の行にも表示されます。
+
 名前だけでなく、プロジェクトとアカウントを見て選んでください。
 
 `--list` は、そのときに設定からプロファイルを読み直します。設定を読めないときは、前回読んだ分を使い、その旨を表示します。
@@ -137,7 +140,7 @@ af-gcloud-exec --profile prod --project acme-shop-prod -- kubectl get pods
 | 言語 | 書き方 |
 |---|---|
 | Python | `google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"], quota_project_id=os.environ["GOOGLE_BILLING_PROJECT"])` |
-| Go | `option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`。割り当てプロジェクトは `GOOGLE_CLOUD_QUOTA_PROJECT` から読まれます |
+| Go | `option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`。割り当てプロジェクトは `GOOGLE_CLOUD_QUOTA_PROJECT` から読まれます。`option.WithQuotaProject` とは一緒に使えません |
 | Node | `OAuth2Client` に `setCredentials({access_token: process.env.GOOGLE_OAUTH_ACCESS_TOKEN})` して `authClient` に渡します |
 
 - Node では、クライアントライブラリが使っているのと**同じメジャー版**の `google-auth-library` から `OAuth2Client` を作ってください。

@@ -76,6 +76,10 @@ The real output is tab-separated; it is aligned with spaces here for reading.
 - Profiles that cannot be used come after the list as `name  (not exported: reason)`. The reason is, for example, two
   labels that make the same name, or a value gcloud does not accept
 
+The name is the label reduced to lowercase letters, digits and `-`. A name that starts with a digit gets a `p` in
+front, and a label with no usable characters (one in Japanese only, say) becomes `p-` followed by a short code. The
+name is also shown on the row in Settings.
+
 Choose by project and account, not by the name alone.
 
 `--list` reads the profiles from Settings at that moment. When Settings cannot be read, it uses the copy it read last
@@ -142,7 +146,7 @@ Write the program so that it takes the token itself.
 | Language | How |
 |---|---|
 | Python | `google.oauth2.credentials.Credentials(os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"], quota_project_id=os.environ["GOOGLE_BILLING_PROJECT"])` |
-| Go | `option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`. The quota project is read from `GOOGLE_CLOUD_QUOTA_PROJECT` |
+| Go | `option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")}))`. The quota project is read from `GOOGLE_CLOUD_QUOTA_PROJECT`. Do not combine it with `option.WithQuotaProject` |
 | Node | An `OAuth2Client` with `setCredentials({access_token: process.env.GOOGLE_OAUTH_ACCESS_TOKEN})`, passed as `authClient` |
 
 - In Node, create the `OAuth2Client` from **the same major version** of `google-auth-library` that the client library

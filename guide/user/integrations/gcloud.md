@@ -44,6 +44,8 @@ Open **⚙ Settings → "Google Cloud"** and press "**Add profile**".
 - Some APIs need a quota project when you use a personal account. Your account needs permission to use services in the
   quota project
 - A change reaches the workspace within about five minutes. Running `af-gcloud-exec` brings it over at once
+- Setting a different account, changing the label so that the name for commands changes, or deleting the profile and
+  adding it again resets which account it uses. If that account is not logged in yet, the next run asks for a login
 
 > [!TIP]
 > The name you give commands is the label reduced to lowercase letters, digits and `-` (`Prod App` becomes `prod-app`).
@@ -74,7 +76,7 @@ your computer, so it is left out with the reason.
 Press "**Log in**" on the profile's row to open the login window.
 
 1. Press "**Log in**" in the window. This is when the login starts
-2. Press "**Open Google sign-in**": Google's sign-in page opens in a new tab. Sign in
+2. Press "**Open Google sign-in**": Google's sign-in page opens in a new tab (its address is always on `accounts.google.com`). Sign in
 3. Paste the verification code Google shows into "**Verification code**" in the same window, and press "**Submit code**"
 
 You are done when the window says "**Logged in.**" and the row shows "**Logged in as …**".
@@ -100,10 +102,11 @@ screen. Press it to open the profile list; you can log in and out from there too
 |---|---|
 | A profile's name (green) | Exactly one profile is logged in |
 | A count such as "1/3" (green) | One of three is logged in |
-| An outline only | No profile is logged in |
+| A count such as "0/3" (an outline, no fill) | No profile is logged in |
 | Amber | An agent is waiting for a login. Its row says "**An agent is waiting for this login**" |
 
 There is no default profile. Every logged-in profile can be used at the same time, and each command picks one.
+"**Google Cloud settings**" at the bottom of the list opens the Settings tab.
 
 > [!NOTE]
 > "**Logged in**" means a login is stored in the workspace. The workspace does not check it with Google, so a login
@@ -117,6 +120,9 @@ Google refuses a stored login when it was revoked, or when your organisation req
 time. The workspace **cannot warn you in advance** when that is. The next command asks you to log in (the toast in
 [Ask an agent](#ask-an-agent)).
 
+Runs keep working, though, until the token already handed out has less than ten minutes left. So the request for a
+login can come up to about 50 minutes after the login ended.
+
 ### Log out
 
 Press "**Log out**" on the profile's row or in the badge's list.
@@ -125,6 +131,7 @@ Press "**Log out**" on the profile's row or in the badge's list.
   confirmation lists them
 - Your sign-in at Google and gcloud on other machines are not affected
 - A token a running command already received stays valid until it expires (at most an hour)
+- A sign-in still waiting for its code in one of those profiles' login windows stops too
 
 ## Ask an agent
 
@@ -143,6 +150,7 @@ Press "**Log in**" to open the same login window as above.
 - If not, the command ends with exit status 3. Log in, tell the agent you are done, and it runs the command again
 - If you do not want the login, press "**Cancel the request**" in the login window. "**Close**", or closing the toast,
   leaves the request open
+- Logging in from the profile's row in Settings, or from the badge's list, settles the waiting request too
 
 Each run is recorded in the session's conversation (without the command's arguments). Runs from every session are
 under "**Recent runs**" on the "Google Cloud" tab of Settings.
