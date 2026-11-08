@@ -342,7 +342,7 @@ to reach the authorization server over `https` (it discovers the token endpoint 
 connects to public addresses only and follows no redirect); every other request is made from the workspace. The Control Plane writes
 `mcp.client_oauth` audit rows (`started`, `completed`, `failed`, `disconnected`) that name the server and the
 authorization server, never a code or token. Members sign in from Settings › MCP servers
-([member guide 20](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)).
+([Add an MCP server to your sessions](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)).
 
 ### Reading what a client sent to `/mcp`
 

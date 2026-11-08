@@ -40,7 +40,7 @@ The registrations live inside your workspace, so start the workspace first if it
 
 - The ID is up to 48 letters, digits, dashes and underscores, starting with a letter or digit. It never changes once registered
 - Remote servers are supported over Streamable HTTP only
-- Environment-variable and header values are stored encrypted and never shown on screen again
+- Environment-variable and header values are stored encrypted and never shown on screen again. The configuration file handed to the agent that runs the server can still contain them in plain text (a file in your home only you can read, never in a repository)
 - A plain `http://` URL to a host other than this machine is accepted, but you get a warning: the token and every request travel unencrypted
 
 > [!WARNING]
@@ -58,10 +58,11 @@ The registrations live inside your workspace, so start the workspace first if it
 - A Bearer token pasted with its `Bearer ` prefix is fine
 - A saved token is not shown. Leave the field blank to keep it, or type a new one to replace it
 - OAuth cannot be combined with fixed headers
+- A saved server whose `Authorization` header is not a Bearer token (`Token …`, say) opens as Custom headers
 
 ### Advanced
 
-"**Advanced**" starts closed, with the current values on one line beside the title (for example "Assistant, Sessions · Every agent · default timeout").
+"**Advanced**" starts closed, with the current values on one line beside the title (for example "Assistant, Sessions · Every agent · default timeout"). It opens by itself when you edit a server whose values are not the defaults.
 
 | Field | What it decides |
 |---|---|
@@ -82,7 +83,7 @@ The registrations live inside your workspace, so start the workspace first if it
 ## Sign in to an OAuth server
 
 1. Choose "**OAuth**" under **Authentication** and save the server
-2. Press "**Sign in**" on its row. The authorization server opens in a new tab
+2. Press "**Sign in**" on its row. The authorization server opens in a new tab (in this tab, after telling you, if the browser blocks the new one)
 3. In that tab, sign in with your own account and approve
 4. When the tab says "**You can close this tab**", close it. The row in your Console tab updates by itself
 
@@ -110,12 +111,12 @@ Each row carries a label saying who registered it.
 |---|---|---|
 | Personal | A server you registered | Test, edit, disable, delete |
 | Tenant | A server an administrator distributed to everyone in the tenant | Test, and disable it in your own workspace. You cannot edit or delete it |
-| Built-in | Agent Fleet's own server and the ops & monitoring integrations | Nothing |
+| Built-in | Agent Fleet's own server and the ops & monitoring integrations | Test only. You cannot edit, disable or delete it |
 
 - A **tenant** server whose credential each member supplies shows "**Enter values**". The values are stored encrypted in your workspace and never reach the tenant
 - A **tenant** server that uses OAuth offers "**Sign in**" like one of your own. The sign-in is yours alone
 - The tenant's servers reach your workspace within 5 minutes. To take them in now, press "**Fetch tenant set**"
-- A personal registration with the same name as a tenant server is not used. The list then says "**These personal registrations are unused because a tenant-distributed server has the same name**"
+- A personal registration with the same name as a tenant server is not used. The list then says "**These personal registrations are unused because a tenant-distributed server has the same name**", followed by their names
 - The **built-in** Agent Fleet server goes to every session with no setup. Sessions use it to report that they are done or to propose a handoff
 - The PagerDuty, Grafana, CloudWatch and AWS integrations appear in the list once you connect them on the **Ops & monitoring** tab
 
@@ -137,11 +138,11 @@ repository's right-click menu shows how each agent picks them up, with warnings.
 ### A registered server does not show up in a session
 
 - Running sessions are not affected. Start a new session
-- Check whether the row says "**Missing required values, so it is not handed out even while enabled**". For a tenant server, fill them in with "**Enter values**"
+- Check whether the row says "**Missing required values, so it is not handed out even while enabled (a header has no value).**" A tenant server whose credential you have not entered says "**No credential entered, so nothing is handed over even while enabled.**" instead: fill it in with "**Enter values**"
 - An OAuth server is not handed out until its row reads "**Connected**"
 - Check **Used by** and **Agents** under **Advanced**
 
-### "Not on the outbound allowlist" appears
+### The destination is not on the outbound allowlist
 
 Your workspace's outbound traffic is restricted. Press "**Request access**" on the row, give a reason and press "**Send request**".
 The server works once an administrator approves it. While egress is log-only it still works, but it stops once enforcement is switched on.
@@ -158,7 +159,7 @@ The row says a sign-in was started but never finished.
 ### "This is this deployment's own /mcp endpoint" and the save is refused
 
 This Agent Fleet's own `/mcp` cannot be registered for sessions, because it would hand them your full authority.
-If you only want memory, sessions already have it through the built-in Agent Fleet server. Another Agent Fleet deployment can be registered.
+Its `/mcp/memory` is refused too: sessions already have memory through the built-in Agent Fleet server. Another Agent Fleet deployment can be registered.
 
 ### The timeout has no effect
 
