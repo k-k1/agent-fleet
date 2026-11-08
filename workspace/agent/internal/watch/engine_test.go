@@ -48,6 +48,7 @@ func (m *memStore) Load() (State, bool) {
 	_ = json.Unmarshal(b, &out)
 	return out, true
 }
+
 // Save keeps a deep copy, as a disk would: the engine's later changes in memory must not show
 // up in what was saved.
 func (m *memStore) Save(s State) error {
