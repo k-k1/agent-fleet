@@ -90,7 +90,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caller, callerOK := requestPeer(r)
-	c, ref := g.authorize(token, caller, callerOK)
+	c, ref := g.authorize(token, caller, callerOK, false)
 	if ref != nil {
 		log.Printf("route gateway: refused (%s)", ref.code)
 		writeRefusal(w, ref)
@@ -102,7 +102,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRefusal(w, &refusal{http.StatusRequestEntityTooLarge, "route_request_too_large", "the request is larger than the gateway forwards"})
 		return
 	}
-	creds, ref := g.credentials(c)
+	creds, ref := g.credentials(c, false)
+	if ref == errNeedFresh {
+		// The credentials have to be resolved: check the call again against Settings as they are
+		// now, then resolve on that check alone.
+		if c, ref = g.authorize(token, caller, callerOK, true); ref == nil {
+			creds, ref = g.credentials(c, true)
+		}
+	}
 	if ref != nil {
 		log.Printf("route gateway: refused (%s)", ref.code)
 		writeRefusal(w, ref)
