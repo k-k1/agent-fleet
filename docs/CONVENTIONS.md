@@ -341,11 +341,14 @@ until they are rewritten.
 ### One page, one task
 
 - **One feature per page**, even when the page is short. Do not merge small pages to save navigation.
-- **The title is what the reader wants to do**, as a verb phrase: "Use AWS SSO" (「AWS SSO を使う」), not "AWS" and
-  not a list of features.
+- **The title is what the reader wants to do**, as a verb phrase: "Use AWS SSO" (「AWS SSO を使う」), "Log in to
+  EC2 with SSM" (「SSM で EC2 にログインする」), not "AWS" and not a list of features. No preamble in it either (not
+  「社内の別のホストに…」) and no trailing parenthesis (not 「…（SSM）」): put the tool's name in the verb phrase.
+  `docs-check.py --only history` refuses both on the `TASK_PAGES`.
 - **The lead** is one or two sentences on what the reader can do afterwards.
 - **How it works** (「全体像」) comes next: a two-column table, *what you do* / *what the agent does*. Agents use Agent
   Fleet's tools, so the reader needs this split before anything else. In Japanese, write 「全体像」, not 「しくみ」.
+  For a feature agents do not touch (an SSM terminal), the second column is *what happens*.
 - Then, as far as they apply: **Set it up** (with the screen), **Use it** (including what appears on screen, such as
   a login toast), **Use it more safely**, **When it goes wrong** (by symptom), **Related**.
 - **Leave out** preamble ("your company's…"), how secrets are handled (that is one cross-cutting page, "How
@@ -360,6 +363,11 @@ until they are rewritten.
 - **Material for contributors is not published.** A procedure that only someone changing Agent Fleet runs, such as
   verifying a template on real infrastructure, belongs in `docs/`, even when it sits in a runbook today.
 - UI labels are quoted from the catalogues (§4, §5).
+- **Short blocks, not long prose.** A paragraph over about four lines becomes a list, a table or numbered steps. Show
+  output with an example block (a `--list` with its rows) rather than describing its columns.
+- **The reader's words.** Japanese is written first and read by the user in Japanese, so it must not read as a
+  translation: no 「あなたの申告にすぎません」-style phrasing, ログイン / サインイン as verbs (§11), 「ない」「すでに」 in
+  hiragana. When a sentence carried over from an English page reads stiff, rewrite it, do not polish it.
 
 ### Screenshots
 
@@ -372,14 +380,15 @@ until they are rewritten.
 
 ### How a page is produced
 
-1. Agree the page's flow with the user: about ten lines of what the reader does and sees.
-2. Collect the facts from the locale catalogues, the components, the existing guide and the code.
-3. Take the screenshots.
-4. Write the Japanese page; the user reviews in Japanese.
-5. A different model fact-checks the page against the sources.
-6. The user reads it.
-7. Write English from the English catalogues, check the two languages against each other, and land both in one
-   change. English stays canonical (§5).
+1. Collect the facts from the locale catalogues, the components, the existing guide and the code.
+2. Take the screenshots.
+3. Write the Japanese page to the rules above.
+4. A different model fact-checks the page against the sources; fix what it finds.
+5. Put it on a docs-site preview; the user reads it there and comments once. Agree the flow with the user first
+   only for a page whose structure is in question (a new kind of page, or a split that changes other pages).
+6. Write English from the English catalogues, check the two languages against each other (same headings, table rows
+   and list items), and land both in one change, with the old section's pointer and redirect (below). English stays
+   canonical (§5).
 
 ### Moving a page
 

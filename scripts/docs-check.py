@@ -30,7 +30,7 @@ Seventeen checks:
   labels     a quoted bold label in member/ and admin/ exists in the Console's catalogue
   size       a guide chapter stays within CHAPTER_LINE_BUDGET lines (warning only)
   history    task pages (user/, ref/cli/ and the ref pages written for them) carry no ADR numbers, journal
-             paths, issue numbers or dates
+             paths, issue numbers or dates, and their titles no preamble or trailing parenthesis
 
 ref is checked at three levels. (a) Axis coverage: the agent columns cover the session
 kind constants, the deployment rows cover the runtime profiles. (b) Row agreement:
@@ -1723,6 +1723,14 @@ def check_history(files: list[str], f: Findings) -> None:
                 continue
             if fence:
                 continue
+            if line.startswith("# "):
+                title = line[2:].strip()
+                if re.search(r"社内|自社|御社|\bin-house\b|\byour company", title):
+                    f.errors.append(f"{rel(path)}:{i}: the title carries a preamble ({title}); name the task only "
+                                    "(CONVENTIONS §12)")
+                if re.search(r"[）)]$", title):
+                    f.errors.append(f"{rel(path)}:{i}: the title ends in a parenthesis ({title}); put the tool's "
+                                    "name in the verb phrase (CONVENTIONS §12)")
             text = re.sub(r"`[^`]*`", "", line)
             for pat, what in _HISTORY:
                 m = pat.search(text)

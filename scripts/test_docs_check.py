@@ -779,6 +779,11 @@ class HistoryTests(unittest.TestCase):
                            ("fixed in #3463", "an issue number"), ("measured on 2026-11-06", "a date")):
             self.assertIn(what, self.errors("user/a.md", text + "\n"))
 
+    def test_title_preamble_and_parenthesis(self):
+        self.assertIn("preamble", self.errors("user/a.ja.md", "# 社内の別のホストにログインする\n"))
+        self.assertIn("parenthesis", self.errors("user/a.ja.md", "# 別ホストに入る（SSM）\n"))
+        self.assertEqual(self.errors("user/a.ja.md", "# SSM で EC2 にログインする\n"), "")
+
     def test_code_anchors_and_old_chapters_are_left_alone(self):
         body = "`2026-11-06`\n```\nADR 0128\n```\n[x](#section-123)\n"
         self.assertEqual(self.errors("ref/cli/a.md", body), "")
