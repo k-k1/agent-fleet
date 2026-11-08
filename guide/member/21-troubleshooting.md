@@ -515,7 +515,7 @@ MCP servers, cloud-account commands, Jira and apps that connect from outside.
 ### An MCP server I registered isn't available in sessions or assistants
 
 Work through ⚙ Settings → MCP servers (used by sessions) in this order
-([20](20-settings.md#mcp-servers-used-by-sessions)).
+([Add an MCP server to your sessions](../user/integrations/mcp-servers.md#when-it-goes-wrong)).
 
 1. Is it **enabled**? Disabled keeps the definition but hands it to nobody.
 2. Do the **targets** include "sessions" / "assistants"? With both cleared it goes nowhere.
@@ -549,7 +549,7 @@ older build could pass it by luck.
 ### An MCP server's row says "Sign in again", "More permission needed" or shows an unfinished sign-in
 
 These are the states of an **OAuth** server's row in ⚙ Settings → MCP servers (used by sessions)
-([20](20-settings.md#mcp-servers-used-by-sessions)). An OAuth server is handed to sessions and assistants only while you are
+([Add an MCP server to your sessions](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)). An OAuth server is handed to sessions and assistants only while you are
 signed in, and a session picks the change up from the next one you start.
 
 | The row says | What it means | What to do |

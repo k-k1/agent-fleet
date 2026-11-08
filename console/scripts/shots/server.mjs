@@ -269,6 +269,17 @@ const exact = {
         enabled: true, targets: { assistant: false, session: true }, kinds: ["claude", "codex"],
         editable: true, ready: true,
       },
+      // The user guide's MCP page also wants a remote server signed in with OAuth, served only
+      // to a run that asks (SHOT_MCP_GUIDE) so the scenes taken without it keep their list.
+      ...(process.env.SHOT_MCP_GUIDE
+        ? [
+            {
+              id: "u2", name: "tracker", label: "Issue Tracker", origin: "user", transport: "http",
+              url: "https://mcp.tracker.example.com/mcp", auth: "oauth",
+              enabled: true, targets: { assistant: true, session: true }, editable: true, ready: true,
+            },
+          ]
+        : []),
     ],
     tenantFetchedAt: 1753600000,
   }),
@@ -413,6 +424,15 @@ const re = [
   // Egress allowlist verdicts for the MCP tab (docs/log/48 §9). This deployment HAS the
   // proxy wired and is still log-only, and the corp wiki host is not on the list — the
   // combination that renders the "works today, blocked once enforced" warning.
+  // The OAuth row's status (agent: mcpreg.OAuthStatus): connected through a client ID document.
+  [
+    /^\/api\/mcp-servers\/([^/]+)\/oauth$/,
+    (m) => ({
+      serverId: m[1], state: "connected", issuer: "https://auth.tracker.example.com", registration: "cimd",
+      scopes: ["issues:read", "issues:write"], expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      connectedAt: Math.floor(Date.now() / 1000) - 600,
+    }),
+  ],
   [
     /^\/api\/egress\/check$/,
     (m, q) => ({
@@ -420,7 +440,8 @@ const re = [
       mode: "log-only",
       enforce: false,
       hosts: Object.fromEntries(
-        q.getAll("host").map((h) => [h, { host: h, allowed: h.endsWith(".anthropic.com"), proposed: false }]),
+        // The guide's MCP page shows the list, not the allowlist warning (that has its own section).
+        q.getAll("host").map((h) => [h, { host: h, allowed: !!process.env.SHOT_MCP_GUIDE || h.endsWith(".anthropic.com"), proposed: false }]),
       ),
     }),
   ],
