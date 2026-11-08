@@ -1,9 +1,6 @@
-/* Small pieces shared across surfaces — settings blocks (.ds-*), the confirm dialog, the
- * destructive-action buttons and the directory picker.
- *
- * .dirpick-* is used only by features/repos and is referenced nowhere in this settings
- * modal (repos.css defines the same names, and the two are still merged in @import order).
- * Moving or deleting it crosses an ownership boundary, so it was left alone here.
+/* Small pieces shared across surfaces — settings blocks (.ds-*), the confirm dialog and the
+ * destructive-action buttons. The directory picker and the repo/branch pickers live solely in
+ * features/repos/repos.css, and the commit-identity line solely in features/scm/scm.css.
  *
  * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
  * one file: every stylesheet in this Console is global, so the same class split across two
