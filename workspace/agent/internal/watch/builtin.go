@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -36,6 +37,11 @@ const (
 // builtinRetain is how long a retired built-in keeps its record; the PR feedback records it
 // replaces were dropped after 30 days unseen too.
 const builtinRetain = 30 * 24 * time.Hour
+
+// builtinRefresh is how often a live built-in's deadline is pushed out by its sweeps. A purpose
+// whose feature no longer sweeps (renamed, removed) leaves live built-ins that nothing retires;
+// they lapse builtinRetain after the last sweep that named them.
+const builtinRefresh = 24 * time.Hour
 
 // tombWindow is how long a session's own watch delivery stands in for the built-in's notice of
 // the same type. The built-in reads a cache that can trail the watch's own reads by a few
@@ -112,6 +118,9 @@ func (e *Engine) SyncBuiltins(purpose string, specs []BuiltinSpec) {
 		if applySpec(&s, sp) {
 			changed = true
 		}
+		if refreshExpiry(&s, now) {
+			changed = true
+		}
 		keep = append(keep, s)
 	}
 	for _, id := range order {
@@ -122,7 +131,6 @@ func (e *Engine) SyncBuiltins(purpose string, specs []BuiltinSpec) {
 		s, ok := e.state.Retired[id]
 		if ok {
 			delete(e.state.Retired, id)
-			s.Expires = time.Time{}
 		} else {
 			s = Subscription{ID: id, Builtin: purpose, Subject: sp.Subject, Source: sourceOf(sp.Subject), Created: now.UTC(),
 				Until: UntilDeadline, Told: cloneTold(sp.Told), Sent: sp.Sent, Baseline: append([]string(nil), sp.Baseline...)}
@@ -131,6 +139,7 @@ func (e *Engine) SyncBuiltins(purpose string, specs []BuiltinSpec) {
 			}
 		}
 		applySpec(&s, sp)
+		s.Expires = now.Add(builtinRetain).UTC()
 		keep = append(keep, s)
 		changed = true
 	}
@@ -148,13 +157,30 @@ func applySpec(s *Subscription, sp BuiltinSpec) bool {
 	before := cloneSub(*s)
 	s.Owner, s.Ref, s.URL, s.Tag = sp.Owner, sp.Ref, SafeURL(sp.URL), sp.Tag
 	s.Types = append([]string(nil), sp.Types...)
-	s.Notify, s.Fallback, s.Max, s.Combine = sp.Notify, sp.Fallback, sp.Max, sp.Combine
-	if s.Notify == NotifySelf {
-		s.Notify = ""
-	}
+	s.Notify, s.Fallback, s.Max, s.Combine = route(sp.Notify), route(sp.Fallback), sp.Max, sp.Combine
+	s.Baseline = append([]string(nil), sp.Baseline...)
+	// Narrowed types: what is pending under a type no longer asked for is not owed.
+	s.Pending = slices.DeleteFunc(s.Pending, func(ev Event) bool { return !selects(s.Types, ev.Type) })
 	return s.Owner != before.Owner || s.Ref != before.Ref || s.URL != before.URL || s.Tag != before.Tag ||
 		!slices.Equal(s.Types, before.Types) || s.Notify != before.Notify || s.Fallback != before.Fallback ||
-		s.Max != before.Max || s.Combine != before.Combine
+		s.Max != before.Max || s.Combine != before.Combine || !slices.Equal(s.Baseline, before.Baseline) ||
+		len(s.Pending) != len(before.Pending)
+}
+
+// route keeps the one other route there is; anything else is the owner session.
+func route(r string) string {
+	if r == NotifyMember {
+		return NotifyMember
+	}
+	return ""
+}
+
+func refreshExpiry(s *Subscription, now time.Time) bool {
+	if s.Expires.Sub(now) > builtinRetain-builtinRefresh {
+		return false
+	}
+	s.Expires = now.Add(builtinRetain).UTC()
+	return true
 }
 
 func sourceOf(id SubjectID) string {
@@ -198,6 +224,15 @@ func (e *Engine) pruneBuiltinLocked(now time.Time) bool {
 			changed = true
 		}
 	}
+	keep := e.state.Subs[:0:0]
+	for _, s := range e.state.Subs {
+		if s.Builtin != "" && !now.Before(s.Expires) {
+			changed = true // no sweep named it for builtinRetain
+			continue
+		}
+		keep = append(keep, s)
+	}
+	e.state.Subs = keep
 	live := map[SubjectID]bool{}
 	for _, s := range e.state.Subs {
 		if s.Builtin != "" {
@@ -226,7 +261,10 @@ func (e *Engine) pruneBuiltinLocked(now time.Time) bool {
 // observe turns the subject's cursor into the conditions that hold now and the next cursor; it
 // is not called when no live built-in watches subject, so a retired subject's cursor stays as
 // it was, as the features it replaces kept their records while switched off.
-func (e *Engine) ObserveBuiltin(subject SubjectID, observe func(cursor json.RawMessage) ([]Event, json.RawMessage)) {
+//
+// observe answers ok false when it has nothing to go on (the cache has not answered): nothing
+// changes then, so a baseline is taken only from a real first sight.
+func (e *Engine) ObserveBuiltin(subject SubjectID, observe func(cursor json.RawMessage) ([]Event, json.RawMessage, bool)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.load()
@@ -240,9 +278,12 @@ func (e *Engine) ObserveBuiltin(subject SubjectID, observe func(cursor json.RawM
 	if !live {
 		return
 	}
-	events, next := observe(e.state.Cursors[subject])
+	events, next, ok := observe(e.state.Cursors[subject])
+	if !ok {
+		return
+	}
 	changed := false
-	if string(next) != string(e.state.Cursors[subject]) {
+	if !bytes.Equal(next, e.state.Cursors[subject]) {
 		if len(next) == 0 {
 			delete(e.state.Cursors, subject)
 		} else {
@@ -326,30 +367,48 @@ func sameSub(a, b Subscription) bool {
 type Tomb struct {
 	At      time.Time `json:"at"`
 	Version string    `json:"version,omitempty"`
+	Count   int       `json:"count,omitempty"`
 }
 
+// tombKey joins with "|", which neither a session name, a subject (a header token) nor a type
+// can contain.
 func tombKey(owner string, subject SubjectID, typ string) string {
 	return owner + "|" + string(subject) + "|" + typ
 }
 
-// takeTombLocked consumes the tomb for ev, and reports whether it stands in for ev. A failed
-// checks tomb is for one head: the built-in's version is the head, a watch's starts with it.
+// takeTombLocked reports whether a tomb stands in for ev, and consumes it when it does. A tomb
+// for a head (failed checks, ready) stands only for that head: the built-in's version is the
+// head, a watch's starts with it. A threads tomb stands for at most the count the watch told.
+// A tomb that does not match stays: the built-in's cache may still be showing an older state,
+// and the matching one comes on a later observation.
 func (e *Engine) takeTombLocked(owner string, ev Event, now time.Time) bool {
 	k := tombKey(owner, ev.Subject, ev.Type)
 	t, ok := e.state.Tombs[k]
 	if !ok {
 		return false
 	}
-	delete(e.state.Tombs, k)
-	if ev.Type == typeChecksFailed && t.Version != ev.Version && !strings.HasPrefix(t.Version, ev.Version+":") {
+	if now.Sub(t.At) >= tombWindow {
+		delete(e.state.Tombs, k)
 		return false
 	}
-	return now.Sub(t.At) < tombWindow
+	switch ev.Type {
+	case typeChecksFailed, typeReady:
+		if t.Version != ev.Version && !strings.HasPrefix(t.Version, ev.Version+":") {
+			return false
+		}
+	case typeThreads:
+		if ev.Count > t.Count {
+			return false
+		}
+	}
+	delete(e.state.Tombs, k)
+	return true
 }
 
 const (
 	typeChecksFailed    = "pr.checks.failed"
 	typeChecksCompleted = "pr.checks.completed"
+	typeReady           = "pr.ready"
 )
 
 // coverTypes are the types a watch may select to tell what a built-in's type tells: a failure
@@ -429,5 +488,5 @@ func (e *Engine) addTombLocked(owner, typ string, ev Event, now time.Time) {
 	if e.state.Tombs == nil {
 		e.state.Tombs = map[string]Tomb{}
 	}
-	e.state.Tombs[tombKey(owner, ev.Subject, typ)] = Tomb{At: now.UTC(), Version: ev.Version}
+	e.state.Tombs[tombKey(owner, ev.Subject, typ)] = Tomb{At: now.UTC(), Version: ev.Version, Count: ev.Count}
 }

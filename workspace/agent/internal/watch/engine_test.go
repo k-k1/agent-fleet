@@ -63,6 +63,7 @@ type fakeSink struct {
 	notifyErr error
 	// answers overrides answer per owner.
 	answers map[string]Readiness
+	onReady func()
 }
 
 func (f *fakeSink) OwnerExists(o string) bool { return !f.gone[o] }
@@ -71,6 +72,9 @@ func (f *fakeSink) Ready(owner string, _ time.Time) Readiness {
 		f.asked = map[string]int{}
 	}
 	f.asked[owner]++
+	if f.onReady != nil {
+		f.onReady()
+	}
 	if r, ok := f.answers[owner]; ok {
 		return r
 	}

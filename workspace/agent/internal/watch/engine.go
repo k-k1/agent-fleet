@@ -352,7 +352,7 @@ func (e *Engine) Watching(owner string, subject SubjectID, typ string) bool {
 	e.load()
 	found := false
 	for _, s := range e.state.Subs {
-		if s.Owner == owner && s.Subject == subject && !s.Done && now.Before(s.Expires) && selects(s.Types, typ) {
+		if s.Builtin == "" && s.Owner == owner && s.Subject == subject && !s.Done && now.Before(s.Expires) && selects(s.Types, typ) {
 			found = true
 			break
 		}
@@ -555,6 +555,9 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 			continue // unwatched since the candidates were picked
 		}
 		s := &e.state.Subs[i]
+		if s.Owner != c.owner || (s.Notify == NotifyMember) != c.member {
+			continue // its feature moved it since the candidates were picked; offered again next tick
+		}
 		member := c.member
 		if !member {
 			switch r := ready[c.owner]; {
@@ -614,7 +617,7 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 	if changed && !e.save() {
 		// Not on disk: delivering now could repeat after a restart. Undo and try next tick.
 		for _, c := range claims {
-			e.restoreLocked(c.sub)
+			e.releaseLocked(c)
 		}
 		claims = nil
 	}
@@ -632,7 +635,7 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 		}
 		e.mu.Lock()
 		if err != nil {
-			e.restoreLocked(c.sub)
+			e.releaseLocked(c)
 		} else {
 			if c.sub.Builtin == "" {
 				e.noteUserDeliveryLocked(c.sub.Owner, c.evs, now)
@@ -670,10 +673,38 @@ func cloneSub(s Subscription) Subscription {
 	return c
 }
 
-// restoreLocked puts a subscription back as it was before a claim, unless it was ended since.
-func (e *Engine) restoreLocked(before Subscription) {
-	if i := e.subIndexLocked(before.ID); i >= 0 {
-		e.state.Subs[i] = before
+// releaseLocked undoes one claim whose delivery failed or was not saved. It undoes the claim
+// only, not the subscription: a feature may have changed its owner or routes, observed a newer
+// state or retired it while the delivery ran, and none of that may be lost. Told cannot have
+// moved meanwhile: only deliver, on the engine's one tick goroutine, records a delivery.
+func (e *Engine) releaseLocked(c claimed) {
+	var s *Subscription
+	if i := e.subIndexLocked(c.sub.ID); i >= 0 {
+		s = &e.state.Subs[i]
+	} else if r, ok := e.state.Retired[c.sub.ID]; ok {
+		defer func() { e.state.Retired[c.sub.ID] = r }()
+		s = &r
+	} else {
+		return // ended since
+	}
+	for i := len(c.evs) - 1; i >= 0; i-- {
+		ev := c.evs[i]
+		if prev, ok := c.sub.Told[ev.Type]; ok {
+			s.Told[ev.Type] = prev
+		} else {
+			delete(s.Told, ev.Type)
+		}
+		// First in line again, unless a newer state of the type is pending by now. A built-in's
+		// next observation replaces it if it no longer holds.
+		if !slices.ContainsFunc(s.Pending, func(p Event) bool { return p.Type == ev.Type }) {
+			s.Pending = slices.Insert(s.Pending, 0, ev)
+		}
+	}
+	if s.Builtin != "" {
+		s.Sent = max(s.Sent-1, 0)
+		s.SentAt = c.sub.SentAt
+	} else {
+		s.Done = c.sub.Done
 	}
 }
 

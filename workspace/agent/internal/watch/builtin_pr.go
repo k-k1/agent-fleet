@@ -35,13 +35,15 @@ type PRCursor struct {
 //
 // The summaries are composed from fields the cache controls; check names are provider text and
 // go into Data (rule 6.5).
-func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now time.Time) ([]Event, json.RawMessage) {
+// A nil pr (the cache has not answered) is no observation: ok is false, and the caller's
+// ObserveBuiltin then changes nothing, so a baseline is not taken from an unanswered read.
+func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now time.Time) (events []Event, next json.RawMessage, ok bool) {
 	var cur PRCursor
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &cur)
 	}
 	if pr == nil {
-		return nil, raw
+		return nil, raw, false
 	}
 	open := pr.State == "open"
 	cr := open && pr.ChangesRequested
@@ -64,7 +66,6 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 	cur.Threads = threads
 
 	source := sourceOf(subject)
-	var events []Event
 	ev := func(typ, version, summary string, data []DataItem) {
 		events = append(events, Event{Source: source, Subject: subject, Type: typ, Version: version, Summary: summary, Data: data, At: now.UTC()})
 	}
@@ -86,6 +87,7 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 		}
 		if threads > 0 {
 			ev("pr.review.threads_unresolved", strconv.Itoa(cur.ThreadRise), fmt.Sprintf("%d review thread(s) are unresolved.", threads), nil)
+			events[len(events)-1].Count = threads
 		}
 		if conflict {
 			ev("pr.conflict", strconv.Itoa(cur.ConflictEpisode), "The PR has a merge conflict with its base.", nil)
@@ -95,7 +97,7 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 		}
 	}
 	out, _ := json.Marshal(cur)
-	return events, out
+	return events, out, true
 }
 
 // shortHead is the 12-character head the PR feedback notice has always shown.

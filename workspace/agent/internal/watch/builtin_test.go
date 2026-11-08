@@ -14,7 +14,7 @@ import (
 const bSubject = SubjectID("fake:o/r#1")
 
 func observe(e *Engine, evs ...Event) {
-	e.ObserveBuiltin(bSubject, func(cur json.RawMessage) ([]Event, json.RawMessage) { return evs, cur })
+	e.ObserveBuiltin(bSubject, func(cur json.RawMessage) ([]Event, json.RawMessage, bool) { return evs, cur, true })
 }
 
 func ciSpec(owner string) BuiltinSpec {
@@ -72,12 +72,12 @@ func TestBuiltinBaselineTakesTheFirstSeenTerminalStateAsHistory(t *testing.T) {
 	sp2 := sp
 	sp2.Subject = "fake:o/r#2"
 	e.SyncBuiltins("n", []BuiltinSpec{sp, sp2})
-	e.ObserveBuiltin(sp2.Subject, func(c json.RawMessage) ([]Event, json.RawMessage) {
-		return []Event{{Subject: sp2.Subject, Type: "pr.ready", Version: "h"}}, c
+	e.ObserveBuiltin(sp2.Subject, func(c json.RawMessage) ([]Event, json.RawMessage, bool) {
+		return []Event{{Subject: sp2.Subject, Type: "pr.ready", Version: "h"}}, c, true
 	})
 	e.Tick(context.Background())
-	e.ObserveBuiltin(sp2.Subject, func(c json.RawMessage) ([]Event, json.RawMessage) {
-		return []Event{{Subject: sp2.Subject, Type: "pr.merged", Version: "t2"}}, c
+	e.ObserveBuiltin(sp2.Subject, func(c json.RawMessage) ([]Event, json.RawMessage, bool) {
+		return []Event{{Subject: sp2.Subject, Type: "pr.merged", Version: "t2"}}, c, true
 	})
 	e.Tick(context.Background())
 	if strings.Join(sink.member, ",") != "a:pr.ready:h,a:pr.merged:t2" {
@@ -109,14 +109,15 @@ func TestBuiltinCapAndCombine(t *testing.T) {
 }
 
 func TestBuiltinFallsBackToTheMemberForAnUnreachableOwner(t *testing.T) {
-	sink := &fakeSink{answer: Unreachable}
+	// An archived owner does not exist for a session's own watches; its built-ins stay.
+	sink := &fakeSink{answer: Unreachable, gone: map[string]bool{"a": true}}
 	e, _, _ := newTestEngine(&fakeSource{}, sink)
 	noFallback := ciSpec("a")
 	noFallback.Subject, noFallback.Fallback = "fake:o/r#2", ""
 	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a"), noFallback})
 	observe(e, ev("pr.checks.failed", "h1"))
-	e.ObserveBuiltin(noFallback.Subject, func(c json.RawMessage) ([]Event, json.RawMessage) {
-		return []Event{{Subject: noFallback.Subject, Type: "pr.checks.failed", Version: "h1"}}, c
+	e.ObserveBuiltin(noFallback.Subject, func(c json.RawMessage) ([]Event, json.RawMessage, bool) {
+		return []Event{{Subject: noFallback.Subject, Type: "pr.checks.failed", Version: "h1"}}, c, true
 	})
 	for i := 0; i < 3; i++ {
 		e.Tick(context.Background())
@@ -145,8 +146,8 @@ func TestRetiredBuiltinKeepsItsRecordAndAnOwnerChangeRepeatsNothing(t *testing.T
 	e2 := New(st, sink, &fakeSource{})
 	e2.now = c.now
 	e2.SyncBuiltins("ci", []BuiltinSpec{ciSpec("b")})
-	e2.ObserveBuiltin(bSubject, func(cur json.RawMessage) ([]Event, json.RawMessage) {
-		return []Event{ev("pr.checks.failed", "h1")}, cur
+	e2.ObserveBuiltin(bSubject, func(cur json.RawMessage) ([]Event, json.RawMessage, bool) {
+		return []Event{ev("pr.checks.failed", "h1")}, cur, true
 	})
 	e2.Tick(context.Background())
 	if len(sink.told) != 1 {
@@ -268,7 +269,7 @@ func TestPRConditionsKeepTheFeedbackVersions(t *testing.T) {
 	var cur json.RawMessage
 	step := func(pr branchpr.PR) map[string]string {
 		var evs []Event
-		evs, cur = PRConditions("github:o/r#1", &pr, cur, now)
+		evs, cur, _ = PRConditions("github:o/r#1", &pr, cur, now)
 		out := map[string]string{}
 		for _, e := range evs {
 			out[e.Type] = e.Version
@@ -323,7 +324,7 @@ func TestAnUnreachableOwnersOwnWatchEndsAsForAGoneOne(t *testing.T) {
 func TestASecondPurposesSeedDoesNotOverwriteTheSubjectsCursor(t *testing.T) {
 	e, _, _ := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
 	e.SyncBuiltins("a", []BuiltinSpec{{Subject: bSubject, Owner: "x", Types: []string{"pr.merged"}}})
-	e.ObserveBuiltin(bSubject, func(json.RawMessage) ([]Event, json.RawMessage) { return nil, json.RawMessage(`{"n":5}`) })
+	e.ObserveBuiltin(bSubject, func(json.RawMessage) ([]Event, json.RawMessage, bool) { return nil, json.RawMessage(`{"n":5}`), true })
 	e.SyncBuiltins("b", []BuiltinSpec{{Subject: bSubject, Owner: "x", Types: []string{"pr.merged"}, Cursor: json.RawMessage(`{"n":1}`)}})
 	if got := string(e.state.Cursors[bSubject]); got != `{"n":5}` {
 		t.Fatalf("cursor = %s", got)
@@ -340,5 +341,189 @@ func TestABuiltinsTypesDoNotWidenWhatAWatchedSubjectIsReadFor(t *testing.T) {
 	e.Tick(context.Background())
 	if strings.Join(src.want, ",") != "pr.merged" {
 		t.Fatalf("the source was asked for %v; a built-in's types would make it spend requests nobody's watch asked for", src.want)
+	}
+}
+
+func threadsEv(rise string, count int) Event {
+	e := ev("pr.review.threads_unresolved", rise)
+	e.Count = count
+	return e
+}
+
+func TestATombForAnotherHeadSurvivesAStaleObservation(t *testing.T) {
+	src := &fakeSource{hint: Hint{After: time.Minute}}
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(src, sink)
+	if _, err := e.Subscribe(context.Background(), Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.checks.failed"}}); err != nil {
+		t.Fatal(err)
+	}
+	src.events = []Event{ev("pr.checks.failed", "h2:fp")}
+	e.Tick(context.Background()) // the watch tells h2 and ends
+	sink.answer = Wait
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h1")) // the cache still shows the older head
+	c.add(time.Minute)
+	observe(e, ev("pr.checks.failed", "h2"))
+	sink.answer = Ready
+	e.Tick(context.Background())
+	e.Tick(context.Background())
+	if strings.Join(sink.told, ",") != "a:pr.checks.failed:h2:fp" {
+		t.Fatalf("told = %v", sink.told)
+	}
+}
+
+// toldByWatch has a's own watch tell evs and end, leaving its tomb, then makes a built-in of
+// types for a.
+func toldByWatch(t *testing.T, types []string, evs ...Event) (*Engine, *fakeSink, *clock) {
+	t.Helper()
+	src := &fakeSource{events: evs, hint: Hint{After: time.Minute}}
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(src, sink)
+	sub, err := e.Subscribe(context.Background(), Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fake source offers neither type: widen the watch by hand.
+	e.state.Subs[e.subIndexLocked(sub.ID)].Types = types
+	e.Tick(context.Background())
+	if len(sink.told) != 1 {
+		t.Fatalf("the watch told %v", sink.told)
+	}
+	e.SyncBuiltins("b", []BuiltinSpec{{Subject: bSubject, Owner: "a", Types: types}})
+	c.add(time.Minute)
+	return e, sink, c
+}
+
+func TestAThreadsTombStandsForNoMoreThanTheCountItTold(t *testing.T) {
+	threads := []string{"pr.review.threads_unresolved"}
+	e, sink, _ := toldByWatch(t, threads, threadsEv("0.2", 2))
+	observe(e, threadsEv("1", 2)) // the two the watch told
+	e.Tick(context.Background())
+	if len(sink.told) != 1 {
+		t.Fatalf("told twice: %v", sink.told)
+	}
+	e, sink, _ = toldByWatch(t, threads, threadsEv("0.2", 2))
+	observe(e, threadsEv("1", 3)) // a third is news
+	e.Tick(context.Background())
+	if len(sink.told) != 2 {
+		t.Fatalf("a rise past what the watch told was swallowed: %v", sink.told)
+	}
+}
+
+func TestAReadyTombStandsForItsHeadOnly(t *testing.T) {
+	ready := []string{"pr.ready"}
+	e, sink, _ := toldByWatch(t, ready, ev("pr.ready", "h1:base"))
+	observe(e, ev("pr.ready", "h2"))
+	e.Tick(context.Background())
+	if len(sink.told) != 2 {
+		t.Fatalf("ready on a new head was swallowed: %v", sink.told)
+	}
+}
+
+func TestNarrowedTypesDropWhatIsPendingUnderThem(t *testing.T) {
+	sink := &fakeSink{answer: Wait}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h1"))
+	sp := ciSpec("a")
+	sp.Types = []string{"pr.review.*"}
+	e.SyncBuiltins("ci", []BuiltinSpec{sp})
+	sink.answer = Ready
+	e.Tick(context.Background())
+	if len(sink.told) != 0 {
+		t.Fatalf("told a type no longer asked for: %v", sink.told)
+	}
+}
+
+func TestANegativeMaxIsNoCap(t *testing.T) {
+	sink := &fakeSink{answer: Ready}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	sp := ciSpec("a")
+	sp.Max = -1
+	e.SyncBuiltins("ci", []BuiltinSpec{sp})
+	observe(e, ev("pr.checks.failed", "h1"))
+	e.Tick(context.Background())
+	if len(sink.told) != 1 {
+		t.Fatalf("told = %v", sink.told)
+	}
+}
+
+func TestAFailedDeliveryUndoesOnlyItsClaim(t *testing.T) {
+	sink := &fakeSink{answer: Ready, injectErr: errors.New("busy")}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h1"))
+	sink.onInject = func() {
+		// While the injection runs: a push fails again and the PR changes hands.
+		e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("b")})
+		observe(e, ev("pr.checks.failed", "h2"))
+	}
+	e.Tick(context.Background())
+	s := e.state.Subs[e.subIndexLocked(BuiltinID("ci", bSubject))]
+	if s.Owner != "b" || s.Sent != 0 || s.Told["pr.checks.failed"] != "" || len(s.Pending) != 1 || s.Pending[0].Version != "h2" {
+		t.Fatalf("after the failed delivery: %+v", s)
+	}
+	sink.onInject, sink.injectErr = nil, nil
+	e.Tick(context.Background())
+	if strings.Join(sink.told, ",") != "b:pr.checks.failed:h2" {
+		t.Fatalf("told = %v", sink.told)
+	}
+}
+
+func TestAFailedDeliveryOfARetiredBuiltinIsUndoneInItsRecord(t *testing.T) {
+	sink := &fakeSink{answer: Ready, injectErr: errors.New("busy")}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h1"))
+	sink.onInject = func() { e.SyncBuiltins("ci", nil) }
+	e.Tick(context.Background())
+	sink.onInject, sink.injectErr = nil, nil
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h1"))
+	e.Tick(context.Background())
+	if strings.Join(sink.told, ",") != "a:pr.checks.failed:h1" {
+		t.Fatalf("a notice whose delivery failed while it was retired was lost: told = %v", sink.told)
+	}
+}
+
+func TestAnOwnerChangedWhileReadinessWasAskedIsNotToldUnasked(t *testing.T) {
+	sink := &fakeSink{answers: map[string]Readiness{"a": Ready, "b": Wait}}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h1"))
+	sink.onReady = func() { e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("b")}) }
+	e.Tick(context.Background())
+	if len(sink.told) != 0 {
+		t.Fatalf("told %v to an owner whose readiness nobody asked", sink.told)
+	}
+}
+
+func TestAnUnansweredReadIsNoFirstSight(t *testing.T) {
+	sink := &fakeSink{answer: Ready}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	e.SyncBuiltins("n", []BuiltinSpec{{Subject: bSubject, Owner: "a", Types: []string{"pr.merged"}, Notify: NotifyMember, Baseline: []string{"pr.merged"}}})
+	e.ObserveBuiltin(bSubject, func(c json.RawMessage) ([]Event, json.RawMessage, bool) {
+		_, next, ok := PRConditions(bSubject, nil, c, time.Now())
+		return nil, next, ok
+	})
+	observe(e, ev("pr.merged", "t1"))
+	e.Tick(context.Background())
+	if len(sink.member) != 0 {
+		t.Fatalf("a PR first seen merged after an unanswered read was told: %v", sink.member)
+	}
+}
+
+func TestALiveBuiltinNoSweepNamesLapses(t *testing.T) {
+	e, _, c := newTestEngine(&fakeSource{}, &fakeSink{answer: Wait})
+	e.SyncBuiltins("gone-purpose", []BuiltinSpec{ciSpec("a")})
+	for i := 0; i < 3; i++ { // a purpose still swept keeps its built-ins however long
+		c.add(builtinRetain / 2)
+		e.SyncBuiltins("kept", []BuiltinSpec{{Subject: "fake:o/r#2", Owner: "a", Types: []string{"pr.merged"}}})
+	}
+	if e.subIndexLocked(BuiltinID("gone-purpose", bSubject)) >= 0 {
+		t.Fatal("a built-in no sweep names any more never lapses")
+	}
+	if e.subIndexLocked(BuiltinID("kept", "fake:o/r#2")) < 0 {
+		t.Fatal("a built-in its feature still sweeps lapsed")
 	}
 }

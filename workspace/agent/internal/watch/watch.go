@@ -35,6 +35,9 @@ type Event struct {
 	// Failed marks a pr.checks.completed whose result is a failure, so a session's watch on
 	// completed checks is known to have told what a built-in's pr.checks.failed would.
 	Failed bool `json:"failed,omitempty"`
+	// Count is the number of unresolved review threads on a pr.review.threads_unresolved, so a
+	// watch that told two threads stands in for a built-in's two and not for its three.
+	Count int `json:"count,omitempty"`
 }
 
 // DataItem is one piece of provider text: a check name and its link, a reviewer's login.

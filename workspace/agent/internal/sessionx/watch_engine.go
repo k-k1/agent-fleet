@@ -215,8 +215,8 @@ func (s *watchSink) Notify(sub watch.Subscription, evs []watch.Event) error {
 	return send(sub, evs)
 }
 
-// The wording of each built-in purpose, registered by the feature that keeps it: into the owner
-// session, and for the member.
+// The wording of each built-in purpose: into the owner session, and for the member. Filled from
+// init functions only and read-only afterwards, so the sink reads them without a lock.
 var (
 	builtinNoticeText   = map[string]func(watch.Subscription, []watch.Event) string{}
 	builtinMemberNotice = map[string]func(watch.Subscription, []watch.Event) error{}
