@@ -31,6 +31,7 @@ package main
 // without adding a check fails here.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"reflect"
 	"runtime"
@@ -48,9 +49,9 @@ func TestSessionWiringIsLive(t *testing.T) {
 		"FirstNonEmpty":    func(t *testing.T) { sameSessionFunc(t, w.FirstNonEmpty, firstNonEmpty) },
 		"SplitFrontmatter": func(t *testing.T) { sameSessionFunc(t, w.SplitFrontmatter, splitFrontmatter) },
 
-		"BrowseRoot":     func(t *testing.T) { sameSessionFunc(t, w.BrowseRoot, browseRoot) },
-		"MaxUploadBytes": func(t *testing.T) { sameSessionFunc(t, w.MaxUploadBytes, maxUploadBytes) },
-		"ReadRoots":      func(t *testing.T) { sameSessionFunc(t, w.ReadRoots, allowedReadRoots) },
+		"BrowseRoot":     func(t *testing.T) { sameSessionFunc(t, w.BrowseRoot, fsx.BrowseRoot) },
+		"MaxUploadBytes": func(t *testing.T) { sameSessionFunc(t, w.MaxUploadBytes, fsx.MaxUploadBytes) },
+		"ReadRoots":      func(t *testing.T) { sameSessionFunc(t, w.ReadRoots, fsx.AllowedReadRoots) },
 
 		"IsSvnRepo":       func(t *testing.T) { sameSessionFunc(t, w.IsSvnRepo, svnx.IsRepo) },
 		"RepoJobsRunning": func(t *testing.T) { sameSessionFunc(t, w.RepoJobsRunning, repoJobsRunning) },

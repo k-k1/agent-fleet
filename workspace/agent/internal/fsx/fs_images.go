@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // Every picture under a folder, several levels down, as one flat list (GET /fs/images,
 // ADR 0080 decision 9's dedicated endpoint, built for the gallery's "include subfolders").
@@ -11,7 +11,7 @@ package main
 // axis at once — depth, folders read, files looked at, wall time, and entries returned — and
 // past any of them the answer is simply the newest of what was seen, marked `truncated`.
 //
-// The walk never leaves the folder asked for: it is gated exactly like fs/tree (safeBrowsePath,
+// The walk never leaves the folder asked for: it is gated exactly like fs/tree (SafeBrowsePath,
 // the codex store, fsQueryResolvedOK for a symlinked start), every child is checked against the
 // denylist by its browse-relative path, and a symlink — to a file or a folder — is skipped
 // rather than followed. os.ReadDir reports a symlink's own type, so a link to ~/.ssh is never
@@ -98,9 +98,9 @@ var (
 	imagesReadDir = func(f *os.File, n int) ([]os.DirEntry, error) { return f.ReadDir(n) }
 )
 
-func handleFSImages(w http.ResponseWriter, r *http.Request) {
+func HandleImages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("path")
-	full, rel, ok := safeBrowsePath(q)
+	full, rel, ok := SafeBrowsePath(q)
 	if !ok || isCodexGeneratedImagesPath(full) || !fsQueryResolvedOK(q, full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -155,7 +155,7 @@ func handleFSImages(w http.ResponseWriter, r *http.Request) {
 // under the browse root at all (an absolute scratch or docs root fsQueryResolvedOK admitted),
 // where no denylist applies.
 func imagesDenyBase(full string) *string {
-	rel, ok := pathguard.ResolveUnder(full, browseRoot())
+	rel, ok := pathguard.ResolveUnder(full, BrowseRoot())
 	if !ok {
 		return nil
 	}
@@ -207,7 +207,7 @@ func walkImages(ctx context.Context, full, rel string, denyBase *string, depth i
 				files++
 				childRel := filepath.Join(d.rel, e.Name())
 				childCanon := path.Join(d.canon, e.Name())
-				if isDenied(childRel) || (denyBase != nil && isDenied(childCanon)) || e.Type()&fs.ModeSymlink != 0 {
+				if IsDenied(childRel) || (denyBase != nil && IsDenied(childCanon)) || e.Type()&fs.ModeSymlink != 0 {
 					continue
 				}
 				sub := e.Name()

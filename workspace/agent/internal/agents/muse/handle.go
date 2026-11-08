@@ -1329,7 +1329,7 @@ func (h *threadHandle) unpark() {
 }
 
 // maxInlineImageBytes caps what AF will base64 into a single frame. The upload endpoint accepts
-// 64 MiB (fs.go's defaultMaxUpload) and base64 inflates by a third, so an uncapped read would
+// 64 MiB (internal/fsx/fs.go's defaultMaxUpload) and base64 inflates by a third, so an uncapped read would
 // put an 85 MB line on a pipe whose reader is bounded at 16 MiB (msp/client.go). Eight is far
 // above any screenshot and well under both limits; anything larger takes the path route below,
 // which still works — the workspace is trusted and the host's filesystem is unrestricted, so

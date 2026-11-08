@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package fsx
 
 import (
 	"crypto/rand"
@@ -38,7 +38,7 @@ type fdReadPath struct {
 	relative   string
 	display    string
 	readOnly   bool
-	browseRoot bool
+	BrowseRoot bool
 }
 
 // validateCanonicalPOSIXPath performs lexical validation only. It never cleans
@@ -47,14 +47,14 @@ type fdReadPath struct {
 func validateCanonicalPOSIXPath(input string, allowAbsolute bool) *fsAPIError {
 	if input == "" || len(input) > maxFSPathBytes || strings.IndexByte(input, 0) >= 0 ||
 		strings.Contains(input, "\\") {
-		return fsErr(400, errCodeFSBadPath, "invalid file path")
+		return fsErr(400, deps.ErrCodeFSBadPath, "invalid file path")
 	}
 	if len(input) >= 2 && ((input[0] >= 'a' && input[0] <= 'z') || (input[0] >= 'A' && input[0] <= 'Z')) && input[1] == ':' {
-		return fsErr(400, errCodeFSBadPath, "Windows drive paths are not allowed")
+		return fsErr(400, deps.ErrCodeFSBadPath, "Windows drive paths are not allowed")
 	}
 	absolute := strings.HasPrefix(input, "/")
 	if absolute && !allowAbsolute {
-		return fsErr(400, errCodeFSBadPath, "absolute paths are not writable")
+		return fsErr(400, deps.ErrCodeFSBadPath, "absolute paths are not writable")
 	}
 
 	parts := strings.Split(input, "/")
@@ -69,7 +69,7 @@ func validateCanonicalPOSIXPath(input string, allowAbsolute bool) *fsAPIError {
 	}
 	for _, part := range parts[start:] {
 		if part == "" || part == "." || part == ".." || len(part) > maxFSNameBytes {
-			return fsErr(400, errCodeFSBadPath, "file path is not canonical")
+			return fsErr(400, deps.ErrCodeFSBadPath, "file path is not canonical")
 		}
 	}
 	return nil
@@ -98,9 +98,9 @@ func resolveFDReadPath(input string) (fdReadPath, *fsAPIError) {
 	if aerr := validateCanonicalPOSIXPath(input, true); aerr != nil {
 		return fdReadPath{}, aerr
 	}
-	browse, err := absoluteTrustedRoot(browseRoot())
+	browse, err := absoluteTrustedRoot(BrowseRoot())
 	if err != nil {
-		return fdReadPath{}, fsErr(500, errCodeFSReadFailed, "cannot resolve browse root")
+		return fdReadPath{}, fsErr(500, deps.ErrCodeFSReadFailed, "cannot resolve browse root")
 	}
 	// A session's changed-files list links to the agent memory it wrote, which sits outside
 	// the browse root ($CLAUDE_CONFIG_DIR) or under a denylisted directory (~/.codex). Only
@@ -114,10 +114,10 @@ func resolveFDReadPath(input string) (fdReadPath, *fsAPIError) {
 	memoryCandidate, browsable := input, false
 	if strings.HasPrefix(input, "/") {
 		if relative, ok := pathUnderRoot(input, browse); ok {
-			browsable = !isDenied(relative)
+			browsable = !IsDenied(relative)
 		}
 	} else {
-		memoryCandidate, browsable = filepath.Join(browse, input), !isDenied(input)
+		memoryCandidate, browsable = filepath.Join(browse, input), !IsDenied(input)
 	}
 	if _, root, relative, ok := memoryx.MemoryFile(memoryCandidate); ok &&
 		(!browsable || browseReadCrossesSymlink(browse, memoryCandidate)) {
@@ -137,12 +137,12 @@ func resolveFDReadPath(input string) (fdReadPath, *fsAPIError) {
 					case ".png", ".jpg", ".jpeg", ".webp", ".gif":
 						return fdReadPath{root: generatedRoot, relative: relative, display: input, readOnly: true}, nil
 					default:
-						return fdReadPath{}, fsErr(403, errCodeFSDenied, "only generated image files may be read from CODEX_HOME")
+						return fdReadPath{}, fsErr(403, deps.ErrCodeFSDenied, "only generated image files may be read from CODEX_HOME")
 					}
 				}
 			}
 			return fdReadPath{
-				root: browse, relative: input, display: input, browseRoot: true,
+				root: browse, relative: input, display: input, BrowseRoot: true,
 			}, nil
 		}
 		if relative, ok := pathUnderRoot(input, generatedRoot); ok {
@@ -152,12 +152,12 @@ func resolveFDReadPath(input string) (fdReadPath, *fsAPIError) {
 			case ".png", ".jpg", ".jpeg", ".webp", ".gif":
 				return fdReadPath{root: generatedRoot, relative: relative, display: input, readOnly: true}, nil
 			default:
-				return fdReadPath{}, fsErr(403, errCodeFSDenied, "only generated image files may be read from CODEX_HOME")
+				return fdReadPath{}, fsErr(403, deps.ErrCodeFSDenied, "only generated image files may be read from CODEX_HOME")
 			}
 		}
 	}
 
-	roots := allowedReadRoots()
+	roots := AllowedReadRoots()
 	for i, rawRoot := range roots {
 		root, err := absoluteTrustedRoot(rawRoot)
 		if err != nil {
@@ -169,14 +169,14 @@ func resolveFDReadPath(input string) (fdReadPath, *fsAPIError) {
 		}
 		if i == 0 {
 			return fdReadPath{
-				root: root, relative: relative, display: relative, browseRoot: true,
+				root: root, relative: relative, display: relative, BrowseRoot: true,
 			}, nil
 		}
 		return fdReadPath{
 			root: root, relative: relative, display: input, readOnly: true,
 		}, nil
 	}
-	return fdReadPath{}, fsErr(400, errCodeFSBadPath, "absolute path is outside allowed read roots")
+	return fdReadPath{}, fsErr(400, deps.ErrCodeFSBadPath, "absolute path is outside allowed read roots")
 }
 
 // browseReadCrossesSymlink reports whether full's directory is reached from the browse root
@@ -241,13 +241,13 @@ func openat2NoSymlinks(dirFD int, relative string, flags int) (int, error) {
 func mapFDOpenError(err error, operation string) *fsAPIError {
 	switch {
 	case errors.Is(err, unix.ELOOP):
-		return fsErr(400, errCodeFSSymlinkNotAllowed, "symlinks are not allowed")
+		return fsErr(400, deps.ErrCodeFSSymlinkNotAllowed, "symlinks are not allowed")
 	case errors.Is(err, unix.ENOENT), errors.Is(err, unix.ENOTDIR):
-		return fsErr(404, errCodeFSNotFile, "target is not an existing regular file")
+		return fsErr(404, deps.ErrCodeFSNotFile, "target is not an existing regular file")
 	case errors.Is(err, unix.EACCES), errors.Is(err, unix.EPERM):
-		return fsErr(403, errCodeFSDenied, "file access is denied")
+		return fsErr(403, deps.ErrCodeFSDenied, "file access is denied")
 	default:
-		return fsErr(500, errCodeFSReadFailed, operation+": "+err.Error())
+		return fsErr(500, deps.ErrCodeFSReadFailed, operation+": "+err.Error())
 	}
 }
 
@@ -256,8 +256,8 @@ func mapFDOpenError(err error, operation string) *fsAPIError {
 // keeps a FIFO swapped in after the lstat from blocking the open; the fstat below
 // then refuses it as not regular. Hard links are NOT refused here (docs/build/07-security.md 7.2.2).
 func openFDFile(path fdReadPath) (*openedFDFile, *fsAPIError) {
-	if path.browseRoot && isDenied(path.relative) {
-		return nil, fsErr(403, errCodeFSDenied, "file path is denied")
+	if path.BrowseRoot && IsDenied(path.relative) {
+		return nil, fsErr(403, deps.ErrCodeFSDenied, "file path is denied")
 	}
 	rootFD, err := unix.Open(path.root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
@@ -280,11 +280,11 @@ func openFDFile(path fdReadPath) (*openedFDFile, *fsAPIError) {
 	}
 	if lst.Mode&unix.S_IFMT == unix.S_IFLNK {
 		out.close()
-		return nil, fsErr(400, errCodeFSSymlinkNotAllowed, "symlinks are not allowed")
+		return nil, fsErr(400, deps.ErrCodeFSSymlinkNotAllowed, "symlinks are not allowed")
 	}
 	if lst.Mode&unix.S_IFMT != unix.S_IFREG {
 		out.close()
-		return nil, fsErr(404, errCodeFSNotFile, "target is not a regular file")
+		return nil, fsErr(404, deps.ErrCodeFSNotFile, "target is not a regular file")
 	}
 
 	fileFD, err := openat2NoSymlinks(parentFD, base, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK)
@@ -296,17 +296,17 @@ func openFDFile(path fdReadPath) (*openedFDFile, *fsAPIError) {
 	if file == nil {
 		_ = unix.Close(fileFD)
 		out.close()
-		return nil, fsErr(500, errCodeFSReadFailed, "open target file")
+		return nil, fsErr(500, deps.ErrCodeFSReadFailed, "open target file")
 	}
 	out.file = file
 	var openedStat unix.Stat_t
 	if err := unix.Fstat(fileFD, &openedStat); err != nil {
 		out.close()
-		return nil, fsErr(500, errCodeFSReadFailed, "inspect opened target")
+		return nil, fsErr(500, deps.ErrCodeFSReadFailed, "inspect opened target")
 	}
 	if openedStat.Mode&unix.S_IFMT != unix.S_IFREG {
 		out.close()
-		return nil, fsErr(404, errCodeFSNotFile, "target is not a regular file")
+		return nil, fsErr(404, deps.ErrCodeFSNotFile, "target is not a regular file")
 	}
 	return out, nil
 }
@@ -357,7 +357,7 @@ func readStableFileSnapshot(file *os.File, hooks snapshotHooks) (stableFileSnaps
 		var before, after unix.Stat_t
 		if err := unix.Fstat(fd, &before); err != nil {
 			if attempt == 1 {
-				return stableFileSnapshot{}, fsErr(500, errCodeFSReadFailed, "cannot stat current file")
+				return stableFileSnapshot{}, fsErr(500, deps.ErrCodeFSReadFailed, "cannot stat current file")
 			}
 			continue
 		}
@@ -368,14 +368,14 @@ func readStableFileSnapshot(file *os.File, hooks snapshotHooks) (stableFileSnaps
 		n, err := file.ReadAt(buf, 0)
 		if err != nil && !errors.Is(err, io.EOF) {
 			if attempt == 1 {
-				return stableFileSnapshot{}, fsErr(500, errCodeFSReadFailed, "cannot read current file")
+				return stableFileSnapshot{}, fsErr(500, deps.ErrCodeFSReadFailed, "cannot read current file")
 			}
 			continue
 		}
 		buf = buf[:n]
 		if err := unix.Fstat(fd, &after); err != nil {
 			if attempt == 1 {
-				return stableFileSnapshot{}, fsErr(500, errCodeFSReadFailed, "cannot restat current file")
+				return stableFileSnapshot{}, fsErr(500, deps.ErrCodeFSReadFailed, "cannot restat current file")
 			}
 			continue
 		}
@@ -389,7 +389,7 @@ func readStableFileSnapshot(file *os.File, hooks snapshotHooks) (stableFileSnaps
 			return stableFileSnapshot{bytes: buf, size: after.Size, mode: after.Mode}, nil
 		}
 	}
-	return stableFileSnapshot{}, fsErr(500, errCodeFSReadFailed, "file changed while it was being read")
+	return stableFileSnapshot{}, fsErr(500, deps.ErrCodeFSReadFailed, "file changed while it was being read")
 }
 
 type fsAtomicWriteOps struct {
@@ -433,9 +433,9 @@ func atomicReplace(opened *openedFDFile, content []byte, mode uint32, ops fsAtom
 	temp, tempName, err := createTempAt(opened.parentFD)
 	if err != nil {
 		if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) || errors.Is(err, unix.EROFS) {
-			return atomicWriteResult{err: fsErr(403, errCodeFSDenied, "parent directory is not writable")}
+			return atomicWriteResult{err: fsErr(403, deps.ErrCodeFSDenied, "parent directory is not writable")}
 		}
-		return atomicWriteResult{err: fsErr(500, errCodeFSWriteFailed, "cannot create temporary file")}
+		return atomicWriteResult{err: fsErr(500, deps.ErrCodeFSWriteFailed, "cannot create temporary file")}
 	}
 	tempFD := int(temp.Fd())
 	cleanup := func() {
@@ -444,28 +444,28 @@ func atomicReplace(opened *openedFDFile, content []byte, mode uint32, ops fsAtom
 	}
 	if n, err := temp.Write(content); err != nil || n != len(content) {
 		cleanup()
-		return atomicWriteResult{err: fsErr(500, errCodeFSWriteFailed, "cannot write temporary file")}
+		return atomicWriteResult{err: fsErr(500, deps.ErrCodeFSWriteFailed, "cannot write temporary file")}
 	}
 	if err := ops.fchmod(tempFD, mode&0o777); err != nil {
 		cleanup()
-		return atomicWriteResult{err: fsErr(500, errCodeFSWriteFailed, "cannot preserve file permissions")}
+		return atomicWriteResult{err: fsErr(500, deps.ErrCodeFSWriteFailed, "cannot preserve file permissions")}
 	}
 	if err := ops.fsync(tempFD); err != nil {
 		cleanup()
-		return atomicWriteResult{err: fsErr(500, errCodeFSWriteFailed, "cannot sync temporary file")}
+		return atomicWriteResult{err: fsErr(500, deps.ErrCodeFSWriteFailed, "cannot sync temporary file")}
 	}
 	if err := temp.Close(); err != nil {
 		_ = ops.unlinkat(opened.parentFD, tempName, 0)
-		return atomicWriteResult{err: fsErr(500, errCodeFSWriteFailed, "cannot close temporary file")}
+		return atomicWriteResult{err: fsErr(500, deps.ErrCodeFSWriteFailed, "cannot close temporary file")}
 	}
 	if err := ops.renameat(opened.parentFD, tempName, opened.parentFD, opened.base); err != nil {
 		_ = ops.unlinkat(opened.parentFD, tempName, 0)
-		return atomicWriteResult{err: fsErr(500, errCodeFSWriteFailed, "cannot replace target file")}
+		return atomicWriteResult{err: fsErr(500, deps.ErrCodeFSWriteFailed, "cannot replace target file")}
 	}
 	if err := ops.fsync(opened.parentFD); err != nil {
 		return atomicWriteResult{
 			renamed: true,
-			err:     fsErr(500, errCodeFSWriteStateUnknown, "file was replaced but directory sync failed"),
+			err:     fsErr(500, deps.ErrCodeFSWriteStateUnknown, "file was replaced but directory sync failed"),
 		}
 	}
 	return atomicWriteResult{renamed: true}
@@ -486,7 +486,7 @@ type uploadDir struct {
 // path string is ever re-resolved and a parent swapped for a link yields ELOOP before anything
 // is created.
 func openUploadDir(rel string, create bool) (*uploadDir, error) {
-	root, err := absoluteTrustedRoot(browseRoot())
+	root, err := absoluteTrustedRoot(BrowseRoot())
 	if err != nil {
 		return nil, err
 	}

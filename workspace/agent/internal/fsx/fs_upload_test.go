@@ -1,6 +1,6 @@
-package main
+package fsx
 
-// handleFSUpload's target-directory rule (ADR 0094 P3). The generation pane's reference-image
+// HandleUpload's target-directory rule (ADR 0094 P3). The generation pane's reference-image
 // picker uploads into `generated/console/inputs`, a folder no workspace has until something has
 // been generated there — so "the directory must already exist" made the pane's own documented
 // flow ("drop a file here to upload it into generated/console/inputs/") fail on any freshly
@@ -35,7 +35,7 @@ func uploadOnePNG(t *testing.T, path, name string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/fs/upload?path="+path, &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	rec := httptest.NewRecorder()
-	handleFSUpload(rec, req)
+	HandleUpload(rec, req)
 	return rec
 }
 

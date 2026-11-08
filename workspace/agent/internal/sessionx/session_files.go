@@ -287,7 +287,7 @@ func resolveExisting(p string) (string, bool) {
 
 // browsePathOf is the row's FileView path, spelled so the file reader can open it. The
 // reader opens a read root by the name it is given and refuses any symlink below it
-// (fs_fd_linux.go), so the symlink-free resolved path is expressed against the root that
+// (internal/fsx/fs_fd_linux.go), so the symlink-free resolved path is expressed against the root that
 // contains it: relative for the browse root, absolute for the others (the scratch root,
 // which ~/.af-work can point into). Carrying it back onto a link form would produce a path
 // the reader rejects. Outside every read root nothing can open it, and the written form

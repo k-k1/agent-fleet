@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"bytes"
@@ -93,19 +93,19 @@ func decodeFSFilePUT(r *http.Request) (fsFilePUTRequest, *fsAPIError) {
 		return fsFilePUTRequest{}, fsErr(derr.Status, derr.Code, derr.Message)
 	}
 	if wire.Path == nil || wire.Content == nil || wire.BaseDiskRevision == nil {
-		return fsFilePUTRequest{}, fsErr(400, errCodeFSBadRequest, "path, content, and baseDiskRevision are required")
+		return fsFilePUTRequest{}, fsErr(400, deps.ErrCodeFSBadRequest, "path, content, and baseDiskRevision are required")
 	}
 	if !revisionPattern.MatchString(*wire.BaseDiskRevision) {
-		return fsFilePUTRequest{}, fsErr(400, errCodeFSBadRequest, "baseDiskRevision is invalid")
+		return fsFilePUTRequest{}, fsErr(400, deps.ErrCodeFSBadRequest, "baseDiskRevision is invalid")
 	}
 	content := []byte(*wire.Content)
 	switch {
 	case len(content) > maxEditorFileBytes:
-		return fsFilePUTRequest{}, fsErr(413, errCodeFSTooLarge, "decoded content exceeds 2 MiB")
+		return fsFilePUTRequest{}, fsErr(413, deps.ErrCodeFSTooLarge, "decoded content exceeds 2 MiB")
 	case bytes.IndexByte(content, 0) >= 0:
-		return fsFilePUTRequest{}, fsErr(415, errCodeFSBinaryNotSupported, "NUL bytes are not supported")
+		return fsFilePUTRequest{}, fsErr(415, deps.ErrCodeFSBinaryNotSupported, "NUL bytes are not supported")
 	case bytes.IndexByte(content, '\r') >= 0:
-		return fsFilePUTRequest{}, fsErr(415, errCodeFSUnsupportedNewline, "only LF newlines are supported")
+		return fsFilePUTRequest{}, fsErr(415, deps.ErrCodeFSUnsupportedNewline, "only LF newlines are supported")
 	}
 	path, aerr := resolveFDWritePath(*wire.Path)
 	if aerr != nil {
@@ -140,18 +140,18 @@ func putFSFile(ctx context.Context, req fsFilePUTRequest, service fsFileService)
 	// normally reaches no one — the client is already gone — its purpose is
 	// guaranteeing the disk stayed unchanged.
 	if ctx.Err() != nil {
-		return fsFilePUTResponse{}, fsErr(499, errCodeFSWriteCancelled, "request was cancelled before the write began")
+		return fsFilePUTResponse{}, fsErr(499, deps.ErrCodeFSWriteCancelled, "request was cancelled before the write began")
 	}
 
-	if isDenied(req.path) {
-		return fsFilePUTResponse{}, fsErr(403, errCodeFSDenied, "file path is denied")
+	if IsDenied(req.path) {
+		return fsFilePUTResponse{}, fsErr(403, deps.ErrCodeFSDenied, "file path is denied")
 	}
-	root, err := absoluteTrustedRoot(browseRoot())
+	root, err := absoluteTrustedRoot(BrowseRoot())
 	if err != nil {
-		return fsFilePUTResponse{}, fsErr(500, errCodeFSReadFailed, "cannot resolve browse root")
+		return fsFilePUTResponse{}, fsErr(500, deps.ErrCodeFSReadFailed, "cannot resolve browse root")
 	}
 	opened, aerr := openFDFile(fdReadPath{
-		root: root, relative: req.path, display: req.path, browseRoot: true,
+		root: root, relative: req.path, display: req.path, BrowseRoot: true,
 	})
 	if aerr != nil {
 		return fsFilePUTResponse{}, aerr
@@ -164,14 +164,14 @@ func putFSFile(ctx context.Context, req fsFilePUTRequest, service fsFileService)
 	}
 	switch {
 	case current.size > maxEditorFileBytes:
-		return fsFilePUTResponse{}, fsErr(413, errCodeFSTooLarge, "current file exceeds 2 MiB")
+		return fsFilePUTResponse{}, fsErr(413, deps.ErrCodeFSTooLarge, "current file exceeds 2 MiB")
 	case bytes.IndexByte(current.bytes, 0) >= 0 || !utf8.Valid(current.bytes):
-		return fsFilePUTResponse{}, fsErr(415, errCodeFSBinaryNotSupported, "current file is not supported text")
+		return fsFilePUTResponse{}, fsErr(415, deps.ErrCodeFSBinaryNotSupported, "current file is not supported text")
 	case bytes.IndexByte(current.bytes, '\r') >= 0:
-		return fsFilePUTResponse{}, fsErr(415, errCodeFSUnsupportedNewline, "current file does not use LF-only newlines")
+		return fsFilePUTResponse{}, fsErr(415, deps.ErrCodeFSUnsupportedNewline, "current file does not use LF-only newlines")
 	}
 	if fileRevision(current.bytes) != req.baseDiskRevision {
-		return fsFilePUTResponse{}, fsErr(409, errCodeFSRevisionConflict, "file changed since it was read")
+		return fsFilePUTResponse{}, fsErr(409, deps.ErrCodeFSRevisionConflict, "file changed since it was read")
 	}
 
 	result := atomicReplace(opened, req.content, current.mode, service.writeOps)
@@ -187,7 +187,7 @@ func writeFSError(w http.ResponseWriter, aerr *fsAPIError) {
 	httpx.WriteErr(w, aerr.status, aerr.code, aerr.message)
 }
 
-func handleFSFilePut(w http.ResponseWriter, r *http.Request) {
+func HandleFilePut(w http.ResponseWriter, r *http.Request) {
 	req, aerr := decodeFSFilePUT(r)
 	if aerr != nil {
 		writeFSError(w, aerr)
@@ -206,7 +206,7 @@ func readFSFile(input string, service fsFileService) (map[string]any, *fsAPIErro
 	if aerr != nil {
 		return nil, aerr
 	}
-	if path.browseRoot {
+	if path.BrowseRoot {
 		// An editor recovery GET must observe the outcome of any in-flight PUT
 		// on the same path. A client-side PUT timeout does not stop the Agent's
 		// atomic write, so an unserialized read could return the pre-rename base
@@ -236,7 +236,7 @@ func readFSFile(input string, service fsFileService) (map[string]any, *fsAPIErro
 		"binary": false, "truncated": false,
 		"editable": false, "editabilityReason": nil,
 	}
-	if path.browseRoot && inNestedGitRoot(path.display) {
+	if path.BrowseRoot && inNestedGitRoot(path.display) {
 		resp["nestedRepo"] = true
 	}
 	tooLarge := snapshot.size > maxEditorFileBytes
@@ -289,7 +289,7 @@ func inNestedGitRoot(display string) bool {
 	}
 	// parts[1] is the working copy itself; the file name (last) cannot be a root.
 	for i := 2; i < len(parts)-1; i++ {
-		dir := filepath.Join(browseRoot(), "repos", filepath.Join(parts[1:i+1]...))
+		dir := filepath.Join(BrowseRoot(), "repos", filepath.Join(parts[1:i+1]...))
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			return true
 		}
@@ -297,7 +297,7 @@ func inNestedGitRoot(display string) bool {
 	return false
 }
 
-func handleFSFile(w http.ResponseWriter, r *http.Request) {
+func HandleFile(w http.ResponseWriter, r *http.Request) {
 	resp, aerr := readFSFile(r.URL.Query().Get("path"), defaultFSFileService)
 	if aerr != nil {
 		writeFSError(w, aerr)
@@ -313,7 +313,7 @@ func handleFSFile(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleFSDownload(w http.ResponseWriter, r *http.Request) {
+func HandleDownload(w http.ResponseWriter, r *http.Request) {
 	path, aerr := resolveFDReadPath(r.URL.Query().Get("path"))
 	if aerr != nil {
 		writeFSError(w, aerr)
@@ -327,7 +327,7 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 	defer opened.close()
 	fi, err := opened.file.Stat()
 	if err != nil {
-		writeFSError(w, fsErr(500, errCodeFSReadFailed, "cannot stat opened file"))
+		writeFSError(w, fsErr(500, deps.ErrCodeFSReadFailed, "cannot stat opened file"))
 		return
 	}
 	name := filepath.Base(path.display)

@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"bytes"
@@ -28,11 +28,11 @@ import (
 // listed or read. Plaintext Claude state lives outside the browse root via
 // CLAUDE_CONFIG_DIR; the encrypted secrets store stays in home but is denylisted.
 
-func browseRoot() string {
+func BrowseRoot() string {
 	if r := os.Getenv("AF_BROWSE_ROOT"); r != "" {
 		return r
 	}
-	return homeDir()
+	return paths.HomeDir()
 }
 
 // scratchRoot is the agent's own per-user temp/scratch base (e.g. /tmp/claude-1000),
@@ -45,26 +45,26 @@ func scratchRoot() string {
 	return filepath.Join(os.TempDir(), "claude-"+strconv.Itoa(os.Getuid()))
 }
 
-// agentFleetDocsRoot is staged by the Control Plane per membership role and mounted
+// AgentFleetDocsRoot is staged by the Control Plane per membership role and mounted
 // read-only into the workspace. It is outside home, so add it explicitly to the
 // read-only file-view roots; this lets the Console open the user guide without
 // duplicating its Markdown in the frontend bundle. AGENT_DOCS_DIR overrides the
 // fixed container path for runtimes without a mount seam (AF_RUNTIME=native,
 // docs/log/34, where the CP stages docs under the workspace dataDir instead). NOTE:
 // distinct from the CP-side AF_DOCS_DIR (the staging SOURCE, workspace_docs.go).
-func agentFleetDocsRoot() string {
+func AgentFleetDocsRoot() string {
 	if d := os.Getenv("AGENT_DOCS_DIR"); d != "" {
 		return d
 	}
 	return "/usr/local/share/agent-fleet/docs"
 }
 
-// allowedReadRoots are the absolute roots the file browser may serve a file from when the
+// AllowedReadRoots are the absolute roots the file browser may serve a file from when the
 // query path is itself absolute (a SendUserFile path that landed outside the browse root).
 // The browse root comes first so an absolute path under home maps back to a home-relative
 // display path.
-func allowedReadRoots() []string {
-	return []string{browseRoot(), scratchRoot(), agentFleetDocsRoot()}
+func AllowedReadRoots() []string {
+	return []string{BrowseRoot(), scratchRoot(), AgentFleetDocsRoot()}
 }
 
 // codexGeneratedImagesRoot is the sole readable exception beneath Codex's
@@ -91,7 +91,7 @@ func isCodexGeneratedImagesPath(p string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// resolveAbs handles an absolute query path (see safeBrowsePath). It serves the file only
+// resolveAbs handles an absolute query path (see SafeBrowsePath). It serves the file only
 // when it sits under an allowed read root, returning the absolute path plus a display path
 // (home-relative when under the browse root, else the absolute path). Denylisted paths
 // under the browse root are refused.
@@ -102,7 +102,7 @@ func resolveAbs(clean, root string) (full, rel string, ok bool) {
 	if isCodexGeneratedImagesPath(clean) {
 		return clean, clean, true
 	}
-	for _, ar := range allowedReadRoots() {
+	for _, ar := range AllowedReadRoots() {
 		r, err := filepath.Rel(ar, clean)
 		if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 			continue // not under this root
@@ -112,7 +112,7 @@ func resolveAbs(clean, root string) (full, rel string, ok bool) {
 			r = ""
 		}
 		if ar == root {
-			if isDenied(r) {
+			if IsDenied(r) {
 				return "", "", false
 			}
 			return clean, r, true
@@ -152,7 +152,7 @@ var fsDeny = map[string]bool{
 	".local/share/muse": true,
 }
 
-func isDenied(rel string) bool {
+func IsDenied(rel string) bool {
 	rel = filepath.ToSlash(rel)
 	for d := range fsDeny {
 		if rel == d || strings.HasPrefix(rel, d+"/") {
@@ -162,13 +162,13 @@ func isDenied(rel string) bool {
 	return false
 }
 
-// isDeniedOrAncestor extends isDenied to the folders that CONTAIN a denied entry (".config",
-// ".local", ".local/share", and the browse root itself). Reads keep isDenied: listing ".config"
+// isDeniedOrAncestor extends IsDenied to the folders that CONTAIN a denied entry (".config",
+// ".local", ".local/share", and the browse root itself). Reads keep IsDenied: listing ".config"
 // is fine, its denied child simply does not appear. Writes need the wider rule, because moving or
 // removing an ancestor carries the denied entry with it, out from under the denylist.
 func isDeniedOrAncestor(rel string) bool {
 	rel = strings.Trim(filepath.ToSlash(rel), "/")
-	if rel == "" || rel == "." || isDenied(rel) {
+	if rel == "" || rel == "." || IsDenied(rel) {
 		return true
 	}
 	for d := range fsDeny {
@@ -195,7 +195,7 @@ func fsWriteRefused(full, rel string, allowRoot bool) bool {
 	if rel != "" && isDeniedOrAncestor(rel) {
 		return true
 	}
-	resolved, ok := pathguard.ResolveUnder(full, browseRoot())
+	resolved, ok := pathguard.ResolveUnder(full, BrowseRoot())
 	if !ok {
 		return true
 	}
@@ -209,7 +209,7 @@ func fsWriteRefused(full, rel string, allowRoot bool) bool {
 // writeRefusedMsg is the 403 the Console already renders for a refused mutation.
 const writeRefusedMsg = "this path is protected and cannot be changed"
 
-// safeBrowsePath resolves a query path to an absolute file the browser may serve, plus a
+// SafeBrowsePath resolves a query path to an absolute file the browser may serve, plus a
 // display path. Two forms are accepted:
 //   - browse-root-relative (no leading slash): the form the Console's file tree and FileView
 //     use. Joined onto the browse root; traversal above the root and denylisted paths are
@@ -219,8 +219,8 @@ const writeRefusedMsg = "this path is protected and cannot be changed"
 //     it sits under an allowed read root — the browse root itself, the scratch base, or the
 //     role-scoped documentation mount — so a shared scratchpad or user-guide file opens in
 //     the viewer instead of erroring. See resolveAbs.
-func safeBrowsePath(p string) (full, rel string, ok bool) {
-	root := browseRoot()
+func SafeBrowsePath(p string) (full, rel string, ok bool) {
+	root := BrowseRoot()
 	p = strings.TrimSpace(p)
 	if filepath.IsAbs(p) {
 		return resolveAbs(filepath.Clean(p), root)
@@ -231,20 +231,20 @@ func safeBrowsePath(p string) (full, rel string, ok bool) {
 		return "", "", false
 	}
 	rel = filepath.ToSlash(rel)
-	if isDenied(rel) {
+	if IsDenied(rel) {
 		return "", "", false
 	}
 	return full, rel, true
 }
 
 // fsResolvedOK re-validates full AFTER symlink resolution against the browse
-// root + denylist. The lexical checks in safeBrowsePath cannot see a symlink
+// root + denylist. The lexical checks in SafeBrowsePath cannot see a symlink
 // like ~/repos/x → ~/.ssh; the file-READ path is defended separately (openat2
 // RESOLVE_BENEATH|NO_SYMLINKS), but listing and the mutating handlers operate on
 // the plain path and need this re-check. A not-yet-existing suffix (mkdir /
 // upload / rename targets) is fine as long as every EXISTING component resolves
 // and the resolved base stays in bounds.
-func fsResolvedOK(full string) bool { return fsResolvedOKUnder(full, browseRoot(), true) }
+func fsResolvedOK(full string) bool { return fsResolvedOKUnder(full, BrowseRoot(), true) }
 
 // fsQueryResolvedOK is the tree/search variant: a RELATIVE query re-checks
 // against the browse root (+denylist); an ABSOLUTE query (a scratch/docs read
@@ -256,11 +256,11 @@ func fsQueryResolvedOK(q, full string) bool {
 	if !filepath.IsAbs(strings.TrimSpace(q)) {
 		return fsResolvedOK(full)
 	}
-	if r, err := filepath.Rel(browseRoot(), full); err == nil &&
+	if r, err := filepath.Rel(BrowseRoot(), full); err == nil &&
 		r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return fsResolvedOKUnder(full, browseRoot(), true)
+		return fsResolvedOKUnder(full, BrowseRoot(), true)
 	}
-	for _, ar := range []string{scratchRoot(), agentFleetDocsRoot()} {
+	for _, ar := range []string{scratchRoot(), AgentFleetDocsRoot()} {
 		if r, err := filepath.Rel(ar, full); err == nil &&
 			r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 			return fsResolvedOKUnder(full, ar, false) // read-only roots carry no denylist
@@ -274,40 +274,40 @@ func fsResolvedOKUnder(full, root string, applyDeny bool) bool {
 	if !ok {
 		return false
 	}
-	return rel == "." || !applyDeny || !isDenied(filepath.ToSlash(rel))
+	return rel == "." || !applyDeny || !IsDenied(filepath.ToSlash(rel))
 }
 
 // safeWritableBrowsePath deliberately keeps mutations inside the user's home.
-// safeBrowsePath also admits read-only roots (scratch and the role-scoped guide),
+// SafeBrowsePath also admits read-only roots (scratch and the role-scoped guide),
 // which must never become writable through the file API.
 func safeWritableBrowsePath(p string) (full, rel string, ok bool) {
 	if filepath.IsAbs(strings.TrimSpace(p)) {
 		return "", "", false
 	}
-	return safeBrowsePath(p)
+	return SafeBrowsePath(p)
 }
 
-// safeWritableResolvedBrowsePath is the gate for a folder something will WRITE into on its own
+// SafeWritableResolvedBrowsePath is the gate for a folder something will WRITE into on its own
 // (imagegen's out_dir): the writable path rules plus the checks the upload route applies — the
 // path as it resolves through symlinks stays inside the browse root, and neither spelling is a
 // denied entry, its descendant or its ancestor. A folder that does not exist yet is judged by
 // its nearest existing parent.
-func safeWritableResolvedBrowsePath(p string) (full, rel string, ok bool) {
+func SafeWritableResolvedBrowsePath(p string) (full, rel string, ok bool) {
 	full, rel, ok = safeWritableBrowsePath(p)
 	if !ok || !fsResolvedOK(full) || fsWriteRefused(full, rel, true) {
 		return "", "", false
 	}
 	// No symlink on the way: the folder is later written through an fd opened without following
 	// one, so a link that merely points at an ordinary folder is refused here as well.
-	if resolved, rok := pathguard.ResolveUnder(full, browseRoot()); !rok || filepath.ToSlash(resolved) != strings.Trim(filepath.ToSlash(rel), "/") {
+	if resolved, rok := pathguard.ResolveUnder(full, BrowseRoot()); !rok || filepath.ToSlash(resolved) != strings.Trim(filepath.ToSlash(rel), "/") {
 		return "", "", false
 	}
 	return full, rel, true
 }
 
-// openOutDirSink is imagegen.BrowseOpenDir: the gate again, then the folder as an fd.
-func openOutDirSink(rel string) (imagegen.DirSink, error) {
-	_, rel, ok := safeWritableResolvedBrowsePath(rel)
+// OpenOutDirSink is imagegen.BrowseOpenDir: the gate again, then the folder as an fd.
+func OpenOutDirSink(rel string) (imagegen.DirSink, error) {
+	_, rel, ok := SafeWritableResolvedBrowsePath(rel)
 	if !ok || rel == "" {
 		return nil, errors.New("out_dir is not a folder this workspace may write to")
 	}
@@ -435,7 +435,7 @@ func peekDir(full, rel string, mod time.Time) peekResult {
 		if !e.Type().IsRegular() || filemeta.ImageContentType(e.Name()) == "" {
 			continue // a link or special file is never counted or offered as a cover
 		}
-		if isDenied(filepath.Join(rel, e.Name())) {
+		if IsDenied(filepath.Join(rel, e.Name())) {
 			continue
 		}
 		res.images++
@@ -476,9 +476,9 @@ func insertNewest(list []fsPreview, p fsPreview) []fsPreview {
 	return list
 }
 
-func handleFSTree(w http.ResponseWriter, r *http.Request) {
+func HandleTree(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("path")
-	full, rel, ok := safeBrowsePath(q)
+	full, rel, ok := SafeBrowsePath(q)
 	if !ok || isCodexGeneratedImagesPath(full) || !fsQueryResolvedOK(q, full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -506,7 +506,7 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 		if denyBase != nil {
 			denyRel = path.Join(*denyBase, e.Name())
 		}
-		if isDenied(childRel) || isDenied(denyRel) {
+		if IsDenied(childRel) || IsDenied(denyRel) {
 			continue
 		}
 		fe := fsEntry{Name: e.Name(), Type: "file"}
@@ -559,12 +559,12 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	})
 	// root: the absolute browse root, so the Console can build an absolute path for a
 	// row ("Copy path"). It's the same for every entry, so it rides on the response.
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out, "root": browseRoot()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out, "root": BrowseRoot()})
 }
 
 const defaultMaxUpload = 64 << 20 // 64 MiB per file unless AF_UPLOAD_MAX overrides
 
-func maxUploadBytes() int64 {
+func MaxUploadBytes() int64 {
 	if v := os.Getenv("AF_UPLOAD_MAX"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			return n
@@ -573,7 +573,7 @@ func maxUploadBytes() int64 {
 	return defaultMaxUpload
 }
 
-// handleFSUpload writes uploaded files into a directory (multipart, field "file",
+// HandleUpload writes uploaded files into a directory (multipart, field "file",
 // one or more). Guards: the target dir is inside the browse root and not denied;
 // each destination name is reduced to its base and re-checked against
 // denylist/traversal; a per-file size cap applies. A name collision returns 409
@@ -592,7 +592,7 @@ func maxUploadBytes() int64 {
 // one is a real mistake — uploading "into" a file would either fail late or clobber it — and the
 // path has already passed safeWritableBrowsePath, the same gate resolveOutDir uses, so creating
 // it cannot escape the browse root or the denylist.
-func handleFSUpload(w http.ResponseWriter, r *http.Request) {
+func HandleUpload(w http.ResponseWriter, r *http.Request) {
 	dirFull, dirRel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if ok {
 		ok = fsResolvedOK(dirFull)
@@ -624,7 +624,7 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dir.close()
 	overwrite := r.URL.Query().Get("overwrite") == "1"
-	max := maxUploadBytes()
+	max := MaxUploadBytes()
 	mr, err := r.MultipartReader()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
@@ -677,9 +677,9 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
 }
 
-// handleFSMkdir creates a new directory at path. The parent must already exist
+// HandleMkdir creates a new directory at path. The parent must already exist
 // (os.Mkdir, not MkdirAll — no accidental deep create). 409 if it exists.
-func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
+func HandleMkdir(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
@@ -700,8 +700,8 @@ func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel})
 }
 
-// handleFSNewFile creates an empty file at path (O_EXCL => 409 if it exists).
-func handleFSNewFile(w http.ResponseWriter, r *http.Request) {
+// HandleNewFile creates an empty file at path (O_EXCL => 409 if it exists).
+func HandleNewFile(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
@@ -724,9 +724,9 @@ func handleFSNewFile(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel})
 }
 
-// handleFSRename moves from -> to within the browse root. Both ends are guarded
+// HandleRename moves from -> to within the browse root. Both ends are guarded
 // (traversal + denylist); the destination must not already exist.
-func handleFSRename(w http.ResponseWriter, r *http.Request) {
+func HandleRename(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	srcFull, srcRel, ok1 := safeWritableBrowsePath(q.Get("from"))
 	dstFull, dstRel, ok2 := safeWritableBrowsePath(q.Get("to"))
@@ -753,9 +753,9 @@ func handleFSRename(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": dstRel})
 }
 
-// handleFSDelete removes a file or directory (recursive). Refuses the browse
-// root and denylisted paths (safeBrowsePath). The Console confirms first.
-func handleFSDelete(w http.ResponseWriter, r *http.Request) {
+// HandleDelete removes a file or directory (recursive). Refuses the browse
+// root and denylisted paths (SafeBrowsePath). The Console confirms first.
+func HandleDelete(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")

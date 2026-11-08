@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"encoding/json"
@@ -137,7 +137,7 @@ func TestHandleFSResolve(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/fs/resolve", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		handleFSResolve(rec, req)
+		HandleResolve(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
 		}

@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"archive/zip"
@@ -61,7 +61,7 @@ func zipGet(t *testing.T, path string, extra ...string) *httptest.ResponseRecord
 		q.Set(extra[i], extra[i+1])
 	}
 	rec := httptest.NewRecorder()
-	handleFSDownloadZip(rec, httptest.NewRequest("GET", "/fs/download-zip?"+q.Encode(), nil))
+	HandleDownloadZip(rec, httptest.NewRequest("GET", "/fs/download-zip?"+q.Encode(), nil))
 	return rec
 }
 
@@ -478,7 +478,7 @@ func TestZipScratchAndDocsRoots(t *testing.T) {
 	home := zipEnv(t)
 	_ = home
 	scratch := scratchRoot()
-	docs := agentFleetDocsRoot()
+	docs := AgentFleetDocsRoot()
 	zipPut(t, scratch, "session/out.txt", "scratch")
 	zipPut(t, docs, "guide/a.md", "doc")
 	if got := zipContents(t, zipGet(t, filepath.Join(scratch, "session"))); got["session/out.txt"] != "scratch" {
@@ -656,7 +656,7 @@ func TestZipSlotHeldForTheWholeRequestAndReleased(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	rec := httptest.NewRecorder()
-	handleFSDownloadZip(rec, httptest.NewRequest("GET", "/fs/download-zip?path=x", nil).WithContext(ctx))
+	HandleDownloadZip(rec, httptest.NewRequest("GET", "/fs/download-zip?path=x", nil).WithContext(ctx))
 	if rec.Body.Len() != 0 {
 		t.Fatalf("answered a request nobody is waiting for: %q", rec.Body.String())
 	}
@@ -677,7 +677,7 @@ func TestZipBusySlotWaitsForARequestThatCancels(t *testing.T) {
 	rec := httptest.NewRecorder()
 	go func() {
 		defer wg.Done()
-		handleFSDownloadZip(rec, httptest.NewRequest("GET", "/fs/download-zip?path=x", nil).WithContext(ctx))
+		HandleDownloadZip(rec, httptest.NewRequest("GET", "/fs/download-zip?path=x", nil).WithContext(ctx))
 	}()
 	cancel()
 	wg.Wait()
@@ -720,7 +720,7 @@ func TestZipHeadAndPostAreRefused(t *testing.T) {
 	zipPut(t, home, "x/a", "a")
 	for _, m := range []string{"HEAD", "POST"} {
 		rec := httptest.NewRecorder()
-		handleFSDownloadZip(rec, httptest.NewRequest(m, "/fs/download-zip?path=x", nil))
+		HandleDownloadZip(rec, httptest.NewRequest(m, "/fs/download-zip?path=x", nil))
 		if rec.Code != 405 {
 			t.Fatalf("%s -> %d", m, rec.Code)
 		}
@@ -737,7 +737,7 @@ func TestZipRangeIsNotHonoured(t *testing.T) {
 	req.Header.Set("Range", "bytes=10-")
 	req.Header.Set("If-Range", `"anything"`)
 	rec := httptest.NewRecorder()
-	handleFSDownloadZip(rec, req)
+	HandleDownloadZip(rec, req)
 	if rec.Code != 200 {
 		t.Fatalf("ranged request -> %d; each build is fresh, a range of one is not a range of the next", rec.Code)
 	}
@@ -769,7 +769,7 @@ func TestZipThroughTheServerStack(t *testing.T) {
 	home := zipEnv(t)
 	zipPut(t, home, "srv/big.bin", strings.Repeat("0123456789", 5000))
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /fs/download-zip", handleFSDownloadZip)
+	mux.HandleFunc("GET /fs/download-zip", HandleDownloadZip)
 	srv := httptest.NewServer(httpx.Gzip(mux))
 	defer srv.Close()
 	req, _ := http.NewRequest("GET", srv.URL+"/fs/download-zip?path=srv", nil)

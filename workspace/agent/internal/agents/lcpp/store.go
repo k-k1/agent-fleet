@@ -122,7 +122,7 @@ type Record struct {
 // ecs-ec2 (unlike claude's own transcript, which sits on the EFS-backed CLAUDE_CONFIG_DIR
 // mount) — moving between them is a correctness/consistency fix, not a durability one. It also
 // closes a real gap for free: AgentStateDir is already in the Console file browser's denylist
-// (fs.go's fsDeny), where AgentDataDir is not, so a raw conversation transcript was previously
+// (internal/fsx/fs.go's fsDeny), where AgentDataDir is not, so a raw conversation transcript was previously
 // servable through the file browser.
 //
 // The zero value is not usable; build one with Open. Safe for concurrent use: mu serializes

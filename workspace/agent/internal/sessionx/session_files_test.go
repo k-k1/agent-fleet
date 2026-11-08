@@ -511,7 +511,7 @@ func TestResolvedRootCachesOnlyExistingRoots(t *testing.T) {
 }
 
 // The FileView path has to be one the file reader opens: it opens a read root by its given
-// name and refuses any symlink below it (fs_fd_linux.go). This is that contract, not a copy
+// name and refuses any symlink below it (internal/fsx/fs_fd_linux.go). This is that contract, not a copy
 // of the reader: the given root must not itself be a link, and the rest must not cross one.
 func openLikeTheReader(t *testing.T, path string) error {
 	t.Helper()

@@ -1,4 +1,4 @@
-package main
+package fsx
 
 import (
 	"bytes"
@@ -62,7 +62,7 @@ func noisyPNG(t *testing.T, path string, w, h int, alpha bool) []byte {
 func download(t *testing.T, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	handleFSDownload(rec, httptest.NewRequest("GET", "/api/fs/download?"+query, nil))
+	HandleDownload(rec, httptest.NewRequest("GET", "/api/fs/download?"+query, nil))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, query)
 	}
@@ -264,7 +264,7 @@ func TestFSTreeWarmFillsTheThumbCache(t *testing.T) {
 	noisyPNG(t, filepath.Join(root, "b.png"), 800, 600, false)
 
 	rec := httptest.NewRecorder()
-	handleFSTree(rec, httptest.NewRequest("GET", "/api/fs/tree?path=&warm=64", nil))
+	HandleTree(rec, httptest.NewRequest("GET", "/api/fs/tree?path=&warm=64", nil))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -282,7 +282,7 @@ func TestFSTreeWithoutWarmDecodesNothing(t *testing.T) {
 	noisyPNG(t, filepath.Join(root, "a.png"), 800, 600, false)
 
 	rec := httptest.NewRecorder()
-	handleFSTree(rec, httptest.NewRequest("GET", "/api/fs/tree?path=", nil))
+	HandleTree(rec, httptest.NewRequest("GET", "/api/fs/tree?path=", nil))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -710,7 +710,7 @@ func TestWarmGeneratedFillsCardAndPreview(t *testing.T) {
 	root := thumbRoots(t)
 	full := filepath.Join(root, "gen.png")
 	noisyPNG(t, full, 832, 1216, false)
-	warmGenerated(full)
+	WarmGenerated(full)
 	waitGenWarmIdle(t)
 	fi, _ := os.Stat(full)
 	// Both card edges: 256 is what the gallery's default tile asks for on a 1x screen, and a
@@ -747,13 +747,13 @@ func TestWarmGeneratedIsBounded(t *testing.T) {
 	t.Cleanup(func() { genWarmWork = old })
 
 	// Before the burst, while the queue still has room: otherwise the cap alone drops them.
-	warmGenerated("/gen/notes.txt")
-	warmGenerated("/gen/pic.webp") // no decoder in the standard library
+	WarmGenerated("/gen/notes.txt")
+	WarmGenerated("/gen/pic.webp") // no decoder in the standard library
 	const burst = 200
 	for i := 0; i < burst; i++ {
-		warmGenerated("/gen/" + strconv.Itoa(i) + ".png")
+		WarmGenerated("/gen/" + strconv.Itoa(i) + ".png")
 	}
-	warmGenerated("/gen/0.png") // already in flight
+	WarmGenerated("/gen/0.png") // already in flight
 	close(release)
 	waitGenWarmIdle(t)
 

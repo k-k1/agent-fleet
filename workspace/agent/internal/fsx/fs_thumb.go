@@ -1,4 +1,4 @@
-package main
+package fsx
 
 // Downscaled previews for /fs/download (`&thumb=<max edge>`), so a card that shows a
 // picture 190x240 CSS px wide does not pull the original bytes to get there. Measured on
@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"image"
 	"image/color"
 	_ "image/gif" // decoder registration for image.Decode; gif is never written back
@@ -402,7 +403,7 @@ func pixelReader(src image.Image) func(x, y int) (r, g, b, a uint32) {
 // next to the memo images; losing the directory costs one re-decode.
 
 func thumbCacheDir() string {
-	return filepath.Join(homeDir(), ".cache", "agent-fleet", "thumbs")
+	return filepath.Join(paths.HomeDir(), ".cache", "agent-fleet", "thumbs")
 }
 
 // inThumbCache reports whether full is inside the thumbnail cache itself. Nothing there may
@@ -724,9 +725,9 @@ var genWarm = struct {
 // genWarmWork is what a worker does with one path; a seam so a test can count and block it.
 var genWarmWork = warmGeneratedFile
 
-// warmGenerated queues one generated picture for warming and returns at once. Safe to call
+// WarmGenerated queues one generated picture for warming and returns at once. Safe to call
 // from anywhere and for any file: a path no decoder can read is dropped before it takes a slot.
-func warmGenerated(full string) {
+func WarmGenerated(full string) {
 	if !thumbDecodable(full) {
 		return
 	}

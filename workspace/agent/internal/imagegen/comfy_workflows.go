@@ -595,7 +595,7 @@ type comfyFamilyRow struct {
 	// 🔴 It decides two things, and both would lie without it: the template strips the alpha
 	// unless the caller asked for `background=transparent` (measured: an ordinary photograph
 	// comes back with alpha 252-255 on 47 % of its pixels — up to 1.2 % see-through, and enough
-	// to keep every thumbnail a PNG, fs_thumb.go's opaque()), and comfyWarnings stops saying
+	// to keep every thumbnail a PNG, internal/fsx/fs_thumb.go's opaque()), and comfyWarnings stops saying
 	// "opaque produced" to a caller who got exactly the transparency they asked for.
 	Alpha bool
 	// Dialect, QualityPrefixes, StepsRange and CFGRange are how a person writes for this family

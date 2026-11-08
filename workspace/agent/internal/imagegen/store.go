@@ -110,7 +110,7 @@ func storeImagesAt(dir string, images []Image, props *ImageProps, sink DirSink) 
 			Seed: img.Seed,
 		})
 		// Fill the thumbnail cache while nobody is waiting. A cold thumbnail is ~95 ms of
-		// decode and a cached one ~44 µs (measured; fs_thumb.go), and the folder this just
+		// decode and a cached one ~44 µs (measured; internal/fsx/fs_thumb.go), and the folder this just
 		// landed in is exactly the one somebody opens next — the gallery's "Generated
 		// images (N)" points straight at it. The seam is the Agent's, like EngineLookup:
 		// this package owns "make pixels", not "know how a preview is scaled".
