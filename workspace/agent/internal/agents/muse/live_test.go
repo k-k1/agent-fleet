@@ -117,8 +117,15 @@ func TestLiveResumeIsIdempotent(t *testing.T) {
 	}
 }
 
-// Dropping the handle and resuming again has to RELOAD the stored session, which is the path
-// a workspace restart takes. A fresh id here would mean the member's history silently split.
+// Dropping the handle and resuming again must leave the slot on one conversation that the next
+// resume will find, which is the path a workspace restart takes.
+//
+// A turnless session is not something the host keeps across processes (measured, muse 1.4.14:
+// the new host answers sessionNotFound and openSession starts a fresh session), and a turn to
+// make it reloadable would cost the member's quota. So two outcomes are accepted, each explicit:
+// the same id (the host reloaded it), or a different id that is the one now persisted for the
+// slot. What fails is a new id that was never stored, which would split the history on the
+// following resume. Reloading a session that has had a turn is covered by the msptest-backed resume tests.
 func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
 	liveGate(t)
 	m := liveMeta(t)
@@ -145,9 +152,20 @@ func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
 	h2.mu.Lock()
 	secondSid := h2.sid
 	h2.mu.Unlock()
-	if secondSid != firstSid {
-		t.Errorf("the reload started a new conversation: %s then %s", firstSid, secondSid)
+	if secondSid == "" {
+		t.Fatal("no muse session id after the resume that followed DropHandle")
 	}
+	if secondSid == firstSid {
+		t.Logf("the host reloaded the turnless session %s", firstSid)
+		return
+	}
+	stored, ok := readSession(slotSid(m))
+	if !ok || stored.ID != secondSid {
+		t.Errorf("the reload started a new conversation %s (was %s) that is not the stored one: %+v (ok=%v)",
+			secondSid, firstSid, stored, ok)
+		return
+	}
+	t.Logf("the host did not keep the turnless session %s; a fresh one, %s, is stored for the next resume", firstSid, secondSid)
 }
 
 // `session/resume` carries the registry's servers, the way a stopped session is reopened. Free,
@@ -156,7 +174,7 @@ func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
 // It resumes the session the same host has just started rather than one a dropped host left:
 // the host keeps no turnless session across processes (measured, muse 1.4.14: the reload after
 // DropHandle answers sessionNotFound, which is also why TestLiveResumeAfterDropReloadsTheSameSession
-// fails there), and a turn would cost the member's quota.
+// takes its fallback branch there), and a turn would cost the member's quota.
 //
 // The control is what makes "accepted" mean "read": the same resume with the settings file's
 // transport spelling has to be REFUSED, and a good one right after it accepted again. A host
