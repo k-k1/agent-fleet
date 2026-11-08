@@ -56,7 +56,7 @@ type Deps struct {
 	// allowedReadRoots). The changed-files list spells its FileView paths against them.
 	ReadRoots func() []string
 
-	// --- Repositories (svn.go / repo_jobs.go) ---
+	// --- Repositories (internal/svnx/svn.go / repo_jobs.go) ---
 	//
 	// The session list shows worktree state alongside, so non-git (svn) and the number of
 	// running import jobs are read from outside the family.

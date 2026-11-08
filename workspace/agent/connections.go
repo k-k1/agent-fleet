@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"log"
 	"net/http"
 	"net/url"
@@ -61,7 +62,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"aws":        awsMCPStatus(s),
 		"discord":    discordStatus(s),
 		"slack":      slackStatus(s),
-		"svn":        svnConnStatus(s), // saved SVN servers (urlPrefix + username; docs/log/41)
+		"svn":        svnx.ConnStatus(s), // saved SVN servers (urlPrefix + username; docs/log/41)
 	}
 	// One entry per agent kind, under its kind name (agents.ConnectionStatuser). copilot rides on
 	// the GitHub connection (docs/log/36 contract): no flow of its own.

@@ -8,7 +8,7 @@
 //   - A failure the CP answered (a 400) is that row's alone; the run goes on.
 // The body is built here from the plan's fields and nothing else.
 import { api, rawJSON } from "../../../core/api/client.ts";
-import type { ExistingGcpProfile, GcpCreate } from "../../../lib/gcloudConfigImport.ts";
+import type { ExistingGcpProfile, GcpCreate } from "./gcloudConfigImport.ts";
 
 export type GcpRowOutcome = "created" | "failed" | "unknown" | "not_run";
 

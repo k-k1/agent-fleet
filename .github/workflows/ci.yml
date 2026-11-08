@@ -182,6 +182,30 @@ jobs:
       - name: lint the product modules
         run: go run .
 
+  # The cultivated-memory engine (ADR 0130 decision 8): a separate module with no
+  # dependency on this repository. Its tests include the one that fails on any
+  # import of an agent-fleet package.
+  memengine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: memengine
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: memengine/go.mod
+          # No dependencies, so no go.sum and nothing to cache (see release-scan).
+          cache: false
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+
   control-plane:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
@@ -447,6 +471,10 @@ jobs:
       # exact values the CP accepts ("true" / "1").
       - name: CP AF_MCP_* parameters / Rule (offline template evaluation)
         run: python3 ./deploy/local/cfn-mcp-env-test.py
+      # Provided routes (ADR 0129) stay off unless turned on, and on brings the internal CP path
+      # whose timeouts outlast the route deadline, the route role and nothing wider.
+      - name: CP ProvidedRoutes parameter / route role (offline template evaluation)
+        run: python3 ./deploy/local/cfn-provided-routes-test.py
       # The EFS file-system policy refuses a mount without an access point or TLS; only the home
       # task's IAM-authorized role may mount the root (Destroy / Clean home / Recreate).
       - name: EFS file-system policy and home task mount (offline template evaluation)

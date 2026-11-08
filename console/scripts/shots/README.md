@@ -44,7 +44,7 @@ node console/scripts/shots/capture.mjs --locale en
   are retaken.
 - Fixture shapes follow the real wire contracts (`console/src/types/session.ts`,
   `console/src/features/repos/store.ts`,
-  `workspace/agent/internal/transcript/transcript.go`, `console/src/lib/gitgraph.ts`).
+  `workspace/agent/internal/transcript/transcript.go`, `console/src/features/scm/gitgraph.ts`).
   When one of those changes, the affected pane renders empty instead of failing —
   check the shot, not just the exit code.
 - The stub logs `[stub] unhandled: <path>` for any API path it does not know, which is
@@ -92,8 +92,9 @@ The container is shared, so pass `--port` / `--cdp-port` that nothing else is li
 
 Scenes marked `guide: true` are for the rewritten guide and the public docs site (ADR 0131). The
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
-`aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, and the workspace pages'
-`ws-recreate`, `ws-machine`, `ws-toolchains`, `ws-databases`) runs on its own:
+`aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `chat-settings`, `ops-settings`,
+`images-gallery`, `images-settings`, and the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
+`ws-databases`) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -102,6 +103,10 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-toas
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ssm-hosts --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ssm-start --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only gcp-settings --out <dir>   # and gcp-badge, gcp-toast
+node console/scripts/shots/capture.mjs --locale ja --theme light --only chat-settings --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only ops-settings --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only images-studio,images-form --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only images-gallery --out <dir>   # and images-settings
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
 ```
 

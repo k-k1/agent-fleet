@@ -95,8 +95,8 @@ description = """The gcloud property name `compute/region` in the gcloud configu
 reason may show, not a credential. Only that literal in those two files is excluded."""
 condition = "AND"
 paths = [
-  '''console/src/lib/gcloudConfigImport\.ts''',
-  '''console/src/lib/gcloudConfigImport\.test\.ts''',
+  '''console/src/features/settings/workspace/gcloudConfigImport\.ts''',
+  '''console/src/features/settings/workspace/gcloudConfigImport\.test\.ts''',
 ]
 regexes = ['''compute/region''']
 

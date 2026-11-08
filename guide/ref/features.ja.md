@@ -43,7 +43,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 変更ファイル | メンバー | ミラーのヘッダ下の帯 | [04 会話](../member/04-conversation.ja.md) |
 | コンテキスト使用量ゲージ | メンバー | セッションのヘッダ | [09 エージェント](../member/09-agents.ja.md) |
 | 回答を自分の言語で読む（翻訳・ターンを使わない）| メンバー | ミラーの回答の下 | [04 会話](../member/04-conversation.ja.md#回答を自分の言語で読む翻訳) |
-| セッションに画像を作らせる（`generate_image`）| メンバー | スタジオに付けたセッション以外で、頼むだけ | [13 画像](../member/13-images.ja.md#セッションに画像を作らせる) |
+| セッションに画像を作らせる（`generate_image`）| メンバー | スタジオに付けたセッション以外で、頼むだけ | [セッションに画像を作らせる](../user/images/from-session.ja.md) |
 | セッションから別のセッションを起こす（子セッション）— 別のエージェントに仕事を渡し、起こしたものの面倒を見る | メンバー | 設定 → エージェント → セッション、あとはどのセッションでも頼むだけ | [11 たくさんのセッションを動かす](../member/11-many-sessions.ja.md#セッションから別のセッションを起こす子セッション) |
 | 中断の検知と自動再開 | メンバー | 自動 | [04 会話](../member/04-conversation.ja.md) |
 
@@ -55,7 +55,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [06 リポジトリと git](../member/06-code.ja.md) |
 | コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [06 リポジトリと git](../member/06-code.ja.md) |
 | worktree | メンバー | 各リポジトリの下 | [06 リポジトリと git](../member/06-code.ja.md) |
-| サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-gh-と-bkt-を使う)。サインイン済みの CLI の一覧は [15](../member/15-external-services.ja.md#サインイン済みの-cli) |
+| サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [GitHub の CLI を使う](../user/integrations/github-cli.ja.md)、[Bitbucket の CLI を使う](../user/integrations/bitbucket-cli.ja.md)。サインイン済みの CLI の一覧は [コマンド](cli/README.ja.md#サインイン済みの-cli) |
 | サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md) |
 | サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [Confluence を使う](../user/integrations/confluence.ja.md) |
 | Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
@@ -68,12 +68,12 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [07 ファイル](../member/07-files.ja.md) |
 | `.drawio` の図 | メンバー | ファイル → `.drawio` | [07 ファイル](../member/07-files.ja.md) |
 | PDF・Office 文書のプレビュー | メンバー | ファイル → その文書 | [07 ファイル](../member/07-files.ja.md) |
-| 画像生成 — エージェントを介さずに絵をまとめて作る | メンバー | 操作バー → 画像生成、またはリーダー `g i` | [13 画像](../member/13-images.ja.md#画像生成) |
-| 編集と部分描き直し — 参照画像・マスク画像・指示編集のモデル | メンバー | 画像生成 → 上級 → 操作 | [13 画像](../member/13-images.ja.md#画像生成) |
-| LoRA と、選ぶ前に見えるトリガー語 | メンバー | 画像生成 → LoRA | [13 画像](../member/13-images.ja.md#画像生成) |
-| 画像生成のスタジオ — エージェントと会話で下書きを直し、生成は人が押す（編集履歴・版・絵の履歴）| メンバー | 画像生成 → エージェントを付ける | [13 画像](../member/13-images.ja.md#スタジオ-エージェントと会話で下書きを直す) |
-| 画像生成の知識のメモ — モデル・系統ごとに 4 節、`~/imagegen-knowledge/` | メンバー | 画像生成 → メモ、またはファイルツリー | [13 画像](../member/13-images.ja.md#スタジオ-エージェントと会話で下書きを直す) |
-| 画像ギャラリー — フォルダの画像をカードで | メンバー | ファイルツリー →「ギャラリーで開く」、またはセッションの「生成した画像 (N)」| [13 画像](../member/13-images.ja.md#画像ギャラリー) |
+| 画像生成 — エージェントを介さずに絵をまとめて作る | メンバー | 操作バー → 画像生成、またはリーダー `g i` | [画像を生成する](../user/images/generate.ja.md) |
+| 編集と部分描き直し — 参照画像・マスク画像・指示編集のモデル | メンバー | 画像生成 → 上級 → 操作 | [画像を生成する](../user/images/generate.ja.md#今ある絵を編集する) |
+| LoRA と、選ぶ前に見えるトリガー語 | メンバー | 画像生成 → LoRA | [画像を生成する](../user/images/generate.ja.md#プロンプトを書く) |
+| 画像生成のスタジオ — エージェントと会話で下書きを直し、生成は人が押す（編集履歴・版・絵の履歴）| メンバー | 画像生成 → エージェントを付ける | [スタジオで画像を仕上げる](../user/images/studio.ja.md) |
+| 画像生成の知識のメモ — モデル・系統ごとに 4 節、`~/imagegen-knowledge/` | メンバー | 画像生成 → メモ、またはファイルツリー | [スタジオで画像を仕上げる](../user/images/studio.ja.md#知識のメモを育てる) |
+| 画像ギャラリー — フォルダの画像をカードで | メンバー | ファイルツリー →「ギャラリーで開く」、またはセッションの「生成した画像 (N)」| [画像ギャラリーを使う](../user/images/gallery.ja.md) |
 | ギャラリーのカードのメニュー — コピー・名前の変更・削除・生成したセッションへ | メンバー | ギャラリーのカード → 右クリック | [アイコン・バッジ・メニュー](../member/badges-and-menus.ja.md#画像ギャラリーのカード) |
 | ローカル Web アプリのブラウザペイン | メンバー | ワークスペース操作バー → プレビュー | [14 プレビューとブラウザ](../member/14-preview-browser.ja.md)。契約は [browser-pane.md](browser-pane.ja.md) |
 | プレビュー用サブドメイン（起動ごとに発行）| メンバー | ワークスペース操作バー → プレビュー | [14 プレビューとブラウザ](../member/14-preview-browser.ja.md) |
@@ -99,7 +99,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 応答なしバッジ — ワークスペースは起動しているが Agent が応答しない | メンバー | ワークスペースの電源ボタンの横 | [21 困ったとき](../member/21-troubleshooting.ja.md#電源ボタンの横に-応答なし-バッジが出ている) |
 | エンジンのピル — チャット / 画像のエンジンが起きているか | メンバー | 画面最上部のバー | [アイコン・バッジ・メニュー](../member/badges-and-menus.ja.md#画面最上部のエンジンのピル) |
 | アシスタントチャット | メンバー | アシスタント | [10 チャットとメモ](../member/10-chat-memo.ja.md) |
-| チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [15 外部サービス](../member/15-external-services.ja.md) |
+| チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [Discord・Slack とつなぐ](../user/integrations/chat-bridge.ja.md) |
 | 返信候補 | メンバー | ミラーの入力欄 | [04 会話](../member/04-conversation.ja.md) |
 | 削除ロック | メンバー | セッションの ⋯ メニュー | [05 止める・片付ける](../member/05-stopping-and-tidying.ja.md) |
 | 掃除とごみ箱 | メンバー | 掃除 | [05 止める・片付ける](../member/05-stopping-and-tidying.ja.md) |
@@ -181,7 +181,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [operator 12](../operate/12-keys.ja.md) |
 | この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [operator 03](../operate/03-run.ja.md#2-つの配備を見分ける色とラベル) |
 | 使わない間の配備の一時停止 | 配備管理者 | 端末 | [operator 03](../operate/03-run.ja.md#使わない間の配備を一時停止する) |
-| 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 15](../member/15-external-services.ja.md) |
+| 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え) |
 | 動かなくなったスロットの強制停止 | 配備管理者（super_admin）| 管理 → スロット → 停止（強制）| [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-動かなくなったスロットの停止) |

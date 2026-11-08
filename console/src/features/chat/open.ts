@@ -2,7 +2,7 @@
 // identified by id, a not-yet-created draft by its assistant — sameTarget dedups
 // so a split-open focuses an existing pane instead of duplicating (docs/log/19).
 import { useLayoutStore } from "../../layout/store.ts";
-import { setChatSeed } from "../../lib/chatSeed.ts";
+import { setChatSeed } from "./chatSeed.ts";
 import type { OpenTarget } from "../../layout/types.ts";
 
 export const convTarget = (id: string): OpenTarget => ({

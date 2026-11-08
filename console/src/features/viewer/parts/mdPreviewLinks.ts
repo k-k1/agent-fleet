@@ -10,7 +10,7 @@
 // `https:` loopback URL stays an ordinary link.
 import { previewURL } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";
-import { URL_STOP } from "../../../lib/markdown.ts";
+import { URL_STOP } from "../markdown.ts";
 import { targetFromURL } from "../../browser/target.ts";
 import { activate, ensurePreviewInfo as ensureInfo } from "../../preview/previewLinkRuntime.ts";
 import type { OpenPortLinkMenu } from "../../preview/portLinkContext.ts";

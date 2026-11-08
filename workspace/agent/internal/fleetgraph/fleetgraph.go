@@ -17,7 +17,7 @@ package fleetgraph
 import "strings"
 
 // LedgerState is the frozen vocabulary the ledger records (mirrors LedgerState in
-// types/fleetgraph.ts exactly — see console/src/lib/fleetgraph.states.json for the parity
+// types/fleetgraph.ts exactly — see console/src/features/fleetgraph/fleetgraph.states.json for the parity
 // fixture both languages' normalisers are tested against).
 type LedgerState string
 
@@ -40,7 +40,7 @@ const (
 // knownStates is the closed set NormalizeState folds into WITHOUT setting `raw` — every
 // literal LedgerState spelling, "unknown" included: a live process reporting the literal
 // string "unknown" is a genuine match, not a fallback, so there is no "original spelling"
-// to preserve. Keep in lockstep with console/src/lib/fleetgraph.states.json —
+// to preserve. Keep in lockstep with console/src/features/fleetgraph/fleetgraph.states.json —
 // states_parity_test.go fails the suite (not skips it) when that fixture cannot be found,
 // per docs/log/101 §101.8.
 var knownStates = map[LedgerState]bool{

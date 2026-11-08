@@ -44,7 +44,7 @@ If a feature ships and does not appear here, it is not done
 | Changed files | member | strip under the mirror header | [04 Conversation](../member/04-conversation.md) |
 | Context usage gauge | member | session header | [09 Agents](../member/09-agents.md) |
 | Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [04 Conversation](../member/04-conversation.md#reading-an-answer-in-your-own-language-translation) |
-| Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [13 Images](../member/13-images.md#having-a-session-generate-an-image) |
+| Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [Have a session make images](../user/images/from-session.md) |
 | Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [11 Running many sessions](../member/11-many-sessions.md#starting-sessions-from-a-session-child-sessions) |
 | Abort detection and auto-resume | member | automatic | [04 Conversation](../member/04-conversation.md) |
 
@@ -56,7 +56,7 @@ If a feature ships and does not appear here, it is not done
 | Start from an empty folder | member | Repositories → new folder | [06 Repositories and git](../member/06-code.md) |
 | Commit graph, diff, stage and commit | member | Commit graph | [06 Repositories and git](../member/06-code.md) |
 | Worktrees | member | under each repository | [06 Repositories and git](../member/06-code.md) |
-| Use `gh` and `bkt` in a session, already signed in | member | any session | [15 External services](../member/15-external-services.md#use-gh-and-bkt-in-a-session); the list of signed-in CLIs is in [15](../member/15-external-services.md#clis-that-are-already-signed-in) |
+| Use `gh` and `bkt` in a session, already signed in | member | any session | [Use the GitHub CLI](../user/integrations/github-cli.md), [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md); the list of signed-in CLIs is in [Commands](cli/README.md#clis-that-are-already-signed-in) |
 | Use `jira` in a session, already signed in | member | any session | [Use Jira](../user/integrations/jira.md) |
 | Use `confluence` in a session, already signed in (the Jira connection) | member | any session | [Use Confluence](../user/integrations/confluence.md) |
 | Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [Use Jira](../user/integrations/jira.md#ask-an-agent) |
@@ -69,12 +69,12 @@ If a feature ships and does not appear here, it is not done
 | Markdown and code editing | member | Files → a file | [07 Files](../member/07-files.md) |
 | `.drawio` diagrams | member | Files → a `.drawio` file | [07 Files](../member/07-files.md) |
 | PDF and Office document preview | member | Files → that document | [07 Files](../member/07-files.md) |
-| Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [13 Images](../member/13-images.md#image-generation) |
-| Edit and inpaint — reference pictures, a mask file, instruction-edit models | member | image generation → Advanced → Operation | [13 Images](../member/13-images.md#image-generation) |
-| LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [13 Images](../member/13-images.md#image-generation) |
-| Image studio — refine the draft by talking to an agent, a person presses generate (edit history, versions, picture history) | member | image generation → Attach an agent | [13 Images](../member/13-images.md#studio-refine-the-draft-by-talking-to-an-agent) |
-| Image knowledge notes — four sections per model and per family, in `~/imagegen-knowledge/` | member | image generation → Notes, or the file tree | [13 Images](../member/13-images.md#studio-refine-the-draft-by-talking-to-an-agent) |
-| Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [13 Images](../member/13-images.md#image-gallery) |
+| Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [Generate images](../user/images/generate.md) |
+| Edit and inpaint — reference pictures, a mask file, instruction-edit models | member | image generation → Advanced → Operation | [Generate images](../user/images/generate.md#edit-a-picture-you-have) |
+| LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [Generate images](../user/images/generate.md#write-the-prompt) |
+| Image studio — refine the draft by talking to an agent, a person presses generate (edit history, versions, picture history) | member | image generation → Attach an agent | [Finish an image in the studio](../user/images/studio.md) |
+| Image knowledge notes — four sections per model and per family, in `~/imagegen-knowledge/` | member | image generation → Notes, or the file tree | [Finish an image in the studio](../user/images/studio.md#grow-the-knowledge-notes) |
+| Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [Use the image gallery](../user/images/gallery.md) |
 | Gallery card menu — copy, rename, delete, jump to the session that made it | member | gallery card → right-click | [Icons, badges and menus](../member/badges-and-menus.md#cards-in-the-image-gallery) |
 | Browser pane for a local web app | member | workspace action bar → Preview | [14 Preview and browser](../member/14-preview-browser.md); [browser-pane.md](browser-pane.md) for the contract |
 | Preview subdomains (minted on every start) | member | workspace action bar → Preview | [14 Preview and browser](../member/14-preview-browser.md) |
@@ -100,7 +100,7 @@ If a feature ships and does not appear here, it is not done
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
-| Chat bridge — Discord / Slack | member | Settings → Chat | [15 External services](../member/15-external-services.md) |
+| Chat bridge — Discord / Slack | member | Settings → Chat | [Connect Discord and Slack](../user/integrations/chat-bridge.md) |
 | Reply suggestions | member | mirror composer | [04 Conversation](../member/04-conversation.md) |
 | Deletion lock | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
 | Cleanup and the trash | member | Clean up | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
@@ -183,7 +183,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Keys at rest on AWS KMS, and a key of its own for each home | deployment admin | a stack parameter, then a shell | [operator 12](../operate/12-keys.md) |
 | The deployment's colour and label (Appearance) | deployment admin (super_admin) | Admin → Appearance | [operator 03](../operate/03-run.md#telling-two-deployments-apart-colour-and-label) |
 | Pausing an idle deployment | deployment admin | a shell | [operator 03](../operate/03-run.md#pausing-an-idle-deployment) |
-| Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 15](../member/15-external-services.md) |
+| Monitoring integrations | deployment admin | Settings → Ops & monitoring | [Connect monitoring tools](../user/integrations/ops-monitoring.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [operator 11](../operate/11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change) |
 | Force-stopping a wedged slot | deployment admin (super_admin) | Admin → Slots → Stop (force) | [operator 11](../operate/11-slot-pool.md#ecs-ec2-stopping-a-wedged-slot) |

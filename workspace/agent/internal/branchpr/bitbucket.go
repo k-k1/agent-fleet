@@ -1,12 +1,15 @@
 package branchpr
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +47,9 @@ const (
 	// only from a call of its own, and a conflict comes from the destination moving as often as
 	// from a push; a new head re-reads it at once.
 	bitbucketConflictTTL = 15 * time.Minute
+	// bitbucketWatchedConflictTTL is the conflict interval of a PR a watch reads (ADR 0133 rule
+	// 6.2): a watch on a conflict wants to hear sooner, at two requests per read.
+	bitbucketWatchedConflictTTL = 5 * time.Minute
 )
 
 var (
@@ -91,6 +97,9 @@ type conflictEntry struct {
 	asked    time.Time
 	// tried is the last read that failed; the next waits out the TTL from it as well.
 	tried time.Time
+	// failed marks a state that the latest read could not confirm: still the chip's fallback,
+	// but not known enough to call the PR mergeable.
+	failed bool
 }
 
 type bitbucket struct {
@@ -119,8 +128,20 @@ func (b *bitbucket) fetch(auth string, keys []Key) (map[Key]*PR, map[Key]bool, t
 	// detail reads what a list does not carry: the head commit's builds and the conflict state.
 	detail := func(repo string, h bbHit) *PR {
 		if h.pr.State == "open" && h.head != "" {
-			h.pr.Checks, h.pr.FailingChecks, h.pr.ChecksPending = b.checks(auth, repo, h.pr.Number, h.head)
-			h.pr.Conflict = b.conflict(auth, repo, h.pr.Number, h.head)
+			r := b.checksFull(auth, repo, h.pr.Number, h.head)
+			h.pr.Checks, h.pr.FailingChecks, h.pr.ChecksPending, h.pr.ChecksDigest = r.state, r.failing, r.pending, r.digest
+			conflict, known := b.conflictKnown(auth, repo, h.pr.Number, h.head)
+			h.pr.Conflict = conflict
+			// Mergeable is said only from a read: a failed one falls back to "no conflict" for the
+			// chip, which must not become "mergeable" for a ready-to-merge notice.
+			switch {
+			case !known:
+				h.pr.Mergeable = "UNKNOWN"
+			case conflict:
+				h.pr.Mergeable = "CONFLICTING"
+			default:
+				h.pr.Mergeable = "MERGEABLE"
+			}
 		}
 		return h.pr
 	}
@@ -319,23 +340,29 @@ func (b *bitbucket) oneByOne(auth, repo string, keys []Key) (map[Key]bbHit, []Ke
 // the PR's list is read instead and only the statuses whose commit link starts with that hash are
 // folded: one more call, never a stale verdict.
 func (b *bitbucket) checks(auth, repo string, pr int, head string) (string, []Check, bool) {
+	r := b.checksFull(auth, repo, pr, head)
+	return r.state, r.failing, r.pending
+}
+
+// checksFull is checks with the fingerprint of the statuses it folded.
+func (b *bitbucket) checksFull(auth, repo string, pr int, head string) rollup {
 	if !isHex(head) {
-		return "", nil, false
+		return rollup{}
 	}
-	pages, more, err := b.statusPages(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url",
+	pages, more, err := b.statusPages(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url,values.updated_on",
 		repoPath(repo), head, bitbucketPageLen))
 	if err == nil {
-		return bitbucketRollupPages(pages, "", more)
+		return rollupPages(pages, "", more)
 	}
 	if !errors.Is(err, errNotVisible) {
-		return "", nil, false
+		return rollup{}
 	}
-	pages, more, err = b.statusPages(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url,values.links.commit.href",
+	pages, more, err = b.statusPages(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url,values.updated_on,values.links.commit.href",
 		repoPath(repo), pr, bitbucketPageLen))
 	if err != nil {
-		return "", nil, false
+		return rollup{}
 	}
-	return bitbucketRollupPages(pages, head, more)
+	return rollupPages(pages, head, more)
 }
 
 // bitbucketStatusPages bounds the pages of statuses one PR's read follows: one call each, and
@@ -377,7 +404,21 @@ func (b *bitbucket) statusPages(auth, path string) (pages [][]byte, more bool, e
 // revspec; any file listed is a conflict. Not the diffstat: since Bitbucket removed its merge
 // preview (2026-09-04) a diffstat is the topic diff and never reports "merge conflict".
 func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
+	c, _ := b.conflictKnown(auth, repo, pr, head)
+	return c
+}
+
+// conflictKnown is conflict, and whether the answer comes from a read of this head (false: the
+// fallback). A PR the watch engine reads (Cache.Fetch) is re-read after
+// bitbucketWatchedConflictTTL instead of bitbucketConflictTTL.
+func (b *bitbucket) conflictKnown(auth, repo string, pr int, head string) (bool, bool) {
+	// One spelling per PR: a session's origin may carry capitals, a watch's subject does not.
+	repo = strings.ToLower(repo)
 	id := repo + "#" + strconv.Itoa(pr)
+	ttl := bitbucketConflictTTL
+	if b.c.watchedRecently(Key{Repo: repo, Number: pr}) {
+		ttl = bitbucketWatchedConflictTTL
+	}
 	now := time.Now()
 	b.mu.Lock()
 	e, ok := b.conflicts[id]
@@ -387,8 +428,8 @@ func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
 	}
 	b.mu.Unlock()
 	same := ok && e.head == head
-	if same && (now.Sub(e.at) < bitbucketConflictTTL || now.Sub(e.tried) < bitbucketConflictTTL) {
-		return e.conflict
+	if same && (now.Sub(e.at) < ttl || now.Sub(e.tried) < ttl) {
+		return e.conflict, !e.at.IsZero() && !e.failed
 	}
 	held := same && e.conflict
 	conflict, err := b.readConflict(auth, repo, pr)
@@ -396,7 +437,7 @@ func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
 	if err != nil {
 		// A failed read waits out the TTL too, keeping what it falls back to: retried on every
 		// refresh, a read that keeps failing would triple the call's share of the budget.
-		next = conflictEntry{head: head, conflict: held, asked: now, tried: now}
+		next = conflictEntry{head: head, conflict: held, asked: now, tried: now, failed: true}
 		if same {
 			next.at = e.at
 		}
@@ -411,7 +452,7 @@ func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
 	}
 	b.conflicts[id] = next
 	b.mu.Unlock()
-	return next.conflict
+	return next.conflict, err == nil
 }
 
 func isHex(s string) bool {
@@ -498,14 +539,16 @@ type bbPull struct {
 			UUID string `json:"uuid"`
 		} `json:"repository"`
 	} `json:"destination"`
+	UpdatedOn    string `json:"updated_on"`
 	Participants []struct {
-		State *string `json:"state"`
+		State    *string `json:"state"`
+		Approved bool    `json:"approved"`
 	} `json:"participants"`
 }
 
 // bbPullFields are a PR's fields as the row reads them; the list asks them under "values.".
 var bbPullFields = []string{"id", "title", "state", "draft", "links.html.href", "source.branch.name",
-	"source.repository.full_name", "source.commit.hash", "destination.repository.uuid", "participants.state"}
+	"source.repository.full_name", "source.commit.hash", "destination.repository.uuid", "participants.state", "participants.approved", "updated_on"}
 
 // hit converts v, whose state bitbucketState knows, to the row's PR and its head.
 func (v bbPull) hit() bbHit {
@@ -514,10 +557,29 @@ func (v bbPull) hit() bbHit {
 	if r := v.Destination.Repository; r != nil && r.UUID != "" {
 		h.pr.NodeID = r.UUID + "#" + strconv.Itoa(v.ID)
 	}
+	if state != "open" {
+		// Bitbucket has no closed_on; the last update of a merged or declined PR stands in, so a
+		// PR declined, reopened and declined again is a second close.
+		h.pr.ClosedAt = v.UpdatedOn
+	}
+	approved := false
 	for _, p := range v.Participants {
 		if p.State != nil && *p.State == "changes_requested" {
 			h.pr.ChangesRequested = true
 		}
+		if p.Approved || (p.State != nil && *p.State == "approved") {
+			approved = true
+		}
+	}
+	// Bitbucket does not say whether a repository requires a review before a merge, so a PR is
+	// ready only once someone approved it and nobody asks for changes.
+	switch {
+	case h.pr.ChangesRequested:
+		h.pr.ReviewDecision = "CHANGES_REQUESTED"
+	case approved:
+		h.pr.ReviewDecision = "APPROVED"
+	default:
+		h.pr.ReviewDecision = "REVIEW_REQUIRED"
 	}
 	if v.Source.Commit != nil {
 		h.head = v.Source.Commit.Hash
@@ -568,12 +630,27 @@ func bitbucketRollup(body []byte, head string) (state string, failing []Check, p
 // bitbucketRollupPages is bitbucketRollup over several pages of one list. more says statuses are
 // left unread, which any of them may still run.
 func bitbucketRollupPages(pages [][]byte, head string, more bool) (state string, failing []Check, pending bool) {
+	r := rollupPages(pages, head, more)
+	return r.state, r.failing, r.pending
+}
+
+// rollup is a folded status list. digest fingerprints every status folded (key, state, update
+// time), so a re-run on the same commit reads as a new result.
+type rollup struct {
+	state   string
+	failing []Check
+	pending bool
+	digest  string
+}
+
+func rollupPages(pages [][]byte, head string, more bool) rollup {
 	type status struct {
-		State string `json:"state"`
-		Name  string `json:"name"`
-		Key   string `json:"key"`
-		URL   string `json:"url"`
-		Links struct {
+		State     string `json:"state"`
+		Name      string `json:"name"`
+		Key       string `json:"key"`
+		URL       string `json:"url"`
+		UpdatedOn string `json:"updated_on"`
+		Links     struct {
 			Commit struct {
 				Href string `json:"href"`
 			} `json:"commit"`
@@ -585,11 +662,13 @@ func bitbucketRollupPages(pages [][]byte, head string, more bool) (state string,
 			Values []status `json:"values"`
 		}
 		if json.Unmarshal(body, &sr) != nil {
-			return "", nil, false
+			return rollup{}
 		}
 		all = append(all, sr.Values...)
 	}
-	var failed, passed bool
+	var failed, passed, pending bool
+	var failing []Check
+	var parts []string
 	for _, v := range all {
 		if head != "" {
 			_, hash, _ := strings.Cut(v.Links.Commit.Href, "/commit/")
@@ -597,6 +676,7 @@ func bitbucketRollupPages(pages [][]byte, head string, more bool) (state string,
 				continue
 			}
 		}
+		parts = append(parts, v.Key+"|"+v.Name+"|"+v.State+"|"+v.UpdatedOn)
 		switch strings.ToUpper(v.State) {
 		case "FAILED", "STOPPED":
 			failed = true
@@ -611,16 +691,19 @@ func bitbucketRollupPages(pages [][]byte, head string, more bool) (state string,
 			passed = true
 		}
 	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	digest := hex.EncodeToString(sum[:6])
 	switch {
 	case failed:
-		return "failure", failing, pending || more
+		return rollup{"failure", failing, pending || more, digest}
 	case pending || more:
 		// Every status read passed, but some were left unread: not known to be green.
-		return "pending", nil, true
+		return rollup{"pending", nil, true, digest}
 	case passed:
-		return "success", nil, false
+		return rollup{"success", nil, false, digest}
 	}
-	return "", nil, false
+	return rollup{}
 }
 
 func repoPath(repo string) string {

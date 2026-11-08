@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
 import { api } from "../../../core/api/client.ts";
-import { EXPORT_FILENAME, renderAwsConfig, type ExportReason } from "../../../lib/awsConfigExport.ts";
+import { EXPORT_FILENAME, renderAwsConfig, type ExportReason } from "./awsConfigExport.ts";
 
 type Tr = ReturnType<typeof useT>;
 

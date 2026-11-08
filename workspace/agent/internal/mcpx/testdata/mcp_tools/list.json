@@ -2836,7 +2836,7 @@
       "name": "update_schedule"
     },
     "watch#1": {
-      "description": "Agent Fleet: get a notice in this session when a pull request changes, instead of polling it yourself (no `gh pr checks --watch` in the background). The notice arrives as your next input once you are idle, even after a restart; a stopped session is started for it. Types: pr.checks.completed, pr.checks.failed, pr.conflict, pr.mergeable, pr.ready, pr.merged, pr.closed, pr.review.changes_requested, pr.review.threads_unresolved, or a prefix like pr.checks.*. notify parent sends the notices to the session that started you instead; that watch then belongs to it. A condition that already holds is reported at once. until first (default) ends the watch after one notice; deadline keeps it until it expires (default 7 days, at most 30).",
+      "description": "Agent Fleet: get a notice in this session when a GitHub or Bitbucket pull request changes, instead of polling it yourself (no `gh pr checks --watch` in the background). The notice arrives as your next input once you are idle, even after a restart; a stopped session is started for it. Types: pr.checks.completed, pr.checks.failed, pr.conflict, pr.mergeable, pr.ready, pr.merged, pr.closed, pr.review.changes_requested, pr.review.threads_unresolved (GitHub only), or a prefix like pr.checks.*. source bitbucket for a Bitbucket PR. notify parent sends the notices to the session that started you instead; that watch then belongs to it. A condition that already holds is reported at once. until first (default) ends the watch after one notice; deadline keeps it until it expires (default 7 days, at most 30).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2854,13 +2854,14 @@
             "type": "string"
           },
           "ref": {
-            "description": "owner/repo#45, #45 in your own repository, or the PR's https://github.com/… URL",
+            "description": "owner/repo#45, #45 in your own repository, or the PR's URL",
             "type": "string"
           },
           "source": {
             "description": "default github",
             "enum": [
-              "github"
+              "github",
+              "bitbucket"
             ],
             "type": "string"
           },

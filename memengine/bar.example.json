@@ -1,0 +1,14 @@
+{
+  "operations": {
+    "add":        {"max_wrong_changes": 1, "max_invalid": 0, "min_fix_rate": 0.7},
+    "patch":      {"max_wrong_changes": 1, "max_invalid": 0, "min_fix_rate": 0.6},
+    "no-op":      {"max_wrong_changes": 3, "max_invalid": 0, "min_fix_rate": 0.85},
+    "supersede":  {"max_wrong_changes": 0, "max_invalid": 0, "min_fix_rate": 1.0},
+    "merge":      {"max_wrong_changes": 1, "max_invalid": 0, "min_fix_rate": 0.6},
+    "patch-call": {"max_wrong_changes": 2, "max_invalid": 0, "max_lost_facts": 0, "min_fix_rate": 0.8}
+  },
+  "roles": {
+    "small": ["add", "patch", "no-op", "patch-call"],
+    "large": ["supersede", "merge"]
+  }
+}

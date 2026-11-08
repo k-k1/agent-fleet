@@ -28,7 +28,7 @@ const (
 )
 
 // DetectVCS reports which VCS (if any) manages dir. Mirrors git.go's isGitRepo /
-// svn.go's isSvnRepo (duplicated rather than imported — package main cannot be
+// internal/svnx's IsRepo (duplicated rather than imported — package main cannot be
 // imported from here, and each check is two lines).
 func DetectVCS(dir string) string {
 	if isGitRepo(dir) {

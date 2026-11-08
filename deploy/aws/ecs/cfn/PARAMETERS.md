@@ -953,6 +953,66 @@ parameters in block style (`Default:` on its own line): `standup.sh`'s preflight
 required parameters line by line and reports every flow-style one as missing. Parameters have been paid
 for by moving prose out of the template, so the next one needs the same.
 
+## Provided routes
+
+### `ProvidedRoutes`
+
+Off by default, and off adds nothing: no environment entry, port mapping, Service Connect
+entry, security-group rule, role or output, so an existing stack is unchanged. `on` is the
+acceptance switch of ADR 0129 phase Q1 (Bedrock the deployment pays for, within budgets its
+administrators set). It does four things.
+
+- **The switch.** `AF_PROVIDED_ROUTES=1` (the CP accepts exactly `1`) and
+  `AF_PROVIDED_ROUTE_DEADLINE=15m`, the upstream deadline that the timeouts below are held to.
+  The CP's log says `provided routes: on (AF_PROVIDED_ROUTES=1)` once it takes effect.
+- **The route role**, `DeploymentRouteRole`. It allows `bedrock:InvokeModel`,
+  `bedrock:InvokeModelWithResponseStream` and `bedrock:GetInferenceProfile` and nothing else;
+  the CP narrows every assumed session further, to the registered model list. It trusts only
+  the CP task role, for `sts:AssumeRole` with `sts:TagSession`. An assume without the
+  `af-membership` session tag, or with a tag other than `af-membership` / `af-tenant`, is
+  refused, so every call is billed to a principal carrying the member's tags (ADR 0129 D5).
+  `CpAssumeRoutePolicy` gives the CP task role those two actions on this role alone. The
+  output `DeploymentRouteRoleArn` is the `role_arn` a super_admin registers:
+
+  ```
+  PUT /api/admin/provided-routes/deployment
+  {"role_arn": "<DeploymentRouteRoleArn>", "region": "us-east-1", "models": ["us.anthropic.claude-opus-5-5"]}
+  ```
+
+  The stack grants the IAM only. The deployment source itself (Region, model list) is the
+  super_admin's, and the grants and budgets per tenant are set over REST
+  (`/api/admin/tenants/{slug}/provided-routes/deployment/...`). Until a tenant is granted with
+  a ceiling and its members have a budget, nobody can use the route.
+- **The internal CP path.** ADR 0129 D2 offers a provided route only when every hop between the
+  Agent and the CP idles out later than the CP's upstream deadline. The public path does not
+  meet that: the ALB idles out at 60 s and the NAT gateway at 350 s. With `on`:
+  - the CP serves its workspace listener (`AF_CP_INTERNAL_LISTEN=0.0.0.0:8098`) as a Service
+    Connect server `af-cp-internal:8098`, with `IdleTimeoutSeconds: 960` and
+    `PerRequestTimeoutSeconds: 0` (none);
+  - every Workspace started from then on gets `AF_CP_INTERNAL_URL=http://af-cp-internal:8098`.
+    The Workspace services are already Service Connect clients of the namespace (for the CP's
+    calls to their Agent), so no change to their task definitions is needed;
+  - `CpInternalFromWs` admits the workspace security group to 8098 on the CP's.
+
+  `AF_CP_INTERNAL_URL` moves every Agent → CP call onto that path, not only the model calls
+  (ADR 0106 decision 8): the workspace listener serves only the token-authenticated routes the
+  Agent calls (`control-plane/workspace_listener.go`). The hops were reasoned about from the
+  template and the AWS documentation, not measured: Agent → its Service Connect proxy → the
+  CP's proxy → the CP. Only the ECS sandbox gate verifies them: a stand-in that stays silent
+  until just before the deadline must complete.
+- **Running Workspaces** keep the environment they started with: Stop → Start each one after
+  turning it on (a Workspace started before has neither the gate nor the issuing token, and its
+  creates on the route fail at the Agent until then).
+
+```
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ProvidedRoutes=on
+```
+
+`deploy/local/cfn-provided-routes-test.py` checks all of the above offline. The CP needs an
+AWS identity from its environment for this (the task role here). `ec2-single` has none and does
+not offer provided routes (`deploy/aws/ec2-single/README.md`).
+
 ### `SessionTtl` / `CookiePurposeKeys` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
 
 Pass-throughs for CP variables the operator guide calls configurable and that had no ECS

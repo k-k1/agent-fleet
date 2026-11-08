@@ -8,7 +8,7 @@
 //   - Session         → console/src/types/session.ts
 //   - Repo            → console/src/features/repos/store.ts
 //   - Turn / Part     → workspace/agent/internal/transcript/transcript.go
-//   - GraphCommit     → console/src/lib/gitgraph.ts
+//   - GraphCommit     → console/src/features/scm/gitgraph.ts
 // Keep them in sync when those contracts move; a drifted fixture renders an empty
 // pane rather than failing loudly.
 
@@ -2210,6 +2210,44 @@ export function movePreview(locale, name) {
     },
     queued: [{ text: L(locale, "エラー文言はデザインのメモに合わせて", "Match the error wording to the design note"), origin: "memo" }],
     sizeBytes: 48213,
+  };
+}
+
+// ---- user guide: images (SHOT_GALLERY, SHOT_IMAGE_SETTINGS) ---------------------------------
+// The image-generation pane's output folder as the gallery lists it (GET fs/tree with mtime, and
+// a subfolder card's cover and count). The pictures are the stub's colour swatches.
+export function galleryTree(p) {
+  const now = Math.floor(Date.now() / 1000);
+  const root = ".cache/agent-fleet/generated/console";
+  if (p === root) {
+    const pics = Array.from({ length: 11 }, (_, i) => ({
+      name: `image-17579${String(40 - i).padStart(2, "0")}00-1.png`,
+      type: "file",
+      size: 1_150_000 + i * 7_300,
+      mtime: now - 60 * (3 + i * 7),
+    }));
+    return {
+      path: p,
+      entries: [
+        { name: "trial", type: "dir", mtime: now - 120, images: 6, preview: [{ name: "image-1757939000-1.png", mtime: now - 120 }] },
+        ...pics,
+      ],
+    };
+  }
+  return null;
+}
+
+// The status a current Agent sends, for the Agents tab's provider order: the deployment's engine
+// row marked as such, then the two CLI routes.
+export function imagegenStatusLive(locale) {
+  const st = imagegenStatus(locale);
+  return {
+    ...st,
+    providers: [
+      ...st.providers.map((p) => ({ ...p, kind: "comfy", fleet: true })),
+      { id: "codex", kind: "codex", fleet: false, models: [] },
+      { id: "agy", kind: "agy", fleet: false, models: [] },
+    ],
   };
 }
 

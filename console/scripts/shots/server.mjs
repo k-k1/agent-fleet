@@ -108,6 +108,26 @@ const exact = {
       { urlPrefix: "https://svn.example.com/design", username: "taro" },
       { urlPrefix: "https://svn.internal.example/legacy", username: "", trustCert: "1" },
     ],
+    // The chat and ops cards' connections exist only in a run that asks (SHOT_CHAT / SHOT_OPS),
+    // so the scenes taken without them keep their "Not connected" cards.
+    ...(process.env.SHOT_CHAT
+      ? {
+          discord: {
+            connected: true, mode: "channel", botName: "Agent Fleet Bot", operator: true, channelId: "100000000000000001",
+            threads: true, receive: true, mirrorInput: true, fullText: false, mentionUserId: "100000000000000002",
+            events: ["answer-ready", "question", "permission-request", "exit", "session-report"], notify: true,
+          },
+          slack: { connected: false },
+        }
+      : {}),
+    ...(process.env.SHOT_OPS
+      ? {
+          pagerduty: { connected: true },
+          grafana: { connected: true, url: "https://grafana.example.com" },
+          cloudwatch: { connected: true, profile: "Staging", region: "ap-northeast-1", sso: true },
+          aws: { connected: false },
+        }
+      : {}),
   }),
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
@@ -135,7 +155,9 @@ const exact = {
   "/api/schedules": () => fx.schedules(LOCALE),
   // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
   // with it (the palette gains a mode).
-  "/api/env/ui-prefs": () => ({ agentMemory: true }),
+  // imageGeneration only for the user guide's settings shot (SHOT_IMAGE_SETTINGS): with it on, the
+  // Agents tab grows the provider order, which no other scene shows.
+  "/api/env/ui-prefs": () => ({ agentMemory: true, ...(process.env.SHOT_IMAGE_SETTINGS ? { imageGeneration: true } : {}) }),
   // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log.
   "/api/agents/memory/entries/list": () => fx.memoryList(LOCALE),
   "/api/agents/memory/entries/member-read": (q) => fx.memoryRead(LOCALE, q.get("name") || ""),
@@ -329,7 +351,8 @@ const exact = {
   }),
   // Image generation (ADR 0081): the widened status and a queue mid-run. Without these the
   // studio pane renders as "no engine available", which shows none of what it is for.
-  "/api/imagegen/status": () => fx.imagegenStatus(LOCALE),
+  "/api/imagegen/status": () =>
+    process.env.SHOT_IMAGE_SETTINGS ? fx.imagegenStatusLive(LOCALE) : fx.imagegenStatus(LOCALE),
   // The top-bar engine pills (ADR 0084): one row per role, the member shape of
   // console/src/features/engines/wire.ts. A warm chat engine with a model loaded, a
   // countdown and somebody actually using it, plus a stopped image engine — so the pill's
@@ -447,7 +470,8 @@ const re = [
   [/^\/api\/chat\/conversations\/([^/]+)$/, (m) => fx.conversation(LOCALE, decodeURIComponent(m[1]))],
   [/^\/api\/usage\/series$/, (m, q) => fx.usageSeries(LOCALE, q)],
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
-  [/^\/api\/fs\/tree$/, (m, q) => fx.fsTree(LOCALE, q.get("path") || "")],
+  [/^\/api\/fs\/tree$/, (m, q) =>
+    (process.env.SHOT_GALLERY && fx.galleryTree(q.get("path") || "")) || fx.fsTree(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/file$/, (m, q) => fx.fsFile(LOCALE, q.get("path") || "")],
   [/^\/api\/imagegen\/props$/, (m, q) => fx.imagegenProps(LOCALE, q.get("path") || "")],
   [/^\/api\/imagegen\/studios\/[^/]+\/draft-log$/, () => fx.imagegenDraftLog()],

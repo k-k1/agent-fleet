@@ -904,7 +904,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.region_profile_default": "Uses the profile default ({region})",
   "ssm.region_other": "Other (enter a code)…",
   "ssm.region_other_placeholder": "Region code (e.g. us-gov-west-1)",
-  // AWS region display names (lib/awsRegions.ts), as the AWS console words them.
+  // AWS region display names (features/settings/parts/awsRegions.ts), as the AWS console words them.
   "ssm.region.us-east-1": "US East (N. Virginia)",
   "ssm.region.us-east-2": "US East (Ohio)",
   "ssm.region.us-west-1": "US West (N. California)",
@@ -1336,7 +1336,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "gcp.region_other_placeholder": "Region (e.g. us-east7)",
   "gcp.zone_other": "Other (enter a zone)…",
   "gcp.zone_other_placeholder": "Zone (e.g. us-east7-a)",
-  // Display names for GCP_REGIONS (lib/gcpRegions.ts), one per listed region.
+  // Display names for GCP_REGIONS (features/settings/workspace/gcpRegions.ts), one per listed region.
   "gcp.region.africa-south1": "Johannesburg, South Africa",
   "gcp.region.asia-east1": "Changhua County, Taiwan",
   "gcp.region.asia-east2": "Hong Kong",

@@ -7,7 +7,7 @@ vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 vi.mock("mermaid", () => ({ default: { initialize: vi.fn(), render: vi.fn() } }));
 
 const { MarkdownView } = await import("./MarkdownView.tsx");
-const { sanitizeMarkdownHtml, deferExternalMedia, stripInternalMedia } = await import("../../lib/sanitize.ts");
+const { sanitizeMarkdownHtml, deferExternalMedia, stripInternalMedia } = await import("./sanitize.ts");
 const { wireExternalImages } = await import("./parts/mdExternalImages.ts");
 
 let host: HTMLDivElement;

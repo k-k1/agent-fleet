@@ -235,7 +235,23 @@ func TestWatchingPRMatchesTheSubjectCaseInsensitively(t *testing.T) {
 	if _, err := e.Subscribe(context.Background(), watch.Request{Owner: "a", Source: "github", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
 		t.Fatal(err)
 	}
-	if !watchingPR("a", "O/R#1", "pr.merged") || watchingPR("a", "o/r#1", "pr.checks.failed") || watchingPR("b", "o/r#1", "pr.merged") {
+	if !watchingPR("a", "github", "O/R#1", "pr.merged") || watchingPR("a", "github", "o/r#1", "pr.checks.failed") ||
+		watchingPR("b", "github", "o/r#1", "pr.merged") || watchingPR("a", "bitbucket", "o/r#1", "pr.merged") {
 		t.Fatal("watchingPR answered wrongly")
 	}
+	bb := watch.New(watchDiskStore{}, newWatchSink(), stubSource{}, bbStub{})
+	useWatchEngine(t, bb)
+	if _, err := bb.Subscribe(context.Background(), watch.Request{Owner: "a", Source: "bitbucket", Ref: "w/x#2", Types: []string{"pr.merged"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !watchingPR("a", "bitbucket", "W/X#2", "pr.merged") || watchingPR("a", "github", "w/x#2", "pr.merged") {
+		t.Fatal("watchingPR answered wrongly")
+	}
+}
+
+type bbStub struct{ stubSource }
+
+func (bbStub) Kind() string { return "bitbucket" }
+func (bbStub) Resolve(context.Context, string, string) (watch.Resolved, error) {
+	return watch.Resolved{Subject: "bitbucket:w/x#2"}, nil
 }

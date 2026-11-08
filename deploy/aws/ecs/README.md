@@ -334,6 +334,27 @@ that adds these parameters turns nothing on; run the targeted deploy above to tu
 Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#mcp-mcp-and-mcp-oauth) and
 `guide/operate/04-secure.md`, "Sign-in for remote MCP clients".
 
+### Provided routes (optional, off by default)
+
+```bash
+# 30-ingress: Bedrock the deployment pays for (ADR 0129 Q1, acceptance only)
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ProvidedRoutes=on
+```
+
+`ProvidedRoutes=on` does four things:
+- It sets `AF_PROVIDED_ROUTES=1` on the CP.
+- It creates the route role, which can only invoke Bedrock models and only for the CP task role with the member's session tags.
+- It gives the CP task role the right to assume that role.
+- It opens the internal path the Agent's model calls need: Service Connect `af-cp-internal:8098`, with timeouts longer than the 15-minute deadline, never the 60-second ALB.
+
+Then:
+- Register the stack output `DeploymentRouteRoleArn` with `PUT /api/admin/provided-routes/deployment`.
+- Grant tenants and set budgets over REST.
+- Stop → Start running Workspaces.
+
+Off adds nothing. Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#provided-routes).
+
 ### Timers, GitHub sign-in extras and LAN / borrowed engines (optional, empty by default)
 
 ```bash

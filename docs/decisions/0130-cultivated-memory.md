@@ -658,3 +658,13 @@ release.
   with the renaming commit in an `AF-Lint-Rename` trailer; it reads file renames from the last 2,000 non-merge commits.
   Not built: scheduling (nothing runs lint by itself yet), baselines for "exists but changed" and checks of stored
   anchors beyond the ones lint extracts from the body, directory renames.
+
+- **2026-11-08 — decision 6 engine and gold-set evaluation built (#3497, first PR).** The engine is the separate
+  module `memengine/` (decision 8): the classify and patch call contracts with fixed JSON schemas, deterministic
+  validation (schema, each `old` once in its field, no overlapping edits, the patch applies; an invalid answer is
+  dropped, never retried), and the model as a one-shot command (prompt on stdin, JSON on stdout, argv only). A
+  test fails on any import of an agent-fleet package. `go run ./cmd/goldeval` scores both tiers against the
+  member's labels per operation. The classification answer set includes `merge` so the gold set's merge cases can
+  be scored; the small tier's `supersede` and `merge` answers are the ones decision 6 escalates. Measured on the
+  59-case set with `claude -p` (haiku as the small tier, sonnet as the larger): the results are in the PR; the
+  scheduler, ripeness rules, approval UI and the AF adapter that queues proposals are later PRs.
