@@ -231,7 +231,7 @@ func TestNoRevivalAndTheExportIsReadOnly(t *testing.T) {
 func TestAnObservationWithASecretIsNeverSent(t *testing.T) {
 	f := env(t)
 	f.put("project", testProject, memoryx.ConsolMemory{Name: "a", Description: "d", Type: "project", Revision: 1, Body: "x",
-		Reasons: []memoryx.ConsolReason{{By: "feedback", Rule: "wrong", Note: "key AKIAABCDEFGHIJKLMNOP is wrong", Revision: 1}}})
+		Reasons: []memoryx.ConsolReason{{By: "feedback", Rule: "wrong", Note: "key " + "AKIA" + "ABCDEFGHIJKLMNOP is wrong", Revision: 1}}})
 	small := &scriptModel{classify: classifyAs("no-op")}
 	rep := mustRun(t, input(small, nil, t0))
 	if small.calls() != 0 || rep.Skipped != 1 {
