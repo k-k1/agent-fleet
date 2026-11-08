@@ -3,7 +3,7 @@
 // shared-session view or a document viewer has no throwaway directory to expand against, so
 // `$AF_WORK_DIR/…` stays plain code there.
 import { createContext, useContext } from "react";
-import { sessionWorkDir } from "../../lib/pathref.ts";
+import { sessionWorkDir } from "./pathref.ts";
 import type { Session } from "../../types/session.ts";
 
 const SessionWorkDirContext = createContext<string>("");

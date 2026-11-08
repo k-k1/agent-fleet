@@ -367,7 +367,7 @@ export type SegmentKindByState = Record<LedgerState, SegmentKind>;
 // the ledger (the Agent normalises in Go before writing) and the live map (the
 // builder normalises Session.state, which is `SessionState | string` and carries
 // the same "" and the same open-ended spellings). One rule, two languages, so both
-// suites read the same fixture: console/src/lib/fleetgraph.states.json.
+// suites read the same fixture: console/src/features/fleetgraph/fleetgraph.states.json.
 export type GraphNormalizeState = (raw: string | undefined) => LedgerState;
 
 // Answers "is this end of an arrow one of the spellings that never has a lane?"
@@ -467,7 +467,7 @@ export interface BuildFleetGraphOptions {
   conversationId?: string;
 }
 
-// Implemented by S-LOGIC in console/src/lib/fleetgraph.ts. It merges the served
+// Implemented by S-LOGIC in console/src/features/fleetgraph/fleetgraph.ts. It merges the served
 // page with the live sessions map (name → Session): the page is history, the map
 // is what is true right now, and `presence` needs both — a lane whose newest run
 // ended is "stopped" while the session is still listed, and "gone" once it is not.

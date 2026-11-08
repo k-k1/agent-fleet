@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { marked } from "../../../lib/markdown.ts";
-import { repairFullwidthTables } from "../../../lib/markdown.ts";
+import { marked } from "../markdown.ts";
+import { repairFullwidthTables } from "../markdown.ts";
 import { SOURCE_LINE_ATTR, insertedLineMap, tagSourceLines } from "./mdSourceLines.ts";
 
 function render(source: string, lineOffset = 0): HTMLElement {

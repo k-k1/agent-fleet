@@ -4,7 +4,7 @@
 // rule is the server's: repoNameRe mirrors workspace/agent/git.go, and a name that
 // already exists is refused there with 409 exists rather than overwritten.
 import { useEffect, useRef } from "react";
-import { repoNameRe } from "../../lib/reponame.ts";
+import { repoNameRe } from "./reponame.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useT } from "../../lib/i18n/index.ts";
 

@@ -12,8 +12,8 @@
 //   - A request that never came back (network) leaves its row "unknown" and stops the run: the
 //     row may exist, and the next import's re-read of the lists is what tells.
 import { api, rawJSON } from "../../../core/api/client.ts";
-import type { ExistingSignIn } from "../../../lib/awsConfigImport.ts";
-import type { SsmPlan } from "../../../lib/settingsBundle.ts";
+import type { ExistingSignIn } from "./awsConfigImport.ts";
+import type { SsmPlan } from "./settingsBundle.ts";
 
 export type RowOutcome = "created" | "failed" | "unknown" | "skipped_source" | "not_run";
 

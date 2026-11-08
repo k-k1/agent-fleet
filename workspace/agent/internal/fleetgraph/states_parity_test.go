@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// statesFixturePath is console/src/lib/fleetgraph.states.json, the frozen normalisation
+// statesFixturePath is console/src/features/fleetgraph/fleetgraph.states.json, the frozen normalisation
 // table both Go and vitest read (docs/log/101 §101.8). Relative to this package's
 // directory (workspace/agent/internal/fleetgraph): four levels up reaches the repo root.
-const statesFixturePath = "../../../../console/src/lib/fleetgraph.states.json"
+const statesFixturePath = "../../../../console/src/features/fleetgraph/fleetgraph.states.json"
 
 type statesFixture struct {
 	Cases []struct {
@@ -20,7 +20,7 @@ type statesFixture struct {
 }
 
 // TestNormalizeStateMatchesFixture is the Go half of the cross-language parity check ADR
-// 0096 decision 3 requires: this package's NormalizeState and console/src/lib/fleetgraph.ts's
+// 0096 decision 3 requires: this package's NormalizeState and console/src/features/fleetgraph/fleetgraph.ts's
 // GraphNormalizeState must agree on every case in the SAME fixture file. A missing fixture
 // fails the suite rather than skipping it — a silently skipped parity check and a passing
 // one are indistinguishable otherwise (docs/log/101 §101.8).

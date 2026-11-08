@@ -7,7 +7,7 @@
 // not part of the answer (docs/log/103 decision 5 / §103.8-3) — a caller that wants one draws
 // it from the model catalog it already fetches (lib/agentModels.ts's useModelOptions).
 import { useEffect, useState } from "react";
-import { api } from "../core/api/client.ts";
+import { api } from "../../../core/api/client.ts";
 
 export interface AiAssistResolutionRow {
   feature: string;

@@ -538,7 +538,7 @@ func deriveRepoName(remote string) string {
 }
 
 // sanitizeSeg makes a branch name usable as part of a folder name (repoNameRe
-// charset). Mirrors the console's sanitizeSeg (console/src/lib/reponame.ts).
+// charset). Mirrors the console's sanitizeSeg (console/src/features/repos/reponame.ts).
 func sanitizeSeg(s string) string {
 	s = sanitizeSegRe.ReplaceAllString(s, "-")
 	s = strings.TrimLeft(s, "-")

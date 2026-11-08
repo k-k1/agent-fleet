@@ -25,7 +25,7 @@
 //      in is not worth the risk.
 
 export const BUNDLE_KIND = "agent-fleet-settings";
-import { isMachineWrittenSetting } from "./settings/prefs.ts";
+import { isMachineWrittenSetting } from "../../../lib/settings/prefs.ts";
 import { validDuration, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
 
 export const BUNDLE_VERSION = 1;

@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { groupRefs, laneColor, laneCount, layoutGraph } from "../../lib/gitgraph.ts";
-import type { GraphCommit, GraphRow, RefChip } from "../../lib/gitgraph.ts";
+import { groupRefs, laneColor, laneCount, layoutGraph } from "./gitgraph.ts";
+import type { GraphCommit, GraphRow, RefChip } from "./gitgraph.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { Icon } from "../../ui/Icon.tsx";

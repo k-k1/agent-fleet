@@ -10,7 +10,7 @@
 // It must run on the renderer's own output, before any post-processing reshapes the tree
 // (front matter panel, mermaid replacing its <pre>): those happen after this.
 import type { Token, Tokens } from "marked";
-import { marked } from "../../../lib/markdown.ts";
+import { marked } from "../markdown.ts";
 
 /** The attribute holding a block's 1-based line in the source the user edits. */
 export const SOURCE_LINE_ATTR = "data-src-line";

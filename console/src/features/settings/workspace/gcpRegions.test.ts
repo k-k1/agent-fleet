@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GCP_REGIONS, GCP_REGION_CODES, gcpZonesOf } from "./gcpRegions.ts";
-import { tools as en } from "./i18n/locales/en/tools.ts";
-import { tools as ja } from "./i18n/locales/ja/tools.ts";
+import { tools as en } from "../../../lib/i18n/locales/en/tools.ts";
+import { tools as ja } from "../../../lib/i18n/locales/ja/tools.ts";
 
 describe("GCP_REGIONS", () => {
   it("names every listed region in both catalogues", () => {

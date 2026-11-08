@@ -21,7 +21,7 @@
 // repository-root-second in one round trip. A candidate it can't place stays plain text, on
 // the same contract as an unknown session slug: if it does not exist, do not link it.
 
-import { isExternalUrl } from "./filemeta.ts";
+import { isExternalUrl } from "../../lib/filemeta.ts";
 
 const MAX_REF_LEN = 512;
 

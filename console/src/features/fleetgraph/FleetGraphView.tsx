@@ -48,7 +48,7 @@ import type {
   LedgerState,
 } from "../../types/fleetgraph.ts";
 import type { Session } from "../../types/session.ts";
-import { buildFleetGraph, isExternalActor, laneY, xOf } from "../../lib/fleetgraph.ts";
+import { buildFleetGraph, isExternalActor, laneY, xOf } from "./fleetgraph.ts";
 import { clampWindow, panByPx, pinchSpanFactor, zoomAt } from "./viewport.ts";
 import "./fleetgraph.css";
 

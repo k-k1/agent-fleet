@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 import hljs from "highlight.js/lib/common";
 import { dirName, slug } from "../../lib/filemeta.ts";
 // marked: the app's own instance, not the package singleton (see lib/markdown.ts).
-import { marked, repairFullwidthTables, splitYamlFrontMatter } from "../../lib/markdown.ts";
-import { mermaidNamesResource, sanitizeMarkdownHtml, stripInternalMedia } from "../../lib/sanitize.ts";
+import { marked, repairFullwidthTables, splitYamlFrontMatter } from "./markdown.ts";
+import { mermaidNamesResource, sanitizeMarkdownHtml, stripInternalMedia } from "./sanitize.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";

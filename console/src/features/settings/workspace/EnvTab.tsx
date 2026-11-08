@@ -9,7 +9,7 @@ import { useHostUpdate } from "../hostUpdate.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
-import { pinDrift } from "../../../lib/pinDrift.ts";
+import { pinDrift } from "./pinDrift.ts";
 import { relTime } from "../../../lib/intl.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
 import { watcherHealth, type CLIRelease } from "../cliRelease.ts";

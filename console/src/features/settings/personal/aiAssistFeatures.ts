@@ -11,8 +11,8 @@
 // suggestions through one shared toggle — see FEATURE_ENABLED_KEY.suggest.chat below).
 //
 // Feature ids match the usage ledger's `feature` values verbatim (usagex/ledger.go).
-import type { Settings } from "./settings.ts";
-import type { MsgKey } from "./i18n/index.ts";
+import type { Settings } from "../../../lib/settings.ts";
+import type { MsgKey } from "../../../lib/i18n/index.ts";
 
 export type AiAssistTier = "short" | "prose";
 
