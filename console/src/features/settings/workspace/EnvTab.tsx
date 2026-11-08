@@ -14,6 +14,18 @@ import { relTime } from "../../../lib/intl.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
 import { watcherHealth, type CLIRelease } from "../cliRelease.ts";
 import { jdkLabel, jdkVendor } from "./jdkLabel.ts";
+import {
+  getToolchains,
+  getToolVersions,
+  isOk,
+  putToolchains,
+  type ToolBin,
+  type ToolchainsPatch,
+  type Toolchains as ToolchainsData,
+  type ToolVersions as ToolVersionsData,
+  type WsSettings,
+} from "../api.ts";
+import { useWsSettings } from "../useWsSettings.ts";
 
 // EnvTab (the "toolchains" tab) selects the workspace toolchains: timezone, node (via nvm),
 // go, and java (a Temurin or Corretto JDK), plus the read-only bundled-tool versions and
@@ -29,14 +41,14 @@ export function EnvTab() {
   const toast = useToast();
   const wsState = useWorkspaceStore((s) => s.state);
   const running = wsState === "running";
-  const [d, setD] = useState<any>(null);
+  const [d, setD] = useState<ToolchainsData | null>(null);
   // Bumped on every completed toolchains load. A 304 hands back the very same object, so
   // the payload alone cannot tell the Installed versions list to refetch.
   const [gen, setGen] = useState(0);
   const [err, setErr] = useState("");
   // CP-owned per-workspace settings: the agent CLI self-update opt-in + its operator
   // gate. DB-backed, so it loads/saves whether the workspace is running or stopped.
-  const [au, setAu] = useState<any>(null); // { agentUpdate, allowAgentUpdate } | null
+  const { ws: au, save: saveWs } = useWsSettings();
 
   // Cache the last good toolchains payload per tenant, so while the workspace is
   // stopped (Agent unreachable) we can still SHOW the form — disabled — from the
@@ -45,10 +57,10 @@ export function EnvTab() {
   const cacheKey = "af.toolchains." + getTenant();
   const load = useCallback(() => {
     setErr("");
-    api("api/env/toolchains")
+    getToolchains()
       .then((res) => {
-        if (res && res.error) throw new Error(res.error.message || "");
-        setD(res);
+        if (res && "error" in res && res.error) throw new Error(res.error.message || "");
+        setD(res as ToolchainsData);
         setGen((g) => g + 1);
         try {
           localStorage.setItem(cacheKey, JSON.stringify(res));
@@ -57,7 +69,7 @@ export function EnvTab() {
         }
       })
       .catch(() => {
-        let cached = null;
+        let cached: ToolchainsData | null = null;
         try {
           cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
         } catch {
@@ -69,38 +81,24 @@ export function EnvTab() {
   }, [cacheKey, tr]);
   useEffect(load, [load]);
 
-  useEffect(() => {
-    api("api/env/ws-settings")
-      .then((res) => setAu(res && !res.error ? res : { agentUpdate: false, allowAgentUpdate: false }))
-      .catch(() => setAu({ agentUpdate: false, allowAgentUpdate: false }));
-  }, []);
+  const setAgentUpdate = (on: boolean) => saveWs({ agentUpdate: on });
+  const setAutoImageRefresh = (on: boolean) => saveWs({ autoImageRefresh: on });
 
-  const setAgentUpdate = async (on: boolean) => {
-    const res = await apiJSON("api/env/ws-settings", "PUT", { agentUpdate: on });
-    if (res && !res.error) setAu(res);
-    else toast(tr("common.save_failed"));
-  };
-
-  const setAutoImageRefresh = async (on: boolean) => {
-    const res = await apiJSON("api/env/ws-settings", "PUT", { autoImageRefresh: on });
-    if (res && !res.error) setAu(res);
-    else toast(tr("common.save_failed"));
-  };
-
-  const update = async (patch: Record<string, string>) => {
-    const next = {
+  const update = async (patch: Partial<ToolchainsPatch>) => {
+    if (!d) return;
+    const next: ToolchainsPatch = {
       node: d.node || "",
       java: d.java || "",
       go: d.go || "",
       timezone: d.timezone || "",
       ...patch,
     };
-    const res = await apiJSON("api/env/toolchains", "PUT", next);
-    if (res && res.error) {
+    const res = await putToolchains(next);
+    if (res && "error" in res && res.error) {
       toast(tr("env.save_failed_msg", { msg: res.error.message || "" }));
       return;
     }
-    setD(res);
+    setD(res as ToolchainsData);
     setGen((g) => g + 1);
   };
 
@@ -198,14 +196,14 @@ function HostUpdateSection() {
 // Served through the Agent, so it is only available while the workspace is running.
 function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: CLIRelease | null }) {
   const tr = useT();
-  const [tv, setTv] = useState<any>(null);
+  const [tv, setTv] = useState<ToolVersionsData | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(
     (refresh = false) => {
       if (!running) return;
       setBusy(true);
-      api("api/env/tool-versions" + (refresh ? "?refresh=1" : ""))
-        .then((res) => setTv(res && !res.error ? res : null))
+      getToolVersions(refresh)
+        .then((res) => setTv(isOk(res) ? res : null))
         .catch(() => setTv(null))
         .finally(() => setBusy(false));
     },
@@ -213,7 +211,7 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
   );
   useEffect(() => load(), [load]);
 
-  const cell = (bin: any) => {
+  const cell = (bin: ToolBin | null | undefined) => {
     if (!bin) return <span className="muted">—</span>;
     return <span title={bin.path + (bin.raw ? "\n" + bin.raw : "")}>{bin.version || bin.raw || "?"}</span>;
   };
@@ -221,7 +219,7 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
   // Pin-drift badge, coloured by direction: older than the pin = warn (an update never
   // arrived — the kiro "stuck" shape), newer = accent (self-update and other expected
   // moves forward). Nothing is shown when the versions match or cannot be compared.
-  const pinBadge = (bin: any, pin: string) => {
+  const pinBadge = (bin: ToolBin | null | undefined, pin: string | undefined) => {
     const d = pinDrift(bin?.version, pin);
     if (d !== "behind" && d !== "ahead") return null;
     return (
@@ -229,7 +227,7 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
         className={"tool-ver-pin is-" + d}
         title={tr(d === "behind" ? "env.pin_behind_title" : "env.pin_ahead_title")}
       >
-        {tr("env.pin_label", { pin })}
+        {tr("env.pin_label", { pin: pin ?? "" })}
       </span>
     );
   };
@@ -259,7 +257,7 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
             </tr>
           </thead>
           <tbody>
-            {(tv.tools || []).map((t: any) => (
+            {(tv.tools || []).map((t) => (
               <tr key={t.name}>
                 <td className="tool-ver-name">{t.name}</td>
                 <td>
@@ -347,8 +345,8 @@ function Toolchains({
   running,
   reload,
 }: {
-  d: any;
-  update: (patch: Record<string, string>) => void;
+  d: ToolchainsData;
+  update: (patch: Partial<ToolchainsPatch>) => void;
   running: boolean;
   reload: () => void;
 }) {
@@ -457,8 +455,8 @@ function JavaRow({
   running,
   reload,
 }: {
-  d: any;
-  update: (patch: Record<string, string>) => void;
+  d: ToolchainsData;
+  update: (patch: Partial<ToolchainsPatch>) => void;
   running: boolean;
   reload: () => void;
 }) {
@@ -596,8 +594,8 @@ function NodeRow({
   reload,
   nodeOpts,
 }: {
-  d: any;
-  update: (patch: Record<string, string>) => void;
+  d: ToolchainsData;
+  update: (patch: Partial<ToolchainsPatch>) => void;
   running: boolean;
   reload: () => void;
   nodeOpts: string[];
@@ -839,7 +837,7 @@ function InstalledVersions({ gen, running, reload }: { gen: number; running: boo
 // AutoImageRefreshRow is the opt-in for the Control Plane to restart this workspace onto a
 // new image by itself once it has been quiet (control-plane/image_refresh.go). Off by default.
 // CP-owned like the row below, so it can be changed while the workspace is stopped.
-function AutoImageRefreshRow({ au, onChange }: { au: any; onChange: (on: boolean) => void }) {
+function AutoImageRefreshRow({ au, onChange }: { au: WsSettings; onChange: (on: boolean) => void }) {
   const tr = useT();
   return (
     <section className="ds-group">
@@ -856,7 +854,7 @@ function AutoImageRefreshRow({ au, onChange }: { au: any; onChange: (on: boolean
 // in the CP DB), so — unlike the toolchains above — it can be toggled even while the
 // workspace is STOPPED; the value is applied at the next container start. Shown only
 // when the operator allows it (tenant policy).
-function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => void }) {
+function AgentUpdateRow({ au, onChange }: { au: WsSettings; onChange: (on: boolean) => void }) {
   const tr = useT();
   return (
     <section className="ds-group">
