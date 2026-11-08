@@ -12,7 +12,7 @@ import { CloneForm } from "./CloneForm.tsx";
 import type { CloneSource } from "./CloneForm.tsx";
 import { NewFolderForm, newFolderNameOk } from "./NewFolderForm.tsx";
 import type { CloneRequest, SvnCheckoutRequest } from "./clone.ts";
-import { deriveRepoName, sanitizeSeg, sanitizeFolderName, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
+import { deriveRepoName, sanitizeSeg, sanitizeFolderName, uniqueRepoName, repoNameRe } from "./reponame.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 export type { CloneRequest };

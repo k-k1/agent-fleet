@@ -1,6 +1,6 @@
 // Turns bare commit hashes, session slugs, assistant-conversation slugs, ticket references and
 // file paths written as inline code into links that open the corresponding surface.
-import { pathRefCandidate, type PathRef } from "../../../lib/pathref.ts";
+import { pathRefCandidate, type PathRef } from "../pathref.ts";
 import { resolvePathRefs, type ResolvedPathRef } from "../pathResolve.ts";
 import { api } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";

@@ -11,7 +11,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 
 const { executeSsmPlan, loadSsmLists, countOutcomes } = await import("./ssmImportExec.ts");
-import type { SsmPlan } from "../../../lib/settingsBundle.ts";
+import type { SsmPlan } from "./settingsBundle.ts";
 
 const sso = (label: string) => ({ label, startUrl: "https://c.awsapps.com/start", ssoRegion: "us-east-1", accountId: "1", roleName: "R", region: "" });
 const role = (label: string, source: string) => ({

@@ -632,3 +632,16 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   grant or budget changes (ADR 0084 decision 8's fourth place) and the Console screens; the CFN stack follows in part 3.
   A Workspace started before the switch was turned on has neither the gate nor the issuing token: the CP's create check
   passes it, and the create fails at the Agent's bind (asking for Stop → Start) until it is restarted.
+- 2026-11-08, Q1 part 3 (#3579): the ECS stack's `ProvidedRoutes=on` (30-ingress; off adds nothing). It sets
+  `AF_PROVIDED_ROUTES=1` with the 15-minute deadline, creates the deployment's route role (InvokeModel*,
+  GetInferenceProfile; trusted by the CP task role alone, for `sts:AssumeRole` with `sts:TagSession`, refused without
+  the `af-membership` tag or with any other tag than it and `af-tenant`) and the CP's grant to assume it, and outputs
+  the role ARN the super_admin registers. D2's path rule decided the rest, chosen by the user on 2026-11-08: the
+  reference stack's Agent reached the CP through the NAT gateway (350 s idle) and the public ALB (60 s), so `on` also
+  makes the CP a Service Connect server for its workspace listener (`af-cp-internal:8098`, idle timeout 960 s and no
+  per-request timeout), injects `AF_CP_INTERNAL_URL` into Workspaces (already clients of the namespace) and admits the
+  workspace security group to that port. The hops are reasoned from the template and AWS's documentation; only the ECS
+  sandbox gate verifies them. The CP logs one line when the switch takes effect and one when it is set but has no
+  store. The CP needs an AWS identity from its environment (an ECS task role, IRSA, an instance role): a Docker or
+  compose CP outside AWS cannot use provided routes, since D1b rules out a stored access key, and `ec2-single`
+  attaches no instance profile and does not offer them.

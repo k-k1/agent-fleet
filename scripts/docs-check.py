@@ -1913,7 +1913,7 @@ def check_emphasis(files: list[str], f: Findings) -> None:
     and the full-width brackets and stops of Japanese (「」（）、。) are all punctuation,
     while Japanese has no spaces to save it. So `用の**「推論エンジン」**の画面` shows the
     raw asterisks on GitHub, while the Console, which retries such runs
-    (console/src/lib/markdown.ts), renders it bold: nobody who only reads the guide in
+    (console/src/features/viewer/markdown.ts), renders it bold: nobody who only reads the guide in
     the Console sees it. 0.21.0 and 0.23.0 were published that way, and over 800 such
     runs had piled up in guide/ and docs/. Keep the bracket outside the bold
     (`「**推論エンジン**」の`), the stop too (`**…しない**。`), or put a space on the

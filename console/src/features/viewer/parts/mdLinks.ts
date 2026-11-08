@@ -1,6 +1,6 @@
 // Wiring for the rendered <a> / <img>: external URLs, in-page anchors, repo-relative links.
 import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget } from "../../../lib/filemeta.ts";
-import { isInternalMediaUrl } from "../../../lib/sanitize.ts";
+import { isInternalMediaUrl } from "../sanitize.ts";
 import { api, downloadURL } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";
 import { browserAttachmentIdFromLink } from "../../../layout/browserAttachmentAction.ts";

@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
@@ -43,8 +44,8 @@ func gitDeps() gitx.Deps {
 		RepoJobActive: repoJobActive,
 		StartRepoJob:  startGitRepoJob,
 
-		IsSvnRepo:    isSvnRepo,
-		SvnRepoEntry: svnRepoEntry,
+		IsSvnRepo:    svnx.IsRepo,
+		SvnRepoEntry: svnx.RepoEntry,
 
 		EnsureCredHelper: ensureCredHelper,
 		InternalGitHost:  internalGitHost,

@@ -108,7 +108,7 @@ func cpContractFamilies() []contractFamily {
 			name:    "ssmProfileDTO",
 			goType:  reflect.TypeOf(ssmProfileDTO{}),
 			binding: ssmProfileBinding,
-			tsPath:  "../console/src/lib/settingsBundle.ts",
+			tsPath:  "../console/src/features/settings/workspace/settingsBundle.ts",
 			tsName:  "SsmProfileEntry",
 			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region", "kind", "source", "sourceKey", "sourceId", "roleArn", "externalId", "sessionName", "durationSeconds", "confirmBeforeUse", "modelRoute", "signIn"),
 			tsOnly: map[string]string{

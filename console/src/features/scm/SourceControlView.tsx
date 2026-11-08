@@ -26,7 +26,7 @@ import { openCommit, openCommitSplit, openChanges, openRepoScm } from "./open.ts
 import { useReposStore, useLaunchTarget } from "../repos/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
-import type { GraphCommit } from "../../lib/gitgraph.ts";
+import type { GraphCommit } from "./gitgraph.ts";
 
 interface ScmStatus {
   branch?: string;

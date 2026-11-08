@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"io"
 	"log"
 	"runtime"
@@ -271,11 +272,11 @@ var subcommands = []subcommand{
 	{
 		// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary,
 		// which fills in the credential and execs the real svn — so the process svn's caller
-		// sees is still svn. See svn_wrapper.go.
+		// sees is still svn. See internal/svnx/svn_wrapper.go.
 		name:    "svn-run",
 		summary: "credential-injecting svn wrapper behind the PATH shim",
 		hidden:  true,
-		run:     runSvnWrapper,
+		run:     svnx.RunWrapper,
 	},
 	{
 		// Arch self-repair's Console face: what af-arch-repair could NOT put back only ever

@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/workitems"
 	"net/http"
 
@@ -398,22 +399,22 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /repos/{name}/parent-ff", gitx.HandleRepoParentFF)
 	// Subversion (docs/log/41): checkout a URL (URL + basic auth), update to the latest
 	// revision, and cleanup a wedged working-copy lock. Delete reuses DELETE /repos/{name}.
-	mux.HandleFunc("POST /repos/svn", handleSvnCheckout)
-	mux.HandleFunc("POST /repos/{name}/svn-update", handleSvnUpdate)
-	mux.HandleFunc("POST /repos/{name}/svn-cleanup", handleSvnCleanup)
+	mux.HandleFunc("POST /repos/svn", svnx.HandleCheckout)
+	mux.HandleFunc("POST /repos/{name}/svn-update", svnx.HandleUpdate)
+	mux.HandleFunc("POST /repos/{name}/svn-cleanup", svnx.HandleCleanup)
 	// Re-authenticate an existing SVN working copy (docs/log/41 amendment): GET reports
 	// which server it talks to and whether a credential matches, POST proves a credential
 	// against that server and stores it. The route is repo-scoped because the URL must
 	// come from the working copy, never from the browser.
-	mux.HandleFunc("GET /repos/{name}/svn-auth", handleGetSvnAuth)
-	mux.HandleFunc("POST /repos/{name}/svn-auth", handleSvnAuth)
+	mux.HandleFunc("GET /repos/{name}/svn-auth", svnx.HandleGetAuth)
+	mux.HandleFunc("POST /repos/{name}/svn-auth", svnx.HandleAuth)
 	// Read-only SVN history and local changes (#1705). svn-log / svn-show are NETWORK calls
 	// (stored credential injected, 401 svn_auth_required on refusal); svn-changes / svn-diff are
 	// local and need no credential. The git /log /show /changes /diff handlers stay git-only.
-	mux.HandleFunc("GET /repos/{name}/svn-log", handleSvnLog)
-	mux.HandleFunc("GET /repos/{name}/svn-show", handleSvnShow)
-	mux.HandleFunc("GET /repos/{name}/svn-changes", handleSvnChanges)
-	mux.HandleFunc("GET /repos/{name}/svn-diff", handleSvnDiff)
+	mux.HandleFunc("GET /repos/{name}/svn-log", svnx.HandleLog)
+	mux.HandleFunc("GET /repos/{name}/svn-show", svnx.HandleShow)
+	mux.HandleFunc("GET /repos/{name}/svn-changes", svnx.HandleChanges)
+	mux.HandleFunc("GET /repos/{name}/svn-diff", svnx.HandleDiff)
 	// Launch prompt templates (repo launch modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
@@ -725,8 +726,8 @@ func buildMux() *http.ServeMux {
 	// SVN saved basic-auth creds (docs/log/41): saved at checkout time, added or corrected
 	// here (docs/log/41 amendment — declining the checkout opt-in used to be a one-way
 	// door), and forgotten here.
-	mux.HandleFunc("PUT /connections/svn", handlePutSvnConn)
-	mux.HandleFunc("DELETE /connections/svn", handleDeleteSvnConn)
+	mux.HandleFunc("PUT /connections/svn", svnx.HandlePutConn)
+	mux.HandleFunc("DELETE /connections/svn", svnx.HandleDeleteConn)
 	// agy quota gauge for the Console's AgyCard (docs/log/32 Track C — the Starter
 	// Quota is an experimental pool, so the card always shows what's left).
 	// The claude-style auth routes (start/complete/DELETE) land with Track A.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { lineToTop, monotoneAnchors, topToLine } from "./splitScrollSync.ts";
 import { insertedLineMap } from "./mdSourceLines.ts";
-import { repairFullwidthTables } from "../../../lib/markdown.ts";
+import { repairFullwidthTables } from "../markdown.ts";
 
 const anchors = [
   { line: 1, top: 0 },

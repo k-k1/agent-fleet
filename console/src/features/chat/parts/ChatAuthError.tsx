@@ -2,7 +2,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
 // ChatAuthError replaces the bare turn error when Claude reported that its login expired
-// (lib/claudeAuthError). The raw CLI text stays one click away for diagnosis; the message says
+// (../claudeAuthError.ts). The raw CLI text stays one click away for diagnosis; the message says
 // what to do, the button leads to the sign-in card, and Retry re-sends the turn that failed.
 export function ChatAuthError({
   text,

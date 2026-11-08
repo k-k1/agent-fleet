@@ -45,7 +45,7 @@ import {
   type ParseError,
   type SectionKey,
   type SettingsBundle,
-} from "../../../lib/settingsBundle.ts";
+} from "./settingsBundle.ts";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { countOutcomes, executeSsmPlan, loadSsmLists } from "./ssmImportExec.ts";
