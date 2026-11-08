@@ -1,4 +1,4 @@
-// lib/aiAssistFeatures.ts — the catalog of the 8 features that run through the Agent's
+// aiAssistFeatures.ts — the catalog of the 8 features that run through the Agent's
 // OneShotHeadless (docs/log/103 §103.2), shared by the AI assist settings tab (AiAssistTab)
 // and the usage view's per-feature breakdown so the same feature carries the same label in
 // both places.
@@ -11,8 +11,8 @@
 // suggestions through one shared toggle — see FEATURE_ENABLED_KEY.suggest.chat below).
 //
 // Feature ids match the usage ledger's `feature` values verbatim (usagex/ledger.go).
-import type { Settings } from "./settings.ts";
-import type { MsgKey } from "./i18n/index.ts";
+import type { Settings } from "../../../lib/settings.ts";
+import type { MsgKey } from "../../../lib/i18n/index.ts";
 
 export type AiAssistTier = "short" | "prose";
 

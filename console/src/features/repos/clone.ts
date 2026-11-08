@@ -11,7 +11,7 @@
 // The job's state is now the only truth, so a dropped connection cannot affect the outcome.
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
-import { deriveRepoName, sanitizeSeg } from "../../lib/reponame.ts";
+import { deriveRepoName, sanitizeSeg } from "./reponame.ts";
 import { useReposStore } from "./store.ts";
 import { useRepoJobsStore, type RepoJob } from "./jobs.ts";
 import { useFilesStore } from "../files/store.ts";

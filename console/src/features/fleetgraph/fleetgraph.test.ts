@@ -11,8 +11,8 @@ import type {
   GraphScale,
   LedgerState,
   LineageEvent,
-} from "../types/fleetgraph.ts";
-import type { Session } from "../types/session.ts";
+} from "../../types/fleetgraph.ts";
+import type { Session } from "../../types/session.ts";
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 

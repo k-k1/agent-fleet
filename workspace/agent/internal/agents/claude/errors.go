@@ -57,7 +57,7 @@ var authKinds = map[string]bool{
 // oauthExpiredFragment is the stable part of claude's "Failed to authenticate: OAuth session
 // expired and could not be refreshed". Narrower than "failed to authenticate" on purpose: that
 // phrase also covers failures a new sign-in does not fix. The Console keeps a twin in
-// lib/claudeAuthError.ts.
+// features/chat/claudeAuthError.ts.
 const oauthExpiredFragment = "oauth session expired"
 
 // authMarkers are the texts that say the same thing, for when `error` is empty or an unknown

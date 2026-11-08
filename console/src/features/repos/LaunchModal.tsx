@@ -42,7 +42,7 @@ import { api } from "../../core/api/client.ts";
 import { BranchList } from "./BranchList.tsx";
 import { SubdirPicker } from "./SubdirPicker.tsx";
 import type { Branch } from "./BranchList.tsx";
-import { sanitizeSeg } from "../../lib/reponame.ts";
+import { sanitizeSeg } from "./reponame.ts";
 import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useLaunchBranchName } from "./useLaunchBranchName.ts";

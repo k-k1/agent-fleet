@@ -1,4 +1,4 @@
-// lib/aiAssistResolution.ts — GET /api/ai-assist/resolution (docs/log/103 §103.6/§103.7's
+// aiAssistResolution.ts — GET /api/ai-assist/resolution (docs/log/103 §103.6/§103.7's
 // "いま使うのは" row): which backend each AI-assist feature currently resolves to.
 //
 // Cheap on purpose: the Agent answers from its own 1-minute availability cache and never
@@ -7,7 +7,7 @@
 // not part of the answer (docs/log/103 decision 5 / §103.8-3) — a caller that wants one draws
 // it from the model catalog it already fetches (lib/agentModels.ts's useModelOptions).
 import { useEffect, useState } from "react";
-import { api } from "../core/api/client.ts";
+import { api } from "../../../core/api/client.ts";
 
 export interface AiAssistResolutionRow {
   feature: string;

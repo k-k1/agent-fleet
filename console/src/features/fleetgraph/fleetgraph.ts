@@ -1,10 +1,10 @@
 // Fleet session graph layout (ADR 0096 / docs/log/101) — the pure builder that
 // turns a ledger page (history) plus the live sessions map (now) into a render
-// model. Structural template borrowed from lib/gitgraph.ts: pure functions in,
+// model. Structural template borrowed from ../scm/gitgraph.ts: pure functions in,
 // plain-data model out, no methods on the model itself.
-import type { Session, SessionKind } from "../types/session.ts";
-import { displayName } from "./sessionview.ts";
-import { zonedParts } from "./intl.ts";
+import type { Session, SessionKind } from "../../types/session.ts";
+import { displayName } from "../../lib/sessionview.ts";
+import { zonedParts } from "../../lib/intl.ts";
 import type {
   ActorId,
   ArchivedEvent,
@@ -33,7 +33,7 @@ import type {
   LineageEvent,
   SegmentKind,
   SegmentKindByState,
-} from "../types/fleetgraph.ts";
+} from "../../types/fleetgraph.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_WIDTH = 1200;

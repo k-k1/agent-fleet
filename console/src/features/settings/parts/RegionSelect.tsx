@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
-import { AWS_REGIONS } from "../../../lib/awsRegions.ts";
+import { AWS_REGIONS } from "./awsRegions.ts";
 
 // Never a region or zone: those are lowercase letters, digits and dashes.
 const OTHER = "*other*";

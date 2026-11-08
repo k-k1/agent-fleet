@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CommitGraph } from "./CommitGraph.tsx";
-import type { GraphCommit } from "../../lib/gitgraph.ts";
+import type { GraphCommit } from "./gitgraph.ts";
 
 const c = (sha: string, parents: string[]): GraphCommit => ({
   sha,

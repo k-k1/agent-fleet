@@ -8,7 +8,7 @@
 //   - Session         → console/src/types/session.ts
 //   - Repo            → console/src/features/repos/store.ts
 //   - Turn / Part     → workspace/agent/internal/transcript/transcript.go
-//   - GraphCommit     → console/src/lib/gitgraph.ts
+//   - GraphCommit     → console/src/features/scm/gitgraph.ts
 // Keep them in sync when those contracts move; a drifted fixture renders an empty
 // pane rather than failing loudly.
 

@@ -1,5 +1,5 @@
 import DOMPurify from "dompurify";
-import { isExternalUrl } from "./filemeta.ts";
+import { isExternalUrl } from "../../lib/filemeta.ts";
 
 // The one sanitizer for Markdown-derived HTML. Agent output, repository files and sessions
 // shared by other members all reach the DOM through it, so it must not let them draw

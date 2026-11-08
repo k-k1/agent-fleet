@@ -1,5 +1,5 @@
 // Switch targets a commit's remote-tracking refs offer in the commit-graph menu.
-import type { GraphRef } from "../../lib/gitgraph.ts";
+import type { GraphRef } from "./gitgraph.ts";
 
 export interface RemoteSwitchTarget {
   /** The ref as drawn, e.g. `origin/main`. */

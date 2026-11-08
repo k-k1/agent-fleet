@@ -1,6 +1,6 @@
 import { useSettings, setSetting, ASSISTANT_AGENT_KINDS, normalizeAssistantOrder } from "../../../lib/settings.ts";
-import { AI_ASSIST_FEATURES, AI_FEATURE_MODEL_FOLLOW_DEFAULT, type AiAssistFeatureDef } from "../../../lib/aiAssistFeatures.ts";
-import { useAiAssistResolution, type AiAssistResolutionRow } from "../../../lib/aiAssistResolution.ts";
+import { AI_ASSIST_FEATURES, AI_FEATURE_MODEL_FOLLOW_DEFAULT, type AiAssistFeatureDef } from "./aiAssistFeatures.ts";
+import { useAiAssistResolution, type AiAssistResolutionRow } from "./aiAssistResolution.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { OnOff, OrderList, Row, Select } from "../parts/controls.tsx";
 import { AiModelRow, useResolvedModelLabel, type AiAgentKind } from "../parts/aiModelRow.tsx";

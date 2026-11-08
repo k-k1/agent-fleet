@@ -44,7 +44,7 @@ node console/scripts/shots/capture.mjs --locale en
   are retaken.
 - Fixture shapes follow the real wire contracts (`console/src/types/session.ts`,
   `console/src/features/repos/store.ts`,
-  `workspace/agent/internal/transcript/transcript.go`, `console/src/lib/gitgraph.ts`).
+  `workspace/agent/internal/transcript/transcript.go`, `console/src/features/scm/gitgraph.ts`).
   When one of those changes, the affected pane renders empty instead of failing —
   check the shot, not just the exit code.
 - The stub logs `[stub] unhandled: <path>` for any API path it does not know, which is

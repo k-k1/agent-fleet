@@ -8,8 +8,8 @@
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
-import { MAX_BYTES } from "../../../lib/awsConfigImport.ts";
-import { parseSshConfig } from "../../../lib/sshConfigIni.ts";
+import { MAX_BYTES } from "./awsConfigImport.ts";
+import { parseSshConfig } from "./sshConfigIni.ts";
 import {
   MAX_ENTRIES,
   readSshConfig,
@@ -20,8 +20,8 @@ import {
   type SshReason,
   type SshRow,
   type SshPreview,
-} from "../../../lib/sshConfigImport.ts";
-import { planSsmImport } from "../../../lib/settingsBundle.ts";
+} from "./sshConfigImport.ts";
+import { planSsmImport } from "./settingsBundle.ts";
 import { executeSsmPlan, loadSsmLists, type ExecRow } from "./ssmImportExec.ts";
 
 type Tr = ReturnType<typeof useT>;

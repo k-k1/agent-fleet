@@ -5,7 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const apiMock = vi.fn();
-vi.mock("../core/api/client.ts", () => ({ api: (...a: unknown[]) => apiMock(...a) }));
+vi.mock("../../../core/api/client.ts", () => ({ api: (...a: unknown[]) => apiMock(...a) }));
 
 const { useAiAssistResolution } = await import("./aiAssistResolution.ts");
 

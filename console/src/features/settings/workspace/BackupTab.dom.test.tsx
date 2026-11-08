@@ -29,7 +29,7 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
 
 import { BackupTab } from "./BackupTab.tsx";
-import { BUNDLE_KIND, BUNDLE_VERSION } from "../../../lib/settingsBundle.ts";
+import { BUNDLE_KIND, BUNDLE_VERSION } from "./settingsBundle.ts";
 
 const bundle = {
   kind: BUNDLE_KIND,
