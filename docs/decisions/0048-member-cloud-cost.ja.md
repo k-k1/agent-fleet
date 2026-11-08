@@ -380,3 +380,12 @@ $0.73・`tts-engine` $0.17 で、**請求全体の 19%** が「見えないま�
 月は UTC で区切る（日次行の日付と同じ）。`meta.first_day` より前の月は `no_coverage`（0 ではなく
 不明。前月比も出さない）、今月と `first_day` をまたぐ月は `partial`。
 データの開始が月の途中で短くなっている月は、前月比の基準にしない。
+
+## 追記 2026-11-08 — メンバー別の月次行 (#3609)
+
+`months=N` を付けると、`/api/admin/usage` と `/api/admin/cloud-cost` は `monthly` に加えて `monthly_members` を返す。
+メンバーごとに、`monthly` と同じ月の規則（`change_*` / `partial` / `no_coverage`）の `months` を持ち、期間合計の降順で
+`member_limit`（既定 50、最大 500）件まで。切り詰め前の人数は `monthly_members_total`。`monthly` と同じテナント範囲の
+クエリから計算するので、テナント管理者には自テナントのメンバーだけが見える。共有・予約枠はメンバーに含めない。期間内に
+行がないメンバーは出ない。メンバー詳細用には `GET /api/admin/tenants/{slug}/members/{key}/usage-monthly` が
+そのメンバーの月別稼働時間を返す（コスト・時間別エンドポイントと同じ権限）。

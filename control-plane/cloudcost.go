@@ -704,8 +704,8 @@ func (a adminAPI) oneMemberCloudCost(w http.ResponseWriter, r *http.Request, mem
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// cloudCost (GET /api/admin/cloud-cost?from=&to=&tenant=) — per-member totals for an
-// admin.
+// cloudCost (GET /api/admin/cloud-cost?from=&to=&tenant=&months=&member_limit=) — per-member
+// totals for an admin; months=N adds `monthly` and the per-member `monthly_members`.
 //
 // The SHARED bucket is super_admin only. It is the deployment's own infrastructure
 // bill (ALB, RDS, Route53, NAT, the CP's own task), which is information about the
@@ -727,6 +727,11 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	months, aerr := monthsParam(r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	memberLimit, aerr := memberLimitParam(r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -785,8 +790,21 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 			writeAPIErr(w, internalErr(err))
 			return
 		}
-		resp["monthly"] = monthlyCost(mrows, sp, resp["meta"].(cloudCostMeta).FirstDay, deploymentWide,
-			func(r store.CloudCostRow) bool { return r.MembershipID == "" || system[r.MembershipID] })
+		isShared := func(r store.CloudCostRow) bool { return r.MembershipID == "" || system[r.MembershipID] }
+		firstDay := resp["meta"].(cloudCostMeta).FirstDay
+		resp["monthly"] = monthlyCost(mrows, sp, firstDay, deploymentWide, isShared)
+		// Per member over the same rows: shared and reserved buckets are not people, and a
+		// tenant-scoped query never selected another tenant's rows, so the scope is inherited.
+		labelTotals, err := a.mgr.store.CloudCostTotals(r.Context(), tenantID, sp.From, sp.To)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		labels := make(map[string]store.CloudCostTotal, len(labelTotals))
+		for _, t := range labelTotals {
+			labels[t.MembershipID] = t
+		}
+		resp["monthly_members"], resp["monthly_members_total"] = monthlyCostByMember(mrows, sp, firstDay, isShared, labels, memberLimit)
 	}
 	if deploymentWide && sharedSeen {
 		byService := map[string]int64{}

@@ -1248,3 +1248,14 @@
 .monthly-trend .mt-row.partial .mt-fill { opacity: 0.55; }
 .monthly-trend .mt-val, .monthly-trend .mt-chg { text-align: right; }
 .monthly-trend .mt-shared { grid-column: 2 / -1; font-size: 0.75rem; text-align: right; }
+
+/* Per-member monthly table (admin usage and cloud-cost panels). Wide on narrow screens: scroll
+   the table, not the page. */
+.member-monthly { margin: 12px 0; }
+.member-monthly .mm-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.member-monthly .mm-scroll { overflow-x: auto; }
+.member-monthly .mm-table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+.member-monthly th, .member-monthly td { padding: 3px 8px; text-align: right; white-space: nowrap; }
+.member-monthly th:first-child, .member-monthly td.mm-name { text-align: left; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.member-monthly .mm-cell.partial { opacity: 0.7; }
+.member-monthly .mm-chg { display: block; font-size: 0.72rem; }

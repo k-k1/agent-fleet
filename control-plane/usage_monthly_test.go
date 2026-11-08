@@ -288,3 +288,189 @@ func TestMonthsOneHasNoChangeAndMyUsageDefaultsToSix(t *testing.T) {
 		t.Errorf("default window = %v", m)
 	}
 }
+
+// --- per-member monthly rows (issue #3609) ---------------------------------------------
+
+func adminGet(h func(http.ResponseWriter, *http.Request), url, email string) map[string]any {
+	r := httptest.NewRequest(http.MethodGet, url, nil)
+	r.Header.Set("X-Forwarded-Email", email)
+	w := httptest.NewRecorder()
+	h(w, r)
+	var got map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	got["_status"] = float64(w.Code)
+	return got
+}
+
+func membersOf(t *testing.T, got map[string]any) []map[string]any {
+	t.Helper()
+	raw, ok := got["monthly_members"].([]any)
+	if !ok {
+		t.Fatalf("no monthly_members in %v", got)
+	}
+	var out []map[string]any
+	for _, m := range raw {
+		out = append(out, m.(map[string]any))
+	}
+	return out
+}
+
+func memberMonths(m map[string]any) []map[string]any {
+	var out []map[string]any
+	for _, x := range m["months"].([]any) {
+		out = append(out, x.(map[string]any))
+	}
+	return out
+}
+
+func TestAdminUsageMonthlyMembersScopeOrderAndLimit(t *testing.T) {
+	freezeMonths(t, "2026-08-20")
+	st, mgr, tn, mem := cloudCostFixture(t)
+	ctx := context.Background()
+	other, _ := st.CreateTenant(ctx, "ops", "運用")
+	oi, _ := st.UpsertIdentity(ctx, "o@x.co.jp", "o-x-co-jp", "")
+	om, _ := st.EnsureMembership(ctx, oi.ID, other.ID, "member")
+	// An idle member of sales (no rows) and a removed member whose membership is gone.
+	idle, _ := st.UpsertIdentity(ctx, "idle@acme.co.jp", "idle-acme-co-jp", "")
+	_, _ = st.EnsureMembership(ctx, idle.ID, tn.ID, "member")
+	_ = st.AddUsage(ctx, mem.ID, tn.ID, "2026-07-31", 3600)
+	_ = st.AddUsage(ctx, mem.ID, tn.ID, "2026-08-01", 7200)
+	_ = st.AddUsage(ctx, "gone-membership", tn.ID, "2026-08-02", 1800)
+	_ = st.AddUsage(ctx, om.ID, other.ID, "2026-08-02", 36000)
+	api := newAdminAPI(mgr)
+
+	got := adminGet(api.usage, "/api/admin/usage?tenant=sales&months=2", "boss@acme.co.jp")
+	ms := membersOf(t, got)
+	if len(ms) != 2 || got["monthly_members_total"].(float64) != 2 {
+		t.Fatalf("tenant admin members = %v (idle member must be absent, ops member must not appear)", ms)
+	}
+	if ms[0]["user_key"] != "w-acme-co-jp" || ms[0]["total_secs"].(float64) != 10800 || ms[1]["user_key"] != "" {
+		t.Errorf("order/labels = %v", ms)
+	}
+	mo := memberMonths(ms[0])
+	if mo[0]["running_secs"].(float64) != 3600 || mo[1]["running_secs"].(float64) != 7200 ||
+		mo[1]["change_pct"].(float64) != 100 || mo[1]["partial"] != true {
+		t.Errorf("w months = %v", mo)
+	}
+	// The removed member keeps their hours: first month has no change, second has no pct.
+	if gm := memberMonths(ms[1]); gm[1]["running_secs"].(float64) != 1800 || gm[1]["change_pct"] != nil {
+		t.Errorf("removed member months = %v", gm)
+	}
+
+	// Positive control: super_admin sees the other tenant's member too, biggest first.
+	_, _ = st.UpsertIdentity(ctx, "root@acme.co.jp", "root-acme-co-jp", "super_admin")
+	got = adminGet(api.usage, "/api/admin/usage?months=2", "root@acme.co.jp")
+	ms = membersOf(t, got)
+	if len(ms) != 3 || ms[0]["user_key"] != "o-x-co-jp" || ms[0]["tenant"] != "ops" {
+		t.Errorf("super members = %v", ms)
+	}
+	// Cap keeps the biggest and still reports the full count.
+	got = adminGet(api.usage, "/api/admin/usage?months=2&member_limit=1", "root@acme.co.jp")
+	if ms = membersOf(t, got); len(ms) != 1 || got["monthly_members_total"].(float64) != 3 {
+		t.Errorf("limited = %v / %v", ms, got["monthly_members_total"])
+	}
+	if got = adminGet(api.usage, "/api/admin/usage?months=2&member_limit=0", "root@acme.co.jp"); got["_status"].(float64) != 400 {
+		t.Errorf("member_limit=0 status %v", got["_status"])
+	}
+	// No months => no per-member block.
+	if got = adminGet(api.usage, "/api/admin/usage", "root@acme.co.jp"); got["monthly_members"] != nil {
+		t.Error("monthly_members without months")
+	}
+}
+
+func TestCloudCostMonthlyMembersCoverageAndScope(t *testing.T) {
+	freezeMonths(t, "2026-08-20")
+	st, mgr, tn, mem := cloudCostFixture(t)
+	seedMonthlyCost(t, st, tn, mem)
+	api := newAdminAPI(mgr)
+
+	got := adminGet(api.cloudCost, "/api/admin/cloud-cost?tenant=sales&months=3", "boss@acme.co.jp")
+	ms := membersOf(t, got)
+	if len(ms) != 1 || ms[0]["user_key"] != "w-acme-co-jp" || ms[0]["tenant"] != "sales" {
+		t.Fatalf("tenant admin members = %v (ops' member and the shared bucket must not appear)", ms)
+	}
+	mo := memberMonths(ms[0])
+	if mo[0]["no_coverage"] != true || mo[1]["unblended_micro"].(float64) != 1_500_000 ||
+		mo[2]["unblended_micro"].(float64) != 2_250_000 {
+		t.Errorf("months = %v", mo)
+	}
+	if mo[2]["change_micro"] != nil || mo[1]["change_micro"] != nil {
+		t.Errorf("no change against a coverage-truncated month: %v", mo)
+	}
+	if ms[0]["total_unblended_micro"].(float64) != 3_750_000 {
+		t.Errorf("total = %v", ms[0]["total_unblended_micro"])
+	}
+
+	_, _ = st.UpsertIdentity(context.Background(), "root@acme.co.jp", "root-acme-co-jp", "super_admin")
+	got = adminGet(api.cloudCost, "/api/admin/cloud-cost?months=3", "root@acme.co.jp")
+	ms = membersOf(t, got)
+	if len(ms) != 2 || ms[0]["user_key"] != "o-x-co-jp" || got["monthly_members_total"].(float64) != 2 {
+		t.Errorf("super members = %v (shared bucket is not a member)", ms)
+	}
+	got = adminGet(api.cloudCost, "/api/admin/cloud-cost?months=3&member_limit=1", "root@acme.co.jp")
+	if len(membersOf(t, got)) != 1 || got["monthly_members_total"].(float64) != 2 {
+		t.Errorf("limited = %v", got)
+	}
+}
+
+func TestMonthlyCostByMemberComparesWithFullPreviousMonth(t *testing.T) {
+	sp := newMonthSpan(2, time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	rows := []store.CloudCostRow{
+		{Day: "2026-07-05", MembershipID: "a", Unblended: 1_000_000},
+		{Day: "2026-08-02", MembershipID: "a", Unblended: 1_500_000},
+		{Day: "2026-08-03", MembershipID: "", Unblended: 9_000_000},
+	}
+	got, total := monthlyCostByMember(rows, sp, "2026-07-01", func(r store.CloudCostRow) bool { return r.MembershipID == "" }, nil, 10)
+	if total != 1 || got[0].Months[1].ChangePct == nil || *got[0].Months[1].ChangePct != 50 {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func memberUsageReq(slug, key, email, q string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants/"+slug+"/members/"+key+"/usage-monthly"+q, nil)
+	r.SetPathValue("slug", slug)
+	r.SetPathValue("key", key)
+	if email != "" {
+		r.Header.Set("X-Forwarded-Email", email)
+	}
+	return r
+}
+
+func TestMemberUsageMonthlyForTheDetailView(t *testing.T) {
+	freezeMonths(t, "2026-08-20")
+	st, mgr, tn, mem := cloudCostFixture(t)
+	ctx := context.Background()
+	oi, _ := st.UpsertIdentity(ctx, "o@x.co.jp", "o-x-co-jp", "")
+	other, _ := st.CreateTenant(ctx, "ops", "運用")
+	om, _ := st.EnsureMembership(ctx, oi.ID, other.ID, "member")
+	_ = st.AddUsage(ctx, mem.ID, tn.ID, "2026-07-31", 3600)
+	_ = st.AddUsage(ctx, mem.ID, tn.ID, "2026-08-01", 7200)
+	_ = st.AddUsage(ctx, om.ID, other.ID, "2026-08-01", 99999)
+	api := newAdminAPI(mgr)
+
+	w := httptest.NewRecorder()
+	api.memberUsageMonthly(w, memberUsageReq("sales", "w-acme-co-jp", "boss@acme.co.jp", "?months=2"))
+	m := monthsOf(t, getJSON(t, w))
+	if m[0]["running_secs"].(float64) != 3600 || m[1]["running_secs"].(float64) != 7200 || m[1]["change_pct"].(float64) != 100 {
+		t.Errorf("months = %v", m)
+	}
+	// An ordinary member cannot read a colleague's hours.
+	w = httptest.NewRecorder()
+	api.memberUsageMonthly(w, memberUsageReq("sales", "w-acme-co-jp", "w@acme.co.jp", ""))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("member status %d, want 403", w.Code)
+	}
+	// Another tenant's member is a 404 under this tenant's slug, even for its admin.
+	w = httptest.NewRecorder()
+	api.memberUsageMonthly(w, memberUsageReq("sales", "o-x-co-jp", "boss@acme.co.jp", ""))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant status %d, want 404", w.Code)
+	}
+	// Positive control: super_admin reads the other tenant's member under its own slug.
+	_, _ = st.UpsertIdentity(ctx, "root@acme.co.jp", "root-acme-co-jp", "super_admin")
+	w = httptest.NewRecorder()
+	api.memberUsageMonthly(w, memberUsageReq("ops", "o-x-co-jp", "root@acme.co.jp", "?months=2"))
+	if m = monthsOf(t, getJSON(t, w)); m[1]["running_secs"].(float64) != 99999 {
+		t.Errorf("super months = %v", m)
+	}
+}

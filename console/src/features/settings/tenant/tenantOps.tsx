@@ -11,6 +11,7 @@ import { api, errText, rel } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { RangePresets } from "../../../ui/RangePresets.tsx";
 import { MonthlyTrend, usageMonthRows } from "../../../ui/MonthlyTrend.tsx";
+import { MemberMonthlyTable, usageMemberRows } from "../../../ui/MemberMonthly.tsx";
 import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { fmtDateTime, DATETIME_FULL, compareText } from "../../../lib/intl.ts";
 import { useLocale, useT } from "../../../lib/i18n/index.ts";
@@ -390,6 +391,16 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
 
         {data?.monthly && (
           <MonthlyTrend title={tr("monthly.hours_title")} rows={usageMonthRows(data.monthly)} format={fmtHrs} />
+        )}
+        {data?.monthly_members && (
+          <MemberMonthlyTable
+            title={tr("monthly.members_hours_title")}
+            members={usageMemberRows(data.monthly_members)}
+            totalMembers={data.monthly_members_total}
+            format={fmtHrs}
+            showTenant={isSuper && !tenant}
+            unknownLabel={tr("admin.unknown")}
+          />
         )}
 
         {data === null ? (

@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -159,9 +160,157 @@ func monthlyCost(rows []store.CloudCostRow, sp monthSpan, firstDay string, withS
 	return out
 }
 
+// Per-member monthly rows (issue #3609). The rows are computed from the same windowed
+// ledger query the overall `monthly` uses, so the month rules (UTC cut, partial current
+// month, no_coverage, no change against a coverage-truncated month) are the ones above and
+// cannot drift. Only members with at least one ledger row in the window appear; a member
+// with none is absent rather than a row of zeros.
+
+const (
+	defaultMemberLimit = 50
+	maxMemberLimit     = 500
+)
+
+// memberLimitParam reads `member_limit` (default 50, 1..500): how many per-member rows the
+// answer carries, biggest first. A malformed value is a 400.
+func memberLimitParam(r *http.Request) (int, *apiError) {
+	v := r.URL.Query().Get("member_limit")
+	if v == "" {
+		return defaultMemberLimit, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || v[0] == '+' || n < 1 || n > maxMemberLimit {
+		return 0, &apiError{http.StatusBadRequest, "bad_request", "member_limit must be 1.." + strconv.Itoa(maxMemberLimit)}
+	}
+	return n, nil
+}
+
+// memberUsageMonths is one member's months of running hours. TotalSecs is the sum over the
+// window and is the sort key (largest first).
+type memberUsageMonths struct {
+	Tenant       string       `json:"tenant"`
+	MembershipID string       `json:"membership_id"`
+	UserKey      string       `json:"user_key"`
+	Email        string       `json:"email"`
+	TotalSecs    int          `json:"total_secs"`
+	Months       []usageMonth `json:"months"`
+}
+
+// memberCostMonths is one member's months of attributed cloud cost.
+type memberCostMonths struct {
+	Tenant         string      `json:"tenant"`
+	MembershipID   string      `json:"membership_id"`
+	UserKey        string      `json:"user_key"`
+	Email          string      `json:"email"`
+	TotalUnblended int64       `json:"total_unblended_micro"`
+	Months         []costMonth `json:"months"`
+}
+
+// monthlyUsageByMember groups rows by membership and runs each group through monthlyUsage.
+// Rows of a removed member keep their membership id (empty labels), so they stay one row.
+// It returns the top `limit` and the number of members before truncation.
+func monthlyUsageByMember(rows []store.UsageRow, sp monthSpan, limit int) ([]memberUsageMonths, int) {
+	groups := map[string][]store.UsageRow{}
+	var order []string
+	for _, r := range rows {
+		k := r.TenantID + "|" + r.MembershipID
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], r)
+	}
+	out := make([]memberUsageMonths, 0, len(order))
+	for _, k := range order {
+		g := groups[k]
+		m := memberUsageMonths{Tenant: g[0].TenantSlug, MembershipID: g[0].MembershipID, UserKey: g[0].UserKey, Email: g[0].Email}
+		for _, r := range g {
+			m.TotalSecs += r.RunningSecs
+		}
+		m.Months = monthlyUsage(g, sp)
+		out = append(out, m)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].TotalSecs != out[j].TotalSecs {
+			return out[i].TotalSecs > out[j].TotalSecs
+		}
+		if out[i].Tenant != out[j].Tenant {
+			return out[i].Tenant < out[j].Tenant
+		}
+		return out[i].UserKey < out[j].UserKey
+	})
+	total := len(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, total
+}
+
+// monthlyCostByMember is monthlyUsageByMember for cost. skip drops the shared and reserved
+// buckets (they are not people); firstDay is the store-wide coverage start, so every member
+// is judged against the same coverage as the overall monthly figures.
+func monthlyCostByMember(rows []store.CloudCostRow, sp monthSpan, firstDay string, skip func(store.CloudCostRow) bool, labels map[string]store.CloudCostTotal, limit int) ([]memberCostMonths, int) {
+	groups := map[string][]store.CloudCostRow{}
+	var order []string
+	for _, r := range rows {
+		if skip != nil && skip(r) {
+			continue
+		}
+		if _, ok := groups[r.MembershipID]; !ok {
+			order = append(order, r.MembershipID)
+		}
+		groups[r.MembershipID] = append(groups[r.MembershipID], r)
+	}
+	out := make([]memberCostMonths, 0, len(order))
+	for _, id := range order {
+		g := groups[id]
+		l := labels[id]
+		m := memberCostMonths{Tenant: l.TenantSlug, MembershipID: id, UserKey: l.UserKey, Email: l.Email}
+		for _, r := range g {
+			m.TotalUnblended += r.Unblended
+		}
+		m.Months = monthlyCost(g, sp, firstDay, false, nil)
+		out = append(out, m)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].TotalUnblended != out[j].TotalUnblended {
+			return out[i].TotalUnblended > out[j].TotalUnblended
+		}
+		if out[i].Tenant != out[j].Tenant {
+			return out[i].Tenant < out[j].Tenant
+		}
+		return out[i].UserKey < out[j].UserKey
+	})
+	total := len(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, total
+}
+
 // myUsageMonthly (GET /api/usage/me/monthly?months=N) — the caller's own monthly hours.
 // Same discipline as /api/cost/me: only the caller's rows, no deployment total.
 func (a adminAPI) myUsageMonthly(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	a.oneMemberUsageMonthly(w, r, mv.MembershipID)
+}
+
+// memberUsageMonthly (GET /api/admin/tenants/{slug}/members/{key}/usage-monthly?months=N) —
+// one member's monthly hours for the member-detail view, behind the same tenant-admin gate and
+// membership resolution as the member's cost and hourly endpoints.
+func (a adminAPI) memberUsageMonthly(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := a.tenantAdminFor(w, r, r.PathValue("slug")); !ok {
+		return
+	}
+	mem, _, _, aerr := a.resolveMember(r, r.PathValue("slug"), r.PathValue("key"))
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	a.oneMemberUsageMonthly(w, r, mem.ID)
+}
+
+// oneMemberUsageMonthly looks the rows up by membership alone (not tenant), like the cost
+// view: rows of a destroyed workspace are still the member's.
+func (a adminAPI) oneMemberUsageMonthly(w http.ResponseWriter, r *http.Request, membershipID string) {
 	n, aerr := monthsParam(r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -171,7 +320,7 @@ func (a adminAPI) myUsageMonthly(w http.ResponseWriter, r *http.Request, _ store
 		n = 6
 	}
 	sp := newMonthSpan(n, monthsNow())
-	rows, err := a.mgr.store.ListUsageMember(r.Context(), mv.MembershipID, sp.From, sp.To)
+	rows, err := a.mgr.store.ListUsageMember(r.Context(), membershipID, sp.From, sp.To)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
