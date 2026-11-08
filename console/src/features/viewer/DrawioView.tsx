@@ -11,7 +11,7 @@
 //      SameSite=Lax session cookie is not sent and the CP's authGate answers 401 (§65.11-7).
 //      The parent, which holds the credentials, fetches it and passes the body in.
 //   3. Send only after the frame says `ready`. Posting right after creating the iframe delivers
-//      the message to the initial about:blank, before the srcdoc document exists, and it is lost
+//      the message to the initial about:blank, before the frame document exists, and it is lost
 //      (measured).
 //
 // Rebuild the whole frame when the theme changes (docs/log/65 §65.11-12). Asking the same frame to
@@ -20,12 +20,12 @@
 // text. Colour choices are frozen at load and first render; a theme round trip within one document
 // is not supported. Rebuilding costs only a re-evaluation of the 4 MB source (~76ms from cache),
 // and the view position (page, zoom, offset) is carried over, so it feels continuous.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import viewerAssetUrl from "../../../vendor/drawio/viewer-static.min.js?url";
 import { downloadURL } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { acceptedStencilNames, stencilUrl } from "./drawioStencilRelay.ts";
-import { DRAWIO_MSG, drawioFrameSrcdoc, isDrawioFrameEvent, type DrawioViewState } from "./drawioFrame.ts";
+import { DRAWIO_MSG, drawioFrameFile, isDrawioFrameEvent, type DrawioViewState } from "./drawioFrame.ts";
 
 export interface DrawioState {
   pages: number;
@@ -72,10 +72,10 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
   const onStateRef = useRef(onState);
   onStateRef.current = onState;
 
-  // The srcdoc is built per theme. Since the point is to rebuild on a theme change, the iframe
-  // gets a key so React creates a new element: swapping srcDoc on the same element can leave us
+  // One built document per theme. Since the point is to rebuild on a theme change, the iframe
+  // gets a key so React creates a new element: swapping src on the same element can leave us
   // holding a window that still carries the previous document's listeners.
-  const srcdoc = useMemo(() => drawioFrameSrcdoc({ dark }), [dark]);
+  const frameSrc = drawioFrameFile(dark);
 
   const post = useCallback((message: Record<string, unknown>) => {
     const win = frameRef.current?.contentWindow;
@@ -201,7 +201,7 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
         // Neither allow-same-origin nor allow-popups: the first would give the frame the
         // Console's own privileges, the second would let the lightbox call window.open.
         sandbox="allow-scripts"
-        srcDoc={srcdoc}
+        src={frameSrc}
       />
       {xml == null && !err && !frameErr && <div className="drawio-note muted">…</div>}
       {frameErr && (

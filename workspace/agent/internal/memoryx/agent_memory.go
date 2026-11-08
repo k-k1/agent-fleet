@@ -1095,20 +1095,19 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 		return agentMemWriteResult{}, &agentMemSecretErr{Findings: f}
 	}
 
-	changes := []agentMemChange{{Rel: repoRel, Data: data}}
-	// The member and an external client name a project that already holds memory and have no
-	// working copy to describe it, so the project's record is left as the sessions wrote it,
-	// unless the external client started the project from a working copy (startProject).
-	if c.Project != nil && req.Scope == agentMemScopeProject && (c.startProject || c.Kind != agentMemMember.Kind && c.Kind != agentMemExternalKind) {
-		extra, err := agentMemProjectInfoChange(*c.Project)
-		if err != nil {
-			return agentMemWriteResult{}, err
-		}
-		changes = append(changes, extra...)
+	changes, err := agentMemEntryChanges(c, req.Scope, repoRel, data)
+	if err != nil {
+		return agentMemWriteResult{}, err
 	}
 	op := "update"
+	var nearNames []string
 	if !exists {
 		op = "create"
+		// A hint for an agent, never a refusal; the member's Console and the background review
+		// write what they were asked to.
+		if c.Kind != agentMemMember.Kind && !c.noRevival {
+			nearNames = agentMemNearNames(c, req.Scope, req.Name)
+		}
 	}
 	rev, err := agentMemApplyLocked(changes, op, repoRel, c, now)
 	if err != nil {
@@ -1119,8 +1118,12 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 		agentMemClearUsage(rel, req.Name)
 	}
 	agentMemPrimeScan(data, req.Scope, req.Name)
+	warnings := agentMemSaveWarnings(req)
+	if len(nearNames) > 0 {
+		warnings = append(warnings, agentMemNearHint(nearNames))
+	}
 	return agentMemWriteResult{Name: e.Name, Scope: e.Scope, Revision: e.Revision, Commit: rev, Created: !exists,
-		Warnings: agentMemSaveWarnings(req)}, nil
+		Warnings: warnings}, nil
 }
 
 // agentMemForget removes a memory from what is published. Its text stays in history; purging

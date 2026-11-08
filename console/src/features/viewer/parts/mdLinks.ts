@@ -23,12 +23,21 @@ function resolveRelPath(ref: string, basePath: string): string {
 // are left as-is (the sanitizer already dropped absolute URLs into the Console's own API).
 export function wireImages(el: HTMLElement, basePath: string) {
   el.querySelectorAll<HTMLImageElement>("img[src]").forEach((img) => {
-    const src = img.getAttribute("src") || "";
-    if (!src || src.startsWith("#") || isExternalUrl(src)) return;
-    const target = resolveRelPath(src, basePath);
-    if (target) img.setAttribute("src", downloadURL(target));
-    else if (isInternalMediaUrl(src)) img.removeAttribute("src");
+    const next = resolveImageSrc(img.getAttribute("src") || "", basePath);
+    if (next === null) img.removeAttribute("src");
+    else if (next !== undefined) img.setAttribute("src", next);
   });
+}
+
+// resolveImageSrc is the one rule for a non-external <img src>: a repo path becomes the
+// download URL (string), an unresolvable one that points into the Console is dropped (null),
+// anything else is left as written (undefined). Shared with click-to-load, which restores
+// URLs the sanitizer set aside and must not skip this step.
+export function resolveImageSrc(src: string, basePath: string): string | null | undefined {
+  if (!src || src.startsWith("#") || isExternalUrl(src)) return undefined;
+  const target = resolveRelPath(src, basePath);
+  if (target) return downloadURL(target);
+  return isInternalMediaUrl(src) ? null : undefined;
 }
 
 // statRepoTarget asks whether a repo-internal path is a file, a directory or gone. One listing

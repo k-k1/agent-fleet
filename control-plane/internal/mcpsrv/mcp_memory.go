@@ -160,6 +160,36 @@ func memoryTools() []mcpTool {
 			},
 		},
 		{
+			name: "memory_patch", minScope: scopeWrite,
+			desc: "Change part of an existing Agent Fleet memory without re-sending it. Each edit replaces the one place where `old` occurs in the body with `new`; every `old` must be non-empty, occur exactly once and not overlap another edit, and all edits are matched against the text you read and applied together or not at all. Pass the revision you read (1 or more; a stale one is refused, so read again). It never creates a memory (use memory_save) and keeps every field you do not name. " + repoHint + "scope is required (\"project\" or \"user\"). Same secret scan and history as memory_save; needs write access to be allowed in Settings > Agent memory.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{
+				"name": nameArg, "scope": writeScopeArg, "project": projectArg, "repository": repositoryArg, "revision": revArg,
+				"edits": map[string]any{"type": "array", "description": "replacements of the body, all matched against the same original text", "items": map[string]any{
+					"type": "object", "properties": map[string]any{
+						"old": map[string]any{"type": "string", "description": "exact text to replace; must occur exactly once in the body"},
+						"new": map[string]any{"type": "string", "description": "replacement text (empty deletes)"},
+					}, "required": []string{"old", "new"}}},
+				"description": map[string]any{"type": "string", "description": "a new one-line description (optional; omit to keep the current one)"},
+			}, "required": []string{"name", "revision", "scope"}},
+			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
+				m := map[string]any{
+					"project": argStr(args, "project"), "repository": argStr(args, "repository"), "scope": argStr(args, "scope"), "name": argStr(args, "name"),
+					"revision": argInt(args, "revision"), "edits": args["edits"], "client": mcpCallFrom(ctx).client,
+				}
+				// Relayed whenever the key is present, "" included, so the Agent refuses an empty
+				// description instead of the call silently keeping the old one; absent means "keep".
+				if d, ok := args["description"]; ok {
+					m["description"] = d
+				}
+				body, _ := json.Marshal(m)
+				out, err := a.memoryCall(ctx, res, "POST", "/agents/memory/external/patch", body)
+				if err == nil {
+					a.memoryAudit(ctx, res, "memory.entry.patch", out)
+				}
+				return out, err
+			},
+		},
+		{
 			name: "memory_forget", minScope: scopeWrite,
 			desc: "Remove an Agent Fleet memory from what is published (its history is kept; the member can restore it in the Console). Pass the revision you read. " + repoHint + "scope is required (\"project\" or \"user\"); a forget without scope is refused. Needs write access to be allowed in Settings > Agent memory.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{

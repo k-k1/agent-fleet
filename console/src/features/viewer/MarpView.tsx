@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
-import { scrubCssUrls, stripInternalMedia } from "../../lib/sanitize.ts";
+import { deferExternalMedia, scrubCssUrls, stripInternalMedia } from "../../lib/sanitize.ts";
+import { wireExternalImages } from "./parts/mdExternalImages.ts";
 
 // Custom Marp themes live as CSS files (each with a `/* @theme name */` header) in
 // ../marp-themes and are registered with the renderer so decks can select them via
@@ -28,6 +29,7 @@ const THEME_CSS = import.meta.glob<string>("../../marp-themes/*.css", {
 const STAGE_CSS = `
 :host { display: block; height: 100%; }
 .deck, .marpit { width: 100%; height: 100%; margin: 0; }
+.md-ext-img { font: 14px sans-serif; padding: 4px 10px; border: 1px dashed #888; border-radius: 6px; background: #fff; color: #333; cursor: pointer; }
 /* Pin the slide to the top of the stage (not vertically centered) so a 16:9 slide
    in a taller viewer keeps its title row at the top; the letterbox falls below. */
 .marpit { display: flex; align-items: flex-start; justify-content: center; }
@@ -113,6 +115,9 @@ export function MarpView({ source }: { source?: string }) {
         if (!alive) return;
         shadow.innerHTML = `<style>${STAGE_CSS}</style><style>${scrubCssUrls(out.css)}</style><div class="deck">${out.html}</div>`;
         stripInternalMedia(shadow);
+        // External images wait for a click; a <style> element's own CSS is not covered here.
+        shadow.querySelectorAll("*").forEach(deferExternalMedia);
+        wireExternalImages(shadow);
         const slides = [...shadow.querySelectorAll<HTMLElement>(".marpit > svg[data-marpit-svg], .marpit > section")];
         // Auto-fit while every slide is still visible (before the display effect
         // hides the non-current ones, which would zero out their measurements).

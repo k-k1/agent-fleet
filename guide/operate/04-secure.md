@@ -243,8 +243,8 @@ an operator.
   ingress passes `/mcp`. The scope (read / write / admin:dangerous) and the expiry are the user's
   choice, and they can revoke it themselves. Over that door a member can also let their own agent
   use their Agent Fleet memory; it is a separate per-member setting, off by default ([member guide](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent),
-  Settings > Agent memory > Settings). External saves and forgets are audited (`memory.entry.save` /
-  `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
+  Settings > Agent memory > Settings). External saves, patches and forgets are audited (`memory.entry.save` /
+  `memory.entry.patch` / `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
   whole tenant ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)); `AF_MCP_ENABLED` turns the whole endpoint off.
 
 ### Sign-in for remote MCP clients (OAuth)
@@ -279,7 +279,7 @@ working for CI and clients without OAuth.
   and `revoke` paths through and keeps `authorize` and `consent` behind it. Under **`AUTH=proxy`** the gateway has
   to do the same: `/mcp-oauth/authorize` and `/mcp-oauth/consent` must pass **through** it (the member's identity header comes from
   there), and the other six paths plus `/mcp` and `/mcp/memory` must **bypass** it.
-- **Two resources.** `/mcp` serves every tool; `/mcp/memory` serves the six external memory tools and nothing else, for
+- **Two resources.** `/mcp` serves every tool; `/mcp/memory` serves the seven external memory tools and nothing else, for
   a claude.ai connector that claude.ai also hands to the member's Workspace sessions. Each has its own metadata
   document and 401 challenge, and each refuses the other's tokens: OAuth codes, grants and tokens are bound to the
   resource the client asked for (a refresh keeps it), and a Personal Access Token is issued for one endpoint
@@ -410,7 +410,8 @@ client is served.
   domain can still send the member's cookie to the Console. The Control Plane refuses cookie-authenticated
   writes whose `Sec-Fetch-Site` is not `same-origin` or whose `Origin` is not the Console's own host (403),
   requires `application/json` (or `multipart/form-data` for uploads) on `/api/` bodies, and answers
-  `X-Frame-Options: DENY` plus `frame-ancestors 'self'`. Those checks are the safety net; the stronger
+  `X-Frame-Options: DENY` plus `frame-ancestors 'self'`, and the Console shell carries `script-src 'self'`
+  (own-origin scripts only, no inline). Those checks are the safety net; the stronger
   layout is `AF_PREVIEW_DOMAIN` under a different registrable domain (for example the Console at
   `af.example.com`, previews under `*.af-preview.example.net`), where the cookie is never sent at all.
   The cookie is named `af_session` and carries no `__Host-` prefix yet, so a `__Host-` name is not an

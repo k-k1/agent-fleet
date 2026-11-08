@@ -19,7 +19,7 @@ func TestMemoryGuideStaysUnderItsOwnCap(t *testing.T) {
 
 // The block names the tools and when to call the two that matter; it holds no memories.
 func TestMemoryGuideNamesTheToolsAndWhenToCallThem(t *testing.T) {
-	for _, want := range []string{"memory_index", "memory_search", "memory_read", "memory_save", "memory_forget", "start work", "re-derive"} {
+	for _, want := range []string{"memory_index", "memory_search", "memory_read", "memory_save", "memory_patch", "memory_forget", "start work", "re-derive", "Patch rather than save"} {
 		if !strings.Contains(MemoryGuide, want) {
 			t.Errorf("MemoryGuide does not mention %q", want)
 		}

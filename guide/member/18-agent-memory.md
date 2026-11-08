@@ -12,7 +12,7 @@ Two features keep what agents learn. **Agent memory** is Agent Fleet's own memor
 ## Agent memory
 
 Agent Fleet's own shared memory: the memory every kind of agent reads and writes with the af tools
-`memory_index` / `memory_search` / `memory_read` / `memory_save` / `memory_forget`. It is per project (a worktree shares its
+`memory_index` / `memory_search` / `memory_read` / `memory_save` / `memory_patch` / `memory_forget`. It is per project (a worktree shares its
 repository's), plus one user-wide scope, so what one agent learns survives a switch of kind, a handoff and a child of
 another kind. **It is off by default.** Turn it on in the [Settings](#settings) view. The version history of the memory the agents keep in their own files is
 [Memory snapshots](#memory-snapshots), further down.
@@ -330,7 +330,7 @@ link back.
 - **Your tenant administrator can block it.** If they have, the memory tools are not offered at all, whatever your
   setting and scope say ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)).
 - **Tools**: `memory_projects`, `memory_index`, `memory_search` and `memory_read` need a read (or higher) token or OAuth connection;
-  `memory_save` and `memory_forget` need a write token or OAuth connection and "Read and write". The setting and the scope both have
+  `memory_save`, `memory_patch` and `memory_forget` need a write token or OAuth connection and "Read and write". The setting and the scope both have
   to allow a call: the narrower one wins.
 - **Asking the agent**: just say it in plain words in your local client, e.g. "search my Agent Fleet memory for how
   we run the integration tests" or "save to Agent Fleet memory that this repo's lint step needs `make gen` first".
@@ -346,14 +346,14 @@ link back.
   first, or pass `project` from `memory_projects`, which also lists such working copies with a count of 0). ssh and `git@` spellings
   and `https://` remotes are matched on github.com, gitlab.com, bitbucket.org and codeberg.org only. A self-hosted host is
   refused (the stored remote does not keep the port, so two services on one host name could be confused): pass `project`.
-- **Saving and forgetting need a scope**: `memory_save` and `memory_forget` require `scope`: `project` (with
+- **Saving and forgetting need a scope**: `memory_save`, `memory_patch` and `memory_forget` require `scope`: `project` (with
   `repository` or `project`) for a fact about one repository, `user` only for a fact that holds in every project.
   A call without `scope` is refused with a message naming what to pass, so a forgotten project can no longer
   publish a repository-specific fact to every project.
 - **What is recorded**: a save shows in the Agent memory list as written by author kind `external`, and the
   commit message carries an `AF-External-Client: <name>` trailer with the client's self-declared name (for
-  information only). Each external save and forget is also written to the audit log as `memory.entry.save` /
-  `memory.entry.forget`, with the project id and never the memory's name. You can revert or forget any of it from
+  information only). Each external save, patch and forget is also written to the audit log as `memory.entry.save` /
+  `memory.entry.patch` / `memory.entry.forget`, with the project id and never the memory's name. You can revert or forget any of it from
   the Agent memory list.
 - **What leaves the workspace**: the memory text reaches that client's model, outside the workspace's egress
   controls. The secret scan stops credentials, not customer names or internal context.
