@@ -21,3 +21,6 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Connect an issue tracker](integrations/issue-tracker.md) | List your Jira issues and GitHub issues in the left rail and start sessions from them |
 | [Use Jira](integrations/jira.md) | Have agents read, file and update Jira issues |
 | [Use Confluence](integrations/confluence.md) | Have agents find and write Confluence pages |
+| [Use the GitHub and Bitbucket CLIs](integrations/gh-bkt.md) | Have agents create and read pull requests with `gh` and `bkt` |
+| [Connect Discord and Slack](integrations/chat-bridge.md) | Get session notifications in Discord or Slack, and answer by replying or with buttons |
+| [Connect monitoring tools](integrations/ops-monitoring.md) | Have the assistant help sort out an incident while it looks at PagerDuty, Grafana, CloudWatch and AWS |

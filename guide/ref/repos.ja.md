@@ -62,7 +62,7 @@ source_of_truth: "この表（手で保守。コードに単一のプロバイ�
 `pullrequest:write`）が要り、それは**テナント管理者が権限を広げ、全員が再認可する**変更になります。
 読み取りだけを先に足したのは意図的です。Console が Bitbucket の行にボタンを出すのは、接続がその
 スコープを持つと分かっているときだけで、そうでなければ Agent Fleet は読むだけです
-（[15](../member/15-external-services.ja.md)）。Bitbucket の Issue は一覧に出ないので、コメントできるのは
+（[Bitbucket のスコープ](../user/integrations/gh-bkt.ja.md#bitbucket-のスコープ)）。Bitbucket の Issue は一覧に出ないので、コメントできるのは
 プルリクエストだけです。
 
 ## 課題管理は別の軸

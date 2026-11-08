@@ -167,7 +167,7 @@ audience: "設定を探している人"
     「制限リセットの通知」は利用上限のリセットの行になりました。
   - 作業中のペインに出ているセッションの通知は、表の設定にかかわらず表示も読み上げもしません。
 - **サービス通知**：Discord / Slack へ**接続を切らずに送信だけ**を止められます。
-  接続そのものと、サービスごとに送るイベントの選択は「チャット連携」タブです（[15](15-external-services.ja.md#discord-slack-と連携するチャットブリッジ)）。
+  接続そのものと、サービスごとに送るイベントの選択は「チャット連携」タブです（[Discord・Slack とつなぐ](../user/integrations/chat-bridge.ja.md#届く通知を決める)）。
 - 通知の履歴は、画面最上部のベルから開く**通知センター**（過去 7 日間）で読めます。未読の赤いドットの意味と
   消え方は [アイコン・バッジ・メニュー](badges-and-menus.ja.md#セッションの表示) にあります。
 
@@ -299,7 +299,7 @@ claude / codex / opencode / GitHub Copilot / Cursor / Kiro（と実験枠の Ant
 
 GitHub / Bitbucket の連携です（clone / push の認証）。**GitHub の連携は GitHub Copilot の接続も兼ねます**。
 同じ連携で、各セッションの `gh`（Bitbucket Cloud なら `bkt` も）にサインイン済みになります
-（[15](15-external-services.ja.md#サインイン済みの-cli)）。GitHub が接続を更新できないときは、タブに「GitHub の接続を更新できませんでした。
+（[GitHub・Bitbucket の CLI を使う](../user/integrations/gh-bkt.ja.md)）。GitHub が接続を更新できないときは、タブに「GitHub の接続を更新できませんでした。
 認可が期限切れになったか、取り消されています。切断してから、もう一度 GitHub に接続してください。」と出ます。
 Jira と Bitbucket の接続は、開始した本人の Console セッションでだけ完了します。別のアカウントでサインインしている、
 またはセッションが切れているときは何も保存されません。本人としてサインインし直して、もう一度接続してください。
@@ -307,10 +307,8 @@ Jira と Bitbucket の接続は、開始した本人の Console セッション�
 
 ### 運用・監視
 
-PagerDuty / Grafana / CloudWatch / AWS を接続し、**SRE アシスタント**が実データを見ながら
-インシデントの壁打ちをできるようにします。CloudWatch と AWS は SSM 接続のプロファイルを選ぶだけで、
-秘密の入力はありません。AWS の**書き込みツールは既定オフ**です。
-→ [15 外部サービス](15-external-services.ja.md)
+PagerDuty・Grafana・CloudWatch・AWS を **SRE アシスタント**につなぐ設定です。接続のしかたと、アシスタントがそれで何をするかは
+[監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) にあります。
 
 ### 課題管理
 
@@ -319,8 +317,8 @@ PagerDuty / Grafana / CloudWatch / AWS を接続し、**SRE アシスタント**
 
 ### チャット連携
 
-Discord / Slack の Bot を接続し、セッションの進捗をチャットで受けて返信で操縦します。
-→ [15 外部サービス](15-external-services.ja.md#discord-slack-と連携するチャットブリッジ)
+Discord・Slack の Bot の接続と、届く通知の設定です。接続の手順と、返信で答える方法は
+[Discord・Slack とつなぐ](../user/integrations/chat-bridge.ja.md) にあります。
 
 ### MCP サーバー（セッションで使う）
 
