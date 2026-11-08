@@ -75,13 +75,14 @@ gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -f title="New title"
 ```
 
 - The link in the error (the token settings page) does not apply to this token
-- A GitHub App connection, or an access token you pasted with `read:org`, does not hit this error
+- An access token you pasted yourself with `read:org` does not hit this error
 - `gh pr edit` can also fail for other reasons, such as a team reviewer you cannot see
 
 ## Bitbucket scopes
 
-`bkt` can do only what the connection is allowed to. The permissions for clone and push are not enough for pull
-requests or pipelines.
+`bkt` can do only what the connection is allowed to. The permissions the connection itself needs (Account: Read and
+Repositories: Read/Write for OAuth; `read:account`, `read:workspace:bitbucket` and `read:repository:bitbucket` for an
+API token) are not enough for pull requests or pipelines.
 
 | What | Connected with OAuth | Connected with an API token |
 |---|---|---|
@@ -119,7 +120,7 @@ The connection does not have the permission for that command. The message names 
 - **An OAuth connection**: have a tenant administrator add the permission, then reconnect Bitbucket in ⚙ Settings → "Git hosting"
 - **An API token connection**: create a new token with the scope, and paste it
 
-Retrying with another credential does not help. A token without the pull request scopes can list repositories, but
+Retrying with another credential will not help. A token without the pull request scopes can list repositories, but
 `bkt pr list` answers `403 Forbidden`.
 
 ### `gh` or `bkt` says you are not logged in

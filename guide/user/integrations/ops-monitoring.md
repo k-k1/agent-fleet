@@ -124,10 +124,6 @@ The chosen profile's SSO login has not happened yet or has expired. Connecting s
 - Press "**Log in**" on that profile in **⚙ Settings → "AWS profiles/SSM"** ([Use AWS SSO](aws-sso.md#log-in))
 - Or open an SSM session of that profile once
 
-### "Failed to connect: specify an AWS profile"
-
-No profile is chosen. Pick one from the drop-down, or enter a profile name under "Manual entry".
-
 ### Amazon Managed Grafana suddenly stops working
 
 The token's lifetime (at most 30 days) is over. Create a new token, disconnect the Grafana card and paste it again.

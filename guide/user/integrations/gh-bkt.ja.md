@@ -75,12 +75,13 @@ gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -f title="新しいタイトル"
 ```
 
 - エラーのリンク先（トークンの設定ページ）は、このトークンには当てはまりません
-- GitHub App で接続しているときや、`read:org` を付けたアクセストークンを貼ったときは、このエラーは出ません
+- `read:org` を付けたアクセストークンを自分で貼っていれば、このエラーは出ません
 - `gh pr edit` は、ほかの理由（チームのレビュアーが見えないなど）で失敗することもあります
 
 ## Bitbucket のスコープ
 
-`bkt` は、接続に与えられた権限の範囲でしか動きません。clone と push に要る権限だけでは、プルリクエストやパイプラインは扱えません。
+`bkt` は、接続に与えられた権限の範囲でしか動きません。接続そのものに要る権限（OAuth なら Account: Read と Repositories: Read/Write、API トークンなら
+`read:account`・`read:workspace:bitbucket`・`read:repository:bitbucket`）だけでは、プルリクエストやパイプラインは扱えません。
 
 | やること | OAuth で接続したとき | API トークンで接続したとき |
 |---|---|---|
@@ -100,7 +101,7 @@ gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -f title="新しいタイトル"
 | こうしているとき | 動き |
 |---|---|
 | `GH_TOKEN` か `GITHUB_TOKEN` を設定した | `gh` はそのトークンを使い、接続は使いません |
-| GitHub Enterprise のホストに `gh auth login` した | そのホストには、あなたのログインが使われます |
+| GitHub Enterprise のホストに `gh auth login` した | そのホストには、あなたが `gh auth login` したアカウントが使われます |
 | `bkt auth login` をした、または `BKT_HOST`・`BKT_TOKEN` を設定した | `bkt` はあなたの設定どおりに動き、接続は使いません |
 
 - github.com に `gh auth login` していても、GitHub を接続していれば `gh` は接続のトークンを使います
