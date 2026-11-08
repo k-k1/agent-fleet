@@ -29,8 +29,9 @@ func monthsParam(r *http.Request) (int, *apiError) {
 	if v == "" {
 		return 0, nil
 	}
+	// Digits only: Atoi would also accept a leading "+".
 	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || n > maxMonths {
+	if err != nil || v[0] == '+' || n < 1 || n > maxMonths {
 		return 0, &apiError{http.StatusBadRequest, "bad_request", "months must be 1.." + strconv.Itoa(maxMonths)}
 	}
 	return n, nil
@@ -145,7 +146,10 @@ func monthlyCost(rows []store.CloudCostRow, sp monthSpan, firstDay string, withS
 			v := shared[k]
 			m.SharedMicro = &v
 		}
-		if i > 0 && !out[i-1].NoCoverage && !m.NoCoverage {
+		// A previous month that is short only because the data starts mid-month is not a
+		// fair base; the running month being partial is the ordinary case and still compares.
+		prevShort := i > 0 && sp.Keys[i-1]+"-01" < firstDay
+		if i > 0 && !out[i-1].NoCoverage && !m.NoCoverage && !prevShort {
 			d := m.Unblended - out[i-1].Unblended
 			m.ChangeMicro = &d
 			m.ChangePct = pctChange(out[i-1].Unblended, m.Unblended)

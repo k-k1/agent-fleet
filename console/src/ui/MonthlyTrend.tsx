@@ -54,7 +54,11 @@ export function MonthlyTrend({
                 <span className="mt-val mono">
                   {format(r.value)}
                   {r.estimated && <span className="muted"> {tr("monthly.estimated")}</span>}
-                  {r.partial && <span className="muted"> ({tr("monthly.partial")})</span>}
+                  {r.partial && (
+                    <span className="muted" title={r.noCoverage === undefined ? undefined : tr("monthly.partial_cost_hint")}>
+                      {" "}({tr("monthly.partial")})
+                    </span>
+                  )}
                 </span>
               )}
               <span className="mt-chg mono muted" title={tr("monthly.vs_prev")}>

@@ -416,3 +416,4 @@ server-computed `monthly` list; each endpoint keeps its permission gate and scop
 shared bucket stays super_admin only. Months are cut in UTC (the day rows' own dating). A month wholly
 before `meta.first_day` is `no_coverage` (unknown, not zero, no change shown); the running month and a
 month starting before `first_day` are `partial`.
+A month that is short only because data starts mid-month is not used as the base of a month-over-month change.

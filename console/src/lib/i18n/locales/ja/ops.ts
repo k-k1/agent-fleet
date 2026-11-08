@@ -236,7 +236,6 @@ export const ops = {
   "cost.shared_centres": "内訳の区分:",
   "cost.account_scope": "この AWS アカウント全体を集計しています。同じアカウントで他のものを動かしていれば、それも共有の額に入ります。",
   "cost.breakdown": "何に使ったか",
-  "monthly.title": "月別",
   "monthly.note_utc": "月の区切りは日次の値と同じく UTC です。",
   "monthly.partial": "途中",
   "monthly.no_coverage": "データなし",

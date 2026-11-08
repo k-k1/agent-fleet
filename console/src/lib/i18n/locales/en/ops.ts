@@ -239,7 +239,6 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "cost.shared_centres": "Cost centres:",
   "cost.account_scope": "Aggregated over this whole AWS account, so anything else running in it is included in the shared figure.",
   "cost.breakdown": "What it was spent on",
-  "monthly.title": "Month by month",
   "monthly.note_utc": "Months are cut in UTC, like the daily figures.",
   "monthly.partial": "so far",
   "monthly.no_coverage": "no data",

@@ -203,8 +203,9 @@ func TestCloudCostMonthlyCoverageAndScope(t *testing.T) {
 	if m[2]["unblended_micro"].(float64) != 2_250_000 || m[2]["estimated"] != true || m[2]["partial"] != true {
 		t.Errorf("Aug = %v (tenant admin must not see ops' 7.0 or the shared 9.0)", m[2])
 	}
-	if m[2]["change_micro"].(float64) != 750_000 || m[2]["change_pct"].(float64) != 50 {
-		t.Errorf("Aug change = %v", m[2])
+	// July is short only because coverage starts on 07-10, so August is not compared with it.
+	if m[2]["change_micro"] != nil || m[2]["change_pct"] != nil {
+		t.Errorf("Aug must not be compared with a coverage-truncated July: %v", m[2])
 	}
 	for _, mm := range m {
 		if _, ok := mm["shared_micro"]; ok {
@@ -245,5 +246,45 @@ func TestMonthlyCostWithNoDataAtAll(t *testing.T) {
 	got := monthlyCost(nil, sp, "", false, nil)
 	if !got[0].NoCoverage || !got[1].NoCoverage || got[1].ChangeMicro != nil {
 		t.Errorf("no store coverage must read as unknown, got %+v", got)
+	}
+}
+
+func TestMonthlyCostChangeComparesWithAFullPreviousMonth(t *testing.T) {
+	sp := newMonthSpan(2, time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	rows := []store.CloudCostRow{{Day: "2026-07-05", Unblended: 1_000_000}, {Day: "2026-08-02", Unblended: 1_500_000}}
+	got := monthlyCost(rows, sp, "2026-07-01", false, nil)
+	if got[1].ChangeMicro == nil || *got[1].ChangeMicro != 500_000 || *got[1].ChangePct != 50 {
+		t.Errorf("a fully covered previous month compares even against the running month: %+v", got[1])
+	}
+}
+
+func TestMonthsParam(t *testing.T) {
+	for q, want := range map[string]struct {
+		n  int
+		ok bool
+	}{"": {0, true}, "1": {1, true}, "24": {24, true}, "0": {}, "-1": {}, "25": {}, "abc": {}, "1.5": {}, "+3": {}} {
+		r := httptest.NewRequest(http.MethodGet, "/x", nil)
+		if q != "" {
+			r.URL.RawQuery = "months=" + q
+		}
+		n, aerr := monthsParam(r)
+		if (aerr == nil) != want.ok || (want.ok && n != want.n) {
+			t.Errorf("months=%q => %d, %v", q, n, aerr)
+		}
+	}
+}
+
+func TestMonthsOneHasNoChangeAndMyUsageDefaultsToSix(t *testing.T) {
+	freezeMonths(t, "2026-08-20")
+	sp := newMonthSpan(1, monthsNow())
+	if got := monthlyUsage(nil, sp); len(got) != 1 || got[0].ChangeSecs != nil || got[0].ChangePct != nil {
+		t.Errorf("single month: %+v", got)
+	}
+	_, mgr, tn, mem := cloudCostFixture(t)
+	w := httptest.NewRecorder()
+	newAdminAPI(mgr).myUsageMonthly(w, httptest.NewRequest(http.MethodGet, "/api/usage/me/monthly", nil),
+		store.Identity{}, store.MembershipView{MembershipID: mem.ID, TenantID: tn.ID})
+	if m := monthsOf(t, getJSON(t, w)); len(m) != 6 || m[0]["month"] != "2026-03" {
+		t.Errorf("default window = %v", m)
 	}
 }

@@ -738,7 +738,7 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 	}
 	// If the set cannot be resolved we just do not fold — not worth failing the cost
 	// view over.
-	system, _ := a.mgr.systemMembershipIDs(r.Context())
+	system, sysErr := a.mgr.systemMembershipIDs(r.Context())
 	deploymentWide := tenantID == "" // tenantScope already proved super_admin for this
 	members := make([]map[string]any, 0, len(totals))
 	var sharedMicro int64
@@ -773,6 +773,12 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		// The same classification as the window totals above: shared and reserved
 		// memberships are the shared bucket, and only the deployment-wide super_admin
 		// view may carry it. A tenant-scoped query never selects shared rows at all.
+		// Unlike the window totals, a failed lookup is an error here: up to 24 months of
+		// reserved memberships would otherwise be counted as people's spend.
+		if sysErr != nil {
+			writeAPIErr(w, internalErr(sysErr))
+			return
+		}
 		sp := newMonthSpan(months, monthsNow())
 		mrows, err := a.mgr.store.ListCloudCost(r.Context(), tenantID, "", sp.From, sp.To)
 		if err != nil {
