@@ -13,7 +13,8 @@ export interface AiAssistResolutionRow {
   feature: string;
   enabled: boolean;
   kind?: string;
-  // "unavailable": the feature runs deny-all (memory.review) and its pinned agent cannot.
+  // "unavailable" is reserved for a deny-all feature whose pinned agent cannot run it (chatx.ResolveDenyAllCached).
+  // No feature uses that today, so the Agent does not send it; the Console still words it if one returns.
   source: "pin" | "default" | "unknown" | "unavailable";
 }
 
@@ -45,10 +46,4 @@ export function useAiAssistResolution(enabled = true): Record<string, AiAssistRe
     };
   }, [enabled]);
   return enabled ? rows : null;
-}
-
-/** True only on the Agent's definite "no deny-all backend" answer for the memory review (ADR 0117);
- *  while the answer is loading or unknown the review is not blocked, the Agent re-checks it. */
-export function useMemoryReviewUnavailable(enabled = true): boolean {
-  return useAiAssistResolution(enabled)?.["memory.review"]?.source === "unavailable";
 }

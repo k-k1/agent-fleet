@@ -97,29 +97,11 @@ you can **revert it** (the earlier text comes back) or **forget the memory**; ei
 change, so it can be undone too. If the text you bring back looks like a secret, you are shown the masked
 findings and asked to confirm.
 
-While **Have finished sessions suggest memories** is on (it takes effect only while "Let sessions use Agent Fleet
-memory" is on too), or while suggestions are still waiting, the view has two
-parts: **Published** (the list above) and **Proposed**, with the number of suggestions waiting beside it. The same
-number sits beside **Changes** in the view bar, and a notification ("N memory suggestions are waiting for your
-approval", under the **Other notices** row of the notification settings) opens this view. If any are waiting, the view opens
-on **Proposed**.
-
-- **Proposed** lists what a memory review suggested (the background review, or one you asked for with **Suggest memories now**), oldest first, with the reason it gave and the difference
-  from the memory as it is now. **Nothing in it is in memory yet.** **Approve** publishes it as a change by
-  `review` (the session it was suggested from is shown as the author session); you can undo it like any other change.
-  **Reject** deletes its text and keeps only a fingerprint, so the same suggestion is not made again until that memory
-  is forgotten. **Reject all** rejects every suggestion, and **Reject all from this review** the ones of the review
-  you picked.
-- A suggestion **can't be approved**, only rejected, when the memory has changed since the review looked at it (the
-  difference is against what you have now), when it was forgotten (a review never brings a forgotten memory back), when
-  the suggestion now matches a secret rule (its text is then not shown at all), or when its project is no longer here.
-  Approving also runs the store's secret scan again.
-- On a change the review published, **Undo this review's changes** puts back, as new changes, everything that review
-  published, each memory only if nobody changed it afterwards. A memory that was edited since is left as it is and
-  named in the result (with the reason); running it again retries only what is left.
-- Only you can approve, reject or undo: the Control Plane signs those requests and the workspace refuses them from a
-  session, and the list of suggestions is not readable from a session either. The Control Plane records each decision
-  (without any text) in the audit log.
+A change that a past memory review published (author `review`, from before the review was removed, see below) offers
+**Undo this review's changes**: it puts back, as new changes, everything that review published, each memory only if
+nobody changed it afterwards. A memory that was edited since is left as it is and named in the result (with the
+reason); running it again retries only what is left. Only you can undo: the Control Plane signs the request and the
+workspace refuses it from a session. The Control Plane records it (without any text) in the audit log.
 
 ### Import & export
 
@@ -279,27 +261,16 @@ refused.
   your own; your tenant administrator can still block it for the whole tenant. What it allows, and what is
   recorded, is in [Using Agent Fleet memory from an external agent](#using-agent-fleet-memory-from-an-external-agent).
 
-- **Have finished sessions suggest memories** (setting "Have finished sessions suggest memories", **off by default**;
-  it also needs the switch above): choosing **Propose** turns the review on, which by itself does nothing in the
-  background. You ask for it from a session's **⋯** menu with **"Suggest memories now"**: an excerpt of the
-  conversation is read by an agent that has **no tools and no MCP servers**, which lists what looks worth keeping as
-  *proposals*. The excerpt is redacted first (anything that looks like a secret is left out), but it is still sent to
-  the provider of the agent chosen for this feature under **AI assistance**, which can be a different provider from the
-  session's own; it spends tokens (at most 250 calls a day, one at a time), and it does not run while the workspace is
-  stopped. **Nothing reaches memory without your approval**: up to 100 proposals wait under
-  [Changes › Proposed](#changes), where you approve or reject them. When the setting is on, a **Background memory review**
-  card appears under AI assistance, where you can pin the agent and model. Only agents that can be run with their
-  tools switched off can do the review, and today that is claude alone; when none is available here, the setting
-  says so and the review waits; if the one you pin cannot, the review does not run rather than falling back to another
-  provider.
-- **Also suggest automatically** (setting "Also suggest automatically", **off by default**, separate from the one
-  above; it works only while **Propose** is chosen): with it on, finished sessions are reviewed in the background
-  without you asking. A session is picked up 5 minutes after it paused, once it has gained 30 turns or 3 of your
-  prompts since its last review, and only if its last turn ended within the last 48 hours; older ones, or what
-  happened while the workspace was stopped, are covered by **"Suggest memories now"**. The cost is the same tokens as
-  above (the 250 calls a day are shared with the manual button), spent with nobody watching. Turning it off stops new
-  reviews right away: a call already running is allowed to finish, and the proposals it brings still wait for your
-  approval, but nothing further is started and a failed call is not retried.
+- **The background memory review was removed.** Earlier versions could have finished sessions suggest memories
+  (the settings "Have finished sessions suggest memories" and "Also suggest automatically", the "Suggest memories now"
+  item in a session's **⋯** menu, and Changes › Proposed). None of that exists any more: there is no setting,
+  button, notification or route for it, and the Background memory review card is gone from AI assistance. What it
+  published stays in the change list and can still be undone (see [Changes](#changes)). Suggestions that were still
+  waiting when you upgraded were **not** dropped: once, on the first start after the upgrade, the workspace wrote each one
+  (with the memory it was about, its base revision, the text, the reason and the run) and the list of rejected
+  fingerprints to `review-queue-export-v1.json` in the `af-memory.work` folder of the Claude configuration directory,
+  and only then deleted the queue. They are observations, not approvals: nothing in that file is in memory, and nothing
+  reads it yet. A workspace that never used the review writes nothing.
 
 ## Memory snapshots
 

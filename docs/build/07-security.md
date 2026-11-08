@@ -589,9 +589,9 @@ their conversations elsewhere. Add the relay row with `sign` (or sign in the han
   - **The mark protects routes, not files.** A session can write any file the Agent's uid can, so the
     store's files and other state files are not covered. `~/.config/agent-fleet/ui-prefs.json` is one: the
     mark on `PUT /env/ui-prefs` guards the route, and a session that edits the file directly is not stopped
-    by it. The switches the route guards today are the background memory review (removal tracked in #3440)
-    and Muse Code's contributor mode; for those, the mark keeps a session from using the route, not from
-    writing the file.
+    by it. The switch the route guards today is Muse Code's contributor mode (the background memory review's
+    switch went with the review, ADR 0130 decision 2); for it, the mark keeps a session from using the
+    route, not from writing the file.
   - It is as strong as the CP's member authentication (nothing under `AUTH=dev`); a compromised CP is out of
     scope.
 

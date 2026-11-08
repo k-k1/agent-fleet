@@ -103,14 +103,4 @@ export const AI_ASSIST_FEATURES: AiAssistFeatureDef[] = [
     noteKey: "aiassist.note_mirror_translate",
     enabledKey: "mirrorTranslateEnabled",
   },
-  {
-    // ADR 0117. The member turns the review on under Agent memory, so this card is only the place
-    // to pin its agent and model, and it appears once the review is on. It runs deny-all (no tools,
-    // no MCP): an agent that cannot be run that way is skipped, never run with its defaults.
-    id: "memory.review",
-    tier: "short",
-    labelKey: "usage.val.feature.memory.review",
-    noteKey: "aiassist.note_memory_review",
-    visible: (s) => s.memoryReview !== "off",
-  },
 ];
