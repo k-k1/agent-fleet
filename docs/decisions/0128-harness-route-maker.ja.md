@@ -651,3 +651,22 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   プロファイル読み込み中）は常にルートのモデルを隠す。その起動でルートが提示されているときに限らない。
   #3425 のマージ後: `IssueLoopback` とループバックのポートへの呼び出しは、ソケットと同じ `issue` / `authorize` の経路を通るので、
   発行時と資格情報の解決前の最新の Settings による確認と、資格情報の再利用もそのまま効く。
+- 2026-11-08、Bedrock のモデル固定（#3587）: Unix ソケット上の Bedrock の代役（本物の AWS なし。`env -i`、専用の `HOME`）に
+  Claude Code 2.1.319 を `CLAUDE_CODE_USE_BEDROCK=1` でつないで測った。モデルなし、または別名（`opus`）だと、403 や 400 の
+  たびにリージョンの `<スコープ>.anthropic.claude-opus-5-5` から Sonnet 4.5 の ID まで最大 9 個の ID を順に試す。
+  `CLAUDE_CODE_NO_MODEL_FALLBACK` と `CLAUDE_CODE_DISABLE_MODEL_ACCESS_FALLBACK`（`1` でも `true` でも）では止まらない。
+  Claude Code のカタログにある Anthropic 直の ID（`claude-opus-5-5`）はリージョンのスコープ（`us.`、`eu.`、ap-northeast-1 なら
+  `apac.`）に書き換えられ、カタログにない ID は入力どおりに出て無効になる。Bedrock の ID（`anthropic.…`、`us.`、`eu.`、
+  `global.…`）は拒否されてもそのまま 1 回だけ出て、フォールバックしない。404 は 2 回（ストリーム、続いてストリームでない
+  invoke が 1 回）で、順に試すことはない。`--model` だけでは足りず、`haiku` や `sonnet` を頼むサブエージェントは自前の ID を
+  解決する。`ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL`、`ANTHROPIC_SMALL_FAST_MODEL`、
+  `CLAUDE_CODE_SUBAGENT_MODEL` を選んだ ID にそろえると、すべての呼び出し（本体のターン、サブエージェント、`--model opus`）が
+  その ID を名指しし、拒否は 1 回で終わった。**決定**: claude の `bedrock` ルートでは、セッションのモデルはプロバイダが
+  `anthropic` の Bedrock モデル ID かシステム推論プロファイル ID でなければならない（`routes.ParseBedrockAnthropicModelID`。
+  汎用の `routes.ParseBedrockModelID` は ADR 0129 の許可リストが使い回す形）。別名、`claude-…` の ID、`[1m]` の接尾辞、ARN は
+  `CheckRoute` と起動で `route_model_mismatch`（400）として断る。起動は `--model <id>` を渡し、上の 7 つの変数を環境変数と
+  `--settings` の層の両方で同じ ID にする。ゲートウェイのトークンはその ID を持ち、別のモデルを名指しする呼び出しには AWS へ
+  出す前に **404** `route_model_not_selected` を返す。利用者は起動ダイアログのリージョンの横に ID を入力する（AWS
+  プロファイルごとに覚えるのはブラウザだけ）。REST・MCP・スケジュールは `model` として送る。ID を AWS 側では確かめない。
+  ルートのロールは `bedrock:InvokeModel*` しか持たず推論プロファイルを列挙できないので、アカウントとリージョンがその ID を
+  使えるかは Bedrock の応答で分かる。測っていないもの: 本物の Bedrock と、1 ターンを超える TUI。

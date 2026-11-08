@@ -182,6 +182,8 @@ export function TenantLimits({
   const [allowLlm, setAllowLlm] = useState(tenant?.allow_engine_llm !== false);
   const [allowImage, setAllowImage] = useState(tenant?.allow_engine_image !== false);
   const [termRetention, setTermRetention] = useState(tenant?.terminal_history_retention_days || 0);
+  // Longest a personal access token issued in this tenant may live; 0 = only the deployment cap.
+  const [patMaxDays, setPatMaxDays] = useState<number | string>(tenant?.pat_max_days || 0);
   const [saved, setSaved] = useState(false);
   // Set only when the save response reports that the tenant limits no longer fit in the pool.
   const [budget, setBudget] = useState<PoolBudget | null>(null);
@@ -203,6 +205,7 @@ export function TenantLimits({
     setAllowLlm(tenant?.allow_engine_llm !== false);
     setAllowImage(tenant?.allow_engine_image !== false);
     setTermRetention(tenant?.terminal_history_retention_days || 0);
+    setPatMaxDays(tenant?.pat_max_days || 0);
   }, [slug, tenant]);
 
   const saveLimits = async () => {
@@ -225,6 +228,7 @@ export function TenantLimits({
       allow_engine_llm: allowLlm,
       allow_engine_image: allowImage,
       terminal_history_retention_days: termRetention,
+      pat_max_days: Math.round(+patMaxDays || 0),
     });
     if (res?.error) {
       toast(errText(res.error));
@@ -275,7 +279,16 @@ export function TenantLimits({
             </span>
             <span className="af-unit">{+maxWsMemMb > 0 ? tr("admin.per_container", { hint: fmtGbHint(+maxWsMemMb) }) : tr("admin.zero_no_tenant_cap")}</span>
           </label>
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.pat_max_days")}</span>
+            <span className="af-inputwrap">
+              <input type="number" min="0" max="3650" value={patMaxDays} onChange={(e) => setPatMaxDays(e.target.value)} />
+              <span className="af-suffix">{tr("admin.pat_max_days_unit")}</span>
+            </span>
+            <span className="af-unit">{+patMaxDays > 0 ? tr("admin.pat_max_days_set") : tr("admin.zero_no_tenant_cap")}</span>
+          </label>
         </div>
+        <p className="admin-hint">{tr("admin.pat_max_days_hint")}</p>
         <p className="admin-hint">
           {tr("admin.ws_mem_hint_1")}<code>WS_MEMORY</code>{tr("admin.ws_mem_hint_2")}<code>AF_MAX_WORKSPACE_MEM</code>{tr("admin.ws_mem_hint_3")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.ws_mem_hint_4")}
         </p>

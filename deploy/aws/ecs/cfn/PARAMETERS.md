@@ -1214,3 +1214,149 @@ Reference does not list aws:RequestTag there, so it probably does not), a
 CreateVolume statement that also listed snapshot/* would let any snapshot in
 the account be restored into this pool. One type each holds either way.
 
+
+## `30-ingress.yaml` — comments moved out of the template
+
+The template had 7 KiB of `#` comments and sat 427 bytes under the CI budget (#3550); now about 3.8 KiB. The
+multi-line rationale below left the file so the next parameter does not need hand-trimming.
+Each entry is the original text, keyed by the template line it sat above (the key is the
+first words of that line). The template keeps a one-line version where it guards an invariant.
+Nothing here changes a resource, a logical ID or a property.
+
+### `HasGoogle: !Not [!Equals [!Ref GoogleClientId, ""]]`
+
+Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
+parameter that doesn't exist stops the task from starting - so wire each one in
+only when that IdP is actually configured.
+
+### `HasGithub: !Not [!Equals [!Ref GithubAllowedOrgs, ""]]`
+
+The org list, not the client id: GITHUB_OAUTH_CLIENT_ID also drove the git-connect
+device flow, which many deployments set without wanting a login (docs/log/71).
+
+### `HasPreviewZone: !Not [!Equals [!Ref PreviewHostedZoneId, ""]`
+
+Set when the preview name lives in another zone (a sibling needs its own delegated
+zone). Empty = the Console's zone, as before.
+
+### `HasSchedulerInterval: !Not [!Equals [!Ref SchedulerInterval,`
+
+Scheduled execution: each knob is passed ONLY when the operator set it, so an unset
+parameter means "whatever the CP's own default is" rather than a copy frozen here.
+
+### `CpArm: !Equals [!Ref CpArch, arm64]`
+
+CpArch keeps the operator's spelling (arm64); ECS stores the case verbatim, so it is
+turned here, never in AllowedValues (that would reject every captured value). TaskDef below.
+
+### `LoadBalancerAttributes:`
+
+Spelled out at the AWS default (60s): the hard ceiling on every CP request. Raise it
+only for a NEW long-poll, never to let a handler block longer (docs/log/62 sec.62.5).
+
+### `rate-limit`
+
+Rate limit first: it is the one rule that protects the login endpoint and
+the API from a flood, and it decides on the SOURCE rather than the body.
+
+### `HostedZoneId: !If [HasPreviewZone, !Ref PreviewHostedZoneId,`
+
+The zone the validation record `_xxx.{PreviewDomain}` is written into. The
+`*.` is stripped, so what is needed is the zone containing PreviewDomain
+itself, not the Console's zone.
+
+### `CpDbUnavailableFilter:`
+
+--- "the Control Plane cannot reach its database", made visible (README, "Alarms") ---
+The marker is control-plane/store_postgres_secret.go's logDBUnavailable: change both or neither.
+
+### `CpDbUnavailableAlarm:`
+
+One breach is enough: the CP rate-limits this line to one a minute, so a single
+datapoint already means a whole minute of failing connections.
+
+### `HomeOpsTaskDef:`
+
+--- The home task: Recreate, Clean home and Destroy on an EFS home (ecs; #1260) ---
+A one-shot RunTask of `af-cp efs-home-op` (the CP cannot mount EFS). Its task role is
+10-data's HomeOpsEfsRole. PARAMETERS.md, "Home task (volume root)".
+
+### `CpHomeOpsManagedPolicy:`
+
+The CP's grant for the task above: PARAMETERS.md, "Home task grant".
+Managed (inline total is capped, #1576); names are account-wide, hence the region.
+
+### `CpCustodianKmsPolicy:`
+
+The kms key custodian's grant (ADR 0005): this key, its two calls, its encryption
+context only. deploy/local/cfn-cp-kms-scope-test.py.
+
+### `DependsOn: [HomeOpsTaskDef, CpHomeOpsManagedPolicy]`
+
+AF_ECS_HOME_TASK names the family as a string, which CloudFormation does not order by:
+without this a fresh CP could offer Recreate before the family or its grant exists.
+
+### `RuntimePlatform:`
+
+Declared, not inferred: an omitted value is nowhere in the definition, so a CpArch
+switch would be no new revision (docs/log/72, 70.8). The ECS enum's spelling (CpArm).
+
+### `CP_ADDR`
+
+ECS/awsvpc: the ALB reaches the task over its ENI, so CP must bind
+non-loopback (the CpSg restricts 8099 ingress to the ALB SG - the
+network isolation the compose loopback bind gives on a single box).
+
+### `AF_DB_HOST`
+
+MetadataStore = RDS Postgres (P3-7 stage 3a): survives CP task replacement.
+The CP composes the DSN from these parts; the password arrives as a
+secret (below) so it never sits in a plaintext URL/env.
+
+### `AF_DB_PASSWORD_SECRET_ARN`
+
+Where the CP re-reads the RDS password (rotated every 7 days, ADR 0065).
+Environment, NOT Secrets: `secrets` is resolved once, at task start.
+
+### `AF_PREVIEW_DOMAIN`
+
+docs/81: parent domain for the preview subdomains. Empty and the CP registers
+no host-mode routing at all (only the existing path mode remains).
+
+### `AF_OIDC_PROVIDERS`
+
+Generic OIDC IdP (docs/log/61). The redirect URI stays the single
+https://<Fqdn>/oauth2/callback whether or not this is enabled.
+
+### `AF_RUNTIME`
+
+No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID: git OAuth apps are
+per-tenant rows (docs/log/71). AF_RUNTIME and AF_ECS_*: PARAMETERS.md.
+
+### `AF_TTS_ECS_SERVICE`
+
+--- Speech: the VOICEVOX engine of 50-tts (ADR 0070). Unset = Polly only. ---
+AF_TTS_ECS_CLUSTER / _REGION are deliberately absent: tts_ecs.go falls back to
+AF_ECS_CLUSTER and AF_ECS_REGION above, and the engine is in the same cluster.
+
+### `AF_ENGINES_SSM_PARAM`
+
+--- Self-hosted inference engines: the table 60-engines wrote (ADR 0071).
+Unset = no engines, and the /engine/* gateway answers 404. Cluster and region
+ride on AF_ECS_* above, as they do for the speech engine.
+
+### `AF_ENGINE_CIVITAI_RED`
+
+Unconditional, unlike the table above: this parameter has no empty state to
+condition on -- "0" IS the answer, and it is the one that hides the NSFW
+search source. PARAMETERS.md.
+
+### `AF_ECS_WORKSPACE_IMAGE`
+
+Start returns at desiredCount 1; the Agent readiness poll only feeds a log
+line (AF_ECS_START_TIMEOUT_SEC, default 300s), so it may exceed the ALB idle timeout.
+
+### `ServiceConnectConfiguration:`
+
+CP as a Service Connect client so it can resolve workspace Agents by
+<service>.<namespace> once the stage-2 adapter creates them.

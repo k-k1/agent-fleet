@@ -302,12 +302,21 @@ func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) 
 		tr.rec.Reason = "pat unknown or revoked"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
 	}
+	capDays, err := a.cp.PATMaxDaysFor(r.Context(), p.ID)
+	if err != nil {
+		// The cap cannot be read, so the token cannot be shown to be inside it: refuse rather
+		// than honor it uncapped.
+		tr.rec.Reason = "store error"
+		return nil, internalErr(err)
+	}
+	// The cap is re-applied on every use, measured from creation, so lowering it (deployment or
+	// tenant) also ends tokens issued under a looser one. The earlier of that and the token's own
+	// expiry wins.
 	expiry := p.ExpiresAt
-	if expiry == "" {
-		// Issued before tokens had a maximum lifetime. Capped from creation, not from now,
-		// so an old non-expiring token stops working at once rather than getting a fresh term.
-		if c, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
-			expiry = c.AddDate(0, 0, a.cp.PATMaxDays()).UTC().Format(time.RFC3339)
+	if c, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
+		capped := c.AddDate(0, 0, capDays).UTC()
+		if e, err := time.Parse(time.RFC3339, expiry); expiry == "" || (err == nil && capped.Before(e)) {
+			expiry = capped.Format(time.RFC3339)
 		}
 	}
 	if expiry == "" {
@@ -730,7 +739,7 @@ func memberTools() []mcpTool {
 					"dir":              map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":            map[string]any{"type": "string", "description": "display name (optional)"},
 					"kind":             map[string]any{"type": "string", "description": "agent kind: " + joinKinds(createKinds(), " | ", " (default)") + ". agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\"). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — a shell session takes no initial_prompt over MCP (it would run as a command), and send_to_session does not reach it either."},
-					"model":            map[string]any{"type": "string", "description": "model override (optional)"},
+					"model":            map[string]any{"type": "string", "description": "model override (optional). claude on route=bedrock requires one: a Bedrock model id or system inference profile id as Bedrock writes it (anthropic.… or <scope>.anthropic.…, scope us, eu, apac, jp, au, us-gov or global). Aliases such as opus, claude-… ids and ARNs are refused; the session then runs on that one model for every call, subagents included, with no fallback to another"},
 					"initial_prompt":   map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":         map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
 					"branch":           map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},

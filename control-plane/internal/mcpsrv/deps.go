@@ -59,9 +59,12 @@ type CP interface {
 
 	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	RuntimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime
-	// PATMaxDays is the longest a PAT may live; a token with no expiry (issued before the
-	// cap) is treated as expiring that long after creation.
-	PATMaxDays() int
+	// PATMaxDaysFor is the longest the stored PAT patID may live: the lower of the deployment's
+	// cap and its tenant's, the tenant being the one the PAT's own membership belongs to. A token
+	// is honored only within that many days of its creation (and within its own expiry, if
+	// sooner); one with no expiry is treated as expiring then. An error must fail the
+	// authentication closed.
+	PATMaxDaysFor(ctx context.Context, patID string) (int, error)
 	// BearerEntryAllowed reports whether the person behind a PAT / OAuth grant may still
 	// sign in (the allowlist half of offboarding). When it answers false the CP has already
 	// revoked their credentials.

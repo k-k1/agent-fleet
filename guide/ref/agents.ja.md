@@ -245,7 +245,10 @@ API キーで従量課金として動きます。**anthropic-subscription** は�
   claude を Amazon Bedrock 上で動かします（[Amazon Bedrock のルート](bedrock-route.ja.md)）。**まだ提供していません**。
   実機での受け入れ確認を待っており、それまでは運用者がその確認のために `AF_CLAUDE_BEDROCK_ROUTE=1` を設定した
   ワークスペースでだけ選べます（Control Plane では `AF_WS_CLAUDE_BEDROCK_ROUTE=1` で、次のワークスペース起動で届きます。動作中のワークスペースは Stop → Start が要ります）。選べる場合は、**モデルのルート** で
-  **Amazon Bedrock** を選び、プロファイルを選びます。リージョンは任意で、空ならプロファイル自身のものです。セッションには
+  **Amazon Bedrock** を選び、プロファイルを選びます。リージョンは任意で、空ならプロファイル自身のものです。**Bedrock の
+  モデル ID** は必須で、Bedrock の表記どおりのモデル ID かシステム推論プロファイル ID（`anthropic.…`、`us.anthropic.…` など。
+  `opus` や `claude-…`、ARN は不可）を入れます。claude はその ID だけで起動する（`--model` と `ANTHROPIC_*_MODEL` の変数）ので、
+  サブエージェントも同じ ID を使い、ほかのモデルへ切り替わることはありません。セッションには
   AWS の資格情報が渡りません。ワークスペースのルートゲートウェイが各モデル呼び出しに署名し、セッションが持つのは、自分の
   プロセスからだけ使え、セッションとともに終わる bearer だけです。CLI のヘッダーは「Amazon Bedrock」になります。拒否された
   呼び出し（プロファイルの印がない・編集された・削除された、確認がまだ、SSO のサインインが必要）は、理由とともにすぐ失敗し

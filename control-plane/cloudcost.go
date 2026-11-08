@@ -660,6 +660,11 @@ func (a adminAPI) oneMemberCloudCost(w http.ResponseWriter, r *http.Request, mem
 		writeAPIErr(w, aerr)
 		return
 	}
+	months, aerr := monthsParam(r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	rows, err := a.mgr.store.ListCloudCost(r.Context(), "", membershipID, from, to)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -679,13 +684,24 @@ func (a adminAPI) oneMemberCloudCost(w http.ResponseWriter, r *http.Request, mem
 		byService[row.Service] += row.Unblended
 		total += row.Unblended
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	meta := a.cloudCostMeta(r.Context(), rows)
+	resp := map[string]any{
 		"from": from, "to": to,
 		"total_micro": total,
 		"days":        sortedCostDays(byDay),
 		"services":    sortedCostServices(byService),
-		"meta":        a.cloudCostMeta(r.Context(), rows),
-	})
+		"meta":        meta,
+	}
+	if months > 0 {
+		sp := newMonthSpan(months, monthsNow())
+		mrows, err := a.mgr.store.ListCloudCost(r.Context(), "", membershipID, sp.From, sp.To)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		resp["monthly"] = monthlyCost(mrows, sp, meta.FirstDay, false, nil)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // cloudCost (GET /api/admin/cloud-cost?from=&to=&tenant=) — per-member totals for an
@@ -710,6 +726,11 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+	months, aerr := monthsParam(r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	totals, err := a.mgr.store.CloudCostTotals(r.Context(), tenantID, from, to)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -717,7 +738,7 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 	}
 	// If the set cannot be resolved we just do not fold — not worth failing the cost
 	// view over.
-	system, _ := a.mgr.systemMembershipIDs(r.Context())
+	system, sysErr := a.mgr.systemMembershipIDs(r.Context())
 	deploymentWide := tenantID == "" // tenantScope already proved super_admin for this
 	members := make([]map[string]any, 0, len(totals))
 	var sharedMicro int64
@@ -747,6 +768,25 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		"members":          members,
 		"attributed_micro": attributed,
 		"meta":             a.cloudCostMeta(r.Context(), rows),
+	}
+	if months > 0 {
+		// The same classification as the window totals above: shared and reserved
+		// memberships are the shared bucket, and only the deployment-wide super_admin
+		// view may carry it. A tenant-scoped query never selects shared rows at all.
+		// Unlike the window totals, a failed lookup is an error here: up to 24 months of
+		// reserved memberships would otherwise be counted as people's spend.
+		if sysErr != nil {
+			writeAPIErr(w, internalErr(sysErr))
+			return
+		}
+		sp := newMonthSpan(months, monthsNow())
+		mrows, err := a.mgr.store.ListCloudCost(r.Context(), tenantID, "", sp.From, sp.To)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		resp["monthly"] = monthlyCost(mrows, sp, resp["meta"].(cloudCostMeta).FirstDay, deploymentWide,
+			func(r store.CloudCostRow) bool { return r.MembershipID == "" || system[r.MembershipID] })
 	}
 	if deploymentWide && sharedSeen {
 		byService := map[string]int64{}

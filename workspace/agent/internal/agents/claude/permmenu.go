@@ -31,6 +31,11 @@ type PermissionMenu struct {
 	// BodyOK is false when no such rule was found, so nothing can be said about the target.
 	Body   []string
 	BodyOK bool
+	// Clipped is set when BodyOK is not because the dialog is taller than the pane: no top rule
+	// above the question and the pane's first line already drawn. Claude Code draws on the
+	// alternate screen (measured: tmux history_size 0), so the lines above are drawn nowhere and
+	// Body then holds what is visible, from the pane's first line down to the question.
+	Clipped bool
 	// RuleWidth is the width of the dialog's top rule, i.e. of the pane.
 	RuleWidth int
 }
@@ -136,6 +141,9 @@ func ParsePermissionMenu(pane string) (PermissionMenu, bool) {
 			m.Body, m.BodyOK, m.RuleWidth = lines[j+1:qIdx], true, len([]rune(strings.TrimSpace(lines[j])))
 			break
 		}
+	}
+	if !m.BodyOK && strings.TrimSpace(lines[0]) != "" {
+		m.Body, m.Clipped = lines[:qIdx], true
 	}
 	return m, true
 }
@@ -253,6 +261,9 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 // answer is "no match". The dialog is read as drawn; a command the dialog shortens or reflows
 // beyond a wrap does not reconstruct and is refused too.
 //
+// A dialog taller than the pane shows only the command's end; checkClippedCommand compares that
+// tail instead.
+//
 // Limit: a screen drawn identically for P wrapped by the terminal and for Q with a real newline
 // where a wrap was possible (a pane-wide line, or a next word that would not have fit) cannot be
 // told apart by any reading of the screen, and matches. Everything else that differs by a
@@ -274,6 +285,9 @@ func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetC
 		return TargetUnchecked
 	}
 	if !m.BodyOK {
+		if m.Clipped && tool == "Bash" && command != nil && strings.HasPrefix(normalizeCommand(*command), target) {
+			return m.checkClippedCommand(*command)
+		}
 		return TargetDiffers
 	}
 	truncated := strings.HasSuffix(strings.TrimSpace(detail), "…")
@@ -315,7 +329,7 @@ func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetC
 		if command != nil {
 			// The payload's target must be the start of that command, or the two were read from
 			// different prompts. The whole command is then compared in place of the first line.
-			if !strings.HasPrefix(normalizeCommand(*command), target) || !matchFullCommand(between, *command, width) {
+			if !strings.HasPrefix(normalizeCommand(*command), target) || !matchFullCommand(between, *command, width, false) {
 				return TargetDiffers
 			}
 			return TargetMatches
@@ -438,6 +452,28 @@ func wordWrapped(c int, next string, width int) bool {
 	return ok && c+1+1+w >= width
 }
 
+// wordWrapRun is wordWrapped for a swallowed run of blanks: the fewest blanks n (at least 1) for
+// which a line of c columns followed by n blanks and the next word would not have fit. ok is false
+// when no run up to maxWrapSpaces explains a break there, or the next line is a real indent.
+func wordWrapRun(c int, next string, width int) (n int, ok bool) {
+	if next == "" || unicode.IsSpace([]rune(next)[0]) {
+		return 0, false
+	}
+	f := strings.Fields(next)
+	if len(f) == 0 {
+		return 0, false
+	}
+	w, known := cols(f[0])
+	if !known {
+		return 0, false
+	}
+	// The same edge as wordWrapped (n = 1 gives its c+1+1+w >= width). Only runs that overflowed
+	// are measured; whether a run that exactly fills the line also breaks is not, so this may
+	// accept one blank fewer than the renderer needs.
+	n = max(1, width-1-w-c)
+	return n, n <= maxWrapSpaces
+}
+
 // permCommandBar is the left bar ("│ ") claude 2.1.319 draws before each line of the command in
 // some dialogs (measured: the "Dangerous rm operation" one, wrapped continuation lines included).
 const permCommandBar = "\u2502 "
@@ -449,7 +485,7 @@ const permCommandBar = "\u2502 "
 func stripCommandBar(region []string, width int) ([]string, int) {
 	barred := false
 	for _, ln := range region {
-		if strings.TrimSpace(ln) == "" {
+		if strings.TrimSpace(ln) == "" || isBareBar(ln) {
 			continue
 		}
 		if !strings.HasPrefix(strings.TrimPrefix(ln, " "), permCommandBar) {
@@ -464,11 +500,34 @@ func stripCommandBar(region []string, width int) ([]string, int) {
 	for i, ln := range region {
 		if rest, ok := strings.CutPrefix(strings.TrimPrefix(ln, " "), permCommandBar); ok {
 			out[i] = " " + rest
+		} else if isBareBar(ln) {
+			out[i] = ""
 		} else {
 			out[i] = ln
 		}
 	}
 	return out, width - len([]rune(permCommandBar))
+}
+
+// maxWrapSpaces bounds the run of blanks a wrap can swallow. The renderer drops the whole run at
+// the break, not one space (measured on 2.1.319: "│     expect(…" drawn as "│" over "expect(…"),
+// so an indented line whose next word does not fit loses its indent.
+const maxWrapSpaces = 16
+
+// wrapSeps is what a boundary the terminal could have wrapped at may hide: a run of between from
+// and maxWrapSpaces blanks, or a real newline. The command text prunes all but the right count.
+func wrapSeps(from int) []string {
+	seps := make([]string, 0, maxWrapSpaces+1)
+	for n := from; n <= maxWrapSpaces; n++ {
+		seps = append(seps, strings.Repeat(" ", n))
+	}
+	return append(seps, "\n")
+}
+
+// isBareBar reports a barred blank line of the command: tmux drops the trailing blank, so the bar
+// is all that is left of " │ ".
+func isBareBar(ln string) bool {
+	return strings.TrimSpace(ln) == strings.TrimSpace(permCommandBar)
 }
 
 // normalizeCommand is a command's text as the dialog can show it: no trailing blanks on a line
@@ -482,12 +541,15 @@ func normalizeCommand(s string) string {
 }
 
 // matchFullCommand reports whether the command region of the dialog can be the whole of command.
-// Every boundary between two drawn lines is a wrap (nothing, or the swallowed space) only where
-// the terminal could have broken the line there, and is otherwise a real newline; a boundary
+// Every boundary between two drawn lines is a wrap (nothing, or the swallowed run of blanks) only
+// where the terminal could have broken the line there, and is otherwise a real newline; a boundary
 // where a wrap is possible is also tried as a newline. Only an exact reconstruction matches, so
 // the one thing that stays ambiguous is a screen drawn identically for two commands, which no
 // reading of the screen can separate. The search is pruned by the command's own text.
-func matchFullCommand(region []string, command string, width int) bool {
+//
+// With tail set, region is only the end of the command (the dialog's top is clipped): its first
+// line may start anywhere in the command, and the reconstruction must be a suffix of it.
+func matchFullCommand(region []string, command string, width int, tail bool) bool {
 	var lines []string
 	for _, ln := range region {
 		lines = append(lines, strings.TrimRight(strings.TrimPrefix(ln, " "), " \t"))
@@ -509,9 +571,13 @@ func matchFullCommand(region []string, command string, width int) bool {
 		}
 		switch {
 		case width > 0 && c+1 >= width-1:
-			opts[k] = []string{"", " ", "\n"}
-		case width > 0 && wordWrapped(c, lines[k+1], width):
-			opts[k] = []string{" ", "\n"}
+			opts[k] = append([]string{""}, wrapSeps(1)...)
+		case width > 0:
+			if n, ok := wordWrapRun(c, lines[k+1], width); ok {
+				opts[k] = wrapSeps(n)
+			} else {
+				opts[k] = []string{"\n"}
+			}
 		default:
 			opts[k] = []string{"\n"}
 		}
@@ -523,17 +589,26 @@ func matchFullCommand(region []string, command string, width int) bool {
 	wants := []string{want, "rtk " + want}
 	var try func(i int, shown string) bool
 	try = func(i int, shown string) bool {
-		viable := false
-		for _, w := range wants {
-			if strings.HasPrefix(w, shown) {
-				viable = true
+		if tail {
+			if !strings.Contains(want, shown) {
+				return false
 			}
-		}
-		if !viable {
-			return false
-		}
-		if i == len(lines) {
-			return strings.TrimSpace(shown) == want || strings.TrimSpace(shown) == "rtk "+want
+			if i == len(lines) {
+				return strings.HasSuffix(want, shown)
+			}
+		} else {
+			viable := false
+			for _, w := range wants {
+				if strings.HasPrefix(w, shown) {
+					viable = true
+				}
+			}
+			if !viable {
+				return false
+			}
+			if i == len(lines) {
+				return strings.TrimSpace(shown) == want || strings.TrimSpace(shown) == "rtk "+want
+			}
 		}
 		for _, sep := range opts[i-1] {
 			if try(i+1, shown+sep+lines[i]) {
@@ -543,4 +618,54 @@ func matchFullCommand(region []string, command string, width int) bool {
 		return false
 	}
 	return try(1, lines[0])
+}
+
+// clippedMinLines is the fewest command lines a clipped dialog must show before its tail counts as
+// evidence. A dialog only clips when it is taller than the pane, so a real one shows the pane's
+// height less its bottom (about 40 of 54 lines on a phone pane). A few lines such as "  });",
+// "EOF" and a closing command are shared by too many commands to tell P from Q; a pane too short
+// to show this many is answered in the terminal.
+const clippedMinLines = 8
+
+// checkClippedCommand compares a Bash dialog whose top is above the pane with the whole command.
+// Only the command's end is visible: the region from the pane's first line down to the dashed
+// rule under the command must reconstruct to a suffix of command, with the same wrap rules as a
+// full match. When the clip falls inside the title or description, both rules are on screen and
+// the command between them is compared whole.
+//
+// Limit: nothing on screen is compared with the start of the command (the payload line is only
+// checked against the payload's own command), so any command whose end reconstructs the visible
+// tail matches, whatever its first lines. The prompt token still binds the answer to the payload.
+// Refusing instead made every Bash prompt taller than the pane (a heredoc on a phone-width pane)
+// unanswerable from the card.
+func (m PermissionMenu) checkClippedCommand(command string) TargetCheck {
+	var rules []int
+	for i, ln := range m.Body {
+		if permDashRuleRe.MatchString(ln) {
+			rules = append(rules, i)
+		}
+	}
+	if len(rules) == 0 || len(rules) > 2 {
+		return TargetDiffers
+	}
+	// The dashed rule spans the pane, as the top rule does.
+	width := len([]rune(strings.TrimSpace(m.Body[rules[0]])))
+	if len(rules) == 2 {
+		region, w := stripCommandBar(m.Body[rules[0]+1:rules[1]], width)
+		if matchFullCommand(region, command, w, false) {
+			return TargetMatches
+		}
+		return TargetDiffers
+	}
+	region, w := stripCommandBar(m.Body[:rules[0]], width)
+	shown := 0
+	for _, ln := range region {
+		if strings.TrimSpace(ln) != "" {
+			shown++
+		}
+	}
+	if shown < clippedMinLines || !matchFullCommand(region, command, w, true) {
+		return TargetDiffers
+	}
+	return TargetMatches
 }

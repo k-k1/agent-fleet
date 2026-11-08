@@ -526,6 +526,13 @@ the per-request check above never sees them. They are cut off separately:
 - **Every PAT expires.** There is no "never": the longest lifetime is `AF_PAT_MAX_DAYS` (default
   365, 1 to 3650; any other value stops the CP at startup). A token issued before this limit existed with no expiry is treated as expiring that long
   after it was created, so an old one stops working at once.
+- **A tenant can lower that limit for itself.** A super_admin sets "Max PAT lifetime" (`pat_max_days`, 1 to 3650 days,
+  0 = no tenant cap) in the tenant's limits. The lower of it and `AF_PAT_MAX_DAYS` applies, both when a token is
+  issued and on every use of an existing one, counted from the token's creation: lowering the value ends the tokens
+  that are already older than the new limit at once. The tenant is the one the token was issued under, so a
+  super_admin's token follows that tenant's limit as well; a token tied to no membership gets only `AF_PAT_MAX_DAYS`. An
+  unset, unreadable or out-of-range tenant value means the deployment limit, never no limit, and if the tenant cannot be
+  read the token is refused. A tenant cannot raise the limit above `AF_PAT_MAX_DAYS`.
 
 Using a PAT on `/mcp` is still exempt from a tenant's allowed networks, because workspaces call it
 from outside the office (`docs/build/07-security.md` §7.3.2); revoking is what cuts it off.

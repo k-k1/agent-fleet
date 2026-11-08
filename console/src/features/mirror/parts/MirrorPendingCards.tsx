@@ -63,6 +63,8 @@ export function MirrorPendingCards({
           carried={carried}
           session={session}
           agentName={agentName}
+          repo={sessionMeta?.repo ?? null}
+          onOpenFile={openFile}
           onOpenPlan={openPlan}
           onReviewPlan={reviewCarriedPlan}
           onReviewPlanAgain={reviewCarriedPlanAgain}
