@@ -467,6 +467,9 @@ func wordWrapRun(c int, next string, width int) (n int, ok bool) {
 	if !known {
 		return 0, false
 	}
+	// The same edge as wordWrapped (n = 1 gives its c+1+1+w >= width). Only runs that overflowed
+	// are measured; whether a run that exactly fills the line also breaks is not, so this may
+	// accept one blank fewer than the renderer needs.
 	n = max(1, width-1-w-c)
 	return n, n <= maxWrapSpaces
 }
@@ -511,8 +514,8 @@ func stripCommandBar(region []string, width int) ([]string, int) {
 // so an indented line whose next word does not fit loses its indent.
 const maxWrapSpaces = 16
 
-// wrapSeps is what a boundary the terminal could have wrapped at may hide: a run of from to
-// maxWrapSpaces blanks, or a real newline. The command text prunes all but the right count.
+// wrapSeps is what a boundary the terminal could have wrapped at may hide: a run of between from
+// and maxWrapSpaces blanks, or a real newline. The command text prunes all but the right count.
 func wrapSeps(from int) []string {
 	seps := make([]string, 0, maxWrapSpaces+1)
 	for n := from; n <= maxWrapSpaces; n++ {
@@ -538,8 +541,8 @@ func normalizeCommand(s string) string {
 }
 
 // matchFullCommand reports whether the command region of the dialog can be the whole of command.
-// Every boundary between two drawn lines is a wrap (nothing, or the swallowed space) only where
-// the terminal could have broken the line there, and is otherwise a real newline; a boundary
+// Every boundary between two drawn lines is a wrap (nothing, or the swallowed run of blanks) only
+// where the terminal could have broken the line there, and is otherwise a real newline; a boundary
 // where a wrap is possible is also tried as a newline. Only an exact reconstruction matches, so
 // the one thing that stays ambiguous is a screen drawn identically for two commands, which no
 // reading of the screen can separate. The search is pruned by the command's own text.
@@ -591,7 +594,7 @@ func matchFullCommand(region []string, command string, width int, tail bool) boo
 				return false
 			}
 			if i == len(lines) {
-				return strings.HasSuffix(want, strings.TrimRight(shown, " \t"))
+				return strings.HasSuffix(want, shown)
 			}
 		} else {
 			viable := false
@@ -619,9 +622,10 @@ func matchFullCommand(region []string, command string, width int, tail bool) boo
 
 // clippedMinLines is the fewest command lines a clipped dialog must show before its tail counts as
 // evidence. A dialog only clips when it is taller than the pane, so a real one shows the pane's
-// height less its bottom (about 15 lines); a short tail such as a lone "EOF" is shared by too
-// many commands to tell P from Q.
-const clippedMinLines = 3
+// height less its bottom (about 40 of 54 lines on a phone pane). A few lines such as "  });",
+// "EOF" and a closing command are shared by too many commands to tell P from Q; a pane too short
+// to show this many is answered in the terminal.
+const clippedMinLines = 8
 
 // checkClippedCommand compares a Bash dialog whose top is above the pane with the whole command.
 // Only the command's end is visible: the region from the pane's first line down to the dashed
@@ -629,10 +633,11 @@ const clippedMinLines = 3
 // full match. When the clip falls inside the title or description, both rules are on screen and
 // the command between them is compared whole.
 //
-// Limit: two commands that end in the same visible tail and start with the same payload line are
-// not told apart; the prompt token still binds the answer to the payload. Refusing instead made
-// every Bash prompt taller than the pane (a heredoc on a phone-width pane) unanswerable from the
-// card.
+// Limit: nothing on screen is compared with the start of the command (the payload line is only
+// checked against the payload's own command), so any command whose end reconstructs the visible
+// tail matches, whatever its first lines. The prompt token still binds the answer to the payload.
+// Refusing instead made every Bash prompt taller than the pane (a heredoc on a phone-width pane)
+// unanswerable from the card.
 func (m PermissionMenu) checkClippedCommand(command string) TargetCheck {
 	var rules []int
 	for i, ln := range m.Body {
