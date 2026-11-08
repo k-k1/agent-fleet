@@ -351,6 +351,26 @@ const SCENES = [
     settle: 2500,
   },
   {
+    // Settings › Issue tracker before Jira is connected: the two ways in.
+    name: "tracker-settings",
+    guide: true,
+    // The tab holds one card, so the whole modal would be mostly blank.
+    clip: ".conns",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "tracker",
+    width: 1500,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 4000,
+  },
+  {
     name: "aws-badge",
     guide: true,
     clip: [".ws-aws-btn", ".ws-aws-pop"],

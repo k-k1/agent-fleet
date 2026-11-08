@@ -571,7 +571,7 @@ Jira card in ⚙ Settings → Issue tracker says **"Boards, sprints and epics: n
 `jira init` and the board, sprint and epic commands fail with an authorization error, and `jira` prints the same
 explanation first. Your tenant administrator adds the scopes to the Atlassian app and ticks the Jira Software
 option on the tenant's Jira card; then **reconnect Jira** once. Do not keep retrying `jira init` meanwhile.
-Viewing, listing, creating and commenting on issues do not need them ([15](15-external-services.md#use-jira-in-a-session)).
+Viewing, listing, creating and commenting on issues do not need them ([Use Jira](../user/integrations/jira.md#use-boards-sprints-and-epics)).
 
 ### `jira issue create` (or `comment add`) timed out with exit status 124
 
@@ -582,7 +582,7 @@ created in the last 15 minutes with that summary and prints "possible matches" o
 the search can fail ("could not look for the issue"), so do not rely on it. Check Jira first, for example with the JQL
 `project = PROJ AND creator = currentUser() AND created >= -15m`, and create it again only if it is not there.
 Commands that only read are re-run by themselves after a timeout or a connection reset
-([15](15-external-services.md#use-jira-in-a-session)).
+([Use Jira](../user/integrations/jira.md#a-write-exited-with-status-124)).
 
 ### `jira` exited with status 3: the description was not set
 
@@ -590,7 +590,7 @@ Status **3** from `jira issue create` or `jira issue edit -b` means the only par
 and `jira` normally names the issue. If a `create` could not read the new issue's key, it says so instead: find the
 issue in Jira (for example with the JQL above). After a `create` **the issue exists**, so do not create it again. After
 an `edit` the other changes you asked for were applied. Either way, set the description with
-`jira issue edit PROJ-1 --no-input -b "…"` ([15](15-external-services.md#use-jira-in-a-session)).
+`jira issue edit PROJ-1 --no-input -b "…"` ([Use Jira](../user/integrations/jira.md#creating-an-issue-exited-with-status-3)).
 
 ### AWS commands say "Unable to locate credentials", or `af-aws-exec` / `af-gcloud-exec` stops
 

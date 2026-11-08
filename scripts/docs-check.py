@@ -1256,6 +1256,9 @@ FEATURES_FILES = (
 def check_features(f: Findings) -> None:
     """Do member rows of the feature catalogue point at a procedure on the member shelf?
 
+    A task page under `user/` counts: it is where a member chapter's section goes when it
+    is rewritten.
+
     `ref/features` declares itself an index of what exists and who can use it, with how
     to do it living behind the link. A row whose Details column only points at a
     capability table (`agents.md` / `repos.md`) is therefore a dead end for the reader —
@@ -1293,10 +1296,10 @@ def check_features(f: Findings) -> None:
             if feature in FEATURES_EXEMPT:
                 continue
             details = cells[header.index(details_head)]
-            if "../member/" not in details:
+            if "../member/" not in details and "../user/" not in details:
                 f.error(
                     f"guide/ref/{name}: Details of '{feature}' does not point at"
-                    f" member/ ({details or 'empty'})"
+                    f" member/ or user/ ({details or 'empty'})"
                     " — a member row must point at exactly one chapter that explains how"
                 )
 

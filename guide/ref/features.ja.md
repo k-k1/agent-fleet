@@ -56,9 +56,9 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [06 リポジトリと git](../member/06-code.ja.md) |
 | worktree | メンバー | 各リポジトリの下 | [06 リポジトリと git](../member/06-code.ja.md) |
 | サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-gh-と-bkt-を使う)。サインイン済みの CLI の一覧は [15](../member/15-external-services.ja.md#サインイン済みの-cli) |
-| サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-jira-を使う) |
-| サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-confluence-を使う) |
-| Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-jira-を使う) |
+| サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md) |
+| サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [Confluence を使う](../user/integrations/confluence.ja.md) |
+| Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
 | Subversion の作業コピー — 更新、ログを表示、ローカルの変更 | メンバー | リポジトリ → SVN の行 | [06 リポジトリと git](../member/06-code.ja.md#subversionsvnリポジトリ) |
 | ファイルツリーとビューア | メンバー | ファイル | [07 ファイル](../member/07-files.ja.md) |
 | フォルダを zip でダウンロードする | メンバー | ファイルツリーまたはギャラリー → 右クリック → zip でダウンロード | [07 ファイル](../member/07-files.ja.md#フォルダを-zip-でダウンロードする) |
