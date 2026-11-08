@@ -25,3 +25,7 @@ member/20-settings.md#mcp-servers-used-by-sessions	user/integrations/mcp-servers
 member/20-settings.md#issue-tracker	user/integrations/issue-tracker.md
 member/15-external-services.md#use-jira-in-a-session	user/integrations/jira.md
 member/15-external-services.md#use-confluence-in-a-session	user/integrations/confluence.md
+member/13-images.md#image-gallery	user/images/gallery.md
+member/13-images.md#image-generation	user/images/generate.md
+member/13-images.md#studio-refine-the-draft-by-talking-to-an-agent	user/images/studio.md
+member/13-images.md#having-a-session-generate-an-image	user/images/from-session.md

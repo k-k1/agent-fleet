@@ -120,7 +120,7 @@ unknown. No model line means the engine is holding nothing (it is asleep). Where
 models, only one is loaded at a time, and whoever asks for the other one waits for it to load.
 The popover says so before you ask. The image-generation pane's
 header says the same four things for the engine it is about to use
-([13](13-images.md#image-generation)).
+([Generate images](../user/images/generate.md)).
 
 When you have set **your own llama.cpp connection** in ⚙ Settings → Agents
 ([09](09-agents.md#lcpp)), the **Chat** pill reports that connection instead of the deployment's
@@ -190,7 +190,7 @@ move…"**, instead of resume. For a session that doesn't belong to a repository
 set** appears here too (an item shown ticked but unclickable is one that follows its repository or conversation
 automatically).
 If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
-absent for sessions that have not, and while the workspace is stopped; see [13](13-images.md#image-gallery)).
+absent for sessions that have not, and while the workspace is stopped; see [Use the image gallery](../user/images/gallery.md)).
 **"Spend budget…"** sets the session's budget; on a session its budget stopped it reads **"Raise budget &
 resume…"** ([05](05-stopping-and-tidying.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
@@ -218,7 +218,7 @@ Files additionally show "Open in reader", "Download", "Translate with assistant"
 item is in the gallery's folder menu; a touch long-press on a folder row opens the menu;
 [07](07-files.md#download-a-folder-as-zip)). Folders and **image files** also show
 **"Open in gallery"** (from an image it opens the parent folder's gallery with that image enlarged; see
-[13](13-images.md#image-gallery)). A file that sits in a folder (not directly in home) also shows **"Open the folder"**
+[Use the image gallery](../user/images/gallery.md)). A file that sits in a folder (not directly in home) also shows **"Open the folder"**
 (shows the parent folder in the file list) and, unless it is an image, **"Open folder in gallery"**. To hand a file to a session or an assistant, open the
 file and use "Send" in the viewer.
 
@@ -243,7 +243,7 @@ same for the folder, plus **"Open in another pane"** (a plain click moves this p
 a folder takes everything in it. Where the folder holds a session's generated images, **"Open …, the
 session that generated this"** jumps to that conversation, and the same name sits in the breadcrumb row
 as a button; neither appears once that session is gone. The menu opens from a right-click, the Menu key or
-Shift+F10 ([13](13-images.md#image-gallery)).
+Shift+F10 ([Use the image gallery](../user/images/gallery.md)).
 
 ### Assistants
 
