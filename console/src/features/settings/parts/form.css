@@ -20,18 +20,6 @@
   min-width: 120px;
 }
 
-.ri-edit {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.ri-edit .cinput {
-  flex: 1;
-  min-width: 90px;
-}
-
 .egress-mcp-ask {
   display: flex;
   flex-wrap: wrap;

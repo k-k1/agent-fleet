@@ -13,7 +13,6 @@
  * the source, so base and modifier can land in different files and the text colour shifts with
  * the rule count and css:dup still matching. Only a rendered diff catches it.
  *
- * The price is one file that is not 1:1 with a surface: `parts/responsive.css` (the phone-width
  * @media block was already at the end and may redefine any class above it). It is kept at its
  * original position rather than distributed.
  *
@@ -39,7 +38,6 @@
 @import "./parts/attachments.css";
 @import "./parts/input.css";
 @import "./sendQueue/sendQueue.css";
-@import "./parts/responsive.css";
 @import "./parts/head.css";
 @import "./parts/handoff.css";
 @import "./parts/marks.css";
