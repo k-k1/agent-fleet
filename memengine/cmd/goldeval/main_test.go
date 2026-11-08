@@ -2,8 +2,10 @@ package main
 
 import (
 	"reflect"
-	"strings"
 	"testing"
+
+	"github.com/k-k1/memengine"
+	"github.com/k-k1/memengine/internal/goldset"
 )
 
 func TestSplitArgs(t *testing.T) {
@@ -18,21 +20,35 @@ func TestSplitArgs(t *testing.T) {
 }
 
 func TestResolveTier(t *testing.T) {
-	n, c, ok := resolveTier("claude:haiku")
-	if !ok || n != "claude:haiku" || !strings.HasSuffix(c, "--model haiku") {
-		t.Fatalf("%q %q %v", n, c, ok)
+	cfg, _ := memengine.LoadConfig("")
+	n, r, m, c, err := resolveTier(cfg, "claude:some-model-1")
+	if err != nil || n != "claude:some-model-1" || r != "claude" || m != "some-model-1" || c.Argv[len(c.Argv)-1] != "some-model-1" {
+		t.Fatalf("%q %q %q %v %v", n, r, m, c.Argv, err)
 	}
-	n, c, ok = resolveTier("codex:gpt-6-luna")
-	if !ok || n != "codex:gpt-6-luna" || !strings.HasPrefix(c, "codex exec --model gpt-6-luna --json") {
-		t.Fatalf("%q %q %v", n, c, ok)
+	if _, _, _, c, err = resolveTier(cfg, "codex:x-y"); err != nil || c.Argv[0] != "codex" {
+		t.Fatalf("%v %v", c.Argv, err)
 	}
-	n, c, ok = resolveTier("mine=./my-model --flag")
-	if !ok || n != "mine" || c != "./my-model --flag" {
-		t.Fatalf("%q %q %v", n, c, ok)
+	n, r, _, c, err = resolveTier(cfg, "mine=./my-model --flag")
+	if err != nil || n != "mine" || r != "custom" || len(c.Argv) != 2 {
+		t.Fatalf("%q %v %v", n, c.Argv, err)
 	}
-	for _, bad := range []string{"nocolon", "claude:", "other:model"} {
-		if _, _, ok := resolveTier(bad); ok {
+	for _, bad := range []string{"nocolon", "claude:", "other:model", "mine="} {
+		if _, _, _, _, err := resolveTier(cfg, bad); err == nil {
 			t.Errorf("%q should not resolve", bad)
 		}
+	}
+}
+
+// The shipped examples must stay loadable.
+func TestExamplesLoad(t *testing.T) {
+	cfg, err := memengine.LoadConfig("../../models.example.json")
+	if err != nil || len(cfg.Candidates) == 0 {
+		t.Fatalf("%v", err)
+	}
+	if _, err := memengine.NewPipeline(cfg); err != nil {
+		t.Errorf("the example roles do not resolve: %v", err)
+	}
+	if _, err := goldset.LoadBar("../../bar.example.json"); err != nil {
+		t.Error(err)
 	}
 }

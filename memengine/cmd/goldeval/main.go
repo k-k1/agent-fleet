@@ -3,8 +3,7 @@
 // stdin, JSON on stdout); nothing here knows an SDK or a key.
 //
 //	go run ./cmd/goldeval -cases cases.jsonl -inputs inputs.jsonl -out run/ \
-//	  -tier small='claude -p --model haiku --output-format json ...' \
-//	  -tier large='claude -p --model sonnet --output-format json ...'
+//	  -config models.json -bar bar.json -tier claude:<model id> -tier codex:<model id>
 //
 // A tier command is split on whitespace with single and double quotes; there
 // is no shell, so no expansion, pipes or redirects.
@@ -55,10 +54,23 @@ func runLive() {
 	limit := flag.Int("limit", 0, "run only the first N cases (a pilot); 0 means all")
 	timeout := flag.Duration("timeout", 3*time.Minute, "per-call timeout")
 	resume := flag.Bool("resume", true, "reuse answers already in -out instead of calling again")
-	flag.Var(&tiers, "tier", "name=command, or a preset claude:<model> / codex:<model> (repeatable); the first is the small tier")
+	cfgPath := flag.String("config", "", "model config (roles, runners, candidates); built-in runners without it")
+	barPath := flag.String("bar", "", "thresholds file; adds pass/fail per candidate and a suggested role mapping")
+	flag.Var(&tiers, "tier", "<runner>:<model id> (e.g. claude:<id>), or name=command; repeatable. Default: the config's candidates")
 	flag.Parse()
+	cfg, err := memengine.LoadConfig(*cfgPath)
+	if err != nil {
+		fatal(err.Error())
+	}
 	if len(tiers) == 0 {
-		fatal("at least one -tier name=command is required")
+		for _, c := range cfg.Candidates {
+			if r, _, ok := memengine.SplitTier(c.Tier); ok && !cfg.Runners[r].Session {
+				tiers = append(tiers, c.Tier)
+			}
+		}
+	}
+	if len(tiers) == 0 {
+		fatal("no tier: give -tier <runner>:<model> or a -config with candidates")
 	}
 	set, err := goldset.Load(*cases, *inputs)
 	if err != nil {
@@ -71,43 +83,40 @@ func runLive() {
 		fatal(err.Error())
 	}
 	ctx := context.Background()
-	var runs []*goldset.TierRun
 	for _, spec := range tiers {
-		name, cmdline, ok := resolveTier(spec)
-		argv, err := splitArgs(cmdline)
+		name, runner, model, cmd, err := resolveTier(cfg, spec)
 		if err != nil {
-			fatal("bad -tier " + spec + ": " + err.Error())
+			fatal(err.Error())
 		}
-		if !ok || name == "" || len(argv) == 0 {
-			fatal("bad -tier " + spec + ": want name=command")
-		}
-		model := memengine.Command{Argv: argv, Timeout: *timeout}
-		path := filepath.Join(*out, strings.NewReplacer(":", "_", "/", "_").Replace(name)+".run.json")
+		cmd.Timeout = *timeout
+		path := runPath(*out, name)
 		var prev *goldset.TierRun
 		if *resume {
 			prev = loadRun(path)
 		}
 		if prev == nil || prev.Baseline.TotalInput() == 0 {
-			// The fixed overhead of the command, from a prompt with no content.
-			rep, err := model.Call(ctx, `Reply with the JSON object {"ok":true}.`)
+			// The fixed overhead of the command, from a prompt with no content. A
+			// retired model fails here, before anything is scored: there is no
+			// fallback to another model.
+			rep, err := cmd.Call(ctx, `Reply with the JSON object {"ok":true}.`)
 			if err != nil {
-				fatal("baseline call for " + name + ": " + err.Error())
+				fatal("baseline call for " + name + " failed, nothing scored: " + err.Error())
 			}
 			if prev == nil {
 				prev = &goldset.TierRun{Name: name}
 			}
 			prev.Baseline = rep.Usage
 		}
-		run := goldset.Run(ctx, name, model, set, *workers, prev, func(s string) { fmt.Fprintln(os.Stderr, s) })
+		run := goldset.Run(ctx, name, cmd, set, *workers, prev, func(s string) { fmt.Fprintln(os.Stderr, s) })
+		run.Model, run.Runner, run.Date, run.GoldHash = model, runner, time.Now().UTC().Format("2006-01-02"), set.GoldHash
 		saveRun(path, run)
-		runs = append(runs, run)
 	}
-	writeReport(*out, set)
+	writeReport(*out, set, cfg, *barPath)
 }
 
 // writeReport scores every tier run found in dir (live and replay alike) and
 // writes report.md and report.json, one column per tier name.
-func writeReport(dir string, set *goldset.Set) {
+func writeReport(dir string, set *goldset.Set, cfg memengine.Config, barPath string) {
 	files, _ := filepath.Glob(filepath.Join(dir, "*.run.json"))
 	sort.Strings(files)
 	var runs []*goldset.TierRun
@@ -129,6 +138,13 @@ func writeReport(dir string, set *goldset.Set) {
 	}
 	ref := goldset.Reference(set)
 	md := goldset.Markdown(scores, ref, agree, []string{notesOf(set)})
+	if barPath != "" {
+		bar, err := goldset.LoadBar(barPath)
+		if err != nil {
+			fatal(err.Error())
+		}
+		md += goldset.BarMarkdown(bar, scores, set.GoldHash, cfg.Cost)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "report.md"), []byte(md), 0o644); err != nil {
 		fatal(err.Error())
 	}
@@ -176,8 +192,14 @@ func scoreAnswers(args []string) {
 	inputs := fs.String("inputs", "inputs.jsonl", "memories the cases cite (JSONL)")
 	out := fs.String("out", "run", "directory holding the tier runs and the report")
 	answers := fs.String("answers", "", "JSONL of {case_id, call, output[, usage]}")
-	tier := fs.String("tier", "", "tier name (a report column)")
+	tier := fs.String("tier", "", "<runner>:<model id> (a report column), e.g. agy-session:some-model")
+	cfgPath := fs.String("config", "", "model config (for candidate costs)")
+	barPath := fs.String("bar", "", "thresholds file")
 	fs.Parse(args)
+	cfg, err := memengine.LoadConfig(*cfgPath)
+	if err != nil {
+		fatal(err.Error())
+	}
 	if *answers == "" || *tier == "" {
 		fatal("score needs --answers and --tier")
 	}
@@ -191,11 +213,13 @@ func scoreAnswers(args []string) {
 	}
 	run := goldset.RunWith(context.Background(), *tier, goldset.NewReplay(set, as), set, 1, nil, true, nil)
 	run.Mode = "replay"
+	run.Runner, run.Model, _ = memengine.SplitTier(*tier)
+	run.Date, run.GoldHash = time.Now().UTC().Format("2006-01-02"), set.GoldHash
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		fatal(err.Error())
 	}
-	saveRun(filepath.Join(*out, strings.NewReplacer(":", "_", "/", "_").Replace(*tier)+".run.json"), run)
-	writeReport(*out, set)
+	saveRun(runPath(*out, *tier), run)
+	writeReport(*out, set, cfg, *barPath)
 }
 
 func notesOf(s *goldset.Set) string {
@@ -280,24 +304,27 @@ func splitArgs(s string) ([]string, error) {
 	return out, nil
 }
 
-// resolveTier turns a -tier value into a name and a command line. A tier is
-// "name=command" (any one-shot CLI that reads the prompt on stdin), or a preset
-// "claude:<model>" / "codex:<model>" whose name is the preset itself, so a
-// later run adds a column to the report by adding a -tier.
-func resolveTier(spec string) (name, cmdline string, ok bool) {
+// runPath is the file a tier's run is kept in.
+func runPath(dir, name string) string {
+	return filepath.Join(dir, strings.NewReplacer(":", "_", "/", "_").Replace(name)+".run.json")
+}
+
+// resolveTier turns a -tier value into a command. "<runner>:<model id>" goes
+// through the config's runner templates (so no model ID lives in code);
+// "name=command" is any one-shot CLI, taken as written. A session-only runner
+// or an unknown one is an error, never a different model.
+func resolveTier(cfg memengine.Config, spec string) (name, runner, model string, cmd memengine.Command, err error) {
 	if n, c, found := strings.Cut(spec, "="); found {
-		return n, c, true
+		argv, err := splitArgs(c)
+		if err != nil || n == "" || len(argv) == 0 {
+			return "", "", "", cmd, fmt.Errorf("bad -tier %q: want name=command", spec)
+		}
+		return n, "custom", n, memengine.Command{Argv: argv}, nil
 	}
-	cli, model, found := strings.Cut(spec, ":")
-	if !found || model == "" {
-		return "", "", false
+	cmd, err = cfg.Command(spec)
+	if err != nil {
+		return "", "", "", cmd, err
 	}
-	switch cli {
-	case "claude":
-		// CLAUDE_CODE_DISABLE_CLAUDE_MDS keeps the host's instruction files out of the call.
-		return spec, `env CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p --output-format json --tools "" --system-prompt "You output only the JSON object asked for." --no-session-persistence --disable-slash-commands --strict-mcp-config --setting-sources "" --model ` + model, true
-	case "codex":
-		return spec, "codex exec --model " + model + " --json --skip-git-repo-check --sandbox read-only", true
-	}
-	return "", "", false
+	runner, model, _ = memengine.SplitTier(spec)
+	return spec, runner, model, cmd, nil
 }

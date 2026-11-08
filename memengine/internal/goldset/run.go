@@ -56,6 +56,12 @@ type TierRun struct {
 	// elsewhere, e.g. by an agent session that saw earlier cases, so its scores
 	// are not fully comparable).
 	Mode string `json:"mode"`
+	// Provenance of the row: the exact model ID, the runner kind, the UTC date of
+	// the run and the gold-set version it was scored against.
+	Model    string `json:"model,omitempty"`
+	Runner   string `json:"runner,omitempty"`
+	Date     string `json:"date,omitempty"`
+	GoldHash string `json:"gold_hash,omitempty"`
 	// GoldConditioned: patch calls were also made for supersede/merge cases,
 	// with the gold label deciding that a patch call happens.
 	GoldConditioned bool              `json:"gold_conditioned,omitempty"`

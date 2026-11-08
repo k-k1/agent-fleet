@@ -7,6 +7,8 @@ package goldset
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -70,8 +72,11 @@ type Input struct {
 
 // Set is the gold set joined with its inputs.
 type Set struct {
-	Cases  []Case
-	Inputs map[string]Input
+	// GoldHash identifies the gold-set version: the first 12 hex digits of the
+	// SHA-256 of cases.jsonl. A run made against another hash is not comparable.
+	GoldHash string
+	Cases    []Case
+	Inputs   map[string]Input
 }
 
 func readJSONL[T any](path string) ([]T, error) {
@@ -108,7 +113,12 @@ func Load(casesPath, inputsPath string) (*Set, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Set{Cases: cases, Inputs: map[string]Input{}}
+	raw, err := os.ReadFile(casesPath)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(raw)
+	s := &Set{GoldHash: hex.EncodeToString(sum[:])[:12], Cases: cases, Inputs: map[string]Input{}}
 	for _, in := range ins {
 		s.Inputs[in.ID] = in
 	}

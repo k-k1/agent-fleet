@@ -340,7 +340,7 @@ func TestReplayScoresLikeALiveRun(t *testing.T) {
 		t.Errorf("conditioned calls must not enter the patch-label row: %+v", rs.Patch)
 	}
 	md := Markdown([]TierScore{live, rs}, Reference(s), nil, nil)
-	if !strings.Contains(md, "| agy:x | replay (") || !strings.Contains(md, "Gold-conditioned patch calls") {
+	if !strings.Contains(md, "replay (answered as a session") || !strings.Contains(md, "Gold-conditioned patch calls") {
 		t.Errorf("report does not record the mode or the conditioning:\n%s", md)
 	}
 	// An unanswered call is a failed call, and a garbled one an invalid output.

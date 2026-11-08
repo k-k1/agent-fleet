@@ -18,17 +18,49 @@ answer must pass, and the model as a plug-in.
   accepts the `claude -p --output-format json` envelope and records the token usage it reports. No SDK,
   no key.
 
+## Roles, not models
+
+The engine knows two roles: `small` (the default for every operation) and `large` (the escalation for
+supersede and merge, `Pipeline`). A config file (`models.example.json`) maps each role to a candidate
+`<runner>:<model id>`; a runner is an argv template with `{model}` in it (`claude` and `codex` are built in,
+a session runner such as `agy-session` is replay-only). No model ID is in the code (`TestNoModelIDsInCode`),
+so a lineup change is a data change, and tests use fake runners only.
+
+A retired model fails safe: its command exits with an error, the call is an error (not an invalid output),
+nothing is applied, and the other role's model is never tried in its place (`TestRetiredModelFailsSafe`).
+
+## When a new model appears: re-run, compare, re-map
+
+1. Add it to `candidates` in the config (`<runner>:<model id>` and a relative `cost`).
+2. Live runner: `goldeval -config models.json -bar bar.json -out run -tier <runner>:<model id>`.
+   Session-only model: `goldeval export-prompts`, have the session answer `prompts.jsonl` into an answers
+   file, then `goldeval score -answers ... -tier <runner>:<model id>` (see Replay mode).
+3. Read `run/report.md`. Every row records the exact model ID, the runner, live or replay, the UTC date and
+   the gold-set version (a content hash of `cases.jsonl`); a run scored against another gold-set version is
+   listed but not judged. Compare candidates against the bar and read the suggested mapping.
+4. A replay winner is a hint: confirm it with a live run before mapping, since a session sees earlier cases.
+5. Re-map by editing `roles` in the config. Nothing else changes. When the bar itself should move, edit
+   the bar file and say why in the commit; the bar is the member's to set.
+
+## The bar is data
+
+`bar.example.json` holds, per operation, the maximum wrong changes, the maximum invalid or failed answers,
+the minimum fix rate (correct answers, or applied patches for `patch-call`) and, for `patch-call`, the
+maximum lost facts; and which operations each role must pass. `report.md` shows pass/fail per candidate per
+operation and suggests the cheapest passing candidate for each role. The values in the example are a
+starting proposal, not decisions.
+
 ## Gold-set evaluation
 
 ```
 cd memengine
 go run ./cmd/goldeval -cases cases.jsonl -inputs inputs.jsonl -out run \
-  -tier small='env CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 claude -p --output-format json --tools "" --system-prompt "You output only the JSON object asked for." --no-session-persistence --disable-slash-commands --strict-mcp-config --setting-sources "" --model haiku' \
-  -tier large='... --model sonnet'
+  -config models.json -bar bar.json -tier claude:<model id> -tier codex:<model id>
 ```
 
-A tier is `-tier name=command` (any one-shot CLI: prompt on stdin, JSON on stdout) or a preset,
-`-tier claude:haiku` / `-tier codex:<model>`. The report is keyed by tier name, so a later run adds a column
+A tier is `-tier <runner>:<model id>` (runner templates from the config or the built-ins) or
+`-tier name=command` (any one-shot CLI: prompt on stdin, JSON on stdout). With no `-tier`, the config's
+live candidates run. The report is keyed by tier name, so a later run adds a column
 by adding a `-tier`. Token usage is parsed per CLI by a small adapter (`memengine.Adapters`: the claude
 envelope, codex `--json` events); a CLI that reports none is valid and shows `n/a`. The codex adapter is
 covered by a fixture only, not yet run against the CLI.
