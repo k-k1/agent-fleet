@@ -293,7 +293,7 @@ claude / codex / opencode / GitHub Copilot / Cursor / Kiro（と実験枠の Ant
 自動再開、中断したターンの自動再開があります。→ [09 エージェント](09-agents.ja.md)・
 [11 たくさんのセッションを動かす](11-many-sessions.ja.md#セッション同士でメッセージを送る)・
 [11 たくさんのセッションを動かす](11-many-sessions.ja.md#セッションから別のセッションを起こす子セッション)・
-[13 画像](13-images.ja.md#セッションに画像を作らせる)
+[セッションに画像を作らせる](../user/images/from-session.ja.md)
 
 ### Git ホスティング
 

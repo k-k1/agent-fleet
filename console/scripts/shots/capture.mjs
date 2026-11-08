@@ -519,6 +519,85 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // The studio as the user guide shows it: the same pane as "imagegen", cropped to the pane.
+    name: "images-studio",
+    guide: true,
+    clip: ".igen",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1800,
+    height: 1000,
+    layout: {
+      cols: [col("c0", [pane("p0", null, { kind: "imagegen", studioId: "5f0c2d1e-8a4b-4c3d-9e2f-1a2b3c4d5e6f" })])],
+      colRatios: [1],
+      activeId: "p0",
+    },
+    ready: `[...document.querySelectorAll("textarea")].some((t) => /lanterns/.test(t.value)) &&
+      !/どの編集かを特定できません|Could not tell which edit this was/.test(document.body.innerText)`,
+  },
+  {
+    // The generation form alone (the studio's middle column), just tall enough for the whole form.
+    name: "images-form",
+    guide: true,
+    clip: ".igen-col-form",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1800,
+    height: 1080,
+    layout: {
+      cols: [col("c0", [pane("p0", null, { kind: "imagegen", studioId: "5f0c2d1e-8a4b-4c3d-9e2f-1a2b3c4d5e6f" })])],
+      colRatios: [1],
+      activeId: "p0",
+    },
+    ready: `[...document.querySelectorAll("textarea")].some((t) => /lanterns/.test(t.value))`,
+  },
+  {
+    // The gallery on the image-generation pane's output folder (server.mjs serves it only here).
+    name: "images-gallery",
+    guide: true,
+    stubEnv: { SHOT_GALLERY: "1" },
+    clip: ".gal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 760,
+    layout: {
+      cols: [col("c0", [pane("p0", null, { kind: "gallery", galleryPath: ".cache/agent-fleet/generated/console" })])],
+      colRatios: [1],
+      activeId: "p0",
+    },
+    settle: 2500,
+  },
+  {
+    // Settings > Agents: the image-generation switch on, with the provider order under it.
+    name: "images-settings",
+    guide: true,
+    stubEnv: { SHOT_IMAGE_SETTINGS: "1" },
+    clip: ["#shot-img-from", "#shot-img-to"],
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector(".acct-btn")?.click();
+      await wait(500);
+      [...document.querySelectorAll(".acct-item")].find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await wait(2000);
+      // The switch's row and the last note of the provider order bound the clip.
+      const label = [...document.querySelectorAll(".settings-modal *")].find((el) =>
+        el.children.length === 0 && /^(画像生成|Image generation)$/.test((el.textContent || "").trim()));
+      const row = label?.closest(".ds-row") || label?.parentElement;
+      if (row) { row.id = "shot-img-from"; row.scrollIntoView({ block: "start" }); }
+      let n = row, last = null;
+      for (let i = 0; n && i < 4; i++) { n = n.nextElementSibling; if (n?.matches("p.ds-note")) last = n; }
+      if (last) last.id = "shot-img-to";
+    })()`,
+    settle: 2500,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

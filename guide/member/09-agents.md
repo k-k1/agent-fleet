@@ -304,7 +304,7 @@ card says "Not available on this host (…)" and agy is not offered.
   conversation database instead. Each launch also marks the working folder as trusted, so agy
   does not stop on its trust prompt, and keeps agy's telemetry setting off.
 - **Image generation.** "Antigravity (agy)" is one of the image routes a session can use
-  ([13](13-images.md#having-a-session-generate-an-image)). It goes through agy's own
+  ([Have a session make images](../user/images/from-session.md)). It goes through agy's own
   image-generator subagent and makes one picture per call. An edit takes up to 3 reference
   images (the Codex route takes 5); they are copied into the run's own folder, and that folder
   is the only place the run may read. When the signed-in account is not offered image

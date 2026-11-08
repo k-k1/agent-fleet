@@ -21,3 +21,12 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Connect an issue tracker](integrations/issue-tracker.md) | List your Jira issues and GitHub issues in the left rail and start sessions from them |
 | [Use Jira](integrations/jira.md) | Have agents read, file and update Jira issues |
 | [Use Confluence](integrations/confluence.md) | Have agents find and write Confluence pages |
+
+## Images
+
+| Page | What you can do |
+|---|---|
+| [Use the image gallery](images/gallery.md) | Look through a folder's pictures as cards |
+| [Generate images](images/generate.md) | Make pictures in bulk on the deployment's engine, without an agent |
+| [Finish an image in the studio](images/studio.md) | Refine an image-generation draft by talking to an agent |
+| [Have a session make images](images/from-session.md) | Have an agent make a picture during a conversation |
