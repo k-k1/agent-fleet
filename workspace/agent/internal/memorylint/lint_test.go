@@ -206,3 +206,129 @@ func TestQualifiedSymbolsAreChecked(t *testing.T) {
 		t.Fatalf("missing-symbol = %v", got)
 	}
 }
+
+// fileRepo is a fakeRepo that also serves file contents, as a revision reader does.
+type fileRepo struct {
+	fakeRepo
+	files map[string]string
+	err   error
+}
+
+func (r fileRepo) ReadFile(p string) ([]byte, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return []byte(r.files[p]), nil
+}
+
+var shortRefRepo = fakeRepo{paths: []string{
+	"docs/log/99-lcpp-agent-kind.md",
+	"docs/log/007-old.md",
+	"docs/build/92-worktree.md",
+	"docs/build/10-development.md",
+	"guide/admin/03-setup.md",
+	"guide/admin/03-setup.ja.md",
+	"docs/README.md",
+}}
+
+// A numbered short reference finds its "<number>-*" entry; a number with no entry, a wrong
+// directory and a non-numeric tail are still reported.
+func TestNumberedShortReferences(t *testing.T) {
+	body := "docs/log/99 docs/log/099 docs/log/7 docs/build/92 guide/admin/03 guide/admin/NN docs/51x docs/log/NN docs/99\n" +
+		"negative: docs/log/9999 docs/build/93 guide/admin/04 docs/log/99x docs/log/9-9 guide/nowhere/03 docs/build/1 docs/log/9"
+	rep := Lint([]Memory{{"m", body}}, Options{}, shortRefRepo)
+	want := []string{"docs/51x", "docs/log/9999", "docs/build/93", "guide/admin/04", "docs/log/99x", "docs/log/9-9", "guide/nowhere/03", "docs/build/1", "docs/log/9"}
+	if got := subjects(rep, "m", CheckMissingPath); !sameSet(got, want) {
+		t.Fatalf("missing-path = %v, want %v", got, want)
+	}
+}
+
+// "docs/<number>" is a journal number without "log/": it resolves in docs/log, and a number with
+// no journal is reported.
+func TestBareDocsNumberResolvesToJournal(t *testing.T) {
+	rep := Lint([]Memory{{"m", "docs/99 docs/7 docs/51"}}, Options{}, shortRefRepo)
+	if got := subjects(rep, "m", CheckMissingPath); !sameSet(got, []string{"docs/51"}) {
+		t.Fatalf("missing-path = %v", got)
+	}
+}
+
+const testIgnore = "node_modules\n/dist/\n*.log\n!keep.log\nbuild/\ndocs/tmp\n"
+
+var ignoreRepo = fileRepo{
+	fakeRepo: fakeRepo{paths: []string{
+		".gitignore",
+		"console/.gitignore",
+		"console/src/app.tsx",
+		"console/src/dist/tracked.go",
+		"keep/keep.log",
+		"docs/README.md",
+		"tools/x.go",
+	}},
+	files: map[string]string{
+		".gitignore":         testIgnore,
+		"console/.gitignore": "dist\n!src/dist\n",
+	},
+}
+
+// Paths the revision's .gitignore files ignore are skipped; everything else is still reported.
+func TestGitIgnoredPathsAreSkipped(t *testing.T) {
+	body := "console/node_modules/react/index.js console/dist console/dist/assets/a.js console/build/out docs/tmp docs/x.log docs/keep.log " +
+		"/ negative: console/src/gone.tsx tools/gone.go docs/gone.md console/src/dist/gone.go tools/dist"
+	rep := Lint([]Memory{{"m", body}}, Options{}, ignoreRepo)
+	// docs/keep.log is re-included by the negation; tools/dist is not ignored by "/dist/" (root only).
+	want := []string{"docs/keep.log", "console/src/gone.tsx", "tools/gone.go", "docs/gone.md", "console/src/dist/gone.go", "tools/dist"}
+	if got := subjects(rep, "m", CheckMissingPath); !sameSet(got, want) {
+		t.Fatalf("missing-path = %v, want %v", got, want)
+	}
+}
+
+// The rules come from the repository reader only: without FileReader nothing is skipped, and an
+// unreadable .gitignore is said so in Skipped and skips nothing.
+func TestGitIgnoreNeedsReadableRevisionRules(t *testing.T) {
+	rep := Lint([]Memory{{"m", "console/node_modules/x"}}, Options{}, ignoreRepo.fakeRepo)
+	if got := subjects(rep, "m", CheckMissingPath); len(got) != 1 {
+		t.Fatalf("plain Repo: %v", got)
+	}
+	bad := ignoreRepo
+	bad.err = errors.New("boom")
+	rep = Lint([]Memory{{"m", "console/node_modules/x"}}, Options{}, bad)
+	if got := subjects(rep, "m", CheckMissingPath); len(got) != 1 {
+		t.Fatalf("unreadable rules: %v", got)
+	}
+	if len(rep.Skipped) != 1 || !strings.Contains(rep.Skipped[0], "boom") {
+		t.Fatalf("skipped = %v", rep.Skipped)
+	}
+}
+
+// Nothing below an ignored directory is re-included, while a negation under a non-ignored parent
+// works.
+func TestIgnoreCannotReincludeUnderIgnoredDir(t *testing.T) {
+	set := &ignoreSet{files: []ignoreFile{{rules: parseIgnore("build/\n!build/keep\n*.log\n!keep.log\n")}}}
+	for _, c := range []struct {
+		p   string
+		ign bool
+	}{{"build/keep", true}, {"build/keep/x", true}, {"sub/keep.log", false}, {"sub/other.log", true}} {
+		if got := set.ignored(c.p, false); got != c.ign {
+			t.Errorf("ignored(%q) = %v, want %v", c.p, got, c.ign)
+		}
+	}
+}
+
+func TestParseIgnorePatterns(t *testing.T) {
+	set := &ignoreSet{files: []ignoreFile{{rules: parseIgnore("# c\n\n/a/**/z\n**/deep\nx[0-9]?.o\n\\#hash\ntrail \n")}}}
+	cases := []struct {
+		p   string
+		dir bool
+		ign bool
+	}{
+		{"a/b/c/z", false, true}, {"a/z", false, true}, {"b/a/z", false, false},
+		{"q/r/deep", true, true}, {"deep", false, true},
+		{"x1a.o", false, true}, {"x1.o", false, false},
+		{"#hash", false, true}, {"trail", false, true},
+	}
+	for _, c := range cases {
+		if got := set.ignored(c.p, c.dir); got != c.ign {
+			t.Errorf("ignored(%q) = %v, want %v", c.p, got, c.ign)
+		}
+	}
+}

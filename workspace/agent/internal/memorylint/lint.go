@@ -45,6 +45,14 @@ type Repo interface {
 	FindSymbols(syms []string) (map[string]bool, error)
 }
 
+// FileReader is implemented by a Repo that can also read file contents. The path check uses it to
+// read the revision's committed .gitignore files, so a git-ignored path (a build output, an
+// installed dependency) is not reported as missing. Without it, ignored paths are not skipped.
+type FileReader interface {
+	// ReadFile returns the content of one file of the revision.
+	ReadFile(path string) ([]byte, error)
+}
+
 // Options tunes a run. The zero value uses the defaults and no retired terms.
 type Options struct {
 	// RetiredTerms is the member-maintained list. Matching ignores case and, for a term made of
@@ -93,9 +101,11 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 	var rc *repoCtx
 	if repo != nil {
 		var err error
-		if rc, err = loadRepo(repo, opts.ADRDir); err != nil {
+		var notes []string
+		if rc, notes, err = loadRepo(repo, opts.ADRDir); err != nil {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("repository checks: %v", err))
 		}
+		rep.Skipped = append(rep.Skipped, notes...)
 	}
 
 	type symUse struct {
@@ -121,7 +131,7 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 		}
 		if rc != nil {
 			for _, a := range extractPaths(m.Body, rc.topDirs) {
-				if !rc.hasPath(a.text) {
+				if !rc.found(a.text) {
 					fs = append(fs, Finding{m.Name, CheckMissingPath, a.text, a.line})
 				}
 			}
@@ -185,30 +195,42 @@ type repoCtx struct {
 	topDirs map[string]bool
 	adrs    map[string]bool
 	hasADRs bool
+	// numbered maps a directory to the numbers (leading zeros trimmed) of its entries named
+	// "<number>-...", so a short reference "docs/log/99" finds "docs/log/99-name.md".
+	numbered map[string]map[string]bool
+	ignore   *ignoreSet
 }
 
-func loadRepo(repo Repo, adrDir string) (*repoCtx, error) {
+// loadRepo indexes the revision. A failure to read the .gitignore files is not fatal: the path
+// check then runs without them, and the returned notes say so.
+func loadRepo(repo Repo, adrDir string) (*repoCtx, []string, error) {
 	paths, err := repo.Paths()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("the revision has no files")
+		return nil, nil, fmt.Errorf("the revision has no files")
 	}
 	if adrDir == "" {
 		adrDir = DefaultADRDir
 	}
 	adrDir = strings.Trim(adrDir, "/") + "/"
-	rc := &repoCtx{files: make(map[string]bool, len(paths)), dirs: map[string]bool{}, topDirs: map[string]bool{}, adrs: map[string]bool{}}
+	rc := &repoCtx{files: make(map[string]bool, len(paths)), dirs: map[string]bool{}, topDirs: map[string]bool{}, adrs: map[string]bool{}, numbered: map[string]map[string]bool{}}
+	var ignoreFiles []string
 	for _, p := range paths {
 		rc.files[p] = true
+		if p == ".gitignore" || strings.HasSuffix(p, "/.gitignore") {
+			ignoreFiles = append(ignoreFiles, p)
+		}
 		for d := p; ; {
+			rc.noteNumbered(d)
 			i := strings.LastIndexByte(d, '/')
 			if i < 0 {
 				break
 			}
 			d = d[:i]
 			if rc.dirs[d] {
+				// Its own ancestors are indexed already; only this entry's name was new.
 				break
 			}
 			rc.dirs[d] = true
@@ -223,10 +245,91 @@ func loadRepo(repo Repo, adrDir string) (*repoCtx, error) {
 			}
 		}
 	}
-	return rc, nil
+	var notes []string
+	if fr, ok := repo.(FileReader); ok && len(ignoreFiles) > 0 {
+		sort.Slice(ignoreFiles, func(i, j int) bool {
+			return strings.Count(ignoreFiles[i], "/") < strings.Count(ignoreFiles[j], "/") || (strings.Count(ignoreFiles[i], "/") == strings.Count(ignoreFiles[j], "/") && ignoreFiles[i] < ignoreFiles[j])
+		})
+		set := &ignoreSet{}
+		for _, f := range ignoreFiles {
+			b, err := fr.ReadFile(f)
+			if err != nil {
+				notes = append(notes, fmt.Sprintf("git-ignored paths are not skipped: %s unreadable: %v", f, err))
+				set = nil
+				break
+			}
+			dir := strings.TrimSuffix(strings.TrimSuffix(f, ".gitignore"), "/")
+			set.files = append(set.files, ignoreFile{dir: dir, rules: parseIgnore(string(b))})
+		}
+		rc.ignore = set
+	}
+	return rc, notes, nil
+}
+
+// noteNumbered records p's name under its directory when it starts with "<digits>-".
+func (rc *repoCtx) noteNumbered(p string) {
+	dir, name := "", p
+	if i := strings.LastIndexByte(p, '/'); i >= 0 {
+		dir, name = p[:i], p[i+1:]
+	}
+	if m := numberedNameRe.FindStringSubmatch(name); m != nil {
+		if rc.numbered[dir] == nil {
+			rc.numbered[dir] = map[string]bool{}
+		}
+		rc.numbered[dir][trimZeros(m[1])] = true
+	}
+}
+
+var (
+	numberedNameRe = regexp.MustCompile(`^(\d+)-`)
+	numberRefRe    = regexp.MustCompile(`^\d+$`)
+)
+
+// journalDir is where a bare "docs/<number>" reference resolves: the numbered work journals.
+const journalDir = "docs/log"
+
+// found reports whether the revision holds p. Beyond an exact file or directory it accepts a
+// numbered short reference (see hasNumbered) and a path the revision's .gitignore files ignore.
+// A path absent from the tree is taken to be a directory when matching dir-only rules ("build/"):
+// the revision cannot say, and the ignored build outputs this exists for are directories.
+func (rc *repoCtx) found(p string) bool {
+	return rc.hasPath(p) || rc.hasNumbered(p) || rc.ignore.ignored(p, !rc.files[p])
 }
 
 func (rc *repoCtx) hasPath(p string) bool { return rc.files[p] || rc.dirs[p] }
+
+// hasNumbered resolves "<dir>/<number>" to an entry "<dir>/<number>-*" (leading zeros compared
+// as trimZeros does for ADRs). The literal placeholder "NN" accepts any numbered entry. A
+// reference "docs/<number>" is a journal number written without "log/", so it also resolves in
+// docs/log. Only the last segment is relaxed: the directory must exist, and a number with no
+// entry stays a miss.
+func (rc *repoCtx) hasNumbered(p string) bool {
+	i := strings.LastIndexByte(p, '/')
+	if i < 0 {
+		return false
+	}
+	dir, last := p[:i], p[i+1:]
+	dirs := []string{dir}
+	if dir == "docs" {
+		dirs = append(dirs, journalDir)
+	}
+	for _, d := range dirs {
+		if !rc.dirs[d] {
+			continue
+		}
+		switch {
+		case last == "NN":
+			if len(rc.numbered[d]) > 0 {
+				return true
+			}
+		case numberRefRe.MatchString(last):
+			if rc.numbered[d][trimZeros(last)] {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 var adrFileRe = regexp.MustCompile(`^(\d{3,5})-[^/]*$`)
 
