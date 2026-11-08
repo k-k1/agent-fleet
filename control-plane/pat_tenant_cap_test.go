@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -136,5 +137,29 @@ func TestSetTenantLimitsValidatesAndKeepsPATMaxDays(t *testing.T) {
 	tn, _, _ = mgr.store.GetTenantBySlug(context.Background(), "acme")
 	if got := parseLimits(tn.Limits).PATMaxDays; got != 0 {
 		t.Errorf("0/omitted must clear the tenant cap, got %d", got)
+	}
+}
+
+// failTenantLookup fails the PAT-to-tenant lookup the on-use cap depends on.
+type failTenantLookup struct{ store.Store }
+
+func (failTenantLookup) PATTenantID(context.Context, string) (string, error) {
+	return "", errors.New("transient")
+}
+
+// When the cap cannot be resolved the token must be refused, not honored uncapped.
+func TestPATIsRefusedWhenItsCapCannotBeResolved(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	tok, h := newPATToken()
+	if err := e.mgr.store.CreatePAT(context.Background(), store.PAT{ID: "p", IdentityID: e.ident.ID, MembershipID: e.membershipID(),
+		Scope: "read", Name: "p", CreatedAt: store.NowTS(), ExpiresAt: time.Now().AddDate(0, 0, 5).UTC().Format(time.RFC3339)}, h); err != nil {
+		t.Fatal(err)
+	}
+	if c := e.mcpCall(tok, "tools/list").Code; c != 200 {
+		t.Fatalf("positive control: %d, want 200", c)
+	}
+	e.mgr.store = failTenantLookup{e.mgr.store}
+	if c := e.mcpCall(tok, "tools/list").Code; c != 500 {
+		t.Errorf("unresolvable cap: %d, want 500 (fail closed)", c)
 	}
 }
