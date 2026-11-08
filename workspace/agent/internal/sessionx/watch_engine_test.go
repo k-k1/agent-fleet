@@ -43,25 +43,48 @@ func TestWatchSinkWaitsForTwoReadyLooksAndStartsAStoppedOwner(t *testing.T) {
 	f := newWatchFixture(t)
 	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir()})
 	s := newWatchSink()
-	sub := watch.Subscription{ID: "w1", Owner: "a", Until: watch.UntilFirst}
-	ev := watch.Event{Source: "github", Subject: "github:o/r#1", Type: "pr.merged", Summary: "PR o/r#1 was merged."}
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 
-	if got := s.Deliver(sub, ev, now); got != watch.NotYet || len(f.started) != 1 {
+	if got := s.Ready("a", now); got != watch.Wait || len(f.started) != 1 {
 		t.Fatalf("stopped owner: %v started=%v", got, f.started)
 	}
-	if s.Deliver(sub, ev, now.Add(5*time.Second)); len(f.started) != 1 {
+	if s.Ready("a", now.Add(5*time.Second)); len(f.started) != 1 {
 		t.Fatal("started the same owner twice")
 	}
 	f.alive["a"], f.ready["a"] = true, true
-	if got := s.Deliver(sub, ev, now.Add(10*time.Second)); got != watch.NotYet {
-		t.Fatalf("first ready look delivered: %v", got)
+	if got := s.Ready("a", now.Add(10*time.Second)); got != watch.Wait {
+		t.Fatalf("first ready look: %v", got)
 	}
-	if got := s.Deliver(sub, ev, now.Add(15*time.Second)); got != watch.Delivered || len(f.sent) != 1 {
-		t.Fatalf("second ready look: %v sent=%v", got, f.sent)
+	if got := s.Ready("a", now.Add(15*time.Second)); got != watch.Ready {
+		t.Fatalf("second ready look: %v", got)
+	}
+	if got := s.Ready("a", now.Add(20*time.Second)); got != watch.Wait {
+		t.Fatalf("the look after a delivery should start over: %v", got)
+	}
+	sub := watch.Subscription{ID: "w1", Owner: "a", Until: watch.UntilFirst}
+	ev := watch.Event{Source: "github", Subject: "github:o/r#1", Type: "pr.merged", Summary: "PR o/r#1 was merged."}
+	if err := s.Inject(sub, ev); err != nil || len(f.sent) != 1 {
+		t.Fatalf("inject: %v sent=%v", err, f.sent)
 	}
 	if !strings.HasPrefix(f.sent[0], "a|[agent-fleet:notice kind=watch source=github type=pr.merged subject=github:o/r#1 watch=w1 reply=none] ") {
 		t.Fatalf("notice = %q", f.sent[0])
+	}
+}
+
+func TestWatchSinkGoneOwnerFreesTheStartSlot(t *testing.T) {
+	f := newWatchFixture(t)
+	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir()})
+	session.WriteMeta(session.Meta{Name: "b", Kind: session.KindClaude, Dir: t.TempDir()})
+	s := newWatchSink()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	s.Ready("a", now) // starts a
+	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir(), Archived: true})
+	if got := s.Ready("a", now.Add(time.Second)); got != watch.Gone {
+		t.Fatalf("archived owner: %v", got)
+	}
+	s.Ready("b", now.Add(2*time.Second))
+	if strings.Join(f.started, ",") != "a,b" {
+		t.Fatalf("b waited for an archived owner's start slot: started=%v", f.started)
 	}
 }
 
@@ -72,7 +95,7 @@ func TestWatchSinkEndsWithAnArchivedOwner(t *testing.T) {
 	if s.OwnerExists("old") || s.OwnerExists("missing") {
 		t.Fatal("an archived or missing owner exists")
 	}
-	if got := s.Deliver(watch.Subscription{Owner: "old"}, watch.Event{}, time.Now()); got != watch.Gone {
+	if got := s.Ready("old", time.Now()); got != watch.Gone {
 		t.Fatalf("archived owner: %v", got)
 	}
 }
@@ -133,8 +156,17 @@ func TestWatchRoutesCreateListDelete(t *testing.T) {
 	if b, ok := watchStateStore.Read(watchStateKey); !ok || len(b.Subs) != 1 {
 		t.Fatalf("state not on disk: %+v %v", b, ok)
 	}
+	session.WriteMeta(session.Meta{Name: "b", Kind: session.KindClaude, Dir: t.TempDir()})
 	if rec := do("DELETE", "/sessions/b/watches/"+created.Watch.ID, ""); rec.Code != 404 {
 		t.Fatalf("another session ended a watch: %d", rec.Code)
+	}
+	if rec := do("GET", "/sessions/b/watches", ""); strings.Contains(rec.Body.String(), created.Watch.ID) {
+		t.Fatalf("another session lists a's watch: %s", rec.Body)
+	}
+	for _, h := range []string{"721", "9223372036"} {
+		if rec := do("POST", "/sessions/a/watches", `{"ref":"o/r#1","types":["pr.merged"],"expires_in_hours":`+h+`}`); rec.Code != 400 {
+			t.Fatalf("expires_in_hours %s: %d %s", h, rec.Code, rec.Body)
+		}
 	}
 	if rec := do("DELETE", "/sessions/a/watches/"+created.Watch.ID, ""); rec.Code != 200 {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body)

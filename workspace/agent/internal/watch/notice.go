@@ -78,6 +78,9 @@ func CleanText(s string, max int) string {
 
 // SafeURL is u when it is a plain https URL without credentials, "" otherwise.
 func SafeURL(u string) string {
+	if strings.ContainsFunc(u, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return ""
+	}
 	p, err := url.Parse(u)
 	if err != nil || p.Scheme != "https" || p.Host == "" || p.User != nil || len(u) > 500 {
 		return ""

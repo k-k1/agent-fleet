@@ -107,10 +107,16 @@ type Subscription struct {
 	Until   string    `json:"until"`
 	Created time.Time `json:"created"`
 	Expires time.Time `json:"expires"`
-	// Delivered holds "type|version" for every event this subscription was told about.
-	Delivered map[string]time.Time `json:"delivered,omitempty"`
-	// Pending are matched events not yet delivered, oldest first.
+	// Told is the version last delivered per event type. Sources report only what holds now,
+	// so the last version per type is all de-duplication needs, and it cannot grow.
+	Told map[string]string `json:"told,omitempty"`
+	// Pending are matched events not yet delivered, at most one per type (the newest state
+	// replaces an older one that was never delivered, ADR 0133 §5).
 	Pending []Event `json:"pending,omitempty"`
+	// Done marks a first-match subscription whose notice is being injected. It is claimed on
+	// disk before the injection, so a crash in between loses that notice instead of repeating
+	// it; a load drops it.
+	Done bool `json:"done,omitempty"`
 }
 
 // tokenRE is the header token set of ADR 0133 §5: nothing in it can close a notice header or

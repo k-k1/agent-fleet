@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -110,7 +111,8 @@ func TestGitHubPollReportsChecksAndUses304(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := types(evs); got != "pr.checks.completed,pr.checks.failed,pr.mergeable,pr.ready" {
+	// clean, but a non-required check failed: not ready.
+	if got := types(evs); got != "pr.checks.completed,pr.checks.failed,pr.mergeable" {
 		t.Fatalf("events = %s", got)
 	}
 	if !strings.Contains(evs[0].Summary, "failed (1 of 2)") || len(evs[0].Data) != 1 || evs[0].Data[0].Text != "lint\nfoo" {
@@ -266,5 +268,135 @@ func TestGitHubNotConnectedIsARefusal(t *testing.T) {
 	var ref *ErrRefused
 	if _, err := g.Resolve(context.Background(), "o/r#7", ""); !errors.As(err, &ref) {
 		t.Fatalf("not connected: %v", err)
+	}
+}
+
+func TestGitHubReadsEveryPageOfChecks(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(true), "clean")
+	var first, second []any
+	for i := 1; i <= 150; i++ {
+		run := map[string]any{"id": i, "name": "job" + strconv.Itoa(i), "status": "completed", "conclusion": "success", "completed_at": "t"}
+		if i == 120 {
+			run["conclusion"] = "failure"
+		}
+		if i <= 100 {
+			first = append(first, run)
+		} else {
+			second = append(second, run)
+		}
+	}
+	f.bodies[runsPath] = map[string]any{"total_count": 150, "check_runs": first}
+	f.bodies["/repos/o/r/commits/abc1234def/check-runs?per_page=100&page=2"] = map[string]any{"total_count": 150, "check_runs": second}
+	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
+	f.bodies[reviewsPath] = []any{}
+	g := newTestGitHub(t, f)
+	evs, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := types(evs); got != "pr.checks.completed,pr.checks.failed,pr.mergeable" {
+		t.Fatalf("a failure on the second page was missed: %s", got)
+	}
+	if !strings.Contains(evs[0].Summary, "failed (1 of 150)") || evs[0].Data[0].Text != "job120" {
+		t.Fatalf("summary %q data %+v", evs[0].Summary, evs[0].Data)
+	}
+}
+
+func TestGitHubReadyNeedsEveryCheckGreen(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(true), "clean")
+	f.bodies[runsPath] = map[string]any{"total_count": 1, "check_runs": []any{
+		map[string]any{"id": 1, "name": "build", "status": "completed", "conclusion": "success", "completed_at": "t1"},
+	}}
+	f.bodies[statusPath] = map[string]any{"total_count": 1, "statuses": []any{map[string]any{"context": "ci", "state": "pending"}}}
+	f.bodies[reviewsPath] = []any{}
+	g := newTestGitHub(t, f)
+	evs, cur, _, _ := g.Poll(context.Background(), "github:o/r#7", nil)
+	if got := types(evs); got != "pr.mergeable" {
+		t.Fatalf("pending status: %s", got)
+	}
+	f.bodies[statusPath] = map[string]any{"total_count": 1, "statuses": []any{map[string]any{"context": "ci", "state": "success", "updated_at": "u"}}}
+	evs, _, _, _ = g.Poll(context.Background(), "github:o/r#7", cur)
+	if got := types(evs); got != "pr.checks.completed,pr.mergeable,pr.ready" {
+		t.Fatalf("all green: %s", got)
+	}
+}
+
+func TestGitHubDismissedReviewLiftsARequest(t *testing.T) {
+	id, who := changesRequested([]ghReview{
+		{ID: 1, State: "CHANGES_REQUESTED", User: struct {
+			Login string `json:"login"`
+		}{"rev"}},
+		{ID: 2, State: "DISMISSED", User: struct {
+			Login string `json:"login"`
+		}{"rev"}},
+	})
+	if id != 0 || len(who) != 0 {
+		t.Fatalf("dismissed request still reported: %d %v", id, who)
+	}
+}
+
+func TestGitHubForbiddenWithoutRateLimitIsAnError(t *testing.T) {
+	f := newFakeGitHub()
+	f.status[pullPath] = http.StatusForbidden
+	g := newTestGitHub(t, f)
+	_, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil)
+	var rl *ErrRateLimited
+	if err == nil || errors.As(err, &rl) {
+		t.Fatalf("plain 403: %v", err)
+	}
+	f.headers.Set("Retry-After", "30")
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	g.now = func() time.Time { return now }
+	if _, _, _, err := g.Poll(context.Background(), "github:o/r#7", nil); !errors.As(err, &rl) || !rl.Until.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("secondary limit: %v", err)
+	}
+}
+
+func TestGitHubRejectedTokenAnswers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	t.Cleanup(srv.Close)
+	g := NewGitHub(func() (string, error) { return "stale", nil }, func(string) (string, error) { return "stale", nil })
+	g.API = srv.URL
+	var ref *ErrRefused
+	if _, err := g.Resolve(context.Background(), "o/r#7", ""); !errors.As(err, &ref) {
+		t.Fatalf("no fresh token: %v, want a refusal", err)
+	}
+	g.Renew = func(string) (string, error) { return "", errors.New("store locked") }
+	if _, err := g.Resolve(context.Background(), "o/r#7", ""); err == nil || !strings.Contains(err.Error(), "store locked") {
+		t.Fatalf("renew failure lost its cause: %v", err)
+	}
+}
+
+func TestParseGitHubRefEdges(t *testing.T) {
+	for _, c := range []struct {
+		ref, def, repo string
+		n              int
+	}{
+		{"O/R#7", "", "o/r", 7},
+		{"https://github.com/Owner/Repo/pull/9", "", "owner/repo", 9},
+		{"#3", "a/b", "a/b", 3},
+	} {
+		repo, n, ok := ParseGitHubRef(c.ref, c.def)
+		if !ok || repo != c.repo || n != c.n {
+			t.Errorf("ParseGitHubRef(%q) = %q %d %v", c.ref, repo, n, ok)
+		}
+	}
+	for _, bad := range []string{"o/r7", "../x#1", "o/..#1", "./r#1", "o/r#0", "o/r#7 x", "o/r##7"} {
+		if _, _, ok := ParseGitHubRef(bad, "a/b"); ok {
+			t.Errorf("ParseGitHubRef(%q) accepted", bad)
+		}
+	}
+}
+
+func TestSafeURLRefusesWhitespaceAndControls(t *testing.T) {
+	for _, u := range []string{"https://x.test/a b", "https://x.test/a\nb", "https://x.test/\u0085", "http://x.test/", "https://u:p@x.test/"} {
+		if got := SafeURL(u); got != "" {
+			t.Errorf("SafeURL(%q) = %q", u, got)
+		}
+	}
+	if SafeURL("https://x.test/run/1?a=b") == "" {
+		t.Error("a plain https URL was refused")
 	}
 }

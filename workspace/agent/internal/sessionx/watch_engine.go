@@ -97,46 +97,67 @@ func (s *watchSink) OwnerExists(owner string) bool {
 	return ok && !m.Archived
 }
 
-func (s *watchSink) Deliver(sub watch.Subscription, ev watch.Event, now time.Time) watch.Delivery {
+func (s *watchSink) Ready(name string, now time.Time) watch.Readiness {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	name := sub.Owner
 	m, ok := session.ReadMeta(name)
 	if !ok || m.Archived || !peerTargetAllowed(NormalizeKind(m.Kind)) {
 		// A watch a session made ends with that session; one that cannot take a prompt could
 		// not have called watch.
+		s.forgetLocked(name)
 		return watch.Gone
 	}
 	if !watchAlive(m) {
 		s.wake(m, now)
 		delete(s.readyOnce, name)
-		return watch.NotYet
+		return watch.Wait
 	}
 	if m.InitialPromptState == session.InitialPromptPending || watchBusy(m) || !watchReady(m) {
 		delete(s.readyOnce, name)
-		return watch.NotYet
+		return watch.Wait
 	}
 	if s.waking == name {
 		s.waking = ""
 	}
 	if !s.readyOnce[name] {
 		s.readyOnce[name] = true
-		return watch.NotYet // the second look, a tick from now, sends it
+		return watch.Wait // the second look, a tick from now, sends it
 	}
+	// The last look before the engine claims the event: a turn may have started since.
 	if fresh, ok := session.ReadMeta(name); !ok || fresh.Archived || !watchReady(fresh) {
 		delete(s.readyOnce, name)
-		return watch.NotYet
+		return watch.Wait
 	}
+	delete(s.readyOnce, name) // its turn starts with this notice; the next one waits for two looks
+	return watch.Ready
+}
+
+func (s *watchSink) Inject(sub watch.Subscription, ev watch.Event) error {
+	name := sub.Owner
 	text := watch.Notice(sub, ev)
 	recordInjection(name, text, TurnSourceNotice)
 	if err := watchInject(name, text, agents.Origin{Kind: agents.OriginNotice}); err != nil {
-		log.Printf("watch: could not tell %s about %s: %v", name, ev.Subject, err)
-		return watch.NotYet
+		return err
 	}
-	delete(s.readyOnce, name) // its turn starts now
 	recordFleetGraphInstruct(name, TurnSourceNotice, "", "", text)
 	log.Printf("watch: told %s about %s (%s)", name, ev.Subject, ev.Type)
-	return watch.Delivered
+	return nil
+}
+
+func (s *watchSink) Forget(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forgetLocked(name)
+}
+
+// forgetLocked drops an owner's looks and, when it was the one being started, frees the start
+// slot so the next stopped owner does not wait out watchWakeWait for nothing.
+func (s *watchSink) forgetLocked(name string) {
+	delete(s.readyOnce, name)
+	delete(s.wokeAt, name)
+	if s.waking == name {
+		s.waking = ""
+	}
 }
 
 // wake starts a stopped owner so it can be told: one start at a time across the Agent, never the
@@ -172,7 +193,9 @@ type watchReq struct {
 	ExpiresInHours int      `json:"expires_in_hours"`
 }
 
-// HandleWatchCreate (POST /sessions/{name}/watches) subscribes the session to a subject.
+// HandleWatchCreate (POST /sessions/{name}/watches) subscribes the session to a subject. Like
+// every /sessions/{name}/ route, it trusts the Agent token's holder to name itself; the MCP
+// tools always pass the calling session's own name.
 func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	m, ok := watchOwner(w, name)
@@ -187,8 +210,10 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	if src == "" {
 		src = "github"
 	}
-	if req.ExpiresInHours < 0 {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_expiry", "expires_in_hours must be positive")
+	// Checked before the multiplication: a huge value would overflow time.Duration into a short,
+	// accepted lifetime.
+	if req.ExpiresInHours < 0 || req.ExpiresInHours > int(watch.MaxLifetime/time.Hour) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_expiry", "expires_in_hours must be between 1 and 720")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

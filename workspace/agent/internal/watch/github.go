@@ -66,7 +66,7 @@ func (g *GitHub) Types() []string { return append([]string(nil), githubTypes...)
 
 var (
 	ghRepoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	ghRefRE  = regexp.MustCompile(`^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#?([1-9][0-9]{0,9})$`)
+	ghRefRE  = regexp.MustCompile(`^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#|#)?([1-9][0-9]{0,9})$`)
 	ghURLRE  = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]{0,9})(?:[/?#].*)?$`)
 )
 
@@ -84,10 +84,20 @@ func ParseGitHubRef(ref, defaultRepo string) (repo string, number int, ok bool) 
 	} else {
 		return "", 0, false
 	}
-	if !ghRepoRE.MatchString(repo) || number <= 0 {
+	if !validRepo(repo) || number <= 0 {
 		return "", 0, false
 	}
-	return repo, number, true
+	// GitHub names are case-insensitive; one spelling keeps one subject per PR.
+	return strings.ToLower(repo), number, true
+}
+
+// validRepo is owner/repo with neither part "." or "..", which would change the API path.
+func validRepo(repo string) bool {
+	if !ghRepoRE.MatchString(repo) {
+		return false
+	}
+	owner, name, _ := strings.Cut(repo, "/")
+	return owner != "." && owner != ".." && name != "." && name != ".."
 }
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
@@ -100,7 +110,7 @@ func parseGHSubject(id SubjectID) (string, int, bool) {
 		return "", 0, false
 	}
 	repo, num, ok := strings.Cut(rest, "#")
-	if !ok || !ghRepoRE.MatchString(repo) {
+	if !ok || !validRepo(repo) {
 		return "", 0, false
 	}
 	n := atoi(num)
@@ -175,6 +185,7 @@ type ghCheckRun struct {
 }
 
 type ghStatus struct {
+	Total    int            `json:"total_count"`
 	Statuses []ghStatusItem `json:"statuses"`
 }
 
@@ -221,6 +232,7 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 
 	head := pr.Head.SHA
 	busy := pr.Mergeable == nil
+	checksOK := true
 	var events []Event
 	if head != "" {
 		if err := g.cached(ctx, fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100", repo, head), &cur.Runs); err != nil {
@@ -229,10 +241,14 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 		if err := g.cached(ctx, fmt.Sprintf("/repos/%s/commits/%s/status?per_page=100", repo, head), &cur.Status); err != nil {
 			return nil, raw, Hint{}, err
 		}
-		cs := summarizeChecks(cur.Runs.Val, cur.Status.Val)
+		runs, status, err := g.allChecks(ctx, repo, head, cur.Runs.Val, cur.Status.Val)
+		if err != nil {
+			return nil, raw, Hint{}, err
+		}
+		cs := summarizeChecks(runs, status)
 		switch {
 		case cs.pending:
-			busy = true
+			busy, checksOK = true, false
 		case cs.total > 0:
 			version := head + ":" + cs.fingerprint
 			result := "passed"
@@ -242,6 +258,7 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 			sum := fmt.Sprintf("Checks on %s finished on %s: %s.", ref, short(head), result)
 			events = append(events, ev("pr.checks.completed", version, sum, cs.failed))
 			if len(cs.failed) > 0 {
+				checksOK = false
 				events = append(events, ev("pr.checks.failed", version, sum, cs.failed))
 			}
 		}
@@ -254,13 +271,20 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 			events = append(events, ev("pr.conflict", pair, ref+" has a merge conflict with its base.", nil))
 		}
 	}
-	if !pr.Draft && pr.MergeableState == "clean" {
+	// "clean" is GitHub's own verdict (mergeable, required checks and reviews satisfied), but it
+	// ignores checks that are not required, so ready also needs every check finished and none
+	// failed.
+	if !pr.Draft && pr.MergeableState == "clean" && checksOK {
 		events = append(events, ev("pr.ready", pair, ref+" is ready to merge: checks passed, mergeable, reviews satisfied.", nil))
 	}
 	if err := g.cached(ctx, fmt.Sprintf("/repos/%s/pulls/%d/reviews?per_page=100", repo, n), &cur.Reviews); err != nil {
 		return nil, raw, Hint{}, err
 	}
-	if id, who := changesRequested(cur.Reviews.Val); id != 0 {
+	reviews, err := g.allReviews(ctx, repo, n, cur.Reviews.Val)
+	if err != nil {
+		return nil, raw, Hint{}, err
+	}
+	if id, who := changesRequested(reviews); id != 0 {
 		data := make([]DataItem, 0, len(who))
 		for _, w := range who {
 			data = append(data, DataItem{Text: w})
@@ -409,11 +433,14 @@ func (g *GitHub) get(ctx context.Context, path, etag string, v any) (int, string
 	resp, err := g.do(ctx, path, etag, tok)
 	if err == nil && resp.StatusCode == http.StatusUnauthorized && g.Renew != nil {
 		resp.Body.Close()
-		if fresh, rerr := g.Renew(tok); rerr == nil && fresh != "" && fresh != tok {
-			resp, err = g.do(ctx, path, etag, fresh)
-		} else {
-			return 0, "", errors.New("GitHub rejected the connection's token; reconnect GitHub in Settings > Connections")
+		fresh, rerr := g.Renew(tok)
+		switch {
+		case rerr != nil:
+			return 0, "", fmt.Errorf("GitHub rejected the connection's token and renewing it failed: %w", rerr)
+		case fresh == "" || fresh == tok:
+			return 0, "", errRejected
 		}
+		resp, err = g.do(ctx, path, etag, fresh)
 	}
 	if err != nil {
 		return 0, "", err
@@ -429,7 +456,7 @@ func (g *GitHub) get(ctx context.Context, path, etag string, v any) (int, string
 		}
 		return resp.StatusCode, "", nil
 	case resp.StatusCode == http.StatusUnauthorized:
-		return 0, "", errors.New("GitHub rejected the connection's token; reconnect GitHub in Settings > Connections")
+		return 0, "", errRejected
 	case resp.StatusCode != http.StatusOK:
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 		return resp.StatusCode, "", nil
@@ -438,6 +465,69 @@ func (g *GitHub) get(ctx context.Context, path, etag string, v any) (int, string
 		return 0, "", fmt.Errorf("GitHub answer for %s could not be read: %w", path, err)
 	}
 	return resp.StatusCode, resp.Header.Get("ETag"), nil
+}
+
+// errRejected is a refusal: only the member can fix it, by reconnecting.
+var errRejected = &ErrRefused{"GitHub rejected the connection's token; reconnect GitHub in Settings > Connections"}
+
+// ghMaxPages bounds how far a list is followed: 1,000 checks or reviews on one PR.
+const ghMaxPages = 10
+
+// allChecks completes the first pages of check runs and statuses with the pages after them.
+// The first page carries the ETag; later pages are read only when the first one says there are
+// more, so a PR with many checks costs more but is never judged on its first hundred.
+func (g *GitHub) allChecks(ctx context.Context, repo, head string, runs ghCheckRuns, st ghStatus) (ghCheckRuns, ghStatus, error) {
+	out := ghCheckRuns{Total: runs.Total, Runs: append([]ghCheckRun(nil), runs.Runs...)}
+	for page := 2; len(out.Runs) < out.Total && page <= ghMaxPages; page++ {
+		var more ghCheckRuns
+		if err := g.page(ctx, fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100&page=%d", repo, head, page), &more); err != nil {
+			return runs, st, err
+		}
+		if len(more.Runs) == 0 {
+			break
+		}
+		out.Runs = append(out.Runs, more.Runs...)
+	}
+	outSt := ghStatus{Total: st.Total, Statuses: append([]ghStatusItem(nil), st.Statuses...)}
+	for page := 2; len(outSt.Statuses) < outSt.Total && page <= ghMaxPages; page++ {
+		var more ghStatus
+		if err := g.page(ctx, fmt.Sprintf("/repos/%s/commits/%s/status?per_page=100&page=%d", repo, head, page), &more); err != nil {
+			return runs, st, err
+		}
+		if len(more.Statuses) == 0 {
+			break
+		}
+		outSt.Statuses = append(outSt.Statuses, more.Statuses...)
+	}
+	return out, outSt, nil
+}
+
+// allReviews follows the reviews list past its first page (it has no total, so a full page
+// means there may be more).
+func (g *GitHub) allReviews(ctx context.Context, repo string, n int, first []ghReview) ([]ghReview, error) {
+	out := append([]ghReview(nil), first...)
+	last := len(first)
+	for page := 2; last == 100 && page <= ghMaxPages; page++ {
+		var more []ghReview
+		if err := g.page(ctx, fmt.Sprintf("/repos/%s/pulls/%d/reviews?per_page=100&page=%d", repo, n, page), &more); err != nil {
+			return nil, err
+		}
+		out = append(out, more...)
+		last = len(more)
+	}
+	return out, nil
+}
+
+// page reads one later page, unconditionally.
+func (g *GitHub) page(ctx context.Context, path string, v any) error {
+	status, _, err := g.get(ctx, path, "", v)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("GitHub answered %d for %s", status, path)
+	}
+	return nil
 }
 
 func (g *GitHub) do(ctx context.Context, path, etag, tok string) (*http.Response, error) {

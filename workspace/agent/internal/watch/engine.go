@@ -13,24 +13,31 @@ import (
 	"time"
 )
 
-// Delivery is a sink's answer for one event.
-type Delivery int
+// Readiness is a sink's answer to "can this owner be told now?".
+type Readiness int
 
 const (
-	// NotYet: the owner cannot take it now (busy, starting, not ready); ask again later.
-	NotYet Delivery = iota
-	// Delivered: told, record it.
-	Delivered
+	// Wait: the owner cannot take a notice now (busy, starting, not ready); ask again later.
+	Wait Readiness = iota
+	// Ready: inject now.
+	Ready
 	// Gone: the owner no longer exists or was archived; its subscriptions end.
 	Gone
 )
 
-// Sink delivers events to the session that owns a subscription.
+// Sink delivers events to the session that owns a subscription. Its methods are called without
+// the engine's lock held: starting a session or injecting a prompt can take seconds, and watch /
+// list_watches must not wait for that.
 type Sink interface {
 	// OwnerExists is false for a session that was deleted or archived.
 	OwnerExists(owner string) bool
-	// Deliver tells the owner about ev. It is called at most once per owner per tick.
-	Deliver(sub Subscription, ev Event, now time.Time) Delivery
+	// Ready decides whether owner can take a notice now. It may start a stopped owner. It is
+	// asked at most once per owner per tick.
+	Ready(owner string, now time.Time) Readiness
+	// Forget drops whatever the sink keeps about an owner whose subscriptions ended.
+	Forget(owner string)
+	// Inject tells the owner about ev.
+	Inject(sub Subscription, ev Event) error
 }
 
 // Store persists the engine's state across Agent restarts.
@@ -48,13 +55,17 @@ type State struct {
 // SubjectState is the engine's bookkeeping for one subject, shared by every subscription to it.
 type SubjectState struct {
 	Cursor   json.RawMessage `json:"cursor,omitempty"`
-	Events   []Event         `json:"events,omitempty"` // what held at the last good poll
 	NextPoll time.Time       `json:"next_poll"`
 	LastPoll time.Time       `json:"last_poll,omitempty"`
 	Fails    int             `json:"fails,omitempty"`
 	LastErr  string          `json:"last_err,omitempty"`
 	Settled  bool            `json:"settled,omitempty"`
 }
+
+// maxPollsPerTick bounds the reads of one tick. After a restart every subject is due at once;
+// without a bound, 200 subscriptions would spend a GitHub budget in one sweep and the tick's
+// deadline would cut the rest off.
+const maxPollsPerTick = 20
 
 // Engine is the watch engine. All methods are safe for concurrent use.
 type Engine struct {
@@ -95,17 +106,29 @@ func (e *Engine) load() {
 	if e.state.Subjects == nil {
 		e.state.Subjects = map[SubjectID]SubjectState{}
 	}
-	// A restart re-reads every live subject at once (ADR 0133 §5, the start-up poll).
+	// A Done subscription was claimed for an injection the Agent did not live to confirm.
+	var keep []Subscription
+	for _, s := range e.state.Subs {
+		if !s.Done {
+			keep = append(keep, s)
+		}
+	}
+	e.state.Subs = keep
+	e.dropUnwatchedLocked()
+	// A restart re-reads every live subject (ADR 0133 §5, the start-up poll); maxPollsPerTick
+	// spreads the reads over the first ticks.
 	for id, ss := range e.state.Subjects {
 		ss.NextPoll = time.Time{}
 		e.state.Subjects[id] = ss
 	}
 }
 
-func (e *Engine) save() {
+func (e *Engine) save() bool {
 	if err := e.store.Save(e.state); err != nil {
 		log.Printf("watch: could not save state: %v", err)
+		return false
 	}
+	return true
 }
 
 // Request is one watch call.
@@ -119,12 +142,18 @@ type Request struct {
 	Lifetime    time.Duration // 0 = DefaultLifetime
 }
 
+// maxRefLen bounds the reference a session may pass; it is kept on disk and shown back.
+const maxRefLen = 300
+
 // Subscribe resolves the reference, checks the limits and records the subscription. The
 // subject is read on the next tick, so a condition that already holds is delivered then.
 func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error) {
 	src, ok := e.sources[r.Source]
 	if !ok {
 		return Subscription{}, &ErrRefused{fmt.Sprintf("unknown source %q", r.Source)}
+	}
+	if len(r.Ref) > maxRefLen {
+		return Subscription{}, &ErrRefused{fmt.Sprintf("ref is longer than %d characters", maxRefLen)}
 	}
 	if err := checkTypes(r.Types, src.Types()); err != nil {
 		return Subscription{}, err
@@ -166,15 +195,16 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 		return Subscription{}, err
 	}
 	e.state.Subs = append(e.state.Subs, sub)
-	if _, ok := e.state.Subjects[sub.Subject]; !ok {
-		e.state.Subjects[sub.Subject] = SubjectState{}
-	} else {
-		// Match what the subject already showed, so a second watcher hears it without waiting.
-		ss := e.state.Subjects[sub.Subject]
-		ss.NextPoll = time.Time{}
-		e.state.Subjects[sub.Subject] = ss
+	// Read the subject on the next tick, so even a subject another watch already reads
+	// answers this one without waiting for its schedule.
+	ss := e.state.Subjects[sub.Subject]
+	ss.NextPoll = time.Time{}
+	e.state.Subjects[sub.Subject] = ss
+	if !e.save() {
+		e.state.Subs = e.state.Subs[:len(e.state.Subs)-1]
+		e.dropUnwatchedLocked()
+		return Subscription{}, errors.New("the watch could not be saved")
 	}
-	e.save()
 	return sub, nil
 }
 
@@ -186,14 +216,18 @@ func (e *Engine) checkLimits(owner string) error {
 }
 
 func (e *Engine) limitsLocked(owner string) error {
-	if len(e.state.Subs) >= MaxTotal {
-		return &ErrRefused{fmt.Sprintf("this workspace already has %d watches, the limit", MaxTotal)}
-	}
-	n := 0
+	total, n := 0, 0
 	for _, s := range e.state.Subs {
+		if s.Done {
+			continue
+		}
+		total++
 		if s.Owner == owner {
 			n++
 		}
+	}
+	if total >= MaxTotal {
+		return &ErrRefused{fmt.Sprintf("this workspace already has %d watches, the limit", MaxTotal)}
 	}
 	if n >= MaxPerOwner {
 		return &ErrRefused{fmt.Sprintf("this session already has %d watches, the limit; end one with unwatch", MaxPerOwner)}
@@ -201,13 +235,14 @@ func (e *Engine) limitsLocked(owner string) error {
 	return nil
 }
 
-// Unsubscribe ends one of owner's subscriptions. It reports whether there was one.
+// Unsubscribe ends one of owner's subscriptions, pending events included. It reports whether
+// there was one.
 func (e *Engine) Unsubscribe(owner, id string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.load()
 	for i, s := range e.state.Subs {
-		if s.ID == id && s.Owner == owner {
+		if s.ID == id && s.Owner == owner && !s.Done {
 			e.state.Subs = append(e.state.Subs[:i], e.state.Subs[i+1:]...)
 			e.dropUnwatchedLocked()
 			e.save()
@@ -232,12 +267,12 @@ func (e *Engine) List(owner string) []Listed {
 	e.load()
 	out := []Listed{}
 	for _, s := range e.state.Subs {
-		if s.Owner != owner {
+		if s.Owner != owner || s.Done {
 			continue
 		}
 		ss := e.state.Subjects[s.Subject]
 		l := Listed{Subscription: s, LastPoll: ss.LastPoll, NextPoll: ss.NextPoll, LastErr: ss.LastErr}
-		l.Delivered, l.Pending = nil, nil
+		l.Told, l.Pending = nil, nil
 		out = append(out, l)
 	}
 	return out
@@ -249,9 +284,13 @@ func (e *Engine) Tick(ctx context.Context) {
 	e.mu.Lock()
 	e.load()
 	now := e.now()
-	dirty := e.expireLocked(now)
+	ended := e.expireLocked(now)
+	dirty := len(ended) > 0
 	due := e.dueLocked(now)
 	e.mu.Unlock()
+	for _, o := range ended {
+		e.sink.Forget(o)
+	}
 
 	// Reads happen without the lock: a slow provider must not block watch / list_watches.
 	type polled struct {
@@ -263,6 +302,9 @@ func (e *Engine) Tick(ctx context.Context) {
 	}
 	var results []polled
 	for _, d := range due {
+		if ctx.Err() != nil {
+			break // the rest stay due for the next tick
+		}
 		src, ok := e.sources[d.source]
 		if !ok {
 			continue
@@ -270,11 +312,13 @@ func (e *Engine) Tick(ctx context.Context) {
 		pctx, cancel := context.WithTimeout(ctx, e.pollTimeout)
 		evs, cur, hint, err := src.Poll(pctx, d.id, d.cursor)
 		cancel()
+		if err != nil && ctx.Err() != nil {
+			break // cut off by the tick's deadline, not the provider's fault: no backoff
+		}
 		results = append(results, polled{d.id, evs, cur, hint, err})
 	}
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	now = e.now()
 	for _, p := range results {
 		ss, ok := e.state.Subjects[p.id]
@@ -297,7 +341,6 @@ func (e *Engine) Tick(ctx context.Context) {
 		}
 		ss.Fails, ss.LastErr = 0, ""
 		ss.Cursor = p.cursor
-		ss.Events = p.events
 		ss.Settled = p.hint.Settled
 		after := p.hint.After
 		if after <= 0 {
@@ -307,12 +350,165 @@ func (e *Engine) Tick(ctx context.Context) {
 		e.state.Subjects[p.id] = ss
 		e.matchLocked(p.id, p.events)
 	}
-	if e.deliverLocked(now) {
-		dirty = true
-	}
 	if dirty {
 		e.save()
 	}
+	cands := e.candidatesLocked()
+	e.mu.Unlock()
+
+	e.deliver(cands, now)
+}
+
+// candidate is the first pending event of one owner's subscription.
+type candidate struct {
+	subID string
+	owner string
+	key   string // type|version of the event
+}
+
+// candidatesLocked picks, per owner, the first pending event of its oldest subscription that has
+// one: one notice per owner per tick, the next waits for the turn the first one starts.
+func (e *Engine) candidatesLocked() []candidate {
+	seen := map[string]bool{}
+	var out []candidate
+	for _, s := range e.state.Subs {
+		if s.Done || len(s.Pending) == 0 || seen[s.Owner] {
+			continue
+		}
+		seen[s.Owner] = true
+		ev := s.Pending[0]
+		out = append(out, candidate{s.ID, s.Owner, ev.Type + "|" + ev.Version})
+	}
+	return out
+}
+
+// claimed is an event recorded as told on disk and about to be injected.
+type claimed struct {
+	sub    Subscription // as it was before the claim
+	ev     Event
+	wasEnd bool
+}
+
+// deliver asks each candidate's owner whether it can take a notice (without the lock), claims
+// the ready ones on disk, injects them, and releases a claim whose injection failed. A crash
+// between the claim and the injection loses that one notice rather than repeating it, as the
+// PR feedback watch does.
+func (e *Engine) deliver(cands []candidate, now time.Time) {
+	if len(cands) == 0 {
+		return
+	}
+	ready := map[string]Readiness{}
+	for _, c := range cands {
+		ready[c.owner] = e.sink.Ready(c.owner, now)
+	}
+
+	e.mu.Lock()
+	var claims []claimed
+	var gone []string
+	changed := false
+	for _, c := range cands {
+		switch ready[c.owner] {
+		case Gone:
+			if e.dropOwnerLocked(c.owner) {
+				changed = true
+			}
+			gone = append(gone, c.owner)
+		case Ready:
+			i := e.subIndexLocked(c.subID)
+			if i < 0 {
+				continue // unwatched since the candidates were picked
+			}
+			s := &e.state.Subs[i]
+			if len(s.Pending) == 0 || s.Pending[0].Type+"|"+s.Pending[0].Version != c.key {
+				continue // replaced by a newer state; the next tick offers that one
+			}
+			before := cloneSub(*s)
+			ev := s.Pending[0]
+			s.Pending = s.Pending[1:]
+			if s.Told == nil {
+				s.Told = map[string]string{}
+			}
+			s.Told[ev.Type] = ev.Version
+			end := s.Until == UntilFirst
+			if end {
+				s.Done = true
+			}
+			claims = append(claims, claimed{before, ev, end})
+			changed = true
+		}
+	}
+	if changed && !e.save() {
+		// Not on disk: injecting now could repeat after a restart. Undo and try next tick.
+		for _, c := range claims {
+			e.restoreLocked(c.sub)
+		}
+		claims = nil
+	}
+	e.mu.Unlock()
+	for _, o := range gone {
+		e.sink.Forget(o)
+	}
+
+	for _, c := range claims {
+		err := e.sink.Inject(c.sub, c.ev)
+		e.mu.Lock()
+		if err != nil {
+			e.restoreLocked(c.sub)
+		} else if c.wasEnd {
+			if i := e.subIndexLocked(c.sub.ID); i >= 0 {
+				e.state.Subs = append(e.state.Subs[:i], e.state.Subs[i+1:]...)
+				e.dropUnwatchedLocked()
+			}
+		}
+		e.save()
+		e.mu.Unlock()
+		if err != nil {
+			log.Printf("watch: could not deliver %s to %s: %v", c.ev.Type, c.sub.Owner, err)
+		}
+	}
+}
+
+func cloneSub(s Subscription) Subscription {
+	c := s
+	c.Pending = append([]Event(nil), s.Pending...)
+	if s.Told != nil {
+		c.Told = make(map[string]string, len(s.Told))
+		for k, v := range s.Told {
+			c.Told[k] = v
+		}
+	}
+	return c
+}
+
+// restoreLocked puts a subscription back as it was before a claim, unless it was ended since.
+func (e *Engine) restoreLocked(before Subscription) {
+	if i := e.subIndexLocked(before.ID); i >= 0 {
+		e.state.Subs[i] = before
+	}
+}
+
+func (e *Engine) subIndexLocked(id string) int {
+	for i, s := range e.state.Subs {
+		if s.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (e *Engine) dropOwnerLocked(owner string) bool {
+	var keep []Subscription
+	for _, s := range e.state.Subs {
+		if s.Owner != owner {
+			keep = append(keep, s)
+		}
+	}
+	if len(keep) == len(e.state.Subs) {
+		return false
+	}
+	e.state.Subs = keep
+	e.dropUnwatchedLocked()
+	return true
 }
 
 type dueSubject struct {
@@ -321,12 +517,14 @@ type dueSubject struct {
 	cursor json.RawMessage
 }
 
-// dueLocked lists the subjects whose next read has come, least recently read first, so one busy
-// subject cannot keep the rest waiting.
+// dueLocked lists the subjects whose next read has come, least recently read first so one busy
+// subject cannot keep the rest waiting, at most maxPollsPerTick of them.
 func (e *Engine) dueLocked(now time.Time) []dueSubject {
 	srcOf := map[SubjectID]string{}
 	for _, s := range e.state.Subs {
-		srcOf[s.Subject] = s.Source
+		if !s.Done {
+			srcOf[s.Subject] = s.Source
+		}
 	}
 	var out []dueSubject
 	for id, ss := range e.state.Subjects {
@@ -343,25 +541,38 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 		}
 		return out[i].id < out[j].id
 	})
+	if len(out) > maxPollsPerTick {
+		out = out[:maxPollsPerTick]
+	}
 	return out
 }
 
-// matchLocked queues, for every subscription to id, the events it selects and has not been told.
+// matchLocked queues, for every subscription to id, the events it selects and was not told in
+// that version. A newer state of a type replaces an older one still pending, so a session that
+// could not be told for a while hears the latest state per type, not the whole history.
 func (e *Engine) matchLocked(id SubjectID, events []Event) {
 	for i := range e.state.Subs {
 		s := &e.state.Subs[i]
-		if s.Subject != id {
+		if s.Subject != id || s.Done {
 			continue
 		}
 		for _, ev := range events {
 			if !selects(s.Types, ev.Type) || !TokenOK(ev.Type) {
 				continue
 			}
-			key := ev.Type + "|" + ev.Version
-			if _, done := s.Delivered[key]; done || hasPending(s.Pending, key) {
+			if s.Told[ev.Type] == ev.Version {
 				continue
 			}
-			s.Pending = append(s.Pending, ev)
+			replaced := false
+			for j := range s.Pending {
+				if s.Pending[j].Type == ev.Type {
+					s.Pending[j], replaced = ev, true
+					break
+				}
+			}
+			if !replaced {
+				s.Pending = append(s.Pending, ev)
+			}
 		}
 	}
 }
@@ -375,55 +586,9 @@ func selects(patterns []string, typ string) bool {
 	return false
 }
 
-func hasPending(p []Event, key string) bool {
-	for _, ev := range p {
-		if ev.Type+"|"+ev.Version == key {
-			return true
-		}
-	}
-	return false
-}
-
-// deliverLocked hands each owner at most one pending event this tick (the next waits for the
-// turn the first one starts). It reports whether anything changed.
-func (e *Engine) deliverLocked(now time.Time) bool {
-	changed := false
-	told := map[string]bool{}
-	var keep []Subscription
-	for i := range e.state.Subs {
-		s := e.state.Subs[i]
-		ended := false
-		if len(s.Pending) > 0 && !told[s.Owner] {
-			ev := s.Pending[0]
-			switch e.sink.Deliver(s, ev, now) {
-			case Delivered:
-				told[s.Owner] = true
-				changed = true
-				if s.Delivered == nil {
-					s.Delivered = map[string]time.Time{}
-				}
-				s.Delivered[ev.Type+"|"+ev.Version] = now.UTC()
-				s.Pending = s.Pending[1:]
-				if s.Until == UntilFirst {
-					ended = true
-				}
-			case Gone:
-				ended, changed = true, true
-			}
-		}
-		if !ended {
-			keep = append(keep, s)
-		}
-	}
-	if changed {
-		e.state.Subs = keep
-		e.dropUnwatchedLocked()
-	}
-	return changed
-}
-
-// expireLocked ends subscriptions past their deadline or whose owner is gone.
-func (e *Engine) expireLocked(now time.Time) bool {
+// expireLocked ends subscriptions past their deadline or whose owner is gone, and returns the
+// owners whose subscriptions all ended.
+func (e *Engine) expireLocked(now time.Time) []string {
 	var keep []Subscription
 	exists := map[string]bool{}
 	for _, s := range e.state.Subs {
@@ -437,11 +602,21 @@ func (e *Engine) expireLocked(now time.Time) bool {
 		}
 	}
 	if len(keep) == len(e.state.Subs) {
-		return false
+		return nil
 	}
 	e.state.Subs = keep
 	e.dropUnwatchedLocked()
-	return true
+	left := map[string]bool{}
+	for _, s := range keep {
+		left[s.Owner] = true
+	}
+	var ended []string
+	for o := range exists {
+		if !left[o] {
+			ended = append(ended, o)
+		}
+	}
+	return ended
 }
 
 // dropUnwatchedLocked forgets subjects nobody subscribes to any more.
