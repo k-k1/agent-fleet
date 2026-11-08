@@ -17,8 +17,11 @@ test.use({
 test.beforeAll(async () => {
   expect(fs.existsSync(path.join(dist, "index.html")), "Build the Console before its browser checks").toBe(true);
   server = http.createServer((req, res) => {
-    const pathname = new URL(req.url || "/", "http://local").pathname;
-    const file = path.resolve(dist, pathname === "/" ? "index.html" : pathname.slice(1));
+    const u = new URL(req.url || "/", "http://local");
+    const pathname = u.pathname;
+    // index.html loads its bootstrap script as "?af-bootstrap"; answer it as the Control Plane does.
+    const relative = u.search === "?af-bootstrap" ? "base-bootstrap.js" : pathname === "/" ? "index.html" : pathname.slice(1);
+    const file = path.resolve(dist, relative);
     if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       res.writeHead(404).end();
       return;
