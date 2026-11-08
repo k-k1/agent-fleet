@@ -50,6 +50,17 @@ source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/
   足します。鍵の管理者が戻せる失効であって、shred ではありません。
 - **KMS が封じた値があるうちは `local` に戻さない。** local の custodian はそれを、理由を示すエラーで拒否します。
 
+## `AF_MASTER_KEY` のパラメータを自前の鍵で暗号化する
+
+上のカストディアンとは別の話です。`ecs` / `ecs-ec2` では `AF_MASTER_KEY` の値は SSM の SecureString
+`/af-cp/master-key` に入り、指定しなければ AWS マネージドの `aws/ssm` 鍵で暗号化されます。自前の鍵を使うには、
+20-platform の `MasterKeyKmsKeyArn` を設定してから、`--key-id` 付きでパラメータを入れ直します（この順番）。
+ECS は **実行ロール**でこれを復号するので、鍵が許可すべきなのはタスクロールではなく実行ロールです。
+テンプレートは、その 1 つの鍵に対する `kms:Decrypt` だけを、SSM 経由に限って付与します。手順・キーポリシー・
+元に戻し方は `deploy/aws/ecs/cfn/PARAMETERS.md` の「`MasterKeyKmsKeyArn`」にあります。
+変わるのは保存時に誰が読めるかだけで、値そのものは変えてはいけません
+（[04 守る](04-secure.ja.md#配備の鍵-要件と変更の代償) の「変更の代償」を参照）。
+
 ## 切り替え前に保存された値を封じ直す
 
 `af-cp rewrap-keys` は、切り替え前に Control Plane が master 鍵で封じた値をすべて KMS で封じ直します。

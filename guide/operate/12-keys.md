@@ -54,6 +54,18 @@ What to know before you switch:
 - **Do not switch back to `local`** while values sealed by KMS exist: the local custodian refuses
   them with an error that says so.
 
+## Encrypting the `AF_MASTER_KEY` parameter with your own key
+
+Separate from the custodian above: on `ecs` / `ecs-ec2` the `AF_MASTER_KEY` value sits in the SSM
+SecureString `/af-cp/master-key`, encrypted with the AWS-managed `aws/ssm` key unless you say
+otherwise. To use a key of your own, set 20-platform's `MasterKeyKmsKeyArn`, then re-put the
+parameter with `--key-id`, in that order. ECS decrypts it with the **execution role**, so that
+role (not the task role) is what the key must admit; the template grants `kms:Decrypt` on that one
+key, via SSM only. The steps, the key policy and the back-out are in
+`deploy/aws/ecs/cfn/PARAMETERS.md` under "`MasterKeyKmsKeyArn`". It changes
+who can read the value at rest; the value itself must not change (see "What changing it costs" in
+[04 Securing it](04-secure.md#the-deployment-keys-requirements-and-what-changing-them-costs)).
+
 ## Re-sealing values stored before the switch
 
 `af-cp rewrap-keys` re-seals, under KMS, every value the Control Plane sealed with the master
