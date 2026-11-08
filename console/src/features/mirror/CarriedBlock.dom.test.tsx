@@ -7,10 +7,13 @@
 //    key path is possible.
 // 2. Approval must go through a confirm. A prose approval alone makes claude execute the plan
 //    (measured, docs/log/75 §75.10 E), so it is an irreversible decision.
+//
+// It also pins that a carried question's lead text renders as Markdown, as the live card does.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { answerConfirm, confirmDialog } from "../../test/confirmDialog.ts";
 
 const sessionCarriedAnswer = vi.fn(async () => ({ ok: true }));
@@ -95,6 +98,37 @@ describe("CarriedBlock", () => {
     expect(apiJSON).not.toHaveBeenCalled();
     expect(errors).toEqual([]);
     expect(done).toBe(1);
+  });
+
+  it("renders a carried question's lead text as Markdown, not as raw markup", () => {
+    // MarkdownView needs a toast host; the other cases render no Markdown and mount without one.
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <CarriedBlock
+              carried={{
+                kind: "question",
+                text: "**大事**なこと:\n- `opus` は断る\n- ID を固定する",
+                questions: [{ question: "どっち？", options: [{ label: "A" }, { label: "B" }] }],
+              }}
+              session="s1"
+              agentName="claude"
+              onDone={() => done++}
+              onError={(m) => errors.push(m)}
+            />
+          </ConfirmProvider>
+        </ToastProvider>,
+      ),
+    );
+    const lead = document.querySelector(".mt-carried-text")!;
+    expect(lead.querySelector("strong")?.textContent).toBe("大事");
+    expect(lead.querySelector("code")?.textContent).toBe("opus");
+    expect(lead.querySelectorAll("li")).toHaveLength(2);
+    expect(lead.textContent).not.toContain("**");
   });
 
   it("sends with free text alone (the notes shape of an AUQ with previews)", async () => {
