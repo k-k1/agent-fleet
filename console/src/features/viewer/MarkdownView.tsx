@@ -16,6 +16,7 @@ import { ensureWorkItems, useWorkItemStore } from "../workitems/store.ts";
 import { ensureJiraProjects, useJiraProjects } from "../workitems/jiraProjects.ts";
 import { useReposStore } from "../repos/store.ts";
 import { cloneHosts, cloneHostsInputs, originOf, JIRA_HINT_RE, WORK_ITEM_HINT_RE, workItemRefInputs } from "../workitems/refs.ts";
+import { SOURCE_LINE_ATTR, insertedLineMap, tagSourceLines } from "./parts/mdSourceLines.ts";
 import { markRepairedTables, renderFrontMatter } from "./parts/mdFrontMatter.ts";
 import { renderEmoji } from "./parts/mdEmoji.ts";
 import { CONV_HINT_RE, linkifyPathRefs, linkifyRefs } from "./parts/mdRefLinks.ts";
@@ -87,6 +88,9 @@ export interface MarkdownViewProps {
   // document viewers), never on a shared session, where the viewer has no access to the owner's
   // workspace. Deliberately not tied to onOpenFile: plan blocks pass none and are owner surfaces.
   previewLinks?: boolean;
+  // Tag each rendered block with the source line it came from (parts/mdSourceLines.ts), for
+  // the File pane's split view to sync its scrolling by. Costs a second lex of the document.
+  sourceLines?: boolean;
 }
 
 export function MarkdownView({
@@ -104,6 +108,7 @@ export function MarkdownView({
   markKind,
   workItemRefs = false,
   previewLinks = false,
+  sourceLines = false,
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
@@ -177,6 +182,14 @@ export function MarkdownView({
     const repair = repairFullwidthTables(body);
     const rawHtml = marked.parse(repair?.body ?? body, { gfm: true, breaks }) as string;
     el.innerHTML = sanitizeMarkdownHtml(rawHtml, { repoRelative: !streaming });
+    if (sourceLines && !streaming) {
+      const head = (source ?? "").slice(0, (source ?? "").length - body.length);
+      tagSourceLines(el, repair?.body ?? body, {
+        breaks,
+        lineOffset: head.split("\n").length - 1,
+        mapLine: insertedLineMap(repair?.inserted ?? []),
+      });
+    }
     if (frontMatter) renderFrontMatter(el, frontMatter.attributes, frontMatter.lenient);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)
@@ -354,6 +367,8 @@ export function MarkdownView({
             wrap.className = "mermaid-diagram";
             wrap.innerHTML = svg;
             stripInternalMedia(wrap);
+            const line = code.parentElement.getAttribute(SOURCE_LINE_ATTR);
+            if (line) wrap.setAttribute(SOURCE_LINE_ATTR, line);
             code.parentElement.replaceWith(wrap);
           } catch {
             // leave the source block in place on a render error
@@ -367,7 +382,7 @@ export function MarkdownView({
       stickyCleanup();
     };
     // wiInputs is read for the relink bookkeeping only: a change to it is the effect below.
-  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, hasPathMenu, workDir, workItemRefs, previewLinks, hasPortMenu]);
+  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast, hasSessionMenu, hasPathMenu, workDir, workItemRefs, previewLinks, hasPortMenu, sourceLines]);
 
   // Idempotent: existing anchors are skipped, and the links already there re-classify on click.
   useEffect(() => {

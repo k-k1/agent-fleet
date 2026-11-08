@@ -26,6 +26,9 @@ export interface TableRepair {
   // How many table blocks were found in all. A caller compares this against the number
   // of <table> elements the renderer produced before trusting the indexes above.
   total: number;
+  // Line indexes, in the repaired body, of the delimiter rows the repair inserted — the only
+  // lines it adds. A caller mapping a repaired line back to the source subtracts them.
+  inserted: number[];
 }
 
 // A pipe as GFM wants it, plus the two lookalikes a Japanese IME hands you: a table
@@ -71,6 +74,7 @@ export function repairFullwidthTables(source: string): TableRepair | null {
   if (!/[｜￨]/.test(source)) return null;
   const lines = source.split("\n");
   const repaired: number[] = [];
+  const inserted: number[] = [];
   let total = 0;
   let fence = "";
 
@@ -121,6 +125,7 @@ export function repairFullwidthTables(source: string): TableRepair | null {
       }
       if (synthesize) {
         lines.splice(i + 1, 0, `|${Array(header.length).fill("---").join("|")}|`);
+        inserted.push(i + 1);
         end++;
       }
       repaired.push(total - 1);
@@ -128,7 +133,7 @@ export function repairFullwidthTables(source: string): TableRepair | null {
     i = end - 1;
   }
 
-  return repaired.length ? { body: lines.join("\n"), repaired, total } : null;
+  return repaired.length ? { body: lines.join("\n"), repaired, total, inserted } : null;
 }
 
 // One `key: value` line, the way a human writes front matter: the key at column

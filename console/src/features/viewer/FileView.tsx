@@ -23,6 +23,7 @@ import { registerPaneViewActions } from "./paneViewActions.ts";
 import { dismissSoftKeyboard, escapeHtml } from "./parts/fileDom.ts";
 import { useFileContent, type FileData } from "./parts/useFileContent.ts";
 import { useScrollMemory } from "./parts/useScrollMemory.ts";
+import { installSplitScrollSync, type SplitScrollSync, type SyncSide } from "./parts/splitScrollSync.ts";
 import { scrollMemoryKey } from "./scrollMemory.ts";
 import { useSelectionPill } from "./parts/useSelectionPill.ts";
 import {
@@ -343,6 +344,32 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const fileModeRef = useRef(fileMode);
   fileModeRef.current = fileMode;
 
+  // The split view scrolls its two sides together (parts/splitScrollSync.ts). Opening it
+  // keeps the position of whichever side was on screen before, so a reader who scrolled the
+  // preview to the middle does not land back at the top.
+  const surfacesBoxRef = useRef<HTMLDivElement>(null);
+  const lastSoloSideRef = useRef<SyncSide>("editor");
+  if (!surfaces.split) lastSoloSideRef.current = surfaces.preview ? "preview" : "editor";
+  const [editorHandleEpoch, setEditorHandleEpoch] = useState(0);
+  const scrollSyncOn = surfaces.split && surfaces.preview === "normal";
+  const scrollSyncRef = useRef<SplitScrollSync | null>(null);
+  useEffect(() => {
+    const box = surfacesBoxRef.current;
+    const handle = editorHandleRef.current;
+    if (!scrollSyncOn || !box || !handle) return;
+    const sync = installSplitScrollSync(
+      box,
+      handle,
+      () => box.querySelector<HTMLElement>(":scope > .file-viewer-shell .md-scroll"),
+      lastSoloSideRef.current,
+    );
+    scrollSyncRef.current = sync;
+    return () => {
+      sync.dispose();
+      if (scrollSyncRef.current === sync) scrollSyncRef.current = null;
+    };
+  }, [scrollSyncOn, editorHandleEpoch]);
+
   // Focus follows the mode, but only when the user asked for the mode (docs/log/44
   // §5). Opening a file — a citation lands in the source surface — must not pull
   // focus out of whatever the user was typing in.
@@ -522,7 +549,11 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
       editorHandleRef.current ? (edit) => editorHandleRef.current!.applyEdit(edit) : undefined,
     );
     if (code) setEditorNotice(suggestErrText(tr, code));
-    else setSuggestOpen(false);
+    else {
+      setSuggestOpen(false);
+      // The edit scrolled the editor to the change, from a panel outside both sides.
+      scrollSyncRef.current?.lead("editor");
+    }
   };
 
   const changeMode = (next: "view" | "edit") => {
@@ -712,7 +743,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         </div>
       )}
 
-      <div className={"file-surfaces" + (surfaces.split ? " is-split" : "")}>
+      <div ref={surfacesBoxRef} className={"file-surfaces" + (surfaces.split ? " is-split" : "")}>
         {canEdit && editor.model && (
           <div className="file-editor-shell" hidden={!surfaces.editor}>
             <CodeEditor
@@ -733,6 +764,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
               onValidationError={onEditorValidationError}
               onHandle={(handle) => {
                 editorHandleRef.current = handle;
+                setEditorHandleEpoch((n) => n + 1);
               }}
               onReady={(focus) => {
                 // Focus is granted by updateMode, never by the surface merely
@@ -799,6 +831,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
           targetLine={targetLine}
           targetColumn={targetColumn}
           scrollMemory={scrollMemory}
+          previewFollowsEditor={scrollSyncOn}
         />
       </div>
 

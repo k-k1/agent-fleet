@@ -27,6 +27,17 @@ export interface CodeEditorHandle {
   selection(): { from: number; to: number };
   /** Apply a ranged edit; returns false when the transaction was rejected. */
   applyEdit(edit: { from: number; to: number; insert: string }): boolean;
+  /** The element that scrolls (CodeMirror's scrollDOM). */
+  scroller: HTMLElement;
+  /** The whole editor (view.dom): the scroller plus its panels, such as search. */
+  host: HTMLElement;
+  /** The 1-based source line at the top of the viewport, with the fraction of
+   *  that line already scrolled past (12.25 = a quarter into line 12). */
+  topLine(): number;
+  /** Scroll so that the fractional line `line` sits at the top of the viewport. */
+  scrollToLine(line: number): void;
+  /** Lines in the document. */
+  lineCount(): number;
 }
 
 interface CodeEditorProps {
@@ -222,6 +233,30 @@ export const editorHighlightStyle = HighlightStyle.define([
 
 export const editorHighlighting: Extension = syntaxHighlighting(editorHighlightStyle);
 
+/** The fractional 1-based line at the top of the viewport. Document heights are
+ *  measured from the document top, so the scroller's own padding and the
+ *  editor's top margin are taken out through documentTop. */
+export function viewportTopLine(view: EditorView): number {
+  const y = view.scrollDOM.getBoundingClientRect().top - view.documentTop;
+  const block = view.lineBlockAtHeight(Math.max(0, y));
+  const line = view.state.doc.lineAt(block.from).number;
+  const frac = block.height > 0 ? (y - block.top) / block.height : 0;
+  return line + Math.min(1, Math.max(0, frac));
+}
+
+/** Scroll the fractional 1-based line to the top of the viewport. The inverse of
+ *  viewportTopLine. Writes scrollTop directly rather than dispatching a
+ *  scrollIntoView effect, so the selection and the history are left alone. */
+export function scrollLineToTop(view: EditorView, line: number): void {
+  const doc = view.state.doc;
+  const n = Math.max(1, Math.min(doc.lines, Math.floor(line)));
+  const block = view.lineBlockAt(doc.line(n).from);
+  const frac = Math.min(1, Math.max(0, line - n));
+  const scroller = view.scrollDOM;
+  const docTop = view.documentTop - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  scroller.scrollTop = docTop + block.top + frac * block.height;
+}
+
 /** Scroll a 1-based line into view and put the cursor on it. The cursor is what
  *  marks the line: `basicSetup`'s active-line highlight follows it, which is the
  *  editing surface's equivalent of CodeView's target-line row. */
@@ -334,6 +369,11 @@ export function CodeEditor({
         });
         return view.state.doc !== before;
       },
+      scroller: view.scrollDOM,
+      host: view.dom,
+      topLine: () => viewportTopLine(view),
+      scrollToLine: (line) => scrollLineToTop(view, line),
+      lineCount: () => view.state.doc.lines,
     });
     let alive = true;
     void loadLanguageExtension(path).then((extension) => {
