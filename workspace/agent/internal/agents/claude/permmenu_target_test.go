@@ -323,3 +323,214 @@ func TestCheckTargetCommandRefusesBareBash(t *testing.T) {
 		t.Errorf("prose: %v", got)
 	}
 }
+
+// A Bash dialog taller than the pane (a heredoc on a phone-width pane) has its top rule, title
+// and first command lines drawn nowhere: Claude Code uses the alternate screen, so they are not
+// in tmux's history either. Captured live from claude 2.1.319 on a 67x54 pane.
+func TestCheckTargetCommandClippedDialog(t *testing.T) {
+	m := menuFixture(t, "bash_clipped_tall_command.txt")
+	if m.BodyOK || !m.Clipped {
+		t.Fatalf("BodyOK=%v Clipped=%v, want a clipped body", m.BodyOK, m.Clipped)
+	}
+	b, err := os.ReadFile(filepath.Join("testdata", "permmenu", "bash_clipped_tall_command.cmd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := string(b)
+	first, _, _ := strings.Cut(full, "\n")
+	detail := "Bash · " + string([]rune(first)[:100]) + "…"
+	if got := m.CheckTargetCommand(detail, "", full); got != TargetMatches {
+		t.Errorf("same command: got %v, want TargetMatches", got)
+	}
+	// A different tail, the same tail with a line changed, and a payload from another command.
+	if got := m.CheckTargetCommand(detail, "", full+"\nrm -rf build"); got != TargetDiffers {
+		t.Errorf("extra last line: got %v, want TargetDiffers", got)
+	}
+	changed := strings.Replace(full, `toContain("nodata")`, `toContain("data")`, 1)
+	if got := m.CheckTargetCommand(detail, "", changed); got != TargetDiffers {
+		t.Errorf("changed visible line: got %v, want TargetDiffers", got)
+	}
+	if got := m.CheckTargetCommand("Bash · ls", "", full); got != TargetDiffers {
+		t.Errorf("payload of another command: got %v, want TargetDiffers", got)
+	}
+	// The one-line check has nothing to compare its target with and stays closed.
+	if got := m.CheckTarget(detail, ""); got != TargetDiffers {
+		t.Errorf("CheckTarget: got %v, want TargetDiffers", got)
+	}
+	// The visible tail must hold clippedMinLines command lines: cut the body from the top until
+	// one line fewer is left, and that tail, though a true suffix, is refused.
+	seen := 0
+	for k := 0; k < len(m.Body)-7; k++ {
+		short := m
+		short.Body = m.Body[k:]
+		n := 0
+		for _, ln := range short.Body[:len(short.Body)-7] { // the last 7 lines are below the command
+			if s := strings.TrimSpace(ln); s != "" && s != "│" {
+				n++
+			}
+		}
+		got := short.CheckTargetCommand(detail, "", full)
+		if n == clippedMinLines {
+			seen++
+			if got != TargetMatches {
+				t.Errorf("%d-line tail: got %v, want TargetMatches", n, got)
+			}
+		}
+		if n == clippedMinLines-1 {
+			seen++
+			if got != TargetDiffers {
+				t.Errorf("%d-line tail: got %v, want TargetDiffers", n, got)
+			}
+			break
+		}
+	}
+	if seen < 2 {
+		t.Fatalf("the cut never reached %d and %d visible lines", clippedMinLines, clippedMinLines-1)
+	}
+	// No dashed rule under the command, or three: not the measured layout.
+	noRule := m
+	noRule.Body = nil
+	for _, ln := range m.Body {
+		if !permDashRuleRe.MatchString(ln) {
+			noRule.Body = append(noRule.Body, ln)
+		}
+	}
+	if got := noRule.CheckTargetCommand(detail, "", full); got != TargetDiffers {
+		t.Errorf("no dashed rule: got %v, want TargetDiffers", got)
+	}
+	rule := strings.Repeat("╌", 67)
+	// The two extra rules go below the real one, so the region above the first rule is still the
+	// matching tail: only the rule count refuses it.
+	threeRules := m
+	threeRules.Body = nil
+	for _, ln := range m.Body {
+		threeRules.Body = append(threeRules.Body, ln)
+		if permDashRuleRe.MatchString(ln) {
+			threeRules.Body = append(threeRules.Body, "x", rule, "y", rule)
+		}
+	}
+	if got := threeRules.CheckTargetCommand(detail, "", full); got != TargetDiffers {
+		t.Errorf("three dashed rules: got %v, want TargetDiffers", got)
+	}
+	// A clipped body never answers for a file tool, even with a command that matches the tail and a
+	// target that is the command's own first line: only the tool check refuses the last case.
+	for _, c := range []struct{ detail, command string }{
+		{"Edit · /home/dev/repos/demo/src/ui/MonthlyTrend.dom.test.tsx", ""},
+		{"Edit · /home/dev/repos/demo/src/ui/MonthlyTrend.dom.test.tsx", full},
+		{"Edit · " + strings.TrimPrefix(detail, "Bash · "), full},
+	} {
+		if got := m.CheckTargetCommand(c.detail, "/home/dev/repos/demo", c.command); got != TargetDiffers {
+			t.Errorf("%q on a clipped Bash dialog: got %v, want TargetDiffers", c.detail, got)
+		}
+	}
+}
+
+// A clip that falls inside the title or description leaves both dashed rules on screen; the
+// command between them is then compared whole, as in an unclipped dialog.
+func TestCheckTargetCommandClippedAboveCommand(t *testing.T) {
+	m := menuFixture(t, "bash_multiline_command.txt")
+	if !m.BodyOK {
+		t.Fatal("fixture should parse with its top rule")
+	}
+	// Drop everything above the description, as a pane too short for the title would.
+	b, err := os.ReadFile(filepath.Join("testdata", "permmenu", "bash_multiline_command.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(b), "\n")
+	start := -1
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) == "Create the file and list it" {
+			start = i
+		}
+	}
+	if start < 0 {
+		t.Fatal("fixture lacks its description line")
+	}
+	c, ok := ParsePermissionMenu(strings.Join(lines[start:], "\n"))
+	if !ok || c.BodyOK || !c.Clipped {
+		t.Fatalf("ok=%v BodyOK=%v Clipped=%v, want a clipped body", ok, c.BodyOK, c.Clipped)
+	}
+	full := "cat > note.txt <<'EOF'\nhello\nEOF\nls -l note.txt"
+	detail := "Bash · cat > note.txt <<'EOF'"
+	if got := c.CheckTargetCommand(detail, "", full); got != TargetMatches {
+		t.Errorf("same command: got %v, want TargetMatches", got)
+	}
+	// With the whole command on screen, a longer command whose end is that whole screen is refused:
+	// a suffix comparison (the clipped-tail rule) would accept it, so this pins the whole one.
+	if got := c.CheckTargetCommand(detail, "", "cat > note.txt <<'EOF'\n"+full); got != TargetDiffers {
+		t.Errorf("command with an extra line: got %v, want TargetDiffers", got)
+	}
+}
+
+// A barred command with an empty line, in a dialog whose top is on screen: tmux trims the blank
+// after the bar, and the bare "│" still reads as the command's empty line.
+func TestCheckTargetCommandBareBarLine(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "permmenu", "bash_bar_dangerous_rm.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane := strings.Replace(string(b), " │ seen\n", " │ seen\n │\n", 1)
+	m, ok := ParsePermissionMenu(pane)
+	if !ok || !m.BodyOK {
+		t.Fatalf("ok=%v BodyOK=%v", ok, m.BodyOK)
+	}
+	cmd := "cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp /dev/null js/alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel.txt; echo seen\n\nls $AF_WORK_DIR/js"
+	// The fixture's last line is "rtk ls …" (a hook rewrite inside the command) and never
+	// matches as a whole; compare the reconstruction directly.
+	region := []string{}
+	in := false
+	for _, ln := range m.Body {
+		if permDashRuleRe.MatchString(ln) {
+			if in {
+				break
+			}
+			in = true
+			continue
+		}
+		if in {
+			region = append(region, ln)
+		}
+	}
+	stripped, w := stripCommandBar(region, m.RuleWidth)
+	if w != m.RuleWidth-2 {
+		t.Fatalf("bar not stripped: width %d of %d", w, m.RuleWidth)
+	}
+	want := strings.Replace(cmd, "ls $AF", "rtk ls $AF", 1)
+	if !matchFullCommand(stripped, want, w, false) {
+		t.Errorf("command with an empty barred line did not reconstruct: %q", stripped)
+	}
+}
+
+// A wrap swallows the whole run of blanks at the break, not one space: the command line
+// " │     expect(…classN" is drawn as " │" over "expect(…classN" (captured live from claude
+// 2.1.319 on a 67x54 pane; the dialog is clipped too). A run too short to have pushed the word
+// to the next line is refused; a longer one draws the same screen and cannot be told apart.
+func TestCheckTargetCommandSwallowedIndent(t *testing.T) {
+	m := menuFixture(t, "bash_clipped_swallowed_indent.txt")
+	b, err := os.ReadFile(filepath.Join("testdata", "permmenu", "bash_clipped_swallowed_indent.cmd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := string(b)
+	first, _, _ := strings.Cut(full, "\n")
+	detail := "Bash · " + first
+	if got := m.CheckTargetCommand(detail, "", full); got != TargetMatches {
+		t.Errorf("same command: got %v, want TargetMatches", got)
+	}
+	const shown = ` │     expect(host.querySelector`
+	for _, indent := range []string{` │expect(host.querySelector`, ` │ expect(host.querySelector`, ` │  expect(host.querySelector`} {
+		other := strings.Replace(full, shown, indent, 1)
+		if other == full {
+			t.Fatal("fixture command lacks the indented line")
+		}
+		if got := m.CheckTargetCommand(detail, "", other); got != TargetDiffers {
+			t.Errorf("indent %q: got %v, want TargetDiffers", indent, got)
+		}
+	}
+	// Three blanks are the fewest with which the line and the 59-column word fill the 64 columns
+	// that wordWrapRun counts as the edge (2+3+59); this pins that edge.
+	if got := m.CheckTargetCommand(detail, "", strings.Replace(full, shown, ` │   expect(host.querySelector`, 1)); got != TargetMatches {
+		t.Errorf("indent of 3: got %v, want TargetMatches", got)
+	}
+}
