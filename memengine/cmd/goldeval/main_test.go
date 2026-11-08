@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/memengine"
@@ -50,5 +53,25 @@ func TestExamplesLoad(t *testing.T) {
 	}
 	if _, err := goldset.LoadBar("../../bar.json"); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestExportPromptsSplitNeverLeaksTheOtherHalf(t *testing.T) {
+	dir := t.TempDir()
+	var cs, in string
+	for _, id := range []string{"a", "e", "f", "h"} { // a, h: tune; e, f: held-out
+		cs += `{"id":"` + id + `","observation":"o","memories":[],"label":{"operation":"add","ok":"OK"}}` + "\n"
+		in += `{"id":"` + id + `","memories":[]}` + "\n"
+	}
+	os.WriteFile(filepath.Join(dir, "c.jsonl"), []byte(cs), 0o644)
+	os.WriteFile(filepath.Join(dir, "i.jsonl"), []byte(in), 0o644)
+	exportPrompts([]string{"-cases", filepath.Join(dir, "c.jsonl"), "-inputs", filepath.Join(dir, "i.jsonl"), "-out", dir, "-split", "tune"})
+	b, err := os.ReadFile(filepath.Join(dir, "prompts-classify.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if strings.Count(got, `"case_id"`) != 2 || !strings.Contains(got, `"case_id":"a"`) || !strings.Contains(got, `"case_id":"h"`) || strings.Contains(got, `"case_id":"e"`) {
+		t.Errorf("tune export must hold exactly the tune cases:\n%s", got)
 	}
 }

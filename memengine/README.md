@@ -100,7 +100,7 @@ goldeval score -cases cases.jsonl -inputs inputs.jsonl -out run/full \
   -answers run/answers-X-classify.jsonl -answers run/answers-X-patch.jsonl -tier <runner>:<model id>
 ```
 
-`export-prompts` writes two files, one line per call, `{case_id, call, prompt, schema}`, each prompt being the
+`export-prompts` writes two files (`-split tune` writes only the TUNE half: use it while iterating, so the session never sees the held-out prompts), one line per call, `{case_id, call, prompt, schema}`, each prompt being the
 exact text the one-shot runner sends (it already asks for one JSON object and nothing else):
 
 - `prompts-classify.jsonl`: all classify calls and nothing else.

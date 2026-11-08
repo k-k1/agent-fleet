@@ -181,11 +181,16 @@ func exportPrompts(args []string) {
 	cases := fs.String("cases", "cases.jsonl", "gold set (JSONL)")
 	inputs := fs.String("inputs", "inputs.jsonl", "memories the cases cite (JSONL)")
 	out := fs.String("out", "run", "directory for prompts-classify.jsonl and prompts-patch.jsonl")
+	split := fs.String("split", "all", "all | tune | heldout: export one deterministic half only; while iterating on a prompt use tune, so a replay session never sees the held-out half")
 	fs.Parse(args)
 	set, err := goldset.Load(*cases, *inputs)
 	if err != nil {
 		fatal(err.Error())
 	}
+	if !goldset.ValidSplit(*split) {
+		fatal("bad -split " + *split + ": want all, tune or heldout")
+	}
+	set.Only(*split)
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		fatal(err.Error())
 	}
