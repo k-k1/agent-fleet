@@ -59,7 +59,7 @@ export function EnvTab() {
     setErr("");
     getToolchains()
       .then((res) => {
-        if (res && "error" in res && res.error) throw new Error(res.error.message || "");
+        if (res && !isOk(res)) throw new Error(res.error.message || "");
         setD(res as ToolchainsData);
         setGen((g) => g + 1);
         try {
@@ -94,7 +94,7 @@ export function EnvTab() {
       ...patch,
     };
     const res = await putToolchains(next);
-    if (res && "error" in res && res.error) {
+    if (res && !isOk(res)) {
       toast(tr("env.save_failed_msg", { msg: res.error.message || "" }));
       return;
     }
