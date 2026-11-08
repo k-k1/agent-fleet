@@ -268,6 +268,10 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     const operation = (async () => {
       try {
         const result = await putFile(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
+        // The hook moved to another file while the PUT was out: its refs now read that file's
+        // buffer, which must not take this save's outcome. The save's own slot stays dirty
+        // and guarded.
+        if (modelRef.current?.path !== snapshot.path) return false;
         if (result.ok) {
           try {
             if (result.path !== snapshot.path) throw new Error("save response path mismatch");
@@ -290,6 +294,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
           setModel(saveFailed(modelRef.current!, errText(result.error)));
         }
       } catch (error) {
+        if (modelRef.current?.path !== snapshot.path) return false; // moved away, as above
         // A thrown transport failure may have lost a response after the Agent
         // committed the rename. It is never treated as an ordinary failed save.
         setModel(saveStateUnknown(modelRef.current!, snapshot, String(error)));
@@ -355,7 +360,17 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   }, [recoverConflict, recoverUnknown, setModel]);
 
   useEffect(() => {
-    slot.api = { save, discard };
+    const previous = slot.api;
+    const api = { save, discard };
+    slot.api = api;
+    return () => {
+      // Unmounted, these callbacks stay bound to this slot and keep serving its guard. But a
+      // hook moving to another file (the render already pointed slotRef there) takes them
+      // along: left with unsaved work, this slot goes back to the api it had before (an
+      // unmounted hook's, still bound to it) or to none, which the guard treats as unable to
+      // proceed.
+      if (slot.api === api && slotRef.current !== slot) slot.api = previous;
+    };
   }, [slot, save, discard]);
 
   useEffect(() => {

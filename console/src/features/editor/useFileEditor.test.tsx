@@ -832,4 +832,89 @@ describe("useFileEditor across unmount (tab switch)", () => {
     expect(back.model?.content).toBe("mine\n");
     expect(back.model?.externalObservation).toMatchObject({ kind: "changed", revision: revisionOf(disk) });
   });
+
+  it("discards and saves a buffer left behind on another file through the guard", async () => {
+    vi.mocked(putFile).mockResolvedValue({ ok: true, path: initial.path, size: 5, revision: revisionOf("mine\n") });
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await unmount();
+    const otherContent = "other\n";
+    given = { path: "repos/b.txt", content: otherContent, revision: revisionOf(otherContent) };
+    await renderEditor();
+    await act(async () => editor!.edit("other edit\n"));
+    expect(dirtyPaneIds()).toEqual(["p1"]);
+
+    // Save the one left behind only: the shown file keeps its own edit.
+    const decision = confirmDirtyNavigation("layout", ["p1"]);
+    const request = currentDirtyGuardRequest()!;
+    expect(request.entries.map((e) => e.label)).toEqual([initial.path, "repos/b.txt"]);
+    await act(async () => {
+      await request.entries[0]!.save();
+    });
+    expect(vi.mocked(putFile)).toHaveBeenCalledWith(initial.path, "mine\n", initial.revision);
+    expect(editor!.model?.content).toBe("other edit\n");
+    expect(editor!.model?.dirty).toBe(true);
+    cancelDirtyGuardRequest(request.id);
+    await expect(decision).resolves.toBe(false);
+    expect(currentDirtyGuardRequest()).toBeNull();
+    // Only the shown file is still unsaved; the saved one was let go.
+    const again = confirmDirtyNavigation("layout", ["p1"]);
+    const second = currentDirtyGuardRequest()!;
+    expect(second.entries.map((e) => e.label)).toEqual(["repos/b.txt"]);
+    await act(async () => {
+      await discardDirtyGuardRequest(second.id);
+    });
+    await expect(again).resolves.toBe(true);
+    expect(dirtyPaneIds()).toEqual([]);
+  });
+
+  it("calls it the same as the buffer when the disk now holds exactly the unsaved text", async () => {
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await unmount();
+    given = { path: initial.path, content: "mine\n", revision: revisionOf("mine\n") };
+    const back = await renderEditor();
+    expect(back.model?.externalObservation).toMatchObject({ kind: "same_as_buffer", revision: revisionOf("mine\n") });
+  });
+
+  it("does not let a hook that moved to another file run the old file's guard on the new buffer", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    // Same hook instance, another file (no remount).
+    const otherContent = "other\n";
+    given = { path: "repos/b.txt", content: otherContent, revision: revisionOf(otherContent) };
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+    expect(editor!.model?.path).toBe("repos/b.txt");
+    await act(async () => {
+      pendingPut.resolve({ ok: true, path: initial.path, size: 5, revision: revisionOf("mine\n") });
+      await pendingPut.promise;
+    });
+    // The new file's buffer did not take the old save's outcome.
+    expect(editor!.model?.content).toBe(otherContent);
+    expect(editor!.model?.baseDiskRevision).toBe(revisionOf(otherContent));
+    expect(editor!.model?.dirty).toBe(false);
+    // The old buffer is still guarded, and its guard does not act on the new one: the new
+    // file's own unsaved edit must survive a discard aimed at the old file.
+    await act(async () => editor!.edit("other edit\n"));
+    const decision = confirmDirtyNavigation("layout", ["p1"]);
+    const request = currentDirtyGuardRequest()!;
+    expect(request.entries.map((e) => e.label)).toEqual([initial.path, "repos/b.txt"]);
+    let discarded = true;
+    await act(async () => {
+      discarded = await request.entries[0]!.discard() !== false;
+    });
+    expect(discarded).toBe(false); // fail closed
+    expect(editor!.model?.content).toBe("other edit\n");
+    expect(editor!.model?.dirty).toBe(true);
+    cancelDirtyGuardRequest(request.id);
+    await expect(decision).resolves.toBe(false);
+  });
 });
