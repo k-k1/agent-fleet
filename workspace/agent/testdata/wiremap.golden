@@ -210,6 +210,11 @@ internal/sessionx/session_turn.go handleManagedTurn x1 {op,sent}
 internal/sessionx/session_turn.go handleQueueEdit x1 {dismissed,op,sent}
 internal/sessionx/session_turn.go handleQueueEdit x1 {op,removed,sent}
 internal/sessionx/session_usage.go HandleSessionsUsage x1 {sessions}
+internal/svnx/svn.go HandleCheckout x1 {job}
+internal/svnx/svn.go HandleDeleteConn x1 {forgot}
+internal/svnx/svn_auth.go HandleAuth x1 {trustCert,urlPrefix,username}
+internal/svnx/svn_auth.go HandleGetAuth x1 {hasCred,trustCert,url,urlPrefix,username} cond{hasCred,trustCert,username}
+internal/svnx/svn_auth.go HandlePutConn x1 {trustCert,urlPrefix,username}
 internal/workitems/workitems.go HandleWorkItemsFetch x2 {errors,items,truncated}
 internal/workitems/workitems_comment.go HandleWorkItemsComment x1 {url}
 jdk_install_http.go handleJDKInstall x3 {error,java_available,java_installed,java_versions,major,state}
@@ -227,10 +232,5 @@ repo_jobs.go handleListRepoJobs x1 {jobs}
 repo_prompts.go handleRepoPromptTemplates x1 {groups}
 share_operation.go handleShareOperationLookup x1 {state,statusCode,updatedAt}
 ssm_instances.go handleSSMInstances x1 {instances}
-svn.go handleDeleteSvnConn x1 {forgot}
-svn.go handleSvnCheckout x1 {job}
-svn_auth.go handleGetSvnAuth x1 {hasCred,trustCert,url,urlPrefix,username} cond{hasCred,trustCert,username}
-svn_auth.go handlePutSvnConn x1 {trustCert,urlPrefix,username}
-svn_auth.go handleSvnAuth x1 {trustCert,urlPrefix,username}
 ui_prefs.go handleGetUIPrefs x1 {} dyn
 ui_prefs.go handlePutUIPrefs x1 {} dyn

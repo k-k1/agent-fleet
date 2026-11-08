@@ -1,4 +1,4 @@
-package main
+package svnx
 
 // Re-authenticating an SVN working copy (docs/log/41 amendment).
 //
@@ -95,10 +95,10 @@ type svnAuthReq struct {
 	TrustCert bool   `json:"trustCert"`
 }
 
-// handleGetSvnAuth (GET /repos/{name}/svn-auth) answers what the re-authentication dialog
+// HandleGetAuth (GET /repos/{name}/svn-auth) answers what the re-authentication dialog
 // needs to open already filled in: which server this working copy talks to, and whether a
 // credential currently matches it. The password is never returned.
-func handleGetSvnAuth(w http.ResponseWriter, r *http.Request) {
+func HandleGetAuth(w http.ResponseWriter, r *http.Request) {
 	dir, ok := svnDirFromPath(w, r)
 	if !ok {
 		return
@@ -116,11 +116,11 @@ func handleGetSvnAuth(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// handleSvnAuth (POST /repos/{name}/svn-auth) verifies a credential against this working
+// HandleAuth (POST /repos/{name}/svn-auth) verifies a credential against this working
 // copy's server and, only then, stores it. This is the re-authentication route: it exists
 // for the working copy that was checked out WITHOUT saving credentials, so it always
 // saves — an unsaved credential would leave the very state the user came here to escape.
-func handleSvnAuth(w http.ResponseWriter, r *http.Request) {
+func HandleAuth(w http.ResponseWriter, r *http.Request) {
 	if !svnAvailable() {
 		httpx.WriteErr(w, http.StatusNotImplemented, "svn_missing", "the 'svn' command is not available in this workspace")
 		return
@@ -168,11 +168,11 @@ type svnConnReq struct {
 	VerifyURL string `json:"verifyUrl"`
 }
 
-// handlePutSvnConn (PUT /connections/svn) upserts a saved SVN server credential from the
+// HandlePutConn (PUT /connections/svn) upserts a saved SVN server credential from the
 // connections screen — the same store the checkout dialog writes, reachable without a
 // working copy in hand (adding the credential BEFORE the checkout, or fixing a password
 // that was rotated on the server).
-func handlePutSvnConn(w http.ResponseWriter, r *http.Request) {
+func HandlePutConn(w http.ResponseWriter, r *http.Request) {
 	var req svnConnReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return

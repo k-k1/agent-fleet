@@ -1,4 +1,4 @@
-package main
+package svnx
 
 // The re-authentication route, end to end against a server that really refuses.
 //
@@ -62,7 +62,7 @@ func TestSvnReauthenticateWorkingCopy(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/repos/docs/svn-update", nil)
 	req.SetPathValue("name", "docs")
-	handleSvnUpdate(rec, req)
+	HandleUpdate(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("update status = %d, want 401: %s", rec.Code, rec.Body.String())
 	}
@@ -74,7 +74,7 @@ func TestSvnReauthenticateWorkingCopy(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("GET", "/repos/docs/svn-auth", nil)
 	req.SetPathValue("name", "docs")
-	handleGetSvnAuth(rec, req)
+	HandleGetAuth(rec, req)
 	var info struct {
 		URL       string `json:"url"`
 		URLPrefix string `json:"urlPrefix"`
@@ -95,7 +95,7 @@ func TestSvnReauthenticateWorkingCopy(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/repos/docs/svn-auth", strings.NewReader(`{"username":"alice","password":"wrong"}`))
 	req.SetPathValue("name", "docs")
-	handleSvnAuth(rec, req)
+	HandleAuth(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("bad password status = %d, want 401: %s", rec.Code, rec.Body.String())
 	}
@@ -108,7 +108,7 @@ func TestSvnReauthenticateWorkingCopy(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/repos/docs/svn-auth", strings.NewReader(`{"username":"alice","password":"s3cret"}`))
 	req.SetPathValue("name", "docs")
-	handleSvnAuth(rec, req)
+	HandleAuth(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("re-auth status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -121,7 +121,7 @@ func TestSvnReauthenticateWorkingCopy(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/repos/docs/svn-update", nil)
 	req.SetPathValue("name", "docs")
-	handleSvnUpdate(rec, req)
+	HandleUpdate(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update after re-auth = %d, want 200: %s", rec.Code, rec.Body.String())
 	}

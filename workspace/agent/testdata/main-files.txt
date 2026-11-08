@@ -91,10 +91,7 @@ session_wiring.go
 share_operation.go
 shutdown.go
 ssm_instances.go
-svn.go
-svn_auth.go
-svn_view.go
-svn_wrapper.go
+svn_wiring.go
 terminal.go
 terminal_history.go
 tool_caches.go

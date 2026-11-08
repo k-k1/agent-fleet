@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -62,8 +63,8 @@ func TestGitWiringIsLive(t *testing.T) {
 		// happen, but "swapped for a different closure" should still be caught.
 		"StartRepoJob": func(t *testing.T) { sameGitFunc(t, w.StartRepoJob, startGitRepoJob) },
 
-		"IsSvnRepo":    func(t *testing.T) { sameGitFunc(t, w.IsSvnRepo, isSvnRepo) },
-		"SvnRepoEntry": func(t *testing.T) { sameGitFunc(t, w.SvnRepoEntry, svnRepoEntry) },
+		"IsSvnRepo":    func(t *testing.T) { sameGitFunc(t, w.IsSvnRepo, svnx.IsRepo) },
+		"SvnRepoEntry": func(t *testing.T) { sameGitFunc(t, w.SvnRepoEntry, svnx.RepoEntry) },
 
 		"EnsureCredHelper": func(t *testing.T) { sameGitFunc(t, w.EnsureCredHelper, ensureCredHelper) },
 		"InternalGitHost":  func(t *testing.T) { sameGitFunc(t, w.InternalGitHost, internalGitHost) },

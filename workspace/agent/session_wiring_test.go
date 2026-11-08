@@ -31,6 +31,7 @@ package main
 // without adding a check fails here.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"reflect"
 	"runtime"
 	"testing"
@@ -51,7 +52,7 @@ func TestSessionWiringIsLive(t *testing.T) {
 		"MaxUploadBytes": func(t *testing.T) { sameSessionFunc(t, w.MaxUploadBytes, maxUploadBytes) },
 		"ReadRoots":      func(t *testing.T) { sameSessionFunc(t, w.ReadRoots, allowedReadRoots) },
 
-		"IsSvnRepo":       func(t *testing.T) { sameSessionFunc(t, w.IsSvnRepo, isSvnRepo) },
+		"IsSvnRepo":       func(t *testing.T) { sameSessionFunc(t, w.IsSvnRepo, svnx.IsRepo) },
 		"RepoJobsRunning": func(t *testing.T) { sameSessionFunc(t, w.RepoJobsRunning, repoJobsRunning) },
 		"ImageJobsActive": func(t *testing.T) { sameSessionFunc(t, w.ImageJobsActive, imagegen.ActiveJobs) },
 

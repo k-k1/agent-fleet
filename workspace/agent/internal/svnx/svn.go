@@ -1,4 +1,4 @@
-package main
+package svnx
 
 // Subversion (SVN) checkout support (docs/log/41). SVN working copies live under
 // ~/repos/<name> alongside git working copies — the folder name IS the id, same
@@ -34,9 +34,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// isSvnRepo reports whether dir is an SVN working copy (has a .svn dir). The
+// IsRepo reports whether dir is an SVN working copy (has a .svn dir). The
 // counterpart to isGitRepo; the repo list uses both to classify a folder.
-func isSvnRepo(dir string) bool {
+func IsRepo(dir string) bool {
 	fi, err := os.Stat(filepath.Join(dir, ".svn"))
 	return err == nil && fi.IsDir()
 }
@@ -50,6 +50,10 @@ func isSvnRepo(dir string) bool {
 // "yes" and turn a missing subversion into an exec failure deep inside a handler,
 // exactly the cryptic error this check exists to prevent.
 func svnAvailable() bool { return realSvnPath() != "" }
+
+// Available is svnAvailable for package main's tests of the checkout job, which need the real
+// job registry and so live there.
+func Available() bool { return svnAvailable() }
 
 // svnCmd builds an `svn` command that goes STRAIGHT to the real binary.
 //
@@ -132,7 +136,7 @@ func runSvnAuthed(ctx context.Context, creds *secrets.SVNCred, args ...string) (
 // checkout of a large repository prints one line per file, and holding all of them in
 // memory is both wasteful and invisible — the sink turns the same bytes into a live
 // "N files, last: …" and keeps only the tail for the error message.
-func runSvnAuthedSink(ctx context.Context, sink *repoJobSink, creds *secrets.SVNCred, args ...string) (string, error) {
+func runSvnAuthedSink(ctx context.Context, sink gitx.RepoJobSink, creds *secrets.SVNCred, args ...string) (string, error) {
 	full, authed := svnAuthedArgs(creds, args...)
 	cmd := svnCmd(ctx, full...)
 	if authed {
@@ -153,7 +157,7 @@ func runSvnAuthedSink(ctx context.Context, sink *repoJobSink, creds *secrets.SVN
 	}
 	cmd.Stdout, cmd.Stderr = sink, sink
 	err := cmd.Run()
-	return sink.tailString(), err
+	return sink.Tail(), err
 }
 
 // svnLocked reports whether svn output signals a wedged working-copy lock (an
@@ -190,7 +194,7 @@ func runSvnAuthedHealing(ctx context.Context, dir string, creds *secrets.SVNCred
 }
 
 // runSvnAuthedHealingSink is runSvnAuthedHealing with a progress sink (job path).
-func runSvnAuthedHealingSink(ctx context.Context, sink *repoJobSink, dir string, creds *secrets.SVNCred, args ...string) (string, error) {
+func runSvnAuthedHealingSink(ctx context.Context, sink gitx.RepoJobSink, dir string, creds *secrets.SVNCred, args ...string) (string, error) {
 	out, err := runSvnAuthedSink(ctx, sink, creds, args...)
 	// A cancelled/timed-out job also fails "locked" (we killed it mid-write); healing it
 	// would restart the very work the user just stopped.
@@ -286,9 +290,9 @@ func svnDirty(dir string) bool {
 	return dirty
 }
 
-// svnRepoEntry builds the list-view representation of an SVN working copy for
+// RepoEntry builds the list-view representation of an SVN working copy for
 // handleListRepos. Git-only fields (branch/ahead/behind/worktree) stay zero.
-func svnRepoEntry(name, dir string) gitx.Repo {
+func RepoEntry(name, dir string) gitx.Repo {
 	rev, url := svnInfo(dir)
 	return gitx.Repo{
 		Name:          name,
@@ -380,9 +384,9 @@ func svnForgetCred(prefix string) error {
 	return s.Save()
 }
 
-// svnConnStatus reports the saved SVN servers (URL prefix + username — never the
+// ConnStatus reports the saved SVN servers (URL prefix + username — never the
 // password) so the Console can list/forget them. Folded into GET /connections.
-func svnConnStatus(s *secrets.Data) []map[string]string {
+func ConnStatus(s *secrets.Data) []map[string]string {
 	list := []map[string]string{}
 	for _, c := range s.SVN {
 		e := map[string]string{"urlPrefix": c.URLPrefix, "username": c.Username}
@@ -435,13 +439,13 @@ func svnBuildURL(base, subpath string) string {
 	return u
 }
 
-// handleSvnCheckout (POST /repos/svn) starts an SVN checkout into ~/repos/<name>.
+// HandleCheckout (POST /repos/svn) starts an SVN checkout into ~/repos/<name>.
 // Mirrors handleCloneRepo: derive/validate a folder name, refuse an existing dir, then
 // hand the network work to a background job and answer 202 with it (docs/log/78) — a first
 // checkout routinely outlives every proxy in the path, and the synchronous shape made
 // the Console call a still-running checkout "done". Credentials are used once and, when
 // Save is set, upserted into the encrypted store for later updates.
-func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
+func HandleCheckout(w http.ResponseWriter, r *http.Request) {
 	if !svnAvailable() {
 		httpx.WriteErr(w, http.StatusNotImplemented, "svn_missing", "the 'svn' command is not available in this workspace")
 		return
@@ -509,13 +513,13 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 			_ = svnSaveCred(base, saveUser, savePass, creds.TrustCert)
 		}
 	}
-	job := startRepoJob("svn", name, dir, full, func(ctx context.Context, sink *repoJobSink) error {
+	job := startRepoJob("svn", name, dir, full, func(ctx context.Context, sink gitx.RepoJobSink) error {
 		out, err := runSvnAuthedHealingSink(ctx, sink, dir, creds, "checkout", full, dir)
 		if err != nil {
 			// Keep a working copy that svn can resume (cleanup + update picks up where
 			// it stopped); only a checkout that never produced one is swept away. The
 			// old unconditional RemoveAll is exactly how a half-hour download vanished.
-			if !isSvnRepo(dir) {
+			if !IsRepo(dir) {
 				_ = os.RemoveAll(dir)
 			}
 			return fmt.Errorf("%v: %s", err, out)
@@ -533,22 +537,22 @@ func svnDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid repo name")
 		return "", false
 	}
-	if !isSvnRepo(dir) {
+	if !IsRepo(dir) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such svn working copy: "+r.PathValue("name"))
 		return "", false
 	}
 	return dir, true
 }
 
-// handleSvnUpdate (POST /repos/{name}/svn-update) runs `svn update`, self-healing a
+// HandleUpdate (POST /repos/{name}/svn-update) runs `svn update`, self-healing a
 // wedged lock. Creds come from the store (matched to the working copy's URL).
-func handleSvnUpdate(w http.ResponseWriter, r *http.Request) {
+func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	dir, ok := svnDirFromPath(w, r)
 	if !ok {
 		return
 	}
 	if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
-		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunning,
+		httpx.WriteErr(w, http.StatusConflict, deps.ErrCodeSessionsRunning,
 			fmt.Sprintf("%d session(s) are running in this working copy (%s); finish or stop them before updating.",
 				len(running), strings.Join(running, ", ")))
 		return
@@ -569,12 +573,12 @@ func handleSvnUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "update_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, svnRepoEntry(r.PathValue("name"), dir))
+	httpx.WriteJSON(w, http.StatusOK, RepoEntry(r.PathValue("name"), dir))
 }
 
-// handleSvnCleanup (POST /repos/{name}/svn-cleanup) runs `svn cleanup` to clear a
+// HandleCleanup (POST /repos/{name}/svn-cleanup) runs `svn cleanup` to clear a
 // wedged working-copy lock. Local only — no auth, always available.
-func handleSvnCleanup(w http.ResponseWriter, r *http.Request) {
+func HandleCleanup(w http.ResponseWriter, r *http.Request) {
 	dir, ok := svnDirFromPath(w, r)
 	if !ok {
 		return
@@ -583,12 +587,12 @@ func handleSvnCleanup(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "cleanup_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, svnRepoEntry(r.PathValue("name"), dir))
+	httpx.WriteJSON(w, http.StatusOK, RepoEntry(r.PathValue("name"), dir))
 }
 
-// handleDeleteSvnConn (DELETE /connections/svn?prefix=...) forgets a saved SVN
+// HandleDeleteConn (DELETE /connections/svn?prefix=...) forgets a saved SVN
 // credential.
-func handleDeleteSvnConn(w http.ResponseWriter, r *http.Request) {
+func HandleDeleteConn(w http.ResponseWriter, r *http.Request) {
 	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
 	if prefix == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_prefix", "prefix is required")

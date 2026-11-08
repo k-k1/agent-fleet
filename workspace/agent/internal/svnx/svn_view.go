@@ -1,4 +1,4 @@
-package main
+package svnx
 
 // Read-only SVN history and local-changes views (issue #1705, docs/log/41 amendment).
 //
@@ -451,11 +451,11 @@ func svnViewDir(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 // ---- handlers --------------------------------------------------------------------------
 
-// handleSvnLog (GET /repos/{name}/svn-log?limit=&path=&from=) returns one page of history,
+// HandleLog (GET /repos/{name}/svn-log?limit=&path=&from=) returns one page of history,
 // newest first. `from` is the OLDEST revision of the previous page: the next page is
 // `-r from-1:1`, and a page of "limit" entries is fetched with one extra so hasMore is exact.
 // wcRevision is the working copy's own revision, so the Console can mark what is newer.
-func handleSvnLog(w http.ResponseWriter, r *http.Request) {
+func HandleLog(w http.ResponseWriter, r *http.Request) {
 	dir, ok := svnViewDir(w, r)
 	if !ok {
 		return
@@ -510,12 +510,12 @@ func svnCommitMessageParts(msg string) (subject, body string) {
 	return strings.TrimSpace(subject), strings.TrimSpace(body)
 }
 
-// handleSvnShow (GET /repos/{name}/svn-show?rev=&path=) returns one revision: header, the
+// HandleShow (GET /repos/{name}/svn-show?rev=&path=) returns one revision: header, the
 // changed paths, and the colored patch. The diff is taken against the REPOSITORY ROOT URL
 // (or root + the working copy's own path joined with `path`), not the working copy: a
 // revision newer than the working copy — the very thing the log marks — may not exist at
 // the working copy's peg, and the log lists the whole commit's paths, so the diff matches it.
-func handleSvnShow(w http.ResponseWriter, r *http.Request) {
+func HandleShow(w http.ResponseWriter, r *http.Request) {
 	dir, ok := svnViewDir(w, r)
 	if !ok {
 		return
@@ -581,9 +581,9 @@ func handleSvnShow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSvnChanges (GET /repos/{name}/svn-changes) lists local modifications. LOCAL ONLY: no
+// HandleChanges (GET /repos/{name}/svn-changes) lists local modifications. LOCAL ONLY: no
 // credential, no network, safe on the Console's auto-refresh tick.
-func handleSvnChanges(w http.ResponseWriter, r *http.Request) {
+func HandleChanges(w http.ResponseWriter, r *http.Request) {
 	dir, ok := svnViewDir(w, r)
 	if !ok {
 		return
@@ -603,9 +603,9 @@ func handleSvnChanges(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, svnChangesResp{Changes: cs})
 }
 
-// handleSvnDiff (GET /repos/{name}/svn-diff?path=) is one file's (or, with no path, the whole
+// HandleDiff (GET /repos/{name}/svn-diff?path=) is one file's (or, with no path, the whole
 // working copy's) uncommitted diff, in git's unified format. LOCAL ONLY.
-func handleSvnDiff(w http.ResponseWriter, r *http.Request) {
+func HandleDiff(w http.ResponseWriter, r *http.Request) {
 	dir, ok := svnViewDir(w, r)
 	if !ok {
 		return

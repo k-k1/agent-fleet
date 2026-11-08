@@ -94,7 +94,7 @@ type Deps struct {
 	RepoJobActive func(name string) bool
 	StartRepoJob  func(kind, name, dir, url string, run func(ctx context.Context, sink RepoJobSink) error) any
 
-	// --- SVN (svn.go) ---
+	// --- SVN (internal/svnx/svn.go) ---
 	//
 	// ~/repos mixes git and svn. The listing shows both, so the git side has to read the
 	// svn side. SvnRepoEntry returns a gitx.Repo, not a type of main's (Repo came over to

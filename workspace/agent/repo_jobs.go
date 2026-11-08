@@ -33,6 +33,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -174,7 +175,7 @@ func sweepRepoJobMarkers() {
 		if !ok {
 			continue
 		}
-		kept := gitx.IsGitRepo(dir) || isSvnRepo(dir)
+		kept := gitx.IsGitRepo(dir) || svnx.IsRepo(dir)
 		if _, err := os.Stat(dir); err != nil {
 			// The folder itself is gone (the user deleted it, or we died before the import
 			// started). Nobody is left to report the interruption to, so just clean up the
@@ -367,7 +368,7 @@ func finishRepoJob(id string, err error) {
 		e.job.Error = err.Error()
 	}
 	if e.job.State != repoJobDone {
-		e.job.Kept = gitx.IsGitRepo(dir) || isSvnRepo(dir)
+		e.job.Kept = gitx.IsGitRepo(dir) || svnx.IsRepo(dir)
 	}
 	repoJobs.mu.Unlock()
 	removeRepoJobMarker(name)
