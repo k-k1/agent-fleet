@@ -141,7 +141,7 @@ func TestBudgetDelaysTheRestWithTheCause(t *testing.T) {
 	later := t0.Add(time.Hour)
 	small2 := &scriptModel{classify: classifyAs("no-op")}
 	in2 := input(small2, nil, later)
-	in2.Config.TokenBudget = 2200 // one topic's estimate (~1950) fits, two do not
+	in2.Config.TokenBudget = 4000 // one topic's estimate (~3350) fits, two do not
 	rep := mustRun(t, in2)
 	if rep.Ripe != 2 || len(rep.Handled) != 1 || len(rep.Delayed) != 1 || rep.Delayed[0].Cause != CauseBudget {
 		t.Fatalf("report = %+v", rep)
