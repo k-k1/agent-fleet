@@ -3,7 +3,7 @@ audience: "People who want to know their workspace's machine size and how its me
 source_of_truth: "The Console's Settings > Machine"
 ---
 
-# Change the machine size
+# See your machine and its usage
 
 English | [日本語](machine.ja.md)
 

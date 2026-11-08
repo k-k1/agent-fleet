@@ -153,5 +153,5 @@ eval "$(af-db env mysql)"
 ## 関連
 
 - [AWS のコードを手元のエミュレーターで試す](aws-emulator.ja.md)
-- [マシンの大きさを変える](machine.ja.md)
+- [マシンと使用状況を見る](machine.ja.md)
 - [ツールチェーンを選ぶ](toolchains.ja.md)

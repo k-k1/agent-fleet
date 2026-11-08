@@ -114,6 +114,6 @@ See [Troubleshooting](../../member/21-troubleshooting.md#starting-a-session-says
 
 ## Related
 
-- [Change the machine size](machine.md): the architecture decides which tools are installed
+- [See your machine and its usage](machine.md): the architecture decides which tools are installed
 - [Run database-backed tests](databases.md)
 - [Recreate the workspace](recreate.md)

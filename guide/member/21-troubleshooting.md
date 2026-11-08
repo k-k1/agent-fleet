@@ -74,7 +74,7 @@ away once more than 3 GiB is free and use is below 85 %. Installs and agents can
 when the disk fills. Free space from ⚙ Settings → Machine, or ask a tenant administrator to grow
 the home. You see it only where the home is a volume of your own (ECS on EC2); on shared storage
 the numbers would include other people's files, so no notice is shown
-([Change the machine size](../user/workspace/machine.md#free-up-the-home-disk)).
+([See your machine and its usage](../user/workspace/machine.md#free-up-the-home-disk)).
 
 ### Starting a session says the agent's CLI could not be installed
 
@@ -471,7 +471,7 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
   abnormally; **"Reconnect"** reopens it ([14](14-preview-browser.md#status-display-and-recovery)).
 - **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy
   builds, watchers and browser panes left open (at most **2** at a time). How to check memory is under
-  [Change the machine size](../user/workspace/machine.md#see-the-usage) and in the FAQ entry "Builds die / freeze from running out of memory" below.
+  [See your machine and its usage](../user/workspace/machine.md#see-the-usage) and in the FAQ entry "Builds die / freeze from running out of memory" below.
 
 ### Signing in on a preview URL shows an Agent Fleet error page
 

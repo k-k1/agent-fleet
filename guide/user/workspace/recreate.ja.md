@@ -86,4 +86,4 @@ source_of_truth: "Console の設定 >「危険な操作」と、ワークスペ�
 ## 関連
 
 - [ツールチェーンを選ぶ](toolchains.ja.md)
-- [マシンの大きさを変える](machine.ja.md)：ホームのディスクの空きを作る
+- [マシンと使用状況を見る](machine.ja.md)：ホームのディスクの空きを作る

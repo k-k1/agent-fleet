@@ -92,5 +92,5 @@ The costs could not be read, so the figures are old or empty. If it persists, te
 
 ## Related
 
-- [Change the machine size](machine.md)
+- [See your machine and its usage](machine.md)
 - [Recreate the workspace](recreate.md)

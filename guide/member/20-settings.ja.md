@@ -396,7 +396,7 @@ Google Cloud バッジは [Google Cloud を使う](../user/integrations/gcloud.j
 ### マシン
 
 ワークスペースが動いているマシンの大きさと、メモリ・ディスクの使用状況、ディスクの空けかたです。
-[マシンの大きさを変える](../user/workspace/machine.ja.md) にあります。
+[マシンと使用状況を見る](../user/workspace/machine.ja.md) にあります。
 
 ### ツールチェーン
 

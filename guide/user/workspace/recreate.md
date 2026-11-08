@@ -90,4 +90,4 @@ workspace again or recreate it again.
 ## Related
 
 - [Choose your toolchains](toolchains.md)
-- [Change the machine size](machine.md): free up space on the home disk
+- [See your machine and its usage](machine.md): free up space on the home disk

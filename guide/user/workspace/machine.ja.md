@@ -3,7 +3,7 @@ audience: "ワークスペースのマシンの大きさや、メモリ・ディ
 source_of_truth: "Console の設定 >「マシン」"
 ---
 
-# マシンの大きさを変える
+# マシンと使用状況を見る
 
 [English](machine.md) | 日本語
 

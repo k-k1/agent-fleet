@@ -157,5 +157,5 @@ A shell opened before the server started does not have the connection variables.
 ## Related
 
 - [Try AWS code against a local emulator](aws-emulator.md)
-- [Change the machine size](machine.md)
+- [See your machine and its usage](machine.md)
 - [Choose your toolchains](toolchains.md)

@@ -406,7 +406,7 @@ When your workspace was running, as a grid of hours. How to read it is in
 ### Machine
 
 The size of the machine your workspace runs on, its memory and disk usage, and how to free disk space:
-[Change the machine size](../user/workspace/machine.md).
+[See your machine and its usage](../user/workspace/machine.md).
 
 ### Toolchains
 

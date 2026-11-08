@@ -27,7 +27,7 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | Page | What you can do |
 |---|---|
 | [Recreate the workspace](workspace/recreate.md) | Rebuild a broken environment from the latest image |
-| [Change the machine size](workspace/machine.md) | Check the machine's size and how memory and disk are used, and free disk space |
+| [See your machine and its usage](workspace/machine.md) | Check the machine's size and how memory and disk are used, and free disk space |
 | [Choose your toolchains](workspace/toolchains.md) | Pick the Node.js, Java and Go versions and the time zone |
 | [Run database-backed tests](workspace/databases.md) | Run tests against PostgreSQL and MySQL inside the workspace |
 | [Try AWS code against a local emulator](workspace/aws-emulator.md) | Try AWS code without touching a real account |

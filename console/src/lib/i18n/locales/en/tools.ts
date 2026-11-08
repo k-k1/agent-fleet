@@ -393,7 +393,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.agent_update_title": "Agent CLI updates",
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",
   "env.agent_update_note":
-    "Covers claude / opencode / codex / Copilot / Antigravity (agy) / rtk. OFF (default) pins the system-baked image versions. ON updates each to the latest on the next start (applied on Stop → Start; turn it OFF and restart to return to the image versions). You can change this even while stopped.",
+    "Covers claude / opencode / codex / Copilot / Antigravity (agy) / Cursor / rtk. OFF (default) pins the system-baked image versions. ON updates each to the latest on the next start (applied on Stop → Start; turn it OFF and restart to return to the image versions). You can change this even while stopped.",
   // --- Databases (features/settings/workspace/DatabaseTab.tsx — ADR 0086 P1 decision 9) ---
   "env.db_title": "Databases",
   "env.db_intro":
