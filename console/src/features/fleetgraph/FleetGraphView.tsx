@@ -1,8 +1,8 @@
 // FleetGraphView — the fleet session graph (ADR 0096): lanes are sessions, time runs
 // left to right. Hand-written inline SVG over a pure layout model, the same structural
-// template as the SCM commit graph (features/scm/CommitGraph.tsx + lib/gitgraph.ts).
+// template as the SCM commit graph (features/scm/CommitGraph.tsx + ../scm/gitgraph.ts).
 //
-// The render model comes from lib/fleetgraph.ts's buildFleetGraph, which merges the
+// The render model comes from ./fleetgraph.ts's buildFleetGraph, which merges the
 // served ledger page (history) with the live sessions map (what is true now) — a lane's
 // presence needs both, so this view holds the page and hands both over rather than
 // deriving anything itself. Geometry (xOf/laneY) comes from there too: a second copy

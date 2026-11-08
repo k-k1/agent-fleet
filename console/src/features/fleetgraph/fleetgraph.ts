@@ -1,6 +1,6 @@
 // Fleet session graph layout (ADR 0096 / docs/log/101) — the pure builder that
 // turns a ledger page (history) plus the live sessions map (now) into a render
-// model. Structural template borrowed from lib/gitgraph.ts: pure functions in,
+// model. Structural template borrowed from ../scm/gitgraph.ts: pure functions in,
 // plain-data model out, no methods on the model itself.
 import type { Session, SessionKind } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";

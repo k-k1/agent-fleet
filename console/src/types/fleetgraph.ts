@@ -435,7 +435,7 @@ export interface GraphScale {
 
 // Plain data only — no methods. The view renders a fixture straight from JSON and
 // a test compares two models, both of which a function member would break (the
-// same reason lib/gitgraph.ts returns rows and exports its helpers separately).
+// same reason features/scm/gitgraph.ts returns rows and exports its helpers separately).
 export interface GraphModel {
   scale: GraphScale;
   lanes: GraphLane[];

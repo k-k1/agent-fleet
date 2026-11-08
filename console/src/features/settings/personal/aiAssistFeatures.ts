@@ -1,4 +1,4 @@
-// lib/aiAssistFeatures.ts — the catalog of the 8 features that run through the Agent's
+// aiAssistFeatures.ts — the catalog of the 8 features that run through the Agent's
 // OneShotHeadless (docs/log/103 §103.2), shared by the AI assist settings tab (AiAssistTab)
 // and the usage view's per-feature breakdown so the same feature carries the same label in
 // both places.

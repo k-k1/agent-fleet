@@ -162,7 +162,7 @@ function CommitRow({
   );
 }
 
-// RefBadge draws one grouped chip (lib/gitgraph groupRefs). The kind is carried by a
+// RefBadge draws one grouped chip (./gitgraph groupRefs). The kind is carried by a
 // leading icon rather than spelled into the label — a tag reads "🏷 v0.5.0", not
 // "refs/tags/v0.5.0" — and a local branch whose remotes sit on this same commit gets a
 // cloud marker instead of a second "origin/…" chip beside it.

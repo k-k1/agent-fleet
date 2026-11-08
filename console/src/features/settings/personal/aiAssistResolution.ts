@@ -1,4 +1,4 @@
-// lib/aiAssistResolution.ts — GET /api/ai-assist/resolution (docs/log/103 §103.6/§103.7's
+// aiAssistResolution.ts — GET /api/ai-assist/resolution (docs/log/103 §103.6/§103.7's
 // "いま使うのは" row): which backend each AI-assist feature currently resolves to.
 //
 // Cheap on purpose: the Agent answers from its own 1-minute availability cache and never

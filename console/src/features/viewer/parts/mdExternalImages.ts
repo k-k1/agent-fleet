@@ -1,4 +1,4 @@
-// Click-to-load for images the sanitizer deferred (deferExternalMedia in lib/sanitize.ts).
+// Click-to-load for images the sanitizer deferred (deferExternalMedia in ../sanitize.ts).
 // Displaying a document must not make the browser contact the document author's host: that
 // reveals the reader's IP address and, without a referrer policy, the page they are on.
 import { EXT_ATTR_PREFIX, isExternalMediaUrl, isInternalMediaUrl, srcsetUrls } from "../sanitize.ts";

@@ -901,7 +901,7 @@ export const tools = {
   "ssm.region_profile_default": "プロファイル既定を使用（{region}）",
   "ssm.region_other": "その他（コードを入力）…",
   "ssm.region_other_placeholder": "リージョンコード（例: us-gov-west-1）",
-  // AWS region display names (lib/awsRegions.ts), as the AWS console words them.
+  // AWS region display names (features/settings/parts/awsRegions.ts), as the AWS console words them.
   "ssm.region.us-east-1": "米国東部 (バージニア北部)",
   "ssm.region.us-east-2": "米国東部 (オハイオ)",
   "ssm.region.us-west-1": "米国西部 (北カリフォルニア)",
@@ -1337,7 +1337,7 @@ export const tools = {
   "gcp.region_other_placeholder": "リージョン（例: us-east7）",
   "gcp.zone_other": "その他（ゾーンを入力）…",
   "gcp.zone_other_placeholder": "ゾーン（例: us-east7-a）",
-  // Display names for GCP_REGIONS (lib/gcpRegions.ts), one per listed region.
+  // Display names for GCP_REGIONS (features/settings/workspace/gcpRegions.ts), one per listed region.
   "gcp.region.africa-south1": "ヨハネスブルグ (南アフリカ)",
   "gcp.region.asia-east1": "彰化県 (台湾)",
   "gcp.region.asia-east2": "香港",
