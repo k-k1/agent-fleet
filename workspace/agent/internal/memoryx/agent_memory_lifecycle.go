@@ -144,6 +144,19 @@ func agentMemWriteBackEligible(e agentMemEntry) bool {
 // when there are no open reasons. mcpx formats the same text for the index, search hits and reads;
 // both pin it with the same literal.
 func agentMemReasonsText(rs []agentMemReason) string {
+	lines := make([]ReasonLine, len(rs))
+	for i, r := range rs {
+		lines[i] = ReasonLine{By: r.By, Rule: r.Rule, Note: r.Note}
+	}
+	return ReasonsPrefix(lines)
+}
+
+// ReasonLine is one open doubt as a client prints it.
+type ReasonLine struct{ By, Rule, Note string }
+
+// ReasonsPrefix is the one rendering of the suspect prefix; the af MCP tools call it, so the
+// index budget (measured on agentMemIndexLine) and the printed text cannot drift apart.
+func ReasonsPrefix(rs []ReasonLine) string {
 	if len(rs) == 0 {
 		return ""
 	}
@@ -213,14 +226,18 @@ func agentMemParseLifeField(l *agentMemLife, key, raw string, problems *[]string
 	case agentMemKeyReasons:
 		var rs []agentMemReason
 		if json.Unmarshal([]byte(strings.TrimSpace(raw)), &rs) == nil {
-			l.Reasons = rs
+			if len(rs) > 0 {
+				l.Reasons = rs // an empty list is no reasons, stored the same as absent
+			}
 		} else if strings.TrimSpace(raw) != "" {
 			bad()
 		}
 	case agentMemKeySupersededBy:
 		var s agentMemSuperseded
-		if json.Unmarshal([]byte(strings.TrimSpace(raw)), &s) == nil {
+		if json.Unmarshal([]byte(strings.TrimSpace(raw)), &s) == nil && (s.Memory != "" || s.Document != nil) {
 			l.SupersededBy = &s
+		} else if strings.TrimSpace(raw) != "" {
+			bad()
 		} else if strings.TrimSpace(raw) != "" {
 			bad()
 		}

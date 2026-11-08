@@ -575,7 +575,9 @@ release.
   names-only tail also lists quiet memories and logs, and a pinned quiet memory is not counted as a pin that did not
   fit. A copy the write-back withdrew and that was edited on the native side is the conflict `withdrawn_but_changed`; it
   cannot be overwritten and is not listed in `MEMORY.md`. A lifecycle write marks an imported memory as changed, so a
-  later re-import of the same file is `diverged` until the member decides (the importers compare stored bytes).
+  later re-import of the same file is `diverged` until the member decides (the importers compare stored bytes). A bundle
+  import only creates and takes no lifecycle fields from the bundle either. `memory_save` of an archived or superseded
+  memory is refused for agents, as `memory_patch` is; the member's save still works.
 
 - **2026-11-08 — decision 3 "Counters" built (#3442).** `.usage-v2/reads/<name>` and `.usage-v2/hits/<name>`
   are written beside the legacy `.usage/<name>`; `confirmed/` and `stale/` are in the layout (cleared with the

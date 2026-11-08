@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 )
 
 const (
@@ -69,19 +71,11 @@ func mcpMemoryReasonsText(rs []mcpMemoryReason) string {
 	if len(rs) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(rs))
-	for _, r := range rs {
-		p := r.By + " " + r.Rule
-		if r.Note != "" {
-			p += ": " + r.Note
-		}
-		parts = append(parts, p)
+	lines := make([]memoryx.ReasonLine, len(rs))
+	for i, r := range rs {
+		lines[i] = memoryx.ReasonLine{By: r.By, Rule: r.Rule, Note: r.Note}
 	}
-	s := strings.Join(parts, "; ")
-	if r := []rune(s); len(r) > 160 {
-		s = string(r[:160]) + "…"
-	}
-	return "[suspect: " + s + "] "
+	return memoryx.ReasonsPrefix(lines)
 }
 
 func (s *mcpMemorySuperseded) String() string {

@@ -557,6 +557,10 @@ func agentMemParseStrict(b []byte) (agentMemEntry, []string, bool) {
 	if e.Revision < 1 {
 		e.Revision = 1
 	}
+	if e.Status == "" && e.StatusBy != "" {
+		e.StatusBy = "" // who set a status that is not there; the writers refuse it
+		problems = append(problems, agentMemKeyStatusBy)
+	}
 	e.Body = strings.TrimRight(body, "\n")
 	return e, problems, true
 }
@@ -1096,6 +1100,10 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	}
 	base := cur.Entry.Revision
 	switch {
+	case exists && agentMemExcluded(cur.Entry) && c.Kind != agentMemMember.Kind:
+		// Same rule as memory_patch: what an agent cannot see it cannot rewrite.
+		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+			"this memory is archived or superseded; ask your user to restore it before changing it")
 	case exists && req.Revision == 0:
 		return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
 			"the memory already exists at revision %d; read it and pass that revision to update it", base)

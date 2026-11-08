@@ -250,8 +250,11 @@ func TestLifeWritersKeepFields(t *testing.T) {
 
 	t.Run("save", func(t *testing.T) {
 		c, want := setup(t, "m")
+		// An agent cannot save over a superseded memory (see TestLifeSaveRefusesExcludedForAgents).
+		want.SupersededBy = nil
+		lifeSet(t, c, agentMemScopeProject, "m", func(e *agentMemEntry) { e.SupersededBy = nil })
 		// The body is left as it is, so the feedback reason stays; kind and anchors are not named.
-		lifeSave(t, c, agentMemSaveReq{Name: "m", Revision: 2, Body: "line one\nline two", Description: "new description"})
+		lifeSave(t, c, agentMemSaveReq{Name: "m", Revision: 3, Body: "line one\nline two", Description: "new description"})
 		check(t, "save", c, "m", want)
 	})
 	t.Run("patch", func(t *testing.T) {
@@ -489,5 +492,45 @@ func TestLifeLenientReader(t *testing.T) {
 	}
 	if agentMemExcluded(e) || !agentMemDescribable(e) {
 		t.Error("an unreadable status must not hide a memory")
+	}
+}
+
+// Hand-edited combinations a writer would refuse are not kept by the reader either: an empty
+// superseded_by must not hide a memory, a lone status_by and an empty reasons list are dropped.
+func TestLifeLenientReaderDropsDegenerateValues(t *testing.T) {
+	raw := "---\nname: \"n\"\ndescription: \"d\"\nrevision: 1\nsuperseded_by: {}\nstatus_by: \"member\"\nreasons: []\n---\nb\n"
+	e, problems, ok := agentMemParseStrict([]byte(raw))
+	if !ok || e.SupersededBy != nil || e.StatusBy != "" || e.Reasons != nil || !e.isZero() {
+		t.Fatalf("parse = %+v", e.agentMemLife)
+	}
+	if strings.Join(problems, ",") != "superseded_by,status_by" {
+		t.Errorf("problems = %v", problems)
+	}
+	if agentMemExcluded(e) {
+		t.Error("an empty superseded_by hid the memory")
+	}
+	if !agentMemLifeSame(e.agentMemLife, agentMemLife{}) {
+		t.Error("a degenerate value made the memory differ from a plain one")
+	}
+}
+
+// An agent cannot rewrite an archived or superseded memory through memory_save any more than
+// through memory_patch; the member's save still works.
+func TestLifeSaveRefusesExcludedForAgents(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	lifeSave(t, c, agentMemSaveReq{Name: "m"})
+	lifeSet(t, c, agentMemScopeProject, "m", func(e *agentMemEntry) { e.Status, e.StatusBy = "archived", "member" })
+	stub, err := agentMemRead(c, "", "m")
+	if err != nil || !stub.Stub {
+		t.Fatalf("read = %+v %v", stub, err)
+	}
+	if _, err := agentMemSave(c, agentMemSaveReq{Name: "m", Description: "d", Body: "rewritten", Revision: stub.Revision}, lifeNow); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("agent save of an archived memory: %v", err)
+	}
+	mem := agentMemMember
+	mem.Project = c.Project
+	if _, err := agentMemSave(mem, agentMemSaveReq{Name: "m", Description: "d", Body: "by the member", Revision: stub.Revision}, lifeNow); err != nil {
+		t.Fatalf("member save: %v", err)
 	}
 }
