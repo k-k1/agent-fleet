@@ -232,12 +232,9 @@ func main() {
 	if mgr.plaintextSecrets() {
 		log.Printf(plaintextSecretsLog, mgr.authMode)
 	}
-	mgr.weakMasterKey, mgr.weakCookieSecret = weakKeyChecks(mgr.authMode, os.Getenv("AF_MASTER_KEY"), os.Getenv("AF_COOKIE_SECRET"))
-	if mgr.weakMasterKey {
-		log.Printf(weakMasterKeyLog, mgr.authMode)
-	}
-	if mgr.weakCookieSecret {
-		log.Printf(weakCookieSecretLog, mgr.authMode)
+	weakMaster, weakCookie := weakKeyChecks(mgr.authMode, os.Getenv("AF_MASTER_KEY"), os.Getenv("AF_COOKIE_SECRET"))
+	if err := weakKeyRefusal(mgr.authMode, weakMaster, weakCookie); err != nil {
+		log.Fatalf("deployment keys: %v", err)
 	}
 
 	// MetadataStore (P3-1, docs/13): SQLite is the source of truth for the
@@ -339,10 +336,11 @@ func main() {
 	}
 
 	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
-	if envBool("AF_COOKIE_PURPOSE_KEYS", false) {
-		log.Print("cookies: per-purpose keys on (AF_COOKIE_PURPOSE_KEYS)")
+	cookiePurposeKeys := cookiePurposeKeysFromEnv()
+	if cookiePurposeKeys {
+		log.Print("cookies: per-purpose keys on")
 	} else {
-		log.Print("cookies: single-key format; set AF_COOKIE_PURPOSE_KEYS=1 once every replica runs this version (guide/operate/04-secure.md)")
+		log.Print("cookies: single-key format (AF_COOKIE_PURPOSE_KEYS=0 opt-out; it goes away in a later release, guide/operate/04-secure.md)")
 	}
 	// Internal git provider: the clone host workspaces authenticate against is the
 	// public base's host (Caddy TLS terminus). Recorded on the manager so each
@@ -375,7 +373,7 @@ func main() {
 		cookieSecret:       decodeKey(os.Getenv("AF_COOKIE_SECRET")),
 		cookieSecure:       strings.HasPrefix(publicBaseURL, "https"),
 		sessionTTL:         envx.DurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour),
-		cookiePurposeKeys:  envBool("AF_COOKIE_PURPOSE_KEYS", false),
+		cookiePurposeKeys:  cookiePurposeKeys,
 		legacyCookieUntil:  time.Now().Add(max(envx.DurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour), previewSessionTTL)),
 		allowEmails:        envx.EmailSet(os.Getenv("AF_OAUTH_ALLOWED_EMAILS")),
 		allowDomains:       envx.DomainSet(os.Getenv("AF_OAUTH_ALLOWED_DOMAINS")),
@@ -781,6 +779,11 @@ func envBool(k string, def bool) bool {
 		return def
 	}
 }
+
+// cookiePurposeKeysFromEnv is on unless AF_COOKIE_PURPOSE_KEYS is explicitly 0/false/no/off
+// (ECS: CookiePurposeKeys=0). An empty value, which is what an untouched ECS parameter passes,
+// is the default: on.
+func cookiePurposeKeysFromEnv() bool { return envBool("AF_COOKIE_PURPOSE_KEYS", true) }
 
 // decodeKey reads a cookie/HMAC key: base64 (std or url, padded or raw) if it
 // decodes, else the raw bytes. Empty => nil (oauth mode then fails the config

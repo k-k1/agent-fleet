@@ -309,3 +309,8 @@ decisions rely on.
 
 New keys derived from the master key use HKDF-SHA256 with a label (see `docs/build/07-security.md`
 §7.6.1, which lists every existing derivation; those stay HMAC for compatibility).
+
+> **Note (2026-11-08, #3552).** Two items above changed in 0.43.0: the Control Plane now refuses
+> to start under `AUTH` other than `dev` on a weak `AF_MASTER_KEY` / `AF_COOKIE_SECRET` (the
+> `weak_*` deployment warnings were removed with it), and per-purpose cookie keys are on by
+> default, with `AF_COOKIE_PURPOSE_KEYS=0` as a one-release opt-out.

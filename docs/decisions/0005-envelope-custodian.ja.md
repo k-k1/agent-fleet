@@ -246,3 +246,7 @@ migration 0091 / pg 0076 で `home_dek.confirm_epoch` を足す（後述）。
 
 master 鍵から導く新しい鍵は、ラベル付きの HKDF-SHA256 を使います（既存の導出は `docs/build/07-security.ja.md`
 §7.6.1 に一覧があり、互換性のため HMAC のままです）。
+
+> **追記（2026-11-08、#3552）。** 上の 2 点は 0.43.0 で変わりました。`AUTH` が `dev` 以外で `AF_MASTER_KEY` /
+> `AF_COOKIE_SECRET` が弱いと Control Plane は起動を拒否します（`weak_*` の配備警告も無くなりました）。
+> cookie の用途別鍵は既定でオンになり、`AF_COOKIE_PURPOSE_KEYS=0` が 1 リリースだけの退避設定です。

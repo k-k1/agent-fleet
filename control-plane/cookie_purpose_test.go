@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -143,5 +144,37 @@ func TestSessionAcrossMixedReplicas(t *testing.T) {
 		if cl, ok := pair[1].session(r); !ok || cl.Email != "a@example.test" {
 			t.Errorf("%s: the other replica did not accept the session", name)
 		}
+	}
+}
+
+func TestCookiePurposeKeysDefaultOn(t *testing.T) {
+	for v, want := range map[string]bool{"": true, "1": true, "true": true, "0": false, "false": false, "off": false} {
+		t.Setenv("AF_COOKIE_PURPOSE_KEYS", v)
+		if got := cookiePurposeKeysFromEnv(); got != want {
+			t.Errorf("AF_COOKIE_PURPOSE_KEYS=%q: %v, want %v", v, got, want)
+		}
+	}
+}
+
+// A replica started later (restart, another task) derives the same keys, and a cookie from the
+// opt-out format or from the previous release still opens on a default-on replica.
+func TestDefaultCookieSurvivesRestartAndOldFormat(t *testing.T) {
+	secret := []byte("fake-cookie-secret-for-tests-only-0123456789")
+	t.Setenv("AF_COOKIE_PURPOSE_KEYS", "")
+	a := config{cookieSecret: secret, cookiePurposeKeys: cookiePurposeKeysFromEnv(), legacyCookieUntil: time.Now().Add(time.Hour)}
+	b := config{cookieSecret: secret, cookiePurposeKeys: cookiePurposeKeysFromEnv(), legacyCookieUntil: time.Now().Add(time.Hour)}
+	v := a.signCookie(cookiePurposeSession, []byte("x"))
+	if !strings.HasPrefix(v, cookieFormatV2) {
+		t.Fatalf("default config issued %q, want the labelled format", v)
+	}
+	if _, ok := b.verifyCookie(cookiePurposeSession, v); !ok {
+		t.Error("a second replica rejects the cookie")
+	}
+	if _, ok := b.verifyCookie(cookiePurposeState, v); ok {
+		t.Error("cookie verified for another purpose")
+	}
+	old := previousRelease{secret}.sign([]byte("y"))
+	if p, ok := b.verifyCookie(cookiePurposeSession, old); !ok || string(p) != "y" {
+		t.Error("the unlabelled cookie of the previous release is no longer accepted")
 	}
 }
