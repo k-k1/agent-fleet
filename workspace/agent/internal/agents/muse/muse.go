@@ -170,7 +170,11 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	if ms, ok := readSession(slotSid(m)); ok {
 		cs = commentaryFor(ms.Path)
 	}
-	td := agents.TranscriptData{Turns: turnsWithCommentary(items, cs), Path: st.Path(), Mode: "normal"}
+	var fragments map[string]string
+	if h := handleFor(m.Name); h != nil {
+		fragments = h.streamingText()
+	}
+	td := agents.TranscriptData{Turns: turnsWithCommentary(withStreamingText(items, fragments), cs), Path: st.Path(), Mode: "normal"}
 	// An assistant turn is labelled with the model of its first item. session/setModel takes
 	// effect at the next model call, so a turn that spans a switch shows the model it began on.
 	for i := range td.Turns {
@@ -189,7 +193,7 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	}
 	// Overlay what only the live handle knows: the fragments of an item still streaming, the
 	// prompt awaiting an answer, and the prompts queued behind the running turn.
-	if fragments := h.streamingText(); len(fragments) > 0 {
+	if len(fragments) > 0 {
 		td.Turns = appendStreaming(td.Turns, items, fragments)
 	}
 	h.mu.Lock()
