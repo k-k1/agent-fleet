@@ -29,7 +29,7 @@ var BedrockScopes = []string{"us", "eu", "apac", "jp", "au", "us-gov", "global"}
 // cannot list inference profiles.
 func ParseBedrockModelID(id string) (BedrockModel, error) {
 	if id != strings.TrimSpace(id) || id == "" {
-		return BedrockModel{}, fmt.Errorf("a Bedrock model id is required (for example us.anthropic.claude-opus-4-6-v1)")
+		return BedrockModel{}, fmt.Errorf("a Bedrock model id is required (for example us.anthropic.claude-opus-4-6-v1)") // model-id-lint:allow an example of the id form in an error; it chooses no model
 	}
 	if len(id) > 200 {
 		return BedrockModel{}, fmt.Errorf("%.40q… is too long for a Bedrock model id", id)

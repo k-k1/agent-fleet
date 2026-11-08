@@ -545,6 +545,10 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.bedrock_region_placeholder": "the profile's region",
   "launch.bedrock_region_invalid": "Not an AWS region (for example us-east-1). Leave it empty to use the profile's own.",
   "launch.bedrock_hint": "Only profiles you marked as a model route in Settings > AWS profiles/SSM. The region is optional; empty uses the profile's own. The calls go through the workspace's route gateway, so the session never receives AWS credentials.",
+  "launch.field.bedrock_model": "Bedrock model ID",
+  // model-id-lint:allow examples of the Bedrock id form in help text; they choose no model
+  "launch.bedrock_model_hint": "Required. The model ID or system inference profile ID your account serves in this Region, as Bedrock writes it: for example us.anthropic.claude-opus-4-6-v1 or anthropic.claude-sonnet-4-5-20250929-v1:0. The session uses this one model for every call, subagents included, and does not fall back to another.",
+  "launch.bedrock_model_invalid": "Not an Anthropic model ID on Bedrock. Use anthropic.… or <scope>.anthropic.… (scope: us, eu, apac, jp, au, us-gov, global); aliases such as opus, claude-… IDs and ARNs are not accepted.",
   "launch.field.permissions": "Tool permissions",
   "launch.mode_normal": "Normal",
   "launch.field.location": "Location",

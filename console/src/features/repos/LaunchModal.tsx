@@ -22,7 +22,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindRoutes, useKindCatalogVersion } from "../../agents/kindCatalog.ts";
-import { bedrockConnection, regionOk, useModelRouteProfiles } from "./bedrockProfiles.ts";
+import { bedrockConnection, bedrockModelOk, regionOk, rememberBedrockModel, rememberedBedrockModel, useModelRouteProfiles } from "./bedrockProfiles.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -258,6 +258,9 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // The bedrock route's profile and region override ("" = the profile's own region).
   const [bedrockProfile, setBedrockProfile] = useState("");
   const [bedrockRegion, setBedrockRegion] = useState("");
+  // The Bedrock model id typed per profile in this dialog; a profile not typed for yet shows the id
+  // last launched with it on this browser.
+  const [bedrockModels, setBedrockModels] = useState<Record<string, string>>({});
   // Driver (docs/log/27 P2/P3): a kind that supports managed defaults to managed (§9.2).
   // CLI (TUI) is an explicit user choice — it costs one TUI process' memory per session.
   // null = untouched: the driver follows the kind's default, which can change under an open dialog
@@ -377,7 +380,10 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   const modelRouteProfiles = useModelRouteProfiles(declaredRoutes.includes("bedrock"));
   const routeOptions = declaredRoutes.filter((r) => r !== "bedrock" || (modelRouteProfiles?.length ?? 0) > 0);
   const bedrockPick = modelRouteProfiles?.find((p) => p.id === bedrockProfile) ?? modelRouteProfiles?.[0];
-  const bedrockBlocked = route === "bedrock" && routeOptions.includes("bedrock") && !regionOk(bedrockRegion);
+  const onBedrock = route === "bedrock" && routeOptions.includes("bedrock") && !!bedrockPick;
+  const bedrockModel = bedrockPick ? (bedrockModels[bedrockPick.id] ?? rememberedBedrockModel(bedrockPick.id)) : "";
+  const bedrockModelBad = onBedrock && !bedrockModelOk(bedrockModel.trim());
+  const bedrockBlocked = (onBedrock && !regionOk(bedrockRegion)) || bedrockModelBad;
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
@@ -621,11 +627,13 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     const r = await onLaunch({
       kind,
       driver: agentOf(kind).managedDriver ? driver : "",
-      model: hasModel ? model : "",
+      // The bedrock route runs on the one Bedrock id typed here, never on the picker's alias: Claude
+      // Code would map an alias to an id of its own choosing and walk a fallback ladder on a denial.
+      model: onBedrock ? bedrockModel.trim() : hasModel ? model : "",
       effort: hasEffort ? effort : "",
       route: routeOptions.includes(route) ? route : undefined,
       routeConnection:
-        route === "bedrock" && routeOptions.includes(route) && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
+        onBedrock && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
       startMode: hasStartMode ? startMode : "normal",
       skipPermissions: hasPermChoice ? skipPerm : undefined,
       prompt: prompt.trim(),
@@ -639,6 +647,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       spendCapUsd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : undefined,
     });
     if (r?.ok) {
+      if (onBedrock && bedrockPick) rememberBedrockModel(bedrockPick.id, bedrockModel.trim());
       // A successful launch means this text and its attachments reached the new session in
       // full, and this is the only place the draft may be discarded: coming back from a failure
       // (a name collision, say) keeps both the typed text and the attachments.
@@ -725,7 +734,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
         {/* An API-key launch does not run on the OAuth login, so its expiry is not this launch's problem. */}
         <ClaudeExpiredHint kind={kind} expired={claudeExpired && route !== "anthropic-api" && route !== "bedrock"} />
 
-        {hasModel && (
+        {hasModel && !onBedrock && (
           <div className="ui-field">
             <span className="ui-field-label">{tr("launch.field.model")}</span>
             <ModelPicker
@@ -1139,11 +1148,34 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                 value={bedrockRegion}
                 placeholder={bedrockPick.region || tr("launch.bedrock_region_placeholder")}
                 aria-label={tr("launch.field.bedrock_region")}
-                aria-invalid={bedrockBlocked || undefined}
+                aria-invalid={!regionOk(bedrockRegion) || undefined}
                 onChange={(e) => setBedrockRegion(e.target.value)}
               />
               <span className="ui-field-hint">
-                {bedrockBlocked ? tr("launch.bedrock_region_invalid") : tr("launch.bedrock_hint")}
+                {!regionOk(bedrockRegion) ? tr("launch.bedrock_region_invalid") : tr("launch.bedrock_hint")}
+              </span>
+            </div>
+          )}
+
+          {onBedrock && (
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.bedrock_model")}</span>
+              <input
+                type="text"
+                value={bedrockModel}
+                placeholder="us.anthropic.claude-opus-4-6-v1" // model-id-lint:allow an example of the id form; it chooses no model
+                aria-label={tr("launch.field.bedrock_model")}
+                aria-invalid={(bedrockModelBad && bedrockModel.trim() !== "") || undefined}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoComplete="off"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setBedrockModels((m) => ({ ...m, [bedrockPick!.id]: v }));
+                }}
+              />
+              <span className="ui-field-hint">
+                {bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}
               </span>
             </div>
           )}

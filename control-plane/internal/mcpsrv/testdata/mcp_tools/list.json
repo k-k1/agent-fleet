@@ -706,7 +706,7 @@
             "type": "string"
           },
           "model": {
-            "description": "model override (optional)",
+            "description": "model override (optional). claude on route=bedrock requires one: a Bedrock model id or system inference profile id as Bedrock writes it (anthropic.… or <scope>.anthropic.…, scope us, eu, apac, jp, au, us-gov or global). Aliases such as opus, claude-… ids and ARNs are refused; the session then runs on that one model for every call, subagents included, with no fallback to another",
             "type": "string"
           },
           "new_branch": {

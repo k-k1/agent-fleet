@@ -652,3 +652,23 @@ table from becoming a menu of models that fail on the first message, which is wh
   the request body arrives are never resolved on the older copy. Credentials already inside the five-minute reserve are
   reused for 30 s (never closer than 30 s to their expiry) rather than resolved, with a pull, on every call. The guide
   (chapter 16, en and ja) states both windows.
+- 2026-11-08, Bedrock model pin (#3587): measured against a stand-in Bedrock on a Unix socket (no real AWS; `env -i`,
+  own `HOME`) with Claude Code 2.1.319 under `CLAUDE_CODE_USE_BEDROCK=1`. With no model or an alias (`opus`), a 403 or 400
+  walks a fallback ladder of up to nine ids, from the Region's `<scope>.anthropic.claude-opus-5-5` down to a Sonnet 4.5 id;
+  `CLAUDE_CODE_NO_MODEL_FALLBACK` and `CLAUDE_CODE_DISABLE_MODEL_ACCESS_FALLBACK` (`1` or `true`) do not stop it. A
+  first-party id that is in Claude Code's catalogue (`claude-opus-5-5`) is rewritten to the Region's scope (`us.`, `eu.`,
+  `apac.` in ap-northeast-1); one that is not goes out as typed and is invalid. A Bedrock id (`anthropic.…`, `us.`, `eu.`,
+  `global.…`) goes out verbatim, once, with no fallback, even when denied. A 404 is two calls (a stream, then one non-stream
+  invoke) and no ladder. `--model` alone is not enough: a subagent that asks for `haiku` or `sonnet` resolves its own ids.
+  With `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL` and
+  `CLAUDE_CODE_SUBAGENT_MODEL` set to the chosen id, every call (main turn, subagents, `--model opus`) named that id and a
+  denial was one call. **Decision:** the claude `bedrock` route requires the session's model to be a Bedrock model id or
+  system inference profile id with provider `anthropic` (`routes.ParseBedrockAnthropicModelID`; the generic
+  `routes.ParseBedrockModelID` is the form ADR 0129's allow-list reuses). Aliases, `claude-…` ids, `[1m]` suffixes and ARNs
+  are refused at `CheckRoute` and launch with `route_model_mismatch` (400). The launch passes `--model <id>` and sets the
+  seven variables above to the same id in both the environment and the `--settings` layer. The gateway's token carries the
+  id and answers any call that names another model **404** `route_model_not_selected` before it reaches AWS. The member
+  types the id in the launch dialog beside the Region (remembered per AWS profile in the browser only); REST, MCP and
+  schedules send it as `model`. No AWS-side check of the id: the route's role carries `bedrock:InvokeModel*` only and cannot
+  list inference profiles, so whether the account and Region serve the id is learnt from Bedrock's answer. Not measured:
+  real Bedrock, and the TUI beyond one turn.

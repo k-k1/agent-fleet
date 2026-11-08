@@ -197,20 +197,24 @@ A model that is already enabled for the account may need none of it.
   `bedrock:InvokeModel*` was refused with AccessDenied on that first call. Make the first call once with a broader
   principal; after that the narrow route role worked.
 
-**Region and model.** The model is the one you choose in the launch dialog. Its default is a tier alias (Opus / Sonnet /
-Haiku), which claude turns into a Bedrock inference-profile ID for the route's region, and that ID may not exist there:
-in that run, in `ap-northeast-1`, the default Sonnet ID failed on the first turn with `model_not_found`. Where the
-account had no access to the model, claude fell back to older Opus versions, one gateway call (and one usage row) for
-each attempt; this is the CLI's behaviour and may change. So use a region where the account has enabled the model. The
-launch dialog offers the tier aliases and the IDs you register under **Additional Claude models** in Settings
-([agents](09-agents.md)); Settings accepts only IDs that start with `claude-` (for example `claude-opus-4-8`), not AWS
-inference-profile IDs such as `us.anthropic.…`, and whether claude maps a registered `claude-…` ID to the right Bedrock
-ID on this route has not been verified. AF does not check the model against the account or pin one per route.
+**Region and model.** On this route you type the model as Bedrock writes it, in the **Bedrock model ID** field beside the
+region: a model ID such as `anthropic.claude-sonnet-4-5-20250929-v1:0`, or a system inference profile ID, which is the same
+ID behind `us.`, `eu.`, `apac.`, `jp.`, `au.`, `us-gov.` or `global.` (for example `us.anthropic.claude-opus-4-6-v1`). The
+field is required, and the launch dialog's ordinary model picker is hidden while the route is chosen. Pick an ID that the
+Bedrock console lists for the route's region and that your account has access to. The session uses that one ID for every
+call, its subagents and claude's own small background calls included, and never falls back to another model; a call that
+names a different model is refused by the gateway (`route_model_not_selected`) before it reaches AWS. Tier aliases (Opus /
+Sonnet / Haiku), `claude-…` IDs and ARNs are refused at launch: with them claude picks Bedrock IDs of its own and, when
+the account lacks one, tries older models one after another, one gateway call (and one usage row) each. AF cannot check
+the ID against your account (the route's role may only invoke models), so an ID the account or region does not serve
+fails on the first turn with Bedrock's own answer, such as AccessDenied or `model_not_found`; start a new session with
+another ID. The dialog remembers the last ID per profile in this browser. Over the REST API or the af MCP tools, send the
+ID as `model` with the route.
 
 **When a call is refused.** The gateway answers an authentication or connection refusal itself with HTTP 401 (a refusal
 that waiting may clear, 503), always with `x-should-retry: false`, so claude shows it once, with the code in the message,
 and does not retry. (Requests the gateway cannot forward keep their own status: `route_operation_not_allowed` 404,
-`route_bad_model` 400, `route_request_too_large` 413.)
+`route_model_not_selected` 404, `route_bad_model` 400, `route_request_too_large` 413.)
 
 | Code | Meaning | What to do |
 |---|---|---|
@@ -221,6 +225,7 @@ and does not retry. (Requests the gateway cannot forward keep their own status: 
 | `route_login_required`, `route_confirmation_required` (401) | The profile needs an SSO sign-in or your "Confirm before use" approval. | Sign in or allow it; the next call goes through. |
 | `route_connection_unavailable` (503) | The Agent cannot read the AWS profiles in Settings right now. | Try again in a moment. |
 | `route_upstream_unavailable`, `route_credentials_unavailable` (503) | Bedrock or the credentials could not be reached right now. | Try again in a moment. |
+| `route_model_not_selected` (404) | The call named a model other than the Bedrock model ID the session was started with. Nothing was sent to AWS; the token stays valid. | Start a new session with the other ID. |
 
 A Bedrock answer such as AccessDenied or `model_not_found` is forwarded as it is; it is not a gateway code.
 
