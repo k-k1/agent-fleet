@@ -473,8 +473,9 @@ func hoursOf(secs int) float64 {
 	return h
 }
 
-// usage (GET /api/admin/usage?from=&to=&tenant=&months=&format=json|csv). months=N adds
-// `monthly`: the last N UTC months (see usage_monthly.go), independent of from/to.
+// usage (GET /api/admin/usage?from=&to=&tenant=&months=&member_limit=&format=json|csv). months=N adds
+// `monthly` (the last N UTC months, see usage_monthly.go, independent of from/to) and
+// `monthly_members` (the same per member, top member_limit by hours).
 // Returns the per-day rows (for a dashboard chart) and per-member totals (for a
 // table); format=csv streams the daily rows as a spreadsheet.
 func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
@@ -517,13 +518,22 @@ func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
 		"from": from, "to": to, "days": days, "totals": aggregateUsage(rows),
 	}
 	if months > 0 {
+		// Validated only where used: a CSV or months-less request ignores member_limit.
+		memberLimit, aerr := memberLimitParam(r)
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
 		sp := newMonthSpan(months, monthsNow())
 		mrows, err := a.mgr.store.ListUsage(r.Context(), tenantID, sp.From, sp.To)
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
 		}
-		resp["monthly"] = monthlyUsage(withoutSystemTenants(mrows), sp)
+		mrows = withoutSystemTenants(mrows)
+		resp["monthly"] = monthlyUsage(mrows, sp)
+		// Same rows, same tenant scope: per member, biggest first, capped at member_limit.
+		resp["monthly_members"], resp["monthly_members_total"] = monthlyUsageByMember(mrows, sp, memberLimit)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

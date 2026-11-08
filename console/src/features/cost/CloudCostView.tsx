@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import { api, errText } from "../../core/api/client.ts";
 import { RangePresets } from "../../ui/RangePresets.tsx";
 import { MonthlyTrend, costMonthRows } from "../../ui/MonthlyTrend.tsx";
+import { MemberMonthlyTable, costMemberRows } from "../../ui/MemberMonthly.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtNum } from "../../lib/intl.ts";
@@ -505,6 +506,16 @@ export function CloudCostAdminView({
             rows={costMonthRows(data.monthly, (v) => tr("monthly.shared", { v: fmtMoney(v, currency) }))}
             format={(v) => fmtMoney(v, currency)}
             note={tr("monthly.cost_scope")}
+          />
+        )}
+        {data?.monthly_members && (
+          <MemberMonthlyTable
+            title={tr("monthly.members_cost_title")}
+            members={costMemberRows(data.monthly_members)}
+            totalMembers={data.monthly_members_total}
+            format={(v) => fmtMoney(v, currency)}
+            showTenant={isSuper && !tenant}
+            unknownLabel={tr("admin.unknown")}
           />
         )}
         {data === null ? (
