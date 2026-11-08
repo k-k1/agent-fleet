@@ -204,6 +204,10 @@ func TestWatchNotifyParentBelongsToTheParent(t *testing.T) {
 		strings.Contains(do("GET", "/sessions/c/watches", "").Body.String(), created.Watch.ID) {
 		t.Fatal("the watch is not listed by the parent alone")
 	}
+	mux.HandleFunc("DELETE /sessions/{name}/watches/{id}", HandleWatchDelete)
+	if rec := do("DELETE", "/sessions/c/watches/"+created.Watch.ID, ""); rec.Code != 404 {
+		t.Fatalf("the child ended its parent's watch: %d", rec.Code)
+	}
 	// A handoff successor and a top-level session have no parent to notify.
 	for _, n := range []string{"h", "p"} {
 		if rec := do("POST", "/sessions/"+n+"/watches", `{"ref":"o/r#1","types":["pr.merged"],"notify":"parent"}`); rec.Code != 400 {
@@ -215,6 +219,11 @@ func TestWatchNotifyParentBelongsToTheParent(t *testing.T) {
 	watchEngine().Tick(context.Background())
 	if !strings.Contains(do("GET", "/sessions/p/watches", "").Body.String(), created.Watch.ID) {
 		t.Fatal("archiving the child ended the parent's watch")
+	}
+	session.WriteMeta(session.Meta{Name: "p", Kind: session.KindClaude, Dir: dir, Archived: true})
+	watchEngine().Tick(context.Background())
+	if l := watchEngine().List("p"); len(l) != 0 {
+		t.Fatalf("archiving the parent left its watch: %+v", l)
 	}
 }
 

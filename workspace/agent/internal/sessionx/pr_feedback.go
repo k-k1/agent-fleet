@@ -87,14 +87,21 @@ var (
 	prFeedbackInject  = injectSessionPrompt
 	prFeedbackStart   = startSessionInProcess
 	prFeedbackPut     = notice.PutOnce
-	prFeedbackWatched = func(name, linkKey, what string) bool {
-		if what == "ci" {
-			return watchingPR(name, linkKey, "pr.checks.failed")
-		}
-		// A review item is a change request or new unresolved threads; a watch on either covers it.
-		return watchingPR(name, linkKey, "pr.review.changes_requested") || watchingPR(name, linkKey, "pr.review.threads_unresolved")
-	}
+	prFeedbackWatched = watchingPR
 )
+
+// prFeedbackCovered reports whether the session's own watches tell it everything item would.
+// A review item can carry a change request and new threads at once; it is covered only when each
+// part it carries is watched, or the uncovered part would be recorded as told and never arrive.
+func prFeedbackCovered(name, linkKey string, it prFeedbackItem) bool {
+	watched := func(typ string) bool { return prFeedbackWatched(name, linkKey, typ) }
+	if it.what == "ci" {
+		// The engine reports a failure under both types; checks.completed carries the result.
+		return watched("pr.checks.failed") || watched("pr.checks.completed")
+	}
+	return (!it.newCR || watched("pr.review.changes_requested")) &&
+		(!it.newThreads || watched("pr.review.threads_unresolved"))
+}
 
 // prFeedbackBranch remembers the branch PR key each session's row last asked (annotateLinks), so
 // the watch reads the entry the list keeps warm instead of asking the same PR by number.
@@ -400,6 +407,8 @@ func prRecordID(w *prWatched) string {
 type prFeedbackItem struct {
 	what string // "ci" or "review"
 	text string
+	// newCR and newThreads say which parts a review item carries.
+	newCR, newThreads bool
 	// apply records the item as told.
 	apply func(r *prFeedbackRecord)
 }
@@ -428,7 +437,7 @@ func prFeedbackDue(w *prWatched, r prFeedbackRecord) (items []prFeedbackItem, co
 	newThreads := pr.UnresolvedThreads > r.ReviewThreads
 	if (newCR || newThreads) && r.ReviewSent < prFeedbackMaxReview {
 		cr, threads := pr.ChangesRequested, pr.UnresolvedThreads
-		items = append(items, prFeedbackItem{what: "review", text: prReviewNotice(w), apply: func(r *prFeedbackRecord) {
+		items = append(items, prFeedbackItem{what: "review", text: prReviewNotice(w), newCR: newCR, newThreads: newThreads, apply: func(r *prFeedbackRecord) {
 			r.ReviewSent++
 			r.ReviewCR, r.ReviewThreads = cr, threads
 		}})
@@ -558,7 +567,7 @@ func prFeedbackTick(now time.Time) {
 			if sentTo[owner.name] {
 				break
 			}
-			if w.provider == "github" && prFeedbackWatched(owner.name, w.linkKey, it.what) {
+			if w.provider == "github" && prFeedbackCovered(owner.name, w.linkKey, it) {
 				// The session watches this PR itself and hears it from the watch engine; recorded
 				// as told so it does not come again once the watch ends.
 				r := s.records[id]

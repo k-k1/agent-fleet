@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"sort"
@@ -316,7 +317,10 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 	if g.Threads != nil && selects(want, typeThreads) {
 		count, err := g.Threads(ctx, repo, n)
 		if err != nil {
-			return nil, raw, Hint{}, err
+			// The REST answers and their ETags stay good: only the threads are unknown this
+			// round, and a threads watch stays pending until a later read answers.
+			log.Printf("watch: unresolved threads of %s: %v", ref, err)
+			goto done
 		}
 		g.charge()
 		switch {
@@ -331,6 +335,7 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 				fmt.Sprintf("%s has %d unresolved review thread(s).", ref, count), nil))
 		}
 	}
+done:
 	out, _ := json.Marshal(cur)
 	hint := Hint{After: ghOpenAfter}
 	if busy {

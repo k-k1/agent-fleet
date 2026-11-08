@@ -454,3 +454,17 @@ func TestGitHubThreadsOnlyWhenAskedAndOnlyOnARise(t *testing.T) {
 		t.Fatalf("versions = %s", got)
 	}
 }
+
+func TestGitHubThreadsFailureKeepsTheRestOfThePoll(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(false), "dirty")
+	f.bodies[runsPath] = map[string]any{"total_count": 0, "check_runs": []any{}}
+	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
+	f.bodies[reviewsPath] = []any{}
+	g := newTestGitHub(t, f)
+	g.Threads = func(context.Context, string, int) (int, error) { return 0, errors.New("graphql down") }
+	evs, cur, _, err := g.Poll(context.Background(), "github:o/r#7", nil, []string{"pr.*"})
+	if err != nil || types(evs) != "pr.conflict" || len(cur) == 0 {
+		t.Fatalf("a threads failure lost the REST answers: %v %s", err, types(evs))
+	}
+}

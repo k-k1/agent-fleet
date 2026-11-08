@@ -98,7 +98,8 @@ func watchThreads(ctx context.Context, repo string, number int) (int, error) {
 		return 0, errors.New("GitHub did not answer for the PR's review threads")
 	}
 	if pr == nil {
-		return 0, nil
+		// Not "no threads": GitHub could not show the PR, which must not reset the count.
+		return 0, errors.New("GitHub did not return the PR for its review threads")
 	}
 	return pr.UnresolvedThreads, nil
 }

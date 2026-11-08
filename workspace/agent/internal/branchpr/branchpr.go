@@ -312,7 +312,9 @@ func (c *Cache) refresh(due []Key) {
 
 // storeLocked records pr as k's answer and hands it to every other entry that holds the same PR,
 // so a PR asked by number (a watch) and by branch (a session row) is one answer: whichever read
-// it last keeps the other fresh, and neither asks GitHub again within its TTL.
+// it last keeps the other fresh, and a Lookup does not ask GitHub again within its TTL. A branch
+// entry is matched by the PR it last held, so a branch that moved to another PR keeps its old
+// answer for one TTL more at worst.
 func (c *Cache) storeLocked(k Key, e *entry, pr *PR, now time.Time) {
 	e.pr, e.fetched = pr, now
 	if pr == nil || pr.Number <= 0 {
@@ -343,6 +345,28 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	now := time.Now()
+	// Fresh answers are as good as a call, and a hold after an error or a rate limit applies to
+	// Fetch as it does to the background refresh.
+	c.mu.Lock()
+	cached, allFresh := map[Key]*PR{}, true
+	for _, k := range keys {
+		e := c.entries[k]
+		if e == nil || !e.fresh(now, c.openTTL) {
+			allFresh = false
+			break
+		}
+		e.asked = now
+		cached[k] = e.pr
+	}
+	hold := c.holdUntil
+	c.mu.Unlock()
+	if allFresh {
+		return cached, nil
+	}
+	if now.Before(hold) {
+		return nil, fmt.Errorf("GitHub is held off until %s after an error", hold.Format(time.RFC3339))
+	}
 	token, err := c.Token()
 	if err != nil {
 		return nil, err
@@ -359,10 +383,15 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
+	now = time.Now()
 	out := map[Key]*PR{}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for k, e := range c.entries {
+		if now.Sub(e.asked) > forgetAfter {
+			delete(c.entries, k)
+		}
+	}
 	for _, k := range keys {
 		if failed[k] {
 			continue

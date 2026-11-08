@@ -608,3 +608,24 @@ func TestFetchNotConnected(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestFetchAnswersFromFreshEntriesAndRespectsTheHold(t *testing.T) {
+	var calls atomic.Int32
+	srv := server(t, &calls, http.StatusOK, nil)
+	c := newTestCache(srv.URL, "tok")
+	k := Key{Repo: "o/r", Number: 100}
+	t.Setenv("BRANCHPR_TEST_BODY", `{"data":{"r0":{"owner":{"login":"o"},"pullRequest":`+prNode(100, "OPEN", false, "o", "SUCCESS")+`}}}`)
+	if _, err := c.Fetch(context.Background(), []Key{k}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Fetch(context.Background(), []Key{k}); err != nil || calls.Load() != 1 {
+		t.Fatalf("a fresh entry was asked again: calls=%d err=%v", calls.Load(), err)
+	}
+	c.mu.Lock()
+	c.entries[k].fetched = time.Time{}
+	c.holdUntil = time.Now().Add(time.Minute)
+	c.mu.Unlock()
+	if _, err := c.Fetch(context.Background(), []Key{k}); err == nil || calls.Load() != 1 {
+		t.Fatalf("Fetch ignored the hold: calls=%d err=%v", calls.Load(), err)
+	}
+}

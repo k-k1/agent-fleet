@@ -177,6 +177,12 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if err := e.checkLimits(r.Owner); err != nil {
 		return Subscription{}, err
 	}
+	e.mu.Lock()
+	err := e.requesterLimitLocked(r.Requester)
+	e.mu.Unlock()
+	if err != nil {
+		return Subscription{}, err
+	}
 	res, err := src.Resolve(ctx, r.Ref, r.DefaultRepo)
 	if err != nil {
 		return Subscription{}, err
@@ -193,6 +199,9 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	defer e.mu.Unlock()
 	e.load()
 	if err := e.limitsLocked(r.Owner); err != nil {
+		return Subscription{}, err
+	}
+	if err := e.requesterLimitLocked(r.Requester); err != nil {
 		return Subscription{}, err
 	}
 	e.state.Subs = append(e.state.Subs, sub)
@@ -214,6 +223,24 @@ func (e *Engine) checkLimits(owner string) error {
 	defer e.mu.Unlock()
 	e.load()
 	return e.limitsLocked(owner)
+}
+
+// requesterLimitLocked also counts a child's watches for its parent against the child, so one
+// child cannot fill its parent's limit.
+func (e *Engine) requesterLimitLocked(requester string) error {
+	if requester == "" {
+		return nil
+	}
+	n := 0
+	for _, s := range e.state.Subs {
+		if !s.Done && (s.Owner == requester || s.Requester == requester) {
+			n++
+		}
+	}
+	if n >= MaxPerOwner {
+		return &ErrRefused{fmt.Sprintf("this session already has %d watches of its own or for its parent, the limit", MaxPerOwner)}
+	}
+	return nil
 }
 
 func (e *Engine) limitsLocked(owner string) error {
@@ -266,16 +293,21 @@ func (e *Engine) Unsubscribe(owner, id string) bool {
 
 // Watching reports whether owner has a live subscription to subject that selects typ. The PR
 // feedback watch asks it so a session that watches its own PR is not told twice.
+// A subscription past its deadline, or whose owner is gone, does not count: the engine drops it
+// on its next tick without telling anyone.
 func (e *Engine) Watching(owner string, subject SubjectID, typ string) bool {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	now := e.now()
 	e.load()
+	found := false
 	for _, s := range e.state.Subs {
-		if s.Owner == owner && s.Subject == subject && !s.Done && selects(s.Types, typ) {
-			return true
+		if s.Owner == owner && s.Subject == subject && !s.Done && now.Before(s.Expires) && selects(s.Types, typ) {
+			found = true
+			break
 		}
 	}
-	return false
+	e.mu.Unlock()
+	return found && e.sink.OwnerExists(owner)
 }
 
 // Listed is one subscription with its subject's health, for list_watches.

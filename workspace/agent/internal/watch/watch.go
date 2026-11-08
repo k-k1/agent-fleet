@@ -99,7 +99,7 @@ const (
 // Subscription is one watch a session asked for.
 type Subscription struct {
 	ID      string    `json:"id"`
-	Owner   string    `json:"owner"` // the session that asked and receives the notices
+	Owner   string    `json:"owner"` // the session that owns the watch and receives its notices
 	Source  string    `json:"source"`
 	Subject SubjectID `json:"subject"`
 	Ref     string    `json:"ref"` // the reference as the session gave it, for list_watches

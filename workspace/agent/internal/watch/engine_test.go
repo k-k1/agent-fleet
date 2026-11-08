@@ -497,3 +497,61 @@ func TestAnEmptyVersionIsStillDeliveredOnce(t *testing.T) {
 		t.Fatalf("told = %v", sink.told)
 	}
 }
+
+func TestWatchingIgnoresExpiredAndGoneOwners(t *testing.T) {
+	sink := &fakeSink{answer: Wait, gone: map[string]bool{}}
+	e, _, c := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, sink)
+	ctx := context.Background()
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}, Lifetime: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	if !e.Watching("a", "fake:o/r#1", "pr.merged") {
+		t.Fatal("a live watch is not reported")
+	}
+	sink.gone["a"] = true
+	if e.Watching("a", "fake:o/r#1", "pr.merged") {
+		t.Fatal("a gone owner's watch counts")
+	}
+	sink.gone["a"] = false
+	c.add(2 * time.Hour)
+	if e.Watching("a", "fake:o/r#1", "pr.merged") {
+		t.Fatal("an expired watch counts")
+	}
+}
+
+func TestAChildCannotFillItsParentsLimit(t *testing.T) {
+	e, _, _ := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, &fakeSink{answer: Wait})
+	ctx := context.Background()
+	for i := 0; i < MaxPerOwner/2; i++ {
+		if _, err := e.Subscribe(ctx, Request{Owner: "p", Requester: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+			t.Fatalf("watch %d: %v", i, err)
+		}
+	}
+	// The child's own watches and those it made for its parent share the child's limit.
+	for i := 0; ; i++ {
+		_, err := e.Subscribe(ctx, Request{Owner: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+		if err != nil {
+			break
+		}
+		if i > MaxPerOwner {
+			t.Fatal("no limit")
+		}
+	}
+	var ref *ErrRefused
+	if _, err := e.Subscribe(ctx, Request{Owner: "p", Requester: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); !errors.As(err, &ref) {
+		t.Fatalf("a child at its limit made a watch for its parent: %v", err)
+	}
+	if _, err := e.Subscribe(ctx, Request{Owner: "p", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+		t.Fatalf("the parent itself was refused: %v", err)
+	}
+}
+
+func TestNoticeNamesTheChildForAParent(t *testing.T) {
+	n := Notice(Subscription{ID: "w1", Requester: "kid", Until: UntilFirst}, Event{Source: "github", Subject: "github:o/r#1", Type: "pr.merged", Summary: "s"})
+	if !strings.HasPrefix(n, "[agent-fleet:notice kind=watch source=github type=pr.merged subject=github:o/r#1 watch=w1 for=kid reply=none] ") {
+		t.Fatalf("notice = %q", n)
+	}
+	if n := Notice(Subscription{ID: "w1", Requester: "x] y"}, Event{Source: "github", Subject: "github:o/r#1", Type: "pr.merged"}); !strings.Contains(n, " for=invalid ") {
+		t.Fatalf("a non-token requester reached the header: %q", n)
+	}
+}
