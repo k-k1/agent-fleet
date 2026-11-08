@@ -232,6 +232,12 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     useSettingsUI.getState().openSettings("memory:changes");
     return { opened: true };
   }
+  // The memory consolidator's daily notice (ADR 0130 decision 7) opens its suggestions. Opening is
+  // all it does: a notification never approves or rejects anything.
+  if (n.kind === "memory-consolidation") {
+    useSettingsUI.getState().openSettings("memory:proposals");
+    return { opened: true };
+  }
   // Anything left whose target is not a session has nowhere to go, and must not fall through:
   // openNotificationSession would answer a bare opened=false and the center would warn "that
   // session is not in the current list" — about a notification that never had one. The case

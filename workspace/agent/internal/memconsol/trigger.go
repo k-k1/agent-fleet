@@ -23,10 +23,10 @@ type Deps struct {
 	Activity func() (busy bool, last time.Time)
 	// Models builds the two roles; tests return fakes. nil means the configured runner.
 	Models func() (Models, map[string]string, error)
-	// Notice is the hook for "at most once a day while any proposal waits"; the notification
-	// itself is the next PR's. It is called with the number of pending proposals, and only when
-	// the daily gate allows it.
-	Notice func(waiting int)
+	// Notice raises the Console notification. It is called with the number of pending proposals,
+	// and only while the switch is on and the daily gate allows it; it must carry the count and
+	// nothing from a memory. A non-nil error leaves the day's notice unspent.
+	Notice func(waiting int) error
 }
 
 var (
@@ -177,6 +177,7 @@ func Tick(ctx context.Context, now time.Time) (Report, bool) {
 		stampSightings(now)
 	}
 	if !dec.Run {
+		maybeNotice(d, cfg, now)
 		return Report{}, false
 	}
 
@@ -245,15 +246,13 @@ func configuredModels(cfg Config) (Models, map[string]string, error) {
 	return out, roles, nil
 }
 
-// maybeNotice is the hook for the daily "proposals are waiting" notice: at most once per
-// Config.NoticeEvery while any proposal is pending. No notification is raised in this PR; the
-// next one installs Deps.Notice.
+// maybeNotice raises the daily "proposals are waiting" notice through Deps.Notice: only while the
+// member's switch is on, at most once per Config.NoticeEvery, and only while any proposal is
+// pending. The time of the last notice is kept in state.json, so a restart does not bring a
+// second one the same day. The gate is checked before the queue is listed because the tick calls
+// this on every enabled tick.
 func maybeNotice(d Deps, cfg Config, now time.Time) {
-	if d.Notice == nil {
-		return
-	}
-	ps, err := ListProposals(StatusPending, now)
-	if err != nil || len(ps) == 0 {
+	if d.Notice == nil || d.Enabled == nil || !d.Enabled() {
 		return
 	}
 	stateMu.Lock()
@@ -262,8 +261,15 @@ func maybeNotice(d Deps, cfg Config, now time.Time) {
 	if err != nil || (!st.Trigger.LastNotice.IsZero() && now.Sub(st.Trigger.LastNotice) < cfg.NoticeEvery) {
 		return
 	}
-	st.Trigger.LastNotice = now
-	if st.save() == nil {
-		d.Notice(len(ps))
+	ps, err := ListProposals(StatusPending, now)
+	if err != nil || len(ps) == 0 {
+		return
 	}
+	// The day's notice is spent only once it is in the outbox: a failed Put is retried on the next tick.
+	if err := d.Notice(len(ps)); err != nil {
+		log.Printf("memory consolidation: notification: %v", err)
+		return
+	}
+	st.Trigger.LastNotice = now
+	_ = st.save()
 }

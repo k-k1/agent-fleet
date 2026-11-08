@@ -702,3 +702,19 @@ release.
   (`workspace/agent/internal/memengine`, `scripts/sync-memengine.sh`, a test that fails on drift) rather than a
   `replace` to a directory outside the image's build context. Not built: the Console approval UI and toggle, the
   daily notice (a gated hook exists), the ledger entry for the tokens, codex/Gemini runners. Follow-ups: #3696 (the replacement writer that would let a supersede apply).
+
+- **2026-11-09 — decisions 6 and 7: the Console side built (#3497, fourth PR).** Settings › Agent memory › Settings has the
+  `memoryConsolidation` switch (off by default; the write is the signed ui-prefs relay the Agent already requires the member-origin
+  mark for) and a status block from `GET /api/agents/memory-consolidation` (last run, earliest next run, pending count, each ripe
+  topic that waits with its cause). A new Suggestions view lists the proposals (pending, decided, expired) in the change list's
+  layout and shows the target revision, evidence, observations and the Agent's diff per item. Approve (after a confirmation naming
+  the writes), reject and retry go through the existing signed relay rows, with the proposal id in the query for the audit hint; no
+  new route and no bulk action exist. The stale-revision, forgotten/exists/invalid/secret and expired/decided refusals are worded,
+  and a proposal whose item the get route reports stale has Approve disabled. A proposal with no patch or create item (supersede,
+  merge, add without a candidate) is shown as advice with no Approve (#3696). The daily notice is the `maybeNotice` hook wired to
+  the Agent's notification outbox as the kind `memory-consolidation` (target type workspace, payload `{pending: n}` only): it now
+  requires the switch to be on, is checked on every enabled tick as well as after a run, and its time is kept in `state.json`
+  so it survives a restart. The row opens Suggestions and decides nothing. Not built: the supersede/merge writer (#3696),
+  codex/Gemini runners, the ledger entry for the tokens. Not verified on a real workspace: a real model run, the notification
+  reaching the Console from a live Agent.
+  A failed outbox write does not spend the day's notice (the stamp is saved only after the notification is queued), so the next tick retries.

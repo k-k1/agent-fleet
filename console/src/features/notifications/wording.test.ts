@@ -122,6 +122,22 @@ describe("notification row headings", () => {
     expect(notificationKindLabel("memory-sync")).toBe(ja["noti.kind_memory_sync"]);
   });
 
+  // The memory consolidator's daily notice (ADR 0130 decision 7): a count and a pointer, never a memory.
+  it("a memory-consolidation notice words the count and leads to the suggestions", () => {
+    setLocale("ja");
+    const n = { kind: "memory-consolidation", displayName: "", payload: { pending: 4, name: "must not appear" } };
+    const w = notificationWording(n);
+    expect(w.title).toBe("承認待ちのメモリの提案が 4 件あります");
+    expect(w.body).toBe(ja["notif.memory_consolidation.body"]);
+    expect(w.body + w.title + w.speech).not.toContain("must not appear");
+    expect(notificationRowSubtitle(n)).toBe(w.body);
+    expect(notificationKindLabel("memory-consolidation")).toBe(ja["noti.kind_memory_consolidation"]);
+    expect(notificationWording({ ...n, payload: {} }).title).not.toMatch(/undefined|NaN/);
+    setLocale("en");
+    expect(notificationWording(n).title).toBe("4 memory suggestions are waiting for your review");
+    setLocale("ja");
+  });
+
   // The start deadline stopped a launch that never finished (#1298). The workspace is the
   // subject, so displayName is empty, and the last phase is the only record of why: on ecs-ec2
   // the stop clears it from the workspace itself. Row and OS notification must both carry it.
