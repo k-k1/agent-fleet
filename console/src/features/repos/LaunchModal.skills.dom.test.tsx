@@ -26,6 +26,10 @@ vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
   getUser: () => "",
   api: async () => ({}),
+  // The settings sync (lib/settings/sync.ts) PUTs ui-prefs through apiJSON 600 ms after any
+  // setting changes; a test that outlasts the debounce reaches it before the shared afterEach
+  // cancels the timer, and a missing export is an unhandled error that fails the whole run.
+  apiJSON: async () => ({}),
   repoPromptTemplates: async () => ({ groups: [] }),
   repoSkills: (...a: unknown[]) => repoSkillsMock(...(a as [string, string, string])),
   sessionSkills: () => sessionSkillsMock(),
