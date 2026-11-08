@@ -342,6 +342,27 @@ asking.
   instruction.
 - What was told is remembered across Agent restarts, so nothing is told twice.
 
+## A session watching a pull request itself
+
+An agent can ask to be told when a pull request changes, instead of polling it in the
+background: the af tool `watch` takes a pull request (`owner/repo#45`, `#45` in its own
+repository, or the GitHub URL) and the events it wants, such as checks finishing, a merge
+conflict, the pull request becoming ready to merge, being merged or closed, or a reviewer asking
+for changes. `list_watches` shows its watches and `unwatch` ends one. This needs no setting:
+the agent decides when to use it.
+
+- **GitHub only for now.** The pull request is read with your GitHub connection, so an agent
+  can only watch what your connection can read.
+- **When it is told.** As with PR feedback, only once the session is idle and can take input,
+  and **a stopped session is started and then told**, one at a time. A condition that already
+  holds when the agent asks is told at once.
+- **In the session** it arrives as a line starting with `[agent-fleet:notice kind=watch`. Text
+  from the pull request (check names, reviewer names) is quoted and marked as data, not
+  instructions.
+- **How long.** A watch ends after its first notice unless the agent asks to keep it, and in
+  any case after 7 days (30 at most), or when the session is archived. A session can hold 20
+  watches, the workspace 200. Watches survive Agent restarts.
+
 ## Letting a session see the fleet
 
 You can let a session see **the fleet it is part of**. If the messaging above is for telling,
