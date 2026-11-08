@@ -77,3 +77,26 @@ func TestClassifyPromptBoundsTheSnippets(t *testing.T) {
 		t.Error("a request without memories should say so")
 	}
 }
+
+// The small tier leaned to no-op on findings about a note (stale fact, retired
+// term, dangling link) and, with no notes shown, on plain lessons. The prompt
+// has to keep saying how to tell those apart; the measured effect is in the
+// gold-set report, this only stops the guidance from being edited away.
+func TestPromptKeepsThePatchVersusNoopGuidance(t *testing.T) {
+	p := ClassifyRequest{Observation: "o"}.Prompt()
+	for _, want := range []string{
+		"a finding about the notes themselves",
+		"a link to a note that does not exist",
+		"a small fix is still a patch",
+		"A link that points nowhere is a defect of the note that holds it",
+		"absence of a note to fix is not a reason for no-op",
+		"the flagged text is correct as written",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("the classify prompt lost %q", want)
+		}
+	}
+	if strings.Index(p, "- patch:") > strings.Index(p, "- add:") {
+		t.Error("patch is listed before add on purpose: the order is part of what was measured")
+	}
+}

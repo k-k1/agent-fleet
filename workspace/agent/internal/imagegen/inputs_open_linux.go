@@ -13,7 +13,7 @@ import (
 
 // readBeneath reads root/rel with the root fixed as a descriptor and every component below it
 // resolved with RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS — the same open the Files pane's reader uses
-// (fs_fd_linux.go's openat2NoSymlinks), so a symlink anywhere under the root, or a ".." that
+// (internal/fsx/fs_fd_linux.go's openat2NoSymlinks), so a symlink anywhere under the root, or a ".." that
 // climbs out of it, fails the open itself instead of a check that ran before it.
 //
 // O_NONBLOCK keeps a FIFO planted under the name from hanging the request; the type check

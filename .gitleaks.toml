@@ -100,6 +100,9 @@ condition = "AND"
 paths = [
   '''console/src/features/settings/workspace/gcloudConfigImport\.ts''',
   '''console/src/features/settings/workspace/gcloudConfigImport\.test\.ts''',
+  # The full-history scan still meets the commits from before the file moved out of lib/.
+  '''console/src/lib/gcloudConfigImport\.ts''',
+  '''console/src/lib/gcloudConfigImport\.test\.ts''',
 ]
 regexes = ['''compute/region''']
 

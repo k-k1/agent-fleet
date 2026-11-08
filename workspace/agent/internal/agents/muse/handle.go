@@ -438,6 +438,7 @@ func (h *threadHandle) hostLost(cl *msp.Client) {
 	h.starting = ""
 	h.sentImages = nil // nothing this host was sent can be echoed any more
 	h.bg = nil         // its tasks went with it; a resume rebuilds from the next host's fold
+	h.streaming = nil  // fragments of items the dead host will never complete
 	h.mu.Unlock()
 	if wasRunning {
 		// A turn cut off by a dead host is aborted, not failed: a resend fixes it, and the
@@ -615,12 +616,16 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	}
 }
 
-// onItem persists one item and drops any streaming buffer it had. A store failure is logged
+// onItem persists one item and drops its streaming buffer once the item is terminal. A store failure is logged
 // once and never fails the turn: the host owns the conversation of record, and refusing to
 // carry on because AF could not mirror a line would trade a rendering gap for a dead session.
 func (h *threadHandle) onItem(it msp.Item) {
 	h.mu.Lock()
-	delete(h.streaming, it.ItemID)
+	// Only a terminal revision ends the stream: `started` and `updated` revisions of an
+	// item still in progress are persisted while its deltas keep arriving.
+	if it.Status != msp.ItemStatusInProgress {
+		delete(h.streaming, it.ItemID)
+	}
 	sid, model := h.slotSid, h.turnModel
 	if model == "" {
 		model = h.model
@@ -781,6 +786,7 @@ func (h *threadHandle) settleIdle(gen uint64) {
 		return
 	}
 	h.running, h.turnID, h.turnModel = false, "", ""
+	h.streaming = nil // an item still in flight when the turn ends will not complete
 	h.state = agents.TurnCompleted
 	h.settleHeadLocked()
 	h.dropResumedLocked(true)
@@ -826,6 +832,7 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 	h.settleHeadLocked()
 	h.dropResumedLocked(true)
 	h.running, h.state, h.turnID = false, st, ""
+	h.streaming = nil // an item still in flight when the turn ends will not complete
 	if newest {
 		h.limit = limit
 		if p.TurnID != "" {
@@ -1322,7 +1329,7 @@ func (h *threadHandle) unpark() {
 }
 
 // maxInlineImageBytes caps what AF will base64 into a single frame. The upload endpoint accepts
-// 64 MiB (fs.go's defaultMaxUpload) and base64 inflates by a third, so an uncapped read would
+// 64 MiB (internal/fsx/fs.go's defaultMaxUpload) and base64 inflates by a third, so an uncapped read would
 // put an 85 MB line on a pipe whose reader is bounded at 16 MiB (msp/client.go). Eight is far
 // above any screenshot and well under both limits; anything larger takes the path route below,
 // which still works — the workspace is trusted and the host's filesystem is unrestricted, so

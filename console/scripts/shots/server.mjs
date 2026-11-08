@@ -63,7 +63,14 @@ const MIME = {
 const L = (ja, en) => (LOCALE === "ja" ? ja : en);
 const exact = {
   "/api/version": () => ({ version: "0.3.0", commit: "demo" }),
-  "/api/whoami": () => ({ ...fx.USER, scheduler_enabled: true, role: "member" }),
+  // home_wipe puts the Danger zone tab on the settings rail, so only the workspace guide scenes
+  // (SHOT_WS_GUIDE) get it and every other modal shot keeps the rail it was taken with.
+  "/api/whoami": () => ({
+    ...fx.USER,
+    scheduler_enabled: true,
+    role: "member",
+    ...(process.env.SHOT_WS_GUIDE ? { home_wipe: true } : {}),
+  }),
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
     super_admin: false,
@@ -392,6 +399,17 @@ const exact = {
       "8080": "https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com",
     },
   }),
+  // Settings › Machine, Toolchains and Databases for the user guide's workspace pages, served only
+  // to a run that asks (SHOT_WS_GUIDE): without it these tabs stay as empty as they always were.
+  ...(process.env.SHOT_WS_GUIDE
+    ? {
+        "/api/workspace/machine": () => fx.wsGuideMachine(),
+        "/api/env/toolchains": () => fx.wsGuideToolchains(),
+        "/api/env/jdk-latest": (q) => fx.wsGuideLatest("jdk", q.get("major") || ""),
+        "/api/env/node-latest": (q) => fx.wsGuideLatest("node", q.get("major") || ""),
+        "/api/env/databases": () => fx.wsGuideDatabases(),
+      }
+    : {}),
   // The left rail's Changes view — cross-repo, one call (see FilesChanges).
   "/api/fs/changes": () => fx.fsChanges(LOCALE),
   // The file viewer's git change marks (CodeView LineMarks). None: the fictional files are clean.

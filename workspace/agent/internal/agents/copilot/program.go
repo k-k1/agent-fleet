@@ -17,7 +17,7 @@ import (
 
 // Home is copilot's state root ($COPILOT_HOME, default ~/.copilot): config.json
 // (trustedFolders), mcp-config.json, logs/, session-store.db and
-// session-state/<sid>/. The tree is denylisted from the file browser (fs.go):
+// session-state/<sid>/. The tree is denylisted from the file browser (internal/fsx/fs.go):
 // in a container with no keychain the auth token can end up stored in plaintext
 // (upstream docs).
 func Home() string { return paths.CopilotHome() }

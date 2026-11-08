@@ -34,3 +34,15 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Generate images](images/generate.md) | Make pictures in bulk on the deployment's engine, without an agent |
 | [Finish an image in the studio](images/studio.md) | Refine an image-generation draft by talking to an agent |
 | [Have a session make images](images/from-session.md) | Have an agent make a picture during a conversation |
+
+## Workspace
+
+| Page | What you can do |
+|---|---|
+| [Recreate the workspace](workspace/recreate.md) | Rebuild a broken environment from the latest image |
+| [See your machine and its usage](workspace/machine.md) | Check the machine's size and how memory and disk are used, and free disk space |
+| [Choose your toolchains](workspace/toolchains.md) | Pick the Node.js, Java and Go versions and the time zone |
+| [Run database-backed tests](workspace/databases.md) | Run tests against PostgreSQL and MySQL inside the workspace |
+| [Try AWS code against a local emulator](workspace/aws-emulator.md) | Try AWS code without touching a real account |
+| [Export and import your settings](workspace/export-import.md) | Take your settings to another environment or account |
+| [See running time and cloud cost](workspace/cost.md) | See when the workspace was running and what it costs |

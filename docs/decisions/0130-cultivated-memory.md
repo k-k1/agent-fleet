@@ -669,6 +669,16 @@ release.
   59-case set with `claude -p` (haiku as the small tier, sonnet as the larger): the results are in the PR; the
   scheduler, ripeness rules, approval UI and the AF adapter that queues proposals are later PRs.
 
+- **2026-11-09 — decision 6 small and large roles and the bar adopted by the member (#3497, second PR).** The member
+  decided: the small role is `claude:haiku`, the large role `claude:sonnet`; Gemini stays a measured replay candidate
+  only; and the bar is the proposed values of `bar.example.json` as they were. Both are now the shipped defaults:
+  `memengine/models.json` and `memengine/bar.json` (the example files were renamed; they were never a decision of their
+  own). The classify prompt now tells the model that an observation may be a finding about a note (a stale fact, a
+  renamed or retired name, a dangling link) and that a small fix is still a patch, and says when no-op and add apply;
+  the schema and validation are unchanged, so this is not a contract change. Evaluation can be restricted to a
+  deterministic TUNE or HELD-OUT half (`-split`), and duplicate answers for one (case, call) are an error. Numbers are
+  in the PR.
+
 - **2026-11-09 — decisions 6 and 7: the Agent adapter built (#3497, third PR).** `workspace/agent/internal/memconsol`
   collects observations (`stale`/`wrong` feedback reasons, lint reasons, the exported 0117 queue read-only), groups
   them deterministically by suspect memory (the name, then `memory_search`'s ranking), and applies decision 6's

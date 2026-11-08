@@ -17,12 +17,27 @@
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
 import { OnOff, Row } from "../parts/controls.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { DevIdpSection } from "./DevIdpSection.tsx";
 import { useSettingsUI } from "../store.ts";
+import {
+  createDevIdpPersona,
+  deleteDevIdpPersona,
+  getWsSettings,
+  isOk,
+  listDevIdpPersonas,
+  putWsSettings,
+  reissuePreview,
+  rotateDevIdp as rotateDevIdpClient,
+  type DevIdpPersona,
+  type DevIdpPersonaList,
+  type Reply,
+  type WsSettings,
+  type WsSettingsPatch,
+} from "../api.ts";
 import { previewInfoFrom, previewScopeUnchanged, previewToken, usePreviewStore } from "../../preview/previewState.ts";
 
 // Whether this deployment has preview subdomains at all. null = not known yet; the rail
@@ -36,12 +51,12 @@ export function usePreviewAvailable(): boolean | null {
   useEffect(() => {
     if (availCache !== null) return;
     let cancelled = false;
-    void api("api/env/ws-settings").then(
-      (res: any) => {
+    void getWsSettings().then(
+      (res) => {
         // An error body (CP starting, workspace unreachable, 5xx) is no more an answer than a
         // rejected fetch: caching it as false would hide the entry until the page reloads.
-        const failed = !res || !!res.error;
-        const v = !failed && !!res.previewDomain;
+        const failed = !isOk(res);
+        const v = isOk(res) && !!res.previewDomain;
         if (!failed) availCache = v;
         if (!cancelled) setOk(v);
       },
@@ -77,15 +92,15 @@ export function PreviewTab() {
   const toast = useToast();
   const askConfirm = useConfirm();
   // { previewDomain, previewUrls, previewPorts, previewPublic, … } | null
-  const [au, setAu] = useState<any>(null);
+  const [au, setAu] = useState<WsSettings | null>(null);
   const [err, setErr] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    void api("api/env/ws-settings").then(
-      (res: any) => {
+    void getWsSettings().then(
+      (res) => {
         if (cancelled) return;
-        if (res && !res.error) setAu(res);
+        if (isOk(res)) setAu(res);
         else setErr(true);
       },
       () => !cancelled && setErr(true),
@@ -95,18 +110,18 @@ export function PreviewTab() {
     };
   }, []);
 
-  const save = async (patch: Record<string, unknown>) => {
+  const save = async (patch: WsSettingsPatch) => {
     const from = previewToken(); // taken NOW, when the person acted, not when the queue gets to it
     const res = await serialized(async () => {
       // A write queued under another tenant / identity is cancelled, not sent: fetch stamps the
       // tenant current at send time, so it would land on the wrong workspace.
       if (!previewScopeUnchanged(from)) return CANCELLED;
-      const r = await apiJSON("api/env/ws-settings", "PUT", patch);
-      if (r && !r.error) usePreviewStore.getState().set(previewInfoFrom(r), from); // the port controls follow
+      const r = await putWsSettings(patch);
+      if (isOk(r)) usePreviewStore.getState().set(previewInfoFrom(r), from); // the port controls follow
       return r;
     });
     if (res === CANCELLED) return;
-    if (res && !res.error) {
+    if (isOk(res)) {
       setAu(res);
     } else {
       // A refusal carries its reason (e.g. the dev IdP is not enabled on this deployment);
@@ -134,7 +149,7 @@ export function PreviewTab() {
     const res = await serialized(async () => {
       if (!previewScopeUnchanged(from)) return CANCELLED;
       try {
-        return await apiJSON("api/env/ws-settings/dev-idp/rotate", "POST", {});
+        return await rotateDevIdpClient();
       } catch {
         return LOST;
       }
@@ -143,22 +158,22 @@ export function PreviewTab() {
     if (res === LOST) {
       const fresh = await serialized(async () => {
         try {
-          return await api("api/env/ws-settings");
+          return await getWsSettings();
         } catch {
           return null;
         }
       });
-      if (fresh && !fresh.error) {
+      if (isOk(fresh)) {
         setAu(fresh);
         toast(tr("env.devidp_rotate_lost_reloaded"));
       } else {
-        setAu((prev: any) => ({ ...prev, devIdpClientId: "" }));
+        setAu((prev) => (prev ? { ...prev, devIdpClientId: "" } : prev));
         toast(tr("env.devidp_rotate_lost_unknown"));
       }
       return;
     }
-    if (res && !res.error) {
-      setAu((prev: any) => ({ ...prev, devIdpClientId: res.devIdpClientId }));
+    if (isOk(res)) {
+      setAu((prev) => (prev ? { ...prev, devIdpClientId: res.devIdpClientId } : prev));
       toast(tr("env.devidp_rotated"));
     } else {
       const why = res?.error ? errText(res.error) : "";
@@ -180,15 +195,15 @@ export function PreviewTab() {
     const from = previewToken();
     const res = await serialized(async () => {
       if (!previewScopeUnchanged(from)) return CANCELLED;
-      const r = await apiJSON("api/env/ws-settings/preview/reissue", "POST", {});
-      if (r && !r.error) usePreviewStore.getState().set(previewInfoFrom(r), from);
+      const r = await reissuePreview();
+      if (isOk(r)) usePreviewStore.getState().set(previewInfoFrom(r), from);
       return r;
     });
     if (res === CANCELLED) return;
-    if (res && !res.error) {
+    if (isOk(res)) {
       // The reissue answer carries the preview block only (no dev IdP fields), so it is merged
       // over what is shown instead of replacing it, or the IdP switch would vanish.
-      setAu((prev: any) => ({ ...prev, ...res }));
+      setAu((prev) => (prev ? { ...prev, ...res } : prev));
       // While stopped there are no issued URLs to throw away, so a successful reissue
       // changes nothing on screen. Always say which of the two happened, or the button
       // looks dead.
@@ -218,8 +233,8 @@ function PreviewSection({
   reissue,
   rotateDevIdp,
 }: {
-  au: any;
-  save: (patch: Record<string, unknown>) => void;
+  au: WsSettings;
+  save: (patch: WsSettingsPatch) => void;
   reissue: () => void;
   rotateDevIdp: () => void;
 }) {
@@ -280,8 +295,8 @@ function PreviewSection({
         <span className="ds-note pv-current">
           {issuedPorts.length > 0 ? (
             issuedPorts.map((p) => (
-              <a key={p} className="pv-current-url" href={au.previewUrls[p]} target="_blank" rel="noreferrer noopener">
-                {au.previewUrls[p].replace(/^https:\/\//, "")}
+              <a key={p} className="pv-current-url" href={au.previewUrls?.[p]} target="_blank" rel="noreferrer noopener">
+                {au.previewUrls?.[p]?.replace(/^https:\/\//, "")}
               </a>
             ))
           ) : (
@@ -344,21 +359,13 @@ function PreviewSection({
   );
 }
 
-interface Persona {
-  id: string;
-  handle: string;
-  name: string;
-  email: string;
-  sub: string;
-}
-
 // Test personas (ADR 0116, #2223): extra identities the consent page offers next to the member
 // themself, for exercising role checks. Their own endpoint, not ws-settings, so a persona edit
 // never queues behind (or clobbers) a preview save.
 function PersonaEditor() {
   const tr = useT();
   const toast = useToast();
-  const [list, setList] = useState<Persona[] | null>(null);
+  const [list, setList] = useState<DevIdpPersona[] | null>(null);
   const [handle, setHandle] = useState("");
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("example.test");
@@ -378,13 +385,13 @@ function PersonaEditor() {
 
   // run sends one request and applies its answer if no newer request was started meanwhile.
   // Returns whether the server accepted it. Failure of any kind clears busy and says why.
-  const run = async (send: () => Promise<any>): Promise<boolean> => {
+  const run = async (send: () => Promise<Reply<DevIdpPersonaList>>): Promise<boolean> => {
     const mine = ++latest.current;
     setBusy(true);
     try {
       const res = await send();
       if (!alive.current) return false;
-      if (res && !res.error) {
+      if (isOk(res)) {
         if (mine === latest.current) {
           setList(res.personas || []);
           if (res.domain) setDomain(res.domain);
@@ -403,21 +410,21 @@ function PersonaEditor() {
   };
 
   useEffect(() => {
-    void run(() => api("api/env/ws-settings/dev-idp/personas"));
+    void run(() => listDevIdpPersonas());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const add = async () => {
     const h = handle.trim();
     if (!h || busy) return;
-    if (await run(() => apiJSON("api/env/ws-settings/dev-idp/personas", "POST", { handle: h, name: name.trim() }))) {
+    if (await run(() => createDevIdpPersona(h, name.trim()))) {
       setHandle("");
       setName("");
     }
   };
   const remove = async (id: string) => {
     if (busy) return;
-    await run(() => apiJSON(`api/env/ws-settings/dev-idp/personas/${encodeURIComponent(id)}`, "DELETE"));
+    await run(() => deleteDevIdpPersona(id));
   };
 
   return (

@@ -39,7 +39,7 @@ const retiredSuffix = ".moved-to-local-"
 const retireManifest = ".af-retire-pending"
 
 // SQLiteHomeDir is where the databases go: beside the Agent's own state, which is on the home
-// volume and already denied to the file browser (fs.go).
+// volume and already denied to the file browser (internal/fsx/fs.go).
 func SQLiteHomeDir() string {
 	return filepath.Join(paths.AgentStateDir(), "codex-sqlite")
 }

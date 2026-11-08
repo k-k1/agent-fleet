@@ -141,15 +141,7 @@
   background: color-mix(in srgb, var(--err) 26%, transparent);
 }
 
-/* confirm dialog */
-.confirm {
-  width: min(420px, 92vw);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 18px 20px;
-}
-
+/* confirm dialog (the `.confirm` box itself lives in ui/ui.css) */
 .confirm-title {
   margin: 0 0 10px;
   font-size: 15px;
@@ -381,15 +373,6 @@
   flex-basis: 100%;
 }
 
-/* Inline text button that reads as a link (used in help text). */
-.linklike {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-  font: inherit;
-}
 
 .ssm-list {
   list-style: none;
@@ -600,22 +583,6 @@ button.ssm-row-action.danger:hover:not(:disabled) {
   gap: 6px;
   margin-top: 10px;
   font-size: 12.5px;
-}
-
-.ssm-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 8px;
-}
-
-.ssm-code-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 8px 0;
 }
 
 .ssm-code-label {

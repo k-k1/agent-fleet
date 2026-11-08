@@ -179,7 +179,7 @@ type Record struct {
 	// idempotency rests on the watermark in usage/state.json, but the append and the
 	// watermark live in separate files and cannot be written atomically together — a crash
 	// in between re-appends — so the aggregation reads (ref, Idx) to drop duplicates
-	// (usage_dedup.go). It is not a dimension, so it stays out of usageKey.
+	// (internal/usagesvc/usage_dedup.go). It is not a dimension, so it stays out of usageKey.
 	Idx int `json:"idx,omitempty"`
 	// Agent names the subagent / Workflow transcript a Sidechain row came from (a hash of its
 	// path below the subagents directory). Idx numbers each agent's turns on their own, so
@@ -245,7 +245,7 @@ func RetentionDays() int {
 
 var (
 	// Mu serialises appends and prunes (concurrent turns inside one process). It is exported
-	// so that readUsageDayForRollup in usage_rollup.go can take the same lock and read a
+	// so that readUsageDayForRollup in internal/usagesvc/usage_rollup.go can take the same lock and read a
 	// day's rows without racing an append.
 	//
 	// Never bind it to an alias variable: `var usageMu = usagex.Mu` copies the mutex itself,
@@ -265,7 +265,7 @@ var (
 // A failed write comes back as an error, and callers handle it in one of two ways:
 //   - Recording an auxiliary call (recordUsageCall) is best-effort and swallows it: an
 //     unwritable ledger must not make a chat or a title suggestion fail.
-//   - Session folding (usage_fold.go) propagates the failure: advancing the watermark over
+//   - Session folding (internal/usagesvc/usage_fold.go) propagates the failure: advancing the watermark over
 //     rows that were never written loses that consumption for good.
 func AppendRows(rows []Record) error {
 	if len(rows) == 0 || !Enabled() {
@@ -372,7 +372,7 @@ func RawDays() []string {
 
 // ReadDay reads one day's rows in append order. The order matters: when a call splits into
 // several model rows, the first row of a call is the one that counts the call
-// (usage_rollup.go).
+// (internal/usagesvc/usage_rollup.go).
 func ReadDay(day string) []Record {
 	b, err := os.ReadFile(filepath.Join(RawDir(), day+".jsonl"))
 	if err != nil {

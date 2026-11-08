@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -38,8 +39,8 @@ const modelInfoCatalogFixture = `{
 }`
 
 func TestResolveModelInfo(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, modelInfoCatalogFixture)
+	usagesvc.UseIsolatedUsageDir(t)
+	usagesvc.UseUsageCatalog(t, modelInfoCatalogFixture)
 	codexRetirement = func(id string) (agents.ModelRetiring, bool) {
 		if id == "gpt-5.5" {
 			return agents.ModelRetiring{At: "2026-10-14T19:00:00Z", Successor: "gpt-5.6-sol"}, true
@@ -108,8 +109,8 @@ func ptr(v float64) *float64 { return &v }
 // The lists come from each kind's cache; an ?info=1 answer must not write into them, or every
 // later answer (MCP list_models included) carries Info too.
 func TestWithModelDetailLeavesTheCachedListAlone(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, modelInfoCatalogFixture)
+	usagesvc.UseIsolatedUsageDir(t)
+	usagesvc.UseUsageCatalog(t, modelInfoCatalogFixture)
 	cached := []agents.ModelChoice{{ID: "gpt-6-luna", Label: "GPT-6 Luna"}}
 	if got := withModelDetail(session.KindCodex, cached, true); got[0].Info == nil {
 		t.Fatal("?info=1 answer carries no info")
@@ -124,8 +125,8 @@ func TestWithModelDetailLeavesTheCachedListAlone(t *testing.T) {
 
 // Info is served only on ?info=1: MCP list_models reads the same route and must not grow.
 func TestAgentModelsInfoOnRequest(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, modelInfoCatalogFixture)
+	usagesvc.UseIsolatedUsageDir(t)
+	usagesvc.UseUsageCatalog(t, modelInfoCatalogFixture)
 	writeUIPrefs(t, `{"hiddenModels":{},"claudeCustomModels":["claude-opus-4-8"]}`)
 	read := func(query string) map[string]json.RawMessage {
 		t.Helper()

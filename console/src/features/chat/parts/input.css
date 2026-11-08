@@ -1,9 +1,3 @@
-/* Match MirrorView's focus treatment (accent border, no default outline) so the chat
-   input doesn't fall back to the browser's heavy blue focus ring. */
-.chat-input:focus {
-  outline: none;
-  border-color: var(--chat-accent);
-}
 .chat-send {
   flex: 0 0 auto;
   height: 31px;

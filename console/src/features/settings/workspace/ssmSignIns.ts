@@ -2,6 +2,7 @@
 // the Control Plane's ssmSignInDTO by the contract test, and what the Settings UI needs to name
 // and save one.
 import type { MsgKey } from "../../../lib/i18n/index.ts";
+import type { SsmProfile, SsmSsoProfileWrite } from "./ssmApi.ts";
 
 /** One shared sign-in, as GET /api/ssm/sign-ins lists it. */
 export interface SsmSignIn {
@@ -50,11 +51,11 @@ export interface GroupCandidate {
 }
 
 /** Only an SSO profile with a sign-in of its own can be grouped. */
-export function groupable(p: any): boolean {
+export function groupable(p: Pick<SsmProfile, "kind" | "signIn"> | undefined): boolean {
   return p?.kind !== "assume_role" && !p?.signIn;
 }
 
-export function toCandidate(p: any): GroupCandidate {
+export function toCandidate(p: SsmProfile): GroupCandidate {
   const s = (v: unknown) => (v == null ? "" : String(v));
   return {
     id: s(p.id),
@@ -114,7 +115,7 @@ export function nameProblem(
 
 /** The body of the PUT that moves one profile into the sign-in: the profile's own fields, as the
  *  edit form sends them, plus the sign-in's name. Nothing else is read from the row. */
-export function groupBody(p: GroupCandidate, signIn: string): Record<string, unknown> {
+export function groupBody(p: GroupCandidate, signIn: string): SsmSsoProfileWrite {
   return {
     label: p.label,
     startUrl: p.startUrl,
