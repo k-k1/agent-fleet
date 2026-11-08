@@ -20,12 +20,12 @@ If a feature ships and does not appear here, it is not done
 |---|---|---|---|
 | Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [03 Starting sessions](../member/03-starting-sessions.md) |
 | Run in a fresh git worktree | member | Start dialog | [06 Repositories and git](../member/06-code.md) |
-| Chat mirror — follow and steer a running agent | member | main area | [04 Conversation](../member/04-conversation.md) |
-| Answer a question, plan, or permission prompt | member | mirror | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents ask |
+| Chat mirror — follow and steer a running agent | member | main area | [Reply to a session](../user/sessions/reply.md) |
+| Answer a question, plan, or permission prompt | member | mirror | [Reply to a session](../user/sessions/reply.md); [agents.md](agents.md) for which agents ask |
 | Answer a question or plan left by a stopped session | member | mirror, the carried card | [Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left) |
 | Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [Hold what you send, stop a turn](../user/sessions/queue.md#hold-follow-ups-in-the-waiting-list) |
 | Have another session review a plan | member | the plan card | [Comment on a plan, have it reviewed](../user/sessions/plans.md#have-another-session-review-it) |
-| Skill / command picker | member | mirror composer | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
+| Skill / command picker | member | mirror composer | [Call a skill or a command](../user/sessions/skills.md); [agents.md](agents.md) for which agents |
 | Live terminal attached to a session | member | main area | [08 Terminal](../member/08-terminal.md) |
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [08 Terminal](../member/08-terminal.md) |
 | Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [08 Terminal](../member/08-terminal.md#copy-paste) |
@@ -37,11 +37,11 @@ If a feature ships and does not appear here, it is not done
 | Hand a conversation to a new session | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move) |
 | Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move) |
 | Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [Save a conversation as Markdown](../user/sessions/export.md) |
-| Fork from a past message | member | mirror, on a past message | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
+| Fork from a past message | member | mirror, on a past message | [Branch from a past message](../user/sessions/branch-message.md); [agents.md](agents.md) for which agents |
 | Hand a session to another member | member | session ⋯ menu or handoff proposal card → Hand off to a member | [12 Working with others](../member/12-collaboration.md#handing-a-session-to-another-member) |
 | Share a session read-only | member | Shared sessions | [12 Working with others](../member/12-collaboration.md) |
-| Highlights | member | mirror, on a selection | [04 Conversation](../member/04-conversation.md) |
-| Changed files | member | strip under the mirror header | [04 Conversation](../member/04-conversation.md) |
+| Highlights | member | mirror, on a selection | [Reply to a session](../user/sessions/reply.md#highlight-a-line-in-the-conversation) |
+| Changed files | member | strip under the mirror header | [See what a session changed](../user/sessions/changes.md) |
 | Context usage gauge | member | session header | [09 Agents](../member/09-agents.md) |
 | Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [Read an answer in your own language](../user/sessions/translate.md) |
 | Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [Have a session make images](../user/images/from-session.md) |
@@ -101,7 +101,7 @@ If a feature ships and does not appear here, it is not done
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [Connect Discord and Slack](../user/integrations/chat-bridge.md) |
-| Reply suggestions | member | mirror composer | [04 Conversation](../member/04-conversation.md) |
+| Reply suggestions | member | mirror composer | [Reply to a session](../user/sessions/reply.md#use-reply-suggestions) |
 | Deletion lock | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
 | Cleanup and the trash | member | Clean up | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
 | Keyboard system | member | Settings → Keyboard | [02 Console basics](../member/02-console-basics.md) |
