@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           url="https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 -o /tmp/gitleaks.tar.gz "$url"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o /tmp/gitleaks.tar.gz "$url"
           echo "${SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
       - name: scan full history
