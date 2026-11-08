@@ -7,7 +7,7 @@ source_of_truth: "Console の設定 >「AWS プロファイル/SSM」の SSM ホ
 
 [English](aws-ssm.md) | 日本語
 
-使いかたは [社内の別のホストにログインする（SSM）](../user/integrations/aws-ssm.ja.md) にあります。ここには、その細かい規則をまとめます。
+使いかたは [SSM で EC2 にログインする](../user/integrations/aws-ssm.ja.md) にあります。ここには、その細かい規則をまとめます。
 
 ## ホスト
 

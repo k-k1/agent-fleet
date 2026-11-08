@@ -198,5 +198,5 @@ Terraform や CDK などのツールが、`af-aws-exec` で指定したのとは
 
 ## 関連
 
-- [社内の別のホストにログインする（SSM）](aws-ssm.ja.md)
+- [SSM で EC2 にログインする](aws-ssm.ja.md)
 - [AWS プロファイルの仕様](../../ref/aws-profiles.ja.md)：取り込み・書き出し・共有サインインの細かい規則

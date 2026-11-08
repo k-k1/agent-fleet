@@ -1,13 +1,13 @@
 ---
-audience: "ワークスペースから社内の EC2 にログインしたい人"
+audience: "ワークスペースからEC2 にログインしたい人"
 source_of_truth: "Console の設定 >「AWS プロファイル/SSM」と「はじめる」の SSM の画面"
 ---
 
-# 社内の別のホストにログインする（SSM）
+# SSM で EC2 にログインする
 
 [English](aws-ssm.md) | 日本語
 
-AWS SSM Session Manager を使って、社内の EC2 にブラウザの端末からログインできます。SSH の鍵も、開いたポートも要りません。
+AWS SSM Session Manager を使って、EC2 にブラウザの端末からログインできます。SSH の鍵も、開いたポートも要りません。
 
 ## 全体像
 
