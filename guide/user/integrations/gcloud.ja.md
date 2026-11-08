@@ -208,5 +208,5 @@ af-gcloud-exec --profile <名前> --project <プロジェクト ID> --login -- t
 
 ## 関連
 
-- [af-gcloud-exec](../../ref/cli/af-gcloud-exec.ja.md)：オプション・終了コード・トークンが届く道具・止まったときのメッセージ
+- [af-gcloud-exec](../../ref/cli/af-gcloud-exec.ja.md)：オプション・終了コード・トークンが届くツール・止まったときのメッセージ
 - [AWS SSO を使う](aws-sso.ja.md)

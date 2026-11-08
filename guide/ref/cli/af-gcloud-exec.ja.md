@@ -106,9 +106,9 @@ prod-app    (not exported: Settings labels Prod App / prod-app all map to this n
 
 シェルにある `CLOUDSDK_*`・`GOOGLE_*`・`GCLOUD_*`・`GCE_METADATA_*` の変数は、先にすべて取り除きます。
 
-## トークンが届く道具
+## トークンが届くツール
 
-| 道具 | トークンを使うか |
+| ツール | トークンを使うか |
 |---|---|
 | `gcloud`（`gcloud storage` を含む） | 使う |
 | GKE クラスタへの `kubectl` | 使う（GKE 認証プラグイン経由。[kubectl を使う](#kubectl-を使う)） |
@@ -243,6 +243,6 @@ Google Cloud の VM の上で直接動くワークスペースでは、gcloud �
 
 - コマンドはあなたとして動くので、自分の gcloud のディレクトリを含めてホームを読めます。`af-gcloud-exec` は、Google の認証情報を探す
   標準の方法（gcloud とクライアントライブラリのもの）が、渡したトークン以外を見つけないようにするだけです
-- 自分の設定を持つ `gsutil` のように、別の場所を探す道具は対象外です
+- 自分の設定を持つ `gsutil` のように、別の場所を探すツールは対象外です
 - Google Cloud の VM や Kubernetes の Pod の上で動くワークスペースでは、標準の方法を無視するプログラムが、VM やノードの身元
   （GKE では Workload Identity）に届く可能性があります。管理者がネットワークで経路を塞がないかぎり、ワークスペースからは防げません

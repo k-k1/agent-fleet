@@ -14,4 +14,4 @@ audience: "ワークスペースから AWS や Google Cloud を使う人"
 | EC2 に、ブラウザの端末からログインする | [SSM で EC2 にログインする](../user/integrations/aws-ssm.ja.md)（細かい規則は [SSM の仕様](../ref/aws-ssm.ja.md)） |
 | 端末・SDK・ビルドツールから AWS プロファイルを使う | [af-aws-exec](../ref/cli/af-aws-exec.ja.md) |
 | エージェントに、あなたの権限で Google Cloud のコマンドを実行してもらう | [Google Cloud を使う](../user/integrations/gcloud.ja.md) |
-| `af-gcloud-exec` のオプション・トークンが届く道具・止まったときのメッセージ | [af-gcloud-exec](../ref/cli/af-gcloud-exec.ja.md) |
+| `af-gcloud-exec` のオプション・トークンが届くツール・止まったときのメッセージ | [af-gcloud-exec](../ref/cli/af-gcloud-exec.ja.md) |
