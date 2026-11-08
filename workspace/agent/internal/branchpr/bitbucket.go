@@ -97,6 +97,9 @@ type conflictEntry struct {
 	asked    time.Time
 	// tried is the last read that failed; the next waits out the TTL from it as well.
 	tried time.Time
+	// failed marks a state that the latest read could not confirm: still the chip's fallback,
+	// but not known enough to call the PR mergeable.
+	failed bool
 }
 
 type bitbucket struct {
@@ -409,6 +412,8 @@ func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
 // fallback). A PR the watch engine reads (Cache.Fetch) is re-read after
 // bitbucketWatchedConflictTTL instead of bitbucketConflictTTL.
 func (b *bitbucket) conflictKnown(auth, repo string, pr int, head string) (bool, bool) {
+	// One spelling per PR: a session's origin may carry capitals, a watch's subject does not.
+	repo = strings.ToLower(repo)
 	id := repo + "#" + strconv.Itoa(pr)
 	ttl := bitbucketConflictTTL
 	if b.c.watchedRecently(Key{Repo: repo, Number: pr}) {
@@ -424,7 +429,7 @@ func (b *bitbucket) conflictKnown(auth, repo string, pr int, head string) (bool,
 	b.mu.Unlock()
 	same := ok && e.head == head
 	if same && (now.Sub(e.at) < ttl || now.Sub(e.tried) < ttl) {
-		return e.conflict, !e.at.IsZero()
+		return e.conflict, !e.at.IsZero() && !e.failed
 	}
 	held := same && e.conflict
 	conflict, err := b.readConflict(auth, repo, pr)
@@ -432,7 +437,7 @@ func (b *bitbucket) conflictKnown(auth, repo string, pr int, head string) (bool,
 	if err != nil {
 		// A failed read waits out the TTL too, keeping what it falls back to: retried on every
 		// refresh, a read that keeps failing would triple the call's share of the budget.
-		next = conflictEntry{head: head, conflict: held, asked: now, tried: now}
+		next = conflictEntry{head: head, conflict: held, asked: now, tried: now, failed: true}
 		if same {
 			next.at = e.at
 		}
@@ -447,7 +452,7 @@ func (b *bitbucket) conflictKnown(auth, repo string, pr int, head string) (bool,
 	}
 	b.conflicts[id] = next
 	b.mu.Unlock()
-	return next.conflict, err == nil || !next.at.IsZero()
+	return next.conflict, err == nil
 }
 
 func isHex(s string) bool {
@@ -534,6 +539,7 @@ type bbPull struct {
 			UUID string `json:"uuid"`
 		} `json:"repository"`
 	} `json:"destination"`
+	UpdatedOn    string `json:"updated_on"`
 	Participants []struct {
 		State    *string `json:"state"`
 		Approved bool    `json:"approved"`
@@ -542,7 +548,7 @@ type bbPull struct {
 
 // bbPullFields are a PR's fields as the row reads them; the list asks them under "values.".
 var bbPullFields = []string{"id", "title", "state", "draft", "links.html.href", "source.branch.name",
-	"source.repository.full_name", "source.commit.hash", "destination.repository.uuid", "participants.state", "participants.approved"}
+	"source.repository.full_name", "source.commit.hash", "destination.repository.uuid", "participants.state", "participants.approved", "updated_on"}
 
 // hit converts v, whose state bitbucketState knows, to the row's PR and its head.
 func (v bbPull) hit() bbHit {
@@ -550,6 +556,11 @@ func (v bbPull) hit() bbHit {
 	h := bbHit{pr: &PR{Number: v.ID, State: state, Draft: state == "open" && v.Draft, URL: v.Links.HTML.Href, Title: v.Title}}
 	if r := v.Destination.Repository; r != nil && r.UUID != "" {
 		h.pr.NodeID = r.UUID + "#" + strconv.Itoa(v.ID)
+	}
+	if state != "open" {
+		// Bitbucket has no closed_on; the last update of a merged or declined PR stands in, so a
+		// PR declined, reopened and declined again is a second close.
+		h.pr.ClosedAt = v.UpdatedOn
 	}
 	approved := false
 	for _, p := range v.Participants {

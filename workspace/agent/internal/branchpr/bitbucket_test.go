@@ -803,3 +803,34 @@ func TestBitbucketRollupDigestMovesWithAReRun(t *testing.T) {
 		t.Fatal("the same statuses gave another digest")
 	}
 }
+
+func TestBitbucketFailedReReadIsNotKnown(t *testing.T) {
+	b := &bbServer{conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `{"values":[]}`}}
+	c := newBBCache(t, b)
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	if _, known := bb.conflictKnown("Bearer bb", "W/R", 4, "c0ffee4"); !known {
+		t.Fatal("a good read is not known")
+	}
+	bb.mu.Lock()
+	e := bb.conflicts["w/r#4"]
+	e.at = time.Now().Add(-time.Hour)
+	bb.conflicts["w/r#4"] = e
+	bb.mu.Unlock()
+	b.mu.Lock()
+	b.conflicts = nil
+	b.mu.Unlock()
+	if conflict, known := bb.conflictKnown("Bearer bb", "w/r", 4, "c0ffee4"); conflict || known {
+		t.Fatalf("a failed re-read: conflict=%v known=%v", conflict, known)
+	}
+	if _, known := bb.conflictKnown("Bearer bb", "w/r", 4, "c0ffee4"); known {
+		t.Fatal("the cached failure claimed to know")
+	}
+}
+
+func TestBitbucketClosedPRCarriesItsLastUpdate(t *testing.T) {
+	pr := strings.TrimSuffix(bbPR(4, "DECLINED", false, "a", "w/r"), "}") + `,"updated_on":"2026-11-08T10:00:00Z"}`
+	got, _, err := parseBitbucketPulls([]byte(`{"values":[`+pr+`]}`), "w/r", []Key{{Repo: "w/r", Branch: "a"}})
+	if err != nil || got[Key{Repo: "w/r", Branch: "a"}].pr.ClosedAt != "2026-11-08T10:00:00Z" {
+		t.Fatalf("closedAt = %+v err %v", got[Key{Repo: "w/r", Branch: "a"}].pr, err)
+	}
+}

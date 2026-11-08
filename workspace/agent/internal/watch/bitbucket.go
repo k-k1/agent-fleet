@@ -64,7 +64,7 @@ func ParseBitbucketRef(ref, defaultRepo string) (repo string, number int, ok boo
 	if !validBBRepo(repo) || number <= 0 {
 		return "", 0, false
 	}
-	// Bitbucket workspace and repository slugs are lower case; one spelling, one subject.
+	// Lower-cased so one PR is one subject; branchpr lower-cases the keys it shares with the list.
 	return strings.ToLower(repo), number, true
 }
 
@@ -129,7 +129,16 @@ type bbCursor struct {
 	CRWas           bool `json:"cr_was,omitempty"`
 	ConflictEpisode int  `json:"conflict_episode,omitempty"`
 	ConflictWas     bool `json:"conflict_was,omitempty"`
+	CloseEpisode    int  `json:"close_episode,omitempty"`
+	ClosedWas       bool `json:"closed_was,omitempty"`
 }
+
+// MaxSubscriptions bounds the live Bitbucket watches of a workspace: a watched open PR the list
+// does not show costs about 50 requests an hour of the account's 1,000, which the list already
+// spends most of.
+func (b *Bitbucket) MaxSubscriptions() int { return bbMaxSubscriptions }
+
+const bbMaxSubscriptions = 10
 
 func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, _ []string) ([]Event, json.RawMessage, Hint, error) {
 	repo, n, ok := parseBBSubject(subject)
@@ -152,13 +161,19 @@ func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMes
 		return Event{Source: "bitbucket", Subject: subject, Type: typ, Version: version, Summary: summary, Data: data, At: at}
 	}
 	ref := fmt.Sprintf("PR %s#%d", repo, n)
+	closed := pr.State == "closed"
+	if closed && !cur.ClosedWas {
+		cur.CloseEpisode++ // declined, reopened and declined again is a second close
+	}
+	cur.ClosedWas = closed
 	switch pr.State {
 	case "merged":
 		out, _ := json.Marshal(cur)
 		return []Event{ev("pr.merged", "merged", ref+" was merged.", nil)}, out, Hint{After: bbSettledAfter, Settled: true}, nil
 	case "closed":
 		out, _ := json.Marshal(cur)
-		return []Event{ev("pr.closed", "closed", ref+" was declined or superseded.", nil)}, out, Hint{After: bbSettledAfter, Settled: true}, nil
+		return []Event{ev("pr.closed", fmt.Sprintf("closed:%d", cur.CloseEpisode), ref+" was declined or superseded.", nil)}, out,
+			Hint{After: bbSettledAfter, Settled: true}, nil
 	}
 
 	var events []Event
@@ -186,14 +201,19 @@ func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMes
 		cur.ConflictEpisode++
 	}
 	cur.ConflictWas = conflict
-	switch pr.Mergeable {
-	case "CONFLICTING":
-		events = append(events, ev("pr.conflict", fmt.Sprintf("%s:%d", head, cur.ConflictEpisode), ref+" has a merge conflict with its destination.", nil))
-	case "MERGEABLE":
-		events = append(events, ev("pr.mergeable", head, ref+" can be merged into its destination.", nil))
-	}
-	if pr.Ready() && head != "" {
-		events = append(events, ev("pr.ready", head, ref+" is ready to merge: checks passed, no conflict, approved.", nil))
+	// Bitbucket does not say where the destination stood, so mergeable and ready carry the
+	// conflict episode: mergeable again after a conflict on the same head is news again.
+	pair := fmt.Sprintf("%s:%d", head, cur.ConflictEpisode)
+	if head != "" {
+		switch pr.Mergeable {
+		case "CONFLICTING":
+			events = append(events, ev("pr.conflict", pair, ref+" has a merge conflict with its destination.", nil))
+		case "MERGEABLE":
+			events = append(events, ev("pr.mergeable", pair, ref+" can be merged into its destination.", nil))
+		}
+		if pr.Ready() {
+			events = append(events, ev("pr.ready", pair, ref+" is ready to merge: checks passed, no conflict, approved, no changes requested.", nil))
+		}
 	}
 
 	if pr.ChangesRequested && !cur.CRWas {

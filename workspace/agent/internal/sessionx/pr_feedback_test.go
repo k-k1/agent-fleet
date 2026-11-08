@@ -72,7 +72,7 @@ func newFeedbackFixture(t *testing.T) *feedbackFixture {
 	prFeedback = &prFeedbackState{}
 	ow := prFeedbackWatched
 	prFeedbackWatched = func(name, provider, linkKey, typ string) bool {
-		return provider == "github" && f.watched[name+"|"+linkKey+"|"+typ]
+		return f.watched[provider+"|"+name+"|"+linkKey+"|"+typ] || (provider == "github" && f.watched[name+"|"+linkKey+"|"+typ])
 	}
 	f.watched = map[string]bool{}
 	t.Cleanup(func() { prFeedbackWatched = ow })
@@ -592,5 +592,25 @@ func TestPRFeedbackCIIsLeftToAFailedChecksWatch(t *testing.T) {
 	f.ticks(3)
 	if len(f.sent) != 0 {
 		t.Fatalf("sent %v though the session watches failed checks", f.sent)
+	}
+}
+
+func TestPRFeedbackLeavesAWatchedBitbucketPRToTheEngine(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", session.WorkItemLink{Provider: "bitbucket", Key: "w/r#7", Role: session.LinkCreated, State: "open",
+		URL: "https://bitbucket.org/w/r/pull-requests/7"})
+	pr := &branchpr.PR{Number: 7, State: "open", URL: "https://bitbucket.org/w/r/pull-requests/7", Head: "h1", NodeID: "BB_7"}
+	failing(pr, "unit")
+	f.prs[branchpr.Key{Repo: "w/r", Number: 7}] = pr
+	f.watched["bitbucket|a|w/r#7|pr.checks.failed"] = true
+	f.ticks(3)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v though the session watches its Bitbucket PR", f.sent)
+	}
+	f.watched["bitbucket|a|w/r#7|pr.checks.failed"] = false
+	pr.Head = "h2"
+	f.ticks(3)
+	if len(f.sent) != 1 {
+		t.Fatalf("sent %v: an unwatched Bitbucket PR must be told", f.sent)
 	}
 }

@@ -209,6 +209,9 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if err := e.limitsLocked(r.Owner); err != nil {
 		return Subscription{}, err
 	}
+	if err := e.sourceLimitLocked(src); err != nil {
+		return Subscription{}, err
+	}
 	if err := e.requesterLimitLocked(r.maker()); err != nil {
 		return Subscription{}, err
 	}
@@ -231,6 +234,29 @@ func (e *Engine) checkLimits(owner string) error {
 	defer e.mu.Unlock()
 	e.load()
 	return e.limitsLocked(owner)
+}
+
+// SourceLimiter is a source that bounds its own live subscriptions per workspace, because its
+// provider's request budget is too small for the engine's general limits.
+type SourceLimiter interface {
+	MaxSubscriptions() int
+}
+
+func (e *Engine) sourceLimitLocked(src Source) error {
+	l, ok := src.(SourceLimiter)
+	if !ok {
+		return nil
+	}
+	n := 0
+	for _, s := range e.state.Subs {
+		if !s.Done && s.Source == src.Kind() {
+			n++
+		}
+	}
+	if n >= l.MaxSubscriptions() {
+		return &ErrRefused{fmt.Sprintf("this workspace already has %d %s watches, the limit for that provider's request budget", n, src.Kind())}
+	}
+	return nil
 }
 
 // requesterLimitLocked counts every watch a session made, its own and those it made for its

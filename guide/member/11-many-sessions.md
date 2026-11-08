@@ -354,8 +354,9 @@ the agent decides when to use it.
 - **GitHub and Bitbucket.** The pull request is read with your own connection, so an agent can
   only watch what your connection can read. On Bitbucket, new unresolved review threads cannot
   be watched (Bitbucket does not report which threads are resolved), a pull request counts as
-  ready to merge only once someone approved it, and a watched pull request is read about every
-  5 minutes, to stay within Bitbucket's hourly request limit.
+  ready to merge only once someone approved it and nobody asks for changes, a watched pull
+  request is read about every 5 minutes, and a workspace can hold 10 Bitbucket watches, to stay
+  within Bitbucket's hourly request limit.
 - **When it is told.** As with PR feedback, only once the session is idle and can take input,
   and **a stopped session is started and then told**, one at a time. A condition that already
   holds when the agent asks is told at once.

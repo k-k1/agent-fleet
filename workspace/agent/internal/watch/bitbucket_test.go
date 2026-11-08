@@ -115,3 +115,70 @@ func TestBitbucketResolveAndRefusals(t *testing.T) {
 		t.Fatal("a vanished PR read as fine")
 	}
 }
+
+func TestBitbucketReadyOnlyWhenEverythingHolds(t *testing.T) {
+	for name, spoil := range map[string]func(*branchpr.PR){
+		"draft":       func(p *branchpr.PR) { p.Draft = true },
+		"unknown":     func(p *branchpr.PR) { p.Mergeable = "UNKNOWN" },
+		"no approval": func(p *branchpr.PR) { p.ReviewDecision = "REVIEW_REQUIRED" },
+		"changes":     func(p *branchpr.PR) { p.ReviewDecision = "CHANGES_REQUESTED"; p.ChangesRequested = true },
+		"checks run":  func(p *branchpr.PR) { p.Checks, p.ChecksPending = "pending", true },
+		"checks fail": func(p *branchpr.PR) { p.Checks = "failure" },
+		"no checks":   func(p *branchpr.PR) { p.Checks = "" },
+	} {
+		pr := bbOpen()
+		spoil(pr)
+		evs, _, _, _ := bbSource(&pr).Poll(context.Background(), "bitbucket:w/r#4", nil, nil)
+		if strings.Contains(types(evs), "pr.ready") {
+			t.Errorf("%s: ready reported: %s", name, types(evs))
+		}
+	}
+}
+
+func TestBitbucketMergeableAgainAndClosedAgainAreNews(t *testing.T) {
+	pr := bbOpen()
+	b := bbSource(&pr)
+	version := func(evs []Event, typ string) string {
+		for _, e := range evs {
+			if e.Type == typ {
+				return e.Version
+			}
+		}
+		return ""
+	}
+	evs, cur, _, _ := b.Poll(context.Background(), "bitbucket:w/r#4", nil, nil)
+	m1 := version(evs, "pr.mergeable")
+	pr.Mergeable = "CONFLICTING"
+	_, cur, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
+	pr.Mergeable = "MERGEABLE"
+	evs, cur, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
+	if m2 := version(evs, "pr.mergeable"); m1 == "" || m2 == m1 || version(evs, "pr.ready") != m2 {
+		t.Fatalf("mergeable versions %q %q, ready %q", m1, m2, version(evs, "pr.ready"))
+	}
+	pr = &branchpr.PR{Number: 4, State: "closed"}
+	evs, cur, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
+	c1 := version(evs, "pr.closed")
+	pr = bbOpen()
+	_, cur, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
+	pr = &branchpr.PR{Number: 4, State: "closed"}
+	evs, _, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
+	if c2 := version(evs, "pr.closed"); c1 == "" || c1 == c2 {
+		t.Fatalf("closed versions %q %q", c1, c2)
+	}
+}
+
+func TestBitbucketWatchesAreCappedPerWorkspace(t *testing.T) {
+	pr := bbOpen()
+	e, _, _ := newTestEngine(bbSource(&pr), &fakeSink{answer: Wait})
+	ctx := context.Background()
+	for i := 0; i < bbMaxSubscriptions; i++ {
+		owner := "o" + string(rune('a'+i))
+		if _, err := e.Subscribe(ctx, Request{Owner: owner, Source: "bitbucket", Ref: "w/r#4", Types: []string{"pr.merged"}}); err != nil {
+			t.Fatalf("watch %d: %v", i, err)
+		}
+	}
+	var ref *ErrRefused
+	if _, err := e.Subscribe(ctx, Request{Owner: "z", Source: "bitbucket", Ref: "w/r#4", Types: []string{"pr.merged"}}); !errors.As(err, &ref) {
+		t.Fatalf("an eleventh Bitbucket watch: %v", err)
+	}
+}
