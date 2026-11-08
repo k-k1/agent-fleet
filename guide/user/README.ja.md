@@ -15,3 +15,4 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | ページ | できること |
 |---|---|
 | [AWS SSO を使う](integrations/aws-sso.ja.md) | エージェントに、あなたの権限で AWS のコマンドを実行してもらう |
+| [社内の別のホストにログインする（SSM）](integrations/aws-ssm.ja.md) | 社内の EC2 に、ブラウザの端末からログインする |

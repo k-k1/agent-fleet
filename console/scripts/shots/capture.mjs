@@ -378,6 +378,50 @@ const SCENES = [
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     settle: 4000,
   },
+  {
+    name: "ssm-hosts",
+    guide: true,
+    stubEnv: { SHOT_SSM_HOSTS: "1" },
+    // The host list is the second group of the tab; the action tags it so the clip can find it.
+    clip: "#shot-ssm-hosts",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "ssm",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const g = [...document.querySelectorAll(".ds-group")].find((el) => /SSM ホスト|SSM hosts/.test(el.querySelector(".ds-title")?.textContent || ""));
+      if (g) { g.id = "shot-ssm-hosts"; g.scrollIntoView({ block: "start" }); }
+    })()`,
+    settle: 2500,
+  },
+  {
+    name: "ssm-start",
+    guide: true,
+    stubEnv: { SHOT_SSM_HOSTS: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      await wait(800);
+      document.querySelector(".ws-newsession")?.click();
+      await wait(800);
+      [...document.querySelectorAll(".start-row")].find((el) => /SSM/.test(el.textContent || ""))?.click();
+      await wait(800);
+      [...document.querySelectorAll("button")].find((el) => /AWS から検索|Search AWS/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2500,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------
