@@ -105,3 +105,9 @@
   font-size: var(--chat-size, 14px);
   line-height: 1.4;
 }
+/* Match MirrorView's focus treatment (accent border, no default outline) so the chat
+   input doesn't fall back to the browser's heavy blue focus ring. */
+.chat-input:focus {
+  outline: none;
+  border-color: var(--chat-accent);
+}

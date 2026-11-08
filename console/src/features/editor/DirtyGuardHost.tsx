@@ -78,7 +78,7 @@ export function DirtyGuardHost() {
       <div className="ui-modal-body">
         <p>{tr(REASON[current.reason] || REASON.layout)}</p>
         <ul>
-          {current.entries.map((entry) => <li key={entry.paneId}>{entry.label}</li>)}
+          {current.entries.map((entry) => <li key={entry.key ?? entry.paneId}>{entry.label}</li>)}
         </ul>
         {saveFailed && (
           <p role="alert">{tr("editor.guard.save_failed")}</p>
