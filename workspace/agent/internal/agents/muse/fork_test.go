@@ -2,6 +2,7 @@ package muse
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -246,10 +247,10 @@ func awaitFork(t *testing.T, ch <-chan msp.SessionForkParams) msp.SessionForkPar
 
 // forkedHost wires a fake host that forks to a fixed id and records every session/resume it is
 // sent. A nil handler result means "accept".
-func forkedHost(t *testing.T, h *threadHandle, onResume func(msp.SessionResumeParams) *msp.Error) (sent <-chan msp.SessionResumeParams, left chan string) {
+func forkedHost(t *testing.T, h *threadHandle, onResume func(msp.SessionResumeParams) *msp.Error) (sent <-chan msp.SessionResumeParams, left chan string, host *msptest.Host) {
 	t.Helper()
 	left = make(chan string, 4)
-	host := newTestHandle(t, h)
+	host = newTestHandle(t, h)
 	host.Handle(msp.MethodSessionFork, func(msptest.Message) (any, *msp.Error) {
 		return map[string]any{
 			"session": map[string]any{
@@ -280,7 +281,7 @@ func forkedHost(t *testing.T, h *threadHandle, onResume func(msp.SessionResumePa
 		return resumedSession(), nil
 	})
 	refuseSessionRead(t, host)
-	return resumes, left
+	return resumes, left, host
 }
 
 const forkedSID = "01a0c1d6-0000-7000-8000-00000000e10f"
@@ -303,10 +304,20 @@ func TestForkedSlotGetsTheServersByResumingTheNewSession(t *testing.T) {
 	srcSlot := "00000000-0000-5000-8000-00000000e101"
 	writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e109", Path: "/tmp/src.jsonl"})
 	h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e102", forkFrom: srcSlot, sessionMCP: true}
-	sent, left := forkedHost(t, h, nil)
+	sent, left, host := forkedHost(t, h, nil)
 
 	if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
 		t.Fatalf("openSession: %v", err)
+	}
+	// The host refuses a resume with servers on a still-loaded fork, so the order is the point.
+	var order []string
+	for _, m := range host.Received() {
+		if m.Method == msp.MethodSessionLeave || m.Method == msp.MethodSessionResume {
+			order = append(order, m.Method)
+		}
+	}
+	if len(order) != 2 || order[0] != msp.MethodSessionLeave || order[1] != msp.MethodSessionResume {
+		t.Errorf("wire order = %v, want leave then resume", order)
 	}
 	select {
 	case sid := <-left:
@@ -348,7 +359,7 @@ func TestForkedSlotWithoutTheGrantSendsNoResume(t *testing.T) {
 	srcSlot := "00000000-0000-5000-8000-00000000e111"
 	writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e119", Path: "/tmp/src.jsonl"})
 	h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e112", forkFrom: srcSlot}
-	sent, left := forkedHost(t, h, nil)
+	sent, left, _ := forkedHost(t, h, nil)
 
 	if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
 		t.Fatalf("openSession: %v", err)
@@ -366,25 +377,35 @@ func TestForkedSlotWithoutTheGrantSendsNoResume(t *testing.T) {
 // tools, not the session.
 func TestForkedSlotSurvivesARefusedPostForkResume(t *testing.T) {
 	for name, code := range map[string]int{"invalid params": msp.ErrCodeInvalidParams, "internal": msp.ErrCodeInternal} {
-		t.Run(name, func(t *testing.T) {
-			// Each case needs a slot with no stored session, or openSession resumes instead of forking.
-			registerWikiServer(t)
-			srcSlot := "00000000-0000-5000-8000-00000000e121"
-			writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e129", Path: "/tmp/src.jsonl"})
-			h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e122", forkFrom: srcSlot, sessionMCP: true}
-			sent, _ := forkedHost(t, h, func(msp.SessionResumeParams) *msp.Error {
-				return &msp.Error{Code: code, Message: "no"}
+		for _, bareToo := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/bare refused=%v", name, bareToo), func(t *testing.T) {
+				// Each case needs a slot with no stored session, or openSession resumes instead of forking.
+				registerWikiServer(t)
+				srcSlot := "00000000-0000-5000-8000-00000000e121"
+				writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e129", Path: "/tmp/src.jsonl"})
+				h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e122", forkFrom: srcSlot, sessionMCP: true}
+				sent, _, _ := forkedHost(t, h, func(p msp.SessionResumeParams) *msp.Error {
+					if p.Config != nil || bareToo {
+						return &msp.Error{Code: code, Message: "no"}
+					}
+					return nil
+				})
+				if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
+					t.Fatalf("a refused post-fork resume failed the open: %v", err)
+				}
+				// The fork was unloaded, so the session is taken back without servers: the handle
+				// must not be left trusting a session the host no longer holds.
+				if n := len(sent); n != 2 {
+					t.Fatalf("session/resume sent %d times, want the servers once and one bare resume", n)
+				}
+				if first, bare := <-sent, <-sent; first.Config == nil || bare.Config != nil || bare.SessionID != forkedSID {
+					t.Errorf("resumes = %+v then %+v; want the config, then a bare resume of the fork", first, bare)
+				}
+				if stored, _ := readSession(h.slotSid); stored.ID != forkedSID {
+					t.Errorf("stored session = %q, want the fork %q", stored.ID, forkedSID)
+				}
 			})
-			if err := h.openSession(h.cl, agents.ThreadSettings{}); err != nil {
-				t.Fatalf("a refused post-fork resume failed the open: %v", err)
-			}
-			if n := len(sent); n != 1 {
-				t.Errorf("session/resume sent %d times, want exactly one (no bare retry)", n)
-			}
-			if stored, _ := readSession(h.slotSid); stored.ID != forkedSID {
-				t.Errorf("stored session = %q, want the fork %q", stored.ID, forkedSID)
-			}
-		})
+		}
 	}
 }
 
@@ -398,7 +419,7 @@ func TestForkedSlotRetriesTheResumeWhileTheHostIsUnloading(t *testing.T) {
 	writeSession(srcSlot, museSession{ID: "01a0c1d6-0000-7000-8000-00000000e139", Path: "/tmp/src.jsonl"})
 	h := &threadHandle{slotSid: "00000000-0000-5000-8000-00000000e132", forkFrom: srcSlot, sessionMCP: true}
 	calls := 0
-	sent, _ := forkedHost(t, h, func(msp.SessionResumeParams) *msp.Error {
+	sent, _, _ := forkedHost(t, h, func(msp.SessionResumeParams) *msp.Error {
 		calls++
 		if calls < 3 {
 			return &msp.Error{Code: msp.ErrCodeCommandRejected, Message: "a session/leave is in progress",

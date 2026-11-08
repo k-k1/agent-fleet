@@ -1804,8 +1804,9 @@ func (h *threadHandle) forkSession(cl *msp.Client) error {
 // finishes asynchronously; the resume answers a retryable `runtime_busy` until it has.
 //
 // Never fatal: the fork and its stored id already exist, and a failure here costs only the
-// tools until the next reopen, which takes the resume path in openSession and sends them again.
-// A refused config is logged and not retried bare, since that resume would add nothing.
+// tools until the next reopen, which takes the resume path in openSession and sends them again
+// (provided the session is held again, see the end of the function).
+// If the resume with servers fails for good, the session is reopened without them.
 func (h *threadHandle) attachServersToFork(cl *msp.Client, sid string) {
 	cfg := h.sessionConfig()
 	if cfg == nil {
@@ -1833,6 +1834,15 @@ func (h *threadHandle) attachServersToFork(cl *msp.Client, sid string) {
 	}
 	if err != nil {
 		fail(err)
+		// The leave released the host's ownership, so a handle left like this would trust a
+		// session the host no longer holds and every turn would fail until a reopen. A config
+		// the host refuses is the usual cause, and the same session opens without it: take the
+		// session back, tools or not. (This bare resume is for ownership, unlike the one
+		// openSession's retry makes for the same refusal on a session that was never left.)
+		bare := msp.SessionResumeParams{CommandID: msp.NewCommandID(), SessionID: sid}
+		if berr := cl.CallInto(msp.MethodSessionResume, bare, callTimeout, &res); berr != nil {
+			log.Printf("muse: %s: fork: the forked session could not be reopened after the unload: %v", h.name, berr)
+		}
 	}
 }
 

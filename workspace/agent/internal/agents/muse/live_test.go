@@ -867,7 +867,7 @@ func TestLiveForkedSessionAcceptsMCPServerConfigOnResume(t *testing.T) {
 		rerr = cl.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
 			CommandID: msp.NewCommandID(), SessionID: fid, Config: cfg,
 		}, callTimeout, &res)
-		if rerr == nil || !strings.Contains(rerr.Error(), "runtime_busy") {
+		if rerr == nil || !hostBusy(rerr) {
 			break
 		}
 	}
