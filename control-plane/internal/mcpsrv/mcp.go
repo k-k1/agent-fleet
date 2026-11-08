@@ -745,8 +745,8 @@ func memberTools() []mcpTool {
 					"branch":           map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
 					"new_branch":       map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
 					"subdir":           map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
-					"route":            map[string]any{"type": "string", "description": "explicit model route id (optional; omit to keep the kind's own default resolution). claude accepts anthropic-subscription, anthropic-api or bedrock, opencode accepts bedrock (with an amazon-bedrock/<id> model); all Terminal sessions only, and bedrock only on a workspace where its acceptance switch is set. Any other kind, or a route the kind does not declare, is refused with the reason, never run on the default route instead."},
-					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset); bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own)"},
+					"route":            map[string]any{"type": "string", "description": "explicit model route id (optional; omit to keep the kind's own default resolution). claude accepts anthropic-subscription, anthropic-api, bedrock or bedrock-deployment (Bedrock the deployment pays for, within the budget your tenant administrator sets), opencode accepts bedrock (with an amazon-bedrock/<id> model); all Terminal sessions only, and bedrock / bedrock-deployment only on a workspace where their acceptance switch is set. Any other kind, or a route the kind does not declare, is refused with the reason, never run on the default route instead."},
+					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset); bedrock takes <profile id>@<region> for one of your Settings AWS profiles marked as a model route (the region may be empty for the profile's own); bedrock-deployment takes none"},
 				},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
@@ -758,6 +758,11 @@ func memberTools() []mcpTool {
 				route, aerr := createRouteArgs(kind, args)
 				if aerr != nil {
 					return "", aerr
+				}
+				if route != nil {
+					if err := a.cp.ProvidedRouteErr(ctx, res.MV.MembershipID, argStr(args, "route")); err != nil {
+						return "", err
+					}
 				}
 				driver := ""
 				// An MCP caller cannot drive a pane, so it asks for managed wherever the Agent's

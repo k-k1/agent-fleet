@@ -54,3 +54,10 @@ func CurrentRouteGateway() RouteGateway {
 	defer routeGateway.mu.RUnlock()
 	return routeGateway.g
 }
+
+// RouteOffering is the gateway's answer to whether a route it serves is offered to the launch
+// dialog now: a provided route only while the Control Plane says the member may use it
+// (ADR 0129 D3, ADR 0084 decision 8's first place). A gateway without it offers every route.
+type RouteOffering interface {
+	Offered(route string) bool
+}

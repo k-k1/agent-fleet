@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -41,7 +42,14 @@ const (
 	// AF route gateway (ADR 0128 decisions 7 A2 and 11 C2): the session holds a gateway bearer
 	// bound to its own processes, never an AWS credential.
 	RouteBedrock = "bedrock"
+	// RouteBedrockDeployment is Bedrock the deployment provides and pays for (ADR 0129): the same
+	// harness contract as RouteBedrock, with the Agent's gateway forwarding to the Control
+	// Plane's, which signs under the deployment's route role within the member's budget.
+	RouteBedrockDeployment = "bedrock-deployment"
 )
+
+// isBedrock reports a route claude reaches as Amazon Bedrock through the AF route gateway.
+func isBedrock(route string) bool { return route == RouteBedrock || route == RouteBedrockDeployment }
 
 // apiKeyConnection is the slot of anthropic-api: the member's Anthropic API key as Settings >
 // Connections stores it (the provider-key map, under its environment variable name,
@@ -117,7 +125,9 @@ func overridesExcept(own ...string) []string {
 }
 
 // Routes implements agents.RouteAdapter.
-func (agentImpl) Routes() []string { return []string{RouteAPI, RouteBedrock, RouteSubscription} }
+func (agentImpl) Routes() []string {
+	return []string{RouteAPI, RouteBedrock, RouteBedrockDeployment, RouteSubscription}
+}
 
 // bedrockGateEnv opens the bedrock route on this Agent. ADR 0128 decision 14 ships a harness ×
 // route row only after live turns and negative controls have been recorded, and the bedrock row
@@ -129,18 +139,45 @@ const bedrockGateEnv = "AF_CLAUDE_BEDROCK_ROUTE"
 
 func bedrockOpen() bool { return os.Getenv(bedrockGateEnv) == "1" }
 
+// deploymentGateEnv is the bedrock-deployment row's own acceptance gate (ADR 0128 decision 14,
+// ADR 0129 Q1), set by a Control Plane that serves provided routes (AF_PROVIDED_ROUTES=1) at the
+// Workspace's start. It does not open the member's own bedrock row, nor that one this.
+const deploymentGateEnv = "AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE"
+
+func deploymentOpen() bool { return os.Getenv(deploymentGateEnv) == "1" }
+
+// routeGate is the acceptance gate of a bedrock route, nil when it is open.
+func routeGate(route string) *agents.RouteRefusal {
+	switch {
+	case route == RouteBedrock && !bedrockOpen():
+		return bedrockGated()
+	case route == RouteBedrockDeployment && !deploymentOpen():
+		return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
+			Message: "the deployment's Bedrock route has not passed its live acceptance yet (ADR 0129 Q1) and is off on this workspace; it is opened by a Control Plane started with AF_PROVIDED_ROUTES=1, at the workspace's next Start (a running workspace needs Stop → Start)"}
+	}
+	return nil
+}
+
 func bedrockGated() *agents.RouteRefusal {
 	return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
 		Message: "the bedrock route has not passed its live acceptance yet (ADR 0128 decision 14) and is off on this workspace; it is opened for the acceptance run with " + bedrockGateEnv + "=1 on the workspace's Agent (a Control Plane started with AF_WS_CLAUDE_BEDROCK_ROUTE=1 sets it at the workspace's next Start; a running workspace needs Stop → Start)"}
 }
 
-// OfferedRoutes implements agents.RouteOfferer: bedrock only while its gate is open.
+// OfferedRoutes implements agents.RouteOfferer: a bedrock route only while its gate is open, and
+// the deployment's only while the Control Plane says the member may use it now.
 func (a agentImpl) OfferedRoutes() []string {
 	var out []string
 	for _, r := range a.Routes() {
-		if r != RouteBedrock || bedrockOpen() {
-			out = append(out, r)
+		if routeGate(r) != nil {
+			continue
 		}
+		if r == RouteBedrockDeployment {
+			o, ok := agents.CurrentRouteGateway().(agents.RouteOffering)
+			if !ok || !o.Offered(r) {
+				continue
+			}
+		}
+		out = append(out, r)
 	}
 	return out
 }
@@ -151,8 +188,8 @@ func (agentImpl) ApplyRoute(m session.Meta, sel agents.RouteSelection) (agents.R
 		return agents.RoutePlan{}, ref
 	}
 	switch sel.Route {
-	case RouteBedrock:
-		return bedrockPlan(m)
+	case RouteBedrock, RouteBedrockDeployment:
+		return bedrockPlan(m, sel.Route)
 	case RouteAPI:
 		key, _ := loadAPIKey()
 		if key = strings.TrimSpace(key); key == "" {
@@ -195,9 +232,9 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, model 
 		if _, fp := splitConnection(sel.Connection); fp != "" && fp != keyFingerprint(strings.TrimSpace(key)) {
 			return keyReplaced()
 		}
-	case RouteBedrock:
-		if !bedrockOpen() {
-			return bedrockGated()
+	case RouteBedrock, RouteBedrockDeployment:
+		if ref := routeGate(sel.Route); ref != nil {
+			return ref
 		}
 		if ref := bedrockModelRefusal(model); ref != nil {
 			return ref
@@ -206,7 +243,8 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, model 
 		if gw == nil {
 			return noGateway()
 		}
-		// The profile is one of the member's own, marked as a model route, in a usable region.
+		// The profile is one of the member's own, marked as a model route, in a usable region;
+		// for the deployment's route, the Control Plane's grant, source, budget and model list.
 		if ref := gw.CheckRoute(context.Background(), sel, model); ref != nil {
 			return ref
 		}
@@ -220,11 +258,12 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, model 
 // read once, here, and a fingerprint already on the selection is checked against THAT read, so a
 // key replaced between the check and the binding is refused instead of being bound silently.
 func (agentImpl) BindRoute(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
-	if sel.Route == RouteBedrock {
-		if !bedrockOpen() {
-			return sel, bedrockGated()
+	if isBedrock(sel.Route) {
+		if ref := routeGate(sel.Route); ref != nil {
+			return sel, ref
 		}
-		// The gateway binds it to the profile's identity and region as they are now.
+		// The gateway binds it to the profile's identity and region as they are now, or to the
+		// deployment source's binding the Control Plane answers.
 		gw := agents.CurrentRouteGateway()
 		if gw == nil {
 			return sel, noGateway()
@@ -271,6 +310,11 @@ func checkRouteSelection(sel agents.RouteSelection) *agents.RouteRefusal {
 			return &agents.RouteRefusal{Status: http.StatusBadRequest, Code: routes.CodeRouteUnavailable,
 				Message: "the bedrock route needs a connection naming one of your Settings AWS profiles marked as a model route, as <profile id>@<region> (the region may be empty for the profile's own)"}
 		}
+	case RouteBedrockDeployment:
+		if conn != "" && !deploymentBindingRe.MatchString(conn) {
+			return &agents.RouteRefusal{Status: http.StatusBadRequest, Code: routes.CodeRouteUnavailable,
+				Message: "the deployment's Bedrock route takes no connection reference (the Control Plane binds it); leave it empty"}
+		}
 	case RouteSubscription:
 		if conn != "" {
 			return &agents.RouteRefusal{Status: http.StatusForbidden, Code: routes.CodeRouteForbidden,
@@ -291,9 +335,9 @@ func checkRouteSelection(sel agents.RouteSelection) *agents.RouteRefusal {
 // values ride the environment AND are pinned in the flag layer (Settings), where a settings file
 // edited later cannot change them. The bearer is environment only: it never goes on a command
 // line, and a settings file that sets it is refused (settingsConflict).
-func bedrockPlan(m session.Meta) (agents.RoutePlan, error) {
-	if !bedrockOpen() {
-		return agents.RoutePlan{}, bedrockGated()
+func bedrockPlan(m session.Meta, route string) (agents.RoutePlan, error) {
+	if ref := routeGate(route); ref != nil {
+		return agents.RoutePlan{}, ref
 	}
 	if ref := bedrockModelRefusal(m.Model); ref != nil {
 		return agents.RoutePlan{}, ref
@@ -342,7 +386,7 @@ var bedrockModelPins = []string{
 // RouteOwnsModels implements agents.RouteModelOwner: a bedrock session's model is a Bedrock id
 // that CheckRoute checks against the route (bedrockModelRefusal). A live catalogue of claude's
 // first-party ids would refuse every one of them before that check is reached.
-func (agentImpl) RouteOwnsModels(route string) bool { return route == RouteBedrock }
+func (agentImpl) RouteOwnsModels(route string) bool { return isBedrock(route) }
 
 // bedrockModelRefusal requires the bedrock route's model to be a Bedrock id of an Anthropic model
 // (routes.ParseBedrockAnthropicModelID). A tier alias or a claude-… id is refused rather than
@@ -377,6 +421,10 @@ func keyReplaced() *agents.RouteRefusal {
 // pin. The bedrock route also refuses the two settings that make the CLI fetch AWS credentials of
 // its own (a command it runs), which would put it on another identity.
 var settingsConflictBedrockKeys = []string{"awsAuthRefresh", "awsCredentialExport"}
+
+// deploymentBindingRe is a bound bedrock-deployment connection: the Control Plane's
+// "<source id>#<16 hex fingerprint>" (routegw binds it).
+var deploymentBindingRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}#[0-9a-f]{16}$`)
 
 // managedSettingsDir is where the organisation's managed settings live; a var for tests.
 var managedSettingsDir = "/etc/claude-code"
@@ -414,7 +462,7 @@ func projectSettingFiles(m session.Meta) []string {
 func settingsConflict(route string, files []string) *agents.RouteRefusal {
 	names := routeOverrides
 	var keys []string
-	if route == RouteBedrock {
+	if isBedrock(route) {
 		// The model pins too: in the managed layer one outranks the flag-layer pin, and the
 		// session's calls would then name a model the gateway refuses (route_model_not_selected).
 		names = append(slices.Clone(routeOverrides), bedrockModelPins...)
@@ -474,7 +522,7 @@ func AuthExpiredFor(m session.Meta) bool {
 		return AuthExpired()
 	}
 	switch m.Route.Route {
-	case RouteAPI, RouteBedrock:
+	case RouteAPI, RouteBedrock, RouteBedrockDeployment:
 		return false
 	case RouteSubscription:
 		c, ok := readCreds()
@@ -590,7 +638,7 @@ func stampRouteChecked(m session.Meta, turns []transcript.Turn) ([]transcript.Tu
 			continue
 		}
 		turns[i].Route = sel.Route
-		if sel.Route == RouteAPI || sel.Route == RouteBedrock {
+		if sel.Route == RouteAPI || isBedrock(sel.Route) {
 			turns[i].Billing = usagex.BillingMetered
 		}
 	}
@@ -605,7 +653,7 @@ func UsesAPIKey(m session.Meta) bool { return m.Route != nil && m.Route.Route ==
 // login (the API key, or the gateway bearer of the bedrock route): the login's renewal is not
 // its recovery.
 func OwnsCredential(m session.Meta) bool {
-	return m.Route != nil && (m.Route.Route == RouteAPI || m.Route.Route == RouteBedrock)
+	return m.Route != nil && (m.Route.Route == RouteAPI || isBedrock(m.Route.Route))
 }
 
 // withCurrentRoute lays the route selection and its boundaries as they are on disk now over m.

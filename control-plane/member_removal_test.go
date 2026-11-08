@@ -145,9 +145,10 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 		{"GET", "/git/default/r.git/info/lfs/locks"},
 		{"POST", "/git/default/r.git/info/lfs/locks/verify"},
 		{"POST", "/git/default/r.git/info/lfs/locks/l1/unlock"},
-		// The body "{}" has no session (the token route) and no output cap (the gateway): both
-		// answer 400 once the token and the membership pass.
+		// The body "{}" has no session (the token route), no route (the check) and no output cap
+		// (the gateway): each answers 400 once the token and the membership pass.
 		{"POST", "/internal/route/token"},
+		{"POST", "/internal/route/check"},
 		{"POST", "/route/v1/model/us.anthropic.claude-opus-5-5/invoke"},
 	}
 	send := func(method, path string) (pattern string, code int, body string) {

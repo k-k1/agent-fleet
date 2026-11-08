@@ -611,3 +611,22 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   running settle at their reservation. The CP generates the call id and returns it in `X-Af-Route-Call`, so the Agent's
   ledger row carries the CP's id. A session policy above AWS's 2,048-character limit is refused at registration, never
   cut. Agent forwarding, the create-path refusal, grants and budgets over REST, and the stack follow in the next parts.
+- 2026-11-08, Q1 part 2 (#3579): the Agent's forwarding and the gates, still behind `AF_PROVIDED_ROUTES=1`. claude
+  declares `bedrock-deployment` with an acceptance gate of its own, `AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE=1`, which a CP
+  with the switch on sets at the Workspace's start beside `AF_ROUTE_ISSUE_TOKEN`; it neither opens nor is opened by the
+  member route's `AF_CLAUDE_BEDROCK_ROUTE`. The launch is the bedrock launch (the gateway bearer on the socket, the
+  model pinned for every way the CLI picks one); `routegw` forwards a checked call to the CP's `/route/v1` at
+  `AF_CP_INTERNAL_URL`, else the public base, with the CP route token in place of a signature, and renews that token on
+  its sweep while the session runs. The ledger row is `Route=bedrock-deployment` under the CP's call id. A selection's
+  connection is the CP's binding (`<source id>#<fingerprint>`), answered by a new `POST /internal/route/check` on the
+  issuing token, which the Agent's bind, check and launch ask; the launch dialog offers the route only while it
+  answers yes (cached 30 seconds). The pre-wake refusal is that same check, run by REST and Console creates, MCP
+  `create_session` and every schedule fire (a schedule's save is not refused for it: a budget used up this month comes
+  back next month). The check also refuses a member whose budget or tenant ceiling is already used up, and a model off
+  the source's list. The spend-limit episode needs no Agent code of its own: the CP's 503 message names "the spend
+  limit", which the claude adapter's transcript markers already read as a limit that waiting does not clear. Grants and
+  budgets over REST, each with an audit row: `PUT /api/admin/tenants/{slug}/provided-routes/deployment/grant`
+  (super_admin: granted, ceiling, a grant without a ceiling above zero refused), `.../policy` (tenant_admin: members
+  only, member default) and `.../members` (tenant_admin: a member of this tenant's grant and override), and `GET` of
+  the same for the tenant's view with this month's spend. Not built: telling the Console on the events stream when a
+  grant or budget changes (ADR 0084 decision 8's fourth place) and the Console screens; the CFN stack follows in part 3.

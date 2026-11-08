@@ -840,9 +840,9 @@ func TestPutDeploymentSource(t *testing.T) {
 		{RoleARN: prTestRole, Region: "us-east-1", Models: []string{"anthropic.claude-unpriced-x"}},
 		{RoleARN: "not-an-arn", Region: "us-east-1", Models: []string{prTestModel}},
 	} {
-		var invalid *InvalidSourceError
+		var invalid *InvalidInputError
 		if _, err := e.g.PutDeploymentSource(ctx, in); !errors.As(err, &invalid) {
-			t.Errorf("%+v: %v, want an InvalidSourceError", in, err)
+			t.Errorf("%+v: %v, want an InvalidInputError", in, err)
 		}
 	}
 	if got := e.source(); got.PolicyVersion != src.PolicyVersion || len(got.Regions) != 1 {

@@ -1167,9 +1167,16 @@ func (a workspaceAPI) sessionCreateThen(w http.ResponseWriter, r *http.Request, 
 	}
 	// A route selection (ADR 0128 decision 12) is checked against the snapshot at the same point,
 	// for the same reason. Absent is the unchanged case and passes untouched.
-	if aerr := checkCreateRoute(peekSessionKind(r), peekSessionRoute(r)); aerr != nil {
+	peek := peekSessionRoute(r)
+	if aerr := checkCreateRoute(peekSessionKind(r), peek); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
+	}
+	if peek.sel != nil {
+		if aerr := providedRouteCreateRefusal(ctx, res.mv.MembershipID, peek.sel.Route); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
 	}
 	// SSM sessions (docs/log/p3-ssm-session.md): resolve the host bookmark
 	// server-side and rewrite the body with the (non-secret) instance/document/SSO

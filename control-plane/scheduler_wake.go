@@ -86,6 +86,13 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 	if code, err := scheduleRouteError(sch.AgentKind, sch.Route, sch.RouteConnection, sch.SessionMode); err != nil {
 		return "", "", fmt.Errorf("schedule route (%s): %w", code, err)
 	}
+	// A provided route is judged at the fire, not at save: a budget used up this month or a
+	// grant switched off refuses this run, and a later month's run may pass (ADR 0129 D3).
+	if sch.SessionMode != "assistant" {
+		if aerr := providedRouteCreateRefusal(ctx, sch.MembershipID, sch.Route); aerr != nil {
+			return "", "", fmt.Errorf("schedule route (%s): %s", aerr.code, aerr.message)
+		}
+	}
 	// 1. membership -> resolved (no gateway headers; the MCP/memo-bridge path).
 	identityID, ok, err := f.mgr.store.IdentityIDForMembership(ctx, sch.MembershipID)
 	if err != nil {

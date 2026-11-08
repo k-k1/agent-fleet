@@ -384,6 +384,10 @@ func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 		// User-reported (2026-08-20). The same 429 / rate_limit, but the side waiting never clears.
 		{"org monthly spend limit", apiErr("You've hit your org's monthly spend limit · run /usage-credits to raise it, or visit claude.ai/admin-settings/usage", 429), true, LimitSpend},
 		{"credit balance too low", apiErr("Your credit balance is too low to access the API", 429), true, LimitSpend},
+		// The CP's refusal on the deployment's Bedrock route (ADR 0129 D4: a 503 with
+		// x-should-retry false, shown once); its words are the CP's (routegateway.budgetRefusal).
+		{"provided route budget used up", apiErr("API Error: 503 you have hit your monthly budget, the spend limit of the deployment's Bedrock route: ≈$5.00 of $5.00 used in 2026-11; it resets on 2026-12-01 00:00 UTC", 503), true, LimitSpend},
+		{"provided route ceiling used up", apiErr("API Error: 503 you have hit the tenant's monthly ceiling, the spend limit of the deployment's Bedrock route: ≈$50.00 of $50.00 used in 2026-11; it resets on 2026-12-01 00:00 UTC", 503), true, LimitSpend},
 		{"a temporary rate limit is not a usage limit", apiErr("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited", 429), false, ""},
 		{"an over-long prompt does not clear by waiting", apiErr("Prompt is too long · the request is ~242785 tokens (limit 200000)", 400), false, ""},
 		{"an authentication error does not clear by waiting", apiErr("API Error (HTTP 401): authentication failed", 401), false, ""},

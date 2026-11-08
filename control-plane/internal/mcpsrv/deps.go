@@ -102,6 +102,9 @@ type CP interface {
 
 	// --- Service layers of other families (called as is; no logic here) ---------
 	ScheduleGuardErr(ctx context.Context, membershipID, repoName, sessionName string) error
+	// ProvidedRouteErr is the create paths' pre-wake refusal of a provided route the member
+	// cannot use now (ADR 0129 D3); nil for every other route and for a usable one.
+	ProvidedRouteErr(ctx context.Context, membershipID, route string) error
 	MemoList(ctx context.Context, membershipID string) (any, error)
 	MemoCreate(ctx context.Context, mv store.MembershipView, repo, category, kind, body, refPath string) (any, error)
 	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int) (any, error)
