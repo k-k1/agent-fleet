@@ -279,8 +279,9 @@ func (g *Gateway) forward(w http.ResponseWriter, r *http.Request, c *call, model
 	if a := r.Header.Get("Accept"); a != "" {
 		up.Header.Set("Accept", a)
 	}
-	// The CP passes or refuses these by its own list; nothing is dropped here, so a header the
-	// CP refuses is refused visibly rather than ignored.
+	// x-amzn-bedrock-* goes on to the CP, which passes or refuses each by its own list, so a
+	// Bedrock option it does not take is refused visibly rather than ignored. Every other header
+	// and the query string are dropped here: none of the four operations takes one.
 	for k, v := range r.Header {
 		if strings.HasPrefix(strings.ToLower(k), "x-amzn-bedrock-") {
 			for _, one := range v {

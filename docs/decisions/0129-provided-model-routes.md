@@ -630,3 +630,5 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   only, member default) and `.../members` (tenant_admin: a member of this tenant's grant and override), and `GET` of
   the same for the tenant's view with this month's spend. Not built: telling the Console on the events stream when a
   grant or budget changes (ADR 0084 decision 8's fourth place) and the Console screens; the CFN stack follows in part 3.
+  A Workspace started before the switch was turned on has neither the gate nor the issuing token: the CP's create check
+  passes it, and the create fails at the Agent's bind (asking for Stop → Start) until it is restarted.
