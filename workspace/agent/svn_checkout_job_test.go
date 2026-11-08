@@ -120,6 +120,3 @@ func TestSvnCheckoutFailureKeepsResumableCopy(t *testing.T) {
 		t.Error("leftovers that never became a working copy should be cleaned up")
 	}
 }
-
-// The dirty verdict in the list walks the whole working copy. On an 11.4 GB working copy (a
-// real one) that can hold GET /repos, so concurrent requests for the same folder ride on a
