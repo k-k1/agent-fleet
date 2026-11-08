@@ -14,7 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { EditorView } from "@codemirror/view";
 import { revisionOf } from "../editor/buffer.ts";
 import { clearDirtyRegistryForTests, hasDirtyEditors } from "../editor/dirtyRegistry.ts";
-import { clearParkedEditorsForTests } from "../editor/useFileEditor.ts";
+import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
 
 const MARP = "---\nmarp: true\n---\n\n# Deck\n\nbody\n";
 const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
@@ -116,8 +116,8 @@ afterEach(() => {
   root = null;
   host.remove();
   clearDirtyRegistryForTests();
-  // An unmount with unsaved edits parks the buffer for the view to come back to.
-  clearParkedEditorsForTests();
+  // An unmount with unsaved edits keeps the buffer for the view to come back to.
+  clearEditorSlotsForTests();
 });
 
 describe("markdown mode controls", () => {

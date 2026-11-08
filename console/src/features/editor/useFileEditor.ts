@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getEditableFile,
   putFile,
@@ -52,26 +52,79 @@ interface InitialEditableFile {
   revision: string;
 }
 
-// An editor whose view was unmounted with work still unsaved (a tabbed cell renders only its
-// selected view, so switching tabs unmounts it). Its refs and dirty-registry entry outlive the
-// component: the entry keeps close / reload / logout guarded, and its save and discard keep
-// working on these refs. Remounting the same view on the same file adopts it. Without it the
-// buffer is React state only, and a tab switch drops unsaved work with no prompt.
-interface ParkedEditor {
+// The buffer of one view on one file, kept outside React. A tabbed cell renders only its
+// selected view, so switching tabs unmounts the editor; held in component state, unsaved work
+// would go with it, and so would its dirty-registry entry, leaving close / reload / logout
+// unguarded. A slot outlives its hook while it is dirty or saving: its single registry entry
+// keeps the guards on it, their save / discard run on it, and a remount on the same view and
+// file picks it up as it stands, a save still in flight included. Idle and unmounted, it is
+// dropped.
+interface EditorSlot {
+  /** "" for the placeholder a hook holds while it has no editable file. */
+  key: string;
   path: string;
   model: { current: FileEditorModel | null };
   saving: { current: Promise<boolean> | null };
   mergeMine: { current: string | null };
   recovery: RecoveryCoordinator;
+  mounted: number;
+  listeners: Set<(model: FileEditorModel | null) => void>;
+  /** The newest mounted hook's save / discard; they stay bound to this slot after it unmounts. */
+  api: { save(): Promise<boolean>; discard(signal?: AbortSignal): Promise<boolean> } | null;
   unregister: (() => void) | null;
 }
 
-/** By view id. A view shows one file at a time, and retargeting a dirty view is guarded. */
-const parkedEditors = new Map<string, ParkedEditor>();
+const slots = new Map<string, EditorSlot>();
+const slotKey = (paneId: string, path: string) => `${paneId}\u0000${path}`;
+
+function newSlot(key: string, path: string, model: FileEditorModel | null): EditorSlot {
+  return {
+    key,
+    path,
+    model: { current: model },
+    saving: { current: null },
+    mergeMine: { current: null },
+    recovery: new RecoveryCoordinator(),
+    mounted: 0,
+    listeners: new Set(),
+    api: null,
+    unregister: null,
+  };
+}
+
+/** The slot a render should use. Found slots are reused; a new one enters the map only when a
+ *  hook mounts on it, so a render that never commits leaves nothing behind. */
+function slotFor(paneId: string, initial: InitialEditableFile | null): EditorSlot {
+  if (!initial) return newSlot("", "", null);
+  const key = slotKey(paneId, initial.path);
+  return slots.get(key) ?? newSlot(key, initial.path, createFileEditorModel(paneId, initial.path, initial.content, initial.revision));
+}
+
+function releaseIfIdle(slot: EditorSlot): void {
+  if (!slot.key || slot.mounted > 0 || slot.model.current?.dirty || slot.saving.current) return;
+  if (slots.get(slot.key) === slot) slots.delete(slot.key);
+  slot.recovery.invalidate();
+  slot.unregister?.();
+  slot.unregister = null;
+}
 
 /** Test hook. */
-export function clearParkedEditorsForTests(): void {
-  parkedEditors.clear();
+export function clearEditorSlotsForTests(): void {
+  for (const slot of slots.values()) slot.unregister?.();
+  slots.clear();
+}
+
+/** A ref-shaped view onto one field of the hook's current slot. The hook's callbacks read
+ *  their buffer through these, so an unmounted hook's save still lands in the slot it ran on. */
+function slotField<T>(slotRef: { current: EditorSlot }, field: (slot: EditorSlot) => { current: T }): { current: T } {
+  return {
+    get current() {
+      return field(slotRef.current).current;
+    },
+    set current(value: T) {
+      field(slotRef.current).current = value;
+    },
+  };
 }
 
 const isCleanForFollow = (model: FileEditorModel): boolean =>
@@ -95,100 +148,32 @@ function remoteFromFile(
 }
 
 export function useFileEditor(paneId: string, initial: InitialEditableFile | null) {
-  const [model, setReactModel] = useState<FileEditorModel | null>(() =>
-    initial ? createFileEditorModel(paneId, initial.path, initial.content, initial.revision) : null,
-  );
-  const modelRef = useRef(model);
-  const savingRef = useRef<Promise<boolean> | null>(null);
-  const mergeMineRef = useRef<string | null>(null);
-  const mountedRef = useRef(true);
-  const recoveryRef = useRef<RecoveryCoordinator | null>(null);
-  if (!recoveryRef.current) recoveryRef.current = new RecoveryCoordinator();
-  // Set while unmounting with unsaved work, so the registration's cleanup leaves the entry.
-  const parkingRef = useRef<ParkedEditor | null>(null);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    parkingRef.current = null;
-    return () => {
-      mountedRef.current = false;
-      const current = modelRef.current;
-      if (current && (current.dirty || savingRef.current)) {
-        const parked: ParkedEditor = {
-          path: current.path,
-          model: modelRef,
-          saving: savingRef,
-          mergeMine: mergeMineRef,
-          recovery: recoveryRef.current!,
-          unregister: null,
-        };
-        parkingRef.current = parked;
-        parkedEditors.set(paneId, parked);
-        return;
-      }
-      recoveryRef.current?.invalidate();
-    };
-    // paneId names the view for its whole life (Pane keys FileView by file, and the view id
-    // never changes under a mounted view).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // A parked editor that has become clean (saved, or discarded by a guard) holds nothing worth
-  // keeping: drop it and its registry entry.
-  const releaseIfSettled = useCallback(() => {
-    const parked = parkingRef.current;
-    if (mountedRef.current || !parked || parkedEditors.get(paneId) !== parked) return;
-    if (modelRef.current?.dirty || savingRef.current) return;
-    parkedEditors.delete(paneId);
-    parked.unregister?.();
-  }, [paneId]);
+  const initialPath = initial?.path;
+  // Keyed on the path, not the object: a refetch of the same file keeps the buffer.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const slot = useMemo(() => slotFor(paneId, initial), [paneId, initialPath]);
+  const slotRef = useRef(slot);
+  slotRef.current = slot;
+  const [model, setReactModel] = useState<FileEditorModel | null>(() => slot.model.current);
+  const [refs] = useState(() => ({
+    model: slotField(slotRef, (s) => s.model),
+    saving: slotField(slotRef, (s) => s.saving),
+    mergeMine: slotField(slotRef, (s) => s.mergeMine),
+    recovery: { get current() { return slotRef.current.recovery; } },
+  }));
+  const modelRef = refs.model;
+  const savingRef = refs.saving;
+  const mergeMineRef = refs.mergeMine;
+  const recoveryRef = refs.recovery;
 
   const setModel = useCallback((next: FileEditorModel) => {
-    // Parked, the refs are still the buffer of record: the guard's save / discard run on them.
-    modelRef.current = next;
+    const target = slotRef.current;
+    target.model.current = next;
     notifyDirtyEditorChanged();
-    if (mountedRef.current) setReactModel(next);
-    else releaseIfSettled();
-  }, [releaseIfSettled]);
-
-  useEffect(() => {
-    if (!initial) {
-      recoveryRef.current?.invalidate();
-      modelRef.current = null;
-      setReactModel(null);
-      return;
-    }
-    const held = parkedEditors.get(paneId);
-    if (held && held.model !== modelRef) {
-      if (held.path === initial.path) {
-        // Back on the same file: take the parked buffer over. A save still in flight finishes
-        // on the parked refs first, so its outcome is what gets adopted.
-        parkedEditors.delete(paneId);
-        let alive = true;
-        const adopt = () => {
-          if (!alive || !mountedRef.current) return;
-          held.recovery.invalidate();
-          held.unregister?.();
-          mergeMineRef.current = held.mergeMine.current;
-          if (held.model.current) setModel(held.model.current);
-        };
-        if (held.saving.current) void held.saving.current.finally(adopt);
-        else adopt();
-        if (held.saving.current) return () => {
-          // Unmounted again before the save settled: put it back rather than lose it.
-          alive = false;
-          if (!parkedEditors.has(paneId)) parkedEditors.set(paneId, held);
-        };
-        return;
-      }
-    }
-    const current = modelRef.current;
-    if (current?.path === initial.path) return;
-    recoveryRef.current?.invalidate();
-    const next = createFileEditorModel(paneId, initial.path, initial.content, initial.revision);
-    modelRef.current = next;
-    setReactModel(next);
-  }, [initial, paneId]);
+    for (const listener of target.listeners) listener(next);
+    // Unmounted, this is the guard's save / discard, or a save that outlived the view.
+    releaseIfIdle(target);
+  }, []);
 
   const recoverConflict = useCallback((): Promise<void> => {
     const current = modelRef.current;
@@ -312,14 +297,17 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       }
       return !modelRef.current?.dirty;
     })();
-    savingRef.current = operation;
+    // The slot the save started on: if the hook moves to another file meanwhile, clearing the
+    // marker there would leave this one pending, and never released.
+    const owner = slotRef.current;
+    owner.saving.current = operation;
     try {
       return await operation;
     } finally {
-      savingRef.current = null;
-      releaseIfSettled();
+      owner.saving.current = null;
+      releaseIfIdle(owner);
     }
-  }, [recoverConflict, recoverUnknown, releaseIfSettled, setModel]);
+  }, [recoverConflict, recoverUnknown, setModel]);
 
   const edit = useCallback((content: string) => {
     const current = modelRef.current;
@@ -367,21 +355,45 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   }, [recoverConflict, recoverUnknown, setModel]);
 
   useEffect(() => {
-    if (!initial) return;
-    const unregister = registerDirtyEditor({
-      paneId,
-      label: initial.path,
-      isDirty: () => !!modelRef.current?.dirty,
-      save,
-      discard,
-    });
-    return () => {
-      // Declared after the mount effect, so on unmount its cleanup has already decided.
-      const parked = parkingRef.current;
-      if (parked && !mountedRef.current) parked.unregister = unregister;
-      else unregister();
+    slot.api = { save, discard };
+  }, [slot, save, discard]);
+
+  useEffect(() => {
+    const listener = (next: FileEditorModel | null) => setReactModel(next);
+    slot.listeners.add(listener);
+    setReactModel(slot.model.current);
+    if (!slot.key) return () => {
+      slot.listeners.delete(listener);
     };
-  }, [discard, initial, paneId, save]);
+    if (!slots.has(slot.key)) slots.set(slot.key, slot);
+    slot.mounted++;
+    if (!slot.unregister) {
+      slot.unregister = registerDirtyEditor({
+        paneId,
+        key: slot.key,
+        label: slot.path,
+        isDirty: () => !!slot.model.current?.dirty,
+        save: () => slot.api?.save() ?? Promise.resolve(!slot.model.current?.dirty),
+        discard: (signal) => slot.api?.discard(signal) ?? false,
+      });
+    }
+    // Back on a buffer kept while the view was away: the file may have moved on since. Same
+    // advisory a probe would raise, from the copy the view has just fetched.
+    const current = slot.model.current;
+    if (initial && current?.dirty && !slot.saving.current && initial.revision !== current.baseDiskRevision) {
+      setModel(observeExternal(current, {
+        kind: initial.revision === current.bufferRevision ? "same_as_buffer" : "changed",
+        revision: initial.revision,
+      }));
+    }
+    return () => {
+      slot.listeners.delete(listener);
+      slot.mounted--;
+      releaseIfIdle(slot);
+    };
+    // initial is read once, as the copy this mount fetched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slot, paneId, setModel]);
 
   const resaveUnknown = useCallback(async () => {
     const current = modelRef.current;

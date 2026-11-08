@@ -18,7 +18,7 @@ import {
   type SuggestEditResult,
 } from "./api.ts";
 import { revisionOf } from "./buffer.ts";
-import { clearParkedEditorsForTests, useFileEditor } from "./useFileEditor.ts";
+import { clearEditorSlotsForTests, useFileEditor } from "./useFileEditor.ts";
 
 vi.mock("./api.ts", () => ({
   getEditableFile: vi.fn(),
@@ -48,8 +48,12 @@ type Editor = ReturnType<typeof useFileEditor>;
 let editor: Editor | null = null;
 let renderer: ReactTestRenderer | null = null;
 
+// What the view hands the hook; a test may swap it before a remount (another file, or a newer
+// copy of the same one).
+let given: typeof initial = initial;
+
 function Harness() {
-  editor = useFileEditor("p1", initial);
+  editor = useFileEditor("p1", given);
   return null;
 }
 
@@ -74,6 +78,7 @@ function editableFile(content: string): EditableFile {
 }
 
 beforeEach(() => {
+  given = initial;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.mocked(putFile).mockReset();
   vi.mocked(getEditableFile).mockReset();
@@ -87,7 +92,7 @@ afterEach(async () => {
   renderer = null;
   editor = null;
   clearDirtyRegistryForTests();
-  clearParkedEditorsForTests();
+  clearEditorSlotsForTests();
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
 });
 
@@ -737,5 +742,94 @@ describe("useFileEditor across unmount (tab switch)", () => {
     expect(editor!.model?.content).toBe("mine\n");
     expect(editor!.model?.dirty).toBe(false);
     expect(editor!.model?.baseDiskRevision).toBe(revisionOf("mine\n"));
+  });
+
+  it("keeps the guard through a remount while a save is in flight, and after a failed save", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    await unmount();
+    await renderEditor();
+    expect(dirtyPaneIds()).toEqual(["p1"]);
+    await unmount(); // away again before the save settles
+    expect(dirtyPaneIds()).toEqual(["p1"]);
+
+    await act(async () => {
+      pendingPut.resolve({ ok: false, status: 400, error: { code: "bad_request", message: "no" } });
+      await pendingPut.promise;
+    });
+    expect(dirtyPaneIds()).toEqual(["p1"]);
+    const back = await renderEditor();
+    expect(back.model?.content).toBe("mine\n");
+    expect(back.model?.dirty).toBe(true);
+  });
+
+  it("lets go of a buffer whose save succeeds while no view shows it", async () => {
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      void current.save();
+      await Promise.resolve();
+    });
+    await unmount();
+    await act(async () => {
+      pendingPut.resolve({ ok: true, path: initial.path, size: 5, revision: revisionOf("mine\n") });
+      await pendingPut.promise;
+    });
+    expect(dirtyPaneIds()).toEqual([]);
+    const back = await renderEditor();
+    expect(back.model?.content).toBe(baseContent); // a fresh start from the file given
+  });
+
+  it("keeps guarding the left-behind buffer when the view comes back on another file", async () => {
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await unmount();
+
+    const otherContent = "other\n";
+    given = { path: "repos/b.txt", content: otherContent, revision: revisionOf(otherContent) };
+    const other = await renderEditor();
+    expect(other.model?.path).toBe("repos/b.txt");
+    expect(other.model?.dirty).toBe(false);
+    expect(dirtyPaneIds()).toEqual(["p1"]);
+    const decision = confirmDirtyNavigation("layout", ["p1"]);
+    expect(currentDirtyGuardRequest()!.entries.map((e) => e.label)).toEqual([initial.path]);
+    cancelDirtyGuardRequest(currentDirtyGuardRequest()!.id);
+    await expect(decision).resolves.toBe(false);
+  });
+
+  it("keeps guarding a buffer whose guard save fails", async () => {
+    vi.mocked(putFile).mockResolvedValue({ ok: false, status: 400, error: { code: "bad_request", message: "no" } });
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await unmount();
+    const decision = confirmDirtyNavigation("reload");
+    const request = currentDirtyGuardRequest()!;
+    let saved = true;
+    await act(async () => {
+      saved = await saveDirtyGuardRequest(request.id);
+    });
+    expect(saved).toBe(false);
+    cancelDirtyGuardRequest(request.id);
+    await expect(decision).resolves.toBe(false);
+    expect(dirtyPaneIds()).toEqual(["p1"]);
+  });
+
+  it("flags a file that changed on disk while the view was away", async () => {
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await unmount();
+    const disk = "someone else\n";
+    given = { path: initial.path, content: disk, revision: revisionOf(disk) };
+    const back = await renderEditor();
+    expect(back.model?.content).toBe("mine\n");
+    expect(back.model?.externalObservation).toMatchObject({ kind: "changed", revision: revisionOf(disk) });
   });
 });
