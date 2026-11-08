@@ -400,7 +400,7 @@ func (f *fakeTTSAudit) InsertAudit(_ context.Context, l store.AuditLog) error {
 
 func testSettingsStore(t *testing.T) store.Store {
 	t.Helper()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

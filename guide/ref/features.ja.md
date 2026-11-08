@@ -56,9 +56,9 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [06 リポジトリと git](../member/06-code.ja.md) |
 | worktree | メンバー | 各リポジトリの下 | [06 リポジトリと git](../member/06-code.ja.md) |
 | サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-gh-と-bkt-を使う)。サインイン済みの CLI の一覧は [15](../member/15-external-services.ja.md#サインイン済みの-cli) |
-| サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-jira-を使う) |
-| サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-confluence-を使う) |
-| Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-jira-を使う) |
+| サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md) |
+| サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [Confluence を使う](../user/integrations/confluence.ja.md) |
+| Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
 | Subversion の作業コピー — 更新、ログを表示、ローカルの変更 | メンバー | リポジトリ → SVN の行 | [06 リポジトリと git](../member/06-code.ja.md#subversionsvnリポジトリ) |
 | ファイルツリーとビューア | メンバー | ファイル | [07 ファイル](../member/07-files.ja.md) |
 | フォルダを zip でダウンロードする | メンバー | ファイルツリーまたはギャラリー → 右クリック → zip でダウンロード | [07 ファイル](../member/07-files.ja.md#フォルダを-zip-でダウンロードする) |
@@ -95,6 +95,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 未読の通知があるセッションの赤いドット | メンバー | 左ペイン・タブ | [03 セッションを始める](../member/03-starting-sessions.ja.md#状態を読む-バッジと通知) |
 | セッション行の作業項目リンク — ブランチのプルリクエストと紐づいたチケット | メンバー | 左ペイン、セッション行 | [03 セッションを始める](../member/03-starting-sessions.ja.md#行からセッションへ)。どのプロバイダが対象かは [repos.md](repos.ja.md) |
 | プルリクエストの通知 — マージ可能・マージ・クローズ | メンバー | 設定 → 通知 | [20 設定](../member/20-settings.ja.md#通知) |
+| セッションがプルリクエストを見張る — チェックの完了・コンフリクト・マージを知らせる | メンバー | （エージェントのツール `watch`） | [11 たくさんのセッションを動かす](../member/11-many-sessions.ja.md#セッションが自分でプルリクエストを見張る) |
 | 応答なしバッジ — ワークスペースは起動しているが Agent が応答しない | メンバー | ワークスペースの電源ボタンの横 | [21 困ったとき](../member/21-troubleshooting.ja.md#電源ボタンの横に-応答なし-バッジが出ている) |
 | エンジンのピル — チャット / 画像のエンジンが起きているか | メンバー | 画面最上部のバー | [アイコン・バッジ・メニュー](../member/badges-and-menus.ja.md#画面最上部のエンジンのピル) |
 | アシスタントチャット | メンバー | アシスタント | [10 チャットとメモ](../member/10-chat-memo.ja.md) |
@@ -122,11 +123,11 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | Git ホスティングの接続 | メンバー | Git ホスティング |
 | 内部リポジトリ | メンバー | 内部リポジトリ |
 | AWS プロファイルと SSM | メンバー | AWS プロファイル/SSM（[AWS SSO を使う](../user/integrations/aws-sso.ja.md)、[SSM で EC2 にログインする](../user/integrations/aws-ssm.ja.md)） |
-| Google Cloud のプロファイル | メンバー | Google Cloud（[16](../member/16-cloud-accounts.ja.md#google-cloud-で自分としてコマンドを実行するaf-gcloud-exec)） |
+| Google Cloud のプロファイル | メンバー | Google Cloud（[Google Cloud を使う](../user/integrations/gcloud.ja.md)） |
 | 連携サーバーとトークン | メンバー | MCP サーバー（セッションで使う） / 外部からのアクセス → MCP トークン・接続アプリ |
 | サインインでリモート MCP クライアントを接続する（OAuth。配備が有効にしているとき）— 接続済みアプリ、最近の呼び出し | メンバー | 外部からのアクセス → MCP トークン・接続アプリ（[19](../member/19-outside-access.ja.md#サインインでリモート-mcp-クライアントを接続するoauth)）
 | `/mcp` から送った入力の「MCP 経由」バッジ | メンバー | ミラーの入力の吹き出し（[19](../member/19-outside-access.ja.md#外部の-claude-から自分のワークスペースを操作するmcp)）
-| OAuth が要る登録済み MCP サーバーにサインインする（サインイン・もう一度サインイン・追加の権限を許可する） | メンバー | MCP サーバー（セッションで使う） → 認証 → OAuth（[20](../member/20-settings.ja.md#mcp-サーバーセッションで使う)）
+| OAuth が要る登録済み MCP サーバーにサインインする（サインイン・もう一度サインイン・追加の権限を許可する） | メンバー | MCP サーバー（セッションで使う） → 認証 → OAuth（[セッションに MCP サーバーを追加する](../user/integrations/mcp-servers.ja.md#oauth-のサーバーにサインインする)）
 | 課題管理の接続 | メンバー | 課題管理 |
 | 使用量 | メンバー | エージェント使用量 |
 | 利用枠ボード: 利用上限に対する自分の状況を公開し、メンバーが自分に公開している状況を見る | メンバー | 利用枠ボード |

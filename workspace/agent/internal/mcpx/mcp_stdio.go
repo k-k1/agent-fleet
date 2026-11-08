@@ -391,7 +391,7 @@ func mcpStdioInstructions() string {
 		}
 		return "Agent Fleet local MCP for the assistant: observe the sessions in your own Workspace."
 	}
-	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user", "branch names from your naming rules"}
+	parts := []string{"completion report", "handoff proposal", "stop after this turn", "session status and usage", "memos to your user", "branch names from your naming rules", "watches that tell you when a pull request changes"}
 	if mcpAgentMemoryEnabled {
 		parts = append(parts, "agent memory shared by every agent kind")
 	}

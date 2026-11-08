@@ -24,7 +24,7 @@ func (r fsStateRuntime) State(context.Context) string { return r.state }
 func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved, *store.SQL, func()) {
 	t.Helper()
 	server := httptest.NewServer(agent)
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		server.Close()
 		t.Fatal(err)

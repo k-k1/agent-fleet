@@ -189,7 +189,7 @@ have_ssm() { "${AWS[@]}" ssm get-parameter --name "$1" --query 'Parameter.Name' 
 # key_too_short decrypts into a shell variable, tests it and prints nothing about it (no value,
 # no length, no digest). Nothing may echo it or run under `set -x` while it is held.
 key_too_short() {
-  local v n
+  local v n d
   { set +x; } 2>/dev/null
   v="$("${AWS[@]}" ssm get-parameter --name "$1" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null)" || return 2
   v="${v//[[:space:]]/}"
@@ -200,11 +200,15 @@ key_too_short() {
   else
     n=$(( ${#v} * 3 / 4 ))                   # raw string: 43 characters count as 32 bytes
   fi
+  # keycheck also refuses a value with fewer than 8 distinct bytes (a repeated placeholder).
+  # Characters stand in for bytes here; the count is printed nowhere.
+  d=$(printf '%s' "$v" | fold -w1 | sort -u | wc -l)
   v=""
-  [ "$n" -lt 32 ]
+  [ "$n" -lt 32 ] || [ "$d" -lt 8 ]
 }
 # The same rule the Control Plane applies at start-up (control-plane/internal/keycheck), minus
-# its repeated-byte check. This release only warns there; so does this, and it does not fail.
+# its exact byte count. The CP refuses to start on such a value; this only warns, so a stand-up
+# can still finish and the operator sees the problem before the first task does.
 for s in cookie-secret master-key; do
   if ! have_ssm "$SSM_PREFIX/$s"; then
     say_missing "no SSM $SSM_PREFIX/$s (README §30-ingress stand-up, step 2)"
@@ -212,7 +216,7 @@ for s in cookie-secret master-key; do
   fi
   key_too_short "$SSM_PREFIX/$s" && rc=0 || rc=$?
   case "$rc" in
-    0) echo "    ⚠ SSM $SSM_PREFIX/$s is shorter than 32 bytes of key material: generate a new one (guide/operate/04-secure.md, \"The deployment keys\")" ;;
+    0) echo "    ⚠ SSM $SSM_PREFIX/$s is shorter than 32 bytes of key material: the Control Plane will refuse to start with it; generate a new one (guide/operate/04-secure.md, \"The deployment keys\")" ;;
     2) echo "    ⚠ SSM $SSM_PREFIX/$s could not be read to check its length (needs ssm:GetParameter and kms:Decrypt)" ;;
   esac
 done

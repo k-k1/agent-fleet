@@ -46,7 +46,7 @@ type handoffLife struct {
 func newHandoffLife(t *testing.T) *handoffLife {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

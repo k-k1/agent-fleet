@@ -235,6 +235,8 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// One member's hourly occupancy — the heatmap next to the stop / disk-quota buttons
 	// (docs/log/83). Same body as /api/usage/me/hourly, keyed by membership.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/usage-hourly", adm.memberUsageHourly)
+	// One member's monthly running hours for the member-detail view (issue #3609).
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/usage-monthly", adm.memberUsageMonthly)
 	// The third and last cleanup step (docs/log/61 §61.18): only a row already offboarded
 	// (DELETE /api/admin/memberships) and destroyed (DELETE /api/admin/workspaces) is
 	// actually removed here.

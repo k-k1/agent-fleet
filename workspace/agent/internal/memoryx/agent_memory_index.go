@@ -86,7 +86,7 @@ func agentMemIndexLine(e agentMemEntry) string {
 	if len(tags) > 0 {
 		t = " (" + strings.Join(tags, "; ") + ")"
 	}
-	return "- [" + e.Scope + "] " + e.Name + " — " + e.Description + t + "\n"
+	return "- [" + e.Scope + "] " + e.Name + " — " + agentMemReasonsText(e.Reasons) + e.Description + t + "\n"
 }
 
 // agentMemRankTier puts behavioural guidance (feedback, user) ahead of everything else.
@@ -173,6 +173,9 @@ func agentMemBudgetIndex(ranked []agentMemEntry, budget int) (described []agentM
 	described = []agentMemEntry{}
 	for ; i < len(ranked); i++ {
 		e := ranked[i]
+		if !agentMemDescribable(e) {
+			break // quiet and log memories are names only, whatever their pin
+		}
 		e.Pinned, e.Uses = false, 0 // ranking input, not part of the answer
 		e.Description = agentMemCutRunes(e.Description, agentMemIndexDescRunes)
 		n := len(agentMemIndexLine(e))
@@ -187,7 +190,7 @@ func agentMemBudgetIndex(ranked []agentMemEntry, budget int) (described []agentM
 		return described, nil, 0, 0
 	}
 	for _, e := range rest {
-		if e.Pinned {
+		if e.Pinned && agentMemDescribable(e) {
 			pinnedOmitted++
 		}
 	}

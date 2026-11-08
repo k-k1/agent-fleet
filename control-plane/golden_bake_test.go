@@ -262,7 +262,7 @@ type goldenFixture struct {
 func newGoldenFixture(t *testing.T, agentHealthy *bool) *goldenFixture {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

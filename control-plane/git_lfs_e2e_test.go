@@ -49,7 +49,7 @@ func TestLFSEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 	dataRoot := filepath.Join(tmp, "data")
-	st, err := store.OpenSQLite(filepath.Join(tmp, "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(tmp, "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

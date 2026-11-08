@@ -185,7 +185,7 @@ func TestSharedSessionsInvalidateDropsCacheAndInflight(t *testing.T) {
 // and N subscribers on one tick cost one Agent read.
 func TestSessionsPayloadPerMemberContentWithSharedRead(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

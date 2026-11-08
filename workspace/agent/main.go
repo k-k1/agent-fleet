@@ -360,6 +360,7 @@ func serve() {
 	// in flight (stalled_tree.go). Its own loop: it must work while nobody has a screen open.
 	sessionx.StartStalledTreeWatch()
 	sessionx.StartPRFeedbackWatch()
+	sessionx.StartWatchEngine()
 
 	// Self-hosted inference engines (ADR 0071 P0): ask the CP which engines this deployment
 	// runs and declare them in opencode's config, so `llamacpp/<model>` is in the launch

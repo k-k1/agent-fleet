@@ -13,7 +13,7 @@ import (
 // per-tenant cap, and the deployment hard ceiling.
 func TestResolveWorkspaceMemBytes(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestResolveWorkspaceMemBytes(t *testing.T) {
 // (ADR 0044 decision 1).
 func TestResolveWorkspaceSizeCPUAndDisk(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

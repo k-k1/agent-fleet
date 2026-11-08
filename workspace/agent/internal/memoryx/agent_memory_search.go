@@ -88,7 +88,7 @@ func agentMemSearchRanked(c agentMemCaller, query string, limit int) (hits []age
 	agentMemWarmScan(c)
 	agentMemMu.RLock()
 	defer agentMemMu.RUnlock()
-	found, fallback, err := agentMemRankLocked(srcs, c.Kind, terms, limit)
+	found, fallback, err := agentMemRankLocked(srcs, c.Kind, terms, limit, true)
 	if err != nil {
 		return nil, "", err
 	}
@@ -120,7 +120,7 @@ func agentMemWarmSrcs(srcs []agentMemSearchSrc) {
 // agentMemRankLocked scores and orders the memories of srcs (the caller holds agentMemMu). It
 // only reads: counting a use is the caller's choice, so a Console search can share the ranking
 // without feeding it. Each result keeps the src it came from.
-func agentMemRankLocked(srcs []agentMemSearchSrc, kind string, terms []string, limit int) (found []agentMemScored, fallback string, err error) {
+func agentMemRankLocked(srcs []agentMemSearchSrc, kind string, terms []string, limit int, forAgent bool) (found []agentMemScored, fallback string, err error) {
 	if limit <= 0 {
 		limit = agentMemSearchDefault
 	}
@@ -135,7 +135,7 @@ func agentMemRankLocked(srcs []agentMemSearchSrc, kind string, terms []string, l
 			agentMemSetUses(es, rel)
 		}
 		for _, e := range es {
-			if !agentMemAppliesTo(e, kind) {
+			if !agentMemAppliesTo(e, kind) || forAgent && agentMemExcluded(e) {
 				continue
 			}
 			s := agentMemScore(e, terms)

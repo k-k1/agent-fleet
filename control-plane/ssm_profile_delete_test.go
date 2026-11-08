@@ -19,7 +19,7 @@ import (
 func ssmAPIStores(t *testing.T) map[string]*store.SQL {
 	t.Helper()
 	ctx := context.Background()
-	lite, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	lite, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

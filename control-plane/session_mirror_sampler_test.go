@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -109,8 +110,9 @@ func TestSampleDoesNotOverwriteANewerMirrorWriteWithASlowOlderRead(t *testing.T)
 	st, mgr, _, _, ws := usageHourFixture(t)
 	arrived := make(chan struct{})
 	release := make(chan struct{})
+	var arrivedOnce sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(arrived)
+		arrivedOnce.Do(func() { close(arrived) })
 		<-release
 		_, _ = w.Write([]byte(`{"sessions":[{"name":"old","alive":true,"kind":"claude"}]}`))
 	}))

@@ -41,7 +41,7 @@ func TestProvidedRoutesOffByDefault(t *testing.T) {
 // The deployment source is the super_admin's to register, with an audit row.
 func TestProvidedRouteDeploymentSourceAdmin(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

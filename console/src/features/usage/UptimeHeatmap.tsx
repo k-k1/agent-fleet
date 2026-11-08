@@ -557,10 +557,32 @@ export function MemberUptimePanel({ slug, userKey }: { slug: string; userKey: st
   const tr = useT();
   const endpoint = `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(userKey)}/usage-hourly`;
   const { range, setRange, applied, data, err, loading, apply } = useUptime(endpoint);
+  // The member's hours per month, aggregated by the server (same rules as the caller's own).
+  const [monthly, setMonthly] = useState<any[] | null>(null);
+  const [monthlyErr, setMonthlyErr] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setMonthly(null);
+    setMonthlyErr(false);
+    api(`api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(userKey)}/usage-monthly?months=6`)
+      .then((d) => alive && (d?.error ? setMonthlyErr(true) : setMonthly(d?.monthly || [])))
+      .catch(() => alive && setMonthlyErr(true));
+    return () => {
+      alive = false;
+    };
+  }, [slug, userKey]);
   return (
     <section className="admin-panel">
       <h4>{tr("uptime.member_title")}</h4>
       <p className="muted uh-lede">{tr("uptime.member_intro")}</p>
+      {monthly && (
+        <MonthlyTrend
+          title={tr("monthly.hours_title")}
+          rows={usageMonthRows(monthly)}
+          format={(v) => (v / 3600).toFixed(v < 3600 ? 2 : 1) + " h"}
+        />
+      )}
+      {monthlyErr && <p className="form-err">{tr("monthly.load_error")}</p>}
       <UptimeRangeBar range={range} setRange={setRange} onApply={apply} loading={loading} />
       {err && <p className="form-err">{err}</p>}
       <UptimeHeatmap data={data} from={applied.from} to={applied.to} />

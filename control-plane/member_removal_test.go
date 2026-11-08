@@ -34,7 +34,7 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	t.Setenv("AF_LLM_URL", "http://127.0.0.1:9/v1")
 	restoreAuthExemptions(t)
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

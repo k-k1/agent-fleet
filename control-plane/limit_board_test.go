@@ -161,7 +161,7 @@ func newLimitFixture(t *testing.T, st *store.SQL, keys ...string) *limitFixture 
 
 func openLimitStore(t *testing.T) *store.SQL {
 	t.Helper()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

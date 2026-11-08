@@ -329,7 +329,7 @@ func TestChooseTTSProvider(t *testing.T) {
 func TestTTSAdminToggleSetting(t *testing.T) {
 	clearTTSEnv(t)
 	srv, _ := fakeVoicevox(t)
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestTTSDict(t *testing.T) {
 	}
 
 	// With a store, the setting's contents come back verbatim.
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

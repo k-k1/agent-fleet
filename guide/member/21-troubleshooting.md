@@ -515,7 +515,7 @@ MCP servers, cloud-account commands, Jira and apps that connect from outside.
 ### An MCP server I registered isn't available in sessions or assistants
 
 Work through ⚙ Settings → MCP servers (used by sessions) in this order
-([20](20-settings.md#mcp-servers-used-by-sessions)).
+([Add an MCP server to your sessions](../user/integrations/mcp-servers.md#when-it-goes-wrong)).
 
 1. Is it **enabled**? Disabled keeps the definition but hands it to nobody.
 2. Do the **targets** include "sessions" / "assistants"? With both cleared it goes nowhere.
@@ -549,7 +549,7 @@ older build could pass it by luck.
 ### An MCP server's row says "Sign in again", "More permission needed" or shows an unfinished sign-in
 
 These are the states of an **OAuth** server's row in ⚙ Settings → MCP servers (used by sessions)
-([20](20-settings.md#mcp-servers-used-by-sessions)). An OAuth server is handed to sessions and assistants only while you are
+([Add an MCP server to your sessions](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)). An OAuth server is handed to sessions and assistants only while you are
 signed in, and a session picks the change up from the next one you start.
 
 | The row says | What it means | What to do |
@@ -571,7 +571,7 @@ Jira card in ⚙ Settings → Issue tracker says **"Boards, sprints and epics: n
 `jira init` and the board, sprint and epic commands fail with an authorization error, and `jira` prints the same
 explanation first. Your tenant administrator adds the scopes to the Atlassian app and ticks the Jira Software
 option on the tenant's Jira card; then **reconnect Jira** once. Do not keep retrying `jira init` meanwhile.
-Viewing, listing, creating and commenting on issues do not need them ([15](15-external-services.md#use-jira-in-a-session)).
+Viewing, listing, creating and commenting on issues do not need them ([Use Jira](../user/integrations/jira.md#use-boards-sprints-and-epics)).
 
 ### `jira issue create` (or `comment add`) timed out with exit status 124
 
@@ -582,7 +582,7 @@ created in the last 15 minutes with that summary and prints "possible matches" o
 the search can fail ("could not look for the issue"), so do not rely on it. Check Jira first, for example with the JQL
 `project = PROJ AND creator = currentUser() AND created >= -15m`, and create it again only if it is not there.
 Commands that only read are re-run by themselves after a timeout or a connection reset
-([15](15-external-services.md#use-jira-in-a-session)).
+([Use Jira](../user/integrations/jira.md#a-write-exited-with-status-124)).
 
 ### `jira` exited with status 3: the description was not set
 
@@ -590,7 +590,7 @@ Status **3** from `jira issue create` or `jira issue edit -b` means the only par
 and `jira` normally names the issue. If a `create` could not read the new issue's key, it says so instead: find the
 issue in Jira (for example with the JQL above). After a `create` **the issue exists**, so do not create it again. After
 an `edit` the other changes you asked for were applied. Either way, set the description with
-`jira issue edit PROJ-1 --no-input -b "…"` ([15](15-external-services.md#use-jira-in-a-session)).
+`jira issue edit PROJ-1 --no-input -b "…"` ([Use Jira](../user/integrations/jira.md#creating-an-issue-exited-with-status-3)).
 
 ### AWS commands say "Unable to locate credentials", or `af-aws-exec` / `af-gcloud-exec` stops
 
@@ -604,7 +604,7 @@ an `edit` the other changes you asked for were applied. Either way, set the desc
   requested in the Agent Fleet Console …", "Google Cloud login required …"). Log in from the toast
   or ⚙ Settings, or run the terminal command it printed, then run the command again. Otherwise the
   status is the command's own: read that command's error
-  ([16](16-cloud-accounts.md#when-it-stops)).
+  ([Use Google Cloud](../user/integrations/gcloud.md#when-it-goes-wrong)).
 
 ## Terminal and phone
 

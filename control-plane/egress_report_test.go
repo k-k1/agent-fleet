@@ -279,7 +279,7 @@ func ingestWith(t *testing.T, eg egressAPI, body string) int {
 
 func TestEgressIngestStoreFailureAnswers5xx(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestEgressIngestStoreFailureAnswers5xx(t *testing.T) {
 
 func TestEgressIngestAuditsDropped(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,6 +32,7 @@ func auditRowsOf(t *testing.T, st store.Store, tenantID, action string) []store.
 // Each admin write below must leave at least one row, under the tenant it concerns, when it
 // succeeds. The static test further down is what forces a new route onto a list.
 func TestAdminWritesLeaveAnAuditRow(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	boss := func(st *store.SQL) store.Identity {
 		id, _, _ := st.GetIdentityByUserKey(ctx, "boss-acme-co-jp")
@@ -100,6 +101,7 @@ func TestAdminWritesLeaveAnAuditRow(t *testing.T) {
 // A role change grants or removes privilege, so a request that cannot be recorded is refused
 // and nothing changes.
 func TestSetMembershipRoleRefusedWhenTheAuditRecordCannotBeWritten(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, victim, tn := destroyFixture(t, fixedRuntimeFactory{&reachableHomeRuntime{unreachableHomeRuntime: unreachableHomeRuntime{rec: &wipeRecorder{}, state: "stopped"}}})
 	boss, _, _ := st.GetIdentityByUserKey(ctx, "boss-acme-co-jp")
@@ -296,6 +298,7 @@ func (s roleRaceStore) GetMembership(ctx context.Context, identityID, tenantID s
 // "from" is the role the update overwrote, not the one read earlier: with another promotion in
 // between, member -> member would otherwise be recorded for a tenant_admin -> member change.
 func TestSetMembershipRoleRecordsTheRoleItActuallyOverwrote(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, _, tn := destroyFixture(t, fixedRuntimeFactory{&reachableHomeRuntime{unreachableHomeRuntime: unreachableHomeRuntime{rec: &wipeRecorder{}, state: "stopped"}}})
 	boss, _, _ := st.GetIdentityByUserKey(ctx, "boss-acme-co-jp")

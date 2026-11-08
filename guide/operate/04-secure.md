@@ -83,30 +83,35 @@ Two secrets protect everything else, and both are only as strong as the value yo
 | What changing it costs | **Do not change it on a running deployment.** Everything sealed under the old value stops opening and there is no re-keying command; see [12 Keys at rest](12-keys.md). | everybody signs in again, once (see "The emergency stop" below) |
 
 The start-up check only measures length (and rejects a value made of a few repeated bytes); it
-cannot tell a long passphrase from random bytes, which is why the value must be generated. In
-this release a value that fails the check **does not stop the Control Plane**: it logs a
-`WARNING` and the administration screen shows a banner (`weak_master_key`,
-`weak_cookie_secret` in `deployment_warnings`). A later release will refuse to start under any
-`AUTH` other than `dev`, so replace a flagged value at your next planned window. The check
-never logs the value. `deploy/aws/ecs/standup.sh` checks the stored parameters the same way and
-prints only OK or too short.
+cannot tell a long passphrase from random bytes, which is why the value must be generated. Under
+any `AUTH` other than `dev`, a value that fails the check **stops the Control Plane at start**
+with a message naming the variable (`AF_MASTER_KEY`, `AF_COOKIE_SECRET` or both). `AUTH=dev` is
+exempt. The check never logs the value. `deploy/aws/ecs/standup.sh` checks the stored
+parameters the same way and prints only OK or too short.
 
-### Switching to per-purpose cookie keys
+**Before you upgrade to the release that refuses**, check the values you run with. A short
+`AF_COOKIE_SECRET` is the easy case: generate a new one, set it and restart; everybody signs in
+again once. A short `AF_MASTER_KEY` is not: values sealed under it stop opening, and there is no
+re-keying command ([12 Keys at rest](12-keys.md)). Plan the move to a generated key (including
+members reconnecting their stored credentials) before the upgrade; the Control Plane will not
+start on the old one.
 
-The Control Plane can sign the session, sign-in state and preview cookies with one key per
-purpose, so a cookie made for one purpose never verifies for another. Because a replica of the
-previous release cannot read the new format, switching is two steps and is **off by default**:
+### Per-purpose cookie keys
 
-1. Deploy this release to every replica. It reads both formats and still issues the old one,
-   so a rolling update signs nobody out.
-2. Once no replica of the previous release is left, set `AF_COOKIE_PURPOSE_KEYS=1` (on ECS, the `CookiePurposeKeys` parameter of the ingress stack, then update it) and restart
-   (replicas may be restarted one at a time; the two settings accept each other's cookies).
-   Cookies issued before the switch keep working for one session lifetime
-   (`AF_SESSION_TTL`, default 7 days) and then expire; sign-in states and preview tokens live
-   minutes. Until then the old format is not purpose-separated.
+The Control Plane signs the session, sign-in state and preview cookies with one key per purpose,
+so a cookie made for one purpose never verifies for another. This is the default. A replica
+older than 0.42.0 cannot read the labelled format, so:
 
-Turning it off again is safe for this release, which reads both formats. Only rolling back to
-the previous release after step 2 signs people out, because it cannot read the new format.
+1. **Update to 0.42.0 (or later) on every replica first.** It reads both formats.
+2. Then update to this release. It issues the labelled format and still accepts the old one for
+   one session lifetime (`AF_SESSION_TTL`, default 7 days) after each start, so a rolling update
+   and a restart sign nobody out; sign-in states and preview tokens live minutes. In that
+   window the old format is not purpose-separated.
+
+To keep issuing the old format for one more release, set `AF_COOKIE_PURPOSE_KEYS=0` (on ECS, the
+`CookiePurposeKeys` parameter of the ingress stack to `0`, then update it). That opt-out goes away
+in a later release, together with the old format itself. Do not lower `AF_SESSION_TTL` in the same update: it shortens the window in which old-format cookies are accepted. Only rolling back to a release before
+0.42.0 after the labelled format was issued signs people out.
 
 ### Values stored before the key was set
 
@@ -342,7 +347,7 @@ to reach the authorization server over `https` (it discovers the token endpoint 
 connects to public addresses only and follows no redirect); every other request is made from the workspace. The Control Plane writes
 `mcp.client_oauth` audit rows (`started`, `completed`, `failed`, `disconnected`) that name the server and the
 authorization server, never a code or token. Members sign in from Settings › MCP servers
-([member guide 20](../member/20-settings.md#mcp-servers-used-by-sessions)).
+([Add an MCP server to your sessions](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)).
 
 ### Reading what a client sent to `/mcp`
 

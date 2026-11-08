@@ -502,6 +502,26 @@ lint とフィードバックの理由はすぐに見える（決定 3）。数�
 
 ## 注記
 
+- **2026-11-08 — 決定 3「スキーマ」と「見え方」を実装した（#3495）。** フロントマターのキーは `kind`・`anchors`・
+  `status`・`status_by`・`superseded_by`・`invalid_at`・`reasons`（`kind` の Go フィールドは `MemKind`。`Kinds` が
+  すでに「メモリの対象エージェント種別」を指すため）。構造のある値はファイル内で 1 行の JSON（有効な YAML フロー値）、
+  ワイヤは camelCase。`superseded_by` は決定 11 の和で、`{"memory": 名前, "scope"?}` か
+  `{"document": {repo, path, heading, commit}}`。1 つのスキーマ（`agentMemLifeProblems`）を、書き込みが公開するすべての
+  ファイルに `agentMemApplyLocked` の中で検査するので、どの書き手も飛ばせない。読み手は合わない値を失敗にせず捨て
+  （バージョン差・手編集のため）、書き手の検査は厳密に読む。`memory_save` の要求に載るのは `kind` と `anchors` だけ
+  （省略は維持、空の指定は消去）。`agentMemLife` をエントリに埋め込んだので、save・patch・ピン・取り込み・
+  プロジェクト移動は名指しされないフィールドをすべて保ち、revert は保存済みの版をそのまま戻す。フィードバック理由は
+  `memory_save` / `memory_patch` の本文変更で消える（書く側はまだない。#3496）。見え方は `agentMemExcluded`
+  （アーカイブ済み、または `superseded_by` あり。`invalid_at` だけでは除外しない）・`agentMemDescribable`（quiet でも
+  `log` でもない）・`agentMemWriteBackEligible` だけが述語で、索引・検索・読み取り（名前・範囲・版・状態・`superseded_by`・
+  理由だけの stub）・外部ルート・lcpp の注入・近い名前のヒント・patch（見えないものはパッチできない）・書き戻しがすべて
+  使う。名前だけの末尾には quiet とログも載り、ピン留めした quiet は「収まらなかったピン」に数えない。書き戻しが
+  撤回した写しをネイティブ側で編集済みなら競合 `withdrawn_but_changed` で、上書きできず `MEMORY.md` にも載らない。
+  ライフサイクルの書き込みは取り込み済みメモリを「変更あり」にするため、同じファイルの再取り込みは、メンバーが決める
+  まで `diverged` になる（取り込みは保存済みのバイト列で比べる）。バンドルの取り込みも新規作成のみで、バンドルから
+  ライフサイクルのフィールドは取らない。アーカイブ済み・置き換え済みのメモリへの `memory_save` は、`memory_patch` と
+  同じくエージェントには拒否する（メンバーの保存は通る）。
+
 - **2026-11-08 — 決定 3「カウンタ」を実装した（#3442）。** 旧 `.usage/<name>` の隣に `.usage-v2/reads/<name>` と
   `.usage-v2/hits/<name>` を書く。`confirmed/` と `stale/` は配置に含め、他のものと一緒にクリアするが、
   `memory_feedback` まで何も追記しない。reads ファイルの mtime は上限を超えても更新する。忘却・再作成・復元は、

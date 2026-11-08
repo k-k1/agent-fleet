@@ -27,7 +27,7 @@ import (
 // refuse.
 func engineTenantGateFixture(t *testing.T) (g engineGateway, membershipID map[string]string) {
 	t.Helper()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

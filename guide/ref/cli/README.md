@@ -13,6 +13,7 @@ usage with `--help`.
 | Command | What it does |
 |---|---|
 | [af-aws-exec](af-aws-exec.md) | Run one command with the permissions of an AWS profile |
+| [af-gcloud-exec](af-gcloud-exec.md) | Run one command with a token of a Google Cloud profile |
 
-Pages for the other commands (`af-gcloud-exec`, `af-db`, `af-memory`, `af-scratch`, `af-arch-repair`) are added one
+Pages for the other commands (`af-db`, `af-memory`, `af-scratch`, `af-arch-repair`) are added one
 by one.

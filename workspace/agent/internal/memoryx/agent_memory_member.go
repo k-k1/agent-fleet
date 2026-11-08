@@ -150,7 +150,7 @@ func agentMemMemberSearch(scope, project, query string, limit int) (agentMemMemb
 	agentMemWarmSrcs(srcs)
 	agentMemMu.RLock()
 	defer agentMemMu.RUnlock()
-	found, fallback, err := agentMemRankLocked(srcs, agentMemUnknown, terms, limit)
+	found, fallback, err := agentMemRankLocked(srcs, agentMemUnknown, terms, limit, false)
 	if err != nil {
 		return out, err
 	}

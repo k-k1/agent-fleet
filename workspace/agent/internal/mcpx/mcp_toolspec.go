@@ -96,6 +96,7 @@ func toolFamilies() [][]toolSpec {
 		selfReportTools(),
 		peerTools(),
 		branchTools(),
+		watchTools(),
 		agentMemoryTools(),
 		sessionSearchTools(),
 		// The schema depends on the live offer; dispatch needs only the name and the handler.

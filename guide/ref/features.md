@@ -57,9 +57,9 @@ If a feature ships and does not appear here, it is not done
 | Commit graph, diff, stage and commit | member | Commit graph | [06 Repositories and git](../member/06-code.md) |
 | Worktrees | member | under each repository | [06 Repositories and git](../member/06-code.md) |
 | Use `gh` and `bkt` in a session, already signed in | member | any session | [15 External services](../member/15-external-services.md#use-gh-and-bkt-in-a-session); the list of signed-in CLIs is in [15](../member/15-external-services.md#clis-that-are-already-signed-in) |
-| Use `jira` in a session, already signed in | member | any session | [15 External services](../member/15-external-services.md#use-jira-in-a-session) |
-| Use `confluence` in a session, already signed in (the Jira connection) | member | any session | [15 External services](../member/15-external-services.md#use-confluence-in-a-session) |
-| Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [15 External services](../member/15-external-services.md#use-jira-in-a-session) |
+| Use `jira` in a session, already signed in | member | any session | [Use Jira](../user/integrations/jira.md) |
+| Use `confluence` in a session, already signed in (the Jira connection) | member | any session | [Use Confluence](../user/integrations/confluence.md) |
+| Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [Use Jira](../user/integrations/jira.md#ask-an-agent) |
 | Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [06 Repositories and git](../member/06-code.md#subversion-svn-repositories) |
 | File tree and viewer | member | Files | [07 Files](../member/07-files.md) |
 | Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [07 Files](../member/07-files.md#download-a-folder-as-zip) |
@@ -96,6 +96,7 @@ If a feature ships and does not appear here, it is not done
 | Red dot on a session with an unread notification | member | left pane, tabs | [03 Starting sessions](../member/03-starting-sessions.md#reading-state-badges-and-notifications) |
 | Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [03 Starting sessions](../member/03-starting-sessions.md#from-a-row-to-a-session); [repos.md](repos.md) for which providers |
 | Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../member/20-settings.md#notifications) |
+| A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [11 Running many sessions](../member/11-many-sessions.md#a-session-watching-a-pull-request-itself) |
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
@@ -124,11 +125,11 @@ explains them.
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
 | AWS profiles and SSM | member | AWS profiles/SSM ([Use AWS SSO](../user/integrations/aws-sso.md), [Log in to EC2 with SSM](../user/integrations/aws-ssm.md)) |
-| Google Cloud profiles | member | Google Cloud ([16](../member/16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec)) |
+| Google Cloud profiles | member | Google Cloud ([Use Google Cloud](../user/integrations/gcloud.md)) |
 | Integration servers and tokens | member | MCP servers (used by sessions) / Outside access → MCP tokens & apps |
 | Connect a remote MCP client by signing in (OAuth, when the deployment enables it) — Connected apps, Recent calls | member | Outside access → MCP tokens & apps ([19](../member/19-outside-access.md#connecting-a-remote-mcp-client-by-signing-in-oauth)) |
 | The "via MCP" badge on input sent through `/mcp` | member | input bubble in the mirror ([19](../member/19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)) |
-| Sign in to a registered MCP server that needs OAuth (Sign in, sign in again, approve extra permission) | member | MCP servers (used by sessions) → Authentication → OAuth ([20](../member/20-settings.md#mcp-servers-used-by-sessions)) |
+| Sign in to a registered MCP server that needs OAuth (Sign in, sign in again, approve extra permission) | member | MCP servers (used by sessions) → Authentication → OAuth ([Add an MCP server to your sessions](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)) |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |
 | Limit board: publish where you stand on usage limits, and see what teammates publish to you | member | Limit board |

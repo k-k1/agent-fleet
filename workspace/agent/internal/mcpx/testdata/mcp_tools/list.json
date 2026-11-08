@@ -154,7 +154,10 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
-      "link_work_item#1"
+      "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1"
     ],
     "session-all": [
       "propose_session_handoff#2",
@@ -177,6 +180,9 @@
       "update_memo#2",
       "branch_name#1",
       "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1",
       "memory_index#1",
       "memory_search#1",
       "memory_read#1",
@@ -217,6 +223,9 @@
       "update_memo#2",
       "branch_name#1",
       "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1",
       "memory_index#1",
       "memory_search#1",
       "memory_read#1",
@@ -253,7 +262,10 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
-      "link_work_item#1"
+      "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1"
     ],
     "session-chromium-nobrowser": [
       "propose_session_handoff#1",
@@ -265,7 +277,10 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
-      "link_work_item#1"
+      "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1"
     ],
     "session-imagegen": [
       "propose_session_handoff#1",
@@ -278,6 +293,9 @@
       "update_memo#2",
       "branch_name#1",
       "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1",
       "generate_image#1"
     ],
     "session-memory": [
@@ -291,6 +309,9 @@
       "update_memo#2",
       "branch_name#1",
       "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1",
       "memory_index#1",
       "memory_search#1",
       "memory_read#1",
@@ -311,7 +332,10 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
-      "link_work_item#1"
+      "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1"
     ],
     "session-search": [
       "propose_session_handoff#1",
@@ -324,6 +348,9 @@
       "update_memo#2",
       "branch_name#1",
       "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1",
       "search_sessions#1"
     ],
     "session-spawn": [
@@ -337,6 +364,9 @@
       "update_memo#2",
       "branch_name#1",
       "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1",
       "create_session#2",
       "list_child_sessions#1",
       "list_repos#2",
@@ -359,6 +389,9 @@
       "update_memo#2",
       "branch_name#1",
       "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1",
       "get_image_studio#1",
       "set_image_draft#1",
       "add_image_knowledge#1",
@@ -374,7 +407,10 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
-      "link_work_item#1"
+      "link_work_item#1",
+      "watch#1",
+      "unwatch#1",
+      "list_watches#1"
     ]
   },
   "tools": {
@@ -1625,6 +1661,15 @@
       },
       "name": "list_schedules"
     },
+    "list_watches#1": {
+      "description": "Agent Fleet: list your watches with their ids, types, expiry, and the last read of each subject (an error there means the provider is not answering).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_watches"
+    },
     "memory_forget#1": {
       "description": "Agent Fleet memory: remove a memory that is wrong or obsolete, for every kind. History keeps it. Pass the revision you read.",
       "inputSchema": {
@@ -1761,12 +1806,30 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "anchors": {
+            "description": "What this memory depends on (paths, symbols, test names, ADR numbers, commands); omit to keep the current ones, [] clears them",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "description": "The memory itself, Markdown",
             "type": "string"
           },
           "description": {
             "description": "One line used to decide relevance, about 150 characters",
+            "type": "string"
+          },
+          "kind": {
+            "description": "How this memory goes stale; omit to keep the current one. A log is history and is never in the described part of the index",
+            "enum": [
+              "preference",
+              "lesson",
+              "procedure",
+              "state",
+              "log"
+            ],
             "type": "string"
           },
           "kinds": {
@@ -2539,6 +2602,22 @@
       },
       "name": "stop_session_after_turn"
     },
+    "unwatch#1": {
+      "description": "Agent Fleet: end one of your watches by its id (from watch or list_watches).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "unwatch"
+    },
     "update_memo#1": {
       "description": "既存メモ（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。文言の整形・カテゴリ変更・並び替え(position)に使う。id は list_memos で得る。",
       "inputSchema": {
@@ -2707,6 +2786,50 @@
         "type": "object"
       },
       "name": "update_schedule"
+    },
+    "watch#1": {
+      "description": "Agent Fleet: get a notice in this session when a pull request changes, instead of polling it yourself (no `gh pr checks --watch` in the background). The notice arrives as your next input once you are idle, even after a restart; a stopped session is started for it. Types: pr.checks.completed, pr.checks.failed, pr.conflict, pr.mergeable, pr.ready, pr.merged, pr.closed, pr.review.changes_requested, or a prefix like pr.checks.*. A condition that already holds is reported at once. until first (default) ends the watch after one notice; deadline keeps it until it expires (default 7 days, at most 30).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_in_hours": {
+            "maximum": 720,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ref": {
+            "description": "owner/repo#45, #45 in your own repository, or the PR's https://github.com/… URL",
+            "type": "string"
+          },
+          "source": {
+            "description": "default github",
+            "enum": [
+              "github"
+            ],
+            "type": "string"
+          },
+          "types": {
+            "description": "event types to be told about",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "until": {
+            "enum": [
+              "first",
+              "deadline"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "types"
+        ],
+        "type": "object"
+      },
+      "name": "watch"
     }
   }
 }

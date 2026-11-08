@@ -315,7 +315,7 @@ Parameters:
     Type: String
     Default: ""
     AllowedValues: ["", "0", "1"]
-    Description: AF_COOKIE_PURPOSE_KEYS. Empty or 0 = off; 1 only after every task runs this release. PARAMETERS.md.
+    Description: AF_COOKIE_PURPOSE_KEYS. Empty or 1 = per-purpose keys (default); 0 = opt out. PARAMETERS.md.
   GithubAllowedEmails:
     Type: String
     Default: ""

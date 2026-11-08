@@ -378,6 +378,7 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.ce_reason_not_written_by_af": "a Claude file Agent Fleet did not write",
   "mem.ce_reason_changed_since_write": "changed in Claude since it was written",
   "mem.ce_reason_forgotten_but_changed": "forgotten in Agent Fleet, but changed in Claude",
+  "mem.ce_reason_withdrawn_but_changed": "no longer shared with agents (archived, superseded, quiet, a log or suspect), but changed in Claude",
   "mem.ce_reason_af_withheld": "the Agent Fleet copy is withheld by the secret scan",
   "mem.ce_reason_symlink": "not a regular file",
   "mem.ce_reason_too_large": "too large",

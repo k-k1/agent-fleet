@@ -14,6 +14,7 @@ import (
 // re-activating a removed tenant_admin must not give the role back.
 
 func TestInviteCannotSetEmailOfIdentityInAnotherTenant(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, _ := userKeyFixture(t)
 	adm := newAdminAPI(mgr)
@@ -45,6 +46,7 @@ func TestInviteCannotSetEmailOfIdentityInAnotherTenant(t *testing.T) {
 }
 
 func TestInviteNeverWritesTheEmailOfAnExistingIdentity(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, _ := userKeyFixture(t)
 	adm := newAdminAPI(mgr)
@@ -78,6 +80,7 @@ func TestInviteNeverWritesTheEmailOfAnExistingIdentity(t *testing.T) {
 }
 
 func TestLoginAuditsEmailSetWithTheLoggingInIdentityAsActor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, _, tn := userKeyFixture(t)
 	ph, _ := st.InviteIdentity(ctx, "", "late-acme-co-jp", tn.ID)
@@ -99,6 +102,7 @@ func TestLoginAuditsEmailSetWithTheLoggingInIdentityAsActor(t *testing.T) {
 }
 
 func TestTenantProviderCannotClaimAnotherTenantsPlaceholder(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, _, tn := userKeyFixture(t) // tenant "sales"
 	other, _ := st.CreateTenant(ctx, "legal", "Legal")
@@ -123,6 +127,7 @@ func TestTenantProviderCannotClaimAnotherTenantsPlaceholder(t *testing.T) {
 }
 
 func TestInviteNeverOverwritesAnExistingEmail(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, tn := userKeyFixture(t)
 	adm := newAdminAPI(mgr)
@@ -139,6 +144,7 @@ func TestInviteNeverOverwritesAnExistingEmail(t *testing.T) {
 }
 
 func TestReinviteOfRemovedTenantAdminRestoresMemberOnly(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, tn := userKeyFixture(t)
 	adm := newAdminAPI(mgr)
@@ -171,6 +177,7 @@ func TestReinviteOfRemovedTenantAdminRestoresMemberOnly(t *testing.T) {
 }
 
 func TestEmailSetSuspectsListsMultiTenantIdentitiesWithoutALogin(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, _, tn := userKeyFixture(t)
 	other, _ := st.CreateTenant(ctx, "legal", "Legal")
@@ -214,6 +221,7 @@ func mustTenantID(t *testing.T, st *store.SQL, slug string) string {
 }
 
 func TestInviteRefusesAPersonWhoSignsInThroughAnotherTenantsIdP(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, tn := userKeyFixture(t) // "sales", caller is its admin
 	other, _ := st.CreateTenant(ctx, "legal", "Legal")
@@ -237,6 +245,7 @@ func TestInviteRefusesAPersonWhoSignsInThroughAnotherTenantsIdP(t *testing.T) {
 }
 
 func TestReinviteAuditShowsThePreviousRole(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, tn := userKeyFixture(t)
 	adm := newAdminAPI(mgr)

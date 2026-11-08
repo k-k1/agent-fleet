@@ -182,7 +182,7 @@ export function ClaudeExportPanel({ reload, onClose }: { reload: number; onClose
             selection={{
               shows: (_i, st) => st === "conflict",
               checked: (i) => overwrite.has(i.name),
-              disabled: (i) => busy || LOCKED.has(i.reason ?? "") || i.reason === "forgotten_but_changed",
+              disabled: (i) => busy || LOCKED.has(i.reason ?? "") || i.reason === "forgotten_but_changed" || i.reason === "withdrawn_but_changed",
               label: (i) => tr("mem.ce_overwrite", { name: i.name }),
               toggle: (i) => toggle(i.name),
             }}

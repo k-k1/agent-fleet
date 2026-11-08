@@ -311,16 +311,6 @@ export function AdminTab() {
             {tr("admin.deploy_warn_plaintext_secrets")}
           </p>
         )}
-        {warnings.includes("weak_master_key") && (
-          <p className="admin-hint warn" role="alert">
-            {tr("admin.deploy_warn_weak_master_key")}
-          </p>
-        )}
-        {warnings.includes("weak_cookie_secret") && (
-          <p className="admin-hint warn" role="alert">
-            {tr("admin.deploy_warn_weak_cookie_secret")}
-          </p>
-        )}
         {warnings.includes("plaintext_sealed") && (
           <p className="admin-hint warn" role="alert">
             {tr("admin.deploy_warn_plaintext_sealed")}

@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 	// first test to finish), and a package may have only one TestMain — so its teardown rides
 	// here, between run and os.Exit, which skips every deferred call.
 	enginePropsFixtureCleanup()
+	sqliteTemplateCleanup()
 	os.Exit(code)
 }
 

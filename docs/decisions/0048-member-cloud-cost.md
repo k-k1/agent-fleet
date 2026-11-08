@@ -417,3 +417,13 @@ shared bucket stays super_admin only. Months are cut in UTC (the day rows' own d
 before `meta.first_day` is `no_coverage` (unknown, not zero, no change shown); the running month and a
 month starting before `first_day` are `partial`.
 A month that is short only because data starts mid-month is not used as the base of a month-over-month change.
+
+## Note 2026-11-08 — per-member monthly rows (#3609)
+
+With `months=N`, `/api/admin/usage` and `/api/admin/cloud-cost` also return `monthly_members`: one entry per
+member with that member's `months` list (same month rules and the same `change_*` / `partial` / `no_coverage`
+fields as `monthly`), sorted by window total, capped by `member_limit` (default 50, max 500) with
+`monthly_members_total` giving the uncapped count. It is computed from the same tenant-scoped query as `monthly`,
+so a tenant admin sees only their tenant's members; shared and reserved buckets are never members. Members with
+no row in the window are absent. `GET /api/admin/tenants/{slug}/members/{key}/usage-monthly` gives one member's
+hours for the member-detail view, behind the same gate as that member's cost and hourly endpoints.

@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // smokeEnv wires the real route table (buildMux) to a real SQLite store in dev
@@ -31,7 +29,7 @@ func smokeEnvWith(t *testing.T, on ...string) (config, *http.ServeMux) {
 	setRouteSwitches(t, on...)
 	restoreAuthExemptions(t)
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
