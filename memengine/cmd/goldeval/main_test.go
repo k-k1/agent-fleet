@@ -39,16 +39,16 @@ func TestResolveTier(t *testing.T) {
 	}
 }
 
-// The shipped examples must stay loadable.
+// The shipped defaults must stay loadable.
 func TestExamplesLoad(t *testing.T) {
-	cfg, err := memengine.LoadConfig("../../models.example.json")
+	cfg, err := memengine.LoadConfig("../../models.json")
 	if err != nil || len(cfg.Candidates) == 0 {
 		t.Fatalf("%v", err)
 	}
 	if _, err := memengine.NewPipeline(cfg); err != nil {
-		t.Errorf("the example roles do not resolve: %v", err)
+		t.Errorf("the shipped roles do not resolve: %v", err)
 	}
-	if _, err := goldset.LoadBar("../../bar.example.json"); err != nil {
+	if _, err := goldset.LoadBar("../../bar.json"); err != nil {
 		t.Error(err)
 	}
 }

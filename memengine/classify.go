@@ -71,12 +71,14 @@ type ClassifyAnswer struct {
 func (r ClassifyRequest) Prompt() string {
 	var b strings.Builder
 	b.WriteString("You maintain a project's long-lived memory notes. Decide what one new observation should do to the existing notes of its topic.\n\n")
+	b.WriteString("The observation is either a lesson to record or a finding about the notes themselves. A finding names something wrong in a note, or a gap in it: a fact that is out of date, a path or name that was renamed or moved, a term that is retired, a link to a note that does not exist, a command that no longer works, a line that disagrees with the observation. Read each existing note against the observation before you decide.\n\n")
 	b.WriteString("Answer with exactly one of:\n")
-	b.WriteString("- add: the observation is a durable lesson no existing note holds.\n")
-	b.WriteString("- patch: one existing note holds the topic and needs a small edit (a missing fact, a wrong line).\n")
+	b.WriteString("- patch: the observation shows that one existing note is wrong, out of date or missing something, and a small edit fixes it. The fix may be one word, one link or one line; a small fix is still a patch. This holds even when the observation is only a correction and would not be worth recording on its own: judge the note, not the observation.\n")
+	b.WriteString("- add: the observation is a durable, reusable lesson (a rule, a procedure, a pitfall) that no existing note holds. When no notes are shown, or none is about this topic, a lesson of that kind is an add: absence of a note to fix is not a reason for no-op.\n")
 	b.WriteString("- supersede: one existing note is mostly out of date and a replacement should take its place.\n")
 	b.WriteString("- merge: two or more existing notes (or this observation and another) say the same thing and should become one.\n")
-	b.WriteString("- no-op: nothing should change (the fact lives in the code or docs, is already recorded, is a one-off, or the note is already right).\n\n")
+	b.WriteString("- no-op: nothing should change. Use it when the observation confirms what the note already says, the note already records the point (including already marking something retired), the observation itself says other notes already hold the same rule, the fact lives in the code or docs, or the observation is a one-off with no bearing on any shown note.\n\n")
+	b.WriteString("When the observation points at a specific line of a shown note that is wrong or stale, choose patch rather than no-op; do not answer no-op only because the fix is small or you are not certain how to word it. An observation often says first what is still right and then what is not; what is still right is context, and the part named as not right is the finding. A link that points nowhere is a defect of the note that holds it, never a new lesson to add, even when no similar note can be found. When the observation says the note is still correct, the flagged text is correct as written (a false alarm), or the note already says what the observation says, choose no-op: do not invent a change. Likewise choose no-op when the observation itself says that existing notes already hold the rule, even if they are not among the shown notes, and when a reported problem turns out not to be one (text that only looks like a link, a name that is in fact correct).\n\n")
 	b.WriteString("Reply with one JSON object and nothing else, in this schema:\n")
 	b.WriteString(ClassifySchema)
 	b.WriteString("\n`targets` is empty for add and no-op, one name for patch and supersede, and every note involved for merge.\n\n")
@@ -100,12 +102,11 @@ func excerpt(s string, n int) string {
 	return strings.TrimSpace(string(r[:n])) + " …"
 }
 
-// ParseClassify validates (Reason is advisory and unused by the engine, so an
-// absent one is accepted; it is there to make the model commit to an answer).
-//
 // ParseClassify validates a model's text against the schema and the request:
 // a known operation, targets that name memories the call was shown, and a
-// target count that fits the operation.
+// target count that fits the operation. Reason is advisory and unused by the
+// engine, so an absent one is accepted; it is there to make the model commit
+// to an answer.
 func ParseClassify(text string, req ClassifyRequest) (ClassifyAnswer, error) {
 	var a ClassifyAnswer
 	if err := decodeStrict(text, &a); err != nil {

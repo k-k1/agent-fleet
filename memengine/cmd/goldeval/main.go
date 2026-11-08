@@ -55,6 +55,7 @@ func runLive() {
 	timeout := flag.Duration("timeout", 3*time.Minute, "per-call timeout")
 	resume := flag.Bool("resume", true, "reuse answers already in -out instead of calling again")
 	conditioned := flag.Bool("gold-conditioned", false, "also make a patch call for every case labelled supersede or merge (as replay does), scored on validity and kept facts only")
+	split := flag.String("split", "all", "all | tune | heldout: score only one deterministic half of the gold set (by case id hash); the live run calls only that half")
 	cfgPath := flag.String("config", "", "model config (roles, runners, candidates); built-in runners without it")
 	barPath := flag.String("bar", "", "thresholds file; adds pass/fail per candidate and a suggested role mapping")
 	flag.Var(&tiers, "tier", "<runner>:<model id> (e.g. claude:<id>), or name=command; repeatable. Default: the config's candidates")
@@ -83,6 +84,10 @@ func runLive() {
 	if err != nil {
 		fatal(err.Error())
 	}
+	if !goldset.ValidSplit(*split) {
+		fatal("bad -split " + *split + ": want all, tune or heldout")
+	}
+	set.Only(*split)
 	if *limit > 0 && *limit < len(set.Cases) {
 		set.Cases = set.Cases[:*limit]
 	}
@@ -118,18 +123,18 @@ func runLive() {
 		run.Model, run.Runner, run.Date, run.GoldHash = model, runner, time.Now().UTC().Format("2006-01-02"), set.GoldHash
 		saveRun(path, run)
 	}
-	writeReport(*out, set, cfg, *barPath)
+	writeReport(*out, set, cfg, *barPath, *split)
 }
 
 // writeReport scores every tier run found in dir (live and replay alike) and
 // writes report.md and report.json, one column per tier name.
-func writeReport(dir string, set *goldset.Set, cfg memengine.Config, barPath string) {
+func writeReport(dir string, set *goldset.Set, cfg memengine.Config, barPath, split string) {
 	files, _ := filepath.Glob(filepath.Join(dir, "*.run.json"))
 	sort.Strings(files)
 	var runs []*goldset.TierRun
 	for _, f := range files {
 		if r := loadRun(f); r != nil {
-			runs = append(runs, r)
+			runs = append(runs, r.Only(split))
 		}
 	}
 	// Live tiers first, so "tier 1" is the small live tier.
@@ -144,7 +149,11 @@ func writeReport(dir string, set *goldset.Set, cfg memengine.Config, barPath str
 		agree = append(agree, [3]int{s, b, i})
 	}
 	ref := goldset.Reference(set)
-	md := goldset.Markdown(scores, ref, agree, []string{notesOf(set)})
+	notes := []string{notesOf(set)}
+	if split != goldset.SplitAll {
+		notes = append(notes, "Split: only the "+split+" half of the gold set (by case id hash) is scored.")
+	}
+	md := goldset.Markdown(scores, ref, agree, notes)
 	if barPath != "" {
 		bar, err := goldset.LoadBar(barPath)
 		if err != nil {
@@ -204,6 +213,7 @@ func scoreAnswers(args []string) {
 	var answers tierFlags
 	fs.Var(&answers, "answers", "JSONL of {case_id, call, output[, usage]}; repeatable (the classify answers and the patch answers)")
 	tier := fs.String("tier", "", "<runner>:<model id> (a report column), e.g. agy-session:some-model")
+	split := fs.String("split", "all", "all | tune | heldout: score only one deterministic half of the gold set")
 	cfgPath := fs.String("config", "", "model config (for candidate costs)")
 	barPath := fs.String("bar", "", "thresholds file")
 	fs.Parse(args)
@@ -218,6 +228,10 @@ func scoreAnswers(args []string) {
 	if err != nil {
 		fatal(err.Error())
 	}
+	if !goldset.ValidSplit(*split) {
+		fatal("bad -split " + *split + ": want all, tune or heldout")
+	}
+	set.Only(*split)
 	as, srcs, err := goldset.LoadAnswerFiles(answers)
 	if err != nil {
 		fatal(err.Error())
@@ -231,7 +245,7 @@ func scoreAnswers(args []string) {
 		fatal(err.Error())
 	}
 	saveRun(runPath(*out, *tier), run)
-	writeReport(*out, set, cfg, *barPath)
+	writeReport(*out, set, cfg, *barPath, *split)
 }
 
 func notesOf(s *goldset.Set) string {

@@ -79,6 +79,63 @@ type Set struct {
 	Inputs   map[string]Input
 }
 
+// Split names a deterministic half of the gold set. The half a case belongs to
+// is a function of its id alone (the low bit of the first byte of
+// SHA-256(id)), so it survives additions to the set and cannot be chosen by
+// looking at a score: prompt changes are iterated on SplitTune and judged on
+// SplitHeldOut.
+const (
+	SplitAll     = "all"
+	SplitTune    = "tune"
+	SplitHeldOut = "heldout"
+)
+
+// SplitOf returns SplitTune or SplitHeldOut for a case id.
+func SplitOf(id string) string {
+	if sha256.Sum256([]byte(id))[0]&1 == 0 {
+		return SplitTune
+	}
+	return SplitHeldOut
+}
+
+// ValidSplit reports whether name is one of the three accepted values.
+func ValidSplit(name string) bool {
+	return name == SplitAll || name == SplitTune || name == SplitHeldOut
+}
+
+// InSplit reports whether a case id belongs to the named split.
+func InSplit(id, split string) bool { return split == "" || split == SplitAll || SplitOf(id) == split }
+
+// Only keeps the cases of one split. GoldHash is unchanged: it identifies the
+// whole file, not the half.
+func (s *Set) Only(split string) {
+	var kept []Case
+	for _, c := range s.Cases {
+		if InSplit(c.ID, split) {
+			kept = append(kept, c)
+		}
+	}
+	s.Cases = kept
+}
+
+// Only returns a copy of the run restricted to the cases of one split, so one
+// full run can be reported per half. Baseline and provenance are kept.
+func (r *TierRun) Only(split string) *TierRun {
+	c := *r
+	c.Classify, c.Patch = nil, nil
+	for _, o := range r.Classify {
+		if InSplit(o.Case, split) {
+			c.Classify = append(c.Classify, o)
+		}
+	}
+	for _, o := range r.Patch {
+		if InSplit(o.Case, split) {
+			c.Patch = append(c.Patch, o)
+		}
+	}
+	return &c
+}
+
 func readJSONL[T any](path string) ([]T, error) {
 	f, err := os.Open(path)
 	if err != nil {
