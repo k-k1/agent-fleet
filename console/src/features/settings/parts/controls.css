@@ -23,21 +23,6 @@
   font-size: 13px;
 }
 
-.choice-seg {
-  display: inline-flex;
-  /* With many options (six TTS voices, say) a narrow width clips them against .seg's
-     overflow:hidden, so min-width:0 lets this shrink as a flex child and the overflow
-     wraps instead (docs/log/24). */
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.choice-seg .seg-btn {
-  flex: 0 0 auto;
-  padding: 5px 16px;
-  font-size: 12px;
-}
-
 .ds-row select,
 .ds-row input[type="number"] {
   font-size: 13px;
