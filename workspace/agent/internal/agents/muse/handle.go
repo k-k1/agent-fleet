@@ -620,7 +620,11 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 // carry on because AF could not mirror a line would trade a rendering gap for a dead session.
 func (h *threadHandle) onItem(it msp.Item) {
 	h.mu.Lock()
-	delete(h.streaming, it.ItemID)
+	// Only a terminal revision ends the stream: `started` and `updated` revisions of an
+	// item still in progress are persisted while its deltas keep arriving.
+	if it.Status != msp.ItemStatusInProgress {
+		delete(h.streaming, it.ItemID)
+	}
 	sid, model := h.slotSid, h.turnModel
 	if model == "" {
 		model = h.model

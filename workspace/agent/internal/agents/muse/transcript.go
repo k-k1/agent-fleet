@@ -347,6 +347,13 @@ func turnsWithCommentary(items []msp.Item, cs *commentarySet) []transcript.Turn 
 		case msp.ItemKindAgentMessage:
 			t := openAssistant(it)
 			text := str(it.Text)
+			// A failed agentMessage is a draft the host discarded (a stream-guard resample,
+			// say); the host commits it with empty text, but a revision that still carries
+			// the partial text must not read as part of the answer. A cancelled one stays:
+			// it is what the agent had said when the member interrupted it.
+			if it.Status == msp.ItemStatusFailed {
+				text = ""
+			}
 			if strings.TrimSpace(text) != "" {
 				t.Parts = append(t.Parts, transcript.Part{Kind: "text", Text: text})
 				t.Text = joinText(t.Text, text)
@@ -610,14 +617,38 @@ func joinText(a, b string) string {
 	return a + "\n" + b
 }
 
-// appendStreaming splices the fragments of items that have not completed yet onto the end of
-// the rendered turns, so the mirror shows an answer as it is written rather than only once
-// the item lands.
-//
-// It appends rather than patching in place on purpose: an item still streaming has, by
-// definition, not been persisted yet, so there is no rendered part to patch. Fragments for an
-// item the store already holds are dropped — that is a delta that arrived after its own
-// completion, and re-appending it would duplicate text the turn already shows.
+// withStreamingText puts the in-flight fragments of agentMessages that are persisted but still
+// in progress into the item's own text, so the turn renders them where the item sits. The
+// store holds an item from its `started` revision (empty text), and the fragments are the only
+// place its text exists until it completes; without this the mirror shows nothing of an answer
+// until item/completed. Items are copied, never changed in place, and a terminal item keeps its
+// stored text: its fragment is a late delta and re-adding it would duplicate the answer.
+func withStreamingText(items []msp.Item, fragments map[string]string) []msp.Item {
+	var out []msp.Item
+	for i, it := range items {
+		frag := fragments[it.ItemID]
+		if it.Kind != msp.ItemKindAgentMessage || it.Status != msp.ItemStatusInProgress || strings.TrimSpace(frag) == "" {
+			continue
+		}
+		if len(frag) <= len(str(it.Text)) {
+			continue
+		}
+		if out == nil {
+			out = append([]msp.Item(nil), items...)
+		}
+		out[i].Text = &frag
+	}
+	if out == nil {
+		return items
+	}
+	return out
+}
+
+// appendStreaming splices the fragments of items the store does not hold yet onto the end of
+// the rendered turns (a delta that outran its item/started). Fragments of persisted items are
+// not handled here: an in-progress one is rendered in place by withStreamingText, and a
+// terminal one is a delta that arrived after its own completion, which re-appending would
+// duplicate.
 func appendStreaming(turns []transcript.Turn, items []msp.Item, fragments map[string]string) []transcript.Turn {
 	known := make(map[string]bool, len(items))
 	for _, it := range items {

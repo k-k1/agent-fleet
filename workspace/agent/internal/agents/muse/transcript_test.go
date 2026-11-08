@@ -854,3 +854,75 @@ func TestEarlierHistorySummaryCountsTheKeptMessages(t *testing.T) {
 		t.Errorf("earlierHistory = %+v", p)
 	}
 }
+
+// The store holds an agentMessage from its `started` revision (empty text, inProgress), so its
+// in-flight fragments must still render, in place, until the item completes.
+func TestStartedItemStreamsItsFragmentsInPlace(t *testing.T) {
+	user := item(msp.ItemKindUserMessage, "u-1", 1)
+	user.Text = sp("hi")
+	started := item(msp.ItemKindAgentMessage, "a-1", 1)
+	started.Status = msp.ItemStatusInProgress
+	started.Text = sp("")
+	items := []msp.Item{user, started}
+	frags := map[string]string{"a-1": "par" + "tial"}
+
+	turns := turnsFromItems(withStreamingText(items, frags))
+	turns = appendStreaming(turns, items, frags)
+	if len(turns) != 2 || turns[1].Text != "partial" || len(turns[1].Parts) != 1 {
+		t.Fatalf("started item's fragments not rendered in place: %+v", turns)
+	}
+
+	// Once completed the stored text wins and a late fragment is not added again.
+	done := item(msp.ItemKindAgentMessage, "a-1", 2)
+	done.Text = sp("partial answer")
+	items = []msp.Item{user, done}
+	turns = turnsFromItems(withStreamingText(items, frags))
+	turns = appendStreaming(turns, items, frags)
+	if len(turns) != 2 || turns[1].Text != "partial answer" || len(turns[1].Parts) != 1 {
+		t.Errorf("completed text duplicated or lost: %+v", turns)
+	}
+}
+
+// An update revision of an in-progress item must not end its stream.
+func TestUpdatedInProgressItemKeepsFragments(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	storesMu.Lock()
+	stores = map[string]*store{}
+	storesMu.Unlock()
+	h := &threadHandle{slotSid: "sid-upd"}
+	host := newTestHandle(t, h)
+	h.onDelta(msp.ItemDeltaParams{ItemID: "a-1", Delta: "x", SessionID: h.sid})
+	started := item(msp.ItemKindAgentMessage, "a-1", 1)
+	started.Status = msp.ItemStatusInProgress
+	host.Notify(msp.NotificationItemStarted, msp.ItemStartedParams{Item: started, SessionID: h.sid})
+	deadline := time.After(5 * time.Second)
+	for {
+		if items, _ := openStore("sid-upd").Items(); len(items) == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("started item never reached the store")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if h.streamingText()["a-1"] != "x" {
+		t.Errorf("fragments dropped by a non-terminal revision: %v", h.streamingText())
+	}
+}
+
+// A failed agentMessage is a discarded draft: only the completed message is the answer.
+func TestFailedAgentMessageIsNotAnswerText(t *testing.T) {
+	user := item(msp.ItemKindUserMessage, "u-1", 1)
+	user.Text = sp("hi")
+	draft := item(msp.ItemKindAgentMessage, "a-1", 2)
+	draft.Status = msp.ItemStatusFailed
+	draft.Text = sp("discarded draft")
+	final := item(msp.ItemKindAgentMessage, "a-2", 1)
+	final.Text = sp("real answer")
+
+	turns := turnsFromItems([]msp.Item{user, draft, final})
+	if len(turns) != 2 || turns[1].Text != "real answer" || len(turns[1].Parts) != 1 {
+		t.Errorf("failed draft leaked into the answer: %+v", turns)
+	}
+}
