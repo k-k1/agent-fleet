@@ -241,6 +241,7 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"DELETE /api/admin/brand":                                     {marker: `brand.reset`},
 	"PUT /api/admin/tts":                                          {marker: `tts.engine`},
 	"PUT /api/admin/tts/dict":                                     {marker: `tts.dict`},
+	"PUT /api/admin/provided-routes/deployment":                   {marker: `provided_route.deployment_source.put`},
 	"PUT /api/admin/engines/{key}":                                {marker: `engine.`},
 	"PUT /api/admin/engines/{key}/idle":                           {marker: `.idle`},
 	"PUT /api/admin/engines/{key}/class":                          {marker: `.class`},

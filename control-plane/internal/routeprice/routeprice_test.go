@@ -274,3 +274,34 @@ func fatals(f func(t *testing.T)) bool {
 	}()
 	return <-failed
 }
+
+// A settlement prices complete totals at list price: the tier switches on the whole input, cache
+// reads and writes included, and a cache write of unknown TTL is priced at the dearer rate.
+func TestPriceMicroUSD(t *testing.T) {
+	m := Model{ID: "x", Rates: Rates{Input: 1, Output: 5, CacheRead: 0.1, CacheWrite: 1.25, CacheWrite1h: 2},
+		Tiers:         []Tier{{AboveInputTokens: 1000, Rates: Rates{Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 2.5}}},
+		ContextWindow: 10_000, MaxOutput: 100}
+	if got := m.PriceMicroUSD(Usage{In: 100, Out: 10, CacheRead: 100, CacheWrite: 100}); got != 100+50+10+200 {
+		t.Fatalf("base price = %d", got)
+	}
+	// 600 + 300 + 200 = 1100 input tokens > 1000: the tier's rates, whose write states no 1h rate.
+	if got := m.PriceMicroUSD(Usage{In: 600, Out: 10, CacheRead: 300, CacheWrite: 200}); got != 1200+100+60+500 {
+		t.Fatalf("tier price = %d", got)
+	}
+	// Rounded up, never down: a fraction of a micro-USD is still spent.
+	if got := (Model{Rates: Rates{Input: 0.1}}).PriceMicroUSD(Usage{In: 1}); got != 1 {
+		t.Fatalf("rounding = %d", got)
+	}
+	// Never above the reservation for a call inside its own bounds.
+	opus, ok := Lookup("us.anthropic.claude-opus-5-5")
+	if !ok {
+		t.Fatal("no opus row")
+	}
+	bound, err := opus.UpperBoundMicroUSD(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := opus.PriceMicroUSD(Usage{In: opus.ContextWindow, Out: 1000}); p > bound {
+		t.Fatalf("price %d above the bound %d", p, bound)
+	}
+}

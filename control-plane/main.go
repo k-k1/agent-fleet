@@ -743,6 +743,8 @@ func main() {
 		signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
 		sig := <-sigc
 		stopDiskRefresh()
+		// Provided routes stop admitting and let admitted calls finish (bounded) before exit.
+		drainProvidedRoutes()
 		code := 130
 		if sig == syscall.SIGTERM {
 			code = 143
