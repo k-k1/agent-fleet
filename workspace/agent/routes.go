@@ -5,6 +5,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memconsol"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
@@ -564,6 +565,16 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
 	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
 	mux.Handle("POST /agents/memory/entries/revert", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryRevert)))
+	// The autonomous consolidator's proposals (ADR 0130 decisions 6 and 7). The reads are open like
+	// the rest of the memory reads; approve, reject and retry are member decisions, signed by the
+	// Control Plane, so a session cannot decide a proposal. There is deliberately no "run now": a
+	// run starts only from the idle trigger.
+	mux.HandleFunc("GET /agents/memory-consolidation", memconsol.HandleStatus)
+	mux.HandleFunc("GET /agents/memory-consolidation/proposals", memconsol.HandleList)
+	mux.HandleFunc("GET /agents/memory-consolidation/proposal", memconsol.HandleGet)
+	mux.Handle("POST /agents/memory-consolidation/proposals/approve", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleApprove)))
+	mux.Handle("POST /agents/memory-consolidation/proposals/reject", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleReject)))
+	mux.Handle("POST /agents/memory-consolidation/proposals/retry", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleRetry)))
 	// Undo what one past review run published (ADR 0117 decision 5, kept by ADR 0130 decision 2):
 	// the review itself is gone, its published history stays revertible. A member write, so only
 	// the member-origin mark gets through; outside /agents/memory/ on purpose, no MCP tool reaches it.

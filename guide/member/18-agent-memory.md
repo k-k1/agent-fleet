@@ -266,6 +266,32 @@ A report on the current revision adds a `feedback` reason, which any change of t
 revision is only kept as an observation. One report per session per revision counts. A confirmation counts but never
 clears a reason, and agents are only asked to report the negative case.
 
+### Consolidation proposals (opt-in, in progress)
+
+Agent Fleet can tidy the memory in the background: it collects what readers and lint reported (`stale` / `wrong` reasons,
+lint reasons, and the proposals the retired 0117 review left unanswered), groups them by memory, and — when it has a reason —
+asks a model for a **small patch** (never a rewrite). **Nothing is ever written to your memory without your approval**: a run
+only queues *proposals*.
+
+- **Off by default.** The switch is the `memoryConsolidation` setting (it also needs agent memory on). There is no control for it
+  in the Console yet; the Console view for proposals, the toggle and the daily notice arrive in the next change. Turning it on
+  needs a request from the Console (a session's own token cannot).
+- **When it runs.** Only when no session has had a turn for 15 minutes, at most once every 3 hours, and only on topics that are
+  ripe: one `wrong` or `stale` report, or 3 new observations, or an observation that has waited 24 hours. A run spends at most a
+  token budget; what does not fit waits, and the status says why (budget, workspace stopped, never idle). If a turn starts during
+  a run, the model call in flight finishes and the rest waits. The figures are in `config.json` beside the queue (under the
+  memory store's work directory, `af-memory.work/consolidation/`); the models are in `models.json` there (default: the `small`
+  role `claude:haiku`, the `large` role `claude:sonnet`, which supersede and merge escalate to).
+- **What a proposal can be.** A *patch* of one memory (exact-text edits, checked to apply to the current revision), a *create*
+  that an earlier 0117 proposal carried, or *advice* (supersede, merge, add) that you apply by hand — the engine does not
+  write replacements. A create over a name that was forgotten, or that ever existed, is refused.
+- **Approval.** A proposal is re-checked against the memory as it is when you approve, and then published the normal way,
+  authored `consolidator`: it shows in **Changes** and can be reverted. A proposal left undecided for 14 days expires (its record
+  stays); expiry alone does not bring the topic back — new evidence, a change to the memory, or an explicit retry does.
+
+Until the Console view exists the Agent serves `GET /agents/memory-consolidation` (status), `…/proposals` (list) and
+`…/proposal?id=` (one, with the diff); approving, rejecting and retrying are member-origin writes.
+
 ### Settings
 
 **It is off by default.** Turn on "Let sessions use Agent Fleet memory" first, here in this view: on reaches sessions
