@@ -346,7 +346,11 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 			events = append(events, ev(typeThreads, fmt.Sprintf("%d.%d", cur.ThreadEpisode, cur.ThreadHigh),
 				fmt.Sprintf("%s has %d unresolved review thread(s).", ref, count), nil))
 		}
+	} else {
+		// Not read this round: a later run of failures starts counting from zero.
+		cur.ThreadFails = 0
 	}
+
 done:
 	out, _ := json.Marshal(cur)
 	hint := Hint{After: ghOpenAfter}
