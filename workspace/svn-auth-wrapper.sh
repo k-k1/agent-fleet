@@ -10,7 +10,7 @@
 # This shim sits ahead of the real binary (/usr/bin/svn) on PATH and hands the call to
 # `workspace-agent svn-run`, which resolves the credential from the ENCRYPTED store and
 # passes it to the real svn on stdin (never in argv, so it stays out of `ps`). The
-# decisions live in Go (workspace/agent/svn_wrapper.go) because they are argv analysis
+# decisions live in Go (workspace/agent/internal/svnx/svn_wrapper.go) because they are argv analysis
 # with unit tests, not shell.
 #
 # Everything here is a fallback: if the agent binary is missing, or we are already inside

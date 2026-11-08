@@ -1,4 +1,4 @@
-package main
+package svnx
 
 // The wrapper against a REAL authenticating server.
 //
@@ -124,7 +124,7 @@ func TestSvnWrapperAuthenticatesAgainstRealServer(t *testing.T) {
 	if out, err := runWrappedSvn(t, bin, "checkout", trunk, wc); err != nil {
 		t.Fatalf("checkout through the wrapper: %v: %s", err, out)
 	}
-	if !isSvnRepo(wc) {
+	if !IsRepo(wc) {
 		t.Fatal("no working copy after the wrapped checkout")
 	}
 	// update: no URL on the command line at all, so the wrapper has to ask the working
@@ -158,4 +158,18 @@ func runWrappedSvn(t *testing.T, bin string, args ...string) (string, error) {
 	cmd.Env = append(os.Environ(), svnRealEnv+"="+realSvnPath(), svnWrappedEnv+"=")
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// buildAgentBinary compiles the real workspace-agent binary (package main, two levels up) with
+// the caller's real environment; the wrapper is one of its subcommands.
+func buildAgentBinary(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "workspace-agent")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Dir = filepath.Join("..", "..") // internal/svnx -> workspace/agent
+	build.Env = os.Environ()
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build workspace-agent: %v\n%s", err, out)
+	}
+	return bin
 }

@@ -1,4 +1,4 @@
-package main
+package svnx
 
 // Transparent authentication for the `svn` an agent (or a person) runs itself
 // (docs/log/41 amendment; ADR 0024's "limitation (intended)" is what this lifts).
@@ -338,10 +338,10 @@ func svnWrapperURL(real string, args []string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// runSvnWrapper is the `workspace-agent svn-run <svn args…>` subcommand behind the PATH
+// RunWrapper is the `workspace-agent svn-run <svn args…>` subcommand behind the PATH
 // shim. It execs the real svn (replacing this process) so signals, exit codes and the
 // terminal behave exactly as they would without the wrapper.
-func runSvnWrapper(args []string) {
+func RunWrapper(args []string) {
 	real := realSvnPath()
 	if real == "" {
 		fmt.Fprintln(os.Stderr, "svn: not found")

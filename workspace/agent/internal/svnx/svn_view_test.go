@@ -1,4 +1,4 @@
-package main
+package svnx
 
 import (
 	"encoding/json"
@@ -180,7 +180,7 @@ func TestSvnShowEncodedCheckoutPath(t *testing.T) {
 	svnRun(t, "", "checkout", svnURLJoin(base, dirName), wc)
 
 	var show svnShowResp
-	if rec := svnView(t, handleSvnShow, "enc", "rev=1&path=a.txt", &show); rec.Code != http.StatusOK {
+	if rec := svnView(t, HandleShow, "enc", "rev=1&path=a.txt", &show); rec.Code != http.StatusOK {
 		t.Fatalf("svn-show = %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(show.Diff, "+hi") || len(show.Paths) != 1 || show.Paths[0].Path != "/"+dirName+"/a.txt" {
@@ -332,11 +332,11 @@ func TestSvnViewEndToEnd(t *testing.T) {
 	commit("remove a") // r5
 
 	// ---- positive control: no credential → svn_auth_required, not a raw error.
-	rec := svnView(t, handleSvnLog, wcName, "", nil)
+	rec := svnView(t, HandleLog, wcName, "", nil)
 	if rec.Code != http.StatusUnauthorized || errCodeOf(t, rec) != errCodeSvnAuth {
 		t.Fatalf("svn-log without creds = %d %s, want 401 %s", rec.Code, rec.Body.String(), errCodeSvnAuth)
 	}
-	rec = svnView(t, handleSvnShow, wcName, "rev=3", nil)
+	rec = svnView(t, HandleShow, wcName, "rev=3", nil)
 	if rec.Code != http.StatusUnauthorized || errCodeOf(t, rec) != errCodeSvnAuth {
 		t.Fatalf("svn-show without creds = %d %s, want 401 %s", rec.Code, rec.Body.String(), errCodeSvnAuth)
 	}
@@ -355,7 +355,7 @@ func TestSvnViewEndToEnd(t *testing.T) {
 	var changes struct {
 		Changes []svnChange `json:"changes"`
 	}
-	if rec := svnView(t, handleSvnChanges, wcName, "", &changes); rec.Code != http.StatusOK {
+	if rec := svnView(t, HandleChanges, wcName, "", &changes); rec.Code != http.StatusOK {
 		t.Fatalf("svn-changes = %d: %s", rec.Code, rec.Body.String())
 	}
 	got := map[string]string{}
@@ -368,14 +368,14 @@ func TestSvnViewEndToEnd(t *testing.T) {
 	var diff struct {
 		Diff string `json:"diff"`
 	}
-	if rec := svnView(t, handleSvnDiff, wcName, "path=a.txt", &diff); rec.Code != http.StatusOK {
+	if rec := svnView(t, HandleDiff, wcName, "path=a.txt", &diff); rec.Code != http.StatusOK {
 		t.Fatalf("svn-diff = %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.HasPrefix(diff.Diff, "diff --git a/a.txt b/a.txt\n--- a/a.txt\t(revision 4)\n+++ b/a.txt\t(working copy)\n") || !strings.Contains(diff.Diff, "+three") {
 		t.Errorf("svn-diff body = %q", diff.Diff)
 	}
 	for _, bad := range []string{"path=../x", "path=-r", "path=a/.svn/x"} {
-		if rec := svnView(t, handleSvnDiff, wcName, bad, nil); rec.Code != http.StatusBadRequest {
+		if rec := svnView(t, HandleDiff, wcName, bad, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("svn-diff %s = %d, want 400", bad, rec.Code)
 		}
 	}
@@ -397,7 +397,7 @@ func TestSvnViewEndToEnd(t *testing.T) {
 		return r
 	}
 	var l logResp
-	if rec := svnView(t, handleSvnLog, wcName, "limit=3", &l); rec.Code != http.StatusOK {
+	if rec := svnView(t, HandleLog, wcName, "limit=3", &l); rec.Code != http.StatusOK {
 		t.Fatalf("svn-log = %d: %s", rec.Code, rec.Body.String())
 	}
 	// Newest first, including r5, which is newer than the working copy.
@@ -407,20 +407,20 @@ func TestSvnViewEndToEnd(t *testing.T) {
 	if l.Revisions[0].Message != "remove a" || l.Revisions[0].Author != user || len(l.Revisions[0].Paths) != 1 || l.Revisions[0].Paths[0].Action != "D" {
 		t.Errorf("r5 = %+v", l.Revisions[0])
 	}
-	if rec := svnView(t, handleSvnLog, wcName, "limit=3&from=3", &l); rec.Code != http.StatusOK {
+	if rec := svnView(t, HandleLog, wcName, "limit=3&from=3", &l); rec.Code != http.StatusOK {
 		t.Fatalf("svn-log page 2 = %d: %s", rec.Code, rec.Body.String())
 	}
 	if !reflect.DeepEqual(revs(l), []int{2, 1}) || l.HasMore {
 		t.Fatalf("page 2 = %v hasMore=%v", revs(l), l.HasMore)
 	}
-	if rec := svnView(t, handleSvnLog, wcName, "from=1", &l); rec.Code != http.StatusOK || len(l.Revisions) != 0 || l.HasMore {
+	if rec := svnView(t, HandleLog, wcName, "from=1", &l); rec.Code != http.StatusOK || len(l.Revisions) != 0 || l.HasMore {
 		t.Fatalf("page past r1 = %d %+v", rec.Code, l)
 	}
-	if rec := svnView(t, handleSvnLog, wcName, "path=sub", &l); rec.Code != http.StatusOK || !reflect.DeepEqual(revs(l), []int{4}) {
+	if rec := svnView(t, HandleLog, wcName, "path=sub", &l); rec.Code != http.StatusOK || !reflect.DeepEqual(revs(l), []int{4}) {
 		t.Fatalf("path filter = %d %v", rec.Code, revs(l))
 	}
 	for _, bad := range []string{"path=../x", "path=-r", "from=HEAD", "from=-5"} {
-		if rec := svnView(t, handleSvnLog, wcName, bad, nil); rec.Code != http.StatusBadRequest {
+		if rec := svnView(t, HandleLog, wcName, bad, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("svn-log %s = %d, want 400", bad, rec.Code)
 		}
 	}
@@ -433,7 +433,7 @@ func TestSvnViewEndToEnd(t *testing.T) {
 		Paths   []svnLogPath `json:"paths"`
 		Diff    string       `json:"diff"`
 	}
-	if rec := svnView(t, handleSvnShow, wcName, "rev=3", &show); rec.Code != http.StatusOK {
+	if rec := svnView(t, HandleShow, wcName, "rev=3", &show); rec.Code != http.StatusOK {
 		t.Fatalf("svn-show r3 = %d: %s", rec.Code, rec.Body.String())
 	}
 	if show.Rev != 3 || show.Short != "r3" || show.Subject != "edit a" || show.Body != "second line of the message" {
@@ -446,18 +446,18 @@ func TestSvnViewEndToEnd(t *testing.T) {
 		t.Errorf("show diff = %q", show.Diff)
 	}
 	// A revision newer than the working copy opens too (the diff is taken at the root URL).
-	if rec := svnView(t, handleSvnShow, wcName, "rev=5", &show); rec.Code != http.StatusOK || !strings.Contains(show.Diff, "-two") {
+	if rec := svnView(t, HandleShow, wcName, "rev=5", &show); rec.Code != http.StatusOK || !strings.Contains(show.Diff, "-two") {
 		t.Fatalf("svn-show r5 = %d: %s", rec.Code, rec.Body.String())
 	}
 	// A path filter keeps only that subtree's paths.
-	if rec := svnView(t, handleSvnShow, wcName, "rev=4&path=sub", &show); rec.Code != http.StatusOK || len(show.Paths) != 2 || !strings.Contains(show.Diff, "diff --git a/b.txt b/b.txt") {
+	if rec := svnView(t, HandleShow, wcName, "rev=4&path=sub", &show); rec.Code != http.StatusOK || len(show.Paths) != 2 || !strings.Contains(show.Diff, "diff --git a/b.txt b/b.txt") {
 		t.Fatalf("svn-show r4 path=sub = %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := svnView(t, handleSvnShow, wcName, "rev=999", nil); rec.Code == http.StatusOK {
+	if rec := svnView(t, HandleShow, wcName, "rev=999", nil); rec.Code == http.StatusOK {
 		t.Errorf("svn-show of a missing revision = 200")
 	}
 	for _, bad := range []string{"", "rev=0", "rev=HEAD", "rev=3:4", "rev=-1", "rev=3&path=../x"} {
-		if rec := svnView(t, handleSvnShow, wcName, bad, nil); rec.Code != http.StatusBadRequest {
+		if rec := svnView(t, HandleShow, wcName, bad, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("svn-show %q = %d, want 400", bad, rec.Code)
 		}
 	}
@@ -472,7 +472,7 @@ func TestSvnViewNotAWorkingCopy(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(gitx.ReposRoot(), "plain"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, h := range []http.HandlerFunc{handleSvnLog, handleSvnShow, handleSvnChanges, handleSvnDiff} {
+	for _, h := range []http.HandlerFunc{HandleLog, HandleShow, HandleChanges, HandleDiff} {
 		if rec := svnView(t, h, "plain", "rev=1", nil); rec.Code != http.StatusNotFound {
 			t.Errorf("non-svn folder = %d, want 404", rec.Code)
 		}
