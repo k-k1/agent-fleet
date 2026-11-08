@@ -120,13 +120,16 @@ func TestLiveResumeIsIdempotent(t *testing.T) {
 // Dropping the handle and resuming again must leave the slot on one conversation that the next
 // resume will find, which is the path a workspace restart takes.
 //
-// A turnless session is not something the host keeps across processes (measured, muse 1.4.14:
-// the new host answers sessionNotFound and openSession starts a fresh session), and a turn to
-// make it reloadable would cost the member's quota. So two outcomes are accepted, each explicit:
-// the same id (the host reloaded it), or a different id that is the one now persisted for the
-// slot. What fails is a new id that was never stored, which would split the history on the
-// following resume. Reloading a session that has had a turn is covered by the msptest-backed resume tests.
-func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
+// muse 1.4.14 does not reliably keep a turnless session across processes (measured: the same
+// binary answered sessionNotFound in some runs, so openSession started a fresh session, and
+// reloaded the session in the others), and a turn to make it reloadable would cost the member's
+// quota. So two outcomes are accepted: the same id (the host reloaded it), or a different id
+// that is the one now persisted for the slot. A different id is
+// only legitimate when the host really does not know the old one, so the test asks the new host
+// directly (session/resume is free) and fails if it could have reloaded it. Reloading a session
+// that has had a turn is covered by TestResumeBackfillsWhatTheMirrorMissed and
+// TestOpenSessionResumeSuccessKeepsTheStoredSession.
+func TestLiveResumeAfterDropKeepsOneStoredConversation(t *testing.T) {
 	liveGate(t)
 	m := liveMeta(t)
 
@@ -150,7 +153,7 @@ func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
 	}
 	h2 := th2.(*threadHandle)
 	h2.mu.Lock()
-	secondSid := h2.sid
+	cl2, secondSid := h2.cl, h2.sid
 	h2.mu.Unlock()
 	if secondSid == "" {
 		t.Fatal("no muse session id after the resume that followed DropHandle")
@@ -165,16 +168,29 @@ func TestLiveResumeAfterDropReloadsTheSameSession(t *testing.T) {
 			secondSid, firstSid, stored, ok)
 		return
 	}
-	t.Logf("the host did not keep the turnless session %s; a fresh one, %s, is stored for the next resume", firstSid, secondSid)
+	// The fallback is only right if the host really cannot reopen the old session. A host that
+	// could would mean the driver skipped the resume and split the history.
+	var res msp.SessionResumeResult
+	err = cl2.CallInto(msp.MethodSessionResume, msp.SessionResumeParams{
+		CommandID: msp.NewCommandID(),
+		SessionID: firstSid,
+	}, callTimeout, &res)
+	if err == nil {
+		t.Fatalf("the new host can resume %s, yet the driver started %s instead", firstSid, secondSid)
+	}
+	if !msp.HasCode(err, msp.ErrCodeSessionNotFound) {
+		t.Fatalf("probing session/resume(%s): %v; want sessionNotFound", firstSid, err)
+	}
+	t.Logf("the host does not keep the turnless session %s; a fresh one, %s, is stored for the next resume", firstSid, secondSid)
 }
 
 // `session/resume` carries the registry's servers, the way a stopped session is reopened. Free,
 // like the start test: no turn, so no server is spawned and no quota is spent.
 //
 // It resumes the session the same host has just started rather than one a dropped host left:
-// the host keeps no turnless session across processes (measured, muse 1.4.14: the reload after
-// DropHandle answers sessionNotFound, which is also why TestLiveResumeAfterDropReloadsTheSameSession
-// takes its fallback branch there), and a turn would cost the member's quota.
+// muse 1.4.14 does not reliably keep a turnless session across processes (measured: the reload
+// after DropHandle sometimes answers sessionNotFound, and TestLiveResumeAfterDropKeepsOneStoredConversation
+// then takes its fallback branch), and a turn would cost the member's quota.
 //
 // The control is what makes "accepted" mean "read": the same resume with the settings file's
 // transport spelling has to be REFUSED, and a good one right after it accepted again. A host
