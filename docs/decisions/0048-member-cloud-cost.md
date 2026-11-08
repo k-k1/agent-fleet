@@ -407,3 +407,12 @@ person is 22.3% (decision 4), so this is a block of the same order.
 - **Re-apportion a sub-hour slot handover by seconds** — decision 3. That would overwrite actual spend
   with an estimate.
 - **Convert to yen** — decision 6.
+
+## Note 2026-11-08 — monthly totals (#3383)
+
+`cloud_cost_daily` keeps past days, so a month is a sum of day rows and can be split honestly.
+`months=N` on the existing cost endpoints (and `usage` / `/api/usage/me/monthly` for hours) adds a
+server-computed `monthly` list; each endpoint keeps its permission gate and scope unchanged, and the
+shared bucket stays super_admin only. Months are cut in UTC (the day rows' own dating). A month wholly
+before `meta.first_day` is `no_coverage` (unknown, not zero, no change shown); the running month and a
+month starting before `first_day` are `partial`.

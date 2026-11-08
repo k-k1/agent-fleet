@@ -6,14 +6,14 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 149
+# count: 150
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {agent_silent,auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} cond{agent_silent,auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
 admin_stats.go adminAPI.memberStats x1 {running}
 audit.go adminAPI.audit x1 {audit}
-cloudcost.go adminAPI.cloudCost x1 {attributed_micro,from,members,meta,shared_groups,shared_micro,shared_roles,shared_services,to} cond{shared_groups,shared_micro,shared_roles,shared_services}
-cloudcost.go adminAPI.oneMemberCloudCost x1 {days,from,meta,services,to,total_micro}
+cloudcost.go adminAPI.cloudCost x1 {attributed_micro,from,members,meta,monthly,shared_groups,shared_micro,shared_roles,shared_services,to} cond{monthly,shared_groups,shared_micro,shared_roles,shared_services}
+cloudcost.go adminAPI.oneMemberCloudCost x1 {days,from,meta,monthly,services,to,total_micro} cond{monthly}
 drawio_stencils.go drawioStencils.index x1 {cached,sets,version}
 egress.go egressAPI.allowlistAdd x1 {entry,id,state}
 egress.go egressAPI.allowlistList x1 {allowlist,builtin,defaults}
@@ -142,7 +142,8 @@ tts.go ttsAdminAPI.putDict x1 {dict,enabled,engine,managed,mode,polly}
 tts_wake.go ttsWakeAPI.post x1 {providers,started}
 update.go updateApply x2 {error}
 update.go updateApply x2 {mode,ok,to}
-usage.go adminAPI.usage x1 {days,from,to,totals}
+usage.go adminAPI.usage x1 {days,from,monthly,to,totals} cond{monthly}
+usage_monthly.go adminAPI.myUsageMonthly x1 {from,monthly,to}
 workitems.go workItemsAPI.deleteQuery x1 {ok}
 workitems.go workItemsAPI.deleteSession x1 {ok}
 workspace_handlers.go workspaceAPI.get x1 {agentSilent,bootPhase,browserUnavailable,docsRoot,homeWipeFailed,name,slotReplace,stale,state} cond{agentSilent,bootPhase,browserUnavailable,docsRoot,homeWipeFailed,slotReplace,stale}
