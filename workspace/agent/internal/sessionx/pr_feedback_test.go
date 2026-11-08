@@ -572,4 +572,23 @@ func TestPRFeedbackReviewIsLeftOnlyWhenEveryPartIsWatched(t *testing.T) {
 	if len(f.sent) != 1 {
 		t.Fatalf("sent %v: covered new threads were told twice", f.sent)
 	}
+	// New threads with only change requests watched: they must still be told.
+	f.watched["a|o/r#1|pr.review.threads_unresolved"] = false
+	f.watched["a|o/r#1|pr.review.changes_requested"] = true
+	pr.UnresolvedThreads = 3
+	f.ticks(3)
+	if len(f.sent) != 2 {
+		t.Fatalf("sent %v: uncovered new threads were lost", f.sent)
+	}
+}
+
+func TestPRFeedbackCIIsLeftToAFailedChecksWatch(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	failing(f.pr(1, "h1"), "unit")
+	f.watched["a|o/r#1|pr.checks.failed"] = true
+	f.ticks(3)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v though the session watches failed checks", f.sent)
+	}
 }

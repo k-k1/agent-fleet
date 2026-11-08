@@ -468,3 +468,34 @@ func TestGitHubThreadsFailureKeepsTheRestOfThePoll(t *testing.T) {
 		t.Fatalf("a threads failure lost the REST answers: %v %s", err, types(evs))
 	}
 }
+
+func TestGitHubPersistentThreadsFailureFailsTheRead(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(true), "clean")
+	f.bodies[runsPath] = map[string]any{"total_count": 0, "check_runs": []any{}}
+	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
+	f.bodies[reviewsPath] = []any{}
+	g := newTestGitHub(t, f)
+	fail := true
+	g.Threads = func(context.Context, string, int) (int, error) {
+		if fail {
+			return 0, errors.New("graphql down")
+		}
+		return 0, nil
+	}
+	var cur json.RawMessage
+	for i := 1; i < ghThreadFailLimit; i++ {
+		var err error
+		if _, cur, _, err = g.Poll(context.Background(), "github:o/r#7", cur, []string{typeThreads}); err != nil {
+			t.Fatalf("failure %d failed the read: %v", i, err)
+		}
+	}
+	if _, _, _, err := g.Poll(context.Background(), "github:o/r#7", cur, []string{typeThreads}); err == nil {
+		t.Fatal("a persistent threads failure stayed invisible")
+	}
+	// The failed read did not keep its cursor; one success resets the count.
+	fail = false
+	if _, cur, _, err := g.Poll(context.Background(), "github:o/r#7", cur, []string{typeThreads}); err != nil || strings.Contains(string(cur), "thread_fails") {
+		t.Fatalf("a success did not reset: %v %s", err, cur)
+	}
+}

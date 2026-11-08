@@ -331,8 +331,8 @@ func (c *Cache) storeLocked(k Key, e *entry, pr *PR, now time.Time) {
 	}
 }
 
-// Fetch asks GitHub about keys now and waits for the answer, for a caller that cannot act on a
-// stale or missing entry (the watch engine's first read of a subject, ADR 0133 rule 6.2). The
+// Fetch answers keys from the cache when every entry is fresh, and otherwise asks the provider
+// now and waits for the answer, for a caller that cannot act on a stale or missing entry (the watch engine's first read of a subject, ADR 0133 rule 6.2). The
 // answers are stored as a background refresh would store them. A key GitHub could not answer
 // is absent from the result; a PR that does not exist answers nil.
 func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
@@ -346,6 +346,13 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 		return nil, err
 	}
 	now := time.Now()
+	c.mu.Lock()
+	for k, e := range c.entries {
+		if now.Sub(e.asked) > forgetAfter {
+			delete(c.entries, k)
+		}
+	}
+	c.mu.Unlock()
 	// Fresh answers are as good as a call, and a hold after an error or a rate limit applies to
 	// Fetch as it does to the background refresh.
 	c.mu.Lock()
@@ -365,7 +372,7 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 		return cached, nil
 	}
 	if now.Before(hold) {
-		return nil, fmt.Errorf("GitHub is held off until %s after an error", hold.Format(time.RFC3339))
+		return nil, fmt.Errorf("the provider is held off until %s after an error", hold.Format(time.RFC3339))
 	}
 	token, err := c.Token()
 	if err != nil {
@@ -387,11 +394,6 @@ func (c *Cache) Fetch(ctx context.Context, keys []Key) (map[Key]*PR, error) {
 	out := map[Key]*PR{}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for k, e := range c.entries {
-		if now.Sub(e.asked) > forgetAfter {
-			delete(c.entries, k)
-		}
-	}
 	for _, k := range keys {
 		if failed[k] {
 			continue

@@ -359,7 +359,8 @@ the agent decides when to use it.
 - **To the parent instead.** A session started by another session can have the notices go to
   that parent (`notify: parent`), so the session running an issue round hears about its
   children's pull requests. The watch then belongs to the parent: it counts against the
-  parent's 20 (and the child's, so one child cannot fill its parent's), the parent lists and ends it, and it lasts until the parent is archived, not
+  parent's 20, and also against the child's 20 together with the child's own watches, so a
+  child adds at most 20 watches in all (`list_watches` names the child each came from); the parent lists and ends it, and it lasts until the parent is archived, not
   the child. The notice says which child it is for.
 - **No double notice with PR feedback.** With [PR feedback](#telling-a-session-about-its-pull-requests-feedback)
   on, a session that watches its own pull request's checks, or every kind of review news that

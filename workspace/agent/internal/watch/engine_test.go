@@ -555,3 +555,17 @@ func TestNoticeNamesTheChildForAParent(t *testing.T) {
 		t.Fatalf("a non-token requester reached the header: %q", n)
 	}
 }
+
+func TestAChildsOwnAndParentWatchesShareOneLimit(t *testing.T) {
+	e, _, _ := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, &fakeSink{answer: Wait})
+	ctx := context.Background()
+	for i := 0; i < MaxPerOwner; i++ {
+		if _, err := e.Subscribe(ctx, Request{Owner: "p", Requester: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+			t.Fatalf("watch %d for the parent: %v", i, err)
+		}
+	}
+	var ref *ErrRefused
+	if _, err := e.Subscribe(ctx, Request{Owner: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); !errors.As(err, &ref) {
+		t.Fatalf("a child with 20 watches for its parent made one of its own: %v", err)
+	}
+}

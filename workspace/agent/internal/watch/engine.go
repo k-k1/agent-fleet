@@ -143,6 +143,14 @@ type Request struct {
 	Lifetime    time.Duration // 0 = DefaultLifetime
 }
 
+// maker is the session that made the request.
+func (r Request) maker() string {
+	if r.Requester != "" {
+		return r.Requester
+	}
+	return r.Owner
+}
+
 // maxRefLen bounds the reference a session may pass; it is kept on disk and shown back.
 const maxRefLen = 300
 
@@ -178,7 +186,7 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 		return Subscription{}, err
 	}
 	e.mu.Lock()
-	err := e.requesterLimitLocked(r.Requester)
+	err := e.requesterLimitLocked(r.maker())
 	e.mu.Unlock()
 	if err != nil {
 		return Subscription{}, err
@@ -201,7 +209,7 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if err := e.limitsLocked(r.Owner); err != nil {
 		return Subscription{}, err
 	}
-	if err := e.requesterLimitLocked(r.Requester); err != nil {
+	if err := e.requesterLimitLocked(r.maker()); err != nil {
 		return Subscription{}, err
 	}
 	e.state.Subs = append(e.state.Subs, sub)
@@ -225,12 +233,9 @@ func (e *Engine) checkLimits(owner string) error {
 	return e.limitsLocked(owner)
 }
 
-// requesterLimitLocked also counts a child's watches for its parent against the child, so one
-// child cannot fill its parent's limit.
+// requesterLimitLocked counts every watch a session made, its own and those it made for its
+// parent, against that session's limit, so a child adds at most MaxPerOwner watches in all.
 func (e *Engine) requesterLimitLocked(requester string) error {
-	if requester == "" {
-		return nil
-	}
 	n := 0
 	for _, s := range e.state.Subs {
 		if !s.Done && (s.Owner == requester || s.Requester == requester) {

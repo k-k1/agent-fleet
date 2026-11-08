@@ -29,6 +29,9 @@ var githubTypes = []string{
 
 const typeThreads = "pr.review.threads_unresolved"
 
+// ghThreadFailLimit is how many threads reads in a row may fail before the whole read fails.
+const ghThreadFailLimit = 3
+
 // Poll intervals the source suggests.
 const (
 	ghBusyAfter    = 15 * time.Second // checks running, or mergeability still being computed
@@ -162,6 +165,7 @@ type ghCursor struct {
 	// fall is not.
 	ThreadEpisode int `json:"thread_episode,omitempty"`
 	ThreadHigh    int `json:"thread_high,omitempty"`
+	ThreadFails   int `json:"thread_fails,omitempty"` // consecutive failed threads reads
 	// Later pages, by path, with their own ETags: a PR with many checks would otherwise spend
 	// counted requests on every read even when nothing changed.
 	RunPages    map[string]ghCached[ghCheckRuns] `json:"run_pages,omitempty"`
@@ -318,10 +322,18 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 		count, err := g.Threads(ctx, repo, n)
 		if err != nil {
 			// The REST answers and their ETags stay good: only the threads are unknown this
-			// round, and a threads watch stays pending until a later read answers.
-			log.Printf("watch: unresolved threads of %s: %v", ref, err)
+			// round. A failure that persists fails the whole read, so it shows in
+			// list_watches and backs off instead of going silent.
+			cur.ThreadFails++
+			if cur.ThreadFails >= ghThreadFailLimit {
+				return nil, raw, Hint{}, fmt.Errorf("unresolved review threads could not be read %d times: %w", cur.ThreadFails, err)
+			}
+			if cur.ThreadFails == 1 {
+				log.Printf("watch: unresolved threads of %s: %v", ref, err)
+			}
 			goto done
 		}
+		cur.ThreadFails = 0
 		g.charge()
 		switch {
 		case count == 0 && cur.ThreadHigh > 0:
