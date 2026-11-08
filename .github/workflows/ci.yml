@@ -88,9 +88,20 @@ jobs:
         run: |
           set -euo pipefail
           url="https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o /tmp/gitleaks.tar.gz "$url"
-          echo "${SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
-          tar xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          # GitHub Releases has been down for over an hour at a time (#3642), longer than any
+          # sane retry window, so a download that still fails falls back to building the same
+          # version from the Go module proxy. The fallback is taken only when the download
+          # fails: a SHA-256 mismatch on a delivered tarball fails the step and never falls
+          # back. The fallback's integrity comes from sum.golang.org, not from ${SHA256}.
+          if curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o /tmp/gitleaks.tar.gz "$url"; then
+            echo "${SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+            tar xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+            echo "gitleaks source: GitHub release tarball (SHA-256 pinned)"
+          else
+            echo "::warning::gitleaks release download failed; building v${VERSION} from the Go module proxy (go.sum / sum.golang.org integrity)"
+            GOBIN=/tmp GOFLAGS=-mod=mod go install "github.com/zricethezav/gitleaks/v8@v${VERSION}"
+            echo "gitleaks source: go install from the module proxy"
+          fi
       - name: scan full history
         run: /tmp/gitleaks --version && /tmp/gitleaks git --log-opts="--all --full-history -m" --redact --verbose
 
