@@ -111,6 +111,12 @@ func (e *ecsRuntime) StaleTarget(ctx context.Context) string {
 	return Freshness.get(ecrFingerprintKey(e.cfg.workspaceImage), ecsStaleTTL, func() string { return e.imageFingerprint(ctx) })
 }
 
+// StaleTargetRef is the configured image reference, display only.
+func (e *ecsRuntime) StaleTargetRef() string { return e.cfg.workspaceImage }
+
+// StaleTargetRef on the EC2 launch type delegates.
+func (e *ecsEC2Runtime) StaleTargetRef() string { return e.base.StaleTargetRef() }
+
 // StaleTarget on the EC2 launch type delegates, like Stale.
 func (e *ecsEC2Runtime) StaleTarget(ctx context.Context) string { return e.base.StaleTarget(ctx) }
 

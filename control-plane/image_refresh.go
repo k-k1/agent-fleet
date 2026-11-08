@@ -58,6 +58,15 @@ func imageRefreshTarget(ctx context.Context, rt runtime.Runtime) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
+// imageRefreshRef is the image reference shown beside the hash in the notice ("" when the
+// runtime has none, e.g. native). Display only.
+func imageRefreshRef(rt runtime.Runtime) string {
+	if r, ok := rt.(interface{ StaleTargetRef() string }); ok {
+		return r.StaleTargetRef()
+	}
+	return ""
+}
+
 // imageRefreshWanted is the cheap half of the decision, shared by the sweep and the re-check
 // under the fences: the member opted in, the runtime says a restart would change the code,
 // and this image has not been attempted. It returns the target to claim.
@@ -103,7 +112,7 @@ func (rp *reaper) refreshImage(ctx context.Context, rt runtime.Runtime, ws store
 		// Another replica holds this image's one attempt. It is the one that starts it.
 		return
 	}
-	rp.startRefreshed(ctx, ws, target)
+	rp.startRefreshed(ctx, ws, target, imageRefreshRef(rt))
 }
 
 func (rp *reaper) imageAlreadyAttempted(ctx context.Context, wsID, target string) bool {
@@ -113,7 +122,7 @@ func (rp *reaper) imageAlreadyAttempted(ctx context.Context, wsID, target string
 
 // startRefreshed is the Start half, through the scheduler wake's unattended start. It
 // records the audit row and the member's notice whichever way it ends.
-func (rp *reaper) startRefreshed(ctx context.Context, ws store.Workspace, target string) {
+func (rp *reaper) startRefreshed(ctx context.Context, ws store.Workspace, target, ref string) {
 	ctx = context.WithoutCancel(ctx)
 	start := rp.refreshStart
 	if start == nil {
@@ -125,7 +134,7 @@ func (rp *reaper) startRefreshed(ctx context.Context, ws store.Workspace, target
 	} else {
 		log.Printf("image-refresh: restarted %s (tenant %s) onto image %s", ws.ContainerName, ws.TenantID, target)
 	}
-	rp.recordImageRefresh(ctx, ws, target, aerr)
+	rp.recordImageRefresh(ctx, ws, target, ref, aerr)
 }
 
 func (rp *reaper) startUnattended(ctx context.Context, ws store.Workspace) *apiError {
@@ -140,7 +149,7 @@ func (rp *reaper) startUnattended(ctx context.Context, ws store.Workspace) *apiE
 	return newWorkspaceAPI(rp.mgr, true).ensureWorkspaceStartedUnattended(ctx, res)
 }
 
-func (rp *reaper) recordImageRefresh(ctx context.Context, ws store.Workspace, target string, aerr *apiError) {
+func (rp *reaper) recordImageRefresh(ctx context.Context, ws store.Workspace, target, ref string, aerr *apiError) {
 	now := store.NowTS()
 	outcome, detail := "ok", "restarted onto image "+target
 	if aerr != nil {
@@ -151,8 +160,9 @@ func (rp *reaper) recordImageRefresh(ctx context.Context, ws store.Workspace, ta
 	if err := rp.mgr.store.InsertAudit(ctx, a); err != nil {
 		log.Printf("image-refresh: audit %s: %v", ws.ContainerName, err)
 	}
+	// Error text goes into the audit detail as is: callers must keep secrets out of it.
 	// The event ID names the image, so a repeated record of the same attempt is one notice.
-	payload, _ := json.Marshal(map[string]any{"image": target, "at": now, "outcome": outcome})
+	payload, _ := json.Marshal(map[string]any{"image": target, "ref": ref, "at": now, "outcome": outcome})
 	n := store.Notification{EventID: "image-refresh:" + ws.ID + ":" + target, MembershipID: ws.MembershipID,
 		Kind: "image-refresh", TargetType: "workspace", Payload: string(payload), CreatedAt: now}
 	if err := rp.mgr.store.InsertNotification(ctx, n); err != nil {

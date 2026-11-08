@@ -431,7 +431,9 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
   if (n.kind === "image-refresh") {
     const failed = n.payload.outcome === "failed";
     const at = typeof n.payload.at === "string" ? new Date(n.payload.at).toLocaleString() : "";
-    const image = typeof n.payload.image === "string" ? n.payload.image : "";
+    const hash = typeof n.payload.image === "string" ? n.payload.image : "";
+    const ref = typeof n.payload.ref === "string" ? n.payload.ref : "";
+    const image = ref ? `${ref} (${hash})` : hash;
     return {
       title: t(failed ? "notif.image_refresh.title_failed" : "notif.image_refresh.title"),
       body: t(failed ? "notif.image_refresh.body_failed" : "notif.image_refresh.body", { image, at }),

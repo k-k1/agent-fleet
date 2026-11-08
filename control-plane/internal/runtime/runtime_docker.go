@@ -246,6 +246,10 @@ func (d *dockerRuntime) StaleTarget(ctx context.Context) string {
 	return Freshness.get("img:"+d.image, 60*time.Second, func() string { return d.imageFingerprint(ctx) })
 }
 
+// StaleTargetRef is the tag shown to the member beside the hash. Display only: a tag moves,
+// so it is never the identity.
+func (d *dockerRuntime) StaleTargetRef() string { return d.image }
+
 // inspectOne runs a single-field `docker inspect` (overridable in tests).
 func (d *dockerRuntime) inspectOne(ctx context.Context, typ, ref, format string) string {
 	if d.inspect != nil {

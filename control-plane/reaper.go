@@ -822,6 +822,8 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 	// redoes the decision, so the screen for "why won't it stop" cannot give a
 	// different answer than the reaper. Recorded even when wsOn is false —
 	// "nothing scheduled" and "the feature is off" are not the same thing.
+	// The image refresh (image_refresh.go) is not on this forecast: it is a restart that
+	// frees nothing, and it leaves an audit row and a notice for "why did it restart".
 	rp.mgr.putIdleForecast(ws.ID, idleForecast{
 		Enabled:    cl.wsOn,
 		StopAt:     base.Add(cl.ws),

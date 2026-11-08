@@ -145,9 +145,9 @@ describe("notification row headings", () => {
 
   it("an image-refresh notice names the image, and a failed one says the workspace is stopped", () => {
     setLocale("en");
-    const ok = { kind: "image-refresh", displayName: "", payload: { image: "abc123", at: "2026-11-08T12:00:00Z", outcome: "ok" } };
+    const ok = { kind: "image-refresh", displayName: "", payload: { image: "abc123", ref: "reg/ws:1.2", at: "2026-11-08T12:00:00Z", outcome: "ok" } };
     expect(notificationWording(ok).title).toBe(en["notif.image_refresh.title"]);
-    expect(notificationWording(ok).body).toContain("abc123");
+    expect(notificationWording(ok).body).toContain("reg/ws:1.2 (abc123)");
     expect(notificationRowSubtitle(ok)).toBe(notificationWording(ok).body);
     const bad = { ...ok, payload: { ...ok.payload, outcome: "failed" } };
     expect(notificationWording(bad).title).toBe(en["notif.image_refresh.title_failed"]);

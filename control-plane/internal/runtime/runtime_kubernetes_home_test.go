@@ -1281,3 +1281,34 @@ func TestKubeEraseHomeKeepsAPollErrorThatIsNotTheDeadline(t *testing.T) {
 		t.Fatalf("EraseHome = %v, a Forbidden was reported as the deadline", err)
 	}
 }
+
+// StaleTarget follows what the tag resolves to; an unreadable registry is "" so the
+// automatic image refresh never acts on it.
+func TestKubeStaleTarget(t *testing.T) {
+	rt, _ := fakeKubeRuntime(t)
+	now := "linux/amd64=sha256:one"
+	rt.pins = fakePinner{fingerprint: &now}
+	clear := func() {
+		Freshness.mu.Lock()
+		delete(Freshness.m, rt.staleImageKey())
+		Freshness.mu.Unlock()
+	}
+	clear()
+	if got := rt.StaleTarget(context.Background()); got != now {
+		t.Fatalf("target = %q", got)
+	}
+	clear()
+	now = "linux/amd64=sha256:two"
+	if got := rt.StaleTarget(context.Background()); got != now {
+		t.Fatalf("after the tag moved: target = %q", got)
+	}
+	clear()
+	now = ""
+	if got := rt.StaleTarget(context.Background()); got != "" {
+		t.Fatalf("registry unreadable: target = %q, want empty", got)
+	}
+	clear()
+	if rt.StaleTargetRef() != rt.cfg.image {
+		t.Fatal("display ref is not the configured image")
+	}
+}

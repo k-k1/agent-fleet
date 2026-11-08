@@ -59,6 +59,9 @@ func (k *kubeRuntime) StaleTarget(ctx context.Context) string {
 	})
 }
 
+// StaleTargetRef is the configured image reference, display only.
+func (k *kubeRuntime) StaleTargetRef() string { return k.cfg.image }
+
 // primeStale records what Start just launched, so a cached pre-start value cannot make a
 // fresh start look stale for a minute. An empty fingerprint is recorded too: keeping the
 // previous start's would be a claim about an image this start did not run.

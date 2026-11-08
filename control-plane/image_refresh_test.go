@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ type refreshRuntime struct {
 func (r *refreshRuntime) AcquireOperationFence(context.Context) (func(), error) {
 	return func() {}, nil
 }
+func (r *refreshRuntime) StaleTargetRef() string     { return "registry/ws:tag" }
 func (r *refreshRuntime) Stale(context.Context) bool { return r.stale.Load() }
 func (r *refreshRuntime) StaleTarget(context.Context) string {
 	s, _ := r.target.Load().(string)
@@ -122,6 +124,14 @@ func TestImageRefreshOneAttemptPerImageAndFailureDoesNotLoop(t *testing.T) {
 	if f.rt.stops.Load() != 1 || f.starts.Load() != 1 {
 		t.Fatalf("same image: stops=%d starts=%d, want 1/1", f.rt.stops.Load(), f.starts.Load())
 	}
+	audit, _ := f.st.ListAuditByTenant(context.Background(), f.ws.TenantID, 10)
+	if len(audit) != 1 || !strings.Contains(audit[0].Detail, "failed") || !strings.Contains(audit[0].Detail, "left stopped") {
+		t.Fatalf("failed attempt audit = %+v", audit)
+	}
+	notes, _ := f.st.ListNotifications(context.Background(), f.ws.MembershipID, "", 10)
+	if len(notes) != 1 || !strings.Contains(notes[0].Payload, `"outcome":"failed"`) || !strings.Contains(notes[0].Payload, `"ref":"registry/ws:tag"`) {
+		t.Fatalf("failed attempt notice = %+v", notes)
+	}
 	// A different image is a new attempt.
 	f.rt.target.Store("sha256:bbb")
 	f.run()
@@ -153,4 +163,13 @@ type switchOffRuntime struct {
 func (r *switchOffRuntime) AcquireOperationFence(context.Context) (func(), error) {
 	r.off()
 	return func() {}, nil
+}
+
+func TestImageRefreshImageRebuiltUnderTheFencesStopsNothing(t *testing.T) {
+	f := newRefreshFixture(t, true)
+	rt := &switchOffRuntime{refreshRuntime: f.rt, off: func() { f.rt.target.Store("sha256:rebuilt") }}
+	f.rp.refreshImage(context.Background(), rt, f.ws, tierClocks{refresh: time.Minute, refreshOn: true})
+	if f.rt.stops.Load() != 0 || f.starts.Load() != 0 {
+		t.Fatalf("stops=%d starts=%d, want none", f.rt.stops.Load(), f.starts.Load())
+	}
 }
