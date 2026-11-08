@@ -101,6 +101,26 @@ const exact = {
       { urlPrefix: "https://svn.example.com/design", username: "taro" },
       { urlPrefix: "https://svn.internal.example/legacy", username: "", trustCert: "1" },
     ],
+    // The chat and ops cards' connections exist only in a run that asks (SHOT_CHAT / SHOT_OPS),
+    // so the scenes taken without them keep their "Not connected" cards.
+    ...(process.env.SHOT_CHAT
+      ? {
+          discord: {
+            connected: true, mode: "channel", botName: "Agent Fleet Bot", operator: true, channelId: "100000000000000001",
+            threads: true, receive: true, mirrorInput: true, fullText: false, mentionUserId: "100000000000000002",
+            events: ["answer-ready", "question", "permission-request", "exit", "session-report"], notify: true,
+          },
+          slack: { connected: false },
+        }
+      : {}),
+    ...(process.env.SHOT_OPS
+      ? {
+          pagerduty: { connected: true },
+          grafana: { connected: true, url: "https://grafana.example.com" },
+          cloudwatch: { connected: true, profile: "Staging", region: "ap-northeast-1", sso: true },
+          aws: { connected: false },
+        }
+      : {}),
   }),
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),

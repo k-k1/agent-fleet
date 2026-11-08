@@ -170,7 +170,7 @@ Reads out replies from sessions and assistants.
     child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
   - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
 - **Service notifications**: stop sending to Discord / Slack **without disconnecting**. The connection itself,
-  and which events each service receives, live in the "Chat" tab ([15](15-external-services.md#connecting-discord-slack-chat-bridge)).
+  and which events each service receives, live in the "Chat" tab ([Connect Discord and Slack](../user/integrations/chat-bridge.md#choose-which-notifications-arrive)).
 - History is in the **notification centre** (last 7 days), opened from the bell in the top bar. What the
   unread red dot means and how it clears: [Icons, badges, and menus](badges-and-menus.md#session-display).
 
@@ -307,7 +307,7 @@ limit resets, and auto-resume of an interrupted turn.
 
 GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
 The same connection signs in `gh`, and for Bitbucket Cloud `bkt`, in every session
-([15](15-external-services.md#clis-that-are-already-signed-in)). If GitHub cannot renew the connection, the tab says
+([Use the GitHub CLI](../user/integrations/github-cli.md), [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md)). If GitHub cannot renew the connection, the tab says
 "GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub
 again."
 Jira and Bitbucket connections finish only in the Console session of the member who started them. If the browser
@@ -316,9 +316,8 @@ is signed in as someone else, or the session expired, nothing is saved: sign in 
 
 ### Ops & monitoring
 
-Connect PagerDuty / Grafana / CloudWatch / AWS so the **SRE assistant** can talk through an incident against
-real data. CloudWatch and AWS only need a profile picked from your SSM connections, with no secret to type. AWS
-**write tools are off by default**. → [15 External services](15-external-services.md)
+Connects PagerDuty, Grafana, CloudWatch and AWS to the **SRE assistant**. How to connect them, and what the assistant
+does with them, is in [Connect monitoring tools](../user/integrations/ops-monitoring.md).
 
 ### Issue tracker
 
@@ -327,8 +326,8 @@ The Jira connection behind the left rail's **Issue tracker**. Connecting it and 
 
 ### Chat
 
-Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.
-→ [15 External services](15-external-services.md#connecting-discord-slack-chat-bridge)
+Connects a Discord or Slack bot and sets which notifications it sends. How to connect it, and how to answer by
+replying, is in [Connect Discord and Slack](../user/integrations/chat-bridge.md).
 
 ### MCP servers (used by sessions)
 

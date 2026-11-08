@@ -55,7 +55,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [06 リポジトリと git](../member/06-code.ja.md) |
 | コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [06 リポジトリと git](../member/06-code.ja.md) |
 | worktree | メンバー | 各リポジトリの下 | [06 リポジトリと git](../member/06-code.ja.md) |
-| サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [15 外部サービス](../member/15-external-services.ja.md#セッションで-gh-と-bkt-を使う)。サインイン済みの CLI の一覧は [15](../member/15-external-services.ja.md#サインイン済みの-cli) |
+| サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [GitHub の CLI を使う](../user/integrations/github-cli.ja.md)、[Bitbucket の CLI を使う](../user/integrations/bitbucket-cli.ja.md)。サインイン済みの CLI の一覧は [コマンド](cli/README.ja.md#サインイン済みの-cli) |
 | サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md) |
 | サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [Confluence を使う](../user/integrations/confluence.ja.md) |
 | Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
@@ -99,7 +99,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 応答なしバッジ — ワークスペースは起動しているが Agent が応答しない | メンバー | ワークスペースの電源ボタンの横 | [21 困ったとき](../member/21-troubleshooting.ja.md#電源ボタンの横に-応答なし-バッジが出ている) |
 | エンジンのピル — チャット / 画像のエンジンが起きているか | メンバー | 画面最上部のバー | [アイコン・バッジ・メニュー](../member/badges-and-menus.ja.md#画面最上部のエンジンのピル) |
 | アシスタントチャット | メンバー | アシスタント | [10 チャットとメモ](../member/10-chat-memo.ja.md) |
-| チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [15 外部サービス](../member/15-external-services.ja.md) |
+| チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [Discord・Slack とつなぐ](../user/integrations/chat-bridge.ja.md) |
 | 返信候補 | メンバー | ミラーの入力欄 | [04 会話](../member/04-conversation.ja.md) |
 | 削除ロック | メンバー | セッションの ⋯ メニュー | [05 止める・片付ける](../member/05-stopping-and-tidying.ja.md) |
 | 掃除とごみ箱 | メンバー | 掃除 | [05 止める・片付ける](../member/05-stopping-and-tidying.ja.md) |
@@ -181,7 +181,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [operator 12](../operate/12-keys.ja.md) |
 | この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [operator 03](../operate/03-run.ja.md#2-つの配備を見分ける色とラベル) |
 | 使わない間の配備の一時停止 | 配備管理者 | 端末 | [operator 03](../operate/03-run.ja.md#使わない間の配備を一時停止する) |
-| 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 15](../member/15-external-services.ja.md) |
+| 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え) |
 | 動かなくなったスロットの強制停止 | 配備管理者（super_admin）| 管理 → スロット → 停止（強制）| [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-動かなくなったスロットの停止) |

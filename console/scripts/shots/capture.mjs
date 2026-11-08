@@ -371,6 +371,55 @@ const SCENES = [
     settle: 4000,
   },
   {
+    // Settings › Chat: a connected Discord card with its notification settings open, Slack not yet.
+    name: "chat-settings",
+    guide: true,
+    stubEnv: { SHOT_CHAT: "1" },
+    clip: ".conns",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "chat",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      document.querySelector(".ps-disclosure")?.click();
+      // The tab is longer than the modal's fixed height: let the modal grow so nothing scrolls away.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 4000,
+  },
+  {
+    // Settings › Ops & monitoring: PagerDuty, Grafana and CloudWatch connected, AWS not yet.
+    name: "ops-settings",
+    guide: true,
+    stubEnv: { SHOT_OPS: "1" },
+    clip: ".conns",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "ops",
+    width: 1500,
+    height: 1900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      // The tab is longer than the modal's fixed height: let the modal grow so nothing scrolls away.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 4000,
+  },
+  {
     name: "aws-badge",
     guide: true,
     clip: [".ws-aws-btn", ".ws-aws-pop"],
