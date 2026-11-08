@@ -29,6 +29,8 @@ Seventeen checks:
   emphasis   every ** in guide/, docs/ and the release notes renders as bold on GitHub
   labels     a quoted bold label in member/ and admin/ exists in the Console's catalogue
   size       a guide chapter stays within CHAPTER_LINE_BUDGET lines (warning only)
+  history    task pages (user/, ref/cli/ and the ref pages written for them) carry no ADR numbers, journal
+             paths, issue numbers or dates
 
 ref is checked at three levels. (a) Axis coverage: the agent columns cover the session
 kind constants, the deployment rows cover the runtime profiles. (b) Row agreement:
@@ -1685,6 +1687,52 @@ def check_tables(files: list[str], f: Findings) -> None:
                 )
 
 
+# Pages written to the task-page rules (docs/CONVENTIONS.md §12), relative to guide/.
+# A directory ends with "/". The old chapters are not listed: they cite ADRs freely and
+# are replaced page by page.
+TASK_PAGES = ("user/", "ref/cli/", "ref/aws-profiles.", "ref/bedrock-route.")
+
+# What a reader of a task page has no use for: why it was decided, when it was measured,
+# which issue changed it. Those stay in docs/; the page states the rule as it is now.
+_HISTORY = (
+    (re.compile(r"\bADR[ -]?\d{4}\b"), "an ADR number"),
+    (re.compile(r"docs/(?:log|decisions)\b"), "a path into docs/"),
+    (re.compile(r"(?<![\w/(#-])#\d{3,}\b"), "an issue number"),
+    (re.compile(r"\b20\d\d-\d\d-\d\d\b"), "a date"),
+)
+
+
+def check_history(files: list[str], f: Findings) -> None:
+    """Does a task page talk about its own history?
+
+    A task page tells the reader what to do and what happens now. An ADR number, a
+    journal path, an issue number or the date something was measured sends them after a
+    story they did not ask for, and goes stale. Code blocks and inline code are skipped:
+    an example may show a date.
+    """
+    for path in files:
+        r = os.path.relpath(path, GUIDE).replace(os.sep, "/")
+        if r.startswith("..") or not any(r.startswith(t) for t in TASK_PAGES):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        fence = False
+        for i, line in enumerate(lines, 1):
+            if line.lstrip().startswith("```"):
+                fence = not fence
+                continue
+            if fence:
+                continue
+            text = re.sub(r"`[^`]*`", "", line)
+            for pat, what in _HISTORY:
+                m = pat.search(text)
+                if m:
+                    f.errors.append(
+                        f"{rel(path)}:{i}: {what} ({m.group(0)}) on a task page. State the rule as it is "
+                        "now and leave the history in docs/ (CONVENTIONS §12)"
+                    )
+
+
 REDIRECTS = os.path.join(GUIDE, "_redirects.tsv")
 
 # Where a path into guide/ is written outside guide/ itself. All of these are read by
@@ -2211,6 +2259,8 @@ def main() -> int:
         check_emphasis(files, f)
     if run("labels"):
         check_labels(files, f)
+    if run("history"):
+        check_history(files, f)
     if run("size"):
         check_size(files, f)
 

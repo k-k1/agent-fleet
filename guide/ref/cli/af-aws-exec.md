@@ -30,7 +30,7 @@ Everything after `--` is the command to run. Give only one of `--login` and `--n
 | `--account <id>` | Refuse, running nothing, unless the profile is this AWS account. Required for a profile that is **not** one of your Settings profiles (one you defined in `~/.aws` yourself) |
 | `--region <region>` | The region for the command. How it is chosen: [Region](#region) |
 | `--login` | When the SSO login is not usable, run the device-code login in this terminal |
-| `--no-login` | Never prompt: print the login command and exit 3 |
+| `--no-login` | Never prompt: print the login command and exit with status 3 |
 | `--keep-aws-config` | Give the command your own `~/.aws` files and `AWS_ENDPOINT_URL*` settings as well |
 | `-q` | Do not print the identity the command runs as |
 | `--list` | Pull the profiles from Settings now and list the names you can use |
@@ -195,7 +195,7 @@ before that profile's first use in each session, before it fetches any credentia
   names the session, the profile, its account and role, with **Allow for this session** and **Deny**.
 - **An approval** lasts 8 hours or until the session ends, and only for the profile as it is now: editing its
   account, role or portal asks again.
-- **Denied, or not answered in time**: the command does not run and af-aws-exec exits with 4. An unanswered request
+- **Denied, or not answered in time**: the command does not run and af-aws-exec exits with status 4. An unanswered request
   stays up for 15 minutes, so you can still allow it and the agent's next run goes through.
 - A role chained from such a profile asks for that profile too.
 - Such a profile is not written to `~/.aws/config`, so a plain `aws --profile` cannot use it: run it with
@@ -211,72 +211,8 @@ it:
 
 ## Model route
 
-A profile can be marked "Model route" in its form. It lets the AF route gateway use the profile for Amazon Bedrock
-model calls (ADR 0128).
-
-- **What the mark says**: that the profile's role carries only `bedrock:InvokeModel*` (the calls that run a model)
-  and nothing broader. It is only your statement: AF cannot read the role's permissions, so mark a profile only when
-  you have checked them.
-- **What the gateway does**: it runs inside the workspace, signs each model call with the profile's short-lived
-  credentials and forwards it, so the session that makes the calls never receives AWS credentials.
-- **What it forwards**: only `invoke`, `invoke-with-response-stream`, `converse` and `converse-stream`. It cannot list
-  models or call any other AWS operation.
-- **An unmarked profile** is refused as a route, with the reason in the answer to the call.
-- **The route token** is tied to one session, to the profile as it is now and to the route the session selected. It
-  is served only to that session's own processes: the gateway listens on a socket in the workspace and checks which
-  process is calling, so another session that copies the token is refused.
-- **The token ends** when the session is stopped, deleted, archived or recreated, when the selection changes, and
-  when the profile is edited, unmarked or deleted. One that nothing ended runs out ten minutes after its session stops
-  running.
-- **A profile set to "Confirm before use"** is asked about as above when the session starts, and is checked again on
-  every model call: until you allow it, each call fails at once with the reason.
-- **To use it**: in the launch dialog of a claude session, choose **Amazon Bedrock** under **Model route** (see
-  [the claude routes](../agents.md#claude-the-api-key-route)). The option appears only when at least one of your
-  profiles is marked, and only once the route has passed its live acceptance (until then, only on a workspace whose
-  operator enabled it for that run).
-
-### Before the first Bedrock call
-
-What follows was observed in one account's live acceptance run on 2026-11-06 (claude
-2.1.318), not taken from AWS documentation; check AWS's current Bedrock model-access documentation for your account.
-A model that is already enabled for the account may need none of it.
-
-- Submit Anthropic's use-case form in the Bedrock console.
-- When the model has not been invoked in the account before, its first invocation has to come from a principal that
-  is allowed `aws-marketplace:Subscribe` (and `aws-marketplace:ViewSubscriptions`). There, a role with only
-  `bedrock:InvokeModel*` was refused with AccessDenied on that first call. Make the first call once with a broader
-  principal; after that the narrow route role worked.
-
-### Region and model
-
-The model is the one you choose in the launch dialog. Its default is a tier alias (Opus / Sonnet /
-Haiku), which claude turns into a Bedrock inference-profile ID for the route's region, and that ID may not exist there:
-in that run, in `ap-northeast-1`, the default Sonnet ID failed on the first turn with `model_not_found`. Where the
-account had no access to the model, claude fell back to older Opus versions, one gateway call (and one usage row) for
-each attempt; this is the CLI's behaviour and may change. So use a region where the account has enabled the model. The
-launch dialog offers the tier aliases and the IDs you register under **Additional Claude models** in Settings
-([agents](../../member/09-agents.md)); Settings accepts only IDs that start with `claude-` (for example `claude-opus-4-8`), not AWS
-inference-profile IDs such as `us.anthropic.…`, and whether claude maps a registered `claude-…` ID to the right Bedrock
-ID on this route has not been verified. AF does not check the model against the account or pin one per route.
-
-### When a call is refused
-
-The gateway answers an authentication or connection refusal itself with HTTP 401 (a refusal
-that waiting may clear, 503), always with `x-should-retry: false`, so claude shows it once, with the code in the message,
-and does not retry. (Requests the gateway cannot forward keep their own status: `route_operation_not_allowed` 404,
-`route_bad_model` 400, `route_request_too_large` 413.)
-
-| Code | Meaning | What to do |
-|---|---|---|
-| `route_token_invalid` (401) | The route token is missing, unknown, expired, or was revoked (the session stopped, or the profile or selection changed). | Start the session again. |
-| `route_caller_forbidden` (401) | The token was presented by a process outside the session it was issued to. The token is not revoked. | Call the model from the session's own terminal, not from another session. |
-| `route_connection_forbidden` (401) | The profile was unmarked as a model route or deleted since the session started (at session creation the same refusal is 403). The token is revoked. | Mark the profile again, or start a new session on another profile. |
-| `route_session_ended`, `route_selection_changed`, `route_connection_changed` (401) | The session ended, no longer selects this route, or its profile was edited. The token is revoked. | Start a new session. |
-| `route_login_required`, `route_confirmation_required` (401) | The profile needs an SSO sign-in or your "Confirm before use" approval. | Sign in or allow it; the next call goes through. |
-| `route_connection_unavailable` (503) | The Agent cannot read the AWS profiles in Settings right now. | Try again in a moment. |
-| `route_upstream_unavailable`, `route_credentials_unavailable` (503) | Bedrock or the credentials could not be reached right now. | Try again in a moment. |
-
-A Bedrock answer such as AccessDenied or `model_not_found` is forwarded as it is; it is not a gateway code.
+Using a profile for claude's Amazon Bedrock model calls (the "Model route" mark in the profile's form) is in
+[Amazon Bedrock route](../bedrock-route.md).
 
 ## A read-only lookup with `aws --profile`
 
@@ -311,7 +247,7 @@ account:
 - `AWS_EC2_METADATA_DISABLED=true` is exported, so the CLI does not ask instance metadata;
 - the environment holds no workload credentials and no AWS config-file or endpoint overrides;
 - the CLI's default chain (with `AWS_PROFILE` set aside and configured endpoints ignored) ended in its own "no
-  credentials" error (exit 253).
+  credentials" error (exit status 253).
 
 **`not-isolated`** is anything else: your own default credentials, an expired session, a failing
 `credential_process`, a network error. A workspace on your own machine, a deployment that hands the task role back and

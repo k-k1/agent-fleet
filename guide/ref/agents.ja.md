@@ -242,7 +242,7 @@ API キーで従量課金として動きます。**anthropic-subscription** は�
   managed 設定ファイル（CLI の文書では起動フラグ層より上とされる。ここでは未測定）と、anthropic-api セッションで `ANTHROPIC_API_KEY` を設定する設定ファイル
   （キー自体はコマンドラインに載せません）。
 - **Amazon Bedrock。** 3 つ目の経路は、設定 > AWS プロファイル/SSM で「モデルのルート」の印を付けたプロファイルで
-  claude を Amazon Bedrock 上で動かします（[クラウドアカウント](../member/16-cloud-accounts.ja.md)）。**まだ提供していません**。
+  claude を Amazon Bedrock 上で動かします（[Amazon Bedrock のルート](bedrock-route.ja.md)）。**まだ提供していません**。
   実機での受け入れ確認を待っており、それまでは運用者がその確認のために `AF_CLAUDE_BEDROCK_ROUTE=1` を設定した
   ワークスペースでだけ選べます（Control Plane では `AF_WS_CLAUDE_BEDROCK_ROUTE=1` で、次のワークスペース起動で届きます。動作中のワークスペースは Stop → Start が要ります）。選べる場合は、**モデルのルート** で
   **Amazon Bedrock** を選び、プロファイルを選びます。リージョンは任意で、空ならプロファイル自身のものです。セッションには

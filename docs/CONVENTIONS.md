@@ -348,6 +348,12 @@ until they are rewritten.
 - **Leave out** preamble ("your company's…"), how secrets are handled (that is one cross-cutting page, "How
   credentials are handled"), spec edge cases (they go to `guide/ref/`) and design reasons (they stay in
   `docs/decisions/`).
+- **No history.** No ADR numbers, links or paths into `docs/`, issue numbers, or the date and version something was
+  measured with. The reader wants the rule as it is now; when a fact rests on one observation, say so in words
+  ("seen in one account") without the story. `docs-check.py --only history` enforces this on the pages listed in its
+  `TASK_PAGES`.
+- **Exit statuses are numbers with their name**: "exits with status 4", 「終了コード 4 で終わります」, not "exits
+  with 4" or 「4 で終わります」.
 - **Material for contributors is not published.** A procedure that only someone changing Agent Fleet runs, such as
   verifying a template on real infrastructure, belongs in `docs/`, even when it sits in a runbook today.
 - UI labels are quoted from the catalogues (§4, §5).
