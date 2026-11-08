@@ -197,7 +197,7 @@ A model that is already enabled for the account may need none of it.
   `bedrock:InvokeModel*` was refused with AccessDenied on that first call. Make the first call once with a broader
   principal; after that the narrow route role worked.
 
-**Region and model.** On this route you type the model as Bedrock writes it, in the **Bedrock model ID** field beside the
+**Region and model.** For a claude session on this route you type the model as Bedrock writes it, in the **Bedrock model ID** field beside the
 region: a model ID such as `anthropic.claude-sonnet-4-5-20250929-v1:0`, or a system inference profile ID, which is the same
 ID behind `us.`, `eu.`, `apac.`, `jp.`, `au.`, `us-gov.` or `global.` (for example `us.anthropic.claude-opus-4-6-v1`). The
 field is required, and the launch dialog's ordinary model picker is hidden while the route is chosen. Pick an ID that the
