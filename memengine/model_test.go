@@ -94,3 +94,34 @@ func TestClassifyAndPatchDropInvalidWithoutRetry(t *testing.T) {
 type funcModel func(string) (Reply, error)
 
 func (f funcModel) Call(_ context.Context, p string) (Reply, error) { return f(p) }
+
+func TestCodexJSONLAdapter(t *testing.T) {
+	out := `{"type":"thread.started","thread_id":"t"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"i0","type":"reasoning","text":"thinking"}}
+{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"{\"edits\":[]}"}}
+{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":400,"output_tokens":20}}
+`
+	rep, err := ParseReply([]byte(out))
+	if err != nil || rep.Text != `{"edits":[]}` || !rep.UsageKnown {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	if rep.Usage.TotalInput() != 1000 || rep.Usage.CacheReadTokens != 400 || rep.Usage.OutputTokens != 20 {
+		t.Errorf("usage %+v", rep.Usage)
+	}
+	if _, err := ParseReply([]byte(`{"type":"turn.failed","message":"quota"}`)); err == nil || errors.Is(err, ErrInvalid) {
+		t.Errorf("a failed turn is an error: %v", err)
+	}
+}
+
+// A CLI that reports no usage is a valid model: the answer counts, the tokens are unknown.
+func TestUsageUnknownIsValid(t *testing.T) {
+	rep, err := ParseReply([]byte(`{"edits":[]}`))
+	if err != nil || rep.UsageKnown || rep.Text != `{"edits":[]}` {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	env, _ := ParseReply([]byte(`{"result":"{\"edits\":[]}"}`))
+	if env.UsageKnown || env.Text != `{"edits":[]}` {
+		t.Errorf("envelope without usage: %+v", env)
+	}
+}

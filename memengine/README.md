@@ -27,6 +27,12 @@ go run ./cmd/goldeval -cases cases.jsonl -inputs inputs.jsonl -out run \
   -tier large='... --model sonnet'
 ```
 
+A tier is `-tier name=command` (any one-shot CLI: prompt on stdin, JSON on stdout) or a preset,
+`-tier claude:haiku` / `-tier codex:<model>`. The report is keyed by tier name, so a later run adds a column
+by adding a `-tier`. Token usage is parsed per CLI by a small adapter (`memengine.Adapters`: the claude
+envelope, codex `--json` events); a CLI that reports none is valid and shows `n/a`. The codex adapter is
+covered by a fixture only, not yet run against the CLI.
+
 `cases.jsonl` is the member-labelled gold set. `inputs.jsonl` holds, per case id, the memories it cites
 (`name`, `scope`, `revision`, `cited_revision`, `revision_mismatch`, `description`, `body`). Both are
 private and stay out of the repository. Answers and usage go to `-out/<tier>.run.json`, the scores to

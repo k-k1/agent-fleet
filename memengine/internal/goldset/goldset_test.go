@@ -252,3 +252,24 @@ func TestLoadJoinsAndChecks(t *testing.T) {
 		t.Error("inputs with fewer memories than cited must be refused")
 	}
 }
+
+// Tiers are columns keyed by name: a later run adds one, and a tier whose CLI
+// reports no usage shows n/a rather than a zero.
+func TestReportKeyedByTierAndUsageUnknown(t *testing.T) {
+	s := synth()
+	known := funcModel(func(string) (memengine.Reply, error) {
+		return reply(`{"operation":"no-op","targets":[],"reason":"r"}`, 100, 5), nil
+	})
+	unknown := funcModel(func(string) (memengine.Reply, error) {
+		return memengine.Reply{Text: `{"operation":"no-op","targets":[],"reason":"r"}`}, nil
+	})
+	a := ScoreTier(Run(context.Background(), "claude:haiku", known, s, 1, nil, nil))
+	b := ScoreTier(Run(context.Background(), "codex:x", unknown, s, 1, nil, nil))
+	if !a.UsageKnown || b.UsageKnown {
+		t.Fatalf("usage known: %v %v", a.UsageKnown, b.UsageKnown)
+	}
+	md := Markdown([]TierScore{a, b}, Reference(s), nil, nil)
+	if !strings.Contains(md, "| codex:x | n/a |") || !strings.Contains(md, "| claude:haiku | patch |") || !strings.Contains(md, "| codex:x | patch |") {
+		t.Errorf("report:\n%s", md)
+	}
+}

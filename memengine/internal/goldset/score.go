@@ -62,7 +62,8 @@ type TierScore struct {
 	PatchPromptPerCall        float64 `json:"patch_prompt_per_call"`
 	PatchOutPerCall           float64 `json:"patch_output_per_call"`
 	TotalInput, TotalOutput   int
-	BaselineInput             int `json:"baseline_input"`
+	UsageKnown                bool `json:"usage_known"` // false when the tier's CLI reported no usage
+	BaselineInput             int  `json:"baseline_input"`
 }
 
 // ScoreTier scores one tier's run.
@@ -140,6 +141,7 @@ func ScoreTier(r *TierRun) TierScore {
 		}
 	}
 	ts.TotalInput, ts.TotalOutput = cIn+pIn, cOut+pOut
+	ts.UsageKnown = ts.TotalInput+ts.TotalOutput > 0
 	per := func(sum, n, sub int) float64 {
 		if n == 0 {
 			return 0
@@ -247,6 +249,10 @@ func Markdown(tiers []TierScore, ref PatchScore, agree [][3]int, notes []string)
 	b.WriteString("Input counts every input token the command reported (cache reads and writes included); *prompt* subtracts the command's fixed overhead measured by a trivial call. Projection: 30 days x (5 classifications + 2 patches) a day, the ADR's low scenario.\n\n")
 	b.WriteString("| tier | classify in | classify prompt | classify out | patch in | patch prompt | patch out | overhead | month in (total) | month in (prompt only) |\n|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, t := range tiers {
+		if !t.UsageKnown {
+			fmt.Fprintf(&b, "| %s | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |\n", t.Name)
+			continue
+		}
 		fmt.Fprintf(&b, "| %s | %.0f | %.0f | %.0f | %.0f | %.0f | %.0f | %d | %.2f M | %.2f M |\n", t.Name,
 			t.ClassifyInPerCall, t.ClassifyPromptPerCall, t.ClassifyOutPerCall, t.PatchInPerCall, t.PatchPromptPerCall, t.PatchOutPerCall,
 			t.BaselineInput, Projection(t, 5, 2, false)/1e6, Projection(t, 5, 2, true)/1e6)
