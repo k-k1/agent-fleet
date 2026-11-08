@@ -14,7 +14,7 @@ import (
 func newGuardTestStore(t *testing.T) (*store.SQL, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

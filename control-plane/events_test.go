@@ -94,7 +94,7 @@ func (s *eventsStub) waitSubscriberTicks(ctx context.Context, rec *syncRecorder,
 // /sessions and /notifications, and the resolved record pointing at it.
 func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 	t.Helper()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -34,7 +34,7 @@ type inboxEnv struct {
 
 func newInboxEnv(t *testing.T) *inboxEnv {
 	t.Helper()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,6 +228,7 @@ func TestInboxRoutesNeverCreateWorkspace(t *testing.T) {
 // TestInboxRouteCheckPositiveControl shows the check above would see a withResolved route:
 // in the same environment one such call creates the workspace record.
 func TestInboxRouteCheckPositiveControl(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	_ = e.do("b", "GET", "/api/notifications", nil, e.t1.Slug)
 	if n := e.count("workspace"); n == 0 {
@@ -238,6 +239,7 @@ func TestInboxRouteCheckPositiveControl(t *testing.T) {
 // TestInboxRequiresSignIn is docs/log/130 A-1, and A-9's "an agent credential is not a
 // person": without a signed-in member every inbox route is 401 and nothing is written.
 func TestInboxRequiresSignIn(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	id := e.send("a", "request", "b")
 	before := e.count("inbox_item")
@@ -261,6 +263,7 @@ func TestInboxRequiresSignIn(t *testing.T) {
 // TestInboxHasNoAgentSurface is the code half of docs/log/130 A-9: no inbox route under
 // /internal/, and no agent tool that sends or lists the roster (decision 11).
 func TestInboxHasNoAgentSurface(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	for _, line := range muxRoutes(t, e.mux) {
 		if strings.Contains(line, "/internal/") && strings.Contains(strings.ToLower(line), "inbox") {
@@ -296,6 +299,7 @@ func TestInboxHasNoAgentSurface(t *testing.T) {
 // member of another tenant and a removed member are refused with the same status, code and
 // message, and an item with one bad recipient is not created for the good ones either.
 func TestInboxInvalidRecipientsAreIndistinguishable(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	if err := e.st.SetMembershipStatus(context.Background(), e.members["c"], "inactive"); err != nil {
 		t.Fatal(err)
@@ -321,6 +325,7 @@ func TestInboxInvalidRecipientsAreIndistinguishable(t *testing.T) {
 // and claiming put nothing into anybody's memo queue, which is what list_memos and a flush
 // read. Take-in, the only way in, is the second half of P1-A.
 func TestInboxNeverReachesTheMemoQueue(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	id := e.send("a", "request", "b")
 	e.send("a", "dm", "b")
@@ -336,6 +341,7 @@ func TestInboxNeverReachesTheMemoQueue(t *testing.T) {
 
 // TestInboxTenantIsolation is docs/log/130 A-3, A-4 and A-5.
 func TestInboxTenantIsolation(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	id := e.send("a", "request", "b")
 	type listResp struct {
@@ -376,6 +382,7 @@ func TestInboxTenantIsolation(t *testing.T) {
 
 // TestInboxReceiveControls is docs/log/130 A-6 and A-7.
 func TestInboxReceiveControls(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	sendTo := func(to ...string) *httptest.ResponseRecorder {
 		var keys []string
@@ -433,6 +440,7 @@ func TestInboxReceiveControls(t *testing.T) {
 // TestInboxSendLimitsAtTheHandler is docs/log/130 A-8: the recipient cap and the body cap on
 // both sides, and the pair limit's answer.
 func TestInboxSendLimitsAtTheHandler(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	ctx := context.Background()
 	var keys []string
@@ -472,6 +480,7 @@ func TestInboxSendLimitsAtTheHandler(t *testing.T) {
 // TestInboxClaimAnswers is docs/log/130 R-1's answer to the loser and R-4's double claim,
 // R-5 on every final state, and A-10's audit rows without a body.
 func TestInboxClaimAnswers(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	id := e.send("a", "request", "b", "c")
 	if rec := e.do("b", "POST", "/api/inbox/items/"+id+"/claim", nil); rec.Code != 200 {
@@ -520,6 +529,7 @@ func TestInboxClaimAnswers(t *testing.T) {
 // the assignee launches, the refusal comes before any workspace exists, the session is
 // recorded on the request, and a second launch is refused without reaching the Agent.
 func TestInboxLaunchChecksClaimFirst(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	var mu sync.Mutex
 	creates := 0
@@ -591,6 +601,7 @@ func TestInboxLaunchChecksClaimFirst(t *testing.T) {
 // with it, and the next REST call is refused. It also checks that the stream frames the
 // mailbox and moves when an item arrives.
 func TestInboxRemovalClosesStream(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	srv := httptest.NewServer(e.mux)
 	t.Cleanup(srv.Close)
@@ -651,6 +662,7 @@ func TestInboxRemovalClosesStream(t *testing.T) {
 // TestInboxRemovalReconcilesOnRead: a removed assignee's claim is back to open the next time
 // anyone reads, without waiting for the sweep (docs/log/130 M-1 as A and C see it).
 func TestInboxRemovalReconcilesOnRead(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	id := e.send("a", "request", "b", "c")
 	_ = e.do("b", "POST", "/api/inbox/items/"+id+"/claim", nil)

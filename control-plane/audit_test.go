@@ -139,7 +139,7 @@ func TestAuditActionTarget(t *testing.T) {
 // InsertAudit + ListAuditByTenant: "" spans every tenant, a set id scopes to it.
 func TestAuditStoreScope(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

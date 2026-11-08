@@ -53,7 +53,7 @@ func newMCPOAuthEnv(t *testing.T) *mcpOAuthEnv {
 	t.Setenv("AF_MCP_OAUTH", "1")
 	t.Setenv("AF_MCP_OAUTH_TRUSTED_HOSTS", "")
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

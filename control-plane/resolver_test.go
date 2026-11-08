@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
-	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // Now that manager.mu is no longer held across DB I/O, concurrent first-time resolves of
@@ -23,7 +22,7 @@ func TestBuildResolvedSingleFlight(t *testing.T) {
 	t.Cleanup(func() { runtime.DockerInspectOut = prev })
 
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

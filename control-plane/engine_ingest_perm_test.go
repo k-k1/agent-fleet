@@ -26,7 +26,7 @@ import (
 //	minoru@example.com plain member of acme      (granted tenant, wrong role)
 func engineIngestPermFixture(t *testing.T) (engineAdminAPI, map[string]string) {
 	t.Helper()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestEngineListAnswersEachCallerTheRowTheyMayHave(t *testing.T) {
 // written as "narrow when a tenant was resolved" hands exactly those to a tenant_admin, and the
 // list still looks plausible — which is why the empty-tenant job is in this fixture.
 func TestIngestJobsAreNarrowedToTheCallersTenant(t *testing.T) {
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

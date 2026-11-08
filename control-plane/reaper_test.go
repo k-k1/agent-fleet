@@ -85,7 +85,7 @@ func newReaperFenceRuntime(t *testing.T) *reaperFenceRuntime {
 func reaperLifecycleFixture(t *testing.T) (*store.SQL, store.Workspace, *manager) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

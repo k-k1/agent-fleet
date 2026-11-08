@@ -228,7 +228,7 @@ func (f *fakeFirer) fire(_ context.Context, sch store.Schedule, _ time.Time) (st
 func newSchedTestStore(t *testing.T) (*store.SQL, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

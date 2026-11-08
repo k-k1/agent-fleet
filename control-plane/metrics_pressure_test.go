@@ -18,11 +18,19 @@ func localDockerStats(t *testing.T) {
 	hostStatsHook = func(context.Context, string) (map[string]any, string) {
 		return map[string]any{"running": true, "mem_used": uint64(1 << 30), "cpu_pct": 3.0}, "run-1"
 	}
-	memPressures = &pressureCache{m: map[string]*pressureEntry{}}
+	resetMemPressures()
 	t.Cleanup(func() {
 		hostStatsHook = old
-		memPressures = &pressureCache{m: map[string]*pressureEntry{}}
+		resetMemPressures()
 	})
+}
+
+// resetMemPressures empties the cache in place. Replacing the memPressures pointer would race
+// with a detached fetch that is still reading it when the test ends.
+func resetMemPressures() {
+	memPressures.mu.Lock()
+	defer memPressures.mu.Unlock()
+	memPressures.m = map[string]*pressureEntry{}
 }
 
 func pressureRT(t *testing.T, h http.HandlerFunc) (*manager, agentStatsRuntime) {

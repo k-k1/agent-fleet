@@ -17,7 +17,7 @@ import (
 // tenant selected via X-AF-Tenant, never the other's.
 func TestInternalGitListTenantScoped(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

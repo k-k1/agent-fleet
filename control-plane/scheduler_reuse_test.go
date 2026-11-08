@@ -18,6 +18,7 @@ import (
 // --- pure rotation helpers ------------------------------------------------------
 
 func TestParseRotateDuration(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want time.Duration
@@ -40,6 +41,7 @@ func TestParseRotateDuration(t *testing.T) {
 }
 
 func TestCalendarCrossed(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC) // Wed 2026-07-22, ISO week 30
 	cases := []struct {
 		name     string
@@ -63,6 +65,7 @@ func TestCalendarCrossed(t *testing.T) {
 }
 
 func TestRotationDue(t *testing.T) {
+	t.Parallel()
 	loc := time.UTC
 	started := "2026-07-20T09:00:00Z"
 	slot := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC) // 7 days later, a Monday
@@ -91,6 +94,7 @@ func TestRotationDue(t *testing.T) {
 }
 
 func TestRotationDueNoBaseline(t *testing.T) {
+	t.Parallel()
 	// A period/calendar trigger cannot fire without a reuse_started_at baseline; only
 	// every_runs (which needs no time baseline) can.
 	slot := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
@@ -103,6 +107,7 @@ func TestRotationDueNoBaseline(t *testing.T) {
 }
 
 func TestValidateRotation(t *testing.T) {
+	t.Parallel()
 	good := []string{"", `{"every_runs":10}`, `{"after":"7d"}`, `{"calendar":"weekly"}`,
 		`{"every_runs":5,"after":"12h","calendar":"daily"}`, `{"context_pct":80}`}
 	for _, s := range good {
@@ -119,6 +124,7 @@ func TestValidateRotation(t *testing.T) {
 }
 
 func TestReusePolicyDefaults(t *testing.T) {
+	t.Parallel()
 	if reuseOverlap(store.Schedule{}) != "skip" {
 		t.Error("overlap default should be skip")
 	}
@@ -144,6 +150,7 @@ func TestReusePolicyDefaults(t *testing.T) {
 // without confirm the Agent answers 200 on mere keystroke delivery, so a swallowed prompt
 // records a bogus "fired".
 func TestReuseSendBodyRequestsConfirm(t *testing.T) {
+	t.Parallel()
 	var body struct {
 		Prompt   string `json:"prompt"`
 		ReportTo string `json:"report_to"`
@@ -272,6 +279,7 @@ func newReuseFixture(t *testing.T, a *fakeAgent, sch store.Schedule) (*wakeFirer
 }
 
 func TestFireReusePinnedSendsToExisting(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: []sessionWire{{Name: "my-sess", Alive: true, State: "idle"}}}
 	sch := store.Schedule{ID: "sch_p", SessionMode: "reuse", ReuseTarget: "my-sess", OwnerConv: "conv1", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
@@ -293,6 +301,7 @@ func TestFireReusePinnedSendsToExisting(t *testing.T) {
 }
 
 func TestFireReusePinnedMissingRecreate(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: nil, newName: "fresh-1"}
 	sch := store.Schedule{ID: "sch_r", SessionMode: "reuse", ReuseTarget: "gone", MissingTargetPolicy: "recreate", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
@@ -311,6 +320,7 @@ func TestFireReusePinnedMissingRecreate(t *testing.T) {
 }
 
 func TestFireReusePinnedMissingFail(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: nil}
 	sch := store.Schedule{ID: "sch_f", SessionMode: "reuse", ReuseTarget: "gone", MissingTargetPolicy: "fail", Prompt: "go"}
 	f, res, _, ctx := newReuseFixture(t, a, sch)
@@ -325,6 +335,7 @@ func TestFireReusePinnedMissingFail(t *testing.T) {
 }
 
 func TestFireReuseManagedFirstFireCreates(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: nil, newName: "managed-1"}
 	sch := store.Schedule{ID: "sch_m", SessionMode: "reuse", Prompt: "go"} // reuse_target empty => managed
 	f, res, st, ctx := newReuseFixture(t, a, sch)
@@ -343,6 +354,7 @@ func TestFireReuseManagedFirstFireCreates(t *testing.T) {
 }
 
 func TestFireReuseManagedRotates(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{
 		sessions: []sessionWire{{Name: "old-sess", Alive: true, State: "idle"}},
 		newName:  "new-sess",
@@ -372,6 +384,7 @@ func TestFireReuseManagedRotates(t *testing.T) {
 }
 
 func TestFireReuseOverlapSkip(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: []sessionWire{{Name: "busy", Alive: true, State: "working"}}}
 	sch := store.Schedule{ID: "sch_o", SessionMode: "reuse", ReuseTarget: "busy", OverlapPolicy: "skip", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
@@ -391,6 +404,7 @@ func TestFireReuseOverlapSkip(t *testing.T) {
 }
 
 func TestFireReuseOverlapQueueSends(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: []sessionWire{{Name: "busy", Alive: true, State: "working"}}}
 	sch := store.Schedule{ID: "sch_q", SessionMode: "reuse", ReuseTarget: "busy", OverlapPolicy: "queue", Prompt: "go"}
 	f, res, _, ctx := newReuseFixture(t, a, sch)
@@ -408,6 +422,7 @@ func TestFireReuseOverlapQueueSends(t *testing.T) {
 // only THEN sent, gated on input-readiness rather than mere aliveness: the fire must
 // /start the session, wait for /status ready, and deliver exactly one /input.
 func TestFireReuseResumesStoppedTargetThenSends(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: []sessionWire{{Name: "pinned", Alive: false, State: "stopped"}}}
 	sch := store.Schedule{ID: "sch_stop", SessionMode: "reuse", ReuseTarget: "pinned", OwnerConv: "conv1", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
@@ -435,13 +450,14 @@ func TestFireReuseResumesStoppedTargetThenSends(t *testing.T) {
 // keystrokes typed into that pane and reuse_run_count advanced even though nothing ran.
 // Now the fire errors (surfaced to the operator) and the ledger does not advance.
 func TestFireReuseUnreadyTargetErrorsNotSilentFire(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{
 		sessions: []sessionWire{{Name: "zombie", Alive: true, State: "idle"}},
 		unready:  map[string]bool{"zombie": true},
 	}
 	sch := store.Schedule{ID: "sch_zomb", SessionMode: "reuse", ReuseTarget: "zombie", OwnerConv: "conv1", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
-	f.readyTimeout = 150 * time.Millisecond // bound the not-ready wait for the test
+	f.sessionReadyTimeout = 150 * time.Millisecond // bound the not-ready wait (readyTimeout is the boot wait, not this one)
 	f.readyInterval = 5 * time.Millisecond
 
 	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
@@ -461,6 +477,7 @@ func TestFireReuseUnreadyTargetErrorsNotSilentFire(t *testing.T) {
 // option on the reuse path: a prompt delivered to an armed session releases the arm, so
 // arming before the send would cancel the very stop the schedule asked for.
 func TestFireReuseArmsStopAfterTheSend(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: []sessionWire{{Name: "nightly", Alive: true, State: "idle"}}}
 	sch := store.Schedule{
 		ID: "sch_stop", SessionMode: "reuse", ReuseTarget: "nightly",
@@ -482,6 +499,7 @@ func TestFireReuseArmsStopAfterTheSend(t *testing.T) {
 // A schedule without the option must not touch the arm at all — the default is the
 // behaviour every schedule written before it was created against.
 func TestFireReuseWithoutStopAfterRunDoesNotArm(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: []sessionWire{{Name: "nightly", Alive: true, State: "idle"}}}
 	sch := store.Schedule{ID: "sch_plain", SessionMode: "reuse", ReuseTarget: "nightly", Prompt: "go"}
 	f, res, _, ctx := newReuseFixture(t, a, sch)
@@ -497,6 +515,7 @@ func TestFireReuseWithoutStopAfterRunDoesNotArm(t *testing.T) {
 // The create path carries the arm in the create body instead: it has to be on disk before
 // the Agent delivers initial_prompt, and a POST that follows the create would race it.
 func TestFireReuseCreateCarriesStopAfterRun(t *testing.T) {
+	t.Parallel()
 	a := &fakeAgent{sessions: nil, newName: "fresh-9"}
 	sch := store.Schedule{
 		ID: "sch_stop_create", SessionMode: "reuse", ReuseTarget: "gone",

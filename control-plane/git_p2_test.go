@@ -27,7 +27,7 @@ type p2Env struct {
 func newP2Env(t *testing.T) *p2Env {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
