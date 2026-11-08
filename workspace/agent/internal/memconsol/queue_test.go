@@ -310,7 +310,13 @@ func TestNoticeHookIsGatedDaily(t *testing.T) {
 	cfg := DefaultConfig()
 	calls := 0
 	on := true
-	d := Deps{Enabled: func() bool { return on }, Notice: func(n int) { calls += n }}
+	var failNotice error
+	d := Deps{Enabled: func() bool { return on }, Notice: func(n int) error {
+		if failNotice == nil {
+			calls += n
+		}
+		return failNotice
+	}}
 
 	// Nothing pending: no notice, and the day is not spent.
 	maybeNotice(d, cfg, t0)
@@ -328,8 +334,15 @@ func TestNoticeHookIsGatedDaily(t *testing.T) {
 		t.Fatalf("notice while off or unwired: %d", calls)
 	}
 
+	// A failed Put does not spend the day: the next tick tries again.
+	failNotice = errors.New("outbox full")
 	maybeNotice(d, cfg, t0)
+	failNotice = nil
+	maybeNotice(d, cfg, t0.Add(time.Minute))
 	maybeNotice(d, cfg, t0.Add(time.Hour))
+	if calls != 1 { // the failed attempt did not spend the day; the retry delivered once
+		t.Fatalf("notice calls = %d", calls)
+	}
 	if calls != 1 {
 		t.Fatalf("notice calls = %d", calls)
 	}
@@ -352,7 +365,9 @@ func TestNoticeHookIsGatedDaily(t *testing.T) {
 func TestRaiseNoticeCarriesOnlyTheCount(t *testing.T) {
 	env(t)
 	t.Setenv("HOME", t.TempDir())
-	raiseNotice(3)
+	if err := raiseNotice(3); err != nil {
+		t.Fatal(err)
+	}
 	evs := notice.List()
 	if len(evs) != 1 {
 		t.Fatalf("outbox = %v", evs)

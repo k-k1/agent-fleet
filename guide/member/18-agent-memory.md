@@ -292,12 +292,12 @@ only queues *proposals*.
   stays); expiry alone does not bring the topic back — new evidence, a change to the memory, or an explicit retry does.
 
 **Reviewing.** Settings › Agent memory › **Suggestions** lists the proposals; filter by *Pending*, *Decided* (approved, rejected,
-or refused when approving) and *Expired*. Open one to see the memory and the revision it was drafted against, the evidence (the
+refused, or partly applied) and *Expired*. Open one to see the memory and the revision it was drafted against, the evidence (the
 reports and lint findings it rests on) and the diff.
 
 - **Approve** applies that one proposal, after a confirmation that names what will be written. Nothing is approved in bulk, by
   waiting, or from a notification: the daily notice only opens this view.
-- **Reject** drops it. **Look again** (for a rejected, expired or refused proposal) reopens its observations so a later run
+- **Reject** drops it. **Look again** (for a rejected, expired, refused or partly applied proposal) reopens its observations so a later run
   looks at the topic afresh; the new proposal is validated from scratch.
 - **Refusals are explained.** If the memory changed after the proposal was drafted (a revision mismatch), or the proposal expired
   or was already decided, Approve says so instead of failing generically; a stale proposal cannot be approved and is marked *not

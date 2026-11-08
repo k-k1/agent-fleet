@@ -51,7 +51,7 @@ export function MemoryTab() {
       <ViewNav label={tr("mem.views_label")} views={defs} value={view} onChange={setView} prefix="mem-af" />
       <div role="tabpanel" id="mem-af-panel" aria-labelledby={`mem-af-tab-${view}`} className="mem-view">
         {view === "settings" ? (
-          <AgentSettingsView running={running} />
+          <AgentSettingsView running={running} reload={reload} />
         ) : !running ? (
           <EmptyState icon="archive" title={tr("mem.ws_required_title")} hint={tr("mem.ws_required_hint")}>
             <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>

@@ -7,7 +7,7 @@
 // mark, ADR 0113), so a session cannot decide a proposal. The list, detail and diff reuse the
 // change list's layout (memoryChanges.tsx) on purpose.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -36,6 +36,14 @@ export function parseGoDuration(s: string | undefined): number {
   return total;
 }
 
+/** A Go duration as "15 min" / "2 h" for the status line; the raw string when it is not one. */
+export function humanDuration(s: string | undefined): string {
+  const ms = parseGoDuration(s);
+  if (!ms) return s ?? "";
+  const min = Math.round(ms / 60e3);
+  return min % 60 === 0 && min >= 60 ? `${min / 60} h` : `${min} min`;
+}
+
 /** A proposal with nothing the Agent can publish (every item is a note) is advice: it has no Approve. */
 export const isAdviceOnly = (p: Pick<ConsolProposal, "items">): boolean =>
   !p.items.some((i) => i.op === "patch" || i.op === "create");
@@ -46,7 +54,7 @@ export const matchesFilter = (status: string, f: StatusFilter): boolean =>
   f === "all" || (f === "decided" ? DECIDED.has(status) : status === f);
 
 /** Retry reopens the observations of a proposal that did not end in a publish. */
-export const canRetry = (status: string): boolean => status === "rejected" || status === "expired" || status === "refused";
+export const canRetry = (status: string): boolean => status === "rejected" || status === "expired" || status === "refused" || status === "partial";
 
 const delayCause = (d: ConsolDelay): string =>
   tMaybe("mem.cs_cause_" + d.cause.replace(/-/g, "_")) ?? d.cause;
@@ -77,7 +85,7 @@ export function refusalText(tr: ReturnType<typeof useT>, code: string | undefine
 // switch is a ui-pref (memoryConsolidation, default off): turning it on sends memory text to a model
 // and spends tokens while the workspace is idle, so it says so, and the Agent only accepts the
 // change with the member-origin mark (the ui-prefs relay is signed).
-export function ConsolidationSettings({ running }: { running: boolean }) {
+export function ConsolidationSettings({ running, reload = 0 }: { running: boolean; reload?: number }) {
   const tr = useT();
   const s = useSettings();
   const enabled = s.memoryConsolidation;
@@ -88,12 +96,12 @@ export function ConsolidationSettings({ running }: { running: boolean }) {
       </Row>
       <p className="muted ds-note">{tr("mem.cs_switch_note")}</p>
       {enabled && !s.agentMemory && <p className="mem-warn">{tr("mem.cs_needs_memory")}</p>}
-      {enabled && running && <ConsolidationStatus />}
+      {enabled && running && <ConsolidationStatus reload={reload} />}
     </>
   );
 }
 
-function ConsolidationStatus() {
+function ConsolidationStatus({ reload }: { reload: number }) {
   const tr = useT();
   const [st, setSt] = useState<ConsolStatus | null>(null);
   const [err, setErr] = useState(false);
@@ -108,7 +116,7 @@ function ConsolidationStatus() {
     setSt(res as ConsolStatus);
     return true;
   }, []);
-  useRetryLoad(load, []);
+  useRetryLoad(load, [reload]);
   if (err) return <p className="mem-warn">{tr("mem.cs_status_failed")}</p>;
   if (!st) return <p className="muted ds-note">{tr("common.loading")}</p>;
   const last = st.lastRun;
@@ -134,7 +142,7 @@ function ConsolidationStatus() {
             ? tr("mem.cs_next_due")
             : tr("mem.cs_next_at", { when: fmtDateTime(next, DATETIME_FULL) })}
         {" · "}
-        {tr("mem.cs_next_rule", { idle: st.config.idleAfter })}
+        {tr("mem.cs_next_rule", { idle: humanDuration(st.config.idleAfter) })}
       </p>
       <p>{tr("mem.cs_pending_count", { n: pending })}</p>
       {st.waiting.length > 0 && (
@@ -207,6 +215,8 @@ function ProposalDetail({
   const [view, setView] = useState<ConsolProposalView | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // setBusy is asynchronous state; the ref stops a second click that lands before it renders.
+  const inFlight = useRef(false);
 
   useEffect(() => {
     let live = true;
@@ -235,7 +245,7 @@ function ProposalDetail({
   };
 
   const decide = async (verb: "approve" | "reject" | "retry") => {
-    if (!view) return;
+    if (!view || inFlight.current) return;
     if (verb === "approve") {
       const targets = view.items.filter((i) => i.op === "patch" || i.op === "create");
       const ok = await askConfirm({
@@ -256,6 +266,8 @@ function ProposalDetail({
       });
       if (!ok) return;
     }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       const res = await send(verb);
@@ -269,6 +281,7 @@ function ProposalDetail({
       toast(tr("mem.af_failed"));
       onDecided();
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };

@@ -717,3 +717,4 @@ release.
   so it survives a restart. The row opens Suggestions and decides nothing. Not built: the supersede/merge writer (#3696),
   codex/Gemini runners, the ledger entry for the tokens. Not verified on a real workspace: a real model run, the notification
   reaching the Console from a live Agent.
+  A failed outbox write does not spend the day's notice (the stamp is saved only after the notification is queued), so the next tick retries.

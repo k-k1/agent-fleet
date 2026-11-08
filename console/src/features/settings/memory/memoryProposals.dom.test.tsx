@@ -139,7 +139,7 @@ describe("ConsolidationSettings", () => {
     expect(text).toContain(t("mem.cs_cause_budget"));
     expect(text).toContain(t("mem.cs_pending_count", { n: 2 }));
     // The last run is far in the future in this fixture, so the next run is a dated lower bound.
-    expect(text).toContain(t("mem.cs_next_rule", { idle: "15m0s" }));
+    expect(text).toContain(t("mem.cs_next_rule", { idle: "15 min" }));
   });
 });
 
@@ -222,6 +222,22 @@ describe("ProposalsPanel", () => {
     await click(byText(t("mem.cs_retry")));
     const id = "d".repeat(20);
     expect(apiJSON).toHaveBeenCalledWith(`api/agents/memory-consolidation/proposals/retry?proposal=${id}`, "POST", { id });
+  });
+
+  it("sends one request for a double-clicked Reject", async () => {
+    await mount(<ProposalsPanel reload={0} onChanged={() => {}} />);
+    const b = byText(t("mem.cs_reject"))!;
+    await act(async () => {
+      b.click();
+      b.click();
+    });
+    await flush();
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Look again for a partly applied proposal", () => {
+    expect(canRetry("partial")).toBe(true);
+    expect(canRetry("approved")).toBe(false);
   });
 
   it("has no bulk action", async () => {

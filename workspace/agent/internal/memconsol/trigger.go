@@ -25,8 +25,8 @@ type Deps struct {
 	Models func() (Models, map[string]string, error)
 	// Notice raises the Console notification. It is called with the number of pending proposals,
 	// and only while the switch is on and the daily gate allows it; it must carry the count and
-	// nothing from a memory.
-	Notice func(waiting int)
+	// nothing from a memory. A non-nil error leaves the day's notice unspent.
+	Notice func(waiting int) error
 }
 
 var (
@@ -265,8 +265,11 @@ func maybeNotice(d Deps, cfg Config, now time.Time) {
 	if err != nil || len(ps) == 0 {
 		return
 	}
-	st.Trigger.LastNotice = now
-	if st.save() == nil {
-		d.Notice(len(ps))
+	// The day's notice is spent only once it is in the outbox: a failed Put is retried on the next tick.
+	if err := d.Notice(len(ps)); err != nil {
+		log.Printf("memory consolidation: notification: %v", err)
+		return
 	}
+	st.Trigger.LastNotice = now
+	_ = st.save()
 }

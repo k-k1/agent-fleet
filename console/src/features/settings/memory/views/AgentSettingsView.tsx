@@ -6,14 +6,14 @@ import { useT } from "../../../../lib/i18n/index.ts";
 import { AgentMemorySwitch, ExternalMemorySwitch } from "../memoryChanges.tsx";
 import { ConsolidationSettings } from "../memoryProposals.tsx";
 
-export function AgentSettingsView({ running }: { running: boolean }) {
+export function AgentSettingsView({ running, reload = 0 }: { running: boolean; reload?: number }) {
   const tr = useT();
   return (
     <>
       <p className="muted ds-hint">{tr("mem.af_intro")}</p>
       <AgentMemorySwitch />
       <ExternalMemorySwitch />
-      <ConsolidationSettings running={running} />
+      <ConsolidationSettings running={running} reload={reload} />
     </>
   );
 }

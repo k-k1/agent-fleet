@@ -1,7 +1,6 @@
 package memconsol
 
 import (
-	"log"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
@@ -24,13 +23,11 @@ const NoticeKind = "memory-consolidation"
 // the workspace, and the payload is the count only: no memory name, body or evidence ever enters a
 // notification or a log line. The Console row opens the proposals view; nothing is decided from
 // the notification itself.
-func raiseNotice(waiting int) {
+func raiseNotice(waiting int) error {
 	ev := notice.New(NoticeKind, "", "", "")
 	ev.TargetType = "workspace"
 	ev.Payload["pending"] = waiting
-	if err := notice.Put(ev); err != nil {
-		log.Printf("memory consolidation: notification: %v", err)
-	}
+	return notice.Put(ev)
 }
 
 // sessionActivity reads the same status store the snapshot trigger and the session list read: a
