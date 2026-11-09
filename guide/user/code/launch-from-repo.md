@@ -52,6 +52,8 @@ A template has a name, a prompt and "**Show in**" ("Every repository" or only th
 
 ## Read the row's badges
 
+![The Repositories list in the left pane. webshop shows "Uncommitted" and "↑2", platform-infra "↓1 FF ok", the worktree feat/checkout-validation "Uncommitted" and "diverged 3↕2 · no FF", and the rows show running-session counts "●1" and "●2"](../../assets/code-repo-rows-en-light.webp)
+
 | Badge | Meaning |
 |---|---|
 | Uncommitted | There are changes not yet committed |
@@ -84,6 +86,8 @@ The numbers at the end of a row mean this.
 ## What you can do with right-click
 
 Right-click a row for this menu. Some items are hidden depending on state and location.
+
+![A worktree row's right-click menu, from "Open commit graph" through "Launch Shell", "Start an image studio", "Stop the sessions below (1)" and "Lock against deletion" to "Delete the working copy"](../../assets/code-repo-menu-en-light.webp)
 
 | Item | What it does |
 |---|---|

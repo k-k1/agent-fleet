@@ -44,6 +44,9 @@ The header shows the current branch and these buttons. When space is tight they 
 3. Write in "**Commit message**" below. To include every tracked file, tick "**Stage all tracked (-a)**"
 4. Press "**Commit**"
 
+![The "webshop — Changes" pane: two staged files (M) and three unstaged ones, the commit message "Add checkout input validation", "Stage all tracked (-a)", the "Commit" button, and the commit author below](../../assets/code-changes-en-light.webp)
+
+- The "Stage" and "Unstage" buttons appear when you hover over a row
 - Tracked files can also be "**Discard changes**"d. They go after a confirmation and cannot be brought back
 - With an empty message you see "A commit message is required"
 

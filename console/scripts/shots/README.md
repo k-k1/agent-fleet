@@ -108,7 +108,7 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only ops-sett
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-studio,images-form --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-gallery --out <dir>   # and images-settings
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
-node console/scripts/shots/capture.mjs --locale ja --theme light --only code-git-hosting --out <dir>  # and code-internal-repos, code-clone, code-gitflow, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only code-git-hosting --out <dir>  # and code-internal-repos, code-clone, code-gitflow, code-repo-rows, code-repo-menu, code-changes, code-svn, one per run
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that

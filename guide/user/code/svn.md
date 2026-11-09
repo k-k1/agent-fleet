@@ -27,13 +27,16 @@ Save the credentials and `svn update` and `svn commit` in a session stop asking 
 2. Pick "**Subversion**" under "**Kind**"
 3. Fill in the fields and press "**Check out**"
 
+!["Add a repository" on the Subversion kind: Repository URL, path trunk, username taro, password, the "Save credentials" and "Trust self-signed certificate" checkboxes, folder name design, and the "Check out" button](../../assets/code-svn-en-light.webp)
+
 | Field | What to enter |
 |---|---|
 | Repository URL | The repository's URL |
 | Path (optional) | The subtree to check out (`trunk` or `branches/x`). Empty for the whole URL |
 | Username (optional), Password (optional) | The basic-auth account |
-| Save credentials | Tick it to store them encrypted and reuse them on later updates |
+| Save credentials | Appears once a username is entered. Tick it to store them encrypted and reuse them on later updates |
 | Trust self-signed certificate | Turns off certificate checks for that server |
+| Folder name | The working copy's folder name |
 
 - To work in parallel, check out another path. It gets its own folder, isolated the same way as separate Git clones
 - The password appears neither in the process list nor in a plaintext cache
