@@ -312,14 +312,7 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		maxSlots:       EnvInt("AF_ECS_EC2_MAX_SLOTS", 8),
 		homeGiB:        int32(EnvInt("AF_ECS_EC2_HOME_GB", 50)),
 		tmpfsMiB:       int32(EnvInt("AF_ECS_EC2_TMP_MB", 2048)),
-		// noexec is deliberately NOT in the default set. ADR 0045 decision 8 names
-		// noexec,nosuid,nodev, but this is a developer container: installers, test
-		// runners and build tools routinely exec out of /tmp, and a noexec /tmp turns
-		// that into a confusing "Permission denied". The two properties the decision
-		// actually wanted from tmpfs — nothing lands on the shared root volume, and the
-		// size is capped — hold without it. Deployments that want it back can set
-		// AF_ECS_EC2_TMP_OPTS=noexec,nosuid,nodev.
-		tmpfsOpts: splitCSV(envOr("AF_ECS_EC2_TMP_OPTS", "nosuid,nodev")),
+		tmpfsOpts:      ec2TmpfsOpts(),
 		// A launch that has not produced a running service within this window is dead,
 		// and the workspace must become startable again — the claim is what would
 		// otherwise keep answering `starting` forever.
@@ -365,6 +358,29 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		describeSlotClasses(pool.classes), pool.defaultClass, pool.maxSlots, pool.homeGiB)
 	go f.sweepLoop(context.Background())
 	return f, nil
+}
+
+// ec2TmpfsDefaultOpts are the mount options of the Workspace's /tmp tmpfs unless
+// AF_ECS_EC2_TMP_OPTS says otherwise.
+//
+// `exec` has to be listed. Docker gives every --tmpfs mount noexec,nosuid,nodev first
+// and appends the requested options after them, the last of a pair winning (moby
+// daemon/oci_linux.go, moby/sys mount.MergeTmpfsOptions), and ECS hands mountOptions to
+// that same path. Leaving noexec out of the list is therefore not the same as asking
+// for exec: the mount still comes up noexec. Measured on an ECS slot with the list
+// `nosuid,nodev`: findmnt showed noexec, and opencode's TUI died mapping bun's
+// /tmp/.bun-*.so ("failed to map segment from shared object").
+//
+// noexec stays off on purpose. ADR 0045 decision 8 named noexec,nosuid,nodev, but this
+// is a developer container where installers, test runners and bun load or run code
+// from /tmp; what the decision needed from tmpfs (nothing on the shared root volume, a
+// size cap) holds without it.
+const ec2TmpfsDefaultOpts = "exec,nosuid,nodev"
+
+// ec2TmpfsOpts reads AF_ECS_EC2_TMP_OPTS. An override replaces the whole list, so one
+// that omits `exec` gets Docker's noexec back (see ec2TmpfsDefaultOpts).
+func ec2TmpfsOpts() []string {
+	return splitCSV(envOr("AF_ECS_EC2_TMP_OPTS", ec2TmpfsDefaultOpts))
 }
 
 func (f *ecsEC2Factory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {

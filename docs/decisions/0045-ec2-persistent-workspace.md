@@ -378,7 +378,10 @@ response; a window where `DeleteVolume` returns `VolumeInUse`).
    development container installers and test runners execute from `/tmp` every day, and `noexec` breaks
    that in the shape of "Permission denied". What decision 8 actually wanted —
    **"nothing is written to the shared root" and "there is a cap"** — both hold without `noexec`.
-   It can be restored with `AF_ECS_EC2_TMP_OPTS`.
+   The default list is therefore `exec,nosuid,nodev`: `exec` has to be named, because Docker mounts
+   every tmpfs `noexec,nosuid,nodev` and only an option listed after that overrides it, so a list
+   that merely omits `noexec` still yields a noexec `/tmp` (#3682). `AF_ECS_EC2_TMP_OPTS` replaces
+   the list; `noexec,nosuid,nodev` restores decision 8.
 2. **The occasion for decision 3-1 (the three-step resize) disappears in the pool model.** Users are not
    tied to instances, so a resize becomes **"move onto a slot of a different size"** (Stop → attach to a
    different pool → Start) and never calls `ModifyInstanceAttribute`. Trap 1 was the kind that
