@@ -89,6 +89,10 @@ type tenantLimits struct {
 	// switched the refresh on is ever touched. "" => deployment default
 	// (AF_IMAGE_REFRESH_QUIET, 15m), "0" => never for this tenant.
 	ImageRefreshQuiet string `json:"image_refresh_quiet,omitempty"`
+	// AutostartOnSignin starts a member's stopped workspace when they sign in to the Console
+	// (workspace_signin_start.go). Off by default: a start costs money, so it is something a
+	// tenant turns on. A member can still opt out for themselves (workspace settings).
+	AutostartOnSignin bool `json:"autostart_on_signin,omitempty"`
 	// AllowAgentSelfUpdate: the operator gate for member-driven CLI self-update
 	// (claude/opencode/codex). When true the CP injects AF_AGENT_SELF_UPDATE_ALLOWED=1
 	// so a member who opted in (toolchains.agentUpdate) gets the baked /usr/local CLIs

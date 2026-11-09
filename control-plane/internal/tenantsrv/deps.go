@@ -233,6 +233,7 @@ type Limits struct {
 	HomeHibernateAfter           string
 	HomeBackupEvery              string
 	ImageRefreshQuiet            string
+	AutostartOnSignin            bool
 	AllowAgentSelfUpdate         bool
 	AllowEngineIngest            bool
 	TerminalHistoryRetentionDays int

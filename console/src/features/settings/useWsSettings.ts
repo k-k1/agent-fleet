@@ -10,7 +10,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { getWsSettings, isOk, putWsSettings, type WsSettings, type WsSettingsPatch } from "./api.ts";
 
-const OFF: WsSettings = { agentUpdate: false, allowAgentUpdate: false, autoImageRefresh: false };
+const OFF: WsSettings = { agentUpdate: false, allowAgentUpdate: false, autoImageRefresh: false, signinStart: true, allowSigninStart: false };
 
 export function useWsSettings(): { ws: WsSettings | null; save: (patch: WsSettingsPatch) => Promise<void> } {
   const tr = useT();

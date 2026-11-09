@@ -22,6 +22,8 @@ export interface Tenant {
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
   image_refresh_quiet?: string;
+  /** Start a member's stopped workspace when they sign in (#2031); members can opt out. */
+  autostart_on_signin?: boolean;
   /** tier1 timeout used only while waiting on a human decision (docs/log/75).
    *  Empty = follow session_idle_timeout. */
   interaction_idle_timeout?: string;

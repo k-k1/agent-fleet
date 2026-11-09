@@ -26,6 +26,11 @@ export type WsSettings = {
   /** The operator gate: whether this tenant lets a member opt in to agentUpdate. */
   allowAgentUpdate: boolean;
   autoImageRefresh: boolean;
+  /** The member's own choice (default true): start the workspace at sign-in. Only takes
+   *  effect while the tenant has it on (allowSigninStart). */
+  signinStart: boolean;
+  /** The tenant's switch for start-at-sign-in. */
+  allowSigninStart: boolean;
   /** "" when this deployment issues no preview subdomains. */
   previewDomain?: string;
   previewPorts?: number[];
@@ -53,6 +58,7 @@ export type WsSettingsPatch = Partial<
     WsSettings,
     | "agentUpdate"
     | "autoImageRefresh"
+    | "signinStart"
     | "previewPorts"
     | "previewFixedSlug"
     | "previewPublic"

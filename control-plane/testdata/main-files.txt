@@ -219,6 +219,7 @@ workspace_home_resize.go
 workspace_lifecycle.go
 workspace_listener.go
 workspace_machine.go
+workspace_signin_start.go
 workspace_sizing.go
 workspace_stale.go
 ws_settings.go

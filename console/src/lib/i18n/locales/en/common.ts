@@ -235,6 +235,8 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.kind.home": "Home",
   "pane.kind.memory": "Memory",
   "pane.open_home": "Open Home",
+  "home.autostart_starting": "Starting your workspace… (you can keep using Home)",
+  "home.autostart_quota": "Your workspace was not started automatically: your organization\u2019s workspace limit is reached. Start it yourself once another one stops.",
   "home.waiting": "Waiting for you",
   "home.waiting_hint": "Sessions waiting for an answer, a permission or a plan approval",
   "home.continue": "Continue",

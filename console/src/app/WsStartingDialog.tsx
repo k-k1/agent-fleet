@@ -14,12 +14,16 @@ import { Icon } from "../ui/Icon.tsx";
 import { useT } from "../lib/i18n/index.ts";
 import { useWorkspaceStore, wsPreparing } from "../core/store/workspace.ts";
 import { phaseKey } from "../lib/bootPhase.ts";
+import { useSigninStartStore } from "../features/home/signinStart.ts";
 
 export function WsStartingDialog() {
   const tr = useT();
   const state = useWorkspaceStore((s) => s.state);
   const bootPhase = useWorkspaceStore((s) => s.bootPhase);
   const preparing = wsPreparing(state, bootPhase);
+  // A start the Control Plane made at sign-in shows its progress on Home (AutoStartRow)
+  // and must not cover it.
+  const autoStarted = useSigninStartStore((s) => s.auto);
 
   // Dismissable, but re-open for each new start window: reset the dismissal on the
   // false→true edge of `preparing`.
@@ -30,7 +34,7 @@ export function WsStartingDialog() {
     prev.current = preparing;
   }, [preparing]);
 
-  if (!preparing || dismissed) return null;
+  if (!preparing || dismissed || autoStarted) return null;
 
   const headline = bootPhase ? tr(phaseKey(bootPhase)) : tr("wsstart.generic");
 

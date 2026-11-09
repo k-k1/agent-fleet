@@ -157,6 +157,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			"home_hibernate_after":            lim.HomeHibernateAfter,
 			"home_backup_every":               lim.HomeBackupEvery,
 			"image_refresh_quiet":             lim.ImageRefreshQuiet,
+			"autostart_on_signin":             lim.AutostartOnSignin,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
 			"allow_engine_ingest":             lim.AllowEngineIngest,
 			"terminal_history_retention_days": lim.TerminalHistoryRetentionDays,
@@ -1567,6 +1568,9 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		// member who opted in is restarted onto a new image. "" => deployment default
 		// (15m), "0" => never for this tenant.
 		ImageRefreshQuiet string `json:"image_refresh_quiet"`
+		// Start a member's stopped workspace when they sign in to the Console
+		// (workspace_signin_start.go). Members can opt out for themselves.
+		AutostartOnSignin bool `json:"autostart_on_signin"`
 		// Operator gate for member CLI self-update (claude/opencode/codex).
 		AllowAgentSelfUpdate bool `json:"allow_agent_self_update"`
 		// Operator gate for taking models into the engine catalogue (ADR 0072 open
@@ -1660,6 +1664,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		HomeHibernateAfter:           body.HomeHibernateAfter,
 		HomeBackupEvery:              body.HomeBackupEvery,
 		ImageRefreshQuiet:            body.ImageRefreshQuiet,
+		AutostartOnSignin:            body.AutostartOnSignin,
 		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
 		AllowEngineIngest:            body.AllowEngineIngest,
 		TerminalHistoryRetentionDays: body.TerminalHistoryRetentionDays,
@@ -1713,6 +1718,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		"home_hibernate_after":            body.HomeHibernateAfter,
 		"home_backup_every":               body.HomeBackupEvery,
 		"image_refresh_quiet":             body.ImageRefreshQuiet,
+		"autostart_on_signin":             body.AutostartOnSignin,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
 		"allow_engine_ingest":             body.AllowEngineIngest,
 		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,

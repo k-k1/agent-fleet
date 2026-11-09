@@ -180,6 +180,7 @@ export function TenantLimits({
   const [homeHib, setHomeHib] = useState(tenant?.home_hibernate_after || "");
   const [homeBackup, setHomeBackup] = useState(tenant?.home_backup_every || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
+  const [signinStart, setSigninStart] = useState(!!tenant?.autostart_on_signin);
   const [allowIngest, setAllowIngest] = useState(!!tenant?.allow_engine_ingest);
   // ADR 0084 decision 7: the server always resolves its stored nil to true before sending, so
   // `!== false` treats "not loaded yet" the same way — allowed, never a flash of "denied".
@@ -206,6 +207,7 @@ export function TenantLimits({
     setHomeHib(tenant?.home_hibernate_after || "");
     setHomeBackup(tenant?.home_backup_every || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
+    setSigninStart(!!tenant?.autostart_on_signin);
     setAllowIngest(!!tenant?.allow_engine_ingest);
     setAllowLlm(tenant?.allow_engine_llm !== false);
     setAllowImage(tenant?.allow_engine_image !== false);
@@ -228,6 +230,8 @@ export function TenantLimits({
       home_hibernate_after: homeHib.trim(),
       home_backup_every: homeBackup.trim(),
       allow_agent_self_update: allowUpd,
+      // Always sent: this PUT rewrites the whole limits blob, so omitting it would switch it off.
+      autostart_on_signin: signinStart,
       allow_engine_ingest: allowIngest,
       // Always an explicit true/false (ADR 0084 decision 7): this PUT rewrites the whole
       // limits blob, and omitting the field would reset a prior denial back to nil/allowed.
@@ -375,6 +379,15 @@ export function TenantLimits({
           </select>
         </label>
         <p className="admin-hint">{tr("admin.term_log_hint")}</p>
+      </div>
+
+      <div className="admin-fgroup">
+        <h4>{tr("admin.signin_start_title")}</h4>
+        <label className="admin-check">
+          <input type="checkbox" checked={signinStart} onChange={(e) => setSigninStart(e.target.checked)} />
+          <span>{tr("admin.signin_start")}</span>
+        </label>
+        <p className="admin-hint">{tr("admin.signin_start_hint")}</p>
       </div>
 
       <div className="admin-fgroup">
