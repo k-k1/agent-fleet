@@ -1206,12 +1206,13 @@ func SettledAt(lines [][]byte) (question, plan time.Time) {
 	return question, plan
 }
 
-// HasToolResult reports whether the transcript holds a tool_result for the call toolUseID. A
-// call's result is written however it ended (run, rejected, denied by Claude Code itself), so
-// it proves the prompt that call raised is no longer open. Whole-transcript, like SettledAt.
-func HasToolResult(lines [][]byte, toolUseID string) bool {
+// ToolResultAt reports when the transcript recorded the tool_result for the call toolUseID.
+// A call's result is written however it ended (run, rejected, denied by Claude Code itself),
+// so a result proves the prompt that call raised is closed. ok is false when there is no result
+// or its line carries no usable clock. Whole-transcript, like SettledAt.
+func ToolResultAt(lines [][]byte, toolUseID string) (at time.Time, ok bool) {
 	if toolUseID == "" {
-		return false
+		return time.Time{}, false
 	}
 	want := []byte(toolUseID)
 	for _, ln := range lines {
@@ -1220,7 +1221,8 @@ func HasToolResult(lines [][]byte, toolUseID string) bool {
 			continue
 		}
 		var ev struct {
-			Message struct {
+			Timestamp string `json:"timestamp"`
+			Message   struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
@@ -1235,12 +1237,17 @@ func HasToolResult(lines [][]byte, toolUseID string) bool {
 			continue
 		}
 		for _, b := range blocks {
-			if b.Type == "tool_result" && b.ToolUseID == toolUseID {
-				return true
+			if b.Type != "tool_result" || b.ToolUseID != toolUseID {
+				continue
 			}
+			ts, err := time.Parse(time.RFC3339, ev.Timestamp)
+			if err != nil {
+				return time.Time{}, false
+			}
+			return ts, true
 		}
 	}
-	return false
+	return time.Time{}, false
 }
 
 // CollectFileEdits extracts every edit-family tool call from lines[from:] — the raw

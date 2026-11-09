@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -24,7 +25,12 @@ func permRespondLock(name string) (unlock func()) {
 // readPermissionMenu captures the session's pane and parses the permission dialog on it.
 // A variable so tests can stand in a pane without tmux.
 var readPermissionMenu = func(name string) (claude.PermissionMenu, bool) {
-	return claude.ParsePermissionMenu(tmuxx.CapturePane(session.TmuxName(name)))
+	return claude.ParsePermissionMenu(capturePermissionPane(name))
+}
+
+// capturePermissionPane is the session's pane text, "" when it could not be captured.
+var capturePermissionPane = func(name string) string {
+	return tmuxx.CapturePane(session.TmuxName(name))
 }
 
 // permDecided remembers, per session, the prompt (permissionToken) that has been given its one
@@ -132,16 +138,21 @@ func settleDeniedPermission(sid, wasRev, token string) {
 // on, nothing retires the payload until Stop, and the card keeps live buttons whose answers
 // all fail with menu_unreadable.
 //
-// Two pieces of evidence are required, because neither is enough alone:
-//   - the transcript holds a tool_result for the call the payload names. The id comes from the
-//     last PreToolUse before the prompt, which with parallel calls can be a sibling that
-//     finished while the real prompt is still up.
-//   - no dialog is on the pane. A dialog this parser cannot read, or one not drawn yet, also
-//     reads as "none", so the pane alone would sweep a live prompt.
+// Retiring a live prompt is the dangerous direction: with the state gone, free text reaches
+// the dialog and Enter answers it. So every one of these must hold:
+//   - no question or plan payload. AskUserQuestion / ExitPlanMode raise their own permission
+//     prompt, which no permtool hook precedes, so its payload carries a stale id; their menu
+//     does not parse as a permission dialog either.
+//   - the transcript holds the payload call's tool_result, written after the payload. The id is
+//     the last PreToolUse's, which may be an earlier call's (no prompt, already finished) or a
+//     parallel sibling's; an older result is that earlier call's.
+//   - the pane was captured and shows no dialog. An empty capture is a tmux failure, not an
+//     absent dialog.
 //
-// The sid lock and the record's Rev keep a newer prompt, written between these reads and the
-// removal, from being the one retired. Whatever turn is still running is set back to working
-// by the next poll's pane heal, as after sweepSettledState.
+// Left open: a sibling that finishes after the prompt was raised, while the real dialog is one
+// ParsePermissionMenu cannot read. The sid lock and the record's Rev keep a newer prompt,
+// written between these reads and the removal, from being retired. A turn still running is set
+// back to working by the next poll's pane heal, as after sweepSettledState.
 func sweepAnsweredPermission(sid, name string, lines [][]byte) {
 	at, ok := status.PendingPermissionAt(sid)
 	if !ok {
@@ -151,11 +162,24 @@ func sweepAnsweredPermission(sid, name string, lines [][]byte) {
 	if st.State != "permission" {
 		return
 	}
-	id, ok := status.ReadPendingPermissionToolUseID(sid)
-	if !ok || !claude.HasToolResult(lines, id) {
+	if _, ok := status.ReadPendingQuestion(sid); ok {
 		return
 	}
-	if _, up := readPermissionMenu(name); up {
+	if _, ok := status.ReadPendingPlan(sid); ok {
+		return
+	}
+	id, ok := status.ReadPendingPermissionToolUseID(sid)
+	if !ok {
+		return
+	}
+	if res, ok := claude.ToolResultAt(lines, id); !ok || !res.After(at) {
+		return
+	}
+	pane := capturePermissionPane(name)
+	if strings.TrimSpace(pane) == "" {
+		return
+	}
+	if _, up := claude.ParsePermissionMenu(pane); up {
 		return
 	}
 	status.RetirePermissionIf(sid, st.Rev, at)
