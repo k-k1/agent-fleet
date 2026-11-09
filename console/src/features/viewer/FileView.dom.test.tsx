@@ -17,6 +17,7 @@ import { clearDirtyRegistryForTests, hasDirtyEditors } from "../editor/dirtyRegi
 import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
 import { clearFileModes } from "./fileModeMemory.ts";
 import { clearScrollPos } from "./scrollMemory.ts";
+import type { attachEditorScrollMemory as realAttach } from "./parts/editorScrollMemory.ts";
 
 const MARP = "---\nmarp: true\n---\n\n# Deck\n\nbody\n";
 const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
@@ -63,12 +64,14 @@ vi.mock("./MarkdownView.tsx", () => ({
 // The editor's scroll memory needs layout jsdom does not have (parts/editorScrollMemory's own
 // suite covers it); here only the restore decision FileView hands it is observed.
 const editorMemory: { key: string; restore: boolean }[] = [];
-vi.mock("./parts/editorScrollMemory.ts", () => ({
-  attachEditorScrollMemory: (_editor: unknown, key: string, restore: boolean) => {
+vi.mock("./parts/editorScrollMemory.ts", () => {
+  // Typed against the real function, so a changed signature fails the typecheck here.
+  const attachEditorScrollMemory: typeof realAttach = (_editor, key, restore) => {
     editorMemory.push({ key, restore });
     return () => {};
-  },
-}));
+  };
+  return { attachEditorScrollMemory };
+});
 
 const { FileView } = await import("./FileView.tsx");
 
