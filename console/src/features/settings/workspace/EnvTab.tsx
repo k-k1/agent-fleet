@@ -83,6 +83,7 @@ export function EnvTab() {
 
   const setAgentUpdate = (on: boolean) => saveWs({ agentUpdate: on });
   const setAutoImageRefresh = (on: boolean) => saveWs({ autoImageRefresh: on });
+  const setSigninStart = (on: boolean) => saveWs({ signinStart: on });
 
   const update = async (patch: Partial<ToolchainsPatch>) => {
     if (!d) return;
@@ -116,6 +117,7 @@ export function EnvTab() {
         <p className="muted pad">{tr("common.loading")}</p>
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
+      {au && au.allowSigninStart && <SigninStartRow au={au} onChange={setSigninStart} />}
       {au && <AutoImageRefreshRow au={au} onChange={setAutoImageRefresh} />}
       {/* cliRelease rides on ws-settings, which is already fetched above — so the row costs
           no extra request and is there whether the workspace runs or not. */}
@@ -830,6 +832,22 @@ function InstalledVersions({ gen, running, reload }: { gen: number; running: boo
           {list.node.map((e) => row("node", e))}
         </tbody>
       </table>
+    </section>
+  );
+}
+
+// SigninStartRow is the member's opt-out of the tenant's start-at-sign-in (#2031). Shown only
+// where the tenant has switched the feature on; on by default there. CP-owned, so it can be
+// changed while the workspace is stopped.
+function SigninStartRow({ au, onChange }: { au: WsSettings; onChange: (on: boolean) => void }) {
+  const tr = useT();
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("env.signin_start_title")}</h4>
+      <Row label={tr("env.signin_start_label")}>
+        <OnOff value={au.signinStart !== false} onChange={onChange} />
+      </Row>
+      <p className="muted ds-note">{tr("env.signin_start_note")}</p>
     </section>
   );
 }

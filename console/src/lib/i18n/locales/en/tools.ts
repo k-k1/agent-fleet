@@ -391,6 +391,10 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.auto_refresh_label": "Restart automatically onto a new image when idle",
   "env.auto_refresh_note":
     "OFF (default): a running workspace keeps its image until you restart it (\u201cRestart needed\u201d). ON: when the image is outdated and nothing has been active for a while (no working or waiting session, no open terminal, preview or browser pane, no recent request), the workspace is restarted \u2014 never recreated, so your files stay \u2014 and you get one notice. Sessions can be resumed afterwards. At most one automatic attempt per image; if the start fails the workspace stays stopped.",
+  "env.signin_start_title": "Start at sign-in",
+  "env.signin_start_label": "Start my workspace automatically when I sign in",
+  "env.signin_start_note":
+    "Your organization has this switched on. When you open the Console while your workspace is stopped, it is started for you; turn this off to start it yourself. It only happens in a tab you are actually using, and never when the workspace limit is reached.",
   "env.agent_update_title": "Agent CLI updates",
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",
   "env.agent_update_note":

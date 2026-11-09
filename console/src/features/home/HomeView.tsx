@@ -26,6 +26,7 @@ import { homeLists } from "./home.ts";
 import { observedWaitingAt } from "../sessions/waiting.ts";
 import { SessionCard } from "../overview/SessionCard.tsx";
 import { GlanceSection } from "./GlanceSection.tsx";
+import { AutoStartRow } from "./AutoStartRow.tsx";
 import { SetupCard, useSetupState } from "../terminal/OnboardingCard.tsx";
 import { openAssistantDraft } from "../chat/open.ts";
 import type { Session } from "../../types/session.ts";
@@ -85,6 +86,7 @@ export function HomeView({ embedded = false, headerActions }: HomeViewProps) {
         </ViewHead>
       )}
       <div className="home-body">
+        <AutoStartRow />
         <SetupCard setup={setup} />
         {waiting.length > 0 && (
           <section className="home-section home-waiting">

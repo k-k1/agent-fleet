@@ -144,6 +144,7 @@ var cpOwnedResolvedRoutes = routeReasons(
 		"POST /api/workspace/clean-home",
 		"POST /api/workspace/recreate",
 		"POST /api/workspace/start",
+		"POST /api/workspace/signin-start",
 		"POST /api/workspace/stop",
 		"GET /api/events",
 		"GET /api/whoami",

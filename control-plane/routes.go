@@ -408,6 +408,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, cfg config) {
 	ws := newWorkspaceAPI(cfg.mgr, cfg.autostart)
 	mux.HandleFunc("GET /api/workspace", ws.withResolved(ws.get))
 	mux.HandleFunc("POST /api/workspace/start", ws.withResolved(ws.start))
+	// Sign-in start: the same on-demand start, gated by the tenant switch and the member's
+	// opt-out, enforced here (workspace_signin_start.go).
+	mux.HandleFunc("POST /api/workspace/signin-start", ws.withResolved(ws.signinStart))
 	mux.HandleFunc("POST /api/workspace/stop", ws.withResolved(ws.stop))
 	mux.HandleFunc("POST /api/workspace/recreate", ws.withResolved(ws.recreate))
 	mux.HandleFunc("POST /api/workspace/clean-home", ws.withResolved(ws.cleanHome)) // deeper reset: wipe home except logins/connections

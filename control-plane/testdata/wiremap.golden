@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 150
+# count: 152
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {agent_silent,auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} cond{agent_silent,auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -70,7 +70,7 @@ internal/tenantsrv/tenants.go Admin.PoolStatus x1 {runtime}
 internal/tenantsrv/tenants.go Admin.RemoveMembership x1 {leftovers,purged,removed,tenant,workspace_stop}
 internal/tenantsrv/tenants.go Admin.RemoveMembership x1 {pending,purged,removed,tenant}
 internal/tenantsrv/tenants.go Admin.SetMembershipRole x1 {role,tenant,user_key}
-internal/tenantsrv/tenants.go Admin.SetTenantLimits x1 {allow_agent_self_update,allow_engine_image,allow_engine_ingest,allow_engine_llm,allowed_slot_classes,background_hold_max,home_backup_every,home_hibernate_after,image_refresh_quiet,interaction_idle_timeout,max_sessions,max_workspace_cpu,max_workspace_disk_gb,max_workspace_mem,max_workspaces,pat_max_days,pool_budget,session_idle_timeout,tenant,terminal_history_retention_days,ws_idle_timeout} cond{pool_budget}
+internal/tenantsrv/tenants.go Admin.SetTenantLimits x1 {allow_agent_self_update,allow_engine_image,allow_engine_ingest,allow_engine_llm,allowed_slot_classes,autostart_on_signin,background_hold_max,home_backup_every,home_hibernate_after,image_refresh_quiet,interaction_idle_timeout,max_sessions,max_workspace_cpu,max_workspace_disk_gb,max_workspace_mem,max_workspaces,pat_max_days,pool_budget,session_idle_timeout,tenant,terminal_history_retention_days,ws_idle_timeout} cond{pool_budget}
 internal/tenantsrv/tenants.go Admin.SetUserLimit x1 {cpu_effective,cpu_limit,disk_effective,disk_gb,home_resize,max_sessions,mem_effective,mem_limit,slot_class,slot_class_effective,slot_class_note,tenant,user_key} cond{home_resize}
 internal/tenantsrv/tenants.go Admin.StopWorkspace x1 {stopped,tenant}
 internal/tenantsrv/tenants.go Admin.TerminatePoolSlot x1 {instance_id,quarantine_reason,terminated}
@@ -153,6 +153,8 @@ workspace_handlers.go workspaceAPI.startResolved x1 {name,state}
 workspace_handlers.go workspaceAPI.stop x1 {error}
 workspace_handlers.go workspaceAPI.stop x1 {name,state}
 workspace_handlers.go workspaceAPI.whoami x1 {auth_mode,email,email_header,home_backups,home_erase,home_wipe,preferred_username,resolved_user,sanitized_user,scheduler_enabled,x_forwarded_user}
+workspace_signin_start.go workspaceAPI.signinStart x1 {message,reason,started} cond{message}
+workspace_signin_start.go workspaceAPI.signinStart x1 {started,state}
 ws_settings.go wsSettingsAPI.get x1 {agentUpdate,allowAgentUpdate,autoImageRefresh}
 ws_settings.go wsSettingsAPI.put x1 {agentUpdate,allowAgentUpdate,autoImageRefresh}
 ws_settings.go wsSettingsAPI.reissuePreview x1 {agentUpdate,allowAgentUpdate,previewReissued}

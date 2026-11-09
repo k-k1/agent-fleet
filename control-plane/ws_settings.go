@@ -25,6 +25,11 @@ type wsSettings struct {
 	// itself once it has been quiet (image_refresh.go, #3656). Off by default, per member.
 	AutoImageRefresh bool `json:"autoImageRefresh,omitempty"`
 
+	// SigninStartOptOut: the member does not want the workspace started at sign-in even
+	// when the tenant has switched that on (workspace_signin_start.go). Stored as an
+	// opt-OUT so that an absent key, which is every existing member, follows the tenant.
+	SigninStartOptOut bool `json:"signinStartOptOut,omitempty"`
+
 	// --- Preview subdomains (docs/log/81) ---------------------------------------
 	// PreviewPorts are the ports the host-based preview may expose (empty = the default
 	// 3000,8080). A subdomain for a port not listed answers 404 rather than "not allowed":
@@ -97,6 +102,18 @@ func (a wsSettingsAPI) tenantAllowsAgentUpdate(r *http.Request, ws store.Workspa
 	return parseLimits(t.Limits).AllowAgentSelfUpdate
 }
 
+// addSigninStart appends the sign-in start pair: the member's own choice (signinStart,
+// default true) and the tenant's gate (allowSigninStart), so the Console can show the
+// toggle only where the tenant has the feature on.
+func (a wsSettingsAPI) addSigninStart(r *http.Request, res *resolved, st wsSettings, out map[string]any) {
+	out["signinStart"] = !st.SigninStartOptOut
+	allow := false
+	if t, err := a.tenants.GetTenant(r.Context(), res.ws.TenantID); err == nil {
+		allow = parseLimits(t.Limits).AutostartOnSignin
+	}
+	out["allowSigninStart"] = allow
+}
+
 // get (GET /api/env/ws-settings) returns the workspace's CP-owned
 // settings plus the relevant operator gates. DB-backed, so it works whether the
 // container is running or stopped.
@@ -108,6 +125,7 @@ func (a wsSettingsAPI) get(w http.ResponseWriter, r *http.Request, res *resolved
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
 		"autoImageRefresh": st.AutoImageRefresh,
 	}
+	a.addSigninStart(r, res, st, out)
 	a.addPreview(r, res, st, out)
 	a.addDevIdP(r, res, out)
 	// The upstream CLI release watcher's liveness (cli_release_watch.go). It is not a
@@ -310,6 +328,9 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 	if v, ok := body["autoImageRefresh"].(bool); ok {
 		st.AutoImageRefresh = v
 	}
+	if v, ok := body["signinStart"].(bool); ok {
+		st.SigninStartOptOut = !v
+	}
 	// Preview (docs/log/81). The values are stored even on a deployment without host-based
 	// preview (AF_PREVIEW_DOMAIN unset): a setting that merely has no effect is easier to
 	// explain than one that silently disappears because of how the deployment is built.
@@ -350,6 +371,7 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
 		"autoImageRefresh": st.AutoImageRefresh,
 	}
+	a.addSigninStart(r, res, st, body2)
 	a.addPreview(r, res, st, body2)
 	a.addDevIdP(r, res, body2)
 	writeJSON(w, http.StatusOK, body2)

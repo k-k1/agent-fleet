@@ -334,6 +334,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
     "Only hibernation is automatic; nothing is ever destroyed this way. The unit goes up to hours, so write days as a multiple of 24h. Enter 0 to never hibernate this tenant's homes.",
   // Home backups (ADR 0045 決定 17). Losing a whole AZ is a story only this runtime has,
   // so lead with why it exists. Say "how far back" rather than "RPO".
+  "admin.signin_start_title": "Start at sign-in",
+  "admin.signin_start": "Start a member\u2019s stopped workspace when they sign in",
+  "admin.signin_start_hint":
+    "Off by default, because every start costs resources. When on, a member who opens the Console in a visible tab and uses it while their workspace is stopped gets it started automatically, within the workspace limit above. Members can switch this off for themselves in Settings.",
   "admin.image_refresh_quiet": "Quiet time before an automatic image refresh",
   "admin.image_refresh_quiet_ph": "e.g. 15m (empty = 15m, 0 = never)",
   "admin.image_refresh_hint":

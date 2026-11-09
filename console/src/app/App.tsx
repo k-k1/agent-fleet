@@ -39,6 +39,7 @@ import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
 import { NotProvisioned } from "../features/auth/NotProvisioned.tsx";
 import { WsStartingDialog } from "./WsStartingDialog.tsx";
+import { useSigninStart } from "../features/home/signinStart.ts";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { startRepoJobsPolling, useRepoJobsStore } from "../features/repos/jobs.ts";
@@ -167,6 +168,9 @@ export function App() {
   // Pop-out tab (a pane detached into its own tab): "popout" renders minimal chrome below;
   // "full" is a normal console seeded with the popped pane (no branch needed).
   const popout = usePopoutMode();
+  // Start the stopped workspace at sign-in when the tenant and the member allow it; the Control
+  // Plane decides, this only picks the moment (features/home/signinStart.ts). Not in a pop-out tab.
+  useSigninStart(booted && popout !== "popout");
   // Pop-out seed descriptor (consumed once at boot) + the identityRev the layout
   // was last loaded under — bookkeeping for the per-tenant sync effect and the
   // identity-reload effect below.

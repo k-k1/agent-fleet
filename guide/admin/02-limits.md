@@ -253,6 +253,18 @@ defaults are listed in [Limits and defaults](../ref/limits.md#set-by-the-deploym
 Even when stopped, the work itself (the contents of home) remains. The next time members need it,
 they just start it again from the Console.
 
+### Starting a stopped workspace at sign-in
+
+Under the tenant's limits, **Start at sign-in** is off by default, because every start uses resources.
+When you switch it on, a member who opens the Console in a visible tab and uses it (a key press, a
+click or a scroll within the last minute) while their workspace is stopped gets it started for them.
+It is the same start as creating or resuming a session, so the workspace limit above applies: at the
+limit nothing is started and the member's Home says why. Nothing is started when the workspace's state
+cannot be read, for a tab nobody is using, for a workspace that has never been created, or after the
+workspace was stopped while the tab was open (the idle auto-stop and a member's own Stop are not undone).
+Each member can switch it off for themselves under Settings › Toolchains (**Start at sign-in**, shown only while the tenant has it on). The deployment-wide
+`AF_AUTOSTART=0` turns it off everywhere.
+
 ## Viewing a member's resources
 
 Opening a member detail shows the state of that member's workspace. At the top is whether it is

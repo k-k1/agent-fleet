@@ -408,6 +408,12 @@ SSM node lookup. **Opening a terminal does not start it, and neither does readin
 reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
 left open never keeps a Workspace warm.
 
+One more start rides on the same switch: a tenant can turn on **Start at sign-in**
+(`autostart_on_signin`, off by default; see [Resource limits](../admin/02-limits.md#starting-a-stopped-workspace-at-sign-in)).
+The Console then asks the Control Plane to start a stopped workspace once, after real input in a
+visible tab. The Control Plane enforces the tenant switch, the member's opt-out and the
+`max_workspaces` check itself. `AF_AUTOSTART=0` disables this too.
+
 ### What keeps a Workspace awake
 
 Background work (a dev server or a
