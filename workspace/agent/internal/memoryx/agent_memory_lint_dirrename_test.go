@@ -126,10 +126,10 @@ func TestLintResolveRenameDoesNotMatchAPrefixThatIsNotASegment(t *testing.T) {
 	if _, ok := agentMemLintResolveRename("dir-x", ren, all, moved); ok {
 		t.Error("dir-x resolved through dir")
 	}
-	if r, ok := agentMemLintResolveRename("dir/x/y", ren, all, moved); !ok || r.To != "other/x/y" {
+	if r, ok := agentMemLintResolveRename("dir/x/y", ren, all, moved); !ok || r[len(r)-1].To != "other/x/y" {
 		t.Errorf("dir/x/y -> %+v %v", r, ok)
 	}
-	if r, ok := agentMemLintResolveRename("dir", ren, all, moved); !ok || r.To != "other" {
+	if r, ok := agentMemLintResolveRename("dir", ren, all, moved); !ok || r[len(r)-1].To != "other" {
 		t.Errorf("dir -> %+v %v", r, ok)
 	}
 	// A directory the commit did not move whole is not renamed.
@@ -163,8 +163,9 @@ func TestLintRenameDirectorySplitOrPartlyLeftBehindIsNotRenamed(t *testing.T) {
 	e.saveWith("m", "see split and left and split/a.go", "split", "left")
 	out := e.apply()
 	g := e.stored("m")
-	// split/a.go has its own file rename and is rewritten; the directories are not.
-	if g.Body != "see split and left and one/a.go" || strings.Join(g.Anchors, ",") != "split,left" {
+	// "split" and "left" are gone from the tree and were not moved whole, so they do not even count
+	// as top-level directories: nothing under them is read as a path.
+	if g.Body != "see split and left and split/a.go" || strings.Join(g.Anchors, ",") != "split,left" {
 		t.Errorf("out %+v: body = %q anchors %v", out, g.Body, g.Anchors)
 	}
 }
@@ -235,5 +236,110 @@ func TestLintReplacePathDirectoryWithTrailingSlash(t *testing.T) {
 		if got, _ := agentMemLintReplacePath(tc.in, "docs/old", "docs/new"); got != tc.want {
 			t.Errorf("%q -> %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestLintRenameChainNamesEveryHop(t *testing.T) {
+	e := lintHistoryFixture(t, []lintHistoryStep{
+		{msg: "add", write: map[string]string{"docs/a.md": "chain text\n", "docs/keep.md": "k\n"}},
+		{msg: "first", git: [][]string{{"mv", "docs/a.md", "docs/b.md"}}},
+		{msg: "second", git: [][]string{{"mv", "docs/b.md", "docs/c.md"}}},
+	})
+	e.save("m", "read docs/a.md", 0)
+	if out := e.apply(); out.Renamed != 1 {
+		t.Fatalf("out = %+v", out)
+	}
+	if g := e.stored("m"); g.Body != "read docs/c.md" {
+		t.Errorf("body = %q", g.Body)
+	}
+	log, _ := memoryGitRun("log", "--format=%B%x00", "-n", "2")
+	for _, w := range []string{"AF-Lint-Rename: docs/a.md -> docs/b.md @ ", "AF-Lint-Rename: docs/b.md -> docs/c.md @ "} {
+		if !strings.Contains(log, w) {
+			t.Errorf("log lacks %q: %q", w, log)
+		}
+	}
+}
+
+func TestLintRenameThereAndBackAgain(t *testing.T) {
+	e := lintHistoryFixture(t, []lintHistoryStep{
+		{msg: "add", write: map[string]string{"docs/a.md": "text\n", "docs/keep.md": "k\n"}},
+		{msg: "there", git: [][]string{{"mv", "docs/a.md", "docs/b.md"}}},
+		{msg: "back", git: [][]string{{"mv", "docs/b.md", "docs/a.md"}}},
+	})
+	// docs/a.md exists, so it is left alone; the stale docs/b.md goes back to where the file is.
+	e.save("m", "docs/a.md and docs/b.md", 0)
+	e.apply()
+	if g := e.stored("m"); g.Body != "docs/a.md and docs/a.md" {
+		t.Errorf("body = %q", g.Body)
+	}
+}
+
+func TestLintRenameCaseOnly(t *testing.T) {
+	e := lintHistoryFixture(t, []lintHistoryStep{
+		{msg: "add", write: map[string]string{"docs/Old.md": "case text\n", "docs/keep.md": "k\n"}},
+		{msg: "case", git: [][]string{{"mv", "docs/Old.md", "docs/old.md"}}},
+	})
+	e.save("m", "see docs/Old.md", 0)
+	e.apply()
+	if g := e.stored("m"); g.Body != "see docs/old.md" {
+		t.Errorf("body = %q", g.Body)
+	}
+}
+
+func TestLintRenameDirectoryMovedInPiecesToDifferentPlaces(t *testing.T) {
+	steps := []lintHistoryStep{
+		{msg: "add", write: map[string]string{"docs/sp/x.md": "xx\n", "docs/sp/y.md": "yy\n", "docs/n/.keep": "\n", "docs/m/.keep": "\n"}},
+		{msg: "x", git: [][]string{{"mv", "docs/sp/x.md", "docs/n/x.md"}}},
+		{msg: "y", git: [][]string{{"mv", "docs/sp/y.md", "docs/m/y.md"}}},
+	}
+	e := lintHistoryFixture(t, steps)
+	e.saveWith("m", "dir docs/sp and file docs/sp/x.md", "docs/sp")
+	e.apply()
+	g := e.stored("m")
+	if g.Body != "dir docs/sp and file docs/n/x.md" || g.Anchors[0] != "docs/sp" {
+		t.Errorf("body = %q anchors %v", g.Body, g.Anchors)
+	}
+}
+
+func TestLintRenameThatOnlyAMergeShowsIsIgnored(t *testing.T) {
+	e := lintHistoryFixture(t, []lintHistoryStep{
+		{msg: "add", write: map[string]string{"docs/old.md": "merge text\n", "docs/keep.md": "k\n"}},
+		{msg: "side", git: [][]string{{"checkout", "-q", "-b", "side"}}, write: map[string]string{"side.txt": "s\n"}},
+		{msg: "main", git: [][]string{{"checkout", "-q", "-"}}, write: map[string]string{"other.txt": "o\n"}},
+		{msg: "merge with a move", git: [][]string{{"merge", "-q", "--no-commit", "--no-ff", "side"}, {"mv", "docs/old.md", "docs/new.md"}}},
+	})
+	e.save("m", "see docs/old.md", 0)
+	if out := e.apply(); out.Renamed != 0 {
+		t.Fatalf("out = %+v", out)
+	}
+	if g := e.stored("m"); g.Body != "see docs/old.md" {
+		t.Errorf("body = %q", g.Body)
+	}
+}
+
+// A word that happens to be the name of a directory that was only partly moved stays prose.
+func TestLintFormerTopDirsSkipPartlyMovedDirectories(t *testing.T) {
+	steps := []lintHistoryStep{
+		{msg: "add", write: map[string]string{"left/a.go": "package a\n", "left/b.go": "package b\n", "docs/keep.md": "k\n", "moved/.keep": "\n"}},
+		{msg: "partly", git: [][]string{{"mv", "left/a.go", "moved/a.go"}}},
+		{msg: "drop the rest", git: [][]string{{"rm", "-q", "left/b.go"}}},
+	}
+	e := lintHistoryFixture(t, steps)
+	e.save("m", "pick left/right, not the other", 0)
+	if out := e.apply(); out.Marked != 0 || out.Renamed != 0 {
+		t.Fatalf("prose was reported: %+v", out)
+	}
+	if rs := lintReasons(e.stored("m"), agentMemReasonByLint); len(rs) != 0 {
+		t.Errorf("reasons = %+v", rs)
+	}
+}
+
+func TestLintRenameLeadingDotSlashAndAnchorSpellings(t *testing.T) {
+	e := lintHistoryFixture(t, dirRenameHistory())
+	e.saveWith("m", "see ./docs/old/a.md here", "docs/old/a.md:12", "docs/old/a.md.", "./docs/old/")
+	e.apply()
+	g := e.stored("m")
+	if g.Body != "see ./docs/new/a.md here" || strings.Join(g.Anchors, ",") != "docs/new/a.md:12,docs/new/a.md.,./docs/new/" {
+		t.Errorf("body = %q anchors %v", g.Body, g.Anchors)
 	}
 }

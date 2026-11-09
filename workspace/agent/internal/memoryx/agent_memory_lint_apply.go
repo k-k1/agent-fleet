@@ -168,7 +168,7 @@ func agentMemLintApply(scope, project string, now time.Time) (agentMemLintApplyO
 			return out, err
 		}
 		if n > 0 {
-			if wire, es, c, repo, err = agentMemLintCollect(scope, project); err != nil {
+			if wire, es, c, repo, err = agentMemLintCollectMemo(scope, project, rr.memo); err != nil {
 				return out, err
 			}
 		}
@@ -286,14 +286,20 @@ type agentMemLintDirRename struct {
 type agentMemLintRenames struct {
 	File map[string]agentMemLintRename
 	Dir  map[string]agentMemLintDirRename
+	// Unread counts renames left out because a path is quoted by git (tab, newline, quote).
+	Unread int
 }
 
 // agentMemLintRenameMemo keeps the history read for the length of one run, so the report's
 // former-directory lookup and the apply step read it once between them.
 type agentMemLintRenameMemo struct {
+	ref  string
 	once sync.Once
 	ren  agentMemLintRenames
 	err  error
+
+	mu     sync.Mutex
+	before map[[2]string]int
 }
 
 // Renames reads the renames of the pinned revision's history. Merge commits are not read: a
@@ -306,27 +312,23 @@ func (r agentMemLintRepo) Renames() (agentMemLintRenames, error) {
 	return r.memo.ren, r.memo.err
 }
 
-// FormerTopDirs lists the first path segments that renames moved files out of, for the path check:
-// a directory renamed away at the top level is no longer in the tree, and without it a body that
-// still names it would never be recognised as a path.
+// FormerTopDirs lists the top-level directories that a commit renamed whole, for the path check:
+// such a directory is no longer in the tree, and without it a body that still names it would never
+// be recognised as a path. A directory only partly moved, or moved to several places, is not one:
+// its name may be an ordinary word ("left/right") that is not worth a reason.
 func (r agentMemLintRepo) FormerTopDirs() ([]string, error) {
 	ren, err := r.Renames()
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
-	for p := range ren.File {
-		if top, _, ok := strings.Cut(p, "/"); ok {
-			seen[top] = true
+	var out []string
+	for d, dr := range ren.Dir {
+		if strings.Contains(d, "/") || dr.To == "" {
+			continue
 		}
-	}
-	for p := range ren.Dir {
-		top, _, _ := strings.Cut(p, "/")
-		seen[top] = true
-	}
-	out := make([]string, 0, len(seen))
-	for t := range seen {
-		out = append(out, t)
+		if n, err := r.DirFilesBefore(dr.Commit, d); err == nil && n == dr.Files {
+			out = append(out, d)
+		}
 	}
 	sort.Strings(out)
 	return out, nil
@@ -363,7 +365,15 @@ func (r agentMemLintRepo) readRenames() (agentMemLintRenames, error) {
 			continue
 		}
 		f := strings.Split(line, "\t")
-		if len(f) != 3 || !strings.HasPrefix(f[0], "R") || strings.HasPrefix(f[1], `"`) || strings.HasPrefix(f[2], `"`) {
+		if len(f) != 3 && strings.HasPrefix(line, "R") {
+			out.Unread++ // a tab or newline in a name splits or quotes the line
+			continue
+		}
+		if len(f) != 3 || !strings.HasPrefix(f[0], "R") {
+			continue
+		}
+		if strings.HasPrefix(f[1], `"`) || strings.HasPrefix(f[2], `"`) {
+			out.Unread++
 			continue
 		}
 		pairs = append(pairs, [2]string{f[1], f[2]})
@@ -413,7 +423,13 @@ func agentMemLintAddDirRenames(dst map[string]agentMemLintDirRename, commit stri
 		}
 	}
 	for d, c := range cands {
-		if _, seen := dst[d]; seen {
+		if old, seen := dst[d]; seen {
+			// An older commit that sent the same directory somewhere else makes the move
+			// ambiguous: part of it may have gone to either place.
+			if old.To != "" && c.to != old.To {
+				old.To = ""
+				dst[d] = old
+			}
 			continue
 		}
 		dr := agentMemLintDirRename{Files: c.files}
@@ -428,6 +444,29 @@ func agentMemLintAddDirRenames(dst map[string]agentMemLintDirRename, commit stri
 // only when every one of them was renamed by that commit: a directory that was split, or that
 // kept files behind, is not "renamed" and its anchors are left to the reason.
 func (r agentMemLintRepo) DirFilesBefore(commit, dir string) (int, error) {
+	if m := r.memo; m != nil {
+		k := [2]string{commit, dir}
+		m.mu.Lock()
+		n, ok := m.before[k]
+		m.mu.Unlock()
+		if ok {
+			return n, nil
+		}
+		n, err := r.dirFilesBefore(commit, dir)
+		if err == nil {
+			m.mu.Lock()
+			if m.before == nil {
+				m.before = map[[2]string]int{}
+			}
+			m.before[k] = n
+			m.mu.Unlock()
+		}
+		return n, err
+	}
+	return r.dirFilesBefore(commit, dir)
+}
+
+func (r agentMemLintRepo) dirFilesBefore(commit, dir string) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
 	out, err := agentMemLintGit(ctx, r.gitDir, nil, "ls-tree", "-r", "--name-only", "-z", commit+"^", "--", dir+"/")
@@ -443,23 +482,29 @@ func (r agentMemLintRepo) DirFilesBefore(commit, dir string) (int, error) {
 	return n, nil
 }
 
+// agentMemLintHop is one step of a path's move: where it was, where it went and the commit.
+type agentMemLintHop struct{ From, To, Commit string }
+
 // agentMemLintResolveRename follows old through the renames to a path that exists in the
-// revision; the evidence is the commit of the last hop. A file rename wins over a directory one;
-// otherwise the longest renamed directory prefix of the path (a whole segment: "dir2/x" is not
-// under "dir") moves it, provided dirMoved confirms the commit moved the directory whole.
-func agentMemLintResolveRename(old string, ren agentMemLintRenames, exists func(string) bool, dirMoved func(commit, dir string, files int) bool) (agentMemLintRename, bool) {
-	cur, hop := old, agentMemLintRename{}
+// revision and returns every hop, so the evidence names each commit. A file rename wins over a
+// directory one; otherwise the longest renamed directory prefix of the path (a whole segment:
+// "dir2/x" is not under "dir") moves it, provided dirMoved confirms the commit moved the
+// directory whole.
+func agentMemLintResolveRename(old string, ren agentMemLintRenames, exists func(string) bool, dirMoved func(commit, dir string, files int) bool) ([]agentMemLintHop, bool) {
+	cur := old
+	var hops []agentMemLintHop
 	for i := 0; i < agentMemLintRenameHops; i++ {
 		next, ok := agentMemLintRenameStep(cur, ren, dirMoved)
 		if !ok {
-			return agentMemLintRename{}, false
+			return nil, false
 		}
-		cur, hop = next.To, next
+		hops = append(hops, agentMemLintHop{cur, next.To, next.Commit})
+		cur = next.To
 		if exists(cur) {
-			return hop, true
+			return hops, true
 		}
 	}
-	return agentMemLintRename{}, false
+	return nil, false
 }
 
 func agentMemLintRenameStep(p string, ren agentMemLintRenames, dirMoved func(commit, dir string, files int) bool) (agentMemLintRename, bool) {
@@ -478,19 +523,6 @@ func agentMemLintRenameStep(p string, ren agentMemLintRenames, dirMoved func(com
 		return agentMemLintRename{To: dr.To + p[i:], Commit: dr.Commit}, true
 	}
 	return agentMemLintRename{}, false
-}
-
-// agentMemLintAnchorParts splits an anchor into the "./" and "/" it may carry and the path
-// between, the same normalisation the path extraction applies to a body.
-func agentMemLintAnchorParts(a string) (lead, core, tail string) {
-	core = strings.TrimSpace(a)
-	if strings.HasPrefix(core, "./") {
-		lead, core = "./", core[2:]
-	}
-	if strings.HasSuffix(core, "/") {
-		core, tail = core[:len(core)-1], "/"
-	}
-	return lead, core, tail
 }
 
 func agentMemLintPathByte(b byte, trailing bool) bool {
@@ -514,7 +546,9 @@ func agentMemLintReplacePath(s, old, to string) (string, int) {
 		}
 		i += at
 		end := i + len(old)
-		okPrev := i == 0 || !agentMemLintPathByte(s[i-1], false)
+		okPrev := i == 0 || !agentMemLintPathByte(s[i-1], false) ||
+			// "./old": a leading "./" is spelling, as the extraction treats it.
+			(s[i-1] == '/' && i >= 2 && s[i-2] == '.' && (i == 2 || !agentMemLintPathByte(s[i-3], false)))
 		// "dir/" ends the path (a directory written with its slash); "dir/x" continues it.
 		okNext := end >= len(s) || !agentMemLintPathByte(s[end], true) &&
 			!(s[end] == '.' && end+1 < len(s) && agentMemLintPathByte(s[end+1], true)) &&
@@ -550,6 +584,9 @@ func agentMemLintApplyRenames(repo agentMemLintRepo, wire agentMemLintWire, es [
 		out.Notes = append(out.Notes, "renames were not read: "+err.Error())
 		return 0, nil
 	}
+	if ren.Unread > 0 {
+		out.Notes = append(out.Notes, fmt.Sprintf("%d renames of paths with quotes, tabs or newlines were not read", ren.Unread))
+	}
 	paths, err := repo.Paths()
 	if err != nil {
 		return 0, nil
@@ -574,13 +611,13 @@ func agentMemLintApplyRenames(repo agentMemLintRepo, wire agentMemLintWire, es [
 			continue
 		}
 		type hit struct {
-			old string
-			r   agentMemLintRename
+			old  string
+			hops []agentMemLintHop
 		}
 		var hits []hit
 		for _, old := range subs {
-			if r, ok := agentMemLintResolveRename(old, ren, func(p string) bool { return have[p] }, dirMoved); ok {
-				hits = append(hits, hit{old, r})
+			if hops, ok := agentMemLintResolveRename(old, ren, func(p string) bool { return have[p] }, dirMoved); ok {
+				hits = append(hits, hit{old, hops})
 			}
 		}
 		if len(hits) == 0 {
@@ -594,20 +631,23 @@ func agentMemLintApplyRenames(repo agentMemLintRepo, wire agentMemLintWire, es [
 			changed := false
 			var trailers []string
 			for _, h := range hits {
-				body, n := agentMemLintReplacePath(cur.Body, h.old, h.r.To)
+				to := h.hops[len(h.hops)-1].To
+				body, n := agentMemLintReplacePath(cur.Body, h.old, to)
 				cur.Body = body
-				// A stored anchor is the whole path or nothing; ./ and a trailing / are only spelling.
+				// A stored anchor takes the same replacement as the body: it may carry a ./, a
+				// trailing / or a :line, which the extraction ignores too.
 				for i, a := range cur.Anchors {
-					if lead, core, tail := agentMemLintAnchorParts(a); core == h.old {
-						cur.Anchors[i] = lead + h.r.To + tail
-						n++
-					}
+					r, k := agentMemLintReplacePath(a, h.old, to)
+					cur.Anchors[i], n = r, n+k
 				}
 				if n == 0 {
 					continue
 				}
 				changed = true
-				trailers = append(trailers, "AF-Lint-Rename: "+h.old+" -> "+h.r.To+" @ "+h.r.Commit)
+				// One trailer per hop, so a chain a -> b -> c names the commit of each move.
+				for _, hop := range h.hops {
+					trailers = append(trailers, "AF-Lint-Rename: "+hop.From+" -> "+hop.To+" @ "+hop.Commit)
+				}
 			}
 			if changed {
 				cur.Updated = now.UTC().Format(time.RFC3339)

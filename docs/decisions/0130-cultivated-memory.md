@@ -763,8 +763,10 @@ release.
   trailer and the whole-path body match are those of a file rename; a directory written with its trailing slash is a whole
   path now. A stored anchor is rewritten when it equals the path (leading `./` and trailing `/` are spelling), also
   when the body does not name it. Because the path check only looks at tokens whose first segment is a top-level
-  directory of the revision, the first segments that renames moved files out of count as top-level directories too;
-  otherwise a body naming a directory renamed away at the top level was never recognised as a path. Stored `anchors` are
+  directory of the revision, a top-level directory that a commit renamed whole counts as one too (one only partly moved,
+  or sent to several places, does not, so a word like `left/right` stays prose); otherwise a body naming a directory
+  renamed away at the top level was never recognised as a path. A chain a -> b -> c writes one `AF-Lint-Rename` trailer
+  per hop, and a directory sent to different places by different commits is ambiguous too. Stored `anchors` are
   checked by the body's per-kind rules (path, ADR number, `Test*` and code-shaped symbols, `[[link]]`), a symbol also
   bare, since an anchor carries no backticks; a command is not checked. An anchor finding has no line, and one the body
   also names is reported once. The per-run write cap is unchanged. Rename detection is git's (`-M`, 50 % similarity), so

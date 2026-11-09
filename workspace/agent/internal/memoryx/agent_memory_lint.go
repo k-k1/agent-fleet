@@ -348,7 +348,7 @@ func agentMemLintRepoFor(p *agentMemProject) (repo memorylint.Repo, ref string, 
 	if err != nil || oid == "" {
 		return nil, "", "no origin/<default> branch in the repository"
 	}
-	return agentMemLintRepo{gitDir: common, ref: oid, memo: &agentMemLintRenameMemo{}}, strings.TrimPrefix(r, "refs/remotes/"), ""
+	return agentMemLintRepo{gitDir: common, ref: oid, memo: &agentMemLintRenameMemo{ref: oid}}, strings.TrimPrefix(r, "refs/remotes/"), ""
 }
 
 // agentMemLintWire is what the Console and `af-memory lint` read.
@@ -375,6 +375,12 @@ func agentMemMemberLint(scope, project string) (agentMemLintWire, error) {
 // as loaded (their revisions are the ones the findings were computed on), the caller of the scope
 // and the repository reader (nil when the repository checks did not run).
 func agentMemLintCollect(scope, project string) (agentMemLintWire, []agentMemEntry, agentMemCaller, memorylint.Repo, error) {
+	return agentMemLintCollectMemo(scope, project, nil)
+}
+
+// agentMemLintCollectMemo is agentMemLintCollect that reuses the rename history another collect of
+// the same run already read, when it is the history of the same pinned revision.
+func agentMemLintCollectMemo(scope, project string, memo *agentMemLintRenameMemo) (agentMemLintWire, []agentMemEntry, agentMemCaller, memorylint.Repo, error) {
 	out := agentMemLintWire{Scope: scope}
 	c, err := agentMemMemberCaller(scope, project)
 	if err != nil {
@@ -399,6 +405,10 @@ func agentMemLintCollect(scope, project string) (agentMemLintWire, []agentMemEnt
 	var why string
 	if scope == agentMemScopeProject {
 		repo, out.Ref, why = agentMemLintRepoFor(c.Project)
+		if r, ok := repo.(agentMemLintRepo); ok && memo != nil && memo.ref == r.ref {
+			r.memo = memo
+			repo = r
+		}
 	} else {
 		why = "user scope: no repository"
 	}
