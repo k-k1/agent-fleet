@@ -18,6 +18,7 @@ import { useSyncExternalStore } from "react";
 import { pinSyncedFallbacks } from "../features/notifications/prefs.ts";
 import { applyTheme } from "./settings/appearance.ts";
 import type { Settings } from "./settings/prefs.ts";
+import type { SURFACE_TARGETS } from "./settings/options.ts";
 import { applyToPage, getSettings, notify, persist, setState, subscribe } from "./settings/store.ts";
 import {
   currentPrefsOwner,
@@ -28,6 +29,7 @@ import {
 } from "./settings/sync.ts";
 
 export {
+  APPEARANCE_SHUFFLE_MODES,
   ASSISTANT_AGENT_KINDS,
   ASSISTANT_RECOMMENDED_MODEL,
   CHAT_FONTS,
@@ -64,6 +66,7 @@ export {
   TTS_WORK_READ_MODES,
   VOICEVOX_ZUNDAMON,
   stoppedArchiveChoice,
+  type AppearanceShuffleMode,
 } from "./settings/options.ts";
 export {
   IMAGE_PROVIDER_FLEET_GROUP,
@@ -115,7 +118,7 @@ export {
   settingsDefaults,
   type Settings,
 } from "./settings/prefs.ts";
-export { getSettings, subscribe } from "./settings/store.ts";
+export { KEY as SETTINGS_STORAGE_KEY, getSettings, subscribe } from "./settings/store.ts";
 export {
   SERVER_PREFS_MAX_BYTES,
   cancelPrefsTimersForTest,
@@ -192,6 +195,27 @@ function syncAppearanceOwner(owner: string): boolean {
   }
   setState({ ...getSettings(), ...snap });
   return true;
+}
+
+/** Which appearance a schedule shared between this device's tabs belongs to: "*" while every
+ * tenant shares one look, the "<tenant>|<user>" owner while each keeps its own, and null when that
+ * owner is not known yet (nothing may be filed under it then). */
+export function appearanceScope(): string | null {
+  if (!getSettings().appearancePerTenant) return "*";
+  return currentPrefsOwner() || null;
+}
+
+/** Show colors (or the random-colors schedule) another tab of this device already chose and saved
+ * (localStorage and, per tenant, the snapshot): applied to this page only, without a write of its
+ * own and without a ui-prefs save, since the writing tab did both. Device-local appearance keys
+ * only: anything else would need markUnsaved and a save to stay consistent. */
+export function adoptAppearance(
+  patch: Partial<Pick<Settings, (typeof SURFACE_TARGETS)[number]["key"] | "appearanceShuffle">>,
+): void {
+  const state = { ...getSettings(), ...patch };
+  setState(state);
+  applyTheme(state);
+  notify();
 }
 
 // The generic signature ties key and value together in the type system, preventing mismatches
