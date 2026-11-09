@@ -254,6 +254,8 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 		{"POST", "/internal/schedules/s1/resume"},
 		{"POST", "/internal/schedules/s1/run-now"},
 		{"GET", "/internal/schedules/s1/runs"},
+		{"POST", "/internal/schedules/s1/runs/not-executed"},
+		{"POST", "/internal/schedules/s1/runs/silent"},
 		{"POST", "/internal/wakes"},
 		{"DELETE", "/internal/wakes/w1"},
 		{"POST", "/internal/mcp-servers/m1/oauth/token"},
@@ -292,52 +294,135 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 
 // Every /internal/ path the Agent's own code names must be served on the workspace listener:
 // the Agent sends it to AF_CP_INTERNAL_URL when that is set, and a pattern left off
-// workspaceRoutes answers 404 there and nowhere else. A path literal ending in "/" is the
-// head of a concatenation ("/internal/wakes/"+id) and needs a pattern below it.
+// workspaceRoutes answers 404 there and nowhere else. A path built by concatenation
+// ("/internal/schedules/"+id+"/runs/silent") is checked whole: every literal piece must
+// match a pattern's segments, and a non-literal piece stands for one segment of anything.
+// The HTTP method is not checked here; TestWorkspaceListenerServesKnownAgentCalls does that.
 func TestWorkspaceListenerCoversAgentInternalPaths(t *testing.T) {
-	lit := regexp.MustCompile(`"(/internal/[A-Za-z0-9._/-]*)"`)
-	var paths []string
-	for _, root := range []string{"../workspace/agent"} {
-		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-				return nil
-			}
-			b, err := os.ReadFile(p)
-			if err != nil {
-				return err
-			}
-			for _, m := range lit.FindAllStringSubmatch(string(b), -1) {
-				paths = append(paths, m[1])
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
+	paths := agentInternalPaths(t, "../workspace/agent")
 	if len(paths) < 10 {
 		t.Fatalf("found only %d /internal/ paths in the Agent: the scan is broken", len(paths))
 	}
-	served := func(path string) bool {
-		for pattern := range workspaceRoutes {
+	for _, p := range uncoveredPaths(paths, workspaceRoutes) {
+		t.Errorf("the Agent calls %s, which the workspace listener does not serve", p)
+	}
+}
+
+// The check itself must fail on a route table missing one pattern, including a pattern that
+// shares its prefix with another (the loose prefix rule this replaced passed both cases).
+func TestUncoveredPathsCatchesAMissingPattern(t *testing.T) {
+	paths := []string{"/internal/schedules/\x00/runs/silent", "/internal/mcp-servers/\x00/oauth/token", "/internal/wakes"}
+	full := map[string]bool{
+		"POST /internal/schedules/{id}/runs/silent":   true,
+		"POST /internal/schedules/{id}/pause":         true,
+		"POST /internal/mcp-servers/{id}/oauth/token": true,
+		"POST /internal/wakes":                        true,
+	}
+	if got := uncoveredPaths(paths, full); len(got) != 0 {
+		t.Fatalf("a full table reported %v", got)
+	}
+	for drop := range full {
+		if drop == "POST /internal/schedules/{id}/pause" {
+			continue
+		}
+		less := map[string]bool{}
+		for k := range full {
+			if k != drop {
+				less[k] = true
+			}
+		}
+		if got := uncoveredPaths(paths, less); len(got) != 1 {
+			t.Errorf("without %q the check reported %v, want one path", drop, got)
+		}
+	}
+}
+
+// agentInternalPaths returns every "/internal/..." path the non-test Go code under root
+// builds, with each non-literal piece of a concatenation replaced by "\x00".
+func agentInternalPaths(t *testing.T, root string) []string {
+	t.Helper()
+	// A string literal starting a path, then any number of `+ expr + "literal"` pieces, and
+	// an optional trailing `+ expr`.
+	expr := regexp.MustCompile(`"(/internal/[A-Za-z0-9._/-]*)"((?:\s*\+\s*[^"+\n,()]+(?:\([^()\n]*\))?\s*\+\s*"[A-Za-z0-9._/-]*")*)(\s*\+\s*[^"+\n,]+)?`)
+	piece := regexp.MustCompile(`\+\s*[^"+\n,()]+(?:\([^()\n]*\))?\s*\+\s*"([A-Za-z0-9._/-]*)"`)
+	var paths []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, m := range expr.FindAllStringSubmatch(string(b), -1) {
+			path := m[1]
+			for _, pm := range piece.FindAllStringSubmatch(m[2], -1) {
+				path += "\x00" + pm[1]
+			}
+			if m[3] != "" {
+				path += "\x00"
+			}
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return paths
+}
+
+// uncoveredPaths returns the paths no pattern in routes serves, matching segment by segment:
+// "\x00" in a path matches any one pattern segment, "{name}" in a pattern any one path
+// segment, and "{name...}" the rest.
+func uncoveredPaths(paths []string, routes map[string]bool) []string {
+	var out []string
+	for _, path := range paths {
+		want := strings.Split(strings.Trim(path, "/"), "/")
+		ok := false
+		for pattern := range routes {
 			pp := pattern
 			if i := strings.IndexByte(pp, ' '); i >= 0 {
 				pp = pp[i+1:]
 			}
-			if pp == path || (strings.HasSuffix(path, "/") && strings.HasPrefix(pp, path)) {
-				return true
+			if segmentsMatch(want, strings.Split(strings.Trim(pp, "/"), "/")) {
+				ok = true
+				break
 			}
 		}
-		return false
-	}
-	for _, p := range paths {
-		if !served(p) {
-			t.Errorf("the Agent calls %s, which the workspace listener does not serve", p)
+		if !ok {
+			out = append(out, strings.ReplaceAll(path, "\x00", "{…}"))
 		}
 	}
+	return out
+}
+
+func segmentsMatch(want, pat []string) bool {
+	for i, ps := range pat {
+		if strings.HasPrefix(ps, "{") && strings.HasSuffix(ps, "...}") {
+			return len(want) > i
+		}
+		if i >= len(want) {
+			return false
+		}
+		ws := want[i]
+		if strings.Contains(ws, "\x00") {
+			// A segment built from a literal and an expression ("pre"+x) matches when the
+			// literal part is the pattern segment's start, or the pattern segment is a wildcard.
+			lit := strings.Split(ws, "\x00")[0]
+			if !(strings.HasPrefix(ps, "{") || strings.HasPrefix(ps, lit)) {
+				return false
+			}
+			continue
+		}
+		if ws != ps && !strings.HasPrefix(ps, "{") {
+			return false
+		}
+	}
+	return len(want) == len(pat)
 }
 
 // The same LFS batch answers each listener with hrefs on that listener: a person's clone

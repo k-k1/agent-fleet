@@ -140,6 +140,8 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 		{"POST", "/internal/schedules/s1/resume"},
 		{"POST", "/internal/schedules/s1/run-now"},
 		{"GET", "/internal/schedules/s1/runs"},
+		{"POST", "/internal/schedules/s1/runs/not-executed"},
+		{"POST", "/internal/schedules/s1/runs/silent"},
 		{"POST", "/internal/wakes"},
 		{"DELETE", "/internal/wakes/w1"},
 		{"POST", "/internal/git-oauth/bitbucket/refresh"},

@@ -57,6 +57,10 @@ var workspaceRoutes = map[string]bool{
 	"POST /internal/schedules/{id}/resume":  true,
 	"POST /internal/schedules/{id}/run-now": true,
 	"GET /internal/schedules/{id}/runs":     true,
+	// Run outcomes the Agent reports for a fire it did not deliver (held_inputs.go) or
+	// delivered silently (chatx/schedule_delivery.go).
+	"POST /internal/schedules/{id}/runs/not-executed": true,
+	"POST /internal/schedules/{id}/runs/silent":       true,
 	// Wake-only bookings for time watches (AF_SCHEDULE_TOKEN, ADR 0133 §7).
 	"POST /internal/wakes":        true,
 	"DELETE /internal/wakes/{id}": true,
