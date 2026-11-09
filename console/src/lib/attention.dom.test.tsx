@@ -5,6 +5,7 @@ import { ATTENTION_INTERVAL_MS, shouldBeacon, wireAttentionBeacon } from "./atte
 
 const attention = vi.fn(async () => null);
 vi.mock("../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   workspaceAttention: () => attention(),
 }));
 

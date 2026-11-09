@@ -9,6 +9,7 @@ import type { Repo } from "./store.ts";
 
 let served: Repo[] = [];
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: vi.fn(async (url: string) => {
     if (url.startsWith("api/repos")) return { repos: served };
     return {};

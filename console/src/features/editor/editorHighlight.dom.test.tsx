@@ -8,6 +8,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   rel: (p: string) => p,
 }));
 

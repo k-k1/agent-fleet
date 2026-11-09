@@ -17,6 +17,7 @@ vi.mock("../../core/store/workspace.ts", () => ({
   wsRunning: (s: string) => s === "running",
 }));
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: vi.fn(),
   getTenant: () => "",
   isTransientErr: () => false,

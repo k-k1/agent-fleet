@@ -46,7 +46,7 @@ vi.mock("../../layout/store.ts", () => ({
 }));
 vi.mock("../../lib/i18n/index.ts", () => ({ useT: () => (key: string) => key }));
 vi.mock("../../ui/toast.ts", () => ({ toast: vi.fn() }));
-vi.mock("../../core/api/client.ts", () => ({ errText: (error: unknown) => String(error) }));
+vi.mock("../../core/api/client.ts", () => ({ apiJSON: async () => ({}), errText: (error: unknown) => String(error) }));
 
 import { BrowserAttachPane } from "./BrowserAttachPane.tsx";
 

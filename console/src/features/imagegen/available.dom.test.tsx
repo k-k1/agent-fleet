@@ -10,6 +10,7 @@ import type { ImagegenStatus } from "./wire.ts";
 const imagegenStatus = vi.fn();
 vi.mock("./api.ts", () => ({ imagegenStatus: () => imagegenStatus() }));
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   isTransientErr: (e: { error?: { code?: string } }) => e?.error?.code === "workspace_starting",
 }));
 let wsState = "running";
