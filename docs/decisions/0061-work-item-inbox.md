@@ -626,14 +626,22 @@ answers 409, the request is never retried, and the panel re-reads after every ou
   no check is `blocking`; `dirty` on `conflicts`; `blocked` when any check is `blocking`; anything else (`UNKNOWN`,
   `merge_impossible`, a failed read) is `unknown` and shown as the reason. `Mergeable` (the merge row of the panel)
   stays about conflicts only, as it is for GitHub.
-- **The head guard is made by the Agent.** Bitbucket's merge endpoint takes no expected head, so the Agent reads the
-  pull request again just before the POST and refuses (`head_changed`) when its source head no longer starts with the
-  commit the panel displayed, or when it is no longer open. A short window between that read and the POST remains.
+- **The head guard is made by the Agent, on full commit ids.** Bitbucket's merge endpoint takes no expected head, and
+  the pull request payload carries only a 12-character head, which two commits can share. So the detail read resolves
+  the head to a full id through the commit link the payload carries (it names the source repository, so a fork resolves
+  too) and sends that id to the Console; no resolvable head means no button. Just before the POST the Agent reads the
+  pull request again, resolves its head the same way and refuses (`head_changed`) unless it equals the displayed id, or
+  when the pull request is no longer open; a head it cannot resolve is refused too. A short window between that read and
+  the POST remains, and the confirm dialog says so instead of repeating GitHub's "only this commit is merged".
 - **Strategies are the destination branch's own** (`destination.branch.merge_strategies`, six documented values), with
   its `default_merge_strategy` preselected. A branch that reports none gets no button.
 - **Close source branch** is a merge parameter here, not a second call, so it is in scope (GitHub's "delete branch"
   stays out). The checkbox starts from the pull request's own `close_source_branch`.
-- **A 202** (Bitbucket merging as a background task) is shown as "still processing"; the panel's re-read shows the result.
+- **A 202** (a background merge, or a destination branch with a merge queue, which always answers this way) is followed
+  through the `Location` task-status link for a bounded time (about 8 s, one poll a second). The link is followed only
+  when it is on the API host, since the Authorization header goes with every poll. A finished task is a merge, a failed
+  one a refusal with Bitbucket's own words, and one still running is shown as "still processing": it is neither re-sent
+  nor reported as done, and the member reopens the panel for the result.
 - Not done: the commit message field and the Jira work item transition of Bitbucket's own dialog. The transition would
   be af's first write to Jira and needs its own decision.
 

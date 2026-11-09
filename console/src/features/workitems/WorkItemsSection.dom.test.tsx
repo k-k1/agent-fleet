@@ -1434,7 +1434,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     provider: "bitbucket",
     key: "ws/repo#3",
     url: "https://bitbucket.org/ws/repo/pull-requests/3",
-    headSha: "ab37a6993eb1",
+    headSha: "ab37a6993eb10000000000000000000000000000",
     mergeMethods: ["merge_commit", "squash", "rebase_merge"],
     defaultMergeMethod: "merge_commit",
     closeSourceBranch: true,
@@ -1455,6 +1455,9 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     // The checkbox starts from the pull request's own setting, and the strategies are Bitbucket's.
     const box = dialog()!.querySelector<HTMLInputElement>("input[type=checkbox]")!;
     expect(box.checked).toBe(true);
+    // The GitHub promise ("only this commit is merged") is not made for Bitbucket.
+    expect(dialog()!.textContent).toContain(t("wi.merge_note_bitbucket", { sha: "ab37a69" }));
+    expect(dialog()!.textContent).not.toContain(t("wi.merge_note", { name: "Bitbucket", sha: "ab37a69" }));
     expect([...dialog()!.querySelectorAll("option")].map((o) => (o as HTMLOptionElement).value)).toEqual(["merge_commit", "squash", "rebase_merge"]);
     await act(async () => box.click());
     const sel = dialog()!.querySelector<HTMLSelectElement>("select")!;
@@ -1465,7 +1468,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     await act(async () => confirmBtn().click());
     await settle();
     expect(workItemMerge).toHaveBeenCalledWith({
-      provider: "bitbucket", key: "ws/repo#3", sha: "ab37a6993eb1", method: "squash", closeSourceBranch: false,
+      provider: "bitbucket", key: "ws/repo#3", sha: "ab37a6993eb10000000000000000000000000000", method: "squash", closeSourceBranch: false,
     });
   });
 

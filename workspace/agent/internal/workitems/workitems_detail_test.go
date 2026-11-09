@@ -483,7 +483,7 @@ func TestParseBitbucketMergeability(t *testing.T) {
 func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 	prJSON := func(state string) string {
 		return `{"id":7,"title":"t","state":"` + state + `","draft":false,"updated_on":"2026-09-10T07:10:55+00:00",
-		  "author":{"display_name":"Taro"},"source":{"branch":{"name":"feat"}},
+		  "author":{"display_name":"Taro"},"source":{"branch":{"name":"feat"},"commit":{"hash":"ab37a6993eb1","links":{"self":{"href":"BASE/2.0/repositories/acme/web/commit/ab37a6993eb1"}}}},
 		  "destination":{"branch":{"name":"main"},"repository":{"full_name":"acme/web"}},
 		  "links":{"html":{"href":"https://example.test/pr/7"}},"participants":[]}`
 	}
@@ -499,7 +499,8 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 		{"merged PR is not asked", "MERGED", `{"values":[{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, 200, "unknown", false},
 	} {
 		called := false
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var srv *httptest.Server
+		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.HasSuffix(r.URL.Path, "/mergeability/checks"):
 				called = true
@@ -507,8 +508,10 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 				_, _ = w.Write([]byte(tc.checks))
 			case strings.HasSuffix(r.URL.Path, "/statuses"), strings.HasSuffix(r.URL.Path, "/diffstat"):
 				_, _ = w.Write([]byte(`{"values":[]}`))
+			case strings.Contains(r.URL.Path, "/commit/"):
+				_, _ = w.Write([]byte(`{"hash":"ab37a6993eb10000000000000000000000000000"}`))
 			default:
-				_, _ = w.Write([]byte(prJSON(tc.state)))
+				_, _ = w.Write([]byte(strings.ReplaceAll(prJSON(tc.state), "BASE", srv.URL)))
 			}
 		}))
 		prev := BitbucketAPIBase
@@ -524,6 +527,11 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 		}
 		if out.Title != "t" {
 			t.Errorf("%s: detail lost, title=%q", tc.name, out.Title)
+		}
+		// The merge guard needs the full commit id, which the payload's 12 characters are not: an
+		// unfinished PR gets it resolved, and an unresolvable head leaves "" (no Merge button).
+		if tc.wantCalled && out.HeadSHA != "ab37a6993eb10000000000000000000000000000" {
+			t.Errorf("%s: headSha = %q, want the full commit id", tc.name, out.HeadSHA)
 		}
 	}
 }

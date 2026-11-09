@@ -957,7 +957,11 @@ export function WorkItemDetailModal({
               {tr("wi.merge_close_source")}
             </label>
           )}
-          <p className="wi-shint">{tr("wi.merge_note", { name: providerName, sha: mergeDlg.sha.slice(0, 7) })}</p>
+          <p className="wi-shint">
+            {mergeDlg.closeSource === null
+              ? tr("wi.merge_note", { name: providerName, sha: mergeDlg.sha.slice(0, 7) })
+              : tr("wi.merge_note_bitbucket", { sha: mergeDlg.sha.slice(0, 7) })}
+          </p>
           {mergeErr && (
             <p className="wi-merr" role="alert">
               {mergeErr}

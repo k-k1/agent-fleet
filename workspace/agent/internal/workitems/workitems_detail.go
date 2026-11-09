@@ -143,6 +143,9 @@ type workItemDetailOut struct {
 	CloseSourceBranch bool `json:"closeSourceBranch"`
 	// private is the repository's visibility, kept only to pick the scope a classic token needs.
 	private bool
+	// headCommitURL is the API link of a Bitbucket pull request's source commit, kept only to
+	// resolve the abbreviated head the payload carries into a full commit id.
+	headCommitURL string
 }
 
 // githubRepoMerge is what the Agent reads of a repository to decide whether Merge is offered. It
@@ -741,7 +744,7 @@ func bitbucketFetchPRDetail(auth, repo string, number int, key string) (*workIte
 	// fields= keeps `description` out of the response, the same promise the list adapter makes.
 	params := url.Values{"fields": {"id,title,state,draft,updated_on,comment_count,task_count," +
 		"links.html.href,author.display_name,author.nickname," +
-		"close_source_branch,source.branch.name,source.commit.hash,destination.branch.name," +
+		"close_source_branch,source.branch.name,source.commit.hash,source.commit.links.self.href,destination.branch.name," +
 		"destination.branch.merge_strategies,destination.branch.default_merge_strategy," +
 		"destination.repository.full_name," +
 		"participants.role,participants.approved,participants.state," +
@@ -769,6 +772,14 @@ func bitbucketFetchPRDetail(auth, repo string, number int, key string) (*workIte
 	}
 	// Only an unfinished PR (a draft included) has anything left to merge.
 	if out.State == "open" || out.State == "in_progress" {
+		// The payload's head is 12 characters, which two commits can share, so the merge guard
+		// needs the full id. HeadSHA is "" when it cannot be resolved, and the Console draws no
+		// Merge button without one.
+		if full, err := bitbucketResolveHead(auth, out.headCommitURL, out.HeadSHA); err == nil {
+			out.HeadSHA = full
+		} else {
+			out.HeadSHA = ""
+		}
 		if b, st, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth,
 			prBase+"/mergeability/checks?fields=values.type,values.status,values.reason,values.blocking"); err == nil && st == http.StatusOK {
 			v := parseBitbucketMergeChecks(b)
@@ -871,7 +882,12 @@ func parseBitbucketPullRequest(body []byte, key string) (*workItemDetailOut, err
 				Name string `json:"name"`
 			} `json:"branch"`
 			Commit struct {
-				Hash string `json:"hash"`
+				Hash  string `json:"hash"`
+				Links struct {
+					Self struct {
+						Href string `json:"href"`
+					} `json:"self"`
+				} `json:"links"`
 			} `json:"commit"`
 		} `json:"source"`
 		Destination struct {
@@ -921,6 +937,7 @@ func parseBitbucketPullRequest(body []byte, key string) (*workItemDetailOut, err
 		Reviews:           []workItemReviewOut{},
 		MergeMethods:      []string{},
 		HeadSHA:           strings.TrimSpace(pr.Source.Commit.Hash),
+		headCommitURL:     pr.Source.Commit.Links.Self.Href,
 		CloseSourceBranch: pr.CloseSourceBranch,
 	}
 	for _, m := range pr.Destination.Branch.MergeStrategies {

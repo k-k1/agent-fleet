@@ -157,6 +157,7 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.merge_close_source": "Close source branch",
   "wi.merge_pending": "{name} accepted the merge and is still processing it. The result shows when the panel reads again.",
   "wi.merge_note": "This merges the pull request on {name} right away. Only the commit shown here ({sha}) is merged; if the branch has moved, nothing is merged.",
+  "wi.merge_note_bitbucket": "This merges the pull request on Bitbucket right away. The head ({sha}) is checked just before the merge, but a push made after that check cannot be stopped. With a merge queue the merge may be queued rather than immediate.",
   "wi.merge_confirm": "Merge",
   "wi.merge_done": "Merged",
   "wi.merge_head_changed": "The pull request changed after this panel was drawn, so nothing was merged. The latest is shown now.",

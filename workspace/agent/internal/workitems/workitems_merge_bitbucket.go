@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -19,9 +19,11 @@ import (
 // workitems_merge.go: reachable only through the member-origin route, no MCP tool, no trigger.
 //
 // Bitbucket's merge endpoint takes no "expected head" the way GitHub's `sha` does, so the guard
-// is made here: the PR is read again immediately before the merge and the merge is refused when
-// its head no longer starts with the commit the panel displayed. The window between that read and
-// the POST is small but not zero; the Console re-reads the PR after any outcome.
+// is made here: the PR is read again immediately before the merge, its head is resolved to a full
+// commit id, and the merge is refused unless that equals the full id the panel displayed. The PR
+// payload itself carries only a 12-character head, which two different commits can share, so it
+// is never compared on its own. The window between that read and the POST is small but not zero;
+// the Console re-reads the PR after any outcome.
 
 // workItemBitbucketStrategies are the values the merge endpoint documents for `merge_strategy`.
 var workItemBitbucketStrategies = map[string]bool{
@@ -29,9 +31,39 @@ var workItemBitbucketStrategies = map[string]bool{
 	"squash_fast_forward": true, "rebase_fast_forward": true, "rebase_merge": true,
 }
 
-// workItemBitbucketSHARe: the PR payload carries a 12-character abbreviated head, which is what
-// the panel displays and sends back; a full id is accepted too. Compared as a prefix.
-var workItemBitbucketSHARe = regexp.MustCompile(`^[0-9a-fA-F]{12,40}$`)
+// bitbucketMergePollEvery and bitbucketMergePollMax bound how long a merge that Bitbucket answered
+// with 202 (a background task, or a merge queue) is followed before the panel is told it is
+// still processing. Variables so the tests need not wait.
+var (
+	bitbucketMergePollEvery = time.Second
+	bitbucketMergePollMax   = 8
+)
+
+// bitbucketResolveHead turns the PR payload's abbreviated head into the full commit id by reading
+// the commit through the link the payload itself carries (which names the source repository, so a
+// fork's commit resolves too). Anything that does not come back as a full id extending the
+// abbreviation is an error: callers treat that as "head unknown" and refuse.
+func bitbucketResolveHead(auth, link, short string) (string, error) {
+	short = strings.ToLower(strings.TrimSpace(short))
+	if short == "" || !strings.HasPrefix(link, BitbucketAPIBase+"/2.0/repositories/") {
+		return "", fmt.Errorf("bitbucket did not say where the head commit is")
+	}
+	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, link+"?fields=hash")
+	if err != nil || status != http.StatusOK {
+		return "", fmt.Errorf("could not read the head commit from %s", BitbucketAPIBase)
+	}
+	var c struct {
+		Hash string `json:"hash"`
+	}
+	if json.Unmarshal(body, &c) != nil {
+		return "", fmt.Errorf("bitbucket answered the head commit with a body that is not JSON")
+	}
+	full := strings.ToLower(c.Hash)
+	if !workItemMergeSHARe.MatchString(full) || !strings.HasPrefix(full, short) {
+		return "", fmt.Errorf("bitbucket did not return a full id for the head commit")
+	}
+	return full, nil
+}
 
 func handleBitbucketMerge(w http.ResponseWriter, key, sha, method string, closeSource *bool) {
 	repo, number, ok := parseGitHubIssueKey(key)
@@ -39,8 +71,8 @@ func handleBitbucketMerge(w http.ResponseWriter, key, sha, method string, closeS
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "key must be workspace/repo#number")
 		return
 	}
-	if !workItemBitbucketSHARe.MatchString(sha) {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "sha must be the head commit shown in the panel")
+	if !workItemMergeSHARe.MatchString(sha) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "sha must be the full head commit id shown in the panel")
 		return
 	}
 	if !workItemBitbucketStrategies[method] {
@@ -86,7 +118,7 @@ func handleBitbucketMerge(w http.ResponseWriter, key, sha, method string, closeS
 // because a timeout after Bitbucket accepted the merge would otherwise read as a second attempt.
 func bitbucketMergePullRequest(auth, repo string, number int, key, sha, method string, closeSource *bool) (string, error) {
 	base := fmt.Sprintf("%s/2.0/repositories/%s/pullrequests/%d", BitbucketAPIBase, gitx.EscapeRepoPath(repo), number)
-	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, base+"?fields=state,source.commit.hash")
+	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, base+"?fields=state,source.commit.hash,source.commit.links.self.href")
 	if err != nil {
 		return "", fmt.Errorf("could not reach %s", BitbucketAPIBase)
 	}
@@ -103,7 +135,12 @@ func bitbucketMergePullRequest(auth, repo string, number int, key, sha, method s
 		State  string `json:"state"`
 		Source struct {
 			Commit struct {
-				Hash string `json:"hash"`
+				Hash  string `json:"hash"`
+				Links struct {
+					Self struct {
+						Href string `json:"href"`
+					} `json:"self"`
+				} `json:"links"`
 			} `json:"commit"`
 		} `json:"source"`
 	}
@@ -113,9 +150,12 @@ func bitbucketMergePullRequest(auth, repo string, number int, key, sha, method s
 	if !strings.EqualFold(cur.State, "OPEN") {
 		return "", &githubMergeError{http.StatusConflict, "not_mergeable", "the pull request is no longer open, so nothing was merged"}
 	}
-	head := strings.ToLower(cur.Source.Commit.Hash)
-	want := strings.ToLower(sha)
-	if head == "" || !(strings.HasPrefix(head, want) || strings.HasPrefix(want, head)) {
+	head, err := bitbucketResolveHead(auth, cur.Source.Commit.Links.Self.Href, cur.Source.Commit.Hash)
+	if err != nil {
+		// Fail closed: a head that cannot be confirmed is not merged.
+		return "", err
+	}
+	if !strings.EqualFold(head, sha) {
 		return "", &githubMergeError{http.StatusConflict, "head_changed",
 			"the pull request changed after this panel was drawn, so nothing was merged"}
 	}
@@ -149,9 +189,10 @@ func bitbucketMergePullRequest(auth, repo string, number int, key, sha, method s
 		_ = json.Unmarshal(out, &pr)
 		return pr.MergeCommit.Hash, nil
 	case http.StatusAccepted:
-		// Bitbucket merges large pull requests as a background task.
-		return "", &githubMergeError{http.StatusAccepted, "merge_pending",
-			"Bitbucket accepted the merge and is still processing it; the panel shows the result when it reads again"}
+		// A large merge runs as a background task, and a destination branch with a merge queue
+		// always answers this way. Follow the task for a bounded time; past it the merge is still
+		// in flight and is neither re-sent nor reported as done.
+		return bitbucketFollowMergeTask(auth, resp.Header.Get("Location"))
 	case http.StatusBadRequest, http.StatusConflict:
 		// A conflict, a failed merge check or a strategy the branch does not allow. The message
 		// says which, and is not secret.
@@ -166,6 +207,46 @@ func bitbucketMergePullRequest(auth, repo string, number int, key, sha, method s
 		return "", fmt.Errorf("bitbucket has no %s visible to this connection", key)
 	}
 	return "", fmt.Errorf("bitbucket answered %d for the merge: %s", resp.StatusCode, bitbucketMergeRefusal(out))
+}
+
+// bitbucketFollowMergeTask polls the task-status link of a merge Bitbucket accepted with 202.
+// The link must stay on the API host: the Authorization header goes with every request.
+func bitbucketFollowMergeTask(auth, loc string) (string, error) {
+	pending := &githubMergeError{http.StatusAccepted, "merge_pending",
+		"Bitbucket accepted the merge and is still processing it (a large merge or a merge queue); reopen the panel to see the result"}
+	if !strings.HasPrefix(loc, BitbucketAPIBase+"/2.0/repositories/") {
+		return "", pending
+	}
+	for i := 0; i < bitbucketMergePollMax; i++ {
+		time.Sleep(bitbucketMergePollEvery)
+		body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, loc)
+		if err != nil {
+			return "", pending
+		}
+		switch status {
+		case http.StatusOK:
+			var t struct {
+				Status string `json:"task_status"`
+				Result struct {
+					MergeCommit struct {
+						Hash string `json:"hash"`
+					} `json:"merge_commit"`
+				} `json:"merge_result"`
+			}
+			_ = json.Unmarshal(body, &t)
+			if strings.EqualFold(t.Status, "SUCCESS") {
+				return t.Result.MergeCommit.Hash, nil
+			}
+		case http.StatusBadRequest, http.StatusConflict:
+			// The merge failed after being accepted, or left the queue without merging.
+			return "", &githubMergeError{http.StatusConflict, "not_mergeable", bitbucketMergeRefusal(body)}
+		case http.StatusUnauthorized:
+			return "", gitx.ErrBitbucketUnauthorized
+		default:
+			return "", pending
+		}
+	}
+	return "", pending
 }
 
 // bitbucketMergeRefusal words Bitbucket's own error text for the panel, bounded like

@@ -155,6 +155,7 @@ export const workitems = {
   "wi.merge_close_source": "ソースブランチを閉じる",
   "wi.merge_pending": "{name} がマージを受け付けて処理中です。パネルが読み直すと結果が出ます。",
   "wi.merge_note": "{name} 上でただちにマージします。マージされるのはここに表示しているコミット（{sha}）だけで、ブランチが進んでいたら何もマージしません。",
+  "wi.merge_note_bitbucket": "Bitbucket 上でただちにマージします。直前にヘッド（{sha}）を確認しますが、その確認の後に push されたものは止められません。マージキューがある場合は、即時ではなくキューに入ることがあります。",
   "wi.merge_confirm": "マージする",
   "wi.merge_done": "マージしました",
   "wi.merge_head_changed": "このパネルを描いた後にプルリクエストが変わったので、何もマージしていません。最新の内容を表示しています。",
