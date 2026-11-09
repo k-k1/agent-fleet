@@ -183,6 +183,7 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 	for _, s := range sessions {
 		dirOf[s.Name] = s.Dir
 	}
+	var notices []prNoticeHold
 	for i := range sessions {
 		s := &sessions[i]
 		if s.PR == nil || s.PR.Number <= 0 {
@@ -200,13 +201,9 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		cur, held := heldLink(s.Links, provider, key)
 		// Told only about a PR the row still holds: a PR removed by hand is no longer the
 		// session's, and a PR seen for the first time is linked on this poll and told from the next.
-		if held {
-			if kind, extra := prNotice(s.PR, role, cur.State); kind != "" &&
-				!sendPRNotice(s, kind, provider, key, extra, s.PR) && kind != prReadyNotice {
-				// The merge or close is told on the change of the recorded state: recording it now
-				// would make the next poll see no change, and the notice would be lost for good.
-				continue
-			}
+		// Only the session working on it is told, not a child watching from a shared copy.
+		if held && role == session.LinkWorking {
+			notices = append(notices, prNoticeHold{name: s.Name, provider: provider, key: key, link: cur, pr: s.PR})
 		}
 		// Already linked at this role or above, with this state: nothing to write. A weaker link
 		// (watching from when the copy was shared, reviewing before the session took the branch
@@ -230,6 +227,7 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 			s.Links = session.LinksOf(m)
 		}
 	}
+	syncPRNotices(notices, now)
 }
 
 // prLinkKey is the provider and inbox key of a PR, read from its URL: the PR row carries no repo
