@@ -1360,6 +1360,340 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // Settings › Agents › the Claude Code card for the user guide's agent pages: connected, with the
+    // account, plan and expiry, and Re-authenticate / Disconnect. Behavior stays closed: open, the
+    // card is taller than the modal.
+    name: "agents-claude",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="claude"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="claude"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Agent instructions: where the instructions go, one row per agent.
+    name: "agents-instructions",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: ".settings-modal .instr-targets",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "instructions",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      document.querySelector(".settings-modal .instr-targets")?.scrollIntoView({ block: "end" });
+    })()`,
+    settle: 2500,
+  },
+
+  {
+    // Settings › Agents › the Behavior block of one card (GitHub Copilot), open: the launch defaults
+    // every card shares.
+    name: "agents-behavior",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="copilot"] .p-settings',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      const card = document.querySelector('.p-card[data-settings-target="copilot"]');
+      card?.querySelector(".ps-disclosure")?.click();
+      await new Promise((r) => setTimeout(r, 600));
+      card?.querySelector(".p-settings")?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The Codex card before connecting: the ChatGPT subscription and API key choices.
+    name: "agents-codex",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="codex"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="codex"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The GitHub Copilot card once GitHub is connected: no sign-in of its own, just the status.
+    name: "agents-copilot",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="copilot"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="copilot"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The OpenCode card from its header to the billing routes, Go chosen (the whole card is taller
+    // than the modal).
+    name: "agents-opencode",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: ['.p-card[data-settings-target="opencode"] .p-head', '.p-card[data-settings-target="opencode"] [role=radiogroup]'],
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="opencode"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The Cursor card before signing in.
+    name: "agents-cursor",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="cursor"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="cursor"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The Kiro card before its on-demand install.
+    name: "agents-kiro",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="kiro"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="kiro"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The Antigravity card before connecting: the experimental-slot label and OAuth.
+    name: "agents-agy",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="agy"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="agy"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The Muse Code card before its one-time install.
+    name: "agents-muse",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="muse"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="muse"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The llama.cpp card pointed at a member's own llama-server, reachable.
+    name: "agents-lcpp",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: '.p-card[data-settings-target="lcpp"]',
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 2200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1800));
+      // The cards render only after the connection check; on a busy host that can outlast the wait.
+      for (let i = 0; i < 40 && /接続を確認しています|Checking the connection/.test(document.querySelector(".settings-modal")?.textContent || ""); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      document.querySelector('.p-card[data-settings-target="lcpp"]')?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Agent usage over 30 days, cropped to the tab.
+    name: "agents-usage",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: ".settings-modal .settings-content",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "usage",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const btns = [...document.querySelectorAll("button")];
+      btns.find((el) => /^(30 ?日|30 days)$/.test((el.textContent || "").trim()))?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Skills with Claude's skills under its real config folder, one shadowed.
+    name: "agents-skills",
+    guide: true,
+    stubEnv: { SHOT_AGENTS_GUIDE: "1" },
+    clip: ".settings-modal .settings-content",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "skills",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+    })()`,
+    settle: 2500,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

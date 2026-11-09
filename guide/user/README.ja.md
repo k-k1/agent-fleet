@@ -44,6 +44,24 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [コミットグラフでコミットする](code/commit.ja.md) | 履歴と差分を見て、端末を開かずにコミットする |
 | [Subversion のリポジトリを使う](code/svn.ja.md) | Subversion のリポジトリをチェックアウトして、セッションで作業する |
 
+## エージェント
+
+| ページ | できること |
+|---|---|
+| [エージェントを選ぶ](agents/choose.ja.md) | 契約に合うエージェントを選んで接続し、既定モデルや使わないモデルを決める |
+| [Claude を接続する](agents/claude.ja.md) | Claude Code をセッションで動かす。リモートコントロールを使う |
+| [Codex を接続する](agents/codex.ja.md) | ChatGPT のサブスクか API キーで Codex を動かす |
+| [OpenCode を接続する](agents/opencode.ja.md) | いくつものプロバイダのモデルを、OpenCode で切り替えて使う |
+| [GitHub Copilot を接続する](agents/copilot.ja.md) | GitHub の接続だけで Copilot CLI を動かす |
+| [Cursor を接続する](agents/cursor.ja.md) | Cursor のアカウントで Cursor CLI を動かす |
+| [Kiro を接続する](agents/kiro.ja.md) | Kiro を導入し、Builder ID などで動かす |
+| [Antigravity を接続する](agents/agy.ja.md) | Google アカウントで Antigravity CLI を動かす（実験枠） |
+| [Muse Code を接続する](agents/muse.ja.md) | Muse Code を導入し、Meta のアカウントか API キーで動かす |
+| [lcpp を使う](agents/lcpp.ja.md) | 配備の llama.cpp エンジンや自分の llama-server でセッションを動かす |
+| [料金と使用量を確かめる](agents/usage.ja.md) | モデルの定価、利用枠の残り、トークンを何に使ったかを見る。RTK で節約する |
+| [作業のしかたを一度だけ書いておく](agents/instructions.ja.md) | 毎回の頼みごとを、すべてのエージェントに伝わるように書いておく |
+| [手元の Claude Code の設定を持ち込む](agents/bring-claude-setup.ja.md) | 自分のスキル・サブエージェント・フックをワークスペースでも使う |
+
 ## 連携
 
 | ページ | できること |

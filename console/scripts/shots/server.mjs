@@ -126,6 +126,23 @@ const exact = {
           slack: { connected: false },
         }
       : {}),
+    // The agent pages of the user guide (SHOT_AGENTS_GUIDE): each card in the state its page shows
+    // (Claude with account, plan and expiry; the sign-in forms of the unconnected ones; Kiro and
+    // Muse Code not yet installed; lcpp on a member's own llama-server). Every other scene keeps the
+    // cards it was taken with.
+    ...(process.env.SHOT_AGENTS_GUIDE
+      ? {
+          claude: { connected: true, email: "demo@example.com", plan: "max", days_left: 2 },
+          codex: { connected: false },
+          cursor: { connected: false },
+          copilot: { connected: true },
+          kiro: { connected: false, supported: false },
+          agy: { connected: false },
+          muse: { connected: false, supported: false },
+          opencode: { connected: true, envs: ["OPENCODE_API_KEY", "ANTHROPIC_API_KEY"] },
+          lcpp: { connected: true, url: "http://192.168.0.10:8080", reachable: true, model: "qwen3-coder-30b-a3b", model_count: 2 },
+        }
+      : {}),
     ...(process.env.SHOT_OPS
       ? {
           pagerduty: { connected: true },
@@ -171,7 +188,13 @@ const exact = {
   // with it (the palette gains a mode).
   // imageGeneration only for the user guide's settings shot (SHOT_IMAGE_SETTINGS): with it on, the
   // Agents tab grows the provider order, which no other scene shows.
-  "/api/env/ui-prefs": () => ({ agentMemory: true, ...(process.env.SHOT_IMAGE_SETTINGS ? { imageGeneration: true } : {}) }),
+  // opencodeCatalog "go" only for the agent pages (SHOT_AGENTS_GUIDE): the OpenCode card then shows its
+  // billing routes and keys instead of the bare off switch.
+  "/api/env/ui-prefs": () => ({
+    agentMemory: true,
+    ...(process.env.SHOT_IMAGE_SETTINGS ? { imageGeneration: true } : {}),
+    ...(process.env.SHOT_AGENTS_GUIDE ? { opencodeCatalog: "go" } : {}),
+  }),
   // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log.
   "/api/agents/memory/entries/list": () => fx.memoryList(LOCALE),
   "/api/agents/memory/entries/member-read": (q) => fx.memoryRead(LOCALE, q.get("name") || ""),
@@ -421,6 +444,17 @@ const exact = {
       "8080": "https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com",
     },
   }),
+  // Settings › Agents (the Claude card's behavior) and Settings › Agent instructions for the user
+  // guide's agent pages, served only to a run that asks (SHOT_AGENTS_GUIDE).
+  ...(process.env.SHOT_AGENTS_GUIDE
+    ? {
+        "/api/claude/settings": () => fx.agentsGuideClaudeSettings(),
+        "/api/user-notes": () => fx.agentsGuideUserNotes(LOCALE),
+        "/api/agents/rtk": () => ({ rtk_available: true, codex_rtk: false, copilot_rtk: true, agy_rtk: false, opencode_rtk: true }),
+        "/api/connections/kiro/install": () => ({ installed: false }),
+        "/api/connections/muse/install": () => ({ installed: false }),
+      }
+    : {}),
   // Settings › Machine, Toolchains and Databases for the user guide's workspace pages, served only
   // to a run that asks (SHOT_WS_GUIDE): without it these tabs stay as empty as they always were.
   ...(process.env.SHOT_WS_GUIDE
@@ -704,7 +738,13 @@ const server = http.createServer((req, res) => {
       // POST …/stream): a list of { delay, data } frames written in order.
       const frames = DEMO?.stream?.(p, req.method, sent);
       if (frames) return void streamFrames(res, frames);
-      const body = JSON.stringify(apiBody(p, url.searchParams, req.method, sent));
+      // The guide's Skills shot (SHOT_AGENTS_GUIDE) shows Claude's real config folder, which the
+      // agent pages name; the fixture keeps ~/.claude for the features-page scene.
+      const guideSkills = process.env.SHOT_AGENTS_GUIDE && p.startsWith("/api/skills/");
+      const params = new URLSearchParams(url.searchParams);
+      if (guideSkills && params.get("path")) params.set("path", params.get("path").replace("/var/lib/af/claude", "/home/dev/.claude"));
+      let body = JSON.stringify(apiBody(p, params, req.method, sent));
+      if (guideSkills) body = body.replaceAll("/home/dev/.claude", "/var/lib/af/claude");
       res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
       res.end(body);
     });

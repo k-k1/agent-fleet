@@ -194,7 +194,7 @@ The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [
   ranked separately (the **AI assistance** tab).
 - **Assistant models**: per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
   shows what it currently resolves to; prices and context window are described in
-  [09](09-agents.md#model-prices-and-usage-chips).
+  [09](../user/agents/usage.md#see-model-list-prices).
 - **Auto-respond to session reports**: the operator takes one turn automatically when a report arrives.
   Its companions: the **Unattended auto-reply limit** (default 10, max 50; it cannot be unlimited), the
   **Auto-reply model** (reading a report is routine work, so a lighter model saves a lot), the **Auto-reply
@@ -255,23 +255,11 @@ the assistant conversation: they share an implementation, but they surface somew
 
 ### Agent instructions
 
-Adds your own standing instructions to every agent newly started in this workspace, with a per-target row
-showing which file it was written to and whether it is in effect.
-See [09 Agents](09-agents.md#agent-instructions-write-down-how-you-work-once).
-
-This covers instructions only. Personal skills have the next entry; personal Claude Code hooks and subagents
-have no settings screen: they are files in claude's configuration folder, which survives Recreate. See
-[09 Agents](09-agents.md#bringing-your-personal-claude-code-setup).
+Adds your own standing instructions to every agent started afterwards. See [Write down how you work, once](../user/agents/instructions.md).
 
 ### Skills
 
-Lists each agent's personal skills, read-only: Claude (`$CLAUDE_CONFIG_DIR/skills` and `commands`), Codex
-(`$CODEX_HOME/skills`), OpenCode and Muse, one tab per agent. Each tab shows the folders that agent reads (a
-missing one is marked, with the path to create), then the skills grouped as yours, Agent Fleet's own (`af-*`,
-rewritten at every start) and the ones bundled with the CLI. An entry another copy of the same name overrides is
-struck through and names the winner. Open an entry for its path, its `SKILL.md` and the other files in its
-folder. Edit the files themselves; sessions started afterwards pick the change up. Skills kept in a repository
-are not listed here.
+Lists each agent's personal skills, read-only. See [Bring your Claude Code setup](../user/agents/bring-claude-setup.md#check-your-skills).
 
 ### Agent memory
 
@@ -290,16 +278,14 @@ Version control over the memory an agent keeps in its own files. The page is des
 
 ### Agents
 
-Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
-Antigravity): default model, **models to exclude**, **additional Claude models**, expanded thinking, RTK. The
-**llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
-the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
+Each agent's card connects it and sets its behavior. See [Choose an agent](../user/agents/choose.md) and each agent's page.
+
+The
 **Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
 **children per session**), **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
-"Conversations" mode works either way, see [02](02-console-basics.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
-limit resets, and auto-resume of an interrupted turn.
-→ [09 Agents](09-agents.md), [11 Running many sessions](11-many-sessions.md#messages-between-sessions),
+"Conversations" mode works either way, see [02](02-console-basics.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes).
+→ [11 Running many sessions](11-many-sessions.md#messages-between-sessions),
 [11 Running many sessions](11-many-sessions.md#starting-sessions-from-a-session-child-sessions),
 [Have a session make images](../user/images/from-session.md)
 
@@ -360,31 +346,7 @@ The same token can use your Agent Fleet memory too; the tab lists what it can do
 
 ### Agent usage
 
-The ledger of **what your tokens went on**. Alongside the sessions themselves, it lists the auxiliary calls
-Agent Fleet makes behind the scenes (title suggestions, summarised handoffs, reply suggestions …) on the same
-scale.
-
-- **Range**: 24 hours / 7 days / 30 days.
-- **Split by**: feature / agent / model / session origin (started by a person, created by the operator, created
-  by a schedule, handoff, started by a session) / trigger (user, automatic, schedule, operator, bridge …).
-- **Metric**: tokens spent / number of calls / cache reads / **API-equivalent cost (estimated)**, which is tokens ×
-  each model's published API list price (cache writes ×1.25, cache reads ×0.1), shown with a `≈`. **It is not
-  what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read
-  "—" (only claude's auxiliary calls return one). The measured figure is still there: hover the amount and it is
-  shown alongside, never added to the estimate.
-- Rates come from a built-in table for Anthropic and from the **models.dev price catalog** for everything else.
-  The Agent fetches that catalog once a day (where it cannot, it reads the copy opencode keeps). **Hover an amount to see which rate was used and where it came from.**
-  Consumption that went through opencode is priced at opencode's own rates, which is closer to what you actually pay.
-- Models missing from the catalog too are **not** estimated. That consumption is reported under "what is
-  measurable" as "N% of the consumption runs on models with no price on file", which is not an amount of 0.
-  The same instance shows **when the catalog was fetched**, because a newer catalog changes past estimates as well.
-- Clicking a series in the time chart filters to it. There is also a **feature × model** matrix.
-- **Measurement coverage** is stated explicitly. Calls that do not report tokens are shown as counted-only
-  (which does not mean they were free). cursor's Terminal (CLI) sessions report tokens per turn from a `stop` hook
-  and are shown as "Tokens: partial"; a turn on Auto has no model name of its own (cursor reports `default`).
-  Managed cursor sessions are not counted this way ([09](09-agents.md#cursor)).
-- **RTK gain**: cumulative tokens saved, average saving rate and command count, daily / weekly / monthly
-  (RTK is in [09](09-agents.md#rtk-token-savings)).
+The ledger of what your tokens went on. How to read it is in [Check prices and usage](../user/agents/usage.md#see-what-your-tokens-went-on).
 
 ### Cloud cost
 

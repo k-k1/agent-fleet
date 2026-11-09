@@ -90,7 +90,7 @@ are updated to their latest version every time the workspace starts.
 - A start nobody is watching, such as one for a scheduled run, does not update. Neither does a start with little free space on the home disk
 - The setting appears only when an administrator allows it
 
-Kiro and Muse Code are not covered: their versions come with the image (for Muse Code, see [Muse Code](../../member/09-agents.md#muse-code)).
+Kiro and Muse Code are not covered: their versions come with the image (for Muse Code, see [Muse Code](../agents/muse.md#update)).
 
 ## Update Agent Fleet
 

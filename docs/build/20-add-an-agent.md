@@ -206,8 +206,9 @@ A kind is not done when it runs. It is done when:
    `Capabilities()` matches what the driver implements (§20.4);
 2. [ref/agents.md](../../guide/ref/agents.md) has its column filled, and the two checks
    in §20.4 pass;
-3. [member/09-agents](../../guide/member/09-agents.md) tells a user how to connect it,
-   using the Console's own words (`console/src/lib/i18n/locales/`);
+3. a page under `guide/user/agents/`, shaped like [Connect Claude](../../guide/user/agents/claude.md),
+   tells a user how to connect it, using the Console's own words
+   (`console/src/lib/i18n/locales/`), and [Choose an agent](../../guide/user/agents/choose.md) lists it;
 4. if the workspace image pins its CLI or host, its contract workflow exists, is
    registered with the release watcher, and has passed against a real release; otherwise
    a check against what it does depend on has passed, run by hand if no workflow can run

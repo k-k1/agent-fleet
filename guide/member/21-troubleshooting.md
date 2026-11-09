@@ -246,20 +246,20 @@ In most cases the connection itself is still alive. This isn't an authentication
 the interactive screen is just redoing its onboarding, and it usually clears if you
 **resume** the session or use **"Recreate (current conversation goes to the archive)"**
 from the ⋯ menu. The traditional manual `/login` inside the terminal works alongside this too.
-You can check the connection status in ⚙ Settings → the "Agents" tab ([09](09-agents.md#claude)).
+You can check the connection status in ⚙ Settings → the "Agents" tab ([09](../user/agents/claude.md)).
 
 ### I want to connect codex, but approving doesn't get me anywhere
 
 To connect with a ChatGPT subscription, you must first **turn on "Enable device code
 authentication for Codex" under ChatGPT's "Settings > Security"**. If it's off, approving
-won't get you any further ([09](09-agents.md#codex)).
+won't get you any further ([09](../user/agents/codex.md)).
 
 ### An agent stopped with "your login has expired"
 
 The error in the chat view offers **"Re-authenticate"**, which opens ⚙ Settings → Agents
 scrolled to that agent's card. Connect again there and **that session resumes exactly where it
 left off**. The agent's card in ⚙ Settings → Agents also
-shows the connection state ([09](09-agents.md#supported-agents-and-how-to-choose)).
+shows the connection state ([09](../user/agents/choose.md#sign-in-again)).
 
 Once you are signed in again, **that same error turns into "Re-authenticated"** (the button
 goes away) and **the session picks up where it stopped by itself** (Claude, with automatic
@@ -300,7 +300,7 @@ It may be excluded under **"Models to exclude"** in ⚙ Settings → Agents. An 
 disappears from the launch dialog, the default-model setting and the list an assistant picks
 from, and **launching with that name is refused as well** (including a schedule's model field
 and launches via an assistant). Remove the exclusion on that agent's card
-([09](09-agents.md#claude)).
+([09](../user/agents/choose.md#exclude-models)).
 
 To use a specific Claude release (a full id such as `claude-opus-4-8`), register it under
 **"Additional Claude models"** on the same screen and it joins the choices.
@@ -314,7 +314,7 @@ it before concluding anything. What the picker says once it settles is the answe
 | It says | What to do |
 |---|---|
 | **Every model is excluded in settings** | ⚙ Settings → Agents → that card → "Models to exclude" |
-| **The current billing choice leaves no model to pick** | ⚙ Settings → Agents → opencode → "opencode.ai billing" ([09](09-agents.md#opencode)) |
+| **The current billing choice leaves no model to pick** | ⚙ Settings → Agents → opencode → "opencode.ai billing" ([09](../user/agents/opencode.md)) |
 | **Only the default model is available (check this agent's connection and plan)** | The agent answered with an empty catalog. Check the sign-in and the plan on that card. On a Copilot Free plan an empty list is normal: that plan offers Auto alone. |
 | **Couldn't fetch the model list — the workspace may have only just started** | The request never landed. The Agent isn't listening yet in the first seconds after a start: **wait half a minute and reopen the dialog** (each open tries again). |
 
@@ -325,7 +325,7 @@ retrying (attempt N): …"**. opencode is retrying a provider error; the message
 limits and overloads usually pass, so wait or stop the turn. Errors that cannot pass (region or
 privacy setting, quota or billing, a bad key) end the turn as failed by themselves and the band
 says so: fix the cause on the provider account (for "requires Global regions", its privacy /
-region setting) and send again ([09](09-agents.md#when-the-provider-returns-an-error)).
+region setting) and send again ([09](../user/agents/opencode.md#when-it-goes-wrong)).
 
 The band appears in **Managed** sessions. A **Terminal (CLI)** session has no band; opencode's
 own retry output is in the terminal.
@@ -687,7 +687,7 @@ billing"** choice must leave something to launch: **"Free models only"** needs n
 **"Go (subscription)"** and **"Zen (metered)"** need an opencode.ai sign-in or key, and
 **"None (my own keys)"** needs a provider key of your own or one of the fleet's engines. With
 billing **"Off"**, or "Use opencode" off, it never appears, key or not
-([09](09-agents.md#opencode)).
+([09](../user/agents/opencode.md)).
 
 **Q. If I unshare it, does it disappear from their side too?**
 No. The recipient can save what was displayed, so **unsharing only ends further access**. A
@@ -699,7 +699,7 @@ exposes (secrets in it are not detected for you). See
 It prevents picking one by accident; it is not a hard billing guard. The model disappears from
 the launch dialog, the settings and the assistant's list, and launching it by name is refused,
 but **it cannot stop the CLI's own commands, such as typing `/model` inside the terminal**
-([09](09-agents.md#claude)).
+([09](../user/agents/choose.md#exclude-models)).
 
 **Q. Builds die / freeze from running out of memory**
 The host is shared and memory-constrained. For Node builds, raise the heap only for the command that needs it
