@@ -17,7 +17,7 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
     "The fleet's command center. I watch running sessions and, when needed, send them instructions or spin up new sessions to move work forward (including starting a task from a handoff or brainstorm). I can also review, add to, and bulk-send the memo queue. I consult other assistants for specialized calls, and I confirm before acting.",
   "assistant.sre.name": "SRE Assistant",
   "assistant.sre.desc":
-    "Your partner for incident response and monitoring ops (read-only). Connect PagerDuty, Grafana, and CloudWatch and I'll help triage the situation, hypothesize root causes, and draft external updates while looking at open incidents, metrics, and logs.",
+    "Your partner for incident response and monitoring ops (read-only). Connect PagerDuty, Grafana, CloudWatch, and AWS and I'll help triage the situation, hypothesize root causes, and draft external updates while looking at open incidents, metrics, and logs.",
 
   // --- assistant settings (AssistantTab) ---
   "assistant.output_language": "Reply language",
@@ -95,7 +95,7 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
   "asst.persona_ph": "e.g. You are a technical-document translator. Return only the translated text.",
   "asst.tools_label": "Tool permissions",
   "asst.mcp_label": "MCP servers (optional)",
-  "asst.mcp_hint": "Choose the MCP servers this assistant's chat connects to. The list holds the built-in integrations (PagerDuty / Grafana / CloudWatch) plus anything registered under Settings > Connections > MCP servers (used by sessions).",
+  "asst.mcp_hint": "Choose the MCP servers this assistant's chat connects to. The list holds the built-in integrations (PagerDuty / Grafana / CloudWatch / AWS) plus anything registered under Settings > Connections > MCP servers (used by sessions).",
   "asst.mcp_empty": "No MCP server is available to attach. Register one under Settings > Connections > MCP servers (used by sessions), or connect an integration on the Ops & monitoring tab.",
   "asst.mcp_disabled": "Disabled (will not attach)",
   "asst.mcp_not_ready": "Incomplete configuration (will not attach)",

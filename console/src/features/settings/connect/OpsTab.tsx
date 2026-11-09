@@ -10,6 +10,7 @@ import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "../parts/providerCard.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { isOk } from "../api.ts";
+import { errText } from "../../../core/api/client.ts";
 import {
   deleteAwsMcp,
   deleteCloudWatch,
@@ -100,7 +101,7 @@ function PagerDutyCard({ st, reload }: { st: PagerDutyConn | undefined; reload: 
         host: eu ? "https://api.eu.pagerduty.com" : "",
       });
       if (res && !isOk(res)) {
-        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
+        toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
       }
       setKey("");
@@ -175,7 +176,7 @@ function GrafanaCard({ st, reload }: { st: ProviderConn | undefined; reload: () 
         token: token.trim(),
       });
       if (res && !isOk(res)) {
-        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
+        toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
       }
       setUrl("");
@@ -339,7 +340,7 @@ function CloudWatchCard({ st, reload }: { st: CloudWatchConn | undefined; reload
     try {
       const res = await putCloudWatch(p.body());
       if (res && !isOk(res)) {
-        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
+        toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
       }
       p.reset();
@@ -411,7 +412,7 @@ function AWSCard({ st, reload }: { st: AwsMcpConn | undefined; reload: () => voi
     try {
       const res = await putAwsMcp({ ...p.body(), endpoint, write });
       if (res && !isOk(res)) {
-        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
+        toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
       }
       p.reset();

@@ -918,3 +918,21 @@ func TestConcurrentDecisionsOnOneGateInProcessLock(t *testing.T) {
 		t.Fatalf("recorded %q, replies %q", rec.Decision, msgs)
 	}
 }
+
+// TestApprovalErrorsPlatformNeutralAndLocalized: the gate serves Discord and Slack operator
+// turns, so its messages must not name one platform, and they follow the connection language.
+func TestApprovalErrorsPlatformNeutralAndLocalized(t *testing.T) {
+	for _, e := range []*approvalErr{errApprovalRejected, errApprovalTimeout, errApprovalUnconfirmed, errApprovalUndeliverable} {
+		for _, s := range []string{e.ja, e.en} {
+			if strings.Contains(s, "Discord") || strings.Contains(s, "Slack") {
+				t.Errorf("approval error names a platform: %q", s)
+			}
+		}
+		if e.ja == "" || e.en == "" || e.ja == e.en {
+			t.Errorf("approval error must carry both languages: %+v", e)
+		}
+	}
+	if !errors.Is(error(errApprovalTimeout), errApprovalTimeout) || errors.Is(error(errApprovalTimeout), errApprovalRejected) {
+		t.Error("sentinel identity broken")
+	}
+}

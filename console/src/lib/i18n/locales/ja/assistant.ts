@@ -15,7 +15,7 @@ export const assistant = {
     "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。メモキューの確認・追加・一括送信もできます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
   "assistant.sre.name": "SRE アシスタント",
   "assistant.sre.desc":
-    "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch を接続しておくと、開いているインシデントやメトリクス・ログを実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
+    "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch・AWS を接続しておくと、開いているインシデントやメトリクス・ログを実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
 
   // --- アシスタント設定（features/settings/AssistantTab.tsx）---
   "assistant.output_language": "回答言語",
@@ -93,7 +93,7 @@ export const assistant = {
   "asst.persona_ph": "例: あなたは技術文書の翻訳者です。訳文のみを返してください。",
   "asst.tools_label": "ツール許可",
   "asst.mcp_label": "MCP サーバー（任意）",
-  "asst.mcp_hint": "このアシスタントのチャットに接続する MCP サーバーを選びます。組み込み連携（PagerDuty / Grafana / CloudWatch）と、設定＞接続＞MCP サーバー（セッションで使う） で登録したものが並びます。",
+  "asst.mcp_hint": "このアシスタントのチャットに接続する MCP サーバーを選びます。組み込み連携（PagerDuty / Grafana / CloudWatch / AWS）と、設定＞接続＞MCP サーバー（セッションで使う） で登録したものが並びます。",
   "asst.mcp_empty": "接続できる MCP サーバーがありません。設定＞接続＞MCP サーバー（セッションで使う） で登録するか、運用・監視 タブで連携を接続してください。",
   "asst.mcp_disabled": "無効化中（接続されません）",
   "asst.mcp_not_ready": "設定が未完了（接続されません）",
