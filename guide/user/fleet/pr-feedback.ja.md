@@ -103,7 +103,23 @@ source_of_truth: "Console の設定 >「エージェント」>「PR へのフィ
 Webhook が Workspace に運ぶのは「このプルリクエストが変わった」という合図だけで、データは渡さず、停止中の Workspace を起こすこともない（停止中の Workspace は起動時に追いつく）。
 
 - **公開リポジトリ**: デプロイの GitHub App の Webhook を設定してあれば（`AF_GITHUB_WEBHOOK_SECRET`、[設定リファレンス](../../ref/settings.ja.md)）、公開リポジトリの配信で見張りが早くなる。
-- **プライベートリポジトリ**: デプロイ共通の App は全テナントで共有なので、プライベートリポジトリの配信は無視する。プライベートリポジトリには、あなたのテナントの Webhook（リポジトリのフック、またはテナント自身の GitHub App。Bitbucket は常にこれ）が必要。なければ見張りはポーリングのまま（数分以内の遅れ）。Workspace からその Webhook を作る機能はまだない。
+- **プライベートリポジトリ**: デプロイ共通の App は全テナントで共有なので、プライベートリポジトリの配信は無視する。プライベートリポジトリには、あなたのテナントの Webhook（リポジトリのフック、またはテナント自身の GitHub App。Bitbucket は常にこれ）が必要。なければ見張りはポーリングのまま（数分以内の遅れ）。Workspace からは [`af-watch-hook`](../../ref/cli/af-watch-hook.ja.md) で作れる。
+
+#### プライベートリポジトリにフックを足す
+
+```sh
+af-watch-hook add github owner/name      # Bitbucket は: af-watch-hook add bitbucket workspace/name
+af-watch-hook list
+af-watch-hook rm <id>
+```
+
+`add` は Control Plane にフックを作り、あなた自身の接続（設定 > 接続）でリポジトリに登録する。以後、プルリクエスト・レビュー・コメント・チェックの出来事が Workspace の見張りに合図を送る。フックの秘密は GitHub / Bitbucket にそのまま渡し、表示も保存もしない。`rm` はリポジトリ側と Agent Fleet 側の両方から消す。
+
+- **リポジトリの管理者権限が要る。** GitHub は `repo`（または `admin:repo_hook`）スコープの classic トークン、または Webhooks: Read and write の fine-grained トークン。Bitbucket は Webhooks スコープとリポジトリ管理者。足りなければ `add` がそう伝え、何も残さない。リポジトリの管理者に頼むか、ポーリングのままにする
+- **デプロイに公開 URL が要る。** なければ外部のサービスがフックに届かない
+- **すでにフックのあるリポジトリに `add` しても何も変えない。** やり直すには `rm` してから `add` する
+- **自分の GitHub App**: App の設定に貼る Webhook の秘密は一度表示する必要があるが、`af-watch-hook` は秘密を表示しない。表示できるようになるまでは、App が要らない `af-watch-hook add` を使う
+- GitHub Enterprise Server と Bitbucket Data Center は対象外
 
 ## 関連
 

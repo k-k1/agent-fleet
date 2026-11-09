@@ -351,6 +351,17 @@ endpoints `POST /webhooks/github` (the deployment App, `AF_GITHUB_WEBHOOK_SECRET
 - Not built: the Agent-side flow that installs a hook at GitHub or Bitbucket with the member's token, and
   `status`-style events that name a commit and not a pull request (the long poll covers them).
 
+   *Note, 2026-11-10 (#3751).* The Agent-side flow is built: `af-watch-hook add|list|rm`
+   (`workspace/agent/internal/watchhook`), behind Agent routes `/watch/hooks` so the Control Plane token
+   (`AF_WATCH_TOKEN`) stays in the Agent and the shell holds only `AGENT_TOKEN`. `add` checks the member's forge
+   credential, makes the hook at the Control Plane, installs it at the forge (JSON body, the secret as the
+   forge-side signing secret, pull request and check events only) and deletes the Control Plane hook again if the
+   install fails; a hook for the same repository already present makes it a no-op. `rm` finds the forge webhook by
+   its URL (the Control Plane stores no forge id), deletes it, and retires the Control Plane hook even when the forge
+   step fails, since the Control Plane hook is what makes a delivery verify. The secret never leaves the Agent
+   process. Not built: a tenant's own GitHub App path, which needs the secret shown to the member once and so
+   conflicts with "never print it" (documented in the guide as unavailable; follow-up #3762).
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled
