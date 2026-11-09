@@ -5990,11 +5990,14 @@ func TestECSEC2StuckStoppingStaysQuietOnAConnectedDrainingInstance(t *testing.T)
 }
 
 // AF_ECS_EC2_TMP_OPTS replaces the default list wholesale, so a deployment can still ask
-// for a noexec /tmp.
+// for a noexec /tmp. A value that parses to no options is unset, not an empty list:
+// Docker would mount an empty list noexec.
 func TestECSEC2TmpfsOptsOverride(t *testing.T) {
-	t.Setenv("AF_ECS_EC2_TMP_OPTS", "")
-	if got := ec2TmpfsOpts(); !slices.Equal(got, []string{"exec", "nosuid", "nodev"}) {
-		t.Errorf("default = %v, want [exec nosuid nodev]", got)
+	for _, v := range []string{"", "   ", " , ,"} {
+		t.Setenv("AF_ECS_EC2_TMP_OPTS", v)
+		if got := ec2TmpfsOpts(); !slices.Equal(got, []string{"exec", "nosuid", "nodev"}) {
+			t.Errorf("AF_ECS_EC2_TMP_OPTS=%q: got %v, want the default [exec nosuid nodev]", v, got)
+		}
 	}
 	t.Setenv("AF_ECS_EC2_TMP_OPTS", " noexec, nosuid ,nodev")
 	if got := ec2TmpfsOpts(); !slices.Equal(got, []string{"noexec", "nosuid", "nodev"}) {

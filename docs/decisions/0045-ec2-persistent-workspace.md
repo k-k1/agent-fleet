@@ -218,7 +218,7 @@ of the instance's CPU units).
    namespace, but it physically sits on the shared root volume and is readable by anyone who can reach
    the host (a route that did not exist with Fargate's per-task microVM). And one person filling it takes
    down everything on that slot. **On EC2 you can make `/tmp` a tmpfs with `linuxParameters.tmpfs`
-   (`containerPath` plus a mandatory `size` plus `noexec,nosuid,nodev`)** (unavailable on Fargate) =
+   (`containerPath` plus a mandatory `size` plus `noexec,nosuid,nodev`)** (the Fargate revision sets no tmpfs, `runtime_ecs.go`) =
    nothing is written to disk, it vanishes at exit, and it has a cap. A quota on the write layer
    (overlay2 plus xfs prjquota) and deleting the container when the slot is returned go in alongside.
 3. **A route is needed for the CP to run `mount` / `umount` on the instance** (measured with SSM

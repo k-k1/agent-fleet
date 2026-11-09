@@ -189,7 +189,7 @@ ENI とは別枠）が、**採らない** —— **EC2 のオンデマンド価�
    分離されるが、実体は共有 root ボリューム上にあり、ホストに手が届けば読める（Fargate の
    タスク毎 microVM には無かった経路）。また一人が埋めると同じスロットの全部が倒れる。
    **EC2 なら `linuxParameters.tmpfs`（`containerPath` ＋ `size` 必須 ＋ `noexec,nosuid,nodev`）で
-   `/tmp` を tmpfs にできる**（Fargate では使えない）＝ ディスクに書かれず・終了で消え・上限も付く。
+   `/tmp` を tmpfs にできる**（Fargate のリビジョンは tmpfs を付けない。`runtime_ecs.go`）＝ ディスクに書かれず・終了で消え・上限も付く。
    書き込み層のクォータ（overlay2 ＋ xfs prjquota）とスロット返却時のコンテナ削除も併せて入れる。
 3. **CP がインスタンス上で `mount` / `umount` を実行する経路が要る**（実測は SSM SendCommand）。
    **detach の前に必ず umount**（強制 detach はファイルシステムを壊す）。

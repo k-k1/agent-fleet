@@ -378,9 +378,14 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 const ec2TmpfsDefaultOpts = "exec,nosuid,nodev"
 
 // ec2TmpfsOpts reads AF_ECS_EC2_TMP_OPTS. An override replaces the whole list, so one
-// that omits `exec` gets Docker's noexec back (see ec2TmpfsDefaultOpts).
+// that omits `exec` gets Docker's noexec back (see ec2TmpfsDefaultOpts). A value with
+// no options in it (blank, " , ") counts as unset: an empty list would silently be
+// that same noexec mount.
 func ec2TmpfsOpts() []string {
-	return splitCSV(envOr("AF_ECS_EC2_TMP_OPTS", ec2TmpfsDefaultOpts))
+	if opts := splitCSV(os.Getenv("AF_ECS_EC2_TMP_OPTS")); len(opts) > 0 {
+		return opts
+	}
+	return splitCSV(ec2TmpfsDefaultOpts)
 }
 
 func (f *ecsEC2Factory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runtime {
