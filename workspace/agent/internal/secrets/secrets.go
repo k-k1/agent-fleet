@@ -25,6 +25,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -460,6 +461,12 @@ func (a ghSnap) sameConn(b ghSnap) bool {
 }
 
 type Data struct {
+	// jiraBase and bbBase are the Jira and Bitbucket OAuth entries as this snapshot was
+	// loaded (or last saved), deep copies the caller cannot reach. Both providers rotate
+	// refresh tokens, so Save must not write a pair another process has already spent;
+	// they are meaningful only when ghBaseSet is true.
+	jiraBase *JiraCreds
+	bbBase   *BitbucketCreds
 	// ghBase is the GitHub entry as this snapshot was loaded (or last saved); ghBaseSet is
 	// false for a Data that did not come from the store. Save uses it to tell "the caller
 	// left the GitHub connection alone" from "the caller changed it".
@@ -811,6 +818,7 @@ func load() (*Data, error) {
 	}
 	e, ok := s.Git["github.com"]
 	s.ghBase, s.ghBaseSet = ghSnap{ok, e}, true
+	s.setOAuthBase()
 	return s, nil
 }
 
@@ -831,8 +839,10 @@ func (s *Data) AdoptGitHub(e GitEntry) {
 // store has moved on and the caller left the connection alone, the stored state wins as a
 // whole — present, absent or replaced — and the caller's cached Login/Email ride along only
 // while the stored entry still carries the account they were read for. A caller that did
-// change the connection (a reconnect, a disconnect) wins. Code that rewrites other fields
-// should still prefer Update.
+// change the connection (a reconnect, a disconnect) wins. The Jira and Bitbucket OAuth
+// entries get the same protection (keepRotated): a status poll that loads, calls an API and
+// saves would otherwise put back a refresh token another process has just rotated. Code
+// that rewrites other fields should still prefer Update.
 func (s *Data) Save() error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
@@ -859,13 +869,99 @@ func (s *Data) Save() error {
 				}
 			}
 		}
+		if s.ghBaseSet {
+			s.Jira = keepRotated(s.Jira, s.jiraBase, cur.Jira, jiraTokens, setJiraTokens)
+			s.Bitbucket = keepRotated(s.Bitbucket, s.bbBase, cur.Bitbucket, bbTokens, setBBTokens)
+		}
 		if err := s.save(); err != nil {
 			return err
 		}
 		e, ok := s.Git["github.com"]
 		s.ghBase, s.ghBaseSet = ghSnap{ok, e}, true
+		s.setOAuthBase()
 		return nil
 	})
+}
+
+// setOAuthBase records the current Jira and Bitbucket entries as the baseline Save
+// compares against.
+func (s *Data) setOAuthBase() {
+	s.jiraBase, s.bbBase = cloneJira(s.Jira), cloneBB(s.Bitbucket)
+}
+
+func cloneJira(c *JiraCreds) *JiraCreds {
+	if c == nil {
+		return nil
+	}
+	n := *c
+	if c.Sites != nil {
+		n.Sites = make([]JiraSite, len(c.Sites))
+		for i, st := range c.Sites {
+			if st.Scopes != nil {
+				st.Scopes = append([]string(nil), st.Scopes...)
+			}
+			n.Sites[i] = st
+		}
+	}
+	return &n
+}
+
+func cloneBB(c *BitbucketCreds) *BitbucketCreds {
+	if c == nil {
+		return nil
+	}
+	n := *c
+	return &n
+}
+
+// oauthTokens is the part of an OAuth entry a refresh grant replaces.
+type oauthTokens struct {
+	access, refresh string
+	expiry          int64
+}
+
+func jiraTokens(c *JiraCreds) oauthTokens {
+	return oauthTokens{c.AccessToken, c.RefreshToken, c.Expiry}
+}
+func setJiraTokens(c *JiraCreds, t oauthTokens) {
+	c.AccessToken, c.RefreshToken, c.Expiry = t.access, t.refresh, t.expiry
+}
+func bbTokens(c *BitbucketCreds) oauthTokens {
+	return oauthTokens{c.AccessToken, c.RefreshToken, c.Expiry}
+}
+func setBBTokens(c *BitbucketCreds, t oauthTokens) {
+	c.AccessToken, c.RefreshToken, c.Expiry = t.access, t.refresh, t.expiry
+}
+
+// keepRotated decides which OAuth entry Save writes: mine (the caller's snapshot), given
+// base (what the snapshot was loaded with) and cur (what the store holds now).
+//
+// The provider retires a refresh token once it is exchanged, so writing back a pair the
+// store has moved past breaks the connection at the next renewal (invalid_grant). Hence:
+//   - the caller left the entry alone: the stored entry wins as a whole, whatever it is;
+//   - the caller kept the tokens but edited other fields (a cached account name): on a store
+//     that moved only by a renewal the edit is kept on top of the stored tokens, and on a
+//     store that was reconnected or disconnected meanwhile the stored state wins;
+//   - otherwise the caller changed the connection itself (connect, disconnect, its own
+//     renewal) and wins.
+func keepRotated[T any](mine, base, cur *T, get func(*T) oauthTokens, set func(*T, oauthTokens)) *T {
+	if reflect.DeepEqual(mine, base) {
+		return cur
+	}
+	if mine == nil || base == nil || get(mine) != get(base) || reflect.DeepEqual(cur, base) {
+		return mine
+	}
+	if cur == nil {
+		return nil
+	}
+	renewed := *cur
+	set(&renewed, get(base))
+	if !reflect.DeepEqual(&renewed, base) {
+		return cur
+	}
+	out := *mine
+	set(&out, get(cur))
+	return &out
 }
 
 // save writes the store atomically (tmp + rename): every git token, OAuth,
