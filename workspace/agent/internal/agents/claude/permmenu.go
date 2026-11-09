@@ -546,7 +546,8 @@ func normalizeCommand(s string) string {
 // simple command it supports, not only the first: measured on claude 2.1.319 with rtk 1.2.0,
 // "…; done; ls" was drawn as "…; done; rtk ls", and Allow was refused as target_mismatch (#3725).
 //
-// It follows `rtk rewrite` (rtk 1.2.0), and nothing looser. When in doubt it removes nothing,
+// It follows `rtk rewrite` (rtk 1.2.0), and loosens it only where a command really starts (after
+// do/then/else, where the hook skips compound commands). When in doubt it removes nothing,
 // which costs a refused Allow; removing too much can make two different commands compare equal
 // and send an answer to the wrong prompt. An "rtk " is removed only where a simple command
 // starts:
@@ -557,8 +558,10 @@ func normalizeCommand(s string) string {
 //   - inside the script of a bash -c / sh -c whose script is one quoted word, which the hook
 //     rewrites too.
 //
-// Nothing is removed inside other quotes, after ( or {, or in a here-document body: the hook
-// leaves those alone, and there an "rtk " is data. One "rtk " at most per command.
+// Nothing is removed inside other quotes, in a here-document body, or right after ( or { (those
+// do not start a command here; a newline after them does): the hook leaves those alone, and
+// there an "rtk " is data. One "rtk " at most per command. env, timeout and nice with options
+// are prefixes the hook follows and this does not: those dialogs still refuse Allow.
 //
 // partial is for a text that may end mid-word (a reconstruction still growing line by line): a
 // trailing "r", "rt" or "rtk" where a command starts is dropped too, and an unterminated bash -c
@@ -676,9 +679,16 @@ var (
 	// `rtk rewrite`, rtk 1.2.0): an assignment with a plain, '…' or "…" value, "time [-p]", and a
 	// bare command/builtin/exec/nohup/nice. "command -p", "exec -a" and nice's options are not
 	// followed by the hook, so an option after them ends the match.
-	rtkPrefixRe = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*\+?=(?:'[^']*'|"[^"\\$` + "`" + `]*"|[^\s'"\\$` + "`" + `;&|<>()]*)|time(?:[ \t]+-p)?|command|builtin|exec|nohup|nice|do|then|else)[ \t]+`)
-	// shellScriptRe opens the script of a bash -c / sh -c; the quote that follows is captured.
-	shellScriptRe = regexp.MustCompile(`^(?:bash|sh)[ \t]+-c[ \t]+(['"])`)
+	//
+	// A bare value may hold \x pairs and a plain $NAME; a "…" value any \x pair. Not ${…} or
+	// $(…): a space inside them would be taken for the end of the value. An escaped space is read
+	// as part of the value, although the hook ends the value there ("A=a\ ls" becomes
+	// "A=a\ rtk ls"): following it would make "A=a\ ls" equal to "A=a\ rtk ls", a command that
+	// runs ls and one that runs nothing.
+	rtkPrefixRe = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*\+?=(?:'[^']*'|"(?:\\.|[^"\\])*"|(?:\\.|\$[A-Za-z0-9_?@#*!$-]|[^\s'"\\$` + "`" + `;&|<>()])*)|time(?:[ \t]+-p)?|command|builtin|exec|nohup|nice|do|then|else)[ \t]+`)
+	// shellScriptRe opens the script of a bash/sh/zsh -c, by name or by path; the quote that
+	// follows is captured. dash -c is not rewritten by the hook (measured).
+	shellScriptRe = regexp.MustCompile(`^(?:[^\s'"\\$` + "`" + `;&|<>()]*/)?(?:bash|sh|zsh)[ \t]+-c[ \t]+(['"])`)
 )
 
 // rtkCommandPrefix is the length of the leading blanks and hook-skipped prefix words of a

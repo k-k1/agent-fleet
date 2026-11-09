@@ -585,9 +585,24 @@ func TestStripRtk(t *testing.T) {
 		{"VAR=1 time rtk ls", "VAR=1 time ls"},
 		{"nohup nice rtk ls", "nohup nice ls"},
 		{"command rtk ls", "command ls"},
+		{"A=$B rtk ls", "A=$B ls"},
+		{`A="x$y" rtk ls`, `A="x$y" ls`},
+		{`A="a\"b" rtk ls`, `A="a\"b" ls`},
+		{`A=a\b rtk ls`, `A=a\b ls`},
 		// The script of bash -c / sh -c.
 		{"bash -c 'rtk ls; rtk ls'", "bash -c 'ls; ls'"},
 		{`sh -c "rtk ls; rtk ls"`, `sh -c "ls; ls"`},
+		{"/bin/bash -c 'rtk ls'; rtk ls", "/bin/bash -c 'ls'; ls"},
+		{"zsh -c 'rtk ls'", "zsh -c 'ls'"},
+		// Prefixes the hook follows and this does not (it refuses Allow there, never matches
+		// wrongly), and a value it splits differently from the shell.
+		{"nice -n 5 rtk ls", "nice -n 5 rtk ls"},
+		{"env VAR=1 rtk ls", "env VAR=1 rtk ls"},
+		{"timeout 5 rtk ls", "timeout 5 rtk ls"},
+		{"A=${x:-a rtk b} ls", "A=${x:-a rtk b} ls"},
+		{`A=a\ rtk ls`, `A=a\ rtk ls`},
+		{"dash -c 'rtk ls'", "dash -c 'rtk ls'"},
+		{"mybash -c 'rtk ls'", "mybash -c 'rtk ls'"},
 		// Left alone by the hook, so an "rtk " there is data and must stay.
 		{"echo rtk ls", "echo rtk ls"},
 		{"echo 'a; rtk b'", "echo 'a; rtk b'"},
