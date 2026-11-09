@@ -58,6 +58,8 @@ type Hint struct {
 type Resolved struct {
 	Subject SubjectID
 	URL     string // the subject's web page, https only; "" when unknown
+	// At is the instant a timed subject fires (the time source); zero for every other source.
+	At time.Time
 }
 
 // Source is one provider's adapter.
@@ -167,6 +169,12 @@ type Subscription struct {
 	Until     string    `json:"until"`
 	Created   time.Time `json:"created"`
 	Expires   time.Time `json:"expires"`
+	// Due is when a time watch fires (UTC); zero for every other source. WakeID is the Control
+	// Plane booking that starts a stopped workspace for it (ADR 0133 §7), set only for a watch
+	// asked for with wake.
+	Due    time.Time `json:"due,omitempty"`
+	Wake   bool      `json:"wake,omitempty"`
+	WakeID string    `json:"wake_id,omitempty"`
 	// Told is the version last delivered per event type. Sources report only what holds now,
 	// so the last version per type is all de-duplication needs, and it cannot grow.
 	Told map[string]string `json:"told,omitempty"`

@@ -1,17 +1,13 @@
 // Random surface colors (the appearanceShuffle setting). On its schedule every surface in
 // SURFACE_TARGETS gets a new color; the dark/light theme keys are never written.
 //
-// The tabs of one browser share the colors through localStorage but each holds its own copy in
-// memory, so the schedule is shared too: the time of the last pick and the colors it chose live
-// under one key per appearance scope (appearanceScope). Whichever tab finds the pick due makes it
-// and writes that key; the others adopt the colors from the storage event instead of rolling
-// their own, which would leave every tab a different color.
+// The schedule is shared by the tabs of one browser: the time of the last pick lives under one key
+// per appearance scope (appearanceScope), so the first tab that finds a pick due makes it and the
+// others see it is no longer due. They show the new colors through watchOtherTabs (lib/settings.ts)
+// rather than rolling their own, which would leave every tab a different color.
 import {
-  APPEARANCE_SHUFFLE_MODES,
-  SETTINGS_STORAGE_KEY,
   SURFACE_COLORS,
   SURFACE_TARGETS,
-  adoptAppearance,
   appearanceScope,
   getSettings,
   setSettings,
@@ -29,7 +25,6 @@ type SurfaceKey = (typeof SURFACE_TARGETS)[number]["key"];
 type Colors = Partial<Pick<Settings, SurfaceKey>>;
 interface Stamp {
   at: number;
-  colors: Colors;
 }
 
 // "default" is no color at all, so a pick that lands on it looks like nothing happened.
@@ -70,18 +65,10 @@ function readStamp(scope: string): Stamp | null {
   }
 }
 
-// Only known surface keys with known color ids are taken: the value comes from another tab,
-// possibly of a newer or older Console build.
 function parseStamp(raw: string | null): Stamp | null {
   try {
     const v = JSON.parse(raw || "null");
-    if (!v || typeof v !== "object" || typeof v.at !== "number") return null;
-    const colors: Record<string, string> = {};
-    for (const t of SURFACE_TARGETS) {
-      const id = v.colors?.[t.key];
-      if (typeof id === "string" && SURFACE_COLORS.some((c) => c.id === id)) colors[t.key] = id;
-    }
-    return { at: v.at, colors: colors as Colors };
+    return v && typeof v === "object" && typeof v.at === "number" ? { at: v.at } : null;
   } catch {
     return null;
   }
@@ -93,11 +80,6 @@ function writeStamp(scope: string, stamp: Stamp): void {
   } catch {}
 }
 
-// When this page last picked. Two tabs that find the same pick due at once both pick and both
-// receive the other's stamp; each adopting the other would leave them swapped until the next
-// pick, so a stamp no newer than our own pick is ignored and both settle on the later one.
-let lastOwnPickAt = 0;
-
 /** Pick new colors now (the dice button, switching the schedule on, and every due check).
  * `extra` is written in the same update, so turning the schedule on saves once. */
 export function shuffleAppearanceNow(now: number = Date.now(), extra: Partial<Settings> = {}): void {
@@ -106,8 +88,7 @@ export function shuffleAppearanceNow(now: number = Date.now(), extra: Partial<Se
   // Read the scope after the write: setSettings settles which tenant's look is showing.
   const scope = appearanceScope();
   if (!scope) return;
-  lastOwnPickAt = now;
-  writeStamp(scope, { at: now, colors });
+  writeStamp(scope, { at: now });
 }
 
 /** Change the schedule. Switching it on picks at once, so the choice visibly does something. */
@@ -142,9 +123,8 @@ function check(): void {
   if (!stamp) {
     // A scope with no schedule yet (a tenant seen for the first time with per-tenant appearance
     // on, or cleared storage) starts its clock from the look it already has: picking at once
-    // would overwrite a tenant's saved colors the moment it is opened. No colors in the stamp,
-    // so the other tabs have nothing to adopt from it.
-    if (mode === "1h" || mode === "daily") writeStamp(scope, { at: now, colors: {} });
+    // would overwrite a tenant's saved colors the moment it is opened.
+    if (mode === "1h" || mode === "daily") writeStamp(scope, { at: now });
     return;
   }
   if (shuffleDue(mode, stamp.at, now)) shuffleAppearanceNow(now);
@@ -161,35 +141,11 @@ export function startAppearanceShuffle({ pickOnLoad = true }: { pickOnLoad?: boo
     loadPickPending = true;
   }
   check();
-  const onStorage = (e: StorageEvent) => {
-    // The schedule itself, changed in another tab: without this a tab still holding "1h" keeps
-    // picking (and every tab adopting) after the member switched it off elsewhere.
-    if (e.key === SETTINGS_STORAGE_KEY) {
-      const mode = readMode(e.newValue);
-      if (mode && mode !== getSettings().appearanceShuffle) adoptAppearance({ appearanceShuffle: mode });
-      return;
-    }
-    const scope = appearanceScope();
-    if (!scope || e.key !== STAMP_PREFIX + scope) return;
-    const stamp = parseStamp(e.newValue);
-    if (stamp && stamp.at > lastOwnPickAt && Object.keys(stamp.colors).length) adoptAppearance(stamp.colors);
-  };
   const onVisible = () => check();
   const timer = setInterval(check, CHECK_MS);
-  window.addEventListener("storage", onStorage);
   document.addEventListener("visibilitychange", onVisible);
   return () => {
     clearInterval(timer);
-    window.removeEventListener("storage", onStorage);
     document.removeEventListener("visibilitychange", onVisible);
   };
-}
-
-function readMode(raw: string | null): AppearanceShuffleMode | null {
-  try {
-    const v = JSON.parse(raw || "null")?.appearanceShuffle;
-    return APPEARANCE_SHUFFLE_MODES.find((m) => m.id === v)?.id ?? null;
-  } catch {
-    return null;
-  }
 }

@@ -89,6 +89,51 @@ describe("looksForeign", () => {
     expect(looksForeign(englishReportNamingJaLabels, "en")).toBe(false);
   });
 
+  it("still offers an English report whose tables and lists name Japanese pages", () => {
+    // Real shape (session s5skc52): page names in a status table and a preview list put the
+    // CJK share at 8.4%, past the stray-word rule, without a single Japanese sentence.
+    const englishStatusWithJaPages =
+      "#3708 (困ったとき) review is done too. It went 1 round and is now marked ready.\n\n" +
+      "- **Fixed:** the links to the task page that covers each topic were missing, so they have been added.\n" +
+      "- **Left as is:** I had suggested adding a 全体像 table to each symptom page, but it was turned down.\n\n" +
+      "| PR | Area | Status |\n|---|---|---|\n" +
+      "| #3706 | フリート | Ready |\n| #3708 | 困ったとき | Ready |\n| #3711 | ファイル・プレビュー | Ready |\n" +
+      "| #3707 | チーム・チャット・外からつなぐ・設定 | In review |\n| #3705 | はじめに | Waiting for a reviewer |\n";
+    expect(looksForeign(englishStatusWithJaPages, "ja")).toBe(true);
+    expect(looksForeign(englishStatusWithJaPages, "en")).toBe(true);
+  });
+
+  it("counts a run as a label up to 20 characters and as prose from 21", () => {
+    const pad = " is the page this report is about, and the rest of it is plain English prose throughout here.";
+    const twenty = "あいうえおかきくけこさしすせそたちつてと";
+    expect(looksForeign(twenty + pad, "ja")).toBe(true);
+    expect(looksForeign(twenty + "な" + pad, "ja")).toBe(false);
+  });
+
+  it("accepts a few short unpunctuated Japanese phrases inside mostly English text", () => {
+    // Pinned on purpose: label-sized and under a quarter of the text, so it reads as English.
+    expect(looksForeign("設定を変更した テストを追加した and the rest of this long status report is written in English", "ja")).toBe(true);
+  });
+
+  it("does not discount Japanese that is written as sentences or short bullets", () => {
+    // A sentence mark makes the run prose, however short.
+    expect(looksForeign("実装完了。see the diff for the details of the change", "ja")).toBe(false);
+    expect(looksForeign("実装完了. see the diff for the details of the change", "ja")).toBe(false);
+    expect(looksForeign("実装完了.\u3000see the diff for the details of the change", "ja")).toBe(false);
+    // Longer than a label: prose even without a mark (28 characters, about 24% of the text).
+    const long = "設定画面からモデルを選び直してから翻訳ボタンを押してみて";
+    const english =
+      "and then check the answer again in the mirror pane, because the rest of this report is " +
+      "written in plain English";
+    expect(looksForeign(`${long} ${english}`, "ja")).toBe(false);
+    // A Japanese file name in an English table is a label, not a sentence closed by its dot.
+    expect(
+      looksForeign("| 設定.pdf | Ready |\n| 手順書.md | Ready |\nBoth files were checked and are ready to merge into main.", "ja"),
+    ).toBe(true);
+    // Bullets without punctuation are label-sized, but CJK is no longer the minority.
+    expect(looksForeign("- 設定を変更した\n- テストを追加した\n- PR を出した see https://example.com", "ja")).toBe(false);
+  });
+
   it("does not offer a one-word answer", () => {
     expect(looksForeign("Done.", "ja")).toBe(false);
     expect(looksForeign("OK", "ja")).toBe(false);

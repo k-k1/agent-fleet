@@ -25,7 +25,9 @@ package chatx
 // so no price data means today's behaviour, never an empty pick where there used to be one.
 
 import (
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -202,22 +204,81 @@ func agyRecommendIDs(v visibility) []string {
 
 // agyNamedModel resolves a fixed agy model NAME (defaultAgyChatModel, a display name) to the id
 // the live catalog lists it under. agy ≥1.1.19 lists "<id>\t<display name>"
-// (gemini-3.5-flash-medium / "Gemini 3.5 Flash (Medium)"), and agyChatModel drops a --model
-// the catalog does not list as an id — so answering with the display name showed "Gemini 3.5
+// (gemini-3.5-flash-medium / "Gemini 3.5 Flash (Medium)"), and the run path passes only
+// catalog ids as --model (agyChatModel) — so answering with the display name showed "Gemini 3.5
 // Flash (Medium)" while the CLI default ran (#972 review, round 2). A readable catalog without
-// that model answers "" (the CLI default, which is what runs); an unreadable one keeps the name,
-// as before, which older agy builds accept as-is.
+// that model falls back to the newest row of the same family (newestAgyFamilyModel), then ""
+// (the CLI default, which is what runs); an unreadable one keeps the name, as before, which older
+// agy builds accept as-is.
 func agyNamedModel(v visibility, name string) string {
 	all := agyModels()
 	if len(all) == 0 {
 		return v.model(session.KindAgy, name)
 	}
-	for _, m := range v.list(session.KindAgy, all) {
+	visible := v.list(session.KindAgy, all)
+	for _, m := range visible {
 		if strings.EqualFold(m.ID, name) || strings.EqualFold(m.Label, name) {
 			return m.ID
 		}
 	}
-	return ""
+	return newestAgyFamilyModel(visible, name)
+}
+
+// agyVersionRe finds the version in an agy model id or display name: the first number standing
+// on its own ("Gemini 3.8 Flash", "gemini-3.8-flash-low"). A number glued to letters is part of
+// the name, not a version — gpt-oss-20b and gpt-oss-120b are different models, not two releases
+// of one — and every number after the version must match exactly, so "4-5" and "4-6" style ids
+// are never treated as one family.
+var agyVersionRe = regexp.MustCompile(`(^|[^0-9A-Za-z.])(\d+(?:\.\d+)*)([^0-9A-Za-z.]|$)`)
+
+// agyFamily is s with its version replaced by "#", lower-cased, and the version itself; ok is
+// false when s carries no version.
+func agyFamily(s string) (family string, ver []int, ok bool) {
+	loc := agyVersionRe.FindStringSubmatchIndex(s)
+	if loc == nil {
+		return "", nil, false
+	}
+	family = strings.ToLower(s[:loc[4]] + "#" + s[loc[5]:])
+	return family, agyVersion(s[loc[4]:loc[5]]), true
+}
+
+// newestAgyFamilyModel answers the newest catalog row that is name with only its version
+// number changed — "Gemini 3.5 Flash (Medium)" finds "Gemini 3.8 Flash (Medium)", and the id
+// "gemini-3.5-flash-medium" finds "gemini-3.8-flash-medium" — and "" when there is none.
+//
+// Without it a version bump upstream silently moved agy one-shots and chats onto the CLI's own
+// default, both for the built-in pick and for a model the member chose in Settings: measured
+// 2026-11-09, agy 1.5.3 listed 3.8 Flash only, its default was Gemini 4 Argon, whose separate
+// small quota ran out after a day of mirror translations while Flash still had most of its own.
+func newestAgyFamilyModel(catalog []agents.ModelChoice, name string) string {
+	want, _, ok := agyFamily(name)
+	if !ok {
+		return ""
+	}
+	best, bestVer := "", []int(nil)
+	for _, m := range catalog {
+		var ver []int
+		if f, v, ok := agyFamily(m.Label); ok && f == want {
+			ver = v
+		} else if f, v, ok := agyFamily(m.ID); ok && f == want {
+			ver = v
+		} else {
+			continue
+		}
+		if best == "" || slices.Compare(ver, bestVer) > 0 {
+			best, bestVer = m.ID, ver
+		}
+	}
+	return best
+}
+
+func agyVersion(s string) []int {
+	var out []int
+	for _, p := range strings.Split(s, ".") {
+		n, _ := strconv.Atoi(p)
+		out = append(out, n)
+	}
+	return out
 }
 
 // cheapestListedModel returns the id in ids with the lowest modelListPrice, "" when none is

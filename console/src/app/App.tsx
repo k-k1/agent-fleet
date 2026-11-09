@@ -47,7 +47,7 @@ import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
 import { publishBrowserTimeZone } from "../lib/browserTimeZone.ts";
 import { startAppearanceShuffle } from "../lib/appearanceShuffle.ts";
-import { applyTenantAppearance, getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
+import { applyTenantAppearance, watchOtherTabs, getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
@@ -387,6 +387,9 @@ export function App() {
   useEffect(() => {
     if (booted) syncKindCatalogTenant();
   }, [booted, tenant]);
+
+  // Appearance changes made in the other tabs of this browser (lib/settings.ts watchOtherTabs).
+  useEffect(() => watchOtherTabs(), []);
 
   // Random surface colors run only after boot: before it the per-tenant snapshot is still to be
   // applied and would overwrite the first pick.
