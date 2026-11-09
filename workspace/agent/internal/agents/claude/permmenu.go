@@ -248,8 +248,9 @@ var permDashRuleRe = regexp.MustCompile(`^\s*╌{10,}\s*$`)
 // prompt token binds an answer to the payload, not to the screen: if the next dialog is drawn
 // before the hook rewrites the payload (#3359), the answer lands on it. A Bash answer must
 // therefore go through CheckTargetCommand, which compares the dialog with the whole command.
-// cwd is the session directory, for a path drawn relative to it. The one rewrite accepted is the "rtk " prefix a command hook puts on the command
-// (measured: bash_four_options.txt); the payload holds the command as it was before.
+// cwd is the session directory, for a path drawn relative to it. The one rewrite accepted is the "rtk " a command hook puts in front of
+// a command (measured: bash_four_options.txt); the payload holds the command as it was before. CheckTargetCommand accepts it in
+// front of any simple command (stripRtk); this one-line comparison only at the start.
 func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 	return m.checkTarget(detail, cwd, nil)
 }
@@ -540,6 +541,230 @@ func normalizeCommand(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+// stripRtk removes the "rtk " a command hook puts in front of a simple command, so the command
+// the dialog draws compares equal to the one the PreToolUse hook saw. The hook rewrites any
+// simple command it supports, not only the first: measured on claude 2.1.319 with rtk 1.2.0,
+// "…; done; ls" was drawn as "…; done; rtk ls", and Allow was refused as target_mismatch (#3725).
+//
+// It follows `rtk rewrite` (rtk 1.2.0), and loosens it only where a command really starts (after
+// do/then/else, where the hook skips compound commands). When in doubt it removes nothing,
+// which costs a refused Allow; removing too much can make two different commands compare equal
+// and send an answer to the wrong prompt. An "rtk " is removed only where a simple command
+// starts:
+//   - at the start, after a newline, or after an unquoted ; & or |, past a do/then/else
+//     keyword;
+//   - past the prefixes the hook skips: NAME=value assignments, "time" or "time -p", and a bare
+//     command/builtin/exec/nohup/nice (not followed by an option);
+//   - inside the script of a bash/sh/zsh -c (by name or path) whose script is one quoted word,
+//     which the hook rewrites too.
+//
+// Nothing is removed inside other quotes, in a here-document body, or right after ( or { (those
+// do not start a command here; a newline after them does): the hook leaves those alone, and
+// there an "rtk " is data. One "rtk " at most per command. env and timeout in any form, nice
+// with options, and assignment values with ${…}, $$ or $'…' are prefixes the hook follows and
+// this does not: those dialogs still refuse Allow.
+//
+// partial is for a text that may end mid-word (a reconstruction still growing line by line): a
+// trailing "r", "rt" or "rtk" where a command starts is dropped too, and an unterminated bash -c
+// script is stripped as far as it goes, since the next line may complete either.
+func stripRtk(s string, partial bool) string {
+	var b strings.Builder
+	start := true
+	var quote byte // '\'', '"', or 'D' for $'…'
+	var heredocs []heredocDelim
+	for i := 0; i < len(s); {
+		c := s[i]
+		if quote != 0 {
+			b.WriteByte(c)
+			i++
+			switch {
+			case c == '\\' && quote != '\'' && i < len(s):
+				b.WriteByte(s[i])
+				i++
+			case c == '\'' && (quote == '\'' || quote == 'D'), c == '"' && quote == '"':
+				quote = 0
+			}
+			continue
+		}
+		if start {
+			rest := s[i:]
+			if n := rtkCommandPrefix(rest); n > 0 {
+				b.WriteString(rest[:n])
+				i += n
+				continue
+			}
+			if strings.HasPrefix(rest, "rtk ") {
+				i += len("rtk ")
+				start = false
+				continue
+			}
+			if partial && (rest == "r" || rest == "rt" || rest == "rtk") {
+				break
+			}
+			if n, script, closed, ok := shellScript(rest); ok && (closed || partial) {
+				b.WriteString(rest[:n])
+				b.WriteString(stripRtk(script, partial && !closed))
+				if closed {
+					b.WriteByte(rest[n-1])
+				}
+				i += n + len(script)
+				if closed {
+					i++
+				}
+				start = false
+				continue
+			}
+			start = false
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '$':
+			if i+1 < len(s) && s[i+1] == '\'' {
+				b.WriteString("$'")
+				i += 2
+				quote = 'D'
+				continue
+			}
+		case '\\':
+			b.WriteByte(c)
+			i++
+			if i < len(s) {
+				b.WriteByte(s[i])
+				i++
+			}
+			continue
+		case '<':
+			if d, n, ok := parseHeredoc(s[i:]); ok {
+				b.WriteString(s[i : i+n])
+				i += n
+				heredocs = append(heredocs, d)
+				continue
+			}
+		case ';', '&', '|':
+			start = true
+		case '\n':
+			b.WriteByte(c)
+			i++
+			// A here-document body runs from the next line to its delimiter line, verbatim.
+			for _, d := range heredocs {
+				for i < len(s) {
+					j := strings.IndexByte(s[i:], '\n')
+					line := s[i:]
+					if j >= 0 {
+						line = s[i : i+j+1]
+					}
+					b.WriteString(line)
+					i += len(line)
+					body := strings.TrimSuffix(line, "\n")
+					if d.dash {
+						body = strings.TrimLeft(body, "\t")
+					}
+					if body == d.word {
+						break
+					}
+				}
+			}
+			heredocs = nil
+			start = true
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+var (
+	// rtkPrefixRe matches the words rtk skips before the command it rewrites (measured with
+	// `rtk rewrite`, rtk 1.2.0): an assignment with a plain, '…' or "…" value, "time [-p]", and a
+	// bare command/builtin/exec/nohup/nice. "command -p", "exec -a" and nice's options are not
+	// followed by the hook, so an option after them ends the match.
+	//
+	// A bare value may hold \x pairs and a plain $NAME; a "…" value any \x pair. Not ${…} or
+	// $(…): a space inside them would be taken for the end of the value. An escaped space is read
+	// as part of the value, although the hook ends the value there ("A=a\ ls" becomes
+	// "A=a\ rtk ls"): following it would make "A=a\ ls" equal to "A=a\ rtk ls", a command that
+	// runs ls and one that runs nothing.
+	rtkPrefixRe = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*\+?=(?:'[^']*'|"(?:\\.|[^"\\])*"|(?:\\.|\$[A-Za-z0-9_?@#*!$-]|[^\s'"\\$` + "`" + `;&|<>()])*)|time(?:[ \t]+-p)?|command|builtin|exec|nohup|nice|do|then|else)[ \t]+`)
+	// shellScriptRe opens the script of a bash/sh/zsh -c, by name or by path; the quote that
+	// follows is captured. dash -c is not rewritten by the hook (measured).
+	shellScriptRe = regexp.MustCompile(`^(?:[^\s'"\\$` + "`" + `;&|<>()]*/)?(?:bash|sh|zsh)[ \t]+-c[ \t]+(['"])`)
+)
+
+// rtkCommandPrefix is the length of the leading blanks and hook-skipped prefix words of a
+// command; 0 when there are none.
+func rtkCommandPrefix(s string) int {
+	n := 0
+	for {
+		for n < len(s) && (s[n] == ' ' || s[n] == '\t') {
+			n++
+		}
+		m := rtkPrefixRe.FindStringIndex(s[n:])
+		if m == nil || strings.HasPrefix(s[n+m[1]:], "-") {
+			return n
+		}
+		n += m[1]
+	}
+}
+
+// shellScript reports a bash/sh/zsh -c whose script is one quoted word: n is the length up to
+// and including the opening quote, script the text inside, closed whether the closing quote was
+// found. A double-quoted script containing $, ` or \ is not taken apart: what the shell would
+// run is not the text.
+func shellScript(s string) (n int, script string, closed, ok bool) {
+	m := shellScriptRe.FindStringSubmatchIndex(s)
+	if m == nil {
+		return 0, "", false, false
+	}
+	n = m[1]
+	q := s[m[2]]
+	end := strings.IndexByte(s[n:], q)
+	body := s[n:]
+	if end >= 0 {
+		body = s[n : n+end]
+	}
+	if q == '"' && strings.ContainsAny(body, "$`\\") {
+		return 0, "", false, false
+	}
+	return n, body, end >= 0, true
+}
+
+type heredocDelim struct {
+	word string
+	dash bool
+}
+
+// parseHeredoc reads a "<<WORD" or "<<-WORD" operator (WORD bare or quoted) at the start of s.
+// "<<<" is a here-string, not a here-document.
+func parseHeredoc(s string) (d heredocDelim, n int, ok bool) {
+	if !strings.HasPrefix(s, "<<") || strings.HasPrefix(s, "<<<") {
+		return d, 0, false
+	}
+	n = 2
+	if n < len(s) && s[n] == '-' {
+		d.dash = true
+		n++
+	}
+	for n < len(s) && (s[n] == ' ' || s[n] == '\t') {
+		n++
+	}
+	if n < len(s) && (s[n] == '\'' || s[n] == '"') {
+		end := strings.IndexByte(s[n+1:], s[n])
+		if end < 0 {
+			return d, 0, false
+		}
+		d.word = s[n+1 : n+1+end]
+		return d, n + end + 2, d.word != ""
+	}
+	w := n
+	for n < len(s) && !strings.ContainsRune(" \t\n;&|<>()'\"", rune(s[n])) {
+		n++
+	}
+	d.word = strings.ReplaceAll(s[w:n], `\`, "")
+	return d, n, d.word != ""
+}
+
 // matchFullCommand reports whether the command region of the dialog can be the whole of command.
 // Every boundary between two drawn lines is a wrap (nothing, or the swallowed run of blanks) only
 // where the terminal could have broken the line there, and is otherwise a real newline; a boundary
@@ -582,32 +807,25 @@ func matchFullCommand(region []string, command string, width int, tail bool) boo
 			opts[k] = []string{"\n"}
 		}
 	}
-	want := normalizeCommand(command)
+	want := stripRtk(normalizeCommand(command), false)
 	if want == "" {
 		return false
 	}
-	wants := []string{want, "rtk " + want}
 	var try func(i int, shown string) bool
 	try = func(i int, shown string) bool {
 		if tail {
-			if !strings.Contains(want, shown) {
+			if !strings.Contains(want, stripRtk(shown, true)) {
 				return false
 			}
 			if i == len(lines) {
-				return strings.HasSuffix(want, shown)
+				return strings.HasSuffix(want, stripRtk(shown, false))
 			}
 		} else {
-			viable := false
-			for _, w := range wants {
-				if strings.HasPrefix(w, shown) {
-					viable = true
-				}
-			}
-			if !viable {
+			if !strings.HasPrefix(want, stripRtk(shown, true)) {
 				return false
 			}
 			if i == len(lines) {
-				return strings.TrimSpace(shown) == want || strings.TrimSpace(shown) == "rtk "+want
+				return stripRtk(strings.TrimSpace(shown), false) == want
 			}
 		}
 		for _, sep := range opts[i-1] {
