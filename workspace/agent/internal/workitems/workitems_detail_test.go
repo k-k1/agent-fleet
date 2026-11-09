@@ -483,7 +483,7 @@ func TestParseBitbucketMergeability(t *testing.T) {
 func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 	prJSON := func(state string) string {
 		return `{"id":7,"title":"t","state":"` + state + `","draft":false,"updated_on":"2026-09-10T07:10:55+00:00",
-		  "author":{"display_name":"Taro"},"source":{"branch":{"name":"feat"}},
+		  "author":{"display_name":"Taro"},"source":{"branch":{"name":"feat"},"commit":{"hash":"ab37a6993eb1","links":{"self":{"href":"BASE/2.0/repositories/acme/web/commit/ab37a6993eb1"}}}},
 		  "destination":{"branch":{"name":"main"},"repository":{"full_name":"acme/web"}},
 		  "links":{"html":{"href":"https://example.test/pr/7"}},"participants":[]}`
 	}
@@ -499,7 +499,8 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 		{"merged PR is not asked", "MERGED", `{"values":[{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, 200, "unknown", false},
 	} {
 		called := false
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var srv *httptest.Server
+		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.HasSuffix(r.URL.Path, "/mergeability/checks"):
 				called = true
@@ -507,8 +508,10 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 				_, _ = w.Write([]byte(tc.checks))
 			case strings.HasSuffix(r.URL.Path, "/statuses"), strings.HasSuffix(r.URL.Path, "/diffstat"):
 				_, _ = w.Write([]byte(`{"values":[]}`))
+			case strings.Contains(r.URL.Path, "/commit/"):
+				_, _ = w.Write([]byte(`{"hash":"ab37a6993eb10000000000000000000000000000"}`))
 			default:
-				_, _ = w.Write([]byte(prJSON(tc.state)))
+				_, _ = w.Write([]byte(strings.ReplaceAll(prJSON(tc.state), "BASE", srv.URL)))
 			}
 		}))
 		prev := BitbucketAPIBase
@@ -524,6 +527,58 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 		}
 		if out.Title != "t" {
 			t.Errorf("%s: detail lost, title=%q", tc.name, out.Title)
+		}
+		// The merge guard needs the full commit id, which the payload's 12 characters are not: an
+		// unfinished PR gets it resolved, and an unresolvable head leaves "" (no Merge button).
+		if tc.wantCalled && out.HeadSHA != "ab37a6993eb10000000000000000000000000000" {
+			t.Errorf("%s: headSha = %q, want the full commit id", tc.name, out.HeadSHA)
+		}
+	}
+}
+
+// What the Merge button needs from a Bitbucket pull request: the strategies the destination branch
+// allows, the head the panel will send back, and the PR's own close-source setting.
+func TestParseBitbucketPullRequestMergeFacts(t *testing.T) {
+	body := []byte(`{"id":3,"title":"t","state":"OPEN","draft":false,"close_source_branch":true,
+	  "source":{"branch":{"name":"feat"},"commit":{"hash":"ab37a6993eb1"}},
+	  "destination":{"branch":{"name":"main","default_merge_strategy":"squash",
+	    "merge_strategies":["merge_commit","squash","fast_forward","something_new"]},
+	    "repository":{"full_name":"ws/repo"}},
+	  "links":{"html":{"href":"https://example.test/pr/3"}},"participants":[]}`)
+	out, err := parseBitbucketPullRequest(body, "ws/repo#3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HeadSHA != "ab37a6993eb1" || !out.CloseSourceBranch {
+		t.Errorf("head=%q closeSource=%v", out.HeadSHA, out.CloseSourceBranch)
+	}
+	// A strategy the Agent cannot send is not offered; the branch's default wins when it is allowed.
+	if strings.Join(out.MergeMethods, ",") != "merge_commit,squash,fast_forward" || out.DefaultMergeMethod != "squash" {
+		t.Errorf("methods=%v default=%q", out.MergeMethods, out.DefaultMergeMethod)
+	}
+	// No strategies reported (an older workspace plan, a field Bitbucket drops): no Merge button.
+	bare, _ := parseBitbucketPullRequest([]byte(`{"id":3,"state":"OPEN","destination":{"branch":{"name":"main"}}}`), "ws/repo#3")
+	if len(bare.MergeMethods) != 0 || bare.DefaultMergeMethod != "" {
+		t.Errorf("methods=%v default=%q", bare.MergeMethods, bare.DefaultMergeMethod)
+	}
+}
+
+func TestParseBitbucketMergeChecksState(t *testing.T) {
+	perm := `{"type":"current_user_permission_check","status":"PASSED","blocking":false}`
+	for _, tc := range []struct {
+		name, body, mergeable, state string
+		permitted                    bool
+	}{
+		{"all green", `{"values":[` + perm + `,{"type":"git_mergeability_check","status":"PASSED","reason":"clean","blocking":false}]}`, "clean", "clean", true},
+		{"conflicts", `{"values":[` + perm + `,{"type":"git_mergeability_check","status":"FAILED","reason":"conflicts","blocking":true}]}`, "conflict", "dirty", true},
+		{"restriction blocks", `{"values":[` + perm + `,{"type":"standard_merge_check","status":"FAILED","blocking":true},{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, "clean", "blocked", true},
+		{"may not merge", `{"values":[{"type":"current_user_permission_check","status":"FAILED","blocking":true},{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, "clean", "blocked", false},
+		{"unevaluated", `{"values":[` + perm + `,{"type":"git_mergeability_check","status":"UNKNOWN"}]}`, "unknown", "unknown", true},
+		{"not json", `<html>`, "unknown", "unknown", false},
+	} {
+		v := parseBitbucketMergeChecks([]byte(tc.body))
+		if v.mergeable != tc.mergeable || v.state != tc.state || v.permitted != tc.permitted {
+			t.Errorf("%s: got %+v, want %s/%s/%v", tc.name, v, tc.mergeable, tc.state, tc.permitted)
 		}
 	}
 }
