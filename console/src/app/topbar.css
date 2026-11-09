@@ -254,6 +254,14 @@
 .acct-swatch-row {
   margin-bottom: 8px;
 }
+/* In the appearance popover the row's bottom gap moves from the segment to the whole row, so the
+   dice lines up with the segment instead of stretching into the gap. */
+.acct-shuffle {
+  margin-bottom: 8px;
+}
+.acct-shuffle > .acct-theme-seg {
+  margin-bottom: 0;
+}
 /* The non-color segments (language, main-area layout, theme) get the same small heading as
    the swatch rows so it is clear what each segment is; styled to match .acct-swatch-lbl. */
 .acct-swatch-lbl,

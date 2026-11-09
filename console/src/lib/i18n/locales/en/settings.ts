@@ -69,6 +69,13 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "display.per_tenant": "Separate appearance per tenant",
   "display.per_tenant_note":
     "Remember the theme and surface colors separately for each tenant on this device and switch to them with the tenant. Off keeps the look you see now for every tenant; saved looks are kept.",
+  "display.shuffle": "Random colors",
+  "display.shuffle_note":
+    "Re-pick every surface color at random on the chosen schedule (never “Default”). The theme (dark/light) is left alone. This is kept on this device only, and every tab of this browser changes to the same colors. 🎲 re-picks them right now.",
+  "display.shuffle.reload": "On open",
+  "display.shuffle.hourly": "Hourly",
+  "display.shuffle.daily": "Daily",
+  "display.shuffle_now": "Change colors now",
   "display.cjk_font": "Japanese font",
   "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
   "display.cjk_font_note":

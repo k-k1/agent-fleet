@@ -46,6 +46,7 @@ import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
 import { publishBrowserTimeZone } from "../lib/browserTimeZone.ts";
+import { startAppearanceShuffle } from "../lib/appearanceShuffle.ts";
 import { applyTenantAppearance, getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
@@ -386,6 +387,12 @@ export function App() {
   useEffect(() => {
     if (booted) syncKindCatalogTenant();
   }, [booted, tenant]);
+
+  // Random surface colors run only after boot: before it the per-tenant snapshot is still to be
+  // applied and would overwrite the first pick.
+  useEffect(() => {
+    if (booted) return startAppearanceShuffle({ pickOnLoad: popout !== "popout" });
+  }, [booted, popout]);
 
   // Per-tenant sync: on boot completion AND on tenant switch — restore that
   // tenant's saved layout and refetch tenant-scoped data.
