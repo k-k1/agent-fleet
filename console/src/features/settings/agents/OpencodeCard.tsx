@@ -9,7 +9,9 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { Choice } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
 import { usePolling } from "../parts/usePolling.ts";
-import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
+import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow, type DeviceFlow } from "./AgentCardParts.tsx";
+import type { ProviderConn } from "../../../types/session.ts";
+import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 
 // opencode: two independent auth paths that coexist (docs/log/54) —
 //   1. opencode account: OAuth device flow through `opencode serve`'s integration
@@ -65,7 +67,7 @@ function OpencodeUsageRows() {
   // persisted: turning opencode off is not a reason to forget the route, and "own" is the
   // right landing place for a workspace switching it on for the first time — it is the only
   // value that reaches no opencode.ai service until the user asks for one.
-  const [lastRoute, setLastRoute] = useState<string>(off ? "own" : selected);
+  const [lastRoute, setLastRoute] = useState<Exclude<typeof selected, "off">>(off ? "own" : selected);
 
   return (
     <>
@@ -76,7 +78,7 @@ function OpencodeUsageRows() {
             ["off", tr("agents.oc_enabled_off")],
             ["on", tr("agents.oc_enabled_on")],
           ]}
-          onChange={(v) => setSettings({ opencodeCatalog: v === "off" ? "off" : (lastRoute as any) })}
+          onChange={(v) => setSettings({ opencodeCatalog: v === "off" ? "off" : lastRoute })}
         />
       </SettingRow>
       <p className="ps-note">{tr(off ? "agents.oc_enabled_note_off" : "agents.oc_enabled_note_on")}</p>
@@ -152,7 +154,7 @@ function OpencodeRouteFallback() {
 // Taking the restart automatically is what this replaced: it drains, and a session still
 // answering when the drain times out loses that turn. Whoever just changed a setting is the
 // one who can judge whether now is the moment, so it is offered rather than taken.
-function OpencodeRestartRow({ st, reload }: { st: any; reload: () => void }) {
+function OpencodeRestartRow({ st, reload }: { st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -190,7 +192,7 @@ function OpencodeRestartRow({ st, reload }: { st: any; reload: () => void }) {
 // a link to that page, and whatever quota information an error carried when a limit was hit.
 // The ID can be typed in or learned automatically from a failure; learning never overwrites a
 // hand-entered value.
-function OpencodeWorkspaceRow({ st, reload }: { st: any; reload: () => void }) {
+function OpencodeWorkspaceRow({ st, reload }: { st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [editing, setEditing] = useState(false);
@@ -264,10 +266,10 @@ export function OpencodeCard({
   updateAgents,
 }: {
   running: boolean;
-  st: any;
+  st: ProviderConn | undefined;
   reload: () => void;
-  agents: any;
-  updateAgents: (patch: unknown) => void;
+  agents: Partial<AgentRtkSettings> | false | null;
+  updateAgents: (patch: AgentRtkPatch) => void;
 }) {
   const tr = useT();
   const toast = useToast();
@@ -277,7 +279,7 @@ export function OpencodeCard({
   const [customEnv, setCustomEnv] = useState("");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
-  const [flow, setFlow] = useState<any>(null); // { url, flow_id, instructions, status } while a sign-in is in flight
+  const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [oauthBusy, setOauthBusy] = useState(false);
   const envs = st?.envs || [];
   const account = !!st?.oauth;
@@ -333,7 +335,7 @@ export function OpencodeCard({
       poll({
         deadlineMs: 10 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setFlow((f: any) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
+        onExpire: () => setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
         step: async () => {
           let p;
           try {
@@ -521,7 +523,7 @@ export function OpencodeCard({
       <CardSettings>
         <LaunchDefaults kind="opencode" />
         <ThinkingRow kind="opencode" />
-        {agents && agents !== false && (
+        {agents && (
           <RtkRow
             available={agents.rtk_available}
             value={agents.opencode_rtk}

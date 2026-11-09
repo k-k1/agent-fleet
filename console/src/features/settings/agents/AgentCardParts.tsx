@@ -15,6 +15,13 @@ import { SettingRow, SettingsDisclosure } from "../parts/cardSettings.tsx";
 
 export { SettingRow };
 
+/** A paste-a-code sign-in in flight (claude / agy): the page to open and the flow to complete. */
+export type LoginFlow = { url: string; flow_id: string };
+
+/** A device-code sign-in in flight: adds the status line, plus the code (`user_code`; opencode
+ *  keeps it in `code`) and opencode's `instructions` when the provider sends them. */
+export type DeviceFlow = LoginFlow & { status: string; user_code?: string; code?: string; instructions?: string };
+
 // CardSettings: the per-agent behavior-settings disclosure. Its body is the client launch
 // defaults (always usable) + any container-backed toggles the card passes.
 export function CardSettings({ children }: { children?: ReactNode }) {

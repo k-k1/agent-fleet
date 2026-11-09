@@ -1,6 +1,7 @@
 import type { FormEvent } from "react";
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { apiJSON, errText } from "../../../core/api/client.ts";
+import { getEgressAllowlist, getEgressStats, isOk, type EgressAllowEntry, type EgressStats } from "../api.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { MAX_TCP_RANGE, isTcpEntry, parseTcpParts, tcpEntryParts } from "./egressTcp.ts";
@@ -29,8 +30,8 @@ function EntryName({ entry }: { entry: string }) {
 
 export function EgressView() {
   const tr = useT();
-  const [data, setData] = useState<any | null>(null); // { egress, mode, enforce }
-  const [list, setList] = useState<any[] | null>(null); // allowlist entries
+  const [data, setData] = useState<EgressStats | null>(null);
+  const [list, setList] = useState<EgressAllowEntry[] | null>(null);
   // The CP's own hosts: the server always admits them, outside the editable list.
   const [builtin, setBuiltin] = useState<string[]>([]);
   const [err, setErr] = useState("");
@@ -48,16 +49,17 @@ export function EgressView() {
     setErr("");
     try {
       const [d, al] = await Promise.all([
-        api("api/admin/egress?days=" + days),
-        api("api/admin/egress/allowlist"),
+        getEgressStats(days),
+        getEgressAllowlist(),
       ]);
-      if (d?.error) {
-        setErr(errText(d.error));
+      if (!isOk(d)) {
+        setErr(errText(d?.error));
         return;
       }
       setData(d);
-      setList(al?.allowlist || []);
-      setBuiltin(al?.builtin || []);
+      const alOk = isOk(al) ? al : null;
+      setList(alOk?.allowlist || []);
+      setBuiltin(alOk?.builtin || []);
     } catch {
       setErr(tr("admin.load_error"));
     }
@@ -118,8 +120,8 @@ export function EgressView() {
   };
 
   const enforce = !!data?.enforce;
-  const proposed = (list || []).filter((e: any) => e.state === "proposed");
-  const active = (list || []).filter((e: any) => e.state === "active");
+  const proposed = (list || []).filter((e) => e.state === "proposed");
+  const active = (list || []).filter((e) => e.state === "active");
   const stats = data?.egress || [];
 
   return (
@@ -165,7 +167,7 @@ export function EgressView() {
       {proposed.length > 0 && (
         <section className="admin-panel">
           <h4>{tr("admin.egress_proposed")}</h4>
-          {proposed.map((e: any) => (
+          {proposed.map((e) => (
             <Fragment key={e.id}>
             <div className="adm-allow-row">
               <EntryName entry={e.entry} />
@@ -255,7 +257,7 @@ export function EgressView() {
         {active.length === 0 ? (
           <p className="muted">{tr("admin.egress_no_entries")}</p>
         ) : (
-          active.map((e: any) => (
+          active.map((e) => (
             <div key={e.id} className={"adm-allow-row" + (e.invalid_reason ? " adm-allow-invalid" : "")}>
               <EntryName entry={e.entry} />
               {e.invalid_reason ? (
@@ -291,7 +293,7 @@ export function EgressView() {
           <p className="muted">{tr("admin.egress_no_records")}</p>
         ) : (
           <div className="adm-egress">
-            {stats.map((e: any) => (
+            {stats.map((e) => (
               <div key={e.host} className="adm-egress-row">
                 <span className="as-name mono" title={e.host}>{e.host}</span>
                 <span className="egress-allow">{tr("admin.egress_allowed", { n: e.allowed })}</span>

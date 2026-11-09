@@ -5,7 +5,9 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
 import { useReauth } from "../parts/useReauth.ts";
-import { CardSettings, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
+import { CardSettings, ConnPaused, LaunchDefaults, RtkRow, type LoginFlow } from "./AgentCardParts.tsx";
+import type { ProviderConn } from "../../../types/session.ts";
+import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 
 export function AgyCard({
   running,
@@ -15,14 +17,14 @@ export function AgyCard({
   updateAgents,
 }: {
   running: boolean;
-  st: any;
+  st: ProviderConn | undefined;
   reload: () => void;
-  agents: any;
-  updateAgents: (patch: unknown) => void;
+  agents: Partial<AgentRtkSettings> | false | null;
+  updateAgents: (patch: AgentRtkPatch) => void;
 }) {
   const tr = useT();
   const toast = useToast();
-  const [flow, setFlow] = useState<any>(null); // { url, flow_id }
+  const [flow, setFlow] = useState<LoginFlow | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   // Fixed to "oauth" while M1; the selector ships disabled so the M2 wiring
@@ -52,7 +54,7 @@ export function AgyCard({
     if (!c) return;
     setBusy(true);
     try {
-      const r = await apiJSON("api/connections/agy/complete", "POST", { flow_id: flow.flow_id, code: c });
+      const r = await apiJSON("api/connections/agy/complete", "POST", { flow_id: flow!.flow_id, code: c });
       if (r && r.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(r.error) }));
         return;
@@ -168,7 +170,7 @@ export function AgyCard({
           same block shape as the Codex / opencode cards. */}
       <CardSettings>
         <LaunchDefaults kind="agy" />
-        {agents && agents !== false && (
+        {agents && (
           <>
             <RtkRow
               available={agents.rtk_available}

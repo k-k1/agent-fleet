@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api, errDetail, rawJSON } from "../../../core/api/client.ts";
+import { getWorkspaceSizing, isOk } from "../api.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 // Cloud cost in the member detail (docs/log/67 §67.15). On a deployment without billing the
@@ -61,9 +62,9 @@ export function MembersPanel({
   const [sizing, setSizing] = useState<WsSizing>(WS_SIZING_FALLBACK);
   useEffect(() => {
     let live = true;
-    api("api/admin/workspace-sizing")
+    getWorkspaceSizing()
       .then((d) => {
-        if (live && d && !(d as any).error && d.runtime) setSizing(d);
+        if (live && isOk(d) && d.runtime) setSizing(d);
       })
       .catch(() => {
         /* keep the fallback; the roster then just shows the raw numbers */

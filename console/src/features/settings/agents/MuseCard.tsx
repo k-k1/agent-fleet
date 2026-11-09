@@ -6,7 +6,9 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
 import { useReauth } from "../parts/useReauth.ts";
 import { usePolling } from "../parts/usePolling.ts";
-import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
+import { CardSettings, ConnPaused, LaunchDefaults, type DeviceFlow } from "./AgentCardParts.tsx";
+import type { ProviderConn } from "../../../types/session.ts";
+import { getMuseInstall, isOk, type CliInstallStatus } from "../api.ts";
 
 // Muse Code (ADR 0095). Three states, and the order matters because each is a precondition of
 // the next: the proprietary binary is not in the image, so a fresh workspace offers an install
@@ -33,11 +35,11 @@ import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
 // The launch defaults block carries the model and the reasoning effort only. Its permission
 // choice is deliberately absent (approvals cannot fire — registry.ts), and muse has no plan
 // mode, so those two rows would be controls with nothing behind them.
-export function MuseCard({ running, st, reload }: { running: boolean; st: any; reload: () => void }) {
+export function MuseCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
-  const [flow, setFlow] = useState<any>(null); // { url, user_code, flow_id, status } while signing in
+  const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [installing, setInstalling] = useState<null | "installing" | "error">(null);
   const [mode, setMode] = useState<"idle" | "key">("idle");
   const [key, setKey] = useState("");
@@ -49,13 +51,14 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
   // { installed, version, pin, updateAvailable } — the version facts behind the update
   // affordance. muse is managed-only, so unlike kiro there is no launch guard to re-pin
   // implicitly: this card is the ONLY place a pin bump or a self-installed shadow gets repaired.
-  const [inst, setInst] = useState<any>(null);
+  const [inst, setInst] = useState<CliInstallStatus | null>(null);
   const unsupported = st?.supported === false; // the binary is not installed yet
 
   const loadInstall = useCallback(async () => {
     if (!running) return;
     try {
-      setInst(await api("api/connections/muse/install"));
+      const r = await getMuseInstall();
+      setInst(isOk(r) ? r : null);
     } catch {
       /* stopped workspace / transient 502 — the card just shows no update notice */
     }
@@ -122,7 +125,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setFlow((f: any) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
+        onExpire: () => setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
         step: async () => {
           let p;
           try {
@@ -139,7 +142,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
           // approval. Saying so ends the wait instead of spinning to the 15-minute deadline for
           // something that can no longer happen (the Agent reports it; see auth.go's HandlePoll).
           if (p && p.failed) {
-            setFlow((f: any) => (f ? { ...f, status: tr("git.oauth_expired") } : f));
+            setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f));
             return { stop: true };
           }
           return { stop: false, nextMs: 2500 };

@@ -7,7 +7,9 @@ import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { OnOff } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
-import { SettingRow, CardSettings, ThinkingRow, StreamRepliesRow, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
+import { SettingRow, CardSettings, ThinkingRow, StreamRepliesRow, ConnPaused, LaunchDefaults, RtkRow, type LoginFlow } from "./AgentCardParts.tsx";
+import type { ProviderConn } from "../../../types/session.ts";
+import { type ClaudeSettings, type ClaudeSettingsPatch } from "../api.ts";
 
 // Claude: OAuth connect (start → approve in a new tab → paste code → complete), plus
 // its behavior settings (Remote Control / notifications / idle compaction / RTK) once connected.
@@ -19,15 +21,15 @@ export function ClaudeCard({
   updateClaude,
 }: {
   running: boolean;
-  st: any;
+  st: ProviderConn | undefined;
   reload: () => void;
-  claude: any;
-  updateClaude: (patch: unknown) => void;
+  claude: Partial<ClaudeSettings> | null;
+  updateClaude: (patch: ClaudeSettingsPatch) => void;
 }) {
   const tr = useT();
   const s = useSettings();
   const toast = useToast();
-  const [flow, setFlow] = useState<any>(null); // { url, flow_id }
+  const [flow, setFlow] = useState<LoginFlow | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -54,7 +56,7 @@ export function ClaudeCard({
     if (!c) return;
     setBusy(true);
     try {
-      const r = await apiJSON("api/connections/claude/complete", "POST", { flow_id: flow.flow_id, code: c });
+      const r = await apiJSON("api/connections/claude/complete", "POST", { flow_id: flow!.flow_id, code: c });
       if (r && r.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(r.error) }));
         return;

@@ -16,6 +16,8 @@
 //	                     delete.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errText, type ApiError } from "../../../core/api/client.ts";
+import { getWorkspaceSizing, isOk, type MemberStats, type Reply } from "../api.ts";
+import type { Session } from "../../../types/session.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -57,8 +59,8 @@ export function MemberView({
 }) {
   const tr = useT();
   const toast = useToast();
-  const [stats, setStats] = useState<any>(null);
-  const [sessions, setSessions] = useState<any[] | null>(null);
+  const [stats, setStats] = useState<MemberStats | null>(null);
+  const [sessions, setSessions] = useState<(Session & { started?: string })[] | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClean, setConfirmClean] = useState(false);
   const [confirmRotate, setConfirmRotate] = useState(false);
@@ -173,8 +175,8 @@ export function MemberView({
   const poll = useCallback(async () => {
     const readStats = async () => {
       try {
-        const s = await api(`${base}/stats`);
-        const st = s && !s.error ? s : { running: false };
+        const s: Reply<MemberStats> = await api(`${base}/stats`);
+        const st: MemberStats = isOk(s) ? s : { running: false };
         const stSer = JSON.stringify(st);
         if (stSer !== statsSer.current) {
           statsSer.current = stSer;
@@ -205,9 +207,9 @@ export function MemberView({
   // member rather than on the 4s poll.
   useEffect(() => {
     let live = true;
-    api("api/admin/workspace-sizing")
-      .then((d: WsSizing) => {
-        if (live && d && !(d as any).error && d.runtime) setSizing(d);
+    getWorkspaceSizing()
+      .then((d) => {
+        if (live && isOk(d) && d.runtime) setSizing(d);
       })
       .catch(() => {
         /* keep the docker/Fargate description; the editor still works */
@@ -233,7 +235,7 @@ export function MemberView({
   const running = stats?.running;
   // Running per the runtime, but the Agent has not answered for minutes (CP dead-man check, #2518).
   const agentSilent = !!stats?.agent_silent;
-  const memRatio = stats?.mem_max ? stats.mem_used / stats.mem_max : null;
+  const memRatio = stats?.mem_max ? stats.mem_used! / stats.mem_max : null;
   // The disk denominator prefers the measured value (disk_total = the capacity of the FS the
   // home sits on) and falls back to the configured cap (disk_quota). On ecs-ec2 disk_gb only
   // takes effect at creation, so if the number alone is changed later, using the configured
@@ -780,7 +782,7 @@ export function MemberView({
           <p className="muted">{tr("admin.no_sessions")}</p>
         ) : (
           <div className="admin-sessions">
-            {sessions.map((s: any) => {
+            {sessions.map((s) => {
               const st = stateInfo(s);
               return (
                 <div key={s.name} className="adm-session">

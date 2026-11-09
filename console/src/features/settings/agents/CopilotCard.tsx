@@ -3,6 +3,8 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill } from "../parts/providerCard.tsx";
 import { useSettingsUI } from "../store.ts";
 import { CardSettings, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
+import type { ProviderConn } from "../../../types/session.ts";
+import { type AgentRtkPatch, type AgentRtkSettings } from "../api.ts";
 
 // agy (Antigravity CLI, docs/log/32): claude-style OAuth connect (start → approve in a
 // new tab → paste code → complete) with an auth-method selector (M1 offers Google
@@ -22,9 +24,9 @@ export function CopilotCard({
   updateAgents,
 }: {
   running: boolean;
-  st: any;
-  agents: any;
-  updateAgents: (patch: unknown) => void;
+  st: ProviderConn | undefined;
+  agents: Partial<AgentRtkSettings> | false | null;
+  updateAgents: (patch: AgentRtkPatch) => void;
 }) {
   const tr = useT();
   const unsupported = st?.supported === false;
@@ -58,7 +60,7 @@ export function CopilotCard({
       )}
       <CardSettings>
         <LaunchDefaults kind="copilot" />
-        {agents && agents !== false && (
+        {agents && (
           <>
             <RtkRow
               available={agents.rtk_available}

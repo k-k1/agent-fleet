@@ -6,7 +6,8 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
 import { useReauth } from "../parts/useReauth.ts";
 import { usePolling } from "../parts/usePolling.ts";
-import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
+import { CardSettings, ConnPaused, LaunchDefaults, type DeviceFlow } from "./AgentCardParts.tsx";
+import type { ProviderConn } from "../../../types/session.ts";
 
 // Cursor: dedicated login flow (docs/log/40). `NO_OPEN_BROWSER=1 cursor-agent login`
 // prints an authorize URL and self-polls until the user approves in a browser, then
@@ -15,11 +16,11 @@ import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
 // login-only; a manual CURSOR_API_KEY registration path is deferred to Track D
 // (cursor has no key-persistence command and injecting it into the TUI pane would
 // leak it into `ps`). No RTK toggle yet — cursor's rtk hook seam is Track D.
-export function CursorCard({ running, st, reload }: { running: boolean; st: any; reload: () => void }) {
+export function CursorCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
-  const [flow, setFlow] = useState<any>(null); // { url, flow_id, status } while a login is in flight
+  const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [busy, setBusy] = useState(false);
   const unsupported = st?.supported === false;
 
@@ -35,7 +36,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
       poll({
         deadlineMs: 10 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setFlow((f: any) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
+        onExpire: () => setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
         step: async () => {
           let p;
           try {
