@@ -399,6 +399,10 @@ type MCPTenantClient struct {
 type MCPTargets struct {
 	Assistant bool `json:"assistant"` // selectable as an assistant integration
 	Session   bool `json:"session"`   // materialized into the agent CLIs' native config
+	// Watch makes the server a source for the watch engine (ADR 0133 §8): the engine, not a
+	// session, calls its watch_resolve and watch_poll tools. Independent of Session, and honoured
+	// only for a member's own (user-origin) definition while the tenant switch is on.
+	Watch bool `json:"watch,omitempty"`
 }
 
 // MCPOAuthGrant is one member's OAuth sign-in to a registered MCP server (ADR 0119 decision 5),

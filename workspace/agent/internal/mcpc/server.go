@@ -46,11 +46,21 @@ type Server struct {
 // Close, never by ctx (see stdio.go's dialStdio comment: a per-call deadline must never
 // take a still-in-use connection down).
 func Connect(ctx context.Context, def mcpreg.ServerDef) (*Server, error) {
+	return connect(ctx, def, false)
+}
+
+// ConnectNarrow is Connect for the watch engine: a stdio child gets mcpreg.StdioEnv(def), not
+// the Agent's environment.
+func ConnectNarrow(ctx context.Context, def mcpreg.ServerDef) (*Server, error) {
+	return connect(ctx, def, true)
+}
+
+func connect(ctx context.Context, def mcpreg.ServerDef, narrow bool) (*Server, error) {
 	var c conn
 	var err error
 	switch def.Transport {
 	case mcpreg.TransportStdio:
-		c, err = dialStdio(def)
+		c, err = dialStdio(def, narrow)
 	case mcpreg.TransportHTTP:
 		c, err = dialHTTP(def)
 	default:
