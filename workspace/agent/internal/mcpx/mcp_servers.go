@@ -149,6 +149,9 @@ func HandleServerEnabled(w http.ResponseWriter, r *http.Request) {
 	HandleServersGet(w, r)
 }
 
+// probeServer is mcpreg.Probe, replaceable by tests.
+var probeServer = mcpreg.Probe
+
 // HandleServerTest runs the handshake (docs/log/48 §10). The body is a definition:
 // with an id it is resolved against the stored one first, so masked secrets are
 // filled in — which lets the Console test a saved server AND an unsaved edit through
@@ -163,22 +166,31 @@ func HandleServerTest(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
+	// The origin comes from the store alone, never from the request: a built-in is tested exactly
+	// as stored, and anything else is a member's server whatever the body says. Otherwise a body
+	// claiming origin "builtin" could have an arbitrary command started with a built-in's
+	// environment (ADR 0133 §8).
+	stored, found := mcpreg.ServerDef{}, false
 	if in.ID != "" {
-		stored, err := mcpreg.Get(in.ID)
+		var err error
+		stored, err = mcpreg.Get(in.ID)
 		if err != nil && !errors.Is(err, mcpreg.ErrNotFound) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 			return
 		}
-		if err == nil {
-			if in.Transport == "" { // testing the stored definition as-is
-				in = stored
-			} else {
-				in.Origin = stored.Origin
-				in = mcpreg.MergeSecrets(in, stored)
-			}
-		}
+		found = err == nil
 	}
-	if in.Origin == "" {
+	switch {
+	case found && stored.Origin == mcpreg.OriginBuiltin:
+		in = stored
+	case found:
+		if in.Transport == "" { // testing the stored definition as-is
+			in = stored
+		} else {
+			in.Origin = stored.Origin
+			in = mcpreg.MergeSecrets(in, stored)
+		}
+	default:
 		in.Origin = mcpreg.OriginUser
 	}
 	// Enabled is irrelevant to a probe — the point is to test before turning it on.
@@ -190,7 +202,7 @@ func HandleServerTest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	httpx.WriteJSON(w, http.StatusOK, mcpreg.Probe(ctx, probe))
+	httpx.WriteJSON(w, http.StatusOK, probeServer(ctx, probe))
 }
 
 func writeMCPErr(w http.ResponseWriter, err error) {

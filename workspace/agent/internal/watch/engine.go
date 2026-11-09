@@ -92,6 +92,10 @@ type Engine struct {
 	now     func() time.Time
 	// pollTimeout bounds one Poll.
 	pollTimeout time.Duration
+	// Dynamic finds a source that is not built in, by kind (the member-added MCP sources of ADR
+	// 0133 §8, which come and go with the member's definitions). Built-in kinds win; it is
+	// consulted for every other kind and must be safe for concurrent use.
+	Dynamic func(kind string) (Source, bool)
 }
 
 // New builds an engine over the given sources.
@@ -105,8 +109,13 @@ func New(store Store, sink Sink, sources ...Source) *Engine {
 
 // Source returns the adapter of kind.
 func (e *Engine) Source(kind string) (Source, bool) {
-	s, ok := e.sources[kind]
-	return s, ok
+	if s, ok := e.sources[kind]; ok {
+		return s, true
+	}
+	if e.Dynamic != nil {
+		return e.Dynamic(kind)
+	}
+	return nil, false
 }
 
 func (e *Engine) load() {
@@ -174,14 +183,18 @@ const maxRefLen = 300
 // Subscribe resolves the reference, checks the limits and records the subscription. The
 // subject is read on the next tick, so a condition that already holds is delivered then.
 func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error) {
-	src, ok := e.sources[r.Source]
+	src, ok := e.Source(r.Source)
 	if !ok {
 		return Subscription{}, &ErrRefused{fmt.Sprintf("unknown source %q", r.Source)}
 	}
 	if len(r.Ref) > maxRefLen {
 		return Subscription{}, &ErrRefused{fmt.Sprintf("ref is longer than %d bytes", maxRefLen)}
 	}
-	if err := checkTypes(r.Types, src.Types()); err != nil {
+	if tc, ok := src.(TypeChecker); ok {
+		if err := tc.CheckTypes(r.Types); err != nil {
+			return Subscription{}, err
+		}
+	} else if err := checkTypes(r.Types, src.Types()); err != nil {
 		return Subscription{}, err
 	}
 	until := r.Until
@@ -211,7 +224,7 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if err != nil {
 		return Subscription{}, err
 	}
-	res, err := src.Resolve(ctx, r.Ref, r.DefaultRepo)
+	res, err := src.Resolve(WithSubscriber(ctx, r.maker()), r.Ref, r.DefaultRepo)
 	if err != nil {
 		return Subscription{}, err
 	}
@@ -394,12 +407,21 @@ func (e *Engine) Tick(ctx context.Context) {
 		err    error
 	}
 	var results []polled
+	batches := map[string][]dueSubject{}
+	var batchOrder []string
 	for _, d := range due {
 		if ctx.Err() != nil {
 			break // the rest stay due for the next tick
 		}
-		src, ok := e.sources[d.source]
+		src, ok := e.Source(d.source)
 		if !ok {
+			continue
+		}
+		if _, ok := src.(BatchPoller); ok {
+			if _, seen := batches[d.source]; !seen {
+				batchOrder = append(batchOrder, d.source)
+			}
+			batches[d.source] = append(batches[d.source], d)
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, e.pollTimeout)
@@ -409,6 +431,42 @@ func (e *Engine) Tick(ctx context.Context) {
 			break // cut off by the tick's deadline, not the provider's fault: no backoff
 		}
 		results = append(results, polled{d.id, evs, cur, hint, err})
+	}
+	// A batch source reads up to MaxBatch subjects in one call, least recently read first (the
+	// order of due).
+	for _, kind := range batchOrder {
+		src, ok := e.Source(kind)
+		if !ok {
+			continue
+		}
+		bp := src.(BatchPoller)
+		items := batches[kind]
+		for len(items) > 0 && ctx.Err() == nil {
+			n := min(len(items), max(bp.MaxBatch(), 1))
+			chunk := items[:n]
+			items = items[n:]
+			req := make([]PollItem, len(chunk))
+			for i, d := range chunk {
+				req[i] = PollItem{Subject: d.id, Cursor: d.cursor, Want: d.want}
+			}
+			pctx, cancel := context.WithTimeout(ctx, e.pollTimeout)
+			got := bp.PollBatch(pctx, req)
+			cancel()
+			if ctx.Err() != nil {
+				break
+			}
+			byID := map[SubjectID]PollResult{}
+			for _, r := range got {
+				byID[r.Subject] = r // a result for a subject that was not asked is never looked up
+			}
+			for _, d := range chunk {
+				r, ok := byID[d.id]
+				if !ok {
+					r = PollResult{Subject: d.id, Err: errors.New("the source did not answer for this subject")}
+				}
+				results = append(results, polled{d.id, r.Events, r.Cursor, r.Hint, r.Err})
+			}
+		}
 	}
 
 	e.mu.Lock()
@@ -740,6 +798,13 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 		src, ok := srcOf[id]
 		if !ok || now.Before(ss.NextPoll) {
 			continue
+		}
+		if s, ok := e.Source(src); ok {
+			// A source may bound how often a subject is read whatever its hint, a restart and a
+			// new watch on the subject included (LastPoll is on disk).
+			if mi, ok := s.(MinIntervaler); ok && !ss.LastPoll.IsZero() && now.Before(ss.LastPoll.Add(mi.MinPollInterval())) {
+				continue
+			}
 		}
 		out = append(out, dueSubject{id, src, ss.Cursor, want[id]})
 	}

@@ -90,6 +90,7 @@ func watchSchema() map[string]any {
 	return map[string]any{
 		"name": mcpToolWatch,
 		"description": "Agent Fleet: get a notice in this session when a GitHub or Bitbucket pull request changes, instead of polling it yourself (no `gh pr checks --watch` in the background). " +
+			"source ext.<name> watches through an MCP server of yours that is marked as a watch source: ref is one line of printable ASCII (200 characters at most) that the server understands, and the types are that server's own, ext.<name>.* (the server's text arrives as quoted data). " +
 			"The notice arrives as your next input once you are idle, even after a restart; a stopped session is started for it. " +
 			"Types: pr.checks.completed, pr.checks.failed, pr.conflict, pr.mergeable, pr.ready, pr.merged, pr.closed, pr.review.changes_requested, pr.review.threads_unresolved (GitHub only), or a prefix like pr.checks.*. source bitbucket for a Bitbucket PR. " +
 			"notify parent sends the notices to the session that started you instead; that watch then belongs to it. " +
@@ -97,11 +98,11 @@ func watchSchema() map[string]any {
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
-				"ref":              map[string]any{"type": "string", "description": "owner/repo#45, #45 in your own repository, or the PR's URL"},
+				"ref":              map[string]any{"type": "string", "description": "owner/repo#45, #45 in your own repository, or the PR's URL; for source ext.<name>, whatever that server takes"},
 				"types":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "event types to be told about"},
 				"until":            map[string]any{"type": "string", "enum": []string{"first", "deadline"}},
 				"expires_in_hours": map[string]any{"type": "integer", "minimum": 1, "maximum": 720},
-				"source":           map[string]any{"type": "string", "enum": []string{"github", "bitbucket"}, "description": "default github"},
+				"source":           map[string]any{"type": "string", "description": "github (default), bitbucket, or ext.<name> for an MCP server of yours that is marked as a watch source (its types start with ext.<name>.)"},
 				"notify":           map[string]any{"type": "string", "enum": []string{"self", "parent"}, "description": "default self"},
 			},
 			"required": []string{"ref", "types"},
