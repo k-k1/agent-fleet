@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memconsol"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
@@ -337,6 +339,10 @@ func serve() {
 	// The Agent memory switch's import / write-back of claude's native memory (#1972). Level
 	// triggered: starting it is what resumes a run a restart interrupted.
 	memoryx.AutoSyncStart()
+	// The memory consolidator (ADR 0130 decisions 6 and 7): off unless the member switched it on;
+	// when on, it looks while the workspace is idle and only queues proposals for the member.
+	memconsol.Configure(memconsol.Production())
+	memconsol.Start(context.Background())
 	// The retired memory review's pending queue is exported once (ADR 0130 decision 2) and the
 	// review's state removed. A failure leaves the queue where it is and is retried next start.
 	if err := memreview.MigrateQueue(); err != nil {

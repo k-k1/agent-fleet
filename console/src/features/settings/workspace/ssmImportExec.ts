@@ -11,9 +11,10 @@
 //     same-named row the plan did not mean.
 //   - A request that never came back (network) leaves its row "unknown" and stops the run: the
 //     row may exist, and the next import's re-read of the lists is what tells.
-import { api, rawJSON } from "../../../core/api/client.ts";
+import { rawJSON } from "../../../core/api/client.ts";
 import type { ExistingSignIn } from "./awsConfigImport.ts";
 import type { SsmPlan } from "./settingsBundle.ts";
+import { listSsmHosts, listSsmProfiles, listSsmSignIns, type SsmHost, type SsmProfile } from "./ssmApi.ts";
 
 export type RowOutcome = "created" | "failed" | "unknown" | "skipped_source" | "not_run";
 
@@ -26,9 +27,9 @@ export interface ExecRow {
 }
 
 /** The member's current profiles and hosts, or null when either could not be read. */
-export async function loadSsmLists(): Promise<{ profiles: any[]; hosts: any[] } | null> {
+export async function loadSsmLists(): Promise<{ profiles: SsmProfile[]; hosts: SsmHost[] } | null> {
   try {
-    const [profiles, hosts] = await Promise.all([api("api/ssm/profiles"), api("api/ssm/hosts")]);
+    const [profiles, hosts] = await Promise.all([listSsmProfiles(), listSsmHosts()]);
     if (!Array.isArray(profiles) || !Array.isArray(hosts)) return null;
     return { profiles, hosts };
   } catch {
@@ -40,7 +41,7 @@ export async function loadSsmLists(): Promise<{ profiles: any[]; hosts: any[] } 
  *  answers 404, a failure answers an error body): the import then proposes no sign-in. */
 export async function loadSignIns(): Promise<ExistingSignIn[] | null> {
   try {
-    const d = await api("api/ssm/sign-ins");
+    const d = await listSsmSignIns();
     if (!Array.isArray(d)) return null;
     return d
       .filter((x) => typeof x?.name === "string")
@@ -52,7 +53,7 @@ export async function loadSignIns(): Promise<ExistingSignIn[] | null> {
 
 export async function executeSsmPlan(
   plan: SsmPlan,
-  curProfiles: any[],
+  curProfiles: Pick<SsmProfile, "id" | "label" | "kind">[],
   opts: { cancelled?: () => boolean; onProgress?: (done: number, total: number) => void } = {},
 ): Promise<ExecRow[]> {
   const out: ExecRow[] = [];

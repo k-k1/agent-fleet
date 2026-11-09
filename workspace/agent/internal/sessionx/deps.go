@@ -45,14 +45,14 @@ type Deps struct {
 	FirstNonEmpty    func(vals ...string) string
 	SplitFrontmatter func(s string) (map[string]string, string)
 
-	// --- Files (fs.go) ---
+	// --- Files (internal/fsx/fs.go) ---
 	//
 	// BrowseRoot is the root that attachments and pasted images are stored under.
 	// MaxUploadBytes is the size cap, and an unwired 0 means "a cap of 0 bytes" = reject
 	// everything, so the zero value is not allowed.
 	BrowseRoot     func() string
 	MaxUploadBytes func() int64
-	// ReadRoots are the roots the file reader serves from, browse root first (fs.go
+	// ReadRoots are the roots the file reader serves from, browse root first (internal/fsx/fs.go
 	// allowedReadRoots). The changed-files list spells its FileView paths against them.
 	ReadRoots func() []string
 
@@ -69,20 +69,18 @@ type Deps struct {
 	// count rides the session list because that is what the CP's reaper reads.
 	ImageJobsActive func() int
 
-	// --- Closing the usage ledger (usage_fold.go) ---
+	// --- Closing the usage ledger (internal/usagesvc/usage_fold.go) ---
 	//
-	// Stopping or deleting a session closes its usage ledger. usage_fold.go stays in main:
-	// the closing is driven by `usage_ledger_test.go` / `usage_dedup_test.go`, whose
-	// subject is main's usage_ledger.go, and pulling it into the family would move the
-	// ledger's tests away from the ledger. gitx takes the same function across its own
+	// Stopping or deleting a session closes its usage ledger. The fold lives in usagesvc, which
+	// sits above sessionx, so main wires it in. gitx takes the same function across its own
 	// seam (gitx/deps.go).
 	FinalizeSessionUsage  func(m session.Meta)
 	MaybeFoldSessionUsage func()
 
-	// --- Spend budget (usage_spend.go) ---
+	// --- Spend budget (internal/usagesvc/usage_spend.go) ---
 	//
 	// SessionSpend prices a session's own transcript for its budget (#1054). The price table
-	// and the turn fold are main's (usage_price.go / usage_fold.go), and a second copy here
+	// and the turn fold are usagesvc's (usage_price.go / usage_fold.go), and a second copy here
 	// would make the budget and the usage view disagree about the same turn.
 	SessionSpend func(m session.Meta) session.Spend
 

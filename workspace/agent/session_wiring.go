@@ -17,10 +17,12 @@ package main
 // and the raw developer message is exposed — both fail quietly.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routegw"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 )
 
 func init() { sessionx.Configure(sessionDeps()) }
@@ -39,17 +41,17 @@ func sessionDeps() sessionx.Deps {
 		FirstNonEmpty:    firstNonEmpty,
 		SplitFrontmatter: splitFrontmatter,
 
-		BrowseRoot:     browseRoot,
-		MaxUploadBytes: maxUploadBytes,
-		ReadRoots:      allowedReadRoots,
+		BrowseRoot:     fsx.BrowseRoot,
+		MaxUploadBytes: fsx.MaxUploadBytes,
+		ReadRoots:      fsx.AllowedReadRoots,
 
 		IsSvnRepo:       svnx.IsRepo,
 		RepoJobsRunning: repoJobsRunning,
 		ImageJobsActive: imagegen.ActiveJobs,
 
-		FinalizeSessionUsage:  finalizeSessionUsage,
-		MaybeFoldSessionUsage: maybeFoldSessionUsage,
-		SessionSpend:          sessionSpend,
+		FinalizeSessionUsage:  usagesvc.FinalizeSessionUsage,
+		MaybeFoldSessionUsage: usagesvc.MaybeFoldSessionUsage,
+		SessionSpend:          usagesvc.SessionSpend,
 
 		RemoveTerminalHistory: removeTerminalHistory,
 		TrashSession:          trashSession,

@@ -6,7 +6,7 @@
 // generated-images folder with 70-250 pictures — instead of a synthetic fixture. The point is to
 // drive the actual grid, actual card count and actual `<img>` mount timing the browser sees.
 //
-// The one thing this stub does NOT do is decode real pixels: `fs_thumb.go`'s cost is already
+// The one thing this stub does NOT do is decode real pixels: `internal/fsx/fs_thumb.go`'s cost is already
 // measured (95ms cold / 44µs cached, thumbSem=4) and is not what is under test here. Instead the
 // thumbnail route REPRODUCES THAT SHAPE — a 4-wide concurrency gate, ~95ms on a cold key, ~0 on a
 // warm one — and answers with a small generated PNG (same swatchPNG idea as scripts/shots). What
@@ -98,7 +98,7 @@ function crc32(buf) {
   return c ^ -1;
 }
 
-// ---- thumbnail concurrency + latency shape (mirrors fs_thumb.go, measured separately) --------
+// ---- thumbnail concurrency + latency shape (mirrors internal/fsx/fs_thumb.go, measured separately) --------
 const THUMB_SEM = 4; // thumbSem
 const COLD_MS = 95; // measured cold decode
 const WARM_MS = 0.05; // measured cache hit (44µs), rounded up for setTimeout granularity
@@ -145,7 +145,7 @@ function warmDir(fullDir, edge, names) {
 const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
 
 // What `peek=<n>` answers for one subfolder: how many pictures, and the newest n. Same shape
-// as workspace/agent/fs.go's peekDir — the point of having it here is that the folder CARDS
+// as workspace/agent/internal/fsx/fs.go's peekDir — the point of having it here is that the folder CARDS
 // (cover + count) are then real in the harness, not just the grid inside.
 function peekInto(dir, n) {
   let ents;

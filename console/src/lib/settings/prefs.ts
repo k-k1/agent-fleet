@@ -229,6 +229,12 @@ const PREFS = {
   // client on another machine, whose model then sees the memory text. Default "off", like the
   // Agent's own missing-key answer (uiprefs.ExternalMemory).
   externalMemory: agentDefaulted<ExternalMemoryMode>("off", { normalize: normalizeExternalMemory }), // opt-in (#1988) — memory text leaves the workspace for an outside client's model
+  // The memory consolidator (ADR 0130 decisions 6 and 7): while the workspace is idle it asks a model for small patches
+  // and queues them as proposals; nothing is applied without the member's approval. Default false, like the Agent's own
+  // missing-key answer (uiprefs.MemoryConsolidation); it also needs agentMemory on. There is no control for it yet (the
+  // proposals screen and the toggle are the next change); this is the key the Agent reads, kept so a save of the other
+  // settings does not drop it.
+  memoryConsolidation: agentDefaulted(false, { normalize: isTrue }), // opt-in (ADR 0130) — memory text goes to a model, and it spends tokens unattended
   // Muse Code's contributor mode (#2535, Settings > Agents > Muse Code): on, Meta may use the
   // conversations to improve its product. Default false, like the Agent's own missing-key answer
   // (uiprefs.MuseContributorMode). A muse session records the value it was created with and keeps

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -32,15 +33,15 @@ const recommendCatalogFixture = `{
 // The comparable price is input + output/10, on the kind's own billing route; a model upstream
 // marks deprecated is priced for the ledger but never offered to the recommendation.
 func TestModelListPrice(t *testing.T) {
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, recommendCatalogFixture)
+	usagesvc.UseIsolatedUsageDir(t)
+	usagesvc.UseUsageCatalog(t, recommendCatalogFixture)
 	if p, ok := modelListPrice(session.KindCodex, "gpt-6-luna"); !ok || math.Abs(p-0.15) > 1e-9 {
 		t.Fatalf("gpt-6-luna = %v %v, want 0.15", p, ok)
 	}
 	if _, ok := modelListPrice(session.KindCodex, "gpt-4o-mini"); ok {
 		t.Fatal("a deprecated model was offered to the recommendation")
 	}
-	if _, _, ok := usageCatalogLookup(session.KindCodex, "gpt-4o-mini"); !ok {
+	if _, _, ok := usagesvc.CatalogLookup(session.KindCodex, "gpt-4o-mini"); !ok {
 		t.Fatal("a deprecated model lost its ledger price")
 	}
 	if _, ok := modelListPrice(session.KindCodex, "gpt-unknown"); ok {
@@ -65,8 +66,8 @@ func TestRecommendPriceIDAgy(t *testing.T) {
 	if got := recommendPriceID(session.KindCodex, "gpt-6-luna-low"); got != "gpt-6-luna-low" {
 		t.Errorf("a non-agy id was rewritten: %q", got)
 	}
-	useIsolatedUsageDir(t)
-	useUsageCatalog(t, recommendCatalogFixture)
+	usagesvc.UseIsolatedUsageDir(t)
+	usagesvc.UseUsageCatalog(t, recommendCatalogFixture)
 	if _, ok := modelListPrice(session.KindAgy, "Gemini 3.8 Flash (Low)"); !ok {
 		t.Fatal("an agy display name did not reach its price")
 	}
@@ -202,7 +203,7 @@ func TestAgentModelsClaudeCustomFromTheQuestion(t *testing.T) {
 // The fetch replaces the copy only with something that parses as a catalog, and never fetches
 // again while the copy is younger than a day.
 func TestRefreshModelsDev(t *testing.T) {
-	useIsolatedUsageDir(t)
+	usagesvc.UseIsolatedUsageDir(t)
 	hits, body := 0, recommendCatalogFixture
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits++
@@ -216,8 +217,8 @@ func TestRefreshModelsDev(t *testing.T) {
 	if hits != 1 {
 		t.Fatalf("hits = %d, want 1", hits)
 	}
-	resetUsageCatalogCache(t)
-	if info := usageCatalogInfo(); info == nil || info.Origin != usageCatalogOriginFetched {
+	usagesvc.ResetUsageCatalogCache(t)
+	if info := usagesvc.CatalogInfo(); info == nil || info.Origin != usagesvc.CatalogOriginFetched {
 		t.Fatalf("catalog = %+v, want the fetched copy", info)
 	}
 	refreshModelsDevIfStale(context.Background(), now.Add(time.Hour))

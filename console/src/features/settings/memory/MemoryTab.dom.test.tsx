@@ -83,11 +83,12 @@ afterEach(() => {
 });
 
 describe("MemoryTab views", () => {
-  it("offers the four views and opens on Memories, with the two lists and nothing else", async () => {
+  it("offers the five views and opens on Memories, with the two lists and nothing else", async () => {
     await mount();
     expect(Array.from(host!.querySelectorAll("[role=tab]")).map((b) => b.textContent)).toEqual([
       t("mem.view_memories"),
       t("mem.view_changes"),
+      t("mem.view_proposals"),
       t("mem.view_importexport"),
       t("mem.view_settings"),
     ]);
@@ -100,6 +101,9 @@ describe("MemoryTab views", () => {
     await mount();
     await goto("changes");
     expect(headings()).toEqual([t("mem.af_changes_title")]);
+
+    await goto("proposals");
+    expect(headings()).toEqual([t("mem.cs_title")]);
 
     await goto("importexport");
     // The hub: one card per source; the wizards open from their Start buttons.

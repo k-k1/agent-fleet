@@ -15,6 +15,7 @@ package main
 
 import (
 	"embed"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -246,7 +247,7 @@ func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 func assistantDeps() assistants.Deps {
 	return assistants.NewDeps(
 		ensureBuiltinKnowledge,       // //go:embed stays in main
-		agentFleetDocsRoot,           // the staged guide (fs.go)
+		fsx.AgentFleetDocsRoot,       // the staged guide (internal/fsx/fs.go)
 		chatx.PreferredHeadlessAgent, // lives in the chat family
 	)
 }

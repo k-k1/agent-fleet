@@ -26,7 +26,7 @@ func envOr(key, def string) string {
 
 // stateDir is agy's own state root: token, settings, caches, conversation DBs.
 // agy hardcodes ~/.gemini (the old gemini-cli convention) — the whole ~/.gemini tree is
-// denylisted from the file browser (fs.go) because the OAuth token persists in
+// denylisted from the file browser (internal/fsx/fs.go) because the OAuth token persists in
 // plaintext under it when no keyring is present (docs/decisions/0008 re-PoC).
 // (tokenPath / SignedIn live in usage.go — that Track C definition is the canonical one.)
 func stateDir() string { return filepath.Join(paths.GeminiHome(), "antigravity-cli") }
