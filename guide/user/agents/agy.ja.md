@@ -22,6 +22,8 @@ agy は実験枠です。利用枠は小さく、Antigravity IDE や Jules と�
 
 **⚙設定 →「エージェント」** の **Antigravity** カードで操作します。カードには「**実験枠（クォータ小・Antigravity IDE / Jules と共有）**」と出ています。
 
+![接続前の Antigravity カード。実験枠の表示、認証方式の「Google OAuth」、「OAuth 接続」のボタンがある](../../assets/agents-agy-ja-light.webp)
+
 1. 「**OAuth 接続**」を押すと、Google のログインが新しいタブで開きます。開かないときは「**ログインリンク ↗**」から開きます
 2. 自分のブラウザで承認します
 3. 表示されたコードを「**コードを貼付**」の欄に貼り付けて、「**完了**」を押します

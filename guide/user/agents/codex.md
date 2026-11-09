@@ -22,6 +22,8 @@ It runs in both Managed and Terminal (CLI).
 
 Choose how to connect on the **Codex** card in **⚙Settings → Agents**.
 
+![The Codex card before connecting: "Connect with a ChatGPT subscription" (recommended) and "Connect with an API key", with the note about turning on device-code authentication](../../assets/agents-codex-en-light.webp)
+
 | Button | Billing | What you need |
 |---|---|---|
 | Connect with a ChatGPT subscription (recommended) | Uses your Plus / Pro allowance. No extra charge | Device-code authentication turned on in ChatGPT |

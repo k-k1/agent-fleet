@@ -59,6 +59,8 @@ source_of_truth: "ワークスペースの Claude Code の設定フォルダ（$
 
 **⚙設定 →「スキル」** で、各エージェントの個人スキルを読み取り専用で一覧できます。Claude のほかに、Codex・OpenCode・Muse のぶんもエージェントごとのタブで見られます。
 
+![「スキル」の Claude のタブ。読み込まれるフォルダ（/var/lib/af/claude/skills と commands）、自分のスキル、上書きされているコマンド、Agent Fleet のスキルが並んでいる](../../assets/agents-skills-ja-light.webp)
+
 | 出るもの | 内容 |
 |---|---|
 | 読み込まれるフォルダ | そのエージェントがスキルを読むフォルダ。まだないフォルダは「**未作成**」と出るので、作る場所がわかります |

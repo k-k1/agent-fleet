@@ -59,6 +59,8 @@ Credentials and Agent Fleet's own hook entries are off-limits to agents too.
 
 **⚙Settings → Skills** lists each agent's personal skills, read-only. Besides Claude, Codex, OpenCode and Muse each have their own tab.
 
+![The Claude tab of Skills: the folders read (/var/lib/af/claude/skills and commands), your skills, a command shown as shadowed, and an Agent Fleet skill](../../assets/agents-skills-en-light.webp)
+
 | What it shows | Contents |
 |---|---|
 | Folders read | The folders the agent reads skills from. One that does not exist yet is marked "**not created**", so you know where to create it |

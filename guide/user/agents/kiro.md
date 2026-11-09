@@ -22,6 +22,8 @@ With a Builder ID it is free.
 
 The Kiro CLI is large (about 855 MB), so most deployments do not bake it into the workspace image.
 
+![The Kiro card before its install: the "Install Kiro" button, which says it downloads about 855 MB into your home](../../assets/agents-kiro-en-light.webp)
+
 1. Press "**Install Kiro**" on the **Kiro** card in **⚙Settings → Agents**
 2. It downloads into your home. This takes a few minutes
 3. When it is done, the card switches to the sign-in screen by itself

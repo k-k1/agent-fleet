@@ -29,6 +29,8 @@ It needs no vendor account, no sign-in and no install, and starts from the launc
 
 To use a llama-server on your own network, enter it under "**Your own connection**".
 
+![The llama.cpp card: "Use llama.cpp" is on, and "Your own connection" holds http://192.168.0.10:8080, reported reachable with the model it found](../../assets/agents-lcpp-en-light.webp)
+
 1. Enter the URL (`http://192.168.0.10:8080`, say) and, if needed, an API key
 2. Press "**Check connection**". The build, the window and the models appear
 

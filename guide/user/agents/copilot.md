@@ -20,6 +20,8 @@ There is no sign-in of Copilot's own.
 
 ## Connect
 
+![The GitHub Copilot card once GitHub is connected: it reads "Connected" and has no sign-in button of its own](../../assets/agents-copilot-en-light.webp)
+
 1. Connect GitHub in **⚙Settings → Git hosting** ([Use the GitHub CLI](../integrations/github-cli.md))
 2. Check that the **GitHub Copilot** card in **⚙Settings → Agents** reads "**Connected**"
 

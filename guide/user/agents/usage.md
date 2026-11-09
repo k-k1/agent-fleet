@@ -66,6 +66,8 @@ Which agents have the gauge is the "Context usage gauge" row of the [Agents refe
 **⚙Settings → Agent usage** is the ledger of what your tokens went on. Besides the sessions themselves, it lists on the same scale
 what Agent Fleet calls behind the scenes (title suggestions, summarised handoffs, reply suggestions and so on).
 
+![Agent usage: the period, split and metric choices, the totals such as tokens spent, a time series by feature, and breakdowns by feature, agent and model](../../assets/agents-usage-en-light.webp)
+
 | Item | Choices |
 |---|---|
 | Period | 24 hours, 7 days, 30 days |

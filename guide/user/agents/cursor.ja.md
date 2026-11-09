@@ -20,6 +20,8 @@ Cursor のアカウントでログインすると、Cursor CLI（cursor）をセ
 
 ## 接続する
 
+![ログイン前の Cursor カード。「Cursor にログイン」のボタンと、Cursor アカウントが必要という案内がある](../../assets/agents-cursor-ja-light.webp)
+
 1. **⚙設定 →「エージェント」** の **Cursor** カードで「**Cursor にログイン**」を押します
 2. 認可のリンクが開くので、ブラウザで承認します
 

@@ -20,6 +20,8 @@ Copilot のためのログインはありません。
 
 ## 接続する
 
+![GitHub を連携したあとの GitHub Copilot カード。「接続済み」と出ていて、ログインのボタンはない](../../assets/agents-copilot-ja-light.webp)
+
 1. **⚙設定 →「Git ホスティング」** で GitHub を接続します（[GitHub の CLI を使う](../integrations/github-cli.ja.md)）
 2. **⚙設定 →「エージェント」** の **GitHub Copilot** カードが「**接続済み**」になっていることを確かめます
 

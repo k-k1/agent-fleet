@@ -20,6 +20,8 @@ You only approve in the browser; there is no code to paste.
 
 ## Connect
 
+![The Cursor card before signing in: the "Sign in to Cursor" button and the note that a Cursor account is needed](../../assets/agents-cursor-en-light.webp)
+
 1. Press "**Sign in to Cursor**" on the **Cursor** card in **⚙Settings → Agents**
 2. An authorization link opens; approve in the browser
 

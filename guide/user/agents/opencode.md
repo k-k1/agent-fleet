@@ -35,6 +35,8 @@ A new workspace starts with "**Use opencode**" off. Nothing reaches opencode.ai 
 "**opencode.ai billing**" decides only how opencode.ai is used. Whichever you pick, the models of the providers you registered yourself,
 and of the deployment's own engines, stay in the launch list.
 
+![The OpenCode card: "Use opencode" is on, and "Go (subscription)" is chosen among the four opencode.ai billing routes](../../assets/agents-opencode-en-light.webp)
+
 | Choice | opencode.ai models in the list | What you need |
 |---|---|---|
 | None (my own keys) | None. `OPENCODE_API_KEY` is not passed even when saved | Your own provider's API key, or an own engine |

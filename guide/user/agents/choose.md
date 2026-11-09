@@ -69,6 +69,8 @@ Running sessions are not stopped. If that sign-in fails or you abandon it, the a
 
 Each card's "**Behavior**" sets the initial values for new sessions. If a repository has settings you last used, those win.
 
+![The Behavior block of the GitHub Copilot card, open: Default model, Default effort, Models to exclude (+ Add a model), Start mode, Tool permissions and RTK (token savings)](../../assets/agents-behavior-en-light.webp)
+
 | Item | What it decides |
 |---|---|
 | Default model | The model selected when a session starts |

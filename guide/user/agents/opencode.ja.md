@@ -35,6 +35,8 @@ OpenCode は、Anthropic・OpenAI・OpenRouter など、いくつもの LLM プ�
 「**opencode.ai への課金**」で選ぶのは、opencode.ai の使い方だけです。どれを選んでも、自分で登録したプロバイダのモデルと、
 配備の自前エンジンのモデルは、起動の一覧に残ります。
 
+![OpenCode カード。「opencode を使う」がオンで、「opencode.ai への課金」の 4 つの選択肢のうち「Go（定額）」が選ばれている](../../assets/agents-opencode-ja-light.webp)
+
 | 選択 | 一覧に出る opencode.ai のモデル | 必要なもの |
 |---|---|---|
 | 使わない（自分の鍵だけ） | なし。`OPENCODE_API_KEY` を保存していても渡しません | 自分のプロバイダの API キー、または自前エンジン |

@@ -22,6 +22,8 @@ agy is an experimental slot: its quota is small and shared with the Antigravity 
 
 Work on the **Antigravity** card in **⚙Settings → Agents**. The card reads "**Experimental slot (small quota, shared with the Antigravity IDE / Jules)**".
 
+![The Antigravity card before connecting: the experimental-slot label, the "Google OAuth" method and the "Connect via OAuth" button](../../assets/agents-agy-en-light.webp)
+
 1. Press "**Connect via OAuth**". The Google sign-in opens in a new tab; if it does not, open it from "**the sign-in link ↗**"
 2. Approve in your own browser
 3. Paste the code you are shown into "**Paste the code**" and press "**Done**"
