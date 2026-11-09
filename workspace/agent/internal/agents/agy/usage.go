@@ -118,6 +118,45 @@ func accountEmail() string {
 	return emailLast
 }
 
+// LearnedLimit is a model quota the Agent learned from a failed call, not one /usage lists
+// (a model can draw on a pool the panel omits). It is in memory only, so it is gone after an
+// Agent restart and the next failed call re-learns it.
+type LearnedLimit struct {
+	Model    string `json:"model"`           // "" is the CLI's default model
+	Label    string `json:"label,omitempty"` // display name when the catalog knows the id
+	ResetsAt string `json:"resetsAt"`
+}
+
+// LearnedWindows is wired by the Agent to routehealth's table (routehealth imports this
+// package, so the dependency cannot point the other way). Nil means nothing is learned.
+var LearnedWindows func(now time.Time) []LearnedWindow
+
+// LearnedWindow is the wiring's view of one parked model.
+type LearnedWindow struct {
+	Model string
+	Until time.Time
+}
+
+// learnedLimits returns the live learned limits for the usage payload. A reset already past
+// is dropped even if the source still holds it.
+func learnedLimits(now time.Time) []LearnedLimit {
+	out := []LearnedLimit{} // always an array on the wire, never null
+	if LearnedWindows == nil {
+		return out
+	}
+	for _, w := range LearnedWindows(now) {
+		if !w.Until.After(now) {
+			continue
+		}
+		l := LearnedLimit{Model: w.Model, ResetsAt: w.Until.UTC().Format(time.RFC3339)}
+		if w.Model != "" {
+			l.Label = modelLabel(w.Model)
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // HandleUsage serves GET /connections/agy/usage for the Console's AgyCard.
 // Always 200 with {ok, authed, …} so the card can degrade in place.
 func HandleUsage(w http.ResponseWriter, r *http.Request) {
@@ -125,12 +164,13 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": false, "authed": false})
 		return
 	}
+	learned := learnedLimits(time.Now())
 	usageMu.Lock()
 	defer usageMu.Unlock()
 	if usageCached == nil || time.Since(usageAt) > usageCacheTTL || r.URL.Query().Get("refresh") != "" {
 		res, err := scrape()
 		if err != nil {
-			out := map[string]any{"ok": false, "authed": true, "error": err.Error()}
+			out := map[string]any{"ok": false, "authed": true, "error": err.Error(), "learned": learned}
 			// Serve the stale cache alongside the error so a transient scrape
 			// failure doesn't blank an already-shown gauge. Right after an Agent restart there
 			// is no cache yet, so the reading stored before the restart stands in.
@@ -158,6 +198,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 		"plan":    usageCached.Plan,
 		"groups":  adjustGroups(usageCached.Groups, time.Now()),
 		"ageSec":  int(time.Since(usageAt).Seconds()),
+		"learned": learned,
 	})
 }
 

@@ -45,6 +45,9 @@ export interface UsageReading {
     stale?: boolean;
     fiveHour?: { remainingPct: number; resetsAt?: string; stale?: boolean };
   }[];
+  // agy: model limits the Agent learned from failed calls (in memory there, so they vanish on
+  // an Agent restart); a model can draw on a quota the /usage panel does not list.
+  learned?: { model: string; label?: string; resetsAt: string }[];
   // copilot: a quota per pool plus one shared monthly reset.
   quotas?: { id: string; remainingPct: number }[];
   resetsAt?: string;
