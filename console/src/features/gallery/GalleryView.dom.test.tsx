@@ -123,6 +123,7 @@ const back = (): Promise<void> =>
 // those tests' own 305-card commits. Pay the first here with an explicit budget; the second
 // gets an explicit per-test budget (HEAVY_RENDER_MS) rather than a raised global timeout.
 const HEAVY_RENDER_MS = 30_000;
+const WARMUP_BUDGET_MS = 60_000;
 beforeAll(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   setLocale("ja");
@@ -130,13 +131,13 @@ beforeAll(async () => {
   useLayoutStore.setState({ layout: freshLayout() });
   served = Array.from({ length: 40 }, (_, n) => img(`w${n}.png`, 1000 + n));
   await render();
-  await vi.waitFor(() => expect(cards().length).toBeGreaterThan(0), { timeout: 30_000 });
+  await vi.waitFor(() => expect(cards().length).toBeGreaterThan(0), { timeout: HEAVY_RENDER_MS });
   await act(async () => root.unmount());
   document.body.innerHTML = "";
   clearGalleryCache();
   clearImageSizeCache();
   served = [];
-}, 60_000);
+}, WARMUP_BUDGET_MS);
 
 beforeEach(() => {
   // The locale comes from settings and its default depends on the environment (jsdom reports

@@ -166,8 +166,9 @@ function check(name: string, actual: unknown) {
 // load average ~40) were pure CPU, not a wait on the 600 ms debounce: each fresh() re-evaluates
 // settings.ts and its graph, and the sweep tests do a dozen of them plus a trace of every key.
 // The first import in a worker also pays the cold transform. Pay that here, with an explicit
-// budget; the sweeps get a describe-level budget below rather than a raised global timeout. A
-// timed-out sweep also kept running into the next test (its loop is not cancelled), which is
+// budget (only the transform cache carries over: every fresh() resets the module registry); each
+// sweep test gets up to the describe-level budget below, per test and not as a total,
+// rather than a raised global timeout. A timed-out sweep also kept running into the next test (its loop is not cancelled), which is
 // how "sends the same body for a local change" failed as a knock-on.
 const SWEEP_BUDGET_MS = 60_000;
 beforeAll(async () => {
