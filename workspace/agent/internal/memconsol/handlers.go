@@ -45,7 +45,8 @@ type StatusView struct {
 	LastRun *Report        `json:"lastRun,omitempty"`
 	Trigger TriggerState   `json:"trigger"`
 	Counts  map[string]int `json:"counts"`
-	// Waiting are the ripe topics that no run has taken, each with the cause that delays it.
+	// Waiting are the ripe topics that no run has taken, each with the cause that delays it. A topic
+	// no run can ever take carries CauseTooLarge and its smallest estimate.
 	Waiting []Delay `json:"waiting"`
 }
 
@@ -102,7 +103,10 @@ func BuildStatus(now time.Time) (StatusView, error) {
 			continue
 		}
 		dl := Delay{Topic: t.ID, Scope: ScopeKey(t.Scope, t.ProjectID), Memory: t.Memory, Cause: CauseWaiting}
-		switch {
+		switch r := PlanTopic(t, open, cfg); {
+		case r.TooLarge:
+			// Priced now, not read from the last run: the memory or the budget may have changed since.
+			dl = tooLargeDelay(r)
 		case delayed[t.ID].Cause != "":
 			dl.Cause, dl.Detail = delayed[t.ID].Cause, delayed[t.ID].Detail
 		case st.Trigger.StoppedGap:

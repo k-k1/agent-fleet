@@ -43,11 +43,14 @@ type Report struct {
 	Finished time.Time `json:"finished"`
 	Status   string    `json:"status"`
 	// Error names the class of a failure ("model call failed"), never the runner's output.
-	Error     string            `json:"error,omitempty"`
-	Ripe      int               `json:"ripe"`
-	Handled   []string          `json:"handled"` // topic ids that were looked at
-	Queued    []string          `json:"queued"`  // proposal ids
-	Delayed   []Delay           `json:"delayed"`
+	Error   string   `json:"error,omitempty"`
+	Ripe    int      `json:"ripe"`
+	Handled []string `json:"handled"` // topic ids that were looked at
+	Queued  []string `json:"queued"`  // proposal ids
+	Delayed []Delay  `json:"delayed"`
+	// TooLarge are the ripe topics no run can take (CauseTooLarge): not delayed, and not retried
+	// until the memory or the budget changes. Each carries its smallest estimate.
+	TooLarge  []Delay           `json:"tooLarge"`
 	Calls     int               `json:"calls"`
 	Dropped   int               `json:"dropped"`  // engine answers that failed validation
 	Rejected  int               `json:"rejected"` // items the adapter's own checks refused
@@ -90,7 +93,7 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	rep := Report{ID: newID(), Started: in.Now, Status: RunIdle, Handled: []string{}, Queued: []string{}, Delayed: []Delay{}, Models: in.Roles,
+	rep := Report{ID: newID(), Started: in.Now, Status: RunIdle, Handled: []string{}, Queued: []string{}, Delayed: []Delay{}, TooLarge: []Delay{}, Models: in.Roles,
 		Manual: in.Manual, All: in.Manual && in.All}
 	progress := func(done, total int) {
 		if in.Progress != nil {
@@ -141,22 +144,14 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 		if !Ripe(open, pending[t.ID], in.Config, in.Now) && !(rep.All && !pending[t.ID] && len(open) > 0) {
 			continue
 		}
-		take := open
-		if len(take) > in.Config.MaxObservationsPerTopic {
-			take = take[:in.Config.MaxObservationsPerTopic]
-		}
-		r := RipeTopic{Topic: t, Open: open, Take: take, Oldest: open[0].FirstSeen}
-		for _, o := range take {
-			// Twice: a supersede or merge answer is classified again by the large tier.
-			r.Estimate += 2 * (estimateTokens(classifyRequest(t, o).Prompt()) + 200)
-		}
-		if len(t.Memories) > 0 {
-			r.Estimate += estimateTokens(t.Memories[0].Body) + 800
+		r := PlanTopic(t, open, in.Config)
+		if r.TooLarge {
+			rep.TooLarge = append(rep.TooLarge, tooLargeDelay(r))
 		}
 		ripe = append(ripe, r)
 	}
 	rep.Ripe = len(ripe)
-	run, delayed := Select(ripe, in.Config.TokenBudget)
+	run, delayed := Select(fitting(ripe), in.Config.TokenBudget)
 	progress(0, len(run))
 	rep.Delayed = append(rep.Delayed, delayed...)
 	if len(run) == 0 {
@@ -197,6 +192,22 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 	}
 	progress(len(run), len(run))
 	return finish(nil)
+}
+
+// fitting drops the topics marked TooLarge: they are reported, never selected or delayed.
+func fitting(rs []RipeTopic) []RipeTopic {
+	out := make([]RipeTopic, 0, len(rs))
+	for _, r := range rs {
+		if !r.TooLarge {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func tooLargeDelay(r RipeTopic) Delay {
+	return Delay{Topic: r.Topic.ID, Memory: r.Topic.Memory, Scope: ScopeKey(r.Topic.Scope, r.Topic.ProjectID), Cause: CauseTooLarge, Estimate: r.Estimate,
+		Detail: "even one observation with one note costs more than the whole per-run token budget"}
 }
 
 func delaysOf(rs []RipeTopic, cause, detail string) []Delay {
@@ -280,7 +291,7 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 	var answers []classified
 	dropped := map[string]bool{}
 	for _, o := range r.Take {
-		req := classifyRequest(t, o)
+		req := classifyRequest(t, o, r.Fit)
 		est := estimateTokens(req.Prompt()) + 200
 		var ans memengine.ClassifyAnswer
 		role := memengine.RoleSmall
@@ -444,6 +455,21 @@ func noteItem(c classified, targets ...string) Item {
 	return it
 }
 
+// subjectOf is the memory a proposal is about: the one name every item changes, otherwise the
+// topic's. An exported create that joined another memory's topic is about the created memory, not
+// the one it was grouped with.
+func subjectOf(t Topic, items []Item) string {
+	if len(items) == 0 {
+		return t.Memory
+	}
+	for _, it := range items[1:] {
+		if it.Name != items[0].Name {
+			return t.Memory
+		}
+	}
+	return items[0].Name
+}
+
 // commit queues the topic's proposal and records coverage, under the state lock so a concurrent
 // Retry or approval sees one consistent file.
 func (w *worker) commit(t Topic, items []Item, used []Observation, covered map[string]string, dropped map[string]bool) {
@@ -464,7 +490,7 @@ func (w *worker) commit(t Topic, items []Item, used []Observation, covered map[s
 		s.Covered = &Coverage{Proposal: proposal, Revision: rev, At: now, Verdict: verdict}
 	}
 	if len(items) > 0 {
-		p := Proposal{ID: newID(), TopicID: t.ID, RunID: w.rep.ID, Scope: t.Scope, ProjectID: t.ProjectID, Memory: t.Memory,
+		p := Proposal{ID: newID(), TopicID: t.ID, RunID: w.rep.ID, Scope: t.Scope, ProjectID: t.ProjectID, Memory: subjectOf(t, items),
 			Status: StatusPending, Created: now, Expires: now.Add(w.in.Config.ProposalTTL), Items: items,
 			TargetRevisions: map[string]int{}, Models: w.in.Roles}
 		for _, m := range t.Memories {

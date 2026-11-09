@@ -277,7 +277,9 @@ only queues *proposals*.
   needs agent memory on, and turning it on sends memory text to a model and spends tokens while the workspace is idle. Only the
   Console can switch it (a session's own token cannot). Below the switch the **status** shows the last run, the earliest next
   run, how many suggestions wait, and each topic that is ripe but delayed with the cause (token budget, workspace stopped,
-  never idle, waiting for the next run, a failed run).
+  never idle, waiting for the next run, a failed run). A topic that is too large to ever fit one run's budget (a note of
+  roughly 180 KB or more at the default 60k) shows as *too-large* with its estimate instead of waiting: trim the note or
+  raise the budget and the next run takes it.
 - **When it runs.** Only when no session has had a turn for 15 minutes, at most once every 3 hours, and only on topics that are
   ripe: one `wrong` or `stale` report, or 3 new observations, or an observation that has waited 24 hours. A run spends at most a
   token budget; what does not fit waits, and the status says why (budget, workspace stopped, never idle). If a turn starts during

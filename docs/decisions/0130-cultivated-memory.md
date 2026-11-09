@@ -733,3 +733,22 @@ release.
   flight does not start and does not spend its window. The route answers 202 at once and the run goes on in the background; the
   status carries `run {running, manual, done, total}` and the report is marked `manual`. The Console has a Run now button with a
   confirmation that says it spends tokens and states the budget. Not verified on a real workspace: a manual run against a real model.
+- **2026-11-09 — decision 6: the estimate matches what is sent; a topic too large to run is a state, not a delay (#3718).**
+  The first live run spent about 23k tokens on 4 topics while the delayed topics were estimated at 5k–77k each. The estimate
+  counted a second (large-tier) classification for every observation, which only a supersede or merge answer costs, and the
+  whole body of the primary note, though a patch sends only the note it edits. It now counts one classification per taken
+  observation (priced on the prompt the engine builds, excerpts included) plus one patch call that sends the largest note the
+  classification shows; the call gate still stops a run that spends past its budget. On the test topic (3 reports, a 30 KB note)
+  the old estimate was 19.7k and the run sent 14.6k; the new one is within a third above what was sent and never below it.
+  A topic still over the whole budget is shrunk instead of delayed: shorter excerpts (600, 300, 150 runes), then fewer notes
+  (4, 2, 1), and only then fewer observations (the rest stay open for the next run). One that does not fit at one observation,
+  one note and 150 runes (a patch must carry the whole note, so a note of about 180 KB never can) is **`too-large`**: it is
+  not selected, not counted as a delay and does not cut the run; the run report lists it under `tooLarge` and the status
+  `waiting` shows it with its smallest estimate. It is priced again on every status read and run, so it clears when the member
+  trims the note or raises the budget. The Console shows the cause string until it has a label for `too-large`.
+  An exported proposal that names no existing memory joins another memory's topic only when the best-ranked one scores 8 or
+  more in `memory_search`'s weights (name 4, description 2, body 1) with at least 4 of it from the name and description:
+  two name words, or a name word and two description words. Eight body-only words do not count. Below that the proposal is a
+  topic of its own, keyed and titled by the name it proposed. The live run had attached creates about a flaky contract test and
+  about PR workflow to notes that shared a body word or two. A proposal's `memory` is now the one name all its items change
+  (the created name for a lone create), and the topic's memory only when the items differ.

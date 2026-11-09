@@ -223,7 +223,7 @@ func doRun(ctx context.Context, d Deps, cfg Config, now time.Time, o runOpts) Re
 	if err != nil {
 		// A retired or unmapped model fails the run before any call: nothing is queued.
 		rep := Report{ID: newID(), Started: now, Finished: now, Status: RunFailed, Error: "the model roles could not be set up", Manual: o.manual, All: o.manual && o.all,
-			Handled: []string{}, Queued: []string{}, Delayed: []Delay{}}
+			Handled: []string{}, Queued: []string{}, Delayed: []Delay{}, TooLarge: []Delay{}}
 		_ = writeReport(rep)
 		log.Printf("memory consolidation: %v", err)
 		return rep
