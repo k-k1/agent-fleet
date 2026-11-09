@@ -144,6 +144,7 @@ function normalizeItem(raw: unknown): WorkItem {
     state: str(r.state),
     url: str(r.url),
     assignee: str(r.assignee),
+    type: str(r.type),
     labels: Array.isArray(r.labels) ? r.labels.filter((l): l is string => typeof l === "string") : [],
     labelColors: readLabelColors(r.labelColors),
     repo: str(r.repo),
@@ -198,6 +199,8 @@ export interface WorkItemDetail {
   url: string;
   author: string;
   assignee: string;
+  /** The tracker's own issue type ("Epic", "Bug", ...); "" when unknown, for a pull request, or from an older Agent. */
+  type: string;
   labels: string[];
   labelColors: Record<string, string>;
   repo: string;
@@ -254,6 +257,7 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
       url: str(d.url),
       author: str(d.author),
       assignee: str(d.assignee),
+      type: str(d.type),
       labels: Array.isArray(d.labels) ? d.labels.filter((l): l is string => typeof l === "string") : [],
       labelColors: readLabelColors(d.labelColors),
       repo: str(d.repo),
