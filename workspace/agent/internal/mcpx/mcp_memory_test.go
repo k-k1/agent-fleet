@@ -576,3 +576,83 @@ func TestMemorySaveKindAnchorsMatchControlPlane(t *testing.T) {
 		}
 	}
 }
+
+// The Control Plane's external memory_feedback takes the Agent tool's arguments (scope, name,
+// revision, verdict, note) with the same types, enum and descriptions, plus the project selectors
+// every external tool has and never a session (the caller is the authenticated connection).
+func TestMemoryFeedbackSchemaMatchesControlPlane(t *testing.T) {
+	raw, err := os.ReadFile("../../../../control-plane/internal/mcpsrv/testdata/mcp_tools/list.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cp struct {
+		Tools map[string]struct {
+			InputSchema struct {
+				Properties map[string]any `json:"properties"`
+				Required   []string       `json:"required"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		t.Fatal(err)
+	}
+	cpProps := cp.Tools["memory_feedback"].InputSchema.Properties
+	if cpProps == nil {
+		t.Fatal("CP memory_feedback not found in the tool golden")
+	}
+	var agent map[string]any
+	var agentRequired []string
+	for _, ts := range agentMemoryTools() {
+		if ts.name == mcpToolMemoryFeedback {
+			in := ts.session()["inputSchema"].(map[string]any)
+			agent = in["properties"].(map[string]any)
+			agentRequired, _ = in["required"].([]string)
+		}
+	}
+	if agent == nil {
+		t.Fatal("agent memory_feedback not found")
+	}
+	// What the Agent requires the CP requires too; the CP adds only the external selectors
+	// (scope is required outside, where a default would guess the wrong project).
+	cpRequired := map[string]bool{}
+	for _, f := range cp.Tools["memory_feedback"].InputSchema.Required {
+		cpRequired[f] = true
+	}
+	agentRequiredSet := map[string]bool{}
+	for _, f := range agentRequired {
+		agentRequiredSet[f] = true
+		if !cpRequired[f] {
+			t.Errorf("the Agent requires %s but the CP does not", f)
+		}
+	}
+	for f := range cpRequired {
+		if !agentRequiredSet[f] && f != "scope" && f != "project" && f != "repository" {
+			t.Errorf("the CP requires %s, which the Agent does not", f)
+		}
+	}
+	for _, f := range []string{"revision", "verdict", "note"} {
+		want, _ := json.Marshal(agent[f])
+		got, _ := json.Marshal(cpProps[f])
+		if string(want) != string(got) {
+			t.Errorf("%s differs:\n agent: %s\n cp:    %s", f, want, got)
+		}
+	}
+	// scope and name are worded for the external audience but must keep their type and enum.
+	for _, f := range []string{"scope", "name"} {
+		a, _ := agent[f].(map[string]any)
+		c, _ := cpProps[f].(map[string]any)
+		if a["type"] != c["type"] || a["type"] == nil {
+			t.Errorf("%s type differs: agent %v cp %v", f, a["type"], c["type"])
+		}
+	}
+	for _, f := range []string{"session", "caller"} {
+		if _, ok := cpProps[f]; ok {
+			t.Errorf("CP memory_feedback advertises %s: the caller must come from the connection", f)
+		}
+	}
+	for f := range cpProps {
+		if _, ok := agent[f]; !ok && f != "project" && f != "repository" {
+			t.Errorf("CP memory_feedback has %s, which the Agent tool lacks", f)
+		}
+	}
+}

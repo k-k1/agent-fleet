@@ -565,6 +565,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/external/read", memoryx.HandleAgentMemoryExternalRead)
 	mux.HandleFunc("POST /agents/memory/external/entries", memoryx.HandleAgentMemoryExternalSave)
 	mux.HandleFunc("POST /agents/memory/external/patch", memoryx.HandleAgentMemoryExternalPatch)
+	mux.HandleFunc("POST /agents/memory/external/feedback", memoryx.HandleAgentMemoryExternalFeedback)
 	mux.HandleFunc("POST /agents/memory/external/forget", memoryx.HandleAgentMemoryExternalForget)
 	// The member's after-the-fact view of those writes (ADR 0108 decision 8). These are for the
 	// Console, so control-plane/routes.go relays them. The member writes (revert, pin,

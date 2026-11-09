@@ -282,6 +282,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget"
     ],
     "mcp memory=true member read": [
@@ -332,6 +333,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget"
     ],
     "mcp memory=true super_admin admin:dangerous": [
@@ -366,6 +368,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget",
       "list_workspaces",
       "get_usage",
@@ -432,6 +435,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget",
       "list_workspaces",
       "get_usage",
@@ -476,6 +480,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget",
       "list_workspaces",
       "get_usage",
@@ -542,6 +547,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget",
       "list_workspaces",
       "get_usage",
@@ -570,6 +576,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget"
     ],
     "memory memory=true member read": [
@@ -585,6 +592,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget"
     ],
     "memory memory=true super_admin admin:dangerous": [
@@ -594,6 +602,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget"
     ],
     "memory memory=true super_admin read": [
@@ -609,6 +618,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget"
     ],
     "memory memory=true tenant_admin admin:dangerous": [
@@ -618,6 +628,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget"
     ],
     "memory memory=true tenant_admin read": [
@@ -633,6 +644,7 @@
       "memory_read",
       "memory_save",
       "memory_patch",
+      "memory_feedback",
       "memory_forget"
     ]
   },
@@ -998,6 +1010,59 @@
         "type": "object"
       },
       "name": "list_workspaces"
+    },
+    "memory_feedback": {
+      "description": "Report that an Agent Fleet memory you relied on is wrong or out of date. Pass the revision you read and a one-line note saying what no longer holds. A report on the current revision marks the memory as suspect until it is fixed; one on an older revision is only kept as an observation, and only the first report of a connection on a revision counts. A `confirmed` verdict only counts: it never clears a doubt. Report only what failed you. Pass `repository` = the output of `git remote get-url origin` in the repository you are working in; the project is found from it. scope is required (\"project\" or \"user\"). Needs write access to be allowed in Settings > Agent memory. Inside an Agent Fleet session, use the af server's own memory tools instead; these are for agents outside Agent Fleet.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "memory name",
+            "type": "string"
+          },
+          "note": {
+            "description": "One line: what no longer holds (required for stale and wrong)",
+            "type": "string"
+          },
+          "project": {
+            "description": "project id from memory_projects (optional when `repository` is given; if both are given they must name the same project)",
+            "type": "string"
+          },
+          "repository": {
+            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work), or a project's `remote` exactly as memory_projects lists it (host/owner/repo)",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Revision you read",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scope": {
+            "description": "required: project (a fact about the repository; needs `repository` or `project`) or user (a fact that holds in every project)",
+            "enum": [
+              "user",
+              "project"
+            ],
+            "type": "string"
+          },
+          "verdict": {
+            "description": "stale: was true once, no longer; wrong: never held",
+            "enum": [
+              "stale",
+              "wrong",
+              "confirmed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "revision",
+          "verdict",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "name": "memory_feedback"
     },
     "memory_forget": {
       "description": "Remove an Agent Fleet memory from what is published (its history is kept; the member can restore it in the Console). Pass the revision you read. Pass `repository` = the output of `git remote get-url origin` in the repository you are working in; the project is found from it. scope is required (\"project\" or \"user\"); a forget without scope is refused. Needs write access to be allowed in Settings > Agent memory. Inside an Agent Fleet session, use the af server's own memory tools instead; these are for agents outside Agent Fleet.",

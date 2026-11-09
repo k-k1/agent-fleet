@@ -119,7 +119,7 @@ func TestMemoryToolsFollowTheScopeTier(t *testing.T) {
 			t.Errorf("%s must be listed at read and write", n)
 		}
 	}
-	for _, n := range []string{"memory_save", "memory_patch", "memory_forget"} {
+	for _, n := range []string{"memory_save", "memory_patch", "memory_feedback", "memory_forget"} {
 		if r[n] || !w[n] {
 			t.Errorf("%s: read=%v write=%v", n, r[n], w[n])
 		}
@@ -320,7 +320,7 @@ func TestMemoryToolsRelayRepositoryAndRequireScopeOnWrites(t *testing.T) {
 		if _, ok := props["repository"]; !ok {
 			t.Errorf("%s has no repository argument", tl.name)
 		}
-		if tl.name == "memory_save" || tl.name == "memory_patch" || tl.name == "memory_forget" {
+		if tl.name == "memory_save" || tl.name == "memory_patch" || tl.name == "memory_feedback" || tl.name == "memory_forget" {
 			req, _ := tl.schema["required"].([]string)
 			if !strings.Contains(strings.Join(req, ","), "scope") {
 				t.Errorf("%s does not require scope: %v", tl.name, req)
@@ -349,7 +349,7 @@ func TestTenantSwitchWithholdsTheMemoryTools(t *testing.T) {
 		}
 		return out
 	}
-	if got := listed(); len(got) != 7 {
+	if got := listed(); len(got) != 8 {
 		t.Fatalf("a new tenant must keep the tools (default on): %v", got)
 	}
 	if err := st.SetTenantExternalMemory(ctx, cp.tenantID, false); err != nil {
@@ -377,7 +377,7 @@ func TestTenantSwitchWithholdsTheMemoryTools(t *testing.T) {
 	if err := st.SetTenantExternalMemory(ctx, cp.tenantID, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := listed(); len(got) != 7 {
+	if got := listed(); len(got) != 8 {
 		t.Fatalf("switch back on: %v", got)
 	}
 	if _, isErr := memCall(t, cp, "read", "memory_index", nil); isErr || cp.calls != 1 {
@@ -402,7 +402,7 @@ func TestMemoryToolsFailClosedWithoutAMembership(t *testing.T) {
 // server's own tools (#2766).
 func TestMemoryToolsSteerSessionsToTheLocalTools(t *testing.T) {
 	tools := memoryTools()
-	if len(tools) != 7 {
+	if len(tools) != 8 {
 		t.Fatalf("memory tools: %d", len(tools))
 	}
 	for _, tl := range tools {
@@ -472,5 +472,42 @@ func TestMemorySaveRelaysKindAndAnchors(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// memory_feedback relays to the Agent's external feedback route with the caller taken from the
+// authenticated PAT; a client cannot pass a caller or session of its own, and a read PAT never
+// reaches it.
+func TestMemoryFeedbackRelaysThePATAsCaller(t *testing.T) {
+	cp := newMemCP(t, memStore(t), "running")
+	args := map[string]any{"name": "n", "scope": "user", "revision": 2, "verdict": "stale", "note": "the flag moved"}
+	if text, isErr := memCall(t, cp, "write", "memory_feedback", args); isErr {
+		t.Fatalf("feedback failed: %s", text)
+	}
+	var got map[string]any
+	if cp.gotMethod != "POST" || cp.gotPath != "/agents/memory/external/feedback" || json.Unmarshal([]byte(cp.gotBody), &got) != nil {
+		t.Fatalf("proxied as %s %s %s", cp.gotMethod, cp.gotPath, cp.gotBody)
+	}
+	if got["caller"] != "pat1" || got["revision"] != float64(2) || got["verdict"] != "stale" || got["note"] != "the flag moved" || got["client"] != "claude-code/9.9" {
+		t.Errorf("body: %s", cp.gotBody)
+	}
+	if _, has := got["session"]; has {
+		t.Errorf("a session field was relayed: %s", cp.gotBody)
+	}
+	// A client-supplied identity is refused before the Agent is reached.
+	for _, k := range []string{"caller", "session"} {
+		before := cp.calls
+		a := map[string]any{}
+		for kk, v := range args {
+			a[kk] = v
+		}
+		a[k] = "someone-else"
+		if text, isErr := memCall(t, cp, "write", "memory_feedback", a); !isErr || cp.calls != before {
+			t.Errorf("%s argument accepted: %q isErr=%v", k, text, isErr)
+		}
+	}
+	before := cp.calls
+	if text, isErr := memCall(t, cp, "read", "memory_feedback", args); !isErr || cp.calls != before {
+		t.Errorf("read PAT reached memory_feedback: %q isErr=%v", text, isErr)
 	}
 }

@@ -60,6 +60,7 @@ var memoryTestRoutes = map[string]http.HandlerFunc{
 	"GET /agents/memory/external/read":       HandleAgentMemoryExternalRead,
 	"POST /agents/memory/external/entries":   HandleAgentMemoryExternalSave,
 	"POST /agents/memory/external/patch":     HandleAgentMemoryExternalPatch,
+	"POST /agents/memory/external/feedback":  HandleAgentMemoryExternalFeedback,
 	"POST /agents/memory/external/forget":    HandleAgentMemoryExternalForget,
 	"GET /agents/memory/entries/changes":     HandleAgentMemoryChanges,
 	"GET /agents/memory/entries/diff":        HandleAgentMemoryChangeDiff,

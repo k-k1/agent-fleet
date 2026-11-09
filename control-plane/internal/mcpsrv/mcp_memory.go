@@ -204,6 +204,31 @@ func memoryTools() []mcpTool {
 			},
 		},
 		{
+			name: "memory_feedback", minScope: scopeWrite,
+			// Arguments mirror the Agent's memory_feedback (workspace/agent/internal/mcpx);
+			// TestMemoryFeedbackSchemaMatchesControlPlane there fails when they drift. There is no
+			// session argument: the caller is the authenticated PAT, set below and never read from args.
+			desc: "Report that an Agent Fleet memory you relied on is wrong or out of date. Pass the revision you read and a one-line note saying what no longer holds. A report on the current revision marks the memory as suspect until it is fixed; one on an older revision is only kept as an observation, and only the first report of a connection on a revision counts. A `confirmed` verdict only counts: it never clears a doubt. Report only what failed you. " + repoHint + "scope is required (\"project\" or \"user\"). Needs write access to be allowed in Settings > Agent memory.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{
+				"name": nameArg, "scope": writeScopeArg, "project": projectArg, "repository": repositoryArg,
+				"revision": map[string]any{"type": "integer", "minimum": 1, "description": "Revision you read"},
+				"verdict":  map[string]any{"type": "string", "enum": []string{"stale", "wrong", "confirmed"}, "description": "stale: was true once, no longer; wrong: never held"},
+				"note":     map[string]any{"type": "string", "description": "One line: what no longer holds (required for stale and wrong)"},
+			}, "required": []string{"name", "revision", "verdict", "scope"}},
+			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
+				body, _ := json.Marshal(map[string]any{
+					"project": argStr(args, "project"), "repository": argStr(args, "repository"), "scope": argStr(args, "scope"), "name": argStr(args, "name"),
+					"revision": argInt(args, "revision"), "verdict": argStr(args, "verdict"), "note": argStr(args, "note"),
+					"client": mcpCallFrom(ctx).client, "caller": mcpCallFrom(ctx).patID,
+				})
+				out, err := a.memoryCall(ctx, res, "POST", "/agents/memory/external/feedback", body)
+				if err == nil {
+					a.memoryAudit(ctx, res, "memory.entry.feedback", out)
+				}
+				return out, err
+			},
+		},
+		{
 			name: "memory_forget", minScope: scopeWrite,
 			desc: "Remove an Agent Fleet memory from what is published (its history is kept; the member can restore it in the Console). Pass the revision you read. " + repoHint + "scope is required (\"project\" or \"user\"); a forget without scope is refused. Needs write access to be allowed in Settings > Agent memory.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{

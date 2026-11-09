@@ -400,6 +400,20 @@ type agentMemExternalForgetReq struct {
 	Client     string `json:"client"`
 }
 
+// agentMemExternalFeedbackReq is an outside client's report. Caller is the identity of the
+// authenticated connection, written by the Control Plane and never by the client: it stands in for
+// the session when "one report per caller per revision" is counted. The session field of the
+// embedded request is ignored.
+type agentMemExternalFeedbackReq struct {
+	agentMemFeedbackReq
+	Project    string `json:"project"`
+	Repository string `json:"repository"`
+	Client     string `json:"client"`
+	Caller     string `json:"caller"`
+}
+
+var agentMemExternalCallerRe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
 // agentMemExternalTrailers records the client's self-declared name next to the change.
 func agentMemExternalTrailers(client string) []string {
 	if c := agentMemExternalClient(client); c != "" {
@@ -494,4 +508,53 @@ func HandleAgentMemoryExternalForget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, agentMemExternalWrote(res, c))
+}
+
+// HandleAgentMemoryExternalFeedback reports a memory as stale or wrong (or confirms it) through the
+// tools' own feedback: the same current-revision rule, one report per caller per revision, and a
+// confirmation that never clears a reason. The caller is the PAT the Control Plane authenticated.
+func HandleAgentMemoryExternalFeedback(w http.ResponseWriter, r *http.Request) {
+	if !agentMemExternalAllow(w, true) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, agentMemSaveMaxRequest)
+	var req agentMemExternalFeedbackReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	caller := agentMemExternalCallerRe.ReplaceAllString(req.Caller, "")
+	if len(caller) > 64 {
+		caller = caller[:64]
+	}
+	if caller == "" {
+		agentMemWriteErr(w, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "memory_feedback needs an authenticated caller"))
+		return
+	}
+	if err := agentMemExternalWriteScope(req.Scope, req.Project, req.Repository); err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	// A report never creates a project (the second argument), as for patch and forget.
+	c, err := agentMemExternalCallerFor(req.Project, req.Repository, false)
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	c.Session = "pat-" + caller
+	c.trailers = agentMemExternalTrailers(req.Client)
+	res, err := agentMemFeedback(c, req.agentMemFeedbackReq, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	out := agentMemExternalFeedbackResult{agentMemFeedbackResult: res}
+	if res.Scope == agentMemScopeProject {
+		out.Project = c.Project.ID
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+type agentMemExternalFeedbackResult struct {
+	agentMemFeedbackResult
+	Project string `json:"project,omitempty"`
 }
