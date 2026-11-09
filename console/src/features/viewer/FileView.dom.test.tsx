@@ -63,11 +63,11 @@ vi.mock("./MarkdownView.tsx", () => ({
 
 // The editor's scroll memory needs layout jsdom does not have (parts/editorScrollMemory's own
 // suite covers it); here only the restore decision FileView hands it is observed.
-const editorMemory: { key: string; restore: boolean }[] = [];
+const editorMemory: { key: string; restore: boolean; inputRoot?: string }[] = [];
 vi.mock("./parts/editorScrollMemory.ts", () => {
   // Typed against the real function, so a changed signature fails the typecheck here.
-  const attachEditorScrollMemory: typeof realAttach = (_editor, key, restore) => {
-    editorMemory.push({ key, restore });
+  const attachEditorScrollMemory: typeof realAttach = (_editor, key, restore, inputRoot) => {
+    editorMemory.push({ key, restore, inputRoot: inputRoot?.className });
     return () => {};
   };
   return { attachEditorScrollMemory };
@@ -78,7 +78,11 @@ const { FileView } = await import("./FileView.tsx");
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-async function render(props: { targetLine?: number; openMode?: "view" | "edit" }): Promise<void> {
+async function render(props: {
+  targetLine?: number;
+  openMode?: "view" | "edit";
+  filePath?: string;
+}): Promise<void> {
   await act(async () => {
     root!.render(<FileView filePath="repos/x/doc.md" paneId="pane-1" {...props} />);
   });
@@ -489,17 +493,46 @@ describe("the buffer behind the preview", () => {
     await render({});
     // Preview -> Split: the scroll sync positions the editor from the preview.
     await act(async () => modeButton("Split").click());
-    expect(editorMemory.at(-1)).toEqual({ key: "pane-1\u0000repos/x/doc.md\u0000editor", restore: false });
+    expect(editorMemory.at(-1)).toMatchObject({ key: "pane-1\u0000repos/x/doc.md\u0000editor", restore: false });
+    // Reader input anywhere in the pane ends a restore: the split's preview, the header, the
+    // suggestion panel.
+    expect(editorMemory.at(-1)?.inputRoot).toBe("fileview");
     // Edit, then Split from the editor: the editor's own place is the one to keep.
     await act(async () => modeButton("Edit").click());
-    expect(editorMemory.at(-1)?.restore).toBe(true);
+    expect(editorMemory.at(-1)).toMatchObject({ restore: true, inputRoot: "fileview" });
     await act(async () => modeButton("Split").click());
-    expect(editorMemory.at(-1)?.restore).toBe(true);
+    expect(editorMemory.at(-1)).toMatchObject({ restore: true, inputRoot: "fileview" });
     // Back from another tab straight into the split: the editor leads.
     act(() => root!.unmount());
     editorMemory.length = 0;
     root = createRoot(host);
     await render({});
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+  });
+
+  it("only records the editor's position when the open file is cited at a new line", async () => {
+    await render({ openMode: "edit" });
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+    editorMemory.length = 0;
+    await render({ openMode: "edit", targetLine: 50 });
+    expect(editorMemory.at(-1)?.restore).toBe(false); // the citation's line wins
+    // A later mode change restores as usual: what it restores is where the citation left it.
+    await act(async () => modeButton("Split").click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+  });
+
+  it("restores as usual when a citation a plain file showed in the viewer is followed by Edit", async () => {
+    served = { content: "alpha\nbeta\ngamma\n", editable: true };
+    const editTab = () =>
+      [...host.querySelectorAll('.file-mode-tabs [role="tab"]')].find((b) => b.textContent === "Edit") as HTMLElement;
+    await render({ filePath: "repos/x/notes.txt" });
+    await act(async () => editTab().click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+    // Cited at a new line: a plain file shows it in the viewer, so the editor is not attached.
+    await render({ filePath: "repos/x/notes.txt", targetLine: 2 });
+    expect(editorVisible()).toBe(false);
+    editorMemory.length = 0;
+    await act(async () => editTab().click());
     expect(editorMemory.at(-1)?.restore).toBe(true);
   });
 

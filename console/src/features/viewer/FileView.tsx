@@ -385,13 +385,23 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // surfaces' (useScrollMemory). A split opened from the preview is positioned by the sync
   // above instead, from the side that was on screen; a slides split has no sync, so the
   // editor restores there too. Re-attaching on a renderer switch is harmless: the recorded
-  // line is where the editor already is.
+  // line is where the editor already is. Input anywhere in the pane ends a restore, so
+  // neither the split's preview nor an accepted suggestion is fought by it. A new cited line
+  // for the open file only records: restoring would take the reader away from the citation.
+  const restoreForRef = useRef<{ key: string | null; targetLine: number | undefined } | null>(null);
   useEffect(() => {
+    if (!memoryKey) return;
+    // Consumed even when the editor is not shown: a plain file shows a citation in the
+    // viewer, and a later switch to the editor is an ordinary one that restores.
+    if (restoreForRef.current?.key !== memoryKey) restoreForRef.current = { key: memoryKey, targetLine };
+    const recited = restoreForRef.current.targetLine !== targetLine;
+    restoreForRef.current.targetLine = targetLine;
     const handle = editorHandleRef.current;
-    if (!surfaces.editor || !handle || !memoryKey) return;
-    const restore = !(scrollSyncOn && lastSoloSideRef.current === "preview");
-    return attachEditorScrollMemory(handle, `${memoryKey}\u0000editor`, restore);
-  }, [surfaces.editor, surfaces.split, scrollSyncOn, editorHandleEpoch, memoryKey]);
+    if (!surfaces.editor || !handle) return;
+    const restore = !recited && !(scrollSyncOn && lastSoloSideRef.current === "preview");
+    const inputRoot = bodyRef.current ?? handle.host;
+    return attachEditorScrollMemory(handle, `${memoryKey}\u0000editor`, restore, inputRoot);
+  }, [surfaces.editor, surfaces.split, scrollSyncOn, editorHandleEpoch, memoryKey, targetLine]);
 
   // Focus follows the mode, but only when the user asked for the mode (docs/log/44
   // §5). Opening a file — a citation lands in the source surface — must not pull
