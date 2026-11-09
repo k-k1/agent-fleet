@@ -14,6 +14,7 @@ usage with `--help`.
 |---|---|
 | [af-aws-exec](af-aws-exec.md) | Run one command with the permissions of an AWS profile |
 | [af-gcloud-exec](af-gcloud-exec.md) | Run one command with a token of a Google Cloud profile |
+| [af-watch-hook](af-watch-hook.md) | Add a webhook to a private repository so watches are poked |
 
 Pages for the other commands (`af-db`, `af-memory`, `af-scratch`, `af-arch-repair`) are added one
 by one.

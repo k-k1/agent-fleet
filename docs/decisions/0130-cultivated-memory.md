@@ -752,3 +752,25 @@ release.
   topic of its own, keyed and titled by the name it proposed. The live run had attached creates about a flaky contract test and
   about PR workflow to notes that shared a body word or two. A proposal's `memory` is now the one name all its items change
   (the created name for a lone create), and the topic's memory only when the items differ.
+
+- **2026-11-10 — `lint-rename` follows directory renames, and lint checks stored `anchors` (#3650, parts 2 and 3).**
+  Git records no directory renames, so the directory moves are inferred from the file renames of one commit: a file
+  `a/b/c/x -> n/m/c/x` says `a/b -> n/m` and `a/b/c -> n/m/c`. A directory whose files went to different places in the
+  commit is ambiguous and is not renamed. A path is rewritten through a directory rename only when the path is that
+  directory or lies under it by whole segments (`dir2/x` is not under `dir`), the commit moved every file the directory
+  held in its parent (`git ls-tree` of `<commit>^`, so a split or a directory that kept files behind is left to the
+  reason), and the new path exists on the default branch. A file's own rename wins over its directory's. The evidence
+  trailer and the whole-path body match are those of a file rename; a directory written with its trailing slash is a whole
+  path now. A stored anchor is rewritten when it equals the path (leading `./` and trailing `/` are spelling), also
+  when the body does not name it. Because the path check only looks at tokens whose first segment is a top-level
+  directory of the revision, a top-level directory that a commit renamed whole counts as one too (one only partly moved,
+  or sent to several places, does not, so a word like `left/right` stays prose); otherwise a body naming a directory
+  renamed away at the top level was never recognised as a path. A chain a -> b -> c writes one `AF-Lint-Rename` trailer
+  per hop, and a directory sent to different places by different commits is ambiguous too. Stored `anchors` are
+  checked by the body's per-kind rules (path, ADR number, `Test*` and code-shaped symbols, `[[link]]`), a symbol also
+  bare, since an anchor carries no backticks; a command is not checked. An anchor finding has no line, and one the body
+  also names is reported once. The per-run write cap is unchanged. Rename detection is git's (`-M`, 50 % similarity), so
+  a directory whose files were rewritten in the same commit as the move does not count as moved whole. **Scheduling
+  (part 1) is not built:** the consolidator's tick is gated by the model-calling `memoryConsolidation` switch, its
+  three-hour window and its own state file, all of which belong to the proposal flow; lint calls no model and needs
+  none of them, so it wants its own switch and window rather than a hook in that tick.

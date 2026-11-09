@@ -72,3 +72,81 @@ func TestFailedFirstScrapeServesTheStoredReading(t *testing.T) {
 		t.Errorf("usage after signing in as another account = %+v, want no reading", out)
 	}
 }
+
+// The usage payload carries the model limits learned from failed calls next to the scraped
+// pools, and never one whose reset has passed.
+func TestUsageCarriesLearnedLimits(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	prevScrape, prevLearned := scrape, LearnedWindows
+	scrape = func() (*usageResult, error) {
+		return &usageResult{Groups: []UsageGroup{{Label: "GEMINI MODELS", RemainingPct: 86}}}, nil
+	}
+	LearnedWindows = func(time.Time) []LearnedWindow {
+		return []LearnedWindow{
+			{Model: "", Until: now.Add(2 * time.Hour)},
+			{Model: "gemini-4-argon", Until: now.Add(100 * time.Hour)},
+			{Model: "old", Until: now.Add(-time.Minute)},
+		}
+	}
+	usageMu.Lock()
+	prevCached, prevAt := usageCached, usageAt
+	usageCached, usageAt = nil, time.Time{}
+	usageMu.Unlock()
+	t.Cleanup(func() {
+		scrape, LearnedWindows = prevScrape, prevLearned
+		usageMu.Lock()
+		usageCached, usageAt = prevCached, prevAt
+		usageMu.Unlock()
+	})
+	writeToken(t, "a@example.com")
+
+	out := agyUsageJSON(t)
+	l, _ := out["learned"].([]any)
+	if len(l) != 2 {
+		t.Fatalf("learned = %+v, want 2 live entries", out["learned"])
+	}
+	m := l[1].(map[string]any)
+	if m["model"] != "gemini-4-argon" || m["resetsAt"] == "" {
+		t.Errorf("entry = %+v", m)
+	}
+	if out["groups"] == nil {
+		t.Error("scraped groups must stay beside the learned ones")
+	}
+}
+
+// A failed scrape with nothing cached is exactly when a member needs the learned limit: the
+// pools are missing, yet the model that refused calls is known.
+func TestFailedScrapeStillCarriesLearnedLimits(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	prevScrape, prevLearned := scrape, LearnedWindows
+	scrape = func() (*usageResult, error) { return nil, errors.New("tui did not answer") }
+	LearnedWindows = func(now time.Time) []LearnedWindow {
+		return []LearnedWindow{{Model: "gemini-4-argon", Until: now.Add(time.Hour)}}
+	}
+	usageMu.Lock()
+	prevCached, prevAt := usageCached, usageAt
+	usageCached, usageAt = nil, time.Time{}
+	usageMu.Unlock()
+	t.Cleanup(func() {
+		scrape, LearnedWindows = prevScrape, prevLearned
+		usageMu.Lock()
+		usageCached, usageAt = prevCached, prevAt
+		usageMu.Unlock()
+	})
+	writeToken(t, "a@example.com")
+	out := agyUsageJSON(t)
+	if l, _ := out["learned"].([]any); out["ok"] != false || len(l) != 1 {
+		t.Fatalf("usage = %+v, want ok=false with one learned limit", out)
+	}
+}
+
+func TestLearnedLimitsIsAnEmptyArrayNotNull(t *testing.T) {
+	prev := LearnedWindows
+	LearnedWindows = nil
+	t.Cleanup(func() { LearnedWindows = prev })
+	b, _ := json.Marshal(learnedLimits(time.Now()))
+	if string(b) != "[]" {
+		t.Fatalf("wire = %s, want []", b)
+	}
+}

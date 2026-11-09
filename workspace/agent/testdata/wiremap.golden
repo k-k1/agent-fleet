@@ -57,8 +57,8 @@ internal/afdb/http.go HandleDatabasesGet x1 {engines}
 internal/agents/agy/auth.go HandleComplete x1 {connected,stored}
 internal/agents/agy/auth.go HandleDisconnect x1 {disconnected}
 internal/agents/agy/auth.go HandleStart x1 {flow_id,url}
-internal/agents/agy/usage.go HandleUsage x1 {account,ageSec,authed,error,groups,ok,plan} cond{account,ageSec,groups,ok,plan}
-internal/agents/agy/usage.go HandleUsage x1 {account,ageSec,authed,groups,ok,plan}
+internal/agents/agy/usage.go HandleUsage x1 {account,ageSec,authed,error,groups,learned,ok,plan} cond{account,ageSec,groups,ok,plan}
+internal/agents/agy/usage.go HandleUsage x1 {account,ageSec,authed,groups,learned,ok,plan}
 internal/agents/agy/usage.go HandleUsage x1 {authed,ok}
 internal/agents/claude/auth.go HandleComplete x1 {connected,stored}
 internal/agents/claude/auth.go HandleDisconnect x1 {disconnected}

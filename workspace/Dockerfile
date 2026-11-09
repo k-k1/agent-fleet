@@ -824,7 +824,9 @@ COPY af-aws-exec.sh /usr/local/bin/af-aws-exec
 # Runs one command with one Google Cloud profile's access token from the Agent's own gcloud
 # store, never the VM's or node's identity (ADR 0107 decision 2): `workspace-agent gcloud-exec`.
 COPY af-gcloud-exec.sh /usr/local/bin/af-gcloud-exec
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/bkt /usr/local/bin/jira /usr/local/bin/confluence /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-memory /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec /usr/local/bin/af-gcloud-exec
+# Webhook hooks for private repositories (ADR 0133 step 4): `workspace-agent watch-hook`.
+COPY af-watch-hook.sh /usr/local/bin/af-watch-hook
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/bkt /usr/local/bin/jira /usr/local/bin/confluence /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-memory /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec /usr/local/bin/af-gcloud-exec /usr/local/bin/af-watch-hook
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # agent-fleet-caller.js (stamps the calling opencode session on af's MCP tools so a
