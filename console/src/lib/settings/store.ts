@@ -66,11 +66,15 @@ export function setRecordWriteHooks(before: () => void, after: () => void): void
 /** Write `value` (default: the current state) as the record, between the two hooks. A caller
  *  that built `value` from an earlier state passes `build` instead, called after `before`. */
 export function writeRecord(build: () => Settings = () => state): void {
-  beforeWrite();
+  // The write itself must happen even if catching up fails (a subscriber throwing on notify).
   try {
-    localStorage.setItem(KEY, JSON.stringify(build()));
-  } catch {}
-  afterWrite();
+    beforeWrite();
+  } finally {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(build()));
+    } catch {}
+    afterWrite();
+  }
 }
 
 export function persist(): void {

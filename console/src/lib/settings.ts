@@ -406,7 +406,7 @@ export function setSettings(patch: Partial<Settings>): void {
   markUnsaved(Object.keys(patch) as (keyof Settings)[]);
   persist();
   recordOwnerAfterLocalWrite();
-  applyToPage(state);
+  applyToPage(getSettings());
   scheduleServerSave();
   notify();
 }
