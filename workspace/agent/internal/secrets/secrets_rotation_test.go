@@ -153,3 +153,70 @@ func TestOAuthBaseIsDeepCopy(t *testing.T) {
 		t.Fatal("an in-place slice edit was taken for an untouched entry")
 	}
 }
+
+// The everyday status-poll path: a cached field filled in while nothing else moved is
+// written as is.
+func TestSaveWritesCacheFillWithoutRotation(t *testing.T) {
+	seedOAuth(t)
+	s := mustLoad(t)
+	s.Bitbucket.Account = "handle"
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustLoad(t); got.Bitbucket.Account != "handle" || got.Bitbucket.RefreshToken != "b-r1" {
+		t.Fatalf("cache fill lost: %+v", got.Bitbucket)
+	}
+}
+
+// A connection the caller creates is written; a connection created meanwhile survives a
+// snapshot that never had one.
+func TestSaveNewConnectionAndStaleAbsence(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	keyEnv(t, "", "")
+	stale := mustLoad(t) // store not created yet
+	fresh := mustLoad(t)
+	fresh.Jira = &JiraCreds{AuthKind: "oauth", AccessToken: "a", RefreshToken: "r", Expiry: 1}
+	if err := fresh.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustLoad(t); got.Jira == nil || got.Jira.RefreshToken != "r" {
+		t.Fatalf("new connection not written: %+v", got.Jira)
+	}
+	stale.Claude = "x"
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustLoad(t); got.Jira == nil || got.Jira.RefreshToken != "r" {
+		t.Fatalf("connection made meanwhile was dropped: %+v", got.Jira)
+	}
+}
+
+// When the store changed more than the tokens (a scope backfill, a site switch) and the
+// caller only edited a cached field, the stored entry wins and the cache edit is dropped:
+// the cache is refilled on the next poll, a lost backfill or site choice is not.
+func TestSaveCacheEditYieldsToOtherStoredChange(t *testing.T) {
+	seedOAuth(t)
+	stale := mustLoad(t)
+	if err := Update(func(d *Data) error {
+		d.Jira.Sites[0].Scopes = append(d.Jira.Sites[0].Scopes, "read:board-scope:jira-software")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale.Jira.Account = "stale cache"
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got := mustLoad(t)
+	if len(got.Jira.Sites[0].Scopes) != 2 || got.Jira.Account != "" {
+		t.Fatalf("stored change not kept: %+v", got.Jira)
+	}
+}
+
+// An empty, non-nil slice in the snapshot reads as untouched, not as an edit.
+func TestOAuthBaseKeepsEmptySlices(t *testing.T) {
+	c := &JiraCreds{Sites: []JiraSite{{CloudID: "c", Scopes: []string{}}}}
+	if b := cloneJira(c); b.Sites[0].Scopes == nil {
+		t.Fatal("clone turned an empty slice into nil")
+	}
+}

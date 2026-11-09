@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -803,6 +804,7 @@ func load() (*Data, error) {
 			// A store not yet created is a successful, empty snapshot: Save must still tell
 			// a GitHub connection added after it from one the caller made.
 			s.ghBase, s.ghBaseSet = ghSnap{}, true
+			s.setOAuthBase()
 			return s, nil
 		}
 		return s, err
@@ -897,9 +899,7 @@ func cloneJira(c *JiraCreds) *JiraCreds {
 	if c.Sites != nil {
 		n.Sites = make([]JiraSite, len(c.Sites))
 		for i, st := range c.Sites {
-			if st.Scopes != nil {
-				st.Scopes = append([]string(nil), st.Scopes...)
-			}
+			st.Scopes = slices.Clone(st.Scopes) // keeps nil vs empty, which DeepEqual tells apart
 			n.Sites[i] = st
 		}
 	}

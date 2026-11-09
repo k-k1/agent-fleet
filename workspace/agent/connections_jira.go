@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -146,18 +147,35 @@ func handlePutJiraConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	creds.Account = account
-	s, err := secrets.Load()
+	storeJiraConn(w, func(s *secrets.Data) error { s.Jira = creds; return nil })
+}
+
+// storeJiraConn applies a deliberate change to the Jira connection under the store lock and
+// answers with the resulting status. A Load ... Save pair would let Save's rotated-token
+// guard take the change for a stale snapshot whenever another write lands in between.
+func storeJiraConn(w http.ResponseWriter, fn func(*secrets.Data) error) {
+	var out *secrets.Data
+	err := secrets.Update(func(s *secrets.Data) error {
+		if err := fn(s); err != nil {
+			return err
+		}
+		out = s
+		return nil
+	})
+	if errors.Is(err, errJiraSiteGone) {
+		httpx.WriteErr(w, http.StatusConflict, "conflict", err.Error())
+		return
+	}
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	s.Jira = creds
-	if err := s.Save(); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, jiraStatus(s))
+	httpx.WriteJSON(w, http.StatusOK, jiraStatus(out))
 }
+
+// errJiraSiteGone means the OAuth connection or the chosen site disappeared between the
+// read and the write (a disconnect or reconnect meanwhile).
+var errJiraSiteGone = errors.New("the Jira connection changed meanwhile; pick the site again")
 
 // handleJiraOAuthStore — PUT /connections/jira/oauth, called by the CP at the end of the
 // code grant (oauth_jira.go). The CP forwards the tokens and forgets them; everything
@@ -208,17 +226,7 @@ func handleJiraOAuthStore(w http.ResponseWriter, r *http.Request) {
 	if me, err := jiraMyself(c); err == nil {
 		c.Account, c.Login = me.DisplayName, me.EmailAddress
 	}
-	s, err := secrets.Load()
-	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
-	}
-	s.Jira = c
-	if err := s.Save(); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, jiraStatus(s))
+	storeJiraConn(w, func(s *secrets.Data) error { s.Jira = c; return nil })
 }
 
 // handlePutJiraSite — PUT /connections/jira/site {cloudId}. One authorization can cover
@@ -242,32 +250,41 @@ func handlePutJiraSite(w http.ResponseWriter, r *http.Request) {
 	}
 	want := strings.TrimSpace(req.CloudID)
 	for _, st := range uniqueJiraSites(s.Jira.Sites) {
-		if st.CloudID == want {
-			s.Jira.CloudID = st.CloudID
-			s.Jira.Site = st.URL
-			// The display name can differ per site (another tenant's Jira is another persona).
-			if me, err := jiraMyself(s.Jira); err == nil {
-				s.Jira.Account, s.Jira.Login = me.DisplayName, me.EmailAddress
-			}
-			if err := s.Save(); err != nil {
-				httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-				return
-			}
-			httpx.WriteJSON(w, http.StatusOK, jiraStatus(s))
-			return
+		if st.CloudID != want {
+			continue
 		}
+		// The display name can differ per site (another tenant's Jira is another persona).
+		// Asked on a copy and outside the store lock: it is a network call, and it may renew
+		// the token, which writes the store itself.
+		probe := *s.Jira
+		probe.CloudID, probe.Site = st.CloudID, st.URL
+		me, merr := jiraMyself(&probe)
+		storeJiraConn(w, func(d *secrets.Data) error {
+			if d.Jira == nil || d.Jira.AuthKind != "oauth" || !jiraHasSite(d.Jira, st.CloudID) {
+				return errJiraSiteGone
+			}
+			d.Jira.CloudID, d.Jira.Site = st.CloudID, st.URL
+			if merr == nil {
+				d.Jira.Account, d.Jira.Login = me.DisplayName, me.EmailAddress
+			}
+			return nil
+		})
+		return
 	}
 	httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "that site is not in this authorization")
 }
 
-func handleDeleteJiraConn(w http.ResponseWriter, r *http.Request) {
-	s, err := secrets.Load()
-	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
+func jiraHasSite(c *secrets.JiraCreds, cloudID string) bool {
+	for _, st := range c.Sites {
+		if st.CloudID == cloudID {
+			return true
+		}
 	}
-	s.Jira = nil
-	if err := s.Save(); err != nil {
+	return false
+}
+
+func handleDeleteJiraConn(w http.ResponseWriter, r *http.Request) {
+	if err := secrets.Update(func(s *secrets.Data) error { s.Jira = nil; return nil }); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
