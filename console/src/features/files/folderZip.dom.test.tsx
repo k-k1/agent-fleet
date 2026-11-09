@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let tenant = "";
 const check = vi.fn();
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getTenant: () => tenant,
   downloadZipURL: (p: string) => `http://x/api/fs/download-zip?path=${encodeURIComponent(p)}${tenant ? "&tenant=" + tenant : ""}`,
   fsZipCheck: (p: string) => check(p),

@@ -18,6 +18,7 @@ let stored: Record<string, { body: string; type: string }> = {};
 let blockFetch: Promise<void> | null = null;
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getTenant: () => "",
   getUser: () => "",
   api: async () => ({ branches: [] }),

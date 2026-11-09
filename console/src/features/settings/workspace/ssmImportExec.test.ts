@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const api = vi.fn();
 const rawJSON = vi.fn();
 vi.mock("../../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: (...a: unknown[]) => api(...a),
   rawJSON: (...a: unknown[]) => rawJSON(...a),
 }));
