@@ -42,6 +42,25 @@ func TestAgyChatModelDropsStalePin(t *testing.T) {
 	}
 }
 
+// A member's Settings pick whose version moved on upstream must stay in its family rather than
+// fall to the CLI default (2026-11-09: that default was Gemini 4 Argon, on its own small quota).
+func TestAgyChatModelFollowsAVersionBump(t *testing.T) {
+	catalog := []agents.ModelChoice{
+		{ID: "gemini-4-argon-medium", Label: "Gemini 4 Argon (Medium)"},
+		{ID: "gemini-3.8-flash-medium", Label: "Gemini 3.8 Flash (Medium)"},
+		{ID: "gemini-3.8-flash-low", Label: "Gemini 3.8 Flash (Low)"},
+	}
+	for pin, want := range map[string]string{
+		"gemini-3.5-flash-medium": "gemini-3.8-flash-medium", // a stored id
+		"Gemini 3.5 Flash (Low)":  "gemini-3.8-flash-low",    // a stored display name
+		"gemini-3.5-pro-high":     "",                        // no such family left: CLI default
+	} {
+		if got := agyChatModel(pin, catalog); got != want {
+			t.Errorf("agyChatModel(%q) = %q, want %q", pin, got, want)
+		}
+	}
+}
+
 func TestAgyChatArgsFlagsBeforePrompt(t *testing.T) {
 	c := &ChatConversation{Model: "", AgyConversationID: "u-1"}
 	got, model := agyChatArgs(c, "PROMPT")

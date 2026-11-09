@@ -25,7 +25,9 @@ package chatx
 // so no price data means today's behaviour, never an empty pick where there used to be one.
 
 import (
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -205,19 +207,65 @@ func agyRecommendIDs(v visibility) []string {
 // (gemini-3.5-flash-medium / "Gemini 3.5 Flash (Medium)"), and agyChatModel drops a --model
 // the catalog does not list as an id — so answering with the display name showed "Gemini 3.5
 // Flash (Medium)" while the CLI default ran (#972 review, round 2). A readable catalog without
-// that model answers "" (the CLI default, which is what runs); an unreadable one keeps the name,
-// as before, which older agy builds accept as-is.
+// that model falls back to the newest row of the same family (newestAgyFamilyModel), then ""
+// (the CLI default, which is what runs); an unreadable one keeps the name, as before, which older
+// agy builds accept as-is.
 func agyNamedModel(v visibility, name string) string {
 	all := agyModels()
 	if len(all) == 0 {
 		return v.model(session.KindAgy, name)
 	}
-	for _, m := range v.list(session.KindAgy, all) {
+	visible := v.list(session.KindAgy, all)
+	for _, m := range visible {
 		if strings.EqualFold(m.ID, name) || strings.EqualFold(m.Label, name) {
 			return m.ID
 		}
 	}
-	return ""
+	return newestAgyFamilyModel(visible, name)
+}
+
+// agyVersionRe is the version number inside an agy display name ("Gemini 3.8 Flash (Medium)").
+var agyVersionRe = regexp.MustCompile(`\d+(?:\.\d+)*`)
+
+// newestAgyFamilyModel answers the newest catalog row that is name with only its version
+// number changed — "Gemini 3.5 Flash (Medium)" finds "Gemini 3.8 Flash (Medium)", and the id
+// "gemini-3.5-flash-medium" finds "gemini-3.8-flash-medium" — and "" when there is none.
+//
+// Without it a version bump upstream silently moved agy one-shots and chats onto the CLI's own
+// default, both for the built-in pick and for a model the member chose in Settings: measured
+// 2026-11-09, agy 1.5.3 listed 3.8 Flash only, its default was Gemini 4 Argon, whose separate
+// small quota ran out after a day of mirror translations while Flash still had most of its own.
+func newestAgyFamilyModel(catalog []agents.ModelChoice, name string) string {
+	family := func(s string) string { return strings.ToLower(agyVersionRe.ReplaceAllString(s, "#")) }
+	want := family(name)
+	if want == strings.ToLower(name) {
+		return "" // the name carries no version to vary
+	}
+	best, bestVer := "", []int(nil)
+	for _, m := range catalog {
+		var ver []int
+		switch want {
+		case family(m.Label):
+			ver = agyVersion(agyVersionRe.FindString(m.Label))
+		case family(m.ID):
+			ver = agyVersion(agyVersionRe.FindString(m.ID))
+		default:
+			continue
+		}
+		if best == "" || slices.Compare(ver, bestVer) > 0 {
+			best, bestVer = m.ID, ver
+		}
+	}
+	return best
+}
+
+func agyVersion(s string) []int {
+	var out []int
+	for _, p := range strings.Split(s, ".") {
+		n, _ := strconv.Atoi(p)
+		out = append(out, n)
+	}
+	return out
 }
 
 // cheapestListedModel returns the id in ids with the lowest modelListPrice, "" when none is

@@ -1317,10 +1317,11 @@ func agyChatArgs(c *ChatConversation, prompt string) ([]string, string) {
 }
 
 // agyChatModel returns the --model value for a turn, self-healing a stale pin:
-// the pinned display name is passed through only while the live catalog (or its
-// stale-if-error cache) still lists it — a renamed/withdrawn model degrades to
-// agy's own default instead of failing every send. An empty catalog (CLI absent,
-// signed out) can't validate, so the pin passes through untouched.
+// the pinned name is passed through only while the live catalog (or its
+// stale-if-error cache) still lists it. A pin whose version moved on follows its
+// family (newestAgyFamilyModel), and a withdrawn model degrades to agy's own default
+// instead of failing every send. An empty catalog (CLI absent, signed out) can't
+// validate, so the pin passes through untouched.
 func agyChatModel(model string, catalog []agents.ModelChoice) string {
 	if model == "" || len(catalog) == 0 {
 		return model
@@ -1330,7 +1331,7 @@ func agyChatModel(model string, catalog []agents.ModelChoice) string {
 			return model
 		}
 	}
-	return ""
+	return newestAgyFamilyModel(catalog, model)
 }
 
 // chatAgyHome prepares the per-CONVERSATION isolated HOME + working dir for a
