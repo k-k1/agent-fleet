@@ -113,11 +113,40 @@ const MIN_CJK = 8;
 // re-saying what is there ("実装完了。see the diff").
 const MAX_STRAY_SHARE = 0.05;
 
+// An English answer that names whole Japanese PAGES or SECTIONS — a status table with a "はじめに"
+// / "困ったとき" column, a list of previews keyed by page name — goes past the 5% above without
+// containing a single Japanese sentence (measured on session s5skc52's reports: 6.5% and 8.4%,
+// and the button was withheld from both). Such a name is a short run of Japanese standing on its
+// own: no sentence punctuation, a handful of characters. Those runs are discounted for the
+// Japanese reader as long as Latin still clearly dominates the raw count (MAX_LABELLED_SHARE),
+// so a Japanese answer made of short bullet points never qualifies; a run that carries 。、！？ or
+// is longer than a label is Japanese prose and keeps the "already mixed, stay silent" rule
+// ("実装完了。see the diff").
+const MAX_LABELLED_SHARE = 0.25;
+const MAX_LABEL_CHARS = 20;
+const CJK_RUN = /[\u3000-\u303f\u3041-\u309f\u30a0-\u30ff\u3400-\u9fff\uf900-\ufaff\uff01-\uff60]+/g;
+const SENTENCE_MARK = /[\u3001\u3002\uff01\uff1f]/;
+
+function cjkCount(s: string): number {
+  return (s.match(KANA)?.length || 0) + (s.match(KANJI)?.length || 0);
+}
+
+/** CJK characters that read as Japanese prose rather than a name standing in English text. */
+function cjkProseCount(prose: string): number {
+  let n = 0;
+  for (const run of prose.match(CJK_RUN) || []) {
+    const c = cjkCount(run);
+    if (SENTENCE_MARK.test(run) || c > MAX_LABEL_CHARS) n += c;
+  }
+  return n;
+}
+
 /**
  * Does this answer look like it is NOT in the reader's language?
  *
  * Deliberately blunt, in both directions:
- *   ja … enough Latin letters to be prose, and at most a stray word's worth of CJK.
+ *   ja … enough Latin letters to be prose, and at most a stray word's worth of CJK — or, while
+ *        Latin still dominates, Japanese only in label-sized runs with no sentence in them.
  *   en … enough CJK characters to be Japanese prose, and more than a stray word's worth.
  *
  * It only decides whether the BUTTON is offered. Nothing translates on this verdict alone, so a
@@ -125,11 +154,17 @@ const MAX_STRAY_SHARE = 0.05;
  */
 export function looksForeign(text: string, lang: TranslateLang): boolean {
   const prose = proseOnly(text);
-  const cjk = (prose.match(KANA)?.length || 0) + (prose.match(KANJI)?.length || 0);
+  const cjk = cjkCount(prose);
   const latin = prose.match(LATIN)?.length || 0;
   // No prose at all leaves the share undefined (0/0); nothing is offered for it either way.
   const cjkShare = cjk + latin > 0 ? cjk / (cjk + latin) : 0;
-  if (lang === "ja") return latin >= MIN_LATIN && cjkShare <= MAX_STRAY_SHARE;
+  if (lang === "ja") {
+    if (latin < MIN_LATIN) return false;
+    if (cjkShare <= MAX_STRAY_SHARE) return true;
+    if (cjkShare > MAX_LABELLED_SHARE) return false;
+    const sentences = cjkProseCount(prose);
+    return sentences / (sentences + latin) <= MAX_STRAY_SHARE;
+  }
   return cjk >= MIN_CJK && cjkShare > MAX_STRAY_SHARE;
 }
 

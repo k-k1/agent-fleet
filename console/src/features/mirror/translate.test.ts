@@ -89,6 +89,27 @@ describe("looksForeign", () => {
     expect(looksForeign(englishReportNamingJaLabels, "en")).toBe(false);
   });
 
+  it("still offers an English report whose tables and lists name Japanese pages", () => {
+    // Real shape (session s5skc52): page names in a status table and a preview list put the
+    // CJK share at 8.4%, past the stray-word rule, without a single Japanese sentence.
+    const englishStatusWithJaPages =
+      "#3708 (困ったとき) review is done too. It went 1 round and is now marked ready.\n\n" +
+      "- **Fixed:** the links to the task page that covers each topic were missing, so they have been added.\n" +
+      "- **Left as is:** I had suggested adding a 全体像 table to each symptom page, but it was turned down.\n\n" +
+      "| PR | Area | Status |\n|---|---|---|\n" +
+      "| #3706 | フリート | Ready |\n| #3708 | 困ったとき | Ready |\n| #3711 | ファイル・プレビュー | Ready |\n" +
+      "| #3707 | チーム・チャット・外からつなぐ・設定 | In review |\n| #3705 | はじめに | Waiting for a reviewer |\n";
+    expect(looksForeign(englishStatusWithJaPages, "ja")).toBe(true);
+    expect(looksForeign(englishStatusWithJaPages, "en")).toBe(true);
+  });
+
+  it("does not discount Japanese that is written as sentences or short bullets", () => {
+    // A sentence mark makes the run prose, however short.
+    expect(looksForeign("実装完了。see the diff for the details of the change", "ja")).toBe(false);
+    // Bullets without punctuation are label-sized, but CJK is no longer the minority.
+    expect(looksForeign("- 設定を変更した\n- テストを追加した\n- PR を出した see https://example.com", "ja")).toBe(false);
+  });
+
   it("does not offer a one-word answer", () => {
     expect(looksForeign("Done.", "ja")).toBe(false);
     expect(looksForeign("OK", "ja")).toBe(false);
