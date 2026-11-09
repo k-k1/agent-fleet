@@ -23,6 +23,8 @@ The list can be read while the workspace is stopped.
 
 ## Read the list
 
+![The Issue tracker section of the left pane. The heading shows 45, with the last fetch time, "2 updated" and a "Find in this list" box under it; GitHub, Bitbucket and Jira rows carry unread dots, CI marks, a conflict mark, comment counts and 🔗, and "Show more (35 left)" is at the bottom](../../assets/sessions-issue-list-en-light.webp)
+
 | What you see | Meaning |
 |---|---|
 | The number beside the heading | How many items are not done. The line under it says when the list was last fetched |
@@ -131,6 +133,8 @@ In the item's detail, press **Remove** beside the session. The session and its w
 
 A GitHub or Bitbucket pull request is fetched again when you open its detail: draft or not, conflicts, reviews, CI,
 base ← head and the size of the diff.
+
+![The detail of GitHub pull request demo/webshop#315. Under "This is the pull request as it is right now" are the author, the branches (develop ← fix/order-history-sort), no conflicts, the diff, reviews and passing CI, then the folded "Review this pull request" and the Merge and Open in GitHub buttons](../../assets/sessions-pr-en-light.webp)
 
 - The first line always says whether you are looking at a fresh read or the content already fetched. While the workspace is stopped, nothing is fetched and the content already fetched is shown
 - When the fetch fails, press **Try again**

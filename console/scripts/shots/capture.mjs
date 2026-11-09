@@ -825,6 +825,45 @@ const SCENES = [
     settle: 1800,
   },
   {
+    // The issue tracker section of the left pane: CI and conflict marks, unread dots, comment counts.
+    name: "sessions-issue-list",
+    guide: true,
+    clip: "#shot-wi-list",
+    pad: 0,
+    sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 0, files: 0 },
+    storage: {
+      "af.workitems.seen.v1": JSON.stringify({
+        "github:demo/webshop#312": { u: "2020-01-01T00:00:00Z", c: 2 },
+        "bitbucket:acme/ledger#201": { u: "2020-01-01T00:00:00Z", c: 7 },
+      }),
+    },
+    width: 1400,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 800));
+      const sec = document.querySelector(".wi-list")?.closest(".ui-section");
+      if (sec) sec.id = "shot-wi-list";
+    })()`,
+    settle: 1200,
+  },
+  {
+    // A mergeable GitHub pull request's detail: live state, checks, reviews and the Merge button.
+    name: "sessions-pr",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 1, files: 0 },
+    width: 1400,
+    height: 1700,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 1500));
+      [...document.querySelectorAll(".wi-row")].find((el) => el.textContent.includes("#315"))?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
     // The session rows of the repository tree, for their state badges.
     name: "sessions-status",
     guide: true,
