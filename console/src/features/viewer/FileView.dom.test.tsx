@@ -78,7 +78,11 @@ const { FileView } = await import("./FileView.tsx");
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-async function render(props: { targetLine?: number; openMode?: "view" | "edit" }): Promise<void> {
+async function render(props: {
+  targetLine?: number;
+  openMode?: "view" | "edit";
+  filePath?: string;
+}): Promise<void> {
   await act(async () => {
     root!.render(<FileView filePath="repos/x/doc.md" paneId="pane-1" {...props} />);
   });
@@ -514,6 +518,21 @@ describe("the buffer behind the preview", () => {
     expect(editorMemory.at(-1)?.restore).toBe(false); // the citation's line wins
     // A later mode change restores as usual: what it restores is where the citation left it.
     await act(async () => modeButton("Split").click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+  });
+
+  it("restores as usual when a citation a plain file showed in the viewer is followed by Edit", async () => {
+    served = { content: "alpha\nbeta\ngamma\n", editable: true };
+    const editTab = () =>
+      [...host.querySelectorAll('.file-mode-tabs [role="tab"]')].find((b) => b.textContent === "Edit") as HTMLElement;
+    await render({ filePath: "repos/x/notes.txt" });
+    await act(async () => editTab().click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+    // Cited at a new line: a plain file shows it in the viewer, so the editor is not attached.
+    await render({ filePath: "repos/x/notes.txt", targetLine: 2 });
+    expect(editorVisible()).toBe(false);
+    editorMemory.length = 0;
+    await act(async () => editTab().click());
     expect(editorMemory.at(-1)?.restore).toBe(true);
   });
 

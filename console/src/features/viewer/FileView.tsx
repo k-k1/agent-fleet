@@ -390,11 +390,14 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // for the open file only records: restoring would take the reader away from the citation.
   const restoreForRef = useRef<{ key: string | null; targetLine: number | undefined } | null>(null);
   useEffect(() => {
-    const handle = editorHandleRef.current;
-    if (!surfaces.editor || !handle || !memoryKey) return;
+    if (!memoryKey) return;
+    // Consumed even when the editor is not shown: a plain file shows a citation in the
+    // viewer, and a later switch to the editor is an ordinary one that restores.
     if (restoreForRef.current?.key !== memoryKey) restoreForRef.current = { key: memoryKey, targetLine };
     const recited = restoreForRef.current.targetLine !== targetLine;
-    restoreForRef.current.targetLine = targetLine; // later re-attaches restore as usual
+    restoreForRef.current.targetLine = targetLine;
+    const handle = editorHandleRef.current;
+    if (!surfaces.editor || !handle) return;
     const restore = !recited && !(scrollSyncOn && lastSoloSideRef.current === "preview");
     const inputRoot = bodyRef.current ?? handle.host;
     return attachEditorScrollMemory(handle, `${memoryKey}\u0000editor`, restore, inputRoot);
