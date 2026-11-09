@@ -65,10 +65,13 @@ import {
   readMergeResult,
   readWorkItemDetail,
   relTime,
+  repoMapProject,
+  repoMapScope,
   reviewCounts,
   stateBadge,
   stateLabel,
   stateTone,
+  type LaunchRepoSource,
   type WorkItem,
   type WorkItemDetail,
   type WorkItemSessionRef,
@@ -260,8 +263,13 @@ interface Props {
    * rather than drawing empty fields, and still offers the launch, which needs nothing more. */
   reference?: boolean;
   repos: Repo[];
-  /** Working copy resolved from the query's default or the item's own repo ("" = none). */
+  /** Working copy resolved by resolveLaunchRepo ("" = none: the user has to choose). */
   defaultRepo: string;
+  /** Where defaultRepo came from; "project" makes the panel say it was remembered. */
+  defaultSource?: LaunchRepoSource;
+  /** Records the base repository a Jira project's tickets launch in (scope = repoMapScope).
+   * Absent: no "remember" box. */
+  onRemember?(scope: string, repo: string): void;
   /** Ledger rows for this item — shows a second person on the same ticket before they launch. */
   started: WorkItemSessionRef[];
   onClose(): void;
@@ -289,6 +297,8 @@ export function WorkItemDetailModal({
   reference = false,
   repos,
   defaultRepo,
+  defaultSource = "",
+  onRemember,
   started,
   onClose,
   onPick,
@@ -320,15 +330,19 @@ export function WorkItemDetailModal({
   const issueType = shownPR ? "" : live.detail?.type || item.type || "";
   const providerName = PROVIDER_NAMES[item.provider] || item.provider;
   const bases = useMemo(() => repos.filter((r) => !r.worktree), [repos]);
-  // Default repository: the query's hint, then the item's repo, then the first one. A worktree
-  // as the default resolves to its parent; where to launch is chosen on the row below.
+  // Default repository as resolved by the caller (resolveLaunchRepo). A worktree as the default
+  // resolves to its parent; where to launch is chosen on the row below. Nothing resolved stays
+  // unselected: falling back to the first repository looked like a decision and sent sessions to
+  // the wrong repository.
   const initialBase = useMemo(() => {
     const hit = repos.find((r) => r.name === defaultRepo);
     if (hit) return hit.worktree ? hit.parent || "" : hit.name;
-    return bases[0]?.name || "";
-  }, [repos, bases, defaultRepo]);
+    return "";
+  }, [repos, defaultRepo]);
   const [base, setBase] = useState(initialBase);
   const [where, setWhere] = useState<string>(NEW_WORKTREE);
+  const scope = onRemember ? repoMapScope(item) : "";
+  const [remember, setRemember] = useState(true);
 
   const baseRepo = repos.find((r) => r.name === base);
   // That base's worktrees in creation order. An SVN working copy has no worktree concept.
@@ -464,6 +478,7 @@ export function WorkItemDetailModal({
       return;
     }
     if (!baseRepo) return;
+    if (scope && remember && !(defaultSource === "project" && base === initialBase)) onRemember?.(scope, baseRepo.name);
     if (where === NEW_WORKTREE && canWorktree) {
       onPick(baseRepo, false, reviewBranch, launchItem);
       return;
@@ -828,6 +843,11 @@ export function WorkItemDetailModal({
                     setWhere(NEW_WORKTREE); // changing the repository re-opens the where choice
                   }}
                 >
+                  {!baseRepo && (
+                    <option value={base} disabled>
+                      {tr("wi.start_repo_choose")}
+                    </option>
+                  )}
                   {bases.map((r) => (
                     <option key={r.name} value={r.name}>
                       {r.name}
@@ -835,11 +855,21 @@ export function WorkItemDetailModal({
                   ))}
                 </select>
               </label>
+              {defaultSource === "project" && base === initialBase && (
+                <p className="wi-shint">{tr("wi.start_repo_remembered", { project: repoMapProject(repoMapScope(item)) })}</p>
+              )}
+              {scope && (
+                <label className="wi-sremember">
+                  <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+                  {tr("wi.start_repo_remember", { project: repoMapProject(scope) })}
+                </label>
+              )}
               <label className="wi-sfield">
                 <span>{tr("wi.start_where")}</span>
-                <select value={where} onChange={(e) => setWhere(e.target.value)}>
-                  {canWorktree && <option value={NEW_WORKTREE}>{tr("wi.start_new_worktree")}</option>}
-                  <option value={base}>{tr("wi.start_in_base", { repo: base })}</option>
+                <select value={where} disabled={!baseRepo} onChange={(e) => setWhere(e.target.value)}>
+                  {/* With no repository chosen yet the field is inert and shows the usual default. */}
+                  {(canWorktree || !baseRepo) && <option value={NEW_WORKTREE}>{tr("wi.start_new_worktree")}</option>}
+                  {baseRepo && <option value={base}>{tr("wi.start_in_base", { repo: base })}</option>}
                   {worktrees.map((r) => (
                     <option key={r.name} value={r.name}>
                       {r.branch ? tr("wi.start_in_worktree", { branch: r.branch }) : r.name}

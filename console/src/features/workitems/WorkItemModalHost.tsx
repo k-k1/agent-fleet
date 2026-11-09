@@ -13,7 +13,7 @@ import { useTenantStore } from "../../core/store/tenant.ts";
 import { useReposStore, useLaunchSeed, useLaunchTarget, type Repo } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
-import { useSettings } from "../../lib/settings.ts";
+import { getSettings, setSetting, useSettings } from "../../lib/settings.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useWorkItemStore } from "./store.ts";
@@ -21,7 +21,7 @@ import { useWorkItemModal } from "./modal.ts";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import { readShelf, resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
-import { branchForItem, promptForItem, repoForItem, sessionsOnItem, titleForItem, type WorkItem } from "./read.ts";
+import { branchForItem, promptForItem, resolveLaunchRepo, sessionsOnItem, titleForItem, type WorkItem } from "./read.ts";
 import "./workitems.css";
 
 /** Opens a session a ticket was started in. A slug that is not on the live list used to open
@@ -142,6 +142,7 @@ export function WorkItemModalHost() {
   if (detail) {
     const item = detail.item;
     const queryHint = payload?.queries.find((q) => q.id === item.queryId)?.repoHint || "";
+    const launch = resolveLaunchRepo(item, { link: detail.repoHint, query: queryHint, map: settings.workItemRepoMap }, folders);
     return (
       <WorkItemDetailModal
         // A second link clicked while the panel is open re-points it; the key resets the launch
@@ -150,7 +151,10 @@ export function WorkItemModalHost() {
         item={item}
         reference={detail.reference}
         repos={repos}
-        defaultRepo={repoForItem(item, detail.repoHint || queryHint, folders)}
+        defaultRepo={launch.repo}
+        defaultSource={launch.source}
+        // Read the map at launch, not from this render: another tab may have added to it.
+        onRemember={(scope, repo) => setSetting("workItemRepoMap", { ...getSettings().workItemRepoMap, [scope]: repo })}
         started={sessionsOnItem(ledger, sessions, item.provider, item.key)}
         onClose={close}
         onPick={(target, inPlace, reviewBranch, resolved) => pickTarget(resolved, target, inPlace, reviewBranch)}
