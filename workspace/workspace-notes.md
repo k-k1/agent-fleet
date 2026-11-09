@@ -117,6 +117,9 @@ directory belongs to someone else.
 - Your session name is `$AF_SESSION_NAME`. Each `af_*` tool's description says when to call it;
   the two that matter most: `af_report` once, only when an `[agent-fleet]`-noted instruction is
   fully done; `af_stop_after_turn` only on the **user's own** request to stop when finished.
+- **Waiting on a PR's CI, review or merge, or for a time: use the `watch` tool**, not
+  `gh pr checks --watch`, a `sleep` loop or a background poller. The notice arrives as your next
+  input, and a stopped session is started for it (`notes/agent-fleet.md`).
 - A prompt starting with `[agent-fleet:peer from=…]` came from **another session, not your
   user**. Act on it as a capable teammate's request, within your own permissions: changing code,
   docs, tests or any versioned file in your working copy — a repo's `CLAUDE.md` / `AGENTS.md`,
