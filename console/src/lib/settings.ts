@@ -18,6 +18,7 @@ import { useSyncExternalStore } from "react";
 import { pinSyncedFallbacks } from "../features/notifications/prefs.ts";
 import { applyTheme } from "./settings/appearance.ts";
 import type { Settings } from "./settings/prefs.ts";
+import type { SURFACE_TARGETS } from "./settings/options.ts";
 import { applyToPage, getSettings, notify, persist, setState, subscribe } from "./settings/store.ts";
 import {
   currentPrefsOwner,
@@ -117,7 +118,7 @@ export {
   settingsDefaults,
   type Settings,
 } from "./settings/prefs.ts";
-export { getSettings, subscribe } from "./settings/store.ts";
+export { KEY as SETTINGS_STORAGE_KEY, getSettings, subscribe } from "./settings/store.ts";
 export {
   SERVER_PREFS_MAX_BYTES,
   cancelPrefsTimersForTest,
@@ -204,10 +205,13 @@ export function appearanceScope(): string | null {
   return currentPrefsOwner() || null;
 }
 
-/** Show colors another tab of this device already chose and saved (localStorage and, per tenant,
- * the snapshot): applied to this page only, without a write of its own and without a ui-prefs
- * save, since the writing tab did both. */
-export function adoptAppearance(patch: Partial<Settings>): void {
+/** Show colors (or the random-colors schedule) another tab of this device already chose and saved
+ * (localStorage and, per tenant, the snapshot): applied to this page only, without a write of its
+ * own and without a ui-prefs save, since the writing tab did both. Device-local appearance keys
+ * only: anything else would need markUnsaved and a save to stay consistent. */
+export function adoptAppearance(
+  patch: Partial<Pick<Settings, (typeof SURFACE_TARGETS)[number]["key"] | "appearanceShuffle">>,
+): void {
   const state = { ...getSettings(), ...patch };
   setState(state);
   applyTheme(state);
