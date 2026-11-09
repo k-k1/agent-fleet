@@ -144,6 +144,7 @@ const ASCII_SENTENCE_END = /^[.!?]+([\s\u3000]|$)/;
 
 function labelSized(run: string, chars: number): boolean {
   if (chars <= MAX_LABEL_CHARS) return true;
+  // i18n-exempt: the separator the text is split on, never shown
   return chars <= MAX_JOINED_NAME_CHARS && run.split("・").every((part) => cjkCount(part) <= MAX_NAME_PART_CHARS);
 }
 
