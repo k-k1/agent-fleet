@@ -792,9 +792,9 @@ func parseBitbucketMergeability(body []byte) string {
 			continue
 		}
 		switch {
-		case c.Status == "PASSED" && c.Reason == "clean":
+		case strings.EqualFold(c.Status, "PASSED") && strings.EqualFold(c.Reason, "clean"):
 			return "clean"
-		case c.Status == "FAILED" && c.Reason == "conflicts":
+		case strings.EqualFold(c.Status, "FAILED") && strings.EqualFold(c.Reason, "conflicts"):
 			return "conflict"
 		}
 	}
