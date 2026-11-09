@@ -392,10 +392,15 @@ func prRecordID(w *prWatched) string {
 	return w.provider + ":" + w.linkKey
 }
 
+// prLegacyForget is how long the old watch kept a record of a PR it no longer saw.
+const prLegacyForget = 30 * 24 * time.Hour
+
 // prFeedbackSpecs are the built-ins of one PR. A legacy record seeds them: the deliveries it
-// counted, and as baseline every condition its rules would not tell now, so the first
-// observation takes those as told.
-func prFeedbackSpecs(w *prWatched, owner string, legacy map[string]prLegacyRecord) (ci, review, conflict watch.BuiltinSpec) {
+// counted, the head whose failure it told (a record that never relaxes, so it is seeded as told),
+// and as baseline the review and conflict conditions its rules would not tell now; those relax
+// when the condition clears, so the first observation is the right moment to take them as told.
+// A record the old watch would have forgotten seeds nothing.
+func prFeedbackSpecs(w *prWatched, owner string, legacy map[string]prLegacyRecord, now time.Time) (ci, review, conflict watch.BuiltinSpec) {
 	subject, id := prSubject(w.provider, w.linkKey), prRecordID(w)
 	base := watch.BuiltinSpec{Subject: subject, Owner: owner, Ref: w.linkKey, URL: w.pr.URL, Tag: id, Fallback: watch.NotifyMember}
 	ci, review, conflict = base, base, base
@@ -404,12 +409,12 @@ func prFeedbackSpecs(w *prWatched, owner string, legacy map[string]prLegacyRecor
 	review.Max, review.Combine = prFeedbackMaxReview, true
 	conflict.Types, conflict.Notify, conflict.Fallback = []string{"pr.conflict"}, watch.NotifyMember, ""
 	r, ok := legacy[id]
-	if !ok {
+	if !ok || now.Sub(r.Seen) > prLegacyForget {
 		return
 	}
 	pr := w.pr
-	if !(pr.Checks == "failure" && !pr.ChecksPending && pr.Head != "" && r.CIHead != pr.Head) {
-		ci.Baseline = ci.Types
+	if r.CIHead != "" {
+		ci.Told = map[string]string{"pr.checks.failed": r.CIHead}
 	}
 	review.Sent = r.ReviewSent
 	if !pr.ChangesRequested || r.ReviewCR {
@@ -491,7 +496,9 @@ func StartPRFeedbackWatch() {
 }
 
 // prFeedbackTick is one sweep. Off, it asks nothing and ends the built-ins, whose records the
-// engine keeps, so turning it on again repeats nothing.
+// engine keeps, so turning it on again repeats nothing. A conflict seen but not yet in the
+// member's outbox still goes there: the engine delivers what a member-bound built-in owes before
+// it retires it (normally within one of its ticks).
 func prFeedbackTick(now time.Time) {
 	e := prFeedbackEngine()
 	if !prFeedbackEnabled() {
@@ -504,7 +511,7 @@ func prFeedbackTick(now time.Time) {
 	legacy := prLegacy()
 	var ci, review, conflict []watch.BuiltinSpec
 	for _, w := range watched {
-		c, r, k := prFeedbackSpecs(w, w.owner().name, legacy)
+		c, r, k := prFeedbackSpecs(w, w.owner().name, legacy, now)
 		ci, review, conflict = append(ci, c), append(review, r), append(conflict, k)
 	}
 	// CI first: of one owner's notices, the engine offers the oldest subscription's first.

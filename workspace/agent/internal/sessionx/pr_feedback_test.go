@@ -654,9 +654,15 @@ func TestPRFeedbackLeavesAWatchedBitbucketPRToItsWatch(t *testing.T) {
 	}
 }
 
-// legacy writes the records the watch kept before it moved onto the engine.
+// legacy writes the records the watch kept before it moved onto the engine, seen now unless set.
 func (f *feedbackFixture) legacy(recs map[string]prLegacyRecord) {
 	f.t.Helper()
+	for k, r := range recs {
+		if r.Seen.IsZero() {
+			r.Seen = f.now.Truncate(time.Hour)
+			recs[k] = r
+		}
+	}
 	if err := prLegacyStore.Write(prLegacyStoreKey, recs); err != nil {
 		f.t.Fatal(err)
 	}
@@ -739,7 +745,7 @@ func TestPRFeedbackToldChangesAndThreadsTogetherInOneNotice(t *testing.T) {
 	}
 }
 
-func TestPRFeedbackTurnedOffTellsNothingStillPending(t *testing.T) {
+func TestPRFeedbackTurnedOffTellsTheSessionNothingStillPending(t *testing.T) {
 	f := newFeedbackFixture(t)
 	f.session("a", prLink(1, session.LinkCreated, ""))
 	failing(f.pr(1, "h1"), "unit")
@@ -750,5 +756,105 @@ func TestPRFeedbackTurnedOffTellsNothingStillPending(t *testing.T) {
 	f.ticks(3)
 	if len(f.sent) != 0 {
 		t.Fatalf("sent %v after the member turned the watch off", f.sent)
+	}
+}
+
+func TestPRFeedbackARerunOfTheHeadToldBeforeTheMoveIsNotToldAgain(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	pr := f.pr(1, "h1")
+	failing(pr, "unit")
+	pr.ChecksPending = true // re-running when the new Agent first looks
+	f.legacy(map[string]prLegacyRecord{"github:PR_1": {CIHead: "h1"}})
+	f.ticks(2)
+	pr.ChecksPending = false
+	f.ticks(3)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v: the old watch told h1 already", f.sent)
+	}
+	pr.Head = "h2"
+	f.ticks(2)
+	if len(f.sent) != 1 || !strings.Contains(f.sent[0], "head commit h2") {
+		t.Fatalf("sent %v, want h2 told", f.sent)
+	}
+}
+
+func TestPRFeedbackARecordTheOldWatchWouldHaveForgottenSeedsNothing(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	f.pr(1, "h1").ChangesRequested = true
+	f.legacy(map[string]prLegacyRecord{"github:PR_1": {ReviewSent: 3, ReviewCR: true, Seen: f.now.Add(-90 * 24 * time.Hour)}})
+	f.ticks(2)
+	if len(f.sent) != 1 {
+		t.Fatalf("sent %v, want the change request told: the record was stale", f.sent)
+	}
+}
+
+func TestPRFeedbackFewerThreadsThanTheOldRecordThenMoreIsNews(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	pr := f.pr(1, "h1")
+	pr.UnresolvedThreads = 1
+	f.legacy(map[string]prLegacyRecord{"github:PR_1": {ReviewSent: 1, ReviewThreads: 2}})
+	f.ticks(2)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v: fewer threads than told is not news", f.sent)
+	}
+	pr.UnresolvedThreads = 2
+	f.ticks(2)
+	if len(f.sent) != 1 || !strings.Contains(f.sent[0], "2 review thread(s)") {
+		t.Fatalf("sent %v, want the rise told", f.sent)
+	}
+}
+
+func TestPRFeedbackAReviewNoticeNamesWhatIsNew(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	pr := f.pr(1, "h1")
+	pr.ChangesRequested = true
+	f.ticks(2)
+	pr.UnresolvedThreads = 2
+	f.ticks(2)
+	if len(f.sent) != 2 || strings.Contains(f.sent[1], "requested changes") || !strings.Contains(f.sent[1], ": 2 review thread(s) are unresolved.") {
+		t.Fatalf("sent %v: the second notice names the new threads, not the change request already told", f.sent)
+	}
+}
+
+func TestPRFeedbackGoesToTheMemberOnceTheOwnerIsArchived(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	failing(f.pr(1, "h1"), "unit")
+	f.ready["a"] = false // busy: the failure waits
+	f.ticks(2)
+	m, _ := session.ReadMeta("a")
+	m.Archived = true
+	session.WriteMeta(m)
+	f.ticks(2)
+	if len(f.sent) != 0 || len(f.member) != 1 || f.member[0].Payload["what"] != "ci" {
+		t.Fatalf("sent %v member %+v, want the waiting failure sent to the member", f.sent, f.member)
+	}
+}
+
+func TestPRFeedbackGoesToTheNewOwnerOnce(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkWorking, "2026-11-01T00:00:00Z"))
+	failing(f.pr(1, "h1"), "unit")
+	f.ready["a"] = false
+	f.ticks(2)
+	f.session("b", prLink(1, session.LinkCreated, "2026-11-02T00:00:00Z")) // a stronger holder
+	f.ticks(4)
+	if len(f.sent) != 1 || !strings.HasPrefix(f.sent[0], "b|") {
+		t.Fatalf("sent %v, want the new owner told once", f.sent)
+	}
+}
+
+func TestPRFeedbackMoreThreadsThanTheOldRecordAtFirstSightIsNews(t *testing.T) {
+	f := newFeedbackFixture(t)
+	f.session("a", prLink(1, session.LinkCreated, ""))
+	f.pr(1, "h1").UnresolvedThreads = 3
+	f.legacy(map[string]prLegacyRecord{"github:PR_1": {ReviewSent: 1, ReviewThreads: 2}})
+	f.ticks(2)
+	if len(f.sent) != 1 || !strings.Contains(f.sent[0], "3 review thread(s)") {
+		t.Fatalf("sent %v, want the rise since the old record told", f.sent)
 	}
 }
