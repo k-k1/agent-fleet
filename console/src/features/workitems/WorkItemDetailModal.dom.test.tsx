@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+const workItemDetail = vi.fn();
+vi.mock("./api.ts", async (orig) => ({
+  ...(await orig<typeof import("./api.ts")>()),
+  workItemDetail: (...a: unknown[]) => workItemDetail(...a),
+}));
+
 const { WorkItemDetailModal } = await import("./WorkItemDetailModal.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 type WorkItem = import("./read.ts").WorkItem;
@@ -45,11 +51,13 @@ const render = async (
   started: WorkItemSessionRef[],
   onUnlink?: (name: string) => Promise<string>,
   row: WorkItem = item,
+  reference = false,
 ) => {
   await act(async () => {
     root!.render(
       <WorkItemDetailModal
         item={row}
+        reference={reference}
         repos={[]}
         defaultRepo=""
         started={started}
@@ -146,6 +154,28 @@ describe("WorkItemDetailModal Kind row", () => {
 
   it("shows the tracker's issue type as-is", async () => {
     await render([], undefined, { ...item, type: "Epic" });
+    expect(kindValue()).toBe("Epic");
+  });
+
+  const liveDetail = (over: Record<string, unknown>) => ({
+    provider: "jira",
+    key: "PROJ-1",
+    kind: "issue",
+    title: "Login",
+    state: "open",
+    url: "https://example.invalid/browse/PROJ-1",
+    ...over,
+  });
+
+  it("prefers the live read's type over the row's", async () => {
+    workItemDetail.mockResolvedValue(liveDetail({ type: "Task" }));
+    await render([], undefined, { ...item, type: "Epic" }, true);
+    expect(kindValue()).toBe("Task");
+  });
+
+  it("falls back to the row's type when the live read names none", async () => {
+    workItemDetail.mockResolvedValue(liveDetail({}));
+    await render([], undefined, { ...item, type: "Epic" }, true);
     expect(kindValue()).toBe("Epic");
   });
 
