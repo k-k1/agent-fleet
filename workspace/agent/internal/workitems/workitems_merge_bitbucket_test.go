@@ -2,12 +2,15 @@ package workitems
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
 // The Bitbucket half of the merge write: the head the panel displayed is checked against a fresh
@@ -21,7 +24,9 @@ type bbMergeFake struct {
 	location string
 	task     []string // successive task-status bodies (the last one repeats)
 	taskHits int
-	head     string // the full commit id the commit API returns ("" = fullHeadA)
+	head     string        // the full commit id the commit API returns ("" = fullHeadA)
+	slow     time.Duration // how long a "slow" task-status answer takes
+	posts    int           // merge POSTs received
 }
 
 // fullHeadA and fullHeadB share their first 12 characters: what the 12-character payload head
@@ -40,6 +45,7 @@ func fakeBitbucketMerge(t *testing.T, pr string, status int, reply string) *bbMe
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/merge"):
 			b, _ := io.ReadAll(r.Body)
 			f.mergeBody, f.posted = string(b), true
+			f.posts++
 			if f.location != "" {
 				w.Header().Set("Location", f.location)
 			}
@@ -56,6 +62,13 @@ func fakeBitbucketMerge(t *testing.T, pr string, status int, reply string) *bbMe
 				_, _ = w.Write([]byte(rest))
 				return
 			}
+			if f.task[i] == "401" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			if f.task[i] == "slow" {
+				time.Sleep(f.slow)
+			}
 			_, _ = w.Write([]byte(f.task[i]))
 		case strings.Contains(r.URL.Path, "/commit/"):
 			// The commit API answers with the full id of whatever the pull request's head is now.
@@ -68,9 +81,12 @@ func fakeBitbucketMerge(t *testing.T, pr string, status int, reply string) *bbMe
 			_, _ = w.Write([]byte(strings.ReplaceAll(pr, "BASE", f.srv.URL)))
 		}
 	}))
-	prev, prevEvery := BitbucketAPIBase, bitbucketMergePollEvery
-	BitbucketAPIBase, bitbucketMergePollEvery = f.srv.URL, time.Millisecond
-	t.Cleanup(func() { BitbucketAPIBase, bitbucketMergePollEvery = prev, prevEvery; f.srv.Close() })
+	prev, prevEvery, prevBudget := BitbucketAPIBase, bitbucketMergePollEvery, bitbucketMergePollBudget
+	BitbucketAPIBase, bitbucketMergePollEvery, bitbucketMergePollBudget = f.srv.URL, time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() {
+		BitbucketAPIBase, bitbucketMergePollEvery, bitbucketMergePollBudget = prev, prevEvery, prevBudget
+		f.srv.Close()
+	})
 	return f
 }
 
@@ -196,6 +212,42 @@ func TestBitbucketMergeFollowsTheTaskOf202(t *testing.T) {
 	_, err := bitbucketMergePullRequest("Bearer x", "ws/repo", 1, "ws/repo#1", fullHeadA, "merge_commit", nil)
 	if me, ok := err.(*githubMergeError); !ok || me.code != "not_mergeable" || !strings.Contains(me.msg, "left the merge queue") {
 		t.Errorf("failed task: err = %v", err)
+	}
+}
+
+// Once Bitbucket has accepted the merge (202) nothing may send it again. A 401 on a poll is the
+// case that used to: ErrBitbucketUnauthorized makes the caller refresh the token and re-run the
+// whole merge, a second POST. It must come back as "still processing" instead.
+func TestBitbucketMergeNeverResendsAfter202(t *testing.T) {
+	f := fakeBitbucketMerge(t, bbPR("OPEN", "ab37a6993eb1"), 202, `{}`)
+	f.location = f.srv.URL + "/2.0/repositories/ws/repo/pullrequests/1/merge/task-status/t1"
+	f.task = []string{"401"}
+	_, err := bitbucketMergePullRequest("Bearer x", "ws/repo", 1, "ws/repo#1", fullHeadA, "merge_commit", nil)
+	if errors.Is(err, gitx.ErrBitbucketUnauthorized) {
+		t.Fatalf("a 401 on the task poll reached the caller as %v: it would re-run the merge", err)
+	}
+	if me, ok := err.(*githubMergeError); !ok || me.code != "merge_pending" {
+		t.Errorf("err = %v, want merge_pending", err)
+	}
+	if f.posts != 1 {
+		t.Errorf("merge POSTs = %d, want 1", f.posts)
+	}
+}
+
+// The follow-up has a wall-clock budget, requests included: a poll that answers slowly is cut
+// with the context instead of stretching the merge past the Control Plane's own timeout.
+func TestBitbucketMergePollingStaysWithinItsBudget(t *testing.T) {
+	f := fakeBitbucketMerge(t, bbPR("OPEN", "ab37a6993eb1"), 202, `{}`)
+	f.location = f.srv.URL + "/2.0/repositories/ws/repo/pullrequests/1/merge/task-status/t1"
+	f.task = []string{"slow"}
+	f.slow = 3 * time.Second // many times the 200 ms budget
+	start := time.Now()
+	_, err := bitbucketMergePullRequest("Bearer x", "ws/repo", 1, "ws/repo#1", fullHeadA, "merge_commit", nil)
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("took %v with a 200 ms budget", took)
+	}
+	if me, ok := err.(*githubMergeError); !ok || me.code != "merge_pending" {
+		t.Errorf("err = %v, want merge_pending", err)
 	}
 }
 

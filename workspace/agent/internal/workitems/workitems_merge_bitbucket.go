@@ -2,6 +2,7 @@ package workitems
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,12 +32,14 @@ var workItemBitbucketStrategies = map[string]bool{
 	"squash_fast_forward": true, "rebase_fast_forward": true, "rebase_merge": true,
 }
 
-// bitbucketMergePollEvery and bitbucketMergePollMax bound how long a merge that Bitbucket answered
-// with 202 (a background task, or a merge queue) is followed before the panel is told it is
-// still processing. Variables so the tests need not wait.
+// bitbucketMergePollEvery and bitbucketMergePollBudget bound how long a merge that Bitbucket
+// answered with 202 (a background task, or a merge queue) is followed before the panel is told it
+// is still processing. The budget is a wall-clock deadline for the whole follow-up, requests
+// included: a count of polls would not bound it, and the Control Plane gives up on the Agent
+// after two minutes. Variables so the tests need not wait.
 var (
-	bitbucketMergePollEvery = time.Second
-	bitbucketMergePollMax   = 8
+	bitbucketMergePollEvery  = time.Second
+	bitbucketMergePollBudget = 8 * time.Second
 )
 
 // bitbucketResolveHead turns the PR payload's abbreviated head into the full commit id by reading
@@ -211,19 +214,38 @@ func bitbucketMergePullRequest(auth, repo string, number int, key, sha, method s
 
 // bitbucketFollowMergeTask polls the task-status link of a merge Bitbucket accepted with 202.
 // The link must stay on the API host: the Authorization header goes with every request.
+//
+// Past this point the merge may already be done or under way, so nothing here may make the caller
+// send it again: a 401 on a poll is reported as "still processing", never as the
+// ErrBitbucketUnauthorized that the caller answers by refreshing the token and re-running the
+// whole merge (read, head check, POST).
 func bitbucketFollowMergeTask(auth, loc string) (string, error) {
 	pending := &githubMergeError{http.StatusAccepted, "merge_pending",
-		"Bitbucket accepted the merge and is still processing it (a large merge or a merge queue); reopen the panel to see the result"}
+		"Bitbucket accepted the merge and is still processing it (a large merge or a merge queue); reopen the panel later to see the result"}
 	if !strings.HasPrefix(loc, BitbucketAPIBase+"/2.0/repositories/") {
 		return "", pending
 	}
-	for i := 0; i < bitbucketMergePollMax; i++ {
-		time.Sleep(bitbucketMergePollEvery)
-		body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, loc)
+	ctx, cancel := context.WithTimeout(context.Background(), bitbucketMergePollBudget)
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", pending
+		case <-time.After(bitbucketMergePollEvery):
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, loc, nil)
 		if err != nil {
 			return "", pending
 		}
-		switch status {
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("Accept", "application/json")
+		resp, err := workItemHTTPClient.Do(req)
+		if err != nil {
+			return "", pending // includes the deadline: the request is cut with the context
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		switch resp.StatusCode {
 		case http.StatusOK:
 			var t struct {
 				Status string `json:"task_status"`
@@ -240,13 +262,10 @@ func bitbucketFollowMergeTask(auth, loc string) (string, error) {
 		case http.StatusBadRequest, http.StatusConflict:
 			// The merge failed after being accepted, or left the queue without merging.
 			return "", &githubMergeError{http.StatusConflict, "not_mergeable", bitbucketMergeRefusal(body)}
-		case http.StatusUnauthorized:
-			return "", gitx.ErrBitbucketUnauthorized
 		default:
 			return "", pending
 		}
 	}
-	return "", pending
 }
 
 // bitbucketMergeRefusal words Bitbucket's own error text for the panel, bounded like

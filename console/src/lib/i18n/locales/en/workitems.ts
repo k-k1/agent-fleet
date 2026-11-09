@@ -155,7 +155,7 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.merge_method_rebase_fast_forward": "Rebase, fast-forward only",
   "wi.merge_method_rebase_merge": "Rebase, then create a merge commit",
   "wi.merge_close_source": "Close source branch",
-  "wi.merge_pending": "{name} accepted the merge and is still processing it. The result shows when the panel reads again.",
+  "wi.merge_pending": "{name} accepted the merge and is still processing it. Reopen the panel later to see the result.",
   "wi.merge_note": "This merges the pull request on {name} right away. Only the commit shown here ({sha}) is merged; if the branch has moved, nothing is merged.",
   "wi.merge_note_bitbucket": "This merges the pull request on Bitbucket right away. The head ({sha}) is checked just before the merge, but a push made after that check cannot be stopped. With a merge queue the merge may be queued rather than immediate.",
   "wi.merge_confirm": "Merge",

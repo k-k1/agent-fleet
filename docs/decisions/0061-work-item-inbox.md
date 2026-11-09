@@ -638,10 +638,10 @@ answers 409, the request is never retried, and the panel re-reads after every ou
 - **Close source branch** is a merge parameter here, not a second call, so it is in scope (GitHub's "delete branch"
   stays out). The checkbox starts from the pull request's own `close_source_branch`.
 - **A 202** (a background merge, or a destination branch with a merge queue, which always answers this way) is followed
-  through the `Location` task-status link for a bounded time (about 8 s, one poll a second). The link is followed only
+  through the `Location` task-status link within a wall-clock budget of about 8 s, requests included, one poll a second. The link is followed only
   when it is on the API host, since the Authorization header goes with every poll. A finished task is a merge, a failed
   one a refusal with Bitbucket's own words, and one still running is shown as "still processing": it is neither re-sent
-  nor reported as done, and the member reopens the panel for the result.
+  nor reported as done, and the member reopens the panel for the result. A 401 on a poll is reported as still processing too, never as an auth failure: that would make the caller refresh the token and re-run the whole merge.
 - Not done: the commit message field and the Jira work item transition of Bitbucket's own dialog. The transition would
   be af's first write to Jira and needs its own decision.
 
