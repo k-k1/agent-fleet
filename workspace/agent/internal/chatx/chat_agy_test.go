@@ -42,6 +42,49 @@ func TestAgyChatModelDropsStalePin(t *testing.T) {
 	}
 }
 
+// A member's Settings pick whose version moved on upstream must stay in its family rather than
+// fall to the CLI default (2026-11-09: that default was Gemini 4 Argon, on its own small quota).
+func TestAgyChatModelFollowsAVersionBump(t *testing.T) {
+	catalog := []agents.ModelChoice{
+		{ID: "gemini-4-argon-medium", Label: "Gemini 4 Argon (Medium)"},
+		{ID: "gemini-3.10-flash-medium", Label: "Gemini 3.10 Flash (Medium)"},
+		{ID: "gemini-3.8-flash-medium", Label: "Gemini 3.8 Flash (Medium)"},
+		{ID: "gemini-3.8-flash-low", Label: "Gemini 3.8 Flash (Low)"},
+	}
+	for pin, want := range map[string]string{
+		"gemini-3.5-flash-medium":   "gemini-3.10-flash-medium", // a stored id
+		"Gemini 3.5 Flash (Low)":    "gemini-3.8-flash-low",     // a stored display name
+		"gemini-3.5-pro-high":       "",                         // no such family left: CLI default
+		"gemini-3.8-flash-medium":   "gemini-3.8-flash-medium",  // listed: kept, newer sibling or not
+		"Gemini 3.8 Flash (Medium)": "gemini-3.8-flash-medium",  // listed by label: its own row's id
+	} {
+		if got := agyChatModel(pin, catalog); got != want {
+			t.Errorf("agyChatModel(%q) = %q, want %q", pin, got, want)
+		}
+	}
+}
+
+// The family fallback never lands on a model the member hid, while a pin on a listed model is
+// still honoured as it stands.
+func TestAgyChatModelFallbackSkipsHiddenModels(t *testing.T) {
+	d := testDeps()
+	d.FilterVisibleModels = func(_ string, list []agents.ModelChoice) []agents.ModelChoice {
+		return slices.DeleteFunc(slices.Clone(list), func(c agents.ModelChoice) bool { return c.ID == "gemini-3.10-flash-medium" })
+	}
+	Configure(d)
+	t.Cleanup(func() { Configure(testDeps()) })
+	catalog := []agents.ModelChoice{
+		{ID: "gemini-3.10-flash-medium", Label: "Gemini 3.10 Flash (Medium)"},
+		{ID: "gemini-3.8-flash-medium", Label: "Gemini 3.8 Flash (Medium)"},
+	}
+	if got := agyChatModel("gemini-3.5-flash-medium", catalog); got != "gemini-3.8-flash-medium" {
+		t.Errorf("fallback = %q, want the newest visible row", got)
+	}
+	if got := agyChatModel("gemini-3.10-flash-medium", catalog); got != "gemini-3.10-flash-medium" {
+		t.Errorf("an explicit pin on a listed model = %q, want it kept", got)
+	}
+}
+
 func TestAgyChatArgsFlagsBeforePrompt(t *testing.T) {
 	c := &ChatConversation{Model: "", AgyConversationID: "u-1"}
 	got, model := agyChatArgs(c, "PROMPT")

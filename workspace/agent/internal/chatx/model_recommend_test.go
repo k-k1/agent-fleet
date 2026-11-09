@@ -139,6 +139,55 @@ func TestAgyRecommendationUsesCatalogID(t *testing.T) {
 	}
 }
 
+// A version bump upstream must not move agy one-shots onto the CLI default (2026-11-09: the
+// default was Gemini 4 Argon, on its own small quota, while the pinned 3.5 Flash name had become
+// 3.8 in the catalog).
+func TestNewestAgyFamilyModel(t *testing.T) {
+	catalog := []agents.ModelChoice{
+		{ID: "gemini-4-argon-medium", Label: "Gemini 4 Argon (Medium)"},
+		{ID: "gemini-3.10-flash-high", Label: "Gemini 3.10 Flash (High)"},
+		{ID: "gemini-3.8-flash-medium", Label: "Gemini 3.8 Flash (Medium)"},
+		{ID: "gemini-3.10-flash-medium", Label: "Gemini 3.10 Flash (Medium)"},
+		{ID: "gemini-3.8-flash-low", Label: "Gemini 3.8 Flash (Low)"},
+		{ID: "gpt-oss-120b-medium", Label: "GPT-OSS 120B (Medium)"},
+		{ID: "claude-opus-5-6-low", Label: "Claude Opus 5.6 (Low)"},
+	}
+	for name, want := range map[string]string{
+		"Gemini 3.5 Flash (Medium)": "gemini-3.10-flash-medium", // newest by number, not by string
+		"Gemini 3.5 Flash (Low)":    "gemini-3.8-flash-low",
+		"gemini-3.5-flash-low":      "gemini-3.8-flash-low", // by id
+		"Gemini 3.5 Pro (Medium)":   "",                     // another family
+		"gpt-oss-20b-medium":        "",                     // a size, not a version
+		"GPT-OSS 20B (Medium)":      "",
+		"claude-opus-5-5-low":       "", // only the first standalone number may vary
+		"Some Model":                "",
+	} {
+		if got := newestAgyFamilyModel(catalog, name); got != want {
+			t.Errorf("newestAgyFamilyModel(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// agyNamedModel prefers the exact row, and only a missing name follows the family.
+func TestAgyNamedModelFollowsTheFamily(t *testing.T) {
+	prev := agyModels
+	t.Cleanup(func() { agyModels = prev })
+	agyModels = func() []agents.ModelChoice {
+		return []agents.ModelChoice{
+			{ID: "gemini-3.10-flash-medium", Label: "Gemini 3.10 Flash (Medium)"},
+			{ID: "gemini-3.8-flash-medium", Label: "Gemini 3.8 Flash (Medium)"},
+		}
+	}
+	for name, want := range map[string]string{
+		"Gemini 3.8 Flash (Medium)": "gemini-3.8-flash-medium",
+		"Gemini 3.5 Flash (Medium)": "gemini-3.10-flash-medium",
+	} {
+		if got := agyNamedModel(prefsVisibility, name); got != want {
+			t.Errorf("agyNamedModel(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
 // chat / prose stay on a named tier — the newest "-luna" — and do NOT follow price: ranking by
 // price there would quietly pick the weakest model for text a person reads.
 func TestRecommendedCodexChatFollowsNewestLuna(t *testing.T) {
