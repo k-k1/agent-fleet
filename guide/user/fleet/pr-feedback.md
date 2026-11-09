@@ -90,6 +90,7 @@ An agent can also set a timer (`watch` with `source: time`): "tell me in 20 minu
 | When a watch ends | After its first notice (unless the agent asks to keep it), and in any case after 7 days (30 at most) or when the session holding it is archived |
 | Watches per session | 20. A watch for the parent counts against the parent's 20, and against the child's 20 together with the child's own watches (`list_watches` names the child each came from) |
 | Watches per workspace | 200 |
+| Timers with `wake` | 250 outstanding wake bookings per member, shared by all that member's workspaces |
 | Bitbucket watches | 10 per workspace, read about every 5 minutes (to stay within Bitbucket's hourly request limit) |
 
 - On Bitbucket, new unresolved review threads cannot be watched: Bitbucket does not report which threads are resolved

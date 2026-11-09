@@ -142,3 +142,15 @@ func TestWatchRoutesTimeWatchWithWake(t *testing.T) {
 		t.Fatalf("unwatch left the booking on the Control Plane (calls %+v)", *calls)
 	}
 }
+
+// A Control Plane that predates /internal/wakes answers 404: that is an outage of the feature, not
+// a verdict on the watch.
+func TestCPWakerBookOn404IsNotARefusal(t *testing.T) {
+	fakeCP(t, func(cpCall) (string, error) {
+		return "", &mcpx.CPScheduleError{Status: 404, Body: "404 page not found"}
+	})
+	var rf *watch.ErrRefused
+	if _, err := (cpWaker{}).Book(context.Background(), time.Now().Add(time.Hour)); err == nil || asRefused(err, &rf) {
+		t.Fatalf("err = %v", err)
+	}
+}

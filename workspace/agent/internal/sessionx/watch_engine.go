@@ -14,6 +14,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpc"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
@@ -68,8 +70,36 @@ func watchEngine() *watch.Engine {
 		bb := &watch.Bitbucket{Read: watchBitbucketPR}
 		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{})
 		watchEngineInst.SetWaker(cpWaker{})
+		watchEngineInst.Dynamic = watchMCPSources().Lookup
 	})
 	return watchEngineInst
+}
+
+var (
+	watchMCPOnce sync.Once
+	watchMCPInst *watch.MCPSources
+)
+
+// watchMCPSources are the member's MCP servers that act as watch sources (ADR 0133 §8). They
+// run only while the tenant switch is on, and their stdio children get a narrowed environment.
+func watchMCPSources() *watch.MCPSources {
+	watchMCPOnce.Do(func() {
+		mgr := mcpc.NewManager(context.Background())
+		mgr.Narrow = true
+		watchMCPInst = &watch.MCPSources{
+			Allowed: mcpreg.WatchSourcesAllowed,
+			Defs:    mcpreg.WatchDefs,
+			KindOf: func(name string) string {
+				m, ok := session.ReadMeta(name)
+				if !ok {
+					return ""
+				}
+				return NormalizeKind(m.Kind)
+			},
+			Conn: mgr,
+		}
+	})
+	return watchMCPInst
 }
 
 // StartWatchEngine runs the engine for the life of the agent.

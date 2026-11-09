@@ -416,7 +416,7 @@ func TestWakeRefusals(t *testing.T) {
 // workspace for nothing.
 func TestWakeBookedForARefusedWatchIsCancelled(t *testing.T) {
 	ctx := context.Background()
-	e, _, _, w := newTimeEngine(&fakeSink{answer: Ready})
+	e, st, _, w := newTimeEngine(&fakeSink{answer: Ready})
 	for i := 0; i < MaxPerOwner-1; i++ {
 		if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "time", Ref: "in 20m"}); err != nil {
 			t.Fatal(err)
@@ -431,6 +431,10 @@ func TestWakeBookedForARefusedWatchIsCancelled(t *testing.T) {
 	e.SetWaker(w2)
 	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "time", Ref: "in 40m", Wake: true}); err == nil {
 		t.Fatal("the 21st watch was accepted")
+	}
+	// A crash here must not lose the booking: it is on disk although the watch was refused.
+	if disk, _ := st.Load(); len(disk.Wakes) != 1 {
+		t.Fatalf("the refused watch's booking is not on disk, a restart could not cancel it: %v", disk.Wakes)
 	}
 	e.Tick(ctx)
 	if w.live() != 0 {

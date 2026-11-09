@@ -54,6 +54,7 @@ func TestCreateWakeValidatesInstant(t *testing.T) {
 	for name, body := range map[string]string{
 		"past":   wakeAt(-time.Minute),
 		"far":    wakeAt(40 * 24 * time.Hour),
+		"edge":   wakeAt(30*24*time.Hour + time.Hour), // the engine's own limit is 30 days
 		"empty":  `{}`,
 		"junk":   `{"at":"tomorrow"}`,
 		"notobj": `[]`,

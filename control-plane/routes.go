@@ -633,7 +633,7 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	// The Agent's report that a run answered with the silent sentinel (#1560).
 	mux.HandleFunc("POST /internal/schedules/{id}/runs/silent", s.withScheduleToken(s.runSilent))
 	// The hidden wake-only target of ADR 0133 §7: booked and cancelled by the Agent's watch engine,
-	// never listed or reachable through the schedule routes above (schedule_wake_target.go).
+	// never listed or reachable through the schedule routes above (schedule.go, scheduler_wake.go).
 	mux.HandleFunc("POST /internal/wakes", s.withScheduleToken(s.createWake))
 	mux.HandleFunc("DELETE /internal/wakes/{id}", s.withScheduleToken(s.deleteWake))
 

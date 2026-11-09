@@ -26,8 +26,8 @@ func (cpWaker) Book(_ context.Context, at time.Time) (string, error) {
 	out, err := cpWakeDo(http.MethodPost, "/internal/wakes", body)
 	if err != nil {
 		var ce *mcpx.CPScheduleError
-		if errors.As(err, &ce) && ce.Status >= 400 && ce.Status < 500 && ce.Status != http.StatusUnauthorized {
-			// The Control Plane refused: no scheduler on this deployment, a limit, a bad instant.
+		if errors.As(err, &ce) && (ce.Status == http.StatusBadRequest || ce.Status == http.StatusConflict || ce.Status == http.StatusUnprocessableEntity) {
+			// Only these mean the request itself was refused (a 404 is a Control Plane without the route): no scheduler on this deployment, a limit, a bad instant.
 			return "", &watch.ErrRefused{Reason: "the Control Plane would not book the wake: " + cpErrorMessage(ce.Body)}
 		}
 		return "", fmt.Errorf("could not book the wake with the Control Plane: %w", err)

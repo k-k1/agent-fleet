@@ -4275,9 +4275,9 @@
 ## watch badtype-wake {"wake":[[{}]]}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"wake\" for watch: got a JSON array, want bool","type":"text"}],"isError":true,"resultType":"complete"}}
-## watch full {"expires_in_hours":2,"notify":"self","ref":"v","source":"github","types":["v"],"until":"first","wake":true}
+## watch full {"expires_in_hours":2,"notify":"self","ref":"v","source":"v","types":["v"],"until":"first","wake":true}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"the watch tools are only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
-  -> POST /sessions/slot01/watches {"source":"github","notify":"self","ref":"v","types":["v"],"until":"first","expires_in_hours":2,"wake":true}
+  -> POST /sessions/slot01/watches {"source":"v","notify":"self","ref":"v","types":["v"],"until":"first","expires_in_hours":2,"wake":true}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}

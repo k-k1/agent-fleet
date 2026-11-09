@@ -297,6 +297,17 @@ The table is a direction, not a commitment; each source is its own change with i
 4. **Webhook ingress on the Control Plane** (GitHub App first; repository webhooks where an App cannot be installed;
    Bitbucket repository webhooks), forwarding pokes only, with the secrets of §4.
 5. **Sources a member adds** (§8), behind the tenant switch, with the environment allowlist for stdio servers.
+   - *2026-11-09, Agent half (#3631).* A member's source is addressed as `ext.<name>` (the definition's name, lower
+     case, `-` as `_`; a name that starts with a digit cannot be one), so it can never shadow a built-in source; its
+     types are `ext.<name>.*` and its subjects `ext:<name>:…`. A subject is read through an optional batch interface of
+     the engine (up to 20 subjects per call, least recently read first) and at most once a minute whatever the hint.
+     The Agent reads the tenant switch from the CP's `/internal/mcp-servers` answer (`watchSources`, absent = off); the
+     CP side and the Console follow in a second change, so until then the switch cannot be on. Only a member's own
+     definition is a source: a tenant-distributed one never is, and `Targets.Watch` is cleared when it arrives.
+     The narrowed stdio environment applies to the engine's own connections and to the connection test of a definition
+     with `Targets.Watch`; existing session-target servers keep the Agent's environment until that is decided
+     separately. Pausing is kept in memory, so an Agent restart lifts it, and editing or re-enabling the definition
+     lifts it too. An OAuth server is reached through the relay, as sessions reach it.
 6. **The `time` source** (§7) with the Control Plane's wake-only schedule target, then further sources from §9 one at
    a time.
 

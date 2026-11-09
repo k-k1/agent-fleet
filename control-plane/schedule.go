@@ -352,7 +352,7 @@ func (a scheduleAPI) list(w http.ResponseWriter, r *http.Request, mv store.Membe
 	out := make([]scheduleDTO, 0, len(rows))
 	for _, s := range rows {
 		if isWakeSchedule(s) {
-			continue // the watch engine's hidden target (schedule_wake_target.go)
+			continue // the watch engine's hidden target (scheduler_wake.go)
 		}
 		out = append(out, scheduleToDTO(s))
 	}
@@ -835,7 +835,7 @@ const scheduleModeWake = "wake"
 const maxWakesPerMembership = 250
 
 // maxWakeHorizon is the farthest instant a wake may be booked for: the longest a watch lives.
-const maxWakeHorizon = 31 * 24 * time.Hour
+const maxWakeHorizon = 30 * 24 * time.Hour
 
 func isWakeSchedule(s store.Schedule) bool { return s.SessionMode == scheduleModeWake }
 
@@ -871,7 +871,7 @@ func (a scheduleAPI) createWake(w http.ResponseWriter, r *http.Request, mv store
 	at, err := time.Parse(time.RFC3339, in.At)
 	now := time.Now().UTC()
 	if err != nil || !at.After(now) || at.After(now.Add(maxWakeHorizon)) {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", "at must be an RFC 3339 instant in the future, at most 31 days ahead"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", "at must be an RFC 3339 instant in the future, at most 30 days ahead"})
 		return
 	}
 	rows, err := a.store.ListSchedules(r.Context(), mv.MembershipID)

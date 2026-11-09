@@ -24,6 +24,8 @@ type Manager struct {
 	mu      sync.Mutex
 	servers map[string]*Server // by mcpreg.ServerDef.Name
 	closed  bool
+	// Narrow starts stdio children with mcpreg.StdioEnv instead of the Agent's environment.
+	Narrow bool
 }
 
 // NewManager returns an empty Manager tied to ctx's lifetime: when ctx is done, every
@@ -86,7 +88,7 @@ func (m *Manager) Sync(ctx context.Context, defs []mcpreg.ServerDef) map[string]
 
 	errs := map[string]error{}
 	for _, d := range toConnect {
-		s, err := Connect(ctx, d)
+		s, err := connect(ctx, d, m.Narrow)
 		if err != nil {
 			errs[d.Name] = err
 			continue
@@ -160,4 +162,17 @@ func (m *Manager) Close() error {
 		}
 	}
 	return firstErr
+}
+
+// CallServer runs tool on the connected server called serverName (its own tool name, not the
+// prefixed one). The watch engine uses it: it names the server, so a tool of another server
+// can never answer.
+func (m *Manager) CallServer(ctx context.Context, serverName, tool string, args json.RawMessage) (text string, isError bool, err error) {
+	m.mu.Lock()
+	s := m.servers[serverName]
+	m.mu.Unlock()
+	if s == nil {
+		return "", true, fmt.Errorf("mcpc: server %q is not connected", serverName)
+	}
+	return s.CallTool(ctx, tool, args)
 }

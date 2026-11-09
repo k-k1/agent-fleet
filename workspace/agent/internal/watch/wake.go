@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -74,6 +75,14 @@ func (e *Engine) bookWake(ctx context.Context, at time.Time) (string, error) {
 		e.booking = map[string]bool{}
 	}
 	e.booking[id] = true
+	// On disk before anything else can fail or the Agent can die: a booking known only in memory
+	// would outlive a crash with nothing left to cancel it.
+	if !e.save() {
+		e.state.Wakes = e.state.Wakes[:len(e.state.Wakes)-1]
+		delete(e.booking, id)
+		go func() { _ = w.Cancel(context.Background(), id) }() // best effort; it deletes itself when it fires
+		return "", errors.New("the wake could not be recorded")
+	}
 	return id, nil
 }
 

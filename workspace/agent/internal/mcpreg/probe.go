@@ -329,9 +329,14 @@ func Probe(ctx context.Context, d ServerDef) ProbeResult {
 
 func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	cmd := exec.CommandContext(ctx, d.Command, d.Args...)
-	cmd.Env = os.Environ()
-	for k, v := range d.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
+	if NarrowEnv(d) {
+		// Tested the way the watch engine starts it (ADR 0133 §8).
+		cmd.Env = StdioEnv(d)
+	} else {
+		cmd.Env = os.Environ()
+		for k, v := range d.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
