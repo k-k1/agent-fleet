@@ -103,7 +103,7 @@ export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
         toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
       }
-      toast(res?.testError ? tr("ops.dc_test_failed", { msg: String(res.testError) }) : tr("ops.dc_test_sent"));
+      toast(res?.testError ? tr("ops.dc_test_failed", { msg: String(res.testError) }) : tr("ops.sl_test_sent"));
       setLocalSt(res);
       setInsp(null);
       setChans(null);

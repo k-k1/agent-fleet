@@ -7,6 +7,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 vi.mock("../../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   sessionSkills: vi.fn(async () => ({
     skills: [{ name: "issue-to-pr", invoke: "/issue-to-pr ", source: "user", description: "" }],
   })),

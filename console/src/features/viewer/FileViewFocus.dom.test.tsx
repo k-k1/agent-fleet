@@ -18,6 +18,7 @@ const MARP = "---\nmarp: true\n---\n\n# Deck\n";
 let served = MD;
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: vi.fn(async (path: string) => {
     if (path.startsWith("api/fs/linemarks")) return { error: { message: "none" } };
     return {

@@ -552,6 +552,13 @@ func BitbucketScopesCanComment(list string) bool {
 	return scopeGranted(oauthScopeSet(list), "write:pullrequest:bitbucket", "pullrequest:write")
 }
 
+// BitbucketScopesCanMerge reports whether a scope list holds what merging a pull request needs.
+// It is the same write scope as posting a comment (Bitbucket has no separate merge scope); the
+// separate name keeps the merge gate from changing if the comment gate ever does.
+func BitbucketScopesCanMerge(list string) bool {
+	return scopeGranted(oauthScopeSet(list), "write:pullrequest:bitbucket", "pullrequest:write")
+}
+
 // Connect-time check outcomes for a pasted Bitbucket credential.
 var (
 	ErrBBScopeless  = errors.New("Bitbucket rejected the token — create a scoped API token and use your Atlassian account email")

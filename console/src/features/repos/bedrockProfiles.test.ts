@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // The module's hook fetches through the API client, which reads the browser's storage on load.
-vi.mock("../../core/api/client.ts", () => ({ api: vi.fn() }));
+vi.mock("../../core/api/client.ts", () => ({ apiJSON: async () => ({}), api: vi.fn() }));
 const { bedrockConnection, bedrockModelOk, markedProfiles, regionOk, routeModelFilter, routeSelectionBody } = await import("./bedrockProfiles.ts");
 
 describe("bedrockProfiles", () => {

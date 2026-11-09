@@ -51,6 +51,7 @@ import { cachedStudioSummary, ensureStudioList, useStudioCache } from "../imageg
 import { studioName as studioNameOf } from "../imagegen/studios.ts";
 import { StudioRedirect } from "../imagegen/parts/StudioRedirect.tsx";
 import { FleetGraphView } from "../fleetgraph/FleetGraphView.tsx";
+import { MemoryView } from "../memory/MemoryView.tsx";
 import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
 import { useSharedSessionsStore } from "../sharing/store.ts";
 import { canPopout, openPanePopout } from "./popout.ts";
@@ -862,6 +863,9 @@ function PopulatedPane({
         />
       )}
       {pane.content.kind === "home" && <HomeView headerActions={tabHeaderActions} />}
+      {pane.content.kind === "memory" && (
+        <MemoryView paneId={pane.id} view={pane.content.memoryView} headerActions={tabHeaderActions} />
+      )}
       {pane.content.kind === "fleetgraph" && (
         <FleetGraphView
           paneId={pane.id}

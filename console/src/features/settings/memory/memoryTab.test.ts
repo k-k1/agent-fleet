@@ -99,6 +99,10 @@ describe("agent memory tab in the settings modal", () => {
       expect(agentRoutes).toMatch(new RegExp(`"POST /agents/memory-consolidation/proposals/${verb}", memberorigin\\.Require`));
     }
     expect(src).toContain("/proposals/${verb}?proposal=");
+    // The manual run (#3702): signed on both sides, and the Console posts to it.
+    expect(cpRoutes).toMatch(/"POST \/api\/agents\/memory-consolidation\/run"[^\n]*sign: signBody/);
+    expect(agentRoutes).toMatch(/"POST \/agents\/memory-consolidation\/run", memberorigin\.Require/);
+    expect(src).toContain("${BASE}/run");
     // Every dynamic key the view builds exists in both catalogs.
     const keys = [
       ...["budget", "interrupted", "workspace_stopped", "never_idle", "next_run", "run_failed"].map((c) => `mem.cs_cause_${c}`),
@@ -106,6 +110,7 @@ describe("agent memory tab in the settings modal", () => {
       ...["pending", "approved", "rejected", "expired", "refused", "partial"].map((c) => `mem.cs_status_${c}`),
       ...["add", "supersede", "merge"].map((c) => `mem.cs_advice_${c}`),
       ...["patch", "create"].map((c) => `mem.cs_op_${c}`),
+      ...["run_in_flight", "disabled"].map((c) => `mem.cs_err_${c}`),
     ];
     for (const k of keys) {
       expect(ja, `ja is missing ${k}`).toHaveProperty(k);

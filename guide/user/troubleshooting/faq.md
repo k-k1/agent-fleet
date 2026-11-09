@@ -64,11 +64,11 @@ Yes. Giving a session instructions, replying, reading files and committing all w
 | The assistant chat | Questions that need no repository, translation, tidying up text |
 | A session | Real work, such as having an agent rewrite files |
 
-How to use the chat is in [Chat and memos](../../member/10-chat-memo.md#what-the-assistant-chat-is).
+How to use the chat is in [Ask an assistant](../chat/assistant.md#choose-between-a-chat-and-a-session).
 
 ## Who receives your memos?
 
-Nothing is delivered automatically. When you send them, they go to the running session you chose ([Chat and memos](../../member/10-chat-memo.md#memo-queue)).
+Nothing is delivered automatically. When you send them, they go to the running session you chose ([Collect memos and hand them over](../chat/memos.md)).
 
 ## Is it fine to run several jobs at once?
 
@@ -99,7 +99,7 @@ but the CLI itself, such as typing `/model` in the terminal, is not stopped ([Ch
 ## Does stopping a share remove it from the other person too?
 
 No. Only access from then on stops. They can save what was shown, and anything already saved cannot be taken back.
-Before you share, check that no secrets appear in the conversation. Nothing finds them for you ([Working with others](../../member/12-collaboration.md#sharing-a-conversation-shared-sessions)).
+Before you share, check that no secrets appear in the conversation. Nothing finds them for you ([Share a conversation](../team/share.md)).
 
 ## A build runs out of memory and dies or freezes
 

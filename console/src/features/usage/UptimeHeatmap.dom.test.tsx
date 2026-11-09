@@ -9,6 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: (p: string) => api(p),
   errText: (e: { message?: string }) => e?.message || "",
   rel: (p: string) => p,

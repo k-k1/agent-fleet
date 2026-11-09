@@ -104,7 +104,7 @@ Questions, plans and permissions can also be answered with buttons.
 ## Talk to the Fleet Operator
 
 With "**Reply to steer (two-way)**" on, a standing thread "🛰 Fleet Operator" is created too. Writing there, you talk
-with the same [Fleet Operator](../../member/11-many-sessions.md) as in the Console: ask it how things are going, or to
+with the same [Fleet Operator](../fleet/operator.md) as in the Console: ask it how things are going, or to
 launch and steer sessions.
 
 An operation asked for from chat, such as a delete, stops at an "Approve / Reject" button before it runs.
@@ -148,5 +148,5 @@ Taking replies on Slack needs the app-level token. Disconnect the card and paste
 
 ## Related
 
-- [Running many sessions at once](../../member/11-many-sessions.md): the Fleet Operator
-- [Settings](../../member/20-settings.md#notifications): Console and browser notifications
+- [Hand work to the Fleet Operator](../fleet/operator.md)
+- [Settings](../settings/notifications.md): Console and browser notifications

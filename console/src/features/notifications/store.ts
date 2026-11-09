@@ -18,6 +18,7 @@ import { openSharedSession } from "../sharing/open.ts";
 import { receivedOfferState } from "../sharing/handoffStore.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
+import { openMemoryView } from "../memory/open.ts";
 import { destinationShown, opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 import { notificationEffectOn, notificationRow } from "./effects.ts";
@@ -229,13 +230,13 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   }
   // A notification of the retired memory review (ADR 0130 decision 2) leads to the change list.
   if (n.kind === "memory-review") {
-    useSettingsUI.getState().openSettings("memory:changes");
+    openMemoryView("changes");
     return { opened: true };
   }
-  // The memory consolidator's daily notice (ADR 0130 decision 7) opens its suggestions. Opening is
-  // all it does: a notification never approves or rejects anything.
+  // The memory consolidator's daily notice (ADR 0130 decision 7) opens its suggestions in the
+  // Memory view (#3720). Opening is all it does: a notification never approves or rejects anything.
   if (n.kind === "memory-consolidation") {
-    useSettingsUI.getState().openSettings("memory:proposals");
+    openMemoryView("proposals");
     return { opened: true };
   }
   // Anything left whose target is not a session has nowhere to go, and must not fall through:

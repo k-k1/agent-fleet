@@ -20,7 +20,7 @@ This is where you add tools Agent Fleet does not ship with, such as an internal 
 
 > [!NOTE]
 > These are servers **your sessions use**. To let an outside app drive this Workspace, use
-> [MCP tokens & apps](../../member/20-settings.md#mcp-tokens-apps) under **Outside access**.
+> [MCP tokens & apps](../outside/external-claude.md) under **Outside access**.
 
 ## Register a server
 
@@ -169,4 +169,4 @@ opencode and Cursor have no equivalent setting, so a timeout is ignored there.
 
 - [Agents — what each kind can do](../../ref/agents.md): which agents receive MCP servers
 - [MCP distribution and outside access](../../admin/04-mcp-outside.md): administrators distribute a server to the whole tenant
-- [MCP tokens & apps](../../member/20-settings.md#mcp-tokens-apps): let an outside app drive this Workspace
+- [MCP tokens & apps](../outside/external-claude.md): let an outside app drive this Workspace

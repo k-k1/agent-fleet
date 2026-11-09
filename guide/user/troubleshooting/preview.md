@@ -18,7 +18,7 @@ The browser started, but the port and path do not answer yet. It also shows whil
 2. Press **"Reload"**
 3. If it stays, press **"Reconnect"**
 
-An app listening on `127.0.0.1` (localhost) is reachable. The pane's other states are in [Preview and browser](../../member/14-preview-browser.md#status-display-and-recovery).
+An app listening on `127.0.0.1` (localhost) is reachable. The pane's other states are in [See a web app you started](../preview/browser-pane.md#the-pane-shows-a-state-instead-of-the-page).
 
 ## The lightweight preview or a preview subdomain shows a 502 page
 
@@ -40,7 +40,7 @@ This usually happens when an app that loads files by absolute path (such as `/st
 - If preview subdomains are available, open it there
 - If not, switch to the browser pane with **"Open in pane"**
 
-How to fix it on the app's side is in [Preview and browser](../../member/14-preview-browser.md#viewing-a-web-app-you-started-browser-pane-and-lightweight-preview).
+How to fix it on the app's side is in [See a web app you started](../preview/browser-pane.md#choose-how-to-open-it).
 
 ## The preview URL you gave a colleague returns 404
 
@@ -59,7 +59,7 @@ How to fix it on the app's side is in [Preview and browser](../../member/14-prev
 | The page reloads itself instead of updating in place | A WebSocket with no traffic was closed partway |
 | HMR does not connect | The dev server may embed its own port into the client. Add a setting such as `server.hmr.clientPort: 443` |
 
-The lightweight preview and the preview subdomains carry WebSocket and SSE. How to write the settings is in [Preview and browser](../../member/14-preview-browser.md#what-the-app-has-to-get-right).
+The lightweight preview and the preview subdomains carry WebSocket and SSE. How to write the settings is in [Use preview subdomains](../preview/subdomains.md#what-the-app-has-to-get-right).
 
 To avoid adding settings, or to narrow the cause down, use **"Open in pane"**. In the browser pane a browser inside the workspace opens `127.0.0.1` directly, so HMR, WebSocket and SSE behave as on plain localhost.
 
@@ -80,7 +80,7 @@ You can check memory in [See your machine and its usage](../workspace/machine.md
 
 ## Signing in on a preview URL shows an Agent Fleet error page
 
-These pages appear when your app uses the development sign-in (OIDC). How to use it is in [Preview and browser](../../member/14-preview-browser.md#signing-in-with-google-on-a-preview-url-development-oidc-idp).
+These pages appear when your app uses the development sign-in (OIDC). How to use it is in [Try Google sign-in on a preview](../preview/dev-signin.md).
 
 | Page | Cause and what to do |
 |---|---|

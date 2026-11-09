@@ -164,33 +164,54 @@ const (
 // any-term fallback; ties keep the order of entries, which is the index order (pinned, guidance,
 // most used, newest). A deterministic function of its input; it reads nothing and counts no use.
 func ReviewRank(entries []ReviewEntry, window string) []ReviewEntry {
+	hits := ReviewRankScored(entries, window)
+	out := make([]ReviewEntry, len(hits))
+	for i, h := range hits {
+		out[i] = h.Entry
+	}
+	return out
+}
+
+// ReviewHit is one ranked entry with what ranked it. Score is the sum of each matched term's best
+// field weight; HeadScore is the part of it that comes from the name and description, so a caller
+// can tell "about the same thing" from "mentions some of the same words in its body".
+type ReviewHit struct {
+	Entry     ReviewEntry
+	Matched   int
+	Score     int
+	HeadScore int
+}
+
+// ReviewRankScored is ReviewRank with the scores kept, in the same order.
+func ReviewRankScored(entries []ReviewEntry, window string) []ReviewHit {
 	terms := reviewTerms(entries, window)
 	if len(terms) == 0 {
 		return nil
 	}
-	type hit struct {
-		e       ReviewEntry
-		matched int
-		score   int
-	}
-	var hits []hit
+	var hits []ReviewHit
 	for _, e := range entries {
 		sc := agentMemScore(agentMemEntry{Name: e.Name, Description: e.Description, Body: e.Body}, terms)
 		if len(sc.matched) > 0 {
-			hits = append(hits, hit{e, len(sc.matched), sc.score})
+			head := 0
+			name, desc := strings.ToLower(e.Name), strings.ToLower(e.Description)
+			for _, t := range sc.matched {
+				switch {
+				case strings.Contains(name, t):
+					head += agentMemWeightName
+				case strings.Contains(desc, t):
+					head += agentMemWeightDesc
+				}
+			}
+			hits = append(hits, ReviewHit{Entry: e, Matched: len(sc.matched), Score: sc.score, HeadScore: head})
 		}
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
-		if hits[i].matched != hits[j].matched {
-			return hits[i].matched > hits[j].matched
+		if hits[i].Matched != hits[j].Matched {
+			return hits[i].Matched > hits[j].Matched
 		}
-		return hits[i].score > hits[j].score
+		return hits[i].Score > hits[j].Score
 	})
-	out := make([]ReviewEntry, len(hits))
-	for i, h := range hits {
-		out[i] = h.e
-	}
-	return out
+	return hits
 }
 
 // reviewTerms picks the words of window worth matching: lower-cased runs of letters and digits of

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
 var updateKindCatalog = flag.Bool("update-kind-catalog", false,
@@ -158,6 +159,11 @@ func TestCPManagedDefaultSnapshotMatchesRegistry(t *testing.T) {
 // The live catalog (and only it) names the routes a harness accepts, so the Console offers a
 // route picker for claude and for no other kind; the checked-in snapshot stays free of them.
 func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
+	// The route gates are this Agent's environment; a workspace running with them on must not
+	// change what this test sees.
+	for _, k := range testguard.RouteGateEnvs {
+		t.Setenv(k, "")
+	}
 	for _, e := range buildKindCatalog(true).Kinds {
 		want := e.Kind == "claude"
 		if got := len(e.Routes) > 0; got != want {
@@ -168,6 +174,36 @@ func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 		if len(e.Routes) != 0 {
 			t.Errorf("%s: the snapshot form carries routes %v", e.Kind, e.Routes)
 		}
+	}
+}
+
+// Each kind's gate decides its own row of the live catalog: opencode's bedrock route appears
+// only with AF_OPENCODE_BEDROCK_ROUTE=1, and neither claude's gate nor an open opencode gate
+// changes the other kind.
+func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
+	routesOf := func(kind string) []string {
+		for _, e := range buildKindCatalog(true).Kinds {
+			if e.Kind == kind {
+				return e.Routes
+			}
+		}
+		t.Fatalf("kind %q missing from the catalog", kind)
+		return nil
+	}
+	for _, k := range testguard.RouteGateEnvs {
+		t.Setenv(k, "")
+	}
+	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
+	if got := routesOf("opencode"); len(got) != 0 {
+		t.Errorf("gate closed: opencode routes %v", got)
+	}
+	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "")
+	t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", "1")
+	if got := routesOf("opencode"); !slices.Equal(got, []string{"bedrock"}) {
+		t.Errorf("gate open: opencode routes %v, want [bedrock]", got)
+	}
+	if got := routesOf("claude"); slices.Contains(got, "bedrock") {
+		t.Errorf("opencode's gate opened claude's bedrock row: %v", got)
 	}
 }
 

@@ -22,6 +22,7 @@ vi.mock("./api.ts", () => ({
   fetchRtkGain: () => Promise.resolve({ available: false }),
 }));
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   errText: (e: { message?: string }) => e?.message || "",
   isTransientErr: () => false,
 }));

@@ -54,7 +54,7 @@ Check the HTTP status of its requests and how many tools `tools/list` returned.
 - If the list looks empty, refresh it
 - If needed, connect again from the app
 
-The details are in [Using your workspace from outside](../../member/19-outside-access.md#recent-calls-when-an-app-connects-but-shows-no-tools).
+The details are in [Connect a remote MCP client by signing in](../outside/oauth-client.md#connected-but-no-tools-appear).
 
 ## Jira says boards, sprints and epics are "not available"
 

@@ -1,6 +1,6 @@
 ---
 audience: "全員（とくに「動いている Web アプリを人に見せる」判断をするエージェント）"
-source_of_truth: "用語とペインにできること／できないことはこのファイル、状態と復旧は member/14、数値は limits.ja.md、ボタンの名前は Console"
+source_of_truth: "用語とペインにできること／できないことはこのファイル、状態と復旧は user/preview/browser-pane、数値は limits.ja.md、ボタンの名前は Console"
 ---
 
 # ブラウザペイン — 利用契約
@@ -22,18 +22,18 @@ Workspace の中で動いている Web アプリを見せる手段は 2 つあ�
 ときの省資源な例外です。
 
 どちらの開き方（ポートとパスの欄、どのボタンが既定になるか）もメンバーの手順です:
-[member/14 プレビューとブラウザ](../member/14-preview-browser.ja.md#使い方)。ポート `7700` は Agent 自身が使うので開けません。
+[起動した Web アプリを見る](../user/preview/browser-pane.ja.md#開く)。ポート `7700` は Agent 自身が使うので開けません。
 
 ## どちらを選ぶか（代表例）
 
 構成別の表（Node / Vite、Spring Boot、API のみ、frontend + API）は
-[member/14 構成別の例](../member/14-preview-browser.ja.md#構成別の例)にあります。原則は、HMR・WebSocket・SSE・
+[起動した Web アプリを見る — 構成ごとの例](../user/preview/browser-pane.ja.md#構成ごとの例)にあります。原則は、HMR・WebSocket・SSE・
 cookie・redirect・絶対パスのアセットが要るものはブラウザペイン、HTTP 応答を 1 回見るだけなら軽量プレビューです。
 
 ## 状態と復旧
 
 ペインに出る 3 つの状態（`target-unreachable`・`disconnected`・`crashed`）の意味と対処は
-[member/14 状態表示と復旧](../member/14-preview-browser.ja.md#状態表示と復旧)にあります。その前提となる契約：
+[起動した Web アプリを見る — 困ったとき](../user/preview/browser-pane.ja.md#ペインに状態が出て画面が出ない)にあります。その前提となる契約：
 復旧のための操作（再接続・Console のリロード・Workspace の Stop→Start）はどれも、現在の port/path から
 **新しい Page を作る**ので、cookie・storage・入力途中の状態は復元されません。
 

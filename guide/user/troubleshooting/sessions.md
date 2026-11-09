@@ -102,7 +102,7 @@ How to remove it anyway, and how to bring back what you removed, is in [Clear aw
 - **While your workspace is stopped, the recipient cannot read the history.** Their screen says so
 - The list refreshes now and then. To update it right away, press **"Refresh"** in the shared session
 
-How to share is in [Working with others](../../member/12-collaboration.md#sharing-a-conversation-shared-sessions).
+How to share is in [Share a conversation](../team/share.md).
 
 ## You sent something from a shared session, but the agent does nothing
 
@@ -110,7 +110,7 @@ With **"Can propose"**, what you type **does not reach the agent until the owner
 The owner's shared session shows **"N pending approval(s)"**: ask them to check it and press **"Approve and send"**.
 With **"View only"** there is no composer at all.
 
-If a send could not be confirmed, it is not sent again automatically, so it cannot arrive twice. Use **"Check result"** to see where it stands ([Working with others](../../member/12-collaboration.md#sharing-a-conversation-shared-sessions)).
+If a send could not be confirmed, it is not sent again automatically, so it cannot arrive twice. Use **"Check result"** to see where it stands ([Share a conversation](../team/share.md)).
 
 ## A scheduled run does not fire
 
@@ -124,7 +124,7 @@ Check its row under **"Schedules"** in the left pane.
 | There is no "Schedules" section | Scheduled runs are disabled on this deployment |
 
 **"Run now"** checks that it works the same way a timed run does. It can take about a minute to start.
-The details are in [Running many sessions](../../member/11-many-sessions.md#scheduled-runs).
+The details are in [Run at a set time](../fleet/schedules.md).
 
 ## No notifications arrive
 
@@ -144,7 +144,7 @@ It reaches other kinds of agent, and stopped sessions too.
 
 If it still does not work, check whether the session was already running before you turned it on.
 The setting applies to sessions started afterwards, so a running session does not change until it restarts.
-The full comparison is in [Running many sessions](../../member/11-many-sessions.md#how-this-differs-from-claude-codes-own-version).
+The full comparison is in [Let sessions message each other](../fleet/messages.md#do-not-use-claude-codes-own-version).
 
 ## Related
 

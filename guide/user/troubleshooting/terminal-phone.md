@@ -22,7 +22,7 @@ In the terminal, Ctrl+C with nothing selected interrupts the program (SIGINT). W
 - Ctrl+C and Ctrl+V copy and paste only while **"Ctrl+C / Ctrl+V copy and paste"** is on in ⚙ Settings → Display (on by default). With it off, both keys go to the program
 - Ctrl+Shift+C and Ctrl+Shift+V always work
 
-The details are in [Terminal](../../member/08-terminal.md#copy-paste).
+The details are in [Use the terminal](../files/terminal.md#copy-and-paste).
 
 ## App shortcuts such as the command palette do nothing
 

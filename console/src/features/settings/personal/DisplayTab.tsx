@@ -27,6 +27,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { SwatchGrid } from "../../../ui/SwatchGrid.tsx";
+import { ShuffleControl } from "../../../ui/ShuffleControl.tsx";
 import { Choice, OnOff, Row } from "../parts/controls.tsx";
 import type { ChoiceProps } from "../parts/controls.tsx";
 
@@ -113,6 +114,10 @@ export function DisplayTab() {
             <p className="muted ds-note">{tr("display.per_tenant_note")}</p>
           </>
         )}
+        <Row label={tr("display.shuffle")}>
+          <ShuffleControl segClass="seg choice-seg" />
+        </Row>
+        <p className="muted ds-note">{tr("display.shuffle_note")}</p>
         {/* assistantColor + assistantTheme moved to the Assistant tab (its appearance
             lives with its behavior); every other surface color stays here. */}
         {SURFACE_TARGETS.filter((t) => t.key !== "assistantColor").map((t) => (

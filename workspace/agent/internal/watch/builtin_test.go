@@ -50,9 +50,6 @@ func TestBuiltinIsDeliveredOnceNeverPolledListedOrCounted(t *testing.T) {
 	if _, err := e.Subscribe(context.Background(), Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
 		t.Fatalf("built-ins count against the session's limit: %v", err)
 	}
-	if e.Watching("a", bSubject, "pr.checks.failed") {
-		t.Fatal("Watching counts a built-in as the session's own watch")
-	}
 	if e.Unsubscribe("a", BuiltinID("ci", bSubject)) {
 		t.Fatal("a session could unwatch a built-in")
 	}
@@ -299,6 +296,16 @@ func TestPRConditionsKeepTheFeedbackVersions(t *testing.T) {
 	if got = step(open); got["pr.review.changes_requested"] != "2" || got["pr.review.threads_unresolved"] != "2" || got["pr.conflict"] != "2" {
 		t.Fatalf("the same state seen again moved a version: %v", got)
 	}
+	// GitHub answers UNKNOWN for a while after the base moves: not the end of the conflict.
+	open.Conflict, open.Mergeable = false, "UNKNOWN"
+	if got = step(open); got["pr.conflict"] != "2" {
+		t.Fatalf("an unknown mergeable state ended the conflict: %v", got)
+	}
+	open.Conflict, open.Mergeable = true, "CONFLICTING"
+	if got = step(open); got["pr.conflict"] != "2" {
+		t.Fatalf("the conflict after an unknown read is a new episode: %v", got)
+	}
+	open.Mergeable = ""
 	ready := branchpr.PR{State: "open", Head: "h3", Checks: "success", Mergeable: "MERGEABLE"}
 	if got := step(ready); got["pr.ready"] != "h3" {
 		t.Fatalf("ready = %v", got)

@@ -166,6 +166,11 @@ func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMes
 		cur.CloseEpisode++ // declined, reopened and declined again is a second close
 	}
 	cur.ClosedWas = closed
+	if pr.State != "open" {
+		// A close ends the conflict: a PR reopened still in conflict is a new episode, even when
+		// the conflict was held through an unknown read just before the close.
+		cur.ConflictWas = false
+	}
 	switch pr.State {
 	case "merged":
 		out, _ := json.Marshal(cur)
@@ -199,6 +204,11 @@ func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMes
 	}
 
 	conflict := pr.Mergeable == "CONFLICTING"
+	if pr.Mergeable == "UNKNOWN" {
+		// A failed conflict read is no observation, so the last state holds. Ending the episode
+		// here would start a new one on the next answering read and repeat the notice.
+		conflict = cur.ConflictWas
+	}
 	if conflict && !cur.ConflictWas {
 		cur.ConflictEpisode++
 	}

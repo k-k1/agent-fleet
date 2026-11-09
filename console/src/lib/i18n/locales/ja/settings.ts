@@ -66,6 +66,13 @@ export const settings = {
   "display.per_tenant": "テナントごとに外観を分ける",
   "display.per_tenant_note":
     "テーマと背景色をこのブラウザでテナントごとに覚え、テナントの切り替えに合わせて切り替えます。オフにすると、今見えている外観がすべてのテナントで使われます（保存済みの外観は残ります）。",
+  "display.shuffle": "色をランダムに",
+  "display.shuffle_note":
+    "各面の背景色を、選んだ間隔でランダムに選び直します（「既定」は選ばれません）。テーマ（ダーク／ライト）は変わりません。この端末だけの設定で、同じブラウザのタブはすべて同じ色に変わります。🎲 でいつでも今すぐ選び直せます。",
+  "display.shuffle.reload": "開くたび",
+  "display.shuffle.hourly": "1時間ごと",
+  "display.shuffle.daily": "毎日",
+  "display.shuffle_now": "今すぐ色を変える",
   "display.cjk_font": "和文フォント",
   "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
   "display.cjk_font_note":
@@ -283,11 +290,12 @@ export const settings = {
   "agents.default_model": "既定モデル",
   "agents.default_effort": "既定 effort",
   "agents.start_mode": "開始モード",
-  // 権限確認をスキップするか（docs/log/76）。既定はスキップ＝従来どおり。
+  // 権限確認をスキップするか（docs/log/76）。保存値は skipPermissions（既定は true＝従来どおりスキップ）。
+  // 画面の「権限確認」はその反対で、オン＝許可を求める。
   "agents.skip_permissions": "権限確認",
   "agents.skip_permissions_sub": "ツール実行のたびに許可を求めるか",
   "agents.skip_permissions_off_note":
-    "オフ（許可を求める）にすると、編集やコマンドのたびに承認待ちで止まります。承認はミラーの許可カードか端末で答えてください。答えないまま放置すると「判断待ち」の時計で停止されます（停止されても対話は持ち越されます）。無人で動かす定時実行やオペレーターの起動には向きません。",
+    "オン（許可を求める）にすると、編集やコマンドのたびに承認待ちで止まります。承認はミラーの許可カードか端末で答えてください。答えないまま放置すると「判断待ち」の時計で停止されます（停止されても対話は持ち越されます）。無人で動かす定時実行やオペレーターの起動には向きません。",
   "agents.mode_normal": "通常",
   "agents.note_launch_defaults":
     "新しいセッションの初期値です。リポジトリで前回使った設定があれば、そちらを優先します。ドライバが対応しない項目は起動時に適用されません。",

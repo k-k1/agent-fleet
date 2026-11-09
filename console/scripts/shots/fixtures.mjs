@@ -12,6 +12,8 @@
 // Keep them in sync when those contracts move; a drifted fixture renders an empty
 // pane rather than failing loudly.
 
+import { createHash } from "node:crypto";
+
 const L = (locale, ja, en) => (locale === "ja" ? ja : en);
 
 // Clock the fixtures hang off. Real "now", so relative labels ("22 minutes ago", "2 months ago")
@@ -603,7 +605,11 @@ export function fsFile(locale, p) {
   const f = FILES[p];
   if (!f) return { path: p, content: "" };
   const content = f(locale);
-  return { path: p, content, size: Buffer.byteLength(content), editable: true, revision: "demo-1" };
+  // The file pages of the user guide (SHOT_FILES_GUIDE) show the editing controls, which the
+  // Console offers only when the revision is the content's real digest. Other runs keep the
+  // placeholder, so their viewer shots stay read-only as they always were.
+  const revision = process.env.SHOT_FILES_GUIDE ? `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}` : "demo-1";
+  return { path: p, content, size: Buffer.byteLength(content), editable: true, revision };
 }
 
 // Image generation (ADR 0081). The pane's whole surface comes from two routes, so the
@@ -2431,3 +2437,272 @@ export function agentsGuideUserNotes(locale) {
     ],
   };
 }
+
+// The fleet pages of the user guide (SHOT_FLEET_GUIDE). Served only to a run that asks, so every
+// other scene keeps the switches off, the switcher on "All" and the plain operator thread.
+export function fleetGuidePrefs(locale) {
+  const ja = locale === "ja";
+  return {
+    peerMessaging: true,
+    sessionFleetSpawn: true,
+    prFeedback: true,
+    workingSets: [
+      { id: "wq7k2mf", name: ja ? "決済の改修" : "Checkout rework", repos: ["webshop", "payments-api"], convs: [], sessions: [], schedules: [] },
+      { id: "wp3n8xd", name: ja ? "インフラ整備" : "Infra upkeep", repos: ["platform-infra"], convs: [], sessions: [], schedules: [] },
+    ],
+  };
+}
+
+// The operator thread with a session report and the operator's follow-up under it.
+export function fleetGuideConversation(locale, id) {
+  const ja = locale === "ja";
+  const base = conversation(locale, id);
+  const ms = (min) => NOW.getTime() - min * 60_000;
+  return {
+    ...base,
+    messages: [
+      {
+        role: "user",
+        content: ja
+          ? "webshop で worktree セッションを起こして、チェックアウトの入力検証を直させて。"
+          : "Start a worktree session on webshop and have it fix the checkout input validation.",
+        ts: ms(52),
+      },
+      {
+        role: "assistant",
+        agent: base.agent,
+        model: base.model,
+        content: ja
+          ? "`webshop` に worktree セッション（claude）を起こし、入力検証の修正を最初のタスクとして渡しました。終わったら報告が届きます。"
+          : "Started a worktree session (claude) on `webshop` with the input-validation fix as its first task. Its report will arrive here when it is done.",
+        ts: ms(51),
+      },
+      {
+        role: "report",
+        session: "sk4rq2f",
+        report_kind: "answer",
+        notice_key: "chat.report.answer_ready",
+        notice_args: { display: ja ? "チェックアウトの入力検証" : "Checkout input validation", name: "sk4rq2f" },
+        content: "",
+        ts: ms(9),
+      },
+      {
+        role: "assistant",
+        agent: base.agent,
+        model: base.model,
+        content: ja
+          ? "出力を確認しました。郵便番号と電話番号の検証を追加し、テスト 12 件が通っています。ブランチ `checkout-validation` に push 済みです。レビューに回しますか？"
+          : "I read its output: postcode and phone validation added, 12 tests passing, pushed to `checkout-validation`. Shall I send it for review?",
+        ts: ms(8),
+      },
+    ],
+  };
+}
+
+// The weekday review with a report going to the conversation and the notification centre, and the
+// session stopped once the run is done, so the detail dialog shows those fields.
+export function fleetGuideSchedules(locale) {
+  const [first, ...rest] = schedules(locale);
+  return [{ ...first, report: true, deliver_to: ["operator", "notifications"], stop_after_run: true }, ...rest];
+}
+
+// ---- user guide: team pages (SHOT_TEAM_GUIDE in server.mjs) ----
+// Teammates the share and hand-to-member dialogs offer. Invented addresses only.
+export function teamGuideMembers() {
+  return {
+    members: [
+      { userKey: "hanako-example-com", email: "hanako@example.com" },
+      { userKey: "jiro-example-com", email: "jiro@example.com" },
+    ],
+  };
+}
+
+// The working copy as the hand-to-member dialog reads it: two commits not pushed yet, so the
+// dialog shows the push gate and "Push, then send".
+export function teamGuideHandoffContext() {
+  return {
+    context: {
+      repo: "webshop",
+      vcs: "git",
+      branch: "fix/checkout-validation",
+      remote: "origin",
+      headSha: "3f9c2a1",
+      ahead: 2,
+      dirty: false,
+      blocked: "unpushed_commits",
+      pushRemote: "https://github.example.com/demo/webshop.git",
+      pushCommits: 2,
+    },
+  };
+}
+
+// Settings › Limit board: this member shows bands to the whole tenant; two teammates publish.
+export function teamGuideLimitMe() {
+  const ago = (m) => new Date(Date.now() - m * 60e3).toISOString();
+  return {
+    enabled: true,
+    audience: "tenant",
+    level: "band",
+    members: [],
+    own: {
+      kinds: [
+        { kind: "claude", units: [
+          { unit: "5h", status: "current", usedPct: 42, observedAt: ago(10), resetsAt: new Date(Date.now() + 3 * 3600e3).toISOString() },
+          { unit: "weekly", status: "current", usedPct: 18, observedAt: ago(10) },
+        ] },
+        { kind: "codex", units: [{ unit: "5h", status: "reset_not_observed", observedAt: ago(320) }] },
+      ],
+    },
+    publishes: [{ slug: "demo", name: "demo", audience: "tenant", level: "band" }],
+  };
+}
+
+export function teamGuideLimitBoard() {
+  const ago = (m) => new Date(Date.now() - m * 60e3).toISOString();
+  return {
+    enabled: true,
+    next: "",
+    members: [
+      { userKey: "hanako-example-com", email: "hanako@example.com", kinds: [
+        { kind: "claude", units: [{ unit: "5h", status: "current", band: "ge95", observedAt: ago(4) }, { unit: "weekly", status: "current", band: "lt80", observedAt: ago(4) }] },
+      ] },
+      { userKey: "jiro-example-com", email: "jiro@example.com", kinds: [
+        { kind: "codex", units: [{ unit: "5h", status: "current", usedPct: 12, observedAt: ago(25) }] },
+      ] },
+      { userKey: "saburo-example-com", email: "saburo@example.com", kinds: [] },
+    ],
+  };
+}
+// ---- end team pages ----
+
+// ---- user guide: chat pages (SHOT_CHATPAGES_GUIDE in server.mjs) ----
+// The three builtins under their real ids (the Console names them from its catalogue) and one
+// assistant the member made for translation, so the "+" picker shows both kinds.
+export function chatPagesAssistants(locale) {
+  const ja = locale === "ja";
+  const b = (id, icon, tools) => ({ id, name: id, icon, builtin: true, agent: "claude", tools });
+  return [
+    b("af", "rocket", "af_read"),
+    b("operator", "broadcast", "af_write"),
+    b("sre", "pulse", "af_read"),
+    {
+      id: "u-translate",
+      name: ja ? "リリースノート翻訳" : "Release-notes translator",
+      icon: "globe",
+      builtin: false,
+      agent: "claude",
+      model: "",
+      description: ja ? "文章を渡してください。日本語↔英語を翻訳します。" : "Paste your text. I translate between Japanese and English.",
+      persona: ja ? "あなたは技術文書の翻訳者です。訳文のみを返してください。" : "You are a technical translator. Reply with the translation only.",
+      tools: "none",
+    },
+  ];
+}
+
+// A long conversation with the af assistant: its work plan filled in and the context gauge past
+// 80 %, so the header shows the agent chip, the plan and the Compact button together.
+export function chatPagesConversation(locale, id) {
+  const ja = locale === "ja";
+  const ms = (min) => NOW.getTime() - min * 60_000;
+  return {
+    id,
+    slug: "a5r8c2w",
+    agent: "claude",
+    assistant_id: "af",
+    title: ja ? "決済 API の設計相談" : "Payments API design",
+    model: "claude-sonnet-5",
+    created_at: ms(300),
+    updated_at: ms(3),
+    message_count: 46,
+    tools: "af_read",
+    context: { tokens: 166000, read: 150000, create: 12000, fresh: 4000, window: 200000, pct: 83, model: "claude-sonnet-5" },
+    plan_updated_at: ms(20),
+    plan: ja
+      ? "## 制約\n- 公開 API の互換を崩さない（v1 の応答形は変えない）\n\n## 前提\n- 返金は冪等キーで重複を防ぐ方針に決定済み\n\n## これからやること\n- 冪等キーの保存期間を決める\n- エラー応答の一覧を作る"
+      : "## Constraints\n- Keep the public API compatible (v1 response shapes stay)\n\n## Given\n- Refunds use an idempotency key against duplicates (decided)\n\n## Next up\n- Decide how long idempotency keys are kept\n- List the error responses",
+    messages: [
+      { role: "user", content: ja ? "冪等キーはどれくらい保存すればいい？" : "How long should we keep idempotency keys?", ts: ms(5) },
+      {
+        role: "assistant",
+        agent: "claude",
+        model: "claude-sonnet-5",
+        content: ja
+          ? "クライアントの再試行が届きうる期間より長くします。決済ゲートウェイの再試行が最大 24 時間なら、**48 時間**を目安にすると安全です。"
+          : "Longer than any client retry can arrive. If the gateway retries for up to 24 hours, **48 hours** is a safe default.",
+        ts: ms(3),
+      },
+    ],
+  };
+}
+
+// The memo queue with notes in two repositories, two of them selected, so the selection bar and
+// its Send button show.
+export function chatPagesMemos(locale) {
+  const ja = locale === "ja";
+  const m = (id, repo, category, body, pos) => ({
+    id, repo, category, kind: "text", body, refPath: "", position: pos, createdAt: ago(pos * 30 + 40), sentAt: "",
+  });
+  return [
+    m("m1", "webshop", ja ? "決済" : "Checkout", ja ? "クーポン併用時の税計算を確認する" : "Check tax when coupons stack", 1),
+    m("m2", "webshop", ja ? "決済" : "Checkout", ja ? "0 円注文のログを Sentry に出す" : "Log zero-total orders to Sentry", 2),
+    m("m4", "webshop", "", ja ? "トップページの読み込みが遅い気がする" : "The top page feels slow to load", 3),
+    m("m3", "payments-api", ja ? "返金" : "Refunds", ja ? "返金の冪等キーを再設計" : "Redesign the refund idempotency key", 4),
+  ];
+}
+// ---- end chat pages ----
+
+// ---- user guide: outside-access and security pages (SHOT_OUTSIDE_GUIDE in server.mjs) ----
+// Settings › MCP tokens & apps: a write token for a laptop's Claude Code, a memory-only one, and
+// claude.ai connected over OAuth. The issued secret is invented and has no real token's shape.
+export function outsidePats() {
+  return {
+    ceiling: "write",
+    max_ttl_days: 365,
+    tokens: [
+      { id: "pat1", name: "laptop-claude", scope: "write", endpoint: "mcp", expires_at: "2027-01-28T09:00:00Z", last_used_at: "2026-11-09T08:12:00Z" },
+      { id: "pat2", name: "notes-memory", scope: "read", endpoint: "memory", expires_at: "2026-12-04T09:00:00Z", last_used_at: "2026-11-02T10:40:00Z" },
+    ],
+  };
+}
+
+export function outsidePatIssued() {
+  return { token: "afp_demo_7Qm2xR9vK4tL8wN3pB6hJ1cZ5yD0sF", endpoint: "mcp" };
+}
+
+export function outsideGrants() {
+  const day = (s) => Math.floor(Date.parse(s) / 1000);
+  return {
+    enabled: true,
+    grants: [
+      { id: "g1", client_name: "Claude", redirect_host: "claude.ai", tenant: "demo", scope: "read", endpoint: "memory", created_at: day("2026-10-20T03:00:00Z"), last_used_at: day("2026-11-09T07:55:00Z") },
+      { id: "g2", client_name: "Codex CLI", redirect_host: "127.0.0.1", tenant: "demo", scope: "write", endpoint: "mcp", created_at: day("2026-11-03T01:00:00Z"), last_used_at: day("2026-11-08T12:30:00Z") },
+    ],
+  };
+}
+
+export function outsideCalls() {
+  const call = (at, status, items, ms) => ({
+    at, http_method: "POST", status, latency_ms: ms, header_version: "2026-07-28",
+    mcp_method_header: true, mcp_name_header: items[0].name !== undefined,
+    accept: "application/json, text/event-stream", items,
+  });
+  const it = (method, extra = {}) => ({ method, era: "stateless", meta_version: "2026-07-28", client_name: "codex-mcp-client", client_version: "0.98.0", status: 200, ...extra });
+  return {
+    calls: [
+      call("2026-11-08T12:30:04Z", 200, [it("tools/call", { name: "get_session_output" })], 182),
+      call("2026-11-08T12:30:01Z", 200, [it("tools/list", { tools: 24 })], 41),
+      call("2026-11-08T12:29:58Z", 200, [it("server/discover")], 12),
+    ],
+  };
+}
+// ---- end outside-access and security pages ----
+
+// ---- user guide: settings pages (SHOT_SETTINGS_GUIDE in server.mjs) ----
+// The read-aloud page: a VOICEVOX engine that is ready and Polly, as GET /api/tts/status answers.
+export function settingsTtsStatus() {
+  return {
+    voicevox: { ready: true, managed: true, enabled: true, mode: "ondemand", state: "running" },
+    polly: { ready: true },
+  };
+}
+// ---- end settings pages ----

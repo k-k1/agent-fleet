@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-vi.mock("../../../core/api/client.ts", () => ({ api: vi.fn() }));
+vi.mock("../../../core/api/client.ts", () => ({ apiJSON: async () => ({}), api: vi.fn() }));
 
 import { LivePoller, parseReading } from "./memberLiveStats.ts";
 import type { LiveReading } from "./memberLiveStats.ts";

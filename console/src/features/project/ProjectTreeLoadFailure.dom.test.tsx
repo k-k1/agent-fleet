@@ -9,6 +9,7 @@ import type { Repo } from "../repos/store.ts";
 let answer: () => unknown = () => ({ error: { code: "http_502", status: 502 } });
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: vi.fn(async (url: string) => (url.startsWith("api/repos") ? answer() : {})),
   isTransientErr: (d: { error?: { status?: number } }) => (d?.error?.status ?? 0) >= 500,
   getTenant: () => "",

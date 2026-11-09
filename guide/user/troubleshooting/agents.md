@@ -51,7 +51,7 @@ The assistant chat shows the same failure as **"Your Claude login has expired. R
 - **"Re-authenticate"** opens the Claude card so you can sign in again
 - **"Retry"** sends the failed message again
 
-The original error stays under "Details". The assistant chat is described in [Chat and memos](../../member/10-chat-memo.md#what-the-assistant-chat-is).
+The original error stays under "Details". The assistant chat is described in [Ask an assistant](../chat/assistant.md#choose-between-a-chat-and-a-session).
 
 ## Connecting codex goes nowhere after you approve
 
@@ -98,7 +98,7 @@ It reached the automatic reply limit. To stop it running away, it can only take 
 - The limit is **"Unattended auto-reply limit"** in ⚙ Settings → Assistant. It cannot be unlimited
 - To keep normal completion reports from triggering automatic replies, turn on **"Quiet completion reports"** on the same screen. Only the report card and the notification arrive
 
-How automatic replies work is in [Running many sessions](../../member/11-many-sessions.md#session-reports-and-auto-reply).
+How automatic replies work is in [Hand work to the Fleet Operator](../fleet/operator.md#receive-reports).
 
 ## The assistant chat says the context is over the limit and does not answer
 
@@ -108,7 +108,7 @@ The conversation has grown too long. Carry on in one of these ways:
 - Open a new chat and hand over just the essentials
 
 Starting an exchange above 90 % compacts it automatically first. Going over the limit before that point leaves it in this state.
-Lowering **"Auto-compact threshold (tokens)"** in ⚙ Settings → Assistant makes it less likely ([Chat and memos](../../member/10-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
+Lowering **"Auto-compact threshold (tokens)"** in ⚙ Settings → Assistant makes it less likely ([Ask an assistant](../chat/assistant.md#compact-a-long-conversation)).
 
 ## Related
 

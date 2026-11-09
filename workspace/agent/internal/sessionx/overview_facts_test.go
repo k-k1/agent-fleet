@@ -41,6 +41,7 @@ func TestMain(m *testing.M) {
 		putPRNotice = func(string, notice.Event) error { return nil }
 		// A throwaway engine per poll: nothing a list test does reaches disk or the next test.
 		prNoticesEngine = func() *watch.Engine { return watch.New(&memWatchStore{}, newWatchSink()) }
+		prFeedbackEngine = prNoticesEngine
 		lookupPorts = func(time.Time) map[string][]int { return nil }
 		_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
 	}))
