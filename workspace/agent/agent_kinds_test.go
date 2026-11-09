@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 )
 
 var updateKindCatalog = flag.Bool("update-kind-catalog", false,
@@ -160,7 +161,7 @@ func TestCPManagedDefaultSnapshotMatchesRegistry(t *testing.T) {
 func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 	// The route gates are this Agent's environment; a workspace running with them on must not
 	// change what this test sees.
-	for _, k := range []string{"AF_CLAUDE_BEDROCK_ROUTE", "AF_OPENCODE_BEDROCK_ROUTE", "AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE"} {
+	for _, k := range testguard.RouteGateEnvs {
 		t.Setenv(k, "")
 	}
 	for _, e := range buildKindCatalog(true).Kinds {
@@ -189,7 +190,9 @@ func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
 		t.Fatalf("kind %q missing from the catalog", kind)
 		return nil
 	}
-	t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", "")
+	for _, k := range testguard.RouteGateEnvs {
+		t.Setenv(k, "")
+	}
 	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
 	if got := routesOf("opencode"); len(got) != 0 {
 		t.Errorf("gate closed: opencode routes %v", got)
