@@ -15,6 +15,8 @@ import { EditorView } from "@codemirror/view";
 import { revisionOf } from "../editor/buffer.ts";
 import { clearDirtyRegistryForTests, hasDirtyEditors } from "../editor/dirtyRegistry.ts";
 import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
+import { clearFileModes } from "./fileModeMemory.ts";
+import { clearScrollPos } from "./scrollMemory.ts";
 
 const MARP = "---\nmarp: true\n---\n\n# Deck\n\nbody\n";
 const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
@@ -118,6 +120,9 @@ afterEach(() => {
   clearDirtyRegistryForTests();
   // An unmount with unsaved edits keeps the buffer for the view to come back to.
   clearEditorSlotsForTests();
+  // The mode and position are remembered per pane x file, and every case uses the same pair.
+  clearFileModes();
+  clearScrollPos();
 });
 
 describe("markdown mode controls", () => {
@@ -421,6 +426,38 @@ describe("the buffer behind the preview", () => {
     await render({});
     expect(editorView().state.doc.toString()).toBe("# Edited\n" + PLAIN_MD);
     expect(hasDirtyEditors()).toBe(true);
+  });
+
+  it("comes back to the mode it was left in after a tab switch", async () => {
+    for (const mode of ["Split", "Edit", "Preview"]) {
+      await render({});
+      await act(async () => modeButton(mode).click());
+      act(() => root!.unmount());
+      root = createRoot(host);
+      await render({});
+      expect(pressed()).toContain(mode);
+    }
+  });
+
+  it("lets a different opener request override the remembered mode", async () => {
+    await render({});
+    await act(async () => modeButton("Split").click());
+    act(() => root!.unmount());
+    // A citation now names a line: it needs the source row, not the remembered split.
+    root = createRoot(host);
+    await render({ targetLine: 3 });
+    expect(pressed()).toContain("Edit");
+    expect(pressed()).not.toContain("Split");
+  });
+
+  it("keeps the mode remembered under a request when the same request comes back", async () => {
+    // The request lives in the layout descriptor, so a remount sees it again; it is not new.
+    await render({ openMode: "edit" });
+    await act(async () => modeButton("Preview").click());
+    act(() => root!.unmount());
+    root = createRoot(host);
+    await render({ openMode: "edit" });
+    expect(pressed()).toContain("Preview");
   });
 
   it("puts Markdown edits through the same buffer validator", async () => {
