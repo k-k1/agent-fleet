@@ -63,7 +63,7 @@ func TestWatchSinkWaitsForTwoReadyLooksAndStartsAStoppedOwner(t *testing.T) {
 	}
 	sub := watch.Subscription{ID: "w1", Owner: "a", Until: watch.UntilFirst}
 	ev := watch.Event{Source: "github", Subject: "github:o/r#1", Type: "pr.merged", Summary: "PR o/r#1 was merged."}
-	if err := s.Inject(sub, ev); err != nil || len(f.sent) != 1 {
+	if err := s.Inject(sub, []watch.Event{ev}); err != nil || len(f.sent) != 1 {
 		t.Fatalf("inject: %v sent=%v", err, f.sent)
 	}
 	if !strings.HasPrefix(f.sent[0], "a|[agent-fleet:notice kind=watch source=github type=pr.merged subject=github:o/r#1 watch=w1 reply=none] ") {
@@ -79,7 +79,7 @@ func TestWatchSinkGoneOwnerFreesTheStartSlot(t *testing.T) {
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	s.Ready("a", now) // starts a
 	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir(), Archived: true})
-	if got := s.Ready("a", now.Add(time.Second)); got != watch.Gone {
+	if got := s.Ready("a", now.Add(time.Second)); got != watch.Unreachable {
 		t.Fatalf("archived owner: %v", got)
 	}
 	s.Ready("b", now.Add(2*time.Second))
@@ -95,8 +95,35 @@ func TestWatchSinkEndsWithAnArchivedOwner(t *testing.T) {
 	if s.OwnerExists("old") || s.OwnerExists("missing") {
 		t.Fatal("an archived or missing owner exists")
 	}
-	if got := s.Ready("old", time.Now()); got != watch.Gone {
+	if got := s.Ready("old", time.Now()); got != watch.Unreachable {
 		t.Fatalf("archived owner: %v", got)
+	}
+	if got := s.Ready("missing", time.Now()); got != watch.Gone {
+		t.Fatalf("missing owner: %v", got)
+	}
+}
+
+func TestWatchSinkWordsABuiltinByItsPurpose(t *testing.T) {
+	f := newWatchFixture(t)
+	s := newWatchSink()
+	sub := watch.Subscription{ID: "b:test:github:o/r#1", Owner: "a", Builtin: "test-purpose"}
+	evs := []watch.Event{{Type: "pr.checks.failed", Version: "h"}, {Type: "pr.review.changes_requested", Version: "1"}}
+	if err := s.Inject(sub, evs); err == nil {
+		t.Fatal("a built-in without wording was injected")
+	}
+	if err := s.Notify(sub, evs); err == nil {
+		t.Fatal("a built-in without a member notification reported success")
+	}
+	var got []watch.Event
+	builtinNoticeText["test-purpose"] = func(_ watch.Subscription, e []watch.Event) string { got = e; return "worded" }
+	builtinMemberNotice["test-purpose"] = func(_ watch.Subscription, e []watch.Event) error { got = e; return nil }
+	t.Cleanup(func() { delete(builtinNoticeText, "test-purpose"); delete(builtinMemberNotice, "test-purpose") })
+	if err := s.Inject(sub, evs); err != nil || len(f.sent) != 1 || f.sent[0] != "a|worded" || len(got) != 2 {
+		t.Fatalf("inject: %v sent=%v got=%v", err, f.sent, got)
+	}
+	got = nil
+	if err := s.Notify(sub, evs); err != nil || len(got) != 2 {
+		t.Fatalf("notify: %v got=%v", err, got)
 	}
 }
 

@@ -190,7 +190,9 @@ func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMes
 			result = fmt.Sprintf("failed (%d failing)", len(pr.FailingChecks))
 		}
 		sum := fmt.Sprintf("Checks on %s finished on %s: %s.", ref, short(head), result)
-		events = append(events, ev("pr.checks.completed", version, sum, data))
+		completed := ev("pr.checks.completed", version, sum, data)
+		completed.Failed = pr.Checks == "failure"
+		events = append(events, completed)
 		if pr.Checks == "failure" {
 			events = append(events, ev("pr.checks.failed", version, sum, data))
 		}

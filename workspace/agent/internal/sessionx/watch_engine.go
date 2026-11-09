@@ -142,11 +142,15 @@ func (s *watchSink) Ready(name string, now time.Time) watch.Readiness {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, ok := session.ReadMeta(name)
-	if !ok || m.Archived || !peerTargetAllowed(NormalizeKind(m.Kind)) {
-		// A watch a session made ends with that session; one that cannot take a prompt could
-		// not have called watch.
+	if !ok {
 		s.forgetLocked(name)
 		return watch.Gone
+	}
+	if m.Archived || !peerTargetAllowed(NormalizeKind(m.Kind)) {
+		// A watch a session made ends with that session; one that cannot take a prompt could
+		// not have called watch. A built-in falls back to the member.
+		s.forgetLocked(name)
+		return watch.Unreachable
 	}
 	if !watchAlive(m) {
 		s.wake(m, now)
@@ -173,16 +177,57 @@ func (s *watchSink) Ready(name string, now time.Time) watch.Readiness {
 	return watch.Ready
 }
 
-func (s *watchSink) Inject(sub watch.Subscription, ev watch.Event) error {
+func (s *watchSink) Inject(sub watch.Subscription, evs []watch.Event) error {
+	if len(evs) == 0 {
+		return nil
+	}
 	name := sub.Owner
-	text := watch.Notice(sub, ev)
+	var text string
+	if sub.Builtin != "" {
+		render, ok := builtinNoticeText[sub.Builtin]
+		if !ok {
+			return errors.New("no notice wording for built-in " + sub.Builtin)
+		}
+		text = render(sub, evs)
+	} else {
+		parts := make([]string, 0, len(evs))
+		for _, ev := range evs {
+			parts = append(parts, watch.Notice(sub, ev))
+		}
+		text = strings.Join(parts, "\n\n")
+	}
 	recordInjection(name, text, TurnSourceNotice)
 	if err := watchInject(name, text, agents.Origin{Kind: agents.OriginNotice}); err != nil {
 		return err
 	}
 	recordFleetGraphInstruct(name, TurnSourceNotice, "", "", text)
-	log.Printf("watch: told %s about %s (%s)", name, ev.Subject, ev.Type)
+	log.Printf("watch: told %s about %s (%s)", name, evs[0].Subject, watchTypes(evs))
 	return nil
+}
+
+// Notify puts a built-in's events into the member's notification outbox. Each purpose words its
+// own notifications under once keys of its own, so a repeat after a released claim is harmless.
+func (s *watchSink) Notify(sub watch.Subscription, evs []watch.Event) error {
+	send, ok := builtinMemberNotice[sub.Builtin]
+	if !ok {
+		return errors.New("no member notification for built-in " + sub.Builtin)
+	}
+	return send(sub, evs)
+}
+
+// The wording of each built-in purpose: into the owner session, and for the member. Filled from
+// init functions only and read-only afterwards, so the sink reads them without a lock.
+var (
+	builtinNoticeText   = map[string]func(watch.Subscription, []watch.Event) string{}
+	builtinMemberNotice = map[string]func(watch.Subscription, []watch.Event) error{}
+)
+
+func watchTypes(evs []watch.Event) string {
+	t := make([]string, 0, len(evs))
+	for _, ev := range evs {
+		t = append(t, ev.Type)
+	}
+	return strings.Join(t, ", ")
 }
 
 func (s *watchSink) Forget(name string) {
