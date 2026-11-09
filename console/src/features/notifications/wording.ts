@@ -35,6 +35,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "arch-residue": "noti.kind_arch_residue",
   "memory-sync": "noti.kind_memory_sync",
   "memory-review": "noti.kind_memory_review",
+  "memory-consolidation": "noti.kind_memory_consolidation",
   "start-deadline": "noti.kind_start_deadline",
   "agent-silent-stop": "noti.kind_agent_silent_stop",
   "image-refresh": "noti.kind_image_refresh",
@@ -67,7 +68,7 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   // showing nothing but a timestamp — which is what a member saw. Clicking it opens nothing by
   // design (below), so the list of what has to be reinstalled has to be ON the row or it is
   // nowhere.
-  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "agent-silent-stop" || n.kind === "image-refresh" || n.kind === "member-home-full" || n.kind === "member-boot-install" || n.kind === "member-agent-silent" || n.kind === "memory-sync" || n.kind === "memory-review") return notificationWording(n).body;
+  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "agent-silent-stop" || n.kind === "image-refresh" || n.kind === "member-home-full" || n.kind === "member-boot-install" || n.kind === "member-agent-silent" || n.kind === "memory-sync" || n.kind === "memory-review" || n.kind === "memory-consolidation") return notificationWording(n).body;
   // The message is the point of a terminal notification; the kind label alone says nothing.
   if (n.kind === "terminal-notification") {
     const text = terminalNotificationText(n.payload);
@@ -371,6 +372,17 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       title: t("notif.memory_review.title", { n: pending }),
       body: t("notif.memory_review.body", { queued, pending }),
       speech: t("notif.memory_review.speech"),
+    };
+  }
+  if (n.kind === "memory-consolidation") {
+    // The daily "suggestions are waiting" notice of the memory consolidator (ADR 0130 decision 7).
+    // The payload is a count and nothing else — never a memory name or text — and the row only
+    // opens Settings > Agent memory > Suggestions; deciding happens there.
+    const pending = typeof n.payload.pending === "number" && Number.isFinite(n.payload.pending) ? n.payload.pending : 0;
+    return {
+      title: t("notif.memory_consolidation.title", { n: pending }),
+      body: t("notif.memory_consolidation.body"),
+      speech: t("notif.memory_consolidation.speech"),
     };
   }
   if (n.kind === "memory-sync") {

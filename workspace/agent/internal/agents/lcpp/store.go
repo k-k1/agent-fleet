@@ -122,7 +122,7 @@ type Record struct {
 // ecs-ec2 (unlike claude's own transcript, which sits on the EFS-backed CLAUDE_CONFIG_DIR
 // mount) — moving between them is a correctness/consistency fix, not a durability one. It also
 // closes a real gap for free: AgentStateDir is already in the Console file browser's denylist
-// (fs.go's fsDeny), where AgentDataDir is not, so a raw conversation transcript was previously
+// (internal/fsx/fs.go's fsDeny), where AgentDataDir is not, so a raw conversation transcript was previously
 // servable through the file browser.
 //
 // The zero value is not usable; build one with Open. Safe for concurrent use: mu serializes
@@ -621,7 +621,7 @@ func (b *transcriptBuilder) add(r Record) {
 			t.InTok = r.Usage.PromptTokens
 			t.OutTok = r.Usage.CompletionTokens
 			// ADR 0093 decision 8: this kind's own window, never a guess — session_usage.go's
-			// AggregateUsage and usage_fold.go's foldTurnRows both read CtxWindow>0 as
+			// AggregateUsage and internal/usagesvc/usage_fold.go's foldTurnRows both read CtxWindow>0 as
 			// WindowSource="recorded" automatically, the same way codex/opencode's own
 			// transcript parsers already do (opencode/transcript.go, codex/transcript.go).
 			if r.Window > 0 {

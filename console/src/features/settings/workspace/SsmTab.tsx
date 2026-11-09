@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode, RefObject } from "react";
-import { api, raw, rawJSON } from "../../../core/api/client.ts";
+import { raw, rawJSON } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -17,9 +17,23 @@ import { useSettingsUI } from "../store.ts";
 import { AwsConfigImport } from "./AwsConfigImport.tsx";
 import { SshConfigImport } from "./SshConfigImport.tsx";
 import { AwsConfigExport } from "./AwsConfigExport.tsx";
+import { isOk, type Reply } from "../api.ts";
 import { RecentCloudRuns } from "../../cloudruns/cloudRuns.tsx";
 import { SIGN_IN_NAME_RE, groupable, samePortal, signInSaveError, toCandidate, type SsmSignIn } from "./ssmSignIns.ts";
 import { ShareSignIn } from "./ShareSignIn.tsx";
+import {
+  getLoginStates,
+  listSsmHosts,
+  listSsmProfiles,
+  listSsmSignIns,
+  type SsmFailBody,
+  type SsmHost,
+  type SsmHostWrite,
+  type SsmProfile,
+  type SsmProfileWrite,
+  type SsmSignInWrite,
+  type SsmSsoProfileWrite,
+} from "./ssmApi.ts";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -31,18 +45,20 @@ import { ShareSignIn } from "./ShareSignIn.tsx";
 // runs `aws sso login` (device-code URL surfaced in the terminal) and caches the
 // short-lived token in the workspace home.
 
+const errMsg = (e: unknown): string => String((e as { message?: unknown } | null)?.message || e);
+
 // postJSON POSTs/PUTs and surfaces failures loudly (a stale CP without the routes
 // returns 404 non-JSON, which would otherwise be swallowed). Returns true on success.
 export async function postJSON(path: string, method: string, body: unknown, toast: (msg: string) => void): Promise<boolean> {
   let res;
   try {
     res = await rawJSON(path, method, body);
-  } catch (e: any) {
-    toast(t("ssm.comm_failed", { msg: String(e?.message || e) }));
+  } catch (e) {
+    toast(t("ssm.comm_failed", { msg: errMsg(e) }));
     return false;
   }
   if (!res.ok) {
-    const j = await res.json().catch(() => null);
+    const j: SsmFailBody = await res.json().catch(() => null);
     // A sign-in refusal (ADR 0125) says what to do about it in the member's words.
     const known = signInSaveError(j?.error?.code);
     toast(known ? t(known) : t("ssm.save_failed_http", { status: res.status, detail: failDetailOf(res, j) }));
@@ -59,12 +75,12 @@ export async function deleteRow(path: string, toast: (msg: string) => void): Pro
   let res;
   try {
     res = await raw(path, { method: "DELETE" });
-  } catch (e: any) {
-    toast(t("ssm.comm_failed", { msg: String(e?.message || e) }));
+  } catch (e) {
+    toast(t("ssm.comm_failed", { msg: errMsg(e) }));
     return "failed";
   }
   if (!res.ok) {
-    const j = await res.json().catch(() => null);
+    const j: SsmFailBody = await res.json().catch(() => null);
     if (j?.error?.code === "ssm_profile_in_use" && Array.isArray(j.hosts)) {
       toast(profileInUse(j.hosts, Array.isArray(j.profiles) ? j.profiles : []));
       return "in_use";
@@ -80,7 +96,7 @@ function profileInUse(aliases: string[], dependents: string[] = []): string {
   return t("ssm.profile_in_use", { n: aliases.length, hosts: aliases.join(", ") });
 }
 
-function failDetailOf(res: Response, j: any): string {
+function failDetailOf(res: Response, j: SsmFailBody): string {
   return j?.error?.message ? " — " + j.error.message : res.status === 404 ? t("ssm.save_failed_404") : "";
 }
 
@@ -106,8 +122,8 @@ export function FieldGroup({ title, optional, children }: { title?: ReactNode; o
 
 export function SsmTab() {
   const tr = useT();
-  const [profiles, setProfiles] = useState<any[] | null>(null);
-  const [hosts, setHosts] = useState<any[] | null>(null);
+  const [profiles, setProfiles] = useState<SsmProfile[] | null>(null);
+  const [hosts, setHosts] = useState<SsmHost[] | null>(null);
   // The member's shared sign-ins (ADR 0125). A failed or older answer leaves none: the profiles
   // still list, each with the sign-in name the CP gives it.
   const [signIns, setSignIns] = useState<SsmSignIn[]>([]);
@@ -124,17 +140,17 @@ export function SsmTab() {
   // replace it with []: the sections read a row missing from a new list as deleted and close
   // its open form, so a transient failure would throw away an unsaved draft.
   const reload = useCallback(() => {
-    const load = (path: string, set: (d: any[]) => void, setErr: (e: string) => void) =>
-      api(path)
+    const load = <T,>(list: () => Promise<Reply<T[]>>, set: (d: T[]) => void, setErr: (e: string) => void) =>
+      list()
         .then((d) => {
           if (!Array.isArray(d)) throw new Error(d?.error?.message || "unexpected response");
           set(d);
           setErr("");
         })
-        .catch((e: any) => setErr(String(e?.message || e)));
-    load("api/ssm/profiles", setProfiles, setProfilesErr);
-    load("api/ssm/hosts", setHosts, setHostsErr);
-    api("api/ssm/sign-ins")
+        .catch((e) => setErr(errMsg(e)));
+    load(listSsmProfiles, setProfiles, setProfilesErr);
+    load(listSsmHosts, setHosts, setHostsErr);
+    listSsmSignIns()
       .then((d) => {
         if (Array.isArray(d)) setSignIns(d.filter((x) => typeof x?.id === "string" && typeof x?.name === "string"));
       })
@@ -210,7 +226,7 @@ const emptyProfile: Record<string, string> = {
 // The assume-role profile type (issue #1109): no portal of its own, it assumes a role from
 // the login of another Settings profile. Field names are the CP's (ssmProfileDTO).
 const ASSUME_ROLE = "assume_role";
-const isChained = (p: any): boolean => p?.kind === ASSUME_ROLE;
+const isChained = (p: Pick<SsmProfile, "kind"> | undefined): boolean => p?.kind === ASSUME_ROLE;
 
 // The workspace keys a profile's sign-in by its AWS name (sso-session af-<name>), so an edit
 // that changes it leaves the profile signed out under its new name.
@@ -229,14 +245,17 @@ export function resetReloginMarks(): void {
 }
 
 // pick copies a row's form fields as strings, so a field the CP left out edits as "".
-export function pick(row: any, empty: Record<string, string>): Record<string, string> {
+export function pick(row: object | null | undefined, empty: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const k of Object.keys(empty)) out[k] = row?.[k] == null ? "" : String(row[k]);
+  for (const k of Object.keys(empty)) {
+    const v = (row as Record<string, unknown> | null | undefined)?.[k];
+    out[k] = v == null ? "" : String(v);
+  }
   return out;
 }
 
 // authMoved: the edit points the profile at another portal (start URL or SSO region).
-function authMoved(was: any, now: { startUrl: string; ssoRegion: string }): boolean {
+function authMoved(was: { startUrl?: string; ssoRegion?: string }, now: { startUrl: string; ssoRegion: string }): boolean {
   return now.startUrl !== String(was.startUrl || "") || now.ssoRegion !== String(was.ssoRegion || "");
 }
 
@@ -252,10 +271,10 @@ function ProfileSection({
   open,
   setOpen,
 }: {
-  profiles: any[] | null;
+  profiles: SsmProfile[] | null;
   signIns: SsmSignIn[];
   loadErr: string;
-  hosts: any[] | null;
+  hosts: SsmHost[] | null;
   reload: () => void;
   labelRef: RefObject<HTMLInputElement | null>;
   open: boolean;
@@ -268,7 +287,7 @@ function ProfileSection({
   const [busy, setBusy] = useState(false);
   // The row being edited; its form replaces the row's details. Never open together with
   // the add form, which shares f.
-  const [editing, setEditing] = useState<any | null>(null);
+  const [editing, setEditing] = useState<SsmProfile | null>(null);
   // ids: the profiles a login clears the relogin mark of (every member of a sign-in).
   // next: further members of a sign-in to log in through when the Agent refuses this one as not
   // exported; startNow: the member already pressed Log in.
@@ -303,13 +322,15 @@ function ProfileSection({
   // The same for each shared sign-in, by its name (one login for every member).
   const [signInStates, setSignInStates] = useState<Record<string, string>>({});
   const loadStates = useCallback(() => {
-    api("api/aws-login/profiles")
+    getLoginStates()
       .then((d) => {
-        // No prototype: a profile named "__proto__" would otherwise set it instead of a key.
+        // An error body has neither list. No prototype: a profile named "__proto__" would
+        // otherwise set it instead of a key.
+        const ok = isOk(d) ? d : null;
         const m: Record<string, string> = Object.create(null);
-        for (const p of Array.isArray(d?.profiles) ? d.profiles : []) m[String(p.name)] = String(p.state);
+        for (const p of Array.isArray(ok?.profiles) ? ok.profiles : []) m[String(p.name)] = String(p.state);
         const g: Record<string, string> = Object.create(null);
-        for (const si of Array.isArray(d?.signIns) ? d.signIns : []) g[String(si.name)] = String(si.state);
+        for (const si of Array.isArray(ok?.signIns) ? ok.signIns : []) g[String(si.name)] = String(si.state);
         setStates(m);
         setSignInStates(g);
       })
@@ -338,7 +359,7 @@ function ProfileSection({
   // a failed press. The button is also off while a save or delete is out: a login begun
   // before the PUT lands signs in to the old portal, and its completion would clear the new
   // relogin mark.
-  const loginOff = (p: any): string | null => {
+  const loginOff = (p: SsmProfile): string | null => {
     if (isChained(p)) {
       // The login is the source profile's; the button logs in to that one.
       const src = (profiles || []).find((x) => x.id === p.sourceProfileId);
@@ -353,7 +374,7 @@ function ProfileSection({
           : null;
   };
   // The profile whose login a row's button starts: the row itself, or a chain's source.
-  const loginTarget = (p: any): any => (isChained(p) ? (profiles || []).find((x) => x.id === p.sourceProfileId) || p : p);
+  const loginTarget = (p: SsmProfile): SsmProfile => (isChained(p) ? (profiles || []).find((x) => x.id === p.sourceProfileId) || p : p);
 
   const close = () => {
     setOpen(false);
@@ -371,7 +392,7 @@ function ProfileSection({
     setF(emptyProfile);
     setOpen(true);
   };
-  const startEdit = (p: any) => {
+  const startEdit = (p: SsmProfile) => {
     setOpen(false);
     setEditingSignIn(null);
     setF({ ...pick(p, emptyProfile), signInMode: p.signIn ? "join" : "" });
@@ -387,17 +408,17 @@ function ProfileSection({
   // that is signed in uses its login; a new sign-in named after a profile of its own that is
   // signed in now, on the same portal, takes that login over (ADR 0125 decision D). Leaving a
   // sign-in, any other new sign-in, and a rename or portal change of a profile of its own do not.
-  const needsLogin = (body: Record<string, unknown>): boolean => {
+  const needsLogin = (body: SsmProfileWrite): boolean => {
     if (!editing || chainedForm || isChained(editing)) return false;
     const was = String(editing.signIn || "");
     if (nextSignIn !== was) {
       if (!nextSignIn) return true;
       if (joining) return !live(signInStates[nextSignIn]);
       const named = (profiles || []).find((x) => !isChained(x) && !x.signIn && x.name === nextSignIn);
-      return !(named && live(states[named.name]) && !authMoved(named, body as any));
+      return !(named && live(states[named.name]) && !authMoved(named, body as SsmSsoProfileWrite));
     }
     if (nextSignIn) return false;
-    return awsProfileName(String(editing.label || "")) !== awsProfileName(String(body.label)) || authMoved(editing, body as any);
+    return awsProfileName(String(editing.label || "")) !== awsProfileName(String(body.label)) || authMoved(editing, body as SsmSsoProfileWrite);
   };
   // An edit keeps the profile's id, so the hosts that use it follow; delete and re-add
   // would leave them on an id that no longer exists (ssm_host.profile_id has no FK).
@@ -405,7 +426,7 @@ function ProfileSection({
     if (!valid) return;
     setBusy(true);
     try {
-      const body: Record<string, unknown> = chainedForm
+      const body: SsmProfileWrite = chainedForm
         ? {
             kind: ASSUME_ROLE,
             label: f.label.trim(),
@@ -702,7 +723,7 @@ function ProfileSection({
       else n.delete(id);
       return n;
     });
-  const groups: { si: SsmSignIn; members: any[] }[] = signIns.map((si) => ({
+  const groups: { si: SsmSignIn; members: SsmProfile[] }[] = signIns.map((si) => ({
     si,
     members: (profiles || []).filter((p) => !isChained(p) && p.signIn === si.name),
   }));
@@ -725,7 +746,7 @@ function ProfileSection({
   const saveSignIn = async () => {
     const si = editingSignIn;
     if (!si || !sfValid) return;
-    const next = { name: sf.name.trim(), startUrl: sf.startUrl.trim(), ssoRegion: sf.ssoRegion.trim() };
+    const next: SsmSignInWrite = { name: sf.name.trim(), startUrl: sf.startUrl.trim(), ssoRegion: sf.ssoRegion.trim() };
     const renamed = next.name !== si.name;
     const moved = next.startUrl !== si.startUrl || next.ssoRegion !== si.ssoRegion;
     const members = (profiles || []).filter((p) => !isChained(p) && p.signIn === si.name);
@@ -793,12 +814,12 @@ function ProfileSection({
   // A sign-in's header: its name, portal and one login state, Log in and Log out, and the edit
   // of its name and portal. The login runs as a member the workspace can log in with; the Agent
   // logs in the sign-in's one sso-session, for every member.
-  const renderSignIn = (si: SsmSignIn, members: any[]) => {
+  const renderSignIn = (si: SsmSignIn, members: SsmProfile[]) => {
     // Every member the workspace could log in through. The first is tried; one the member's own
     // ~/.aws holds back is refused by the Agent (not_exported), and the next is tried instead.
     const candidates = members.filter((m) => m.name && !m.nameCollides && m.accountId && m.roleName);
     const loginMember = candidates[0];
-    const asLogin = (m: any) => ({ id: String(m.id), name: String(m.name), label: si.name, accountId: String(m.accountId), roleName: String(m.roleName) });
+    const asLogin = (m: SsmProfile) => ({ id: String(m.id), name: String(m.name), label: si.name, accountId: String(m.accountId), roleName: String(m.roleName) });
     const relogin = members.some((m) => reloginNeeded.has(m.id));
     const st = signInStates[si.name];
     return (
@@ -866,7 +887,7 @@ function ProfileSection({
 
   // One profile's row. A member of a shared sign-in (grouped) has no login of its own: its
   // header logs in, out and shows the state once for every member, and holds the portal.
-  const renderRow = (p: any, grouped: boolean) => (
+  const renderRow = (p: SsmProfile, grouped: boolean) => (
     <li key={p.id} className={"ssm-item" + (grouped ? " ssm-member" : "")}>
       <div className="ssm-item-head">
         {!grouped && shareable && groupable(p) && (
@@ -1050,10 +1071,11 @@ function ProfileSection({
             // The next member starts at once only while the Agent still lists it in the sign-in the
             // member pressed Log in for; one moved to another sign-in meanwhile would log that in.
             const cur = loginFor;
-            void api("api/aws-login/profiles")
+            void getLoginStates()
               .then((d) => {
+                const ok = isOk(d) ? d : null;
                 const inSignIn = (n: string) =>
-                  (Array.isArray(d?.profiles) ? d.profiles : []).some((x: any) => x?.name === n && !x?.source && x?.signIn === cur.signIn);
+                  (Array.isArray(ok?.profiles) ? ok.profiles : []).some((x) => x?.name === n && !x?.source && x?.signIn === cur.signIn);
                 const left = (cur.next || []).filter((x) => inSignIn(x.name));
                 const [nx, ...rest] = left;
                 if (nx) setLoginFor((now) => (now === cur ? { ...nx, ids: cur.ids, signIn: cur.signIn, next: rest, startNow: true } : now));
@@ -1123,9 +1145,9 @@ function HostSection({
   reload,
   onNeedProfile,
 }: {
-  hosts: any[] | null;
+  hosts: SsmHost[] | null;
   loadErr: string;
-  profiles: any[] | null;
+  profiles: SsmProfile[] | null;
   reload: () => void;
   onNeedProfile: () => void;
 }) {
@@ -1140,6 +1162,7 @@ function HostSection({
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
   const setVal = (k: string) => (v: string) => setF((p) => ({ ...p, [k]: v }));
   const profileOf = (id: string) => (profiles || []).find((p) => p.id === id);
+  const profileRegion = profileOf(f.profileId)?.region;
   const noProfiles = profiles !== null && profiles.length === 0;
   // The profile must be one the current list holds: a dead id (deleted while the form was
   // open, or the list not loaded yet) would only come back from the CP as bad_profile.
@@ -1165,7 +1188,7 @@ function HostSection({
     setF(emptyHost);
     setOpen(true);
   };
-  const startEdit = (h: any) => {
+  const startEdit = (h: SsmHost) => {
     setOpen(false);
     setF(pick(h, emptyHost));
     setEditing(h.id);
@@ -1174,7 +1197,7 @@ function HostSection({
     if (!valid) return;
     setBusy(true);
     try {
-      const body = {
+      const body: SsmHostWrite = {
         alias: f.alias.trim(),
         profileId: f.profileId,
         instanceId: f.instanceId.trim(),
@@ -1236,9 +1259,7 @@ function HostSection({
               value={f.region}
               onChange={setVal("region")}
               emptyLabel={
-                profileOf(f.profileId)?.region
-                  ? tr("ssm.region_profile_default", { region: profileOf(f.profileId).region })
-                  : tr("ssm.f_region_placeholder")
+                profileRegion ? tr("ssm.region_profile_default", { region: profileRegion }) : tr("ssm.f_region_placeholder")
               }
             />
           </Field>

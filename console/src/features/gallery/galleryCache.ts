@@ -127,7 +127,7 @@ export function galleryTreeURL(path: string, warm: number): string {
 /**
  * How deep "include subfolders" walks and how many pictures it asks for. Three levels covers
  * the generated root (root → session folder → pictures) and a docs/img-style tree; the limit
- * is a few pages of PAGE_SIZE — the Agent bounds its walk on its own as well (fs_images.go).
+ * is a few pages of PAGE_SIZE — the Agent bounds its walk on its own as well (internal/fsx/fs_images.go).
  */
 const FLAT_DEPTH = 3;
 const FLAT_LIMIT = 1000;

@@ -167,7 +167,7 @@ func testDeps() Deps {
 		// browse root get through. A pass-through fake would fail the test that an
 		// attachment's location lands in Knowledge (chat_verb_test.go), because it never
 		// resolves under the root — a weak fake breaks the check without touching a single
-		// assertion. The deny list (isDenied) is fs.go's job.
+		// assertion. The deny list (isDenied) is internal/fsx/fs.go's job.
 		SafeBrowsePath: func(p string) (string, string, bool) {
 			root := os.Getenv("AF_BROWSE_ROOT")
 			if root == "" {

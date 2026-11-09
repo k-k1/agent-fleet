@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -19,11 +20,7 @@ import (
 // ok=false — no catalog, no price for this id, or upstream marks it deprecated — takes the id
 // out of the running; when nothing is left, the caller keeps its fixed rule.
 func modelListPrice(kind, model string) (float64, bool) {
-	p, _, deprecated, ok := usageCatalogLookupStatus(kind, recommendPriceID(kind, model))
-	if !ok || deprecated {
-		return 0, false
-	}
-	return p.In + p.Out/10, true
+	return usagesvc.CatalogListPrice(kind, recommendPriceID(kind, model))
 }
 
 // agyEffortSuffixes are the reasoning-effort / thinking variants agy lists one model under

@@ -403,7 +403,7 @@ func TestTranscriptMergesToolResultIntoTheCallingTurn(t *testing.T) {
 // TestTranscriptCarriesRecordedWindow pins ADR 0093 decision 8: this kind's own resolved
 // context window (driver.go's harness.EngineWindow call, threaded through AppendUsage) must
 // reach transcript.Turn.CtxWindow, because that is exactly the field session_usage.go's
-// AggregateUsage and usage_fold.go's foldTurnRows key off to report WindowSource="recorded"
+// AggregateUsage and internal/usagesvc/usage_fold.go's foldTurnRows key off to report WindowSource="recorded"
 // instead of falling back to usagex.WindowGuess.
 func TestTranscriptCarriesRecordedWindow(t *testing.T) {
 	testHome(t)

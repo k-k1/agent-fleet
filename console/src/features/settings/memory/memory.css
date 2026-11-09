@@ -758,3 +758,19 @@
   width: 100%;
   font-family: var(--font-mono, monospace);
 }
+
+/* Memory suggestions (the consolidator's proposals): the change list's layout, with a status badge
+   in the same family as the other badges. */
+.mem-badge.cs-pending {
+  background: var(--accent-soft, var(--bg-2));
+}
+.mem-badge.cs-refused,
+.mem-badge.cs-expired {
+  color: var(--err);
+}
+.mem-cs-item {
+  margin: 8px 0;
+}
+.mem-cs-status {
+  margin-top: 8px;
+}

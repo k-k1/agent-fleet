@@ -17,7 +17,7 @@ import (
 // per-session (not shared) so concurrent SSM sessions to different accounts don't
 // clobber each other's AWS_CONFIG_FILE; the SSO token cache stays in the default
 // ~/.aws/sso/cache so one `aws sso login` is reused across sessions of the same
-// portal. The ".aws" tree is denylisted from the file browser (fs.go).
+// portal. The ".aws" tree is denylisted from the file browser (internal/fsx/fs.go).
 func SsmConfigPath(name string) string {
 	return filepath.Join(paths.HomeDir(), ".aws", "af-sessions", name+".config")
 }

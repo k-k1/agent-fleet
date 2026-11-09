@@ -18,12 +18,13 @@ import { ViewNav, useSectionView, type ViewDef } from "./viewNav.tsx";
 import { AgentMemoryStatus } from "./views/AgentMemoryStatus.tsx";
 import { MemoriesView } from "./views/MemoriesView.tsx";
 import { AgentChangesPanel } from "./memoryChanges.tsx";
+import { ProposalsPanel } from "./memoryProposals.tsx";
 import { ImportExportView } from "./views/ImportExportView.tsx";
 import { AgentSettingsView } from "./views/AgentSettingsView.tsx";
 
 export const MEMORY_SECTION = "memory";
 // Order is the nav order; the first is the default when the workspace is running.
-export const MEMORY_VIEWS = ["memories", "changes", "importexport", "settings"] as const;
+export const MEMORY_VIEWS = ["memories", "changes", "proposals", "importexport", "settings"] as const;
 const VIEWS: readonly string[] = MEMORY_VIEWS;
 
 export function MemoryTab() {
@@ -39,6 +40,7 @@ export function MemoryTab() {
   const defs: ViewDef[] = [
     { key: "memories", label: tr("mem.view_memories") },
     { key: "changes", label: tr("mem.view_changes") },
+    { key: "proposals", label: tr("mem.view_proposals") },
     { key: "importexport", label: tr("mem.view_importexport") },
     { key: "settings", label: tr("mem.view_settings") },
   ];
@@ -49,7 +51,7 @@ export function MemoryTab() {
       <ViewNav label={tr("mem.views_label")} views={defs} value={view} onChange={setView} prefix="mem-af" />
       <div role="tabpanel" id="mem-af-panel" aria-labelledby={`mem-af-tab-${view}`} className="mem-view">
         {view === "settings" ? (
-          <AgentSettingsView running={running} />
+          <AgentSettingsView running={running} reload={reload} />
         ) : !running ? (
           <EmptyState icon="archive" title={tr("mem.ws_required_title")} hint={tr("mem.ws_required_hint")}>
             <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
@@ -58,6 +60,8 @@ export function MemoryTab() {
           </EmptyState>
         ) : view === "changes" ? (
           <AgentChangesPanel reload={reload} onChanged={bump} />
+        ) : view === "proposals" ? (
+          <ProposalsPanel reload={reload} onChanged={bump} />
         ) : view === "importexport" ? (
           <ImportExportView reload={reload} onChanged={bump} />
         ) : (
