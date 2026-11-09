@@ -20,6 +20,17 @@ describe("agoText", () => {
     expect(agoText(3569)).toBe("59 分前");
     expect(agoText(3599.6)).toBe("1 時間前");
   });
+  it("does not round twice at the half-unit boundaries", () => {
+    expect(agoText(89.6)).toBe("1 分前");
+    expect(agoText(90)).toBe("2 分前");
+    expect(agoText(5399.6)).toBe("1 時間前");
+    expect(agoText(5400)).toBe("2 時間前");
+  });
+  it("returns empty for NaN, undefined and Infinity", () => {
+    expect(agoText(NaN)).toBe("");
+    expect(agoText(undefined)).toBe("");
+    expect(agoText(Infinity)).toBe("");
+  });
   it("clamps negatives and handles null", () => {
     expect(agoText(-3.2)).toBe("0 秒前");
     expect(agoText(null)).toBe("");

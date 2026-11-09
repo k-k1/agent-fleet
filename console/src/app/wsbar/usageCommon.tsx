@@ -79,15 +79,16 @@ export function useUsage(tenant: string | null, src: { kind: string; endpoint: s
 
 // agoText: seconds since the usage was fetched -> "N seconds/minutes/hours ago" (freshness label).
 export function agoText(sec: number | null | undefined) {
-  if (sec == null) return "";
-  // The age can be fractional (Home adds (now - fetchedAt) / 1000 to the Agent's integer age), so
-  // round once and pick the unit from the rounded value: 59.6 s must read "1 minute", never
-  // "60 seconds", and 59.5 min "1 hour", never "60 minutes".
+  if (sec == null || !Number.isFinite(sec)) return "";
+  // The age can be fractional (Home adds (now - fetchedAt) / 1000 to the Agent's integer age).
+  // Seconds are rounded for the seconds branch only; minutes and hours derive from the raw value so
+  // nothing is rounded twice (89.6 s is "1 minute", not 90 s -> "2 minutes"). A value that rounds up
+  // to 60 s or 60 min falls into the next unit: 59.6 s reads "1 minute", never "60 seconds".
   const s = Math.max(0, Math.round(sec));
-  const min = Math.round(s / 60);
-  if (min >= 60) return tCount("wsbar.ago_hour", Math.round(s / 3600));
-  if (s >= 60) return tCount("wsbar.ago_min", min);
-  return tCount("wsbar.ago_sec", s);
+  if (s < 60) return tCount("wsbar.ago_sec", s);
+  const min = Math.round(sec / 60);
+  if (min < 60) return tCount("wsbar.ago_min", min);
+  return tCount("wsbar.ago_hour", Math.round(sec / 3600));
 }
 
 // UsageBreakdownLink: deep link from the usage chip into the Settings > agent usage tab
