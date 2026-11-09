@@ -455,7 +455,12 @@ func agentMemCommitRels(commit, rel string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return agentMemChangeRels(body, rel), nil
+	// Strict, as the list is: a trailer the row would be withheld for is not reverted from either.
+	also, ok := agentMemAlsoRels(agentMemTrailers(body), rel)
+	if !ok {
+		return nil, memoryErrf(http.StatusConflict, errCodeMemoryConflict, "this change names memories outside its own directory; it cannot be reverted")
+	}
+	return append([]string{rel}, also...), nil
 }
 
 // agentMemResolveChange checks that commitArg names an agent-memory change on main and returns

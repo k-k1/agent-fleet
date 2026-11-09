@@ -764,7 +764,7 @@ release.
   memory ends the unit's revertibility. One revert (`agentMemRevertGroup`) writes one commit: the new memory goes (with a
   tombstone, as for any undone create) and each replaced memory returns to its text before, at a revision above every one it
   had. It refuses unless every side is exactly as the commit left it and has both texts in the history (a purge of one side
-  refuses the revert; forgetting one side of a unit is refused too). Approval re-validates each side against its revision twice, in
+  refuses the revert; `memory_forget` and the change list's forget of one side of a unit are refused while the unit is that memory's newest change, since a forget would end the unit's revert for good). Approval re-validates each side against its revision twice, in
   Approve before any write and again inside the store lock (`agentMemReplace`); a moved side refuses the whole replacement and
   writes nothing, and a failure after the files were written (git, the disk) puts every side back (`agentMemApplyLocked`'s undo).
   The new name is held to no revival in the same lock: a forgotten name, or one that exists, including a superseded memory's

@@ -322,3 +322,28 @@ func memberCallerT(t *testing.T) agentMemCaller {
 	}
 	return c
 }
+
+// Forgetting one memory of a unit directly (not through the change list) is refused while the unit
+// is its newest change, so the unit's revert stays possible; once a later change exists it is allowed.
+func TestForgetOfOneSideOfAUnitIsRefused(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	now := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	seedT(t, now, "a", "b")
+	res, err := replaceT(t, 1, replaceItem("both", ConsolSource{"a", 1}, ConsolSource{"b", 1}), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := commitCount(t)
+	if _, err := agentMemForget(memberCallerT(t), agentMemForgetReq{Scope: "project", Name: "a", Revision: 2}, now); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("forget of a replaced side: err = %v", err)
+	}
+	if _, err := agentMemForget(agentMemCallerT(t, "claude-main"), agentMemForgetReq{Name: "both", Revision: 1}, now); agentMemCode(err) != errCodeMemoryConflict {
+		t.Fatalf("forget of the replacement: err = %v", err)
+	}
+	if commitCount(t) != n {
+		t.Fatal("a refused forget wrote a commit")
+	}
+	if _, err := agentMemRevert(agentMemRevertReq{Commit: res.Commit}, now); err != nil {
+		t.Fatalf("the unit no longer reverts: %v", err)
+	}
+}

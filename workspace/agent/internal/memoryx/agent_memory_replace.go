@@ -316,3 +316,26 @@ func agentMemRevertGroup(req agentMemRevertReq, commit string, rels []string, no
 	}
 	return res, nil
 }
+
+// agentMemRefuseGroupForget refuses to forget a memory whose newest change wrote several memories
+// (a replacement): a forget would end that unit's revert for good. The unit goes back as a whole.
+// The caller holds agentMemMu.
+func agentMemRefuseGroupForget(repoRel string) error {
+	if !memoryHasCommits() {
+		return nil
+	}
+	latest, err := agentMemLatestChange(repoRel)
+	if err != nil || latest == "" {
+		return err
+	}
+	body, err := memoryGitRun("log", "-1", "--format=%B", latest)
+	if err != nil {
+		return err
+	}
+	tr := agentMemTrailers(body)
+	if tr[agentMemAlsoTrailer] != "" {
+		return memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+			"this memory was written together with others by its newest change; revert that change as a whole instead of forgetting one of them")
+	}
+	return nil
+}
