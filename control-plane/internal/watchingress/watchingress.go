@@ -201,7 +201,7 @@ func (wi *Ingress) handleApp(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	wi.deliver(w, r, "github", "app", wi.appSecret, "")
+	wi.deliver(w, r, "github", "app", wi.appSecret, "", "")
 }
 
 func (wi *Ingress) handleHook(w http.ResponseWriter, r *http.Request) {
@@ -216,11 +216,18 @@ func (wi *Ingress) handleHook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	// An unknown hook answers like a bad signature, so the status does not tell a guesser which
+	// ids exist. A hook whose owner left the tenant is as good as unknown.
+	if ok {
+		if _, active, err := wi.d.Store().GetMembershipByID(r.Context(), h.MembershipID); err != nil || !active {
+			ok = false
+		}
+	}
 	if !ok {
-		http.NotFound(w, r)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	wi.deliver(w, r, h.Source, h.ID, HookSecret(wi.d.SigningRoot(), h.ID), h.TenantID)
+	wi.deliver(w, r, h.Source, h.ID, HookSecret(wi.d.SigningRoot(), h.ID), h.TenantID, h.Repo)
 }
 
 func tooMany(w http.ResponseWriter) {
@@ -230,7 +237,7 @@ func tooMany(w http.ResponseWriter) {
 
 // deliver is the one path of a delivery: size limit, signature, then parse, then forward.
 // tenantID "" is the deployment's App, whose pokes may only reach public repositories.
-func (wi *Ingress) deliver(w http.ResponseWriter, r *http.Request, source, key string, secret []byte, tenantID string) {
+func (wi *Ingress) deliver(w http.ResponseWriter, r *http.Request, source, key string, secret []byte, tenantID, hookRepo string) {
 	if key == "app" && !wi.pre.allow(wi.Now()) {
 		tooMany(w)
 		return
@@ -275,6 +282,11 @@ func (wi *Ingress) deliver(w http.ResponseWriter, r *http.Request, source, key s
 	// The deployment's App serves every tenant, so what it forwards must already be public.
 	// A private repository's activity reaches only a tenant's own hook.
 	if tenantID == "" && parsed.Private {
+		parsed.Subjects = nil
+	}
+	// A hook made for one repository speaks only for it: whoever holds the secret cannot name
+	// another repository's subjects.
+	if hookRepo != "" && !strings.EqualFold(parsed.Repo, hookRepo) {
 		parsed.Subjects = nil
 	}
 	wi.forward(source, parsed.Subjects, tenantID)

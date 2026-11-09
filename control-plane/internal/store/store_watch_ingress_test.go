@@ -57,3 +57,28 @@ func watchIngressStoreCase(t *testing.T, st *SQL) {
 		}
 	}
 }
+
+// A deleted membership leaves no hook nobody can delete and no registration behind.
+func TestDeleteMembershipRemovesItsWatchRows(t *testing.T) {
+	limitBoardStores(t, func(t *testing.T, st *SQL) {
+		ctx := context.Background()
+		tn, ms := limitMembers(t, st, "gone")
+		exp := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+		if err := st.ReplaceWatchSubjects(ctx, ms[0].ID, tn.ID, []WatchSubjectRow{{"github", "github:o/r#1"}}, exp, 5); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateWatchHook(ctx, WatchHook{ID: "hk", TenantID: tn.ID, MembershipID: ms[0].ID, Source: "github", CreatedAt: NowTS()}, 5); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.DeleteMembership(ctx, ms[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, _ := st.GetWatchHook(ctx, "hk"); ok {
+			t.Fatal("the hook of a deleted membership is still there")
+		}
+		var n int
+		if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_subject WHERE membership_id=?`, ms[0].ID).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("registrations left: %d %v", n, err)
+		}
+	})
+}

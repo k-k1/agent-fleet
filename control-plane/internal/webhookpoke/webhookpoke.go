@@ -32,6 +32,8 @@ type Parsed struct {
 	Subjects []string
 	// Private reports that the repository is private. A source that cannot tell says true.
 	Private bool
+	// Repo is the repository the payload names, lower-cased, "" when it names none valid.
+	Repo string
 }
 
 // VerifyHMAC256 checks an "sha256=<hex>" signature header (GitHub X-Hub-Signature-256,
@@ -125,7 +127,7 @@ func ParseGitHub(event string, body []byte) (Parsed, error) {
 		return Parsed{}, errors.New("unreadable payload")
 	}
 	// Private unless the payload says otherwise: when in doubt, answer true.
-	out := Parsed{Private: p.Repository.Private == nil || *p.Repository.Private}
+	out := Parsed{Private: p.Repository.Private == nil || *p.Repository.Private, Repo: strings.ToLower(p.Repository.FullName)}
 	var numbers []int
 	switch event {
 	case "pull_request", "pull_request_review", "pull_request_review_comment", "pull_request_review_thread":
@@ -178,7 +180,7 @@ func ParseBitbucket(eventKey string, body []byte) (Parsed, error) {
 	if err := json.Unmarshal(body, &p); err != nil {
 		return Parsed{}, errors.New("unreadable payload")
 	}
-	out := Parsed{Private: p.Repository.IsPrivate == nil || *p.Repository.IsPrivate}
+	out := Parsed{Private: p.Repository.IsPrivate == nil || *p.Repository.IsPrivate, Repo: strings.ToLower(p.Repository.FullName)}
 	if strings.HasPrefix(eventKey, "pullrequest:") && p.PullRequest != nil {
 		out.Subjects = collect("bitbucket", p.Repository.FullName, []int{p.PullRequest.ID})
 	}

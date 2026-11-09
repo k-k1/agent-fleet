@@ -104,17 +104,19 @@ func (s *SQL) CreateWatchHook(ctx context.Context, h WatchHook, max int) error {
 		return err
 	}
 	defer tx.Rollback()
-	var n int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_hook WHERE membership_id=?`, h.MembershipID).Scan(&n); err != nil {
-		return err
-	}
-	if n >= max {
-		return ErrWatchLimit
-	}
 	if _, err = tx.ExecContext(ctx,
 		`INSERT INTO watch_hook(id, tenant_id, membership_id, source, repo, created_at) VALUES(?,?,?,?,?,?)`,
 		h.ID, h.TenantID, h.MembershipID, h.Source, h.Repo, h.CreatedAt); err != nil {
 		return err
+	}
+	// A soft cap: two concurrent creates that both start below the limit may both commit, so
+	// the limit can be exceeded by a row or two. It bounds growth, it is not an invariant.
+	var n int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_hook WHERE membership_id=?`, h.MembershipID).Scan(&n); err != nil {
+		return err
+	}
+	if n > max {
+		return ErrWatchLimit
 	}
 	return tx.Commit()
 }

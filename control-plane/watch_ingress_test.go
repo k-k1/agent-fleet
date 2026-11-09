@@ -221,10 +221,10 @@ func TestWatchIngressRejectsBeforeParsingAndPokesNothing(t *testing.T) {
 	if w := f.hookDelivery(id, "pull_request", "{{{", sign([]byte(secret), "{{{")); w.Code != http.StatusBadRequest {
 		t.Errorf("signed garbage: %d", w.Code)
 	}
-	if w := f.hookDelivery(strings.Repeat("0", 32), "pull_request", body, sign([]byte(secret), body)); w.Code != http.StatusNotFound {
+	if w := f.hookDelivery(strings.Repeat("0", 32), "pull_request", body, sign([]byte(secret), body)); w.Code != http.StatusUnauthorized {
 		t.Errorf("unknown hook: %d", w.Code)
 	}
-	if w := f.hookDelivery("not-hex", "pull_request", body, ""); w.Code != http.StatusNotFound {
+	if w := f.hookDelivery("not-hex", "pull_request", body, ""); w.Code != http.StatusUnauthorized {
 		t.Errorf("malformed hook id: %d", w.Code)
 	}
 	if p := f.quiet(); len(p) != 0 {
@@ -409,7 +409,7 @@ func TestWatchIngressBridgeTokenAndHooks(t *testing.T) {
 	}
 	body := prBody("true")
 	_, secret := f.createHook(a, "github")
-	if w := f.hookDelivery(id, "pull_request", body, sign([]byte(secret), body)); w.Code != http.StatusNotFound {
+	if w := f.hookDelivery(id, "pull_request", body, sign([]byte(secret), body)); w.Code != http.StatusUnauthorized {
 		t.Fatalf("a deleted hook still answers: %d", w.Code)
 	}
 	for i := 1; i < watchingress.MaxHooks; i++ {
@@ -459,7 +459,39 @@ func TestWatchIngressLimitsAnonymousRequestsBeforeLookup(t *testing.T) {
 	for i := 0; i < 300; i++ {
 		codes[f.hookDelivery(strings.Repeat("0", 32), "pull_request", "{}", "").Code]++
 	}
-	if codes[http.StatusTooManyRequests] == 0 || codes[http.StatusNotFound] == 0 {
+	if codes[http.StatusTooManyRequests] == 0 || codes[http.StatusUnauthorized] == 0 {
 		t.Fatalf("300 guesses in one instant: %v, want some 404 and some 429", codes)
+	}
+}
+
+// A hook made for one repository speaks only for it, and stops speaking when its owner leaves.
+func TestWatchIngressHookIsBoundToItsRepoAndOwner(t *testing.T) {
+	f := newWIFixture(t, "")
+	a := f.member("alpha", "a@alpha.example", "running")
+	f.register(a, subj, "github:acme/other#7")
+	id, secret := f.createHook(a, "github") // repo Acme/Repo
+	other := `{"number":7,"pull_request":{"number":7},"repository":{"full_name":"acme/other","private":true}}`
+	if w := f.hookDelivery(id, "pull_request", other, sign([]byte(secret), other)); w.Code != http.StatusAccepted {
+		t.Fatalf("delivery: %d", w.Code)
+	}
+	if p := f.quiet(); len(p) != 0 {
+		t.Fatalf("a hook made for acme/repo poked for acme/other: %v", p)
+	}
+	own := prBody("true")
+	if w := f.hookDelivery(id, "pull_request", own, sign([]byte(secret), own)); w.Code != http.StatusAccepted {
+		t.Fatalf("delivery: %d", w.Code)
+	}
+	if p := f.waitPokes(1); len(p) != 1 {
+		t.Fatalf("own repo pokes: %v", p)
+	}
+	if err := f.st.SetMembershipStatus(context.Background(), a.MembershipID, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	f.mgr.evictMembershipCache(a.MembershipID)
+	f.mu.Lock()
+	f.now = f.now.Add(time.Minute)
+	f.mu.Unlock()
+	if w := f.hookDelivery(id, "pull_request", own, sign([]byte(secret), own)); w.Code != http.StatusUnauthorized {
+		t.Fatalf("a removed owner's hook still answers: %d", w.Code)
 	}
 }
