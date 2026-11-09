@@ -511,6 +511,7 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.cs_cause_workspace_stopped": "the workspace was stopped when a run was due",
   "mem.cs_cause_never_idle": "no idle window came since the last run",
   "mem.cs_cause_next_run": "waiting for the next run",
+  "mem.cs_cause_too_large": "too large for one run (~{n} tokens)",
   "mem.cs_cause_run_failed": "the run ended on a model or runner error",
   "mem.cs_run_failed": "failed",
   "mem.cs_run_cut": "partial",

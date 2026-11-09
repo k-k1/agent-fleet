@@ -3,7 +3,7 @@
 // 1. The mode is offered only while the memory switch is on, and is left if the switch goes off.
 // 2. A name or description match shows at once from the list; a body match comes from the Agent's
 //    body search, with the matching line, after the pause. Neither is filtered a second time.
-// 3. Enter opens Settings > Agent memory > Memories asking for that memory; Ctrl/⌘+Enter does the same.
+// 3. Enter opens the Memory view pane asking for that memory (#3720); Ctrl/⌘+Enter does the same.
 // 4. A stopped workspace, a failed read and an empty answer each say their own thing.
 // 5. Memories withheld by the secret scan are a count, never a row.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -65,6 +65,8 @@ import { useKeysStore } from "./store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
+import { useLayoutStore } from "../../layout/store.ts";
+import { allViews, freshLayout } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { setSetting } from "../../lib/settings.ts";
 import { parseMemoryTarget } from "../settings/memory/memorySearch.ts";
@@ -188,13 +190,18 @@ describe("CommandPalette memory mode", () => {
     expect(rows()[0].textContent).toContain("app");
   });
 
-  it("opens Settings > Agent memory > Memories asking for the memory, with Enter and with Ctrl+Enter", async () => {
+  it("opens the Memory view asking for the memory, with Enter and with Ctrl+Enter", async () => {
+    useLayoutStore.setState({ layout: freshLayout() });
     await mount();
     await openMemoryMode();
     await typeQuery("build-cmd");
     pressEnter();
     let ui = useSettingsUI.getState();
-    expect([ui.settingsOpen, ui.settingsSection, ui.settingsView]).toEqual([true, "memory", "memories"]);
+    expect(ui.settingsOpen).toBe(false);
+    expect(allViews(useLayoutStore.getState().layout).find((v) => v.content.kind === "memory")?.content).toEqual({
+      kind: "memory",
+      memoryView: "memories",
+    });
     expect(parseMemoryTarget(ui.settingsTarget)).toEqual({ scope: "project", project: project.id, name: "build-cmd" });
     expect(useKeysStore.getState().paletteOpen).toBe(false);
 

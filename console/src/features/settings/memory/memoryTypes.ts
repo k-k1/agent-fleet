@@ -506,6 +506,8 @@ export interface ConsolDelay {
   memory: string;
   cause: string;
   detail?: string;
+  /** Tokens the topic needs, for the "too-large" cause. */
+  estimate?: number;
 }
 export interface ConsolReport {
   id: string;

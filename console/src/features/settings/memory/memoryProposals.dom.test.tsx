@@ -15,7 +15,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { ProposalsPanel, ConsolidationSettings, parseGoDuration, isAdviceOnly, matchesFilter, canRetry } from "./memoryProposals.tsx";
+import { ProposalsPanel, ConsolidationSettings, delayCause, parseGoDuration, isAdviceOnly, matchesFilter, canRetry } from "./memoryProposals.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import { getSettings, setSetting } from "../../../lib/settings.ts";
@@ -118,6 +118,16 @@ describe("the pure helpers", () => {
     expect(matchesFilter("pending", "decided")).toBe(false);
     expect(canRetry("pending")).toBe(false);
     expect(canRetry("expired")).toBe(true);
+  });
+});
+
+describe("delayCause", () => {
+  it("words the too-large cause with the estimate, and a known cause without one", () => {
+    const d = { topic: "t", scope: "user", memory: "m", cause: "too-large", estimate: 52000 };
+    expect(delayCause(d)).toBe(t("mem.cs_cause_too_large", { n: (52000).toLocaleString() }));
+    expect(delayCause(d)).toContain("52");
+    expect(delayCause({ ...d, estimate: undefined })).toContain("~?");
+    expect(delayCause({ ...d, cause: "budget" })).toBe(t("mem.cs_cause_budget"));
   });
 });
 

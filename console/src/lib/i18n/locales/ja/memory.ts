@@ -510,6 +510,7 @@ export const memory = {
   "mem.cs_cause_workspace_stopped": "実行の時間にワークスペースが止まっていたため",
   "mem.cs_cause_never_idle": "前回の実行以降、空きがなかったため",
   "mem.cs_cause_next_run": "次の実行を待っています",
+  "mem.cs_cause_too_large": "1回の実行に収まらない大きさ（約 {n} トークン）",
   "mem.cs_cause_run_failed": "実行がモデルまたは実行環境のエラーで終わったため",
   "mem.cs_run_failed": "失敗",
   "mem.cs_run_cut": "途中まで",

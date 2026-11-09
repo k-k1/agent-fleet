@@ -56,8 +56,8 @@ export const matchesFilter = (status: string, f: StatusFilter): boolean =>
 /** Retry reopens the observations of a proposal that did not end in a publish. */
 export const canRetry = (status: string): boolean => status === "rejected" || status === "expired" || status === "refused" || status === "partial";
 
-const delayCause = (d: ConsolDelay): string =>
-  tMaybe("mem.cs_cause_" + d.cause.replace(/-/g, "_")) ?? d.cause;
+export const delayCause = (d: ConsolDelay): string =>
+  tMaybe("mem.cs_cause_" + d.cause.replace(/-/g, "_"), { n: d.estimate ? d.estimate.toLocaleString() : "?" }) ?? d.cause;
 
 /** The Agent's refusal of a decision as a sentence a member can act on. `code` is the Agent's
  *  error code (not_pending, stale, forgotten, exists, invalid, secret). */
