@@ -260,10 +260,14 @@ func TestGitHubReferenceDetailIssue(t *testing.T) {
 		"title":"Crash on save","state":"closed","state_reason":"not_planned",
 		"html_url":"https://github.com/o/r/issues/7","updated_at":"2026-10-01T00:00:00Z",
 		"body":"SECRET BODY","user":{"login":"alice"},
-		"assignees":[{"login":"bob"},{"login":"carol"}],"labels":[{"name":"bug","color":"d73a4a"}]}`})
+		"assignees":[{"login":"bob"},{"login":"carol"}],"labels":[{"name":"bug","color":"d73a4a"}],
+		"type":{"name":"Feature"}}`})
 	out, err := githubReferenceDetail("tok", "o/r#7")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if out.Type != "Feature" {
+		t.Errorf("issue type = %q, want Feature", out.Type)
 	}
 	if out.Kind != "issue" || out.Title != "Crash on save" || out.State != "done" || out.StateReason != "not_planned" {
 		t.Errorf("issue row wrong: %+v", out)
@@ -358,7 +362,7 @@ func TestJiraReferenceDetail(t *testing.T) {
 	c, hits := fakeJira(t, map[string]string{"/rest/api/3/issue/PROJ-12": `{"key":"PROJ-12","fields":{
 		"summary":"Fix login","updated":"2026-10-01T10:00:00.000+0900",
 		"status":{"name":"Shipped","statusCategory":{"key":"done"}},
-		"assignee":{"displayName":"Bob"},"labels":["auth"],"issuetype":{"name":"Bug"},
+		"assignee":{"displayName":"Bob"},"labels":["auth"],"issuetype":{"name":"Epic"},
 		"description":"SECRET BODY"}}`})
 	out, err := jiraReferenceDetail(c, "PROJ-12")
 	if err != nil {
@@ -368,6 +372,9 @@ func TestJiraReferenceDetail(t *testing.T) {
 		out.Assignee != "Bob" || len(out.Assignees) != 1 || out.UpdatedAt != "2026-10-01T01:00:00Z" ||
 		out.URL != c.Site+"/browse/PROJ-12" || out.Reviews == nil || out.LabelColors == nil {
 		t.Errorf("row wrong: %+v", out)
+	}
+	if out.Type != "Epic" {
+		t.Errorf("issue type = %q, want Epic", out.Type)
 	}
 	if b, _ := json.Marshal(out); strings.Contains(string(b), "SECRET") {
 		t.Errorf("a body leaked into the answer: %s", b)

@@ -308,6 +308,9 @@ export function WorkItemDetailModal({
   const neutral = reading && !kindKnown;
   const isPR = live.detail && reference ? live.detail.kind === "pr" : item.kind === "pr";
   const shownPR = isPR;
+  // The tracker's own issue type, shown as-is. The live read leads once it has answered; the row's
+  // type covers the wait. A pull request never shows one.
+  const issueType = shownPR ? "" : live.detail?.type || item.type || "";
   const providerName = PROVIDER_NAMES[item.provider] || item.provider;
   const bases = useMemo(() => repos.filter((r) => !r.worktree), [repos]);
   // Default repository: the query's hint, then the item's repo, then the first one. A worktree
@@ -579,7 +582,7 @@ export function WorkItemDetailModal({
           {kindKnown && (
             <>
               <dt>{tr("wi.detail_kind")}</dt>
-              <dd>{shownPR ? tr("wi.kind_pr") : tr("wi.kind_issue")}</dd>
+              <dd>{shownPR ? tr("wi.kind_pr") : issueType || tr("wi.kind_issue")}</dd>
             </>
           )}
           <dt>{tr("wi.detail_provider")}</dt>

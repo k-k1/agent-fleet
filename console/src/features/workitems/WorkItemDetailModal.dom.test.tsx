@@ -41,11 +41,15 @@ const ref = (name: string, over: Partial<WorkItemSessionRef> = {}): WorkItemSess
   ...over,
 });
 
-const render = async (started: WorkItemSessionRef[], onUnlink?: (name: string) => Promise<string>) => {
+const render = async (
+  started: WorkItemSessionRef[],
+  onUnlink?: (name: string) => Promise<string>,
+  row: WorkItem = item,
+) => {
   await act(async () => {
     root!.render(
       <WorkItemDetailModal
-        item={item}
+        item={row}
         repos={[]}
         defaultRepo=""
         started={started}
@@ -131,5 +135,27 @@ describe("WorkItemDetailModal removed rows", () => {
     await render([], onUnlink); // the next poll drops it
     await render([swork], onUnlink); // linked again later
     expect(rows()).toHaveLength(1);
+  });
+});
+
+describe("WorkItemDetailModal Kind row", () => {
+  const kindValue = () => {
+    const dt = [...document.querySelectorAll("dt")].find((e) => e.textContent === t("wi.detail_kind"));
+    return dt?.nextElementSibling?.textContent;
+  };
+
+  it("shows the tracker's issue type as-is", async () => {
+    await render([], undefined, { ...item, type: "Epic" });
+    expect(kindValue()).toBe("Epic");
+  });
+
+  it("falls back to Issue when the tracker names no type", async () => {
+    await render([], undefined, item);
+    expect(kindValue()).toBe(t("wi.kind_issue"));
+  });
+
+  it("reads Pull request for a PR even when the row carries a type", async () => {
+    await render([], undefined, { ...item, provider: "github", kind: "pr", type: "Epic" });
+    expect(kindValue()).toBe(t("wi.kind_pr"));
   });
 });

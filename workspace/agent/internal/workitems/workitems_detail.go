@@ -79,9 +79,12 @@ type workItemReviewOut struct {
 // workItemDetailOut is the panel's payload. Everything here is non-secret metadata of the same
 // kind the rail already shows — no body, no comment text, no token.
 type workItemDetailOut struct {
-	Provider string   `json:"provider"`
-	Key      string   `json:"key"`
-	Kind     string   `json:"kind"`
+	Provider string `json:"provider"`
+	Key      string `json:"key"`
+	Kind     string `json:"kind"`
+	// Type is the tracker's own issue type (Jira issuetype, GitHub issue type), "" when unknown
+	// or for a pull request. The panel shows it in place of the generic "Issue".
+	Type     string   `json:"type"`
 	Title    string   `json:"title"`
 	State    string   `json:"state"`
 	URL      string   `json:"url"`
@@ -327,7 +330,7 @@ func jiraReferenceDetail(c *secrets.JiraCreds, key string) (*workItemDetailOut, 
 	}
 	r := rows[0]
 	out := &workItemDetailOut{
-		Provider: "jira", Key: r.Key, Kind: "issue", Title: r.Title, State: r.State, URL: r.URL,
+		Provider: "jira", Key: r.Key, Kind: "issue", Type: r.Type, Title: r.Title, State: r.State, URL: r.URL,
 		Assignee: r.Assignee, Labels: r.Labels, LabelColors: map[string]string{},
 		UpdatedAt: r.UpdatedAt, Mergeable: "unknown", Assignees: []string{}, Reviews: []workItemReviewOut{},
 		MergeMethods: []string{},
@@ -384,6 +387,10 @@ func parseGitHubIssue(body []byte, key string) (out *workItemDetailOut, isPR boo
 			Login string `json:"login"`
 		} `json:"assignees"`
 		Labels []gitHubLabel `json:"labels"`
+		// Null unless the organisation has issue types set up.
+		Type *struct {
+			Name string `json:"name"`
+		} `json:"type"`
 	}
 	if err := json.Unmarshal(body, &is); err != nil {
 		return nil, false, err
@@ -398,6 +405,9 @@ func parseGitHubIssue(body []byte, key string) (out *workItemDetailOut, isPR boo
 		Author: is.User.Login, Repo: repo, UpdatedAt: is.UpdatedAt, Comments: is.Comments,
 		Mergeable: "unknown", Labels: []string{}, LabelColors: gitHubLabelColors(is.Labels),
 		Assignees: []string{}, Reviews: []workItemReviewOut{}, MergeMethods: []string{},
+	}
+	if is.Type != nil {
+		out.Type = is.Type.Name
 	}
 	for _, a := range is.Assignees {
 		out.Assignees = append(out.Assignees, a.Login)
