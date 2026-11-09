@@ -247,6 +247,8 @@ export type UsageTotal = {
 export type AdminUsage = {
   from: string;
   to: string;
+  /** Per member per day. */
+  days: (UsageTotal & { day: string })[];
   totals: UsageTotal[];
   monthly?: unknown[];
   monthly_members?: unknown[];

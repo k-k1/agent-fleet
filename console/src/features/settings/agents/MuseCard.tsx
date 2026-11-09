@@ -88,9 +88,10 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: Provid
         firstDelayMs: 4000,
         onExpire: () => setInstalling("error"),
         step: async () => {
-          let p;
+          let p: CliInstallStatus | null;
           try {
-            p = await api("api/connections/muse/install");
+            const r = await getMuseInstall();
+            p = isOk(r) ? r : null;
           } catch {
             p = null;
           }

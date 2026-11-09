@@ -61,7 +61,7 @@ export function CodexCard({
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setDev((d) => ({ ...d, status: tr("git.oauth_expired") }) as DeviceFlow),
+        onExpire: () => setDev((d) => (d ? { ...d, status: tr("git.oauth_expired") } : d)),
         step: async () => {
           let p;
           try {

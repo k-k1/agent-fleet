@@ -13,7 +13,6 @@ import {
   type AgentRtkSettings,
   type ClaudeSettings,
   type CodexSettings,
-  type ErrorReply,
   type Reply,
 } from "../api.ts";
 import { Button } from "../../../ui/Button.tsx";
@@ -131,11 +130,11 @@ export function AgentsTab() {
     <P, T>(put: (patch: P) => Promise<Reply<T>>, setState: (d: T) => void) =>
     async (patch: P) => {
       const d = await put(patch);
-      if (d && (d as ErrorReply).error) {
-        toast(tr("common.save_failed_msg", { msg: errDetail((d as ErrorReply).error) }));
+      if (!isOk(d)) {
+        toast(tr("common.save_failed_msg", { msg: errDetail(d?.error) }));
         return;
       }
-      setState(d as T);
+      setState(d);
     };
   const updateClaude = mkUpdate(putClaudeSettings, setClaude);
   const updateCodex = mkUpdate(putCodexSettings, setCodex);

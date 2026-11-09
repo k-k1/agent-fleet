@@ -71,9 +71,10 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: Provid
         firstDelayMs: 4000,
         onExpire: () => setInstalling("error"),
         step: async () => {
-          let p;
+          let p: CliInstallStatus | null;
           try {
-            p = await api("api/connections/kiro/install");
+            const r = await getKiroInstall();
+            p = isOk(r) ? r : null;
           } catch {
             p = null;
           }
