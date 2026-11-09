@@ -33,6 +33,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usageall"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/watchhook"
 )
 
 // buildMux returns a mux with every Agent route registered (docs/log/23 P0-2). Keeping it
@@ -151,6 +152,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/links", sessionx.HandleSessionLink)
 	// The watch engine (ADR 0133): a session subscribes to a PR and is told when it changes.
 	mux.HandleFunc("POST /watch/poke", sessionx.HandleWatchPoke)
+	// af-watch-hook: tenant webhook hooks for private repositories, created at the Control Plane
+	// and installed at the forge with the member's own token (the Control Plane token stays here).
+	mux.HandleFunc("GET /watch/hooks", func(w http.ResponseWriter, r *http.Request) { watchhook.Default().List(w, r) })
+	mux.HandleFunc("POST /watch/hooks", func(w http.ResponseWriter, r *http.Request) { watchhook.Default().Add(w, r) })
+	mux.HandleFunc("DELETE /watch/hooks/{id}", func(w http.ResponseWriter, r *http.Request) { watchhook.Default().Remove(w, r) })
 	mux.HandleFunc("POST /sessions/{name}/watches", sessionx.HandleWatchCreate)
 	mux.HandleFunc("GET /sessions/{name}/watches", sessionx.HandleWatchList)
 	mux.HandleFunc("DELETE /sessions/{name}/watches/{id}", sessionx.HandleWatchDelete)

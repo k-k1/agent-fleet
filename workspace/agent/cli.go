@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/watchhook"
 )
 
 // subcommand is one entry in this binary's argument contract.
@@ -66,6 +67,14 @@ var subcommands = []subcommand{
 		operands: "<verb>",
 		summary:  "AF agent memory: changes|import-sources|import --project <slug> [--dry-run]",
 		run:      afmemory.Run,
+	},
+	{
+		// Behind the af-watch-hook PATH shim (ADR 0133 step 4): a webhook hook for a private
+		// repository, installed at the forge with the member's own token.
+		name:     "watch-hook",
+		operands: "add <github|bitbucket> <owner/name> | list | rm <id>",
+		summary:  "create, list and remove a webhook hook that pokes this workspace's watches",
+		run:      watchhook.Run,
 	},
 	{
 		// Behind the af-aws-exec PATH shim (issue #998): one command under one SSO

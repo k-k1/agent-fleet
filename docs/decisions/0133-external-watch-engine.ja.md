@@ -335,6 +335,8 @@ Agent 側の `POST /watch/poke`。
   エンジンはポークされた対象を 10 秒に 1 回までしか読まず、失敗中の対象のバックオフは保つ。
 - 未実装: メンバーのトークンで GitHub / Bitbucket にフックを入れる Agent 側の流れと、プルリクエストでなくコミットを指す `status` 系イベント（長いポーリングで補う）。
 
+   *注記（2026-11-10、#3751）。* Agent 側の流れを作った。`af-watch-hook add|list|rm`（`workspace/agent/internal/watchhook`）で、Agent の `/watch/hooks` ルートの裏にあり、Control Plane のトークン（`AF_WATCH_TOKEN`）は Agent に留まり、シェルが持つのは `AGENT_TOKEN` だけになる。`add` はメンバーの forge 資格情報を確かめ、Control Plane にフックを作り、forge に登録し（JSON 本文、秘密は forge 側の署名用シークレット、プルリクエストとチェックの出来事だけ）、登録が失敗したら Control Plane のフックを消す。同じリポジトリのフックがすでにあれば何もしない（forge 側の Webhook が消えていればそう警告する）。`rm` は forge の Webhook を URL で探して消し（Control Plane は forge の ID を持たない）、forge 側が失敗しても Control Plane のフックは消す（配信が検証を通るのはそのフックがあるからなので）。秘密は Agent のプロセスの外に出ない。未実装: テナント自身の GitHub App の道。メンバーに秘密を一度見せる必要があり、「表示しない」と両立しない（ガイドでは使えないと書いた。Follow-up #3762）。
+
 ## Rejected
 
 - **専用の `watch_pr` ツールと速い `branchpr`。** PR の場合はすぐ解けるが、手作りの見張りが 6 つ目になる。次の

@@ -104,7 +104,23 @@ tells your workspace to read a pull request right away instead of waiting for th
 only "this pull request changed", and it never starts a stopped workspace (a stopped workspace catches up when it starts).
 
 - **Public repositories**: when the deployment's GitHub App webhook is set up (`AF_GITHUB_WEBHOOK_SECRET`, see [Settings reference](../../ref/settings.md)), deliveries for public repositories speed up watches.
-- **Private repositories**: the deployment's shared App is ignored for them, because it serves every tenant. A private repository needs a webhook that belongs to your tenant (a repository hook, or your tenant's own GitHub App; Bitbucket always uses one). Without it the watch stays on polling, a few minutes at most behind. Creating that webhook from the workspace is not built yet.
+- **Private repositories**: the deployment's shared App is ignored for them, because it serves every tenant. A private repository needs a webhook that belongs to your tenant (a repository hook, or your tenant's own GitHub App; Bitbucket always uses one). Without it the watch stays on polling, a few minutes at most behind. Create it from the workspace with [`af-watch-hook`](../../ref/cli/af-watch-hook.md).
+
+#### Add a hook for a private repository
+
+```sh
+af-watch-hook add github owner/name      # or: af-watch-hook add bitbucket workspace/name
+af-watch-hook list
+af-watch-hook rm <id>
+```
+
+`add` makes the hook at the Control Plane and installs it at the repository with your own connection (Settings > Connections), then pull request, review, comment and check events poke your workspace's watches. The hook's secret goes straight to GitHub or Bitbucket; it is never shown or saved. `rm` deletes the hook at the repository and at Agent Fleet.
+
+- **You need admin rights on the repository.** GitHub: a classic token with the `repo` (or `admin:repo_hook`) scope, or a fine-grained token with Webhooks: Read and write. Bitbucket: the Webhooks scope and repository admin. Without them `add` says so and leaves nothing behind. Ask a repository admin, or keep polling
+- **The deployment must have a public URL**, or a provider could not reach the hook
+- **Running `add` again** for a repository that has a hook changes nothing. To start over, `rm` it and `add` it again
+- **Your own GitHub App**: a webhook secret pasted into an App's settings must be shown to you once, which `af-watch-hook` does not do (it never prints the secret). Until it can, use `af-watch-hook add`, which needs no App
+- GitHub Enterprise Server and Bitbucket Data Center are not supported
 
 ## Related
 
