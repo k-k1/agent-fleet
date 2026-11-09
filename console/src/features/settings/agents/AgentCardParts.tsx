@@ -173,13 +173,15 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
           />
         </SettingRow>
       )}
-      {/* Whether to skip permission prompts (docs/log/76). Only shown for kinds whose pending
+      {/* Whether to skip permission prompts (docs/log/76). The stored field is skipPermissions, but
+          the row is labelled "Tool permissions: ask for approval", so On is its negation; the
+          off-note describes the approvals-on state. Only shown for kinds whose pending
           approvals can be answered from the Console (claude / cursor / copilot / kiro / agy):
           allowing it off for a kind that cannot be answered would let a stuck session be
           created. */}
       {desc.caps.permissionChoice && (
         <SettingRow label={tr("agents.skip_permissions")} sub={tr("agents.skip_permissions_sub")}>
-          <OnOff value={row.skipPermissions} onChange={(skipPermissions) => update({ skipPermissions })} />
+          <OnOff value={!row.skipPermissions} onChange={(ask) => update({ skipPermissions: !ask })} />
         </SettingRow>
       )}
       {desc.caps.permissionChoice && !row.skipPermissions && (
