@@ -110,6 +110,27 @@ describe("looksForeign", () => {
     expect(looksForeign(twenty + "な" + pad, "ja")).toBe(false);
   });
 
+  it("counts a long name joined by ・ as a label, but not a sentence that contains a ・", () => {
+    // Real shape (session s5skc52): a 25-character page name in the heading and the table.
+    const name = "チーム・チャット・外からつなぐ・設定・セキュリティ";
+    const report =
+      `#3707 (${name}) is done too. 1 round, now marked ready.\n\n` +
+      "- **Fixed:** the external-claude page now says that a token sent to the wrong endpoint is refused with 401\n" +
+      "- **Checked:** all four open facts were checked against the code and the security notes.\n\n" +
+      `| PR | Area | Status |\n|---|---|---|\n| #3706 | フリート | Ready |\n| #3707 | ${name} | Ready |\n` +
+      "| #3708 | 困ったとき | Ready |\n| #3705 | はじめに | Still waiting for a reviewer |\n";
+    expect(looksForeign(report, "ja")).toBe(true);
+    const english =
+      " and then check the answer again in the mirror pane, because the rest of this long status report " +
+      "is written in plain English and there is more of it below for the whole team to read";
+    // A part longer than a name keeps the run prose (35 CJK to 144 Latin letters, 19.6%).
+    expect(looksForeign("設定画面からモデル・エージェントを選び直してから翻訳ボタンを押してみて" + english, "ja")).toBe(false);
+    // A joined run within 30 characters, but one part is longer than a name (28 CJK, 16.3%).
+    expect(looksForeign("モデル・エージェント・プロンプト・コンテキストを確認した" + english, "ja")).toBe(false);
+    // Short parts, but longer than any joined name (40 CJK, 21.7%).
+    expect(looksForeign("リンゴ・ミカン・バナナ・ブドウ・モモ・ナシ・カキ・スイカ・メロン・イチゴを買った" + english, "ja")).toBe(false);
+  });
+
   it("accepts a few short unpunctuated Japanese phrases inside mostly English text", () => {
     // Pinned on purpose: label-sized and under a quarter of the text, so it reads as English.
     expect(looksForeign("設定を変更した テストを追加した and the rest of this long status report is written in English", "ja")).toBe(true);
