@@ -148,6 +148,8 @@ func agentMemLintGit(ctx context.Context, gitDir string, stdin []byte, args ...s
 // agentMemLintRepo reads one ref of a repository for memorylint.
 type agentMemLintRepo struct {
 	gitDir, ref string
+	// memo, when set, shares one read of the rename history between the report and the apply step.
+	memo *agentMemLintRenameMemo
 }
 
 func (r agentMemLintRepo) Paths() ([]string, error) {
@@ -346,7 +348,7 @@ func agentMemLintRepoFor(p *agentMemProject) (repo memorylint.Repo, ref string, 
 	if err != nil || oid == "" {
 		return nil, "", "no origin/<default> branch in the repository"
 	}
-	return agentMemLintRepo{gitDir: common, ref: oid}, strings.TrimPrefix(r, "refs/remotes/"), ""
+	return agentMemLintRepo{gitDir: common, ref: oid, memo: &agentMemLintRenameMemo{}}, strings.TrimPrefix(r, "refs/remotes/"), ""
 }
 
 // agentMemLintWire is what the Console and `af-memory lint` read.
@@ -386,7 +388,7 @@ func agentMemLintCollect(scope, project string) (agentMemLintWire, []agentMemEnt
 	}
 	mems := make([]memorylint.Memory, 0, len(es))
 	for _, e := range es {
-		mems = append(mems, memorylint.Memory{Name: e.Name, Body: e.Body})
+		mems = append(mems, memorylint.Memory{Name: e.Name, Body: e.Body, Anchors: e.Anchors})
 	}
 	out.Project, out.Withheld = c.Project, withheld
 	doc := agentMemLintLoadDoc()

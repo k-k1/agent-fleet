@@ -35,6 +35,9 @@ const DefaultADRDir = "docs/decisions"
 type Memory struct {
 	Name string
 	Body string
+	// Anchors are the memory's stored anchors. Each is checked by the rule of its kind, as if it
+	// had been written in the body; one lint cannot place in a kind (a command) is not checked.
+	Anchors []string
 }
 
 // Repo reads one revision of a repository. A nil Repo skips every repository check.
@@ -51,6 +54,14 @@ type Repo interface {
 type FileReader interface {
 	// ReadFile returns the content of one file of the revision.
 	ReadFile(path string) ([]byte, error)
+}
+
+// FormerPaths is implemented by a Repo that knows top-level directories which were renamed away.
+// The path check only looks at tokens whose first segment is a top-level directory of the
+// revision, so without these a body naming a directory that was moved at the top level would
+// never be recognised as a path.
+type FormerPaths interface {
+	FormerTopDirs() ([]string, error)
 }
 
 // Options tunes a run. The zero value uses the defaults and no retired terms.
@@ -111,6 +122,14 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 			rep.Skipped = append(rep.Skipped, fmt.Sprintf("repository checks: %v", err))
 		}
 		rep.Skipped = append(rep.Skipped, notes...)
+		if fp, ok := repo.(FormerPaths); ok && rc != nil {
+			// Best effort: without it the path check is as before, only less complete.
+			if tops, err := fp.FormerTopDirs(); err == nil {
+				for _, t := range tops {
+					rc.topDirs[t] = true
+				}
+			}
+		}
 	}
 
 	type symUse struct {
@@ -123,7 +142,8 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 
 	for _, m := range mems {
 		var fs []Finding
-		for _, l := range extractLinks(m.Body) {
+		ax := extractAnchors(m.Anchors)
+		for _, l := range dedupe(append(extractLinks(m.Body), ax.links...)) {
 			if !names[l.text] {
 				fs = append(fs, Finding{m.Name, CheckBrokenLink, l.text, l.line})
 			}
@@ -135,19 +155,19 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 			fs = append(fs, Finding{Memory: m.Name, Check: CheckOversizeBody, Subject: fmt.Sprint(len(m.Body))})
 		}
 		if rc != nil {
-			for _, a := range extractPaths(m.Body, rc.topDirs) {
+			for _, a := range dedupe(append(extractPaths(m.Body, rc.topDirs), extractAnchorPaths(m.Anchors, rc.topDirs)...)) {
 				if !rc.found(a.text) {
 					fs = append(fs, Finding{m.Name, CheckMissingPath, a.text, a.line})
 				}
 			}
 			if rc.hasADRs {
-				for _, a := range extractADRs(m.Body) {
+				for _, a := range dedupe(append(extractADRs(m.Body), ax.adrs...)) {
 					if !rc.adrs[a.text] {
 						fs = append(fs, Finding{m.Name, CheckMissingADR, "ADR " + a.text, a.line})
 					}
 				}
 			}
-			for _, a := range extractSymbols(m.Body) {
+			for _, a := range dedupe(append(extractSymbols(m.Body), ax.syms...)) {
 				symUses = append(symUses, symUse{m.Name, a.text, a.line})
 				symSet[a.text] = true
 			}
@@ -528,4 +548,43 @@ func (tm termMatcher) hits(body string) []anchor {
 		}
 	}
 	return out
+}
+
+// anchorSet is what the stored anchors of one memory yield, by kind, with no line (an anchor has
+// none).
+type anchorSet struct {
+	links, adrs, syms []anchor
+}
+
+// extractAnchors applies the body rules to each stored anchor on its own. A symbol is also
+// accepted bare, as an anchor is written without the backticks a body needs to tell code from
+// prose; the shape rules are the same.
+func extractAnchors(as []string) anchorSet {
+	var out anchorSet
+	for _, a := range as {
+		a = strings.TrimSpace(a)
+		out.links = append(out.links, noLine(extractLinks(a))...)
+		out.adrs = append(out.adrs, noLine(extractADRs(a))...)
+		out.syms = append(out.syms, noLine(extractSymbols(a))...)
+		if !strings.Contains(a, "`") {
+			out.syms = append(out.syms, noLine(extractSymbols("`"+a+"`"))...)
+		}
+	}
+	return out
+}
+
+// extractAnchorPaths applies the body's path rule to each anchor.
+func extractAnchorPaths(as []string, topDirs map[string]bool) []anchor {
+	var out []anchor
+	for _, a := range as {
+		out = append(out, noLine(extractPaths(strings.TrimSpace(a), topDirs))...)
+	}
+	return out
+}
+
+func noLine(as []anchor) []anchor {
+	for i := range as {
+		as[i].line = 0
+	}
+	return as
 }
