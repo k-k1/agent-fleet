@@ -40,6 +40,16 @@ var memoryRelays = []agentRelay{
 	// the review itself is removed, its published history stays revertible). A member write, so
 	// signed; the audit target is the run id.
 	{route: "POST /api/agents/memory-review/runs/revert", audit: auditAs("memory.review.revert_run", queryShaped("run", auditReviewIDHint)), sign: signBody},
+	// The autonomous consolidator's proposals (ADR 0130 decisions 6 and 7): the status, the list and
+	// one proposal with its diff only read. Approving, rejecting and retrying are the member's
+	// decisions, so they are signed (a session holds the same token and must not decide its own
+	// proposals); the audit target is the proposal id, repeated by the Console in the query.
+	{route: "GET /api/agents/memory-consolidation"},
+	{route: "GET /api/agents/memory-consolidation/proposals"},
+	{route: "GET /api/agents/memory-consolidation/proposal"},
+	{route: "POST /api/agents/memory-consolidation/proposals/approve", audit: auditAs("memory.consolidation.approve", queryShaped("proposal", auditReviewIDHint)), sign: signBody},
+	{route: "POST /api/agents/memory-consolidation/proposals/reject", audit: auditAs("memory.consolidation.reject", queryShaped("proposal", auditReviewIDHint)), sign: signBody},
+	{route: "POST /api/agents/memory-consolidation/proposals/retry", audit: auditAs("memory.consolidation.retry", queryShaped("proposal", auditReviewIDHint)), sign: signBody},
 	// The member's create/edit (#1997), audited under the project id.
 	{route: "POST /api/agents/memory/entries/member-save", audit: auditAs("memory.entry.save", queryShaped("project", auditProjectHint)), sign: signBody},
 	{route: "GET /api/agents/memory/entries/member-read"},

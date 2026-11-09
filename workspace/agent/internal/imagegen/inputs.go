@@ -21,7 +21,7 @@ import (
 	"strings"
 )
 
-// BrowseRootDir and PathDenied are the Files pane's own browse root and denylist (fs.go),
+// BrowseRootDir and PathDenied are the Files pane's own browse root and denylist (internal/fsx/fs.go),
 // installed by the Agent's main package for the same reason BrowsePath is: a second copy of
 // that list inside this package would drift from the one the file tree enforces. nil refuses
 // every reference rather than reading it through a weaker check.

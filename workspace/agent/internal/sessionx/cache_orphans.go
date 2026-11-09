@@ -6,7 +6,7 @@ package sessionx
 // Two subtrees are keyed by a session UUID and have no retention of their own: pasted/<sid>
 // (images and files the Console uploaded into a session — session_paste.go) and
 // codex-view-image/<sid> (the screenshots codex's view_image read, persisted so the mirror
-// can show them — agents/codex/transcript.go). The time sweeps next door (fs_thumb.go,
+// can show them — agents/codex/transcript.go). The time sweeps next door (internal/fsx/fs_thumb.go,
 // imagegen/store.go) never look at them, and deleting a session leaves them behind, so they
 // only ever grow — 2.7 months and ~145 MB on the deployment this was measured on.
 //

@@ -37,7 +37,7 @@ func Bin() string { return bin() }
 
 // Home is kiro's config/session root (~/.kiro): settings/cli.json, settings/mcp.json,
 // agents/, and sessions/cli/ (the v2 session store). Credentials live in a separate tree
-// (~/.local/share/kiro-cli/data.sqlite3); both are on fs.go's denylist.
+// (~/.local/share/kiro-cli/data.sqlite3); both are on internal/fsx/fs.go's denylist.
 func Home() string { return paths.KiroHome() }
 
 // sessionsDir is ~/.kiro/sessions/cli — the flat v2 session store (per-sid

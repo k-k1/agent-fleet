@@ -84,6 +84,9 @@ func TestMemberWriteRoutesRequireTheMark(t *testing.T) {
 		"/agents/memory/snapshots",
 		"/agents/memory/import/apply",
 		"/agents/memory-review/runs/revert",
+		"/agents/memory-consolidation/proposals/approve",
+		"/agents/memory-consolidation/proposals/reject",
+		"/agents/memory-consolidation/proposals/retry",
 	} {
 		req := httptest.NewRequest(http.MethodPost, p, strings.NewReader(`{}`))
 		req.Header.Set("Authorization", "Bearer agent-token")
@@ -112,6 +115,9 @@ func TestMemberWriteRoutesAdmitAMarkedRequest(t *testing.T) {
 		"/agents/memory/import/apply",
 		"/agents/memory/snapshots",
 		"/agents/memory-review/runs/revert",
+		"/agents/memory-consolidation/proposals/approve",
+		"/agents/memory-consolidation/proposals/reject",
+		"/agents/memory-consolidation/proposals/retry",
 	} {
 		// An empty body is a validation error past the mark (the run id is malformed).
 		body := `{}`
@@ -199,7 +205,7 @@ func TestMemberOriginRoutesAgreeWithTheControlPlane(t *testing.T) {
 	var agent []string
 	for _, line := range strings.Split(string(golden), "\n") {
 		method, path, ok := strings.Cut(strings.TrimSpace(line), " ")
-		if !ok || method != http.MethodPost || !(strings.HasPrefix(path, "/agents/memory/") || strings.HasPrefix(path, "/agents/memory-review/")) {
+		if !ok || method != http.MethodPost || !(strings.HasPrefix(path, "/agents/memory/") || strings.HasPrefix(path, "/agents/memory-review/") || strings.HasPrefix(path, "/agents/memory-consolidation/")) {
 			continue
 		}
 		req := httptest.NewRequest(method, path, strings.NewReader("not json"))

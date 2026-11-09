@@ -497,3 +497,78 @@ export interface LintReport {
     proposals?: LintProposal[];
   };
 }
+
+// The memory consolidator's wire (ADR 0130 decisions 6 and 7; workspace/agent/internal/memconsol).
+// Durations are Go duration strings ("3h0m0s").
+export interface ConsolDelay {
+  topic: string;
+  scope: string;
+  memory: string;
+  cause: string;
+  detail?: string;
+}
+export interface ConsolReport {
+  id: string;
+  started: string;
+  finished: string;
+  status: string;
+  error?: string;
+  ripe: number;
+  queued: string[];
+  delayed: ConsolDelay[];
+}
+export interface ConsolStatus {
+  enabled: boolean;
+  config: { idleAfter: string; minInterval: string; proposalTTL: string };
+  lastRun?: ConsolReport;
+  trigger: { lastRun?: string };
+  counts: Record<string, number>;
+  waiting: ConsolDelay[];
+}
+export interface ConsolEdit {
+  old: string;
+  new: string;
+}
+export interface ConsolItem {
+  op: "patch" | "create" | "note" | string;
+  name: string;
+  reason?: string;
+  revision?: number;
+  edits?: ConsolEdit[];
+  description?: string;
+  type?: string;
+  body?: string;
+  advice?: string;
+  targets?: string[];
+  commit?: string;
+}
+export interface ConsolEvidence {
+  id: string;
+  source: string;
+  memory: string;
+  rule: string;
+  note: string;
+}
+export interface ConsolProposal {
+  id: string;
+  topicId: string;
+  scope: string;
+  projectId?: string;
+  memory: string;
+  status: string;
+  created: string;
+  expires: string;
+  decided?: string;
+  reason?: string;
+  items: ConsolItem[];
+  observationIds: string[];
+  targetRevisions?: Record<string, number>;
+  evidence: ConsolEvidence[];
+}
+export interface ConsolItemView extends ConsolItem {
+  diff?: string;
+  stale?: string;
+}
+export interface ConsolProposalView extends ConsolProposal {
+  itemViews: ConsolItemView[];
+}

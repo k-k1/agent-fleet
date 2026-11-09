@@ -5,12 +5,13 @@ package main
 // GET /agents/{kind}/models?info=1.
 //
 // The price is the API LIST price on the route the kind is billed through, read from the same
-// catalog the usage view prices from (usage_catalog.go), but on the kind's own providers only:
+// catalog the usage view prices from (internal/usagesvc/usage_catalog.go), but on the kind's own providers only:
 // the ledger's fallback to other primary providers would put a price no route bills next to a
 // model. claude / codex / agy are usually subscription-billed, so the Console labels it as a
 // list price, not a bill.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"slices"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -49,19 +50,7 @@ func resolveModelInfo(kind, id string) *agents.ModelInfo {
 		return nil
 	}
 	info := &agents.ModelInfo{}
-	if row, provider, ok := usageCatalogRouteRow(kind, recommendPriceID(kind, id)); ok {
-		if row.price != nil {
-			info.Price = &agents.ModelPrice{In: row.price.In, Out: row.price.Out}
-			if row.cacheReadKnown {
-				cr := row.price.CacheRead
-				info.Price.CacheRead = &cr
-			}
-			info.PriceFrom = provider
-		}
-		info.Context = row.context
-		info.Released = row.released
-		info.Deprecated = row.deprecated
-	}
+	usagesvc.FillCatalogModelInfo(info, kind, recommendPriceID(kind, id))
 	if kind == session.KindCodex {
 		if r, ok := codexRetirement(id); ok {
 			info.Retiring = &r

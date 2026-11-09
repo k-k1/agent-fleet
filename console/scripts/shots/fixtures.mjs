@@ -1134,7 +1134,7 @@ export function stats() {
 // ---- usage ledger (GET /api/usage/series) ------------------------------------------
 // The Console asks for three series per view (the selected axis over time, feature ×
 // model, kind × model), so this answers any (by, split, bucket) combination from one
-// weight table. Wire shape: workspace/agent/usage_series.go ↔ features/usage/api.ts.
+// weight table. Wire shape: workspace/agent/internal/usagesvc/usage_series.go ↔ features/usage/api.ts.
 
 // Relative weight of each value on each axis. Numbers are invented but ordered the way
 // a real week looks: session work dwarfs everything, claude/opus carry most of it.
