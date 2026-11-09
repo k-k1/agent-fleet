@@ -255,10 +255,12 @@ func TestAllSkipsATopicWithAPendingProposal(t *testing.T) {
 func TestManualRunKeepsTheBudget(t *testing.T) {
 	f := env(t)
 	f.wrong("a", "x", 1)
+	f.wrong("b", "y", 1)
 	if err := os.MkdirAll(Dir(), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(Dir(), "config.json"), []byte(`{"tokenBudget":10}`), 0o600); err != nil {
+	// One topic costs about 1.9k tokens, so the budget takes one and delays the other.
+	if err := os.WriteFile(filepath.Join(Dir(), "config.json"), []byte(`{"tokenBudget":2500}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	small := &scriptModel{classify: classifyAs("no-op")}
@@ -268,7 +270,7 @@ func TestManualRunKeepsTheBudget(t *testing.T) {
 	}
 	waitIdle(t)
 	rep, _ := LastReport()
-	if small.calls() != 0 || rep.Status != RunCut || len(rep.Delayed) != 1 || rep.Delayed[0].Cause != CauseBudget {
+	if small.calls() != 1 || len(rep.Delayed) != 1 || rep.Delayed[0].Cause != CauseBudget || len(rep.TooLarge) != 0 {
 		t.Fatalf("report = %+v calls=%d", rep, small.calls())
 	}
 }
