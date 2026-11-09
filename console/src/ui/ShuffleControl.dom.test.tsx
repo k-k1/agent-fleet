@@ -28,7 +28,13 @@ describe("ShuffleControl", () => {
     const dice = host.querySelector<HTMLButtonElement>(".shuffle-dice")!;
     expect(dice.getAttribute("aria-label")).toBe("Change colors now");
 
+    expect(dice.querySelector("svg")!.classList.contains("dice-roll")).toBe(false);
     await act(async () => dice.click());
+    const rolled = dice.querySelector("svg")!;
+    expect(rolled.classList.contains("dice-roll")).toBe(true);
+    // A second press remounts the die, restarting the roll instead of leaving it finished.
+    await act(async () => dice.click());
+    expect(dice.querySelector("svg")).not.toBe(rolled);
     expect(getSettings().appearanceShuffle).toBe("off");
     const first = getSettings().topbarColor;
     expect(first).not.toBe("default");
