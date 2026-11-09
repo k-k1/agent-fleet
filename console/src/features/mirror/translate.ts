@@ -131,12 +131,17 @@ function cjkCount(s: string): number {
   return (s.match(KANA)?.length || 0) + (s.match(KANJI)?.length || 0);
 }
 
+// A Japanese sentence closed with an ASCII mark ("実装完了. see the diff") is still a sentence.
+const ASCII_SENTENCE_END = /^[.!?]/;
+
 /** CJK characters that read as Japanese prose rather than a name standing in English text. */
 function cjkProseCount(prose: string): number {
   let n = 0;
-  for (const run of prose.match(CJK_RUN) || []) {
+  for (const m of prose.matchAll(CJK_RUN)) {
+    const run = m[0];
     const c = cjkCount(run);
-    if (SENTENCE_MARK.test(run) || c > MAX_LABEL_CHARS) n += c;
+    const closed = ASCII_SENTENCE_END.test(prose.slice(m.index + run.length));
+    if (SENTENCE_MARK.test(run) || closed || c > MAX_LABEL_CHARS) n += c;
   }
   return n;
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -454,5 +455,30 @@ func TestNoteTurnResultKeepsAParkSetDuringTheCall(t *testing.T) {
 	NoteTurnResult(context.Background(), c, session.KindCodex, nil)
 	if _, _, ok := tb.Until(session.KindCodex, "model-a", routeT0.Add(2*time.Second)); !ok {
 		t.Fatal("a success that started before the park lifted it")
+	}
+}
+
+// A stale agy pin runs as its family's newest model, so the route must be looked up under that
+// model: otherwise the park is written under a key no lookup reads and the call never moves.
+func TestAgyRouteSeesTheFamilyResolvedModel(t *testing.T) {
+	prev := agyModels
+	t.Cleanup(func() { agyModels = prev })
+	agyModels = func() []agents.ModelChoice {
+		return []agents.ModelChoice{{ID: "gemini-3.8-flash-medium", Label: "Gemini 3.8 Flash (Medium)"}}
+	}
+	writeResolvePrefs(t, `{"aiFeatureAgents":{"title.session":"agy"},"aiFeatureModels":{"title.session":{"agy":"gemini-3.5-flash-medium"}}}`)
+	tb := useRouteTable(t)
+	forceHeadlessAvailable(t, session.KindAgy, true)
+	if got := oneShotRouteModel("title.session", OneShotShort, session.KindAgy, ""); got != "gemini-3.8-flash-medium" {
+		t.Fatalf("route model = %q, want the model that runs", got)
+	}
+	tb.Park(session.KindAgy, "gemini-3.8-flash-medium",
+		routehealth.Verdict{Class: routehealth.ClassWindow, Scope: routehealth.ScopeModel, ResetAt: routeT0.Add(100 * time.Hour)}, routeT0)
+	if k := oneShotRouteKind("title.session", OneShotShort, ""); k == session.KindAgy {
+		t.Fatal("a park on the model a stale pin runs as did not move the one-shot")
+	}
+	c := &ChatConversation{Agent: session.KindAgy, Model: "gemini-3.5-flash-medium"}
+	if got := chatRouteModel(c, session.KindAgy); got != "gemini-3.8-flash-medium" {
+		t.Fatalf("chat route model = %q, want the model that runs", got)
 	}
 }

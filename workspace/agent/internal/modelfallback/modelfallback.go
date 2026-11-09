@@ -86,7 +86,7 @@ var Entries = []Entry{
 	{
 		ID: ChatAgy, Kind: "agy", Owner: "assistant chat and agy one-shot fallback (chatx.agyNamedModel)",
 		Source:           "product choice: Gemini Flash is the quota-cheapest agy model on Starter (docs/log/32 Track D)",
-		WhyNotDiscovered: "a preference among listed models; dropped at send time when the catalog no longer lists it",
+		WhyNotDiscovered: "a preference among listed models; when the catalog no longer lists it, the newest row of the same family runs",
 	},
 	{
 		ID: ImagegenAgyDriver, Kind: "agy", Owner: "image generation, agy route (imagegen.newAgyProvider)",

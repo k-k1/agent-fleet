@@ -2,6 +2,7 @@ package agy
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,7 +17,10 @@ import (
 // passed agy over and every mirror translation failed for days until the window reset.
 var (
 	quotaReachedRe = regexp.MustCompile(`(?i)\bquota reached\b`)
-	resetsInRe     = regexp.MustCompile(`(?i)\bresets in ((?:\d+h)?(?:\d+m)?(?:\d+s)?)\b`)
+	// "108h50m38s" is the measured form; days, spaces and capitals are accepted too, because a
+	// reset read as zero turns a multi-day window into a backoff guess.
+	resetsInRe  = regexp.MustCompile(`(?i)\bresets in ((?:\d+\s*[dhms]\s*)+)`)
+	resetPartRe = regexp.MustCompile(`(?i)(\d+)\s*([dhms])`)
 )
 
 // LimitInMessage reports whether msg is agy's usage-quota refusal and, when the text names
@@ -30,10 +34,23 @@ func LimitInMessage(msg string, now time.Time) (resetAt time.Time, ok bool) {
 	if !quotaReachedRe.MatchString(msg) {
 		return time.Time{}, false
 	}
-	if m := resetsInRe.FindStringSubmatch(msg); m != nil && strings.TrimSpace(m[1]) != "" {
-		if d, err := time.ParseDuration(m[1]); err == nil && d > 0 {
+	if m := resetsInRe.FindStringSubmatch(msg); m != nil {
+		if d := resetDuration(m[1]); d > 0 {
 			return now.Add(d), true
 		}
 	}
 	return time.Time{}, true
+}
+
+func resetDuration(s string) time.Duration {
+	unit := map[string]time.Duration{"d": 24 * time.Hour, "h": time.Hour, "m": time.Minute, "s": time.Second}
+	var d time.Duration
+	for _, p := range resetPartRe.FindAllStringSubmatch(s, -1) {
+		n, err := strconv.Atoi(p[1])
+		if err != nil {
+			return 0
+		}
+		d += time.Duration(n) * unit[strings.ToLower(p[2])]
+	}
+	return d
 }

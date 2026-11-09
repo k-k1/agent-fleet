@@ -224,8 +224,23 @@ func agyNamedModel(v visibility, name string) string {
 	return newestAgyFamilyModel(visible, name)
 }
 
-// agyVersionRe is the version number inside an agy display name ("Gemini 3.8 Flash (Medium)").
-var agyVersionRe = regexp.MustCompile(`\d+(?:\.\d+)*`)
+// agyVersionRe finds the version in an agy model id or display name: the first number standing
+// on its own ("Gemini 3.8 Flash", "gemini-3.8-flash-low"). A number glued to letters is part of
+// the name, not a version — gpt-oss-20b and gpt-oss-120b are different models, not two releases
+// of one — and every number after the version must match exactly, so "4-5" and "4-6" style ids
+// are never treated as one family.
+var agyVersionRe = regexp.MustCompile(`(^|[^0-9A-Za-z.])(\d+(?:\.\d+)*)([^0-9A-Za-z.]|$)`)
+
+// agyFamily is s with its version replaced by "#", lower-cased, and the version itself; ok is
+// false when s carries no version.
+func agyFamily(s string) (family string, ver []int, ok bool) {
+	loc := agyVersionRe.FindStringSubmatchIndex(s)
+	if loc == nil {
+		return "", nil, false
+	}
+	family = strings.ToLower(s[:loc[4]] + "#" + s[loc[5]:])
+	return family, agyVersion(s[loc[4]:loc[5]]), true
+}
 
 // newestAgyFamilyModel answers the newest catalog row that is name with only its version
 // number changed — "Gemini 3.5 Flash (Medium)" finds "Gemini 3.8 Flash (Medium)", and the id
@@ -236,20 +251,18 @@ var agyVersionRe = regexp.MustCompile(`\d+(?:\.\d+)*`)
 // 2026-11-09, agy 1.5.3 listed 3.8 Flash only, its default was Gemini 4 Argon, whose separate
 // small quota ran out after a day of mirror translations while Flash still had most of its own.
 func newestAgyFamilyModel(catalog []agents.ModelChoice, name string) string {
-	family := func(s string) string { return strings.ToLower(agyVersionRe.ReplaceAllString(s, "#")) }
-	want := family(name)
-	if want == strings.ToLower(name) {
-		return "" // the name carries no version to vary
+	want, _, ok := agyFamily(name)
+	if !ok {
+		return ""
 	}
 	best, bestVer := "", []int(nil)
 	for _, m := range catalog {
 		var ver []int
-		switch want {
-		case family(m.Label):
-			ver = agyVersion(agyVersionRe.FindString(m.Label))
-		case family(m.ID):
-			ver = agyVersion(agyVersionRe.FindString(m.ID))
-		default:
+		if f, v, ok := agyFamily(m.Label); ok && f == want {
+			ver = v
+		} else if f, v, ok := agyFamily(m.ID); ok && f == want {
+			ver = v
+		} else {
 			continue
 		}
 		if best == "" || slices.Compare(ver, bestVer) > 0 {

@@ -103,9 +103,25 @@ describe("looksForeign", () => {
     expect(looksForeign(englishStatusWithJaPages, "en")).toBe(true);
   });
 
+  it("counts a run as a label up to 20 characters and as prose from 21", () => {
+    const pad = " is the page this report is about, and the rest of it is plain English prose throughout here.";
+    const twenty = "あいうえおかきくけこさしすせそたちつてと";
+    expect(looksForeign(twenty + pad, "ja")).toBe(true);
+    expect(looksForeign(twenty + "な" + pad, "ja")).toBe(false);
+  });
+
+  it("accepts a few short unpunctuated Japanese phrases inside mostly English text", () => {
+    // Pinned on purpose: label-sized and under a quarter of the text, so it reads as English.
+    expect(looksForeign("設定を変更した テストを追加した and the rest of this long status report is written in English", "ja")).toBe(true);
+  });
+
   it("does not discount Japanese that is written as sentences or short bullets", () => {
     // A sentence mark makes the run prose, however short.
     expect(looksForeign("実装完了。see the diff for the details of the change", "ja")).toBe(false);
+    expect(looksForeign("実装完了. see the diff for the details of the change", "ja")).toBe(false);
+    // Longer than a label: prose even without a mark (25 characters, about 17% of the text).
+    const long = "設定画面からモデルを選び直してから翻訳ボタンを押してみて";
+    expect(looksForeign(`${long} and then check the answer again in the mirror pane please`, "ja")).toBe(false);
     // Bullets without punctuation are label-sized, but CJK is no longer the minority.
     expect(looksForeign("- 設定を変更した\n- テストを追加した\n- PR を出した see https://example.com", "ja")).toBe(false);
   });
