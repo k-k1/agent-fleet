@@ -26,14 +26,17 @@ import (
 //
 // Adding an Agent → CP call means adding its pattern here and its request to
 // TestWorkspaceListenerServesKnownAgentCalls: a call left off works everywhere except on a
-// deployment that sets AF_CP_INTERNAL_LISTEN.
+// deployment that sets AF_CP_INTERNAL_LISTEN. TestWorkspaceListenerCoversAgentInternalPaths
+// fails when an /internal/ path the Agent's code names is missing here.
 var workspaceRoutes = map[string]bool{
 	// Docs pull (AF_DOCS_TOKEN).
 	"GET /internal/docs": true,
 	// Branch naming rules (AF_BRANCH_RULES_TOKEN).
 	"GET /internal/branch-rules": true,
-	// Tenant MCP registry (AF_MCP_TOKEN).
-	"GET /internal/mcp-servers": true,
+	// Tenant MCP registry and the OAuth relay for its servers (AF_MCP_TOKEN).
+	"GET /internal/mcp-servers":                    true,
+	"POST /internal/mcp-servers/{id}/oauth/token":  true,
+	"POST /internal/mcp-servers/{id}/oauth/revoke": true,
 	// AWS profiles (AF_AWS_PROFILES_TOKEN).
 	"GET /internal/aws-profiles": true,
 	// Google Cloud profiles (AF_GCP_PROFILES_TOKEN).
@@ -54,6 +57,9 @@ var workspaceRoutes = map[string]bool{
 	"POST /internal/schedules/{id}/resume":  true,
 	"POST /internal/schedules/{id}/run-now": true,
 	"GET /internal/schedules/{id}/runs":     true,
+	// Wake-only bookings for time watches (AF_SCHEDULE_TOKEN, ADR 0133 §7).
+	"POST /internal/wakes":        true,
+	"DELETE /internal/wakes/{id}": true,
 	// Watch ingress registration and hooks (AF_WATCH_TOKEN). /webhooks/* is for providers, not
 	// workspaces, and is not listed.
 	"PUT /internal/watch-subjects":      true,

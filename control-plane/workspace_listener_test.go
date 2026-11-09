@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -252,6 +254,10 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 		{"POST", "/internal/schedules/s1/resume"},
 		{"POST", "/internal/schedules/s1/run-now"},
 		{"GET", "/internal/schedules/s1/runs"},
+		{"POST", "/internal/wakes"},
+		{"DELETE", "/internal/wakes/w1"},
+		{"POST", "/internal/mcp-servers/m1/oauth/token"},
+		{"POST", "/internal/mcp-servers/m1/oauth/revoke"},
 		{"POST", "/internal/git-oauth/bitbucket/refresh"},
 		{"POST", "/internal/git-oauth/jira/refresh"},
 		{"POST", "/internal/engine/token"},
@@ -280,6 +286,56 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 		h.ServeHTTP(w, req)
 		if w.Code == http.StatusNotFound && strings.HasPrefix(w.Body.String(), "404 page not found") {
 			t.Errorf("%s %s: the listener's 404", c.method, c.path)
+		}
+	}
+}
+
+// Every /internal/ path the Agent's own code names must be served on the workspace listener:
+// the Agent sends it to AF_CP_INTERNAL_URL when that is set, and a pattern left off
+// workspaceRoutes answers 404 there and nowhere else. A path literal ending in "/" is the
+// head of a concatenation ("/internal/wakes/"+id) and needs a pattern below it.
+func TestWorkspaceListenerCoversAgentInternalPaths(t *testing.T) {
+	lit := regexp.MustCompile(`"(/internal/[A-Za-z0-9._/-]*)"`)
+	var paths []string
+	for _, root := range []string{"../workspace/agent"} {
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+				return nil
+			}
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			for _, m := range lit.FindAllStringSubmatch(string(b), -1) {
+				paths = append(paths, m[1])
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(paths) < 10 {
+		t.Fatalf("found only %d /internal/ paths in the Agent: the scan is broken", len(paths))
+	}
+	served := func(path string) bool {
+		for pattern := range workspaceRoutes {
+			pp := pattern
+			if i := strings.IndexByte(pp, ' '); i >= 0 {
+				pp = pp[i+1:]
+			}
+			if pp == path || (strings.HasSuffix(path, "/") && strings.HasPrefix(pp, path)) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range paths {
+		if !served(p) {
+			t.Errorf("the Agent calls %s, which the workspace listener does not serve", p)
 		}
 	}
 }
