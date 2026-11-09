@@ -466,3 +466,31 @@ func TestAgentMemoryMissHintSkipsWithheldFile(t *testing.T) {
 		}
 	}
 }
+
+// A save shaped like the Control Plane relay's body (kind and anchors present) stores both and
+// memory_read returns them; an unknown kind is refused as on the Agent's own tool.
+func TestAgentMemoryExternalSaveKindAndAnchorsRoundTrip(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	agentMemSaveN(t, c, "seed", "project", time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC))
+	externalMode(t, ExternalMemoryWrite)
+	save := func(extra map[string]any) (int, []byte) {
+		m := map[string]any{"project": c.Project.ID, "repository": "", "scope": "project", "name": "k-a", "description": "d",
+			"type": "project", "body": "b", "kinds": []string{}, "revision": 0, "client": "claude-code/1"}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return memberDo(t, http.MethodPost, extBase+"entries", m)
+	}
+	if code, b := save(map[string]any{"kind": "lesson", "anchors": []string{"a/b.go", "ADR 0130"}}); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	code, b := memberDo(t, http.MethodGet, extBase+"read?project="+c.Project.ID+"&scope=project&name=k-a", nil)
+	var e agentMemEntry
+	if code != 200 || json.Unmarshal(b, &e) != nil || e.MemKind != "lesson" || strings.Join(e.Anchors, "|") != "a/b.go|ADR 0130" {
+		t.Fatalf("read: %d %s", code, b)
+	}
+	if code, b = save(map[string]any{"kind": "nonsense", "revision": 1}); code == 200 {
+		t.Fatalf("unknown kind accepted: %s", b)
+	}
+}

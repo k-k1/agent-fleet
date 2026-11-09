@@ -238,7 +238,7 @@
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_save"}}
 ## read memory_save unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_save"}}
-## read memory_save full {"body":"v","description":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
+## read memory_save full {"anchors":[],"body":"v","description":"v","kind":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: memory_save"}}
 ## read memory_search absent
 -> AGENT ["GET","/agents/memory/external/search?q=",""]
@@ -582,8 +582,8 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_save unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
-## write memory_save full {"body":"v","description":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
--> AGENT ["POST","/agents/memory/external/entries","{\"body\":\"v\",\"client\":\"\",\"description\":\"v\",\"kinds\":[],\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\",\"type\":\"v\"}"]
+## write memory_save full {"anchors":[],"body":"v","description":"v","kind":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
+-> AGENT ["POST","/agents/memory/external/entries","{\"anchors\":[],\"body\":\"v\",\"client\":\"\",\"description\":\"v\",\"kind\":\"v\",\"kinds\":[],\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\",\"type\":\"v\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write memory_search absent
 -> AGENT ["GET","/agents/memory/external/search?q=",""]
@@ -941,8 +941,8 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_save unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for memory_save","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous memory_save full {"body":"v","description":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
--> AGENT ["POST","/agents/memory/external/entries","{\"body\":\"v\",\"client\":\"\",\"description\":\"v\",\"kinds\":[],\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\",\"type\":\"v\"}"]
+## admin:dangerous memory_save full {"anchors":[],"body":"v","description":"v","kind":"v","kinds":[],"name":"v","project":"v","repository":"v","revision":2,"scope":"v","type":"v"}
+-> AGENT ["POST","/agents/memory/external/entries","{\"anchors\":[],\"body\":\"v\",\"client\":\"\",\"description\":\"v\",\"kind\":\"v\",\"kinds\":[],\"name\":\"v\",\"project\":\"v\",\"repository\":\"v\",\"revision\":2,\"scope\":\"v\",\"type\":\"v\"}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous memory_search absent
 -> AGENT ["GET","/agents/memory/external/search?q=",""]
