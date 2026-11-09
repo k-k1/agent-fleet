@@ -297,13 +297,8 @@ claude / codex / opencode / GitHub Copilot / Cursor / Kiro（と実験枠の Ant
 
 ### Git ホスティング
 
-GitHub / Bitbucket の連携です（clone / push の認証）。**GitHub の連携は GitHub Copilot の接続も兼ねます**。
-同じ連携で、各セッションの `gh`（Bitbucket Cloud なら `bkt` も）にサインイン済みになります
-（[GitHub の CLI を使う](../user/integrations/github-cli.ja.md)、[Bitbucket の CLI を使う](../user/integrations/bitbucket-cli.ja.md)）。GitHub が接続を更新できないときは、タブに「GitHub の接続を更新できませんでした。
-認可が期限切れになったか、取り消されています。切断してから、もう一度 GitHub に接続してください。」と出ます。
-Jira と Bitbucket の接続は、開始した本人の Console セッションでだけ完了します。別のアカウントでサインインしている、
-またはセッションが切れているときは何も保存されません。本人としてサインインし直して、もう一度接続してください。
-→ [06 リポジトリと git](06-code.ja.md)
+GitHub・Bitbucket の接続、コミットの作者、保存した Subversion の認証情報です。GitHub の接続は GitHub Copilot の接続も兼ねます。
+[Git のサービスを接続する](../user/code/connect-git.ja.md) にあります。
 
 ### 運用・監視
 
@@ -418,9 +413,7 @@ Client ID（**コピー**ボタン付き。client secret は表示しません�
 
 ### 内部リポジトリ
 
-外部の git ホスティングを使わず、**テナントの中だけで完結する git リポジトリ**の作成・リネーム・削除と、
-中身の参照です。clone URL は自動で認証されるので、接続の手順はありません
-（ワークスペースが停止中でも操作できます）。→ [06 リポジトリと git](06-code.ja.md)
+外部のサービスを使わずに、テナントの中に Git のリポジトリを作ります。[内蔵の Git を使う](../user/code/internal-git.ja.md) にあります。
 
 ### 書き出し / 取り込み
 

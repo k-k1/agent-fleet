@@ -32,6 +32,18 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Stop a session that spends too much with a budget](sessions/budget.md) | Stop a session when its estimated spend reaches a budget |
 | [Hand off to another session or agent](sessions/handoff.md) | Continue a conversation in a new session or with another kind of agent |
 
+## Code
+
+| Page | What you can do |
+|---|---|
+| [Connect a Git service](code/connect-git.md) | Connect GitHub or Bitbucket to clone and push private repositories |
+| [Clone a repository](code/clone.md) | Bring a repository into the workspace, or start from nothing |
+| [Use the built-in Git](code/internal-git.md) | Keep repositories inside the tenant, with no external service |
+| [Launch a session from a repository](code/launch-from-repo.md) | Launch a session from a repository row and read the row's badges |
+| [Initialize Git Flow](code/git-flow.md) | Make the branches started from issues follow git-flow |
+| [Commit in the commit graph](code/commit.md) | Read history and diffs, and commit without opening a terminal |
+| [Use a Subversion repository](code/svn.md) | Check out a Subversion repository and work in it from a session |
+
 ## Integrations
 
 | Page | What you can do |

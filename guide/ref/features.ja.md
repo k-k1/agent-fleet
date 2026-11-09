@@ -18,7 +18,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
 | セッションの起動（エージェント・モデル・effort・開始モード）| メンバー | ワークスペース操作バー → Start | [セッションを始める](../user/sessions/start.ja.md) |
-| 新しい git worktree で動かす | メンバー | Start ダイアログ | [06 リポジトリと git](../member/06-code.ja.md) |
+| 新しい git worktree で動かす | メンバー | Start ダイアログ | [ワークツリーで並行して作業する](../user/sessions/worktrees.ja.md) |
 | チャットミラー — 実行中のエージェントを追う・操縦する | メンバー | メイン領域 | [セッションに返事をする](../user/sessions/reply.ja.md) |
 | 質問・プラン・権限確認に答える | メンバー | ミラー | [セッションに返事をする](../user/sessions/reply.ja.md)。どのエージェントが尋ねるかは [agents.md](agents.ja.md) |
 | 停止したセッションに残った質問とプランに答える | メンバー | ミラーの持ち越しカード | [セッションに返事をする](../user/sessions/reply.ja.md#止まったセッションに残ったカードに答える) |
@@ -51,15 +51,15 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
-| リポジトリの取り込み | メンバー | リポジトリ → Clone | [06 リポジトリと git](../member/06-code.ja.md) |
-| 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [06 リポジトリと git](../member/06-code.ja.md) |
-| コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [06 リポジトリと git](../member/06-code.ja.md) |
-| worktree | メンバー | 各リポジトリの下 | [06 リポジトリと git](../member/06-code.ja.md) |
+| リポジトリの取り込み | メンバー | リポジトリ → Clone | [リポジトリをクローンする](../user/code/clone.ja.md) |
+| 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [リポジトリをクローンする](../user/code/clone.ja.md#何もないところから始める) |
+| コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [コミットグラフでコミットする](../user/code/commit.ja.md) |
+| worktree | メンバー | 各リポジトリの下 | [リポジトリからセッションを起動する](../user/code/launch-from-repo.ja.md) |
 | サインイン済みの `gh` と `bkt` をセッションで使う | メンバー | どのセッションでも | [GitHub の CLI を使う](../user/integrations/github-cli.ja.md)、[Bitbucket の CLI を使う](../user/integrations/bitbucket-cli.ja.md)。サインイン済みの CLI の一覧は [コマンド](cli/README.ja.md#サインイン済みの-cli) |
 | サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md) |
 | サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [Confluence を使う](../user/integrations/confluence.ja.md) |
 | Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
-| Subversion の作業コピー — 更新、ログを表示、ローカルの変更 | メンバー | リポジトリ → SVN の行 | [06 リポジトリと git](../member/06-code.ja.md#subversionsvnリポジトリ) |
+| Subversion の作業コピー — 更新、ログを表示、ローカルの変更 | メンバー | リポジトリ → SVN の行 | [Subversion のリポジトリを使う](../user/code/svn.ja.md) |
 | ファイルツリーとビューア | メンバー | ファイル | [07 ファイル](../member/07-files.ja.md) |
 | フォルダを zip でダウンロードする | メンバー | ファイルツリーまたはギャラリー → 右クリック → zip でダウンロード | [07 ファイル](../member/07-files.ja.md#フォルダを-zip-でダウンロードする) |
 | フォルダからシェルを開く | メンバー | ファイルツリー → フォルダを右クリック → ここでシェルを開く | [07 ファイル](../member/07-files.ja.md#フォルダからシェルを開く) |

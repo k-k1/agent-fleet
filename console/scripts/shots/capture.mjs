@@ -1182,6 +1182,184 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // Settings › Git hosting for the user guide's code pages: GitHub not connected yet (its two
+    // ways in), Bitbucket connected with its commit identity, and the saved Subversion servers.
+    name: "code-git-hosting",
+    guide: true,
+    stubEnv: { SHOT_CODE_GUIDE: "1" },
+    clip: ".conns",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "git",
+    width: 1500,
+    height: 1800,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      // The tab is longer than the modal's fixed height: let the modal grow so nothing scrolls away.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 3000,
+  },
+  {
+    // Settings › Internal repos with two repositories: one the member may rename and delete, one
+    // created by someone else (no rename / delete buttons).
+    name: "code-internal-repos",
+    guide: true,
+    stubEnv: { SHOT_CODE_GUIDE: "1" },
+    clip: ".conns",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "internalrepos",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 3000,
+  },
+  {
+    // The rail's "Add" dialog on its Git kind: a Bitbucket repository picked, GitHub not connected.
+    name: "code-clone",
+    guide: true,
+    stubEnv: { SHOT_CODE_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = async (f) => { for (let i = 0; i < 50 && !f(); i++) await new Promise((r) => setTimeout(r, 200)); return f(); };
+      const add = await wait(() => document.querySelector('button.ui-btn[title="追加"], button.ui-btn[title="Add"]'));
+      add?.click();
+      await wait(() => document.querySelector('.repopicker .branch-item[title="acme/payments-api"]'));
+      await new Promise((r) => setTimeout(r, 1500));
+      document.querySelector('.repopicker .branch-item[title="acme/payments-api"]')?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The Repositories rail and its badges: uncommitted, ahead / behind origin, a worktree
+    // diverged from its parent, running and stopped session counts.
+    name: "code-repo-rows",
+    guide: true,
+    clip: "#shot-code-repos",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const rows = () => [...document.querySelectorAll(".repo-row")];
+      for (let i = 0; i < 50 && rows().length < 2; i++) await new Promise((r) => setTimeout(r, 200));
+      const all = rows();
+      // Tag the smallest element holding every repository row, so the clip is the list and nothing else.
+      let box = all[0];
+      while (box && !all.every((r) => box.contains(r))) box = box.parentElement;
+      if (box) box.id = "shot-code-repos";
+    })()`,
+    settle: 1500,
+  },
+  {
+    // A worktree row's right-click menu.
+    name: "code-repo-menu",
+    guide: true,
+    clip: ".ui-menu",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const find = () => [...document.querySelectorAll(".repo-row")].find((el) => /checkout-validation/.test(el.textContent || ""));
+      for (let i = 0; i < 50 && !find(); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = find();
+      const b = row?.getBoundingClientRect();
+      row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: b ? b.left + 40 : 200, clientY: b ? b.top + 8 : 300 }));
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The Changes pane: two files staged, the rest not, and a commit message typed.
+    name: "code-changes",
+    guide: true,
+    clip: ".scmview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1100,
+    height: 560,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "changes", scmRepo: "webshop" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".commitbox textarea"); i++) await new Promise((r) => setTimeout(r, 200));
+      const ta = document.querySelector(".commitbox textarea");
+      if (ta) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(ta, document.documentElement.lang === "ja" ? "チェックアウトの入力検証を追加" : "Add checkout input validation");
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    })()`,
+    settle: 1500,
+  },
+  {
+    // "Add a repository" on its Subversion kind: the checkout form.
+    name: "code-svn",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = async (f) => { for (let i = 0; i < 50 && !f(); i++) await new Promise((r) => setTimeout(r, 200)); return f(); };
+      const add = await wait(() => document.querySelector('button.ui-btn[title="追加"], button.ui-btn[title="Add"]'));
+      add?.click();
+      const svn = await wait(() => [...document.querySelectorAll(".ui-modal button")].find((el) => (el.textContent || "").trim() === "Subversion"));
+      svn?.click();
+      await new Promise((r) => setTimeout(r, 300));
+      // Fill the form the way a reader would; "Save credentials" appears only once a username is typed.
+      const set = (el, v) => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      const ins = [...document.querySelectorAll(".ui-modal input:not([type=checkbox])")];
+      if (ins[0]) set(ins[0], "https://svn.example.com/design");
+      if (ins[1]) set(ins[1], "trunk");
+      if (ins[2]) set(ins[2], "taro");
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Initialize Git Flow, opened from a repository row's menu: develop exists only on origin, so
+    // the dialog shows its origin-only note under the field.
+    name: "code-gitflow",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const find = () => [...document.querySelectorAll(".repo-row")].find((el) => /platform-infra/.test(el.textContent || ""));
+      for (let i = 0; i < 50 && !find(); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = find();
+      row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 200, clientY: 300 }));
+      await new Promise((r) => setTimeout(r, 600));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /Git Flow/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2500,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

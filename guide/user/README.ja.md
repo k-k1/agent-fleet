@@ -32,6 +32,18 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [使いすぎたセッションを予算で止める](sessions/budget.ja.md) | 推定の費用が予算に達したら、セッションを止める |
 | [別のセッションやエージェントに引き継ぐ](sessions/handoff.ja.md) | 会話を新しいセッションや別の種類のエージェントで続ける |
 
+## コード
+
+| ページ | できること |
+|---|---|
+| [Git のサービスを接続する](code/connect-git.ja.md) | GitHub や Bitbucket を接続して、private リポジトリをクローン・push する |
+| [リポジトリをクローンする](code/clone.ja.md) | リポジトリをワークスペースに持ってくる。何もないところから始める |
+| [内蔵の Git を使う](code/internal-git.ja.md) | 外部のサービスを使わずに、テナントの中にリポジトリを置く |
+| [リポジトリからセッションを起動する](code/launch-from-repo.ja.md) | リポジトリの行からセッションを起動し、行のバッジで状態を読む |
+| [Git Flow を初期化する](code/git-flow.ja.md) | 課題から作るブランチを、git-flow の流儀にそろえる |
+| [コミットグラフでコミットする](code/commit.ja.md) | 履歴と差分を見て、端末を開かずにコミットする |
+| [Subversion のリポジトリを使う](code/svn.ja.md) | Subversion のリポジトリをチェックアウトして、セッションで作業する |
+
 ## 連携
 
 | ページ | できること |

@@ -24,7 +24,7 @@ source_of_truth: "各コマンドの --help"
 
 | コマンド | 使う接続 | 詳しく |
 |---|---|---|
-| `git` | **Git ホスティング**（GitHub、Bitbucket） | [リポジトリと git](../../member/06-code.ja.md#git-プロバイダを接続する) |
+| `git` | **Git ホスティング**（GitHub、Bitbucket） | [Git のサービスを接続する](../../user/code/connect-git.ja.md) |
 | `gh` | **Git ホスティング**の GitHub | [GitHub の CLI を使う](../../user/integrations/github-cli.ja.md) |
 | `bkt` | **Git ホスティング**の Bitbucket Cloud（bitbucket.org） | [Bitbucket の CLI を使う](../../user/integrations/bitbucket-cli.ja.md) |
 | `jira` | **課題管理**の Jira | [Jira を使う](../../user/integrations/jira.ja.md) |

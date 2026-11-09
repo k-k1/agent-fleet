@@ -24,7 +24,7 @@ Agents already know how to use it, so there is no command to teach them.
 ## Before you start
 
 Connect GitHub (github.com) in **⚙ Settings → "Git hosting"**. It is the same connection git uses to clone and push;
-the steps are in [Repositories and git](../../member/06-code.md#connect-a-git-provider).
+the steps are in [Connect a Git service](../code/connect-git.md#connect-github).
 
 - GitHub Enterprise cannot be connected from Settings. You [set it up yourself](#use-your-own-setup)
 
@@ -94,6 +94,6 @@ There is no connection, or it can no longer be used. Check that the GitHub card 
 ## Related
 
 - [Use the Bitbucket CLI](bitbucket-cli.md): the same for Bitbucket Cloud
-- [Repositories and git](../../member/06-code.md): connecting GitHub, cloning and pushing
+- [Connect a Git service](../code/connect-git.md): connecting GitHub, cloning and pushing
 - [Connect an issue tracker](issue-tracker.md): list pull requests and issues in the left rail
 - [Commands](../../ref/cli/README.md#clis-that-are-already-signed-in): the CLIs that use a connection

@@ -19,7 +19,7 @@ If a feature ships and does not appear here, it is not done
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [Start a session](../user/sessions/start.md) |
-| Run in a fresh git worktree | member | Start dialog | [06 Repositories and git](../member/06-code.md) |
+| Run in a fresh git worktree | member | Start dialog | [Work in parallel with worktrees](../user/sessions/worktrees.md) |
 | Chat mirror — follow and steer a running agent | member | main area | [Reply to a session](../user/sessions/reply.md) |
 | Answer a question, plan, or permission prompt | member | mirror | [Reply to a session](../user/sessions/reply.md); [agents.md](agents.md) for which agents ask |
 | Answer a question or plan left by a stopped session | member | mirror, the carried card | [Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left) |
@@ -52,15 +52,15 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Import a repository | member | Repositories → Clone | [06 Repositories and git](../member/06-code.md) |
-| Start from an empty folder | member | Repositories → new folder | [06 Repositories and git](../member/06-code.md) |
-| Commit graph, diff, stage and commit | member | Commit graph | [06 Repositories and git](../member/06-code.md) |
-| Worktrees | member | under each repository | [06 Repositories and git](../member/06-code.md) |
+| Import a repository | member | Repositories → Clone | [Clone a repository](../user/code/clone.md) |
+| Start from an empty folder | member | Repositories → new folder | [Clone a repository](../user/code/clone.md#start-from-nothing) |
+| Commit graph, diff, stage and commit | member | Commit graph | [Commit in the commit graph](../user/code/commit.md) |
+| Worktrees | member | under each repository | [Launch a session from a repository](../user/code/launch-from-repo.md) |
 | Use `gh` and `bkt` in a session, already signed in | member | any session | [Use the GitHub CLI](../user/integrations/github-cli.md), [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md); the list of signed-in CLIs is in [Commands](cli/README.md#clis-that-are-already-signed-in) |
 | Use `jira` in a session, already signed in | member | any session | [Use Jira](../user/integrations/jira.md) |
 | Use `confluence` in a session, already signed in (the Jira connection) | member | any session | [Use Confluence](../user/integrations/confluence.md) |
 | Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [Use Jira](../user/integrations/jira.md#ask-an-agent) |
-| Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [06 Repositories and git](../member/06-code.md#subversion-svn-repositories) |
+| Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [Use a Subversion repository](../user/code/svn.md) |
 | File tree and viewer | member | Files | [07 Files](../member/07-files.md) |
 | Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [07 Files](../member/07-files.md#download-a-folder-as-zip) |
 | Open a shell from a folder | member | Files tree → right-click a folder → Open shell here | [07 Files](../member/07-files.md#open-a-shell-from-a-folder) |

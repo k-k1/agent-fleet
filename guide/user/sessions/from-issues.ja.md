@@ -87,7 +87,7 @@ source_of_truth: "Console の左ペインの「課題管理」と、項目の詳
 
 - 既定では、課題の種別やラベルから接頭辞が決まり、番号とタイトルが続きます（`feature/45-empty-list`、`fix/PROJ-123`）
 - git-flow や Bitbucket のブランチ設定があるリポジトリでは、その接頭辞と基点を使い、基点を決めた規則がダイアログに出ます
-- `origin` に `develop` があるのに git-flow の設定がないリポジトリでは、「**Git Flow を初期化…**」を勧めます（[Git Flow を初期化](../../member/06-code.ja.md#git-flow-を初期化)）
+- `origin` に `develop` があるのに git-flow の設定がないリポジトリでは、「**Git Flow を初期化…**」を勧めます（[Git Flow を初期化](../code/git-flow.ja.md)）
 - 規則から外れた名前には注意が出るだけで、そのまま使えます
 - テンプレートは「保存したクエリ」の「ブランチ名テンプレート」で変えられます（[ブランチ名を決める](../integrations/issue-tracker.ja.md#ブランチ名を決める)）。テナント管理者がチームの既定を決めていることもあり、リポジトリの規則とあなたのテンプレートがそれより優先されます
 

@@ -305,14 +305,8 @@ limit resets, and auto-resume of an interrupted turn.
 
 ### Git hosting
 
-GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
-The same connection signs in `gh`, and for Bitbucket Cloud `bkt`, in every session
-([Use the GitHub CLI](../user/integrations/github-cli.md), [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md)). If GitHub cannot renew the connection, the tab says
-"GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub
-again."
-Jira and Bitbucket connections finish only in the Console session of the member who started them. If the browser
-is signed in as someone else, or the session expired, nothing is saved: sign in as yourself and connect again.
-→ [06 Repositories and git](06-code.md)
+The GitHub and Bitbucket connections, the commit author, and the saved Subversion credentials. Connecting GitHub
+also connects GitHub Copilot. See [Connect a Git service](../user/code/connect-git.md).
 
 ### Ops & monitoring
 
@@ -429,9 +423,8 @@ also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the cl
 
 ### Internal repos
 
-Create, rename, delete and browse git repositories that **live entirely inside the tenant**, with no external
-git hosting. The clone URL authenticates itself, so there is no connect step (and it works while the workspace
-is stopped). → [06 Repositories and git](06-code.md)
+Create Git repositories inside the tenant, with no external service. See
+[Use the built-in Git](../user/code/internal-git.md).
 
 ### Export / import
 

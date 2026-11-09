@@ -24,7 +24,7 @@ CI の様子を見られます。セッションの中で `gh auth login` をす
 ## 始める前に
 
 **⚙設定 →「Git ホスティング」** で GitHub（github.com）を接続します。git の clone・push と同じ接続です。
-手順は [リポジトリと git](../../member/06-code.ja.md#git-プロバイダを接続する) にあります。
+手順は [Git のサービスを接続する](../code/connect-git.ja.md#github-を接続する) にあります。
 
 - GitHub Enterprise は、設定画面からは接続できません。[自分で設定します](#自分の設定で使う)
 
@@ -93,6 +93,6 @@ gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -f title="新しいタイトル"
 ## 関連
 
 - [Bitbucket の CLI を使う](bitbucket-cli.ja.md)：Bitbucket Cloud で同じことをする
-- [リポジトリと git](../../member/06-code.ja.md)：GitHub の接続と、clone・push
+- [Git のサービスを接続する](../code/connect-git.ja.md)：GitHub の接続と、clone・push
 - [課題管理サービスを接続する](issue-tracker.ja.md)：プルリクエストや Issue を左ペインに並べる
 - [コマンド](../../ref/cli/README.ja.md#サインイン済みの-cli)：接続を使う CLI の一覧

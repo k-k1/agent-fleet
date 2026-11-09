@@ -24,7 +24,7 @@ Agents already know how to use it, so there is no command to teach them.
 ## Before you start
 
 Connect Bitbucket Cloud (bitbucket.org) in **⚙ Settings → "Git hosting"**. It is the same connection git uses to clone
-and push; the steps are in [Repositories and git](../../member/06-code.md#connect-a-git-provider).
+and push; the steps are in [Connect a Git service](../code/connect-git.md#connect-bitbucket).
 
 - Bitbucket Data Center cannot be connected from Settings. You [set it up yourself](#use-your-own-setup)
 - When you connect with "**Connect with an app token**", give the token the scopes `bkt` needs as well ([Scopes](#scopes))
@@ -111,6 +111,6 @@ The connection is not yet known to have the pull request write permission. Add t
 ## Related
 
 - [Use the GitHub CLI](github-cli.md): the same for GitHub
-- [Repositories and git](../../member/06-code.md): connecting Bitbucket, cloning and pushing
+- [Connect a Git service](../code/connect-git.md): connecting Bitbucket, cloning and pushing
 - [Connect an issue tracker](issue-tracker.md): list pull requests in the left rail
 - [Commands](../../ref/cli/README.md#clis-that-are-already-signed-in): the CLIs that use a connection

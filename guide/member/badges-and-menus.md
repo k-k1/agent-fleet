@@ -78,7 +78,7 @@ are not attributed to any session.
 | Uncommitted | There are uncommitted changes |
 | = parent | Same commit as the parent ("parent" here is the upstream of the parent working copy's branch, e.g. `origin/develop`, or the parent working copy's HEAD when it has none; the chip's tooltip names it; commits the parent working copy has not pushed are not compared) |
 | unmerged N | There are N worktree-specific commits not contained in the parent |
-| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([06](06-code.md)) |
+| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([Launch a session from a repository](../user/code/launch-from-repo.md#read-the-rows-badges)) |
 | diverged N↕M, no FF | Both the worktree and the parent have their own commits; a merge or rebase is needed |
 | n/a | The relation to the parent can't be determined (detached HEAD etc.) |
 | ↑N | N commits ahead of origin |
@@ -203,7 +203,7 @@ Fast-Forward (on a worktree, **"Fast-forward from origin/develop"** or similar),
 a working set**, **Skills…** (the skills this working copy gives each agent, read-only), launch a session by kind, **stop the sessions below**, and delete the working copy. **"Archived sessions of this working copy"** opens the archive
 filtered to it. A Subversion working copy has **"Update (svn)"**, **"Clean up lock (svn)"**,
 **"Re-authenticate (svn)"**, **"Show log"** and **"Local changes"** instead of the Git items
-([06](06-code.md#subversion-svn-repositories)). Stop
+([Use a Subversion repository](../user/code/svn.md)). Stop
 opens a modal listing the sessions running in that row and in the copies nested under it
 ([Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy)); Delete opens a confirmation
 that also lists the copies nested under that row
@@ -285,4 +285,4 @@ gives the same menu again, from a right-click, its ⋯ button, or the Menu key w
 
 ---
 
-Related: [Read a session's state](../user/sessions/status.md) · [Repositories and git](06-code.md) · [Files](07-files.md)
+Related: [Read a session's state](../user/sessions/status.md) · [Launch a session from a repository](../user/code/launch-from-repo.md) · [Files](07-files.md)

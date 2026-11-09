@@ -88,7 +88,7 @@ Starting from an issue fills the launch dialog with a branch name built from the
 
 - By default the prefix comes from the issue's type or labels, followed by the number and the title (`feature/45-empty-list`, `fix/PROJ-123`)
 - In a repository with git-flow or Bitbucket branch settings, those prefixes and that base are used, and the dialog says which rule chose the base
-- In a repository whose `origin` has `develop` but no git-flow settings, the dialog suggests **Initialize Git Flow…** ([Initialize Git Flow](../../member/06-code.md#initialize-git-flow))
+- In a repository whose `origin` has `develop` but no git-flow settings, the dialog suggests **Initialize Git Flow…** ([Initialize Git Flow](../code/git-flow.md))
 - A name outside the rules only gets a warning and can still be used
 - Change the template with "Branch name template" in Saved queries ([Choose the branch name](../integrations/issue-tracker.md#choose-the-branch-name)). A tenant administrator may have set a team default; the repository's rules and your template come before it
 
