@@ -476,8 +476,8 @@ func TestCheckTargetCommandBareBarLine(t *testing.T) {
 		t.Fatalf("ok=%v BodyOK=%v", ok, m.BodyOK)
 	}
 	cmd := "cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp /dev/null js/alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel.txt; echo seen\n\nls $AF_WORK_DIR/js"
-	// The fixture's last line is "rtk ls …" (a hook rewrite inside the command) and never
-	// matches as a whole; compare the reconstruction directly.
+	// The fixture's last line is "rtk ls …", a hook rewrite inside the command. Compare the
+	// reconstruction directly so this pins the bare bar line alone.
 	region := []string{}
 	in := false
 	for _, ln := range m.Body {
@@ -532,5 +532,66 @@ func TestCheckTargetCommandSwallowedIndent(t *testing.T) {
 	// that wordWrapRun counts as the edge (2+3+59); this pins that edge.
 	if got := m.CheckTargetCommand(detail, "", strings.Replace(full, shown, ` │   expect(host.querySelector`, 1)); got != TargetMatches {
 		t.Errorf("indent of 3: got %v, want TargetMatches", got)
+	}
+}
+
+// The rtk hook rewrites any simple command it supports, not only the first one, and the dialog
+// draws the rewritten command (measured on 2.1.319, #3725). An Allow on such a dialog was refused
+// as target_mismatch.
+func TestCheckTargetCommandRtkInsideCommand(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "permmenu", "bash_rtk_inner_rewrite.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := ParsePermissionMenu(string(b))
+	if !ok || !m.BodyOK {
+		t.Fatalf("ok=%v BodyOK=%v", ok, m.BodyOK)
+	}
+	cmd := `cd $AF_WORK_DIR/probe; sed -i 's/width: 4/width: 5/' a.css; sleep 1; cd $AF_WORK_DIR/probe; rm -f old/*; ` +
+		`for x in one two three four five six seven eight; do printf '%s\n' ` +
+		`"$x-padding-to-make-this-command-long-enough-to-wrap-across-several-lines-of-the-terminal" > /dev/null; done; ls`
+	detail := "Bash · " + string([]rune(cmd)[:100]) + "…"
+	if got := m.CheckTargetCommand(detail, "", cmd); got != TargetMatches {
+		t.Errorf("the command the hook saw: got %v, want TargetMatches", got)
+	}
+	for _, other := range []string{
+		strings.TrimSuffix(cmd, "; ls") + "; ls -a",
+		strings.TrimSuffix(cmd, "; ls") + "; rm ls",
+		strings.Replace(cmd, "rm -f old/*", "rm -rf old/*", 1),
+	} {
+		d := "Bash · " + string([]rune(other)[:100]) + "…"
+		if got := m.CheckTargetCommand(d, "", other); got != TargetDiffers {
+			t.Errorf("%q: got %v, want TargetDiffers", other[len(other)-12:], got)
+		}
+	}
+}
+
+func TestStripRtk(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"rtk ls", "ls"},
+		{"cd x; rtk ls", "cd x; ls"},
+		{"a && rtk git status | rtk grep x", "a && git status | grep x"},
+		{"for f in *; do rtk cat $f; done", "for f in *; do cat $f; done"},
+		{"echo hi\nrtk ls", "echo hi\nls"},
+		{"(rtk ls)", "(ls)"},
+		// Not where a command starts: an argument, inside quotes, after "2>&1" (the "1" that
+		// follows the & starts nothing).
+		{"echo rtk ls", "echo rtk ls"},
+		{"echo 'a; rtk b'", "echo 'a; rtk b'"},
+		{`echo "a; rtk b"`, `echo "a; rtk b"`},
+		{"make 2>&1 rtk", "make 2>&1 rtk"},
+		{"cmd 2>&1 rtk x", "cmd 2>&1 rtk x"},
+		{`echo a\; rtk b`, `echo a\; rtk b`},
+	}
+	for _, c := range cases {
+		if got := stripRtk(c.in, false); got != c.want {
+			t.Errorf("stripRtk(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	if got := stripRtk("cd x; rt", true); got != "cd x; " {
+		t.Errorf("partial: %q", got)
+	}
+	if got := stripRtk("cd x; rt", false); got != "cd x; rt" {
+		t.Errorf("not partial: %q", got)
 	}
 }

@@ -248,8 +248,9 @@ var permDashRuleRe = regexp.MustCompile(`^\s*╌{10,}\s*$`)
 // prompt token binds an answer to the payload, not to the screen: if the next dialog is drawn
 // before the hook rewrites the payload (#3359), the answer lands on it. A Bash answer must
 // therefore go through CheckTargetCommand, which compares the dialog with the whole command.
-// cwd is the session directory, for a path drawn relative to it. The one rewrite accepted is the "rtk " prefix a command hook puts on the command
-// (measured: bash_four_options.txt); the payload holds the command as it was before.
+// cwd is the session directory, for a path drawn relative to it. The one rewrite accepted is the "rtk " a command hook puts in front of
+// a command (measured: bash_four_options.txt); the payload holds the command as it was before. CheckTargetCommand accepts it in
+// front of any simple command (stripRtk); this one-line comparison only at the start.
 func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 	return m.checkTarget(detail, cwd, nil)
 }
@@ -540,6 +541,84 @@ func normalizeCommand(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+// stripRtk removes the "rtk " a command hook puts in front of a simple command, so the command
+// the dialog draws compares equal to the one the PreToolUse hook saw. The hook rewrites any
+// simple command it supports, not only the first: measured on 2.1.319, "…; done; ls" was drawn
+// as "…; done; rtk ls", and Allow was refused as target_mismatch (#3725).
+//
+// Only an "rtk " where a simple command starts is removed: the start of the text or a line, or
+// after an unquoted ;, &, |, (, {, or a do/then/else/! keyword. Inside quotes nothing is removed,
+// so "echo 'a; rtk b'" and "echo 'a; b'" stay different. Removing it from both sides also
+// accepts a dialog that dropped an rtk the command had; "rtk X" runs X, so that is the same call.
+//
+// partial is for a text that may end mid-word (a reconstruction still growing line by line): a
+// trailing "r", "rt" or "rtk" where a command starts is dropped too, since the next line may
+// complete it to "rtk ".
+func stripRtk(s string, partial bool) string {
+	var b strings.Builder
+	start := true
+	var quote byte
+	for i := 0; i < len(s); {
+		c := s[i]
+		if quote != 0 {
+			b.WriteByte(c)
+			if c == quote {
+				quote = 0
+			} else if c == '\\' && quote == '"' && i+1 < len(s) {
+				b.WriteByte(s[i+1])
+				i++
+			}
+			i++
+			continue
+		}
+		if start {
+			if c == ' ' || c == '\t' {
+				b.WriteByte(c)
+				i++
+				continue
+			}
+			rest := s[i:]
+			if strings.HasPrefix(rest, "rtk ") {
+				i += len("rtk ")
+				continue
+			}
+			if partial && (rest == "r" || rest == "rt" || rest == "rtk") {
+				break
+			}
+			kw := false
+			for _, k := range []string{"do ", "then ", "else ", "! "} {
+				if strings.HasPrefix(rest, k) {
+					b.WriteString(k)
+					i += len(k)
+					kw = true
+					break
+				}
+			}
+			if kw {
+				continue
+			}
+			start = false
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '\\':
+			b.WriteByte(c)
+			i++
+			if i < len(s) {
+				b.WriteByte(s[i])
+				i++
+			}
+			continue
+		case ';', '&', '|', '(', '{', '\n':
+			start = true
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
 // matchFullCommand reports whether the command region of the dialog can be the whole of command.
 // Every boundary between two drawn lines is a wrap (nothing, or the swallowed run of blanks) only
 // where the terminal could have broken the line there, and is otherwise a real newline; a boundary
@@ -582,32 +661,25 @@ func matchFullCommand(region []string, command string, width int, tail bool) boo
 			opts[k] = []string{"\n"}
 		}
 	}
-	want := normalizeCommand(command)
+	want := stripRtk(normalizeCommand(command), false)
 	if want == "" {
 		return false
 	}
-	wants := []string{want, "rtk " + want}
 	var try func(i int, shown string) bool
 	try = func(i int, shown string) bool {
 		if tail {
-			if !strings.Contains(want, shown) {
+			if !strings.Contains(want, stripRtk(shown, true)) {
 				return false
 			}
 			if i == len(lines) {
-				return strings.HasSuffix(want, shown)
+				return strings.HasSuffix(want, stripRtk(shown, false))
 			}
 		} else {
-			viable := false
-			for _, w := range wants {
-				if strings.HasPrefix(w, shown) {
-					viable = true
-				}
-			}
-			if !viable {
+			if !strings.HasPrefix(want, stripRtk(shown, true)) {
 				return false
 			}
 			if i == len(lines) {
-				return strings.TrimSpace(shown) == want || strings.TrimSpace(shown) == "rtk "+want
+				return stripRtk(strings.TrimSpace(shown), false) == want
 			}
 		}
 		for _, sep := range opts[i-1] {

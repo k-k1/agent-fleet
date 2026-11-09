@@ -1,0 +1,24 @@
+
+     old/*; for x in one two three four five six seven eight; do printf '%s\n'
+     "$x-padding-to-make-this-command-long-enough-to-wrap-across-several-lines-of-the-terminal" > /dev/null;
+     done; ls
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Run second probe command
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ cd $AF_WORK_DIR/probe; sed -i 's/width: 4/width: 5/' a.css; sleep 1; cd $AF_WORK_DIR/probe; rm -f old/*;
+ │ for x in one two three four five six seven eight; do printf '%s\n'
+ │ "$x-padding-to-make-this-command-long-enough-to-wrap-across-several-lines-of-the-terminal" > /dev/null;
+ │ done; rtk ls
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ Dangerous rm operation on statically-unresolvable target: /home/dev/repos/agent-fleet@wip-sj3674c/old/*
+ ⚠ Claude Code will automatically block this request in 1:53, to avoid holding up an unattended session
+
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
+───────────────────────────────────────────────────────────── [AF:sa4k7f7] Repro #3725 safety-check dialog ─
