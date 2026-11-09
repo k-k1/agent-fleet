@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/watchingress"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +37,7 @@ func bridgeFamilies() []struct {
 		{"AF_AWS_PROFILES_TOKEN", awsProfilesSignKey, verifyAWSProfilesToken},
 		{"AF_GCP_PROFILES_TOKEN", gcpProfilesSignKey, verifyGCPProfilesToken},
 		{"AF_BRANCH_RULES_TOKEN", branchRulesSignKey, verifyBranchRulesToken},
+		{"AF_WATCH_TOKEN", watchingress.SignKey, watchingress.VerifyToken},
 	}
 }
 

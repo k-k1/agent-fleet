@@ -54,6 +54,12 @@ var workspaceRoutes = map[string]bool{
 	"POST /internal/schedules/{id}/resume":  true,
 	"POST /internal/schedules/{id}/run-now": true,
 	"GET /internal/schedules/{id}/runs":     true,
+	// Watch ingress registration and hooks (AF_WATCH_TOKEN). /webhooks/* is for providers, not
+	// workspaces, and is not listed.
+	"PUT /internal/watch-subjects":      true,
+	"GET /internal/watch-hooks":         true,
+	"POST /internal/watch-hooks":        true,
+	"DELETE /internal/watch-hooks/{id}": true,
 	// Git OAuth refresh (AF_GIT_OAUTH_TOKEN).
 	"POST /internal/git-oauth/bitbucket/refresh": true,
 	"POST /internal/git-oauth/jira/refresh":      true,
