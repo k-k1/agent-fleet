@@ -427,6 +427,25 @@ const re = [
     /^\/api\/sessions\/([^/]+)\/messages$/,
     (m) => {
       const body = fx.messages(LOCALE, decodeURIComponent(m[1]));
+      // SHOT_FORK: user turns carry the anchor a branch point needs, so "Branch here" shows.
+      if (process.env.SHOT_FORK) {
+        body.messages = body.messages.map((t) => (t.role === "user" ? { ...t, anchorId: `u-${t.idx}` } : t));
+      }
+      // SHOT_BUSY: a turn is running and nothing waits on the user (the guide's waiting-list shot).
+      if (process.env.SHOT_BUSY && body.status === "question") {
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return { ...rest, status: "working" };
+      }
+      // SHOT_TRANSLATE: the agent answered in the other language, so the translate button shows.
+      if (process.env.SHOT_TRANSLATE && body.status === "question") {
+        const other = fx.messages(LOCALE === "ja" ? "en" : "ja", decodeURIComponent(m[1])).messages;
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return {
+          ...rest,
+          status: "idle",
+          messages: body.messages.map((t, i) => (t.role === "assistant" && other[i] ? other[i] : t)),
+        };
+      }
       // SHOT_PLAN: the mirror session waits on a plan instead of a question (the guide's plan page).
       if (process.env.SHOT_PLAN && body.status === "question") {
         const { pendingQuestions: _q, pendingText: _t, ...rest } = body;

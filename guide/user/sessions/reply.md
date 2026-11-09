@@ -42,6 +42,8 @@ Which cards and choices you get depends on the agent and the state.
 | Plan awaiting approval | Choose **"Approve and run"** or **"Reject (keep going)"** |
 | Awaiting permission | **"Allow"** or **"Deny"** the edit or command. A choice that stops asking for the rest of the session, such as **"Always allow"**, may be offered too |
 
+![A pending question card. Under the header "Surface" and the question "Where should the zero-total error appear?" are three choices with descriptions, a free-text box, "Cancel — back to chat" and "Submit answer"](../../assets/conv-question-en-light.webp)
+
 - **Picking a choice does not send it.** You can change your mind, and compare the previews some choices come with, before anything goes out
 - **What you picked and typed is kept.** Look at another tab or the terminal and come back: the card is as you left it. It is cleared once the answer is sent or the question is cancelled
 - A question card may offer **"Translate"**; see [Read an answer in your own language](translate.md)

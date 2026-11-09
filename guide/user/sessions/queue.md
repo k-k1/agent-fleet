@@ -32,6 +32,8 @@ The waiting list and the queue are different things.
 2. Choose **"Add to waiting list"** from the **▾** on the right edge of the Send button (or press **Alt+Enter**). The ▾ appears only while a turn runs
 3. The instruction is listed in **"Waiting to send (N)"** above the input box. Nothing reaches the agent or the conversation yet
 
+!["Waiting to send (2)" above the input box. Two instructions are listed, each row with move up, move down, edit, send now and delete buttons. The Send button and its ▾ sit to the right of the input box](../../assets/conv-queue-en-light.webp)
+
 When the turn ends the first row is sent, then the next once the agent has started that turn and finished it, and so on.
 Two rows never go out at once.
 

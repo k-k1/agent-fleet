@@ -25,6 +25,8 @@ The current session is left as it is.
 2. Pressing it opens a confirmation. It shows the branch point, how many exchanges are carried, and that the current session stays as it is
 3. Choose **"Where to start"** and press **"Branch"**
 
+![The confirmation "Start a new session from just before this message". It shows the branch point, "Redo this message" and "Continue after it" under "Where to start", notes on what is carried, and the "Branch" button](../../assets/conv-fork-en-light.webp)
+
 | Where to start | What is carried | Use it when |
 |---|---|---|
 | **Redo this message** (default) | Everything before this message. The message itself lands in the new session's input box as a **draft** (not sent) | You want to reword the instruction |

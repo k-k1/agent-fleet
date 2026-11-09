@@ -32,6 +32,8 @@ It shows **what actually happened**, not what the agent said it would do.
 
 Each row carries a badge for the file's state.
 
+![The "Changed files" strip, opened. Right of the heading are the "Most recent" sort and the source-control button; five files are listed with the badges Unstaged, Staged, Untracked, Committed and No diff](../../assets/conv-files-en-light.webp)
+
 | Where the file is | Badge |
 |---|---|
 | In the working copy | **Untracked**, **Unstaged**, **Staged**, **Committed** or **No diff** |

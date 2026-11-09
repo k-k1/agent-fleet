@@ -25,6 +25,8 @@ Unlike sending "please answer in English" again, **no session turn is used.**
 2. That answer alone is replaced by its translation
 3. To go back, press **"Original"**
 
+![An answer from Claude written in Japanese. Its bottom row holds the time, token counts, and the "Translate" and "Copy" buttons](../../assets/conv-translate-en-light.webp)
+
 - It translates into the Console's display language. If you fixed **Reply language** to 日本語 or English in **⚙ Settings → "Assistant"**, it uses that
 - **Only prose is translated.** Code blocks, commands, paths and tool output stay as they were
 - Highlights stay on the original, so they are hidden while the translation is shown
