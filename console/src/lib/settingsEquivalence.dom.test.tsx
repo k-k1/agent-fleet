@@ -5,7 +5,7 @@
 //
 // Regenerate (only when a behaviour change is intended, and say so in the commit):
 //   UPDATE_SETTINGS_GOLDEN=1 npx vitest run src/lib/settingsEquivalence.dom.test.tsx
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -162,6 +162,18 @@ function check(name: string, actual: unknown) {
   expect(v).toEqual(golden[name]);
 }
 
+// Every timer here is fake, so the 5 s timeouts seen under load (full suite at --maxWorkers=2,
+// load average ~40) were pure CPU, not a wait on the 600 ms debounce: each fresh() re-evaluates
+// settings.ts and its graph, and the sweep tests do a dozen of them plus a trace of every key.
+// The first import in a worker also pays the cold transform. Pay that here, with an explicit
+// budget; the sweeps get a describe-level budget below rather than a raised global timeout. A
+// timed-out sweep also kept running into the next test (its loop is not cancelled), which is
+// how "sends the same body for a local change" failed as a knock-on.
+const SWEEP_BUDGET_MS = 60_000;
+beforeAll(async () => {
+  await import("./settings.ts");
+}, SWEEP_BUDGET_MS);
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-01T00:00:00Z"));
@@ -178,7 +190,7 @@ let KEYS: string[] = [];
 let DEFAULTS: Obj = {};
 let VALID: Obj = {};
 
-describe("settings.ts equivalence golden", () => {
+describe("settings.ts equivalence golden", { timeout: SWEEP_BUDGET_MS }, () => {
   it("exports the same surface", async () => {
     const s = await fresh(null);
     const surface: Obj = {};
