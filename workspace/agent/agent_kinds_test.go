@@ -176,6 +176,34 @@ func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 	}
 }
 
+// Each kind's gate decides its own row of the live catalog: opencode's bedrock route appears
+// only with AF_OPENCODE_BEDROCK_ROUTE=1, and neither claude's gate nor an open opencode gate
+// changes the other kind.
+func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
+	routesOf := func(kind string) []string {
+		for _, e := range buildKindCatalog(true).Kinds {
+			if e.Kind == kind {
+				return e.Routes
+			}
+		}
+		t.Fatalf("kind %q missing from the catalog", kind)
+		return nil
+	}
+	t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", "")
+	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
+	if got := routesOf("opencode"); len(got) != 0 {
+		t.Errorf("gate closed: opencode routes %v", got)
+	}
+	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "")
+	t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", "1")
+	if got := routesOf("opencode"); !slices.Equal(got, []string{"bedrock"}) {
+		t.Errorf("gate open: opencode routes %v, want [bedrock]", got)
+	}
+	if got := routesOf("claude"); slices.Contains(got, "bedrock") {
+		t.Errorf("opencode's gate opened claude's bedrock row: %v", got)
+	}
+}
+
 // A route declared but not yet offered (claude's bedrock, before decision 14's acceptance run) is
 // left out of the live catalog, so the launch dialog does not offer it; opening its gate adds it.
 func TestKindCatalogOffersOnlyReleasedRoutes(t *testing.T) {
