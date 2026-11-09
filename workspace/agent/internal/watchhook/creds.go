@@ -13,6 +13,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 )
 
+// executable names this binary, for the bkt-cred re-run; tests replace it.
+var executable = os.Executable
+
 // GitCreds is the member's credential for host, from the same git credential helper a push uses,
 // so an expiring token is renewed exactly as there. A pasted Bitbucket API token comes back from
 // git under a static user name; the REST API wants email:token, which `workspace-agent bkt-cred`
@@ -29,7 +32,7 @@ func GitCreds(ctx context.Context, host string) (Cred, error) {
 		return Cred{}, errors.New("no credential")
 	}
 	if host == "bitbucket.org" && user == "x-bitbucket-api-token-auth" {
-		self, err := os.Executable()
+		self, err := executable()
 		if err != nil {
 			return Cred{}, err
 		}

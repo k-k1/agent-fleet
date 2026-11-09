@@ -123,7 +123,7 @@ func Main(c *Client, args []string, out, errw io.Writer) int {
 			fmt.Fprintf(out, "hook %s already exists for %s. %s\n", res.ID, res.Repo, res.Note)
 			return 0
 		}
-		fmt.Fprintf(out, "hook %s installed at %s for %s (pull request and check events). Watches on this repository's pull requests are now poked.\n", res.ID, res.Source, res.Repo)
+		fmt.Fprintf(out, "hook %s installed at %s for %s (pull request, review, comment and check events). Watches on this repository's pull requests are now poked.\n", res.ID, res.Source, res.Repo)
 		return 0
 	case "rm":
 		if len(args) != 2 {

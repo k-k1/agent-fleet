@@ -66,6 +66,9 @@ type env struct {
 	msg     string // message in a refusal body
 	listing string // body of a hook listing
 	delSt   int
+	auths   []string          // Authorization header of every forge request
+	pages   map[string]string // GitHub listing by ?page=; overrides listing when set
+	drop    bool              // answer a hook creation by cutting the connection
 }
 
 func newEnv(t *testing.T) *env {
@@ -75,13 +78,25 @@ func newEnv(t *testing.T) *env {
 		b, _ := io.ReadAll(r.Body)
 		e.got = append(e.got, r.Method+" "+r.URL.Path)
 		e.bodies = append(e.bodies, string(b))
+		e.auths = append(e.auths, r.Header.Get("Authorization"))
 		switch r.Method {
 		case "POST":
+			if e.drop {
+				e.drop = false
+				hj, _ := w.(http.Hijacker)
+				c, _, _ := hj.Hijack()
+				c.Close()
+				return
+			}
 			w.WriteHeader(e.status)
 			if e.status >= 400 {
 				_ = json.NewEncoder(w).Encode(map[string]string{"message": e.msg})
 			}
 		case "GET":
+			if e.pages != nil {
+				_, _ = io.WriteString(w, e.pages[r.URL.Query().Get("page")])
+				return
+			}
 			_, _ = io.WriteString(w, e.listing)
 		case "DELETE":
 			w.WriteHeader(e.delSt)
@@ -216,11 +231,12 @@ func TestAddIsIdempotentPerRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.got = nil
+	e.listing = `[{"id":1,"config":{"url":"` + first.URL + `"}}]`
 	second, err := e.m.Add(context.Background(), "github", "acme/priv")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.Existing || second.ID != first.ID || len(e.cp.hooks) != 1 || len(e.got) != 0 {
+	if !second.Existing || second.ID != first.ID || len(e.cp.hooks) != 1 || len(e.got) != 1 || e.got[0] != "GET /repos/acme/priv/hooks" {
 		t.Fatalf("second add: %+v hooks=%d forge=%v", second, len(e.cp.hooks), e.got)
 	}
 }
@@ -344,4 +360,74 @@ func asErr(err error, target **Error) bool {
 		err = u.Unwrap()
 	}
 	return false
+}
+
+func TestAddSendsTheRightAuthorization(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.m.Add(context.Background(), "github", "a/b"); err != nil {
+		t.Fatal(err)
+	}
+	e.m.Creds = func(context.Context, string) (Cred, error) {
+		return Cred{User: "me@example.com", Token: "apitok", Basic: true}, nil
+	}
+	if _, err := e.m.Add(context.Background(), "bitbucket", "ws/r"); err != nil {
+		t.Fatal(err)
+	}
+	if e.auths[0] != "Bearer forge-token" {
+		t.Fatalf("github: %q", e.auths[0])
+	}
+	req, _ := http.NewRequest("GET", "http://x", nil)
+	req.SetBasicAuth("me@example.com", "apitok")
+	if e.auths[1] != req.Header.Get("Authorization") {
+		t.Fatalf("bitbucket api token must be Basic email:token, got %q", e.auths[1])
+	}
+}
+
+func TestRemoveFindsAGitHubHookOnLaterPages(t *testing.T) {
+	e := newEnv(t)
+	res, _ := e.m.Add(context.Background(), "github", "acme/priv")
+	e.got = nil
+	page1 := "[" + strings.Repeat(`{"id":1,"config":{"url":"https://other"}},`, 99) + `{"id":1,"config":{"url":"https://other"}}]`
+	e.pages = map[string]string{"1": page1, "2": `[{"id":99,"config":{"url":"` + res.URL + `"}}]`}
+	rm, err := e.m.Remove(context.Background(), res.ID)
+	if err != nil || !rm.ForgeRemoved || e.got[len(e.got)-1] != "DELETE /repos/acme/priv/hooks/99" {
+		t.Fatalf("%+v %v %v", rm, err, e.got)
+	}
+}
+
+func TestAddAgainWarnsWhenTheForgeWebhookIsGone(t *testing.T) {
+	e := newEnv(t)
+	res, _ := e.m.Add(context.Background(), "github", "acme/priv")
+	e.listing = `[]`
+	again, err := e.m.Add(context.Background(), "github", "acme/priv")
+	if err != nil || !again.Existing || !strings.Contains(again.Note, "missing at github.com") || !strings.Contains(again.Note, res.ID) {
+		t.Fatalf("%+v %v", again, err)
+	}
+	e.listing = `[{"id":1,"config":{"url":"` + res.URL + `"}}]`
+	again, _ = e.m.Add(context.Background(), "github", "acme/priv")
+	if strings.Contains(again.Note, "missing") {
+		t.Fatalf("healthy hook reported missing: %s", again.Note)
+	}
+}
+
+func TestLostInstallAnswerCleansUpAForgeHookThatMayExist(t *testing.T) {
+	e := newEnv(t)
+	e.drop = true
+	e.listing = `[{"id":5,"config":{"url":"https://af.example/webhooks/hooks/h1"}}]`
+	_, err := e.m.Add(context.Background(), "github", "acme/priv")
+	if err == nil || len(e.cp.hooks) != 0 {
+		t.Fatalf("err=%v hooks=%v", err, e.cp.hooks)
+	}
+	if e.got[len(e.got)-1] != "DELETE /repos/acme/priv/hooks/5" {
+		t.Fatalf("the possibly created forge hook was left: %v", e.got)
+	}
+}
+
+func TestRemoveOfAnUnknownSourceOnlyWarns(t *testing.T) {
+	e := newEnv(t)
+	e.cp.hooks["x"] = Hook{ID: "x", Source: "gitlab", Repo: "a/b", URL: "https://af.example/webhooks/hooks/x"}
+	rm, err := e.m.Remove(context.Background(), "x")
+	if err != nil || rm.ForgeRemoved || rm.Warning == "" || len(e.got) != 0 {
+		t.Fatalf("%+v %v %v", rm, err, e.got)
+	}
 }

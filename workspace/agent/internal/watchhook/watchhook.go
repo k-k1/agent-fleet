@@ -175,7 +175,11 @@ func (m *Manager) cp(ctx context.Context, method, path string, in, out any) erro
 		if status == http.StatusUnauthorized || status == http.StatusForbidden {
 			status = http.StatusBadGateway
 		}
-		return userErr(status, "cp_"+strings.TrimSpace(e.Error.Code), "%s", msg)
+		code := "cp_error"
+		if c := strings.TrimSpace(e.Error.Code); c != "" {
+			code = "cp_" + c
+		}
+		return userErr(status, code, "%s", msg)
 	}
 	if out == nil {
 		return nil
@@ -236,7 +240,13 @@ func (m *Manager) Add(ctx context.Context, source, repo string) (*AddResult, err
 	}
 	for _, h := range existing {
 		if h.Source == source && strings.EqualFold(h.Repo, repo) {
-			return &AddResult{Hook: h, Existing: true, Note: "a hook for this repository already exists, nothing changed. Its secret is shown only at creation: to start over, run `af-watch-hook rm " + h.ID + "` and add again."}, nil
+			note := "a hook for this repository already exists, nothing changed. Its secret is shown only at creation: to start over, run `af-watch-hook rm " + h.ID + "` and add again."
+			// A webhook deleted at the forge by hand leaves a hook that looks healthy and is
+			// never poked; say so rather than report all well.
+			if _, found, warn := m.findAtForge(ctx, cred, h); warn == "" && !found {
+				note = "the hook exists at Agent Fleet but its webhook is missing at " + host + " (deleted there?), so nothing is poked. Run `af-watch-hook rm " + h.ID + "` and add again."
+			}
+			return &AddResult{Hook: h, Existing: true, Note: note}, nil
 		}
 	}
 
@@ -255,6 +265,9 @@ func (m *Manager) Add(ctx context.Context, source, repo string) (*AddResult, err
 		rbErr := m.rollback(created.ID)
 		var ue *Error
 		if !errors.As(err, &ue) {
+			// The request may have reached the forge though its answer was lost: remove a
+			// webhook that carries this URL, best effort, so none is left that nobody can use.
+			m.removeAtForge(context.WithoutCancel(ctx), created.Hook)
 			ue = userErr(http.StatusBadGateway, "forge_failed", "installing the hook at %s failed: %s", host, scrub(err.Error(), created.Secret, cred.Token))
 		}
 		out := *ue
@@ -382,7 +395,7 @@ func (m *Manager) install(ctx context.Context, cred Cred, source, repo, hookURL,
 		case status == http.StatusCreated || status == http.StatusOK:
 			return nil
 		case status == 401 || status == 403 || status == 404:
-			return denied(source, repo, status, b)
+			return denied(source, repo, status, []byte(scrub(string(b), secret, cred.Token)))
 		default:
 			return fmt.Errorf("GitHub answered HTTP %d %s", status, forgeMessage(b))
 		}
@@ -393,7 +406,8 @@ func (m *Manager) install(ctx context.Context, cred Cred, source, repo, hookURL,
 			"description": "Agent Fleet watch", "url": hookURL, "active": true, "secret": secret,
 			"skip_cert_verification": false, "events": bitbucketEvents,
 		}
-		status, b, err := m.forge(ctx, cred, source, http.MethodPost, m.bbBase()+"/repositories/"+repo+"/hooks", payload, nil)
+		// Bitbucket workspace and repository slugs are lower case.
+		status, b, err := m.forge(ctx, cred, source, http.MethodPost, m.bbBase()+"/repositories/"+strings.ToLower(repo)+"/hooks", payload, nil)
 		if err != nil {
 			return err
 		}
@@ -401,7 +415,7 @@ func (m *Manager) install(ctx context.Context, cred Cred, source, repo, hookURL,
 		case status == http.StatusCreated || status == http.StatusOK:
 			return nil
 		case status == 401 || status == 403 || status == 404:
-			return denied(source, repo, status, b)
+			return denied(source, repo, status, []byte(scrub(string(b), secret, cred.Token)))
 		default:
 			return fmt.Errorf("Bitbucket answered HTTP %d %s", status, forgeMessage(b))
 		}
@@ -451,49 +465,48 @@ func (m *Manager) Remove(ctx context.Context, id string) (*RemoveResult, error) 
 	return res, nil
 }
 
-func (m *Manager) removeAtForge(ctx context.Context, h Hook) (bool, string) {
-	manual := fmt.Sprintf("delete the webhook with URL %s in the %s repository settings by hand; it no longer verifies, so it is harmless meanwhile", h.URL, h.Repo)
-	cred, err := m.Creds(ctx, hostOf(h.Source))
-	if err != nil || cred.Token == "" {
-		return false, "no " + hostOf(h.Source) + " token to remove the forge webhook: " + manual
-	}
+// findAtForge looks the hook's webhook up at the forge by its URL (the Control Plane keeps no
+// forge id). It returns the API URL to DELETE when found; warn is set when the lookup itself
+// could not be done, in which case found is false and nothing is known.
+func (m *Manager) findAtForge(ctx context.Context, cred Cred, h Hook) (deleteURL string, found bool, warn string) {
 	switch h.Source {
 	case GitHub:
-		status, b, err := m.forge(ctx, cred, GitHub, http.MethodGet, m.ghBase()+"/repos/"+h.Repo+"/hooks?per_page=100", nil, nil)
-		if err != nil {
-			return false, "could not list the repository's webhooks (" + err.Error() + "): " + manual
-		}
-		if status != http.StatusOK {
-			return false, fmt.Sprintf("GitHub refused to list the webhooks (HTTP %d: the token needs admin rights on %s): %s", status, h.Repo, manual)
-		}
-		var list []struct {
-			ID     int64 `json:"id"`
-			Config struct {
-				URL string `json:"url"`
-			} `json:"config"`
-		}
-		if json.Unmarshal(b, &list) != nil {
-			return false, "unreadable webhook list from GitHub: " + manual
-		}
-		for _, w := range list {
-			if w.Config.URL == h.URL {
-				st, _, err := m.forge(ctx, cred, GitHub, http.MethodDelete, fmt.Sprintf("%s/repos/%s/hooks/%d", m.ghBase(), h.Repo, w.ID), nil, nil)
-				if err != nil || (st != http.StatusNoContent && st != http.StatusNotFound) {
-					return false, fmt.Sprintf("GitHub did not delete the webhook (HTTP %d): %s", st, manual)
+		for page := 1; page <= 10; page++ {
+			status, b, err := m.forge(ctx, cred, GitHub, http.MethodGet, fmt.Sprintf("%s/repos/%s/hooks?per_page=100&page=%d", m.ghBase(), h.Repo, page), nil, nil)
+			if err != nil {
+				return "", false, "could not list the repository's webhooks (" + err.Error() + ")"
+			}
+			if status != http.StatusOK {
+				return "", false, fmt.Sprintf("GitHub refused to list the webhooks (HTTP %d: the token needs admin rights on %s)", status, h.Repo)
+			}
+			var list []struct {
+				ID     int64 `json:"id"`
+				Config struct {
+					URL string `json:"url"`
+				} `json:"config"`
+			}
+			if json.Unmarshal(b, &list) != nil {
+				return "", false, "unreadable webhook list from GitHub"
+			}
+			for _, w := range list {
+				if w.Config.URL == h.URL {
+					return fmt.Sprintf("%s/repos/%s/hooks/%d", m.ghBase(), h.Repo, w.ID), true, ""
 				}
-				return true, ""
+			}
+			if len(list) < 100 {
+				break
 			}
 		}
-		return false, "" // not installed at GitHub (already deleted there): nothing to do
-	default:
+		return "", false, ""
+	case Bitbucket:
 		next := m.bbBase() + "/repositories/" + h.Repo + "/hooks?pagelen=100"
 		for page := 0; next != "" && page < 10; page++ {
 			status, b, err := m.forge(ctx, cred, Bitbucket, http.MethodGet, next, nil, nil)
 			if err != nil {
-				return false, "could not list the repository's webhooks (" + err.Error() + "): " + manual
+				return "", false, "could not list the repository's webhooks (" + err.Error() + ")"
 			}
 			if status != http.StatusOK {
-				return false, fmt.Sprintf("Bitbucket refused to list the webhooks (HTTP %d: the credential needs the Webhooks scope and admin rights on %s): %s", status, h.Repo, manual)
+				return "", false, fmt.Sprintf("Bitbucket refused to list the webhooks (HTTP %d: the credential needs the Webhooks scope and admin rights on %s)", status, h.Repo)
 			}
 			var list struct {
 				Values []struct {
@@ -503,21 +516,41 @@ func (m *Manager) removeAtForge(ctx context.Context, h Hook) (bool, string) {
 				Next string `json:"next"`
 			}
 			if json.Unmarshal(b, &list) != nil {
-				return false, "unreadable webhook list from Bitbucket: " + manual
+				return "", false, "unreadable webhook list from Bitbucket"
 			}
 			for _, w := range list.Values {
 				if w.URL == h.URL {
-					st, _, err := m.forge(ctx, cred, Bitbucket, http.MethodDelete, m.bbBase()+"/repositories/"+h.Repo+"/hooks/"+url.PathEscape(w.UUID), nil, nil)
-					if err != nil || (st != http.StatusNoContent && st != http.StatusNotFound) {
-						return false, fmt.Sprintf("Bitbucket did not delete the webhook (HTTP %d): %s", st, manual)
-					}
-					return true, ""
+					return m.bbBase() + "/repositories/" + h.Repo + "/hooks/" + url.PathEscape(w.UUID), true, ""
 				}
 			}
 			next = list.Next
 		}
-		return false, ""
+		return "", false, ""
 	}
+	return "", false, "unknown source " + h.Source
+}
+
+func (m *Manager) removeAtForge(ctx context.Context, h Hook) (bool, string) {
+	manual := fmt.Sprintf("delete the webhook with URL %s in the %s repository settings by hand; it no longer verifies, so it is harmless meanwhile", h.URL, h.Repo)
+	if h.Source != GitHub && h.Source != Bitbucket {
+		return false, "this hook's source is not one af-watch-hook installs: " + manual
+	}
+	cred, err := m.Creds(ctx, hostOf(h.Source))
+	if err != nil || cred.Token == "" {
+		return false, "no " + hostOf(h.Source) + " token to remove the forge webhook: " + manual
+	}
+	del, found, warn := m.findAtForge(ctx, cred, h)
+	if warn != "" {
+		return false, warn + ": " + manual
+	}
+	if !found {
+		return false, "" // not installed at the forge (already deleted there): nothing to do
+	}
+	st, _, err := m.forge(ctx, cred, h.Source, http.MethodDelete, del, nil, nil)
+	if err != nil || (st != http.StatusNoContent && st != http.StatusNotFound) {
+		return false, fmt.Sprintf("%s did not delete the webhook (HTTP %d): %s", h.Source, st, manual)
+	}
+	return true, ""
 }
 
 func dotSegment(repo string) bool {
