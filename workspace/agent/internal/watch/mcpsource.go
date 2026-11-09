@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ const (
 	mcpMaxEvents     = 20
 	mcpMinPoll       = time.Minute
 	mcpMaxFailures   = 5
+	mcpMaxBadReplies = 20 // consecutive replies with malformed entries
 	mcpMaxRefLen     = 200
 	mcpMaxReply      = 256 << 10 // bytes of one tool result
 	mcpMaxCursor     = 4 << 10
@@ -60,18 +62,20 @@ type MCPSources struct {
 
 	now func() time.Time
 
-	connMu  sync.Mutex // serialises Sync, which can wait on a handshake; mu never does
-	mu      sync.Mutex
-	defs    []mcpreg.ServerDef
-	defsAt  time.Time
-	defsErr error
-	state   map[string]*mcpState // by definition ID
+	connected bool       // Conn may hold connections; guarded by connMu
+	connMu    sync.Mutex // serialises Sync, which can wait on a handshake; mu never does
+	mu        sync.Mutex
+	defs      []mcpreg.ServerDef
+	defsAt    time.Time
+	defsErr   error
+	state     map[string]*mcpState // by definition ID
 }
 
 // mcpState is the failure bookkeeping of one source.
 type mcpState struct {
 	fails      int
 	violations int
+	badRun     int   // consecutive replies with malformed entries
 	pausedAt   int64 // the definition's UpdatedAt when it was paused; 0 = running
 	paused     bool
 	lastErr    string
@@ -115,6 +119,11 @@ func (m *MCPSources) defsFor(fresh bool) (map[string]mcpreg.ServerDef, error) {
 	if m.defsErr != nil {
 		return nil, m.defsErr
 	}
+	for id := range m.state { // a removed definition keeps no state
+		if !slices.ContainsFunc(m.defs, func(d mcpreg.ServerDef) bool { return d.ID == id }) {
+			delete(m.state, id)
+		}
+	}
 	bySlug := map[string]mcpreg.ServerDef{}
 	clash := map[string]bool{}
 	for _, d := range m.defs {
@@ -153,8 +162,14 @@ func (m *MCPSources) stateLocked(id string) *mcpState {
 func (m *MCPSources) gate(d mcpreg.ServerDef) error {
 	if m.Allowed == nil || !m.Allowed() {
 		// Close whatever is running: a server of a tenant that switched the feature off keeps no
-		// child process of ours.
-		m.Conn.Sync(context.Background(), nil)
+		// child process of ours. Under connMu, like every Sync, so it cannot close a server a
+		// concurrent read has just connected; once closed it is not repeated for each refusal.
+		m.connMu.Lock()
+		if m.connected {
+			m.Conn.Sync(context.Background(), nil)
+			m.connected = false
+		}
+		m.connMu.Unlock()
 		return errors.New("watch sources are switched off for this tenant")
 	}
 	m.mu.Lock()
@@ -164,7 +179,7 @@ func (m *MCPSources) gate(d mcpreg.ServerDef) error {
 		*st = mcpState{}
 	}
 	if st.paused {
-		return fmt.Errorf("source paused after %d failed calls (last: %s); edit or re-enable the MCP server to resume", mcpMaxFailures, st.lastErr)
+		return fmt.Errorf("source paused (last: %s); edit or re-enable the MCP server to resume", st.lastErr)
 	}
 	return nil
 }
@@ -179,11 +194,35 @@ func (m *MCPSources) record(d mcpreg.ServerDef, err error) {
 		st.fails = 0
 		return
 	}
+	m.failLocked(d, st, err)
+}
+
+func (m *MCPSources) failLocked(d mcpreg.ServerDef, st *mcpState, err error) {
 	st.fails++
 	st.lastErr = CleanText(err.Error(), 120)
 	if st.fails >= mcpMaxFailures && !st.paused {
 		st.paused, st.pausedAt = true, d.UpdatedAt
-		log.Printf("watch: source %s paused after %d failed calls", d.Name, st.fails)
+		log.Printf("watch: source %s paused after %d failed calls", CleanText(d.Name, 60), st.fails)
+	}
+}
+
+// noteReply counts a reply that carried n malformed or out-of-namespace entries. It does not
+// count as a failed call (a server that delivers its events and adds a stray cursor still works),
+// but a server whose replies are malformed mcpMaxBadReplies times in a row is paused.
+func (m *MCPSources) noteReply(d mcpreg.ServerDef, n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.stateLocked(d.ID)
+	if n == 0 {
+		st.badRun = 0
+		return
+	}
+	st.violations += n
+	st.badRun++
+	st.lastErr = fmt.Sprintf("%d malformed entries in the last reply (%d in all)", n, st.violations)
+	if st.badRun >= mcpMaxBadReplies && !st.paused {
+		st.paused, st.pausedAt = true, d.UpdatedAt
+		log.Printf("watch: source %s paused after %d malformed replies", CleanText(d.Name, 60), st.badRun)
 	}
 }
 
@@ -205,6 +244,7 @@ func (m *MCPSources) connect(ctx context.Context, d mcpreg.ServerDef) error {
 	if errs := m.Conn.Sync(ctx, want); errs[d.Name] != nil {
 		return fmt.Errorf("cannot start the server: %w", errs[d.Name])
 	}
+	m.connected = len(want) > 0
 	return nil
 }
 
@@ -465,12 +505,7 @@ func (s *mcpSource) PollBatch(ctx context.Context, items []PollItem) []PollResul
 			}
 		}
 	}
-	if violations > 0 {
-		s.p.mu.Lock()
-		s.p.stateLocked(d.ID).violations += violations
-		s.p.mu.Unlock()
-		s.p.record(d, fmt.Errorf("%d malformed or out-of-namespace entries in a reply", violations))
-	}
+	s.p.noteReply(d, violations)
 	return out
 }
 
@@ -522,9 +557,13 @@ func parseMCPData(raw json.RawMessage) []DataItem {
 		}
 		switch {
 		case json.Unmarshal(e, &str) == nil:
-			out = append(out, DataItem{Text: CleanText(str, mcpDataTextMax)})
-		case json.Unmarshal(e, &obj) == nil && obj.Text != "":
-			out = append(out, DataItem{Text: CleanText(obj.Text, mcpDataTextMax), URL: SafeURL(obj.URL)})
+			if t := CleanText(str, mcpDataTextMax); t != "" {
+				out = append(out, DataItem{Text: t})
+			}
+		case json.Unmarshal(e, &obj) == nil && len(e) > 0 && e[0] == '{':
+			if t := CleanText(obj.Text, mcpDataTextMax); t != "" {
+				out = append(out, DataItem{Text: t, URL: SafeURL(obj.URL)})
+			}
 		default:
 			out = append(out, DataItem{Text: CleanText(string(e), mcpDataTextMax)})
 		}

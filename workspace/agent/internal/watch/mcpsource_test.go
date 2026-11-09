@@ -184,6 +184,9 @@ func TestMCPResolveRefAndKindRules(t *testing.T) {
 
 func TestMCPTenantSwitchOffRefusesAndStopsCalls(t *testing.T) {
 	f := newMCPFixture(t)
+	f.conn.poll = func(map[string]any) (string, error) { return pollReply(nil, nil, nil), nil }
+	f.source(t).PollBatch(context.Background(), []PollItem{{Subject: "ext:wiki_bot:p"}}) // connects
+	f.conn.calls, f.conn.synced = nil, nil
 	f.on = false
 	if _, err := f.resolve(t, "p"); err == nil {
 		t.Fatal("resolve while the switch is off")
@@ -380,8 +383,12 @@ func TestMCPAFailureRunIsBrokenBySuccess(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		f.source(t).PollBatch(context.Background(), item)
 	}
-	if r := f.source(t).PollBatch(context.Background(), item); r[0].Err == nil || strings.Contains(r[0].Err.Error(), "paused") && f.conn.polls() != 10 {
-		t.Errorf("failures were not consecutive: polls=%d err=%v", f.conn.polls(), r[0].Err)
+	r := f.source(t).PollBatch(context.Background(), item)
+	if f.conn.polls() != 10 {
+		t.Errorf("polls = %d, want 10: the run of failures was not broken by the success", f.conn.polls())
+	}
+	if r[0].Err == nil || strings.Contains(r[0].Err.Error(), "paused") {
+		t.Errorf("want the plain failure, not a pause: %v", r[0].Err)
 	}
 }
 
@@ -395,8 +402,6 @@ func TestMCPBadJSONCountsAsAFailure(t *testing.T) {
 }
 
 func TestMCPCheckTypes(t *testing.T) {
-	s := (&mcpFixture{}).src
-	_ = s
 	src := &mcpSource{slug: "wiki_bot"}
 	for _, ok := range [][]string{{"ext.wiki_bot.*"}, {"ext.wiki_bot.page_changed"}, {"ext.wiki_bot.page.v2.*"}} {
 		if err := src.CheckTypes(ok); err != nil {
@@ -455,12 +460,15 @@ func TestEngineReadsMCPSubjectsInOneBatchOfTwentyLeastRecentFirst(t *testing.T) 
 		return pollReply(nil, nil, nil), nil
 	}
 	for i := 0; i < 5; i++ {
-		if _, err := e.Subscribe(context.Background(), Request{Owner: fmt.Sprint("o", i), Requester: "", Source: "ext.wiki_bot", Ref: fmt.Sprint("p", i), Types: []string{"ext.wiki_bot.*"}}); err != nil {
-			// the fixture knows only "sess" as a session
-			f.kinds[fmt.Sprint("o", i)] = "claude"
-			if _, err := e.Subscribe(context.Background(), Request{Owner: fmt.Sprint("o", i), Source: "ext.wiki_bot", Ref: fmt.Sprint("p", i), Types: []string{"ext.wiki_bot.*"}}); err != nil {
-				t.Fatal(err)
-			}
+		req := Request{Owner: fmt.Sprint("o", i), Source: "ext.wiki_bot", Ref: fmt.Sprint("p", i), Types: []string{"ext.wiki_bot.*"}}
+		// The fixture knows only "sess": an unknown subscriber is refused ...
+		if _, err := e.Subscribe(context.Background(), req); err == nil {
+			t.Fatal("an unknown subscriber was accepted")
+		}
+		// ... until its kind is known.
+		f.kinds[req.Owner] = "claude"
+		if _, err := e.Subscribe(context.Background(), req); err != nil {
+			t.Fatal(err)
 		}
 	}
 	// p0..p4 read once; give p3 and p4 an earlier last read than the rest by hand.
@@ -643,5 +651,89 @@ func TestEngineChunksABatchSourceByMaxBatch(t *testing.T) {
 	e.Tick(context.Background())
 	if fmt.Sprint(src.sizes) != "[2 2 1]" {
 		t.Errorf("batches: %v", src.sizes)
+	}
+}
+
+func TestMCPStrayEntriesDoNotPauseAWorkingSource(t *testing.T) {
+	f := newMCPFixture(t)
+	f.conn.poll = func(map[string]any) (string, error) {
+		return pollReply([]map[string]any{{"subject": "ext:wiki_bot:a", "type": "ext.wiki_bot.edit", "version": "1"}},
+			map[string]any{"ext:wiki_bot:a": "c2", "ext:wiki_bot:stray": "x"}, nil), nil
+	}
+	item := []PollItem{{Subject: "ext:wiki_bot:a"}}
+	for i := 0; i < 8; i++ {
+		if r := f.source(t).PollBatch(context.Background(), item); r[0].Err != nil || len(r[0].Events) != 1 {
+			t.Fatalf("round %d: %+v", i, r[0])
+		}
+	}
+	// A source whose every reply is malformed is still paused, at its own threshold.
+	f.conn.poll = func(map[string]any) (string, error) {
+		return pollReply(nil, map[string]any{"ext:wiki_bot:stray": "x"}, nil), nil
+	}
+	for i := 0; i < mcpMaxBadReplies; i++ {
+		f.source(t).PollBatch(context.Background(), item)
+	}
+	if r := f.source(t).PollBatch(context.Background(), item); r[0].Err == nil || !strings.Contains(r[0].Err.Error(), "paused") {
+		t.Errorf("not paused after %d malformed replies: %v", mcpMaxBadReplies, r[0].Err)
+	}
+}
+
+func TestMCPSwitchOffClosesConnectionsOnceNotPerRefusal(t *testing.T) {
+	f := newMCPFixture(t)
+	f.conn.poll = func(map[string]any) (string, error) { return pollReply(nil, nil, nil), nil }
+	f.source(t).PollBatch(context.Background(), []PollItem{{Subject: "ext:wiki_bot:a"}}) // connects
+	f.on = false
+	for i := 0; i < 5; i++ {
+		f.source(t).PollBatch(context.Background(), []PollItem{{Subject: "ext:wiki_bot:a"}})
+		_, _ = f.resolve(t, "p")
+	}
+	closes := 0
+	for _, names := range f.conn.synced {
+		if len(names) == 0 {
+			closes++
+		}
+	}
+	if closes != 1 {
+		t.Errorf("Sync(nil) ran %d times", closes)
+	}
+}
+
+func TestMCPDataWithoutTextIsSkippedAndRemovedDefinitionsKeepNoState(t *testing.T) {
+	if got := parseMCPData(json.RawMessage(`[null,"",{"text":""},"kept"]`)); len(got) != 1 || got[0].Text != "kept" {
+		t.Errorf("%+v", got)
+	}
+	f := newMCPFixture(t)
+	f.conn.poll = func(map[string]any) (string, error) { return "", errors.New("boom") }
+	f.source(t).PollBatch(context.Background(), []PollItem{{Subject: "ext:wiki_bot:a"}})
+	if len(f.src.state) != 1 {
+		t.Fatal("no state")
+	}
+	f.def.ID = "other"
+	f.src.defsAt = time.Time{}
+	f.source(t).def()
+	if _, ok := f.src.state["id1"]; ok {
+		t.Error("state of a removed definition kept")
+	}
+}
+
+func TestMCPMalformedRunIsBrokenByACleanReply(t *testing.T) {
+	f := newMCPFixture(t)
+	bad := true
+	f.conn.poll = func(map[string]any) (string, error) {
+		if bad {
+			return pollReply(nil, map[string]any{"ext:wiki_bot:stray": "x"}, nil), nil
+		}
+		return pollReply(nil, nil, nil), nil
+	}
+	item := []PollItem{{Subject: "ext:wiki_bot:a"}}
+	for round := 0; round < 3; round++ {
+		bad = true
+		for i := 0; i < mcpMaxBadReplies-1; i++ {
+			f.source(t).PollBatch(context.Background(), item)
+		}
+		bad = false
+		if r := f.source(t).PollBatch(context.Background(), item); r[0].Err != nil {
+			t.Fatalf("round %d paused: %v", round, r[0].Err)
+		}
 	}
 }

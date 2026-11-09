@@ -148,3 +148,30 @@ func TestWatchDefsAreTheMembersOwnReadyServers(t *testing.T) {
 		t.Errorf("WatchDefs = %v", names)
 	}
 }
+
+// An edit or a toggle in the same second as the last one must still move UpdatedAt: the engine
+// lifts a paused source on that change.
+func TestUpdatedAtAlwaysMovesOnEditAndToggle(t *testing.T) {
+	withTempHome(t)
+	d, err := Create(ServerDef{Name: "w", Transport: TransportHTTP, URL: "https://w.example/mcp", Enabled: true, Targets: Targets{Watch: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := d.UpdatedAt
+	for i := 0; i < 3; i++ {
+		if err := SetEnabled(d.ID, i%2 == 1); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := Get(d.ID)
+		if got.UpdatedAt <= last {
+			t.Fatalf("toggle %d: UpdatedAt %d did not pass %d", i, got.UpdatedAt, last)
+		}
+		last = got.UpdatedAt
+	}
+	in := d
+	in.Label = "renamed"
+	up, err := Update(d.ID, in)
+	if err != nil || up.UpdatedAt <= last {
+		t.Fatalf("update: %v %d <= %d", err, up.UpdatedAt, last)
+	}
+}

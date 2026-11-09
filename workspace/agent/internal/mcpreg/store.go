@@ -352,6 +352,13 @@ func Create(in ServerDef) (ServerDef, error) {
 	return in, nil
 }
 
+// nextUpdatedAt is the new UpdatedAt of an edited definition. It always moves past the old one:
+// the clock has one-second resolution, and the watch engine lifts a paused source when UpdatedAt
+// changes, which an edit or a toggle made within the same second must still do.
+func nextUpdatedAt(old int64) int64 {
+	return max(time.Now().Unix(), old+1)
+}
+
 // Update replaces a user-scope definition. Masked secret values keep their stored
 // counterparts. Tenant rows are read-only locally (use SetEnabled); builtin rows are read-only, period.
 func Update(id string, in ServerDef) (ServerDef, error) {
@@ -376,7 +383,7 @@ func Update(id string, in ServerDef) (ServerDef, error) {
 	in.ID = stored.ID
 	in.Origin = OriginUser
 	in.CreatedAt = stored.CreatedAt
-	in.UpdatedAt = time.Now().Unix()
+	in.UpdatedAt = nextUpdatedAt(stored.UpdatedAt)
 	if err := Validate(in); err != nil {
 		return ServerDef{}, err
 	}
@@ -508,7 +515,7 @@ func SetEnabled(id string, on bool) error {
 	for i := range s.MCP {
 		if s.MCP[i].ID == id {
 			s.MCP[i].Enabled = on
-			s.MCP[i].UpdatedAt = time.Now().Unix()
+			s.MCP[i].UpdatedAt = nextUpdatedAt(s.MCP[i].UpdatedAt)
 			return s.Save()
 		}
 	}
