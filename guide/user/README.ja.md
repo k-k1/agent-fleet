@@ -10,6 +10,20 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 1 ページに 1 つの「やりたいこと」をまとめています。今のガイドの章を、順にここへ書き直しています。
 まだここにないことは [Agent Fleet を使う](../member/README.ja.md) の章にあります。
 
+## はじめに
+
+| ページ | できること |
+|---|---|
+| [Agent Fleet でできること](start/overview.ja.md) | 何ができて、どのページから読めばいいかを知る |
+| [最初のセッションを始める](start/quickstart.ja.md) | サインインしてから、最初の返事を受け取るまでを進める |
+| [用語と全体像](start/concepts.ja.md) | テナント・ワークスペース・セッション・エージェントの関係を知る |
+| [画面の見かた](start/console-tour.ja.md) | 上部バー・ワークスペース操作バー・左ペイン・メイン領域のどこに何があるかを知る |
+| [キーボードとコマンドパレットで操作する](start/shortcuts.ja.md) | ショートカットとコマンドパレットで、マウスを使わずに動かす |
+| [画面を分けて並べる](start/panes.ja.md) | セッションやファイルをペインに並べ、配置を選ぶ |
+| [スマートフォンで使う](start/phone.ja.md) | スマートフォンから進み具合を見て、返事をする |
+| [一日の終わりにワークスペースを止める](start/end-of-day.ja.md) | 作業を残したままワークスペースを止め、「要再起動」に対応する |
+| [ターミナルを使わない人のための入口](start/without-terminal.ja.md) | チャット・閲覧・進み具合の確認だけで使う |
+
 ## セッション
 
 | ページ | できること |
@@ -43,6 +57,25 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [Git Flow を初期化する](code/git-flow.ja.md) | 課題から作るブランチを、git-flow の流儀にそろえる |
 | [コミットグラフでコミットする](code/commit.ja.md) | 履歴と差分を見て、端末を開かずにコミットする |
 | [Subversion のリポジトリを使う](code/svn.ja.md) | Subversion のリポジトリをチェックアウトして、セッションで作業する |
+
+## ファイルとターミナル
+
+| ページ | できること |
+|---|---|
+| [ファイルを見る・ダウンロードする](files/browse.ja.md) | ワークスペースのファイルをたどって開き、ファイルやフォルダをダウンロードする |
+| [ドキュメントや図を表示する](files/view.ja.md) | Markdown・スライド・`.drawio` の図・PDF・Office の文書を Console で読む |
+| [ファイルを編集する](files/edit.ja.md) | 開いたファイルをその場で直して保存する。AI に書き換えを提案させる |
+| [ファイルをセッションに渡す](files/send.ja.md) | 選んだ範囲を、指示を添えてセッションやアシスタントに送る |
+| [ターミナルを使う](files/terminal.ja.md) | ブラウザの端末でコピー・貼り付けをし、打鍵の遅れを見て、フォントを変える |
+
+## プレビュー
+
+| ページ | できること |
+|---|---|
+| [起動した Web アプリを見る](preview/browser-pane.ja.md) | ワークスペースで起動した Web アプリを、ブラウザペインや軽量プレビューで開く |
+| [プレビュー用のサブドメインを使う](preview/subdomains.ja.md) | アプリをルート直下の URL で開き、同僚やテナントの外の人に見せる |
+| [プレビューで Google ログインを試す](preview/dev-signin.ja.md) | プレビューの URL や自分の PC のアプリで、Google ログインを試す |
+| [エージェントが開いたブラウザを操作する](preview/agent-browser.ja.md) | エージェントのブラウザで、ログインなど人にしかできない操作を引き受ける |
 
 ## エージェント
 
@@ -113,3 +146,56 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [AWS のコードを手元のエミュレーターで試す](workspace/aws-emulator.ja.md) | 本物のアカウントに触らずに、AWS のコードを試す |
 | [設定を書き出す・取り込む](workspace/export-import.ja.md) | 自分の設定を、別の環境やアカウントへ持っていく |
 | [稼働時間とクラウド費用を見る](workspace/cost.ja.md) | ワークスペースがいつ動いていて、いくらかかっているかを見る |
+
+## チーム
+
+| ページ | できること |
+|---|---|
+| [セッションをメンバーに渡す](team/hand-over.ja.md) | 共有しているメンバーに、セッションの続きを引き継いでもらう |
+| [受信箱でチームメイトに頼む](team/inbox.ja.md) | メンバーにメッセージや依頼を送り、引き受けた人がセッションを始める |
+| [会話を共有する](team/share.ja.md) | 会話を読み取り専用で見せ、必要なら提案を受け付ける |
+| [使用量の上限の状況を見せ合う](team/usage-limits.ja.md) | 利用上限にどれだけ近いかを、選んだメンバーに見せる |
+
+## チャット
+
+| ページ | できること |
+|---|---|
+| [アシスタントに質問する](chat/assistant.ja.md) | リポジトリなしで質問する。長い会話を圧縮し、作業計画を残す |
+| [翻訳や専用のアシスタントを使う](chat/purpose-assistants.ja.md) | ファイルを翻訳・要約する。自分用のアシスタントを作り、AI 補助を設定する |
+| [メモをためて渡す](chat/memos.ja.md) | 思いついた指示をためて整理し、まとめてセッションに送る |
+
+## 外からつなぐ
+
+| ページ | できること |
+|---|---|
+| [外部の Claude からワークスペースを動かす](outside/external-claude.ja.md) | 手元の Claude Code や Claude Desktop から、トークンでセッションを動かす |
+| [リモートの MCP クライアントをサインインでつなぐ](outside/oauth-client.ja.md) | claude.ai・ChatGPT・Claude Code・Codex を、トークンなしでつなぐ |
+| [手元の Claude Code の作業をワークスペースに移す](outside/move-work-in.ja.md) | 手元で始めた作業を push して、ワークスペースのセッションで続ける |
+
+## 設定
+
+| ページ | できること |
+|---|---|
+| [表示とアカウントを変える](settings/display.ja.md) | 言語・タイムゾーン・テーマ・フォントを変え、サインイン方法を追加する |
+| [通知を受け取る](settings/notifications.ja.md) | 通知の種類ごとに、未読ドット・OS の通知・読み上げを選ぶ |
+| [読み上げを使う](settings/read-aloud.ja.md) | 回答を声で読み上げる。声と読み方を選ぶ |
+
+## セキュリティ
+
+| ページ | できること |
+|---|---|
+| [資格情報を安全に扱う](security/credentials.ja.md) | トークンや鍵をどこに置き、どこに書かないかを知る |
+
+## 困ったとき
+
+| ページ | できること |
+|---|---|
+| [ワークスペースが起動しない・止まった](troubleshooting/workspace.ja.md) | 電源ボタンの横のバッジや、起動・ディスクのメッセージから直し方を探す |
+| [セッションが再開できない・見当たらない](troubleshooting/sessions.ja.md) | 消えた・再開できない・途中で止まったセッション、共有や定時実行の不調を直す |
+| [エージェントにログインできない・モデルが出ない](troubleshooting/agents.ja.md) | ログインの期限切れ、選べないモデル、止まったアシスタントを直す |
+| [クローンや認証に失敗する](troubleshooting/git.ja.md) | クローン、private リポジトリの認証、submodule の失敗を直す |
+| [プレビューやブラウザが表示されない](troubleshooting/preview.ja.md) | ブラウザペインやプレビューの URL に出るエラーから直し方を探す |
+| [MCP・クラウド・Jira が動かない](troubleshooting/integrations.ja.md) | MCP サーバー、AWS・Google Cloud のコマンド、`jira`、外から接続するアプリの不調を直す |
+| [ターミナルやスマートフォンで操作できない](troubleshooting/terminal-phone.ja.md) | キー操作、コピー＆ペースト、スマートフォンでの操作、出ないメニューを直す |
+| [よくある質問](troubleshooting/faq.ja.md) | 最初に試すことと、よく聞かれる質問の答えを読む |
+| [不具合を報告する・要望を出す](troubleshooting/report.ja.md) | Agent Fleet そのものの不具合や、ほしい機能を Issue で伝える |

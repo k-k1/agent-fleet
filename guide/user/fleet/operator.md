@@ -132,4 +132,5 @@ You can also talk to the same Fleet Operator from Discord or Slack ([Connect Dis
 
 - [Ways to use the Fleet Operator](operator-patterns.md)
 - [Run at a set time](schedules.md)
-- [10 Chat and memos](../../member/10-chat-memo.md): assistant chat and the memo queue
+- [Ask an assistant](../chat/assistant.md)
+- [Collect memos and hand them over](../chat/memos.md)

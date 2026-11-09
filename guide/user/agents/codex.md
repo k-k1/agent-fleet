@@ -70,7 +70,7 @@ While it is off, approving never finishes the connection.
 ### The sign-in expired, and sending is refused
 
 After a turn fails on an expired sign-in, sending is refused until you sign in again. Sign in again with "**Re-authenticate**" on the card.
-The details are in [Troubleshooting](../../member/21-troubleshooting.md#a-claude-session-shows-login-expired-sign-in-again-or-sending-starts-nothing).
+The details are in [Fix an agent's login or a missing model](../troubleshooting/agents.md#login-expired-sign-in-again-and-sending-starts-nothing).
 
 ## Related
 

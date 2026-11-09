@@ -10,6 +10,20 @@ English | [日本語](README.ja.md)
 Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
 Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
 
+## Getting started
+
+| Page | What you can do |
+|---|---|
+| [What you can do with Agent Fleet](start/overview.md) | Learn what it does and which page to read first |
+| [Start your first session](start/quickstart.md) | Go from signing in to the first reply |
+| [Terms and the big picture](start/concepts.md) | See how tenants, workspaces, sessions and agents relate |
+| [Find your way around the screen](start/console-tour.md) | Know what sits where on the top bar, the workspace action bar, the left pane and the main area |
+| [Use the keyboard and the command palette](start/shortcuts.md) | Drive the Console without the mouse, with shortcuts and the command palette |
+| [Split the screen into panes](start/panes.md) | Lay out sessions and files in panes, and choose the layout |
+| [Use it on a phone](start/phone.md) | Check progress and reply from a phone |
+| [Stop the workspace at the end of the day](start/end-of-day.md) | Stop the workspace with your work kept, and deal with Restart needed |
+| [Start here if you don't use the terminal](start/without-terminal.md) | Use only chat, reading and progress checks |
+
 ## Sessions
 
 | Page | What you can do |
@@ -43,6 +57,25 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Initialize Git Flow](code/git-flow.md) | Make the branches started from issues follow git-flow |
 | [Commit in the commit graph](code/commit.md) | Read history and diffs, and commit without opening a terminal |
 | [Use a Subversion repository](code/svn.md) | Check out a Subversion repository and work in it from a session |
+
+## Files and terminal
+
+| Page | What you can do |
+|---|---|
+| [See and download files](files/browse.md) | Walk the workspace's files, open them, and download files and folders |
+| [View documents and diagrams](files/view.md) | Read Markdown, slides, `.drawio` diagrams, PDFs and Office documents in the Console |
+| [Edit a file](files/edit.md) | Fix an open file in place and save it. Have an AI propose a change |
+| [Hand a file to a session](files/send.md) | Send a selection, with instructions, to a session or an assistant |
+| [Use the terminal](files/terminal.md) | Copy and paste in the browser terminal, read its lag, change its font |
+
+## Preview
+
+| Page | What you can do |
+|---|---|
+| [See a web app you started](preview/browser-pane.md) | Open a web app started in the workspace in the browser pane or the lightweight preview |
+| [Use preview subdomains](preview/subdomains.md) | Open the app at its own root URL and show it to colleagues or outsiders |
+| [Try Google sign-in on a preview](preview/dev-signin.md) | Try Google sign-in on a preview URL or from an app on your own machine |
+| [Operate a browser the agent opened](preview/agent-browser.md) | Take over a step only a person can do, such as a login, in the agent's browser |
 
 ## Agents
 
@@ -113,3 +146,56 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Try AWS code against a local emulator](workspace/aws-emulator.md) | Try AWS code without touching a real account |
 | [Export and import your settings](workspace/export-import.md) | Take your settings to another environment or account |
 | [See running time and cloud cost](workspace/cost.md) | See when the workspace was running and what it costs |
+
+## Team
+
+| Page | What you can do |
+|---|---|
+| [Hand a session to a member](team/hand-over.md) | Have a member you share a session with carry it on |
+| [Ask a teammate through the inbox](team/inbox.md) | Send members a message or a request; whoever takes it starts a session |
+| [Share a conversation](team/share.md) | Show a conversation read-only, and take suggestions on it if you want |
+| [Show each other where you stand on usage limits](team/usage-limits.md) | Show members you choose how close you are to your usage limits |
+
+## Chat
+
+| Page | What you can do |
+|---|---|
+| [Ask an assistant](chat/assistant.md) | Ask questions without a repository; compact a long conversation and keep a work plan |
+| [Use translation and purpose-built assistants](chat/purpose-assistants.md) | Translate or summarize a file; make your own assistant and set up AI assistance |
+| [Collect memos and hand them over](chat/memos.md) | Collect instructions as they come, tidy them, and send them to a session together |
+
+## Outside access
+
+| Page | What you can do |
+|---|---|
+| [Drive your workspace from an external Claude](outside/external-claude.md) | Drive sessions from your own Claude Code or Claude Desktop with a token |
+| [Connect a remote MCP client by signing in](outside/oauth-client.md) | Connect claude.ai, ChatGPT, Claude Code or Codex without a token |
+| [Move work from your own Claude Code into the workspace](outside/move-work-in.md) | Push work you started on your computer and carry on in a workspace session |
+
+## Settings
+
+| Page | What you can do |
+|---|---|
+| [Change the display and your account](settings/display.md) | Change language, time zone, theme and fonts; add a sign-in method |
+| [Get notified](settings/notifications.md) | Choose the unread dot, the OS notification and read-aloud for each kind of notification |
+| [Use read-aloud](settings/read-aloud.md) | Have answers read out loud; choose the voice and how it reads |
+
+## Security
+
+| Page | What you can do |
+|---|---|
+| [Handle credentials safely](security/credentials.md) | Know where tokens and keys belong, and where never to write them |
+
+## Troubleshooting
+
+| Page | What you can do |
+|---|---|
+| [Fix a workspace that will not start or has stopped](troubleshooting/workspace.md) | Find the fix from the badge beside the power button, or a start or disk message |
+| [Find a missing session or one that will not resume](troubleshooting/sessions.md) | Fix sessions that vanished, will not resume or stopped partway, and sharing or scheduled runs that misbehave |
+| [Fix an agent's login or a missing model](troubleshooting/agents.md) | Fix an expired login, a model you cannot pick, or an assistant that stopped |
+| [Fix a failed clone or Git authentication](troubleshooting/git.md) | Fix failed clones, private-repository authentication and submodule fetches |
+| [Fix a preview or browser pane that does not show](troubleshooting/preview.md) | Find the fix from the error the browser pane or a preview URL shows |
+| [Fix MCP, cloud and Jira integrations](troubleshooting/integrations.md) | Fix MCP servers, AWS and Google Cloud commands, `jira`, and apps connected from outside |
+| [Fix the terminal, keys and phone layout](troubleshooting/terminal-phone.md) | Fix keys, copy and paste, the phone layout, and menus that do not appear |
+| [Read the frequently asked questions](troubleshooting/faq.md) | Read what to try first, and answers to common questions |
+| [Report a bug or request a feature](troubleshooting/report.md) | Tell the project about a bug in Agent Fleet itself, or a feature you want, with an issue |

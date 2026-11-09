@@ -1300,3 +1300,23 @@
   justify-content: center;
   padding: 2px 7px;
 }
+/* The die tumbles once per press of the dice button. */
+.dice-roll {
+  animation: dice-roll 0.5s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes dice-roll {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  40% {
+    transform: rotate(220deg) scale(0.8);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dice-roll {
+    animation: none;
+  }
+}

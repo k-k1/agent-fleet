@@ -566,6 +566,24 @@ const SCENES = [
     settle: 4000,
   },
   {
+    name: "ws-agent-silent",
+    guide: true,
+    // The stub reports a silent Agent only in a run that sets this (server.mjs).
+    stubEnv: { SHOT_AGENT_SILENT: "1" },
+    clip: [".ws-agentsilent .ws-stale-pill", ".ws-agentsilent .ws-stale-pop"],
+    pad: 24,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 760,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      // The badge appears after the first workspace poll: wait for it rather than for a fixed time.
+      for (let i = 0; i < 50 && !document.querySelector(".ws-agentsilent .ws-stale-pill"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".ws-agentsilent .ws-stale-pill")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
     name: "aws-badge",
     guide: true,
     clip: [".ws-aws-btn", ".ws-aws-pop"],
@@ -1827,6 +1845,698 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // The Files section with a folder's right-click menu (files/browse page): open a shell here,
+    // download as zip, and the rest. The clip is the menu and the row it was opened on.
+    name: "files-menu",
+    guide: true,
+    clip: [".files-ctxmenu", "#shot-files-row"],
+    pad: 8,
+    sections: { assistant: 0, workitems: 0, memos: 0, schedules: 0, repos: 0, files: 1 },
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/runbook.md" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const row = (name) => [...document.querySelectorAll(".fsrow")].find((el) => (el.querySelector(".fs-name")?.textContent || "").trim() === name);
+      for (let i = 0; i < 50 && !row("webshop"); i++) await wait(200);
+      if (!row("docs")) row("webshop")?.click();
+      for (let i = 0; i < 50 && !row("docs"); i++) await wait(200);
+      const r = row("docs");
+      if (r) r.id = "shot-files-row";
+      const b = r?.getBoundingClientRect();
+      r?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: b ? b.left + 150 : 200, clientY: b ? b.top + 8 : 300 }));
+    })()`,
+    settle: 1500,
+  },
+  {
+    // A Markdown file in the viewer (files/view page): the Preview / Source switch over the
+    // rendered text and its Mermaid diagram.
+    name: "files-view",
+    guide: true,
+    clip: ".fileview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1100,
+    height: 760,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/checkout-flow.md" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mermaid-diagram svg")`,
+  },
+  {
+    // A draw.io diagram in the viewer (files/view page): the Diagram / Source switch and the
+    // page and zoom readout the header shows once the viewer has drawn.
+    name: "files-drawio",
+    guide: true,
+    clip: ".fileview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1100,
+    height: 700,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/architecture.drawio" })])], colRatios: [1], activeId: "p0" },
+    ready: `[...document.querySelectorAll(".fi-meta")].some((el) => /\\d%/.test(el.textContent || ""))`,
+  },
+  {
+    // The same file switched to Split (files/edit page): the editor beside the preview, with Save
+    // and AI proposal in the header.
+    name: "files-edit",
+    guide: true,
+    stubEnv: { SHOT_FILES_GUIDE: "1" },
+    clip: ".fileview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 760,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/checkout-flow.md" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mermaid-diagram svg")`,
+    action: `(async () => {
+      const b = [...document.querySelectorAll(".fileview button")].find((el) => /^(分割|Split)$/.test((el.textContent || "").trim()));
+      b?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Text selected in the viewer and "Send" pressed (files/send page): the send dialog.
+    name: "files-send",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/checkout-flow.md" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mermaid-diagram svg")`,
+    // The pill appears for a selection in the source lines (the code grid), not in the rendered
+    // preview, so the scene switches to Source first and selects a few lines there.
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      [...document.querySelectorAll(".fileview button")].find((el) => /^(ソース|Source)$/.test((el.textContent || "").trim()))?.click();
+      for (let i = 0; i < 30 && !document.querySelector(".codeview .codegrid"); i++) await wait(200);
+      const grid = document.querySelector(".codeview .codegrid");
+      const cells = grid ? [...grid.querySelectorAll("*")].filter((el) => /カートから|from the cart to/.test(el.textContent || "") && el.children.length === 0) : [];
+      const cell = cells[0];
+      if (cell) {
+        const range = document.createRange();
+        range.selectNodeContents(cell);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        const b = cell.getBoundingClientRect();
+        cell.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: b.right - 10, clientY: b.bottom - 4 }));
+      }
+      for (let i = 0; i < 20 && !document.querySelector(".sel-send-pill"); i++) await wait(200);
+      document.querySelector(".sel-send-pill")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // Settings › Display, the Terminal group (files/terminal page): font, size and the copy and
+    // paste switches.
+    name: "files-terminal",
+    guide: true,
+    clip: "#shot-term-group",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "display",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const h = [...document.querySelectorAll(".settings-modal .ds-title")].find((el) => /^(ターミナル|Terminal)$/.test((el.textContent || "").trim()));
+      if (h) { const g = h.closest(".ds-group") || h.parentElement; g.id = "shot-term-group"; g.scrollIntoView({ block: "center" }); }
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The workspace bar's Preview popover (preview/browser-pane page): the port and path fields,
+    // the open targets and this start's preview URLs.
+    name: "preview-pop",
+    guide: true,
+    clip: ".ws-preview-pop",
+    pad: 4,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 30 && document.querySelector(".ws-preview-btn")?.disabled; i++) await wait(300);
+      document.querySelector(".ws-preview-btn")?.click();
+      for (let i = 0; i < 30 && !document.querySelector(".ws-preview-pop .pv-host"); i++) await wait(200);
+      // A port typed in, so the open buttons read as they do in use rather than greyed out.
+      const port = document.querySelector(".ws-preview-pop .preview-port");
+      if (port) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(port, "5173");
+        port.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Settings › Preview subdomains (preview/subdomains page): the current URLs, the ports and
+    // the switches that widen who may open them.
+    name: "preview-settings",
+    guide: true,
+    stubEnv: { SHOT_PREVIEW_GUIDE: "1" },
+    clip: ["#shot-pv-a", "#shot-pv-b"],
+    pad: 4,
+    sections: FOCUS_TREE,
+    settings: "preview",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      // The tab is one section; the clip runs from its title to the reissue note.
+      const h = document.querySelector(".settings-modal .ds-title");
+      if (h) h.id = "shot-pv-a";
+      const re = [...document.querySelectorAll(".settings-modal button")].find((el) => /いま捨てて発行し直す|Discard and mint a new one/i.test(el.textContent || ""));
+      if (re) re.id = "shot-pv-b";
+      h?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The development OIDC IdP block of the same tab (preview/dev-signin page): issuer, discovery
+    // URL and client id with their copy buttons, and the secret rotation.
+    name: "preview-devidp",
+    guide: true,
+    stubEnv: { SHOT_PREVIEW_GUIDE: "1" },
+    clip: ["#shot-dip-a", "#shot-dip-b"],
+    pad: 4,
+    sections: FOCUS_TREE,
+    settings: "preview",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const h = [...document.querySelectorAll(".settings-modal .ds-title")].find((el) => /OIDC/.test(el.textContent || ""));
+      if (h) h.id = "shot-dip-a";
+      const rot = [...document.querySelectorAll(".settings-modal button")].find((el) => /新しい secret を発行|Issue a new secret/i.test(el.textContent || ""));
+      const row = rot?.closest(".ds-row, div");
+      if (row) row.id = "shot-dip-b";
+      h?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  // ---- team pages (SHOT_TEAM_GUIDE) ----
+  {
+    // The hand-to-member dialog: two teammates the session is shared with, and a branch with
+    // commits not pushed yet, so the push gate and "Push, then send" show.
+    name: "team-handover",
+    guide: true,
+    stubEnv: { SHOT_TEAM_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      // The rail re-renders while its first polls land, which closes a menu opened too early.
+      await new Promise((r) => setTimeout(r, 3000));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /メンバーへ引き継ぐ|Hand off to a member/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".ui-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 1500));
+      // Fill the title and the prompt the way the owner would, through React's own setter.
+      const set = (el, v) => {
+        const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      const m = document.querySelector(".ui-modal");
+      const ja = document.documentElement.lang !== "en" && /引き継/.test(m?.textContent || "");
+      const t = m?.querySelector("input[type=text], input:not([type])");
+      if (t && !t.value) set(t, ja ? "チェックアウトの入力検証（続き）" : "Checkout input validation (cont.)");
+      const p = m?.querySelector("textarea");
+      if (p) set(p, ja ? "郵便番号の検証まで済んでいます。残りは電話番号の形式チェックとテストです。" : "Postal-code validation is done. Phone-number format checks and their tests are left.");
+      // Tick "Push, then send" so the send button is live, as it is right before sending.
+      m?.querySelector("input[type=checkbox]")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The share dialog opened from a session's menu: the exposure warning, a teammate picked
+    // from the suggestions, and "Can propose" chosen.
+    name: "team-share",
+    guide: true,
+    stubEnv: { SHOT_TEAM_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      // The rail re-renders while its first polls land, which closes a menu opened too early.
+      await new Promise((r) => setTimeout(r, 3000));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /^\\s*(共有する|Share)/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".share-recipient-suggest .ui-menu-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".share-recipient-suggest .ui-menu-item")?.click();
+      await new Promise((r) => setTimeout(r, 300));
+      [...document.querySelectorAll(".ui-modal .seg-btn")][1]?.click();
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The inbox for the team pages: the received tab with a request waiting, one this member took
+    // (unfolded, with its session) and a message. The features-page "inbox" scene, light and cropped.
+    name: "team-inbox",
+    guide: true,
+    clip: ".inbox-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".inbox-btn"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 3000));
+      document.querySelector(".inbox-btn")?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".inbox-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 1000));
+      document.querySelectorAll(".inbox-group")[1]?.querySelector(".inbox-card-head")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // Settings › Limit board: this member shows bands to the whole tenant; two teammates publish
+    // and one shows nothing (read as Unknown).
+    name: "team-limits",
+    guide: true,
+    stubEnv: { SHOT_TEAM_GUIDE: "1" },
+    // The tab content only: the settings rail beside it is noise on this page.
+    clip: ".settings-content",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "limits",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 2500,
+  },
+    {
+    // The inbox's compose tab: a request with a recipe attached.
+    name: "team-inbox-compose",
+    guide: true,
+    stubEnv: { SHOT_TEAM_GUIDE: "1" },
+    clip: ".inbox-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".inbox-btn"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 3000));
+      document.querySelector(".inbox-btn")?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".inbox-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 1000));
+      [...document.querySelectorAll(".inbox-modal button")].find((el) => /^\\s*(新規|New)\\s*$/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 800));
+      const box = [...document.querySelectorAll(".inbox-modal label")].find((el) => /レシピを添付する|Attach a recipe/.test(el.textContent || ""))?.querySelector("input[type=checkbox]");
+      box?.click();
+    })()`,
+    settle: 1500,
+  },
+// ---- end team pages ----
+  // ---- chat pages (SHOT_CHATPAGES_GUIDE) ----
+  {
+    // The assistant chat: the agent chip, the work plan open and the context gauge past 80 %
+    // with its Compact button.
+    name: "chatpages-chat",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: ".chatview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 700,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "chat", conversationId: "c-pay-1" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".chat-plan-toggle"); i++) await new Promise((r) => setTimeout(r, 200));
+      if (!document.querySelector(".chat-plan")) document.querySelector(".chat-plan-toggle")?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The rail's "+" (new chat): the three builtins, an assistant of the member's own, and Create.
+    name: "chatpages-picker",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: [".assistant-picker", "#shot-asst-head"],
+    pad: 6,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".assistant-picker-wrap button"); i++) await new Promise((r) => setTimeout(r, 200));
+      const wrap = document.querySelector(".assistant-picker-wrap");
+      const head = wrap?.closest(".ui-section-head");
+      if (head) head.id = "shot-asst-head";
+      wrap?.querySelector("button")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The create-assistant dialog, empty, so its placeholders show a translator as the example.
+    name: "chatpages-create",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".assistant-picker-wrap button"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".assistant-picker-wrap button")?.click();
+      await new Promise((r) => setTimeout(r, 600));
+      [...document.querySelectorAll(".assistant-picker .ui-menu-item")].find((el) => /アシスタントを作成|Create assistant/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // The memo queue with two memos selected: the selection bar and its Send button.
+    name: "chatpages-memos",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: "#shot-memos",
+    pad: 0,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && document.querySelectorAll(".memo-row").length < 4; i++) await new Promise((r) => setTimeout(r, 200));
+      const rows = [...document.querySelectorAll(".memo-row")];
+      rows.slice(0, 2).forEach((r) => r.querySelector("input[type=checkbox]")?.click());
+      await new Promise((r) => setTimeout(r, 400));
+      const sec = document.querySelector(".memo-row")?.closest(".ui-section");
+      if (sec) sec.id = "shot-memos";
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The send dialog for those two memos: the editable text and the destinations.
+    name: "chatpages-memo-send",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1300,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && document.querySelectorAll(".memo-row").length < 4; i++) await new Promise((r) => setTimeout(r, 200));
+      const rows = [...document.querySelectorAll(".memo-row")];
+      rows.slice(0, 2).forEach((r) => r.querySelector("input[type=checkbox]")?.click());
+      await new Promise((r) => setTimeout(r, 400));
+      document.querySelector(".memo-selbar .ui-btn-primary, .memo-selbar button:last-child")?.click();
+    })()`,
+    settle: 2000,
+  },
+  // ---- end chat pages ----
+  // ---- outside-access and security pages (SHOT_OUTSIDE_GUIDE) ----
+  {
+    // Settings › MCP tokens & apps right after "Issue token": the once-shown token with its
+    // .mcp.json template, above the form it came from.
+    name: "outside-token-issued",
+    guide: true,
+    stubEnv: { SHOT_OUTSIDE_GUIDE: "1" },
+    clip: [".pat-issued", ".pat-form"],
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "tokens",
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "1500px"; m.style.maxHeight = "none"; }
+      [...document.querySelectorAll(".pat-form button")].find((b) => /トークンを発行|Issue token/.test(b.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      // The template is built from the page's own origin, which here is the stub's loopback port;
+      // show the address a deployment would have instead.
+      const pre = document.querySelector(".pat-tmpl");
+      if (pre) pre.textContent = pre.textContent.replace(location.origin, "https://console.example.com");
+      document.querySelector(".pat-issued")?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The connected apps under the tokens: claude.ai on the memory endpoint and a command-line
+    // client on /mcp, the second with its recent calls open.
+    name: "outside-apps",
+    guide: true,
+    stubEnv: { SHOT_OUTSIDE_GUIDE: "1" },
+    clip: "[data-shot=apps]",
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "tokens",
+    width: 1500,
+    height: 2400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "2300px"; m.style.maxHeight = "none"; }
+      const apps = document.querySelector(".display-settings > section");
+      apps?.setAttribute("data-shot", "apps");
+      const toggles = apps ? [...apps.querySelectorAll(".calls > button")] : [];
+      toggles[1]?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      apps?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1500,
+  },
+  // ---- end outside-access and security pages ----
+  // ---- settings pages (SHOT_SETTINGS_GUIDE) ----
+  {
+    // Settings › Display: the tab in the dialog's rail, with language, time zone, layout and theme.
+    name: "settings-display",
+    guide: true,
+    stubEnv: { SHOT_SETTINGS_GUIDE: "1" },
+    clip: ".settings-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "display",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Notifications: the table of notification kinds and what each does on arrival.
+    name: "settings-notifications",
+    guide: true,
+    stubEnv: { SHOT_SETTINGS_GUIDE: "1" },
+    clip: "#shot-settings-noti",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "notifications",
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      // The table is longer than the modal's fixed height: let the modal grow so nothing scrolls away.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+      const g = document.querySelector(".settings-modal .noti-table")?.closest(".ds-group");
+      if (g) g.id = "shot-settings-noti";
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Read aloud with speech turned on: the switch and the voice group under it.
+    name: "settings-tts",
+    guide: true,
+    stubEnv: { SHOT_SETTINGS_GUIDE: "1" },
+    clip: ["#shot-tts-from", "#shot-tts-to"],
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "tts",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      // Turn speech on: the first group's first switch, its "On" button.
+      const first = document.querySelector(".settings-modal .display-settings .ds-group");
+      [...(first?.querySelectorAll("button") || [])].find((b) => /^(オン|On)$/.test((b.textContent || "").trim()))?.click();
+      await new Promise((r) => setTimeout(r, 1000));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+      // From the speech switch down to the reading language's note: the voice choices a reader
+      // sets first. The rest of the tab is a long list of options the page names in a table.
+      const groups = document.querySelectorAll(".settings-modal .display-settings .ds-group");
+      if (groups[0]) groups[0].id = "shot-tts-from";
+      const lang = [...(groups[1]?.querySelectorAll(".ds-row") || [])].find((el) => /読み上げ言語|Read-aloud language/i.test(el.textContent || ""));
+      const note = lang?.nextElementSibling;
+      if (note) note.id = "shot-tts-to";
+      // The grown modal is centred, so everything below the clip would push its top off screen:
+      // hide what follows the note.
+      let n = note?.nextElementSibling;
+      while (n) { n.style.display = "none"; n = n.nextElementSibling; }
+      [...groups].slice(2).forEach((g) => { g.style.display = "none"; });
+      document.querySelector(".settings-modal .ds-reset")?.style.setProperty("display", "none");
+    })()`,
+    settle: 2500,
+  },
+  // ---- end settings pages ----
+  // ---- getting-started pages (guide/user/start/) ----
+  {
+    // Home on a first-run member: the welcome card with the workspace started and no agent yet.
+    name: "start-welcome",
+    guide: true,
+    stubEnv: { SHOT_START_GUIDE: "firstrun" },
+    clip: ".home-setup",
+    // The card waits for the workspace state and the connection probes; on a busy host that outlasts the boot wait.
+    ready: `!!document.querySelector(".home-setup")`,
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "home" })])], colRatios: [1], activeId: "p0" },
+  },
+  {
+    // The whole Console once, for the screen tour: rail, bar, a session beside the commit graph.
+    name: "start-tour",
+    guide: true,
+    // Wait for the workspace to read as running and both panes to finish loading.
+    ready: `!!document.querySelector(".ws-power.on") && !/読み込み中|Loading/.test(document.body.innerText)`,
+    sections: SHOW_TOOLS,
+    width: 1440,
+    height: 860,
+    layout: {
+      cols: [
+        col("c0", [mirrorOf("sk4rq2f")]),
+        col("c1", [pane("p1", null, { kind: "scm", scmRepo: "webshop" })]),
+      ],
+      colRatios: [0.58, 0.42],
+      activeId: "p0",
+    },
+  },
+  {
+    // The command palette as it opens: the sessions list, waiting ones first.
+    name: "start-palette",
+    guide: true,
+    // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
+    ready: `!!document.querySelector(".ws-power.on")`,
+    clip: ".cp-panel",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.body.focus();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", code: "KeyP", ctrlKey: true, bubbles: true }));
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The top bar's Appearance menu with its main-area layout switch.
+    name: "start-appearance",
+    guide: true,
+    // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
+    ready: `!!document.querySelector(".ws-power.on")`,
+    clip: [".appr-btn", ".appr-menu"],
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => { document.querySelector(".appr-btn")?.click(); })()`,
+    settle: 800,
+  },
+  {
+    // The Console on a phone: one session, the bar folded into its menu.
+    name: "start-phone",
+    guide: true,
+    // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
+    ready: `!!document.querySelector(".ws-power.on")`,
+    mobile: true,
+    sections: FOCUS_TREE,
+    width: 390,
+    height: 760,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+  },
+  {
+    // The bar's "Restart needed" badge with its popover open (SHOT_START_GUIDE=stale).
+    name: "start-restart",
+    guide: true,
+    stubEnv: { SHOT_START_GUIDE: "stale" },
+    clip: [".ws-stale-pill", ".ws-stale-pop"],
+    // The badge appears only once the bar has read the workspace as running.
+    ready: `!!document.querySelector(".ws-stale-pill")`,
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => { document.querySelector(".ws-stale-pill")?.click(); })()`,
+    settle: 800,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------
@@ -1929,7 +2639,7 @@ try {
       width: scene.width,
       height: scene.height,
       deviceScaleFactor: 2,
-      mobile: false,
+      mobile: !!scene.mobile,
     });
     // Seed the browser state a returning user would have: display settings (locale +
     // theme) and this scene's saved pane layout, keyed exactly like the app writes it

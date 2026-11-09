@@ -50,208 +50,35 @@ saved; until then the agents act on the previous settings, so press **Retry**.
 
 ### Display
 
-Everything about appearance.
-
-- **Language**, **region format** and **time zone**: the region format (how dates and numbers are
-  written) follows the display language by default, and the time zone follows your browser by default.
-  "Follow browser" is a setting of its own, not a copy of today's zone, so it moves with you when you
-  travel. Pick a zone to pin it instead. Dates and times across the Console, including the session
-  mirror, and the times in files the Agent writes (the Markdown export) use it, and a change applies immediately, without restarting the workspace.
-  With "follow browser", the Console also tells your workspace which zone this browser is in, whenever
-  you open it or come back to it, so the text the Agent writes itself (the usage-limit resume notice,
-  the note on a reopened report, the Markdown export) uses that zone instead of the workspace clock.
-  If you use several devices, the one you used last decides; a pinned zone always wins. Text the
-  Control Plane writes keeps the schedule's own zone; the Schedules list shows a schedule's next run in
-  your zone once you pick a time zone or region format, and its details add the schedule's own time when
-  the two differ.
-- **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
-  surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
-  readable at a glance.
-- **Terminal**: font and font size, and **Ctrl+C / Ctrl+V copy and paste** (on by default; when Ctrl+C
-  copies and when it interrupts the program is in [08](08-terminal.md#copy-paste)).
-- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([07](07-files.md)).
-- **Reader view** / **file icons** (icon set).
-- **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
-  Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
-  disturb either ([02](02-console-basics.md)). If you switch often, the same choice sits in **Appearance** (the paint
-  can) in the top bar.
-- **Separate appearance per tenant** (only if you belong to two or more tenants; off by default): remembers the
-  theme and surface colours for each tenant on this device and switches with the tenant. Off keeps the look you see
-  now for every tenant; saved looks are kept.
+Language, time zone, theme, fonts and the main-area layout. See [Change the display and your account](../user/settings/display.md).
 
 ### Account
 
-The **sign-in methods** linked to your account (Google / Microsoft / GitHub …). Whichever one you use, you
-land in the same workspace, the same home and the same settings.
-
-- **Add a sign-in method**: when your company offers more than one (say Microsoft at head office and GitHub
-  at the subsidiary you are seconded to), you can add a second one to your account. The button takes you
-  through that method's sign-in and back; the list then shows it.
-- Only a method that asserts **the same email address as this account** can be added. Accounts under
-  different addresses cannot be merged into one (it could not be undone).
-- That method's own entry rules still apply: organization membership for GitHub, the allowed email domains.
-  Linking is not a way around them.
-- A method already used by **somebody else's account** cannot be added.
-- If the sign-in page told you "this email address is already used by another sign-in method", the fix is to
-  **sign in the way you normally do** and add the other method here.
-- **Remove**: a method you no longer use can be taken off the list. Your workspace, home and secrets are
-  untouched, and you can add the same method again later. Two of them cannot be removed, and hovering the
-  disabled button says which case you are in:
-  - **the method you are signed in with right now**: sign in with another one first, then remove it.
-  - **the only method left**: removing it would leave you unable to sign in at all, with no way to undo it
-    yourself (this deployment has no password and sends no email).
+Adding and removing sign-in methods. See [Change the display and your account](../user/settings/display.md#add-a-sign-in-method).
 
 ### Keyboard
 
-- **Shortcut assignment**: you can change the direct keys (`Alt+1` …) and the three app-wide keys. Sequences
-  under the leader (e.g. leader → `p` → `r`) are structural and cannot be changed. **?** opens the cheat sheet
-  at any time.
-- **Terminal input priority**: while a terminal has focus, every Ctrl-key goes to the terminal. Only the leader
-  survives on the app side, and everything remains reachable from the command menu / palette.
-- **Pass every key to shell / SSM terminals**: stronger than the above. The leader (Ctrl/⌘+K) and the palette
-  (Ctrl/⌘+P) are passed through too, making it a pure terminal. It applies only to shell / SSM, not to agent
-  terminals. Off by default.
-- **Send key**: **Ctrl+Enter to send (Enter for a newline, the default)** or **Enter to send
-  (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
-- **Reply suggestions**: chips with short replies above the composer ([Reply to a session](../user/sessions/reply.md#use-reply-suggestions)). This is also
-  where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
-  drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
-  back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
+Shortcut assignments, terminal input priority, the send key and reply suggestions are in [Use the keyboard and the command palette](../user/start/shortcuts.md#change-the-keys).
 
 ### Read aloud
 
-Reads out replies from sessions and assistants.
-
-- **Voice**: engine (Zundamon (VOICEVOX) / Polly / auto), speaker, **a different voice per session** (assigned
-  from a character pool), emotion, reading speed.
-- **Auto-read**: read new replies automatically, **read the work in progress in a quiet voice**, read in every
-  open pane, summarise long replies, read out confirmations and questions.
-- **How it reads**: abbreviate code fragments, pause after particles, read English as kana, and a
-  **pronunciation dictionary** (`written=reading`, one per line).
-- **Advanced**: background playback and volume, panning to match the pane position, audio cache.
-- **Audio notifications**: announce session state changes and usage-limit resets by voice; which ones is
-  chosen in the Notifications tab.
-- **Read-aloud language**: Auto (follows the display language) / Japanese / English. With the engine on
-  "auto", English switches to a Polly English voice. This is separate from the assistant's **Output language**.
-- "Reset to defaults" resets the speech settings only (the pronunciation dictionary is kept).
+Reads answers out loud. See [Use read-aloud](../user/settings/read-aloud.md).
 
 ### Notifications
 
-- **Allow desktop notifications**: shown while the browser has not been asked yet; it asks for permission.
-  If the browser blocked notifications for this site, the tab says so: only the site settings can undo it.
-- **Session voice notifications** on / off: the master switch for the "Read aloud" column below (also the
-  speaker button in the notification centre).
-- **The notification table**: one row per kind of notification, one switch per effect:
-
-  | Row | Covers |
-  |---|---|
-  | Turn finished | a session finished its turn and waits for you |
-  | Turn finished (child session) | the same, for a session another session started with `create_session` |
-  | Needs your answer | a question, a plan approval, a permission request |
-  | Usage limit reset | a Claude / Codex 5-hour or weekly limit you had hit has reset |
-  | Session report | a session reported to an assistant conversation |
-  | Pull requests | the pull request of a session's branch became ready to merge (open, checks passed, no conflict, approved or needing no review — on Bitbucket, approved by someone; once per pushed commit), or was merged or closed; with [PR feedback](../user/fleet/pr-feedback.md) on, also a session's pull request has a merge conflict, or got CI or review feedback its session could not be told (archived) |
-  | Rate limit | a session hit a rate limit, or resumed after one |
-  | Scheduled runs | a scheduled run finished, failed or was skipped |
-  | Handoffs | a handoff offered to you, accepted or expired, or a session that started from one you gave back |
-  | Cloud sign-in | AWS or Google Cloud needs you to sign in, or an SSO session is about to expire |
-  | Terminal notifications | a program in a session sent OSC 9 / 99 / 777 |
-  | Other notices | assistant chat paused or near its context limit, submodule sync, stop after turn, a workspace start that was stopped, memory suggestions, and, for administrators, a member's home nearly full, a member's workspace not responding or a member's tool install failing (and any kind added later) |
-
-  - **Unread dot**: off marks the notification read the moment it arrives: no red dot on the session and no
-    unread count, while the notification centre keeps it as a read row. This column follows you to your
-    other devices (the read mark does anyway). It cannot be turned off for "Needs your answer", "Handoffs"
-    and "Cloud sign-in", which wait for a person.
-  - **OS notification** and **Read aloud**: this device only, so a phone and a desk can differ. Read aloud
-    also needs "Session voice notifications" on; a usage-limit reset speaks whenever "Read aloud" is on in
-    the speech tab instead.
-  - Everything is on by default, which is how notifications behaved before the table. The two switches it
-    replaced carry over as they were: "Notify when a child session is waiting for input" became the
-    child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
-  - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
-- **Service notifications**: stop sending to Discord / Slack **without disconnecting**. The connection itself,
-  and which events each service receives, live in the "Chat" tab ([Connect Discord and Slack](../user/integrations/chat-bridge.md#choose-which-notifications-arrive)).
-- History is in the **notification centre** (last 7 days), opened from the bell in the top bar. What the
-  unread red dot means and how it clears: [Icons, badges, and menus](badges-and-menus.md#session-display).
+Choose the unread dot, the OS notification and read-aloud for each kind of notification. See [Get notified](../user/settings/notifications.md).
 
 ### Limit board
 
-Who in this tenant may see where you stand on your agents' usage limits, and how much. It is hidden
-until you choose otherwise and is set per tenant; the tab lists every tenant you publish to, then what teammates
-publish to you. The choices and how to read the values are in
-[12](12-collaboration.md#showing-teammates-where-you-stand-on-usage-limits).
+Choose who in this tenant sees where you stand on usage limits, and how much. See [Show each other where you stand on usage limits](../user/team/usage-limits.md).
 
 ### Assistant
 
-The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [Hand work to the Fleet Operator](../user/fleet/operator.md)).
-
-- **Output language**: follow the input / 日本語 / English. It changes chat replies only (the read-aloud
-  language lives on the **Read aloud** tab).
-- **Agent priority**: a new conversation starts on the first connected CLI from the top of this list. The
-  conversation stays on that CLI; when it cannot be used (not connected, or at a usage or rate limit) the first
-  usable CLI in this order answers that turn instead, which may be one ranked above it, and a note in the
-  thread says so. The next turn goes back once the limit lifts. Titles, reply suggestions and the like are
-  ranked separately (the **AI assistance** tab).
-- **Assistant models**: per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
-  shows what it currently resolves to; prices and context window are described in
-  [09](../user/agents/usage.md#see-model-list-prices).
-- **Auto-respond to session reports**: the operator takes one turn automatically when a report arrives.
-  Its companions: the **Unattended auto-reply limit** (default 10, max 50; it cannot be unlimited), the
-  **Auto-reply model** (reading a report is routine work, so a lighter model saves a lot), the **Auto-reply
-  bundling window** (reports arriving within it are handled in one turn) and **Quiet completion reports** (a
-  normal completion delivers the card and the notification but takes no turn). See
-  [Hand work to the Fleet Operator](../user/fleet/operator.md#receive-reports).
-- **Auto-pilot**: carries questions and plan approvals through automatically. Off by default (same section).
-- **Auto-resume interrupted turns**: resumes a turn cut short by a dropped connection or a temporary rate
-  limit. On by default.
-- **Auto-compact chat context** and its **threshold (tokens)**: summarise and hand a long conversation forward
-  ([10](10-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
-- **Session output fetch limit**: how much of a session's output the operator reads at once (default 32 KiB).
-  The larger it is, the more accumulates in the conversation and the more tokens every later turn costs. The
-  full output is always readable in the chat view.
-- **Appearance**: theme and background colour of the assistant surface (this device only).
+Reply language, agent priority, the assistant models, auto-compaction and so on. See [Ask an assistant](../user/chat/assistant.md#choose-the-reply-language-and-the-models). Auto-replies to session reports and autopilot are in [Hand work to the Fleet Operator](../user/fleet/operator.md#adjust-the-automatic-replies).
 
 ### AI assistance
 
-Settings for the **one-shot AI generations** that appear on sessions, the mirror and the File pane. These are not
-the assistant conversation: they share an implementation, but they surface somewhere else.
-
-- **Agent priority**: the CLI order used for assistance, ranked separately from the assistant. The chat wants
-  the strongest model; assistance runs constantly and wants the cheapest one that works. CLIs that are not
-  connected or are at a usage or rate limit are skipped, and a generation that hits a limit is retried once on
-  the next CLI.
-- **Model for short labels** / **Model for prose**: short covers titles, branch names and reply suggestions;
-  prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults.
-  "Recommended" for short labels is **the model with the lowest models.dev list price** among the ones that CLI
-  lists (codex and agy; a cheaper model that ships is picked up on its own); for prose it is a fixed tier one step
-  up. Without prices it falls back to the previous defaults. "Recommended (currently: …)" shows what it resolves
-  to right now. For muse, both are the newest model that is neither a `-contributor` one nor one you hid;
-  if there is none (or muse's model list cannot be read), the assistance is not generated rather than run on
-  its contributor default. Muse Code's contributor mode (Settings › Agents › Muse Code) applies to these
-  turns too.
-- **Features that use AI assistance**: one card per feature (8). Turning one off hides its button
-  entirely and folds away that card's agent/model rows.
-  - **Session title suggestion**: the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
-  - **Chat title suggestion**: "Ask AI" in the assistant's rename dialog. A chat has no banner of its own.
-  - **Branch name suggestion**: used when creating a worktree or renaming a branch.
-  - **Reply suggestions (session)** / **Reply suggestions (chat)**: the ✨ button on the mirror and the chat
-    composer, each its own switch; it spends tokens only when pressed. Turning one off does not affect the
-    other. The **reply suggestions** learned from your own input history (Keyboard tab) use no AI and are separate.
-  - **File edit suggestions**: turns a selection plus your instruction into a proposed replacement.
-  - **Work-plan update**: the "refresh" button that re-derives the assistant chat's plan from the recent
-    exchange.
-  - **Answer translation (mirror)**: the "Translate" button on a mirror answer that came back in another
-    language ([Read an answer in your own language](../user/sessions/translate.md)). A translation is kept
-    per agent/model: changing this feature's agent or model means the next press generates a fresh one (the earlier
-    one comes back if you switch back).
-  - **Translate automatically**: presses that button for you the moment a turn finishes (off by default). Only
-    answers that **arrive while you are watching that session** qualify. This is the one translation setting
-    that spends without being asked.
-
-  Each card can also be pinned to its own agent, separate from the priority order above (default: "auto —
-  priority order"). Once pinned to one agent, that card can also pick that agent's own model: left on "auto"
-  a card follows the default and cannot pick one concrete model. A card's "currently uses" line names the
-  agent it will actually run on right now (blank until the Agent has an answer).
+The agents and models used for one-shot AI generation such as titles and reply suggestions, and turning each feature on or off. See [Use translation and purpose-built assistants](../user/chat/purpose-assistants.md#set-up-ai-assistance).
 
 ### Agent instructions
 
@@ -284,7 +111,7 @@ The
 **Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
 **children per session**), **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
-"Conversations" mode works either way, see [02](02-console-basics.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes).
+"Conversations" mode works either way, see [02](../user/start/shortcuts.md#find-and-open-with-the-command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes).
 → [Let sessions message each other](../user/fleet/messages.md),
 [Start child sessions from a session](../user/fleet/child-sessions.md),
 [Have a session make images](../user/images/from-session.md)
@@ -334,13 +161,7 @@ bar's Google Cloud badge, are in [Use Google Cloud](../user/integrations/gcloud.
 
 ### MCP tokens & apps
 
-The **MCP tokens & apps** tab sits in the **Outside access** group, not under Connections, because it points the other way: it holds the personal access tokens and connected apps that *use this Workspace*. To register servers your sessions call, see [MCP servers (used by sessions)](../user/integrations/mcp-servers.md).
-
-Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
-→ [19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)
-
-The same token can use your Agent Fleet memory too; the tab lists what it can do:
-→ [18 Agent memory](18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)
+Personal access tokens and connected apps for using this workspace from outside. Tokens are in [Drive your workspace from an external Claude](../user/outside/external-claude.md), connected apps in [Connect a remote MCP client by signing in](../user/outside/oauth-client.md). To register a server your sessions call, see [Add an MCP server to your sessions](../user/integrations/mcp-servers.md).
 
 ## Workspace
 
@@ -375,13 +196,10 @@ This workspace's PostgreSQL and MySQL:
 
 ### Preview subdomains
 
-Settings for opening the app you are building at `https://<random>-<port>.<domain>/`. **The tab is only
-there on a deployment that issues preview subdomains** (elsewhere no URL would ever be minted, whatever
-you set here). Which ports are exposed, pinning the URL, sharing it with your tenant, opening it without a
-login, and re-issuing the URL all live here. Where the deployment offers the development OIDC IdP, the tab
-also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the client secret is not shown),
-**Issue a new secret…**, **App configuration examples** and **Test personas**.
-→ [14 Preview and browser](14-preview-browser.md#preview-subdomains-only-where-they-are-issued)
+The tab for opening the app you are building at its own URL. It is only there on a deployment that issues preview
+subdomains. The ports, sharing and re-issuing the URL are in [Use preview subdomains](../user/preview/subdomains.md); the
+development OIDC IdP block (issuer, client id, app configuration examples, test personas) is in
+[Try Google sign-in on a preview](../user/preview/dev-signin.md).
 
 ### Internal repos
 

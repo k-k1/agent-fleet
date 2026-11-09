@@ -79,12 +79,12 @@ Turning it on is not enough in these cases.
 ### The session shows a sign-in screen such as "Select login method"
 
 The connection is usually still there. Resuming the session, or "**Recreate (current conversation goes to the archive)**" from the ⋯ menu, fixes it most of the time.
-Running `/login` in the terminal works too. The details are in [Troubleshooting](../../member/21-troubleshooting.md#selecting-claude-shows-a-login-screen-select-login-method).
+Running `/login` in the terminal works too. The details are in [Fix an agent's login or a missing model](../troubleshooting/agents.md#a-claude-session-shows-a-login-screen-such-as-select-login-method).
 
 ### "Login expired — sign in again" appears, and sending starts nothing
 
 The workspace's Claude sign-in has expired. Sign in again with "**Re-authenticate**" on the card, and the session carries on without being stopped.
-The details are in [Troubleshooting](../../member/21-troubleshooting.md#a-claude-session-shows-login-expired-sign-in-again-or-sending-starts-nothing).
+The details are in [Fix an agent's login or a missing model](../troubleshooting/agents.md#login-expired-sign-in-again-and-sending-starts-nothing).
 
 ### Remote control does not connect
 

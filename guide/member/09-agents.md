@@ -23,18 +23,6 @@ This chapter has moved to the pages below.
 | See model prices, usage chips, remaining context, RTK and agent usage | [Check prices and usage](../user/agents/usage.md) |
 | Write down how you work, once (agent instructions) | [Write down how you work, once](../user/agents/instructions.md) |
 | Bring your own Claude Code skills, hooks and subagents | [Bring your Claude Code setup](../user/agents/bring-claude-setup.md) |
+| Know the assistant chat's default model | [Ask an assistant](../user/chat/assistant.md#choose-the-reply-language-and-the-models) |
 
 What each kind can do is in the [Agents reference](../ref/agents.md).
-
-## Default model for the assistant chat
-
-Each assistant can pin its own model, and an administrator can set claude's default for the whole
-deployment. Fast, low-cost tiers are the defaults because the assistant is conversational:
-claude → Sonnet 5 · codex → the newest Luna it lists (`gpt-6-luna` at the time of writing) ·
-opencode → `opencode-go/glm-5.2` when the account lists it, otherwise `opencode/nemotron-3-ultra-free` ·
-agy → Gemini 3.5 Flash · cursor → its own default (Auto). muse is not a fast tier: left on the
-recommendation it picks the newest Muse Code model that is not a "contributor" model; whether Meta
-may use your conversations still follows your own Contributor mode setting (the assistant-chat
-note in the [Agents reference](../ref/agents.md)). Which kinds can be an
-assistant chat at all is the "Usable as the assistant chat" row there; cursor's assistant, for
-one, runs **read-only**.

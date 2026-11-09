@@ -75,7 +75,7 @@ Just looking, before moving anything, is useful too.
 
 - A stopped session can be resumed, so it is not lost. Approve the list and finished ones can be archived or deleted too
 - For a session with a full context, rather than piling on instructions, summarise the key points and hand over to a new session (step 2 of [Research, split and implement in parallel](#research-split-and-implement-in-parallel))
-- Collecting memos as ideas come is described in [10 Chat and memos](../../member/10-chat-memo.md)
+- Collecting memos as ideas come is described in [Collect memos and hand them over](../chat/memos.md)
 
 ## Related
 

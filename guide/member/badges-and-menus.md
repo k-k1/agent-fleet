@@ -41,10 +41,10 @@ shows it for anything folded inside. In the left pane a session with unread news
 clears when the session is on screen in one of your panes (a report: when its operator conversation is, or
 when you open it from the notification centre), or with **"Mark all as read"** in the notification centre;
 merely opening the bell marks nothing as read. This is the one place that describes the dot
-(which notifications raise it: [Settings › Notifications](20-settings.md#notifications)).
+(which notifications raise it: [Settings › Notifications](../user/settings/notifications.md)).
 
 A row can also carry **"Shared"** (visible to another member;
-see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Locked against deletion"** (excluded from deletion and
+see [Share a conversation](../user/team/share.md)) and **"Locked against deletion"** (excluded from deletion and
 automatic tidying; see [Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion)).
 
 A row can grow a **second line** with links. The first is the GitHub or Bitbucket pull request
@@ -136,10 +136,10 @@ connection. Not this deployment's engine."** together with the model the last ch
   [Use Google Cloud](../user/integrations/gcloud.md#the-google-cloud-badge-in-the-ws-bar) (Google Cloud).
 - **Restart needed**, beside the workspace power button in the WS bar: the workspace is still running the
   pre-update backend. Clicking it offers **Restart now**, which stops running sessions (resumable); it goes away
-  once the workspace is current ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
+  once the workspace is current ([01](../user/start/end-of-day.md#a-new-version-is-available-and-restart-needed)).
 - **Not responding**, beside the workspace power button: the workspace is running but its Agent has not
   answered the Control Plane for several minutes. Nothing in the Console will work until you **Stop workspace**
-  and start it again ([21](21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button)).
+  and start it again ([Fix a workspace that will not start or has stopped](../user/troubleshooting/workspace.md#not-responding-appears-beside-the-power-button)).
 - Colored `1`, `2`…: the number of the pane it is shown in. Press to jump to that pane.
 - "Untracked", "Added", "Modified", "Renamed", "Deleted": the file's Git change type.
 - The number on an assistant row: the conversation's message count.
@@ -150,7 +150,7 @@ connection. Not this deployment's engine."** together with the model the last ch
   session and delivers the answer; the card is kept for 14 days
   ([Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left)).
 - **The inbox button's number** in the top bar: new inbox items plus handoffs waiting for you
-  ([12](12-collaboration.md#asking-a-teammate-the-inbox)). In the inbox, **"Open for 14+ days"** marks a
+  ([Ask a teammate through the inbox](../user/team/inbox.md)). In the inbox, **"Open for 14+ days"** marks a
   request nobody has finished. A session started from an inbox request has an inbox mark
   (**"Started from an inbox request (sender: …)"**), a memo taken in from the inbox reads **"Inbox: …"**,
   and a shared session with a handoff for you has a branch mark, **"A handoff is waiting"**.
@@ -167,7 +167,7 @@ connection. Not this deployment's engine."** together with the model the last ch
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
   stopped; **"Raise budget & resume…"** in its menu carries on ([Stop a session that spends too much with a budget](../user/sessions/budget.md#when-it-stops)).
 - **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
-  ([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
+  ([Share a conversation](../user/team/share.md)).
 - **"Safe" / "Review" / "Keep"** in the cleanup modal: whether it is fine to tidy away
   ([Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup)).
 
@@ -213,10 +213,10 @@ Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 ### Files / folders
 
 You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
-Folders also show **"Open shell here"**, which starts a shell session in that folder ([07](07-files.md#open-a-shell-from-a-folder)).
+Folders also show **"Open shell here"**, which starts a shell session in that folder ([07](../user/files/browse.md#open-a-shell-from-a-folder)).
 Files additionally show "Open in reader", "Download", "Translate with assistant" and "Summarize with assistant"; **folders show "Download as zip"** (the same
 item is in the gallery's folder menu; a touch long-press on a folder row opens the menu;
-[07](07-files.md#download-a-folder-as-zip)). Folders and **image files** also show
+[07](../user/files/browse.md#download-a-folder-as-zip)). Folders and **image files** also show
 **"Open in gallery"** (from an image it opens the parent folder's gallery with that image enlarged; see
 [Use the image gallery](../user/images/gallery.md)). A file that sits in a folder (not directly in home) also shows **"Open the folder"**
 (shows the parent folder in the file list) and, unless it is an image, **"Open folder in gallery"**. To hand a file to a session or an assistant, open the
@@ -225,7 +225,7 @@ file and use "Send" in the viewer.
 ### File and folder links in replies and documents
 
 A file or folder link in an agent's reply, the assistant chat, the document viewer or a Markdown
-preview ([07](07-files.md#links-in-rendered-markdown)) has a menu of its own: right-click it,
+preview ([07](../user/files/view.md#links-in-documents)) has a menu of its own: right-click it,
 long-press it, or press the Menu key or Shift+F10 on it. A file offers **"Open in pane"** and
 **"Open in new pane"**, both offer **"Show in Files"**, and then come the items above that change
 nothing (no new, rename or delete). For a path outside your home (`/…`), what follows the open
@@ -261,12 +261,12 @@ create a new branch based at that commit. While viewing a submodule, the branch-
 At the top right of a pane you get, depending on its content, **toggle wrapping**, **pop out into another tab**
 (the pane moves into a browser tab of its own) and **close** (middle-click / Ctrl+click closes without
 confirmation). Panes that cannot be popped out don't show the button
-([02](02-console-basics.md#arranging-multiple-views-panes)).
+([02](../user/start/panes.md)).
 
 ### Tabs (tabbed grid)
 
 Right-clicking **a session's tab** gives the same menu as that session's row in the left pane
-([02](02-console-basics.md#arranging-multiple-views-panes)). Tabs that are not sessions, and every tab while the
+([02](../user/start/panes.md)). Tabs that are not sessions, and every tab while the
 workspace is stopped, keep the browser's own menu.
 
 ### Cards in the sessions overview
@@ -276,13 +276,8 @@ gives the same menu again, from a right-click, its ⋯ button, or the Menu key w
 
 ## When a menu doesn't appear
 
-- While the workspace is stopped, menu items that run inside the workspace are disabled or hidden.
-- Operations the kind doesn't support, or that don't fit the current state, are not shown.
-- A right-click menu closes on an outside click, Escape, or when the window loses focus, and the focus goes
-  back to the item you opened it from.
-- Every one of these menus also opens from the keyboard with the **Menu key** (or **Shift+F10**) while the item
-  has focus.
+See [Fix the terminal, keys and phone layout](../user/troubleshooting/terminal-phone.md#a-menu-does-not-appear).
 
 ---
 
-Related: [Read a session's state](../user/sessions/status.md) · [Launch a session from a repository](../user/code/launch-from-repo.md) · [Files](07-files.md)
+Related: [Read a session's state](../user/sessions/status.md) · [Launch a session from a repository](../user/code/launch-from-repo.md) · [Files](../user/files/browse.md)

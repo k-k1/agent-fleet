@@ -39,7 +39,7 @@ named **Memories**, **Changes** and **Suggestions** in this chapter are its thre
   description, type, author and author session taken together; after a short pause it also searches the bodies, and
   memories only the body search found are listed after those, ranked like the agents' `memory_search`. When no memory holds every word, the body search returns the ones that hold some of them, and the list then shows only those, under a "some words only" notice (a memory that matches in full by name, description, type or author always wins over them); searching is not a use and does not change how
   often a memory is read. The command palette's **Memory** scope searches the same memories from anywhere
-  ([02](02-console-basics.md#memory)). Pick a row and the right side shows that memory: its text, scope, type, author, last update
+  ([02](../user/start/shortcuts.md#find-and-open-with-the-command-palette)). Pick a row and the right side shows that memory: its text, scope, type, author, last update
   and how often agents read it, with **Edit**, **Pin** / **Unpin**, **Forget this memory** and, under **More actions**
   (⋯), **Purge history…**. **New memory** (in the scope on screen; the user-wide scope while all scopes are shown) and
   **Edit** open a form in the same place. The scope, the chip and the memory you picked are remembered while you move
@@ -442,7 +442,7 @@ The view you leave open is remembered. It needs the running workspace.
 The same MCP token, or an app you connected by signing in (OAuth), can also use the memory Agent Fleet keeps; the
 consent page says so next to `read` and `write`. For example your own Claude Code / Claude Desktop (see
 [Agent memory](#agent-memory); how to make a token and connect a client is in
-[19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)). Two things have to be true: the scope of the token or OAuth connection, and **⚙ Settings → Agent
+[Drive your workspace from an external Claude](../user/outside/external-claude.md#issue-a-token)). Two things have to be true: the scope of the token or OAuth connection, and **⚙ Settings → Agent
 memory → Settings → "Use Agent Fleet memory from outside Agent Fleet"** (`Off` by default; `Read only` or `Read and write`).
 The "MCP tokens & apps" tab (under Outside access) lists what the token can do (including that a tenant Block hides these tools) and links to that setting; the setting has a "How to connect"
 link back.
@@ -499,7 +499,7 @@ Before you start:
    your workspace read what you bring in.
 2. In the same view, set "Use Agent Fleet memory from outside Agent Fleet" to **Read and write**.
 3. Connect Claude Code on your computer to `/mcp` with the `write` scope
-   ([19 Using it from outside](19-outside-access.md#moving-work-from-your-own-claude-code-into-the-workspace)
+   ([Move work from your own Claude Code into the workspace](../user/outside/move-work-in.md)
    shows the commands). If the memory tools do not appear, your tenant administrator has blocked them.
 4. The repository is cloned in the workspace, under `~/repos`. A clone that holds no memory yet is started by the
    first save, so no session has to save one first. If the workspace holds several clones of the same remote,
