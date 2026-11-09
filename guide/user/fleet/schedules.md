@@ -62,7 +62,7 @@ Open **Details / edit** from the row's ⋯ menu.
 | Label | The name shown in the list |
 | Type, Spec | For cron, a 5-field expression (`0 9 * * 1-5`); for an interval, seconds (`3600` is one hour); for a single run, an ISO 8601 date and time |
 | Time zone | The time zone the spec is read in |
-| Wake policy | `wake` (the default) wakes a stopped workspace and runs. `skip` leaves it stopped and records the run as "Skipped" |
+| Wake policy | `wake` (the default) and `catch_up` wake a stopped workspace and run. `skip` leaves it stopped and records the run as "Skipped" |
 | Agent, Model | The agent that runs it, and its model |
 | Report to assistant | Sends a completion report. Off by default |
 | Deliver to | Where the report goes (next section) |
