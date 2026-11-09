@@ -12,11 +12,15 @@ package main
 // declares the audit and the signing.
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 )
 
 // relaySigning is whether the CP marks a relayed request as the member's (ADR 0113).
@@ -334,4 +338,35 @@ func auditSessionStart(r *http.Request) (string, string, bool) {
 		name += " (fresh)"
 	}
 	return "session.start", name, r.PathValue("name") != ""
+}
+
+// codeMCPWatchDisabled is the refusal of a registration that marks an MCP server as a watch
+// source while the tenant has not allowed it. The Console resolves it through err.<code>.
+const codeMCPWatchDisabled = "mcp_watch_disabled"
+
+// maxMCPBody bounds the registration body the gate reads.
+const maxMCPBody = 1 << 20
+
+// gateMCPWatch refuses a registration (POST /api/mcp-servers, PUT /api/mcp-servers/{id}) whose
+// targets.watch is true while the member's tenant has the watch-sources switch off (ADR 0133 §8).
+// A body that does not mark the server as a source, or does not parse, passes through unchanged:
+// the Agent validates the rest, and enforces the switch itself. A switch that cannot be read is
+// off.
+func (cfg config) gateMCPWatch(next http.HandlerFunc) func(http.ResponseWriter, *http.Request, *resolved) {
+	return func(w http.ResponseWriter, r *http.Request, res *resolved) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxMCPBody+1))
+		if err != nil || len(body) > maxMCPBody {
+			http.Error(w, "bad request body", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if mcpsrv.SetsWatchTarget(body) {
+			on, err := cfg.mgr.store.GetTenantWatchSources(r.Context(), res.mv.TenantID)
+			if err != nil || !on {
+				writeAPIErr(w, &apiError{http.StatusForbidden, codeMCPWatchDisabled, "your tenant has not allowed MCP servers as watch sources"})
+				return
+			}
+		}
+		next(w, r)
+	}
 }

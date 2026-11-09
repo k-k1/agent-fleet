@@ -20,9 +20,9 @@ var connectionRelays = []agentRelay{
 	// MCP registry (docs/log/48 P0) — the implementation is Agent-side
 	// (workspace/agent/mcp_servers.go).
 	{route: "GET /api/mcp-servers"},
-	{route: "POST /api/mcp-servers", audit: auditMCPServer("create")},
+	{route: "POST /api/mcp-servers", audit: auditMCPServer("create"), wrapped: true},
 	{route: "POST /api/mcp-servers/test"},
-	{route: "PUT /api/mcp-servers/{id}", audit: auditMCPServer("update")},
+	{route: "PUT /api/mcp-servers/{id}", audit: auditMCPServer("update"), wrapped: true},
 	{route: "POST /api/mcp-servers/{id}/enabled"},
 	{route: "DELETE /api/mcp-servers/{id}", audit: auditMCPServer("delete")},
 	// P4: the member's half of tenant distribution — pull the tenant set now (instead of

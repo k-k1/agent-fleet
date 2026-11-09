@@ -61,7 +61,7 @@ export interface McpServer {
   // Absent = static headers (or none).
   auth?: "oauth";
   enabled: boolean;
-  targets: { assistant: boolean; session: boolean };
+  targets: { assistant: boolean; session: boolean; watch?: boolean };
   kinds?: string[];
   timeoutMs?: number;
   // userSecret marks a TENANT-distributed definition that arrives with header NAMES but
@@ -186,6 +186,9 @@ export interface Form {
   headers: KV[]; // Custom headers mode; in Bearer mode it holds the stored Authorization row
   assistant: boolean;
   session: boolean;
+  // watch: the watch engine may use the server as a source (ADR 0133 §8). Off by default, and
+  // refused by the CP while the tenant has not allowed it.
+  watch: boolean;
   kinds: string[]; // empty = every kind
   timeoutMs: string;
   enabled: boolean;
@@ -206,6 +209,7 @@ export const emptyForm = (): Form => ({
   headers: [],
   assistant: true,
   session: true,
+  watch: false,
   kinds: [],
   timeoutMs: "",
   enabled: true,
@@ -375,6 +379,7 @@ export const isInsecureRemote = (url: string): boolean => {
 export interface AdvancedValues {
   assistant: boolean;
   session: boolean;
+  watch?: boolean; // the member form only
   kinds: string[];
   timeoutMs: string;
   enabled: boolean;
@@ -383,7 +388,7 @@ export interface AdvancedValues {
 // advancedIsDefault: every advanced value is what a fresh form starts with. withTimeout is
 // false for the tenant form, which has no timeout field.
 export const advancedIsDefault = (v: AdvancedValues, withTimeout = true): boolean =>
-  v.assistant && v.session && v.kinds.length === 0 && v.enabled && (!withTimeout || v.timeoutMs.trim() === "");
+  v.assistant && v.session && !v.watch && v.kinds.length === 0 && v.enabled && (!withTimeout || v.timeoutMs.trim() === "");
 
 export const formOf = (s: McpServer): Form => ({
   id: s.id,
@@ -400,6 +405,7 @@ export const formOf = (s: McpServer): Form => ({
   headers: toKV(s.headers),
   assistant: !!s.targets?.assistant,
   session: !!s.targets?.session,
+  watch: !!s.targets?.watch,
   kinds: s.kinds || [],
   timeoutMs: s.timeoutMs ? String(s.timeoutMs) : "",
   enabled: s.enabled,
@@ -415,7 +421,7 @@ export const bodyOf = (f: Form): Record<string, unknown> => {
     label: f.label.trim(),
     transport: f.transport,
     enabled: f.enabled,
-    targets: { assistant: f.assistant, session: f.session },
+    targets: { assistant: f.assistant, session: f.session, ...(f.watch ? { watch: true } : {}) },
     kinds: f.kinds,
     timeoutMs: Number(f.timeoutMs) || 0,
   };

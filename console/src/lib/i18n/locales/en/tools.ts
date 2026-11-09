@@ -135,6 +135,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.tp_http": "Remote (HTTP)",
   "mcp.target_assistant": "Assistant",
   "mcp.target_session": "Sessions",
+  "mcp.target_watch": "Watch source",
   "mcp.target_none": "None",
   "mcp.kinds_all": "Every agent",
   "mcp.not_ready":
@@ -183,7 +184,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.f_headers_hint": "Values are stored encrypted. For a plain bearer token, choose Bearer token instead.",
   "mcp.add_header": "Add header",
   "mcp.f_targets": "Used by",
-  "mcp.f_targets_hint": "With neither selected the definition is kept but handed to nothing.",
+  "mcp.f_targets_hint": "With none selected the definition is kept but handed to nothing. Watch source lets the workspace's watch engine call the server (watch with source ext.<id>); your tenant admin has to allow it first.",
   "mcp.f_kinds": "Agents",
   "mcp.f_kinds_hint": "Select none to target every agent.",
   "mcp.f_timeout": "Timeout (ms)",

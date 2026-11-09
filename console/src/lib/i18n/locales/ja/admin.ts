@@ -781,6 +781,16 @@ export const admin = {
   "tenant.ext_memory_off_hint": "ブロック中: メンバー自身の設定にかかわらず、どのメンバーの外部エージェントにもメモリのツールは提供されません。Agent Fleet の中でのメモリ利用には影響しません。",
   "tenant.ext_memory_load_failed": "設定を読み込めませんでした。",
   "tenant.ext_memory_save_failed": "設定を保存できませんでした。",
+  "tenant.tab_watch_sources": "ウォッチのソース",
+  "tenant.watch_src_title": "MCP サーバーをウォッチのソースにする",
+  "tenant.watch_src_note":
+    "このテナントのメンバーが、自分の MCP サーバーをウォッチのソースとして登録してよいかを決めます。ソースはセッションではなくワークスペースのウォッチエンジンが呼び出し、メンバー自身のシステム（チケットの待ち行列やデプロイツールなど）を見守るのに使います。出力はそのメンバー自身のセッションにだけ、引用されたデータとして届きます。ローカル（stdio）のサーバーは絞った環境変数で起動します。メンバーは設定 > MCP サーバーでサーバーごとにソースにする設定が必要で、それまではオフのままです。",
+  "tenant.watch_src_on": "許可",
+  "tenant.watch_src_off": "ブロック",
+  "tenant.watch_src_on_hint": "メンバーは自分の MCP サーバーをウォッチのソースにできます。",
+  "tenant.watch_src_off_hint": "ブロック中（初期値）: どのメンバーもサーバーをウォッチのソースにできず、以前に登録したものがあってもワークスペースでは動きません。",
+  "tenant.watch_src_load_failed": "設定を読み込めませんでした。",
+  "tenant.watch_src_save_failed": "設定を保存できませんでした。",
   "tenant.tab_engine_access": "推論エンジンの利用者",
   "tenant.engine_access_title": "推論エンジンを使えるメンバー",
   "tenant.engine_access_note":

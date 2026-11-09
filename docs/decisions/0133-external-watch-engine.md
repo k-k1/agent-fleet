@@ -308,6 +308,13 @@ The table is a direction, not a commitment; each source is its own change with i
      with `Targets.Watch`; existing session-target servers keep the Agent's environment until that is decided
      separately. Pausing is kept in memory, so an Agent restart lifts it, and editing or re-enabling the definition
      lifts it too. An OAuth server is reached through the relay, as sessions reach it.
+   - *2026-11-10, Control Plane half and Console (#3631).* Besides five failed calls in a row, 20 replies in a row that
+     carry malformed or out-of-namespace entries pause a source; a clean reply resets that count, and a reply that
+     delivers its events with a stray entry is not a failed call. The tenant switch is a column of `tenant` (off by
+     default), changed by `PUT /api/admin/tenants/{slug}/watch-sources` (tenant admin, audited as
+     `tenant.watch_sources`) and sent to the Agent as `watchSources` in the `/internal/mcp-servers` answer, which
+     reads as off when it cannot be read. The CP also refuses a member's `POST`/`PUT /api/mcp-servers` that sets
+     `targets.watch` while the switch is off (`mcp_watch_disabled`); the Agent enforces the switch on its own.
 6. **The `time` source** (§7) with the Control Plane's wake-only schedule target, then further sources from §9 one at
    a time.
 

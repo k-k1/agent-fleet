@@ -267,6 +267,8 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// tenant_admin, checked mid-handler by tenantAdminFor like the network rule above.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/external-memory", adm.tenantExternalMemory)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/external-memory", adm.setTenantExternalMemory)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/watch-sources", adm.tenantWatchSources)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/watch-sources", adm.setTenantWatchSources)
 	// The tenant's DEFAULT machine class (docs/log/70). tenant_admin for the same reason
 	// as the network rule above — it reaches nothing outside this tenant, and the set
 	// it may choose from is bounded by allowed_slot_classes, which only a super_admin
@@ -752,6 +754,10 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 		rest(w, r)
 		resetWorkItemCommentCapability(r.Context(), cfg.mgr.store, res.mv.MembershipID)
 	})
+	// A member may mark an MCP server as a watch source only while the tenant allows it (ADR 0133
+	// §8); the Agent enforces the switch too.
+	mux.HandleFunc("POST /api/mcp-servers", proxy.withResolved(cfg.gateMCPWatch(rest)))
+	mux.HandleFunc("PUT /api/mcp-servers/{id}", proxy.withResolved(cfg.gateMCPWatch(rest)))
 	mux.HandleFunc("PUT /api/connections/git/{host}", bbReset)
 	mux.HandleFunc("DELETE /api/connections/git/{host}", bbReset)
 	// Git provider OAuth — CP-native for BOTH providers since docs/log/71: the OAuth app is
