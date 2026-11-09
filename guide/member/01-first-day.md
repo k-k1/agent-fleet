@@ -33,7 +33,7 @@ Next comes a two-way choice: **"Where do you want to start?"** (you can use both
   assistant right away. You need neither git nor a terminal ([10 Chat and memos](10-chat-memo.md)).
 - **Develop in a repository**: "Go to dev setup" expands the remaining steps.
   1. **Connect a git provider** (optional): sign in to GitHub / Bitbucket. It is required if you'll clone or push private repositories ([06 Repositories and git](06-code.md)).
-  2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([03 Starting sessions](03-starting-sessions.md)).
+  2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([Start a session](../user/sessions/start.md)).
 
 The card leaves Home once you create your first session or start your first chat. From then
 on Home shows four sections:

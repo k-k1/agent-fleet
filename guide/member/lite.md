@@ -181,21 +181,8 @@ them later. You can also just keep collecting and send them another day.
 
 ## 7. Watching development progress
 
-The **Sessions** list on the left shows all the development AI work in a row. The colored mark
-on each row (the status badge) tells you at a glance what state it's in. Read them like this:
-
-| What you see | Meaning | How to take it |
-|------------|------|--------------------|
-| **Working…** (a spinning mark) | The AI is working right this moment | It's moving. Just wait |
-| **Ready** (a check mark) | Reached a stopping point, awaiting the next instruction | Its hands are free (awaiting input) |
-| **Question / Awaiting permission / Plan ready** | The AI is waiting for a human reply | The developer in charge needs to respond (see the ground rule below) |
-| **Stopped** | Not running (can be resumed later) | Just paused for now |
-| **Running** | A shell or the like is up | Active |
-
-Open a row and a "**Chat / Terminal**" toggle appears at the top. **Choose the "Chat" side**
-to follow that work's **conversation** in a readable form (formatted turn by turn). "Terminal"
-is the black screen for developers, so looking at "Chat" alone is enough for you. While you're
-watching, it shows "**Viewing history (resume to type)**"; you're essentially in read-only mode.
+The **Sessions** list on the left shows what state each piece of development AI work is in. How to read the state marks
+and follow a conversation is in [Read a session's state](../user/sessions/status.md).
 
 ### Reading work that was shared with you
 

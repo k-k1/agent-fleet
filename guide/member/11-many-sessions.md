@@ -405,7 +405,7 @@ give the session the material to answer, on your behalf, a question meant for yo
 is your job**; a session that finds a stopped peer goes as far as telling you.
 
 It helps to read the assistant chat in [10 Chat and memos](10-chat-memo.md) and
-[03 Starting sessions](03-starting-sessions.md) first.
+[Start a session](../user/sessions/start.md) first.
 
 ## What is the Fleet Operator?
 

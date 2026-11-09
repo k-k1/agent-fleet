@@ -14,6 +14,18 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 
 | Page | What you can do |
 |---|---|
+| [Start a session](sessions/start.md) | Launch a session from Start, choosing the agent, the model and a first prompt |
+| [Work in parallel with worktrees](sessions/worktrees.md) | Give each session its own working copy and work in parallel in one repository |
+| [Start from an issue or a ticket](sessions/from-issues.md) | Start a session from an issue or a pull request in the issue tracker list |
+| [Read a session's state](sessions/status.md) | Tell from the row marks and notifications which sessions are waiting for you |
+| [Reply to a session](sessions/reply.md) | Read the conversation, answer question, plan and permission cards, and send the next instruction |
+| [Hold what you send, stop a turn](sessions/queue.md) | Hold follow-ups during a turn and send them in order, and stop a turn when something is queued |
+| [Comment on a plan, have it reviewed](sessions/plans.md) | Send comments on parts of a plan, and have another agent review it |
+| [Call a skill or a command](sessions/skills.md) | Pick a skill or a command the session can call and put it in the input box |
+| [Branch from a past message](sessions/branch-message.md) | Start a new session holding the conversation up to one of your past messages |
+| [See what a session changed](sessions/changes.md) | See the files a session actually touched, as a list |
+| [Save a conversation as Markdown](sessions/export.md) | Download the whole conversation as a Markdown file |
+| [Read an answer in your own language](sessions/translate.md) | Read an answer in a language you do not read, translated without using a turn |
 | [Stop and resume a session](sessions/stop-resume.md) | Pause a session and later carry on from where it stopped |
 | [Stop when done, or keep a session awake](sessions/auto-stop.md) | Have a session stop once its work is done, or keep a long job from being stopped |
 | [Clear away finished sessions](sessions/cleanup.md) | Archive sessions and delete working copies and branches you no longer need, and restore them from the trash |

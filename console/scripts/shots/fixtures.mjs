@@ -391,6 +391,14 @@ export function ptyScreen(locale) {
 
 // ---- the remaining endpoints the shell polls ---------------------------------------
 
+// The plan the agent is waiting to have approved (SHOT_PLAN, the guide's plan page). Served as
+// `pendingPlan` with status "plan", which is what draws the live approval card.
+export function pendingPlan(locale) {
+  return locale === "ja"
+    ? "# 合計 0 円の注文をカートで止める\n\nカート画面で合計が 0 円になったら、決済へ進む前にエラーを出す。\n\n1. `validateCart` に合計 0 円の検査を足す\n2. 既存のバリデーション表示にメッセージを出す\n3. 単体テストを足す\n"
+    : "# Stop zero-total orders at the cart\n\nWhen the cart total is zero, show an error before checkout starts.\n\n1. Add a zero-total check to `validateCart`\n2. Show the message in the existing validation banner\n3. Add unit tests\n";
+}
+
 export function messages(locale, session) {
   if (session === "swnd7qa") {
     return { name: session, messages: studioTurns(locale), cursor: 4, status: "idle", alive: true, reset: true, firstLine: 0, hasMore: false, jsonlLines: 4, jsonlMtime: ago(1) };

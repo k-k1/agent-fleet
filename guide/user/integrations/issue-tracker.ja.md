@@ -87,7 +87,7 @@ OAuth の接続では、Atlassian アプリに許可されている範囲によ�
 
 ## 一覧からセッションを始める
 
-一覧の読みかたと、行からセッションを始める手順は [セッションを始める](../../member/03-starting-sessions.ja.md#課題管理から始める) にあります。
+一覧の読みかたと、行からセッションを始める手順は [Issue やチケットから始める](../sessions/from-issues.ja.md) にあります。
 最初の指示には課題のキー・タイトル・URL が入り、エージェントは本文とコメントを `jira`、`gh`、`bkt` で読みます。
 
 ## 困ったとき
@@ -108,4 +108,4 @@ OAuth の接続では、Atlassian アプリに許可されている範囲によ�
 
 - [Jira を使う](jira.ja.md)：エージェントに Jira の課題を扱ってもらう
 - [Confluence を使う](confluence.ja.md)：エージェントに Confluence のページを扱ってもらう
-- [セッションを始める](../../member/03-starting-sessions.ja.md#課題管理から始める)：一覧の読みかたと、行からセッションを始める手順
+- [Issue やチケットから始める](../sessions/from-issues.ja.md)：一覧の読みかたと、行からセッションを始める手順
