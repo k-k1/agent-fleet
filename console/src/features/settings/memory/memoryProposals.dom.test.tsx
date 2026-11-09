@@ -217,6 +217,40 @@ describe("the manual run", () => {
     }
   });
 
+  it("keeps polling through a failed read, recovers, and stops on unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      setSetting("memoryConsolidation", true);
+      let mode: "ok" | "fail" | "done" = "ok";
+      api.mockImplementation((p: string) => {
+        if (p !== "api/agents/memory-consolidation") return route(p);
+        if (mode === "fail") return Promise.resolve({ error: { code: "x", message: "down" } });
+        return Promise.resolve(runStatus(mode === "ok" ? { running: true, manual: true, done: 0, total: 2 } : { running: false, done: 0, total: 0 }));
+      });
+      await mount(<ConsolidationSettings running />);
+      mode = "fail";
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3100);
+      });
+      expect(host!.textContent).toContain(t("mem.cs_status_failed"));
+      mode = "done";
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3100);
+      });
+      expect(host!.textContent).not.toContain(t("mem.cs_status_failed"));
+      expect(runButton()!.disabled).toBe(false);
+      mode = "ok";
+      act(() => root?.unmount());
+      const n = api.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10000);
+      });
+      expect(api.mock.calls.length).toBe(n);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("words the 409 refusals", async () => {
     setSetting("memoryConsolidation", true);
     api.mockImplementation((p: string) => (p === "api/agents/memory-consolidation" ? Promise.resolve(runStatus({ running: false, done: 0, total: 0 })) : route(p)));

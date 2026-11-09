@@ -525,7 +525,7 @@ export interface ConsolStatus {
   /** The run in flight, manual or automatic; done of total selected topics are finished. */
   run?: { running: boolean; manual?: boolean; all?: boolean; started?: string; done: number; total: number };
   lastRun?: ConsolReport;
-  trigger: { lastRun?: string };
+  trigger: { lastRun?: string; lastManualRun?: string };
   counts: Record<string, number>;
   waiting: ConsolDelay[];
 }

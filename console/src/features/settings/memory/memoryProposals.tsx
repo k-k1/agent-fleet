@@ -125,6 +125,8 @@ function ConsolidationStatus({ reload }: { reload: number }) {
   const running = st?.run?.running === true;
   // While a run is in flight the status is re-read so the progress and the final report appear
   // without a page action; it stops by itself once the Agent says nothing is running.
+  // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would
+  // leave a stale "running" that only a reload could end. The interval is bounded and cleared on unmount.
   useEffect(() => {
     if (!running) return;
     const ac = new AbortController();
