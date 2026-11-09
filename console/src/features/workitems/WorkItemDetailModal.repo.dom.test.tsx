@@ -37,12 +37,18 @@ const item: WorkItem = {
   mergeable: "",
 };
 
-const repos: Repo[] = [{ name: "client-sdk" }, { name: "web" }];
+const REPOS: Repo[] = [{ name: "client-sdk" }, { name: "web" }];
 
 const onPick = vi.fn();
 const onRemember = vi.fn();
 
-const render = async (defaultRepo: string, defaultSource: LaunchRepoSource = "", row: WorkItem = item, remember = true) => {
+const render = async (
+  defaultRepo: string,
+  defaultSource: LaunchRepoSource = "",
+  row: WorkItem = item,
+  remember = true,
+  repos: Repo[] = REPOS,
+) => {
   await act(async () => {
     root!.render(
       <WorkItemDetailModal
@@ -64,6 +70,7 @@ const render = async (defaultRepo: string, defaultSource: LaunchRepoSource = "",
 };
 
 const repoSelect = () => document.querySelector<HTMLSelectElement>(".wi-sfield select")!;
+const whereSelect = () => document.querySelectorAll<HTMLSelectElement>(".wi-sfield select")[1];
 const startButton = () =>
   [...document.querySelectorAll<HTMLButtonElement>(".ui-modal-foot button")].find((b) => b.textContent === t("wi.start"))!;
 const rememberBox = () => document.querySelector<HTMLInputElement>(".wi-sremember input");
@@ -135,6 +142,32 @@ describe("WorkItemDetailModal launch repository", () => {
     expect(document.body.textContent).not.toContain(t("wi.start_repo_remembered", { project: "CPAAS" }));
     await act(async () => startButton().click());
     expect(onRemember).toHaveBeenCalledWith("jira:CPAAS", "client-sdk");
+  });
+
+  it("keeps the where field inert until a repository is chosen", async () => {
+    await render("");
+    expect(whereSelect().disabled).toBe(true);
+    await choose("web");
+    expect(whereSelect().disabled).toBe(false);
+  });
+
+  it("follows a resolution that lands after the panel opened, but never replaces the user's choice", async () => {
+    await render("", "", item, true, []);
+    await render("web", "project");
+    expect(repoSelect().value).toBe("web");
+    expect(document.body.textContent).toContain(t("wi.start_repo_remembered", { project: "CPAAS" }));
+    await choose("client-sdk");
+    await render("web", "project");
+    expect(repoSelect().value).toBe("client-sdk");
+  });
+
+  it("shows an in-place launch for a base that cannot take a worktree", async () => {
+    await render("web", "", item, true, [{ name: "client-sdk" }, { name: "web", unborn: true }]);
+    expect(whereSelect().value).toBe("web");
+    expect(document.body.textContent).toContain(t("wi.start_existing_hint"));
+    await act(async () => startButton().click());
+    expect(onPick.mock.calls[0][0].name).toBe("web");
+    expect(onPick.mock.calls[0][1]).toBe(true);
   });
 
   it("offers no remember box for a GitHub item, which names its own repository", async () => {

@@ -341,6 +341,12 @@ export function WorkItemDetailModal({
   }, [repos, defaultRepo]);
   const [base, setBase] = useState(initialBase);
   const [where, setWhere] = useState<string>(NEW_WORKTREE);
+  // The repository list and the synced memory can land after the panel opened. An empty base is
+  // always untouched (the placeholder cannot be chosen back), so only that one follows; a choice
+  // the user made is never replaced.
+  useEffect(() => {
+    if (!base && initialBase) setBase(initialBase);
+  }, [base, initialBase]);
   const scope = onRemember ? repoMapScope(item) : "";
   const [remember, setRemember] = useState(true);
 
@@ -352,6 +358,9 @@ export function WorkItemDetailModal({
   );
   // `git worktree add` cannot resolve HEAD in a working copy with no commit yet (unborn).
   const canWorktree = !!baseRepo && baseRepo.vcs !== "svn" && !baseRepo.unborn;
+  // A base that cannot take a worktree launches in place (go()), so show that rather than a
+  // select with no matching option and the new-worktree hint.
+  const shownWhere = where === NEW_WORKTREE && baseRepo && !canWorktree ? base : where;
 
   const rel = relTime(view.updatedAt);
   const d = live.detail;
@@ -855,7 +864,7 @@ export function WorkItemDetailModal({
                   ))}
                 </select>
               </label>
-              {defaultSource === "project" && base === initialBase && (
+              {defaultSource === "project" && baseRepo && base === initialBase && (
                 <p className="wi-shint">{tr("wi.start_repo_remembered", { project: repoMapProject(repoMapScope(item)) })}</p>
               )}
               {scope && (
@@ -866,7 +875,7 @@ export function WorkItemDetailModal({
               )}
               <label className="wi-sfield">
                 <span>{tr("wi.start_where")}</span>
-                <select value={where} disabled={!baseRepo} onChange={(e) => setWhere(e.target.value)}>
+                <select value={shownWhere} disabled={!baseRepo} onChange={(e) => setWhere(e.target.value)}>
                   {/* With no repository chosen yet the field is inert and shows the usual default. */}
                   {(canWorktree || !baseRepo) && <option value={NEW_WORKTREE}>{tr("wi.start_new_worktree")}</option>}
                   {baseRepo && <option value={base}>{tr("wi.start_in_base", { repo: base })}</option>}
@@ -878,7 +887,7 @@ export function WorkItemDetailModal({
                 </select>
               </label>
               <p className="wi-shint">
-                {where === NEW_WORKTREE
+                {shownWhere === NEW_WORKTREE
                   ? tr(isPR ? "wi.start_new_worktree_hint_pr" : "wi.start_new_worktree_hint")
                   : tr("wi.start_existing_hint")}
               </p>

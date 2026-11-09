@@ -153,7 +153,9 @@ export function WorkItemModalHost() {
         repos={repos}
         defaultRepo={launch.repo}
         defaultSource={launch.source}
-        // Read the map at launch, not from this render: another tab may have added to it.
+        // Read the map at launch rather than from this render. The map is not among the keys
+        // shared live between tabs, so an entry another open tab learned can still be lost here
+        // (#3775); the cost is choosing that project's repository once more.
         onRemember={(scope, repo) => setSetting("workItemRepoMap", { ...getSettings().workItemRepoMap, [scope]: repo })}
         started={sessionsOnItem(ledger, sessions, item.provider, item.key)}
         onClose={close}
