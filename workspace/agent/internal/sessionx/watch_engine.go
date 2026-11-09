@@ -14,6 +14,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpc"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
@@ -66,9 +68,38 @@ func watchEngine() *watch.Engine {
 		})
 		gh.Threads = watchThreads
 		bb := &watch.Bitbucket{Read: watchBitbucketPR}
-		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb)
+		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{})
+		watchEngineInst.SetWaker(cpWaker{})
+		watchEngineInst.Dynamic = watchMCPSources().Lookup
 	})
 	return watchEngineInst
+}
+
+var (
+	watchMCPOnce sync.Once
+	watchMCPInst *watch.MCPSources
+)
+
+// watchMCPSources are the member's MCP servers that act as watch sources (ADR 0133 §8). They
+// run only while the tenant switch is on, and their stdio children get a narrowed environment.
+func watchMCPSources() *watch.MCPSources {
+	watchMCPOnce.Do(func() {
+		mgr := mcpc.NewManager(context.Background())
+		mgr.Narrow = true
+		watchMCPInst = &watch.MCPSources{
+			Allowed: mcpreg.WatchSourcesAllowed,
+			Defs:    mcpreg.WatchDefs,
+			KindOf: func(name string) string {
+				m, ok := session.ReadMeta(name)
+				if !ok {
+					return ""
+				}
+				return NormalizeKind(m.Kind)
+			},
+			Conn: mgr,
+		}
+	})
+	return watchMCPInst
 }
 
 // StartWatchEngine runs the engine for the life of the agent.
@@ -78,6 +109,7 @@ func StartWatchEngine() {
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			watchEngine().Tick(ctx)
+			watchSubjectRegistrar().sync(ctx, time.Now())
 			cancel()
 			time.Sleep(watchInterval)
 		}
@@ -280,6 +312,7 @@ type watchReq struct {
 	Types          []string `json:"types"`
 	Until          string   `json:"until"`
 	ExpiresInHours int      `json:"expires_in_hours"`
+	Wake           bool     `json:"wake"`
 }
 
 // HandleWatchCreate (POST /sessions/{name}/watches) subscribes the session to a subject. Like
@@ -329,6 +362,7 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	sub, err := watchEngine().Subscribe(ctx, watch.Request{
 		Owner: owner, Requester: requester, Source: src, Ref: strings.TrimSpace(req.Ref), DefaultRepo: linkRepoOf(m.Dir, src),
 		Types: req.Types, Until: strings.TrimSpace(req.Until), Lifetime: time.Duration(req.ExpiresInHours) * time.Hour,
+		Wake: req.Wake,
 	})
 	if err != nil {
 		var ref *watch.ErrRefused

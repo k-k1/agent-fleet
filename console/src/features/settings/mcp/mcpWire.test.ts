@@ -224,3 +224,18 @@ describe("needsMemberSecrets", () => {
     expect(needsMemberSecrets(row({ origin: "user", userSecret: true, headers: { A: "" } }))).toBe(false);
   });
 });
+
+// Watch source (ADR 0133 §8): the flag is sent only when it is on, so a definition that is not a
+// source has the same body as before, and an edit that turns it off drops it.
+describe("watch source target", () => {
+  it("is off by default and omitted from the body", () => {
+    expect(emptyForm().watch).toBe(false);
+    expect(bodyOf(formOf(stdioRow)).targets).toEqual({ assistant: !!stdioRow.targets.assistant, session: !!stdioRow.targets.session });
+  });
+  it("round-trips when on and goes away when switched off", () => {
+    const on = formOf({ ...stdioRow, targets: { ...stdioRow.targets, watch: true } });
+    expect(on.watch).toBe(true);
+    expect((bodyOf(on).targets as { watch?: boolean }).watch).toBe(true);
+    expect((bodyOf({ ...on, watch: false }).targets as { watch?: boolean }).watch).toBeUndefined();
+  });
+});

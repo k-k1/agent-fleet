@@ -27,10 +27,10 @@ const (
 	// OneShotOpencodeGo is the opencode pick for one-shot calls (titles, reply chips) when
 	// the account's catalog lists it; otherwise the CLI's own default runs.
 	OneShotOpencodeGo = "opencode-go/deepseek-v4-flash"
-	// ChatAgy is the agy assistant default, in `agy models` display-name syntax. A name the
-	// live catalog no longer lists is dropped at send time, so a rename upstream degrades to
-	// agy's own default rather than an error.
-	ChatAgy = "Gemini 3.5 Flash (Medium)"
+	// ChatAgy is the agy assistant default, in `agy models` display-name syntax. When the
+	// live catalog no longer lists it, the newest row differing only in its version number is
+	// used (chatx.newestAgyFamilyModel), and with none of those agy's own default runs.
+	ChatAgy = "Gemini 3.8 Flash (Medium)"
 )
 
 // Image generation (internal/imagegen). The agy id is the DRIVER model of the turn, not the
@@ -86,7 +86,7 @@ var Entries = []Entry{
 	{
 		ID: ChatAgy, Kind: "agy", Owner: "assistant chat and agy one-shot fallback (chatx.agyNamedModel)",
 		Source:           "product choice: Gemini Flash is the quota-cheapest agy model on Starter (docs/log/32 Track D)",
-		WhyNotDiscovered: "a preference among listed models; dropped at send time when the catalog no longer lists it",
+		WhyNotDiscovered: "a preference among listed models; when the catalog no longer lists it, the newest row of the same family runs",
 	},
 	{
 		ID: ImagegenAgyDriver, Kind: "agy", Owner: "image generation, agy route (imagegen.newAgyProvider)",

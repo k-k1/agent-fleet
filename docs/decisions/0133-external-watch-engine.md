@@ -297,8 +297,59 @@ The table is a direction, not a commitment; each source is its own change with i
 4. **Webhook ingress on the Control Plane** (GitHub App first; repository webhooks where an App cannot be installed;
    Bitbucket repository webhooks), forwarding pokes only, with the secrets of §4.
 5. **Sources a member adds** (§8), behind the tenant switch, with the environment allowlist for stdio servers.
+   - *2026-11-09, Agent half (#3631).* A member's source is addressed as `ext.<name>` (the definition's name, lower
+     case, `-` as `_`; a name that starts with a digit cannot be one), so it can never shadow a built-in source; its
+     types are `ext.<name>.*` and its subjects `ext:<name>:…`. A subject is read through an optional batch interface of
+     the engine (up to 20 subjects per call, least recently read first) and at most once a minute whatever the hint.
+     The Agent reads the tenant switch from the CP's `/internal/mcp-servers` answer (`watchSources`, absent = off); the
+     CP side and the Console follow in a second change, so until then the switch cannot be on. Only a member's own
+     definition is a source: a tenant-distributed one never is, and `Targets.Watch` is cleared when it arrives.
+     The narrowed stdio environment applies to the engine's own connections and to the connection test of a definition
+     with `Targets.Watch`; existing session-target servers keep the Agent's environment until that is decided
+     separately. Pausing is kept in memory, so an Agent restart lifts it, and editing or re-enabling the definition
+     lifts it too. An OAuth server is reached through the relay, as sessions reach it.
+   - *2026-11-10, Control Plane half and Console (#3631).* Besides five failed calls in a row, 20 replies in a row that
+     carry malformed or out-of-namespace entries pause a source; a clean reply resets that count, and a reply that
+     delivers its events with a stray entry is not a failed call. The tenant switch is a column of `tenant` (off by
+     default), changed by `PUT /api/admin/tenants/{slug}/watch-sources` (tenant admin, audited as
+     `tenant.watch_sources`) and sent to the Agent as `watchSources` in the `/internal/mcp-servers` answer, which
+     reads as off when it cannot be read. The CP also refuses a member's `POST`/`PUT /api/mcp-servers` that sets
+     `targets.watch` while the switch is off (`mcp_watch_disabled`); the Agent enforces the switch on its own.
 6. **The `time` source** (§7) with the Control Plane's wake-only schedule target, then further sources from §9 one at
    a time.
+
+   *Note, 2026-11-09 (step 6, #3632).* The time source and the wake-only target are built; the
+   further §9 sources are not (follow-ups in the PR). Decisions the text left open:
+   the due instant is part of the subject (`time:20261109T150000Z`, UTC) and `watch` takes an RFC 3339
+   time with an offset or a wait (`in 20m`), never a bare time of day, because the engine keeps UTC and
+   must not guess a zone. A timer's default lifetime is its due time plus 24 hours (at most 30 days
+   from now), not the 7 days of other watches, which would end a timer set 20 days out before it
+   fired; `until deadline` is refused. The wake-only target is a schedule row with
+   `session_mode = wake`, a value the schedule API refuses, booked and cancelled on
+   `/internal/wakes`; the list and every by-id handler treat it as absent. The Control Plane
+   also deletes the row itself after its fire, and the Agent reads a 404 as "gone", so the clean-up
+   is safe to repeat. The engine cancels every booking no live watch needs, working from the set of
+   outstanding bookings rather than the places a watch can end, and asks again each minute until the
+   Control Plane answers.
+
+### Step 4 note (2026-11-09, #3630)
+
+Built as one change: `internal/webhookpoke` (signature check, parsers that return subjects only), the
+endpoints `POST /webhooks/github` (the deployment App, `AF_GITHUB_WEBHOOK_SECRET`) and
+`POST /webhooks/hooks/{id}` (a tenant-owned hook), the Agent's `PUT /internal/watch-subjects` and
+`/internal/watch-hooks` under its own `AF_WATCH_TOKEN`, and `POST /watch/poke` on the Agent.
+
+- A hook's secret is derived (HMAC of the token signing root and the hook id), not stored, so the database holds
+  nothing that verifies a delivery. Deleting the hook retires it.
+- Tenant isolation: a hook belongs to one tenant and its pokes reach only that tenant's registrations. The App is
+  shared by every tenant, so what it forwards is limited to public repositories (`repository.private` false; a
+  payload that does not say counts as private). Private repositories use a tenant hook or the long poll.
+- Registrations are a replaced set per workspace (at most 200), expire after an hour, and the Agent renews every
+  20 minutes. A poke reaches only workspaces the database shows as running and never starts one.
+- A replayed or forged delivery costs at most one extra read: the Control Plane pokes a (workspace, subject) pair at
+  most every 5 s, and the engine reads a poked subject at most every 10 s and keeps a failing subject's backoff.
+- Not built: the Agent-side flow that installs a hook at GitHub or Bitbucket with the member's token, and
+  `status`-style events that name a commit and not a pull request (the long poll covers them).
 
 ## Rejected
 

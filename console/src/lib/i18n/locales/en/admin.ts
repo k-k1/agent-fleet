@@ -784,6 +784,16 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.ext_memory_off_hint": "Blocked: the memory tools are not offered to any member's external agent, whatever their own setting says. Memory used inside Agent Fleet is not affected.",
   "tenant.ext_memory_load_failed": "Could not load the setting.",
   "tenant.ext_memory_save_failed": "Could not save the setting.",
+  "tenant.tab_watch_sources": "Watch sources",
+  "tenant.watch_src_title": "MCP servers as watch sources",
+  "tenant.watch_src_note":
+    "Decides whether members of this tenant may register an MCP server of their own as a source for watches. A source is called by the workspace's watch engine, not by a session, to follow their own systems (a ticket queue, a deploy tool). Its output reaches only that member's own sessions as quoted data, and a local (stdio) server is started with a reduced environment. Each member still has to mark a server as a watch source in Settings > MCP servers, and it stays off until they do.",
+  "tenant.watch_src_on": "Allow",
+  "tenant.watch_src_off": "Block",
+  "tenant.watch_src_on_hint": "Members may mark their own MCP servers as watch sources.",
+  "tenant.watch_src_off_hint": "Blocked (the default): no member can mark a server as a watch source, and workspaces run none, whatever was registered before.",
+  "tenant.watch_src_load_failed": "Could not load the setting.",
+  "tenant.watch_src_save_failed": "Could not save the setting.",
   "tenant.tab_engine_access": "Engine access",
   "tenant.engine_access_title": "Who may use the inference engines",
   "tenant.engine_access_note":

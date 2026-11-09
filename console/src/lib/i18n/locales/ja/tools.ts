@@ -134,6 +134,7 @@ export const tools = {
   "mcp.tp_http": "リモート (HTTP)",
   "mcp.target_assistant": "アシスタント",
   "mcp.target_session": "セッション",
+  "mcp.target_watch": "ウォッチのソース",
   "mcp.target_none": "なし",
   "mcp.kinds_all": "すべてのエージェント",
   "mcp.not_ready":
@@ -182,7 +183,7 @@ export const tools = {
   "mcp.f_headers_hint": "値は暗号化保存されます。ふつうの Bearer トークンなら、認証で「Bearer トークン」を選んでください。",
   "mcp.add_header": "ヘッダを追加",
   "mcp.f_targets": "利用先",
-  "mcp.f_targets_hint": "どちらも外すと、登録は残りますがどこにも渡されません。",
+  "mcp.f_targets_hint": "すべて外すと、登録は残りますがどこにも渡されません。「ウォッチのソース」は、ワークスペースのウォッチエンジンがこのサーバーを呼び出せるようにします（watch の source に ext.<ID> を指定）。先にテナント管理者の許可が必要です。",
   "mcp.f_kinds": "対象エージェント",
   "mcp.f_kinds_hint": "何も選ばなければ全エージェントが対象です。",
   "mcp.f_timeout": "タイムアウト (ms)",

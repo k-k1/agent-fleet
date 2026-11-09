@@ -815,7 +815,10 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 			OAuthClient: distClientOf(row),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"servers": out, "unreadable": broken})
+	// The tenant switch for member-added watch sources rides on the same poll. A read that fails
+	// is "off": the Agent only turns the feature on when told so.
+	watchSources, werr := a.cp.Store().GetTenantWatchSources(r.Context(), mv.TenantID)
+	writeJSON(w, http.StatusOK, map[string]any{"servers": out, "unreadable": broken, "watchSources": werr == nil && watchSources})
 }
 
 // refuseOwnMCP refuses a URL that is this deployment's own /mcp endpoint: distributing it

@@ -585,3 +585,49 @@ func TestAdminUpsertKeepsLegacyOwnMCPRowEditable(t *testing.T) {
 		t.Fatalf("a changed URL that is still the own endpoint: %d %s", w.Code, w.Body)
 	}
 }
+
+// The tenant switch for member-added watch sources rides on the distribution poll: off unless the
+// member's own tenant says on, and never another tenant's answer.
+func TestDistributeCarriesTheWatchSourcesSwitch(t *testing.T) {
+	a, ctx := newMCPServerAPITest(t, true)
+	st := a.cp.Store()
+	on, _ := st.CreateTenant(ctx, "on", "On")
+	off, _ := st.CreateTenant(ctx, "off", "Off")
+	if err := st.SetTenantWatchSources(ctx, on.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	read := func(tenant string) any {
+		rec := httptest.NewRecorder()
+		a.Distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil), store.MembershipView{TenantID: tenant})
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out["watchSources"]
+	}
+	if read(on.ID) != true || read(off.ID) != false || read("unknown-tenant") != false {
+		t.Errorf("watchSources: on=%v off=%v unknown=%v", read(on.ID), read(off.ID), read("unknown-tenant"))
+	}
+}
+
+func TestSetsWatchTarget(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"targets":{"watch":true}}`:                true,
+		`{"targets":{"session":true,"watch":true}}`: true,
+		// The Agent reads the first value only, so what follows it must not hide the flag.
+		`{"targets":{"watch":true}} trailing-garbage`:      true,
+		"{\"targets\":{\"watch\":true}}\n{\"targets\":{}}": true,
+		`{"targets":{"session":true}}`:                     false,
+		`{"targets":{"watch":false}}`:                      false,
+		`{"targets":{"watch":"true"}}`:                     false,
+		`{}`:                                               false,
+		`not json`:                                         false,
+	} {
+		if got, _ := SetsWatchTarget([]byte(body)); got != want {
+			t.Errorf("%q: %v", body, got)
+		}
+	}
+	if _, ok := SetsWatchTarget([]byte(`{"targets":`)); ok {
+		t.Error("a truncated value was read")
+	}
+}

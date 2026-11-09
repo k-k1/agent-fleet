@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 	"github.com/k-k1/agent-fleet/control-plane/internal/tenantsrv"
+	"github.com/k-k1/agent-fleet/control-plane/internal/watchingress"
 )
 
 // What a removed member's still-running workspace can reach (issue #1087). The workspace
@@ -94,6 +95,7 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	}{
 		{"/internal/docs", bearer(func() string { return mintDocsToken(k(docsSignKey(master)), mem.ID) })},
 		{"/internal/branch-rules", bearer(func() string { return mintBranchRulesToken(k(branchRulesSignKey(master)), mem.ID) })},
+		{"/internal/watch-", bearer(func() string { return watchingress.MintToken(k(watchingress.SignKey(master)), mem.ID) })},
 		{"/internal/mcp-servers", bearer(func() string { return mcpsrv.MintMCPToken(k(mcpsrv.MCPSignKey(master)), mem.ID) })},
 		{"/internal/aws-profiles", bearer(func() string { return mintAWSProfilesToken(k(awsProfilesSignKey(master)), mem.ID) })},
 		{"/internal/gcp-profiles", bearer(func() string { return mintGCPProfilesToken(k(gcpProfilesSignKey(master)), mem.ID) })},
@@ -115,6 +117,10 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	samples := []struct{ method, path string }{
 		{"GET", "/internal/docs"},
 		{"GET", "/internal/branch-rules"},
+		{"PUT", "/internal/watch-subjects"},
+		{"GET", "/internal/watch-hooks"},
+		{"POST", "/internal/watch-hooks"},
+		{"DELETE", "/internal/watch-hooks/h1"},
 		{"GET", "/internal/mcp-servers"},
 		{"GET", "/internal/aws-profiles"},
 		{"GET", "/internal/gcp-profiles"},

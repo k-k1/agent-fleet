@@ -58,6 +58,8 @@ type Hint struct {
 type Resolved struct {
 	Subject SubjectID
 	URL     string // the subject's web page, https only; "" when unknown
+	// At is the instant a timed subject fires (the time source); zero for every other source.
+	At time.Time
 }
 
 // Source is one provider's adapter.
@@ -73,6 +75,56 @@ type Source interface {
 	// time); the events are every condition that holds now. want are the type patterns the
 	// subject's subscriptions ask for, so a source can skip a costly read nobody needs.
 	Poll(ctx context.Context, subject SubjectID, cursor json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error)
+}
+
+// PollItem is one subject of a batch read.
+type PollItem struct {
+	Subject SubjectID
+	Cursor  json.RawMessage
+	Want    []string
+}
+
+// PollResult is the answer for one PollItem; Subject names the item it answers.
+type PollResult struct {
+	Subject SubjectID
+	Events  []Event
+	Cursor  json.RawMessage
+	Hint    Hint
+	Err     error
+}
+
+// BatchPoller is a Source that reads several subjects in one call. The engine hands it its due
+// subjects, least recently read first, at most MaxBatch at a time, instead of calling Poll for
+// each; Poll is then unused.
+type BatchPoller interface {
+	Source
+	MaxBatch() int
+	PollBatch(ctx context.Context, items []PollItem) []PollResult
+}
+
+// MinIntervaler is a Source that bounds how often one subject is read, whatever its Hint says.
+type MinIntervaler interface {
+	MinPollInterval() time.Duration
+}
+
+// TypeChecker is a Source whose event types are not a fixed list (a member's MCP server): it
+// judges the patterns of a watch itself, instead of the engine matching them against Types.
+type TypeChecker interface {
+	CheckTypes(patterns []string) error
+}
+
+type subscriberKey struct{}
+
+// WithSubscriber carries the name of the session that is subscribing into Resolve, so a source
+// can judge that session's kind. Only the engine sets it.
+func WithSubscriber(ctx context.Context, session string) context.Context {
+	return context.WithValue(ctx, subscriberKey{}, session)
+}
+
+// SubscriberFrom is the session that is subscribing, "" outside Subscribe.
+func SubscriberFrom(ctx context.Context) string {
+	s, _ := ctx.Value(subscriberKey{}).(string)
+	return s
 }
 
 // ErrRefused is a Resolve answer the caller should show as is: the reference is malformed, the
@@ -117,6 +169,12 @@ type Subscription struct {
 	Until     string    `json:"until"`
 	Created   time.Time `json:"created"`
 	Expires   time.Time `json:"expires"`
+	// Due is when a time watch fires (UTC); zero for every other source. WakeID is the Control
+	// Plane booking that starts a stopped workspace for it (ADR 0133 §7), set only for a watch
+	// asked for with wake.
+	Due    time.Time `json:"due,omitempty"`
+	Wake   bool      `json:"wake,omitempty"`
+	WakeID string    `json:"wake_id,omitempty"`
 	// Told is the version last delivered per event type. Sources report only what holds now,
 	// so the last version per type is all de-duplication needs, and it cannot grow.
 	Told map[string]string `json:"told,omitempty"`
@@ -156,7 +214,7 @@ var tokenRE = regexp.MustCompile(`^[A-Za-z0-9.:/#_-]{1,200}$`)
 func TokenOK(s string) bool { return tokenRE.MatchString(s) }
 
 // typeRE is an event type pattern: "pr.checks.completed", "pr.checks.*", "pr.*".
-var typeRE = regexp.MustCompile(`^[a-z][a-z_]*(\.[a-z][a-z_]*)*(\.\*)?$`)
+var typeRE = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.\*)?$`)
 
 // MatchType reports whether pattern selects typ. A pattern ends either in a name or in ".*".
 func MatchType(pattern, typ string) bool {

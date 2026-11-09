@@ -28,6 +28,7 @@ type watchArgs struct {
 	Types          []string `json:"types"`
 	Until          string   `json:"until,omitempty"`
 	ExpiresInHours int      `json:"expires_in_hours,omitempty"`
+	Wake           bool     `json:"wake,omitempty"`
 }
 
 func mcpWatch(id json.RawMessage, a *watchArgs) []byte {
@@ -90,21 +91,25 @@ func watchSchema() map[string]any {
 	return map[string]any{
 		"name": mcpToolWatch,
 		"description": "Agent Fleet: get a notice in this session when a GitHub or Bitbucket pull request changes, instead of polling it yourself (no `gh pr checks --watch` in the background). " +
+			"source ext.<name> watches through an MCP server of yours that is marked as a watch source: ref is one line of printable ASCII (200 characters at most) that the server understands, and the types are that server's own, ext.<name>.* (the server's text arrives as quoted data). " +
 			"The notice arrives as your next input once you are idle, even after a restart; a stopped session is started for it. " +
 			"Types: pr.checks.completed, pr.checks.failed, pr.conflict, pr.mergeable, pr.ready, pr.merged, pr.closed, pr.review.changes_requested, pr.review.threads_unresolved (GitHub only), or a prefix like pr.checks.*. source bitbucket for a Bitbucket PR. " +
 			"notify parent sends the notices to the session that started you instead; that watch then belongs to it. " +
+			"source time is a timer: ref is an RFC 3339 time with an offset (2026-11-09T15:00:00+09:00) or a wait (in 20m, 2h30m, 3d), at most 30 days ahead, and no types are needed; the notice type is time.fired. " +
+			"A timer fires while the Workspace runs; wake true also books the Control Plane to start the Workspace if it is stopped then (refused where the Control Plane has no scheduler). Without wake a timer that fell due while stopped is told late at the next start. " +
 			"A condition that already holds is reported at once. until first (default) ends the watch after one notice; deadline keeps it until it expires (default 7 days, at most 30).",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
-				"ref":              map[string]any{"type": "string", "description": "owner/repo#45, #45 in your own repository, or the PR's URL"},
-				"types":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "event types to be told about"},
+				"ref":              map[string]any{"type": "string", "description": "owner/repo#45, #45 in your own repository, or the PR's URL; for source ext.<name>, whatever that server takes"},
+				"types":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "event types to be told about (not needed for source time)"},
+				"wake":             map[string]any{"type": "boolean", "description": "source time only: start the stopped Workspace when the timer is due"},
 				"until":            map[string]any{"type": "string", "enum": []string{"first", "deadline"}},
 				"expires_in_hours": map[string]any{"type": "integer", "minimum": 1, "maximum": 720},
-				"source":           map[string]any{"type": "string", "enum": []string{"github", "bitbucket"}, "description": "default github"},
+				"source":           map[string]any{"type": "string", "description": "github (default), bitbucket, time, or ext.<name> for an MCP server of yours that is marked as a watch source (its types start with ext.<name>.)"},
 				"notify":           map[string]any{"type": "string", "enum": []string{"self", "parent"}, "description": "default self"},
 			},
-			"required": []string{"ref", "types"},
+			"required": []string{"ref"},
 		},
 	}
 }

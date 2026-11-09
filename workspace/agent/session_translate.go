@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -636,6 +637,9 @@ func handleSessionTranslate(w http.ResponseWriter, r *http.Request) {
 			return got, nil
 		})
 		if err != nil {
+			// The reply carries only a fixed wording, so this line is the one place the cause
+			// (the CLI's stderr, a timeout) can be read back from.
+			log.Printf("translate %s: %v", name, err)
 			msg := "translation failed"
 			if errors.Is(err, errTranslateUnusable) {
 				msg = "translation returned no usable text"

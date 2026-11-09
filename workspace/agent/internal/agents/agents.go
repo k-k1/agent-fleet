@@ -430,6 +430,14 @@ type ProgressReporter interface {
 	StateSourceModTime(m session.Meta) (time.Time, bool)
 }
 
+// QuotaRefusalReader is an optional Agent capability: whether a failed headless call's error text
+// is the kind's own usage-quota refusal for the model that was called, and when the provider says
+// it lifts (zero when it names no time). routehealth parks that model until then; without it the
+// generic reading can take a multi-day quota for a one-minute rate limit and never fail over.
+type QuotaRefusalReader interface {
+	QuotaRefusal(msg string, now time.Time) (resetAt time.Time, ok bool)
+}
+
 // UsageReader is an optional Agent capability: the conversation as the usage fold reads it,
 // when that differs from Transcript's turns — today opencode, whose billed calls with nothing to
 // display come back as transcript.Turn.CostOnly rows so their reported cost is not lost.

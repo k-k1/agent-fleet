@@ -150,6 +150,7 @@ func buildMux() *http.ServeMux {
 	// Work items and PRs a session is linked to (#3134): the link_work_item tool and branch_name.
 	mux.HandleFunc("POST /sessions/{name}/links", sessionx.HandleSessionLink)
 	// The watch engine (ADR 0133): a session subscribes to a PR and is told when it changes.
+	mux.HandleFunc("POST /watch/poke", sessionx.HandleWatchPoke)
 	mux.HandleFunc("POST /sessions/{name}/watches", sessionx.HandleWatchCreate)
 	mux.HandleFunc("GET /sessions/{name}/watches", sessionx.HandleWatchList)
 	mux.HandleFunc("DELETE /sessions/{name}/watches/{id}", sessionx.HandleWatchDelete)

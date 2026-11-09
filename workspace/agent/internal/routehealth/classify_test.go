@@ -54,6 +54,36 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// agyQuotaMsg is the error OneShotHeadlessRun receives when agy's quota is spent (stderr of a
+// real `agy -p`, agy 1.5.3, behind chatx's "agy execution failed: " prefix).
+const agyQuotaMsg = "agy execution failed: error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 108h50m38s.\n" +
+	`AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 108h50m38s.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true}`
+
+// TestAgyQuotaParksUntilTheNamedReset: read generically, agy's quota refusal is a one-minute
+// request-rate park, shorter than NearRecovery, so the resolvers never passed agy over and
+// every translation failed until the multi-day window reset.
+func TestAgyQuotaParksUntilTheNamedReset(t *testing.T) {
+	now := time.Date(2026, 11, 9, 10, 9, 0, 0, time.UTC)
+	v := Classify(session.KindAgy, agyQuotaMsg, now)
+	want := now.Add(108*time.Hour + 50*time.Minute + 38*time.Second)
+	if v.Class != ClassWindow || v.Scope != ScopeModel || !v.ResetAt.Equal(want) {
+		t.Fatalf("got %+v, want window/model resetting at %v", v, want)
+	}
+	tab := NewTable()
+	tab.Fail(session.KindAgy, "", agyQuotaMsg, now)
+	if !tab.Avoid(session.KindAgy, "", now.Add(time.Hour)) {
+		t.Error("an hour later agy's default model must still be passed over")
+	}
+	if tab.Avoid(session.KindAgy, "gpt-oss-120b-medium", now) {
+		t.Error("another agy model kept answering on the same day; it must stay usable")
+	}
+	// Without a duration it is still a window: parked on a guess that Avoid honours.
+	v = Classify(session.KindAgy, "error: Individual quota reached.", now)
+	if v.Class != ClassWindow || !v.ResetAt.IsZero() {
+		t.Errorf("no duration: got %+v", v)
+	}
+}
+
 // TestOnlyAvailabilityClassesCool keeps config, auth and unknown failures out of the table.
 func TestOnlyAvailabilityClassesCool(t *testing.T) {
 	want := map[Class]bool{ClassWindow: true, ClassSpend: true, ClassRateLimit: true, ClassServer: true,

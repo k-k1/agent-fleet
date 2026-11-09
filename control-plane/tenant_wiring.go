@@ -162,6 +162,14 @@ func (a adminAPI) setTenantExternalMemory(w http.ResponseWriter, r *http.Request
 	a.srv().SetTenantExternalMemory(w, r)
 }
 
+func (a adminAPI) tenantWatchSources(w http.ResponseWriter, r *http.Request) {
+	a.srv().TenantWatchSources(w, r)
+}
+
+func (a adminAPI) setTenantWatchSources(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetTenantWatchSources(w, r)
+}
+
 func (a adminAPI) tenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	a.srv().TenantSlotClass(w, r)
 }

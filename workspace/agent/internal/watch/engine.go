@@ -64,6 +64,10 @@ type State struct {
 	Retired map[string]Subscription       `json:"retired,omitempty"`
 	Cursors map[SubjectID]json.RawMessage `json:"builtin_cursors,omitempty"`
 	Tombs   map[string]Tomb               `json:"tombs,omitempty"`
+	// Wakes are the Control Plane bookings made for time watches and not yet confirmed gone. A
+	// booking leaves the list only when the Control Plane has answered that it no longer holds it
+	// (wake.go), so a watch that ended while the Control Plane was unreachable is cleaned up later.
+	Wakes []string `json:"wakes,omitempty"`
 }
 
 // SubjectState is the engine's bookkeeping for one subject, shared by every subscription to it.
@@ -92,6 +96,14 @@ type Engine struct {
 	now     func() time.Time
 	// pollTimeout bounds one Poll.
 	pollTimeout time.Duration
+	// Wake bookkeeping (wake.go).
+	waker       Waker
+	booking     map[string]bool // bookings made by a Subscribe that has not finished
+	wakeRetryAt time.Time
+	// Dynamic finds a source that is not built in, by kind (the member-added MCP sources of ADR
+	// 0133 §8, which come and go with the member's definitions). Built-in kinds win; it is
+	// consulted for every other kind and must be safe for concurrent use.
+	Dynamic func(kind string) (Source, bool)
 }
 
 // New builds an engine over the given sources.
@@ -105,8 +117,13 @@ func New(store Store, sink Sink, sources ...Source) *Engine {
 
 // Source returns the adapter of kind.
 func (e *Engine) Source(kind string) (Source, bool) {
-	s, ok := e.sources[kind]
-	return s, ok
+	if s, ok := e.sources[kind]; ok {
+		return s, true
+	}
+	if e.Dynamic != nil {
+		return e.Dynamic(kind)
+	}
+	return nil, false
 }
 
 func (e *Engine) load() {
@@ -158,6 +175,9 @@ type Request struct {
 	Types       []string
 	Until       string
 	Lifetime    time.Duration // 0 = DefaultLifetime
+	// Wake asks for a Control Plane booking that starts a stopped workspace when a time watch is
+	// due (ADR 0133 §7). Only the time source takes it.
+	Wake bool
 }
 
 // maker is the session that made the request.
@@ -174,14 +194,21 @@ const maxRefLen = 300
 // Subscribe resolves the reference, checks the limits and records the subscription. The
 // subject is read on the next tick, so a condition that already holds is delivered then.
 func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error) {
-	src, ok := e.sources[r.Source]
+	src, ok := e.Source(r.Source)
 	if !ok {
 		return Subscription{}, &ErrRefused{fmt.Sprintf("unknown source %q", r.Source)}
 	}
 	if len(r.Ref) > maxRefLen {
 		return Subscription{}, &ErrRefused{fmt.Sprintf("ref is longer than %d bytes", maxRefLen)}
 	}
-	if err := checkTypes(r.Types, src.Types()); err != nil {
+	if len(r.Types) == 0 && len(src.Types()) == 1 {
+		r.Types = src.Types() // a source with one type (time) needs none asked for
+	}
+	if tc, ok := src.(TypeChecker); ok {
+		if err := tc.CheckTypes(r.Types); err != nil {
+			return Subscription{}, err
+		}
+	} else if err := checkTypes(r.Types, src.Types()); err != nil {
 		return Subscription{}, err
 	}
 	until := r.Until
@@ -211,7 +238,7 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if err != nil {
 		return Subscription{}, err
 	}
-	res, err := src.Resolve(ctx, r.Ref, r.DefaultRepo)
+	res, err := src.Resolve(WithSubscriber(ctx, r.maker()), r.Ref, r.DefaultRepo)
 	if err != nil {
 		return Subscription{}, err
 	}
@@ -222,6 +249,25 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	sub := Subscription{
 		ID: newID(), Owner: r.Owner, Requester: r.Requester, Source: r.Source, Subject: res.Subject, Ref: r.Ref, URL: res.URL,
 		Types: append([]string(nil), r.Types...), Until: until, Created: now.UTC(), Expires: now.Add(life).UTC(),
+	}
+	timed := !res.At.IsZero()
+	if r.Wake && !timed {
+		return Subscription{}, &ErrRefused{"wake applies to time watches only"}
+	}
+	if timed {
+		if err := e.timeTerms(&sub, res.At, r); err != nil {
+			return Subscription{}, err
+		}
+	}
+	if r.Wake {
+		// Booked before the lock is taken (the call is a network round trip), and recorded as
+		// outstanding at once: a failure past this point leaves it for reconcileWakes to cancel.
+		id, err := e.bookWake(ctx, res.At)
+		if err != nil {
+			return Subscription{}, err
+		}
+		sub.Wake, sub.WakeID = true, id
+		defer e.endBooking(id)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -394,12 +440,21 @@ func (e *Engine) Tick(ctx context.Context) {
 		err    error
 	}
 	var results []polled
+	batches := map[string][]dueSubject{}
+	var batchOrder []string
 	for _, d := range due {
 		if ctx.Err() != nil {
 			break // the rest stay due for the next tick
 		}
-		src, ok := e.sources[d.source]
+		src, ok := e.Source(d.source)
 		if !ok {
+			continue
+		}
+		if _, ok := src.(BatchPoller); ok {
+			if _, seen := batches[d.source]; !seen {
+				batchOrder = append(batchOrder, d.source)
+			}
+			batches[d.source] = append(batches[d.source], d)
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, e.pollTimeout)
@@ -409,6 +464,42 @@ func (e *Engine) Tick(ctx context.Context) {
 			break // cut off by the tick's deadline, not the provider's fault: no backoff
 		}
 		results = append(results, polled{d.id, evs, cur, hint, err})
+	}
+	// A batch source reads up to MaxBatch subjects in one call, least recently read first (the
+	// order of due).
+	for _, kind := range batchOrder {
+		src, ok := e.Source(kind)
+		if !ok {
+			continue
+		}
+		bp := src.(BatchPoller)
+		items := batches[kind]
+		for len(items) > 0 && ctx.Err() == nil {
+			n := min(len(items), max(bp.MaxBatch(), 1))
+			chunk := items[:n]
+			items = items[n:]
+			req := make([]PollItem, len(chunk))
+			for i, d := range chunk {
+				req[i] = PollItem{Subject: d.id, Cursor: d.cursor, Want: d.want}
+			}
+			pctx, cancel := context.WithTimeout(ctx, e.pollTimeout)
+			got := bp.PollBatch(pctx, req)
+			cancel()
+			if ctx.Err() != nil {
+				break
+			}
+			byID := map[SubjectID]PollResult{}
+			for _, r := range got {
+				byID[r.Subject] = r // a result for a subject that was not asked is never looked up
+			}
+			for _, d := range chunk {
+				r, ok := byID[d.id]
+				if !ok {
+					r = PollResult{Subject: d.id, Err: errors.New("the source did not answer for this subject")}
+				}
+				results = append(results, polled{d.id, r.Events, r.Cursor, r.Hint, r.Err})
+			}
+		}
 	}
 
 	e.mu.Lock()
@@ -450,6 +541,7 @@ func (e *Engine) Tick(ctx context.Context) {
 	e.mu.Unlock()
 
 	e.deliver(cands, now)
+	e.reconcileWakes(ctx)
 }
 
 // candidate is what one subscription offers this tick: its first pending event, or every
@@ -740,6 +832,13 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 		src, ok := srcOf[id]
 		if !ok || now.Before(ss.NextPoll) {
 			continue
+		}
+		if s, ok := e.Source(src); ok {
+			// A source may bound how often a subject is read whatever its hint, a restart and a
+			// new watch on the subject included (LastPoll is on disk).
+			if mi, ok := s.(MinIntervaler); ok && !ss.LastPoll.IsZero() && now.Before(ss.LastPoll.Add(mi.MinPollInterval())) {
+				continue
+			}
 		}
 		out = append(out, dueSubject{id, src, ss.Cursor, want[id]})
 	}

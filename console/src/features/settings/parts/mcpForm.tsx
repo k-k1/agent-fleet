@@ -260,7 +260,7 @@ export function advancedSummary(
   kindLabel: (k: string) => string,
   withTimeout = true,
 ): string {
-  const targets = [v.assistant && tr("mcp.target_assistant"), v.session && tr("mcp.target_session")].filter(Boolean);
+  const targets = [v.assistant && tr("mcp.target_assistant"), v.session && tr("mcp.target_session"), v.watch && tr("mcp.target_watch")].filter(Boolean);
   const parts = [
     targets.length ? targets.join(", ") : tr("mcp.target_none"),
     v.kinds.length ? v.kinds.map(kindLabel).join(", ") : tr("mcp.kinds_all"),

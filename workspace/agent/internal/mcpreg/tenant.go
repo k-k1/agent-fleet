@@ -93,6 +93,8 @@ func FetchTenant() (TenantFetchResult, error) {
 	var wire struct {
 		Servers    []ServerDef `json:"servers"`
 		Unreadable int         `json:"unreadable"`
+		// WatchSources: the tenant switch, off unless the CP says true.
+		WatchSources bool `json:"watchSources"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return TenantFetchResult{}, fmt.Errorf("CP MCP registry response is not JSON: %w", err)
@@ -105,6 +107,9 @@ func FetchTenant() (TenantFetchResult, error) {
 	}
 	changed, err := saveTenantCache(kept, res.FetchedAt)
 	if err != nil {
+		return res, err
+	}
+	if err := setWatchSources(wire.WatchSources); err != nil {
 		return res, err
 	}
 	res.Changed = changed
@@ -121,7 +126,8 @@ func FetchTenant() (TenantFetchResult, error) {
 func acceptTenant(in []ServerDef) (kept []ServerDef, dropped int) {
 	for _, d := range in {
 		d.Origin = OriginTenant
-		d.Enabled = true // the CP only distributes enabled rows; local opt-out is applied in compose
+		d.Targets.Watch = false // a watch source is a member's own server, never a distributed one
+		d.Enabled = true        // the CP only distributes enabled rows; local opt-out is applied in compose
 		if d.Transport != TransportHTTP {
 			dropped++
 			continue
@@ -187,7 +193,8 @@ func saveTenantCache(servers []ServerDef, fetchedAt int64) (bool, error) {
 }
 
 func writeTenantCache(servers []ServerDef, fetchedAt int64) error {
-	b, err := json.Marshal(tenantCache{FetchedAt: fetchedAt, Servers: servers})
+	// The tenant switch is not part of the server set: a rewrite of the set keeps it.
+	b, err := json.Marshal(tenantCache{FetchedAt: fetchedAt, Servers: servers, WatchSources: loadTenantCache().WatchSources})
 	if err != nil {
 		return err
 	}
@@ -221,3 +228,27 @@ func normalizeDefs(in []ServerDef) []ServerDef {
 	}
 	return out
 }
+
+// setWatchSources records the tenant switch for member-added watch sources, rewriting the cache
+// only when it moves. It is not a server change, so it never reports one.
+func setWatchSources(on bool) error {
+	c := loadTenantCache()
+	if c.WatchSources == on {
+		return nil
+	}
+	c.WatchSources = on
+	b, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(tenantCachePath()), 0o700); err != nil {
+		return err
+	}
+	return writeFileAtomic(tenantCachePath(), b, 0o600)
+}
+
+// WatchSourcesAllowed is the tenant switch for member-added watch sources (ADR 0133 §8). It
+// answers false until the CP has said true: no bridge, a CP that predates the switch and a
+// cache that cannot be read are all "off". An unreachable CP keeps the last answer, as the
+// server set does; the switch going off reaches the engine with the next poll (TenantPollInterval).
+func WatchSourcesAllowed() bool { return loadTenantCache().WatchSources }
