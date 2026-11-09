@@ -169,8 +169,9 @@ func prNotice(pr *branchpr.PR, role, before string) (kind, onceKey string) {
 }
 
 // sendPRNotice puts one notification for the PR provider/key of session s, and reports whether it
-// is in the outbox (now or earlier). An outbox that cannot be written answers false, and the
-// caller keeps the state change that prompted it so the next poll tries again.
+// is in the outbox (now or earlier). An outbox that cannot be written answers false: the engine
+// offers the notification again on its next tick, and the PR feedback watch keeps the state
+// change that prompted it so its next tick tries again.
 func sendPRNotice(s *session.Session, kind, provider, key, extra string, pr *branchpr.PR) bool {
 	once := kind + "|" + provider + ":" + key
 	if extra != "" {
