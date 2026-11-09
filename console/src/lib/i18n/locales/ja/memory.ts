@@ -529,11 +529,9 @@ export const memory = {
   "mem.cs_advice_supersede": "新しいメモリへの置き換えを勧めています",
   "mem.cs_advice_merge": "メモリの統合を勧めています",
   "mem.cs_advice_targets": "関係するメモリ:",
-  "mem.cs_advice_note": "この提案には承認ボタンがありません。置き換えや統合を書き込む仕組みはまだなく、内容を見て「メモリ」から手で直してください。",
   "mem.cs_advice_only": "助言のみの提案です。適用できる変更を含まないため、承認はできません。",
   "mem.cs_op_patch": "修正",
   "mem.cs_op_create": "作成",
-  "mem.cs_at_revision": "（リビジョン {n} を見て作成）",
   "mem.cs_published": "適用済み",
   "mem.cs_item_stale": "このメモリは提案の作成後に変わったため、この変更はもう当てはまりません: {why}",
   "mem.cs_load_failed": "提案を読み込めませんでした。",
@@ -611,5 +609,5 @@ export const memory = {
   "mem.pv_advice_add": "新しいメモリ「{name}」を追加することを勧めています。",
   "mem.pv_advice_supersede": "メモリ「{name}」を、新しいメモリで置き換えることを勧めています。",
   "mem.pv_advice_merge": "メモリ（{targets}）を 1 件に統合することを勧めています。",
-  "mem.pv_advice_note": "まだ承認できません（置き換え・統合を書き込む仕組みがないため）。何も書き込まれません。内容を見て、「メモリ」から手で直してください。",
+  "mem.pv_advice_note": "この助言は何も書き込みません。まだ承認できません（置き換え・統合を書き込む仕組みがないため）。内容を見て、「メモリ」から手で直してください。",
 };

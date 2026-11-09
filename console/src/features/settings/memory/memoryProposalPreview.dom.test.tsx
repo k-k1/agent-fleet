@@ -20,12 +20,12 @@ import { ProposalsPanel } from "./memoryProposals.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import { setLocale, t } from "../../../lib/i18n/index.ts";
-import type { ConsolItem, ConsolItemView, ConsolProposalView } from "./memoryTypes.ts";
+import type { ConsolItemView, ConsolProposalView } from "./memoryTypes.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-const create = (name: string, extra: Partial<ConsolItem> = {}): ConsolItemView => ({
+const create = (name: string, extra: Partial<ConsolItemView> = {}): ConsolItemView => ({
   op: "create",
   name,
   description: `about ${name}`,
@@ -226,8 +226,51 @@ describe("the advice card", () => {
     await mount(<ProposalPreview view={viewOf("tests", [advice])} />);
     const [card] = cards("note");
     expect(card.textContent).toContain("Suggests merging the memories (tests, ci) into one.");
-    expect(card.textContent).toContain("Not approvable yet");
+    expect(card.textContent).toContain("not approvable yet");
     expect(card.textContent).toContain("same rule twice");
+  });
+});
+
+describe("review findings (round 1)", () => {
+  it("shows no stale warning on a decided proposal's cards", async () => {
+    const staleCreate = create("fresh", { stale: "name exists" });
+    await mount(<ProposalPreview view={viewOf("t", [staleCreate, { ...patch("p"), stale: "the memory has changed since" }], { status: "approved" })} />);
+    expect(host!.querySelector(".mem-warn")).toBeNull();
+  });
+
+  it("says only the advice writes nothing when a patch rides along", async () => {
+    await mount(<ProposalPreview view={viewOf("t", [patch("p"), advice])} />);
+    const text = cards("note")[0].textContent!;
+    expect(text).toContain("This suggestion writes nothing");
+    expect(text).not.toContain("Nothing is written");
+  });
+
+  it("marks the items that were applied", async () => {
+    await mount(<ProposalPreview view={viewOf("t", [create("a", { commit: "c1" }), patch("p"), { ...patch("q"), commit: "c2" }], { status: "partial" })} />);
+    const applied = (el: HTMLElement) => el.textContent!.includes(t("mem.cs_published"));
+    expect(cards("create").map(applied)).toEqual([true]);
+    expect(cards("patch").map(applied)).toEqual([false, true]);
+  });
+
+  it("counts a name once in the summary", async () => {
+    await mount(<ProposalPreview view={viewOf("t", [create("same"), create("same")])} />);
+    expect(summary()).toBe("Approving adds 1 memory; no existing memory changes.");
+  });
+
+  it("drops the revision from the labels of a stale patch", async () => {
+    await mount(<ProposalPreview view={viewOf("t", [{ ...patch("p", 2), stale: "the memory has changed since" }])} />);
+    const labels = Array.from(cards("patch")[0].querySelectorAll(".mem-pv-side")).map((e) => e.getAttribute("aria-label"));
+    expect(labels).toEqual(["Before", "After"]);
+  });
+
+  it("prefers the item's own revision over targetRevisions", async () => {
+    await mount(<ProposalPreview view={viewOf("t", [patch("p", 4)], { targetRevisions: { p: 9 } })} />);
+    expect(summary()).toContain("rev 4 → 5");
+  });
+
+  it("says the topic memory is untouched once for several creates", async () => {
+    await mount(<ProposalPreview view={viewOf("topic", [create("a"), create("b")])} />);
+    expect(host!.querySelectorAll(".mem-pv-untouched")).toHaveLength(1);
   });
 });
 

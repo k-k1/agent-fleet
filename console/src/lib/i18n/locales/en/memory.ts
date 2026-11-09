@@ -530,11 +530,9 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.cs_advice_supersede": "suggests replacing it with a new memory",
   "mem.cs_advice_merge": "suggests merging memories",
   "mem.cs_advice_targets": "Memories involved:",
-  "mem.cs_advice_note": "This suggestion has no Approve button. Nothing can write a replacement or a merge yet, so read it and edit the memories by hand in Memories.",
   "mem.cs_advice_only": "This is advice only. It contains no change that can be applied, so it cannot be approved.",
   "mem.cs_op_patch": "patch",
   "mem.cs_op_create": "create",
-  "mem.cs_at_revision": "(drafted against revision {n})",
   "mem.cs_published": "applied",
   "mem.cs_item_stale": "This memory changed after the suggestion was drafted, so this change no longer applies: {why}",
   "mem.cs_load_failed": "Could not load the suggestion.",
@@ -612,5 +610,5 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.pv_advice_add": "Suggests adding a new memory “{name}”.",
   "mem.pv_advice_supersede": "Suggests replacing the memory “{name}” with a new one.",
   "mem.pv_advice_merge": "Suggests merging the memories ({targets}) into one.",
-  "mem.pv_advice_note": "Not approvable yet: nothing can write a replacement or a merge. Nothing is written. Read it and edit the memories by hand in Memories.",
+  "mem.pv_advice_note": "This suggestion writes nothing. It is not approvable yet: nothing can write a replacement or a merge. Read it and edit the memories by hand in Memories.",
 };

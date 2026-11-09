@@ -127,7 +127,7 @@ interface SettingsUIStore {
    *  the `data-settings-target` it carries (an agent kind for Settings > Agents). The section
    *  that owns it consumes it once its content exists (useSettingsTarget); null = nothing asked. */
   settingsTarget: string | null;
-  /** The view inside the opened section that a "section:view" request named (memory:changes).
+  /** The view inside the opened section that a "section:view" request named (memorysnapshots:transfer).
    *  The section's view-nav consumes it once; null = nothing asked, so the remembered view wins. */
   settingsView: string | null;
   openSettings(section?: string, opts?: { addPort?: number; target?: string }): void;
@@ -161,7 +161,7 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   settingsView: null,
 
   openSettings(section?: string, opts?: { addPort?: number; target?: string }) {
-    // "section:view" names a view of a section that has a view-nav (memory:changes).
+    // "section:view" names a view of a section that has a view-nav (memorysnapshots:transfer).
     const [sec, view] = (section ?? "").split(":");
     section = sec;
     // "connections" is a legacy alias for the merged agents tab (the old connections

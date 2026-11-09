@@ -35,7 +35,8 @@ export function proposalSubject(p: Pick<ConsolProposal, "memory" | "items">): st
 
 /** The revision a patch was drafted against, and the one it publishes. */
 export function patchRevisions(view: Pick<ConsolProposal, "targetRevisions">, iv: ConsolItem): { from: number; to: number } | null {
-  const from = view.targetRevisions?.[iv.name] ?? iv.revision;
+  // iv.revision is what Approve checks and publishes against; targetRevisions is only the fallback.
+  const from = iv.revision ?? view.targetRevisions?.[iv.name];
   return typeof from === "number" && from > 0 ? { from, to: from + 1 } : null;
 }
 
@@ -45,8 +46,13 @@ export const topicChanged = (view: Pick<ConsolProposal, "memory" | "items">): bo
 
 /** The one line above the cards: how many memories approving adds and changes. */
 export function previewSummary(tr: TFn, view: Pick<ConsolProposal, "items" | "targetRevisions">): string {
-  const creates = view.items.filter((i) => i.op === "create");
-  const patches = view.items.filter((i) => i.op === "patch");
+  // By name: Approve refuses a second item for a name it already wrote, so a repeat is not a change.
+  const uniq = (op: string): ConsolItem[] => {
+    const seen = new Set<string>();
+    return view.items.filter((i) => i.op === op && !seen.has(i.name) && !!seen.add(i.name));
+  };
+  const creates = uniq("create");
+  const patches = uniq("patch");
   if (creates.length + patches.length === 0) return tr("mem.pv_sum_none");
   const list = patches
     .map((i) => {
@@ -101,18 +107,21 @@ function Side({ rows, side, label }: { rows: DiffRow[]; side: "-" | "+"; label: 
   );
 }
 
-function Stale({ iv }: { iv: ConsolItemView }) {
+// Only while pending: a decided patch always reads "changed since", because its own approval
+// advanced the revision, and the Agent's Approve avoids exactly that self-conflict.
+function Stale({ iv, pending }: { iv: ConsolItemView; pending: boolean }) {
   const tr = useT();
-  return iv.stale ? <p className="mem-warn">{tr("mem.cs_item_stale", { why: iv.stale })}</p> : null;
+  return pending && iv.stale ? <p className="mem-warn">{tr("mem.cs_item_stale", { why: iv.stale })}</p> : null;
 }
 
-function CreateCard({ view, iv }: { view: ConsolProposalView; iv: ConsolItemView }) {
+function CreateCard({ view, iv, pending, topicNote }: { view: ConsolProposalView; iv: ConsolItemView; pending: boolean; topicNote: boolean }) {
   const tr = useT();
   const scope = view.scope === "user" ? tr("mem.af_scope_user") : view.projectId || tr("mem.pv_scope_project");
   return (
     <article className="mem-pv-card" data-op="create">
       <h5 className="mem-pv-title">
         <span className="mem-badge af-op-create">{tr("mem.pv_new")}</span> <code>{iv.name}</code>
+        {iv.commit && <span className="muted"> · {tr("mem.cs_published")}</span>}
       </h5>
       <dl className="mem-pv-meta">
         <dt>{tr("mem.pv_scope")}</dt>
@@ -136,23 +145,27 @@ function CreateCard({ view, iv }: { view: ConsolProposalView; iv: ConsolItemView
           <MarkdownView source={iv.body} />
         </div>
       ) : null}
-      {!topicChanged(view) && iv.name !== view.memory && (
+      {topicNote && !topicChanged(view) && iv.name !== view.memory && (
         <p className="muted ds-note mem-pv-untouched">{tr("mem.pv_topic_untouched", { name: view.memory })}</p>
       )}
-      <Stale iv={iv} />
+      <Stale iv={iv} pending={pending} />
     </article>
   );
 }
 
-function PatchCard({ view, iv }: { view: ConsolProposalView; iv: ConsolItemView }) {
+function PatchCard({ view, iv, pending }: { view: ConsolProposalView; iv: ConsolItemView; pending: boolean }) {
   const tr = useT();
-  const rev = patchRevisions(view, iv);
+  // A stale diff is current-vs-patched, and the Agent does not say which revision "current" is,
+  // so a revision on the labels would be a guess.
+  const rev = iv.stale ? null : patchRevisions(view, iv);
+  const title = patchRevisions(view, iv);
   const rows = parseLineDiff(iv.diff);
   return (
     <article className="mem-pv-card" data-op="patch">
       <h5 className="mem-pv-title">
         <span className="mem-badge af-op-patch">{tr("mem.pv_change")}</span> <code>{iv.name}</code>
-        {rev && <span className="muted"> {tr("mem.pv_rev", { from: rev.from, to: rev.to })}</span>}
+        {title && <span className="muted"> {tr("mem.pv_rev", { from: title.from, to: title.to })}</span>}
+        {iv.commit && <span className="muted"> · {tr("mem.cs_published")}</span>}
       </h5>
       {iv.reason && <p className="muted">{iv.reason}</p>}
       {rows.length > 0 ? (
@@ -162,7 +175,7 @@ function PatchCard({ view, iv }: { view: ConsolProposalView; iv: ConsolItemView 
         </div>
       ) : null}
       <p className="muted ds-note">{tr("mem.pv_patch_note")}</p>
-      <Stale iv={iv} />
+      <Stale iv={iv} pending={pending} />
     </article>
   );
 }
@@ -203,9 +216,10 @@ export function ProposalPreview({ view }: { view: ConsolProposalView }) {
       )}
       {view.itemViews.map((iv, i) =>
         iv.op === "create" ? (
-          <CreateCard key={i} view={view} iv={iv} />
+          // The topic note is the same sentence for every create, so only the first card says it.
+          <CreateCard key={i} view={view} iv={iv} pending={pending} topicNote={view.itemViews.findIndex((x) => x.op === "create") === i} />
         ) : iv.op === "patch" ? (
-          <PatchCard key={i} view={view} iv={iv} />
+          <PatchCard key={i} view={view} iv={iv} pending={pending} />
         ) : (
           <AdviceCard key={i} iv={iv} />
         ),
