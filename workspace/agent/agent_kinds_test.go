@@ -158,6 +158,11 @@ func TestCPManagedDefaultSnapshotMatchesRegistry(t *testing.T) {
 // The live catalog (and only it) names the routes a harness accepts, so the Console offers a
 // route picker for claude and for no other kind; the checked-in snapshot stays free of them.
 func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
+	// The route gates are this Agent's environment; a workspace running with them on must not
+	// change what this test sees.
+	for _, k := range []string{"AF_CLAUDE_BEDROCK_ROUTE", "AF_OPENCODE_BEDROCK_ROUTE", "AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE"} {
+		t.Setenv(k, "")
+	}
 	for _, e := range buildKindCatalog(true).Kinds {
 		want := e.Kind == "claude"
 		if got := len(e.Routes) > 0; got != want {
