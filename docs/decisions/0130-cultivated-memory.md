@@ -718,3 +718,18 @@ release.
   codex/Gemini runners, the ledger entry for the tokens. Not verified on a real workspace: a real model run, the notification
   reaching the Console from a live Agent.
   A failed outbox write does not spend the day's notice (the stamp is saved only after the notification is queued), so the next tick retries.
+
+- **2026-11-09 — decision 6: a member-started manual run (#3702).** Decision 6 said the consolidator runs only when the workspace
+  is idle and has no run-now route (#3695). On a workspace where some session is busy all day that means it never runs, so the
+  member could neither try it nor see a proposal during the day. This is now a deliberate exception, and only for the member:
+  `POST /agents/memory-consolidation/run {all?}` is behind the member-origin mark (relay row `memory.consolidation.run`, signed,
+  no audit target), like approve/reject/retry; there is no MCP tool and no unsigned path, so a session cannot start a run. A
+  manual run skips the idle check and `MinInterval`, and other sessions' turns do not defer it (it runs with no `Turns`). It is
+  recorded in `trigger.lastManualRun`, never in `lastRun`, and the automatic trigger does not read it, so the 3 h window is
+  neither consumed nor reset. Everything else of decision 6 stays: the switch must be on, the per-run token budget, ripeness
+  (default; `all` takes every waiting topic except one with a proposal already pending), validation, no revival, and nothing
+  written to memory before approval. One run at a time across manual and automatic: a request while one is in flight is
+  refused with 409 `run_in_flight` (not queued), and with the switch off 409 `disabled`; an automatic tick that finds a run in
+  flight does not start and does not spend its window. The route answers 202 at once and the run goes on in the background; the
+  status carries `run {running, manual, done, total}` and the report is marked `manual`. The Console has a Run now button with a
+  confirmation that says it spends tokens and states the budget. Not verified on a real workspace: a manual run against a real model.

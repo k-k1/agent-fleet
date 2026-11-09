@@ -143,6 +143,130 @@ describe("ConsolidationSettings", () => {
   });
 });
 
+describe("the manual run", () => {
+  const RUN = "api/agents/memory-consolidation/run";
+  const runStatus = (run: object, extra: object = {}) => ({
+    ...status,
+    config: { ...status.config, tokenBudget: 60000 },
+    run,
+    ...extra,
+  });
+  const runButton = () => byText(t("mem.cs_run_button"));
+
+  it("asks first, says it spends tokens and states the budget, then posts once", async () => {
+    setSetting("memoryConsolidation", true);
+    api.mockImplementation((p: string) => (p === "api/agents/memory-consolidation" ? Promise.resolve(runStatus({ running: false, done: 0, total: 0 })) : route(p)));
+    let release: (v: object) => void = () => {};
+    apiJSON.mockImplementation(() => new Promise((r) => (release = r)));
+    await mount(<ConsolidationSettings running />);
+    // Cancel: nothing is sent.
+    await click(runButton());
+    const body = document.body.textContent!;
+    expect(body).toContain(t("mem.cs_run_body"));
+    expect(body).toContain(t("mem.cs_run_budget", { n: (60000).toLocaleString() }));
+    await click(buttons().find((b) => b.textContent === t("common.cancel")));
+    expect(apiJSON).not.toHaveBeenCalled();
+    // Confirm: one POST, and a second click while it is in flight sends nothing more.
+    await click(runButton());
+    await click(confirmButton()!);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(apiJSON).toHaveBeenCalledWith(RUN, "POST", {});
+    expect(runButton()!.disabled).toBe(true);
+    await click(runButton());
+    expect(document.body.querySelector(".ui-confirm-actions")).toBeNull();
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    await act(async () => release({ started: true }));
+    await flush();
+  });
+
+  it("sends all=true only when the option is ticked", async () => {
+    setSetting("memoryConsolidation", true);
+    api.mockImplementation((p: string) => (p === "api/agents/memory-consolidation" ? Promise.resolve(runStatus({ running: false, done: 0, total: 0 })) : route(p)));
+    await mount(<ConsolidationSettings running />);
+    await act(async () => host!.querySelector<HTMLInputElement>(".mem-cs-run input")!.click());
+    await click(runButton());
+    expect(document.body.textContent).toContain(t("mem.cs_run_body_all"));
+    await click(confirmButton()!);
+    expect(apiJSON).toHaveBeenCalledWith(RUN, "POST", { all: true });
+  });
+
+  it("is disabled and shows progress while running, and polls until it ends", async () => {
+    vi.useFakeTimers();
+    try {
+      setSetting("memoryConsolidation", true);
+      let run: object = { running: true, manual: true, done: 1, total: 3 };
+      api.mockImplementation((p: string) => (p === "api/agents/memory-consolidation" ? Promise.resolve(runStatus(run)) : route(p)));
+      await mount(<ConsolidationSettings running />);
+      expect(runButton()!.disabled).toBe(true);
+      expect(host!.querySelector(".mem-cs-status")!.textContent).toContain(t("mem.cs_running_progress", { n: 2, m: 3 }));
+      const calls = api.mock.calls.length;
+      run = { running: false, done: 0, total: 0 };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3100);
+      });
+      expect(api.mock.calls.length).toBeGreaterThan(calls);
+      expect(runButton()!.disabled).toBe(false);
+      // Polling stops once nothing runs.
+      const after = api.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10000);
+      });
+      expect(api.mock.calls.length).toBe(after);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps polling through a failed read, recovers, and stops on unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      setSetting("memoryConsolidation", true);
+      let mode: "ok" | "fail" | "done" = "ok";
+      api.mockImplementation((p: string) => {
+        if (p !== "api/agents/memory-consolidation") return route(p);
+        if (mode === "fail") return Promise.resolve({ error: { code: "x", message: "down" } });
+        return Promise.resolve(runStatus(mode === "ok" ? { running: true, manual: true, done: 0, total: 2 } : { running: false, done: 0, total: 0 }));
+      });
+      await mount(<ConsolidationSettings running />);
+      mode = "fail";
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3100);
+      });
+      expect(host!.textContent).toContain(t("mem.cs_status_failed"));
+      mode = "done";
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3100);
+      });
+      expect(host!.textContent).not.toContain(t("mem.cs_status_failed"));
+      expect(runButton()!.disabled).toBe(false);
+      mode = "ok";
+      act(() => root?.unmount());
+      const n = api.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10000);
+      });
+      expect(api.mock.calls.length).toBe(n);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("words the 409 refusals", async () => {
+    setSetting("memoryConsolidation", true);
+    api.mockImplementation((p: string) => (p === "api/agents/memory-consolidation" ? Promise.resolve(runStatus({ running: false, done: 0, total: 0 })) : route(p)));
+    for (const code of ["run_in_flight", "disabled"]) {
+      apiJSON.mockResolvedValueOnce({ error: { code, message: "raw" } });
+      await mount(<ConsolidationSettings running />);
+      await click(runButton());
+      await click(confirmButton()!);
+      expect(document.body.textContent).toContain(t(code === "disabled" ? "mem.cs_err_disabled" : "mem.cs_err_run_in_flight"));
+      act(() => root?.unmount());
+      host?.remove();
+      document.body.innerHTML = "";
+    }
+  });
+});
+
 describe("ProposalsPanel", () => {
   it("lists pending proposals first and filters decided and expired ones", async () => {
     await mount(<ProposalsPanel reload={0} onChanged={() => {}} />);

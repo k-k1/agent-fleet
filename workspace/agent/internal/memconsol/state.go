@@ -84,9 +84,13 @@ const maxDropped = 2
 
 // TriggerState is what the trigger keeps across restarts.
 type TriggerState struct {
-	LastRun    time.Time `json:"lastRun,omitempty"`
-	LastTick   time.Time `json:"lastTick,omitempty"`
-	LastNotice time.Time `json:"lastNotice,omitempty"`
+	// LastRun is when the last automatic run began: the only start time the 3 h window reads.
+	LastRun time.Time `json:"lastRun,omitempty"`
+	// LastManualRun is when the member last started a manual run. It is kept apart on purpose: the
+	// automatic trigger never reads it, so a manual run neither consumes nor resets the window.
+	LastManualRun time.Time `json:"lastManualRun,omitempty"`
+	LastTick      time.Time `json:"lastTick,omitempty"`
+	LastNotice    time.Time `json:"lastNotice,omitempty"`
 	// BusyTicks counts ticks since the last run on which a session was active; a ripe topic that
 	// waits while this grows is delayed by "never-idle".
 	BusyTicks int `json:"busyTicks,omitempty"`

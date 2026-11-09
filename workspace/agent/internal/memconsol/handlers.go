@@ -40,6 +40,8 @@ type StatusView struct {
 		TokenBudget     int    `json:"tokenBudget"`
 		ProposalTTL     string `json:"proposalTTL"`
 	} `json:"config"`
+	// Run is the run in flight, manual or automatic; Running false when none is.
+	Run     RunProgress    `json:"run"`
 	LastRun *Report        `json:"lastRun,omitempty"`
 	Trigger TriggerState   `json:"trigger"`
 	Counts  map[string]int `json:"counts"`
@@ -55,6 +57,7 @@ func BuildStatus(now time.Time) (StatusView, error) {
 	v.Enabled = d.Enabled != nil && d.Enabled()
 	v.Config.IdleAfter, v.Config.MinInterval, v.Config.MaxWait = cfg.IdleAfter.String(), cfg.MinInterval.String(), cfg.MaxWait.String()
 	v.Config.NewObservations, v.Config.TokenBudget, v.Config.ProposalTTL = cfg.NewObservations, cfg.TokenBudget, cfg.ProposalTTL.String()
+	v.Run = currentProgress()
 	v.Counts = map[string]int{}
 	v.Waiting = []Delay{}
 	if r, ok := LastReport(); ok {

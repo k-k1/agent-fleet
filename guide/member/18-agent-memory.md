@@ -284,6 +284,14 @@ only queues *proposals*.
   a run, the model call in flight finishes and the rest waits. The figures are in `config.json` beside the queue (under the
   memory store's work directory, `af-memory.work/consolidation/`); the models are in `models.json` there (default: the `small`
   role `claude:haiku`, the `large` role `claude:sonnet`, which supersede and merge escalate to).
+- **Run now (manual).** If a session is busy all day the automatic run may never come. **Run now**, next to the status, starts
+  a run yourself. It asks first: it calls the model, spends tokens, and shows the per-run budget. It ignores the idle check
+  and the 3-hour limit, and a turn in another session does not stop it; everything else is as for an automatic run (the switch
+  must be on, the token budget, validation, nothing written before you approve). By default it takes the ripe topics; tick
+  *Include topics that are not due yet* to take every waiting topic (one that already has a suggestion waiting is left out).
+  The request returns at once and the status shows the run's progress ("topic n of m"), then its report. Only one run goes at a
+  time: a second request is refused, not queued. A manual run does not use up or reset the automatic 3-hour window. Only you
+  can start it from the Console; a session cannot.
 - **What a proposal can be.** A *patch* of one memory (exact-text edits, checked to apply to the current revision), a *create*
   that an earlier 0117 proposal carried, or *advice* (supersede, merge, add) that you apply by hand — the engine does not
   write replacements. A create over a name that was forgotten, or that ever existed, is refused.

@@ -50,6 +50,10 @@ var memoryRelays = []agentRelay{
 	{route: "POST /api/agents/memory-consolidation/proposals/approve", audit: auditAs("memory.consolidation.approve", queryShaped("proposal", auditReviewIDHint)), sign: signBody},
 	{route: "POST /api/agents/memory-consolidation/proposals/reject", audit: auditAs("memory.consolidation.reject", queryShaped("proposal", auditReviewIDHint)), sign: signBody},
 	{route: "POST /api/agents/memory-consolidation/proposals/retry", audit: auditAs("memory.consolidation.retry", queryShaped("proposal", auditReviewIDHint)), sign: signBody},
+	// A member-started run of the consolidator (#3702; ADR 0130 decision 6, 2026-11-09 note). It
+	// spends model tokens and bypasses the idle gate, so a session holding the same token must not
+	// start one: signed. It names no proposal, so the audit row has no target.
+	{route: "POST /api/agents/memory-consolidation/run", audit: auditAs("memory.consolidation.run", nil), sign: signBody},
 	// The member's create/edit (#1997), audited under the project id.
 	{route: "POST /api/agents/memory/entries/member-save", audit: auditAs("memory.entry.save", queryShaped("project", auditProjectHint)), sign: signBody},
 	{route: "GET /api/agents/memory/entries/member-read"},
