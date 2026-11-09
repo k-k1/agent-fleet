@@ -174,8 +174,20 @@ func TestProvidedBudgetRefusalPassesThrough(t *testing.T) {
 		resp.Header.Get("X-Af-Route-Budget-Level") != "" {
 		t.Fatalf("budget refusal: %d %v %s", resp.StatusCode, resp.Header, body)
 	}
-	if rows := e.waitRows(1); rows[0].OK || rows[0].Route != usagex.RouteBedrockDeployment {
-		t.Fatalf("ledger row = %+v", rows[0])
+	// Never admitted, nothing reserved or billed: no ledger row (#3683). An admitted call that
+	// Bedrock refused carries the CP's call id and is recorded as failed.
+	e.upFn = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(cpCallHeader, "cpcall-429")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"Too many requests"}`))
+	}
+	if resp, _ := e.call(tok, provPath(provModel), `{}`); resp.StatusCode != 429 {
+		t.Fatalf("throttle: %d", resp.StatusCode)
+	}
+	rows := e.waitRows(1)
+	if len(rows) != 1 || rows[0].Call != "cpcall-429" || rows[0].OK || rows[0].Route != usagex.RouteBedrockDeployment {
+		t.Fatalf("ledger rows = %+v, want only the admitted call's", rows)
 	}
 }
 

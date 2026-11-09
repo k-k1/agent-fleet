@@ -235,13 +235,14 @@ func (a providedRouteAdmin) putGrant(w http.ResponseWriter, r *http.Request) {
 	if !decodeAdminBody(w, r, &in) {
 		return
 	}
-	if err := a.g.SetGrant(r.Context(), t.ID, in); err != nil {
+	warn, err := a.g.SetGrant(r.Context(), t.ID, in)
+	if err != nil {
 		writeRouteAdminErr(w, err)
 		return
 	}
 	a.audit(r, ident, t.ID, "provided_route.deployment_grant", t.Slug,
 		fmt.Sprintf("granted=%t ceiling_micro=%s", in.Granted, microDetail(in.CeilingMicro)))
-	writeJSON(w, http.StatusOK, in)
+	writeJSON(w, http.StatusOK, grantSaved{in, nonNil(warn)})
 }
 
 func (a providedRouteAdmin) putPolicy(w http.ResponseWriter, r *http.Request) {
@@ -253,13 +254,14 @@ func (a providedRouteAdmin) putPolicy(w http.ResponseWriter, r *http.Request) {
 	if !decodeAdminBody(w, r, &in) {
 		return
 	}
-	if err := a.g.SetPolicy(r.Context(), t.ID, in); err != nil {
+	warn, err := a.g.SetPolicy(r.Context(), t.ID, in)
+	if err != nil {
 		writeRouteAdminErr(w, err)
 		return
 	}
 	a.audit(r, ident, t.ID, "provided_route.deployment_policy", t.Slug,
 		fmt.Sprintf("members_only=%t member_default_micro=%d", in.MembersOnly, in.MemberDefaultMicro))
-	writeJSON(w, http.StatusOK, in)
+	writeJSON(w, http.StatusOK, policySaved{in, nonNil(warn)})
 }
 
 func (a providedRouteAdmin) putMember(w http.ResponseWriter, r *http.Request) {
@@ -289,13 +291,38 @@ func (a providedRouteAdmin) putMember(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "no_member", "no such member in this tenant"})
 		return
 	}
-	if err := a.g.SetMember(r.Context(), t.ID, in); err != nil {
+	warn, err := a.g.SetMember(r.Context(), t.ID, in)
+	if err != nil {
 		writeRouteAdminErr(w, err)
 		return
 	}
 	a.audit(r, ident, t.ID, "provided_route.deployment_member", target.UserKey,
 		fmt.Sprintf("granted=%t budget_micro=%s", in.Granted, microDetail(in.BudgetMicro)))
-	writeJSON(w, http.StatusOK, in)
+	writeJSON(w, http.StatusOK, memberSaved{in, nonNil(warn)})
+}
+
+// grantSaved, policySaved and memberSaved echo a saved write with its warnings: amounts a call
+// fits under only with a small output cap (routegateway's belowFloor). warnings is never null.
+type grantSaved struct {
+	routegateway.GrantInput
+	Warnings []string `json:"warnings"`
+}
+
+type policySaved struct {
+	routegateway.PolicyInput
+	Warnings []string `json:"warnings"`
+}
+
+type memberSaved struct {
+	routegateway.MemberInput
+	Warnings []string `json:"warnings"`
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func (a providedRouteAdmin) audit(r *http.Request, ident store.Identity, tenantID, action, target, detail string) {

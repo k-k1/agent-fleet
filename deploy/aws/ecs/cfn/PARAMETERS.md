@@ -979,6 +979,18 @@ administrators set). It does four things.
   {"role_arn": "<DeploymentRouteRoleArn>", "region": "us-east-1", "models": ["us.anthropic.claude-opus-5-5"]}
   ```
 
+  **Budgets are held to reservations.** A call is admitted only when its whole reservation
+  fits under the member's budget and the tenant's ceiling (ADR 0129 D4). The reservation is the
+  model's whole context window at its dearest input rate, plus the requested output cap at its
+  dearest output rate. On a 200,000-token Haiku 4.5 that is $0.44 with a one-token cap and $0.62
+  for the 32,000 tokens Claude Code asks for. So a $0.50 budget admits nothing claude sends.
+  - The policy, member and grant PUTs refuse an amount above zero that no call of any listed
+    model can fit under.
+  - They save one that only small calls fit under, and answer it with `warnings`.
+  - `GET /api/admin/tenants/{slug}/provided-routes/deployment` lists each model's reservation
+    (`reservations`, `floor_micro`) to size budgets by.
+  - Zero is always accepted and means no use.
+
   The stack grants the IAM only. The deployment source itself (Region, model list) is the
   super_admin's, and the grants and budgets per tenant are set over REST
   (`/api/admin/tenants/{slug}/provided-routes/deployment/...`). Until a tenant is granted with
