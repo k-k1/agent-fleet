@@ -55,21 +55,21 @@ afterEach(() => {
 
 describe("view requests across the two memory entries", () => {
   it("lands on the named view of the other entry, in both directions", async () => {
-    await open("memory:changes");
+    await open("memory:importexport");
     await mount();
-    expect(selectedTab()).toBe("changes");
+    expect(selectedTab()).toBe("importexport");
 
     await open("memorysnapshots:transfer");
     expect(selectedTab()).toBe("transfer");
     expect(useSettingsUI.getState().settingsView).toBeNull();
 
-    await open("memory:importexport");
-    expect(selectedTab()).toBe("importexport");
+    await open("memory:settings");
+    expect(selectedTab()).toBe("settings");
     expect(useSettingsUI.getState().settingsView).toBeNull();
   });
 
   it("a view the target entry does not have is dropped there, not by the entry being left", async () => {
-    await open("memory:changes");
+    await open("memory:importexport");
     await mount();
     await open("memorysnapshots:nonsense");
     expect(selectedTab()).toBe("history");
@@ -95,9 +95,9 @@ describe("view requests and the phone drill-down", () => {
     await open("memory");
     await mount();
     expect(entered()).toBe(false);
-    await open("memory:changes");
+    await open("memory:importexport");
     expect(entered()).toBe(true);
-    expect(selectedTab()).toBe("changes");
+    expect(selectedTab()).toBe("importexport");
 
     act(() => document.querySelector<HTMLButtonElement>(".settings-back")!.click());
     expect(entered()).toBe(false);
