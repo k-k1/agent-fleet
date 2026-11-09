@@ -475,6 +475,7 @@ link back.
   `repository` or `project`) for a fact about one repository, `user` only for a fact that holds in every project.
   A call without `scope` is refused with a message naming what to pass, so a forgotten project can no longer
   publish a repository-specific fact to every project.
+- **Kind and anchors**: the external `memory_save` accepts the same optional `kind` and `anchors` as the in-workspace one (omit either to keep what is there; pass `[]` for `anchors` to clear them). The lifecycle fields are not settable from outside.
 - **What is recorded**: a save shows in the Agent memory list as written by author kind `external`, and the
   commit message carries an `AF-External-Client: <name>` trailer with the client's self-declared name (for
   information only). Each external save, patch and forget is also written to the audit log as `memory.entry.save` /

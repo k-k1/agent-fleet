@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -529,5 +530,49 @@ func TestMemoryFeedbackTool(t *testing.T) {
 	r = callMemoryTool(t, "memory_feedback", map[string]any{"name": "fb", "revision": 2, "verdict": "stale"})
 	if !r.IsError {
 		t.Fatalf("a duplicate or noteless report was accepted: %+v", r)
+	}
+}
+
+// The Control Plane's external memory_save advertises kind and anchors exactly as this tool does;
+// its tool golden is the other half of the contract (control-plane/internal/mcpsrv/testdata).
+func TestMemorySaveKindAnchorsMatchControlPlane(t *testing.T) {
+	raw, err := os.ReadFile("../../../../control-plane/internal/mcpsrv/testdata/mcp_tools/list.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cp struct {
+		Tools map[string]struct {
+			InputSchema struct {
+				Properties map[string]any `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(raw, &cp); err != nil {
+		t.Fatal(err)
+	}
+	cpProps := cp.Tools["memory_save"].InputSchema.Properties
+	var agent map[string]any
+	for _, ts := range agentMemoryTools() {
+		if ts.name == mcpToolMemorySave {
+			agent = ts.session()["inputSchema"].(map[string]any)["properties"].(map[string]any)
+		}
+	}
+	if agent == nil {
+		t.Fatal("agent memory_save not found")
+	}
+	for _, f := range []string{"kind", "anchors"} {
+		want, _ := json.Marshal(agent[f])
+		got, _ := json.Marshal(cpProps[f])
+		if string(want) != string(got) {
+			t.Errorf("%s differs:\n agent: %s\n cp:    %s", f, want, got)
+		}
+	}
+	for _, f := range []string{"status", "superseded_by", "invalid_at", "reasons"} {
+		if _, ok := cpProps[f]; ok {
+			t.Errorf("CP memory_save advertises lifecycle field %s", f)
+		}
+		if _, ok := agent[f]; ok {
+			t.Errorf("agent memory_save advertises lifecycle field %s", f)
+		}
 	}
 }
