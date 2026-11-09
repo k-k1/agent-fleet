@@ -63,11 +63,11 @@ vi.mock("./MarkdownView.tsx", () => ({
 
 // The editor's scroll memory needs layout jsdom does not have (parts/editorScrollMemory's own
 // suite covers it); here only the restore decision FileView hands it is observed.
-const editorMemory: { key: string; restore: boolean }[] = [];
+const editorMemory: { key: string; restore: boolean; inputRoot?: string }[] = [];
 vi.mock("./parts/editorScrollMemory.ts", () => {
   // Typed against the real function, so a changed signature fails the typecheck here.
-  const attachEditorScrollMemory: typeof realAttach = (_editor, key, restore) => {
-    editorMemory.push({ key, restore });
+  const attachEditorScrollMemory: typeof realAttach = (_editor, key, restore, inputRoot) => {
+    editorMemory.push({ key, restore, inputRoot: inputRoot?.className });
     return () => {};
   };
   return { attachEditorScrollMemory };
@@ -489,7 +489,9 @@ describe("the buffer behind the preview", () => {
     await render({});
     // Preview -> Split: the scroll sync positions the editor from the preview.
     await act(async () => modeButton("Split").click());
-    expect(editorMemory.at(-1)).toEqual({ key: "pane-1\u0000repos/x/doc.md\u0000editor", restore: false });
+    expect(editorMemory.at(-1)).toMatchObject({ key: "pane-1\u0000repos/x/doc.md\u0000editor", restore: false });
+    // Reader input on either side of the split ends a restore, not only input in the editor.
+    expect(editorMemory.at(-1)?.inputRoot).toContain("file-surfaces");
     // Edit, then Split from the editor: the editor's own place is the one to keep.
     await act(async () => modeButton("Edit").click());
     expect(editorMemory.at(-1)?.restore).toBe(true);

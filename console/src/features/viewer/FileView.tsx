@@ -385,12 +385,14 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // surfaces' (useScrollMemory). A split opened from the preview is positioned by the sync
   // above instead, from the side that was on screen; a slides split has no sync, so the
   // editor restores there too. Re-attaching on a renderer switch is harmless: the recorded
-  // line is where the editor already is.
+  // line is where the editor already is. Input anywhere in the surfaces ends a restore, so
+  // scrolling the split's preview is not fought by the editor's restore.
   useEffect(() => {
     const handle = editorHandleRef.current;
     if (!surfaces.editor || !handle || !memoryKey) return;
     const restore = !(scrollSyncOn && lastSoloSideRef.current === "preview");
-    return attachEditorScrollMemory(handle, `${memoryKey}\u0000editor`, restore);
+    const inputRoot = surfacesBoxRef.current ?? handle.host;
+    return attachEditorScrollMemory(handle, `${memoryKey}\u0000editor`, restore, inputRoot);
   }, [surfaces.editor, surfaces.split, scrollSyncOn, editorHandleEpoch, memoryKey]);
 
   // Focus follows the mode, but only when the user asked for the mode (docs/log/44
