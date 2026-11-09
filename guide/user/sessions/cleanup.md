@@ -20,7 +20,7 @@ trash first, so deleting too much can be undone.
 | Delete a working copy | The working copy and the sessions in it are cleared in one go |
 | Lock something against deletion | Neither cleanup nor automatic tidying removes it |
 
-You can also ask the [Fleet Operator](../../member/11-many-sessions.md#what-is-the-fleet-operator) to do the same survey and tidy-up from chat.
+You can also ask the [Fleet Operator](../fleet/operator.md) to do the same survey and tidy-up from chat.
 
 ## What stays and what goes
 

@@ -2431,3 +2431,71 @@ export function agentsGuideUserNotes(locale) {
     ],
   };
 }
+
+// The fleet pages of the user guide (SHOT_FLEET_GUIDE). Served only to a run that asks, so every
+// other scene keeps the switches off, the switcher on "All" and the plain operator thread.
+export function fleetGuidePrefs(locale) {
+  const ja = locale === "ja";
+  return {
+    peerMessaging: true,
+    sessionFleetSpawn: true,
+    prFeedback: true,
+    workingSets: [
+      { id: "wq7k2mf", name: ja ? "決済の改修" : "Checkout rework", repos: ["webshop", "payments-api"], convs: [], sessions: [], schedules: [] },
+      { id: "wp3n8xd", name: ja ? "インフラ整備" : "Infra upkeep", repos: ["platform-infra"], convs: [], sessions: [], schedules: [] },
+    ],
+  };
+}
+
+// The operator thread with a session report and the operator's follow-up under it.
+export function fleetGuideConversation(locale, id) {
+  const ja = locale === "ja";
+  const base = conversation(locale, id);
+  const ms = (min) => NOW.getTime() - min * 60_000;
+  return {
+    ...base,
+    messages: [
+      {
+        role: "user",
+        content: ja
+          ? "webshop で worktree セッションを起こして、チェックアウトの入力検証を直させて。"
+          : "Start a worktree session on webshop and have it fix the checkout input validation.",
+        ts: ms(52),
+      },
+      {
+        role: "assistant",
+        agent: base.agent,
+        model: base.model,
+        content: ja
+          ? "`webshop` に worktree セッション（claude）を起こし、入力検証の修正を最初のタスクとして渡しました。終わったら報告が届きます。"
+          : "Started a worktree session (claude) on `webshop` with the input-validation fix as its first task. Its report will arrive here when it is done.",
+        ts: ms(51),
+      },
+      {
+        role: "report",
+        session: "sk4rq2f",
+        report_kind: "answer",
+        notice_key: "chat.report.answer_ready",
+        notice_args: { display: ja ? "チェックアウトの入力検証" : "Checkout input validation", name: "sk4rq2f" },
+        content: "",
+        ts: ms(9),
+      },
+      {
+        role: "assistant",
+        agent: base.agent,
+        model: base.model,
+        content: ja
+          ? "出力を確認しました。郵便番号と電話番号の検証を追加し、テスト 12 件が通っています。ブランチ `checkout-validation` に push 済みです。レビューに回しますか？"
+          : "I read its output: postcode and phone validation added, 12 tests passing, pushed to `checkout-validation`. Shall I send it for review?",
+        ts: ms(8),
+      },
+    ],
+  };
+}
+
+// The weekday review with a report going to the conversation and the notification centre, and the
+// session stopped once the run is done, so the detail dialog shows those fields.
+export function fleetGuideSchedules(locale) {
+  const [first, ...rest] = schedules(locale);
+  return [{ ...first, report: true, deliver_to: ["operator", "notifications"], stop_after_run: true }, ...rest];
+}
