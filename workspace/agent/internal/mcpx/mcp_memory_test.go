@@ -601,13 +601,34 @@ func TestMemoryFeedbackSchemaMatchesControlPlane(t *testing.T) {
 		t.Fatal("CP memory_feedback not found in the tool golden")
 	}
 	var agent map[string]any
+	var agentRequired []string
 	for _, ts := range agentMemoryTools() {
 		if ts.name == mcpToolMemoryFeedback {
-			agent = ts.session()["inputSchema"].(map[string]any)["properties"].(map[string]any)
+			in := ts.session()["inputSchema"].(map[string]any)
+			agent = in["properties"].(map[string]any)
+			agentRequired, _ = in["required"].([]string)
 		}
 	}
 	if agent == nil {
 		t.Fatal("agent memory_feedback not found")
+	}
+	// What the Agent requires the CP requires too; the CP adds only the external selectors
+	// (scope is required outside, where a default would guess the wrong project).
+	cpRequired := map[string]bool{}
+	for _, f := range cp.Tools["memory_feedback"].InputSchema.Required {
+		cpRequired[f] = true
+	}
+	agentRequiredSet := map[string]bool{}
+	for _, f := range agentRequired {
+		agentRequiredSet[f] = true
+		if !cpRequired[f] {
+			t.Errorf("the Agent requires %s but the CP does not", f)
+		}
+	}
+	for f := range cpRequired {
+		if !agentRequiredSet[f] && f != "scope" && f != "project" && f != "repository" {
+			t.Errorf("the CP requires %s, which the Agent does not", f)
+		}
 	}
 	for _, f := range []string{"revision", "verdict", "note"} {
 		want, _ := json.Marshal(agent[f])

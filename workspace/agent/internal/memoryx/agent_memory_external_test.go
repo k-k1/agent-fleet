@@ -529,6 +529,14 @@ func TestAgentMemoryExternalFeedback(t *testing.T) {
 	if code != 200 || json.Unmarshal(b, &e) != nil || len(e.Reasons) != 1 {
 		t.Fatalf("a confirmation must not clear the reason: %d %s", code, b)
 	}
+	// An older revision is only an observation, through this route as well.
+	if code, b := memberDo(t, http.MethodPost, extBase+"entries", map[string]any{"project": c.Project.ID, "scope": "project",
+		"name": "seed", "description": "d", "type": "project", "body": "changed", "revision": 1, "client": "x"}); code != 200 {
+		t.Fatalf("second revision: %d %s", code, b)
+	}
+	if code, b := fb(map[string]any{"caller": "pat-d"}); code != 200 || !strings.Contains(b, `"outcome":"observation"`) {
+		t.Fatalf("older revision: %d %s", code, b)
+	}
 	if code, b := fb(map[string]any{"caller": ""}); code != 400 {
 		t.Fatalf("no caller accepted: %d %s", code, b)
 	}

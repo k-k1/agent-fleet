@@ -479,8 +479,8 @@ link back.
 - **Reporting a memory that failed you**: `memory_feedback` takes `scope`, `name`, `revision`, `verdict` (`stale`, `wrong` or `confirmed`) and `note`, with the same rules as inside the workspace: a report on the current revision marks the memory as suspect, one on an older revision is only kept as an observation, `confirmed` never clears a doubt, and only the first report per connection per revision counts. The connection is the token or OAuth connection you made; the tool takes no session argument.
 - **What is recorded**: a save shows in the Agent memory list as written by author kind `external`, and the
   commit message carries an `AF-External-Client: <name>` trailer with the client's self-declared name (for
-  information only). Each external save, patch and forget is also written to the audit log as `memory.entry.save` /
-  `memory.entry.patch` / `memory.entry.forget`, with the project id and never the memory's name. You can revert or forget any of it from
+  information only). Each external save, patch, feedback report and forget is also written to the audit log as `memory.entry.save` /
+  `memory.entry.patch` / `memory.entry.feedback` / `memory.entry.forget`, with the project id and never the memory's name. You can revert or forget any of it from
   the Agent memory list.
 - **What leaves the workspace**: the memory text reaches that client's model, outside the workspace's egress
   controls. The secret scan stops credentials, not customer names or internal context.
