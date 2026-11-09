@@ -49,9 +49,9 @@ func reviewEntries(ms []memoryx.ConsolMemory) []memoryx.ReviewEntry {
 }
 
 // An exported proposal naming a memory that does not exist joins an existing memory's topic only
-// when the best-ranked one is about the same thing: a score of attachMinScore or more (two name
-// words, or one name word and two description words, or eight body words) of which attachMinHead
-// comes from the name and description. Measured on the first live run: creates about a flaky
+// when a ranked one is about the same thing: a score of attachMinScore or more (two name words, or
+// one name word and two description words) of which attachMinHead comes from the name and
+// description; body words alone never qualify. Measured on the first live run: creates about a flaky
 // contract test and about PR workflow were attached to notes that shared only body words ("under",
 // "load", "branch") with them, and were then shown under that note's name.
 const (
@@ -71,9 +71,13 @@ func BuildTopics(obs []Observation, memories map[string][]memoryx.ConsolMemory) 
 		mems := memories[key]
 		primary := o.Memory
 		if _, ok := findMem(mems, primary); !ok && o.Source == SourceExport {
-			if ranked := memoryx.ReviewRankScored(reviewEntries(mems), o.Memory+" "+o.Note); len(ranked) > 0 &&
-				ranked[0].Score >= attachMinScore && ranked[0].HeadScore >= attachMinHead {
-				primary = ranked[0].Entry.Name
+			// The first hit that clears both gates, not just the first hit: a note stuffed with
+			// matching body words ranks above a real name match without being about the same thing.
+			for _, h := range memoryx.ReviewRankScored(reviewEntries(mems), o.Memory+" "+o.Note) {
+				if h.Score >= attachMinScore && h.HeadScore >= attachMinHead {
+					primary = h.Entry.Name
+					break
+				}
 			}
 		}
 		id := topicID(o.Scope, o.ProjectID, primary)
@@ -206,9 +210,10 @@ type RipeTopic struct {
 
 // estimate is the tokens the calls of one topic cost at a fit: one classification per taken
 // observation, and one patch call that sends the whole of the largest note shown (any shown note
-// may be the patch target, and a patch must carry its whole text). A supersede or merge answer
-// costs a second classification, which is not counted: it is the exception, and the call gate
-// still stops a run that spends past its budget.
+// may be the patch target, and a patch must carry its whole text). Two costs are not counted: a
+// supersede or merge answer's second classification, and the extra patch calls of a topic whose
+// observations patch several notes. Both are the exception, and the call gate still stops a run
+// that spends past its budget (the topic is then deferred whole and stays open).
 func estimate(t Topic, take []Observation, fit Fit) int {
 	est := 0
 	for _, o := range take {
@@ -249,18 +254,22 @@ func PlanTopic(t Topic, open []Observation, c Config) RipeTopic {
 	if r.Estimate <= c.TokenBudget {
 		return r
 	}
+	ladder := shrinkLadder()
+	// Cost only grows with observations, notes and runes, so when the smallest combination is over
+	// budget every other one is too: answer without pricing the rest.
+	if e := estimate(t, take[:1], ladder[len(ladder)-1]); e > c.TokenBudget {
+		r.Take, r.Fit, r.Estimate, r.TooLarge = take[:1], ladder[len(ladder)-1], e, true
+		return r
+	}
 	for n := len(take); n >= 1; n-- {
-		for _, fit := range shrinkLadder() {
+		for _, fit := range ladder {
 			if e := estimate(t, take[:n], fit); e <= c.TokenBudget {
 				r.Take, r.Fit, r.Estimate = take[:n], fit, e
 				return r
 			}
 		}
 	}
-	ladder := shrinkLadder()
-	r.Take, r.Fit = take[:1], ladder[len(ladder)-1]
-	r.Estimate, r.TooLarge = estimate(t, r.Take, r.Fit), true
-	return r
+	return r // unreachable: the smallest combination fit
 }
 
 // estimateTokens is bytes/3, the ADR's own scale for mixed Japanese/English text.
@@ -288,7 +297,9 @@ func shrinkLadder() []Fit {
 
 func cutRunes(s string, n int) string {
 	if r := []rune(s); len(r) > n {
-		return string(r[:n])
+		// The marker is the one Prompt's own excerpt adds, so a full-size fit is byte-identical
+		// to what the engine would cut itself (its wording is part of what the gold set measures).
+		return string(r[:n]) + " …"
 	}
 	return s
 }
@@ -330,7 +341,8 @@ func observationText(o Observation) string {
 // Select orders the ripe topics oldest observation first (a busy topic cannot starve a quiet one)
 // and takes them while their estimates fit the budget. Topics that do not fit are returned as
 // delayed with the cause, in the same order. A topic whose estimate alone is over the whole
-// budget is delayed too (flagged), never run half-way.
+// budget is delayed too (flagged), never run half-way. Run shrinks a topic first (PlanTopic), so
+// that branch is a guard for other callers, not a path of a run.
 func Select(ripe []RipeTopic, budget int) (run []RipeTopic, delayed []Delay) {
 	sort.SliceStable(ripe, func(i, j int) bool {
 		if !ripe[i].Oldest.Equal(ripe[j].Oldest) {

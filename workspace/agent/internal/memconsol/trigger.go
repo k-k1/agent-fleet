@@ -55,8 +55,9 @@ type Decision struct {
 
 // Decide is the trigger rule of ADR 0130 decision 6 as a pure function: the switch is on, no
 // session is working, none has run a turn for IdleAfter, and the last run began at least
-// MinInterval ago. The idle conditions are not optional: there is no input that skips them, and
-// the only caller of Run on the Agent is the tick that asked this.
+// MinInterval ago. The idle conditions have no input that skips them. The one other caller of Run is a
+// member-started manual run, which does not pass through Decide: only the member can start it,
+// and it keeps every other guard (switch, budget, validation, approval-only publishing).
 func Decide(enabled bool, now, lastRun, lastActivity time.Time, busy bool, c Config) Decision {
 	switch {
 	case !enabled:

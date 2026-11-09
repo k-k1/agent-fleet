@@ -50,14 +50,9 @@ func TestEstimateMatchesWhatIsSent(t *testing.T) {
 	if len(rep.Delayed) != 0 || rep.Status != RunOK || len(rep.Queued) != 1 {
 		t.Fatalf("a topic that costs ~%d tokens in fact was held back at a budget of 17000: %+v", sink.tokens, rep)
 	}
-	// The estimate is never below what was sent and within a third above it. Before: 19733 for
-	// this topic, about 1.35x what the same run sent (the live run: 4 topics cost 23k in total,
+	// The estimate is never below what was sent and within a third above it, for this single-patch
+	// topic. The old estimate was 19733, about 1.35x what the same run sent (the live run: 4 topics cost 23k in total,
 	// estimated 5k-77k each).
-	if priced < sink.tokens || priced > sink.tokens*4/3 {
-		t.Fatalf("estimate %d vs %d tokens sent", priced, sink.tokens)
-	}
-	// Measured on the prompts the fake runner received: the estimate is never below what was sent,
-	// and within a third above it (the live run: 4 topics cost 23k, estimated 5k-77k each).
 	if priced < sink.tokens || priced > sink.tokens*4/3 {
 		t.Fatalf("estimate %d vs %d tokens sent", priced, sink.tokens)
 	}
@@ -214,6 +209,7 @@ func TestAttachThresholdBoundaries(t *testing.T) {
 		{"score 8 (4+4)", mk("pipeline-release-notes", "other", "x"), true},
 		{"score 11, none of it from the name or description", mk("unrelated-note", "other", "pipeline release runner alpha bravo charlie delta echoes foxtrot golfers hotels"), false},
 		{"head 4, score 4: too low", mk("pipeline-notes", "other", "x"), false},
+		{"head 4, score 8", mk("pipeline-notes", "other", "alpha bravo charlie delta"), true},
 		{"head 6, score 8", mk("pipeline-notes", "release runner", "x"), true},
 	}
 	for _, tc := range cases {
@@ -222,5 +218,33 @@ func TestAttachThresholdBoundaries(t *testing.T) {
 		if got != tc.attach {
 			t.Errorf("%s: attached = %v, want %v (topic %s)", tc.name, got, tc.attach, ts[0].Memory)
 		}
+	}
+}
+
+// A full-size fit sends exactly what the engine itself would send for the untouched memory (its
+// wording is part of what the gold set measures); a shrunk one still shows that it was cut.
+func TestFullFitPromptIsTheEnginesOwn(t *testing.T) {
+	long := memoryx.ConsolMemory{Name: "n", Description: "d", Body: strings.Repeat("x", 1000)}
+	tp := Topic{Memories: []memoryx.ConsolMemory{long}}
+	o := Observation{ID: "1", Source: SourceFeedback, Rule: "wrong", Memory: "n", Note: "x"}
+	engine := classifyRequest(Topic{Memories: []memoryx.ConsolMemory{long}}, o, Fit{Notes: 4, Runes: 1 << 20})
+	if got, want := classifyRequest(tp, o, fullFit).Prompt(), engine.Prompt(); got != want {
+		t.Fatalf("full-fit prompt differs from the engine's own")
+	}
+	if p := classifyRequest(tp, o, Fit{Notes: 4, Runes: 300}).Prompt(); !strings.Contains(p, strings.Repeat("x", 300)+" …") {
+		t.Fatalf("a shrunk excerpt carries no cut marker")
+	}
+}
+
+// A note stuffed with matching body words ranks first but is not about the same thing; the real
+// name match behind it is still found.
+func TestAttachSkipsABodyHeavyFirstHit(t *testing.T) {
+	mems := projMems(
+		memoryx.ConsolMemory{Name: "unrelated-note", Description: "other", Type: "project", Revision: 1,
+			Body: "pipeline release runner alpha bravo charlie delta echoes foxtrot golfers hotels"},
+		memoryx.ConsolMemory{Name: "pipeline-release-notes", Description: "other", Type: "project", Revision: 1, Body: "x"})
+	ts := BuildTopics([]Observation{createObs("pipeline-release-runner", "alpha bravo charlie delta echoes foxtrot golfers hotels")}, mems)
+	if len(ts) != 1 || ts[0].Memory != "pipeline-release-notes" {
+		t.Fatalf("topics = %+v", ts)
 	}
 }

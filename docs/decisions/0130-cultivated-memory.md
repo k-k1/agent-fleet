@@ -739,7 +739,7 @@ release.
   whole body of the primary note, though a patch sends only the note it edits. It now counts one classification per taken
   observation (priced on the prompt the engine builds, excerpts included) plus one patch call that sends the largest note the
   classification shows; the call gate still stops a run that spends past its budget. On the test topic (3 reports, a 30 KB note)
-  the old estimate was 19.7k and the run sent 14.6k; the new one is within a third above what was sent and never below it.
+  the old estimate was 19.7k and the run sent 14.6k; the new one is 15.1k, within a third above what was sent and not below it on this single-patch topic. A topic whose observations patch several notes, or whose answers escalate, costs more calls than the estimate counts; the call gate then defers the topic whole.
   A topic still over the whole budget is shrunk instead of delayed: shorter excerpts (600, 300, 150 runes), then fewer notes
   (4, 2, 1), and only then fewer observations (the rest stay open for the next run). One that does not fit at one observation,
   one note and 150 runes (a patch must carry the whole note, so a note of about 180 KB never can) is **`too-large`**: it is

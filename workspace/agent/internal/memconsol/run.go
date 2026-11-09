@@ -228,9 +228,9 @@ type worker struct {
 }
 
 // gate is asked before every model call: a turn that started since the run began, or a spent
-// budget, defers the rest. The idle check itself belongs to the trigger and is never skipped; this
-// is the second half of decision 6 ("when a turn starts during a run, the run finishes the model
-// call in flight and defers the rest").
+// budget, defers the rest. The idle check itself belongs to the trigger (Decide); only a
+// member-started manual run reaches Run without it. This is the second half of decision 6 ("when
+// a turn starts during a run, the run finishes the model call in flight and defers the rest").
 func (w *worker) gate(estimate int) error {
 	if w.in.Enabled != nil && !w.in.Enabled() {
 		w.cutCause, w.cutDetail = CauseInterrupted, "the member switched consolidation off during the run"
