@@ -2,8 +2,8 @@
 
 English | [日本語](0133-external-watch-engine.ja.md)
 
-- Status: **accepted** (2026-11-08; proposed 2026-11-08). Nothing is built yet.
-- Follow-ups: #3627, #3628, #3629, #3630, #3631, #3632 (steps 1 to 6 of §10).
+- Status: **accepted** (2026-11-08; proposed 2026-11-08). Steps 1 to 6 of §10 implemented (2026-11-09); the further sources of §9 that step 6 names are not built yet.
+- Follow-ups: #3627, #3628, #3629, #3630, #3631, #3632 (steps 1 to 6 of §10); #3709, #3732, #3751, #3752.
 - Related: [0021](0021-scheduled-execution.md) (scheduled execution) / [0061](0061-work-item-inbox.md) (work item inbox)
 
 ## Context
