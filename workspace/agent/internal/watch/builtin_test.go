@@ -50,9 +50,6 @@ func TestBuiltinIsDeliveredOnceNeverPolledListedOrCounted(t *testing.T) {
 	if _, err := e.Subscribe(context.Background(), Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
 		t.Fatalf("built-ins count against the session's limit: %v", err)
 	}
-	if e.Watching("a", bSubject, "pr.checks.failed") {
-		t.Fatal("Watching counts a built-in as the session's own watch")
-	}
 	if e.Unsubscribe("a", BuiltinID("ci", bSubject)) {
 		t.Fatal("a session could unwatch a built-in")
 	}

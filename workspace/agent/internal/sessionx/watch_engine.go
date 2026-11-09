@@ -340,12 +340,6 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, watchCreateResp{Watch: sub})
 }
 
-// watchingPR reports whether name watches the provider's PR "owner/repo#N" for typ, so the PR
-// feedback watch does not tell it the same thing a second time.
-func watchingPR(name, provider, linkKey, typ string) bool {
-	return watchEngine().Watching(name, watch.SubjectID(provider+":"+strings.ToLower(linkKey)), typ)
-}
-
 // HandleWatchList (GET /sessions/{name}/watches) lists the session's watches.
 func HandleWatchList(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")

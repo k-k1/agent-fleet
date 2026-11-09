@@ -342,25 +342,6 @@ func (e *Engine) Unsubscribe(owner, id string) bool {
 	return found
 }
 
-// Watching reports whether owner has a live subscription to subject that selects typ. The PR
-// feedback watch asks it so a session that watches its own PR is not told twice.
-// A subscription past its deadline, or whose owner is gone, does not count: the engine drops it
-// on its next tick without telling anyone.
-func (e *Engine) Watching(owner string, subject SubjectID, typ string) bool {
-	e.mu.Lock()
-	now := e.now()
-	e.load()
-	found := false
-	for _, s := range e.state.Subs {
-		if s.Builtin == "" && s.Owner == owner && s.Subject == subject && !s.Done && now.Before(s.Expires) && selects(s.Types, typ) {
-			found = true
-			break
-		}
-	}
-	e.mu.Unlock()
-	return found && e.sink.OwnerExists(owner)
-}
-
 // Listed is one subscription with its subject's health, for list_watches.
 type Listed struct {
 	Subscription
