@@ -15,17 +15,26 @@ const SRC = path.resolve(__dirname, "..");
 const EXEMPT = new Set(["test/clientMockApiJSON.test.ts"]);
 const MOCK_OPEN = /vi\.mock\(\s*(["'`])[^"'`]*core\/api\/client(?:\.ts)?\1\s*,/g;
 const MOCK_CLOSE = /^\}\)\);?[ \t]*$|^\}\);?[ \t]*$/m;
-const HAS_REAL_MODULE = /importOriginal|importActual|\borig\b|\bactual\b/;
+// "Calls the original loader", not just "has a variable called orig/actual".
+const HAS_REAL_MODULE = /importOriginal|importActual|await\s+\(?\s*(?:orig|actual)\b/;
+// A line-start // comment is blanked, newlines kept so line numbers stay right. Not handled, by
+// choice: a block comment between the path and the comma, and CRLF files (the repo is LF).
+const stripLineComments = (s: string) => s.replace(/^[ \t]*\/\/.*$/gm, "");
 
 /** bareClientMocks returns the 1-based line of every client.ts mock factory in `src` that
  *  neither defines `apiJSON` nor spreads the real module. */
 export function bareClientMocks(src: string): number[] {
   const lines: number[] = [];
+  src = stripLineComments(src);
   for (const m of src.matchAll(MOCK_OPEN)) {
     const start = m.index! + m[0].length;
     const rest = src.slice(start);
+    // A one-line factory ends on its own line; judging it by the rest of the file would let a
+    // later mention of apiJSON excuse it.
+    const nl = rest.indexOf("\n");
+    const head = nl < 0 ? rest : rest.slice(0, nl);
     const close = rest.search(MOCK_CLOSE);
-    const factory = close < 0 ? rest : rest.slice(0, close);
+    const factory = /\}\)\)?;?\s*$/.test(head) ? head : close < 0 ? rest : rest.slice(0, close);
     if (/\bapiJSON\b/.test(factory) || HAS_REAL_MODULE.test(factory)) continue;
     lines.push(src.slice(0, m.index!).split("\n").length);
   }
@@ -48,6 +57,13 @@ describe("client.ts mocks carry apiJSON", () => {
     expect(bareClientMocks(bare.replace("api: vi.fn(),", "api: vi.fn(),\n  apiJSON: async () => ({}),"))).toEqual([]);
     expect(bareClientMocks('vi.mock("../core/api/client.ts", async (orig) => ({\n  ...(await orig()),\n}));\n')).toEqual([]);
     expect(bareClientMocks('vi.mock("../core/api/client.ts");\n')).toEqual([]);
+    // One-line factories are judged on their own line, not on later mentions of apiJSON.
+    const one = 'vi.mock("../core/api/client.ts", () => ({ api: vi.fn() }));\nconst apiJSONMock = 1;\n';
+    expect(bareClientMocks(one)).toEqual([1]);
+    expect(bareClientMocks(one.replace("api: vi.fn()", "api: vi.fn(), apiJSON: async () => ({})"))).toEqual([]);
+    // An unrelated argument named actual is not the real module; a commented-out mock is no mock.
+    expect(bareClientMocks('vi.mock("../core/api/client.ts", () => ({\n  check: (actual) => actual,\n}));\n')).toEqual([1]);
+    expect(bareClientMocks('// vi.mock("../core/api/client.ts", () => ({}));\n')).toEqual([]);
   });
 
   it("no test file mocks core/api/client.ts without apiJSON", () => {
