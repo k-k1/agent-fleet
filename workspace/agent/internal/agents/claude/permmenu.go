@@ -555,13 +555,14 @@ func normalizeCommand(s string) string {
 //     keyword;
 //   - past the prefixes the hook skips: NAME=value assignments, "time" or "time -p", and a bare
 //     command/builtin/exec/nohup/nice (not followed by an option);
-//   - inside the script of a bash -c / sh -c whose script is one quoted word, which the hook
-//     rewrites too.
+//   - inside the script of a bash/sh/zsh -c (by name or path) whose script is one quoted word,
+//     which the hook rewrites too.
 //
 // Nothing is removed inside other quotes, in a here-document body, or right after ( or { (those
 // do not start a command here; a newline after them does): the hook leaves those alone, and
-// there an "rtk " is data. One "rtk " at most per command. env, timeout and nice with options
-// are prefixes the hook follows and this does not: those dialogs still refuse Allow.
+// there an "rtk " is data. One "rtk " at most per command. env and timeout in any form, nice
+// with options, and assignment values with ${…}, $$ or $'…' are prefixes the hook follows and
+// this does not: those dialogs still refuse Allow.
 //
 // partial is for a text that may end mid-word (a reconstruction still growing line by line): a
 // trailing "r", "rt" or "rtk" where a command starts is dropped too, and an unterminated bash -c
@@ -707,7 +708,7 @@ func rtkCommandPrefix(s string) int {
 	}
 }
 
-// shellScript reports a bash -c / sh -c whose script is one quoted word: n is the length up to
+// shellScript reports a bash/sh/zsh -c whose script is one quoted word: n is the length up to
 // and including the opening quote, script the text inside, closed whether the closing quote was
 // found. A double-quoted script containing $, ` or \ is not taken apart: what the shell would
 // run is not the text.
