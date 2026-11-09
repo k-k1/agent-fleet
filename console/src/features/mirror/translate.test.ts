@@ -120,11 +120,13 @@ describe("looksForeign", () => {
       `| PR | Area | Status |\n|---|---|---|\n| #3706 | フリート | Ready |\n| #3707 | ${name} | Ready |\n` +
       "| #3708 | 困ったとき | Ready |\n| #3705 | はじめに | Still waiting for a reviewer |\n";
     expect(looksForeign(report, "ja")).toBe(true);
-    // A part longer than a name keeps the run prose (here about 17% of the text).
-    const sentence = "設定画面からモデル・エージェントを選び直してから翻訳ボタンを押してみて";
-    expect(looksForeign(`${sentence} and then check the answer again in the mirror pane, because the rest is English`, "ja")).toBe(
-      false,
-    );
+    const english =
+      " and then check the answer again in the mirror pane, because the rest of this long status report " +
+      "is written in plain English and there is more of it below";
+    // A part longer than a name keeps the run prose (35 characters, about 20% of the text).
+    expect(looksForeign("設定画面からモデル・エージェントを選び直してから翻訳ボタンを押してみて" + english, "ja")).toBe(false);
+    // Short parts, but longer than any joined name (40 characters, about 21%).
+    expect(looksForeign("リンゴ・ミカン・バナナ・ブドウ・モモ・ナシ・カキ・スイカ・メロン・イチゴを買った" + english, "ja")).toBe(false);
   });
 
   it("accepts a few short unpunctuated Japanese phrases inside mostly English text", () => {
