@@ -1694,6 +1694,100 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  // ---- getting-started pages (guide/user/start/) ----
+  {
+    // Home on a first-run member: the welcome card with the workspace started and no agent yet.
+    name: "start-welcome",
+    guide: true,
+    stubEnv: { SHOT_START_GUIDE: "firstrun" },
+    clip: ".home-setup",
+    // The card waits for the workspace state and the connection probes; on a busy host that outlasts the boot wait.
+    ready: `!!document.querySelector(".home-setup")`,
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "home" })])], colRatios: [1], activeId: "p0" },
+  },
+  {
+    // The whole Console once, for the screen tour: rail, bar, a session beside the commit graph.
+    name: "start-tour",
+    guide: true,
+    // Wait for the workspace to read as running and both panes to finish loading.
+    ready: `!!document.querySelector(".ws-power.on") && !/読み込み中|Loading/.test(document.body.innerText)`,
+    sections: SHOW_TOOLS,
+    width: 1440,
+    height: 860,
+    layout: {
+      cols: [
+        col("c0", [mirrorOf("sk4rq2f")]),
+        col("c1", [pane("p1", null, { kind: "scm", scmRepo: "webshop" })]),
+      ],
+      colRatios: [0.58, 0.42],
+      activeId: "p0",
+    },
+  },
+  {
+    // The command palette as it opens: the sessions list, waiting ones first.
+    name: "start-palette",
+    guide: true,
+    // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
+    ready: `!!document.querySelector(".ws-power.on")`,
+    clip: ".cp-panel",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.body.focus();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", code: "KeyP", ctrlKey: true, bubbles: true }));
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The top bar's Appearance menu with its main-area layout switch.
+    name: "start-appearance",
+    guide: true,
+    // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
+    ready: `!!document.querySelector(".ws-power.on")`,
+    clip: [".appr-btn", ".appr-menu"],
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => { document.querySelector(".appr-btn")?.click(); })()`,
+    settle: 800,
+  },
+  {
+    // The Console on a phone: one session, the bar folded into its menu.
+    name: "start-phone",
+    guide: true,
+    // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
+    ready: `!!document.querySelector(".ws-power.on")`,
+    mobile: true,
+    sections: FOCUS_TREE,
+    width: 390,
+    height: 760,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+  },
+  {
+    // The bar's "Restart needed" badge with its popover open (SHOT_START_GUIDE=stale).
+    name: "start-restart",
+    guide: true,
+    stubEnv: { SHOT_START_GUIDE: "stale" },
+    clip: [".ws-stale-pill", ".ws-stale-pop"],
+    // The badge appears only once the bar has read the workspace as running.
+    ready: `!!document.querySelector(".ws-stale-pill")`,
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => { document.querySelector(".ws-stale-pill")?.click(); })()`,
+    settle: 800,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------
@@ -1796,7 +1890,7 @@ try {
       width: scene.width,
       height: scene.height,
       deviceScaleFactor: 2,
-      mobile: false,
+      mobile: !!scene.mobile,
     });
     // Seed the browser state a returning user would have: display settings (locale +
     // theme) and this scene's saved pane layout, keyed exactly like the app writes it

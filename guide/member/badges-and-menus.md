@@ -136,7 +136,7 @@ connection. Not this deployment's engine."** together with the model the last ch
   [Use Google Cloud](../user/integrations/gcloud.md#the-google-cloud-badge-in-the-ws-bar) (Google Cloud).
 - **Restart needed**, beside the workspace power button in the WS bar: the workspace is still running the
   pre-update backend. Clicking it offers **Restart now**, which stops running sessions (resumable); it goes away
-  once the workspace is current ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
+  once the workspace is current ([01](../user/start/end-of-day.md#a-new-version-is-available-and-restart-needed)).
 - **Not responding**, beside the workspace power button: the workspace is running but its Agent has not
   answered the Control Plane for several minutes. Nothing in the Console will work until you **Stop workspace**
   and start it again ([21](21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button)).
@@ -261,12 +261,12 @@ create a new branch based at that commit. While viewing a submodule, the branch-
 At the top right of a pane you get, depending on its content, **toggle wrapping**, **pop out into another tab**
 (the pane moves into a browser tab of its own) and **close** (middle-click / Ctrl+click closes without
 confirmation). Panes that cannot be popped out don't show the button
-([02](02-console-basics.md#arranging-multiple-views-panes)).
+([02](../user/start/panes.md)).
 
 ### Tabs (tabbed grid)
 
 Right-clicking **a session's tab** gives the same menu as that session's row in the left pane
-([02](02-console-basics.md#arranging-multiple-views-panes)). Tabs that are not sessions, and every tab while the
+([02](../user/start/panes.md)). Tabs that are not sessions, and every tab while the
 workspace is stopped, keep the browser's own menu.
 
 ### Cards in the sessions overview

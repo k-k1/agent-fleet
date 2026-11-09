@@ -33,7 +33,7 @@ Home and End move between them.
   description, type, author and author session taken together; after a short pause it also searches the bodies, and
   memories only the body search found are listed after those, ranked like the agents' `memory_search`. When no memory holds every word, the body search returns the ones that hold some of them, and the list then shows only those, under a "some words only" notice (a memory that matches in full by name, description, type or author always wins over them); searching is not a use and does not change how
   often a memory is read. The command palette's **Memory** scope searches the same memories from anywhere
-  ([02](02-console-basics.md#memory)). Pick a row and the right side shows that memory: its text, scope, type, author, last update
+  ([02](../user/start/shortcuts.md#find-and-open-with-the-command-palette)). Pick a row and the right side shows that memory: its text, scope, type, author, last update
   and how often agents read it, with **Edit**, **Pin** / **Unpin**, **Forget this memory** and, under **More actions**
   (⋯), **Purge history…**. **New memory** (in the scope on screen; the user-wide scope while all scopes are shown) and
   **Edit** open a form in the same place. The scope, the chip and the memory you picked are remembered while you move

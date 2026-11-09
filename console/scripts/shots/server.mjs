@@ -75,13 +75,19 @@ const exact = {
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
     super_admin: false,
   }),
-  "/api/workspace": () => ({ state: "running", bootPhase: "" }),
+  // The getting-started pages (SHOT_START_GUIDE=stale) show the bar's "Restart needed" badge, which
+  // every other scene must not carry.
+  "/api/workspace": () => ({ state: "running", bootPhase: "", ...(process.env.SHOT_START_GUIDE === "stale" ? { stale: true } : {}) }),
   // A POST is "start a session" (the studio's attach): answer a name so the flow completes.
   "/api/sessions": (q, method) =>
     method === "POST"
       ? { name: "s" + crypto.randomUUID().slice(0, 6) }
       : {
-          sessions: FLEET_LANES
+          // A first-run member (SHOT_START_GUIDE=firstrun) has no session and no chat yet, which is
+          // what puts the welcome card on Home.
+          sessions: process.env.SHOT_START_GUIDE === "firstrun"
+            ? []
+            : FLEET_LANES
             ? fx.sessionsBig(LOCALE, FLEET_LANES)
             : process.env.SHOT_SESSIONS_GUIDE
               ? fx.sessionsBudgetStopped(LOCALE)
@@ -159,10 +165,15 @@ const exact = {
           bitbucket: { connected: true, username: "demo-user", email: "demo@example.com", commitName: "Demo User", commitEmail: "demo@example.com" },
         }
       : {}),
+    // The welcome card on a first-run Home (SHOT_START_GUIDE=firstrun): the workspace is up, no agent
+    // and no Git service connected yet, so step 1 is checked and step 2 is the next thing to do.
+    ...(process.env.SHOT_START_GUIDE === "firstrun"
+      ? { claude: { connected: false }, codex: { connected: false }, cursor: { connected: false }, opencode: { connected: false }, github: { connected: false }, bitbucket: { connected: false } }
+      : {}),
   }),
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
-  "/api/chat/conversations": () => ({ conversations: fx.conversations(LOCALE) }),
+  "/api/chat/conversations": () => ({ conversations: process.env.SHOT_START_GUIDE === "firstrun" ? [] : fx.conversations(LOCALE) }),
   "/api/assistants": () => fx.assistants(LOCALE),
   // Work items (docs/log/80). Unhandled routes only answer {}, so without this the rail's new
   // surface always renders empty and verifies nothing.

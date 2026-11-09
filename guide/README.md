@@ -7,7 +7,8 @@ source_of_truth: "the Console itself — if a screen disagrees with this guide, 
 
 English | [日本語](README.ja.md)
 
-Start wherever you fit.
+If you are new, start with [What you can do with Agent Fleet](user/start/overview.md).
+Otherwise, start wherever you fit.
 
 | You are | Read | It answers |
 |---|---|---|
@@ -23,7 +24,7 @@ may use it, per agent, per repository kind, per deployment target and per role. 
 release: which release a feature arrived in and which one fixed a problem, one line per
 item, newest release first, with each release's full notes one click away.
 
-If you would rather never open a terminal, the [Simple guide](member/lite.md) is the
+If you would rather never open a terminal, [Start here if you don't use the terminal](user/start/without-terminal.md) is the
 short way round.
 
 While your workspace is running you can open this guide in the Console at any time,

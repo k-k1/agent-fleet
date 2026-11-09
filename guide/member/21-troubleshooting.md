@@ -39,7 +39,7 @@ The workspace itself: its power button, its start, its disk and the tools instal
 The backend was updated while your workspace was running. Nothing is broken and nothing has to
 happen now: the badge offers **Restart now** (a stop→start, which stops running sessions;
 they stay resumable) and goes away once the workspace is back on the current version
-([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
+([01](../user/start/end-of-day.md#a-new-version-is-available-and-restart-needed)).
 
 ### A **Not responding** badge sits next to the power button
 
@@ -65,7 +65,7 @@ list until you start again.
 ### The workspace has stopped without me noticing
 
 It **stops automatically** after a while with no activity (idle auto-stop). Press "Start" in the workspace action bar
-once more, and your session list, clones, and connections all come back as they were ([01](01-first-day.md#at-the-end-of-the-day-is-it-ok-to-stop-the-workspace)).
+once more, and your session list, clones, and connections all come back as they were ([01](../user/start/end-of-day.md)).
 
 ### "Your home disk is nearly full"
 
@@ -642,14 +642,14 @@ terminal.
 - **"Pass all keys to shell / SSM terminals (incl. Ctrl+K, Ctrl+P)"**: even the leader and the palette go through.
   Move focus to another pane to get the app operations back.
 
-**?** opens the list of what is bound to what ([02](02-console-basics.md#shortcuts),
-[20](20-settings.md#keyboard)).
+**?** opens the list of what is bound to what ([02](../user/start/shortcuts.md),
+[20](../user/start/shortcuts.md#change-the-keys)).
 
 ### On a phone, the keyboard pops up on its own / it's hard to operate
 
 The **control key row** under the terminal (`Esc` `Tab` arrows `^C` `⏎`) sends keys without
 bringing up the soft keyboard. You can scroll back through past output with a **one-finger vertical swipe**. Toggle the left pane
-with the **≡ (menu)** at the top left of the screen ([02](02-console-basics.md#using-it-on-a-phone)).
+with the **≡ (menu)** at the top left of the screen ([02](../user/start/phone.md)).
 
 ### Only the terminal stays dark on the light theme
 
@@ -671,7 +671,7 @@ and follow you on other devices and browsers ([20](20-settings.md#opening-it-and
 **Q. If I stop the workspace, is my work lost?**
 No. Clones, uncommitted changes, the session list, and connections all remain. However,
 uncommitted changes exist only inside the workspace, so commit / push for long-term safekeeping
-([01](01-first-day.md#at-the-end-of-the-day-is-it-ok-to-stop-the-workspace) · [Connect a Git service](../user/code/connect-git.md#push)).
+([01](../user/start/end-of-day.md) · [Connect a Git service](../user/code/connect-git.md#push)).
 
 **Q. Is it OK to run several tasks at the same time?**
 Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are

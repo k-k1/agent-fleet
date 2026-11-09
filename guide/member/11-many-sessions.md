@@ -22,7 +22,7 @@ colour the whole card, so they can be spotted from across the room.
   the same button on the layout map at the top of the left pane, or the leader keys **`g` → `s`** / **`s` → `l`**.
   It is an ordinary pane: split it, tab it, pop it out, and it is there again after a reload.
   On a phone, Sessions, Split down and Close all can sit in the action bar's **⋯**
-  ([02](02-console-basics.md#using-it-on-a-phone)).
+  ([02](../user/start/phone.md)).
 - **How many columns** depends on the width of the pane it is in: one column in a narrow side
   column, four or more across a wide one.
 - **Cards sit under one heading per project (repository)**. Every working copy of the same

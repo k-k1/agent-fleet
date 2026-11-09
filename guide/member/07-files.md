@@ -60,7 +60,7 @@ and its sub-folders (empty ones too) and Unicode names intact.
 
 To add files, **upload by drag & drop** or create them via "New file" in the right-click menu.
 If a file with the same name exists, an overwrite confirmation is shown. **Ctrl+click** (or
-middle-click) a file to **open it in a new pane** while keeping the current view ([02](02-console-basics.md#arranging-multiple-views-panes)).
+middle-click) a file to **open it in a new pane** while keeping the current view ([02](../user/start/panes.md)).
 
 The tree is **refreshed automatically**, so there is normally no need to refresh by hand:
 
