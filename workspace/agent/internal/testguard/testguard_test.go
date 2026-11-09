@@ -86,6 +86,7 @@ func TestGuardScratchEnvironment(t *testing.T) {
 	if !keepCredentials {
 		unset = append(unset, "CLAUDE_CONFIG_DIR", "CODEX_HOME")
 	}
+	unset = append(unset, RouteGateEnvs...)
 	for _, k := range unset {
 		if v, ok := os.LookupEnv(k); ok {
 			t.Errorf("%s is still set (%q)", k, v)
