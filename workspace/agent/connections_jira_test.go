@@ -394,6 +394,9 @@ func TestJiraPutSiteDuringConcurrentWrites(t *testing.T) {
 	}{
 		{"renewal", func(d *secrets.Data) { d.Jira.AccessToken, d.Jira.RefreshToken = "at2", "rt2" }, http.StatusOK},
 		{"disconnect", func(d *secrets.Data) { d.Jira = nil }, http.StatusConflict},
+		{"reconnect moving that site's URL", func(d *secrets.Data) {
+			d.Jira.Sites[1].URL = "https://renamed.atlassian.net"
+		}, http.StatusOK},
 		{"reconnect without that site", func(d *secrets.Data) {
 			d.Jira = &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "n", RefreshToken: "n", Expiry: time.Now().Unix() + 3600,
 				CloudID: "cid-1", Site: "https://one.atlassian.net", Sites: []secrets.JiraSite{{CloudID: "cid-1", URL: "https://one.atlassian.net"}}}
@@ -440,8 +443,11 @@ func TestJiraPutSiteDuringConcurrentWrites(t *testing.T) {
 			if s.Jira.CloudID != "cid-2" || s.Jira.Account != "Taro on Two" {
 				t.Errorf("switch lost: %q / %q", s.Jira.CloudID, s.Jira.Account)
 			}
-			if s.Jira.RefreshToken != "rt2" || s.Jira.AccessToken != "at2" {
+			if tc.name == "renewal" && (s.Jira.RefreshToken != "rt2" || s.Jira.AccessToken != "at2") {
 				t.Errorf("renewal undone: %q / %q", s.Jira.AccessToken, s.Jira.RefreshToken)
+			}
+			if want := s.Jira.Sites[1].URL; s.Jira.Site != want {
+				t.Errorf("site URL = %q, want the stored row's %q", s.Jira.Site, want)
 			}
 		})
 	}

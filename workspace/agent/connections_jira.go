@@ -254,16 +254,22 @@ func handlePutJiraSite(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// The display name can differ per site (another tenant's Jira is another persona).
-		// Asked on a copy and outside the store lock: it is a network call, and it may renew
-		// the token, which writes the store itself.
+		// Asked on a copy and outside the store lock: it is a network call, and the store
+		// must stay writable for a renewal meanwhile.
 		probe := *s.Jira
 		probe.CloudID, probe.Site = st.CloudID, st.URL
 		me, merr := jiraMyself(&probe)
 		storeJiraConn(w, func(d *secrets.Data) error {
-			if d.Jira == nil || d.Jira.AuthKind != "oauth" || !jiraHasSite(d.Jira, st.CloudID) {
+			if d.Jira == nil || d.Jira.AuthKind != "oauth" {
 				return errJiraSiteGone
 			}
-			d.Jira.CloudID, d.Jira.Site = st.CloudID, st.URL
+			// The row is read again from the store: a reconnect meanwhile may have dropped the
+			// site or changed its URL.
+			url, ok := jiraSiteURL(d.Jira, st.CloudID)
+			if !ok {
+				return errJiraSiteGone
+			}
+			d.Jira.CloudID, d.Jira.Site = st.CloudID, url
 			if merr == nil {
 				d.Jira.Account, d.Jira.Login = me.DisplayName, me.EmailAddress
 			}
@@ -274,13 +280,13 @@ func handlePutJiraSite(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "that site is not in this authorization")
 }
 
-func jiraHasSite(c *secrets.JiraCreds, cloudID string) bool {
-	for _, st := range c.Sites {
+func jiraSiteURL(c *secrets.JiraCreds, cloudID string) (string, bool) {
+	for _, st := range uniqueJiraSites(c.Sites) {
 		if st.CloudID == cloudID {
-			return true
+			return st.URL, true
 		}
 	}
-	return false
+	return "", false
 }
 
 func handleDeleteJiraConn(w http.ResponseWriter, r *http.Request) {
