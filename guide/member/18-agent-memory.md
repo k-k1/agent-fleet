@@ -18,11 +18,17 @@ another kind. **It is off by default.** Turn it on in the [Settings](#settings) 
 [Memory snapshots](#memory-snapshots), further down.
 
 The page opens with one status line: whether it is on, how many memories in how many projects, when it last changed,
-and a warning, with a link to Settings, when the background sync with Claude Code needs you. Under it are four views:
-**Memories · Changes · Import & export · Settings**. The view you leave open is remembered. While the workspace is stopped
-only **Settings** works (the switches are saved for the next start); the other views offer **Start the workspace**. On a
+and a warning, with a link to Settings, when the background sync with Claude Code needs you. Under it are two views:
+**Settings · Import & export**. The view you leave open is remembered. While the workspace is stopped
+only **Settings** works (the switches are saved for the next start); the other view offers **Start the workspace**. On a
 phone or a tablet in portrait the tabs stay on one row and scroll sideways when they do not all fit; the arrow keys,
 Home and End move between them.
+
+**The Memory view.** Reading a body, a diff or a list side by side does not fit in a dialog, so **Memories**, **Changes** and
+**Suggestions** live in a pane of their own, the *Memory* tab, like the image gallery. Open it with **Open memory view** at the
+top of Settings › Agent memory, or from the daily notice (which lands on **Suggestions**) or a memory in the command palette.
+There is one Memory view per workspace; opening it again focuses it. It works like the views below, only larger; the sections
+named **Memories**, **Changes** and **Suggestions** in this chapter are its three tabs.
 
 ### Memories
 
@@ -299,9 +305,18 @@ only queues *proposals*.
   authored `consolidator`: it shows in **Changes** and can be reverted. A proposal left undecided for 14 days expires (its record
   stays); expiry alone does not bring the topic back — new evidence, a change to the memory, or an explicit retry does.
 
-**Reviewing.** Settings › Agent memory › **Suggestions** lists the proposals; filter by *Pending*, *Decided* (approved, rejected,
-refused, or partly applied) and *Expired*. Open one to see the memory and the revision it was drafted against, the evidence (the
-reports and lint findings it rests on) and the diff.
+**Reviewing.** The Memory view's **Suggestions** tab lists the proposals; filter by *Pending*, *Decided* (approved, rejected,
+refused, or partly applied) and *Expired*. A proposal is titled by what it changes — the name of the memory it creates or
+patches — not by the topic it was grouped under (which can be an unrelated memory; the topic is shown in a smaller line below).
+Open one to see **If you approve**, before the Approve button:
+
+- a one-line summary: "Approving adds 2 memories; no existing memory changes", or "Approving changes 1 memory (adr-0094, rev 2 → 3)";
+- one card per item. A *create* card is a *New memory*: scope, name, type, description and the body as it will read. When the
+  topic memory is not the one being created it says "The topic memory … is not changed". A *patch* card shows the target's
+  revision n → n+1 as **Before** and **After** side by side, the removed and added lines highlighted, and says the change is
+  published as `consolidator` and can be reverted from the change list. An *advice* card says what would happen and that it
+  cannot be approved yet;
+- then the memory's evidence (the reports and lint findings it rests on) and the revisions the proposal was drafted against.
 
 - **Approve** applies that one proposal, after a confirmation that names what will be written. Nothing is approved in bulk, by
   waiting, or from a notification: the daily notice only opens this view.
@@ -315,7 +330,7 @@ reports and lint findings it rests on) and the diff.
 
 **The daily notice.** While the switch is on and at least one proposal is pending, you get at most one notification a day,
 "N memory suggestions are waiting for your review". It carries the count only (never a memory's text) and opens
-**Suggestions**. It is on by default with the other notifications (Settings › Notifications › Other).
+**Suggestions** in the Memory view. It is on by default with the other notifications (Settings › Notifications › Other).
 
 ### Settings
 

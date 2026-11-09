@@ -233,6 +233,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.kind.imagegen": "Image generation",
   "pane.kind.fleetgraph": "Fleet graph",
   "pane.kind.home": "Home",
+  "pane.kind.memory": "Memory",
   "pane.open_home": "Open Home",
   "home.waiting": "Waiting for you",
   "home.waiting_hint": "Sessions waiting for an answer, a permission or a plan approval",

@@ -233,6 +233,7 @@ export const common = {
   "pane.kind.imagegen": "画像生成",
   "pane.kind.fleetgraph": "フリート俯瞰図",
   "pane.kind.home": "ホーム",
+  "pane.kind.memory": "メモリ",
   "pane.open_home": "ホームを開く",
   "home.waiting": "あなたの返事を待っています",
   "home.waiting_hint": "質問・許可・プランの承認を待っているセッションです",

@@ -273,9 +273,9 @@ describe("ProposalsPanel", () => {
     expect(rows()).toHaveLength(2);
     await click(buttons().find((b) => b.textContent === t("mem.cs_filter_decided", { n: 1 })));
     expect(rows()).toHaveLength(1);
-    expect(rows()[0].textContent).toContain("old");
+    expect(rows()[0].textContent).toContain(t("mem.cs_status_rejected"));
     await click(buttons().find((b) => b.textContent === t("mem.cs_filter_expired", { n: 1 })));
-    expect(rows()[0].textContent).toContain("gone");
+    expect(rows()[0].textContent).toContain(t("mem.cs_status_expired"));
     await click(buttons().find((b) => b.textContent === t("mem.cs_filter_all", { n: 4 })));
     expect(rows()).toHaveLength(4);
   });
@@ -286,7 +286,7 @@ describe("ProposalsPanel", () => {
     expect(text).toContain("branches@3");
     expect(text).toContain("trunk renamed");
     expect(text).toContain("trunk is main now");
-    expect(host!.querySelector(".diff")).toBeTruthy();
+    expect(host!.querySelectorAll(".mem-pv-side")).toHaveLength(2);
     expect(apiJSON).not.toHaveBeenCalled();
   });
 
