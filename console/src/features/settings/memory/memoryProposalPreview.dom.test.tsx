@@ -222,12 +222,56 @@ describe("the patch card", () => {
 });
 
 describe("the advice card", () => {
-  it("says what would happen and that it cannot be approved yet", async () => {
+  it("says what would happen and that it cannot be approved", async () => {
     await mount(<ProposalPreview view={viewOf("tests", [advice])} />);
     const [card] = cards("note");
     expect(card.textContent).toContain("Suggests merging the memories (tests, ci) into one.");
-    expect(card.textContent).toContain("not approvable yet");
+    expect(card.textContent).toContain("cannot be approved");
+    expect(card.textContent).not.toContain("not approvable yet");
     expect(card.textContent).toContain("same rule twice");
+  });
+});
+
+const replace = (name: string, sources: { name: string; revision: number }[], extra: Partial<ConsolItemView> = {}): ConsolItemView => ({
+  op: "replace",
+  name,
+  description: `about ${name}`,
+  type: "reference",
+  body: `# ${name}\n\nmerged text`,
+  sources,
+  reason: "same rule twice",
+  diff: `+# ${name}\n+\n+merged text`,
+  ...extra,
+});
+
+describe("the replacement card (#3696)", () => {
+  it("is approvable: shows the new memory, what it supersedes, and says it reverts as one change", async () => {
+    const v = viewOf("a", [replace("umbrella", [{ name: "a", revision: 1 }, { name: "b", revision: 4 }])]);
+    await mount(<ProposalPreview view={v} />);
+    const [card] = cards("replace");
+    expect(card.textContent).toContain("umbrella");
+    expect(card.textContent).toContain("merged text");
+    expect(card.textContent).toContain("rev 4 → 5");
+    expect(card.textContent).toContain("one change");
+    expect(card.textContent).not.toContain("not approvable");
+    expect(summary()).toBe(
+      "Approving adds 1 replacement memory and marks 2 existing memories as superseded (a, b); one revert undoes all of it.",
+    );
+  });
+
+  it("titles the proposal by the replacement and warns while a source moved", async () => {
+    expect(proposalSubject({ memory: "topic", items: [replace("umbrella", [{ name: "a", revision: 1 }])] })).toBe("umbrella");
+    await mount(<ProposalPreview view={viewOf("a", [replace("u", [{ name: "a", revision: 1 }], { stale: "a memory to supersede has changed" })])} />);
+    expect(cards("replace")[0].querySelector(".mem-warn")!.textContent).toContain("has changed");
+  });
+
+  it("offers Approve for a proposal that holds a replacement", async () => {
+    const v = viewOf("a", [replace("u", [{ name: "a", revision: 1 }])]);
+    api.mockImplementation((path: string) =>
+      path.endsWith("/proposals") ? Promise.resolve({ proposals: [v] }) : path.includes("proposal?id=") ? Promise.resolve(v) : Promise.resolve({}),
+    );
+    await mount(<ProposalsPanel reload={0} onChanged={() => {}} />);
+    expect(Array.from(host!.querySelectorAll("button")).some((b) => b.textContent === t("mem.cs_approve"))).toBe(true);
   });
 });
 

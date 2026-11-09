@@ -46,7 +46,7 @@ export function humanDuration(s: string | undefined): string {
 
 /** A proposal with nothing the Agent can publish (every item is a note) is advice: it has no Approve. */
 export const isAdviceOnly = (p: Pick<ConsolProposal, "items">): boolean =>
-  !p.items.some((i) => i.op === "patch" || i.op === "create");
+  !p.items.some((i) => i.op === "patch" || i.op === "create" || i.op === "replace");
 
 export type StatusFilter = "all" | "pending" | "decided" | "expired";
 const DECIDED = new Set(["approved", "rejected", "refused", "partial"]);
@@ -282,7 +282,7 @@ function ProposalDetail({
   const decide = async (verb: "approve" | "reject" | "retry") => {
     if (!view || inFlight.current) return;
     if (verb === "approve") {
-      const targets = view.items.filter((i) => i.op === "patch" || i.op === "create");
+      const targets = view.items.filter((i) => i.op === "patch" || i.op === "create" || i.op === "replace");
       const ok = await askConfirm({
         title: tr("mem.cs_approve_title"),
         body: (

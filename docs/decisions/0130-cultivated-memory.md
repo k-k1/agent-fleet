@@ -752,6 +752,27 @@ release.
   topic of its own, keyed and titled by the name it proposed. The live run had attached creates about a flaky contract test and
   about PR workflow to notes that shared a body word or two. A proposal's `memory` is now the one name all its items change
   (the created name for a lone create), and the topic's memory only when the items differ.
+- **2026-11-10 — decisions 6 and 7: the replacement writer (#3696).** A supersede, a merge and an add with no exported
+  candidate are now approvable. The large tier writes the memory (`memengine.Compose`: name, description, type, body; the
+  notes it replaces are sent whole), and the proposal queues it as a `create` (add) or a `replace` (supersede, merge). One
+  deliberate departure from decision 6's wording ("the replacement is created or patched first, as its own published change; the
+  supersede then sets `superseded_by`... both are ordinary one-target changes"): a `replace` is **one commit** that writes the new
+  memory and sets `superseded_by` and `invalid_at` on every replaced one, because two commits can leave the half-applied
+  state decision 6 only argued away by ordering (a replacement without its marks, or marks that point at a memory whose write was
+  lost). The commit's `AF-Memory` is the new memory (the change list's row, op `replace`) and `AF-Memory-Also` lists the replaced
+  ones; `agentMemChangesOf` matches both, so "the newest change of a path" holds for every side and a later change to any replaced
+  memory ends the unit's revertibility. One revert (`agentMemRevertGroup`) writes one commit: the new memory goes (with a
+  tombstone, as for any undone create) and each replaced memory returns to its text before, at a revision above every one it
+  had. It refuses unless every side is exactly as the commit left it and has both texts in the history (a purge of one side
+  refuses the revert; `memory_forget` and the change list's forget of one side of a unit are refused while the unit is that memory's newest change, since a forget would end the unit's revert for good). Approval re-validates each side against its revision twice, in
+  Approve before any write and again inside the store lock (`agentMemReplace`); a moved side refuses the whole replacement and
+  writes nothing, and a failure after the files were written (git, the disk) puts every side back (`agentMemApplyLocked`'s undo).
+  The new name is held to no revival in the same lock: a forgotten name, or one that exists, including a superseded memory's
+  (its file stays), is refused, and a superseded or archived memory is not a source. Within one proposal a memory is superseded by
+  one replace only and a name is created once; the later item, and a patch of a superseded memory, become advice or are dropped.
+  When the model's text fails the engine's or the store's checks the proposal falls back to the advice item. Not verified: a real
+  model writing the replacement (the evaluation decision 6 asked for has no compose case yet), and the live Console.
+
 
 - **2026-11-10 — `lint-rename` follows directory renames, and lint checks stored `anchors` (#3650, parts 2 and 3).**
   Git records no directory renames, so the directory moves are inferred from the file renames of one commit: a file

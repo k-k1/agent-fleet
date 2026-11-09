@@ -27,6 +27,7 @@ type fakeStore struct {
 	mu        sync.Mutex
 	mems      map[string][]memoryx.ConsolMemory // by ScopeKey
 	forgotten map[string]bool                   // ScopeKey + "/" + name
+	excluded  map[string]bool                   // ScopeKey + "/" + name: superseded, still has its file
 	published []memoryx.ConsolItem
 	pubIDs    map[string]string // publish id -> commit
 	failAt    int               // 1-based Publish call that fails with a store error; 0 never
@@ -34,7 +35,7 @@ type fakeStore struct {
 }
 
 func newFake() *fakeStore {
-	return &fakeStore{mems: map[string][]memoryx.ConsolMemory{}, forgotten: map[string]bool{}}
+	return &fakeStore{mems: map[string][]memoryx.ConsolMemory{}, forgotten: map[string]bool{}, excluded: map[string]bool{}}
 }
 
 func (f *fakeStore) put(scope, pid string, m memoryx.ConsolMemory) {
@@ -63,7 +64,13 @@ func (f *fakeStore) Scopes() ([]memoryx.ConsolScope, error) {
 func (f *fakeStore) Memories(scope, pid string) ([]memoryx.ConsolMemory, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]memoryx.ConsolMemory(nil), f.mems[ScopeKey(scope, pid)]...), nil
+	var out []memoryx.ConsolMemory
+	for _, m := range f.mems[ScopeKey(scope, pid)] {
+		if !f.excluded[ScopeKey(scope, pid)+"/"+m.Name] {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) Target(scope, pid, name string) (memoryx.ReviewTargetState, error) {
@@ -73,6 +80,7 @@ func (f *fakeStore) Target(scope, pid, name string) (memoryx.ReviewTargetState, 
 	for _, m := range f.mems[ScopeKey(scope, pid)] {
 		if m.Name == name {
 			st.Exists, st.Revision, st.Body, st.Description, st.Type = true, m.Revision, m.Body, m.Description, m.Type
+			st.Excluded = f.excluded[ScopeKey(scope, pid)+"/"+name]
 		}
 	}
 	return st, nil
@@ -88,6 +96,22 @@ func (f *fakeStore) Publish(id string, it memoryx.ConsolItem, now time.Time) (me
 		f.failAt = 0
 		return memoryx.ConsolPublished{}, errors.New("disk full")
 	}
+	k := ScopeKey(it.Scope, it.ProjectID)
+	if it.Op == "replace" {
+		// The real store's rule, under its lock: every side is checked before anything is written.
+		if f.forgotten[k+"/"+it.Name] {
+			return memoryx.ConsolPublished{}, &memoryx.ReviewRefusal{Kind: memoryx.ReviewForgotten, Msg: "forgotten"}
+		}
+		for _, src := range it.Sources {
+			ok := false
+			for _, m := range f.mems[k] {
+				ok = ok || m.Name == src.Name && m.Revision == src.Revision && !f.excluded[k+"/"+m.Name]
+			}
+			if !ok {
+				return memoryx.ConsolPublished{}, &memoryx.ReviewRefusal{Kind: memoryx.ReviewStale, Msg: "a side moved"}
+			}
+		}
+	}
 	f.published = append(f.published, it)
 	if f.pubIDs == nil {
 		f.pubIDs = map[string]string{}
@@ -95,7 +119,22 @@ func (f *fakeStore) Publish(id string, it memoryx.ConsolItem, now time.Time) (me
 	commit := fmt.Sprintf("%040x", len(f.published))
 	f.pubIDs[id] = commit
 	// Publishing moves the memory on, as the real store does.
-	k := ScopeKey(it.Scope, it.ProjectID)
+	switch it.Op {
+	case "replace":
+		for _, src := range it.Sources {
+			for i := range f.mems[k] {
+				if f.mems[k][i].Name == src.Name {
+					f.mems[k][i].Revision++
+					f.excluded[k+"/"+src.Name] = true
+				}
+			}
+		}
+		f.mems[k] = append(f.mems[k], memoryx.ConsolMemory{Name: it.Name, Description: it.Description, Type: it.Type, Body: it.Body, Revision: 1})
+		return memoryx.ConsolPublished{Commit: commit, Revision: 1}, nil
+	case "create":
+		f.mems[k] = append(f.mems[k], memoryx.ConsolMemory{Name: it.Name, Description: it.Description, Type: it.Type, Body: it.Body, Revision: 1})
+		return memoryx.ConsolPublished{Commit: commit, Revision: 1}, nil
+	}
 	for i := range f.mems[k] {
 		if f.mems[k][i].Name == it.Name {
 			f.mems[k][i].Revision++
@@ -140,22 +179,38 @@ type scriptModel struct {
 	mu       sync.Mutex
 	classify func(prompt string) (string, error)
 	patch    func(prompt string) (string, error)
+	compose  func(prompt string) (string, error)
 	nClass   int
 	nPatch   int
+	nCompose int
 	after    func(n int) // called after every call with the running total
+	prompts  []string
+}
+
+func (m *scriptModel) lastPrompt() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.prompts) == 0 {
+		return ""
+	}
+	return m.prompts[len(m.prompts)-1]
 }
 
 func (m *scriptModel) Call(ctx context.Context, prompt string) (memengine.Reply, error) {
 	m.mu.Lock()
+	m.prompts = append(m.prompts, prompt)
 	var f func(string) (string, error)
-	if strings.Contains(prompt, "## Note ") {
+	if strings.Contains(prompt, "## Notes to replace") {
+		m.nCompose++
+		f = m.compose
+	} else if strings.Contains(prompt, "## Note ") {
 		m.nPatch++
 		f = m.patch
 	} else {
 		m.nClass++
 		f = m.classify
 	}
-	n := m.nClass + m.nPatch
+	n := m.nClass + m.nPatch + m.nCompose
 	m.mu.Unlock()
 	if m.after != nil {
 		defer m.after(n)
@@ -170,11 +225,22 @@ func (m *scriptModel) Call(ctx context.Context, prompt string) (memengine.Reply,
 	return memengine.Reply{Text: text, Usage: memengine.Usage{InputTokens: 1000, OutputTokens: 100}, UsageKnown: true}, nil
 }
 
-func (m *scriptModel) calls() int { m.mu.Lock(); defer m.mu.Unlock(); return m.nClass + m.nPatch }
+func (m *scriptModel) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.nClass + m.nPatch + m.nCompose
+}
 
 func classifyAs(op string, targets ...string) func(string) (string, error) {
 	return func(string) (string, error) {
 		b, _ := json.Marshal(map[string]any{"operation": op, "targets": targets, "reason": "because"})
+		return string(b), nil
+	}
+}
+
+func composeAs(name, body string) func(string) (string, error) {
+	return func(string) (string, error) {
+		b, _ := json.Marshal(map[string]string{"name": name, "description": "d " + name, "type": "project", "body": body})
 		return string(b), nil
 	}
 }

@@ -111,7 +111,8 @@
 
 /* AF-owned memory changes: a forget or a member's revert reads apart from an agent's write. */
 .mem-badge.af-op-forget,
-.mem-badge.af-op-revert {
+.mem-badge.af-op-revert,
+.mem-badge.af-op-replace {
   color: var(--accent);
   border-color: var(--accent);
 }

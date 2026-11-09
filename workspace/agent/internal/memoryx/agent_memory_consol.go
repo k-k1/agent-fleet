@@ -7,8 +7,8 @@ package memoryx
 //
 //   - it never writes on its own: PublishConsolidation is reached only from the member-origin
 //     approve route, and no af MCP tool calls it (ADR 0113);
-//   - a create is refused over a name that was forgotten or ever existed, judged inside the store
-//     lock the save holds (agentMemCaller.noRevival), so a check made at queue time cannot go stale.
+//   - a create (and the new memory of a replace) is refused over a name that was forgotten or ever
+//     existed, judged inside the store lock the save holds (agentMemCaller.noRevival), so a check made at queue time cannot go stale.
 //
 // Reads here count no use: a consolidator that reads a memory must not make it look popular.
 
@@ -119,19 +119,27 @@ type ConsolEdit struct {
 	Old, New string
 }
 
+// ConsolSource is one memory a replace supersedes, with the revision the proposal saw.
+type ConsolSource struct {
+	Name     string
+	Revision int
+}
+
 // ConsolItem is one approved operation as the store needs it.
 type ConsolItem struct {
-	Op        string // patch | create
+	Op        string // patch | create | replace
 	Scope     string
 	ProjectID string
 	Name      string
 	// Revision is the revision a patch was made against; it must still be the current one.
 	Revision int
 	Edits    []ConsolEdit
-	// Description, Type and Body are the new memory of a create.
+	// Description, Type and Body are the new memory of a create or replace.
 	Description string
 	Type        string
 	Body        string
+	// Sources are the memories a replace supersedes (a supersede names one, a merge several).
+	Sources []ConsolSource
 }
 
 // ConsolPublished is the outcome of PublishConsolidation. Already says an earlier call had
@@ -151,8 +159,8 @@ func PublishConsolidation(proposalID string, it ConsolItem, now time.Time) (Cons
 	switch {
 	case !reviewIDRe.MatchString(proposalID):
 		return ConsolPublished{}, invalid("proposal id is malformed")
-	case it.Op != "patch" && it.Op != "create":
-		return ConsolPublished{}, invalid("op must be patch or create")
+	case it.Op != "patch" && it.Op != "create" && it.Op != "replace":
+		return ConsolPublished{}, invalid("op must be patch, create or replace")
 	case it.Scope != agentMemScopeProject && it.Scope != agentMemScopeUser:
 		return ConsolPublished{}, invalid("scope must be project or user")
 	case !agentMemValidName(it.Name):
@@ -178,6 +186,12 @@ func PublishConsolidation(proposalID string, it ConsolItem, now time.Time) (Cons
 		}
 		res, err = agentMemPatch(c, agentMemPatchReq{Session: c.Session, Scope: it.Scope, Name: it.Name,
 			Revision: it.Revision, Edits: edits}, now)
+	case "replace":
+		req := agentMemReplaceReq{Scope: it.Scope, Name: it.Name, Description: it.Description, Type: it.Type, Body: it.Body}
+		for _, s := range it.Sources {
+			req.Sources = append(req.Sources, agentMemReplaceSource{Name: s.Name, Revision: s.Revision})
+		}
+		res, err = agentMemReplace(c, req, now)
 	default:
 		c.noRevival = true
 		res, err = agentMemSave(c, agentMemSaveReq{Session: c.Session, Scope: it.Scope, Name: it.Name,

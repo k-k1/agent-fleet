@@ -28,14 +28,23 @@ const (
 	StatusPartial  = "partial"  // approval published some items and the store refused a later one
 )
 
-// Item operations. Only patch and create can be published; a note is advice for the member (the
-// engine has no call that writes a replacement, so a supersede or merge cannot be applied from
-// here and reaches the member as a plain observation, ADR 0130 decision 6).
+// Item operations. Patch, create and replace can be published; a note is advice for the member and
+// writes nothing. A replace is a supersede or merge: the new memory and the supersede marks of the
+// ones it replaces, published as one change (ADR 0130 decision 6). A note remains for what the
+// engine could not turn into a checked replacement (the model's text failed validation).
 const (
-	OpPatch  = "patch"
-	OpCreate = "create"
-	OpNote   = "note"
+	OpPatch   = "patch"
+	OpCreate  = "create"
+	OpReplace = "replace"
+	OpNote    = "note"
 )
+
+// Source is one memory a replace supersedes, with the revision the engine saw. Approval re-validates
+// it against the memory as it is then.
+type Source struct {
+	Name     string `json:"name"`
+	Revision int    `json:"revision"`
+}
 
 // Edit is one exact-text edit of a patch.
 type Edit struct {
@@ -46,15 +55,17 @@ type Edit struct {
 // Item is one operation of a proposal.
 type Item struct {
 	Op     string `json:"op"`
-	Name   string `json:"name"` // the target memory (patch, note) or the new memory (create)
+	Name   string `json:"name"` // the target memory (patch, note) or the new memory (create, replace)
 	Reason string `json:"reason,omitempty"`
 	// Revision is the revision the engine saw when it made a patch.
 	Revision int    `json:"revision,omitempty"`
 	Edits    []Edit `json:"edits,omitempty"`
-	// Create: the new memory.
+	// Create, replace: the new memory.
 	Description string `json:"description,omitempty"`
 	Type        string `json:"type,omitempty"`
 	Body        string `json:"body,omitempty"`
+	// Replace: the memories it supersedes (one for a supersede, several for a merge).
+	Sources []Source `json:"sources,omitempty"`
 	// Note: the engine's operation (add, supersede, merge) and the memories it named.
 	Advice  string   `json:"advice,omitempty"`
 	Targets []string `json:"targets,omitempty"`
@@ -297,25 +308,68 @@ func validateItem(scope, projectID string, it Item) *Problem {
 			return &Problem{ProbInvalid, "the patch adds a link to a memory that does not exist: " + l}
 		}
 	case OpCreate:
-		switch {
-		case st.Forgotten:
-			return &Problem{ProbForgotten, "the name was forgotten or existed before; a consolidation never brings it back"}
-		case st.Exists || st.Withheld:
-			return &Problem{ProbExists, "a memory by that name exists"}
-		case !memoryx.ValidReviewName(it.Name):
-			return &Problem{ProbInvalid, "the name is not a valid memory name"}
+		return validateNewMemory(scope, projectID, it, st)
+	case OpReplace:
+		if pr := validateNewMemory(scope, projectID, it, st); pr != nil {
+			return pr
 		}
-		if err := store.Validate(scope, it.Name, it.Description, it.Type, it.Body); err != nil {
-			return &Problem{ProbInvalid, err.Error()}
-		}
-		if memoryx.ReviewTextProblem(it.Body+"\n"+it.Description) != "" {
-			return &Problem{ProbSecret, "the text failed the secret scan"}
-		}
-		if bl := brokenLinks(it.Body, scope, projectID); len(bl) > 0 {
-			return &Problem{ProbInvalid, "the body links to a memory that does not exist: " + bl[0]}
-		}
+		return validateSources(scope, projectID, it)
 	default:
-		return &Problem{ProbInvalid, "only a patch or a create can be applied"}
+		return &Problem{ProbInvalid, "only a patch, a create or a replace can be applied"}
+	}
+	return nil
+}
+
+// validateNewMemory is the gate of a memory that does not exist yet (a create, and the new side of
+// a replace): the name is free and was never used, and the text passes the store's schema, the
+// secret scan and the link check. A superseded memory still has its file, so its name is taken.
+func validateNewMemory(scope, projectID string, it Item, st memoryx.ReviewTargetState) *Problem {
+	switch {
+	case st.Forgotten:
+		return &Problem{ProbForgotten, "the name was forgotten or existed before; a consolidation never brings it back"}
+	case st.Exists || st.Withheld:
+		return &Problem{ProbExists, "a memory by that name exists"}
+	case !memoryx.ValidReviewName(it.Name):
+		return &Problem{ProbInvalid, "the name is not a valid memory name"}
+	}
+	if err := store.Validate(scope, it.Name, it.Description, it.Type, it.Body); err != nil {
+		return &Problem{ProbInvalid, err.Error()}
+	}
+	if memoryx.ReviewTextProblem(it.Body+"\n"+it.Description) != "" {
+		return &Problem{ProbSecret, "the text failed the secret scan"}
+	}
+	if bl := brokenLinks(it.Body, scope, projectID); len(bl) > 0 {
+		return &Problem{ProbInvalid, "the body links to a memory that does not exist: " + bl[0]}
+	}
+	return nil
+}
+
+// maxSources bounds how many memories one replace supersedes; the store refuses more.
+const maxSources = 8
+
+// validateSources checks every memory a replace supersedes against its current revision. All sides
+// are read before anything is written, so one that moved refuses the whole replacement.
+func validateSources(scope, projectID string, it Item) *Problem {
+	if len(it.Sources) == 0 || len(it.Sources) > maxSources {
+		return &Problem{ProbInvalid, "a replacement supersedes between one and eight memories"}
+	}
+	seen := map[string]bool{}
+	for _, src := range it.Sources {
+		if src.Name == it.Name || seen[src.Name] || src.Revision < 1 {
+			return &Problem{ProbInvalid, "the memories a replacement supersedes are not distinct, or one is the replacement itself"}
+		}
+		seen[src.Name] = true
+		st, err := store.Target(scope, projectID, src.Name)
+		switch {
+		case err != nil:
+			return &Problem{ProbInvalid, "a memory to supersede cannot be read"}
+		case !st.Exists || st.Withheld:
+			return &Problem{ProbStale, "a memory to supersede is gone or withheld"}
+		case st.Excluded:
+			return &Problem{ProbStale, "a memory to supersede is archived or superseded already"}
+		case st.Revision != src.Revision:
+			return &Problem{ProbStale, "a memory to supersede has changed since the engine read it"}
+		}
 	}
 	return nil
 }
@@ -383,6 +437,8 @@ func Retry(id string, now time.Time) (Proposal, int, error) {
 	return p, n, s.save()
 }
 
+func isPublishable(op string) bool { return op == OpPatch || op == OpCreate || op == OpReplace }
+
 func publishID(proposalID string, i int) string {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%s/%d", proposalID, i)))
 	return hex.EncodeToString(h[:])[:20]
@@ -392,8 +448,10 @@ func publishID(proposalID string, i int) string {
 // memory store, and the only caller is the member-origin approve route. Every publishable item is
 // re-validated against the memory as it is now before the first one is written; a refusal leaves
 // the store untouched and marks the proposal refused, with the reason. Items publish through the
-// store's patch / save path authored as the consolidator (memoryx.PublishConsolidation), so the
-// change list shows them and each can be reverted; a note item is advice and writes nothing.
+// store's patch / save / replace path authored as the consolidator (memoryx.PublishConsolidation),
+// so the change list shows them and each can be reverted; a replace is one change over all its
+// memories, and the store re-checks each side's revision under its lock (the CAS). A note item is
+// advice and writes nothing.
 func Approve(id string, now time.Time) (Proposal, error) {
 	stateMu.Lock()
 	defer stateMu.Unlock()
@@ -410,7 +468,7 @@ func Approve(id string, now time.Time) (Proposal, error) {
 	publishable := 0
 	for i := range p.Items {
 		it := &p.Items[i]
-		if it.Op != OpPatch && it.Op != OpCreate {
+		if !isPublishable(it.Op) {
 			continue
 		}
 		publishable++
@@ -444,7 +502,7 @@ func Approve(id string, now time.Time) (Proposal, error) {
 	done := 0
 	for i := range p.Items {
 		it := &p.Items[i]
-		if it.Op != OpPatch && it.Op != OpCreate {
+		if !isPublishable(it.Op) {
 			continue
 		}
 		if it.Commit != "" {
@@ -453,6 +511,9 @@ func Approve(id string, now time.Time) (Proposal, error) {
 		}
 		ci := memoryx.ConsolItem{Op: it.Op, Scope: p.Scope, ProjectID: p.ProjectID, Name: it.Name, Revision: it.Revision,
 			Description: it.Description, Type: it.Type, Body: it.Body}
+		for _, src := range it.Sources {
+			ci.Sources = append(ci.Sources, memoryx.ConsolSource{Name: src.Name, Revision: src.Revision})
+		}
 		for _, e := range it.Edits {
 			ci.Edits = append(ci.Edits, memoryx.ConsolEdit{Old: e.Old, New: e.New})
 		}
@@ -538,7 +599,7 @@ func View(id string, now time.Time) (ProposalView, error) {
 				iv.Stale = "the memory has changed since the engine read it"
 			}
 			iv.Diff = lineDiff(st.Body, body)
-		case OpCreate:
+		case OpCreate, OpReplace:
 			iv.Diff = lineDiff("", it.Body)
 			if it.Commit == "" {
 				if pr := validateItem(p.Scope, p.ProjectID, it); pr != nil {

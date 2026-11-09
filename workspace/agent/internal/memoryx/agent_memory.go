@@ -1235,6 +1235,9 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 			"the memory is at revision %d, not %d; read it again before forgetting it", cur.Entry.Revision, req.Revision)
 	}
 	repoRel := rel + "/" + req.Name + ".md"
+	if err := agentMemRefuseGroupForget(repoRel); err != nil {
+		return agentMemWriteResult{}, err
+	}
 	base, err := forgetIntent(rel, req.Name)
 	if err != nil {
 		return agentMemWriteResult{}, err

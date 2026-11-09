@@ -255,6 +255,9 @@ type ReviewTargetState struct {
 	// Forgotten: a tombstone, or (for a name that does not exist) any change in the history, says the
 	// memory was forgotten; a create is refused over it.
 	Forgotten bool
+	// Excluded: the memory is archived or superseded, so agents do not see it and a consolidation
+	// must not replace it again.
+	Excluded bool
 }
 
 // ReviewTarget reads the live state of one memory for the approval screen. It counts no use and
@@ -315,6 +318,7 @@ func ReviewTarget(scope, projectID, name string) (ReviewTargetState, error) {
 		return out, nil
 	}
 	out.Revision, out.Type, out.Description, out.Body = l.Entry.Revision, l.Entry.Type, l.Entry.Description, l.Entry.Body
+	out.Excluded = agentMemExcluded(l.Entry)
 	return out, nil
 }
 
