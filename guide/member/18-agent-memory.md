@@ -300,11 +300,17 @@ only queues *proposals*.
   The request returns at once and the status shows the run's progress ("topic n of m"), then its report. Only one run goes at a
   time: a second request is refused, not queued. A manual run does not use up or reset the automatic 3-hour window. Only you
   can start it from the Console; a session cannot.
-- **What a proposal can be.** A *patch* of one memory (exact-text edits, checked to apply to the current revision), a *create*
-  that an earlier 0117 proposal carried, or *advice* (supersede, merge, add) that you apply by hand — the engine does not
-  write replacements. A create over a name that was forgotten, or that ever existed, is refused.
-- **Approval.** A proposal is re-checked against the memory as it is when you approve, and then published the normal way,
-  authored `consolidator`: it shows in **Changes** and can be reverted. A proposal left undecided for 14 days expires (its record
+- **What a proposal can be.** A *patch* of one memory (exact-text edits, checked to apply to the current revision); a *create*,
+  either one that an earlier 0117 proposal carried or a new memory the larger model wrote for an *add* with no candidate; or a
+  *replacement* for a *supersede* or *merge*: the larger model writes one new memory, and the memories it replaces are marked
+  superseded (hidden from agents, kept in history). A create or replacement over a name that was forgotten, or that ever
+  existed (a superseded memory still has its name), is refused. When the larger model's text fails a check, the proposal falls
+  back to *advice*, which you apply by hand.
+- **Approval.** A proposal is re-checked against the memory as it is when you approve — every memory it touches, each against
+  the revision the proposal saw; if any of them moved, nothing is written — and then published the normal way, authored
+  `consolidator`: it shows in **Changes** and can be reverted. A replacement is *one* change over the new memory and all the
+  memories it supersedes (the row lists them), and one revert undoes all of it. It can be reverted only while none of those
+  memories has changed since. A proposal left undecided for 14 days expires (its record
   stays); expiry alone does not bring the topic back — new evidence, a change to the memory, or an explicit retry does.
 
 **Reviewing.** The Memory view's **Suggestions** tab lists the proposals; filter by *Pending*, *Decided* (approved, rejected,
@@ -316,8 +322,9 @@ Open one to see **If you approve**, before the Approve button:
 - one card per item. A *create* card is a *New memory*: scope, name, type, description and the body as it will read. When the
   topic memory is not the one being created it says "The topic memory … is not changed". A *patch* card shows the target's
   revision n → n+1 as **Before** and **After** side by side, the removed and added lines highlighted, and says the change is
-  published as `consolidator` and can be reverted from the change list. An *advice* card says what would happen and that it
-  cannot be approved yet;
+  published as `consolidator` and can be reverted from the change list. A *replacement* card shows the new memory, the memories it
+  supersedes with their revisions, and says it is published and reverted as one change. An *advice* card says what would
+  happen and that it cannot be approved;
 - then the memory's evidence (the reports and lint findings it rests on) and the revisions the proposal was drafted against.
 
 - **Approve** applies that one proposal, after a confirmation that names what will be written. Nothing is approved in bulk, by
@@ -327,8 +334,9 @@ Open one to see **If you approve**, before the Approve button:
 - **Refusals are explained.** If the memory changed after the proposal was drafted (a revision mismatch), or the proposal expired
   or was already decided, Approve says so instead of failing generically; a stale proposal cannot be approved and is marked *not
   applicable* — use *Look again*.
-- **Advice only.** A supersede, a merge, or an add with no candidate text is shown as *Advice only* and has no Approve button:
-  nothing can write the replacement yet (tracked in #3696). Read it and edit the memories by hand in **Memories**.
+- **Advice only.** When the larger model's replacement or new memory failed a check (a name that was used before, a schema or
+  secret-scan failure, a link to nothing, an invalid answer), the proposal is shown as *Advice only* and has no Approve button.
+  Read it and edit the memories by hand in **Memories**.
 
 **The daily notice.** While the switch is on and at least one proposal is pending, you get at most one notification a day,
 "N memory suggestions are waiting for your review". It carries the count only (never a memory's text) and opens

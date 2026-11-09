@@ -44,26 +44,6 @@ func TestRunQueuesAPatchProposalAndNeverWritesTheStore(t *testing.T) {
 	}
 }
 
-// Supersede and merge escalate to the large tier; the large answer stands, and with no call that
-// writes a replacement it reaches the member as advice about one target.
-func TestSupersedeEscalatesAndQueuesAdviceOnly(t *testing.T) {
-	f := env(t)
-	f.wrong("old-note", "all stale", 1)
-	small := &scriptModel{classify: classifyAs("supersede", "old-note")}
-	large := &scriptModel{classify: classifyAs("supersede", "old-note")}
-	rep := mustRun(t, input(small, large, t0))
-	if small.nClass != 1 || large.nClass != 1 || rep.Status != RunOK {
-		t.Fatalf("calls small=%d large=%d report=%+v", small.nClass, large.nClass, rep)
-	}
-	it := pendingList(t, t0)[0].Items[0]
-	if it.Op != OpNote || it.Advice != "supersede" || it.Name != "old-note" || it.Role != "large" {
-		t.Fatalf("item = %+v", it)
-	}
-	if _, err := Approve(pendingList(t, t0)[0].ID, t0); err == nil || f.nPublished() != 0 {
-		t.Fatalf("an advice-only proposal was approvable: %v", err)
-	}
-}
-
 // A model or runner error (a retired model's command failing) fails the run: nothing is queued from
 // the failed call, no later topic is tried, no fallback model is used, and the topic stays ripe.
 func TestModelErrorFailsTheRunSafely(t *testing.T) {

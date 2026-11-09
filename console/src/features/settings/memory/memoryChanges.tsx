@@ -294,6 +294,7 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
                   <span className="mem-snap-when">{fmtDateTime(c.at, DATETIME_FULL)}</span>
                   <span className={"mem-badge af-op-" + c.op}>{opLabel(c.op)}</span>
                   <span className="mem-af-name">{c.name}</span>
+                  {c.also && c.also.length > 0 && <span className="muted">{tr("mem.af_also", { names: c.also.join(", ") })}</span>}
                   <span className="mem-snap-what muted">
                     {where(c)}
                     {" · "}

@@ -40,7 +40,7 @@ var agentMemMember = agentMemCaller{Session: "console", Kind: "member"}
 var (
 	agentMemRepoPathRe = regexp.MustCompile(`^af/(user|projects/[a-z0-9._-]{1,80})/([a-z0-9_][a-z0-9._-]{0,63})\.md$`)
 	agentMemCommitRe   = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
-	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true, "pin": true, "lint": true, "lint-rename": true}
+	agentMemOps        = map[string]bool{"create": true, "update": true, "forget": true, "revert": true, "import": true, "pin": true, "lint": true, "lint-rename": true, agentMemOpReplace: true}
 )
 
 // agentMemChangeView is one published change as the Console lists it.
@@ -54,6 +54,9 @@ type agentMemChangeView struct {
 	AuthorKind    string           `json:"authorKind"`
 	AuthorSession string           `json:"authorSession"`
 	RevertOf      string           `json:"revertOf,omitempty"`
+	// Also names the other memories one change wrote (a replacement's superseded memories). The
+	// change is one unit: Latest and Revertible hold for it only while every side is as it left it.
+	Also []string `json:"also,omitempty"`
 	// ReviewRun is the background review's run that published the change (ADR 0117), the id
 	// "revert this run" takes. Only a well-formed id of a change authored by the review is shown.
 	ReviewRun string `json:"reviewRun,omitempty"`
@@ -253,8 +256,9 @@ func agentMemListChangesPage(limit int, before string) (agentMemChangesWire, err
 			return out, err
 		}
 		for _, f := range newer {
-			if _, rel, _, _ := agentMemChangeFrom(f[0], f[1], f[2]); rel != "" {
-				seen[rel] = true
+			_, rel, _, _ := agentMemChangeFrom(f[0], f[1], f[2])
+			for _, r := range agentMemChangeRels(f[2], rel) {
+				seen[r] = true
 			}
 		}
 		start = parent
@@ -274,9 +278,14 @@ func agentMemListChangesPage(limit int, before string) (agentMemChangesWire, err
 		// The newest change of a path is decided before any row is withheld, the same way
 		// agentMemLatestChange decides it for a revert: otherwise the row before a withheld
 		// one would offer a revert the Agent always refuses.
-		first := rel != "" && !seen[rel]
-		if rel != "" {
-			seen[rel] = true
+		// A change that wrote several memories is the newest only if it is for each of them.
+		rels := agentMemChangeRels(f[2], rel)
+		first := rel != ""
+		for _, r := range rels {
+			if seen[r] {
+				first = false
+			}
+			seen[r] = true
 		}
 		if !ok {
 			out.Withheld++
@@ -304,6 +313,30 @@ func agentMemMarkLatest(v *agentMemChangeView, rel string) {
 	v.Live = live
 	_, beforeOK, _, afterOK, err := agentMemSides(v.Commit, rel)
 	v.Revertible = err == nil && (beforeOK || afterOK)
+	if len(v.Also) > 0 {
+		// The unit goes back as a whole: each replaced memory needs both of its texts.
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		for _, n := range v.Also {
+			_, b, _, a, serr := agentMemSides(v.Commit, dir+"/"+n+".md")
+			v.Revertible = v.Revertible && serr == nil && b && a
+		}
+	}
+}
+
+// agentMemChangeRels is every memory path a commit message names: the AF-Memory one first, then
+// those of AF-Memory-Also. An entry that is not a memory path is skipped (the row is withheld by
+// agentMemChangeFrom; here the paths only decide which later rows are the newest).
+func agentMemChangeRels(body, rel string) []string {
+	if rel == "" {
+		return nil
+	}
+	rels := []string{rel}
+	for _, p := range strings.Split(agentMemTrailers(body)[agentMemAlsoTrailer], ",") {
+		if r, _, _, _, ok := agentMemParseRepoPath(strings.TrimSpace(p)); ok && r != rel {
+			rels = append(rels, r)
+		}
+	}
+	return rels
 }
 
 // agentMemChangeFrom builds a row from one commit, or ok=false when anything in it is not in the
@@ -331,10 +364,21 @@ func agentMemChangeFrom(commit, at, body string) (v agentMemChangeView, rel, pid
 	if !agentMemCleanText(name + "\n" + pid + "\n" + tr["AF-Author-Kind"] + "\n" + tr["AF-Author-Session"]) {
 		return v, rel, "", false
 	}
+	alsoRels, alsoOK := agentMemAlsoRels(tr, rel)
+	if !alsoOK {
+		return v, rel, "", false
+	}
 	v = agentMemChangeView{
 		Commit: commit, At: at, Op: tr["AF-Op"], Scope: scope, Name: name,
 		AuthorKind: tr["AF-Author-Kind"], AuthorSession: tr["AF-Author-Session"], RevertOf: tr["AF-Revert-Of"],
 		PurgedBefore: tr[agentMemPurgedTrailer] != "",
+	}
+	for _, a := range alsoRels {
+		_, _, _, an, _ := agentMemParseRepoPath(agentMemRepoPrefix + "/" + a)
+		if !agentMemCleanText(an) {
+			return agentMemChangeView{}, rel, "", false
+		}
+		v.Also = append(v.Also, an)
 	}
 	if run := tr[reviewRunTrailer]; reviewIDRe.MatchString(run) && tr["AF-Author-Kind"] == ReviewAuthorKind {
 		v.ReviewRun = run
@@ -367,32 +411,51 @@ func agentMemChangeDiff(commitArg string) (agentMemDiffWire, error) {
 			return agentMemDiffWire{}, err
 		}
 	}
-	diff, err := memoryGitRun("diff", "--no-color", base, commit, "--", agentMemRepoPrefix+"/"+rel)
+	rels, err := agentMemCommitRels(commit, rel)
+	if err != nil {
+		return agentMemDiffWire{}, err
+	}
+	args := []string{"diff", "--no-color", base, commit, "--"}
+	for _, r := range rels {
+		args = append(args, agentMemRepoPrefix+"/"+r)
+	}
+	diff, err := memoryGitRun(args...)
 	if err != nil {
 		return agentMemDiffWire{}, err
 	}
 	// The raw diff, and both sides decoded the way a reader would see them: a JSON escape in
 	// the file hides a value from a scan of the raw text alone.
 	findings := agentMemScanText("diff", diff)
-	before, beforeOK, after, afterOK, err := agentMemSides(commit, rel)
-	if err != nil {
-		return agentMemDiffWire{}, err
-	}
-	for _, side := range []struct {
-		b  []byte
-		ok bool
-	}{{before, beforeOK}, {after, afterOK}} {
-		if !side.ok {
-			continue
+	for _, r := range rels {
+		before, beforeOK, after, afterOK, err := agentMemSides(commit, r)
+		if err != nil {
+			return agentMemDiffWire{}, err
 		}
-		if e, ok := agentMemParse(side.b); ok {
-			findings = append(findings, agentMemScanText("diff", agentMemPublished(e))...)
+		for _, side := range []struct {
+			b  []byte
+			ok bool
+		}{{before, beforeOK}, {after, afterOK}} {
+			if !side.ok {
+				continue
+			}
+			if e, ok := agentMemParse(side.b); ok {
+				findings = append(findings, agentMemScanText("diff", agentMemPublished(e))...)
+			}
 		}
 	}
 	if len(findings) > 0 {
 		return agentMemDiffWire{Withheld: true, Findings: findings}, nil
 	}
 	return agentMemDiffWire{Diff: diff}, nil
+}
+
+// agentMemCommitRels is every memory path a commit wrote: its AF-Memory one and its AF-Memory-Also ones.
+func agentMemCommitRels(commit, rel string) ([]string, error) {
+	body, err := memoryGitRun("log", "-1", "--format=%B", commit)
+	if err != nil {
+		return nil, err
+	}
+	return agentMemChangeRels(body, rel), nil
 }
 
 // agentMemResolveChange checks that commitArg names an agent-memory change on main and returns
@@ -447,7 +510,9 @@ type agentMemChangeRef struct{ Hash, Op string }
 // line with trailing blanks.
 func agentMemChangesOf(rel string, limit int) ([]agentMemChangeRef, error) {
 	path := agentMemRepoPrefix + "/" + rel
-	log, err := memoryGitRun("log", memoryBranch, "-F", "--grep=AF-Memory: "+path,
+	// The second --grep finds a change that wrote this memory beside another (AF-Memory-Also); the
+	// trailer check below decides which candidates really name the path.
+	log, err := memoryGitRun("log", memoryBranch, "-F", "--grep=AF-Memory: "+path, "--grep="+agentMemAlsoTrailer+": ",
 		"--format=%H"+memoryFldSep+"%B"+memoryRecSep)
 	if err != nil {
 		return nil, err
@@ -459,7 +524,7 @@ func agentMemChangesOf(rel string, limit int) ([]agentMemChangeRef, error) {
 			continue
 		}
 		tr := agentMemTrailers(f[1])
-		if tr["AF-Trigger"] == memoryTriggerAgentMemory && tr["AF-Memory"] == path {
+		if tr["AF-Trigger"] == memoryTriggerAgentMemory && (tr["AF-Memory"] == path || agentMemAlsoNames(tr, path)) {
 			out = append(out, agentMemChangeRef{Hash: f[0], Op: tr["AF-Op"]})
 			if limit > 0 && len(out) >= limit {
 				break
@@ -467,6 +532,16 @@ func agentMemChangesOf(rel string, limit int) ([]agentMemChangeRef, error) {
 		}
 	}
 	return out, nil
+}
+
+// agentMemAlsoNames says whether a change's AF-Memory-Also trailer names the repository path.
+func agentMemAlsoNames(tr map[string]string, path string) bool {
+	for _, p := range strings.Split(tr[agentMemAlsoTrailer], ",") {
+		if strings.TrimSpace(p) == path {
+			return true
+		}
+	}
+	return false
 }
 
 // agentMemImportState is what the history says about the AF copy of rel ("projects/<id>/<name>.md",
@@ -597,6 +672,11 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 		return agentMemWriteResult{}, err
 	}
 	_, scope, _, name, _ := agentMemParseRepoPath(agentMemRepoPrefix + "/" + rel)
+	if rels, err := agentMemCommitRels(commit, rel); err != nil {
+		return agentMemWriteResult{}, err
+	} else if len(rels) > 1 {
+		return agentMemRevertGroup(req, commit, rels, now)
+	}
 	if !req.Forget {
 		body, err := memoryGitRun("log", "-1", "--format=%B", commit)
 		if err != nil {

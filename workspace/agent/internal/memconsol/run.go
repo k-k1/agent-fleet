@@ -323,27 +323,36 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 	covered := map[string]string{} // observation id -> verdict
 	var used []Observation
 	patchObs := map[string][]classified{}
+	// claim keeps one proposal from holding two items that cannot both be applied: a memory is
+	// superseded by one replace only, and a name is created once. The later item is advice.
+	claim := newClaims()
 	for _, c := range answers {
 		switch c.ans.Operation {
 		case memengine.OpNoop:
 			covered[c.obs.ID] = "no-op"
 		case memengine.OpPatch:
 			patchObs[c.ans.Targets[0]] = append(patchObs[c.ans.Targets[0]], c)
-		case memengine.OpAdd:
-			switch it, ok := w.addItem(t, c); {
-			case ok:
-				items = append(items, it)
-				used = append(used, c.obs)
-			case c.obs.Candidate != nil:
+		case memengine.OpAdd, memengine.OpSupersede, memengine.OpMerge:
+			it, ok := w.addItem(t, c)
+			if !ok && c.ans.Operation == memengine.OpAdd && c.obs.Candidate != nil {
 				// The memory an exported proposal carried failed a check (no revival, a name that
 				// exists, the schema, a secret): it is refused, not turned into advice.
 				dropped[c.obs.ID] = true
-			default:
-				items = append(items, noteItem(c))
-				used = append(used, c.obs)
+				continue
 			}
-		default: // supersede, merge: advice, one target for a supersede
-			items = append(items, noteItem(c, c.ans.Targets...))
+			if !ok {
+				var err error
+				if it, ok, err = w.composeItem(ctx, t, c); err != nil {
+					return err
+				}
+			}
+			if ok && !claim.take(it) {
+				ok = false
+			}
+			if !ok {
+				it = noteItem(c, c.ans.Targets...)
+			}
+			items = append(items, it)
 			used = append(used, c.obs)
 		}
 	}
@@ -356,6 +365,14 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 		cs := patchObs[name]
 		m, ok := findMem(t.Memories, name)
 		if !ok {
+			continue
+		}
+		if claim.sources[name] {
+			// The memory is superseded by a replace of this proposal; a patch of it could not apply
+			// after that, and the replace already carries the observation.
+			for _, c := range cs {
+				dropped[c.obs.ID] = true
+			}
 			continue
 		}
 		var note []string
@@ -425,11 +442,84 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 
 func memoryTextProblem(s string) bool { return reviewTextProblem(s) != "" }
 
-// addItem turns an add into a create only when an exported 0117 proposal carried the memory:
-// the engine has no call that writes a new memory, so the text of a create is never a model's.
+// claims tracks what the items of one proposal already use.
+type claims struct {
+	sources map[string]bool // memories a replace supersedes
+	names   map[string]bool // memories a create or replace writes
+}
+
+func newClaims() *claims { return &claims{sources: map[string]bool{}, names: map[string]bool{}} }
+
+// take registers the item's memories, or says it clashes with an earlier item and registers nothing.
+func (c *claims) take(it Item) bool {
+	if c.names[it.Name] {
+		return false
+	}
+	for _, s := range it.Sources {
+		if c.sources[s.Name] {
+			return false
+		}
+	}
+	c.names[it.Name] = true
+	for _, s := range it.Sources {
+		c.sources[s.Name] = true
+	}
+	return true
+}
+
+// composeItem asks the large tier to write the memory a supersede, a merge or an add stands for,
+// then holds it to the same gate as any other item (validateItem, no revival included). Its text
+// is a model's, so a bad answer is advice instead, never a write: ok=false with a nil error. Only
+// a failed or deferred call returns an error.
+func (w *worker) composeItem(ctx context.Context, t Topic, c classified) (Item, bool, error) {
+	op := c.ans.Operation
+	if op == memengine.OpAdd && len(c.ans.Targets) != 0 || op == memengine.OpSupersede && len(c.ans.Targets) != 1 || op == memengine.OpMerge && len(c.ans.Targets) < 2 {
+		return Item{}, false, nil
+	}
+	req := memengine.ComposeRequest{Operation: op, Observation: observationText(c.obs)}
+	var srcs []Source
+	for _, name := range c.ans.Targets {
+		m, ok := findMem(t.Memories, name)
+		if !ok || memoryTextProblem(m.Body+m.Description) {
+			return Item{}, false, nil
+		}
+		req.Sources = append(req.Sources, memengine.Note{Name: m.Name, Description: m.Description, Body: m.Body})
+		srcs = append(srcs, Source{Name: m.Name, Revision: m.Revision})
+	}
+	if memoryTextProblem(req.Observation) {
+		return Item{}, false, nil
+	}
+	est := estimateTokens(req.Prompt()) + 1500
+	var ans memengine.ComposeAnswer
+	err := w.call(ctx, memengine.RoleLarge, est, func(ctx context.Context, m memengine.Model) (memengine.Reply, error) {
+		a, rep, err := memengine.Compose(ctx, m, req)
+		ans = a
+		return rep, err
+	})
+	if err != nil {
+		if memengine.IsInvalid(err) {
+			w.rep.Dropped++
+			return Item{}, false, nil
+		}
+		return Item{}, false, err
+	}
+	it := Item{Op: OpCreate, Name: ans.Name, Description: ans.Description, Type: ans.Type, Body: ans.Body,
+		Reason: c.ans.Reason, Role: string(memengine.RoleLarge)}
+	if len(srcs) > 0 {
+		it.Op, it.Sources = OpReplace, srcs
+	}
+	if pr := validateItem(t.Scope, t.ProjectID, it); pr != nil {
+		w.rep.Rejected++
+		return Item{}, false, nil
+	}
+	return it, true, nil
+}
+
+// addItem turns an add into a create when an exported 0117 proposal carried the memory; the text is
+// then the member's own export, not a model's. An add with no candidate is written by composeItem.
 // The candidate is still untrusted and goes through validateItem like anything else.
 func (w *worker) addItem(t Topic, c classified) (Item, bool) {
-	if c.obs.Candidate == nil {
+	if c.obs.Candidate == nil || c.ans.Operation != memengine.OpAdd {
 		return Item{}, false
 	}
 	cd := c.obs.Candidate

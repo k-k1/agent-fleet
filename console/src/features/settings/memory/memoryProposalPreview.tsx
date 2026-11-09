@@ -15,7 +15,7 @@ import type { ConsolItem, ConsolItemView, ConsolProposal, ConsolProposalView } f
 type TFn = ReturnType<typeof useT>;
 
 /** The items the Agent can publish: the ones Approve would write. */
-const writes = (iv: Pick<ConsolItem, "op">): boolean => iv.op === "create" || iv.op === "patch";
+const writes = (iv: Pick<ConsolItem, "op">): boolean => iv.op === "create" || iv.op === "patch" || iv.op === "replace";
 
 /**
  * What the proposal is ABOUT, for its title: the created name or the patched target. The topic
@@ -53,16 +53,25 @@ export function previewSummary(tr: TFn, view: Pick<ConsolProposal, "items" | "ta
   };
   const creates = uniq("create");
   const patches = uniq("patch");
-  if (creates.length + patches.length === 0) return tr("mem.pv_sum_none");
+  const replaces = uniq("replace");
+  if (creates.length + patches.length + replaces.length === 0) return tr("mem.pv_sum_none");
   const list = patches
     .map((i) => {
       const r = patchRevisions(view, i);
       return r ? `${i.name}, ${tr("mem.pv_rev", { from: r.from, to: r.to })}` : i.name;
     })
     .join("; ");
-  if (patches.length === 0) return tr(creates.length === 1 ? "mem.pv_sum_add_one" : "mem.pv_sum_add_many", { n: creates.length });
-  if (creates.length === 0) return tr(patches.length === 1 ? "mem.pv_sum_change_one" : "mem.pv_sum_change_many", { n: patches.length, list });
-  return tr("mem.pv_sum_both", { a: creates.length, p: patches.length, list });
+  const parts: string[] = [];
+  if (creates.length + patches.length > 0) {
+    if (patches.length === 0) parts.push(tr(creates.length === 1 ? "mem.pv_sum_add_one" : "mem.pv_sum_add_many", { n: creates.length }));
+    else if (creates.length === 0) parts.push(tr(patches.length === 1 ? "mem.pv_sum_change_one" : "mem.pv_sum_change_many", { n: patches.length, list }));
+    else parts.push(tr("mem.pv_sum_both", { a: creates.length, p: patches.length, list }));
+  }
+  if (replaces.length > 0) {
+    const sources = [...new Set(replaces.flatMap((i) => (i.sources ?? []).map((s) => s.name)))];
+    parts.push(tr("mem.pv_sum_replace", { n: replaces.length, m: sources.length, list: sources.join(", ") }));
+  }
+  return parts.join(" ");
 }
 
 export interface DiffRow {
@@ -153,6 +162,52 @@ function CreateCard({ view, iv, pending, topicNote }: { view: ConsolProposalView
   );
 }
 
+function ReplaceCard({ view, iv, pending }: { view: ConsolProposalView; iv: ConsolItemView; pending: boolean }) {
+  const tr = useT();
+  const scope = view.scope === "user" ? tr("mem.af_scope_user") : view.projectId || tr("mem.pv_scope_project");
+  const sources = iv.sources ?? [];
+  return (
+    <article className="mem-pv-card" data-op="replace">
+      <h5 className="mem-pv-title">
+        <span className="mem-badge af-op-replace">{tr("mem.pv_replacement")}</span> <code>{iv.name}</code>
+        {iv.commit && <span className="muted"> · {tr("mem.cs_published")}</span>}
+      </h5>
+      <dl className="mem-pv-meta">
+        <dt>{tr("mem.pv_scope")}</dt>
+        <dd>{scope}</dd>
+        {iv.type && (
+          <>
+            <dt>{tr("mem.pv_type")}</dt>
+            <dd>{iv.type}</dd>
+          </>
+        )}
+        {iv.description && (
+          <>
+            <dt>{tr("mem.pv_description")}</dt>
+            <dd>{iv.description}</dd>
+          </>
+        )}
+        <dt>{tr("mem.pv_supersedes")}</dt>
+        <dd>
+          {sources.map((s) => (
+            <span key={s.name}>
+              <code>{s.name}</code> <span className="muted">{tr("mem.pv_rev", { from: s.revision, to: s.revision + 1 })} </span>
+            </span>
+          ))}
+        </dd>
+      </dl>
+      {iv.reason && <p className="muted">{iv.reason}</p>}
+      {iv.body ? (
+        <div className="mem-pv-body">
+          <MarkdownView source={iv.body} />
+        </div>
+      ) : null}
+      <p className="muted ds-note">{tr("mem.pv_replace_note")}</p>
+      <Stale iv={iv} pending={pending} />
+    </article>
+  );
+}
+
 function PatchCard({ view, iv, pending }: { view: ConsolProposalView; iv: ConsolItemView; pending: boolean }) {
   const tr = useT();
   // A stale diff is current-vs-patched, and the Agent does not say which revision "current" is,
@@ -196,8 +251,8 @@ function AdviceCard({ iv }: { iv: ConsolItemView }) {
           {tr("mem.cs_advice_targets")} {targets.map((n) => <code key={n}>{n} </code>)}
         </p>
       )}
-      {/* Advice has no Approve: the engine has no call that writes a replacement or a merge yet
-          (#3696 builds the writer), so a member applies it by hand in Memories. */}
+      {/* Advice has no Approve: it is what is left when the model's replacement text failed a
+          check (#3696), so a member applies it by hand in Memories. */}
       <p className="muted ds-note">{tr("mem.pv_advice_note")}</p>
     </article>
   );
@@ -220,6 +275,8 @@ export function ProposalPreview({ view }: { view: ConsolProposalView }) {
           <CreateCard key={i} view={view} iv={iv} pending={pending} topicNote={view.itemViews.findIndex((x) => x.op === "create") === i} />
         ) : iv.op === "patch" ? (
           <PatchCard key={i} view={view} iv={iv} pending={pending} />
+        ) : iv.op === "replace" ? (
+          <ReplaceCard key={i} view={view} iv={iv} pending={pending} />
         ) : (
           <AdviceCard key={i} iv={iv} />
         ),

@@ -99,6 +99,9 @@ export interface MemoryChange {
   authorKind: string;
   authorSession: string;
   revertOf?: string;
+  /** The other memories one change wrote: a replacement's superseded memories. The change is one
+   *  unit and is reverted as one. */
+  also?: string[];
   /** The background review's run that published the change (ADR 0117): the id "revert this run"
    *  takes. Absent for any other author. */
   reviewRun?: string;
@@ -536,10 +539,12 @@ export interface ConsolEdit {
   new: string;
 }
 export interface ConsolItem {
-  op: "patch" | "create" | "note" | string;
+  op: "patch" | "create" | "replace" | "note" | string;
   name: string;
   reason?: string;
   revision?: number;
+  /** replace: the memories it supersedes, each with the revision the proposal saw. */
+  sources?: { name: string; revision: number }[];
   edits?: ConsolEdit[];
   description?: string;
   type?: string;
