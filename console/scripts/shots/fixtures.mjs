@@ -159,6 +159,18 @@ export function sessions(locale) {
   ];
 }
 
+// The sessions guide's budget page (SHOT_SESSIONS_GUIDE): the stopped opencode session was
+// stopped by a $5.00 budget it went past, so its menu offers "raise budget & resume".
+export function sessionsBudgetStopped(locale) {
+  return sessions(locale).map((s) =>
+    s.name === "so5nw6k" ? { ...s, spendCapUsd: 5, spendCapHitAt: ago(40) } : s,
+  );
+}
+
+export function sessionSpendGuide(name) {
+  return { name, spendCapUsd: 5, spendCapHitAt: ago(40), hardFactor: 2, spendUsd: 5.18, priced: true, children: [], childrenUsd: 0 };
+}
+
 // ---- the scripted mirror conversation (claude session sk4rq2f) --------------------
 
 const DIFF_OLD = `export function validateCart(cart: Cart): Result {
@@ -378,6 +390,14 @@ export function ptyScreen(locale) {
 }
 
 // ---- the remaining endpoints the shell polls ---------------------------------------
+
+// The plan the agent is waiting to have approved (SHOT_PLAN, the guide's plan page). Served as
+// `pendingPlan` with status "plan", which is what draws the live approval card.
+export function pendingPlan(locale) {
+  return locale === "ja"
+    ? "# 合計 0 円の注文をカートで止める\n\nカート画面で合計が 0 円になったら、決済へ進む前にエラーを出す。\n\n1. `validateCart` に合計 0 円の検査を足す\n2. 既存のバリデーション表示にメッセージを出す\n3. 単体テストを足す\n"
+    : "# Stop zero-total orders at the cart\n\nWhen the cart total is zero, show an error before checkout starts.\n\n1. Add a zero-total check to `validateCart`\n2. Show the message in the existing validation banner\n3. Add unit tests\n";
+}
 
 export function messages(locale, session) {
   if (session === "swnd7qa") {
@@ -1126,7 +1146,7 @@ export function stats() {
 // ---- usage ledger (GET /api/usage/series) ------------------------------------------
 // The Console asks for three series per view (the selected axis over time, feature ×
 // model, kind × model), so this answers any (by, split, bucket) combination from one
-// weight table. Wire shape: workspace/agent/usage_series.go ↔ features/usage/api.ts.
+// weight table. Wire shape: workspace/agent/internal/usagesvc/usage_series.go ↔ features/usage/api.ts.
 
 // Relative weight of each value on each axis. Numbers are invented but ordered the way
 // a real week looks: session work dwarfs everything, claude/opus carry most of it.
@@ -2247,6 +2267,167 @@ export function imagegenStatusLive(locale) {
       ...st.providers.map((p) => ({ ...p, kind: "comfy", fleet: true })),
       { id: "codex", kind: "codex", fleet: false, models: [] },
       { id: "agy", kind: "agy", fleet: false, models: [] },
+    ],
+  };
+}
+
+// ---- user guide: the workspace pages (SHOT_WS_GUIDE in server.mjs) ----
+// A member's own EC2 box, measured while it runs: the machine tab's first group.
+const GIB = 1024 ** 3;
+export function wsGuideMachine() {
+  return {
+    runtime: "ecs-ec2",
+    running: true,
+    measured: {
+      arch: "arm64",
+      vcpu: 4,
+      mem_max: 14.5 * GIB,
+      mem_total: 16 * GIB,
+      disk_total: 100 * GIB,
+      instance_type: "m7g.xlarge",
+    },
+    declared: { instance_type: "m7g.xlarge", arch: "arm64", vcpu: 4, slot_mem_mib: 16384, home_gib: 100, dedicated: true },
+  };
+}
+
+// Node.js 22 and Temurin 21 installed and in use; Temurin 21 has a newer patch out, so the
+// Java row shows its update button.
+export function wsGuideToolchains() {
+  return {
+    timezone: "Asia/Tokyo",
+    tz_options: ["Asia/Tokyo", "UTC", "America/Los_Angeles", "Europe/London"],
+    node: "22",
+    node_options: ["system", "20", "22", "24"],
+    node_installed: ["22"],
+    node_versions: { 22: "v22.23.4" },
+    go: "system",
+    go_options: ["system"],
+    java: "21",
+    java_available: ["17", "21", "25", "corretto-17", "corretto-21"],
+    java_installed: ["21"],
+    java_versions: { 21: "21.0.11+10" },
+  };
+}
+
+export function wsGuideLatest(kind, major) {
+  if (kind === "jdk" && major === "21") return { major, current: "21.0.11+10", latest: "21.0.12+7", update_available: true };
+  if (kind === "node" && major === "22") return { major, current: "v22.23.4", latest: "v22.23.4", update_available: false };
+  return {};
+}
+
+// Postgres running with one working copy's database and one named database; MySQL never started.
+export function wsGuideDatabases() {
+  const sock = "/home/dev/.local/state/af-db/run/postgres-17";
+  const pg = (name) => ({
+    urlSocket: `postgres://postgres:demo-pass@/${name}?host=${sock}&port=5432&sslmode=disable`,
+    urlTcp: `postgres://postgres:demo-pass@127.0.0.1:5432/${name}?sslmode=disable`,
+  });
+  return {
+    engines: [
+      {
+        engine: "postgres",
+        major: "17",
+        installed: true,
+        state: "running",
+        version: "17.6",
+        rssBytes: 47_000_000,
+        port: 5432,
+        datadir: "/home/dev/.local/state/af-db/postgres-17/data",
+        autostart: false,
+        databases: [
+          { name: "af_webshop_3f9a1c", dir: "/home/dev/repos/webshop", ...pg("af_webshop_3f9a1c") },
+          { name: "scratch", dir: "", ...pg("scratch") },
+        ],
+        lastUsedAt: "2026-11-08T09:12:00Z",
+        lastError: "",
+      },
+      {
+        engine: "mysql",
+        major: "8.4",
+        installed: false,
+        state: "absent",
+        version: "",
+        rssBytes: 0,
+        port: 0,
+        datadir: "",
+        autostart: false,
+        databases: [],
+        lastUsedAt: "",
+        lastError: "",
+      },
+    ],
+  };
+}
+
+// ---- user guide: code pages (SHOT_CODE_GUIDE) ------------------------------------------------
+// GET /api/internal-git/repos — console/src/features/settings/workspace/InternalReposTab.tsx.
+// The second one was created by someone else, so its rename / delete buttons are hidden.
+export function codeGuideInternalRepos() {
+  return [
+    { name: "prototype-ui", clone_url: "https://fleet.example.com/git/demo/prototype-ui.git", default_branch: "main", created_at: ago(60 * 24 * 3), can_manage: true },
+    { name: "shared-scripts", clone_url: "https://fleet.example.com/git/demo/shared-scripts.git", default_branch: "main", created_at: ago(60 * 24 * 20), can_manage: false },
+  ];
+}
+
+// GET /api/connections/git/{host}/repos — console/src/features/repos/RepoPicker.tsx RepoItem.
+export function codeGuideRemoteRepos() {
+  return [
+    { full_name: "acme/payments-api", clone_url: "https://bitbucket.org/acme/payments-api.git", private: true, updated_at: ago(40) },
+    { full_name: "acme/mobile-app", clone_url: "https://bitbucket.org/acme/mobile-app.git", private: true, updated_at: ago(60 * 5) },
+    { full_name: "acme/docs-site", clone_url: "https://bitbucket.org/acme/docs-site.git", private: false, updated_at: ago(60 * 24 * 2) },
+  ];
+}
+
+// GET /api/connections/git/{host}/branches?repo=… — the Branch objects BranchList renders.
+export function codeGuideBranches() {
+  return {
+    default: "main",
+    branches: [
+      { name: "main", default: true },
+      { name: "develop" },
+      { name: "feature/refund-api" },
+    ],
+  };
+}
+
+// ---- user guide: the agent pages (SHOT_AGENTS_GUIDE in server.mjs) ----
+// The Claude card's behavior toggles, in the shape GET api/claude/settings answers.
+export function agentsGuideClaudeSettings() {
+  return {
+    remoteControlAtStartup: false,
+    agentPushNotifEnabled: true,
+    idleCompaction: true,
+    rtk_available: true,
+    rtk_enabled: true,
+  };
+}
+
+// Settings › Agent instructions: a short body and one row per agent kind, with Cursor unsupported
+// and lcpp taking it through the system prompt. Paths are where each kind's driver writes them.
+export function agentsGuideUserNotes(locale) {
+  const ja = locale === "ja";
+  const text = ja
+    ? "報告は日本語で、結論から書いてください。\n破壊的な操作（force push・削除）の前は、必ず確認してください。\nテストを足したら、実行した結果も報告に入れてください。\n"
+    : "Report in English, conclusion first.\nAlways confirm before anything destructive (force push, deletion).\nWhen you add tests, include the run's result in your report.\n";
+  const bytes = new TextEncoder().encode(text).byteLength;
+  const row = (kind, delivery, path) => ({ kind, supported: true, delivery, path, on: true, applied: true });
+  return {
+    text,
+    bytes,
+    max_bytes: 8192,
+    enabled: true,
+    path: "/home/dev/.config/agent-fleet/user-notes.md",
+    fleet_bytes: 9100,
+    targets: [
+      row("claude", "file", "/var/lib/af/claude/CLAUDE.md"),
+      row("codex", "compose", "/home/dev/.codex/AGENTS.md"),
+      { kind: "cursor", supported: false, reason: "no_user_scope", on: false, applied: false },
+      row("agy", "compose", "/home/dev/.gemini/AGENTS.md"),
+      row("copilot", "file", "/home/dev/.copilot/instructions/agent-fleet-user.instructions.md"),
+      row("kiro", "file", "/home/dev/.kiro/steering/agent-fleet-user.md"),
+      row("opencode", "compose", "/home/dev/.config/opencode/AGENTS.md"),
+      { kind: "lcpp", supported: true, delivery: "prompt", on: true, applied: true },
+      row("muse", "compose", "/home/dev/.config/muse/AGENTS.md"),
     ],
   };
 }

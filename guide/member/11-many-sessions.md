@@ -149,7 +149,7 @@ keep their current tools until they restart. Under it, **"Children per session"*
 sets **how many children one session may have at a time**. The limit is per parent, not per
 workspace, so two parents can each have that many. **A child stops counting toward the limit when you delete or
 archive it**, or when a child left stopped is archived on its own after the usual window
-([Stopping and tidying up](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)); a stopped child still counts.
+([Stop and resume a session](../user/sessions/stop-resume.md#leave-a-session-stopped)); a stopped child still counts.
 
 Once it is on, a session starts a child when it judges the work splits, and tells you it is
 doing so and what for. You can also ask for one ("have a codex session write the tests for
@@ -261,7 +261,7 @@ one ("tell the session next door what we just did").
   deleted. Expired login and the usage-limit menu still refuse: those can last for hours, and
   the sender is better off knowing.
 - **Only plain text travels.** No conversation history, no files. To pass the context itself,
-  use the handoff or the branch ([05](05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move)).
+  use the handoff or the branch ([Hand off to another session or agent](../user/sessions/handoff.md#choose-a-way)).
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
   them would run verbatim as a command.
 - **A session can also read another session's recent output**, without sending anything. The
@@ -386,7 +386,7 @@ Every session has it; there is nothing to turn on. It covers these things.
 - **Another session's state**: working, waiting for input, or stopped. A session can check
   whether the peer it handed work to is still going, without asking you.
 - **Context usage**: how full its own context has become. It can decide to hand the rest
-  over to a fresh session before it runs out mid-task (that is the handoff, [05](05-stopping-and-tidying.md#handing-a-conversation-off-handoff)).
+  over to a fresh session before it runs out mid-task (that is the handoff, [Hand off to another session or agent](../user/sessions/handoff.md#hand-off)).
 - **Reading the memo queue**: what is already waiting there.
 - **Adding one memo**: leaving you a note about something outside what you asked for. "There
   is another bug next to the function I fixed", "this runbook is out of date": **a report set
@@ -405,7 +405,7 @@ give the session the material to answer, on your behalf, a question meant for yo
 is your job**; a session that finds a stopped peer goes as far as telling you.
 
 It helps to read the assistant chat in [10 Chat and memos](10-chat-memo.md) and
-[03 Starting sessions](03-starting-sessions.md) first.
+[Start a session](../user/sessions/start.md) first.
 
 ## What is the Fleet Operator?
 

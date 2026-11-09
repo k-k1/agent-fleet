@@ -18,6 +18,9 @@ regexes = [
   '''AKIAQWERTYUIOPASDFGH''',
   # AWS 公式ドキュメントの例示キー（docs/手順書に出てくる形の検査）
   '''AKIAIOSFODNN7EXAMPLE''',
+  # workspace/agent/internal/memconsol/run_test.go in ef15ff9b8: a made-up key in a note, to prove an
+  # observation carrying a secret is never sent to a model. Later commits build it at run time.
+  '''AKIAABCDEFGHIJKLMNOP''',
   # internal/bridge/*_test.go（Discord/Slack へ流す本文の伏字化）
   '''xoxb-123456789012-[A-Za-z]+''',
   '''ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789''',
@@ -97,6 +100,9 @@ condition = "AND"
 paths = [
   '''console/src/features/settings/workspace/gcloudConfigImport\.ts''',
   '''console/src/features/settings/workspace/gcloudConfigImport\.test\.ts''',
+  # The full-history scan still meets the commits from before the file moved out of lib/.
+  '''console/src/lib/gcloudConfigImport\.ts''',
+  '''console/src/lib/gcloudConfigImport\.test\.ts''',
 ]
 regexes = ['''compute/region''']
 

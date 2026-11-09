@@ -1,7 +1,7 @@
 // Gallery perf harness (ADR 0080 follow-up, 2026-09-14): the three "feels slow" reports were
-// never measured on the browser side — only the Agent's own thumbnail cost was (fs_thumb.go).
+// never measured on the browser side — only the Agent's own thumbnail cost was (internal/fsx/fs_thumb.go).
 // This drives the real console bundle in headless Chromium (raw CDP, no Playwright) against
-// stub.mjs, which answers `api/fs/tree` from a REAL folder on disk and reproduces fs_thumb.go's
+// stub.mjs, which answers `api/fs/tree` from a REAL folder on disk and reproduces internal/fsx/fs_thumb.go's
 // measured concurrency/latency shape (thumbSem=4, 95ms cold / ~0 cached) for `api/fs/download`.
 //
 //   npm --prefix console run build

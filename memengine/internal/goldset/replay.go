@@ -158,10 +158,13 @@ type AnswerSource struct {
 	Patch        int    `json:"patch_answers"`
 }
 
-// LoadAnswerFiles reads several answers files and describes each one.
+// LoadAnswerFiles reads several answers files and describes each one. Two
+// answers for the same (case, call), in one file or in two, are an error: a
+// silent last-wins would score whichever file happened to come last.
 func LoadAnswerFiles(paths []string) ([]AnswerLine, []AnswerSource, error) {
 	var all []AnswerLine
 	var srcs []AnswerSource
+	seen := map[string]string{}
 	for _, p := range paths {
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -174,6 +177,11 @@ func LoadAnswerFiles(paths []string) ([]AnswerLine, []AnswerSource, error) {
 		sum := sha256.Sum256(raw)
 		src := AnswerSource{File: filepath.Base(p), Hash: hex.EncodeToString(sum[:])[:12]}
 		for _, l := range ls {
+			key := l.CaseID + "\x00" + l.Call
+			if first, dup := seen[key]; dup {
+				return nil, nil, fmt.Errorf("duplicate answer for case %s, call %s: in %s and in %s", l.CaseID, l.Call, first, filepath.Base(p))
+			}
+			seen[key] = filepath.Base(p)
 			if l.Call == "classify" {
 				src.Classify++
 			} else {

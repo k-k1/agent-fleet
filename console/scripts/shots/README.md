@@ -92,8 +92,9 @@ The container is shared, so pass `--port` / `--cdp-port` that nothing else is li
 
 Scenes marked `guide: true` are for the rewritten guide and the public docs site (ADR 0131). The
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
-`aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `images-gallery`,
-`images-settings`) runs on its own:
+`aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `chat-settings`, `ops-settings`,
+`images-gallery`, `images-settings`, the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
+`ws-databases`, the sessions pages' `sessions-budget`, the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`, the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`, and the agent pages' `agents-*` scenes) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -102,8 +103,17 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-toas
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ssm-hosts --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ssm-start --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only gcp-settings --out <dir>   # and gcp-badge, gcp-toast
+node console/scripts/shots/capture.mjs --locale ja --theme light --only chat-settings --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only ops-settings --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-studio,images-form --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-gallery --out <dir>   # and images-settings
+node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only conv-plan --out <dir>    # and every other conv-* scene, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-start,sessions-launch,sessions-location,sessions-issue,sessions-status,sessions-issue-list,sessions-pr --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-cleanup,sessions-stop-below,sessions-resume,sessions-menu,sessions-move,sessions-handoff --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-budget --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only code-git-hosting --out <dir>  # and code-internal-repos, code-clone, code-gitflow, code-repo-rows, code-repo-menu, code-changes, code-svn, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only agents-claude --out <dir>  # and every other agents-* scene, one per run
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that

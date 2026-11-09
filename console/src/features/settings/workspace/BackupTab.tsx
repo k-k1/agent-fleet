@@ -16,7 +16,7 @@
 //   3. Never silence what did not go in. Version mismatches, type mismatches and hosts whose
 //      referent is missing are surfaced as counts.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errDetail, rawJSON } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
@@ -50,14 +50,27 @@ import { tCount, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { countOutcomes, executeSsmPlan, loadSsmLists } from "./ssmImportExec.ts";
 import { useSettingsUI } from "../store.ts";
+import { isOk } from "../api.ts";
+import {
+  createGcpProfile,
+  getUserNotes,
+  listGcpProfiles,
+  listSsmHostRows,
+  listSsmProfileRows,
+  putUserNotes,
+  type BackupRow,
+  type GcpProfileRow,
+  type UserNotes,
+} from "./backupApi.ts";
 
 type Picked = Record<SectionKey, boolean>;
+type Tr = ReturnType<typeof useT>;
 
 interface Loaded {
-  profiles: any[];
-  hosts: any[];
-  gcpProfiles: any[];
-  instructions: any | null;
+  profiles: BackupRow[];
+  hosts: BackupRow[];
+  gcpProfiles: GcpProfileRow[];
+  instructions: UserNotes | null;
 }
 
 export function BackupTab() {
@@ -76,33 +89,33 @@ export function BackupTab() {
 
   const reload = useCallback(async () => {
     const [profiles, hosts, gcpProfiles] = await Promise.all([
-      api("api/ssm/profiles"),
-      api("api/ssm/hosts"),
-      api("api/gcp/profiles"),
+      listSsmProfileRows(),
+      listSsmHostRows(),
+      listGcpProfiles(),
     ]);
     // The user instructions live in the Agent, so they are readable only while the workspace
     // is running. When it is stopped, drop the whole category so the UI can show it is absent
     // rather than silently exporting it as empty.
-    const instructions = running ? await api("api/user-notes") : null;
+    const instructions = running ? await getUserNotes() : null;
     setLoaded({
       profiles: Array.isArray(profiles) ? profiles : [],
       hosts: Array.isArray(hosts) ? hosts : [],
       gcpProfiles: Array.isArray(gcpProfiles) ? gcpProfiles : [],
-      instructions: instructions && !instructions.error ? instructions : null,
+      instructions: isOk(instructions) ? instructions : null,
     });
   }, [running]);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  const prefsCount = Object.keys(exportablePrefs(getSettings() as any, settingsDefaults() as any)).length;
+  const prefsCount = Object.keys(exportablePrefs(getSettings(), settingsDefaults())).length;
   const instrBytes = utf8Bytes(loaded.instructions?.text ?? "");
   const canExport =
     exportPick.prefs || exportPick.ssm || exportPick.gcpProfiles || (exportPick.instructions && !!loaded.instructions);
 
   const doExport = () => {
     const sections: BundleSections = {};
-    if (exportPick.prefs) sections.prefs = exportablePrefs(getSettings() as any, settingsDefaults() as any);
+    if (exportPick.prefs) sections.prefs = exportablePrefs(getSettings(), settingsDefaults());
     if (exportPick.ssm) sections.ssm = toSsmSection(loaded.profiles, loaded.hosts);
     if (exportPick.gcpProfiles) sections.gcpProfiles = toGcpSection(loaded.gcpProfiles);
     if (exportPick.instructions && loaded.instructions) {
@@ -159,8 +172,8 @@ export function BackupTab() {
     const lines: string[] = [];
     try {
       if (wantPrefs && s.prefs) {
-        const { patch, skipped } = sanitizeImportedPrefs(s.prefs, settingsDefaults() as any);
-        const merged = mergeImportedPrefs(getSettings() as any, patch, (k) =>
+        const { patch, skipped } = sanitizeImportedPrefs(s.prefs, settingsDefaults());
+        const merged = mergeImportedPrefs(getSettings(), patch, (k) =>
           isAccumulatedSetting(k as keyof Settings),
         );
         setSettings(merged as Partial<Settings>);
@@ -175,7 +188,7 @@ export function BackupTab() {
         lines.push(...(await importGcp(s.gcpProfiles, tr)));
       }
       if (wantInstr && s.instructions) {
-        const res = await rawJSON("api/user-notes", "PUT", {
+        const res = await putUserNotes({
           text: s.instructions.text,
           enabled: s.instructions.enabled,
           targets: s.instructions.targets,
@@ -352,7 +365,7 @@ function Pick({
 // the add-only rule depends on knowing what exists.
 async function importSsm(
   section: NonNullable<BundleSections["ssm"]>,
-  tr: (k: any, v?: any) => string,
+  tr: Tr,
 ): Promise<string[]> {
   const cur = await loadSsmLists();
   if (!cur) return [tr("backup.res_ssm_unread")];
@@ -369,14 +382,14 @@ async function importSsm(
 // refused entry is counted rather than aborting the rest.
 async function importGcp(
   section: NonNullable<BundleSections["gcpProfiles"]>,
-  tr: (k: any, v?: any) => string,
+  tr: Tr,
 ): Promise<string[]> {
-  const cur = await api("api/gcp/profiles");
+  const cur = await listGcpProfiles();
   const plan = planGcpImport(section, Array.isArray(cur) ? cur : []);
   let added = 0;
   let failed = 0;
   for (const p of plan.profiles) {
-    const res = await rawJSON("api/gcp/profiles", "POST", p);
+    const res = await createGcpProfile(p);
     if (res.ok) added++;
     else failed++;
   }

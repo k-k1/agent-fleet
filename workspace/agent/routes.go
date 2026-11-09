@@ -4,11 +4,14 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memconsol"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/workitems"
 	"net/http"
 
@@ -112,7 +115,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /session-search/turns", sessionsearch.HandleWindow)
 	// Per-feature usage time series (docs/log/46 P3 / ADR0029), aggregated server-side.
 	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
-	mux.HandleFunc("GET /usage/series", handleUsageSeries)
+	mux.HandleFunc("GET /usage/series", usagesvc.HandleSeries)
 	mux.HandleFunc("GET /sessions/cleanup", sessionx.HandleSessionsCleanup)
 	mux.HandleFunc("DELETE /sessions/{name}", handleDeleteSession)
 	// Cleanup archive (docs/log/32): the gz safety net for destructive tidy-up.
@@ -461,29 +464,29 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /git/identity", gitx.HandleGlobalIdentityPut)
 	// File browser (docs/17 P3-5 stage 2 + the FILES improvements): read tree/file, download raw,
 	// upload into a dir, git-changes filter + viewer line marks.
-	mux.HandleFunc("GET /fs/tree", handleFSTree)
-	mux.HandleFunc("GET /fs/search", handleFSSearch)
-	mux.HandleFunc("GET /fs/file", handleFSFile)
-	mux.HandleFunc("PUT /fs/file", handleFSFilePut)
-	// Resolves path references in mirror text (fs_resolve.go) — read-only, stat only.
-	mux.HandleFunc("POST /fs/resolve", handleFSResolve)
+	mux.HandleFunc("GET /fs/tree", fsx.HandleTree)
+	mux.HandleFunc("GET /fs/search", fsx.HandleSearch)
+	mux.HandleFunc("GET /fs/file", fsx.HandleFile)
+	mux.HandleFunc("PUT /fs/file", fsx.HandleFilePut)
+	// Resolves path references in mirror text (internal/fsx/fs_resolve.go) — read-only, stat only.
+	mux.HandleFunc("POST /fs/resolve", fsx.HandleResolve)
 	// The editor's AI edit suggestion (docs/log/44 Phase 4) — a read-only generation channel
 	// that never touches the fs.
-	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(handleFSSuggestEdit))
-	mux.HandleFunc("GET /fs/download", handleFSDownload)
+	mux.HandleFunc("POST /fs/suggest-edit", httpx.HeldOpen(fsx.HandleSuggestEdit))
+	mux.HandleFunc("GET /fs/download", fsx.HandleDownload)
 	// A folder as one zip (ADR 0111): read-only, bounded on every axis, built into a temp file.
-	mux.HandleFunc("GET /fs/download-zip", handleFSDownloadZip)
-	// A picture's width and height from its header, many paths per request (fs_imagesize.go).
-	mux.HandleFunc("POST /fs/imagesize", handleFSImageSize)
-	// Every picture under a folder, a bounded walk, flattened into one list (fs_images.go).
-	mux.HandleFunc("GET /fs/images", handleFSImages)
-	mux.HandleFunc("POST /fs/upload", handleFSUpload)
-	mux.HandleFunc("GET /fs/changes", handleFSChanges)
-	mux.HandleFunc("GET /fs/linemarks", handleFSLineMarks)
-	mux.HandleFunc("POST /fs/mkdir", handleFSMkdir)
-	mux.HandleFunc("POST /fs/newfile", handleFSNewFile)
-	mux.HandleFunc("POST /fs/rename", handleFSRename)
-	mux.HandleFunc("DELETE /fs/delete", handleFSDelete)
+	mux.HandleFunc("GET /fs/download-zip", fsx.HandleDownloadZip)
+	// A picture's width and height from its header, many paths per request (internal/fsx/fs_imagesize.go).
+	mux.HandleFunc("POST /fs/imagesize", fsx.HandleImageSize)
+	// Every picture under a folder, a bounded walk, flattened into one list (internal/fsx/fs_images.go).
+	mux.HandleFunc("GET /fs/images", fsx.HandleImages)
+	mux.HandleFunc("POST /fs/upload", fsx.HandleUpload)
+	mux.HandleFunc("GET /fs/changes", fsx.HandleChanges)
+	mux.HandleFunc("GET /fs/linemarks", fsx.HandleLineMarks)
+	mux.HandleFunc("POST /fs/mkdir", fsx.HandleMkdir)
+	mux.HandleFunc("POST /fs/newfile", fsx.HandleNewFile)
+	mux.HandleFunc("POST /fs/rename", fsx.HandleRename)
+	mux.HandleFunc("DELETE /fs/delete", fsx.HandleDelete)
 
 	// Claude settings (Remote Control / notifications / RTK hook) — Console toggles.
 	mux.HandleFunc("GET /claude/settings", claude.HandleSettingsGet)
@@ -562,6 +565,16 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/entries/changes", memoryx.HandleAgentMemoryChanges)
 	mux.HandleFunc("GET /agents/memory/entries/diff", memoryx.HandleAgentMemoryChangeDiff)
 	mux.Handle("POST /agents/memory/entries/revert", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryRevert)))
+	// The autonomous consolidator's proposals (ADR 0130 decisions 6 and 7). The reads are open like
+	// the rest of the memory reads; approve, reject and retry are member decisions, signed by the
+	// Control Plane, so a session cannot decide a proposal. There is deliberately no "run now": a
+	// run starts only from the idle trigger.
+	mux.HandleFunc("GET /agents/memory-consolidation", memconsol.HandleStatus)
+	mux.HandleFunc("GET /agents/memory-consolidation/proposals", memconsol.HandleList)
+	mux.HandleFunc("GET /agents/memory-consolidation/proposal", memconsol.HandleGet)
+	mux.Handle("POST /agents/memory-consolidation/proposals/approve", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleApprove)))
+	mux.Handle("POST /agents/memory-consolidation/proposals/reject", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleReject)))
+	mux.Handle("POST /agents/memory-consolidation/proposals/retry", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleRetry)))
 	// Undo what one past review run published (ADR 0117 decision 5, kept by ADR 0130 decision 2):
 	// the review itself is gone, its published history stays revertible. A member write, so only
 	// the member-origin mark gets through; outside /agents/memory/ on purpose, no MCP tool reaches it.

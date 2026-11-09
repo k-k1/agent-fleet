@@ -74,7 +74,7 @@ away once more than 3 GiB is free and use is below 85 %. Installs and agents can
 when the disk fills. Free space from ⚙ Settings → Machine, or ask a tenant administrator to grow
 the home. You see it only where the home is a volume of your own (ECS on EC2); on shared storage
 the numbers would include other people's files, so no notice is shown
-([20](20-settings.md#machine)).
+([See your machine and its usage](../user/workspace/machine.md#free-up-the-home-disk)).
 
 ### Starting a session says the agent's CLI could not be installed
 
@@ -87,7 +87,7 @@ says why:
 | … because the home disk is full | Free some space, then restart the workspace. |
 | … because of a network error | Restart the workspace to try again. |
 | … because the download did not match its checksum | Restart the workspace to try again. |
-| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([20](20-settings.md#toolchains)). |
+| … See Settings › Toolchains and the workspace log | Read the reason in ⚙ Settings → Toolchains ([Choose your toolchains](../user/workspace/toolchains.md#check-the-tool-versions)). |
 
 Your tenant administrator sees the same failure on your card in the member list.
 
@@ -117,7 +117,7 @@ return ([11](11-many-sessions.md#narrowing-the-view-with-working-sets)).
 
 If it is still missing, check whether it was **archived** (AI sessions can be restored from
 the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
-trash). See [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup).
+trash). See [Clear away finished sessions](../user/sessions/cleanup.md#archive-and-restore).
 
 If the **Repositories** section of the left pane says **"Couldn't refresh the list — showing the
 last known one"**, nothing is gone: the Console could not read the repository list just now and
@@ -131,7 +131,7 @@ the page, or check your access to this workspace.
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
 (typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse cannot resume from this state.
 Start the same work over as a new session. shell falls back to home and resumes if the
-working folder is missing ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)).
+working folder is missing ([Stop and resume a session](../user/sessions/stop-resume.md#folder-missing-cant-resume-and-the-row-will-not-open)).
 
 ### Resuming says "the conversation log was deleted"
 
@@ -153,7 +153,7 @@ the same session without the old context, and remove a low `cleanupPeriodDays` i
 The move refuses while the session is working, or while a question, plan or approval waits for
 you: let the turn end or stop it, and answer first. A stopped Managed Cursor session cannot be
 moved, because its conversation is gone. shell and ssm sessions have no conversation to move. See
-[05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move).
+[Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent).
 
 ### Cleanup won't remove some things
 
@@ -167,7 +167,7 @@ Candidates rated **Keep** are left alone by cleanup, and the row states why.
 Deleted sessions, branches and worktrees are stashed in the **trash**, so the "Trash
 (restore)" tab of the cleanup modal brings them back (a worktree at the commit it was on, with
 its uncommitted changes when the row says so)
-([05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
+([Clear away finished sessions](../user/sessions/cleanup.md#restore-from-the-trash)).
 
 ### I shared it, but the recipient sees nothing — or only old conversations
 
@@ -211,7 +211,7 @@ Check its row in the **Schedules** section of the left pane.
 
 They won't appear if the browser's notification permission is off (you're asked to allow it the first time). Also, notifications are
 **suppressed** while you have that session's screen open. shell / ssm are outside the scope of state notifications
-([03](03-starting-sessions.md#reading-state-badges-and-notifications)). A window showing **"Live updates paused — click to resume"**
+([Read a session's state](../user/sessions/status.md)). A window showing **"Live updates paused — click to resume"**
 paused after 10 idle minutes; click it.
 
 ### claude doesn't know `/list-agents`, or says it can't message another session
@@ -246,20 +246,20 @@ In most cases the connection itself is still alive. This isn't an authentication
 the interactive screen is just redoing its onboarding, and it usually clears if you
 **resume** the session or use **"Recreate (current conversation goes to the archive)"**
 from the ⋯ menu. The traditional manual `/login` inside the terminal works alongside this too.
-You can check the connection status in ⚙ Settings → the "Agents" tab ([09](09-agents.md#claude)).
+You can check the connection status in ⚙ Settings → the "Agents" tab ([09](../user/agents/claude.md)).
 
 ### I want to connect codex, but approving doesn't get me anywhere
 
 To connect with a ChatGPT subscription, you must first **turn on "Enable device code
 authentication for Codex" under ChatGPT's "Settings > Security"**. If it's off, approving
-won't get you any further ([09](09-agents.md#codex)).
+won't get you any further ([09](../user/agents/codex.md)).
 
 ### An agent stopped with "your login has expired"
 
 The error in the chat view offers **"Re-authenticate"**, which opens ⚙ Settings → Agents
 scrolled to that agent's card. Connect again there and **that session resumes exactly where it
 left off**. The agent's card in ⚙ Settings → Agents also
-shows the connection state ([09](09-agents.md#supported-agents-and-how-to-choose)).
+shows the connection state ([09](../user/agents/choose.md#sign-in-again)).
 
 Once you are signed in again, **that same error turns into "Re-authenticated"** (the button
 goes away) and **the session picks up where it stopped by itself** (Claude, with automatic
@@ -300,7 +300,7 @@ It may be excluded under **"Models to exclude"** in ⚙ Settings → Agents. An 
 disappears from the launch dialog, the default-model setting and the list an assistant picks
 from, and **launching with that name is refused as well** (including a schedule's model field
 and launches via an assistant). Remove the exclusion on that agent's card
-([09](09-agents.md#claude)).
+([09](../user/agents/choose.md#exclude-models)).
 
 To use a specific Claude release (a full id such as `claude-opus-4-8`), register it under
 **"Additional Claude models"** on the same screen and it joins the choices.
@@ -314,7 +314,7 @@ it before concluding anything. What the picker says once it settles is the answe
 | It says | What to do |
 |---|---|
 | **Every model is excluded in settings** | ⚙ Settings → Agents → that card → "Models to exclude" |
-| **The current billing choice leaves no model to pick** | ⚙ Settings → Agents → opencode → "opencode.ai billing" ([09](09-agents.md#opencode)) |
+| **The current billing choice leaves no model to pick** | ⚙ Settings → Agents → opencode → "opencode.ai billing" ([09](../user/agents/opencode.md)) |
 | **Only the default model is available (check this agent's connection and plan)** | The agent answered with an empty catalog. Check the sign-in and the plan on that card. On a Copilot Free plan an empty list is normal: that plan offers Auto alone. |
 | **Couldn't fetch the model list — the workspace may have only just started** | The request never landed. The Agent isn't listening yet in the first seconds after a start: **wait half a minute and reopen the dialog** (each open tries again). |
 
@@ -325,7 +325,7 @@ retrying (attempt N): …"**. opencode is retrying a provider error; the message
 limits and overloads usually pass, so wait or stop the turn. Errors that cannot pass (region or
 privacy setting, quota or billing, a bad key) end the turn as failed by themselves and the band
 says so: fix the cause on the provider account (for "requires Global regions", its privacy /
-region setting) and send again ([09](09-agents.md#when-the-provider-returns-an-error)).
+region setting) and send again ([09](../user/agents/opencode.md#when-it-goes-wrong)).
 
 The band appears in **Managed** sessions. A **Terminal (CLI)** session has no band; opencode's
 own retry output is in the terminal.
@@ -376,14 +376,14 @@ Cloning, submodules and authentication on a private repository.
 
 ### Cloning fails
 
-- Private repositories need a GitHub / Bitbucket **connection** first (⚙ Settings → "Git hosting" tab; [06](06-code.md#connect-a-git-provider)). Check whether it says "Not connected".
+- Private repositories need a GitHub / Bitbucket **connection** first (⚙ Settings → "Git hosting" tab; [Connect a Git service](../user/code/connect-git.md)). Check whether it says "Not connected".
 - Double-check the spelling of the URL and branch name.
-- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([06](06-code.md#submodules-and-git-lfs)).
+- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([Clone a repository](../user/code/clone.md#submodules-and-git-lfs)).
 
 ### A session says the submodules are missing / broken
 
 - A large submodule may not finish fetching inside the launch. The fetch keeps going in the
-  background, and the notification center tells you when it lands ([06](06-code.md#submodules-and-git-lfs)).
+  background, and the notification center tells you when it lands ([Clone a repository](../user/code/clone.md#submodules-and-git-lfs)).
 - A submodule left half-fetched is repaired the next time a session launches in that working
   copy. To fix it right away, run `git submodule update --init --recursive` there in a terminal.
 
@@ -391,7 +391,7 @@ Cloning, submodules and authentication on a private repository.
 
 In ⚙ Settings → the "Git hosting" tab, check that the provider in question is **"Connected"**.
 If it isn't, connect via OAuth or a token. Once connected, authentication is transparent, so
-from then on you can clone / push without entering tokens ([06](06-code.md#connect-a-git-provider)).
+from then on you can clone / push without entering tokens ([Connect a Git service](../user/code/connect-git.md)).
 
 ## Preview and browser
 
@@ -471,7 +471,7 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
   abnormally; **"Reconnect"** reopens it ([14](14-preview-browser.md#status-display-and-recovery)).
 - **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy
   builds, watchers and browser panes left open (at most **2** at a time). How to check memory is under
-  [Machine](20-settings.md#machine) and in the FAQ entry "Builds die / freeze from running out of memory" below.
+  [See your machine and its usage](../user/workspace/machine.md#see-the-usage) and in the FAQ entry "Builds die / freeze from running out of memory" below.
 
 ### Signing in on a preview URL shows an Agent Fleet error page
 
@@ -661,8 +661,8 @@ viewer and other screens follow the theme ([20 Display](20-settings.md#display))
 **Q. Can I get a deleted session back?**
 If you only hid it with "Archive", you can bring it back with "Restore" in the archived list. With "Stop
 (resumable later)" it remains as stopped and can be resumed with a click. "Delete" for shell / ssm
-cannot be undone (the conversation log files themselves remain). For the differences, see
-[05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions).
+moves it to the trash, and the "Trash (restore)" tab of Clean up brings it back. For the differences, see
+[Clear away finished sessions](../user/sessions/cleanup.md#what-stays-and-what-goes).
 
 **Q. Can I use it from both my work PC and my home PC?**
 Yes. Your login and connections, as well as display settings like font / text size, are stored on the server
@@ -671,15 +671,15 @@ and follow you on other devices and browsers ([20](20-settings.md#opening-it-and
 **Q. If I stop the workspace, is my work lost?**
 No. Clones, uncommitted changes, the session list, and connections all remain. However,
 uncommitted changes exist only inside the workspace, so commit / push for long-term safekeeping
-([01](01-first-day.md#at-the-end-of-the-day-is-it-ok-to-stop-the-workspace) · [06](06-code.md#push-and-authentication)).
+([01](01-first-day.md#at-the-end-of-the-day-is-it-ok-to-stop-the-workspace) · [Connect a Git service](../user/code/connect-git.md#push)).
 
 **Q. Is it OK to run several tasks at the same time?**
 Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are
-created by default ([03](03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work) · [06](06-code.md#launch-a-session-from-a-repository-row)).
+created by default ([Work in parallel with worktrees](../user/sessions/worktrees.md) · [Launch a session from a repository](../user/code/launch-from-repo.md)).
 
 **Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
 Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),
-Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions).
+Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [Stop and resume a session](../user/sessions/stop-resume.md#choose-how-to-stop).
 
 **Q. opencode doesn't show up among the new-session kinds**
 On its card in ⚙ Settings → Agents, **"Use opencode"** must be on, and the **"opencode.ai
@@ -687,7 +687,7 @@ billing"** choice must leave something to launch: **"Free models only"** needs n
 **"Go (subscription)"** and **"Zen (metered)"** need an opencode.ai sign-in or key, and
 **"None (my own keys)"** needs a provider key of your own or one of the fleet's engines. With
 billing **"Off"**, or "Use opencode" off, it never appears, key or not
-([09](09-agents.md#opencode)).
+([09](../user/agents/opencode.md)).
 
 **Q. If I unshare it, does it disappear from their side too?**
 No. The recipient can save what was displayed, so **unsharing only ends further access**. A
@@ -699,7 +699,7 @@ exposes (secrets in it are not detected for you). See
 It prevents picking one by accident; it is not a hard billing guard. The model disappears from
 the launch dialog, the settings and the assistant's list, and launching it by name is refused,
 but **it cannot stop the CLI's own commands, such as typing `/model` inside the terminal**
-([09](09-agents.md#claude)).
+([09](../user/agents/choose.md#exclude-models)).
 
 **Q. Builds die / freeze from running out of memory**
 The host is shared and memory-constrained. For Node builds, raise the heap only for the command that needs it

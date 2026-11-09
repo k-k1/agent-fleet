@@ -20,7 +20,7 @@ import (
 	"testing"
 )
 
-// withInputGate installs the browse root and a denylist of one folder, standing in for fs.go's.
+// withInputGate installs the browse root and a denylist of one folder, standing in for internal/fsx/fs.go's.
 func withInputGate(t *testing.T, browse string) {
 	t.Helper()
 	oldRoot, oldDenied := BrowseRootDir, PathDenied

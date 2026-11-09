@@ -63,7 +63,14 @@ const MIME = {
 const L = (ja, en) => (LOCALE === "ja" ? ja : en);
 const exact = {
   "/api/version": () => ({ version: "0.3.0", commit: "demo" }),
-  "/api/whoami": () => ({ ...fx.USER, scheduler_enabled: true, role: "member" }),
+  // home_wipe puts the Danger zone tab on the settings rail, so only the workspace guide scenes
+  // (SHOT_WS_GUIDE) get it and every other modal shot keeps the rail it was taken with.
+  "/api/whoami": () => ({
+    ...fx.USER,
+    scheduler_enabled: true,
+    role: "member",
+    ...(process.env.SHOT_WS_GUIDE ? { home_wipe: true } : {}),
+  }),
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
     super_admin: false,
@@ -73,7 +80,13 @@ const exact = {
   "/api/sessions": (q, method) =>
     method === "POST"
       ? { name: "s" + crypto.randomUUID().slice(0, 6) }
-      : { sessions: FLEET_LANES ? fx.sessionsBig(LOCALE, FLEET_LANES) : fx.sessions(LOCALE) },
+      : {
+          sessions: FLEET_LANES
+            ? fx.sessionsBig(LOCALE, FLEET_LANES)
+            : process.env.SHOT_SESSIONS_GUIDE
+              ? fx.sessionsBudgetStopped(LOCALE)
+              : fx.sessions(LOCALE),
+        },
   "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
   // Past-session search (ADR 0110) for the palette's conversations mode. Hits name sessions from
   // fx.sessions so Enter has something to open, plus one archived session that is not listed.
@@ -101,6 +114,51 @@ const exact = {
       { urlPrefix: "https://svn.example.com/design", username: "taro" },
       { urlPrefix: "https://svn.internal.example/legacy", username: "", trustCert: "1" },
     ],
+    // The chat and ops cards' connections exist only in a run that asks (SHOT_CHAT / SHOT_OPS),
+    // so the scenes taken without them keep their "Not connected" cards.
+    ...(process.env.SHOT_CHAT
+      ? {
+          discord: {
+            connected: true, mode: "channel", botName: "Agent Fleet Bot", operator: true, channelId: "100000000000000001",
+            threads: true, receive: true, mirrorInput: true, fullText: false, mentionUserId: "100000000000000002",
+            events: ["answer-ready", "question", "permission-request", "exit", "session-report"], notify: true,
+          },
+          slack: { connected: false },
+        }
+      : {}),
+    // The agent pages of the user guide (SHOT_AGENTS_GUIDE): each card in the state its page shows
+    // (Claude with account, plan and expiry; the sign-in forms of the unconnected ones; Kiro and
+    // Muse Code not yet installed; lcpp on a member's own llama-server). Every other scene keeps the
+    // cards it was taken with.
+    ...(process.env.SHOT_AGENTS_GUIDE
+      ? {
+          claude: { connected: true, email: "demo@example.com", plan: "max", days_left: 2 },
+          codex: { connected: false },
+          cursor: { connected: false },
+          copilot: { connected: true },
+          kiro: { connected: false, supported: false },
+          agy: { connected: false },
+          muse: { connected: false, supported: false },
+          opencode: { connected: true, envs: ["OPENCODE_API_KEY", "ANTHROPIC_API_KEY"] },
+          lcpp: { connected: true, url: "http://192.168.0.10:8080", reachable: true, model: "qwen3-coder-30b-a3b", model_count: 2 },
+        }
+      : {}),
+    ...(process.env.SHOT_OPS
+      ? {
+          pagerduty: { connected: true },
+          grafana: { connected: true, url: "https://grafana.example.com" },
+          cloudwatch: { connected: true, profile: "Staging", region: "ap-northeast-1", sso: true },
+          aws: { connected: false },
+        }
+      : {}),
+    // The user guide's code pages (SHOT_CODE_GUIDE): GitHub not connected yet, so its card shows
+    // the two ways in, and Bitbucket connected with an account and its commit identity.
+    ...(process.env.SHOT_CODE_GUIDE
+      ? {
+          github: { connected: false },
+          bitbucket: { connected: true, username: "demo-user", email: "demo@example.com", commitName: "Demo User", commitEmail: "demo@example.com" },
+        }
+      : {}),
   }),
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
@@ -130,7 +188,13 @@ const exact = {
   // with it (the palette gains a mode).
   // imageGeneration only for the user guide's settings shot (SHOT_IMAGE_SETTINGS): with it on, the
   // Agents tab grows the provider order, which no other scene shows.
-  "/api/env/ui-prefs": () => ({ agentMemory: true, ...(process.env.SHOT_IMAGE_SETTINGS ? { imageGeneration: true } : {}) }),
+  // opencodeCatalog "go" only for the agent pages (SHOT_AGENTS_GUIDE): the OpenCode card then shows its
+  // billing routes and keys instead of the bare off switch.
+  "/api/env/ui-prefs": () => ({
+    agentMemory: true,
+    ...(process.env.SHOT_IMAGE_SETTINGS ? { imageGeneration: true } : {}),
+    ...(process.env.SHOT_AGENTS_GUIDE ? { opencodeCatalog: "go" } : {}),
+  }),
   // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log.
   "/api/agents/memory/entries/list": () => fx.memoryList(LOCALE),
   "/api/agents/memory/entries/member-read": (q) => fx.memoryRead(LOCALE, q.get("name") || ""),
@@ -352,7 +416,15 @@ const exact = {
     method === "POST" ? {} : fx.imagegenKnowledge(LOCALE, q.get("scope") || "family", q.get("key") || ""),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
-  "/api/internal-git/repos": () => ({ repos: [] }),
+  "/api/internal-git/repos": () => ({ repos: process.env.SHOT_CODE_GUIDE ? fx.codeGuideInternalRepos() : [] }),
+  // The clone dialog's picker for the code pages (SHOT_CODE_GUIDE): Bitbucket's repositories and
+  // the branches of the one the scene picks.
+  ...(process.env.SHOT_CODE_GUIDE
+    ? {
+        "/api/connections/git/bitbucket.org/repos": () => ({ repos: fx.codeGuideRemoteRepos() }),
+        "/api/connections/git/bitbucket.org/branches": () => fx.codeGuideBranches(),
+      }
+    : {}),
   "/api/pat": () => ({}),
   "/api/tts/dict": () => ({ entries: [] }),
   "/api/workspace/stats": () => fx.stats(),
@@ -372,6 +444,28 @@ const exact = {
       "8080": "https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com",
     },
   }),
+  // Settings › Agents (the Claude card's behavior) and Settings › Agent instructions for the user
+  // guide's agent pages, served only to a run that asks (SHOT_AGENTS_GUIDE).
+  ...(process.env.SHOT_AGENTS_GUIDE
+    ? {
+        "/api/claude/settings": () => fx.agentsGuideClaudeSettings(),
+        "/api/user-notes": () => fx.agentsGuideUserNotes(LOCALE),
+        "/api/agents/rtk": () => ({ rtk_available: true, codex_rtk: false, copilot_rtk: true, agy_rtk: false, opencode_rtk: true }),
+        "/api/connections/kiro/install": () => ({ installed: false }),
+        "/api/connections/muse/install": () => ({ installed: false }),
+      }
+    : {}),
+  // Settings › Machine, Toolchains and Databases for the user guide's workspace pages, served only
+  // to a run that asks (SHOT_WS_GUIDE): without it these tabs stay as empty as they always were.
+  ...(process.env.SHOT_WS_GUIDE
+    ? {
+        "/api/workspace/machine": () => fx.wsGuideMachine(),
+        "/api/env/toolchains": () => fx.wsGuideToolchains(),
+        "/api/env/jdk-latest": (q) => fx.wsGuideLatest("jdk", q.get("major") || ""),
+        "/api/env/node-latest": (q) => fx.wsGuideLatest("node", q.get("major") || ""),
+        "/api/env/databases": () => fx.wsGuideDatabases(),
+      }
+    : {}),
   // The left rail's Changes view — cross-repo, one call (see FilesChanges).
   "/api/fs/changes": () => fx.fsChanges(LOCALE),
   // The file viewer's git change marks (CodeView LineMarks). None: the fictional files are clean.
@@ -379,6 +473,9 @@ const exact = {
 };
 
 const re = [
+  // The budget dialog of the sessions guide (SHOT_SESSIONS_GUIDE): the spend of the session its
+  // budget stopped. Without it the route stays unhandled, as it always was.
+  ...(process.env.SHOT_SESSIONS_GUIDE ? [[/^\/api\/sessions\/([^/]+)\/spend$/, (m) => fx.sessionSpendGuide(m[1])]] : []),
   // The move dialog's preview (ADR 0115) for the move scene.
   [/^\/api\/sessions\/([^/]+)\/move\/preview$/, (m) => fx.movePreview(LOCALE, m[1])],
   // The model picker of a target kind: invented ids, so no real third-party model is named.
@@ -389,6 +486,30 @@ const re = [
     /^\/api\/sessions\/([^/]+)\/messages$/,
     (m) => {
       const body = fx.messages(LOCALE, decodeURIComponent(m[1]));
+      // SHOT_FORK: user turns carry the anchor a branch point needs, so "Branch here" shows.
+      if (process.env.SHOT_FORK) {
+        body.messages = body.messages.map((t) => (t.role === "user" ? { ...t, anchorId: `u-${t.idx}` } : t));
+      }
+      // SHOT_BUSY: a turn is running and nothing waits on the user (the guide's waiting-list shot).
+      if (process.env.SHOT_BUSY && body.status === "question") {
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return { ...rest, status: "working" };
+      }
+      // SHOT_TRANSLATE: the agent answered in the other language, so the translate button shows.
+      if (process.env.SHOT_TRANSLATE && body.status === "question") {
+        const other = fx.messages(LOCALE === "ja" ? "en" : "ja", decodeURIComponent(m[1])).messages;
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return {
+          ...rest,
+          status: "idle",
+          messages: body.messages.map((t, i) => (t.role === "assistant" && other[i] ? other[i] : t)),
+        };
+      }
+      // SHOT_PLAN: the mirror session waits on a plan instead of a question (the guide's plan page).
+      if (process.env.SHOT_PLAN && body.status === "question") {
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return { ...rest, status: "plan", mode: "plan", pendingPlan: fx.pendingPlan(LOCALE) };
+      }
       if (!IDLE) return body;
       const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
       return { ...rest, status: body.status === "question" ? "idle" : body.status };
@@ -617,7 +738,13 @@ const server = http.createServer((req, res) => {
       // POST …/stream): a list of { delay, data } frames written in order.
       const frames = DEMO?.stream?.(p, req.method, sent);
       if (frames) return void streamFrames(res, frames);
-      const body = JSON.stringify(apiBody(p, url.searchParams, req.method, sent));
+      // The guide's Skills shot (SHOT_AGENTS_GUIDE) shows Claude's real config folder, which the
+      // agent pages name; the fixture keeps ~/.claude for the features-page scene.
+      const guideSkills = process.env.SHOT_AGENTS_GUIDE && p.startsWith("/api/skills/");
+      const params = new URLSearchParams(url.searchParams);
+      if (guideSkills && params.get("path")) params.set("path", params.get("path").replace("/var/lib/af/claude", "/home/dev/.claude"));
+      let body = JSON.stringify(apiBody(p, params, req.method, sent));
+      if (guideSkills) body = body.replaceAll("/home/dev/.claude", "/var/lib/af/claude");
       res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
       res.end(body);
     });

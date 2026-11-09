@@ -45,7 +45,7 @@ merely opening the bell marks nothing as read. This is the one place that descri
 
 A row can also carry **"Shared"** (visible to another member;
 see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Locked against deletion"** (excluded from deletion and
-automatic tidying; see [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
+automatic tidying; see [Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion)).
 
 A row can grow a **second line** with links. The first is the GitHub or Bitbucket pull request
 of the branch the session works on. The icon says open, draft, merged or closed, and an open one
@@ -78,7 +78,7 @@ are not attributed to any session.
 | Uncommitted | There are uncommitted changes |
 | = parent | Same commit as the parent ("parent" here is the upstream of the parent working copy's branch, e.g. `origin/develop`, or the parent working copy's HEAD when it has none; the chip's tooltip names it; commits the parent working copy has not pushed are not compared) |
 | unmerged N | There are N worktree-specific commits not contained in the parent |
-| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([06](06-code.md)) |
+| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from origin/develop"** in the menu (**"Fast-forward from parent"** without an upstream) brings them in ([Launch a session from a repository](../user/code/launch-from-repo.md#read-the-rows-badges)) |
 | diverged N↕M, no FF | Both the worktree and the parent have their own commits; a merge or rebase is needed |
 | n/a | The relation to the parent can't be determined (detached HEAD etc.) |
 | ↑N | N commits ahead of origin |
@@ -123,7 +123,7 @@ header says the same four things for the engine it is about to use
 ([Generate images](../user/images/generate.md)).
 
 When you have set **your own llama.cpp connection** in ⚙ Settings → Agents
-([09](09-agents.md#lcpp)), the **Chat** pill reports that connection instead of the deployment's
+([09](../user/agents/lcpp.md#connect-to-your-own-llama-server)), the **Chat** pill reports that connection instead of the deployment's
 engine: **Connected**, **Not reachable** or **Checking**, and its popover says **"Your own
 connection. Not this deployment's engine."** together with the model the last check found
 (**"Model: …"**). With your own connection set and **"Use llama.cpp"** Off, no Chat pill is shown.
@@ -148,7 +148,7 @@ connection. Not this deployment's engine."** together with the model the last ch
 - **"Question left unanswered at stop"**, **"Plan awaiting approval at stop"**, **"Permission requested at
   stop"** on a card in the conversation: what was on screen when the session stopped. Answering it resumes the
   session and delivers the answer; the card is kept for 14 days
-  ([04](04-conversation.md#questions-and-plans-left-by-a-stopped-session)).
+  ([Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left)).
 - **The inbox button's number** in the top bar: new inbox items plus handoffs waiting for you
   ([12](12-collaboration.md#asking-a-teammate-the-inbox)). In the inbox, **"Open for 14+ days"** marks a
   request nobody has finished. A session started from an inbox request has an inbox mark
@@ -165,11 +165,11 @@ connection. Not this deployment's engine."** together with the model the last ch
   parent whose children have all gone quiet ([11](11-many-sessions.md#starting-sessions-from-a-session-child-sessions)).
 - **"Paused"** on a schedule row: that schedule is suspended ([11](11-many-sessions.md)).
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
-  stopped; **"Raise budget & resume…"** in its menu carries on ([05](05-stopping-and-tidying.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
+  stopped; **"Raise budget & resume…"** in its menu carries on ([Stop a session that spends too much with a budget](../user/sessions/budget.md#when-it-stops)).
 - **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
   ([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
 - **"Safe" / "Review" / "Keep"** in the cleanup modal: whether it is fine to tidy away
-  ([05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
+  ([Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup)).
 
 ## Right-click menus
 
@@ -177,13 +177,13 @@ connection. Not this deployment's engine."** together with the model the last ch
 
 Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
 rename, rename the branch, hand the conversation off (to another agent, or **Hand off to a member…**), **move it to another agent**
-([05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move)), **Share…**, **set / clear the delete lock**,
-**"Export as Markdown"** (three choices, [04](04-conversation.md#saving-a-conversation-as-markdown)),
+([Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent)), **Share…**, **set / clear the delete lock**,
+**"Export as Markdown"** (three choices, [Save a conversation as Markdown](../user/sessions/export.md)),
 archive / delete, and recreate. **"Menu of repository {name}"** moves to the left pane and opens the menu of
 the repository the session belongs to (not shown for a session without a repository, on a phone, or while the
 workspace is stopped; if the left pane is hiding that repository, a notice says why). On a stopped session whose
 worktree has been deleted, **"Recreate working copy (worktree)…"** recreates the worktree at its original path
-so the session can resume ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)). A session that was moved carries a line under its row,
+so the session can resume ([Stop and resume a session](../user/sessions/stop-resume.md#folder-missing-cant-resume-and-the-row-will-not-open)). A session that was moved carries a line under its row,
 **"Moved to …"** (click to open the target) or **"Move to … unfinished"** (click to retry or cancel), and its
 menu offers **"Open the session it moved to"** and **"Resume here anyway…"**, or **"Retry or cancel the
 move…"**, instead of resume. For a session that doesn't belong to a repository, **assignment to a working
@@ -192,7 +192,7 @@ automatically).
 If the session has made images with `generate_image`, **"Generated images (N)"** appears too (N is how many;
 absent for sessions that have not, and while the workspace is stopped; see [Use the image gallery](../user/images/gallery.md)).
 **"Spend budget…"** sets the session's budget; on a session its budget stopped it reads **"Raise budget &
-resume…"** ([05](05-stopping-and-tidying.md#a-spend-budget-pausing-a-session-that-spends-too-much)).
+resume…"** ([Stop a session that spends too much with a budget](../user/sessions/budget.md#when-it-stops)).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
 a new one in the same place. When there is no working folder, resume, handoff, and recreate are not shown.
 
@@ -203,11 +203,11 @@ Fast-Forward (on a worktree, **"Fast-forward from origin/develop"** or similar),
 a working set**, **Skills…** (the skills this working copy gives each agent, read-only), launch a session by kind, **stop the sessions below**, and delete the working copy. **"Archived sessions of this working copy"** opens the archive
 filtered to it. A Subversion working copy has **"Update (svn)"**, **"Clean up lock (svn)"**,
 **"Re-authenticate (svn)"**, **"Show log"** and **"Local changes"** instead of the Git items
-([06](06-code.md#subversion-svn-repositories)). Stop
+([Use a Subversion repository](../user/code/svn.md)). Stop
 opens a modal listing the sessions running in that row and in the copies nested under it
-([05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)); Delete opens a confirmation
+([Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy)); Delete opens a confirmation
 that also lists the copies nested under that row
-([05](05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy)). A normal click expands / collapses the row.
+([Clear away finished sessions](../user/sessions/cleanup.md#delete-one-jobs-working-copies)). A normal click expands / collapses the row.
 Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 
 ### Files / folders
@@ -285,4 +285,4 @@ gives the same menu again, from a right-click, its ⋯ button, or the Menu key w
 
 ---
 
-Related: [Sessions](03-starting-sessions.md) · [Repositories and git](06-code.md) · [Files](07-files.md)
+Related: [Read a session's state](../user/sessions/status.md) · [Launch a session from a repository](../user/code/launch-from-repo.md) · [Files](07-files.md)

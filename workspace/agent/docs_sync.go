@@ -31,6 +31,7 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"io"
 	"log"
 	"net/http"
@@ -62,7 +63,7 @@ var errDocsBridgeOff = errors.New("docs bridge is not configured in this deploym
 // syncWorkspaceDocs fetches and installs the docs when the runtime did not mount any.
 // Best-effort: every failure leaves the directory exactly as it was.
 func syncWorkspaceDocs(why string) {
-	root := agentFleetDocsRoot()
+	root := fsx.AgentFleetDocsRoot()
 	if docsRootPopulated(root) {
 		return // mounted by the runtime (docker / native) — nothing to do
 	}

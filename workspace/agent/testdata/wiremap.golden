@@ -54,18 +54,6 @@ engines.go handleEngineCatalogChanged x1 {refreshing}
 engines.go handleEngineUsage x1 {recorded}
 env_tool_versions.go handleToolVersions x1 {checkedAt,tools}
 env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,java_versions,node,node_installed,node_options,node_versions,timezone,tz_options}
-fs.go handleFSDelete x1 {deleted}
-fs.go handleFSMkdir x1 {path}
-fs.go handleFSNewFile x1 {path}
-fs.go handleFSRename x1 {path}
-fs.go handleFSTree x1 {entries,path,root}
-fs.go handleFSUpload x2 {conflicts,path,written}
-fs_file_api.go handleFSFile x1 {binary,content,editabilityReason,editable,lfs,nestedRepo,path,revision,size,truncated} cond{binary,content,editabilityReason,editable,lfs,nestedRepo,revision,truncated}
-fs_git.go handleFSChanges x2 {changes}
-fs_resolve.go handleFSResolve x1 {resolved}
-fs_search.go handleFSSearch x1 {results,root,truncated}
-fs_search.go handleFSSearch x3 {results,truncated}
-fs_suggest_edit.go handleFSSuggestEdit x1 {replacement,summary}
 internal/afdb/http.go HandleDatabasesAction x6 {status}
 internal/afdb/http.go HandleDatabasesGet x1 {engines}
 internal/agents/agy/auth.go HandleComplete x1 {connected,stored}
@@ -126,6 +114,18 @@ internal/chatx/chat_report.go HandleChatReport x1 {interim,reported}
 internal/chatx/chat_report.go HandleChatReport x1 {reported}
 internal/chatx/chat_suggest_reply.go HandleChatSuggestReplies x1 {suggestions}
 internal/chatx/chat_title.go HandleChatSuggestTitle x1 {suggestedTitle}
+internal/fsx/fs.go HandleDelete x1 {deleted}
+internal/fsx/fs.go HandleMkdir x1 {path}
+internal/fsx/fs.go HandleNewFile x1 {path}
+internal/fsx/fs.go HandleRename x1 {path}
+internal/fsx/fs.go HandleTree x1 {entries,path,root}
+internal/fsx/fs.go HandleUpload x2 {conflicts,path,written}
+internal/fsx/fs_file_api.go HandleFile x1 {binary,content,editabilityReason,editable,lfs,nestedRepo,path,revision,size,truncated} cond{binary,content,editabilityReason,editable,lfs,nestedRepo,revision,truncated}
+internal/fsx/fs_git.go HandleChanges x2 {changes}
+internal/fsx/fs_resolve.go HandleResolve x1 {resolved}
+internal/fsx/fs_search.go HandleSearch x1 {results,root,truncated}
+internal/fsx/fs_search.go HandleSearch x3 {results,truncated}
+internal/fsx/fs_suggest_edit.go HandleSuggestEdit x1 {replacement,summary}
 internal/gitx/git.go HandleCloneRepo x1 {job}
 internal/gitx/git.go HandleInitRepo x1 {repo}
 internal/gitx/git.go HandleListRepos x1 {repos}

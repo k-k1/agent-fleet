@@ -31,7 +31,7 @@ import (
 
 // aiAssistFeature is one row of the catalog behind both this endpoint and the enforcement
 // gates each feature's own handler carries (chat_plan.go, chat_suggest_reply.go,
-// session_suggest_reply.go, chat_title.go, session_title.go, fs_suggest_edit.go,
+// session_suggest_reply.go, chat_title.go, session_title.go, internal/fsx/fs_suggest_edit.go,
 // session_translate.go). Kept here, not derived from usagex's feature constants, because
 // "enabled" is an AI-assist-specific fact the ledger has no reason to know.
 type aiAssistFeature struct {

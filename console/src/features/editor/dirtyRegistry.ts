@@ -3,6 +3,9 @@ import { allViews } from "../../layout/ops.ts";
 
 export interface DirtyEditorEntry {
   paneId: string;
+  /** Identity in the registry; defaults to paneId. A view can hold more than one buffer (an
+   *  unsaved one it left behind on another file), so editors register per view and file. */
+  key?: string;
   label: string;
   isDirty(): boolean;
   save(): Promise<boolean>;
@@ -43,11 +46,12 @@ export function subscribeDirtyRegistry(listener: () => void): () => void {
 }
 
 export function registerDirtyEditor(entry: DirtyEditorEntry): () => void {
-  entries.set(entry.paneId, entry);
+  const key = entry.key ?? entry.paneId;
+  entries.set(key, entry);
   emit();
   return () => {
-    if (entries.get(entry.paneId) === entry) {
-      entries.delete(entry.paneId);
+    if (entries.get(key) === entry) {
+      entries.delete(key);
       emit();
     }
   };
@@ -67,17 +71,14 @@ export function hasDirtyEditors(): boolean {
 }
 
 export function dirtyPaneIds(): string[] {
-  return [...entries.values()].filter((entry) => entry.isDirty()).map((entry) => entry.paneId);
+  return [...new Set([...entries.values()].filter((entry) => entry.isDirty()).map((entry) => entry.paneId))];
 }
 
 function dirtyEntries(ids?: Iterable<string>): DirtyEditorEntry[] {
-  if (!ids) return [...entries.values()].filter((entry) => entry.isDirty());
-  const out: DirtyEditorEntry[] = [];
-  for (const id of ids) {
-    const entry = entries.get(id);
-    if (entry?.isDirty()) out.push(entry);
-  }
-  return out;
+  const dirty = [...entries.values()].filter((entry) => entry.isDirty());
+  if (!ids) return dirty;
+  const wanted = new Set(ids);
+  return dirty.filter((entry) => wanted.has(entry.paneId));
 }
 
 /** Prompt once for all affected buffers. Save proceeds only if every buffer becomes clean. */
