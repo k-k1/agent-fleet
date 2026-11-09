@@ -777,3 +777,174 @@
 .mem-cs-status {
   margin-top: 8px;
 }
+
+/* Proposal preview, "if you approve" (memoryProposalPreview.tsx, #3720). */
+.mem-pv {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mem-pv h4 {
+  margin: 0;
+}
+
+.mem-pv-summary {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-2, transparent);
+  font-weight: 600;
+}
+
+.mem-pv-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mem-pv-card p {
+  margin: 0;
+}
+
+.mem-pv-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.mem-pv-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.mem-pv-meta dt {
+  color: var(--muted);
+}
+
+.mem-pv-meta dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mem-pv-body {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 10px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.mem-pv-ba {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mem-pv-side {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.mem-pv-side-head {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.mem-pv-lines {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.mem-pv-line {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mem-pv-mark {
+  flex: none;
+  width: 1ch;
+  color: var(--muted);
+}
+
+.mem-pv-del {
+  background: color-mix(in srgb, var(--danger, #d9534f) 18%, transparent);
+}
+
+.mem-pv-add {
+  background: color-mix(in srgb, var(--ok, #3fb950) 18%, transparent);
+}
+
+.mem-pv-gap {
+  color: var(--muted);
+}
+
+.mem-cs-actions {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+}
+
+@media (max-width: 760px) {
+  .mem-pv-ba {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* In the Memory pane (features/memory) there is room, so lift the modal-sized height caps. */
+.mview .mem-list,
+.mview .mem-pin-list,
+.mview .mem-diff {
+  max-height: none;
+}
+
+.mview .mem-body {
+  grid-template-columns: minmax(240px, 340px) 1fr;
+}
+
+@media (max-width: 760px) {
+  .mview .mem-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Memory pane shell (features/memory/MemoryView.tsx, #3720). */
+.mview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.mview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}

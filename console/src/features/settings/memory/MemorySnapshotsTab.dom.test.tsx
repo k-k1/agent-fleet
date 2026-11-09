@@ -28,6 +28,8 @@ const { MemorySnapshotsTab } = await import("./MemorySnapshotsTab.tsx");
 const { useSettingsUI } = await import("../store.ts");
 const { t } = await import("../../../lib/i18n/index.ts");
 const { setSetting } = await import("../../../lib/settings.ts");
+const { useLayoutStore } = await import("../../../layout/store.ts");
+const { allViews } = await import("../../../layout/ops.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -499,8 +501,10 @@ describe("MemorySnapshotsTab history filter for Agent Fleet memory writes", () =
     const link = hint()!.querySelector<HTMLButtonElement>("button")!;
     expect(link.textContent).toBe(t("mem.hist_af_changes"));
     await act(async () => link.click());
-    expect(useSettingsUI.getState().settingsSection).toBe("memory");
-    expect(useSettingsUI.getState().settingsView).toBe("changes");
+    // The change list lives in the Memory view pane now (#3720); the modal gets out of its way.
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    const pane = allViews(useLayoutStore.getState().layout).find((v) => v.content.kind === "memory");
+    expect(pane?.content).toEqual({ kind: "memory", memoryView: "changes" });
   });
 
   it("lists them with the toggle on, and remembers the toggle", async () => {
