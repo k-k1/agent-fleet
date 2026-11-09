@@ -128,7 +128,7 @@ For parallel work, give each session its own worktree and this does not happen.
 
 ### A claude session will not resume because its conversation log was deleted
 
-See [Stopping, resuming and tidying up](../../member/05-stopping-and-tidying.md#a-claude-session-whose-conversation-log-was-deleted).
+See [Find a missing session or one that will not resume](../troubleshooting/sessions.md#a-claude-session-will-not-resume-because-its-conversation-log-was-deleted).
 
 ## Related
 

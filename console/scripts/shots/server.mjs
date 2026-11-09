@@ -75,7 +75,9 @@ const exact = {
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
     super_admin: false,
   }),
-  "/api/workspace": () => ({ state: "running", bootPhase: "" }),
+  // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
+  // (guide scene ws-agent-silent). Other runs keep the plain running workspace.
+  "/api/workspace": () => ({ state: "running", bootPhase: "", ...(process.env.SHOT_AGENT_SILENT ? { agentSilent: true } : {}) }),
   // A POST is "start a session" (the studio's attach): answer a name so the flow completes.
   "/api/sessions": (q, method) =>
     method === "POST"

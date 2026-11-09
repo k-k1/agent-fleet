@@ -171,3 +171,17 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | Page | What you can do |
 |---|---|
 | [Handle credentials safely](security/credentials.md) | Know where tokens and keys belong, and where never to write them |
+
+## Troubleshooting
+
+| Page | What you can do |
+|---|---|
+| [Fix a workspace that will not start or has stopped](troubleshooting/workspace.md) | Find the fix from the badge beside the power button, or a start or disk message |
+| [Find a missing session or one that will not resume](troubleshooting/sessions.md) | Fix sessions that vanished, will not resume or stopped partway, and sharing or scheduled runs that misbehave |
+| [Fix an agent's login or a missing model](troubleshooting/agents.md) | Fix an expired login, a model you cannot pick, or an assistant that stopped |
+| [Fix a failed clone or Git authentication](troubleshooting/git.md) | Fix failed clones, private-repository authentication and submodule fetches |
+| [Fix a preview or browser pane that does not show](troubleshooting/preview.md) | Find the fix from the error the browser pane or a preview URL shows |
+| [Fix MCP, cloud and Jira integrations](troubleshooting/integrations.md) | Fix MCP servers, AWS and Google Cloud commands, `jira`, and apps connected from outside |
+| [Fix the terminal, keys and phone layout](troubleshooting/terminal-phone.md) | Fix keys, copy and paste, the phone layout, and menus that do not appear |
+| [Read the frequently asked questions](troubleshooting/faq.md) | Read what to try first, and answers to common questions |
+| [Report a bug or request a feature](troubleshooting/report.md) | Tell the project about a bug in Agent Fleet itself, or a feature you want, with an issue |

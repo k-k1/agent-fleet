@@ -139,7 +139,7 @@ connection. Not this deployment's engine."** together with the model the last ch
   once the workspace is current ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
 - **Not responding**, beside the workspace power button: the workspace is running but its Agent has not
   answered the Control Plane for several minutes. Nothing in the Console will work until you **Stop workspace**
-  and start it again ([21](21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button)).
+  and start it again ([Fix a workspace that will not start or has stopped](../user/troubleshooting/workspace.md#not-responding-appears-beside-the-power-button)).
 - Colored `1`, `2`…: the number of the pane it is shown in. Press to jump to that pane.
 - "Untracked", "Added", "Modified", "Renamed", "Deleted": the file's Git change type.
 - The number on an assistant row: the conversation's message count.
@@ -276,12 +276,7 @@ gives the same menu again, from a right-click, its ⋯ button, or the Menu key w
 
 ## When a menu doesn't appear
 
-- While the workspace is stopped, menu items that run inside the workspace are disabled or hidden.
-- Operations the kind doesn't support, or that don't fit the current state, are not shown.
-- A right-click menu closes on an outside click, Escape, or when the window loses focus, and the focus goes
-  back to the item you opened it from.
-- Every one of these menus also opens from the keyboard with the **Menu key** (or **Shift+F10**) while the item
-  has focus.
+See [Fix the terminal, keys and phone layout](../user/troubleshooting/terminal-phone.md#a-menu-does-not-appear).
 
 ---
 

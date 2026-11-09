@@ -110,7 +110,7 @@ Sessions and shells that were already running keep the old version. Start a new 
 
 ### You are told an agent CLI could not be installed
 
-See [Troubleshooting](../../member/21-troubleshooting.md#starting-a-session-says-the-agents-cli-could-not-be-installed).
+See [Fix a workspace that will not start or has stopped](../troubleshooting/workspace.md#this-agents-cli-could-not-be-installed).
 
 ## Related
 

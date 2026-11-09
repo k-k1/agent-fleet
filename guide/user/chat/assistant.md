@@ -127,7 +127,7 @@ decides how the Fleet Operator behaves ([Adjust the automatic replies](../fleet/
 ### "Your Claude login has expired"
 
 The chat runs on claude and the workspace's Claude login has expired. Log in again with "**Re-authenticate**" on the notice,
-then send the same message again with "**Retry**" ([An agent stopped with "your login has expired"](../../member/21-troubleshooting.md#an-agent-stopped-with-your-login-has-expired)).
+then send the same message again with "**Retry**" ([An agent stopped with "your login has expired"](../troubleshooting/agents.md#the-agent-stopped-saying-its-login-has-expired)).
 
 ### A different agent answered
 

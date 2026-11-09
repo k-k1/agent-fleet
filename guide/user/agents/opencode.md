@@ -128,7 +128,7 @@ Check whether the card shows "**Restart opencode serve to apply**".
 
 ### It stays "working" and nothing comes back
 
-See [Troubleshooting](../../member/21-troubleshooting.md#an-opencode-session-says-working-but-nothing-arrives).
+See [Fix an agent's login or a missing model](../troubleshooting/agents.md#an-opencode-session-stays-working-and-nothing-comes-back).
 
 ## Related
 

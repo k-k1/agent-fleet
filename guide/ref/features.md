@@ -97,7 +97,7 @@ If a feature ships and does not appear here, it is not done
 | Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [Start from an issue or a ticket](../user/sessions/from-issues.md#how-sessions-and-tickets-are-linked); [repos.md](repos.md) for which providers |
 | Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../user/settings/notifications.md) |
 | A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [Tell a session about its pull request's review](../user/fleet/pr-feedback.md#a-session-watches-a-pull-request-itself) |
-| Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |
+| Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [Fix a workspace that will not start or has stopped](../user/troubleshooting/workspace.md#not-responding-appears-beside-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [Connect Discord and Slack](../user/integrations/chat-bridge.md) |

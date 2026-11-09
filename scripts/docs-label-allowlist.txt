@@ -5,12 +5,6 @@
 guide/member/README.ja.md: どうやるの？
 guide/member/README.md: how do I do this?
 guide/member/05-stopping-and-tidying.ja.md: 子 ≈$X
-# Strings the Control Plane or a CLI prints, not catalogue entries
-# (control-plane/preview_relay_error.go; the AWS CLI).
-guide/member/21-troubleshooting.md: The listener on port N changed or stopped. Reopen the port from the Console.
-guide/member/21-troubleshooting.md: Opening port N is not available until the workspace is restarted (its agent is older than this feature).
-guide/member/21-troubleshooting.md: Unable to locate credentials
 # A concrete value the Console fills into "Model: {name}".
 guide/member/badges-and-menus.md: Model: Qwen3.8 27B IQ4_XS
 guide/member/05-stopping-and-tidying.md: children ≈$X
-guide/member/21-troubleshooting.md: Too many temporarily opened ports. Close a server or add the port to the preview ports in Settings.

@@ -171,3 +171,17 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | ページ | できること |
 |---|---|
 | [資格情報を安全に扱う](security/credentials.ja.md) | トークンや鍵をどこに置き、どこに書かないかを知る |
+
+## 困ったとき
+
+| ページ | できること |
+|---|---|
+| [ワークスペースが起動しない・止まった](troubleshooting/workspace.ja.md) | 電源ボタンの横のバッジや、起動・ディスクのメッセージから直し方を探す |
+| [セッションが再開できない・見当たらない](troubleshooting/sessions.ja.md) | 消えた・再開できない・途中で止まったセッション、共有や定時実行の不調を直す |
+| [エージェントにログインできない・モデルが出ない](troubleshooting/agents.ja.md) | ログインの期限切れ、選べないモデル、止まったアシスタントを直す |
+| [クローンや認証に失敗する](troubleshooting/git.ja.md) | クローン、private リポジトリの認証、submodule の失敗を直す |
+| [プレビューやブラウザが表示されない](troubleshooting/preview.ja.md) | ブラウザペインやプレビューの URL に出るエラーから直し方を探す |
+| [MCP・クラウド・Jira が動かない](troubleshooting/integrations.ja.md) | MCP サーバー、AWS・Google Cloud のコマンド、`jira`、外から接続するアプリの不調を直す |
+| [ターミナルやスマートフォンで操作できない](troubleshooting/terminal-phone.ja.md) | キー操作、コピー＆ペースト、スマートフォンでの操作、出ないメニューを直す |
+| [よくある質問](troubleshooting/faq.ja.md) | 最初に試すことと、よく聞かれる質問の答えを読む |
+| [不具合を報告する・要望を出す](troubleshooting/report.ja.md) | Agent Fleet そのものの不具合や、ほしい機能を Issue で伝える |
