@@ -157,13 +157,13 @@ connection. Not this deployment's engine."** together with the model the last ch
 - "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
 - **"From operator", "Scheduled", "Manual fire", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
-  [a message from another session](11-many-sessions.md#messages-between-sessions). **"Via MCP: <name>"** (a
+  [a message from another session](../user/fleet/messages.md). **"Via MCP: <name>"** (a
   plug icon; just **"Via MCP"** when the name is unknown) marks a prompt that came in through the MCP connection
   of an outside assistant or client rather than from you: the agent is told it is not an instruction from you and
   will not treat it as your approval. **"Started by <name>"** marks the
   first prompt of a session another session started, and **"Stalled-tree notice"** the one Agent Fleet sends a
-  parent whose children have all gone quiet ([11](11-many-sessions.md#starting-sessions-from-a-session-child-sessions)).
-- **"Paused"** on a schedule row: that schedule is suspended ([11](11-many-sessions.md)).
+  parent whose children have all gone quiet ([Start child sessions from a session](../user/fleet/child-sessions.md)).
+- **"Paused"** on a schedule row: that schedule is suspended ([Run at a set time](../user/fleet/schedules.md)).
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
   stopped; **"Raise budget & resume…"** in its menu carries on ([Stop a session that spends too much with a budget](../user/sessions/budget.md#when-it-stops)).
 - **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
@@ -271,7 +271,7 @@ workspace is stopped, keep the browser's own menu.
 
 ### Cards in the sessions overview
 
-A card in the sessions overview pane ([11](11-many-sessions.md#seeing-every-running-session-at-once-the-sessions-overview))
+A card in the sessions overview pane ([See every running session](../user/fleet/overview.md))
 gives the same menu again, from a right-click, its ⋯ button, or the Menu key while the card has focus.
 
 ## When a menu doesn't appear

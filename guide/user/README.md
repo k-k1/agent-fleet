@@ -62,6 +62,21 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Write down how you work, once](agents/instructions.md) | Write your standing requests once so that every agent gets them |
 | [Bring your Claude Code setup](agents/bring-claude-setup.md) | Use your own skills, subagents and hooks in the workspace |
 
+## Fleet
+
+| Page | What you can do |
+|---|---|
+| [See every running session](fleet/overview.md) | Lay out the running sessions as cards and spot the ones waiting for you |
+| [See how sessions relate over time](fleet/graph.md) | See on a time axis which session started which, and what passed between them |
+| [Narrow the view with working sets](fleet/working-sets.md) | Group repositories and conversations per piece of work and switch what the left pane shows |
+| [Start child sessions from a session](fleet/child-sessions.md) | Have a session start other sessions and hand them parts of the work |
+| [Let sessions message each other](fleet/messages.md) | Have sessions running side by side send each other short messages |
+| [Tell a session about its pull request's review](fleet/pr-feedback.md) | Tell the session that opened a PR about failed CI and review comments |
+| [Let a session see the fleet](fleet/fleet-visibility.md) | Let a session see the other sessions' state and leave you notes |
+| [Hand work to the Fleet Operator](fleet/operator.md) | Have it start sessions, instruct them and take their reports, from chat |
+| [Ways to use the Fleet Operator](fleet/operator-patterns.md) | Patterns that work, such as parallel implementation and cross-review |
+| [Run at a set time](fleet/schedules.md) | Have an agent work at set times or intervals |
+
 ## Integrations
 
 | Page | What you can do |
