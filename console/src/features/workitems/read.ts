@@ -866,14 +866,50 @@ export function titleForItem(item: WorkItem, max = 60): string {
   return head.length > max ? head.slice(0, max - 1) + "…" : head;
 }
 
-/** Which local working copy an item should launch in. GitHub gives "owner/name"; the
- * folder is usually just "name", and a query's repoHint wins when the user set one. */
-export function repoForItem(item: WorkItem, hint: string, folders: string[]): string {
-  const candidates = [hint, item.repo.split("/")[1] || "", item.repo].filter(Boolean);
-  for (const c of candidates) {
-    if (folders.includes(c)) return c;
+/** Where a pre-selected launch repository came from; "" = nothing resolved. The panel names the
+ * "project" source so that a remembered choice that is wrong is visible before Start. */
+export type LaunchRepoSource = "link" | "project" | "query" | "item" | "";
+
+/** Key of the per-member project -> repository memory (the workItemRepoMap preference):
+ * `jira:<PROJECT>` for a Jira issue key, "" for anything else. A GitHub or Bitbucket item already
+ * names its repository, so only Jira, which names none, needs one. */
+export function repoMapScope(item: Pick<WorkItem, "provider" | "key">): string {
+  if (item.provider !== "jira") return "";
+  const m = /^([A-Z][A-Z0-9_]*)-\d+$/.exec(item.key);
+  return m ? `jira:${m[1]}` : "";
+}
+
+/** The Jira project of a repoMapScope key, for display ("jira:CPAAS" -> "CPAAS"). */
+export function repoMapProject(scope: string): string {
+  return scope.slice(scope.indexOf(":") + 1);
+}
+
+/** The launch repository for an item, first match against an existing folder wins: the working
+ * copy the clicked link was written in, the saved query's repoHint, the remembered repository of
+ * the item's project, then the item's own repository (GitHub gives "owner/name"; the folder is
+ * usually just "name"). The query hint is set by hand and the memory is learned, so the hint wins:
+ * the other way round, two queries over one project with different hints would each overwrite
+ * the memory and pre-select the other's repository. A candidate that names no existing
+ * folder (a removed or renamed clone) is skipped, never selected. Nothing matching is "": the
+ * panel then makes the user choose instead of offering the first repository, which is how
+ * sessions were started in the wrong one. */
+export function resolveLaunchRepo(
+  item: WorkItem,
+  hints: { link?: string; query?: string; map?: Record<string, string> },
+  folders: string[],
+): { repo: string; source: LaunchRepoSource } {
+  const scope = repoMapScope(item);
+  const candidates: [string, LaunchRepoSource][] = [
+    [hints.link || "", "link"],
+    [hints.query || "", "query"],
+    [(scope && hints.map?.[scope]) || "", "project"],
+    [item.repo.split("/")[1] || "", "item"],
+    [item.repo, "item"],
+  ];
+  for (const [c, source] of candidates) {
+    if (c && folders.includes(c)) return { repo: c, source };
   }
-  return "";
+  return { repo: "", source: "" };
 }
 
 /** Ledger lookup: the sessions already started for an item key. */

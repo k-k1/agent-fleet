@@ -22,7 +22,8 @@ import {
   railLabels,
   railWhen,
   relTime,
-  repoForItem,
+  repoMapScope,
+  resolveLaunchRepo,
   sessionsForItem,
   sessionsOnItem,
   shortKey,
@@ -397,21 +398,52 @@ describe("titleForItem", () => {
   });
 });
 
-describe("repoForItem", () => {
-  it("matches an existing folder in order: repoHint, the name of owner/name, then the full name", () => {
-    expect(repoForItem(item(), "myfork", ["web", "myfork"])).toBe("myfork");
-    expect(repoForItem(item(), "", ["web"])).toBe("web");
-    expect(repoForItem(item(), "", ["acme/web"])).toBe("acme/web");
+describe("resolveLaunchRepo for an item that names its repository", () => {
+  it("matches an existing folder in order: the hint, the name of owner/name, then the full name", () => {
+    expect(resolveLaunchRepo(item(), { query: "myfork" }, ["web", "myfork"]).repo).toBe("myfork");
+    expect(resolveLaunchRepo(item(), {}, ["web"]).repo).toBe("web");
+    expect(resolveLaunchRepo(item(), {}, ["acme/web"]).repo).toBe("acme/web");
   });
 
   it("returns empty on no match, letting the launch hub ask", () => {
-    expect(repoForItem(item(), "", ["other"])).toBe("");
+    expect(resolveLaunchRepo(item(), {}, ["other"]).repo).toBe("");
   });
 
   it("matches a Bitbucket workspace/repo the same way as GitHub", () => {
     const pr = item({ provider: "bitbucket", kind: "pr", key: "acme/web#7", repo: "acme/web" });
-    expect(repoForItem(pr, "", ["web"])).toBe("web");
+    expect(resolveLaunchRepo(pr, {}, ["web"]).repo).toBe("web");
     expect(shortKey(pr.key)).toBe("#7");
+  });
+});
+
+describe("resolveLaunchRepo", () => {
+  const jira = item({ provider: "jira", key: "CPAAS-8", repo: "" });
+  const folders = ["web", "api", "sdk"];
+
+  it("orders the link, the query hint, the project memory, then the item's repository", () => {
+    const map = { "jira:CPAAS": "api" };
+    expect(resolveLaunchRepo(jira, { link: "web", query: "sdk", map }, folders)).toEqual({ repo: "web", source: "link" });
+    expect(resolveLaunchRepo(jira, { query: "sdk", map }, folders)).toEqual({ repo: "sdk", source: "query" });
+    expect(resolveLaunchRepo(jira, { map }, folders)).toEqual({ repo: "api", source: "project" });
+    expect(resolveLaunchRepo(item(), { map }, ["web"])).toEqual({ repo: "web", source: "item" });
+  });
+
+  it("skips a remembered repository that no longer exists, and resolves nothing rather than guessing", () => {
+    expect(resolveLaunchRepo(jira, { map: { "jira:CPAAS": "gone" }, query: "gone" }, folders)).toEqual({ repo: "", source: "" });
+    expect(resolveLaunchRepo(jira, { map: { "jira:CPAAS": "gone" } }, folders)).toEqual({ repo: "", source: "" });
+  });
+
+  it("uses another project's memory for nothing", () => {
+    expect(resolveLaunchRepo(jira, { map: { "jira:OTHER": "api" } }, folders).repo).toBe("");
+  });
+});
+
+describe("repoMapScope", () => {
+  it("keys a Jira issue by its project and nothing else at all", () => {
+    expect(repoMapScope({ provider: "jira", key: "CPAAS-8" })).toBe("jira:CPAAS");
+    expect(repoMapScope({ provider: "jira", key: "A_B2-10" })).toBe("jira:A_B2");
+    expect(repoMapScope({ provider: "jira", key: "not a key" })).toBe("");
+    expect(repoMapScope({ provider: "github", key: "acme/web#3" })).toBe("");
   });
 });
 
@@ -498,11 +530,11 @@ describe("promptForItem — how to read the body, per provider", () => {
   });
 });
 
-describe("repoForItem — Jira", () => {
-  it("has only repoHint to go on, because Jira carries no repo", () => {
+describe("resolveLaunchRepo — Jira", () => {
+  it("resolves nothing without a hint, because Jira carries no repo", () => {
     const jira = item({ provider: "jira", key: "PROJ-123", repo: "" });
-    expect(repoForItem(jira, "webshop", ["webshop"])).toBe("webshop");
-    expect(repoForItem(jira, "", ["webshop"])).toBe("");
+    expect(resolveLaunchRepo(jira, { query: "webshop" }, ["webshop"]).repo).toBe("webshop");
+    expect(resolveLaunchRepo(jira, {}, ["webshop"]).repo).toBe("");
   });
 });
 

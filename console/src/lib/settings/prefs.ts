@@ -90,6 +90,13 @@ function accumulated<T>(d: T, opts: PrefOpts<T> = {}): Pref<T> {
 
 const isTrue = (v: unknown): boolean => v === true;
 
+const normalizeStringMap = (v: unknown): Record<string, string> => {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, x] of Object.entries(v)) if (typeof x === "string" && x) out[k] = x;
+  return out;
+};
+
 const normalizeAppearanceShuffle = (v: unknown): AppearanceShuffleMode =>
   APPEARANCE_SHUFFLE_MODES.find((m) => m.id === v)?.id ?? "off";
 
@@ -726,6 +733,11 @@ const PREFS = {
   // Clearing this does NOT fall back to the server's temp/<slug>; clearing the branch field in
   // the launch dialog is what does that.
   workItemBranchTemplate: synced(""),
+  // Which base repository a tracker project's tickets launch in, keyed by repoMapScope
+  // (`jira:<PROJECT>`), learned from the work item panel's launch. Accumulated: an empty server
+  // copy must not wipe what every launch so far has taught, because a lost entry silently brings
+  // back the wrong-repository launches this exists to stop.
+  workItemRepoMap: accumulated<Record<string, string>>({}, { normalize: normalizeStringMap }),
   // Working set definitions (docs/log/52 + ADR 0036): named sets of { working copies,
   // conversations, sessions without a repo } that narrow the left pane down to one piece of
   // work. The definitions sync across devices (server ui-prefs); which set is currently being

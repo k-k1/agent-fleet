@@ -684,6 +684,7 @@
   "usageChipsPinned",
   "usageChipsFolded",
   "workItemBranchTemplate",
+  "workItemRepoMap",
   "workingSets",
   "workingSetActive",
   "launchTemplates",
@@ -917,6 +918,7 @@
   "usageChipsPinned": [],
   "usageChipsFolded": [],
   "workItemBranchTemplate": "",
+  "workItemRepoMap": {},
   "workingSets": [],
   "workingSetActive": "",
   "launchTemplates": {},
@@ -1150,6 +1152,7 @@
   "usageChipsPinned": [],
   "usageChipsFolded": [],
   "workItemBranchTemplate": "",
+  "workItemRepoMap": {},
   "workingSets": [],
   "workingSetActive": "",
   "launchTemplates": {},
@@ -1707,6 +1710,10 @@
    "deviceLocal": false,
    "accumulated": false
   },
+  "workItemRepoMap": {
+   "deviceLocal": false,
+   "accumulated": true
+  },
   "workingSets": {
    "deviceLocal": false,
    "accumulated": true
@@ -1999,6 +2006,9 @@
     "x"
    ],
    "workItemBranchTemplate": "x",
+   "workItemRepoMap": {
+    "x": "y"
+   },
    "workingSets": [
     {
      "id": "w1",
@@ -2554,6 +2564,9 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -2856,6 +2869,9 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -3462,6 +3478,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -3778,6 +3795,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -4094,6 +4112,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -4352,6 +4371,9 @@
        "x"
       ],
       "workItemBranchTemplate": "x",
+      "workItemRepoMap": {
+       "x": "y"
+      },
       "workingSets": [
        {
         "id": "w1",
@@ -4681,6 +4703,9 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -4924,6 +4949,9 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -5080,6 +5108,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -5207,6 +5236,9 @@
       "quickRepliesPinned": [
        "x"
       ],
+      "workItemRepoMap": {
+       "x": "y"
+      },
       "workingSets": [
        {
         "id": "w1",
@@ -5405,6 +5437,9 @@
     "quickRepliesPinned": [
      "x"
     ],
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -5562,6 +5597,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -5606,6 +5642,9 @@
       "quickRepliesPinned": [
        "x"
       ],
+      "workItemRepoMap": {
+       "x": "y"
+      },
       "workingSets": [
        {
         "id": "w1",
@@ -5721,6 +5760,9 @@
     "quickRepliesPinned": [
      "x"
     ],
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -6116,6 +6158,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -6723,6 +6766,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -6850,6 +6894,9 @@
       "quickRepliesPinned": [
        "x"
       ],
+      "workItemRepoMap": {
+       "x": "y"
+      },
       "workingSets": [
        {
         "id": "w1",
@@ -7048,6 +7095,9 @@
     "quickRepliesPinned": [
      "x"
     ],
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -7205,6 +7255,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -7249,6 +7300,9 @@
       "quickRepliesPinned": [
        "x"
       ],
+      "workItemRepoMap": {
+       "x": "y"
+      },
       "workingSets": [
        {
         "id": "w1",
@@ -7364,6 +7418,9 @@
     "quickRepliesPinned": [
      "x"
     ],
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -7682,6 +7739,9 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -7925,6 +7985,9 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -8081,6 +8144,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -8208,6 +8272,9 @@
       "quickRepliesPinned": [
        "x"
       ],
+      "workItemRepoMap": {
+       "x": "y"
+      },
       "workingSets": [
        {
         "id": "w1",
@@ -8406,6 +8473,9 @@
     "quickRepliesPinned": [
      "x"
     ],
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -8563,6 +8633,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -8607,6 +8678,9 @@
       "quickRepliesPinned": [
        "x"
       ],
+      "workItemRepoMap": {
+       "x": "y"
+      },
       "workingSets": [
        {
         "id": "w1",
@@ -8722,6 +8796,9 @@
     "quickRepliesPinned": [
      "x"
     ],
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -8879,6 +8956,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory",
@@ -9073,6 +9151,9 @@
        "x"
       ],
       "workItemBranchTemplate": "x",
+      "workItemRepoMap": {
+       "x": "y"
+      },
       "workingSets": [
        {
         "id": "w1",
@@ -9258,6 +9339,7 @@
     "usageChipsPinned",
     "usageChipsFolded",
     "workItemBranchTemplate",
+    "workItemRepoMap",
     "workingSets",
     "workingSetActive",
     "launchTemplates",
@@ -9473,6 +9555,9 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
+    "workItemRepoMap": {
+     "x": "y"
+    },
     "workingSets": [
      {
       "id": "w1",
@@ -9638,6 +9723,7 @@
   "usageChipsPinned": 1,
   "usageChipsFolded": 1,
   "workItemBranchTemplate": 1,
+  "workItemRepoMap": 1,
   "workingSets": 1,
   "workingSetActive": 1,
   "launchTemplates": 1,
@@ -9765,6 +9851,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory",
@@ -9930,6 +10017,7 @@
     "usageChipsPinned",
     "usageChipsFolded",
     "workItemBranchTemplate",
+    "workItemRepoMap",
     "workingSets",
     "workingSetActive",
     "launchTemplates",
@@ -10104,6 +10192,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -10290,6 +10379,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -10435,6 +10525,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -10608,6 +10699,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -10978,6 +11070,7 @@
       "usageChipsPinned",
       "usageChipsFolded",
       "workItemBranchTemplate",
+      "workItemRepoMap",
       "workingSets",
       "launchTemplates",
       "launchHistory"
@@ -11439,6 +11532,7 @@
      "usageChipsPinned",
      "usageChipsFolded",
      "workItemBranchTemplate",
+     "workItemRepoMap",
      "workingSets",
      "workingSetActive",
      "launchTemplates",
@@ -11703,6 +11797,7 @@
      "usageChipsPinned",
      "usageChipsFolded",
      "workItemBranchTemplate",
+     "workItemRepoMap",
      "workingSets",
      "workingSetActive",
      "launchTemplates",
@@ -11832,6 +11927,7 @@
        "usageChipsPinned",
        "usageChipsFolded",
        "workItemBranchTemplate",
+       "workItemRepoMap",
        "workingSets",
        "launchTemplates",
        "launchHistory",
@@ -12094,6 +12190,7 @@
      "usageChipsPinned",
      "usageChipsFolded",
      "workItemBranchTemplate",
+     "workItemRepoMap",
      "workingSets",
      "workingSetActive",
      "launchTemplates",
@@ -12411,6 +12508,7 @@
     "usageChipsPinned",
     "usageChipsFolded",
     "workItemBranchTemplate",
+    "workItemRepoMap",
     "workingSets",
     "workingSetActive",
     "launchTemplates",
@@ -12564,6 +12662,7 @@
        "usageChipsPinned",
        "usageChipsFolded",
        "workItemBranchTemplate",
+       "workItemRepoMap",
        "workingSets",
        "launchTemplates",
        "launchHistory"
