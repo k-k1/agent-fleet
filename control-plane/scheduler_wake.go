@@ -74,7 +74,8 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 	// A kind the Agent does not register is refused before the Workspace is woken for it. A row
 	// saved before create/update validated agent_kind can still carry one; it used to launch
 	// claude silently. An assistant fire ignores agent_kind.
-	if sch.SessionMode != "assistant" {
+	wakeOnly := sch.SessionMode == scheduleModeWake
+	if sch.SessionMode != "assistant" && !wakeOnly {
 		if err := agentkinds.CheckCreateKind(scheduleInjectKind(sch.AgentKind)); err != nil {
 			return "", "", fmt.Errorf("schedule agent_kind: %w", err)
 		}
@@ -83,12 +84,12 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 	// it, or one the snapshot has since stopped accepting, must not wake a Workspace to run on
 	// the default route instead. This is the one entry every fire passes through: a new session,
 	// a reused one's recreate and a rotation all create from here on.
-	if code, err := scheduleRouteError(sch.AgentKind, sch.Route, sch.RouteConnection, sch.SessionMode); err != nil {
+	if code, err := scheduleRouteError(sch.AgentKind, sch.Route, sch.RouteConnection, sch.SessionMode); err != nil && !wakeOnly {
 		return "", "", fmt.Errorf("schedule route (%s): %w", code, err)
 	}
 	// A provided route is judged at the fire, not at save: a budget used up this month or a
 	// grant switched off refuses this run, and a later month's run may pass (ADR 0129 D3).
-	if sch.SessionMode != "assistant" {
+	if sch.SessionMode != "assistant" && !wakeOnly {
 		if aerr := providedRouteCreateRefusal(ctx, sch.MembershipID, sch.Route); aerr != nil {
 			return "", "", fmt.Errorf("schedule route (%s): %s", aerr.code, aerr.message)
 		}
@@ -116,6 +117,11 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 	shouldWake, soft := wakeDecision(state, sch.WakePolicy)
 	if soft != "" {
 		return soft, "", nil
+	}
+	if wakeOnly && !shouldWake {
+		// Already running (or starting): the engine fires the watch itself, so there is nothing
+		// to start and no reason to hold the workspace awake.
+		return statusWakeRunning, "", nil
 	}
 	// 3. keep-alive: hold a tier-2 pseudo-connection so the reaper cannot stop this
 	//    workspace while the session runs; release after the settle window (★1). The
@@ -174,6 +180,11 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 		log.Printf("scheduler: %s recovered — agent became ready after the start deadline (schedule %s)", res.ws.ID, sch.ID)
 		_ = f.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 		_ = f.mgr.touchWorkspace(ctx, res.ws.ID)
+	}
+	if wakeOnly {
+		// Up and answering is all a wake is for: no prompt, no message to the Agent. On start the
+		// engine fires every time watch that fell due from its own store.
+		return statusWakeFired, "", nil
 	}
 	// session_mode=assistant: run one assistant-chat turn
 	// instead of driving a session.

@@ -73,6 +73,16 @@ A child started by another session can have the notices go to its parent (`notif
 - The watch then belongs to the parent. The parent lists and ends it, and it lasts until the parent is archived, not the child
 - The notice says which child it is for
 
+### Timers
+
+An agent can also set a timer (`watch` with `source: time`): "tell me in 20 minutes" or "at 15:00 JST". Times are kept in UTC; the agent gives either a full time with an offset (`2026-11-09T15:00:00+09:00`) or a wait (`in 20m`, `3d`), at most 30 days ahead.
+
+- **While the workspace is running** the timer fires from the workspace, and the session is told the same way as for a pull request
+- **`wake`** also asks the Control Plane to start the workspace if it is stopped at that time, so the agent can be told then. It does nothing else: no prompt is sent, and the workspace may go back to stopped afterwards as usual. It needs the Control Plane's scheduler (the scheduled-execution feature) to be running; where it is not, the agent's request is refused rather than accepted and never fired
+- **Without `wake`**, a timer that falls due while the workspace is stopped is told at the next start, marked late. It is dropped if its watch has expired by then (a timer lives until a day after it is due)
+- The booking made for `wake` does not appear under Scheduled execution and cannot be edited there. It is removed when the timer fires, when the agent ends the watch, or when the session holding it ends
+- `list_watches` shows each timer's due time and whether it has a wake
+
 ### Limits on watches
 
 | Rule | Value |
@@ -80,6 +90,7 @@ A child started by another session can have the notices go to its parent (`notif
 | When a watch ends | After its first notice (unless the agent asks to keep it), and in any case after 7 days (30 at most) or when the session holding it is archived |
 | Watches per session | 20. A watch for the parent counts against the parent's 20, and against the child's 20 together with the child's own watches (`list_watches` names the child each came from) |
 | Watches per workspace | 200 |
+| Timers with `wake` | 250 outstanding wake bookings per member, shared by all that member's workspaces |
 | Bitbucket watches | 10 per workspace, read about every 5 minutes (to stay within Bitbucket's hourly request limit) |
 
 - On Bitbucket, new unresolved review threads cannot be watched: Bitbucket does not report which threads are resolved
