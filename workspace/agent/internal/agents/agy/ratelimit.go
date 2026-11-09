@@ -45,9 +45,9 @@ func LimitInMessage(msg string, now time.Time) (resetAt time.Time, ok bool) {
 
 var resetUnits = map[string]time.Duration{
 	"d": 24 * time.Hour, "day": 24 * time.Hour, "days": 24 * time.Hour,
-	"h": time.Hour, "hour": time.Hour, "hours": time.Hour,
-	"m": time.Minute, "min": time.Minute, "minute": time.Minute, "minutes": time.Minute,
-	"s": time.Second, "sec": time.Second, "second": time.Second, "seconds": time.Second,
+	"h": time.Hour, "hr": time.Hour, "hrs": time.Hour, "hour": time.Hour, "hours": time.Hour,
+	"m": time.Minute, "min": time.Minute, "mins": time.Minute, "minute": time.Minute, "minutes": time.Minute,
+	"s": time.Second, "sec": time.Second, "secs": time.Second, "second": time.Second, "seconds": time.Second,
 }
 
 // resetDuration reads "108h50m38s" / "1d 2h" / "2 days". Any unit it does not know makes the

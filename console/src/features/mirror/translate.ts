@@ -133,7 +133,7 @@ function cjkCount(s: string): number {
 
 // A Japanese sentence closed with an ASCII mark ("実装完了. see the diff") is still a sentence.
 // The mark must end a word: a file name such as 設定.pdf in an English table is a label.
-const ASCII_SENTENCE_END = /^[.!?]+(\s|$)/;
+const ASCII_SENTENCE_END = /^[.!?]+([\s\u3000]|$)/;
 
 /** CJK characters that read as Japanese prose rather than a name standing in English text. */
 function cjkProseCount(prose: string): number {

@@ -119,7 +119,8 @@ describe("looksForeign", () => {
     // A sentence mark makes the run prose, however short.
     expect(looksForeign("実装完了。see the diff for the details of the change", "ja")).toBe(false);
     expect(looksForeign("実装完了. see the diff for the details of the change", "ja")).toBe(false);
-    // Longer than a label: prose even without a mark (28 characters, about 18% of the text).
+    expect(looksForeign("実装完了.\u3000see the diff for the details of the change", "ja")).toBe(false);
+    // Longer than a label: prose even without a mark (28 characters, about 24% of the text).
     const long = "設定画面からモデルを選び直してから翻訳ボタンを押してみて";
     const english =
       "and then check the answer again in the mirror pane, because the rest of this report is " +
