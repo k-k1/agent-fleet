@@ -146,4 +146,4 @@ Slack で返信を受け付けるには、App-level トークンが要ります�
 ## 関連
 
 - [たくさんのセッションを動かす](../../member/11-many-sessions.ja.md)：フリート・オペレーター
-- [設定](../../member/20-settings.ja.md#通知)：Console とブラウザの通知
+- [設定](../settings/notifications.ja.md)：Console とブラウザの通知

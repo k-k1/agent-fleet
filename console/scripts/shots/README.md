@@ -94,7 +94,7 @@ Scenes marked `guide: true` are for the rewritten guide and the public docs site
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
 `aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `chat-settings`, `ops-settings`,
 `images-gallery`, `images-settings`, the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
-`ws-databases`, the sessions pages' `sessions-budget`, the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`, the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`, and the agent pages' `agents-*` scenes) runs on its own:
+`ws-databases`, the sessions pages' `sessions-budget`, the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`, the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`, the agent pages' `agents-*` scenes, the team pages' `team-handover`, `team-share`, `team-inbox-compose` and `team-limits`, the chat pages' `chatpages-*`, the outside-access pages' `outside-*` and the settings pages' `settings-*`) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -114,6 +114,10 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions
 node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-budget --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only code-git-hosting --out <dir>  # and code-internal-repos, code-clone, code-gitflow, code-repo-rows, code-repo-menu, code-changes, code-svn, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only agents-claude --out <dir>  # and every other agents-* scene, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only team-handover --out <dir>  # and team-share, team-inbox, team-inbox-compose, team-limits, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only chatpages-chat --out <dir>  # and every other chatpages-* scene, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only outside-token-issued --out <dir>  # and outside-apps, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only settings-display --out <dir>  # and settings-notifications, settings-tts, one per run
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that

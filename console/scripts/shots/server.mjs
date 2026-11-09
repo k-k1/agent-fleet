@@ -162,8 +162,14 @@ const exact = {
   }),
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
-  "/api/chat/conversations": () => ({ conversations: fx.conversations(LOCALE) }),
-  "/api/assistants": () => fx.assistants(LOCALE),
+  // The chat pages (SHOT_CHATPAGES_GUIDE): the real builtins plus a translation assistant, and a long
+  // conversation on top of the list.
+  "/api/chat/conversations": () => ({
+    conversations: process.env.SHOT_CHATPAGES_GUIDE
+      ? [(({ messages, plan, context, tools, ...meta }) => meta)(fx.chatPagesConversation(LOCALE, "c-pay-1")), ...fx.conversations(LOCALE)]
+      : fx.conversations(LOCALE),
+  }),
+  "/api/assistants": () => (process.env.SHOT_CHATPAGES_GUIDE ? { assistants: fx.chatPagesAssistants(LOCALE) } : fx.assistants(LOCALE)),
   // Work items (docs/log/80). Unhandled routes only answer {}, so without this the rail's new
   // surface always renders empty and verifies nothing.
   "/api/work-items": () => fx.workItems(LOCALE),
@@ -181,7 +187,7 @@ const exact = {
     bitbucket: { configured: true },
     jira: { configured: true },
   }),
-  "/api/memos": () => fx.memos(LOCALE),
+  "/api/memos": () => (process.env.SHOT_CHATPAGES_GUIDE ? fx.chatPagesMemos(LOCALE) : fx.memos(LOCALE)),
   "/api/memo-categories": () => fx.memoCategories(LOCALE),
   "/api/schedules": () => fx.schedules(LOCALE),
   // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
@@ -416,6 +422,9 @@ const exact = {
     method === "POST" ? {} : fx.imagegenKnowledge(LOCALE, q.get("scope") || "family", q.get("key") || ""),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
+  // The settings pages (SHOT_SETTINGS_GUIDE): both speech engines ready, so the read-aloud tab
+  // shows its VOICEVOX rows. Without it the status stays unknown, as it always was.
+  ...(process.env.SHOT_SETTINGS_GUIDE ? { "/api/tts/status": () => fx.settingsTtsStatus() } : {}),
   "/api/internal-git/repos": () => ({ repos: process.env.SHOT_CODE_GUIDE ? fx.codeGuideInternalRepos() : [] }),
   // The clone dialog's picker for the code pages (SHOT_CODE_GUIDE): Bitbucket's repositories and
   // the branches of the one the scene picks.
@@ -425,7 +434,11 @@ const exact = {
         "/api/connections/git/bitbucket.org/branches": () => fx.codeGuideBranches(),
       }
     : {}),
-  "/api/pat": () => ({}),
+  // The outside-access pages (SHOT_OUTSIDE_GUIDE): two tokens, a connected app, and an issue that
+  // answers with a once-shown token. Without it the tab stays empty, as it always was.
+  "/api/pat": (q, method) =>
+    process.env.SHOT_OUTSIDE_GUIDE ? (method === "POST" ? fx.outsidePatIssued() : fx.outsidePats()) : {},
+  ...(process.env.SHOT_OUTSIDE_GUIDE ? { "/api/mcp-oauth/grants": () => fx.outsideGrants() } : {}),
   "/api/tts/dict": () => ({ entries: [] }),
   "/api/workspace/stats": () => fx.stats(),
   // Preview subdomains (docs/log/81): the issued URLs and the per-workspace settings. This
@@ -466,6 +479,15 @@ const exact = {
         "/api/env/databases": () => fx.wsGuideDatabases(),
       }
     : {}),
+  // The share dialog's recipients and Settings › Limit board for the user guide's team pages,
+  // served only to a run that asks (SHOT_TEAM_GUIDE).
+  ...(process.env.SHOT_TEAM_GUIDE
+    ? {
+        "/api/session-share-recipients": () => fx.teamGuideMembers(),
+        "/api/limit-board/me": () => fx.teamGuideLimitMe(),
+        "/api/limit-board": () => fx.teamGuideLimitBoard(),
+      }
+    : {}),
   // The left rail's Changes view — cross-repo, one call (see FilesChanges).
   "/api/fs/changes": () => fx.fsChanges(LOCALE),
   // The file viewer's git change marks (CodeView LineMarks). None: the fictional files are clean.
@@ -476,6 +498,18 @@ const re = [
   // The budget dialog of the sessions guide (SHOT_SESSIONS_GUIDE): the spend of the session its
   // budget stopped. Without it the route stays unhandled, as it always was.
   ...(process.env.SHOT_SESSIONS_GUIDE ? [[/^\/api\/sessions\/([^/]+)\/spend$/, (m) => fx.sessionSpendGuide(m[1])]] : []),
+  // The hand-to-member dialog of the team pages (SHOT_TEAM_GUIDE): who it can go to, and a
+  // working copy with commits not pushed yet.
+  ...(process.env.SHOT_TEAM_GUIDE
+    ? [
+        [/^\/api\/sessions\/([^/]+)\/handoff-recipients$/, () => fx.teamGuideMembers()],
+        [/^\/api\/sessions\/([^/]+)\/handoff-context$/, () => fx.teamGuideHandoffContext()],
+      ]
+    : []),
+  // The recent calls of a token or a connected app (SHOT_OUTSIDE_GUIDE).
+  ...(process.env.SHOT_OUTSIDE_GUIDE
+    ? [[/^\/api\/(?:pat|mcp-oauth\/grants)\/([^/]+)\/calls$/, () => fx.outsideCalls()]]
+    : []),
   // The move dialog's preview (ADR 0115) for the move scene.
   [/^\/api\/sessions\/([^/]+)\/move\/preview$/, (m) => fx.movePreview(LOCALE, m[1])],
   // The model picker of a target kind: invented ids, so no real third-party model is named.
@@ -550,7 +584,10 @@ const re = [
   [/^\/api\/repos\/([^/]+)\/identity$/, () => ({ name: "Demo User", email: "demo@example.com" })],
   [/^\/api\/repos\/([^/]+)\/show$/, (m, q) => fx.show(LOCALE, q.get("sha") || "")],
   [/^\/api\/repos\/([^/]+)\/diff$/, (m, q) => fx.diff(LOCALE, q.get("path") || "")],
-  [/^\/api\/chat\/conversations\/([^/]+)$/, (m) => fx.conversation(LOCALE, decodeURIComponent(m[1]))],
+  [/^\/api\/chat\/conversations\/([^/]+)$/, (m) =>
+    process.env.SHOT_CHATPAGES_GUIDE && m[1] === "c-pay-1"
+      ? fx.chatPagesConversation(LOCALE, "c-pay-1")
+      : fx.conversation(LOCALE, decodeURIComponent(m[1]))],
   [/^\/api\/usage\/series$/, (m, q) => fx.usageSeries(LOCALE, q)],
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/tree$/, (m, q) =>

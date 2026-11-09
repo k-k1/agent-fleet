@@ -180,7 +180,7 @@ its uncommitted changes when the row says so)
 - **While the owner's workspace is stopped, the history cannot be read**: the recipient sees
   a note saying so.
 - The list refreshes periodically; **"Refresh"** in Shared sessions pulls it right now
-  ([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
+  ([Share a conversation](../user/team/share.md)).
 
 ### I sent something from a session shared with me, but the agent does nothing
 
@@ -191,7 +191,7 @@ place.
 
 If the outcome of a send could not be confirmed, nothing is re-sent automatically, on purpose.
 Use **"Check result"** to find out where it stands
-([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
+([Share a conversation](../user/team/share.md)).
 
 ### A scheduled run doesn't fire
 
@@ -362,7 +362,7 @@ summary forward and continue) or open a **new chat** and hand over just the esse
 Starting an exchange above 90% auto-compacts first (can be turned off in ⚙ Settings →
 Assistant), but exceeding the limit before that point produces this state. Lowering the
 **automatic compaction threshold** in ⚙ Settings → Assistant makes it less likely to recur
-([10](10-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
+([Ask an assistant](../user/chat/assistant.md#compact-a-long-conversation)).
 
 ## Repositories and git
 
@@ -562,7 +562,7 @@ signed in, and a session picks the change up from the next one you start.
 
 Open **Recent calls** under the app (⚙ Settings → Outside access → MCP tokens & apps → **Connected apps**) and check the HTTP status of
 its requests and how many tools the `tools/list` request returned. Press **Refresh** if the list looks empty, and
-reconnect from the app if needed. The details are in ([19](19-outside-access.md#recent-calls-when-an-app-connects-but-shows-no-tools)).
+reconnect from the app if needed. The details are in [Connect a remote MCP client by signing in](../user/outside/oauth-client.md#connected-but-no-tools-appear).
 
 ### Jira says boards, sprints and epics are "not available"
 
@@ -654,7 +654,7 @@ with the **≡ (menu)** at the top left of the screen ([02](02-console-basics.md
 ### Only the terminal stays dark on the light theme
 
 This is known behavior. Even after switching themes, the terminal (the black screen) background stays dark. The file
-viewer and other screens follow the theme ([20 Display](20-settings.md#display)).
+viewer and other screens follow the theme ([Change the display](../user/settings/display.md#change-the-display)).
 
 ## FAQ
 
@@ -693,7 +693,7 @@ billing **"Off"**, or "Use opencode" off, it never appears, key or not
 No. The recipient can save what was displayed, so **unsharing only ends further access**. A
 copy they already saved cannot be recalled. Before sharing, check what the conversation
 exposes (secrets in it are not detected for you). See
-[12](12-collaboration.md#sharing-a-conversation-shared-sessions).
+[Share a conversation](../user/team/share.md).
 
 **Q. Does "Models to exclude" stop the billing?**
 It prevents picking one by accident; it is not a hard billing guard. The model disappears from

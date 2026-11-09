@@ -230,4 +230,4 @@ selecting a range). This action is not in the file's right-click menu.
 - The file is **passed by path**, and the session reads and writes it itself. This suits work that produces file output, such as translating a large file.
 
 You can also tag items with a "Category" and pile them up in the **memo queue** to send in a
-batch later ([10 Chat and memos](10-chat-memo.md)).
+batch later ([Collect memos and hand them over](../user/chat/memos.md)).

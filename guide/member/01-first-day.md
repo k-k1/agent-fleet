@@ -30,7 +30,7 @@ are checked off automatically. Only the top two items are required for everyone.
 Next comes a two-way choice: **"Where do you want to start?"** (you can use both later).
 
 - **Ask AI a question or for a translation**: "Start chatting" opens a chat with the
-  assistant right away. You need neither git nor a terminal ([10 Chat and memos](10-chat-memo.md)).
+  assistant right away. You need neither git nor a terminal ([Ask an assistant](../user/chat/assistant.md)).
 - **Develop in a repository**: "Go to dev setup" expands the remaining steps.
   1. **Connect a git provider** (optional): sign in to GitHub / Bitbucket. It is required if you'll clone or push private repositories ([Connect a Git service](../user/code/connect-git.md)).
   2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([Start a session](../user/sessions/start.md)).
