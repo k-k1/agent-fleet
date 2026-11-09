@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachEditorScrollMemory } from "./editorScrollMemory.ts";
 import { clearScrollPos, loadScrollPos, saveScrollPos } from "../scrollMemory.ts";
 
-let frames: FrameRequestCallback[] = [];
+let frames: { id: number; cb: FrameRequestCallback }[] = [];
+let nextFrame = 0;
 const flush = (n = 1) => {
   for (let i = 0; i < n; i++) {
     const run = frames;
     frames = [];
-    run.forEach((cb) => cb(0));
+    run.forEach((f) => f.cb(0));
   }
 };
 
@@ -43,9 +44,12 @@ const resize = (el: Element) => observers.filter((o) => o.el === el).forEach((o)
 
 beforeEach(() => {
   frames = [];
-  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
-  vi.stubGlobal("cancelAnimationFrame", () => {
-    frames = [];
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    frames.push({ id: ++nextFrame, cb });
+    return nextFrame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+    frames = frames.filter((f) => f.id !== id);
   });
   observers = [];
   vi.stubGlobal(
@@ -209,6 +213,43 @@ describe("attachEditorScrollMemory", () => {
     detach();
   });
 
+  it("does not spend a re-restore on a re-measure that leaves the line in place", () => {
+    saveScrollPos("k", 337);
+    const { editor, state } = fakeEditor();
+    const detach = attachEditorScrollMemory(editor, "k", true);
+    flush(4);
+    for (let i = 0; i < 10; i++) resize(editor.content);
+    state.line = 300;
+    resize(editor.content);
+    flush(4);
+    expect(state.line).toBe(337);
+    detach();
+  });
+
+  it("drops the watch when a later show has nothing to restore", () => {
+    saveScrollPos("k", 300);
+    const { editor, state } = fakeEditor();
+    const detach = attachEditorScrollMemory(editor, "k", true);
+    flush(4); // settled and watching
+    state.visible = false;
+    resize(editor.scroller);
+    clearScrollPos(); // the record was evicted meanwhile
+    state.line = 1;
+    state.visible = true;
+    resize(editor.scroller);
+    resize(editor.content);
+    flush(4);
+    expect(state.line).toBe(1);
+    detach();
+  });
+
+  it("does not watch the document when restore is off", () => {
+    const { editor } = fakeEditor();
+    const detach = attachEditorScrollMemory(editor, "k", false);
+    expect(observers.some((o) => o.el === editor.content)).toBe(false);
+    detach();
+  });
+
   it("stops re-restoring after a bounded number of re-measures", () => {
     saveScrollPos("k", 337);
     const { editor, state } = fakeEditor();
@@ -231,6 +272,7 @@ describe("attachEditorScrollMemory", () => {
     const detach = attachEditorScrollMemory(editor, "k", true);
     flush(10);
     const scrolls = state.scrolls;
+    expect(observers.some((o) => o.el === editor.content)).toBe(true); // watched, so the resize is seen
     resize(editor.content);
     flush(4);
     expect(state.scrolls).toBe(scrolls);
@@ -249,6 +291,22 @@ describe("attachEditorScrollMemory", () => {
     preview.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
     flush(3);
     expect(state.scrolls).toBe(1);
+    detach();
+  });
+
+  it("ends the watch on input anywhere in the given root", () => {
+    saveScrollPos("k", 337);
+    const { editor, state } = fakeEditor();
+    const pane = document.createElement("div");
+    const preview = document.createElement("div");
+    pane.append(editor.host, preview);
+    const detach = attachEditorScrollMemory(editor, "k", true, pane);
+    flush(4); // settled and watching
+    preview.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+    state.line = 300; // the split's preview now leads the editor
+    resize(editor.content);
+    flush(4);
+    expect(state.line).toBe(300);
     detach();
   });
 

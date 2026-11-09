@@ -385,15 +385,20 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // surfaces' (useScrollMemory). A split opened from the preview is positioned by the sync
   // above instead, from the side that was on screen; a slides split has no sync, so the
   // editor restores there too. Re-attaching on a renderer switch is harmless: the recorded
-  // line is where the editor already is. Input anywhere in the surfaces ends a restore, so
-  // scrolling the split's preview is not fought by the editor's restore.
+  // line is where the editor already is. Input anywhere in the pane ends a restore, so
+  // neither the split's preview nor an accepted suggestion is fought by it. A new cited line
+  // for the open file only records: restoring would take the reader away from the citation.
+  const restoreForRef = useRef<{ key: string | null; targetLine: number | undefined } | null>(null);
   useEffect(() => {
     const handle = editorHandleRef.current;
     if (!surfaces.editor || !handle || !memoryKey) return;
-    const restore = !(scrollSyncOn && lastSoloSideRef.current === "preview");
-    const inputRoot = surfacesBoxRef.current ?? handle.host;
+    if (restoreForRef.current?.key !== memoryKey) restoreForRef.current = { key: memoryKey, targetLine };
+    const recited = restoreForRef.current.targetLine !== targetLine;
+    restoreForRef.current.targetLine = targetLine; // later re-attaches restore as usual
+    const restore = !recited && !(scrollSyncOn && lastSoloSideRef.current === "preview");
+    const inputRoot = bodyRef.current ?? handle.host;
     return attachEditorScrollMemory(handle, `${memoryKey}\u0000editor`, restore, inputRoot);
-  }, [surfaces.editor, surfaces.split, scrollSyncOn, editorHandleEpoch, memoryKey]);
+  }, [surfaces.editor, surfaces.split, scrollSyncOn, editorHandleEpoch, memoryKey, targetLine]);
 
   // Focus follows the mode, but only when the user asked for the mode (docs/log/44
   // §5). Opening a file — a citation lands in the source surface — must not pull

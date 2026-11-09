@@ -490,18 +490,30 @@ describe("the buffer behind the preview", () => {
     // Preview -> Split: the scroll sync positions the editor from the preview.
     await act(async () => modeButton("Split").click());
     expect(editorMemory.at(-1)).toMatchObject({ key: "pane-1\u0000repos/x/doc.md\u0000editor", restore: false });
-    // Reader input on either side of the split ends a restore, not only input in the editor.
-    expect(editorMemory.at(-1)?.inputRoot).toContain("file-surfaces");
+    // Reader input anywhere in the pane ends a restore: the split's preview, the header, the
+    // suggestion panel.
+    expect(editorMemory.at(-1)?.inputRoot).toBe("fileview");
     // Edit, then Split from the editor: the editor's own place is the one to keep.
     await act(async () => modeButton("Edit").click());
-    expect(editorMemory.at(-1)?.restore).toBe(true);
+    expect(editorMemory.at(-1)).toMatchObject({ restore: true, inputRoot: "fileview" });
     await act(async () => modeButton("Split").click());
-    expect(editorMemory.at(-1)?.restore).toBe(true);
+    expect(editorMemory.at(-1)).toMatchObject({ restore: true, inputRoot: "fileview" });
     // Back from another tab straight into the split: the editor leads.
     act(() => root!.unmount());
     editorMemory.length = 0;
     root = createRoot(host);
     await render({});
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+  });
+
+  it("only records the editor's position when the open file is cited at a new line", async () => {
+    await render({ openMode: "edit" });
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+    editorMemory.length = 0;
+    await render({ openMode: "edit", targetLine: 50 });
+    expect(editorMemory.at(-1)?.restore).toBe(false); // the citation's line wins
+    // A later mode change restores as usual: what it restores is where the citation left it.
+    await act(async () => modeButton("Split").click());
     expect(editorMemory.at(-1)?.restore).toBe(true);
   });
 

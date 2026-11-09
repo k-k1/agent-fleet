@@ -14,7 +14,9 @@
 // after the target held for two frames, and the document's height changes under a still
 // scrollTop, moving the top line (measured on a loaded host: line 337 became 321.5 when the
 // height map grew by 450px). So until the reader touches the pane, a change in the document's
-// height that leaves the editor off the target restores it again.
+// height that leaves the editor off the target restores it again. "Touches" has to cover
+// everything in the pane that can move the editor (a header button, the suggestion panel's
+// accept), or the guard pulls the editor back from where that action put it.
 import { loadScrollPos, saveScrollPos } from "../scrollMemory.ts";
 
 /** What this needs from the editor (CodeEditorHandle provides it). */
@@ -31,7 +33,8 @@ export interface ScrollMemoryEditor {
 const RESTORE_FRAMES = 60;
 
 /** Re-restores after the target was reached, so a height map that keeps changing cannot
- *  hold the editor forever. */
+ *  hold the editor forever. One late re-measure was seen in practice; the rest is headroom
+ *  for wrapped lines measured in a few passes. */
 const MAX_RESETTLES = 5;
 
 const USER_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
@@ -108,6 +111,7 @@ export function attachEditorScrollMemory(
     frame = requestAnimationFrame(step);
   };
   const arm = () => {
+    stop(); // a guard from an earlier restore must not outlive this one, even when it restores nothing
     if (!restore) return;
     const saved = loadScrollPos(key);
     if (saved == null || saved <= 1) return;
@@ -138,7 +142,7 @@ export function attachEditorScrollMemory(
           if (++resettles > MAX_RESETTLES) guarding = false;
           else start(target);
         });
-  contentRo?.observe(content);
+  if (restore) contentRo?.observe(content);
 
   const onUser = () => {
     if (restoring) finish();
