@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/testguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
 )
 
 // TestMain turns the overview read off for the whole package: every test that builds a wire
@@ -38,6 +39,8 @@ func TestMain(m *testing.M) {
 		lookupBitbucketPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
 		jiraProjectsOf = func(time.Time) map[string]bool { return nil }
 		putPRNotice = func(string, notice.Event) error { return nil }
+		// A throwaway engine per poll: nothing a list test does reaches disk or the next test.
+		prNoticesEngine = func() *watch.Engine { return watch.New(&memWatchStore{}, newWatchSink()) }
 		lookupPorts = func(time.Time) map[string][]int { return nil }
 		_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
 	}))
