@@ -752,6 +752,168 @@ const SCENES = [
     settle: 2500,
   },
   {
+    // A plan awaiting approval, with the buttons the plans page names.
+    name: "conv-plan",
+    guide: true,
+    stubEnv: { SHOT_PLAN: "1" },
+    clip: ".mt-plan",
+    pad: 8,
+    ready: "!!document.querySelector('.mt-plan-approve')",
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    settle: 2500,
+  },
+  {
+    // The skill / command picker opened from the composer (the session idle, so the composer is free).
+    name: "conv-skills",
+    guide: true,
+    stubEnv: { SHOTS_IDLE: "1" },
+    clip: [".mirror-skill-btn", ".mirror-skills"],
+    pad: 8,
+    ready: "!!document.querySelector('.mirror-skill-btn:not([disabled])')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".mirror-skill-btn")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // The session menu's Markdown export: the three choices under their caption.
+    name: "conv-export",
+    guide: true,
+    // The caption and its three items only; the action tags the first and the last.
+    clip: ["#shot-export-from", "#shot-export-to"],
+    pad: 4,
+    ready: "!!document.querySelector('.sess-menu-btn')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      // The rail can still be filling in on a busy host: retry the click until the menu shows.
+      let cap;
+      for (let i = 0; i < 20 && !cap; i++) {
+        const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+          /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+        if (!document.querySelector(".sess-menu")) row?.querySelector(".sess-menu-btn")?.click();
+        await new Promise((r) => setTimeout(r, 500));
+        cap = [...document.querySelectorAll(".ui-menu-caption")].find((el) => /Markdown/.test(el.textContent || ""));
+      }
+      if (cap) {
+        cap.id = "shot-export-from";
+        let last = cap;
+        for (let el = cap.nextElementSibling, n = 0; el && n < 3; el = el.nextElementSibling, n++) last = el;
+        last.id = "shot-export-to";
+      }
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The live question card with its choices and "Submit answer" (the reply page).
+    name: "conv-question",
+    guide: true,
+    clip: "#shot-question",
+    pad: 8,
+    ready: "!!document.querySelector('.mt-question')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const q = [...document.querySelectorAll(".mt-question")].pop();
+      if (q) { q.id = "shot-question"; q.scrollIntoView({ block: "center" }); }
+    })()`,
+    settle: 1200,
+  },
+  {
+    // Two follow-ups held in "Waiting to send" while a turn runs, down to the send button and its ▾.
+    name: "conv-queue",
+    guide: true,
+    stubEnv: { SHOT_BUSY: "1" },
+    clip: [".mirror-queue", ".mirror-send-split"],
+    pad: 8,
+    ready: "!!document.querySelector('.mirror-send-more')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const ta = document.querySelector(".mirror-input");
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+      const ja = document.documentElement.lang === "ja" || /送信/.test(document.body.textContent || "");
+      const texts = ja
+        ? ["エラー文言は messages.ts にまとめて", "終わったら commit して"]
+        : ["Keep the error text in messages.ts", "Commit when you are done"];
+      for (const t of texts) {
+        ta.focus();
+        set.call(ta, t);
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 200));
+        ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", altKey: true, bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The confirmation that "Branch here" opens on the user's own past message.
+    name: "conv-fork",
+    guide: true,
+    stubEnv: { SHOT_FORK: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    ready: "!!document.querySelector('.mt-fork')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      [...document.querySelectorAll(".mt-fork")].pop()?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The "Changed files" strip under the conversation header, opened.
+    name: "conv-files",
+    guide: true,
+    clip: ".mirror-files",
+    pad: 0,
+    ready: "!!document.querySelector('.mirror-files-toggle')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const s = document.querySelector(".mirror-files");
+      if (s && !s.classList.contains("open")) s.querySelector(".mirror-files-toggle")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // An answer written in the other language, with "Translate" under it (the translate page).
+    name: "conv-translate",
+    guide: true,
+    stubEnv: { SHOT_TRANSLATE: "1" },
+    clip: "#shot-translate",
+    pad: 4,
+    ready: "!!document.querySelector('.mt-translate')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const b = [...document.querySelectorAll(".mt-translate")].pop();
+      const turn = b?.closest(".mirror-turn");
+      if (turn) { turn.id = "shot-translate"; turn.scrollIntoView({ block: "center" }); }
+    })()`,
+    settle: 1200,
+  },
+  {
     // The Start hub opened from the WS bar: where to work (chat, shell, home, a repository).
     name: "sessions-start",
     guide: true,

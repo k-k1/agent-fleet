@@ -148,7 +148,7 @@ connection. Not this deployment's engine."** together with the model the last ch
 - **"Question left unanswered at stop"**, **"Plan awaiting approval at stop"**, **"Permission requested at
   stop"** on a card in the conversation: what was on screen when the session stopped. Answering it resumes the
   session and delivers the answer; the card is kept for 14 days
-  ([04](04-conversation.md#questions-and-plans-left-by-a-stopped-session)).
+  ([Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left)).
 - **The inbox button's number** in the top bar: new inbox items plus handoffs waiting for you
   ([12](12-collaboration.md#asking-a-teammate-the-inbox)). In the inbox, **"Open for 14+ days"** marks a
   request nobody has finished. A session started from an inbox request has an inbox mark
@@ -178,7 +178,7 @@ connection. Not this deployment's engine."** together with the model the last ch
 Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
 rename, rename the branch, hand the conversation off (to another agent, or **Hand off to a member…**), **move it to another agent**
 ([05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move)), **Share…**, **set / clear the delete lock**,
-**"Export as Markdown"** (three choices, [04](04-conversation.md#saving-a-conversation-as-markdown)),
+**"Export as Markdown"** (three choices, [Save a conversation as Markdown](../user/sessions/export.md)),
 archive / delete, and recreate. **"Menu of repository {name}"** moves to the left pane and opens the menu of
 the repository the session belongs to (not shown for a session without a repository, on a phone, or while the
 workspace is stopped; if the left pane is hiding that repository, a notice says why). On a stopped session whose

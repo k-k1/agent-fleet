@@ -76,7 +76,7 @@ export function shouldDrain(s: DrainState): boolean {
 /**
  * Whether a send during a running turn is taken INTO that turn. Only codex and muse do (Managed:
  * a native turn/steer); every other kind queues the input behind the turn, so the "send now"
- * hint must not promise more (guide/member/04-conversation.md, "Stopping a turn when something is queued").
+ * hint must not promise more (guide/user/sessions/queue.md, "Stop a turn when something is queued").
  */
 export function injectsMidTurn(agentId: string, managed: boolean): boolean {
   return managed && (agentId === "codex" || agentId === "muse");
