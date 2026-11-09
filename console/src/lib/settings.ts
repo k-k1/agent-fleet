@@ -17,8 +17,8 @@
 import { useSyncExternalStore } from "react";
 import { pinSyncedFallbacks } from "../features/notifications/prefs.ts";
 import { applyTheme } from "./settings/appearance.ts";
-import { sameValue, settingsDefaults, type Settings } from "./settings/prefs.ts";
-import { APPEARANCE_SHUFFLE_MODES } from "./settings/options.ts";
+import { sameValue, type Settings } from "./settings/prefs.ts";
+import { APPEARANCE_SHUFFLE_MODES, REGION_THEMES, SURFACE_COLORS, THEMES } from "./settings/options.ts";
 import { KEY as SETTINGS_KEY, applyToPage, getSettings, notify, persist, setState, subscribe } from "./settings/store.ts";
 import {
   currentPrefsOwner,
@@ -173,8 +173,9 @@ function writeAppearanceSnapshot(owner: string): void {
 /** Show the current tenant's saved appearance (boot, tenant switch). A tenant with no snapshot
  * keeps what is shown and files it as its first snapshot. Does nothing with the switch off. */
 export function applyTenantAppearance(): void {
+  catchUpWithOtherTabs();
   if (!syncAppearanceOwner(currentPrefsOwner())) return;
-  persist();
+  persistSeen();
   applyTheme(getSettings());
   notify();
 }
@@ -214,11 +215,27 @@ export function appearanceScope(): string | null {
 // back; synced keys already converge through the server copy.
 const CROSS_TAB_KEYS = [...APPEARANCE_KEYS, "appearancePerTenant", "appearanceShuffle"] as const;
 
-// A value from another tab, accepted only in the shape this build stores (it may be another
-// Console version).
+// The values each cross-tab key may take in this build. Another tab may run another Console
+// version; a value this one does not know is left out rather than stored and saved again.
+const SURFACE_IDS = SURFACE_COLORS.map((c) => c.id);
+const REGION_THEME_IDS = REGION_THEMES.map((t) => t.id);
+const CROSS_TAB_ALLOWED: Record<(typeof CROSS_TAB_KEYS)[number], readonly unknown[]> = {
+  theme: THEMES.map((t) => t.id),
+  mirrorTheme: REGION_THEME_IDS,
+  sharedTheme: REGION_THEME_IDS,
+  assistantTheme: REGION_THEME_IDS,
+  topbarColor: SURFACE_IDS,
+  leftpaneColor: SURFACE_IDS,
+  viewerColor: SURFACE_IDS,
+  chatColor: SURFACE_IDS,
+  sharedColor: SURFACE_IDS,
+  assistantColor: SURFACE_IDS,
+  appearancePerTenant: [true, false],
+  appearanceShuffle: APPEARANCE_SHUFFLE_MODES.map((m) => m.id),
+};
+
 function crossTabValue(k: (typeof CROSS_TAB_KEYS)[number], v: unknown): unknown {
-  if (k === "appearanceShuffle") return APPEARANCE_SHUFFLE_MODES.some((m) => m.id === v) ? v : undefined;
-  return typeof v === typeof settingsDefaults()[k] ? v : undefined;
+  return CROSS_TAB_ALLOWED[k].includes(v) ? v : undefined;
 }
 
 function parseObject(raw: string | null): Record<string, unknown> {
@@ -285,6 +302,7 @@ function onOtherTabStorage(e: StorageEvent): void {
     return;
   }
   if (e.key === SETTINGS_KEY) {
+    seenRecord = e.newValue;
     showFromOtherTab(crossTabPatch(e.oldValue, e.newValue));
     return;
   }
@@ -295,9 +313,36 @@ function onOtherTabStorage(e: StorageEvent): void {
   const patch: Record<string, unknown> = {};
   for (const k of APPEARANCE_KEYS) {
     const v = crossTabValue(k, snap[k]);
-    if (v !== undefined && v !== cur[k]) patch[k] = v;
+    if (v !== undefined && !sameValue(v, cur[k])) patch[k] = v;
   }
   showFromOtherTab(patch as Partial<Settings>);
+}
+
+// The settings record as this tab last wrote or took it. A tab writes the whole record, so one
+// whose storage event from another tab has not arrived yet would put that tab's change back with
+// its own older value. Before writing, the tab first takes what changed since (catchUpWithOtherTabs).
+let seenRecord: string | null = readRecord();
+
+function readRecord(): string | null {
+  try {
+    return localStorage.getItem(SETTINGS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+// Take the other tabs' changes this tab has not yet seen. The caller's own write goes on top.
+function catchUpWithOtherTabs(): void {
+  const stored = readRecord();
+  if (stored === seenRecord) return;
+  const patch = crossTabPatch(seenRecord, stored);
+  seenRecord = stored;
+  showFromOtherTab(patch);
+}
+
+function persistSeen(): void {
+  persist();
+  seenRecord = readRecord();
 }
 
 /** Follow appearance changes made in the other tabs of this browser; returns the stop function. */
@@ -316,6 +361,7 @@ export function setSetting<K extends keyof Settings>(key: K, value: Settings[K])
 // save. Used where many keys change together, such as a reset: calling setSetting 17 times would
 // run that many re-renders and debounced saves.
 export function setSettings(patch: Partial<Settings>): void {
+  catchUpWithOtherTabs();
   // Turning the switch on brings back this tenant's earlier snapshot, if any, over the shared
   // look; with none, the look shown becomes the snapshot (written below).
   const owner = currentPrefsOwner();
@@ -335,7 +381,7 @@ export function setSettings(patch: Partial<Settings>): void {
     writeAppearanceSnapshot(owner);
   }
   markUnsaved(Object.keys(patch) as (keyof Settings)[]);
-  persist();
+  persistSeen();
   recordOwnerAfterLocalWrite();
   applyToPage(state);
   scheduleServerSave();

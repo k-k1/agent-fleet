@@ -96,6 +96,27 @@ describe("schedule across tabs", () => {
     stopB();
   });
 
+  it("two tabs that pick at once settle on the later pick", async () => {
+    const a = await freshTab();
+    const stopA = a.s.watchOtherTabs();
+    const b = await freshTab();
+    const stopB = b.s.watchOtherTabs();
+    const key = "af-display-settings";
+    const l0 = localStorage.getItem(key);
+    a.sh.shuffleAppearanceNow();
+    const la = localStorage.getItem(key);
+    b.sh.shuffleAppearanceNow();
+    const lb = localStorage.getItem(key);
+    // A's event reaches B late (after B's own pick), then B's reaches A.
+    window.dispatchEvent(new StorageEvent("storage", { key, oldValue: l0, newValue: la }));
+    window.dispatchEvent(new StorageEvent("storage", { key, oldValue: la, newValue: lb }));
+    const colors = (t: typeof a) => SURFACE_TARGETS.map((x) => t.s.getSettings()[x.key]);
+    expect(colors(a)).toEqual(colors(b));
+    expect(colors(b)).toEqual(SURFACE_TARGETS.map((x) => JSON.parse(lb!)[x.key]));
+    stopA();
+    stopB();
+  });
+
   it("an hourly schedule re-picks once the hour is up, and only then", async () => {
     vi.setSystemTime(new Date(2026, 10, 9, 10, 0));
     const a = await freshTab();
