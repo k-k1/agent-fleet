@@ -98,7 +98,7 @@ To change a host or a profile, use "**Edit**" on its row. Deleting and registeri
 A stopped SSM session reopens with "**Resume**" in the list, or with "**Re-login and resume**" to log in again first.
 
 When you are done with an SSM session, "**Delete**" in the list moves it to the trash
-([stopping and tidying](../../member/05-stopping-and-tidying.md)).
+([Clear away finished sessions](../sessions/cleanup.md#archive-and-restore)).
 
 ## When it goes wrong
 

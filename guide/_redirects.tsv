@@ -78,3 +78,15 @@ member/03-starting-sessions.md#from-a-ticket-number-in-the-conversation	user/ses
 member/03-starting-sessions.md#reading-state-badges-and-notifications	user/sessions/status.md
 member/03-starting-sessions.md#changing-the-title-and-branch-name	user/sessions/start.md#rename-a-session-or-its-branch
 member/lite.md#7-watching-development-progress	user/sessions/status.md
+member/05-stopping-and-tidying.md#stopping-and-tidying-up-sessions	user/sessions/stop-resume.md
+member/05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup	user/sessions/cleanup.md#tidy-up-in-bulk-cleanup
+member/05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy	user/sessions/cleanup.md#delete-one-jobs-working-copies
+member/05-stopping-and-tidying.md#a-spend-budget-pausing-a-session-that-spends-too-much	user/sessions/budget.md
+member/05-stopping-and-tidying.md#when-you-can-and-cant-resume	user/sessions/stop-resume.md#resume-a-session
+member/05-stopping-and-tidying.md#the-warning-when-the-branch-has-been-swapped	user/sessions/stop-resume.md#the-row-shows-a-warning-icon-and-a-branch-name
+member/05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move	user/sessions/handoff.md
+member/05-stopping-and-tidying.md#handing-a-conversation-off-handoff	user/sessions/handoff.md#hand-off
+member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move	user/sessions/handoff.md#move-to-another-agent
+member/05-stopping-and-tidying.md#keeping-a-session-awake	user/sessions/auto-stop.md#keep-a-session-awake
+member/05-stopping-and-tidying.md#having-a-session-stop-when-it-is-done	user/sessions/auto-stop.md#stop-when-it-is-done
+member/05-stopping-and-tidying.md#locking-something-against-deletion	user/sessions/cleanup.md#lock-something-against-deletion

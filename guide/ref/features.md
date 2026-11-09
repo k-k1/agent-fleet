@@ -29,13 +29,13 @@ If a feature ships and does not appear here, it is not done
 | Live terminal attached to a session | member | main area | [08 Terminal](../member/08-terminal.md) |
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [08 Terminal](../member/08-terminal.md) |
 | Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [08 Terminal](../member/08-terminal.md#copy-paste) |
-| Resume a stopped session | member | left pane → the session | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
+| Resume a stopped session | member | left pane → the session | [Stop and resume a session](../user/sessions/stop-resume.md) |
 | Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
 | Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [11 Running many sessions](../member/11-many-sessions.md) |
 | Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [11 Running many sessions](../member/11-many-sessions.md#seeing-how-sessions-relate-over-time-the-fleet-graph) |
-| Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#stopping-and-tidying-up-sessions) |
-| Hand a conversation to a new session | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move) |
-| Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move) |
+| Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy) |
+| Hand a conversation to a new session | member | session ⋯ menu | [Hand off to another session or agent](../user/sessions/handoff.md#choose-a-way) |
+| Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent) |
 | Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [Save a conversation as Markdown](../user/sessions/export.md) |
 | Fork from a past message | member | mirror, on a past message | [Branch from a past message](../user/sessions/branch-message.md); [agents.md](agents.md) for which agents |
 | Hand a session to another member | member | session ⋯ menu or handoff proposal card → Hand off to a member | [12 Working with others](../member/12-collaboration.md#handing-a-session-to-another-member) |
@@ -102,8 +102,8 @@ If a feature ships and does not appear here, it is not done
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [Connect Discord and Slack](../user/integrations/chat-bridge.md) |
 | Reply suggestions | member | mirror composer | [Reply to a session](../user/sessions/reply.md#use-reply-suggestions) |
-| Deletion lock | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
-| Cleanup and the trash | member | Clean up | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
+| Deletion lock | member | session ⋯ menu | [Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion) |
+| Cleanup and the trash | member | Clean up | [Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup) |
 | Keyboard system | member | Settings → Keyboard | [02 Console basics](../member/02-console-basics.md) |
 | Text-to-speech | member | Settings → Read aloud | [20 Settings](../member/20-settings.md) |
 | Skills views — each agent's skills, read-only: personal (Settings) and a repository's (project tree → Skills…) | member | Settings → Skills; repository row menu → Skills… | [20 Settings](../member/20-settings.md#skills); [09 Agents](../member/09-agents.md) |

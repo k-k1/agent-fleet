@@ -93,8 +93,8 @@ The container is shared, so pass `--port` / `--cdp-port` that nothing else is li
 Scenes marked `guide: true` are for the rewritten guide and the public docs site (ADR 0131). The
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
 `aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `chat-settings`, `ops-settings`,
-`images-gallery`, `images-settings`, and the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
-`ws-databases`, and the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`) runs on its own:
+`images-gallery`, `images-settings`, the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
+`ws-databases`, the sessions pages' `sessions-budget`, and the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -110,6 +110,8 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only images-g
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only conv-plan --out <dir>    # and every other conv-* scene, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-start,sessions-launch,sessions-location,sessions-issue,sessions-status,sessions-issue-list,sessions-pr --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-cleanup,sessions-stop-below,sessions-resume,sessions-menu,sessions-move,sessions-handoff --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-budget --out <dir>
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that

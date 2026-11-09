@@ -42,7 +42,7 @@ With "Redo this message", sending it reworded or as it was is one action either 
 | Agent | The same kind | Can go to another agent |
 | Use it when | The exact wording and the fine details matter | You want another agent to take over |
 
-Handoff is in the [Stopping and tidying up](../../member/05-stopping-and-tidying.md#handing-a-conversation-off-handoff) chapter.
+Handoff is in [Hand off to another session or agent](handoff.md#hand-off).
 
 ## When it goes wrong
 

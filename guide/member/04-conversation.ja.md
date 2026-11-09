@@ -34,5 +34,6 @@ audience: "動いているエージェントと会話するすべての人"
 ---
 
 関連: [03 セッションを始める](03-starting-sessions.ja.md)（起動）·
-[05 止める・片付ける](05-stopping-and-tidying.ja.md)（再開）·
+[セッションを止める・再開する](../user/sessions/stop-resume.ja.md)（再開）·
+[ref/features.md](../ref/features.ja.md)（カタログ）·
 [ref/agents.md](../ref/agents.ja.md)（どのエージェントが何に対応しているか）

@@ -1043,6 +1043,145 @@ const SCENES = [
     })()`,
     settle: 1200,
   },
+  {
+    // The cleanup window, opened from the trash icon in the Repositories heading: the two stages
+    // and the candidates with their safety rating.
+    name: "sessions-cleanup",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const sel = '[aria-label="掃除を開く（点検・整理）"], [aria-label="Open cleanup (survey & tidy)"]';
+      for (let i = 0; i < 50 && !document.querySelector(sel); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(sel)?.click();
+      // The window opens with "surveying…" and grows when the candidates arrive: wait for them.
+      for (let i = 0; i < 50 && !document.querySelector(".clean-modal .clean-row"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2500,
+  },
+  {
+    // "Raise budget & resume" on a session its spend budget stopped (SHOT_SESSIONS_GUIDE).
+    name: "sessions-budget",
+    guide: true,
+    stubEnv: { SHOT_SESSIONS_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /在庫同期バッチの調査|Stock sync batch triage/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /予算を上げて再開|Raise budget/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // Stopping every session under one working copy: right-click the webshop row.
+    name: "sessions-stop-below",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const find = () => document.querySelector('.repo-card[data-rail-repo="webshop"]');
+      for (let i = 0; i < 50 && !find(); i++) await new Promise((r) => setTimeout(r, 200));
+      const card = find();
+      const b = card.getBoundingClientRect();
+      card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: b.left + 40, clientY: b.top + 10 }));
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll("button, [role=menuitem]")].find((el) => /配下のセッションを停止|Stop the sessions below/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // A stopped session opened from the list: the history is read-only until "Resume and continue".
+    name: "sessions-resume",
+    guide: true,
+    clip: ".mirror-compose-resume",
+    pad: 4,
+    sections: FOCUS_TREE,
+    width: 1100,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("so5nw6k")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".mirror-compose-resume"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The session menu, for the auto-stop page: Stop when this turn ends and Keep awake.
+    name: "sessions-menu",
+    guide: true,
+    clip: ".sess-menu",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+    })()`,
+    settle: 1200,
+  },
+  {
+    // Moving a session to another agent, for the handoff page (the features-page "move" scene, light and cropped).
+    name: "sessions-move",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /別のエージェントへ移す|Move to another agent/.test(el.textContent || ""))?.click();
+      // The dialog mounts a beat after the menu closes: wait for it.
+      for (let i = 0; i < 50 && !document.querySelector(".ui-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The handoff dialog: the target agent and the optional note.
+    name: "sessions-handoff",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /別のエージェントへ引き継ぐ|Hand off to another agent/.test(el.textContent || ""))?.click();
+      // The dialog mounts a beat after the menu closes: wait for it.
+      for (let i = 0; i < 50 && !document.querySelector(".ui-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2500,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

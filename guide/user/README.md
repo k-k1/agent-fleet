@@ -26,6 +26,11 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [See what a session changed](sessions/changes.md) | See the files a session actually touched, as a list |
 | [Save a conversation as Markdown](sessions/export.md) | Download the whole conversation as a Markdown file |
 | [Read an answer in your own language](sessions/translate.md) | Read an answer in a language you do not read, translated without using a turn |
+| [Stop and resume a session](sessions/stop-resume.md) | Pause a session and later carry on from where it stopped |
+| [Stop when done, or keep a session awake](sessions/auto-stop.md) | Have a session stop once its work is done, or keep a long job from being stopped |
+| [Clear away finished sessions](sessions/cleanup.md) | Archive sessions and delete working copies and branches you no longer need, and restore them from the trash |
+| [Stop a session that spends too much with a budget](sessions/budget.md) | Stop a session when its estimated spend reaches a budget |
+| [Hand off to another session or agent](sessions/handoff.md) | Continue a conversation in a new session or with another kind of agent |
 
 ## Integrations
 

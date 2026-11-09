@@ -36,5 +36,6 @@ again.
 ---
 
 Related: [03 Starting sessions](03-starting-sessions.md) for launching ·
-[05 Stopping and tidying up](05-stopping-and-tidying.md) for resuming ·
+[Stop and resume a session](../user/sessions/stop-resume.md) for resuming ·
+[ref/features.md](../ref/features.md) for the catalogue ·
 [ref/agents.md](../ref/agents.md) for which agents support what

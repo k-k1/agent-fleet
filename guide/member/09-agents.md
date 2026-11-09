@@ -294,7 +294,7 @@ card says "Not available on this host (…)" and agy is not offered.
   idle. That background work keeps the Workspace awake for at most 2 hours by default (the
   deployment can change the bound); after that the Workspace can stop as idle while the command
   still runs. For a longer build, use **Keep awake**
-  ([05](05-stopping-and-tidying.md#keeping-a-session-awake)). A turn that agy never closes (the CLI died
+  ([Stop when done, or keep a session awake](../user/sessions/auto-stop.md#keep-a-session-awake)). A turn that agy never closes (the CLI died
   mid-turn) stops reading Working after an hour with no change, unless one of its commands is
   still running.
 - **Agent Fleet adds a hook entry to agy's configuration.** To know which conversation a session

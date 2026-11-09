@@ -80,7 +80,13 @@ const exact = {
   "/api/sessions": (q, method) =>
     method === "POST"
       ? { name: "s" + crypto.randomUUID().slice(0, 6) }
-      : { sessions: FLEET_LANES ? fx.sessionsBig(LOCALE, FLEET_LANES) : fx.sessions(LOCALE) },
+      : {
+          sessions: FLEET_LANES
+            ? fx.sessionsBig(LOCALE, FLEET_LANES)
+            : process.env.SHOT_SESSIONS_GUIDE
+              ? fx.sessionsBudgetStopped(LOCALE)
+              : fx.sessions(LOCALE),
+        },
   "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
   // Past-session search (ADR 0110) for the palette's conversations mode. Hits name sessions from
   // fx.sessions so Enter has something to open, plus one archived session that is not listed.
@@ -417,6 +423,9 @@ const exact = {
 };
 
 const re = [
+  // The budget dialog of the sessions guide (SHOT_SESSIONS_GUIDE): the spend of the session its
+  // budget stopped. Without it the route stays unhandled, as it always was.
+  ...(process.env.SHOT_SESSIONS_GUIDE ? [[/^\/api\/sessions\/([^/]+)\/spend$/, (m) => fx.sessionSpendGuide(m[1])]] : []),
   // The move dialog's preview (ADR 0115) for the move scene.
   [/^\/api\/sessions\/([^/]+)\/move\/preview$/, (m) => fx.movePreview(LOCALE, m[1])],
   // The model picker of a target kind: invented ids, so no real third-party model is named.
