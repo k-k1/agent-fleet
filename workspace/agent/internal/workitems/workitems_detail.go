@@ -104,9 +104,9 @@ type workItemDetailOut struct {
 	// Never nil: the Console iterates it.
 	Assignees []string `json:"assignees"`
 	// Mergeable is "clean" / "conflict" / "unknown". GitHub computes it asynchronously and
-	// answers null while it is still thinking, and Bitbucket does not expose it at all — both
-	// are "unknown", because claiming "clean" from a missing field is how a member is sent to
-	// a conflicted branch.
+	// answers null while it is still thinking, and Bitbucket answers it only through the
+	// mergeability-checks endpoint — a missing or unevaluated answer is "unknown", because
+	// claiming "clean" from a missing field is how a member is sent to a conflicted branch.
 	Mergeable    string              `json:"mergeable"`
 	BaseBranch   string              `json:"baseBranch"`
 	HeadBranch   string              `json:"headBranch"`
@@ -762,7 +762,43 @@ func bitbucketFetchPRDetail(auth, repo string, number int, key string) (*workIte
 		fmt.Sprintf("%s/diffstat?pagelen=%d&fields=size,values.lines_added,values.lines_removed", prBase, workItemDetailFiles)); err == nil && st == http.StatusOK {
 		out.ChangedFiles, out.Additions, out.Deletions = parseBitbucketDiffstat(b)
 	}
+	// Only an unfinished PR (a draft included) has anything left to merge.
+	if out.State == "open" || out.State == "in_progress" {
+		if b, st, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth,
+			prBase+"/mergeability/checks?fields=values.type,values.status,values.reason"); err == nil && st == http.StatusOK {
+			out.Mergeable = parseBitbucketMergeability(b)
+		}
+	}
 	return out, nil
+}
+
+// parseBitbucketMergeability reads the Git-level verdict out of the mergeability checks. Like
+// GitHub's Mergeable it is about conflicts only: a branch restriction that blocks the merge
+// does not make the branch conflicted. Anything but a definite answer is "unknown" — Bitbucket
+// omits reason when status is UNKNOWN (e.g. a timeout) and says that is not "conflict-free".
+func parseBitbucketMergeability(body []byte) string {
+	var r struct {
+		Values []struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		} `json:"values"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return "unknown"
+	}
+	for _, c := range r.Values {
+		if c.Type != "git_mergeability_check" {
+			continue
+		}
+		switch {
+		case strings.EqualFold(c.Status, "PASSED") && strings.EqualFold(c.Reason, "clean"):
+			return "clean"
+		case strings.EqualFold(c.Status, "FAILED") && strings.EqualFold(c.Reason, "conflicts"):
+			return "conflict"
+		}
+	}
+	return "unknown"
 }
 
 // bitbucketDetailError mirrors the list path's wording. 403 names the missing permission
@@ -831,7 +867,7 @@ func parseBitbucketPullRequest(body []byte, key string) (*workItemDetailOut, err
 		UpdatedAt: bitbucketTimeToRFC3339(pr.UpdatedOn),
 		Draft:     pr.Draft,
 		Merged:    strings.EqualFold(pr.State, "MERGED"),
-		// Bitbucket does not report whether a PR merges cleanly without starting a merge task.
+		// Filled from the mergeability-checks endpoint by bitbucketFetchPRDetail.
 		Mergeable:    "unknown",
 		BaseBranch:   pr.Destination.Branch.Name,
 		HeadBranch:   pr.Source.Branch.Name,
