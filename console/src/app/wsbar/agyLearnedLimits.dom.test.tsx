@@ -58,7 +58,7 @@ describe("agy learned limits", () => {
       learned: [{ model: "gemini-4-argon", label: "Gemini 4 Argon", resetsAt: at(50) }],
     });
     expect(text).toContain("Gemini (weekly)");
-    expect(text).toContain("Gemini 4 Argon: quota reached");
+    expect(text).toContain("Gemini 4 Argon: quota reached, resets 2 days left (");
     expect(text).toMatch(/last failed call/);
     expect(text).toMatch(/Agent restarts/);
   });
@@ -80,6 +80,6 @@ describe("agy learned limits", () => {
   });
 
   it("is a source field, not a chip driver", () => {
-    expect(AGY_USAGE.learned?.({ learned: [{ model: "a", resetsAt: at(1) }] }, NOW)).toEqual([{ model: "a", resetsAt: at(1) }]);
+    expect(AGY_USAGE.learned?.({ learned: [{ model: "a", resetsAt: at(1) }] }, NOW)).toEqual([{ id: "a", label: undefined, resetsAt: at(1) }]);
   });
 });

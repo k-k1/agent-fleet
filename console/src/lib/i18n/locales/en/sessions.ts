@@ -60,7 +60,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.usage.agy.week_row": "{group} (weekly)",
   "wsbar.usage.agy.five_row": "{group} (5-hour)",
   "wsbar.usage.learned_head": "Seen on failed calls",
-  "wsbar.usage.learned_row": "{model}: quota reached, resets {when}",
+  "wsbar.usage.learned_row": "{model}: quota reached, resets {until} ({when})",
   "wsbar.usage.learned_default_model": "CLI default",
   "wsbar.usage.learned_note": "Seen on the last failed call, not part of the /usage scrape. Kept in memory only: forgotten when the Agent restarts, and shown again after the next failed call.",
   "wsbar.usage.plan": "Plan: {plan}",

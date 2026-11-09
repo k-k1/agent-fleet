@@ -140,10 +140,10 @@ type LearnedWindow struct {
 // learnedLimits returns the live learned limits for the usage payload. A reset already past
 // is dropped even if the source still holds it.
 func learnedLimits(now time.Time) []LearnedLimit {
+	out := []LearnedLimit{} // always an array on the wire, never null
 	if LearnedWindows == nil {
-		return nil
+		return out
 	}
-	out := []LearnedLimit{}
 	for _, w := range LearnedWindows(now) {
 		if !w.Until.After(now) {
 			continue

@@ -7,7 +7,9 @@ package main
 import (
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routehealth"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 )
 
@@ -33,5 +35,18 @@ func TestUsageWiringIsLive(t *testing.T) {
 			continue
 		}
 		t.Run(name, check)
+	}
+}
+
+// The agy popover's learned limits come out of a real cooldown table: a typo in the kind or in
+// the field copy would otherwise leave the popover silently empty.
+func TestLearnedFromTableReadsAgyQuotaParks(t *testing.T) {
+	tb := routehealth.NewTable()
+	now := time.Now()
+	tb.Fail("agy", "gemini-4-argon", "agy execution failed: error: Individual quota reached. Resets in 108h50m38s.", now)
+	tb.Fail("codex", "gpt", "usage limit reached. resets in 3h", now)
+	got := learnedFromTable(tb, now.Add(time.Minute))
+	if len(got) != 1 || got[0].Model != "gemini-4-argon" || !got[0].Until.After(now.Add(100*time.Hour)) {
+		t.Fatalf("learned = %+v, want the one agy window", got)
 	}
 }

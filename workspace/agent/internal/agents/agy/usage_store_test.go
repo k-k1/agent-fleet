@@ -140,3 +140,13 @@ func TestFailedScrapeStillCarriesLearnedLimits(t *testing.T) {
 		t.Fatalf("usage = %+v, want ok=false with one learned limit", out)
 	}
 }
+
+func TestLearnedLimitsIsAnEmptyArrayNotNull(t *testing.T) {
+	prev := LearnedWindows
+	LearnedWindows = nil
+	t.Cleanup(func() { LearnedWindows = prev })
+	b, _ := json.Marshal(learnedLimits(time.Now()))
+	if string(b) != "[]" {
+		t.Fatalf("wire = %s, want []", b)
+	}
+}

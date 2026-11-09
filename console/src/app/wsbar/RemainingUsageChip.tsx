@@ -103,9 +103,10 @@ export function RemainingUsageChip({ src, tenant }: { src: RemainingSource; tena
             <div className="wu-learned">
               <div className="wu-note muted">{tr("wsbar.usage.learned_head")}</div>
               {learned.map((l) => (
-                <div key={l.model} className="wu-note">
+                <div key={l.id} className="wu-note">
                   {tr("wsbar.usage.learned_row", {
-                    model: l.model || tr("wsbar.usage.learned_default_model"),
+                    model: l.label || l.id || tr("wsbar.usage.learned_default_model"),
+                    until: untilText(l.resetsAt),
                     when: whenText(l.resetsAt),
                   })}
                 </div>
