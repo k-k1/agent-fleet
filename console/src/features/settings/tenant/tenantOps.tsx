@@ -7,7 +7,8 @@
 // isSuper only decides whether the tenant selector (i.e. whether to look across tenants)
 // is shown; the server always decides whose rows come back.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errText, rel } from "../../../core/api/client.ts";
+import { errText, rel } from "../../../core/api/client.ts";
+import { getAdminAudit, getAdminSessions, getAdminUsage, isOk, type AdminSessionRow, type AdminUsage, type AuditRow, type UsageTotal } from "../api.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { RangePresets } from "../../../ui/RangePresets.tsx";
 import { MonthlyTrend, usageMonthRows } from "../../../ui/MonthlyTrend.tsx";
@@ -29,16 +30,16 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
   const tr = useT();
   const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
   const [q, setQ] = useState("");
-  const [rows, setRows] = useState<any[] | null>(null);
+  const [rows, setRows] = useState<AdminSessionRow[] | null>(null);
   const [err, setErr] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const ser = useRef("");
 
   const poll = useCallback(async () => {
     try {
-      const d = await api("api/admin/sessions" + (tenant ? "?tenant=" + encodeURIComponent(tenant) : ""));
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await getAdminSessions(tenant);
+      if (!isOk(d)) {
+        setErr(errText(d?.error));
         return;
       }
       setErr("");
@@ -65,10 +66,10 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
 
   // Deployment-wide overview: show RUNNING sessions only (stopped/resumable ones are
   // noise here — the per-member detail still lists them). Member detail is unchanged.
-  const all = (rows || []).filter((s: any) => s.alive);
+  const all = (rows || []).filter((s) => s.alive);
   const needle = q.trim().toLowerCase();
   const shown = needle
-    ? all.filter((s: any) =>
+    ? all.filter((s) =>
         [s.user_key, s.email, s.label, s.repo, s.name, s.tenant]
           .some((v) => (v || "").toLowerCase().includes(needle)),
       )
@@ -108,7 +109,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
             {(() => {
               // Group by tenant (a header per tenant), so the row drops its tenant column
               // and stays narrow enough for a phone. Groups sorted by tenant name.
-              const by = new Map<string, any[]>();
+              const by = new Map<string, AdminSessionRow[]>();
               for (const s of shown) {
                 const k = s.tenant || "";
                 (by.get(k) || by.set(k, []).get(k)!).push(s);
@@ -125,7 +126,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
                         {tName(tslug)} <span className="muted">({list.length})</span>
                       </div>
                     )}
-                    {list.map((s: any) => {
+                    {list.map((s) => {
                       const st = stateInfo(s);
                       return (
                         <div key={s.tenant + "|" + s.user_key + "|" + s.name} className="adm-session">
@@ -169,16 +170,16 @@ export function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
   const tr = useT();
   const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
   const [q, setQ] = useState("");
-  const [rows, setRows] = useState<any[] | null>(null);
+  const [rows, setRows] = useState<AuditRow[] | null>(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
     setRows(null);
     setErr("");
     try {
-      const d = await api("api/admin/audit" + (tenant ? "?tenant=" + encodeURIComponent(tenant) : ""));
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await getAdminAudit(tenant);
+      if (!isOk(d)) {
+        setErr(errText(d?.error));
         setRows([]);
         return;
       }
@@ -195,7 +196,7 @@ export function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
 
   const needle = q.trim().toLowerCase();
   const shown = needle
-    ? (rows || []).filter((a: any) =>
+    ? (rows || []).filter((a) =>
         [a.action, a.target, a.actor_email, a.actor_id, a.tenant].some((v) =>
           (v || "").toLowerCase().includes(needle),
         ),
@@ -236,7 +237,7 @@ export function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
           <p className="muted">{(rows || []).length === 0 ? tr("admin.no_audit") : tr("admin.no_matching_audit")}</p>
         ) : (
           <div className="adm-audit">
-            {shown.map((a: any) => (
+            {shown.map((a) => (
               <div key={a.id} className="adm-audit-row">
                 <span className="as-time muted">{fmtAt(a.at)}</span>
                 <span className={"audit-action cat-" + auditCat(a.action)}>{a.action}</span>
@@ -272,7 +273,7 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
   // Non-super callers must scope to a tenant they administer (the API rejects the
   // deployment-wide view); default to their first tenant.
   const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<AdminUsage | null>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -292,9 +293,9 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
     setErr("");
     try {
       const q = usageQuery(win);
-      const d = await api("api/admin/usage" + (q ? "?" + q : ""));
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await getAdminUsage(q);
+      if (!isOk(d)) {
+        setErr(errText(d?.error));
         setData(null);
       } else {
         setData(d);
@@ -323,9 +324,9 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
     return u.toString();
   };
 
-  const totals: any[] = (data?.totals || []).slice().sort((a: any, b: any) => b.running_secs - a.running_secs);
-  const maxSecs = totals.reduce((m: number, t: any) => Math.max(m, t.running_secs), 0);
-  const grandSecs = totals.reduce((s: number, t: any) => s + t.running_secs, 0);
+  const totals: UsageTotal[] = (data?.totals || []).slice().sort((a, b) => b.running_secs - a.running_secs);
+  const maxSecs = totals.reduce((m, t) => Math.max(m, t.running_secs), 0);
+  const grandSecs = totals.reduce((s, t) => s + t.running_secs, 0);
 
   return (
     <div className="admin-stage usage-view">
@@ -409,7 +410,7 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
           <p className="muted">{tr("admin.usage_no_records")}</p>
         ) : (
           <div className={"usage-rows ur-table" + (isSuper && !tenant ? " ur-with-tenant" : "")}>
-            {totals.map((t: any) => (
+            {totals.map((t) => (
               <div key={(t.tenant || "") + "|" + t.user_key} className="usage-row">
                 <span className="ur-key mono" title={t.email || ""}>{t.user_key || tr("admin.unknown")}</span>
                 {isSuper && !tenant && <span className="ur-tenant muted">{t.tenant}</span>}

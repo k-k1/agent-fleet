@@ -298,6 +298,15 @@ export interface ProviderConn {
   workspace_id_source?: "manual" | "learned";
   workspace_url?: string;
   last_limit?: { name?: string; reset_at?: string };
+  // opencode: settings changed since the running serve daemon started (opencode PendingRestart).
+  // Absent = what is stored is what serve is using.
+  restart_required?: { reasons?: string[]; since?: string };
+  // Account identity, where the Agent can read one (claude / codex / agy / cursor / kiro / muse).
+  // `method` is codex's / agy's auth method ("apikey" for a pasted key); `name` is muse's full name.
+  email?: string;
+  plan?: string;
+  method?: string;
+  name?: string;
 }
 
 // The full connections bag. Known agents are named; git providers (github /

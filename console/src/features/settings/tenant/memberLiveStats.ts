@@ -9,6 +9,7 @@
 // schedule would leak between panels and between tests.
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../../core/api/client.ts";
+import type { MemberStats } from "../api.ts";
 
 export type LiveReading = { mem_used: number; mem_max?: number; cpu_pct?: number };
 
@@ -125,7 +126,7 @@ export class LivePoller {
 
 // parseReading — null when the workspace is not running or the Agent had no memory figure yet
 // (the card then keeps its placeholder).
-export function parseReading(s: any): LiveReading | null {
+export function parseReading(s: (MemberStats & { error?: unknown }) | null | undefined): LiveReading | null {
   if (!s || s.error || s.running !== true || typeof s.mem_used !== "number") return null;
   return {
     mem_used: s.mem_used,

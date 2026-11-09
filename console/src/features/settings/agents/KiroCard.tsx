@@ -6,7 +6,9 @@ import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
 import { useReauth } from "../parts/useReauth.ts";
 import { usePolling } from "../parts/usePolling.ts";
-import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
+import { CardSettings, ConnPaused, LaunchDefaults, type DeviceFlow } from "./AgentCardParts.tsx";
+import type { ProviderConn } from "../../../types/session.ts";
+import { getKiroInstall, isOk, type CliInstallStatus } from "../api.ts";
 
 // Kiro: on-demand install + device-flow login (docs/log/43 Track C). Kiro's ~855MB
 // bundle is NOT baked on the lean image (decision §4-2), so a fresh workspace reports
@@ -18,11 +20,11 @@ import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
 // api/connections/kiro/poll (no pasted code, like Codex/Cursor). v1 is login-only
 // (Builder ID / free); the API-key path (KIRO_API_KEY, Pro+) is deferred to Track D.
 // No RTK toggle yet — kiro's rtk hook seam is Track D.
-export function KiroCard({ running, st, reload }: { running: boolean; st: any; reload: () => void }) {
+export function KiroCard({ running, st, reload }: { running: boolean; st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
-  const [flow, setFlow] = useState<any>(null); // { url, user_code, flow_id, status } while a login is in flight
+  const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [installing, setInstalling] = useState<null | "installing" | "error">(null);
   const [busy, setBusy] = useState(false);
   // { installed, version, pin, updateAvailable } — the version facts behind the update
@@ -31,13 +33,14 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
   // something re-installs. The launch guard does that implicitly at the next launch;
   // this makes it EXPLICIT (you see that an update exists and press the button when a
   // multi-minute download suits you, instead of being surprised mid-launch).
-  const [inst, setInst] = useState<any>(null);
+  const [inst, setInst] = useState<CliInstallStatus | null>(null);
   const unsupported = st?.supported === false; // CLI not installed yet (on-demand)
 
   const loadInstall = useCallback(async () => {
     if (!running) return;
     try {
-      setInst(await api("api/connections/kiro/install"));
+      const r = await getKiroInstall();
+      setInst(isOk(r) ? r : null);
     } catch {
       /* stopped workspace / transient 502 — the card just shows no update notice */
     }
@@ -68,9 +71,10 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
         firstDelayMs: 4000,
         onExpire: () => setInstalling("error"),
         step: async () => {
-          let p;
+          let p: CliInstallStatus | null;
           try {
-            p = await api("api/connections/kiro/install");
+            const r = await getKiroInstall();
+            p = isOk(r) ? r : null;
           } catch {
             p = null;
           }
@@ -105,7 +109,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setFlow((f: any) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
+        onExpire: () => setFlow((f) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
         step: async () => {
           let p;
           try {

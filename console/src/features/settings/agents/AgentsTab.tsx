@@ -1,7 +1,20 @@
 import { ConnChecking, type ConnPhase } from "../parts/providerCard.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { api, apiJSON, errDetail, isTransientErr } from "../../../core/api/client.ts";
+import { errDetail, isTransientErr } from "../../../core/api/client.ts";
+import {
+  getAgentRtk,
+  getClaudeSettings,
+  getCodexSettings,
+  isOk,
+  putAgentRtk,
+  putClaudeSettings,
+  putCodexSettings,
+  type AgentRtkSettings,
+  type ClaudeSettings,
+  type CodexSettings,
+  type Reply,
+} from "../api.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { Choice, OnOff, OrderList, Row } from "../parts/controls.tsx";
 import {
@@ -67,9 +80,9 @@ export function AgentsTab() {
   // place (hides that card's toggles) instead of blanking the connect UI. claude:
   // null = loading/unavailable, object = ready. agents: null = loading, false =
   // endpoint missing (older image), object = ready.
-  const [claude, setClaude] = useState<any>(null);
-  const [codex, setCodex] = useState<any>(null);
-  const [agents, setAgents] = useState<any>(null);
+  const [claude, setClaude] = useState<ClaudeSettings | null>(null);
+  const [codex, setCodex] = useState<CodexSettings | null>(null);
+  const [agents, setAgents] = useState<AgentRtkSettings | false | null>(null);
   // The images rows this deployment actually declares (ADR 0082 decision 3), or null while
   // there is no live answer to trust — not running, still loading, a transient failure, or an
   // Agent build old enough to predate `kind` (ADR 0082 P0/P1; see isPreAdr0082Status below).
@@ -80,14 +93,14 @@ export function AgentsTab() {
   const [imagegenProviders, setImagegenProviders] = useState<ImagegenProvider[] | null>(null);
 
   const loadSettings = useCallback(() => {
-    api("api/claude/settings")
-      .then((c) => setClaude(c && !c.error ? c : null))
+    getClaudeSettings()
+      .then((c) => setClaude(isOk(c) ? c : null))
       .catch(() => setClaude(null));
-    api("api/codex/settings")
-      .then((c) => setCodex(c && !c.error ? c : null))
+    getCodexSettings()
+      .then((c) => setCodex(isOk(c) ? c : null))
       .catch(() => setCodex(null));
-    api("api/agents/rtk")
-      .then((a) => setAgents(a && !a.error ? a : false))
+    getAgentRtk()
+      .then((a) => setAgents(isOk(a) ? a : false))
       .catch(() => setAgents(false));
     imagegenStatus()
       .then((st) => {
@@ -114,17 +127,18 @@ export function AgentsTab() {
   // One save handler per settings endpoint — identical error contract, differing
   // only in path + setter.
   const mkUpdate =
-    (path: string, setState: (d: any) => void) => async (patch: unknown) => {
-      const d = await apiJSON(path, "PUT", patch);
-      if (d && d.error) {
-        toast(tr("common.save_failed_msg", { msg: errDetail(d.error) }));
+    <P, T>(put: (patch: P) => Promise<Reply<T>>, setState: (d: T) => void) =>
+    async (patch: P) => {
+      const d = await put(patch);
+      if (!isOk(d)) {
+        toast(tr("common.save_failed_msg", { msg: errDetail(d?.error) }));
         return;
       }
       setState(d);
     };
-  const updateClaude = mkUpdate("api/claude/settings", setClaude);
-  const updateCodex = mkUpdate("api/codex/settings", setCodex);
-  const updateAgents = mkUpdate("api/agents/rtk", setAgents);
+  const updateClaude = mkUpdate(putClaudeSettings, setClaude);
+  const updateCodex = mkUpdate(putCodexSettings, setCodex);
+  const updateAgents = mkUpdate(putAgentRtk, setAgents);
 
   // ADR 0082 decision 3: once the Agent has answered, the list is drawn one row per DECLARED
   // images row instead of the two static kind-name guesses — and decision 8, the fold that used

@@ -15,7 +15,9 @@ import {
   IssueLink,
 } from "../parts/providerCard.tsx";
 import { usePolling } from "../parts/usePolling.ts";
-import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
+import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow, type DeviceFlow } from "./AgentCardParts.tsx";
+import type { ProviderConn } from "../../../types/session.ts";
+import { type AgentRtkPatch, type AgentRtkSettings, type CodexSettings, type CodexSettingsPatch } from "../api.ts";
 
 // Codex: ChatGPT subscription (device code) or API key, plus the RTK toggle
 // (workspace-level; shown whenever settings load). codex has no command-rewrite
@@ -30,19 +32,19 @@ export function CodexCard({
   updateAgents,
 }: {
   running: boolean;
-  st: any;
+  st: ProviderConn | undefined;
   reload: () => void;
-  codex: any;
-  updateCodex: (patch: unknown) => void;
-  agents: any;
-  updateAgents: (patch: unknown) => void;
+  codex: Partial<CodexSettings> | null;
+  updateCodex: (patch: CodexSettingsPatch) => void;
+  agents: Partial<AgentRtkSettings> | false | null;
+  updateAgents: (patch: AgentRtkPatch) => void;
 }) {
   const tr = useT();
   const s = useSettings();
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | device | key
-  const [dev, setDev] = useState<any>(null); // { user_code, url, flow_id, status }
+  const [dev, setDev] = useState<DeviceFlow | null>(null);
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -59,7 +61,7 @@ export function CodexCard({
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setDev((d: any) => ({ ...d, status: tr("git.oauth_expired") })),
+        onExpire: () => setDev((d) => (d ? { ...d, status: tr("git.oauth_expired") } : d)),
         step: async () => {
           let p;
           try {
@@ -240,7 +242,7 @@ export function CodexCard({
             </p>
           </>
         )}
-        {agents && agents !== false && (
+        {agents && (
           <>
             <RtkRow
               available={agents.rtk_available}
