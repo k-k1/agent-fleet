@@ -365,6 +365,7 @@ Agent Fleet はバックグラウンドでメモリを整えられます。読�
 - **保存と忘却には scope が必要**：`memory_save`・`memory_patch`・`memory_forget` は `scope` が必須です。特定のリポジトリの事実なら `project`
   （`repository` か `project` を添えて）、全プロジェクトで成り立つ事実のときだけ `user`。`scope` なしの呼び出しは、何を渡すかを
   示すメッセージで拒否されるため、プロジェクトを渡し忘れてもリポジトリ固有の事実が全プロジェクトに公開されることはありません。
+- **kind と anchors**：外部の `memory_save` も、ワークスペース内と同じ任意の `kind` と `anchors` を受け付けます（省略すると今の値を保ち、`anchors` に `[]` を渡すと消します）。ライフサイクルのフィールドは外部からは設定できません。
 - **記録されるもの**：保存はエージェントメモリの一覧に作成者の種別 `external` として並び、コミットメッセージには
   クライアントが自己申告した名前の `AF-External-Client: <名前>` トレーラーが付きます（参考情報のみ）。外部からの
   保存・部分編集・忘却は監査ログにも `memory.entry.save` / `memory.entry.patch` / `memory.entry.forget` として、プロジェクト ID 付き（メモリ名は含まず）で

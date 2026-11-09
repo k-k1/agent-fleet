@@ -143,15 +143,29 @@ func memoryTools() []mcpTool {
 				"type":        map[string]any{"type": "string", "enum": []string{"user", "feedback", "project", "reference"}},
 				"body":        map[string]any{"type": "string", "description": "the memory text (Markdown)"},
 				"scope":       writeScopeArg, "project": projectArg, "repository": repositoryArg,
-				"kinds":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "agent kinds the memory is limited to (optional)"},
+				"kinds": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "agent kinds the memory is limited to (optional)"},
+				// kind and anchors mirror the Agent's memory_save (workspace/agent/internal/mcpx);
+				// TestMemorySaveSchemaMatchesCP there fails when the two drift. The lifecycle fields
+				// (status, superseded_by, invalid_at, reasons) stay out, as on the Agent.
+				"kind":     map[string]any{"type": "string", "enum": []string{"preference", "lesson", "procedure", "state", "log"}, "description": "How this memory goes stale; omit to keep the current one. A log is history and is never in the described part of the index"},
+				"anchors":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "What this memory depends on (paths, symbols, test names, ADR numbers, commands); omit to keep the current ones, [] clears them"},
 				"revision": revArg,
 			}, "required": []string{"name", "description", "type", "body", "scope"}},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
-				body, _ := json.Marshal(map[string]any{
+				m := map[string]any{
 					"project": argStr(args, "project"), "repository": argStr(args, "repository"), "scope": argStr(args, "scope"), "name": argStr(args, "name"),
 					"description": argStr(args, "description"), "type": argStr(args, "type"), "body": argStr(args, "body"),
 					"kinds": argStrings(args, "kinds"), "revision": argInt(args, "revision"), "client": mcpCallFrom(ctx).client,
-				})
+				}
+				// Relayed verbatim whenever the key is present ([] included): absent keeps what the
+				// memory has, present sets it, and the Agent alone judges the value, so an invalid
+				// kind is refused there exactly as for its own tool.
+				for _, k := range []string{"kind", "anchors"} {
+					if v, ok := args[k]; ok {
+						m[k] = v
+					}
+				}
+				body, _ := json.Marshal(m)
 				out, err := a.memoryCall(ctx, res, "POST", "/agents/memory/external/entries", body)
 				if err == nil {
 					a.memoryAudit(ctx, res, "memory.entry.save", out)

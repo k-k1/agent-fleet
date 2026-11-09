@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -423,4 +424,53 @@ func TestMemoryReadDescriptionSaysOmittedScopeSearchesBoth(t *testing.T) {
 		return
 	}
 	t.Fatal("no memory_read tool")
+}
+
+// kind and anchors reach the Agent as given: absent stays absent (keep), [] is relayed (clear).
+func TestMemorySaveRelaysKindAndAnchors(t *testing.T) {
+	cp := newMemCP(t, memStore(t), "running")
+	base := map[string]any{"name": "n", "description": "d", "type": "project", "body": "b", "scope": "user"}
+	save := func(extra map[string]any) map[string]any {
+		t.Helper()
+		args := map[string]any{}
+		for k, v := range base {
+			args[k] = v
+		}
+		for k, v := range extra {
+			args[k] = v
+		}
+		if text, isErr := memCall(t, cp, "write", "memory_save", args); isErr {
+			t.Fatalf("save failed: %s", text)
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(cp.gotBody), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	got := save(map[string]any{"kind": "lesson", "anchors": []any{"a/b.go", "ADR 0130"}})
+	if got["kind"] != "lesson" || fmt.Sprint(got["anchors"]) != "[a/b.go ADR 0130]" {
+		t.Errorf("kind/anchors not relayed: %s", cp.gotBody)
+	}
+	got = save(map[string]any{"anchors": []any{}})
+	if a, ok := got["anchors"].([]any); !ok || len(a) != 0 {
+		t.Errorf("empty anchors must be relayed to clear: %s", cp.gotBody)
+	}
+	got = save(nil)
+	if _, has := got["kind"]; has {
+		t.Errorf("omitted kind was relayed: %s", cp.gotBody)
+	}
+	if _, has := got["anchors"]; has {
+		t.Errorf("omitted anchors were relayed: %s", cp.gotBody)
+	}
+	tools := memoryTools()
+	for _, f := range []string{"status", "superseded_by", "invalid_at", "reasons"} {
+		for _, tl := range tools {
+			if tl.name == "memory_save" {
+				if _, ok := tl.schema["properties"].(map[string]any)[f]; ok {
+					t.Errorf("memory_save advertises lifecycle field %s", f)
+				}
+			}
+		}
+	}
 }
