@@ -17,9 +17,9 @@
 import { useSyncExternalStore } from "react";
 import { pinSyncedFallbacks } from "../features/notifications/prefs.ts";
 import { applyTheme } from "./settings/appearance.ts";
-import type { Settings } from "./settings/prefs.ts";
-import type { SURFACE_TARGETS } from "./settings/options.ts";
-import { applyToPage, getSettings, notify, persist, setState, subscribe } from "./settings/store.ts";
+import { sameValue, settingsDefaults, type Settings } from "./settings/prefs.ts";
+import { APPEARANCE_SHUFFLE_MODES } from "./settings/options.ts";
+import { KEY as SETTINGS_KEY, applyToPage, getSettings, notify, persist, setState, subscribe } from "./settings/store.ts";
 import {
   currentPrefsOwner,
   markUnsaved,
@@ -118,7 +118,7 @@ export {
   settingsDefaults,
   type Settings,
 } from "./settings/prefs.ts";
-export { KEY as SETTINGS_STORAGE_KEY, getSettings, subscribe } from "./settings/store.ts";
+export { getSettings, subscribe } from "./settings/store.ts";
 export {
   SERVER_PREFS_MAX_BYTES,
   cancelPrefsTimersForTest,
@@ -205,17 +205,105 @@ export function appearanceScope(): string | null {
   return currentPrefsOwner() || null;
 }
 
-/** Show colors (or the random-colors schedule) another tab of this device already chose and saved
- * (localStorage and, per tenant, the snapshot): applied to this page only, without a write of its
- * own and without a ui-prefs save, since the writing tab did both. Device-local appearance keys
- * only: anything else would need markUnsaved and a save to stay consistent. */
-export function adoptAppearance(
-  patch: Partial<Pick<Settings, (typeof SURFACE_TARGETS)[number]["key"] | "appearanceShuffle">>,
-): void {
-  const state = { ...getSettings(), ...patch };
-  setState(state);
-  applyTheme(state);
+// Other tabs of this browser. Each tab holds the settings in memory and reads localStorage only at
+// load, so without this a change made in one tab stays invisible in the others until they reload,
+// and the next write from a stale tab puts its old values back.
+//
+// Only the appearance keys cross between tabs. paneLayout is device-local too but switching it
+// re-lays the main area (with an unsaved-edits confirm), which a tab must not do behind the member's
+// back; synced keys already converge through the server copy.
+const CROSS_TAB_KEYS = [...APPEARANCE_KEYS, "appearancePerTenant", "appearanceShuffle"] as const;
+
+// A value from another tab, accepted only in the shape this build stores (it may be another
+// Console version).
+function crossTabValue(k: (typeof CROSS_TAB_KEYS)[number], v: unknown): unknown {
+  if (k === "appearanceShuffle") return APPEARANCE_SHUFFLE_MODES.some((m) => m.id === v) ? v : undefined;
+  return typeof v === typeof settingsDefaults()[k] ? v : undefined;
+}
+
+function parseObject(raw: string | null): Record<string, unknown> {
+  try {
+    const v = JSON.parse(raw || "null");
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+// What another tab's write of the shared settings record changes here. Only keys whose stored
+// value the write itself changed are taken: the rest of that record is the writing tab's own
+// copy, possibly older than ours.
+function crossTabPatch(oldRaw: string | null, newRaw: string | null): Partial<Settings> {
+  const before = parseObject(oldRaw);
+  const after = parseObject(newRaw);
+  const cur = getSettings();
+  const patch: Record<string, unknown> = {};
+  for (const k of CROSS_TAB_KEYS) {
+    if (!(k in after) || sameValue(before[k], after[k])) continue;
+    const v = crossTabValue(k, after[k]);
+    if (v !== undefined && !sameValue(v, cur[k])) patch[k] = v;
+  }
+  const perTenant = "appearancePerTenant" in patch ? !!patch.appearancePerTenant : cur.appearancePerTenant;
+  if (perTenant) {
+    // The record holds the writing tab's tenant's look, which need not be ours; our tenant's
+    // look comes from its snapshot (on the switch turning on) or its snapshot key's own events.
+    for (const k of APPEARANCE_KEYS) delete patch[k];
+  } else if (patch.appearancePerTenant === false) {
+    // Switched off elsewhere: the look that tab showed is now every tenant's.
+    for (const k of APPEARANCE_KEYS) {
+      const v = crossTabValue(k, after[k]);
+      if (v !== undefined) patch[k] = v;
+    }
+  }
+  return patch as Partial<Settings>;
+}
+
+function showFromOtherTab(patch: Partial<Settings>): void {
+  if (!Object.keys(patch).length) return;
+  setState({ ...getSettings(), ...patch });
+  // The switch turned on elsewhere: show this tab's own tenant snapshot (or file the current look
+  // as its first one), as turning it on here would.
+  if (patch.appearancePerTenant) {
+    appearanceOwner = "";
+    syncAppearanceOwner(currentPrefsOwner());
+  } else if (patch.appearancePerTenant === false) {
+    appearanceOwner = "";
+  }
+  // No persist and no server save: the writing tab did both, and these keys never reach ui-prefs.
+  applyTheme(getSettings());
   notify();
+}
+
+function onOtherTabStorage(e: StorageEvent): void {
+  if (!e.key) return;
+  // An event can arrive after this tab or a third one has already written the key again. Taking
+  // it then would leave two tabs that wrote at the same moment each showing the other's value;
+  // skipping it leaves both on whatever was written last.
+  try {
+    if (localStorage.getItem(e.key) !== e.newValue) return;
+  } catch {
+    return;
+  }
+  if (e.key === SETTINGS_KEY) {
+    showFromOtherTab(crossTabPatch(e.oldValue, e.newValue));
+    return;
+  }
+  const owner = currentPrefsOwner();
+  if (!owner || e.key !== APPEARANCE_SNAPSHOT_PREFIX + owner || !getSettings().appearancePerTenant) return;
+  const snap = parseObject(e.newValue);
+  const cur = getSettings();
+  const patch: Record<string, unknown> = {};
+  for (const k of APPEARANCE_KEYS) {
+    const v = crossTabValue(k, snap[k]);
+    if (v !== undefined && v !== cur[k]) patch[k] = v;
+  }
+  showFromOtherTab(patch as Partial<Settings>);
+}
+
+/** Follow appearance changes made in the other tabs of this browser; returns the stop function. */
+export function watchOtherTabs(): () => void {
+  window.addEventListener("storage", onOtherTabStorage);
+  return () => window.removeEventListener("storage", onOtherTabStorage);
 }
 
 // The generic signature ties key and value together in the type system, preventing mismatches

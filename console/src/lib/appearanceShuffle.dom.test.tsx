@@ -60,7 +60,7 @@ describe("shuffleDue", () => {
 });
 const HOUR = 60 * 60_000;
 
-// One module instance per "tab": the stamp key in the shared localStorage is the only channel.
+// One module instance per "tab"; they share only localStorage, as real tabs do.
 async function freshTab(owner = "a|u1") {
   vi.resetModules();
   const s = await import("./settings.ts");
@@ -70,9 +70,6 @@ async function freshTab(owner = "a|u1") {
   return { s, sh, setOwner: (v: string) => (o = v) };
 }
 
-const colorsOf = (st: Settings) => SURFACE_TARGETS.map((t) => st[t.key]);
-const storageEvent = (key: string, newValue: string | null) =>
-  window.dispatchEvent(new StorageEvent("storage", { key, newValue }));
 
 describe("schedule across tabs", () => {
   beforeEach(() => {
@@ -84,16 +81,18 @@ describe("schedule across tabs", () => {
   it("switching on picks at once without touching the theme, and another tab adopts the pick", async () => {
     localStorage.setItem("af-display-settings", JSON.stringify({ theme: "light" }));
     const b = await freshTab();
-    const stopB = b.sh.startAppearanceShuffle();
+    const stopB = b.s.watchOtherTabs();
     const a = await freshTab();
+    const before = localStorage.getItem("af-display-settings");
     a.sh.setAppearanceShuffle("1h");
     const picked = a.s.getSettings();
     expect(picked.theme).toBe("light");
     for (const t of SURFACE_TARGETS) expect(picked[t.key]).not.toBe("default");
 
-    const key = "af-appearance-shuffle:*";
-    window.dispatchEvent(new StorageEvent("storage", { key, newValue: localStorage.getItem(key) }));
+    const key = "af-display-settings";
+    window.dispatchEvent(new StorageEvent("storage", { key, oldValue: before, newValue: localStorage.getItem(key) }));
     for (const t of SURFACE_TARGETS) expect(b.s.getSettings()[t.key]).toBe(picked[t.key]);
+    expect(b.s.getSettings().appearanceShuffle).toBe("1h");
     stopB();
   });
 
@@ -115,59 +114,7 @@ describe("schedule across tabs", () => {
     const a = await freshTab();
     const stop = a.sh.startAppearanceShuffle({ pickOnLoad: false });
     expect(a.s.getSettings().topbarColor).toBe("teal");
-    const seeded = JSON.parse(localStorage.getItem("af-appearance-shuffle:*")!);
-    expect(seeded.colors).toEqual({});
-    stop();
-  });
-
-  it("two tabs that pick at once settle on the later pick", async () => {
-    const a = await freshTab();
-    const stopA = a.sh.startAppearanceShuffle({ pickOnLoad: false });
-    a.sh.shuffleAppearanceNow(2000);
-    const own = colorsOf(a.s.getSettings());
-    // The other tab's pick from just before ours arrives late: ignored.
-    storageEvent("af-appearance-shuffle:*", JSON.stringify({ at: 1000, colors: { topbarColor: "mono" } }));
-    expect(colorsOf(a.s.getSettings())).toEqual(own);
-    // A later one is adopted.
-    storageEvent("af-appearance-shuffle:*", JSON.stringify({ at: 3000, colors: { topbarColor: "mono" } }));
-    expect(a.s.getSettings().topbarColor).toBe("mono");
-    stopA();
-  });
-
-  it("adopting leaves the shared copy alone and ignores another scope's stamp", async () => {
-    localStorage.setItem("af-display-settings", JSON.stringify({ topbarColor: "teal" }));
-    const a = await freshTab();
-    const stop = a.sh.startAppearanceShuffle({ pickOnLoad: false });
-    storageEvent("af-appearance-shuffle:b|u1", JSON.stringify({ at: 5, colors: { topbarColor: "rose" } }));
-    expect(a.s.getSettings().topbarColor).toBe("teal");
-    storageEvent("af-appearance-shuffle:*", JSON.stringify({ at: 5, colors: { topbarColor: "rose" } }));
-    expect(a.s.getSettings().topbarColor).toBe("rose");
-    expect(JSON.parse(localStorage.getItem("af-display-settings")!).topbarColor).toBe("teal");
-    stop();
-  });
-
-  it("ignores a malformed stamp and unknown colors in one", async () => {
-    localStorage.setItem("af-display-settings", JSON.stringify({ topbarColor: "teal" }));
-    const a = await freshTab();
-    const stop = a.sh.startAppearanceShuffle({ pickOnLoad: false });
-    storageEvent("af-appearance-shuffle:*", "{not json");
-    storageEvent("af-appearance-shuffle:*", JSON.stringify({ at: 9, colors: { topbarColor: "neon" } }));
-    storageEvent("af-appearance-shuffle:*", null);
-    expect(a.s.getSettings().topbarColor).toBe("teal");
-    storageEvent("af-appearance-shuffle:*", JSON.stringify({ at: 9, colors: { topbarColor: "neon", viewerColor: "rose" } }));
-    expect(a.s.getSettings().topbarColor).toBe("teal");
-    expect(a.s.getSettings().viewerColor).toBe("rose");
-    stop();
-  });
-
-  it("follows the schedule when another tab changes it", async () => {
-    localStorage.setItem("af-display-settings", JSON.stringify({ appearanceShuffle: "1h" }));
-    const a = await freshTab();
-    const stop = a.sh.startAppearanceShuffle({ pickOnLoad: false });
-    storageEvent("af-display-settings", JSON.stringify({ appearanceShuffle: "off" }));
-    expect(a.s.getSettings().appearanceShuffle).toBe("off");
-    storageEvent("af-display-settings", JSON.stringify({ appearanceShuffle: "bogus" }));
-    expect(a.s.getSettings().appearanceShuffle).toBe("off");
+    expect(JSON.parse(localStorage.getItem("af-appearance-shuffle:*")!).at).toBe(Date.now());
     stop();
   });
 
