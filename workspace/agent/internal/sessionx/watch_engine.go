@@ -20,14 +20,16 @@ import (
 )
 
 // The watch engine of ADR 0133 as the Agent runs it: one engine, its state on disk, the
-// github source, and a sink that injects notices into the owning session the way the PR
-// feedback watch does (idle and ready on two looks, a stopped owner started one at a time).
+// github and bitbucket sources, and a sink that injects notices into the owning session only
+// when it is idle and ready on two looks in a row, as the pending peer spool does, and starts a
+// stopped owner one at a time.
 
 // watchInterval is the engine's tick. Reads are scheduled per subject by the source's hints; a
 // tick only finds the ones that are due, so a short tick costs no requests.
 var watchInterval = 5 * time.Second
 
-// Waits for starting a stopped owner, as the PR feedback watch uses them.
+// Waits for starting a stopped owner: how long a started one may take to become ready before the
+// next may be started, and how far apart two starts of the same one are.
 const (
 	watchWakeWait  = 5 * time.Minute
 	watchWakeRetry = 15 * time.Minute
@@ -338,12 +340,6 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, watchCreateResp{Watch: sub})
-}
-
-// watchingPR reports whether name watches the provider's PR "owner/repo#N" for typ, so the PR
-// feedback watch does not tell it the same thing a second time.
-func watchingPR(name, provider, linkKey, typ string) bool {
-	return watchEngine().Watching(name, watch.SubjectID(provider+":"+strings.ToLower(linkKey)), typ)
 }
 
 // HandleWatchList (GET /sessions/{name}/watches) lists the session's watches.

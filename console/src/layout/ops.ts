@@ -139,6 +139,9 @@ export function sameTarget(view: View, target: OpenTarget): boolean {
     case "fleetgraph": return c.kind === "fleetgraph";
     // One Home per workspace, like the overview: a second open focuses it.
     case "home": return c.kind === "home";
+    // The kind alone: a second open focuses the Memory view that exists. Which view shows is state
+    // of the pane, so openMemoryView retargets it in place (features/memory/open.ts).
+    case "memory": return c.kind === "memory";
     // One "add a model" pane per engine and catalogue: opening it again focuses the one that is
     // already there rather than starting a second wizard against the same list.
     case "engineAdd": return c.kind === "engineAdd" && c.engineKey === t.engineKey && c.lora === t.lora;

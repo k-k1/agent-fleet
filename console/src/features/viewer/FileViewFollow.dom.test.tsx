@@ -4,7 +4,7 @@
 // a clean buffered pane follows and keeps its chosen mode, a pane without a
 // buffer (the plain-mode Markdown fallback) replaces its loaded data, and a
 // dirty pane shows the advisory with the diff-check action.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { EditorView } from "@codemirror/view";
@@ -32,6 +32,9 @@ vi.mock("../../core/api/client.ts", () => ({
       ...(editable ? { revision: revisionOf(content) } : {}),
     };
   }),
+  // lib/settings/sync.ts saves ui-prefs through apiJSON on a debounce timer; without
+  // this export a late-firing timer is an unhandled error that fails the whole run.
+  apiJSON: vi.fn(async () => ({})),
   downloadURL: (p: string) => `/dl/${p}`,
   isTransientErr: () => false,
   errText: (e: unknown) => String(e),
@@ -101,6 +104,25 @@ const pressed = () =>
   [...host.querySelectorAll('button[aria-pressed="true"]')].map((b) => b.textContent);
 const editorView = () => EditorView.findFromDOM(host.querySelector(".cm-editor") as HTMLElement)!;
 const status = () => host.querySelector(".file-editor-status")?.textContent ?? "";
+
+// The first FileView mount in a fresh worker is the expensive one: it loads the
+// Markdown grammar chunk and boots CodeMirror in jsdom. Measured on a loaded host:
+// 3.3 s for the first render against well under 1 s afterwards, which on its own
+// spent most of the first test's 5 s budget. Pay it here, in a hook with an
+// explicit budget, so no test's timeout depends on which one ran first.
+beforeAll(async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const warmHost = document.createElement("div");
+  document.body.appendChild(warmHost);
+  const warmRoot = createRoot(warmHost);
+  await act(async () => {
+    warmRoot.render(<FileView filePath="repos/x/doc.md" paneId="pane-warm" />);
+  });
+  await vi.waitFor(() => expect(warmHost.querySelector(".cm-editor")).not.toBeNull(), { timeout: 30_000 });
+  act(() => warmRoot.unmount());
+  warmHost.remove();
+  clearDirtyRegistryForTests();
+}, 60_000);
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

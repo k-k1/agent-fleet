@@ -26,6 +26,7 @@ vi.mock("./api.ts", () => ({
   suggestEdit: vi.fn(),
 }));
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   errText: (error: { message: string }) => error.message,
 }));
 

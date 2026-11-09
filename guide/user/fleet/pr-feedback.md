@@ -63,7 +63,7 @@ Events it can watch include checks finishing, a merge conflict, the pull request
 
 - **GitHub and Bitbucket.** The pull request is read with your own connection, so an agent can watch only what your connection can read
 - **When it is told** is the same as PR feedback. A condition that already holds when the agent asks is told at once
-- **No double notice.** With PR feedback on, a session that watches its own pull request's checks, or every kind of review news that arrived, hears about them from its watch only
+- **No double notice.** With PR feedback on, a session that watches its own pull request for failed checks, a change request or new unresolved threads hears that from its watch only, and PR feedback does not repeat it after the watch ends. What it does not watch still comes from PR feedback
 - In the session it arrives as a line starting with `[agent-fleet:notice kind=watch`. Text from the pull request (check names, reviewer names) is quoted and marked as data, not instructions
 
 ### Send the notices to the parent

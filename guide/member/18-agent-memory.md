@@ -18,11 +18,17 @@ another kind. **It is off by default.** Turn it on in the [Settings](#settings) 
 [Memory snapshots](#memory-snapshots), further down.
 
 The page opens with one status line: whether it is on, how many memories in how many projects, when it last changed,
-and a warning, with a link to Settings, when the background sync with Claude Code needs you. Under it are four views:
-**Memories · Changes · Import & export · Settings**. The view you leave open is remembered. While the workspace is stopped
-only **Settings** works (the switches are saved for the next start); the other views offer **Start the workspace**. On a
+and a warning, with a link to Settings, when the background sync with Claude Code needs you. Under it are two views:
+**Settings · Import & export**. The view you leave open is remembered. While the workspace is stopped
+only **Settings** works (the switches are saved for the next start); the other view offers **Start the workspace**. On a
 phone or a tablet in portrait the tabs stay on one row and scroll sideways when they do not all fit; the arrow keys,
 Home and End move between them.
+
+**The Memory view.** Reading a body, a diff or a list side by side does not fit in a dialog, so **Memories**, **Changes** and
+**Suggestions** live in a pane of their own, the *Memory* tab, like the image gallery. Open it with **Open memory view** at the
+top of Settings › Agent memory, or from the daily notice (which lands on **Suggestions**) or a memory in the command palette.
+There is one Memory view per workspace; opening it again focuses it. It works like the views below, only larger; the sections
+named **Memories**, **Changes** and **Suggestions** in this chapter are its three tabs.
 
 ### Memories
 
@@ -277,13 +283,23 @@ only queues *proposals*.
   needs agent memory on, and turning it on sends memory text to a model and spends tokens while the workspace is idle. Only the
   Console can switch it (a session's own token cannot). Below the switch the **status** shows the last run, the earliest next
   run, how many suggestions wait, and each topic that is ripe but delayed with the cause (token budget, workspace stopped,
-  never idle, waiting for the next run, a failed run).
+  never idle, waiting for the next run, a failed run). A topic that is too large to ever fit one run's budget (a note of
+  roughly 180 KB or more at the default 60k) shows as *too-large* with its estimate instead of waiting: trim the note or
+  raise the budget and the next run takes it.
 - **When it runs.** Only when no session has had a turn for 15 minutes, at most once every 3 hours, and only on topics that are
   ripe: one `wrong` or `stale` report, or 3 new observations, or an observation that has waited 24 hours. A run spends at most a
   token budget; what does not fit waits, and the status says why (budget, workspace stopped, never idle). If a turn starts during
   a run, the model call in flight finishes and the rest waits. The figures are in `config.json` beside the queue (under the
   memory store's work directory, `af-memory.work/consolidation/`); the models are in `models.json` there (default: the `small`
   role `claude:haiku`, the `large` role `claude:sonnet`, which supersede and merge escalate to).
+- **Run now (manual).** If a session is busy all day the automatic run may never come. **Run now**, next to the status, starts
+  a run yourself. It asks first: it calls the model, spends tokens, and shows the per-run budget. It ignores the idle check
+  and the 3-hour limit, and a turn in another session does not stop it; everything else is as for an automatic run (the switch
+  must be on, the token budget, validation, nothing written before you approve). By default it takes the ripe topics; tick
+  *Include topics that are not due yet* to take every waiting topic (one that already has a suggestion waiting is left out).
+  The request returns at once and the status shows the run's progress ("topic n of m"), then its report. Only one run goes at a
+  time: a second request is refused, not queued. A manual run does not use up or reset the automatic 3-hour window. Only you
+  can start it from the Console; a session cannot.
 - **What a proposal can be.** A *patch* of one memory (exact-text edits, checked to apply to the current revision), a *create*
   that an earlier 0117 proposal carried, or *advice* (supersede, merge, add) that you apply by hand — the engine does not
   write replacements. A create over a name that was forgotten, or that ever existed, is refused.
@@ -291,9 +307,18 @@ only queues *proposals*.
   authored `consolidator`: it shows in **Changes** and can be reverted. A proposal left undecided for 14 days expires (its record
   stays); expiry alone does not bring the topic back — new evidence, a change to the memory, or an explicit retry does.
 
-**Reviewing.** Settings › Agent memory › **Suggestions** lists the proposals; filter by *Pending*, *Decided* (approved, rejected,
-refused, or partly applied) and *Expired*. Open one to see the memory and the revision it was drafted against, the evidence (the
-reports and lint findings it rests on) and the diff.
+**Reviewing.** The Memory view's **Suggestions** tab lists the proposals; filter by *Pending*, *Decided* (approved, rejected,
+refused, or partly applied) and *Expired*. A proposal is titled by what it changes — the name of the memory it creates or
+patches — not by the topic it was grouped under (which can be an unrelated memory; the topic is shown in a smaller line below).
+Open one to see **If you approve**, before the Approve button:
+
+- a one-line summary: "Approving adds 2 memories; no existing memory changes", or "Approving changes 1 memory (adr-0094, rev 2 → 3)";
+- one card per item. A *create* card is a *New memory*: scope, name, type, description and the body as it will read. When the
+  topic memory is not the one being created it says "The topic memory … is not changed". A *patch* card shows the target's
+  revision n → n+1 as **Before** and **After** side by side, the removed and added lines highlighted, and says the change is
+  published as `consolidator` and can be reverted from the change list. An *advice* card says what would happen and that it
+  cannot be approved yet;
+- then the memory's evidence (the reports and lint findings it rests on) and the revisions the proposal was drafted against.
 
 - **Approve** applies that one proposal, after a confirmation that names what will be written. Nothing is approved in bulk, by
   waiting, or from a notification: the daily notice only opens this view.
@@ -307,7 +332,7 @@ reports and lint findings it rests on) and the diff.
 
 **The daily notice.** While the switch is on and at least one proposal is pending, you get at most one notification a day,
 "N memory suggestions are waiting for your review". It carries the count only (never a memory's text) and opens
-**Suggestions**. It is on by default with the other notifications (Settings › Notifications › Other).
+**Suggestions** in the Memory view. It is on by default with the other notifications (Settings › Notifications › Other).
 
 ### Settings
 

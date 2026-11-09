@@ -637,13 +637,16 @@ func TestWorkItemMergeStoppedDoesNotStart(t *testing.T) {
 
 func TestWorkItemMergeRefusesLocally(t *testing.T) {
 	for name, body := range map[string]string{
-		"bitbucket": `{"provider":"bitbucket","key":"ws/r#1","sha":"abc","method":"merge"}`,
-		"jira":      `{"provider":"jira","key":"PROJ-1","sha":"abc","method":"merge"}`,
-		"no sha":    `{"provider":"github","key":"acme/web#1","method":"merge"}`,
-		"no key":    `{"provider":"github","sha":"abc","method":"merge"}`,
-		"no method": `{"provider":"github","key":"acme/web#1","sha":"abc"}`,
-		"bad":       `{"provider":"github","key":"acme/web#1","sha":"abc","method":"ff"}`,
-		"not json":  `x`,
+		// GitHub's method names are not Bitbucket's merge strategies.
+		"bitbucket with a GitHub method": `{"provider":"bitbucket","key":"ws/r#1","sha":"abc","method":"merge"}`,
+		"bitbucket unknown strategy":     `{"provider":"bitbucket","key":"ws/r#1","sha":"abc","method":"ff"}`,
+		"github with a Bitbucket method": `{"provider":"github","key":"acme/web#1","sha":"abc","method":"merge_commit"}`,
+		"jira":                           `{"provider":"jira","key":"PROJ-1","sha":"abc","method":"merge"}`,
+		"no sha":                         `{"provider":"github","key":"acme/web#1","method":"merge"}`,
+		"no key":                         `{"provider":"github","sha":"abc","method":"merge"}`,
+		"no method":                      `{"provider":"github","key":"acme/web#1","sha":"abc"}`,
+		"bad":                            `{"provider":"github","key":"acme/web#1","sha":"abc","method":"ff"}`,
+		"not json":                       `x`,
 	} {
 		env := newWorkItemEnv(t, "running")
 		w := httptest.NewRecorder()
@@ -687,6 +690,45 @@ func TestWorkItemMergeRelaysSignedAndPassesRefusalThrough(t *testing.T) {
 	if c.Method != "POST" || c.Path != "/work-items/merge" || c.Query != "" || c.BodySHA256 != hex.EncodeToString(sum[:]) ||
 		c.Membership != env.mid || c.Workspace != "ws1" || c.Subject != "user1" {
 		t.Errorf("claims = %+v — the mark must cover the body that was sent, for this member", c)
+	}
+}
+
+// A Bitbucket merge is relayed with its provider, its strategy and the close-source option, under
+// the same member-origin mark; the option is dropped for GitHub, which has none.
+func TestWorkItemMergeRelaysBitbucketOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       map[string]any
+	}{
+		{"bitbucket", `{"provider":"bitbucket","key":"ws/r#1","sha":"ab37a6993eb1","method":"squash","closeSourceBranch":false}`,
+			map[string]any{"provider": "bitbucket", "key": "ws/r#1", "sha": "ab37a6993eb1", "method": "squash", "closeSourceBranch": false}},
+		{"bitbucket without the option", `{"provider":"bitbucket","key":"ws/r#1","sha":"ab37a6993eb1","method":"merge_commit"}`,
+			map[string]any{"provider": "bitbucket", "key": "ws/r#1", "sha": "ab37a6993eb1", "method": "merge_commit"}},
+		{"github drops it", `{"provider":"github","key":"acme/web#1","sha":"abc","method":"merge","closeSourceBranch":true}`,
+			map[string]any{"provider": "github", "key": "acme/web#1", "sha": "abc", "method": "merge"}},
+	} {
+		env := newWorkItemEnv(t, "running")
+		var raw []byte
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"merged":true,"sha":"f"}`))
+		}))
+		w := httptest.NewRecorder()
+		env.api.merge(w, consoleMergeReq(tc.body), mergeRes(env, srv.URL, "running"))
+		srv.Close()
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: got %d %s", tc.name, w.Code, w.Body.String())
+		}
+		var got map[string]any
+		_ = json.Unmarshal(raw, &got)
+		if len(got) != len(tc.want) {
+			t.Errorf("%s: agent body = %s", tc.name, raw)
+		}
+		for k, v := range tc.want {
+			if got[k] != v {
+				t.Errorf("%s: agent body = %s, want %s=%v", tc.name, raw, k, v)
+			}
+		}
 	}
 }
 

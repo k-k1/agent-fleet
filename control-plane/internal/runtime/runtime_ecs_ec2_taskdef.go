@@ -174,8 +174,8 @@ func (e *ecsEC2Runtime) serviceTaskDefIfFingerprint(ctx context.Context, fp stri
 //     and let them have the box. A small memoryReservation keeps the API happy.
 //   - /tmp is a tmpfs. The root volume is shared with whoever had the slot before, so
 //     a disk-backed /tmp would both leak (readable from the host) and let one user fill
-//     the volume out from under the next (ADR 0045 decision 8, price 2). tmpfs is the one
-//     tool Fargate did not have.
+//     the volume out from under the next (ADR 0045 decision 8, price 2). The Fargate
+//     revision sets no tmpfs: there each task has its own disk.
 //   - home is a host bind of the freshly mounted EBS, not an EFS volume.
 //
 // It takes a ctx because the backend-drift stamp is probed from ECR here

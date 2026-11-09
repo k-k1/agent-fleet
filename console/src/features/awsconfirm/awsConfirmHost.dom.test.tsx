@@ -5,6 +5,7 @@ import { act, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getTenant: () => "",
   api: vi.fn(async (path: string) =>
     path === "api/aws-confirm"

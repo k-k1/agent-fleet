@@ -22,7 +22,8 @@ import (
 // confirm button in the Console, through the Control Plane, and the Agent enforces that itself:
 // every session holds AGENT_TOKEN, so the route takes only a member-origin mark the CP signed for
 // this workspace's own member (ADR 0113). There is also no MCP tool and no automatic trigger.
-// GitHub only: Bitbucket stays read-only (decision 19) and a Jira key has nothing to merge.
+// GitHub and Bitbucket Cloud: a Jira key has nothing to merge. The Bitbucket half is in
+// workitems_merge_bitbucket.go and follows the same rules.
 
 // workItemMergeMethods are the three values GitHub accepts for `merge_method`.
 var workItemMergeMethods = map[string]bool{"merge": true, "squash": true, "rebase": true}
@@ -50,7 +51,7 @@ type workItemMergeOut struct {
 	SHA    string `json:"sha"`
 }
 
-// HandleWorkItemsMerge — POST /work-items/merge {provider, key, sha, method}.
+// HandleWorkItemsMerge — POST /work-items/merge {provider, key, sha, method, closeSourceBranch}.
 func HandleWorkItemsMerge(w http.ResponseWriter, r *http.Request) {
 	// Registered behind memberorigin.Require; refusing here as well keeps a route that is ever
 	// registered without the wrapper closed rather than open.
@@ -64,14 +65,20 @@ func HandleWorkItemsMerge(w http.ResponseWriter, r *http.Request) {
 		// read here: a fresh read would defeat the check that the member saw what is merged.
 		SHA    string `json:"sha"`
 		Method string `json:"method"`
+		// CloseSourceBranch is Bitbucket's merge-time option; nil leaves the pull request's own
+		// setting. GitHub has no such option and ignores it.
+		CloseSourceBranch *bool `json:"closeSourceBranch"`
 	}
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
 	switch strings.TrimSpace(in.Provider) {
 	case "", "github":
+	case "bitbucket":
+		handleBitbucketMerge(w, strings.TrimSpace(in.Key), strings.TrimSpace(in.SHA), strings.TrimSpace(in.Method), in.CloseSourceBranch)
+		return
 	default:
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_provider", "merging is available for GitHub pull requests only")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_provider", "merging is available for GitHub and Bitbucket pull requests only")
 		return
 	}
 	key := strings.TrimSpace(in.Key)

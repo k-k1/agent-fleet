@@ -51,6 +51,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "ops.dc_channel_select": "Select a channel…",
   "ops.dc_advanced_dm": "Advanced: send as DM (enter your user ID)",
   "ops.dc_advanced_channel": "Back to channel picker",
+  "ops.sl_test_sent": "Test notification sent. If it arrived in Slack, you're all set.",
   "ops.dc_test_sent": "Test notification sent. If it arrived in Discord, you're all set.",
   "ops.dc_test_failed": "Connection saved, but the test send failed: {msg}",
   "ops.dc_user_placeholder": "Your Discord user ID (numeric)",
@@ -81,16 +82,16 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "ops.ev_exit": "Abnormal exits",
   "ops.ev_report": "Session reports",
   "ops.dc_hint":
-    "In the Discord Developer Portal (discord.com/developers/applications), create New Application → Bot → Reset Token and paste the token here. Then just open the “Invite to your server” link to add the bot to your private server and pick a channel — no copying numeric IDs. The token is stored encrypted inside the workspace and used only to send notifications (session display name and state only — never logs or secrets).",
+    "In the Discord Developer Portal (discord.com/developers/applications), create New Application → Bot → Reset Token and paste the token here. Then just open the “Invite to your server” link to add the bot to your private server and pick a channel — no copying numeric IDs. The token is stored encrypted inside the workspace and used only to send notifications. What goes out is the session's display name and state, plus the choices of a question or permission prompt; with Full-text mode on it also posts the final answer text (likely secrets auto-redacted). Raw logs and tool output are never sent.",
   "ops.sl_bot_placeholder": "Slack bot token (xoxb-…)",
   "ops.sl_app_placeholder": "App-level token (xapp-…) — only for two-way receive",
   "ops.sl_user_placeholder": "Your Slack member ID (U…)",
   "ops.sl_waiting_channel": "Waiting for the bot to be in a channel… (invite it with /invite @your-bot, then pick it)",
   "ops.sl_user_label": "Your Slack member ID",
   "ops.sl_user_sub": "Auto-filled from your email; who gets @mentioned and whose replies/clicks are trusted (required for two-way).",
-  "ops.sl_receive_sub": "Replying in a session's thread sends the text into that session; buttons answer questions/permissions. Needs the app-level token.",
+  "ops.sl_receive_sub": "Replying in a session's thread sends the text into that session; buttons answer questions, permission requests and plan approvals. Needs the app-level token.",
   "ops.sl_hint":
-    "Create a Slack app (api.slack.com/apps → From scratch), enable Socket Mode, add bot scopes (chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email) plus an app-level token with connections:write, subscribe to message events, then install it and /invite the bot to a channel. Paste both tokens here. They're stored encrypted inside the workspace and used only for notifications (display name and state — never logs or secrets).",
+    "Create a Slack app (api.slack.com/apps → From scratch), enable Socket Mode, add bot scopes (chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email) plus an app-level token with connections:write, subscribe to message events, then install it and /invite the bot to a channel. Paste both tokens here. They're stored encrypted inside the workspace and used only for notifications. What goes out is the session's display name and state, plus the choices of a question or permission prompt; with Full-text mode on it also posts the final answer text (likely secrets auto-redacted). Raw logs and tool output are never sent.",
   // --- EC2 slot pool (features/settings/ec2Pool.tsx; AF_RUNTIME=ecs-ec2 only) ---
   "pool.not_ec2": "This deployment does not use the EC2 slot pool.",
   "pool.slots_title": "Slots",

@@ -55,8 +55,9 @@ type Decision struct {
 
 // Decide is the trigger rule of ADR 0130 decision 6 as a pure function: the switch is on, no
 // session is working, none has run a turn for IdleAfter, and the last run began at least
-// MinInterval ago. The idle conditions are not optional: there is no input that skips them, and
-// the only caller of Run on the Agent is the tick that asked this.
+// MinInterval ago. The idle conditions have no input that skips them. The one other caller of Run is a
+// member-started manual run, which does not pass through Decide: only the member can start it,
+// and it keeps every other guard (switch, budget, validation, approval-only publishing).
 func Decide(enabled bool, now, lastRun, lastActivity time.Time, busy bool, c Config) Decision {
 	switch {
 	case !enabled:
@@ -108,6 +109,9 @@ var runMu sync.Mutex // one run at a time
 // Start launches the polling loop, the same shape as the memory snapshot loop (the Agent's
 // existing facility for "when quiet"); it adds no second scheduler. The switch is read every tick.
 func Start(ctx context.Context) {
+	baseMu.Lock()
+	base = ctx
+	baseMu.Unlock()
 	go func() {
 		select {
 		case <-time.After(startupWait):
@@ -167,8 +171,15 @@ func Tick(ctx context.Context, now time.Time) (Report, bool) {
 	case "busy", "not-idle":
 		st.Trigger.BusyTicks++
 	}
+	// A manual run in flight owns runMu: the automatic run then does not start, and does not spend
+	// the 3 h window either (LastRun is written only once the lock is held).
+	held := false
 	if dec.Run {
-		st.Trigger.LastRun = now
+		if held = runMu.TryLock(); held {
+			st.Trigger.LastRun = now
+		} else {
+			dec = Decision{false, "running"}
+		}
 	}
 	stamp := !dec.Run && now.Sub(st.Trigger.LastStamp) >= stampEvery
 	_ = st.save()
@@ -181,9 +192,10 @@ func Tick(ctx context.Context, now time.Time) (Report, bool) {
 		return Report{}, false
 	}
 
-	runMu.Lock()
 	defer runMu.Unlock()
-	rep := doRun(ctx, d, cfg, now)
+	beginRun(false, false, now)
+	defer endRun()
+	rep := doRun(ctx, d, cfg, now, runOpts{})
 
 	stateMu.Lock()
 	if st, err := loadState(); err == nil {
@@ -195,7 +207,10 @@ func Tick(ctx context.Context, now time.Time) (Report, bool) {
 	return rep, true
 }
 
-func doRun(ctx context.Context, d Deps, cfg Config, now time.Time) Report {
+// runOpts is what a manual run changes about doRun.
+type runOpts struct{ manual, all bool }
+
+func doRun(ctx context.Context, d Deps, cfg Config, now time.Time, o runOpts) Report {
 	var (
 		m     Models
 		roles map[string]string
@@ -208,13 +223,18 @@ func doRun(ctx context.Context, d Deps, cfg Config, now time.Time) Report {
 	}
 	if err != nil {
 		// A retired or unmapped model fails the run before any call: nothing is queued.
-		rep := Report{ID: newID(), Started: now, Finished: now, Status: RunFailed, Error: "the model roles could not be set up",
-			Handled: []string{}, Queued: []string{}, Delayed: []Delay{}}
+		rep := Report{ID: newID(), Started: now, Finished: now, Status: RunFailed, Error: "the model roles could not be set up", Manual: o.manual, All: o.manual && o.all,
+			Handled: []string{}, Queued: []string{}, Delayed: []Delay{}, TooLarge: []Delay{}}
 		_ = writeReport(rep)
 		log.Printf("memory consolidation: %v", err)
 		return rep
 	}
-	rep, err := Run(ctx, RunInput{Models: m, Roles: roles, Turns: turns{d.Activity}, Enabled: d.Enabled, Config: cfg, Now: now})
+	in := RunInput{Models: m, Roles: roles, Turns: turns{d.Activity}, Enabled: d.Enabled, Config: cfg, Now: now, Progress: setProgress}
+	if o.manual {
+		// The member asked for this run now: other sessions' turns do not defer it.
+		in.Turns, in.Manual, in.All = nil, true, o.all
+	}
+	rep, err := Run(ctx, in)
 	if err != nil {
 		log.Printf("memory consolidation: run: %v", err)
 	}

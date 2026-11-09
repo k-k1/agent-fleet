@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 let runsReply: unknown = { runs: [] };
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getTenant: () => "",
   api: vi.fn(async (path: string) => (path.startsWith("api/aws-runs") ? runsReply : {})),
 }));

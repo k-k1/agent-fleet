@@ -16,6 +16,7 @@ let searchHits: string[] = [];
 let uploadGate: (() => Promise<void>) | null = null;
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getTenant: () => "",
   api: vi.fn(async (url: string) => {
     const p = decodeURIComponent(new URL(url, "http://x/").searchParams.get("path") || "");

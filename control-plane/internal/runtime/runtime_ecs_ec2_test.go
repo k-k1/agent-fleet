@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1082,7 +1083,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 			maxSlots:       4,
 			homeGiB:        50,
 			tmpfsMiB:       2048,
-			tmpfsOpts:      []string{"nosuid", "nodev"},
+			tmpfsOpts:      ec2TmpfsOpts(),
 			claimTTL:       15 * time.Minute,
 			releaseGrace:   10 * time.Minute,
 			slotSleepAfter: 15 * time.Minute,
@@ -1745,6 +1746,7 @@ func TestECSEC2SlotStillBootingIsNeverAbandoned(t *testing.T) {
 // Everything the task definition has to say for the pool to be safe and exclusive.
 func TestECSEC2TaskDefinitionShape(t *testing.T) {
 	ctx := context.Background()
+	t.Setenv("AF_ECS_EC2_TMP_OPTS", "") // the shipped default, whatever the shell has
 	h := newEC2Harness(t)
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
@@ -1769,6 +1771,11 @@ func TestECSEC2TaskDefinitionShape(t *testing.T) {
 	tmpfs := c.LinuxParameters.Tmpfs
 	if len(tmpfs) != 1 || aws.ToString(tmpfs[0].ContainerPath) != "/tmp" || tmpfs[0].Size != 2048 {
 		t.Errorf("/tmp must be a size-capped tmpfs, got %+v", tmpfs)
+	} else if opts := tmpfs[0].MountOptions; !slices.Contains(opts, "exec") || slices.Contains(opts, "noexec") ||
+		!slices.Contains(opts, "nosuid") || !slices.Contains(opts, "nodev") {
+		// Docker mounts a tmpfs noexec unless `exec` is listed, and bun (opencode's TUI)
+		// cannot map its native library out of a noexec /tmp.
+		t.Errorf("/tmp tmpfs options = %v, want exec,nosuid,nodev", opts)
 	}
 	// Chromium's setuid sandbox needs SYS_ADMIN in the bounding set (docker parity).
 	if caps := c.LinuxParameters.Capabilities; caps == nil || len(caps.Add) != 1 || caps.Add[0] != "SYS_ADMIN" {
@@ -5979,5 +5986,21 @@ func TestECSEC2StuckStoppingStaysQuietOnAConnectedDrainingInstance(t *testing.T)
 	h.rt.State(ctx)
 	if ph := h.rt.BootPhase(); ph != "" {
 		t.Fatalf("phase %q reported for a draining instance whose agent is connected", ph)
+	}
+}
+
+// AF_ECS_EC2_TMP_OPTS replaces the default list wholesale, so a deployment can still ask
+// for a noexec /tmp. A value that parses to no options is unset, not an empty list:
+// Docker would mount an empty list noexec.
+func TestECSEC2TmpfsOptsOverride(t *testing.T) {
+	for _, v := range []string{"", "   ", " , ,"} {
+		t.Setenv("AF_ECS_EC2_TMP_OPTS", v)
+		if got := ec2TmpfsOpts(); !slices.Equal(got, []string{"exec", "nosuid", "nodev"}) {
+			t.Errorf("AF_ECS_EC2_TMP_OPTS=%q: got %v, want the default [exec nosuid nodev]", v, got)
+		}
+	}
+	t.Setenv("AF_ECS_EC2_TMP_OPTS", " noexec, nosuid ,nodev")
+	if got := ec2TmpfsOpts(); !slices.Equal(got, []string{"noexec", "nosuid", "nodev"}) {
+		t.Errorf("override = %v, want [noexec nosuid nodev]", got)
 	}
 }

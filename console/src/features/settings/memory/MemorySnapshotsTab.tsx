@@ -38,7 +38,8 @@ import { RestorePanel } from "./memoryRestore.tsx";
 import { TransferSection } from "./memoryTransfer.tsx";
 import { ViewNav, useSectionView, type ViewDef } from "./viewNav.tsx";
 import { useSettings } from "../../../lib/settings.ts";
-import { useSettingsUI, lastSnapshotsShowAf, rememberSnapshotsShowAf } from "../store.ts";
+import { openMemoryView } from "../../memory/open.ts";
+import { lastSnapshotsShowAf, rememberSnapshotsShowAf } from "../store.ts";
 import { kindColorClasses } from "../../../lib/sessionkind.ts";
 
 // Trigger label. The trailer value the Agent returns (auto/manual/pre-restore/restore/import/agent-memory)
@@ -86,7 +87,6 @@ export function MemorySnapshotsTab() {
   const [scope, setScope] = useState<RestoreScopeState | null>(null);
   const [view, setView] = useSectionView(SNAPSHOTS_SECTION, VIEWS, "history");
   const [showAf, setShowAf] = useState(lastSnapshotsShowAf);
-  const openSettings = useSettingsUI((s) => s.openSettings);
   const agentMemoryOn = useSettings().agentMemory;
 
   const load = useCallback(
@@ -428,7 +428,7 @@ export function MemorySnapshotsTab() {
                       "hidden" in row ? (
                         <li key={row.key} className="mem-snap-hidden muted pad">
                           <span>{tr("mem.hist_af_hidden", { n: row.hidden })}</span>{" "}
-                          <button type="button" className="linklike" onClick={() => openSettings("memory:changes")}>
+                          <button type="button" className="linklike" onClick={() => openMemoryView("changes")}>
                             {tr("mem.hist_af_changes")}
                           </button>
                         </li>

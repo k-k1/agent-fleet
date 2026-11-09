@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setLocale } from "../../../lib/i18n/index.ts";
 
 const api = vi.fn();
-vi.mock("../../../core/api/client.ts", () => ({ api: (...args: unknown[]) => api(...args), errText: (e: { message: string }) => e.message }));
+vi.mock("../../../core/api/client.ts", () => ({ apiJSON: async () => ({}), api: (...args: unknown[]) => api(...args), errText: (e: { message: string }) => e.message }));
 import { RecentCalls } from "./RecentCalls.tsx";
 
 let host: HTMLDivElement, root: Root;

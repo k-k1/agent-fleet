@@ -12,20 +12,20 @@ import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
-import { Diff } from "../../scm/GitDiff.tsx";
 import { Choice, OnOff, Row } from "../parts/controls.tsx";
 import { setSetting, useSettings } from "../../../lib/settings.ts";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { ProposalPreview, proposalSubject } from "./memoryProposalPreview.tsx";
 import type {
   ConsolDelay,
-  ConsolItemView,
   ConsolProposal,
   ConsolProposalView,
   ConsolStatus,
 } from "./memoryTypes.ts";
 
 const BASE = "api/agents/memory-consolidation";
+const RUN_POLL_MS = 3000;
 
 /** Go's Duration.String ("3h0m0s", "1m30.5s", "500ms") in milliseconds; 0 when it is not one. */
 export function parseGoDuration(s: string | undefined): number {
@@ -56,8 +56,8 @@ export const matchesFilter = (status: string, f: StatusFilter): boolean =>
 /** Retry reopens the observations of a proposal that did not end in a publish. */
 export const canRetry = (status: string): boolean => status === "rejected" || status === "expired" || status === "refused" || status === "partial";
 
-const delayCause = (d: ConsolDelay): string =>
-  tMaybe("mem.cs_cause_" + d.cause.replace(/-/g, "_")) ?? d.cause;
+export const delayCause = (d: ConsolDelay): string =>
+  tMaybe("mem.cs_cause_" + d.cause.replace(/-/g, "_"), { n: d.estimate ? d.estimate.toLocaleString() : "?" }) ?? d.cause;
 
 /** The Agent's refusal of a decision as a sentence a member can act on. `code` is the Agent's
  *  error code (not_pending, stale, forgotten, exists, invalid, secret). */
@@ -77,6 +77,10 @@ export function refusalText(tr: ReturnType<typeof useT>, code: string | undefine
       return tr("mem.cs_err_not_pending");
     case "not_found":
       return tr("mem.cs_err_not_found");
+    case "run_in_flight":
+      return tr("mem.cs_err_run_in_flight");
+    case "disabled":
+      return tr("mem.cs_err_disabled");
   }
   return fallback;
 }
@@ -117,6 +121,58 @@ function ConsolidationStatus({ reload }: { reload: number }) {
     return true;
   }, []);
   useRetryLoad(load, [reload]);
+  const running = st?.run?.running === true;
+  // While a run is in flight the status is re-read so the progress and the final report appear
+  // without a page action; it stops by itself once the Agent says nothing is running.
+  // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would
+  // leave a stale "running" that only a reload could end. The interval is bounded and cleared on unmount.
+  useEffect(() => {
+    if (!running) return;
+    const ac = new AbortController();
+    const h = setInterval(() => void load(ac.signal), RUN_POLL_MS);
+    return () => {
+      ac.abort();
+      clearInterval(h);
+    };
+  }, [running, load]);
+
+  const [all, setAll] = useState(false);
+  const [starting, setStarting] = useState(false);
+  // setStarting is asynchronous state; the ref stops a second click that lands before it renders.
+  const inFlight = useRef(false);
+  const toast = useToast();
+  const askConfirm = useConfirm();
+  const runNow = async () => {
+    if (!st || inFlight.current || running) return;
+    const budget = st.config.tokenBudget;
+    const ok = await askConfirm({
+      title: tr("mem.cs_run_title"),
+      body: (
+        <>
+          <p>{tr(all ? "mem.cs_run_body_all" : "mem.cs_run_body")}</p>
+          <p>{budget ? tr("mem.cs_run_budget", { n: budget.toLocaleString() }) : tr("mem.cs_run_budget_unknown")}</p>
+          <p className="muted">{tr("mem.cs_run_note")}</p>
+        </>
+      ),
+      confirmLabel: tr("mem.cs_run_confirm"),
+    });
+    if (!ok || inFlight.current) return;
+    inFlight.current = true;
+    setStarting(true);
+    try {
+      // No id to repeat in the query: the CP audit row for this write has no target.
+      const res = await apiJSON(`${BASE}/run`, "POST", all ? { all: true } : {});
+      if (res?.error) toast(refusalText(tr, res.error.code, errDetail(res.error)));
+      else toast(tr("mem.cs_run_started"), { kind: "success" });
+    } catch {
+      // The request may or may not have reached the Agent: the re-read below shows which.
+      toast(tr("mem.af_failed"));
+    } finally {
+      inFlight.current = false;
+      setStarting(false);
+      await load(new AbortController().signal);
+    }
+  };
   if (err) return <p className="mem-warn">{tr("mem.cs_status_failed")}</p>;
   if (!st) return <p className="muted ds-note">{tr("common.loading")}</p>;
   const last = st.lastRun;
@@ -133,6 +189,7 @@ function ConsolidationStatus({ reload }: { reload: number }) {
               status: tMaybe("mem.cs_run_" + last.status) ?? last.status,
             })
           : tr("mem.cs_never_run")}
+        {last?.manual ? ` ${tr("mem.cs_last_manual")}` : ""}
         {last?.error ? ` — ${last.error}` : ""}
       </p>
       <p className="muted">
@@ -145,6 +202,21 @@ function ConsolidationStatus({ reload }: { reload: number }) {
         {tr("mem.cs_next_rule", { idle: humanDuration(st.config.idleAfter) })}
       </p>
       <p>{tr("mem.cs_pending_count", { n: pending })}</p>
+      <div className="mem-cs-run">
+        {running ? (
+          <p>
+            {tr(st.run?.manual ? "mem.cs_running_manual" : "mem.cs_running_auto")}
+            {(st.run?.total ?? 0) > 0 ? ` ${tr("mem.cs_running_progress", { n: Math.min((st.run?.done ?? 0) + 1, st.run!.total), m: st.run!.total })}` : ""}
+          </p>
+        ) : null}
+        <button type="button" disabled={running || starting} onClick={() => void runNow()}>
+          {tr("mem.cs_run_button")}
+        </button>{" "}
+        <label className="muted">
+          <input type="checkbox" checked={all} disabled={running || starting} onChange={(e) => setAll(e.target.checked)} />{" "}
+          {tr("mem.cs_run_all")}
+        </label>
+      </div>
       {st.waiting.length > 0 && (
         <>
           <p>{tr("mem.cs_delayed_title")}</p>
@@ -162,43 +234,6 @@ function ConsolidationStatus({ reload }: { reload: number }) {
 }
 
 const statusLabel = (status: string): string => tMaybe("mem.cs_status_" + status) ?? status;
-
-function ItemBlock({ iv }: { iv: ConsolItemView }) {
-  const tr = useT();
-  if (iv.op === "note") {
-    return (
-      <div className="mem-cs-item">
-        <p>
-          <span className="mem-badge">{tr("mem.cs_advice")}</span> <code>{iv.name}</code>{" "}
-          <span className="muted">{tMaybe("mem.cs_advice_" + iv.advice) ?? iv.advice ?? ""}</span>
-        </p>
-        {iv.reason && <p>{iv.reason}</p>}
-        {(iv.targets?.length ?? 0) > 0 && (
-          <p className="muted">
-            {tr("mem.cs_advice_targets")} {iv.targets!.map((n) => <code key={n}>{n} </code>)}
-          </p>
-        )}
-        {/* Advice has no Approve: the engine has no call that writes a replacement, so a supersede or
-            merge is applied by hand in Memories (#3696 builds the writer). */}
-        <p className="muted ds-note">{tr("mem.cs_advice_note")}</p>
-      </div>
-    );
-  }
-  return (
-    <div className="mem-cs-item">
-      <p>
-        <span className={"mem-badge af-op-" + iv.op}>{tMaybe("mem.cs_op_" + iv.op) ?? iv.op}</span> <code>{iv.name}</code>
-        {iv.op === "patch" && iv.revision ? (
-          <span className="muted"> {tr("mem.cs_at_revision", { n: iv.revision })}</span>
-        ) : null}
-        {iv.commit && <span className="muted"> · {tr("mem.cs_published")}</span>}
-      </p>
-      {iv.reason && <p>{iv.reason}</p>}
-      {iv.stale && <p className="mem-warn">{tr("mem.cs_item_stale", { why: iv.stale })}</p>}
-      {iv.diff ? <Diff text={iv.diff} embedded wrap /> : null}
-    </div>
-  );
-}
 
 function ProposalDetail({
   id,
@@ -293,8 +328,20 @@ function ProposalDetail({
   const stale = view.itemViews.some((i) => i.stale);
   return (
     <div className="mem-cs-detail">
-      <div className="mem-diff-head">
-        <span className={"mem-badge cs-" + view.status}>{statusLabel(view.status)}</span>
+      {/* The subject of the change, not the clustering topic: for an exported create the topic
+          memory may be unrelated to what is written (#3718). */}
+      <h4 className="mem-cs-subject">
+        <span className={"mem-badge cs-" + view.status}>{statusLabel(view.status)}</span> <code>{proposalSubject(view)}</code>
+      </h4>
+      {advice && <p className="muted ds-note">{tr("mem.cs_advice_only")}</p>}
+      {pending && stale && <p className="mem-warn">{tr("mem.cs_err_stale")}</p>}
+      {view.status === "expired" && <p className="mem-warn">{tr("mem.cs_err_not_pending_expired")}</p>}
+      {view.reason && (view.status === "refused" || view.status === "partial") && (
+        <p className="mem-warn">{tr("mem.cs_refused_why", { why: view.reason })}</p>
+      )}
+      <ProposalPreview view={view} />
+      {/* After the preview: the buttons come after what they would do. */}
+      <div className="mem-cs-actions">
         {pending && !advice && (
           <button type="button" disabled={busy || stale} onClick={() => void decide("approve")}>
             {tr("mem.cs_approve")}
@@ -311,14 +358,8 @@ function ProposalDetail({
           </button>
         )}
       </div>
-      {advice && <p className="muted ds-note">{tr("mem.cs_advice_only")}</p>}
-      {pending && stale && <p className="mem-warn">{tr("mem.cs_err_stale")}</p>}
-      {view.status === "expired" && <p className="mem-warn">{tr("mem.cs_err_not_pending_expired")}</p>}
-      {view.reason && (view.status === "refused" || view.status === "partial") && (
-        <p className="mem-warn">{tr("mem.cs_refused_why", { why: view.reason })}</p>
-      )}
       <p className="muted">
-        <code>{view.memory}</code> · {view.scope === "user" ? tr("mem.af_scope_user") : view.projectId || ""}
+        {tr("mem.pv_topic")} <code>{view.memory}</code> · {view.scope === "user" ? tr("mem.af_scope_user") : view.projectId || ""}
         {" · "}
         {tr("mem.cs_created", { when: fmtDateTime(view.created, DATETIME_FULL) })}
         {pending && ` · ${tr("mem.cs_expires", { when: fmtDateTime(view.expires, DATETIME_FULL) })}`}
@@ -333,9 +374,6 @@ function ProposalDetail({
           ))}
         </p>
       )}
-      {view.itemViews.map((iv, i) => (
-        <ItemBlock key={i} iv={iv} />
-      ))}
       <h5>{tr("mem.cs_evidence")}</h5>
       {view.evidence.length === 0 ? (
         <p className="muted">{tr("mem.cs_evidence_none")}</p>
@@ -406,7 +444,7 @@ export function ProposalsPanel({ reload, onChanged }: { reload: number; onChange
                 >
                   <span className="mem-snap-when">{fmtDateTime(p.created, DATETIME_FULL)}</span>
                   <span className={"mem-badge cs-" + p.status}>{statusLabel(p.status)}</span>
-                  <span className="mem-af-name">{p.memory}</span>
+                  <span className="mem-af-name">{proposalSubject(p)}</span>
                   <span className="mem-snap-what muted">
                     {isAdviceOnly(p) ? tr("mem.cs_advice") : tr("mem.cs_items", { n: p.items.length })}
                   </span>

@@ -12,6 +12,7 @@ vi.mock("../../lib/clipboard.ts", () => ({ copyText: (s: string) => copyText(s) 
 const toast = vi.fn();
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: async () => ({}),
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",

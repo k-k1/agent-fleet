@@ -354,15 +354,16 @@ RUN set -eux; \
 # compression); the PreToolUse hook, `rtk rewrite` and `rtk gain` we use are identical.
 # entrypoint.sh downloads the same assets (boot-install and self-update) — keep them in step.
 #
-# ⚠️ amd64 gets a STATIC musl binary. arm64 has no musl asset: upstream publishes only
-# `rtk-oss-aarch64-unknown-linux-gnu` (gnu, like the default edition's), which requires **GLIBC_2.39** (exactly two symbols,
-# `pidfd_getpid` / `pidfd_spawnp` — verified with readelf on v0.47.0). On the old
+# ⚠️ amd64 gets a STATIC musl binary. arm64 stays on `rtk-oss-aarch64-unknown-linux-gnu` (gnu, like
+# the default edition's); v1.2.0 also lists an `-aarch64-unknown-linux-musl` asset, not adopted
+# here until it has been run on arm64. The gnu build requires **GLIBC_2.39** (exactly two symbols,
+# `pidfd_getpid` / `pidfd_spawnp` — verified with readelf on v0.47.0, unchanged on v1.2.0). On the old
 # Debian 12 base (**glibc 2.36**) the download and the sha256 both passed and the binary
 # then could not start (measured on Graviton4, 2026-08-22, docs/log/70 §70.9.2). The base
 # is now Debian 13 (**glibc 2.41 >= 2.39**), so it is expected to load — but "loads" is
 # not "works", so nothing here asserts it (docs/decisions/0068). Exactly the shape
 # docs/log/43 recorded for kiro, except kiro publishes an aarch64 musl variant and rtk
-# does not (checked across v0.47.0 and dev-0.48.0-rc.400).
+# did not until 1.2.0 (checked across v0.47.0 and dev-0.48.0-rc.400); not adopted until run on arm64.
 #
 # So the binary is VERIFIED BY RUNNING IT, and a version that cannot run is removed
 # rather than shipped. That is deliberately not an `arch = arm64` check: the day
@@ -373,7 +374,7 @@ RUN set -eux; \
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
 ARG BAKE_RTK=1
-ARG RTK_VERSION=1.1.0
+ARG RTK_VERSION=1.2.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \

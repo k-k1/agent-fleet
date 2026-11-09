@@ -532,27 +532,6 @@ func TestAnEmptyVersionIsStillDeliveredOnce(t *testing.T) {
 	}
 }
 
-func TestWatchingIgnoresExpiredAndGoneOwners(t *testing.T) {
-	sink := &fakeSink{answer: Wait, gone: map[string]bool{}}
-	e, _, c := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, sink)
-	ctx := context.Background()
-	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}, Lifetime: time.Hour}); err != nil {
-		t.Fatal(err)
-	}
-	if !e.Watching("a", "fake:o/r#1", "pr.merged") {
-		t.Fatal("a live watch is not reported")
-	}
-	sink.gone["a"] = true
-	if e.Watching("a", "fake:o/r#1", "pr.merged") {
-		t.Fatal("a gone owner's watch counts")
-	}
-	sink.gone["a"] = false
-	c.add(2 * time.Hour)
-	if e.Watching("a", "fake:o/r#1", "pr.merged") {
-		t.Fatal("an expired watch counts")
-	}
-}
-
 func TestAChildCannotFillItsParentsLimit(t *testing.T) {
 	e, _, _ := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, &fakeSink{answer: Wait})
 	ctx := context.Background()

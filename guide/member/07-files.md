@@ -194,6 +194,8 @@ Switch to editing with **View / Edit / Split** at the top of the viewer and you 
 right there, with no need to start a session for a small change (on `.md`, "Split" puts the editor
 and the preview side by side, and scrolling either one scrolls the other to the same place in
 the source).
+Switching to another tab in the same cell and back keeps the View / Edit / Split choice, the
+scroll position and any unsaved edits (a browser reload starts over).
 
 - **Save with Ctrl/⌘+S** (or the Save button). The status line shows "Unsaved changes",
   "Saving", "Saved".

@@ -9,6 +9,7 @@ const deleteMock = vi.fn(async (_id: string) => new Response(null, { status: 204
 const createMock = vi.fn(async (_input: unknown): Promise<unknown> => ({ id: "stashed" }));
 const pasteMock = vi.fn(async (f: File) => ({ status: 201, path: "/m/paste-1-" + f.name, name: "paste-1-" + f.name }));
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getTenant: () => "",
   api: async () => ({}),
   isTransientErr: () => false,

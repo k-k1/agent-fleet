@@ -76,7 +76,7 @@ Each card's "**Behavior**" sets the initial values for new sessions. If a reposi
 | Default model | The model selected when a session starts |
 | Default effort | The initial reasoning effort, for agents that offer one |
 | Start mode | "Normal" or "Plan" |
-| Tool permissions | Whether to skip permission prompts. On skips them; off asks for approval before each tool run |
+| Tool permissions | Whether the agent asks for approval before each tool run. On asks; off skips the prompts (the default) |
 | Models to exclude | Models you do not want picked ([next section](#exclude-models)) |
 | Show thinking expanded | Whether the session view opens "thinking" from the start. Display only |
 | RTK (token savings) | Whether commands are rewritten to save tokens ([Check prices and usage](usage.md#save-tokens-with-rtk)) |
@@ -101,10 +101,10 @@ The setting is there so that a model your plan bills extra for is not picked by 
 ## Use it more safely
 
 Agents run commands, edit files and push on your behalf.
-Scheduled runs do it unattended, and with "Tool permissions" on they do it without asking each time. Some of it cannot be undone.
+Scheduled runs do it unattended, and with "Tool permissions" off they do it without asking each time. Some of it cannot be undone.
 
 - Keep backups and use credentials with narrow permissions
-- For work you want to check step by step, turn "**Tool permissions**" off. The agent then waits for approval before every edit or command, from the permission card in the session view or the terminal. That does not suit unattended scheduled runs
+- For work you want to check step by step, turn "**Tool permissions**" on. The agent then waits for approval before every edit or command, from the permission card in the session view or the terminal. That does not suit unattended scheduled runs
 - A muse session never asks to approve a tool. Treat it like shell: it can run anything
 - shell and ssm sessions run what you send exactly as sent
 

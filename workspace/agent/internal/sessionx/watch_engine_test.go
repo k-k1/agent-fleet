@@ -3,6 +3,7 @@ package sessionx
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -254,25 +255,23 @@ func TestWatchNotifyParentBelongsToTheParent(t *testing.T) {
 	}
 }
 
-func TestWatchingPRMatchesTheSubjectCaseInsensitively(t *testing.T) {
-	newWatchFixture(t)
-	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir()})
-	e := watch.New(watchDiskStore{}, newWatchSink(), stubSource{})
-	useWatchEngine(t, e)
-	if _, err := e.Subscribe(context.Background(), watch.Request{Owner: "a", Source: "github", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
-		t.Fatal(err)
-	}
-	if !watchingPR("a", "github", "O/R#1", "pr.merged") || watchingPR("a", "github", "o/r#1", "pr.checks.failed") ||
-		watchingPR("b", "github", "o/r#1", "pr.merged") || watchingPR("a", "bitbucket", "o/r#1", "pr.merged") {
-		t.Fatal("watchingPR answered wrongly")
-	}
-	bb := watch.New(watchDiskStore{}, newWatchSink(), stubSource{}, bbStub{})
-	useWatchEngine(t, bb)
-	if _, err := bb.Subscribe(context.Background(), watch.Request{Owner: "a", Source: "bitbucket", Ref: "w/x#2", Types: []string{"pr.merged"}}); err != nil {
-		t.Fatal(err)
-	}
-	if !watchingPR("a", "bitbucket", "W/X#2", "pr.merged") || watchingPR("a", "github", "w/x#2", "pr.merged") {
-		t.Fatal("watchingPR answered wrongly")
+func TestABuiltinsSubjectIsTheOneASessionsWatchGets(t *testing.T) {
+	// A session's own watch covers a built-in only on the same subject: both lower-case the repo.
+	for _, c := range []struct{ provider, key, ref string }{
+		{"github", "O/R#1", "O/R#1"},
+		{"bitbucket", "W/X#2", "https://bitbucket.org/W/X/pull-requests/2"},
+	} {
+		var repo string
+		var n int
+		var ok bool
+		if c.provider == "github" {
+			repo, n, ok = watch.ParseGitHubRef(c.ref, "")
+		} else {
+			repo, n, ok = watch.ParseBitbucketRef(c.ref, "")
+		}
+		if want := watch.SubjectID(fmt.Sprintf("%s:%s#%d", c.provider, repo, n)); !ok || prSubject(c.provider, c.key) != want {
+			t.Errorf("prSubject(%s, %s) = %s, a watch gets %s", c.provider, c.key, prSubject(c.provider, c.key), want)
+		}
 	}
 }
 

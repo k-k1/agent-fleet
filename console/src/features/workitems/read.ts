@@ -144,6 +144,7 @@ function normalizeItem(raw: unknown): WorkItem {
     state: str(r.state),
     url: str(r.url),
     assignee: str(r.assignee),
+    type: str(r.type),
     labels: Array.isArray(r.labels) ? r.labels.filter((l): l is string => typeof l === "string") : [],
     labelColors: readLabelColors(r.labelColors),
     repo: str(r.repo),
@@ -198,6 +199,8 @@ export interface WorkItemDetail {
   url: string;
   author: string;
   assignee: string;
+  /** The tracker's own issue type ("Epic", "Bug", ...); "" when unknown, for a pull request, or from an older Agent. */
+  type: string;
   labels: string[];
   labelColors: Record<string, string>;
   repo: string;
@@ -224,7 +227,7 @@ export interface WorkItemDetail {
   /** GitHub's `mergeable_state`: "clean" | "blocked" | "behind" | "dirty" | "unstable" |
    * "has_hooks" | "draft" | "unknown", "" when not a GitHub pull request or an older Agent. */
   mergeableState: string;
-  /** The merge methods the repository allows ("merge" | "squash" | "rebase"). */
+  /** The merge methods the repository (GitHub) or the destination branch (Bitbucket) allows. */
   mergeMethods: string[];
   /** The method the dialog starts on ("" when none is allowed). */
   defaultMergeMethod: string;
@@ -232,6 +235,8 @@ export interface WorkItemDetail {
    * classic token's `repo` scope). Absent or false — including every token that reports no
    * scopes — means no Merge button is drawn. */
   canMerge: boolean;
+  /** Bitbucket only: the pull request's own "close source branch" setting, the checkbox's start. */
+  closeSourceBranch: boolean;
 }
 
 /** Adopt one detail response. Every field is normalised for the same reason `normalizeItem`
@@ -252,6 +257,7 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
       url: str(d.url),
       author: str(d.author),
       assignee: str(d.assignee),
+      type: str(d.type),
       labels: Array.isArray(d.labels) ? d.labels.filter((l): l is string => typeof l === "string") : [],
       labelColors: readLabelColors(d.labelColors),
       repo: str(d.repo),
@@ -281,6 +287,7 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
       defaultMergeMethod: oneOf(d.defaultMergeMethod, MERGE_METHODS),
       // Only a literal true: a truthy string from a confused proxy must not draw a button.
       canMerge: d.canMerge === true,
+      closeSourceBranch: d.closeSourceBranch === true,
     },
   };
 }
@@ -304,17 +311,21 @@ export function readMergeResult(res: unknown): MergeResult {
   return { ok: false, code, message };
 }
 
-export const MERGE_METHODS: readonly string[] = ["merge", "squash", "rebase"];
+/** GitHub's three methods, then Bitbucket Cloud's six strategies ("squash" is shared). */
+export const MERGE_METHODS: readonly string[] = [
+  "merge", "squash", "rebase",
+  "merge_commit", "fast_forward", "squash_fast_forward", "rebase_fast_forward", "rebase_merge",
+];
 
 /** `mergeable_state` values GitHub accepts a merge for, and that are also green: `unstable` (a
  * non-required check is failing) would be accepted too but is deliberately not offered. */
 const MERGEABLE_STATES = ["clean", "has_hooks"];
 
 export interface MergeGate {
-  /** Draw the Merge button at all. False for Bitbucket, issues, a merged or closed pull request,
-   * a connection that cannot merge, and an Agent that sent no merge facts. */
+  /** Draw the Merge button at all. False for issues, a merged or closed pull request, a
+   * connection that cannot merge, and an Agent that sent no merge facts. */
   show: boolean;
-  /** Press allowed. Only when GitHub says the merge would succeed. */
+  /** Press allowed. Only when the provider says the merge would succeed. */
   enabled: boolean;
   /** i18n key of the reason shown next to a disabled button ("" when enabled). */
   whyKey: MergeWhyKey | "";
@@ -342,7 +353,7 @@ const MERGE_WHY: Record<string, MergeWhyKey> = {
  * button is a write against GitHub, and "when in doubt, do not draw it" is the whole policy. */
 export function mergeGate(d: WorkItemDetail | null): MergeGate {
   const none: MergeGate = { show: false, enabled: false, whyKey: "" };
-  if (!d || d.provider !== "github" || d.kind !== "pr") return none;
+  if (!d || (d.provider !== "github" && d.provider !== "bitbucket") || d.kind !== "pr") return none;
   if (d.merged || d.state === "done") return none;
   if (!d.canMerge || !d.headSha || d.mergeMethods.length === 0) return none;
   if (d.draft) return { show: true, enabled: false, whyKey: "wi.merge_why_draft" };
