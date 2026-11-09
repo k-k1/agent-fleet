@@ -169,7 +169,8 @@ func TestParseBitbucketPullRequest(t *testing.T) {
 	if out.UpdatedAt != "2026-09-10T07:10:55Z" {
 		t.Errorf("updatedAt = %q, want UTC RFC3339", out.UpdatedAt)
 	}
-	// Bitbucket cannot answer this without starting a merge task, and a guess would be a lie.
+	// The PR body alone says nothing about conflicts; bitbucketFetchPRDetail fills it in from the
+	// mergeability checks, and a guess here would be a lie.
 	if out.Mergeable != "unknown" {
 		t.Errorf("mergeable = %q", out.Mergeable)
 	}
@@ -455,6 +456,24 @@ func TestJiraReferenceDetailOAuthRefreshFailureCarriesNoBridgeText(t *testing.T)
 		}
 		if m := err.Error(); strings.Contains(m, "BRIDGE_SENTINEL") || strings.Contains(m, "invalid_grant") || strings.Contains(m, "127.0.0.1") {
 			t.Errorf("unreachable=%v: error leaks bridge text: %v", unreachable, err)
+		}
+	}
+}
+
+func TestParseBitbucketMergeability(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"clean", `{"values":[{"type":"pullrequest_state_check","status":"PASSED"},{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, "clean"},
+		{"conflicts", `{"values":[{"type":"git_mergeability_check","status":"FAILED","reason":"conflicts"}]}`, "conflict"},
+		// A branch restriction that blocks the merge is not a conflict.
+		{"blocked by restriction", `{"values":[{"type":"standard_merge_check","status":"FAILED","blocking":true},{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, "clean"},
+		// The docs: reason is omitted when status is UNKNOWN, and that is not "conflict-free".
+		{"unevaluated", `{"values":[{"type":"git_mergeability_check","status":"UNKNOWN"}]}`, "unknown"},
+		{"merge impossible", `{"values":[{"type":"git_mergeability_check","status":"FAILED","reason":"merge_impossible"}]}`, "unknown"},
+		{"no git check", `{"values":[{"type":"pullrequest_state_check","status":"PASSED"}]}`, "unknown"},
+		{"not json", `<html>`, "unknown"},
+	} {
+		if got := parseBitbucketMergeability([]byte(tc.body)); got != tc.want {
+			t.Errorf("%s → %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
