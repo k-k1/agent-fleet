@@ -494,3 +494,49 @@ func TestAgentMemoryExternalSaveKindAndAnchorsRoundTrip(t *testing.T) {
 		t.Fatalf("unknown kind accepted: %s", b)
 	}
 }
+
+// An outside report counts once per caller per revision, an older revision is only an observation,
+// confirmed never clears a reason, and the caller cannot be taken from the embedded session field.
+func TestAgentMemoryExternalFeedback(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	agentMemSaveN(t, c, "seed", "project", time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC))
+	externalMode(t, ExternalMemoryWrite)
+	fb := func(extra map[string]any) (int, string) {
+		m := map[string]any{"project": c.Project.ID, "scope": "project", "name": "seed", "revision": 1, "verdict": "stale",
+			"note": "moved", "client": "claude-code/1", "caller": "pat-a"}
+		for k, v := range extra {
+			m[k] = v
+		}
+		code, b := memberDo(t, http.MethodPost, extBase+"feedback", m)
+		return code, string(b)
+	}
+	if code, b := fb(nil); code != 200 || !strings.Contains(b, `"outcome":"counted"`) {
+		t.Fatalf("first: %d %s", code, b)
+	}
+	if code, b := fb(nil); code != 200 || !strings.Contains(b, `"outcome":"duplicate"`) {
+		t.Fatalf("same caller again: %d %s", code, b)
+	}
+	// A client-style session value does not make a new caller.
+	if code, b := fb(map[string]any{"session": "claude-main"}); code != 200 || !strings.Contains(b, `"outcome":"duplicate"`) {
+		t.Fatalf("session field must be ignored: %d %s", code, b)
+	}
+	if code, b := fb(map[string]any{"caller": "pat-b", "verdict": "confirmed", "note": ""}); code != 200 || !strings.Contains(b, `"outcome":"counted"`) {
+		t.Fatalf("other caller confirmed: %d %s", code, b)
+	}
+	code, b := memberDo(t, http.MethodGet, extBase+"read?project="+c.Project.ID+"&scope=project&name=seed", nil)
+	var e agentMemEntry
+	if code != 200 || json.Unmarshal(b, &e) != nil || len(e.Reasons) != 1 {
+		t.Fatalf("a confirmation must not clear the reason: %d %s", code, b)
+	}
+	if code, b := fb(map[string]any{"caller": ""}); code != 400 {
+		t.Fatalf("no caller accepted: %d %s", code, b)
+	}
+	if code, b := fb(map[string]any{"caller": "///"}); code != 400 {
+		t.Fatalf("caller of only unsafe characters accepted: %d %s", code, b)
+	}
+	externalMode(t, ExternalMemoryRead)
+	if code, b := fb(map[string]any{"caller": "pat-c"}); code != 403 {
+		t.Fatalf("read-only setting let a report through: %d %s", code, b)
+	}
+}

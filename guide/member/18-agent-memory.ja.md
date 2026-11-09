@@ -346,7 +346,7 @@ Agent Fleet はバックグラウンドでメモリを整えられます。読�
   （[19 外から使う](19-outside-access.ja.md#メモリ専用のコネクタclaudeai-向け)）。
 - **テナント管理者がブロックしている場合。** メモリのツールは、あなたの設定やスコープにかかわらず一切提供されません（[管理 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用)）。
 - **ツール**：`memory_projects`・`memory_index`・`memory_search`・`memory_read` は read 以上のトークンまたは OAuth 接続、
-  `memory_save`・`memory_patch`・`memory_forget` は write のトークンまたは OAuth 接続と「読み書き」が必要です。設定とスコープの両方が許した呼び出しだけが
+  `memory_save`・`memory_patch`・`memory_feedback`・`memory_forget` は write のトークンまたは OAuth 接続と「読み書き」が必要です。設定とスコープの両方が許した呼び出しだけが
   通り、狭いほうが優先されます。
 - **エージェントへの頼み方**：手元のクライアントに普通の言葉で頼むだけです。「Agent Fleet のメモリから結合テストの
   回し方を探して」「このリポジトリは lint の前に `make gen` が要る、と Agent Fleet のメモリに保存して」など。
@@ -366,6 +366,7 @@ Agent Fleet はバックグラウンドでメモリを整えられます。読�
   （`repository` か `project` を添えて）、全プロジェクトで成り立つ事実のときだけ `user`。`scope` なしの呼び出しは、何を渡すかを
   示すメッセージで拒否されるため、プロジェクトを渡し忘れてもリポジトリ固有の事実が全プロジェクトに公開されることはありません。
 - **kind と anchors**：外部の `memory_save` も、ワークスペース内と同じ任意の `kind` と `anchors` を受け付けます（省略すると今の値を保ち、`anchors` に `[]` を渡すと消します）。ライフサイクルのフィールドは外部からは設定できません。
+- **失敗したメモリの報告**：`memory_feedback` は `scope`・`name`・`revision`・`verdict`（`stale`・`wrong`・`confirmed`）・`note` を取り、ワークスペース内と同じ規則で動きます。現在の版への報告はそのメモリを「要確認」にし、古い版への報告は観測として残るだけで、`confirmed` は疑いを消さず、同じ接続の同じ版への報告は最初の 1 件だけ数えます。接続とは発行したトークンまたは OAuth 接続のことで、このツールにセッションの引数はありません。
 - **記録されるもの**：保存はエージェントメモリの一覧に作成者の種別 `external` として並び、コミットメッセージには
   クライアントが自己申告した名前の `AF-External-Client: <名前>` トレーラーが付きます（参考情報のみ）。外部からの
   保存・部分編集・忘却は監査ログにも `memory.entry.save` / `memory.entry.patch` / `memory.entry.forget` として、プロジェクト ID 付き（メモリ名は含まず）で

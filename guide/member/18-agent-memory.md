@@ -455,7 +455,7 @@ link back.
 - **Your tenant administrator can block it.** If they have, the memory tools are not offered at all, whatever your
   setting and scope say ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)).
 - **Tools**: `memory_projects`, `memory_index`, `memory_search` and `memory_read` need a read (or higher) token or OAuth connection;
-  `memory_save`, `memory_patch` and `memory_forget` need a write token or OAuth connection and "Read and write". The setting and the scope both have
+  `memory_save`, `memory_patch`, `memory_feedback` and `memory_forget` need a write token or OAuth connection and "Read and write". The setting and the scope both have
   to allow a call: the narrower one wins.
 - **Asking the agent**: just say it in plain words in your local client, e.g. "search my Agent Fleet memory for how
   we run the integration tests" or "save to Agent Fleet memory that this repo's lint step needs `make gen` first".
@@ -476,6 +476,7 @@ link back.
   A call without `scope` is refused with a message naming what to pass, so a forgotten project can no longer
   publish a repository-specific fact to every project.
 - **Kind and anchors**: the external `memory_save` accepts the same optional `kind` and `anchors` as the in-workspace one (omit either to keep what is there; pass `[]` for `anchors` to clear them). The lifecycle fields are not settable from outside.
+- **Reporting a memory that failed you**: `memory_feedback` takes `scope`, `name`, `revision`, `verdict` (`stale`, `wrong` or `confirmed`) and `note`, with the same rules as inside the workspace: a report on the current revision marks the memory as suspect, one on an older revision is only kept as an observation, `confirmed` never clears a doubt, and only the first report per connection per revision counts. The connection is the token or OAuth connection you made; the tool takes no session argument.
 - **What is recorded**: a save shows in the Agent memory list as written by author kind `external`, and the
   commit message carries an `AF-External-Client: <name>` trailer with the client's self-declared name (for
   information only). Each external save, patch and forget is also written to the audit log as `memory.entry.save` /
