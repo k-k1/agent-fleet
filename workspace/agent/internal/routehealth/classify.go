@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -159,6 +160,10 @@ func Classify(kind, msg string, now time.Time) Verdict {
 	case session.KindMuse:
 		if at, ok := muse.LimitInMessage(msg); ok {
 			return Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: at}
+		}
+	case session.KindAgy:
+		if at, ok := agy.LimitInMessage(msg, now); ok {
+			return Verdict{Class: ClassWindow, Scope: ScopeModel, ResetAt: at}
 		}
 	}
 	low := strings.ToLower(msg)
