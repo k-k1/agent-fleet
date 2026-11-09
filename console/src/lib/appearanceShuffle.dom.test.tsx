@@ -146,6 +146,20 @@ describe("schedule across tabs", () => {
     stop();
   });
 
+  it("ignores a malformed stamp and unknown colors in one", async () => {
+    localStorage.setItem("af-display-settings", JSON.stringify({ topbarColor: "teal" }));
+    const a = await freshTab();
+    const stop = a.sh.startAppearanceShuffle({ pickOnLoad: false });
+    storageEvent("af-appearance-shuffle:*", "{not json");
+    storageEvent("af-appearance-shuffle:*", JSON.stringify({ at: 9, colors: { topbarColor: "neon" } }));
+    storageEvent("af-appearance-shuffle:*", null);
+    expect(a.s.getSettings().topbarColor).toBe("teal");
+    storageEvent("af-appearance-shuffle:*", JSON.stringify({ at: 9, colors: { topbarColor: "neon", viewerColor: "rose" } }));
+    expect(a.s.getSettings().topbarColor).toBe("teal");
+    expect(a.s.getSettings().viewerColor).toBe("rose");
+    stop();
+  });
+
   it("follows the schedule when another tab changes it", async () => {
     localStorage.setItem("af-display-settings", JSON.stringify({ appearanceShuffle: "1h" }));
     const a = await freshTab();
