@@ -189,7 +189,7 @@ ENI とは別枠）が、**採らない** —— **EC2 のオンデマンド価�
    分離されるが、実体は共有 root ボリューム上にあり、ホストに手が届けば読める（Fargate の
    タスク毎 microVM には無かった経路）。また一人が埋めると同じスロットの全部が倒れる。
    **EC2 なら `linuxParameters.tmpfs`（`containerPath` ＋ `size` 必須 ＋ `noexec,nosuid,nodev`）で
-   `/tmp` を tmpfs にできる**（Fargate では使えない）＝ ディスクに書かれず・終了で消え・上限も付く。
+   `/tmp` を tmpfs にできる**（Fargate のリビジョンは tmpfs を付けない。`runtime_ecs.go`）＝ ディスクに書かれず・終了で消え・上限も付く。
    書き込み層のクォータ（overlay2 ＋ xfs prjquota）とスロット返却時のコンテナ削除も併せて入れる。
 3. **CP がインスタンス上で `mount` / `umount` を実行する経路が要る**（実測は SSM SendCommand）。
    **detach の前に必ず umount**（強制 detach はファイルシステムを壊す）。
@@ -336,7 +336,10 @@ CP が自前で解決する）必要があり、それは別の決定である�
    開発コンテナではインストーラやテストランナーが `/tmp` から exec するのが日常で、
    `noexec` は「Permission denied」の形でそれを壊す。決定 8 が実際に欲しかった
    **「共有 root に書かれない」「上限が付く」は `noexec` 無しで両方成立する**。
-   `AF_ECS_EC2_TMP_OPTS` で戻せる。
+   そのため既定は `exec,nosuid,nodev` とする。`exec` は明示が要る。Docker は tmpfs を必ず
+   `noexec,nosuid,nodev` で始め、その後ろに並べた指定だけが上書きするので、`noexec` を
+   書かないだけの指定でも `/tmp` は noexec になる（#3682）。`AF_ECS_EC2_TMP_OPTS` は一覧を
+   丸ごと置き換え、`noexec,nosuid,nodev` で決定 8 に戻せる。
 2. **決定 3-1（サイズ変更の 3 手セット）を踏む場面が、プール型では無くなる。**
    ユーザーとインスタンスが紐づかないので、サイズ変更は
    **「別サイズのスロットへ載せ替える」**（Stop → 別プールへ attach → Start）で済み、
