@@ -44,6 +44,25 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Commit in the commit graph](code/commit.md) | Read history and diffs, and commit without opening a terminal |
 | [Use a Subversion repository](code/svn.md) | Check out a Subversion repository and work in it from a session |
 
+## Files and terminal
+
+| Page | What you can do |
+|---|---|
+| [See and download files](files/browse.md) | Walk the workspace's files, open them, and download files and folders |
+| [View documents and diagrams](files/view.md) | Read Markdown, slides, `.drawio` diagrams, PDFs and Office documents in the Console |
+| [Edit a file](files/edit.md) | Fix an open file in place and save it. Have an AI propose a change |
+| [Hand a file to a session](files/send.md) | Send a selection, with instructions, to a session or an assistant |
+| [Use the terminal](files/terminal.md) | Copy and paste in the browser terminal, read its lag, change its font |
+
+## Preview
+
+| Page | What you can do |
+|---|---|
+| [See a web app you started](preview/browser-pane.md) | Open a web app started in the workspace in the browser pane or the lightweight preview |
+| [Use preview subdomains](preview/subdomains.md) | Open the app at its own root URL and show it to colleagues or outsiders |
+| [Try Google sign-in on a preview](preview/dev-signin.md) | Try Google sign-in on a preview URL or from an app on your own machine |
+| [Operate a browser the agent opened](preview/agent-browser.md) | Take over a step only a person can do, such as a login, in the agent's browser |
+
 ## Agents
 
 | Page | What you can do |
@@ -61,6 +80,21 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Check prices and usage](agents/usage.md) | See model list prices, what is left of your allowance and what your tokens went on; save with RTK |
 | [Write down how you work, once](agents/instructions.md) | Write your standing requests once so that every agent gets them |
 | [Bring your Claude Code setup](agents/bring-claude-setup.md) | Use your own skills, subagents and hooks in the workspace |
+
+## Fleet
+
+| Page | What you can do |
+|---|---|
+| [See every running session](fleet/overview.md) | Lay out the running sessions as cards and spot the ones waiting for you |
+| [See how sessions relate over time](fleet/graph.md) | See on a time axis which session started which, and what passed between them |
+| [Narrow the view with working sets](fleet/working-sets.md) | Group repositories and conversations per piece of work and switch what the left pane shows |
+| [Start child sessions from a session](fleet/child-sessions.md) | Have a session start other sessions and hand them parts of the work |
+| [Let sessions message each other](fleet/messages.md) | Have sessions running side by side send each other short messages |
+| [Tell a session about its pull request's review](fleet/pr-feedback.md) | Tell the session that opened a PR about failed CI and review comments |
+| [Let a session see the fleet](fleet/fleet-visibility.md) | Let a session see the other sessions' state and leave you notes |
+| [Hand work to the Fleet Operator](fleet/operator.md) | Have it start sessions, instruct them and take their reports, from chat |
+| [Ways to use the Fleet Operator](fleet/operator-patterns.md) | Patterns that work, such as parallel implementation and cross-review |
+| [Run at a set time](fleet/schedules.md) | Have an agent work at set times or intervals |
 
 ## Integrations
 

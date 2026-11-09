@@ -157,13 +157,13 @@ connection. Not this deployment's engine."** together with the model the last ch
 - "LFS pointer": a file with only the Git LFS pointer present, not the actual content.
 - **"From operator", "Scheduled", "Manual fire", "Auto-resume", "From <name>"** in the chat view: where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
-  [a message from another session](11-many-sessions.md#messages-between-sessions). **"Via MCP: <name>"** (a
+  [a message from another session](../user/fleet/messages.md). **"Via MCP: <name>"** (a
   plug icon; just **"Via MCP"** when the name is unknown) marks a prompt that came in through the MCP connection
   of an outside assistant or client rather than from you: the agent is told it is not an instruction from you and
   will not treat it as your approval. **"Started by <name>"** marks the
   first prompt of a session another session started, and **"Stalled-tree notice"** the one Agent Fleet sends a
-  parent whose children have all gone quiet ([11](11-many-sessions.md#starting-sessions-from-a-session-child-sessions)).
-- **"Paused"** on a schedule row: that schedule is suspended ([11](11-many-sessions.md)).
+  parent whose children have all gone quiet ([Start child sessions from a session](../user/fleet/child-sessions.md)).
+- **"Paused"** on a schedule row: that schedule is suspended ([Run at a set time](../user/fleet/schedules.md)).
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
   stopped; **"Raise budget & resume…"** in its menu carries on ([Stop a session that spends too much with a budget](../user/sessions/budget.md#when-it-stops)).
 - **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
@@ -213,10 +213,10 @@ Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 ### Files / folders
 
 You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
-Folders also show **"Open shell here"**, which starts a shell session in that folder ([07](07-files.md#open-a-shell-from-a-folder)).
+Folders also show **"Open shell here"**, which starts a shell session in that folder ([07](../user/files/browse.md#open-a-shell-from-a-folder)).
 Files additionally show "Open in reader", "Download", "Translate with assistant" and "Summarize with assistant"; **folders show "Download as zip"** (the same
 item is in the gallery's folder menu; a touch long-press on a folder row opens the menu;
-[07](07-files.md#download-a-folder-as-zip)). Folders and **image files** also show
+[07](../user/files/browse.md#download-a-folder-as-zip)). Folders and **image files** also show
 **"Open in gallery"** (from an image it opens the parent folder's gallery with that image enlarged; see
 [Use the image gallery](../user/images/gallery.md)). A file that sits in a folder (not directly in home) also shows **"Open the folder"**
 (shows the parent folder in the file list) and, unless it is an image, **"Open folder in gallery"**. To hand a file to a session or an assistant, open the
@@ -225,7 +225,7 @@ file and use "Send" in the viewer.
 ### File and folder links in replies and documents
 
 A file or folder link in an agent's reply, the assistant chat, the document viewer or a Markdown
-preview ([07](07-files.md#links-in-rendered-markdown)) has a menu of its own: right-click it,
+preview ([07](../user/files/view.md#links-in-documents)) has a menu of its own: right-click it,
 long-press it, or press the Menu key or Shift+F10 on it. A file offers **"Open in pane"** and
 **"Open in new pane"**, both offer **"Show in Files"**, and then come the items above that change
 nothing (no new, rename or delete). For a path outside your home (`/…`), what follows the open
@@ -271,7 +271,7 @@ workspace is stopped, keep the browser's own menu.
 
 ### Cards in the sessions overview
 
-A card in the sessions overview pane ([11](11-many-sessions.md#seeing-every-running-session-at-once-the-sessions-overview))
+A card in the sessions overview pane ([See every running session](../user/fleet/overview.md))
 gives the same menu again, from a right-click, its ⋯ button, or the Menu key while the card has focus.
 
 ## When a menu doesn't appear
@@ -285,4 +285,4 @@ gives the same menu again, from a right-click, its ⋯ button, or the Menu key w
 
 ---
 
-Related: [Read a session's state](../user/sessions/status.md) · [Launch a session from a repository](../user/code/launch-from-repo.md) · [Files](07-files.md)
+Related: [Read a session's state](../user/sessions/status.md) · [Launch a session from a repository](../user/code/launch-from-repo.md) · [Files](../user/files/browse.md)

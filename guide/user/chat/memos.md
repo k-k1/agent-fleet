@@ -29,7 +29,7 @@ Memos are stored on the server, so the same queue shows on another PC or your ph
 - Attach images by pasting or dropping them into the box, or with the attach button
 - Memos are grouped by repository, and by category within it
 - Press **+** on a category header to write straight into that category. "**Add category**" creates one ahead of time
-- The send button of an open file can also "**Add to queue**" a memo about that file ([Send a file to a session / chat](../../member/07-files.md#send-a-file-to-a-session-chat))
+- The send button of an open file can also "**Add to queue**" a memo about that file ([Hand a file to a session](../files/send.md#send-it-later-in-a-batch))
 - "**Save to memo**" on the "Start working" screen moves the prompt you are writing, attachments included, into the memo queue and clears the box. "**Start with this**" in the memo's **⋯** brings it back, and the memo goes away once the session starts
 
 ## Read and edit memos

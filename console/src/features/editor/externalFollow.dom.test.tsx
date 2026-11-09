@@ -10,6 +10,7 @@ import { EditorView } from "@codemirror/view";
 import { history, undo, undoDepth } from "@codemirror/commands";
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   rel: (p: string) => p,
 }));
 

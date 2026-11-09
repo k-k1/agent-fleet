@@ -5,6 +5,8 @@ import { openNotificationTarget, type FleetNotification } from "./store.ts";
 import { notificationKindLabel, notificationRowSubtitle, notificationWording } from "./wording.ts";
 import { notifyRowOf } from "./prefs.ts";
 import { useSettingsUI } from "../settings/store.ts";
+import { useLayoutStore } from "../../layout/store.ts";
+import { allViews, freshLayout } from "../../layout/ops.ts";
 import { setLocale } from "../../lib/i18n/index.ts";
 import { ja } from "../../lib/i18n/locales/ja.ts";
 import { en } from "../../lib/i18n/locales/en.ts";
@@ -30,6 +32,7 @@ const notification = (payload: Record<string, unknown> = { queued: 2, pending: 5
 describe("a memory-review notification", () => {
   beforeEach(() => {
     useSettingsUI.getState().closeSettings();
+    useLayoutStore.setState({ layout: freshLayout() });
   });
 
   it("words the counts in both languages and puts them on the row", () => {
@@ -59,12 +62,36 @@ describe("a memory-review notification", () => {
     expect(notifyRowOf("memory-review", false)).toBe("other");
   });
 
-  it("opens Settings > Agent memory > Changes when it is clicked, and counts as opened", async () => {
+  it("opens the Memory view on Changes when it is clicked, and counts as opened", async () => {
     const r = await openNotificationTarget(notification(), false);
     expect(r.opened).toBe(true);
-    const ui = useSettingsUI.getState();
-    expect(ui.settingsOpen).toBe(true);
-    expect(ui.settingsSection).toBe("memory");
-    expect(ui.settingsView).toBe("changes");
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    const pane = allViews(useLayoutStore.getState().layout).find((v) => v.content.kind === "memory");
+    expect(pane?.content).toEqual({ kind: "memory", memoryView: "changes" });
+  });
+});
+
+// The consolidator's daily notice (ADR 0130 decision 7) opens the proposals in the Memory view
+// (#3720), not in the Settings modal.
+describe("a memory-consolidation notification", () => {
+  const consolidation = (): FleetNotification => ({ ...notification({ pending: 3 }), id: "memory-consolidation-1", kind: "memory-consolidation" });
+  const memoryPanes = () => allViews(useLayoutStore.getState().layout).filter((v) => v.content.kind === "memory");
+
+  beforeEach(() => {
+    useSettingsUI.getState().closeSettings();
+    useLayoutStore.setState({ layout: freshLayout() });
+  });
+
+  it("opens the proposals in a Memory view pane and leaves Settings closed", async () => {
+    const r = await openNotificationTarget(consolidation(), false);
+    expect(r.opened).toBe(true);
+    expect(useSettingsUI.getState().settingsOpen).toBe(false);
+    expect(memoryPanes().map((v) => v.content)).toEqual([{ kind: "memory", memoryView: "proposals" }]);
+  });
+
+  it("retargets the Memory view that is already open instead of opening a second one", async () => {
+    useLayoutStore.getState().openTarget({ content: { kind: "memory", memoryView: "memories" } });
+    await openNotificationTarget(consolidation(), false);
+    expect(memoryPanes().map((v) => v.content)).toEqual([{ kind: "memory", memoryView: "proposals" }]);
   });
 });

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,9 +20,9 @@ import (
 // stubPane makes readPermissionMenu parse pane instead of capturing tmux.
 func stubPane(t *testing.T, pane string) {
 	t.Helper()
-	prev := readPermissionMenu
-	readPermissionMenu = func(string) (claude.PermissionMenu, bool) { return claude.ParsePermissionMenu(pane) }
-	t.Cleanup(func() { readPermissionMenu = prev })
+	prev := capturePermissionPane
+	capturePermissionPane = func(string) string { return pane }
+	t.Cleanup(func() { capturePermissionPane = prev })
 }
 
 func permFixture(t *testing.T, name string) string {
@@ -578,5 +579,81 @@ func TestPermissionKeysRefusesBareBash(t *testing.T) {
 		if keys, code := permissionKeys("s", claude.PermAllow, d, "", ""); code != "target_mismatch" || keys != nil {
 			t.Errorf("%q: keys=%v code=%q", d, keys, code)
 		}
+	}
+}
+
+// A prompt Claude Code closed by itself fires no hook; the next poll retires it once the
+// transcript holds the call's result, newer than the payload, AND the pane shows no dialog
+// (#3725).
+func TestSweepAnsweredPermission(t *testing.T) {
+	withTempHome(t)
+	const id = "toolu_01SweepMe"
+	use := []byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"` + id + `","name":"Bash","input":{"command":"echo hi"}}]}}`)
+	result := func(at time.Time) []byte {
+		return []byte(`{"type":"user","timestamp":"` + at.UTC().Format(time.RFC3339Nano) + `","message":{"content":[{"type":"tool_result","tool_use_id":"` + id + `","is_error":true,"content":"Permission for this command was denied"}]}}`)
+	}
+	answered := [][]byte{use, result(time.Now().Add(time.Minute))}
+	// The id is an earlier call's that finished before this prompt was raised.
+	stale := [][]byte{use, result(time.Now().Add(-time.Minute))}
+	noDialog := "❯ \n  ⏵⏵ bypass permissions on\n"
+	dialog := permFixture(t, "bash_ask_rule_af_label.txt")
+
+	cases := []struct {
+		name, toolUseID, pane string
+		lines                 [][]byte
+		question, plan        bool
+		swept                 bool
+	}{
+		{name: "answered and closed", toolUseID: id, pane: noDialog, lines: answered, swept: true},
+		// The id can be a parallel sibling's that finished while the real prompt is still up.
+		{name: "a dialog is still up", toolUseID: id, pane: dialog, lines: answered},
+		// The dialog may not be drawn yet, or be one the parser cannot read.
+		{name: "no result yet", toolUseID: id, pane: noDialog, lines: [][]byte{use}},
+		{name: "result older than the payload", toolUseID: id, pane: noDialog, lines: stale},
+		{name: "payload without an id", pane: noDialog, lines: answered},
+		// A failed capture is not an absent dialog.
+		{name: "pane not captured", toolUseID: id, pane: "", lines: answered},
+		// AskUserQuestion / ExitPlanMode raise their own prompt with a stale id, and their menu
+		// does not parse as a permission dialog.
+		{name: "masked by a question", toolUseID: id, pane: noDialog, lines: answered, question: true},
+		{name: "masked by a plan", toolUseID: id, pane: noDialog, lines: answered, plan: true},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stubPane(t, c.pane)
+			name := "slot9" + strconv.Itoa(i)
+			sid := permissionSession(t, name)
+			if c.question {
+				status.WritePendingQuestion(sid, []byte(`[{"question":"Which?"}]`))
+			}
+			if c.plan {
+				status.WritePendingPlan(sid, "the plan")
+			}
+			status.WritePendingPermissionCall(sid, "Bash · echo hi", "echo hi", c.toolUseID)
+			sweepAnsweredPermission(sid, name, c.lines)
+			_, kept := status.ReadPendingPermission(sid)
+			st, _ := status.Read(sid)
+			if c.swept && (kept || st.State != "idle") {
+				t.Fatalf("not swept: payload kept=%v state=%q", kept, st.State)
+			}
+			if !c.swept && (!kept || st.State != "permission") {
+				t.Fatalf("swept a live prompt: payload kept=%v state=%q", kept, st.State)
+			}
+		})
+	}
+}
+
+// The hook carries the PreToolUse call's id onto the pending payload, and the payload's
+// command reads back without it.
+func TestPendingPermissionKeepsTheToolUseID(t *testing.T) {
+	withTempHome(t)
+	sid := "sid-3725"
+	status.WriteLastToolCall(sid, "Bash · echo hi", "echo hi", "toolu_01Keep")
+	applyPendingPayloads(sid, "permission", hookInput{})
+	if id, ok := status.ReadPendingPermissionToolUseID(sid); !ok || id != "toolu_01Keep" {
+		t.Fatalf("id = %q %v", id, ok)
+	}
+	if d, cmd, ok := status.ReadPendingPermissionCommand(sid); !ok || d != "Bash · echo hi" || cmd != "echo hi" {
+		t.Fatalf("detail=%q command=%q ok=%v", d, cmd, ok)
 	}
 }

@@ -29,7 +29,7 @@ Press **＋ Start** on the workspace action bar to open the **Start** screen.
 
 | Choice | What happens |
 |---|---|
-| Chat (assistant) | Starts a chat that uses no repository, for questions, translation and summaries ([Chat and memos](../../member/10-chat-memo.md)) |
+| Chat (assistant) | Starts a chat that uses no repository, for questions, translation and summaries ([Ask an assistant](../chat/assistant.md)) |
 | SSM — log in to another host | Logs in to EC2 over SSM. Shown only when you have an SSM profile ([Log in to EC2 with SSM](../integrations/aws-ssm.md)) |
 | shell | Opens a plain shell (bash) right away |
 | Launch an agent in home | Runs an agent in home (`~`), for drafts, research and throwaway work |

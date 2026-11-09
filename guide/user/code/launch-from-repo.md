@@ -100,7 +100,7 @@ Right-click a row for this menu. Some items are hidden depending on state and lo
 | Share… | Share this working copy's sessions with other members ([Share a conversation](../team/share.md)) |
 | Launch Shell | Opens a shell session in that working copy |
 | Start an image studio | Starts an image studio in that working copy ([Finish an image in the studio](../images/studio.md)). Shown only while the workspace is running and image generation is available |
-| Working sets | Assigns the copy to a working set ([11](../../member/11-many-sessions.md#narrowing-the-view-with-working-sets)) |
+| Working sets | Assigns the copy to a working set ([Narrow the view with working sets](../fleet/working-sets.md)) |
 | Stop the sessions below | Stops the sessions running in that working copy and the ones under it, together ([Stop and resume a session](../sessions/stop-resume.md#stop-every-session-in-one-working-copy)) |
 | Archive all stopped sessions | Archives the stopped sessions of that working copy together |
 | Archived sessions of this working copy | Opens the archive list narrowed to that working copy |

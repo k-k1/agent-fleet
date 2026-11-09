@@ -97,25 +97,9 @@ From **Assistant** on the left you can ask the AI questions and have it translat
 
 ## 5. Reading documents and slides
 
-Documents written by the dev team open from **Files (the repository tree)** on the left. Just
-walk down the folders and click a file name.
-
-- **Markdown (.md) documents** are shown as a nicely formatted **preview**. The
-  "**Preview / Source**" toggle at the top also lets you see the original formatted text.
-  Diagrams (Mermaid) are rendered as pictures too.
-- **Marp slide decks** can be read as slides, flipping through one page at a time. A
-  "**Slides / Preview / Source**" toggle appears at the top, with the slide view shown first.
-  Flip pages with "◀ ▶" or the arrow keys, and use the "**Fullscreen**" button to show them
-  large (works for presentations too).
-
-You're only reading, so there's no worry about accidentally breaking the contents. External
-links open in a new tab.
-
-The screen showing an open file has a "**Send**" button. From there you can **hand the document
-to a chat assistant** and ask "translate this" or "summarize this", send it to a development
-session, or add it to the memo queue covered in the next chapter. When you're thinking "I'd
-like this English document translated", the easy route is: open it, press "Send", and pick
-**Assistants (open in chat)** as the destination.
+Documents written by the dev team open from **Files** on the left: walk down the folders and click a file name. How
+Markdown, slides, diagrams and PDFs are shown is in [View documents and diagrams](../user/files/view.md); asking an
+assistant to translate or summarise a file is in [Hand a file to a session](../user/files/send.md).
 
 ---
 

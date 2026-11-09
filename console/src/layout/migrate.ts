@@ -156,6 +156,10 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "home":
       return { kind: "home" };
+    case "memory": {
+      const v = p.memoryView;
+      return v === "memories" || v === "changes" || v === "proposals" ? { kind: "memory", memoryView: v } : { kind: "memory" };
+    }
     case "fleetgraph": {
       const collapsed = collapsedNames(p.collapsed);
       return { kind: "fleetgraph", showArchived: p.showArchived !== false, ...(collapsed.length ? { collapsed } : {}) };

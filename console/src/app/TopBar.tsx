@@ -17,6 +17,7 @@ import { useBrandStore } from "../lib/brand.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
+import { ShuffleControl } from "../ui/ShuffleControl.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { NotificationCenter } from "../features/notifications/NotificationCenter.tsx";
 import { InboxButton } from "../features/inbox/InboxButton.tsx";
@@ -333,6 +334,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     </div>
                   </div>
                 )}
+                <div className="appr-seg-row">
+                  <span className="appr-seg-lbl" title={tr("display.shuffle_note")}>{tr("display.shuffle")}</span>
+                  <ShuffleControl className="acct-shuffle" segClass="ui-seg choice-seg acct-theme-seg" />
+                </div>
                 {SURFACE_TARGETS.map((t) => (
                   <SwatchRow key={t.key} label={tr(t.shortKey)} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
                 ))}

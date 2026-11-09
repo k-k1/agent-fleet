@@ -48,10 +48,22 @@ func reviewEntries(ms []memoryx.ConsolMemory) []memoryx.ReviewEntry {
 	return out
 }
 
+// An exported proposal naming a memory that does not exist joins an existing memory's topic only
+// when a ranked one is about the same thing: a score of attachMinScore or more (two name words, or
+// one name word and two description words) of which attachMinHead comes from the name and
+// description; body words alone never qualify. Measured on the first live run: creates about a flaky
+// contract test and about PR workflow were attached to notes that shared only body words ("under",
+// "load", "branch") with them, and were then shown under that note's name.
+const (
+	attachMinScore = 8
+	attachMinHead  = 4
+)
+
 // BuildTopics groups observations. An observation's topic is its suspect memory when that memory
 // exists in the scope; an exported proposal (of any op) that names a memory that does not exist is
-// attached to the best-ranked existing memory when one shares words with it, and otherwise is a
-// topic of its own. The result is ordered by topic id, so the same inputs always give the same topics.
+// attached to the best-ranked existing memory when it clears attachMinScore, and otherwise is a
+// topic of its own, keyed by the name it proposed. The result is ordered by topic id, so the same
+// inputs always give the same topics.
 func BuildTopics(obs []Observation, memories map[string][]memoryx.ConsolMemory) []Topic {
 	byID := map[string]*Topic{}
 	for _, o := range obs {
@@ -59,8 +71,13 @@ func BuildTopics(obs []Observation, memories map[string][]memoryx.ConsolMemory) 
 		mems := memories[key]
 		primary := o.Memory
 		if _, ok := findMem(mems, primary); !ok && o.Source == SourceExport {
-			if ranked := memoryx.ReviewRank(reviewEntries(mems), o.Memory+" "+o.Note); len(ranked) > 0 {
-				primary = ranked[0].Name
+			// The first hit that clears both gates, not just the first hit: a note stuffed with
+			// matching body words ranks above a real name match without being about the same thing.
+			for _, h := range memoryx.ReviewRankScored(reviewEntries(mems), o.Memory+" "+o.Note) {
+				if h.Score >= attachMinScore && h.HeadScore >= attachMinHead {
+					primary = h.Entry.Name
+					break
+				}
 			}
 		}
 		id := topicID(o.Scope, o.ProjectID, primary)
@@ -113,6 +130,10 @@ const (
 	CauseNeverIdle   = "never-idle"        // no idle window came since the last run
 	CauseWaiting     = "next-run"          // ripe, simply waiting for the next run
 	CauseRunFailed   = "run-failed"        // the run ended on a model or runner error
+	// CauseTooLarge is terminal, not a delay: even one observation with the smallest excerpts and
+	// one note costs more than the whole per-run budget (a patch must send the whole note), so no
+	// run can take the topic until the memory shrinks or the budget is raised.
+	CauseTooLarge = "too-large"
 )
 
 // open reports whether an observation counts: it has not been looked at, or the memory it is about
@@ -181,20 +202,121 @@ type RipeTopic struct {
 	Take     []Observation // the oldest MaxObservationsPerTopic of them
 	Estimate int           // estimated tokens of the calls this topic costs
 	Oldest   time.Time
+	// Fit is what the classification calls show; TooLarge marks a topic that does not fit the
+	// whole budget at the smallest fit.
+	Fit      Fit
+	TooLarge bool
+}
+
+// estimate is the tokens the calls of one topic cost at a fit: one classification per taken
+// observation, and one patch call that sends the whole of the largest note shown (any shown note
+// may be the patch target, and a patch must carry its whole text). Two costs are not counted: a
+// supersede or merge answer's second classification, and the extra patch calls of a topic whose
+// observations patch several notes. Both are the exception, and the call gate still stops a run
+// that spends past its budget (the topic is then deferred whole and stays open).
+func estimate(t Topic, take []Observation, fit Fit) int {
+	est := 0
+	for _, o := range take {
+		est += estimateTokens(classifyRequest(t, o, fit).Prompt()) + 200
+	}
+	shown := t.Memories
+	if len(shown) > fit.Notes {
+		shown = shown[:fit.Notes]
+	}
+	largest, found := memoryx.ConsolMemory{}, false
+	for _, m := range shown {
+		if !found || len(m.Body) > len(largest.Body) {
+			largest, found = m, true
+		}
+	}
+	if found {
+		var note []string
+		for _, o := range take {
+			note = append(note, observationText(o))
+		}
+		preq := memengine.PatchRequest{Observation: strings.Join(note, "\n\n- "), Name: largest.Name, Description: largest.Description, Body: largest.Body}
+		est += estimateTokens(preq.Prompt()) + 300
+	}
+	return est
+}
+
+// PlanTopic prices a ripe topic and, when it is over the whole budget, shrinks it. Every
+// observation is kept while the context can still shrink (shorter excerpts, then fewer notes);
+// only then is the newest observation dropped and the ladder walked again (dropped ones stay open
+// for the next run), down to one observation with one note at 150 runes. A topic still over the budget there is TooLarge.
+func PlanTopic(t Topic, open []Observation, c Config) RipeTopic {
+	take := open
+	if len(take) > c.MaxObservationsPerTopic {
+		take = take[:c.MaxObservationsPerTopic]
+	}
+	r := RipeTopic{Topic: t, Open: open, Take: take, Oldest: open[0].FirstSeen, Fit: fullFit}
+	r.Estimate = estimate(t, take, fullFit)
+	if r.Estimate <= c.TokenBudget {
+		return r
+	}
+	ladder := shrinkLadder()
+	// Cost only grows with observations, notes and runes, so when the smallest combination is over
+	// budget every other one is too: answer without pricing the rest.
+	if e := estimate(t, take[:1], ladder[len(ladder)-1]); e > c.TokenBudget {
+		r.Take, r.Fit, r.Estimate, r.TooLarge = take[:1], ladder[len(ladder)-1], e, true
+		return r
+	}
+	for n := len(take); n >= 1; n-- {
+		for _, fit := range ladder {
+			if e := estimate(t, take[:n], fit); e <= c.TokenBudget {
+				r.Take, r.Fit, r.Estimate = take[:n], fit, e
+				return r
+			}
+		}
+	}
+	return r // unreachable: the smallest combination fit
 }
 
 // estimateTokens is bytes/3, the ADR's own scale for mixed Japanese/English text.
 func estimateTokens(prompt string) int { return len(prompt)/3 + 1 }
 
+// Fit is how much of a topic one classification call is shown: the first Notes of the topic's
+// memories (the primary first), each cut to Runes of body. fullFit is what the engine sends anyway.
+type Fit struct {
+	Notes int
+	Runes int
+}
+
+var fullFit = Fit{Notes: memengine.MaxSnippets, Runes: memengine.SnippetRunes}
+
+// shrinkLadder lists the fits tried, largest first: shorter excerpts before fewer notes.
+func shrinkLadder() []Fit {
+	var out []Fit
+	for _, n := range []int{memengine.MaxSnippets, 2, 1} {
+		for _, r := range []int{memengine.SnippetRunes, 300, 150} {
+			out = append(out, Fit{Notes: n, Runes: r})
+		}
+	}
+	return out
+}
+
+func cutRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		// The marker is the one Prompt's own excerpt adds, so a full-size fit is byte-identical
+		// to what the engine would cut itself (its wording is part of what the gold set measures).
+		return string(r[:n]) + " …"
+	}
+	return s
+}
+
 // classifyRequest is the engine request for one observation of a topic. A snippet that fails the
 // secret scan is left out whole.
-func classifyRequest(t Topic, o Observation) memengine.ClassifyRequest {
+func classifyRequest(t Topic, o Observation, fit Fit) memengine.ClassifyRequest {
 	req := memengine.ClassifyRequest{Observation: observationText(o)}
-	for _, m := range t.Memories {
+	shown := t.Memories
+	if len(shown) > fit.Notes {
+		shown = shown[:fit.Notes]
+	}
+	for _, m := range shown {
 		if memoryx.ReviewTextProblem(m.Name+"\n"+m.Description+"\n"+m.Body) != "" {
 			continue
 		}
-		req.Memories = append(req.Memories, memengine.Snippet{Name: m.Name, Description: m.Description, Body: m.Body})
+		req.Memories = append(req.Memories, memengine.Snippet{Name: m.Name, Description: m.Description, Body: cutRunes(m.Body, fit.Runes)})
 	}
 	return req
 }
@@ -219,7 +341,8 @@ func observationText(o Observation) string {
 // Select orders the ripe topics oldest observation first (a busy topic cannot starve a quiet one)
 // and takes them while their estimates fit the budget. Topics that do not fit are returned as
 // delayed with the cause, in the same order. A topic whose estimate alone is over the whole
-// budget is delayed too (flagged), never run half-way.
+// budget is delayed too (flagged), never run half-way. Run shrinks a topic first (PlanTopic), so
+// that branch is a guard for other callers, not a path of a run.
 func Select(ripe []RipeTopic, budget int) (run []RipeTopic, delayed []Delay) {
 	sort.SliceStable(ripe, func(i, j int) bool {
 		if !ripe[i].Oldest.Equal(ripe[j].Oldest) {

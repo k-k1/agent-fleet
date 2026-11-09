@@ -65,7 +65,7 @@ For a translator, for example, put "Send me text and I'll translate between Japa
 | AF read | Reads your workspace's session list, states and output. It cannot write |
 | AF write | On top of reading, sends prompts to sessions. It works on your behalf, so choose it only for a purpose you trust |
 
-The built-in Fleet Operator is an example of "AF write" ([the Fleet Operator](../../member/11-many-sessions.md#what-is-the-fleet-operator)).
+The built-in Fleet Operator is an example of "AF write" ([the Fleet Operator](../fleet/operator.md)).
 
 ## Set up AI assistance
 

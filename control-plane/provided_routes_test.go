@@ -208,7 +208,8 @@ func TestProvidedRouteTenantAdmin(t *testing.T) {
 	if w := routeAdminDo(mux, "PUT", base+"/policy", "m@x", `{"members_only":false,"member_default_micro":1}`); w.Code != http.StatusForbidden {
 		t.Fatalf("a member set the policy: %d %s", w.Code, w.Body)
 	}
-	if w := routeAdminDo(mux, "PUT", base+"/policy", "boss@x", `{"members_only":true,"member_default_micro":20000000}`); w.Code != 200 {
+	if w := routeAdminDo(mux, "PUT", base+"/policy", "boss@x", `{"members_only":true,"member_default_micro":20000000}`); w.Code != 200 ||
+		!strings.Contains(w.Body.String(), `"warnings":[]`) {
 		t.Fatalf("policy: %d %s", w.Code, w.Body)
 	}
 	if w := routeAdminDo(mux, "PUT", base+"/members", "boss@x", `{"membership_id":"elsewhere","granted":true}`); w.Code != http.StatusNotFound {
@@ -217,17 +218,23 @@ func TestProvidedRouteTenantAdmin(t *testing.T) {
 	if w := routeAdminDo(mux, "PUT", base+"/members", "boss@x", `{"membership_id":"`+member+`","granted":true,"budget_micro":-5}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("a negative budget: %d %s", w.Code, w.Body)
 	}
-	if w := routeAdminDo(mux, "PUT", base+"/members", "boss@x", `{"membership_id":"`+member+`","granted":true,"budget_micro":7000000}`); w.Code != 200 {
+	// The source lists opus 5.5: one call reserves at least $8.80 (#3683).
+	if w := routeAdminDo(mux, "PUT", base+"/members", "boss@x", `{"membership_id":"`+member+`","granted":true,"budget_micro":7000000}`); w.Code != http.StatusBadRequest ||
+		!strings.Contains(w.Body.String(), "$8.80") {
+		t.Fatalf("a budget no call fits under: %d %s", w.Code, w.Body)
+	}
+	if w := routeAdminDo(mux, "PUT", base+"/members", "boss@x", `{"membership_id":"`+member+`","granted":true,"budget_micro":9000000}`); w.Code != 200 ||
+		!strings.Contains(w.Body.String(), `"warnings":["the member's monthly budget $9.00 admits a call of us.anthropic.claude-opus-5-5 only while its output cap is small`) {
 		t.Fatalf("member: %d %s", w.Code, w.Body)
 	}
 	w := routeAdminDo(mux, "GET", base, "boss@x", "")
 	var v routegateway.TenantView
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || !v.Granted || *v.CeilingMicro != 50_000_000 || !v.MembersOnly ||
-		v.MemberDefaultMicro != 20_000_000 || len(v.Members) != 2 {
+		v.MemberDefaultMicro != 20_000_000 || len(v.Members) != 2 || v.FloorMicro != 8_800_022 || len(v.Reservations) != 1 {
 		t.Fatalf("view: %d %s", w.Code, w.Body)
 	}
 	for _, m := range v.Members {
-		if m.MembershipID == member && (!m.Granted || m.EffectiveMicro != 7_000_000) {
+		if m.MembershipID == member && (!m.Granted || m.EffectiveMicro != 9_000_000) {
 			t.Fatalf("member view = %+v", m)
 		}
 	}
@@ -275,7 +282,7 @@ func TestProvidedRouteCreateRefusal(t *testing.T) {
 	if aerr := providedRouteCreateRefusal(ctx, member, "bedrock-deployment"); aerr == nil || aerr.code != "route_budget_exhausted" {
 		t.Fatalf("budget zero: %+v", aerr)
 	}
-	routeAdminDo(mux, "PUT", base+"/policy", "boss@x", `{"members_only":false,"member_default_micro":1000000}`)
+	routeAdminDo(mux, "PUT", base+"/policy", "boss@x", `{"members_only":false,"member_default_micro":9000000}`)
 	if aerr := providedRouteCreateRefusal(ctx, member, "bedrock-deployment"); aerr != nil {
 		t.Fatalf("usable: %+v", aerr)
 	}

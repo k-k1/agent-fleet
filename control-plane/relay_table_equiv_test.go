@@ -213,6 +213,7 @@ var frozenMemberOriginRoutes = map[string]bool{
 	"POST /api/agents/memory-consolidation/proposals/approve": true,
 	"POST /api/agents/memory-consolidation/proposals/reject":  true,
 	"POST /api/agents/memory-consolidation/proposals/retry":   true,
+	"POST /api/agents/memory-consolidation/run":               true, // #3702
 	// Importing AF memory out of a bundle (#1983).
 	"POST /api/agents/memory/af-import": true,
 	// The member's part in what the Agent memory switch does by itself with claude's native
@@ -393,6 +394,7 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/agents/memory-consolidation/proposals/approve": true,
 	"POST /api/agents/memory-consolidation/proposals/reject":  true,
 	"POST /api/agents/memory-consolidation/proposals/retry":   true,
+	"POST /api/agents/memory-consolidation/run":               true, // #3702
 }
 
 // auditAddedSinceTheFreeze are routes that existed at the freeze and that the frozen switch

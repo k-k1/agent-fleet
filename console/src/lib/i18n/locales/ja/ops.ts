@@ -49,6 +49,7 @@ export const ops = {
   "ops.dc_channel_select": "通知先チャンネルを選択…",
   "ops.dc_advanced_dm": "上級者向け: DM に送る（ユーザー ID 手入力）",
   "ops.dc_advanced_channel": "チャンネル選択に戻す",
+  "ops.sl_test_sent": "テスト通知を送りました。Slack に届いていれば設定完了です",
   "ops.dc_test_sent": "テスト通知を送りました。Discord に届いていれば設定完了です",
   "ops.dc_test_failed": "接続は保存しましたがテスト送信に失敗しました: {msg}",
   "ops.dc_user_placeholder": "自分の Discord ユーザー ID（数字）",
@@ -79,16 +80,16 @@ export const ops = {
   "ops.ev_exit": "異常終了",
   "ops.ev_report": "完了報告",
   "ops.dc_hint":
-    "Discord Developer Portal（discord.com/developers/applications）で New Application → Bot → Reset Token でトークンを取得して貼り付けます。あとは表示される「サーバーへ招待」リンクで自分の私設サーバーに Bot を追加し、チャンネルを選ぶだけです（数字 ID のコピーは不要）。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（送るのはセッションの表示名と状態だけで、ログや秘密は送りません）。",
+    "Discord Developer Portal（discord.com/developers/applications）で New Application → Bot → Reset Token でトークンを取得して貼り付けます。あとは表示される「サーバーへ招待」リンクで自分の私設サーバーに Bot を追加し、チャンネルを選ぶだけです（数字 ID のコピーは不要）。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます。送るのはセッションの表示名と状態、質問・許可リクエストの選択肢で、全文モードをオンにすると最終回答の本文も送ります（秘密らしき文字列は自動で伏せます）。生のログやツール出力は送りません。",
   "ops.sl_bot_placeholder": "Slack Bot トークン（xoxb-…）",
   "ops.sl_app_placeholder": "App-level トークン（xapp-…）— 双方向受信のときだけ必要",
   "ops.sl_user_placeholder": "自分の Slack メンバー ID（U…）",
   "ops.sl_waiting_channel": "Bot がチャンネルに参加するのを待っています…（/invite @Bot 名 で招待してから選んでください）",
   "ops.sl_user_label": "自分の Slack メンバー ID",
   "ops.sl_user_sub": "メールから自動入力されます。@メンション先は、返信/ボタンを信頼する本人です（双方向では必須です）。",
-  "ops.sl_receive_sub": "セッションのスレッドに返信するとその本文がセッションへ送られ、ボタンで質問/許可に回答できます。App-level トークンが必要です。",
+  "ops.sl_receive_sub": "セッションのスレッドに返信するとその本文がセッションへ送られ、ボタンで質問・許可リクエスト・プランの承認に回答できます。App-level トークンが必要です。",
   "ops.sl_hint":
-    "Slack アプリを作成し（api.slack.com/apps → From scratch）、Socket Mode を有効化します。Bot スコープ（chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email）と connections:write を持つ App-level トークンを追加し、message 系イベントを購読してからインストールして、/invite で Bot をチャンネルに招待します。両方のトークンをここに貼り付けてください。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（送るのは表示名と状態だけで、ログや秘密は送りません）。",
+    "Slack アプリを作成し（api.slack.com/apps → From scratch）、Socket Mode を有効化します。Bot スコープ（chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email）と connections:write を持つ App-level トークンを追加し、message 系イベントを購読してからインストールして、/invite で Bot をチャンネルに招待します。両方のトークンをここに貼り付けてください。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます。送るのはセッションの表示名と状態、質問・許可リクエストの選択肢で、全文モードをオンにすると最終回答の本文も送ります（秘密らしき文字列は自動で伏せます）。生のログやツール出力は送りません。",
   // --- EC2 スロットプール（features/settings/ec2Pool.tsx・AF_RUNTIME=ecs-ec2 のみ）---
   "pool.not_ec2": "この配備は EC2 スロットプールを使っていません。",
   "pool.slots_title": "スロット",

@@ -107,7 +107,11 @@ export type PaneContent =
    */
   | { kind: "fleetgraph"; showArchived: boolean; collapsed?: string[] }
   // Home (#2028): what waits for the member and where they left off. No state of its own.
-  | { kind: "home" };
+  | { kind: "home" }
+  // The Memory view (#3720): the memory viewer, the change list and the consolidator's proposals at
+  // pane size. `memoryView` is which of the three is showing; it lives here, not in React state,
+  // because switching tabs unmounts the view. One per workspace (sameTarget is the kind alone).
+  | { kind: "memory"; memoryView?: "memories" | "changes" | "proposals" };
 
 export type PaneKind = PaneContent["kind"];
 

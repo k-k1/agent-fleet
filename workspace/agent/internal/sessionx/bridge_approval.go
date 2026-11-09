@@ -253,11 +253,29 @@ func claimApproval(id, who string) (winner string, err error) {
 	return string(b), nil
 }
 
+// approvalErr is a gate outcome handed back to the operator LLM. The text is resolved when
+// it is read (Error), not when the package loads: the notification language lives in the
+// connection secrets, which are not known at init. Identity is the pointer, so errors.Is
+// against the sentinels below keeps working.
+type approvalErr struct{ ja, en string }
+
+func (e *approvalErr) Error() string { return Fb(BridgeAnswerEN(), e.ja, e.en) }
+
+// The texts name no chat platform: the gate serves Discord and Slack operator turns, and a
+// button click does not say which one the user is on.
 var (
-	errApprovalRejected      = errors.New("この操作は却下されました（実行していません）")
-	errApprovalTimeout       = errors.New("承認がタイムアウトしました（実行していません）。必要ならもう一度依頼してください")
-	errApprovalUnconfirmed   = errors.New("承認は届きましたが確定できなかったため、この操作を実行していません。必要ならもう一度依頼してください")
-	errApprovalUndeliverable = errors.New("承認リクエストを Discord に送信できなかったため、この操作を中止しました")
+	errApprovalRejected = &approvalErr{
+		"この操作は却下されました（実行していません）",
+		"The user rejected this action (it was not run)."}
+	errApprovalTimeout = &approvalErr{
+		"承認がタイムアウトしました（実行していません）。必要ならもう一度依頼してください",
+		"Approval timed out (the action was not run). Ask again if it is still needed."}
+	errApprovalUnconfirmed = &approvalErr{
+		"承認は届きましたが確定できなかったため、この操作を実行していません。必要ならもう一度依頼してください",
+		"The approval arrived but could not be confirmed, so the action was not run. Ask again if it is still needed."}
+	errApprovalUndeliverable = &approvalErr{
+		"承認リクエストをチャットのスレッドに送信できなかったため、この操作を中止しました",
+		"The approval request could not be posted to the chat thread, so the action was cancelled."}
 )
 
 // BridgeApprovalGate is called by a destructive write handler in the mcp-stdio subprocess

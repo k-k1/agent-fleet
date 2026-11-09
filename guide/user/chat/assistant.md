@@ -41,7 +41,7 @@ Three assistants come ready to use (marked "**Built-in**" in the list).
 | Assistant | What it does |
 |---|---|
 | Agent Fleet Assistant | Explains how to use Agent Fleet. It answers while checking the current state of your workspace, such as which sessions are running |
-| Fleet Operator | Directs your sessions from the chat: starting, instructing and stopping them, and checking and sending the memo queue ([the Fleet Operator](../../member/11-many-sessions.md#what-is-the-fleet-operator)) |
+| Fleet Operator | Directs your sessions from the chat: starting, instructing and stopping them, and checking and sending the memo queue ([the Fleet Operator](../fleet/operator.md)) |
 | SRE Assistant | A partner for incident response and monitoring. With PagerDuty, Grafana, CloudWatch and the like connected, it reads the real state while it helps (read-only) |
 
 Make your own, for translation or anything else, with "**Create assistant**" in the same list ([Use translation and purpose-built assistants](purpose-assistants.md)).
@@ -120,7 +120,7 @@ With "Recommended", each agent defaults to a fast, inexpensive model suited to c
 - Model prices and context lengths are in [Check prices and usage](../agents/usage.md#see-model-list-prices)
 
 The rest of the tab (auto-responding to session reports, auto-pilot, auto-resuming interrupted turns, the session output fetch limit)
-decides how the Fleet Operator behaves ([Session reports and auto-reply](../../member/11-many-sessions.md#session-reports-and-auto-reply)).
+decides how the Fleet Operator behaves ([Adjust the automatic replies](../fleet/operator.md#adjust-the-automatic-replies)).
 
 ## When it goes wrong
 
@@ -146,5 +146,5 @@ That CLI is not connected yet. Log in under ⚙ Settings → "**Agents**" and it
 
 - [Use translation and purpose-built assistants](purpose-assistants.md): translate or summarize a file, and make your own assistant
 - [Collect memos and hand them over](memos.md): collect instructions as they occur to you and hand them to a session or an assistant later
-- [Running many sessions](../../member/11-many-sessions.md#what-is-the-fleet-operator): direct sessions with the Fleet Operator
+- [Hand work to the Fleet Operator](../fleet/operator.md): direct sessions with the Fleet Operator
 - [Agents — what each kind can do](../../ref/agents.md): which agents can be an assistant

@@ -15,6 +15,9 @@ import { EditorView } from "@codemirror/view";
 import { revisionOf } from "../editor/buffer.ts";
 import { clearDirtyRegistryForTests, hasDirtyEditors } from "../editor/dirtyRegistry.ts";
 import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
+import { clearFileModes } from "./fileModeMemory.ts";
+import { clearScrollPos } from "./scrollMemory.ts";
+import type { attachEditorScrollMemory as realAttach } from "./parts/editorScrollMemory.ts";
 
 const MARP = "---\nmarp: true\n---\n\n# Deck\n\nbody\n";
 const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
@@ -22,6 +25,7 @@ const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
 let served: { content: string; editable: boolean; nestedRepo?: boolean } = { content: PLAIN_MD, editable: true };
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: vi.fn(async (path: string) => {
     if (path.startsWith("api/fs/linemarks")) return { error: { message: "none" } };
     const { content, editable, nestedRepo } = served;
@@ -58,12 +62,28 @@ vi.mock("./MarkdownView.tsx", () => ({
   },
 }));
 
+// The editor's scroll memory needs layout jsdom does not have (parts/editorScrollMemory's own
+// suite covers it); here only the restore decision FileView hands it is observed.
+const editorMemory: { key: string; restore: boolean; inputRoot?: string }[] = [];
+vi.mock("./parts/editorScrollMemory.ts", () => {
+  // Typed against the real function, so a changed signature fails the typecheck here.
+  const attachEditorScrollMemory: typeof realAttach = (_editor, key, restore, inputRoot) => {
+    editorMemory.push({ key, restore, inputRoot: inputRoot?.className });
+    return () => {};
+  };
+  return { attachEditorScrollMemory };
+});
+
 const { FileView } = await import("./FileView.tsx");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-async function render(props: { targetLine?: number; openMode?: "view" | "edit" }): Promise<void> {
+async function render(props: {
+  targetLine?: number;
+  openMode?: "view" | "edit";
+  filePath?: string;
+}): Promise<void> {
   await act(async () => {
     root!.render(<FileView filePath="repos/x/doc.md" paneId="pane-1" {...props} />);
   });
@@ -105,6 +125,7 @@ const lastPreview = () => previewProps.at(-1);
 beforeEach(() => {
   clearDirtyRegistryForTests();
   previewProps.length = 0;
+  editorMemory.length = 0;
   served = { content: PLAIN_MD, editable: true };
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -118,6 +139,9 @@ afterEach(() => {
   clearDirtyRegistryForTests();
   // An unmount with unsaved edits keeps the buffer for the view to come back to.
   clearEditorSlotsForTests();
+  // The mode and position are remembered per pane x file, and every case uses the same pair.
+  clearFileModes();
+  clearScrollPos();
 });
 
 describe("markdown mode controls", () => {
@@ -421,6 +445,107 @@ describe("the buffer behind the preview", () => {
     await render({});
     expect(editorView().state.doc.toString()).toBe("# Edited\n" + PLAIN_MD);
     expect(hasDirtyEditors()).toBe(true);
+  });
+
+  it("comes back to the mode it was left in after a tab switch", async () => {
+    for (const mode of ["Split", "Edit", "Preview"]) {
+      await render({});
+      await act(async () => modeButton(mode).click());
+      act(() => root!.unmount());
+      root = createRoot(host);
+      await render({});
+      expect(pressed()).toContain(mode);
+    }
+  });
+
+  it("lets a different opener request override the remembered mode", async () => {
+    await render({});
+    await act(async () => modeButton("Split").click());
+    act(() => root!.unmount());
+    // A citation now names a line: it needs the source row, not the remembered split.
+    root = createRoot(host);
+    await render({ targetLine: 3 });
+    expect(pressed()).toContain("Edit");
+    expect(pressed()).not.toContain("Split");
+  });
+
+  it("keeps the mode remembered under a request when the same request comes back", async () => {
+    // The request lives in the layout descriptor, so a remount sees it again; it is not new.
+    await render({ openMode: "edit" });
+    await act(async () => modeButton("Preview").click());
+    act(() => root!.unmount());
+    root = createRoot(host);
+    await render({ openMode: "edit" });
+    expect(pressed()).toContain("Preview");
+  });
+
+  it("clamps a remembered mode to what the file allows now", async () => {
+    await render({});
+    await act(async () => modeButton("Split").click());
+    act(() => root!.unmount());
+    served = { content: PLAIN_MD, editable: false }; // became read-only meanwhile
+    root = createRoot(host);
+    await render({});
+    expect(pressed()).toContain("Preview");
+    expect(modeLabels()).toEqual(["Source", "Preview"]);
+  });
+
+  it("restores the editor's position unless a synced split takes it from the preview", async () => {
+    await render({});
+    // Preview -> Split: the scroll sync positions the editor from the preview.
+    await act(async () => modeButton("Split").click());
+    expect(editorMemory.at(-1)).toMatchObject({ key: "pane-1\u0000repos/x/doc.md\u0000editor", restore: false });
+    // Reader input anywhere in the pane ends a restore: the split's preview, the header, the
+    // suggestion panel.
+    expect(editorMemory.at(-1)?.inputRoot).toBe("fileview");
+    // Edit, then Split from the editor: the editor's own place is the one to keep.
+    await act(async () => modeButton("Edit").click());
+    expect(editorMemory.at(-1)).toMatchObject({ restore: true, inputRoot: "fileview" });
+    await act(async () => modeButton("Split").click());
+    expect(editorMemory.at(-1)).toMatchObject({ restore: true, inputRoot: "fileview" });
+    // Back from another tab straight into the split: the editor leads.
+    act(() => root!.unmount());
+    editorMemory.length = 0;
+    root = createRoot(host);
+    await render({});
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+  });
+
+  it("only records the editor's position when the open file is cited at a new line", async () => {
+    await render({ openMode: "edit" });
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+    editorMemory.length = 0;
+    await render({ openMode: "edit", targetLine: 50 });
+    expect(editorMemory.at(-1)?.restore).toBe(false); // the citation's line wins
+    // A later mode change restores as usual: what it restores is where the citation left it.
+    await act(async () => modeButton("Split").click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+  });
+
+  it("restores as usual when a citation a plain file showed in the viewer is followed by Edit", async () => {
+    served = { content: "alpha\nbeta\ngamma\n", editable: true };
+    const editTab = () =>
+      [...host.querySelectorAll('.file-mode-tabs [role="tab"]')].find((b) => b.textContent === "Edit") as HTMLElement;
+    await render({ filePath: "repos/x/notes.txt" });
+    await act(async () => editTab().click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+    // Cited at a new line: a plain file shows it in the viewer, so the editor is not attached.
+    await render({ filePath: "repos/x/notes.txt", targetLine: 2 });
+    expect(editorVisible()).toBe(false);
+    editorMemory.length = 0;
+    await act(async () => editTab().click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+  });
+
+  it("restores the editor in a slides split, which has no scroll sync", async () => {
+    served = { content: MARP, editable: true };
+    await render({});
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400)); // the Marp detection is debounced
+    });
+    await act(async () => modeButton("Split").click());
+    expect(lastPreview()?.renderer).toBe("slides");
+    expect(editorMemory.at(-1)?.restore).toBe(true);
   });
 
   it("puts Markdown edits through the same buffer validator", async () => {

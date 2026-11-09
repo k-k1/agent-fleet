@@ -466,37 +466,77 @@ func RemoveLastTool(sid string) { lastTools.Remove(sid) }
 const recordSep = "\x00"
 
 func splitRecord(v string) (detail, command string) {
-	detail, command, _ = strings.Cut(v, recordSep)
+	detail, command, _ = splitCall(v)
 	return detail, command
 }
 
+// A third part, after a second separator, is the call's tool_use id (#3725). Records without
+// it (written before the id was kept, or by a hook that had none) read as id "".
+func splitCall(v string) (detail, command, toolUseID string) {
+	detail, rest, _ := strings.Cut(v, recordSep)
+	command, toolUseID, _ = strings.Cut(rest, recordSep)
+	return detail, command, toolUseID
+}
+
+func joinCall(detail, command, toolUseID string) string {
+	switch {
+	case toolUseID != "":
+		return detail + recordSep + command + recordSep + toolUseID
+	case command != "":
+		return detail + recordSep + command
+	}
+	return detail
+}
+
 // WriteLastToolCommand records the tool about to run with its whole Bash command.
-func WriteLastToolCommand(sid, detail, command string) {
+func WriteLastToolCommand(sid, detail, command string) { WriteLastToolCall(sid, detail, command, "") }
+
+// WriteLastToolCall is WriteLastToolCommand plus the call's tool_use id, which lets a sweep
+// find the call's tool_result in the transcript once the prompt it raised is gone.
+func WriteLastToolCall(sid, detail, command, toolUseID string) {
 	if detail == "" {
 		return
 	}
-	if command != "" {
-		detail += recordSep + command
-	}
-	_ = lastTools.Write(sid, detail)
+	_ = lastTools.Write(sid, joinCall(detail, command, toolUseID))
 }
 
 // ReadLastToolCommand is ReadLastTool plus the command recorded with it ("" when none).
 func ReadLastToolCommand(sid string) (detail, command string, ok bool) {
+	detail, command, _, ok = ReadLastToolCall(sid)
+	return detail, command, ok
+}
+
+// ReadLastToolCall is ReadLastToolCommand plus the call's tool_use id ("" when none was kept).
+func ReadLastToolCall(sid string) (detail, command, toolUseID string, ok bool) {
 	v, ok := lastTools.Read(sid)
 	if !ok {
-		return "", "", false
+		return "", "", "", false
 	}
-	detail, command = splitRecord(v)
-	return detail, command, true
+	detail, command, toolUseID = splitCall(v)
+	return detail, command, toolUseID, true
 }
 
 // WritePendingPermissionCommand publishes the payload together with the command it stands for.
 func WritePendingPermissionCommand(sid, message, command string) {
-	if command != "" {
-		message += recordSep + command
+	WritePendingPermissionCall(sid, message, command, "")
+}
+
+// WritePendingPermissionCall is WritePendingPermissionCommand plus the tool_use id of the call
+// the prompt is believed to be for.
+func WritePendingPermissionCall(sid, message, command, toolUseID string) {
+	_ = pendingPerms.Write(sid, joinCall(message, command, toolUseID))
+}
+
+// ReadPendingPermissionToolUseID is the tool_use id stored with the pending payload. It comes
+// from the last PreToolUse before the prompt, so with parallel calls it can name a sibling of
+// the call that is really asking: never treat it as proof on its own.
+func ReadPendingPermissionToolUseID(sid string) (string, bool) {
+	v, ok := pendingPerms.Read(sid)
+	if !ok {
+		return "", false
 	}
-	_ = pendingPerms.Write(sid, message)
+	_, _, id := splitCall(v)
+	return id, id != ""
 }
 
 // ReadPendingPermissionCommand is ReadPendingPermission plus the command stored with it.

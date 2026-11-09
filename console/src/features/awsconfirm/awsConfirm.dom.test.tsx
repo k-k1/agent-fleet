@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 const calls: { path: string; method: string }[] = [];
 let listed: unknown[] = [];
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getTenant: () => "",
   api: vi.fn(async (path: string, opts?: RequestInit) => {
     calls.push({ path, method: opts?.method ?? "GET" });

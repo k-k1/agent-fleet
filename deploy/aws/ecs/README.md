@@ -2099,7 +2099,7 @@ they survive, and keep billing. The response and the audit entry list what was l
 - **AZ is destiny.** An EBS volume cannot leave its AZ, so a user is pinned to the AZ
   their home was created in. If no slot can be run there, that user cannot start.
 - **A slot's root volume is shared with whoever had it before.** `/tmp` is a tmpfs
-  (nothing lands on disk, capped size) and the ECS task-cleanup window is shortened to
+  (nothing lands on disk, capped size; mounted `exec,nosuid,nodev`, `AF_ECS_EC2_TMP_OPTS`) and the ECS task-cleanup window is shortened to
   5m, but the image cache and container write layers are genuinely shared.
 - **Patching slots = updating this stack** (the AMI parameter resolves at update time)
   and letting the old slots go. That is the operational cost the EC2 launch type adds.

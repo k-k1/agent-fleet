@@ -315,5 +315,13 @@ func (g *Gateway) forward(w http.ResponseWriter, r *http.Request, c *call, model
 	}
 	obs := newUsageObserver(op)
 	copyErr := streamCopy(w, resp.Body, obs)
+
+	// A ledger row is a call the CP admitted: it carries the CP's call id and a reservation. A
+	// refusal of the CP's own (grant, budget, contract) was never admitted, reached no payer and
+	// costs nothing, so it writes no row, as the member route's own refusals write none; the
+	// CP's log and the harness's error are its record.
+	if !cpCallIDRe.MatchString(resp.Header.Get(cpCallHeader)) {
+		return
+	}
 	g.record(c, modelID, op, resp, obs, copyErr == nil && resp.StatusCode < 400, start)
 }

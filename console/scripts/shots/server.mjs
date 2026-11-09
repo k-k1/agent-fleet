@@ -169,7 +169,14 @@ const exact = {
       ? [(({ messages, plan, context, tools, ...meta }) => meta)(fx.chatPagesConversation(LOCALE, "c-pay-1")), ...fx.conversations(LOCALE)]
       : fx.conversations(LOCALE),
   }),
-  "/api/assistants": () => (process.env.SHOT_CHATPAGES_GUIDE ? { assistants: fx.chatPagesAssistants(LOCALE) } : fx.assistants(LOCALE)),
+  // The Console reads { assistants: [...] }; the bare array stays for the scenes taken with it, and
+  // only the chat and fleet pages' runs get the wrapped shape so the new-chat picker lists them.
+  "/api/assistants": () =>
+    process.env.SHOT_CHATPAGES_GUIDE
+      ? { assistants: fx.chatPagesAssistants(LOCALE) }
+      : process.env.SHOT_FLEET_GUIDE
+        ? { assistants: fx.assistants(LOCALE) }
+        : fx.assistants(LOCALE),
   // Work items (docs/log/80). Unhandled routes only answer {}, so without this the rail's new
   // surface always renders empty and verifies nothing.
   "/api/work-items": () => fx.workItems(LOCALE),
@@ -189,7 +196,8 @@ const exact = {
   }),
   "/api/memos": () => (process.env.SHOT_CHATPAGES_GUIDE ? fx.chatPagesMemos(LOCALE) : fx.memos(LOCALE)),
   "/api/memo-categories": () => fx.memoCategories(LOCALE),
-  "/api/schedules": () => fx.schedules(LOCALE),
+  "/api/schedules": () =>
+    process.env.SHOT_FLEET_GUIDE ? fx.fleetGuideSchedules(LOCALE) : fx.schedules(LOCALE),
   // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
   // with it (the palette gains a mode).
   // imageGeneration only for the user guide's settings shot (SHOT_IMAGE_SETTINGS): with it on, the
@@ -200,6 +208,9 @@ const exact = {
     agentMemory: true,
     ...(process.env.SHOT_IMAGE_SETTINGS ? { imageGeneration: true } : {}),
     ...(process.env.SHOT_AGENTS_GUIDE ? { opencodeCatalog: "go" } : {}),
+    // The fleet pages of the user guide (SHOT_FLEET_GUIDE): the three session switches on (the
+    // child limit row appears only then) and two working sets for the switcher.
+    ...(process.env.SHOT_FLEET_GUIDE ? fx.fleetGuidePrefs(LOCALE) : {}),
   }),
   // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log.
   "/api/agents/memory/entries/list": () => fx.memoryList(LOCALE),
@@ -456,7 +467,29 @@ const exact = {
       "3000": "https://k7f2q9x1w3ub5nzt0abc-3000.pv.example.com",
       "8080": "https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com",
     },
+    // The development OIDC IdP block of the preview page (SHOT_PREVIEW_GUIDE): a fictional
+    // issuer and client id. Without it the tab shows no IdP, as it always did.
+    ...(process.env.SHOT_PREVIEW_GUIDE
+      ? {
+          devIdpAvailable: true,
+          devIdpIssuer: "https://console.example.com/dev-idp",
+          devIdpClientId: "af-ws-7d3k9q2m",
+        }
+      : {}),
   }),
+  // Test personas for the same page, served only to a run that asks (SHOT_PREVIEW_GUIDE).
+  ...(process.env.SHOT_PREVIEW_GUIDE
+    ? {
+        "/api/env/ws-settings/dev-idp/personas": () => ({
+          max: 20,
+          domain: "example.test",
+          personas: [
+            { id: "p1", handle: "admin", name: "Admin", email: "admin@example.test", sub: "persona:admin" },
+            { id: "p2", handle: "viewer", name: "Viewer", email: "viewer@example.test", sub: "persona:viewer" },
+          ],
+        }),
+      }
+    : {}),
   // Settings › Agents (the Claude card's behavior) and Settings › Agent instructions for the user
   // guide's agent pages, served only to a run that asks (SHOT_AGENTS_GUIDE).
   ...(process.env.SHOT_AGENTS_GUIDE
@@ -584,10 +617,15 @@ const re = [
   [/^\/api\/repos\/([^/]+)\/identity$/, () => ({ name: "Demo User", email: "demo@example.com" })],
   [/^\/api\/repos\/([^/]+)\/show$/, (m, q) => fx.show(LOCALE, q.get("sha") || "")],
   [/^\/api\/repos\/([^/]+)\/diff$/, (m, q) => fx.diff(LOCALE, q.get("path") || "")],
-  [/^\/api\/chat\/conversations\/([^/]+)$/, (m) =>
-    process.env.SHOT_CHATPAGES_GUIDE && m[1] === "c-pay-1"
-      ? fx.chatPagesConversation(LOCALE, "c-pay-1")
-      : fx.conversation(LOCALE, decodeURIComponent(m[1]))],
+  [
+    /^\/api\/chat\/conversations\/([^/]+)$/,
+    (m) =>
+      process.env.SHOT_CHATPAGES_GUIDE && m[1] === "c-pay-1"
+        ? fx.chatPagesConversation(LOCALE, "c-pay-1")
+        : process.env.SHOT_FLEET_GUIDE
+          ? fx.fleetGuideConversation(LOCALE, decodeURIComponent(m[1]))
+          : fx.conversation(LOCALE, decodeURIComponent(m[1])),
+  ],
   [/^\/api\/usage\/series$/, (m, q) => fx.usageSeries(LOCALE, q)],
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/tree$/, (m, q) =>

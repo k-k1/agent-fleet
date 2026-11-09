@@ -87,7 +87,7 @@ Choose who in this tenant sees where you stand on usage limits, and how much. Se
 
 ### Assistant
 
-Reply language, agent priority, the assistant models, auto-compaction and so on. See [Ask an assistant](../user/chat/assistant.md#choose-the-reply-language-and-the-models). Auto-replies to session reports and autopilot are in [11](11-many-sessions.md#session-reports-and-auto-reply).
+Reply language, agent priority, the assistant models, auto-compaction and so on. See [Ask an assistant](../user/chat/assistant.md#choose-the-reply-language-and-the-models). Auto-replies to session reports and autopilot are in [Hand work to the Fleet Operator](../user/fleet/operator.md#adjust-the-automatic-replies).
 
 ### AI assistance
 
@@ -125,8 +125,8 @@ The
 **children per session**), **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
 "Conversations" mode works either way, see [02](02-console-basics.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes).
-→ [11 Running many sessions](11-many-sessions.md#messages-between-sessions),
-[11 Running many sessions](11-many-sessions.md#starting-sessions-from-a-session-child-sessions),
+→ [Let sessions message each other](../user/fleet/messages.md),
+[Start child sessions from a session](../user/fleet/child-sessions.md),
 [Have a session make images](../user/images/from-session.md)
 
 ### Git hosting
@@ -209,13 +209,10 @@ This workspace's PostgreSQL and MySQL:
 
 ### Preview subdomains
 
-Settings for opening the app you are building at `https://<random>-<port>.<domain>/`. **The tab is only
-there on a deployment that issues preview subdomains** (elsewhere no URL would ever be minted, whatever
-you set here). Which ports are exposed, pinning the URL, sharing it with your tenant, opening it without a
-login, and re-issuing the URL all live here. Where the deployment offers the development OIDC IdP, the tab
-also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the client secret is not shown),
-**Issue a new secret…**, **App configuration examples** and **Test personas**.
-→ [14 Preview and browser](14-preview-browser.md#preview-subdomains-only-where-they-are-issued)
+The tab for opening the app you are building at its own URL. It is only there on a deployment that issues preview
+subdomains. The ports, sharing and re-issuing the URL are in [Use preview subdomains](../user/preview/subdomains.md); the
+development OIDC IdP block (issuer, client id, app configuration examples, test personas) is in
+[Try Google sign-in on a preview](../user/preview/dev-signin.md).
 
 ### Internal repos
 
@@ -256,8 +253,8 @@ Recreating the workspace and cleaning home (on deployments that can). What stays
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Stop sessions from searching past conversations | Agents (past-session search) |
 | Let agents share what they learn across kinds | Agent memory (Settings) |
-| Let a session see what the other sessions are doing | Nothing to set: every session can ([11](11-many-sessions.md#letting-a-session-see-the-fleet)) |
-| Have a session leave you a note about what it noticed | Nothing to set: every session can ([11](11-many-sessions.md#letting-a-session-see-the-fleet)) |
+| Let a session see what the other sessions are doing | Nothing to set: every session can ([Let a session see the fleet](../user/fleet/fleet-visibility.md)) |
+| Have a session leave you a note about what it noticed | Nothing to set: every session can ([Let a session see the fleet](../user/fleet/fleet-visibility.md)) |
 | Clone a private repository | Git hosting |
 | Get help investigating an incident | Ops & monitoring |
 | Start work from a ticket or an issue | Issue tracker |
