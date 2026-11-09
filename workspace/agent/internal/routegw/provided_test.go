@@ -287,3 +287,18 @@ func TestProvidedTokenRenewal(t *testing.T) {
 		t.Fatalf("expiring token not replaced at the call: %d, mints %d→%d", resp.StatusCode, before, cp.mintCount())
 	}
 }
+
+// record never writes an empty call id: spool dedup keys on it, so two such rows would collapse.
+// forward records only answers that carry the CP's id; record holds without that guard too.
+func TestProvidedRecordAlwaysHasACallID(t *testing.T) {
+	e, _ := newProvEnv(t)
+	c := &call{b: Binding{Session: "s1"}, provided: true}
+	for _, id := range []string{"", "not an id!"} {
+		resp := &http.Response{StatusCode: 200, Header: http.Header{cpCallHeader: {id}}}
+		e.g.record(c, provModel, "invoke", resp, newUsageObserver("invoke"), true, e.now)
+	}
+	rows := e.waitRows(2)
+	if len(rows) != 2 || rows[0].Call == "" || rows[1].Call == "" || rows[0].Call == rows[1].Call || rows[0].Key == rows[1].Key {
+		t.Fatalf("rows = %+v", rows)
+	}
+}

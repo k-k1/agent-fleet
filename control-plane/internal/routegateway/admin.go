@@ -106,9 +106,15 @@ func (g *Gateway) SetGrant(ctx context.Context, tenantID string, in GrantInput) 
 	if in.Granted && (in.CeilingMicro == nil || *in.CeilingMicro == 0) {
 		return nil, &InvalidInputError{fmt.Errorf("granting the deployment's Bedrock route needs a monthly ceiling above zero for the tenant")}
 	}
-	warn, err := g.belowFloor(ctx, "the tenant's monthly ceiling", in.CeilingMicro)
-	if err != nil {
-		return nil, err
+	// Off, the ceiling is inert: saving the grant off with an old ceiling below a floor that has
+	// risen since must not be refused.
+	var warn []string
+	if in.Granted {
+		w, err := g.belowFloor(ctx, "the tenant's monthly ceiling", in.CeilingMicro)
+		if err != nil {
+			return nil, err
+		}
+		warn = w
 	}
 	return warn, g.d.Store.SetProvidedRouteGrant(ctx, tenantID, providedroutes.SourceDeployment, in.Granted, in.CeilingMicro)
 }

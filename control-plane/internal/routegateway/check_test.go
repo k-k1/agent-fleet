@@ -226,6 +226,26 @@ func TestBudgetFloor(t *testing.T) {
 	if err != nil || v.FloorMicro != floor || len(v.Reservations) != 1 || v.Reservations[0] != (ModelReservation{prTestModel, floor, high}) {
 		t.Fatalf("view = %+v %v", v, err)
 	}
+	// Off, the ceiling is inert: an old ceiling below the floor saves with the grant off.
+	if _, err := e.g.SetGrant(ctx, e.tenant.ID, GrantInput{CeilingMicro: &below}); err != nil {
+		t.Fatalf("grant off with a ceiling below the floor: %v", err)
+	}
+	if _, err := e.g.SetGrant(ctx, e.tenant.ID, GrantInput{Granted: true, CeilingMicro: ptrI64(100_000_000)}); err != nil {
+		t.Fatal(err)
+	}
+	// A budget saved before the floor rose, nothing spent: the refusal says the budget is too
+	// small, not used up, and keeps the words the claude adapter reads.
+	if err := e.st.SetProvidedRouteMember(ctx, e.tenant.ID, e.mid, providedroutes.SourceDeployment, false, &below); err != nil {
+		t.Fatal(err)
+	}
+	resp, body := e.call(e.token(e.source().Binding(), TokenTTL), streamPath(prTestModel), prStreamBody, nil)
+	if msg := string(body); resp.StatusCode != 503 || !strings.Contains(msg, "too small for the next call") || !strings.Contains(msg, "spend limit") ||
+		strings.Contains(msg, "you have hit") || !strings.Contains(msg, "the next call could cost up to") {
+		t.Fatalf("stale budget, nothing used: %d %s", resp.StatusCode, body)
+	}
+	if _, err := e.g.SetMember(ctx, e.tenant.ID, MemberInput{MembershipID: e.mid}); err != nil {
+		t.Fatal(err)
+	}
 	// The cheapest model sets the floor; with no source there is nothing to hold a budget to.
 	e.register(prTestRole, "us-east-1", true, prTestModel, prTestModel2)
 	m2, _ := routeprice.Lookup(prTestModel2)

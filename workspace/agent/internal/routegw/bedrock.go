@@ -215,7 +215,9 @@ func (g *Gateway) record(c *call, modelID, op string, resp *http.Response, obs *
 	if c.provided {
 		// The CP's call id, so the ledger row and the CP's reservation are one call (ADR 0129 D2).
 		route = usagex.RouteBedrockDeployment
-		call = resp.Header.Get(cpCallHeader) // forward records only a call that carries one
+		if id := resp.Header.Get(cpCallHeader); cpCallIDRe.MatchString(id) {
+			call = id
+		}
 	}
 	row := usagex.Record{
 		TS:   g.d.Now().UTC().Format(time.RFC3339),
