@@ -97,6 +97,15 @@ An agent can also set a timer (`watch` with `source: time`): "tell me in 20 minu
 - On Bitbucket, a pull request counts as ready to merge once someone approved it and nobody asks for changes
 - Watches survive Agent restarts
 
+### Faster notices with webhooks
+
+A watch is always read by polling, with your own connection. An administrator can add webhooks so the Control Plane
+tells your workspace to read a pull request right away instead of waiting for the next scheduled read. A webhook carries no data to the workspace,
+only "this pull request changed", and it never starts a stopped workspace (a stopped workspace catches up when it starts).
+
+- **Public repositories**: when the deployment's GitHub App webhook is set up (`AF_GITHUB_WEBHOOK_SECRET`, see [Settings reference](../../ref/settings.md)), deliveries for public repositories speed up watches.
+- **Private repositories**: the deployment's shared App is ignored for them, because it serves every tenant. A private repository needs a webhook that belongs to your tenant (a repository hook, or your tenant's own GitHub App; Bitbucket always uses one). Without it the watch stays on polling, a few minutes at most behind. Creating that webhook from the workspace is not built yet.
+
 ## Related
 
 - [Connect a Git service](../code/connect-git.md)

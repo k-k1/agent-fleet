@@ -97,6 +97,14 @@ source_of_truth: "Console の設定 >「エージェント」>「PR へのフィ
 - Bitbucket でマージできる状態とみなすのは、誰かが承認していて、変更を求める人がいないときです
 - 見張りは Agent を再起動しても残ります
 
+### Webhook で早く知る
+
+見張りは常に、あなた自身の接続によるポーリングで読む。管理者が Webhook を足すと、Control Plane が次の周期を待たずに「このプルリクエストを今読んで」と Workspace に伝える。
+Webhook が Workspace に運ぶのは「このプルリクエストが変わった」という合図だけで、データは渡さず、停止中の Workspace を起こすこともない（停止中の Workspace は起動時に追いつく）。
+
+- **公開リポジトリ**: デプロイの GitHub App の Webhook を設定してあれば（`AF_GITHUB_WEBHOOK_SECRET`、[設定リファレンス](../../ref/settings.ja.md)）、公開リポジトリの配信で見張りが早くなる。
+- **プライベートリポジトリ**: デプロイ共通の App は全テナントで共有なので、プライベートリポジトリの配信は無視する。プライベートリポジトリには、あなたのテナントの Webhook（リポジトリのフック、またはテナント自身の GitHub App。Bitbucket は常にこれ）が必要。なければ見張りはポーリングのまま（数分以内の遅れ）。Workspace からその Webhook を作る機能はまだない。
+
 ## 関連
 
 - [Git のサービスを接続する](../code/connect-git.ja.md)

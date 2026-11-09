@@ -109,6 +109,7 @@ func StartWatchEngine() {
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			watchEngine().Tick(ctx)
+			watchSubjectRegistrar().sync(ctx, time.Now())
 			cancel()
 			time.Sleep(watchInterval)
 		}

@@ -325,6 +325,25 @@ The table is a direction, not a commitment; each source is its own change with i
    outstanding bookings rather than the places a watch can end, and asks again each minute until the
    Control Plane answers.
 
+### Step 4 note (2026-11-09, #3630)
+
+Built as one change: `internal/webhookpoke` (signature check, parsers that return subjects only), the
+endpoints `POST /webhooks/github` (the deployment App, `AF_GITHUB_WEBHOOK_SECRET`) and
+`POST /webhooks/hooks/{id}` (a tenant-owned hook), the Agent's `PUT /internal/watch-subjects` and
+`/internal/watch-hooks` under its own `AF_WATCH_TOKEN`, and `POST /watch/poke` on the Agent.
+
+- A hook's secret is derived (HMAC of the token signing root and the hook id), not stored, so the database holds
+  nothing that verifies a delivery. Deleting the hook retires it.
+- Tenant isolation: a hook belongs to one tenant and its pokes reach only that tenant's registrations. The App is
+  shared by every tenant, so what it forwards is limited to public repositories (`repository.private` false; a
+  payload that does not say counts as private). Private repositories use a tenant hook or the long poll.
+- Registrations are a replaced set per workspace (at most 200), expire after an hour, and the Agent renews every
+  20 minutes. A poke reaches only workspaces the database shows as running and never starts one.
+- A replayed or forged delivery costs at most one extra read: the Control Plane pokes a (workspace, subject) pair at
+  most every 5 s, and the engine reads a poked subject at most every 10 s and keeps a failing subject's backoff.
+- Not built: the Agent-side flow that installs a hook at GitHub or Bitbucket with the member's token, and
+  `status`-style events that name a commit and not a pull request (the long poll covers them).
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled

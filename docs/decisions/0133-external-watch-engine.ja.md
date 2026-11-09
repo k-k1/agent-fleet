@@ -314,6 +314,21 @@ Workspace が止まっている間に生きているのは Control Plane だけ�
    未解決の予約の集合から、どの生きた見張りも要らない予約を取り消し、Control Plane が答えるまで 1 分ごとに
    聞き直す。
 
+### 段階 4 のメモ（2026-11-09、#3630）
+
+1 つの変更として実装した。`internal/webhookpoke`（署名検証と、対象だけを返すパーサ）、エンドポイント
+`POST /webhooks/github`（デプロイの App、`AF_GITHUB_WEBHOOK_SECRET`）と `POST /webhooks/hooks/{id}`（テナントが持つフック）、
+専用の `AF_WATCH_TOKEN` で認証する Agent 用の `PUT /internal/watch-subjects` と `/internal/watch-hooks`、
+Agent 側の `POST /watch/poke`。
+
+- フックのシークレットは保存せず、トークン署名ルートとフック ID から導出する。DB には配信を検証できるものが残らない。フックを消せば無効になる。
+- テナント分離: フックは 1 テナントのもので、ポークはそのテナントの登録にしか届かない。App は全テナント共有なので、転送は公開リポジトリ
+  （`repository.private` が false。書かれていなければ非公開扱い）に限る。非公開リポジトリはテナントのフックか長いポーリングを使う。
+- 登録は Workspace ごとの置き換え集合（最大 200）で、1 時間で失効し、Agent が 20 分ごとに更新する。ポークは DB 上で実行中の Workspace にしか届かず、起動はしない。
+- 再送や偽造の配信が起こせる余分な読み取りは 1 回まで: Control Plane は (Workspace, 対象) ごとに 5 秒に 1 回までしかポークせず、
+  エンジンはポークされた対象を 10 秒に 1 回までしか読まず、失敗中の対象のバックオフは保つ。
+- 未実装: メンバーのトークンで GitHub / Bitbucket にフックを入れる Agent 側の流れと、プルリクエストでなくコミットを指す `status` 系イベント（長いポーリングで補う）。
+
 ## Rejected
 
 - **専用の `watch_pr` ツールと速い `branchpr`。** PR の場合はすぐ解けるが、手作りの見張りが 6 つ目になる。次の
