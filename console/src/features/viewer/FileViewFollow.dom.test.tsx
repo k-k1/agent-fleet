@@ -32,6 +32,9 @@ vi.mock("../../core/api/client.ts", () => ({
       ...(editable ? { revision: revisionOf(content) } : {}),
     };
   }),
+  // lib/settings/sync.ts saves ui-prefs through apiJSON on a debounce timer; without
+  // this export a late-firing timer is an unhandled error that fails the whole run.
+  apiJSON: vi.fn(async () => ({})),
   downloadURL: (p: string) => `/dl/${p}`,
   isTransientErr: () => false,
   errText: (e: unknown) => String(e),
