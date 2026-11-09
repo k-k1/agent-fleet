@@ -51,3 +51,16 @@ member/20-settings.md#toolchains	user/workspace/toolchains.md
 member/20-settings.md#databases	user/workspace/databases.md#manage-them-from-the-console
 member/20-settings.md#export-import	user/workspace/export-import.md
 member/20-settings.md#danger-zone	user/workspace/recreate.md
+member/03-starting-sessions.md#session-types	user/sessions/start.md#session-types
+member/03-starting-sessions.md#execution-method-managed-and-terminal-cli	user/sessions/start.md#choose-the-execution-method
+member/03-starting-sessions.md#creating-a-new-session-start-at-the-top-of-the-screen	user/sessions/start.md
+member/03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work	user/sessions/worktrees.md
+member/03-starting-sessions.md#working-folder-starting-inside-a-subfolder	user/sessions/worktrees.md#launch-inside-a-folder-of-the-repository
+member/03-starting-sessions.md#starting-from-the-issue-tracker	user/sessions/from-issues.md
+member/03-starting-sessions.md#reading-the-list	user/sessions/from-issues.md#read-the-list
+member/03-starting-sessions.md#from-a-row-to-a-session	user/sessions/from-issues.md#start-a-session-from-a-row
+member/03-starting-sessions.md#pull-request-details	user/sessions/from-issues.md#opening-a-pull-request
+member/03-starting-sessions.md#from-a-ticket-number-in-the-conversation	user/sessions/from-issues.md#open-from-an-issue-number-in-the-conversation
+member/03-starting-sessions.md#reading-state-badges-and-notifications	user/sessions/status.md
+member/03-starting-sessions.md#changing-the-title-and-branch-name	user/sessions/start.md#rename-a-session-or-its-branch
+member/lite.md#7-watching-development-progress	user/sessions/status.md

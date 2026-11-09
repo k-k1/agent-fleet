@@ -94,7 +94,7 @@ Cloned repositories are listed under **Repositories**. The **"Launch"** button o
 the **"Start working"** screen, where you choose the agent, model, **location**, and the first
 prompt, then launch. The location defaults to an isolated **"New worktree"**; what each choice
 does, the base branch and branch name, and the working folder are in
-[Worktrees and new branches](03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work).
+[Work in parallel with worktrees](../user/sessions/worktrees.md).
 
 The **▾** to the right of "Launch" lets you pick a kind (claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse / shell) and
 **launch instantly** without opening the settings screen (Ctrl / middle-click launches in a new pane).

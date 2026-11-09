@@ -285,4 +285,4 @@ gives the same menu again, from a right-click, its ⋯ button, or the Menu key w
 
 ---
 
-Related: [Sessions](03-starting-sessions.md) · [Repositories and git](06-code.md) · [Files](07-files.md)
+Related: [Read a session's state](../user/sessions/status.md) · [Repositories and git](06-code.md) · [Files](07-files.md)

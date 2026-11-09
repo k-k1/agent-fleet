@@ -12,7 +12,7 @@ Even if you're comfortable with CLIs, a browser terminal has quirks of its own
 This chapter covers sessions running as Terminal (CLI), plus shell / SSM. When you open a
 session, a **terminal** (the black screen) appears in the main area. If you started
 Codex / opencode in managed execution, only the chat view opens and there is no terminal
-(for the difference between execution methods, see [03 Starting sessions](03-starting-sessions.md)).
+(for the difference between execution methods, see [Start a session](../user/sessions/start.md#choose-the-execution-method)).
 When you open a stopped session, a **"Resume"** button appears after "Resuming…"; press it to resume.
 
 ## Copy & paste

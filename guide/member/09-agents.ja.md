@@ -19,13 +19,13 @@ Agent Fleet が動かすセッションの種別は 11 個あります。それ�
 [Antigravity（agy）](#antigravityagy)・[Muse Code](#muse-code)・[lcpp](#lcpp)。
 
 どの種別がマネージドで、どの種別がターミナル（CLI）で動くかは[エージェントリファレンス](../ref/agents.ja.md)に、
-それぞれの選び方は [03 セッションを始める](03-starting-sessions.ja.md#実行方式-マネージドとターミナルcli)にあります。
+それぞれの選び方は [セッションを始める](../user/sessions/start.ja.md#実行方式を選ぶ)にあります。
 マネージドのチャット表示は、左ペインのリポジトリを使わないアシスタントチャットとは別です。
 
 接続がうまくいったかは、⚙設定 → 「エージェント」タブの各カードで確認できます。
 **「接続済み」** と表示され、claude / codex ならログインしているアカウント（メール）と
 プランも出ます。1 つ接続すれば、新規セッションの種類にそのエージェントが並ぶように
-なります（[03](03-starting-sessions.ja.md)）。
+なります（[セッションを始める](../user/sessions/start.ja.md)）。
 
 接続済みのカードには、claude / codex / Antigravity / Cursor / Kiro / Muse Code で **再認証** ボタンも
 あります（「接続解除」の隣）。これらの CLI には再ログイン専用の操作がないので、**先にサインアウトして

@@ -90,7 +90,7 @@ git の認証は接続後、すべての git 操作に**透過的に使われま
 **「作業を始める」** 画面が開き、エージェント・モデル・**場所**・最初のプロンプトを
 選んで起動できます。場所の既定は隔離された **「新しい worktree」** です。選択肢ごとの違い、
 基点ブランチとブランチ名、作業ディレクトリは
-[worktree と新規ブランチ](03-starting-sessions.ja.md#worktree-と新規ブランチ-並行作業の要)にあります。
+[ワークツリーで並行して作業する](../user/sessions/worktrees.ja.md)にあります。
 
 「起動」右の **▾** からは、設定画面を開かず種別（claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse / shell）を選んで
 **即起動**できます（Ctrl / 中クリックで新しいペインに起動）。

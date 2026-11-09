@@ -211,7 +211,7 @@ Check its row in the **Schedules** section of the left pane.
 
 They won't appear if the browser's notification permission is off (you're asked to allow it the first time). Also, notifications are
 **suppressed** while you have that session's screen open. shell / ssm are outside the scope of state notifications
-([03](03-starting-sessions.md#reading-state-badges-and-notifications)). A window showing **"Live updates paused — click to resume"**
+([Read a session's state](../user/sessions/status.md)). A window showing **"Live updates paused — click to resume"**
 paused after 10 idle minutes; click it.
 
 ### claude doesn't know `/list-agents`, or says it can't message another session
@@ -675,7 +675,7 @@ uncommitted changes exist only inside the workspace, so commit / push for long-t
 
 **Q. Is it OK to run several tasks at the same time?**
 Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are
-created by default ([03](03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work) · [06](06-code.md#launch-a-session-from-a-repository-row)).
+created by default ([Work in parallel with worktrees](../user/sessions/worktrees.md) · [06](06-code.md#launch-a-session-from-a-repository-row)).
 
 **Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
 Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),

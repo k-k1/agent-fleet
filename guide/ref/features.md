@@ -18,7 +18,7 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [03 Starting sessions](../member/03-starting-sessions.md) |
+| Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [Start a session](../user/sessions/start.md) |
 | Run in a fresh git worktree | member | Start dialog | [06 Repositories and git](../member/06-code.md) |
 | Chat mirror — follow and steer a running agent | member | main area | [04 Conversation](../member/04-conversation.md) |
 | Answer a question, plan, or permission prompt | member | mirror | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents ask |
@@ -87,14 +87,14 @@ If a feature ships and does not appear here, it is not done
 |---|---|---|---|
 | Working sets | member | top of the left pane | [11 Running many sessions](../member/11-many-sessions.md) |
 | Memo queue | member | Memo queue | [10 Chat and memos](../member/10-chat-memo.md) |
-| Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [03 Starting sessions](../member/03-starting-sessions.md); [repos.md](repos.md) for what each provider contributes |
+| Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [Start from an issue or a ticket](../user/sessions/from-issues.md); [repos.md](repos.md) for what each provider contributes |
 | Scheduled (unattended) runs | member | Schedules | [11 Running many sessions](../member/11-many-sessions.md) |
 | Notification centre | member | top bar | [20 Settings](../member/20-settings.md) |
 | Inbox — messages and requests between members, with claim, launch and PR links | member | top bar → inbox | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
 | Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
 | Attach a session to an inbox message, sharing it with the recipients | member | inbox → New | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
-| Red dot on a session with an unread notification | member | left pane, tabs | [03 Starting sessions](../member/03-starting-sessions.md#reading-state-badges-and-notifications) |
-| Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [03 Starting sessions](../member/03-starting-sessions.md#from-a-row-to-a-session); [repos.md](repos.md) for which providers |
+| Red dot on a session with an unread notification | member | left pane, tabs | [Read a session's state](../user/sessions/status.md#the-red-dot) |
+| Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [Start from an issue or a ticket](../user/sessions/from-issues.md#how-sessions-and-tickets-are-linked); [repos.md](repos.md) for which providers |
 | Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../member/20-settings.md#notifications) |
 | A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [11 Running many sessions](../member/11-many-sessions.md#a-session-watching-a-pull-request-itself) |
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |

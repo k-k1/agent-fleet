@@ -22,13 +22,13 @@ the cards in ⚙Settings → "Agents": [Claude](#claude), [Codex](#codex), [Open
 
 Which kinds run Managed and which run in Terminal (CLI) is in the
 [Agents reference](../ref/agents.md), and what each choice means is in
-[03 Starting sessions](03-starting-sessions.md#execution-method-managed-and-terminal-cli).
+[Start a session](../user/sessions/start.md#choose-the-execution-method).
 The Managed chat view is separate from the assistant chat in the left pane, which doesn't use a repository.
 
 You can confirm a connection succeeded on each card in ⚙Settings → the "Agents" tab.
 It shows **"Connected"**, and for claude / codex also the signed-in account (email) and
 plan. Once one agent is connected, it appears among the session types when you launch a
-new session ([03](03-starting-sessions.md)).
+new session ([Start a session](../user/sessions/start.md)).
 
 A connected card also has **Re-authenticate** (next to Disconnect) for claude, codex, Antigravity,
 Cursor, Kiro and Muse Code. Those CLIs have no separate re-login, so it **signs out first and then

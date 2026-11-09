@@ -10,6 +10,15 @@ English | [日本語](README.ja.md)
 Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
 Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
 
+## Sessions
+
+| Page | What you can do |
+|---|---|
+| [Start a session](sessions/start.md) | Launch a session from Start, choosing the agent, the model and a first prompt |
+| [Work in parallel with worktrees](sessions/worktrees.md) | Give each session its own working copy and work in parallel in one repository |
+| [Start from an issue or a ticket](sessions/from-issues.md) | Start a session from an issue or a pull request in the issue tracker list |
+| [Read a session's state](sessions/status.md) | Tell from the row marks and notifications which sessions are waiting for you |
+
 ## Integrations
 
 | Page | What you can do |
