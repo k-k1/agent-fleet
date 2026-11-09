@@ -354,13 +354,23 @@ const maxMCPBody = 1 << 20
 // off.
 func (cfg config) gateMCPWatch(next http.HandlerFunc) func(http.ResponseWriter, *http.Request, *resolved) {
 	return func(w http.ResponseWriter, r *http.Request, res *resolved) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxMCPBody+1))
-		if err != nil || len(body) > maxMCPBody {
-			http.Error(w, "bad request body", http.StatusBadRequest)
+		// Only the first value of the body decides, as on the Agent; the rest is forwarded as it came.
+		prefix, err := io.ReadAll(io.LimitReader(r.Body, maxMCPBody+1))
+		if err != nil {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "could not read the request body"})
 			return
 		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		if mcpsrv.SetsWatchTarget(body) {
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(prefix), r.Body), r.Body}
+		watch, ok := mcpsrv.SetsWatchTarget(prefix)
+		if !ok && len(prefix) > maxMCPBody {
+			// A value that does not end within the limit cannot be judged: refused rather than passed.
+			writeAPIErr(w, &apiError{http.StatusRequestEntityTooLarge, "payload_too_large", "the registration is too large"})
+			return
+		}
+		if watch {
 			on, err := cfg.mgr.store.GetTenantWatchSources(r.Context(), res.mv.TenantID)
 			if err != nil || !on {
 				writeAPIErr(w, &apiError{http.StatusForbidden, codeMCPWatchDisabled, "your tenant has not allowed MCP servers as watch sources"})

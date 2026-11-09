@@ -76,6 +76,8 @@ func TestTenantWatchSourcesSwitchGuards(t *testing.T) {
 
 // A registration that marks a server as a watch source is refused while the tenant switch is off
 // and reaches the Agent, body intact, while it is on. Anything else passes either way.
+const plainBody = `{"name":"x","targets":{"session":true}}`
+
 func TestGateMCPWatch(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, tn, mv, _ := networkFixture(t)
@@ -94,6 +96,16 @@ func TestGateMCPWatch(t *testing.T) {
 		return w
 	}
 	const watch = `{"name":"x","targets":{"session":true,"watch":true}}`
+	// The Agent reads the first JSON value only, so a body with something after it is still a source.
+	for _, b := range []string{watch + " trailing-garbage", watch + "\n" + plainBody} {
+		if w := call(b); w.Code != http.StatusForbidden || got != "" {
+			t.Errorf("%q passed the gate with the switch off: %d (forwarded %q)", b, w.Code, got)
+		}
+	}
+	// A value that does not end within the limit cannot be judged, and is refused.
+	if w := call(`{"name":"` + strings.Repeat("a", maxMCPBody) + `"}`); w.Code != http.StatusRequestEntityTooLarge || got != "" {
+		t.Errorf("oversize: %d (forwarded %d bytes)", w.Code, len(got))
+	}
 	const plain = `{"name":"x","targets":{"session":true}}`
 
 	if w := call(watch); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), codeMCPWatchDisabled) || got != "" {
@@ -116,5 +128,31 @@ func TestGateMCPWatch(t *testing.T) {
 	cfg.gateMCPWatch(next)(w, r, &resolved{mv: store.MembershipView{TenantID: "nope"}})
 	if w.Code != http.StatusForbidden {
 		t.Errorf("unreadable switch: %d", w.Code)
+	}
+}
+
+// A tenant_admin of another tenant can neither read nor change this tenant's switch, and nothing
+// is audited for the refused write.
+func TestTenantWatchSourcesOtherTenantAdminRefused(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, tn, _, _ := networkFixture(t)
+	other, _ := st.CreateTenant(ctx, "ops", "Ops")
+	rival, _ := st.UpsertIdentity(ctx, "rival@other.co.jp", "rival-other-co-jp", "tenant_admin")
+	if _, err := st.EnsureMembership(ctx, rival.ID, other.ID, "tenant_admin"); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{http.MethodGet, http.MethodPut} {
+		if w := callWatchSources(mgr, "rival@other.co.jp", m, `{"enabled":true}`); w.Code != http.StatusForbidden {
+			t.Errorf("other tenant's admin %s = %d %s, want 403", m, w.Code, w.Body.String())
+		}
+	}
+	if on, _ := st.GetTenantWatchSources(ctx, tn.ID); on {
+		t.Error("another tenant's admin turned the switch on")
+	}
+	rows, _ := st.ListAuditByTenant(ctx, tn.ID, 10)
+	for _, r := range rows {
+		if r.Action == "tenant.watch_sources" {
+			t.Errorf("audit row for a refused write: %+v", r)
+		}
 	}
 }

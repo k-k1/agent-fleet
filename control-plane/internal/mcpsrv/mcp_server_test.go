@@ -614,14 +614,20 @@ func TestSetsWatchTarget(t *testing.T) {
 	for body, want := range map[string]bool{
 		`{"targets":{"watch":true}}`:                true,
 		`{"targets":{"session":true,"watch":true}}`: true,
-		`{"targets":{"session":true}}`:              false,
-		`{"targets":{"watch":false}}`:               false,
-		`{"targets":{"watch":"true"}}`:              false,
-		`{}`:                                        false,
-		`not json`:                                  false,
+		// The Agent reads the first value only, so what follows it must not hide the flag.
+		`{"targets":{"watch":true}} trailing-garbage`:      true,
+		"{\"targets\":{\"watch\":true}}\n{\"targets\":{}}": true,
+		`{"targets":{"session":true}}`:                     false,
+		`{"targets":{"watch":false}}`:                      false,
+		`{"targets":{"watch":"true"}}`:                     false,
+		`{}`:                                               false,
+		`not json`:                                         false,
 	} {
-		if got := SetsWatchTarget([]byte(body)); got != want {
-			t.Errorf("%s: %v", body, got)
+		if got, _ := SetsWatchTarget([]byte(body)); got != want {
+			t.Errorf("%q: %v", body, got)
 		}
+	}
+	if _, ok := SetsWatchTarget([]byte(`{"targets":`)); ok {
+		t.Error("a truncated value was read")
 	}
 }

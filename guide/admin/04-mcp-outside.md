@@ -134,7 +134,7 @@ engine's path, so it is off for every tenant until you allow it.
 ### The switch
 
 Tenant settings → **Watch sources**. **Block** is the starting state of every tenant: members
-cannot mark a server as a watch source (the Console refuses the save), and every workspace of the
+cannot mark a server as a watch source (the save is refused), and every workspace of the
 tenant stops running the sources it has. **Allow** lets members decide per server, in Settings →
 MCP servers → Advanced → **Used by** → **Watch source**; nothing changes for anyone until they do.
 
