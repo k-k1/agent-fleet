@@ -13,8 +13,7 @@
 //     (localStorage), so refreshing or reconnecting does not ask again.
 import { useEffect } from "react";
 import { create } from "zustand";
-import { api, getTenant } from "../../core/api/client.ts";
-import { useTenantStore } from "../../core/store/tenant.ts";
+import { api, getTenant, getUser } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { armedNext, shouldRequestSigninStart } from "./signinGate.ts";
 
@@ -23,14 +22,14 @@ interface SigninStartStore {
    *  row instead of the modal. */
   auto: boolean;
   /** Why it was not started, when the member should be told (the limit is reached). */
-  blocked: { reason: string; message: string } | null;
+  blocked: { reason: string } | null;
 }
 
 export const useSigninStartStore = create<SigninStartStore>(() => ({ auto: false, blocked: null }));
 
 // Scoped to tenant and member: on a shared browser, another member's sign-in or another
 // tenant must not inherit this one's cooldown.
-const stampKey = (): string => `af.signinStart.at.${getTenant()}.${String(useTenantStore.getState().whoami?.user ?? "")}`;
+const stampKey = (): string => `af.signinStart.at.${getTenant()}.${getUser()}`;
 
 function readStamp(): number {
   try {
@@ -63,7 +62,7 @@ export async function requestSigninStart(): Promise<void> {
     useSigninStartStore.setState({ auto: true, blocked: null });
     await useWorkspaceStore.getState().refresh();
   } else if (r?.reason === "quota_workspaces") {
-    useSigninStartStore.setState({ blocked: { reason: r.reason, message: String(r.message || "") } });
+    useSigninStartStore.setState({ blocked: { reason: r.reason } });
   }
 }
 

@@ -43,10 +43,8 @@ describe("AutoStartRow", () => {
 
   it("explains a reached workspace limit while the workspace stays stopped", () => {
     useWorkspaceStore.setState({ state: "stopped", bootPhase: "" });
-    useSigninStartStore.setState({ blocked: { reason: "quota_workspaces", message: "tenant workspace limit reached (2)" } });
+    useSigninStartStore.setState({ blocked: { reason: "quota_workspaces" } });
     mount();
     expect(host.querySelector(".home-autostart-blocked")).not.toBeNull();
-    // The Control Plane's English message is not shown raw.
-    expect(host.textContent).not.toContain("limit reached (2)");
   });
 });

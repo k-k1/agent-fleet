@@ -8,6 +8,7 @@ vi.mock("../../core/api/client.ts", async (orig) => ({
   api: (...a: unknown[]) => apiMock(...a),
 }));
 
+import { setTenant, setUser } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSigninStart, useSigninStartStore } from "./signinStart.ts";
 
@@ -134,14 +135,36 @@ describe("useSigninStart", () => {
     expect(calls()).toBe(2);
   });
 
-  it("scopes the cooldown to the tenant", async () => {
+  it("scopes the cooldown to tenant and member, so another account or tenant asks again", async () => {
+    setTenant("acme");
+    setUser("a@example.com");
+    const { unmount } = render(<Probe />);
+    setWs("stopped");
+    input();
+    await act(async () => {});
+    expect(calls()).toBe(1);
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith("af.signinStart.at."));
+    expect(keys).toEqual(["af.signinStart.at.acme.a@example.com"]);
+    unmount();
+    // Same tab, another account (no logout, so localStorage survives): not suppressed.
+    setUser("b@example.com");
+    useWorkspaceStore.setState({ state: "…" });
+    const second = render(<Probe />);
+    setWs("stopped");
+    input();
+    await act(async () => {});
+    expect(calls()).toBe(2);
+    second.unmount();
+    // Same account, another tenant.
+    setTenant("beta");
+    useWorkspaceStore.setState({ state: "…" });
     render(<Probe />);
     setWs("stopped");
     input();
     await act(async () => {});
-    const keys = Object.keys(localStorage).filter((k) => k.startsWith("af.signinStart.at."));
-    expect(keys).toHaveLength(1);
-    expect(keys[0]).not.toBe("af.signinStart.at");
+    expect(calls()).toBe(3);
+    setTenant("");
+    setUser("");
   });
 
   it("drops the limit note once the workspace leaves stopped", async () => {
