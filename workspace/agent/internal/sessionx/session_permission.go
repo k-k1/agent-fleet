@@ -126,6 +126,41 @@ func settleDeniedPermission(sid, wasRev, token string) {
 	status.RetirePermissionIf(sid, wasRev, at)
 }
 
+// sweepAnsweredPermission retires a permission prompt that closed without a hook (#3725).
+// Claude Code can deny a call by itself (its built-in safety check draws the dialog even under
+// bypass permissions, then closes it), and a denied tool fires no PostToolUse. If the turn goes
+// on, nothing retires the payload until Stop, and the card keeps live buttons whose answers
+// all fail with menu_unreadable.
+//
+// Two pieces of evidence are required, because neither is enough alone:
+//   - the transcript holds a tool_result for the call the payload names. The id comes from the
+//     last PreToolUse before the prompt, which with parallel calls can be a sibling that
+//     finished while the real prompt is still up.
+//   - no dialog is on the pane. A dialog this parser cannot read, or one not drawn yet, also
+//     reads as "none", so the pane alone would sweep a live prompt.
+//
+// The sid lock and the record's Rev keep a newer prompt, written between these reads and the
+// removal, from being the one retired. Whatever turn is still running is set back to working
+// by the next poll's pane heal, as after sweepSettledState.
+func sweepAnsweredPermission(sid, name string, lines [][]byte) {
+	at, ok := status.PendingPermissionAt(sid)
+	if !ok {
+		return
+	}
+	st, _ := status.Read(sid)
+	if st.State != "permission" {
+		return
+	}
+	id, ok := status.ReadPendingPermissionToolUseID(sid)
+	if !ok || !claude.HasToolResult(lines, id) {
+		return
+	}
+	if _, up := readPermissionMenu(name); up {
+		return
+	}
+	status.RetirePermissionIf(sid, st.Rev, at)
+}
+
 // permissionRespondResult is /permission-respond's success body.
 type permissionRespondResult struct {
 	Responded string `json:"responded"`

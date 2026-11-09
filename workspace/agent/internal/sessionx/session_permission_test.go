@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -578,5 +579,68 @@ func TestPermissionKeysRefusesBareBash(t *testing.T) {
 		if keys, code := permissionKeys("s", claude.PermAllow, d, "", ""); code != "target_mismatch" || keys != nil {
 			t.Errorf("%q: keys=%v code=%q", d, keys, code)
 		}
+	}
+}
+
+// A prompt Claude Code closed by itself fires no hook; the next poll retires it once the
+// transcript holds the call's result AND no dialog is on the pane (#3725).
+func TestSweepAnsweredPermission(t *testing.T) {
+	withTempHome(t)
+	const id = "toolu_01SweepMe"
+	answered := [][]byte{
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"` + id + `","name":"Bash","input":{"command":"echo hi"}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"` + id + `","is_error":true,"content":"Permission for this command was denied"}]}}`),
+	}
+	asked := answered[:1]
+	noDialog := "❯ \n  ⏵⏵ bypass permissions on\n"
+	dialog := permFixture(t, "bash_ask_rule_af_label.txt")
+
+	prompt := func(t *testing.T, name, toolUseID string) string {
+		t.Helper()
+		sid := permissionSession(t, name)
+		status.WritePendingPermissionCall(sid, "Bash · echo hi", "echo hi", toolUseID)
+		return sid
+	}
+	cases := []struct {
+		name, toolUseID, pane string
+		lines                 [][]byte
+		swept                 bool
+	}{
+		{"answered and closed", id, noDialog, answered, true},
+		// The id can be a parallel sibling's that finished while the real prompt is still up.
+		{"a dialog is still up", id, dialog, answered, false},
+		// The dialog may not be drawn yet, or be one the parser cannot read.
+		{"no result yet", id, noDialog, asked, false},
+		{"payload without an id", "", noDialog, answered, false},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stubPane(t, c.pane)
+			sid := prompt(t, "slot9"+strconv.Itoa(i), c.toolUseID)
+			sweepAnsweredPermission(sid, "slot9"+strconv.Itoa(i), c.lines)
+			_, kept := status.ReadPendingPermission(sid)
+			st, _ := status.Read(sid)
+			if c.swept && (kept || st.State != "idle") {
+				t.Fatalf("not swept: payload kept=%v state=%q", kept, st.State)
+			}
+			if !c.swept && (!kept || st.State != "permission") {
+				t.Fatalf("swept a live prompt: payload kept=%v state=%q", kept, st.State)
+			}
+		})
+	}
+}
+
+// The hook carries the PreToolUse call's id onto the pending payload, and the payload's
+// command reads back without it.
+func TestPendingPermissionKeepsTheToolUseID(t *testing.T) {
+	withTempHome(t)
+	sid := "sid-3725"
+	status.WriteLastToolCall(sid, "Bash · echo hi", "echo hi", "toolu_01Keep")
+	applyPendingPayloads(sid, "permission", hookInput{})
+	if id, ok := status.ReadPendingPermissionToolUseID(sid); !ok || id != "toolu_01Keep" {
+		t.Fatalf("id = %q %v", id, ok)
+	}
+	if d, cmd, ok := status.ReadPendingPermissionCommand(sid); !ok || d != "Bash · echo hi" || cmd != "echo hi" {
+		t.Fatalf("detail=%q command=%q ok=%v", d, cmd, ok)
 	}
 }

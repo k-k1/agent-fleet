@@ -137,7 +137,7 @@ func RunSessionStatusHook(args []string) {
 	// about to run (for the permission block's detail) — it fires in EVERY mode, so
 	// it must not change the session status.
 	if state == "permtool" {
-		status.WriteLastToolCommand(sid, h.toolDetail, h.toolCommand)
+		status.WriteLastToolCall(sid, h.toolDetail, h.toolCommand, h.toolUseID)
 		// The same hook is how we learn WHERE this session's plan lives: claude writes the
 		// plan through its own Write tool, so the path passes through here while the plan is
 		// still pending. Nothing else carries it in time — the tool_result that spells the
@@ -582,17 +582,18 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 	}
 	if state == "permission" {
 		message := h.message
-		command := ""
+		command, toolUseID := "", ""
 		// Prefer the specific tool detail captured just before the prompt.
-		detail, lastCommand, ok := status.ReadLastToolCommand(sid)
+		detail, lastCommand, lastID, ok := status.ReadLastToolCall(sid)
 		if ok && detail != "" {
 			message = detail
 			command = lastCommand
+			toolUseID = lastID
 		} else if message == "" {
 			message = "Claude needs your permission"
 		}
 		status.RemoveLastTool(sid)
-		status.WritePendingPermissionCommand(sid, message, command)
+		status.WritePendingPermissionCall(sid, message, command, toolUseID)
 	} else {
 		status.RemovePendingPermission(sid)
 	}

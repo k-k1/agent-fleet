@@ -1206,6 +1206,43 @@ func SettledAt(lines [][]byte) (question, plan time.Time) {
 	return question, plan
 }
 
+// HasToolResult reports whether the transcript holds a tool_result for the call toolUseID. A
+// call's result is written however it ended (run, rejected, denied by Claude Code itself), so
+// it proves the prompt that call raised is no longer open. Whole-transcript, like SettledAt.
+func HasToolResult(lines [][]byte, toolUseID string) bool {
+	if toolUseID == "" {
+		return false
+	}
+	want := []byte(toolUseID)
+	for _, ln := range lines {
+		// Cheap prefilter: this runs over the whole transcript on every poll with a payload.
+		if !bytes.Contains(ln, want) || !bytes.Contains(ln, []byte(`"tool_result"`)) {
+			continue
+		}
+		var ev struct {
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &ev) != nil || len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
+			continue
+		}
+		var blocks []struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == "tool_result" && b.ToolUseID == toolUseID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // CollectFileEdits extracts every edit-family tool call from lines[from:] — the raw
 // material for the session's changed-files list (docs/log/68). `from` lets the caller fold
 // only the lines it hasn't seen: the jsonl is append-only, so the answer for a prefix
