@@ -52,10 +52,29 @@ export function setState(next: Settings): void {
   state = next;
 }
 
-export function persist(): void {
+// Run around every write of the record (lib/settings.ts installs them): `before` takes what the
+// other tabs stored since this one last looked, so a write never puts their changes back with this
+// tab's older values; `after` notes the record as written.
+let beforeWrite = (): void => {};
+let afterWrite = (): void => {};
+
+export function setRecordWriteHooks(before: () => void, after: () => void): void {
+  beforeWrite = before;
+  afterWrite = after;
+}
+
+/** Write `value` (default: the current state) as the record, between the two hooks. A caller
+ *  that built `value` from an earlier state passes `build` instead, called after `before`. */
+export function writeRecord(build: () => Settings = () => state): void {
+  beforeWrite();
   try {
-    localStorage.setItem(KEY, JSON.stringify(state));
+    localStorage.setItem(KEY, JSON.stringify(build()));
   } catch {}
+  afterWrite();
+}
+
+export function persist(): void {
+  writeRecord();
 }
 
 export function notify(): void {

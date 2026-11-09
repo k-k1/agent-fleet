@@ -19,7 +19,16 @@ import { pinSyncedFallbacks } from "../features/notifications/prefs.ts";
 import { applyTheme } from "./settings/appearance.ts";
 import { sameValue, type Settings } from "./settings/prefs.ts";
 import { APPEARANCE_SHUFFLE_MODES, REGION_THEMES, SURFACE_COLORS, THEMES } from "./settings/options.ts";
-import { KEY as SETTINGS_KEY, applyToPage, getSettings, notify, persist, setState, subscribe } from "./settings/store.ts";
+import {
+  KEY as SETTINGS_KEY,
+  applyToPage,
+  getSettings,
+  notify,
+  persist,
+  setRecordWriteHooks,
+  setState,
+  subscribe,
+} from "./settings/store.ts";
 import {
   currentPrefsOwner,
   markUnsaved,
@@ -175,7 +184,7 @@ function writeAppearanceSnapshot(owner: string): void {
 export function applyTenantAppearance(): void {
   catchUpWithOtherTabs();
   if (!syncAppearanceOwner(currentPrefsOwner())) return;
-  persistSeen();
+  persist();
   applyTheme(getSettings());
   notify();
 }
@@ -308,45 +317,59 @@ function onOtherTabStorage(e: StorageEvent): void {
   }
   const owner = currentPrefsOwner();
   if (!owner || e.key !== APPEARANCE_SNAPSHOT_PREFIX + owner || !getSettings().appearancePerTenant) return;
-  const snap = parseObject(e.newValue);
+  showFromOtherTab(snapshotPatch(e.newValue));
+}
+
+// What this tenant's snapshot, as stored by another tab, changes here.
+function snapshotPatch(raw: string | null): Partial<Settings> {
+  const snap = parseObject(raw);
   const cur = getSettings();
   const patch: Record<string, unknown> = {};
   for (const k of APPEARANCE_KEYS) {
     const v = crossTabValue(k, snap[k]);
     if (v !== undefined && !sameValue(v, cur[k])) patch[k] = v;
   }
-  showFromOtherTab(patch as Partial<Settings>);
+  return patch as Partial<Settings>;
 }
 
-// The settings record as this tab last wrote or took it. A tab writes the whole record, so one
-// whose storage event from another tab has not arrived yet would put that tab's change back with
-// its own older value. Before writing, the tab first takes what changed since (catchUpWithOtherTabs).
-let seenRecord: string | null = readRecord();
+// The settings record as this tab last wrote or took it. A tab writes the whole record (and, per
+// tenant, the whole snapshot), so one whose storage event from another tab has not arrived yet
+// would put that tab's change back with its own older value. Every write of the record therefore
+// first takes what the other tabs stored since (store.ts runs these hooks around each write).
+let seenRecord: string | null = readStored(SETTINGS_KEY);
 
-function readRecord(): string | null {
+function readStored(key: string): string | null {
   try {
-    return localStorage.getItem(SETTINGS_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-// Take the other tabs' changes this tab has not yet seen. The caller's own write goes on top.
+// Take the other tabs' changes this tab has not yet seen; the caller's own write goes on top.
+// This tenant's snapshot is taken whole: this tab's look only ever moves ahead of its snapshot by
+// writing it, so what is stored there is at least as new as what this tab shows.
 function catchUpWithOtherTabs(): void {
-  const stored = readRecord();
-  if (stored === seenRecord) return;
-  const patch = crossTabPatch(seenRecord, stored);
-  seenRecord = stored;
-  showFromOtherTab(patch);
+  const stored = readStored(SETTINGS_KEY);
+  if (stored !== seenRecord) {
+    const patch = crossTabPatch(seenRecord, stored);
+    seenRecord = stored;
+    showFromOtherTab(patch);
+  }
+  const owner = currentPrefsOwner();
+  if (owner && getSettings().appearancePerTenant) {
+    showFromOtherTab(snapshotPatch(readStored(APPEARANCE_SNAPSHOT_PREFIX + owner)));
+  }
 }
 
-function persistSeen(): void {
-  persist();
-  seenRecord = readRecord();
-}
+setRecordWriteHooks(catchUpWithOtherTabs, () => {
+  seenRecord = readStored(SETTINGS_KEY);
+});
 
 /** Follow appearance changes made in the other tabs of this browser; returns the stop function. */
 export function watchOtherTabs(): () => void {
+  // Whatever another tab stored before this listener existed has no event coming.
+  catchUpWithOtherTabs();
   window.addEventListener("storage", onOtherTabStorage);
   return () => window.removeEventListener("storage", onOtherTabStorage);
 }
@@ -381,7 +404,7 @@ export function setSettings(patch: Partial<Settings>): void {
     writeAppearanceSnapshot(owner);
   }
   markUnsaved(Object.keys(patch) as (keyof Settings)[]);
-  persistSeen();
+  persist();
   recordOwnerAfterLocalWrite();
   applyToPage(state);
   scheduleServerSave();

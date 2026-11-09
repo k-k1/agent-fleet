@@ -18,7 +18,7 @@ import {
   type Settings,
 } from "./prefs.ts";
 import { fillRecommendedModelMaps, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeAssistantOrder } from "./normalize.ts";
-import { KEY, applyToPage, getSettings, notify, persist, setState } from "./store.ts";
+import { applyToPage, getSettings, notify, persist, setState, writeRecord } from "./store.ts";
 
 // The notification table pins its device-local cells off a synced key on every hydrate
 // (features/notifications/prefs.ts pinSyncedFallbacks). lib/ may not import features/ (ADR 0124),
@@ -447,21 +447,35 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   // since this one last did, and recording this owner over that copy would vouch for its values.
   // When the copy is recorded as this owner's already it is left alone: another tab of the same
   // owner may hold a newer unsaved edit there.
+  // `merged` was built from the state as it stood here; the write hooks below may take another
+  // tab's changes into the state, and those must not be undone by writing or setting `merged`.
+  const builtFrom = getSettings();
   if (owner && storedOwner !== owner) {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(changed ? merged : getSettings()));
-    } catch {}
+    writeRecord(() => (changed ? withCaughtUp(merged, builtFrom) : getSettings()));
     recordOwner(owner);
   }
   markPrefsLoaded();
   // Accumulated data the server did not have is written back from here to restore it.
   if (restore) scheduleServerSave();
   if (!changed) return true;
-  setState(merged);
+  setState(withCaughtUp(merged, builtFrom));
   persist();
-  applyToPage(merged);
+  // persist() may have taken another tab's changes over `merged`; show what is now the state.
+  applyToPage(getSettings());
   notify();
   return true;
+}
+
+// `merged` with the keys the state has changed since `builtFrom` (another tab's change caught up
+// with by a write hook) taken from the state.
+function withCaughtUp(merged: Settings, builtFrom: Settings): Settings {
+  const cur = getSettings();
+  if (cur === builtFrom) return merged;
+  const out = { ...merged } as Record<string, unknown>;
+  const now = cur as unknown as Record<string, unknown>;
+  const was = builtFrom as unknown as Record<string, unknown>;
+  for (const k of Object.keys(now)) if (!sameValue(now[k], was[k])) out[k] = now[k];
+  return out as unknown as Settings;
 }
 
 // Resync across an identity boundary (a tenant switch, or a user switch inside one tenant).
