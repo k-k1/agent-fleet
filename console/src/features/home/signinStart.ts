@@ -13,7 +13,8 @@
 //     (localStorage), so refreshing or reconnecting does not ask again.
 import { useEffect } from "react";
 import { create } from "zustand";
-import { api } from "../../core/api/client.ts";
+import { api, getTenant } from "../../core/api/client.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { armedNext, shouldRequestSigninStart } from "./signinGate.ts";
 
@@ -27,11 +28,13 @@ interface SigninStartStore {
 
 export const useSigninStartStore = create<SigninStartStore>(() => ({ auto: false, blocked: null }));
 
-const STAMP_KEY = "af.signinStart.at";
+// Scoped to tenant and member: on a shared browser, another member's sign-in or another
+// tenant must not inherit this one's cooldown.
+const stampKey = (): string => `af.signinStart.at.${getTenant()}.${String(useTenantStore.getState().whoami?.user ?? "")}`;
 
 function readStamp(): number {
   try {
-    return Number(localStorage.getItem(STAMP_KEY)) || 0;
+    return Number(localStorage.getItem(stampKey())) || 0;
   } catch {
     return 0;
   }
@@ -39,7 +42,7 @@ function readStamp(): number {
 
 function writeStamp(at: number) {
   try {
-    localStorage.setItem(STAMP_KEY, String(at));
+    localStorage.setItem(stampKey(), String(at));
   } catch {
     /* storage unavailable: the per-load guard still holds */
   }
@@ -47,12 +50,15 @@ function writeStamp(at: number) {
 
 /** request asks the Control Plane once and records what came of it. */
 export async function requestSigninStart(): Promise<void> {
+  useSigninStartStore.setState({ blocked: null });
   let r: any;
   try {
     r = await api("api/workspace/signin-start", { method: "POST" });
   } catch {
-    return; // no answer: do not retry, the member can still press Start
+    return; // no answer: neither stamped nor retried; the member can still press Start
   }
+  // Only an answer starts the cooldown, so a dropped connection does not silence the next try.
+  writeStamp(Date.now());
   if (r?.started === true) {
     useSigninStartStore.setState({ auto: true, blocked: null });
     await useWorkspaceStore.getState().refresh();
@@ -77,6 +83,8 @@ export function useSigninStart(enabled: boolean) {
       if (st.auto && (state === "stopped" || state === "unknown" || (state === "running" && !useWorkspaceStore.getState().bootPhase))) {
         useSigninStartStore.setState({ auto: false });
       }
+      // The limit note belongs to a stopped workspace; once it is anything else it is stale.
+      if (state !== "stopped" && useSigninStartStore.getState().blocked) useSigninStartStore.setState({ blocked: null });
       const now = Date.now();
       if (
         shouldRequestSigninStart({
@@ -90,7 +98,6 @@ export function useSigninStart(enabled: boolean) {
         })
       ) {
         requested = true;
-        writeStamp(now);
         void requestSigninStart();
       }
     };

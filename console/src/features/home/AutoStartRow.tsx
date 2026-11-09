@@ -30,7 +30,6 @@ export function AutoStartRow() {
       <div className="home-autostart home-autostart-blocked" role="status">
         <Icon name="info" />
         <span>{tr("home.autostart_quota")}</span>
-        {blocked.message && <span className="home-autostart-phase">{blocked.message}</span>}
       </div>
     );
   }

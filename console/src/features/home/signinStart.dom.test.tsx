@@ -102,6 +102,59 @@ describe("useSigninStart", () => {
     expect(useSigninStartStore.getState().auto).toBe(false);
   });
 
+  it("does not ask from a hidden tab", async () => {
+    const spy = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      render(<Probe />);
+      setWs("stopped");
+      input();
+      await act(async () => {});
+      expect(calls()).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not start the cooldown when the request got no answer, and retries on a later load", async () => {
+    apiMock.mockImplementationOnce(async () => {
+      throw new Error("network");
+    });
+    const { unmount } = render(<Probe />);
+    setWs("stopped");
+    input();
+    await act(async () => {});
+    expect(calls()).toBe(1);
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("af.signinStart"))).toHaveLength(0);
+    unmount();
+    useWorkspaceStore.setState({ state: "…" });
+    render(<Probe />);
+    setWs("stopped");
+    input();
+    await act(async () => {});
+    expect(calls()).toBe(2);
+  });
+
+  it("scopes the cooldown to the tenant", async () => {
+    render(<Probe />);
+    setWs("stopped");
+    input();
+    await act(async () => {});
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith("af.signinStart.at."));
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).not.toBe("af.signinStart.at");
+  });
+
+  it("drops the limit note once the workspace leaves stopped", async () => {
+    apiMock.mockImplementation(async () => ({ started: false, reason: "quota_workspaces", message: "m" }));
+    render(<Probe />);
+    setWs("stopped");
+    input();
+    await act(async () => {});
+    expect(useSigninStartStore.getState().blocked).not.toBeNull();
+    setWs("running");
+    expect(useSigninStartStore.getState().blocked).toBeNull();
+  });
+
   it("does nothing when disabled (not booted, or a pop-out tab)", async () => {
     render(<Probe enabled={false} />);
     setWs("stopped");
