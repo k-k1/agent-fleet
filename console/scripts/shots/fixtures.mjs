@@ -159,6 +159,18 @@ export function sessions(locale) {
   ];
 }
 
+// The sessions guide's budget page (SHOT_SESSIONS_GUIDE): the stopped opencode session was
+// stopped by a $5.00 budget it went past, so its menu offers "raise budget & resume".
+export function sessionsBudgetStopped(locale) {
+  return sessions(locale).map((s) =>
+    s.name === "so5nw6k" ? { ...s, spendCapUsd: 5, spendCapHitAt: ago(40) } : s,
+  );
+}
+
+export function sessionSpendGuide(name) {
+  return { name, spendCapUsd: 5, spendCapHitAt: ago(40), hardFactor: 2, spendUsd: 5.18, priced: true, children: [], childrenUsd: 0 };
+}
+
 // ---- the scripted mirror conversation (claude session sk4rq2f) --------------------
 
 const DIFF_OLD = `export function validateCart(cart: Cart): Result {
@@ -378,6 +390,14 @@ export function ptyScreen(locale) {
 }
 
 // ---- the remaining endpoints the shell polls ---------------------------------------
+
+// The plan the agent is waiting to have approved (SHOT_PLAN, the guide's plan page). Served as
+// `pendingPlan` with status "plan", which is what draws the live approval card.
+export function pendingPlan(locale) {
+  return locale === "ja"
+    ? "# 合計 0 円の注文をカートで止める\n\nカート画面で合計が 0 円になったら、決済へ進む前にエラーを出す。\n\n1. `validateCart` に合計 0 円の検査を足す\n2. 既存のバリデーション表示にメッセージを出す\n3. 単体テストを足す\n"
+    : "# Stop zero-total orders at the cart\n\nWhen the cart total is zero, show an error before checkout starts.\n\n1. Add a zero-total check to `validateCart`\n2. Show the message in the existing validation banner\n3. Add unit tests\n";
+}
 
 export function messages(locale, session) {
   if (session === "swnd7qa") {

@@ -13,7 +13,7 @@ This chapter covers the parts of the Console for **more than one person**: shari
 Two different things live in the session's ⋯ menu. **Share…** shows your conversation to another
 member of the same tenant, read-only ([Sharing a conversation](#sharing-a-conversation-shared-sessions)).
 Handing over starts a new session instead: **Hand off to another agent…** starts one of your own,
-with the context carried over ([05](05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move)),
+with the context carried over ([Hand off to another session or agent](../user/sessions/handoff.md#choose-a-way)),
 and **Hand off to a member** offers that handoff to someone the session is shared with, who starts
 it in their own workspace ([below](#handing-a-session-to-another-member)).
 

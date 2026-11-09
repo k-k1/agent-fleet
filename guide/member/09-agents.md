@@ -22,13 +22,13 @@ the cards in ⚙Settings → "Agents": [Claude](#claude), [Codex](#codex), [Open
 
 Which kinds run Managed and which run in Terminal (CLI) is in the
 [Agents reference](../ref/agents.md), and what each choice means is in
-[03 Starting sessions](03-starting-sessions.md#execution-method-managed-and-terminal-cli).
+[Start a session](../user/sessions/start.md#choose-the-execution-method).
 The Managed chat view is separate from the assistant chat in the left pane, which doesn't use a repository.
 
 You can confirm a connection succeeded on each card in ⚙Settings → the "Agents" tab.
 It shows **"Connected"**, and for claude / codex also the signed-in account (email) and
 plan. Once one agent is connected, it appears among the session types when you launch a
-new session ([03](03-starting-sessions.md)).
+new session ([Start a session](../user/sessions/start.md)).
 
 A connected card also has **Re-authenticate** (next to Disconnect) for claude, codex, Antigravity,
 Cursor, Kiro and Muse Code. Those CLIs have no separate re-login, so it **signs out first and then
@@ -294,7 +294,7 @@ card says "Not available on this host (…)" and agy is not offered.
   idle. That background work keeps the Workspace awake for at most 2 hours by default (the
   deployment can change the bound); after that the Workspace can stop as idle while the command
   still runs. For a longer build, use **Keep awake**
-  ([05](05-stopping-and-tidying.md#keeping-a-session-awake)). A turn that agy never closes (the CLI died
+  ([Stop when done, or keep a session awake](../user/sessions/auto-stop.md#keep-a-session-awake)). A turn that agy never closes (the CLI died
   mid-turn) stops reading Working after an hour with no change, unless one of its commands is
   still running.
 - **Agent Fleet adds a hook entry to agy's configuration.** To know which conversation a session
@@ -333,7 +333,7 @@ to improve the product. It is off by default, and each session keeps the mode it
 with across a stop and start. See [Agents reference](../ref/agents.md) for the details.
 
 In a running muse session the **`/`** button beside the input lists the session's own skills,
-and picking one runs it ([04](04-conversation.md#calling-a-skill-or-a-command); what the list
+and picking one runs it ([Call a skill or a command](../user/sessions/skills.md); what the list
 holds is in the [Agents reference](../ref/agents.md)). When a usage limit stops a muse turn, the
 session resumes by itself once the limit resets (the states are in the same reference).
 

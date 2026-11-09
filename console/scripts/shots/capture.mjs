@@ -43,6 +43,19 @@ const mirrorOf = (s) => pane("p0", s, { kind: "terminal", chat: true });
 const FOCUS_TREE = { assistant: 1, workitems: 0, memos: 0, schedules: 0, repos: 1, files: 0 };
 const SHOW_TOOLS = { assistant: 1, workitems: 1, memos: 1, schedules: 1, repos: 1, files: 0 };
 
+// Open the Start hub. Right after boot the bar can still read the workspace as not running and
+// ask to start it; cancel that and click again once the state has loaded.
+const OPEN_START_HUB = `
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 10; i++) {
+        document.querySelector(".ws-newsession")?.click();
+        await wait(700);
+        const c = document.querySelector(".ui-confirm");
+        if (!c) break;
+        [...c.querySelectorAll("button")].find((b) => /キャンセル|Cancel/.test(b.textContent || ""))?.click();
+        await wait(1000);
+      }`;
+
 const SCENES = [
   {
     name: "console",
@@ -735,6 +748,437 @@ const SCENES = [
       const items = [...document.querySelectorAll(".acct-item")];
       items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
       await new Promise((r) => setTimeout(r, 1500));
+    })()`,
+    settle: 2500,
+  },
+  {
+    // A plan awaiting approval, with the buttons the plans page names.
+    name: "conv-plan",
+    guide: true,
+    stubEnv: { SHOT_PLAN: "1" },
+    clip: ".mt-plan",
+    pad: 8,
+    ready: "!!document.querySelector('.mt-plan-approve')",
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    settle: 2500,
+  },
+  {
+    // The skill / command picker opened from the composer (the session idle, so the composer is free).
+    name: "conv-skills",
+    guide: true,
+    stubEnv: { SHOTS_IDLE: "1" },
+    clip: [".mirror-skill-btn", ".mirror-skills"],
+    pad: 8,
+    ready: "!!document.querySelector('.mirror-skill-btn:not([disabled])')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".mirror-skill-btn")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // The session menu's Markdown export: the three choices under their caption.
+    name: "conv-export",
+    guide: true,
+    // The caption and its three items only; the action tags the first and the last.
+    clip: ["#shot-export-from", "#shot-export-to"],
+    pad: 4,
+    ready: "!!document.querySelector('.sess-menu-btn')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      // The rail can still be filling in on a busy host: retry the click until the menu shows.
+      let cap;
+      for (let i = 0; i < 20 && !cap; i++) {
+        const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+          /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+        if (!document.querySelector(".sess-menu")) row?.querySelector(".sess-menu-btn")?.click();
+        await new Promise((r) => setTimeout(r, 500));
+        cap = [...document.querySelectorAll(".ui-menu-caption")].find((el) => /Markdown/.test(el.textContent || ""));
+      }
+      if (cap) {
+        cap.id = "shot-export-from";
+        let last = cap;
+        for (let el = cap.nextElementSibling, n = 0; el && n < 3; el = el.nextElementSibling, n++) last = el;
+        last.id = "shot-export-to";
+      }
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The live question card with its choices and "Submit answer" (the reply page).
+    name: "conv-question",
+    guide: true,
+    clip: "#shot-question",
+    pad: 8,
+    ready: "!!document.querySelector('.mt-question')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const q = [...document.querySelectorAll(".mt-question")].pop();
+      if (q) { q.id = "shot-question"; q.scrollIntoView({ block: "center" }); }
+    })()`,
+    settle: 1200,
+  },
+  {
+    // Two follow-ups held in "Waiting to send" while a turn runs, down to the send button and its ▾.
+    name: "conv-queue",
+    guide: true,
+    stubEnv: { SHOT_BUSY: "1" },
+    clip: [".mirror-queue", ".mirror-send-split"],
+    pad: 8,
+    ready: "!!document.querySelector('.mirror-send-more')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const ta = document.querySelector(".mirror-input");
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+      const ja = document.documentElement.lang === "ja" || /送信/.test(document.body.textContent || "");
+      const texts = ja
+        ? ["エラー文言は messages.ts にまとめて", "終わったら commit して"]
+        : ["Keep the error text in messages.ts", "Commit when you are done"];
+      for (const t of texts) {
+        ta.focus();
+        set.call(ta, t);
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 200));
+        ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", altKey: true, bubbles: true, cancelable: true }));
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The confirmation that "Branch here" opens on the user's own past message.
+    name: "conv-fork",
+    guide: true,
+    stubEnv: { SHOT_FORK: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    ready: "!!document.querySelector('.mt-fork')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      [...document.querySelectorAll(".mt-fork")].pop()?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The "Changed files" strip under the conversation header, opened.
+    name: "conv-files",
+    guide: true,
+    clip: ".mirror-files",
+    pad: 0,
+    ready: "!!document.querySelector('.mirror-files-toggle')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const s = document.querySelector(".mirror-files");
+      if (s && !s.classList.contains("open")) s.querySelector(".mirror-files-toggle")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // An answer written in the other language, with "Translate" under it (the translate page).
+    name: "conv-translate",
+    guide: true,
+    stubEnv: { SHOT_TRANSLATE: "1" },
+    clip: "#shot-translate",
+    pad: 4,
+    ready: "!!document.querySelector('.mt-translate')",
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const b = [...document.querySelectorAll(".mt-translate")].pop();
+      const turn = b?.closest(".mirror-turn");
+      if (turn) { turn.id = "shot-translate"; turn.scrollIntoView({ block: "center" }); }
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The Start hub opened from the WS bar: where to work (chat, shell, home, a repository).
+    name: "sessions-start",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${OPEN_START_HUB}
+    })()`,
+    settle: 1500,
+  },
+  {
+    // "Start work" for a repository as it opens: agent, model, first prompt, and the folded
+    // Location and Details sections with their summaries.
+    name: "sessions-launch",
+    guide: true,
+    // The hub stays open under the dialog; the action tags the top one.
+    clip: "#shot-launch",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1800,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${OPEN_START_HUB}
+      [...document.querySelectorAll(".start-row")].find((el) => el.textContent.includes("webshop"))?.click();
+      await wait(1200);
+      const ms = document.querySelectorAll(".ui-modal");
+      if (ms.length) ms[ms.length - 1].id = "shot-launch";
+    })()`,
+    settle: 1500,
+  },
+  {
+    // "Start work" for a repository with its Location section unfolded: new worktree or this copy,
+    // the base branch and the working directory.
+    name: "sessions-location",
+    guide: true,
+    clip: ".launch-sec.open",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${OPEN_START_HUB}
+      [...document.querySelectorAll(".start-row")].find((el) => el.textContent.includes("webshop"))?.click();
+      await wait(1200);
+      // The first section in the dialog is Location.
+      document.querySelector(".launch-sec-head")?.click();
+      await wait(600);
+      document.querySelector(".launch-sec.open")?.scrollIntoView({ block: "center" });
+    })()`,
+    settle: 1800,
+  },
+  {
+    // A GitHub issue's detail opened from the work-item list, with "Start this ticket".
+    name: "sessions-issue",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    // The repository section stays open so the repositories have loaded before the detail
+    // opens; the start section picks its default repository when it mounts.
+    sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 1, files: 0 },
+    width: 1400,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 1500));
+      [...document.querySelectorAll(".wi-row")].find((el) => el.textContent.includes("#312"))?.click();
+    })()`,
+    settle: 1800,
+  },
+  {
+    // The issue tracker section of the left pane: CI and conflict marks, unread dots, comment counts.
+    name: "sessions-issue-list",
+    guide: true,
+    clip: "#shot-wi-list",
+    pad: 0,
+    sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 0, files: 0 },
+    storage: {
+      "af.workitems.seen.v1": JSON.stringify({
+        "github:demo/webshop#312": { u: "2020-01-01T00:00:00Z", c: 2 },
+        "bitbucket:acme/ledger#201": { u: "2020-01-01T00:00:00Z", c: 7 },
+      }),
+    },
+    width: 1400,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 800));
+      const sec = document.querySelector(".wi-list")?.closest(".ui-section");
+      if (sec) sec.id = "shot-wi-list";
+    })()`,
+    settle: 1200,
+  },
+  {
+    // A mergeable GitHub pull request's detail: live state, checks, reviews and the Merge button.
+    name: "sessions-pr",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 1, files: 0 },
+    width: 1400,
+    height: 1700,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 1500));
+      [...document.querySelectorAll(".wi-row")].find((el) => el.textContent.includes("#315"))?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The session rows of the repository tree, for their state badges.
+    name: "sessions-status",
+    guide: true,
+    clip: "#shot-sess-list",
+    pad: 4,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 600));
+      const rows = [...document.querySelectorAll(".sess-row")];
+      const box = rows[0]?.closest(".sess-list.proj-tree");
+      if (box) box.id = "shot-sess-list";
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The cleanup window, opened from the trash icon in the Repositories heading: the two stages
+    // and the candidates with their safety rating.
+    name: "sessions-cleanup",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const sel = '[aria-label="掃除を開く（点検・整理）"], [aria-label="Open cleanup (survey & tidy)"]';
+      for (let i = 0; i < 50 && !document.querySelector(sel); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(sel)?.click();
+      // The window opens with "surveying…" and grows when the candidates arrive: wait for them.
+      for (let i = 0; i < 50 && !document.querySelector(".clean-modal .clean-row"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2500,
+  },
+  {
+    // "Raise budget & resume" on a session its spend budget stopped (SHOT_SESSIONS_GUIDE).
+    name: "sessions-budget",
+    guide: true,
+    stubEnv: { SHOT_SESSIONS_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /在庫同期バッチの調査|Stock sync batch triage/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /予算を上げて再開|Raise budget/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // Stopping every session under one working copy: right-click the webshop row.
+    name: "sessions-stop-below",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const find = () => document.querySelector('.repo-card[data-rail-repo="webshop"]');
+      for (let i = 0; i < 50 && !find(); i++) await new Promise((r) => setTimeout(r, 200));
+      const card = find();
+      const b = card.getBoundingClientRect();
+      card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: b.left + 40, clientY: b.top + 10 }));
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll("button, [role=menuitem]")].find((el) => /配下のセッションを停止|Stop the sessions below/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // A stopped session opened from the list: the history is read-only until "Resume and continue".
+    name: "sessions-resume",
+    guide: true,
+    clip: ".mirror-compose-resume",
+    pad: 4,
+    sections: FOCUS_TREE,
+    width: 1100,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("so5nw6k")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".mirror-compose-resume"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The session menu, for the auto-stop page: Stop when this turn ends and Keep awake.
+    name: "sessions-menu",
+    guide: true,
+    clip: ".sess-menu",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+    })()`,
+    settle: 1200,
+  },
+  {
+    // Moving a session to another agent, for the handoff page (the features-page "move" scene, light and cropped).
+    name: "sessions-move",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /別のエージェントへ移す|Move to another agent/.test(el.textContent || ""))?.click();
+      // The dialog mounts a beat after the menu closes: wait for it.
+      for (let i = 0; i < 50 && !document.querySelector(".ui-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The handoff dialog: the target agent and the optional note.
+    name: "sessions-handoff",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /別のエージェントへ引き継ぐ|Hand off to another agent/.test(el.textContent || ""))?.click();
+      // The dialog mounts a beat after the menu closes: wait for it.
+      for (let i = 0; i < 50 && !document.querySelector(".ui-modal"); i++) await new Promise((r) => setTimeout(r, 200));
     })()`,
     settle: 2500,
   },

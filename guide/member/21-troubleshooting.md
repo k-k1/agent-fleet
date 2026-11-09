@@ -117,7 +117,7 @@ return ([11](11-many-sessions.md#narrowing-the-view-with-working-sets)).
 
 If it is still missing, check whether it was **archived** (AI sessions can be restored from
 the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
-trash). See [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup).
+trash). See [Clear away finished sessions](../user/sessions/cleanup.md#archive-and-restore).
 
 If the **Repositories** section of the left pane says **"Couldn't refresh the list — showing the
 last known one"**, nothing is gone: the Console could not read the repository list just now and
@@ -131,7 +131,7 @@ the page, or check your access to this workspace.
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
 (typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode / lcpp / muse cannot resume from this state.
 Start the same work over as a new session. shell falls back to home and resumes if the
-working folder is missing ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)).
+working folder is missing ([Stop and resume a session](../user/sessions/stop-resume.md#folder-missing-cant-resume-and-the-row-will-not-open)).
 
 ### Resuming says "the conversation log was deleted"
 
@@ -153,7 +153,7 @@ the same session without the old context, and remove a low `cleanupPeriodDays` i
 The move refuses while the session is working, or while a question, plan or approval waits for
 you: let the turn end or stop it, and answer first. A stopped Managed Cursor session cannot be
 moved, because its conversation is gone. shell and ssm sessions have no conversation to move. See
-[05](05-stopping-and-tidying.md#moving-a-session-to-another-agent-move).
+[Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent).
 
 ### Cleanup won't remove some things
 
@@ -167,7 +167,7 @@ Candidates rated **Keep** are left alone by cleanup, and the row states why.
 Deleted sessions, branches and worktrees are stashed in the **trash**, so the "Trash
 (restore)" tab of the cleanup modal brings them back (a worktree at the commit it was on, with
 its uncommitted changes when the row says so)
-([05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
+([Clear away finished sessions](../user/sessions/cleanup.md#restore-from-the-trash)).
 
 ### I shared it, but the recipient sees nothing — or only old conversations
 
@@ -211,7 +211,7 @@ Check its row in the **Schedules** section of the left pane.
 
 They won't appear if the browser's notification permission is off (you're asked to allow it the first time). Also, notifications are
 **suppressed** while you have that session's screen open. shell / ssm are outside the scope of state notifications
-([03](03-starting-sessions.md#reading-state-badges-and-notifications)). A window showing **"Live updates paused — click to resume"**
+([Read a session's state](../user/sessions/status.md)). A window showing **"Live updates paused — click to resume"**
 paused after 10 idle minutes; click it.
 
 ### claude doesn't know `/list-agents`, or says it can't message another session
@@ -661,8 +661,8 @@ viewer and other screens follow the theme ([20 Display](20-settings.md#display))
 **Q. Can I get a deleted session back?**
 If you only hid it with "Archive", you can bring it back with "Restore" in the archived list. With "Stop
 (resumable later)" it remains as stopped and can be resumed with a click. "Delete" for shell / ssm
-cannot be undone (the conversation log files themselves remain). For the differences, see
-[05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions).
+moves it to the trash, and the "Trash (restore)" tab of Clean up brings it back. For the differences, see
+[Clear away finished sessions](../user/sessions/cleanup.md#what-stays-and-what-goes).
 
 **Q. Can I use it from both my work PC and my home PC?**
 Yes. Your login and connections, as well as display settings like font / text size, are stored on the server
@@ -675,11 +675,11 @@ uncommitted changes exist only inside the workspace, so commit / push for long-t
 
 **Q. Is it OK to run several tasks at the same time?**
 Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are
-created by default ([03](03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work) · [Launch a session from a repository](../user/code/launch-from-repo.md)).
+created by default ([Work in parallel with worktrees](../user/sessions/worktrees.md) · [Launch a session from a repository](../user/code/launch-from-repo.md)).
 
 **Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
 Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),
-Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [05](05-stopping-and-tidying.md#stopping-and-tidying-up-sessions).
+Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [Stop and resume a session](../user/sessions/stop-resume.md#choose-how-to-stop).
 
 **Q. opencode doesn't show up among the new-session kinds**
 On its card in ⚙ Settings → Agents, **"Use opencode"** must be on, and the **"opencode.ai

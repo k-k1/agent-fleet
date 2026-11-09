@@ -24,7 +24,7 @@ The row's badges also tell you about unpushed changes and changes you have not b
 2. Choose the agent, model, **location** and first prompt
 3. Launch
 
-- The location defaults to an isolated "**New worktree**". What each location does, and the base branch and branch name, are in [Worktrees and new branches](../../member/03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work)
+- The location defaults to an isolated "**New worktree**". What each location does, and the base branch and branch name, are in [Work in parallel with worktrees](../sessions/worktrees.md)
 - The **▾** next to "Launch" lets you pick a kind (an agent or a shell) and launch at once without the screen. No prompt is passed
 - In the **▾** list, Ctrl+click or middle-click launches into a new pane
 
@@ -101,11 +101,11 @@ Right-click a row for this menu. Some items are hidden depending on state and lo
 | Launch Shell | Opens a shell session in that working copy |
 | Start an image studio | Starts an image studio in that working copy ([Finish an image in the studio](../images/studio.md)). Shown only while the workspace is running and image generation is available |
 | Working sets | Assigns the copy to a working set ([11](../../member/11-many-sessions.md#narrowing-the-view-with-working-sets)) |
-| Stop the sessions below | Stops the sessions running in that working copy and the ones under it, together ([05](../../member/05-stopping-and-tidying.md#stopping-and-tidying-up-sessions)) |
+| Stop the sessions below | Stops the sessions running in that working copy and the ones under it, together ([Stop and resume a session](../sessions/stop-resume.md#stop-every-session-in-one-working-copy)) |
 | Archive all stopped sessions | Archives the stopped sessions of that working copy together |
 | Archived sessions of this working copy | Opens the archive list narrowed to that working copy |
-| Lock against deletion, Unlock (allow deletion) | Keeps the working copy out of automatic tidying and stops it being deleted. A lock icon appears on the row, and "Delete the working copy" stays greyed out until you unlock ([05](../../member/05-stopping-and-tidying.md#locking-something-against-deletion)) |
-| Delete the working copy | [05](../../member/05-stopping-and-tidying.md#clearing-one-finished-job-deleting-a-working-copy) |
+| Lock against deletion, Unlock (allow deletion) | Keeps the working copy out of automatic tidying and stops it being deleted. A lock icon appears on the row, and "Delete the working copy" stays greyed out until you unlock ([Clear away finished sessions](../sessions/cleanup.md#lock-something-against-deletion)) |
+| Delete the working copy | [Clear away finished sessions](../sessions/cleanup.md#delete-one-jobs-working-copies) |
 
 - "Stop the sessions below" and "Archive all stopped sessions" appear, with a count, only when there is something to act on
 

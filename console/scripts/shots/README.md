@@ -93,8 +93,8 @@ The container is shared, so pass `--port` / `--cdp-port` that nothing else is li
 Scenes marked `guide: true` are for the rewritten guide and the public docs site (ADR 0131). The
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
 `aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `chat-settings`, `ops-settings`,
-`images-gallery`, `images-settings`, and the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
-`ws-databases`, and the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`) runs on its own:
+`images-gallery`, `images-settings`, the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
+`ws-databases`, the sessions pages' `sessions-budget`, the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`, and the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -108,6 +108,10 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only ops-sett
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-studio,images-form --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-gallery --out <dir>   # and images-settings
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only conv-plan --out <dir>    # and every other conv-* scene, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-start,sessions-launch,sessions-location,sessions-issue,sessions-status,sessions-issue-list,sessions-pr --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-cleanup,sessions-stop-below,sessions-resume,sessions-menu,sessions-move,sessions-handoff --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-budget --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only code-git-hosting --out <dir>  # and code-internal-repos, code-clone, code-gitflow, code-repo-rows, code-repo-menu, code-changes, code-svn, one per run
 ```
 

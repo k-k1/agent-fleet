@@ -80,7 +80,13 @@ const exact = {
   "/api/sessions": (q, method) =>
     method === "POST"
       ? { name: "s" + crypto.randomUUID().slice(0, 6) }
-      : { sessions: FLEET_LANES ? fx.sessionsBig(LOCALE, FLEET_LANES) : fx.sessions(LOCALE) },
+      : {
+          sessions: FLEET_LANES
+            ? fx.sessionsBig(LOCALE, FLEET_LANES)
+            : process.env.SHOT_SESSIONS_GUIDE
+              ? fx.sessionsBudgetStopped(LOCALE)
+              : fx.sessions(LOCALE),
+        },
   "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
   // Past-session search (ADR 0110) for the palette's conversations mode. Hits name sessions from
   // fx.sessions so Enter has something to open, plus one archived session that is not listed.
@@ -433,6 +439,9 @@ const exact = {
 };
 
 const re = [
+  // The budget dialog of the sessions guide (SHOT_SESSIONS_GUIDE): the spend of the session its
+  // budget stopped. Without it the route stays unhandled, as it always was.
+  ...(process.env.SHOT_SESSIONS_GUIDE ? [[/^\/api\/sessions\/([^/]+)\/spend$/, (m) => fx.sessionSpendGuide(m[1])]] : []),
   // The move dialog's preview (ADR 0115) for the move scene.
   [/^\/api\/sessions\/([^/]+)\/move\/preview$/, (m) => fx.movePreview(LOCALE, m[1])],
   // The model picker of a target kind: invented ids, so no real third-party model is named.
@@ -443,6 +452,30 @@ const re = [
     /^\/api\/sessions\/([^/]+)\/messages$/,
     (m) => {
       const body = fx.messages(LOCALE, decodeURIComponent(m[1]));
+      // SHOT_FORK: user turns carry the anchor a branch point needs, so "Branch here" shows.
+      if (process.env.SHOT_FORK) {
+        body.messages = body.messages.map((t) => (t.role === "user" ? { ...t, anchorId: `u-${t.idx}` } : t));
+      }
+      // SHOT_BUSY: a turn is running and nothing waits on the user (the guide's waiting-list shot).
+      if (process.env.SHOT_BUSY && body.status === "question") {
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return { ...rest, status: "working" };
+      }
+      // SHOT_TRANSLATE: the agent answered in the other language, so the translate button shows.
+      if (process.env.SHOT_TRANSLATE && body.status === "question") {
+        const other = fx.messages(LOCALE === "ja" ? "en" : "ja", decodeURIComponent(m[1])).messages;
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return {
+          ...rest,
+          status: "idle",
+          messages: body.messages.map((t, i) => (t.role === "assistant" && other[i] ? other[i] : t)),
+        };
+      }
+      // SHOT_PLAN: the mirror session waits on a plan instead of a question (the guide's plan page).
+      if (process.env.SHOT_PLAN && body.status === "question") {
+        const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+        return { ...rest, status: "plan", mode: "plan", pendingPlan: fx.pendingPlan(LOCALE) };
+      }
       if (!IDLE) return body;
       const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
       return { ...rest, status: body.status === "question" ? "idle" : body.status };

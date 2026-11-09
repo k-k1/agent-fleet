@@ -113,7 +113,7 @@ land in the same workspace, the same home and the same settings.
   terminals. Off by default.
 - **Send key**: **Ctrl+Enter to send (Enter for a newline, the default)** or **Enter to send
   (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
-- **Reply suggestions**: chips with short replies above the composer ([04](04-conversation.md#reply-suggestions)). This is also
+- **Reply suggestions**: chips with short replies above the composer ([Reply to a session](../user/sessions/reply.md#use-reply-suggestions)). This is also
   where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
   drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
   back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
@@ -241,7 +241,7 @@ the assistant conversation: they share an implementation, but they surface somew
   - **Work-plan update**: the "refresh" button that re-derives the assistant chat's plan from the recent
     exchange.
   - **Answer translation (mirror)**: the "Translate" button on a mirror answer that came back in another
-    language ([04](04-conversation.md#reading-an-answer-in-your-own-language-translation)). A translation is kept
+    language ([Read an answer in your own language](../user/sessions/translate.md)). A translation is kept
     per agent/model: changing this feature's agent or model means the next press generates a fresh one (the earlier
     one comes back if you switch back).
   - **Translate automatically**: presses that button for you the moment a turn finishes (off by default). Only
