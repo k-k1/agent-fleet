@@ -101,7 +101,7 @@ func watchSchema() map[string]any {
 				"types":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "event types to be told about"},
 				"until":            map[string]any{"type": "string", "enum": []string{"first", "deadline"}},
 				"expires_in_hours": map[string]any{"type": "integer", "minimum": 1, "maximum": 720},
-				"source":           map[string]any{"type": "string", "enum": []string{"github", "bitbucket"}, "description": "default github"},
+				"source":           map[string]any{"type": "string", "description": "github (default), bitbucket, or ext.<name> for an MCP server of yours that is marked as a watch source (its types start with ext.<name>.)"},
 				"notify":           map[string]any{"type": "string", "enum": []string{"self", "parent"}, "description": "default self"},
 			},
 			"required": []string{"ref", "types"},

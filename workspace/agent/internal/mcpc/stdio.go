@@ -87,13 +87,18 @@ func (b *limitedBuffer) String() string {
 // out from under a caller who is still using it (ADR 0093 decision 6: "stdio 子はセッ
 // ションと共に死ぬこと" — tied to Manager.Close()/the session context passed to
 // NewManager, not to any one request's deadline).
-func dialStdio(def mcpreg.ServerDef) (*stdioConn, error) {
+func dialStdio(def mcpreg.ServerDef, narrow bool) (*stdioConn, error) {
 	cmd := exec.Command(def.Command, def.Args...)
-	env := os.Environ()
-	for k, v := range def.Env {
-		env = append(env, k+"="+v)
+	if narrow {
+		// The watch engine's connections: never the Agent's own environment (ADR 0133 §8).
+		cmd.Env = mcpreg.StdioEnv(def)
+	} else {
+		env := os.Environ()
+		for k, v := range def.Env {
+			env = append(env, k+"="+v)
+		}
+		cmd.Env = env
 	}
-	cmd.Env = env
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

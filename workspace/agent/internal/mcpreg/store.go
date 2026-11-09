@@ -59,6 +59,9 @@ func optOutPath() string {
 type tenantCache struct {
 	FetchedAt int64       `json:"fetchedAt"`
 	Servers   []ServerDef `json:"servers"`
+	// WatchSources is the tenant switch for member-added watch sources (ADR 0133 §8). Absent
+	// means off: a deployment whose CP predates the switch, or has no bridge, never enables it.
+	WatchSources bool `json:"watchSources,omitempty"`
 }
 
 func loadTenantCache() tenantCache {

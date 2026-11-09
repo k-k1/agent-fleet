@@ -2858,11 +2858,7 @@
             "type": "string"
           },
           "source": {
-            "description": "default github",
-            "enum": [
-              "github",
-              "bitbucket"
-            ],
+            "description": "github (default), bitbucket, or ext.<name> for an MCP server of yours that is marked as a watch source (its types start with ext.<name>.)",
             "type": "string"
           },
           "types": {
