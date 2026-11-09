@@ -26,9 +26,9 @@ If a feature ships and does not appear here, it is not done
 | Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [Hold what you send, stop a turn](../user/sessions/queue.md#hold-follow-ups-in-the-waiting-list) |
 | Have another session review a plan | member | the plan card | [Comment on a plan, have it reviewed](../user/sessions/plans.md#have-another-session-review-it) |
 | Skill / command picker | member | mirror composer | [Call a skill or a command](../user/sessions/skills.md); [agents.md](agents.md) for which agents |
-| Live terminal attached to a session | member | main area | [08 Terminal](../member/08-terminal.md) |
-| Terminal round-trip time (keystroke lag) | member | terminal pane header | [08 Terminal](../member/08-terminal.md) |
-| Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [08 Terminal](../member/08-terminal.md#copy-paste) |
+| Live terminal attached to a session | member | main area | [Use the terminal](../user/files/terminal.md) |
+| Terminal round-trip time (keystroke lag) | member | terminal pane header | [Use the terminal](../user/files/terminal.md) |
+| Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [Use the terminal](../user/files/terminal.md#copy-and-paste) |
 | Resume a stopped session | member | left pane → the session | [Stop and resume a session](../user/sessions/stop-resume.md) |
 | Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
 | Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [See every running session](../user/fleet/overview.md) |
@@ -61,14 +61,14 @@ If a feature ships and does not appear here, it is not done
 | Use `confluence` in a session, already signed in (the Jira connection) | member | any session | [Use Confluence](../user/integrations/confluence.md) |
 | Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [Use Jira](../user/integrations/jira.md#ask-an-agent) |
 | Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [Use a Subversion repository](../user/code/svn.md) |
-| File tree and viewer | member | Files | [07 Files](../member/07-files.md) |
-| Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [07 Files](../member/07-files.md#download-a-folder-as-zip) |
-| Open a shell from a folder | member | Files tree → right-click a folder → Open shell here | [07 Files](../member/07-files.md#open-a-shell-from-a-folder) |
-| Links in rendered Markdown — tickets, file paths, loopback URLs that open the workspace preview | member | mirror, chat, file and document viewers | [07 Files](../member/07-files.md#links-in-rendered-markdown) |
+| File tree and viewer | member | Files | [See and download files](../user/files/browse.md) |
+| Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [See and download files](../user/files/browse.md#download-a-folder-as-zip) |
+| Open a shell from a folder | member | Files tree → right-click a folder → Open shell here | [See and download files](../user/files/browse.md#open-a-shell-from-a-folder) |
+| Links in rendered Markdown — tickets, file paths, loopback URLs that open the workspace preview | member | mirror, chat, file and document viewers | [View documents and diagrams](../user/files/view.md#links-in-documents) |
 | Menu on file and folder links in replies and documents | member | right-click a link | [Icons, badges and menus](../member/badges-and-menus.md#file-and-folder-links-in-replies-and-documents) |
-| Markdown and code editing | member | Files → a file | [07 Files](../member/07-files.md) |
-| `.drawio` diagrams | member | Files → a `.drawio` file | [07 Files](../member/07-files.md) |
-| PDF and Office document preview | member | Files → that document | [07 Files](../member/07-files.md) |
+| Markdown and code editing | member | Files → a file | [Edit a file](../user/files/edit.md) |
+| `.drawio` diagrams | member | Files → a `.drawio` file | [View documents and diagrams](../user/files/view.md) |
+| PDF and Office document preview | member | Files → that document | [View documents and diagrams](../user/files/view.md) |
 | Image generation — make pictures in bulk without an agent | member | action bar → Images, or leader `g i` | [Generate images](../user/images/generate.md) |
 | Edit and inpaint — reference pictures, a mask file, instruction-edit models | member | image generation → Advanced → Operation | [Generate images](../user/images/generate.md#edit-a-picture-you-have) |
 | LoRAs with their trigger words, shown before you pick one | member | image generation → LoRAs | [Generate images](../user/images/generate.md#write-the-prompt) |
@@ -76,10 +76,10 @@ If a feature ships and does not appear here, it is not done
 | Image knowledge notes — four sections per model and per family, in `~/imagegen-knowledge/` | member | image generation → Notes, or the file tree | [Finish an image in the studio](../user/images/studio.md#grow-the-knowledge-notes) |
 | Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [Use the image gallery](../user/images/gallery.md) |
 | Gallery card menu — copy, rename, delete, jump to the session that made it | member | gallery card → right-click | [Icons, badges and menus](../member/badges-and-menus.md#cards-in-the-image-gallery) |
-| Browser pane for a local web app | member | workspace action bar → Preview | [14 Preview and browser](../member/14-preview-browser.md); [browser-pane.md](browser-pane.md) for the contract |
-| Preview subdomains (minted on every start) | member | workspace action bar → Preview | [14 Preview and browser](../member/14-preview-browser.md) |
-| Sign in with Google on a preview URL (development OIDC IdP) | member | Settings → Preview subdomains | [14 Preview and browser](../member/14-preview-browser.md#signing-in-with-google-on-a-preview-url-development-oidc-idp) |
-| Attach to a Chromium the agent owns | member | a link the agent hands you | [14 Preview and browser](../member/14-preview-browser.md) |
+| Browser pane for a local web app | member | workspace action bar → Preview | [See a web app you started](../user/preview/browser-pane.md); [browser-pane.md](browser-pane.md) for the contract |
+| Preview subdomains (minted on every start) | member | workspace action bar → Preview | [Use preview subdomains](../user/preview/subdomains.md) |
+| Sign in with Google on a preview URL (development OIDC IdP) | member | Settings → Preview subdomains | [Try Google sign-in on a preview](../user/preview/dev-signin.md) |
+| Attach to a Chromium the agent owns | member | a link the agent hands you | [Operate a browser the agent opened](../user/preview/agent-browser.md) |
 
 ## Organising the work
 

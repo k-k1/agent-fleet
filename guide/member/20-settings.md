@@ -68,8 +68,8 @@ Everything about appearance.
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
 - **Terminal**: font and font size, and **Ctrl+C / Ctrl+V copy and paste** (on by default; when Ctrl+C
-  copies and when it interrupts the program is in [08](08-terminal.md#copy-paste)).
-- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([07](07-files.md)).
+  copies and when it interrupts the program is in [Use the terminal](../user/files/terminal.md#copy-and-paste)).
+- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([View documents and diagrams](../user/files/view.md)).
 - **Reader view** / **file icons** (icon set).
 - **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
@@ -375,13 +375,10 @@ This workspace's PostgreSQL and MySQL:
 
 ### Preview subdomains
 
-Settings for opening the app you are building at `https://<random>-<port>.<domain>/`. **The tab is only
-there on a deployment that issues preview subdomains** (elsewhere no URL would ever be minted, whatever
-you set here). Which ports are exposed, pinning the URL, sharing it with your tenant, opening it without a
-login, and re-issuing the URL all live here. Where the deployment offers the development OIDC IdP, the tab
-also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the client secret is not shown),
-**Issue a new secret…**, **App configuration examples** and **Test personas**.
-→ [14 Preview and browser](14-preview-browser.md#preview-subdomains-only-where-they-are-issued)
+The tab for opening the app you are building at its own URL. It is only there on a deployment that issues preview
+subdomains. The ports, sharing and re-issuing the URL are in [Use preview subdomains](../user/preview/subdomains.md); the
+development OIDC IdP block (issuer, client id, app configuration examples, test personas) is in
+[Try Google sign-in on a preview](../user/preview/dev-signin.md).
 
 ### Internal repos
 

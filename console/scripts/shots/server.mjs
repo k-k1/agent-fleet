@@ -450,7 +450,29 @@ const exact = {
       "3000": "https://k7f2q9x1w3ub5nzt0abc-3000.pv.example.com",
       "8080": "https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com",
     },
+    // The development OIDC IdP block of the preview page (SHOT_PREVIEW_GUIDE): a fictional
+    // issuer and client id. Without it the tab shows no IdP, as it always did.
+    ...(process.env.SHOT_PREVIEW_GUIDE
+      ? {
+          devIdpAvailable: true,
+          devIdpIssuer: "https://console.example.com/dev-idp",
+          devIdpClientId: "af-ws-7d3k9q2m",
+        }
+      : {}),
   }),
+  // Test personas for the same page, served only to a run that asks (SHOT_PREVIEW_GUIDE).
+  ...(process.env.SHOT_PREVIEW_GUIDE
+    ? {
+        "/api/env/ws-settings/dev-idp/personas": () => ({
+          max: 20,
+          domain: "example.test",
+          personas: [
+            { id: "p1", handle: "admin", name: "Admin", email: "admin@example.test", sub: "persona:admin" },
+            { id: "p2", handle: "viewer", name: "Viewer", email: "viewer@example.test", sub: "persona:viewer" },
+          ],
+        }),
+      }
+    : {}),
   // Settings › Agents (the Claude card's behavior) and Settings › Agent instructions for the user
   // guide's agent pages, served only to a run that asks (SHOT_AGENTS_GUIDE).
   ...(process.env.SHOT_AGENTS_GUIDE

@@ -1827,6 +1827,213 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  {
+    // The Files section with a folder's right-click menu (files/browse page): open a shell here,
+    // download as zip, and the rest. The clip is the menu and the row it was opened on.
+    name: "files-menu",
+    guide: true,
+    clip: [".files-ctxmenu", "#shot-files-row"],
+    pad: 8,
+    sections: { assistant: 0, workitems: 0, memos: 0, schedules: 0, repos: 0, files: 1 },
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/runbook.md" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const row = (name) => [...document.querySelectorAll(".fsrow")].find((el) => (el.querySelector(".fs-name")?.textContent || "").trim() === name);
+      for (let i = 0; i < 50 && !row("webshop"); i++) await wait(200);
+      if (!row("docs")) row("webshop")?.click();
+      for (let i = 0; i < 50 && !row("docs"); i++) await wait(200);
+      const r = row("docs");
+      if (r) r.id = "shot-files-row";
+      const b = r?.getBoundingClientRect();
+      r?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: b ? b.left + 150 : 200, clientY: b ? b.top + 8 : 300 }));
+    })()`,
+    settle: 1500,
+  },
+  {
+    // A Markdown file in the viewer (files/view page): the Preview / Source switch over the
+    // rendered text and its Mermaid diagram.
+    name: "files-view",
+    guide: true,
+    clip: ".fileview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1100,
+    height: 760,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/checkout-flow.md" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mermaid-diagram svg")`,
+  },
+  {
+    // A draw.io diagram in the viewer (files/view page): the Diagram / Source switch and the
+    // page and zoom readout the header shows once the viewer has drawn.
+    name: "files-drawio",
+    guide: true,
+    clip: ".fileview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1100,
+    height: 700,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/architecture.drawio" })])], colRatios: [1], activeId: "p0" },
+    ready: `[...document.querySelectorAll(".fi-meta")].some((el) => /\\d%/.test(el.textContent || ""))`,
+  },
+  {
+    // The same file switched to Split (files/edit page): the editor beside the preview, with Save
+    // and AI proposal in the header.
+    name: "files-edit",
+    guide: true,
+    stubEnv: { SHOT_FILES_GUIDE: "1" },
+    clip: ".fileview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 760,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/checkout-flow.md" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mermaid-diagram svg")`,
+    action: `(async () => {
+      const b = [...document.querySelectorAll(".fileview button")].find((el) => /^(分割|Split)$/.test((el.textContent || "").trim()));
+      b?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Text selected in the viewer and "Send" pressed (files/send page): the send dialog.
+    name: "files-send",
+    guide: true,
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "file", filePath: "repos/webshop/docs/checkout-flow.md" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mermaid-diagram svg")`,
+    // The pill appears for a selection in the source lines (the code grid), not in the rendered
+    // preview, so the scene switches to Source first and selects a few lines there.
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      [...document.querySelectorAll(".fileview button")].find((el) => /^(ソース|Source)$/.test((el.textContent || "").trim()))?.click();
+      for (let i = 0; i < 30 && !document.querySelector(".codeview .codegrid"); i++) await wait(200);
+      const grid = document.querySelector(".codeview .codegrid");
+      const cells = grid ? [...grid.querySelectorAll("*")].filter((el) => /カートから|from the cart to/.test(el.textContent || "") && el.children.length === 0) : [];
+      const cell = cells[0];
+      if (cell) {
+        const range = document.createRange();
+        range.selectNodeContents(cell);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        const b = cell.getBoundingClientRect();
+        cell.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: b.right - 10, clientY: b.bottom - 4 }));
+      }
+      for (let i = 0; i < 20 && !document.querySelector(".sel-send-pill"); i++) await wait(200);
+      document.querySelector(".sel-send-pill")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // Settings › Display, the Terminal group (files/terminal page): font, size and the copy and
+    // paste switches.
+    name: "files-terminal",
+    guide: true,
+    clip: "#shot-term-group",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "display",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const h = [...document.querySelectorAll(".settings-modal .ds-title")].find((el) => /^(ターミナル|Terminal)$/.test((el.textContent || "").trim()));
+      if (h) { const g = h.closest(".ds-group") || h.parentElement; g.id = "shot-term-group"; g.scrollIntoView({ block: "center" }); }
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The workspace bar's Preview popover (preview/browser-pane page): the port and path fields,
+    // the open targets and this start's preview URLs.
+    name: "preview-pop",
+    guide: true,
+    clip: ".ws-preview-pop",
+    pad: 4,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 30 && document.querySelector(".ws-preview-btn")?.disabled; i++) await wait(300);
+      document.querySelector(".ws-preview-btn")?.click();
+      for (let i = 0; i < 30 && !document.querySelector(".ws-preview-pop .pv-host"); i++) await wait(200);
+      // A port typed in, so the open buttons read as they do in use rather than greyed out.
+      const port = document.querySelector(".ws-preview-pop .preview-port");
+      if (port) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(port, "5173");
+        port.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Settings › Preview subdomains (preview/subdomains page): the current URLs, the ports and
+    // the switches that widen who may open them.
+    name: "preview-settings",
+    guide: true,
+    stubEnv: { SHOT_PREVIEW_GUIDE: "1" },
+    clip: ["#shot-pv-a", "#shot-pv-b"],
+    pad: 4,
+    sections: FOCUS_TREE,
+    settings: "preview",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      // The tab is one section; the clip runs from its title to the reissue note.
+      const h = document.querySelector(".settings-modal .ds-title");
+      if (h) h.id = "shot-pv-a";
+      const re = [...document.querySelectorAll(".settings-modal button")].find((el) => /いま捨てて発行し直す|Discard and mint a new one/i.test(el.textContent || ""));
+      if (re) re.id = "shot-pv-b";
+      h?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The development OIDC IdP block of the same tab (preview/dev-signin page): issuer, discovery
+    // URL and client id with their copy buttons, and the secret rotation.
+    name: "preview-devidp",
+    guide: true,
+    stubEnv: { SHOT_PREVIEW_GUIDE: "1" },
+    clip: ["#shot-dip-a", "#shot-dip-b"],
+    pad: 4,
+    sections: FOCUS_TREE,
+    settings: "preview",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const h = [...document.querySelectorAll(".settings-modal .ds-title")].find((el) => /OIDC/.test(el.textContent || ""));
+      if (h) h.id = "shot-dip-a";
+      const rot = [...document.querySelectorAll(".settings-modal button")].find((el) => /新しい secret を発行|Issue a new secret/i.test(el.textContent || ""));
+      const row = rot?.closest(".ds-row, div");
+      if (row) row.id = "shot-dip-b";
+      h?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 2500,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

@@ -395,7 +395,7 @@ from then on you can clone / push without entering tokens ([Connect a Git servic
 
 ## Preview and browser
 
-The browser pane, the lightweight preview and preview subdomains. The explanations are in [chapter 14](14-preview-browser.md); these entries are the quick diagnosis.
+The browser pane, the lightweight preview and preview subdomains. The explanations are in [chapter 14](../user/preview/browser-pane.md); these entries are the quick diagnosis.
 
 | You see | Entry |
 |---|---|
@@ -412,7 +412,7 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
 - **`target-unreachable`** means the browser started but the port and path do not answer yet; a dev
   server that is still starting up looks the same. Check the port number and path, then press
   **"Reload"**, and **"Reconnect"** if it stays. Listening on `127.0.0.1` is enough. The pane's
-  other states are in [14](14-preview-browser.md#status-display-and-recovery).
+  other states are in [14](../user/preview/browser-pane.md#the-pane-shows-a-state-instead-of-the-page).
 - **A 502 page from the lightweight preview or a preview subdomain** says which failure it is:
   *nothing is listening on the port* (start the app, reload); *the port is listening but does not speak HTTP*
   (a database, SSH, gRPC over h2c: the preview carries HTTP and WebSocket only); *the port is serving HTTPS*
@@ -422,13 +422,13 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
 - **A blank page / 404** usually means an app that loads assets by absolute path (`/static/...`) was opened in
   the **lightweight preview**, whose URL is a sub-path (`/preview/{port}/`). Open it on the preview subdomain
   if your deployment issues one, or switch to **"Open in pane"**; the fixes on the app's side are in
-  [14](14-preview-browser.md#viewing-a-web-app-you-started-browser-pane-and-lightweight-preview).
+  [14](../user/preview/browser-pane.md#choose-how-to-open-it).
 
 ### The preview URL I gave a colleague returns 404
 
 - **A preview subdomain URL changes every time the workspace restarts**, so a pasted
   `https://<random>-3000.…` returns 404 after the next start. Hand out the link from the **"Share"** button
-  in the preview popover: it survives restarts ([14](14-preview-browser.md#showing-it-to-someone-else-three-steps)).
+  in the preview popover: it survives restarts ([14](../user/preview/subdomains.md#show-it-to-others)).
 - Nothing under **"Shared with you"**, or a 404: check that **"Show it to your tenant"** is on under
   Settings › Preview subdomains. Turning it off closes the preview **from their very next request**, even
   mid-session; that is deliberate.
@@ -442,12 +442,12 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
   no row of API data appears** (not blank, no error), yet `127.0.0.1:<port>` shows it correctly. The dev
   server blocks cross-origin access to `/_next/*` by default, so HMR never connects and hydration never
   finishes; `⚠ Blocked cross-origin request to Next.js dev resource` in the dev server log confirms it. Add
-  `allowedDevOrigins` with a wildcard, since the URL changes on every start ([14](14-preview-browser.md#what-the-app-has-to-get-right)
+  `allowedDevOrigins` with a wildcard, since the URL changes on every start ([14](../user/preview/subdomains.md#what-the-app-has-to-get-right)
   has the exact form).
 - **The lightweight preview and the preview subdomains both pass WebSocket and SSE through.** On a **preview
   subdomain**, Vite 8.3.6 connected over `wss` on 443 with no `hmr` setting (measured), so there is no need to add
   `server.hmr.clientPort` there. If the page reloads itself instead of updating in place, the WebSocket was
-  closed after a silent stretch (60 s on the measured deployment); see [14](14-preview-browser.md#what-the-app-has-to-get-right).
+  closed after a silent stretch (60 s on the measured deployment); see [14](../user/preview/subdomains.md#what-the-app-has-to-get-right).
 - If HMR still does not connect (not measured on the lightweight sub-path preview), the dev server may be
   **embedding its own port into the client**. Then the app needs a setting such as `server.hmr.clientPort: 443`.
 - To avoid adding configuration, or to isolate the cause, use **"Open in pane"** (browser pane): a browser
@@ -459,7 +459,7 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
 - **Did you repoint the dev server's proxy at the preview URL?** Keep Vite's `server.proxy` `target` and
   Next.js's `rewrites()` `destination` as **`http://127.0.0.1:8080`**: the proxy is a server-side call made
   by the dev server inside the container and carries no browser login
-  ([14](14-preview-browser.md#what-the-app-has-to-get-right)).
+  ([14](../user/preview/subdomains.md#what-the-app-has-to-get-right)).
 - **If the browser calls the 8080 URL directly**, signing in is per port: open `https://<random>-8080.…`
   **in a tab once** to sign in there too. If the page on 3000 calls 8080 directly, also turn on
   **"Allow calls between ports"** in the settings (off by default).
@@ -468,7 +468,7 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
 
 - **`disconnected`** means the channel (WebSocket) dropped, not necessarily a crash: check that the workspace
   is running and press **"Reconnect"**. **`crashed`** means the browser inside the workspace terminated
-  abnormally; **"Reconnect"** reopens it ([14](14-preview-browser.md#status-display-and-recovery)).
+  abnormally; **"Reconnect"** reopens it ([14](../user/preview/browser-pane.md#the-pane-shows-a-state-instead-of-the-page)).
 - **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy
   builds, watchers and browser panes left open (at most **2** at a time). How to check memory is under
   [See your machine and its usage](../user/workspace/machine.md#see-the-usage) and in the FAQ entry "Builds die / freeze from running out of memory" below.
@@ -476,7 +476,7 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
 ### Signing in on a preview URL shows an Agent Fleet error page
 
 These pages come from the development OIDC IdP
-([14](14-preview-browser.md#signing-in-with-google-on-a-preview-url-development-oidc-idp)).
+([14](../user/preview/dev-signin.md)).
 
 | Page | Cause and fix |
 |---|---|
@@ -496,7 +496,7 @@ These messages come from the preview, not from the app:
 | **"Too many temporarily opened ports. Close a server or add the port to the preview ports in Settings."** | Stop a server you no longer need, or list the port under ⚙ Settings → Preview subdomains. |
 | **"Opening port N is not available until the workspace is restarted (its agent is older than this feature)."** | Restart the workspace. |
 
-See [14](14-preview-browser.md#preview-subdomains-only-where-they-are-issued).
+See [14](../user/preview/subdomains.md).
 
 ## Integrations: MCP, cloud accounts, Jira, outside apps
 
@@ -629,7 +629,7 @@ selection / Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+V / Ctrl+
   ⚙ Settings → Display (on by default). With it off both keys go to the program; Ctrl+Shift+C /
   Ctrl+Shift+V always work.
 
-See [08](08-terminal.md#copy-paste).
+See [08](../user/files/terminal.md#copy-and-paste).
 
 ### App shortcuts such as the command palette don't work
 

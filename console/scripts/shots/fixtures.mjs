@@ -12,6 +12,8 @@
 // Keep them in sync when those contracts move; a drifted fixture renders an empty
 // pane rather than failing loudly.
 
+import { createHash } from "node:crypto";
+
 const L = (locale, ja, en) => (locale === "ja" ? ja : en);
 
 // Clock the fixtures hang off. Real "now", so relative labels ("22 minutes ago", "2 months ago")
@@ -603,7 +605,11 @@ export function fsFile(locale, p) {
   const f = FILES[p];
   if (!f) return { path: p, content: "" };
   const content = f(locale);
-  return { path: p, content, size: Buffer.byteLength(content), editable: true, revision: "demo-1" };
+  // The file pages of the user guide (SHOT_FILES_GUIDE) show the editing controls, which the
+  // Console offers only when the revision is the content's real digest. Other runs keep the
+  // placeholder, so their viewer shots stay read-only as they always were.
+  const revision = process.env.SHOT_FILES_GUIDE ? `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}` : "demo-1";
+  return { path: p, content, size: Buffer.byteLength(content), editable: true, revision };
 }
 
 // Image generation (ADR 0081). The pane's whole surface comes from two routes, so the

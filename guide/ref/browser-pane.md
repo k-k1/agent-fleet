@@ -1,6 +1,6 @@
 ---
 audience: "everyone, and specifically an agent deciding how to show a running web app to a person"
-source_of_truth: "this file for terminology and what the pane can and cannot do; member/14 for states and recovery; limits.md for the numbers; the Console for what a button is called"
+source_of_truth: "this file for terminology and what the pane can and cannot do; user/preview/browser-pane for states and recovery; limits.md for the numbers; the Console for what a button is called"
 ---
 
 # Browser pane — the usage contract
@@ -22,13 +22,13 @@ wrong one wastes a round trip. This is the contract for both.
 exception for "I just need to see one HTTP response".
 
 How to open either one (the port and path fields, which button is the default where) is a member
-procedure: [member/14 Preview and browser](../member/14-preview-browser.md#how-to-use-it). The port `7700` cannot be
+procedure: [See a web app you started](../user/preview/browser-pane.md#open-it). The port `7700` cannot be
 opened, because the Agent itself uses it.
 
 ## Which route, by example
 
 The setup-by-setup table (Node / Vite, Spring Boot, API only, frontend + API) is in
-[member/14 Examples by setup](../member/14-preview-browser.md#examples-by-setup). The rule behind
+[See a web app you started — examples by setup](../user/preview/browser-pane.md#examples-by-setup). The rule behind
 it: anything that needs HMR, WebSocket, SSE, cookies, redirects or absolute asset paths goes to the
 browser pane; a single look at one HTTP response goes to the lightweight preview.
 
@@ -36,7 +36,7 @@ browser pane; a single look at one HTTP response goes to the lightweight preview
 
 The three states the pane can show (`target-unreachable`, `disconnected`, `crashed`), what each
 means and what to do are in
-[member/14 Status display and recovery](../member/14-preview-browser.md#status-display-and-recovery).
+[See a web app you started — when it goes wrong](../user/preview/browser-pane.md#the-pane-shows-a-state-instead-of-the-page).
 The contract behind them: every recovery action (Reconnect, a Console reload, a Workspace
 stop/start) creates a *new* Page at the current port and path, so cookies, storage and half-typed
 input are not restored.
