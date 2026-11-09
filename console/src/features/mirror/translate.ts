@@ -127,8 +127,8 @@ const MAX_LABEL_CHARS = 20;
 // A name made of short parts joined by ・ is a label up to MAX_JOINED_NAME_CHARS: the page name
 // "チーム・チャット・外からつなぐ・設定・セキュリティ" is 25 characters, and as prose it alone pushed
 // one English report past 5% (measured: 6.0%). A sentence containing a ・ usually has a long part
-// and stays prose, but a short list with a short verb ("東京・大阪・名古屋・福岡に出張した") passes as
-// a label; the cost of that wrong guess is one button, never a model run.
+// and stays prose, but a short list with a short verb ("東京・大阪・名古屋・福岡・札幌・仙台・広島に出張した")
+// passes as a label; the cost of that wrong guess is one button, never a model run.
 const MAX_NAME_PART_CHARS = 10;
 const MAX_JOINED_NAME_CHARS = 30;
 const CJK_RUN = /[\u3000-\u303f\u3041-\u309f\u30a0-\u30ff\u3400-\u9fff\uf900-\ufaff\uff01-\uff60]+/g;

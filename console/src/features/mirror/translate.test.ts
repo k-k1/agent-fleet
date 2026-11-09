@@ -122,10 +122,12 @@ describe("looksForeign", () => {
     expect(looksForeign(report, "ja")).toBe(true);
     const english =
       " and then check the answer again in the mirror pane, because the rest of this long status report " +
-      "is written in plain English and there is more of it below";
-    // A part longer than a name keeps the run prose (35 characters, about 20% of the text).
+      "is written in plain English and there is more of it below for the whole team to read";
+    // A part longer than a name keeps the run prose (35 CJK to 144 Latin letters, 19.6%).
     expect(looksForeign("設定画面からモデル・エージェントを選び直してから翻訳ボタンを押してみて" + english, "ja")).toBe(false);
-    // Short parts, but longer than any joined name (40 characters, about 21%).
+    // A joined run within 30 characters, but one part is longer than a name (28 CJK, 16.3%).
+    expect(looksForeign("モデル・エージェント・プロンプト・コンテキストを確認した" + english, "ja")).toBe(false);
+    // Short parts, but longer than any joined name (40 CJK, 21.7%).
     expect(looksForeign("リンゴ・ミカン・バナナ・ブドウ・モモ・ナシ・カキ・スイカ・メロン・イチゴを買った" + english, "ja")).toBe(false);
   });
 
