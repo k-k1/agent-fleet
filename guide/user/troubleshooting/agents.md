@@ -17,7 +17,7 @@ The connection is usually still fine. This is not a login problem: claude's inte
 - **Resuming** the session, or **"Recreate (current conversation goes to the archive)"** from the ⋯ menu, almost always clears it
 - Running `/login` in the terminal works too
 
-The connection state is on the Claude card in ⚙ Settings → Agents.
+The connection state is on the Claude card in ⚙ Settings → Agents ([Connect Claude](../agents/claude.md#connect)).
 
 ## The agent stopped, saying its login has expired
 
@@ -37,6 +37,8 @@ That is why the Console shows **"Login expired — sign in again"** instead of r
 1. Press **"Re-authenticate"** on the Claude card in ⚙ Settings → Agents
 2. Once you are signed in again, the session carries on without being stopped
 
+How to sign in is in [Connect Claude](../agents/claude.md#connect), and for Codex in [Connect Codex](../agents/codex.md#connect).
+
 - Codex, too, refuses sends after a turn died on its login, until you sign in again. The refusal toast and its **"Re-authenticate"** open that agent's card
 - The launch dialog warns about the expired login as well, but still lets you launch. The first prompt is not delivered, though, and a toast with **"Re-authenticate"** says so once. Sign in again, then send the prompt again
 
@@ -49,7 +51,7 @@ The assistant chat shows the same failure as **"Your Claude login has expired. R
 - **"Re-authenticate"** opens the Claude card so you can sign in again
 - **"Retry"** sends the failed message again
 
-The original error stays under "Details".
+The original error stays under "Details". The assistant chat is described in [Chat and memos](../../member/10-chat-memo.md#what-the-assistant-chat-is).
 
 ## Connecting codex goes nowhere after you approve
 
@@ -86,7 +88,7 @@ The band appears in Managed sessions. A Terminal (CLI) session has no band: open
 ## Starting opencode says "This opencode version is not supported"
 
 The opencode the workspace runs is older than 2, usually one you installed or pinned yourself.
-Agent Fleet runs only opencode 2 (`@opencode/cli`): remove the old one or pin a 2.x release, then start the session again.
+Agent Fleet runs only opencode 2 (`@opencode/cli`): remove the old one or pin a 2.x release, then start the session again ([Connect OpenCode](../agents/opencode.md)).
 
 ## The assistant stopped carrying on by itself
 
@@ -96,6 +98,8 @@ It reached the automatic reply limit. To stop it running away, it can only take 
 - The limit is **"Unattended auto-reply limit"** in ⚙ Settings → Assistant. It cannot be unlimited
 - To keep normal completion reports from triggering automatic replies, turn on **"Quiet completion reports"** on the same screen. Only the report card and the notification arrive
 
+How automatic replies work is in [Running many sessions](../../member/11-many-sessions.md#session-reports-and-auto-reply).
+
 ## The assistant chat says the context is over the limit and does not answer
 
 The conversation has grown too long. Carry on in one of these ways:
@@ -104,7 +108,7 @@ The conversation has grown too long. Carry on in one of these ways:
 - Open a new chat and hand over just the essentials
 
 Starting an exchange above 90 % compacts it automatically first. Going over the limit before that point leaves it in this state.
-Lowering **"Auto-compact threshold (tokens)"** in ⚙ Settings → Assistant makes it less likely.
+Lowering **"Auto-compact threshold (tokens)"** in ⚙ Settings → Assistant makes it less likely ([Chat and memos](../../member/10-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
 
 ## Related
 

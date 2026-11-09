@@ -34,7 +34,7 @@ Agent Fleet cannot fix it on its side. Change the server to one of these:
 - Route every request with the same `Mcp-Session-Id` to the same instance
 
 Load-balancer cookie stickiness does not help, because Claude Code does not send cookies back on MCP requests.
-Once the server is fixed, restart the session.
+Once the server is fixed, restart the session. The connection test is described in [Add an MCP server to your sessions](../integrations/mcp-servers.md#check-it-with-a-connection-test).
 
 ## An MCP server's row says "Sign in again" or "More permission needed"
 

@@ -49,6 +49,8 @@ Setting `cleanupPeriodDays` to `0` makes claude stop saving conversations at all
 - **"Start a new conversation"** continues in the same session without the old context. Any old log or backup that was left is set aside, not deleted
 - If you lowered `cleanupPeriodDays` yourself, remove it
 
+How to resume is in [Stop and resume a session](../sessions/stop-resume.md#resume-a-session).
+
 An old session for which Agent Fleet has no record of a finished turn cannot be told apart. It starts with an empty conversation without a warning, even if its log is gone.
 
 ## "Couldn't restore the conversation log from the backup"
@@ -61,7 +63,7 @@ An empty log that was in the way may have been moved aside as `.superseded.<numb
 
 A provider error, a dropped connection or a usage limit can end a turn partway. You get a notification, so the conversation is not left half-done without you knowing.
 
-A cut-off that time will cure is resumed from where it stopped by these settings. All of them are on by default.
+A cut-off that time will cure is resumed from where it stopped by these settings. All of them are on by default ([Connect Claude](../agents/claude.md#behavior), [Connect Codex](../agents/codex.md#behavior)).
 
 | Setting | What it resumes |
 |---|---|
@@ -108,7 +110,7 @@ With **"Can propose"**, what you type **does not reach the agent until the owner
 The owner's shared session shows **"N pending approval(s)"**: ask them to check it and press **"Approve and send"**.
 With **"View only"** there is no composer at all.
 
-If a send could not be confirmed, it is not sent again automatically, so it cannot arrive twice. Use **"Check result"** to see where it stands.
+If a send could not be confirmed, it is not sent again automatically, so it cannot arrive twice. Use **"Check result"** to see where it stands ([Working with others](../../member/12-collaboration.md#sharing-a-conversation-shared-sessions)).
 
 ## A scheduled run does not fire
 
