@@ -21,6 +21,12 @@ type PRCursor struct {
 	// fall is no news, a rise after one is: two threads, one resolved, a new one is news again.
 	ThreadRise int `json:"thread_rise,omitempty"`
 	Threads    int `json:"threads,omitempty"`
+	// Closed is the state of the close in progress ("merged", "closed", "" while open) and
+	// ClosedAt the close time first seen for it: the version of pr.merged / pr.closed. Bitbucket
+	// has no close time and reports its last update instead, which a comment on a merged PR
+	// moves; pinned here, one close is one event.
+	Closed   string `json:"closed,omitempty"`
+	ClosedAt string `json:"closed_at,omitempty"`
 }
 
 // PRConditions are the conditions that hold now for one PR the session list's caches answered,
@@ -31,7 +37,8 @@ type PRCursor struct {
 //   - pr.review.threads_unresolved each time the unresolved threads rise;
 //   - pr.conflict once per conflict episode;
 //   - pr.ready once per head commit;
-//   - pr.merged / pr.closed once per close time, so a PR reopened and closed again is news.
+//   - pr.merged / pr.closed once per close, versioned by the close time first seen for it, so a
+//     PR reopened and closed again is news and a later update to a closed PR is not.
 //
 // The summaries are composed from fields the cache controls; check names are provider text and
 // go into Data (rule 6.5).
@@ -64,6 +71,14 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 		cur.ThreadRise++
 	}
 	cur.Threads = threads
+	switch pr.State {
+	case "merged", "closed":
+		if cur.Closed != pr.State {
+			cur.Closed, cur.ClosedAt = pr.State, pr.ClosedAt
+		}
+	default:
+		cur.Closed, cur.ClosedAt = "", ""
+	}
 
 	source := sourceOf(subject)
 	ev := func(typ, version, summary string, data []DataItem) {
@@ -71,9 +86,9 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 	}
 	switch pr.State {
 	case "merged":
-		ev("pr.merged", pr.ClosedAt, "The PR was merged.", nil)
+		ev("pr.merged", cur.ClosedAt, "The PR was merged.", nil)
 	case "closed":
-		ev("pr.closed", pr.ClosedAt, "The PR was closed without merging.", nil)
+		ev("pr.closed", cur.ClosedAt, "The PR was closed without merging.", nil)
 	case "open":
 		if pr.Checks == "failure" && !pr.ChecksPending && pr.Head != "" {
 			data := make([]DataItem, 0, len(pr.FailingChecks))
