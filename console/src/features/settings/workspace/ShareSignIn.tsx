@@ -9,10 +9,11 @@
 // What a request carries is the profile's own fields (groupBody) and the sign-in's name; no
 // token, cache content or other row is read.
 import { useRef, useState } from "react";
-import { api, rawJSON } from "../../../core/api/client.ts";
+import { rawJSON } from "../../../core/api/client.ts";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
+import { listSsmProfiles, listSsmSignIns, type SsmProfile } from "./ssmApi.ts";
 import {
   groupable,
   groupBody,
@@ -87,14 +88,14 @@ export function ShareSignIn({
     setStale("");
     // Re-read what the CP holds now: another tab may have created the sign-in elsewhere or moved
     // a profile's portal since the dialog opened, and the writes would then act on old values.
-    const [pr, sr] = await Promise.all([api("api/ssm/profiles").catch(() => null), api("api/ssm/sign-ins").catch(() => null)]);
+    const [pr, sr] = await Promise.all([listSsmProfiles().catch(() => null), listSsmSignIns().catch(() => null)]);
     if (!Array.isArray(pr) || !Array.isArray(sr)) {
       setStale("ssm.share_unread");
       setBusy(false);
       return;
     }
-    const freshSignIns: SsmSignIn[] = sr.filter((x: any) => typeof x?.name === "string");
-    const byId = new Map<string, any>(pr.map((p: any) => [String(p.id), p]));
+    const freshSignIns: SsmSignIn[] = sr.filter((x) => typeof x?.name === "string");
+    const byId = new Map<string, SsmProfile>(pr.map((p) => [String(p.id), p]));
     const pending = group.filter((p) => outcomes[p.id]?.status !== "joined");
     const fresh: typeof group = [];
     for (const p of pending) {
@@ -107,7 +108,7 @@ export function ShareSignIn({
       }
       fresh.push(c);
     }
-    const freshOthers = pr.filter((p: any) => groupable(p) && !group.some((g) => g.id === String(p.id))).map(toCandidate);
+    const freshOthers = pr.filter((p) => groupable(p) && !group.some((g) => g.id === String(p.id))).map(toCandidate);
     const again = nameProblem(signIn, fresh, freshOthers, freshSignIns);
     if (again) {
       setStale(PROBLEM_KEYS[again]);

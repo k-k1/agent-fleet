@@ -31,7 +31,9 @@ package main
 // without adding a check fails here.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"reflect"
 	"runtime"
 	"testing"
@@ -48,20 +50,20 @@ func TestSessionWiringIsLive(t *testing.T) {
 		"FirstNonEmpty":    func(t *testing.T) { sameSessionFunc(t, w.FirstNonEmpty, firstNonEmpty) },
 		"SplitFrontmatter": func(t *testing.T) { sameSessionFunc(t, w.SplitFrontmatter, splitFrontmatter) },
 
-		"BrowseRoot":     func(t *testing.T) { sameSessionFunc(t, w.BrowseRoot, browseRoot) },
-		"MaxUploadBytes": func(t *testing.T) { sameSessionFunc(t, w.MaxUploadBytes, maxUploadBytes) },
-		"ReadRoots":      func(t *testing.T) { sameSessionFunc(t, w.ReadRoots, allowedReadRoots) },
+		"BrowseRoot":     func(t *testing.T) { sameSessionFunc(t, w.BrowseRoot, fsx.BrowseRoot) },
+		"MaxUploadBytes": func(t *testing.T) { sameSessionFunc(t, w.MaxUploadBytes, fsx.MaxUploadBytes) },
+		"ReadRoots":      func(t *testing.T) { sameSessionFunc(t, w.ReadRoots, fsx.AllowedReadRoots) },
 
 		"IsSvnRepo":       func(t *testing.T) { sameSessionFunc(t, w.IsSvnRepo, svnx.IsRepo) },
 		"RepoJobsRunning": func(t *testing.T) { sameSessionFunc(t, w.RepoJobsRunning, repoJobsRunning) },
 		"ImageJobsActive": func(t *testing.T) { sameSessionFunc(t, w.ImageJobsActive, imagegen.ActiveJobs) },
 
-		"FinalizeSessionUsage":  func(t *testing.T) { sameSessionFunc(t, w.FinalizeSessionUsage, finalizeSessionUsage) },
-		"MaybeFoldSessionUsage": func(t *testing.T) { sameSessionFunc(t, w.MaybeFoldSessionUsage, maybeFoldSessionUsage) },
+		"FinalizeSessionUsage":  func(t *testing.T) { sameSessionFunc(t, w.FinalizeSessionUsage, usagesvc.FinalizeSessionUsage) },
+		"MaybeFoldSessionUsage": func(t *testing.T) { sameSessionFunc(t, w.MaybeFoldSessionUsage, usagesvc.MaybeFoldSessionUsage) },
 
 		"RemoveTerminalHistory": func(t *testing.T) { sameSessionFunc(t, w.RemoveTerminalHistory, removeTerminalHistory) },
 		"TrashSession":          func(t *testing.T) { sameSessionFunc(t, w.TrashSession, trashSession) },
-		"SessionSpend":          func(t *testing.T) { sameSessionFunc(t, w.SessionSpend, sessionSpend) },
+		"SessionSpend":          func(t *testing.T) { sameSessionFunc(t, w.SessionSpend, usagesvc.SessionSpend) },
 		"ToolchainShellPrefix":  func(t *testing.T) { sameSessionFunc(t, w.ToolchainShellPrefix, toolchainShellPrefix) },
 		"EndRouteTokens":        func(t *testing.T) { sameSessionFunc(t, w.EndRouteTokens, endRouteTokens) },
 

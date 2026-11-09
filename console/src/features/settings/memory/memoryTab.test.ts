@@ -18,7 +18,7 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 // memoryTransfer (export and import), so the family is concatenated and read as one tab body.
 // Add any new file here: forget one and the check that is supposed to watch for unregistered
 // REST paths silently stops covering it.
-const tab = ["./MemoryTab.tsx", "./MemorySnapshotsTab.tsx", "./views/AgentMemoryStatus.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryClaudeImport.tsx", "./memoryMuseImport.tsx", "./memoryClaudeExport.tsx", "./memoryProjectMove.tsx"]
+const tab = ["./MemoryTab.tsx", "./MemorySnapshotsTab.tsx", "./views/AgentMemoryStatus.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryProposals.tsx", "./memoryClaudeImport.tsx", "./memoryMuseImport.tsx", "./memoryClaudeExport.tsx", "./memoryProjectMove.tsx"]
   .map(read)
   .join("\n");
 const dialog = read("../SettingsDialog.tsx");
@@ -84,6 +84,32 @@ describe("agent memory tab in the settings modal", () => {
       expect(tab).toContain(p);
       expect(cpRoutes).toContain("/" + p);
       expect(agentRoutes).toContain(p.replace(/^api\//, "/"));
+    }
+  });
+
+  it("registers every consolidator route the Suggestions view calls, with the writes signed", () => {
+    const src = read("./memoryProposals.tsx");
+    for (const r of ["", "/proposals", "/proposal"]) {
+      expect(cpRoutes).toContain(`"GET /api/agents/memory-consolidation${r}"`);
+      expect(agentRoutes).toContain(`"GET /agents/memory-consolidation${r}"`);
+    }
+    for (const verb of ["approve", "reject", "retry"]) {
+      // The relay row carries sign: signBody, and the Agent wraps the route in memberorigin.Require.
+      expect(cpRoutes).toMatch(new RegExp(`"POST /api/agents/memory-consolidation/proposals/${verb}"[^\\n]*sign: signBody`));
+      expect(agentRoutes).toMatch(new RegExp(`"POST /agents/memory-consolidation/proposals/${verb}", memberorigin\\.Require`));
+    }
+    expect(src).toContain("/proposals/${verb}?proposal=");
+    // Every dynamic key the view builds exists in both catalogs.
+    const keys = [
+      ...["budget", "interrupted", "workspace_stopped", "never_idle", "next_run", "run_failed"].map((c) => `mem.cs_cause_${c}`),
+      ...["ok", "failed", "cut", "idle"].map((c) => `mem.cs_run_${c}`),
+      ...["pending", "approved", "rejected", "expired", "refused", "partial"].map((c) => `mem.cs_status_${c}`),
+      ...["add", "supersede", "merge"].map((c) => `mem.cs_advice_${c}`),
+      ...["patch", "create"].map((c) => `mem.cs_op_${c}`),
+    ];
+    for (const k of keys) {
+      expect(ja, `ja is missing ${k}`).toHaveProperty(k);
+      expect(en, `en is missing ${k}`).toHaveProperty(k);
     }
   });
 

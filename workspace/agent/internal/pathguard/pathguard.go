@@ -1,9 +1,9 @@
 // Package pathguard is the one place this repo confines a query path to a root
 // directory, lexically AND after symlink resolution. It exists because
-// workspace/agent/fs.go's browse-root confinement (safeBrowsePath /
+// workspace/agent/internal/fsx/fs.go's browse-root confinement (safeBrowsePath /
 // fsResolvedOKUnder) and the lcpp harness's cwd confinement (ADR 0093 decision 5,
 // internal/harness/cwd.go) are the same judgement against two different roots — a
-// package.go can't import package main's fs.go, and ADR 0081 decision 3 is explicit
+// package.go can't import package main's internal/fsx/fs.go, and ADR 0081 decision 3 is explicit
 // that the same judgement must not be written twice. Both callers keep their own
 // denylist and multi-root logic; this package only answers "is this path inside
 // that root," lexically and for real.

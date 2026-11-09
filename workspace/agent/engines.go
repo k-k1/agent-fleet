@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"io"
 	"log"
 	"net/http"
@@ -60,19 +61,19 @@ func init() {
 	imagegen.EngineImageRows = engineImageProviderRows
 	// Generated pictures land in the gallery's own folder, so pay the decode here rather
 	// than when somebody opens it: the card's thumbnail and the lightbox's preview, queued
-	// and bounded (fs_thumb.go, warmGenerated).
-	imagegen.WarmThumb = warmGenerated
+	// and bounded (internal/fsx/fs_thumb.go, warmGenerated).
+	imagegen.WarmThumb = fsx.WarmGenerated
 	// The path gate is the same kind of seam (ADR 0081 decision 3): the browse root, the
-	// denylist and the symlink re-check are fs.go's, and internal/imagegen owns "make pixels",
+	// denylist and the symlink re-check are internal/fsx/fs.go's, and internal/imagegen owns "make pixels",
 	// not "know which folders this workspace may read and write". Re-implementing either check
 	// inside that package would be a second copy of a security decision.
-	imagegen.BrowsePath = safeBrowsePath
-	imagegen.BrowseWritablePath = safeWritableResolvedBrowsePath
-	imagegen.BrowseOpenDir = openOutDirSink
+	imagegen.BrowsePath = fsx.SafeBrowsePath
+	imagegen.BrowseWritablePath = fsx.SafeWritableResolvedBrowsePath
+	imagegen.BrowseOpenDir = fsx.OpenOutDirSink
 	// The reference-image gate (ADR 0100 decision 4) reads beneath the browse root itself and
 	// refuses the same denylist the file tree does.
-	imagegen.BrowseRootDir = browseRoot
-	imagegen.PathDenied = isDenied
+	imagegen.BrowseRootDir = fsx.BrowseRoot
+	imagegen.PathDenied = fsx.IsDenied
 	// The image studio (ADR 0100): liveness and the session meta lock are sessionx's, the
 	// member's language is the synced UI preference.
 	imagegen.StudioSessionAlive = func(name string) bool {

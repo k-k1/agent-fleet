@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"os"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func TestUsageLedgerLive(t *testing.T) {
 	if os.Getenv("AF_TITLE_LIVE") != "1" {
 		t.Skip("set AF_TITLE_LIVE=1 to enable")
 	}
-	useTempUsageDir(t)
+	usagesvc.UseTempUsageDir(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	ctx = usagex.WithTag(ctx, usagex.Tag{

@@ -35,7 +35,7 @@ import (
 // of those screens — it goes straight to the main screen, and driveOnboarding only answers the
 // screens that appear. agy writes the credential itself to
 // ~/.gemini/antigravity-cli/antigravity-oauth-token in plaintext: outside the encrypted store,
-// and on the denylist (fs.go).
+// and on the denylist (internal/fsx/fs.go).
 
 // trustRe (the workspace-trust screen), readyRe (the main-screen footer) and planRe (the
 // account line's email+plan) are shared with usage.go (Track C).

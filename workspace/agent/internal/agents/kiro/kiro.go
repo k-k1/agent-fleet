@@ -18,7 +18,7 @@
 // (transcript.go). The unguaranteed classic SQLite (`~/.local/share/kiro-cli/data.sqlite3`,
 // headless only) is deliberately not depended on - the lesson from the false-idle caused by
 // opencode's store contract change. Auth is the Builder ID / device flow kind, with credentials
-// under `~/.local/share/kiro-cli/` (auth.go / fs.go denylist).
+// under `~/.local/share/kiro-cli/` (auth.go / internal/fsx/fs.go denylist).
 package kiro
 
 import (
