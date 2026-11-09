@@ -2284,8 +2284,8 @@ func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel strin
 	if sm, ok := backend(kind).(safeOneShotModeler); ok && m == "" {
 		m = sm.safeOneShotModel(prefsVisibility)
 	}
-	if kind == session.KindAgy {
-		m = agyOneShotRunModel(m)
+	if rm, ok := backend(kind).(runModelMatcher); ok {
+		m = rm.oneShotRunModel(m)
 	}
 	return m
 }

@@ -52,6 +52,11 @@ var resetUnits = map[string]time.Duration{
 
 // resetDuration reads "108h50m38s" / "1d 2h" / "2 days". Any unit it does not know makes the
 // whole reading zero: a wrong reset is worse than the backoff guess a zero falls back to.
+// QuotaRefusal implements agents.QuotaRefusalReader.
+func (agentImpl) QuotaRefusal(msg string, now time.Time) (time.Time, bool) {
+	return LimitInMessage(msg, now)
+}
+
 func resetDuration(s string) time.Duration {
 	var d time.Duration
 	for _, p := range resetPartRe.FindAllStringSubmatch(s, -1) {

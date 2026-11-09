@@ -36,8 +36,8 @@ func chatRouteModel(c *ChatConversation, kind string) string {
 	if m == "" && kind == session.KindMuse {
 		m = museSafeOneShotModel(prefsVisibility)
 	}
-	if kind == session.KindAgy {
-		m = agyChatRunModel(m)
+	if rm, ok := backend(kind).(runModelMatcher); ok {
+		m = rm.chatRunModel(m)
 	}
 	return m
 }
