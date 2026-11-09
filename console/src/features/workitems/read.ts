@@ -144,6 +144,7 @@ function normalizeItem(raw: unknown): WorkItem {
     state: str(r.state),
     url: str(r.url),
     assignee: str(r.assignee),
+    type: str(r.type),
     labels: Array.isArray(r.labels) ? r.labels.filter((l): l is string => typeof l === "string") : [],
     labelColors: readLabelColors(r.labelColors),
     repo: str(r.repo),

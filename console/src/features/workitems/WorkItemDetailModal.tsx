@@ -309,7 +309,7 @@ export function WorkItemDetailModal({
   const isPR = live.detail && reference ? live.detail.kind === "pr" : item.kind === "pr";
   const shownPR = isPR;
   // The tracker's own issue type, shown as-is. The live read leads once it has answered; the row's
-  // type covers the wait. A pull request never shows one.
+  // type covers the wait and an older Agent whose detail carries none. A pull request never shows one.
   const issueType = shownPR ? "" : live.detail?.type || item.type || "";
   const providerName = PROVIDER_NAMES[item.provider] || item.provider;
   const bases = useMemo(() => repos.filter((r) => !r.worktree), [repos]);
@@ -423,7 +423,7 @@ export function WorkItemDetailModal({
   const launchItem: WorkItem =
     reference && d
       ? { ...item, kind: d.kind, title: d.title || item.title, state: d.state, url: d.url || item.url, assignee: d.assignee,
-          labels: d.labels, labelColors: d.labelColors, repo: d.repo || item.repo, updatedAt: d.updatedAt }
+          type: d.type || item.type || "", labels: d.labels, labelColors: d.labelColors, repo: d.repo || item.repo, updatedAt: d.updatedAt }
       : item;
   // A stand-in's own state is unread, so the dot and the State row come from the live answer.
   const stateText = d ? detailStateLabel(d) : view.state ? stateLabel(view.state) : "";

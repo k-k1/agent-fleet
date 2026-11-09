@@ -83,6 +83,13 @@ describe("readWorkItems", () => {
     expect(odd.mergeable).toBe("");
     expect(read({ id: "4", checks: null }).checks.state).toBe("");
   });
+
+  it("keeps the tracker's issue type on a row, and reads a missing or non-string one as empty (#3734)", () => {
+    const read = (raw: Record<string, unknown>) => readWorkItems({ items: [raw], queries: [] }).payload!.items[0];
+    expect(read({ id: "1", type: "Epic" }).type).toBe("Epic");
+    expect(read({ id: "2" }).type).toBe("");
+    expect(read({ id: "3", type: 7 }).type).toBe("");
+  });
 });
 
 describe("checksText", () => {
