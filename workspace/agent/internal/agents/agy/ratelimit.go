@@ -19,8 +19,9 @@ var (
 	quotaReachedRe = regexp.MustCompile(`(?i)\bquota reached\b`)
 	// "108h50m38s" is the measured form; days, spaces and capitals are accepted too, because a
 	// reset read as zero turns a multi-day window into a backoff guess.
-	resetsInRe  = regexp.MustCompile(`(?i)\bresets in ((?:\d+\s*[dhms]\s*)+)`)
-	resetPartRe = regexp.MustCompile(`(?i)(\d+)\s*([dhms])`)
+	// The unit is read as a whole word, so "5 months" or "5 ms" is never five minutes.
+	resetsInRe  = regexp.MustCompile(`(?i)\bresets in ((?:\d+\s*[a-z]+\s*)+)`)
+	resetPartRe = regexp.MustCompile(`(?i)(\d+)\s*([a-z]+)`)
 )
 
 // LimitInMessage reports whether msg is agy's usage-quota refusal and, when the text names
@@ -42,15 +43,24 @@ func LimitInMessage(msg string, now time.Time) (resetAt time.Time, ok bool) {
 	return time.Time{}, true
 }
 
+var resetUnits = map[string]time.Duration{
+	"d": 24 * time.Hour, "day": 24 * time.Hour, "days": 24 * time.Hour,
+	"h": time.Hour, "hour": time.Hour, "hours": time.Hour,
+	"m": time.Minute, "min": time.Minute, "minute": time.Minute, "minutes": time.Minute,
+	"s": time.Second, "sec": time.Second, "second": time.Second, "seconds": time.Second,
+}
+
+// resetDuration reads "108h50m38s" / "1d 2h" / "2 days". Any unit it does not know makes the
+// whole reading zero: a wrong reset is worse than the backoff guess a zero falls back to.
 func resetDuration(s string) time.Duration {
-	unit := map[string]time.Duration{"d": 24 * time.Hour, "h": time.Hour, "m": time.Minute, "s": time.Second}
 	var d time.Duration
 	for _, p := range resetPartRe.FindAllStringSubmatch(s, -1) {
 		n, err := strconv.Atoi(p[1])
-		if err != nil {
+		u, ok := resetUnits[strings.ToLower(p[2])]
+		if err != nil || !ok {
 			return 0
 		}
-		d += time.Duration(n) * unit[strings.ToLower(p[2])]
+		d += time.Duration(n) * u
 	}
 	return d
 }

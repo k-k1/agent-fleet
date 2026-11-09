@@ -119,9 +119,16 @@ describe("looksForeign", () => {
     // A sentence mark makes the run prose, however short.
     expect(looksForeign("実装完了。see the diff for the details of the change", "ja")).toBe(false);
     expect(looksForeign("実装完了. see the diff for the details of the change", "ja")).toBe(false);
-    // Longer than a label: prose even without a mark (25 characters, about 17% of the text).
+    // Longer than a label: prose even without a mark (28 characters, about 18% of the text).
     const long = "設定画面からモデルを選び直してから翻訳ボタンを押してみて";
-    expect(looksForeign(`${long} and then check the answer again in the mirror pane please`, "ja")).toBe(false);
+    const english =
+      "and then check the answer again in the mirror pane, because the rest of this report is " +
+      "written in plain English";
+    expect(looksForeign(`${long} ${english}`, "ja")).toBe(false);
+    // A Japanese file name in an English table is a label, not a sentence closed by its dot.
+    expect(
+      looksForeign("| 設定.pdf | Ready |\n| 手順書.md | Ready |\nBoth files were checked and are ready to merge into main.", "ja"),
+    ).toBe(true);
     // Bullets without punctuation are label-sized, but CJK is no longer the minority.
     expect(looksForeign("- 設定を変更した\n- テストを追加した\n- PR を出した see https://example.com", "ja")).toBe(false);
   });

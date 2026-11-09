@@ -204,8 +204,8 @@ func agyRecommendIDs(v visibility) []string {
 
 // agyNamedModel resolves a fixed agy model NAME (defaultAgyChatModel, a display name) to the id
 // the live catalog lists it under. agy ≥1.1.19 lists "<id>\t<display name>"
-// (gemini-3.5-flash-medium / "Gemini 3.5 Flash (Medium)"), and agyChatModel drops a --model
-// the catalog does not list as an id — so answering with the display name showed "Gemini 3.5
+// (gemini-3.5-flash-medium / "Gemini 3.5 Flash (Medium)"), and the run path passes only
+// catalog ids as --model (agyChatModel) — so answering with the display name showed "Gemini 3.5
 // Flash (Medium)" while the CLI default ran (#972 review, round 2). A readable catalog without
 // that model falls back to the newest row of the same family (newestAgyFamilyModel), then ""
 // (the CLI default, which is what runs); an unreadable one keeps the name, as before, which older

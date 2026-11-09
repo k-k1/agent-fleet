@@ -2263,7 +2263,7 @@ func oneShotRouteKind(feature string, tier OneShotTier, claudeModel string) stri
 // before it runs: the same choice oneShotRunOn starts from. agy's catalogue matching is applied
 // here too (agyOneShotRunModel), so a stale pin is looked up under the model that will run. A
 // per-CLI adjustment can still change what runs (codex dropping an auto-picked -m); the outcome
-// is recorded under the model that ran. A run that fell back to the CLI's own
+// is recorded under the model that ran. A codex run that fell back to the CLI's own
 // default ("") is recorded under that default, which is its own key: a lookup for a named model
 // does not see it, so the next call tries the named model first again.
 func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel string) string {

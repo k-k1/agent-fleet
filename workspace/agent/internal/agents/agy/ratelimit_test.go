@@ -14,6 +14,9 @@ func TestLimitInMessageReadsTheReset(t *testing.T) {
 		"Individual quota reached. RESETS IN 108H.":              108 * time.Hour,
 		"Individual quota reached. Resets in 45m.":               45 * time.Minute,
 		"Individual quota reached.":                              0,
+		"Individual quota reached. Resets in 5 months.":          0,
+		"Individual quota reached. Resets in 5 ms.":              0,
+		"Individual quota reached. Resets in 2 days.":            48 * time.Hour,
 	}
 	for msg, want := range cases {
 		at, ok := LimitInMessage(msg, now)
