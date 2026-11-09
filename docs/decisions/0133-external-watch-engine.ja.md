@@ -2,7 +2,7 @@
 
 [English](0133-external-watch-engine.md) | 日本語
 
-- Status: **accepted**（2026-11-08。proposed 2026-11-08）。まだ何も作っていない。
+- Status: **accepted**（2026-11-08。proposed 2026-11-08）。§10 の段階 1〜3 は実装済み（2026-11-09）。段階 4〜6 はまだ作っていない。
 - Follow-ups: #3627、#3628、#3629、#3630、#3631、#3632（§10 の段階 1〜6）。
 - Related: [0021](0021-scheduled-execution.ja.md)（定時実行）/ [0061](0061-work-item-inbox.ja.md)（作業項目の受け箱）
 
