@@ -146,7 +146,7 @@ For the reason above, this deployment's `/mcp` cannot be registered for sessions
 ### Your own Claude's connection is refused
 
 - Once a token is revoked, connections using it get 401 from the next call. An expired token stops working too. Check the list's "**Expires**" and issue a new token
-- A token for `/mcp/memory` does not work at `/mcp`, nor the other way round. The list's "**Endpoint**" column shows which it is
+- A token for `/mcp/memory` does not work at `/mcp`, nor the other way round: it is refused with 401 as an invalid token. The list's "**Endpoint**" column shows which it is
 
 ### You want to see a token you did not save
 
