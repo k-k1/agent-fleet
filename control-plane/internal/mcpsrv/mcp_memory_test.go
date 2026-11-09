@@ -463,8 +463,9 @@ func TestMemorySaveRelaysKindAndAnchors(t *testing.T) {
 	if _, has := got["anchors"]; has {
 		t.Errorf("omitted anchors were relayed: %s", cp.gotBody)
 	}
+	tools := memoryTools()
 	for _, f := range []string{"status", "superseded_by", "invalid_at", "reasons"} {
-		for _, tl := range memoryTools() {
+		for _, tl := range tools {
 			if tl.name == "memory_save" {
 				if _, ok := tl.schema["properties"].(map[string]any)[f]; ok {
 					t.Errorf("memory_save advertises lifecycle field %s", f)
