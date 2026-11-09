@@ -266,6 +266,49 @@ A report on the current revision adds a `feedback` reason, which any change of t
 revision is only kept as an observation. One report per session per revision counts. A confirmation counts but never
 clears a reason, and agents are only asked to report the negative case.
 
+### Consolidation proposals (opt-in)
+
+Agent Fleet can tidy the memory in the background: it collects what readers and lint reported (`stale` / `wrong` reasons,
+lint reasons, and the proposals the retired 0117 review left unanswered), groups them by memory, and — when it has a reason —
+asks a model for a **small patch** (never a rewrite). **Nothing is ever written to your memory without your approval**: a run
+only queues *proposals*.
+
+- **Turning it on.** Settings › Agent memory › **Settings** › *Memory tidy-up (suggestions)*. It is **off by default**, it also
+  needs agent memory on, and turning it on sends memory text to a model and spends tokens while the workspace is idle. Only the
+  Console can switch it (a session's own token cannot). Below the switch the **status** shows the last run, the earliest next
+  run, how many suggestions wait, and each topic that is ripe but delayed with the cause (token budget, workspace stopped,
+  never idle, waiting for the next run, a failed run).
+- **When it runs.** Only when no session has had a turn for 15 minutes, at most once every 3 hours, and only on topics that are
+  ripe: one `wrong` or `stale` report, or 3 new observations, or an observation that has waited 24 hours. A run spends at most a
+  token budget; what does not fit waits, and the status says why (budget, workspace stopped, never idle). If a turn starts during
+  a run, the model call in flight finishes and the rest waits. The figures are in `config.json` beside the queue (under the
+  memory store's work directory, `af-memory.work/consolidation/`); the models are in `models.json` there (default: the `small`
+  role `claude:haiku`, the `large` role `claude:sonnet`, which supersede and merge escalate to).
+- **What a proposal can be.** A *patch* of one memory (exact-text edits, checked to apply to the current revision), a *create*
+  that an earlier 0117 proposal carried, or *advice* (supersede, merge, add) that you apply by hand — the engine does not
+  write replacements. A create over a name that was forgotten, or that ever existed, is refused.
+- **Approval.** A proposal is re-checked against the memory as it is when you approve, and then published the normal way,
+  authored `consolidator`: it shows in **Changes** and can be reverted. A proposal left undecided for 14 days expires (its record
+  stays); expiry alone does not bring the topic back — new evidence, a change to the memory, or an explicit retry does.
+
+**Reviewing.** Settings › Agent memory › **Suggestions** lists the proposals; filter by *Pending*, *Decided* (approved, rejected,
+refused, or partly applied) and *Expired*. Open one to see the memory and the revision it was drafted against, the evidence (the
+reports and lint findings it rests on) and the diff.
+
+- **Approve** applies that one proposal, after a confirmation that names what will be written. Nothing is approved in bulk, by
+  waiting, or from a notification: the daily notice only opens this view.
+- **Reject** drops it. **Look again** (for a rejected, expired, refused or partly applied proposal) reopens its observations so a later run
+  looks at the topic afresh; the new proposal is validated from scratch.
+- **Refusals are explained.** If the memory changed after the proposal was drafted (a revision mismatch), or the proposal expired
+  or was already decided, Approve says so instead of failing generically; a stale proposal cannot be approved and is marked *not
+  applicable* — use *Look again*.
+- **Advice only.** A supersede, a merge, or an add with no candidate text is shown as *Advice only* and has no Approve button:
+  nothing can write the replacement yet (tracked in #3696). Read it and edit the memories by hand in **Memories**.
+
+**The daily notice.** While the switch is on and at least one proposal is pending, you get at most one notification a day,
+"N memory suggestions are waiting for your review". It carries the count only (never a memory's text) and opens
+**Suggestions**. It is on by default with the other notifications (Settings › Notifications › Other).
+
 ### Settings
 
 **It is off by default.** Turn on "Let sessions use Agent Fleet memory" first, here in this view: on reaches sessions

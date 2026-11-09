@@ -1,7 +1,7 @@
 // features/usage/api — types and fetch for GET /api/usage/series (docs/log/46 §4-a / ADR0029).
 //
 // The server aggregates and returns the result; raw logs never reach the Console. The wire shape
-// maps one-to-one onto usageSeriesResp in workspace/agent/usage_series.go. The server rejects an
+// maps one-to-one onto usageSeriesResp in workspace/agent/internal/usagesvc/usage_series.go. The server rejects an
 // unknown axis with 400, so this side keeps the vocabulary closed in UsageDim.
 import { api } from "../../core/api/client.ts";
 
@@ -37,7 +37,7 @@ export interface UsageAgg {
   cost_usd?: number;
   /**
    * Estimated API-equivalent amount, derived by the server from its price table times the token
-   * counts (usage_price.go). It is a different value from the measured cost_usd and must never be
+   * counts (internal/usagesvc/usage_price.go). It is a different value from the measured cost_usd and must never be
    * added to it: one number never mixes two ways of measuring. A model missing from the price
    * table has no value here rather than 0; priced_spend / unpriced_spend say how much could be
    * priced.

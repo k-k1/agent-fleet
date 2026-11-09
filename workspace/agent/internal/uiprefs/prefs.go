@@ -282,6 +282,22 @@ func ExternalMemory() string {
 	return memoryx.ExternalMemoryOff
 }
 
+// MemoryConsolidation is the member's switch for the autonomous consolidator (ADR 0130 decisions
+// 6 and 7, ui-prefs memoryConsolidation). Only a boolean true is on; missing or malformed reads as
+// off, because a run sends memory text to a model and spends tokens while nobody is looking.
+func MemoryConsolidation() bool {
+	v, _ := Read()["memoryConsolidation"].(bool)
+	return v
+}
+
+// MemoryConsolidationEnabled is whether the consolidator may run at all: AF memory is on AND the
+// member turned consolidation on. Every caller that starts a run or a model call asks this, never
+// MemoryConsolidation alone: a consolidator reading a store the member switched off would be a
+// path the switch does not govern. It only ever produces proposals; nothing it does writes memory.
+func MemoryConsolidationEnabled() bool {
+	return AgentMemory() && MemoryConsolidation()
+}
+
 // MuseContributorMode is the member's choice to run Muse Code in contributor mode (ui-prefs
 // museContributorMode, #2535), under which the vendor may use the conversation to improve its
 // product. Only a boolean true is on; missing or malformed reads as off, so nobody is opted in

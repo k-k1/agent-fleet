@@ -678,3 +678,43 @@ release.
   the schema and validation are unchanged, so this is not a contract change. Evaluation can be restricted to a
   deterministic TUNE or HELD-OUT half (`-split`), and duplicate answers for one (case, call) are an error. Numbers are
   in the PR.
+
+- **2026-11-09 — decisions 6 and 7: the Agent adapter built (#3497, third PR).** `workspace/agent/internal/memconsol`
+  collects observations (`stale`/`wrong` feedback reasons, lint reasons, the exported 0117 queue read-only), groups
+  them deterministically by suspect memory (the name, then `memory_search`'s ranking), and applies decision 6's
+  ripeness (one report, 3 open observations, 24 h) oldest observation first inside a per-run token budget; the run
+  report records each delayed topic with its cause (`budget`, `interrupted`, `run-failed`; the status adds
+  `workspace-stopped` and `never-idle`). A run starts only from the existing polling loop shape (15 min without a
+  turn, at most every 3 h, all figures in `config.json`), behind the ui-prefs switch `memoryConsolidation` (off by
+  default; turning it on needs the member-origin mark; the Console control is the next PR). It calls the engine with
+  the claude CLI headless (`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`); roles are data in `models.json` (default small
+  `claude:haiku`, large `claude:sonnet`). Haiku does not meet the patch bar yet, which is acceptable only because
+  **nothing is applied without approval**: a run writes proposals into `af-memory.work/consolidation/proposals/` and
+  nothing else, and the one function that publishes is reached from the member-origin approve route. Approval
+  re-validates against the current revision, then publishes through the store's patch/save path authored
+  `consolidator` (so it is in the change list and revertible); a create is held to no revival inside the store lock
+  both when queued and when approved. A model or runner error, or a retired model, ends the run with nothing queued
+  from the failed call and no fallback model. Decisions taken: the engine cannot write a replacement, so a supersede
+  or merge (and an add with no exported candidate) is queued as **advice** about one target that the member applies
+  by hand, and a create exists only for an exported 0117 create; the deterministic checks cover schema, size, secret
+  scan, links the edit adds and the edits applying, but not repository paths (lint's job). The Agent module compiles
+  from `workspace/` alone, so it holds a byte-for-byte mirror of the engine's sources
+  (`workspace/agent/internal/memengine`, `scripts/sync-memengine.sh`, a test that fails on drift) rather than a
+  `replace` to a directory outside the image's build context. Not built: the Console approval UI and toggle, the
+  daily notice (a gated hook exists), the ledger entry for the tokens, codex/Gemini runners. Follow-ups: #3696 (the replacement writer that would let a supersede apply).
+
+- **2026-11-09 — decisions 6 and 7: the Console side built (#3497, fourth PR).** Settings › Agent memory › Settings has the
+  `memoryConsolidation` switch (off by default; the write is the signed ui-prefs relay the Agent already requires the member-origin
+  mark for) and a status block from `GET /api/agents/memory-consolidation` (last run, earliest next run, pending count, each ripe
+  topic that waits with its cause). A new Suggestions view lists the proposals (pending, decided, expired) in the change list's
+  layout and shows the target revision, evidence, observations and the Agent's diff per item. Approve (after a confirmation naming
+  the writes), reject and retry go through the existing signed relay rows, with the proposal id in the query for the audit hint; no
+  new route and no bulk action exist. The stale-revision, forgotten/exists/invalid/secret and expired/decided refusals are worded,
+  and a proposal whose item the get route reports stale has Approve disabled. A proposal with no patch or create item (supersede,
+  merge, add without a candidate) is shown as advice with no Approve (#3696). The daily notice is the `maybeNotice` hook wired to
+  the Agent's notification outbox as the kind `memory-consolidation` (target type workspace, payload `{pending: n}` only): it now
+  requires the switch to be on, is checked on every enabled tick as well as after a run, and its time is kept in `state.json`
+  so it survives a restart. The row opens Suggestions and decides nothing. Not built: the supersede/merge writer (#3696),
+  codex/Gemini runners, the ledger entry for the tokens. Not verified on a real workspace: a real model run, the notification
+  reaching the Console from a live Agent.
+  A failed outbox write does not spend the day's notice (the stamp is saved only after the notification is queued), so the next tick retries.

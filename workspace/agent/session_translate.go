@@ -77,7 +77,7 @@ func translateModel() string { return envOr("AF_TRANSLATE_MODEL", "sonnet") }
 // translatePersona is deliberately NOT locale-branched. The rule in docs/log/28 §6.6 branches a
 // prompt whose OUTPUT the user reads — but here the output language IS the parameter, so a
 // second copy of these instructions would change nothing the reader sees and would only have to
-// be kept in step (the same reason fs_suggest_edit.go stays single-language).
+// be kept in step (the same reason internal/fsx/fs_suggest_edit.go stays single-language).
 //
 // Everything it forbids is something that has to survive the round trip verbatim: a code block
 // the reader may copy, a path they may click, an identifier they may grep for.

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
 import { Button } from "../../../ui/Button.tsx";
@@ -10,6 +9,24 @@ import { OnOff } from "../parts/controls.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "../parts/providerCard.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { isOk } from "../api.ts";
+import {
+  deleteAwsMcp,
+  deleteCloudWatch,
+  deleteGrafana,
+  deletePagerDuty,
+  listSsmProfilePicks,
+  putAwsMcp,
+  putCloudWatch,
+  putGrafana,
+  putPagerDuty,
+  type AwsMcpConn,
+  type AwsProfileBody,
+  type CloudWatchConn,
+  type PagerDutyConn,
+  type SsmProfilePick,
+} from "./connectApi.ts";
+import type { ProviderConn } from "../../../types/session.ts";
 
 // OpsTab is the home for service-operations connections (docs/log/25 Phase 1): external
 // monitoring / incident tools the SRE assistant talks to over MCP, plus the AWS MCP
@@ -67,7 +84,7 @@ export function OpsTab() {
 // PagerDutyCard: paste a PagerDuty API key (read-only key recommended). Optional EU
 // host override. On connect the key is stored encrypted; the SRE assistant then gets
 // PagerDuty tools on its next message.
-function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
+function PagerDutyCard({ st, reload }: { st: PagerDutyConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [key, setKey] = useState("");
@@ -78,11 +95,11 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
     if (!key.trim()) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/pagerduty", "PUT", {
+      const res = await putPagerDuty({
         apiKey: key.trim(),
         host: eu ? "https://api.eu.pagerduty.com" : "",
       });
-      if (res && res.error) {
+      if (res && !isOk(res)) {
         toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
@@ -93,7 +110,7 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
     }
   };
   const disconnect = async () => {
-    await raw("api/connections/pagerduty", { method: "DELETE" });
+    await deletePagerDuty();
     reload();
   };
 
@@ -141,7 +158,7 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
 // recommended). Works for self-hosted / Grafana Cloud / Amazon Managed Grafana —
 // for AMG the URL is the workspace endpoint (https://g-xxxx.grafana-workspace.
 // <region>.amazonaws.com) and tokens expire after at most 30 days (re-paste here).
-function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
+function GrafanaCard({ st, reload }: { st: ProviderConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [url, setUrl] = useState("");
@@ -153,11 +170,11 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
     if (!ok) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/grafana", "PUT", {
+      const res = await putGrafana({
         url: url.trim(),
         token: token.trim(),
       });
-      if (res && res.error) {
+      if (res && !isOk(res)) {
         toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
@@ -169,7 +186,7 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
     }
   };
   const disconnect = async () => {
-    await raw("api/connections/grafana", { method: "DELETE" });
+    await deleteGrafana();
     reload();
   };
 
@@ -222,14 +239,14 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
 // instead of relying on ~/.aws/config. A manual entry remains for members who
 // maintain their own ~/.aws. An expired SSO session just makes the tools error.
 function useAWSProfile(connected: boolean) {
-  const [profiles, setProfiles] = useState<any[] | null>(null);
+  const [profiles, setProfiles] = useState<SsmProfilePick[] | null>(null);
   const [sel, setSel] = useState(""); // profile id, or "manual"
   const [manualProfile, setManualProfile] = useState("");
   const [region, setRegion] = useState("");
 
   useEffect(() => {
     if (connected) return;
-    api("api/ssm/profiles")
+    listSsmProfilePicks()
       .then((d) => setProfiles(Array.isArray(d) ? d : []))
       .catch(() => setProfiles([]));
   }, [connected]);
@@ -244,17 +261,19 @@ function useAWSProfile(connected: boolean) {
     setRegion(p?.region || "");
   };
   // body() is the request half both cards PUT; each adds its own extra fields.
-  const body = () =>
-    manual
-      ? { profile: manualProfile.trim(), region: region.trim() }
-      : {
-          profile: picked.label,
-          region: region.trim(),
-          startUrl: picked.startUrl || "",
-          ssoRegion: picked.ssoRegion || "",
-          accountId: picked.accountId || "",
-          roleName: picked.roleName || "",
-        };
+  const body = (): AwsProfileBody => {
+    if (manual) return { profile: manualProfile.trim(), region: region.trim() };
+    // `ok` gates every caller, and without `manual` it means a profile is picked.
+    const pk = picked as SsmProfilePick;
+    return {
+      profile: pk.label,
+      region: region.trim(),
+      startUrl: pk.startUrl || "",
+      ssoRegion: pk.ssoRegion || "",
+      accountId: pk.accountId || "",
+      roleName: pk.roleName || "",
+    };
+  };
   const reset = () => {
     setSel("");
     setManualProfile("");
@@ -308,7 +327,7 @@ function AWSProfileFields({ p }: { p: ReturnType<typeof useAWSProfile> }) {
 }
 
 // CloudWatchCard: point the CloudWatch MCP at an AWS profile (see useAWSProfile).
-function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
+function CloudWatchCard({ st, reload }: { st: CloudWatchConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -318,8 +337,8 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
     if (!p.ok) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/cloudwatch", "PUT", p.body());
-      if (res && res.error) {
+      const res = await putCloudWatch(p.body());
+      if (res && !isOk(res)) {
         toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
@@ -330,7 +349,7 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
     }
   };
   const disconnect = async () => {
-    await raw("api/connections/cloudwatch", { method: "DELETE" });
+    await deleteCloudWatch();
     reload();
   };
 
@@ -378,7 +397,7 @@ const AWS_MCP_ENDPOINTS = ["us-east-1", "eu-central-1"];
 //     that arrives with the connection.
 // Unlike the other ops integrations this one also attaches to interactive sessions,
 // not just the assistant chat — its tools are for building on AWS.
-function AWSCard({ st, reload }: { st: any; reload: () => void }) {
+function AWSCard({ st, reload }: { st: AwsMcpConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -390,8 +409,8 @@ function AWSCard({ st, reload }: { st: any; reload: () => void }) {
     if (!p.ok) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/aws", "PUT", { ...p.body(), endpoint, write });
-      if (res && res.error) {
+      const res = await putAwsMcp({ ...p.body(), endpoint, write });
+      if (res && !isOk(res)) {
         toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
@@ -403,7 +422,7 @@ function AWSCard({ st, reload }: { st: any; reload: () => void }) {
     }
   };
   const disconnect = async () => {
-    await raw("api/connections/aws", { method: "DELETE" });
+    await deleteAwsMcp();
     reload();
   };
 

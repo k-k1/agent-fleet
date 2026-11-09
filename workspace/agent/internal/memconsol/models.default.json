@@ -1,0 +1,6 @@
+{
+  "roles": {
+    "small": "claude:haiku",
+    "large": "claude:sonnet"
+  }
+}

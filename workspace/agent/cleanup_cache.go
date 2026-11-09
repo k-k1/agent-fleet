@@ -17,6 +17,7 @@ package main
 
 import (
 	"errors"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fsx"
 	"io/fs"
 	"net/http"
 	"os"
@@ -108,7 +109,7 @@ func placeOf(abs string) usagePlace {
 			p.Path = "~/" + abs[len(home)+1:]
 		}
 	}
-	if rel, err := filepath.Rel(browseRoot(), abs); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+	if rel, err := filepath.Rel(fsx.BrowseRoot(), abs); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
 		p.Browse = filepath.ToSlash(rel)
 	}
 	return p

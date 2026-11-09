@@ -7,6 +7,7 @@ package main
 // tests below derive their rows from the registry.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -16,7 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// oldUsageMeasuredForKind is the switch usageMeasuredForKind held before each kind declared its
+// oldUsageMeasuredForKind is the switch usagesvc.MeasuredForKind held before each kind declared its
 // own accuracy. It is a deliberate literal copy over the kinds that existed then: the
 // declarations must answer exactly what it did.
 func oldUsageMeasuredForKind(kind string) string {
@@ -37,8 +38,8 @@ var kindsBeforeUsageDeclarations = []string{
 func TestUsageMeasuredMatchesOldSwitch(t *testing.T) {
 	probes := append([]string{"", "Claude", " claude", "claude-code", "unknown-kind"}, kindsBeforeUsageDeclarations...)
 	for _, k := range probes {
-		if got, want := usageMeasuredForKind(k), oldUsageMeasuredForKind(k); got != want {
-			t.Errorf("usageMeasuredForKind(%q) = %q, old switch %q", k, got, want)
+		if got, want := usagesvc.MeasuredForKind(k), oldUsageMeasuredForKind(k); got != want {
+			t.Errorf("MeasuredForKind(%q) = %q, old switch %q", k, got, want)
 		}
 	}
 }
@@ -65,8 +66,8 @@ func TestEveryKindDeclaresItsUsageAccuracy(t *testing.T) {
 func TestUsageMeasuredRefusesAlternateSpellings(t *testing.T) {
 	for _, k := range []string{"", "Claude", "CLAUDE", " claude", "claude-code", "codex-cli",
 		"OpenCode", "llamacpp", "llama.cpp", "github-copilot", "Muse", "antigravity"} {
-		if got := usageMeasuredForKind(k); got != usagex.MeasuredNone {
-			t.Errorf("usageMeasuredForKind(%q) = %q, want %q", k, got, usagex.MeasuredNone)
+		if got := usagesvc.MeasuredForKind(k); got != usagex.MeasuredNone {
+			t.Errorf("MeasuredForKind(%q) = %q, want %q", k, got, usagex.MeasuredNone)
 		}
 	}
 }

@@ -104,7 +104,7 @@ var Entries = []string{
 	// The durable outcome of a create under an idempotency key (sessionx
 	// session_idempotency.go). Introduced directly under AgentStateDir.
 	"session-create-outcomes",
-	// Archives being built for a folder download (fs_zip.go). Introduced directly under
+	// Archives being built for a folder download (internal/fsx/fs_zip.go). Introduced directly under
 	// AgentStateDir, and empty between requests; listed only so the drift check stays honest.
 	"zip-export",
 	// The removed opencode 2 opt-in's switch and serve record (ADR 0127). Nothing writes them

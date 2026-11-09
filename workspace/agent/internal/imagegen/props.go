@@ -137,7 +137,7 @@ func readSidecar(imagePath string) (ImageProps, bool) {
 // BrowsePath resolves a browse-root-relative path for READING, and BrowseWritablePath the same
 // for a folder that is about to be written into. Both are filled in by the Agent's main package
 // at startup, which is where the browse root, the denylist and the symlink re-check live
-// (fs.go); this package cannot import main, and re-implementing the gate here would be a second
+// (internal/fsx/fs.go); this package cannot import main, and re-implementing the gate here would be a second
 // copy of a security decision.
 //
 // nil means no path may be named at all: this package refuses rather than falling back to a
@@ -758,7 +758,7 @@ func intPtrOf(v any) *int64 {
 var errNoBrowseRoot = errors.New("this Agent cannot resolve browse paths")
 
 // resolveOutDir turns a caller's browse-root-relative folder into an absolute one, through the
-// SAME gate the upload route uses (fs.go's safeWritableResolvedBrowsePath: inside the browse root
+// SAME gate the upload route uses (internal/fsx/fs.go's safeWritableResolvedBrowsePath: inside the browse root
 // after symlink resolution, not under or above fsDeny, never an absolute path). Created on first
 // use through BrowseOpenDir, because a folder named for work that has not happened yet cannot be
 // expected to exist.

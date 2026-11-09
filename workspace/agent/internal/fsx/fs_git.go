@@ -1,0 +1,207 @@
+package fsx
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+)
+
+// git-aware file-browser endpoints (docs/17 P3-5, FILES improvements):
+//   GET /fs/changes   — modified files across all repos (the "changes only" filter)
+//   GET /fs/linemarks — editor-style gutter marks for one working-tree file
+// Both reuse the read-only browse guards (denylist/traversal) and the existing
+// gitChanges() porcelain parser.
+
+type fileChange struct {
+	Repo      string `json:"repo"`
+	Path      string `json:"path"` // home-relative: repos/<repo>/<file>
+	Index     string `json:"index"`
+	Worktree  string `json:"worktree"`
+	Untracked bool   `json:"untracked"`
+}
+
+// HandleChanges aggregates `git status` across every working copy under
+// ~/repos, returning home-relative paths so the Console can show "changed files
+// only" alongside the home tree.
+func HandleChanges(w http.ResponseWriter, r *http.Request) {
+	root := gitx.ReposRoot()
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": []fileChange{}})
+		return
+	}
+	out := []fileChange{}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		repo := e.Name()
+		dir := filepath.Join(root, repo)
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+			continue // not a git working copy
+		}
+		cs, err := gitx.GitChanges(dir)
+		if err != nil {
+			continue
+		}
+		for _, c := range cs {
+			out = append(out, fileChange{
+				Repo: repo, Path: "repos/" + repo + "/" + c.Path,
+				Index: c.Index, Worktree: c.Worktree, Untracked: c.Untracked,
+			})
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": out})
+}
+
+// lineMarksWire is the GET /fs/line-marks response (the Console's `LineMarks`,
+// console/src/features/viewer/CodeView.tsx).
+//
+// was: map[string]any{"added":…, "modified":…, "deleted":…}
+// All three keys are unconditional, so no omitempty. All three must be empty slices and
+// never nil: nil marshals to `null`, empty to `[]`. emptyMarks, parseDiffMarks and the
+// untracked path all initialise with make or []int{}, so no path returns nil.
+type lineMarksWire struct {
+	Added    []int `json:"added"`
+	Modified []int `json:"modified"`
+	Deleted  []int `json:"deleted"`
+}
+
+func emptyMarks() lineMarksWire {
+	return lineMarksWire{Added: []int{}, Modified: []int{}, Deleted: []int{}}
+}
+
+// HandleLineMarks returns gutter marks for a working-tree file under ~/repos,
+// computed against HEAD: which new-file lines are added/modified and where
+// deletions occurred. Untracked files mark every line added. Non-repo paths (or
+// clean files) return empty marks. The Console overlays these in the viewer.
+func HandleLineMarks(w http.ResponseWriter, r *http.Request) {
+	_, rel, ok := SafeBrowsePath(r.URL.Query().Get("path"))
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	parts := strings.SplitN(filepath.ToSlash(rel), "/", 3)
+	if len(parts) < 3 || parts[0] != "repos" {
+		httpx.WriteJSON(w, http.StatusOK, emptyMarks())
+		return
+	}
+	repo, inrepo := parts[1], parts[2]
+	dir := filepath.Join(gitx.ReposRoot(), repo)
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, emptyMarks())
+		return
+	}
+	// Untracked file => the whole thing is "added".
+	if st, _ := gitx.Run(dir, "status", "--porcelain", "--", inrepo); strings.HasPrefix(st, "??") {
+		n := countFileLines(rel)
+		added := make([]int, 0, n)
+		for i := 1; i <= n; i++ {
+			added = append(added, i)
+		}
+		httpx.WriteJSON(w, http.StatusOK, lineMarksWire{Added: added, Modified: []int{}, Deleted: []int{}})
+		return
+	}
+	// --unified=0: hunks are pure deletion/addition runs (no context) => simple map.
+	out, err := gitx.Run(dir, "diff", "HEAD", "--unified=0", "--", inrepo)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, emptyMarks())
+		return
+	}
+	added, modified, deleted := parseDiffMarks(out)
+	httpx.WriteJSON(w, http.StatusOK, lineMarksWire{Added: added, Modified: modified, Deleted: deleted})
+}
+
+var hunkRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)`)
+
+// parseDiffMarks reads a `git diff --unified=0` and classifies new-file lines: a
+// run of N deletions immediately followed by M additions yields min(N,M)
+// "modified" lines (+ any surplus additions as "added"); a deletion run with no
+// following addition records a "deleted" marker at the new-file position.
+func parseDiffMarks(diff string) (added, modified, deleted []int) {
+	added, modified, deleted = []int{}, []int{}, []int{}
+	newLine := 0
+	pendingDel := 0
+	flushDel := func(at int) {
+		if pendingDel > 0 {
+			deleted = append(deleted, at)
+			pendingDel = 0
+		}
+	}
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			flushDel(newLine)
+			if m := hunkRe.FindStringSubmatch(line); m != nil {
+				newLine, _ = strconv.Atoi(m[1])
+			}
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			// file headers — ignore
+		case strings.HasPrefix(line, "+"):
+			if pendingDel > 0 {
+				modified = append(modified, newLine)
+				pendingDel--
+			} else {
+				added = append(added, newLine)
+			}
+			newLine++
+		case strings.HasPrefix(line, "-"):
+			pendingDel++
+		default:
+			flushDel(newLine)
+		}
+	}
+	flushDel(newLine)
+	return
+}
+
+// countFileLines counts the lines of a browse-relative file, for marking every line of an
+// untracked file as added (a final line without a trailing newline still counts). It opens the
+// file the way /fs/file does (no symlink, regular files only, so a FIFO or device never blocks
+// the Agent) and reads at most the /fs/file size limit through a fixed buffer: anything larger,
+// or unreadable, is 0 lines and the viewer shows no marks.
+func countFileLines(rel string) int {
+	root, err := absoluteTrustedRoot(BrowseRoot())
+	if err != nil {
+		return 0
+	}
+	opened, aerr := openFDFile(fdReadPath{root: root, relative: filepath.ToSlash(rel), display: rel, BrowseRoot: true})
+	if aerr != nil {
+		return 0
+	}
+	defer opened.close()
+	if fi, err := opened.file.Stat(); err != nil || fi.Size() > maxEditorFileBytes {
+		return 0
+	}
+	// The limit also bounds a file that grows after the stat.
+	r := io.LimitReader(opened.file, maxEditorFileBytes+1)
+	buf := make([]byte, 32*1024)
+	n, total := 0, 0
+	var last byte
+	for {
+		m, err := r.Read(buf)
+		if m > 0 {
+			n += bytes.Count(buf[:m], []byte{'\n'})
+			total += m
+			last = buf[m-1]
+		}
+		if err != nil {
+			break
+		}
+	}
+	if total > maxEditorFileBytes {
+		return 0
+	}
+	if total > 0 && last != '\n' {
+		n++
+	}
+	return n
+}

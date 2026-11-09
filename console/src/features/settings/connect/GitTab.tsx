@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -9,19 +8,33 @@ import { Button } from "../../../ui/Button.tsx";
 import { useConnections } from "../parts/useConnections.ts";
 import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton, IssueLink, Hint } from "../parts/providerCard.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { isOk } from "../api.ts";
+import {
+  connectBitbucketToken,
+  connectGithubToken,
+  deleteSvnServer,
+  disconnectBitbucket,
+  disconnectGithub,
+  getConnections,
+  getGitOAuthAvailability,
+  getGlobalGitIdentity,
+  pollGithubOAuth,
+  putGitProviderIdentity,
+  putGlobalGitIdentity,
+  putSvnServer,
+  replyError,
+  startBitbucketOAuth,
+  startGithubOAuth,
+  type GitHostConn,
+  type GitOAuthAvailability,
+  type SvnServer,
+} from "./connectApi.ts";
 
 interface RowProps {
-  st: any;
+  st: GitHostConn | undefined;
   reload: () => void;
   /** Whether the tenant has registered an OAuth app for this provider (docs/log/71). */
   oauthAvailable: boolean;
-}
-
-interface GitOAuthAvailability {
-  configured?: boolean;
-  // GitHub only: set when the tenant's app is a GitHub App (issue #1667).
-  app_type?: "github_app";
-  install_url?: string;
 }
 
 // useGitOAuthAvailability — whether "connect with OAuth" may be offered.
@@ -36,9 +49,9 @@ interface GitOAuthAvailability {
 function useGitOAuthAvailability() {
   const [avail, setAvail] = useState<Record<string, GitOAuthAvailability> | null>(null);
   useEffect(() => {
-    api("api/git-oauth")
+    getGitOAuthAvailability()
       .then((d) => {
-        if (d && !d.error) setAvail(d);
+        if (isOk(d)) setAvail(d);
       })
       .catch(() => {});
   }, []);
@@ -102,15 +115,6 @@ export function GitTab() {
   );
 }
 
-/** One saved Subversion server (docs/log/41): the URL prefix a credential is matched by,
- *  the account, and whether this server's certificate is trusted. Never the password. */
-interface SvnServer {
-  urlPrefix: string;
-  username?: string;
-  /** "1" when set — the Agent folds these into GET /connections as plain strings. */
-  trustCert?: string;
-}
-
 /** SVN rides along on GET /connections as a LIST, which ConnectionsStatus's index
  *  signature (one ProviderConn per key) cannot express. Read through a cast here rather
  *  than widening that type for every other card. */
@@ -141,13 +145,13 @@ function SvnCard({ servers, reload }: { servers: SvnServer[]; reload: () => void
     if (!p || busy) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/svn", "PUT", {
+      const res = await putSvnServer({
         urlPrefix: p,
         username: user.trim(),
         password: pass,
         trustCert: trust,
       });
-      if (res && res.error) {
+      if (res && !isOk(res)) {
         toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
         return;
       }
@@ -161,7 +165,7 @@ function SvnCard({ servers, reload }: { servers: SvnServer[]; reload: () => void
     }
   };
   const forget = async (p: string) => {
-    await raw(`api/connections/svn?prefix=${encodeURIComponent(p)}`, { method: "DELETE" });
+    await deleteSvnServer(p);
     reload();
   };
 
@@ -234,11 +238,11 @@ function IdentityFields({ host, name0, email0 }: { host: string; name0?: string;
   const save = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON(`api/connections/git/${encodeURIComponent(host)}/identity`, "PUT", {
+      const res = await putGitProviderIdentity(host, {
         name: name.trim(),
         email: email.trim(),
       });
-      if (res && res.error) {
+      if (res && !isOk(res)) {
         toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
         return;
       }
@@ -271,9 +275,9 @@ function GlobalIdentity() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    api("api/git/identity")
+    getGlobalGitIdentity()
       .then((d) => {
-        if (d && !d.error) {
+        if (isOk(d)) {
           setName(d.name || "");
           setEmail(d.email || "");
         }
@@ -283,8 +287,8 @@ function GlobalIdentity() {
   const save = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/git/identity", "PUT", { name: name.trim(), email: email.trim() });
-      if (res && res.error) {
+      const res = await putGlobalGitIdentity({ name: name.trim(), email: email.trim() });
+      if (res && !isOk(res)) {
         toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
         return;
       }
@@ -318,7 +322,7 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | oauth | token
-  const [oauth, setOauth] = useState<any>(null); // { user_code, verification_uri, status }
+  const [oauth, setOauth] = useState<{ user_code: string; verification_uri: string; status: string } | null>(null);
   const [token, setToken] = useState("");
   // What the last OAuth grant reported. It outlives the toast because the card it concerns
   // switches to the connected view, which is where the member has to act on it.
@@ -328,11 +332,11 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
 
   const startOAuth = async () => {
     setGrant(null);
-    const res = await api("api/connections/git/github/oauth/start", { method: "POST" });
-    if (!res || res.error) {
-      if (res?.error?.code === "not_configured")
-        toast(tr("git.github_oauth_unconfigured"), { kind: "warn" });
-      else toast(tr("git.oauth_start_failed", { msg: res?.error?.message || "" }));
+    const res = await startGithubOAuth();
+    if (!isOk(res)) {
+      const err = replyError(res);
+      if (err?.code === "not_configured") toast(tr("git.github_oauth_unconfigured"), { kind: "warn" });
+      else toast(tr("git.oauth_start_failed", { msg: err?.message || "" }));
       return;
     }
     setMode("oauth");
@@ -341,15 +345,15 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
     poll({
       deadlineMs: (res.expires_in || 900) * 1000,
       firstDelayMs: iv,
-      onExpire: () => setOauth((o: any) => ({ ...o, status: tr("git.oauth_expired") })),
+      onExpire: () => setOauth((o) => (o ? { ...o, status: tr("git.oauth_expired") } : o)),
       step: async () => {
-        let p;
+        let p: Awaited<ReturnType<typeof pollGithubOAuth>> | null;
         try {
-          p = await apiJSON("api/connections/git/github/oauth/poll", "POST", { flow_id: res.flow_id });
+          p = await pollGithubOAuth(res.flow_id);
         } catch {
           p = null;
         }
-        if (p && p.connected) {
+        if (isOk(p) && p.connected) {
           setMode("idle");
           reload();
           // The token is stored either way; these say what still stands between the member and
@@ -359,11 +363,13 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
           if (p.token_expires) toast(tr("git.github_token_expires"), { kind: "warn" });
           return { stop: true };
         }
-        if (p && p.error) {
-          setOauth((o: any) => ({ ...o, status: tr("git.oauth_failed", { msg: p.error.message || p.error.code || "" }) }));
+        if (p && !isOk(p)) {
+          setOauth((o) =>
+            o ? { ...o, status: tr("git.oauth_failed", { msg: p.error.message || p.error.code || "" }) } : o,
+          );
           return { stop: true };
         }
-        if (p && p.interval) iv = p.interval * 1000;
+        if (isOk(p) && p.interval) iv = p.interval * 1000;
         return { stop: false, nextMs: iv };
       },
     });
@@ -371,8 +377,8 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
 
   const saveToken = async () => {
     if (!token.trim()) return;
-    const res = await apiJSON("api/connections/git/github.com", "PUT", { token: token.trim() });
-    if (res && res.error) {
+    const res = await connectGithubToken(token.trim());
+    if (res && !isOk(res)) {
       toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
       return;
     }
@@ -382,7 +388,7 @@ function GithubRow({ st, reload, oauthAvailable, installURL }: RowProps & { inst
     reload();
   };
   const disconnect = async () => {
-    await raw("api/connections/git/github.com", { method: "DELETE" });
+    await disconnectGithub();
     setGrant(null);
     reload();
   };
@@ -491,11 +497,11 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
   const [token, setToken] = useState("");
 
   const startOAuth = async () => {
-    const res = await api("api/connections/git/bitbucket/oauth/start");
-    if (!res || res.error || !res.authorize_url) {
-      if (res?.error?.code === "not_configured")
-        toast(tr("git.bitbucket_oauth_unconfigured"), { kind: "warn" });
-      else toast(tr("git.oauth_start_failed", { msg: res?.error?.message || "" }));
+    const res = await startBitbucketOAuth();
+    if (!isOk(res) || !res.authorize_url) {
+      const err = replyError(res);
+      if (err?.code === "not_configured") toast(tr("git.bitbucket_oauth_unconfigured"), { kind: "warn" });
+      else toast(tr("git.oauth_start_failed", { msg: err?.message || "" }));
       return;
     }
     window.open(res.authorize_url, "_blank", "noopener");
@@ -506,13 +512,13 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
       firstDelayMs: 2500,
       onExpire: () => setStatus(tr("git.bb_timeout")),
       step: async () => {
-        let d;
+        let d: Awaited<ReturnType<typeof getConnections>> | null;
         try {
-          d = await api("api/connections");
+          d = await getConnections();
         } catch {
           d = null;
         }
-        if (d && d.bitbucket && d.bitbucket.connected) {
+        if (isOk(d) && d.bitbucket?.connected) {
           setMode("idle");
           reload();
           return { stop: true };
@@ -524,11 +530,8 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
 
   const saveToken = async () => {
     if (!token.trim()) return;
-    const res = await apiJSON("api/connections/git/bitbucket.org", "PUT", {
-      username: username.trim(),
-      token: token.trim(),
-    });
-    if (res && res.error) {
+    const res = await connectBitbucketToken(username.trim(), token.trim());
+    if (res && !isOk(res)) {
       // Connect-time scope check (backend): map the actionable codes to guidance,
       // fall back to the raw message for anything else.
       const code = res.error.code;
@@ -549,7 +552,7 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
     reload();
   };
   const disconnect = async () => {
-    await raw("api/connections/git/bitbucket.org", { method: "DELETE" });
+    await disconnectBitbucket();
     reload();
   };
 

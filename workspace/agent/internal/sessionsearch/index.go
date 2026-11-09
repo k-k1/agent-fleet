@@ -71,7 +71,7 @@ func resetStoreForTest() {
 	}
 }
 
-// The pass has no timer of its own, for the reason usage_fold.go gives: the host is shared and
+// The pass has no timer of its own, for the reason internal/usagesvc/usage_fold.go gives: the host is shared and
 // memory-constrained, and a resident sweep would re-read transcripts nobody is searching. It
 // runs when a search arrives, at most once per passPeriod, in the background; the search answers
 // from what is indexed and says that a pass is running.
