@@ -334,7 +334,8 @@ func (a scheduleAPI) getOwned(r *http.Request, id string, mv store.MembershipVie
 	if err != nil {
 		return store.Schedule{}, internalErr(err)
 	}
-	if !ok || sch.MembershipID != mv.MembershipID {
+	// A wake-only target is not a schedule the member owns: it answers like a missing one.
+	if !ok || sch.MembershipID != mv.MembershipID || isWakeSchedule(sch) {
 		return store.Schedule{}, &apiError{http.StatusNotFound, "not_found", "schedule not found"}
 	}
 	return sch, nil
@@ -350,6 +351,9 @@ func (a scheduleAPI) list(w http.ResponseWriter, r *http.Request, mv store.Membe
 	}
 	out := make([]scheduleDTO, 0, len(rows))
 	for _, s := range rows {
+		if isWakeSchedule(s) {
+			continue // the watch engine's hidden target (schedule_wake_target.go)
+		}
 		out = append(out, scheduleToDTO(s))
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -810,4 +814,112 @@ func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool, aerr *apiEr
 		sch.Silent = *p.Silent
 	}
 	return specChanged, nil
+}
+
+// --- the hidden wake-only target (ADR 0133 §7) ---------------------------------------
+//
+// A time watch asked for with `wake` books a schedule so the Control Plane, the only component
+// alive while a workspace is stopped, starts the workspace when the watch falls due. It sends no
+// prompt and no message to the Agent: on start the engine fires the watch from its own store.
+//
+// It reuses the ADR 0021 scheduler, table and fire path; what is new is one session_mode value
+// and the two internal routes below. The value is deliberately not accepted by
+// validateScheduleFields, so a member cannot create, patch or convert a schedule into one.
+// The row is hidden: the list omits it and every by-id handler answers 404 (getOwned).
+
+// scheduleModeWake is the session_mode of the hidden wake-only target.
+const scheduleModeWake = "wake"
+
+// maxWakesPerMembership bounds the hidden rows one member can hold. The Agent's own limit is
+// 200 watches per workspace; the margin covers a booking whose watch never got saved.
+const maxWakesPerMembership = 250
+
+// maxWakeHorizon is the farthest instant a wake may be booked for: the longest a watch lives.
+const maxWakeHorizon = 31 * 24 * time.Hour
+
+func isWakeSchedule(s store.Schedule) bool { return s.SessionMode == scheduleModeWake }
+
+// wakeBookedResp is createWake's answer, wakeDeletedResp deleteWake's.
+type wakeBookedResp struct {
+	ID string `json:"id"`
+	At string `json:"at"`
+}
+
+type wakeDeletedResp struct {
+	Deleted bool   `json:"deleted"`
+	ID      string `json:"id"`
+}
+
+// wakeBody is POST /internal/wakes.
+type wakeBody struct {
+	At string `json:"at"` // RFC 3339; stored in UTC
+}
+
+// createWake books a wake-only schedule for one instant. It refuses where the scheduler is not
+// running, because a row nothing fires would make the Agent trust a timer that never goes off.
+func (a scheduleAPI) createWake(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
+	if !schedulerRunning {
+		writeAPIErr(w, &apiError{http.StatusConflict, "scheduler_disabled",
+			"the Control Plane scheduler is not running on this deployment, so a wake would never fire"})
+		return
+	}
+	var in wakeBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	at, err := time.Parse(time.RFC3339, in.At)
+	now := time.Now().UTC()
+	if err != nil || !at.After(now) || at.After(now.Add(maxWakeHorizon)) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", "at must be an RFC 3339 instant in the future, at most 31 days ahead"})
+		return
+	}
+	rows, err := a.store.ListSchedules(r.Context(), mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	n := 0
+	for _, s := range rows {
+		if isWakeSchedule(s) {
+			n++
+		}
+	}
+	if n >= maxWakesPerMembership {
+		writeAPIErr(w, &apiError{http.StatusConflict, "too_many_wakes", "too many wake bookings are outstanding"})
+		return
+	}
+	spec := at.UTC().Format(time.RFC3339)
+	stamp := store.NowTS()
+	s := store.Schedule{
+		ID: "sch_" + store.NewID(), MembershipID: mv.MembershipID, TenantID: mv.TenantID,
+		SpecKind: "once", Spec: spec, SpecLabel: "wake", TZ: "UTC",
+		WakePolicy: "wake", SessionMode: scheduleModeWake, OverlapPolicy: "skip", MissingTargetPolicy: "fail",
+		AgentKind: "claude", Enabled: true, NextRun: spec, CreatedAt: stamp, UpdatedAt: stamp,
+	}
+	if err := a.store.CreateSchedule(r.Context(), s); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusCreated, wakeBookedResp{ID: s.ID, At: spec})
+}
+
+// deleteWake removes a wake booking. A missing id, or one that is an ordinary schedule, is a
+// 404: the Agent reads 404 as "already gone", which makes its clean-up safe to repeat.
+func (a scheduleAPI) deleteWake(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
+	id := r.PathValue("id")
+	sch, ok, err := a.store.GetSchedule(r.Context(), id)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok || sch.MembershipID != mv.MembershipID || !isWakeSchedule(sch) {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "wake not found"})
+		return
+	}
+	if err := a.store.DeleteSchedule(r.Context(), id, mv.MembershipID); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, wakeDeletedResp{Deleted: true, ID: id})
 }

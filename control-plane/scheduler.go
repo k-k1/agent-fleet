@@ -70,6 +70,8 @@ type scheduleStore interface {
 	// InsertNotification surfaces an unattended failure/skip in the notification center
 	// (★3, P4) — WS-independent because the CP notification store is the durable sink.
 	InsertNotification(ctx context.Context, n store.Notification) error
+	// DeleteSchedule removes a spent hidden wake-only row (finishWake).
+	DeleteSchedule(ctx context.Context, id, membershipID string) error
 }
 
 // scheduleRunKeep bounds the per-schedule run history (docs/log/38 P3 get_schedule_runs).
@@ -249,6 +251,10 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 			return
 		}
 		status = "error:" + truncStatus(ferr.Error())
+	}
+	if sch.SessionMode == scheduleModeWake {
+		sc.finishWake(ctx, sch, status, now)
+		return
 	}
 	// Compute the next fire strictly after `now` (not after the slot) so a backlog
 	// from a stopped CP collapses to a single catch-up fire rather than replaying
@@ -715,4 +721,30 @@ func sameWallMinute(a, b time.Time) bool {
 	ay, am, ad := a.Date()
 	by, bm, bd := b.Date()
 	return ay == by && am == bm && ad == bd && a.Hour() == b.Hour() && a.Minute() == b.Minute()
+}
+
+// Outcomes of the hidden wake-only target. Neither is a failure, and neither is recorded in the
+// member's run history or notifications: the member never saw the row.
+const (
+	statusWakeFired   = "fired_wake"
+	statusWakeRunning = "fired_wake_running"
+)
+
+// finishWake closes a wake-only row after its fire. The ledger is advanced first, so a failed
+// delete leaves a spent row nothing will fire again rather than one that wakes the workspace on
+// every tick; the delete then removes it. The Agent deletes the same id when its watch fires,
+// and reads this 404 as "gone". An error status is logged only: the watch is still fired from
+// the Agent's own store the next time the workspace starts.
+func (sc *scheduler) finishWake(ctx context.Context, sch store.Schedule, status string, now time.Time) {
+	nowRFC := now.UTC().Format(time.RFC3339)
+	if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, "", false, nowRFC); err != nil {
+		log.Printf("scheduler: wake %s: ledger did not advance (it may fire again): %v", sch.ID, err)
+		return
+	}
+	if strings.HasPrefix(status, "error") || strings.HasPrefix(status, "skipped") {
+		log.Printf("scheduler: wake %s: %s", sch.ID, status)
+	}
+	if err := sc.store.DeleteSchedule(ctx, sch.ID, sch.MembershipID); err != nil {
+		log.Printf("scheduler: wake %s: could not delete the spent row: %v", sch.ID, err)
+	}
 }

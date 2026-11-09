@@ -64,6 +64,10 @@ type State struct {
 	Retired map[string]Subscription       `json:"retired,omitempty"`
 	Cursors map[SubjectID]json.RawMessage `json:"builtin_cursors,omitempty"`
 	Tombs   map[string]Tomb               `json:"tombs,omitempty"`
+	// Wakes are the Control Plane bookings made for time watches and not yet confirmed gone. A
+	// booking leaves the list only when the Control Plane has answered that it no longer holds it
+	// (wake.go), so a watch that ended while the Control Plane was unreachable is cleaned up later.
+	Wakes []string `json:"wakes,omitempty"`
 }
 
 // SubjectState is the engine's bookkeeping for one subject, shared by every subscription to it.
@@ -92,6 +96,10 @@ type Engine struct {
 	now     func() time.Time
 	// pollTimeout bounds one Poll.
 	pollTimeout time.Duration
+	// Wake bookkeeping (wake.go).
+	waker       Waker
+	booking     map[string]bool // bookings made by a Subscribe that has not finished
+	wakeRetryAt time.Time
 }
 
 // New builds an engine over the given sources.
@@ -158,6 +166,9 @@ type Request struct {
 	Types       []string
 	Until       string
 	Lifetime    time.Duration // 0 = DefaultLifetime
+	// Wake asks for a Control Plane booking that starts a stopped workspace when a time watch is
+	// due (ADR 0133 §7). Only the time source takes it.
+	Wake bool
 }
 
 // maker is the session that made the request.
@@ -180,6 +191,9 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	}
 	if len(r.Ref) > maxRefLen {
 		return Subscription{}, &ErrRefused{fmt.Sprintf("ref is longer than %d bytes", maxRefLen)}
+	}
+	if len(r.Types) == 0 && len(src.Types()) == 1 {
+		r.Types = src.Types() // a source with one type (time) needs none asked for
 	}
 	if err := checkTypes(r.Types, src.Types()); err != nil {
 		return Subscription{}, err
@@ -222,6 +236,25 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	sub := Subscription{
 		ID: newID(), Owner: r.Owner, Requester: r.Requester, Source: r.Source, Subject: res.Subject, Ref: r.Ref, URL: res.URL,
 		Types: append([]string(nil), r.Types...), Until: until, Created: now.UTC(), Expires: now.Add(life).UTC(),
+	}
+	timed := !res.At.IsZero()
+	if r.Wake && !timed {
+		return Subscription{}, &ErrRefused{"wake applies to time watches only"}
+	}
+	if timed {
+		if err := e.timeTerms(&sub, res.At, r); err != nil {
+			return Subscription{}, err
+		}
+	}
+	if r.Wake {
+		// Booked before the lock is taken (the call is a network round trip), and recorded as
+		// outstanding at once: a failure past this point leaves it for reconcileWakes to cancel.
+		id, err := e.bookWake(ctx, res.At)
+		if err != nil {
+			return Subscription{}, err
+		}
+		sub.Wake, sub.WakeID = true, id
+		defer e.endBooking(id)
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -450,6 +483,7 @@ func (e *Engine) Tick(ctx context.Context) {
 	e.mu.Unlock()
 
 	e.deliver(cands, now)
+	e.reconcileWakes(ctx)
 }
 
 // candidate is what one subscription offers this tick: its first pending event, or every

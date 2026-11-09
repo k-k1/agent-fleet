@@ -66,7 +66,8 @@ func watchEngine() *watch.Engine {
 		})
 		gh.Threads = watchThreads
 		bb := &watch.Bitbucket{Read: watchBitbucketPR}
-		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb)
+		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{})
+		watchEngineInst.SetWaker(cpWaker{})
 	})
 	return watchEngineInst
 }
@@ -280,6 +281,7 @@ type watchReq struct {
 	Types          []string `json:"types"`
 	Until          string   `json:"until"`
 	ExpiresInHours int      `json:"expires_in_hours"`
+	Wake           bool     `json:"wake"`
 }
 
 // HandleWatchCreate (POST /sessions/{name}/watches) subscribes the session to a subject. Like
@@ -329,6 +331,7 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	sub, err := watchEngine().Subscribe(ctx, watch.Request{
 		Owner: owner, Requester: requester, Source: src, Ref: strings.TrimSpace(req.Ref), DefaultRepo: linkRepoOf(m.Dir, src),
 		Types: req.Types, Until: strings.TrimSpace(req.Until), Lifetime: time.Duration(req.ExpiresInHours) * time.Hour,
+		Wake: req.Wake,
 	})
 	if err != nil {
 		var ref *watch.ErrRefused

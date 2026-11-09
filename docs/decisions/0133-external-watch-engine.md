@@ -300,6 +300,20 @@ The table is a direction, not a commitment; each source is its own change with i
 6. **The `time` source** (§7) with the Control Plane's wake-only schedule target, then further sources from §9 one at
    a time.
 
+   *Note, 2026-11-09 (step 6, #3632).* The time source and the wake-only target are built; the
+   further §9 sources are not (follow-ups in the PR). Decisions the text left open:
+   the due instant is part of the subject (`time:20261109T150000Z`, UTC) and `watch` takes an RFC 3339
+   time with an offset or a wait (`in 20m`), never a bare time of day, because the engine keeps UTC and
+   must not guess a zone. A timer's default lifetime is its due time plus 24 hours (at most 30 days
+   from now), not the 7 days of other watches, which would end a timer set 20 days out before it
+   fired; `until deadline` is refused. The wake-only target is a schedule row with
+   `session_mode = wake`, a value the schedule API refuses, booked and cancelled on
+   `/internal/wakes`; the list and every by-id handler treat it as absent. The Control Plane
+   also deletes the row itself after its fire, and the Agent reads a 404 as "gone", so the clean-up
+   is safe to repeat. The engine cancels every booking no live watch needs, working from the set of
+   outstanding bookings rather than the places a watch can end, and asks again each minute until the
+   Control Plane answers.
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled
