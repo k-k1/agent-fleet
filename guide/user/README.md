@@ -44,6 +44,25 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Commit in the commit graph](code/commit.md) | Read history and diffs, and commit without opening a terminal |
 | [Use a Subversion repository](code/svn.md) | Check out a Subversion repository and work in it from a session |
 
+## Files and terminal
+
+| Page | What you can do |
+|---|---|
+| [See and download files](files/browse.md) | Walk the workspace's files, open them, and download files and folders |
+| [View documents and diagrams](files/view.md) | Read Markdown, slides, `.drawio` diagrams, PDFs and Office documents in the Console |
+| [Edit a file](files/edit.md) | Fix an open file in place and save it. Have an AI propose a change |
+| [Hand a file to a session](files/send.md) | Send a selection, with instructions, to a session or an assistant |
+| [Use the terminal](files/terminal.md) | Copy and paste in the browser terminal, read its lag, change its font |
+
+## Preview
+
+| Page | What you can do |
+|---|---|
+| [See a web app you started](preview/browser-pane.md) | Open a web app started in the workspace in the browser pane or the lightweight preview |
+| [Use preview subdomains](preview/subdomains.md) | Open the app at its own root URL and show it to colleagues or outsiders |
+| [Try Google sign-in on a preview](preview/dev-signin.md) | Try Google sign-in on a preview URL or from an app on your own machine |
+| [Operate a browser the agent opened](preview/agent-browser.md) | Take over a step only a person can do, such as a login, in the agent's browser |
+
 ## Agents
 
 | Page | What you can do |
