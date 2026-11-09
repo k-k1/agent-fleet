@@ -383,3 +383,72 @@ func TestJiraSitesPreferBaseURLOverProductPath(t *testing.T) {
 		t.Fatalf("sites = %+v, want the base URL", got)
 	}
 }
+
+// A site switch spans a network call. A token renewal or a disconnect landing during it must
+// not be undone by the switch, and the switch itself must not be dropped as a stale write.
+func TestJiraPutSiteDuringConcurrentWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		meanwhile func(*secrets.Data)
+		wantCode  int
+	}{
+		{"renewal", func(d *secrets.Data) { d.Jira.AccessToken, d.Jira.RefreshToken = "at2", "rt2" }, http.StatusOK},
+		{"disconnect", func(d *secrets.Data) { d.Jira = nil }, http.StatusConflict},
+		{"reconnect moving that site's URL", func(d *secrets.Data) {
+			d.Jira.Sites[1].URL = "https://renamed.atlassian.net"
+		}, http.StatusOK},
+		{"reconnect without that site", func(d *secrets.Data) {
+			d.Jira = &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "n", RefreshToken: "n", Expiry: time.Now().Unix() + 3600,
+				CloudID: "cid-1", Site: "https://one.atlassian.net", Sites: []secrets.JiraSite{{CloudID: "cid-1", URL: "https://one.atlassian.net"}}}
+		}, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Another process writes the store while /myself is in flight.
+				if err := secrets.Update(func(d *secrets.Data) error { tc.meanwhile(d); return nil }); err != nil {
+					t.Error(err)
+				}
+				_, _ = w.Write([]byte(`{"displayName":"Taro on Two"}`))
+			}))
+			defer srv.Close()
+			old := jirax.CloudAPIBase
+			jirax.CloudAPIBase = srv.URL
+			defer func() { jirax.CloudAPIBase = old }()
+			if err := secrets.Update(func(d *secrets.Data) error {
+				d.Jira = &secrets.JiraCreds{
+					AuthKind: "oauth", AccessToken: "at", RefreshToken: "rt", Expiry: time.Now().Unix() + 3600,
+					CloudID: "cid-1", Site: "https://one.atlassian.net",
+					Sites: []secrets.JiraSite{
+						{CloudID: "cid-1", URL: "https://one.atlassian.net", Name: "One"},
+						{CloudID: "cid-2", URL: "https://two.atlassian.net", Name: "Two"},
+					},
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			handlePutJiraSite(w, httptest.NewRequest("PUT", "/connections/jira/site", strings.NewReader(`{"cloudId":"cid-2"}`)))
+			if w.Code != tc.wantCode {
+				t.Fatalf("site switch = %d (%s), want %d", w.Code, w.Body.String(), tc.wantCode)
+			}
+			s, _ := secrets.Load()
+			if tc.wantCode == http.StatusConflict {
+				if s.Jira != nil && s.Jira.CloudID != "cid-1" {
+					t.Fatalf("concurrent change undone: %+v", s.Jira)
+				}
+				return
+			}
+			if s.Jira.CloudID != "cid-2" || s.Jira.Account != "Taro on Two" {
+				t.Errorf("switch lost: %q / %q", s.Jira.CloudID, s.Jira.Account)
+			}
+			if tc.name == "renewal" && (s.Jira.RefreshToken != "rt2" || s.Jira.AccessToken != "at2") {
+				t.Errorf("renewal undone: %q / %q", s.Jira.AccessToken, s.Jira.RefreshToken)
+			}
+			if want := s.Jira.Sites[1].URL; s.Jira.Site != want {
+				t.Errorf("site URL = %q, want the stored row's %q", s.Jira.Site, want)
+			}
+		})
+	}
+}
