@@ -199,6 +199,11 @@ func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMes
 	}
 
 	conflict := pr.Mergeable == "CONFLICTING"
+	if pr.Mergeable == "UNKNOWN" {
+		// A failed conflict read is no observation: read as "resolved", the next read that
+		// answers would start a new episode and repeat the notice.
+		conflict = cur.ConflictWas
+	}
 	if conflict && !cur.ConflictWas {
 		cur.ConflictEpisode++
 	}

@@ -71,6 +71,17 @@ func TestBitbucketPollReportsFromTheCache(t *testing.T) {
 		t.Fatalf("conflict versions %q %q", first, second)
 	}
 
+	// A failed conflict read in the middle of one conflict is not its end.
+	pr.Mergeable = "UNKNOWN"
+	_, cur, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
+	pr.Mergeable = "CONFLICTING"
+	evs, cur, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
+	for _, e := range evs {
+		if e.Type == "pr.conflict" && e.Version != second {
+			t.Fatalf("an unknown read started a new conflict episode: %q after %q", e.Version, second)
+		}
+	}
+
 	// Change requests count episodes the same way.
 	pr.ChangesRequested = true
 	evs, _, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)

@@ -59,6 +59,12 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 	}
 	cur.CRWas = cr
 	conflict := open && pr.Conflict
+	if open && pr.Mergeable == "UNKNOWN" {
+		// GitHub answers UNKNOWN for a while after the base moves, and a failed Bitbucket read
+		// does too: no observation of the conflict. Read as "resolved", every merge to the base
+		// would start a new episode and repeat the notice of a PR that never left its conflict.
+		conflict = cur.ConflictWas
+	}
 	if conflict && !cur.ConflictWas {
 		cur.ConflictEpisode++
 	}
