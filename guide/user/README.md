@@ -14,6 +14,10 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 
 | Page | What you can do |
 |---|---|
+| [Start a session](sessions/start.md) | Launch a session from Start, choosing the agent, the model and a first prompt |
+| [Work in parallel with worktrees](sessions/worktrees.md) | Give each session its own working copy and work in parallel in one repository |
+| [Start from an issue or a ticket](sessions/from-issues.md) | Start a session from an issue or a pull request in the issue tracker list |
+| [Read a session's state](sessions/status.md) | Tell from the row marks and notifications which sessions are waiting for you |
 | [Reply to a session](sessions/reply.md) | Read the conversation, answer question, plan and permission cards, and send the next instruction |
 | [Hold what you send, stop a turn](sessions/queue.md) | Hold follow-ups during a turn and send them in order, and stop a turn when something is queued |
 | [Comment on a plan, have it reviewed](sessions/plans.md) | Send comments on parts of a plan, and have another agent review it |

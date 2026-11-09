@@ -270,4 +270,4 @@ Subversion の作業コピーでは、Git の項目の代わりに **「更新�
 
 ---
 
-関連: [セッション](03-starting-sessions.ja.md)・[リポジトリとgit](06-code.ja.md)・[ファイル](07-files.ja.md)
+関連: [セッションの状態を読む](../user/sessions/status.ja.md)・[リポジトリとgit](06-code.ja.md)・[ファイル](07-files.ja.md)

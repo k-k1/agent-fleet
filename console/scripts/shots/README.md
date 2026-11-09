@@ -109,6 +109,7 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only images-s
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-gallery --out <dir>   # and images-settings
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only conv-plan --out <dir>    # and every other conv-* scene, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-start,sessions-launch,sessions-location,sessions-issue,sessions-status,sessions-issue-list,sessions-pr --out <dir>
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that

@@ -65,3 +65,16 @@ member/04-conversation.md#highlighting-a-line-in-a-conversation	user/sessions/re
 member/04-conversation.md#seeing-what-a-session-changed	user/sessions/changes.md
 member/04-conversation.md#saving-a-conversation-as-markdown	user/sessions/export.md
 member/04-conversation.md#reading-an-answer-in-your-own-language-translation	user/sessions/translate.md
+member/03-starting-sessions.md#session-types	user/sessions/start.md#session-types
+member/03-starting-sessions.md#execution-method-managed-and-terminal-cli	user/sessions/start.md#choose-the-execution-method
+member/03-starting-sessions.md#creating-a-new-session-start-at-the-top-of-the-screen	user/sessions/start.md
+member/03-starting-sessions.md#worktrees-and-new-branches-the-key-to-parallel-work	user/sessions/worktrees.md
+member/03-starting-sessions.md#working-folder-starting-inside-a-subfolder	user/sessions/worktrees.md#launch-inside-a-folder-of-the-repository
+member/03-starting-sessions.md#starting-from-the-issue-tracker	user/sessions/from-issues.md
+member/03-starting-sessions.md#reading-the-list	user/sessions/from-issues.md#read-the-list
+member/03-starting-sessions.md#from-a-row-to-a-session	user/sessions/from-issues.md#start-a-session-from-a-row
+member/03-starting-sessions.md#pull-request-details	user/sessions/from-issues.md#opening-a-pull-request
+member/03-starting-sessions.md#from-a-ticket-number-in-the-conversation	user/sessions/from-issues.md#open-from-an-issue-number-in-the-conversation
+member/03-starting-sessions.md#reading-state-badges-and-notifications	user/sessions/status.md
+member/03-starting-sessions.md#changing-the-title-and-branch-name	user/sessions/start.md#rename-a-session-or-its-branch
+member/lite.md#7-watching-development-progress	user/sessions/status.md
