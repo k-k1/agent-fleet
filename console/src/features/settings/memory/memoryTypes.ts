@@ -513,13 +513,17 @@ export interface ConsolReport {
   finished: string;
   status: string;
   error?: string;
+  manual?: boolean;
+  all?: boolean;
   ripe: number;
   queued: string[];
   delayed: ConsolDelay[];
 }
 export interface ConsolStatus {
   enabled: boolean;
-  config: { idleAfter: string; minInterval: string; proposalTTL: string };
+  config: { idleAfter: string; minInterval: string; proposalTTL: string; tokenBudget?: number };
+  /** The run in flight, manual or automatic; done of total selected topics are finished. */
+  run?: { running: boolean; manual?: boolean; all?: boolean; started?: string; done: number; total: number };
   lastRun?: ConsolReport;
   trigger: { lastRun?: string };
   counts: Record<string, number>;

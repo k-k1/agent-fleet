@@ -87,6 +87,7 @@ func TestMemberWriteRoutesRequireTheMark(t *testing.T) {
 		"/agents/memory-consolidation/proposals/approve",
 		"/agents/memory-consolidation/proposals/reject",
 		"/agents/memory-consolidation/proposals/retry",
+		"/agents/memory-consolidation/run",
 	} {
 		req := httptest.NewRequest(http.MethodPost, p, strings.NewReader(`{}`))
 		req.Header.Set("Authorization", "Bearer agent-token")
@@ -118,6 +119,7 @@ func TestMemberWriteRoutesAdmitAMarkedRequest(t *testing.T) {
 		"/agents/memory-consolidation/proposals/approve",
 		"/agents/memory-consolidation/proposals/reject",
 		"/agents/memory-consolidation/proposals/retry",
+		"/agents/memory-consolidation/run",
 	} {
 		// An empty body is a validation error past the mark (the run id is malformed).
 		body := `{}`
@@ -129,7 +131,9 @@ func TestMemberWriteRoutesAdmitAMarkedRequest(t *testing.T) {
 		mux.ServeHTTP(w, req)
 		// A snapshot of an empty body is no validation error: it may succeed or fail on the
 		// store, but never on the mark.
-		if p == "/agents/memory/snapshots" {
+		// The run route has no body to validate: past the mark it is answered by the consolidator
+		// (409 disabled here, the switch is off), never started by this test.
+		if p == "/agents/memory/snapshots" || p == "/agents/memory-consolidation/run" {
 			if w.Code == http.StatusForbidden || strings.Contains(w.Body.String(), "member_origin") {
 				t.Errorf("%s with a mark: %d %s", p, w.Code, w.Body)
 			}

@@ -55,6 +55,9 @@ type Report struct {
 	Tokens    int               `json:"tokens"`   // measured when the runner reported usage, else estimated
 	Estimated bool              `json:"estimated,omitempty"`
 	Models    map[string]string `json:"models,omitempty"`
+	// Manual is set on a run the member started; All on one that took every waiting topic.
+	Manual bool `json:"manual,omitempty"`
+	All    bool `json:"all,omitempty"`
 }
 
 // RunInput is everything a run needs; the trigger builds it, tests build it with fakes.
@@ -68,6 +71,14 @@ type RunInput struct {
 	Config  Config
 	Now     time.Time
 	Sleeper func() time.Time // the clock after the start; nil means time.Now
+	// Manual marks a member-started run. Its Turns is nil (other sessions' turns do not defer it);
+	// every other guard (switch, budget, validation, approval-only publishing) is unchanged.
+	Manual bool
+	// All takes every waiting topic, ripe or not (a topic with a proposal pending stays out).
+	// Honoured only together with Manual.
+	All bool
+	// Progress is told how many selected topics are done out of how many; nil in tests.
+	Progress func(done, total int)
 }
 
 var errCut = errors.New("cut")
@@ -79,7 +90,13 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	rep := Report{ID: newID(), Started: in.Now, Status: RunIdle, Handled: []string{}, Queued: []string{}, Delayed: []Delay{}, Models: in.Roles}
+	rep := Report{ID: newID(), Started: in.Now, Status: RunIdle, Handled: []string{}, Queued: []string{}, Delayed: []Delay{}, Models: in.Roles,
+		Manual: in.Manual, All: in.Manual && in.All}
+	progress := func(done, total int) {
+		if in.Progress != nil {
+			in.Progress(done, total)
+		}
+	}
 	spent := 0
 	finish := func(err error) (Report, error) {
 		rep.Tokens = spent
@@ -121,7 +138,7 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 	var ripe []RipeTopic
 	for _, t := range topics {
 		open := t.OpenObservations(st)
-		if !Ripe(open, pending[t.ID], in.Config, in.Now) {
+		if !Ripe(open, pending[t.ID], in.Config, in.Now) && !(rep.All && !pending[t.ID] && len(open) > 0) {
 			continue
 		}
 		take := open
@@ -140,6 +157,7 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 	}
 	rep.Ripe = len(ripe)
 	run, delayed := Select(ripe, in.Config.TokenBudget)
+	progress(0, len(run))
 	rep.Delayed = append(rep.Delayed, delayed...)
 	if len(run) == 0 {
 		if len(delayed) > 0 {
@@ -150,6 +168,7 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 	rep.Status = RunOK
 
 	for k, r := range run {
+		progress(k, len(run))
 		if err := ctx.Err(); err != nil {
 			rep.Status = RunCut
 			rep.Delayed = append(rep.Delayed, delaysOf(run[k:], CauseInterrupted, "the Agent is shutting down")...)
@@ -176,6 +195,7 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 			return finish(nil)
 		}
 	}
+	progress(len(run), len(run))
 	return finish(nil)
 }
 

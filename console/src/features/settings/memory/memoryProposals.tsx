@@ -26,6 +26,7 @@ import type {
 } from "./memoryTypes.ts";
 
 const BASE = "api/agents/memory-consolidation";
+const RUN_POLL_MS = 3000;
 
 /** Go's Duration.String ("3h0m0s", "1m30.5s", "500ms") in milliseconds; 0 when it is not one. */
 export function parseGoDuration(s: string | undefined): number {
@@ -77,6 +78,10 @@ export function refusalText(tr: ReturnType<typeof useT>, code: string | undefine
       return tr("mem.cs_err_not_pending");
     case "not_found":
       return tr("mem.cs_err_not_found");
+    case "run_in_flight":
+      return tr("mem.cs_err_run_in_flight");
+    case "disabled":
+      return tr("mem.cs_err_disabled");
   }
   return fallback;
 }
@@ -117,6 +122,56 @@ function ConsolidationStatus({ reload }: { reload: number }) {
     return true;
   }, []);
   useRetryLoad(load, [reload]);
+  const running = st?.run?.running === true;
+  // While a run is in flight the status is re-read so the progress and the final report appear
+  // without a page action; it stops by itself once the Agent says nothing is running.
+  useEffect(() => {
+    if (!running) return;
+    const ac = new AbortController();
+    const h = setInterval(() => void load(ac.signal), RUN_POLL_MS);
+    return () => {
+      ac.abort();
+      clearInterval(h);
+    };
+  }, [running, load]);
+
+  const [all, setAll] = useState(false);
+  const [starting, setStarting] = useState(false);
+  // setStarting is asynchronous state; the ref stops a second click that lands before it renders.
+  const inFlight = useRef(false);
+  const toast = useToast();
+  const askConfirm = useConfirm();
+  const runNow = async () => {
+    if (!st || inFlight.current || running) return;
+    const budget = st.config.tokenBudget;
+    const ok = await askConfirm({
+      title: tr("mem.cs_run_title"),
+      body: (
+        <>
+          <p>{tr(all ? "mem.cs_run_body_all" : "mem.cs_run_body")}</p>
+          <p>{budget ? tr("mem.cs_run_budget", { n: budget.toLocaleString() }) : tr("mem.cs_run_budget_unknown")}</p>
+          <p className="muted">{tr("mem.cs_run_note")}</p>
+        </>
+      ),
+      confirmLabel: tr("mem.cs_run_confirm"),
+    });
+    if (!ok || inFlight.current) return;
+    inFlight.current = true;
+    setStarting(true);
+    try {
+      // No id to repeat in the query: the CP audit row for this write has no target.
+      const res = await apiJSON(`${BASE}/run`, "POST", all ? { all: true } : {});
+      if (res?.error) toast(refusalText(tr, res.error.code, errDetail(res.error)));
+      else toast(tr("mem.cs_run_started"), { kind: "success" });
+    } catch {
+      // The request may or may not have reached the Agent: the re-read below shows which.
+      toast(tr("mem.af_failed"));
+    } finally {
+      inFlight.current = false;
+      setStarting(false);
+      await load(new AbortController().signal);
+    }
+  };
   if (err) return <p className="mem-warn">{tr("mem.cs_status_failed")}</p>;
   if (!st) return <p className="muted ds-note">{tr("common.loading")}</p>;
   const last = st.lastRun;
@@ -133,6 +188,7 @@ function ConsolidationStatus({ reload }: { reload: number }) {
               status: tMaybe("mem.cs_run_" + last.status) ?? last.status,
             })
           : tr("mem.cs_never_run")}
+        {last?.manual ? ` ${tr("mem.cs_last_manual")}` : ""}
         {last?.error ? ` — ${last.error}` : ""}
       </p>
       <p className="muted">
@@ -145,6 +201,21 @@ function ConsolidationStatus({ reload }: { reload: number }) {
         {tr("mem.cs_next_rule", { idle: humanDuration(st.config.idleAfter) })}
       </p>
       <p>{tr("mem.cs_pending_count", { n: pending })}</p>
+      <div className="mem-cs-run">
+        {running ? (
+          <p>
+            {tr(st.run?.manual ? "mem.cs_running_manual" : "mem.cs_running_auto")}
+            {(st.run?.total ?? 0) > 0 ? ` ${tr("mem.cs_running_progress", { n: Math.min((st.run?.done ?? 0) + 1, st.run!.total), m: st.run!.total })}` : ""}
+          </p>
+        ) : null}
+        <button type="button" disabled={running || starting} onClick={() => void runNow()}>
+          {tr("mem.cs_run_button")}
+        </button>{" "}
+        <label className="muted">
+          <input type="checkbox" checked={all} disabled={running || starting} onChange={(e) => setAll(e.target.checked)} />{" "}
+          {tr("mem.cs_run_all")}
+        </label>
+      </div>
       {st.waiting.length > 0 && (
         <>
           <p>{tr("mem.cs_delayed_title")}</p>
