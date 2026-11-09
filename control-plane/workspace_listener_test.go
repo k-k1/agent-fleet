@@ -308,8 +308,8 @@ func TestWorkspaceListenerCoversAgentInternalPaths(t *testing.T) {
 	}
 }
 
-// The check itself must fail on a route table missing one pattern, including a pattern that
-// shares its prefix with another (the loose prefix rule this replaced passed both cases).
+// The check itself must fail on a route table missing one pattern, even when another pattern
+// with the same prefix is still listed: a prefix alone never covers a call.
 func TestUncoveredPathsCatchesAMissingPattern(t *testing.T) {
 	paths := []string{"/internal/schedules/\x00/runs/silent", "/internal/mcp-servers/\x00/oauth/token", "/internal/wakes"}
 	full := map[string]bool{
