@@ -42,7 +42,7 @@ A stopped session cannot be sent to. Resume it first, or pick another destinatio
 ## Send it later, in a batch
 
 Write a "**Category (when adding to the queue; optional)**" and press "**Add to queue**" to hold it in the memo queue
-instead of sending it now. What you hold can be sent per category in one go ([Chat and memos](../../member/10-chat-memo.md)).
+instead of sending it now. What you hold can be sent per category in one go ([Collect memos and hand them over](../chat/memos.md)).
 
 ## Have a whole file translated or summarised
 

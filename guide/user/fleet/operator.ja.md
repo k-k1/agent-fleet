@@ -132,4 +132,5 @@ Discord や Slack から、同じフリート・オペレーターと話すこ�
 
 - [フリート・オペレーターの使いかたの例](operator-patterns.ja.md)
 - [決まった時刻に実行する](schedules.ja.md)
-- [10 チャットとメモ](../../member/10-chat-memo.ja.md)：アシスタントのチャットとメモキュー
+- [アシスタントに質問する](../chat/assistant.ja.md)
+- [メモをためて渡す](../chat/memos.ja.md)

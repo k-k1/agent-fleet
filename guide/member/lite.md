@@ -91,36 +91,7 @@ so asking your administrator is the fastest and surest route.
 
 ## 4. Using chat (questions, translation, text cleanup)
 
-From "**Assistants**" on the left, choose "**+ New chat**" and a conversation with the AI begins.
-Just write in the input field at the bottom and send. It's good at requests like "translate
-this", "summarize this", "make this text easier to read".
-
-- By default you send with **Ctrl+Enter (⌘+Enter on a Mac)**; Enter inserts a newline. If you
-  would rather send with Enter alone, switch the **send key** in ⚙ Settings → Keys. You can also
-  paste in an image and ask "what is this?".
-- While the conversation is still empty, it says "**Send a message to start the conversation.**"
-  The very first time you open it, it says "**No chats yet. Start one from +.**"
-- Even with no configuration at all, several **assistants (AI personalities/roles)** come ready
-  out of the box. For example, the **Agent Fleet Assistant** (guidance on using the product) and
-  the **SRE Assistant** (a sounding board for monitoring and incident response). Pick the one
-  that fits when you press "+ New chat". If all you need is translation or summarization, the
-  easiest way is to right-click a file in the file list on the left and choose
-  **"Translate with assistant" or "Summarize with assistant"**
-  (a chat opens with that file already handed over).
-
-### How is chat different from a session?
-
-A common question. Roughly speaking:
-
-- **Chat (assistants)** = for repository-free Q&A and translation. Your help desk: ask casually,
-  as often as you like. It only answers within the conversation; it doesn't create files or take on big jobs.
-- **Session** = where developers have the AI do serious work (writing code, fixing lots of files).
-
-So it's enough to remember: "short questions, translation, text cleanup" go to chat, and "big
-work that rewrites files" goes to a session. **Big jobs that produce file output**, like
-translating a long document and saving it as a separate file, are better handed to a session
-(i.e. the dev team) rather than chat. Chat runs out of steam when it takes on too much work at
-once, which is why the roles are kept separate.
+From **Assistant** on the left you can ask the AI questions and have it translate or summarize. How to start and when to use a session instead is in [Ask an assistant](../user/chat/assistant.md); translating files and purpose-built assistants are in [Use translation and purpose-built assistants](../user/chat/purpose-assistants.md).
 
 ---
 
@@ -134,32 +105,7 @@ assistant to translate or summarise a file is in [Hand a file to a session](../u
 
 ## 6. The memo queue (collect ideas and hand them over)
 
-Even when you think "I'd like this fixed" or "I want a feature like this", interrupting the team
-every single time feels awkward. The **memo queue** is the place to **pile up those quick notes
-and hand them to development later, all at once**.
-
-- Write whatever comes to mind in the input field of the "**Memo queue**" on the left
-  ("**Add a quick memo… (send them together later)**") and press "**Add**". If you like, group
-  memos with "**Category (optional)**" (e.g. frontend, api). When it's empty it says
-  "**No memos yet.**"
-- The "**Send**" button on an open file can also "**Add to queue**" a request about that
-  document (see the previous chapter).
-- Piled-up memos can stay rough; that's fine. Use "**Organize the selected memos with an
-  assistant**" at the top and the AI will polish the wording and even suggest a categorization.
-  You review the result in a preview (the "**Tidy with assistant**" screen), and nothing is
-  rewritten until you press "**Apply**".
-- To hand them over, tick the checkboxes and press "**Send selection**", or press "**Send**" on
-  a category header (= send this category together), then choose the destination session. The
-  selected memos arrive **combined into a single message**.
-
-### "Who receives my memos?"
-
-Memos don't automatically fly off into someone's email. When you perform the send operation,
-they go to **the running session you chose** (that development AI's work). In other words, you
-choose the destination. If there is no session you can send to, it says "**No running session
-to send to.**" In that case, ask the developer in charge to get a session running, then send.
-Sent memos aren't deleted; they remain marked "**Sent**" for a while, so you can look back at
-them later. You can also just keep collecting and send them another day.
+Collect requests as they come in the **Memo queue** on the left, and hand them to a session later. How it works, and who receives your memos, is in [Collect memos and hand them over](../user/chat/memos.md).
 
 ---
 
@@ -168,18 +114,7 @@ them later. You can also just keep collecting and send them another day.
 The **Sessions** list on the left shows what state each piece of development AI work is in. How to read the state marks
 and follow a conversation is in [Read a session's state](../user/sessions/status.md).
 
-### Reading work that was shared with you
-
-When a developer **shares** something with you ("keep an eye on how this goes"), it appears under
-**Shared sessions** on the left. Click it and you can read that conversation **read-only**. It
-opens independently of your own workspace, so you don't need to have any repository.
-
-- Only with the **may-propose** permission can you **propose** something to send from the field
-  below. A proposal reaches the AI **only after the owner (the developer who shared it) approves
-  it**. Nothing starts moving on its own.
-- **While the owner's workspace is stopped**, the history can't be read. It says so; ask the
-  developer to start it.
-- If the list looks out of date, press **"Refresh"**.
+A conversation a developer shared with you is under **Shared sessions** on the left, read-only. How to read it is in [Share a conversation](../user/team/share.md#read-a-conversation-shared-with-you).
 
 ### An important ground rule
 

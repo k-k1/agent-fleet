@@ -38,8 +38,8 @@ If a feature ships and does not appear here, it is not done
 | Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent) |
 | Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [Save a conversation as Markdown](../user/sessions/export.md) |
 | Fork from a past message | member | mirror, on a past message | [Branch from a past message](../user/sessions/branch-message.md); [agents.md](agents.md) for which agents |
-| Hand a session to another member | member | session ⋯ menu or handoff proposal card → Hand off to a member | [12 Working with others](../member/12-collaboration.md#handing-a-session-to-another-member) |
-| Share a session read-only | member | Shared sessions | [12 Working with others](../member/12-collaboration.md) |
+| Hand a session to another member | member | session ⋯ menu or handoff proposal card → Hand off to a member | [Hand a session to a member](../user/team/hand-over.md) |
+| Share a session read-only | member | Shared sessions | [Share a conversation](../user/team/share.md) |
 | Highlights | member | mirror, on a selection | [Reply to a session](../user/sessions/reply.md#highlight-a-line-in-the-conversation) |
 | Changed files | member | strip under the mirror header | [See what a session changed](../user/sessions/changes.md) |
 | Context usage gauge | member | session header | [Check prices and usage](../user/agents/usage.md#see-how-long-the-conversation-is) |
@@ -90,12 +90,12 @@ If a feature ships and does not appear here, it is not done
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [Start from an issue or a ticket](../user/sessions/from-issues.md); [repos.md](repos.md) for what each provider contributes |
 | Scheduled (unattended) runs | member | Schedules | [Run at a set time](../user/fleet/schedules.md) |
 | Notification centre | member | top bar | [20 Settings](../member/20-settings.md) |
-| Inbox — messages and requests between members, with claim, launch and PR links | member | top bar → inbox | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
-| Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
-| Attach a session to an inbox message, sharing it with the recipients | member | inbox → New | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
+| Inbox — messages and requests between members, with claim, launch and PR links | member | top bar → inbox | [Ask a teammate through the inbox](../user/team/inbox.md) |
+| Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [Ask a teammate through the inbox](../user/team/inbox.md) |
+| Attach a session to an inbox message, sharing it with the recipients | member | inbox → New | [Ask a teammate through the inbox](../user/team/inbox.md) |
 | Red dot on a session with an unread notification | member | left pane, tabs | [Read a session's state](../user/sessions/status.md#the-red-dot) |
 | Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [Start from an issue or a ticket](../user/sessions/from-issues.md#how-sessions-and-tickets-are-linked); [repos.md](repos.md) for which providers |
-| Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../member/20-settings.md#notifications) |
+| Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../user/settings/notifications.md) |
 | A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [Tell a session about its pull request's review](../user/fleet/pr-feedback.md#a-session-watches-a-pull-request-itself) |
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
@@ -127,8 +127,8 @@ explains them.
 | AWS profiles and SSM | member | AWS profiles/SSM ([Use AWS SSO](../user/integrations/aws-sso.md), [Log in to EC2 with SSM](../user/integrations/aws-ssm.md)) |
 | Google Cloud profiles | member | Google Cloud ([Use Google Cloud](../user/integrations/gcloud.md)) |
 | Integration servers and tokens | member | MCP servers (used by sessions) / Outside access → MCP tokens & apps |
-| Connect a remote MCP client by signing in (OAuth, when the deployment enables it) — Connected apps, Recent calls | member | Outside access → MCP tokens & apps ([19](../member/19-outside-access.md#connecting-a-remote-mcp-client-by-signing-in-oauth)) |
-| The "via MCP" badge on input sent through `/mcp` | member | input bubble in the mirror ([19](../member/19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)) |
+| Connect a remote MCP client by signing in (OAuth, when the deployment enables it) — Connected apps, Recent calls | member | Outside access → MCP tokens & apps ([Connect a remote MCP client by signing in](../user/outside/oauth-client.md)) |
+| The "via MCP" badge on input sent through `/mcp` | member | input bubble in the mirror ([Drive your workspace from an external Claude](../user/outside/external-claude.md#how-an-instruction-looks-to-the-session)) |
 | Sign in to a registered MCP server that needs OAuth (Sign in, sign in again, approve extra permission) | member | MCP servers (used by sessions) → Authentication → OAuth ([Add an MCP server to your sessions](../user/integrations/mcp-servers.md#sign-in-to-an-oauth-server)) |
 | Issue-tracker connections | member | Issue tracker |
 | Usage | member | Agent usage |

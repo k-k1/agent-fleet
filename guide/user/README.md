@@ -132,3 +132,42 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Try AWS code against a local emulator](workspace/aws-emulator.md) | Try AWS code without touching a real account |
 | [Export and import your settings](workspace/export-import.md) | Take your settings to another environment or account |
 | [See running time and cloud cost](workspace/cost.md) | See when the workspace was running and what it costs |
+
+## Team
+
+| Page | What you can do |
+|---|---|
+| [Hand a session to a member](team/hand-over.md) | Have a member you share a session with carry it on |
+| [Ask a teammate through the inbox](team/inbox.md) | Send members a message or a request; whoever takes it starts a session |
+| [Share a conversation](team/share.md) | Show a conversation read-only, and take suggestions on it if you want |
+| [Show each other where you stand on usage limits](team/usage-limits.md) | Show members you choose how close you are to your usage limits |
+
+## Chat
+
+| Page | What you can do |
+|---|---|
+| [Ask an assistant](chat/assistant.md) | Ask questions without a repository; compact a long conversation and keep a work plan |
+| [Use translation and purpose-built assistants](chat/purpose-assistants.md) | Translate or summarize a file; make your own assistant and set up AI assistance |
+| [Collect memos and hand them over](chat/memos.md) | Collect instructions as they come, tidy them, and send them to a session together |
+
+## Outside access
+
+| Page | What you can do |
+|---|---|
+| [Drive your workspace from an external Claude](outside/external-claude.md) | Drive sessions from your own Claude Code or Claude Desktop with a token |
+| [Connect a remote MCP client by signing in](outside/oauth-client.md) | Connect claude.ai, ChatGPT, Claude Code or Codex without a token |
+| [Move work from your own Claude Code into the workspace](outside/move-work-in.md) | Push work you started on your computer and carry on in a workspace session |
+
+## Settings
+
+| Page | What you can do |
+|---|---|
+| [Change the display and your account](settings/display.md) | Change language, time zone, theme and fonts; add a sign-in method |
+| [Get notified](settings/notifications.md) | Choose the unread dot, the OS notification and read-aloud for each kind of notification |
+| [Use read-aloud](settings/read-aloud.md) | Have answers read out loud; choose the voice and how it reads |
+
+## Security
+
+| Page | What you can do |
+|---|---|
+| [Handle credentials safely](security/credentials.md) | Know where tokens and keys belong, and where never to write them |

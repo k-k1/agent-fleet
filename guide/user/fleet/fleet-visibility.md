@@ -36,7 +36,7 @@ A session can add one memo to the memo queue: "there is another bug next to the 
 
 - When it finds a memo it left was wrong or incomplete, it corrects that memo rather than adding a second one
 - It cannot delete memos
-- When and to which session the memos go is still your decision ([10 Chat and memos](../../member/10-chat-memo.md))
+- When and to which session the memos go is still your decision ([Collect memos and hand them over](../chat/memos.md))
 
 ## What it cannot see or do
 
@@ -50,4 +50,4 @@ A session can add one memo to the memo queue: "there is another bug next to the 
 
 - [Let sessions message each other](messages.md)
 - [Hand work to the Fleet Operator](operator.md)
-- [10 Chat and memos](../../member/10-chat-memo.md)
+- [Collect memos and hand them over](../chat/memos.md)

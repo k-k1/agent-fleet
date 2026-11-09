@@ -2034,6 +2034,397 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  // ---- team pages (SHOT_TEAM_GUIDE) ----
+  {
+    // The hand-to-member dialog: two teammates the session is shared with, and a branch with
+    // commits not pushed yet, so the push gate and "Push, then send" show.
+    name: "team-handover",
+    guide: true,
+    stubEnv: { SHOT_TEAM_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      // The rail re-renders while its first polls land, which closes a menu opened too early.
+      await new Promise((r) => setTimeout(r, 3000));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /メンバーへ引き継ぐ|Hand off to a member/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".ui-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 1500));
+      // Fill the title and the prompt the way the owner would, through React's own setter.
+      const set = (el, v) => {
+        const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      const m = document.querySelector(".ui-modal");
+      const ja = document.documentElement.lang !== "en" && /引き継/.test(m?.textContent || "");
+      const t = m?.querySelector("input[type=text], input:not([type])");
+      if (t && !t.value) set(t, ja ? "チェックアウトの入力検証（続き）" : "Checkout input validation (cont.)");
+      const p = m?.querySelector("textarea");
+      if (p) set(p, ja ? "郵便番号の検証まで済んでいます。残りは電話番号の形式チェックとテストです。" : "Postal-code validation is done. Phone-number format checks and their tests are left.");
+      // Tick "Push, then send" so the send button is live, as it is right before sending.
+      m?.querySelector("input[type=checkbox]")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The share dialog opened from a session's menu: the exposure warning, a teammate picked
+    // from the suggestions, and "Can propose" chosen.
+    name: "team-share",
+    guide: true,
+    stubEnv: { SHOT_TEAM_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".sess-menu-wrap"); i++) await new Promise((r) => setTimeout(r, 200));
+      // The rail re-renders while its first polls land, which closes a menu opened too early.
+      await new Promise((r) => setTimeout(r, 3000));
+      const row = [...document.querySelectorAll(".sess-menu-wrap")].find((el) =>
+        /チェックアウトの入力検証|Checkout input validation/.test(el.closest("li, .sess-row, [class*=row]")?.textContent || ""));
+      row?.querySelector(".sess-menu-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".ui-menu-item")].find((el) => /^\\s*(共有する|Share)/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".share-recipient-suggest .ui-menu-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".share-recipient-suggest .ui-menu-item")?.click();
+      await new Promise((r) => setTimeout(r, 300));
+      [...document.querySelectorAll(".ui-modal .seg-btn")][1]?.click();
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The inbox for the team pages: the received tab with a request waiting, one this member took
+    // (unfolded, with its session) and a message. The features-page "inbox" scene, light and cropped.
+    name: "team-inbox",
+    guide: true,
+    clip: ".inbox-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".inbox-btn"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 3000));
+      document.querySelector(".inbox-btn")?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".inbox-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 1000));
+      document.querySelectorAll(".inbox-group")[1]?.querySelector(".inbox-card-head")?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // Settings › Limit board: this member shows bands to the whole tenant; two teammates publish
+    // and one shows nothing (read as Unknown).
+    name: "team-limits",
+    guide: true,
+    stubEnv: { SHOT_TEAM_GUIDE: "1" },
+    // The tab content only: the settings rail beside it is noise on this page.
+    clip: ".settings-content",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "limits",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 2500,
+  },
+    {
+    // The inbox's compose tab: a request with a recipe attached.
+    name: "team-inbox-compose",
+    guide: true,
+    stubEnv: { SHOT_TEAM_GUIDE: "1" },
+    clip: ".inbox-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".inbox-btn"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 3000));
+      document.querySelector(".inbox-btn")?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".inbox-modal"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 1000));
+      [...document.querySelectorAll(".inbox-modal button")].find((el) => /^\\s*(新規|New)\\s*$/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 800));
+      const box = [...document.querySelectorAll(".inbox-modal label")].find((el) => /レシピを添付する|Attach a recipe/.test(el.textContent || ""))?.querySelector("input[type=checkbox]");
+      box?.click();
+    })()`,
+    settle: 1500,
+  },
+// ---- end team pages ----
+  // ---- chat pages (SHOT_CHATPAGES_GUIDE) ----
+  {
+    // The assistant chat: the agent chip, the work plan open and the context gauge past 80 %
+    // with its Compact button.
+    name: "chatpages-chat",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: ".chatview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 700,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "chat", conversationId: "c-pay-1" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".chat-plan-toggle"); i++) await new Promise((r) => setTimeout(r, 200));
+      if (!document.querySelector(".chat-plan")) document.querySelector(".chat-plan-toggle")?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The rail's "+" (new chat): the three builtins, an assistant of the member's own, and Create.
+    name: "chatpages-picker",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: [".assistant-picker", "#shot-asst-head"],
+    pad: 6,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".assistant-picker-wrap button"); i++) await new Promise((r) => setTimeout(r, 200));
+      const wrap = document.querySelector(".assistant-picker-wrap");
+      const head = wrap?.closest(".ui-section-head");
+      if (head) head.id = "shot-asst-head";
+      wrap?.querySelector("button")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The create-assistant dialog, empty, so its placeholders show a translator as the example.
+    name: "chatpages-create",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".assistant-picker-wrap button"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".assistant-picker-wrap button")?.click();
+      await new Promise((r) => setTimeout(r, 600));
+      [...document.querySelectorAll(".assistant-picker .ui-menu-item")].find((el) => /アシスタントを作成|Create assistant/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2000,
+  },
+  {
+    // The memo queue with two memos selected: the selection bar and its Send button.
+    name: "chatpages-memos",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: "#shot-memos",
+    pad: 0,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && document.querySelectorAll(".memo-row").length < 4; i++) await new Promise((r) => setTimeout(r, 200));
+      const rows = [...document.querySelectorAll(".memo-row")];
+      rows.slice(0, 2).forEach((r) => r.querySelector("input[type=checkbox]")?.click());
+      await new Promise((r) => setTimeout(r, 400));
+      const sec = document.querySelector(".memo-row")?.closest(".ui-section");
+      if (sec) sec.id = "shot-memos";
+    })()`,
+    settle: 1200,
+  },
+  {
+    // The send dialog for those two memos: the editable text and the destinations.
+    name: "chatpages-memo-send",
+    guide: true,
+    stubEnv: { SHOT_CHATPAGES_GUIDE: "1" },
+    clip: ".ui-modal",
+    pad: 0,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1300,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && document.querySelectorAll(".memo-row").length < 4; i++) await new Promise((r) => setTimeout(r, 200));
+      const rows = [...document.querySelectorAll(".memo-row")];
+      rows.slice(0, 2).forEach((r) => r.querySelector("input[type=checkbox]")?.click());
+      await new Promise((r) => setTimeout(r, 400));
+      document.querySelector(".memo-selbar .ui-btn-primary, .memo-selbar button:last-child")?.click();
+    })()`,
+    settle: 2000,
+  },
+  // ---- end chat pages ----
+  // ---- outside-access and security pages (SHOT_OUTSIDE_GUIDE) ----
+  {
+    // Settings › MCP tokens & apps right after "Issue token": the once-shown token with its
+    // .mcp.json template, above the form it came from.
+    name: "outside-token-issued",
+    guide: true,
+    stubEnv: { SHOT_OUTSIDE_GUIDE: "1" },
+    clip: [".pat-issued", ".pat-form"],
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "tokens",
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "1500px"; m.style.maxHeight = "none"; }
+      [...document.querySelectorAll(".pat-form button")].find((b) => /トークンを発行|Issue token/.test(b.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      // The template is built from the page's own origin, which here is the stub's loopback port;
+      // show the address a deployment would have instead.
+      const pre = document.querySelector(".pat-tmpl");
+      if (pre) pre.textContent = pre.textContent.replace(location.origin, "https://console.example.com");
+      document.querySelector(".pat-issued")?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The connected apps under the tokens: claude.ai on the memory endpoint and a command-line
+    // client on /mcp, the second with its recent calls open.
+    name: "outside-apps",
+    guide: true,
+    stubEnv: { SHOT_OUTSIDE_GUIDE: "1" },
+    clip: "[data-shot=apps]",
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "tokens",
+    width: 1500,
+    height: 2400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "2300px"; m.style.maxHeight = "none"; }
+      const apps = document.querySelector(".display-settings > section");
+      apps?.setAttribute("data-shot", "apps");
+      const toggles = apps ? [...apps.querySelectorAll(".calls > button")] : [];
+      toggles[1]?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      apps?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1500,
+  },
+  // ---- end outside-access and security pages ----
+  // ---- settings pages (SHOT_SETTINGS_GUIDE) ----
+  {
+    // Settings › Display: the tab in the dialog's rail, with language, time zone, layout and theme.
+    name: "settings-display",
+    guide: true,
+    stubEnv: { SHOT_SETTINGS_GUIDE: "1" },
+    clip: ".settings-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "display",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Notifications: the table of notification kinds and what each does on arrival.
+    name: "settings-notifications",
+    guide: true,
+    stubEnv: { SHOT_SETTINGS_GUIDE: "1" },
+    clip: "#shot-settings-noti",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "notifications",
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      // The table is longer than the modal's fixed height: let the modal grow so nothing scrolls away.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+      const g = document.querySelector(".settings-modal .noti-table")?.closest(".ds-group");
+      if (g) g.id = "shot-settings-noti";
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Read aloud with speech turned on: the switch and the voice group under it.
+    name: "settings-tts",
+    guide: true,
+    stubEnv: { SHOT_SETTINGS_GUIDE: "1" },
+    clip: ["#shot-tts-from", "#shot-tts-to"],
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "tts",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      // Turn speech on: the first group's first switch, its "On" button.
+      const first = document.querySelector(".settings-modal .display-settings .ds-group");
+      [...(first?.querySelectorAll("button") || [])].find((b) => /^(オン|On)$/.test((b.textContent || "").trim()))?.click();
+      await new Promise((r) => setTimeout(r, 1000));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+      // From the speech switch down to the reading language's note: the voice choices a reader
+      // sets first. The rest of the tab is a long list of options the page names in a table.
+      const groups = document.querySelectorAll(".settings-modal .display-settings .ds-group");
+      if (groups[0]) groups[0].id = "shot-tts-from";
+      const lang = [...(groups[1]?.querySelectorAll(".ds-row") || [])].find((el) => /読み上げ言語|Read-aloud language/i.test(el.textContent || ""));
+      const note = lang?.nextElementSibling;
+      if (note) note.id = "shot-tts-to";
+      // The grown modal is centred, so everything below the clip would push its top off screen:
+      // hide what follows the note.
+      let n = note?.nextElementSibling;
+      while (n) { n.style.display = "none"; n = n.nextElementSibling; }
+      [...groups].slice(2).forEach((g) => { g.style.display = "none"; });
+      document.querySelector(".settings-modal .ds-reset")?.style.setProperty("display", "none");
+    })()`,
+    settle: 2500,
+  },
+  // ---- end settings pages ----
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

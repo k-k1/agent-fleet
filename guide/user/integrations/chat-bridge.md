@@ -149,4 +149,4 @@ Taking replies on Slack needs the app-level token. Disconnect the card and paste
 ## Related
 
 - [Hand work to the Fleet Operator](../fleet/operator.md)
-- [Settings](../../member/20-settings.md#notifications): Console and browser notifications
+- [Settings](../settings/notifications.md): Console and browser notifications

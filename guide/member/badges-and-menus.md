@@ -41,10 +41,10 @@ shows it for anything folded inside. In the left pane a session with unread news
 clears when the session is on screen in one of your panes (a report: when its operator conversation is, or
 when you open it from the notification centre), or with **"Mark all as read"** in the notification centre;
 merely opening the bell marks nothing as read. This is the one place that describes the dot
-(which notifications raise it: [Settings › Notifications](20-settings.md#notifications)).
+(which notifications raise it: [Settings › Notifications](../user/settings/notifications.md)).
 
 A row can also carry **"Shared"** (visible to another member;
-see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Locked against deletion"** (excluded from deletion and
+see [Share a conversation](../user/team/share.md)) and **"Locked against deletion"** (excluded from deletion and
 automatic tidying; see [Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion)).
 
 A row can grow a **second line** with links. The first is the GitHub or Bitbucket pull request
@@ -150,7 +150,7 @@ connection. Not this deployment's engine."** together with the model the last ch
   session and delivers the answer; the card is kept for 14 days
   ([Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left)).
 - **The inbox button's number** in the top bar: new inbox items plus handoffs waiting for you
-  ([12](12-collaboration.md#asking-a-teammate-the-inbox)). In the inbox, **"Open for 14+ days"** marks a
+  ([Ask a teammate through the inbox](../user/team/inbox.md)). In the inbox, **"Open for 14+ days"** marks a
   request nobody has finished. A session started from an inbox request has an inbox mark
   (**"Started from an inbox request (sender: …)"**), a memo taken in from the inbox reads **"Inbox: …"**,
   and a shared session with a handoff for you has a branch mark, **"A handoff is waiting"**.
@@ -167,7 +167,7 @@ connection. Not this deployment's engine."** together with the model the last ch
 - **The budget mark** (a pulse icon) on a stopped session: its estimated spend reached its budget and it was
   stopped; **"Raise budget & resume…"** in its menu carries on ([Stop a session that spends too much with a budget](../user/sessions/budget.md#when-it-stops)).
 - **"N awaiting approval"** on shared sessions: proposals from a recipient are waiting for you
-  ([12](12-collaboration.md#sharing-a-conversation-shared-sessions)).
+  ([Share a conversation](../user/team/share.md)).
 - **"Safe" / "Review" / "Keep"** in the cleanup modal: whether it is fine to tidy away
   ([Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup)).
 

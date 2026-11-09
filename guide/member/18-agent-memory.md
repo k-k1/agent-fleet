@@ -442,7 +442,7 @@ The view you leave open is remembered. It needs the running workspace.
 The same MCP token, or an app you connected by signing in (OAuth), can also use the memory Agent Fleet keeps; the
 consent page says so next to `read` and `write`. For example your own Claude Code / Claude Desktop (see
 [Agent memory](#agent-memory); how to make a token and connect a client is in
-[19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)). Two things have to be true: the scope of the token or OAuth connection, and **⚙ Settings → Agent
+[Drive your workspace from an external Claude](../user/outside/external-claude.md#issue-a-token)). Two things have to be true: the scope of the token or OAuth connection, and **⚙ Settings → Agent
 memory → Settings → "Use Agent Fleet memory from outside Agent Fleet"** (`Off` by default; `Read only` or `Read and write`).
 The "MCP tokens & apps" tab (under Outside access) lists what the token can do (including that a tenant Block hides these tools) and links to that setting; the setting has a "How to connect"
 link back.
@@ -499,7 +499,7 @@ Before you start:
    your workspace read what you bring in.
 2. In the same view, set "Use Agent Fleet memory from outside Agent Fleet" to **Read and write**.
 3. Connect Claude Code on your computer to `/mcp` with the `write` scope
-   ([19 Using it from outside](19-outside-access.md#moving-work-from-your-own-claude-code-into-the-workspace)
+   ([Move work from your own Claude Code into the workspace](../user/outside/move-work-in.md)
    shows the commands). If the memory tools do not appear, your tenant administrator has blocked them.
 4. The repository is cloned in the workspace, under `~/repos`. A clone that holds no memory yet is started by the
    first save, so no session has to save one first. If the workspace holds several clones of the same remote,
