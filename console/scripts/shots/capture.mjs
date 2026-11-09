@@ -433,6 +433,24 @@ const SCENES = [
     settle: 4000,
   },
   {
+    name: "ws-agent-silent",
+    guide: true,
+    // The stub reports a silent Agent only in a run that sets this (server.mjs).
+    stubEnv: { SHOT_AGENT_SILENT: "1" },
+    clip: [".ws-agentsilent .ws-stale-pill", ".ws-agentsilent .ws-stale-pop"],
+    pad: 24,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 760,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      // The badge appears after the first workspace poll: wait for it rather than for a fixed time.
+      for (let i = 0; i < 50 && !document.querySelector(".ws-agentsilent .ws-stale-pill"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".ws-agentsilent .ws-stale-pill")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
     name: "aws-badge",
     guide: true,
     clip: [".ws-aws-btn", ".ws-aws-pop"],

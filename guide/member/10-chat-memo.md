@@ -28,7 +28,7 @@ opens enlarged in the same lightbox the gallery uses.
 
 If the chat runs on claude and the workspace's Claude login has expired, the failed reply turns
 into a short notice with **Re-authenticate** and **Retry**; see
-[21 Troubleshooting](21-troubleshooting.md#an-agent-stopped-with-your-login-has-expired).
+[Fix an agent's login or a missing model](../user/troubleshooting/agents.md#the-agent-stopped-saying-its-login-has-expired).
 
 ### Purpose-built assistants and translation
 

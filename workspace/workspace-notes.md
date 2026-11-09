@@ -52,7 +52,7 @@ skip and say so.
 - Filing a GitHub issue — Agent Fleet's own tracker or a user's repository — is visible outside
   this workspace: strip secrets, internal hostnames/URLs, and tenant/customer names from logs,
   screenshots or error text before pasting them in, and describe the environment generically
-  instead. Where to file feedback on Agent Fleet itself is in the guide's Troubleshooting chapter.
+  instead. Where to file feedback on Agent Fleet itself is `user/troubleshooting/report.md` in the guide.
 
 ## Git branches: stay on the branch the session started on
 - **Do not create, switch, or rename branches on your own initiative** — not even when the

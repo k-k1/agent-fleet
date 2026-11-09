@@ -209,44 +209,6 @@ can send the work off in a direction the developer never intended.
 
 ## 8. When you're stuck + FAQ
 
-### First moves when something goes wrong
+What to try first when something goes wrong, and the FAQ, are in [Read the frequently asked questions](../user/troubleshooting/faq.md).
 
-1. **If items disappeared from the left**, check that the button at the very top of the left pane
-   still says **"All"**. When it shows another name (a working set), only that group is listed;
-   nothing was deleted.
-2. Try **reloading** the page (browser refresh).
-3. If you haven't pressed "Start workspace", most features won't work. Check that it's started.
-4. If it still doesn't work, don't push through; **ask your administrator**. Login, connections,
-   and permissions are the administrator's territory.
-
-### FAQ
-
-**Q. Can I use it without touching the black screen (terminal)?**
-Yes. Everything in this volume (chat, memo queue, file browsing, progress watching) is done
-entirely with buttons and input fields. You never type a command or learn git.
-
-**Q. How is chat different from a session?**
-Chat is a repository-free help desk for questions and translation; a session is where developers
-have the AI do serious work. Remember it as: short questions → chat; big work that rewrites
-files → session (i.e. the dev team). See [Chapter 4](#4-using-chat-questions-translation-text-cleanup) for details.
-
-**Q. Who receives my memos?**
-There's no automatic delivery. When you perform the send operation, they go to the running
-session you chose. You get to pick the destination. See [Chapter 6](#6-the-memo-queue-collect-ideas-and-hand-them-over).
-
-**Q. If I press the wrong button, will something break?**
-Browsing and chatting can't damage anything. Memo organizing doesn't rewrite anything until
-you press "Apply". If in doubt, close with "Later" or ✕ and you're back where you started.
-
-**Q. Does it work on a smartphone?**
-For viewing and light operations, yes. Open the left-side list from the three-line menu at the
-top. For focused work, a computer is more comfortable.
-
-**Q. Do I need "connect git" or "create a session"?**
-Not if you only chat and browse. Setup requires just two things: "Start workspace" and
-"Connect an agent". See [Chapter 3](#3-one-time-setup).
-
-**Q. What if I want to do more?**
-When you feel like editing files yourself or having the AI write code, the developer-facing
-[member/README.md](README.md) is your next step. If you want to understand the machinery
-itself, head to the developer documentation.
+When you feel like editing files yourself or having the AI write code, the developer-facing [Using Agent Fleet](README.md) is your next step.

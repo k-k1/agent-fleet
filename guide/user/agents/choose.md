@@ -123,12 +123,12 @@ The workspace image is too old to handle RTK and the other settings. [Recreate t
 ### The model I want is not offered
 
 Check that it is not under that card's "**Models to exclude**". Other causes are in
-[Troubleshooting](../../member/21-troubleshooting.md#a-model-i-want-isnt-offered-or-launching-with-it-is-refused).
+[Fix an agent's login or a missing model](../troubleshooting/agents.md#the-model-you-want-is-not-offered-or-launching-with-it-is-refused).
 
 ### The agent stopped because its sign-in expired
 
 Press "**Re-authenticate**" on the error and that agent's card opens. Sign in again and the session can carry on where it stopped.
-The details are in [Troubleshooting](../../member/21-troubleshooting.md#an-agent-stopped-with-your-login-has-expired).
+The details are in [Fix an agent's login or a missing model](../troubleshooting/agents.md#the-agent-stopped-saying-its-login-has-expired).
 
 ## Related
 

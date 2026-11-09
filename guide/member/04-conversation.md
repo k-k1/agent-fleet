@@ -21,17 +21,7 @@ What this chapter held has moved to one page per task.
 
 ## When a turn is interrupted
 
-An agent's turn can be cut off by something outside the conversation, such as a provider
-error, a dropped connection or a usage limit. When that happens the conversation is not
-silently left half-finished:
-
-- You are notified, including when a run resumes after a usage limit resets.
-- **Auto-resume interrupted turns** (in the assistant's settings) lets the assistant
-  restart the turns that a retry would fix, rather than leaving them for you to notice.
-
-Only interruptions that a resend actually repairs are resumed. A turn that failed
-because of what it was asked to do is left alone, because retrying it would just fail
-again.
+See [Find a missing session or one that will not resume](../user/troubleshooting/sessions.md#a-turn-was-cut-off-partway).
 
 ---
 
