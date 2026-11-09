@@ -32,8 +32,8 @@ Next comes a two-way choice: **"Where do you want to start?"** (you can use both
 - **Ask AI a question or for a translation**: "Start chatting" opens a chat with the
   assistant right away. You need neither git nor a terminal ([10 Chat and memos](10-chat-memo.md)).
 - **Develop in a repository**: "Go to dev setup" expands the remaining steps.
-  1. **Connect a git provider** (optional): sign in to GitHub / Bitbucket. It is required if you'll clone or push private repositories ([06 Repositories and git](06-code.md)).
-  2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([03 Starting sessions](03-starting-sessions.md)).
+  1. **Connect a git provider** (optional): sign in to GitHub / Bitbucket. It is required if you'll clone or push private repositories ([Connect a Git service](../user/code/connect-git.md)).
+  2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([Start a session](../user/sessions/start.md)).
 
 The card leaves Home once you create your first session or start your first chat. From then
 on Home shows four sections:
@@ -71,11 +71,11 @@ Open **"Add"** from **Repositories** in the left pane, leave **Kind** on **Git**
 repository (or paste its clone URL) and press **"Clone"**. When it finishes, the repository
 appears in the **Repositories** list, and **"Launch"** on that row starts your first session. Private
 repositories need the "Connect a git provider" step above. The options (branch, folder name),
-the pitfalls, and the built-in git provider are in [06 Repositories and git](06-code.md#clone-a-repository).
+the pitfalls, and the built-in git provider are in [Clone a repository](../user/code/clone.md).
 
 Starting something that does not exist anywhere yet? There is nothing to clone: use
 **"+ Start" → "Start in a new folder…"** to create an empty folder that is already a git repository
-([06](06-code.md#starting-with-nothing-to-import-from-a-new-folder)).
+([Clone a repository](../user/code/clone.md#start-from-nothing)).
 
 ## At the end of the day — is it OK to stop the workspace?
 
@@ -83,7 +83,7 @@ Yes, stop it if you like. Even if you stop the workspace from the workspace acti
 the following remain:
 
 - The repositories you cloned, and the changes inside them (including uncommitted work).
-- The list of sessions you were running. They remain as **stopped**, and the next time you start the workspace you can resume them with a click (for the cases that can't be resumed, see [05 Stopping and tidying up](05-stopping-and-tidying.md)).
+- The list of sessions you were running. They remain as **stopped**, and the next time you start the workspace you can resume them with a click (for the cases that can't be resumed, see [Stop and resume a session](../user/sessions/stop-resume.md#when-it-goes-wrong)).
 - Your git and agent **connections (logins)**. They persist across workspace stop / start.
 
 Even while the workspace is stopped, the session list is still visible in the left pane
@@ -95,7 +95,7 @@ inactivity (idle auto-stop). It saves resources, so if stopping it explicitly fe
 chore, it's fine to just leave it.
 
 However, **uncommitted changes exist only inside the workspace**. For long-running work,
-committing and pushing frequently is the safe habit ([06](06-code.md)).
+committing and pushing frequently is the safe habit ([Connect a Git service](../user/code/connect-git.md#push)).
 
 ### "A new version is available" and the **Restart needed** badge
 
@@ -114,7 +114,7 @@ See the [release history](../../deploy/release/notes/SUMMARY.md) for what each r
 ### End-of-first-day checklist
 
 - Did you commit and push the changes that matter? (Only what you pushed survives outside the workspace.)
-- Sessions you want to keep running can simply stay as they are. If you've reached a good stopping point, stopping them via "Stop (resumable later)" in the ⋯ menu means a single click resumes them next time ([05](05-stopping-and-tidying.md)).
+- Sessions you want to keep running can simply stay as they are. If you've reached a good stopping point, stopping them via "Stop (resumable later)" in the ⋯ menu means a single click resumes them next time ([Stop and resume a session](../user/sessions/stop-resume.md)).
 - The workspace can be stopped by you, or left alone for idle auto-stop. Either is fine.
 
 For the things that tend to trip people up on day one (claude showing a login screen, a session

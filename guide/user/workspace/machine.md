@@ -93,7 +93,7 @@ Below it come the working copies with the most build output, and the folders in 
 What Agent Fleet keeps in `~/.cache/agent-fleet` (generated images, thumbnails, pasted and attached files and so on).
 
 - Generated images are removed after 30 days and thumbnails after 14 days
-- **Open cleanup** lets you clear what deleted sessions left and empty the trash ([Stopping and tidying up](../../member/05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup))
+- **Open cleanup** lets you clear what deleted sessions left and empty the trash ([Clear away finished sessions](../sessions/cleanup.md#restore-from-the-trash))
 
 ### Tool caches
 

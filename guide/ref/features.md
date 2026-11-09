@@ -18,32 +18,32 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [03 Starting sessions](../member/03-starting-sessions.md) |
-| Run in a fresh git worktree | member | Start dialog | [06 Repositories and git](../member/06-code.md) |
-| Chat mirror — follow and steer a running agent | member | main area | [04 Conversation](../member/04-conversation.md) |
-| Answer a question, plan, or permission prompt | member | mirror | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents ask |
-| Answer a question or plan left by a stopped session | member | mirror, the carried card | [04 Conversation](../member/04-conversation.md#questions-and-plans-left-by-a-stopped-session) |
-| Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [04 Conversation](../member/04-conversation.md#holding-follow-ups-before-sending-send-queue) |
-| Have another session review a plan | member | the plan card | [04 Conversation](../member/04-conversation.md#having-another-session-review-the-plan) |
-| Skill / command picker | member | mirror composer | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
+| Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [Start a session](../user/sessions/start.md) |
+| Run in a fresh git worktree | member | Start dialog | [Work in parallel with worktrees](../user/sessions/worktrees.md) |
+| Chat mirror — follow and steer a running agent | member | main area | [Reply to a session](../user/sessions/reply.md) |
+| Answer a question, plan, or permission prompt | member | mirror | [Reply to a session](../user/sessions/reply.md); [agents.md](agents.md) for which agents ask |
+| Answer a question or plan left by a stopped session | member | mirror, the carried card | [Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left) |
+| Hold follow-ups while a turn runs (Waiting to send) | member | mirror composer → Send ▾ → Add to waiting list, or Alt+Enter | [Hold what you send, stop a turn](../user/sessions/queue.md#hold-follow-ups-in-the-waiting-list) |
+| Have another session review a plan | member | the plan card | [Comment on a plan, have it reviewed](../user/sessions/plans.md#have-another-session-review-it) |
+| Skill / command picker | member | mirror composer | [Call a skill or a command](../user/sessions/skills.md); [agents.md](agents.md) for which agents |
 | Live terminal attached to a session | member | main area | [08 Terminal](../member/08-terminal.md) |
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [08 Terminal](../member/08-terminal.md) |
 | Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [08 Terminal](../member/08-terminal.md#copy-paste) |
-| Resume a stopped session | member | left pane → the session | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
+| Resume a stopped session | member | left pane → the session | [Stop and resume a session](../user/sessions/stop-resume.md) |
 | Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
 | Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [11 Running many sessions](../member/11-many-sessions.md) |
 | Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [11 Running many sessions](../member/11-many-sessions.md#seeing-how-sessions-relate-over-time-the-fleet-graph) |
-| Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#stopping-and-tidying-up-sessions) |
-| Hand a conversation to a new session | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#continuing-elsewhere-handoff-branch-move) |
-| Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#moving-a-session-to-another-agent-move) |
-| Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [04 Conversation](../member/04-conversation.md#saving-a-conversation-as-markdown) |
-| Fork from a past message | member | mirror, on a past message | [04 Conversation](../member/04-conversation.md); [agents.md](agents.md) for which agents |
+| Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy) |
+| Hand a conversation to a new session | member | session ⋯ menu | [Hand off to another session or agent](../user/sessions/handoff.md#choose-a-way) |
+| Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent) |
+| Export a conversation as Markdown | member | session ⋯ menu → Export as Markdown | [Save a conversation as Markdown](../user/sessions/export.md) |
+| Fork from a past message | member | mirror, on a past message | [Branch from a past message](../user/sessions/branch-message.md); [agents.md](agents.md) for which agents |
 | Hand a session to another member | member | session ⋯ menu or handoff proposal card → Hand off to a member | [12 Working with others](../member/12-collaboration.md#handing-a-session-to-another-member) |
 | Share a session read-only | member | Shared sessions | [12 Working with others](../member/12-collaboration.md) |
-| Highlights | member | mirror, on a selection | [04 Conversation](../member/04-conversation.md) |
-| Changed files | member | strip under the mirror header | [04 Conversation](../member/04-conversation.md) |
-| Context usage gauge | member | session header | [09 Agents](../user/agents/usage.md#see-how-long-the-conversation-is) |
-| Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [04 Conversation](../member/04-conversation.md#reading-an-answer-in-your-own-language-translation) |
+| Highlights | member | mirror, on a selection | [Reply to a session](../user/sessions/reply.md#highlight-a-line-in-the-conversation) |
+| Changed files | member | strip under the mirror header | [See what a session changed](../user/sessions/changes.md) |
+| Context usage gauge | member | session header | [Check prices and usage](../user/agents/usage.md#see-how-long-the-conversation-is) |
+| Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [Read an answer in your own language](../user/sessions/translate.md) |
 | Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [Have a session make images](../user/images/from-session.md) |
 | Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [11 Running many sessions](../member/11-many-sessions.md#starting-sessions-from-a-session-child-sessions) |
 | Abort detection and auto-resume | member | automatic | [04 Conversation](../member/04-conversation.md) |
@@ -52,15 +52,15 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Import a repository | member | Repositories → Clone | [06 Repositories and git](../member/06-code.md) |
-| Start from an empty folder | member | Repositories → new folder | [06 Repositories and git](../member/06-code.md) |
-| Commit graph, diff, stage and commit | member | Commit graph | [06 Repositories and git](../member/06-code.md) |
-| Worktrees | member | under each repository | [06 Repositories and git](../member/06-code.md) |
+| Import a repository | member | Repositories → Clone | [Clone a repository](../user/code/clone.md) |
+| Start from an empty folder | member | Repositories → new folder | [Clone a repository](../user/code/clone.md#start-from-nothing) |
+| Commit graph, diff, stage and commit | member | Commit graph | [Commit in the commit graph](../user/code/commit.md) |
+| Worktrees | member | under each repository | [Launch a session from a repository](../user/code/launch-from-repo.md) |
 | Use `gh` and `bkt` in a session, already signed in | member | any session | [Use the GitHub CLI](../user/integrations/github-cli.md), [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md); the list of signed-in CLIs is in [Commands](cli/README.md#clis-that-are-already-signed-in) |
 | Use `jira` in a session, already signed in | member | any session | [Use Jira](../user/integrations/jira.md) |
 | Use `confluence` in a session, already signed in (the Jira connection) | member | any session | [Use Confluence](../user/integrations/confluence.md) |
 | Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [Use Jira](../user/integrations/jira.md#ask-an-agent) |
-| Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [06 Repositories and git](../member/06-code.md#subversion-svn-repositories) |
+| Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [Use a Subversion repository](../user/code/svn.md) |
 | File tree and viewer | member | Files | [07 Files](../member/07-files.md) |
 | Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [07 Files](../member/07-files.md#download-a-folder-as-zip) |
 | Open a shell from a folder | member | Files tree → right-click a folder → Open shell here | [07 Files](../member/07-files.md#open-a-shell-from-a-folder) |
@@ -87,23 +87,23 @@ If a feature ships and does not appear here, it is not done
 |---|---|---|---|
 | Working sets | member | top of the left pane | [11 Running many sessions](../member/11-many-sessions.md) |
 | Memo queue | member | Memo queue | [10 Chat and memos](../member/10-chat-memo.md) |
-| Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [03 Starting sessions](../member/03-starting-sessions.md); [repos.md](repos.md) for what each provider contributes |
+| Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [Start from an issue or a ticket](../user/sessions/from-issues.md); [repos.md](repos.md) for what each provider contributes |
 | Scheduled (unattended) runs | member | Schedules | [11 Running many sessions](../member/11-many-sessions.md) |
 | Notification centre | member | top bar | [20 Settings](../member/20-settings.md) |
 | Inbox — messages and requests between members, with claim, launch and PR links | member | top bar → inbox | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
 | Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
 | Attach a session to an inbox message, sharing it with the recipients | member | inbox → New | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
-| Red dot on a session with an unread notification | member | left pane, tabs | [03 Starting sessions](../member/03-starting-sessions.md#reading-state-badges-and-notifications) |
-| Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [03 Starting sessions](../member/03-starting-sessions.md#from-a-row-to-a-session); [repos.md](repos.md) for which providers |
+| Red dot on a session with an unread notification | member | left pane, tabs | [Read a session's state](../user/sessions/status.md#the-red-dot) |
+| Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [Start from an issue or a ticket](../user/sessions/from-issues.md#how-sessions-and-tickets-are-linked); [repos.md](repos.md) for which providers |
 | Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../member/20-settings.md#notifications) |
 | A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [11 Running many sessions](../member/11-many-sessions.md#a-session-watching-a-pull-request-itself) |
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [Connect Discord and Slack](../user/integrations/chat-bridge.md) |
-| Reply suggestions | member | mirror composer | [04 Conversation](../member/04-conversation.md) |
-| Deletion lock | member | session ⋯ menu | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
-| Cleanup and the trash | member | Clean up | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
+| Reply suggestions | member | mirror composer | [Reply to a session](../user/sessions/reply.md#use-reply-suggestions) |
+| Deletion lock | member | session ⋯ menu | [Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion) |
+| Cleanup and the trash | member | Clean up | [Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup) |
 | Keyboard system | member | Settings → Keyboard | [02 Console basics](../member/02-console-basics.md) |
 | Text-to-speech | member | Settings → Read aloud | [20 Settings](../member/20-settings.md) |
 | Skills views — each agent's skills, read-only: personal (Settings) and a repository's (project tree → Skills…) | member | Settings → Skills; repository row menu → Skills… | [Bring your Claude Code setup](../user/agents/bring-claude-setup.md#check-your-skills) |

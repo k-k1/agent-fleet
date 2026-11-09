@@ -91,7 +91,7 @@ name, format, size, and line count.
 
 - **Syntax highlighting, line numbers, minimap**: code is highlighted with language detection. Toggle line numbers and the minimap under "File viewer" in ⚙Settings → the "Display" tab.
 - **Huge files**: files that are extremely large or have extremely long lines automatically switch to "Plain view" (no highlighting or line numbers).
-- **LFS pointers**: files whose Git LFS content has not been fetched show an "LFS pointer" badge. Enter the repository in a terminal and run `git lfs pull` to fetch the content ([06](06-code.md)).
+- **LFS pointers**: files whose Git LFS content has not been fetched show an "LFS pointer" badge. Enter the repository in a terminal and run `git lfs pull` to fetch the content ([Clone a repository](../user/code/clone.md#a-file-shows-lfs-pointer)).
 
 ### Markdown and Mermaid
 
@@ -115,7 +115,7 @@ assistant chat, the document viewer), it turns these into links:
   It stays plain text in the chat and in the document viewer.
 - **Ticket numbers** (`#956`, `owner/name#956`, a Jira key, and both ends of a range such as
   `#573-#598`) open the ticket's details, by the rules in
-  [03 Starting sessions](03-starting-sessions.md#from-a-ticket-number-in-the-conversation). In a file's preview a
+  [Start from an issue or a ticket](../user/sessions/from-issues.md#open-from-an-issue-number-in-the-conversation). In a file's preview a
   `#956` is read against the working copy the file is in: only for a file under `~/repos/<name>/`
   whose origin is on github.com or bitbucket.org. A file in a Git repository nested inside the
   copy (a submodule, a vendored clone) or outside `~/repos` gets no ticket links at all, and the

@@ -38,7 +38,7 @@ Connections and settings go through the agent CLIs inside the workspace. If the 
 
 What usually decides it is the context gauge, image paste, and whether you need Managed.
 What each kind can do is in the tables of the [Agents reference](../../ref/agents.md).
-The difference between Managed and Terminal (CLI) is in [Starting sessions](../../member/03-starting-sessions.md#execution-method-managed-and-terminal-cli).
+The difference between Managed and Terminal (CLI) is in [Start a session](../sessions/start.md#choose-the-execution-method).
 
 Two kinds have no agent at all.
 

@@ -113,7 +113,7 @@ land in the same workspace, the same home and the same settings.
   terminals. Off by default.
 - **Send key**: **Ctrl+Enter to send (Enter for a newline, the default)** or **Enter to send
   (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
-- **Reply suggestions**: chips with short replies above the composer ([04](04-conversation.md#reply-suggestions)). This is also
+- **Reply suggestions**: chips with short replies above the composer ([Reply to a session](../user/sessions/reply.md#use-reply-suggestions)). This is also
   where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
   drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
   back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
@@ -241,7 +241,7 @@ the assistant conversation: they share an implementation, but they surface somew
   - **Work-plan update**: the "refresh" button that re-derives the assistant chat's plan from the recent
     exchange.
   - **Answer translation (mirror)**: the "Translate" button on a mirror answer that came back in another
-    language ([04](04-conversation.md#reading-an-answer-in-your-own-language-translation)). A translation is kept
+    language ([Read an answer in your own language](../user/sessions/translate.md)). A translation is kept
     per agent/model: changing this feature's agent or model means the next press generates a fresh one (the earlier
     one comes back if you switch back).
   - **Translate automatically**: presses that button for you the moment a turn finishes (off by default). Only
@@ -291,14 +291,8 @@ session search this workspace's past conversations with the `search_sessions` to
 
 ### Git hosting
 
-GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
-The same connection signs in `gh`, and for Bitbucket Cloud `bkt`, in every session
-([Use the GitHub CLI](../user/integrations/github-cli.md), [Use the Bitbucket CLI](../user/integrations/bitbucket-cli.md)). If GitHub cannot renew the connection, the tab says
-"GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub
-again."
-Jira and Bitbucket connections finish only in the Console session of the member who started them. If the browser
-is signed in as someone else, or the session expired, nothing is saved: sign in as yourself and connect again.
-→ [06 Repositories and git](06-code.md)
+The GitHub and Bitbucket connections, the commit author, and the saved Subversion credentials. Connecting GitHub
+also connects GitHub Copilot. See [Connect a Git service](../user/code/connect-git.md).
 
 ### Ops & monitoring
 
@@ -391,9 +385,8 @@ also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the cl
 
 ### Internal repos
 
-Create, rename, delete and browse git repositories that **live entirely inside the tenant**, with no external
-git hosting. The clone URL authenticates itself, so there is no connect step (and it works while the workspace
-is stopped). → [06 Repositories and git](06-code.md)
+Create Git repositories inside the tenant, with no external service. See
+[Use the built-in Git](../user/code/internal-git.md).
 
 ### Export / import
 

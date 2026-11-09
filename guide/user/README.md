@@ -10,6 +10,40 @@ English | [日本語](README.ja.md)
 Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
 Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
 
+## Sessions
+
+| Page | What you can do |
+|---|---|
+| [Start a session](sessions/start.md) | Launch a session from Start, choosing the agent, the model and a first prompt |
+| [Work in parallel with worktrees](sessions/worktrees.md) | Give each session its own working copy and work in parallel in one repository |
+| [Start from an issue or a ticket](sessions/from-issues.md) | Start a session from an issue or a pull request in the issue tracker list |
+| [Read a session's state](sessions/status.md) | Tell from the row marks and notifications which sessions are waiting for you |
+| [Reply to a session](sessions/reply.md) | Read the conversation, answer question, plan and permission cards, and send the next instruction |
+| [Hold what you send, stop a turn](sessions/queue.md) | Hold follow-ups during a turn and send them in order, and stop a turn when something is queued |
+| [Comment on a plan, have it reviewed](sessions/plans.md) | Send comments on parts of a plan, and have another agent review it |
+| [Call a skill or a command](sessions/skills.md) | Pick a skill or a command the session can call and put it in the input box |
+| [Branch from a past message](sessions/branch-message.md) | Start a new session holding the conversation up to one of your past messages |
+| [See what a session changed](sessions/changes.md) | See the files a session actually touched, as a list |
+| [Save a conversation as Markdown](sessions/export.md) | Download the whole conversation as a Markdown file |
+| [Read an answer in your own language](sessions/translate.md) | Read an answer in a language you do not read, translated without using a turn |
+| [Stop and resume a session](sessions/stop-resume.md) | Pause a session and later carry on from where it stopped |
+| [Stop when done, or keep a session awake](sessions/auto-stop.md) | Have a session stop once its work is done, or keep a long job from being stopped |
+| [Clear away finished sessions](sessions/cleanup.md) | Archive sessions and delete working copies and branches you no longer need, and restore them from the trash |
+| [Stop a session that spends too much with a budget](sessions/budget.md) | Stop a session when its estimated spend reaches a budget |
+| [Hand off to another session or agent](sessions/handoff.md) | Continue a conversation in a new session or with another kind of agent |
+
+## Code
+
+| Page | What you can do |
+|---|---|
+| [Connect a Git service](code/connect-git.md) | Connect GitHub or Bitbucket to clone and push private repositories |
+| [Clone a repository](code/clone.md) | Bring a repository into the workspace, or start from nothing |
+| [Use the built-in Git](code/internal-git.md) | Keep repositories inside the tenant, with no external service |
+| [Launch a session from a repository](code/launch-from-repo.md) | Launch a session from a repository row and read the row's badges |
+| [Initialize Git Flow](code/git-flow.md) | Make the branches started from issues follow git-flow |
+| [Commit in the commit graph](code/commit.md) | Read history and diffs, and commit without opening a terminal |
+| [Use a Subversion repository](code/svn.md) | Check out a Subversion repository and work in it from a session |
+
 ## Agents
 
 | Page | What you can do |

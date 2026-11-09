@@ -42,7 +42,7 @@ The items under the card's "**Behavior**" are [the ones every agent shares](choo
 - **The models on offer are fetched from the account when you start.** The reasoning effort is part of the model name, so there is no separate picker
 - The usage chip on the WS bar shows the 5-hour and weekly usage ([Check prices and usage](usage.md))
 - **It may end a turn while a background command keeps running.** Meanwhile the session reads "**Ready · running in background**" and is not treated as idle
-- Background work keeps the workspace awake for at most 2 hours by default, though. For a longer build, use "**Keep awake**" ([Stopping and tidying up](../../member/05-stopping-and-tidying.md#keeping-a-session-awake))
+- Background work keeps the workspace awake for at most 2 hours by default, though. For a longer build, use "**Keep awake**" ([Stop when done, or keep a session awake](../sessions/auto-stop.md#keep-a-session-awake))
 - A turn agy never closes loses its in-progress mark after an hour without change. It keeps the mark while that turn's command is still running
 - **It is one of the routes a session can make images with.** It makes one image per call and takes up to 3 reference images for an edit ([Have a session make images](../images/from-session.md))
 

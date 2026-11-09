@@ -24,7 +24,7 @@ Bitbucket Cloud を接続しておくと、エージェントが `bkt`（[Bitbuc
 ## 始める前に
 
 **⚙設定 →「Git ホスティング」** で Bitbucket Cloud（bitbucket.org）を接続します。git の clone・push と同じ接続です。
-手順は [リポジトリと git](../../member/06-code.ja.md#git-プロバイダを接続する) にあります。
+手順は [Git のサービスを接続する](../code/connect-git.ja.md#bitbucket-を接続する) にあります。
 
 - Bitbucket Data Center は、設定画面からは接続できません。[自分で設定します](#自分の設定で使う)
 - **「アプリトークンで接続」** でつなぐときは、`bkt` で使う分のスコープもトークンに付けておきます（[スコープ](#スコープ)）
@@ -106,6 +106,6 @@ Bitbucket をつなぎ直してください。Bitbucket の課題（issue）は�
 ## 関連
 
 - [GitHub の CLI を使う](github-cli.ja.md)：GitHub で同じことをする
-- [リポジトリと git](../../member/06-code.ja.md)：Bitbucket の接続と、clone・push
+- [Git のサービスを接続する](../code/connect-git.ja.md)：Bitbucket の接続と、clone・push
 - [課題管理サービスを接続する](issue-tracker.ja.md)：プルリクエストを左ペインに並べる
 - [コマンド](../../ref/cli/README.ja.md#サインイン済みの-cli)：接続を使う CLI の一覧

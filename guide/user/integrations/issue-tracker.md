@@ -88,7 +88,7 @@ The "**Branch name template**" in "Saved queries" sets the branch name of a sess
 
 ## Start a session from the list
 
-How to read the list and start a session from a row is in [Starting sessions](../../member/03-starting-sessions.md#starting-from-the-issue-tracker).
+How to read the list and start a session from a row is in [Start from an issue or a ticket](../sessions/from-issues.md).
 The first instruction carries the issue's key, title and URL, and the agent reads the description and comments with `jira`, `gh` or `bkt`.
 
 ## When it goes wrong
@@ -109,4 +109,4 @@ The first instruction carries the issue's key, title and URL, and the agent read
 
 - [Use Jira](jira.md): have agents work with Jira issues
 - [Use Confluence](confluence.md): have agents work with Confluence pages
-- [Starting sessions](../../member/03-starting-sessions.md#starting-from-the-issue-tracker): reading the list and starting a session from a row
+- [Start from an issue or a ticket](../sessions/from-issues.md): reading the list and starting a session from a row

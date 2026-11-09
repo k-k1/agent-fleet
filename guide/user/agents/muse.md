@@ -66,7 +66,7 @@ Treat it like a shell session: it can do anything in this workspace.
 ## Good to know
 
 - **It runs as Managed only.** It cannot start in Terminal (CLI)
-- The **`/`** button beside the input box lists the running session's own skills; pick one and it runs ([The conversation](../../member/04-conversation.md#calling-a-skill-or-a-command))
+- The **`/`** button beside the input box lists the running session's own skills; pick one and it runs ([Call a skill or a command](../sessions/skills.md))
 - When a turn stops on a usage limit, it resumes by itself once the limit lifts
 - What Agent Fleet does not see, such as schedules and messages between sessions running inside muse, is in the [Agents reference](../../ref/agents.md#muse-what-agent-fleet-does-not-see)
 
