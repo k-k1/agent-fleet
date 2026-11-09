@@ -367,8 +367,9 @@ the agent decides when to use it.
   child adds at most 20 watches in all (`list_watches` names the child each came from); the parent lists and ends it, and it lasts until the parent is archived, not
   the child. The notice says which child it is for.
 - **No double notice with PR feedback.** With [PR feedback](#telling-a-session-about-its-pull-requests-feedback)
-  on, a session that watches its own pull request's checks, or every kind of review news that
-  arrived, hears about them from its watch only.
+  on, a session that watches its own pull request for failed checks, a change request or new
+  unresolved threads hears that from its watch only, and PR feedback does not repeat it after
+  the watch ends. What it does not watch still comes from PR feedback.
 - **In the session** it arrives as a line starting with `[agent-fleet:notice kind=watch`. Text
   from the pull request (check names, reviewer names) is quoted and marked as data, not
   instructions.
