@@ -13,24 +13,30 @@ const flush = (n = 1) => {
 
 /** A stand-in editor: `line` is where it is; `drift` moves it once after a scroll, the way
  *  CodeMirror's first measurement corrects its estimated heights. */
-function fakeEditor(visible = true) {
+function fakeEditor(visible = true, lines = 1000) {
   const host = document.createElement("div");
   const scroller = document.createElement("div");
   host.appendChild(scroller);
-  Object.defineProperty(scroller, "clientHeight", { get: () => (visible ? 400 : 0) });
-  const state = { line: 1, drift: 0, scrolls: 0 };
+  const state = { line: 1, drift: 0, scrolls: 0, visible };
+  Object.defineProperty(scroller, "clientHeight", { get: () => (state.visible ? 400 : 0) });
+  // 20px per line; the scroller cannot go past the last line.
+  Object.defineProperty(scroller, "scrollTop", { get: () => Math.round(state.line * 20) });
   const editor = {
     host,
     scroller,
     topLine: () => state.line,
     scrollToLine: (line: number) => {
       state.scrolls++;
-      state.line = line + state.drift;
+      state.line = Math.min(lines, line + state.drift);
       state.drift = 0;
     },
   };
   return { editor, state };
 }
+
+/** The box observers attached so far; `resize()` tells them the box changed. */
+let observers: (() => void)[] = [];
+const resize = () => observers.forEach((cb) => cb());
 
 beforeEach(() => {
   frames = [];
@@ -38,6 +44,22 @@ beforeEach(() => {
   vi.stubGlobal("cancelAnimationFrame", () => {
     frames = [];
   });
+  observers = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      cb: () => void;
+      constructor(cb: () => void) {
+        this.cb = cb;
+      }
+      observe() {
+        observers.push(this.cb);
+      }
+      disconnect() {
+        observers = observers.filter((cb) => cb !== this.cb);
+      }
+    },
+  );
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -110,6 +132,48 @@ describe("attachEditorScrollMemory", () => {
     const detach = attachEditorScrollMemory(editor, "k", false);
     flush(3);
     expect(state.scrolls).toBe(0);
+    detach();
+  });
+
+  it("waits while the editor has no box and restores once it gets one", () => {
+    saveScrollPos("k", 300);
+    const { editor, state } = fakeEditor(false);
+    const detach = attachEditorScrollMemory(editor, "k", true);
+    flush(3); // hidden: no frames kept running, no budget spent, nothing written
+    expect(frames).toHaveLength(0);
+    expect(state.scrolls).toBe(0);
+    state.visible = true;
+    resize();
+    flush(4);
+    expect(state.line).toBe(300);
+    detach();
+  });
+
+  it("restores again when a hidden editor comes back after settling", () => {
+    saveScrollPos("k", 300);
+    const { editor, state } = fakeEditor();
+    const detach = attachEditorScrollMemory(editor, "k", true);
+    flush(4);
+    expect(state.line).toBe(300);
+    // Hidden (display:none resets scrollTop), then shown again.
+    state.visible = false;
+    resize();
+    state.line = 1;
+    state.visible = true;
+    resize();
+    flush(4);
+    expect(state.line).toBe(300);
+    detach();
+  });
+
+  it("gives up early when the recorded line is past the end of a shorter document", () => {
+    saveScrollPos("k", 900);
+    const { editor, state } = fakeEditor(true, 200);
+    const detach = attachEditorScrollMemory(editor, "k", true);
+    flush(10);
+    expect(frames).toHaveLength(0);
+    expect(state.scrolls).toBeLessThanOrEqual(3);
+    expect(loadScrollPos("k")).toBe(200); // where it could get to
     detach();
   });
 

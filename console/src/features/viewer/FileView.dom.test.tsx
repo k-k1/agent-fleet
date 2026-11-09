@@ -60,6 +60,16 @@ vi.mock("./MarkdownView.tsx", () => ({
   },
 }));
 
+// The editor's scroll memory needs layout jsdom does not have (parts/editorScrollMemory's own
+// suite covers it); here only the restore decision FileView hands it is observed.
+const editorMemory: { key: string; restore: boolean }[] = [];
+vi.mock("./parts/editorScrollMemory.ts", () => ({
+  attachEditorScrollMemory: (_editor: unknown, key: string, restore: boolean) => {
+    editorMemory.push({ key, restore });
+    return () => {};
+  },
+}));
+
 const { FileView } = await import("./FileView.tsx");
 
 let root: Root | null = null;
@@ -107,6 +117,7 @@ const lastPreview = () => previewProps.at(-1);
 beforeEach(() => {
   clearDirtyRegistryForTests();
   previewProps.length = 0;
+  editorMemory.length = 0;
   served = { content: PLAIN_MD, editable: true };
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -458,6 +469,46 @@ describe("the buffer behind the preview", () => {
     root = createRoot(host);
     await render({ openMode: "edit" });
     expect(pressed()).toContain("Preview");
+  });
+
+  it("clamps a remembered mode to what the file allows now", async () => {
+    await render({});
+    await act(async () => modeButton("Split").click());
+    act(() => root!.unmount());
+    served = { content: PLAIN_MD, editable: false }; // became read-only meanwhile
+    root = createRoot(host);
+    await render({});
+    expect(pressed()).toContain("Preview");
+    expect(modeLabels()).toEqual(["Source", "Preview"]);
+  });
+
+  it("restores the editor's position unless a synced split takes it from the preview", async () => {
+    await render({});
+    // Preview -> Split: the scroll sync positions the editor from the preview.
+    await act(async () => modeButton("Split").click());
+    expect(editorMemory.at(-1)).toEqual({ key: "pane-1\u0000repos/x/doc.md\u0000editor", restore: false });
+    // Edit, then Split from the editor: the editor's own place is the one to keep.
+    await act(async () => modeButton("Edit").click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+    await act(async () => modeButton("Split").click());
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+    // Back from another tab straight into the split: the editor leads.
+    act(() => root!.unmount());
+    editorMemory.length = 0;
+    root = createRoot(host);
+    await render({});
+    expect(editorMemory.at(-1)?.restore).toBe(true);
+  });
+
+  it("restores the editor in a slides split, which has no scroll sync", async () => {
+    served = { content: MARP, editable: true };
+    await render({});
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400)); // the Marp detection is debounced
+    });
+    await act(async () => modeButton("Split").click());
+    expect(lastPreview()?.renderer).toBe("slides");
+    expect(editorMemory.at(-1)?.restore).toBe(true);
   });
 
   it("puts Markdown edits through the same buffer validator", async () => {
