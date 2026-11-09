@@ -82,6 +82,27 @@ func TestBitbucketPollReportsFromTheCache(t *testing.T) {
 		}
 	}
 
+	// A conflict held through an unknown read, then a decline and a reopen still in conflict:
+	// the reopened conflict is a new episode. Run on a copy so the rest of the test is unchanged.
+	{
+		c := cur
+		pr.Mergeable = "UNKNOWN"
+		_, c, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", c, nil)
+		pr.State = "closed"
+		_, c, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", c, nil)
+		pr.State, pr.Mergeable = "open", "CONFLICTING"
+		evs, _, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", c, nil)
+		reopened := ""
+		for _, e := range evs {
+			if e.Type == "pr.conflict" {
+				reopened = e.Version
+			}
+		}
+		if reopened == "" || reopened == second {
+			t.Fatalf("a conflict after a reopen kept the old episode: %q (before %q)", reopened, second)
+		}
+	}
+
 	// Change requests count episodes the same way.
 	pr.ChangesRequested = true
 	evs, _, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
