@@ -124,6 +124,11 @@ const MAX_STRAY_SHARE = 0.05;
 // ("実装完了。see the diff").
 const MAX_LABELLED_SHARE = 0.25;
 const MAX_LABEL_CHARS = 20;
+// A name made of short parts joined by ・ is a label however long it gets: the page name
+// "チーム・チャット・外からつなぐ・設定・セキュリティ" is 25 characters, and as prose it alone pushed
+// one English report past 5% (measured: 6.0%). A sentence that happens to contain a ・ still has a
+// long part on one side of it, so it stays prose.
+const MAX_NAME_PART_CHARS = 10;
 const CJK_RUN = /[\u3000-\u303f\u3041-\u309f\u30a0-\u30ff\u3400-\u9fff\uf900-\ufaff\uff01-\uff60]+/g;
 const SENTENCE_MARK = /[\u3001\u3002\uff01\uff1f]/;
 
@@ -135,6 +140,10 @@ function cjkCount(s: string): number {
 // The mark must end a word: a file name such as 設定.pdf in an English table is a label.
 const ASCII_SENTENCE_END = /^[.!?]+([\s\u3000]|$)/;
 
+function labelSized(run: string, chars: number): boolean {
+  return chars <= MAX_LABEL_CHARS || run.split("・").every((part) => cjkCount(part) <= MAX_NAME_PART_CHARS);
+}
+
 /** CJK characters that read as Japanese prose rather than a name standing in English text. */
 function cjkProseCount(prose: string): number {
   let n = 0;
@@ -142,7 +151,7 @@ function cjkProseCount(prose: string): number {
     const run = m[0];
     const c = cjkCount(run);
     const closed = ASCII_SENTENCE_END.test(prose.slice(m.index + run.length));
-    if (SENTENCE_MARK.test(run) || closed || c > MAX_LABEL_CHARS) n += c;
+    if (SENTENCE_MARK.test(run) || closed || !labelSized(run, c)) n += c;
   }
   return n;
 }
