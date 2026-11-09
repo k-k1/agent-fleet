@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -27,13 +28,14 @@ import (
 var agentMemLintApplyMax = 100
 
 const (
-	agentMemLintAuthor   = "lint"
-	agentMemOpLint       = "lint"
-	agentMemOpLintRename = "lint-rename"
-	// agentMemLintRenameCommits bounds how far back renames are read.
-	agentMemLintRenameCommits = 2000
-	agentMemLintRenameHops    = 5
+	agentMemLintAuthor     = "lint"
+	agentMemOpLint         = "lint"
+	agentMemOpLintRename   = "lint-rename"
+	agentMemLintRenameHops = 5
 )
+
+// agentMemLintRenameCommits bounds how far back renames are read (a var so a test can lower it).
+var agentMemLintRenameCommits = 2000
 
 // agentMemLintCaller is the author of every lint write.
 func agentMemLintCaller(c agentMemCaller) agentMemCaller {
@@ -166,7 +168,7 @@ func agentMemLintApply(scope, project string, now time.Time) (agentMemLintApplyO
 			return out, err
 		}
 		if n > 0 {
-			if wire, es, c, repo, err = agentMemLintCollect(scope, project); err != nil {
+			if wire, es, c, repo, err = agentMemLintCollectMemo(scope, project, rr.memo); err != nil {
 				return out, err
 			}
 		}
@@ -269,10 +271,70 @@ func agentMemLintWrite(lc agentMemCaller, scope string, checked agentMemEntry, n
 // agentMemLintRename is where a path went: the new path and the commit that renamed it.
 type agentMemLintRename struct{ To, Commit string }
 
-// Renames reads the file renames of the pinned revision's history, newest first (the newest
-// rename of a path wins), and returns old path -> where it went. Merge commits are not read: a
+// agentMemLintDirRename is where a directory went, inferred from the file renames of one commit
+// (git records no directory renames): Files is how many files that commit renamed out of it, which
+// is checked against what the directory held before the commit. To is empty when the commit's
+// renames out of the directory disagree about where it went: the newest word on a directory
+// stays, so an older rename never fills in for an ambiguous newer one.
+type agentMemLintDirRename struct {
+	agentMemLintRename
+	Files int
+}
+
+// agentMemLintRenames is what the history says moved, newest first (the newest rename of a path
+// wins).
+type agentMemLintRenames struct {
+	File map[string]agentMemLintRename
+	Dir  map[string]agentMemLintDirRename
+	// Unread counts renames left out because a path is quoted by git (tab, newline, quote).
+	Unread int
+}
+
+// agentMemLintRenameMemo keeps the history read for the length of one run, so the report's
+// former-directory lookup and the apply step read it once between them.
+type agentMemLintRenameMemo struct {
+	ref  string
+	once sync.Once
+	ren  agentMemLintRenames
+	err  error
+
+	mu     sync.Mutex
+	before map[[2]string]int
+}
+
+// Renames reads the renames of the pinned revision's history. Merge commits are not read: a
 // rename that only a merge shows is simply not applied.
-func (r agentMemLintRepo) Renames() (map[string]agentMemLintRename, error) {
+func (r agentMemLintRepo) Renames() (agentMemLintRenames, error) {
+	if r.memo == nil {
+		return r.readRenames()
+	}
+	r.memo.once.Do(func() { r.memo.ren, r.memo.err = r.readRenames() })
+	return r.memo.ren, r.memo.err
+}
+
+// FormerTopDirs lists the top-level directories that a commit renamed whole, for the path check:
+// such a directory is no longer in the tree, and without it a body that still names it would never
+// be recognised as a path. A directory only partly moved, or moved to several places, is not one:
+// its name may be an ordinary word ("left/right") that is not worth a reason.
+func (r agentMemLintRepo) FormerTopDirs() ([]string, error) {
+	ren, err := r.Renames()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for d, dr := range ren.Dir {
+		if strings.Contains(d, "/") || dr.To == "" {
+			continue
+		}
+		if n, err := r.DirFilesBefore(dr.Commit, d); err == nil && n == dr.Files {
+			out = append(out, d)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (r agentMemLintRepo) readRenames() (agentMemLintRenames, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "--git-dir="+r.gitDir, "-c", "core.quotePath=false", "log",
@@ -281,50 +343,184 @@ func (r agentMemLintRepo) Renames() (map[string]agentMemLintRename, error) {
 	cmd.Env = append(cmd.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("git log failed")
+		return agentMemLintRenames{}, fmt.Errorf("git log failed")
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("git log failed")
+		return agentMemLintRenames{}, fmt.Errorf("git log failed")
 	}
-	out := map[string]agentMemLintRename{}
+	out := agentMemLintRenames{File: map[string]agentMemLintRename{}, Dir: map[string]agentMemLintDirRename{}}
 	commit := ""
+	var pairs [][2]string
+	flush := func() {
+		agentMemLintAddDirRenames(out.Dir, commit, pairs)
+		pairs = pairs[:0]
+	}
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 64<<10), 4<<20)
 	for sc.Scan() {
 		line := sc.Text()
 		if rest, ok := strings.CutPrefix(line, "\x01"); ok {
+			flush()
 			commit = rest
 			continue
 		}
 		f := strings.Split(line, "\t")
-		if len(f) != 3 || !strings.HasPrefix(f[0], "R") || strings.HasPrefix(f[1], `"`) || strings.HasPrefix(f[2], `"`) {
+		if len(f) != 3 && strings.HasPrefix(line, "R") {
+			out.Unread++ // a tab or newline in a name splits or quotes the line
 			continue
 		}
-		if _, seen := out[f[1]]; !seen {
-			out[f[1]] = agentMemLintRename{To: f[2], Commit: commit}
+		if len(f) != 3 || !strings.HasPrefix(f[0], "R") {
+			continue
+		}
+		if strings.HasPrefix(f[1], `"`) || strings.HasPrefix(f[2], `"`) {
+			out.Unread++
+			continue
+		}
+		pairs = append(pairs, [2]string{f[1], f[2]})
+		if _, seen := out.File[f[1]]; !seen {
+			out.File[f[1]] = agentMemLintRename{To: f[2], Commit: commit}
 		}
 	}
+	flush()
 	for sc.Scan() {
 	}
 	if err := cmd.Wait(); err != nil || sc.Err() != nil {
-		return nil, fmt.Errorf("git log failed")
+		return agentMemLintRenames{}, fmt.Errorf("git log failed")
 	}
 	return out, nil
 }
 
+// agentMemLintAddDirRenames infers, from the file renames of one commit, the directories that
+// moved: a file a/b/c/x -> n/m/c/x says a/b -> n/m and also a/b/c -> n/m/c (the moved part is
+// where the two paths first differ; everything below it kept its name). A directory whose files
+// went to different places in the commit is ambiguous and recorded as such. dst keeps the first
+// (newest) word on each directory.
+func agentMemLintAddDirRenames(dst map[string]agentMemLintDirRename, commit string, pairs [][2]string) {
+	type cand struct {
+		to    string
+		files int
+	}
+	cands := map[string]*cand{}
+	for _, p := range pairs {
+		old, nw := p[0], p[1]
+		for i := strings.LastIndexByte(old, '/'); i > 0; i = strings.LastIndexByte(old[:i], '/') {
+			d, rest := old[:i], old[i+1:]
+			if !strings.HasSuffix(nw, "/"+rest) {
+				break // the longer tails cannot match either
+			}
+			to := nw[:len(nw)-len(rest)-1]
+			if to == "" {
+				break
+			}
+			c := cands[d]
+			if c == nil {
+				c = &cand{to: to}
+				cands[d] = c
+			} else if c.to != to {
+				c.to = "" // ambiguous
+			}
+			c.files++
+		}
+	}
+	for d, c := range cands {
+		if old, seen := dst[d]; seen {
+			// An older commit that sent the same directory somewhere else makes the move
+			// ambiguous: part of it may have gone to either place.
+			if old.To != "" && c.to != old.To {
+				old.To = ""
+				dst[d] = old
+			}
+			continue
+		}
+		dr := agentMemLintDirRename{Files: c.files}
+		if c.to != "" {
+			dr.agentMemLintRename = agentMemLintRename{To: c.to, Commit: commit}
+		}
+		dst[d] = dr
+	}
+}
+
+// DirFilesBefore counts the files under dir in the parent of commit. A directory rename counts
+// only when every one of them was renamed by that commit: a directory that was split, or that
+// kept files behind, is not "renamed" and its anchors are left to the reason.
+func (r agentMemLintRepo) DirFilesBefore(commit, dir string) (int, error) {
+	if m := r.memo; m != nil {
+		k := [2]string{commit, dir}
+		m.mu.Lock()
+		n, ok := m.before[k]
+		m.mu.Unlock()
+		if ok {
+			return n, nil
+		}
+		n, err := r.dirFilesBefore(commit, dir)
+		if err == nil {
+			m.mu.Lock()
+			if m.before == nil {
+				m.before = map[[2]string]int{}
+			}
+			m.before[k] = n
+			m.mu.Unlock()
+		}
+		return n, err
+	}
+	return r.dirFilesBefore(commit, dir)
+}
+
+func (r agentMemLintRepo) dirFilesBefore(commit, dir string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
+	defer cancel()
+	out, err := agentMemLintGit(ctx, r.gitDir, nil, "ls-tree", "-r", "--name-only", "-z", commit+"^", "--", dir+"/")
+	if err != nil {
+		return 0, fmt.Errorf("git ls-tree: %w", err)
+	}
+	n := 0
+	for _, p := range strings.Split(string(out), "\x00") {
+		if strings.HasPrefix(p, dir+"/") {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// agentMemLintHop is one step of a path's move: where it was, where it went and the commit.
+type agentMemLintHop struct{ From, To, Commit string }
+
 // agentMemLintResolveRename follows old through the renames to a path that exists in the
-// revision; the evidence is the commit of the last hop.
-func agentMemLintResolveRename(old string, ren map[string]agentMemLintRename, exists func(string) bool) (agentMemLintRename, bool) {
-	cur, hop := old, agentMemLintRename{}
+// revision and returns every hop, so the evidence names each commit. A file rename wins over a
+// directory one; otherwise the longest renamed directory prefix of the path (a whole segment:
+// "dir2/x" is not under "dir") moves it, provided dirMoved confirms the commit moved the
+// directory whole.
+func agentMemLintResolveRename(old string, ren agentMemLintRenames, exists func(string) bool, dirMoved func(commit, dir string, files int) bool) ([]agentMemLintHop, bool) {
+	cur := old
+	var hops []agentMemLintHop
 	for i := 0; i < agentMemLintRenameHops; i++ {
-		r, ok := ren[cur]
+		next, ok := agentMemLintRenameStep(cur, ren, dirMoved)
 		if !ok {
-			return agentMemLintRename{}, false
+			return nil, false
 		}
-		cur, hop = r.To, r
+		hops = append(hops, agentMemLintHop{cur, next.To, next.Commit})
+		cur = next.To
 		if exists(cur) {
-			return hop, true
+			return hops, true
 		}
+	}
+	return nil, false
+}
+
+func agentMemLintRenameStep(p string, ren agentMemLintRenames, dirMoved func(commit, dir string, files int) bool) (agentMemLintRename, bool) {
+	if r, ok := ren.File[p]; ok {
+		return r, true
+	}
+	for i := len(p); i > 0; i = strings.LastIndexByte(p[:i], '/') {
+		d := p[:i]
+		dr, ok := ren.Dir[d]
+		if !ok {
+			continue
+		}
+		if dr.To == "" || dirMoved == nil || !dirMoved(dr.Commit, d, dr.Files) {
+			return agentMemLintRename{}, false // the nearest directory word is the one that counts
+		}
+		return agentMemLintRename{To: dr.To + p[i:], Commit: dr.Commit}, true
 	}
 	return agentMemLintRename{}, false
 }
@@ -350,9 +546,13 @@ func agentMemLintReplacePath(s, old, to string) (string, int) {
 		}
 		i += at
 		end := i + len(old)
-		okPrev := i == 0 || !agentMemLintPathByte(s[i-1], false)
+		okPrev := i == 0 || !agentMemLintPathByte(s[i-1], false) ||
+			// "./old": a leading "./" is spelling, as the extraction treats it.
+			(s[i-1] == '/' && i >= 2 && s[i-2] == '.' && (i == 2 || !agentMemLintPathByte(s[i-3], false)))
+		// "dir/" ends the path (a directory written with its slash); "dir/x" continues it.
 		okNext := end >= len(s) || !agentMemLintPathByte(s[end], true) &&
-			!(s[end] == '.' && end+1 < len(s) && agentMemLintPathByte(s[end+1], true)) && s[end] != '/'
+			!(s[end] == '.' && end+1 < len(s) && agentMemLintPathByte(s[end+1], true)) &&
+			(s[end] != '/' || end+1 >= len(s) || !agentMemLintPathByte(s[end+1], false))
 		b.WriteString(s[at:i])
 		if okPrev && okNext {
 			b.WriteString(to)
@@ -384,13 +584,23 @@ func agentMemLintApplyRenames(repo agentMemLintRepo, wire agentMemLintWire, es [
 		out.Notes = append(out.Notes, "renames were not read: "+err.Error())
 		return 0, nil
 	}
+	if ren.Unread > 0 {
+		out.Notes = append(out.Notes, fmt.Sprintf("%d renames of paths with quotes, tabs or newlines were not read", ren.Unread))
+	}
 	paths, err := repo.Paths()
 	if err != nil {
 		return 0, nil
 	}
 	have := make(map[string]bool, len(paths))
 	for _, p := range paths {
-		have[p] = true
+		// The files and every directory above them: a renamed directory resolves to a directory.
+		for d := p; d != ""; d = d[:max(strings.LastIndexByte(d, '/'), 0)] {
+			have[d] = true
+		}
+	}
+	dirMoved := func(commit, dir string, files int) bool {
+		n, err := repo.DirFilesBefore(commit, dir)
+		return err == nil && n == files
 	}
 	sort.Slice(es, func(i, j int) bool { return es[i].Name < es[j].Name })
 	lc := agentMemLintCaller(c)
@@ -401,13 +611,13 @@ func agentMemLintApplyRenames(repo agentMemLintRepo, wire agentMemLintWire, es [
 			continue
 		}
 		type hit struct {
-			old string
-			r   agentMemLintRename
+			old  string
+			hops []agentMemLintHop
 		}
 		var hits []hit
 		for _, old := range subs {
-			if r, ok := agentMemLintResolveRename(old, ren, func(p string) bool { return have[p] }); ok {
-				hits = append(hits, hit{old, r})
+			if hops, ok := agentMemLintResolveRename(old, ren, func(p string) bool { return have[p] }, dirMoved); ok {
+				hits = append(hits, hit{old, hops})
 			}
 		}
 		if len(hits) == 0 {
@@ -421,17 +631,23 @@ func agentMemLintApplyRenames(repo agentMemLintRepo, wire agentMemLintWire, es [
 			changed := false
 			var trailers []string
 			for _, h := range hits {
-				body, n := agentMemLintReplacePath(cur.Body, h.old, h.r.To)
+				to := h.hops[len(h.hops)-1].To
+				body, n := agentMemLintReplacePath(cur.Body, h.old, to)
+				cur.Body = body
+				// A stored anchor takes the same replacement as the body: it may carry a ./, a
+				// trailing / or a :line, which the extraction ignores too.
+				for i, a := range cur.Anchors {
+					r, k := agentMemLintReplacePath(a, h.old, to)
+					cur.Anchors[i], n = r, n+k
+				}
 				if n == 0 {
 					continue
 				}
-				cur.Body, changed = body, true
-				for i, a := range cur.Anchors {
-					if a == h.old {
-						cur.Anchors[i] = h.r.To
-					}
+				changed = true
+				// One trailer per hop, so a chain a -> b -> c names the commit of each move.
+				for _, hop := range h.hops {
+					trailers = append(trailers, "AF-Lint-Rename: "+hop.From+" -> "+hop.To+" @ "+hop.Commit)
 				}
-				trailers = append(trailers, "AF-Lint-Rename: "+h.old+" -> "+h.r.To+" @ "+h.r.Commit)
 			}
 			if changed {
 				cur.Updated = now.UTC().Format(time.RFC3339)

@@ -82,14 +82,14 @@ var testRepo = fakeRepo{
 // is not.
 func TestEachCheckHasAPositiveControl(t *testing.T) {
 	mems := []Memory{
-		{"target", "ok"},
-		{"links", "see [[target]] and [[ghost]] and [[ghost|alias]]\n[[ -f x ]] is shell"},
-		{"paths", "edit `workspace/agent/internal/memoryx/agent_memory.go` and workspace/agent/internal/memoryx/gone.go:12.\nsee https://example.com/docs/nowhere.md and /usr/docs/x.go and and/or"},
-		{"syms", "calls `agentMemSave` and `agentMemVanished` and `plain` and `store.json`; run TestAgentMemorySaves and TestGoneAway"},
-		{"adrs", "per ADR 0130 and ADR 9999, also ADR-0007"},
-		{"terms", "the Muse import\nuses retired-thing here; a museum is fine; 旧設定 too"},
-		{"big", strings.Repeat("x", DefaultMaxBytes+1)},
-		{"edge", strings.Repeat("x", DefaultMaxBytes)},
+		{Name: "target", Body: "ok"},
+		{Name: "links", Body: "see [[target]] and [[ghost]] and [[ghost|alias]]\n[[ -f x ]] is shell"},
+		{Name: "paths", Body: "edit `workspace/agent/internal/memoryx/agent_memory.go` and workspace/agent/internal/memoryx/gone.go:12.\nsee https://example.com/docs/nowhere.md and /usr/docs/x.go and and/or"},
+		{Name: "syms", Body: "calls `agentMemSave` and `agentMemVanished` and `plain` and `store.json`; run TestAgentMemorySaves and TestGoneAway"},
+		{Name: "adrs", Body: "per ADR 0130 and ADR 9999, also ADR-0007"},
+		{Name: "terms", Body: "the Muse import\nuses retired-thing here; a museum is fine; 旧設定 too"},
+		{Name: "big", Body: strings.Repeat("x", DefaultMaxBytes+1)},
+		{Name: "edge", Body: strings.Repeat("x", DefaultMaxBytes)},
 	}
 	rep := Lint(mems, Options{RetiredTerms: []string{"muse", "retired-thing", "旧設定", "  "}}, testRepo)
 	if rep.Checked != len(mems) {
@@ -142,11 +142,11 @@ func sameSet(a, b []string) bool {
 // reported: the prototype's false positives were mostly this.
 func TestPathPrecision(t *testing.T) {
 	body := "internal/memoryx/nowhere.go, foo/bar/baz, ./README.md, console/src, console/src/app.tsx#L3, console/dist/*.js, `docs/decisions/`"
-	rep := Lint([]Memory{{"m", body}}, Options{}, testRepo)
+	rep := Lint([]Memory{{Name: "m", Body: body}}, Options{}, testRepo)
 	if got := subjects(rep, "m", CheckMissingPath); len(got) != 0 {
 		t.Fatalf("false positives: %v", got)
 	}
-	rep = Lint([]Memory{{"m", "console/src/missing.tsx and workspace/gone/"}}, Options{}, testRepo)
+	rep = Lint([]Memory{{Name: "m", Body: "console/src/missing.tsx and workspace/gone/"}}, Options{}, testRepo)
 	if got := subjects(rep, "m", CheckMissingPath); !sameSet(got, []string{"console/src/missing.tsx", "workspace/gone"}) {
 		t.Fatalf("got %v", got)
 	}
@@ -156,7 +156,7 @@ func TestPathPrecision(t *testing.T) {
 // check does not guess.
 func TestNoRepoRunsOnlyTheThreeChecks(t *testing.T) {
 	body := "[[ghost]] muse console/src/gone.go `agentMemVanished` ADR 9999 " + strings.Repeat("x", DefaultMaxBytes)
-	rep := Lint([]Memory{{"m", body}}, Options{RetiredTerms: []string{"muse"}}, nil)
+	rep := Lint([]Memory{{Name: "m", Body: body}}, Options{RetiredTerms: []string{"muse"}}, nil)
 	for _, c := range []string{CheckMissingPath, CheckMissingSym, CheckMissingADR} {
 		if rep.Counts[c] != 0 {
 			t.Errorf("%s ran without a repo", c)
@@ -168,7 +168,7 @@ func TestNoRepoRunsOnlyTheThreeChecks(t *testing.T) {
 		}
 	}
 	noADR := fakeRepo{paths: []string{"console/a.go"}}
-	rep = Lint([]Memory{{"m", "ADR 12"}}, Options{}, noADR)
+	rep = Lint([]Memory{{Name: "m", Body: "ADR 12"}}, Options{}, noADR)
 	if rep.Counts[CheckMissingADR] != 0 {
 		t.Error("ADR check ran with no ADR directory")
 	}
@@ -176,20 +176,20 @@ func TestNoRepoRunsOnlyTheThreeChecks(t *testing.T) {
 
 // A repository that cannot be read is said so in Skipped, never reported as clean.
 func TestRepoFailureIsSaid(t *testing.T) {
-	rep := Lint([]Memory{{"m", "console/x.go"}}, Options{}, fakeRepo{pathErr: errors.New("boom")})
+	rep := Lint([]Memory{{Name: "m", Body: "console/x.go"}}, Options{}, fakeRepo{pathErr: errors.New("boom")})
 	if len(rep.Skipped) != 1 || !strings.Contains(rep.Skipped[0], "boom") {
 		t.Fatalf("skipped = %v", rep.Skipped)
 	}
 	r := testRepo
 	r.symErr = errors.New("timeout")
-	rep = Lint([]Memory{{"m", "`agentMemVanished`"}}, Options{}, r)
+	rep = Lint([]Memory{{Name: "m", Body: "`agentMemVanished`"}}, Options{}, r)
 	if len(rep.Skipped) != 1 || rep.Counts[CheckMissingSym] != 0 {
 		t.Fatalf("skipped = %v counts = %v", rep.Skipped, rep.Counts)
 	}
 }
 
 func TestLinesAndOrder(t *testing.T) {
-	rep := Lint([]Memory{{"b", "x\n[[ghost]]"}, {"a", "y\n\nmuse"}}, Options{RetiredTerms: []string{"muse"}}, nil)
+	rep := Lint([]Memory{{Name: "b", Body: "x\n[[ghost]]"}, {Name: "a", Body: "y\n\nmuse"}}, Options{RetiredTerms: []string{"muse"}}, nil)
 	if len(rep.Findings) != 2 || rep.Findings[0].Memory != "a" || rep.Findings[0].Line != 3 || rep.Findings[1].Line != 2 {
 		t.Fatalf("%+v", rep.Findings)
 	}
@@ -201,7 +201,7 @@ func TestQualifiedSymbolsAreChecked(t *testing.T) {
 	body := "`pkg.missing_func` `pkg.removed()` `store.json` `agent_memory.go` `pkg.Exists`"
 	r := testRepo
 	r.symbols = map[string]bool{"Exists": true}
-	rep := Lint([]Memory{{"m", body}}, Options{}, r)
+	rep := Lint([]Memory{{Name: "m", Body: body}}, Options{}, r)
 	if got := subjects(rep, "m", CheckMissingSym); !sameSet(got, []string{"missing_func", "removed"}) {
 		t.Fatalf("missing-symbol = %v", got)
 	}
@@ -236,7 +236,7 @@ var shortRefRepo = fakeRepo{paths: []string{
 func TestNumberedShortReferences(t *testing.T) {
 	body := "docs/log/99 docs/log/099 docs/log/7 docs/build/92 guide/admin/03 guide/admin/NN docs/51x docs/log/NN docs/99\n" +
 		"negative: docs/log/9999 docs/build/93 guide/admin/04 docs/log/99x docs/log/9-9 guide/nowhere/03 docs/build/1 docs/log/9"
-	rep := Lint([]Memory{{"m", body}}, Options{}, shortRefRepo)
+	rep := Lint([]Memory{{Name: "m", Body: body}}, Options{}, shortRefRepo)
 	want := []string{"docs/51x", "docs/log/9999", "docs/build/93", "guide/admin/04", "docs/log/99x", "docs/log/9-9", "guide/nowhere/03", "docs/build/1", "docs/log/9"}
 	if got := subjects(rep, "m", CheckMissingPath); !sameSet(got, want) {
 		t.Fatalf("missing-path = %v, want %v", got, want)
@@ -246,7 +246,7 @@ func TestNumberedShortReferences(t *testing.T) {
 // "docs/<number>" is a journal number without "log/": it resolves in docs/log, and a number with
 // no journal is reported.
 func TestBareDocsNumberResolvesToJournal(t *testing.T) {
-	rep := Lint([]Memory{{"m", "docs/99 docs/7 docs/51"}}, Options{}, shortRefRepo)
+	rep := Lint([]Memory{{Name: "m", Body: "docs/99 docs/7 docs/51"}}, Options{}, shortRefRepo)
 	if got := subjects(rep, "m", CheckMissingPath); !sameSet(got, []string{"docs/51"}) {
 		t.Fatalf("missing-path = %v", got)
 	}
@@ -274,7 +274,7 @@ var ignoreRepo = fileRepo{
 func TestGitIgnoredPathsAreSkipped(t *testing.T) {
 	body := "console/node_modules/react/index.js console/dist console/dist/assets/a.js console/build/out docs/tmp docs/x.log docs/keep.log " +
 		"/ negative: console/src/gone.tsx tools/gone.go docs/gone.md console/src/dist/gone.go tools/dist"
-	rep := Lint([]Memory{{"m", body}}, Options{}, ignoreRepo)
+	rep := Lint([]Memory{{Name: "m", Body: body}}, Options{}, ignoreRepo)
 	// docs/keep.log is re-included by the negation; tools/dist is not ignored by "/dist/" (root only).
 	want := []string{"docs/keep.log", "console/src/gone.tsx", "tools/gone.go", "docs/gone.md", "console/src/dist/gone.go", "tools/dist"}
 	if got := subjects(rep, "m", CheckMissingPath); !sameSet(got, want) {
@@ -285,13 +285,13 @@ func TestGitIgnoredPathsAreSkipped(t *testing.T) {
 // The rules come from the repository reader only: without FileReader nothing is skipped, and an
 // unreadable .gitignore is said so in Skipped and skips nothing.
 func TestGitIgnoreNeedsReadableRevisionRules(t *testing.T) {
-	rep := Lint([]Memory{{"m", "console/node_modules/x"}}, Options{}, ignoreRepo.fakeRepo)
+	rep := Lint([]Memory{{Name: "m", Body: "console/node_modules/x"}}, Options{}, ignoreRepo.fakeRepo)
 	if got := subjects(rep, "m", CheckMissingPath); len(got) != 1 {
 		t.Fatalf("plain Repo: %v", got)
 	}
 	bad := ignoreRepo
 	bad.err = errors.New("boom")
-	rep = Lint([]Memory{{"m", "console/node_modules/x"}}, Options{}, bad)
+	rep = Lint([]Memory{{Name: "m", Body: "console/node_modules/x"}}, Options{}, bad)
 	if got := subjects(rep, "m", CheckMissingPath); len(got) != 1 {
 		t.Fatalf("unreadable rules: %v", got)
 	}
@@ -382,8 +382,8 @@ var proposalFixture = proposalRepo{
 // are not proposed.
 func TestRetiredTermProposals(t *testing.T) {
 	mems := []Memory{
-		{"a", "the Operator Interaction Graph view; set AF_OLD_SWITCH=1 and AF_STILL_HERE"},
-		{"b", "background memory review is mostly alive; AF_OLD_SWITCH_V2 is another key; single"},
+		{Name: "a", Body: "the Operator Interaction Graph view; set AF_OLD_SWITCH=1 and AF_STILL_HERE"},
+		{Name: "b", Body: "background memory review is mostly alive; AF_OLD_SWITCH_V2 is another key; single"},
 	}
 	rep := Lint(mems, Options{}, proposalFixture)
 	if len(rep.Proposals) != 2 {
@@ -414,5 +414,66 @@ func TestRetiredTermProposals(t *testing.T) {
 	rep = Lint(mems, Options{}, proposalFixture.fakeRepo)
 	if len(rep.Proposals) != 0 || len(rep.Skipped) != 0 {
 		t.Errorf("plain repo: %+v %v", rep.Proposals, rep.Skipped)
+	}
+}
+
+func TestStoredAnchorsAreCheckedByKind(t *testing.T) {
+	r := fakeRepo{paths: []string{"console/x.go", "docs/decisions/0130-a.md"}, symbols: map[string]bool{"liveSym": true}}
+	m := Memory{Name: "m", Body: "nothing to see", Anchors: []string{
+		"console/gone.go", "console/x.go", "./console/gone2.go/", "TestVanished", "goneSymbol", "liveSym", "af-memory lint --apply", "ADR 9999", "ADR 130", "[[ghost]]", "plain",
+	}}
+	rep := Lint([]Memory{m}, Options{}, r)
+	got := map[string]bool{}
+	for _, f := range rep.Findings {
+		if f.Line != 0 {
+			t.Errorf("anchor finding with a line: %+v", f)
+		}
+		got[f.Check+":"+f.Subject] = true
+	}
+	want := []string{
+		"missing-path:console/gone.go", "missing-path:console/gone2.go", "missing-symbol:TestVanished", "missing-symbol:goneSymbol",
+		"missing-adr:ADR 9999", "broken-link:ghost",
+	}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("no finding %s in %v", w, rep.Findings)
+		}
+	}
+	if len(rep.Findings) != len(want) {
+		t.Errorf("findings = %+v, want exactly %v (a command, a prose word, existing anchors report nothing)", rep.Findings, want)
+	}
+}
+
+func TestAnchorAlsoInTheBodyIsOneFinding(t *testing.T) {
+	r := fakeRepo{paths: []string{"console/x.go"}}
+	rep := Lint([]Memory{{Name: "m", Body: "see console/gone.go", Anchors: []string{"console/gone.go"}}}, Options{}, r)
+	if len(rep.Findings) != 1 || rep.Findings[0].Line != 1 {
+		t.Fatalf("findings = %+v", rep.Findings)
+	}
+}
+
+func TestAnchorsNeedARepositoryLikeTheBody(t *testing.T) {
+	rep := Lint([]Memory{{Name: "m", Body: "x", Anchors: []string{"console/gone.go", "TestVanished"}}}, Options{}, nil)
+	if len(rep.Findings) != 0 {
+		t.Fatalf("findings without a repository: %+v", rep.Findings)
+	}
+}
+
+type formerRepo struct {
+	fakeRepo
+	tops []string
+}
+
+func (r formerRepo) FormerTopDirs() ([]string, error) { return r.tops, nil }
+
+func TestFormerTopDirsMakeARenamedAwayDirectoryAPath(t *testing.T) {
+	body := "uses oldtop/a.go"
+	plain := fakeRepo{paths: []string{"newtop/a.go"}}
+	if rep := Lint([]Memory{{Name: "m", Body: body}}, Options{}, plain); len(rep.Findings) != 0 {
+		t.Fatalf("without the former directory: %+v", rep.Findings)
+	}
+	rep := Lint([]Memory{{Name: "m", Body: body}}, Options{}, formerRepo{plain, []string{"oldtop"}})
+	if len(rep.Findings) != 1 || rep.Findings[0].Subject != "oldtop/a.go" {
+		t.Fatalf("findings = %+v", rep.Findings)
 	}
 }
