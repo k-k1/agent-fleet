@@ -26,6 +26,8 @@ Use it when you leave a long job running overnight and want the session stopped 
 - **Ask the session**: send "stop when this is done". The session arms the stop itself
 - **Set it yourself**: choose **"Stop when this turn ends"** in the ⋯ menu
 
+![The session row's ⋯ menu, with "Keep awake (4h)" and "Stop when this turn ends" near the bottom](../../assets/sessions-menu-en-light.webp)
+
 Once armed, the row carries the badge **"Stops when the running turn ends (resumable)"**. You get one notification when it stops.
 
 - The stop happens **after the running turn ends**. It will not stop while a question is waiting for you or while work is still going

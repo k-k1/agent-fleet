@@ -23,6 +23,8 @@ When in doubt, choose "Stop". It keeps both the conversation and the row, which 
 
 The operations are in the session row's **⋯ menu** (or right-click). Which items appear depends on the session's kind and state.
 
+![The session row's ⋯ menu: "Stop (resumable later)" at the top, then handoff, move and share, then "Lock against deletion", "Keep awake (4h)", "Stop when this turn ends" and "Spend budget…", and last "Archive (remove from the list)" and "Recreate (current conversation goes to the archive)"](../../assets/sessions-menu-en-light.webp)
+
 | What you want to do | Item | Afterwards | Reversible? |
 |---|---|---|---|
 | Pause for now and continue later | **"Stop (resumable later)"** | Stays in the list as "Stopped" | Open it and resume |
@@ -51,6 +53,8 @@ Stopping also ends the turn that is running. To stop once the turn has ended, us
 2. The sessions running in that working copy, and in the copies the left pane nests under it, are listed one per line
 3. Press **"Stop (N)"**
 
+![The "Stop the sessions below" dialog: the sessions running in webshop and the worktree under it, each line saying "stop now" or "after the turn", with the shell row unticked](../../assets/sessions-stop-below-en-light.webp)
+
 Each line says how it will stop.
 
 | Shown | Meaning |
@@ -67,6 +71,8 @@ Each line says how it will stop.
 
 1. Click a stopped row in the list. The history opens read-only first
 2. In the chat, press **"Resume and continue"**. **"Resume"** in the ⋯ menu also resumes it
+
+![The bottom of a stopped session's chat: the "Resume and continue" button and "Viewing history (resume to type)"](../../assets/sessions-resume-en-light.webp)
 
 - **Ctrl+click** (or middle-click) opens it in a new pane and keeps your current view
 - A resumed session continues with the execution method it was saved with (Managed / Terminal (CLI))

@@ -38,6 +38,9 @@ Any session with a conversation can be handed off, except shell and ssm. The wor
 
 1. Choose **"Hand off to another agent…"** in the ⋯ menu
 2. Pick the **"Target agent"**. Write anything to focus on or leave out in **"Note (optional)"**
+
+   ![The handoff dialog: the list of target agents, the "Note (optional)" field and the "Start handoff" button](../../assets/sessions-handoff-en-light.webp)
+
 3. **"Start handoff"** puts the request into a chat with the Fleet Operator. Review it and send it
 4. The Fleet Operator reads the original session and presents a handoff proposal
 5. Check the proposal, the working folder and the agent to start, and agree: the new session starts
@@ -51,6 +54,8 @@ Use it when a session has run out of its agent's usage limit, or you want to car
 1. Choose **"Move to another agent…"** in the ⋯ menu
 2. Pick the **"Target agent"**, and the new session's **"Model"** and **"Execution method"**
 3. Check what the dialog shows about the working copy and the handover file's size, and press **"Move"**
+
+![The "Move to another agent" dialog: the target agents, the agents that cannot take it and why, Model and Execution method, the uncommitted changes, the queued instruction and the handover file's size](../../assets/sessions-move-en-light.webp)
 
 The Workspace writes the conversation to a **handover file**, starts the agent you picked **in the same working copy**, and tells it to read that file first.
 The original session then stops and takes no more input, so only one session writes to the working copy.

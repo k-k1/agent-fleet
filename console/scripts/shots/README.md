@@ -108,7 +108,7 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only ops-sett
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-studio,images-form --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only images-gallery --out <dir>   # and images-settings
 node console/scripts/shots/capture.mjs --locale ja --theme light --only ws-recreate --out <dir>  # and ws-machine, ws-toolchains, ws-databases, one per run
-node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-cleanup --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-cleanup,sessions-stop-below,sessions-resume,sessions-menu,sessions-move,sessions-handoff --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only sessions-budget --out <dir>
 ```
 
