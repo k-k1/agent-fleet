@@ -124,6 +124,37 @@ Changing it is recorded in the [audit log](03-audit-usage.md) as `tenant.externa
 `enabled=true` or `enabled=false`. Only a tenant administrator or a super_admin can change it. Turning off the
 whole `/mcp` endpoint for a deployment is the operator's `AF_MCP_ENABLED`, a different switch.
 
+## MCP servers as watch sources
+
+A member can mark an MCP server of their own as a **watch source**: the workspace's watch engine
+(the `watch` tool) then calls the server's `watch_resolve` and `watch_poll` tools on a schedule,
+to follow a system Agent Fleet has no built-in support for. It is member-chosen code in the
+engine's path, so it is off for every tenant until you allow it.
+
+### The switch
+
+Tenant settings → **Watch sources**. **Block** is the starting state of every tenant: members
+cannot mark a server as a watch source (the save is refused), and every workspace of the
+tenant stops running the sources it has. **Allow** lets members decide per server, in Settings →
+MCP servers → Advanced → **Used by** → **Watch source**; nothing changes for anyone until they do.
+
+What stays true with the switch on:
+
+- only a member's own server can be a source; a server you distribute to the tenant never is;
+- a source's events reach only that member's own sessions (or that member), as quoted data, never
+  other members, other workspaces or the Control Plane;
+- a source is called for at most 20 subjects at a time and each subject once a minute, with 10
+  seconds per call; five failed calls in a row, or 20 malformed replies in a row, pause it until the
+  member edits or re-enables the server;
+- a local (stdio) source is started with a reduced environment (`PATH`, `HOME`, `LANG`, `TMPDIR`
+  and its own variables), not the Agent's.
+
+Turning it off reaches the workspaces within five minutes, the poll interval of distributed MCP
+servers; members' registrations are kept, so allowing it again restores them. If the switch cannot
+be read, a workspace keeps the last answer it had and a tenant that was never told runs none.
+Changing it is recorded in the [audit log](03-audit-usage.md) as `tenant.watch_sources`, with
+`enabled=true` or `enabled=false`. Only a tenant administrator or a super_admin can change it.
+
 ## Outbound traffic is not yours to control
 
 Which destinations the deployment's workspaces may reach is decided by the deployment

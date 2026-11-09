@@ -300,6 +300,12 @@ Workspace が止まっている間に生きているのは Control Plane だけ�
      `Targets.Watch` を消す）。絞った stdio の環境は、エンジン自身の接続と `Targets.Watch` を持つ定義の接続テストにだけ
      使い、既存のセッション向けサーバーは、別に決めるまで Agent の環境のままにする。一時停止はメモリ上なので Agent の
      再起動で解け、定義の編集や有効化し直しでも解ける。OAuth のサーバーはセッションと同じくリレー経由で呼ぶ。
+   - *2026-11-10、Control Plane 側と Console（#3631）。* 5 回続けて失敗した場合に加えて、不正または名前空間外のエントリを含む
+     応答が 20 回続くとソースを一時停止する。きれいな応答でその数は 0 に戻り、イベントを届けたうえで余分なエントリが 1 つ
+     混じっただけの応答は失敗した呼び出しに数えない。テナントのスイッチは `tenant` の列（既定はオフ）で、
+     `PUT /api/admin/tenants/{slug}/watch-sources`（テナント管理者、`tenant.watch_sources` として監査）で変更し、
+     `/internal/mcp-servers` の応答の `watchSources` で Agent に伝える（読めないときはオフとして返す）。CP は、スイッチがオフの間は
+     メンバーの `POST`/`PUT /api/mcp-servers` で `targets.watch` を立てるものも断る（`mcp_watch_disabled`）。Agent は自分でもスイッチを強制する。
 6. **`time` ソース**（§7）と、Control Plane の起動だけの予定の宛先。そのあと §9 のほかのソースを 1 つずつ。
 
    *注記（2026-11-09、段階 6、#3632）。* `time` ソースと起動だけの宛先を作った。§9 のほかのソースは作って

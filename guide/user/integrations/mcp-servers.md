@@ -66,7 +66,7 @@ The registrations live inside your workspace, so start the workspace first if it
 
 | Field | What it decides |
 |---|---|
-| Used by | Whether the "**Assistant**", "**Sessions**" or both get the server. Clear both and the entry stays but is handed to nothing |
+| Used by | Whether the "**Assistant**", "**Sessions**" or both get the server, and whether it is a "**Watch source**" ([below](#use-a-server-as-a-watch-source)). Clear all and the entry stays but is handed to nothing |
 | Agents | Which kinds of agent get the server. Select none for every agent |
 | Timeout (ms) | Between 1000 and 120000. Leave it blank for each agent's default |
 | Enabled | Clear it and the definition stays but is handed to nothing |
@@ -121,6 +121,19 @@ Each row carries a label saying who registered it.
 - The PagerDuty, Grafana, CloudWatch and AWS integrations appear in the list once you connect them on the **Ops & monitoring** tab
 
 How administrators distribute servers is in [MCP distribution and outside access](../../admin/04-mcp-outside.md).
+
+## Use a server as a watch source
+
+An MCP server of yours can also feed the `watch` tool: the workspace calls the server's `watch_resolve(ref)` and
+`watch_poll(subjects, cursors)` tools itself, and the session that asked is told when something happens, instead of polling.
+Turn on "**Watch source**" under **Advanced → Used by**. It is independent of "**Sessions**": the server needs no access to your sessions.
+
+- Your tenant admin has to allow it first (Tenant settings → **Watch sources**). Until then the save is refused
+- A session watches it with `source` `ext.<ID>` (the ID in lower case, `-` as `_`; an ID that starts with a digit cannot be one) and types that start with `ext.<ID>.`
+- The server receives only the subject references and its own cursors, never session text, and a `ref` is one line of ASCII (200 characters at most)
+- What the server answers reaches the session as quoted data, never as an instruction. Its events go only to your own sessions
+- A local (stdio) server starts with a reduced environment (`PATH`, `HOME`, `LANG`, `TMPDIR` and the variables you set on it)
+- The workspace asks for 20 subjects at a time, each subject at most once a minute. Five failed calls in a row, or 20 malformed replies in a row, pause the source; `list_watches` shows why. Edit or re-enable the server to resume
 
 ## Which agents get it
 

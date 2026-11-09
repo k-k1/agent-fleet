@@ -196,6 +196,7 @@ export const errors = {
   "err.mcp_invalid": "MCP サーバーの定義が不正です",
   "err.mcp_name_invalid": "名前は英数字・ハイフン・アンダースコア 48 文字以内で、先頭は英数字にしてください",
   "err.mcp_name_reserved": "その名前は Agent Fleet が使用する予約名です",
+  "err.mcp_watch_disabled": "このテナントでは、MCP サーバーをウォッチのソースにすることが許可されていません。テナント管理者に依頼してください（設定 > テナント > ウォッチのソース）。",
   "err.mcp_transport_unsupported": "未対応の接続方式です（対応しているのは stdio / リモート HTTP だけです）",
   "err.mcp_command_required": "stdio サーバーにはコマンドが必要です",
   "err.mcp_stdio_no_url": "stdio サーバーに URL / ヘッダは指定できません",

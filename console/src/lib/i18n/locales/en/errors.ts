@@ -198,6 +198,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_invalid": "The MCP server definition is invalid.",
   "err.mcp_name_invalid": "Use 1-48 characters of letters, digits, dash or underscore, starting with a letter or digit.",
   "err.mcp_name_reserved": "That name is reserved by Agent Fleet.",
+  "err.mcp_watch_disabled": "Your tenant has not allowed MCP servers as watch sources. Ask a tenant admin (Settings > Tenant > Watch sources).",
   "err.mcp_transport_unsupported": "Unsupported transport (stdio / remote HTTP only).",
   "err.mcp_command_required": "A stdio server needs a command.",
   "err.mcp_stdio_no_url": "A stdio server cannot carry a URL or headers.",

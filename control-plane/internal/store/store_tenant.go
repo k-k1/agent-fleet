@@ -65,6 +65,10 @@ type TenantStore interface {
 	// reached through /mcp from outside Agent Fleet (#2318). Unknown tenant = error.
 	GetTenantExternalMemory(ctx context.Context, tenantID string) (bool, error)
 	SetTenantExternalMemory(ctx context.Context, tenantID string, enabled bool) error
+	// GetTenantWatchSources / SetTenantWatchSources: the tenant-wide switch for member-added watch
+	// sources (ADR 0133 §8, #3631). Off by default. Unknown tenant = error.
+	GetTenantWatchSources(ctx context.Context, tenantID string) (bool, error)
+	SetTenantWatchSources(ctx context.Context, tenantID string, enabled bool) error
 }
 
 func (s *SQL) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
@@ -168,6 +172,24 @@ func (s *SQL) SetTenantExternalMemory(ctx context.Context, tenantID string, enab
 func (s *SQL) GetTenantExternalMemory(ctx context.Context, tenantID string) (bool, error) {
 	var v int
 	err := s.db.QueryRowContext(ctx, `SELECT external_memory FROM tenant WHERE id=?`, tenantID).Scan(&v)
+	return v != 0, err
+}
+
+// SetTenantWatchSources writes the tenant-wide switch for member-added watch sources.
+func (s *SQL) SetTenantWatchSources(ctx context.Context, tenantID string, enabled bool) error {
+	v := 0
+	if enabled {
+		v = 1
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET watch_sources=? WHERE id=?`, v, tenantID)
+	return err
+}
+
+// GetTenantWatchSources reads it. An unknown tenant is an error, never "enabled": the callers
+// that gate on it fail closed.
+func (s *SQL) GetTenantWatchSources(ctx context.Context, tenantID string) (bool, error) {
+	var v int
+	err := s.db.QueryRowContext(ctx, `SELECT watch_sources FROM tenant WHERE id=?`, tenantID).Scan(&v)
 	return v != 0, err
 }
 

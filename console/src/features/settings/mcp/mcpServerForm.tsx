@@ -291,6 +291,10 @@ export function ServerForm({
                   <input type="checkbox" checked={form.session} onChange={(e) => patch({ session: e.target.checked })} />
                   {tr("mcp.target_session")}
                 </label>
+                <label className="mcp-check">
+                  <input type="checkbox" checked={form.watch} onChange={(e) => patch({ watch: e.target.checked })} />
+                  {tr("mcp.target_watch")}
+                </label>
               </div>
             </Field>
             <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>

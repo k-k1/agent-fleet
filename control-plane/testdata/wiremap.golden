@@ -52,7 +52,7 @@ git_lfs_locks.go gitServerAPI.lfsLocksVerify x1 {next_cursor,ours,theirs}
 git_lfs_locks.go gitServerAPI.lfsUnlock x1 {lock}
 internal/mcpsrv/mcp_server.go ServerAPI.AdminDelete x1 {deleted,name}
 internal/mcpsrv/mcp_server.go ServerAPI.AdminList x1 {servers,tenant}
-internal/mcpsrv/mcp_server.go ServerAPI.Distribute x1 {servers,unreadable}
+internal/mcpsrv/mcp_server.go ServerAPI.Distribute x1 {servers,unreadable,watchSources}
 internal/tenantsrv/tenant_slot_class.go Admin.SetTenantSlotClass x1 {slot_class,tenant}
 internal/tenantsrv/tenants.go Admin.AddMembership x1 {role,tenant,user_key}
 internal/tenantsrv/tenants.go Admin.CleanHome x1 {cleaned,pending,tenant}

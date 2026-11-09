@@ -142,10 +142,11 @@ export function ServerRow({
   );
 }
 
-export function targetsText(tg: { assistant: boolean; session: boolean } | undefined, tr: ReturnType<typeof useT>): string {
+export function targetsText(tg: { assistant: boolean; session: boolean; watch?: boolean } | undefined, tr: ReturnType<typeof useT>): string {
   const on: string[] = [];
   if (tg?.assistant) on.push(tr("mcp.target_assistant"));
   if (tg?.session) on.push(tr("mcp.target_session"));
+  if (tg?.watch) on.push(tr("mcp.target_watch"));
   return on.length > 0 ? on.join(" / ") : tr("mcp.target_none");
 }
 
