@@ -612,3 +612,67 @@ func TestARouteChangedWhileReadinessWasAskedIsNotDeliveredTheOldWay(t *testing.T
 		t.Fatalf("member = %v", sink.member)
 	}
 }
+
+func TestAClosedPRsLaterUpdatesAreNotANewClose(t *testing.T) {
+	now := time.Now()
+	var cur json.RawMessage
+	version := func(pr branchpr.PR) string {
+		evs, next, _ := PRConditions("bitbucket:w/r#1", &pr, cur, now)
+		cur = next
+		for _, e := range evs {
+			if e.Type == "pr.merged" || e.Type == "pr.closed" {
+				return e.Type + "@" + e.Version
+			}
+		}
+		return ""
+	}
+	// Bitbucket reports its last update as the close time: a comment after the decline moves it.
+	got := []string{
+		version(branchpr.PR{State: "closed", ClosedAt: "u1"}),
+		version(branchpr.PR{State: "closed", ClosedAt: "u2"}),
+		version(branchpr.PR{State: "open"}),
+		version(branchpr.PR{State: "closed", ClosedAt: "u3"}),
+		version(branchpr.PR{State: "merged", ClosedAt: "u4"}),
+		version(branchpr.PR{State: "merged", ClosedAt: "u5"}),
+	}
+	if strings.Join(got, ",") != "pr.closed@u1,pr.closed@u1,,pr.closed@u3,pr.merged@u4,pr.merged@u4" {
+		t.Fatalf("versions = %v", got)
+	}
+}
+
+func TestAMemberBuiltinLeavingTheSetDeliversWhatItOwesFirst(t *testing.T) {
+	sink := &fakeSink{notifyErr: errors.New("outbox down")}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	sp := BuiltinSpec{Subject: bSubject, Owner: "a", Types: []string{"pr.merged"}, Notify: NotifyMember}
+	e.SyncBuiltins("n", []BuiltinSpec{sp})
+	observe(e) // first seen open
+	observe(e, ev("pr.merged", "t"))
+	e.Tick(context.Background()) // the outbox fails
+	e.SyncBuiltins("n", nil)     // the session was archived meanwhile
+	sink.notifyErr = nil
+	e.Tick(context.Background())
+	e.SyncBuiltins("n", nil)
+	e.Tick(context.Background())
+	if strings.Join(sink.member, ",") != "a:pr.merged:t" {
+		t.Fatalf("member = %v", sink.member)
+	}
+	if e.subIndexLocked(BuiltinID("n", bSubject)) >= 0 {
+		t.Fatal("still live once delivered and out of the set")
+	}
+	if _, ok := e.state.Retired[BuiltinID("n", bSubject)]; !ok {
+		t.Fatal("not retired with its record once delivered")
+	}
+}
+
+func TestASessionBuiltinLeavingTheSetOwesNothingMore(t *testing.T) {
+	sink := &fakeSink{answer: Wait}
+	e, _, _ := newTestEngine(&fakeSource{}, sink)
+	e.SyncBuiltins("ci", []BuiltinSpec{ciSpec("a")})
+	observe(e, ev("pr.checks.failed", "h1"))
+	e.SyncBuiltins("ci", nil) // the session no longer holds the PR
+	sink.answer = Ready
+	e.Tick(context.Background())
+	if len(sink.told) != 0 || e.subIndexLocked(BuiltinID("ci", bSubject)) >= 0 {
+		t.Fatalf("a session no longer holding the PR was told %v", sink.told)
+	}
+}

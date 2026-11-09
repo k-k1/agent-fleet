@@ -113,6 +113,12 @@ func (e *Engine) SyncBuiltins(purpose string, specs []BuiltinSpec) {
 		}
 		sp, ok := want[s.ID]
 		if !ok {
+			if s.Notify == NotifyMember && len(s.Pending) > 0 {
+				// The member can always be told: what is owed goes out before it is retired, or
+				// a merge seen a moment before its session was archived would be lost.
+				keep = append(keep, s)
+				continue
+			}
 			e.retireLocked(s, now)
 			changed = true
 			continue
