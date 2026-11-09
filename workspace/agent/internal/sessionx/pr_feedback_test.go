@@ -846,6 +846,11 @@ func TestPRFeedbackGoesToTheNewOwnerOnce(t *testing.T) {
 	if len(f.sent) != 1 || !strings.HasPrefix(f.sent[0], "b|") {
 		t.Fatalf("sent %v, want the new owner told once", f.sent)
 	}
+	f.ready["a"] = true // the old owner frees up: it is no longer the one to tell
+	f.ticks(3)
+	if len(f.sent) != 1 {
+		t.Fatalf("sent %v: told the old owner too", f.sent)
+	}
 }
 
 func TestPRFeedbackMoreThreadsThanTheOldRecordAtFirstSightIsNews(t *testing.T) {

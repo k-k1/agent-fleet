@@ -514,8 +514,8 @@ type claimed struct {
 // deliver asks each candidate's owner whether it can take a notice (without the lock), claims
 // the ready ones on disk, delivers them, and releases a claim whose delivery failed. A crash
 // between the claim and the delivery loses that one notice rather than repeating it: a notice
-// an agent acts on twice costs a turn and can repeat its action, a lost one only a delay until
-// the condition is seen again.
+// an agent acts on twice costs a turn and can repeat its action, while a lost one only waits for
+// the condition's next version (a new head, a new episode).
 func (e *Engine) deliver(cands []candidate, now time.Time) {
 	if len(cands) == 0 {
 		return
