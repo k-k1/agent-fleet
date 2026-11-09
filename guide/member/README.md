@@ -22,9 +22,11 @@ to going further. When you are stuck, it is fine to open [21 Troubleshooting](21
 
 ### Getting started
 
-1. [First day](01-first-day.md): signing in, the welcome card, your first clone
-2. [Console basics](02-console-basics.md): shortcuts, the command palette, panes, phones
+1. [First day](01-first-day.md): moved to [Start your first session](../user/start/quickstart.md) and the pages beside it
+2. [Console basics](02-console-basics.md): moved to [Find your way around the screen](../user/start/console-tour.md) and the pages beside it
 3. [Starting a session](03-starting-sessions.md): kinds, execution method, the Start dialog, the issue tracker
+
+The pages to read first are listed under [Getting started](../user/README.md#getting-started).
 
 ### Daily work
 
@@ -55,7 +57,7 @@ to going further. When you are stuck, it is fine to open [21 Troubleshooting](21
 
 Also here: [Icons, badges and menus](badges-and-menus.md) for what a mark on the
 screen means, and the [Simple guide](lite.md), the short version for someone who never
-opens the terminal.
+opens the terminal (its entry point is [Start here if you don't use the terminal](../user/start/without-terminal.md)).
 
 What each agent, provider or role can actually do is in the
 [Reference](../ref/README.md), and the terminology is in the

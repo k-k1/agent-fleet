@@ -76,14 +76,24 @@ const exact = {
     super_admin: false,
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
-  // (guide scene ws-agent-silent). Other runs keep the plain running workspace.
-  "/api/workspace": () => ({ state: "running", bootPhase: "", ...(process.env.SHOT_AGENT_SILENT ? { agentSilent: true } : {}) }),
+  // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
+  // "Restart needed" badge. Every other run keeps the plain running workspace.
+  "/api/workspace": () => ({
+    state: "running",
+    bootPhase: "",
+    ...(process.env.SHOT_AGENT_SILENT ? { agentSilent: true } : {}),
+    ...(process.env.SHOT_START_GUIDE === "stale" ? { stale: true } : {}),
+  }),
   // A POST is "start a session" (the studio's attach): answer a name so the flow completes.
   "/api/sessions": (q, method) =>
     method === "POST"
       ? { name: "s" + crypto.randomUUID().slice(0, 6) }
       : {
-          sessions: FLEET_LANES
+          // A first-run member (SHOT_START_GUIDE=firstrun) has no session and no chat yet, which is
+          // what puts the welcome card on Home.
+          sessions: process.env.SHOT_START_GUIDE === "firstrun"
+            ? []
+            : FLEET_LANES
             ? fx.sessionsBig(LOCALE, FLEET_LANES)
             : process.env.SHOT_SESSIONS_GUIDE
               ? fx.sessionsBudgetStopped(LOCALE)
@@ -161,15 +171,22 @@ const exact = {
           bitbucket: { connected: true, username: "demo-user", email: "demo@example.com", commitName: "Demo User", commitEmail: "demo@example.com" },
         }
       : {}),
+    // The welcome card on a first-run Home (SHOT_START_GUIDE=firstrun): the workspace is up, no agent
+    // and no Git service connected yet, so step 1 is checked and step 2 is the next thing to do.
+    ...(process.env.SHOT_START_GUIDE === "firstrun"
+      ? { claude: { connected: false }, codex: { connected: false }, cursor: { connected: false }, opencode: { connected: false }, github: { connected: false }, bitbucket: { connected: false } }
+      : {}),
   }),
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   // The chat pages (SHOT_CHATPAGES_GUIDE): the real builtins plus a translation assistant, and a long
-  // conversation on top of the list.
+  // conversation on top of the list. A first-run member (SHOT_START_GUIDE=firstrun) has none.
   "/api/chat/conversations": () => ({
     conversations: process.env.SHOT_CHATPAGES_GUIDE
       ? [(({ messages, plan, context, tools, ...meta }) => meta)(fx.chatPagesConversation(LOCALE, "c-pay-1")), ...fx.conversations(LOCALE)]
-      : fx.conversations(LOCALE),
+      : process.env.SHOT_START_GUIDE === "firstrun"
+        ? []
+        : fx.conversations(LOCALE),
   }),
   // The Console reads { assistants: [...] }; the bare array stays for the scenes taken with it, and
   // only the chat and fleet pages' runs get the wrapped shape so the new-chat picker lists them.

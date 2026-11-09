@@ -21,9 +21,11 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 
 ### はじめに
 
-1. [初日](01-first-day.ja.md) — サインイン、ようこそカード、最初のクローン
-2. [Console の基本](02-console-basics.ja.md) — ショートカット、コマンドパレット、ペイン、スマートフォン
+1. [初日](01-first-day.ja.md) — [最初のセッションを始める](../user/start/quickstart.ja.md) などのページに移りました
+2. [Console の基本](02-console-basics.ja.md) — [画面の見かた](../user/start/console-tour.ja.md) などのページに移りました
 3. [セッションを始める](03-starting-sessions.ja.md) — 種類、実行方式、新規作成、課題トラッカー
+
+はじめに読むページの一覧は [はじめに](../user/README.ja.md#はじめに) にあります。
 
 ### 日々の作業
 
@@ -53,7 +55,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 21. [困ったとき](21-troubleshooting.ja.md) — 症状別の対処と FAQ
 
 ほかに [アイコン・バッジ・メニュー](badges-and-menus.ja.md)（画面の印の意味）と、
-[かんたんガイド](lite.ja.md)（端末を一切開かない人のための短い版）があります。
+[かんたんガイド](lite.ja.md)（端末を一切開かない人のための短い版。入口は [ターミナルを使わない人のための入口](../user/start/without-terminal.ja.md)）があります。
 
 **どのエージェント / プロバイダ / ロールに何ができるかは
 [リファレンス](../ref/README.ja.md)** にあります。用語は [用語集](../ref/glossary.ja.md)。

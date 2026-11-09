@@ -30,7 +30,7 @@ If a feature ships and does not appear here, it is not done
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [Use the terminal](../user/files/terminal.md) |
 | Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [Use the terminal](../user/files/terminal.md#copy-and-paste) |
 | Resume a stopped session | member | left pane → the session | [Stop and resume a session](../user/sessions/stop-resume.md) |
-| Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
+| Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [Find your way around the screen](../user/start/console-tour.md#home) |
 | Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [See every running session](../user/fleet/overview.md) |
 | Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [See how sessions relate over time](../user/fleet/graph.md) |
 | Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy) |
@@ -104,7 +104,7 @@ If a feature ships and does not appear here, it is not done
 | Reply suggestions | member | mirror composer | [Reply to a session](../user/sessions/reply.md#use-reply-suggestions) |
 | Deletion lock | member | session ⋯ menu | [Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion) |
 | Cleanup and the trash | member | Clean up | [Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup) |
-| Keyboard system | member | Settings → Keyboard | [02 Console basics](../member/02-console-basics.md) |
+| Keyboard system | member | Settings → Keyboard | [Use the keyboard and the command palette](../user/start/shortcuts.md) |
 | Text-to-speech | member | Settings → Read aloud | [20 Settings](../member/20-settings.md) |
 | Skills views — each agent's skills, read-only: personal (Settings) and a repository's (project tree → Skills…) | member | Settings → Skills; repository row menu → Skills… | [Bring your Claude Code setup](../user/agents/bring-claude-setup.md#check-your-skills) |
 

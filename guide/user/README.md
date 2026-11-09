@@ -10,6 +10,20 @@ English | [日本語](README.ja.md)
 Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
 Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
 
+## Getting started
+
+| Page | What you can do |
+|---|---|
+| [What you can do with Agent Fleet](start/overview.md) | Learn what it does and which page to read first |
+| [Start your first session](start/quickstart.md) | Go from signing in to the first reply |
+| [Terms and the big picture](start/concepts.md) | See how tenants, workspaces, sessions and agents relate |
+| [Find your way around the screen](start/console-tour.md) | Know what sits where on the top bar, the workspace action bar, the left pane and the main area |
+| [Use the keyboard and the command palette](start/shortcuts.md) | Drive the Console without the mouse, with shortcuts and the command palette |
+| [Split the screen into panes](start/panes.md) | Lay out sessions and files in panes, and choose the layout |
+| [Use it on a phone](start/phone.md) | Check progress and reply from a phone |
+| [Stop the workspace at the end of the day](start/end-of-day.md) | Stop the workspace with your work kept, and deal with Restart needed |
+| [Start here if you don't use the terminal](start/without-terminal.md) | Use only chat, reading and progress checks |
+
 ## Sessions
 
 | Page | What you can do |

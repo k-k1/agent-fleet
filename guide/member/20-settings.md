@@ -58,20 +58,7 @@ Adding and removing sign-in methods. See [Change the display and your account](.
 
 ### Keyboard
 
-- **Shortcut assignment**: you can change the direct keys (`Alt+1` …) and the three app-wide keys. Sequences
-  under the leader (e.g. leader → `p` → `r`) are structural and cannot be changed. **?** opens the cheat sheet
-  at any time.
-- **Terminal input priority**: while a terminal has focus, every Ctrl-key goes to the terminal. Only the leader
-  survives on the app side, and everything remains reachable from the command menu / palette.
-- **Pass every key to shell / SSM terminals**: stronger than the above. The leader (Ctrl/⌘+K) and the palette
-  (Ctrl/⌘+P) are passed through too, making it a pure terminal. It applies only to shell / SSM, not to agent
-  terminals. Off by default.
-- **Send key**: **Ctrl+Enter to send (Enter for a newline, the default)** or **Enter to send
-  (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
-- **Reply suggestions**: chips with short replies above the composer ([Reply to a session](../user/sessions/reply.md#use-reply-suggestions)). This is also
-  where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
-  drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
-  back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
+Shortcut assignments, terminal input priority, the send key and reply suggestions are in [Use the keyboard and the command palette](../user/start/shortcuts.md#change-the-keys).
 
 ### Read aloud
 
@@ -124,7 +111,7 @@ The
 **Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
 **children per session**), **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
-"Conversations" mode works either way, see [02](02-console-basics.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes).
+"Conversations" mode works either way, see [02](../user/start/shortcuts.md#find-and-open-with-the-command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes).
 → [Let sessions message each other](../user/fleet/messages.md),
 [Start child sessions from a session](../user/fleet/child-sessions.md),
 [Have a session make images](../user/images/from-session.md)

@@ -6,86 +6,10 @@ audience: "someone using Agent Fleet without touching the terminal"
 
 English | [日本語](lite.ja.md)
 
-**First, relax: with this way of working, you will never touch the black screen (the terminal).**
-
-Agent Fleet has a text-only black screen called the "terminal". Developers type commands there
-to make the AI write code. But that is not where you'll be working. All you touch are the
-**buttons, checkboxes, and input fields** in your browser. You don't need to memorize commands,
-and you don't need to know what the word "git" means. This volume explains only the ways of
-using Agent Fleet that never require opening that black screen.
-
-This guide describes the "how" of the operations. It doesn't get into the "why it works that way"
-mechanics. See the [guide's index](../README.md) for guides for other roles, and the
-[glossary](../ref/glossary.md). If you ever need to go a step further (write code yourself, edit
-files, and so on), move on to the full [user guide](README.md).
-
----
-
-## 1. What you can do with Agent Fleet
-
-Agent Fleet is a service that lets everyone in your organization use AI (such as Claude) from
-the browser. It has plenty of advanced features, but **these four are all you need to learn**.
-
-| What you want to do | Where to do it | In a nutshell |
-|--------------|----------|----------------|
-| Ask the AI questions, get translations, polish text | **Chat (assistants)** | A help desk that needs no repository. Ask casually, as often as you like |
-| Collect ideas and requests, then hand them to the dev team | **Memo queue** | Pile up quick notes, then send them together |
-| Read documents and slides | **File list** | Browse repository contents in your browser |
-| See how far development has progressed | **Session list** | Glance at the status badges on the AI's work |
-
-To repeat: **the terminal is not on this list**. All four work with nothing but buttons and
-mouse clicks. If you get stuck, you can always close things with the "Later" button or the ✕,
-so don't be afraid to click around.
-
----
-
-## 2. Logging in and reading the screen
-
-Open the URL your company gave you and a login screen appears. Sign in with the account you
-normally use (your company's login method). IT set this up, so if you're lost, just ask your
-administrator for the URL and login method and you'll be fine.
-
-After logging in you'll see a screen (the Console) divided into several areas. You don't need
-to understand all of it. **All you need to remember is the following list on the left side.**
-
-- **Assistants**: the list of AI chats and "+ New chat". This is your entrance for questions and translations.
-- **Memo queue**: the list of request memos you've collected. It shows a count badge.
-- **Files (the repository tree)**: where the dev team's documents and slides live.
-- **Sessions**: the list of development AI work. Status badges (colored marks) show progress at a glance.
-- **Shared sessions**: work a developer has shown you. It doesn't appear when nothing is shared (chapter 7).
-
-It also works on a narrow smartphone screen. In that case the left-side list starts out
-collapsed; press the three-line (menu) button near the top to open it. It closes automatically
-when you pick an item, so you can operate it with one finger.
-
----
-
-## 3. One-time setup
-
-After you sign in, the main area shows **Home**. The first time, a guidance card appears at
-the top of it saying "**Welcome to Agent Fleet / Two steps first, then just pick your goal**". It's a to-do list where items get checked off in
-order. There are only two things to do.
-
-1. **Start workspace**: brings up your own private work area. Just press the "Start" button
-   and wait for the "Starting…" indicator to settle. This one is a must.
-2. **Connect an agent**: sign in to the AI (such as Claude). Chat needs this, so press
-   "Connect" and follow the on-screen instructions to sign in.
-
-Next, two cards appear asking "**Where do you want to start?**". You should press
-**"Start chatting" under "Ask AI a question or for a translation"**. That alone opens a chat
-and your setup is done. The other card, "Develop in a repository", is for developers, so you
-can leave it alone (the git connection and session creation steps are shown only to people
-who choose it).
-
-You can close the card with "Later" at the bottom right, and completed items get checked off
-automatically. If you want to see it again after closing it, you can always reopen it from
-"**Getting-started guide**" in the menu under your name at the top right. You can stop the
-workspace when you're done with it; press "Start" again next time and it comes back.
-
-**When to ask your administrator.** Don't struggle on your own in these cases: you don't know
-the login method or the URL / signing in at "Connect an agent" isn't working / you're not sure
-what your account can use in the first place. These are configuration and permission matters,
-so asking your administrator is the fastest and surest route.
+The entry point of this volume (what to read first, and the one rule to keep) has moved to
+[Start here if you don't use the terminal](../user/start/without-terminal.md). What you can do is in
+[What you can do with Agent Fleet](../user/start/overview.md), the screen in [Find your way around the screen](../user/start/console-tour.md),
+and the first-time setup in [Start your first session](../user/start/quickstart.md). The chapters below have not moved yet.
 
 ---
 
@@ -118,11 +42,7 @@ A conversation a developer shared with you is under **Shared sessions** on the l
 
 ### An important ground rule
 
-When the AI is **waiting for someone's reply** (as in "Question" or "Awaiting permission"),
-please don't answer in their place just because you happen to be watching. That question is
-addressed to the developer in charge. Stick to **watching** the progress, and if you notice
-something, speak to the person in charge or write it into the memo queue. Replying on your own
-can send the work off in a direction the developer never intended.
+The rule not to answer questions meant for someone else has moved to [Start here if you don't use the terminal](../user/start/without-terminal.md#dont-answer-questions-meant-for-someone-else).
 
 ---
 

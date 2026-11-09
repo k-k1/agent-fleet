@@ -33,7 +33,7 @@ While a terminal has focus, a setting in ⚙ Settings → Keyboard may be passin
 | **"Prefer the terminal over the app while the terminal is focused"** | Every Ctrl key goes to the terminal | The leader still works: open the palette with Ctrl+K → ; (⌘K → ; on macOS) |
 | **"Pass all keys to shell / SSM terminals (incl. Ctrl+K, Ctrl+P)"** | In shell and SSM terminals the leader and palette keys go to the terminal too | Move focus to another pane |
 
-**?** opens the list of what each key does ([Console basics](../../member/02-console-basics.md#shortcuts)).
+**?** opens the list of what each key does ([Use the keyboard and the command palette](../start/shortcuts.md)).
 
 ## On a phone, the keyboard pops up by itself or it is hard to use
 
@@ -41,7 +41,7 @@ While a terminal has focus, a setting in ⚙ Settings → Keyboard may be passin
 - **Swipe up or down with one finger** on the terminal to scroll back through earlier output
 - The **≡ (menu)** at the top left opens and closes the left pane
 
-Everything else is in [Console basics](../../member/02-console-basics.md#using-it-on-a-phone). Involved work is easier on a computer.
+Everything else is in [Use it on a phone](../start/phone.md). Involved work is easier on a computer.
 
 ## Only the terminal stays dark on the light theme
 
@@ -62,4 +62,4 @@ What the menus contain is in [Icons, badges, and menus](../../member/badges-and-
 
 - [Terminal](../../member/08-terminal.md)
 - [Console basics](../../member/02-console-basics.md)
-- [Settings](../../member/20-settings.md#keyboard)
+- [Use the keyboard and the command palette](../start/shortcuts.md#change-the-keys)
