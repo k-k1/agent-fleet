@@ -58,10 +58,17 @@ export function workItemDetail(rec: { provider: string; key: string; kind?: stri
   return apiJSON("api/work-items/detail", "POST", rec);
 }
 
-/** Merge a GitHub pull request (ADR 0061, 2026-10-25 note on #2632). Only from the detail modal's
- * confirm dialog. `sha` is the head commit the panel displayed: GitHub refuses the merge when the
- * branch has moved since. A stopped workspace answers 409 rather than being started. */
-export function workItemMerge(rec: { provider: string; key: string; sha: string; method: string }): Promise<unknown> {
+/** Merge a GitHub or Bitbucket pull request (ADR 0061, 2026-10-25 note on #2632 and its Bitbucket
+ * note). Only from the detail modal's confirm dialog. `sha` is the head commit the panel
+ * displayed: the merge is refused when the branch has moved since. `closeSourceBranch` is
+ * Bitbucket's merge option. A stopped workspace answers 409 rather than being started. */
+export function workItemMerge(rec: {
+  provider: string;
+  key: string;
+  sha: string;
+  method: string;
+  closeSourceBranch?: boolean;
+}): Promise<unknown> {
   return apiJSON("api/work-items/merge", "POST", rec);
 }
 

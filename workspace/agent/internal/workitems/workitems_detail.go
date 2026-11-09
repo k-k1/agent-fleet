@@ -138,6 +138,9 @@ type workItemDetailOut struct {
 	// not report scopes is false unless it is a GitHub App user token that githubAppUserCanMerge
 	// positively shows to hold Contents: write; a fine-grained token cannot be read back.
 	CanMerge bool `json:"canMerge"`
+	// CloseSourceBranch is a Bitbucket pull request's own "close source branch" setting, the
+	// default for the merge dialog's checkbox. False elsewhere.
+	CloseSourceBranch bool `json:"closeSourceBranch"`
 	// private is the repository's visibility, kept only to pick the scope a classic token needs.
 	private bool
 }
@@ -738,10 +741,12 @@ func bitbucketFetchPRDetail(auth, repo string, number int, key string) (*workIte
 	// fields= keeps `description` out of the response, the same promise the list adapter makes.
 	params := url.Values{"fields": {"id,title,state,draft,updated_on,comment_count,task_count," +
 		"links.html.href,author.display_name,author.nickname," +
-		"source.branch.name,destination.branch.name,destination.repository.full_name," +
+		"close_source_branch,source.branch.name,source.commit.hash,destination.branch.name," +
+		"destination.branch.merge_strategies,destination.branch.default_merge_strategy," +
+		"destination.repository.full_name," +
 		"participants.role,participants.approved,participants.state," +
 		"participants.user.display_name,participants.user.nickname"}}
-	body, status, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth, prBase+"?"+params.Encode())
+	body, status, hdr, err := gitx.BitbucketGetStatusHeader(workItemHTTPClient, auth, prBase+"?"+params.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("could not reach %s", BitbucketAPIBase)
 	}
@@ -765,40 +770,72 @@ func bitbucketFetchPRDetail(auth, repo string, number int, key string) (*workIte
 	// Only an unfinished PR (a draft included) has anything left to merge.
 	if out.State == "open" || out.State == "in_progress" {
 		if b, st, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth,
-			prBase+"/mergeability/checks?fields=values.type,values.status,values.reason"); err == nil && st == http.StatusOK {
-			out.Mergeable = parseBitbucketMergeability(b)
+			prBase+"/mergeability/checks?fields=values.type,values.status,values.reason,values.blocking"); err == nil && st == http.StatusOK {
+			v := parseBitbucketMergeChecks(b)
+			out.Mergeable, out.MergeableState = v.mergeable, v.state
+			// The Merge button needs a positive answer on both: the connection's write scope and
+			// the checks' own word that this user may merge. Either unknown withholds it.
+			out.CanMerge = v.permitted &&
+				gitx.BitbucketScopesCanMerge(gitx.BitbucketGrantedScopes(auth, hdr.Get("X-OAuth-Scopes")))
 		}
 	}
 	return out, nil
 }
 
-// parseBitbucketMergeability reads the Git-level verdict out of the mergeability checks. Like
-// GitHub's Mergeable it is about conflicts only: a branch restriction that blocks the merge
-// does not make the branch conflicted. Anything but a definite answer is "unknown" — Bitbucket
-// omits reason when status is UNKNOWN (e.g. a timeout) and says that is not "conflict-free".
-func parseBitbucketMergeability(body []byte) string {
+// bitbucketMergeVerdict is what the mergeability checks say, in the panel's vocabulary.
+type bitbucketMergeVerdict struct {
+	mergeable string // "clean" / "conflict" / "unknown" (conflicts only, like GitHub's)
+	state     string // GitHub-style: "clean" / "dirty" / "blocked" / "unknown"
+	permitted bool   // current_user_permission_check PASSED
+}
+
+// parseBitbucketMergeability returns only the conflict verdict; see parseBitbucketMergeChecks.
+func parseBitbucketMergeability(body []byte) string { return parseBitbucketMergeChecks(body).mergeable }
+
+// parseBitbucketMergeChecks reads the mergeability checks. `mergeable` is about Git conflicts
+// only, like GitHub's: a branch restriction that blocks the merge does not make the branch
+// conflicted. Anything but a definite answer is "unknown" — Bitbucket omits reason when status
+// is UNKNOWN (e.g. a timeout) and says that is not "conflict-free". `state` additionally folds
+// in every check's `blocking` flag, which is what decides whether the Merge button is enabled.
+func parseBitbucketMergeChecks(body []byte) bitbucketMergeVerdict {
+	v := bitbucketMergeVerdict{mergeable: "unknown", state: "unknown"}
 	var r struct {
 		Values []struct {
-			Type   string `json:"type"`
-			Status string `json:"status"`
-			Reason string `json:"reason"`
+			Type     string `json:"type"`
+			Status   string `json:"status"`
+			Reason   string `json:"reason"`
+			Blocking bool   `json:"blocking"`
 		} `json:"values"`
 	}
 	if err := json.Unmarshal(body, &r); err != nil {
-		return "unknown"
+		return v
 	}
+	blocked := false
 	for _, c := range r.Values {
-		if c.Type != "git_mergeability_check" {
-			continue
+		if c.Blocking {
+			blocked = true
 		}
-		switch {
-		case strings.EqualFold(c.Status, "PASSED") && strings.EqualFold(c.Reason, "clean"):
-			return "clean"
-		case strings.EqualFold(c.Status, "FAILED") && strings.EqualFold(c.Reason, "conflicts"):
-			return "conflict"
+		switch c.Type {
+		case "current_user_permission_check":
+			v.permitted = strings.EqualFold(c.Status, "PASSED")
+		case "git_mergeability_check":
+			switch {
+			case strings.EqualFold(c.Status, "PASSED") && strings.EqualFold(c.Reason, "clean"):
+				v.mergeable = "clean"
+			case strings.EqualFold(c.Status, "FAILED") && strings.EqualFold(c.Reason, "conflicts"):
+				v.mergeable = "conflict"
+			}
 		}
 	}
-	return "unknown"
+	switch {
+	case v.mergeable == "conflict":
+		v.state = "dirty"
+	case blocked:
+		v.state = "blocked"
+	case v.mergeable == "clean":
+		v.state = "clean"
+	}
+	return v
 }
 
 // bitbucketDetailError mirrors the list path's wording. 403 names the missing permission
@@ -828,14 +865,20 @@ func parseBitbucketPullRequest(body []byte, key string) (*workItemDetailOut, err
 			DisplayName string `json:"display_name"`
 			Nickname    string `json:"nickname"`
 		} `json:"author"`
-		Source struct {
+		CloseSourceBranch bool `json:"close_source_branch"`
+		Source            struct {
 			Branch struct {
 				Name string `json:"name"`
 			} `json:"branch"`
+			Commit struct {
+				Hash string `json:"hash"`
+			} `json:"commit"`
 		} `json:"source"`
 		Destination struct {
 			Branch struct {
-				Name string `json:"name"`
+				Name                 string   `json:"name"`
+				MergeStrategies      []string `json:"merge_strategies"`
+				DefaultMergeStrategy string   `json:"default_merge_strategy"`
 			} `json:"branch"`
 			Repository struct {
 				FullName string `json:"full_name"`
@@ -868,15 +911,30 @@ func parseBitbucketPullRequest(body []byte, key string) (*workItemDetailOut, err
 		Draft:     pr.Draft,
 		Merged:    strings.EqualFold(pr.State, "MERGED"),
 		// Filled from the mergeability-checks endpoint by bitbucketFetchPRDetail.
-		Mergeable:    "unknown",
-		BaseBranch:   pr.Destination.Branch.Name,
-		HeadBranch:   pr.Source.Branch.Name,
-		Comments:     pr.CommentCount,
-		Assignees:    []string{},
-		Labels:       []string{},
-		LabelColors:  map[string]string{},
-		Reviews:      []workItemReviewOut{},
-		MergeMethods: []string{},
+		Mergeable:         "unknown",
+		BaseBranch:        pr.Destination.Branch.Name,
+		HeadBranch:        pr.Source.Branch.Name,
+		Comments:          pr.CommentCount,
+		Assignees:         []string{},
+		Labels:            []string{},
+		LabelColors:       map[string]string{},
+		Reviews:           []workItemReviewOut{},
+		MergeMethods:      []string{},
+		HeadSHA:           strings.TrimSpace(pr.Source.Commit.Hash),
+		CloseSourceBranch: pr.CloseSourceBranch,
+	}
+	for _, m := range pr.Destination.Branch.MergeStrategies {
+		if workItemBitbucketStrategies[m] {
+			out.MergeMethods = append(out.MergeMethods, m)
+		}
+	}
+	if len(out.MergeMethods) > 0 {
+		out.DefaultMergeMethod = out.MergeMethods[0]
+		for _, m := range out.MergeMethods {
+			if m == pr.Destination.Branch.DefaultMergeStrategy {
+				out.DefaultMergeMethod = m
+			}
+		}
 	}
 	// Only reviewers. A Bitbucket participant list also holds everyone who commented, and
 	// "6 reviewers" that is really 4 bystanders is worse than no line at all.

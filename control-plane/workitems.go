@@ -707,7 +707,8 @@ func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolv
 	_, _ = w.Write(body)
 }
 
-// merge relays "merge this GitHub pull request" to the Agent (ADR 0061, 2026-10-25 note on #2632).
+// merge relays "merge this GitHub or Bitbucket pull request" to the Agent (ADR 0061, 2026-10-25
+// note on #2632, and its Bitbucket note).
 //
 // The second human-gated write, and it is held to a stricter standard than the report comment:
 //   - It must be the Console's own JSON request. The session cookie is SameSite=Lax, so a page on
@@ -721,7 +722,7 @@ func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolv
 //   - The Agent's answer passes through verbatim: GitHub's own refusal is what tells a moved head
 //     from a protected branch.
 //
-// GitHub only. Bitbucket is read-only (decision 19) and is refused here rather than at the Agent,
+// GitHub and Bitbucket; a Jira key (or anything else) is refused here rather than at the Agent,
 // so an old and a new Agent behave the same. `sha` is mandatory: it is the head commit the panel
 // displayed, and without it the Agent would merge whatever the head is by now.
 func (a workItemsAPI) merge(w http.ResponseWriter, r *http.Request, res *resolved) {
@@ -734,26 +735,40 @@ func (a workItemsAPI) merge(w http.ResponseWriter, r *http.Request, res *resolve
 		Key      string `json:"key"`
 		SHA      string `json:"sha"`
 		Method   string `json:"method"`
+		// CloseSourceBranch is Bitbucket's merge-time option; nil = the pull request's own setting.
+		CloseSourceBranch *bool `json:"closeSourceBranch,omitempty"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
 	switch in.Provider {
-	case "", "github":
+	case "":
+		in.Provider = "github"
+	case "github", "bitbucket":
 	default:
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_provider", "merging is available for GitHub pull requests only"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_provider", "merging is available for GitHub and Bitbucket pull requests only"})
 		return
 	}
 	if strings.TrimSpace(in.Key) == "" || strings.TrimSpace(in.SHA) == "" {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key and sha are required"})
 		return
 	}
-	switch in.Method {
-	case "merge", "squash", "rebase":
-	default:
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "method must be merge, squash or rebase"})
-		return
+	if in.Provider == "bitbucket" {
+		switch in.Method {
+		case "merge_commit", "squash", "fast_forward", "squash_fast_forward", "rebase_fast_forward", "rebase_merge":
+		default:
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "method is not a Bitbucket merge strategy"})
+			return
+		}
+	} else {
+		in.CloseSourceBranch = nil // a GitHub merge has no such option
+		switch in.Method {
+		case "merge", "squash", "rebase":
+		default:
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "method must be merge, squash or rebase"})
+			return
+		}
 	}
 	// The mark speaks for the workspace's own member.
 	if res.ws.MembershipID == "" || res.ws.MembershipID != res.mv.MembershipID {
@@ -763,10 +778,9 @@ func (a workItemsAPI) merge(w http.ResponseWriter, r *http.Request, res *resolve
 	ctx := r.Context()
 	if res.rt.State(ctx) != "running" {
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
-			"start the workspace to merge the pull request (the GitHub credentials live in it)"})
+			"start the workspace to merge the pull request (the " + in.Provider + " credentials live in it)"})
 		return
 	}
-	in.Provider = "github"
 	// What is signed is what is sent: the normalised body, not the browser's bytes.
 	payload, _ := json.Marshal(in)
 	const agentPath = "/work-items/merge"
@@ -806,7 +820,7 @@ func (a workItemsAPI) merge(w http.ResponseWriter, r *http.Request, res *resolve
 	if a.mgr != nil && a.mgr.store != nil {
 		_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID,
 			ActorKind: "user", ActorID: res.ident.ID, Action: "work_item.merge", Target: in.Key,
-			Detail: "method=" + in.Method + " sha=" + in.SHA, HTTPStatus: resp.StatusCode, At: store.NowTS()})
+			Detail: "provider=" + in.Provider + " method=" + in.Method + " sha=" + in.SHA, HTTPStatus: resp.StatusCode, At: store.NowTS()})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)

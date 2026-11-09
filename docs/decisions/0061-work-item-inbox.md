@@ -608,3 +608,36 @@ user has push there. An error, a rate limit, a timeout, an unread page or any ot
 and a definitive answer is cached for a minute per token hash and repository. A fine-grained personal access token stays
 without a button: GitHub documents no endpoint that reads its granted permissions back (`X-Accepted-GitHub-Permissions`
 says what an endpoint needs, not what the token holds). Merge itself is unchanged.
+
+## Note (2026-11-09): a person can merge a Bitbucket pull request from the detail modal
+
+Decision 19 (Bitbucket read-only), as the 2026-10-25 notes left it, and the "GitHub only" bullet of the #2632 note are
+superseded for the merge: the detail modal's **Merge** button is now drawn for a **Bitbucket Cloud** pull request too,
+and the Agent sends `POST /2.0/repositories/{workspace}/{repo}/pullrequests/{id}/merge`. Everything that keeps the
+GitHub merge from widening what af does on its own applies unchanged: never reachable by agents (no MCP tool, no
+trigger, the member-origin route of ADR 0113), the Console's confirm dialog is the only caller, a stopped Workspace
+answers 409, the request is never retried, and the panel re-reads after every outcome. What differs:
+
+- **The button needs two positive answers.** The connection holds the write scope (`pullrequest:write` or
+  `write:pullrequest:bitbucket`, the same check the report comment uses), and the documented
+  `GET .../pullrequests/{id}/mergeability/checks` says the current user may merge (`current_user_permission_check`
+  PASSED). Either unknown is "no button".
+- **When it is enabled** follows the checks, in GitHub's vocabulary: `clean` when the Git check is `PASSED`/`clean` and
+  no check is `blocking`; `dirty` on `conflicts`; `blocked` when any check is `blocking`; anything else (`UNKNOWN`,
+  `merge_impossible`, a failed read) is `unknown` and shown as the reason. `Mergeable` (the merge row of the panel)
+  stays about conflicts only, as it is for GitHub.
+- **The head guard is made by the Agent.** Bitbucket's merge endpoint takes no expected head, so the Agent reads the
+  pull request again just before the POST and refuses (`head_changed`) when its source head no longer starts with the
+  commit the panel displayed, or when it is no longer open. A short window between that read and the POST remains.
+- **Strategies are the destination branch's own** (`destination.branch.merge_strategies`, six documented values), with
+  its `default_merge_strategy` preselected. A branch that reports none gets no button.
+- **Close source branch** is a merge parameter here, not a second call, so it is in scope (GitHub's "delete branch"
+  stays out). The checkbox starts from the pull request's own `close_source_branch`.
+- **A 202** (Bitbucket merging as a background task) is shown as "still processing"; the panel's re-read shows the result.
+- Not done: the commit message field and the Jira work item transition of Bitbucket's own dialog. The transition would
+  be af's first write to Jira and needs its own decision.
+
+Follow-ups: #3729
+
+Not measured against a real merge: the shape of the 200/202/409 answers is from the documentation; the mergeability
+checks and the branch's strategies were read from a real pull request.

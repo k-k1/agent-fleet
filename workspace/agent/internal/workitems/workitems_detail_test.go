@@ -527,3 +527,50 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 		}
 	}
 }
+
+// What the Merge button needs from a Bitbucket pull request: the strategies the destination branch
+// allows, the head the panel will send back, and the PR's own close-source setting.
+func TestParseBitbucketPullRequestMergeFacts(t *testing.T) {
+	body := []byte(`{"id":3,"title":"t","state":"OPEN","draft":false,"close_source_branch":true,
+	  "source":{"branch":{"name":"feat"},"commit":{"hash":"ab37a6993eb1"}},
+	  "destination":{"branch":{"name":"main","default_merge_strategy":"squash",
+	    "merge_strategies":["merge_commit","squash","fast_forward","something_new"]},
+	    "repository":{"full_name":"ws/repo"}},
+	  "links":{"html":{"href":"https://example.test/pr/3"}},"participants":[]}`)
+	out, err := parseBitbucketPullRequest(body, "ws/repo#3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HeadSHA != "ab37a6993eb1" || !out.CloseSourceBranch {
+		t.Errorf("head=%q closeSource=%v", out.HeadSHA, out.CloseSourceBranch)
+	}
+	// A strategy the Agent cannot send is not offered; the branch's default wins when it is allowed.
+	if strings.Join(out.MergeMethods, ",") != "merge_commit,squash,fast_forward" || out.DefaultMergeMethod != "squash" {
+		t.Errorf("methods=%v default=%q", out.MergeMethods, out.DefaultMergeMethod)
+	}
+	// No strategies reported (an older workspace plan, a field Bitbucket drops): no Merge button.
+	bare, _ := parseBitbucketPullRequest([]byte(`{"id":3,"state":"OPEN","destination":{"branch":{"name":"main"}}}`), "ws/repo#3")
+	if len(bare.MergeMethods) != 0 || bare.DefaultMergeMethod != "" {
+		t.Errorf("methods=%v default=%q", bare.MergeMethods, bare.DefaultMergeMethod)
+	}
+}
+
+func TestParseBitbucketMergeChecksState(t *testing.T) {
+	perm := `{"type":"current_user_permission_check","status":"PASSED","blocking":false}`
+	for _, tc := range []struct {
+		name, body, mergeable, state string
+		permitted                    bool
+	}{
+		{"all green", `{"values":[` + perm + `,{"type":"git_mergeability_check","status":"PASSED","reason":"clean","blocking":false}]}`, "clean", "clean", true},
+		{"conflicts", `{"values":[` + perm + `,{"type":"git_mergeability_check","status":"FAILED","reason":"conflicts","blocking":true}]}`, "conflict", "dirty", true},
+		{"restriction blocks", `{"values":[` + perm + `,{"type":"standard_merge_check","status":"FAILED","blocking":true},{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, "clean", "blocked", true},
+		{"may not merge", `{"values":[{"type":"current_user_permission_check","status":"FAILED","blocking":true},{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, "clean", "blocked", false},
+		{"unevaluated", `{"values":[` + perm + `,{"type":"git_mergeability_check","status":"UNKNOWN"}]}`, "unknown", "unknown", true},
+		{"not json", `<html>`, "unknown", "unknown", false},
+	} {
+		v := parseBitbucketMergeChecks([]byte(tc.body))
+		if v.mergeable != tc.mergeable || v.state != tc.state || v.permitted != tc.permitted {
+			t.Errorf("%s: got %+v, want %s/%s/%v", tc.name, v, tc.mergeable, tc.state, tc.permitted)
+		}
+	}
+}

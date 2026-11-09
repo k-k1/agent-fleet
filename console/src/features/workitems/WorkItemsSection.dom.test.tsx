@@ -1399,7 +1399,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     workItemDetail.mockResolvedValue({ ...mergeable, mergeableState: state });
     const modal = await open();
     expect(mergeBtn(modal)?.disabled).toBe(true);
-    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t(why));
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t(why, { name: "GitHub" }));
     await act(async () => mergeBtn(modal)!.click());
     expect(dialog()).toBeNull();
   });
@@ -1428,11 +1428,53 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     }
   });
 
-  it("never draws Merge on a Bitbucket row, even if the answer claims it can", async () => {
-    workItemDetail.mockResolvedValue({ ...mergeable, provider: "bitbucket", key: "ws/repo#3" });
-    const modal = await open(pr({ provider: "bitbucket", key: "ws/repo#3", url: "https://bitbucket.org/ws/repo/pull-requests/3" }));
+  const bbRow = () => pr({ provider: "bitbucket", key: "ws/repo#3", url: "https://bitbucket.org/ws/repo/pull-requests/3" });
+  const bbMergeable = {
+    ...mergeable,
+    provider: "bitbucket",
+    key: "ws/repo#3",
+    url: "https://bitbucket.org/ws/repo/pull-requests/3",
+    headSha: "ab37a6993eb1",
+    mergeMethods: ["merge_commit", "squash", "rebase_merge"],
+    defaultMergeMethod: "merge_commit",
+    closeSourceBranch: true,
+  };
+
+  it("draws no Merge on a Bitbucket row unless the Agent vouches for it", async () => {
+    workItemDetail.mockResolvedValue({ ...bbMergeable, canMerge: false });
+    const modal = await open(bbRow());
     expect(mergeBtn(modal)).toBeUndefined();
-    expect(footer(modal).querySelector(".wi-dmergehold")).toBeNull();
+  });
+
+  it("merges a Bitbucket pull request with the chosen strategy and the close-source choice", async () => {
+    workItemDetail.mockResolvedValue(bbMergeable);
+    workItemMerge.mockResolvedValue({ merged: true, sha: "feedface" });
+    const modal = await open(bbRow());
+    expect(mergeBtn(modal)?.disabled).toBe(false);
+    await act(async () => mergeBtn(modal)!.click());
+    // The checkbox starts from the pull request's own setting, and the strategies are Bitbucket's.
+    const box = dialog()!.querySelector<HTMLInputElement>("input[type=checkbox]")!;
+    expect(box.checked).toBe(true);
+    expect([...dialog()!.querySelectorAll("option")].map((o) => (o as HTMLOptionElement).value)).toEqual(["merge_commit", "squash", "rebase_merge"]);
+    await act(async () => box.click());
+    const sel = dialog()!.querySelector<HTMLSelectElement>("select")!;
+    await act(async () => {
+      sel.value = "squash";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => confirmBtn().click());
+    await settle();
+    expect(workItemMerge).toHaveBeenCalledWith({
+      provider: "bitbucket", key: "ws/repo#3", sha: "ab37a6993eb1", method: "squash", closeSourceBranch: false,
+    });
+  });
+
+  it("sends no close-source option for GitHub", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    workItemMerge.mockResolvedValue({ merged: true, sha: "feedface" });
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    expect(dialog()!.querySelector("input[type=checkbox]")).toBeNull();
   });
 
   it("draws no Merge on a merged or closed pull request", async () => {
@@ -1455,7 +1497,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
     const modal = await open();
     expect(mergeBtn(modal)?.disabled).toBe(true);
-    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_stopped"));
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_stopped", { name: "GitHub" }));
     await act(async () => mergeBtn(modal)!.click());
     expect(workItemMerge).not.toHaveBeenCalled();
   });
@@ -1508,7 +1550,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
       const modal = await open();
       expect(modal.querySelector(".wi-dmerge .codicon-spin")).not.toBeNull();
       expect(modal.textContent).toContain(t("wi.detail_merge_checking"));
-      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_checking"));
+      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_checking", { name: "GitHub" }));
       expect(mergeBtn(modal)?.disabled).toBe(true);
 
       let release: (v: unknown) => void = () => {};
@@ -1539,7 +1581,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
       expect(workItemDetail).toHaveBeenCalledTimes(6); // the open + five re-reads
       expect(modal.querySelector(".wi-dmerge .codicon-spin")).toBeNull();
       expect(modal.textContent).toContain(t("wi.detail_merge_unknown"));
-      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_unknown"));
+      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_unknown", { name: "GitHub" }));
       const again = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dmerge button")].find((b) => b.textContent === t("wi.detail_merge_recheck"))!;
       workItemDetail.mockResolvedValue(mergeable);
       await act(async () => again.click());

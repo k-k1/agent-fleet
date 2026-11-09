@@ -236,12 +236,19 @@ interface MergeDialog {
   sha: string;
   methods: string[];
   method: string;
+  /** Bitbucket only: the checkbox. null = the provider has no such option (GitHub). */
+  closeSource: boolean | null;
 }
 
 const MERGE_METHOD_LABEL = {
   merge: "wi.merge_method_merge",
   squash: "wi.merge_method_squash",
   rebase: "wi.merge_method_rebase",
+  merge_commit: "wi.merge_method_merge",
+  fast_forward: "wi.merge_method_fast_forward",
+  squash_fast_forward: "wi.merge_method_squash_fast_forward",
+  rebase_fast_forward: "wi.merge_method_rebase_fast_forward",
+  rebase_merge: "wi.merge_method_rebase_merge",
 } as const;
 
 const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
@@ -380,6 +387,7 @@ export function WorkItemDetailModal({
       sha: d.headSha,
       methods: d.mergeMethods,
       method: d.defaultMergeMethod || d.mergeMethods[0] || "",
+      closeSource: d.provider === "bitbucket" ? d.closeSourceBranch : null,
     });
   };
   const confirmMerge = async () => {
@@ -389,7 +397,13 @@ export function WorkItemDetailModal({
     let result = readMergeResult(null);
     try {
       result = readMergeResult(
-        await workItemMerge({ provider: "github", key: mergeDlg.key, sha: mergeDlg.sha, method: mergeDlg.method }),
+        await workItemMerge({
+          provider: item.provider,
+          key: mergeDlg.key,
+          sha: mergeDlg.sha,
+          method: mergeDlg.method,
+          ...(mergeDlg.closeSource === null ? {} : { closeSourceBranch: mergeDlg.closeSource }),
+        }),
       );
     } catch (e) {
       // A rejected request cannot say whether GitHub saw it, so the read below is what settles it.
@@ -402,6 +416,9 @@ export function WorkItemDetailModal({
     if (result.ok) {
       setMergeDlg(null);
       setMergeNote({ text: tr("wi.merge_done"), bad: false });
+    } else if (result.code === "merge_pending") {
+      setMergeDlg(null);
+      setMergeNote({ text: tr("wi.merge_pending", { name: providerName }), bad: false });
     } else if (result.code === "head_changed") {
       setMergeDlg(null);
       setMergeNote({ text: tr("wi.merge_head_changed"), bad: true });
@@ -481,14 +498,14 @@ export function WorkItemDetailModal({
   // The reason sits in the footer beside the button; the full text is also its title.
   const mergeSlot: { button: "none" | "hold" | "enabled" | "disabled"; note: { text: string; bad: boolean } | null } = (() => {
     if (mergeNote) return { button: gate.show ? (gate.enabled ? "enabled" : "disabled") : "hold", note: mergeNote };
-    if (item.provider !== "github" || !isPR || neutral) return { button: "none", note: null };
+    if ((item.provider !== "github" && item.provider !== "bitbucket") || !isPR || neutral) return { button: "none", note: null };
     if (gate.show) {
       // While the panel is re-reading by itself, "try again in a moment" would ask the user to do
       // what is already happening.
       const why = gate.whyKey === "wi.merge_why_unknown" && live.rechecking ? "wi.merge_why_checking" : gate.whyKey;
-      return { button: gate.enabled ? "enabled" : "disabled", note: why ? { text: tr(why), bad: false } : null };
+      return { button: gate.enabled ? "enabled" : "disabled", note: why ? { text: tr(why, { name: providerName }), bad: false } : null };
     }
-    if (live.stopped) return { button: "disabled", note: { text: tr("wi.merge_why_stopped"), bad: false } };
+    if (live.stopped) return { button: "disabled", note: { text: tr("wi.merge_why_stopped", { name: providerName }), bad: false } };
     if (live.err) return { button: "disabled", note: { text: tr("wi.merge_why_unread"), bad: false } };
     return { button: "hold", note: null };
   })();
@@ -929,7 +946,18 @@ export function WorkItemDetailModal({
               )}
             </dd>
           </dl>
-          <p className="wi-shint">{tr("wi.merge_note", { sha: mergeDlg.sha.slice(0, 7) })}</p>
+          {mergeDlg.closeSource !== null && (
+            <label className="wi-mclose">
+              <input
+                type="checkbox"
+                checked={mergeDlg.closeSource}
+                disabled={mergeBusy}
+                onChange={(e) => setMergeDlg({ ...mergeDlg, closeSource: e.target.checked })}
+              />
+              {tr("wi.merge_close_source")}
+            </label>
+          )}
+          <p className="wi-shint">{tr("wi.merge_note", { name: providerName, sha: mergeDlg.sha.slice(0, 7) })}</p>
           {mergeErr && (
             <p className="wi-merr" role="alert">
               {mergeErr}

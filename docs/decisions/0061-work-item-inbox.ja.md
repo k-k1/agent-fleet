@@ -543,3 +543,32 @@ member-origin マーク（ADR 0113）がある要求だけを受け付け、Cont
 オープンな PR の詳細の読み取りだけで（一覧では行わない）、全体で 6 秒の上限がある。`ghu_` のトークンは `X-OAuth-Scopes` が何であれトークンの接頭辞で選び、想定外の応答の形（リスト・`permissions` の欠落や null）や確認しきれなかったインストールは不明として扱いキャッシュしない。確定した答えはトークンのハッシュとリポジトリごとに 1 分キャッシュする。
 fine-grained の personal access token は引き続きボタンなし: 付与された権限を読み返す API を GitHub は文書化していない
 （`X-Accepted-GitHub-Permissions` はエンドポイントが要る権限を示すもので、トークンが持つ権限ではない）。マージ自体は変更しない。
+
+## 注記（2026-11-09）: 詳細モーダルから Bitbucket のプルリクエストをマージできる
+
+決定 19（Bitbucket は読み取り専用）の 2026-10-25 の注記までの扱いと、#2632 の注記の「GitHub のみ」の箇条は、マージについては
+置き換える。詳細モーダルの**マージ**ボタンを **Bitbucket Cloud** のプルリクエストにも出し、Agent が
+`POST /2.0/repositories/{workspace}/{repo}/pullrequests/{id}/merge` を送る。GitHub のマージが af 自身のできることを広げないために
+置いている条件は、そのまま全部かかる: エージェントからは届かない（MCP ツールなし、自動の契機なし、ADR 0113 のメンバー起点の経路）、
+呼び出し元は Console の確認ダイアログだけ、停止中のワークスペースは 409、再送しない、どの結果の後でもパネルが読み直す。違うのは次の点。
+
+- **ボタンには 2 つの肯定的な答えが要る。** 接続が書き込みスコープ（`pullrequest:write` または `write:pullrequest:bitbucket`。報告コメント
+  と同じ判定）を持つこと、そして文書化されている `GET .../pullrequests/{id}/mergeability/checks` が、現在のユーザーはマージできる
+  （`current_user_permission_check` が PASSED）と言うこと。どちらかが不明なら「ボタンなし」。
+- **押せるかどうか**はチェックの結果を GitHub の語彙に写して決める: Git のチェックが `PASSED`/`clean` で `blocking` なチェックが無ければ
+  `clean`、`conflicts` なら `dirty`、`blocking` なチェックがあれば `blocked`、それ以外（`UNKNOWN`、`merge_impossible`、読み取り失敗）は
+  `unknown` で、理由として表示する。パネルの「マージ」行（`Mergeable`）は GitHub と同じく競合だけを表す。
+- **head の確認は Agent が行う。** Bitbucket のマージ API には期待する head の指定がないため、Agent は POST の直前にプルリクエストを
+  読み直し、ソースの head がパネルに表示したコミットで始まらなくなっていた場合や、もうオープンでない場合に断る（`head_changed`）。
+  その読み取りから POST までの短い隙間は残る。
+- **戦略は対象ブランチ自身のもの**（`destination.branch.merge_strategies`、文書化された 6 値）で、`default_merge_strategy` を初期値にする。
+  戦略を返さないブランチにはボタンを出さない。
+- **ソースブランチを閉じる**はここではマージの引数で、別の呼び出しではないので対象に入れる（GitHub の「ブランチ削除」は対象外のまま）。
+  チェックボックスの初期値はプルリクエスト自身の `close_source_branch`。
+- **202**（Bitbucket がバックグラウンドでマージする場合）は「処理中」と表示し、結果はパネルの読み直しで見せる。
+- 未対応: Bitbucket 自身のダイアログにあるコミットメッセージ欄と Jira の作業項目の遷移。遷移は af の Jira への初めての書き込みになるので、
+  別の判断が要る。
+
+Follow-ups: #3729
+
+実際のマージでは測っていない: 200/202/409 の応答の形は文書による。マージ可否のチェックとブランチの戦略は、実物のプルリクエストから読んだ。
