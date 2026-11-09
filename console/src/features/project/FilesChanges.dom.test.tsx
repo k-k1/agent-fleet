@@ -27,6 +27,7 @@ let failing = false;
 let gate: { wait: Promise<void>; open: () => void } | null = null;
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: vi.fn(async () => {
     if (gate) await gate.wait;
     if (failing) return { error: { code: "http_502", status: 502 } };

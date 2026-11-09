@@ -46,6 +46,7 @@ func TestMemberOriginRoutesAreTheMemberWrites(t *testing.T) {
 		"POST /api/agents/memory-consolidation/proposals/approve",
 		"POST /api/agents/memory-consolidation/proposals/reject",
 		"POST /api/agents/memory-consolidation/proposals/retry",
+		"POST /api/agents/memory-consolidation/run",
 		"POST /api/agents/memory-review/runs/revert",
 		"POST /api/agents/memory/af-import",
 		"POST /api/agents/memory/auto-sync",

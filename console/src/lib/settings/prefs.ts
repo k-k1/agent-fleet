@@ -8,7 +8,14 @@
 import type { WorkingSet } from "../workingSets.ts";
 import type { LaunchTemplateStore } from "../launchTemplates.ts";
 import type { PromptHistoryStore } from "../promptHistory.ts";
-import { ASSISTANT_AGENT_KINDS, ASSISTANT_RECOMMENDED_MODEL, CJK_FONT_AUTO, DEFAULT_MODEL } from "./options.ts";
+import {
+  APPEARANCE_SHUFFLE_MODES,
+  ASSISTANT_AGENT_KINDS,
+  ASSISTANT_RECOMMENDED_MODEL,
+  CJK_FONT_AUTO,
+  DEFAULT_MODEL,
+  type AppearanceShuffleMode,
+} from "./options.ts";
 import { IMAGE_PROVIDERS } from "./imageProviders.ts";
 import {
   DEFAULT_AGENT_LAUNCH,
@@ -83,6 +90,9 @@ function accumulated<T>(d: T, opts: PrefOpts<T> = {}): Pref<T> {
 
 const isTrue = (v: unknown): boolean => v === true;
 
+const normalizeAppearanceShuffle = (v: unknown): AppearanceShuffleMode =>
+  APPEARANCE_SHUFFLE_MODES.find((m) => m.id === v)?.id ?? "off";
+
 const PREFS = {
   termFont: synced("Source Code Pro"),
   termSize: synced(13),
@@ -151,6 +161,11 @@ const PREFS = {
   // Keep a separate appearance (APPEARANCE_KEYS) per tenant on this device. Device-local, off by
   // default; only offered to members with two or more memberships.
   appearancePerTenant: deviceLocal(false),
+  // Re-pick every surface color at random on a schedule (lib/appearanceShuffle.ts). Device-local
+  // like the colors it rewrites; the dark/light theme keys are never touched. One switch for the
+  // whole device, not part of the per-tenant snapshot: the shuffle rewrites whichever tenant's
+  // colors are showing.
+  appearanceShuffle: deviceLocal<AppearanceShuffleMode>("off", { normalize: normalizeAppearanceShuffle }),
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: synced("mod-enter"),

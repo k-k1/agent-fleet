@@ -49,7 +49,7 @@ export function matchMemoriesDetail(rows: MemoryListed[], hits: MemorySearchHit[
 export const matchMemories = (rows: MemoryListed[], hits: MemorySearchHit[], q: string, fallback = ""): MemoryListed[] =>
   matchMemoriesDetail(rows, hits, q, fallback).rows;
 
-/** One memory, named for `openSettings("memory:memories", { target })`. */
+/** One memory, named for `openMemoryView("memories", { target })`. */
 export interface MemoryTarget {
   scope: "user" | "project";
   /** Project id; "" for the user scope. */

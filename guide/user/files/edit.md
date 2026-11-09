@@ -33,6 +33,8 @@ Open the file and switch the control at the top to editing.
 
 A file that shows no editing switch cannot be changed from the Console.
 
+Switching to another tab in the same cell and back keeps the switch you chose, the scroll position and any unsaved edits. A browser reload starts over.
+
 ## Save
 
 Press Ctrl+S (⌘+S on a Mac) or "**Save**". The state at the top goes from "**Unsaved changes**" to "**Saving**" to "**Saved**".

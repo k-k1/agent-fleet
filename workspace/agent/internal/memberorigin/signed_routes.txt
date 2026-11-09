@@ -18,6 +18,7 @@
 POST /agents/memory-consolidation/proposals/approve relay
 POST /agents/memory-consolidation/proposals/reject relay
 POST /agents/memory-consolidation/proposals/retry relay
+POST /agents/memory-consolidation/run relay
 POST /agents/memory-review/runs/revert relay
 POST /agents/memory/af-import relay
 POST /agents/memory/auto-sync relay

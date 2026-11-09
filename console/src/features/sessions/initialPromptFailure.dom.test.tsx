@@ -13,6 +13,7 @@ vi.mock("../../ui/toast.ts", () => ({
 let scopeUser = "u";
 let scopeTenant = "a";
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getUser: () => scopeUser,
   getTenant: () => scopeTenant,
 }));

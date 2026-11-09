@@ -2,7 +2,7 @@
 // cannot see: that a card is really two targets (body = enlarge, corner = pane), that the
 // thumbnails are asked for at the shared size and lazily, that a folder whose Agent sends no
 // mtime still draws — and that the lightbox pages through the same order the grid shows.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
@@ -116,6 +116,28 @@ const back = (): Promise<void> =>
     window.addEventListener("popstate", () => setTimeout(resolve, 0), { once: true });
     history.back();
   });
+
+// Two costs land on whichever test happens to run them, and under load (full suite at
+// --maxWorkers=2, load average ~40) they pushed the 300-card tests past the 5 s default:
+// the first GalleryView mount in a fresh worker (cold module graph, first React commit), and
+// those tests' own 305-card commits. Pay the first here with an explicit budget; the second
+// gets an explicit per-test budget (HEAVY_RENDER_MS) rather than a raised global timeout.
+const HEAVY_RENDER_MS = 30_000;
+const WARMUP_BUDGET_MS = 60_000;
+beforeAll(async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  setLocale("ja");
+  useWorkspaceStore.setState({ state: "running" });
+  useLayoutStore.setState({ layout: freshLayout() });
+  served = Array.from({ length: 40 }, (_, n) => img(`w${n}.png`, 1000 + n));
+  await render();
+  await vi.waitFor(() => expect(cards().length).toBeGreaterThan(0), { timeout: HEAVY_RENDER_MS });
+  await act(async () => root.unmount());
+  document.body.innerHTML = "";
+  clearGalleryCache();
+  clearImageSizeCache();
+  served = [];
+}, WARMUP_BUDGET_MS);
 
 beforeEach(() => {
   // The locale comes from settings and its default depends on the environment (jsdom reports
@@ -271,7 +293,7 @@ describe("画像ギャラリーのペイン", () => {
     expect(view?.content).toMatchObject({ kind: "gallery", sort: "name" });
   });
 
-  it("300 枚で打ち切り、「さらに表示」で続きを出す", async () => {
+  it("300 枚で打ち切り、「さらに表示」で続きを出す", { timeout: HEAVY_RENDER_MS }, async () => {
     served = Array.from({ length: 305 }, (_, n) => img(`i${String(n).padStart(3, "0")}.png`, 1000 + n));
     await render();
     expect(cards()).toHaveLength(300);
@@ -604,7 +626,7 @@ describe("画像ギャラリーのペイン", () => {
     expect(host.querySelector(".gal-count")?.textContent).not.toContain("更新中");
   });
 
-  it("フォルダでの居場所（スクロール位置と「さらに表示」）も覚えていて、戻ると同じ場所に出る", async () => {
+  it("フォルダでの居場所（スクロール位置と「さらに表示」）も覚えていて、戻ると同じ場所に出る", { timeout: HEAVY_RENDER_MS }, async () => {
     served = Array.from({ length: 305 }, (_, n) => img(`i${String(n).padStart(3, "0")}.png`, 1000 + n));
     await render();
     await click(byText("さらに表示"));

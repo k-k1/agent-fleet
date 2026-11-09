@@ -1206,6 +1206,50 @@ func SettledAt(lines [][]byte) (question, plan time.Time) {
 	return question, plan
 }
 
+// ToolResultAt reports when the transcript recorded the tool_result for the call toolUseID.
+// A call's result is written however it ended (run, rejected, denied by Claude Code itself),
+// so a result proves the prompt that call raised is closed. ok is false when there is no result
+// or its line carries no usable clock. Whole-transcript, like SettledAt.
+func ToolResultAt(lines [][]byte, toolUseID string) (at time.Time, ok bool) {
+	if toolUseID == "" {
+		return time.Time{}, false
+	}
+	want := []byte(toolUseID)
+	for _, ln := range lines {
+		// Cheap prefilter: this runs over the whole transcript on every poll with a payload.
+		if !bytes.Contains(ln, want) || !bytes.Contains(ln, []byte(`"tool_result"`)) {
+			continue
+		}
+		var ev struct {
+			Timestamp string `json:"timestamp"`
+			Message   struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &ev) != nil || len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
+			continue
+		}
+		var blocks []struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_result" || b.ToolUseID != toolUseID {
+				continue
+			}
+			ts, err := time.Parse(time.RFC3339, ev.Timestamp)
+			if err != nil {
+				return time.Time{}, false
+			}
+			return ts, true
+		}
+	}
+	return time.Time{}, false
+}
+
 // CollectFileEdits extracts every edit-family tool call from lines[from:] — the raw
 // material for the session's changed-files list (docs/log/68). `from` lets the caller fold
 // only the lines it hasn't seen: the jsonl is append-only, so the answer for a prefix

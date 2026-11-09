@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+const workItemDetail = vi.fn();
+vi.mock("./api.ts", async (orig) => ({
+  ...(await orig<typeof import("./api.ts")>()),
+  workItemDetail: (...a: unknown[]) => workItemDetail(...a),
+}));
+
 const { WorkItemDetailModal } = await import("./WorkItemDetailModal.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 type WorkItem = import("./read.ts").WorkItem;
@@ -41,11 +47,17 @@ const ref = (name: string, over: Partial<WorkItemSessionRef> = {}): WorkItemSess
   ...over,
 });
 
-const render = async (started: WorkItemSessionRef[], onUnlink?: (name: string) => Promise<string>) => {
+const render = async (
+  started: WorkItemSessionRef[],
+  onUnlink?: (name: string) => Promise<string>,
+  row: WorkItem = item,
+  reference = false,
+) => {
   await act(async () => {
     root!.render(
       <WorkItemDetailModal
-        item={item}
+        item={row}
+        reference={reference}
         repos={[]}
         defaultRepo=""
         started={started}
@@ -131,5 +143,49 @@ describe("WorkItemDetailModal removed rows", () => {
     await render([], onUnlink); // the next poll drops it
     await render([swork], onUnlink); // linked again later
     expect(rows()).toHaveLength(1);
+  });
+});
+
+describe("WorkItemDetailModal Kind row", () => {
+  const kindValue = () => {
+    const dt = [...document.querySelectorAll("dt")].find((e) => e.textContent === t("wi.detail_kind"));
+    return dt?.nextElementSibling?.textContent;
+  };
+
+  it("shows the tracker's issue type as-is", async () => {
+    await render([], undefined, { ...item, type: "Epic" });
+    expect(kindValue()).toBe("Epic");
+  });
+
+  const liveDetail = (over: Record<string, unknown>) => ({
+    provider: "jira",
+    key: "PROJ-1",
+    kind: "issue",
+    title: "Login",
+    state: "open",
+    url: "https://example.invalid/browse/PROJ-1",
+    ...over,
+  });
+
+  it("prefers the live read's type over the row's", async () => {
+    workItemDetail.mockResolvedValue(liveDetail({ type: "Task" }));
+    await render([], undefined, { ...item, type: "Epic" }, true);
+    expect(kindValue()).toBe("Task");
+  });
+
+  it("falls back to the row's type when the live read names none", async () => {
+    workItemDetail.mockResolvedValue(liveDetail({}));
+    await render([], undefined, { ...item, type: "Epic" }, true);
+    expect(kindValue()).toBe("Epic");
+  });
+
+  it("falls back to Issue when the tracker names no type", async () => {
+    await render([], undefined, item);
+    expect(kindValue()).toBe(t("wi.kind_issue"));
+  });
+
+  it("reads Pull request for a PR even when the row carries a type", async () => {
+    await render([], undefined, { ...item, provider: "github", kind: "pr", type: "Epic" });
+    expect(kindValue()).toBe(t("wi.kind_pr"));
   });
 });

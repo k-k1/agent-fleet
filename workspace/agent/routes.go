@@ -575,6 +575,7 @@ func buildMux() *http.ServeMux {
 	mux.Handle("POST /agents/memory-consolidation/proposals/approve", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleApprove)))
 	mux.Handle("POST /agents/memory-consolidation/proposals/reject", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleReject)))
 	mux.Handle("POST /agents/memory-consolidation/proposals/retry", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleRetry)))
+	mux.Handle("POST /agents/memory-consolidation/run", memberorigin.Require(memconsol.DecideMaxRequest, http.HandlerFunc(memconsol.HandleRun)))
 	// Undo what one past review run published (ADR 0117 decision 5, kept by ADR 0130 decision 2):
 	// the review itself is gone, its published history stays revertible. A member write, so only
 	// the member-origin mark gets through; outside /agents/memory/ on purpose, no MCP tool reaches it.

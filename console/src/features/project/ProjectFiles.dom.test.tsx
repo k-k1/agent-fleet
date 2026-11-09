@@ -14,6 +14,7 @@ interface Entry {
 let served: Record<string, Entry[]> = {};
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   getTenant: () => "",
   api: vi.fn(async (url: string) => {
     const p = decodeURIComponent(new URL(url, "http://x/").searchParams.get("path") || "");

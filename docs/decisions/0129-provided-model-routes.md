@@ -645,3 +645,16 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   store. The CP needs an AWS identity from its environment (an ECS task role, IRSA, an instance role): a Docker or
   compose CP outside AWS cannot use provided routes, since D1b rules out a stored access key, and `ec2-single`
   attaches no instance profile and does not offer them.
+- 2026-11-09, #3683: a budget below one call's reservation never admits a call, and nothing said so (ECS sandbox: a
+  $0.50 member default against $0.62 for one Haiku 4.5 call with the 32,000-token output cap claude sends). The grant,
+  policy and member writes now refuse an amount above zero that is below the smallest one-call reservation of every
+  model on the source's list (a one-token output cap: no call of any model can fit), the D3 rule that refuses a grant
+  with no ceiling at save time applied to an amount that is as impossible. An amount above that floor but below a
+  model's full-output reservation is saved with a `warnings` entry naming both reservations: whether a call fits then
+  depends on the output cap the harness sends, which the CP learns only per call. Zero stays legal (no use). The
+  tenant view lists each model's reservations and the floor. A refusal the CP makes before admission (grant, budget,
+  contract) now writes no ledger row at the Agent, as the member route's own refusals write none; an admitted call
+  carries the CP's call id and is recorded whatever Bedrock answered. Claude Code labels the CP's 401 refusals "AWS
+  authentication failed"; no other status fits (403 and 400 are retried, 404 reads as "model not available", 429 as a
+  rate limit, and a 503 would make the claude adapter classify a refusal that waiting does not clear as retryable), so
+  the label stays, followed by the CP's own message.

@@ -218,7 +218,7 @@ of the instance's CPU units).
    namespace, but it physically sits on the shared root volume and is readable by anyone who can reach
    the host (a route that did not exist with Fargate's per-task microVM). And one person filling it takes
    down everything on that slot. **On EC2 you can make `/tmp` a tmpfs with `linuxParameters.tmpfs`
-   (`containerPath` plus a mandatory `size` plus `noexec,nosuid,nodev`)** (unavailable on Fargate) =
+   (`containerPath` plus a mandatory `size` plus `noexec,nosuid,nodev`)** (the Fargate revision sets no tmpfs, `runtime_ecs.go`) =
    nothing is written to disk, it vanishes at exit, and it has a cap. A quota on the write layer
    (overlay2 plus xfs prjquota) and deleting the container when the slot is returned go in alongside.
 3. **A route is needed for the CP to run `mount` / `umount` on the instance** (measured with SSM
@@ -378,7 +378,10 @@ response; a window where `DeleteVolume` returns `VolumeInUse`).
    development container installers and test runners execute from `/tmp` every day, and `noexec` breaks
    that in the shape of "Permission denied". What decision 8 actually wanted —
    **"nothing is written to the shared root" and "there is a cap"** — both hold without `noexec`.
-   It can be restored with `AF_ECS_EC2_TMP_OPTS`.
+   The default list is therefore `exec,nosuid,nodev`: `exec` has to be named, because Docker mounts
+   every tmpfs `noexec,nosuid,nodev` and only an option listed after that overrides it, so a list
+   that merely omits `noexec` still yields a noexec `/tmp` (#3682). `AF_ECS_EC2_TMP_OPTS` replaces
+   the list; `noexec,nosuid,nodev` restores decision 8.
 2. **The occasion for decision 3-1 (the three-step resize) disappears in the pool model.** Users are not
    tied to instances, so a resize becomes **"move onto a slot of a different size"** (Stop → attach to a
    different pool → Start) and never calls `ModifyInstanceAttribute`. Trap 1 was the kind that

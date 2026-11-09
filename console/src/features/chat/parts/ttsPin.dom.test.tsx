@@ -14,7 +14,7 @@
 //     window close on somebody who is still listening (decision 3).
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-vi.mock("../../../core/api/client.ts", () => ({ rel: (p: string) => "http://x/" + p }));
+vi.mock("../../../core/api/client.ts", () => ({ apiJSON: async () => ({}), rel: (p: string) => "http://x/" + p }));
 
 import { makeProviderPin, synthToBuffer } from "./ttsAudio.ts";
 import { type TtsOptions } from "./ttsOptions.ts";

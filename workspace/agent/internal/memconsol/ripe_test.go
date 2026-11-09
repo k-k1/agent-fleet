@@ -73,7 +73,7 @@ func TestTopicsAreDeterministic(t *testing.T) {
 	}}
 	obs := []Observation{
 		ob("1", SourceFeedback, "wrong", time.Hour),
-		{ID: "2", Source: SourceExport, Rule: "review-create", Scope: "project", ProjectID: testProject, Memory: "branch-notes", Note: "the trunk branch is develop", FirstSeen: t0.Add(-2 * time.Hour)},
+		{ID: "2", Source: SourceExport, Rule: "review-create", Scope: "project", ProjectID: testProject, Memory: "branch-notes", Note: "git branches: the trunk branch is develop", FirstSeen: t0.Add(-2 * time.Hour)},
 		{ID: "3", Source: SourceLint, Rule: "x", Scope: "project", ProjectID: testProject, Memory: "ci-setup", Note: "n", FirstSeen: t0},
 	}
 	obs[0].Memory = "git-branches"

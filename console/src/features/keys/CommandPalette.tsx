@@ -74,7 +74,7 @@ import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useSettings } from "../../lib/settings.ts";
-import { useSettingsUI } from "../settings/store.ts";
+import { openMemoryView } from "../memory/open.ts";
 import { keyOf, matchMemories, memoryTarget } from "../settings/memory/memorySearch.ts";
 import type { MemoryListed, MemorySearchHit } from "../settings/memory/memoryTypes.ts";
 import { loadMemoryList, searchMemoryBodies, type MemoryList } from "./memoryPalette.ts";
@@ -306,8 +306,7 @@ function TalkRowBody({ h }: { h: SessionSearchHit }) {
   );
 }
 
-// One memory → a palette row. Enter opens Settings > Agent memory with it picked; a dialog has no
-// second pane to split into, so Ctrl/⌘+Enter does the same.
+// One memory → a palette row. Enter opens the Memory view with it picked.
 function memoryItem(m: MemoryListed, snippet?: string): Item {
   const where = m.scope === "user" ? t("keys.palette.memory_user") : (m.project?.display ?? "");
   return {
@@ -317,7 +316,7 @@ function memoryItem(m: MemoryListed, snippet?: string): Item {
     search: m.name,
     keys: [],
     memory: { m, snippet },
-    run: () => useSettingsUI.getState().openSettings("memory:memories", { target: memoryTarget(m) }),
+    run: () => openMemoryView("memories", { target: memoryTarget(m) }),
   };
 }
 

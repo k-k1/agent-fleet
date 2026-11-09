@@ -5,7 +5,7 @@ const apiMock = vi.fn();
 let tenant = "";
 let expired = false; // the real latch cannot be reset, so stand it in
 vi.mock("../core/auth/authExpired.ts", () => ({ isAuthExpired: () => expired }));
-vi.mock("../core/api/client.ts", () => ({ api: (...a: unknown[]) => apiMock(...a), getTenant: () => tenant }));
+vi.mock("../core/api/client.ts", () => ({ apiJSON: async () => ({}), api: (...a: unknown[]) => apiMock(...a), getTenant: () => tenant }));
 
 const { AGENTS, agentOf, availableKinds, repoLaunchKinds } = await import("./registry.ts");
 const { FALLBACK_KIND_FACTS, catalogKinds, kindFacts, kindRoutes, parseKindCatalog, setKindCatalog } = await import("./kindCatalog.ts");
