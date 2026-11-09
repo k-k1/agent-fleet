@@ -83,6 +83,13 @@ describe("readWorkItems", () => {
     expect(odd.mergeable).toBe("");
     expect(read({ id: "4", checks: null }).checks.state).toBe("");
   });
+
+  it("keeps the tracker's issue type on a row, and reads a missing or non-string one as empty (#3734)", () => {
+    const read = (raw: Record<string, unknown>) => readWorkItems({ items: [raw], queries: [] }).payload!.items[0];
+    expect(read({ id: "1", type: "Epic" }).type).toBe("Epic");
+    expect(read({ id: "2" }).type).toBe("");
+    expect(read({ id: "3", type: 7 }).type).toBe("");
+  });
 });
 
 describe("checksText", () => {
@@ -780,10 +787,16 @@ describe("mergeGate", () => {
 
   it("draws nothing without a live read, outside GitHub pull requests, or once finished", () => {
     expect(mergeGate(null).show).toBe(false);
-    expect(mergeGate(pr({ provider: "bitbucket" })).show).toBe(false);
+    expect(mergeGate(pr({ provider: "jira" })).show).toBe(false);
     expect(mergeGate(pr({ kind: "issue" })).show).toBe(false);
     expect(mergeGate(pr({ merged: true })).show).toBe(false);
     expect(mergeGate(pr({ state: "done" })).show).toBe(false);
+  });
+
+  it("offers Merge on a Bitbucket pull request on the same terms as GitHub", () => {
+    expect(mergeGate(pr({ provider: "bitbucket", mergeMethods: ["merge_commit"] })).enabled).toBe(true);
+    expect(mergeGate(pr({ provider: "bitbucket", mergeMethods: ["merge_commit"], canMerge: false })).show).toBe(false);
+    expect(mergeGate(pr({ provider: "bitbucket", mergeMethods: ["merge_commit"], mergeableState: "dirty" })).whyKey).toBe("wi.merge_why_dirty");
   });
 
   it("draws nothing without the Agent's word, a head SHA or an allowed method", () => {

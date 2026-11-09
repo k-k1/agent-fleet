@@ -3,6 +3,7 @@ import { EDITOR_IO_TIMEOUT_MS, getEditableFile, probeFileMeta, putFile } from ".
 import { revisionOf } from "./buffer.ts";
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   rel: (path: string) => `/${path}`,
 }));
 

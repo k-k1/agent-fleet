@@ -21,8 +21,10 @@ vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => askConfirm
 const ws = { state: "running" };
 const startWs = vi.fn();
 vi.mock("../../../core/store/workspace.ts", () => ({
-  useWorkspaceStore: (sel: (s: { state: string; start: () => void }) => unknown) =>
-    sel({ state: ws.state, start: startWs }),
+  useWorkspaceStore: Object.assign(
+    (sel: (s: { state: string; start: () => void }) => unknown) => sel({ state: ws.state, start: startWs }),
+    { getState: () => ({ state: ws.state, start: startWs }), subscribe: () => () => {} },
+  ),
   wsStartBusy: () => false,
 }));
 
@@ -83,28 +85,19 @@ afterEach(() => {
 });
 
 describe("MemoryTab views", () => {
-  it("offers the five views and opens on Memories, with the two lists and nothing else", async () => {
+  it("offers Settings and Import & export; the lists moved to the Memory view (#3720)", async () => {
     await mount();
     expect(Array.from(host!.querySelectorAll("[role=tab]")).map((b) => b.textContent)).toEqual([
-      t("mem.view_memories"),
-      t("mem.view_changes"),
-      t("mem.view_proposals"),
-      t("mem.view_importexport"),
       t("mem.view_settings"),
+      t("mem.view_importexport"),
     ]);
-    expect(selectedTab()).toBe("memories");
-    expect(headings()).toEqual([t("mem.br_title")]);
-    expect(switchRow(t("mem.af_switch"))).toBeUndefined();
+    expect(selectedTab()).toBe("settings");
+    expect(switchRow(t("mem.af_switch"))).toBeTruthy();
+    expect(Array.from(host!.querySelectorAll("button")).some((b) => b.textContent === t("mem.open_view"))).toBe(true);
   });
 
   it("shows each view's panels after switching, and drops the previous view's", async () => {
     await mount();
-    await goto("changes");
-    expect(headings()).toEqual([t("mem.af_changes_title")]);
-
-    await goto("proposals");
-    expect(headings()).toEqual([t("mem.cs_title")]);
-
     await goto("importexport");
     // The hub: one card per source; the wizards open from their Start buttons.
     expect(headings()).toEqual([
@@ -126,6 +119,7 @@ describe("MemoryTab views", () => {
   it("mounts the outside-access help link in Settings, next to the setting", async () => {
     await mount();
     const link = () => Array.from(host!.querySelectorAll("button")).filter((b) => b.textContent === t("mem.ext_help"));
+    await goto("importexport");
     expect(link()).toHaveLength(0);
     await goto("settings");
     expect(link()).toHaveLength(1);
@@ -135,7 +129,7 @@ describe("MemoryTab views", () => {
 
   it("does not carry the snapshot panels any more", async () => {
     await mount();
-    for (const v of ["memories", "changes", "importexport", "settings"]) {
+    for (const v of ["importexport", "settings"]) {
       await goto(v);
       expect(text(), v).not.toContain(t("mem.snapshot_now"));
       expect(text(), v).not.toContain(t("mem.auto_label"));
@@ -147,11 +141,10 @@ describe("MemoryTab views", () => {
 
   it("remembers the last view for the next time the entry is opened", async () => {
     await mount();
-    await goto("changes");
+    await goto("importexport");
     unmount();
     await mount();
-    expect(selectedTab()).toBe("changes");
-    expect(headings()).toEqual([t("mem.af_changes_title")]);
+    expect(selectedTab()).toBe("importexport");
   });
 
   it("opens the view a deep link names, and says it was consumed", async () => {
@@ -164,17 +157,17 @@ describe("MemoryTab views", () => {
 
   it("follows a deep link made while the entry is already on screen", async () => {
     await mount();
-    expect(selectedTab()).toBe("memories");
-    act(() => useSettingsUI.getState().openSettings("memory:changes"));
+    expect(selectedTab()).toBe("settings");
+    act(() => useSettingsUI.getState().openSettings("memory:importexport"));
     await flush();
-    expect(selectedTab()).toBe("changes");
+    expect(selectedTab()).toBe("importexport");
     expect(useSettingsUI.getState().settingsView).toBeNull();
   });
 
   it("ignores a view name this entry does not have, instead of keeping it for later", async () => {
     act(() => useSettingsUI.getState().openSettings("memory:nonsense"));
     await mount();
-    expect(selectedTab()).toBe("memories");
+    expect(selectedTab()).toBe("settings");
     expect(useSettingsUI.getState().settingsView).toBeNull();
   });
 
@@ -281,7 +274,7 @@ describe("MemoryTab status header over time", () => {
 
     // A run in progress that fails afterwards.
     st = sync({ phase: "importing", settled: false });
-    await goto("changes");
+    await goto("importexport");
     expect(head()).not.toContain(t("mem.status_sync_problem"));
     st = sync({ phase: "importing", settled: false, failing: true });
     await advance(4500);
@@ -297,7 +290,7 @@ describe("MemoryTab status header over time", () => {
     await mount();
     expect(head()).toContain(t("mem.status_off"));
     n = 2;
-    await goto("changes");
+    await goto("importexport");
     expect(head()).toContain(t("mem.status_count", { n: 2 }));
     setSettings({ ...settingsDefaults(), agentMemory: true });
     n = 5;
@@ -316,7 +309,7 @@ describe("MemoryTab while the workspace is stopped", () => {
   });
 
   it("opens on Settings, even when another view was the last one used", async () => {
-    localStorage.setItem("af-settings-views", JSON.stringify({ memory: "changes" }));
+    localStorage.setItem("af-settings-views", JSON.stringify({ memory: "importexport" }));
     await mount();
     expect(selectedTab()).toBe("settings");
     expect(switchRow(t("mem.af_switch"))).toBeTruthy();
@@ -355,7 +348,7 @@ describe("MemoryTab while the workspace is stopped", () => {
 
   it("offers Start instead of the other views, and calls nothing", async () => {
     await mount();
-    for (const v of ["memories", "changes", "importexport"]) {
+    for (const v of ["importexport"]) {
       await goto(v);
       expect(text(), v).toContain(t("mem.ws_required_title"));
       expect(switchRow(t("mem.af_switch")), v).toBeUndefined();
@@ -370,12 +363,12 @@ describe("MemoryTab while the workspace is stopped", () => {
   });
 
   it("does not forget the remembered view because it opened on Settings", async () => {
-    localStorage.setItem("af-settings-views", JSON.stringify({ memory: "changes" }));
+    localStorage.setItem("af-settings-views", JSON.stringify({ memory: "importexport" }));
     await mount();
     unmount();
     ws.state = "running";
     await mount();
-    expect(selectedTab()).toBe("changes");
+    expect(selectedTab()).toBe("importexport");
   });
 });
 

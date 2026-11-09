@@ -31,6 +31,8 @@ export interface CodeEditorHandle {
   scroller: HTMLElement;
   /** The whole editor (view.dom): the scroller plus its panels, such as search. */
   host: HTMLElement;
+  /** The document's box (contentDOM); its height follows CodeMirror's height map. */
+  content: HTMLElement;
   /** The 1-based source line at the top of the viewport, with the fraction of
    *  that line already scrolled past (12.25 = a quarter into line 12). */
   topLine(): number;
@@ -371,6 +373,7 @@ export function CodeEditor({
       },
       scroller: view.scrollDOM,
       host: view.dom,
+      content: view.contentDOM,
       topLine: () => viewportTopLine(view),
       scrollToLine: (line) => scrollLineToTop(view, line),
       lineCount: () => view.state.doc.lines,

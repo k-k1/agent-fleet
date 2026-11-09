@@ -174,8 +174,20 @@ func TestProvidedBudgetRefusalPassesThrough(t *testing.T) {
 		resp.Header.Get("X-Af-Route-Budget-Level") != "" {
 		t.Fatalf("budget refusal: %d %v %s", resp.StatusCode, resp.Header, body)
 	}
-	if rows := e.waitRows(1); rows[0].OK || rows[0].Route != usagex.RouteBedrockDeployment {
-		t.Fatalf("ledger row = %+v", rows[0])
+	// Never admitted, nothing reserved or billed: no ledger row (#3683). An admitted call that
+	// Bedrock refused carries the CP's call id and is recorded as failed.
+	e.upFn = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(cpCallHeader, "cpcall-429")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"Too many requests"}`))
+	}
+	if resp, _ := e.call(tok, provPath(provModel), `{}`); resp.StatusCode != 429 {
+		t.Fatalf("throttle: %d", resp.StatusCode)
+	}
+	rows := e.waitRows(1)
+	if len(rows) != 1 || rows[0].Call != "cpcall-429" || rows[0].OK || rows[0].Route != usagex.RouteBedrockDeployment {
+		t.Fatalf("ledger rows = %+v, want only the admitted call's", rows)
 	}
 }
 
@@ -273,5 +285,20 @@ func TestProvidedTokenRenewal(t *testing.T) {
 	before := cp.mintCount()
 	if resp, _ := e.call(tok2, provPath(provModel), `{}`); resp.StatusCode != 200 || cp.mintCount() != before+1 {
 		t.Fatalf("expiring token not replaced at the call: %d, mints %d→%d", resp.StatusCode, before, cp.mintCount())
+	}
+}
+
+// record never writes an empty call id: spool dedup keys on it, so two such rows would collapse.
+// forward records only answers that carry the CP's id; record holds without that guard too.
+func TestProvidedRecordAlwaysHasACallID(t *testing.T) {
+	e, _ := newProvEnv(t)
+	c := &call{b: Binding{Session: "s1"}, provided: true}
+	for _, id := range []string{"", "not an id!"} {
+		resp := &http.Response{StatusCode: 200, Header: http.Header{cpCallHeader: {id}}}
+		e.g.record(c, provModel, "invoke", resp, newUsageObserver("invoke"), true, e.now)
+	}
+	rows := e.waitRows(2)
+	if len(rows) != 2 || rows[0].Call == "" || rows[1].Call == "" || rows[0].Call == rows[1].Call || rows[0].Key == rows[1].Key {
+		t.Fatalf("rows = %+v", rows)
 	}
 }

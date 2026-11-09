@@ -25,9 +25,9 @@ Asking the AI questions, translating, reading documents and following developmen
 |---|---|---|
 | 1 | [Start your first session](quickstart.md) | Sign in, start the workspace and connect an agent. Under "Where do you want to start?", choose **Start chatting** |
 | 2 | [Find your way around the screen](console-tour.md) | What sits where in the left pane |
-| 3 | [Using chat](../../member/lite.md#4-using-chat-questions-translation-text-cleanup) | How to ask for answers, translations and summaries, and how a chat differs from a session |
-| 4 | [Reading documents and slides](../../member/lite.md#5-reading-documents-and-slides) | Read documents in the browser |
-| 5 | [The memo queue](../../member/lite.md#6-the-memo-queue-collect-ideas-and-hand-them-over) | Collect requests and hand them over together |
+| 3 | [Ask an assistant](../chat/assistant.md#start-a-chat) | How to ask for answers, translations and summaries, and how a chat differs from a session |
+| 4 | [View documents and diagrams](../files/view.md) | Read documents in the browser |
+| 5 | [Collect memos and hand them over](../chat/memos.md) | Collect requests and hand them over together |
 | 6 | [Read a session's state](../sessions/status.md) | Read development progress from the row marks |
 | 7 | [Use it on a phone](phone.md) | Check progress while you are out |
 
@@ -44,7 +44,7 @@ A session stopped with "Question" or waiting for a permission is waiting for the
 
 ## When it goes wrong
 
-The first things to try, and the frequent questions, are in [When you're stuck + FAQ](../../member/lite.md#8-when-youre-stuck-faq).
+The first things to try, and the frequent questions, are in [Read the frequently asked questions](../troubleshooting/faq.md).
 
 ## Related
 

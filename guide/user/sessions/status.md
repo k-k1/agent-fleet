@@ -55,7 +55,7 @@ appear while you have that screen open.
 | A question is waiting | The agent asked a question |
 
 - shell and SSM sessions do not notify
-- Which notifications to show, read aloud or mark with a red dot is chosen per kind in [Settings › Notifications](../../member/20-settings.md#notifications)
+- Which notifications to show, read aloud or mark with a red dot is chosen per kind in [Settings › Notifications](../settings/notifications.md)
 
 ### The red dot
 
@@ -89,7 +89,7 @@ Press the note, use the page, or bring the window back into focus, and everythin
 ### No notifications arrive
 
 - Check that the browser allows notifications from the Console
-- Check that the kind is not turned off in [Settings › Notifications](../../member/20-settings.md#notifications)
+- Check that the kind is not turned off in [Settings › Notifications](../settings/notifications.md)
 - If "Live updates paused" is showing, press it to resume
 
 ## Related

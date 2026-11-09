@@ -96,6 +96,17 @@ export const THEMES: { id: string; labelKey: MsgKey }[] = [
   { id: "light", labelKey: "theme.light" },
 ];
 
+// How often the surface colors are re-picked at random (lib/appearanceShuffle.ts). "reload" =
+// once per page load; "1h" = an hour after the last pick; "daily" = on the first check of a new
+// local calendar day.
+export type AppearanceShuffleMode = "off" | "reload" | "1h" | "daily";
+export const APPEARANCE_SHUFFLE_MODES: { id: AppearanceShuffleMode; labelKey: MsgKey }[] = [
+  { id: "off", labelKey: "common.off" },
+  { id: "reload", labelKey: "display.shuffle.reload" },
+  { id: "1h", labelKey: "display.shuffle.hourly" },
+  { id: "daily", labelKey: "display.shuffle.daily" },
+];
+
 // Main-area layout profiles. Both DisplayTab and the TopBar appearance popover use them, so
 // the choices are defined here once; otherwise one side gains or drifts a label on its own.
 export const PANE_LAYOUTS: { id: "split" | "tabs"; labelKey: MsgKey }[] = [

@@ -30,7 +30,7 @@ There are three ways to carry a conversation into a new session.
 | What carries over | Key points, unfinished tasks, changed files, next steps | The conversation before that message, word for word | The conversation, where it stopped, the working copy's state, instructions not yet sent |
 
 - To carry the conversation itself rather than a summary ("redo it from that instruction"), use [Branch here](branch-message.md)
-- To ask someone the session is shared with to carry on, use **"Hand off to a member…"** in the ⋯ menu ([Handing a session to another member](../../member/12-collaboration.md#handing-a-session-to-another-member))
+- To ask someone the session is shared with to carry on, use **"Hand off to a member…"** in the ⋯ menu ([Hand a session to a member](../team/hand-over.md))
 
 ## Hand off
 

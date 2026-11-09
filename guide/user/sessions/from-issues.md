@@ -180,7 +180,7 @@ An issue not in the list opens a detail with its key and a link to the original 
 While the workspace is running, GitHub, Bitbucket and Jira issues are read on the spot; while it is stopped, the detail says
 "**The workspace is stopped, so … was not asked**".
 
-How links inside an opened file work is in [Files](../../member/07-files.md#links-in-rendered-markdown).
+How links inside an opened file work is in [View documents and diagrams](../files/view.md#links-in-documents).
 
 ## When it goes wrong
 

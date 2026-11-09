@@ -1284,3 +1284,19 @@
 .member-monthly th:first-child, .member-monthly td.mm-name { text-align: left; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .member-monthly .mm-cell.partial { opacity: 0.7; }
 .member-monthly .mm-chg { display: block; font-size: 0.72rem; }
+/* Random-colors schedule + dice (ui/ShuffleControl): the segmented control takes the width and the
+   dice keeps its own, centred against the segment's height. */
+.shuffle-ctl {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.shuffle-ctl > .choice-seg {
+  flex: 1;
+  min-width: 0;
+}
+.shuffle-dice {
+  flex-shrink: 0;
+  justify-content: center;
+  padding: 2px 7px;
+}

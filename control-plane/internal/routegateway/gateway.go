@@ -354,6 +354,12 @@ func (g *Gateway) budgetRefusal(ctx context.Context, use routeUse, level string,
 	// limit episode (one that waiting does not clear before the reset): keep the words.
 	msg := fmt.Sprintf("you have hit %s, the spend limit of the deployment's Bedrock route: ≈%s of %s used in %s; it resets on %s",
 		name, usd(used), usd(limit), month, reset.Format("2006-01-02 15:04 UTC"))
+	if used == 0 && limit > 0 {
+		// Nothing spent: the budget is smaller than one call's reservation (one saved before the
+		// source's models or the price table raised the floor, #3683), not used up.
+		msg = fmt.Sprintf("%s (%s) is too small for the next call: it is the spend limit of the deployment's Bedrock route, nothing has been used in %s, "+
+			"and a call is admitted only when its whole reservation fits; ask your tenant administrator to raise it", name, usd(limit), month)
+	}
 	if next > 0 {
 		msg += fmt.Sprintf(" (the next call could cost up to %s)", usd(next))
 	}

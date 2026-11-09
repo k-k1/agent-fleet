@@ -608,3 +608,44 @@ user has push there. An error, a rate limit, a timeout, an unread page or any ot
 and a definitive answer is cached for a minute per token hash and repository. A fine-grained personal access token stays
 without a button: GitHub documents no endpoint that reads its granted permissions back (`X-Accepted-GitHub-Permissions`
 says what an endpoint needs, not what the token holds). Merge itself is unchanged.
+
+## Note (2026-11-09): a person can merge a Bitbucket pull request from the detail modal
+
+Decision 19 (Bitbucket read-only), as the 2026-10-25 notes left it, and the "GitHub only" bullet of the #2632 note are
+superseded for the merge: the detail modal's **Merge** button is now drawn for a **Bitbucket Cloud** pull request too,
+and the Agent sends `POST /2.0/repositories/{workspace}/{repo}/pullrequests/{id}/merge`. Everything that keeps the
+GitHub merge from widening what af does on its own applies unchanged: never reachable by agents (no MCP tool, no
+trigger, the member-origin route of ADR 0113), the Console's confirm dialog is the only caller, a stopped Workspace
+answers 409, the request is never retried, and the panel re-reads after every outcome. What differs:
+
+- **The button needs two positive answers.** The connection holds the write scope (`pullrequest:write` or
+  `write:pullrequest:bitbucket`, the same check the report comment uses), and the documented
+  `GET .../pullrequests/{id}/mergeability/checks` says the current user may merge (`current_user_permission_check`
+  PASSED). Either unknown is "no button".
+- **When it is enabled** follows the checks, in GitHub's vocabulary: `clean` when the Git check is `PASSED`/`clean` and
+  no check is `blocking`; `dirty` on `conflicts`; `blocked` when any check is `blocking`; anything else (`UNKNOWN`,
+  `merge_impossible`, a failed read) is `unknown` and shown as the reason. `Mergeable` (the merge row of the panel)
+  stays about conflicts only, as it is for GitHub.
+- **The head guard is made by the Agent, on full commit ids.** Bitbucket's merge endpoint takes no expected head, and
+  the pull request payload carries only a 12-character head, which two commits can share. So the detail read resolves
+  the head to a full id through the commit link the payload carries (it names the source repository, so a fork resolves
+  too) and sends that id to the Console; no resolvable head means no button. Just before the POST the Agent reads the
+  pull request again, resolves its head the same way and refuses (`head_changed`) unless it equals the displayed id, or
+  when the pull request is no longer open; a head it cannot resolve is refused too. A short window between that read and
+  the POST remains, and the confirm dialog says so instead of repeating GitHub's "only this commit is merged".
+- **Strategies are the destination branch's own** (`destination.branch.merge_strategies`, six documented values), with
+  its `default_merge_strategy` preselected. A branch that reports none gets no button.
+- **Close source branch** is a merge parameter here, not a second call, so it is in scope (GitHub's "delete branch"
+  stays out). The checkbox starts from the pull request's own `close_source_branch`.
+- **A 202** (a background merge, or a destination branch with a merge queue, which always answers this way) is followed
+  through the `Location` task-status link within a wall-clock budget of about 8 s, requests included, one poll a second. The link is followed only
+  when it is on the API host, since the Authorization header goes with every poll. A finished task is a merge, a failed
+  one a refusal with Bitbucket's own words, and one still running is shown as "still processing": it is neither re-sent
+  nor reported as done, and the member reopens the panel for the result. A 401 on a poll is reported as still processing too, never as an auth failure: that would make the caller refresh the token and re-run the whole merge.
+- Not done: the commit message field and the Jira work item transition of Bitbucket's own dialog. The transition would
+  be af's first write to Jira and needs its own decision.
+
+Follow-ups: #3729
+
+Not measured against a real merge: the shape of the 200/202/409 answers is from the documentation; the mergeability
+checks and the branch's strategies were read from a real pull request.

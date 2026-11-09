@@ -93,7 +93,7 @@ Read the screen rather than this page.
 
 ## The limit board: what it collects and how it reads
 
-The limit board (**Settings → Limit board**, [12 Working with others](../member/12-collaboration.md))
+The limit board (**Settings → Limit board**, [Show each other where you stand on usage limits](../user/team/usage-limits.md))
 shows where members stand on their agents' usage limits. This is its full coverage; anything not
 in the table is **unknown**, never "available".
 

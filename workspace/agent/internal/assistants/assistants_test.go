@@ -87,3 +87,17 @@ func TestNewDepsRejectsNil(t *testing.T) {
 		})
 	}
 }
+
+// TestSREPersonaDoesNotPromiseCallAWS: the SRE assistant connects AWS read-only, and the
+// read-only proxy drops call_aws / run_script (secrets.AWSConn). The persona may name them
+// only to forbid them, never as a read tool.
+func TestSREPersonaDoesNotPromiseCallAWS(t *testing.T) {
+	for name, p := range map[string]string{"ja": srePersona, "en": srePersonaEN} {
+		if strings.Contains(p, "call_aws による") || strings.Contains(p, "call_aws for AWS API lookups") {
+			t.Errorf("%s persona offers call_aws as a read tool", name)
+		}
+		if !strings.Contains(p, "call_aws") || !strings.Contains(p, "run_script") {
+			t.Errorf("%s persona should tell the assistant not to use call_aws / run_script", name)
+		}
+	}
+}

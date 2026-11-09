@@ -25,6 +25,8 @@ import { useFileContent, type FileData } from "./parts/useFileContent.ts";
 import { useScrollMemory } from "./parts/useScrollMemory.ts";
 import { installSplitScrollSync, type SplitScrollSync, type SyncSide } from "./parts/splitScrollSync.ts";
 import { scrollMemoryKey } from "./scrollMemory.ts";
+import { loadFileMode, saveFileMode } from "./fileModeMemory.ts";
+import { attachEditorScrollMemory } from "./parts/editorScrollMemory.ts";
 import { useSelectionPill } from "./parts/useSelectionPill.ts";
 import {
   editorStatusText,
@@ -122,7 +124,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // Scroll memory. Switching tabs and coming back unmounts this view entirely and refetches the
   // content (PaneHost draws only the selected view), so the reading position is kept outside the
   // component. One memory per view.
-  const scrollMemory = useScrollMemory(scrollMemoryKey(paneId, filePath));
+  const memoryKey = scrollMemoryKey(paneId, filePath);
+  const scrollMemory = useScrollMemory(memoryKey);
   // State reported back by the diagram view (page count, zoom); used only by the header.
   const [diagramState, setDiagramState] = useState<DrawioState | null>(null);
   // Once shown, the diagram view is never unmounted, only hidden: rebuilding it reloads the 4 MB
@@ -330,12 +333,20 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // A fresh open request re-picks it too, the same way a new citation does:
   // choosing edit (「編集」) for the file a pane already shows retargets that pane (same
   // `data`), and only the request is new.
-  const startingMode = () => initialFileMode(caps, { hasTargetLine: !!targetLine, requested: openMode });
+  // Coming back to this tab with the same request resumes the mode it was left in
+  // (fileModeMemory.ts); the capability clamp below still applies to it.
+  const startingMode = () =>
+    loadFileMode(memoryKey, { targetLine, openMode }) ??
+    initialFileMode(caps, { hasTargetLine: !!targetLine, requested: openMode });
   const modeIsCurrent = modeState.key === data && modeState.targetLine === targetLine && modeState.openMode === openMode;
   if (data && !modeIsCurrent) setModeState({ key: data, targetLine, openMode, mode: startingMode() });
   // Capability changes after that only clamp the selection, so editing a deck's
   // front matter cannot yank the user back to the initial mode.
-  const fileMode = modeIsCurrent ? reconcileFileMode(modeState.mode, caps) : startingMode();
+  // The render before `data` lands clamps too: a remembered mode may not fit what the file allows.
+  const fileMode = reconcileFileMode(modeIsCurrent ? modeState.mode : startingMode(), caps);
+  useEffect(() => {
+    if (data && modeState.key === data) saveFileMode(memoryKey, modeState, modeState.mode);
+  }, [memoryKey, modeState, data]);
   const paneMode = paneModeOf(fileMode, caps);
   const surfaces = surfacesFor(fileMode, caps);
   const renderers = rendererControls(fileMode, caps);
@@ -369,6 +380,28 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
       if (scrollSyncRef.current === sync) scrollSyncRef.current = null;
     };
   }, [scrollSyncOn, editorHandleEpoch]);
+
+  // The editor's own position, kept across tab switches and mode changes like the other
+  // surfaces' (useScrollMemory). A split opened from the preview is positioned by the sync
+  // above instead, from the side that was on screen; a slides split has no sync, so the
+  // editor restores there too. Re-attaching on a renderer switch is harmless: the recorded
+  // line is where the editor already is. Input anywhere in the pane ends a restore, so
+  // neither the split's preview nor an accepted suggestion is fought by it. A new cited line
+  // for the open file only records: restoring would take the reader away from the citation.
+  const restoreForRef = useRef<{ key: string | null; targetLine: number | undefined } | null>(null);
+  useEffect(() => {
+    if (!memoryKey) return;
+    // Consumed even when the editor is not shown: a plain file shows a citation in the
+    // viewer, and a later switch to the editor is an ordinary one that restores.
+    if (restoreForRef.current?.key !== memoryKey) restoreForRef.current = { key: memoryKey, targetLine };
+    const recited = restoreForRef.current.targetLine !== targetLine;
+    restoreForRef.current.targetLine = targetLine;
+    const handle = editorHandleRef.current;
+    if (!surfaces.editor || !handle) return;
+    const restore = !recited && !(scrollSyncOn && lastSoloSideRef.current === "preview");
+    const inputRoot = bodyRef.current ?? handle.host;
+    return attachEditorScrollMemory(handle, `${memoryKey}\u0000editor`, restore, inputRoot);
+  }, [surfaces.editor, surfaces.split, scrollSyncOn, editorHandleEpoch, memoryKey, targetLine]);
 
   // Focus follows the mode, but only when the user asked for the mode (docs/log/44
   // §5). Opening a file — a citation lands in the source surface — must not pull

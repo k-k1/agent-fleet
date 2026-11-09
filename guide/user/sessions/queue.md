@@ -65,7 +65,7 @@ The waiting list belongs to one session and is temporary. It is never stored on 
 - Reloading the page clears it
 - It sends only while that session's chat is open
 
-To keep something across devices, use the [Memo queue](../../member/10-chat-memo.md#memo-queue).
+To keep something across devices, use the [Memo queue](../chat/memos.md).
 
 ## Stop a turn when something is queued
 

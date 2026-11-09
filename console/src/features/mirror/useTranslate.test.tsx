@@ -27,6 +27,7 @@ const apiMock = vi.fn((path: string, opts?: RequestInit): Promise<unknown> => {
 });
 
 vi.mock("../../core/api/client.ts", () => ({
+  apiJSON: async () => ({}),
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
   errText: (e: unknown) => (e && typeof e === "object" && "message" in e ? String((e as { message?: string }).message) : "err"),
 }));
