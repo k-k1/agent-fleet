@@ -61,7 +61,7 @@ rather than print a guess.
 
 The built-in **Fleet Operator** is the main example of "AF write": from chat it can
 direct everything from launching sessions to giving instructions and receiving completion
-reports. See [11 Running many sessions](11-many-sessions.md) for details.
+reports. See [Hand work to the Fleet Operator](../user/fleet/operator.md) for details.
 
 For example, for a translation assistant you might put "You are a technical-document
 translator. Return only the translated text." in the persona, and "Send me text and I'll

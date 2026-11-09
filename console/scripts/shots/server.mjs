@@ -163,7 +163,10 @@ const exact = {
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/chat/conversations": () => ({ conversations: fx.conversations(LOCALE) }),
-  "/api/assistants": () => fx.assistants(LOCALE),
+  // The Console reads { assistants: [...] }; the bare array stays for the scenes taken with it, and
+  // only the fleet pages' run (SHOT_FLEET_GUIDE) gets the wrapped shape so the new-chat picker lists them.
+  "/api/assistants": () =>
+    process.env.SHOT_FLEET_GUIDE ? { assistants: fx.assistants(LOCALE) } : fx.assistants(LOCALE),
   // Work items (docs/log/80). Unhandled routes only answer {}, so without this the rail's new
   // surface always renders empty and verifies nothing.
   "/api/work-items": () => fx.workItems(LOCALE),
@@ -183,7 +186,8 @@ const exact = {
   }),
   "/api/memos": () => fx.memos(LOCALE),
   "/api/memo-categories": () => fx.memoCategories(LOCALE),
-  "/api/schedules": () => fx.schedules(LOCALE),
+  "/api/schedules": () =>
+    process.env.SHOT_FLEET_GUIDE ? fx.fleetGuideSchedules(LOCALE) : fx.schedules(LOCALE),
   // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
   // with it (the palette gains a mode).
   // imageGeneration only for the user guide's settings shot (SHOT_IMAGE_SETTINGS): with it on, the
@@ -194,6 +198,9 @@ const exact = {
     agentMemory: true,
     ...(process.env.SHOT_IMAGE_SETTINGS ? { imageGeneration: true } : {}),
     ...(process.env.SHOT_AGENTS_GUIDE ? { opencodeCatalog: "go" } : {}),
+    // The fleet pages of the user guide (SHOT_FLEET_GUIDE): the three session switches on (the
+    // child limit row appears only then) and two working sets for the switcher.
+    ...(process.env.SHOT_FLEET_GUIDE ? fx.fleetGuidePrefs(LOCALE) : {}),
   }),
   // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log.
   "/api/agents/memory/entries/list": () => fx.memoryList(LOCALE),
@@ -572,7 +579,13 @@ const re = [
   [/^\/api\/repos\/([^/]+)\/identity$/, () => ({ name: "Demo User", email: "demo@example.com" })],
   [/^\/api\/repos\/([^/]+)\/show$/, (m, q) => fx.show(LOCALE, q.get("sha") || "")],
   [/^\/api\/repos\/([^/]+)\/diff$/, (m, q) => fx.diff(LOCALE, q.get("path") || "")],
-  [/^\/api\/chat\/conversations\/([^/]+)$/, (m) => fx.conversation(LOCALE, decodeURIComponent(m[1]))],
+  [
+    /^\/api\/chat\/conversations\/([^/]+)$/,
+    (m) =>
+      process.env.SHOT_FLEET_GUIDE
+        ? fx.fleetGuideConversation(LOCALE, decodeURIComponent(m[1]))
+        : fx.conversation(LOCALE, decodeURIComponent(m[1])),
+  ],
   [/^\/api\/usage\/series$/, (m, q) => fx.usageSeries(LOCALE, q)],
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/tree$/, (m, q) =>

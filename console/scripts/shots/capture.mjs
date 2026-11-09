@@ -325,6 +325,139 @@ const SCENES = [
     settle: 1500,
   },
   {
+    // The fleet pages of the user guide: the sessions overview pane alone, cropped to the pane.
+    name: "fleet-overview",
+    guide: true,
+    clip: ".ovw",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 760,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "sessions", showStopped: false })])], colRatios: [1], activeId: "p0" },
+    settle: 1500,
+  },
+  {
+    // The fleet graph pane alone, archived lanes shown as it opens by default.
+    name: "fleet-graph",
+    guide: true,
+    clip: ".fgraph",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 560,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "fleetgraph", showArchived: true })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 75 && !document.querySelector(".fgraph"); i++) await new Promise((r) => setTimeout(r, 200));
+    })()`,
+    settle: 2000,
+  },
+  {
+    // The working-set switcher at the top of the left pane, opened, with two sets (SHOT_FLEET_GUIDE).
+    name: "fleet-wset",
+    guide: true,
+    stubEnv: { SHOT_FLEET_GUIDE: "1" },
+    clip: [".wset-bar", ".wset-menu"],
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 700,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".wset-btn"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".wset-btn")?.click();
+    })()`,
+    settle: 1200,
+  },
+  {
+    // Settings › Agents › Session: peer messaging, starting sessions from a session, PR feedback
+    // and the child limit, all on (SHOT_FLEET_GUIDE).
+    name: "fleet-settings",
+    guide: true,
+    stubEnv: { SHOT_FLEET_GUIDE: "1" },
+    clip: ["#shot-fleet-from", "#shot-fleet-to"],
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "agents",
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector(".acct-btn")?.click();
+      await wait(500);
+      [...document.querySelectorAll(".acct-item")].find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await wait(2000);
+      const rowOf = (re) => {
+        const label = [...document.querySelectorAll(".settings-modal *")].find((el) =>
+          el.children.length === 0 && re.test((el.textContent || "").trim()));
+        return label?.closest(".ds-row") || label?.parentElement;
+      };
+      const from = rowOf(/^(セッション間メッセージ|Messages between sessions|Cross-session messaging)$/);
+      const limit = rowOf(/^(子セッションの同時本数|Children per session)$/);
+      if (from) { from.id = "shot-fleet-from"; from.scrollIntoView({ block: "start" }); }
+      const note = limit?.nextElementSibling;
+      if (note?.matches("p.ds-note")) note.id = "shot-fleet-to"; else if (limit) limit.id = "shot-fleet-to";
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The new-chat picker of the Assistant section: where the Fleet Operator is chosen.
+    name: "fleet-operator",
+    guide: true,
+    stubEnv: { SHOT_FLEET_GUIDE: "1" },
+    clip: [".assistant-picker-wrap", ".assistant-picker"],
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 700,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".assistant-picker-wrap button"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".assistant-picker-wrap button")?.click();
+    })()`,
+    settle: 1200,
+  },
+  {
+    // A session report card in the operator's conversation, with the operator's follow-up (SHOT_FLEET_GUIDE).
+    name: "fleet-report",
+    guide: true,
+    stubEnv: { SHOT_FLEET_GUIDE: "1" },
+    clip: [".chat-msg.role-report", "#shot-fleet-after"],
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 900,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "chat", conversationId: "c-ops-1", draftAssistantId: null })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".chat-msg.role-report"); i++) await new Promise((r) => setTimeout(r, 200));
+      const r = document.querySelector(".chat-msg.role-report");
+      const next = r?.nextElementSibling;
+      if (next) next.id = "shot-fleet-after";
+      r?.scrollIntoView({ block: "center" });
+    })()`,
+    settle: 1500,
+  },
+  {
+    // A schedule's "Details & edit" dialog, opened from the row menu in the Schedules section (SHOT_FLEET_GUIDE).
+    name: "fleet-schedule",
+    guide: true,
+    stubEnv: { SHOT_FLEET_GUIDE: "1" },
+    clip: ".sched-detail-modal",
+    pad: 0,
+    sections: { ...FOCUS_TREE, schedules: 1 },
+    width: 1300,
+    height: 1500,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 50 && !document.querySelector('.sched-row[data-sched-id="sch-1"] .sched-menu-btn'); i++) await wait(200);
+      document.querySelector('.sched-row[data-sched-id="sch-1"] .sched-menu-btn')?.click();
+      await wait(500);
+      [...document.querySelectorAll(".sched-menu .ui-menu-item")].find((el) => /詳細・編集|Details/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
     name: "split",
     sections: SHOW_TOOLS,
     width: 1600,

@@ -150,7 +150,7 @@ Reads out replies from sessions and assistants.
   | Needs your answer | a question, a plan approval, a permission request |
   | Usage limit reset | a Claude / Codex 5-hour or weekly limit you had hit has reset |
   | Session report | a session reported to an assistant conversation |
-  | Pull requests | the pull request of a session's branch became ready to merge (open, checks passed, no conflict, approved or needing no review — on Bitbucket, approved by someone; once per pushed commit), or was merged or closed; with [PR feedback](11-many-sessions.md#telling-a-session-about-its-pull-requests-feedback) on, also a session's pull request has a merge conflict, or got CI or review feedback its session could not be told (archived) |
+  | Pull requests | the pull request of a session's branch became ready to merge (open, checks passed, no conflict, approved or needing no review — on Bitbucket, approved by someone; once per pushed commit), or was merged or closed; with [PR feedback](../user/fleet/pr-feedback.md) on, also a session's pull request has a merge conflict, or got CI or review feedback its session could not be told (archived) |
   | Rate limit | a session hit a rate limit, or resumed after one |
   | Scheduled runs | a scheduled run finished, failed or was skipped |
   | Handoffs | a handoff offered to you, accepted or expired, or a session that started from one you gave back |
@@ -183,7 +183,7 @@ publish to you. The choices and how to read the values are in
 
 ### Assistant
 
-The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [11](11-many-sessions.md)).
+The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [Hand work to the Fleet Operator](../user/fleet/operator.md)).
 
 - **Output language**: follow the input / 日本語 / English. It changes chat replies only (the read-aloud
   language lives on the **Read aloud** tab).
@@ -200,7 +200,7 @@ The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [
   **Auto-reply model** (reading a report is routine work, so a lighter model saves a lot), the **Auto-reply
   bundling window** (reports arriving within it are handled in one turn) and **Quiet completion reports** (a
   normal completion delivers the card and the notification but takes no turn). See
-  [11](11-many-sessions.md#session-reports-and-auto-reply).
+  [Hand work to the Fleet Operator](../user/fleet/operator.md#receive-reports).
 - **Auto-pilot**: carries questions and plan approvals through automatically. Off by default (same section).
 - **Auto-resume interrupted turns**: resumes a turn cut short by a dropped connection or a temporary rate
   limit. On by default.
@@ -285,8 +285,8 @@ The
 **children per session**), **past-session search** (on by default: lets a
 session search this workspace's past conversations with the `search_sessions` tool; the command palette's
 "Conversations" mode works either way, see [02](02-console-basics.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes).
-→ [11 Running many sessions](11-many-sessions.md#messages-between-sessions),
-[11 Running many sessions](11-many-sessions.md#starting-sessions-from-a-session-child-sessions),
+→ [Let sessions message each other](../user/fleet/messages.md),
+[Start child sessions from a session](../user/fleet/child-sessions.md),
 [Have a session make images](../user/images/from-session.md)
 
 ### Git hosting
@@ -419,8 +419,8 @@ Recreating the workspace and cleaning home (on deployments that can). What stays
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Stop sessions from searching past conversations | Agents (past-session search) |
 | Let agents share what they learn across kinds | Agent memory (Settings) |
-| Let a session see what the other sessions are doing | Nothing to set: every session can ([11](11-many-sessions.md#letting-a-session-see-the-fleet)) |
-| Have a session leave you a note about what it noticed | Nothing to set: every session can ([11](11-many-sessions.md#letting-a-session-see-the-fleet)) |
+| Let a session see what the other sessions are doing | Nothing to set: every session can ([Let a session see the fleet](../user/fleet/fleet-visibility.md)) |
+| Have a session leave you a note about what it noticed | Nothing to set: every session can ([Let a session see the fleet](../user/fleet/fleet-visibility.md)) |
 | Clone a private repository | Git hosting |
 | Get help investigating an incident | Ops & monitoring |
 | Start work from a ticket or an issue | Issue tracker |

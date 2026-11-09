@@ -113,7 +113,7 @@ A session that is missing, will not resume, will not reach another member or wil
 **Suspect a working set filter first.** When the bar at the top of the left pane shows
 anything other than **"All"**, repositories, conversations and sessions outside that group
 are simply not displayed (nothing was deleted). Switch the bar back to "All" and they
-return ([11](11-many-sessions.md#narrowing-the-view-with-working-sets)).
+return ([Narrow the view with working sets](../user/fleet/working-sets.md)).
 
 If it is still missing, check whether it was **archived** (AI sessions can be restored from
 the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
@@ -205,7 +205,7 @@ Check its row in the **Schedules** section of the left pane.
   the operator chat).
 - **"Run now"** exercises the same path as a timed firing (allow up to about a minute).
 - If there is no Schedules section at all, scheduled execution is disabled on this deployment
-  ([11](11-many-sessions.md#scheduled-runs)).
+  ([Run at a set time](../user/fleet/schedules.md)).
 
 ### No notifications arrive
 
@@ -221,7 +221,7 @@ enabling it also switches Claude's usage telemetry back on. Agent Fleet has its 
 the same thing: turn on **Settings > Agents > Session > "Messages between sessions"** (off by
 default; it applies to sessions started from then on). It reaches other agent kinds as well as
 claude, and reaches stopped sessions too. The full comparison is in
-[11 Running many sessions](11-many-sessions.md#how-this-differs-from-claude-codes-own-version).
+[Let sessions message each other](../user/fleet/messages.md#do-not-use-claude-codes-own-version).
 
 If the agent still seems to lack the tools after you turn it on, check whether that session was
 already running beforehand: a running session keeps its current tools until it restarts.
@@ -353,7 +353,7 @@ message**. The limit is in ⚙ Settings → Assistant (it cannot be unlimited).
 
 If you only want normal completions to stay quiet, turn on **"Quiet completion reports"** in
 the same tab: the card and the notification still arrive, but no automatic turn runs
-([11](11-many-sessions.md#session-reports-and-auto-reply)).
+([Hand work to the Fleet Operator](../user/fleet/operator.md#receive-reports)).
 
 ### The chat says the context went over the limit and won't answer
 

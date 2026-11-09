@@ -31,8 +31,8 @@ If a feature ships and does not appear here, it is not done
 | Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [Use the terminal](../user/files/terminal.md#copy-and-paste) |
 | Resume a stopped session | member | left pane → the session | [Stop and resume a session](../user/sessions/stop-resume.md) |
 | Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
-| Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [11 Running many sessions](../member/11-many-sessions.md) |
-| Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [11 Running many sessions](../member/11-many-sessions.md#seeing-how-sessions-relate-over-time-the-fleet-graph) |
+| Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [See every running session](../user/fleet/overview.md) |
+| Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [See how sessions relate over time](../user/fleet/graph.md) |
 | Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy) |
 | Hand a conversation to a new session | member | session ⋯ menu | [Hand off to another session or agent](../user/sessions/handoff.md#choose-a-way) |
 | Move a session to another agent | member | session ⋯ menu → Move to another agent…, or the usage-limit band in the chat | [Hand off to another session or agent](../user/sessions/handoff.md#move-to-another-agent) |
@@ -45,7 +45,7 @@ If a feature ships and does not appear here, it is not done
 | Context usage gauge | member | session header | [Check prices and usage](../user/agents/usage.md#see-how-long-the-conversation-is) |
 | Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [Read an answer in your own language](../user/sessions/translate.md) |
 | Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [Have a session make images](../user/images/from-session.md) |
-| Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [11 Running many sessions](../member/11-many-sessions.md#starting-sessions-from-a-session-child-sessions) |
+| Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [Start child sessions from a session](../user/fleet/child-sessions.md) |
 | Abort detection and auto-resume | member | automatic | [04 Conversation](../member/04-conversation.md) |
 
 ## Working with code
@@ -85,10 +85,10 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Working sets | member | top of the left pane | [11 Running many sessions](../member/11-many-sessions.md) |
+| Working sets | member | top of the left pane | [Narrow the view with working sets](../user/fleet/working-sets.md) |
 | Memo queue | member | Memo queue | [10 Chat and memos](../member/10-chat-memo.md) |
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [Start from an issue or a ticket](../user/sessions/from-issues.md); [repos.md](repos.md) for what each provider contributes |
-| Scheduled (unattended) runs | member | Schedules | [11 Running many sessions](../member/11-many-sessions.md) |
+| Scheduled (unattended) runs | member | Schedules | [Run at a set time](../user/fleet/schedules.md) |
 | Notification centre | member | top bar | [20 Settings](../member/20-settings.md) |
 | Inbox — messages and requests between members, with claim, launch and PR links | member | top bar → inbox | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
 | Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
@@ -96,7 +96,7 @@ If a feature ships and does not appear here, it is not done
 | Red dot on a session with an unread notification | member | left pane, tabs | [Read a session's state](../user/sessions/status.md#the-red-dot) |
 | Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [Start from an issue or a ticket](../user/sessions/from-issues.md#how-sessions-and-tickets-are-linked); [repos.md](repos.md) for which providers |
 | Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../member/20-settings.md#notifications) |
-| A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [11 Running many sessions](../member/11-many-sessions.md#a-session-watching-a-pull-request-itself) |
+| A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [Tell a session about its pull request's review](../user/fleet/pr-feedback.md#a-session-watches-a-pull-request-itself) |
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |

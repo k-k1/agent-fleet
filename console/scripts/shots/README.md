@@ -94,7 +94,7 @@ Scenes marked `guide: true` are for the rewritten guide and the public docs site
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
 `aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `chat-settings`, `ops-settings`,
 `images-gallery`, `images-settings`, the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
-`ws-databases`, the sessions pages' `sessions-budget`, the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`, the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`, the agent pages' `agents-*` scenes, the file pages' `files-edit`, and the preview pages' `preview-settings` and `preview-devidp`) runs on its own:
+`ws-databases`, the sessions pages' `sessions-budget`, the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`, the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`, the agent pages' `agents-*` scenes, the file pages' `files-edit`, the preview pages' `preview-settings` and `preview-devidp`, and the fleet pages' `fleet-wset`, `fleet-settings`, `fleet-operator`, `fleet-report` and `fleet-schedule`) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -116,6 +116,8 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only code-git
 node console/scripts/shots/capture.mjs --locale ja --theme light --only agents-claude --out <dir>  # and every other agents-* scene, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only files-menu,files-view,files-drawio,files-send,files-terminal,preview-pop --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only files-edit --out <dir>  # and preview-settings, preview-devidp, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only fleet-overview,fleet-graph --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only fleet-wset --out <dir>  # and fleet-settings, fleet-operator, fleet-report, fleet-schedule, one per run
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that
