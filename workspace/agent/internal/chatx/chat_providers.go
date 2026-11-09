@@ -1305,7 +1305,7 @@ func agyChatArgs(c *ChatConversation, prompt string) ([]string, string) {
 	var args []string
 	var model string
 	if pinned := chatModelFor(c, session.KindAgy); pinned != "" { // fetch the catalog only when there is a pin to validate
-		if m := agyChatModel(pinned, agy.Models()); m != "" {
+		if m := agyChatRunModel(pinned); m != "" {
 			args = append(args, "--model", m)
 			model = m
 		}
@@ -1317,20 +1317,41 @@ func agyChatArgs(c *ChatConversation, prompt string) ([]string, string) {
 }
 
 // agyChatModel returns the --model value for a turn, self-healing a stale pin:
-// the pinned display name is passed through only while the live catalog (or its
-// stale-if-error cache) still lists it — a renamed/withdrawn model degrades to
-// agy's own default instead of failing every send. An empty catalog (CLI absent,
-// signed out) can't validate, so the pin passes through untouched.
+// the pinned id or display name is passed (as the row's id) only while the live
+// catalog (or its stale-if-error cache) still lists it. A pin whose version moved on
+// follows its family among the VISIBLE rows (newestAgyFamilyModel; a hidden model is
+// never picked for the member), and a withdrawn model degrades to agy's own default
+// instead of failing every send. An empty catalog (CLI absent, signed out) can't
+// validate, so the pin passes through untouched.
 func agyChatModel(model string, catalog []agents.ModelChoice) string {
 	if model == "" || len(catalog) == 0 {
 		return model
 	}
 	for _, mc := range catalog {
-		if mc.ID == model {
-			return model
+		if mc.ID == model || strings.EqualFold(mc.Label, model) {
+			return mc.ID
 		}
 	}
-	return ""
+	return newestAgyFamilyModel(filterVisibleModels(session.KindAgy, catalog), model)
+}
+
+// agyOneShotRunModel and agyChatRunModel are the --model a one-shot / a chat turn on agy
+// passes for m. The routing table is written under what ran and read under what the
+// settings say, so both sides must go through these: with a stale pin the two would
+// otherwise differ, the park would sit under a key no lookup reads, and the failover would
+// never fire.
+func agyOneShotRunModel(m string) string {
+	if m == "" {
+		return ""
+	}
+	return agyChatModel(m, filterVisibleModels(session.KindAgy, agyModels()))
+}
+
+func agyChatRunModel(m string) string {
+	if m == "" {
+		return ""
+	}
+	return agyChatModel(m, agyModels())
 }
 
 // chatAgyHome prepares the per-CONVERSATION isolated HOME + working dir for a
@@ -2239,9 +2260,10 @@ func oneShotRouteKind(feature string, tier OneShotTier, claudeModel string) stri
 }
 
 // oneShotRouteModel is the model a one-shot on kind is looked up under in the cooldown table
-// before it runs: the same choice oneShotRunOn starts from. A per-CLI adjustment can still
-// change what runs (codex dropping an auto-picked -m, agy matching an id to its catalogue);
-// the outcome is recorded under the model that ran. A run that fell back to the CLI's own
+// before it runs: the same choice oneShotRunOn starts from. agy's catalogue matching is applied
+// here too (agyOneShotRunModel), so a stale pin is looked up under the model that will run. A
+// per-CLI adjustment can still change what runs (codex dropping an auto-picked -m); the outcome
+// is recorded under the model that ran. A codex run that fell back to the CLI's own
 // default ("") is recorded under that default, which is its own key: a lookup for a named model
 // does not see it, so the next call tries the named model first again.
 func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel string) string {
@@ -2261,6 +2283,9 @@ func oneShotRouteModel(feature string, tier OneShotTier, kind, claudeModel strin
 	// safe model and records that, so the lookup has to name the same one.
 	if sm, ok := backend(kind).(safeOneShotModeler); ok && m == "" {
 		m = sm.safeOneShotModel(prefsVisibility)
+	}
+	if rm, ok := backend(kind).(runModelMatcher); ok {
+		m = rm.oneShotRunModel(m)
 	}
 	return m
 }
@@ -2464,7 +2489,7 @@ func oneShotOnAgy(ctx context.Context, call *usagex.Call, run oneShotRun) (strin
 		// opened the setting runs what the screen calls the recommendation.
 		m = recommendedOneShotModel(kind, tier)
 	}
-	if m := agyChatModel(m, filterVisibleModels(session.KindAgy, agy.Models())); m != "" {
+	if m := agyOneShotRunModel(m); m != "" {
 		args = append(args, "--model", m)
 		call.ModelReq = m
 	}

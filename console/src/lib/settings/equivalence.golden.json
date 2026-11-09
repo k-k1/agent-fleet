@@ -1,6 +1,5 @@
 {
  "exports": {
-  "adoptAppearance": "function/1",
   "agentLaunchDefault": "function/2",
   "APPEARANCE_SHUFFLE_MODES": [
    {
@@ -243,7 +242,6 @@
   "setPrefsOwnerSource": "function/1",
   "setSetting": "function/2",
   "setSettings": "function/1",
-  "SETTINGS_STORAGE_KEY": "af-display-settings",
   "settingsDefaults": "function/0",
   "SPAWN_CHILD_LIMITS": [
    1,
@@ -554,7 +552,8 @@
     "38",
     "ヒソヒソ"
    ]
-  ]
+  ],
+  "watchOtherTabs": "function/0"
  },
  "keyOrder": [
   "termFont",

@@ -65,6 +65,14 @@ type envModelNamer interface {
 	namedEnvModel(v visibility, m string) string
 }
 
+// runModelMatcher is a backend that matches a requested model against its live catalogue before
+// passing it (agy: a stale pin follows its family). The routing table is written under what ran
+// and read under what the settings say, so the lookups apply the same matching.
+type runModelMatcher interface {
+	oneShotRunModel(m string) string
+	chatRunModel(m string) string
+}
+
 // callerModeler is a backend whose one-shot model, when the settings name none, is the one the
 // caller passed (claudeModel), not the recommendation.
 type callerModeler interface{ takesCallerModel() }
@@ -151,5 +159,7 @@ func (museChat) safeOneShotModel(v visibility) string { return museSafeOneShotMo
 
 // namedEnvModel: an agy override may be a display name, resolved to its id (agyNamedModel).
 func (agyChat) namedEnvModel(v visibility, m string) string { return agyNamedModel(v, m) }
+func (agyChat) oneShotRunModel(m string) string             { return agyOneShotRunModel(m) }
+func (agyChat) chatRunModel(m string) string                { return agyChatRunModel(m) }
 
 func (ClaudeChat) takesCallerModel() {}

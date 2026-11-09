@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/localredirect"
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/watchingress"
 )
 
 // buildMux returns a mux with every CP route registered, spread over per-feature
@@ -45,6 +47,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerInboxRoutes(mux, cfg)
 	registerWorkItemRoutes(mux, cfg)
 	registerScheduleRoutes(mux, cfg)
+	registerWatchIngressRoutes(mux, cfg)
 	registerMCPServerRoutes(mux, cfg)
 	registerNotificationRoutes(mux, cfg)
 	registerLimitBoardRoutes(mux, cfg)
@@ -634,6 +637,10 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/schedules/{id}/runs/not-executed", s.withScheduleToken(s.runNotExecuted))
 	// The Agent's report that a run answered with the silent sentinel (#1560).
 	mux.HandleFunc("POST /internal/schedules/{id}/runs/silent", s.withScheduleToken(s.runSilent))
+	// The hidden wake-only target of ADR 0133 §7: booked and cancelled by the Agent's watch engine,
+	// never listed or reachable through the schedule routes above (schedule.go, scheduler_wake.go).
+	mux.HandleFunc("POST /internal/wakes", s.withScheduleToken(s.createWake))
+	mux.HandleFunc("DELETE /internal/wakes/{id}", s.withScheduleToken(s.deleteWake))
 
 	// Console member routes (P5): the logged-in member manages their own schedules. No
 	// create here — authoring a schedule from natural language is the operator's NL->spec
@@ -1004,4 +1011,33 @@ func jsonSameOriginOnly(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// watchAppSecretEnv is the deployment's GitHub App webhook secret, the App's own setting. Unset
+// leaves /webhooks/github off (ADR 0133 step 4).
+const watchAppSecretEnv = "AF_GITHUB_WEBHOOK_SECRET"
+
+// watchDeps adapts the manager to watchingress.Deps.
+type watchDeps struct{ m *manager }
+
+func (d watchDeps) Store() watchingress.Store { return d.m.store }
+func (d watchDeps) VerifyBridge(ctx context.Context, signKey []byte, token string, verify func([]byte, string) (string, bool)) (string, bool) {
+	return d.m.verifyBridge(ctx, signKey, token, verify)
+}
+func (d watchDeps) SigningRoot() []byte       { return d.m.tokenSigningRoot() }
+func (d watchDeps) PublicBaseURL() string     { return d.m.publicBaseURL }
+func (d watchDeps) AgentClient() *http.Client { return agentHTTPClient }
+func (d watchDeps) AgentEndpoint(ws store.Workspace) (string, string) {
+	rt := d.m.runtimeFor(ws, noSecretKeys)
+	if rt == nil {
+		return "", ""
+	}
+	return rt.Endpoint(), rt.Token()
+}
+
+// registerWatchIngressRoutes serves the watch engine's webhook ingress and its Agent-facing
+// bridge. /webhooks/ is public: every delivery proves itself with a signature (ADR 0133 §4).
+func registerWatchIngressRoutes(mux *http.ServeMux, cfg config) {
+	exemptPrefix("/internal/", "/webhooks/")
+	watchingress.New(watchDeps{cfg.mgr}, strings.TrimSpace(os.Getenv(watchAppSecretEnv))).Register(mux)
 }

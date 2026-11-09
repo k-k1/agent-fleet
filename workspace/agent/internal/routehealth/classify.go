@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -159,6 +161,15 @@ func Classify(kind, msg string, now time.Time) Verdict {
 	case session.KindMuse:
 		if at, ok := muse.LimitInMessage(msg); ok {
 			return Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: at}
+		}
+	}
+	// A kind's own quota reader (agents.QuotaRefusalReader, today agy): the refusal names the
+	// model's window and its reset, which the generic markers below would read as a short 429.
+	if a, ok := agentreg.Lookup(kind); ok {
+		if r, ok := a.(agents.QuotaRefusalReader); ok {
+			if at, ok := r.QuotaRefusal(msg, now); ok {
+				return Verdict{Class: ClassWindow, Scope: ScopeModel, ResetAt: at}
+			}
 		}
 	}
 	low := strings.ToLower(msg)
