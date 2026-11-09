@@ -95,6 +95,8 @@ export interface RemainingSource {
   accountField: "account" | "user"; // which reading field names the signed-in account
   upgradableKey?: MsgKey; // appended to the plan line when the reading says canUpgrade
   noteKey?: MsgKey; // a caveat shown under the rows
+  // Limits learned from failed calls rather than scraped (agy). Rows only: they never drive the chip.
+  learned?(u: UsageReading, now: number): { model: string; resetsAt: string }[];
   manageURL?: string;
 }
 
@@ -159,6 +161,12 @@ export const AGY_USAGE: RemainingSource = {
       .filter(Boolean)
       .join(" / ");
   },
+  // A reset in the past is dropped here too: the Agent filters at read time, but the reading
+  // can sit in the Console for minutes.
+  learned: (u, now) =>
+    (Array.isArray(u.learned) ? u.learned : [])
+      .filter((l) => Date.parse(l.resetsAt) > now)
+      .map((l) => ({ model: l.label || l.model, resetsAt: l.resetsAt })),
   accountField: "account",
   // The Starter pool is tiny and shared with the Antigravity IDE / Jules (docs/log/32 Track C-3).
   noteKey: "agents.agy_exp_label",

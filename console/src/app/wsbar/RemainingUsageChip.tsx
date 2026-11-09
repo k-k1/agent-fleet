@@ -30,6 +30,7 @@ export function RemainingUsageChip({ src, tenant }: { src: RemainingSource; tena
 
   const wins = usage?.ok ? src.pools(usage, tr) : [];
   const unavailable = wins.length === 0;
+  const learned = usage && src.learned ? src.learned(usage, Date.now()) : [];
 
   // Near the cap: the latest live capped reset (same rule as UsageChip).
   const bind = pickNearCap(wins);
@@ -97,6 +98,20 @@ export function RemainingUsageChip({ src, tenant }: { src: RemainingSource; tena
                 }}
               />
             ))
+          )}
+          {learned.length > 0 && (
+            <div className="wu-learned">
+              <div className="wu-note muted">{tr("wsbar.usage.learned_head")}</div>
+              {learned.map((l) => (
+                <div key={l.model} className="wu-note">
+                  {tr("wsbar.usage.learned_row", {
+                    model: l.model || tr("wsbar.usage.learned_default_model"),
+                    when: whenText(l.resetsAt),
+                  })}
+                </div>
+              ))}
+              <div className="wu-note muted">{tr("wsbar.usage.learned_note")}</div>
+            </div>
           )}
           {src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
           <div className="wu-foot">
