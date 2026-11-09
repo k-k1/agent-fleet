@@ -1,6 +1,7 @@
 package routehealth
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -138,6 +139,29 @@ func (t *Table) Avoid(kind, model string, now time.Time) bool {
 		}
 	}
 	return false
+}
+
+// Learned is one model-scoped usage window the table has seen a provider name a reset for.
+type Learned struct {
+	Model string // "" is the CLI's own default model
+	Until time.Time
+}
+
+// LearnedWindows lists the live model-keyed usage windows of kind whose end the provider
+// named, ordered by model. Guessed backoffs (the provider named no reset) and kind-wide parks
+// are left out: the first is not a fact about the quota, the second is not about one model.
+func (t *Table) LearnedWindows(kind string, now time.Time) []Learned {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []Learned
+	for k, e := range t.m {
+		if k.Kind != kind || k.Wide || e.class != ClassWindow || !e.named || !e.until.After(now) {
+			continue
+		}
+		out = append(out, Learned{Model: k.Model, Until: e.until})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Model < out[j].Model })
+	return out
 }
 
 // parks returns copies of the live kind-wide and model parks.

@@ -234,7 +234,11 @@ func TestToolCallGolden(t *testing.T) {
 				b, _ := json.Marshal(full)
 				sets = append(sets, [2]string{"full", string(b)})
 			}
-			if _, ok := props["kind"]; ok {
+			// The sweep is for an agent-kind argument; memory_save's `kind` is an enum of
+			// memory kinds. The full set covers relay of the key only (goldenArgValue sends
+			// "v", not a valid kind, since schemas use []string enums); a valid value is
+			// covered by TestMemorySaveRelaysKindAndAnchors and the Agent round-trip test.
+			if kp, ok := props["kind"].(map[string]any); ok && kp["enum"] == nil {
 				for _, k := range kinds {
 					sets = append(sets, [2]string{"kind=" + k, fmt.Sprintf(`{"kind":%q}`, k)})
 				}

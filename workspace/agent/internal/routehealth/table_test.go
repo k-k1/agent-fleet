@@ -201,3 +201,27 @@ func TestAStaleSuccessKeepsANewerPark(t *testing.T) {
 		t.Fatal("a success that started after the park did not lift it")
 	}
 }
+
+// learnedMsg is agy's model quota refusal (agy 1.5.3), the text a popover row is learned from.
+const learnedMsg = "agy execution failed: error: Individual quota reached. Resets in 108h50m38s."
+
+func TestLearnedWindowsListsOnlyNamedLiveModelWindows(t *testing.T) {
+	tb := NewTable()
+	tb.Fail("agy", "gemini-4-argon", learnedMsg, t0)
+	tb.Fail("agy", "", learnedMsg, t0)
+	tb.Fail("agy", "flaky", "503 Service Unavailable", t0)                                             // server class: not a window
+	tb.Fail("agy", "guess", "quota exhausted, try again later", t0)                                    // no named reset
+	tb.Fail("codex", "gpt", "usage limit reached. resets in 3h", t0)                                   // other kind
+	tb.Park("agy", "x", Verdict{Class: ClassWindow, Scope: ScopeKind, ResetAt: t0.Add(time.Hour)}, t0) // kind-wide
+
+	got := tb.LearnedWindows("agy", t0.Add(time.Minute))
+	if len(got) != 2 || got[0].Model != "" || got[1].Model != "gemini-4-argon" {
+		t.Fatalf("learned = %+v, want the default model and gemini-4-argon only", got)
+	}
+	if want := t0.Add(108*time.Hour + 50*time.Minute + 38*time.Second); !got[1].Until.Equal(want) {
+		t.Errorf("until = %v, want %v", got[1].Until, want)
+	}
+	if left := tb.LearnedWindows("agy", t0.Add(200*time.Hour)); len(left) != 0 {
+		t.Errorf("expired windows still listed: %+v", left)
+	}
+}
