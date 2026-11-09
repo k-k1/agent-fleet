@@ -566,32 +566,86 @@ func TestCheckTargetCommandRtkInsideCommand(t *testing.T) {
 	}
 }
 
+// TestStripRtk pins stripRtk to what `rtk rewrite` (rtk 1.2.0) actually rewrites: each "in" is
+// the hook's output for "want", or text the hook leaves alone (in == want).
 func TestStripRtk(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"rtk ls", "ls"},
 		{"cd x; rtk ls", "cd x; ls"},
 		{"a && rtk git status | rtk grep x", "a && git status | grep x"},
+		{"a || rtk ls", "a || ls"},
 		{"for f in *; do rtk cat $f; done", "for f in *; do cat $f; done"},
+		{"if x; then rtk ls; else rtk ls; fi", "if x; then ls; else ls; fi"},
 		{"echo hi\nrtk ls", "echo hi\nls"},
-		{"(rtk ls)", "(ls)"},
-		// Not where a command starts: an argument, inside quotes, after "2>&1" (the "1" that
-		// follows the & starts nothing).
+		// Prefixes the hook skips, chained.
+		{"time rtk ls", "time ls"},
+		{"time -p rtk ls", "time -p ls"},
+		{"VAR=1 VAR2=2 rtk ls", "VAR=1 VAR2=2 ls"},
+		{`VAR="a b" rtk ls`, `VAR="a b" ls`},
+		{"VAR=1 time rtk ls", "VAR=1 time ls"},
+		{"nohup nice rtk ls", "nohup nice ls"},
+		{"command rtk ls", "command ls"},
+		// The script of bash -c / sh -c.
+		{"bash -c 'rtk ls; rtk ls'", "bash -c 'ls; ls'"},
+		{`sh -c "rtk ls; rtk ls"`, `sh -c "ls; ls"`},
+		// Left alone by the hook, so an "rtk " there is data and must stay.
 		{"echo rtk ls", "echo rtk ls"},
 		{"echo 'a; rtk b'", "echo 'a; rtk b'"},
 		{`echo "a; rtk b"`, `echo "a; rtk b"`},
-		{"make 2>&1 rtk", "make 2>&1 rtk"},
+		{`echo $'a\'b; rtk c'`, `echo $'a\'b; rtk c'`},
+		{"(rtk ls)", "(rtk ls)"},
+		{"{ rtk ls; }", "{ rtk ls; }"},
+		{"echo $((rtk + 1))", "echo $((rtk + 1))"},
+		{"! rtk ls", "! rtk ls"},
+		{"command -p rtk ls", "command -p rtk ls"},
+		{"bash -x -c 'rtk ls'", "bash -x -c 'rtk ls'"},
+		{`bash -c "rtk $x; rtk ls"`, `bash -c "rtk $x; rtk ls"`},
 		{"cmd 2>&1 rtk x", "cmd 2>&1 rtk x"},
 		{`echo a\; rtk b`, `echo a\; rtk b`},
+		{"cat <<'EOF'\nrtk ls\nEOF\nrtk ls", "cat <<'EOF'\nrtk ls\nEOF\nls"},
+		{"cat <<-EOF\n\trtk ls\n\tEOF\nrtk ls", "cat <<-EOF\n\trtk ls\n\tEOF\nls"},
+		{"rtk rtk ls", "rtk ls"},
+		{"rtk\tls", "rtk\tls"},
+		{"ls; rtk", "ls; rtk"},
 	}
 	for _, c := range cases {
 		if got := stripRtk(c.in, false); got != c.want {
 			t.Errorf("stripRtk(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
-	if got := stripRtk("cd x; rt", true); got != "cd x; " {
-		t.Errorf("partial: %q", got)
+	for in, want := range map[string]string{
+		"cd x; r":            "cd x; ",
+		"cd x; rt":           "cd x; ",
+		"cd x; rtk":          "cd x; ",
+		"bash -c 'rtk ls; r": "bash -c 'ls; ",
+	} {
+		if got := stripRtk(in, true); got != want {
+			t.Errorf("partial stripRtk(%q) = %q, want %q", in, got, want)
+		}
 	}
 	if got := stripRtk("cd x; rt", false); got != "cd x; rt" {
 		t.Errorf("not partial: %q", got)
+	}
+}
+
+// The comparison as a whole: an rtk inside quotes or a here-document is data, so a command
+// that differs from the dialog only there never matches; an "rtk " wrapped across two lines
+// still reconstructs; and a clipped dialog's tail is compared the same way.
+func TestMatchFullCommandRtk(t *testing.T) {
+	if matchFullCommand([]string{"echo 'a; rtk b'"}, "echo 'a; b'", 0, false) {
+		t.Error("an rtk inside quotes was dropped")
+	}
+	if matchFullCommand([]string{"cat >s <<'EOF'", "rtk ls", "EOF"}, "cat >s <<'EOF'\nls\nEOF", 0, false) {
+		t.Error("an rtk inside a here-document was dropped")
+	}
+	// "…; rt" fills the 10-column pane and "k ls" continues it with no separator.
+	if !matchFullCommand([]string{"cd ab; rt", "k ls"}, "cd ab; ls", 10, false) {
+		t.Error("an rtk wrapped across lines did not reconstruct")
+	}
+	if !matchFullCommand([]string{"cd ab; rtk ls"}, "x=1; cd ab; ls", 0, true) {
+		t.Error("a clipped tail with an rtk rewrite did not match")
+	}
+	if matchFullCommand([]string{"cd ab; rtk ls -a"}, "x=1; cd ab; ls", 0, true) {
+		t.Error("a clipped tail of another command matched")
 	}
 }
