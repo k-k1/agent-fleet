@@ -247,7 +247,7 @@ func TestProcessAppearingAfterTheSurveyIsCaughtBeforeTheDelete(t *testing.T) {
 	}
 	fakeProc(t, f.deps, 77, nm)
 	root, _ := filepath.EvalSymlinks(f.wt)
-	if why := recheck(context.Background(), f.deps, root, r.Dirs[0], nm); why != ReasonInUse {
+	if why := recheck(context.Background(), f.deps, f.wt, root, r.Dirs[0], nm); why != ReasonInUse {
 		t.Fatalf("recheck = %q", why)
 	}
 }
@@ -332,5 +332,59 @@ func TestNestedRepositoryIsSkipped(t *testing.T) {
 	write(t, filepath.Join(f.main, ".git", "info", "exclude"), "vendor/lib\n")
 	if r := f.apply(false); len(r.Removed) != 0 || !exists(nm) {
 		t.Fatalf("a nested repository's node_modules was removed: %+v", r)
+	}
+}
+
+func TestRecheckCatchesASessionOrLockAppearingAfterTheSurvey(t *testing.T) {
+	f := newFixture(t)
+	nm := f.mk("node_modules")
+	budget := sizeBudget
+	r := Survey(context.Background(), f.deps, "app@wip", f.wt, 30, &budget)
+	root, _ := filepath.EvalSymlinks(f.wt)
+	f.deps.LiveSessions = func(string) []string { return []string{"late"} }
+	if why := recheck(context.Background(), f.deps, f.wt, root, r.Dirs[0], nm); why != ReasonLive {
+		t.Fatalf("live: %q", why)
+	}
+	f.deps.LiveSessions = nil
+	f.deps.Locked = func(string) bool { return true }
+	if why := recheck(context.Background(), f.deps, f.wt, root, r.Dirs[0], nm); why != ReasonLocked {
+		t.Fatalf("locked: %q", why)
+	}
+}
+
+func TestCrossesDevice(t *testing.T) {
+	f := newFixture(t)
+	nm := f.mk("node_modules")
+	fi, _ := os.Lstat(f.wt)
+	if crossesDevice(nm, devOf(fi)) {
+		t.Fatal("a tree on the worktree's own filesystem reported as crossing")
+	}
+	// A mount cannot be made without root; a root on a different device stands in for one.
+	if !crossesDevice(nm, devOf(fi)+1) {
+		t.Fatal("a tree on another device was not reported")
+	}
+	if !crossesDevice(filepath.Join(nm, "missing"), devOf(fi)) {
+		t.Fatal("an unreadable path must count as crossing")
+	}
+}
+
+func TestRepositoryConfigCannotRunCommandsOrHideUntrackedFiles(t *testing.T) {
+	f := newFixture(t)
+	nm := f.mk("node_modules")
+	marker := filepath.Join(f.base, "fsmonitor-ran")
+	hook := filepath.Join(f.base, "hook.sh")
+	write(t, hook, "#!/bin/sh\ntouch "+marker+"\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(t, f.main, "config", "core.fsmonitor", hook)
+	run(t, f.main, "config", "status.showUntrackedFiles", "no")
+	write(t, filepath.Join(f.wt, "notes.txt"), "mine")
+	r := f.apply(false)
+	if exists(marker) {
+		t.Error("core.fsmonitor from the repository config was executed")
+	}
+	if r.Reason != ReasonDirty || !exists(nm) {
+		t.Errorf("status.showUntrackedFiles=no hid an untracked file: %+v", r)
 	}
 }

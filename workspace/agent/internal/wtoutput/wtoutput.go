@@ -10,7 +10,8 @@
 //     have no uncommitted or untracked change at all;
 //   - a symlink is unlinked, never followed: node_modules is often a link to the parent clone's
 //     tree and target/build a link onto /scratch, and descending would empty someone else's tree;
-//   - nothing that resolves outside the worktree is touched;
+//   - nothing that resolves outside the worktree is touched, and a directory with another
+//     filesystem mounted anywhere inside it is left alone;
 //   - no live or deletion-locked session, no process using a path under the candidate, and a
 //     quiet period (HEAD, index and session activity all older than the dormant limit).
 //
@@ -113,7 +114,10 @@ func (d Deps) logf(f string, a ...any) {
 func git(ctx context.Context, dir string, args ...string) ([]byte, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	// The repository's config is not ours: core.fsmonitor and hooks would run a command of
+	// whoever wrote it, as this user, on every status or ls-files.
+	pre := []string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}
+	cmd := exec.CommandContext(ctx, "git", append(pre, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -163,10 +167,12 @@ func Survey(ctx context.Context, d Deps, name, dir string, dormantDays int, budg
 	if limit := d.now().Add(-time.Duration(dormantDays) * 24 * time.Hour); newest.IsZero() || newest.After(limit) {
 		return refuse(ReasonDormant, fmt.Sprintf("activity within %d days", dormantDays))
 	}
-	out, code, err := git(ctx, root, "status", "--porcelain=v1", "-z")
+	out, code, err := git(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil || code != 0 {
 		return refuse(ReasonGit, "git status failed")
 	}
+	// --untracked-files=all: a status.showUntrackedFiles=no in the repository's config must not
+	// switch the gate off. Submodules keep git's default (a dirty one refuses), the cautious side.
 	if len(out) > 0 {
 		return refuse(ReasonDirty, "uncommitted or untracked changes")
 	}
@@ -185,6 +191,10 @@ func Survey(ctx context.Context, d Deps, name, dir string, dormantDays int, budg
 		if why := notRegenerable(ctx, root, rel, abs, link); why != "" {
 			continue
 		}
+		if rfi, err := os.Lstat(root); err != nil || crossesDevice(abs, devOf(rfi)) {
+			r.Skipped = append(r.Skipped, rel+": crosses a filesystem boundary")
+			continue
+		}
 		// A dry run must predict what Apply would refuse.
 		if busy, err := inUse(d.ProcRoot, root, abs); err != nil || busy {
 			r.Skipped = append(r.Skipped, rel+": "+ReasonInUse)
@@ -200,7 +210,7 @@ func Survey(ctx context.Context, d Deps, name, dir string, dormantDays int, budg
 		r.Dirs = append(r.Dirs, c)
 		r.Bytes += c.Bytes
 	}
-	r.Truncated = *budget <= 0
+	r.Truncated = *budget < 0
 	if len(r.Dirs) == 0 && sawBusy {
 		return refuse(ReasonInUse, strings.Join(r.Skipped, "; "))
 	}
@@ -231,10 +241,10 @@ func Apply(ctx context.Context, d Deps, name, dir string, dormantDays int, dryRu
 	r.Bytes = 0
 	for _, c := range plan {
 		abs := filepath.Join(root, filepath.FromSlash(c.Rel))
-		if why := recheck(ctx, d, root, c, abs); why != "" {
+		if why := recheck(ctx, d, dir, root, c, abs); why != "" {
 			r.Skipped = append(r.Skipped, c.Rel+": "+why)
-			if why == ReasonInUse {
-				r.Reason = ReasonInUse
+			if why == ReasonInUse || why == ReasonLive || why == ReasonLocked {
+				r.Reason = why
 			}
 			continue
 		}
@@ -263,7 +273,18 @@ func Apply(ctx context.Context, d Deps, name, dir string, dormantDays int, dryRu
 }
 
 // recheck is the last look before a delete; "" means go ahead.
-func recheck(ctx context.Context, d Deps, root string, c Dir, abs string) string {
+func recheck(ctx context.Context, d Deps, dir, root string, c Dir, abs string) string {
+	// A session may have started, or a lock been set, since the survey. The process scan below
+	// covers the milliseconds between this look and the delete.
+	if d.Locked != nil && d.Locked(dir) {
+		return ReasonLocked
+	}
+	if d.LiveSessions != nil && len(d.LiveSessions(dir)) > 0 {
+		return ReasonLive
+	}
+	if rfi, err := os.Lstat(root); err != nil || crossesDevice(abs, devOf(rfi)) {
+		return "crosses a filesystem boundary"
+	}
 	// The parent may have been swapped for a link since the survey: resolve it again and
 	// demand it is still inside the worktree.
 	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
@@ -310,6 +331,7 @@ func notRegenerable(ctx context.Context, root, rel, abs string, link bool) strin
 }
 
 // candidates lists the allow-listed names at the root and in each npm/pnpm workspace package,
+// ("**" globs match nothing: a package missed is only output left on disk),
 // as slash-separated paths relative to root. Directories only if they are real folders inside
 // root; the entries themselves are judged by the caller.
 func candidates(ctx context.Context, root string) []string {
@@ -436,7 +458,8 @@ func allocated(fi os.FileInfo) int64 {
 	return fi.Size()
 }
 
-// treeBytes sums allocated bytes under dir without following links. budget bounds the entries.
+// treeBytes sums allocated bytes under dir without following links. budget bounds the entries;
+// it goes negative only when an entry was left unvisited.
 func treeBytes(dir string, budget *int) int64 {
 	var n int64
 	var walk func(string)
@@ -446,7 +469,11 @@ func treeBytes(dir string, budget *int) int64 {
 			return
 		}
 		for _, e := range ents {
-			if *budget <= 0 {
+			if *budget == 0 {
+				*budget = -1
+				return
+			}
+			if *budget < 0 {
 				return
 			}
 			*budget--
@@ -462,6 +489,39 @@ func treeBytes(dir string, budget *int) int64 {
 	}
 	walk(dir)
 	return n
+}
+
+func devOf(fi os.FileInfo) uint64 {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return uint64(st.Dev)
+	}
+	return 0
+}
+
+// crossesDevice says whether abs, or any directory under it, is on another filesystem than dev
+// (a bind mount or a mounted volume): RemoveAll would empty what is mounted there. A tree that
+// cannot be read through is treated as crossing. Links are not followed.
+func crossesDevice(abs string, dev uint64) bool {
+	fi, err := os.Lstat(abs)
+	if err != nil || devOf(fi) != dev {
+		return true
+	}
+	if !fi.IsDir() {
+		return false
+	}
+	ents, err := os.ReadDir(abs)
+	if err != nil {
+		return true
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		if crossesDevice(filepath.Join(abs, e.Name()), dev) {
+			return true
+		}
+	}
+	return false
 }
 
 // removeTree is os.RemoveAll that also gets through read-only directories. RemoveAll never

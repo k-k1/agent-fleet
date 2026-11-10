@@ -216,6 +216,15 @@ func storedSignin(body []byte) bool {
 	return json.Unmarshal(body, &out) == nil && out.Stored
 }
 
+// removedAny reads a worktree-output answer: true only when it lists at least one removed
+// directory, so a dry run or a refusal leaves no "deleted" record.
+func removedAny(body []byte) bool {
+	var out struct {
+		Removed []json.RawMessage `json:"removed"`
+	}
+	return json.Unmarshal(body, &out) == nil && len(out.Removed) > 0
+}
+
 // auditFSFilePut records a file save under the path fsFilePut checked and put in the context;
 // without one nothing is recorded.
 func auditFSFilePut(r *http.Request) (string, string, bool) {

@@ -77,7 +77,7 @@ func HandleSurvey(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// HandleApply (POST /cleanup/worktree-output/{name}). 409 with the report when
+// HandleApply (POST /cleanup/worktree-output?worktree=NAME). 409 with the report when
 // the worktree is refused or nothing could be removed.
 func HandleApply(w http.ResponseWriter, r *http.Request) {
 	dir, ok := gitx.ResolveRepoDir(r.URL.Query().Get("worktree"))
