@@ -25,6 +25,7 @@ func TestMCPScheduleGateArgumentMatchesDTO(t *testing.T) {
 		Tools map[string]struct {
 			InputSchema struct {
 				Properties map[string]struct {
+					Required   []string `json:"required"`
 					Properties map[string]struct {
 						Type string `json:"type"`
 					} `json:"properties"`
@@ -59,6 +60,10 @@ func TestMCPScheduleGateArgumentMatchesDTO(t *testing.T) {
 		if !ok {
 			t.Errorf("%s does not advertise gate", key)
 			continue
+		}
+		// kind is the only guard against an empty gate:{} that the CP would read as a removal.
+		if !reflect.DeepEqual(gate.Required, []string{"kind"}) {
+			t.Errorf("%s gate.required = %v, want [kind]", key, gate.Required)
 		}
 		sample := map[string]any{}
 		var got []string

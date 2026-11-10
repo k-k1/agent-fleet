@@ -239,7 +239,7 @@ func scheduleTools() []toolSpec {
 // forwards the object verbatim and validates nothing, so the CP stays the only judge. The
 // output-only fields (fired_at, last_eval_at, last_verdict) are deliberately absent.
 func scheduleGateSchema(update bool) map[string]any {
-	desc := "ゲート（任意）。到来した各 tick で、利用者が保存済みの作業項目クエリ（query_id）を評価し、結果が空でなく、前回発火時から変化した時だけセッションを起動する。何もなければ起動もターン消費もしない。cron / interval の session_mode=new のスケジュールだけに付けられる。prompt では {{gate.refs}}（一致した項目キー・最大20件）が使える。run_schedule_now はゲートを通さず発火する。"
+	desc := "ゲート（任意）。到来した各 tick で、利用者が保存済みの作業項目クエリ（query_id）を評価し、結果が空でなく、前回発火時から変化した時だけセッションを起動する。何もなければ起動もターン消費もしない。cron / interval の session_mode=new のスケジュールだけに付けられる。prompt では {{gate.refs}}（一致した項目キー・最大20件）が使える。ワークスペース停止中はゲートのために起こさず、その tick は評価・発火・通知のいずれも行われない（変化なしの意味ではない）。run_schedule_now はゲートを通さず発火する。"
 	if update {
 		desc = "ゲートの設定（任意）。省略すると既存のゲートはそのまま。kind=none で外す。query_id か fingerprint を変えると前回発火の記録は破棄される。" + desc
 	}
@@ -250,8 +250,8 @@ func scheduleGateSchema(update bool) map[string]any {
 			"kind":              map[string]any{"type": "string", "description": "work_items | none（none は更新時にゲートを外す）"},
 			"query_id":          map[string]any{"type": "string", "description": "利用者が保存済みの作業項目クエリの id（kind=work_items で必須。他人のクエリは拒否される）"},
 			"fingerprint":       map[string]any{"type": "string", "description": "変化の判定方法（任意）: keys（既定・項目キーの集合）| keys+updated（更新時刻も含める）"},
-			"max_fires_per_day": map[string]any{"type": "integer", "description": "1日あたりの発火上限（任意。省略で CP の既定値）"},
-			"min_fire_gap_s":    map[string]any{"type": "integer", "description": "発火間隔の下限・秒（任意。省略で CP の既定値）"},
+			"max_fires_per_day": map[string]any{"type": "integer", "description": "1日あたりの発火上限（任意。1..24。省略で CP の既定値）"},
+			"min_fire_gap_s":    map[string]any{"type": "integer", "description": "発火間隔の下限・秒（任意。60..86400。省略で CP の既定値）"},
 		},
 		"required": []string{"kind"},
 	}
