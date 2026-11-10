@@ -176,6 +176,16 @@ case "$args" in
     if [ "${STUB_POOL_DEPLOY_FAIL:-0}" = 1 ]; then
       echo "Failed to create/update the stack. Status: UPDATE_ROLLBACK_COMPLETE" >&2; exit 255
     fi ;;
+  # STUB_ENGINES_DEPLOY_FAIL=1: the 60-engines update fails and rolls back (#3555: its Cloud Map
+  # services had vanished). update.sh must still reach 30-ingress, then exit non-zero.
+  *"cloudformation deploy --stack-name af-ecs-engines"*)
+    if [ "${STUB_ENGINES_DEPLOY_FAIL:-0}" = 1 ]; then
+      echo "Failed to create/update the stack. Status: UPDATE_ROLLBACK_COMPLETE" >&2; exit 255
+    fi ;;
+  *"cloudformation deploy --stack-name af-ecs-tts"*)
+    if [ "${STUB_TTS_DEPLOY_FAIL:-0}" = 1 ]; then
+      echo "Failed to create/update the stack. Status: UPDATE_ROLLBACK_COMPLETE" >&2; exit 255
+    fi ;;
   *"cloudformation list-exports"*"SlotLaunchTemplateId"*)
     case "${STUB_POOL_EXPORT:-ok}" in
       fail) echo "An error occurred (AccessDenied) when calling the ListExports operation" >&2; exit 254 ;;
@@ -189,6 +199,9 @@ case "$args" in
   # params/60-engines and its preflight refuses to build at all.
   *"cloudformation list-exports"*"EnginesSsmParam"*)
     [ "${STUB_ENGINES_LIVE:-0}" = 1 ] && echo "af-ecs-engines-EnginesSsmParam" || echo "" ;;
+  # How update.sh finds the speech stack: the export whose value is 30-ingress's VoicevoxUrl.
+  *"cloudformation list-exports"*"-VoicevoxUrl"*)
+    [ "${STUB_TTS_LIVE:-0}" = 1 ] && echo "af-ecs-tts-VoicevoxUrl" || echo "" ;;
   *"cloudformation list-exports"*) echo "t-cluster" ;;
   # The EFS backup facts efs-backup-check.sh reads. STUB_VAULT: unset = a data stack without the
   # vault output (pre-0.26.0), ok = vault and a plan selecting fs-1, noplan = vault but the
@@ -1129,6 +1142,25 @@ grep -q "deploy --stack-name af-ecs-engines" "$LOG" || fail "60-engines was not 
 if grep -q "deploy --stack-name af-ecs-engines .*--parameter-overrides" "$LOG"; then
   fail "a post-P6 stack was given parameters it does not need"
 fi
+
+# A side stack that fails and rolls back (#3555) must not strand the CP on the old release:
+# 30-ingress is still deployed, the run ends non-zero, and the summary names the stack.
+# side_case <out> <stack> <label> VAR=val...: one failing side stack.
+side_case() {
+  local out="$1" stack="$2" label="$3" rc=0; shift 3
+  : > "$LOG"
+  env VERSION=9.9.9-dev-test STUB_ECR_HAS=1 "$@" \
+    "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/$out" 2>&1 || rc=$?
+  [ "$rc" != 0 ] || { cat "$WORK/$out"; fail "update.sh exited 0 although $stack failed"; }
+  has "deploy --stack-name $stack"
+  has "deploy --stack-name t-ingress"
+  order "deploy --stack-name $stack" "deploy --stack-name t-ingress"
+  if ! grep -q "FAILED: .*side stacks did not deploy" "$WORK/$out" || ! grep -q "$stack ($label" "$WORK/$out"; then
+    cat "$WORK/$out"; fail "the summary does not name the failed side stack $stack"
+  fi
+}
+side_case out3s af-ecs-engines 60-engines STUB_ENGINES_LIVE=1 STUB_ENGINES_DEPLOY_FAIL=1
+side_case out3s2 af-ecs-tts 50-tts STUB_TTS_LIVE=1 STUB_TTS_DEPLOY_FAIL=1
 
 # --dry-run has to SHOW the translation. An operator reads the plan to decide whether to run it,
 # and "Enabled is about to be set" is the one thing in this deploy worth reading.
