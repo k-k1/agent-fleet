@@ -130,3 +130,8 @@ func (agentImpl) StopContinued(_ session.Meta, sid string, marker time.Time) boo
 
 // WarmStatus is agents.StatusWarmer: the first probe runs off the caller's path.
 func (agentImpl) WarmStatus() { go Status() }
+
+// ProgressSignals is agents.ProgressSignaler: ProgressHooks.
+func (agentImpl) ProgressSignals() agents.ProgressTraits {
+	return agents.ProgressTraits{Signal: agents.ProgressHooks}
+}

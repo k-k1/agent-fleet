@@ -59,11 +59,18 @@ func progressTrusted(m session.Meta) bool {
 	if m.DriverKind() == session.DriverManaged {
 		return managedProgressMeasured(m)
 	}
-	switch NormalizeKind(m.Kind) {
-	case session.KindClaude, session.KindAgy:
-		return true
+	return progressTraits(m).Signal != agents.ProgressUnmeasured
+}
+
+// progressTraits is the kind's agents.ProgressSignaler answer; an unknown kind reads as claude
+// and a kind without the capability as unmeasured.
+func progressTraits(m session.Meta) agents.ProgressTraits {
+	if a, ok := RegisteredAgent(NormalizeKind(m.Kind)); ok {
+		if s, ok := a.(agents.ProgressSignaler); ok {
+			return s.ProgressSignals()
+		}
 	}
-	return progressPaneOnly(m)
+	return agents.ProgressTraits{}
 }
 
 // progressPaneOnly: the kind's only measured live signal is the pane repaint, and nothing else
@@ -72,11 +79,7 @@ func progressPaneOnly(m session.Meta) bool {
 	if m.DriverKind() == session.DriverManaged {
 		return false
 	}
-	switch NormalizeKind(m.Kind) {
-	case session.KindCodex, session.KindCursor, session.KindCopilot, session.KindKiro, session.KindOpencode:
-		return true
-	}
-	return false
+	return progressTraits(m).Signal == agents.ProgressPaneOnly
 }
 
 // progressProbes are the world inputs of progressOf, injectable for tests.
@@ -259,11 +262,7 @@ func statusMarksBoundary(m session.Meta) bool {
 	if m.DriverKind() == session.DriverManaged {
 		return true
 	}
-	switch NormalizeKind(m.Kind) {
-	case session.KindAgy, session.KindCopilot, session.KindCursor, session.KindKiro:
-		return false
-	}
-	return true
+	return !progressTraits(m).HooklessStatus
 }
 
 // fillStateSince sets Session.StateSince from stateSinceOf.

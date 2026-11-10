@@ -46,3 +46,8 @@ func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.
 func (agentImpl) UsageMeasured() string { return usagex.MeasuredNone }
+
+// ProgressSignals is agents.ProgressSignaler: ProgressHooks; its Terminal sessions have no status hook.
+func (agentImpl) ProgressSignals() agents.ProgressTraits {
+	return agents.ProgressTraits{Signal: agents.ProgressHooks, HooklessStatus: true}
+}

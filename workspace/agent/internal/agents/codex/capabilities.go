@@ -122,3 +122,8 @@ func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 func (agentImpl) StopContinued(m session.Meta, _ string, marker time.Time) bool {
 	return m.DriverKind() != session.DriverManaged && StopContinued(m, marker)
 }
+
+// ProgressSignals is agents.ProgressSignaler: ProgressPaneOnly.
+func (agentImpl) ProgressSignals() agents.ProgressTraits {
+	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly}
+}

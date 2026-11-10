@@ -62,3 +62,8 @@ func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 
 // WarmStatus is agents.StatusWarmer: this package's WarmStatus().
 func (agentImpl) WarmStatus() { WarmStatus() }
+
+// ProgressSignals is agents.ProgressSignaler: ProgressPaneOnly; its Terminal sessions have no status hook.
+func (agentImpl) ProgressSignals() agents.ProgressTraits {
+	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly, HooklessStatus: true}
+}
