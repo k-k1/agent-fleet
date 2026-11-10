@@ -1,6 +1,7 @@
 package memoryx
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -25,6 +26,7 @@ func TestRetireArchivesInOneRevertibleChange(t *testing.T) {
 	now := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
 	seedT(t, now, "flake-note")
 	prior, _ := rawEntryT(t, "flake-note")
+	priorBytes := rawFileT(t, "flake-note")
 	before := commitCount(t)
 	res, err := retireT(t, 1, retireItem("flake-note", 1, "issue #2310 is closed"), now)
 	if err != nil || res.Revision != 2 {
@@ -66,6 +68,10 @@ func TestRetireArchivesInOneRevertibleChange(t *testing.T) {
 	if !ok || back.Status != "" || back.StatusBy != "" || back.InvalidAt != "" || back.Body != prior.Body || back.Description != prior.Description ||
 		!reflect.DeepEqual(back.Reasons, prior.Reasons) || back.Revision != 3 {
 		t.Fatalf("after revert = %+v, want the text of %+v", back, prior)
+	}
+	// Byte for byte, apart from the lines a write always moves.
+	if got := rawFileT(t, "flake-note"); stableLines(got) != stableLines(priorBytes) {
+		t.Fatalf("file after revert differs from the original:\n--- before\n%s\n--- after\n%s", priorBytes, got)
 	}
 	if ms, _ := ConsolMemories("project", consolPID(t)); len(ms) != 1 {
 		t.Fatalf("the revert did not bring the memory back to the consolidator: %d", len(ms))
@@ -133,4 +139,26 @@ func TestRetireRetryWritesNothing(t *testing.T) {
 	if err != nil || !again.Already || again.Commit != first.Commit || commitCount(t) != n {
 		t.Fatalf("retry = %+v, %v", again, err)
 	}
+}
+
+func rawFileT(t *testing.T, name string) string {
+	t.Helper()
+	b, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), "projects", consolPID(t), name+".md"))
+	if err != nil || !ok {
+		t.Fatalf("read %s: %v %v", name, ok, err)
+	}
+	return string(b)
+}
+
+// stableLines drops the frontmatter lines every write moves (revision, author, timestamps).
+func stableLines(s string) string {
+	var keep []string
+	for _, l := range strings.Split(s, "\n") {
+		switch {
+		case strings.HasPrefix(l, "revision:"), strings.HasPrefix(l, "author"), strings.HasPrefix(l, "updated:"):
+		default:
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "\n")
 }

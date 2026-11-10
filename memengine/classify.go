@@ -93,7 +93,7 @@ func (r ClassifyRequest) Prompt() string {
 	b.WriteString("## Observation\n")
 	b.WriteString(strings.TrimSpace(r.Observation))
 	if len(r.Evidence) > 0 {
-		b.WriteString("\n\n## Facts checked by the Agent\nThese were looked up by the program, not guessed. A closed issue or a merged pull request means that work is finished; it does not by itself make a lesson wrong, so judge whether the note or the suggested note is still useful once that work is done. An issue that is not listed was not checked.\n")
+		b.WriteString("\n\n## Facts checked by the Agent\nThese were looked up by the program, not guessed. A closed issue or a merged pull request means that work is finished (a pull request closed without merging may have been abandoned, which is not the same); it does not by itself make a lesson wrong, so judge whether the note or the suggested note is still useful once that work is done. An issue that is not listed was not checked.\n")
 		for _, e := range r.Evidence {
 			b.WriteString("- " + strings.TrimSpace(e) + "\n")
 		}

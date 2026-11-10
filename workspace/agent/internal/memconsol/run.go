@@ -581,7 +581,7 @@ func retireReason(s string) string {
 		return "obsolete: the subject of this note is finished"
 	}
 	if r := []rune(s); len(r) > maxRetireReason {
-		s = string(r[:maxRetireReason])
+		s = string(r[:maxRetireReason-1]) + "…"
 	}
 	return s
 }

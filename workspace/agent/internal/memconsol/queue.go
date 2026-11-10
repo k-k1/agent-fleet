@@ -468,7 +468,7 @@ func publishID(proposalID string, i int) string {
 // memory store, and the only caller is the member-origin approve route. Every publishable item is
 // re-validated against the memory as it is now before the first one is written; a refusal leaves
 // the store untouched and marks the proposal refused, with the reason. Items publish through the
-// store's patch / save / replace path authored as the consolidator (memoryx.PublishConsolidation),
+// store's patch / save / replace / retire path authored as the consolidator (memoryx.PublishConsolidation),
 // so the change list shows them and each can be reverted; a replace is one change over all its
 // memories, and the store re-checks each side's revision under its lock (the CAS). A note item is
 // advice and writes nothing.
@@ -642,6 +642,9 @@ func View(id string, now time.Time) (ProposalView, error) {
 				break
 			}
 			iv.Diff = lineDiff(st.Body, "")
+			if st.Excluded && it.Commit == "" {
+				iv.Stale = "the memory is archived or superseded already"
+			}
 			iv.Retire = &RetirePreview{IndexLine: st.IndexLine, StubReason: it.Reason}
 			if it.Commit == "" {
 				if pr := validateItem(p.Scope, p.ProjectID, it); pr != nil {

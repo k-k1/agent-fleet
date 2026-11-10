@@ -815,7 +815,7 @@ release.
   finished work (so the model leans to no-op instead of creating a note about a finished incident, rather than the Agent
   silently dropping it), and which shown notes name only finished work. A lookup that fails, times out, is refused or is not
   connected is **unknown and is not shown**; it is never read as closed, and a note is called finished only when every
-  reference of it was checked. Lookups are bounded per run (24, 5 s each, stop after 3 failures in a row) and cached across
+  reference of it was checked. A pull request closed without merging reads as `closed` (the prompt says it may have been abandoned); a 404 is unknown but does not count towards the failure stop. Lookups are bounded per run (24, 5 s each, stop after 3 failures in a row) and cached across
   runs (closed and merged 6 h, open 15 min). The classifier prompt changed (a `retire` answer and the facts section), so the
   gold-set figures of decision 6 describe the earlier prompt until re-measured. Not built: anchor existence as evidence
   (a path or `Test*` name that is gone) overlaps lint's reasons and is left to it; the scheduled lint of #3767 is separate.

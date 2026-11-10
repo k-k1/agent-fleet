@@ -61,6 +61,8 @@ func refStateOf(status int, body io.Reader) (RefState, error) {
 	switch {
 	case status == http.StatusUnauthorized:
 		return "", gitx.NewGitHubUnauthorized("github rejected the token")
+	case status == http.StatusNotFound || status == http.StatusGone:
+		return "", ErrRefGone
 	case status != http.StatusOK:
 		return "", fmt.Errorf("github answered %d", status)
 	}

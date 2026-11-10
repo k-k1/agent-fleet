@@ -290,6 +290,42 @@ func TestRefLookupsAreBounded(t *testing.T) {
 	}
 }
 
+// A reference that can never be looked up (a 404) is unknown but says nothing about the network:
+// it does not trip the consecutive-failure stop, and it is asked once per run.
+func TestPermanentFailureDoesNotStopTheRunsLookups(t *testing.T) {
+	var calls atomic.Int32
+	c := &RefChecker{Lookup: func(_ context.Context, repo string, n int) (RefState, error) {
+		calls.Add(1)
+		if repo == "o/private" {
+			return "", ErrRefGone
+		}
+		return RefClosed, nil
+	}}
+	r := c.Begin()
+	ctx := context.Background()
+	for i := 1; i <= 2*refFailuresStop; i++ {
+		if r.State(ctx, "o/private", i) != "" {
+			t.Fatal("a 404 produced a state")
+		}
+	}
+	if r.State(ctx, "o/private", 1) != "" || calls.Load() != int32(2*refFailuresStop) {
+		t.Errorf("a gone reference was asked again (%d calls)", calls.Load())
+	}
+	if r.State(ctx, "o/public", 1) != RefClosed {
+		t.Error("permanent failures silenced the run's later lookups")
+	}
+}
+
+// The view flags a retire whose memory was archived or superseded after it was queued, as approval will.
+func TestRetireViewFlagsAnExcludedMemory(t *testing.T) {
+	f := env(t)
+	p := queuedRetire(t, f)
+	f.excluded["project:"+testProject+"/flake-note"] = true
+	if v, _ := View(p.ID, t0); v.Views[0].Stale == "" {
+		t.Error("the view shows an already-archived memory as approvable")
+	}
+}
+
 func TestExtractRefs(t *testing.T) {
 	text := "see #12, k-k1/x#7 and https://github.com/o/p/pull/99; not &#123; or C#3 or color #123456 or a/b/c#4; #12 again"
 	var got []string
@@ -326,6 +362,9 @@ func TestRefStateOf(t *testing.T) {
 		got, err := refStateOf(c.status, strings.NewReader(c.body))
 		if (err != nil) != c.bad || got != c.want {
 			t.Errorf("%d %s: got %q, %v", c.status, c.body, got, err)
+		}
+		if gone := errors.Is(err, ErrRefGone); gone != (c.status == 404) {
+			t.Errorf("%d: ErrRefGone = %v", c.status, gone)
 		}
 	}
 }

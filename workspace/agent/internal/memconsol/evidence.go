@@ -12,6 +12,7 @@ package memconsol
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -34,6 +35,12 @@ const (
 // Finished says the work behind the reference is over: the issue is closed or the PR merged
 // (a PR closed without merging counts as closed, which is the state GitHub reports).
 func (s RefState) Finished() bool { return s == RefClosed || s == RefMerged }
+
+// ErrRefGone marks a lookup that failed for a reason that will not change within the run (the
+// reference does not exist for this connection: a 404 for a repository the token cannot see, a
+// typo, another host). It is still unknown, but it says nothing about the network, so it does not
+// count towards the consecutive-failure stop and is not asked again in the run.
+var ErrRefGone = errors.New("memconsol: the reference cannot be looked up")
 
 // RefLookup asks the forge for one issue or pull request. repo is "owner/name".
 type RefLookup func(ctx context.Context, repo string, number int) (RefState, error)
@@ -87,6 +94,7 @@ type RefRun struct {
 	c        *RefChecker
 	left     int
 	failures int // in a row
+	gone     map[refKey]bool
 	Lookups  int // lookups actually started
 }
 
@@ -111,6 +119,9 @@ func (r *RefRun) State(ctx context.Context, repo string, n int) RefState {
 		delete(c.cache, k)
 	}
 	c.mu.Unlock()
+	if r.gone[k] {
+		return ""
+	}
 	if r.left <= 0 || r.failures >= refFailuresStop || ctx.Err() != nil {
 		return ""
 	}
@@ -119,6 +130,13 @@ func (r *RefRun) State(ctx context.Context, repo string, n int) RefState {
 	cctx, cancel := context.WithTimeout(ctx, refCallTimeout)
 	defer cancel()
 	st, err := c.Lookup(cctx, k.repo, n)
+	if errors.Is(err, ErrRefGone) {
+		if r.gone == nil {
+			r.gone = map[refKey]bool{}
+		}
+		r.gone[k] = true
+		return ""
+	}
 	if err != nil || (st != RefOpen && st != RefClosed && st != RefMerged) {
 		r.failures++
 		return ""
