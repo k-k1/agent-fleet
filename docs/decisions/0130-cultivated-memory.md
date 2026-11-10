@@ -795,3 +795,19 @@ release.
   (part 1) is not built:** the consolidator's tick is gated by the model-calling `memoryConsolidation` switch, its
   three-hour window and its own state file, all of which belong to the proposal flow; lint calls no model and needs
   none of them, so it wants its own switch and window rather than a hook in that tick.
+
+- **2026-11-10 — Lint `--apply` runs on its own schedule (#3767, part 1 of #3650).**
+  `internal/memlintsched` gives `lint --apply` its own idle-workspace timer and its own switch, the ui-pref
+  `memoryLintSchedule` (**default off**; the ADR says the reasons should appear unattended but not whether that is on from
+  the start, and the run publishes commits into the store while nobody is looking, so it is opt-in like the consolidator.
+  It needs agent memory on, and turning it on needs the member-origin mark). It does not touch the consolidator's tick,
+  its `memoryConsolidation` switch, its 3 h window or its state file. The trigger is decision 6's: no session working, none
+  has run a turn for 15 minutes, at least 6 hours since the last start (30 minutes when the cap left memories deferred). It
+  reads the same session-activity signal as the consolidator and stops between scopes if a session starts working.
+  The run covers the user scope and every project that holds memory with **one** write budget (the per-run cap of 100), so
+  the cap bounds the run, not each scope. Overlap: one run lock in the Agent (`agentMemLintRunMu`) is taken by the scheduled
+  run and by the `lint-apply` route; `af-memory lint --apply` is a separate process but only posts to that route, so the
+  write is always in the Agent. A run that finds the lock held does nothing: the scheduled one waits for its next tick, the
+  manual one gets 409. The attempt is written to the schedule's state file before the run starts, and a failed run backs
+  off 15 minutes doubling to 6 hours, so neither a crash nor a persistent error retries in a tight loop. Not verified: a
+  real idle workspace over a long time, and the live Console.

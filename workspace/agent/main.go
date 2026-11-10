@@ -29,6 +29,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memconsol"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memlintsched"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
@@ -343,6 +344,9 @@ func serve() {
 	// when on, it looks while the workspace is idle and only queues proposals for the member.
 	memconsol.Configure(memconsol.Production())
 	memconsol.Start(context.Background())
+	// The scheduled lint --apply (ADR 0130 decision 5): its own switch (memoryLintSchedule, default
+	// off) and window, no model; see internal/memlintsched.
+	memlintsched.Start(context.Background(), memlintsched.Production())
 	// The retired memory review's pending queue is exported once (ADR 0130 decision 2) and the
 	// review's state removed. A failure leaves the queue where it is and is retried next start.
 	if err := memreview.MigrateQueue(); err != nil {

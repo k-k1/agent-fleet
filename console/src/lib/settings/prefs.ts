@@ -257,6 +257,10 @@ const PREFS = {
   // proposals screen and the toggle are the next change); this is the key the Agent reads, kept so a save of the other
   // settings does not drop it.
   memoryConsolidation: agentDefaulted(false, { normalize: isTrue }), // opt-in (ADR 0130) — memory text goes to a model, and it spends tokens unattended
+  // The scheduled lint --apply (ADR 0130 decision 5): while the workspace is idle the Agent publishes lint's reasons and
+  // renames as commits authored `lint`, no model involved. Default false, like the Agent's own missing-key answer
+  // (uiprefs.MemoryLintSchedule); separate from memoryConsolidation, and it also needs agentMemory on.
+  memoryLintSchedule: agentDefaulted(false, { normalize: isTrue }), // opt-in (ADR 0130) — commits land in the memory store unattended
   // Muse Code's contributor mode (#2535, Settings > Agents > Muse Code): on, Meta may use the
   // conversations to improve its product. Default false, like the Agent's own missing-key answer
   // (uiprefs.MuseContributorMode). A muse session records the value it was created with and keeps
