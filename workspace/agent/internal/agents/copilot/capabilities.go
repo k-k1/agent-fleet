@@ -60,3 +60,8 @@ func (agentImpl) NoHeadlessChat() {}
 func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 	return agents.TUIInterruptCtrlC()
 }
+
+// ProgressSignals is agents.ProgressSignaler: ProgressPaneOnly; its Terminal sessions have no status hook.
+func (agentImpl) ProgressSignals() agents.ProgressTraits {
+	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly, HooklessStatus: true}
+}

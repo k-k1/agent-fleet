@@ -664,3 +664,17 @@ mis-cased spellings) x six models, texts included. `kindLiteralCeiling` 82 → 7
 unchanged; not verified against a live fleet.
 
 Follow-ups: #2925.
+
+## Note (2026-11-10): Terminal progress signals behind `agents.ProgressSignaler` (#2925)
+
+The three kind branches of `sessionx/progress.go` (`progressTrusted`, `progressPaneOnly`,
+`statusMarksBoundary`) now read an optional `agents.ProgressSignaler`, looked up by exact registry
+key after `NormalizeKind`. Per kind: `ProgressHooks` (claude, agy), `ProgressPaneOnly` (codex,
+opencode, cursor, copilot, kiro) and `HooklessStatus` (agy, cursor, copilot, kiro). A kind without
+the capability (muse, lcpp, shell, ssm) stays unmeasured, and the zero value keeps the status
+file's mtime usable, as the old fall-through did. `TestProgressTraitsMatchOldSwitch` pins the three
+predicates to a copy of the old switches over every registered kind x driver (plus empty and
+unknown kinds). `kindLiteralCeiling` 74 → 71. Behaviour unchanged; not verified against a live
+fleet.
+
+Follow-ups: #2925.

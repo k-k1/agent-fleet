@@ -103,3 +103,8 @@ func (agentImpl) TUIInterrupt(inSubagentView func() bool) agents.TUIInterruptTra
 	}
 	return agents.TUIInterruptTraits{Keys: []string{"Escape", "Escape"}, Gap: DoubleEscGap, Measured: true}
 }
+
+// ProgressSignals is agents.ProgressSignaler: ProgressPaneOnly.
+func (agentImpl) ProgressSignals() agents.ProgressTraits {
+	return agents.ProgressTraits{Signal: agents.ProgressPaneOnly}
+}
