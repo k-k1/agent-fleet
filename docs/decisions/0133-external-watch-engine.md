@@ -391,6 +391,18 @@ GitHub Actions runs not tied to a PR are watchable. Decisions the text left open
   (registrations still list pull request subjects only), paging a workflow that starts more than 20 runs between two
   reads, and `watch.ended` for the PR source. Follow-up: #3780.
 
+*Note, 2026-11-10 (#3780).* Two of the items above are built. (1) A workflow's run list is followed past its first
+page (20 runs) while `total_count` says there are more, at most 5 pages (100 runs), each page with its own ETag and
+runs deduplicated by id across a boundary; a later page that fails fails the whole read, so the cursor does not
+advance on a partial view. The event rule is unchanged (the newest completed run is told, latest state per type); what
+paging fixes is a completed run hidden behind 20 newer runs that are still going. (2) The `github` source's read of the
+pull request itself now answers `ErrGone` by the Actions source's own definition (404, 403 that is not a rate limit,
+410), so a deleted PR or repository ends the watch with `watch.ended` after the usual three reads; 5xx and rate limits
+never do. Other reads of the PR (checks of a head SHA) stay plain errors, since a 404 there is a force-push. Bitbucket's
+PR source is unchanged. Not built, left in #3780: webhook pokes for runs (a `workflow_run` delivery would have to be
+parsed into run subjects and accepted by the poke route, both Control Plane changes; a workflow subject carries a
+floor the Control Plane cannot derive), Bitbucket Pipelines, and the live check against a private repository.
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled
