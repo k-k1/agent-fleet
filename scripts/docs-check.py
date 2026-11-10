@@ -785,22 +785,23 @@ def source_studio_kinds() -> set[str]:
     sess = os.path.join(internal, "session", "session.go")
     if not (os.path.exists(path) and os.path.exists(sess)):
         return set()
-    m = re.search(r"^func StudioSessionUnsupported\(.*?^\}", read(path), re.M | re.S)
-    if not m:
+    src = read(path)
+    # The refused kinds are the keys of studioManagedRefusal, and the function must still
+    # consult it; any other shape reads as "nothing found", which the caller reports as an
+    # error: a guess here would approve a wrong cell.
+    fn = re.search(r"^func StudioSessionUnsupported\(.*?^\}", src, re.M | re.S)
+    tbl = re.search(r"^var studioManagedRefusal = map\[string\]func\(kind string\) string\{(.*?)^\}", src, re.M | re.S)
+    if not fn or not tbl or "studioManagedRefusal[" not in fn.group(0):
         return set()
     consts = dict(re.findall(r'^\s*(Kind\w+)\s*=\s*"([a-z]+)"', read(sess), re.M))
-    body = m.group(0)
-    # Any shape this reader does not understand reads as "nothing found", which the caller
-    # reports as an error: a guess here would approve a wrong cell.
-    if len(re.findall(r"\bswitch\b", body)) != 1:
-        return set()
     refused: set[str] = set()
-    for case in re.findall(r"\bcase\b([^:]*):", body):  # a case list may span lines
-        for item in case.split(","):
-            ref = re.fullmatch(r"\s*session\.(Kind\w+)\s*", item)
-            if not ref or ref.group(1) not in consts:
-                return set()  # a literal, an unknown constant or an expression
-            refused.add(consts[ref.group(1)])
+    for key in re.findall(r"^\t(\S+?):", tbl.group(1), re.M):
+        ref = re.fullmatch(r"session\.(Kind\w+)", key)
+        if not ref or ref.group(1) not in consts:
+            return set()  # a literal, an unknown constant or an expression
+        refused.add(consts[ref.group(1)])
+    if not refused:
+        return set()
     caps = source_caps()
     managed_only = {k for k, fields in caps.items() if "ManagedOnly" in fields}
     return set(caps) - (refused & managed_only)
