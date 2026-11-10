@@ -120,6 +120,7 @@ var oneSession = []map[string]any{{
 // a NORMAL state, so the answer is 200 with an empty candidate list, and the UI says
 // "share it first".
 func TestHandoffRecipientsUnsharedSessionAnswers(t *testing.T) {
+	t.Parallel()
 	f := newHandoffAPIFixture(t, oneSession)
 	rec := f.getRecipients(t, "session-1")
 	if rec.Code != http.StatusOK {
@@ -144,6 +145,7 @@ func TestHandoffRecipientsUnsharedSessionAnswers(t *testing.T) {
 
 // A session that does not exist stays a 404 — never conflated with "not shared".
 func TestHandoffRecipientsUnknownSessionIs404(t *testing.T) {
+	t.Parallel()
 	f := newHandoffAPIFixture(t, oneSession)
 	if rec := f.getRecipients(t, "no-such-session"); rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -151,6 +153,7 @@ func TestHandoffRecipientsUnknownSessionIs404(t *testing.T) {
 }
 
 func TestHandoffRecipientsListsSharedMembers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newHandoffAPIFixture(t, oneSession)
 	// Put a share rule in place, then sync: the catalog row is created by the sync.
@@ -176,6 +179,7 @@ func TestHandoffRecipientsListsSharedMembers(t *testing.T) {
 // the same reason shared reads are thinned through `freshCatalog`. Only the moment an
 // offer is made re-reads it exactly.
 func TestHandoffRecipientsThrottlesInventorySync(t *testing.T) {
+	t.Parallel()
 	f := newHandoffAPIFixture(t, oneSession)
 	if rec := f.getRecipients(t, "session-1"); rec.Code != http.StatusOK {
 		t.Fatalf("status=%d", rec.Code)
@@ -197,6 +201,7 @@ func TestHandoffRecipientsThrottlesInventorySync(t *testing.T) {
 // The modal opens on the recipient list alone: ?context=skip must not make the owner's Agent
 // run the git status behind the verdict, and the verdict is read from its own route.
 func TestHandoffRecipientsContextSkipDoesNotAskTheAgentForTheVerdict(t *testing.T) {
+	t.Parallel()
 	f := newHandoffAPIFixture(t, oneSession)
 	req := httptest.NewRequest(http.MethodGet, "/api/sessions/session-1/handoff-recipients?context=skip", nil)
 	req.SetPathValue("name", "session-1")
@@ -221,6 +226,7 @@ func TestHandoffRecipientsContextSkipDoesNotAskTheAgentForTheVerdict(t *testing.
 }
 
 func TestHandoffContextRouteRelaysTheAgentsVerdict(t *testing.T) {
+	t.Parallel()
 	f := newHandoffAPIFixture(t, oneSession)
 	get := func(name string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+name+"/handoff-context", nil)
@@ -246,6 +252,7 @@ func TestHandoffContextRouteRelaysTheAgentsVerdict(t *testing.T) {
 // than the Console could have made before reading the body or touching the Agent. The handler is
 // called directly, so the global write gate is out of the picture.
 func TestHandoffCreateRefusesCrossOriginRequests(t *testing.T) {
+	t.Parallel()
 	f := newHandoffAPIFixture(t, oneSession)
 	const body = `{"sessionName":"session-1","title":"t","prompt":"p","recipientMembershipId":"x"}`
 	send := func(h map[string]string) int {

@@ -46,6 +46,7 @@ const rawSnapshot = `{"v":1,"kinds":{
 // The snapshot is isolated (ADR 0111 decision 6): whatever it holds, sessions, repo jobs and
 // image jobs decode the same, and the busy decision taken from them is the same.
 func TestLimitSnapshotNeverAffectsTheEnvelope(t *testing.T) {
+	t.Parallel()
 	decode := func(body string) agentSessionsEnvelope {
 		t.Helper()
 		var env agentSessionsEnvelope
@@ -68,6 +69,7 @@ func TestLimitSnapshotNeverAffectsTheEnvelope(t *testing.T) {
 	}
 	for name, extra := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			env := decode(agentEnvelopeBase + extra + `}`)
 			if !reflect.DeepEqual(env.Sessions, plain.Sessions) || env.RepoJobs != 1 || env.ImageJobs != 2 {
 				t.Fatalf("envelope changed: %+v", env)
@@ -91,6 +93,7 @@ func TestLimitSnapshotNeverAffectsTheEnvelope(t *testing.T) {
 
 // One malformed kind costs only that kind.
 func TestLimitSnapshotMalformedKindIsUnknownAlone(t *testing.T) {
+	t.Parallel()
 	raw := json.RawMessage(`{"v":1,"kinds":{"claude":{"epoch":"e","units":"bad"},
 	 "agy":{"epoch":"e","units":[{"unit":"5h","usedPct":1,"observedAt":"2026-10-12T11:00:00Z"}]},
 	 "codex":{"epoch":"e","epochSince":"2026-10-12T08:00:00Z","units":[{"unit":"5h","usedPct":1,"observedAt":"2026-10-12T11:00:00Z"},
@@ -106,6 +109,7 @@ func TestLimitSnapshotMalformedKindIsUnknownAlone(t *testing.T) {
 // An old CP decodes GET /sessions into the envelope it had before this field existed. It must
 // keep working when a new Agent adds the snapshot.
 func TestOldEnvelopeIgnoresTheSnapshot(t *testing.T) {
+	t.Parallel()
 	var old struct {
 		Sessions  []sessionWire `json:"sessions"`
 		RepoJobs  int           `json:"repoJobs"`
@@ -120,6 +124,7 @@ func TestOldEnvelopeIgnoresTheSnapshot(t *testing.T) {
 }
 
 func TestLimitSessionsOf(t *testing.T) {
+	t.Parallel()
 	var env agentSessionsEnvelope
 	_ = json.Unmarshal([]byte(agentEnvelopeBase+`}`), &env)
 	got := limitSessionsOf(env.Sessions)
@@ -232,6 +237,7 @@ func entryOf(t *testing.T, r boardResp, userKey string) map[string]any {
 // The reduction (decision 6): a viewer outside the audience gets exactly what a never-observed
 // member gives, and the band level never carries the exact values.
 func TestLimitBoardReduction(t *testing.T) {
+	t.Parallel()
 	f := newLimitFixture(t, openLimitStore(t), "alice", "bob", "carol", "dave", "erin")
 	for _, who := range []string{"alice", "bob", "carol"} {
 		f.observe(t, who, validSnapshot())
@@ -288,6 +294,7 @@ func limitJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 // reading data it may not show, and that must not be the only thing standing between a viewer
 // and the data.
 func TestBoardEntryOutsideTheAudienceIsNeverObserved(t *testing.T) {
+	t.Parallel()
 	obs := []store.LimitObservation{{Kind: "claude", Unit: "5h", UsedPct: 70, ObservedAt: "2026-10-12T11:59:00Z"}}
 	ss := &store.LimitSessionStates{States: `[{"kind":"claude","state":"limited"}]`, ObservedAt: "2026-10-12T11:59:00Z"}
 	never := limitJSON(boardEntry(store.LimitPublication{}, false, "v", nil, nil, limitNow))
@@ -307,6 +314,7 @@ func TestBoardEntryOutsideTheAudienceIsNeverObserved(t *testing.T) {
 
 // The state level shows what sessions ran into and nothing of the quota.
 func TestLimitBoardStateLevel(t *testing.T) {
+	t.Parallel()
 	f := newLimitFixture(t, openLimitStore(t), "alice", "bob")
 	f.observe(t, "alice", validSnapshot())
 	f.publish(t, "alice", "tenant", "state")
@@ -321,6 +329,7 @@ func TestLimitBoardStateLevel(t *testing.T) {
 
 // Display honesty (decision 6, addendum item 6), on the data the reaper last stored.
 func TestProjectLimitsStatuses(t *testing.T) {
+	t.Parallel()
 	obs := []store.LimitObservation{
 		{Kind: "claude", Unit: "5h", UsedPct: 60, ResetsAt: "2026-10-12T13:00:00Z", ObservedAt: "2026-10-12T11:30:00Z"},
 		{Kind: "claude", Unit: "7d", UsedPct: 30, ResetsAt: "2026-10-15T00:00:00Z", ObservedAt: "2026-10-12T10:30:00Z"},
@@ -352,6 +361,7 @@ func TestProjectLimitsStatuses(t *testing.T) {
 // A setting is per tenant membership: one person in two tenants publishes separately, and a
 // co-member in the other tenant sees nothing of the first.
 func TestLimitBoardCrossTenantIsolation(t *testing.T) {
+	t.Parallel()
 	st := openLimitStore(t)
 	ctx := context.Background()
 	f := newLimitFixture(t, st, "alice", "bob")
@@ -397,6 +407,7 @@ func TestLimitBoardCrossTenantIsolation(t *testing.T) {
 }
 
 func TestLimitBoardTenantSwitchAndRoster(t *testing.T) {
+	t.Parallel()
 	f := newLimitFixture(t, openLimitStore(t), "alice", "bob", "carol", "dave")
 	f.observe(t, "alice", validSnapshot())
 	f.publish(t, "alice", "tenant", "exact")
@@ -423,6 +434,7 @@ func TestLimitBoardTenantSwitchAndRoster(t *testing.T) {
 
 // The browser fallback (POST /api/notifications/usage-observations) under the same contract.
 func TestUsageObservationFeedsTheBoardOnlyWithAnObservationTime(t *testing.T) {
+	t.Parallel()
 	st := openLimitStore(t)
 	f := newLimitFixture(t, st, "alice")
 	mv := f.members["alice"]
@@ -491,11 +503,13 @@ func TestUsageObservationFeedsTheBoardOnlyWithAnObservationTime(t *testing.T) {
 // The sweep itself: a reaper read that carries a snapshot (valid or broken) takes the same
 // idle decision as one without, and the valid one lands on the board.
 func TestReaperSweepRecordsTheSnapshotWithoutChangingDecisions(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, limits string
 		want         int
 	}{{"none", "", 0}, {"broken", `,"limits":{"v":1,"kinds":"x"}`, 0}, {"valid", `,"limits":` + snapshotAt(time.Now()), 3}} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			st, ws, mgr := reaperLifecycleFixture(t)
 			var asked string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -550,6 +564,7 @@ var _ runtime.Runtime = (*limitSweepRuntime)(nil)
 
 // Both dialects for the board's read path, end to end through the projection.
 func TestLimitBoardPostgres(t *testing.T) {
+	t.Parallel()
 	url, ok := pgtest.Schema(t)
 	if !ok {
 		t.Skip("set AF_TEST_DATABASE_URL to run the Postgres half")
@@ -577,6 +592,7 @@ func TestLimitBoardPostgres(t *testing.T) {
 // observed anything of the new account. That epoch alone must hide the previous account's
 // values; waiting for the first new observation left them published as current.
 func TestLimitBoardEpochOnlyReloginHidesThePreviousAccount(t *testing.T) {
+	t.Parallel()
 	f := newLimitFixture(t, openLimitStore(t), "alice", "bob")
 	f.observe(t, "alice", validSnapshot())
 	f.publish(t, "alice", "tenant", "exact")
@@ -596,6 +612,7 @@ func TestLimitBoardEpochOnlyReloginHidesThePreviousAccount(t *testing.T) {
 // Review finding (#2017): a browser post read before a re-login and delivered after the reaper
 // stored the new account must not bring the previous account back.
 func TestUsageObservationLatePostFromBeforeAReloginIsRefused(t *testing.T) {
+	t.Parallel()
 	st := openLimitStore(t)
 	f := newLimitFixture(t, st, "alice")
 	mv := f.members["alice"]
@@ -690,6 +707,7 @@ const (
 // Round 2: an older login's post does nothing, and a newer login does not inherit the old armed
 // state, so its first reading is not taken for a reset.
 func TestUsageResetNotificationIsFencedByLogin(t *testing.T) {
+	t.Parallel()
 	notifyDialects(t, func(t *testing.T, st *store.SQL) {
 		h := newNotifyHarness(t, st, nil)
 		ctx := context.Background()
@@ -711,6 +729,7 @@ func TestUsageResetNotificationIsFencedByLogin(t *testing.T) {
 // Round 3 (b): the generation is per source, not per window. B observed only on the 7-day
 // window must already clear A's armed 5-hour window and refuse A's late 5-hour post.
 func TestUsageResetNotificationNewLoginOnAnotherWindowFencesAll(t *testing.T) {
+	t.Parallel()
 	notifyDialects(t, func(t *testing.T, st *store.SQL) {
 		h := newNotifyHarness(t, st, nil)
 		ctx := context.Background()
@@ -764,6 +783,7 @@ func (g *gateStore) ApplyUsageObservation(ctx context.Context, m, s, e, gen stri
 // A's decision must be taken against B's committed generation, not the one it read, or it rolls
 // the state back to A and armed=1.
 func TestUsageResetNotificationConcurrentOlderPostCannotRollBack(t *testing.T) {
+	t.Parallel()
 	notifyDialects(t, func(t *testing.T, st *store.SQL) {
 		g := &gateStore{SQL: st, reached: make(chan struct{}), release: make(chan struct{})}
 		h := newNotifyHarness(t, st, g)
@@ -787,6 +807,7 @@ func TestUsageResetNotificationConcurrentOlderPostCannotRollBack(t *testing.T) {
 // Round 2: two logins recognised in the same second are still ordered (the generation keeps
 // its nanoseconds all the way to the store).
 func TestLimitBoardSameSecondReloginSwitches(t *testing.T) {
+	t.Parallel()
 	f := newLimitFixture(t, openLimitStore(t), "alice", "bob")
 	f.observe(t, "alice", `{"v":1,"kinds":{"claude":{"epoch":"a","epochSince":"2026-10-12T11:58:00.000000000Z","units":[{"unit":"5h","usedPct":90,"resetsAt":"2026-10-12T14:00:00Z","observedAt":"2026-10-12T11:57:00Z"}]}}}`)
 	f.observe(t, "alice", `{"v":1,"kinds":{"claude":{"epoch":"b","epochSince":"2026-10-12T11:58:00.000000001Z","units":[]}}}`)
@@ -798,6 +819,7 @@ func TestLimitBoardSameSecondReloginSwitches(t *testing.T) {
 // Review finding (#2017): with the tenant switch off, /me shows no values either, and the
 // setting stays editable.
 func TestLimitBoardMeShowsNothingWhenTheTenantIsOff(t *testing.T) {
+	t.Parallel()
 	f := newLimitFixture(t, openLimitStore(t), "alice")
 	f.observe(t, "alice", validSnapshot())
 	if err := f.st.SetLimitBoardEnabled(context.Background(), f.tenant.ID, false, "t"); err != nil {
@@ -819,6 +841,7 @@ func TestLimitBoardMeShowsNothingWhenTheTenantIsOff(t *testing.T) {
 // supply. A key the catalog does not name (a typo, a renamed kind) would silently drop that
 // kind's quota from the board, so every key must be a catalog kind.
 func TestLimitKindUnitsAreCatalogKinds(t *testing.T) {
+	t.Parallel()
 	known := map[string]bool{}
 	for _, e := range agentkinds.All() {
 		known[e.Kind] = true
