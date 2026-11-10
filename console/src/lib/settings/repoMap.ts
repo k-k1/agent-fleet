@@ -16,10 +16,6 @@ export interface RepoMapEntry {
 
 export type RepoMap = Record<string, RepoMapEntry>;
 
-/** A tombstone older than this is dropped. A device offline for longer than this can bring a
- * forgotten entry back; the cost is choosing that repository once more. */
-export const REPO_TOMBSTONE_TTL_MS = 90 * 24 * 3600 * 1000;
-
 /** Reads a stored value: legacy `scope -> "repo"` strings become entries with at = 0, anything
  * malformed is dropped. Idempotent. */
 export function normalizeRepoMap(v: unknown): RepoMap {
@@ -36,24 +32,29 @@ export function normalizeRepoMap(v: unknown): RepoMap {
   return out;
 }
 
-/** Per-entry merge of two copies: the newer change wins; on a tie the tombstone does (when in
- * doubt the member chooses once more rather than launching in a repository they forgot). */
+/** Per-entry merge of two copies: the newer change wins. On a tie the tombstone does (when in
+ * doubt the member chooses once more rather than launching in a repository they forgot), and
+ * between two live entries the larger repo name does, so the result never depends on argument
+ * order and two devices converge. Tombstones are never pruned: one is tens of bytes and the map
+ * is bounded by the number of tracker projects, while dropping one would let a long-offline
+ * device bring a forgotten repository back, which is the wrong-repository launch this memory
+ * exists to prevent. Stamps come from each device's wall clock, so a badly slow clock can lose a
+ * merge against an entry it never saw; the member then picks once more. */
 export function mergeRepoMaps(a: RepoMap, b: RepoMap): RepoMap {
   const out: RepoMap = { ...a };
   for (const [k, e] of Object.entries(b)) {
     const cur = out[k];
-    if (!cur || e.at > cur.at || (e.at === cur.at && !e.repo && !!cur.repo)) out[k] = e;
+    if (!cur || e.at > cur.at) out[k] = e;
+    else if (e.at === cur.at && e.repo !== cur.repo) {
+      if (!e.repo || (!!cur.repo && e.repo > cur.repo)) out[k] = e;
+    }
   }
   return out;
 }
 
-/** The map with `scope` set to `repo` ("" forgets it), stamped `now`. Expired tombstones go. */
+/** The map with `scope` set to `repo` ("" forgets it), stamped `now`. */
 export function withRepoEntry(map: RepoMap, scope: string, repo: string, now = Date.now()): RepoMap {
-  const out: RepoMap = {};
-  for (const [k, e] of Object.entries(map)) {
-    if (!e.repo && e.at < now - REPO_TOMBSTONE_TTL_MS) continue;
-    out[k] = e;
-  }
+  const out: RepoMap = { ...map };
   // A stamp that does not move past the entry it replaces (clock skew between devices) would lose
   // the merge against that entry.
   const prev = out[scope]?.at ?? 0;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { liveRepoMap, mergeRepoMaps, normalizeRepoMap, REPO_TOMBSTONE_TTL_MS, withRepoEntry } from "./repoMap.ts";
+import { liveRepoMap, mergeRepoMaps, normalizeRepoMap, withRepoEntry } from "./repoMap.ts";
 
 describe("repoMap", () => {
   it("reads legacy string maps as entries and drops malformed ones", () => {
@@ -27,11 +27,18 @@ describe("repoMap", () => {
     expect(liveRepoMap(mergeRepoMaps(entry, { "jira:A": { repo: "", at: 5 } }))).toEqual({});
   });
 
-  it("stamps past the entry it replaces and drops expired tombstones", () => {
+  it("converges on a tie between live entries whatever the argument order", () => {
+    const a = { "jira:A": { repo: "web", at: 0 } };
+    const b = { "jira:A": { repo: "sdk", at: 0 } };
+    expect(mergeRepoMaps(a, b)).toEqual(mergeRepoMaps(b, a));
+    expect(liveRepoMap(mergeRepoMaps(a, b))).toEqual({ "jira:A": "web" });
+  });
+
+  it("stamps past the entry it replaces and keeps tombstones", () => {
     const now = 10_000_000_000_000;
-    const old = { "jira:A": { repo: "web", at: now + 50 }, "jira:Z": { repo: "", at: now - REPO_TOMBSTONE_TTL_MS - 1 } };
+    const old = { "jira:A": { repo: "web", at: now + 50 }, "jira:Z": { repo: "", at: 1 } };
     const out = withRepoEntry(old, "jira:A", "", now);
     expect(out["jira:A"]).toEqual({ repo: "", at: now + 51 });
-    expect("jira:Z" in out).toBe(false);
+    expect(out["jira:Z"]).toEqual({ repo: "", at: 1 });
   });
 });

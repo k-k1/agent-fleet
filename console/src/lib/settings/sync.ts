@@ -207,16 +207,33 @@ export function scheduleServerSave(): void {
   }, 600);
 }
 
+// Longest the pre-save read may hold the PUT back. A hung read must not stall every setting's sync.
+const PREMERGE_READ_MS = 5_000;
+
 // Reads the server copy and merges the keys that declare a merge into this tab's state. A failed
-// read or an owner switch while it was in flight changes nothing; the save then goes out as it
-// did before (the entries it would have kept are the same ones a later hydrate merges back).
+// or slow read, or an owner switch while it was in flight, changes nothing; the save then goes
+// out as it did before (a later hydrate merges back what it would have kept).
+//
+// Not atomic: the server has no compare-and-swap, so two tabs that save in the same instant can
+// both read before either PUT lands and the later PUT wins, losing the other's entry until that
+// tab's next hydrate restores it. Likewise an older build that does not know the entry shape
+// reads the map as empty and can save {} until a current tab restores it. Both end in choosing a
+// repository once more, never in a wrong launch.
 async function mergeServerCopiesBeforeSave(): Promise<void> {
   const owner = ownerSource();
   let srv: any;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    srv = await api("api/env/ui-prefs");
+    srv = await Promise.race([
+      api("api/env/ui-prefs"),
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error("premerge read timed out")), PREMERGE_READ_MS);
+      }),
+    ]);
   } catch {
     return;
+  } finally {
+    clearTimeout(timer);
   }
   if (ownerSource() !== owner || !srv || typeof srv !== "object" || srv.error) return;
   const cur = getSettings();
