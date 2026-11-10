@@ -291,7 +291,7 @@ func actionsGet[T any](g *GitHub, ctx context.Context, path string, c *ghCached[
 		etag = c.ETag
 	}
 	var v T
-	status, tag, err := g.get(ctx, path, etag, &v)
+	status, tag, hdr, err := g.getHdr(ctx, path, etag, &v)
 	if err != nil {
 		return err
 	}
@@ -301,7 +301,14 @@ func actionsGet[T any](g *GitHub, ctx context.Context, path string, c *ghCached[
 	case http.StatusOK:
 		c.Key, c.ETag, c.Val = path, tag, v
 		return nil
-	case http.StatusNotFound, http.StatusForbidden, http.StatusGone:
+	case http.StatusForbidden:
+		// A 403 that asks for SSO re-authorization is readable again once the member
+		// re-authorizes the token, so it is a retried error, never "gone".
+		if hdr.Get("X-GitHub-SSO") != "" {
+			return fmt.Errorf("GitHub answered 403 for %s: the token needs SSO authorization", path)
+		}
+		return &ErrGone{gone}
+	case http.StatusNotFound, http.StatusGone:
 		return &ErrGone{gone}
 	}
 	return fmt.Errorf("GitHub answered %d for %s", status, path)
@@ -353,7 +360,7 @@ func (a *GitHubActions) pollWorkflow(ctx context.Context, subject SubjectID, rep
 	if err := actionsGet(a.GH, ctx, path, &cur.List, goneWorkflow); err != nil {
 		return nil, raw, Hint{}, err
 	}
-	runs, err := a.morePages(ctx, repo, file, branch, floorUnix, cur)
+	runs, capped, err := a.morePages(ctx, repo, file, branch, floorUnix, cur)
 	if err != nil {
 		return nil, raw, Hint{}, err
 	}
@@ -382,8 +389,10 @@ func (a *GitHubActions) pollWorkflow(ctx context.Context, subject SubjectID, rep
 		}
 	}
 	out, _ := json.Marshal(cur)
-	if wait == 0 {
-		wait = actionsIdleAfter
+	if wait == 0 || capped {
+		// A list longer than the page cap costs the cap in counted requests per read; at the busy
+		// pace a hot workflow would spend this source's share of the hourly limit in minutes.
+		wait = max(wait, actionsIdleAfter)
 	}
 	return evs, out, Hint{After: wait}, nil
 }
@@ -392,10 +401,13 @@ func (a *GitHubActions) pollWorkflow(ctx context.Context, subject SubjectID, rep
 // list says there are more (total_count) and up to actionsMaxPages. Each page is read with its
 // own ETag. Runs are deduplicated by id: a run that starts between two page reads pushes one run
 // from a page to the next, and it must not be counted twice. A failure on a later page fails the
-// whole read (the cursor is not advanced), so a run on a page that could not be read is never
-// judged missing.
-func (a *GitHubActions) morePages(ctx context.Context, repo, file, branch string, floorUnix int64, cur *actionsCursor) ([]ghRun, error) {
-	runs := append([]ghRun(nil), cur.List.Val.Runs...)
+// whole read (the caller keeps the previous raw cursor, so nothing is persisted), so a run on a
+// page that could not be read is never judged missing. capped reports that the loop stopped at
+// actionsMaxPages with more still listed. The loop runs while the last page was full and the
+// unique runs so far are fewer than total_count, so a list that shifted under the reads
+// may cost extra pages, bounded by the cap.
+func (a *GitHubActions) morePages(ctx context.Context, repo, file, branch string, floorUnix int64, cur *actionsCursor) (runs []ghRun, capped bool, err error) {
+	runs = append([]ghRun(nil), cur.List.Val.Runs...)
 	seen := make(map[int64]bool, len(runs))
 	for _, r := range runs {
 		seen[r.ID] = true
@@ -406,7 +418,7 @@ func (a *GitHubActions) morePages(ctx context.Context, repo, file, branch string
 		path := workflowRunsPath(repo, file, branch, actionsListSize, floorUnix) + "&page=" + strconv.Itoa(page)
 		c := cur.ListPages[path]
 		if err := actionsGet(a.GH, ctx, path, &c, goneWorkflow); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		pages[path] = c
 		last = len(c.Val.Runs)
@@ -418,7 +430,7 @@ func (a *GitHubActions) morePages(ctx context.Context, repo, file, branch string
 		}
 	}
 	cur.ListPages = pages
-	return runs, nil
+	return runs, last == actionsListSize && len(runs) < cur.List.Val.Total, nil
 }
 
 // startedAfter is the next-run rule: a run counts only when its id is above the floor (ids only
