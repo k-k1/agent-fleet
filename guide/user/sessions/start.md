@@ -32,7 +32,7 @@ Press **＋ Start** on the workspace action bar to open the **Start** screen.
 | Chat (assistant) | Starts a chat that uses no repository, for questions, translation and summaries ([Ask an assistant](../chat/assistant.md)) |
 | SSM — log in to another host | Logs in to EC2 over SSM. Shown only when you have an SSM profile ([Log in to EC2 with SSM](../integrations/aws-ssm.md)) |
 | shell | Opens a plain shell (bash) right away |
-| Launch an agent in home | Runs an agent in home (`~`), for drafts, research and throwaway work |
+| Launch an agent in home | Runs an agent in home (`~`), for drafts, research and throwaway work. It opens the same Start work dialog as a repository (images and files can be attached), without the worktree and branch choices |
 | Launch an agent in a repository | Search for a cloned repository and pick it to go on to **Start working** |
 | Clone a new repository… | Clone from a connection or a URL; when it finishes you go straight on to Start working |
 | Start in a new folder… | For when there is nothing to clone from yet: creates a folder under `~/repos`, runs `git init` and starts there |

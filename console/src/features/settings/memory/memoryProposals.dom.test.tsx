@@ -15,7 +15,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { ProposalsPanel, ConsolidationSettings, delayCause, parseGoDuration, isAdviceOnly, matchesFilter, canRetry } from "./memoryProposals.tsx";
+import { ProposalsPanel, ConsolidationSettings, LintScheduleSettings, delayCause, parseGoDuration, isAdviceOnly, matchesFilter, canRetry } from "./memoryProposals.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import { getSettings, setSetting } from "../../../lib/settings.ts";
@@ -105,6 +105,7 @@ afterEach(() => {
   apiJSON.mockReset();
   document.body.innerHTML = "";
   setSetting("memoryConsolidation", false);
+  setSetting("memoryLintSchedule", false);
 });
 
 describe("the pure helpers", () => {
@@ -151,6 +152,16 @@ describe("ConsolidationSettings", () => {
     expect(text).toContain(t("mem.cs_pending_count", { n: 2 }));
     // The last run is far in the future in this fixture, so the next run is a dated lower bound.
     expect(text).toContain(t("mem.cs_next_rule", { idle: "15 min" }));
+  });
+});
+
+describe("LintScheduleSettings", () => {
+  it("is off by default and its switch writes its own ui-pref, not the tidy-up one", async () => {
+    expect(getSettings().memoryLintSchedule).toBe(false);
+    await mount(<LintScheduleSettings />);
+    await click(buttons().find((b) => b.textContent === t("common.on")));
+    expect(getSettings().memoryLintSchedule).toBe(true);
+    expect(getSettings().memoryConsolidation).toBe(false);
   });
 });
 

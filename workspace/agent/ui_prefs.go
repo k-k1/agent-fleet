@@ -263,6 +263,15 @@ func memoryConsolidationNeedsMark(before, after map[string]any) bool {
 	return on(after) && !on(before)
 }
 
+// memoryLintScheduleNeedsMark says whether replacing `before` with `after` switches the scheduled
+// lint --apply on (memoryLintSchedule, ADR 0130 decision 5): it publishes commits into the memory
+// store unattended, so turning it on is the member's decision and not a session's. Only a boolean
+// true is on, the reading uiprefs.MemoryLintSchedule applies. Turning it off needs nothing.
+func memoryLintScheduleNeedsMark(before, after map[string]any) bool {
+	on := func(m map[string]any) bool { b, _ := m["memoryLintSchedule"].(bool); return b }
+	return on(after) && !on(before)
+}
+
 // museContributorNeedsMark says whether replacing `before` with `after` switches Muse Code's
 // contributor mode on (museContributorMode, #2535). Only a boolean true is on, the reading
 // uiprefs.MuseContributorMode applies, so a write of any other value cannot slip past as "not on".
@@ -318,11 +327,12 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// AGENT_TOKEN, which every session's shell holds, can call this route, so a write that would
 	// switch it on needs the Control Plane's mark (ADR 0113), which the CP puts on every relayed
 	// prefs write. The same holds for the memory consolidator (memoryConsolidation, ADR 0130): on, it
-	// sends memory text to a model and spends tokens unattended.
+	// sends memory text to a model and spends tokens unattended; and for the scheduled lint
+	// (memoryLintSchedule): on, it publishes commits into the memory store unattended.
 	// The mark guards this route, not ui-prefs.json: a session that can write the file can set
 	// the same switches without it (07-security §7.5.1, Limits).
 	prev := uiprefs.Read()
-	if (museContributorNeedsMark(prev, obj) || memoryConsolidationNeedsMark(prev, obj)) && !memberorigin.RequireBody(w, r, body) {
+	if (museContributorNeedsMark(prev, obj) || memoryConsolidationNeedsMark(prev, obj) || memoryLintScheduleNeedsMark(prev, obj)) && !memberorigin.RequireBody(w, r, body) {
 		return
 	}
 	// The retired memory review keys (ADR 0130 decision 2) are dropped on save, whatever sent

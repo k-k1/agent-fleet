@@ -602,6 +602,7 @@
   "agentMemory",
   "externalMemory",
   "memoryConsolidation",
+  "memoryLintSchedule",
   "museContributorMode",
   "sessionSpawnChildLimit",
   "sessionStoppedArchiveDays",
@@ -796,6 +797,7 @@
   "agentMemory": false,
   "externalMemory": "off",
   "memoryConsolidation": false,
+  "memoryLintSchedule": false,
   "museContributorMode": false,
   "sessionSpawnChildLimit": 3,
   "sessionStoppedArchiveDays": 0,
@@ -1030,6 +1032,7 @@
   "agentMemory": false,
   "externalMemory": "off",
   "memoryConsolidation": false,
+  "memoryLintSchedule": false,
   "museContributorMode": false,
   "sessionSpawnChildLimit": 3,
   "sessionStoppedArchiveDays": 0,
@@ -1379,6 +1382,10 @@
    "accumulated": false
   },
   "memoryConsolidation": {
+   "deviceLocal": false,
+   "accumulated": false
+  },
+  "memoryLintSchedule": {
    "deviceLocal": false,
    "accumulated": false
   },
@@ -1843,6 +1850,7 @@
    "agentMemory": true,
    "externalMemory": "read",
    "memoryConsolidation": true,
+   "memoryLintSchedule": true,
    "museContributorMode": true,
    "sessionSpawnChildLimit": 4,
    "sessionStoppedArchiveDays": 1,
@@ -2007,7 +2015,10 @@
    ],
    "workItemBranchTemplate": "x",
    "workItemRepoMap": {
-    "x": "y"
+    "x": {
+     "repo": "y",
+     "at": 0
+    }
    },
    "workingSets": [
     {
@@ -2404,6 +2415,7 @@
     "agentMemory": true,
     "externalMemory": "read",
     "memoryConsolidation": true,
+    "memoryLintSchedule": true,
     "museContributorMode": true,
     "sessionSpawnChildLimit": 4,
     "sessionStoppedArchiveDays": 1,
@@ -2565,7 +2577,10 @@
     ],
     "workItemBranchTemplate": "x",
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -2709,6 +2724,7 @@
     "agentMemory": true,
     "externalMemory": "read",
     "memoryConsolidation": true,
+    "memoryLintSchedule": true,
     "museContributorMode": true,
     "sessionSpawnChildLimit": 4,
     "sessionStoppedArchiveDays": 1,
@@ -2870,7 +2886,10 @@
     ],
     "workItemBranchTemplate": "x",
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -3400,6 +3419,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -3717,6 +3737,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -4034,6 +4055,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -4215,6 +4237,7 @@
       "agentMemory": true,
       "externalMemory": "read",
       "memoryConsolidation": true,
+      "memoryLintSchedule": true,
       "museContributorMode": true,
       "sessionSpawnChildLimit": 4,
       "sessionStoppedArchiveDays": 1,
@@ -4372,7 +4395,10 @@
       ],
       "workItemBranchTemplate": "x",
       "workItemRepoMap": {
-       "x": "y"
+       "x": {
+        "repo": "y",
+        "at": 0
+       }
       },
       "workingSets": [
        {
@@ -4540,6 +4566,7 @@
     "agentMemory": true,
     "externalMemory": "read",
     "memoryConsolidation": true,
+    "memoryLintSchedule": true,
     "museContributorMode": true,
     "sessionSpawnChildLimit": 4,
     "sessionStoppedArchiveDays": 1,
@@ -4704,7 +4731,10 @@
     ],
     "workItemBranchTemplate": "x",
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -4804,6 +4834,7 @@
     "agentMemory": true,
     "externalMemory": "read",
     "memoryConsolidation": true,
+    "memoryLintSchedule": true,
     "museContributorMode": true,
     "sessionSpawnChildLimit": 4,
     "sessionStoppedArchiveDays": 1,
@@ -5030,6 +5061,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -5237,7 +5269,10 @@
        "x"
       ],
       "workItemRepoMap": {
-       "x": "y"
+       "x": {
+        "repo": "y",
+        "at": 0
+       }
       },
       "workingSets": [
        {
@@ -5438,7 +5473,10 @@
      "x"
     ],
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -5519,6 +5557,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -5643,7 +5682,10 @@
        "x"
       ],
       "workItemRepoMap": {
-       "x": "y"
+       "x": {
+        "repo": "y",
+        "at": 0
+       }
       },
       "workingSets": [
        {
@@ -5761,7 +5803,10 @@
      "x"
     ],
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -6080,6 +6125,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -6688,6 +6734,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -6895,7 +6942,10 @@
        "x"
       ],
       "workItemRepoMap": {
-       "x": "y"
+       "x": {
+        "repo": "y",
+        "at": 0
+       }
       },
       "workingSets": [
        {
@@ -7096,7 +7146,10 @@
      "x"
     ],
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -7177,6 +7230,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -7301,7 +7355,10 @@
        "x"
       ],
       "workItemRepoMap": {
-       "x": "y"
+       "x": {
+        "repo": "y",
+        "at": 0
+       }
       },
       "workingSets": [
        {
@@ -7419,7 +7476,10 @@
      "x"
     ],
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -7576,6 +7636,7 @@
     "agentMemory": true,
     "externalMemory": "read",
     "memoryConsolidation": true,
+    "memoryLintSchedule": true,
     "museContributorMode": true,
     "sessionSpawnChildLimit": 4,
     "sessionStoppedArchiveDays": 1,
@@ -7740,7 +7801,10 @@
     ],
     "workItemBranchTemplate": "x",
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -7840,6 +7904,7 @@
     "agentMemory": true,
     "externalMemory": "read",
     "memoryConsolidation": true,
+    "memoryLintSchedule": true,
     "museContributorMode": true,
     "sessionSpawnChildLimit": 4,
     "sessionStoppedArchiveDays": 1,
@@ -8066,6 +8131,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -8273,7 +8339,10 @@
        "x"
       ],
       "workItemRepoMap": {
-       "x": "y"
+       "x": {
+        "repo": "y",
+        "at": 0
+       }
       },
       "workingSets": [
        {
@@ -8474,7 +8543,10 @@
      "x"
     ],
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -8555,6 +8627,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -8679,7 +8752,10 @@
        "x"
       ],
       "workItemRepoMap": {
-       "x": "y"
+       "x": {
+        "repo": "y",
+        "at": 0
+       }
       },
       "workingSets": [
        {
@@ -8797,7 +8873,10 @@
      "x"
     ],
     "workItemRepoMap": {
-     "x": "y"
+     "x": {
+      "repo": "y",
+      "at": 0
+     }
     },
     "workingSets": [
      {
@@ -8837,6 +8916,7 @@
  "localChange.all": {
   "putsAt599": 0,
   "gets": [
+   "api/env/ui-prefs",
    "api/env/ui-prefs"
   ],
   "puts": [
@@ -8878,6 +8958,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -9013,6 +9094,7 @@
       "agentMemory": true,
       "externalMemory": "read",
       "memoryConsolidation": true,
+      "memoryLintSchedule": true,
       "museContributorMode": true,
       "sessionSpawnChildLimit": 4,
       "sessionStoppedArchiveDays": 1,
@@ -9257,6 +9339,7 @@
     "agentMemory",
     "externalMemory",
     "memoryConsolidation",
+    "memoryLintSchedule",
     "museContributorMode",
     "sessionSpawnChildLimit",
     "sessionStoppedArchiveDays",
@@ -9410,6 +9493,7 @@
     "agentMemory": true,
     "externalMemory": "read",
     "memoryConsolidation": true,
+    "memoryLintSchedule": true,
     "museContributorMode": true,
     "sessionSpawnChildLimit": 4,
     "sessionStoppedArchiveDays": 1,
@@ -9641,6 +9725,7 @@
   "agentMemory": 1,
   "externalMemory": 1,
   "memoryConsolidation": 1,
+  "memoryLintSchedule": 1,
   "museContributorMode": 1,
   "sessionSpawnChildLimit": 1,
   "sessionStoppedArchiveDays": 1,
@@ -9732,6 +9817,8 @@
  "localChange.coalesced": {
   "mid": 0,
   "gets": [
+   "api/env/ui-prefs",
+   "api/env/ui-prefs",
    "api/env/ui-prefs"
   ],
   "puts": [
@@ -9773,6 +9860,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -9935,6 +10023,7 @@
     "agentMemory",
     "externalMemory",
     "memoryConsolidation",
+    "memoryLintSchedule",
     "museContributorMode",
     "sessionSpawnChildLimit",
     "sessionStoppedArchiveDays",
@@ -10114,6 +10203,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -10301,6 +10391,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -10447,6 +10538,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -10621,6 +10713,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -10992,6 +11085,7 @@
       "agentMemory",
       "externalMemory",
       "memoryConsolidation",
+      "memoryLintSchedule",
       "museContributorMode",
       "sessionSpawnChildLimit",
       "sessionStoppedArchiveDays",
@@ -11450,6 +11544,7 @@
      "agentMemory",
      "externalMemory",
      "memoryConsolidation",
+     "memoryLintSchedule",
      "museContributorMode",
      "sessionSpawnChildLimit",
      "sessionStoppedArchiveDays",
@@ -11720,6 +11815,7 @@
      "agentMemory",
      "externalMemory",
      "memoryConsolidation",
+     "memoryLintSchedule",
      "museContributorMode",
      "sessionSpawnChildLimit",
      "sessionStoppedArchiveDays",
@@ -11849,6 +11945,7 @@
        "agentMemory",
        "externalMemory",
        "memoryConsolidation",
+       "memoryLintSchedule",
        "museContributorMode",
        "sessionSpawnChildLimit",
        "sessionStoppedArchiveDays",
@@ -12108,6 +12205,7 @@
      "agentMemory",
      "externalMemory",
      "memoryConsolidation",
+     "memoryLintSchedule",
      "museContributorMode",
      "sessionSpawnChildLimit",
      "sessionStoppedArchiveDays",
@@ -12426,6 +12524,7 @@
     "agentMemory",
     "externalMemory",
     "memoryConsolidation",
+    "memoryLintSchedule",
     "museContributorMode",
     "sessionSpawnChildLimit",
     "sessionStoppedArchiveDays",
@@ -12584,6 +12683,7 @@
        "agentMemory",
        "externalMemory",
        "memoryConsolidation",
+       "memoryLintSchedule",
        "museContributorMode",
        "sessionSpawnChildLimit",
        "sessionStoppedArchiveDays",

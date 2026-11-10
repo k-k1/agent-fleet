@@ -14,6 +14,7 @@ import { useReposStore, useLaunchSeed, useLaunchTarget, type Repo } from "../rep
 import { useSessionsStore } from "../sessions/store.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { getSettings, setSetting, useSettings } from "../../lib/settings.ts";
+import { liveRepoMap, withRepoEntry } from "../../lib/settings/repoMap.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useWorkItemStore } from "./store.ts";
@@ -142,7 +143,7 @@ export function WorkItemModalHost() {
   if (detail) {
     const item = detail.item;
     const queryHint = payload?.queries.find((q) => q.id === item.queryId)?.repoHint || "";
-    const launch = resolveLaunchRepo(item, { link: detail.repoHint, query: queryHint, map: settings.workItemRepoMap }, folders);
+    const launch = resolveLaunchRepo(item, { link: detail.repoHint, query: queryHint, map: liveRepoMap(settings.workItemRepoMap) }, folders);
     return (
       <WorkItemDetailModal
         // A second link clicked while the panel is open re-points it; the key resets the launch
@@ -153,10 +154,11 @@ export function WorkItemModalHost() {
         repos={repos}
         defaultRepo={launch.repo}
         defaultSource={launch.source}
-        // Read the map at launch rather than from this render. The map is not among the keys
-        // shared live between tabs, so an entry another open tab learned can still be lost here
-        // (#3775); the cost is choosing that project's repository once more.
-        onRemember={(scope, repo) => setSetting("workItemRepoMap", { ...getSettings().workItemRepoMap, [scope]: repo })}
+        // Read the map at launch rather than from this render. Entries are merged per entry with
+        // the server copy on save and hydrate (lib/settings/repoMap.ts), so what another tab or
+        // device learned in between survives, and a forgotten entry stays forgotten.
+        onRemember={(scope, repo) => setSetting("workItemRepoMap", withRepoEntry(getSettings().workItemRepoMap, scope, repo))}
+        onForget={(scope) => setSetting("workItemRepoMap", withRepoEntry(getSettings().workItemRepoMap, scope, ""))}
         started={sessionsOnItem(ledger, sessions, item.provider, item.key)}
         onClose={close}
         onPick={(target, inPlace, reviewBranch, resolved) => pickTarget(resolved, target, inPlace, reviewBranch)}

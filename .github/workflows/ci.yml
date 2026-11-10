@@ -393,6 +393,8 @@ jobs:
       # fake `aws`, so it runs per PR as well.
       - name: teardown / bring-up order (the same check as release-gate)
         run: ./deploy/local/ecs-lifecycle-stub-test.sh
+      - name: harness teardown only sweeps its own Cloud Map namespace (stub aws)
+        run: ./deploy/local/harness-teardown-stub-test.sh
       - name: EFS backup preflight (real script, stub aws)
         run: ./deploy/local/efs-backup-check-stub-test.sh
       # The engine fetch sidecar lives inside a CloudFormation Mappings entry, where nothing

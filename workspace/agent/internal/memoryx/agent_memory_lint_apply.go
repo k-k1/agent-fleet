@@ -155,8 +155,16 @@ type agentMemLintApplyOut struct {
 // agentMemLintApply runs lint over one scope and publishes what it found: first the renames, then
 // the reasons (on a fresh check, because a rename moves the revision).
 func agentMemLintApply(scope, project string, now time.Time) (agentMemLintApplyOut, error) {
-	out := agentMemLintApplyOut{Scope: scope}
 	budget := agentMemLintApplyMax
+	return agentMemLintApplyBudget(scope, project, now, &budget)
+}
+
+// agentMemLintApplyBudget is agentMemLintApply drawing on a write budget the caller owns, so a run
+// over several scopes shares one per-run cap instead of getting one per scope.
+func agentMemLintApplyBudget(scope, project string, now time.Time, budgetp *int) (agentMemLintApplyOut, error) {
+	out := agentMemLintApplyOut{Scope: scope}
+	budget := *budgetp
+	defer func() { *budgetp = budget }()
 
 	wire, es, c, repo, err := agentMemLintCollect(scope, project)
 	if err != nil {

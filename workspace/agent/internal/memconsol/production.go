@@ -48,3 +48,7 @@ func sessionActivity() (busy bool, last time.Time) {
 	}
 	return busy, last
 }
+
+// SessionActivity is sessionActivity for the other idle-workspace schedules (memlintsched), so
+// they read one signal and do not copy it.
+func SessionActivity() (busy bool, last time.Time) { return sessionActivity() }

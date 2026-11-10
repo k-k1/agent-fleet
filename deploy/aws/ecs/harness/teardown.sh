@@ -85,7 +85,12 @@ done
 say namespace
 NSID=$(aws servicediscovery list-namespaces --query "Namespaces[?Name=='$N.internal'].Id | [0]" --output text)
 if [ -n "$NSID" ] && [ "$NSID" != None ]; then
-  for sv in $(aws servicediscovery list-services --query "Services[].Id" --output text); do
+  # Only this harness's namespace. An unfiltered list-services returns every Cloud Map service in
+  # the account and region, including the ones a real deployment's 50-tts / 60-engines own;
+  # delete-service refuses only the ones with a registered instance, so the engines scaled to zero
+  # were the ones that went (#3555).
+  for sv in $(aws servicediscovery list-services \
+      --filters "Name=NAMESPACE_ID,Values=$NSID,Condition=EQ" --query "Services[].Id" --output text); do
     aws servicediscovery delete-service --id "$sv" >/dev/null 2>&1
   done
   aws servicediscovery delete-namespace --id "$NSID" >/dev/null 2>&1 && echo "namespace $NSID"

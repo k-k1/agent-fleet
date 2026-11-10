@@ -298,6 +298,22 @@ func MemoryConsolidationEnabled() bool {
 	return AgentMemory() && MemoryConsolidation()
 }
 
+// MemoryLintSchedule is the member's switch for the scheduled `lint --apply` (ADR 0130 decision 5,
+// ui-prefs memoryLintSchedule). It is separate from MemoryConsolidation on purpose: lint calls no
+// model, so the consolidator's switch (which means "memory text goes to a model") says nothing
+// about it. Only a boolean true is on; missing or malformed reads as off, because a run publishes
+// commits into the store while nobody is looking.
+func MemoryLintSchedule() bool {
+	v, _ := Read()["memoryLintSchedule"].(bool)
+	return v
+}
+
+// MemoryLintScheduleEnabled is whether the scheduled lint may run: AF memory is on AND the member
+// turned the schedule on. A manual `lint --apply` answers to the memory switch alone.
+func MemoryLintScheduleEnabled() bool {
+	return AgentMemory() && MemoryLintSchedule()
+}
+
 // MuseContributorMode is the member's choice to run Muse Code in contributor mode (ui-prefs
 // museContributorMode, #2535), under which the vendor may use the conversation to improve its
 // product. Only a boolean true is on; missing or malformed reads as off, so nobody is opted in

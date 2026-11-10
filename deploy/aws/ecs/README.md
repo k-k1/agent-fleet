@@ -681,6 +681,12 @@ It does the things the hand-typed sequence gets wrong:
   through the `<stack>-SlotLaunchTemplateId` export, so it needs
   `cloudformation:ListExports`); name it with `--pool-stack <stack>`, which is checked to
   own the deployment's launch template.
+- **Carries on past a failed side stack, then fails.** `50-tts` and `60-engines` are optional and
+  nothing on the release route imports them (30-ingress gets their URLs as plain parameters), so
+  when one of their deploys fails (and CloudFormation rolls it back) the script records it, still
+  deploys 30-ingress so the CP gets the release, and ends with a `FAILED:` summary naming the
+  stack and a **non-zero exit**. Fix the cause (the stack events say which resource) and re-run.
+  Failures before that point (image checks, 20-platform, the slot pool) still stop the run.
 - **Lists the workspaces that are still on the old image**, because nothing moves
   them automatically. It never stops one: stopping kills that user's sessions, and
   when to take that is their call.

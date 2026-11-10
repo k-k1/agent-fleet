@@ -36,6 +36,7 @@ const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 let root: Root | null = null;
 let host: HTMLDivElement;
 const onPickRepo = vi.fn();
+const onPickHome = vi.fn();
 
 const rows = () => [...document.querySelectorAll<HTMLButtonElement>(".start-row")];
 const rowFor = (label: string) => rows().find((b) => b.textContent?.includes(label))!;
@@ -56,14 +57,14 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
-async function mount(kinds: string[] = ["claude"], claudeExpired = false): Promise<void> {
+async function mount(kinds: string[] = ["claude"]): Promise<void> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <StartModal kinds={kinds} claudeExpired={claudeExpired} onClose={() => {}} onPickRepo={onPickRepo} />
+        <StartModal kinds={kinds} onClose={() => {}} onPickRepo={onPickRepo} onPickHome={onPickHome} />
       </ToastProvider>,
     );
   });
@@ -78,6 +79,7 @@ function unmount(): void {
 beforeEach(async () => {
   initRepo.mockReset();
   onPickRepo.mockReset();
+  onPickHome.mockReset();
   apiGet.mockReset();
   apiGet.mockImplementation(async () => []);
   apiPost.mockReset();
@@ -181,71 +183,11 @@ describe("StartModal — SSM host card subtitle", () => {
   });
 });
 
-// The home stage's own launch button — a separate component from LaunchModal.tsx with its own
-// model state wiring, so a copy-paste mistake there would not be caught by LaunchModal's own
-// tests. lcpp has no CLI-picked own default (docs/log/109): unlike codex/opencode, launching it
-// with no model selected used to POST model="" and fail the very first turn silently.
-describe("StartModal — home stage lcpp model requirement (docs/log/109)", () => {
-  async function settle(): Promise<void> {
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-  }
-
-  it("disables Begin while the lcpp catalog is empty, then sends the auto-picked model", async () => {
-    unmount();
-    apiGet.mockImplementation(async (path: string) =>
-      path.includes("agents/lcpp/models") ? { models: [] } : [],
-    );
-    await mount(["lcpp"]);
+// The home launch itself lives in StartHost (StartHost.home.dom.test.tsx): the hub only reports the pick.
+describe("StartModal — Launch an agent at home", () => {
+  it("hands the pick to the host instead of rendering a form of its own", async () => {
     await click(rowFor(t("start.home_title")));
-    await settle();
-    expect(footButton(t("launch.launch")).disabled).toBe(true);
-
-    unmount();
-    apiGet.mockImplementation(async (path: string) =>
-      path.includes("agents/lcpp/models") ? { models: [{ id: "m1", label: "m1" }] } : [],
-    );
-    // Stop startWork right after it captures the POST body, before it reaches session-opening
-    // code this test does not mock (open.ts).
-    apiPost.mockImplementation(async (...a: unknown[]) =>
-      a[0] === "api/sessions" ? { error: { message: "stop-here" } } : {},
-    );
-    await mount(["lcpp"]);
-    await click(rowFor(t("start.home_title")));
-    await settle();
-    expect(footButton(t("launch.launch")).disabled).toBe(false);
-
-    await click(footButton(t("launch.launch")));
-    const call = apiPost.mock.calls.find((c) => c[0] === "api/sessions");
-    expect(call?.[2]).toMatchObject({ model: "m1" });
-  });
-});
-
-// An expired Claude login: the home stage says so and links to Settings > Agents, but Claude
-// stays launchable (/login in the pane is a valid recovery), so the launch button is not gated.
-describe("StartModal — home stage expired Claude login", () => {
-  const notice = () => document.querySelector(".ui-field-hint .linklike");
-
-  it("shows a Re-authenticate link that opens Settings > Agents, and keeps Begin enabled", async () => {
-    unmount();
-    await mount(["claude"], true);
-    await click(rowFor(t("start.home_title")));
-    expect(notice()?.textContent).toBe(t("mirror.error_auth_action"));
-    expect(footButton(t("launch.launch")).disabled).toBe(false);
-
-    await click(notice()!);
-    const s = (await import("../settings/store.ts")).useSettingsUI.getState();
-    expect(s.settingsOpen).toBe(true);
-    expect(s.settingsSection).toBe("agents");
-  });
-
-  it("shows nothing while the login is valid", async () => {
-    unmount();
-    await mount(["claude"], false);
-    await click(rowFor(t("start.home_title")));
-    expect(notice()).toBeNull();
+    expect(onPickHome).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("textarea")).toBeNull();
   });
 });

@@ -59,7 +59,7 @@ Instead of polling a pull request, an agent can ask to be told when it changes. 
 | `list_watches` | Lists its watches |
 | `unwatch` | Ends one watch |
 
-Events it can watch include checks finishing, a merge conflict, the pull request becoming ready to merge, being merged or closed, a reviewer asking for changes, and new unresolved review threads.
+Events it can watch include checks finishing, a merge conflict, the pull request becoming ready to merge, being merged or closed, a reviewer asking for changes, and new unresolved review threads. If the pull request itself is deleted (or its repository is, or you lose access to it), the watch ends with a notice saying so instead of waiting until it expires; a passing GitHub error or rate limit never ends a watch.
 
 - **GitHub and Bitbucket.** The pull request is read with your own connection, so an agent can watch only what your connection can read
 - **When it is told** is the same as PR feedback. A condition that already holds when the agent asks is told at once
@@ -76,6 +76,7 @@ A workflow run that is not tied to a pull request (a nightly or release workflow
 | `o/r:cli-pin-bump.yml`, or with a branch `o/r:cli-pin-bump.yml@main` | the next run of that workflow completes. Only a run that started after the watch was made counts; a run already running or finished then never does. Without a branch, runs on every branch and event count; add `@main` to narrow it. A branch can be given only in the `o/r:file.yml@branch` form, not with the workflow URL. A re-run of a run that existed before the watch is not reported; watch that run directly. To follow a run you started a moment ago, watch that run instead |
 
 - The workflow is read with your own GitHub connection. A repository or run your connection cannot read is refused when the agent asks, and a run that is deleted (or a repository you lose access to) later ends the watch with a notice saying so, instead of waiting for it forever
+- A workflow that starts many runs between two checks (up to 100) is read in full, so a run that finished behind newer ones still counts; beyond that the oldest of the burst waits for the next check
 - What counts as "after" is decided from GitHub's own run numbers and timestamps, not this workspace's clock
 - The notice says the run number, the attempt and the result. The workflow's name and the names and links of failed jobs are quoted data, as for check names
 - Reads are conditional (an unchanged run costs no request quota), quick while the run is queued or running, and count in the same limits as pull request watches

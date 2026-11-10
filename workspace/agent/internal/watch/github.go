@@ -230,6 +230,8 @@ type ghReview struct {
 	} `json:"user"`
 }
 
+const gonePull = "the pull request was deleted, its repository is gone, or it can no longer be read with your GitHub connection"
+
 func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
 	repo, n, ok := parseGHSubject(subject)
 	if !ok {
@@ -239,7 +241,10 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &cur)
 	}
-	if err := g.cached(ctx, fmt.Sprintf("/repos/%s/pulls/%d", repo, n), &cur.Pull); err != nil {
+	// The pull request itself missing or unreadable is ErrGone (the Actions source's definition:
+	// 404, 403 that is not a rate limit, 410; a 5xx or a rate limit never is). The other reads
+	// stay plain errors: a 404 on a head SHA's checks is a force-push, not a vanished PR.
+	if err := actionsGet(g, ctx, fmt.Sprintf("/repos/%s/pulls/%d", repo, n), &cur.Pull, gonePull); err != nil {
 		return nil, raw, Hint{}, err
 	}
 	pr := cur.Pull.Val

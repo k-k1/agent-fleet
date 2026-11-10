@@ -17,6 +17,7 @@ import {
   type AppearanceShuffleMode,
 } from "./options.ts";
 import { IMAGE_PROVIDERS } from "./imageProviders.ts";
+import { mergeRepoMaps, normalizeRepoMap, type RepoMap } from "./repoMap.ts";
 import {
   DEFAULT_AGENT_LAUNCH,
   migrateOpencodeCatalog,
@@ -45,9 +46,13 @@ export interface Pref<T> {
    *  over the merged value: a local value is not re-read, so an unsaved local choice stays as it
    *  is instead of being compared in its migrated form. */
   readonly migrate?: (v: unknown) => T;
+  /** Per-entry union of this device's value and the server's, for a key whose whole-value
+   *  last-writer-wins save would lose what another tab or device added. Used by hydrate and just
+   *  before a save; takes raw (unnormalized) inputs and must be commutative and idempotent. */
+  readonly merge?: (local: unknown, server: unknown) => T;
 }
 
-type PrefOpts<T> = Pick<Pref<T>, "normalize" | "migrate">;
+type PrefOpts<T> = Pick<Pref<T>, "normalize" | "migrate" | "merge">;
 
 // An ordinary preference: stored on this device and in the user's server copy, the server's
 // value winning on hydrate.
@@ -90,12 +95,6 @@ function accumulated<T>(d: T, opts: PrefOpts<T> = {}): Pref<T> {
 
 const isTrue = (v: unknown): boolean => v === true;
 
-const normalizeStringMap = (v: unknown): Record<string, string> => {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
-  const out: Record<string, string> = {};
-  for (const [k, x] of Object.entries(v)) if (typeof x === "string" && x) out[k] = x;
-  return out;
-};
 
 const normalizeAppearanceShuffle = (v: unknown): AppearanceShuffleMode =>
   APPEARANCE_SHUFFLE_MODES.find((m) => m.id === v)?.id ?? "off";
@@ -257,6 +256,10 @@ const PREFS = {
   // proposals screen and the toggle are the next change); this is the key the Agent reads, kept so a save of the other
   // settings does not drop it.
   memoryConsolidation: agentDefaulted(false, { normalize: isTrue }), // opt-in (ADR 0130) — memory text goes to a model, and it spends tokens unattended
+  // The scheduled lint --apply (ADR 0130 decision 5): while the workspace is idle the Agent publishes lint's reasons and
+  // renames as commits authored `lint`, no model involved. Default false, like the Agent's own missing-key answer
+  // (uiprefs.MemoryLintSchedule); separate from memoryConsolidation, and it also needs agentMemory on.
+  memoryLintSchedule: agentDefaulted(false, { normalize: isTrue }), // opt-in (ADR 0130) — commits land in the memory store unattended
   // Muse Code's contributor mode (#2535, Settings > Agents > Muse Code): on, Meta may use the
   // conversations to improve its product. Default false, like the Agent's own missing-key answer
   // (uiprefs.MuseContributorMode). A muse session records the value it was created with and keeps
@@ -737,7 +740,12 @@ const PREFS = {
   // (`jira:<PROJECT>`), learned from the work item panel's launch. Accumulated: an empty server
   // copy must not wipe what every launch so far has taught, because a lost entry silently brings
   // back the wrong-repository launches this exists to stop.
-  workItemRepoMap: accumulated<Record<string, string>>({}, { normalize: normalizeStringMap }),
+  // Entries carry a change time and a forgotten one stays as a tombstone, so tabs and devices
+  // merge per entry (lib/settings/repoMap.ts) instead of the last whole-map save winning.
+  workItemRepoMap: accumulated<RepoMap>({}, {
+    normalize: normalizeRepoMap,
+    merge: (a, b) => mergeRepoMaps(normalizeRepoMap(a), normalizeRepoMap(b)),
+  }),
   // Working set definitions (docs/log/52 + ADR 0036): named sets of { working copies,
   // conversations, sessions without a repo } that narrow the left pane down to one piece of
   // work. The definitions sync across devices (server ui-prefs); which set is currently being
@@ -784,6 +792,12 @@ const MACHINE_WRITTEN: ReadonlySet<string> = new Set<Key>(["browserTimeZone"]);
 export const isMachineWrittenSetting = (key: string): boolean => MACHINE_WRITTEN.has(key);
 
 export const isAgentDefaultedSetting = (key: keyof Settings): boolean => AGENT_DEFAULTED.has(key);
+
+/** The per-entry merge of a key that declares one (see Pref.merge), else undefined. */
+export const settingMerge = (key: keyof Settings): ((local: unknown, server: unknown) => unknown) | undefined => pref(key).merge;
+
+/** The keys that declare a merge. */
+export const MERGEABLE_KEYS: readonly Key[] = PREF_KEYS.filter((k) => pref(k).merge);
 
 /** Exported as a policy seam so tests can pin which preferences must never be
  * silently emptied by a server copy that has lost them. */

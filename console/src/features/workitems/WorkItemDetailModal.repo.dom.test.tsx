@@ -41,6 +41,7 @@ const REPOS: Repo[] = [{ name: "client-sdk" }, { name: "web" }];
 
 const onPick = vi.fn();
 const onRemember = vi.fn();
+const onForget = vi.fn();
 
 const render = async (
   defaultRepo: string,
@@ -57,6 +58,7 @@ const render = async (
         defaultRepo={defaultRepo}
         defaultSource={defaultSource}
         onRemember={remember ? onRemember : undefined}
+        onForget={remember ? onForget : undefined}
         started={[]}
         onClose={() => {}}
         onPick={onPick}
@@ -88,6 +90,7 @@ beforeEach(() => {
   workItemDetail.mockReturnValue(new Promise(() => {}));
   onPick.mockReset();
   onRemember.mockReset();
+  onForget.mockReset();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -134,6 +137,29 @@ describe("WorkItemDetailModal launch repository", () => {
     expect(document.body.textContent).toContain(t("wi.start_repo_remembered", { project: "CPAAS" }));
     await act(async () => startButton().click());
     expect(onRemember).not.toHaveBeenCalled();
+  });
+
+  it("forgets the remembered repository when it is launched unchanged with the box cleared", async () => {
+    await render("web", "project");
+    await act(async () => rememberBox()!.click());
+    await act(async () => startButton().click());
+    expect(onForget).toHaveBeenCalledWith("jira:CPAAS");
+    expect(onRemember).not.toHaveBeenCalled();
+    expect(onPick).toHaveBeenCalled();
+  });
+
+  it("does not forget when nothing was remembered and the box is cleared", async () => {
+    await render("");
+    await choose("web");
+    await act(async () => rememberBox()!.click());
+    await act(async () => startButton().click());
+    expect(onForget).not.toHaveBeenCalled();
+  });
+
+  it("does not forget a remembered repository while the box stays ticked", async () => {
+    await render("web", "project");
+    await act(async () => startButton().click());
+    expect(onForget).not.toHaveBeenCalled();
   });
 
   it("overwrites the remembered repository when the user picks another", async () => {
