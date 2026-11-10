@@ -87,36 +87,26 @@ func TestCPEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 		t.Fatal("could not read a single constant from errcodes.go = this check has gone silent")
 	}
 
-	ents, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	emitted := map[string]string{}
-	scanned := 0
-	for _, e := range ents {
-		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || n == "errcodes.go" {
-			continue
-		}
-		af, err := parser.ParseFile(token.NewFileSet(), n, nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", n, err)
-		}
-		scanned++
-		ast.Inspect(af, func(node ast.Node) bool {
-			if id, ok := node.(*ast.Ident); ok {
-				if code, ok := codeOf[id.Name]; ok {
-					emitted[code] = id.Name
-				}
-			}
-			return true
-		})
-	}
+	emitted, scanned := scanEmittedErrCodes(t, ".", codeOf)
 	if scanned < 50 {
 		t.Fatalf("only %d .go files were read = this check has gone silent", scanned)
 	}
 	if len(emitted) == 0 {
 		t.Fatal("found no emitted error code at all (the scan is broken)")
+	}
+
+	// Packages split out of package main cannot name the errCode* constants, so they emit the
+	// same strings as literals (internal/tenantsrv does). internal/engine is the planned home
+	// of the engine family's ~50 codes; it is read as soon as it exists, so moving a file there
+	// cannot silently drop its codes from this check.
+	internalEmitted, internalScanned := scanEmittedErrLiterals(t, "internal", codeOf)
+	if internalScanned < 50 {
+		t.Fatalf("only %d .go files under internal/ were read = this check has gone silent", internalScanned)
+	}
+	for code, where := range internalEmitted {
+		if _, ok := emitted[code]; !ok {
+			emitted[code] = where
+		}
 	}
 
 	catalog := cpConsoleCatalog(t, "ja")
@@ -131,4 +121,92 @@ func TestCPEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 
 func consoleCatalogHasKeyCP(catalog, key string) bool {
 	return strings.Contains(catalog, `"`+key+`"`)
+}
+
+// scanEmittedErrCodes returns the codes whose errCode* constant is referenced by an
+// identifier in a non-test .go file directly under dir, and the number of files read.
+func scanEmittedErrCodes(t *testing.T, dir string, codeOf map[string]string) (map[string]string, int) {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emitted := map[string]string{}
+	scanned := 0
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || n == "errcodes.go" {
+			continue
+		}
+		af, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, n), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", n, err)
+		}
+		scanned++
+		ast.Inspect(af, func(node ast.Node) bool {
+			if id, ok := node.(*ast.Ident); ok {
+				if code, ok := codeOf[id.Name]; ok {
+					emitted[code] = id.Name
+				}
+			}
+			return true
+		})
+	}
+	return emitted, scanned
+}
+
+// scanEmittedErrLiterals walks every non-test .go file under root and returns the codes that
+// appear there as string literals (value: "<file>"), and the number of files read.
+func scanEmittedErrLiterals(t *testing.T, root string, codeOf map[string]string) (map[string]string, int) {
+	t.Helper()
+	byValue := map[string]bool{}
+	for _, v := range codeOf {
+		byValue[v] = true
+	}
+	emitted := map[string]string{}
+	scanned := 0
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		af, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		scanned++
+		ast.Inspect(af, func(node ast.Node) bool {
+			if lit, ok := node.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if v := strings.Trim(lit.Value, "`\""); byValue[v] {
+					emitted[v] = path
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return emitted, scanned
+}
+
+// TestScanEmittedErrLiteralsSeesNestedPackages pins the scanner itself: a literal in a nested
+// package directory must be reported, otherwise a moved engine file loses its codes silently.
+func TestScanEmittedErrLiteralsSeesNestedPackages(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "engine", "sub")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "package sub\n\nconst c = \"engine_probe_code\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, n := scanEmittedErrLiterals(t, root, map[string]string{"errCodeProbe": "engine_probe_code"})
+	if n != 1 || got["engine_probe_code"] == "" {
+		t.Fatalf("scan missed the nested literal: files=%d got=%v", n, got)
+	}
 }
