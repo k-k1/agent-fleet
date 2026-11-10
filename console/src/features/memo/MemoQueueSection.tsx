@@ -8,6 +8,7 @@
 //     drag — memos within/between categories, and the categories themselves;
 //   - the send button (「送信…」) opens SendMemoModal to edit the concatenated text and
 //     pick a destination.
+import { readFold, writeFold } from "../../lib/foldStore.ts";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -177,7 +178,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const [tidy, setTidy] = useState<Memo[] | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   // Section open/closed, owned here (controlled) so the leader command can force it open.
-  const [open, setOpen] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
+  const [open, setOpen] = useState(() => readFold(SECTION_KEY) !== false);
   const serRef = useRef("");
   const composerTextRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(composerTextRef, newText);
@@ -219,7 +220,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
 
   const setSectionOpen = (o: boolean) => {
     setOpen(o);
-    localStorage.setItem(SECTION_KEY, o ? "1" : "0");
+    writeFold(SECTION_KEY, o);
   };
 
   const blocks = useMemo(() => groupMemos(memos, cats), [memos, cats]);

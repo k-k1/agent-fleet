@@ -2,6 +2,7 @@
 // actions, and a body. `id` keys the open/closed state in localStorage (same
 // af-section-<id> keys as the old console, so collapse choices carry over).
 // `count` shows a muted tally — the only signal of contents while collapsed.
+import { readFold, writeFold } from "../lib/foldStore.ts";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
@@ -32,8 +33,7 @@ export function Section({ id, title, icon, count, unread, actions, defaultOpen =
   const tr = useT();
   const [openState, setOpen] = useState(() => {
     if (!id) return defaultOpen;
-    const v = localStorage.getItem(storeKey(id));
-    return v === null ? defaultOpen : v === "1";
+    return readFold(storeKey(id)) ?? defaultOpen;
   });
   const controlled = openProp !== undefined;
   const open = controlled ? openProp : openState;
@@ -48,7 +48,7 @@ export function Section({ id, title, icon, count, unread, actions, defaultOpen =
     }
     setOpen((o) => {
       const next = !o;
-      if (id) localStorage.setItem(storeKey(id), next ? "1" : "0");
+      if (id) writeFold(storeKey(id), next);
       return next;
     });
   };
