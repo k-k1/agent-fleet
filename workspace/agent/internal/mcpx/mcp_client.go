@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 )
@@ -185,6 +186,34 @@ func CreateSessionKey(scope, dir, subdir, kind, model, effort, prompt string, wo
 	return "cs_" + hex.EncodeToString(h.Sum(nil))
 }
 
+// effortPrecheck is the part of checkCreateEffort that needs no catalog: the kind's own
+// agents.EffortPolicy. decided is false when the effort still has to be checked against the
+// model's catalog row (a kind without the capability, an unknown kind, or EffortByCatalog).
+func effortPrecheck(kind, model string) (decided bool, err error) {
+	a, _ := agentreg.Lookup(kind)
+	p, ok := a.(agents.EffortPolicy)
+	if !ok {
+		return false, nil
+	}
+	t := p.EffortTraits()
+	switch t.Rule {
+	case agents.EffortInModelID:
+		return true, fmt.Errorf("%s は effort を別に指定できません。effort はモデル id に含まれているので、list_models から目的の effort の id を選んでください", kind)
+	case agents.EffortNever:
+		if t.Reason != "" {
+			return true, fmt.Errorf("%s は effort を指定できません（%s）", kind, t.Reason)
+		}
+		return true, fmt.Errorf("%s は effort を指定できません", kind)
+	case agents.EffortCLIJudges:
+		return true, nil
+	}
+	if t.AutoRejectsEffort && (model == "" || strings.EqualFold(model, "auto")) {
+		// The launch drops effort for auto, because the CLI refuses it there.
+		return true, fmt.Errorf("%s の auto は effort を指定できません。effort を使うなら list_models から model も指定してください", kind)
+	}
+	return false, nil
+}
+
 // checkCreateEffort refuses an effort the child would not run at, naming the ones it would, so
 // the caller can correct itself in the same turn. It reads the catalog list_models answers
 // from and resolves the model with the launch's own rule (agents.MatchModel): validating
@@ -197,22 +226,8 @@ func checkCreateEffort(kind, model, effort string) error {
 	if kind == "" {
 		kind = "claude"
 	}
-	switch kind {
-	case "agy", "cursor":
-		return fmt.Errorf("%s は effort を別に指定できません。effort はモデル id に含まれているので、list_models から目的の effort の id を選んでください", kind)
-	case "lcpp":
-		return fmt.Errorf("lcpp は effort を指定できません（推論量はエンジン側の起動設定で決まります）")
-	case "shell", "ssm":
-		return fmt.Errorf("%s は effort を指定できません", kind)
-	case "opencode", "kiro":
-		// Their catalogs list no efforts, yet the CLI takes one (opencode's variant, kiro's
-		// --effort), so the CLI is the only judge of the value. Nothing in this repo declares
-		// their valid levels, and a guessed list would refuse real ones.
-		return nil
-	}
-	if kind == "copilot" && (model == "" || strings.EqualFold(model, "auto")) {
-		// The launch drops effort for auto, because copilot refuses it there.
-		return fmt.Errorf("copilot の auto は effort を指定できません。effort を使うなら list_models から model も指定してください")
+	if decided, err := effortPrecheck(kind, model); decided {
+		return err
 	}
 	if model == "" {
 		// The default is the CLI's own choice (the user's Claude Code settings, codex's

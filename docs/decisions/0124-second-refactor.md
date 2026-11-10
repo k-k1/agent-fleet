@@ -650,3 +650,17 @@ registered kind, aliases and prefs; the classification test holds the declaring 
 `kindLiteralCeiling` 86 → 83. Behaviour unchanged; not verified against a live fleet.
 
 Follow-ups: #2925.
+
+## Note (2026-11-10): the create-time effort check behind `agents.EffortPolicy` (#2925)
+
+The four kind branches of MCP `create_session`'s `checkCreateEffort` (`mcpx/mcp_client.go`) now read
+an optional `agents.EffortPolicy`, looked up by exact registry key through `agentreg`. A rule per
+kind: `EffortInModelID` (agy, cursor), `EffortNever` (lcpp with its reason, shell, ssm),
+`EffortCLIJudges` (opencode, kiro) and, for copilot, `AutoRejectsEffort` on top of the default
+catalog check; a kind without the capability still checks the model's catalog row. The catalog read
+and the blank-model refusal stay in `mcpx`. `TestEffortPrecheckMatchesOldSwitch` pins the
+catalog-free part to a copy of the old switch over every registered kind (plus blank, unknown and
+mis-cased spellings) x five models, texts included. `kindLiteralCeiling` 82 → 78. Behaviour
+unchanged; not verified against a live fleet.
+
+Follow-ups: #2925.
