@@ -1031,3 +1031,40 @@ func TestPeerMessageSummaryNamesTheSenderAndBody(t *testing.T) {
 		t.Errorf("peerMessage = %+v", p)
 	}
 }
+
+// The host's fallbackText is a SHOULD for a new kind, so the typed members must carry the facts
+// when it is absent; and a peerMessage without its member stays a bare kind name.
+func TestNewKindsSummariseFromTypedMembersWithoutFallbackText(t *testing.T) {
+	sev := msp.NoticeSeverityError
+	lbl := "lint hook"
+	phase := msp.SubagentInputPhaseDelivered
+	status := msp.SubagentResultStatusFailed
+	cases := []struct {
+		name string
+		mod  func(*msp.Item)
+		kind msp.ItemKind
+		want string
+	}{
+		{"result", func(i *msp.Item) { i.ResultStatus = &status }, msp.ItemKindSubagentResult, "subagent result: failed"},
+		{"input", func(i *msp.Item) { i.InputPhase = &phase }, msp.ItemKindSubagentInput, "subagent input: delivered"},
+		{"notice", func(i *msp.Item) {
+			i.NoticeSeverity = &sev
+			i.NoticeSubject = &msp.NoticeSubject{ID: "h-1", Label: &lbl}
+		}, msp.ItemKindSystemNotice, "error notice: lint hook"},
+		{"notice without members", func(*msp.Item) {}, msp.ItemKindSystemNotice, ""},
+		{"peer without member", func(*msp.Item) {}, msp.ItemKindPeerMessage, ""},
+	}
+	for _, c := range cases {
+		it := item(c.kind, "n-1", 1)
+		it.Status = msp.ItemStatusCompleted
+		c.mod(&it)
+		turns := turnsFromItems([]msp.Item{it})
+		if len(turns) != 1 || len(turns[0].Parts) != 1 {
+			t.Fatalf("%s: item was dropped or split: %+v", c.name, turns)
+		}
+		p := turns[0].Parts[0]
+		if p.Tool != string(c.kind) || p.Info != c.want {
+			t.Errorf("%s: part = tool %q info %q, want info %q", c.name, p.Tool, p.Info, c.want)
+		}
+	}
+}
