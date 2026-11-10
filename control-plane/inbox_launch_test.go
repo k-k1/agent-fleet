@@ -91,6 +91,7 @@ func (e *inboxEnv) launch(who, id string) *httptest.ResponseRecorder {
 // landing while the launch waits for the workspace: the Agent is never asked, and after a
 // release the next assignee's launch is the only session.
 func TestInboxLaunchLosesItsClaimWhileWaiting(t *testing.T) {
+	t.Parallel()
 	for _, op := range []string{"withdraw", "release"} {
 		t.Run(op, func(t *testing.T) {
 			e := newInboxEnv(t)
@@ -165,6 +166,7 @@ func (s *inboxFailFinishStore) FinishInboxLaunch(ctx context.Context, id, mid, t
 // what it finds, and when the Agent no longer knows the key the press refuses instead of
 // creating again. Handing the request back is what starts over.
 func TestInboxLaunchUnrecordedIsNeverCreatedTwice(t *testing.T) {
+	t.Parallel()
 	for _, forget := range []bool{false, true} {
 		name := "agent-remembers"
 		if forget {
@@ -248,6 +250,7 @@ func (c inboxPauseCustodian) Unwrap(_ context.Context, _, s string) ([]byte, err
 // TestInboxSendRacesReceiveControls: a block, a chosen-members setting or a removal saved
 // while the send is sealing its body still stops the whole item.
 func TestInboxSendRacesReceiveControls(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"block", "chosen", "inactive"} {
 		t.Run(mode, func(t *testing.T) {
 			e := newInboxEnv(t)
@@ -295,6 +298,7 @@ func TestInboxSendRacesReceiveControls(t *testing.T) {
 // TestInboxReadReconcilesFirst: the read route answers with the item, so a removed assignee's
 // claim is already released in that answer (docs/log/130 M-1 when read is the first request).
 func TestInboxReadReconcilesFirst(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	id := e.send("a", "request", "b", "c")
 	_ = e.do("b", "POST", "/api/inbox/items/"+id+"/claim", nil)

@@ -91,6 +91,7 @@ func (d *devIdPTestEnv) idTokenClaims(t *testing.T, code, redirect, verifier str
 }
 
 func TestDevIdPPersonaHandleIsStrictAndNeverFolded(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	for _, h := range []string{
 		"Admin", "ADMIN", "ａdmin" /* fullwidth a */, "аdmin" /* Cyrillic a */, "admin ", " admin", "ad min",
@@ -114,6 +115,7 @@ func TestDevIdPPersonaHandleIsStrictAndNeverFolded(t *testing.T) {
 }
 
 func TestDevIdPPersonaCRUDAndLimits(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "Admin User")
 	if rec := d.personaReq(t, http.MethodPost, personaAPI, `{"handle":"admin","name":"again"}`); rec.Code != http.StatusConflict {
@@ -154,6 +156,7 @@ func TestDevIdPPersonaCRUDAndLimits(t *testing.T) {
 }
 
 func TestDevIdPPersonaAPIIs409WhereTheIdPIsNotServed(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	setDevIdPDeployment(t, d.mgr, false)
 	if rec := d.personaReq(t, http.MethodPost, personaAPI, `{"handle":"admin"}`); rec.Code != http.StatusConflict {
@@ -165,6 +168,7 @@ func TestDevIdPPersonaAPIIs409WhereTheIdPIsNotServed(t *testing.T) {
 }
 
 func TestDevIdPPersonaCannotBeARealMembersAddress(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	ctx := context.Background()
 	// A real member (a test tenant that really uses example.test) and one with the address on a
@@ -191,6 +195,7 @@ func TestDevIdPPersonaCannotBeARealMembersAddress(t *testing.T) {
 }
 
 func TestDevIdPPersonaSubjectCannotEqualAMembersSubject(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	ctx := context.Background()
 	ident, err := d.mgr.store.UpsertIdentity(ctx, "alice@corp.example", "preview-user", "")
@@ -210,6 +215,7 @@ func TestDevIdPPersonaSubjectCannotEqualAMembersSubject(t *testing.T) {
 }
 
 func TestDevIdPConsentSignsInAsAPersonaAndAuditsIt(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "Admin User")
 	d.addPersona(t, "viewer", "Viewer")
@@ -253,6 +259,7 @@ func TestDevIdPConsentSignsInAsAPersonaAndAuditsIt(t *testing.T) {
 }
 
 func TestDevIdPConsentCanChooseMyself(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "")
 	redirect := d.ownHost(3000) + "/cb"
@@ -270,6 +277,7 @@ func TestDevIdPConsentCanChooseMyself(t *testing.T) {
 }
 
 func TestDevIdPPromptNoneStaysSilentAsMyself(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "")
 	redirect := d.ownHost(3000) + "/cb"
@@ -286,12 +294,14 @@ func TestDevIdPPromptNoneStaysSilentAsMyself(t *testing.T) {
 }
 
 func TestDevIdPNoPersonasMeansNoConsentPage(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	codeFrom(t, d.authorizeAs(t, "preview-user", d.authQuery(redirect, ""))) // straight to a code, as before
 }
 
 func TestDevIdPConsentIsNotACSRFTarget(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "")
 	admin := d.personaID(t, "admin")
@@ -350,6 +360,7 @@ func TestDevIdPConsentIsNotACSRFTarget(t *testing.T) {
 }
 
 func TestDevIdPConsentGetIsNotAHandler(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	rec := d.console(t, "https://af.example.com"+devIdPConsentPath+"?ticket=x&choice=self")
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -358,6 +369,7 @@ func TestDevIdPConsentGetIsNotAHandler(t *testing.T) {
 }
 
 func TestDevIdPConsentCannotChooseAnotherWorkspacesPersona(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "")
 	otherWS := d.addViewer(t, "persona-other")
@@ -377,6 +389,7 @@ func TestDevIdPConsentCannotChooseAnotherWorkspacesPersona(t *testing.T) {
 }
 
 func TestDevIdPConsentRedirectComesFromTheStoredRequest(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "")
 	redirect := d.ownHost(3000) + "/cb"
@@ -392,6 +405,7 @@ func TestDevIdPConsentRedirectComesFromTheStoredRequest(t *testing.T) {
 }
 
 func TestDevIdPConsentRechecksTheRedirect(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "")
 	redirect := d.ownHost(3000) + "/cb"
@@ -412,6 +426,7 @@ func TestDevIdPConsentRechecksTheRedirect(t *testing.T) {
 }
 
 func TestDevIdPConsentPageEscapesAndRefusesFraming(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", `<script>alert(1)</script>"><img src=x>`)
 	redirect := d.ownHost(3000) + "/cb"
@@ -437,6 +452,7 @@ func TestDevIdPConsentPageEscapesAndRefusesFraming(t *testing.T) {
 }
 
 func TestDevIdPConsentIsNotServedOnAPreviewHost(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "")
 	host := newPreviewHostAPI(d.cfg).dispatch(d.mux)
@@ -463,6 +479,7 @@ func TestDevIdPConsentIsNotServedOnAPreviewHost(t *testing.T) {
 }
 
 func TestDevIdPConsentIsA404WhereTheIdPIsOff(t *testing.T) {
+	t.Parallel()
 	cfg := oauthTestConfig(t)
 	cfg.mgr.publicBaseURL = "https://af.example.com"
 	cfg.mgr.previewDomain = "pv.example.com" // the IdP is offered only with preview subdomains
@@ -489,6 +506,7 @@ func TestDevIdPConsentIsA404WhereTheIdPIsOff(t *testing.T) {
 }
 
 func TestDevIdPPersonasGoWithTheWorkspace(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "")
 	ctx := context.Background()
@@ -501,6 +519,7 @@ func TestDevIdPPersonasGoWithTheWorkspace(t *testing.T) {
 }
 
 func TestDevIdPPersonaCollisionAfterTheCodeWasIssuedIsRefusedAtToken(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "later", "Later")
 	redirect := d.ownHost(3000) + "/cb"
@@ -538,6 +557,7 @@ func TestDevIdPPersonaCollisionAfterTheCodeWasIssuedIsRefusedAtToken(t *testing.
 }
 
 func TestDevIdPConsentPageFollowsAcceptLanguage(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "Admin User")
 	redirect := d.ownHost(3000) + "/cb"
@@ -564,6 +584,7 @@ func TestDevIdPConsentPageFollowsAcceptLanguage(t *testing.T) {
 }
 
 func TestDevIdPConsentCancelReturnsAccessDeniedToTheVettedRedirect(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "Admin")
 	redirect := d.ownHost(3000) + "/cb"
@@ -595,6 +616,7 @@ func TestDevIdPConsentCancelReturnsAccessDeniedToTheVettedRedirect(t *testing.T)
 }
 
 func TestDevIdPConsentCancelIsRefusedLikeContinue(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addPersona(t, "admin", "Admin")
 	redirect := d.ownHost(3000) + "/cb"
@@ -629,6 +651,7 @@ func TestDevIdPConsentCancelIsRefusedLikeContinue(t *testing.T) {
 }
 
 func TestDevIdPConsentPageIsBrandedAndEscaped(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.cfg.brand.env, _ = buildBrand("violet", `<i>"stg"`)
 	d.addPersona(t, "admin", `<b onmouseover=x>"Ünï`)
@@ -660,6 +683,7 @@ func TestDevIdPConsentPageIsBrandedAndEscaped(t *testing.T) {
 // badge off the card at 320px (measured in headless Chromium with a 16-letter brand label) and
 // hid the test addresses' domain behind an ellipsis on phones.
 func TestDevIdPConsentPageStaysReadableOnNarrowScreens(t *testing.T) {
+	t.Parallel()
 	css := devIdPConsentTmpl.Tree.Root.String() + devIdPShellTmpl.Lookup("devidp-shell-css").Tree.Root.String()
 	if !strings.Contains(css, ".top{display:flex;flex-wrap:wrap;") {
 		t.Error("the header must wrap so the badge stays inside the card")

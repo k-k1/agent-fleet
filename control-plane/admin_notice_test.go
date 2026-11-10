@@ -77,6 +77,7 @@ func (f *noticeFixture) kinds(t *testing.T, m store.Membership, kind string) int
 }
 
 func TestHomeFullNotifiesTenantAdminsOncePerCrossing(t *testing.T) {
+	t.Parallel()
 	f := newNoticeFixture(t, true)
 	const full = `{"disk_used":102005473280,"disk_total":107374182400}` // 95 of 100 GiB
 	f.setStats(full)
@@ -118,6 +119,7 @@ func TestHomeFullNotifiesTenantAdminsOncePerCrossing(t *testing.T) {
 }
 
 func TestHomeFullStaysQuietWithoutAKnownReadingOrOwnHome(t *testing.T) {
+	t.Parallel()
 	shared := newNoticeFixture(t, false)
 	shared.setStats(`{"disk_used":9900,"disk_total":10000}`)
 	shared.sample()
@@ -144,6 +146,7 @@ func TestHomeFullStaysQuietWithoutAKnownReadingOrOwnHome(t *testing.T) {
 }
 
 func TestBootInstallFailureNotifiesAdminsOncePerFailure(t *testing.T) {
+	t.Parallel()
 	// Boot outcomes are recorded on every runtime, own home or not.
 	f := newNoticeFixture(t, false)
 	f.setStats(`{"boot_install_failed":{"claude":"network"}}`)
@@ -165,6 +168,7 @@ func TestBootInstallFailureNotifiesAdminsOncePerFailure(t *testing.T) {
 }
 
 func TestBootInstallSkippedUpgradeIsNotAFailure(t *testing.T) {
+	t.Parallel()
 	f := newNoticeFixture(t, false)
 	f.setStats(`{"boot_install_failed":{"claude":"skipped_no_space"}}`)
 	f.sample()

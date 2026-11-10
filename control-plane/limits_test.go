@@ -14,6 +14,7 @@ import (
 )
 
 func TestParseLimitsTerminalHistoryRetention(t *testing.T) {
+	t.Parallel()
 	got := parseLimits(`{"terminal_history_retention_days":7}`)
 	if got.TerminalHistoryRetentionDays != 7 {
 		t.Fatalf("retention = %d; want 7", got.TerminalHistoryRetentionDays)
@@ -68,6 +69,7 @@ func budgetFixture(t *testing.T, max int, quotas map[string]int) (*store.SQL, *m
 // "a new member's first launch is slow", noticed weeks later, so capacity is measured with
 // those two subtracted.
 func TestPoolBudgetLeavesRoomForABake(t *testing.T) {
+	t.Parallel()
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 20, "beta": 8})
 	b, ok, err := mgr.poolBudget(context.Background(), "", 0)
 	if err != nil || !ok {
@@ -91,6 +93,7 @@ func TestPoolBudgetLeavesRoomForABake(t *testing.T) {
 // bounding anything, which is a different problem from being over and has to be reported in
 // a different way.
 func TestPoolBudgetTreatsZeroAsUnlimitedNotZero(t *testing.T) {
+	t.Parallel()
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 5, "beta": 0})
 	b, _, _ := mgr.poolBudget(context.Background(), "", 0)
 	if b.Allocated != 5 {
@@ -110,6 +113,7 @@ func TestPoolBudgetTreatsZeroAsUnlimitedNotZero(t *testing.T) {
 // A suspended tenant runs nothing. Counting it would shrink the running tenants' share for
 // the sake of a stopped one.
 func TestPoolBudgetSkipsSuspendedTenants(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr := budgetFixture(t, 10, map[string]int{"acme": 6, "gone": 6})
 	tn, _, _ := st.GetTenantBySlug(ctx, "gone")
@@ -129,6 +133,7 @@ func TestPoolBudgetSkipsSuspendedTenants(t *testing.T) {
 // not apply", not "everything fits" — answering OK vacuously would claim a guarantee that a
 // Fargate deployment does not have.
 func TestPoolBudgetIsAbsentWithoutAPool(t *testing.T) {
+	t.Parallel()
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
 	mgr.rtFactory = &poollessFactory{}
@@ -140,6 +145,7 @@ func TestPoolBudgetIsAbsentWithoutAPool(t *testing.T) {
 // The value has to be previewable before it is saved, or the warning describes the number it
 // replaced instead of the one just typed.
 func TestPoolBudgetCanPreviewAnUnsavedValue(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr := budgetFixture(t, 10, map[string]int{"acme": 4, "beta": 4})
 	tn, _, _ := st.GetTenantBySlug(ctx, "acme")
@@ -164,6 +170,7 @@ func putLimits(mgr *manager, slug string, body string) *httptest.ResponseRecorde
 // the tenant can never open a workspace again. A typo in a number field must not be
 // discovered through a member's failed launch.
 func TestSetTenantLimitsRejectsNegativeQuotas(t *testing.T) {
+	t.Parallel()
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 4})
 	w := putLimits(mgr, "acme", `{"max_workspaces":-1}`)
 	if w.Code != http.StatusBadRequest {
@@ -184,6 +191,7 @@ func TestSetTenantLimitsRejectsNegativeQuotas(t *testing.T) {
 // peaks never coincide is legitimate operation, and above all a deployment that is already
 // over would lose the ability to edit every other field on this screen.
 func TestSetTenantLimitsWarnsButSavesAnOverAllocation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, mgr := budgetFixture(t, 10, map[string]int{"acme": 4, "beta": 4})
 	w := putLimits(mgr, "acme", `{"max_workspaces":50}`)
@@ -211,6 +219,7 @@ func TestSetTenantLimitsWarnsButSavesAnOverAllocation(t *testing.T) {
 // Nothing is attached when it fits: an "all good" on every save stops being read by the time
 // there is something to read.
 func TestSetTenantLimitsSaysNothingWhenTheBudgetFits(t *testing.T) {
+	t.Parallel()
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 4, "beta": 4})
 	w := putLimits(mgr, "acme", `{"max_workspaces":6}`)
 	if w.Code != http.StatusOK {

@@ -45,6 +45,7 @@ func discoveryCode(d *devIdPTestEnv, t *testing.T) int {
 // A deployment with PUBLIC_BASE_URL, no AF_DEV_IDP and no stored row serves the IdP: the
 // whole point of the change. newDevIdPTestEnv sets neither.
 func TestDevIdPIsServedOnAFreshDeployment(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	if v, _ := d.mgr.store.GetSetting(context.Background(), devIdPSettingKey); v != "" {
 		t.Fatalf("fixture stored a setting %q; the test proves nothing", v)
@@ -68,6 +69,7 @@ func TestDevIdPIsServedOnAFreshDeployment(t *testing.T) {
 // Off then on, with no restart: every reader follows, and the workspace keeps its client id
 // and secret throughout.
 func TestDevIdPToggleIsFollowedEverywhereAndKeepsTheOptIns(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	a := devIdPAdminAPI{memberAuth{d.mgr}}
 	ctx := context.Background()
@@ -117,6 +119,7 @@ func TestDevIdPToggleIsFollowedEverywhereAndKeepsTheOptIns(t *testing.T) {
 // The off-then-on cycle must not rotate or delete a registration. A separate test from the
 // above, with the workspace opted in throughout.
 func TestDevIdPSwitchCycleKeepsClientIDAndSecret(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	a := devIdPAdminAPI{memberAuth{d.mgr}}
 	id0, secret0 := d.registration(t)
@@ -134,6 +137,7 @@ func TestDevIdPSwitchCycleKeepsClientIDAndSecret(t *testing.T) {
 // Another CP process flips the switch and cannot invalidate this one's cache. The window is
 // devIdPSwitchTTL and not a tick longer, token endpoint included.
 func TestDevIdPCacheWindowIsBoundedForARemoteOff(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	clock := time.Now()
 	d.mgr.devIdPSw.now = func() time.Time { return clock }
@@ -204,6 +208,7 @@ func hookStore(d *devIdPTestEnv) (*idpStoreHook, store.Store) {
 // A read that began before a local PUT returns its old "on" afterwards. It must neither be
 // handed to the caller nor written back over the invalidation.
 func TestDevIdPInvalidateBeatsAnInFlightRead(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	h, real := hookStore(d)
 	d.mgr.devIdPSw.invalidate()
@@ -235,6 +240,7 @@ func TestDevIdPInvalidateBeatsAnInFlightRead(t *testing.T) {
 // A read that returns late with an old "on" (another replica flipped meanwhile) is not
 // believed for a fresh window: the window runs from when the read started.
 func TestDevIdPSlowReadDoesNotExtendAStaleOn(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	h, real := hookStore(d)
 	clock := time.Now()
@@ -261,6 +267,7 @@ func TestDevIdPSlowReadDoesNotExtendAStaleOn(t *testing.T) {
 
 // A switch that fails to read answers off at every gate, never on a guess.
 func TestDevIdPFailsClosedWhenTheSwitchCannotBeRead(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	h, _ := hookStore(d)
 	d.mgr.devIdPSw.invalidate()
@@ -277,6 +284,7 @@ func TestDevIdPFailsClosedWhenTheSwitchCannotBeRead(t *testing.T) {
 
 // The deployment goes off after the gate let a valid code in: no token may come out.
 func TestDevIdPTokenIsRefusedWhenTheSwitchFlipsMidRequest(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/api/auth/callback/google"
 	verifier, challenge := pkcePair()
@@ -295,6 +303,7 @@ func TestDevIdPTokenIsRefusedWhenTheSwitchFlipsMidRequest(t *testing.T) {
 
 // Audit comes first: when it cannot be written nothing changes and the answer is 503.
 func TestDevIdPAdminPutIsRefusedWhenTheAuditCannotBeWritten(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	h, real := hookStore(d)
 	h.insertAudit = func(context.Context, store.AuditLog) error { return errors.New("audit down") }
@@ -312,6 +321,7 @@ func TestDevIdPAdminPutIsRefusedWhenTheAuditCannotBeWritten(t *testing.T) {
 
 // AF_DEV_IDP=0 wins over a stored "on", the API says so, and a PUT cannot change it.
 func TestDevIdPEnvLockBeatsTheStoredSetting(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	setDevIdPDeployment(t, d.mgr, true)
 	d.mgr.devIdPEnvOff = true
@@ -333,6 +343,7 @@ func TestDevIdPEnvLockBeatsTheStoredSetting(t *testing.T) {
 }
 
 func TestDevIdPStatusNamesAMissingBaseURL(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.mgr.publicBaseURL = ""
 	a := devIdPAdminAPI{memberAuth{d.mgr}}
@@ -343,6 +354,7 @@ func TestDevIdPStatusNamesAMissingBaseURL(t *testing.T) {
 }
 
 func TestDevIdPAdminPutRejectsAnEmptyBody(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	a := devIdPAdminAPI{memberAuth{d.mgr}}
 	for _, body := range []string{``, `{}`, `{"enabled":"yes"}`} {
@@ -358,6 +370,7 @@ func TestDevIdPAdminPutRejectsAnEmptyBody(t *testing.T) {
 // Through the route table: only a super admin reads or writes; a tenant admin and a member
 // get 403 and the stored value stays put. Every accepted PUT leaves an audit row.
 func TestDevIdPAdminRoutesAreSuperAdminOnly(t *testing.T) {
+	t.Parallel()
 	st, mgr, _, _, _ := networkFixture(t)
 	ctx := context.Background()
 	if _, err := st.UpsertIdentity(ctx, "root@acme.co.jp", "root-acme-co-jp", "super_admin"); err != nil {
@@ -410,6 +423,7 @@ func TestDevIdPAdminRoutesAreSuperAdminOnly(t *testing.T) {
 
 // A deployment with no master key (a dev setup) starts workspaces from the memoized runtime. The switch must still be read at every start, in both directions.
 func TestStartFollowsTheDevIdPSwitchFromAMemoWithoutKeys(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := &envRecordingFactory{}
 	st, mgr, victim, tn := destroyFixture(t, f)
@@ -451,6 +465,7 @@ func TestStartFollowsTheDevIdPSwitchFromAMemoWithoutKeys(t *testing.T) {
 // or injected, ws-settings says unavailable, rotate is the 409 no_preview_domain, and the admin
 // status says why; with one, everything works.
 func TestDevIdPNeedsAPreviewDomain(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	a := devIdPAdminAPI{memberAuth{d.mgr}}
 	wsGet := func() map[string]any {

@@ -15,6 +15,7 @@ import (
 )
 
 func TestEgressPolicy(t *testing.T) {
+	t.Parallel()
 	p := newEgressPolicy(defaultEgressAllowlist)
 	allow := []string{
 		"api.anthropic.com",         // exact
@@ -53,6 +54,7 @@ func TestEgressPolicy(t *testing.T) {
 }
 
 func TestEgressBatcher(t *testing.T) {
+	t.Parallel()
 	b := newEgressBatcher("", "")
 	b.add("api.anthropic.com", true)
 	b.add("api.anthropic.com", true)
@@ -74,6 +76,7 @@ func TestEgressBatcher(t *testing.T) {
 }
 
 func TestEgressStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -116,6 +119,7 @@ func TestEgressStore(t *testing.T) {
 // egressAPI.ingest end-to-end: auth gate, aggregation, and a single deduped
 // would-block audit row per host.
 func TestEgressIngestHandler(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -166,6 +170,7 @@ func TestEgressIngestHandler(t *testing.T) {
 }
 
 func TestAllowlistStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -225,6 +230,7 @@ func TestAllowlistStore(t *testing.T) {
 }
 
 func TestEffectivePolicyEndpoint(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -277,6 +283,7 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 // own hosts: a workspace reaches the CP through the egress path, so an allowlist
 // without them cuts every workspace off from its CP the moment the mode is enforce.
 func TestEgressPolicyAlwaysAdmitsCPHosts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -363,6 +370,7 @@ func TestEgressPolicyAlwaysAdmitsCPHosts(t *testing.T) {
 // allowed while the gateway drops it, so those are refused and reported instead. An IPv6
 // literal is admitted in its canonical bare form (#2754).
 func TestCPEgressHostsOnlyExactHosts(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name             string
 		public, internal string
@@ -411,6 +419,7 @@ func TestCPEgressHostsOnlyExactHosts(t *testing.T) {
 // A bracketed IPv6 literal is looked up in the same canonical form the built-in CP host
 // entry is stored in, so two spellings of one address get the same verdict.
 func TestNormalizeEgressHostCanonicalisesIPv6(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"https://[2001:DB8:0:0:0:0:0:5]:8443/x": "2001:db8::5",
 		"[2001:db8::0005]":                      "2001:db8::5",
@@ -425,6 +434,7 @@ func TestNormalizeEgressHostCanonicalisesIPv6(t *testing.T) {
 // TCP passthrough entries (ADR 0122, addendum 2026-11-05): validated on the way in, kept
 // out of the HTTP allowlist the agent writes for Squid, and served in their own field.
 func TestNormalizeEgressEntryTCP(t *testing.T) {
+	t.Parallel()
 	got, aerr := normalizeEgressEntry(" TCP:Git.Example.com.:22 ")
 	if aerr != nil || got != "tcp:git.example.com:22" {
 		t.Fatalf("got %q, %v", got, aerr)
@@ -438,6 +448,7 @@ func TestNormalizeEgressEntryTCP(t *testing.T) {
 }
 
 func TestPolicyEndpointServesTCPEntriesSeparately(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -492,6 +503,7 @@ func TestPolicyEndpointServesTCPEntriesSeparately(t *testing.T) {
 // A private tcp: entry stored before the grammar refused it is not shipped, is flagged in
 // the admin list, and cannot be activated again.
 func TestStoredPrivateTCPEntryIsFlaggedAndNotShipped(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
