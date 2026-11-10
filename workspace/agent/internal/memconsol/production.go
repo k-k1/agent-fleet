@@ -3,6 +3,7 @@ package memconsol
 import (
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -13,7 +14,8 @@ import (
 // Production is the Agent's own wiring: the member's switch (ui-prefs, with agent memory on) and
 // the session-activity signal. An unwired consolidator never runs, so main must Configure it.
 func Production() Deps {
-	return Deps{Enabled: uiprefs.MemoryConsolidationEnabled, Activity: sessionActivity, Notice: raiseNotice}
+	return Deps{Enabled: uiprefs.MemoryConsolidationEnabled, Activity: sessionActivity, Notice: raiseNotice,
+		Refs: &RefChecker{Lookup: githubRefState, RepoOf: memoryx.ConsolProjectRepo}}
 }
 
 // NoticeKind is the Console notification kind of the daily "proposals are waiting" notice.

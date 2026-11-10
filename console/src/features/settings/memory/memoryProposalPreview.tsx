@@ -15,7 +15,8 @@ import type { ConsolItem, ConsolItemView, ConsolProposal, ConsolProposalView } f
 type TFn = ReturnType<typeof useT>;
 
 /** The items the Agent can publish: the ones Approve would write. */
-const writes = (iv: Pick<ConsolItem, "op">): boolean => iv.op === "create" || iv.op === "patch" || iv.op === "replace";
+export const writes = (iv: Pick<ConsolItem, "op">): boolean =>
+  iv.op === "create" || iv.op === "patch" || iv.op === "replace" || iv.op === "retire";
 
 /**
  * What the proposal is ABOUT, for its title: the created name or the patched target. The topic
@@ -54,7 +55,8 @@ export function previewSummary(tr: TFn, view: Pick<ConsolProposal, "items" | "ta
   const creates = uniq("create");
   const patches = uniq("patch");
   const replaces = uniq("replace");
-  if (creates.length + patches.length + replaces.length === 0) return tr("mem.pv_sum_none");
+  const retires = uniq("retire");
+  if (creates.length + patches.length + replaces.length + retires.length === 0) return tr("mem.pv_sum_none");
   const list = patches
     .map((i) => {
       const r = patchRevisions(view, i);
@@ -70,6 +72,9 @@ export function previewSummary(tr: TFn, view: Pick<ConsolProposal, "items" | "ta
   if (replaces.length > 0) {
     const sources = [...new Set(replaces.flatMap((i) => (i.sources ?? []).map((s) => s.name)))];
     parts.push(tr("mem.pv_sum_replace", { n: replaces.length, m: sources.length, list: sources.join(", ") }));
+  }
+  if (retires.length > 0) {
+    parts.push(tr("mem.pv_sum_retire", { n: retires.length, list: retires.map((i) => i.name).join(", ") }));
   }
   return parts.join(" ");
 }
@@ -235,6 +240,38 @@ function PatchCard({ view, iv, pending }: { view: ConsolProposalView; iv: Consol
   );
 }
 
+function RetireCard({ view, iv, pending }: { view: ConsolProposalView; iv: ConsolItemView; pending: boolean }) {
+  const tr = useT();
+  const rev = patchRevisions(view, iv);
+  const rows = parseLineDiff(iv.diff);
+  return (
+    <article className="mem-pv-card" data-op="retire">
+      <h5 className="mem-pv-title">
+        <span className="mem-badge af-op-retire">{tr("mem.pv_retire")}</span> <code>{iv.name}</code>
+        {rev && <span className="muted"> {tr("mem.pv_rev", { from: rev.from, to: rev.to })}</span>}
+        {iv.commit && <span className="muted"> · {tr("mem.cs_published")}</span>}
+      </h5>
+      {iv.reason && <p className="muted">{iv.reason}</p>}
+      {/* What agents stop seeing, one line per place they see it. */}
+      <dl className="mem-pv-meta">
+        <dt>{tr("mem.pv_retire_index")}</dt>
+        <dd>{iv.retire?.indexLine ? <code>{iv.retire.indexLine}</code> : <span className="muted">{tr("mem.pv_retire_not_listed")}</span>}</dd>
+        <dt>{tr("mem.pv_retire_search")}</dt>
+        <dd>{tr("mem.pv_retire_search_body")}</dd>
+        <dt>{tr("mem.pv_retire_read")}</dt>
+        <dd>{tr("mem.pv_retire_read_body", { reason: iv.retire?.stubReason ?? iv.reason ?? "" })}</dd>
+      </dl>
+      {rows.length > 0 ? (
+        <div className="mem-pv-ba">
+          <Side rows={rows} side="-" label={tr("mem.pv_retire_hidden_text")} />
+        </div>
+      ) : null}
+      <p className="muted ds-note">{tr("mem.pv_retire_note")}</p>
+      <Stale iv={iv} pending={pending} />
+    </article>
+  );
+}
+
 function AdviceCard({ iv }: { iv: ConsolItemView }) {
   const tr = useT();
   const targets = iv.targets ?? [];
@@ -277,6 +314,8 @@ export function ProposalPreview({ view }: { view: ConsolProposalView }) {
           <PatchCard key={i} view={view} iv={iv} pending={pending} />
         ) : iv.op === "replace" ? (
           <ReplaceCard key={i} view={view} iv={iv} pending={pending} />
+        ) : iv.op === "retire" ? (
+          <RetireCard key={i} view={view} iv={iv} pending={pending} />
         ) : (
           <AdviceCard key={i} iv={iv} />
         ),

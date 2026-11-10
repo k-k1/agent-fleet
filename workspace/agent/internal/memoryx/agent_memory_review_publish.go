@@ -258,6 +258,11 @@ type ReviewTargetState struct {
 	// Excluded: the memory is archived or superseded, so agents do not see it and a consolidation
 	// must not replace it again.
 	Excluded bool
+	// Pinned: the member pinned the memory, so a consolidation does not retire it.
+	Pinned bool
+	// IndexLine is the line memory_index prints for the memory now (what a retire takes away),
+	// "" when the memory is excluded or withheld.
+	IndexLine string
 }
 
 // ReviewTarget reads the live state of one memory for the approval screen. It counts no use and
@@ -318,7 +323,10 @@ func ReviewTarget(scope, projectID, name string) (ReviewTargetState, error) {
 		return out, nil
 	}
 	out.Revision, out.Type, out.Description, out.Body = l.Entry.Revision, l.Entry.Type, l.Entry.Description, l.Entry.Body
-	out.Excluded = agentMemExcluded(l.Entry)
+	out.Excluded, out.Pinned = agentMemExcluded(l.Entry), l.Entry.Pinned
+	if !out.Excluded {
+		out.IndexLine = strings.TrimSuffix(agentMemIndexLine(l.Entry), "\n")
+	}
 	return out, nil
 }
 

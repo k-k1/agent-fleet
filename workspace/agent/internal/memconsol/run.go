@@ -82,6 +82,9 @@ type RunInput struct {
 	All bool
 	// Progress is told how many selected topics are done out of how many; nil in tests.
 	Progress func(done, total int)
+	// Refs looks up the state of the issues and PRs that notes and observations name, for the
+	// classifier's prompt. nil means nothing is looked up.
+	Refs *RefChecker
 }
 
 var errCut = errors.New("cut")
@@ -101,6 +104,7 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 		}
 	}
 	spent := 0
+	refs := in.Refs.Begin()
 	finish := func(err error) (Report, error) {
 		rep.Tokens = spent
 		rep.Finished = clock()
@@ -169,7 +173,7 @@ func Run(ctx context.Context, in RunInput) (Report, error) {
 			rep.Delayed = append(rep.Delayed, delaysOf(run[k:], CauseInterrupted, "the Agent is shutting down")...)
 			return finish(nil)
 		}
-		w := &worker{in: in, rep: &rep, spent: &spent, topic: r.Topic}
+		w := &worker{in: in, rep: &rep, spent: &spent, topic: r.Topic, refs: refs}
 		perr := w.topic1(ctx, st, r)
 		rep.Handled = append(rep.Handled, r.Topic.ID)
 		switch {
@@ -223,6 +227,7 @@ type worker struct {
 	rep   *Report
 	spent *int
 	topic Topic
+	refs  *RefRun
 
 	cutCause, cutDetail string
 }
@@ -292,6 +297,7 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 	dropped := map[string]bool{}
 	for _, o := range r.Take {
 		req := classifyRequest(t, o, r.Fit)
+		req.Evidence = w.refs.evidenceFor(ctx, t, o, memoryTexts(t, req))
 		est := estimateTokens(req.Prompt()) + 200
 		var ans memengine.ClassifyAnswer
 		role := memengine.RoleSmall
@@ -332,6 +338,19 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 			covered[c.obs.ID] = "no-op"
 		case memengine.OpPatch:
 			patchObs[c.ans.Targets[0]] = append(patchObs[c.ans.Targets[0]], c)
+		case memengine.OpRetire:
+			it, ok := w.retireItem(t, c)
+			switch {
+			case !ok:
+				items = append(items, noteItem(c, c.ans.Targets...))
+			case claim.sources[it.Name]:
+				// Another item of this proposal already takes the memory out of use; this
+				// observation is covered by it.
+			default:
+				claim.sources[it.Name] = true
+				items = append(items, it)
+			}
+			used = append(used, c.obs)
 		case memengine.OpAdd, memengine.OpSupersede, memengine.OpMerge:
 			it, ok := w.addItem(t, c)
 			if !ok && c.ans.Operation == memengine.OpAdd && c.obs.Candidate != nil {
@@ -530,6 +549,53 @@ func (w *worker) addItem(t Topic, c classified) (Item, bool) {
 		return Item{}, false
 	}
 	return it, true
+}
+
+// retireItem turns a retire answer into an item. The model's text is not trusted: the reason is
+// reduced to one line, and the item passes validateItem (the memory is visible, unpinned and at the
+// revision the engine read) like any other. ok=false makes it advice instead, never a write.
+func (w *worker) retireItem(t Topic, c classified) (Item, bool) {
+	if len(c.ans.Targets) != 1 {
+		return Item{}, false
+	}
+	m, ok := findMem(t.Memories, c.ans.Targets[0])
+	if !ok {
+		return Item{}, false
+	}
+	it := Item{Op: OpRetire, Name: m.Name, Revision: m.Revision, Reason: retireReason(c.ans.Reason), Role: string(c.role)}
+	if pr := validateItem(t.Scope, t.ProjectID, it); pr != nil {
+		w.rep.Rejected++
+		return Item{}, false
+	}
+	return it, true
+}
+
+// maxRetireReason is the longest one-line reason a retire carries (the store's reason note limit).
+const maxRetireReason = 300
+
+// retireReason reduces the model's sentence to one line the store accepts, and says something
+// plain when the model gave none.
+func retireReason(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if s == "" {
+		return "obsolete: the subject of this note is finished"
+	}
+	if r := []rune(s); len(r) > maxRetireReason {
+		s = string(r[:maxRetireReason-1]) + "…"
+	}
+	return s
+}
+
+// memoryTexts is the full text of the notes a classification call shows, by name: the references a
+// note names are read from all of it, not from the excerpt the prompt carries.
+func memoryTexts(t Topic, req memengine.ClassifyRequest) map[string]string {
+	out := map[string]string{}
+	for _, sn := range req.Memories {
+		if m, ok := findMem(t.Memories, sn.Name); ok {
+			out[m.Name] = m.Description + "\n" + m.Body
+		}
+	}
+	return out
 }
 
 func noteItem(c classified, targets ...string) Item {

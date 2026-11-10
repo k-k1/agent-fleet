@@ -21,6 +21,9 @@ func TestParseClassify(t *testing.T) {
 		{"no-op", `{"operation":"no-op","targets":[],"reason":"r"}`, OpNoop, false},
 		{"patch one", `{"operation":"patch","targets":["a"],"reason":"r"}`, OpPatch, false},
 		{"supersede one", `{"operation":"supersede","targets":["b"],"reason":"r"}`, OpSupersede, false},
+		{"retire one", `{"operation":"retire","targets":["a"],"reason":"r"}`, OpRetire, false},
+		{"retire without target", `{"operation":"retire","targets":[],"reason":"r"}`, "", true},
+		{"retire with two targets", `{"operation":"retire","targets":["a","b"],"reason":"r"}`, "", true},
 		{"merge two", `{"operation":"merge","targets":["a","b"],"reason":"r"}`, OpMerge, false},
 		{"merge of an observation only", `{"operation":"merge","targets":[],"reason":"r"}`, OpMerge, false},
 		{"unknown operation", `{"operation":"delete","targets":[],"reason":"r"}`, "", true},
@@ -50,7 +53,7 @@ func TestParseClassify(t *testing.T) {
 }
 
 func TestEscalation(t *testing.T) {
-	want := map[Operation]bool{OpAdd: false, OpPatch: false, OpNoop: false, OpSupersede: true, OpMerge: true}
+	want := map[Operation]bool{OpAdd: false, OpPatch: false, OpNoop: false, OpSupersede: true, OpMerge: true, OpRetire: true}
 	for op, w := range want {
 		if op.Escalates() != w {
 			t.Errorf("%s.Escalates() = %v, want %v", op, !w, w)
@@ -98,5 +101,18 @@ func TestPromptKeepsThePatchVersusNoopGuidance(t *testing.T) {
 	}
 	if strings.Index(p, "- patch:") > strings.Index(p, "- add:") {
 		t.Error("patch is listed before add on purpose: the order is part of what was measured")
+	}
+}
+
+func TestPromptOffersRetireAndShowsCheckedFacts(t *testing.T) {
+	r := ClassifyRequest{Observation: "obs", Memories: shown.Memories}
+	if p := r.Prompt(); !strings.Contains(p, "- retire:") || !strings.Contains(p, "retire") || strings.Contains(p, "Facts checked") {
+		t.Error("the prompt must offer retire and show no facts section when nothing was checked")
+	}
+	r.Evidence = []string{"note `a` names #12 (o/r): closed"}
+	p := r.Prompt()
+	i, j, k := strings.Index(p, "## Facts checked by the Agent"), strings.Index(p, "- note `a` names #12"), strings.Index(p, "## Existing notes")
+	if i < 0 || j < i || k < j {
+		t.Errorf("the checked facts belong between the observation and the notes:\n%s", p)
 	}
 }

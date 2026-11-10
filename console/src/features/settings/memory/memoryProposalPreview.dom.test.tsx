@@ -346,3 +346,45 @@ describe("in the proposals panel", () => {
     expect(cards("note")).toHaveLength(1);
   });
 });
+
+describe("a retire item (#3788)", () => {
+  const retire = (name: string, over: Partial<ConsolItemView> = {}): ConsolItemView => ({
+    op: "retire",
+    name,
+    revision: 3,
+    reason: "issue #2310 is closed",
+    diff: "-comment on #2310 when it fails\n-rerun the job",
+    retire: { indexLine: `- [project] ${name} — flaky test note (project; 2026-10-01)`, stubReason: "issue #2310 is closed" },
+    ...over,
+  });
+
+  it("is a publishable item: it titles the proposal and is not advice-only", async () => {
+    expect(proposalSubject({ memory: "topic", items: [retire("flake-note")] })).toBe("flake-note");
+    await mount(<ProposalPreview view={viewOf("topic", [retire("flake-note")])} />);
+    expect(summary()).toBe("Approving retires 1 memory (flake-note): agents stop seeing it, and nothing is deleted. One revert brings it back.");
+  });
+
+  it("shows what agents stop seeing: the index line, search, the stub and the text", async () => {
+    await mount(<ProposalPreview view={viewOf("topic", [retire("flake-note")])} />);
+    const [card] = cards("retire");
+    expect(card).toBeTruthy();
+    expect(card.textContent).toContain("- [project] flake-note — flaky test note");
+    expect(card.textContent).toContain("No longer a hit for any agent.");
+    expect(card.textContent).toContain("Answers a stub with the reason instead of the text: “issue #2310 is closed”");
+    expect(card.textContent).toContain("comment on #2310 when it fails");
+    expect(card.textContent).toContain("rev 3 → 4");
+    expect(card.querySelector(".mem-pv-del")).toBeTruthy();
+  });
+
+  it("warns when the memory moved since, while pending only", async () => {
+    await mount(<ProposalPreview view={viewOf("topic", [retire("flake-note", { stale: "the memory has changed since the engine read it" })])} />);
+    expect(cards("retire")[0].querySelector(".mem-warn")?.textContent).toContain("has changed since the engine read it");
+  });
+
+  it("is in Japanese too", async () => {
+    setLocale("ja");
+    await mount(<ProposalPreview view={viewOf("topic", [retire("flake-note")])} />);
+    expect(summary()).toBe(t("mem.pv_sum_retire", { n: 1, list: "flake-note" }));
+    expect(summary()).toContain("退役");
+  });
+});

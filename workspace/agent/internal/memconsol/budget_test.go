@@ -182,7 +182,7 @@ func TestPlanTopicShrinkOrder(t *testing.T) {
 	if cut.TooLarge || cut.Estimate > c.TokenBudget || len(cut.Take) != 3 || cut.Fit.Runes >= fullFit.Runes || cut.Fit.Notes != fullFit.Notes {
 		t.Fatalf("one token over should only shorten the excerpts: %+v", cut)
 	}
-	c.TokenBudget = 4000
+	c.TokenBudget = 4150 // the classify prompt carries the retire guidance now
 	tiny := PlanTopic(tp, tp.Observations, c)
 	if tiny.TooLarge || tiny.Estimate > c.TokenBudget || len(tiny.Take) != 1 || tiny.Fit.Notes != 1 {
 		t.Fatalf("a small budget should drop observations and notes: %+v", tiny)

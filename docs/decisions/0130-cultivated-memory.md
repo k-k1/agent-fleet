@@ -811,3 +811,28 @@ release.
   manual one gets 409. The attempt is written to the schedule's state file before the run starts, and a failed run backs
   off 15 minutes doubling to 6 hours, so neither a crash nor a persistent error retries in a tight loop. Not verified: a
   real idle workspace over a long time, and the live Console.
+
+- **2026-11-10 — decisions 6 and 7: retiring an obsolete memory, and checked evidence of obsolescence (#3788).** The
+  consolidator can now say "this memory is obsolete". A new proposal item, `retire`, is published through the same
+  approve-only path as a patch or a replacement (`memoryx.PublishConsolidation`, authored `consolidator`): under the store
+  lock `agentMemRetire` re-checks that the memory exists, is readable, is visible to agents, is **not pinned** and is still
+  at the revision the proposal saw, then writes one commit (`AF-Op: retire`) that sets `status: archived`,
+  `status_by: consolidator`, `invalid_at`, and adds a reason `{by: consolidator, rule: retired, note: <one line>}`, so the
+  `memory_read` stub says why. No file is deleted. The change is one path, so the existing single-memory revert restores the
+  text, status and reasons as they were (the revision still moves forward); a later write to the memory ends the revert
+  window, as for any change. A pinned memory is the member's word: a retire answer over one becomes advice, never a write.
+  The reasons schema gained the author `consolidator`. The classifier gains the answer `retire` (one target); like
+  supersede and merge it escalates to the large tier, because it takes a whole note out of every agent's sight. The approval
+  preview adds the line `memory_index` prints now (it disappears), that search no longer hits it, the stub's reason, and the
+  text as removed lines. **Evidence is looked up by the Agent, never by the model.** Issue and PR numbers a note or an
+  observation names (`owner/repo#N`, a github.com URL, or a bare `#N` in a project whose origin is github.com) are looked up
+  through the member's own GitHub connection (the REST issues endpoint; a PR carries `merged_at`) and handed to the
+  classifier as a "facts checked by the Agent" section: what the observation names, whether an exported suggestion cites
+  finished work (so the model leans to no-op instead of creating a note about a finished incident, rather than the Agent
+  silently dropping it), and which shown notes name only finished work. A lookup that fails, times out, is refused or is not
+  connected is **unknown and is not shown**; it is never read as closed, and a note is called finished only when every
+  reference of it was checked. A pull request closed without merging reads as `closed` (the prompt says it may have been abandoned); a 404 is unknown but does not count towards the failure stop. Lookups are bounded per run (24, 5 s each, stop after 3 failures in a row) and cached across
+  runs (closed and merged 6 h, open 15 min). The classifier prompt changed (a `retire` answer and the facts section), so the
+  gold-set figures of decision 6 describe the earlier prompt until re-measured. Not built: anchor existence as evidence
+  (a path or `Test*` name that is gone) overlaps lint's reasons and is left to it; the scheduled lint of #3767 is separate.
+  Not verified: a real model choosing `retire`, and the live Console.
