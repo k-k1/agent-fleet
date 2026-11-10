@@ -426,6 +426,7 @@ func offerTrailResults(e *engineRuntimeState) string {
 // — a CP upgraded before its stack, which has to keep serving. The positive control is the last
 // third, because a fake that was never called proves nothing on its own.
 func TestADeploymentWithNoOffersNeverAsksEC2ForABox(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 
 	t.Run("no offers at all", func(t *testing.T) {
@@ -481,6 +482,7 @@ func TestADeploymentWithNoOffersNeverAsksEC2ForABox(t *testing.T) {
 
 // The hooks are the whole mechanism, so "inert" has to mean they are not there.
 func TestWireOffersAttachesNothingWithoutAnOfferOrATemplate(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	for _, tc := range []struct{ name, offers, template string }{
 		{"no offers", "", "lt-image"},
@@ -505,6 +507,7 @@ func TestWireOffersAttachesNothingWithoutAnOfferOrATemplate(t *testing.T) {
 // offers. This is the entire migration story (ADR 0075), and it is what lets a stack move a
 // ladder to `offers` without an edit.
 func TestAnInstanceClassLadderReadsAsAllOnDemandOffers(t *testing.T) {
+	t.Parallel()
 	const ladder = "l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;" +
 		"l40s|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.91"
 	d := engineDef{Classes: ladder}
@@ -528,6 +531,7 @@ func TestAnInstanceClassLadderReadsAsAllOnDemandOffers(t *testing.T) {
 }
 
 func TestParseEngineOffersReadsTheBuyColumn(t *testing.T) {
+	t.Parallel()
 	list := parseEngineClasses(
 		"a|A|22000|g6.xlarge|4-8|15000-65536|1.26|spot;" +
 			"b|B|22000|g6.xlarge|4-8|15000-65536|1.26|OD;" +
@@ -548,6 +552,7 @@ const spotAndOdOffers = "spot|Spot|22000|g6.xlarge|4-8|15000-65536|0.57|spot;" +
 // INTERRUPTION, and nowhere else. This is the automatic path — no pin — which is the one a gate
 // on the panel's picker would never have covered.
 func TestASpotOfferIsACandidateOnlyWhereInterruptionIsAccepted(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newOfferTestEngine(t, &offerECS{}, &fakeFleet{}, spotAndOdOffers, st)
 
@@ -573,6 +578,7 @@ func TestASpotOfferIsACandidateOnlyWhereInterruptionIsAccepted(t *testing.T) {
 // because the pin cannot be honoured and an engine that refuses to start is not what "I have not
 // accepted interruption" asked for.
 func TestAPinnedSpotOfferIsNotBoughtWithoutConsent(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newOfferTestEngine(t, &offerECS{}, &fakeFleet{}, spotAndOdOffers, st)
 	if err := st.SetSetting(t.Context(), engineClassSettingKey("image"), "spot"); err != nil {
@@ -593,6 +599,7 @@ func TestAPinnedSpotOfferIsNotBoughtWithoutConsent(t *testing.T) {
 // The role the amendment is FOR. ADR 0075 decision 9 and ADR 0077 decision 9 refused a `spot`
 // row for the chat role at parse time; it is declarable now, and the consent is what decides.
 func TestTheChatRoleMayDeclareASpotOfferAndBuysItOnlyWithConsent(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	d := engineDef{
 		Key: "llm", API: engineAPIChat, Service: "af-llm",
@@ -617,6 +624,7 @@ func TestTheChatRoleMayDeclareASpotOfferAndBuysItOnlyWithConsent(t *testing.T) {
 
 // Decision 2: an offer smaller than the largest enabled model is not a candidate.
 func TestOffersAreFilteredByWhatTheModelsNeed(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newOfferTestEngine(t, &offerECS{}, &fakeFleet{}, twoOffers, st)
 	if got := offerIDs(e.candidateOffers(t.Context())); got != "l4,l40s" {
@@ -632,6 +640,7 @@ func TestOffersAreFilteredByWhatTheModelsNeed(t *testing.T) {
 // Decision 2's refusal: every offer is smaller than the model, so there is no box to buy and the
 // engine does not start on the biggest one either.
 func TestNoCandidateMeansNoStart(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	api := &offerECS{}
@@ -657,6 +666,7 @@ func TestNoCandidateMeansNoStart(t *testing.T) {
 }
 
 func TestAPinnedOfferDoesNotFallThroughAndUnpinningRestoresTheChoice(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newOfferTestEngine(t, &offerECS{}, &fakeFleet{}, twoOffers, st)
 
@@ -688,6 +698,7 @@ func TestAPinnedOfferDoesNotFallThroughAndUnpinningRestoresTheChoice(t *testing.
 // EC2 would spread across the types instead of preferring the cheapest declared one — and nothing
 // but the bill would ever say so.
 func TestAnOnDemandOfferWritesPriorityInTheDeclaredOrder(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	e := newOfferTestEngine(t, &offerECS{}, fleet,
@@ -734,6 +745,7 @@ func TestAnOnDemandOfferWritesPriorityInTheDeclaredOrder(t *testing.T) {
 
 // The Spot half of the same request, and the tags that make the box findable afterwards.
 func TestASpotOfferAsksForPriceCapacityOptimizedAndTagsTheBox(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	e := newOfferTestEngine(t, &offerECS{}, fleet,
@@ -785,6 +797,7 @@ func TestASpotOfferAsksForPriceCapacityOptimizedAndTagsTheBox(t *testing.T) {
 // above) cannot otherwise say which of them actually landed, or what it was expected to cost, to
 // anyone reading the ledger later (control-plane/engine_offer.go's noteOffer).
 func TestAPurchaseAuditsTheInstanceTypeAndPrice(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	e := newOfferTestEngine(t, &offerECS{}, fleet,
@@ -824,6 +837,7 @@ func TestAPurchaseAuditsTheInstanceTypeAndPrice(t *testing.T) {
 // "give up" would turn that into an engine that walks its whole list in a second and cools down
 // for four hours).
 func TestEngineFleetVerdict(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		code, action, result string
 		known                bool
@@ -850,6 +864,7 @@ func TestEngineFleetVerdict(t *testing.T) {
 // answer three different things at once. What the fold does with that is the part a reader cannot
 // check from the table alone.
 func TestEngineFleetResponseVerdict(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		codes          []string
@@ -882,6 +897,7 @@ func TestEngineFleetResponseVerdict(t *testing.T) {
 
 // And the same table where it matters: what the walk does with it.
 func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
+	t.Parallel()
 	// A Spot row, a second Spot row, and an on-demand one — the shape that makes "skip the rest
 	// of this purchase option" different from "take the next row".
 	const offers = "spotA|Spot A|22000|g6.xlarge|4-8|15000-65536|1.57|spot;" +
@@ -1032,6 +1048,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 // The positive control is at the end: the identical fixture with the box registered writes the
 // count immediately. Removing the `registered()` guard in startOnOffer makes the first half fail.
 func TestTheDesiredCountOnlyFollowsARegisteredBox(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{instance: "i-77"}
 	api := &offerECS{}
@@ -1075,6 +1092,7 @@ func TestTheDesiredCountOnlyFollowsARegisteredBox(t *testing.T) {
 // slot pool waits for exactly this pair (ACTIVE and agentConnected), and asking for the task a
 // moment early is a task that sits PENDING.
 func TestABoxIsNotReadyUntilItsAgentIsConnected(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{instance: "i-77"}
 	api := &offerECS{boxes: map[string]offerBox{"i-77": {role: "engine-image", disconnected: true}}}
@@ -1099,6 +1117,7 @@ func TestABoxIsNotReadyUntilItsAgentIsConnected(t *testing.T) {
 // is in engine_offer.go, and the only one an engine with offers can reach is the one behind
 // `registered()`.
 func TestOnlyOneFileAsksForTheTask(t *testing.T) {
+	t.Parallel()
 	names, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
@@ -1135,6 +1154,7 @@ func TestOnlyOneFileAsksForTheTask(t *testing.T) {
 // is terminated — it is ours and it is billing — and the next offer is tried. Under ADR 0075 this
 // clock timed "can this provider produce a box", which the purchase call now answers outright.
 func TestABoxThatNeverRegistersIsEndedAndTheNextOfferTried(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	api := &offerECS{}
@@ -1169,6 +1189,7 @@ func TestABoxThatNeverRegistersIsEndedAndTheNextOfferTried(t *testing.T) {
 // --- ADR 0077 decision 5: the box leaves when the service does -----------------------------
 
 func TestTheBoxIsEndedOnceTheServiceIsStoppedAndEmpty(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{instance: "i-77"}
 	api := &offerECS{}
@@ -1217,6 +1238,7 @@ func TestTheBoxIsEndedOnceTheServiceIsStoppedAndEmpty(t *testing.T) {
 // ACTIVE still satisfies placement constraints, so the next task is aimed at a box that is not
 // there.
 func TestAGhostContainerInstanceIsDeregistered(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	api := &offerECS{boxes: map[string]offerBox{"i-gone": {role: "engine-image"}}}
@@ -1249,6 +1271,7 @@ func TestAGhostContainerInstanceIsDeregistered(t *testing.T) {
 // sent to DescribeInstances. A workspace slot is in the same pool and carries the same af-pool
 // tag; the only thing that separates them is af-role.
 func TestTheSweepLeavesSomebodyElsesBoxAlone(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	fleet.addForeignBox("i-slot", "slot")
@@ -1276,6 +1299,7 @@ func TestTheSweepLeavesSomebodyElsesBoxAlone(t *testing.T) {
 // read `[spot3 active, spot3 active]` — a lie about the walk. Here the second one would be a
 // second GPU.
 func TestTheAdminToggleAndTheControllerBuyOneBoxBetweenThem(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{instance: "i-77"}
 	api := &offerECS{}
@@ -1302,6 +1326,7 @@ func TestTheAdminToggleAndTheControllerBuyOneBoxBetweenThem(t *testing.T) {
 // --- contract B: what the panel is handed --------------------------------------------------
 
 func TestTheAdminRowCarriesTheOffersTheTrailAndTheOfferOnTheBox(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{instance: "i-77"}
 	api := &offerECS{}
@@ -1359,6 +1384,7 @@ func TestTheAdminRowCarriesTheOffersTheTrailAndTheOfferOnTheBox(t *testing.T) {
 // Decision 8's contract with the Console: `{"class": ""}` takes the pin off. It is the only way
 // back to automatic, so it cannot be a no-op.
 func TestPutClassWithAnEmptyIdUnpins(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	e := newOfferTestEngine(t, &offerECS{}, fleet, twoOffers, st)
@@ -1389,6 +1415,7 @@ func TestPutClassWithAnEmptyIdUnpins(t *testing.T) {
 // The registration ceiling travels live, like the offer list and the launch template. Without it,
 // raising it needs a Control Plane replacement and the panel's figure is not the one in force.
 func TestTheOfferBudgetIsCarriedLive(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newOfferTestEngine(t, &offerECS{}, &fakeFleet{}, twoOffers, st)
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
@@ -1429,6 +1456,7 @@ func TestTheOfferBudgetIsCarriedLive(t *testing.T) {
 // window closed, the task went, and the sweep returned at its first line. Measured twice on
 // hardware (ADR 0077 P1 run): `mode=off`, no task, and the box still running four minutes later.
 func TestASuccessfulStartEndsTheWalkSoTheBoxCanLeave(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{instance: "i-77"}
 	api := &offerECS{}
@@ -1479,6 +1507,7 @@ func TestASuccessfulStartEndsTheWalkSoTheBoxCanLeave(t *testing.T) {
 // the fix above the run no longer says "in flight", so this is the guard that stops the second
 // purchase — and a second purchase is a second GPU.
 func TestAStartOnAnEngineThatIsAlreadyUpBuysNothing(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{instance: "i-77"}
 	api := &offerECS{}
@@ -1508,6 +1537,7 @@ func TestAStartOnAnEngineThatIsAlreadyUpBuysNothing(t *testing.T) {
 // writes desired 0). The controller has to be the one that writes it — whoever set the count —
 // or the migration's second half needs a human with a shell.
 func TestModeOffTakesTheDesiredCountDownWhoeverWroteIt(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	// desired 1, nothing running, no box anywhere: exactly what CloudFormation leaves behind.
@@ -1553,6 +1583,7 @@ func TestModeOffTakesTheDesiredCountDownWhoeverWroteIt(t *testing.T) {
 // The fix is an ordering one, so the positive control has to be about the order: the same press
 // on a STOPPED engine does begin a new walk, which is what proves the gate still reaches begin().
 func TestModeOnWhileRunningKeepsTheTrail(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{instance: "i-77"}
 	api := &offerECS{}
@@ -1663,6 +1694,7 @@ func offerBought(t *testing.T, fleet *fakeFleet, n int) string {
 // decision 6's "write only when the first candidate differs" restriction existed to avoid racing
 // ECS's own re-placement — and ECS buys nothing here.
 func TestAnInterruptionRebuildsFromTheTopWithoutWritingTheDesiredCount(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e, api, fleet := interruptedEngine(t, st, twoOffers)
 	writes := len(api.desiredWrites())
@@ -1712,6 +1744,7 @@ func TestAnInterruptionRebuildsFromTheTopWithoutWritingTheDesiredCount(t *testin
 // (measured, ADR 0071 P0), and rebuilding then would buy a second GPU for a task ECS is already
 // placing on the first one.
 func TestATaskReplacedOnALiveBoxIsNotAnInterruption(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e, api, fleet := interruptedEngine(t, st, twoOffers)
 
@@ -1738,6 +1771,7 @@ func TestATaskReplacedOnALiveBoxIsNotAnInterruption(t *testing.T) {
 // that is reclaiming this shape now will reclaim it again in a minute, and the operator's list
 // has another row for exactly this.
 func TestAnOfferInterruptedTwiceInARowIsSkipped(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e, api, fleet := interruptedEngine(t, st, twoOffers)
 
@@ -1776,6 +1810,7 @@ func TestAnOfferInterruptedTwiceInARowIsSkipped(t *testing.T) {
 // (iv) An interruption is not a failure; a rebuild that cannot get a box is. The cooldown is what
 // stands between "the Spot pool is empty right now" and a CreateFleet per tick for ever.
 func TestARebuildThatGetsNoBoxIsAFailedStart(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e, api, fleet := interruptedEngine(t, st, twoOffers)
 	// Every purchase from here answers "no stock", so the rebuild walks the list and spends it.
@@ -1818,6 +1853,7 @@ func TestARebuildThatGetsNoBoxIsAFailedStart(t *testing.T) {
 // again — the rebuild's premise is a task the service wants — so it is ended here rather than
 // left for the sweep's ceiling backstop.
 func TestARebuildAbandonedByAStopEndsItsBox(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e, api, fleet := interruptedEngine(t, st, twoOffers)
 
@@ -1853,6 +1889,7 @@ func TestARebuildAbandonedByAStopEndsItsBox(t *testing.T) {
 // replacement, where the engine's ONLY box has zero tasks for a few seconds. The positive control
 // is that shape: the same sweep, the same ages, one box, and nothing is terminated.
 func TestASecondIdleBoxIsSweptWhileTheEngineRuns(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	fleet.addForeignBox("i-busy", "engine-image")
@@ -1894,6 +1931,7 @@ func TestASecondIdleBoxIsSweptWhileTheEngineRuns(t *testing.T) {
 //
 // So "no box of this role is alive while the ledger holds one" is sufficient on its own.
 func TestABoxLostBeforeItsTaskRanIsStillAnInterruption(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	api := &offerECS{}
@@ -1946,6 +1984,7 @@ func TestABoxLostBeforeItsTaskRanIsStillAnInterruption(t *testing.T) {
 // and the start is merely slow (the measured cold start is 4 min 45 s, most of which looks like
 // this). Nothing is bought.
 func TestASlowStartOnALiveBoxIsNotAnInterruption(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	api := &offerECS{}
@@ -1979,6 +2018,7 @@ func TestASlowStartOnALiveBoxIsNotAnInterruption(t *testing.T) {
 // interruption. Nothing is rebuilt — which is what keeps an engine the operator switched off
 // from buying a box every thirty seconds for ever.
 func TestABoxGoneAtDesiredZeroIsNotAnInterruption(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	fleet := &fakeFleet{}
 	api := &offerECS{}

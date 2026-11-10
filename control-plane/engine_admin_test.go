@@ -50,6 +50,7 @@ func adminPut(t *testing.T, a engineAdminAPI, key, body string) (int, map[string
 // toggle, OFF stops the box HERE: a GPU is $1.26/hour and there is no undo window worth
 // paying for.
 func TestEngineAdminModes(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	f := &engineTestECS{desired: 1, running: 1}
 	reg, e := newAdminTestRegistry(t, f, st)
@@ -98,6 +99,7 @@ func TestEngineAdminModes(t *testing.T) {
 }
 
 func TestEngineAdminIdleWindow(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	reg, e := newAdminTestRegistry(t, &engineTestECS{}, st)
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
@@ -168,6 +170,7 @@ func TestEngineAdminModePushesTheCatalogue(t *testing.T) {
 // The gateway and the catalogue are where "off" has to be felt. Without this the toggle
 // would be a setting nobody consults.
 func TestEngineAdminOffTakesItOutOfTheCatalogueAndRefusesRouting(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	reg, e := newAdminTestRegistry(t, &engineTestECS{desired: 1, running: 1}, st)
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
@@ -202,6 +205,7 @@ func catalogKeys(t *testing.T, g engineGateway) []string {
 }
 
 func TestEngineAdminRefusesWhatItCannotMean(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	reg, _ := newAdminTestRegistry(t, &engineTestECS{}, st)
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
@@ -224,6 +228,7 @@ func TestEngineAdminRefusesWhatItCannotMean(t *testing.T) {
 }
 
 func TestEngineAdminListsEveryEngine(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	reg, _ := newAdminTestRegistry(t, &engineTestECS{desired: 0}, st)
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
@@ -260,6 +265,7 @@ func TestEngineAdminListsEveryEngine(t *testing.T) {
 // with a plausible-looking value. A blank on that screen reads as "unknown"; a zero or a
 // fallback date reads as fact and gets acted on against a $1.26/hour GPU.
 func TestEngineAdminRowOmitsWhatItCannotAnswer(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	at := time.Date(2026, 9, 8, 4, 3, 0, 0, time.UTC)
 	f := &fakeTTSECS{
@@ -342,6 +348,7 @@ func TestEngineAdminRowOmitsWhatItCannotAnswer(t *testing.T) {
 // back would be telling the administrator the opposite of the button they just pressed —
 // the same class of defect as reporting a setting as reality.
 func TestEngineDisplayStateDoesNotContradictTheButton(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ raw, mode, want string }{
 		{"running", engineModeOff, "stopping"},
 		{"starting", engineModeOff, "stopping"},
@@ -402,6 +409,7 @@ func adminModel(t *testing.T, a engineAdminAPI, method, key, id, body string) (i
 // And it must refuse before RunTask, not after: the alternative spends the download first and
 // then either overwrites the row or strands gigabytes in the bucket with no row to reach them.
 func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineModelAdminAPI(t)
 	ctx := context.Background()
 	if err := st.PutEngineModel(ctx, store.EngineModel{
@@ -459,6 +467,7 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 // and what names the destination, so a request without one asks this route to decide both with
 // nobody looking — which is how 24 GB landed in directories no ComfyUI loader enumerates.
 func TestIngestRefusesAPressWithNoPlan(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.settings, e.ctrl = st, nil
@@ -543,6 +552,7 @@ func TestEngineIngestRefusesACivitaiAssetThatNeedsAnAccount(t *testing.T) {
 // and the flux1 template reads a diffusion model, two text encoders and a VAE — no answer in
 // the family selector could have saved that row, and after any answer the panel said nothing.
 func TestEngineAdminRowMustHoldWhatItsFamilyReads(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.settings, e.ctrl = st, nil
@@ -643,6 +653,7 @@ func TestEngineAdminRowMustHoldWhatItsFamilyReads(t *testing.T) {
 // Both directions are pinned, because "kept everything" and "checked nothing" look identical
 // from the outside: the shared file survives, and the one nothing else uses is deleted.
 func TestEngineModelPurgeSparesFilesAnotherRowUses(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineModelAdminAPI(t)
 	ctx := t.Context()
 	shared := "image/text_encoders/clip_l.safetensors"
@@ -732,6 +743,7 @@ func TestEngineModelPurgeSparesFilesAnotherRowUses(t *testing.T) {
 // is the round trip that has to keep working: read the row, forget it, post the same JSON,
 // get the same declaration back.
 func TestEngineAdminRowCanBePostedBackToRebuildIt(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineModelAdminAPI(t)
 	ctx := t.Context()
 	e.def.Provider = "" // sdcpp-shaped: no family vocabulary to satisfy on the way back in
@@ -886,6 +898,7 @@ func TestEngineAdminRowCanBePostedBackToRebuildIt(t *testing.T) {
 // engine starts with — and see the previous one stop being it. This is the sequence behind
 // ADR 0072 P0's definition of done, minus the GPU.
 func TestEngineAdminModelLifecycle(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineModelAdminAPI(t)
 	ctx := context.Background()
 	if err := st.PutEngineModel(ctx, store.EngineModel{
@@ -965,6 +978,7 @@ func TestEngineAdminModelLifecycle(t *testing.T) {
 // created: it would be a catalogue entry the sidecar can never sync, visible as an engine that
 // starts and idles.
 func TestEngineAdminModelRefusesAnEmptyBody(t *testing.T) {
+	t.Parallel()
 	a, _, _ := engineModelAdminAPI(t)
 	if code, _ := adminModel(t, a, "PUT", "image", "x", `{}`); code != http.StatusBadRequest {
 		t.Errorf("empty patch = %d, want 400", code)
@@ -982,6 +996,7 @@ func TestEngineAdminModelRefusesAnEmptyBody(t *testing.T) {
 // generate_image's `model` enum — and then fail at generation, after a cold start. This is the
 // refusal moved to where the operator can act on it (ADR 0072 decision 2, P2 実機検証).
 func TestEngineAdminComfyDemandsADeclaredFamily(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.settings = st
@@ -1029,6 +1044,7 @@ func TestEngineAdminComfyDemandsADeclaredFamily(t *testing.T) {
 // The panel cannot work either of these out on its own: which families this provider knows
 // (there is no list anywhere else), and which existing rows predate the rule above.
 func TestEngineAdminRowCarriesTheFamilyVocabulary(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	comfy := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	comfy.settings, comfy.ctrl = st, nil
@@ -1074,6 +1090,7 @@ func TestEngineAdminRowCarriesTheFamilyVocabulary(t *testing.T) {
 // again — which lands it disabled and, for a split model, means re-typing three S3 keys to
 // change one word. A seeded row is always in this state, because the seed cannot know a family.
 func TestEngineAdminModelBaseModelPatch(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.settings, e.ctrl = st, nil
@@ -1146,6 +1163,7 @@ func TestEngineAdminModelBaseModelPatch(t *testing.T) {
 // this field existed are in, and writing `unknown` there would claim the question was asked. The
 // panel draws them differently — "licence not recorded" against the licence's own name.
 func TestEngineAdminModelReadsTheVerdictOffTheLicence(t *testing.T) {
+	t.Parallel()
 	a, _, st := engineModelAdminAPI(t)
 	ctx := context.Background()
 
@@ -1184,6 +1202,7 @@ func TestEngineAdminModelReadsTheVerdictOffTheLicence(t *testing.T) {
 // nobody makes twice. The empty string is a real value — "stop declaring one" — which is why the
 // field is a pointer on the wire.
 func TestEngineAdminEditsAModelNegativePrompt(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineModelAdminAPI(t)
 	if err := st.PutEngineModel(t.Context(), store.EngineModel{
 		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", BaseModel: "sdxl", Enabled: true,
@@ -1223,6 +1242,7 @@ func TestEngineAdminEditsAModelNegativePrompt(t *testing.T) {
 // carried on the catalogue, and cleared by the same route — there is no DELETE, because
 // "excluded: nothing" is a value typed into the box it was typed out of.
 func TestEngineAdminSetsTheEngineExclusionList(t *testing.T) {
+	t.Parallel()
 	a, e, _ := engineModelAdminAPI(t)
 	put := func(body string) (int, string) {
 		t.Helper()
@@ -1299,6 +1319,7 @@ func engineWindowTestRow(id string, enabled bool, ctxTokens int) store.EngineMod
 // correct a context_tokens was to register the whole row again — which lands it disabled and
 // drops the licence acceptance the ingest recorded.
 func TestEngineAdminEditsAModelWindow(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineWindowTestEngine(t)
 	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", false, 262144)); err != nil {
 		t.Fatal(err)
@@ -1354,6 +1375,7 @@ func TestEngineAdminEditsAModelWindow(t *testing.T) {
 // model — so an ALREADY enabled row's context window could be raised to anything and nobody
 // looked. That is the exact operation that bought an L4 and then died four minutes later.
 func TestEngineAdminAsksBeforeRaisingTheWindowOfALoadedModel(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineWindowTestEngine(t)
 	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", true, 16384)); err != nil {
 		t.Fatal(err)
@@ -1403,6 +1425,7 @@ func TestEngineAdminAsksBeforeRaisingTheWindowOfALoadedModel(t *testing.T) {
 // The operator's own measurement, written and withdrawn — and guarded forward like the window,
 // because declaring 40 GB on a row the engine is already loading is the same act.
 func TestEngineAdminEditsAModelVram(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineWindowTestEngine(t)
 	if err := st.PutEngineModel(t.Context(), engineWindowTestRow("qwen3", true, 16384)); err != nil {
 		t.Fatal(err)
@@ -1457,6 +1480,7 @@ func TestEngineAdminEditsAModelVram(t *testing.T) {
 // A borrowed catalogue is a MIRROR of the far deployment's (ADR 0079 decision 7), so the new
 // fields are refused with the rest — before the body is even read.
 func TestEngineAdminRefusesAWindowEditOnABorrowedRow(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	rem := &engineRemote{key: "image", tokens: map[string]engineRemoteToken{}}
 	e := &engineRuntimeState{
@@ -1490,6 +1514,7 @@ func TestEngineAdminRefusesAWindowEditOnABorrowedRow(t *testing.T) {
 // a SOURCE whose file lands on the taken key — which is exactly how an operator reaches it: the
 // same filename from a later version of the same model.
 func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
 	e.settings, e.ctrl = st, nil
@@ -1594,6 +1619,7 @@ func TestEngineIngestRejectsARecordedDestinationBeforeUpload(t *testing.T) {
 // The three rows are each other's control. If the fence had simply stopped running, `present` and
 // `unknown` would go green too.
 func TestARecordedDestinationIsHeldOnlyWhileTheBytesAreThere(t *testing.T) {
+	t.Parallel()
 	const key = "image/checkpoints/orphan.safetensors"
 	for _, tc := range []struct {
 		name   string
@@ -1703,6 +1729,7 @@ func TestARecordedDestinationIsHeldOnlyWhileTheBytesAreThere(t *testing.T) {
 // 0060_engine_model_source.sql exists to keep — an id is short and readable and does not say
 // which vendor published the model, and once the job row is gone nothing else does.
 func TestRegisteringAModelRecordsWhereItCameFrom(t *testing.T) {
+	t.Parallel()
 	a, _, st := engineModelAdminAPI(t)
 	code, out := adminModel(t, a, "POST", "image", "", `{
 	  "id":"sd35-medium","kind":"checkpoint","base_model":"sd35",
@@ -1758,6 +1785,7 @@ func TestRegisteringAModelRecordsWhereItCameFrom(t *testing.T) {
 // of ADR 0076: `managed:false` with a lifecycle that is not `remote`, and it takes models in
 // like any other.
 func TestEngineIngestIsRefusedForABorrowedRoleAndAllowedForAnExternalOne(t *testing.T) {
+	t.Parallel()
 	body := func() string {
 		return `{"id":"m1","kind":"gguf","license_accepted":true,
 		  "source":{"url":"https://example.invalid/new.gguf","sha256":"` + strings.Repeat("d", 64) + `"}}`
@@ -1808,6 +1836,7 @@ func TestEngineIngestIsRefusedForABorrowedRoleAndAllowedForAnExternalOne(t *test
 // is a row the engine can be told to start with and cannot load, and a text encoder registered
 // with no flag becomes the checkpoint of its own row.
 func TestIngestJobRowSaysWhatTheFileWasTakenInAs(t *testing.T) {
+	t.Parallel()
 	job := store.EngineIngestJob{
 		ID: "j1", Role: "image", ModelID: "clip-l", S3Key: "image/text_encoders/clip_l.safetensors",
 		State: store.EngineIngestDone,
@@ -1844,6 +1873,7 @@ func TestIngestJobRowSaysWhatTheFileWasTakenInAs(t *testing.T) {
 // the Agent reads nothing else, so a value stored and not relayed is a column that does nothing,
 // which is what `trainedWords` already was for as long as it had nowhere to be stored.
 func TestEngineAdminEditsAModelsTrainedWords(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineModelAdminAPI(t)
 	// The checkpoint the adapter rides beside: a catalogue row with no model at all answers nil,
 	// so an engine offering only a LoRA has no wire to look at.
@@ -1910,6 +1940,7 @@ func TestEngineAdminEditsAModelsTrainedWords(t *testing.T) {
 // that names a model's licence beside it had nothing to name — the sessionWire failure, one
 // relay function further down.
 func TestEngineCatalogRowCarriesLicenceAndSource(t *testing.T) {
+	t.Parallel()
 	row := engineCatalogModelRow(store.EngineModel{
 		ID: "flux1-dev", LicenseName: "FLUX.1 [dev] Non-Commercial License",
 		LicenseURL: "https://example.invalid/license", Source: "civitai:1759168",
@@ -1993,6 +2024,7 @@ func TestEngineIngestStartsALoginWalledAssetWhenACivitaiTokenIsRegistered(t *tes
 // The missing term cannot be computed here — that is what "no geometry" means — so the guard's
 // job is to stop calling it a fit, not to invent a number.
 func TestEngineAdminWillNotCallAFloorAFitWhenAWindowIsDeclared(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineWindowTestEngine(t)
 	row := engineWindowTestRow("qwen3", false, 262144)
 	row.KVLayers, row.KVHeadsKV, row.KVKeyLen, row.KVValueLen = 0, 0, 0, 0 // never read
@@ -2052,6 +2084,7 @@ func TestEngineAdminWillNotCallAFloorAFitWhenAWindowIsDeclared(t *testing.T) {
 // The bytes are in the bucket and the header is 64 KiB in. Read it on the write the operator is
 // already making, and the row stops being unanswerable.
 func TestEngineAdminHealsAMissingGeometryFromTheBucket(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
 	e.catalog = newEngineCatalog(st, "image")
@@ -2123,6 +2156,7 @@ func TestEngineAdminHealsAMissingGeometryFromTheBucket(t *testing.T) {
 // problem: the edit they actually asked for must land either way, and the row stays exactly
 // where it would have been if nothing had been attempted.
 func TestEngineAdminGeometryHealIsBestEffort(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
 	e.catalog = newEngineCatalog(st, "image")
@@ -2173,6 +2207,7 @@ func TestEngineAdminGeometryHealIsBestEffort(t *testing.T) {
 // whatever anybody changed while the read was in flight. Same hazard as rewriting a file you
 // read a second ago, and the same answer: write the columns you learned about.
 func TestEngineAdminGeometryHealDoesNotRevertAConcurrentEdit(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
 	e.catalog = newEngineCatalog(st, "image")
@@ -2236,6 +2271,7 @@ func TestEngineAdminGeometryHealDoesNotRevertAConcurrentEdit(t *testing.T) {
 // against — and skipping on "it already has layers" would leave it that way for ever. Both
 // deployments hold rows in exactly this state.
 func TestEngineAdminGeometryHealUpgradesAPreModifierRow(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
 	e.catalog = newEngineCatalog(st, "image")
@@ -2292,6 +2328,7 @@ func TestEngineAdminGeometryHealUpgradesAPreModifierRow(t *testing.T) {
 // measurable byte. It may even HAVE a geometry, so the refusal must not send its operator
 // looking for a header that is already read.
 func TestEngineAdminAsksAboutAWindowOnUnweighableFiles(t *testing.T) {
+	t.Parallel()
 	a, e, st := engineWindowTestEngine(t)
 	row := engineWindowTestRow("seeded", false, 32768)
 	row.Files = []store.EngineModelFile{{S3Key: "image/checkpoints/seeded.gguf"}} // no Bytes
@@ -2328,6 +2365,7 @@ func TestEngineAdminAsksAboutAWindowOnUnweighableFiles(t *testing.T) {
 // staples the old file's attention shape onto the new file's row — a wrong VRAM answer nothing
 // afterwards contradicts.
 func TestEngineAdminGeometryHealWillNotStapleAnOldShapeToANewFile(t *testing.T) {
+	t.Parallel()
 	st := testSettingsStore(t)
 	e := newClassTestEngine(t, &engineTestECS{}, &fakeFleet{}, "l4|L4|21000|g6.xlarge|4-8|15000-65536", st)
 	e.catalog = newEngineCatalog(st, "image")

@@ -126,6 +126,7 @@ func accessJSONField(body, key string) string {
 }
 
 func TestPATIssuanceAppliesTheTenantRules(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	api := newPATAPI(f.mgr)
 	mint := func(r *http.Request, who store.Identity) *httptest.ResponseRecorder {
@@ -167,6 +168,7 @@ func TestPATIssuanceAppliesTheTenantRules(t *testing.T) {
 }
 
 func TestPATListAndRevokeStillWorkOutsideTheNetwork(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	api := newPATAPI(f.mgr)
 	w := httptest.NewRecorder()
@@ -196,6 +198,7 @@ func TestPATListAndRevokeStillWorkOutsideTheNetwork(t *testing.T) {
 }
 
 func TestPATLifetimeIsCapped(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	f.mgr.patMaxDays = 30
 	api := newPATAPI(f.mgr)
@@ -223,6 +226,7 @@ func TestPATLifetimeIsCapped(t *testing.T) {
 }
 
 func TestTenantAdminGateAppliesTheTenantRules(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	a := memberAuth{f.mgr}
 	gate := func(r *http.Request, slug string) (int, string) {
@@ -263,6 +267,7 @@ func TestTenantAdminGateAppliesTheTenantRules(t *testing.T) {
 }
 
 func TestAnyTenantAdminGateNeedsOneAdminTenantThatAdmitsTheRequest(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	a := memberAuth{f.mgr}
 	gate := func(r *http.Request) (int, string) {
@@ -304,6 +309,7 @@ func accessMembership(t *testing.T, f *accessFixture, id store.Identity, tn stor
 }
 
 func TestIngestGateIsBoundToTheSelectedTenant(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	reg, _ := newAdminTestRegistry(t, &engineTestECS{}, testSettingsStore(t))
 	a := engineAdminAPI{memberAuth{f.mgr}, reg, f.st}
@@ -436,6 +442,7 @@ func TestLegacyNonExpiringPATIsCappedFromCreation(t *testing.T) {
 // --- review round 1 ----------------------------------------------------------------
 
 func TestListTenantsOmitsTenantsThatRefuseTheRequest(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	adm := newAdminAPI(f.mgr)
 	slugs := func(r *http.Request, who store.Identity) string {
@@ -500,6 +507,7 @@ func (p noVerdictProvider) Exchange(context.Context, string, string) (auth.Princ
 func (p noVerdictProvider) Allowed(context.Context, auth.Principal) (bool, error) { return false, nil }
 
 func TestGitHubEntryVerdictKeepsUnknownApartFromDenied(t *testing.T) {
+	t.Parallel()
 	p := &auth.GitHubProvider{ProviderID: "github", DeployAllowed: func(e string) bool { return e == "ok@example.com" }, DeployHasList: true,
 		TTL: time.Minute, Grace: time.Minute}
 	ctx := context.Background()
@@ -522,6 +530,7 @@ func TestGitHubEntryVerdictKeepsUnknownApartFromDenied(t *testing.T) {
 }
 
 func TestBadPATRequestBodiesAreRefused(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	api := newPATAPI(f.mgr)
 	mint := func(body string) int {
@@ -540,6 +549,7 @@ func TestBadPATRequestBodiesAreRefused(t *testing.T) {
 }
 
 func TestParsePATMaxDays(t *testing.T) {
+	t.Parallel()
 	for raw, want := range map[string]int{"": 0, "30": 30, " 365 ": 365, "3650": 3650} {
 		if got, err := parsePATMaxDays(raw); err != nil || got != want {
 			t.Errorf("%q = %d, %v; want %d", raw, got, err, want)

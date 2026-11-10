@@ -515,6 +515,7 @@ func TestIngestStartsExactlyWhatThePlanNamed(t *testing.T) {
 // on (role, id): a second Anima taken in under the same proposal would replace a working row's
 // files, licence and enabled state minutes after a press, and nothing would connect the two.
 func TestPlanProposesAnIdNothingElseHolds(t *testing.T) {
+	t.Parallel()
 	rows := []store.EngineModel{{ID: "anima-aesthetic-v1.1"}, {ID: "anima-aesthetic-v1.1-2"}}
 	if got := enginePlanID("", "split_files/anima-aesthetic-v1.1.safetensors", rows); got != "anima-aesthetic-v1.1-3" {
 		t.Errorf("proposed id = %q, want the first free suffix", got)
@@ -542,6 +543,7 @@ func TestPlanProposesAnIdNothingElseHolds(t *testing.T) {
 // The layout follows the ROLE. A deployment whose image engine is sdcpp has no file vocabulary at
 // all and its one whole checkpoint still belongs under `image/checkpoints/`; the llm role is flat.
 func TestIngestKeyFollowsTheRole(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		role         string
 		images, lora bool
@@ -598,6 +600,7 @@ func TestPlanTokenDoesNotMoveWithTheID(t *testing.T) {
 // load-bearing: a record with no object is a key whose bytes were purged, an object with no
 // matching identity is bytes nobody can vouch for.
 func TestLedgerLookupNeedsBothProofs(t *testing.T) {
+	t.Parallel()
 	key, identity := "image/vae/x.safetensors", "hf:a/b@c/x.safetensors#sha256:dd"
 	head := &fakeEngineStorageHead{states: map[string]string{}, bytes: map[string]int64{}}
 	held := enginePartsHeld{
