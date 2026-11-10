@@ -19,7 +19,10 @@ import (
 
 // secretEnvNames is the closed list of credential variables. A name is added here when the
 // CP starts injecting a new bearer credential; TestSecretEnvNamesCoverCPCredentials in the CP
-// module's root fails when workspaceExtraEnv emits a *_TOKEN / *_SECRET that is not listed.
+// module's root fails when workspaceExtraEnv emits a name ending in TOKEN, SECRET, PASSWORD or
+// KEY that is not listed, with and without the switch-gated emitters on. AF_SECRET_KEY and
+// AF_SECRET_KEY_NEXT are not here: they travel through the adapters' own key handling
+// (SecretKeys), not this list.
 var secretEnvNames = []string{
 	"AF_MEMO_TOKEN",
 	"AF_SCHEDULE_TOKEN",

@@ -39,6 +39,8 @@ func bridgeFamilies() []struct {
 		{"AF_GCP_PROFILES_TOKEN", gcpProfilesSignKey, verifyGCPProfilesToken},
 		{"AF_BRANCH_RULES_TOKEN", branchRulesSignKey, verifyBranchRulesToken},
 		{"AF_WATCH_TOKEN", watchingress.SignKey, watchingress.VerifyToken},
+		// Only injected with AF_PROVIDED_ROUTES=1; the rotation test switches it on.
+		{"AF_ROUTE_ISSUE_TOKEN", routegateway.SignKey, routegateway.VerifyIssueToken},
 	}
 }
 
@@ -73,6 +75,7 @@ func TestBridgeKeyEpochZeroIsLegacy(t *testing.T) {
 // on removal, on re-activation and on an administrator's rotation, and a token minted at the
 // new epoch works; none of it needs a restart of the CP.
 func TestBridgeTokensDieOnRotationRemovalAndReactivation(t *testing.T) {
+	t.Setenv(routegateway.EnvSwitch, "1") // AF_ROUTE_ISSUE_TOKEN is switch-gated
 	ctx := context.Background()
 	f := &envRecordingFactory{}
 	st, mgr, victim, tn := destroyFixture(t, f)
@@ -264,6 +267,7 @@ func checkSecretEnvCoverage(t *testing.T, mustEmit []string) {
 	f.mu.Lock()
 	env := f.built[len(f.built)-1]
 	f.mu.Unlock()
+	// KEYS is deliberately not matched: AF_MEMBER_ORIGIN_KEYS carries public keys only.
 	credential := regexp.MustCompile(`(TOKEN|SECRET|PASSWORD|KEY)$`)
 	listed := map[string]bool{}
 	for _, n := range runtime.SecretEnvNames() {
