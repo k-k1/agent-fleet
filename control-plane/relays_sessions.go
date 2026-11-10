@@ -48,6 +48,10 @@ var sessionRelays = []agentRelay{
 	{route: "DELETE /api/cleanup/tool-caches/{name}"},
 	{route: "GET /api/cleanup/home"},
 	{route: "POST /api/cleanup/home/measure"}, // starts a read-only walk (#3083)
+	// Drop regenerable build output from a dormant worktree (#3202). Irreversible, so audited;
+	// the survey GET and ?dry_run=1 change nothing.
+	{route: "GET /api/cleanup/worktree-output"},
+	{route: "POST /api/cleanup/worktree-output", audit: auditAs("cleanup.worktree_output", query("worktree"))},
 	{route: "GET /api/cleanup/leftovers"},
 	{route: "DELETE /api/cleanup/leftovers/{kind}"},
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
