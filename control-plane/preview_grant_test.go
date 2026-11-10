@@ -131,6 +131,7 @@ func ownerOpens(t *testing.T, e *previewHostEnv, slug string, port int) *http.Co
 }
 
 func TestPreviewOwnerOpensUnlistedPortBoundToListener(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	ag.set(5173, "http", "111", "222")
 	e := newPreviewHostEnv(t, ag.srv.URL)
@@ -183,6 +184,7 @@ func auditCount(t *testing.T, e *previewHostEnv, action string) int {
 
 // Public mode and tenant share govern listed ports only: an unlisted port stays the owner's.
 func TestPreviewUnlistedPortStaysOwnerOnly(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	ag.set(5173, "http", "111")
 	e := newPreviewHostEnv(t, ag.srv.URL)
@@ -220,6 +222,7 @@ func TestPreviewUnlistedPortStaysOwnerOnly(t *testing.T) {
 // The grant dies with the listener: stopped → 404 and the row is gone; another process on
 // the port (different inode) → 404 too.
 func TestPreviewGrantEndsWithTheListener(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	ag.set(5173, "http", "111")
 	e := newPreviewHostEnv(t, ag.srv.URL)
@@ -242,6 +245,7 @@ func TestPreviewGrantEndsWithTheListener(t *testing.T) {
 }
 
 func TestPreviewGrantRefusals(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		setup  func(g *grantAgent)
 		status int
@@ -253,6 +257,7 @@ func TestPreviewGrantRefusals(t *testing.T) {
 		"old agent":         {func(g *grantAgent) { g.noEndpoint = true; g.set(5173, "http", "1") }, 409, "not available until the workspace is restarted"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ag := newGrantAgent(t)
 			tc.setup(ag)
 			e := newPreviewHostEnv(t, ag.srv.URL)
@@ -276,6 +281,7 @@ func TestPreviewGrantRefusals(t *testing.T) {
 }
 
 func TestPreviewGrantGuardsAndCap(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	e := newPreviewHostEnv(t, ag.srv.URL)
 	e.mintSlug(t)
@@ -305,6 +311,7 @@ func TestPreviewGrantGuardsAndCap(t *testing.T) {
 
 // Slug rotation (start / reissue) and stop clear the grants.
 func TestPreviewGrantsClearedOnRotateAndStop(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	ag.set(5173, "http", "111")
 	e := newPreviewHostEnv(t, ag.srv.URL)
@@ -337,6 +344,7 @@ func (e *previewHostEnv) currentSlug(t *testing.T) string {
 
 // An unlisted sibling counts for CORS only with a live grant and the owner's own cookie.
 func TestPreviewSiblingOriginUnlistedNeedsGrantAndOwner(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	ag.set(5173, "http", "111")
 	e := newPreviewHostEnv(t, ag.srv.URL)
@@ -362,6 +370,7 @@ func TestPreviewSiblingOriginUnlistedNeedsGrantAndOwner(t *testing.T) {
 }
 
 func TestPreviewSettingsListsTempPorts(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	ag.set(5173, "http", "111")
 	e := newPreviewHostEnv(t, ag.srv.URL)
@@ -377,6 +386,7 @@ func TestPreviewSettingsListsTempPorts(t *testing.T) {
 // The path form (/preview/{port}/) never carries a listener binding, and a client-supplied
 // header never reaches the Agent through it either.
 func TestPreviewPathFormDropsClientListenerHeader(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	mux := newPreviewTenantTestEnv(t, ag.srv.URL)
 	req := httptest.NewRequest(http.MethodGet, "/preview/5173/?tenant=default", nil)
@@ -395,6 +405,7 @@ func TestPreviewPathFormDropsClientListenerHeader(t *testing.T) {
 // and CORS preflights: with a grant present, an anonymous caller must see exactly what it sees
 // without one.
 func TestPreviewUnlistedPortAnswersAnonymousCallersLikeNoGrant(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	ag.set(5173, "http", "111")
 	e := newPreviewHostEnv(t, ag.srv.URL)
@@ -448,6 +459,7 @@ func TestPreviewUnlistedPortAnswersAnonymousCallersLikeNoGrant(t *testing.T) {
 
 // Concurrent opens settle in one transaction: the cap holds, a renewed listener audits once.
 func TestPreviewGrantConcurrentOpensRespectCapAndAuditOnce(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	e := newPreviewHostEnv(t, ag.srv.URL)
 	e.mintSlug(t)
@@ -481,6 +493,7 @@ func TestPreviewGrantConcurrentOpensRespectCapAndAuditOnce(t *testing.T) {
 
 // A grant whose slug was rotated while its probe ran must not be saved over the new start.
 func TestPreviewGrantSaveRefusedAfterSlugRotation(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	e := newPreviewHostEnv(t, ag.srv.URL)
 	old := e.mintSlug(t)
@@ -498,6 +511,7 @@ func TestPreviewGrantSaveRefusedAfterSlugRotation(t *testing.T) {
 
 // Servers that have stopped do not hold the cap: a full table of dead grants makes room.
 func TestPreviewGrantCapPrunesStoppedListeners(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	e := newPreviewHostEnv(t, ag.srv.URL)
 	e.mintSlug(t)
@@ -532,6 +546,7 @@ func (e *previewHostEnv) openOwnDirect(port int) {
 // previous start's open from this one's: the epoch does. An old open that returns late must be
 // refused and must not overwrite the grant the current start already holds.
 func TestPreviewGrantFromThePreviousStartIsRefusedWithAFixedSlug(t *testing.T) {
+	t.Parallel()
 	ag := newGrantAgent(t)
 	e := newPreviewHostEnv(t, ag.srv.URL)
 	e.setPreviewSettings(t, func(st *wsSettings) { st.PreviewFixedSlug = true })

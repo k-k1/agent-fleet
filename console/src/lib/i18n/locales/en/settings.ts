@@ -61,6 +61,11 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   // --- display settings ---
   "display.color_theme": "Color theme",
   "display.theme": "Theme",
+  "display.text_contrast": "Text contrast",
+  "display.text_contrast_standard": "Standard",
+  "display.text_contrast_strong": "Strong",
+  "display.text_contrast_strongest": "Strongest",
+  "display.text_contrast_note": "Darkens (light theme) or brightens (dark theme) text across the whole Console. Applies only to this device.",
   "display.session_theme": "Session theme",
   "display.shared_theme": "Shared session theme",
   "display.assistant_theme": "Assistant theme",

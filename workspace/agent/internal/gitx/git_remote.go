@@ -2,6 +2,7 @@ package gitx
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -73,13 +74,11 @@ func RefreshBitbucketAndRetry(s *secrets.Data, err error, retry func(auth string
 	if !errors.Is(err, ErrBitbucketUnauthorized) || s.Bitbucket == nil {
 		return err
 	}
-	nc, rerr := RefreshBitbucket(*s.Bitbucket)
-	if rerr != nil {
+	c := *s.Bitbucket
+	if rerr := RefreshBitbucketStored(context.Background(), &c); rerr != nil {
 		return err // keep the original unauthorized (a failed refresh means reconnect)
 	}
-	c := nc
-	s.Bitbucket = &c
-	_ = s.Save()
+	s.Bitbucket = &c // already persisted under the store lock
 	return retry("Bearer " + c.AccessToken)
 }
 
@@ -432,10 +431,8 @@ func BitbucketAuthHeader(s *secrets.Data) (string, error) {
 	if s.Bitbucket != nil && s.Bitbucket.AccessToken != "" {
 		c := *s.Bitbucket
 		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
-			if nc, err := RefreshBitbucket(c); err == nil {
-				c = nc
-				s.Bitbucket = &c
-				_ = s.Save()
+			if err := RefreshBitbucketStored(context.Background(), &c); err == nil {
+				s.Bitbucket = &c // already persisted under the store lock
 			}
 		}
 		return "Bearer " + c.AccessToken, nil

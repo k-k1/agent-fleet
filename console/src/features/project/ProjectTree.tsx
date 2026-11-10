@@ -5,6 +5,7 @@
 // decorated flat list — and folding the base folds the whole project. The
 // section header carries the repo actions (clone / refresh) and the
 // session-maintenance actions (tidy / archive).
+import { useFold } from "../../lib/useFold.ts";
 import { memo, useEffect, useState } from "react";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Section } from "../../ui/Section.tsx";
@@ -58,11 +59,8 @@ export const ProjectTree = memo(function ProjectTree() {
   // the section mounts no RepoNode, so the reveal (command palette, the session menu's
   // repository item) would expand nothing and find no row. Same af-section-repos key Section
   // itself would use, so an existing choice carries over.
-  const [secOpen, setSecOpen] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
-  const setSection = (open: boolean) => {
-    localStorage.setItem(SECTION_KEY, open ? "1" : "0");
-    setSecOpen(open);
-  };
+  const [secStored, setSection] = useFold(SECTION_KEY);
+  const secOpen = secStored !== false;
   // Only a reveal made while mounted opens it: the counter is never reset, so comparing with
   // the value at mount keeps an old reveal from unfolding the section on every remount.
   const revealN = useRepoReveal((s) => s.n);

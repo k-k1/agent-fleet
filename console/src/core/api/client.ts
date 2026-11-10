@@ -4,6 +4,7 @@
 // Shared API layer, originally ported from the Phase 1 Console — the behavioral
 // contract is unchanged; only the packaging moved to modules.
 
+import { isScopedFold, setFoldScope } from "../../lib/foldStore.ts";
 import { signalAuthExpired } from "../auth/authExpired.ts";
 import { signalProviderRequired } from "../auth/providerRequired.ts";
 import { t, tMaybe } from "../../lib/i18n/index.ts";
@@ -35,10 +36,12 @@ const initialTabTenant = ((): string => {
 })();
 let tenantPinned = !!initialTabTenant;
 let selectedTenant = initialTabTenant || localStorage.getItem("af-tenant") || "";
+setFoldScope({ tenant: selectedTenant });
 
 export const getTenant = (): string => selectedTenant;
 export function setTenant(slug: string | null | undefined): void {
   selectedTenant = slug || "";
+  setFoldScope({ tenant: selectedTenant });
   if (tenantPinned) {
     try {
       sessionStorage.setItem(TAB_TENANT_KEY, selectedTenant);
@@ -63,21 +66,22 @@ let currentUser = "";
 export const getUser = (): string => currentUser;
 export function setUser(id: string | null | undefined): void {
   currentUser = id || "";
+  setFoldScope({ user: currentUser });
 }
 
 // clearLocalState wipes every Console-owned localStorage entry — all keys carry an
 // `af` prefix (tenant selection, per-(user,tenant) layouts, composer drafts, display
-// settings, section fold states, caches, …). Called on logout so the next account on
-// this browser starts clean and nothing of the prior user survives (the layout is
-// already user-scoped, but this also clears the stale tenant selection, drafts and
-// misc UI state). In-memory tenant/user are reset too, though logout navigates away
+// settings, caches, …). Called on logout so the next account on this browser starts clean
+// and nothing of the prior user survives. The one exception is the (user,tenant)-scoped fold
+// flags (FOLD_PREFIXES + NUL): the same account gets its folds back, any other account reads
+// a different scope. In-memory tenant/user are reset too, though logout navigates away
 // immediately after.
 export function clearLocalState(): void {
   try {
     const keys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith("af")) keys.push(k);
+      if (k && k.startsWith("af") && !isScopedFold(k)) keys.push(k);
     }
     for (const k of keys) localStorage.removeItem(k);
   } catch {
@@ -89,6 +93,7 @@ export function clearLocalState(): void {
   tenantPinned = false;
   selectedTenant = "";
   currentUser = "";
+  setFoldScope({ user: "", tenant: "" });
 }
 
 const _fetch = window.fetch.bind(window);

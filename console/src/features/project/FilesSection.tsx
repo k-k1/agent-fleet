@@ -7,6 +7,7 @@
 // "open folder" on a repo row) opens the section so the target is visible — hence the
 // controlled Section + own persistence (the old console's af-section-files key,
 // so an existing collapse choice carries over).
+import { useFold } from "../../lib/useFold.ts";
 import { openGeneratedGallery } from "../gallery/open.ts";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
@@ -38,20 +39,10 @@ export const FilesSection = memo(function FilesSection() {
   const filterRef = useRef<HTMLInputElement>(null);
   const sectionBodyRef = useRef<HTMLDivElement>(null);
   const wasSearchingRef = useRef(false);
-  const [open, setOpen] = useState(() => localStorage.getItem(KEY) === "1");
-  const set = (v: boolean) => {
-    setOpen(v);
-    try {
-      localStorage.setItem(KEY, v ? "1" : "0");
-    } catch {}
-  };
-  const [homeOpen, setHomeOpen] = useState(() => localStorage.getItem(HOME_KEY) === "1");
-  const setHome = (v: boolean) => {
-    setHomeOpen(v);
-    try {
-      localStorage.setItem(HOME_KEY, v ? "1" : "0");
-    } catch {}
-  };
+  const [openStored, set] = useFold(KEY);
+  const open = openStored === true;
+  const [homeStored, setHome] = useFold(HOME_KEY);
+  const homeOpen = homeStored === true;
   const [view, setView] = useState(() => localStorage.getItem(VIEW_KEY) || "tree");
   const setViewPersist = (v: string) => {
     setView(v);

@@ -15,6 +15,7 @@ import (
 // the Agent is asked (ADR 0128 decision 12), and passes a create with no selection untouched. The
 // cases are selections no harness declares for the kind they name.
 func TestSessionCreateRefusesRouteSelection(t *testing.T) {
+	t.Parallel()
 	f := newHandoffLife(t)
 	rc := f.recipientWorkspace()
 	for name, tc := range map[string]struct {
@@ -56,6 +57,7 @@ func TestSessionCreateRefusesRouteSelection(t *testing.T) {
 }
 
 func TestScheduleRouteSelection(t *testing.T) {
+	t.Parallel()
 	api, _, mv := newSchedAPITest(t)
 	const base = `"spec_kind":"cron","spec":"0 9 * * *","prompt":"x"`
 	for name, b := range map[string]string{
@@ -99,6 +101,7 @@ func TestScheduleRouteSelection(t *testing.T) {
 // A fire of a row that carries a selection the snapshot does not accept is refused before the
 // Workspace is touched, in every session mode: new, reuse (first create and rotation) alike.
 func TestFireRefusesRouteSelection(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"new", "reuse"} {
 		for _, kind := range []string{"", "claude", "codex"} {
 			// A zero wakeFirer would panic on the first store call: the refusal has to come first.
@@ -113,6 +116,7 @@ func TestFireRefusesRouteSelection(t *testing.T) {
 
 // The bodies a fire sends carry the selection when the row has one, and no route key when not.
 func TestScheduleBodiesCarryRoute(t *testing.T) {
+	t.Parallel()
 	slot := time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC)
 	sch := store.Schedule{ID: "s", SessionMode: "new", AgentKind: "claude", Prompt: "p"}
 	for name, build := range map[string]func(store.Schedule) []byte{
@@ -138,6 +142,7 @@ func TestScheduleBodiesCarryRoute(t *testing.T) {
 
 // The selection survives the store round trip, and a row written without one reads back empty.
 func TestScheduleRouteStoreRoundTrip(t *testing.T) {
+	t.Parallel()
 	api, _, mv := newSchedAPITest(t)
 	st := api.store
 	rec := doJSON(api.create, mv, "POST", `{"spec_kind":"cron","spec":"0 9 * * *","prompt":"x"}`, "")
@@ -162,6 +167,7 @@ func TestScheduleRouteStoreRoundTrip(t *testing.T) {
 // not one on another route, and not one whose Agent does not report a route at all. A schedule
 // without a route sends exactly as before, whatever the target's selection.
 func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
+	t.Parallel()
 	sel := &agentroutes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY@0123456789abcdef"}
 	bed := &agentroutes.Selection{Route: "bedrock", Connection: "p1@us-east-1#00112233aabbccdd"}
 	for name, tc := range map[string]struct {
@@ -207,6 +213,7 @@ func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
 // /api/sessions and at a schedule's fire before the Workspace is touched (ADR 0129 D3); the
 // gateway's own reasons are TestProvidedRouteCreateRefusal's.
 func TestCreatePathsRefuseAnUnservedProvidedRoute(t *testing.T) {
+	// Serial: it swaps the process-wide route gateway, which a parallel test could observe.
 	prev := activeProvidedRouteGateway.Load()
 	activeProvidedRouteGateway.Store(nil)
 	t.Cleanup(func() { activeProvidedRouteGateway.Store(prev) })

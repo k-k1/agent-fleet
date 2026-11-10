@@ -70,16 +70,9 @@ func credHelperGet(r io.Reader, w io.Writer) {
 	if host == "bitbucket.org" && s.Bitbucket != nil {
 		c := *s.Bitbucket
 		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
-			if nc, rerr := gitx.RefreshBitbucket(c); rerr == nil {
-				c = nc
-				// Re-read-modify-write under the store lock: this helper runs as a
-				// SEPARATE process concurrent with agent handlers, and a blind Save
-				// of the stale snapshot would drop their changes.
-				_ = secrets.Update(func(cur *secrets.Data) error {
-					cur.Bitbucket = &c
-					return nil
-				})
-			}
+			// The helper is a separate process: the shared refresh helper serializes
+			// with the Agent and persists under the store lock.
+			_ = gitx.RefreshBitbucketStored(ctx, &c)
 		}
 		fmt.Fprintf(w, "username=x-token-auth\npassword=%s\n", c.AccessToken)
 		return

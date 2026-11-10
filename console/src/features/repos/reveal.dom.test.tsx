@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Repo } from "./store.ts";
+import { foldKey } from "../../lib/foldStore.ts";
 
 let served: Repo[] = [];
 vi.mock("../../core/api/client.ts", () => ({
@@ -111,7 +112,7 @@ describe("openRepoMenuInRail", () => {
     expect(row("app")).toBeNull();
     expect(await settle(openRepoMenuInRail("app@wip-sab"))).toBe(true);
     expect(repoMenu()).not.toBeNull();
-    expect(localStorage.getItem("af-section-repos")).toBe("1");
+    expect(localStorage.getItem(foldKey("af-section-repos"))).toBe("1");
   });
 
   it("does not unfold a folded section on mount because of an earlier reveal", async () => {

@@ -160,6 +160,10 @@ export function applyTheme(s: Settings): void {
   const root = document.documentElement;
   const theme = s.theme === "light" ? "light" : "dark";
   root.dataset.theme = theme;
+  // Standard writes no attribute at all, so it stays byte-identical to a build without the
+  // setting; an unknown stored value is treated as standard.
+  if (s.textContrast === "strong" || s.textContrast === "strongest") root.dataset.contrast = s.textContrast;
+  else delete root.dataset.contrast;
   const setVar = (name: string, val: string | null) =>
     val ? root.style.setProperty(name, val) : root.style.removeProperty(name);
   setVar("--topbar-bg", surfaceValue(s.topbarColor, theme));

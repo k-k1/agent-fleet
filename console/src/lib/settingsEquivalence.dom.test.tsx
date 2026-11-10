@@ -44,6 +44,7 @@ async function fresh(local: Obj | null, storedOwner = "", owner = ""): Promise<M
 const VALID_OVERRIDES: Obj = {
   theme: "light",
   paneLayout: "split",
+  textContrast: "strong",
   mirrorTheme: "dark",
   sharedTheme: "light",
   assistantTheme: "dark",

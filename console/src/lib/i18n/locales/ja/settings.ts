@@ -58,6 +58,11 @@ export const settings = {
   // --- 表示設定（features/settings/DisplayTab.tsx）---
   "display.color_theme": "カラーテーマ",
   "display.theme": "テーマ",
+  "display.text_contrast": "文字のコントラスト",
+  "display.text_contrast_standard": "標準",
+  "display.text_contrast_strong": "強め",
+  "display.text_contrast_strongest": "最強",
+  "display.text_contrast_note": "Console 全体の文字をはっきりさせます（ライトでは濃く、ダークでは明るく）。このブラウザだけに適用されます。",
   "display.session_theme": "セッションのテーマ",
   "display.shared_theme": "共有セッションのテーマ",
   "display.assistant_theme": "アシスタントのテーマ",

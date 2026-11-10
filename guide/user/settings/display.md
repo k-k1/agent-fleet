@@ -28,7 +28,7 @@ Open **⚙ Settings → "Display"**. A change applies at once.
 |---|---|
 | Language and region | "**Language**", "**Region format**" (how dates and numbers are written), "**Time zone**" |
 | Main area layout | "**Split panes**" or "**Tabbed grid**" |
-| Color theme | The app's "**Theme**", "**Session theme**", "**Shared session theme**", and the backgrounds of the top bar, the left pane and so on |
+| Color theme | The app's "**Theme**", "**Text contrast**" (Standard, Strong, Strongest), "**Session theme**", "**Shared session theme**", and the backgrounds of the top bar, the left pane and so on |
 | Japanese font | Which Japanese font draws symbols such as ①②③ and ㈱ |
 | Terminal | Font and size, "**Ctrl+C / Ctrl+V copy and paste**", "**Copy without asking after a mouse drag**" |
 | File viewer | Font, size, tab width, line numbers, wrap, minimap |
@@ -61,7 +61,7 @@ Settings are saved in two places.
 
 | Saved in | Settings |
 |---|---|
-| This browser only | The theme, the session and shared session themes, background colors, the main area layout, whether appearance is separate per tenant |
+| This browser only | The theme, text contrast, the session and shared session themes, background colors, the main area layout, whether appearance is separate per tenant |
 | The server (the same on another PC or browser) | Language, region format, time zone, fonts and sizes, and everything else |
 
 - You can keep a different theme on your office PC and your home PC, to suit the lighting
