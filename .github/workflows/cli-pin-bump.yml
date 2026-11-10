@@ -5,7 +5,9 @@
 # has passed its contract (`tested == latest`) gets its `ARG` pins and checksums rewritten
 # in workspace/Dockerfile, on one fixed branch, in one PR that waits for a human. The
 # decision and the edit are deploy/local/cli-pin-bump.sh (tested by
-# cli-pin-bump-stub-test.sh); this file only calls it and pushes.
+# cli-pin-bump-stub-test.sh); this file only calls it and pushes. When the claude pin moves,
+# deploy/local/claude-route-overrides.sh re-derives routeOverrides in the same commit, so the
+# PR is not red on TestRouteOverridesCoverTheCLIsLists when the CLI's names did not change.
 #
 # The token is a secret, not GITHUB_TOKEN: a push or PR made with GITHUB_TOKEN starts no
 # other workflow, so the PR's CI would never run and it could never be merged on green.
@@ -15,18 +17,11 @@
 name: cli-pin-bump
 
 on:
-  # A contract that just recorded `tested` is the moment a bump can become possible.
-  workflow_run:
-    workflows:
-      - claude-tui-contract
-      - codex-contract
-      - opencode-contract
-      - copilot-contract
-      - agy-contract
-      - cursor-contract
-      - kiro-contract
-      - muse-contract
-    types: [completed]
+  # A contract that just recorded `tested` is the moment a bump can become possible, so
+  # every contract dispatches this workflow when it finishes (its `pin-bump` job). Not
+  # `workflow_run`: the watcher dispatches the contracts with GITHUB_TOKEN, and a run
+  # started that way fires no `workflow_run`, so that trigger only ever saw contracts on
+  # pull requests, which never record `tested` (#3783). `workflow_dispatch` is exempt.
   schedule:
     - cron: "0 1-23/2 * * *" # every 2 hours at the odd hours, a backstop 30 minutes after the watcher
   workflow_dispatch:
@@ -42,7 +37,6 @@ concurrency:
 
 jobs:
   bump:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -61,6 +55,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BODY_FILE: ${{ runner.temp }}/body.md
         run: deploy/local/cli-pin-bump.sh
+
+      # Only edits when the CLI's provider, endpoint and credential names are unchanged since
+      # routeOverridesFrom; otherwise the test stays red and the PR body lists the names.
+      - name: re-derive claude's routeOverrides
+        if: steps.bump.outputs.incomplete != 'true' && steps.bump.outputs.count != '0'
+        env:
+          BODY_FILE: ${{ runner.temp }}/body.md
+        run: deploy/local/claude-route-overrides.sh
 
       # A release source or download that could not be read says nothing about the release;
       # acting on it would drop a kind from the PR, or close it, over a network blip.
@@ -100,6 +102,8 @@ jobs:
             exit 1
           fi
           export GH_TOKEN="$TOKEN"
+          # What claude-route-overrides.sh may have edited; an unedited path commits nothing.
+          route_files=(workspace/agent/internal/agents/claude/route.go workspace/agent/internal/agents/claude/route_bedrock_test.go)
           remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           # A human closed a PR carrying this exact edit without merging it: that is a
@@ -122,12 +126,12 @@ jobs:
             echo "Automated by cli-pin-bump.yml: each bumped kind passed its contract on the"
             echo "new version. Evidence and the kinds left at their pin are in the PR body."
           } > "$RUNNER_TEMP/msg.txt"
-          git commit -q -F "$RUNNER_TEMP/msg.txt" -- workspace/Dockerfile
+          git commit -q -F "$RUNNER_TEMP/msg.txt" -- workspace/Dockerfile "${route_files[@]}"
 
           # Re-push only when the Dockerfile would differ: a force-push restarts CI, and
           # every contract completion runs this job.
           if git fetch -q "$remote" "refs/heads/$BRANCH" 2>/dev/null &&
-             git diff --quiet FETCH_HEAD HEAD -- workspace/Dockerfile; then
+             git diff --quiet FETCH_HEAD HEAD -- workspace/Dockerfile "${route_files[@]}"; then
             echo "The bump branch already carries this edit; not re-pushed."
           else
             git push -q --force "$remote" "HEAD:refs/heads/$BRANCH"
