@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -200,6 +201,9 @@ func TestBudgetFloor(t *testing.T) {
 		if !errors.As(err, &invalid) || !strings.Contains(err.Error(), usd(floor)) || !strings.Contains(err.Error(), prTestModel) {
 			t.Errorf("%s below the floor: %v", name, err)
 		}
+		if usd(below) == usd(floor) && !strings.Contains(err.Error(), fmt.Sprintf("$%.6f", float64(below)/1e6)) {
+			t.Errorf("%s: both amounts round to %s and the message does not tell them apart: %v", name, usd(floor), err)
+		}
 	}
 	zero := int64(0)
 	for name, err := range map[string]error{
@@ -259,5 +263,19 @@ func TestBudgetFloor(t *testing.T) {
 	one := int64(1)
 	if _, err := e.g.SetMember(ctx, e.tenant.ID, MemberInput{MembershipID: e.mid, BudgetMicro: &one}); err != nil {
 		t.Fatalf("no source registered: %v", err)
+	}
+}
+
+// A message that compares two amounts must tell them apart even when both round to the same
+// cents (#3683): 440005 and 440006 micro-USD are both $0.44.
+func TestUsdNear(t *testing.T) {
+	if got := usdNear(440005, 440006); got != "$0.440005" {
+		t.Errorf("colliding: %q", got)
+	}
+	if got := usdNear(440006, 440005); got != "$0.440006" {
+		t.Errorf("colliding: %q", got)
+	}
+	if got := usdNear(500000, 440006); got != "$0.50" {
+		t.Errorf("distinct: %q", got)
 	}
 }

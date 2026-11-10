@@ -87,7 +87,7 @@ func (g *Gateway) belowFloor(ctx context.Context, what string, micro *int64) ([]
 	}
 	return nil, &InvalidInputError{fmt.Errorf("%s %s is below the smallest reservation of one call (%s, for %s with a one-token output cap), "+
 		"so no call could ever be admitted; set at least that, or 0 for no use. A coding session asks for far more output: "+
-		"GET this view's reservations for each model", what, usd(*micro), usd(floor), cheapest)}
+		"GET this view's reservations for each model", what, usdNear(*micro, floor), usdNear(floor, *micro), cheapest)}
 }
 
 // GrantInput is the super_admin's grant to one tenant.

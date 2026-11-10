@@ -373,6 +373,15 @@ func (g *Gateway) budgetRefusal(ctx context.Context, use routeUse, level string,
 
 func usd(micro int64) string { return fmt.Sprintf("$%.2f", float64(micro)/1e6) }
 
+// usdNear is usd, except that it prints every micro-USD digit when other would round to the same
+// cents: a message that compares two amounts must not read "$0.44 is below $0.44".
+func usdNear(micro, other int64) string {
+	if usd(micro) == usd(other) {
+		return fmt.Sprintf("$%.6f", float64(micro)/1e6)
+	}
+	return usd(micro)
+}
+
 // --- token -------------------------------------------------------------------
 
 func (g *Gateway) liveMembership(ctx context.Context, mid string) (store.MembershipView, *routeRefusal) {

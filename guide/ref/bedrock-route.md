@@ -71,6 +71,27 @@ fails on the first turn with Bedrock's own answer, such as AccessDenied or `mode
 another ID. The dialog remembers the last ID per profile in this browser. Over the REST API or the af MCP tools, send the
 ID as `model` with the route.
 
+## Budgets and reservations (the deployment's Bedrock route)
+
+This applies when the deployment itself provides the Bedrock route and a tenant administrator sets a monthly budget
+per member and a monthly ceiling for the tenant.
+
+- **Reservation**: before a call is sent, the gateway reserves its pre-call upper bound: the model's whole context
+  window at its dearest input rate plus the requested output cap at its dearest output rate. The call is admitted only
+  when that whole amount fits under both the member's budget and the tenant's ceiling; the reservation is settled
+  to the real cost afterwards. Claude Code asks for tens of thousands of output tokens, so its reservation is far
+  above that of a short call.
+- **Floor**: the smallest budget that admits one call of each model on the list, that is, the largest of the models'
+  one-token-output reservations. The tenant view (`GET /api/admin/tenants/{slug}/provided-routes/deployment`) lists
+  each model's reservations and the floor (`reservations`, `floor_micro`).
+- **A 400 on save**: a budget or ceiling above zero and below the floor is refused, because no call could ever be
+  admitted. Set at least the floor, or 0 for no use (0 is always accepted).
+- **A warning on save**: an amount at or above the floor but below a model's full-output reservation is saved, and the
+  answer carries a warning. Calls fit only while the output cap they ask for is small.
+- **A 503 at call time** (`route_budget_exhausted`): the call's reservation does not fit in what is left of the
+  budget or ceiling this month. When nothing has been spent, the message says the budget is smaller than one call's
+  reservation. Ask the tenant administrator to raise it. A refused call writes no usage row.
+
 ## When a call is refused
 
 The gateway answers an authentication or connection refusal itself with HTTP 401 (a refusal
