@@ -76,8 +76,10 @@ type SubjectState struct {
 	NextPoll time.Time       `json:"next_poll"`
 	LastPoll time.Time       `json:"last_poll,omitempty"`
 	Fails    int             `json:"fails,omitempty"`
-	LastErr  string          `json:"last_err,omitempty"`
-	Settled  bool            `json:"settled,omitempty"`
+	// Gone counts consecutive reads that said the subject no longer exists (ErrGone).
+	Gone    int    `json:"gone,omitempty"`
+	LastErr string `json:"last_err,omitempty"`
+	Settled bool   `json:"settled,omitempty"`
 }
 
 // maxPollsPerTick bounds the reads of one tick. After a restart every subject is due at once;
@@ -514,6 +516,14 @@ func (e *Engine) Tick(ctx context.Context) {
 		if p.err != nil {
 			ss.Fails++
 			ss.LastErr = p.err.Error()
+			var gone *ErrGone
+			if errors.As(p.err, &gone) {
+				if ss.Gone++; ss.Gone >= goneConfirm {
+					e.endGoneLocked(p.id, gone.Reason, now)
+				}
+			} else {
+				ss.Gone = 0
+			}
 			var rl *ErrRateLimited
 			if errors.As(p.err, &rl) && rl.Until.After(now) {
 				ss.NextPoll = rl.Until
@@ -523,7 +533,7 @@ func (e *Engine) Tick(ctx context.Context) {
 			e.state.Subjects[p.id] = ss
 			continue
 		}
-		ss.Fails, ss.LastErr = 0, ""
+		ss.Fails, ss.Gone, ss.LastErr = 0, 0, ""
 		ss.Cursor = p.cursor
 		ss.Settled = p.hint.Settled
 		after := p.hint.After
@@ -945,6 +955,23 @@ func (e *Engine) dropUnwatchedLocked() {
 		if !live[id] {
 			delete(e.state.Subjects, id)
 		}
+	}
+}
+
+// endGoneLocked turns every watch on a vanished subject into a final notice: its pending events
+// are replaced by watch.ended, and it ends after that is delivered (as a first-match watch does).
+// The notice goes through the usual readiness rules, so a busy owner hears it when idle.
+func (e *Engine) endGoneLocked(id SubjectID, reason string, now time.Time) {
+	for i := range e.state.Subs {
+		s := &e.state.Subs[i]
+		if s.Subject != id || s.Done || s.Builtin != "" {
+			continue
+		}
+		s.Until = UntilFirst
+		s.Pending = []Event{{
+			Source: s.Source, Subject: id, Type: EventEnded, Version: "ended",
+			Summary: "This watch has ended: " + reason, At: now.UTC(),
+		}}
 	}
 }
 

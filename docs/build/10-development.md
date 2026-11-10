@@ -143,8 +143,12 @@ dispatched the contract, and nothing is being tested while it is down.
 
 `cli-pin-bump.yml` keeps **one** pull request against `main`, on the fixed branch
 `automation/cli-pin-bump`, that raises every agent-CLI pin whose new version has already
-passed its contract. It runs when a contract workflow completes, every 2 hours (odd hours) as a
-backstop, and on dispatch. The decision and the edit are `deploy/local/cli-pin-bump.sh`;
+passed its contract. Every contract dispatches it when it finishes (a `pin-bump` job holding
+the only `actions: write`), it runs every 2 hours (odd hours) as a backstop, and on dispatch.
+It is not triggered by `workflow_run`: the watcher dispatches the contracts with
+`GITHUB_TOKEN`, and a run started that way fires no `workflow_run`
+([#3783](https://github.com/k-k1/agent-fleet/issues/3783)); GitHub also delivered the
+2-hourly cron only 3-4 times a day. The decision and the edit are `deploy/local/cli-pin-bump.sh`;
 `deploy/local/cli-pin-bump-stub-test.sh` pins them.
 
 - **Which kinds move.** A kind is bumped only when its pin differs from the public latest
@@ -185,6 +189,13 @@ backstop, and on dispatch. The decision and the edit are `deploy/local/cli-pin-b
   passes. Binary-only CLIs (agy, cursor, kiro, muse) need an unpack recipe first.
 - **The edit** touches only the bumped kinds' `ARG` lines, is checked line by line
   before it replaces the file, and a second run changes nothing.
+- **claude's `routeOverrides`.** `TestRouteOverridesCoverTheCLIsLists` fails whenever the
+  claude pin differs from `routeOverridesFrom`. `deploy/local/claude-route-overrides.sh`
+  runs `strings` over the linux-x64 binaries of `routeOverridesFrom` and the new pin and
+  compares the provider, endpoint and credential variable names. Identical: it moves
+  `routeOverridesFrom` in the same commit and the PR can go green. Different, or a binary
+  it could not read: it edits nothing, the test stays red, and the PR body lists the names
+  to sort into `routeOverrides` by hand. `claude-route-overrides-stub-test.sh` pins this.
 - **The PR** carries the evidence table — each kind's `pin → latest`, a link to the
   contract run that recorded `tested` (`cli-release-state.sh` writes the run URL into the
   marker comment), and where the checksums came from. The branch is force-updated only

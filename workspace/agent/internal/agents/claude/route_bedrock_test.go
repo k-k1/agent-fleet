@@ -244,6 +244,8 @@ const routeOverridesFrom = "2.1.321"
 // and auth skips. A bump of the pin has to look again: run `strings` on the new binary and
 // compare its arrays naming CLAUDE_CODE_USE_*, *_BASE_URL, *_API_KEY / *_AUTH_TOKEN and
 // CLAUDE_CODE_SKIP_*_AUTH with routeOverrides, then update routeOverridesFrom.
+// deploy/local/claude-route-overrides.sh does that in the bump PR when the names are the same
+// as in routeOverridesFrom; when they differ it edits nothing, so this stays red for a human.
 func TestRouteOverridesCoverTheCLIsLists(t *testing.T) {
 	df, err := os.ReadFile("../../../../Dockerfile")
 	if err != nil {

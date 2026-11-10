@@ -208,3 +208,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VER: ${{ needs.drift.outputs.version }}
         run: deploy/local/cli-contract-report.sh failure muse "${VER:-unknown}"
+
+  # The `tested` this run may have recorded is what a bump waits for; see cli-pin-bump.yml's
+  # `on:` for why this dispatches it instead of relying on `workflow_run`. A job of its own,
+  # so actions: write never reaches the steps that run the CLI. Whatever the result:
+  # cli-pin-bump decides by `tested == latest` and changes nothing when nothing is due.
+  pin-bump:
+    needs: record
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: dispatch cli-pin-bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run cli-pin-bump.yml --repo "$GITHUB_REPOSITORY" --ref main

@@ -157,6 +157,13 @@ work you could simply do.
   a parent running an issue round can ask its children to do that instead of polling their PRs.
   The PR is still polled: a notice can come a minute or more after the event, or sooner where
   the tenant has set up webhooks (guide: `user/fleet/pr-feedback.md`).
+  - **Workflow runs not tied to a PR (GitHub Actions)**: `types: [github.workflow_run.completed |
+    github.workflow_run.failed]` with `ref` a run URL (`https://github.com/o/r/actions/runs/<id>`,
+    `/attempts/<n>` optional) or `o/r:run/<id>` (fires when that run completes, at once if it
+    already has; a re-run is told again), or `o/r:<file>.yml[@branch]` (the NEXT run: only a run
+    that started after the `watch` call counts; to follow a run you just started, watch the run).
+    Such a ref goes to `source: github_actions` by itself. The workflow name and failed jobs arrive
+    as quoted data. A run deleted or lost mid-watch ends the watch with a notice.
   - **Timers: `source: time`** instead of `sleep` or a wait loop. `ref` is an RFC 3339 time with
     an offset or a wait (`in 20m`, `2h30m`, `3d`), at most 30 days ahead; no `types`; the notice
     is `time.fired`. A timer fires while the Workspace runs. One that fell due while the Workspace

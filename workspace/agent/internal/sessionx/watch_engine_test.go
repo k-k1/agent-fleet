@@ -281,3 +281,46 @@ func (bbStub) Kind() string { return "bitbucket" }
 func (bbStub) Resolve(context.Context, string, string) (watch.Resolved, error) {
 	return watch.Resolved{Subject: "bitbucket:w/x#2"}, nil
 }
+
+type stubActions struct{ stubSource }
+
+func (stubActions) Kind() string { return watch.ActionsKind }
+func (stubActions) Types() []string {
+	return []string{watch.EventRunCompleted, watch.EventRunFailed}
+}
+func (stubActions) Resolve(context.Context, string, string) (watch.Resolved, error) {
+	return watch.Resolved{Subject: "github:o/r/actions/runs/5"}, nil
+}
+
+// A workflow run reference sent with the default source is a run watch; a pull request
+// reference stays a pull request watch.
+func TestWatchRoutesAnActionsReferenceToItsSource(t *testing.T) {
+	newWatchFixture(t)
+	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir()})
+	useWatchEngine(t, watch.New(watchDiskStore{}, newWatchSink(), stubSource{}, stubActions{}))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sessions/{name}/watches", HandleWatchCreate)
+	do := func(body string) (int, watch.Subscription) {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("POST", "/sessions/a/watches", strings.NewReader(body)))
+		var c struct{ Watch watch.Subscription }
+		_ = json.Unmarshal(rec.Body.Bytes(), &c)
+		return rec.Code, c.Watch
+	}
+	code, w := do(`{"ref":"https://github.com/o/r/actions/runs/5","types":["github.workflow_run.completed"]}`)
+	if code != 200 || w.Source != watch.ActionsKind {
+		t.Fatalf("run ref: %d %+v", code, w)
+	}
+	code, w = do(`{"source":"github","ref":"o/r:ci.yml@main","types":["github.workflow_run.*"]}`)
+	if code != 200 || w.Source != watch.ActionsKind {
+		t.Fatalf("workflow ref: %d %+v", code, w)
+	}
+	code, w = do(`{"ref":"o/r#1","types":["pr.merged"]}`)
+	if code != 200 || w.Source != "github" {
+		t.Fatalf("pr ref: %d %+v", code, w)
+	}
+	// A PR type asked for a run is refused by the source's own type list.
+	if code, _ = do(`{"ref":"o/r:run/5","types":["pr.merged"]}`); code != 400 {
+		t.Fatalf("pr type on a run: %d", code)
+	}
+}

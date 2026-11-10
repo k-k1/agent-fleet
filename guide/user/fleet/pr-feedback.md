@@ -66,6 +66,20 @@ Events it can watch include checks finishing, a merge conflict, the pull request
 - **No double notice.** With PR feedback on, a session that watches its own pull request for failed checks, a change request or new unresolved threads hears that from its watch only, and PR feedback does not repeat it after the watch ends. What it does not watch still comes from PR feedback
 - In the session it arrives as a line starting with `[agent-fleet:notice kind=watch`. Text from the pull request (check names, reviewer names) is quoted and marked as data, not instructions
 
+### GitHub Actions runs
+
+A workflow run that is not tied to a pull request (a nightly or release workflow, or one the agent started by hand) can be watched too. The agent passes a run or a workflow instead of a pull request, with the types `github.workflow_run.completed` (every finished run) or `github.workflow_run.failed` (only failures). Pull request types are refused for these.
+
+| `ref` | Fires when |
+|---|---|
+| a run URL (`https://github.com/o/r/actions/runs/123`, optionally with `/attempts/2`) or `o/r:run/123` | that run completes. A run that has already completed is told at once. While the watch is still live (the agent asked to keep it until its deadline), a re-run of the run is told again as a new attempt; a watch that names an attempt reports only that attempt, and the default watch ends at its first notice |
+| `o/r:cli-pin-bump.yml`, or with a branch `o/r:cli-pin-bump.yml@main` | the next run of that workflow completes. Only a run that started after the watch was made counts; a run already running or finished then never does. Without a branch, runs on every branch and event count; add `@main` to narrow it. A branch can be given only in the `o/r:file.yml@branch` form, not with the workflow URL. A re-run of a run that existed before the watch is not reported; watch that run directly. To follow a run you started a moment ago, watch that run instead |
+
+- The workflow is read with your own GitHub connection. A repository or run your connection cannot read is refused when the agent asks, and a run that is deleted (or a repository you lose access to) later ends the watch with a notice saying so, instead of waiting for it forever
+- What counts as "after" is decided from GitHub's own run numbers and timestamps, not this workspace's clock
+- The notice says the run number, the attempt and the result. The workflow's name and the names and links of failed jobs are quoted data, as for check names
+- Reads are conditional (an unchanged run costs no request quota), quick while the run is queued or running, and count in the same limits as pull request watches
+
 ### Send the notices to the parent
 
 A child started by another session can have the notices go to its parent (`notify: parent`), so the session handing out the work hears about its children's pull requests.

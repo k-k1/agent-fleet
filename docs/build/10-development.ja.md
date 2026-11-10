@@ -128,7 +128,11 @@ contract として報告される。変数を消せば advisory に戻る。昇�
 
 `cli-pin-bump.yml` は、新しい版で contract がすでに通ったエージェント CLI のピンをまとめて
 上げる PR を、固定ブランチ `automation/cli-pin-bump` から `main` へ**1 本だけ**保つ。
-contract ワークフローが終わったとき、保険として2 時間ごと（奇数時）、手動 dispatch で走る。判断と
+各 contract が終わるときに dispatch する（`actions: write` を持つのはその `pin-bump` ジョブだけ）ほか、
+保険として 2 時間ごと（奇数時）と手動 dispatch で走る。`workflow_run` では起動しない: watcher は
+contract を `GITHUB_TOKEN` で dispatch し、そうして始まった実行は `workflow_run` を起こさないため
+（[#3783](https://github.com/k-k1/agent-fleet/issues/3783)）。2 時間ごとの cron も、GitHub からは
+1 日 3〜4 回しか届いていなかった。判断と
 書き換えは `deploy/local/cli-pin-bump.sh`、それを固定するのが
 `deploy/local/cli-pin-bump-stub-test.sh`。
 
@@ -164,6 +168,13 @@ contract ワークフローが終わったとき、保険として2 時間ごと
   バイナリ配布のみの CLI（agy・cursor・kiro・muse）は先に展開レシピが要る。
 - **書き換え**は上げる kind の `ARG` 行だけに触れ、ファイルを置き換える前に 1 行ずつ
   照合する。2 回目の実行は何も変えない。
+- **claude の `routeOverrides`。** `TestRouteOverridesCoverTheCLIsLists` は claude のピンが
+  `routeOverridesFrom` と違うと落ちる。`deploy/local/claude-route-overrides.sh` が
+  `routeOverridesFrom` の版と新しいピンの linux-x64 バイナリに `strings` をかけ、プロバイダ・
+  エンドポイント・認証情報の変数名を比べる。同じなら同じコミットで `routeOverridesFrom` を
+  動かし、PR は緑になれる。違う、またはバイナリを読めなかったときは何も書き換えず、テストは
+  赤のまま、PR 本文に `routeOverrides` へ手で振り分ける名前を並べる。これを固定するのが
+  `claude-route-overrides-stub-test.sh`。
 - **PR** には証拠表が載る — kind ごとの `ピン → latest`、`tested` を記録した contract 実行への
   リンク（`cli-release-state.sh` が実行 URL をマーカーのコメントに書く）、チェックサムの出どころ。
   ブランチの force-push は Dockerfile の書き換えが変わったときだけ。自動ではマージしない。
