@@ -176,6 +176,12 @@ case "$args" in
     if [ "${STUB_POOL_DEPLOY_FAIL:-0}" = 1 ]; then
       echo "Failed to create/update the stack. Status: UPDATE_ROLLBACK_COMPLETE" >&2; exit 255
     fi ;;
+  # STUB_ENGINES_DEPLOY_FAIL=1: the 60-engines update fails and rolls back (#3555: its Cloud Map
+  # services had vanished). update.sh must still reach 30-ingress, then exit non-zero.
+  *"cloudformation deploy --stack-name af-ecs-engines"*)
+    if [ "${STUB_ENGINES_DEPLOY_FAIL:-0}" = 1 ]; then
+      echo "Failed to create/update the stack. Status: UPDATE_ROLLBACK_COMPLETE" >&2; exit 255
+    fi ;;
   *"cloudformation list-exports"*"SlotLaunchTemplateId"*)
     case "${STUB_POOL_EXPORT:-ok}" in
       fail) echo "An error occurred (AccessDenied) when calling the ListExports operation" >&2; exit 254 ;;
@@ -1129,6 +1135,19 @@ grep -q "deploy --stack-name af-ecs-engines" "$LOG" || fail "60-engines was not 
 if grep -q "deploy --stack-name af-ecs-engines .*--parameter-overrides" "$LOG"; then
   fail "a post-P6 stack was given parameters it does not need"
 fi
+
+# A side stack that fails and rolls back (#3555) must not strand the CP on the old release:
+# 30-ingress is still deployed, the run ends non-zero, and the summary names the stack.
+: > "$LOG"
+rc3s=0
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_DEPLOY_FAIL=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3s" 2>&1 || rc3s=$?
+[ "$rc3s" != 0 ] || { cat "$WORK/out3s"; fail "update.sh exited 0 although 60-engines failed"; }
+has "deploy --stack-name af-ecs-engines"
+has "deploy --stack-name t-ingress"
+order "deploy --stack-name af-ecs-engines" "deploy --stack-name t-ingress"
+grep -q "FAILED: .*side stacks did not deploy" "$WORK/out3s" && grep -q "af-ecs-engines (60-engines" "$WORK/out3s" \
+  || { cat "$WORK/out3s"; fail "the summary does not name the failed side stack"; }
 
 # --dry-run has to SHOW the translation. An operator reads the plan to decide whether to run it,
 # and "Enabled is about to be set" is the one thing in this deploy worth reading.

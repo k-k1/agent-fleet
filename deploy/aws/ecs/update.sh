@@ -568,6 +568,27 @@ if [ -z "$CLUSTER" ] || [ "$CLUSTER" = "None" ] || [ -z "$CP_SERVICE" ]; then
 fi
 echo "==> stack=$STACK cluster=$CLUSTER cp-service=$CP_SERVICE"
 
+# --- side stacks: a failed 50-tts / 60-engines must not strand the release (#3555) --------
+# 50-tts and 60-engines are optional engines that nothing on the release path imports:
+# 30-ingress takes only 00-network, 10-data and 20-platform exports (the engines' URLs reach it
+# as plain parameter strings), so the CP can roll forward without them. Stopping at the first
+# failure instead left the CP on the old release for a problem in a side stack. A failure is
+# recorded, the update goes on to 30-ingress, and the run ends non-zero with the stack named.
+# Anything BEFORE the side stacks (image checks, 20-platform, the pool) still stops the run:
+# those are what the CP itself depends on.
+SIDE_FAILED=()
+side_deploy() { # side_deploy <stack> <label> <template> [deploy args...]
+  local stack="$1" label="$2" rc=0
+  shift 2
+  af_cfn_deploy "$stack" "$@" || rc=$?
+  if [ "$rc" != 0 ]; then
+    SIDE_FAILED+=("$stack ($label, exit $rc)")
+    echo "WARNING: cloudformation deploy of $stack ($label) failed (exit $rc); CloudFormation" >&2
+    echo "         normally rolls such an update back. Carrying on with $STACK so the CP still gets the release;" >&2
+    echo "         this run will end non-zero." >&2
+  fi
+}
+
 # --- 1e) the speech engine stack, when this deployment has one (ADR 0070) -------------
 # Kept in step with the repo the same way 30-ingress is: a release ships template fixes,
 # and a 50-tts left behind would drift silently (nothing reads its version).
@@ -581,7 +602,7 @@ if [ -n "$TTS_STACK" ]; then
   if [ "$DRY" = 1 ]; then
     echo "DRY: aws cloudformation deploy --stack-name $TTS_STACK --template-file $HERE/cfn/50-tts.yaml"
   else
-    af_cfn_deploy "$TTS_STACK" "$HERE/cfn/50-tts.yaml" --no-fail-on-empty-changeset
+    side_deploy "$TTS_STACK" 50-tts "$HERE/cfn/50-tts.yaml" --no-fail-on-empty-changeset
   fi
 fi
 
@@ -713,7 +734,7 @@ if [ -n "$ENGINES_STACK" ]; then
   if [ "$DRY" = 1 ]; then
     echo "DRY: aws cloudformation deploy --stack-name $ENGINES_STACK --template-file $HERE/cfn/60-engines.yaml$eng_shown"
   else
-    af_cfn_deploy "$ENGINES_STACK" "$HERE/cfn/60-engines.yaml" "${eng_deploy[@]}"
+    side_deploy "$ENGINES_STACK" 60-engines "$HERE/cfn/60-engines.yaml" "${eng_deploy[@]}"
   fi
 fi
 
@@ -911,4 +932,14 @@ $(printf '%s\n' "$golden_stale" | while IFS= read -r l; do echo "     $l"; done)
    when AF_ECS_EC2_GOLDEN_AUTOBAKE=0, or when the pool has fewer than 2 free slots (in both
    cases the CP log gives the reason). To bake it by hand, use bake-golden.sh.
 EOF
+fi
+
+# --- side stacks that failed (see side_deploy) -----------------------------------------------
+if [ "${#SIDE_FAILED[@]}" -gt 0 ]; then
+  echo
+  echo "FAILED: $STACK itself is updated, but these side stacks did not deploy:" >&2
+  for f in "${SIDE_FAILED[@]}"; do echo "  - $f" >&2; done
+  echo "        Read the stack events of each (aws cloudformation describe-stack-events), fix the cause," >&2
+  echo "        then re-run update.sh." >&2
+  exit 1
 fi
