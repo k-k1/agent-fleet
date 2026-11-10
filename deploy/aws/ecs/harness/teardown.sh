@@ -113,12 +113,20 @@ done
 say vpc
 VPC=$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=$N --query 'Vpcs[0].VpcId' --output text 2>/dev/null)
 if [ -n "$VPC" ] && [ "$VPC" != None ]; then
+  # Only the Elastic IPs this VPC's NAT gateways hold. An unfiltered describe-addresses returns
+  # every EIP in the account and region, and release-address refuses only associated ones, so an
+  # unassociated EIP reserved for something else would go (#3796). The allocation IDs are read
+  # before the NAT gateways are deleted, in every state: a deleted gateway stays listed for about
+  # an hour, so a re-run after an interrupted teardown still finds its EIPs, and a harness built
+  # before any tagging needs no tag. If none are found, nothing is released.
+  EIPS=$(aws ec2 describe-nat-gateways --filter Name=vpc-id,Values="$VPC" \
+      --query 'NatGateways[].NatGatewayAddresses[].AllocationId' --output text | tr '\t' '\n' | grep '^eipalloc-' || true)
   for ng in $(aws ec2 describe-nat-gateways --filter Name=vpc-id,Values="$VPC" \
       --query 'NatGateways[?State!=`deleted`].NatGatewayId' --output text); do
     aws ec2 delete-nat-gateway --nat-gateway-id "$ng" >/dev/null 2>&1 && echo "nat $ng"
     aws ec2 wait nat-gateway-deleted --nat-gateway-ids "$ng" 2>/dev/null
   done
-  for a in $(aws ec2 describe-addresses --query 'Addresses[].AllocationId' --output text); do
+  for a in $EIPS; do
     aws ec2 release-address --allocation-id "$a" >/dev/null 2>&1 && echo "eip $a"
   done
   # ECS / EFS が残した ENI は上で消えているはずだが、遅れて外れるものがある。
