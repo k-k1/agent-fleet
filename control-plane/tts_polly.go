@@ -13,7 +13,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -127,15 +126,4 @@ func pollySSML(text string, speed float64) string {
 	_ = xml.EscapeText(&b, []byte(text))
 	b.WriteString(`</prosody></speak>`)
 	return b.String()
-}
-
-// firstEnv returns the first environment variable that has a value; whitespace-only counts
-// as unset.
-func firstEnv(keys ...string) string {
-	for _, k := range keys {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-			return v
-		}
-	}
-	return ""
 }

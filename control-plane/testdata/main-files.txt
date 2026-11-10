@@ -59,6 +59,7 @@ engine_comfy_guard.go
 engine_comfy_panel.go
 engine_complete.go
 engine_control.go
+engine_def.go
 engine_discover.go
 engine_ecs.go
 engine_family_guess.go
@@ -86,8 +87,10 @@ engine_remote.go
 engine_remote_catalog.go
 engine_remote_token.go
 engine_safetensors.go
+engine_shared.go
 engine_storage.go
 engine_storage_aws.go
+engine_table.go
 engine_table_reload.go
 engine_token.go
 engine_uptime.go
@@ -204,12 +207,14 @@ tenant_login.go
 tenant_member_defaults.go
 tenant_wiring.go
 tts.go
+tts_engine_control.go
 tts_polly.go
 tts_speakers.go
 tts_wake.go
 update.go
 usage.go
 usage_hourly.go
+usage_monthly.go
 version_info.go
 workitems.go
 workitems_jira_projects.go
@@ -224,4 +229,3 @@ workspace_signin_start.go
 workspace_sizing.go
 workspace_stale.go
 ws_settings.go
-usage_monthly.go

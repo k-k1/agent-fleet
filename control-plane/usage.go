@@ -25,11 +25,6 @@ import (
 
 const usageDayFmt = "2006-01-02"
 
-// usageHourFmt is the hourly bucket key (docs/log/83). UTC, like the day bucket —
-// the client shifts it to local time for display, because a 24-row heatmap drawn in
-// UTC tells a reader in Tokyo that they work at four in the morning.
-const usageHourFmt = "2006-01-02T15"
-
 // usageSessionTimeout bounds ONE workspace's session read inside a sweep. The shared
 // agent client allows two minutes, which is right for a user-facing call and wrong
 // here: a handful of wedged agents would run the sampler past its own tick, and a

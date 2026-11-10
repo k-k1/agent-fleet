@@ -95,11 +95,6 @@ func (a engineAdminAPI) uptime(w http.ResponseWriter, r *http.Request, _ store.I
 	writeJSON(w, http.StatusOK, buildEngineHourly(key, rows, fromDay, toDay, e.controlCfg(r.Context())))
 }
 
-const (
-	engineIdleMinSeconds = 60
-	engineIdleMaxSeconds = 24 * 60 * 60
-)
-
 // putIdle changes how long an on-demand GPU may sit unused before it is stopped.
 func (a engineAdminAPI) putIdle(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	key := strings.TrimSpace(r.PathValue("key"))
