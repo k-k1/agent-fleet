@@ -46,6 +46,7 @@ func seedRepoLedger(t *testing.T, st *store.SQL, tenantID, repo string) {
 // Deleting a repo takes its LFS ledger and lock rows along; renaming carries them.
 // Otherwise the quota over-counts and a later repo of the same name inherits locks.
 func TestGitRepoDeleteRenameCarryLFSRows(t *testing.T) {
+	t.Parallel()
 	e := newLFSEnv(t)
 	ctx := context.Background()
 	dflt, _, _ := e.st.GetTenantBySlug(ctx, "default")
@@ -72,6 +73,7 @@ func TestGitRepoDeleteRenameCarryLFSRows(t *testing.T) {
 // A store error part-way leaves the repo row, the ledger and the locks as they were,
 // so the handler can fail the request before touching the disk.
 func TestGitRepoDeleteIsAtomic(t *testing.T) {
+	t.Parallel()
 	e := newLFSEnv(t)
 	ctx := context.Background()
 	dflt, _, _ := e.st.GetTenantBySlug(ctx, "default")
@@ -92,6 +94,7 @@ func TestGitRepoDeleteIsAtomic(t *testing.T) {
 // A ledger write that fails must fail the upload and leave the object unpublished:
 // once published, batch reports it present and the row would never be written.
 func TestLFSUploadLedgerFailureDoesNotPublish(t *testing.T) {
+	t.Parallel()
 	e := newLFSEnv(t)
 	failOn(t, e.st, "INSERT", "lfs_object")
 	data := []byte("payload")
@@ -108,6 +111,7 @@ func TestLFSUploadLedgerFailureDoesNotPublish(t *testing.T) {
 // GC keeps an orphan whose ledger row cannot be deleted; removing the file first would
 // leave a row that over-counts the quota with nothing left to reconcile it against.
 func TestLFSGCKeepsObjectWhenLedgerDeleteFails(t *testing.T) {
+	t.Parallel()
 	f := newLFSGCFixture(t)
 	ctx := context.Background()
 	orphan := oidOf([]byte("orphaned-object"))
@@ -150,6 +154,7 @@ func (s hookedLFSStore) DeleteLFSObject(ctx context.Context, tenant, repo, oid s
 // of A's row would happen: B's own ledger write is a no-op because A's row exists, so
 // deleting that row would leave B's published object unaccounted for.
 func TestLFSUploadPublishFailureKeepsConcurrentAccounting(t *testing.T) {
+	t.Parallel()
 	e := newLFSEnv(t)
 	data := []byte("concurrent-upload")
 	oid := oidOf(data)
@@ -194,6 +199,7 @@ func TestLFSUploadPublishFailureKeepsConcurrentAccounting(t *testing.T) {
 // When GC cannot unlink an orphan after deleting its row, the row comes back: the file
 // is still there and nothing else would record it again.
 func TestLFSGCRemoveFailureKeepsAccounting(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the directory permission this relies on")
 	}
@@ -238,6 +244,7 @@ func failFirstPublish(t *testing.T, e *lfsEnv, oid string) {
 // The row a failed publish keeps is credited to the retry of the same oid; otherwise
 // at a full quota the object could never be uploaded again.
 func TestLFSRetryAfterFailedPublishAtQuota(t *testing.T) {
+	t.Parallel()
 	e := newLFSEnv(t)
 	data := []byte("retry-at-quota")
 	oid := oidOf(data)
@@ -283,6 +290,7 @@ func (s hookedGCStore) DeleteLFSObject(ctx context.Context, tenant, repo, oid st
 // A repo delete that lands between GC's row delete and its unlink leaves ENOENT; that
 // is a finished removal, not a failure whose row should be restored.
 func TestLFSGCDoesNotRestoreRowOfDeletedRepo(t *testing.T) {
+	t.Parallel()
 	f := newLFSGCFixture(t)
 	ctx := context.Background()
 	orphan := oidOf([]byte("orphaned-object"))

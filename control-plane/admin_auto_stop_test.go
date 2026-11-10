@@ -41,6 +41,7 @@ func memberRows(t *testing.T, mgr *manager, email string) map[string]map[string]
 // the reason is kept: the notification reaches the member alone (#1384). The reason lasts
 // until the next start, and a launch still in flight is not reported as stopped.
 func TestAdminMembersShowTheStartDeadlineStop(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, tn, mv, _ := networkFixture(t)
 	ws := store.Workspace{ID: store.NewID(), TenantID: tn.ID, MembershipID: mv.MembershipID,
@@ -109,6 +110,7 @@ func (r *failStartStub) Start(context.Context) error { return errors.New("prepar
 // A new launch is a new story whether or not it succeeds: a Start that fails must not leave
 // the admin reading the previous launch's deadline stop as the reason it is down.
 func TestAFailedStartClearsThePreviousAutoStop(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, ws, mgr := reaperLifecycleFixture(t)
 	if err := st.SetWorkspaceState(ctx, ws.ID, "stopped"); err != nil {
@@ -130,6 +132,7 @@ func TestAFailedStartClearsThePreviousAutoStop(t *testing.T) {
 // The member detail polls /stats and reads the reason from there: the roster row it was
 // opened from is a snapshot that would keep the reason after the member restarted.
 func TestMemberStatsCarriesTheAutoStopOnlyWhileDown(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		state string
 		want  bool
@@ -163,6 +166,7 @@ func TestMemberStatsCarriesTheAutoStopOnlyWhileDown(t *testing.T) {
 // "none" for a row that still exists (ecs-ec2 after Clean home) must not read as "no
 // workspace", because DeleteMembership refuses on the row alone (#1888).
 func TestAdminMembersReportWorkspaceRowApartFromState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, tn, mv, _ := networkFixture(t)
 	if got, ok := memberRows(t, mgr, "boss@acme.co.jp")["yamada-acme-co-jp"]["has_workspace"]; !ok || got != false {

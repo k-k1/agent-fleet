@@ -86,6 +86,7 @@ func (e *workItemEnv) addQuery(t *testing.T, id, label, query string, enabled bo
 // this feature has is "read your tickets without waking a stopped Workspace", so if this
 // breaks the core of the design goes with it (ADR 0061 decision 1).
 func TestWorkItemsStoppedServesCacheWithoutFetching(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "stopped")
 	ctx := context.Background()
 	env.addQuery(t, "q1", "自分の未完了", "assignee:@me is:open", true)
@@ -113,6 +114,7 @@ func TestWorkItemsStoppedServesCacheWithoutFetching(t *testing.T) {
 // A failure in one query replaces only the rows of the queries that succeeded. The failed
 // query's rows stay, because dropping them empties the whole shelf over a single 401.
 func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "ok", "動く方", "assignee:@me", true)
@@ -183,6 +185,7 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 // #2709: the Agent's canComment flag survives the cache and reaches the DTO; a row from an Agent
 // that sends none (every row before this field) stays false, so the Console keeps it read-only.
 func TestWorkItemsCanCommentThroughTheCache(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
@@ -214,6 +217,7 @@ func TestWorkItemsCanCommentThroughTheCache(t *testing.T) {
 // disconnect withdraws it (rows stay), and a fetch that began before the connection changed cannot
 // bring it back.
 func TestWorkItemsCanCommentIsWithdrawnWhenTheConnectionChanges(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
@@ -282,6 +286,7 @@ func (r racingStore) ReplaceWorkItemsAt(ctx context.Context, mid string, qids []
 // The whole connection change (before-reset, new token, after-reset) completes between the fetch's
 // last check and its write; the old connection's true must still not land.
 func TestWorkItemsCanCommentCannotBeRestoredByACommitRace(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "bb", "Bitbucket", "acme/web", true)
@@ -306,6 +311,7 @@ func TestWorkItemsCanCommentCannotBeRestoredByACommitRace(t *testing.T) {
 // stopped. Three cases in one refresh — a known count, a full page without a count, and a query
 // that fit — then a refresh that fails, which must keep the note next to the rows it kept.
 func TestWorkItemsMatchTotalThroughTheCache(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "gh", "GitHub", "is:open involves:@me", true)
@@ -344,6 +350,7 @@ func TestWorkItemsMatchTotalThroughTheCache(t *testing.T) {
 // alone: advancing it would count "it did not arrive" as fetched and stay silent for the
 // five minutes of the interval.
 func TestWorkItemsUnreachableAgentKeepsStamp(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "q1", "自分の未完了", "assignee:@me", true)
@@ -368,6 +375,7 @@ func TestWorkItemsUnreachableAgentKeepsStamp(t *testing.T) {
 // "Last fetched" is the oldest stamp among the enabled queries. Showing the newest would
 // claim a list half of which is stale was fetched just now.
 func TestWorkItemsFetchedAtIsOldestEnabled(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "stopped")
 	ctx := context.Background()
 	env.addQuery(t, "new", "新しい", "a", true)
@@ -389,6 +397,7 @@ func TestWorkItemsFetchedAtIsOldestEnabled(t *testing.T) {
 // The fetch interval (5 minutes). The SSE tick is 4 seconds, so without it GitHub is hit
 // continuously, once per open tab.
 func TestWorkItemsRefreshIntervalThrottles(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "q1", "自分の未完了", "assignee:@me", true)
@@ -414,6 +423,7 @@ func TestWorkItemsRefreshIntervalThrottles(t *testing.T) {
 
 // A disabled query drops out of the fetch set: its rows stay, but nothing is called for it.
 func TestWorkItemsDisabledQueryNotFetched(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	env.addQuery(t, "q1", "無効", "assignee:@me", false)
 	env.api.refreshNow(context.Background(), env.res, true)
@@ -423,6 +433,7 @@ func TestWorkItemsDisabledQueryNotFetched(t *testing.T) {
 }
 
 func TestWorkItemQueryValidation(t *testing.T) {
+	t.Parallel()
 	mv := store.MembershipView{MembershipID: "m1"}
 	// jira is accepted; an unknown provider is still refused, because being turned down on
 	// the spot beats being stored as a row that can never fetch anything.
@@ -449,6 +460,7 @@ func TestWorkItemQueryValidation(t *testing.T) {
 
 // The ledger is idempotent on (item, session): a retried launch does not add a second row.
 func TestWorkItemSessionLedgerIdempotent(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	post := func() *httptest.ResponseRecorder {
 		body := `{"provider":"github","itemKey":"acme/web#45","sessionName":"sk7f3q9","repo":"web","branch":"feature/web-45"}`
@@ -476,6 +488,7 @@ func TestWorkItemSessionLedgerIdempotent(t *testing.T) {
 // Deleting a query removes only the cache; the ledger — the record that work was started —
 // survives.
 func TestDeleteQueryKeepsLedger(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "q1", "自分の未完了", "assignee:@me", true)
@@ -507,6 +520,7 @@ func TestDeleteQueryKeepsLedger(t *testing.T) {
 // for the list, and writing the answer into work_item_cache would put a panel's read into the
 // rail's history.
 func TestWorkItemDetailStoppedDoesNotStartOrStore(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "stopped")
 	env.addQuery(t, "q1", "自分の PR", "is:open involves:@me", true)
 	req := httptest.NewRequest("POST", "/api/work-items/detail",
@@ -534,6 +548,7 @@ func TestWorkItemDetailStoppedDoesNotStartOrStore(t *testing.T) {
 // A key is the only coordinate this can work from, so an empty one is a 400 here rather than a
 // round trip that ends as a provider error.
 func TestWorkItemDetailNeedsAKey(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	req := httptest.NewRequest("POST", "/api/work-items/detail", strings.NewReader(`{"provider":"github"}`))
 	w := httptest.NewRecorder()
@@ -546,6 +561,7 @@ func TestWorkItemDetailNeedsAKey(t *testing.T) {
 // An Agent from before this feature answers 404 on the route. Passing that through would read as
 // "the pull request is gone"; it has to say the workspace needs restarting instead.
 func TestWorkItemDetailOldAgentSaysSo(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running") // the stub agent only serves /work-items/fetch
 	req := httptest.NewRequest("POST", "/api/work-items/detail",
 		strings.NewReader(`{"provider":"github","key":"acme/web#518"}`))
@@ -562,6 +578,7 @@ func TestWorkItemDetailOldAgentSaysSo(t *testing.T) {
 // The Agent decides issue vs. pull request from `kind`, so the relay has to carry it through:
 // empty for a reference outside the inbox, "pr" for a cached row (#1697).
 func TestWorkItemDetailRelaysKind(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ in, want string }{
 		{`{"provider":"github","key":"acme/web#7"}`, ""},
 		{`{"provider":"github","key":"acme/web#7","kind":"pr"}`, "pr"},
@@ -585,6 +602,7 @@ func TestWorkItemDetailRelaysKind(t *testing.T) {
 
 // An unknown kind is refused here, before the Agent is reached.
 func TestWorkItemDetailRejectsUnknownKind(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	req := httptest.NewRequest("POST", "/api/work-items/detail",
 		strings.NewReader(`{"provider":"github","key":"acme/web#7","kind":"banana"}`))
@@ -621,6 +639,7 @@ const mergeBody = `{"provider":"github","key":"acme/web#518","sha":"abc","method
 
 // A stopped Workspace answers 409 and is not started, and nothing reaches the Agent.
 func TestWorkItemMergeStoppedDoesNotStart(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "stopped")
 	var reached int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
@@ -636,6 +655,7 @@ func TestWorkItemMergeStoppedDoesNotStart(t *testing.T) {
 }
 
 func TestWorkItemMergeRefusesLocally(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		// GitHub's method names are not Bitbucket's merge strategies.
 		"bitbucket with a GitHub method": `{"provider":"bitbucket","key":"ws/r#1","sha":"abc","method":"merge"}`,
@@ -661,6 +681,7 @@ func TestWorkItemMergeRefusesLocally(t *testing.T) {
 // mark that covers that exact body, and its answer (here a moved head) passes through with its
 // status and code intact.
 func TestWorkItemMergeRelaysSignedAndPassesRefusalThrough(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	var raw []byte
 	var path, auth, mark string
@@ -696,6 +717,7 @@ func TestWorkItemMergeRelaysSignedAndPassesRefusalThrough(t *testing.T) {
 // A Bitbucket merge is relayed with its provider, its strategy and the close-source option, under
 // the same member-origin mark; the option is dropped for GitHub, which has none.
 func TestWorkItemMergeRelaysBitbucketOptions(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, body string
 		want       map[string]any
@@ -736,6 +758,7 @@ func TestWorkItemMergeRelaysBitbucketOptions(t *testing.T) {
 // same-site preview app, text/plain no-cors): it is refused before anything is read, signed or
 // sent. The Console's own JSON request still goes through.
 func TestWorkItemMergeRefusesCrossOriginRequests(t *testing.T) {
+	t.Parallel()
 	for name, mod := range map[string]func(*http.Request){
 		"text/plain":      func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") },
 		"no content type": func(r *http.Request) { r.Header.Del("Content-Type") },
@@ -778,6 +801,7 @@ func TestWorkItemMergeRefusesCrossOriginRequests(t *testing.T) {
 
 // The mark speaks for the workspace's own member only.
 func TestWorkItemMergeRefusesAnotherMembersWorkspace(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	var reached int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
@@ -793,6 +817,7 @@ func TestWorkItemMergeRefusesAnotherMembersWorkspace(t *testing.T) {
 
 // An Agent from before this feature has no route; that must not read as "pull request gone".
 func TestWorkItemMergeOldAgentSaysSo(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running") // the stub agent serves /work-items/fetch only
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
 	defer srv.Close()
@@ -816,6 +841,7 @@ func consoleCommentReq(body string) *http.Request {
 // The Agent receives the normalised body under a member-origin mark that covers it, for this
 // member.
 func TestWorkItemCommentRelaysSigned(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	var raw []byte
 	var path, auth, mark string
@@ -847,6 +873,7 @@ func TestWorkItemCommentRelaysSigned(t *testing.T) {
 }
 
 func TestWorkItemCommentRefusesCrossOriginRequests(t *testing.T) {
+	t.Parallel()
 	for name, mod := range map[string]func(*http.Request){
 		"text/plain":      func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") },
 		"no content type": func(r *http.Request) { r.Header.Del("Content-Type") },
@@ -888,6 +915,7 @@ func TestWorkItemCommentRefusesCrossOriginRequests(t *testing.T) {
 }
 
 func TestWorkItemCommentRefusesAnotherMembersWorkspace(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	var reached int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
@@ -902,6 +930,7 @@ func TestWorkItemCommentRefusesAnotherMembersWorkspace(t *testing.T) {
 }
 
 func TestWorkItemCommentStoppedDoesNotStart(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "stopped")
 	var reached int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
@@ -917,6 +946,7 @@ func TestWorkItemCommentStoppedDoesNotStart(t *testing.T) {
 // body the provider accepts past the Agent's cap), and a request beyond the Console's own cap is
 // refused before it is read in full, signed or relayed.
 func TestWorkItemCommentBodySizeBounds(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	var raw []byte
 	var reached int
@@ -945,6 +975,7 @@ func TestWorkItemCommentBodySizeBounds(t *testing.T) {
 
 // A post leaves an audit row naming who, where and the outcome, and never the text.
 func TestWorkItemCommentWritesAnAuditRow(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	tenant, _ := env.st.EnsureDefaultTenant(ctx)
@@ -982,6 +1013,7 @@ func TestWorkItemCommentWritesAnAuditRow(t *testing.T) {
 }
 
 func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
+	t.Parallel()
 	if got := splitLabels(""); got == nil {
 		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")
 	}
@@ -1023,6 +1055,7 @@ func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 // (Jira, an older Agent) stays unknown (null) rather than becoming a known 0. A refresh from an
 // older Agent replaces a known count with unknown, never with 0.
 func TestWorkItemsCommentsThroughTheCache(t *testing.T) {
+	t.Parallel()
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
 	env.addQuery(t, "gh", "GitHub", "acme/web", true)

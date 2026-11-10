@@ -13,6 +13,7 @@ import (
 )
 
 func TestHomeDEKModeRandom(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		mode, custodian string
 		want, err       bool
@@ -62,6 +63,7 @@ func recreateWorkspace(t *testing.T, st *store.SQL, base store.Workspace, wid st
 }
 
 func TestResolveDEKHomeKey(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for name, st := range ssmAPIStores(t) {
 		t.Run(name, func(t *testing.T) {
@@ -123,6 +125,7 @@ func TestResolveDEKHomeKey(t *testing.T) {
 }
 
 func TestResolveDEKMintFailsClosed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := ssmAPIStores(t)["sqlite"]
 	f := newFakeKMS(t)
@@ -162,6 +165,7 @@ func TestResolveDEKMintFailsClosed(t *testing.T) {
 // leaves the EFS directories, and a retry then reports nothing), so a runtime that cannot
 // prove it keeps the key: a dropped key makes a surviving secrets.enc unreadable for good.
 func TestDestroyKeepsHomeDEKUnlessProvenGone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name      string
@@ -217,6 +221,7 @@ func seedHomeDEK(t *testing.T, st *store.SQL, memID, tenantID, scheme string) st
 // A stale decision never deletes a key that changed under it: the proof is taken, then a
 // workspace row is made for the membership again, or the key is put back to migrating.
 func TestDestroyedHomeDEKSurvivesAChangeDuringTheProof(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	t.Run("home re-created", func(t *testing.T) {
 		f := &destroyingFactory{verdict: runtime.HomeGone}
@@ -255,6 +260,7 @@ func TestDestroyedHomeDEKSurvivesAChangeDuringTheProof(t *testing.T) {
 // The destroys that run as a recorded home operation (the home task adapters) drop a proven
 // key too: by the starter that finishes the record, and by the reconciler of a replaced CP.
 func TestRecordedDestroyDropsProvenHomeDEK(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, via := range []string{"starter", "reconciler"} {
 		for _, verdict := range []runtime.HomeVerdict{runtime.HomeGone, runtime.HomeUnknown} {
@@ -290,6 +296,7 @@ func TestRecordedDestroyDropsProvenHomeDEK(t *testing.T) {
 // A destroy whose lifecycle lease is gone (lost to a takeover, or expired) keeps the key: its
 // proof may describe a home an earlier generation had, and another CP may have re-created it.
 func TestReleaseHomeDEKNeedsTheLiveLease(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name     string
@@ -326,6 +333,7 @@ func TestReleaseHomeDEKNeedsTheLiveLease(t *testing.T) {
 }
 
 func TestHomeDEKOrphanCLI(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := ssmAPIStores(t)["sqlite"]
 	live := homeDEKWorkspace(t, st, "W7")
@@ -365,6 +373,7 @@ func TestHomeDEKOrphanCLI(t *testing.T) {
 }
 
 func TestPrintHomeDEKStatus(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := ssmAPIStores(t)["sqlite"]
 	ws := homeDEKWorkspace(t, st, "W5")
@@ -430,6 +439,7 @@ func (f *keyRecordingFactory) New(_ runtime.Workspace, keys runtime.SecretKeys, 
 // again, so a KMS key disabled since the memo was built stops the start instead of the memo
 // starting the workspace on keys the custodian would no longer open.
 func TestStartResolvesKeysEveryTime(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, preview := range []string{"", "preview.example"} {
 		f := &keyRecordingFactory{}

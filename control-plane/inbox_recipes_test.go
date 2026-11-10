@@ -15,6 +15,7 @@ import (
 )
 
 func TestCanonicalRepoIdentity(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		in, want string
 		ok       bool
@@ -62,6 +63,7 @@ type takeInResp struct {
 // to the memo queue until taken in, a request's recipe only by its assignee, once, with the
 // server's origin, and a DM's by any recipient.
 func TestInboxRecipeTakeIn(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	rec := e.sendWith("a", "request", []map[string]any{testRecipe}, "b", "c")
 	if rec.Code != http.StatusCreated {
@@ -124,6 +126,7 @@ func TestInboxRecipeTakeIn(t *testing.T) {
 }
 
 func TestInboxRecipeRefusesBadRepo(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	bad := map[string]any{"type": "recipe", "recipe": map[string]any{"prompt": "x", "repo": "https://gitlab.example/a/b"}}
 	rec := e.sendWith("a", "dm", []map[string]any{bad}, "b")
@@ -154,6 +157,7 @@ func (e *inboxEnv) memoTokenDo(who, method, path string, body any) *httptest.Res
 // the CP through /internal/memos with their arguments as they are, and neither can set,
 // change or remove an origin. The Console's own memo routes cannot either.
 func TestInboxOriginCannotBeForged(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	forged := map[string]any{"kind": "text", "body": "mine", "origin": map[string]any{"itemId": "x", "sender": "boss"}}
 	for _, r := range []*httptest.ResponseRecorder{
@@ -239,6 +243,7 @@ func (e *inboxEnv) workspaceFor(who string, agent *capturingAgent) store.Workspa
 // message with the member's own memos, an edited text included, and it goes with the
 // server's origin line.
 func TestMemoFlushKeepsOriginAlone(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	agent := newCapturingAgent(t)
 	e.workspaceFor("b", agent)
@@ -308,6 +313,7 @@ func (e *inboxEnv) badges(who string) map[string]inboxOriginRef {
 // inbox_origin in any spelling, not for a memo that is not the member's, and not for what the
 // workspace reports about its sessions, even naming a real item with its real sender.
 func TestInboxProvenanceFromCPRecordOnly(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	agent := newCapturingAgent(t)
 	e.workspaceFor("b", agent)
@@ -375,6 +381,7 @@ func (s *removeDuringTakeIn) ListInboxAttachments(ctx context.Context, id string
 // TestInboxTakeInRacesRemoval: a member removed after the handler's checks and before the
 // take-in's transaction gets no memo, for a DM and for a request they finished.
 func TestInboxTakeInRacesRemoval(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"dm", "request"} {
 		t.Run(kind, func(t *testing.T) {
 			e := newInboxEnv(t)
@@ -420,6 +427,7 @@ func (e *inboxEnv) sessionFixture() store.SharedSessionCatalog {
 // decided on every read; a revoked share turns the card into the placeholder; withdrawing a
 // message revokes nothing; a non-owner can attach a session shared with them, granting nothing.
 func TestInboxSessionAttachment(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	cat := e.sessionFixture()
 	confirm := map[string]any{"recipients": []string{key("b"), key("c")}, "scope": "session"}
@@ -493,6 +501,7 @@ func TestInboxSessionAttachment(t *testing.T) {
 // Agent made the session and the CP saw a 500) is recovered through the idempotency lookup on
 // the next press, and that session shows its provenance badge in the real session list.
 func TestInboxRecoveredLaunchKeepsProvenance(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	agent := newCapturingAgent(t)
 	var mu sync.Mutex
@@ -539,6 +548,7 @@ func TestInboxRecoveredLaunchKeepsProvenance(t *testing.T) {
 // decision 2 allows, but the session was still started from the request: it keeps the
 // provenance the CP decided at the confirm.
 func TestInboxReleaseAfterConfirmKeepsProvenance(t *testing.T) {
+	t.Parallel()
 	e := newInboxEnv(t)
 	id := e.send("a", "request", "b")
 	_ = e.do("b", "POST", "/api/inbox/items/"+id+"/claim", nil)

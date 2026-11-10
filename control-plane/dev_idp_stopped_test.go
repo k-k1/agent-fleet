@@ -127,6 +127,7 @@ func (d *devIdPTestEnv) completeFlow(t *testing.T, rec *httptest.ResponseRecorde
 const devIdPTestIssuer = "https://af.example.com/dev-idp"
 
 func TestDevIdPStoppedWorkspaceOwnerSignsInToLoopback(t *testing.T) {
+	t.Parallel()
 	for _, redirect := range loopbackRedirects() {
 		for _, pkce := range []bool{true, false} {
 			for _, basic := range []bool{true, false} {
@@ -147,6 +148,7 @@ func TestDevIdPStoppedWorkspaceOwnerSignsInToLoopback(t *testing.T) {
 }
 
 func TestDevIdPStoppedWorkspaceOwnerSignsInToLoopbackThroughConsent(t *testing.T) {
+	t.Parallel()
 	for _, redirect := range loopbackRedirects() {
 		d := newDevIdPTestEnv(t)
 		d.addPersona(t, "admin", "Admin User")
@@ -170,6 +172,7 @@ func TestDevIdPStoppedWorkspaceOwnerSignsInToLoopbackThroughConsent(t *testing.T
 
 // The preview host needs the current slug, which a stopped workspace does not have.
 func TestDevIdPStoppedWorkspaceRefusesThePreviewHost(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	preview := d.ownHost(3000) + "/cb"
 	if rec := d.authorizeAs(t, "preview-user", d.authQuery(preview, "")); rec.Code != http.StatusFound {
@@ -183,6 +186,7 @@ func TestDevIdPStoppedWorkspaceRefusesThePreviewHost(t *testing.T) {
 
 // A tenant colleague follows the preview rules, stopped or not: only with tenant share on.
 func TestDevIdPStoppedWorkspaceColleagueFollowsTheShareRules(t *testing.T) {
+	t.Parallel()
 	for _, redirect := range loopbackRedirects() {
 		d := newDevIdPTestEnv(t)
 		d.addViewer(t, "colleague")
@@ -205,6 +209,7 @@ func TestDevIdPStoppedWorkspaceColleagueFollowsTheShareRules(t *testing.T) {
 
 // Someone outside the workspace's tenant is refused whatever the workspace's state.
 func TestDevIdPStoppedWorkspaceRefusesANonMember(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.stopWorkspace(t)
 	if _, err := d.mgr.store.UpsertIdentity(context.Background(), "", "stranger", ""); err != nil {

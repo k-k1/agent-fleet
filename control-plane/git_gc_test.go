@@ -97,6 +97,7 @@ func (f *lfsGCFixture) exists(oid string) bool {
 // referenced object, an aged orphan and a young orphan, only the aged, unreferenced
 // object is pruned (file + ledger), quota freed.
 func TestLFSGCPrune(t *testing.T) {
+	t.Parallel()
 	f := newLFSGCFixture(t)
 	ctx := context.Background()
 
@@ -147,6 +148,8 @@ func TestLFSGCPrune(t *testing.T) {
 // non-zero, enumeration fails and the prune deletes nothing — not even a genuine
 // orphan — rather than reading every unread pointer as unreferenced.
 func TestLFSGCPrunePass2Failure(t *testing.T) {
+	// Deliberately not parallel: it swaps the package-level lfsCatFileBatch that the
+	// parallel LFS GC tests read.
 	cases := map[string]struct{ script, wantErr string }{
 		// head exits after a few bytes; the pipeline's status is head's 0, so only
 		// the short stream gives the failure away.
@@ -188,6 +191,7 @@ func TestLFSGCPrunePass2Failure(t *testing.T) {
 // TestReferencedLFSOIDsIgnoresReplaceRefs: a refs/replace entry swapping the pointer
 // blob for a small non-pointer blob must not hide the pointer from enumeration.
 func TestReferencedLFSOIDsIgnoresReplaceRefs(t *testing.T) {
+	t.Parallel()
 	f := newLFSGCFixture(t)
 	pointerBlob := gitOut(t, f.bare, "--git-dir", f.bare, "rev-parse", "main:asset.bin")
 	decoy := filepath.Join(t.TempDir(), "decoy")
@@ -220,6 +224,7 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 // TestReadPointerBatch: every prefix of a valid response stream, and every response
 // that does not answer the candidate asked, is an error rather than a partial set.
 func TestReadPointerBatch(t *testing.T) {
+	t.Parallel()
 	shaA := strings.Repeat("a", 40)
 	shaB := strings.Repeat("b", 40)
 	oid := oidOf([]byte("obj"))
@@ -262,6 +267,7 @@ func TestReadPointerBatch(t *testing.T) {
 // TestReferencedLFSOIDsEmpty: a repo with no pointer blobs yields an empty set,
 // not an error (so pruneLFS treats everything as orphan-eligible correctly).
 func TestReferencedLFSOIDsEmpty(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -316,6 +322,7 @@ func (f *lfsGCFixture) ledger(t *testing.T) map[string]bool {
 // repo has no lfs/objects directory at all, which is what a first upload that never
 // published leaves.
 func TestLFSGCReconcilesLedgerRowsWithoutAFile(t *testing.T) {
+	t.Parallel()
 	f := newLFSGCFixture(t)
 	ctx := context.Background()
 	oidStale := oidOf([]byte("never-published"))
@@ -347,6 +354,7 @@ func TestLFSGCReconcilesLedgerRowsWithoutAFile(t *testing.T) {
 
 // A row whose file is on disk is never reconciled away, however old.
 func TestLFSGCReconcileKeepsRowsWithAFile(t *testing.T) {
+	t.Parallel()
 	f := newLFSGCFixture(t)
 	ctx := context.Background()
 	f.seed(t, f.oidRef, 100, 2*time.Hour)
@@ -380,6 +388,7 @@ func (s ledgerFailingStore) DeleteStaleLFSObject(ctx context.Context, tenantID, 
 // A store error in the reconcile aborts the whole pass: no ledger row and no object file is
 // touched, not even an orphan the prune would otherwise delete.
 func TestLFSGCReconcileStoreErrorAbortsThePass(t *testing.T) {
+	t.Parallel()
 	for name, st := range map[string]func(*store.SQL) ledgerFailingStore{
 		"list fails":   func(s *store.SQL) ledgerFailingStore { return ledgerFailingStore{SQL: s, failList: true} },
 		"delete fails": func(s *store.SQL) ledgerFailingStore { return ledgerFailingStore{SQL: s, failDelete: true} },
@@ -410,6 +419,7 @@ func TestLFSGCReconcileStoreErrorAbortsThePass(t *testing.T) {
 // which would under-count the quota for good (batch reports the objects as present, so they
 // are never uploaded again).
 func TestLFSGCReconcileLeavesTheRowsOfARepoMovedMidSweep(t *testing.T) {
+	t.Parallel()
 	f := newLFSGCFixture(t)
 	ctx := context.Background()
 	oid := oidOf([]byte("moved-with-the-repo"))
@@ -429,6 +439,7 @@ func TestLFSGCReconcileLeavesTheRowsOfARepoMovedMidSweep(t *testing.T) {
 // With no grace period the reconcile does not run: a row written this second may belong to
 // an upload between its ledger write and its rename.
 func TestLFSGCReconcileNeedsAGracePeriod(t *testing.T) {
+	t.Parallel()
 	f := newLFSGCFixture(t)
 	oid := oidOf([]byte("publishing-this-second"))
 	f.putRow(t, oid, 10, 0)

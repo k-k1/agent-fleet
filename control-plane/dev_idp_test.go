@@ -222,6 +222,7 @@ func verifyIDToken(token string, jwks map[string]any, wantIss, wantAud string, n
 // --- the happy path, end to end ------------------------------------------------------
 
 func TestDevIdPAuthorizationCodeFlow(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	issuer := "https://af.example.com/dev-idp"
 	verifier, challenge := pkcePair()
@@ -303,6 +304,7 @@ func TestDevIdPAuthorizationCodeFlow(t *testing.T) {
 }
 
 func TestDevIdPDiscoveryDocument(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	rec := d.console(t, "https://af.example.com"+devIdPDiscoveryPath)
 	doc := idpJSON(t, rec)
@@ -323,6 +325,7 @@ func TestDevIdPDiscoveryDocument(t *testing.T) {
 // --- enablement -------------------------------------------------------------------------
 
 func TestDevIdPDisabledIsA404Everywhere(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	setDevIdPDeployment(t, d.mgr, false)
 	for _, p := range []string{devIdPDiscoveryPath, devIdPJWKSPath, devIdPAuthorizePath, devIdPTokenPath, devIdPUserinfoPath} {
@@ -343,6 +346,7 @@ func TestDevIdPDisabledIsA404Everywhere(t *testing.T) {
 // There is no per-workspace switch: a workspace whose stored settings still say devIdp:false
 // signs in, and a PUT of the removed field is accepted, ignored and no longer reported.
 func TestDevIdPServesAWorkspaceWithoutAnOptIn(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	ctx := context.Background()
 	if err := d.mgr.store.SetWorkspaceSettings(ctx, d.ws.ID, `{"devIdp":false}`); err != nil {
@@ -367,6 +371,7 @@ func TestDevIdPServesAWorkspaceWithoutAnOptIn(t *testing.T) {
 }
 
 func TestDevIdPNothingWhereTheDeploymentDoesNotServeIt(t *testing.T) {
+	t.Parallel()
 	for name, off := range map[string]func(*testing.T, *devIdPTestEnv){
 		"switched off": func(t *testing.T, e *devIdPTestEnv) { setDevIdPDeployment(t, e.mgr, false) },
 		"locked":       func(_ *testing.T, e *devIdPTestEnv) { e.mgr.devIdPEnvOff = true },
@@ -384,6 +389,7 @@ func TestDevIdPNothingWhereTheDeploymentDoesNotServeIt(t *testing.T) {
 }
 
 func TestDevIdPEnvInjection(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	env := d.mgr.devIdPEnv(context.Background(), d.ws)
 	got := map[string]string{}
@@ -410,6 +416,7 @@ func TestDevIdPEnvInjection(t *testing.T) {
 // --- redirect_uri ACL -------------------------------------------------------------------
 
 func TestDevIdPRedirectURIAllowList(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	host3000 := previewHostname(d.slug, 3000, d.domain)
 	other := d.addViewer(t, "mallory")
@@ -474,6 +481,7 @@ func TestDevIdPRedirectURIAllowList(t *testing.T) {
 }
 
 func TestDevIdPRedirectAfterARestartUsesTheNewSlug(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	old := d.ownHost(3000) + "/cb"
 	if rec := d.authorizeAs(t, "preview-user", d.authQuery(old, "")); rec.Code != http.StatusFound {
@@ -492,6 +500,7 @@ func TestDevIdPRedirectAfterARestartUsesTheNewSlug(t *testing.T) {
 // A code minted for one slug cannot be redeemed after a restart moved the workspace: the
 // permission is decided again at the token step.
 func TestDevIdPCodeDiesWithTheSlugItWasIssuedFor(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	code := codeFrom(t, d.authorizeAs(t, "preview-user", d.authQuery(redirect, "")))
@@ -502,6 +511,7 @@ func TestDevIdPCodeDiesWithTheSlugItWasIssuedFor(t *testing.T) {
 }
 
 func TestDevIdPTenantSharedPreview(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	d.addViewer(t, "colleague")
 	redirect := d.ownHost(3000) + "/cb"
@@ -532,6 +542,7 @@ func TestDevIdPTenantSharedPreview(t *testing.T) {
 }
 
 func TestDevIdPTokenRedirectURIMustMatchExactly(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	for _, bad := range []string{redirect + "/", redirect + "?a=1", d.ownHost(8080) + "/cb", "http://localhost:3000/cb", ""} {
@@ -546,6 +557,7 @@ func TestDevIdPTokenRedirectURIMustMatchExactly(t *testing.T) {
 // --- codes ----------------------------------------------------------------------------
 
 func TestDevIdPCodeReplay(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	code := codeFrom(t, d.authorizeAs(t, "preview-user", d.authQuery(redirect, "")))
@@ -569,6 +581,7 @@ func TestDevIdPCodeReplay(t *testing.T) {
 }
 
 func TestDevIdPCodeExpiresInAMinute(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	code := codeFrom(t, d.authorizeAs(t, "preview-user", d.authQuery(redirect, "")))
@@ -582,6 +595,7 @@ func TestDevIdPCodeExpiresInAMinute(t *testing.T) {
 }
 
 func TestDevIdPCodeIsBoundToItsClient(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	// A second workspace with its own registration (the colleague's).
 	v := d.addViewer(t, "colleague")
@@ -612,6 +626,7 @@ func TestDevIdPCodeIsBoundToItsClient(t *testing.T) {
 // --- client authentication ------------------------------------------------------------
 
 func TestDevIdPClientAuthentication(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	form := func(code string) url.Values {
@@ -655,6 +670,7 @@ func TestDevIdPClientAuthentication(t *testing.T) {
 }
 
 func TestDifferentVerifier(t *testing.T) {
+	t.Parallel()
 	for _, v := range []string{"xAAA", "yAAA", "AAAA", "x", "-_x"} {
 		got := differentVerifier(v)
 		if got == v || len(got) != len(v) || got[1:] != v[1:] {
@@ -666,6 +682,7 @@ func TestDifferentVerifier(t *testing.T) {
 // --- PKCE -----------------------------------------------------------------------------
 
 func TestDevIdPPKCE(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	verifier, challenge := pkcePair()
@@ -707,6 +724,7 @@ func TestDevIdPPKCE(t *testing.T) {
 }
 
 func TestDevIdPAuthorizeProtocolErrors(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	for name, mut := range map[string]func(url.Values){
@@ -730,6 +748,7 @@ func TestDevIdPAuthorizeProtocolErrors(t *testing.T) {
 // --- claims -------------------------------------------------------------------------------
 
 func TestDevIdPClaims(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	ctx := context.Background()
 	redirect := d.ownHost(3000) + "/cb"
@@ -795,6 +814,7 @@ func TestDevIdPClaims(t *testing.T) {
 // --- the tokens belong to this IdP, this workspace --------------------------------------
 
 func TestDevIdPTokenVerifiesOnlyAgainstThisIssuerAndClient(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	tok := d.exchange(codeFrom(t, d.authorizeAs(t, "preview-user", d.authQuery(redirect, ""))), redirect, "")
@@ -830,6 +850,7 @@ func TestDevIdPTokenVerifiesOnlyAgainstThisIssuerAndClient(t *testing.T) {
 // --- the preview host serves none of it ---------------------------------------------------
 
 func TestDevIdPIsNotServedOnAPreviewHost(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	// The preview dispatcher in front of the real Console handler, as main wires it.
 	host := newPreviewHostAPI(d.cfg).dispatch(d.mux)
@@ -864,6 +885,7 @@ func TestDevIdPIsNotServedOnAPreviewHost(t *testing.T) {
 // --- the signing key ---------------------------------------------------------------------
 
 func TestDevIdPSigningKeyNeverLeaks(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
@@ -913,6 +935,7 @@ func TestDevIdPSigningKeyNeverLeaks(t *testing.T) {
 func jsonString(v any) string { b, _ := json.Marshal(v); return string(b) }
 
 func TestDevIdPKeyRotation(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	issue := func() string {
@@ -978,6 +1001,7 @@ func (h *auditHold) InsertAudit(ctx context.Context, a store.AuditLog) error {
 // A replay that lands while the first redemption is still between consuming the code and
 // storing its token must still leave no live token.
 func TestDevIdPReplayDuringTheFirstRedemptionLeavesNoLiveToken(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	hold := &auditHold{Store: d.mgr.store, reached: make(chan struct{}), release: make(chan struct{})}
 	d.mgr.store = hold
@@ -1004,6 +1028,7 @@ func TestDevIdPReplayDuringTheFirstRedemptionLeavesNoLiveToken(t *testing.T) {
 }
 
 func TestDevIdPDisabledIsA404BehindTheAuthGateToo(t *testing.T) {
+	t.Parallel()
 	cfg := oauthTestConfig(t)
 	cfg.mgr.publicBaseURL = "https://af.example.com"
 	cfg.mgr.previewDomain = "pv.example.com" // the IdP is offered only with preview subdomains
@@ -1035,6 +1060,7 @@ func TestDevIdPDisabledIsA404BehindTheAuthGateToo(t *testing.T) {
 }
 
 func TestAccessLogRedactsCredentialsInTheQuery(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
@@ -1060,6 +1086,7 @@ func TestAccessLogRedactsCredentialsInTheQuery(t *testing.T) {
 }
 
 func TestDevIdPRefusesReauthenticationItCannotDo(t *testing.T) {
+	t.Parallel()
 	d := newDevIdPTestEnv(t)
 	redirect := d.ownHost(3000) + "/cb"
 	for name, kv := range map[string][2]string{
