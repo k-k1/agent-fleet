@@ -63,6 +63,8 @@ if [ "$NAT" = 1 ]; then
   aws ec2 create-route --route-table-id "$PUBRT" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW" >/dev/null
   aws ec2 associate-route-table --route-table-id "$PUBRT" --subnet-id "$PUB" >/dev/null
   EIP=$(aws ec2 allocate-address --domain vpc --query AllocationId --output text)
+  # Tagged at once so teardown can find it if create-nat-gateway fails and no NAT ever holds it.
+  aws ec2 create-tags --resources "$EIP" --tags Key=Name,Value=$N
   NATGW=$(aws ec2 create-nat-gateway --subnet-id "$PUB" --allocation-id "$EIP" \
     --query NatGateway.NatGatewayId --output text)
   aws ec2 create-tags --resources "$NATGW" --tags Key=Name,Value=$N
