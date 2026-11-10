@@ -2,7 +2,7 @@
 // actions, and a body. `id` keys the open/closed state in localStorage (same
 // af-section-<id> keys as the old console, so collapse choices carry over).
 // `count` shows a muted tally — the only signal of contents while collapsed.
-import { readFold, writeFold } from "../lib/foldStore.ts";
+import { useFold } from "../lib/useFold.ts";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
@@ -31,10 +31,9 @@ const storeKey = (id: string) => `af-section-${id}`;
 
 export function Section({ id, title, icon, count, unread, actions, defaultOpen = true, open: openProp, onToggle, children }: SectionProps) {
   const tr = useT();
-  const [openState, setOpen] = useState(() => {
-    if (!id) return defaultOpen;
-    return readFold(storeKey(id)) ?? defaultOpen;
-  });
+  const [stored, setStored] = useFold(id ? storeKey(id) : undefined);
+  const [localOpen, setLocalOpen] = useState(defaultOpen);
+  const openState = id ? stored ?? defaultOpen : localOpen;
   const controlled = openProp !== undefined;
   const open = controlled ? openProp : openState;
   // Publish the sticky header band's height as --sec-head-h on the section, so
@@ -46,11 +45,8 @@ export function Section({ id, title, icon, count, unread, actions, defaultOpen =
       onToggle?.();
       return;
     }
-    setOpen((o) => {
-      const next = !o;
-      if (id) writeFold(storeKey(id), next);
-      return next;
-    });
+    if (id) setStored(!openState);
+    else setLocalOpen(!openState);
   };
   return (
     <section className={"ui-section" + (open ? "" : " collapsed")}>
