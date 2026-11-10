@@ -82,9 +82,6 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
   padding: 6px 10px; border: 0; border-radius: 5px; background: transparent;
   color: var(--muted); cursor: pointer; font-size: 12px; text-align: left;
 }
-.mirror-marks-head .mfl-title { color: var(--fg); font-weight: 600; }
-.mirror-marks-head .mfl-count { font-variant-numeric: tabular-nums; }
-.mirror-marks-head .mfl-lead { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mirror-marks-list { margin: 0; padding: 4px; list-style: none; max-height: 220px; overflow: auto; }
 .tmark-row { display: flex; align-items: center; gap: 2px; }
 .tmark-row-btn {

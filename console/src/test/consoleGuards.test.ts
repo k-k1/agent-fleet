@@ -60,6 +60,15 @@ describe("css-dup ceilings", () => {
   });
 });
 
+describe("css-dup cleared names", () => {
+  // Names that were duplicated across files and now live in one. The ceiling above only counts;
+  // this pins the names, so a clean-up cannot be undone by an unrelated duplicate being removed.
+  const names = new Set((JSON.parse(cssDup().stdout) as { name: string }[]).map((d) => d.name));
+  it.each(["mfl-title", "mfl-count", "mfl-lead"])("%s is defined in one file only", (n) => {
+    expect(names.has(n)).toBe(false);
+  });
+});
+
 describe("lib/ import boundary exceptions", () => {
   // .oxlintrc.json is JSONC; its comments are whole lines.
   const cfg = JSON.parse(
