@@ -2941,8 +2941,8 @@ open enum `ItemKind` への値 `earlierHistory` の追加。チェッカーは�
    `approvalBrokerUnavailable` / `approvalResolving`、`HistoryNoneReason` の
    `projectionRebuildFailed`、`SessionViewHealth` の `healthy`。スキーマは未知の kind を汎用描画
    せよと定めており mirror は既にそうする。ラベル無しで本文を型付きメンバーに持つのは
-   `peerMessage` だけなので、`kindSummary` が「message from <送信者>: <本文>」を作る。他の 3 kind は汎用経路
-   （kind 名と、ホストが送れば label / `fallbackText`）で、型付きメンバーは描画しない。64 件の追加（`BackgroundTarget`、`model/complete` 型、
+   `peerMessage` だけなので、`kindSummary` が「message from <送信者>: <本文>」を作る。`subagentResult` / `subagentInput` / `systemNotice` も型付きメンバー（結果・フェーズ・重大度・対象）から要約する。
+   新 kind の `fallbackText` は SHOULD に過ぎないため。残りのメンバーは描画しない。64 件の追加（`BackgroundTarget`、`model/complete` 型、
    notice の origin / severity など）は生成されるが未使用。
 
 同じ代償: 1.4.15 のバンドルは `MUSE_VERSION` が動くまで 1.4.14 のバイナリに対して赤。

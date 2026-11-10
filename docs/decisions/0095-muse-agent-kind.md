@@ -3237,8 +3237,9 @@ Two things moved in 1.4.15, and the red step hid the second behind the first.
    `projectionRebuildFailed`; `SessionViewHealth` `healthy`. The schema says clients render
    unknown kinds generically, and the mirror already does; only `peerMessage` carries its text
    in a typed member without a label, so `kindSummary` now renders "message from <sender>: <body>".
-   The other three kinds take the generic path (kind name plus label / `fallbackText` when the host
-   sends one); their typed members are not rendered. The 64 additions
+   `subagentResult`, `subagentInput` and `systemNotice` are summarised from their typed members
+   too (outcome, phase, severity and subject), because `fallbackText` is only a SHOULD for a new
+   kind. Their remaining members are not rendered. The 64 additions
    (`BackgroundTarget`, `model/complete` types, notice origin and severity, …) are generated but
    unused.
 
