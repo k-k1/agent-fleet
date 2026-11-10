@@ -14,7 +14,7 @@
 ---
 ## [0.43.0](0.43.0.ja.md) — 2026-11-10
 
-**CLI ピン** — rtk 1.2.0
+**CLI ピン** — Claude Code 2.1.321 / Copilot 1.0.108 / rtk 1.2.0
 
 **New / Improved**
 
