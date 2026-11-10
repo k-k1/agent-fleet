@@ -163,6 +163,24 @@ func workflowSubject(repo, file, branch string, floorID, floorUnix int64) Subjec
 	return SubjectID(s)
 }
 
+// ActionsPokeKey is the form of an Actions subject that is registered with the Control Plane and
+// that a webhook can name (ADR 0133 §4). A run subject is its own key. A workflow subject loses
+// its floor, which only this Agent knows, so every watch of that workflow (and branch) answers to
+// one key. ok is false for a subject that is not an Actions one.
+func ActionsPokeKey(subject SubjectID) (key string, ok bool) {
+	if actRunSubjectRE.MatchString(string(subject)) {
+		return string(subject), true
+	}
+	if m := actWfSubjectRE.FindStringSubmatch(string(subject)); m != nil {
+		key = "github:" + m[1] + "/actions/workflows/" + m[2]
+		if m[5] != "" {
+			key += "/branch/" + m[5]
+		}
+		return key, true
+	}
+	return "", false
+}
+
 // ghRun is the part of a workflow run this source uses.
 type ghRun struct {
 	ID         int64  `json:"id"`
@@ -497,3 +515,15 @@ func (a *GitHubActions) runEvents(ctx context.Context, subject SubjectID, repo, 
 	}
 	return evs, nil
 }
+
+// IsActionsPokeKey reports whether s is the registered form of an Actions subject: a run
+// subject, or a workflow without its floor. The Control Plane builds exactly these from a
+// workflow_run delivery.
+func IsActionsPokeKey(s string) bool {
+	if actRunSubjectRE.MatchString(s) {
+		return true
+	}
+	return actWfKeyRE.MatchString(s)
+}
+
+var actWfKeyRE = regexp.MustCompile(`^github:(` + actRepo + `)/actions/workflows/(` + actFile + `)(?:/branch/([A-Za-z0-9._/-]{1,100}))?$`)

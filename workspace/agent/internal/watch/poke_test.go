@@ -96,3 +96,47 @@ func TestSubjectsListsLiveWatchesOnce(t *testing.T) {
 		t.Fatalf("subjects after the last watch ended: %v", got)
 	}
 }
+
+func TestActionsPokeKeyDropsTheFloorOnly(t *testing.T) {
+	for in, want := range map[SubjectID]string{
+		"github:o/r/actions/runs/5":                                   "github:o/r/actions/runs/5",
+		"github:o/r/actions/runs/5/attempts/2":                        "github:o/r/actions/runs/5/attempts/2",
+		"github:o/r/actions/workflows/ci.yml/after/10-20":             "github:o/r/actions/workflows/ci.yml",
+		"github:o/r/actions/workflows/Ci.yaml/after/10-20/branch/a/b": "github:o/r/actions/workflows/Ci.yaml/branch/a/b",
+	} {
+		got, ok := ActionsPokeKey(in)
+		if !ok || got != want {
+			t.Errorf("ActionsPokeKey(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+		if !IsActionsPokeKey(got) {
+			t.Errorf("the key %q of %q is not accepted by IsActionsPokeKey", got, in)
+		}
+	}
+	for _, in := range []SubjectID{"github:o/r#1", "github:o/r/actions/workflows/ci.yml", "x"} {
+		if k, ok := ActionsPokeKey(in); ok {
+			t.Errorf("ActionsPokeKey(%q) = %q", in, k)
+		}
+	}
+	if IsActionsPokeKey("github:o/r/actions/workflows/ci.yml/after/1-2") {
+		t.Error("the floor form passes as a key")
+	}
+}
+
+func TestPokeMatchingPokesOnlyMatchesOfTheSource(t *testing.T) {
+	e, src, c := pokeEngine(t, Hint{After: 10 * time.Minute})
+	if e.PokeMatching("fake", func(SubjectID) bool { return false }) || e.PokeMatching("other", func(SubjectID) bool { return true }) {
+		t.Fatal("reported a subject held that nothing matched")
+	}
+	c.add(pokeMinGap)
+	e.Tick(context.Background())
+	if src.polls != 1 {
+		t.Fatalf("a poke that matched nothing caused a read: %d", src.polls)
+	}
+	if !e.PokeMatching("fake", func(s SubjectID) bool { return s == "fake:o/r#1" }) {
+		t.Fatal("matching subject not held")
+	}
+	e.Tick(context.Background())
+	if src.polls != 2 {
+		t.Fatalf("the matching poke caused no read: %d", src.polls)
+	}
+}

@@ -65,13 +65,31 @@ func (r *watchRegistrar) sync(ctx context.Context, now time.Time) {
 	r.last, r.lastAt = key, now
 }
 
-// watchSubjectList is the engine's watched subjects in the form the Control Plane accepts.
+// watchSubjectList is the engine's watched subjects in the form the Control Plane accepts. An
+// Actions subject is registered as its poke key (a workflow's floor stays here), and several
+// watches of one workflow share one key, so the list is deduplicated.
 func watchSubjectList(e *watch.Engine) []string {
 	var out []string
+	seen := map[string]bool{}
 	for _, s := range e.Subjects() {
-		if watchSubjectRE.MatchString(string(s.Subject)) && len(out) < watchRegisterMax {
-			out = append(out, string(s.Subject))
+		key := string(s.Subject)
+		switch s.Source {
+		case watch.ActionsKind:
+			k, ok := watch.ActionsPokeKey(s.Subject)
+			if !ok {
+				continue
+			}
+			key = k
+		default:
+			if !watchSubjectRE.MatchString(key) {
+				continue
+			}
 		}
+		if seen[key] || len(out) >= watchRegisterMax {
+			continue
+		}
+		seen[key] = true
+		out = append(out, key)
 	}
 	return out
 }
@@ -131,11 +149,21 @@ func HandleWatchPoke(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
-	if !watchSubjectRE.MatchString(in.Subject) || !strings.HasPrefix(in.Subject, in.Source+":") {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_subject", "source and subject do not match a pull request reference")
+	// The Control Plane names the provider ("github"); a key in an Actions form belongs to the
+	// Actions source, which the engine keeps apart from the pull request source.
+	var held bool
+	switch {
+	case watchSubjectRE.MatchString(in.Subject) && strings.HasPrefix(in.Subject, in.Source+":"):
+		held = watchEngine().Poke(in.Source, watch.SubjectID(in.Subject))
+	case in.Source == "github" && watch.IsActionsPokeKey(in.Subject):
+		held = watchEngine().PokeMatching(watch.ActionsKind, func(s watch.SubjectID) bool {
+			k, ok := watch.ActionsPokeKey(s)
+			return ok && k == in.Subject
+		})
+	default:
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_subject", "source and subject do not match a pull request or workflow run reference")
 		return
 	}
-	held := watchEngine().Poke(in.Source, watch.SubjectID(in.Subject))
 	httpx.WriteJSON(w, http.StatusAccepted, watchPokeResp{Held: held})
 }
 

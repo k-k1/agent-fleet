@@ -373,6 +373,19 @@ PR に紐づかない GitHub Actions の実行を見張れるようにした。�
 実行への webhook の poke（`workflow_run` の配信を実行の subject に解釈し、poke の経路で受けるのは Control Plane 側の変更で、
 ワークフローの subject が持つ下限は Control Plane から導けない）、Bitbucket Pipelines、非公開リポジトリでの実機確認。
 
+*補足、2026-11-10（#3780、Webhook の poke）。* `workflow_run` の配信が実行の見張りを poke するようにした。ワークフローの
+subject が持つ下限は Agent しか知らず Control Plane は導けないので、線上では下限のない **poke キー** を使う: 実行
+（`github:o/r/actions/runs/<id>[/attempts/<n>]`）と、下限を除いたワークフロー
+（`github:o/r/actions/workflows/<file>[/branch/<b>]`）。`completed` の配信について Control Plane は、実行（試行つきと
+なし）、`path` の末尾のファイル名（`@<ref>` は除く）のワークフロー、実行の `head_branch` つきのワークフローを名指す。
+どの項目も登録が受け付けるのと同じ形で検査し、合わない実行 id・パス・ブランチは何も名指さない。他の action
+（`requested`、`in_progress`）は実行キーを名指さない。Agent は Actions の各 subject をそのキーで登録し（同じワークフローの
+複数の下限は 1 つにまとまる）、subject がそのキーの poke は Actions ソースに届く: 実行キーはその実行を、ワークフローキー
+はそのワークフロー（とブランチ）の見張り全部を、下限によらず poke する（`Engine.PokeMatching`）。poke が運ぶのは
+`(source, subject)` だけで、線上の source は `github` のまま。poke は次の読み取りを早めるだけで間隔と退避の規則も同じなので、
+実行の状態を作り出すことはない。フックと App の信頼はプルリクエストの場合と同じ。実際のリポジトリでは未確認。#3780 に残る
+もの: Bitbucket Pipelines と実機確認。
+
 ## Rejected
 
 - **専用の `watch_pr` ツールと速い `branchpr`。** PR の場合はすぐ解けるが、手作りの見張りが 6 つ目になる。次の

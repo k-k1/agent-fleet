@@ -495,3 +495,48 @@ func TestWatchIngressHookIsBoundToItsRepoAndOwner(t *testing.T) {
 		t.Fatalf("a removed owner's hook still answers: %d", w.Code)
 	}
 }
+
+func TestWatchIngressWorkflowRunDeliveryPokesRunAndWorkflowKeys(t *testing.T) {
+	f := newWIFixture(t, "")
+	a := f.member("alpha", "a@alpha.example", "running")
+	b := f.member("beta", "b@beta.example", "running")
+	const (
+		runKey = "github:acme/repo/actions/runs/4242/attempts/1"
+		wfKey  = "github:acme/repo/actions/workflows/nightly.yml"
+		other  = "github:acme/repo/actions/workflows/other.yml"
+	)
+	// Alpha watches the run and the workflow; the other key belongs to a workflow that did not run.
+	if w := f.register(a, runKey, wfKey, other); w.Code != http.StatusOK {
+		t.Fatalf("register: %d %s", w.Code, w.Body.String())
+	}
+	f.register(b, wfKey)
+	id, secret := f.createHook(a, "github")
+	body := `{"action":"completed","workflow_run":{"id":4242,"run_attempt":1,"path":".github/workflows/nightly.yml","head_branch":"main"},` +
+		`"repository":{"full_name":"Acme/Repo","private":true}}`
+	if w := f.hookDelivery(id, "workflow_run", body, sign([]byte(secret), body)); w.Code != http.StatusAccepted {
+		t.Fatalf("delivery: %d %s", w.Code, w.Body.String())
+	}
+	got := f.waitPokes(2)
+	wsA := f.ws["a@alpha.example"].ID
+	want := map[string]bool{wsA + "|github|" + runKey: true, wsA + "|github|" + wfKey: true}
+	if len(got) != 2 || !want[got[0]] || !want[got[1]] || got[0] == got[1] {
+		t.Fatalf("pokes %v, want %v only: another tenant's workspace and an unrelated workflow must not be poked", got, want)
+	}
+	if more := f.quiet(); len(more) != 2 {
+		t.Fatalf("late pokes: %v", more)
+	}
+}
+
+func TestWatchIngressAcceptsActionsKeysOnRegistration(t *testing.T) {
+	f := newWIFixture(t, "")
+	a := f.member("alpha", "a@alpha.example", "running")
+	for _, s := range []string{"github:a/b/actions/runs/9", "github:a/b/actions/workflows/ci.yml/branch/main"} {
+		if w := f.register(a, s); w.Code != http.StatusOK {
+			t.Errorf("%s: %d %s", s, w.Code, w.Body.String())
+		}
+	}
+	// A workflow subject with its floor is the Agent's own form; only the floor-less key travels.
+	if w := f.register(a, "github:a/b/actions/workflows/ci.yml/after/1-2"); w.Code != http.StatusBadRequest {
+		t.Errorf("floor form accepted: %d", w.Code)
+	}
+}
