@@ -39,14 +39,14 @@ describe("text contrast", () => {
   });
 
   for (const level of ["strong", "strongest"]) {
-    it(`${level}: override reaches the root and a nested region of the opposite theme`, () => {
-      for (const [appTheme, region] of [["dark", "light"], ["light", "dark"]] as const) {
+    it(`${level}: override reaches the root and a nested region of either theme`, () => {
+      for (const [appTheme, region] of [["dark", "light"], ["light", "dark"], ["light", "light"], ["dark", "dark"]] as const) {
         applyTheme({ ...defaultSettings(), theme: appTheme, textContrast: level as "strong" });
         document.body.innerHTML = `<div id="r" data-theme="${region}"><span id="in"></span></div>`;
         expect(matches(document.documentElement, selectors(level, appTheme)), `root ${appTheme}`).toBe(true);
         expect(matches(document.getElementById("r")!, selectors(level, region)), `region ${region} in ${appTheme}`).toBe(true);
         // the region must not pick up the other theme's override
-        expect(matches(document.getElementById("r")!, selectors(level, appTheme))).toBe(false);
+        if (region !== appTheme) expect(matches(document.getElementById("r")!, selectors(level, appTheme))).toBe(false);
       }
     });
   }

@@ -18,7 +18,7 @@ import { useSyncExternalStore } from "react";
 import { pinSyncedFallbacks } from "../features/notifications/prefs.ts";
 import { applyTheme } from "./settings/appearance.ts";
 import { sameValue, type Settings } from "./settings/prefs.ts";
-import { APPEARANCE_SHUFFLE_MODES, REGION_THEMES, SURFACE_COLORS, THEMES } from "./settings/options.ts";
+import { APPEARANCE_SHUFFLE_MODES, REGION_THEMES, SURFACE_COLORS, TEXT_CONTRASTS, THEMES } from "./settings/options.ts";
 import {
   KEY as SETTINGS_KEY,
   applyToPage,
@@ -220,10 +220,12 @@ export function appearanceScope(): string | null {
 // load, so without this a change made in one tab stays invisible in the others until they reload,
 // and the next write from a stale tab puts its old values back.
 //
-// Only the appearance keys cross between tabs. paneLayout is device-local too but switching it
+// Only the appearance keys (and textContrast, which applies instantly and harmlessly) cross
+// between tabs; otherwise a stale tab's next write would put the old contrast back. paneLayout is device-local too but switching it
 // re-lays the main area (with an unsaved-edits confirm), which a tab must not do behind the member's
 // back; synced keys already converge through the server copy.
-const CROSS_TAB_KEYS = [...APPEARANCE_KEYS, "appearancePerTenant", "appearanceShuffle"] as const;
+// textContrast is deliberately not in APPEARANCE_KEYS: it follows the screen, not the tenant.
+const CROSS_TAB_KEYS = [...APPEARANCE_KEYS, "appearancePerTenant", "appearanceShuffle", "textContrast"] as const;
 
 // The values each cross-tab key may take in this build. Another tab may run another Console
 // version; a value this one does not know is left out rather than stored and saved again.
@@ -231,6 +233,7 @@ const SURFACE_IDS = SURFACE_COLORS.map((c) => c.id);
 const REGION_THEME_IDS = REGION_THEMES.map((t) => t.id);
 const CROSS_TAB_ALLOWED: Record<(typeof CROSS_TAB_KEYS)[number], readonly unknown[]> = {
   theme: THEMES.map((t) => t.id),
+  textContrast: TEXT_CONTRASTS.map((c) => c.id),
   mirrorTheme: REGION_THEME_IDS,
   sharedTheme: REGION_THEME_IDS,
   assistantTheme: REGION_THEME_IDS,

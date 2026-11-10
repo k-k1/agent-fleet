@@ -311,12 +311,12 @@
    moves; derived tokens (--sel-fg) follow because they are declared on the same element.
    Ratios on --bg / --panel / --panel2 (tokens.contrast.test.ts recomputes and enforces
    them):
-     light standard   16.4/15.0/13.9 | 7.6/6.9/6.4 | 5.8/5.3/4.9
+     light standard   16.4/15.0/13.8 | 7.6/6.9/6.4 | 5.8/5.3/4.9
      light strong     18.5/16.9/15.6 | 9.4/8.6/7.9 | 7.6/6.9/6.4
-     light strongest  21.0/19.3/17.7 | 12.7/11.7/10.8 | 10.2/9.3/8.6
+     light strongest  21.0/19.3/17.7 | 12.7/11.7/10.8 | 10.1/9.3/8.6
      dark  standard   12.3/13.1/13.6 | 4.7/5.0/5.2 | 3.7/4.0/4.1
      dark  strong     13.6/14.5/15.0 | 6.4/6.8/7.0 | 5.2/5.6/5.8
-     dark  strongest  15.3/16.3/16.9 | 8.7/9.3/9.6 | 7.2/7.6/7.9 */
+     dark  strongest  15.3/16.3/16.9 | 8.7/9.2/9.6 | 7.2/7.6/7.9 */
 :root[data-contrast="strong"][data-theme="light"],
 [data-contrast="strong"] [data-theme="light"] {
   --fg: #111418;
