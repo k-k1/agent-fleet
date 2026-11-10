@@ -139,7 +139,9 @@ func (Bitbucket) MaxSubscriptions() int { return bbMaxSubscriptions }
 
 const bbMaxSubscriptions = 10
 
-const goneBBPull = "the pull request was deleted, its repository is gone, or it can no longer be read with your Bitbucket connection"
+// Only conditions that end a watch: a connection that lost access answers a held-off or failed
+// read, which stays a plain error (unlike GitHub, which also maps a permanent 403 to gone).
+const goneBBPull = "the pull request was deleted, its repository is gone, or there is no such pull request"
 
 func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, _ []string) ([]Event, json.RawMessage, Hint, error) {
 	repo, n, ok := parseBBSubject(subject)

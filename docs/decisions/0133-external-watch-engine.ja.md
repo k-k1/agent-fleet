@@ -389,7 +389,7 @@ subject が持つ下限は Agent しか知らず Control Plane は導けない�
 *補足、2026-11-10（#3780、Bitbucket で消えた PR）。* `bitbucket` の PR ソースは、読み取りが「そのプルリクエストはない」と
 答えたとき（リポジトリや PR への 404、またはその番号の PR がない）`ErrGone` を返す。通常の 3 回の読み取りのあと
 `watch.ended` で見張りが終わる。読み取りの失敗・保留・レート制限は通常のエラーのままで、見張りを終わらせない。
-#3780 に残るもの: Bitbucket Pipelines と実機確認。
+#3780 に残るもの: Bitbucket Pipelines とプライベートリポジトリでの実機確認。
 
 ## Rejected
 
