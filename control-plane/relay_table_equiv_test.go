@@ -410,6 +410,7 @@ var auditAddedSinceTheFreeze = map[string]bool{
 	"DELETE /api/cleanup/archives":            true,
 	"DELETE /api/cleanup/archives/{id}":       true,
 	"POST /api/cleanup/archives/{id}/restore": true,
+	"POST /api/cleanup/worktree-output":       true,
 	"POST /api/repos/init":                    true,
 	"POST /api/repos/{name}/recreate":         true,
 	"POST /api/repos/{name}/stage":            true,

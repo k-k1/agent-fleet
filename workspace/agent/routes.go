@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/workitems"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/wtoutput"
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
@@ -131,6 +132,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /cleanup/tool-caches/{name}", handleDeleteToolCache)
 	mux.HandleFunc("GET /cleanup/home", handleHomeUsage)
 	mux.HandleFunc("POST /cleanup/home/measure", handleMeasureHomeUsage)
+	mux.HandleFunc("GET /cleanup/worktree-output", wtoutput.HandleSurvey)
+	mux.HandleFunc("POST /cleanup/worktree-output", wtoutput.HandleApply)
 	mux.HandleFunc("GET /cleanup/leftovers", handleLeftoverUsage)
 	mux.HandleFunc("DELETE /cleanup/leftovers/{kind}", handleDeleteLeftovers)
 	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites

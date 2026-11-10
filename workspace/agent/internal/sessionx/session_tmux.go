@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -240,6 +241,24 @@ func dirWithin(d, dir string) bool {
 	}
 	cd, cdir := workingCopyKey(d), workingCopyKey(dir)
 	return cd == cdir || strings.HasPrefix(cd, cdir+string(os.PathSeparator))
+}
+
+// LastActivityInDir is the newest moment any session whose cwd is dir or beneath it (stopped
+// and archived ones included) was created or stopped; zero when there is none. A running
+// session is judged by LiveSessionsInDir, not by this.
+func LastActivityInDir(metas []session.Meta, dir string) time.Time {
+	var newest time.Time
+	for _, m := range metas {
+		if !dirWithin(m.Dir, dir) {
+			continue
+		}
+		for _, s := range []string{m.CreatedAt, m.StoppedAt} {
+			if t, err := time.Parse(time.RFC3339, s); err == nil && t.After(newest) {
+				newest = t
+			}
+		}
+	}
+	return newest
 }
 
 // LockedSessionsInDir returns the display names of DELETE-LOCKED sessions (docs/log/45)

@@ -209,3 +209,17 @@ func TestAuditArchiveRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestRemovedAnyOnlyForAnswersThatListRemovals(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"status":"candidate","dirs":[{"rel":"node_modules"}]}`:    false, // dry run
+		`{"status":"refused","reason":"in_use"}`:                    false,
+		`{"status":"candidate","removed":[]}`:                       false,
+		`{"status":"candidate","removed":[{"rel":"node_modules"}]}`: true,
+		`not json`: false,
+	} {
+		if got := removedAny([]byte(body)); got != want {
+			t.Errorf("%s: got %v want %v", body, got, want)
+		}
+	}
+}
