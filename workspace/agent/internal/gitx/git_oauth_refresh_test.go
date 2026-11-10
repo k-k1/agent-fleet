@@ -3,6 +3,7 @@ package gitx
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,9 +105,8 @@ func TestRefreshBitbucketStoredDoesNotAdoptAnExpiredPair(t *testing.T) {
 	withAgentHome(t)
 	var gotBody atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b := make([]byte, 256)
-		n, _ := r.Body.Read(b)
-		gotBody.Store(string(b[:n]))
+		b, _ := io.ReadAll(r.Body)
+		gotBody.Store(string(b))
 		_, _ = w.Write([]byte(`{"access_token":"fresh","refresh_token":"r2","expires_in":3600}`))
 	}))
 	defer srv.Close()
@@ -147,25 +147,76 @@ func TestRefreshBitbucketStoredDisconnectDuringGrantIsNotUndone(t *testing.T) {
 	}
 }
 
-// A reconnect (new pair) that lands during the grant is kept; the stale grant result is dropped.
+// A reconnect (new pair) that lands during the grant is kept, and the caller is handed it
+// rather than the stale grant result — unless it is another account's.
 func TestRefreshBitbucketStoredReplacementDuringGrantWins(t *testing.T) {
-	withAgentHome(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = secrets.Update(func(d *secrets.Data) error {
-			d.Bitbucket = &secrets.BitbucketCreds{AccessToken: "reconnected", RefreshToken: "rX", Expiry: time.Now().Unix() + 3600}
-			return nil
+	for _, tc := range []struct {
+		name, stored string
+		wantErr      bool
+	}{{"same account", "alice", false}, {"unresolved account", "", false}, {"other account", "bob", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			withAgentHome(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = secrets.Update(func(d *secrets.Data) error {
+					d.Bitbucket = &secrets.BitbucketCreds{AccessToken: "reconnected", RefreshToken: "rX",
+						Expiry: time.Now().Unix() + 3600, Account: tc.stored}
+					return nil
+				})
+				_, _ = w.Write([]byte(`{"access_token":"fresh","refresh_token":"r1","expires_in":3600}`))
+			}))
+			defer srv.Close()
+			seeded := expiredBB()
+			seeded.Account = "alice"
+			seedBB(t, srv.URL, seeded)
+
+			c := seeded
+			err := RefreshBitbucketStored(context.Background(), &c)
+			if tc.wantErr != errors.Is(err, errBitbucketReplaced) || (!tc.wantErr && err != nil) {
+				t.Fatalf("err = %v", err)
+			}
+			if st := storedBB(t); st.AccessToken != "reconnected" || st.RefreshToken != "rX" {
+				t.Fatalf("stored: %+v", st)
+			}
+			if !tc.wantErr && (c.AccessToken != "reconnected" || c.RefreshToken != "rX") {
+				t.Fatalf("caller must get the reconnected pair: %+v", c)
+			}
+			if tc.wantErr && c.AccessToken != "old" {
+				t.Fatalf("caller's creds must stay: %+v", c)
+			}
 		})
-		_, _ = w.Write([]byte(`{"access_token":"fresh","refresh_token":"r1","expires_in":3600}`))
-	}))
+	}
+}
+
+// Adopting a pair the bridge already migrated must carry its (empty) legacy secret too.
+func TestRefreshBitbucketStoredAdoptCarriesLegacySecretDrop(t *testing.T) {
+	withAgentHome(t)
+	seedBB(t, "http://127.0.0.1:1", secrets.BitbucketCreds{AccessToken: "other", RefreshToken: "r1", Expiry: time.Now().Unix() + 3600})
+	c := expiredBB()
+	c.Key, c.Secret = "legacy-key", "legacy-secret"
+	if err := RefreshBitbucketStored(context.Background(), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Key != "" || c.Secret != "" {
+		t.Fatalf("legacy secret came back: %+v", c)
+	}
+}
+
+// The grant ends with the refresh budget, so a hung CP cannot hold the lock for its full retry ladder.
+func TestRefreshBitbucketStoredGrantIsBoundedByTheBudget(t *testing.T) {
+	withAgentHome(t)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-release }))
 	defer srv.Close()
+	defer close(release)
 	seedBB(t, srv.URL, expiredBB())
+	old := bbRefreshWait
+	bbRefreshWait = 300 * time.Millisecond
+	defer func() { bbRefreshWait = old }()
 
 	c := expiredBB()
-	if err := RefreshBitbucketStored(context.Background(), &c); !errors.Is(err, errBitbucketReplaced) {
-		t.Fatalf("err = %v", err)
-	}
-	if st := storedBB(t); st.AccessToken != "reconnected" || st.RefreshToken != "rX" {
-		t.Fatalf("stored: %+v", st)
+	start := time.Now()
+	if err := RefreshBitbucketStored(context.Background(), &c); err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("err=%v after %v", err, time.Since(start))
 	}
 }
 

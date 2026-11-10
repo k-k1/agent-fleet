@@ -18,9 +18,11 @@ const bbFreshWindow = 120 * time.Second
 // lock, so handlers of the Agent queue here instead of polling the file lock.
 var bbRefreshMu sync.Mutex
 
-// bbRefreshWait bounds the wait for the cross-process lock and the store read. The grant
-// has its own HTTP timeouts, so the worst-case hold of the lock is that plus the persist.
-// Callers sit in front of git (the credential helper) and must not wait forever.
+// bbRefreshWait bounds one renewal: the wait for the cross-process lock, the store read and
+// the grant itself (every grant attempt ends with the same context). Worst-case hold of the
+// lock is therefore the wait plus the 10 s persist, which can exceed a waiter's own wait: it
+// then fails once and the next call adopts the stored pair. Callers sit in front of git (the
+// credential helper) and must not wait forever.
 var bbRefreshWait = 30 * time.Second
 
 // errBitbucketReplaced: the stored connection is no longer the one being renewed.
@@ -36,6 +38,10 @@ var errBitbucketReplaced = errors.New("bitbucket connection was disconnected or 
 // no longer the stored one adopts what another process renewed (when that pair is still
 // fresh) instead of exchanging, and a caller whose token IS the stored one exchanges the
 // stored refresh token, never its own possibly stale copy.
+//
+// A forced refresh (a 401 despite a fresh-looking token) is a legitimate caller whose token
+// IS the stored one, so there is deliberately no "stored token is still fresh, do nothing"
+// shortcut here: callers decide whether a renewal is due.
 //
 // The result is written with secrets.Update, never Load … Save: a snapshot taken before the
 // grant must not resurrect a connection that was disconnected, or replaced by a reconnect,
@@ -62,7 +68,7 @@ func RefreshBitbucketStored(ctx context.Context, c *secrets.BitbucketCreds) erro
 			adoptBitbucket(c, d)
 			return nil
 		}
-		nc, err := refreshBitbucketGrant(*d)
+		nc, err := refreshBitbucketGrantContext(wctx, *d)
 		if err != nil {
 			return err
 		}
@@ -71,11 +77,20 @@ func RefreshBitbucketStored(ctx context.Context, c *secrets.BitbucketCreds) erro
 		pctx, pcancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer pcancel()
 		err = secrets.UpdateContext(pctx, func(s *secrets.Data) error {
-			if s.Bitbucket == nil || s.Bitbucket.AccessToken == "" || s.Bitbucket.RefreshToken != d.RefreshToken {
+			if s.Bitbucket == nil || s.Bitbucket.AccessToken == "" {
 				return errBitbucketReplaced
 			}
+			if s.Bitbucket.RefreshToken != d.RefreshToken {
+				// Reconnected during the grant (a reconnect does not take the lock): what is
+				// stored is newer than this grant's pair. Hand it to the caller instead,
+				// unless it is another account's.
+				if c.Account != "" && s.Bitbucket.Account != "" && c.Account != s.Bitbucket.Account {
+					return errBitbucketReplaced
+				}
+				nc = *s.Bitbucket
+				return nil
+			}
 			adoptBitbucket(s.Bitbucket, &nc)
-			s.Bitbucket.Key, s.Bitbucket.Secret = nc.Key, nc.Secret
 			return nil
 		})
 		if err != nil {
@@ -85,15 +100,17 @@ func RefreshBitbucketStored(ctx context.Context, c *secrets.BitbucketCreds) erro
 			return fmt.Errorf("persisting the refreshed bitbucket token: %w", err)
 		}
 		adoptBitbucket(c, &nc)
-		c.Key, c.Secret = nc.Key, nc.Secret
 		return nil
 	})
 }
 
 // adoptBitbucket copies the token fields of src into dst, leaving the identity fields
-// (Account, Email) of dst alone. Scopes are kept when src records none.
+// (Account, Email) of dst alone. Scopes are kept when src records none. The legacy client
+// key/secret travel with the pair: a snapshot that kept an old copy would write it back
+// on its next Save after another process dropped it.
 func adoptBitbucket(dst, src *secrets.BitbucketCreds) {
 	dst.AccessToken, dst.RefreshToken, dst.Expiry = src.AccessToken, src.RefreshToken, src.Expiry
+	dst.Key, dst.Secret = src.Key, src.Secret
 	if src.Scopes != "" {
 		dst.Scopes = src.Scopes
 	}

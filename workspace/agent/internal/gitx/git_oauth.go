@@ -127,8 +127,14 @@ func RemoveBitbucketOAuth() {
 //     a fallback if the bridge is unavailable, and are dropped the first time the bridge
 //     answers — proving the replacement works before removing what it replaces.
 func refreshBitbucketGrant(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
+	return refreshBitbucketGrantContext(context.Background(), c)
+}
+
+// refreshBitbucketGrantContext is refreshBitbucketGrant whose attempts all end with ctx, so a
+// caller holding the "bitbucket-refresh" lock can bound how long it holds it.
+func refreshBitbucketGrantContext(ctx context.Context, c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
 	if b := LoadGitOAuthBridge(); b != nil {
-		nc, err := refreshBitbucketViaCP(*b, c)
+		nc, err := refreshBitbucketViaCPContext(ctx, *b, c)
 		if err == nil {
 			return nc, nil
 		}
@@ -137,7 +143,7 @@ func refreshBitbucketGrant(c secrets.BitbucketCreds) (secrets.BitbucketCreds, er
 		}
 		log.Printf("bitbucket refresh: CP bridge failed (%v) — falling back to the stored client secret", err)
 	}
-	return refreshBitbucketDirect(c)
+	return refreshBitbucketDirect(ctx, c)
 }
 
 // LoadGitOAuthBridge reads the CP bridge out of the store. nil = not configured, which
@@ -255,11 +261,15 @@ func RefreshOAuthViaCPContext(ctx context.Context, b secrets.CPBridge, provider,
 // the scrub of a pre-docs/log/71 store happens as a side effect of the first refresh that
 // proves the bridge works.
 func refreshBitbucketViaCP(b secrets.CPBridge, c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
+	return refreshBitbucketViaCPContext(context.Background(), b, c)
+}
+
+func refreshBitbucketViaCPContext(ctx context.Context, b secrets.CPBridge, c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
 	if c.RefreshToken == "" {
 		return c, fmt.Errorf("no refresh token stored")
 	}
 	body, _ := json.Marshal(map[string]string{"refresh_token": c.RefreshToken})
-	req, err := http.NewRequest("POST",
+	req, err := http.NewRequestWithContext(ctx, "POST",
 		strings.TrimRight(b.BaseURL, "/")+"/internal/git-oauth/bitbucket/refresh", strings.NewReader(string(body)))
 	if err != nil {
 		return c, err
@@ -312,7 +322,7 @@ func refreshBitbucketViaCP(b secrets.CPBridge, c secrets.BitbucketCreds) (secret
 // credential helper (clone/fetch/push in sessions), so a single blip here otherwise
 // surfaces as an intermittent 401 that a manual retry hides. A 4xx like invalid_grant is
 // permanent (the refresh token was revoked) and returns at once.
-func refreshBitbucketDirect(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
+func refreshBitbucketDirect(ctx context.Context, c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
 	if c.Key == "" || c.Secret == "" {
 		return c, fmt.Errorf("bitbucket refresh is unavailable: no control-plane bridge is configured for this workspace")
 	}
@@ -323,9 +333,13 @@ func refreshBitbucketDirect(c secrets.BitbucketCreds) (secrets.BitbucketCreds, e
 	var lastErr error
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
-			time.Sleep(retryBackoff(i))
+			select {
+			case <-ctx.Done():
+				return c, fmt.Errorf("%w (last error: %v)", ctx.Err(), lastErr)
+			case <-time.After(retryBackoff(i)):
+			}
 		}
-		req, err := http.NewRequest("POST", bbTokenURL, strings.NewReader(form.Encode()))
+		req, err := http.NewRequestWithContext(ctx, "POST", bbTokenURL, strings.NewReader(form.Encode()))
 		if err != nil {
 			return c, err
 		}
