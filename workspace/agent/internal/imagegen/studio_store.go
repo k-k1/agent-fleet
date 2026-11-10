@@ -191,6 +191,26 @@ func studioSessionAlive(name string) bool {
 	return ok
 }
 
+// studioManagedRefusal is the reason a Managed session of each kind cannot be bound to a studio.
+// It is a table local to this package, not an internal/agents capability: the wording is the
+// studio's own, and it is looked up by the exact stored kind, as the switch it replaced was.
+var studioManagedRefusal = map[string]func(kind string) string{
+	session.KindOpencode: func(string) string {
+		return "an opencode Managed session shares its MCP server with the other sessions of its folder, so it cannot be bound to an image studio; use the Terminal execution method"
+	},
+	// muse has no Terminal execution method to point at.
+	session.KindMuse: func(string) string {
+		return "a muse session cannot tell the image studio tools which session it is yet, so it cannot be bound to an image studio for now"
+	},
+	session.KindCopilot: unnamedManagedRefusal,
+	session.KindCursor:  unnamedManagedRefusal,
+	session.KindKiro:    unnamedManagedRefusal,
+}
+
+func unnamedManagedRefusal(kind string) string {
+	return "a " + kind + " Managed session cannot tell the image studio tools which session it is yet, so it cannot be bound to an image studio; use the Terminal execution method"
+}
+
 // StudioSessionUnsupported says why a session of this kind and execution method cannot be bound
 // to a studio, or "" when it can (ADR 0100 decision 8). The studio tools trust the MCP child's
 // idea of which session it is serving, and these children cannot tell: opencode's Managed child
@@ -201,14 +221,8 @@ func StudioSessionUnsupported(kind, driver string) string {
 	if driver != session.DriverManaged {
 		return ""
 	}
-	switch kind {
-	case session.KindOpencode:
-		return "an opencode Managed session shares its MCP server with the other sessions of its folder, so it cannot be bound to an image studio; use the Terminal execution method"
-	case session.KindMuse:
-		// muse has no Terminal execution method to point at.
-		return "a muse session cannot tell the image studio tools which session it is yet, so it cannot be bound to an image studio for now"
-	case session.KindCopilot, session.KindCursor, session.KindKiro:
-		return "a " + kind + " Managed session cannot tell the image studio tools which session it is yet, so it cannot be bound to an image studio; use the Terminal execution method"
+	if why, ok := studioManagedRefusal[kind]; ok {
+		return why(kind)
 	}
 	return ""
 }
