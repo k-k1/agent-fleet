@@ -490,7 +490,7 @@ returns the result without storing the token.
   ([decisions/0102](../decisions/0102-aws-login-through-the-console.md)).
 
 - The per-membership **bridge tokens** (memo, schedule, MCP, docs, engine issuing, git OAuth,
-  AWS and GCP profiles, branch rules), the internal git token and the dev IdP client secret
+  AWS and GCP profiles, branch rules, and with `AF_PROVIDED_ROUTES=1` the route issuing token), the internal git token and the dev IdP client secret
   are credentials too. They reach the workspace the way `AGENT_TOKEN` does — never as a
   task-definition `environment` entry (old revisions are never deleted, and
   `DescribeTaskDefinition` and CloudTrail return `environment` verbatim): an SSM

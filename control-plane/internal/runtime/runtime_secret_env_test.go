@@ -160,3 +160,15 @@ func TestDockerCredentialEnvIsInTheEnvFileNotArgv(t *testing.T) {
 }
 
 var _ = ecs.RegisterTaskDefinitionInput{}
+
+// The route issuing token only exists behind AF_PROVIDED_ROUTES=1, so no default-config run
+// emits it; pin that the split keeps it out of the plain env (ECS environment, docker argv).
+func TestRouteIssueTokenIsSplitOutOfPlainEnv(t *testing.T) {
+	plain, secret := splitSecretEnv([]string{"AF_ROUTE_ISSUE_TOKEN=value-of-route", "AF_CP_BASE_URL=https://cp.example"})
+	if len(plain) != 1 || plain[0] != "AF_CP_BASE_URL=https://cp.example" {
+		t.Errorf("plain = %v", plain)
+	}
+	if len(secret) != 1 || secret[0].Name != "AF_ROUTE_ISSUE_TOKEN" {
+		t.Errorf("secret = %v", secret)
+	}
+}
