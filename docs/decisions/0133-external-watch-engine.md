@@ -417,6 +417,11 @@ source stays `github` on the wire, and a poke only brings the next read forward 
 so it cannot fabricate a run state. A hook or the App is trusted exactly as for a pull request. Not verified live
 against a real repository. Still open in #3780: Bitbucket Pipelines and the live check.
 
+*Note, 2026-11-10 (#3780, Bitbucket vanished PR).* The `bitbucket` PR source now answers `ErrGone` when the read
+says there is no such pull request (a 404 on the repository or the PR, or no PR with that number), so the watch ends
+with `watch.ended` after the usual three reads. A failed, held-off or rate-limited read is still a plain error and never
+ends a watch. Still open in #3780: Bitbucket Pipelines and the live check against a private repository.
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled

@@ -143,8 +143,13 @@ func TestBitbucketResolveAndRefusals(t *testing.T) {
 	if _, err := nc.Resolve(ctx, "w/r#4", ""); !errors.As(err, &ref) {
 		t.Fatalf("not connected: %v", err)
 	}
-	if _, _, _, err := b.Poll(ctx, "bitbucket:w/r#5", json.RawMessage(nil), nil); err == nil {
-		t.Fatal("a vanished PR read as fine")
+	var gone *ErrGone
+	if _, _, _, err := b.Poll(ctx, "bitbucket:w/r#5", json.RawMessage(nil), nil); !errors.As(err, &gone) {
+		t.Fatalf("a vanished PR = %v, want ErrGone", err)
+	}
+	failing := &Bitbucket{Read: func(context.Context, string, int) (*branchpr.PR, error) { return nil, errors.New("boom") }}
+	if _, _, _, err := failing.Poll(ctx, "bitbucket:w/r#4", nil, nil); err == nil || errors.As(err, &gone) {
+		t.Fatalf("a failed read = %v, want a plain error", err)
 	}
 }
 
