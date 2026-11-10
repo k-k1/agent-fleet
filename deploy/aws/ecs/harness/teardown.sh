@@ -102,10 +102,31 @@ aws logs delete-log-group --log-group-name /$N >/dev/null 2>&1 && echo "log grou
 
 say security-groups
 sleep 20
-for g in $N-ws $N-efs; do
-  ID=$(aws ec2 describe-security-groups --filters Name=group-name,Values=$g --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
-  [ -n "$ID" ] && [ "$ID" != None ] && aws ec2 delete-security-group --group-id "$ID" >/dev/null 2>&1 && echo "sg $g deleted"
-done
+# A group name is unique only within a VPC, so a lookup by name alone spans the whole account and
+# region and can return another deployment's (or an interrupted run's) same-named group; deleting
+# that by ID is the same class as #3555 / #3796. Scope the lookup to the VPCs this harness can
+# live in: the tagged one (AF_HARNESS_NAT=1) and the default one (the no-NAT shape). With no VPC
+# resolved, nothing is deleted rather than falling back to the unscoped lookup.
+# The names and the tag value are harness-specific (setup.sh creates only $N-ws / $N-efs), so a
+# same-named group inside these two VPCs is treated as ours. A stale group left in the default VPC
+# by a switch from the NAT shape is never swept (a leak, not a wrong delete): it makes the match
+# ambiguous and is skipped.
+HVPCS=$( { aws ec2 describe-vpcs --filters Name=tag:Name,Values=$N --query 'Vpcs[].VpcId' --output text 2>/dev/null
+           aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[].VpcId' --output text 2>/dev/null
+         } | tr '\t' '\n' | grep '^vpc-' | sort -u | paste -sd, - || true)
+if [ -z "$HVPCS" ]; then
+  echo "harness VPC not resolved; skipping security group deletion"
+else
+  for g in $N-ws $N-efs; do
+    IDS=$(aws ec2 describe-security-groups --filters Name=group-name,Values=$g Name=vpc-id,Values="$HVPCS" \
+      --query 'SecurityGroups[].GroupId' --output text 2>/dev/null | tr '\t' '\n' | grep '^sg-' || true)
+    case $(printf '%s' "$IDS" | grep -c .) in
+      1) aws ec2 delete-security-group --group-id "$IDS" >/dev/null 2>&1 && echo "sg $g deleted" ;;
+      0) ;;
+      *) echo "sg $g matches more than one group in $HVPCS; skipping" ;;
+    esac
+  done
+fi
 
 # AF_HARNESS_NAT=1 で作った専用 VPC。順序が全て——NAT を消して EIP を解放するまで
 # サブネットは消えず、ENI が残っているうちはサブネットも消えない。NAT は削除要求から
