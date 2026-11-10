@@ -12,9 +12,11 @@ import {
   isAccumulatedSetting,
   isAgentDefaultedSetting,
   isDeviceLocalSetting,
+  MERGEABLE_KEYS,
   migrateIncoming,
   normalizeMerged,
   sameValue,
+  settingMerge,
   type Settings,
 } from "./prefs.ts";
 import { fillRecommendedModelMaps, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeAssistantOrder } from "./normalize.ts";
@@ -176,8 +178,12 @@ export function scheduleServerSave(): void {
     saveTimer = null;
     const gen = ++saveGen;
     const carried = new Map(unsaved);
+    // A mergeable key changed here is first merged with the server's copy, so a stale tab's save
+    // adds to what other tabs and devices saved instead of replacing it.
+    const premerge = MERGEABLE_KEYS.some((k) => unsaved.has(k)) ? mergeServerCopiesBeforeSave() : null;
+    const send = () => apiJSON("api/env/ui-prefs", "PUT", serverPrefs(getSettings()));
     // Device-local keys are not sent to the server; they never leave this device.
-    const flight: Promise<void> = apiJSON("api/env/ui-prefs", "PUT", serverPrefs(getSettings()))
+    const flight: Promise<void> = (premerge ? premerge.then(send) : send())
       // Swallowing a failure means believing the settings are synced when they are not. A
       // permanent failure such as exceeding the 64 KiB limit (413) is only visible here, so it
       // must always be logged — and shown (usePrefsSyncState).
@@ -199,6 +205,31 @@ export function scheduleServerSave(): void {
       });
     saveInFlight = flight;
   }, 600);
+}
+
+// Reads the server copy and merges the keys that declare a merge into this tab's state. A failed
+// read or an owner switch while it was in flight changes nothing; the save then goes out as it
+// did before (the entries it would have kept are the same ones a later hydrate merges back).
+async function mergeServerCopiesBeforeSave(): Promise<void> {
+  const owner = ownerSource();
+  let srv: any;
+  try {
+    srv = await api("api/env/ui-prefs");
+  } catch {
+    return;
+  }
+  if (ownerSource() !== owner || !srv || typeof srv !== "object" || srv.error) return;
+  const cur = getSettings();
+  const patch: Record<string, unknown> = {};
+  for (const k of MERGEABLE_KEYS) {
+    if (!unsaved.has(k) || srv[k] == null) continue;
+    const m = settingMerge(k)!(cur[k], srv[k]);
+    if (!sameValue(m, cur[k])) patch[k] = m;
+  }
+  if (!Object.keys(patch).length) return;
+  setState({ ...getSettings(), ...patch });
+  persist();
+  notify();
 }
 
 /** Test hook: lift the quiesce set by cancelPrefsTimersForTest when the next test starts. */
@@ -396,6 +427,17 @@ export async function hydrateUIPrefs(): Promise<boolean> {
     }
     if (sameValue(srv[k], (merged as any)[k])) {
       unsaved.delete(key); // the server already holds it (a save that landed but answered an error)
+      continue;
+    }
+    // A key merged per entry: the union goes on screen and, when the server lacks part of it, out.
+    const mergeFn = settingMerge(key);
+    if (mergeFn) {
+      const m = mergeFn((merged as any)[k], srv[k]);
+      if (!sameValue(m, mergeFn(srv[k], srv[k]))) restore = true; // the server copy, read the same way
+      if (!sameValue(m, (merged as any)[k])) {
+        (merged as any)[k] = m;
+        changed = true;
+      }
       continue;
     }
     // Changed here and not yet saved (a save pending or failed): this tab's value stands and goes
