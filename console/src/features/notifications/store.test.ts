@@ -162,6 +162,14 @@ describe("scheduled-run notification wording (docs/log/38)", () => {
     expect(w.body).toContain("timed out waiting for agent");
   });
 
+  it("a gate failure names the gate, not the usage reset, and keeps the cause", () => {
+    const w = notificationWording(sched("schedule-failed", "error:gate:work item query q1 not found"));
+    expect(w.title).toBe("定時実行が失敗しました");
+    expect(w.body).toContain("ゲートの確認に失敗しました: work item query q1 not found");
+    const nd = notificationWording(sched("schedule-failed", "error:gate:not_delivered"));
+    expect(nd.body).toContain("再試行はされません");
+  });
+
   it("a skip renders a known reason as translated text", () => {
     const w = notificationWording(sched("schedule-skipped", "skipped_quota"));
     expect(w.title).toBe("定時実行が見送られました");

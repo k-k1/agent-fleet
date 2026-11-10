@@ -614,6 +614,13 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
+## create_schedule badtype-gate {"gate":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの登録を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
 ## create_schedule badtype-missing_target_policy {"missing_target_policy":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの登録を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -740,7 +747,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
-## create_schedule full {"agent_kind":"v","deliver_to":["v"],"missing_target_policy":"v","model":"v","overlap_policy":"v","prompt":"v","repo":"v","report":true,"reuse_target":"v","rotation":"v","route":"v","route_connection":"v","session_mode":"v","silent":true,"spec":"v","spec_kind":"v","spec_label":"v","stop_after_run":true,"tz":"v","wake_policy":"v"}
+## create_schedule full {"agent_kind":"v","deliver_to":["v"],"gate":{},"missing_target_policy":"v","model":"v","overlap_policy":"v","prompt":"v","repo":"v","report":true,"reuse_target":"v","rotation":"v","route":"v","route_connection":"v","session_mode":"v","silent":true,"spec":"v","spec_kind":"v","spec_label":"v","stop_after_run":true,"tz":"v","wake_policy":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの登録を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -4094,6 +4101,13 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（スケジュール id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: update_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
+## update_schedule badtype-gate {"gate":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（スケジュール id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: update_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
 ## update_schedule badtype-id {"id":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -4227,7 +4241,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（スケジュール id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: update_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
-## update_schedule full {"agent_kind":"v","deliver_to":["v"],"id":"v","missing_target_policy":"v","model":"v","overlap_policy":"v","prompt":"v","repo":"v","report":true,"reuse_target":"v","rotation":"v","route":"v","route_connection":"v","session_mode":"v","silent":true,"spec":"v","spec_kind":"v","spec_label":"v","stop_after_run":true,"tz":"v","wake_policy":"v"}
+## update_schedule full {"agent_kind":"v","deliver_to":["v"],"gate":{},"id":"v","missing_target_policy":"v","model":"v","overlap_policy":"v","prompt":"v","repo":"v","report":true,"reuse_target":"v","rotation":"v","route":"v","route_connection":"v","session_mode":"v","silent":true,"spec":"v","spec_kind":"v","spec_label":"v","stop_after_run":true,"tz":"v","wake_policy":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]

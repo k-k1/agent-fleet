@@ -155,6 +155,9 @@ export function statusIcon(status?: string): string {
 export function runStatusLabelKey(status?: string): MsgKey {
   // A run that answered with the silent sentinel succeeded and delivered nothing (#1560).
   if ((status || "").trim() === "fired_silent") return "sched.status_silent";
+  // The gate could not be checked (control plane: scheduler_gate.go). Nothing ran, and the cause
+  // is the gate's, not the session's, so it does not read as a plain "Failed".
+  if ((status || "").trim().startsWith("error:gate:")) return "sched.status_gate_fail";
   switch (statusTone(status)) {
     case "ok":
       return "sched.status_ok";

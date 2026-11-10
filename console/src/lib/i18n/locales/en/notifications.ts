@@ -99,6 +99,8 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "notif.schedule.reason_rate_limited": "the usage limit had been reached",
   "notif.schedule.reason_membership": "the owning membership is no longer active (the schedule has been paused)",
   "notif.schedule.reason_target_missing": "the target it sends to no longer exists",
+  "notif.schedule.reason_gate": "the gate check failed: {detail}",
+  "notif.schedule.reason_gate_not_delivered": "the gate decided to fire, but the run did not start (it is not retried)",
   "notif.schedule.reason_overlap": "the target was still busy with its previous turn",
   "notif.submodules_ready.title": "Submodules are now checked out",
   "notif.submodules_ready.speech": "The submodules of {repo} finished fetching.",

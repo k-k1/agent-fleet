@@ -88,6 +88,7 @@ func scheduleTools() []toolSpec {
 							"stop_after_run":        map[string]any{"type": "boolean", "description": "実行が終わったらそのセッションを停止するか（任意。既定 false=起動したまま。報告は停止前に届く。再開可能。assistant モードでは無関係=セッションを使わない）"},
 							"deliver_to":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "report=true 時の届け先（任意・複数可）: operator（既定=この会話）| notifications | discord | slack。bridge は利用者が接続済みの場合だけ"},
 							"silent":                map[string]any{"type": "boolean", "description": "最終回答が [SILENT] だけなら何も届けない（監視向け・任意。失敗は必ず通知）"},
+							"gate":                  scheduleGateSchema(false),
 						},
 						"required": []string{"spec_kind", "spec", "prompt"},
 					},
@@ -141,6 +142,7 @@ func scheduleTools() []toolSpec {
 							"stop_after_run":        map[string]any{"type": "boolean", "description": "実行が終わったらセッションを停止するか（任意。false=起動したまま）"},
 							"deliver_to":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "届け先（任意）: operator | notifications | discord | slack"},
 							"silent":                map[string]any{"type": "boolean", "description": "[SILENT] だけの回答を届けない（任意）"},
+							"gate":                  scheduleGateSchema(true),
 						},
 						"required": []string{"id"},
 					},
@@ -229,6 +231,29 @@ func scheduleTools() []toolSpec {
 				},
 			}
 		}, operatorWrite: true, refuse: refuseScheduleDrive, handle: handler(mcpScheduleAction)},
+	}
+}
+
+// scheduleGateSchema is the `gate` argument of create_schedule / update_schedule. It mirrors the
+// control plane's scheduleGateDTO input fields (control-plane/scheduler_gate.go); the Agent
+// forwards the object verbatim and validates nothing, so the CP stays the only judge. The
+// output-only fields (fired_at, last_eval_at, last_verdict) are deliberately absent.
+func scheduleGateSchema(update bool) map[string]any {
+	desc := "ゲート（任意）。到来した各 tick で、利用者が保存済みの作業項目クエリ（query_id）を評価し、結果が空でなく、前回発火時から変化した時だけセッションを起動する。何もなければ起動もターン消費もしない。cron / interval の session_mode=new のスケジュールだけに付けられる。prompt では {{gate.refs}}（一致した項目キー・最大20件）が使える。ワークスペース停止中はゲートのために起こさず、その tick は評価・発火・通知のいずれも行われない（変化なしの意味ではない）。run_schedule_now はゲートを通さず発火する。"
+	if update {
+		desc = "ゲートの設定（任意）。省略すると既存のゲートはそのまま。kind=none で外す。query_id か fingerprint を変えると前回発火の記録は破棄される。" + desc
+	}
+	return map[string]any{
+		"type":        "object",
+		"description": desc,
+		"properties": map[string]any{
+			"kind":              map[string]any{"type": "string", "description": "work_items | none（none は更新時にゲートを外す）"},
+			"query_id":          map[string]any{"type": "string", "description": "利用者が保存済みの作業項目クエリの id（kind=work_items で必須。他人のクエリは拒否される）"},
+			"fingerprint":       map[string]any{"type": "string", "description": "変化の判定方法（任意）: keys（既定・項目キーの集合）| keys+updated（更新時刻も含める）"},
+			"max_fires_per_day": map[string]any{"type": "integer", "description": "1日あたりの発火上限（任意。1..24。省略で CP の既定値）"},
+			"min_fire_gap_s":    map[string]any{"type": "integer", "description": "発火間隔の下限・秒（任意。60..86400。省略で CP の既定値）"},
+		},
+		"required": []string{"kind"},
 	}
 }
 

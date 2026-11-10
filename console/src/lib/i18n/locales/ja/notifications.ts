@@ -97,6 +97,8 @@ export const notifications = {
   "notif.schedule.reason_rate_limited": "利用上限に達していました",
   "notif.schedule.reason_membership": "所有メンバーシップが無効になっています（スケジュールは一時停止しました）",
   "notif.schedule.reason_target_missing": "送信先が見つかりません",
+  "notif.schedule.reason_gate": "ゲートの確認に失敗しました: {detail}",
+  "notif.schedule.reason_gate_not_delivered": "ゲートは発火と判定しましたが、実行は開始されませんでした（再試行はされません）",
   "notif.schedule.reason_overlap": "送信先が前のターンを実行中でした",
   "notif.submodules_ready.title": "submodule の取得が完了しました",
   "notif.submodules_ready.speech": "{repo} の submodule の取得が完了しました。",
