@@ -161,7 +161,12 @@ func replace(path, body string) error {
 	return os.Rename(f.Name(), path)
 }
 
-func owned(path string) bool {
+func owned(path string) bool { return OwnedBy(path, Marker) }
+
+// OwnedBy reports whether path is a regular (not symlinked) SKILL.md whose body, right after the
+// frontmatter, starts with marker. Other packages that keep their own marker on skills they write
+// (internal/skillcurator) use the same strict test, so a quoted marker or a link proves nothing.
+func OwnedBy(path, marker string) bool {
 	st, err := os.Lstat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return false
@@ -177,5 +182,5 @@ func owned(path string) bool {
 		}
 	}
 	// Quoting the marker in a user's documentation is not an ownership grant.
-	return strings.HasPrefix(body, Marker+"\n")
+	return strings.HasPrefix(body, marker+"\n")
 }

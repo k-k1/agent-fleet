@@ -836,3 +836,14 @@ release.
   gold-set figures of decision 6 describe the earlier prompt until re-measured. Not built: anchor existence as evidence
   (a path or `Test*` name that is gone) overlaps lint's reasons and is left to it; the scheduled lint of #3767 is separate.
   Not verified: a real model choosing `retire`, and the live Console.
+
+**Note (2026-11-11, #1562): the skill curator exists ahead of its writer.** Step 4 (#3498) will write skills; the
+aging side is built first so that its ownership rule is fixed before any agent-authored skill exists.
+`internal/skillcurator` touches only a directory named `afa-*` whose real (non-link) `SKILL.md` carries
+`agent-fleet:agent-skill` right after the frontmatter, so fleetskills' `af-` notes, a user's own skills and
+`$CLAUDE_CONFIG_DIR` skills without the marker are never moved. An unused skill is marked stale (`.stale`) after
+14 days and moved to `<root>/.archive/` after 30; nothing is deleted, `Restore` puts one back, `.pinned` exempts
+one. It runs only while the workspace is idle and only with the member's `agentSkillCuration` switch (default off,
+turning it on needs the member-origin mark). "Used" is the later of `.last-used`'s and `SKILL.md`'s mtime, so
+until a writer records uses the age is the age of the last write; no transcript is read. Step 4's writer must emit
+the marker and the prefix and should touch `.last-used` when a skill is offered or read. Follow-up: #1562.
