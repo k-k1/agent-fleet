@@ -41,6 +41,14 @@ describe("statusIcon", () => {
 });
 
 describe("runStatusLabelKey", () => {
+  // A gate that could not be checked has its own label, still in the failure tone.
+  it("labels an error:gate:… run as a gate failure, in the danger tone", () => {
+    expect(runStatusLabelKey("error:gate:agent said 500")).toBe("sched.status_gate_fail");
+    expect(runStatusLabelKey("error:gate:not_delivered")).toBe("sched.status_gate_fail");
+    expect(statusTone("error:gate:agent said 500")).toBe("danger");
+    expect(runStatusLabelKey("error:gateway timeout")).toBe("sched.status_fail");
+  });
+
   it("maps a run outcome to its friendly label key by tone", () => {
     expect(runStatusLabelKey("fired")).toBe("sched.status_ok");
     expect(runStatusLabelKey("fired_rotated")).toBe("sched.status_ok");

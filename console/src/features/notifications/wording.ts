@@ -149,6 +149,9 @@ function scheduleFailureReason(status: string): string {
     case "skipped_overlap":
       return t("notif.schedule.reason_overlap");
   }
+  // error:gate:… is the gate check failing (scheduler_gate.go); not_delivered is its one fixed token.
+  if (status === "error:gate:not_delivered") return t("notif.schedule.reason_gate_not_delivered");
+  if (status.startsWith("error:gate:")) return t("notif.schedule.reason_gate", { detail: status.slice("error:gate:".length).trim() });
   return status.startsWith("error:") ? status.slice("error:".length).trim() : "";
 }
 

@@ -37,6 +37,7 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.status_ok": "Success",
   "sched.status_fail": "Failed",
   "sched.status_skip": "Skipped",
+  "sched.status_gate_fail": "Gate check failed",
   "sched.status_silent": "Success (silent)",
   "sched.status_pending": "Pending",
   "sched.detail": "Details / edit",

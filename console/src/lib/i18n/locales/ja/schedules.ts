@@ -35,6 +35,7 @@ export const schedules = {
   "sched.status_ok": "成功",
   "sched.status_fail": "失敗",
   "sched.status_skip": "スキップ",
+  "sched.status_gate_fail": "ゲートの確認に失敗",
   "sched.status_silent": "成功（報告なし）",
   "sched.status_pending": "未実行",
   "sched.detail": "詳細・編集",
