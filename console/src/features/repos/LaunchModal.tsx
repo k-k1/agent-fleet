@@ -135,6 +135,10 @@ interface LaunchModalProps {
    * allowWorktree and this explains WHY — otherwise the choice just silently vanishes
    * for one repo and the user reads it as a bug. */
   isUnborn?: boolean;
+  /** A repo-less launch in the home directory (the Start hub's "Launch an agent at home"):
+   * `repo` is "" and the location tier is a fixed note instead of worktree / branch / subdir
+   * pickers. Never combined with a worktree: the launch always sends worktree=false, subdir="". */
+  home?: boolean;
   onClose: () => void;
   /** Present when opened from the Start hub: the back action returns to it. */
   onBack?: () => void;
@@ -203,12 +207,12 @@ export function LaunchModal(props: LaunchModalProps) {
   // location): every field, draft and resolved branch name belongs to the target it was opened
   // for. The Modal around it is not — remounting it in the same commit costs its back-button
   // guard (see StartHost).
-  const target = [repo, workItem?.provider ?? "", workItem?.key ?? "", props.initialExistingBranch ?? "", String(props.initialWorktree ?? "")].join("\u0000");
+  const target = [props.home ? "home" : "", repo, workItem?.provider ?? "", workItem?.key ?? "", props.initialExistingBranch ?? "", String(props.initialWorktree ?? "")].join("\u0000");
   return (
     <Modal
       title={
         <>
-          <Icon name="play" /> {tr("launch.title", { repo })}
+          <Icon name="play" /> {props.home ? tr("launch.title_home") : tr("launch.title", { repo })}
         </>
       }
       onClose={onClose}
@@ -219,7 +223,7 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -292,7 +296,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
   // sessions when each task has its own dir. From a worktree row (allowWorktree
   // false) there's no worktree choice: launch in place.
-  const [worktree, setWorktree] = useState(initialWorktree ?? allowWorktree);
+  const [worktree, setWorktree] = useState(home ? false : (initialWorktree ?? allowWorktree));
   // Working directory: "" = the working copy root (the usual case). Seeded from what
   // this repo was last launched in, since a monorepo user keeps returning to the same
   // package — the field shows the value, so a remembered folder is never silent.
@@ -350,6 +354,9 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // The repository's template sources, fetched once; history and personal templates are ui-prefs.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
   useEffect(() => {
+    // A home launch has no repository to read a template file from; the user's own templates
+    // and nothing else are offered.
+    if (home) return;
     let alive = true;
     repoPromptTemplates(repo)
       .then((d) => alive && setSrvGroups(d.groups || []))
@@ -357,7 +364,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     return () => {
       alive = false;
     };
-  }, [repo]);
+  }, [repo, home]);
 
   const hasModel = agentOf(kind).caps.model;
   const driverManaged = driver === "managed";
@@ -627,7 +634,8 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     setDraft: setPrompt,
     setHistIdx: () => {},
     inputRef: textRef,
-    composerLocked: busy,
+    // No working copy to read skills from, so a home launch offers none (and no slash list).
+    composerLocked: busy || home,
   });
 
   // start fires the launch. `resolveCollision` is the conflict panel's re-run: the
@@ -655,7 +663,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       title: title.trim(),
       images: canPasteImage ? images.flatMap((x) => (x.file ? [x.file] : [])) : [],
       worktree,
-      subdir,
+      subdir: home ? "" : subdir,
       base: worktree ? wtBase : "",
       newBranch: worktree && !useExisting ? newBranch : "",
       useExisting,
@@ -826,7 +834,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                 <span className="launch-stash-label">{tr("launch.stash_to_memo")}</span>
               </button>
               <PromptTemplateButton btnRef={tmplBtnRef} open={tmplOpen} disabled={busy} onToggle={() => setTmplOpen((o) => !o)} />
-              {skillPicker.canSkills && (
+              {skillPicker.canSkills && !home && (
                 <SkillButton
                   btnRef={skillPicker.btnRef}
                   open={skillPicker.listVisible}
@@ -890,7 +898,14 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
         {/* Location: an isolated worktree (the default) or directly in this copy. A worktree
             row has no choice (it launches inside that worktree), so it is a one-line note
             rather than a collapsible section. */}
-        {!allowWorktree ? (
+        {home ? (
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.location")}</span>
+            <span className="ui-field-hint">
+              <Trans k="start.home_note" components={[<code />]} />
+            </span>
+          </div>
+        ) : !allowWorktree ? (
           <>
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.field.location")}</span>

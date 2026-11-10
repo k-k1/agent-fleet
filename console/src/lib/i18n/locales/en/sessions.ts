@@ -573,6 +573,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   // === P2 launch modal (features/repos/LaunchModal.tsx) ===
   "launch.history": "History",
   "launch.title": "Start working: {repo}",
+  "launch.title_home": "Start working: Home",
   "launch.agents_checking": "Checking agent connections…",
   "launch.agents_none": "No agents available. Authenticate one in Settings > Connections.",
   "launch.plan_hint": "Plan devotes the first turn to investigation and planning.",
