@@ -454,10 +454,13 @@ function TemplateEditor({
           <input type="radio" name={nameId + "-scope"} checked={!draft.repo} onChange={() => onChange({ ...draft, repo: "" })} />
           {tr("launch.tmpl.scope_all")}
         </label>
-        <label>
-          <input type="radio" name={nameId + "-scope"} checked={draft.repo === repo} onChange={() => onChange({ ...draft, repo })} />
-          {tr("launch.tmpl.scope_repo", { repo })}
-        </label>
+        {/* A home launch has no repository to scope a template to. */}
+        {repo && (
+          <label>
+            <input type="radio" name={nameId + "-scope"} checked={draft.repo === repo} onChange={() => onChange({ ...draft, repo })} />
+            {tr("launch.tmpl.scope_repo", { repo })}
+          </label>
+        )}
       </fieldset>
       {error && (
         <div className="launch-tmpl-err" id={errId} role="alert">

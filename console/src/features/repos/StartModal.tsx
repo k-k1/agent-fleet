@@ -12,15 +12,9 @@ import { Icon } from "../../ui/Icon.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
-import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
-import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
-import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
-import { agentLaunchDefault, useSettings, setSetting } from "../../lib/settings.ts";
-import { requiresConcreteModel, useAutoConcreteModel } from "../../lib/agentModels.ts";
+import { useSettings, setSetting } from "../../lib/settings.ts";
 import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
-import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { groupedRepos } from "../../lib/project.ts";
 import { hostColorBase } from "../../lib/termcolor.ts";
 import { useSettingsUI } from "../settings/store.ts";
@@ -44,15 +38,16 @@ import { deriveRepoName } from "./reponame.ts";
 interface StartModalProps {
   /** Connection-gated coding-agent kinds (claude / codex / agy / opencode). */
   kinds: string[];
-  /** The workspace's Claude login has expired (see RepoRailContext.claudeExpired). */
-  claudeExpired?: boolean;
   onClose: () => void;
   /** A working copy was picked (existing or freshly cloned) — the host closes
    * this hub and opens the per-repo start-work dialog on it. */
   onPickRepo: (r: Repo) => void;
+  /** "Launch an agent at home" was picked — the host opens the start-work dialog in its
+   * repo-less (home) form on top of this hub. */
+  onPickHome: () => void;
 }
 
-type Stage = "place" | "clone" | "newdir" | "home" | "ssm";
+type Stage = "place" | "clone" | "newdir" | "ssm";
 
 interface SsmProfile {
   id: string;
@@ -72,7 +67,7 @@ interface SsmInstance {
   pingStatus: string;
 }
 
-export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }: StartModalProps) {
+export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModalProps) {
   useKindCatalogVersion(); // effort / start-mode rows and the driver sent depend on the catalog's facts
   const toast = useToast();
   const tr = useT();
@@ -281,66 +276,6 @@ export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }
     setSsmLogin((res && res.name) || "");
   };
 
-  // --- home: repo-less agent session (kind / model / first prompt) ---
-  const [kind, setKind] = useState(kinds[0] || "claude");
-  const initialDefault = agentLaunchDefault(settings, kinds[0] || "claude");
-  const [model, setModel] = useState(() => resolveModel(kinds[0] || "claude", "", initialDefault.model));
-  const [effort, setEffort] = useState(() => resolveEffort(kinds[0] || "claude", "", initialDefault.effort));
-  const [startMode, setStartMode] = useState(() => resolveStartMode(kinds[0] || "claude", "", initialDefault.startMode));
-  // Permission prompts (docs/log/76). undefined = untouched, so nothing is sent and the Agent's
-  // per-kind default applies.
-  const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
-  const [prompt, setPrompt] = useState("");
-  // kind is seeded once at mount, but kinds arrives asynchronously (the connection
-  // check takes ~1.5-2s). Mounting during that window seeds the "claude" fallback,
-  // which then sticks even if claude turns out to be unavailable — the picker shows
-  // nothing selected and starting would launch an unusable agent. Re-seed as soon as the
-  // real list lands and the held kind isn't in it.
-  useEffect(() => {
-    if (!kinds.length || kinds.includes(kind)) return;
-    const k = kinds[0];
-    const d = agentLaunchDefault(settings, k);
-    setKind(k);
-    setModel(resolveModel(k, "", d.model));
-    setEffort(resolveEffort(k, "", d.effort));
-    setStartMode(resolveStartMode(k, "", d.startMode));
-    setSkipPerm(undefined);
-  }, [kinds, kind, settings]);
-  // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
-  // catalog settles, auto-pick its first entry rather than leaving the picker on an empty
-  // selection nothing can launch with.
-  useAutoConcreteModel(kind, model, (next) => {
-    setModel(next);
-    setEffort("");
-  });
-  const homeModelPending = agentOf(kind).caps.model && requiresConcreteModel(kind) && !model;
-  const startHome = async () => {
-    if (busy) return;
-    setBusy(true);
-    const r = await startWork(
-      { dir: "", repo: "" },
-      {
-        kind,
-        // A repo-less launch from the hub also defaults to managed like any new session
-        // (docs/log/27 §9.2 — opencode).
-        driver: agentOf(kind).managedDriver ? "managed" : "",
-        model: agentOf(kind).caps.model ? model : "",
-        effort: agentOf(kind).managedDriver || agentOf(kind).caps.tuiEffort ? effort : "",
-        startMode: agentOf(kind).managedDriver || agentOf(kind).caps.tuiStartMode ? startMode : "normal",
-        skipPermissions: agentOf(kind).caps.permissionChoice ? skipPerm : undefined,
-        prompt: prompt.trim(),
-        title: "",
-        images: [],
-        worktree: false,
-        subdir: "",
-        base: "",
-        newBranch: "",
-      },
-    );
-    setBusy(false);
-    if (r.ok) onClose();
-  };
-
   // SSO handshake takes over the dialog (modal swap — safe since backClose
   // suppresses its own history echoes).
   if (ssmLogin != null) {
@@ -417,7 +352,7 @@ export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }
                 </span>
               </button>
               {kinds.length > 0 && (
-                <button type="button" className="start-row" onClick={() => setStage("home")}>
+                <button type="button" className="start-row" onClick={onPickHome}>
                   <Icon name="home" className="start-row-ic" />
                   <span className="start-row-body">
                     <span className="start-row-title">{tr("start.home_title")}</span>
@@ -527,137 +462,6 @@ export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }
             </Button>
             <Button variant="primary" onClick={() => void doInit()} disabled={busy || !newFolderNameOk(newName, takenNames)}>
               {busy ? tr("start.creating_folder") : tr("start.create_and_continue")}
-            </Button>
-          </footer>
-        </>
-      )}
-
-      {stage === "home" && (
-        <>
-          <div className="ui-modal-body">
-            <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.agent")}</span>
-              <div className="ui-seg big">
-                {kinds.map((k) => {
-                  const a = agentOf(k);
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      title={tr(a.launchHintKey)}
-                      className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " active" : "")}
-                      onClick={() => {
-                        const defaults = agentLaunchDefault(settings, k);
-                        setKind(k);
-                        setModel(resolveModel(k, "", defaults.model));
-                        setEffort(resolveEffort(k, "", defaults.effort));
-                        setStartMode(resolveStartMode(k, "", defaults.startMode));
-                        setSkipPerm(undefined);
-                      }}
-                    >
-                      <Icon name={a.icon} className="seg-ic" />
-                      {kindDisplayName(k)}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <ClaudeExpiredHint kind={kind} expired={claudeExpired} />
-            {agentOf(kind).caps.model && (
-              <div className="ui-field">
-                <span className="ui-field-label">{tr("launch.field.model")}</span>
-                <ModelPicker
-                  kind={kind}
-                  model={model}
-                  onChange={(next) => {
-                    setModel(next);
-                    setEffort("");
-                  }}
-                />
-              </div>
-            )}
-            {(() => {
-              const a = agentOf(kind);
-              const showEffort = a.caps.effort && (a.managedDriver || a.caps.tuiEffort);
-              // planMode is the cap for the chat plan toggle (planCycleKey). cursor/copilot/kiro
-              // have planMode:false but tuiStartMode:true (their launch command / driver can start
-              // in plan mode), so the start-mode choice is offered when either cap is present.
-              const showStartMode = (a.caps.planMode || a.caps.tuiStartMode) && (a.managedDriver || a.caps.tuiStartMode);
-              // The permission choice is only for kinds whose pending approvals can be answered
-              // from the Console (docs/log/76).
-              const showPerm = a.caps.permissionChoice;
-              const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
-              if (!showEffort && !showStartMode && !showPerm) return null;
-              return (
-                <div className="ui-field-row">
-                  {showEffort && (
-                    <div className="ui-field">
-                      <span className="ui-field-label">{tr("launch.field.effort")}</span>
-                      <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
-                      <span className="ui-field-hint">{tr("launch.field.effort_hint")}</span>
-                    </div>
-                  )}
-                  {showStartMode && (
-                    <div className="ui-field">
-                      <span className="ui-field-label">{tr("launch.field.start_mode")}</span>
-                      <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
-                        <option value="normal">{nonPlanModeLabel(kind, skipPermEffective) || tr("launch.mode_normal")}</option>
-                        <option value="plan">Plan</option>
-                      </select>
-                    </div>
-                  )}
-                  {showPerm && (
-                    <div className="ui-field">
-                      <span className="ui-field-label">{tr("launch.field.permissions")}</span>
-                      <select
-                        value={skipPermEffective ? "skip" : "ask"}
-                        onChange={(e) => setSkipPerm(e.target.value === "skip")}
-                      >
-                        <option value="skip">{tr("launch.perm_skip")}</option>
-                        <option value="ask">{tr("launch.perm_ask")}</option>
-                      </select>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-            <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.location")}</span>
-              <span className="ui-field-hint">
-                <Trans k="start.home_note" components={[<code />]} />
-              </span>
-            </div>
-            <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.first_prompt")}</span>
-              {/* Image pasting is deliberately absent: a repo-less session has no use for it. Do
-                  not bring LaunchModal's staged-images machinery over here. */}
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-                  const mod = e.metaKey || e.ctrlKey;
-                  const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
-                  if (submitWithKey) {
-                    e.preventDefault();
-                    void startHome();
-                  }
-                }}
-                rows={4}
-                autoFocus
-                placeholder={tr("launch.first_prompt_ph")}
-              />
-            </div>
-          </div>
-          <footer className="ui-modal-foot">
-            <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={() => setStage("place")} disabled={busy}>
-              {tr("launch.back_to_hub")}
-            </Button>
-            <Button variant="ghost" onClick={onClose} disabled={busy}>
-              {tr("common.cancel")}
-            </Button>
-            <Button variant="primary" onClick={() => void startHome()} disabled={busy || homeModelPending}>
-              {busy ? tr("launch.launching") : tr("launch.launch")}
             </Button>
           </footer>
         </>

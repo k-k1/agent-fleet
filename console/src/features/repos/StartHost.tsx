@@ -24,6 +24,8 @@ import { t } from "../../lib/i18n/index.ts";
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
   const [show, setShow] = useState(false);
+  // The repo-less (home) start-work dialog, stacked on the hub like a picked repo's.
+  const [home, setHome] = useState(false);
   const launch = useLaunchTarget((s) => s.target);
   const launchExisting = useLaunchTarget((s) => s.existingBranch);
   const launchInPlace = useLaunchTarget((s) => s.inPlace);
@@ -47,6 +49,7 @@ export function StartHost() {
     if (startTick !== lastTickRef.current) {
       lastTickRef.current = startTick;
       clearLaunch();
+      setHome(false);
       setShow(true);
     }
   }, [startTick, clearLaunch]);
@@ -75,12 +78,12 @@ export function StartHost() {
       {show && (
         <StartModal
           kinds={agentKinds}
-          claudeExpired={ctx.claudeExpired}
           onClose={() => {
             hubGen.current++;
             setShow(false);
             clearSeed();
           }}
+          onPickHome={() => setHome(true)}
           onPickRepo={async (r) => {
             // A memo being restored (#3289) outranks the picked repo's stored draft: set that
             // draft aside first, and open nothing when it could not be saved.
@@ -100,6 +103,28 @@ export function StartHost() {
             }
             if (s.saved) toast(t("memo.start_draft_saved"), { kind: "success" });
             openLaunch(r);
+          }}
+        />
+      )}
+      {show && home && (
+        <LaunchModal
+          home
+          repo=""
+          kinds={agentKinds}
+          claudeExpired={ctx.claudeExpired}
+          settling={ctx.connsSettling}
+          allowWorktree={false}
+          onClose={() => setHome(false)}
+          onBack={() => setHome(false)}
+          onLaunch={async (o) => {
+            // dir "" = the home directory, no working copy; useStartWork skips the repo-scoped
+            // bookkeeping and adds the new session to the active working set.
+            const r = await startWork({ dir: "", repo: "" }, o);
+            if (r.ok) {
+              setHome(false);
+              setShow(false); // launched — drop the hub underneath too
+            }
+            return r;
           }}
         />
       )}
