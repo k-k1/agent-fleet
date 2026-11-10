@@ -128,6 +128,9 @@ const PREFS = {
   markdownCodeWrap: synced(true),
   iconSet: synced("vscode"),
   theme: deviceLocal("dark"),
+  // Text contrast: "standard" | "strong" | "strongest" (TEXT_CONTRASTS). Device-local like
+  // theme, since how readable text is depends on the screen in front of the member.
+  textContrast: deviceLocal<"standard" | "strong" | "strongest">("standard"),
   /** Main-area layout profile. Stored only on this device; each profile's
    * concrete layout remains per user, tenant and browser tab. */
   paneLayout: deviceLocal<"split" | "tabs">("tabs"),

@@ -90,6 +90,15 @@ describe("watchOtherTabs", () => {
     expect(s.getSettings().topbarColor).toBe("teal");
   });
 
+  it("follows a text contrast changed in another tab, and ignores an unknown level", async () => {
+    const s = await freshTab();
+    otherTabWrites(KEY, { ...stored(), textContrast: "strong" });
+    expect(s.getSettings().textContrast).toBe("strong");
+    expect(document.documentElement.dataset.contrast).toBe("strong");
+    otherTabWrites(KEY, { ...stored(), textContrast: "bogus" });
+    expect(s.getSettings().textContrast).toBe("strong");
+  });
+
   it("follows the random-colors schedule changed in another tab", async () => {
     localStorage.setItem(KEY, JSON.stringify({ appearanceShuffle: "1h" }));
     const s = await freshTab();

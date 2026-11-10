@@ -382,6 +382,20 @@
   "surfaceBg": "function/2",
   "surfaceValue": "function/2",
   "termFontStack": "function/1",
+  "TEXT_CONTRASTS": [
+   {
+    "id": "standard",
+    "labelKey": "display.text_contrast_standard"
+   },
+   {
+    "id": "strong",
+    "labelKey": "display.text_contrast_strong"
+   },
+   {
+    "id": "strongest",
+    "labelKey": "display.text_contrast_strongest"
+   }
+  ],
   "THEMES": [
    {
     "id": "dark",
@@ -572,6 +586,7 @@
   "markdownCodeWrap",
   "iconSet",
   "theme",
+  "textContrast",
   "paneLayout",
   "locale",
   "regionFormat",
@@ -708,6 +723,7 @@
   "markdownCodeWrap": true,
   "iconSet": "vscode",
   "theme": "dark",
+  "textContrast": "standard",
   "paneLayout": "tabs",
   "locale": "en",
   "regionFormat": "auto",
@@ -943,6 +959,7 @@
   "markdownCodeWrap": true,
   "iconSet": "vscode",
   "theme": "dark",
+  "textContrast": "standard",
   "paneLayout": "tabs",
   "locale": "en",
   "regionFormat": "auto",
@@ -1262,6 +1279,10 @@
    "accumulated": false
   },
   "theme": {
+   "deviceLocal": true,
+   "accumulated": false
+  },
+  "textContrast": {
    "deviceLocal": true,
    "accumulated": false
   },
@@ -1757,6 +1778,7 @@
    "markdownCodeWrap": false,
    "iconSet": "vscode-x",
    "theme": "light",
+   "textContrast": "strong",
    "paneLayout": "split",
    "locale": "ja",
    "timeZone": "auto-x",
@@ -2071,6 +2093,7 @@
    "markdownCodeWrap": "yes",
    "iconSet": 7,
    "theme": 7,
+   "textContrast": 7,
    "paneLayout": 7,
    "locale": 7,
    "mirrorTheme": 7,
@@ -2218,6 +2241,7 @@
    "chatFont": "",
    "iconSet": "",
    "theme": "",
+   "textContrast": "",
    "paneLayout": "",
    "locale": "",
    "mirrorTheme": "",
@@ -3582,6 +3606,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -3900,6 +3925,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -4431,6 +4457,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -4473,6 +4500,7 @@
     "markdownCodeWrap": false,
     "iconSet": "vscode-x",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "ja",
     "timeZone": "auto-x",
@@ -4787,6 +4815,7 @@
     "markdownCodeWrap": false,
     "iconSet": "vscode-x",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "ja",
     "regionFormat": "auto-x",
@@ -5305,6 +5334,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -5337,6 +5367,7 @@
     "chatFont": "",
     "iconSet": "",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "",
     "mirrorTheme": "dark",
@@ -5718,6 +5749,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -5745,6 +5777,7 @@
    "order": "defaults",
    "set": {
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "mirrorTheme": "dark",
     "sharedTheme": "light",
@@ -5870,6 +5903,7 @@
     "markdownCodeWrap": false,
     "iconSet": "vscode-x",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "ja",
     "timeZone": "auto-x",
@@ -6288,6 +6322,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -6320,6 +6355,7 @@
     "chatFont": "",
     "iconSet": "",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "",
     "mirrorTheme": "dark",
@@ -6427,6 +6463,7 @@
    "order": "defaults",
    "set": {
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "mirrorTheme": "dark",
     "sharedTheme": "light",
@@ -6479,6 +6516,7 @@
     "markdownCodeWrap": false,
     "iconSet": "vscode-x",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "ja",
     "timeZone": "auto-x",
@@ -6978,6 +7016,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -7010,6 +7049,7 @@
     "chatFont": "",
     "iconSet": "",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "",
     "mirrorTheme": "dark",
@@ -7391,6 +7431,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -7418,6 +7459,7 @@
    "order": "defaults",
    "set": {
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "mirrorTheme": "dark",
     "sharedTheme": "light",
@@ -7543,6 +7585,7 @@
     "markdownCodeWrap": false,
     "iconSet": "vscode-x",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "ja",
     "timeZone": "auto-x",
@@ -7857,6 +7900,7 @@
     "markdownCodeWrap": false,
     "iconSet": "vscode-x",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "ja",
     "regionFormat": "auto-x",
@@ -8375,6 +8419,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -8407,6 +8452,7 @@
     "chatFont": "",
     "iconSet": "",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "",
     "mirrorTheme": "dark",
@@ -8788,6 +8834,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -8815,6 +8862,7 @@
    "order": "defaults",
    "set": {
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "mirrorTheme": "dark",
     "sharedTheme": "light",
@@ -9268,6 +9316,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -9309,6 +9358,7 @@
     "markdownCodeWrap",
     "iconSet",
     "theme",
+    "textContrast",
     "paneLayout",
     "locale",
     "regionFormat",
@@ -9446,6 +9496,7 @@
     "markdownCodeWrap": false,
     "iconSet": "vscode-x",
     "theme": "light",
+    "textContrast": "strong",
     "paneLayout": "split",
     "locale": "ja",
     "regionFormat": "auto-x",
@@ -9695,6 +9746,7 @@
   "markdownCodeWrap": 1,
   "iconSet": 1,
   "theme": 1,
+  "textContrast": 1,
   "paneLayout": 1,
   "locale": 1,
   "regionFormat": 1,
@@ -9952,6 +10004,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -9993,6 +10046,7 @@
     "markdownCodeWrap",
     "iconSet",
     "theme",
+    "textContrast",
     "paneLayout",
     "locale",
     "regionFormat",
@@ -10300,6 +10354,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -10480,6 +10535,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -10628,6 +10684,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -10903,6 +10960,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -11275,6 +11333,7 @@
      },
      "absent": [
       "theme",
+      "textContrast",
       "paneLayout",
       "mirrorTheme",
       "sharedTheme",
@@ -11514,6 +11573,7 @@
      "markdownCodeWrap",
      "iconSet",
      "theme",
+     "textContrast",
      "paneLayout",
      "locale",
      "regionFormat",
@@ -11787,6 +11847,7 @@
      "markdownCodeWrap",
      "iconSet",
      "theme",
+     "textContrast",
      "paneLayout",
      "locale",
      "regionFormat",
@@ -12134,6 +12195,7 @@
       },
       "absent": [
        "theme",
+       "textContrast",
        "paneLayout",
        "mirrorTheme",
        "sharedTheme",
@@ -12175,6 +12237,7 @@
      "markdownCodeWrap",
      "iconSet",
      "theme",
+     "textContrast",
      "paneLayout",
      "locale",
      "regionFormat",
@@ -12494,6 +12557,7 @@
     "markdownCodeWrap",
     "iconSet",
     "theme",
+    "textContrast",
     "paneLayout",
     "locale",
     "regionFormat",
@@ -12770,6 +12834,7 @@
       "set": {},
       "absent": [
        "theme",
+       "textContrast",
        "paneLayout",
        "mirrorTheme",
        "sharedTheme",

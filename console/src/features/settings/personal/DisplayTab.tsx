@@ -15,6 +15,7 @@ import {
   readerFontStack,
   ICON_SETS,
   THEMES,
+  TEXT_CONTRASTS,
   REGION_THEMES,
   SURFACE_TARGETS,
   LOCALES,
@@ -88,6 +89,14 @@ export function DisplayTab() {
             onChange={(v) => setSetting("theme", v)}
           />
         </Row>
+        <Row label={tr("display.text_contrast")}>
+          <Choice
+            value={s.textContrast}
+            options={TEXT_CONTRASTS.map((x) => [x.id, tr(x.labelKey)])}
+            onChange={(v) => setSetting("textContrast", v as "standard" | "strong" | "strongest")}
+          />
+        </Row>
+        <p className="muted ds-note">{tr("display.text_contrast_note")}</p>
         <Row label={tr("display.session_theme")}>
           <Choice
             value={s.mirrorTheme}
