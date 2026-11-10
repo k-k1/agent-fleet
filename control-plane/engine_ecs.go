@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
@@ -476,32 +475,6 @@ func (t *engineECS) logKey() string {
 		return "engine"
 	}
 	return "engine " + t.key
-}
-
-// newTTSEngine is how the TTS routes obtain their engine adapter. It is a variable so a test
-// can install one backed by a fake ECS API: everything on-demand hangs off "is there a
-// service to start", and that question is unanswerable in a test otherwise. Production never
-// assigns it.
-var newTTSEngine = newTTSEngineFromEnv
-
-// newTTSEngineFromEnv returns a controller only when AF_TTS_ECS_SERVICE is set. Unset
-// means the engine is not managed here (a long-running dev docker, say) and its lifecycle
-// belongs to someone else. Cluster and region fall back to the workspace's AF_ECS_* when
-// the dedicated AF_TTS_ECS_* are absent.
-func newTTSEngineFromEnv() *engineECS {
-	service := firstEnv("AF_TTS_ECS_SERVICE")
-	if service == "" {
-		return nil
-	}
-	region := firstEnv("AF_TTS_ECS_REGION", "AF_ECS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION")
-	ac, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(region))
-	if err != nil {
-		log.Printf("tts: ecs engine control disabled (aws config: %v)", err)
-		return nil
-	}
-	cluster := firstEnv("AF_TTS_ECS_CLUSTER", "AF_ECS_CLUSTER")
-	log.Printf("tts: voicevox engine managed via ecs (cluster=%s service=%s)", cluster, service)
-	return &engineECS{api: ecs.NewFromConfig(ac), key: "tts", cluster: cluster, service: service}
 }
 
 // setEnabled flips the desired count between 0 and 1. The cold start (70-77 s measured on
