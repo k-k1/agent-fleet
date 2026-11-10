@@ -483,6 +483,38 @@ func kindSummary(it msp.Item) string {
 		if e := it.EarlierHistory; e != nil {
 			return fmt.Sprintf("earlier history: %d messages kept from before the checkpoint", len(e.Messages))
 		}
+	case msp.ItemKindPeerMessage:
+		// A message another session sent into this one. It carries its text in a typed member
+		// and no label, so without this it would reach the mirror as a bare kind name.
+		if m := it.PeerMessage; m != nil {
+			return fmt.Sprintf("message from %s: %s", m.SenderLabel, m.Body)
+		}
+	case msp.ItemKindSubagentResult:
+		// Host-side fallbackText is only a SHOULD for a new kind; the outcome must not depend on it.
+		if it.ResultStatus != nil {
+			return "subagent result: " + string(*it.ResultStatus)
+		}
+	case msp.ItemKindSubagentInput:
+		if it.InputPhase != nil {
+			return "subagent input: " + string(*it.InputPhase)
+		}
+	case msp.ItemKindSystemNotice:
+		// Severity and subject are the point of a notice; both are optional on the wire.
+		var parts []string
+		if it.NoticeSeverity != nil {
+			parts = append(parts, string(*it.NoticeSeverity))
+		}
+		parts = append(parts, "notice")
+		s := strings.Join(parts, " ")
+		if n := it.NoticeSubject; n != nil {
+			if n.Label != nil && *n.Label != "" {
+				return s + ": " + *n.Label
+			}
+			return s + ": " + n.ID
+		}
+		if it.NoticeSeverity != nil {
+			return s
+		}
 	}
 	return ""
 }

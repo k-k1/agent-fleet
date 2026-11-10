@@ -276,8 +276,9 @@ func TestSchemaDriftNamesBothFingerprints(t *testing.T) {
 }
 
 func TestDeclaredNotificationsCoverTheSchema(t *testing.T) {
-	if got := len(msp.DeclaredNotifications()); got != 45 {
-		t.Errorf("the schema declares %d notifications, want 45", got)
+	// Recount after every bundle re-export: the number moves with each release that adds one.
+	if got := len(msp.DeclaredNotifications()); got != 47 {
+		t.Errorf("the schema declares %d notifications, want 47", got)
 	}
 	typ, ok := msp.DeclaredNotification(msp.NotificationTurnCompleted)
 	if !ok || typ != "TurnCompletedParams" {

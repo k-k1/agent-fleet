@@ -3214,3 +3214,34 @@ decodes and switches on. The checker was right and is unchanged.
 The same cost applies again: the 1.4.14 bundle is red against a 1.4.13 binary until
 `MUSE_VERSION` moves (the pin bump is cli-pin-bump's), so this PR's own pin-run of
 `muse-contract.yml` is expected to be red.
+
+### Note 2026-11-10 — bundle bumped to 1.4.15-R8339.1, and the export lost its fingerprint (#3819)
+
+Two things moved in 1.4.15, and the red step hid the second behind the first.
+
+1. **`muse schema generate-json-schema` no longer writes `fingerprint` into `manifest.json`**
+   (now `{experimental, schemaVersion}` only). The workflow step "the manifest fingerprint against
+   the binary and the generated types" read `.fingerprint`, got `null`, and failed before the
+   compatibility test ran. The release manifest's `msp_schema_fingerprint` is unchanged in kind
+   (`sha256:ef311d2d…`), `initialize` still requires `schema.fingerprint`, and the string is
+   still embedded in the binary (measured: present in 1.4.15, absent for an altered value). The
+   step now compares equality when the export carries a fingerprint and otherwise requires the
+   manifest's value to occur in the binary; both fail closed. The checked-in
+   `schema/manifest.json` takes its `fingerprint` from the release manifest, because
+   `SchemaDrift` compares it with what the host reports at the handshake; a test now rejects a
+   manifest without one. The fingerprint is not a hash of the exported JSON (measured), so it
+   cannot be recomputed locally.
+2. **Real protocol breaks, all new values of open enums the client decodes**: `ItemKind`
+   `peerMessage`, `subagentInput`, `subagentResult`, `systemNotice`; `ErrorKind`
+   `approvalBrokerUnavailable`, `approvalResolving`; `HistoryNoneReason`
+   `projectionRebuildFailed`; `SessionViewHealth` `healthy`. The schema says clients render
+   unknown kinds generically, and the mirror already does; only `peerMessage` carries its text
+   in a typed member without a label, so `kindSummary` now renders "message from <sender>: <body>".
+   `subagentResult`, `subagentInput` and `systemNotice` are summarised from their typed members
+   too (outcome, phase, severity and subject), because `fallbackText` is only a SHOULD for a new
+   kind. Their remaining members are not rendered. The 64 additions
+   (`BackgroundTarget`, `model/complete` types, notice origin and severity, …) are generated but
+   unused.
+
+The same cost applies again: the 1.4.15 bundle is red against a 1.4.14 binary until
+`MUSE_VERSION` moves; the pin bump is cli-pin-bump's.

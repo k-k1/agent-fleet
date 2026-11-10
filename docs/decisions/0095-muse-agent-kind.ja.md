@@ -2921,3 +2921,29 @@ open enum `ItemKind` への値 `earlierHistory` の追加。チェッカーは�
 
 同じ代償: 1.4.14 のバンドルは `MUSE_VERSION` が動くまで 1.4.13 のバイナリに対して赤。
 ピンの更新は cli-pin-bump の仕事で、この PR 自身のピン実行の `muse-contract.yml` も赤になる想定。
+
+### 注記 2026-11-10 — バンドルを 1.4.15-R8339.1 に更新、export から fingerprint が消えた（#3819）
+
+1.4.15 では 2 つが動き、赤くなったステップが 2 つ目を隠していた。
+
+1. **`muse schema generate-json-schema` が `manifest.json` に `fingerprint` を書かなくなった**
+   （`{experimental, schemaVersion}` のみ）。ワークフローの「manifest の fingerprint をバイナリと
+   生成型に照合する」ステップは `.fingerprint` を読んで `null` を得て、互換性テストの前に落ちた。
+   リリース manifest の `msp_schema_fingerprint`（`sha256:ef311d2d…`）は変わらず、`initialize` も
+   `schema.fingerprint` を必須のままで、文字列はバイナリにも埋め込まれている（実測: 1.4.15 には
+   あり、改変した値は無い）。ステップは export が fingerprint を持てば等価を比べ、持たなければ
+   manifest の値がバイナリに含まれることを要求する。どちらも fail-closed。チェックイン済みの
+   `schema/manifest.json` の `fingerprint` はリリース manifest から取る（`SchemaDrift` がハンドシェイクで
+   ホストの報告値と比べるため）。fingerprint を欠くマニフェストはテストが拒否する。fingerprint は
+   export JSON のハッシュではない（実測）ので手元では再計算できない。
+2. **本物のプロトコル破壊（クライアントが decode する open enum への値追加）**: `ItemKind` の
+   `peerMessage` / `subagentInput` / `subagentResult` / `systemNotice`、`ErrorKind` の
+   `approvalBrokerUnavailable` / `approvalResolving`、`HistoryNoneReason` の
+   `projectionRebuildFailed`、`SessionViewHealth` の `healthy`。スキーマは未知の kind を汎用描画
+   せよと定めており mirror は既にそうする。ラベル無しで本文を型付きメンバーに持つのは
+   `peerMessage` だけなので、`kindSummary` が「message from <送信者>: <本文>」を作る。`subagentResult` / `subagentInput` / `systemNotice` も型付きメンバー（結果・フェーズ・重大度・対象）から要約する。
+   新 kind の `fallbackText` は SHOULD に過ぎないため。残りのメンバーは描画しない。64 件の追加（`BackgroundTarget`、`model/complete` 型、
+   notice の origin / severity など）は生成されるが未使用。
+
+同じ代償: 1.4.15 のバンドルは `MUSE_VERSION` が動くまで 1.4.14 のバイナリに対して赤。
+ピンの更新は cli-pin-bump の仕事。
