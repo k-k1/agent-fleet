@@ -105,6 +105,24 @@ export function ConsolidationSettings({ running, reload = 0 }: { running: boolea
   );
 }
 
+// LintScheduleSettings is the switch of the scheduled lint --apply (ui-pref memoryLintSchedule, default
+// off). It calls no model; it is separate from the tidy-up switch above. The Agent only accepts turning
+// it on with the member-origin mark, like the tidy-up switch.
+export function LintScheduleSettings() {
+  const tr = useT();
+  const s = useSettings();
+  const enabled = s.memoryLintSchedule;
+  return (
+    <>
+      <Row label={tr("mem.ls_switch")}>
+        <OnOff value={enabled} onChange={(v) => setSetting("memoryLintSchedule", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("mem.ls_switch_note")}</p>
+      {enabled && !s.agentMemory && <p className="mem-warn">{tr("mem.cs_needs_memory")}</p>}
+    </>
+  );
+}
+
 function ConsolidationStatus({ reload }: { reload: number }) {
   const tr = useT();
   const [st, setSt] = useState<ConsolStatus | null>(null);

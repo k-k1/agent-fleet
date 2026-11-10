@@ -4,7 +4,7 @@
 
 import { useT } from "../../../../lib/i18n/index.ts";
 import { AgentMemorySwitch, ExternalMemorySwitch } from "../memoryChanges.tsx";
-import { ConsolidationSettings } from "../memoryProposals.tsx";
+import { ConsolidationSettings, LintScheduleSettings } from "../memoryProposals.tsx";
 
 export function AgentSettingsView({ running, reload = 0 }: { running: boolean; reload?: number }) {
   const tr = useT();
@@ -14,6 +14,7 @@ export function AgentSettingsView({ running, reload = 0 }: { running: boolean; r
       <AgentMemorySwitch />
       <ExternalMemorySwitch />
       <ConsolidationSettings running={running} reload={reload} />
+      <LintScheduleSettings />
     </>
   );
 }

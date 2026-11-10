@@ -61,3 +61,34 @@ func TestMemoryConsolidationSwitchNeedsTheMemberOriginMarkToTurnOn(t *testing.T)
 		t.Fatal(`the string "true" read as on`)
 	}
 }
+
+// The scheduled lint publishes commits unattended, so like the consolidator its switch is the
+// member's: an unmarked write cannot turn it on, switching off needs nothing, it is off when
+// missing, and it is separate from memoryConsolidation (lint calls no model).
+func TestMemoryLintScheduleSwitchNeedsTheMemberOriginMarkToTurnOn(t *testing.T) {
+	writeUIPrefs(t, `{"agentMemory":true,"memoryConsolidation":true}`)
+	if uiprefs.MemoryLintSchedule() || uiprefs.MemoryLintScheduleEnabled() {
+		t.Fatal("the schedule is on by default, or follows the consolidator's switch")
+	}
+	if rec := putPrefs(t, `{"agentMemory":true,"memoryLintSchedule":true}`, false); rec.Code == http.StatusOK {
+		t.Fatalf("an unmarked write switched the schedule on: %d", rec.Code)
+	}
+	if rec := putPrefs(t, `{"agentMemory":true,"memoryLintSchedule":true}`, true); rec.Code != http.StatusOK {
+		t.Fatalf("a marked write: %d %s", rec.Code, rec.Body)
+	}
+	if !uiprefs.MemoryLintScheduleEnabled() || uiprefs.MemoryConsolidation() {
+		t.Fatal("the marked write did not switch only the schedule on")
+	}
+	writeUIPrefs(t, `{"agentMemory":false,"memoryLintSchedule":true}`)
+	if uiprefs.MemoryLintScheduleEnabled() {
+		t.Fatal("enabled with agent memory off")
+	}
+	writeUIPrefs(t, `{"agentMemory":true,"memoryLintSchedule":true}`)
+	if rec := putPrefs(t, `{"agentMemory":true,"memoryLintSchedule":false}`, false); rec.Code != http.StatusOK || uiprefs.MemoryLintSchedule() {
+		t.Fatalf("switching off without a mark: %d", rec.Code)
+	}
+	writeUIPrefs(t, `{"agentMemory":true,"memoryLintSchedule":"true"}`)
+	if uiprefs.MemoryLintSchedule() {
+		t.Fatal(`the string "true" read as on`)
+	}
+}

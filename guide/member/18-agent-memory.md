@@ -267,6 +267,16 @@ longer fires; a rule that could not run (no repository) removes nothing. When a 
 the default branch, lint replaces only that path in the body (and in `anchors`), as its own commit that names the renaming
 commit, and the change can be reverted like any other.
 
+**Scheduled lint (opt-in).** Settings › Agent memory › **Settings** › *Automatic lint marks* runs the same thing as
+`af-memory lint --apply` on its own, over the user scope and every project that holds memory, so reasons appear without anyone
+running a command. It is **off by default**, it also needs agent memory on, and only the Console can switch it on (a session's
+own token cannot); it is separate from the tidy-up switch, because lint uses no model and spends no tokens. A run starts only when no session is
+working and none has run a turn for 15 minutes, at most once every 6 hours (30 minutes when the 100-memory cap left some
+unwritten), and stops between scopes if a session starts working. The 100-memory cap covers the whole run. A failing run
+is retried after 15 minutes, doubling up to 6 hours. A manual `af-memory lint --apply` and a scheduled run never overlap: a
+manual one started during a scheduled run is refused with "already in progress" and can simply be run again afterwards; if that happens part-way through a run over all scopes, the scopes already done keep their changes and running it again finishes the rest. The
+switch and the timing are kept across restarts of the workspace.
+
 Agents report a memory that failed them with `memory_feedback` (the revision they read, `stale` or `wrong`, and a note).
 A report on the current revision adds a `feedback` reason, which any change of the body clears; a report on an older
 revision is only kept as an observation. One report per session per revision counts. A confirmation counts but never

@@ -497,6 +497,8 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.view_proposals": "Suggestions",
   "mem.cs_switch": "Memory tidy-up (suggestions)",
   "mem.cs_switch_note": "When on, and while the workspace is idle, a model drafts small fixes to memories from feedback and lint findings and lines them up as suggestions. Memory text is sent to the model and tokens are spent. No memory changes until you approve; review them one at a time in Suggestions.",
+  "mem.ls_switch": "Automatic lint marks",
+  "mem.ls_switch_note": "When on, and while the workspace is idle (about every 6 hours), Agent Fleet runs the same check as `af-memory lint --apply`: it adds or clears lint reasons on memories and rewrites a path that git shows was renamed. No model is used and no tokens are spent. Each change is its own commit authored `lint` that you can revert, and one run changes at most 100 memories. A manual run and a scheduled run never overlap.",
   "mem.cs_needs_memory": "Agent memory is off, so this does nothing yet.",
   "mem.cs_status_failed": "Could not read the tidy-up status.",
   "mem.cs_status_title": "Tidy-up status",

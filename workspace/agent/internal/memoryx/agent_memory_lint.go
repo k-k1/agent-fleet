@@ -496,6 +496,11 @@ func HandleAgentMemoryLintApply(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	if !agentMemLintRunMu.TryLock() {
+		agentMemWriteErr(w, agentMemLintRunning())
+		return
+	}
+	defer agentMemLintRunMu.Unlock()
 	out, err := agentMemLintApply(req.Scope, req.Project, time.Now())
 	if err != nil {
 		agentMemWriteErr(w, err)
