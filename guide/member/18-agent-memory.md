@@ -402,8 +402,8 @@ refused.
   waiting when you upgraded were **not** dropped: once, on the first start after the upgrade, the workspace wrote each one
   (with the memory it was about, its base revision, the text, the reason and the run) and the list of rejected
   fingerprints to `review-queue-export-v1.json` in the `af-memory.work` folder of the Claude configuration directory,
-  and only then deleted the queue. They are observations, not approvals: nothing in that file is in memory, and nothing
-  reads it yet. A workspace that never used the review writes nothing.
+  and only then deleted the queue. They are observations, not approvals: nothing in that file is in memory. Only the
+  [memory tidy-up](#consolidation-proposals-opt-in), when it is on, reads it, as material for its suggestions. A workspace that never used the review writes nothing.
 
 ## Memory snapshots
 

@@ -3,6 +3,14 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.43.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.43.0) — 2026-11-10
+
+新しい `watch` ツールで、セッションがプルリクエスト・レビュー・指定した時刻を待てるようになり、任意で
+有効にできるメモリの自動整理が、エージェントのメモリの直しを下書きして承認を待つようになりました。
+Workspace はサインイン時に起動したり、新しいイメージへ自分で移ったりできます。設定 › エージェント の
+権限確認のスイッチも、表示どおりに動くようになりました。更新の前にアップグレードの注意を読んでください。
+弱い `AF_MASTER_KEY` や `AF_COOKIE_SECRET` では Control Plane が起動しなくなりました。
+
 ## [0.42.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.42.0) — 2026-11-08
 
 このリリースの大半は、Control Plane・Agent・AWS テンプレートのセキュリティ診断にもとづく強化で、
