@@ -306,6 +306,18 @@ only queues *proposals*.
   superseded (hidden from agents, kept in history). A create or replacement over a name that was forgotten, or that ever
   existed (a superseded memory still has its name), is refused. When the larger model's text fails a check, the proposal falls
   back to *advice*, which you apply by hand.
+- **Retiring an obsolete memory.** A fourth kind, a *retire*, says that a whole memory is obsolete: the thing it is about is
+  finished (the issue it tells agents to follow is closed, the workaround is no longer needed). Approving it marks the memory
+  *archived* by `consolidator` with the one-line reason; agents no longer see it in the index or in search, and `memory_read`
+  answers a stub that carries the reason instead of the text. **Nothing is deleted**: the file stays, it is one change in
+  **Changes**, and reverting it brings the memory back as it was (while it has not changed since). A pinned memory is never
+  retired by a suggestion (you get advice instead). The larger model has to confirm a retire before it is even suggested.
+- **Checked facts.** Before the model decides, the Agent itself looks up whether the issues and pull requests a memory or an
+  observation names (`owner/repo#12`, a github.com link, or `#12` in a project whose origin is on github.com) are closed or
+  merged, using your GitHub connection, and tells the model as a fact. This is how an observation exported from the old review
+  that cites an issue closed weeks ago is marked as citing finished work, so the model leans to *no change* instead of
+  creating a note about it. A lookup that fails, times out or is not connected counts as *unknown*, never as closed. Lookups
+  are limited per run and cached.
 - **Approval.** A proposal is re-checked against the memory as it is when you approve — every memory it touches, each against
   the revision the proposal saw; if any of them moved, nothing is written — and then published the normal way, authored
   `consolidator`: it shows in **Changes** and can be reverted. A replacement is *one* change over the new memory and all the
@@ -323,7 +335,9 @@ Open one to see **If you approve**, before the Approve button:
   topic memory is not the one being created it says "The topic memory … is not changed". A *patch* card shows the target's
   revision n → n+1 as **Before** and **After** side by side, the removed and added lines highlighted, and says the change is
   published as `consolidator` and can be reverted from the change list. A *replacement* card shows the new memory, the memories it
-  supersedes with their revisions, and says it is published and reverted as one change. An *advice* card says what would
+  supersedes with their revisions, and says it is published and reverted as one change. A *retire* card shows what agents stop
+  seeing: the memory's line in the index, that search no longer finds it, the reason a read will answer with, and the text
+  that will be hidden (as removed lines). An *advice* card says what would
   happen and that it cannot be approved;
 - then the memory's evidence (the reports and lint findings it rests on) and the revisions the proposal was drafted against.
 

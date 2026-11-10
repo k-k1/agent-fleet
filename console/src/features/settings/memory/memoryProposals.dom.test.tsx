@@ -114,6 +114,7 @@ describe("the pure helpers", () => {
     expect(parseGoDuration("")).toBe(0);
     expect(isAdviceOnly({ items: [{ op: "note", name: "x" }] })).toBe(true);
     expect(isAdviceOnly({ items: [{ op: "note", name: "x" }, { op: "patch", name: "y" }] })).toBe(false);
+    expect(isAdviceOnly({ items: [{ op: "retire", name: "z" }] })).toBe(false);
     expect(matchesFilter("refused", "decided")).toBe(true);
     expect(matchesFilter("pending", "decided")).toBe(false);
     expect(canRetry("pending")).toBe(false);

@@ -81,6 +81,10 @@ func (f *fakeStore) Target(scope, pid, name string) (memoryx.ReviewTargetState, 
 		if m.Name == name {
 			st.Exists, st.Revision, st.Body, st.Description, st.Type = true, m.Revision, m.Body, m.Description, m.Type
 			st.Excluded = f.excluded[ScopeKey(scope, pid)+"/"+name]
+			st.Pinned = m.Pinned
+			if !st.Excluded {
+				st.IndexLine = "- [" + scope + "] " + m.Name + " — " + m.Description
+			}
 		}
 	}
 	return st, nil
@@ -131,6 +135,14 @@ func (f *fakeStore) Publish(id string, it memoryx.ConsolItem, now time.Time) (me
 		}
 		f.mems[k] = append(f.mems[k], memoryx.ConsolMemory{Name: it.Name, Description: it.Description, Type: it.Type, Body: it.Body, Revision: 1})
 		return memoryx.ConsolPublished{Commit: commit, Revision: 1}, nil
+	case "retire":
+		for i := range f.mems[k] {
+			if f.mems[k][i].Name == it.Name {
+				f.mems[k][i].Revision++
+			}
+		}
+		f.excluded[k+"/"+it.Name] = true
+		return memoryx.ConsolPublished{Commit: commit, Revision: it.Revision + 1}, nil
 	case "create":
 		f.mems[k] = append(f.mems[k], memoryx.ConsolMemory{Name: it.Name, Description: it.Description, Type: it.Type, Body: it.Body, Revision: 1})
 		return memoryx.ConsolPublished{Commit: commit, Revision: 1}, nil

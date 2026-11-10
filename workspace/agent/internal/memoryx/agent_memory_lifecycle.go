@@ -34,6 +34,7 @@ const (
 	agentMemReasonByLint   = "lint"
 	agentMemReasonByFeed   = "feedback"
 	agentMemReasonByMember = "member"
+	agentMemReasonByConsol = "consolidator"
 	agentMemStatusByAgent  = "agent"
 	agentMemStatusByMember = "member"
 	agentMemStatusByConsol = "consolidator"
@@ -57,7 +58,7 @@ var (
 	agentMemMemKinds    = map[string]bool{agentMemMemKindPrefer: true, agentMemMemKindLesson: true, agentMemMemKindProc: true, agentMemMemKindState: true, agentMemMemKindLog: true}
 	agentMemStatuses    = map[string]bool{agentMemStatusActive: true, agentMemStatusQuiet: true, agentMemStatusArchived: true}
 	agentMemStatusBys   = map[string]bool{agentMemStatusByAgent: true, agentMemStatusByMember: true, agentMemStatusByConsol: true}
-	agentMemReasonBys   = map[string]bool{agentMemReasonByLint: true, agentMemReasonByFeed: true, agentMemReasonByMember: true}
+	agentMemReasonBys   = map[string]bool{agentMemReasonByLint: true, agentMemReasonByFeed: true, agentMemReasonByMember: true, agentMemReasonByConsol: true}
 	agentMemReasonRule  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 	agentMemCommitIDRe  = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 	agentMemDocBadChars = regexp.MustCompile(`[\x00-\x1f]`)
@@ -329,7 +330,7 @@ func agentMemLifeProblems(l agentMemLife) []string {
 	for _, r := range l.Reasons {
 		switch {
 		case !agentMemReasonBys[r.By]:
-			p = append(p, "a reason's by must be one of lint, feedback, member")
+			p = append(p, "a reason's by must be one of lint, feedback, member, consolidator")
 		case !agentMemReasonRule.MatchString(r.Rule):
 			p = append(p, "a reason's rule must be a short lower-case id")
 		case r.Revision < 0:

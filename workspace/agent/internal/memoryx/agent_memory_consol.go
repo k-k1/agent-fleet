@@ -16,6 +16,7 @@ import (
 	"errors"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -127,7 +128,7 @@ type ConsolSource struct {
 
 // ConsolItem is one approved operation as the store needs it.
 type ConsolItem struct {
-	Op        string // patch | create | replace
+	Op        string // patch | create | replace | retire
 	Scope     string
 	ProjectID string
 	Name      string
@@ -140,6 +141,8 @@ type ConsolItem struct {
 	Body        string
 	// Sources are the memories a replace supersedes (a supersede names one, a merge several).
 	Sources []ConsolSource
+	// Reason is the one line a retire leaves on the memory.
+	Reason string
 }
 
 // ConsolPublished is the outcome of PublishConsolidation. Already says an earlier call had
@@ -159,8 +162,8 @@ func PublishConsolidation(proposalID string, it ConsolItem, now time.Time) (Cons
 	switch {
 	case !reviewIDRe.MatchString(proposalID):
 		return ConsolPublished{}, invalid("proposal id is malformed")
-	case it.Op != "patch" && it.Op != "create" && it.Op != "replace":
-		return ConsolPublished{}, invalid("op must be patch, create or replace")
+	case it.Op != "patch" && it.Op != "create" && it.Op != "replace" && it.Op != "retire":
+		return ConsolPublished{}, invalid("op must be patch, create, replace or retire")
 	case it.Scope != agentMemScopeProject && it.Scope != agentMemScopeUser:
 		return ConsolPublished{}, invalid("scope must be project or user")
 	case !agentMemValidName(it.Name):
@@ -186,6 +189,8 @@ func PublishConsolidation(proposalID string, it ConsolItem, now time.Time) (Cons
 		}
 		res, err = agentMemPatch(c, agentMemPatchReq{Session: c.Session, Scope: it.Scope, Name: it.Name,
 			Revision: it.Revision, Edits: edits}, now)
+	case "retire":
+		res, err = agentMemRetire(c, it.Scope, it.Name, it.Revision, it.Reason, now)
 	case "replace":
 		req := agentMemReplaceReq{Scope: it.Scope, Name: it.Name, Description: it.Description, Type: it.Type, Body: it.Body}
 		for _, s := range it.Sources {
@@ -229,4 +234,20 @@ func ConsolCommitOf(publishID string) (string, error) {
 		return "", nil
 	}
 	return trailerCommitBy(consolProposalTrailer, publishID, ConsolidatorAuthorKind)
+}
+
+// ConsolProjectRepo is the github.com repository ("owner/repo") the project's origin names, ""
+// when it has none, it is on another host, or the record fails the store's checks. It is what a
+// bare "#12" in the project's memories means; a user-scope memory has no such default.
+func ConsolProjectRepo(projectID string) string {
+	if !agentMemValidProjectID(projectID) {
+		return ""
+	}
+	agentMemMu.RLock()
+	defer agentMemMu.RUnlock()
+	host, path, ok := strings.Cut(agentMemProjectInfo(projectID).Remote, "/")
+	if !ok || host != "github.com" || strings.Count(path, "/") != 1 {
+		return ""
+	}
+	return path
 }

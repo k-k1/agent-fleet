@@ -27,6 +27,8 @@ type Deps struct {
 	// and only while the switch is on and the daily gate allows it; it must carry the count and
 	// nothing from a memory. A non-nil error leaves the day's notice unspent.
 	Notice func(waiting int) error
+	// Refs looks up whether the issues and PRs that notes name are finished. nil looks nothing up.
+	Refs *RefChecker
 }
 
 var (
@@ -229,7 +231,7 @@ func doRun(ctx context.Context, d Deps, cfg Config, now time.Time, o runOpts) Re
 		log.Printf("memory consolidation: %v", err)
 		return rep
 	}
-	in := RunInput{Models: m, Roles: roles, Turns: turns{d.Activity}, Enabled: d.Enabled, Config: cfg, Now: now, Progress: setProgress}
+	in := RunInput{Models: m, Roles: roles, Turns: turns{d.Activity}, Enabled: d.Enabled, Config: cfg, Now: now, Progress: setProgress, Refs: d.Refs}
 	if o.manual {
 		// The member asked for this run now: other sessions' turns do not defer it.
 		in.Turns, in.Manual, in.All = nil, true, o.all

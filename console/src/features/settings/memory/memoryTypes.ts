@@ -539,7 +539,7 @@ export interface ConsolEdit {
   new: string;
 }
 export interface ConsolItem {
-  op: "patch" | "create" | "replace" | "note" | string;
+  op: "patch" | "create" | "replace" | "retire" | "note" | string;
   name: string;
   reason?: string;
   revision?: number;
@@ -576,9 +576,17 @@ export interface ConsolProposal {
   targetRevisions?: Record<string, number>;
   evidence: ConsolEvidence[];
 }
+/** What a retire takes away from agents (a retire item only). */
+export interface ConsolRetirePreview {
+  /** The memory's line in memory_index now; it disappears. "" when agents do not see it. */
+  indexLine: string;
+  /** The one line memory_read answers in place of the text. */
+  stubReason: string;
+}
 export interface ConsolItemView extends ConsolItem {
   diff?: string;
   stale?: string;
+  retire?: ConsolRetirePreview;
 }
 export interface ConsolProposalView extends ConsolProposal {
   itemViews: ConsolItemView[];

@@ -28,14 +28,16 @@ const (
 	StatusPartial  = "partial"  // approval published some items and the store refused a later one
 )
 
-// Item operations. Patch, create and replace can be published; a note is advice for the member and
+// Item operations. Patch, create, replace and retire can be published; a note is advice for the member and
 // writes nothing. A replace is a supersede or merge: the new memory and the supersede marks of the
-// ones it replaces, published as one change (ADR 0130 decision 6). A note remains for what the
+// ones it replaces, published as one change (ADR 0130 decision 6). A retire archives one existing
+// memory (status archived, by the consolidator) and deletes nothing. A note remains for what the
 // engine could not turn into a checked replacement (the model's text failed validation).
 const (
 	OpPatch   = "patch"
 	OpCreate  = "create"
 	OpReplace = "replace"
+	OpRetire  = "retire"
 	OpNote    = "note"
 )
 
@@ -54,10 +56,11 @@ type Edit struct {
 
 // Item is one operation of a proposal.
 type Item struct {
-	Op     string `json:"op"`
-	Name   string `json:"name"` // the target memory (patch, note) or the new memory (create, replace)
+	Op   string `json:"op"`
+	Name string `json:"name"` // the target memory (patch, retire, note) or the new memory (create, replace)
+	// Reason is why the engine chose this; for a retire it is also the one line left on the memory.
 	Reason string `json:"reason,omitempty"`
-	// Revision is the revision the engine saw when it made a patch.
+	// Revision is the revision the engine saw when it made a patch or a retire.
 	Revision int    `json:"revision,omitempty"`
 	Edits    []Edit `json:"edits,omitempty"`
 	// Create, replace: the new memory.
@@ -307,6 +310,21 @@ func validateItem(scope, projectID string, it Item) *Problem {
 		for _, l := range brokenLinks(strings.Join(editNews(it.Edits), "\n"), scope, projectID) {
 			return &Problem{ProbInvalid, "the patch adds a link to a memory that does not exist: " + l}
 		}
+	case OpRetire:
+		switch {
+		case !st.Exists || st.Withheld:
+			return &Problem{ProbStale, "the memory is gone or withheld"}
+		case st.Excluded:
+			return &Problem{ProbStale, "the memory is archived or superseded already"}
+		case st.Pinned:
+			return &Problem{ProbStale, "the memory is pinned; only the member retires it"}
+		case st.Revision != it.Revision:
+			return &Problem{ProbStale, "the memory has changed since the engine read it"}
+		case !memoryx.ReviewRetireReasonOK(it.Reason) || len([]rune(it.Reason)) > maxRetireReason:
+			return &Problem{ProbInvalid, "a retire needs a one-line reason"}
+		case memoryx.ReviewTextProblem(it.Reason) != "":
+			return &Problem{ProbSecret, "the reason failed the secret scan"}
+		}
 	case OpCreate:
 		return validateNewMemory(scope, projectID, it, st)
 	case OpReplace:
@@ -315,7 +333,7 @@ func validateItem(scope, projectID string, it Item) *Problem {
 		}
 		return validateSources(scope, projectID, it)
 	default:
-		return &Problem{ProbInvalid, "only a patch, a create or a replace can be applied"}
+		return &Problem{ProbInvalid, "only a patch, a create, a replace or a retire can be applied"}
 	}
 	return nil
 }
@@ -437,7 +455,9 @@ func Retry(id string, now time.Time) (Proposal, int, error) {
 	return p, n, s.save()
 }
 
-func isPublishable(op string) bool { return op == OpPatch || op == OpCreate || op == OpReplace }
+func isPublishable(op string) bool {
+	return op == OpPatch || op == OpCreate || op == OpReplace || op == OpRetire
+}
 
 func publishID(proposalID string, i int) string {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%s/%d", proposalID, i)))
@@ -511,6 +531,9 @@ func Approve(id string, now time.Time) (Proposal, error) {
 		}
 		ci := memoryx.ConsolItem{Op: it.Op, Scope: p.Scope, ProjectID: p.ProjectID, Name: it.Name, Revision: it.Revision,
 			Description: it.Description, Type: it.Type, Body: it.Body}
+		if it.Op == OpRetire {
+			ci.Reason = it.Reason
+		}
 		for _, src := range it.Sources {
 			ci.Sources = append(ci.Sources, memoryx.ConsolSource{Name: src.Name, Revision: src.Revision})
 		}
@@ -559,6 +582,19 @@ type ItemView struct {
 	Diff string `json:"diff,omitempty"`
 	// Stale says the item no longer applies to the memory as it is now, with the reason.
 	Stale string `json:"stale,omitempty"`
+	// Retire is set on a retire: what agents stop seeing once it is approved.
+	Retire *RetirePreview `json:"retire,omitempty"`
+}
+
+// RetirePreview is what a retire takes away from agents. The Diff of the item shows the text that
+// will no longer be read; this adds the line memory_index prints now (it disappears) and the
+// reason a later memory_read stub will carry in place of the text. Search hits for the memory
+// disappear too; they have no text of their own to show.
+type RetirePreview struct {
+	// IndexLine is the memory's line in memory_index now, "" when it is not visible to agents.
+	IndexLine string `json:"indexLine"`
+	// StubReason is the one line memory_read will answer instead of the text.
+	StubReason string `json:"stubReason"`
 }
 
 // ProposalView is a proposal with its items' diffs, as the get route returns it.
@@ -599,6 +635,19 @@ func View(id string, now time.Time) (ProposalView, error) {
 				iv.Stale = "the memory has changed since the engine read it"
 			}
 			iv.Diff = lineDiff(st.Body, body)
+		case OpRetire:
+			st, err := store.Target(p.Scope, p.ProjectID, it.Name)
+			if err != nil || !st.Exists || st.Withheld {
+				iv.Stale = "the memory is gone or withheld"
+				break
+			}
+			iv.Diff = lineDiff(st.Body, "")
+			iv.Retire = &RetirePreview{IndexLine: st.IndexLine, StubReason: it.Reason}
+			if it.Commit == "" {
+				if pr := validateItem(p.Scope, p.ProjectID, it); pr != nil {
+					iv.Stale = pr.Msg
+				}
+			}
 		case OpCreate, OpReplace:
 			iv.Diff = lineDiff("", it.Body)
 			if it.Commit == "" {

@@ -16,17 +16,20 @@ const (
 	OpPatch     Operation = "patch"
 	OpSupersede Operation = "supersede"
 	OpMerge     Operation = "merge"
+	OpRetire    Operation = "retire"
 	OpNoop      Operation = "no-op"
 )
 
 // Operations lists the answers the schema allows.
-var Operations = []Operation{OpAdd, OpPatch, OpSupersede, OpMerge, OpNoop}
+var Operations = []Operation{OpAdd, OpPatch, OpSupersede, OpMerge, OpRetire, OpNoop}
 
 // Escalates reports whether the small tier must hand this answer to the larger
 // tier (or to the member as a plain observation): ADR 0130 decision 6 sends
-// supersede and merge up, the cases Mem0's update router lost. A conservative
-// rule, not a measured one; the evaluation reports both tiers on those cases.
-func (o Operation) Escalates() bool { return o == OpSupersede || o == OpMerge }
+// supersede and merge up, the cases Mem0's update router lost. A retire goes up
+// too: it takes a whole note out of every agent's sight, so the larger tier
+// must agree before it is even proposed. A conservative rule, not a measured
+// one; the evaluation reports both tiers on those cases.
+func (o Operation) Escalates() bool { return o == OpSupersede || o == OpMerge || o == OpRetire }
 
 // IsChange reports whether the operation would write to the store.
 func (o Operation) IsChange() bool { return o != OpNoop }
@@ -48,7 +51,7 @@ const SnippetRunes = 600
 // ClassifySchema is the fixed answer schema, shown to the model verbatim and
 // enforced by ParseClassify.
 const ClassifySchema = `{
-  "operation": "add | patch | supersede | merge | no-op",
+  "operation": "add | patch | supersede | merge | retire | no-op",
   "targets": ["names of existing memories the operation acts on"],
   "reason": "one sentence"
 }`
@@ -57,6 +60,10 @@ const ClassifySchema = `{
 type ClassifyRequest struct {
 	Observation string
 	Memories    []Snippet
+	// Evidence are facts the Agent checked mechanically (for example that an issue a note names
+	// is closed). They are given to the model as facts it did not have to guess; empty means
+	// nothing was checked, which says nothing about the notes.
+	Evidence []string
 }
 
 // ClassifyAnswer is the validated answer.
@@ -77,13 +84,20 @@ func (r ClassifyRequest) Prompt() string {
 	b.WriteString("- add: the observation is a durable, reusable lesson (a rule, a procedure, a pitfall) that no existing note holds. When no notes are shown, or none is about this topic, a lesson of that kind is an add: absence of a note to fix is not a reason for no-op.\n")
 	b.WriteString("- supersede: one existing note is mostly out of date and a replacement should take its place.\n")
 	b.WriteString("- merge: two or more existing notes (or this observation and another) say the same thing and should become one.\n")
+	b.WriteString("- retire: one existing note is entirely obsolete: the thing it is about is finished or gone (the issue or pull request it tells readers to follow is closed or merged, the workaround it describes is no longer needed), so no edit could make it useful again. Choose it only when the whole note is obsolete and the checked facts or the observation say so; a note with some stale lines is a patch, and a note replaced by a better one is a supersede. Retiring hides the note from every agent until the member restores it.\n")
 	b.WriteString("- no-op: nothing should change. Use it when the observation confirms what the note already says, the note already records the point (including already marking something retired), the observation itself says other notes already hold the same rule, the fact lives in the code or docs, or the observation is a one-off with no bearing on any shown note.\n\n")
 	b.WriteString("When the observation points at a specific line of a shown note that is wrong or stale, choose patch rather than no-op; do not answer no-op only because the fix is small or you are not certain how to word it. An observation often says first what is still right and then what is not; what is still right is context, and the part named as not right is the finding. A link that points nowhere is a defect of the note that holds it, never a new lesson to add, even when no similar note can be found. If no shown note holds the link, there is nothing to fix and the answer is no-op. When the observation says the note is still correct, the flagged text is correct as written (a false alarm), or the note already says what the observation says, choose no-op: do not invent a change. Likewise choose no-op when the observation itself says that existing notes already hold the rule, even if they are not among the shown notes, and when a reported problem turns out not to be one (text that only looks like a link, a name that is in fact correct).\n\n")
 	b.WriteString("Reply with one JSON object and nothing else, in this schema:\n")
 	b.WriteString(ClassifySchema)
-	b.WriteString("\n`targets` is empty for add and no-op, one name for patch and supersede, and every note involved for merge.\n\n")
+	b.WriteString("\n`targets` is empty for add and no-op, one name for patch, supersede and retire, and every note involved for merge.\n\n")
 	b.WriteString("## Observation\n")
 	b.WriteString(strings.TrimSpace(r.Observation))
+	if len(r.Evidence) > 0 {
+		b.WriteString("\n\n## Facts checked by the Agent\nThese were looked up by the program, not guessed. A closed issue or a merged pull request means that work is finished; it does not by itself make a lesson wrong, so judge whether the note or the suggested note is still useful once that work is done. An issue that is not listed was not checked.\n")
+		for _, e := range r.Evidence {
+			b.WriteString("- " + strings.TrimSpace(e) + "\n")
+		}
+	}
 	b.WriteString("\n\n## Existing notes of the topic\n")
 	if len(r.Memories) == 0 {
 		b.WriteString("(none)\n")
@@ -134,7 +148,7 @@ func ParseClassify(text string, req ClassifyRequest) (ClassifyAnswer, error) {
 		if len(a.Targets) != 0 {
 			return ClassifyAnswer{}, invalid("%s takes no targets", a.Operation)
 		}
-	case OpPatch, OpSupersede:
+	case OpPatch, OpSupersede, OpRetire:
 		if len(a.Targets) != 1 {
 			return ClassifyAnswer{}, invalid("%s takes exactly one target, got %d", a.Operation, len(a.Targets))
 		}

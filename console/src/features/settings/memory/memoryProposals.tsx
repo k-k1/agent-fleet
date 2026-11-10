@@ -16,7 +16,7 @@ import { Choice, OnOff, Row } from "../parts/controls.tsx";
 import { setSetting, useSettings } from "../../../lib/settings.ts";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
-import { ProposalPreview, proposalSubject } from "./memoryProposalPreview.tsx";
+import { ProposalPreview, proposalSubject, writes } from "./memoryProposalPreview.tsx";
 import type {
   ConsolDelay,
   ConsolProposal,
@@ -46,7 +46,7 @@ export function humanDuration(s: string | undefined): string {
 
 /** A proposal with nothing the Agent can publish (every item is a note) is advice: it has no Approve. */
 export const isAdviceOnly = (p: Pick<ConsolProposal, "items">): boolean =>
-  !p.items.some((i) => i.op === "patch" || i.op === "create" || i.op === "replace");
+  !p.items.some(writes);
 
 export type StatusFilter = "all" | "pending" | "decided" | "expired";
 const DECIDED = new Set(["approved", "rejected", "refused", "partial"]);
@@ -282,7 +282,7 @@ function ProposalDetail({
   const decide = async (verb: "approve" | "reject" | "retry") => {
     if (!view || inFlight.current) return;
     if (verb === "approve") {
-      const targets = view.items.filter((i) => i.op === "patch" || i.op === "create" || i.op === "replace");
+      const targets = view.items.filter(writes);
       const ok = await askConfirm({
         title: tr("mem.cs_approve_title"),
         body: (
