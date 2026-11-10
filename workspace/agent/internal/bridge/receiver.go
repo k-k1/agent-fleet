@@ -247,11 +247,22 @@ func routeInbound(m gatewayMessage, token, boundUser string, deps ReceiverDeps) 
 // then acks (👀 + typing) on success or posts a localized reason on failure.
 func routeSessionInbound(m gatewayMessage, name, text, token string, deps ReceiverDeps) {
 	if c, ok := parseChatCommand(text); ok && deps.handlesCommand(c) {
-		out := runChatCommand(c, cmdEnv{store: discordThreads, thread: m.ChannelID, session: name,
-			source: sourceDiscord, key: "discord:" + m.ID, deps: deps})
-		if _, e := discordPostMessage(token, m.ChannelID, out); e != nil {
-			log.Printf("bridge: post !%s result to %s failed: %v", c.name, name, e)
+		env := cmdEnv{store: discordThreads, thread: m.ChannelID, session: name,
+			source: sourceDiscord, key: "discord:" + m.ID, deps: deps,
+			notify: func(prev threadRef, t string) { _, _ = discordPostMessage(token, prev.Thread, t) }}
+		post := func(out string) {
+			if _, e := discordPostMessage(token, m.ChannelID, out); e != nil {
+				log.Printf("bridge: post !%s result to %s failed: %v", c.name, name, e)
+			}
 		}
+		if c.name == "start" {
+			// A create takes seconds; running it on the dispatcher worker would stall every
+			// other reply and button click behind it. Ack now, answer when it lands.
+			_ = DiscordAddReaction(token, m.ChannelID, m.ID, receiptEmoji)
+			go func() { post(runChatCommand(c, env)) }()
+			return
+		}
+		post(runChatCommand(c, env))
 		return
 	}
 	reason, err := deps.Inject(name, text, sourceDiscord)

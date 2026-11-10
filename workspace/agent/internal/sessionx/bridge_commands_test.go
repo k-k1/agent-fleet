@@ -92,3 +92,32 @@ func TestChatStartLaunchTaskIsBadged(t *testing.T) {
 		t.Fatal("a request body must not be able to set chatSource")
 	}
 }
+
+// A redelivered chat event whose first create is still launching is "starting", not a failure
+// (a failure message invites a retype, which would start a second session), and a created
+// session whose body carries no name still gets a sensible reply.
+func TestStartFromChatReplies(t *testing.T) {
+	chatCmdFixture(t)
+	session.WriteMeta(session.Meta{Name: "cc-src", Dir: t.TempDir(), Kind: session.KindClaude})
+	prev := createChatTarget
+	t.Cleanup(func() { createChatTarget = prev })
+
+	createChatTarget = func(CreateReq) (int, []byte) {
+		return http.StatusConflict, []byte(`{"code":"create_in_progress"}`)
+	}
+	reply, err := startFromChat("cc-src", "x", "slack", "k")
+	if err != nil || !strings.Contains(reply, "starting") && !strings.Contains(reply, "開始中") {
+		t.Fatalf("in-progress reply = %q, %v", reply, err)
+	}
+
+	createChatTarget = func(CreateReq) (int, []byte) { return http.StatusCreated, []byte(`{}`) }
+	reply, err = startFromChat("cc-src", "x", "slack", "k2")
+	if err != nil || strings.Contains(reply, "session  ") || strings.Contains(reply, "セッション  ") {
+		t.Fatalf("nameless reply = %q, %v", reply, err)
+	}
+
+	createChatTarget = func(CreateReq) (int, []byte) { return http.StatusBadRequest, []byte(`{"code":"bad_dir"}`) }
+	if _, err = startFromChat("cc-src", "x", "slack", "k3"); err == nil {
+		t.Fatal("a refused create must be an error")
+	}
+}

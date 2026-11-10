@@ -158,7 +158,7 @@ Appended; nothing above is rewritten. Two commands now run on the path a reply a
 bound user inside a known session thread — so contract 5 (person-only, no channel listening) is unchanged and no new
 entry point exists.
 
-- **Syntax**: `!start <prompt>` and `!attach <session>` (`/` also accepted; Slack swallows a leading `/`). A command is
+- **Syntax**: `!start <prompt>` and `!attach <session>` (only `!`: Slack swallows a leading `/`, and a `/` form on Discord would eat replies like "/start the server"; text that must start with `!start` literally is prefixed with any character). A command is
   recognised only when the deployment wired it, otherwise the text is injected as an ordinary reply.
 - **`!start`** creates, in-process (the move's create path), a session of the *thread session's own* kind, model,
   driver and working copy with the prompt as the launch task. Nothing but the prompt comes from the message, so a chat
@@ -173,4 +173,8 @@ entry point exists.
   serialized per provider, so a reply written after the confirmation resolves to the new session. A delivery already
   past its lookup can still land once on the old thread (accepted). The sender's thread-seeding write no longer
   overwrites a same-channel mapping, so a rebind that lands while a thread is being created is not undone.
+- `!start` runs off the dispatcher worker (a create takes seconds and would stall every reply and button click):
+  👀 at once, result posted when it lands. An in-flight duplicate answers "already starting". The key is not durable, so a
+  redelivery across an Agent restart can start twice (a durable key would accumulate with nobody to look it up).
+  The thread evicted by `!attach` gets one notice that it no longer takes replies.
 - Out of scope: attaching an operator thread, handing a Terminal (CLI) session off into a thread, new providers, UI.

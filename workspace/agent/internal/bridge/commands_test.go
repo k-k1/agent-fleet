@@ -8,26 +8,37 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // captureDiscordPosts is captureDiscord that also keeps request bodies, so a posted reply's
 // text can be asserted.
-func captureDiscordPosts(t *testing.T) *[]string {
+type postLog struct {
+	mu sync.Mutex
+	l  []string
+}
+
+func (p *postLog) all() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.l...)
+}
+
+func captureDiscordPosts(t *testing.T) *postLog {
 	t.Helper()
-	var mu sync.Mutex
-	var posts []string
+	posts := &postLog{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		posts = append(posts, r.Method+" "+r.URL.Path+" "+string(b))
-		mu.Unlock()
+		posts.mu.Lock()
+		posts.l = append(posts.l, r.Method+" "+r.URL.Path+" "+string(b))
+		posts.mu.Unlock()
 		_, _ = w.Write([]byte(`{"id":"m1"}`))
 	}))
 	t.Cleanup(srv.Close)
 	old := discordAPIBase
 	discordAPIBase = srv.URL
 	t.Cleanup(func() { discordAPIBase = old })
-	return &posts
+	return posts
 }
 
 func cmdMsg(author, channel, content string) gatewayMessage {
@@ -42,7 +53,6 @@ func cmdMsg(author, channel, content string) gatewayMessage {
 func TestParseChatCommand(t *testing.T) {
 	for in, want := range map[string]chatCommand{
 		"!attach sess-b":      {"attach", "sess-b"},
-		"/attach  sess-b ":    {"attach", "sess-b"},
 		"!START fix the bug":  {"start", "fix the bug"},
 		"!start":              {"start", ""},
 		"!start line1\nline2": {"start", "line1\nline2"},
@@ -51,7 +61,7 @@ func TestParseChatCommand(t *testing.T) {
 			t.Errorf("parseChatCommand(%q) = %+v,%v; want %+v", in, got, ok, want)
 		}
 	}
-	for _, in := range []string{"attach sess-b", "!starter x", "please !start", "!attached", "hello"} {
+	for _, in := range []string{"attach sess-b", "!starter x", "please !start", "!attached", "hello", "/attach sess-b", "/start the server", "`!start` literally"} {
 		if _, ok := parseChatCommand(in); ok {
 			t.Errorf("parseChatCommand(%q) must not be a command", in)
 		}
@@ -99,8 +109,8 @@ func TestAttachRebindsThread(t *testing.T) {
 	if _, ok := ThreadToSession("T-b"); ok {
 		t.Fatal("sess-b's previous thread must stop routing")
 	}
-	if len(*posts) != 1 || !strings.Contains((*posts)[0], "POST /channels/T-a/messages") {
-		t.Fatalf("confirmation not posted in the thread: %v", *posts)
+	if !strings.Contains(strings.Join(posts.all(), "\n"), "POST /channels/T-a/messages") {
+		t.Fatalf("confirmation not posted in the thread: %v", posts.all())
 	}
 
 	routeInbound(cmdMsg("U1", "T-a", "continue"), "tok", "U1", deps)
@@ -131,8 +141,8 @@ func TestAttachAuthorization(t *testing.T) {
 	} {
 		routeInbound(m, "tok", "U1", deps)
 	}
-	if started != 0 || len(injected) != 0 || len(*posts) != 0 {
-		t.Fatalf("gate leaked: started=%d injected=%v posts=%v", started, injected, *posts)
+	if started != 0 || len(injected) != 0 || len(posts.all()) != 0 {
+		t.Fatalf("gate leaked: started=%d injected=%v posts=%v", started, injected, posts.all())
 	}
 	if loadThreads()["sess-a"].Thread != "T-a" {
 		t.Fatalf("binding changed: %v", loadThreads())
@@ -142,8 +152,8 @@ func TestAttachAuthorization(t *testing.T) {
 	if loadThreads()["sess-a"].Thread != "T-a" {
 		t.Fatalf("a refused target must not rebind: %v", loadThreads())
 	}
-	if len(*posts) != 1 || !strings.Contains((*posts)[0], "REFUSED") {
-		t.Fatalf("the refusal reason must be posted: %v", *posts)
+	if len(posts.all()) != 1 || !strings.Contains((posts.all())[0], "REFUSED") {
+		t.Fatalf("the refusal reason must be posted: %v", posts.all())
 	}
 }
 
@@ -164,23 +174,64 @@ func TestStartCommand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	saveThreads(threadMap{"sess-a": {Channel: "C1", Thread: "T-a"}})
 	posts := captureDiscordPosts(t)
-	var injected, started []string
+	var injected []string
 	deps := attachDeps(&injected)
+	startedCh := make(chan string, 2)
+	release := make(chan struct{})
 	deps.Start = func(from, prompt, source, key string) (string, error) {
-		started = append(started, from+"|"+prompt+"|"+source+"|"+key)
+		startedCh <- from + "|" + prompt + "|" + source + "|" + key
+		<-release
 		return "STARTED-OK", nil
 	}
+	// A slow create must not hold the dispatcher worker: routeInbound returns while Start is
+	// still blocked, so the next message (here a plain reply) is handled meanwhile.
 	routeInbound(cmdMsg("U1", "T-a", "!start fix the bug"), "tok", "U1", deps)
-	if len(started) != 1 || started[0] != "sess-a|fix the bug|discord|discord:MSG1" || len(injected) != 0 {
-		t.Fatalf("started=%v injected=%v", started, injected)
+	if got := <-startedCh; got != "sess-a|fix the bug|discord|discord:MSG1" {
+		t.Fatalf("start args = %q", got)
 	}
-	if len(*posts) != 1 || !strings.Contains((*posts)[0], "STARTED-OK") {
-		t.Fatalf("result not posted: %v", *posts)
+	routeInbound(cmdMsg("U1", "T-a", "meanwhile"), "tok", "U1", deps)
+	if len(injected) != 1 || injected[0] != "sess-a|meanwhile|discord" {
+		t.Fatalf("the dispatcher was blocked behind !start: %v", injected)
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(strings.Join(posts.all(), "\n"), "STARTED-OK") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(strings.Join(posts.all(), "\n"), "STARTED-OK") {
+		t.Fatalf("result not posted: %v", posts.all())
 	}
 	// "!start" with no prompt is usage, not a session.
 	routeInbound(cmdMsg("U1", "T-a", "!start"), "tok", "U1", deps)
-	if len(started) != 1 {
-		t.Fatalf("empty !start must not start: %v", started)
+	select {
+	case got := <-startedCh:
+		t.Fatalf("empty !start must not start: %v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	// Let the usage reply land before the test restores discordAPIBase under it.
+	for i := 0; i < 500 && !strings.Contains(strings.Join(posts.all(), "\n"), "Usage"); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Rebinding tells the evicted thread, instead of leaving later messages there to vanish.
+func TestAttachNotifiesEvictedThread(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	saveThreads(threadMap{"sess-a": {Channel: "C1", Thread: "T-a"}, "sess-b": {Channel: "C1", Thread: "T-b"}})
+	posts := captureDiscordPosts(t)
+	var injected []string
+	routeInbound(cmdMsg("U1", "T-a", "!attach sess-b"), "tok", "U1", attachDeps(&injected))
+	var toEvicted bool
+	for _, p := range posts.all() {
+		if strings.Contains(p, "POST /channels/T-b/messages") {
+			toEvicted = true
+		}
+	}
+	if !toEvicted {
+		t.Fatalf("the evicted thread T-b was not told: %v", posts.all())
 	}
 }
 

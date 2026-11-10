@@ -11,10 +11,12 @@ import (
 	"strings"
 )
 
-// chatCommandRe matches "!attach x" / "!start x". "/" is accepted too for Discord, but Slack
-// swallows a leading "/" as a slash command before the bot ever sees it, so "!" is the form
-// the guide documents. The command word must be the whole first token ("!starter" is text).
-var chatCommandRe = regexp.MustCompile(`(?is)^[!/](attach|start)(?:\s+(.*))?$`)
+// chatCommandRe matches "!attach x" / "!start x". Only "!" is a command prefix: Slack swallows
+// a leading "/" as a slash command before the bot sees it, and a "/" form on Discord would eat
+// ordinary replies like "/start the server". The command word must be the whole first token
+// ("!starter" is text); a reply that has to begin with "!start" literally can be prefixed with
+// a backtick or any other character.
+var chatCommandRe = regexp.MustCompile(`(?is)^!(attach|start)(?:\s+(.*))?$`)
 
 type chatCommand struct {
 	name string // "attach" | "start"
@@ -37,6 +39,9 @@ type cmdEnv struct {
 	source  string // sourceDiscord / sourceSlack
 	key     string // provider message identity, for create idempotency
 	deps    ReceiverDeps
+	// notify posts a line into another thread of the same provider (the one a rebind
+	// evicted). Best-effort.
+	notify func(prev threadRef, text string)
 }
 
 func (d ReceiverDeps) say(ja, en string) string {
@@ -98,6 +103,11 @@ func runAttach(arg string, e cmdEnv) string {
 		"✓ This thread is now bound to "+to+". Replies here go to "+to+" (notifications for "+e.session+" will start a new thread)")
 	if hadPrev && prev.Thread != "" {
 		msg += d.say("\n"+to+" の元のスレッドへの返信はもう届きません", "\n"+to+"'s previous thread no longer receives replies")
+		if e.notify != nil {
+			// Without this a message written in the evicted thread is dropped in silence.
+			e.notify(prev, d.say("ℹ️ このスレッドは別のスレッドに置き換えられ、返信を受け付けなくなりました",
+				"ℹ️ This thread was replaced by another one and no longer receives replies"))
+		}
 	}
 	return msg
 }

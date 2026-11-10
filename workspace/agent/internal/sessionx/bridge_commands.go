@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -69,6 +70,12 @@ func startFromChat(from, prompt, source, key string) (string, error) {
 		InitialPrompt: prompt, IdempotencyKey: key, chatSource: source,
 	}
 	status, body := createChatTarget(req)
+	if status == http.StatusConflict && strings.Contains(string(body), "create_in_progress") {
+		// The same chat message is already being launched (a redelivered event): that is not
+		// a failure, and telling the member so would invite a retype that starts a second one.
+		return Fb(en, "⏳ 同じ指示のセッションを開始中です。通知を待ってください",
+			"⏳ That session is already starting — wait for its notification"), nil
+	}
 	if status != http.StatusCreated && status != http.StatusOK {
 		return Fb(en, "⚠️ セッションを開始できませんでした", "⚠️ Couldn't start the session"),
 			fmt.Errorf("create from chat: status %d: %s", status, body)
@@ -77,6 +84,10 @@ func startFromChat(from, prompt, source, key string) (string, error) {
 		Name string `json:"name"`
 	}
 	_ = json.Unmarshal(body, &made)
+	if made.Name == "" {
+		return Fb(en, "✓ 新しいセッションを開始しました。通知は専用のスレッドに出ます",
+			"✓ Started a new session — its notifications will open their own thread"), nil
+	}
 	return Fb(en, "✓ 新しいセッション "+made.Name+" を開始しました。通知は専用のスレッドに出ます",
 		"✓ Started session "+made.Name+" — its notifications will open their own thread"), nil
 }

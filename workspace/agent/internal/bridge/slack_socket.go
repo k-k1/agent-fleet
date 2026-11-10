@@ -380,11 +380,23 @@ func routeSlackInbound(m slackInboundMsg, creds slackReceiveCreds, deps Receiver
 // typing indicator, so the receipt + the eventual answer are the only feedback.
 func routeSlackSession(m slackInboundMsg, name, text string, creds slackReceiveCreds, deps ReceiverDeps) {
 	if c, ok := parseChatCommand(text); ok && deps.handlesCommand(c) {
-		out := runChatCommand(c, cmdEnv{store: slackThreads, thread: m.ThreadTS, session: name,
-			source: sourceSlack, key: "slack:" + m.Channel + ":" + m.TS, deps: deps})
-		if _, e := slackPostMessage(creds.botToken, m.Channel, m.ThreadTS, out, nil); e != nil {
-			log.Printf("bridge: post !%s result to slack %s failed: %v", c.name, name, e)
+		env := cmdEnv{store: slackThreads, thread: m.ThreadTS, session: name,
+			source: sourceSlack, key: "slack:" + m.Channel + ":" + m.TS, deps: deps,
+			notify: func(prev threadRef, t string) {
+				_, _ = slackPostMessage(creds.botToken, prev.Channel, prev.Thread, t, nil)
+			}}
+		post := func(out string) {
+			if _, e := slackPostMessage(creds.botToken, m.Channel, m.ThreadTS, out, nil); e != nil {
+				log.Printf("bridge: post !%s result to slack %s failed: %v", c.name, name, e)
+			}
 		}
+		if c.name == "start" {
+			// See routeSessionInbound: a create must not run on the dispatcher worker.
+			_ = SlackAddReaction(creds.botToken, m.Channel, m.TS, slackReceiptReaction)
+			go func() { post(runChatCommand(c, env)) }()
+			return
+		}
+		post(runChatCommand(c, env))
 		return
 	}
 	reason, err := deps.Inject(name, text, sourceSlack)
