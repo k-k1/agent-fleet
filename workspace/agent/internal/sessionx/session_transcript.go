@@ -75,7 +75,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// <sid>.jsonl; they normalize their native store into transcript.Turns via transcript(),
 	// and the generic windower pages over those. claude keeps its own line-cursor path
 	// below (battle-tested reset/stub/compaction handling — left untouched).
-	if meta.Kind != session.KindClaude {
+	if !transcriptTraitsOf(meta.Kind).ownMessagesPath {
 		handleGenericMessages(w, r, meta, alive, state)
 		return
 	}
@@ -523,9 +523,9 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// keystrokes — and its "Update now" exits the process, killing the tmux session.
 	// Surface it so the mirror blocks the composer and offers the skip choices,
 	// the same treatment as claude's startup resume menu.
-	if alive && meta.Kind == session.KindCodex {
-		if ts := codexTerminalState(meta.Name); ts != "" {
-			resp["terminalState"] = ts
+	if ts := transcriptTraitsOf(meta.Kind).terminalState; alive && ts != nil {
+		if s := ts(meta.Name); s != "" {
+			resp["terminalState"] = s
 		}
 	}
 	// Current mode (plan / normal) so the Console shows the plan indicator and toggle.
@@ -542,17 +542,13 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 			case "plan":
 				resp["mode"] = "Plan"
 			case "normal":
-				if meta.Kind == session.KindOpencode {
-					resp["mode"] = "Build" // opencode's non-plan agent name (same vocabulary as Console's defaultModeLabel)
-				} else {
-					resp["mode"] = "Default"
-				}
+				resp["mode"] = normalModeLabelOf(meta.Kind)
 			}
 		} else if pm := PaneMode(meta.Kind, session.TmuxName(meta.Name)); pm != "" {
 			// Codex 0.145.0 no longer prints "Plan mode" in the footer. PaneMode still
 			// returns Default as the composer-readiness signal; mirror-driven /plan and
 			// BTab changes are persisted in meta by rememberCodexTUIMode.
-			if meta.Kind == session.KindCodex && pm == "Default" && meta.Mode == "plan" {
+			if transcriptTraitsOf(meta.Kind).planInMeta && pm == "Default" && meta.Mode == "plan" {
 				resp["mode"] = "Plan"
 			} else {
 				resp["mode"] = pm
