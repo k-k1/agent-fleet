@@ -37,13 +37,13 @@ untrusted input, hard streaming limits, a durable job, storage and cleanup, secr
   (`agent/internal/agents/codex/transcript.go:109`) is unexported and feeds a `rolloutParser` line by
   line (`:172`). Neither can be cancelled or bounded in time.
 - **Both drop records silently.** Codex `feed` returns on a line that does not decode (`:187`) and
-  drops every message whose role is not `user` or `assistant` (`:657`, "developer/system
+  drops every message whose role is not `user` or `assistant` (`:658`, "developer/system
   instructions — noise"). Claude's `parseTurn` (`claude/transcript.go:692`) returns `ok=false` for
   tool results, summaries and bookkeeping. For a session of this Agent that is the right filter; for
   an upload it means a record can be refused or dropped with nobody told.
 - **Reading is unbounded.** The claude reader is `os.ReadFile` plus a split
-  (`claude/transcript.go:289`). A codex rollout "reached 147 MB in one hour" and one full parse
-  "measured 3.9 s of CPU" (`codex/transcript.go:124`); that is the only parse-cost measurement we
+  (`claude/transcript.go:290`). A codex rollout "reached 147 MB in one hour" and one full parse
+  "measured 3.9 s of CPU" (`codex/transcript.go:124-125`); that is the only parse-cost measurement we
   have, it is codex's, and it was taken on a trusted file.
 - **0115's size target is soft.** `handoverSizeTarget = 256 << 10` (`session_handover.go:34`):
   user messages, the last 3 turns and the leading sections are never cut, so the file "can still
@@ -51,7 +51,7 @@ untrusted input, hard streaming limits, a durable job, storage and cleanup, secr
   That is a quality knob, not a limit.
 - **Secrets are scrubbed once, at render.** `renderHandover` takes `sc := bridge.ScrubSecrets`
   (`session_handover.go:478`). `ScrubSecrets(s string) string` (`agent/internal/bridge/fulltext.go:104`)
-  returns text only and is documented "best-effort" (`:99`); it cannot say what it found.
+  returns text only and is documented "best-effort" (`:101`); it cannot say what it found.
 - **`fstore` cannot carry a durable record.** `Store.Write` stages a temp file and renames it
   (`agent/internal/fstore/fstore.go:43`) with no `Sync` of the file or the directory; `Read` returns
   `ok=false` for a missing file, an empty file and a decode failure alike (`:67`). Both are right for
@@ -74,7 +74,7 @@ untrusted input, hard streaming limits, a durable job, storage and cleanup, secr
   (`agent/internal/memberorigin/memberorigin.go:255`) spools a multipart body to a file while
   hashing it, verifies a Control-Plane-signed mark over the hash, and refuses an unmarked request
   before writing anything. The memory-bundle import uses it
-  (`agent/internal/memoryx/memory_handlers.go:248`); the Control Plane spools at most 130 MiB of an
+  (`agent/internal/memoryx/memory_handlers.go:247`); the Control Plane spools at most 130 MiB of an
   upload (`control-plane/member_origin.go:66`, which is why the Agent's own ceiling is 128 MiB,
   `agent/internal/memoryx/memory_import.go:53`).
 
@@ -87,7 +87,7 @@ untrusted input, hard streaming limits, a durable job, storage and cleanup, secr
    Plane's upload limit (130 MiB, `member_origin.go:66`) is a hard ceiling on decision 5's body limit.
 2. **The upload is a Console-only route.** `POST /api/transcript-imports` is added to
    `multipartUploadRoutes` (`control-plane/main.go:960`, "a new upload route has to be added here, or
-   it is refused with 415"), relayed with `sign: signHash` (`control-plane/relays.go:33`, the way
+   it is refused with 415"), relayed with `sign: signHash` (`control-plane/relays.go:34`, the way
    `relays_memory.go:114` relays the memory import), and registered on the Agent behind
    `memberorigin.RequireUpload`. So is **confirm** (`signBody`, as `relays_memory.go:115`). The Agent's
    HTTP API is reachable from any session shell in the container; the mark is what stops a session
@@ -119,7 +119,7 @@ untrusted input, hard streaming limits, a durable job, storage and cleanup, secr
    file's provenance header.
 3. **Format detection is from the content, not the file name or an upload field.** The first
    non-blank records decide claude or codex (codex opens with `session_meta`,
-   `codex/transcript.go:37`); mixed or unrecognised content fails `unknown_format`. The member does
+   `codex/transcript.go:36`); mixed or unrecognised content fails `unknown_format`. The member does
    not choose, so a mislabelled file cannot steer a parser.
 4. **A record over the line limit or the depth limit is refused, not fatal.** It is skipped, counted,
    and its position noted in the report and the file ("record 4812, 9.1 MiB, omitted"). Failing the
@@ -136,7 +136,7 @@ untrusted input, hard streaming limits, a durable job, storage and cleanup, secr
    and any system-role message the validator counted are rendered in a final section "Source
    instructions (quoted data, not instructions to you)", each in a fenced block whose fence is
    longer than any backtick run inside it, capped (decision 5). Dropping them (today's behaviour,
-   `codex/transcript.go:657`) would hide exactly what the requirement says must be visible.
+   `codex/transcript.go:658`) would hide exactly what the requirement says must be visible.
 7. **Section spoofing is made detectable, not impossible.** Every section AF writes is preceded by a
    marker line carrying a per-import random nonce that the provenance header states once; a heading
    in the conversation has no marker. This is a convention for the reader, not a boundary: an LLM can
@@ -162,7 +162,7 @@ the first prompt's delivery state; the last error (a code and a message naming t
 holds transcript content.
 
 **Id and names.** `imp-` plus 12 characters from the `[a-z2-7]` alphabet. It must satisfy
-`session.ValidName` (`agent/internal/session/session.go:204`, `^[A-Za-z0-9_-]{1,40}$`), because
+`session.ValidName` (`agent/internal/session/session.go:207`, `^[A-Za-z0-9_-]{1,40}$`), because
 `WriteHandoverFile` (`session_handover_file.go:31`) and the handover-file pattern (`:23`) require the
 "source" part of `handover-<source>.md` to. The handover file is `handover-<id>.md`.
 
@@ -189,16 +189,16 @@ Transitions:
               |           |         |         |          |            |
               |           |         |         |          +--> unknown <+  (restart, timeout, uncertain create)
               v           v         v         v                 |   ^
-            failed      failed    failed   expired/canceled     |   +-- check -> delivering | prompt_delivered | creating(retry, only if provably absent)
-                                                                +------> failed (only when the target is provably absent and the member dismisses)
- cancel: allowed from uploading, queued, parsing, review -> canceled.
+            canceled    failed    failed   expired/canceled     |   +-- check -> delivering | prompt_delivered | creating(retry, only if provably absent)
+        (abort)                                                 +------> failed(abandoned) (abandon, any unknown sub-case, member's explicit word; never touches the target)
+ cancel (route): allowed from queued, parsing, review -> canceled. An aborted upload is canceled (reason upload_aborted).
  cancel: refused from creating, delivering, unknown (the target may exist; see 3.5).
 ```
 
 1. **`unknown` is a state, not a failure.** It is entered whenever the Agent cannot say whether the
    session exists or whether the prompt arrived: the Agent stopped during `creating`/`delivering`, a
    create timed out, the create's idempotency record is `unknown`
-   (`agent/internal/sessionx/session_idempotency.go:19`), or the record reads as unreadable.
+   (`agent/internal/sessionx/session_idempotency.go:23`), or the target's meta exists and cannot be read (3.4). A job *record* that cannot be read is not `unknown`: it is the separate `unreadable` row of 3.4.
    The Console shows it as "needs your attention", never as a failure, and never auto-retries it.
 2. **The target name is reserved before creation and reused on retry.** At the `review`→`creating`
    transition the Agent allocates the target name (`allocSessionName`), writes it into the job
@@ -225,15 +225,23 @@ Transitions:
      does not read** keeps `unknown` and refuses retry (ADR 0115's addendum: "a meta file that exists and does not
      read is never taken for absent"). **No meta file and no pane or
      runtime under the name** lets the job offer "retry", which creates again under the same name.
-     **No meta but a pane or runtime** is an orphan: the member is shown it and may stop it.
-   - A record that exists and does not parse is shown as `unreadable` and neither retried nor
-     deleted by the sweep; the member dismisses it explicitly.
-5. **Cancel and retry.** Cancel reaches `uploading`, `queued`, `parsing` and `review` (decision 7).
+     **No meta but a pane or runtime** is an orphan: the member is shown it and may stop it
+     (the ordinary stop); `check` then finds nothing and offers "retry", or the member abandons the
+     job (3.5).
+   - A job *record* that exists and does not parse is not a state: it is listed as `unreadable`,
+     never retried and never deleted by the sweep; the member dismisses it explicitly (`DELETE`).
+     This is separate from the target's meta above, which keeps the job `unknown`.
+5. **Cancel and retry.** Cancel reaches `queued`, `parsing` and `review` (decision 7; an upload is cancelled by aborting it).
    Once a name is reserved the target may exist, so cancel from `creating`/`delivering`/`unknown` is
    refused with the target's name; the member stops or deletes that session the ordinary way
    (the same stance as 0115's "cancel refuses while the target exists"). Retry exists only for
    `creating`/`unknown` with the target provably absent, and for a first prompt that was not
-   delivered (`deliver`, below). A `failed` parse is retried by dropping the file again: the raw body
+   delivered (`deliver`, below). **`unknown` always has a way out: `abandon`** (`DELETE` with
+   `abandon=1`, marked) ends the job as `failed` (`abandoned`) in every sub-case, including an
+   orphan and an unreadable meta, on the member's explicit word after the dialog has named the target.
+   It deletes nothing and stops nothing; the name stays held while any meta or pane carries it, and
+   the record then follows the 7-day retention. Without it three `unknown` jobs would fill the
+   pending limit (decision 5) for good. A `failed` parse is retried by dropping the file again: the raw body
    is already gone (decision 4.4).
 6. **The first prompt is never resent by itself.** As in 0115 (`session_move_deliver.go:30`), a
    delivery of unknown outcome stays `delivering` until the member presses "send again"; an unknown
@@ -244,7 +252,7 @@ Transitions:
    worktree from that SHA, and **checks `HEAD` equals it before the first prompt is typed**. A
    mismatch fails the job with `head_mismatch`; the session is left, named in the error. This is
    needed because `gitx.NewWorktreeStartPoint` keeps a local branch of the same name as is and does
-   not fetch (`agent/internal/gitx/git.go:926`, "A local branch … keeps the start point the bare name
+   not fetch (`agent/internal/gitx/git.go:932`, "A local branch, tag, commit or full ref keeps the start point the bare name
    has always had"), so a branch name alone can start on a stale tip. The create therefore does not
    carry `initial_prompt`; the held prompt is delivered by the job after the check, through the
    mechanism 0115 uses for a move target's first prompt (`moveDelivery`, recorded by target until
@@ -253,7 +261,7 @@ Transitions:
    They are counted in a new `importJobs` field on `GET /sessions` (`agent/internal/sessionx/session_handlers.go:280`,
    next to `repoJobs`; the Agent's `deps` carries it like `RepoJobsRunning`, `deps.go:64`), read by
    the Control Plane (`control-plane/agent_client.go:303`, `jobsRunning()` at `:322`), and shown as an
-   idle-stop holder of its own kind (`control-plane/idle_forecast.go:86`, where `repojob` is). `review`
+   idle-stop holder of its own kind (`control-plane/idle_forecast.go:90`, where `repojob` is). `review`
    is **not** running work: nothing executes, the raw body is gone, and a record waiting up to a day for
    a person must not keep a workspace warm (0059 refused the same thing for the Console's polling).
    The staged candidate is under the state directory, which a stop keeps.
@@ -265,7 +273,7 @@ Transitions:
    and `candidate.md` (each 0600). Neither is under `~/.af-work` (boot cleanup, above), nor `~/repos`
    ("recreate" deletes it; a job outliving its working copies is the point), nor `/tmp`. The state
    directory is excluded from the session scan by construction. Both subdirectories join the list in
-   `agent/internal/statemig/statemig.go:62` (its comment: "add to that list when adding a store here").
+   `agent/internal/statemig/statemig.go:62` (`Entries`, an allowlist; `statemig_drift_test.go` fails when a store under `AgentStateDir` is not named there).
 2. **Never logged.** No line of the body, no record content and no file name beyond the sanitized base
    name (`filepath.Base`, as `fs.go:647`) is logged or audited. The audit entry carries the id, the
    byte size and the outcome.
@@ -281,6 +289,11 @@ Transitions:
    scrubbed and bounded form and nothing after the review needs the original. A job that fails or is
    cancelled removes its raw body in the same step. A hard backstop: a boot sweep and an hourly timer
    remove any `raw` older than 2 hours whatever its job says, and any data directory with no record.
+   `parsing` starts by checking the staged file against the recorded size and sha256; a mismatch is
+   `failed` (`interrupted`) with the staging removed. The 0700/0600 modes keep other users out, not
+   other processes of the Agent's uid (a session shell): that is the limit ADR 0113 documents for
+   `RequireUpload`'s spool (`memberorigin.go:250`), inherited here, and the re-check turns a rewrite
+   between hashing and parsing into a visible failure rather than a parsed substitute.
    Consequence: an edit of the choice of target after review does not re-render (4.5 keeps
    the candidate target-independent).
 5. **The candidate is target-independent; the final file is assembled at write time.** It holds the
@@ -290,7 +303,7 @@ Transitions:
    `WriteHandoverFile` (`session_handover_file.go:31`: complete and synced before it returns).
 6. **The handover joins the target's lifecycle for free, and a test pins it.** The file name matches
    the handover pattern (`session_handover_file.go:23`), so trashing the target archives it
-   (`agent/cleanup_ops.go:394` → `ListHandoverFiles`, `:60`), restoring puts it back, and a later
+   (`agent/cleanup_ops.go:395` → `ListHandoverFiles`, `:60`), restoring puts it back, and a later
    move from the target copies it forward (`CopyHandoverChain`, `:105`). Phase 4 adds the test that an
    imported target survives trash/restore and an A→B chain; it does not add code for it.
 7. **Retention of the job record.** A terminal record is kept 7 days (the value of
@@ -311,14 +324,15 @@ code `limit_<name>` and a message that names the limit, its value and what was s
 | Upload receive time | 10 min | request deadline | `limit_upload_time` |
 | Line length | 8 MiB | bounded line reader; the rest of the line is discarded unread | line **refused** (2.4), not fatal |
 | Line count | 200,000 | counted as read | `limit_lines` |
-| Nesting depth | 64 | byte scan of each line, no decode | line **refused** |
+| Nesting depth | 64 | string-aware scan of each line, no decode (5.1) | line **refused** |
 | Refused records | 1,000 | counted | `limit_refused_records` |
+| `ImportReport` size | 200 distinct record types, 64 characters per type name, 20 line numbers per refusal reason | counted as built; the rest folds into an `other` count | folded, not fatal |
 | Parse time (validate + normalize + render) | 60 s | `context.WithTimeout`, checked every 256 lines and in the render loops | `limit_parse_time` |
 | Rendered output (hard) | 8 MiB | counting writer under the render builder: the build stops at the limit | `limit_rendered_bytes` |
 | Quoted source-instructions section | 32 KiB | cut with a visible marker | cut, not fatal |
 | Concurrent parses per workspace | 1 (others `queued`) | semaphore | queue |
 | Queued + parsing jobs | 3 | admission | 429 `limit_queue` |
-| Staged bytes per workspace | 256 MiB | sum of `raw` + `candidate.md` over data directories, checked at admission with the declared length and while receiving | `limit_staged_bytes` |
+| Staged bytes per workspace | 256 MiB | a reservation taken under one lock at admission (the declared length, or the body limit when none), trimmed to the real size when the body ends and released with the data; also checked while receiving | `limit_staged_bytes` |
 | Non-terminal jobs per member (a workspace is one member's) | 3 (`review` counts, `unknown` counts) | admission | 429 `limit_pending_jobs` |
 | `review` TTL | 24 h | sweep | `expired` |
 | Raw body TTL (backstop) | 2 h | sweep | file removed |
@@ -328,7 +342,7 @@ How they are held:
 
 1. **One bounded line reader**, in a new package `agent/internal/transcriptimport`, replaces
    `os.ReadFile` + `bytes.Split` for imports: it reads with `bufio.Reader` + `ReadSlice`, never
-   holds more than one line-limit of an over-long line, and counts bytes, lines and depth as it goes,
+   holds more than one line-limit of an over-long line, and counts bytes, lines and depth as it goes (the depth scan tracks whether it is inside a JSON string and honours backslash escapes, so brackets in a tool output's text do not count; it never builds a value),
    so a limit trips before the next line is stored. It produces the `[][]byte` the existing
    normalizers take, so the normalizers' input is bounded by the body limit by construction.
 2. **The rendered output is bounded while it is built**, not after: `renderHandover`'s
@@ -341,7 +355,7 @@ How they are held:
    measurement of peak RSS on hostile fixtures at the body cap. The rule it applies: if that peak
    exceeds a quarter of `memory.max` on the smallest workspace size, parsing moves into a child
    process with its own limit; otherwise it stays in the Agent.
-4. **Measured so far:** nothing for this feature. The 3.9 s / 147 MB figure (`codex/transcript.go:124`)
+4. **Measured so far:** nothing for this feature. The 3.9 s / 147 MB figure (`codex/transcript.go:124-125`)
    is codex, trusted, and is the only basis for the 60 s parse time (about 15× on a file twice the
    body cap). Claude has no figure.
 
@@ -359,7 +373,7 @@ How they are held:
    Control Plane (which spools the upload while relaying it) and sat in the Agent's staging file until
    `parsing` ended. The dialog says this in a sentence, before the member drops the file where
    possible (a one-line note on the drop zone) and again on the review. The scrub is best-effort
-   (`fulltext.go:99`: it can miss a secret and can over-redact a harmless token); the dialog says that
+   (`fulltext.go:101`: it can miss a secret and can over-redact a harmless token); the dialog says that
    too, so that "scrubbed" is not read as "safe to share".
 4. Whether a finding must be acknowledged before confirm is a product decision (open question 3).
 
@@ -375,9 +389,11 @@ How they are held:
    existing function becomes a wrapper with `context.Background()`), and a context check in
    `BuildHandover`/`RenderHandover`'s loops. A cancelled call returns `ctx.Err()` and the job removes
    its staging. The old signatures keep their callers (the mirror, usage, 0115's move) untouched.
-3. **The upload is cancelled by the request.** A closed connection or the member's cancel aborts the
-   counting reader; the partial staging is removed and the record, if written, goes to `failed`
-   (`canceled` when the member asked).
+3. **The upload is cancelled by the request.** The job record is written, synced, when the body
+   starts arriving. A closed connection aborts the counting reader; the staging is removed and the
+   record goes to `canceled` (`upload_aborted`). The client learns the id only from the `202`, so
+   aborting the fetch is the one way to cancel an upload, and a network drop is indistinguishable
+   from it; both end the same way.
 4. **Cancel is a request, and says what it did.** After `creating` begins it is refused (3.5): a
    created session is not something a cancel can un-create without the member's explicit delete.
 
@@ -395,11 +411,13 @@ starts a cold workspace, `:1230`); the upload starts it too, since the Agent mus
 | `GET /api/transcript-imports/{id}` | the job: state, report, suggestions (`cwd`, `gitBranch`), target, errors | — | — |
 | `GET /api/transcript-imports/{id}/preview` | scrubbed head of `candidate.md` (bounded) and the finding counts | — | — |
 | `POST /api/transcript-imports/{id}/confirm` `{repo, branch, commit, kind, model?, driver?, title?, ack_findings?}` | reserve the name, write the handover, create the session; `202` | `signBody` | `transcript_import.confirm` (id, target) |
-| `POST /api/transcript-imports/{id}/cancel` | decision 7 | — | `transcript_import.cancel` |
-| `POST /api/transcript-imports/{id}/check` | reconcile an `unknown` job (3.4) | — | — |
+| `POST /api/transcript-imports/{id}/cancel` | decision 7 | `signBody` | `transcript_import.cancel` |
+| `POST /api/transcript-imports/{id}/check` | reconcile an `unknown` job (3.4) | `signBody` | — |
 | `POST /api/transcript-imports/{id}/retry` | create again under the same name when provably absent | `signBody` | `transcript_import.retry` |
 | `POST /api/transcript-imports/{id}/deliver` | send the held first prompt again, on the member's word (3.6) | `signBody` | `transcript_import.deliver` |
-| `DELETE /api/transcript-imports/{id}` | dismiss a terminal or `unreadable` record | — | `transcript_import.dismiss` |
+| `DELETE /api/transcript-imports/{id}[?abandon=1]` | dismiss a terminal or `unreadable` record; `abandon=1` ends an `unknown` job (3.5) | `signBody` | `transcript_import.dismiss` |
+
+Every route that changes a job carries the mark, so a session shell cannot cancel, reconcile (which can start a create) or erase a member's jobs; the reads are open.
 
 The `kind` is one of `moveTargetKinds()` (`agent/internal/sessionx/session_move.go:53`: the kinds that
 declare a measured move target), exactly 0115's set, so cursor (`not_measured`) and lcpp stay out. A
@@ -435,7 +453,7 @@ Each phase is one PR; none merges a half-working feature to users, because the C
   transition table, the tri-state load, the boot recovery sweep and the TTL sweepers, the staging
   layout, `statemig` entries; `importJobs` on `GET /sessions` and the CP holder; read-only
   `GET` routes. *Tests:* every transition allowed and every other refused; a record cut mid-write is
-  `unreadable` and never `missing`; restart in each non-terminal state lands where 3.4 says;
+  `unreadable` and never `missing`; an unreadable record is an `unreadable` row, not `unknown`; an aborted upload ends `canceled`; `abandon` ends an `unknown` job in every sub-case; restart in each non-terminal state lands where 3.4 says;
   staging with no record and raw older than 2 h are swept; a held job keeps the idle forecast busy and
   `review` does not.
 - **P2 — safe parse and render.** The bounded line reader; the raw-record validation layer and
@@ -445,14 +463,14 @@ Each phase is one PR; none merges a half-working feature to users, because the C
   source-instructions section; `ScrubSecretsCounted`. *Tests* on hostile fixtures: 70 MiB body,
   9 MiB line, depth 10,000, NUL and invalid UTF-8, 300,000 tiny lines, a source that fakes headings
   and tool results, a developer message with a backtick fence, a codex file with only developer
-  records, a mixed claude/codex file; each trips the limit it should and names it; cancellation
+  records, a mixed claude/codex file, a legitimate line with 70 `{` inside a string, 200,000 lines each with a distinct `type`; each trips the limit it should and names it; cancellation
   stops a parse within one check interval; no secret appears in the report. *Measurements, recorded in
   the ADR's addendum:* peak RSS and wall time at the body cap for claude and codex, which fix the
   constants and settle decision 5.3.
 - **P3 — upload and job runner.** The Agent upload route behind `RequireUpload`, the runner
   (`queued`→`parsing`→`review`), admission limits, preview, cancel, dismiss; the CP route table,
   `multipartUploadRoutes`, audit, allow-list. *Tests:* an unmarked request writes nothing; a closed
-  connection leaves no staging; two uploads parse one at a time; the over-limit paths of the table
+  connection leaves no staging; two uploads parse one at a time; two simultaneous uploads cannot together exceed the staged-bytes limit; a staged file rewritten after hashing fails at `parsing`; every changing route refuses an unmarked request; the over-limit paths of the table
   answer with the limit's name; the raw body is gone once `candidate.md` is synced and on every failure.
 - **P4 — confirm, create, deliver, recover.** Name reservation and its hold against allocation; the
   create with the durable idempotency key and no `initial_prompt`; SHA resolution, worktree from the

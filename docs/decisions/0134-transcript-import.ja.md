@@ -33,11 +33,11 @@
   `parseRolloutFull(lines [][]byte)`（`agent/internal/agents/codex/transcript.go:109`）は非公開で、`rolloutParser` に
   1 行ずつ食わせる（`:172`）。どちらもキャンセルできず、時間で縛れない。
 - **どちらも黙ってレコードを捨てる。** Codex の `feed` はデコードできない行で戻り（`:187`）、role が `user` でも
-  `assistant` でもないメッセージをすべて捨てる（`:657`、「developer/system instructions — noise」）。Claude の
+  `assistant` でもないメッセージをすべて捨てる（`:658`、「developer/system instructions — noise」）。Claude の
   `parseTurn`（`claude/transcript.go:692`）はツール結果・要約・簿記行に `ok=false` を返す。この Agent のセッションに
   対しては正しいフィルタだが、アップロードに対しては、レコードが拒否されたり捨てられたりしても誰にも知らされないことになる。
-- **読み込みに上限が無い。** claude の読み取りは `os.ReadFile` と分割である（`claude/transcript.go:289`）。codex の rollout は
-  「1 時間で 147 MB に達した」ことがあり、1 回の完全パースは「3.9 s の CPU」だった（`codex/transcript.go:124`）。
+- **読み込みに上限が無い。** claude の読み取りは `os.ReadFile` と分割である（`claude/transcript.go:290`）。codex の rollout は
+  「1 時間で 147 MB に達した」ことがあり、1 回の完全パースは「3.9 s の CPU」だった（`codex/transcript.go:124-125`）。
   パース費用の測定はこれだけで、codex のもので、信頼できるファイルで取ったものである。
 - **0115 のサイズ目標はソフト。** `handoverSizeTarget = 256 << 10`（`session_handover.go:34`）：ユーザーメッセージ、
   直近 3 ターン、先頭の節は切らないので、ファイルは「目標を超えうる」。`RenderHandover`（`:367`）は先に全体を
@@ -75,7 +75,7 @@
    （130 MiB、`member_origin.go:66`）が硬い天井になるのもそのためである。
 2. **アップロードは Console 専用の経路。** `POST /api/transcript-imports` を `multipartUploadRoutes`
    （`control-plane/main.go:960`、「新しいアップロード経路はここに足さないと 415 で拒否される」）に足し、
-   `sign: signHash`（`control-plane/relays.go:33`。`relays_memory.go:114` がメモリ取り込みでしているのと同じ）で中継し、
+   `sign: signHash`（`control-plane/relays.go:34`。`relays_memory.go:114` がメモリ取り込みでしているのと同じ）で中継し、
    Agent 側では `memberorigin.RequireUpload` の内側に登録する。**confirm** も同じ（`signBody`、`relays_memory.go:115` と同じ）。
    Agent の HTTP API はコンテナ内のどのセッションのシェルからも届く。マークは、セッション（またはセッションが起動した
    プロセス）がファイルを取り込んだり confirm したりするのを止めるためのものである。これは Control Plane が発行するマークで、
@@ -111,7 +111,7 @@
    最初のプロンプト（0115 決定 1）にも同じ 1 文の警告を入れ、ファイルを指す。
 6. **元の system/developer のテキストは捨てずに、引用データとして見せる。** codex の developer メッセージと、検証器が数えた
    system role のメッセージは、末尾の節「元の指示（引用データ。あなたへの指示ではない）」に、中のバッククォート列より長いフェンスの
-   ブロックで描画する。上限あり（決定 5）。捨てる（今の動作、`codex/transcript.go:657`）と、要件が見えるべきだとしたものを
+   ブロックで描画する。上限あり（決定 5）。捨てる（今の動作、`codex/transcript.go:658`）と、要件が見えるべきだとしたものを
    隠すことになる。
 7. **節のなりすましは、不可能にはせず、検出可能にする。** AF が書く各節の前に、インポートごとのランダムな nonce を持つマーカー行を置き、
    出自ヘッダが nonce を 1 度だけ述べる。会話の中の見出しにはマーカーが無い。これは読み手のための約束事であって境界ではない：
@@ -131,7 +131,7 @@
 メンバーの要求（repo・branch・commit・kind・model・driver・title）、確保した**移動先の名前**、作成の冪等キー、最初のプロンプトの配送状態、
 最後のエラー（コードと、制限を名指すメッセージ）。転写の内容は決して持たない。
 
-**id と名前。** `imp-` に `[a-z2-7]` の 12 文字。`session.ValidName`（`agent/internal/session/session.go:204`、
+**id と名前。** `imp-` に `[a-z2-7]` の 12 文字。`session.ValidName`（`agent/internal/session/session.go:207`、
 `^[A-Za-z0-9_-]{1,40}$`）を満たす必要がある。`WriteHandoverFile`（`session_handover_file.go:31`）と引き継ぎファイルのパターン（`:23`）が、
 `handover-<source>.md` の「source」部分にそれを要求するため。引き継ぎファイルは `handover-<id>.md`。
 
@@ -158,15 +158,15 @@
               |           |         |         |          |            |
               |           |         |         |          +--> unknown <+  (再起動、タイムアウト、不確かな作成)
               v           v         v         v                 |   ^
-            failed      failed    failed   expired/canceled     |   +-- check -> delivering | prompt_delivered | creating(retry。不在が証明できるときのみ)
-                                                                +------> failed (移動先の不在が証明でき、メンバーが破棄したときのみ)
- cancel: uploading, queued, parsing, review から可 -> canceled。
+            canceled    failed    failed   expired/canceled     |   +-- check -> delivering | prompt_delivered | creating(retry。不在が証明できるときのみ)
+        (abort)                                                 +------> failed(abandoned) (abandon。unknown のどの場合でも、メンバーの明示的な指示で。移動先には触れない)
+ cancel（ルート）: queued, parsing, review から可 -> canceled。中断したアップロードは canceled（理由 upload_aborted）。
  cancel: creating, delivering, unknown からは拒否（移動先が存在しうる。3.5 参照）。
 ```
 
 1. **`unknown` は失敗ではなく状態である。** セッションがあるのか、プロンプトが届いたのか Agent が言えないときに入る：
    `creating`/`delivering` の最中に Agent が止まった、作成がタイムアウトした、作成の冪等レコードが `unknown`
-   （`agent/internal/sessionx/session_idempotency.go:19`）、レコードが読めない。Console は「確認が必要」として見せ、
+   （`agent/internal/sessionx/session_idempotency.go:23`）、移動先のメタが存在するが読めない（3.4）。ジョブの*レコード*が読めない場合は `unknown` ではなく、3.4 の別の `unreadable` 行である。Console は「確認が必要」として見せ、
    失敗としては見せず、自動で再試行しない。
 2. **移動先の名前は作成の前に確保し、再試行で再利用する。** `review`→`creating` の遷移で Agent が名前を割り当て
    （`allocSessionName`）、ジョブレコードに（同期で）書き、その後で作成する。名前は作成要求の name として渡す
@@ -186,12 +186,14 @@
      `InitialPromptState` によって `delivering` か `prompt_delivered` に進む。**メタファイルが存在するが読めない**場合は
      `unknown` のまま再試行を拒否する（ADR 0115 の追記：「存在して読めないメタファイルを、無いものと見なさない」）。
      **メタファイルも、その名前のペイン・ランタイムも無い**場合は「retry」を提示でき、同じ名前でもう一度作成する。
-     **メタは無いがペインかランタイムがある**場合は孤児で、メンバーに見せ、止めてよい。
-   - 存在するがパースできないレコードは `unreadable` として表示し、再試行も掃除による削除もしない。メンバーが明示的に破棄する。
-5. **キャンセルと再試行。** キャンセルが届くのは `uploading`、`queued`、`parsing`、`review`（決定 7）。名前を確保した後は移動先が
+     **メタは無いがペインかランタイムがある**場合は孤児で、メンバーに見せ、止めてよい
+     （通常の停止）。その後 `check` が何も見つけなければ「retry」を提示する。またはメンバーがジョブを放棄する（3.5）。
+   - 存在するがパースできないジョブの*レコード*は状態ではない：`unreadable` として一覧に出し、再試行も掃除による削除もしない。
+     メンバーが明示的に破棄する（`DELETE`）。これは上の移動先のメタとは別で、移動先のメタが読めない場合はジョブを `unknown` に保つ。
+5. **キャンセルと再試行。** キャンセルが届くのは `queued`、`parsing`、`review`（決定 7。アップロードは中断することでキャンセルする）。名前を確保した後は移動先が
    存在しうるので、`creating`/`delivering`/`unknown` からのキャンセルは移動先の名前を示して拒否する。メンバーは通常の方法で
    そのセッションを止めるか削除する（0115 の「移動先があるうちはキャンセルを拒否する」と同じ立場）。再試行は、移動先の不在が
-   証明できる `creating`/`unknown` と、配送されなかった最初のプロンプト（下の `deliver`）にだけある。パースに失敗した
+   証明できる `creating`/`unknown` と、配送されなかった最初のプロンプト（下の `deliver`）にだけある。**`unknown` には必ず出口がある：`abandon`**（`DELETE` に `abandon=1`、マーク付き）は、孤児や読めないメタを含むどの場合でも、ダイアログが移動先の名前を示した上でのメンバーの明示的な指示で、ジョブを `failed`（`abandoned`）で終える。何も削除せず何も止めない。メタかペインがその名前を持つ間は名前の保持が続き、レコードは 7 日の保持に従う。これが無いと、`unknown` が 3 件でペンディング上限（決定 5）が永久に埋まる。パースに失敗した
    `failed` は、ファイルをもう一度ドロップして再試行する：生の本文は既に無い（決定 4.4）。
 6. **最初のプロンプトは自動では再送しない。** 0115 と同じく（`session_move_deliver.go:30`）、結果が不明な配送は、メンバーが
    「もう一度送る」を押すまで `delivering` のままである。不明な配送は届いている可能性があり、二重に送ると移動先が二度動く。
@@ -200,14 +202,14 @@
    その SHA から worktree を作り、**最初のプロンプトを打つ前に `HEAD` がそれに等しいことを確認する**。不一致なら
    `head_mismatch` でジョブを失敗させ、セッションはエラーに名前を示して残す。これが要るのは、
    `gitx.NewWorktreeStartPoint` が同名のローカルブランチをそのまま使い、fetch しないため
-   （`agent/internal/gitx/git.go:926`、「A local branch … keeps the start point the bare name has always had」）、ブランチ名だけでは
+   （`agent/internal/gitx/git.go:932`、「A local branch, tag, commit or full ref keeps the start point the bare name has always had」）、ブランチ名だけでは
    古い先頭から始まりうるからである。したがって作成は `initial_prompt` を持たない。保持したプロンプトは、確認の後でジョブが、
    0115 が移動先の最初のプロンプトに使う仕組み（移動先ごとに配送済みまで記録される `moveDelivery`、
    `session_move_deliver.go:30`）で配送する。フェーズ 4 はそれをコピーせず一般化する。
 8. **アイドル停止。** `uploading`、`queued`、`parsing`、`creating`、`delivering` は実行中の仕事である。`GET /sessions` の
    新しい `importJobs` フィールド（`agent/internal/sessionx/session_handlers.go:280`、`repoJobs` の隣。Agent の `deps` が
    `RepoJobsRunning` と同様に運ぶ、`deps.go:64`）で数え、Control Plane が読み（`control-plane/agent_client.go:303`、
-   `jobsRunning()` は `:322`）、専用の種別のアイドル停止ホルダーとして示す（`control-plane/idle_forecast.go:86`、`repojob` があるところ）。
+   `jobsRunning()` は `:322`）、専用の種別のアイドル停止ホルダーとして示す（`control-plane/idle_forecast.go:90`、`repojob` があるところ）。
    `review` は実行中の仕事**ではない**：何も動かず、生の本文も無く、人間を最長 1 日待つレコードがワークスペースを温め続けては
    ならない（0059 も Console のポーリングについて同じことを退けた）。候補は state ディレクトリにあり、停止しても残る。
 
@@ -217,7 +219,7 @@
    `~/.local/state/agent-fleet/transcript-import-data/<id>/`（モード 0700）で、`raw` と `candidate.md`（各 0600）を持つ。
    どちらも `~/.af-work`（上の起動時掃除）の下にも、`~/repos`（「再作成」で消える。作業コピーより長生きするのがジョブの要点）の下にも、
    `/tmp` にも置かない。state ディレクトリは構造上セッションの走査対象外である。2 つのサブディレクトリを
-   `agent/internal/statemig/statemig.go:62` の一覧に加える（そのコメント：「ここにストアを足すときはこの一覧にも足す」）。
+   `agent/internal/statemig/statemig.go:62` の `Entries`（許可リスト。`AgentStateDir` 配下のストアがそこに無いと `statemig_drift_test.go` が失敗する）に加える。
 2. **決してログに出さない。** 本文の行も、レコードの内容も、無害化した基本名（`fs.go:647` と同じ `filepath.Base`）以外のファイル名も、
    ログにも監査にも出さない。監査エントリが持つのは id・バイト数・結果。
 3. **`fstore` に追加のメソッドを 2 つ足し、既定は変えない。** `WriteSynced`（ファイル `Sync`、rename、ディレクトリ `Sync`。すべての
@@ -228,14 +230,14 @@
    **`parsing` が `candidate.md` を（同期して）書いた時点で削除する** — Issue の「引き継ぎが書かれたら」より早い。候補はマスク済みで
    有界の形であり、レビューの後に原本が要るものは何も無いため。失敗またはキャンセルしたジョブは同じ手順で生の本文を消す。
    最後の保険として、起動時の掃除と 1 時間ごとのタイマーが、ジョブの記録が何と言おうと 2 時間より古い `raw` と、レコードの無い
-   データディレクトリを削除する。帰結：レビュー後に移動先の選択を変えても再描画しない（4.5 が候補を移動先に依存させない）。
+   データディレクトリを削除する。`parsing` は、一時ファイルを記録したサイズと sha256 に照らして確認することから始め、不一致なら `failed`（`interrupted`）で一時領域を削除する。0700/0600 は他のユーザーを締め出すが、Agent と同じ uid の他のプロセス（セッションのシェル）は締め出さない：これは ADR 0113 が `RequireUpload` のスプールについて文書化している制限（`memberorigin.go:250`）で、ここでも引き継ぐ。再確認は、ハッシュとパースの間の書き換えを、すり替えた内容のパースではなく目に見える失敗にする。帰結：レビュー後に移動先の選択を変えても再描画しない（4.5 が候補を移動先に依存させない）。
 5. **候補は移動先に依存せず、最終ファイルは書き込み時に組み立てる。** 候補は出自ヘッダ、移動先に依らない 0115 の節、会話、
    引用した元の指示を持つ。confirm で Agent が移動先に依存する行（0115 決定 14 のプロジェクト指示ファイルの行）を足し、
    `WriteHandoverFile`（`session_handover_file.go:31`：戻る前に完全で同期済み）で
    `~/.af-work/<target>/handover-<id>.md` に書く。
 6. **引き継ぎは移動先のライフサイクルに無償で加わり、テストで固定する。** ファイル名は引き継ぎのパターン
    （`session_handover_file.go:23`）に合うので、移動先をゴミ箱に入れるとアーカイブされ
-   （`agent/cleanup_ops.go:394` → `ListHandoverFiles`、`:60`）、復元すると戻り、その後の移動先からの移動で先へコピーされる
+   （`agent/cleanup_ops.go:395` → `ListHandoverFiles`、`:60`）、復元すると戻り、その後の移動先からの移動で先へコピーされる
    （`CopyHandoverChain`、`:105`）。フェーズ 4 は、取り込んだ移動先がゴミ箱／復元と A→B の連鎖を越えて残るテストを足す。
    そのためのコードは足さない。
 7. **ジョブレコードの保持。** 終端のレコードは 7 日（`archivedScratchTTL` の値、`leftovers.go:393`）残し、結果を後から読めるように
@@ -255,14 +257,15 @@
 | アップロード受信時間 | 10 分 | リクエストのデッドライン | `limit_upload_time` |
 | 行長 | 8 MiB | 有界の行リーダー。残りは読まずに捨てる | 行を**拒否**（2.4）、致命的ではない |
 | 行数 | 200,000 | 読みながら数える | `limit_lines` |
-| ネストの深さ | 64 | 各行をバイト走査（デコードしない） | 行を**拒否** |
+| ネストの深さ | 64 | 各行を文字列を認識する走査（デコードしない、5.1） | 行を**拒否** |
 | 拒否レコード数 | 1,000 | 数える | `limit_refused_records` |
+| `ImportReport` のサイズ | 異なるレコード種別 200、種別名 64 文字、拒否理由ごとの行番号 20 | 組み立てながら数え、残りは `other` の件数に畳む | 畳む。致命的ではない |
 | パース時間（検証＋正規化＋描画） | 60 秒 | `context.WithTimeout`。256 行ごと・描画ループで確認 | `limit_parse_time` |
 | 描画出力（ハード） | 8 MiB | 描画ビルダーの下の数えるライター：上限で組み立てを止める | `limit_rendered_bytes` |
 | 引用する元の指示の節 | 32 KiB | 見える印をつけて切る | 切る。致命的ではない |
 | ワークスペースあたりの同時パース | 1（残りは `queued`） | セマフォ | キュー |
 | queued ＋ parsing のジョブ | 3 | 受付 | 429 `limit_queue` |
-| ワークスペースあたりの一時領域バイト | 256 MiB | データディレクトリの `raw` ＋ `candidate.md` の合計。宣言された長さで受付時に、受信中にも確認 | `limit_staged_bytes` |
+| ワークスペースあたりの一時領域バイト | 256 MiB | データディレクトリの `raw` ＋ `candidate.md` の合計。受付時に 1 つのロックの下で取る予約（宣言された長さ。無ければ本文制限）で、本文が終わったら実サイズに詰め、データと一緒に解放する。受信中にも確認 | `limit_staged_bytes` |
 | メンバーあたりの終端でないジョブ（ワークスペースは 1 メンバーのもの） | 3（`review` も `unknown` も数える） | 受付 | 429 `limit_pending_jobs` |
 | `review` の TTL | 24 時間 | 掃除 | `expired` |
 | 生の本文の TTL（保険） | 2 時間 | 掃除 | ファイル削除 |
@@ -272,7 +275,7 @@
 
 1. **有界の行リーダーを 1 つ**、新しいパッケージ `agent/internal/transcriptimport` に置き、取り込みでは `os.ReadFile` ＋
    `bytes.Split` の代わりに使う。`bufio.Reader` ＋ `ReadSlice` で読み、長すぎる行は行長制限の分より多く持たず、
-   バイト・行・深さを進みながら数える。制限は次の行を保持する前に作動する。出力は既存の正規化器が取る `[][]byte` なので、
+   バイト・行・深さを進みながら数える（深さの走査は JSON 文字列の中かどうかを追い、バックスラッシュのエスケープを扱うので、ツール出力のテキスト中の括弧は数えない。値は組み立てない）。制限は次の行を保持する前に作動する。出力は既存の正規化器が取る `[][]byte` なので、
    正規化器の入力は構造上、本文制限で有界になる。
 2. **描画出力は組み立てながら縛り、後からではない：** 取り込みでは `renderHandover` の `strings.Builder`
    （`session_handover.go:476`）を、数えて `ErrRenderLimit` を返すライターに置き換え、`RenderHandover`（`:367`）の切り詰めループは
@@ -280,7 +283,7 @@
 3. **メモリ。** ピークはおおよそ、本文＋分割した行＋ターンで、本文の数倍。64 MiB の本文と 256 MiB の一時領域は、フェーズ 2 が
    敵対的なフィクスチャで本文上限のときのピーク RSS を測って置き換える推測値である。適用する規則：そのピークが最小のワークスペース
    サイズの `memory.max` の 4 分の 1 を超えるなら、パースを独自の制限を持つ子プロセスへ移す。超えなければ Agent の中に置く。
-4. **今までの測定：** この機能のためのものは無い。3.9 s／147 MB（`codex/transcript.go:124`）は codex の信頼できるファイルで、
+4. **今までの測定：** この機能のためのものは無い。3.9 s／147 MB（`codex/transcript.go:124-125`）は codex の信頼できるファイルで、
    パース時間 60 秒の唯一の根拠である（本文上限の 2 倍のファイルで約 15 倍）。claude の数値は無い。
 
 ### 6. 秘密情報（要件 5）
@@ -293,7 +296,7 @@
    件数とターンと、候補の先頭のプレビューを見せる。マスクを戻す操作は提供しない。
 3. **レビューが出る時点で、生の本文は既にワークスペースに届いている：** Control Plane を通り（中継中にアップロードをスプールする）、
    `parsing` が終わるまで Agent の一時ファイルにあった。ダイアログはこれを 1 文で言う。可能ならメンバーがファイルをドロップする前
-   （ドロップ領域の 1 行の注記）と、レビューでもう一度。マスクは best-effort（`fulltext.go:99`：秘密を見逃すことも、無害なトークンを
+   （ドロップ領域の 1 行の注記）と、レビューでもう一度。マスクは best-effort（`fulltext.go:101`：秘密を見逃すことも、無害なトークンを
    マスクしすぎることもある）なので、「マスク済み」が「共有して安全」と読まれないよう、それも言う。
 4. 検出があったとき、confirm の前に確認の承諾を要求するかは製品の判断である（未決の質問 3）。
 
@@ -307,8 +310,9 @@
    `claude/transcript.go:1023` にも通す）。公開の `codex.ParseRolloutCtx(ctx, lines)`（`parseRolloutFull` は今は非公開で、
    既存の関数は `context.Background()` を渡すラッパーになる）。`BuildHandover`/`RenderHandover` のループにも context 確認を足す。
    キャンセルされた呼び出しは `ctx.Err()` を返し、ジョブは一時領域を削除する。古いシグネチャの呼び出し元（ミラー、使用量、0115 の移動）は触らない。
-3. **アップロードはリクエストでキャンセルされる。** 接続が閉じる、またはメンバーのキャンセルで、数えるリーダーが中断される。
-   途中の一時領域は削除され、レコードがあれば `failed`（メンバーが求めたなら `canceled`）になる。
+3. **アップロードはリクエストでキャンセルされる。** ジョブレコードは本文が届き始めるときに（同期して）書く。接続が閉じると数えるリーダーが
+   中断され、一時領域は削除され、レコードは `canceled`（`upload_aborted`）になる。クライアントが id を知るのは `202` からだけなので、
+   fetch の中断がアップロードをキャンセルする唯一の方法で、ネットワークの切断はそれと区別できない。どちらも同じ終わり方をする。
 4. **キャンセルは要求であり、したことを述べる。** `creating` が始まった後は拒否する（3.5）：作成済みのセッションは、メンバーの明示的な
    削除なしにキャンセルで作成を取り消せるものではない。
 
@@ -326,11 +330,13 @@ Control Plane のルート（すべて Cookie 認証の `/api` の下。各々�
 | `GET /api/transcript-imports/{id}` | ジョブ：state、レポート、提案（`cwd`、`gitBranch`）、移動先、エラー | — | — |
 | `GET /api/transcript-imports/{id}/preview` | `candidate.md` のマスク済みの先頭（有界）と検出件数 | — | — |
 | `POST /api/transcript-imports/{id}/confirm` `{repo, branch, commit, kind, model?, driver?, title?, ack_findings?}` | 名前を確保し、引き継ぎを書き、セッションを作る。`202` | `signBody` | `transcript_import.confirm`（id、target） |
-| `POST /api/transcript-imports/{id}/cancel` | 決定 7 | — | `transcript_import.cancel` |
-| `POST /api/transcript-imports/{id}/check` | `unknown` のジョブの整合（3.4） | — | — |
+| `POST /api/transcript-imports/{id}/cancel` | 決定 7 | `signBody` | `transcript_import.cancel` |
+| `POST /api/transcript-imports/{id}/check` | `unknown` のジョブの整合（3.4） | `signBody` | — |
 | `POST /api/transcript-imports/{id}/retry` | 不在が証明できるときに同じ名前でもう一度作る | `signBody` | `transcript_import.retry` |
 | `POST /api/transcript-imports/{id}/deliver` | 保持した最初のプロンプトを、メンバーの指示で再送（3.6） | `signBody` | `transcript_import.deliver` |
-| `DELETE /api/transcript-imports/{id}` | 終端または `unreadable` のレコードを破棄 | — | `transcript_import.dismiss` |
+| `DELETE /api/transcript-imports/{id}[?abandon=1]` | 終端または `unreadable` のレコードを破棄。`abandon=1` は `unknown` のジョブを終える（3.5） | `signBody` | `transcript_import.dismiss` |
+
+ジョブを変更するルートはすべてマークを要求する。セッションのシェルがメンバーのジョブをキャンセル・整合（作成を起動しうる）・消去できないようにするためで、読み取りは開いている。
 
 `kind` は `moveTargetKinds()`（`agent/internal/sessionx/session_move.go:53`：測定済みの移動先を宣言している種別）のいずれかで、
 0115 とまったく同じ集合なので、cursor（`not_measured`）と lcpp は対象外のままである。それ以外は `import_target_kind` で拒否する。
@@ -358,18 +364,18 @@ Console の文字列は i18n カタログ（英語と日本語）を通す。
 - **P1 — ジョブストアと制限ファイル。** `fstore.WriteSynced` と `ReadChecked`。パッケージ `agent/internal/transcriptimport`：
   `limits.go`、ジョブレコード、遷移表つきの状態機械、三値の読み込み、起動時の復旧、TTL の掃除、一時領域の配置、`statemig` の
   エントリ。`GET /sessions` の `importJobs` と CP のホルダー。読み取り専用の `GET` ルート。*テスト：* 許可された遷移すべてと、
-  それ以外すべての拒否。書き込み途中で切れたレコードは `unreadable` で、決して `missing` にならない。各非終端状態での再起動が 3.4 の
+  それ以外すべての拒否。書き込み途中で切れたレコードは `unreadable` で、決して `missing` にならない。読めないレコードは `unknown` ではなく `unreadable` 行になる。中断したアップロードは `canceled` で終わる。`abandon` は `unknown` のジョブをどの場合でも終える。各非終端状態での再起動が 3.4 の
   とおりに落ちる。レコードの無い一時領域と 2 時間より古い raw が掃除される。保持中のジョブはアイドル予測を busy に保ち、`review` は保たない。
 - **P2 — 安全なパースと描画。** 有界の行リーダー、生レコードの検証層と `ImportReport`（形式検出、種別の件数、パーサーごとの未知の種別、
   拒否、正規化器による破棄の件数）。`CollectAllTurnsCtx`、`codex.ParseRolloutCtx`、`BuildHandover`/`RenderHandover` の context 確認。
   有界の描画ライター。出自ヘッダ、節のマーカー、引用する元の指示の節。`ScrubSecretsCounted`。*敵対的なフィクスチャでのテスト：*
   70 MiB の本文、9 MiB の行、深さ 10,000、NUL と不正な UTF-8、30 万行の極小の行、見出しやツール結果を偽装する入力、
-  バッククォートのフェンスを含む developer メッセージ、developer レコードしかない codex ファイル、claude/codex の混在ファイル。
+  バッククォートのフェンスを含む developer メッセージ、developer レコードしかない codex ファイル、claude/codex の混在ファイル、文字列の中に `{` を 70 個含む正当な行、すべて異なる `type` を持つ 20 万行。
   それぞれ、あるべき制限で作動してその名を告げる。キャンセルは 1 回の確認間隔内にパースを止める。レポートに秘密は現れない。
   *測定（この ADR の追記に記録）：* claude と codex の本文上限でのピーク RSS と実時間。これで定数が決まり、決定 5.3 が決着する。
 - **P3 — アップロードとジョブ実行。** `RequireUpload` の内側の Agent のアップロード経路、実行側（`queued`→`parsing`→`review`）、
   受付制限、プレビュー、cancel、dismiss。CP の経路表、`multipartUploadRoutes`、監査、許可リスト。*テスト：* マークの無い要求は
-  何も書かない。閉じた接続は一時領域を残さない。2 つのアップロードは 1 つずつパースされる。表の制限超過の各経路が制限の名で答える。
+  何も書かない。閉じた接続は一時領域を残さない。2 つのアップロードは 1 つずつパースされる。同時の 2 つのアップロードが合わせて一時領域バイトの制限を超えることはない。ハッシュ後に書き換えた一時ファイルは `parsing` で失敗する。ジョブを変更するすべてのルートはマークの無い要求を拒否する。表の制限超過の各経路が制限の名で答える。
   `candidate.md` の同期後とすべての失敗時に、生の本文が無くなる。
 - **P4 — confirm・作成・配送・復旧。** 名前の確保と、割り当てに対する保持。永続冪等キーと `initial_prompt` なしの作成。SHA の解決、
   SHA からの worktree と `HEAD` の確認。引き継ぎの書き込み。保持したプロンプトの配送（`moveDelivery` から一般化）。`unknown` の整合・
