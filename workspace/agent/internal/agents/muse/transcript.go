@@ -483,6 +483,12 @@ func kindSummary(it msp.Item) string {
 		if e := it.EarlierHistory; e != nil {
 			return fmt.Sprintf("earlier history: %d messages kept from before the checkpoint", len(e.Messages))
 		}
+	case msp.ItemKindPeerMessage:
+		// A message another session sent into this one. It carries its text in a typed member
+		// and no label, so without this it would reach the mirror as a bare kind name.
+		if m := it.PeerMessage; m != nil {
+			return fmt.Sprintf("message from %s: %s", m.SenderLabel, m.Body)
+		}
 	}
 	return ""
 }

@@ -101,6 +101,10 @@ func (n *node) nullable() bool {
 // manifest is the schema bundle's sidecar: the fingerprint the vendor computes over its own
 // schema model. It is the value the drift test compares, not a hash of the JSON file (the
 // rendered file is not byte-stable across releases that do not change the model).
+//
+// muse's own export dropped `fingerprint` in 1.4.15, so the checked-in copy gets the value
+// from the release manifest's `msp_schema_fingerprint` (the same value `initialize` reports,
+// which handshake.go's SchemaDrift compares against). Compare never reads it from an export.
 type manifest struct {
 	Experimental  bool   `json:"experimental"`
 	Fingerprint   string `json:"fingerprint"`

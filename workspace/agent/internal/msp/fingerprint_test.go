@@ -85,6 +85,12 @@ func TestSchemaFingerprintMatchesTheBundle(t *testing.T) {
 	if SchemaFingerprint != want {
 		t.Errorf("SchemaFingerprint = %q, bundle manifest says %q", SchemaFingerprint, want)
 	}
+	// muse >= 1.4.15 exports a manifest without a fingerprint, so a plain re-export would blank
+	// it and SchemaDrift would then report drift on every handshake. Copy the release manifest's
+	// msp_schema_fingerprint into schema/manifest.json when re-exporting.
+	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(want) {
+		t.Errorf("schema/manifest.json fingerprint = %q, want sha256:<64 hex> (add the release manifest's msp_schema_fingerprint after a re-export)", want)
+	}
 	if SchemaVersion != 1 {
 		t.Errorf("SchemaVersion = %d, want 1 (MSP v1 is what this client speaks)", SchemaVersion)
 	}

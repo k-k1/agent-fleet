@@ -1014,3 +1014,20 @@ func TestDiscardedDraftsAreHiddenAndOpenNoTurn(t *testing.T) {
 		t.Errorf("cancelled text lost: %+v", turns)
 	}
 }
+
+// muse 1.4.15 delivers a message from another session as a peerMessage item whose text lives
+// in a typed member; it has no label or fallbackText, so the summary comes from that member.
+func TestPeerMessageSummaryNamesTheSenderAndBody(t *testing.T) {
+	pm := item(msp.ItemKindPeerMessage, "p-1", 1)
+	pm.Status = msp.ItemStatusCompleted
+	pm.PeerMessage = &msp.PeerMessage{SenderLabel: "remote session", Remote: true, Body: "build is green"}
+
+	turns := turnsFromItems([]msp.Item{pm})
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("item was dropped or split: %+v", turns)
+	}
+	p := turns[0].Parts[0]
+	if p.Tool != "peerMessage" || p.Info != "message from remote session: build is green" {
+		t.Errorf("peerMessage = %+v", p)
+	}
+}
