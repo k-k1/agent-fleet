@@ -106,6 +106,7 @@ func reaperLifecycleFixture(t *testing.T) (*store.SQL, store.Workspace, *manager
 }
 
 func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, ws, mgr := reaperLifecycleFixture(t)
 	rp := &reaper{mgr: mgr}
@@ -160,6 +161,7 @@ func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
 }
 
 func TestReaperStopWaitsForLocalWorkspaceOperation(t *testing.T) {
+	t.Parallel()
 	_, ws, mgr := reaperLifecycleFixture(t)
 	rp := &reaper{mgr: mgr}
 	rt := newReaperFenceRuntime(t)
@@ -190,6 +192,7 @@ func TestReaperStopWaitsForLocalWorkspaceOperation(t *testing.T) {
 }
 
 func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		activate  func(*manager, *reaperFenceRuntime, store.Workspace) error
@@ -259,6 +262,7 @@ func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 }
 
 func TestReaperObservesActivityFromAnotherControlPlane(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		activate func(context.Context, *manager, store.Workspace) func()
@@ -295,6 +299,7 @@ func TestReaperObservesActivityFromAnotherControlPlane(t *testing.T) {
 }
 
 func TestWorkspaceActivityMergeNeverShortensRemotePresence(t *testing.T) {
+	t.Parallel()
 	st, ws, _ := reaperLifecycleFixture(t)
 	now := time.Now().UTC()
 	if ok, err := st.RecordWorkspaceActivity(context.Background(), ws.ID, leaseTS(now), leaseTS(now.Add(time.Minute)), leaseTS(now)); err != nil || !ok {
@@ -315,6 +320,7 @@ func TestWorkspaceActivityMergeNeverShortensRemotePresence(t *testing.T) {
 }
 
 func TestWorkspaceIdleStopClaimRejectsLaterActivity(t *testing.T) {
+	t.Parallel()
 	st, ws, _ := reaperLifecycleFixture(t)
 	ctx := context.Background()
 	lease, err := acquireWorkspaceLifecycleLease(ctx, st, ws.MembershipID)
@@ -341,6 +347,7 @@ func TestWorkspaceIdleStopClaimRejectsLaterActivity(t *testing.T) {
 }
 
 func TestWorkspaceActivityCoalescesWithinProtectedLease(t *testing.T) {
+	t.Parallel()
 	st, ws, _ := reaperLifecycleFixture(t)
 	m := &manager{store: st, conns: newConnRegistry()}
 	ctx := context.Background()
@@ -365,6 +372,7 @@ func TestWorkspaceActivityCoalescesWithinProtectedLease(t *testing.T) {
 }
 
 func TestExplicitStartClearsOrphanedIdleStopIntentWhileRunning(t *testing.T) {
+	t.Parallel()
 	st, ws, mgr := reaperLifecycleFixture(t)
 	ctx := context.Background()
 	old, err := acquireWorkspaceLifecycleLease(ctx, st, ws.MembershipID)
@@ -398,6 +406,7 @@ func TestExplicitStartClearsOrphanedIdleStopIntentWhileRunning(t *testing.T) {
 }
 
 func TestWorkspaceOperationFenceBlocksSecondControlPlaneWithoutAdapterFence(t *testing.T) {
+	t.Parallel()
 	st, ws, _ := reaperLifecycleFixture(t)
 	gate := &operationFenceGateStore{Store: st}
 	mgrA := &manager{store: gate}
@@ -435,6 +444,7 @@ func TestWorkspaceOperationFenceBlocksSecondControlPlaneWithoutAdapterFence(t *t
 // after coming up: a stale in-memory lastSeen must NOT mask a fresh DB
 // last_active_at written by the Start.
 func TestIdleBase(t *testing.T) {
+	t.Parallel()
 	boot := time.Date(2026, 7, 12, 4, 10, 0, 0, time.UTC)
 	rp := &reaper{bootTime: boot}
 	rfc := func(h, m int) string {
@@ -548,6 +558,7 @@ func setLastActive(t *testing.T, st *store.SQL, wsID string, at time.Time) strin
 }
 
 func TestReaperHibernatesOnlyAColdHome(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	month := 30 * 24 * time.Hour
 
@@ -616,6 +627,7 @@ func TestReaperHibernatesOnlyAColdHome(t *testing.T) {
 // The tenant's setting is what decides, and "0" has to mean never — this is the only
 // automatic path in the product that takes a user's home off the disk it was on.
 func TestHomeHibernateAfterResolution(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		tenant  string
@@ -655,6 +667,7 @@ func (f stubFactory) New(runtime.Workspace, runtime.SecretKeys, []string) runtim
 // on anything that is not running), so tier 3 has to be reached from the other side of
 // that return. This is the branch that would silently do nothing if it were misplaced.
 func TestReaperSweepReachesTier3OnAStoppedWorkspace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, ws, mgr := reaperLifecycleFixture(t)
 	ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-60*24*time.Hour))
@@ -688,6 +701,7 @@ func TestReaperSweepReachesTier3OnAStoppedWorkspace(t *testing.T) {
 // the container. Once the queue is empty the same workspace does stop, so the test cannot
 // pass by never stopping anything.
 func TestReaperSweepKeepsAWorkspaceWithAnImageJob(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, ws, mgr := reaperLifecycleFixture(t)
 	ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-time.Hour))
@@ -718,6 +732,7 @@ func TestReaperSweepKeepsAWorkspaceWithAnImageJob(t *testing.T) {
 // wait left after the re-check, and nothing inside the workspace reports to the CP's
 // activity ledger on its own.
 func TestReaperStopRechecksAfterOutboxDrain(t *testing.T) {
+	t.Parallel()
 	_, ws, mgr := reaperLifecycleFixture(t)
 	rt := newReaperFenceRuntime(t)
 	close(rt.fenceRelease)
@@ -734,6 +749,7 @@ func TestReaperStopRechecksAfterOutboxDrain(t *testing.T) {
 // two things that make that safe: a tenant can still turn them off, and an operator can
 // still turn them off deployment-wide with an explicit "0".
 func TestIdleTimeoutDefaultsAndOverrides(t *testing.T) {
+	t.Parallel()
 	const (
 		sessDefault = time.Hour
 		wsDefault   = 2 * time.Hour
@@ -778,6 +794,7 @@ func (failingSessionInputStore) SessionHasRecentInput(context.Context, string, s
 // replica A. Two managers with separate connRegistries share one store, so a pass here
 // cannot come from a shared in-memory registry.
 func TestReaperTier1SparesSessionTypedAtOnAnotherReplica(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		typeOnA   bool // a terminal is attached on A and a keystroke arrives
@@ -834,6 +851,7 @@ func TestReaperTier1SparesSessionTypedAtOnAnotherReplica(t *testing.T) {
 }
 
 func TestSessionInputWatermarkIsMonotonic(t *testing.T) {
+	t.Parallel()
 	st, ws, _ := reaperLifecycleFixture(t)
 	ctx := context.Background()
 	now := time.Now().UTC()

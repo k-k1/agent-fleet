@@ -311,6 +311,7 @@ func auditWith(t *testing.T, st *store.SQL, tenantID, action string) []store.Aud
 // Removing a member stops the workspace they had in that tenant — and only that one: the
 // same person's workspace in another tenant is their desk there and keeps running.
 func TestRemoveMembershipStopsOnlyThatTenantsWorkspace(t *testing.T) {
+	t.Parallel()
 	f := &stopRecordingFactory{}
 	st, mgr, _, sales, _ := twoTenantFixture(t, f)
 	w := callRemoveMembership(mgr, `{"tenant_slug":"sales","user_key":"leaver-acme-co-jp"}`)
@@ -395,6 +396,7 @@ func mustMembershipID(t *testing.T, st *store.SQL, key string, tn store.Tenant) 
 // woken) and pauses the schedule; re-inviting the person resumes exactly the schedules
 // that removal paused, from now on, and leaves alone one they had paused themselves.
 func TestRemovedMemberSchedulesPauseAndResumeOnRestore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := &stopRecordingFactory{}
 	st, mgr, victim, sales, _ := twoTenantFixture(t, f)
@@ -530,6 +532,7 @@ func TestRemovalStopAfterRemoveRestoreRemoveStops(t *testing.T) {
 // ran out of budget, leaves an inactive membership's workspace running; the sweep finds it
 // by the row and stops it, and leaves active members' workspaces alone.
 func TestRemovedMemberSweepStopsWhatTheRemovalLeftRunning(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := &stopRecordingFactory{}
 	st, mgr, victim, sales, _ := twoTenantFixture(t, f)
@@ -553,6 +556,7 @@ func TestRemovedMemberSweepStopsWhatTheRemovalLeftRunning(t *testing.T) {
 // A schedule's owner pause must survive a later remove/restore, even when every write lands
 // in the same second (the timestamps cannot tell them apart; the mark can).
 func TestRestoreLeavesAnOwnerPauseFromTheSameSecond(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, victim, sales, _ := twoTenantFixture(t, &stopRecordingFactory{})
 	mid := membershipIDOf(t, st, victim, sales)
@@ -583,6 +587,7 @@ func TestRestoreLeavesAnOwnerPauseFromTheSameSecond(t *testing.T) {
 
 // The resume is conditional: an owner's pause between the restore's read and its write wins.
 func TestResumeHeldScheduleLosesToAnOwnerPause(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, _, victim, sales, _ := twoTenantFixture(t, &stopRecordingFactory{})
 	mid := membershipIDOf(t, st, victim, sales)
@@ -623,6 +628,7 @@ func (s holdRacingStore) HoldScheduleForRemoval(ctx context.Context, id, slot, l
 // written (no pause is written), or while it was being written (the pause is undone).
 // Either way a restored owner never keeps a paused schedule.
 func TestSchedulerPauseRacingARestore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
 	setup := func(t *testing.T) (*store.SQL, string) {
@@ -667,6 +673,7 @@ func hostPreviewCookie(e *previewHostEnv, slug string, port int, membershipID st
 // else's, and a removed owner's workspace serves nobody — public mode included — while
 // its stop is pending or after it failed.
 func TestPreviewOfARemovedOwnerServesNobody(t *testing.T) {
+	t.Parallel()
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer agent.Close()
 	e := newPreviewHostEnv(t, agent.URL)
@@ -694,6 +701,7 @@ func TestPreviewOfARemovedOwnerServesNobody(t *testing.T) {
 // replica other than the one serving the removal hears of it. The owner's workspace keeps
 // running.
 func TestRemovedViewersOpenPreviewStreamIsClosed(t *testing.T) {
+	t.Parallel()
 	opened := make(chan struct{})
 	release := make(chan struct{}) // lets a failing run end instead of hanging agent.Close
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -739,6 +747,7 @@ func TestRemovedViewersOpenPreviewStreamIsClosed(t *testing.T) {
 // Removing a member closes their tracked requests on the serving replica at once, without
 // waiting for the sweep — and only theirs.
 func TestRemoveMembershipClosesTheMembersConnections(t *testing.T) {
+	t.Parallel()
 	st, mgr, victim, sales, dev := twoTenantFixture(t, &stopRecordingFactory{})
 	salesCtx, untrackSales := mgr.memberConns.track(context.Background(), membershipIDOf(t, st, victim, sales))
 	defer untrackSales()
@@ -757,6 +766,7 @@ func TestRemoveMembershipClosesTheMembersConnections(t *testing.T) {
 // the row: the stale fire must not stamp a hold on the paused row, or the next re-invite
 // would resume what the owner stopped.
 func TestSchedulerHoldDoesNotOverwriteAnOwnerPause(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, mgr, victim, sales, _ := twoTenantFixture(t, &stopRecordingFactory{})
 	mid := membershipIDOf(t, st, victim, sales)
@@ -786,6 +796,7 @@ func TestSchedulerHoldDoesNotOverwriteAnOwnerPause(t *testing.T) {
 // the removal reaches this replica — the gateway is not a withResolved route, so it files
 // the request itself.
 func TestRemovedMembersEngineStreamEnds(t *testing.T) {
+	t.Parallel()
 	opened := make(chan struct{})
 	release := make(chan struct{})
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -837,6 +848,7 @@ func TestRemovedMembersEngineStreamEnds(t *testing.T) {
 // One slow workspace stop must not hold up closing the connections of a later removal: the
 // connection sweep is its own loop, and stops run off the sweep.
 func TestConnectionSweepDoesNotWaitForAWorkspaceStop(t *testing.T) {
+	t.Parallel()
 	f := &stopRecordingFactory{hold: make(chan struct{})}
 	st, mgr, victim, sales, dev := twoTenantFixture(t, f)
 	mid := membershipIDOf(t, st, victim, sales)

@@ -217,6 +217,7 @@ func mcpClientLocation(t *testing.T, w *httptest.ResponseRecorder) *url.URL {
 }
 
 func TestMCPClientOAuthStartRecordsTheStateAndAsksTheAgent(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	// A member-chosen redirect or client must not reach the Agent: the body may carry the
 	// registration path and a scope, nothing else.
@@ -269,6 +270,7 @@ func TestMCPClientOAuthStartRecordsTheStateAndAsksTheAgent(t *testing.T) {
 }
 
 func TestMCPClientOAuthStartRelaysAgentRefusals(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	f.alice.agent.startStatus = 409
 	f.alice.agent.startBody = `{"error":{"code":"client_id_needed","message":"enter one","issuer":"https://as.example.com","stray":"x"}}`
@@ -290,6 +292,7 @@ func TestMCPClientOAuthStartRelaysAgentRefusals(t *testing.T) {
 }
 
 func TestMCPClientOAuthStartNeedsAPublicBaseURL(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	f.cfg.mgr.publicBaseURL = ""
 	w, _ := f.start(t, f.alice, ``)
@@ -302,6 +305,7 @@ func TestMCPClientOAuthStartNeedsAPublicBaseURL(t *testing.T) {
 }
 
 func TestMCPClientOAuthStartWithoutHTTPSOffersNoCIMD(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	f.cfg.mgr.publicBaseURL = "http://127.0.0.1:8080"
 	f.start(t, f.alice, ``)
@@ -311,6 +315,7 @@ func TestMCPClientOAuthStartWithoutHTTPSOffersNoCIMD(t *testing.T) {
 }
 
 func TestMCPClientOAuthCallbackCompletes(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	w := f.callback(t, f.alice.session, "code=THE-AUTH-CODE&iss="+url.QueryEscape("https://as.example.com")+"&state="+state)
@@ -339,6 +344,7 @@ func TestMCPClientOAuthCallbackCompletes(t *testing.T) {
 }
 
 func TestMCPClientOAuthStateIsSingleUse(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	q := "code=c&state=" + state
@@ -356,6 +362,7 @@ func TestMCPClientOAuthStateIsSingleUse(t *testing.T) {
 
 // A callback that fails still burns the state: a second try with it must find nothing.
 func TestMCPClientOAuthFailedCallbackAlsoSpendsTheState(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	f.alice.agent.callbackStatus = 400
@@ -378,6 +385,7 @@ func TestMCPClientOAuthFailedCallbackAlsoSpendsTheState(t *testing.T) {
 // Member B's browser holding member A's state must fail, and must not deliver the code to
 // anyone's Agent as a completion.
 func TestMCPClientOAuthCrossMemberCallbackFails(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	loc := mcpClientLocation(t, f.callback(t, f.bob.session, "code=ALICES-CODE&state="+state))
@@ -404,6 +412,7 @@ func TestMCPClientOAuthCrossMemberCallbackFails(t *testing.T) {
 }
 
 func TestMCPClientOAuthCallbackWithoutASessionFails(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	loc := mcpClientLocation(t, f.callback(t, nil, "code=c&state="+state))
@@ -419,6 +428,7 @@ func TestMCPClientOAuthCallbackWithoutASessionFails(t *testing.T) {
 }
 
 func TestMCPClientOAuthExpiredStateFails(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	// Age the row past its expiry.
@@ -440,6 +450,7 @@ func TestMCPClientOAuthExpiredStateFails(t *testing.T) {
 }
 
 func TestMCPClientOAuthUnknownOrMissingState(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	for _, q := range []string{"code=c", "code=c&state=", "code=c&state=never-issued", "code=c&state=" + strings.Repeat("a", 9000)} {
 		loc := mcpClientLocation(t, f.callback(t, f.alice.session, q))
@@ -455,6 +466,7 @@ func TestMCPClientOAuthUnknownOrMissingState(t *testing.T) {
 // The redirect is a fixed origin-relative path. Nothing the browser sends picks where it
 // goes, and nothing the Agent (or the authorization server behind it) says is echoed.
 func TestMCPClientOAuthRedirectCannotBeSteered(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	f.alice.agent.callbackStatus = 502
@@ -477,6 +489,7 @@ func TestMCPClientOAuthRedirectCannotBeSteered(t *testing.T) {
 }
 
 func TestMCPClientOAuthProviderErrorForwardsNoText(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	f.alice.agent.callbackStatus = 400
@@ -503,6 +516,7 @@ func TestMCPClientOAuthProviderErrorForwardsNoText(t *testing.T) {
 }
 
 func TestMCPClientOAuthCallbackWithADeadAgentFails(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	f.alice.agent.srv.Close()
@@ -513,6 +527,7 @@ func TestMCPClientOAuthCallbackWithADeadAgentFails(t *testing.T) {
 }
 
 func TestMCPClientOAuthDisconnectIsAudited(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	do := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodDelete, "/api/mcp-servers/mcp-1/oauth", nil)
@@ -538,6 +553,7 @@ func TestMCPClientOAuthDisconnectIsAudited(t *testing.T) {
 }
 
 func TestMCPClientOAuthCIMDDocument(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	r := httptest.NewRequest(http.MethodGet, "https://af.example.com/oauth/mcp-client.json", nil)
 	w := httptest.NewRecorder()
@@ -622,6 +638,7 @@ func TestMCPClientOAuthRoutesAndExemptions(t *testing.T) {
 // Under AUTH=proxy there is no session cookie: the gateway's identity header is the proof, and
 // the same binding applies.
 func TestMCPClientOAuthCallbackUnderAuthProxy(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	f.cfg.mgr.authMode = "proxy"
 	call := func(state, email string) *httptest.ResponseRecorder {
@@ -650,6 +667,7 @@ func TestMCPClientOAuthCallbackUnderAuthProxy(t *testing.T) {
 // A session whose provider is gone is not enough: the exempt path skips
 // authGate's per-request re-check, so the callback repeats it.
 func TestMCPClientOAuthCallbackRechecksTheSessionIsStillAllowed(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	// The operator removed the IdP the session was minted by.
@@ -671,6 +689,7 @@ func TestMCPClientOAuthCallbackRechecksTheSessionIsStillAllowed(t *testing.T) {
 // A disconnect ends the sign-ins still open for that server: a tab left at the authorization
 // server must not complete afterwards.
 func TestMCPClientOAuthDisconnectEndsOpenSignIns(t *testing.T) {
+	t.Parallel()
 	f := newMCPClientFixture(t)
 	_, state := f.start(t, f.alice, ``)
 	r := httptest.NewRequest(http.MethodDelete, "/api/mcp-servers/mcp-1/oauth", nil)
