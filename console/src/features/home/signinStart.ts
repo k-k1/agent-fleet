@@ -4,13 +4,18 @@
 // Console left open in a background tab must never keep one running.
 //
 // The rules, each of them a way the feature could turn into a start/idle-stop loop:
-//   - Only a workspace that was already `stopped` when this page first saw it. A stop seen
-//     later (the user's own, the idle auto-stop, an admin's) disarms the page for good.
-//   - Only a visible tab, and only after real input on it in the last minute. Opening a tab
-//     and walking away never starts anything.
-//   - Only `stopped`. `unknown` (the Control Plane could not be read) is never a reason.
+//   - Only a workspace that was already cold (`stopped`, or `none`: docker and native remove
+//     the container on Stop) when this page first saw it. A stop seen later (the user's own,
+//     the idle auto-stop, an admin's) disarms the page for good.
+//   - Only a visible tab with the member present: real input on it in the last minute, or the
+//     page was just opened by navigation (typed address, redirect back from sign-in), which
+//     is the sign-in itself. A reload or history traversal is not presence, and a tab that is
+//     hidden or restored in the background waits for input, so a reloading kiosk or an
+//     unattended tab starts nothing.
+//   - Never `unknown` (the Control Plane could not be read).
 //   - At most one request per page load, and one per cooldown window across reloads and tabs
-//     (localStorage), so refreshing or reconnecting does not ask again.
+//     (localStorage, per tenant and member). Only a start opens the window; a refusal does
+//     not, so turning the tenant switch on takes effect at the next visit.
 import { useEffect } from "react";
 import { create } from "zustand";
 import { api, getTenant, getUser } from "../../core/api/client.ts";
