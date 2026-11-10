@@ -97,16 +97,20 @@
   font-size: 12px;
   text-align: left;
 }
-.mirror-files-head .mfl-title {
+.mirror-files-head .mfl-title,
+.mirror-marks-head .mfl-title {
   color: var(--fg);
   font-weight: 600;
 }
-.mirror-files-head .mfl-count {
+.mirror-files-head .mfl-count,
+.mirror-marks-head .mfl-count {
   font-variant-numeric: tabular-nums;
 }
-/* The collapsed summary's file name: it gives up its width first, so the +/- counters
-   stay readable on a narrow split pane. */
-.mirror-files-head .mfl-lead {
+/* The collapsed summary's file name (and the mark strip's author count): it gives up its
+   width first, so the counters stay readable on a narrow split pane. The mark strip shares
+   these rules instead of redeclaring them in marks.css. */
+.mirror-files-head .mfl-lead,
+.mirror-marks-head .mfl-lead {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
