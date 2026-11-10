@@ -83,6 +83,16 @@ func TestDriftAgyToolHooks(t *testing.T) {
 	}
 	t.Logf("agy exit: %v\noutput: %s", runErr, out)
 
+	// A refused model turn says nothing about the hook contract: no tool call was ever
+	// attempted. Fail (the contract is unverified, so E2E_REQUIRE must stay red) but name the
+	// cause, so the run is not read as a hooks regression. Measured on 1.5.4: the sign-in's
+	// quota was exhausted and the events were SessionStart, PreInvocation, Stop only.
+	if resetAt, limited := agy.LimitInMessage(string(out), time.Now()); limited {
+		t.Fatalf("INCONCLUSIVE, not a hooks regression: the model turn was refused for quota "+
+			"(reset at %v), so no tool call was attempted. Re-run once the quota resets: %s",
+			resetAt.Format(time.RFC3339), strings.TrimSpace(string(out)))
+	}
+
 	if _, err := os.Stat(ran); err != nil {
 		t.Errorf("the shell command never ran — agy refused the tool call (1.4.4 denied every one with an empty reason when the PreToolUse hook printed {}, #2470): %s", strings.TrimSpace(string(out)))
 	}
