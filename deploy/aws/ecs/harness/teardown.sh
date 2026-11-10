@@ -107,6 +107,10 @@ sleep 20
 # that by ID is the same class as #3555 / #3796. Scope the lookup to the VPCs this harness can
 # live in: the tagged one (AF_HARNESS_NAT=1) and the default one (the no-NAT shape). With no VPC
 # resolved, nothing is deleted rather than falling back to the unscoped lookup.
+# The names and the tag value are harness-specific (setup.sh creates only $N-ws / $N-efs), so a
+# same-named group inside these two VPCs is treated as ours. A stale group left in the default VPC
+# by a switch from the NAT shape is never swept (a leak, not a wrong delete): it makes the match
+# ambiguous and is skipped.
 HVPCS=$( { aws ec2 describe-vpcs --filters Name=tag:Name,Values=$N --query 'Vpcs[].VpcId' --output text 2>/dev/null
            aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[].VpcId' --output text 2>/dev/null
          } | tr '\t' '\n' | grep '^vpc-' | sort -u | paste -sd, - || true)

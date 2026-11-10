@@ -42,7 +42,8 @@ case "$args" in
     esac
     [ -z "${STUB_SG_DUP:-}" ] || echo "sg-ws-dup" ;;
   *"ec2 describe-security-groups"*"group-name,Values=af-ec2c-ws"*) echo "sg-ws-foreign" ;;  # unscoped: foreign first
-  *"ec2 describe-security-groups"*"group-name,Values=af-ec2c-efs"*"vpc-id,Values="*) ;;
+  *"ec2 describe-security-groups"*"group-name,Values=af-ec2c-efs"*"vpc-id,Values="*)
+    case "$args" in *"vpc-harness"*) [ -n "${STUB_SG_DUP:-}" ] || echo "sg-efs-harness" ;; esac ;;
   *"ec2 describe-security-groups"*"group-name,Values=af-ec2c-efs"*) echo "sg-efs-foreign" ;;
   *"ec2 describe-nat-gateways"*"Values=vpc-harness"*"NatGatewayAddresses"*)
     [ -n "${STUB_NO_NAT:-}" ] || echo "eipalloc-harness" ;;
@@ -96,11 +97,13 @@ grep -qF "delete-security-group --group-id sg-ws-harness" "$LOG" \
 if grep -E "delete-security-group --group-id sg-.*-foreign" "$LOG"; then
   echo "NG: a security group outside the harness VPC was deleted"; exit 1
 fi
+grep -qF "delete-security-group --group-id sg-efs-harness" "$LOG" \
+  || { cat "$LOG"; echo "NG: the harness VPC's efs security group was not deleted"; exit 1; }
 echo "OK: security groups are looked up inside the harness VPC only"
 
 # No VPC resolvable: skip, never fall back to the unscoped lookup.
 : > "$LOG"
-STUB_TAGGED_VPC= STUB_DEFAULT_VPC= STUB_LOG="$LOG" PATH="$WORK/bin:$PATH" bash "$ROOT/deploy/aws/ecs/harness/teardown.sh" > "$WORK/out" 2>&1 \
+STUB_TAGGED_VPC='' STUB_DEFAULT_VPC='' STUB_LOG="$LOG" PATH="$WORK/bin:$PATH" bash "$ROOT/deploy/aws/ecs/harness/teardown.sh" > "$WORK/out" 2>&1 \
   || { cat "$WORK/out"; echo "NG: teardown.sh failed with no VPC"; exit 1; }
 if grep -F "delete-security-group" "$LOG"; then echo "NG: a security group was deleted with no VPC resolved"; exit 1; fi
 grep -qF "skipping security group deletion" "$WORK/out" || { echo "NG: no skip message"; exit 1; }
