@@ -3,7 +3,6 @@ package watch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -140,6 +139,10 @@ func (Bitbucket) MaxSubscriptions() int { return bbMaxSubscriptions }
 
 const bbMaxSubscriptions = 10
 
+// Only conditions that end a watch: a connection that lost access answers a held-off or failed
+// read, which stays a plain error (unlike GitHub, which also maps a permanent 403 to gone).
+const goneBBPull = "the pull request was deleted, its repository is gone, or there is no such pull request"
+
 func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, _ []string) ([]Event, json.RawMessage, Hint, error) {
 	repo, n, ok := parseBBSubject(subject)
 	if !ok {
@@ -154,7 +157,10 @@ func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMes
 		return nil, raw, Hint{}, err
 	}
 	if pr == nil {
-		return nil, raw, Hint{}, errors.New("Bitbucket did not return the pull request: it is gone or no longer readable with your connection")
+		// A definite "no such PR" (404 on the repository or PR, or no PR with that number): the
+		// engine ends the watch after goneConfirm reads. A failed or held read is an error
+		// above, never nil, so it never ends a watch.
+		return nil, raw, Hint{}, &ErrGone{goneBBPull}
 	}
 	at := time.Now().UTC()
 	ev := func(typ, version, summary string, data []DataItem) Event {
