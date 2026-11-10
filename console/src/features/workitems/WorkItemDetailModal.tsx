@@ -270,6 +270,9 @@ interface Props {
   /** Records the base repository a Jira project's tickets launch in (scope = repoMapScope).
    * Absent: no "remember" box. */
   onRemember?(scope: string, repo: string): void;
+  /** Forgets the remembered repository of a project: launching the remembered pre-selection
+   * unchanged with the "remember" box unticked. */
+  onForget?(scope: string): void;
   /** Ledger rows for this item — shows a second person on the same ticket before they launch. */
   started: WorkItemSessionRef[];
   onClose(): void;
@@ -299,6 +302,7 @@ export function WorkItemDetailModal({
   defaultRepo,
   defaultSource = "",
   onRemember,
+  onForget,
   started,
   onClose,
   onPick,
@@ -487,7 +491,9 @@ export function WorkItemDetailModal({
       return;
     }
     if (!baseRepo) return;
-    if (scope && remember && !(defaultSource === "project" && base === initialBase)) onRemember?.(scope, baseRepo.name);
+    const remembered = defaultSource === "project" && base === initialBase;
+    if (scope && remember && !remembered) onRemember?.(scope, baseRepo.name);
+    else if (scope && !remember && remembered) onForget?.(scope);
     if (where === NEW_WORKTREE && canWorktree) {
       onPick(baseRepo, false, reviewBranch, launchItem);
       return;
