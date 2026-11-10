@@ -215,7 +215,7 @@ Transitions:
    review and delivery need the job record.
 4. **Recovery after an Agent restart, at boot** (the analogue of `sweepRepoJobMarkers`,
    `repo_jobs.go:149`, but over files):
-   - `uploading`: the body is partial; → `failed` (`interrupted`), staging removed.
+   - `uploading`: the body is partial; → `failed` (`interrupted`), staging removed. A crash is deliberately not an abort: `canceled` (`upload_aborted`, 7.3) is only for a connection that closed while the Agent kept running.
    - `queued`, `parsing`: re-queued when the raw file exists and matches the recorded size and sha256
      (the record is written only after the body is synced), otherwise `failed` (`interrupted`).
    - `review`: unchanged.
@@ -412,7 +412,7 @@ starts a cold workspace, `:1230`); the upload starts it too, since the Agent mus
 | `GET /api/transcript-imports/{id}/preview` | scrubbed head of `candidate.md` (bounded) and the finding counts | — | — |
 | `POST /api/transcript-imports/{id}/confirm` `{repo, branch, commit, kind, model?, driver?, title?, ack_findings?}` | reserve the name, write the handover, create the session; `202` | `signBody` | `transcript_import.confirm` (id, target) |
 | `POST /api/transcript-imports/{id}/cancel` | decision 7 | `signBody` | `transcript_import.cancel` |
-| `POST /api/transcript-imports/{id}/check` | reconcile an `unknown` job (3.4) | `signBody` | — |
+| `POST /api/transcript-imports/{id}/check` | reconcile an `unknown` job (3.4) | `signBody` | `transcript_import.check` |
 | `POST /api/transcript-imports/{id}/retry` | create again under the same name when provably absent | `signBody` | `transcript_import.retry` |
 | `POST /api/transcript-imports/{id}/deliver` | send the held first prompt again, on the member's word (3.6) | `signBody` | `transcript_import.deliver` |
 | `DELETE /api/transcript-imports/{id}[?abandon=1]` | dismiss a terminal or `unreadable` record; `abandon=1` ends an `unknown` job (3.5) | `signBody` | `transcript_import.dismiss` |

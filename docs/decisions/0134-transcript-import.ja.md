@@ -178,7 +178,7 @@
    （「done」「refused」「unknown」で）答える。不在を証明するレコード（「reserved」「abandoned」「refused」）だけが、
    ジョブに再作成を許す。台帳が守るのは作成だけで、パース・レビュー・配送にはジョブレコードが要る。
 4. **Agent 再起動後の復旧（起動時。`sweepRepoJobMarkers`、`repo_jobs.go:149` の類だが、ファイルを対象にする）：**
-   - `uploading`：本文は途中なので `failed`（`interrupted`）、一時領域を削除。
+   - `uploading`：本文は途中なので `failed`（`interrupted`）、一時領域を削除。クラッシュは意図的に中断とは区別する：`canceled`（`upload_aborted`、7.3）は Agent が動き続けている間に接続が閉じた場合だけである。
    - `queued`、`parsing`：raw が存在し、記録したサイズと sha256 に一致すれば再キュー（レコードは本文を同期した後でしか書かない）。
      そうでなければ `failed`（`interrupted`）。
    - `review`：そのまま。
@@ -331,7 +331,7 @@ Control Plane のルート（すべて Cookie 認証の `/api` の下。各々�
 | `GET /api/transcript-imports/{id}/preview` | `candidate.md` のマスク済みの先頭（有界）と検出件数 | — | — |
 | `POST /api/transcript-imports/{id}/confirm` `{repo, branch, commit, kind, model?, driver?, title?, ack_findings?}` | 名前を確保し、引き継ぎを書き、セッションを作る。`202` | `signBody` | `transcript_import.confirm`（id、target） |
 | `POST /api/transcript-imports/{id}/cancel` | 決定 7 | `signBody` | `transcript_import.cancel` |
-| `POST /api/transcript-imports/{id}/check` | `unknown` のジョブの整合（3.4） | `signBody` | — |
+| `POST /api/transcript-imports/{id}/check` | `unknown` のジョブの整合（3.4） | `signBody` | `transcript_import.check` |
 | `POST /api/transcript-imports/{id}/retry` | 不在が証明できるときに同じ名前でもう一度作る | `signBody` | `transcript_import.retry` |
 | `POST /api/transcript-imports/{id}/deliver` | 保持した最初のプロンプトを、メンバーの指示で再送（3.6） | `signBody` | `transcript_import.deliver` |
 | `DELETE /api/transcript-imports/{id}[?abandon=1]` | 終端または `unreadable` のレコードを破棄。`abandon=1` は `unknown` のジョブを終える（3.5） | `signBody` | `transcript_import.dismiss` |
