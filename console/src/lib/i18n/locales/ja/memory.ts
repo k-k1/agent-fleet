@@ -602,7 +602,7 @@ export const memory = {
   "mem.pv_replacement": "置き換え",
   "mem.pv_supersedes": "置き換える対象",
   "mem.pv_replace_note": "作者「consolidator」の 1 つの変更として公開します。新しいメモリを書き込み、置き換え対象のメモリは「置き換え済み」にして Agent から見えなくします。この提案のあとで対象のどれかが変わっていた場合は、何も書き込みません。変更履歴から全体を元に戻せます。",
-  "mem.pv_sum_retire": "承認すると、メモリ {n} 件を退役させます（{list}）。Agent からは見えなくなりますが、何も削除しません。元に戻すと 1 回で復元できます。",
+  "mem.pv_sum_retire": "承認すると、メモリ {n} 件を退役させます（{list}）。Agent からは見えなくなりますが、何も削除しません。元に戻すと 1 回で戻ります。",
   "mem.pv_rev": "リビジョン {from} → {to}",
   "mem.pv_retire": "退役",
   "mem.pv_retire_index": "memory_index",
