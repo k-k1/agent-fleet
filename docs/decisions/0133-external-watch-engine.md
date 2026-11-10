@@ -362,6 +362,35 @@ endpoints `POST /webhooks/github` (the deployment App, `AF_GITHUB_WEBHOOK_SECRET
    process. Not built: a tenant's own GitHub App path, which needs the secret shown to the member once and so
    conflicts with "never print it" (documented in the guide as unavailable; follow-up #3762).
 
+### Note on §9, CI on its own (2026-11-10, #3779)
+
+GitHub Actions runs not tied to a PR are watchable. Decisions the text left open:
+
+- **A source of its own, `github_actions`**, not a second ref form under `github`. The engine checks types per
+  source, so a run cannot be asked for `pr.merged` and a PR cannot be asked for a run type with no engine change, and
+  every existing PR ref stays as it was. The `watch` handler sends a reference in an Actions form to it when the caller
+  left the source at the `github` default (a PR ref never matches those forms). It reads through the `github` source's
+  token, conditional requests and 10% share of the hourly limit.
+- **Refs.** A run: `https://github.com/o/r/actions/runs/<id>[/attempts/<n>]` or `o/r:run/<id>[/attempts/<n>]`; the next
+  run of a workflow: `o/r:<file>.yml[@branch]` or the workflow's URL. Types are `github.workflow_run.completed` and
+  `github.workflow_run.failed`; the version is run id and run attempt.
+- **"Started after the watch" is a floor taken from GitHub's answer**, not this host's clock. Resolve lists the
+  workflow's newest runs and the subject carries the highest run id and the newest creation time seen (or the `Date`
+  header when there is no run yet); a run counts only if its id is above the floor (ids only grow) and it was created at
+  or after the floor's time. A skewed local clock therefore cannot make an old run look new. Since the floor is in the
+  subject, watches made while the workflow is quiet share one subject and one read (with no run yet, the floor time
+  is rounded down to the minute so that holds there too). A re-run of a run at or below the floor is never seen. The cost: a run created in the
+  moment before the watch but not yet listed by GitHub may be taken as new.
+- **Summary.** Built from the repository, run number, attempt, run id and a fixed set of conclusion words; for a
+  workflow watch, the file name from the ref. The workflow's own name (written by whoever can edit the repository) and
+  the failed jobs go into Data, which the §6 rule 6.5 notice quotes.
+- **A subject that is gone.** A source may answer a read with `ErrGone` (a deleted run, a repository the connection
+  lost). After three such reads in a row the engine replaces the watch's pending events with a `watch.ended` notice
+  and ends it once told; before this a failing subject only backed off until the watch expired.
+- Not built: Bitbucket Pipelines (shared `ci.run.*` types once a second provider exists), webhook pokes for runs
+  (registrations still list pull request subjects only), paging a workflow that starts more than 20 runs between two
+  reads, and `watch.ended` for the PR source. Follow-up: #3780.
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled

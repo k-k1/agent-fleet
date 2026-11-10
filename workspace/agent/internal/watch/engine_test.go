@@ -582,3 +582,62 @@ func TestAChildsOwnAndParentWatchesShareOneLimit(t *testing.T) {
 		t.Fatalf("a child with 20 watches for its parent made one of its own: %v", err)
 	}
 }
+
+func TestAGoneSubjectEndsItsWatchWithAReasonAfterConfirmation(t *testing.T) {
+	src := &fakeSource{err: &ErrGone{"the run was deleted"}}
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(src, sink)
+	ctx := context.Background()
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}, Until: UntilDeadline}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < goneConfirm-1; i++ {
+		e.Tick(ctx)
+		c.add(20 * time.Minute)
+	}
+	if len(sink.told) != 0 || len(e.List("a")) != 1 {
+		t.Fatalf("ended before confirmation: told=%v", sink.told)
+	}
+	e.Tick(ctx)
+	if len(sink.told) != 1 || sink.told[0] != "a:watch.ended:ended" {
+		t.Fatalf("told = %v", sink.told)
+	}
+	if !strings.Contains(sink.notices[0], "This watch has ended: the run was deleted") || !strings.Contains(sink.notices[0], "This watch has ended; call watch again") {
+		t.Fatalf("notice = %s", sink.notices[0])
+	}
+	if len(e.List("a")) != 0 {
+		t.Fatal("the watch is still listed after its ending was told, even though it was a deadline watch")
+	}
+	c.add(20 * time.Minute)
+	e.Tick(ctx)
+	if src.polls != goneConfirm {
+		t.Fatalf("polled a gone subject %d times", src.polls)
+	}
+}
+
+func TestAnotherErrorBetweenGoneReadsRestartsTheConfirmation(t *testing.T) {
+	src := &fakeSource{err: &ErrGone{"gone"}}
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(src, sink)
+	ctx := context.Background()
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, err := range []error{&ErrGone{"gone"}, &ErrGone{"gone"}, errors.New("flaky"), &ErrGone{"gone"}, &ErrGone{"gone"}} {
+		src.err = err
+		e.Tick(ctx)
+		c.add(20 * time.Minute)
+	}
+	if len(sink.told) != 0 || len(e.List("a")) != 1 {
+		t.Fatalf("ended without %d gone reads in a row: %v", goneConfirm, sink.told)
+	}
+	// A good read also resets the count.
+	src.err = nil
+	e.Tick(ctx)
+	c.add(20 * time.Minute)
+	src.err = &ErrGone{"gone"}
+	e.Tick(ctx)
+	if len(sink.told) != 0 {
+		t.Fatalf("a good read did not reset: %v", sink.told)
+	}
+}

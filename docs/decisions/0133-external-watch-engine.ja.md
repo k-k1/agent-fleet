@@ -337,6 +337,31 @@ Agent 側の `POST /watch/poke`。
 
    *注記（2026-11-10、#3751）。* Agent 側の流れを作った。`af-watch-hook add|list|rm`（`workspace/agent/internal/watchhook`）で、Agent の `/watch/hooks` ルートの裏にあり、Control Plane のトークン（`AF_WATCH_TOKEN`）は Agent に留まり、シェルが持つのは `AGENT_TOKEN` だけになる。`add` はメンバーの forge 資格情報を確かめ、Control Plane にフックを作り、forge に登録し（JSON 本文、秘密は forge 側の署名用シークレット、プルリクエストとチェックの出来事だけ）、登録が失敗したら Control Plane のフックを消す。同じリポジトリのフックがすでにあれば何もしない（forge 側の Webhook が消えていればそう警告する）。`rm` は forge の Webhook を URL で探して消し（Control Plane は forge の ID を持たない）、forge 側が失敗しても Control Plane のフックは消す（配信が検証を通るのはそのフックがあるからなので）。秘密は Agent のプロセスの外に出ない。未実装: テナント自身の GitHub App の道。メンバーに秘密を一度見せる必要があり、「表示しない」と両立しない（ガイドでは使えないと書いた。Follow-up #3762）。
 
+### §9 への補足: PR に紐づかない CI（2026-11-10、#3779）
+
+PR に紐づかない GitHub Actions の実行を見張れるようにした。本文が決めていなかった点:
+
+- **独立したソース `github_actions`** にした。`github` の下に別の ref 形式を足す形にはしていない。エンジンは種類をソースごとに
+  検査するので、実行に `pr.merged` は頼めず、PR に実行の種類も頼めない。既存の PR の ref は変わらない。呼び出し側がソースを
+  既定の `github` のままにして Actions の形の ref を渡したときは、`watch` の受け口がこのソースへ回す（PR の ref はその形に
+  一致しない）。トークン、条件付きリクエスト、1 時間の上限の 10% は `github` ソースのものを使う。
+- **ref。** 実行: `https://github.com/o/r/actions/runs/<id>[/attempts/<n>]` または `o/r:run/<id>[/attempts/<n>]`。ワークフローの
+  次の実行: `o/r:<file>.yml[@branch]` またはワークフローの URL。種類は `github.workflow_run.completed` と
+  `github.workflow_run.failed`、版は実行 ID と試行番号。
+- **「見張りのあとに始まった」は、このホストの時計ではなく GitHub の答えから取った下限で決める。** Resolve がワークフローの
+  新しい実行を一覧し、subject に、見えた最大の実行 ID と最新の作成時刻（実行がまだ無ければ `Date` ヘッダ）を入れる。実行が
+  数えられるのは、ID が下限より大きく（ID は増えるだけ）、作成時刻が下限以降のときだけ。ローカルの時計がずれていても古い実行が
+  新しく見えない。下限が subject に入るので、ワークフローが静かなあいだに作った見張りは 1 つの subject と 1 回の読み取りを
+  共有する（実行がまだ無いときは下限の時刻を分に切り捨てて、同じことが成り立つようにする）。floor 以前の実行の再実行は見えない。代償: 見張りを作る直前に作られ、GitHub の一覧にまだ出ない実行は、新しいものとして扱われうる。
+- **Summary。** リポジトリ、実行番号、試行、実行 ID、決まった結論の語から作る。ワークフローの見張りでは ref のファイル名も使う。
+  ワークフローの名前（リポジトリを編集できる人が書く）と失敗したジョブは Data に入れ、§6 規則 6.5 のとおり引用して渡す。
+- **なくなった subject。** ソースは読み取りに `ErrGone`（削除された実行、接続が失ったリポジトリ）を返せる。3 回続けて返ったら、
+  エンジンは見張りの保留中イベントを `watch.ended` の知らせに置き換え、伝えたあとに終える。以前は、失敗する subject は
+  見張りの期限までバックオフするだけだった。
+- 作っていないもの: Bitbucket Pipelines（2 つ目のプロバイダが現れたときの共通の `ci.run.*`）、実行への webhook の poke
+  （登録は今もプルリクエストの subject だけ）、2 回の読み取りの間に 20 を超える実行が始まるワークフローのページ送り、PR ソースの
+  `watch.ended`。後続: #3780。
+
 ## Rejected
 
 - **専用の `watch_pr` ツールと速い `branchpr`。** PR の場合はすぐ解けるが、手作りの見張りが 6 つ目になる。次の
