@@ -410,10 +410,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.319
+ARG CLAUDE_CODE_VERSION=2.1.321
 ARG OPENCODE_VERSION=2.2.6
 ARG CODEX_VERSION=0.167.0
-ARG COPILOT_VERSION=1.0.107
+ARG COPILOT_VERSION=1.0.108
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
 # is supported (ADR 0127): a rollback is an earlier 2.x pin, never a 1.x one (the opencode 1
 # package, opencode-ai, is another package that entrypoint.sh removes from ~/.local).
