@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
+	"github.com/k-k1/agent-fleet/control-plane/internal/routegateway"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
@@ -38,6 +39,8 @@ func bridgeFamilies() []struct {
 		{"AF_GCP_PROFILES_TOKEN", gcpProfilesSignKey, verifyGCPProfilesToken},
 		{"AF_BRANCH_RULES_TOKEN", branchRulesSignKey, verifyBranchRulesToken},
 		{"AF_WATCH_TOKEN", watchingress.SignKey, watchingress.VerifyToken},
+		// Only injected with AF_PROVIDED_ROUTES=1; the rotation test switches it on.
+		{"AF_ROUTE_ISSUE_TOKEN", routegateway.SignKey, routegateway.VerifyIssueToken},
 	}
 }
 
@@ -72,6 +75,7 @@ func TestBridgeKeyEpochZeroIsLegacy(t *testing.T) {
 // on removal, on re-activation and on an administrator's rotation, and a token minted at the
 // new epoch works; none of it needs a restart of the CP.
 func TestBridgeTokensDieOnRotationRemovalAndReactivation(t *testing.T) {
+	t.Setenv(routegateway.EnvSwitch, "1") // AF_ROUTE_ISSUE_TOKEN is switch-gated
 	ctx := context.Background()
 	f := &envRecordingFactory{}
 	st, mgr, victim, tn := destroyFixture(t, f)
@@ -233,7 +237,22 @@ func TestTokenSigningVersion(t *testing.T) {
 
 // Every *_TOKEN / *_SECRET the CP puts in a workspace's environment must be on the list the
 // adapters route through secrets / the env file, or it is back in plaintext task definitions.
+// The env is built twice: with every switch off, and with the switch-gated emitters on, because
+// a credential that only appears behind a switch is never seen by a default-config run.
 func TestSecretEnvNamesCoverCPCredentials(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		checkSecretEnvCoverage(t, nil)
+	})
+	t.Run("switches on", func(t *testing.T) {
+		t.Setenv(routegateway.EnvSwitch, "1") // providedRouteIssueEnv: AF_ROUTE_ISSUE_TOKEN
+		checkSecretEnvCoverage(t, []string{"AF_ROUTE_ISSUE_TOKEN"})
+	})
+}
+
+// checkSecretEnvCoverage builds one workspace env and requires every credential-looking name in
+// it to be listed; mustEmit names must be present, so the run proves it exercised the switch.
+func checkSecretEnvCoverage(t *testing.T, mustEmit []string) {
+	t.Helper()
 	ctx := context.Background()
 	f := &envRecordingFactory{}
 	st, mgr, victim, tn := destroyFixture(t, f)
@@ -248,19 +267,27 @@ func TestSecretEnvNamesCoverCPCredentials(t *testing.T) {
 	f.mu.Lock()
 	env := f.built[len(f.built)-1]
 	f.mu.Unlock()
+	// KEYS is deliberately not matched: AF_MEMBER_ORIGIN_KEYS carries public keys only.
 	credential := regexp.MustCompile(`(TOKEN|SECRET|PASSWORD|KEY)$`)
 	listed := map[string]bool{}
 	for _, n := range runtime.SecretEnvNames() {
 		listed[n] = true
 	}
+	emitted := map[string]bool{}
 	seen := 0
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
+		emitted[name] = true
 		if credential.MatchString(name) && !listed[name] {
 			t.Errorf("%s looks like a credential but is not in runtime.SecretEnvNames (it would reach the task definition in plaintext)", name)
 		}
 		if listed[name] {
 			seen++
+		}
+	}
+	for _, n := range mustEmit {
+		if !emitted[n] {
+			t.Errorf("%s was not emitted: the switch-gated case no longer exercises it", n)
 		}
 	}
 	if seen < 10 {
