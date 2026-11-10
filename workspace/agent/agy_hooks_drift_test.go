@@ -88,9 +88,14 @@ func TestDriftAgyToolHooks(t *testing.T) {
 	// cause, so the run is not read as a hooks regression. Measured on 1.5.4: the sign-in's
 	// quota was exhausted and the events were SessionStart, PreInvocation, Stop only.
 	if resetAt, limited := agy.LimitInMessage(string(out), time.Now()); limited {
+		// resetAt is zero when the refusal text carried no "Resets in" duration.
+		when := "at an unknown time"
+		if !resetAt.IsZero() {
+			when = "at " + resetAt.Format(time.RFC3339)
+		}
 		t.Fatalf("INCONCLUSIVE, not a hooks regression: the model turn was refused for quota "+
-			"(reset at %v), so no tool call was attempted. Re-run once the quota resets: %s",
-			resetAt.Format(time.RFC3339), strings.TrimSpace(string(out)))
+			"(resets %s), so no tool call was attempted. Re-run once the quota resets: %s",
+			when, strings.TrimSpace(string(out)))
 	}
 
 	if _, err := os.Stat(ran); err != nil {
