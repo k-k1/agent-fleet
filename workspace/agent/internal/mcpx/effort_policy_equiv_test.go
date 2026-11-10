@@ -55,8 +55,8 @@ func TestEffortPrecheckMatchesOldSwitch(t *testing.T) {
 			checked++
 		}
 	}
-	if checked < 11*6 {
-		t.Fatalf("only %d combinations checked", checked)
+	if want := len(kinds) * len(models); checked != want {
+		t.Fatalf("checked %d combinations, want %d", checked, want)
 	}
 }
 
@@ -69,11 +69,18 @@ func TestEffortPolicyDeclaredOnlyWhereOldSwitchNamed(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if p.EffortTraits().Rule == agents.EffortByCatalog {
+		tr := p.EffortTraits()
+		if tr.Rule == agents.EffortByCatalog && !tr.AutoRejectsEffort {
 			continue
 		}
-		if d, _ := oldEffortPrecheck(k, "gpt-x"); !d {
-			t.Errorf("kind %q declares a non-catalog effort rule the old switch did not have", k)
+		named := false
+		for _, m := range []string{"", "auto", "gpt-x"} {
+			if d, _ := oldEffortPrecheck(k, m); d {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("kind %q declares a non-catalog effort rule or AutoRejectsEffort the old switch did not have", k)
 		}
 	}
 }

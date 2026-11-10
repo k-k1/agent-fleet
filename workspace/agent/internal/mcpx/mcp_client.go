@@ -189,6 +189,7 @@ func CreateSessionKey(scope, dir, subdir, kind, model, effort, prompt string, wo
 // effortPrecheck is the part of checkCreateEffort that needs no catalog: the kind's own
 // agents.EffortPolicy. decided is false when the effort still has to be checked against the
 // model's catalog row (a kind without the capability, an unknown kind, or EffortByCatalog).
+// decided with a nil error allows the effort without consulting the catalog (opencode, kiro).
 func effortPrecheck(kind, model string) (decided bool, err error) {
 	a, _ := agentreg.Lookup(kind)
 	p, ok := a.(agents.EffortPolicy)

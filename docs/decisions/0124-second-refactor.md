@@ -660,7 +660,7 @@ kind: `EffortInModelID` (agy, cursor), `EffortNever` (lcpp with its reason, shel
 catalog check; a kind without the capability still checks the model's catalog row. The catalog read
 and the blank-model refusal stay in `mcpx`. `TestEffortPrecheckMatchesOldSwitch` pins the
 catalog-free part to a copy of the old switch over every registered kind (plus blank, unknown and
-mis-cased spellings) x five models, texts included. `kindLiteralCeiling` 82 → 78. Behaviour
+mis-cased spellings) x six models, texts included. `kindLiteralCeiling` 82 → 78. Behaviour
 unchanged; not verified against a live fleet.
 
 Follow-ups: #2925.
