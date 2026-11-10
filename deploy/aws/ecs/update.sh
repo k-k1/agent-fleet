@@ -761,7 +761,11 @@ else
   rc=$?
   set -e
   echo "$deploy_out"
-  [ $rc -eq 0 ] || exit $rc
+  if [ $rc -ne 0 ]; then
+    # A double failure: keep the side stack's earlier failure from being lost behind this one.
+    [ "${#SIDE_FAILED[@]}" -eq 0 ] || echo "NOTE: side stack(s) also failed earlier: ${SIDE_FAILED[*]}" >&2
+    exit $rc
+  fi
 fi
 # The values that went empty above (a network or data stack that no longer has them).
 if [ ${#CLEAR_INGRESS[@]} -gt 0 ]; then
@@ -937,9 +941,9 @@ fi
 # --- side stacks that failed (see side_deploy) -----------------------------------------------
 if [ "${#SIDE_FAILED[@]}" -gt 0 ]; then
   echo
-  echo "FAILED: $STACK itself is updated, but these side stacks did not deploy:" >&2
-  for f in "${SIDE_FAILED[@]}"; do echo "  - $f" >&2; done
-  echo "        Read the stack events of each (aws cloudformation describe-stack-events), fix the cause," >&2
-  echo "        then re-run update.sh." >&2
+  echo "FAILED: $STACK itself is updated, but these side stacks did not deploy:"
+  for f in "${SIDE_FAILED[@]}"; do echo "  - $f"; done
+  echo "        Read the stack events of each (aws cloudformation describe-stack-events), fix the cause,"
+  echo "        then re-run update.sh."
   exit 1
 fi
