@@ -139,7 +139,6 @@ func TestSigninStartNeverStartsOnAnUncertainState(t *testing.T) {
 		"unknown":  signinStartStateUnsure,
 		"starting": signinStartNotStopped,
 		"running":  signinStartNotStopped,
-		"none":     signinStartNotStopped,
 	} {
 		tc := newSigninCase(t, state, true)
 		tc.tenantLimits(t, `{"autostart_on_signin":true}`)
@@ -147,6 +146,18 @@ func TestSigninStartNeverStartsOnAnUncertainState(t *testing.T) {
 		if out["started"] != false || out["reason"] != reason || tc.rt.startCount() != 0 {
 			t.Errorf("state %q: answer %v, starts=%d, want not started (%s)", state, out, tc.rt.startCount(), reason)
 		}
+	}
+}
+
+// "none" is how docker and native report a workspace that was stopped normally (Stop removes the
+// container / pid file), and the Console shows it as stopped. Refusing it made the feature
+// silently do nothing on those deployments.
+func TestSigninStartStartsAWorkspaceWhoseContainerIsGone(t *testing.T) {
+	c := newSigninCase(t, "none", true)
+	c.tenantLimits(t, `{"autostart_on_signin":true}`)
+	code, out := c.call(t)
+	if code != http.StatusOK || out["started"] != true || c.rt.startCount() != 1 {
+		t.Fatalf("answer = %d %v, starts=%d, want started once", code, out, c.rt.startCount())
 	}
 }
 

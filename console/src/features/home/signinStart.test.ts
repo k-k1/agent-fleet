@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COOLDOWN_MS, INPUT_FRESH_MS, armedNext, shouldRequestSigninStart, type SigninGate } from "./signinGate.ts";
+import { COOLDOWN_MS, INPUT_FRESH_MS, armedNext, isCold, loadCountsAsPresence, shouldRequestSigninStart, type SigninGate } from "./signinGate.ts";
 
 const NOW = 10_000_000;
 const open: SigninGate = {
@@ -26,8 +26,8 @@ describe("shouldRequestSigninStart", () => {
     expect(shouldRequestSigninStart({ ...open, lastInputAt: NOW - INPUT_FRESH_MS - 1 })).toBe(false);
   });
 
-  it("never asks when the state is anything but stopped, unknown above all", () => {
-    for (const state of ["unknown", "…", "running", "starting", "starting…", "stopping…", "none"]) {
+  it("never asks when the state is neither stopped nor none, unknown above all", () => {
+    for (const state of ["unknown", "…", "running", "starting", "starting…", "stopping…"]) {
       expect(shouldRequestSigninStart({ ...open, state })).toBe(false);
     }
   });
@@ -41,6 +41,26 @@ describe("shouldRequestSigninStart", () => {
   it("does not ask when the page is not armed", () => {
     expect(shouldRequestSigninStart({ ...open, armed: false })).toBe(false);
     expect(shouldRequestSigninStart({ ...open, armed: null })).toBe(false);
+  });
+});
+
+describe("a workspace stopped the normal way on docker / native reads \"none\"", () => {
+  it("is cold, and may be asked about, exactly like \"stopped\"", () => {
+    expect(isCold("none")).toBe(true);
+    expect(isCold("stopped")).toBe(true);
+    for (const s of ["running", "starting", "unknown", "…", "stopping…"]) expect(isCold(s)).toBe(false);
+    expect(armedNext(null, "none")).toBe(true);
+    expect(shouldRequestSigninStart({ ...open, state: "none" })).toBe(true);
+  });
+});
+
+describe("loadCountsAsPresence", () => {
+  it("counts a navigation to a visible page, not a reload, a traversal or a hidden tab", () => {
+    expect(loadCountsAsPresence("navigate", true)).toBe(true);
+    expect(loadCountsAsPresence("reload", true)).toBe(false);
+    expect(loadCountsAsPresence("back_forward", true)).toBe(false);
+    expect(loadCountsAsPresence(undefined, true)).toBe(false);
+    expect(loadCountsAsPresence("navigate", false)).toBe(false);
   });
 });
 

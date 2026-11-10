@@ -25,7 +25,7 @@ beforeEach(() => {
   localStorage.clear();
   apiMock.mockReset();
   apiMock.mockImplementation(async (path: string) => (path === "api/workspace" ? { state: "starting" } : { started: true }));
-  useSigninStartStore.setState({ auto: false, blocked: null });
+  useSigninStartStore.setState({ auto: false, blocked: null, last: "" });
   useWorkspaceStore.setState({ state: "…", bootPhase: "" });
 });
 
@@ -101,6 +101,75 @@ describe("useSigninStart", () => {
     await act(async () => {});
     expect(useSigninStartStore.getState().blocked?.reason).toBe("quota_workspaces");
     expect(useSigninStartStore.getState().auto).toBe(false);
+  });
+
+  it("asks for a workspace that reads \"none\" (stopped the normal way on docker and native)", async () => {
+    render(<Probe />);
+    setWs("none");
+    input();
+    await act(async () => {});
+    expect(calls()).toBe(1);
+  });
+
+  it("asks after a touch, as a phone sends it", async () => {
+    render(<Probe />);
+    setWs("stopped");
+    act(() => void window.dispatchEvent(new Event("touchstart")));
+    await act(async () => {});
+    expect(calls()).toBe(1);
+  });
+
+  it("does not let a refusal for policy silence the next page after the switch is turned on", async () => {
+    apiMock.mockImplementationOnce(async () => ({ started: false, reason: "tenant_off" }));
+    const { unmount } = render(<Probe />);
+    setWs("stopped");
+    input();
+    await act(async () => {});
+    expect(calls()).toBe(1);
+    expect(useSigninStartStore.getState().last).toBe("tenant_off");
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("af.signinStart"))).toHaveLength(0);
+    unmount();
+    // The administrator turns the switch on; the next sign-in asks again and starts.
+    useWorkspaceStore.setState({ state: "…" });
+    render(<Probe />);
+    setWs("stopped");
+    input();
+    await act(async () => {});
+    expect(calls()).toBe(2);
+    expect(useSigninStartStore.getState().last).toBe("started");
+  });
+
+  it("keeps the limit note while the workspace reads \"none\"", async () => {
+    apiMock.mockImplementation(async () => ({ started: false, reason: "quota_workspaces" }));
+    render(<Probe />);
+    setWs("none");
+    input();
+    await act(async () => {});
+    expect(useSigninStartStore.getState().blocked).not.toBeNull();
+  });
+
+  it("treats a page opened by navigation as the sign-in input", async () => {
+    const spy = vi.spyOn(performance, "getEntriesByType").mockReturnValue([{ type: "navigate" } as unknown as PerformanceEntry]);
+    try {
+      render(<Probe />);
+      setWs("stopped");
+      await act(async () => {});
+      expect(calls()).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not treat a reload as input", async () => {
+    const spy = vi.spyOn(performance, "getEntriesByType").mockReturnValue([{ type: "reload" } as unknown as PerformanceEntry]);
+    try {
+      render(<Probe />);
+      setWs("stopped");
+      await act(async () => {});
+      expect(calls()).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("does not ask from a hidden tab", async () => {
