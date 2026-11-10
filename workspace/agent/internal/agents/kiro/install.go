@@ -1,6 +1,6 @@
-package main
+package kiro
 
-// install_kiro.go — on-demand installer for the Kiro CLI (kind="kiro", docs/log/43
+// install.go — on-demand installer for the Kiro CLI (kind="kiro", docs/log/43
 // Track B / decisions/0026).
 //
 // Every OTHER agent CLI is either baked into the image (/usr/local, BAKE_AGENT_CLIS=1)
@@ -12,7 +12,7 @@ package main
 //   - the kiro launch program runs `workspace-agent install-kiro --if-needed` on every
 //     launch (first-use auto-install and later pin catch-up — progress shows in the
 //     session pane; silent when the pinned version is already there),
-//   - the connection card's "install" button (Track C) calls installKiro() over HTTP.
+//   - the connection card's "install" button (Track C) calls Install() over HTTP.
 //
 // Pinned by versions.json (kiro + kiro_sha256, arch-specific) — the same "version we
 // verified" contract as the baked image and the other boot-installs. That pin is also
@@ -21,7 +21,7 @@ package main
 // leave the user on the old version forever — kiro has no self-update path here (we pin
 // app.disableAutoupdates off) and no boot-install to refresh it, unlike every other CLI.
 // A drift between the installed version and the pin therefore triggers a re-install
-// (see kiroCheck) — upgrade AND downgrade, because the pin is the version we verified.
+// (see Check) — upgrade AND downgrade, because the pin is the version we verified.
 //
 // The install is minutes long and the most natural user reaction to a slow first
 // launch is to stop the session (kill the tmux pane) — so it MUST be crash-safe:
@@ -54,6 +54,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 // kiroAsset returns the manifest asset name for this arch. x86_64 uses the gnu
@@ -77,29 +80,29 @@ func kiroAsset() (string, error) {
 // placement is an atomic rename, and it is wiped at the start of each install so a
 // killed prior attempt leaves at most one install's worth of residue behind.
 func kiroInstallStaging() string {
-	return filepath.Join(agentFleetShareDir(), "kiro-install")
+	return filepath.Join(installx.ShareDir(), "kiro-install")
 }
 
 // kiroInstallLockPath is the flock file guarding concurrent installs (B-2).
 func kiroInstallLockPath() string {
-	return filepath.Join(agentFleetShareDir(), ".kiro-install.lock")
+	return filepath.Join(installx.ShareDir(), ".kiro-install.lock")
 }
 
-// runInstallKiro handles `workspace-agent install-kiro`.
+// RunInstall handles `workspace-agent install-kiro`.
 //
 // `--if-needed` is the launch-guard mode (kiro/program.go prepends it to every kiro
 // pane program): identical behaviour, but it says nothing at all when the pinned
 // version is already installed. The guard runs on EVERY launch — including the common
 // "nothing to do" case — so it must not print a line into the pane before the TUI
 // takes the screen. A real install/upgrade still reports progress there, as before.
-func runInstallKiro(args []string) {
+func RunInstall(args []string) {
 	quiet := false
 	for _, a := range args {
 		if a == "--if-needed" {
 			quiet = true
 		}
 	}
-	if err := installKiro(quiet); err != nil {
+	if err := Install(quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "[install-kiro] %v\n", err)
 		os.Exit(1)
 	}
@@ -107,10 +110,10 @@ func runInstallKiro(args []string) {
 
 // kiroInstallLock takes the cross-process exclusive lock, returning an unlock func.
 // Shared by both entry points (the CLI subcommand the launch guard runs, and the HTTP
-// route's installKiro() goroutine) because both flow through installKiro(). A
+// route's Install() goroutine) because both flow through Install(). A
 // non-blocking try first lets us tell the user we're waiting before blocking.
 func kiroInstallLock() (func(), error) {
-	if err := os.MkdirAll(agentFleetShareDir(), 0o755); err != nil {
+	if err := os.MkdirAll(installx.ShareDir(), 0o755); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(kiroInstallLockPath(), os.O_CREATE|os.O_RDWR, 0o644)
@@ -133,7 +136,7 @@ func kiroInstallLock() (func(), error) {
 // kiroPresent reports whether a usable kiro-cli is already installed (home first,
 // then a baked /usr/local via PATH) and returns the binary path to pin settings on.
 func kiroPresent(binDir string) (string, bool) {
-	if home := filepath.Join(binDir, "kiro-cli"); fileExecutable(home) {
+	if home := filepath.Join(binDir, "kiro-cli"); installx.FileExecutable(home) {
 		return home, true
 	}
 	if p, err := exec.LookPath("kiro-cli"); err == nil {
@@ -142,69 +145,69 @@ func kiroPresent(binDir string) (string, bool) {
 	return "", false
 }
 
-// kiroVersionMarkerPath records which pin the last install placed, so the per-launch
+// VersionMarkerPath records which pin the last install placed, so the per-launch
 // check is a stat instead of an exec of the 855MB binary (same trick as agy's
 // .agy.version marker in the entrypoint). It is only ever a FAST PATH for "current":
 // any mismatch falls through to probing the binary itself, so a stale/absent marker
 // (e.g. an install from before this file grew one, or a baked /usr/local kiro) can
 // never trigger a bogus 554MB re-download.
-func kiroVersionMarkerPath(binDir string) string {
+func VersionMarkerPath(binDir string) string {
 	return filepath.Join(binDir, ".kiro.version")
 }
 
-// kiroState is the verdict of kiroCheck.
-type kiroState int
+// State is the verdict of Check.
+type State int
 
 const (
-	kiroMissing    kiroState = iota // no kiro-cli anywhere → install
-	kiroCurrent                     // installed version == pin → nothing to do
-	kiroStale                       // installed version != pin → re-install at the pin
-	kiroUnknownVer                  // present but `--version` gave nothing parsable
+	Missing    State = iota // no kiro-cli anywhere → install
+	Current                 // installed version == pin → nothing to do
+	Stale                   // installed version != pin → re-install at the pin
+	UnknownVer              // present but `--version` gave nothing parsable
 )
 
-// kiroCheck compares the installed kiro-cli against the versions.json pin and returns
+// Check compares the installed kiro-cli against the versions.json pin and returns
 // the binary path, the version it reports (best effort) and the verdict.
 //
 // want=="" (no pin readable — a hand-built image without versions.json) degrades to the
 // pre-pin-check behaviour: a present binary is left alone rather than treated as stale,
 // since there is nothing to compare it against.
-func kiroCheck(binDir, want string) (string, string, kiroState) {
+func Check(binDir, want string) (string, string, State) {
 	p, ok := kiroPresent(binDir)
 	if !ok {
-		return "", "", kiroMissing
+		return "", "", Missing
 	}
 	if want == "" {
-		return p, "", kiroCurrent
+		return p, "", Current
 	}
-	if b, err := os.ReadFile(kiroVersionMarkerPath(binDir)); err == nil &&
+	if b, err := os.ReadFile(VersionMarkerPath(binDir)); err == nil &&
 		strings.TrimSpace(string(b)) == want && p == filepath.Join(binDir, "kiro-cli") {
-		return p, want, kiroCurrent
+		return p, want, Current
 	}
 	cur := kiroBinVersion(p)
 	switch {
 	case cur == "":
-		return p, "", kiroUnknownVer
+		return p, "", UnknownVer
 	case cur == want:
-		return p, cur, kiroCurrent
+		return p, cur, Current
 	default:
-		return p, cur, kiroStale
+		return p, cur, Stale
 	}
 }
 
-// kiroInstallCurrent reports whether the pinned kiro is already in place, i.e. an
+// InstallCurrent reports whether the pinned kiro is already in place, i.e. an
 // install request has nothing to do. Present-but-STALE is deliberately false: the HTTP
 // route then runs the upgrade instead of answering "done" (kiro_install_http.go).
-func kiroInstallCurrent() bool {
-	binDir := filepath.Join(homeDir(), ".local", "bin")
-	_, _, st := kiroCheck(binDir, readBuildPins()["kiro"])
-	return st == kiroCurrent || st == kiroUnknownVer
+func InstallCurrent() bool {
+	binDir := installx.LocalBin()
+	_, _, st := Check(binDir, installx.ReadBuildPins()["kiro"])
+	return st == Current || st == UnknownVer
 }
 
 // kiroBinVersion returns the version `<bin> --version` reports ("kiro-cli 2.14.2" →
 // "2.14.2"), or "" when it can't be determined (probe failed / unparsable output).
 func kiroBinVersion(bin string) string {
-	tb := probeVersion(context.Background(), bin, nil, nil) // probeTimeout, nil when the path is gone
-	if tb == nil || !verNumRe.MatchString(tb.Version) {
+	tb := installx.ProbeVersion(context.Background(), bin, nil, nil) // installx.ProbeTimeout, nil when the path is gone
+	if tb == nil || !installx.VerNumRe.MatchString(tb.Version) {
 		return ""
 	}
 	return tb.Version
@@ -214,9 +217,9 @@ func kiroBinVersion(bin string) string {
 // who annotates the message for the post-lock re-check. quiet suppresses the "already
 // current" line only (warnings and the upgrade notice always print).
 func kiroSkipInstall(binDir, want, who string, quiet bool) bool {
-	p, cur, st := kiroCheck(binDir, want)
+	p, cur, st := Check(binDir, want)
 	switch st {
-	case kiroCurrent:
+	case Current:
 		if !quiet {
 			fmt.Fprintf(os.Stderr, "[install-kiro] kiro-cli %s already installed%s (%s); skip\n", cur, who, p)
 		}
@@ -227,13 +230,13 @@ func kiroSkipInstall(binDir, want, who string, quiet bool) bool {
 			writeKiroVersionMarker(binDir, cur)
 		}
 		return true
-	case kiroUnknownVer:
+	case UnknownVer:
 		// Don't churn a 554MB re-download over an unreadable version — a binary that
 		// can't report one is an environment problem, and the launch will surface it.
 		fmt.Fprintf(os.Stderr, "[install-kiro] WARN: kiro-cli at %s reports no parsable version; leaving it as-is (pin %s)\n", p, want)
 		pinKiroSettings(p)
 		return true
-	case kiroStale:
+	case Stale:
 		fmt.Fprintf(os.Stderr, "[install-kiro] kiro-cli %s is installed (%s) but the pinned version is %s; re-installing ...\n", cur, p, want)
 	}
 	return false
@@ -241,12 +244,12 @@ func kiroSkipInstall(binDir, want, who string, quiet bool) bool {
 
 // writeKiroVersionMarker records the pin now living in ~/.local/bin (best effort).
 func writeKiroVersionMarker(binDir, ver string) {
-	_ = os.WriteFile(kiroVersionMarkerPath(binDir), []byte(ver+"\n"), 0o644)
+	_ = os.WriteFile(VersionMarkerPath(binDir), []byte(ver+"\n"), 0o644)
 }
 
-func installKiro(quiet bool) error {
-	binDir := filepath.Join(homeDir(), ".local", "bin")
-	pins := readBuildPins()
+func Install(quiet bool) error {
+	binDir := installx.LocalBin()
+	pins := installx.ReadBuildPins()
 	ver, sha := pins["kiro"], pins["kiro_sha256"]
 
 	// Fast path (pre-lock): the pinned version is already there → just (re)pin settings.
@@ -287,14 +290,14 @@ func installKiro(quiet bool) error {
 	zipPath := filepath.Join(staging, "kiro.zip")
 	url := fmt.Sprintf("https://prod.download.cli.kiro.dev/stable/%s/%s", ver, asset)
 	fmt.Fprintf(os.Stderr, "[install-kiro] downloading Kiro CLI %s (%s, ~554MB) ...\n", ver, asset)
-	if err := runCmd("curl", "-fSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", zipPath, url); err != nil {
+	if err := installx.RunCmd("curl", "-fSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", zipPath, url); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
-	if err := verifySha256(zipPath, sha); err != nil {
+	if err := installx.VerifySha256(zipPath, sha); err != nil {
 		return err
 	}
 	extract := filepath.Join(staging, "x")
-	if err := runCmd("unzip", "-q", zipPath, "-d", extract); err != nil {
+	if err := installx.RunCmd("unzip", "-q", zipPath, "-d", extract); err != nil {
 		return fmt.Errorf("extract: %w", err)
 	}
 	// Free the 554MB zip immediately so peak disk on the home volume stays near one
@@ -307,7 +310,7 @@ func installKiro(quiet bool) error {
 	// double of the 855MB payload and each placement is an atomic same-filesystem rename.
 	srcBin := filepath.Join(extract, "kirocli", "bin")
 	stagedKiro := filepath.Join(srcBin, "kiro-cli")
-	if !fileExecutable(stagedKiro) {
+	if !installx.FileExecutable(stagedKiro) {
 		if err := os.Chmod(stagedKiro, 0o755); err != nil {
 			return fmt.Errorf("extracted archive has no kiro-cli: %w", err)
 		}
@@ -323,7 +326,7 @@ func installKiro(quiet bool) error {
 	// Drop a stale marker BEFORE touching the binaries: from here on the tree is
 	// mid-swap, and an interrupted upgrade must never leave a marker claiming the new
 	// pin over a half-old install (the next launch re-probes and finishes the job).
-	_ = os.Remove(kiroVersionMarkerPath(binDir))
+	_ = os.Remove(VersionMarkerPath(binDir))
 	// Place the support binaries first, then kiro-cli LAST: kiro-cli is the presence
 	// marker the launch guard / idempotency checks probe, so it must appear only once
 	// the whole install is otherwise complete. A kill before this final rename leaves
@@ -391,7 +394,7 @@ func pinKiroSettings(binPath string) {
 // fleet-required settings as true. Unreadable / unexpected shape → false, i.e. fall
 // back to asking the CLI (which is the authority on its own settings format).
 func kiroSettingsPinned() bool {
-	b, err := os.ReadFile(filepath.Join(homeDir(), ".kiro", "settings", "cli.json"))
+	b, err := os.ReadFile(filepath.Join(paths.HomeDir(), ".kiro", "settings", "cli.json"))
 	if err != nil {
 		return false
 	}

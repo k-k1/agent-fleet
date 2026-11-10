@@ -550,7 +550,7 @@ ARG KIRO_SHA256_ARM64=1a65bd74602b7a8d32ca45937bbfbb3a320f25e8807eecf611935dc298
 # sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
 # MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
-# agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
+# agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（agents/muse/install.go）。
 ARG MUSE_VERSION=1.4.14-R7309.1
 ARG MUSE_SHA256_X64=0809aac7cb58d18f5022b6d05e02aa1974683c0ec430e5f04d25b60ed17de2da
 ARG MUSE_SHA256_ARM64=3dc39b8fa26f9963cc2038f2966c0932ed5a39f0f9efb39cc0266a261cbbcf76
@@ -695,7 +695,7 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=true
 # 自分を書き換える（MUSE_UPDATE_INTERVAL_SECONDS=3600・実測 2026-09-20）。管理外の
 # 自己更新バイナリが黙って育つのを止める 1 行。
 #
-# 影そのものの検知と修復は install_muse.go の museCheck が持つ——**パスではなく版一致**で
+# 影そのものの検知と修復は agents/muse/install.go の Check が持つ——**パスではなく版一致**で
 # 判定する（ベンダの既定の置き場は AF と同じ `~/.local/bin/muse` なので、パスで見ると AF 自身の
 # バイナリを影と報告してしまう）。
 ENV MUSE_NO_AUTO_UPDATE=1

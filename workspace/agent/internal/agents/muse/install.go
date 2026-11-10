@@ -1,6 +1,6 @@
-package main
+package muse
 
-// install_muse.go — on-demand installer for Muse Code (kind="muse", ADR 0095 decision 8).
+// install.go — on-demand installer for Muse Code (kind="muse", ADR 0095 decision 8).
 //
 // Muse Code is proprietary, so the distributed image does not contain it — the rule Claude
 // Code, Copilot CLI and Antigravity already live under (`Dockerfile`'s BAKE_AGENT_CLIS=0
@@ -9,7 +9,7 @@ package main
 // that member actually wants muse.
 //
 //   - `workspace-agent install-muse` (and `--if-needed`, the quiet mode) — the CLI route.
-//   - the connection card's install button calls installMuse() over HTTP
+//   - the connection card's install button calls Install() over HTTP
 //     (muse_install_http.go).
 //
 // There is no launch guard, and that difference from kiro is deliberate: muse is managed-only,
@@ -43,6 +43,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 // museAsset returns the release-manifest asset name for this arch (ADR 0095 decision 8). One
@@ -76,24 +78,24 @@ var museDownloadURL = func(ver, asset string) string {
 // (same filesystem as ~/.local/bin) so placement is an atomic rename, and it is wiped at the
 // start of each run so a killed attempt leaves at most one install's residue.
 func museInstallStaging() string {
-	return filepath.Join(agentFleetShareDir(), "muse-install")
+	return filepath.Join(installx.ShareDir(), "muse-install")
 }
 
 // museInstallLockPath is the flock file serialising concurrent installs.
 func museInstallLockPath() string {
-	return filepath.Join(agentFleetShareDir(), ".muse-install.lock")
+	return filepath.Join(installx.ShareDir(), ".muse-install.lock")
 }
 
-// runInstallMuse handles `workspace-agent install-muse`. `--if-needed` only silences the
+// RunInstall handles `workspace-agent install-muse`. `--if-needed` only silences the
 // "already installed" line; warnings and a real install still report progress.
-func runInstallMuse(args []string) {
+func RunInstall(args []string) {
 	quiet := false
 	for _, a := range args {
 		if a == "--if-needed" {
 			quiet = true
 		}
 	}
-	if err := installMuse(quiet); err != nil {
+	if err := Install(quiet); err != nil {
 		fmt.Fprintf(os.Stderr, "[install-muse] %v\n", err)
 		os.Exit(1)
 	}
@@ -102,7 +104,7 @@ func runInstallMuse(args []string) {
 // museInstallLock takes the cross-process exclusive lock, returning an unlock func. A
 // non-blocking try first lets us say we are waiting before we block.
 func museInstallLock() (func(), error) {
-	if err := os.MkdirAll(agentFleetShareDir(), 0o755); err != nil {
+	if err := os.MkdirAll(installx.ShareDir(), 0o755); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(museInstallLockPath(), os.O_CREATE|os.O_RDWR, 0o644)
@@ -125,7 +127,7 @@ func museInstallLock() (func(), error) {
 // musePresent reports whether a usable muse is installed (home first, then a baked
 // /usr/local via PATH) and returns the path to probe.
 func musePresent(binDir string) (string, bool) {
-	if home := filepath.Join(binDir, "muse"); fileExecutable(home) {
+	if home := filepath.Join(binDir, "muse"); installx.FileExecutable(home) {
 		return home, true
 	}
 	if p, err := exec.LookPath("muse"); err == nil {
@@ -134,11 +136,11 @@ func musePresent(binDir string) (string, bool) {
 	return "", false
 }
 
-// museVersionMarkerPath records which pin the last install placed, so the common check is a
+// VersionMarkerPath records which pin the last install placed, so the common check is a
 // stat rather than an exec of a 299 MiB binary. It is only ever a FAST PATH for "current": any
 // mismatch falls through to probing the binary, so a stale or absent marker can never trigger a
 // bogus re-download.
-func museVersionMarkerPath(binDir string) string {
+func VersionMarkerPath(binDir string) string {
 	return filepath.Join(binDir, ".muse.version")
 }
 
@@ -158,10 +160,10 @@ var (
 	museSemverRe  = regexp.MustCompile(`[0-9]+\.[0-9]+(?:\.[0-9]+)?`)
 )
 
-// museParseVersion extracts the comparable version from a `muse --version` line: the
+// ParseVersion extracts the comparable version from a `muse --version` line: the
 // parenthesised build id when there is one, else a bare version (so a future release that stops
 // printing one still compares equal to a pin in the same shape).
-func museParseVersion(raw string) string {
+func ParseVersion(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if m := museBuildIDRe.FindStringSubmatch(raw); m != nil {
 		return m[1]
@@ -169,17 +171,17 @@ func museParseVersion(raw string) string {
 	return museSemverRe.FindString(raw)
 }
 
-// museState is the verdict of museCheck.
-type museState int
+// State is the verdict of Check.
+type State int
 
 const (
-	museMissing    museState = iota // no muse anywhere → install
-	museCurrent                     // installed version == pin → nothing to do
-	museStale                       // installed version != pin → re-install at the pin
-	museUnknownVer                  // present but `--version` gave nothing parsable
+	Missing    State = iota // no muse anywhere → install
+	Current                 // installed version == pin → nothing to do
+	Stale                   // installed version != pin → re-install at the pin
+	UnknownVer              // present but `--version` gave nothing parsable
 )
 
-// museCheck compares the installed muse against the versions.json pin and returns the path,
+// Check compares the installed muse against the versions.json pin and returns the path,
 // the version it reports (best effort) and the verdict.
 //
 // This is also the shadow guard of decision 8. A member who ran the vendor's one-line installer
@@ -190,56 +192,56 @@ const (
 //
 // want=="" (no pin readable — a hand-built image with no versions.json) degrades to leaving a
 // present binary alone: there is nothing to compare it against.
-func museCheck(binDir, want string) (string, string, museState) {
+func Check(binDir, want string) (string, string, State) {
 	p, ok := musePresent(binDir)
 	if !ok {
-		return "", "", museMissing
+		return "", "", Missing
 	}
 	if want == "" {
-		return p, "", museCurrent
+		return p, "", Current
 	}
-	if b, err := os.ReadFile(museVersionMarkerPath(binDir)); err == nil &&
+	if b, err := os.ReadFile(VersionMarkerPath(binDir)); err == nil &&
 		strings.TrimSpace(string(b)) == want && p == filepath.Join(binDir, "muse") {
-		return p, want, museCurrent
+		return p, want, Current
 	}
 	cur := museBinVersion(p)
 	switch {
 	case cur == "":
-		return p, "", museUnknownVer
+		return p, "", UnknownVer
 	case cur == want:
-		return p, cur, museCurrent
+		return p, cur, Current
 	default:
-		return p, cur, museStale
+		return p, cur, Stale
 	}
 }
 
-// museInstallCurrent reports whether the pinned muse is already in place. Present-but-STALE is
+// InstallCurrent reports whether the pinned muse is already in place. Present-but-STALE is
 // deliberately false, so the HTTP route performs the upgrade instead of answering "done".
-func museInstallCurrent() bool {
-	binDir := filepath.Join(homeDir(), ".local", "bin")
-	_, _, st := museCheck(binDir, readBuildPins()["muse"])
-	return st == museCurrent || st == museUnknownVer
+func InstallCurrent() bool {
+	binDir := installx.LocalBin()
+	_, _, st := Check(binDir, installx.ReadBuildPins()["muse"])
+	return st == Current || st == UnknownVer
 }
 
 // museBinVersion returns the build id `<bin> --version` reports, or "" when it cannot be
 // determined. It does NOT go through probeVersion's extractVer, which would strip the build id.
 func museBinVersion(bin string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), installx.ProbeTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, bin, "--version").Output()
 	if err != nil && len(out) == 0 {
 		return ""
 	}
-	return museParseVersion(strings.SplitN(string(out), "\n", 2)[0])
+	return ParseVersion(strings.SplitN(string(out), "\n", 2)[0])
 }
 
 // museSkipInstall reports whether the download can be skipped, printing the reason. who
 // annotates the message for the post-lock re-check; quiet suppresses the "already current"
 // line only.
 func museSkipInstall(binDir, want, who string, quiet bool) bool {
-	p, cur, st := museCheck(binDir, want)
+	p, cur, st := Check(binDir, want)
 	switch st {
-	case museCurrent:
+	case Current:
 		if !quiet {
 			fmt.Fprintf(os.Stderr, "[install-muse] Muse Code %s already installed%s (%s); skip\n", cur, who, p)
 		}
@@ -247,12 +249,12 @@ func museSkipInstall(binDir, want, who string, quiet bool) bool {
 			writeMuseVersionMarker(binDir, cur)
 		}
 		return true
-	case museUnknownVer:
+	case UnknownVer:
 		// Don't churn a 299 MiB re-download over an unreadable version — a binary that
 		// cannot report one is an environment problem, and the launch will surface it.
 		fmt.Fprintf(os.Stderr, "[install-muse] WARN: muse at %s reports no parsable version; leaving it as-is (pin %s)\n", p, want)
 		return true
-	case museStale:
+	case Stale:
 		// The shadow case as well as a pin bump: either way the pinned version is what AF runs.
 		fmt.Fprintf(os.Stderr, "[install-muse] muse %s is installed (%s) but the pinned version is %s; re-installing ...\n", cur, p, want)
 	}
@@ -261,12 +263,12 @@ func museSkipInstall(binDir, want, who string, quiet bool) bool {
 
 // writeMuseVersionMarker records the pin now living in ~/.local/bin (best effort).
 func writeMuseVersionMarker(binDir, ver string) {
-	_ = os.WriteFile(museVersionMarkerPath(binDir), []byte(ver+"\n"), 0o644)
+	_ = os.WriteFile(VersionMarkerPath(binDir), []byte(ver+"\n"), 0o644)
 }
 
-func installMuse(quiet bool) error {
-	binDir := filepath.Join(homeDir(), ".local", "bin")
-	pins := readBuildPins()
+func Install(quiet bool) error {
+	binDir := installx.LocalBin()
+	pins := installx.ReadBuildPins()
 	ver, sha := pins["muse"], pins["muse_sha256"]
 
 	// Fast path (pre-lock): the pinned version is already there.
@@ -305,11 +307,11 @@ func installMuse(quiet bool) error {
 
 	staged := filepath.Join(staging, "muse")
 	fmt.Fprintf(os.Stderr, "[install-muse] downloading Muse Code %s (%s, ~299MB) ...\n", ver, asset)
-	if err := runCmd("curl", "-fSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused",
+	if err := installx.RunCmd("curl", "-fSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused",
 		"-o", staged, museDownloadURL(ver, asset)); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
-	if err := verifySha256(staged, sha); err != nil {
+	if err := installx.VerifySha256(staged, sha); err != nil {
 		return err
 	}
 	if err := os.Chmod(staged, 0o755); err != nil {
@@ -325,7 +327,7 @@ func installMuse(quiet bool) error {
 	}
 	// Drop a stale marker BEFORE touching the binary: from here the tree is mid-swap, and an
 	// interrupted upgrade must never leave a marker claiming the new pin over the old install.
-	_ = os.Remove(museVersionMarkerPath(binDir))
+	_ = os.Remove(VersionMarkerPath(binDir))
 	// One atomic same-filesystem rename. On an upgrade it lands on an existing file, and
 	// rename only swaps the directory entry — a running muse host keeps its inode and is
 	// unaffected (no ETXTBSY, unlike writing in place).
@@ -350,7 +352,7 @@ func museSanityCheck(bin string) error {
 		return fmt.Errorf("%w (output: %s)", err, strings.TrimSpace(string(out)))
 	}
 	raw := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
-	if museParseVersion(raw) == "" {
+	if ParseVersion(raw) == "" {
 		return fmt.Errorf("no version in %q — the version line changed shape, so the pin comparison would never match", raw)
 	}
 	return nil

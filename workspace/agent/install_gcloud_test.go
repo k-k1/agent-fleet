@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 // fakeGCloudArchive writes a tar.gz laid out like Google's archive: google-cloud-sdk/ with a
@@ -70,8 +72,8 @@ func newGCloudInstallTest(t *testing.T) *gcloudInstallEnvT {
 	t.Helper()
 	e := &gcloudInstallEnvT{home: t.TempDir()}
 	t.Setenv("HOME", e.home)
-	oldPins, oldFetch, oldArch := buildPinsPath, gcloudFetch, gcloudGOARCH
-	buildPinsPath = filepath.Join(t.TempDir(), "versions.json")
+	oldPins, oldFetch, oldArch := installx.BuildPinsPath, gcloudFetch, gcloudGOARCH
+	installx.BuildPinsPath = filepath.Join(t.TempDir(), "versions.json")
 	gcloudGOARCH = "amd64"
 	gcloudFetch = func(url, dest string) error {
 		e.fetched = append(e.fetched, url)
@@ -81,14 +83,14 @@ func newGCloudInstallTest(t *testing.T) *gcloudInstallEnvT {
 		}
 		return os.WriteFile(dest, b, 0o644)
 	}
-	t.Cleanup(func() { buildPinsPath, gcloudFetch, gcloudGOARCH = oldPins, oldFetch, oldArch })
+	t.Cleanup(func() { installx.BuildPinsPath, gcloudFetch, gcloudGOARCH = oldPins, oldFetch, oldArch })
 	return e
 }
 
 func (e *gcloudInstallEnvT) pin(t *testing.T, ver, sum string) {
 	t.Helper()
 	b, _ := json.Marshal(map[string]string{"gcloud": ver, "gcloud_sha256": sum})
-	if err := os.WriteFile(buildPinsPath, b, 0o644); err != nil {
+	if err := os.WriteFile(installx.BuildPinsPath, b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -207,7 +209,7 @@ func TestInstallGCloudRefusesAnArchiveOfAnotherVersion(t *testing.T) {
 func TestInstallGCloudNeedsBothPins(t *testing.T) {
 	newGCloudInstallTest(t)
 	b, _ := json.Marshal(map[string]string{"gcloud": "587.0.0"})
-	_ = os.WriteFile(buildPinsPath, b, 0o644)
+	_ = os.WriteFile(installx.BuildPinsPath, b, 0o644)
 	if err := installGCloud(); err == nil || !strings.Contains(err.Error(), "pin") {
 		t.Fatalf("installGCloud without a sum = %v", err)
 	}

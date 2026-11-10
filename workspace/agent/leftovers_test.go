@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
@@ -30,10 +31,10 @@ func isolateLeftovers(t *testing.T) (home, proc string) {
 	if err := os.WriteFile(pins, []byte(`{"kiro":"2.24.1"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldPins, oldHost := buildPinsPath, hostnameFn
-	buildPinsPath = pins
+	oldPins, oldHost := installx.BuildPinsPath, hostnameFn
+	installx.BuildPinsPath = pins
 	hostnameFn = func() (string, error) { return "thisbox", nil }
-	t.Cleanup(func() { buildPinsPath, hostnameFn = oldPins, oldHost })
+	t.Cleanup(func() { installx.BuildPinsPath, hostnameFn = oldPins, oldHost })
 	return home, proc
 }
 
@@ -335,7 +336,7 @@ func TestLeftoversSurveyMatchesTheDelete(t *testing.T) {
 // says so.
 func TestLeftoversNeedVersionsJSON(t *testing.T) {
 	home, _ := isolateLeftovers(t)
-	buildPinsPath = filepath.Join(t.TempDir(), "missing.json")
+	installx.BuildPinsPath = filepath.Join(t.TempDir(), "missing.json")
 	writeSized(t, filepath.Join(home, ".af-work", "sgone01", "x"), 1)
 
 	pruneLeftoversAtBoot()

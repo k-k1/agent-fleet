@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"io"
 	"log"
 	"runtime"
@@ -12,11 +11,14 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watchhook"
 )
 
@@ -100,7 +102,7 @@ var subcommands = []subcommand{
 		run:     runAWSEnvCredentials,
 	},
 	// On-demand pinned installers (docs/log/35 §35.7.2, jdk.go / install_tools.go /
-	// install_kiro.go / install_postgres.go / install_pg_client.go / install_mysql.go): a lean
+	// agents/kiro/install.go / install_postgres.go / install_pg_client.go / install_mysql.go): a lean
 	// rootfs deployment installs these into the per-user home on first use, so the entrypoint
 	// and the launch programs run them on demand as well as the member from a terminal.
 	{
@@ -148,7 +150,7 @@ var subcommands = []subcommand{
 		// everyone: the launch program and the connection card run this on demand.
 		name:    "install-kiro",
 		summary: "download the pinned Kiro CLI into the home volume",
-		run:     runInstallKiro,
+		run:     kiro.RunInstall,
 	},
 	{
 		// Muse Code is proprietary (never in the distributed image) and ~299MB, so it takes
@@ -157,7 +159,7 @@ var subcommands = []subcommand{
 		// refuses and names this subcommand instead (ADR 0095 decision 8).
 		name:    "install-muse",
 		summary: "download the pinned Muse Code binary into the home volume",
-		run:     runInstallMuse,
+		run:     muse.RunInstall,
 	},
 	{
 		// Removes superseded copilot / cursor versions from home. The entrypoint runs it ahead of

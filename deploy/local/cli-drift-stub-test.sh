@@ -107,7 +107,7 @@ case ",${STUB_DRIFT:-}," in
       cursor) version="9999.99.99-deadbee" ;;
       # muse's pin IS a build id (1.3.0-R3401.1). A bare-semver drift fixture would pass
       # against a row that silently dropped the suffix, which is the exact defect the muse
-      # row exists to keep out (install_muse.go's museVerRe).
+      # row exists to keep out (agents/muse/install.go's museVerRe).
       muse)   version="9.9.9-R9999.9" ;;
       *)      version="9.9.9" ;;
     esac ;;

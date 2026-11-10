@@ -6,7 +6,7 @@ package main
 // supported=false. The connection card can't reach kiro's login flow (it needs the
 // binary) and the kind can't be launched (available gates on connected), so the card
 // offers an explicit "install" button that lands the CLI in the user's ~/.local via
-// the same installKiro() the first-use launch guard runs (Track B).
+// the same kiro.Install() the first-use launch guard runs (Track B).
 //
 // The download is minutes long, so this runs the install in the background and
 // exposes a tiny state machine the card polls: POST starts it (idempotent while
@@ -23,10 +23,11 @@ package main
 
 import (
 	"net/http"
-	"path/filepath"
 	"sync"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 type kiroInstall struct {
@@ -58,13 +59,13 @@ func handleKiroInstall(w http.ResponseWriter, r *http.Request) {
 		// mid-swap, so any version we read is meaningless (and the poll is 4s-tight).
 		if st != "installing" {
 			pin := readBuildPins()["kiro"]
-			_, cur, vst := kiroCheck(filepath.Join(homeDir(), ".local", "bin"), pin)
-			body["installed"] = vst != kiroMissing
+			_, cur, vst := kiro.Check(installx.LocalBin(), pin)
+			body["installed"] = vst != kiro.Missing
 			body["version"] = cur // "" when the binary can't report one
 			body["pin"] = pin
 			// Only claim an update when we KNOW the versions differ: an unreadable
 			// version or a missing pin must not nag the user with a 554MB download.
-			body["updateAvailable"] = vst == kiroStale
+			body["updateAvailable"] = vst == kiro.Stale
 		}
 		httpx.WriteJSON(w, http.StatusOK, body)
 		return
@@ -73,7 +74,7 @@ func handleKiroInstall(w http.ResponseWriter, r *http.Request) {
 	// install). A present-but-stale kiro (the home copy predates a versions.json pin
 	// bump) is NOT "done" — it falls through so this route can bring it to the pin,
 	// the same upgrade the launch guard performs.
-	if kiroInstallCurrent() {
+	if kiro.InstallCurrent() {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"state": "done"})
 		return
 	}
@@ -87,7 +88,7 @@ func handleKiroInstall(w http.ResponseWriter, r *http.Request) {
 	kiroInstaller.err = ""
 	kiroInstaller.mu.Unlock()
 	go func() {
-		err := installKiro(false)
+		err := kiro.Install(false)
 		kiroInstaller.mu.Lock()
 		if err != nil {
 			kiroInstaller.state = "error"

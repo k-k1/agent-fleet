@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 // TestMySQLSHAMismatch verifies that a sha mismatch returns *mysqlSHAMismatch
@@ -28,7 +30,7 @@ func TestMySQLSHAMismatch(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	// Write a versions.json with a wrong sha and override buildPinsPath.
+	// Write a versions.json with a wrong sha and override the pins path.
 	pinsDir := filepath.Join(tmp, "pins")
 	if err := os.MkdirAll(pinsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -38,9 +40,9 @@ func TestMySQLSHAMismatch(t *testing.T) {
 		[]byte(fmt.Sprintf(`{"mysql":"8.4.6","mysql_sha256":%q}`, wrongSHA)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	origPinsPath := buildPinsPath
-	buildPinsPath = pinsFile
-	defer func() { buildPinsPath = origPinsPath }()
+	origPinsPath := installx.BuildPinsPath
+	installx.BuildPinsPath = pinsFile
+	defer func() { installx.BuildPinsPath = origPinsPath }()
 
 	origURLs := mysqlCDNBaseURLs
 	mysqlCDNBaseURLs = []string{srv.URL + "/Downloads/MySQL-%s/%s", srv.URL + "/archives/mysql-%s/%s"}

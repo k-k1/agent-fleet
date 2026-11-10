@@ -9,8 +9,6 @@ package main
 // rename, so a failed download never corrupts an existing install.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,14 +19,14 @@ import (
 	"runtime"
 	"sort"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 // agentFleetShareDir is the per-user root for on-demand tool installs
 // (~/.local/share/agent-fleet — home volume, persists across restarts, shared
 // between the docker and native runtimes).
-func agentFleetShareDir() string {
-	return filepath.Join(homeDir(), ".local", "share", "agent-fleet")
-}
+func agentFleetShareDir() string { return installx.ShareDir() }
 
 // --- chromium (browser pane) -------------------------------------------------
 
@@ -528,29 +526,11 @@ func installGrafanaMCP(ver string) (string, error) {
 
 // --- shared helpers ----------------------------------------------------------
 
-// fileExecutable reports whether path is an executable regular file.
-func fileExecutable(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && !st.IsDir() && st.Mode()&0111 != 0
-}
+// fileExecutable, verifySha256 and runCmd live in internal/installx (shared with the
+// per-kind installers); these keep the many call sites in this package unchanged.
+func fileExecutable(path string) bool { return installx.FileExecutable(path) }
 
-// verifySha256 compares a file's digest against the expected hex sum.
-func verifySha256(path, want string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return err
-	}
-	got := hex.EncodeToString(h.Sum(nil))
-	if got != want {
-		return fmt.Errorf("sha256 mismatch: got %s, want %s", got, want)
-	}
-	return nil
-}
+func verifySha256(path, want string) error { return installx.VerifySha256(path, want) }
 
 // copyFile writes src to dest atomically (temp + rename) with the given mode.
 func copyFile(src, dest string, mode os.FileMode) error {

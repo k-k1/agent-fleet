@@ -12,7 +12,7 @@
 #      fingerprint is not compared for equality: it moves on additive releases too, and that
 #      made every such release red until someone re-exported the bundle.
 #   2. **The shape of `muse --version`.** The pin is the parenthesised build id
-#      (`Muse Code 1.3.0 (1.3.0-R3401.1)`), and install_muse.go compares against it. A release
+#      (`Muse Code 1.3.0 (1.3.0-R3401.1)`), and internal/agents/muse/install.go compares against it. A release
 #      that changes that line breaks the pin comparison everywhere — the installer would read
 #      "stale" forever and re-download ~299MB on every check — so it is asserted here, at the
 #      release edge, rather than discovered by a member.
@@ -33,7 +33,7 @@ on:
     paths:
       - "workspace/agent/internal/msp/**"
       - "workspace/agent/internal/agents/muse/**"
-      - "workspace/agent/install_muse.go"
+      - "workspace/agent/internal/installx/**"
       - "workspace/Dockerfile"
       - ".github/workflows/muse-contract.yml"
   schedule:
@@ -107,7 +107,7 @@ jobs:
           chmod 0755 /tmp/muse
           /tmp/muse --version
 
-      # The line install_muse.go's pin comparison reads. Asserted as a SHAPE (the build id in
+      # The line internal/agents/muse/install.go's pin comparison reads. Asserted as a SHAPE (the build id in
       # parentheses), not as a fixed string, so a version bump is not a false failure while a
       # format change is a real one.
       - name: the version line still carries the build id in parentheses
@@ -121,7 +121,7 @@ jobs:
           if [ "$got" != "$VER" ]; then
             echo "::error::\`muse --version\` no longer carries the pinned build id in parentheses."
             echo "::error::got=$got want=$VER from: $raw"
-            echo "::error::install_muse.go's museParseVersion and env_tool_versions.go's muse row compare against it."
+            echo "::error::internal/agents/muse/install.go's ParseVersion and env_tool_versions.go's muse row compare against it."
             exit 1
           fi
 
