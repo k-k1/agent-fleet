@@ -403,6 +403,20 @@ PR source is unchanged. Not built, left in #3780: webhook pokes for runs (a `wor
 parsed into run subjects and accepted by the poke route, both Control Plane changes; a workflow subject carries a
 floor the Control Plane cannot derive), Bitbucket Pipelines, and the live check against a private repository.
 
+*Note, 2026-11-10 (#3780, webhook pokes).* A `workflow_run` delivery now pokes run watches. The Control Plane cannot
+derive a workflow subject, which carries a floor only the Agent knows, so the wire names **poke keys** instead: a run
+(`github:o/r/actions/runs/<id>[/attempts/<n>]`) and a workflow without its floor
+(`github:o/r/actions/workflows/<file>[/branch/<b>]`). For a `completed` delivery the Control Plane names the run with
+and without its attempt, the workflow from the basename of `path` (an `@<ref>` suffix dropped), and the workflow
+with the run's `head_branch`; every field is checked against the same shape the registration accepts, and a run id,
+path or branch that does not fit names nothing. Other actions (`requested`, `in_progress`) name no run key. The Agent
+registers each Actions subject as its key (several floors of one workflow share one), and a poke whose subject is such
+a key reaches the Actions source: a run key pokes that run, a workflow key pokes every watch of that workflow and
+branch whatever its floor (`Engine.PokeMatching`). The poke still carries `(source, subject)` and nothing else, the
+source stays `github` on the wire, and a poke only brings the next read forward under the same gap and backoff rules,
+so it cannot fabricate a run state. A hook or the App is trusted exactly as for a pull request. Not verified live
+against a real repository. Still open in #3780: Bitbucket Pipelines and the live check.
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled

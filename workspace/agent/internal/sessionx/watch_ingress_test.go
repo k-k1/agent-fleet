@@ -2,9 +2,12 @@ package sessionx
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -118,5 +121,151 @@ func TestHandleWatchPokeReadsAHeldSubjectSoonerAndRefusesBadBodies(t *testing.T)
 		if rec := do(body); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d", name, rec.Code)
 		}
+	}
+}
+
+// echoActions resolves a reference to itself as the subject, so a test can hold any Actions
+// subject, floors included.
+type echoActions struct{ stubSource }
+
+func (echoActions) Kind() string { return watch.ActionsKind }
+func (echoActions) Types() []string {
+	return []string{watch.EventRunCompleted}
+}
+func (echoActions) Resolve(_ context.Context, ref, _ string) (watch.Resolved, error) {
+	return watch.Resolved{Subject: watch.SubjectID(ref)}, nil
+}
+func (echoActions) Poll(context.Context, watch.SubjectID, json.RawMessage, []string) ([]watch.Event, json.RawMessage, watch.Hint, error) {
+	return nil, nil, watch.Hint{After: 10 * time.Minute}, nil
+}
+
+func actionsWatchEngine(t *testing.T, refs ...string) *watch.Engine {
+	t.Helper()
+	newWatchFixture(t)
+	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir()})
+	e := watch.New(watchDiskStore{}, newWatchSink(), stubSource{}, echoActions{})
+	useWatchEngine(t, e)
+	for _, ref := range refs {
+		if _, err := e.Subscribe(context.Background(), watch.Request{Owner: "a", Source: watch.ActionsKind, Ref: ref, Types: []string{watch.EventRunCompleted}, Until: watch.UntilDeadline}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.Tick(context.Background())
+	return e
+}
+
+const (
+	wfOld = "github:o/r/actions/workflows/ci.yml/after/100-1700000000"
+	wfNew = "github:o/r/actions/workflows/ci.yml/after/250-1700009999"
+	wfBr  = "github:o/r/actions/workflows/ci.yml/after/250-1700009999/branch/main"
+	wfOth = "github:o/r/actions/workflows/other.yml/after/1-2"
+	runS  = "github:o/r/actions/runs/77/attempts/2"
+)
+
+func TestWatchSubjectListRegistersActionsKeysWithoutTheFloor(t *testing.T) {
+	e := actionsWatchEngine(t, wfOld, wfNew, wfBr, wfOth, runS)
+	want := []string{
+		"github:o/r/actions/runs/77/attempts/2",
+		"github:o/r/actions/workflows/ci.yml",
+		"github:o/r/actions/workflows/ci.yml/branch/main",
+		"github:o/r/actions/workflows/other.yml",
+	}
+	got := watchSubjectList(e)
+	sort.Strings(got)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("registered\n got %q\nwant %q", got, want)
+	}
+}
+
+func pokeBody(t *testing.T, body string) (int, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/watch/poke", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	HandleWatchPoke(rec, r)
+	return rec.Code, rec.Body.String()
+}
+
+func TestHandleWatchPokeBringsActionsWatchesForward(t *testing.T) {
+	e := actionsWatchEngine(t, wfOld, wfNew, wfBr, wfOth, runS)
+	next := func() map[string]time.Time {
+		out := map[string]time.Time{}
+		for _, s := range e.List("a") {
+			out[s.Ref] = s.NextPoll
+		}
+		return out
+	}
+	before := next()
+	if code, body := pokeBody(t, `{"source":"github","subject":"github:o/r/actions/workflows/ci.yml"}`); code != http.StatusAccepted || !strings.Contains(body, `"held":true`) {
+		t.Fatalf("workflow key: %d %s", code, body)
+	}
+	after := next()
+	// Every floor of ci.yml moves, the branch-only watch and the other workflow do not.
+	for ref, moved := range map[string]bool{wfOld: true, wfNew: true, wfBr: false, wfOth: false, runS: false} {
+		if got := after[ref].Before(before[ref]); got != moved {
+			t.Errorf("%s: moved=%v, want %v", ref, got, moved)
+		}
+	}
+	if code, body := pokeBody(t, `{"source":"github","subject":"github:o/r/actions/runs/77/attempts/2"}`); code != http.StatusAccepted || !strings.Contains(body, `"held":true`) {
+		t.Fatalf("run key: %d %s", code, body)
+	}
+	if !next()[runS].Before(before[runS]) {
+		t.Error("the run watch was not brought forward")
+	}
+	// A key nobody holds is accepted and held:false; it moves nothing.
+	if code, body := pokeBody(t, `{"source":"github","subject":"github:o/r/actions/workflows/none.yml"}`); code != http.StatusAccepted || !strings.Contains(body, `"held":false`) {
+		t.Fatalf("unheld key: %d %s", code, body)
+	}
+}
+
+func TestHandleWatchPokeRefusesForgedActionsKeys(t *testing.T) {
+	actionsWatchEngine(t, wfOld)
+	for name, body := range map[string]string{
+		"floor form from outside": `{"source":"github","subject":"` + wfOld + `"}`,
+		"wrong provider":          `{"source":"bitbucket","subject":"github:o/r/actions/workflows/ci.yml"}`,
+		"the engine's own source": `{"source":"github_actions","subject":"github:o/r/actions/workflows/ci.yml"}`,
+		"newline":                 `{"source":"github","subject":"github:o/r/actions/runs/7\nreply=none"}`,
+		"not a yaml file":         `{"source":"github","subject":"github:o/r/actions/workflows/ci.sh"}`,
+	} {
+		if code, _ := pokeBody(t, body); code != http.StatusBadRequest {
+			t.Errorf("%s: %d", name, code)
+		}
+	}
+}
+
+func TestPutWatchSubjectsFallsBackToPullRequestsForAnOlderControlPlane(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if strings.Contains(string(b), "/actions/") { // what a Control Plane without Actions keys does
+			http.Error(w, `{"error":{"code":"invalid_subject"}}`, http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	t.Setenv("AF_WATCH_TOKEN", "afw_x")
+	if err := putWatchSubjects(context.Background(), []string{"github:o/r#1", "github:o/r/actions/runs/5"}); err != nil {
+		t.Fatalf("the pull request set was not accepted: %v", err)
+	}
+	if len(bodies) != 2 || !strings.Contains(bodies[0], "/actions/") || strings.Contains(bodies[1], "/actions/") || !strings.Contains(bodies[1], "github:o/r#1") {
+		t.Fatalf("requests: %q", bodies)
+	}
+	// A refusal that has nothing to drop is still an error, and is not retried.
+	bodies = nil
+	if err := putWatchSubjects(context.Background(), []string{"github:o/r/actions/runs/5"}); err != nil || len(bodies) != 2 {
+		t.Fatalf("actions-only set: err=%v requests=%q", err, bodies)
+	}
+}
+
+func TestWatchSubjectListKeepsRepositoriesWithUnderscoresAndDropsOverlongOnes(t *testing.T) {
+	long := strings.Repeat("a", 101)
+	e := actionsWatchEngine(t, "github:o/my_repo/actions/workflows/ci.yml/after/1-2", "github:o/"+long+"/actions/workflows/ci.yml/after/1-2")
+	got := watchSubjectList(e)
+	if len(got) != 1 || got[0] != "github:o/my_repo/actions/workflows/ci.yml" {
+		t.Fatalf("list = %q", got)
 	}
 }

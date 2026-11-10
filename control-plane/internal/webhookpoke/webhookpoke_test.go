@@ -104,3 +104,110 @@ func TestValidSubject(t *testing.T) {
 		}
 	}
 }
+
+func TestParseGitHubWorkflowRunNamesRunAndWorkflowKeys(t *testing.T) {
+	run := func(action, path, branch string) string {
+		return `{"action":"` + action + `","workflow_run":{"id":4242,"run_attempt":2,"path":"` + path + `","head_branch":"` + branch +
+			`","pull_requests":[{"number":7}]},"repository":{"full_name":"Acme/Repo","private":false}}`
+	}
+	got, err := ParseGitHub("workflow_run", []byte(run("completed", ".github/workflows/Nightly.yml", "release/1.x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"github:acme/repo/actions/runs/4242",
+		"github:acme/repo/actions/runs/4242/attempts/2",
+		"github:acme/repo/actions/workflows/Nightly.yml",
+		"github:acme/repo/actions/workflows/Nightly.yml/branch/release/1.x",
+		"github:acme/repo#7",
+	}
+	if strings.Join(got.Subjects, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("subjects\n got %q\nwant %q", got.Subjects, want)
+	}
+	for _, s := range got.Subjects {
+		if !ValidSubject(s) {
+			t.Errorf("a subject the delivery names does not pass the registration check: %q", s)
+		}
+	}
+	// A ref suffix on the path is not part of the file name.
+	got, _ = ParseGitHub("workflow_run", []byte(run("completed", ".github/workflows/ci.yml@refs/pull/7/merge", "main")))
+	if len(got.Subjects) < 3 || got.Subjects[2] != "github:acme/repo/actions/workflows/ci.yml" {
+		t.Fatalf("path with a ref suffix: %q", got.Subjects)
+	}
+	// Only a completed run is a change the Actions source tells; the other actions name no run key.
+	for _, action := range []string{"requested", "in_progress", ""} {
+		got, _ = ParseGitHub("workflow_run", []byte(run(action, ".github/workflows/ci.yml", "main")))
+		if len(got.Subjects) != 1 || got.Subjects[0] != "github:acme/repo#7" {
+			t.Errorf("action %q: %q", action, got.Subjects)
+		}
+	}
+	// Other events never name a run, even with the same shape.
+	got, _ = ParseGitHub("check_run", []byte(run("completed", ".github/workflows/ci.yml", "main")))
+	if len(got.Subjects) != 0 {
+		t.Errorf("check_run named %q", got.Subjects)
+	}
+}
+
+func TestParseGitHubWorkflowRunIgnoresForgedFields(t *testing.T) {
+	body := func(id, path, branch string) []byte {
+		return []byte(`{"action":"completed","workflow_run":{"id":` + id + `,"run_attempt":1,"path":"` + path + `","head_branch":"` + branch +
+			`","pull_requests":[{"number":3}]},"repository":{"full_name":"a/b","private":false}}`)
+	}
+	for name, b := range map[string][]byte{
+		"path outside workflows": body("5", "other/ci.yml", "main"),
+		"not a yaml file":        body("5", ".github/workflows/ci.sh", "main"),
+		"traversal in the path":  body("5", ".github/workflows/../x.yml", "main"),
+		"branch with dots":       body("5", ".github/workflows/ci.yml", "a..b"),
+		"branch with a space":    body("5", ".github/workflows/ci.yml", "a b"),
+	} {
+		got, err := ParseGitHub("workflow_run", b)
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		// A bad path or branch costs only its own key: the run keys and the PR subject stay.
+		have := strings.Join(got.Subjects, " ")
+		for _, k := range []string{"github:a/b/actions/runs/5 ", "github:a/b/actions/runs/5/attempts/1", "github:a/b#3"} {
+			if !strings.Contains(have+" ", k) {
+				t.Errorf("%s: %q lost from %q", name, k, got.Subjects)
+			}
+		}
+		for _, s := range got.Subjects {
+			if strings.Contains(s, "/workflows/") && !strings.HasSuffix(s, "/workflows/ci.yml") {
+				t.Errorf("%s: forged workflow key %q", name, s)
+			}
+			if strings.Contains(s, "/branch/") || strings.Contains(s, "..") || strings.Contains(s, " ") {
+				t.Errorf("%s: forged key %q", name, s)
+			}
+		}
+	}
+	for _, id := range []string{"0", "-3", "1234567890123456789"} {
+		if got, _ := ParseGitHub("workflow_run", body(id, ".github/workflows/ci.yml", "main")); len(got.Subjects) != 1 || got.Subjects[0] != "github:a/b#3" {
+			t.Errorf("run id %s: want only the pull request subject, got %q", id, got.Subjects)
+		}
+	}
+}
+
+func TestValidSubjectActionsKeys(t *testing.T) {
+	for s, want := range map[string]bool{
+		"github:acme/my_repo/actions/runs/1": true, "github:acme/my_repo/actions/workflows/ci.yml": true,
+		"github:a/b/actions/runs/1":                                true,
+		"github:a/b/actions/runs/1/attempts/3":                     true,
+		"github:a/b/actions/workflows/ci.yml":                      true,
+		"github:a/b/actions/workflows/Ci-1.yaml/branch/feat/x":     true,
+		"github:A/b/actions/runs/1":                                false,
+		"github:../b/actions/runs/1":                               false,
+		"github:a/b/actions/runs/0":                                false,
+		"github:a/b/actions/runs/1\n":                              false,
+		"github:a/b/actions/workflows/ci.yml/branch/a..b":          false,
+		"github:a/b/actions/workflows/ci.yml/branch/-x":            false,
+		"github:a/b/actions/workflows/ci.yml/after/1-2":            false,
+		"github:a/b/actions/workflows/ci.txt":                      false,
+		"bitbucket:a/b/actions/runs/1":                             false,
+		"github:a/b/actions/workflows/ci.yml/branch/trailing/":     false,
+		"github:a/b/actions/workflows/ci.yml/branch/double//slash": false,
+	} {
+		if ValidSubject(s) != want {
+			t.Errorf("ValidSubject(%q) = %v", s, !want)
+		}
+	}
+}

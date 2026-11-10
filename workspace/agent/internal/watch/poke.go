@@ -41,31 +41,41 @@ type SubjectRef struct {
 // A subject in backoff keeps its backoff: a failing provider is not helped by more requests.
 // Poke carries no data; the read is made by the source with the member's own connection.
 func (e *Engine) Poke(source string, subject SubjectID) bool {
+	return e.PokeMatching(source, func(s SubjectID) bool { return s == subject })
+}
+
+// PokeMatching pokes every live subject of source for which match is true and reports whether
+// there was one. It exists for a poke that names a group of subjects rather than one: a workflow
+// watch's subject carries a floor that a webhook cannot know, so the delivery names the workflow
+// and all of its watches are brought forward. match runs under the engine's lock.
+func (e *Engine) PokeMatching(source string, match func(SubjectID) bool) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.load()
-	held := false
+	held := map[SubjectID]bool{}
 	for _, s := range e.state.Subs {
-		if s.Source == source && s.Subject == subject && !s.Done && s.Builtin == "" {
-			held = true
-			break
+		if s.Source == source && !s.Done && s.Builtin == "" && !held[s.Subject] && match(s.Subject) {
+			held[s.Subject] = true
 		}
 	}
-	if !held {
-		return false
+	changed := false
+	for subject := range held {
+		ss, ok := e.state.Subjects[subject]
+		if !ok || ss.Fails > 0 {
+			continue
+		}
+		at := e.now()
+		if next := ss.LastPoll.Add(pokeMinGap); next.After(at) {
+			at = next
+		}
+		if at.Before(ss.NextPoll) {
+			ss.NextPoll = at
+			e.state.Subjects[subject] = ss
+			changed = true
+		}
 	}
-	ss, ok := e.state.Subjects[subject]
-	if !ok || ss.Fails > 0 {
-		return true
-	}
-	at := e.now()
-	if next := ss.LastPoll.Add(pokeMinGap); next.After(at) {
-		at = next
-	}
-	if at.Before(ss.NextPoll) {
-		ss.NextPoll = at
-		e.state.Subjects[subject] = ss
+	if changed {
 		e.save()
 	}
-	return true
+	return len(held) > 0
 }
