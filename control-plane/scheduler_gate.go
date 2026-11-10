@@ -48,11 +48,13 @@ const (
 // Verdicts stored in schedule.gate_last_verdict. Only gateVerdictFire starts a session. An
 // error is stored as "error:" and the message.
 const (
-	gateVerdictClear      = "clear"
-	gateVerdictUnchanged  = "unchanged"
-	gateVerdictCappedGap  = "capped_gap"
-	gateVerdictCappedDay  = "capped_day"
-	gateVerdictFire       = "fire"
+	gateVerdictClear     = "clear"
+	gateVerdictUnchanged = "unchanged"
+	gateVerdictCappedGap = "capped_gap"
+	gateVerdictCappedDay = "capped_day"
+	gateVerdictFire      = "fire"
+	// gateVerdictClaimed is stored by the claim and replaced by "fire" once the fire is recorded.
+	gateVerdictClaimed    = "claimed"
 	gateVerdictNotRunning = "not_running"
 	gateVerdictUnreached  = "unreachable"
 	gateVerdictErrorPfx   = "error:"
@@ -239,7 +241,8 @@ type schedGateRunner interface {
 // schedGateStore is the write half of the gate ledger.
 type schedGateStore interface {
 	ClaimScheduleGateFire(ctx context.Context, c store.ScheduleGateClaim) (bool, error)
-	RecordScheduleGateEval(ctx context.Context, id, slot, nextRun, evalAt, verdict string) (bool, error)
+	RecordScheduleGateEval(ctx context.Context, id, slot, nextRun, evalAt, verdict, gateSpec string) (bool, error)
+	MarkScheduleGateDelivered(ctx context.Context, id string) error
 }
 
 // withGate arms the scheduler's gate step. Without it a gated schedule never fires (fail closed).
@@ -258,14 +261,21 @@ func (sc *scheduler) gateStep(ctx context.Context, sch store.Schedule, slot, now
 	nowRFC := now.UTC().Format(time.RFC3339)
 	next, _, cerr := advanceNextRun(sch, now)
 	if cerr != nil {
-		log.Printf("scheduler: gated schedule %s advance: %v (not firing)", sch.ID, cerr)
+		// As an ungated schedule does: disable it, so a row that can never advance stops being
+		// listed every tick, and say why in the status.
+		log.Printf("scheduler: gated schedule %s advance: %v (disabling)", sch.ID, cerr)
+		status := "error:" + truncStatus(cerr.Error())
+		if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, "", false, nowRFC); err != nil {
+			log.Printf("scheduler: gated schedule %s: record: %v", sch.ID, err)
+		}
+		sc.notifyOutcome(ctx, sch, slot, status, nowRFC)
 		return sch, false
 	}
 	record := func(verdict string) bool {
 		if sc.gateStore == nil {
 			return false
 		}
-		ok, err := sc.gateStore.RecordScheduleGateEval(ctx, sch.ID, sch.NextRun, next, nowRFC, verdict)
+		ok, err := sc.gateStore.RecordScheduleGateEval(ctx, sch.ID, sch.NextRun, next, nowRFC, verdict, sch.GateSpec)
 		if err != nil {
 			log.Printf("scheduler: gated schedule %s: record %q: %v", sch.ID, verdict, err)
 			return false
@@ -290,6 +300,18 @@ func (sc *scheduler) gateStep(ctx context.Context, sch store.Schedule, slot, now
 		sc.notifyOutcome(ctx, sch, slot, status, nowRFC)
 	}
 
+	// A verdict still "claimed" means the previous fire's claim was written and the process died
+	// before that fire was recorded: its fingerprint now reads as fired though no session may
+	// exist. Say so once (the verdict is overwritten below). The loss is deliberate, at-most-once.
+	if sch.GateLastVerdict == gateVerdictClaimed {
+		status := "error:gate:not_delivered"
+		run := store.ScheduleRun{ID: store.NewID(), ScheduleID: sch.ID, MembershipID: sch.MembershipID, FiredAt: nowRFC,
+			Status: status, Trigger: "scheduled", Slot: slot.UTC().Format(time.RFC3339)}
+		if err := sc.store.AppendScheduleRun(ctx, run, scheduleRunKeep); err != nil {
+			log.Printf("scheduler: append run %s: %v", sch.ID, err)
+		}
+		sc.notifyOutcome(ctx, sch, slot, status, nowRFC)
+	}
 	if sc.gateRunner == nil || sc.gateStore == nil {
 		fail(errors.New("gate evaluation is not available on this Control Plane"))
 		return sch, false
@@ -324,7 +346,7 @@ func (sc *scheduler) gateStep(ctx context.Context, sch store.Schedule, slot, now
 	}
 	claimed, err := sc.gateStore.ClaimScheduleGateFire(ctx, store.ScheduleGateClaim{
 		ID: sch.ID, Slot: sch.NextRun, PrevFingerprint: sch.GateFiredFingerprint,
-		Fingerprint: d.Fingerprint, NextRun: next, FiredAt: nowRFC, Verdict: gateVerdictFire,
+		Fingerprint: d.Fingerprint, NextRun: next, FiredAt: nowRFC, Verdict: gateVerdictClaimed, GateKind: sch.GateKind, GateSpec: sch.GateSpec,
 		WindowStart: d.WindowStart.UTC().Format(time.RFC3339), WindowCount: d.WindowCount,
 	})
 	if err != nil {
@@ -348,6 +370,15 @@ type gateQueryReader interface {
 // workspace: a runtime that is not running is errGateNotRunning. The query must still belong to
 // the schedule's owner, so a spec naming someone else's query reads as an error.
 func evaluateWorkItemsGate(ctx context.Context, rt runtime.Runtime, qs gateQueryReader, sch store.Schedule) ([]gateItem, error) {
+	items, err := evaluateWorkItemsGateOnce(ctx, rt, qs, sch)
+	if err != nil && ctx.Err() != nil {
+		// A cancelled tick (shutdown) is not a gate error and must not raise a notice.
+		return nil, errGateUnreachable
+	}
+	return items, err
+}
+
+func evaluateWorkItemsGateOnce(ctx context.Context, rt runtime.Runtime, qs gateQueryReader, sch store.Schedule) ([]gateItem, error) {
 	spec, err := parseGateSpec(sch.GateSpec)
 	if err != nil {
 		return nil, err
@@ -370,9 +401,7 @@ func evaluateWorkItemsGate(ctx context.Context, rt runtime.Runtime, qs gateQuery
 			// standing problem the member should hear about.
 			return nil, fmt.Errorf("%s (HTTP %d)", he.msg, he.code)
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
-		}
+		// A cancelled tick (shutdown) lands here too and must not read as a gate error.
 		return nil, errGateUnreachable
 	}
 	if msg := errs[q.ID]; msg != "" {
@@ -436,30 +465,36 @@ func scheduleGateToDTO(s store.Schedule) *scheduleGateDTO {
 // sch: kind and the normalized spec. The query must belong to the member, and a gate is for
 // recurring new-session schedules only: reuse and assistant fires have no per-slot idempotency
 // to lean on, and a once has nothing to poll.
-func applyGateDTO(ctx context.Context, qs gateQueryReader, sch *store.Schedule, in scheduleGateDTO) *apiError {
+//
+// resetLedger reports that the gate's fired-fingerprint ledger no longer describes the gate: it was
+// removed, or its query or fingerprint mode changed. The caller clears it in the store.
+func applyGateDTO(ctx context.Context, qs gateQueryReader, sch *store.Schedule, in scheduleGateDTO) (resetLedger bool, _ *apiError) {
+	old, oldErr := parseGateSpec(sch.GateSpec)
+	hadGate := sch.GateKind != ""
 	if in.Kind == "" || in.Kind == "none" {
 		sch.GateKind, sch.GateSpec = "", ""
-		return nil
+		return hadGate, nil
 	}
 	if in.Kind != gateKindWorkItems {
-		return &apiError{http.StatusBadRequest, "bad_gate", "gate.kind must be work_items or none"}
+		return false, &apiError{http.StatusBadRequest, "bad_gate", "gate.kind must be work_items or none"}
 	}
 	spec := gateWorkItemsSpec{QueryID: strings.TrimSpace(in.QueryID), Fingerprint: in.Fingerprint,
 		MaxFiresPerDay: in.MaxFiresPerDay, MinFireGapS: in.MinFireGapS}.withDefaults()
 	if err := spec.validate(); err != nil {
-		return &apiError{http.StatusBadRequest, "bad_gate", "gate: " + err.Error()}
+		return false, &apiError{http.StatusBadRequest, "bad_gate", "gate: " + err.Error()}
 	}
 	q, ok, err := qs.GetWorkItemQuery(ctx, spec.QueryID)
 	if err != nil {
-		return internalErr(err)
+		return false, internalErr(err)
 	}
 	// The same answer for a missing query and someone else's, as getOwned gives a schedule.
 	if !ok || q.MembershipID != sch.MembershipID {
-		return &apiError{http.StatusBadRequest, "bad_gate", "gate.query_id is not one of your saved work item queries"}
+		return false, &apiError{http.StatusBadRequest, "bad_gate", "gate.query_id is not one of your saved work item queries"}
 	}
 	b, _ := json.Marshal(spec)
 	sch.GateKind, sch.GateSpec = gateKindWorkItems, string(b)
-	return nil
+	reset := hadGate && (oldErr != nil || old.QueryID != spec.QueryID || old.Fingerprint != spec.Fingerprint)
+	return reset, nil
 }
 
 // checkGateFits refuses a gate on a schedule it cannot drive.

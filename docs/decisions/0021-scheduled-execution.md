@@ -162,7 +162,9 @@ stay in #1763.
   records the fingerprint, and only then is the session injected. Of two ticks that listed the same row exactly
   one wins. A crash between claim and inject loses that one fire (at-most-once), deliberately: a missed triage
   leaves the red red for the next change or a run-now, while a duplicate burns quota and files duplicate issues.
-  A failed inject is final for the same reason, with the usual error notification.
+  A failed inject is final for the same reason, with the usual error notification. The claim stores the verdict
+  `claimed` and recording the fire turns it into `fire`, so a tick that still finds `claimed` knows a crash lost
+  the previous fire and raises one `error:gate:not_delivered` notice (the fire itself is not redone).
 - **Fail closed**: an error from the check (the query gone, the tracker rejecting it, an Agent without the route, an
   unreadable spec) never fires. It is stored on the row (`gate.last_verdict = error:…`) and, once per streak of
   consecutive errors, written to the run history and the notification center. An Agent that does not answer, and a
@@ -174,7 +176,8 @@ stay in #1763.
 - **Caps**: `max_fires_per_day` (default 2, in a rolling 24 hour window opened by the first fire) and
   `min_fire_gap_s` (default 21600), checked only for a result that differs from the last fire.
 - **A run-now bypasses the gate**: it is the member's own press, so it fires whatever the gate would say, and carries
-  no `{{gate.refs}}`.
+  no `{{gate.refs}}`. It does not touch the gate ledger, so the next tick may fire the same red once more.
+  Changing the gate's query or fingerprint mode, or removing the gate, clears the ledger.
 - **Amendment to decision 10**: a gated schedule's prompt may use `{{gate.refs}}`, the matched item keys, at most
   20, sorted. Each key must match `owner/repo#N` or `PROJ-123`; any other key is dropped. This is the only
   variable that carries data, and the data is structured identifiers, never text a third party wrote. On an

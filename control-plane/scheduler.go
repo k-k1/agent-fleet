@@ -307,6 +307,13 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 		log.Printf("scheduler: WARNING record fire %s failed — ledger did not advance; "+
 			"next tick may re-fire this slot (possible duplicate prompt delivery): %v", sch.ID, err)
 	}
+	// The claim is delivered once the fire is recorded: until then the verdict reads "claimed",
+	// which is how the next tick learns that a crash lost the fire (scheduler_gate.go).
+	if gated {
+		if err := sc.gateStore.MarkScheduleGateDelivered(ctx, sch.ID); err != nil {
+			log.Printf("scheduler: gated schedule %s: mark delivered: %v", sch.ID, err)
+		}
+	}
 	// Append to the run history (docs/log/38 P3). Best-effort: a failed history write must
 	// not affect the ledger advance above. Session links the run to what it drove; trigger
 	// records whether this was a manual run-now (flag set on the row) or an automatic fire.

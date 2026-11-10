@@ -151,7 +151,15 @@ type ScheduleStore interface {
 	// RecordScheduleGateEval stores the outcome of a gate evaluation that did not fire: it advances
 	// next_run (conditional on slot, like the claim) and sets the last-evaluation columns, and
 	// leaves last_run and last_status alone because nothing ran.
-	RecordScheduleGateEval(ctx context.Context, id, slot, nextRun, evalAt, verdict string) (recorded bool, err error)
+	// gateSpec is compared too, so an evaluation of a query the owner has since replaced writes nothing.
+	RecordScheduleGateEval(ctx context.Context, id, slot, nextRun, evalAt, verdict, gateSpec string) (recorded bool, err error)
+	// MarkScheduleGateDelivered ends a claimed fire's window: the claim wrote verdict "claimed" and
+	// the scheduler calls this once the fire has been recorded, so a verdict still "claimed" on a
+	// later tick means the process died in between.
+	MarkScheduleGateDelivered(ctx context.Context, id string) error
+	// ResetScheduleGateLedger clears the fired-fingerprint ledger when the owner changes or removes
+	// the gate, so a new query is never compared with the old query's fingerprint.
+	ResetScheduleGateLedger(ctx context.Context, id, membershipID string) error
 	// MarkScheduleRunSilent records that the run that fired into session for slot answered
 	// with the silent sentinel (issue #1560): its status becomes ScheduleStatusFiredSilent.
 	// Only a run still recorded as plainly fired changes, so a failure is never overwritten.
@@ -163,6 +171,7 @@ type ScheduleStore interface {
 type ScheduleGateClaim struct {
 	ID, Slot, PrevFingerprint string
 	Fingerprint, NextRun      string
+	GateKind, GateSpec        string // compared: the gate the result was evaluated for
 	FiredAt, Verdict          string
 	WindowStart               string
 	WindowCount               int
@@ -320,9 +329,9 @@ func (s *SQL) ClaimScheduleGateFire(ctx context.Context, c ScheduleGateClaim) (b
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET next_run=?, gate_fired_fingerprint=?, gate_fired_at=?, gate_window_start=?,
 		   gate_window_count=?, gate_last_eval_at=?, gate_last_verdict=?
-		 WHERE id=? AND enabled=1 AND next_run=? AND gate_fired_fingerprint=?`,
+		 WHERE id=? AND enabled=1 AND next_run=? AND gate_fired_fingerprint=? AND gate_kind=? AND gate_spec=?`,
 		c.NextRun, c.Fingerprint, c.FiredAt, c.WindowStart, c.WindowCount, c.FiredAt, c.Verdict,
-		c.ID, c.Slot, c.PrevFingerprint)
+		c.ID, c.Slot, c.PrevFingerprint, c.GateKind, c.GateSpec)
 	if err != nil {
 		return false, err
 	}
@@ -331,16 +340,32 @@ func (s *SQL) ClaimScheduleGateFire(ctx context.Context, c ScheduleGateClaim) (b
 }
 
 // RecordScheduleGateEval: see the interface.
-func (s *SQL) RecordScheduleGateEval(ctx context.Context, id, slot, nextRun, evalAt, verdict string) (bool, error) {
+func (s *SQL) RecordScheduleGateEval(ctx context.Context, id, slot, nextRun, evalAt, verdict, gateSpec string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET next_run=?, gate_last_eval_at=?, gate_last_verdict=?
-		 WHERE id=? AND enabled=1 AND next_run=?`,
-		nextRun, evalAt, verdict, id, slot)
+		 WHERE id=? AND enabled=1 AND next_run=? AND gate_spec=?`,
+		nextRun, evalAt, verdict, id, slot, gateSpec)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// MarkScheduleGateDelivered: see the interface.
+func (s *SQL) MarkScheduleGateDelivered(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET gate_last_verdict='fire' WHERE id=? AND gate_last_verdict='claimed'`, id)
+	return err
+}
+
+// ResetScheduleGateLedger: see the interface.
+func (s *SQL) ResetScheduleGateLedger(ctx context.Context, id, membershipID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET gate_fired_fingerprint='', gate_fired_at='', gate_window_start='',
+		   gate_window_count=0, gate_last_eval_at='', gate_last_verdict=''
+		 WHERE id=? AND membership_id=?`, id, membershipID)
+	return err
 }
 
 // HoldScheduleForRemoval records a slot that came due while the owner's membership was

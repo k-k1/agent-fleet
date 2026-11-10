@@ -79,7 +79,7 @@ func (e *gateEnv) tick(t *testing.T, now time.Time) {
 	if got.NextRun <= now.Format(time.RFC3339) {
 		t.Fatalf("next_run %s did not move past %s", got.NextRun, now.Format(time.RFC3339))
 	}
-	if ok, err := e.st.RecordScheduleGateEval(e.ctx, "sch_g", got.NextRun, gateSlot, got.GateLastEvalAt, got.GateLastVerdict); err != nil || !ok {
+	if ok, err := e.st.RecordScheduleGateEval(e.ctx, "sch_g", got.NextRun, gateSlot, got.GateLastEvalAt, got.GateLastVerdict, got.GateSpec); err != nil || !ok {
 		t.Fatalf("rewind: %v %v", ok, err)
 	}
 }
@@ -139,6 +139,9 @@ func TestGateChangedFiresOnceThenUnchangedDoesNot(t *testing.T) {
 		t.Fatalf("a changed result fired %d sessions, want 1", e.fired())
 	}
 	row := e.row(t)
+	if row.GateLastVerdict != gateVerdictFire {
+		t.Fatalf("verdict after a recorded fire = %q, want fire (not claimed)", row.GateLastVerdict)
+	}
 	if row.GateFiredFingerprint == "" || row.LastStatus != "fired" || row.GateWindowCount != 1 {
 		t.Fatalf("ledger after the fire: %+v", row)
 	}
@@ -400,7 +403,8 @@ func TestApplyGateDTOValidation(t *testing.T) {
 	_ = st.CreateWorkItemQuery(ctx, store.WorkItemQuery{ID: "qx", MembershipID: "other", Provider: "github", Query: "x", Enabled: true, CreatedAt: store.NowTS()})
 	apply := func(g scheduleGateDTO) (store.Schedule, *apiError) {
 		s := store.Schedule{MembershipID: mid, SessionMode: "new", SpecKind: "cron"}
-		return s, applyGateDTO(ctx, st, &s, g)
+		_, aerr := applyGateDTO(ctx, st, &s, g)
+		return s, aerr
 	}
 	if s, aerr := apply(scheduleGateDTO{Kind: "work_items", QueryID: "q1"}); aerr != nil || s.GateKind != gateKindWorkItems {
 		t.Fatalf("valid gate refused: %v", aerr)
@@ -430,5 +434,99 @@ func TestApplyGateDTOValidation(t *testing.T) {
 		if checkGateFits(s) == nil {
 			t.Errorf("gate accepted on %+v", s)
 		}
+	}
+}
+
+// A verdict still "claimed" means a crash lost the previous fire between claim and record.
+func TestGateLostClaimIsNotifiedOnce(t *testing.T) {
+	e := newGateEnv(t, shortGap)
+	if ok, err := e.st.RecordScheduleGateEval(e.ctx, "sch_g", gateSlot, gateSlot, gateNow.Format(time.RFC3339), gateVerdictClaimed, e.row(t).GateSpec); err != nil || !ok {
+		t.Fatal(err)
+	}
+	e.gate.set(nil, nil)
+	e.tick(t, gateNow)
+	e.tick(t, gateNow.Add(2*time.Hour))
+	notifs, _ := e.st.ListNotifications(e.ctx, e.mid, "2000-01-01T00:00:00Z", 50)
+	runs := e.runs(t)
+	if len(notifs) != 1 || len(runs) != 1 || runs[0].Status != "error:gate:not_delivered" {
+		t.Fatalf("notifs=%d runs=%+v, want one not_delivered notice", len(notifs), runs)
+	}
+}
+
+// A claim or record made for a gate the owner has since replaced writes nothing.
+func TestGateWritesRefuseAReplacedSpec(t *testing.T) {
+	e := newGateEnv(t, shortGap)
+	other := `{"query_id":"q2"}`
+	ok, err := e.st.RecordScheduleGateEval(e.ctx, "sch_g", gateSlot, "2026-11-10T14:00:00Z", "x", "clear", other)
+	if err != nil || ok {
+		t.Fatalf("eval for a stale spec recorded: %v %v", ok, err)
+	}
+	ok, err = e.st.ClaimScheduleGateFire(e.ctx, store.ScheduleGateClaim{ID: "sch_g", Slot: gateSlot, NextRun: "2026-11-10T14:00:00Z",
+		Fingerprint: "fp", GateKind: gateKindWorkItems, GateSpec: other})
+	if err != nil || ok {
+		t.Fatalf("claim for a stale spec won: %v %v", ok, err)
+	}
+}
+
+func TestGateLedgerResetOnQueryChange(t *testing.T) {
+	st, ctx := newSchedTestStore(t)
+	mid := realMembership(t, st, ctx)
+	for _, id := range []string{"q1", "q2"} {
+		_ = st.CreateWorkItemQuery(ctx, store.WorkItemQuery{ID: id, MembershipID: mid, Provider: "github", Query: "x", Enabled: true, CreatedAt: store.NowTS()})
+	}
+	s := store.Schedule{MembershipID: mid, SessionMode: "new", SpecKind: "cron"}
+	if reset, aerr := applyGateDTO(ctx, st, &s, scheduleGateDTO{Kind: "work_items", QueryID: "q1"}); reset || aerr != nil {
+		t.Fatalf("first gate: reset=%v %v", reset, aerr)
+	}
+	if reset, _ := applyGateDTO(ctx, st, &s, scheduleGateDTO{Kind: "work_items", QueryID: "q1", MaxFiresPerDay: 3}); reset {
+		t.Fatal("a cap change reset the ledger")
+	}
+	if reset, _ := applyGateDTO(ctx, st, &s, scheduleGateDTO{Kind: "work_items", QueryID: "q2"}); !reset {
+		t.Fatal("a query change kept the ledger")
+	}
+	if reset, _ := applyGateDTO(ctx, st, &s, scheduleGateDTO{Kind: "none"}); !reset {
+		t.Fatal("removing the gate kept the ledger")
+	}
+	// The store side clears every ledger column.
+	sch := gatedSchedule(mid, shortGap)
+	sch.ID = "sch_r"
+	_ = st.CreateSchedule(ctx, sch)
+	_, _ = st.ClaimScheduleGateFire(ctx, store.ScheduleGateClaim{ID: "sch_r", Slot: gateSlot, NextRun: "2026-11-10T14:00:00Z",
+		Fingerprint: "fp", FiredAt: "2026-11-10T12:00:00Z", GateKind: sch.GateKind, GateSpec: sch.GateSpec, WindowCount: 1})
+	if err := st.ResetScheduleGateLedger(ctx, "sch_r", mid); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := st.GetSchedule(ctx, "sch_r")
+	if got.GateFiredFingerprint != "" || got.GateWindowCount != 0 || got.GateFiredAt != "" {
+		t.Fatalf("ledger not cleared: %+v", got)
+	}
+}
+
+func TestGateCancelledContextIsNotAGateError(t *testing.T) {
+	st, ctx := newSchedTestStore(t)
+	mid := realMembership(t, st, ctx)
+	_ = st.CreateWorkItemQuery(ctx, store.WorkItemQuery{ID: "q1", MembershipID: mid, Provider: "github", Query: "x", Enabled: true, CreatedAt: store.NowTS()})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	t.Cleanup(srv.Close)
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := evaluateWorkItemsGate(cctx, stubRuntime{endpoint: srv.URL}, st, gatedSchedule(mid, `{"query_id":"q1"}`)); err != errGateUnreachable {
+		t.Fatalf("err = %v, want unreachable (a silent skip)", err)
+	}
+}
+
+// A gated row whose next slot cannot be computed is disabled like an ungated one, not listed forever.
+func TestGateUnadvanceableRowIsDisabled(t *testing.T) {
+	e := newGateEnv(t, shortGap)
+	sch := e.row(t)
+	sch.Spec = "not-a-number"
+	if err := e.st.UpdateSchedule(e.ctx, sch); err != nil {
+		t.Fatal(err)
+	}
+	e.gate.set(redItems, nil)
+	e.sc.tickAt(e.ctx, gateNow)
+	got := e.row(t)
+	if got.Enabled || e.fired() != 0 || !strings.HasPrefix(got.LastStatus, "error:") {
+		t.Fatalf("enabled=%v fired=%d status=%q", got.Enabled, e.fired(), got.LastStatus)
 	}
 }

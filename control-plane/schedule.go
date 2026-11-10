@@ -375,7 +375,7 @@ func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv store.Mem
 		return
 	}
 	if in.Gate != nil {
-		if aerr := applyGateDTO(r.Context(), a.mgr.store, &s, *in.Gate); aerr != nil {
+		if _, aerr := applyGateDTO(r.Context(), a.mgr.store, &s, *in.Gate); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -435,8 +435,10 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_prompt", "prompt is required"})
 		return
 	}
+	resetGate := false
 	if p.Gate != nil {
-		if aerr := applyGateDTO(r.Context(), a.mgr.store, &sch, *p.Gate); aerr != nil {
+		var aerr *apiError
+		if resetGate, aerr = applyGateDTO(r.Context(), a.mgr.store, &sch, *p.Gate); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -461,6 +463,14 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 	if err := a.store.UpdateSchedule(r.Context(), sch); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
+	}
+	if resetGate {
+		if err := a.mgr.store.ResetScheduleGateLedger(r.Context(), sch.ID, sch.MembershipID); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		sch.GateFiredFingerprint, sch.GateFiredAt, sch.GateWindowStart, sch.GateWindowCount = "", "", "", 0
+		sch.GateLastEvalAt, sch.GateLastVerdict = "", ""
 	}
 	if reuseChanged {
 		if err := a.store.SetScheduleReuse(r.Context(), sch.ID, "", "", 0, sch.UpdatedAt); err != nil {
