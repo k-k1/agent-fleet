@@ -111,13 +111,14 @@ done
 # サブネットは消えず、ENI が残っているうちはサブネットも消えない。NAT は削除要求から
 # 実際に消えるまで数分あるので待つ（待たずに VPC を消しに行くと DependencyViolation）。
 say vpc
-VPC=$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=$N --query 'Vpcs[0].VpcId' --output text 2>/dev/null)
-if [ -n "$VPC" ] && [ "$VPC" != None ]; then
+# Every VPC with the harness name: an interrupted teardown leaves the old one behind next to the
+# new one, and picking one with [0] would release the live harness's NAT EIP or leak the other's.
+for VPC in $(aws ec2 describe-vpcs --filters Name=tag:Name,Values=$N --query 'Vpcs[].VpcId' --output text 2>/dev/null); do
   # Only the Elastic IPs this VPC's NAT gateways hold. An unfiltered describe-addresses returns
   # every EIP in the account and region, and release-address refuses only associated ones, so an
   # unassociated EIP reserved for something else would go (#3796). The allocation IDs are read
   # before the NAT gateways are deleted, in every state: a deleted gateway stays listed for about
-  # an hour, so a re-run after an interrupted teardown still finds its EIPs, and a harness built
+  # an hour (per the AWS docs for DescribeNatGateways), so a re-run after an interrupted teardown still finds its EIPs, and a harness built
   # before any tagging needs no tag. If none are found, nothing is released.
   EIPS=$(aws ec2 describe-nat-gateways --filter Name=vpc-id,Values="$VPC" \
       --query 'NatGateways[].NatGatewayAddresses[].AllocationId' --output text | tr '\t' '\n' | grep '^eipalloc-' || true)
@@ -154,7 +155,12 @@ if [ -n "$VPC" ] && [ "$VPC" != None ]; then
     aws ec2 delete-internet-gateway --internet-gateway-id "$igw" >/dev/null 2>&1 && echo "igw $igw"
   done
   aws ec2 delete-vpc --vpc-id "$VPC" >/dev/null 2>&1 && echo "vpc $VPC deleted"
-fi
+done
+# An EIP that setup.sh allocated and tagged but never got attached to a NAT gateway (the
+# create-nat-gateway call failed) belongs to no gateway, so only the tag finds it.
+for a in $(aws ec2 describe-addresses --filters Name=tag:Name,Values=$N --query 'Addresses[].AllocationId' --output text 2>/dev/null); do
+  aws ec2 release-address --allocation-id "$a" >/dev/null 2>&1 && echo "eip $a"
+done
 
 # ⚠️ タスク定義は他の何とも違って**スタックにもクラスタにも属さない**ので、上のどの削除にも
 # 引っかからない。課金はしないが、残せば次の run の family に混ざり、残存確認が「0 件」と

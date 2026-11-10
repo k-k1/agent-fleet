@@ -33,8 +33,12 @@ case "$args" in
     esac ;;
   *"servicediscovery delete-service"*) ;;
   *"ec2 describe-vpcs"*) echo "vpc-harness" ;;
-  *"ec2 describe-nat-gateways"*"NatGatewayAddresses"*) echo "eipalloc-harness" ;;
-  *"ec2 describe-nat-gateways"*) echo "nat-harness" ;;
+  *"ec2 describe-nat-gateways"*"Values=vpc-harness"*"NatGatewayAddresses"*)
+    [ -n "${STUB_NO_NAT:-}" ] || echo "eipalloc-harness" ;;
+  *"ec2 describe-nat-gateways"*"Values=vpc-harness"*)
+    [ -n "${STUB_NO_NAT:-}" ] || echo "nat-harness" ;;
+  *"ec2 describe-nat-gateways"*) ;;                       # any other VPC: nothing
+  *"ec2 describe-addresses"*"tag:Name,Values=af-ec2c"*) echo "eipalloc-orphan" ;;
   *"ec2 describe-addresses"*) echo "eipalloc-harness eipalloc-foreign" ;;
 esac
 exit 0
@@ -59,4 +63,15 @@ grep -qF "ec2 release-address --allocation-id eipalloc-harness" "$LOG" \
 if grep -F "release-address --allocation-id eipalloc-foreign" "$LOG"; then
   echo "NG: a foreign Elastic IP was released"; exit 1
 fi
-echo "OK: harness teardown releases only the Elastic IPs its NAT gateways held"
+grep -qF "release-address --allocation-id eipalloc-orphan" "$LOG" \
+  || { echo "NG: the tagged EIP with no NAT gateway was not released"; exit 1; }
+echo "OK: harness teardown releases only the Elastic IPs its NAT gateways held (plus tagged orphans)"
+
+# No NAT gateway in the VPC: nothing but the tagged orphan may be released.
+: > "$LOG"
+STUB_NO_NAT=1 STUB_LOG="$LOG" PATH="$WORK/bin:$PATH" bash "$ROOT/deploy/aws/ecs/harness/teardown.sh" > "$WORK/out" 2>&1 \
+  || { cat "$WORK/out"; echo "NG: teardown.sh failed without a NAT gateway"; exit 1; }
+if grep -E "release-address --allocation-id eipalloc-(foreign|harness)" "$LOG"; then
+  echo "NG: an EIP was released with no NAT gateway to own it"; exit 1
+fi
+echo "OK: no NAT gateway, no untagged EIP released"
