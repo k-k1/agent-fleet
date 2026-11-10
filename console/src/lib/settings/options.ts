@@ -96,6 +96,14 @@ export const THEMES: { id: string; labelKey: MsgKey }[] = [
   { id: "light", labelKey: "theme.light" },
 ];
 
+// Text contrast levels (Display settings → Color theme). "standard" is the unmodified palette;
+// the other two write data-contrast on <html> (appearance.ts applyTheme, tokens.css).
+export const TEXT_CONTRASTS: { id: "standard" | "strong" | "strongest"; labelKey: MsgKey }[] = [
+  { id: "standard", labelKey: "display.text_contrast_standard" },
+  { id: "strong", labelKey: "display.text_contrast_strong" },
+  { id: "strongest", labelKey: "display.text_contrast_strongest" },
+];
+
 // How often the surface colors are re-picked at random (lib/appearanceShuffle.ts). "reload" =
 // once per page load; "1h" = an hour after the last pick; "daily" = on the first check of a new
 // local calendar day.
