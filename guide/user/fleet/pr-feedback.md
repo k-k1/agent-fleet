@@ -72,8 +72,8 @@ A workflow run that is not tied to a pull request (a nightly or release workflow
 
 | `ref` | Fires when |
 |---|---|
-| a run URL (`https://github.com/o/r/actions/runs/123`, optionally with `/attempts/2`) or `o/r:run/123` | that run completes. A run that has already completed is told at once. A re-run of the same run (a new attempt) is told again, unless the watch names an attempt |
-| `o/r:cli-pin-bump.yml`, or with a branch `o/r:cli-pin-bump.yml@main` | the next run of that workflow completes. Only a run that started after the watch was made counts; a run already running or finished then never does. To follow a run you started a moment ago, watch that run instead |
+| a run URL (`https://github.com/o/r/actions/runs/123`, optionally with `/attempts/2`) or `o/r:run/123` | that run completes. A run that has already completed is told at once. While the watch is still live (the agent asked to keep it until its deadline), a re-run of the run is told again as a new attempt; a watch that names an attempt reports only that attempt, and the default watch ends at its first notice |
+| `o/r:cli-pin-bump.yml`, or with a branch `o/r:cli-pin-bump.yml@main` | the next run of that workflow completes. Only a run that started after the watch was made counts; a run already running or finished then never does. Without a branch, runs on every branch and event count; add `@main` to narrow it. A branch can be given only in the `o/r:file.yml@branch` form, not with the workflow URL. A re-run of a run that existed before the watch is not reported; watch that run directly. To follow a run you started a moment ago, watch that run instead |
 
 - The workflow is read with your own GitHub connection. A repository or run your connection cannot read is refused when the agent asks, and a run that is deleted (or a repository you lose access to) later ends the watch with a notice saying so, instead of waiting for it forever
 - What counts as "after" is decided from GitHub's own run numbers and timestamps, not this workspace's clock

@@ -378,7 +378,8 @@ GitHub Actions runs not tied to a PR are watchable. Decisions the text left open
   workflow's newest runs and the subject carries the highest run id and the newest creation time seen (or the `Date`
   header when there is no run yet); a run counts only if its id is above the floor (ids only grow) and it was created at
   or after the floor's time. A skewed local clock therefore cannot make an old run look new. Since the floor is in the
-  subject, watches made while the workflow is quiet share one subject and one read. The cost: a run created in the
+  subject, watches made while the workflow is quiet share one subject and one read (with no run yet, the floor time
+  is rounded down to the minute so that holds there too). A re-run of a run at or below the floor is never seen. The cost: a run created in the
   moment before the watch but not yet listed by GitHub may be taken as new.
 - **Summary.** Built from the repository, run number, attempt, run id and a fixed set of conclusion words; for a
   workflow watch, the file name from the ref. The workflow's own name (written by whoever can edit the repository) and

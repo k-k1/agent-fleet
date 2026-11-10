@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -221,6 +222,9 @@ func (a *GitHubActions) Resolve(ctx context.Context, ref, defaultRepo string) (R
 		switch {
 		case err != nil:
 			return Resolved{}, err
+		case (status == http.StatusNotFound || status == http.StatusForbidden) && r.attempt > 0 && a.baseRunReadable(ctx, r.repo, r.runID):
+			// The run exists but this attempt does not yet: wait for it.
+			return Resolved{Subject: runSubject(r.repo, r.runID, r.attempt)}, nil
 		case status == http.StatusNotFound || status == http.StatusForbidden:
 			return Resolved{}, &ErrRefused{fmt.Sprintf("%s run %d is not a workflow run your GitHub connection can read", r.repo, r.runID)}
 		case status != http.StatusOK:
@@ -242,7 +246,9 @@ func (a *GitHubActions) Resolve(ctx context.Context, ref, defaultRepo string) (R
 	if floorUnix == 0 && floorID == 0 {
 		// No run yet: GitHub's own clock, from the answer, is the floor.
 		if d, err := http.ParseTime(hdr.Get("Date")); err == nil {
-			floorUnix = d.Unix()
+			// To the minute, so watches made within a minute of each other on a workflow with no
+			// run yet still share one subject. Earlier is the safe side: no run exists to be old.
+			floorUnix = d.Unix() - d.Unix()%60
 		}
 	}
 	subj := workflowSubject(r.repo, r.file, r.branch, floorID, floorUnix)
@@ -261,6 +267,13 @@ func floorOf(runs []ghRun) (id, unix int64) {
 		}
 	}
 	return id, unix
+}
+
+// baseRunReadable is true when the run itself (any attempt) can be read.
+func (a *GitHubActions) baseRunReadable(ctx context.Context, repo string, id int64) bool {
+	var run ghRun
+	status, _, err := a.GH.get(ctx, runPath(repo, id, 0), "", &run)
+	return err == nil && status == http.StatusOK
 }
 
 // actionsGet reads path with the cursor's ETag and keeps the answer on a 200. A subject that is
@@ -305,6 +318,11 @@ const goneRun = "the workflow run was deleted or can no longer be read with your
 
 func (a *GitHubActions) pollRun(ctx context.Context, subject SubjectID, repo string, id int64, attempt int, cur *actionsCursor, raw json.RawMessage) ([]Event, json.RawMessage, Hint, error) {
 	if err := actionsGet(a.GH, ctx, runPath(repo, id, attempt), &cur.Run, goneRun); err != nil {
+		var gone *ErrGone
+		if attempt > 0 && errors.As(err, &gone) && a.baseRunReadable(ctx, repo, id) {
+			// A pinned attempt that has not started yet is not a deleted run.
+			return nil, raw, Hint{After: actionsQueuedAfter}, nil
+		}
 		return nil, raw, Hint{}, err
 	}
 	run := cur.Run.Val
@@ -408,7 +426,7 @@ func (a *GitHubActions) runEvents(ctx context.Context, subject SubjectID, repo, 
 		}
 		for _, j := range cur.Jobs.Val.Jobs {
 			if failedConclusions[j.Conclusion] {
-				data = append(data, DataItem{Text: "Failed job: " + j.Name, URL: j.HTMLURL})
+				data = append(data, DataItem{Text: "Failed job: " + j.Name, URL: SafeURL(j.HTMLURL)})
 			}
 		}
 	}

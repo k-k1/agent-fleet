@@ -347,3 +347,71 @@ func TestEngineRefusesPRTypesForARunAndFiresOnAnAlreadyCompletedRun(t *testing.T
 		t.Fatalf("notice %s", sink.notices[0])
 	}
 }
+
+func TestAPinnedAttemptThatDoesNotExistYetIsNotAGoneRun(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies["/repos/o/r/actions/runs/55"] = run(55, "completed", "failure", "2026-11-10T01:00:00Z", 1)
+	a := newTestActions(t, f)
+	ctx := context.Background()
+	res, err := a.Resolve(ctx, "o/r:run/55/attempts/2", "")
+	if err != nil || res.Subject != "github:o/r/actions/runs/55/attempts/2" {
+		t.Fatalf("resolve: %+v %v", res, err)
+	}
+	evs, _, hint, err := a.Poll(ctx, res.Subject, nil, nil)
+	if err != nil || len(evs) != 0 || hint.After != actionsQueuedAfter {
+		t.Fatalf("poll: %v %v %+v", evs, err, hint)
+	}
+	// Attempt 2 appears: it is reported.
+	f.bodies["/repos/o/r/actions/runs/55/attempts/2"] = run(55, "completed", "success", "2026-11-10T01:00:00Z", 2)
+	evs, _, _, err = a.Poll(ctx, res.Subject, nil, nil)
+	if err != nil || len(evs) != 1 || evs[0].Version != "55:2" {
+		t.Fatalf("attempt 2: %v %v", evs, err)
+	}
+	// A run that is really gone (base unreadable too) is still ErrGone, and still refused at subscribe time.
+	var g *ErrGone
+	if _, _, _, err = a.Poll(ctx, "github:o/r/actions/runs/77/attempts/2", nil, nil); !errors.As(err, &g) {
+		t.Fatalf("gone run with an attempt: %v", err)
+	}
+	var ref *ErrRefused
+	if _, err = a.Resolve(ctx, "o/r:run/77/attempts/2", ""); !errors.As(err, &ref) {
+		t.Fatalf("resolve of a missing run: %v", err)
+	}
+}
+
+func TestRateLimitedAnswersAreNeverGone(t *testing.T) {
+	for _, st := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
+		for name, h := range map[string]http.Header{
+			"retry-after": {"Retry-After": {"60"}},
+			"primary":     {"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {"4102444800"}},
+		} {
+			f := newFakeGitHub()
+			f.status["/repos/o/r/actions/runs/55"] = st
+			f.headers = h
+			a := newTestActions(t, f)
+			_, _, _, err := a.Poll(context.Background(), "github:o/r/actions/runs/55", nil, nil)
+			var rl *ErrRateLimited
+			var g *ErrGone
+			if !errors.As(err, &rl) || errors.As(err, &g) {
+				t.Fatalf("%d %s: %v", st, name, err)
+			}
+		}
+	}
+}
+
+func TestQuietWorkflowWithoutRunsSharesASubjectWithinAMinute(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[wfResolvePath("")] = map[string]any{"workflow_runs": []any{}}
+	a := newTestActions(t, f)
+	var subs []SubjectID
+	for _, d := range []string{"Tue, 10 Nov 2026 03:00:01 GMT", "Tue, 10 Nov 2026 03:00:02 GMT"} {
+		f.headers.Set("Date", d)
+		res, err := a.Resolve(context.Background(), "o/r:"+wfName, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		subs = append(subs, res.Subject)
+	}
+	if subs[0] != subs[1] {
+		t.Fatalf("two subjects: %v", subs)
+	}
+}
