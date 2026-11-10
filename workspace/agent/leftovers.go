@@ -42,8 +42,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -259,7 +261,7 @@ func (k leftoverKind) prune(home string, pins map[string]string, boot bool) (lef
 // workspacePins reads versions.json. ok=false outside a Workspace image (e.g. the native
 // runtime on someone's own machine), where home is not ours to tidy.
 func workspacePins() (map[string]string, bool) {
-	b, err := os.ReadFile(buildPinsPath)
+	b, err := os.ReadFile(installx.BuildPinsPath)
 	if err != nil {
 		return nil, false
 	}
@@ -724,7 +726,7 @@ func kiroKasRoots(home string) []string {
 // version present, and any version whose .lock names a live pid. Without the marker which
 // version is current cannot be told and nothing goes.
 func kiroLeftovers(home string, roots []string, pins map[string]string) []leftover {
-	b, err := os.ReadFile(kiroVersionMarkerPath(filepath.Join(home, ".local", "bin")))
+	b, err := os.ReadFile(kiro.VersionMarkerPath(filepath.Join(home, ".local", "bin")))
 	cur := strings.TrimSpace(string(b))
 	if err != nil || cur == "" {
 		return nil

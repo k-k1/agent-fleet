@@ -174,7 +174,7 @@ if [ "${1:-}" = "--inner" ]; then
       echo "NG  versions.json kiro_sha256: ${got:-?} != ${kiro_sha_want:-?}"; fail=1
     fi
     # muse_sha256 も arch 依存の焼き込み値（on-demand install-muse の検証材料）。
-    # x86_linux / aarch64_linux の release manifest checksum と対（install_muse.go の museAsset）。
+    # x86_linux / aarch64_linux の release manifest checksum と対（agents/muse/install.go の museAsset）。
     case "$(dpkg --print-architecture)" in
       amd64) muse_sha_want="$EXPECT_MUSE_SHA_X64" ;;
       arm64) muse_sha_want="$EXPECT_MUSE_SHA_ARM64" ;;

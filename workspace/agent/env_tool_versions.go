@@ -12,27 +12,23 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
-// buildPinsPath is the pin list the Dockerfile writes from its ARGs. It is a var only so
-// tests can swap it (the install_kiro pin comparison); never rewritten at runtime.
-var buildPinsPath = "/usr/local/share/agent-fleet/versions.json"
-
 // bakedUVToolRoot is the root where the image puts `uv tool install` results (the
-// Dockerfile's UV_TOOL_DIR). Like buildPinsPath it is a var only so tests can swap it;
+// Dockerfile's UV_TOOL_DIR). Like the pin list path it is a var only so tests can swap it;
 // never rewritten at runtime. Hardcoded, a test checking "this must not exist on the baked
 // side" would pick up the *real container's* baked tree, so it would pass on CI (which has
 // nothing baked) and fail in a real Workspace — brittle in the wrong direction.
@@ -107,7 +103,7 @@ var toolSpecs = []toolSpec{
 	// default extraction would report `1.3.0`, so this row would claim drift on every
 	// correctly pinned install — and the card built on the same comparison would offer a
 	// 299MB "update" that changes nothing.
-	{Name: "muse", Cmd: "muse", Baked: "/usr/local/bin/muse", Pin: "muse", VerRe: museParseVersion},
+	{Name: "muse", Cmd: "muse", Baked: "/usr/local/bin/muse", Pin: "muse", VerRe: muse.ParseVersion},
 	// psql is installed on-demand by workspace-agent install-pg-client into ~/.local/bin.
 	// No Pin: versions.json "postgres" is the Zonky server version (e.g. 17.11.0) while
 	// psql reports the Debian client version (17.11); comparing them produces false drift.
@@ -188,50 +184,21 @@ const toolVerCacheTTL = 3 * time.Minute
 // instead (collectBudget). The original goal — a broken binary must not hang the handler —
 // is carried by the latter.
 const (
-	probeTimeout  = 15 * time.Second
+	probeTimeout  = installx.ProbeTimeout
 	collectBudget = 45 * time.Second
 )
 
-// probeSlots caps how many version probes run at once. With one goroutine per tool all
-// exec'ing at the same time, a Workspace with few CPUs makes slow-starting CLIs time out on
-// the load we create ourselves (waiting for a slot does not eat the exec deadline — that one
-// starts once the process does).
-var probeSlots = make(chan struct{}, 4)
-
 // verNumRe extracts the version number from --version output (1.2 / 1.2.3 / 3.11.2, …).
-var verNumRe = regexp.MustCompile(`[0-9]+\.[0-9]+(\.[0-9]+)?`)
+var verNumRe = installx.VerNumRe
 
 // probeVersion reads the version of the binary at path into a toolBin. nil when there is no
-// binary.
+// binary. The probe itself (slot cap, timeout) lives in installx, shared with the kind installers.
 func probeVersion(ctx context.Context, path string, args, env []string) *toolBin {
-	fi, err := os.Stat(path)
-	if err != nil || fi.IsDir() {
+	p := installx.ProbeVersion(ctx, path, args, env)
+	if p == nil {
 		return nil
 	}
-	if len(args) == 0 {
-		args = []string{"--version"}
-	}
-	select {
-	case probeSlots <- struct{}{}:
-		defer func() { <-probeSlots }()
-	case <-ctx.Done():
-		return &toolBin{Path: path, Raw: "(timeout)"}
-	}
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, args...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-	out, err := cmd.Output()
-	if ctx.Err() != nil {
-		return &toolBin{Path: path, Raw: "(timeout)"}
-	}
-	if err != nil && len(out) == 0 {
-		return &toolBin{Path: path, Raw: "(取得失敗)"}
-	}
-	raw := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
-	return &toolBin{Path: path, Version: extractVer(raw), Raw: raw}
+	return &toolBin{Path: p.Path, Version: p.Version, Raw: p.Raw}
 }
 
 // uvToolRoot is the uv tool root that holds path. `uv tool install` puts the binary at
@@ -352,20 +319,9 @@ func (tp *toolProbe) at(path string) *toolBin {
 	return &c
 }
 
-func extractVer(raw string) string {
-	if m := verNumRe.FindString(raw); m != "" {
-		return m
-	}
-	return raw
-}
+func extractVer(raw string) string { return installx.ExtractVer(raw) }
 
-func readBuildPins() map[string]string {
-	pins := map[string]string{}
-	if b, err := os.ReadFile(buildPinsPath); err == nil {
-		_ = json.Unmarshal(b, &pins)
-	}
-	return pins
-}
+func readBuildPins() map[string]string { return installx.ReadBuildPins() }
 
 func collectToolVersions() []toolReport {
 	ctx, cancel := context.WithTimeout(context.Background(), collectBudget)

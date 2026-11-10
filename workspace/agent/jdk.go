@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/jdkvendor"
 )
 
@@ -407,11 +408,7 @@ func runJavaHome(args []string) {
 	fmt.Println(jh)
 }
 
-func runCmd(name string, args ...string) error {
-	c := exec.Command(name, args...)
-	c.Stderr = os.Stderr
-	return c.Run()
-}
+func runCmd(name string, args ...string) error { return installx.RunCmd(name, args...) }
 
 func firstArg(args []string) string {
 	if len(args) == 0 {

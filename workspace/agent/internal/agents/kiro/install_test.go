@@ -1,15 +1,14 @@
-package main
+package kiro
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 // TestKiroAsset pins the arch → asset mapping: x86_64 gnu (Debian 12 glibc suffices),
@@ -51,9 +50,9 @@ func fakeKiroHome(t *testing.T, ver, pin string) string {
 	if err := os.WriteFile(pins, []byte(`{"kiro":"`+pin+`","kiro_sha256":"deadbeef"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	orig := buildPinsPath
-	buildPinsPath = pins
-	t.Cleanup(func() { buildPinsPath = orig })
+	orig := installx.BuildPinsPath
+	installx.BuildPinsPath = pins
+	t.Cleanup(func() { installx.BuildPinsPath = orig })
 	return binDir
 }
 
@@ -64,15 +63,15 @@ func fakeKiroHome(t *testing.T, ver, pin string) string {
 // path only ever sees a fully-installed binary.
 func TestInstallKiroIdempotentSkip(t *testing.T) {
 	binDir := fakeKiroHome(t, "2.14.2", "2.14.2")
-	if err := installKiro(false); err != nil {
-		t.Fatalf("installKiro with pinned binary should skip cleanly, got %v", err)
+	if err := Install(false); err != nil {
+		t.Fatalf("Install with pinned binary should skip cleanly, got %v", err)
 	}
-	b, err := os.ReadFile(kiroVersionMarkerPath(binDir))
+	b, err := os.ReadFile(VersionMarkerPath(binDir))
 	if err != nil || strings.TrimSpace(string(b)) != "2.14.2" {
 		t.Fatalf("marker not recorded for the skip fast path: %q / %v", string(b), err)
 	}
-	if !kiroInstallCurrent() {
-		t.Error("kiroInstallCurrent() = false for a binary already at the pin")
+	if !InstallCurrent() {
+		t.Error("InstallCurrent() = false for a binary already at the pin")
 	}
 }
 
@@ -82,18 +81,18 @@ func TestInstallKiroIdempotentSkip(t *testing.T) {
 // first version they ever installed, forever (kiro's own updater is pinned off).
 func TestKiroCheckPinDrift(t *testing.T) {
 	binDir := fakeKiroHome(t, "2.14.1", "2.14.2")
-	p, cur, st := kiroCheck(binDir, "2.14.2")
-	if st != kiroStale || cur != "2.14.1" || p != filepath.Join(binDir, "kiro-cli") {
-		t.Fatalf("kiroCheck = (%q, %q, %v), want stale at 2.14.1", p, cur, st)
+	p, cur, st := Check(binDir, "2.14.2")
+	if st != Stale || cur != "2.14.1" || p != filepath.Join(binDir, "kiro-cli") {
+		t.Fatalf("Check = (%q, %q, %v), want stale at 2.14.1", p, cur, st)
 	}
 	if kiroSkipInstall(binDir, "2.14.2", "", false) {
 		t.Error("a stale install must NOT be skipped")
 	}
-	if kiroInstallCurrent() {
-		t.Error("kiroInstallCurrent() = true for a stale install (the install route would answer \"done\")")
+	if InstallCurrent() {
+		t.Error("InstallCurrent() = true for a stale install (the install route would answer \"done\")")
 	}
 	// Same version → current, and the recorded marker then short-circuits the probe.
-	if _, _, st := kiroCheck(binDir, "2.14.1"); st != kiroCurrent {
+	if _, _, st := Check(binDir, "2.14.1"); st != Current {
 		t.Errorf("matching version must be current, got %v", st)
 	}
 }
@@ -102,16 +101,16 @@ func TestKiroCheckPinDrift(t *testing.T) {
 // per-launch guard answer "current" from a stat, without exec'ing the 855MB binary.
 func TestKiroCheckMarkerFastPath(t *testing.T) {
 	binDir := fakeKiroHome(t, "", "2.14.2") // stub reports NO version
-	if _, _, st := kiroCheck(binDir, "2.14.2"); st != kiroUnknownVer {
-		t.Fatalf("without a marker an unreadable version must be kiroUnknownVer, got %v", st)
+	if _, _, st := Check(binDir, "2.14.2"); st != UnknownVer {
+		t.Fatalf("without a marker an unreadable version must be UnknownVer, got %v", st)
 	}
 	writeKiroVersionMarker(binDir, "2.14.2")
-	if _, _, st := kiroCheck(binDir, "2.14.2"); st != kiroCurrent {
+	if _, _, st := Check(binDir, "2.14.2"); st != Current {
 		t.Errorf("marker matching the pin must short-circuit to current, got %v", st)
 	}
 	// A marker from an older pin is only a fast path for "current" — it must not be
 	// trusted to declare staleness on its own; the binary probe decides.
-	if _, _, st := kiroCheck(binDir, "2.15.0"); st != kiroUnknownVer {
+	if _, _, st := Check(binDir, "2.15.0"); st != UnknownVer {
 		t.Errorf("marker mismatch must fall through to the probe, got %v", st)
 	}
 }
@@ -120,7 +119,7 @@ func TestKiroCheckMarkerFastPath(t *testing.T) {
 // in place (warn only) rather than triggering a 554MB re-download on every launch.
 func TestInstallKiroUnknownVersionLeavesAlone(t *testing.T) {
 	fakeKiroHome(t, "", "2.14.2")
-	if err := installKiro(true); err != nil {
+	if err := Install(true); err != nil {
 		t.Fatalf("unparsable version should skip cleanly, got %v", err)
 	}
 }
@@ -129,7 +128,7 @@ func TestInstallKiroUnknownVersionLeavesAlone(t *testing.T) {
 // compare against, so a present binary is left alone instead of being re-installed.
 func TestInstallKiroNoPinLeavesAlone(t *testing.T) {
 	fakeKiroHome(t, "2.14.1", "")
-	if err := installKiro(true); err != nil {
+	if err := Install(true); err != nil {
 		t.Fatalf("missing pin with a present binary should skip cleanly, got %v", err)
 	}
 }
@@ -164,36 +163,6 @@ func TestKiroInstallLockExcludes(t *testing.T) {
 		t.Fatalf("lock not released: %v", err)
 	}
 	_ = syscall.Flock(int(f2.Fd()), syscall.LOCK_UN)
-}
-
-// TestKiroInstallGETReportsPinDrift: the connection card's update affordance is driven
-// by this payload. A home copy older than the versions.json pin must report
-// updateAvailable=true with both versions, so the user can SEE that an update exists and
-// press the button when a multi-minute download suits them (docs/log/43 §11).
-func TestKiroInstallGETReportsPinDrift(t *testing.T) {
-	fakeKiroHome(t, "2.14.1", "2.14.2")
-	kiroInstaller = kiroInstall{}
-
-	rec := httptest.NewRecorder()
-	handleKiroInstall(rec, httptest.NewRequest(http.MethodGet, "/connections/kiro/install", nil))
-	var got map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
-	}
-	if got["installed"] != true || got["updateAvailable"] != true ||
-		got["version"] != "2.14.1" || got["pin"] != "2.14.2" {
-		t.Fatalf("GET payload = %v, want installed/updateAvailable with 2.14.1 → 2.14.2", got)
-	}
-
-	// Same version as the pin → no nagging.
-	fakeKiroHome(t, "2.14.2", "2.14.2")
-	rec = httptest.NewRecorder()
-	handleKiroInstall(rec, httptest.NewRequest(http.MethodGet, "/connections/kiro/install", nil))
-	got = nil
-	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if got["updateAvailable"] != false || got["installed"] != true {
-		t.Fatalf("GET payload = %v, want installed with no update", got)
-	}
 }
 
 func TestPlaceKiroCompanions(t *testing.T) {

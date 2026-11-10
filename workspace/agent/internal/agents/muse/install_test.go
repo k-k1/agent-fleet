@@ -1,16 +1,15 @@
-package main
+package muse
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 // The arch → asset mapping the release manifest publishes. Only the running arch is asserted
@@ -49,17 +48,17 @@ func TestMuseParseVersionTakesTheBuildID(t *testing.T) {
 		{"no version at all here", ""}, // nothing to take
 		{"", ""},
 	} {
-		if got := museParseVersion(tc.raw); got != tc.want {
-			t.Errorf("museParseVersion(%q) = %q, want %q", tc.raw, got, tc.want)
+		if got := ParseVersion(tc.raw); got != tc.want {
+			t.Errorf("ParseVersion(%q) = %q, want %q", tc.raw, got, tc.want)
 		}
 	}
 	// The negative control for the whole point: the DEFAULT extraction really does lose the
 	// build id, so this test is guarding against a live hazard rather than a hypothetical one.
-	// If extractVer ever starts keeping it, museParseVersion stops being load-bearing and this
+	// If extractVer ever starts keeping it, ParseVersion stops being load-bearing and this
 	// says so instead of leaving a stale justification in the comments.
 	const measured = "Muse Code 1.3.0 (1.3.0-R3401.1)"
-	if extractVer(measured) == museParseVersion(measured) {
-		t.Errorf("extractVer now agrees with museParseVersion on %q — re-check whether the "+
+	if installx.ExtractVer(measured) == ParseVersion(measured) {
+		t.Errorf("extractVer now agrees with ParseVersion on %q — re-check whether the "+
 			"muse-specific parse is still needed", measured)
 	}
 }
@@ -86,7 +85,7 @@ func museTestHome(t *testing.T) (home, binDir string) {
 		if dir == "" {
 			continue
 		}
-		if fileExecutable(filepath.Join(dir, "muse")) {
+		if installx.FileExecutable(filepath.Join(dir, "muse")) {
 			continue
 		}
 		keep = append(keep, dir)
@@ -97,7 +96,7 @@ func museTestHome(t *testing.T) (home, binDir string) {
 
 // fakeMuseHome sets up HOME with a stub `muse` reporting ver from `--version`, plus a
 // versions.json pinning muse=pin. Returns ~/.local/bin. ver=="" makes `--version` print
-// nothing, which is the museUnknownVer path.
+// nothing, which is the UnknownVer path.
 func fakeMuseHome(t *testing.T, ver, pin string) string {
 	t.Helper()
 	home, binDir := museTestHome(t)
@@ -118,9 +117,9 @@ func fakeMuseHome(t *testing.T, ver, pin string) string {
 	if err := os.WriteFile(pins, []byte(`{"muse":"`+pin+`","muse_sha256":"deadbeef"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	orig := buildPinsPath
-	buildPinsPath = pins
-	t.Cleanup(func() { buildPinsPath = orig })
+	orig := installx.BuildPinsPath
+	installx.BuildPinsPath = pins
+	t.Cleanup(func() { installx.BuildPinsPath = orig })
 	return binDir
 }
 
@@ -128,15 +127,15 @@ func fakeMuseHome(t *testing.T, ver, pin string) string {
 // marker, so the next check is a stat rather than an exec of a 299 MiB binary.
 func TestInstallMuseIdempotentSkip(t *testing.T) {
 	binDir := fakeMuseHome(t, "1.3.0-R3401.1", "1.3.0-R3401.1")
-	if err := installMuse(false); err != nil {
-		t.Fatalf("installMuse with the pinned binary should skip cleanly, got %v", err)
+	if err := Install(false); err != nil {
+		t.Fatalf("Install with the pinned binary should skip cleanly, got %v", err)
 	}
-	b, err := os.ReadFile(museVersionMarkerPath(binDir))
+	b, err := os.ReadFile(VersionMarkerPath(binDir))
 	if err != nil || strings.TrimSpace(string(b)) != "1.3.0-R3401.1" {
 		t.Fatalf("marker not recorded on the skip fast path: %q / %v", string(b), err)
 	}
-	if !museInstallCurrent() {
-		t.Error("museInstallCurrent() = false for a binary already at the pin")
+	if !InstallCurrent() {
+		t.Error("InstallCurrent() = false for a binary already at the pin")
 	}
 }
 
@@ -153,28 +152,28 @@ func TestMuseCheckJudgesVersionNotPath(t *testing.T) {
 		name  string
 		ver   string // what the installed binary reports
 		pin   string
-		want  museState
+		want  State
 		wantV string
 	}{
-		{"a shadow at a drifted version is stale", "1.2.9-R3300.4", "1.3.0-R3401.1", museStale, "1.2.9-R3300.4"},
-		{"a shadow reporting the PIN is left alone", "1.3.0-R3401.1", "1.3.0-R3401.1", museCurrent, "1.3.0-R3401.1"},
-		{"a pin bump makes the installed copy stale", "1.3.0-R3401.1", "1.4.0-R4002.7", museStale, "1.3.0-R3401.1"},
-		{"an unreadable version is not churned", "", "1.3.0-R3401.1", museUnknownVer, ""},
+		{"a shadow at a drifted version is stale", "1.2.9-R3300.4", "1.3.0-R3401.1", Stale, "1.2.9-R3300.4"},
+		{"a shadow reporting the PIN is left alone", "1.3.0-R3401.1", "1.3.0-R3401.1", Current, "1.3.0-R3401.1"},
+		{"a pin bump makes the installed copy stale", "1.3.0-R3401.1", "1.4.0-R4002.7", Stale, "1.3.0-R3401.1"},
+		{"an unreadable version is not churned", "", "1.3.0-R3401.1", UnknownVer, ""},
 		// No pin (a hand-built image with no versions.json) has nothing to compare against, so
 		// a present binary is left alone rather than treated as stale.
-		{"no pin leaves a present binary alone", "1.3.0-R3401.1", "", museCurrent, ""},
+		{"no pin leaves a present binary alone", "1.3.0-R3401.1", "", Current, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			binDir := fakeMuseHome(t, tc.ver, tc.pin)
-			p, cur, st := museCheck(binDir, tc.pin)
+			p, cur, st := Check(binDir, tc.pin)
 			if st != tc.want || cur != tc.wantV {
-				t.Fatalf("museCheck = (%q, %q, %v), want (%v, %q)", p, cur, st, tc.want, tc.wantV)
+				t.Fatalf("Check = (%q, %q, %v), want (%v, %q)", p, cur, st, tc.want, tc.wantV)
 			}
 			if p != filepath.Join(binDir, "muse") {
-				t.Errorf("museCheck returned %q, want the home copy", p)
+				t.Errorf("Check returned %q, want the home copy", p)
 			}
 			// The verdict has to reach the skip decision, or it is only a label.
-			if skipped := museSkipInstall(binDir, tc.pin, "", false); skipped != (st != museStale) {
+			if skipped := museSkipInstall(binDir, tc.pin, "", false); skipped != (st != Stale) {
 				t.Errorf("museSkipInstall = %v for verdict %v", skipped, st)
 			}
 		})
@@ -189,23 +188,23 @@ func TestMuseVersionMarkerNeverOverridesTheBinary(t *testing.T) {
 	// A marker that lies about the installed version, exactly the way an interrupted upgrade
 	// could: it claims the new pin while the binary is still the old one.
 	writeMuseVersionMarker(binDir, "1.3.0-R3401.1")
-	if _, cur, st := museCheck(binDir, "1.3.0-R3401.1"); st != museCurrent {
+	if _, cur, st := Check(binDir, "1.3.0-R3401.1"); st != Current {
 		// Documenting the shape rather than asserting the opposite: the marker IS trusted when
 		// it matches the pin, which is the point of the fast path. The guard that makes that
-		// safe is in installMuse, and the next test pins it.
+		// safe is in Install, and the next test pins it.
 		t.Logf("marker fast path not taken (cur=%q st=%v)", cur, st)
 	}
 	// The real protection: the marker is removed BEFORE the binary is touched, so an install
 	// interrupted mid-swap leaves no marker to believe.
-	src, err := os.ReadFile("install_muse.go")
+	src, err := os.ReadFile("install.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(src)
-	rm := strings.Index(body, "os.Remove(museVersionMarkerPath(binDir))")
+	rm := strings.Index(body, "os.Remove(VersionMarkerPath(binDir))")
 	place := strings.Index(body, "os.Rename(staged, installed)")
 	if rm < 0 || place < 0 {
-		t.Fatal("installMuse no longer removes the marker or no longer renames into place")
+		t.Fatal("Install no longer removes the marker or no longer renames into place")
 	}
 	if rm > place {
 		t.Error("the stale marker is dropped AFTER the binary is placed; an interrupted upgrade " +
@@ -221,13 +220,13 @@ func TestInstallMuseRefusesWithoutAPin(t *testing.T) {
 	if err := os.WriteFile(pins, []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	orig := buildPinsPath
-	buildPinsPath = pins
-	t.Cleanup(func() { buildPinsPath = orig })
+	orig := installx.BuildPinsPath
+	installx.BuildPinsPath = pins
+	t.Cleanup(func() { installx.BuildPinsPath = orig })
 
-	err := installMuse(false)
+	err := Install(false)
 	if err == nil {
-		t.Fatal("installMuse succeeded with no pin in versions.json")
+		t.Fatal("Install succeeded with no pin in versions.json")
 	}
 	if !strings.Contains(err.Error(), "versions.json") {
 		t.Errorf("the error does not name the cause: %v", err)
@@ -242,74 +241,6 @@ func TestMuseDownloadURL(t *testing.T) {
 		"?channel=muse&version=1.3.0-R3401.1&file=muse-x86-linux"
 	if got != want {
 		t.Errorf("museDownloadURL =\n  %s\nwant\n  %s", got, want)
-	}
-}
-
-// The HTTP route the connection card polls. GET must report the version facts the card turns
-// into its "update available" affordance — and must NOT claim an update when the versions are
-// merely unknown, or the card would offer a 299 MiB download that changes nothing.
-func TestMuseInstallRouteReportsVersionFacts(t *testing.T) {
-	for _, tc := range []struct {
-		name            string
-		ver, pin        string
-		wantInstalled   bool
-		wantUpdateAvail bool
-	}{
-		{"at the pin: installed, no update", "1.3.0-R3401.1", "1.3.0-R3401.1", true, false},
-		{"behind the pin: update available", "1.2.9-R3300.4", "1.3.0-R3401.1", true, true},
-		{"unreadable version: installed, but no update claimed", "", "1.3.0-R3401.1", true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fakeMuseHome(t, tc.ver, tc.pin)
-			rec := httptest.NewRecorder()
-			handleMuseInstall(rec, httptest.NewRequest(http.MethodGet, "/connections/muse/install", nil))
-			var body struct {
-				State           string `json:"state"`
-				Installed       bool   `json:"installed"`
-				Version         string `json:"version"`
-				Pin             string `json:"pin"`
-				UpdateAvailable bool   `json:"updateAvailable"`
-			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-				t.Fatalf("decode: %v (%s)", err, rec.Body.String())
-			}
-			if body.State != "idle" {
-				t.Errorf("state = %q", body.State)
-			}
-			if body.Installed != tc.wantInstalled || body.UpdateAvailable != tc.wantUpdateAvail {
-				t.Errorf("installed=%v updateAvailable=%v, want %v/%v (version=%q pin=%q)",
-					body.Installed, body.UpdateAvailable, tc.wantInstalled, tc.wantUpdateAvail,
-					body.Version, body.Pin)
-			}
-			if body.Pin != tc.pin {
-				t.Errorf("pin = %q, want %q", body.Pin, tc.pin)
-			}
-		})
-	}
-}
-
-// A POST with the pinned version already present answers "done" without starting anything —
-// the card's Install button is idempotent. A present-but-STALE muse must NOT answer done: that
-// is the upgrade and the shadow repair, and this route is the only thing that performs them
-// (muse is managed-only, so unlike kiro there is no launch guard behind it).
-func TestMuseInstallPostIsIdempotentButNotForStale(t *testing.T) {
-	fakeMuseHome(t, "1.3.0-R3401.1", "1.3.0-R3401.1")
-	rec := httptest.NewRecorder()
-	handleMuseInstall(rec, httptest.NewRequest(http.MethodPost, "/connections/muse/install", nil))
-	if !strings.Contains(rec.Body.String(), `"done"`) {
-		t.Fatalf("POST at the pin should be a no-op done: %s", rec.Body.String())
-	}
-	if museInstaller.state == "installing" {
-		t.Error("POST at the pin started an install")
-	}
-	if !museInstallCurrent() {
-		t.Error("museInstallCurrent() = false at the pin")
-	}
-
-	fakeMuseHome(t, "1.2.9-R3300.4", "1.3.0-R3401.1")
-	if museInstallCurrent() {
-		t.Error("museInstallCurrent() = true for a stale install; the route would answer done " +
-			"and the member would never get the pinned version")
 	}
 }
 
@@ -363,18 +294,18 @@ func TestInstallMuseVerifiesTheChecksum(t *testing.T) {
 		if err := os.WriteFile(pins, []byte(`{"muse":"1.3.0-R3401.1","muse_sha256":"`+pinnedSha+`"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		origPins, origURL := buildPinsPath, museDownloadURL
-		buildPinsPath = pins
+		origPins, origURL := installx.BuildPinsPath, museDownloadURL
+		installx.BuildPinsPath = pins
 		museDownloadURL = func(string, string) string { return "file://" + artifact }
-		t.Cleanup(func() { buildPinsPath, museDownloadURL = origPins, origURL })
+		t.Cleanup(func() { installx.BuildPinsPath, museDownloadURL = origPins, origURL })
 		return filepath.Join(binDir, "muse")
 	}
 
 	t.Run("a hash that does not match is refused and nothing is placed", func(t *testing.T) {
 		installed := setup(t, strings.Repeat("0", 64))
-		err := installMuse(false)
+		err := Install(false)
 		if err == nil {
-			t.Fatal("installMuse accepted an artifact whose sha256 does not match the pin")
+			t.Fatal("Install accepted an artifact whose sha256 does not match the pin")
 		}
 		if !strings.Contains(strings.ToLower(err.Error()), "sha256") {
 			t.Errorf("the error does not name the checksum: %v", err)
@@ -386,13 +317,13 @@ func TestInstallMuseVerifiesTheChecksum(t *testing.T) {
 
 	t.Run("the matching hash installs (the control)", func(t *testing.T) {
 		installed := setup(t, sum)
-		if err := installMuse(false); err != nil {
-			t.Fatalf("installMuse refused a correctly hashed artifact: %v", err)
+		if err := Install(false); err != nil {
+			t.Fatalf("Install refused a correctly hashed artifact: %v", err)
 		}
-		if !fileExecutable(installed) {
+		if !installx.FileExecutable(installed) {
 			t.Fatal("the verified binary was not placed, or is not executable")
 		}
-		if b, err := os.ReadFile(museVersionMarkerPath(filepath.Dir(installed))); err != nil ||
+		if b, err := os.ReadFile(VersionMarkerPath(filepath.Dir(installed))); err != nil ||
 			strings.TrimSpace(string(b)) != "1.3.0-R3401.1" {
 			t.Errorf("marker after a real install: %q / %v", string(b), err)
 		}

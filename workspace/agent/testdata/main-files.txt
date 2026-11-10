@@ -41,8 +41,6 @@ gcloud_exec.go
 git_wiring.go
 gitflow_init.go
 install_gcloud.go
-install_kiro.go
-install_muse.go
 install_mysql.go
 install_pg_client.go
 install_postgres.go

@@ -20,6 +20,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 func TestParseGCloudExecArgs(t *testing.T) {
@@ -39,7 +40,7 @@ func TestGCloudExecHelper(t *testing.T) {
 	if os.Getenv("AF_TEST_GCLOUD_EXEC_HELPER") != "1" {
 		t.Skip("helper process only")
 	}
-	buildPinsPath = os.Getenv("AF_TEST_PINS")
+	installx.BuildPinsPath = os.Getenv("AF_TEST_PINS")
 	var args []string
 	_ = json.Unmarshal([]byte(os.Getenv("AF_TEST_ARGS")), &args)
 	runGCloudExec(args)
@@ -263,9 +264,9 @@ func TestEnsureGCloudChecksTheWholePin(t *testing.T) {
 	t.Setenv("HOME", home)
 	pins := filepath.Join(t.TempDir(), "versions.json")
 	_ = os.WriteFile(pins, []byte(`{"gcloud":"587.0.0","gcloud_sha256":"abc"}`), 0o644)
-	oldPins, oldRun := buildPinsPath, gcloudInstallRun
-	t.Cleanup(func() { buildPinsPath, gcloudInstallRun = oldPins, oldRun })
-	buildPinsPath = pins
+	oldPins, oldRun := installx.BuildPinsPath, gcloudInstallRun
+	t.Cleanup(func() { installx.BuildPinsPath, gcloudInstallRun = oldPins, oldRun })
+	installx.BuildPinsPath = pins
 	sdk := gcloudSDKRoot()
 	tree := func(marker string) {
 		_ = os.RemoveAll(sdk)

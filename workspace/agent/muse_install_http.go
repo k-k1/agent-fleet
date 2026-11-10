@@ -4,7 +4,7 @@ package main
 // decision 8). Muse Code is proprietary and not baked, so a fresh workspace has no `muse` and
 // muse.Status() reports supported=false: the connection card cannot offer the sign-in (that
 // needs the binary) and the kind cannot be launched, so the card offers an install button that
-// lands the binary in the member's ~/.local via the same installMuse() the CLI subcommand runs.
+// lands the binary in the member's ~/.local via the same muse.Install() the CLI subcommand runs.
 //
 // The download is minutes long, so this runs in the background behind a small state machine the
 // card polls: POST starts it (idempotent while running), GET reports {state, error}. Once
@@ -21,10 +21,11 @@ package main
 
 import (
 	"net/http"
-	"path/filepath"
 	"sync"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 type museInstall struct {
@@ -56,20 +57,20 @@ func handleMuseInstall(w http.ResponseWriter, r *http.Request) {
 		// any version read there is meaningless (and the card's poll is seconds-tight).
 		if st != "installing" {
 			pin := readBuildPins()["muse"]
-			_, cur, vst := museCheck(filepath.Join(homeDir(), ".local", "bin"), pin)
-			body["installed"] = vst != museMissing
+			_, cur, vst := muse.Check(installx.LocalBin(), pin)
+			body["installed"] = vst != muse.Missing
 			body["version"] = cur // "" when the binary cannot report one
 			body["pin"] = pin
 			// Only claim an update when the versions are KNOWN to differ: an unreadable
 			// version or a missing pin must not nag the member into a 299 MiB download.
-			body["updateAvailable"] = vst == museStale
+			body["updateAvailable"] = vst == muse.Stale
 		}
 		httpx.WriteJSON(w, http.StatusOK, body)
 		return
 	}
 	// POST. Nothing to do when the pinned version is already present. Present-but-stale is
 	// NOT "done": it falls through so this route brings it to the pin.
-	if museInstallCurrent() {
+	if muse.InstallCurrent() {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"state": "done"})
 		return
 	}
@@ -83,7 +84,7 @@ func handleMuseInstall(w http.ResponseWriter, r *http.Request) {
 	museInstaller.err = ""
 	museInstaller.mu.Unlock()
 	go func() {
-		err := installMuse(false)
+		err := muse.Install(false)
 		museInstaller.mu.Lock()
 		if err != nil {
 			museInstaller.state = "error"

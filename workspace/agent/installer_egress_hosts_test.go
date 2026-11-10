@@ -17,7 +17,7 @@ const installerEgressHostsPath = "testdata/installer-egress-hosts.txt"
 // boot installs and agent CLI updates included. A new installer file outside these globs
 // escapes the check, so name it install_*.go.
 var installerSourceGlobs = []string{
-	"install_*.go", "node_install.go", "jdk*.go", "internal/jdkvendor/*.go", "../entrypoint.sh",
+	"install_*.go", "internal/agents/kiro/install.go", "internal/agents/muse/install.go", "node_install.go", "jdk*.go", "internal/jdkvendor/*.go", "../entrypoint.sh",
 }
 
 var httpsHostRe = regexp.MustCompile(`https://([a-z0-9][a-z0-9.-]*[a-z0-9])`)

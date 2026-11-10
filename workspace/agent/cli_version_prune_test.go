@@ -6,6 +6,8 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
 // isolateCLIVersions points home, /proc, the npm roots and PATH lookup at temp dirs, so a
@@ -256,9 +258,9 @@ func TestPruneAtBootNeedsVersionsJSON(t *testing.T) {
 	home, _ := isolateCLIVersions(t)
 	installCursor(t, home, "2026.07.20-8cc9c0b")
 	installCursor(t, home, "2026.09.23-86fc751")
-	old := buildPinsPath
-	buildPinsPath = filepath.Join(t.TempDir(), "missing.json")
-	t.Cleanup(func() { buildPinsPath = old })
+	old := installx.BuildPinsPath
+	installx.BuildPinsPath = filepath.Join(t.TempDir(), "missing.json")
+	t.Cleanup(func() { installx.BuildPinsPath = old })
 
 	pruneOldCLIVersionsAtBoot()
 
