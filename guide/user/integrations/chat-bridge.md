@@ -101,6 +101,30 @@ Questions, plans and permissions can also be answered with buttons.
 - Shell and SSM sessions cannot be answered from chat. The thread gets a refusal and nothing is typed into the terminal
 - Only replies and button presses from the person who connected are accepted
 
+## Start a session and move a thread
+
+With "**Reply to steer (two-way)**" on, two commands work inside a session's thread. Write them as a plain message that
+starts with `!`. A message that starts with `!start` or `!attach` is always taken as the command; to send such text
+literally, put anything in front of it (for example a backtick).
+
+| Command | What it does |
+|---|---|
+| `!start <first instruction>` | Starts a new session with the same kind, model, driver and working copy as the thread's session, and gives it the instruction. It gets a thread of its own when its first notification arrives |
+| `!attach <session>` | Binds **this thread** to another existing session. Replies here now go to that session |
+
+- `!attach` moves the thread: the session it was bound to loses it and opens a new thread with its next notification,
+  and the target's previous thread no longer takes replies. A thread is bound to one session at a time
+- A reply or notification already in flight when you press send can still land on the previous session. Anything you
+  write after the confirmation goes to the new one
+- `!start` answers with a 👀 at once and posts the result when the session is up. If the same message is delivered twice
+  within a few seconds you get "already starting" rather than a second session. Across an Agent restart a redelivered
+  message can still start twice
+- The thread that `!attach` took away from the target is told it was replaced and no longer takes replies
+- The same rules as a reply apply: only the person who connected can use them, and only inside a session's thread.
+  Shell and SSM sessions can be neither started from nor attached
+- `!start` never takes a repository, kind or host from the message. To start something else, use the Console or the
+  Fleet Operator thread
+
 ## Talk to the Fleet Operator
 
 With "**Reply to steer (two-way)**" on, a standing thread "🛰 Fleet Operator" is created too. Writing there, you talk

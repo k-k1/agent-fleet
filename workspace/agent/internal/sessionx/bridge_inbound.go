@@ -131,6 +131,10 @@ func StartBridgeReceiver() {
 		// P3, brought forward: a reply in the dedicated operator thread runs a turn on the built-in
 		// operator assistant conversation (bridge_operator.go); the reply is posted back.
 		Operator: runOperatorTurn,
+		// "!attach" / "!start" (ADR 0020, note of 2026-11-10; bridge_commands.go).
+		CheckAttach: checkChatAttach,
+		Start:       startFromChat,
+		Localize:    func(ja, en string) string { return Fb(BridgeAnswerEN(), ja, en) },
 	})
 }
 

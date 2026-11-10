@@ -414,6 +414,10 @@ type CreateReq struct {
 	// mcp is who sent this create over the CP's /mcp (HandleMCPCreateSession), or nil. Unexported,
 	// so no JSON body can set it: the only way to a non-nil value is that route.
 	mcp *mcpOrigin
+	// chatSource is the chat provider ("discord" / "slack") a bridge "!start" came from. Unexported
+	// like mcp, so no JSON body can claim it: the only way to a non-empty value is the bridge's
+	// own in-process create (startFromChat).
+	chatSource string
 	// name is the slug a move booked for its target before writing the handover file there
 	// (ADR 0115 decision 9). Unexported, so no client can name a session: every other create
 	// allocates a fresh slug.
@@ -782,6 +786,8 @@ func createTurnOrigin(req *CreateReq, spawnParent string) agents.Origin {
 	switch {
 	case req.mcp != nil:
 		return turnOrigin(TurnSourceMCP, "")
+	case req.chatSource != "":
+		return turnOrigin(req.chatSource, "")
 	case req.ReportTo != "":
 		return turnOrigin(injectionSource(req.Source), "")
 	case scheduleInjectionSource(req.Source) != "":
@@ -822,6 +828,13 @@ func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 		// Discord mirror and no fleet-graph arrow (fleetGraphActorFor drops TurnSourceMCP), and
 		// ahead of the default branch, which would draw the prompt as the member's own.
 		recordInjection(name, req.InitialPrompt, TurnSourceMCP)
+	case req.chatSource != "":
+		// The bound member typed the launch task in their own chat thread: badge it like a
+		// reply from that provider, and draw the same fleet-graph arrow a reply draws.
+		recordInjection(name, req.InitialPrompt, req.chatSource)
+		if hasPrompt {
+			recordFleetGraphInstruct(name, req.chatSource, "", "", req.InitialPrompt)
+		}
 	case req.ReportTo != "" || req.delivery() != nil:
 		req.instr = chatx.AddScheduledInstruction(name, req.ReportTo, injectionSource(req.Source), req.delivery(), req.managed)
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
