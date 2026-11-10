@@ -139,3 +139,48 @@ and only the sink routes it differently. Decision 10 is untouched: the prompt's 
   Control Plane).
 - Out of scope: runs in `session_mode=assistant` (the run is itself a turn in the conversation, so the Control
   Plane refuses targets and the sentinel there), script-only runs, and chaining one run's output into the next.
+
+## Addendum (2026-11-10) — gated schedules, slice 1 (#1763)
+
+A fire used to be clock-only: every tick starts a session and spends a turn whether or not there is anything to do
+(the silent sentinel above hides the answer, not the cost). A schedule may now carry a **gate**, a cheap check the
+scheduler runs first. The existing new-session path fires only when the check says so **and** its result differs
+from the one the gate last fired on. Decisions 3, 4 and 10 stand; decision 10 is amended in one place, below.
+Slice 1 is the declarative gate only. Later slices (probe wakes, a workspace-side script gate, an inbound trigger)
+stay in #1763.
+
+- **Gate kind `work_items`**: one of the member's saved work-item queries ([0061](0061-work-item-inbox.md)),
+  resolved by the running Agent through the existing `POST /work-items/fetch`. No code runs, no new credential,
+  no new route and no inbound endpoint. The query must belong to the schedule's owner, at save and again at every
+  evaluation. A gate applies to recurring `session_mode=new` schedules only (reuse and assistant fires have no
+  per-slot idempotency, and a `once` has nothing to poll).
+- **What "differs" hashes**: the sorted, de-duplicated item keys (`fingerprint=keys`), or key plus `updated_at`
+  (`keys+updated`, which also fires on an edit). Titles and bodies never enter it. It is compared with the
+  fingerprint of the last *fired* result, not the last seen one, so a red that flaps red/green/red does not
+  re-fire. An empty result is `clear`.
+- **Claim, then inject**: one conditional write (on `next_run` and the stored fingerprint) advances the ledger and
+  records the fingerprint, and only then is the session injected. Of two ticks that listed the same row exactly
+  one wins. A crash between claim and inject loses that one fire (at-most-once), deliberately: a missed triage
+  leaves the red red for the next change or a run-now, while a duplicate burns quota and files duplicate issues.
+  A failed inject is final for the same reason, with the usual error notification.
+- **Fail closed**: an error from the check (the query gone, the tracker rejecting it, an Agent without the route, an
+  unreadable spec) never fires. It is stored on the row (`gate.last_verdict = error:…`) and, once per streak of
+  consecutive errors, written to the run history and the notification center. An Agent that does not answer, and a
+  workspace that is not running, are silent skips: slice 1 never wakes a workspace to check.
+- **Skips leave no run row**: `clear`, `unchanged`, `not_running`, `unreachable` and a hit cap only update
+  `gate.last_eval_at` / `gate.last_verdict`, because at a 2 hour cadence the 50-row history would otherwise
+  hold four days of nothing. A fire is an ordinary fire in every other respect (`deliver_to`, the sentinel,
+  the report ledger are unchanged).
+- **Caps**: `max_fires_per_day` (default 2, in a rolling 24 hour window opened by the first fire) and
+  `min_fire_gap_s` (default 21600), checked only for a result that differs from the last fire.
+- **A run-now bypasses the gate**: it is the member's own press, so it fires whatever the gate would say, and carries
+  no `{{gate.refs}}`.
+- **Amendment to decision 10**: a gated schedule's prompt may use `{{gate.refs}}`, the matched item keys, at most
+  20, sorted. Each key must match `owner/repo#N` or `PROJ-123`; any other key is dropped. This is the only
+  variable that carries data, and the data is structured identifiers, never text a third party wrote. On an
+  ungated schedule the token stays literal.
+- **Data model**: additive columns on `schedule` (`gate_kind`, `gate_spec` JSON, and the ledger: fired fingerprint,
+  fired-at, window start and count, last evaluation and verdict). The API carries them as `gate` on the schedule.
+- **Not in this slice** (#1763 follow-ups): the Console form and display, the `create_schedule` / `update_schedule`
+  arguments and persona text, a notice when a cap holds a changed result back, backoff of a failing gate,
+  `stop_after_run` defaulting to on for a gated schedule, `refire_after`. Follow-ups: #3809.

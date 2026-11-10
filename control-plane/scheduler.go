@@ -159,6 +159,10 @@ type scheduler struct {
 	store    scheduleStore
 	firer    scheduleFirer
 	interval time.Duration
+	// gateStore / gateRunner arm the gate step of a gated schedule (scheduler_gate.go). Unset, a
+	// gated schedule is never fired.
+	gateStore  schedGateStore
+	gateRunner schedGateRunner
 }
 
 func newScheduler(st scheduleStore, firer scheduleFirer, interval time.Duration) *scheduler {
@@ -236,6 +240,16 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 	if err != nil {
 		slot = now // defensive: a corrupt next_run should not wedge the loop
 	}
+	// A gated schedule evaluates its gate first and fires only on a claimed verdict. A run-now
+	// is the member's own press, so it goes past the gate (and carries no {{gate.refs}}).
+	gated := false
+	if sch.GateKind != "" && !sch.ManualFirePending {
+		var ok bool
+		if sch, ok = sc.gateStep(ctx, sch, slot, now); !ok {
+			return
+		}
+		gated = true
+	}
 	status, session, ferr := sc.firer.fire(ctx, sch, slot)
 	if ferr != nil {
 		// Retryable and still inside the window: leave the ledger ALONE so this same slot
@@ -245,7 +259,9 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 		// Leaving next_run untouched is also what keeps the retry on the nominal slot, so
 		// the idempotency key, {{time}} and manual_fire_pending all stay put.
 		var retry scheduleRetryable
-		if errors.As(ferr, &retry) && now.Before(slot.Add(scheduleRetryWindow)) {
+		// A gated fire has already claimed its slot (next_run moved on), so there is no slot left to
+		// re-list: its failure is final, and the fingerprint stays claimed (at-most-once).
+		if !gated && errors.As(ferr, &retry) && now.Before(slot.Add(scheduleRetryWindow)) {
 			log.Printf("scheduler: schedule %s not delivered yet (%v) — retrying on a later tick (slot %s, until %s)",
 				sch.ID, ferr, slot.UTC().Format(time.RFC3339), slot.Add(scheduleRetryWindow).UTC().Format(time.RFC3339))
 			return

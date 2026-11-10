@@ -86,6 +86,9 @@ type scheduleDTO struct {
 	// running on this deployment — the schedule is stored but will never fire until an
 	// operator enables it (AF_SCHEDULER_INTERVAL). Empty otherwise. The operator relays it.
 	Warning string `json:"warning,omitempty"`
+	// Gate is the optional check that decides whether a due tick fires (scheduler_gate.go). Nil
+	// = ungated, today's behaviour. On output it also carries the gate's last evaluation.
+	Gate *scheduleGateDTO `json:"gate,omitempty"`
 }
 
 // withSchedulerWarning stamps the "scheduler disabled" note onto a DTO when the scheduler
@@ -110,6 +113,7 @@ func scheduleToDTO(s store.Schedule) scheduleDTO {
 		OwnerConv: s.OwnerConv, Report: s.Report, StopAfterRun: s.StopAfterRun,
 		DeliverTo: scheduleTargets(s.DeliverTo), Silent: s.Silent, Enabled: s.Enabled, NextRun: s.NextRun, LastRun: s.LastRun,
 		LastStatus: s.LastStatus, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
+		Gate: scheduleGateToDTO(s),
 	}
 	// Render the next fire in the schedule's own zone so the operator can read back a
 	// human-friendly "next: 2026-07-23 09:00 JST" for confirmation (ADR0021 §④'').
@@ -370,6 +374,16 @@ func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv store.Mem
 		writeAPIErr(w, aerr)
 		return
 	}
+	if in.Gate != nil {
+		if aerr := applyGateDTO(r.Context(), a.mgr.store, &s, *in.Gate); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+		if aerr := checkGateFits(s); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
 	next, err := initialNextRun(s, time.Now().UTC())
 	if err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", err.Error()})
@@ -419,6 +433,18 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 	}
 	if strings.TrimSpace(sch.Prompt) == "" {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_prompt", "prompt is required"})
+		return
+	}
+	if p.Gate != nil {
+		if aerr := applyGateDTO(r.Context(), a.mgr.store, &sch, *p.Gate); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	// Judged on every edit, not only a gate edit: moving a gated schedule to reuse or once
+	// would otherwise leave a gate nothing evaluates.
+	if aerr := checkGateFits(sch); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	// Recompute the next fire when the schedule is enabled and its timing changed, so an
@@ -693,28 +719,29 @@ func (a scheduleAPI) writeOne(w http.ResponseWriter, r *http.Request, id string,
 
 // schedulePatch carries partial edits (nil = unchanged), mirroring memoPatch.
 type schedulePatch struct {
-	SpecKind            *string   `json:"spec_kind"`
-	Spec                *string   `json:"spec"`
-	SpecLabel           *string   `json:"spec_label"`
-	TZ                  *string   `json:"tz"`
-	WakePolicy          *string   `json:"wake_policy"`
-	SessionMode         *string   `json:"session_mode"`
-	ReuseTarget         *string   `json:"reuse_target"`
-	AgentKind           *string   `json:"agent_kind"`
-	Model               *string   `json:"model"`
-	Route               *string   `json:"route"`
-	RouteConnection     *string   `json:"route_connection"`
-	Repo                *string   `json:"repo"`
-	Worktree            *string   `json:"worktree"`
-	NewBranch           *bool     `json:"new_branch"`
-	Prompt              *string   `json:"prompt"`
-	OverlapPolicy       *string   `json:"overlap_policy"`
-	Rotation            *string   `json:"rotation"`
-	MissingTargetPolicy *string   `json:"missing_target_policy"`
-	Report              *bool     `json:"report"`
-	StopAfterRun        *bool     `json:"stop_after_run"`
-	DeliverTo           *[]string `json:"deliver_to"`
-	Silent              *bool     `json:"silent"`
+	SpecKind            *string          `json:"spec_kind"`
+	Spec                *string          `json:"spec"`
+	SpecLabel           *string          `json:"spec_label"`
+	TZ                  *string          `json:"tz"`
+	WakePolicy          *string          `json:"wake_policy"`
+	SessionMode         *string          `json:"session_mode"`
+	ReuseTarget         *string          `json:"reuse_target"`
+	AgentKind           *string          `json:"agent_kind"`
+	Model               *string          `json:"model"`
+	Route               *string          `json:"route"`
+	RouteConnection     *string          `json:"route_connection"`
+	Repo                *string          `json:"repo"`
+	Worktree            *string          `json:"worktree"`
+	NewBranch           *bool            `json:"new_branch"`
+	Prompt              *string          `json:"prompt"`
+	OverlapPolicy       *string          `json:"overlap_policy"`
+	Rotation            *string          `json:"rotation"`
+	MissingTargetPolicy *string          `json:"missing_target_policy"`
+	Report              *bool            `json:"report"`
+	StopAfterRun        *bool            `json:"stop_after_run"`
+	DeliverTo           *[]string        `json:"deliver_to"`
+	Silent              *bool            `json:"silent"`
+	Gate                *scheduleGateDTO `json:"gate"`
 	// owner_conv is intentionally NOT patchable: create stamps it to the operator's own
 	// conversation (mcp_stdio withOwnerConv) so completion reports always return to the
 	// operator. Letting update change it would let a report be redirected within the

@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 417
+# count: 425
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -233,6 +233,14 @@ scheduleDTO.agent_kind string,omitempty
 scheduleDTO.created_at string,omitempty
 scheduleDTO.deliver_to [string]
 scheduleDTO.enabled bool
+scheduleDTO.gate.fingerprint string,omitempty
+scheduleDTO.gate.fired_at string,omitempty
+scheduleDTO.gate.kind string
+scheduleDTO.gate.last_eval_at string,omitempty
+scheduleDTO.gate.last_verdict string,omitempty
+scheduleDTO.gate.max_fires_per_day number,omitempty
+scheduleDTO.gate.min_fire_gap_s number,omitempty
+scheduleDTO.gate.query_id string,omitempty
 scheduleDTO.id string,omitempty
 scheduleDTO.last_run string,omitempty
 scheduleDTO.last_status string,omitempty

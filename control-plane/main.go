@@ -588,7 +588,7 @@ func main() {
 		}
 		firer := newWakeFirer(mgr, settle, ready)
 		schedulerRunning = true // so the operator API stops warning that fires never happen
-		go newScheduler(mgr.store, firer, iv).run(context.Background())
+		go newScheduler(mgr.store, firer, iv).withGate(mgr.store, firer).run(context.Background())
 		logSchedulerFirerNote(firer)
 		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s jitter=%s)", iv, settle, ready, scheduleJitterMax)
 	}
