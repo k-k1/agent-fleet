@@ -21,6 +21,7 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { errText } from "../../core/api/client.ts";
+import { useFold } from "../../lib/useFold.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
@@ -320,13 +321,8 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // The section owns its open state (a controlled Section) because a reveal from a
   // notification has to open it. The key is the one Section persists to itself, so an
   // existing open/closed choice still applies.
-  const [sectionOpen, setSectionOpenState] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
-  const setSectionOpen = (v: boolean) => {
-    setSectionOpenState(v);
-    try {
-      localStorage.setItem(SECTION_KEY, v ? "1" : "0");
-    } catch {}
-  };
+  const [sectionStored, setSectionOpen] = useFold(SECTION_KEY);
+  const sectionOpen = sectionStored !== false;
   const reveal = useSchedulesStore((s) => s.reveal);
   const serRef = useRef("");
   // Working sets (docs/log/52): a CP-persisted schedule DERIVES its membership — from repo /

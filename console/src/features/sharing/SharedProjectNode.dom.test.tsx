@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { foldKey } from "../../lib/foldStore.ts";
 
 vi.mock("./open.ts", () => ({ openSharedSession: vi.fn() }));
 
@@ -122,7 +123,7 @@ describe("SharedProjectNode", () => {
   it("persists the collapsed state in localStorage", async () => {
     await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc-base" })]);
     await act(async () => host.querySelector<HTMLButtonElement>(".shared-project-head")!.click());
-    expect(localStorage.getItem("af-shared-proj-owner-example-com:proj")).toBe("0");
+    expect(localStorage.getItem(foldKey("af-shared-proj-owner-example-com:proj"))).toBe("0");
   });
 
   it("shows the owner login id (email address) on the project heading", async () => {
