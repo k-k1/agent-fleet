@@ -15,7 +15,7 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import { api, getTenant, getUser } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
-import { armedNext, shouldRequestSigninStart } from "./signinGate.ts";
+import { armedNext, isCold, loadCountsAsPresence, shouldRequestSigninStart } from "./signinGate.ts";
 
 interface SigninStartStore {
   /** The Control Plane started the workspace for this page's sign-in: Home shows the boot as a
@@ -23,9 +23,12 @@ interface SigninStartStore {
   auto: boolean;
   /** Why it was not started, when the member should be told (the limit is reached). */
   blocked: { reason: string } | null;
+  /** What the last request came to ("started", or the Control Plane's refusal reason; "" = none
+   *  asked yet). Also logged with console.debug, so a live "it did not start" names its branch. */
+  last: string;
 }
 
-export const useSigninStartStore = create<SigninStartStore>(() => ({ auto: false, blocked: null }));
+export const useSigninStartStore = create<SigninStartStore>(() => ({ auto: false, blocked: null, last: "" }));
 
 // Scoped to tenant and member: on a shared browser, another member's sign-in or another
 // tenant must not inherit this one's cooldown.
@@ -56,8 +59,13 @@ export async function requestSigninStart(): Promise<void> {
   } catch {
     return; // no answer: neither stamped nor retried; the member can still press Start
   }
-  // Only an answer starts the cooldown, so a dropped connection does not silence the next try.
-  writeStamp(Date.now());
+  const last = r?.started === true ? "started" : String(r?.reason || r?.error?.code || "no_answer");
+  useSigninStartStore.setState({ last });
+  console.debug("signin-start:", last);
+  // Only a start begins the cooldown. A refusal for policy (the tenant switch is still off, the
+  // member opted out) must not silence every tab for 30 minutes after an administrator turns it
+  // on; the per-load guard already keeps one page from asking twice.
+  if (r?.started === true) writeStamp(Date.now());
   if (r?.started === true) {
     useSigninStartStore.setState({ auto: true, blocked: null });
     await useWorkspaceStore.getState().refresh();
@@ -72,18 +80,20 @@ export function useSigninStart(enabled: boolean) {
     if (!enabled) return;
     let armed: boolean | null = null;
     let requested = false;
-    let lastInputAt = 0;
+    // A page that was just navigated to counts as the sign-in input (see loadCountsAsPresence).
+    const nav = (performance.getEntriesByType?.("navigation")?.[0] as PerformanceNavigationTiming | undefined)?.type;
+    let lastInputAt = loadCountsAsPresence(nav, document.visibilityState === "visible") ? Date.now() : 0;
 
     const evaluate = () => {
       const state = useWorkspaceStore.getState().state;
       armed = armedNext(armed, state);
       // The row belongs to one start: drop it once the workspace is up or is stopped again.
       const st = useSigninStartStore.getState();
-      if (st.auto && (state === "stopped" || state === "unknown" || (state === "running" && !useWorkspaceStore.getState().bootPhase))) {
+      if (st.auto && (isCold(state) || state === "unknown" || (state === "running" && !useWorkspaceStore.getState().bootPhase))) {
         useSigninStartStore.setState({ auto: false });
       }
       // The limit note belongs to a stopped workspace; once it is anything else it is stale.
-      if (state !== "stopped" && useSigninStartStore.getState().blocked) useSigninStartStore.setState({ blocked: null });
+      if (!isCold(state) && useSigninStartStore.getState().blocked) useSigninStartStore.setState({ blocked: null });
       const now = Date.now();
       if (
         shouldRequestSigninStart({

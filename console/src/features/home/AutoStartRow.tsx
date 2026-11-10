@@ -8,6 +8,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { useWorkspaceStore, wsPreparing } from "../../core/store/workspace.ts";
 import { phaseKey } from "../../lib/bootPhase.ts";
+import { isCold } from "./signinGate.ts";
 import { useSigninStartStore } from "./signinStart.ts";
 
 export function AutoStartRow() {
@@ -25,7 +26,7 @@ export function AutoStartRow() {
       </div>
     );
   }
-  if (blocked && state === "stopped") {
+  if (blocked && isCold(state)) {
     return (
       <div className="home-autostart home-autostart-blocked" role="status">
         <Icon name="info" />
