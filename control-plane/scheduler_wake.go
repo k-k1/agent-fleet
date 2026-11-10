@@ -435,7 +435,9 @@ func buildInjectBody(sch store.Schedule, slot time.Time) []byte {
 // expandSchedulePrompt substitutes the fixed metadata template variables (ADR0021 §④”')
 // into the prompt. Every value is deterministically computed by the scheduler from the
 // fire slot and the schedule row — no user/report/external data is ever injected, so the
-// prompt-injection surface stays zero. An undefined {{foo}} is passed through literally.
+// prompt-injection surface stays zero. The one exception is {{gate.refs}} on a gated schedule:
+// the matched item keys, each checked against a strict pattern (ADR 0021 addendum 2026-11-10).
+// An undefined {{foo}} is passed through literally.
 func expandSchedulePrompt(sch store.Schedule, slot time.Time) string {
 	loc := scheduleLocation(sch.TZ)
 	st := slot.In(loc)
@@ -447,7 +449,7 @@ func expandSchedulePrompt(sch store.Schedule, slot time.Time) string {
 	if tz == "" {
 		tz = "UTC"
 	}
-	repl := strings.NewReplacer(
+	pairs := []string{
 		"{{date}}", st.Format("2006-01-02"),
 		"{{time}}", st.Format("15:04"),
 		"{{datetime}}", st.Format("2006-01-02 15:04 MST"),
@@ -455,8 +457,13 @@ func expandSchedulePrompt(sch store.Schedule, slot time.Time) string {
 		"{{schedule_id}}", sch.ID,
 		"{{schedule_label}}", sch.SpecLabel,
 		"{{last_run}}", lastRun,
-	)
-	return repl.Replace(sch.Prompt)
+	}
+	// {{gate.refs}} is the one variable that carries matched data, so it only exists on a gated
+	// schedule and only as validated keys (gateRefs). On any other schedule it stays literal.
+	if sch.GateKind != "" {
+		pairs = append(pairs, "{{gate.refs}}", gateRefsText(sch))
+	}
+	return strings.NewReplacer(pairs...).Replace(sch.Prompt)
 }
 
 // logSchedulerFirerNote records once, at wiring time, which firer is active.

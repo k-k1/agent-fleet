@@ -181,6 +181,7 @@ schedule_bridge.go
 schedule_delete_guard.go
 scheduler.go
 scheduler_assistant.go
+scheduler_gate.go
 scheduler_reuse.go
 scheduler_wake.go
 session_activity.go

@@ -69,6 +69,17 @@ type Schedule struct {
 	// (issue #1087); a re-invite resumes it. Cleared by any change the owner makes. Not
 	// part of the schedule DTO.
 	HeldByRemoval bool
+	// Gate (ADR 0021 addendum 2026-11-10). GateKind is "" (no gate) or "work_items"; GateSpec is
+	// the JSON the kind reads. The rest is the gate's ledger: the fingerprint it last fired on and
+	// when, the 24 hour fire window the daily cap counts in, and the last evaluation (what the
+	// Console shows). GateRefs is never stored: the scheduler fills it for one fire so the prompt
+	// can expand {{gate.refs}}.
+	GateKind, GateSpec                string
+	GateFiredFingerprint, GateFiredAt string
+	GateWindowStart                   string
+	GateWindowCount                   int
+	GateLastEvalAt, GateLastVerdict   string
+	GateRefs                          []string
 }
 
 // ScheduleRun is one fire-attempt history row (docs/log/38 P3 get_schedule_runs).
@@ -132,10 +143,38 @@ type ScheduleStore interface {
 	// session and slot (trimmed, recorded before slots were, or never fired). changed is false
 	// when the run is found but no longer fired: a repeated report, or a run that failed.
 	MarkScheduleRunNotExecuted(ctx context.Context, scheduleID, membershipID, session, slot, status, detail string) (found, changed bool, err error)
+	// ClaimScheduleGateFire is the gate's claim-then-inject step: one conditional write that
+	// advances next_run and records the fingerprint the fire is for, applying only while the row is
+	// still the enabled one the scheduler listed at slot with prevFingerprint on its ledger.
+	// claimed=false means another tick, or the owner, got there first and nothing was written.
+	ClaimScheduleGateFire(ctx context.Context, c ScheduleGateClaim) (claimed bool, err error)
+	// RecordScheduleGateEval stores the outcome of a gate evaluation that did not fire: it advances
+	// next_run (conditional on slot, like the claim) and sets the last-evaluation columns, and
+	// leaves last_run and last_status alone because nothing ran.
+	// gateSpec is compared too, so an evaluation of a query the owner has since replaced writes nothing.
+	RecordScheduleGateEval(ctx context.Context, id, slot, nextRun, evalAt, verdict, gateSpec string) (recorded bool, err error)
+	// MarkScheduleGateDelivered ends a claimed fire's window: the claim wrote verdict "claimed" and
+	// the scheduler calls this once the fire has been recorded, so a verdict still "claimed" on a
+	// later tick means the process died in between.
+	MarkScheduleGateDelivered(ctx context.Context, id string) error
+	// ResetScheduleGateLedger clears the fired-fingerprint ledger when the owner changes or removes
+	// the gate, so a new query is never compared with the old query's fingerprint.
+	ResetScheduleGateLedger(ctx context.Context, id, membershipID string) error
 	// MarkScheduleRunSilent records that the run that fired into session for slot answered
 	// with the silent sentinel (issue #1560): its status becomes ScheduleStatusFiredSilent.
 	// Only a run still recorded as plainly fired changes, so a failure is never overwritten.
 	MarkScheduleRunSilent(ctx context.Context, scheduleID, membershipID, session, slot string) (found, changed bool, err error)
+}
+
+// ScheduleGateClaim is the write ClaimScheduleGateFire makes. Slot and PrevFingerprint are the
+// compare half, the rest is what is set. Window is the fire window after this fire.
+type ScheduleGateClaim struct {
+	ID, Slot, PrevFingerprint string
+	Fingerprint, NextRun      string
+	GateKind, GateSpec        string // compared: the gate the result was evaluated for
+	FiredAt, Verdict          string
+	WindowStart               string
+	WindowCount               int
 }
 
 // ScheduleStatusFiredSilent is the run status of a fire whose session answered with the
@@ -150,7 +189,8 @@ const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind
 	overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
 	manual_fire_pending, report, stop_after_run, held_by_removal, deliver_to, silent,
-	route, route_connection FROM schedule`
+	route, route_connection, gate_kind, gate_spec, gate_fired_fingerprint, gate_fired_at,
+	gate_window_start, gate_window_count, gate_last_eval_at, gate_last_verdict FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
@@ -159,7 +199,9 @@ func scanSchedule(row scanner) (Schedule, error) {
 		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
 		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt,
 		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
-		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent, &s.Route, &s.RouteConnection)
+		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent, &s.Route, &s.RouteConnection,
+		&s.GateKind, &s.GateSpec, &s.GateFiredFingerprint, &s.GateFiredAt, &s.GateWindowStart,
+		&s.GateWindowCount, &s.GateLastEvalAt, &s.GateLastVerdict)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
 	s.ManualFirePending = manualFire != 0
@@ -176,13 +218,13 @@ func (s *SQL) CreateSchedule(ctx context.Context, sc Schedule) error {
 		   wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 		   overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 		   reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy, report,
-		   stop_after_run, deliver_to, silent, route, route_connection)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   stop_after_run, deliver_to, silent, route, route_connection, gate_kind, gate_spec)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.ID, sc.MembershipID, sc.TenantID, sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ,
 		sc.WakePolicy, sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.LastRun, sc.LastStatus, sc.CreatedAt, sc.UpdatedAt,
 		sc.ReuseSession, sc.ReuseStartedAt, sc.ReuseRunCount, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec)
 	return err
 }
 
@@ -238,12 +280,12 @@ func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, held_by_removal=0
+		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0
 		 WHERE id=? AND membership_id=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.ID, sc.MembershipID)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, sc.ID, sc.MembershipID)
 	return err
 }
 
@@ -277,6 +319,52 @@ func (s *SQL) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, n
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET last_run=?, last_status=?, next_run=?, enabled=?, updated_at=?, manual_fire_pending=0, held_by_removal=0 WHERE id=?`,
 		lastRun, lastStatus, nextRun, b2i(enabled), updatedAt, id)
+	return err
+}
+
+// ClaimScheduleGateFire: see the interface. The compare is on next_run and the stored
+// fingerprint, so two concurrent ticks that both listed the row cannot both win, and an owner's
+// pause or edit between the list and the claim wins over the claim.
+func (s *SQL) ClaimScheduleGateFire(ctx context.Context, c ScheduleGateClaim) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET next_run=?, gate_fired_fingerprint=?, gate_fired_at=?, gate_window_start=?,
+		   gate_window_count=?, gate_last_eval_at=?, gate_last_verdict=?
+		 WHERE id=? AND enabled=1 AND next_run=? AND gate_fired_fingerprint=? AND gate_kind=? AND gate_spec=?`,
+		c.NextRun, c.Fingerprint, c.FiredAt, c.WindowStart, c.WindowCount, c.FiredAt, c.Verdict,
+		c.ID, c.Slot, c.PrevFingerprint, c.GateKind, c.GateSpec)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// RecordScheduleGateEval: see the interface.
+func (s *SQL) RecordScheduleGateEval(ctx context.Context, id, slot, nextRun, evalAt, verdict, gateSpec string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET next_run=?, gate_last_eval_at=?, gate_last_verdict=?
+		 WHERE id=? AND enabled=1 AND next_run=? AND gate_spec=?`,
+		nextRun, evalAt, verdict, id, slot, gateSpec)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// MarkScheduleGateDelivered: see the interface.
+func (s *SQL) MarkScheduleGateDelivered(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET gate_last_verdict='fire' WHERE id=? AND gate_last_verdict='claimed'`, id)
+	return err
+}
+
+// ResetScheduleGateLedger: see the interface.
+func (s *SQL) ResetScheduleGateLedger(ctx context.Context, id, membershipID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET gate_fired_fingerprint='', gate_fired_at='', gate_window_start='',
+		   gate_window_count=0, gate_last_eval_at='', gate_last_verdict=''
+		 WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
 }
 
