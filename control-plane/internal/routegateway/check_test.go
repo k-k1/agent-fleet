@@ -275,6 +275,9 @@ func TestUsdNear(t *testing.T) {
 	if got := usdNear(440006, 440005); got != "$0.440006" {
 		t.Errorf("colliding: %q", got)
 	}
+	if got := usdNear(500000, 500000); got != "$0.50" {
+		t.Errorf("equal: %q", got)
+	}
 	if got := usdNear(500000, 440006); got != "$0.50" {
 		t.Errorf("distinct: %q", got)
 	}

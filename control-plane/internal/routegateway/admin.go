@@ -73,7 +73,7 @@ func (g *Gateway) belowFloor(ctx context.Context, what string, micro *int64) ([]
 		for _, r := range rows {
 			if *micro < r.MaxOutputMicro {
 				warn = append(warn, fmt.Sprintf("%s %s admits a call of %s only while its output cap is small: one call reserves %s with a one-token cap and %s with the model's whole output (a coding session asks for tens of thousands of tokens)",
-					what, usd(*micro), r.Model, usd(r.MinMicro), usd(r.MaxOutputMicro)))
+					what, usdNear(*micro, r.MinMicro), r.Model, usdNear(r.MinMicro, *micro), usd(r.MaxOutputMicro)))
 			}
 		}
 		return warn, nil

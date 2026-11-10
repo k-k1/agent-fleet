@@ -81,11 +81,13 @@ per member and a monthly ceiling for the tenant.
   when that whole amount fits under both the member's budget and the tenant's ceiling; the reservation is settled
   to the real cost afterwards. Claude Code asks for tens of thousands of output tokens, so its reservation is far
   above that of a short call.
-- **Floor**: the smallest budget that admits one call of each model on the list, that is, the largest of the models'
-  one-token-output reservations. The tenant view (`GET /api/admin/tenants/{slug}/provided-routes/deployment`) lists
+- **Floor**: the smallest budget that admits one call of the cheapest model on the list, that is, the smallest of the
+  models' one-token-output reservations. Below it no call of any model can ever be admitted. The tenant view (`GET /api/admin/tenants/{slug}/provided-routes/deployment`) lists
   each model's reservations and the floor (`reservations`, `floor_micro`).
-- **A 400 on save**: a budget or ceiling above zero and below the floor is refused, because no call could ever be
-  admitted. Set at least the floor, or 0 for no use (0 is always accepted).
+- **A 400 on save**: a member or default budget, or a ceiling while the grant is on, above zero and below the floor is
+  refused, because no call could ever be admitted. Set at least the floor, or 0 for no use. 0 is accepted for a budget
+  and for a ceiling while the grant is off; a ceiling of 0 with the grant on is refused for a different reason (a
+  granted tenant needs a ceiling above zero). While the grant is off the ceiling is inert and is not checked against the floor.
 - **A warning on save**: an amount at or above the floor but below a model's full-output reservation is saved, and the
   answer carries a warning. Calls fit only while the output cap they ask for is small.
 - **A 503 at call time** (`route_budget_exhausted`): the call's reservation does not fit in what is left of the
