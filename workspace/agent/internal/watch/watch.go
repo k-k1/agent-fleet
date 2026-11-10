@@ -133,6 +133,21 @@ type ErrRefused struct{ Reason string }
 
 func (e *ErrRefused) Error() string { return e.Reason }
 
+// ErrGone is a Poll answer that says the subject itself no longer exists or can no longer be read
+// (a deleted run, a repository the connection lost). After goneConfirm failed reads in a row the
+// engine ends the subject's watches and tells their owners the reason, instead of backing off
+// forever. Reason is composed by the source from fields it controls (rule 6.5).
+type ErrGone struct{ Reason string }
+
+func (e *ErrGone) Error() string { return e.Reason }
+
+// EventEnded is the notice an owner gets when its watch is ended because the subject is gone.
+const EventEnded = "watch.ended"
+
+// goneConfirm is how many consecutive ErrGone reads end a watch. The reads are spread by the
+// error backoff, so a transient 404 from the provider does not end a healthy watch.
+const goneConfirm = 3
+
 // ErrRateLimited makes the engine leave the source alone until Until.
 type ErrRateLimited struct{ Until time.Time }
 

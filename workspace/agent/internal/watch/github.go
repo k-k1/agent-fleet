@@ -480,19 +480,19 @@ func (g *GitHub) getJSON(ctx context.Context, path, etag string, v any) (int, er
 	return status, err
 }
 
-// get performs one GET, renewing the token once on a 401, and decodes a 200 into v. It
+// getHdr performs one GET, renewing the token once on a 401, and decodes a 200 into v. It
 // enforces the source's share of the hourly limit and turns GitHub's rate-limit answers into
 // ErrRateLimited.
-func (g *GitHub) get(ctx context.Context, path, etag string, v any) (int, string, error) {
+func (g *GitHub) getHdr(ctx context.Context, path, etag string, v any) (int, string, http.Header, error) {
 	if until, ok := g.overBudget(); ok {
-		return 0, "", &ErrRateLimited{Until: until}
+		return 0, "", nil, &ErrRateLimited{Until: until}
 	}
 	tok, err := g.Token()
 	if err != nil {
-		return 0, "", err
+		return 0, "", nil, err
 	}
 	if tok == "" {
-		return 0, "", &ErrRefused{"GitHub is not connected (Settings > Connections)"}
+		return 0, "", nil, &ErrRefused{"GitHub is not connected (Settings > Connections)"}
 	}
 	resp, err := g.do(ctx, path, etag, tok)
 	if err == nil && resp.StatusCode == http.StatusUnauthorized && g.Renew != nil {
@@ -500,35 +500,40 @@ func (g *GitHub) get(ctx context.Context, path, etag string, v any) (int, string
 		fresh, rerr := g.Renew(tok)
 		switch {
 		case rerr != nil:
-			return 0, "", fmt.Errorf("GitHub rejected the connection's token and renewing it failed: %w", rerr)
+			return 0, "", nil, fmt.Errorf("GitHub rejected the connection's token and renewing it failed: %w", rerr)
 		case fresh == "" || fresh == tok:
-			return 0, "", errRejected
+			return 0, "", nil, errRejected
 		}
 		resp, err = g.do(ctx, path, etag, fresh)
 	}
 	if err != nil {
-		return 0, "", err
+		return 0, "", nil, err
 	}
 	defer resp.Body.Close()
 	g.account(resp)
 	switch {
 	case resp.StatusCode == http.StatusNotModified:
-		return resp.StatusCode, etag, nil
+		return resp.StatusCode, etag, resp.Header, nil
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
 		if until, ok := rateLimitUntil(resp, g.clock()); ok {
-			return 0, "", &ErrRateLimited{Until: until}
+			return 0, "", nil, &ErrRateLimited{Until: until}
 		}
-		return resp.StatusCode, "", nil
+		return resp.StatusCode, "", resp.Header, nil
 	case resp.StatusCode == http.StatusUnauthorized:
-		return 0, "", errRejected
+		return 0, "", nil, errRejected
 	case resp.StatusCode != http.StatusOK:
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
-		return resp.StatusCode, "", nil
+		return resp.StatusCode, "", resp.Header, nil
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(v); err != nil {
-		return 0, "", fmt.Errorf("GitHub answer for %s could not be read: %w", path, err)
+		return 0, "", nil, fmt.Errorf("GitHub answer for %s could not be read: %w", path, err)
 	}
-	return resp.StatusCode, resp.Header.Get("ETag"), nil
+	return resp.StatusCode, resp.Header.Get("ETag"), resp.Header, nil
+}
+
+func (g *GitHub) get(ctx context.Context, path, etag string, v any) (int, string, error) {
+	status, tag, _, err := g.getHdr(ctx, path, etag, v)
+	return status, tag, err
 }
 
 // errRejected is a refusal: only the member can fix it, by reconnecting.

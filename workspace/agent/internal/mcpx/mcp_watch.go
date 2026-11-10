@@ -95,13 +95,14 @@ func watchSchema() map[string]any {
 			"The notice arrives as your next input once you are idle, even after a restart; a stopped session is started for it. " +
 			"Types: pr.checks.completed, pr.checks.failed, pr.conflict, pr.mergeable, pr.ready, pr.merged, pr.closed, pr.review.changes_requested, pr.review.threads_unresolved (GitHub only), or a prefix like pr.checks.*. source bitbucket for a Bitbucket PR. " +
 			"notify parent sends the notices to the session that started you instead; that watch then belongs to it. " +
+			"GitHub Actions runs not tied to a PR use types github.workflow_run.completed and github.workflow_run.failed (or github.workflow_run.*), with ref as a run URL (https://github.com/o/r/actions/runs/<id>, optionally /attempts/<n>) or o/r:run/<id> for that run, which fires when it completes (at once if it already has; a re-run is a new attempt and is told again), or o/r:<workflow file>.yml with an optional @branch (o/r:cli-pin-bump.yml@main) for the next run of that workflow, which fires only for a run that starts after the watch is made; the workflow name and failed jobs arrive as quoted data. Such a ref is routed to source github_actions on its own. " +
 			"source time is a timer: ref is an RFC 3339 time with an offset (2026-11-09T15:00:00+09:00) or a wait (in 20m, 2h30m, 3d), at most 30 days ahead, and no types are needed; the notice type is time.fired. " +
 			"A timer fires while the Workspace runs; wake true also books the Control Plane to start the Workspace if it is stopped then (refused where the Control Plane has no scheduler). Without wake a timer that fell due while stopped is told late at the next start. " +
 			"A condition that already holds is reported at once. until first (default) ends the watch after one notice; deadline keeps it until it expires (default 7 days, at most 30).",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
-				"ref":              map[string]any{"type": "string", "description": "owner/repo#45, #45 in your own repository, or the PR's URL; for source ext.<name>, whatever that server takes"},
+				"ref":              map[string]any{"type": "string", "description": "owner/repo#45, #45 in your own repository, or the PR's URL; a workflow run URL, o/r:run/<id>, o/r:<file>.yml[@branch] for GitHub Actions; for source ext.<name>, whatever that server takes"},
 				"types":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "event types to be told about (not needed for source time)"},
 				"wake":             map[string]any{"type": "boolean", "description": "source time only: start the stopped Workspace when the timer is due"},
 				"until":            map[string]any{"type": "string", "enum": []string{"first", "deadline"}},

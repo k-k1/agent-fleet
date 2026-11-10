@@ -68,7 +68,7 @@ func watchEngine() *watch.Engine {
 		})
 		gh.Threads = watchThreads
 		bb := &watch.Bitbucket{Read: watchBitbucketPR}
-		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{})
+		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{}, watch.NewGitHubActions(gh))
 		watchEngineInst.SetWaker(cpWaker{})
 		watchEngineInst.Dynamic = watchMCPSources().Lookup
 	})
@@ -332,6 +332,16 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	if src == "" {
 		src = "github"
 	}
+	// A workflow run is its own source (github_actions); a caller who left the source at its
+	// github default and passed an Actions reference means that one. A pull request reference
+	// never matches, so it is not rerouted.
+	repoProvider := src
+	if src == "github" && watch.LooksLikeActionsRef(req.Ref) {
+		src = watch.ActionsKind
+	}
+	if src == watch.ActionsKind {
+		repoProvider = "github"
+	}
 	// Checked before the multiplication: a huge value would overflow time.Duration into a short,
 	// accepted lifetime.
 	if req.ExpiresInHours < 0 || req.ExpiresInHours > int(watch.MaxLifetime/time.Hour) {
@@ -360,7 +370,7 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	sub, err := watchEngine().Subscribe(ctx, watch.Request{
-		Owner: owner, Requester: requester, Source: src, Ref: strings.TrimSpace(req.Ref), DefaultRepo: linkRepoOf(m.Dir, src),
+		Owner: owner, Requester: requester, Source: src, Ref: strings.TrimSpace(req.Ref), DefaultRepo: linkRepoOf(m.Dir, repoProvider),
 		Types: req.Types, Until: strings.TrimSpace(req.Until), Lifetime: time.Duration(req.ExpiresInHours) * time.Hour,
 		Wake: req.Wake,
 	})
