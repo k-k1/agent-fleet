@@ -266,10 +266,10 @@ func (d *discordProvider) sendThreaded(m Message, msgs []outMsg, from int) (int,
 		}
 		return len(msgs), nil
 	}
-	updateThreads(func(ts threadMap) {
-		ts[m.SessionName] = threadRef{Channel: d.creds.ChannelID, Thread: threadID}
-	})
-	// The seed (msgs[0]) already landed in the channel; post the rest into the thread.
+	discordThreads.seed(m.SessionName, threadRef{Channel: d.creds.ChannelID, Thread: threadID})
+	// The seed (msgs[0]) already landed in the channel; post the rest into the thread. A
+	// concurrent "!attach" may have bound the session elsewhere meanwhile; the new thread
+	// then just carries this one notification.
 	return d.postRangeToThread(m.SessionName, threadID, msgs, 1)
 }
 

@@ -109,6 +109,43 @@ func (ts *threadStore) threadToSession(threadID string) (string, bool) {
 	return "", false
 }
 
+// rebind moves the thread from one session to another in a single critical section, so a
+// reader never sees the thread bound to both or to neither. It refuses (ok=false) unless
+// `from` still owns the thread, which is what makes two racing rebinds of one thread
+// serialize: the loser finds the thread already moved. The target's previous thread, if any,
+// is dropped — one thread per session is the map's invariant. prev reports it.
+func (ts *threadStore) rebind(thread, from, to string) (prev threadRef, hadPrev, ok bool) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	m := ts.loadLocked()
+	ref, owned := m[from]
+	if !owned || ref.Thread != thread || thread == "" {
+		return threadRef{}, false, false
+	}
+	prev, hadPrev = m[to]
+	for name, r := range m {
+		if r.Thread == thread {
+			delete(m, name)
+		}
+	}
+	m[to] = ref
+	ts.writeLocked(m)
+	return prev, hadPrev, true
+}
+
+// seed records the thread the sender just created for a session, unless a rebind already
+// gave the session a thread of the same channel while the sender was creating this one:
+// overwriting that would silently undo the user's "!attach". A mapping into another channel
+// is stale (the destination changed) and is replaced as before.
+func (ts *threadStore) seed(session string, ref threadRef) {
+	ts.update(func(m threadMap) {
+		if cur, ok := m[session]; ok && cur.Channel == ref.Channel && cur.Thread != "" {
+			return
+		}
+		m[session] = ref
+	})
+}
+
 // touch stamps a session's thread with the current time after the bot posts into it,
 // feeding the mention time-gate (shouldMention). now is injected so tests are
 // deterministic; production passes time.Now(). No-op if the session has no recorded

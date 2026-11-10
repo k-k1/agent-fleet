@@ -409,9 +409,7 @@ func (sp *slackProvider) sendThreaded(m Message, msgs []slackMsg, from int) (int
 	if err != nil {
 		return 0, err
 	}
-	slackThreads.update(func(ts threadMap) {
-		ts[m.SessionName] = threadRef{Channel: sp.creds.ChannelID, Thread: rootTS}
-	})
+	slackThreads.seed(m.SessionName, threadRef{Channel: sp.creds.ChannelID, Thread: rootTS})
 	return sp.postRangeToThread(m.SessionName, sp.creds.ChannelID, rootTS, msgs, 1)
 }
 

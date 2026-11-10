@@ -379,6 +379,14 @@ func routeSlackInbound(m slackInboundMsg, creds slackReceiveCreds, deps Receiver
 // with a 👀 receipt on success or posts a localized reason on failure. Slack's Web API has no
 // typing indicator, so the receipt + the eventual answer are the only feedback.
 func routeSlackSession(m slackInboundMsg, name, text string, creds slackReceiveCreds, deps ReceiverDeps) {
+	if c, ok := parseChatCommand(text); ok && deps.handlesCommand(c) {
+		out := runChatCommand(c, cmdEnv{store: slackThreads, thread: m.ThreadTS, session: name,
+			source: sourceSlack, key: "slack:" + m.Channel + ":" + m.TS, deps: deps})
+		if _, e := slackPostMessage(creds.botToken, m.Channel, m.ThreadTS, out, nil); e != nil {
+			log.Printf("bridge: post !%s result to slack %s failed: %v", c.name, name, e)
+		}
+		return
+	}
 	reason, err := deps.Inject(name, text, sourceSlack)
 	if err != nil {
 		log.Printf("bridge: inject into %s from slack failed: %v", name, err)

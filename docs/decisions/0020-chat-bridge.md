@@ -150,3 +150,27 @@ app registration, which is fundamentally incompatible with this product's deploy
   and there is a single bound user (the DM target, the mention, and the identity check). The bound
   user is resolved automatically by email → users.lookupByEmail. The live contract test is
   `AF_SLACK_LIVE`. Looking at real Slack on real hardware remains, after a rebuild.
+
+
+## Note (2026-11-10): starting a session and re-binding a thread from chat (#1566)
+
+Appended; nothing above is rewritten. Two commands now run on the path a reply already takes — a message from the
+bound user inside a known session thread — so contract 5 (person-only, no channel listening) is unchanged and no new
+entry point exists.
+
+- **Syntax**: `!start <prompt>` and `!attach <session>` (`/` also accepted; Slack swallows a leading `/`). A command is
+  recognised only when the deployment wired it, otherwise the text is injected as an ordinary reply.
+- **`!start`** creates, in-process (the move's create path), a session of the *thread session's own* kind, model,
+  driver and working copy with the prompt as the launch task. Nothing but the prompt comes from the message, so a chat
+  user cannot pick a kind, directory or connection. The launch task is badged with the provider like a reply, and the
+  chat message id is the create's idempotency key (a redelivered event cannot start twice). The new session gets its
+  own thread from the ordinary first notification; it does not take over the current thread. Shell / SSM sources are refused.
+- **`!attach`** moves the *current* thread to the target session. The target must pass the reply gate (not archived,
+  not moved, a kind that takes typed input). It is atomic in the thread store: one critical section deletes every
+  entry of the thread, installs it under the target, and fails if the issuing session no longer owns the thread, so
+  racing rebinds have one winner and a thread is never bound to two sessions. The old session is **detached** (its next
+  notification opens a fresh thread); the target's previous thread is dropped and stops routing. Inbound handling is
+  serialized per provider, so a reply written after the confirmation resolves to the new session. A delivery already
+  past its lookup can still land once on the old thread (accepted). The sender's thread-seeding write no longer
+  overwrites a same-channel mapping, so a rebind that lands while a thread is being created is not undone.
+- Out of scope: attaching an operator thread, handing a Terminal (CLI) session off into a thread, new providers, UI.

@@ -48,6 +48,16 @@ type ReceiverDeps struct {
 	// source names the platform the message came from (sourceDiscord / sourceSlack) so the
 	// stored user message is attributed to it.
 	Operator func(conv, text, source string) (reply string, err error)
+	// CheckAttach decides whether a session may be bound to a chat thread ("!attach"). It
+	// applies the same gate as Inject (kind, archived, moved) and returns an already-localized
+	// reason with the error on refusal. nil leaves "!attach" unrecognised.
+	CheckAttach func(session string) (reason string, err error)
+	// Start starts a new session from the session whose thread the command was typed in
+	// ("!start"), returning the localized line to post. key identifies the chat message so a
+	// redelivered event cannot start twice. nil leaves "!start" unrecognised.
+	Start func(fromSession, prompt, source, key string) (reply string, err error)
+	// Localize picks the Japanese or English text by the connection's language; nil = English.
+	Localize func(ja, en string) string
 }
 
 // receiverPollInterval: how often to re-read secrets to notice a connect/disconnect or an
@@ -236,6 +246,14 @@ func routeInbound(m gatewayMessage, token, boundUser string, deps ReceiverDeps) 
 // routeSessionInbound injects a bound-user reply into the session its thread groups,
 // then acks (👀 + typing) on success or posts a localized reason on failure.
 func routeSessionInbound(m gatewayMessage, name, text, token string, deps ReceiverDeps) {
+	if c, ok := parseChatCommand(text); ok && deps.handlesCommand(c) {
+		out := runChatCommand(c, cmdEnv{store: discordThreads, thread: m.ChannelID, session: name,
+			source: sourceDiscord, key: "discord:" + m.ID, deps: deps})
+		if _, e := discordPostMessage(token, m.ChannelID, out); e != nil {
+			log.Printf("bridge: post !%s result to %s failed: %v", c.name, name, e)
+		}
+		return
+	}
 	reason, err := deps.Inject(name, text, sourceDiscord)
 	if err != nil {
 		log.Printf("bridge: inject into %s from discord failed: %v", name, err)
