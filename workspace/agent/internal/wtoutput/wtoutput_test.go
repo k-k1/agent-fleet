@@ -388,3 +388,24 @@ func TestRepositoryConfigCannotRunCommandsOrHideUntrackedFiles(t *testing.T) {
 		t.Errorf("status.showUntrackedFiles=no hid an untracked file: %+v", r)
 	}
 }
+
+func TestPartialApplyCarriesNoRefusalReason(t *testing.T) {
+	f := newFixture(t)
+	first, second := f.mk(".gradle"), f.mk("node_modules")
+	calls := 0
+	// Quiet at the survey and for the first directory's recheck, live from the second's.
+	f.deps.LiveSessions = func(string) []string {
+		calls++
+		if calls >= 3 {
+			return []string{"late"}
+		}
+		return nil
+	}
+	r := f.apply(false)
+	if r.Status != "candidate" || len(r.Removed) != 1 || len(r.Skipped) != 1 || r.Reason != "" {
+		t.Fatalf("report = %+v", r)
+	}
+	if exists(first) == exists(second) {
+		t.Fatalf("exactly one directory should be gone: %v %v", exists(first), exists(second))
+	}
+}

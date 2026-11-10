@@ -268,6 +268,8 @@ func Apply(ctx context.Context, d Deps, name, dir string, dormantDays int, dryRu
 			r.Reason = ReasonGit
 		}
 		r.Detail = strings.Join(r.Skipped, "; ")
+	} else {
+		r.Reason = "" // a partial success is not a refusal; Skipped says what was left
 	}
 	return r
 }
