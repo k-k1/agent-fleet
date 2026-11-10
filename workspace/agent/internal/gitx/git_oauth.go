@@ -102,15 +102,14 @@ func HandleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 // RemoveBitbucketOAuth clears the stored OAuth refresh creds. Called from the
 // generic disconnect (connections.go) so one ✕ covers both paths.
 func RemoveBitbucketOAuth() {
-	s, err := secrets.Load()
-	if err != nil {
-		return
-	}
-	s.Bitbucket = nil
-	_ = s.Save()
+	_ = secrets.Update(func(s *secrets.Data) error {
+		s.Bitbucket = nil
+		return nil
+	})
 }
 
-// RefreshBitbucket exchanges the refresh_token for a fresh access token.
+// refreshBitbucketGrant exchanges the refresh_token for a fresh access token. It only runs
+// the grant; callers go through RefreshBitbucketStored, which serializes it and persists.
 //
 // ★ The grant runs in the CONTROL PLANE (docs/log/71 §71.8). It is Basic-authenticated with
 // the tenant's OAuth app secret, and that secret used to be copied into every member's
@@ -127,7 +126,7 @@ func RemoveBitbucketOAuth() {
 //   - a store written BEFORE this change still holds key/secret. Those are used only as
 //     a fallback if the bridge is unavailable, and are dropped the first time the bridge
 //     answers — proving the replacement works before removing what it replaces.
-func RefreshBitbucket(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
+func refreshBitbucketGrant(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
 	if b := LoadGitOAuthBridge(); b != nil {
 		nc, err := refreshBitbucketViaCP(*b, c)
 		if err == nil {

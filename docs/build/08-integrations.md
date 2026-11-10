@@ -217,6 +217,12 @@ nowhere.
   The bridge's coordinates live in the encrypted store (`GitOAuthBridge`), **not in the
   environment**: the credential helper is a separate process started by git, whose
   environment cannot be guaranteed.
+- **Bitbucket renewals are serialized like Jira's** (2026-11-10): every Bitbucket refresh
+  (`BitbucketAuthHeader`, `RefreshBitbucketAndRetry`, the git credential helper) goes through
+  `gitx.RefreshBitbucketStored`: in-process mutex, the cross-process `bitbucket-refresh`
+  store lock, re-read inside it and adopt a still-fresh pair another process renewed, write
+  with `secrets.Update`. A connection disconnected or replaced during the grant is not
+  written back. Whether bitbucket.org rotates refresh tokens is still unmeasured.
 
 ### 8.4.2 Jira
 

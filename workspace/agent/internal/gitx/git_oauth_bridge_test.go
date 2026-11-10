@@ -102,7 +102,7 @@ func TestBitbucketRefreshFallsBackOnlyWhileLegacyCredsRemain(t *testing.T) {
 	}
 
 	legacy := secrets.BitbucketCreds{AccessToken: "stale", RefreshToken: "r0", Key: "k", Secret: "s"}
-	nc, err := RefreshBitbucket(legacy)
+	nc, err := refreshBitbucketGrant(legacy)
 	if err != nil || nc.AccessToken != "by-fallback" {
 		t.Fatalf("legacy creds must still refresh when the bridge is down: %+v %v", nc, err)
 	}
@@ -114,7 +114,7 @@ func TestBitbucketRefreshFallsBackOnlyWhileLegacyCredsRemain(t *testing.T) {
 	// to fall back to, and the error must be the bridge's, not a bogus "revoked token".
 	directCalls = 0
 	migrated := secrets.BitbucketCreds{AccessToken: "stale", RefreshToken: "r0"}
-	if _, err := RefreshBitbucket(migrated); err == nil {
+	if _, err := refreshBitbucketGrant(migrated); err == nil {
 		t.Fatal("a failing bridge with no fallback must be an error")
 	}
 	if directCalls != 0 {
@@ -126,7 +126,7 @@ func TestBitbucketRefreshFallsBackOnlyWhileLegacyCredsRemain(t *testing.T) {
 // surfaces as git prompting for a password on a connection the member never touched.
 func TestBitbucketRefreshWithoutBridgeOrLegacyCredsSaysWhy(t *testing.T) {
 	withAgentHome(t)
-	_, err := RefreshBitbucket(secrets.BitbucketCreds{AccessToken: "stale", RefreshToken: "r0"})
+	_, err := refreshBitbucketGrant(secrets.BitbucketCreds{AccessToken: "stale", RefreshToken: "r0"})
 	if err == nil {
 		t.Fatal("want an error")
 	}
