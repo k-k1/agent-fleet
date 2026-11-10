@@ -75,7 +75,7 @@ var SubjectRE = regexp.MustCompile(`^(github|bitbucket):[a-z0-9._~-]{1,100}/[a-z
 //
 // The repository is lower-cased as in a pull request subject; the file and branch keep their case.
 var (
-	actRepoPat      = `[a-z0-9._~-]{1,100}/[a-z0-9._~-]{1,100}`
+	actRepoPat      = `[a-z0-9_.~-]{1,100}/[a-z0-9_.~-]{1,100}`
 	actRunSubjectRE = regexp.MustCompile(`^github:(` + actRepoPat + `)/actions/runs/[1-9][0-9]{0,17}(?:/attempts/[1-9][0-9]{0,3})?$`)
 	actWfSubjectRE  = regexp.MustCompile(`^github:(` + actRepoPat + `)/actions/workflows/([A-Za-z0-9_.-]+\.ya?ml)(?:/branch/([A-Za-z0-9._/-]{1,100}))?$`)
 )

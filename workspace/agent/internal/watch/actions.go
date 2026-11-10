@@ -168,10 +168,13 @@ func workflowSubject(repo, file, branch string, floorID, floorUnix int64) Subjec
 // its floor, which only this Agent knows, so every watch of that workflow (and branch) answers to
 // one key. ok is false for a subject that is not an Actions one.
 func ActionsPokeKey(subject SubjectID) (key string, ok bool) {
-	if actRunSubjectRE.MatchString(string(subject)) {
-		return string(subject), true
+	if m := actRunSubjectRE.FindStringSubmatch(string(subject)); m != nil {
+		return string(subject), repoFitsWire(m[1])
 	}
 	if m := actWfSubjectRE.FindStringSubmatch(string(subject)); m != nil {
+		if !repoFitsWire(m[1]) {
+			return "", false
+		}
 		key = "github:" + m[1] + "/actions/workflows/" + m[2]
 		if m[5] != "" {
 			key += "/branch/" + m[5]
@@ -516,14 +519,23 @@ func (a *GitHubActions) runEvents(ctx context.Context, subject SubjectID, repo, 
 	return evs, nil
 }
 
+// repoFitsWire reports whether repo (owner/name) is within what the Control Plane's registration
+// accepts: each half at most 100 characters. A key it would refuse must not be registered, since
+// one refused subject makes it reject the whole set.
+func repoFitsWire(repo string) bool {
+	owner, name, ok := strings.Cut(repo, "/")
+	return ok && len(owner) <= 100 && len(name) <= 100
+}
+
 // IsActionsPokeKey reports whether s is the registered form of an Actions subject: a run
 // subject, or a workflow without its floor. The Control Plane builds exactly these from a
-// workflow_run delivery.
+// workflow_run delivery, so the shape is the one it accepts: lower-case repository, valid branch.
 func IsActionsPokeKey(s string) bool {
-	if actRunSubjectRE.MatchString(s) {
-		return true
+	if m := actRunSubjectRE.FindStringSubmatch(s); m != nil {
+		return m[1] == strings.ToLower(m[1]) && repoFitsWire(m[1])
 	}
-	return actWfKeyRE.MatchString(s)
+	m := actWfKeyRE.FindStringSubmatch(s)
+	return m != nil && m[1] == strings.ToLower(m[1]) && repoFitsWire(m[1]) && (m[3] == "" || validBranch(m[3]))
 }
 
 var actWfKeyRE = regexp.MustCompile(`^github:(` + actRepo + `)/actions/workflows/(` + actFile + `)(?:/branch/([A-Za-z0-9._/-]{1,100}))?$`)

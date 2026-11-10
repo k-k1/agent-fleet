@@ -140,3 +140,18 @@ func TestPokeMatchingPokesOnlyMatchesOfTheSource(t *testing.T) {
 		t.Fatalf("the matching poke caused no read: %d", src.polls)
 	}
 }
+
+func TestIsActionsPokeKeyIsAsStrictAsTheControlPlane(t *testing.T) {
+	for k, want := range map[string]bool{
+		"github:o/my_repo/actions/runs/5":                     true,
+		"github:O/r/actions/runs/5":                           false,
+		"github:o/r/actions/workflows/ci.yml/branch/a..b":     false,
+		"github:o/r/actions/workflows/ci.yml/branch/-x":       false,
+		"github:o/r/actions/workflows/ci.yml/branch/x/":       false,
+		"github:o/r/actions/workflows/ci.yml/branch/feat/x-1": true,
+	} {
+		if IsActionsPokeKey(k) != want {
+			t.Errorf("IsActionsPokeKey(%q) = %v", k, !want)
+		}
+	}
+}

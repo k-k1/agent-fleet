@@ -151,7 +151,7 @@ func TestParseGitHubWorkflowRunNamesRunAndWorkflowKeys(t *testing.T) {
 func TestParseGitHubWorkflowRunIgnoresForgedFields(t *testing.T) {
 	body := func(id, path, branch string) []byte {
 		return []byte(`{"action":"completed","workflow_run":{"id":` + id + `,"run_attempt":1,"path":"` + path + `","head_branch":"` + branch +
-			`"},"repository":{"full_name":"a/b","private":false}}`)
+			`","pull_requests":[{"number":3}]},"repository":{"full_name":"a/b","private":false}}`)
 	}
 	for name, b := range map[string][]byte{
 		"path outside workflows": body("5", "other/ci.yml", "main"),
@@ -164,6 +164,13 @@ func TestParseGitHubWorkflowRunIgnoresForgedFields(t *testing.T) {
 		if err != nil {
 			t.Fatal(name, err)
 		}
+		// A bad path or branch costs only its own key: the run keys and the PR subject stay.
+		have := strings.Join(got.Subjects, " ")
+		for _, k := range []string{"github:a/b/actions/runs/5 ", "github:a/b/actions/runs/5/attempts/1", "github:a/b#3"} {
+			if !strings.Contains(have+" ", k) {
+				t.Errorf("%s: %q lost from %q", name, k, got.Subjects)
+			}
+		}
 		for _, s := range got.Subjects {
 			if strings.Contains(s, "/workflows/") && !strings.HasSuffix(s, "/workflows/ci.yml") {
 				t.Errorf("%s: forged workflow key %q", name, s)
@@ -174,14 +181,15 @@ func TestParseGitHubWorkflowRunIgnoresForgedFields(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"0", "-3", "1234567890123456789"} {
-		if got, _ := ParseGitHub("workflow_run", body(id, ".github/workflows/ci.yml", "main")); len(got.Subjects) != 0 {
-			t.Errorf("run id %s named %q", id, got.Subjects)
+		if got, _ := ParseGitHub("workflow_run", body(id, ".github/workflows/ci.yml", "main")); len(got.Subjects) != 1 || got.Subjects[0] != "github:a/b#3" {
+			t.Errorf("run id %s: want only the pull request subject, got %q", id, got.Subjects)
 		}
 	}
 }
 
 func TestValidSubjectActionsKeys(t *testing.T) {
 	for s, want := range map[string]bool{
+		"github:acme/my_repo/actions/runs/1": true, "github:acme/my_repo/actions/workflows/ci.yml": true,
 		"github:a/b/actions/runs/1":                                true,
 		"github:a/b/actions/runs/1/attempts/3":                     true,
 		"github:a/b/actions/workflows/ci.yml":                      true,

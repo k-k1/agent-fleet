@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -169,19 +171,9 @@ func TestWatchSubjectListRegistersActionsKeysWithoutTheFloor(t *testing.T) {
 		"github:o/r/actions/workflows/other.yml",
 	}
 	got := watchSubjectList(e)
-	sortStrings(got)
+	sort.Strings(got)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("registered\n got %q\nwant %q", got, want)
-	}
-}
-
-func sortStrings(s []string) {
-	for i := range s {
-		for j := i + 1; j < len(s); j++ {
-			if s[j] < s[i] {
-				s[i], s[j] = s[j], s[i]
-			}
-		}
 	}
 }
 
@@ -238,5 +230,42 @@ func TestHandleWatchPokeRefusesForgedActionsKeys(t *testing.T) {
 		if code, _ := pokeBody(t, body); code != http.StatusBadRequest {
 			t.Errorf("%s: %d", name, code)
 		}
+	}
+}
+
+func TestPutWatchSubjectsFallsBackToPullRequestsForAnOlderControlPlane(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if strings.Contains(string(b), "/actions/") { // what a Control Plane without Actions keys does
+			http.Error(w, `{"error":{"code":"invalid_subject"}}`, http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_CP_INTERNAL_URL", "")
+	t.Setenv("AF_WATCH_TOKEN", "afw_x")
+	if err := putWatchSubjects(context.Background(), []string{"github:o/r#1", "github:o/r/actions/runs/5"}); err != nil {
+		t.Fatalf("the pull request set was not accepted: %v", err)
+	}
+	if len(bodies) != 2 || !strings.Contains(bodies[0], "/actions/") || strings.Contains(bodies[1], "/actions/") || !strings.Contains(bodies[1], "github:o/r#1") {
+		t.Fatalf("requests: %q", bodies)
+	}
+	// A refusal that has nothing to drop is still an error, and is not retried.
+	bodies = nil
+	if err := putWatchSubjects(context.Background(), []string{"github:o/r/actions/runs/5"}); err != nil || len(bodies) != 2 {
+		t.Fatalf("actions-only set: err=%v requests=%q", err, bodies)
+	}
+}
+
+func TestWatchSubjectListKeepsRepositoriesWithUnderscoresAndDropsOverlongOnes(t *testing.T) {
+	long := strings.Repeat("a", 101)
+	e := actionsWatchEngine(t, "github:o/my_repo/actions/workflows/ci.yml/after/1-2", "github:o/"+long+"/actions/workflows/ci.yml/after/1-2")
+	got := watchSubjectList(e)
+	if len(got) != 1 || got[0] != "github:o/my_repo/actions/workflows/ci.yml" {
+		t.Fatalf("list = %q", got)
 	}
 }

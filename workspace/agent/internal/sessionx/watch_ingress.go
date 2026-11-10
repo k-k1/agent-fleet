@@ -97,9 +97,33 @@ func watchSubjectList(e *watch.Engine) []string {
 // putWatchSubjects is PUT /internal/watch-subjects. Without the bridge (no public URL or no
 // token) it does nothing, as the other bridges do.
 func putWatchSubjects(ctx context.Context, subjects []string) error {
+	status, err := putWatchSubjectsOnce(ctx, subjects)
+	if status != http.StatusBadRequest {
+		return err
+	}
+	// A Control Plane that predates Actions keys refuses the whole set for one subject it does
+	// not know, which would also drop the pull request pokes. Send those alone.
+	var prOnly []string
+	for _, s := range subjects {
+		if watchSubjectRE.MatchString(s) {
+			prOnly = append(prOnly, s)
+		}
+	}
+	if len(prOnly) == len(subjects) {
+		return err
+	}
+	if _, err2 := putWatchSubjectsOnce(ctx, prOnly); err2 != nil {
+		return err2
+	}
+	return nil
+}
+
+// putWatchSubjectsOnce makes one request and returns the HTTP status (0 when none was made or
+// answered).
+func putWatchSubjectsOnce(ctx context.Context, subjects []string) (int, error) {
 	base, token := cpurl.Request(), os.Getenv("AF_WATCH_TOKEN")
 	if base == "" || token == "" {
-		return nil
+		return 0, nil
 	}
 	if subjects == nil {
 		subjects = []string{}
@@ -109,20 +133,20 @@ func putWatchSubjects(ctx context.Context, subjects []string) error {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, base+"/internal/watch-subjects", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("control plane answered %d", resp.StatusCode)
+		return resp.StatusCode, fmt.Errorf("control plane answered %d", resp.StatusCode)
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 var (

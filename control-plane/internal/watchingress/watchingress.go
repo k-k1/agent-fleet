@@ -444,7 +444,7 @@ func (wi *Ingress) putSubjects(w http.ResponseWriter, r *http.Request, mv store.
 	var rows []store.WatchSubjectRow
 	for _, s := range in.Subjects {
 		if !webhookpoke.ValidSubject(s) {
-			writeErr(w, &apiError{http.StatusBadRequest, "invalid_subject", "a subject is not a github or bitbucket pull request reference"})
+			writeErr(w, &apiError{http.StatusBadRequest, "invalid_subject", "a subject is not a github or bitbucket pull request reference or a github workflow run key"})
 			return
 		}
 		if seen[s] {
