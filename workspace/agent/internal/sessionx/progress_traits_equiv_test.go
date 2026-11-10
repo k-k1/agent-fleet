@@ -1,7 +1,8 @@
 package sessionx
 
 // Equivalence proof for agents.ProgressSignaler: the three progress predicates against verbatim
-// copies of the kind switches they replaced, over every registered kind x driver, plus an
+// copies of the kind switches they replaced (except that oldProgressTrusted falls through to
+// oldProgressPaneOnly, so the oracle never calls the code under test), over every registered kind x driver, plus an
 // unknown and an empty kind (both read as claude).
 
 import (
