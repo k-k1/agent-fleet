@@ -19,6 +19,7 @@
 **New / Improved**
 
 - **[ウォッチ]** `watch` / `list_watches` / `unwatch` で PR のチェック・コンフリクト・レビュー・マージを待つ（GitHub・Bitbucket）。通知は親へも送れる ([#3627](https://github.com/k-k1/agent-fleet/issues/3627), [#3628](https://github.com/k-k1/agent-fleet/issues/3628))
+- **[ウォッチ]** PR に紐づかない GitHub Actions の実行やワークフローの次の実行を `watch` で待つ ([#3779](https://github.com/k-k1/agent-fleet/issues/3779))
 - **[ウォッチ]** 最長 30 日の `watch` のタイマー。停止中の Workspace を起動することもできる ([#3632](https://github.com/k-k1/agent-fleet/issues/3632))
 - **[ウォッチ]** メンバーの MCP サーバーをウォッチのソースに（テナントの **ウォッチのソース** で許可） ([#3631](https://github.com/k-k1/agent-fleet/issues/3631))
 - **[ウォッチ]** webhook での通知: 公開リポジトリは `AF_GITHUB_WEBHOOK_SECRET`、非公開は `af-watch-hook` ([#3630](https://github.com/k-k1/agent-fleet/issues/3630), [#3751](https://github.com/k-k1/agent-fleet/issues/3751))

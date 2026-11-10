@@ -20,6 +20,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 **New / Improved**
 
 - **[watch]** Sessions wait for PR checks, conflicts, reviews and merges with `watch` / `list_watches` / `unwatch` (GitHub, Bitbucket), notices to a parent ([#3627](https://github.com/k-k1/agent-fleet/issues/3627), [#3628](https://github.com/k-k1/agent-fleet/issues/3628))
+- **[watch]** `watch` on a GitHub Actions run, or a workflow's next run, outside a PR ([#3779](https://github.com/k-k1/agent-fleet/issues/3779))
 - **[watch]** `watch` timers up to 30 days, optionally starting a stopped workspace ([#3632](https://github.com/k-k1/agent-fleet/issues/3632))
 - **[watch]** A member's MCP server as a watch source, behind the tenant switch **Watch sources** ([#3631](https://github.com/k-k1/agent-fleet/issues/3631))
 - **[watch]** Webhook pokes: `AF_GITHUB_WEBHOOK_SECRET` for public repositories, `af-watch-hook` for private ones ([#3630](https://github.com/k-k1/agent-fleet/issues/3630), [#3751](https://github.com/k-k1/agent-fleet/issues/3751))
