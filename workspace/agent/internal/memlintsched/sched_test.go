@@ -133,10 +133,11 @@ func TestTickOutcomes(t *testing.T) {
 		t.Errorf("stopped: %+v", st)
 	}
 	r.out, r.err = memoryx.LintApplyAllOut{}, memoryx.ErrLintRunning
+	prior := loadState()
 	if Tick(d, c, t0.Add(2*time.Hour)) {
 		t.Error("a refused run counts as having run")
 	}
-	if st := loadState(); st.Failures != 0 || !st.NotBefore.Equal(t0.Add(2*time.Hour)) {
+	if st := loadState(); st != prior {
 		t.Errorf("ErrLintRunning spent the window: %+v", st)
 	}
 }
@@ -146,5 +147,28 @@ func TestTickUnwired(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	if Tick(Deps{}, DefaultConfig(), t0) {
 		t.Fatal("ran unwired")
+	}
+}
+
+// The run's continue test is Decide's idle rule, not just "nobody is working at this instant": a
+// turn that started and ended since the run began makes it stop at the next scope boundary.
+func TestTickContinueUsesTheIdleRule(t *testing.T) {
+	r, d := newRig(t)
+	c := DefaultConfig()
+	var got []bool
+	d.Run = func(_ time.Time, cont func() bool) (memoryx.LintApplyAllOut, error) {
+		got = append(got, cont())
+		r.last = t0.Add(-time.Minute) // a turn ran meanwhile, finished
+		got = append(got, cont())
+		r.last, r.busy = t0.Add(-time.Hour), true
+		got = append(got, cont())
+		r.enabled = false
+		r.busy = false
+		got = append(got, cont())
+		return memoryx.LintApplyAllOut{}, nil
+	}
+	Tick(d, c, t0)
+	if len(got) != 4 || !got[0] || got[1] || got[2] || got[3] {
+		t.Errorf("cont answers = %v, want [true false false false]", got)
 	}
 }

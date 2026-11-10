@@ -98,3 +98,25 @@ func TestLintApplyAllStopsWhenToldTo(t *testing.T) {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 }
+
+// Stopping in the middle: scope one (the user scope) is applied, the run stops before scope two, and
+// the second scope's memory is untouched. The budget the first scope used is not given back.
+func TestLintApplyAllStopsBetweenScopes(t *testing.T) {
+	e := newLintApplyEnv(t, map[string]string{"docs/real.md": "x\n"})
+	AgentMemoryEnabled = func() bool { return true }
+	e.save("p", "uses docs/gone.md", 0)
+	if _, err := agentMemSave(e.c, agentMemSaveReq{Scope: agentMemScopeUser, Name: "u", Description: "d", Type: "user", Body: "see [[nothing-here]]"}, laNow); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	out, err := LintApplyAll(laNow, func() bool { calls++; return calls == 1 })
+	if err != nil || !out.Stopped || out.Scopes != 1 || out.Marked != 1 {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+	if len(lintReasons(lifeStored(t, e.c, agentMemScopeUser, "u"), "lint")) != 1 {
+		t.Error("scope one was not applied")
+	}
+	if len(e.stored("p").Reasons) != 0 {
+		t.Errorf("scope two was written after the stop: %+v", e.stored("p").Reasons)
+	}
+}

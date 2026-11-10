@@ -135,6 +135,7 @@ func Tick(d Deps, c Config, now time.Time) bool {
 	}
 	// The attempt is recorded before it starts: a crash mid-run then waits RetryBase on restart
 	// instead of starting again at once.
+	before := st
 	st.LastRun, st.NotBefore = now, now.Add(c.RetryBase)
 	if err := st.save(); err != nil {
 		log.Printf("memory lint schedule: state not writable, skipping the run: %v", err)
@@ -144,15 +145,17 @@ func Tick(d Deps, c Config, now time.Time) bool {
 		if !d.Enabled() {
 			return false
 		}
-		b, _ := d.Activity()
-		return !b
+		// The same rule as Decide: a turn that began and ended since the run started is
+		// activity too, which a busy flag alone would miss.
+		b, last := d.Activity()
+		return !b && (last.IsZero() || now.Sub(last) >= c.IdleAfter)
 	}
 	out, err := d.Run(now, cont)
 	switch {
 	case errors.Is(err, memoryx.ErrLintRunning):
-		// A manual run holds the lock; it is doing the work. Nothing is spent.
-		st.NotBefore = now
-		_ = st.save()
+		// A manual run holds the lock; it is doing the work. Nothing is spent: the state
+		// goes back to what it was before this attempt.
+		_ = before.save()
 		return false
 	case err != nil:
 		st.Failures++

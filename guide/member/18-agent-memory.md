@@ -274,7 +274,7 @@ own token cannot); it is separate from the tidy-up switch, because lint uses no 
 working and none has run a turn for 15 minutes, at most once every 6 hours (30 minutes when the 100-memory cap left some
 unwritten), and stops between scopes if a session starts working. The 100-memory cap covers the whole run. A failing run
 is retried after 15 minutes, doubling up to 6 hours. A manual `af-memory lint --apply` and a scheduled run never overlap: a
-manual one started during a scheduled run is refused with "already in progress" and can simply be run again afterwards. The
+manual one started during a scheduled run is refused with "already in progress" and can simply be run again afterwards; if that happens part-way through a run over all scopes, the scopes already done keep their changes and running it again finishes the rest. The
 switch and the timing are kept across restarts of the workspace.
 
 Agents report a memory that failed them with `memory_feedback` (the revision they read, `stale` or `wrong`, and a note).

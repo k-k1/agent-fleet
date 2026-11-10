@@ -74,7 +74,6 @@ func LintApplyAll(now time.Time, cont func() bool) (LintApplyAllOut, error) {
 			return out, nil
 		}
 		o, err := agentMemLintApplyBudget(t.scope, t.project, now, &budget)
-		out.Scopes++
 		out.Marked += o.Marked
 		out.Renamed += o.Renamed
 		out.Changed += o.Changed
@@ -82,6 +81,7 @@ func LintApplyAll(now time.Time, cont func() bool) (LintApplyAllOut, error) {
 		if err != nil {
 			return out, err
 		}
+		out.Scopes++
 	}
 	return out, nil
 }
