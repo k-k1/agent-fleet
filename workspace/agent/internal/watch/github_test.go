@@ -505,3 +505,60 @@ func TestGitHubPersistentThreadsFailureFailsTheRead(t *testing.T) {
 		t.Fatalf("a success did not reset: %v %s", err, cur)
 	}
 }
+
+func TestPullRequestThatIsGoneIsErrGoneButATransientAnswerIsNot(t *testing.T) {
+	for _, st := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusGone} {
+		f := newFakeGitHub()
+		f.status[pullPath] = st
+		_, _, _, err := newTestGitHub(t, f).Poll(context.Background(), "github:o/r#7", nil, nil)
+		var g *ErrGone
+		if !errors.As(err, &g) {
+			t.Fatalf("status %d: %v", st, err)
+		}
+	}
+	for _, st := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
+		f := newFakeGitHub()
+		f.status[pullPath] = st
+		_, _, _, err := newTestGitHub(t, f).Poll(context.Background(), "github:o/r#7", nil, nil)
+		var g *ErrGone
+		if err == nil || errors.As(err, &g) {
+			t.Fatalf("status %d must stay a retried error: %v", st, err)
+		}
+	}
+	// A rate limit is not "gone" either.
+	f := newFakeGitHub()
+	f.status[pullPath] = http.StatusForbidden
+	f.headers = http.Header{"Retry-After": {"60"}}
+	_, _, _, err := newTestGitHub(t, f).Poll(context.Background(), "github:o/r#7", nil, nil)
+	var g *ErrGone
+	if err == nil || errors.As(err, &g) {
+		t.Fatalf("rate limited: %v", err)
+	}
+	// A 404 on the head commit's checks (a force-push) does not end the watch.
+	f = newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(true), "clean")
+	_, _, _, err = newTestGitHub(t, f).Poll(context.Background(), "github:o/r#7", nil, nil)
+	if err == nil || errors.As(err, &g) {
+		t.Fatalf("checks 404: %v", err)
+	}
+}
+
+func TestAPullRequestThatVanishedEndsItsWatchThroughTheEngine(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(false), "unknown")
+	gh := newTestGitHub(t, f)
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(gh, sink)
+	ctx := context.Background()
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "github", Ref: "o/r#7", Types: []string{"pr.merged"}, Until: UntilDeadline}); err != nil {
+		t.Fatal(err)
+	}
+	delete(f.bodies, pullPath) // the repository is deleted
+	for i := 0; i < goneConfirm; i++ {
+		e.Tick(ctx)
+		c.add(20 * time.Minute)
+	}
+	if len(sink.told) != 1 || sink.told[0] != "a:watch.ended:ended" || !strings.Contains(sink.notices[0], "This watch has ended: the pull request was deleted") {
+		t.Fatalf("told %v notices %v", sink.told, sink.notices)
+	}
+}

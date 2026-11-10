@@ -415,3 +415,147 @@ func TestQuietWorkflowWithoutRunsSharesASubjectWithinAMinute(t *testing.T) {
 		t.Fatalf("two subjects: %v", subs)
 	}
 }
+
+// pageOf is the body of one page of a workflow's run list.
+func pageOf(total int, runs ...any) map[string]any {
+	return map[string]any{"total_count": total, "workflow_runs": runs}
+}
+
+func manyRuns(from, to int64, status string) []any {
+	var out []any
+	for id := to; id >= from; id-- { // newest first, as GitHub lists them
+		conclusion := ""
+		if status == "completed" {
+			conclusion = "success"
+		}
+		out = append(out, run(id, status, conclusion, "2026-11-10T02:30:00Z", 1))
+	}
+	return out
+}
+
+func TestWorkflowListIsPagedWhenMoreRunsStartedThanOnePageHolds(t *testing.T) {
+	f := newFakeGitHub()
+	floorUnix := time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC).Unix()
+	subj := workflowSubject("o/r", wfName, "", 90, floorUnix)
+	p1 := workflowRunsPath("o/r", wfName, "", actionsListSize, floorUnix)
+	p2 := p1 + "&page=2"
+	p3 := p1 + "&page=3"
+	a := newTestActions(t, f)
+	ctx := context.Background()
+
+	// 25 runs started: the newest 20 are still going, the oldest 5 are done.
+	f.bodies[p1] = pageOf(25, manyRuns(106, 125, "in_progress")...)
+	f.bodies[p2] = pageOf(25, manyRuns(101, 105, "completed")...)
+	evs, raw, hint, err := a.Poll(ctx, subj, nil, nil)
+	if err != nil || len(evs) != 1 || evs[0].Version != "105:1" {
+		t.Fatalf("a completed run on page 2 was missed: %v %v", evs, err)
+	}
+	if hint.After != actionsBusyAfter {
+		t.Fatalf("hint %+v: the in-flight runs on page 1 set the pace", hint)
+	}
+	if f.served[p3] != 0 {
+		t.Fatal("read a page past the end of the list")
+	}
+
+	// An unchanged list is read from the ETags: no counted request for either page.
+	served1, served2 := f.served[p1], f.served[p2]
+	if _, _, _, err = a.Poll(ctx, subj, raw, nil); err != nil {
+		t.Fatal(err)
+	}
+	if f.served[p1] != served1 || f.served[p2] != served2 {
+		t.Fatalf("an unchanged page was downloaded again: %d %d", f.served[p1], f.served[p2])
+	}
+
+	// Page 1 unchanged (304), page 2 changed (200): only page 2 is downloaded and the news shows.
+	f.bodies[p2] = pageOf(25, append(manyRuns(101, 104, "completed"), run(105, "completed", "success", "2026-11-10T02:30:00Z", 2))...)
+	evs, raw, _, err = a.Poll(ctx, subj, raw, nil)
+	if err != nil || len(evs) != 1 || evs[0].Version != "105:2" || f.served[p1] != served1 || f.served[p2] != served2+1 {
+		t.Fatalf("mixed 304/200: %v %v served %d %d", evs, err, f.served[p1], f.served[p2])
+	}
+	// And the reverse: page 1 changes while page 2 is served from its ETag.
+	served2 = f.served[p2]
+	f.bodies[p1] = pageOf(25, append(manyRuns(107, 125, "in_progress"), manyRuns(106, 106, "in_progress")...)...)
+	if _, _, _, err = a.Poll(ctx, subj, raw, nil); err != nil || f.served[p2] != served2 {
+		t.Fatalf("page 2 downloaded again: %v %d %d", err, f.served[p2], served2)
+	}
+}
+
+func TestWorkflowListSSO403IsNotGone(t *testing.T) {
+	f := newFakeGitHub()
+	f.status["/repos/o/r/actions/runs/55"] = http.StatusForbidden
+	f.headers = http.Header{"X-Github-Sso": {"required; url=https://github.com/orgs/o/sso"}}
+	a := newTestActions(t, f)
+	_, _, _, err := a.Poll(context.Background(), "github:o/r/actions/runs/55", nil, nil)
+	var g *ErrGone
+	if err == nil || errors.As(err, &g) {
+		t.Fatalf("an SSO 403 must be a retried error: %v", err)
+	}
+	// The pull request source shares the rule.
+	f = newFakeGitHub()
+	f.status[pullPath] = http.StatusForbidden
+	f.headers = http.Header{"X-Github-Sso": {"required"}}
+	_, _, _, err = newTestGitHub(t, f).Poll(context.Background(), "github:o/r#7", nil, nil)
+	if err == nil || errors.As(err, &g) {
+		t.Fatalf("pull request SSO 403: %v", err)
+	}
+}
+
+func TestWorkflowPagingNeverCountsARunTwiceAcrossAPageBoundary(t *testing.T) {
+	f := newFakeGitHub()
+	floorUnix := time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC).Unix()
+	subj := workflowSubject("o/r", wfName, "", 90, floorUnix)
+	p1 := workflowRunsPath("o/r", wfName, "", actionsListSize, floorUnix)
+	// Run 107 is listed at the foot of page 1 and, because a run started between the two reads,
+	// again at the head of page 2.
+	f.bodies[p1] = pageOf(22, manyRuns(107, 126, "in_progress")...)
+	f.bodies[p1+"&page=2"] = pageOf(22, run(107, "in_progress", "", "2026-11-10T02:30:00Z", 1), run(106, "completed", "success", "2026-11-10T02:30:00Z", 1))
+	a := NewGitHubActions(newTestGitHub(t, f))
+	evs, _, _, err := a.Poll(context.Background(), subj, nil, nil)
+	if err != nil || len(evs) != 1 || evs[0].Version != "106:1" {
+		t.Fatalf("%v %v", evs, err)
+	}
+	// The count is where the duplicate shows: 20 on page 1, one new on page 2.
+	var cur actionsCursor
+	if err := actionsGet(a.GH, context.Background(), p1, &cur.List, goneWorkflow); err != nil {
+		t.Fatal(err)
+	}
+	runs, _, err := a.morePages(context.Background(), "o/r", wfName, "", floorUnix, &cur)
+	if err != nil || len(runs) != 21 {
+		t.Fatalf("%d runs, %v: the repeated run was counted twice", len(runs), err)
+	}
+}
+
+func TestWorkflowPagingIsBoundedAndAFailedLaterPageFailsTheRead(t *testing.T) {
+	f := newFakeGitHub()
+	floorUnix := time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC).Unix()
+	subj := workflowSubject("o/r", wfName, "", 90, floorUnix)
+	p1 := workflowRunsPath("o/r", wfName, "", actionsListSize, floorUnix)
+	a := newTestActions(t, f)
+	ctx := context.Background()
+	// A list that claims far more runs than the cap allows: the pages read stop at the cap.
+	f.bodies[p1] = pageOf(5000, manyRuns(1000, 1019, "in_progress")...)
+	for p := 2; p <= actionsMaxPages+2; p++ {
+		lo := int64(1000 - 20*(p-1))
+		f.bodies[p1+"&page="+strconv.Itoa(p)] = pageOf(5000, manyRuns(lo, lo+19, "in_progress")...)
+	}
+	_, _, hint, err := a.Poll(ctx, subj, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hint.After < actionsIdleAfter {
+		t.Fatalf("a list longer than the cap is read at the busy pace: %+v", hint)
+	}
+	if f.served[p1+"&page="+strconv.Itoa(actionsMaxPages)] != 1 || f.served[p1+"&page="+strconv.Itoa(actionsMaxPages+1)] != 0 {
+		t.Fatalf("paging was not bounded: %v", f.served)
+	}
+
+	// A later page that cannot be read fails the whole read as a plain error (retried), never as
+	// "the run is not there" and never as ErrGone for a transient answer.
+	f.bodies[p1] = pageOf(25, manyRuns(106, 125, "in_progress")...)
+	f.status[p1+"&page=2"] = http.StatusBadGateway
+	_, _, _, err = a.Poll(ctx, subj, nil, nil)
+	var g *ErrGone
+	if err == nil || errors.As(err, &g) {
+		t.Fatalf("a 502 on page 2: %v", err)
+	}
+}
