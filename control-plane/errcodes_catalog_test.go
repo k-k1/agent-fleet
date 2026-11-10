@@ -19,6 +19,8 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -96,25 +98,33 @@ func TestCPEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 	}
 
 	// Packages split out of package main cannot name the errCode* constants, so they emit the
-	// same strings as literals (internal/tenantsrv does). internal/engine is the planned home
-	// of the engine family's ~50 codes; it is read as soon as it exists, so moving a file there
-	// cannot silently drop its codes from this check.
+	// same strings as literals. The walk covers every directory under internal/, including one
+	// that does not exist yet, so a file moved into it cannot drop its codes from this check.
+	nameOf := map[string]string{}
+	for name, code := range codeOf {
+		nameOf[code] = name
+	}
 	internalEmitted, internalScanned := scanEmittedErrLiterals(t, "internal", codeOf)
 	if internalScanned < 50 {
 		t.Fatalf("only %d .go files under internal/ were read = this check has gone silent", internalScanned)
 	}
-	for code, where := range internalEmitted {
+	for code, path := range internalEmitted {
 		if _, ok := emitted[code]; !ok {
-			emitted[code] = where
+			emitted[code] = nameOf[code] + " (literal in " + path + ")"
 		}
 	}
 
 	catalog := cpConsoleCatalog(t, "ja")
-	for code, constName := range emitted {
+	codes := make([]string, 0, len(emitted))
+	for code := range emitted {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	for _, code := range codes {
 		if !consoleCatalogHasKeyCP(catalog, "err."+code) {
 			t.Errorf("%s = %q is emitted, but the Console catalog has no \"err.%s\". "+
 				"Add it to console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time",
-				constName, code, code)
+				emitted[code], code, code)
 		}
 	}
 }
@@ -135,7 +145,8 @@ func scanEmittedErrCodes(t *testing.T, dir string, codeOf map[string]string) (ma
 	scanned := 0
 	for _, e := range ents {
 		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || n == "errcodes.go" {
+		// Test files never reach a screen, here or under internal/.
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") || n == "errcodes.go" {
 			continue
 		}
 		af, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, n), nil, 0)
@@ -177,11 +188,31 @@ func scanEmittedErrLiterals(t *testing.T, root string, codeOf map[string]string)
 			t.Fatalf("parse %s: %v", path, err)
 		}
 		scanned++
+		// A code is emitted from a call argument, field or return value. A switch case label
+		// matches a string that came in (internal/auth/page.go's `case "denied":` is the
+		// login page's query parameter), so it is not an emit position.
+		var stack []ast.Node
 		ast.Inspect(af, func(node ast.Node) bool {
-			if lit, ok := node.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-				if v := strings.Trim(lit.Value, "`\""); byValue[v] {
-					emitted[v] = path
+			if node == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			defer func() { stack = append(stack, node) }()
+			lit, ok := node.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			if len(stack) > 0 {
+				if cc, ok := stack[len(stack)-1].(*ast.CaseClause); ok {
+					for _, l := range cc.List {
+						if l == ast.Expr(lit) {
+							return true
+						}
+					}
 				}
+			}
+			if v, err := strconv.Unquote(lit.Value); err == nil && byValue[v] {
+				emitted[v] = path
 			}
 			return true
 		})
@@ -193,20 +224,25 @@ func scanEmittedErrLiterals(t *testing.T, root string, codeOf map[string]string)
 	return emitted, scanned
 }
 
-// TestScanEmittedErrLiteralsSeesNestedPackages pins the scanner itself: a literal in a nested
-// package directory must be reported, otherwise a moved engine file loses its codes silently.
+// TestScanEmittedErrLiteralsSeesNestedPackages pins the scanner itself: a call-argument
+// literal in a nested package directory must be reported (otherwise a moved engine file loses
+// its codes silently) and a switch case label must not be.
 func TestScanEmittedErrLiteralsSeesNestedPackages(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "engine", "sub")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	src := "package sub\n\nconst c = \"engine_probe_code\"\n"
+	src := "package sub\n\nfunc f(w any) {\n\twrite(w, \"engine_probe_code\")\n\tswitch \"x\" {\n\tcase \"engine_label_code\":\n\t}\n}\n"
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, n := scanEmittedErrLiterals(t, root, map[string]string{"errCodeProbe": "engine_probe_code"})
+	got, n := scanEmittedErrLiterals(t, root, map[string]string{
+		"errCodeProbe": "engine_probe_code", "errCodeLabel": "engine_label_code"})
 	if n != 1 || got["engine_probe_code"] == "" {
-		t.Fatalf("scan missed the nested literal: files=%d got=%v", n, got)
+		t.Fatalf("scan missed the nested call-argument literal: files=%d got=%v", n, got)
+	}
+	if _, ok := got["engine_label_code"]; ok {
+		t.Fatalf("a switch case label was reported as an emitted code: %v", got)
 	}
 }
