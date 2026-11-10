@@ -56,9 +56,11 @@ func relayForms() map[string]relayGetter {
 }
 
 func TestPreviewRelayPassesAgentErrorKindThrough(t *testing.T) {
+	t.Parallel()
 	for form, get := range relayForms() {
 		for _, kind := range []string{"preview_unreachable", "preview_not_http", "preview_tls", "preview_failed"} {
 			t.Run(form+"/"+kind, func(t *testing.T) {
+				t.Parallel()
 				agent := fakeAgentPreviewError(kind)
 				defer agent.Close()
 				rec := get(t, agent.URL, map[string]string{"Accept-Language": "en", "Accept": "application/json"})
@@ -89,10 +91,12 @@ func TestPreviewRelayPassesAgentErrorKindThrough(t *testing.T) {
 }
 
 func TestPreviewRelayRendersLocalizedPageForNavigation(t *testing.T) {
+	t.Parallel()
 	agent := fakeAgentPreviewError("preview_tls")
-	defer agent.Close()
+	t.Cleanup(agent.Close)
 	for form, get := range relayForms() {
 		t.Run(form, func(t *testing.T) {
+			t.Parallel()
 			rec := get(t, agent.URL, map[string]string{"Accept": "text/html", "Accept-Language": "en"})
 			if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 				t.Fatalf("Content-Type = %q", ct)
@@ -110,11 +114,13 @@ func TestPreviewRelayRendersLocalizedPageForNavigation(t *testing.T) {
 
 // The CP's own dial failure toward the Agent keeps its own code and message.
 func TestPreviewRelayDialFailureIsWorkspaceUnreachable(t *testing.T) {
-	agent := httptest.NewServer(http.NotFoundHandler())
-	url := agent.URL
-	agent.Close()
+	t.Parallel()
+	// Port 0 can never be dialled, so no parallel test's server can answer in its place (a closed
+	// httptest port could be reused by one).
+	url := "http://127.0.0.1:0"
 	for form, get := range relayForms() {
 		t.Run(form, func(t *testing.T) {
+			t.Parallel()
 			rec := get(t, url, map[string]string{"Accept-Language": "en"})
 			if rec.Code != http.StatusBadGateway {
 				t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
@@ -138,12 +144,14 @@ func TestPreviewRelayDialFailureIsWorkspaceUnreachable(t *testing.T) {
 // An app's own 502 (no marker) is not the relay's to rewrite, and a forged marker with an
 // unknown value is left alone.
 func TestPreviewRelayLeavesAppBadGatewayAlone(t *testing.T) {
+	t.Parallel()
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream app says no", http.StatusBadGateway)
 	}))
-	defer agent.Close()
+	t.Cleanup(agent.Close)
 	for form, get := range relayForms() {
 		t.Run(form, func(t *testing.T) {
+			t.Parallel()
 			rec := get(t, agent.URL, nil)
 			if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "upstream app says no") {
 				t.Fatalf("got %d %q", rec.Code, rec.Body)
@@ -164,6 +172,7 @@ func (e *previewHostEnv) setPublic(t *testing.T) {
 }
 
 func TestAcceptPrefersHTML(t *testing.T) {
+	t.Parallel()
 	for accept, want := range map[string]bool{
 		"":                                    false,
 		"*/*":                                 false,
@@ -185,15 +194,17 @@ func TestAcceptPrefersHTML(t *testing.T) {
 // The marker is read from the final response header only: declaring it as a trailer on an
 // app's own 502 does not turn that response into a relay error page.
 func TestPreviewRelayIgnoresMarkerInTrailer(t *testing.T) {
+	t.Parallel()
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Trailer", previewErrorHeader)
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte("app body"))
 		w.Header().Set(previewErrorHeader, "preview_tls")
 	}))
-	defer agent.Close()
+	t.Cleanup(agent.Close)
 	for form, get := range relayForms() {
 		t.Run(form, func(t *testing.T) {
+			t.Parallel()
 			rec := get(t, agent.URL, nil)
 			if rec.Code != http.StatusBadGateway || rec.Body.String() != "app body" {
 				t.Fatalf("got %d %q, want the app's own 502", rec.Code, rec.Body)
