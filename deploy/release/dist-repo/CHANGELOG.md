@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.43.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.43.0) — 2026-11-10
+
+Sessions can now wait for a pull request, a review or a set time with the new `watch` tool, and an
+opt-in memory tidy-up drafts fixes to agents' memories for you to approve. Workspaces can start at
+sign-in or move to a new image on their own, and the Tool permissions switch in Settings › Agents
+now does what it says. Read the Upgrade notes before updating: the Control Plane no longer starts on
+a weak `AF_MASTER_KEY` or `AF_COOKIE_SECRET`.
+
 ## [0.42.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.42.0) — 2026-11-08
 
 This release is mostly security hardening from an assessment of the Control Plane, the Agent and the

@@ -13,6 +13,52 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.43.0](0.43.0.md) — 2026-11-10
+
+**CLI pins** — Claude Code 2.1.321, Copilot 1.0.108, rtk 1.2.0
+
+**New / Improved**
+
+- **[watch]** Sessions wait for PR checks, conflicts, reviews and merges with `watch` / `list_watches` / `unwatch` (GitHub, Bitbucket), notices to a parent ([#3627](https://github.com/k-k1/agent-fleet/issues/3627), [#3628](https://github.com/k-k1/agent-fleet/issues/3628))
+- **[watch]** `watch` on a GitHub Actions run, or a workflow's next run, outside a PR ([#3779](https://github.com/k-k1/agent-fleet/issues/3779))
+- **[watch]** `watch` timers up to 30 days, optionally starting a stopped workspace ([#3632](https://github.com/k-k1/agent-fleet/issues/3632))
+- **[watch]** A member's MCP server as a watch source, behind the tenant switch **Watch sources** ([#3631](https://github.com/k-k1/agent-fleet/issues/3631))
+- **[watch]** Webhook pokes: `AF_GITHUB_WEBHOOK_SECRET` for public repositories, `af-watch-hook` for private ones ([#3630](https://github.com/k-k1/agent-fleet/issues/3630), [#3751](https://github.com/k-k1/agent-fleet/issues/3751))
+- **[memory]** Opt-in memory tidy-up: model-drafted suggestions with a preview, approve and undo ([#3497](https://github.com/k-k1/agent-fleet/issues/3497), [#3702](https://github.com/k-k1/agent-fleet/issues/3702), [#3720](https://github.com/k-k1/agent-fleet/issues/3720))
+- **[memory]** Memory lint report and `af-memory lint-rename` ([#3443](https://github.com/k-k1/agent-fleet/issues/3443), [#3571](https://github.com/k-k1/agent-fleet/issues/3571), [#3496](https://github.com/k-k1/agent-fleet/issues/3496))
+- **[memory]** `memory_patch` and `memory_feedback`, also on external `/mcp` ([#3441](https://github.com/k-k1/agent-fleet/issues/3441), [#3496](https://github.com/k-k1/agent-fleet/issues/3496), [#3649](https://github.com/k-k1/agent-fleet/issues/3649), [#3636](https://github.com/k-k1/agent-fleet/issues/3636))
+- **[memory]** Archived or superseded memories hidden from agents and the Claude Code write-back ([#3495](https://github.com/k-k1/agent-fleet/issues/3495))
+- **[workspace]** Optional start of a stopped workspace at sign-in, per tenant, with a member opt-out ([#2031](https://github.com/k-k1/agent-fleet/issues/2031))
+- **[workspace]** Opt-in restart of an idle workspace onto a new image ([#3656](https://github.com/k-k1/agent-fleet/issues/3656))
+- **[usage]** Running hours and cloud cost by month, with month-over-month change ([#3383](https://github.com/k-k1/agent-fleet/issues/3383), [#3609](https://github.com/k-k1/agent-fleet/issues/3609))
+- **[tenants]** Per-tenant **Max PAT lifetime** ([#3465](https://github.com/k-k1/agent-fleet/issues/3465))
+- **[work items]** Merge a Bitbucket Cloud PR from the detail panel; mergeability shown
+- **[appearance]** **Random colors** on open, hourly or daily, plus a 🎲 re-pick ([#3738](https://github.com/k-k1/agent-fleet/issues/3738))
+- **[ecs]** `20-platform` parameter `MasterKeyKmsKeyArn` for a customer-managed key on `/af-cp/master-key` ([#3470](https://github.com/k-k1/agent-fleet/issues/3470))
+- **[auth]** The Control Plane refuses to start on a weak `AF_MASTER_KEY` / `AF_COOKIE_SECRET`; per-purpose cookie keys by default ([#3552](https://github.com/k-k1/agent-fleet/issues/3552))
+- **[security]** The Console runs only its own scripts; external Markdown images load on click ([#3454](https://github.com/k-k1/agent-fleet/issues/3454), [#3458](https://github.com/k-k1/agent-fleet/issues/3458))
+- **[files]** Markdown Split view scrolls together; a tab keeps its mode and scroll ([#3659](https://github.com/k-k1/agent-fleet/issues/3659), [#3662](https://github.com/k-k1/agent-fleet/issues/3662))
+- **[work items]** Jira launch asks for the repository and remembers it per project ([#3770](https://github.com/k-k1/agent-fleet/issues/3770))
+- **[PR feedback]** No repeats of watched events, review notices say what is new, no conflict re-announce on a base move ([#3629](https://github.com/k-k1/agent-fleet/issues/3629), [#3732](https://github.com/k-k1/agent-fleet/issues/3732))
+- **[mirror]** Skill picker matches word prefixes ([#3614](https://github.com/k-k1/agent-fleet/issues/3614))
+- **[agy]** Usage popover lists limits **Seen on failed calls** ([#3744](https://github.com/k-k1/agent-fleet/issues/3744))
+- **[work items]** Kind row shows the tracker's issue type ([#3734](https://github.com/k-k1/agent-fleet/issues/3734))
+- **[bitbucket]** `bkt` names the missing scope on a refusal ([#3570](https://github.com/k-k1/agent-fleet/issues/3570))
+
+**Fixed**
+
+- **[settings]** Tool permissions switch was inverted ([#3688](https://github.com/k-k1/agent-fleet/issues/3688))
+- **[jira]** Connections broke when a renewed token was overwritten by an older copy (Bitbucket too) ([#3723](https://github.com/k-k1/agent-fleet/issues/3723))
+- **[mirror]** Permission card Allow on tall or rtk-rewritten Bash dialogs; cards left after claude closed the dialog ([#3601](https://github.com/k-k1/agent-fleet/issues/3601), [#3725](https://github.com/k-k1/agent-fleet/issues/3725))
+- **[files]** Unsaved edits lost on a tab switch ([#3663](https://github.com/k-k1/agent-fleet/issues/3663))
+- **[agy]** Conversation translation failed; translate button missing on mixed-language replies ([#3745](https://github.com/k-k1/agent-fleet/issues/3745), [#3746](https://github.com/k-k1/agent-fleet/issues/3746), [#3747](https://github.com/k-k1/agent-fleet/issues/3747))
+- **[muse]** af tools lost after resume or fork; answers hidden until finished, failed drafts shown ([#3611](https://github.com/k-k1/agent-fleet/issues/3611), [#3612](https://github.com/k-k1/agent-fleet/issues/3612), [#3676](https://github.com/k-k1/agent-fleet/issues/3676))
+- **[sessions]** `get_session_output` skipped the rest of a reply still being written ([#3618](https://github.com/k-k1/agent-fleet/issues/3618))
+- **[ecs-ec2]** opencode's terminal UI could not start ([#3682](https://github.com/k-k1/agent-fleet/issues/3682))
+- **[kubernetes]** Tenant OAuth MCP tokens and some scheduled-run outcomes failed from workspaces ([#3761](https://github.com/k-k1/agent-fleet/issues/3761))
+- **[console]** Carried question Markdown, built-in MCP **Disable**, usage age label, AWS row buttons, cross-tab theme, chat bridge texts ([#3597](https://github.com/k-k1/agent-fleet/issues/3597), [#3621](https://github.com/k-k1/agent-fleet/issues/3621), [#3703](https://github.com/k-k1/agent-fleet/issues/3703), [#3573](https://github.com/k-k1/agent-fleet/issues/3573), [#3741](https://github.com/k-k1/agent-fleet/issues/3741), [#3667](https://github.com/k-k1/agent-fleet/issues/3667))
+- **[memory]** Background memory review removed; waiting suggestions exported once ([#3440](https://github.com/k-k1/agent-fleet/issues/3440))
+
 ## [0.42.0](0.42.0.md) — 2026-11-08
 
 **CLI pins** — Claude Code 2.1.319, OpenCode 2.2.6, Copilot 1.0.107, Antigravity 1.5.3

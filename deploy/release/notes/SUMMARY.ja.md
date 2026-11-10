@@ -12,6 +12,52 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.43.0](0.43.0.ja.md) — 2026-11-10
+
+**CLI ピン** — Claude Code 2.1.321 / Copilot 1.0.108 / rtk 1.2.0
+
+**New / Improved**
+
+- **[ウォッチ]** `watch` / `list_watches` / `unwatch` で PR のチェック・コンフリクト・レビュー・マージを待つ（GitHub・Bitbucket）。通知は親へも送れる ([#3627](https://github.com/k-k1/agent-fleet/issues/3627), [#3628](https://github.com/k-k1/agent-fleet/issues/3628))
+- **[ウォッチ]** PR に紐づかない GitHub Actions の実行やワークフローの次の実行を `watch` で待つ ([#3779](https://github.com/k-k1/agent-fleet/issues/3779))
+- **[ウォッチ]** 最長 30 日の `watch` のタイマー。停止中の Workspace を起動することもできる ([#3632](https://github.com/k-k1/agent-fleet/issues/3632))
+- **[ウォッチ]** メンバーの MCP サーバーをウォッチのソースに（テナントの **ウォッチのソース** で許可） ([#3631](https://github.com/k-k1/agent-fleet/issues/3631))
+- **[ウォッチ]** webhook での通知: 公開リポジトリは `AF_GITHUB_WEBHOOK_SECRET`、非公開は `af-watch-hook` ([#3630](https://github.com/k-k1/agent-fleet/issues/3630), [#3751](https://github.com/k-k1/agent-fleet/issues/3751))
+- **[メモリ]** 任意のメモリの自動整理: モデルが下書きした提案をプレビューして承認・取り消し ([#3497](https://github.com/k-k1/agent-fleet/issues/3497), [#3702](https://github.com/k-k1/agent-fleet/issues/3702), [#3720](https://github.com/k-k1/agent-fleet/issues/3720))
+- **[メモリ]** メモリのリントレポートと `af-memory lint-rename` ([#3443](https://github.com/k-k1/agent-fleet/issues/3443), [#3571](https://github.com/k-k1/agent-fleet/issues/3571), [#3496](https://github.com/k-k1/agent-fleet/issues/3496))
+- **[メモリ]** `memory_patch` と `memory_feedback`（外部の `/mcp` にも） ([#3441](https://github.com/k-k1/agent-fleet/issues/3441), [#3496](https://github.com/k-k1/agent-fleet/issues/3496), [#3649](https://github.com/k-k1/agent-fleet/issues/3649), [#3636](https://github.com/k-k1/agent-fleet/issues/3636))
+- **[メモリ]** アーカイブ・置き換え済みのメモリをエージェントと Claude Code への書き戻しから外す ([#3495](https://github.com/k-k1/agent-fleet/issues/3495))
+- **[Workspace]** サインイン時に停止中の Workspace を起動（テナントごと、メンバーは個別にやめられる） ([#2031](https://github.com/k-k1/agent-fleet/issues/2031))
+- **[Workspace]** アイドルの Workspace を新しいイメージで再起動（任意） ([#3656](https://github.com/k-k1/agent-fleet/issues/3656))
+- **[使用量]** 月ごとの稼働時間とクラウド費用、前月からの増減 ([#3383](https://github.com/k-k1/agent-fleet/issues/3383), [#3609](https://github.com/k-k1/agent-fleet/issues/3609))
+- **[テナント]** テナントごとの **PAT の最長有効期間** ([#3465](https://github.com/k-k1/agent-fleet/issues/3465))
+- **[作業項目]** 詳細パネルから Bitbucket Cloud の PR をマージ、マージ可否も表示
+- **[外観]** **色をランダムに**（開くたび・1 時間ごと・毎日）と 🎲 での選び直し ([#3738](https://github.com/k-k1/agent-fleet/issues/3738))
+- **[ecs]** `20-platform` のパラメータ `MasterKeyKmsKeyArn` で `/af-cp/master-key` を自分の KMS 鍵で暗号化 ([#3470](https://github.com/k-k1/agent-fleet/issues/3470))
+- **[認証]** 弱い `AF_MASTER_KEY` / `AF_COOKIE_SECRET` では Control Plane が起動しない。Cookie は既定で用途ごとの鍵 ([#3552](https://github.com/k-k1/agent-fleet/issues/3552))
+- **[セキュリティ]** Console は自分のスクリプトだけを実行。Markdown の外部画像はクリックで読み込む ([#3454](https://github.com/k-k1/agent-fleet/issues/3454), [#3458](https://github.com/k-k1/agent-fleet/issues/3458))
+- **[ファイル]** Markdown の分割表示の連動スクロール、タブの表示モードとスクロール位置を保持 ([#3659](https://github.com/k-k1/agent-fleet/issues/3659), [#3662](https://github.com/k-k1/agent-fleet/issues/3662))
+- **[作業項目]** Jira からの起動でリポジトリを選ばせ、プロジェクトごとに覚える ([#3770](https://github.com/k-k1/agent-fleet/issues/3770))
+- **[PR フィードバック]** ウォッチ中の内容を繰り返さない、レビュー通知は新しい点を示す、ベースが進んでもコンフリクトを再通知しない ([#3629](https://github.com/k-k1/agent-fleet/issues/3629), [#3732](https://github.com/k-k1/agent-fleet/issues/3732))
+- **[ミラー]** スキルの候補が単語の先頭で一致 ([#3614](https://github.com/k-k1/agent-fleet/issues/3614))
+- **[agy]** 使用量のポップオーバーに **失敗した呼び出しで判明した上限** ([#3744](https://github.com/k-k1/agent-fleet/issues/3744))
+- **[作業項目]** 種別の行にトラッカーの課題タイプ ([#3734](https://github.com/k-k1/agent-fleet/issues/3734))
+- **[bitbucket]** `bkt` が拒否時に足りないスコープを示す ([#3570](https://github.com/k-k1/agent-fleet/issues/3570))
+
+**Fixed**
+
+- **[設定]** 権限確認のスイッチが逆になっていた ([#3688](https://github.com/k-k1/agent-fleet/issues/3688))
+- **[jira]** 更新したトークンが古いコピーで上書きされ接続が使えなくなる（Bitbucket も） ([#3723](https://github.com/k-k1/agent-fleet/issues/3723))
+- **[ミラー]** 縦に長い・rtk が書き換えた Bash のダイアログで許可が失敗、claude が閉じたあともカードが残る ([#3601](https://github.com/k-k1/agent-fleet/issues/3601), [#3725](https://github.com/k-k1/agent-fleet/issues/3725))
+- **[ファイル]** タブの切り替えで未保存の編集が失われる ([#3663](https://github.com/k-k1/agent-fleet/issues/3663))
+- **[agy]** 会話の翻訳の失敗、日英混在の応答に翻訳ボタンが出ない ([#3745](https://github.com/k-k1/agent-fleet/issues/3745), [#3746](https://github.com/k-k1/agent-fleet/issues/3746), [#3747](https://github.com/k-k1/agent-fleet/issues/3747))
+- **[muse]** 再開・フォークで af のツールが消える、応答が終わるまで出ない、失敗した下書きが出る ([#3611](https://github.com/k-k1/agent-fleet/issues/3611), [#3612](https://github.com/k-k1/agent-fleet/issues/3612), [#3676](https://github.com/k-k1/agent-fleet/issues/3676))
+- **[セッション]** `get_session_output` が書き途中の応答の続きを読み飛ばす ([#3618](https://github.com/k-k1/agent-fleet/issues/3618))
+- **[ecs-ec2]** opencode のターミナル UI が起動しない ([#3682](https://github.com/k-k1/agent-fleet/issues/3682))
+- **[kubernetes]** Workspace からテナントの OAuth の MCP トークンとスケジュール実行の結果の一部が失敗 ([#3761](https://github.com/k-k1/agent-fleet/issues/3761))
+- **[Console]** 持ち越した質問の Markdown・組み込み MCP の **無効化**・使用量の経過表示・AWS の行のボタン・別タブのテーマ・チャットブリッジの説明 ([#3597](https://github.com/k-k1/agent-fleet/issues/3597), [#3621](https://github.com/k-k1/agent-fleet/issues/3621), [#3703](https://github.com/k-k1/agent-fleet/issues/3703), [#3573](https://github.com/k-k1/agent-fleet/issues/3573), [#3741](https://github.com/k-k1/agent-fleet/issues/3741), [#3667](https://github.com/k-k1/agent-fleet/issues/3667))
+- **[メモリ]** メモリのバックグラウンドレビューを廃止し、承認待ちの提案は一度だけ書き出す ([#3440](https://github.com/k-k1/agent-fleet/issues/3440))
+
 ## [0.42.0](0.42.0.ja.md) — 2026-11-08
 
 **CLI ピン** — Claude Code 2.1.319 / OpenCode 2.2.6 / Copilot 1.0.107 / Antigravity 1.5.3
