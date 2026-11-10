@@ -115,9 +115,9 @@ func TestPreviewRelayRendersLocalizedPageForNavigation(t *testing.T) {
 // The CP's own dial failure toward the Agent keeps its own code and message.
 func TestPreviewRelayDialFailureIsWorkspaceUnreachable(t *testing.T) {
 	t.Parallel()
-	agent := httptest.NewServer(http.NotFoundHandler())
-	url := agent.URL
-	agent.Close()
+	// Port 0 can never be dialled, so no parallel test's server can answer in its place (a closed
+	// httptest port could be reused by one).
+	url := "http://127.0.0.1:0"
 	for form, get := range relayForms() {
 		t.Run(form, func(t *testing.T) {
 			t.Parallel()

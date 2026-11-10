@@ -213,7 +213,7 @@ func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
 // /api/sessions and at a schedule's fire before the Workspace is touched (ADR 0129 D3); the
 // gateway's own reasons are TestProvidedRouteCreateRefusal's.
 func TestCreatePathsRefuseAnUnservedProvidedRoute(t *testing.T) {
-	t.Parallel()
+	// Serial: it swaps the process-wide route gateway, which a parallel test could observe.
 	prev := activeProvidedRouteGateway.Load()
 	activeProvidedRouteGateway.Store(nil)
 	t.Cleanup(func() { activeProvidedRouteGateway.Store(prev) })
