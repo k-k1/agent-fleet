@@ -257,10 +257,14 @@ they just start it again from the Console.
 
 Under the tenant's limits, **Start at sign-in** is off by default, because every start uses resources.
 When you switch it on, a member who opens the Console in a visible tab and uses it (a key press, a
-click or a scroll within the last minute) while their workspace is stopped gets it started for them.
+click, a touch or a scroll within the last minute, or just having arrived at the Console by sign-in or a
+typed address) while their workspace is stopped gets it started for them. A reload does not count as
+arriving, and the same page asks once. Only a start puts the page on a 30-minute rest: a refusal
+(for example while the switch was still off) does not, so turning the switch on takes effect at the
+next visit.
 It is the same start as creating or resuming a session, so the workspace limit above applies: at the
 limit nothing is started and the member's Home says why. Nothing is started when the workspace's state
-cannot be read, for a tab nobody is using, for a workspace that has never been created, or after the
+cannot be read, for a tab nobody is using, or after the
 workspace was stopped while the tab was open (the idle auto-stop and a member's own Stop are not undone).
 Each member can switch it off for themselves under Settings › Toolchains (**Start at sign-in**, shown only while the tenant has it on). The deployment-wide
 `AF_AUTOSTART=0` turns it off everywhere.
