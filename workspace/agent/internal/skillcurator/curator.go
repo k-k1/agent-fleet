@@ -41,6 +41,7 @@ const (
 	PinnedFile   = ".pinned"    // present: the skill is exempt from curation
 	LastUsedFile = ".last-used" // its mtime records the last use
 	StaleFile    = ".stale"     // written by the curator when it marks a skill stale
+	OriginFile   = ".origin"    // written into an archived skill: the name it had in the root
 	ArchiveDir   = ".archive"   // under the skills root; not a skill directory itself
 )
 
@@ -57,6 +58,8 @@ func DefaultConfig() Config {
 // Result lists what one pass did, by skill directory name.
 type Result struct {
 	Stale, Archived, Revived []string
+	// Stopped: cont said no before the pass finished.
+	Stopped bool
 }
 
 // Candidate reports whether root/name is a skill the curator may act on.
@@ -96,6 +99,7 @@ func Run(root string, now time.Time, c Config, cont func() bool) Result {
 	}
 	for _, e := range ents {
 		if cont != nil && !cont() {
+			res.Stopped = true
 			break
 		}
 		name := e.Name()
@@ -104,6 +108,8 @@ func Run(root string, now time.Time, c Config, cont func() bool) Result {
 		}
 		dir := filepath.Join(root, name)
 		if exists(filepath.Join(dir, PinnedFile)) {
+			// Pinned means exempt, so a mark left from before the pin is cleared too.
+			_ = os.Remove(filepath.Join(dir, StaleFile))
 			continue
 		}
 		used, ok := lastUsed(dir)
@@ -143,6 +149,9 @@ func archive(root, name string) (string, error) {
 	if err := os.MkdirAll(ad, 0o755); err != nil {
 		return "", err
 	}
+	if err := realArchiveDir(ad); err != nil {
+		return "", err
+	}
 	dst := filepath.Join(ad, name)
 	for i := 2; exists(dst); i++ {
 		dst = filepath.Join(ad, fmt.Sprintf("%s.%d", name, i))
@@ -150,7 +159,24 @@ func archive(root, name string) (string, error) {
 	if err := os.Rename(filepath.Join(root, name), dst); err != nil {
 		return "", err
 	}
+	// The clash suffix is not part of the name, so the name is recorded rather than guessed at
+	// restore (a skill may legitimately be called afa-a.2). Best effort: without it Restore
+	// falls back to the archived name as it is.
+	_ = os.WriteFile(filepath.Join(dst, OriginFile), []byte(name+"\n"), 0o644)
 	return dst, nil
+}
+
+// realArchiveDir refuses an archive that is a link or not a directory: MkdirAll follows a link,
+// and a rename through it would carry the skill out of the root.
+func realArchiveDir(ad string) error {
+	st, err := os.Lstat(ad)
+	if err != nil {
+		return err
+	}
+	if !st.IsDir() {
+		return fmt.Errorf("%s is not a plain directory", ad)
+	}
+	return nil
 }
 
 // Archived lists the names under root/.archive, for a restore.
@@ -164,29 +190,44 @@ func Archived(root string) []string {
 	return out
 }
 
-// Restore moves an archived skill back to root under its original name (the clash suffix is
-// dropped) and clears its stale mark. It refuses when that name is taken, or when the archived
-// entry no longer carries the marker. The skill gets a fresh last-use time so the next pass
-// does not archive it again at once.
+// Restore moves an archived skill back to root under its original name (from its .origin
+// record) and clears its stale mark. It refuses when that name is taken, when the archive is not
+// a plain directory, or when the archived entry no longer carries the marker. The skill gets a
+// fresh last-use time so the next pass does not archive it again at once.
 func Restore(root, archived string, now time.Time) error {
-	src := filepath.Join(root, ArchiveDir, archived)
-	if filepath.Base(archived) != archived || !Candidate(filepath.Join(root, ArchiveDir), archived) {
+	ad := filepath.Join(root, ArchiveDir)
+	if err := realArchiveDir(ad); err != nil {
+		return err
+	}
+	src := filepath.Join(ad, archived)
+	if filepath.Base(archived) != archived || !Candidate(ad, archived) {
 		return fmt.Errorf("%q is not an archived agent skill", archived)
 	}
 	name := archived
-	if i := strings.LastIndexByte(name, '.'); i > 0 && strings.Trim(name[i+1:], "0123456789") == "" {
-		name = name[:i]
+	if b, err := os.ReadFile(filepath.Join(src, OriginFile)); err == nil {
+		if o := strings.TrimSpace(string(b)); o != "" && filepath.Base(o) == o && strings.HasPrefix(o, Prefix) {
+			name = o
+		}
 	}
 	dst := filepath.Join(root, name)
 	if exists(dst) {
 		return fmt.Errorf("%s already exists", name)
 	}
 	_ = os.Remove(filepath.Join(src, StaleFile))
+	_ = os.Remove(filepath.Join(src, OriginFile))
 	if err := os.Rename(src, dst); err != nil {
 		return err
 	}
+	// Remove then create exclusively: a .last-used that is a link must not be written through.
 	lu := filepath.Join(dst, LastUsedFile)
-	if err := os.WriteFile(lu, nil, 0o644); err != nil {
+	if err := os.Remove(lu); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(lu, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Chtimes(lu, now, now)

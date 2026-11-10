@@ -190,3 +190,66 @@ func TestMissingRootIsNoop(t *testing.T) {
 		t.Fatal(res)
 	}
 }
+
+// A skill whose real name ends in .N is restored under that name, not the clash-free stem.
+func TestRestoreKeepsDottedName(t *testing.T) {
+	root := t.TempDir()
+	skill(t, root, "afa-a.2", agentBody(), days(100))
+	Run(root, now, DefaultConfig(), nil)
+	if err := Restore(root, "afa-a.2", now); err != nil {
+		t.Fatal(err)
+	}
+	if !present(filepath.Join(root, "afa-a.2", "SKILL.md")) || present(filepath.Join(root, "afa-a")) {
+		t.Fatal("restored under the wrong name")
+	}
+}
+
+// An .archive that is a link must not receive the skill, and nothing may leave the root.
+func TestArchiveSymlinkRefused(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	if err := os.Symlink(other, filepath.Join(root, ArchiveDir)); err != nil {
+		t.Fatal(err)
+	}
+	skill(t, root, "afa-old", agentBody(), days(100))
+	res := Run(root, now, DefaultConfig(), nil)
+	if len(res.Archived) != 0 || !present(filepath.Join(root, "afa-old", "SKILL.md")) {
+		t.Fatalf("%+v", res)
+	}
+	if ents, _ := os.ReadDir(other); len(ents) != 0 {
+		t.Fatal("something was written through the link")
+	}
+	if err := Restore(root, "afa-old", now); err == nil {
+		t.Fatal("restore through a linked archive accepted")
+	}
+}
+
+// Restore must not write through a .last-used link.
+func TestRestoreDoesNotFollowLastUsedLink(t *testing.T) {
+	root := t.TempDir()
+	skill(t, root, "afa-a", agentBody(), days(100))
+	Run(root, now, DefaultConfig(), nil)
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("ORIGINAL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(root, ArchiveDir, "afa-a", LastUsedFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(root, "afa-a", now); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "ORIGINAL" {
+		t.Fatalf("victim rewritten: %q", b)
+	}
+}
+
+func TestPinClearsStaleMark(t *testing.T) {
+	root := t.TempDir()
+	dir := skill(t, root, "afa-p", agentBody(), days(20))
+	Run(root, now, DefaultConfig(), nil)
+	touch(t, filepath.Join(dir, PinnedFile), now)
+	Run(root, now, DefaultConfig(), nil)
+	if present(filepath.Join(dir, StaleFile)) {
+		t.Fatal("stale mark left on a pinned skill")
+	}
+}

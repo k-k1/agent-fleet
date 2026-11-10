@@ -29,6 +29,8 @@ type Deps struct {
 	Activity func() (busy bool, last time.Time)
 	// Roots lists the user skills roots of the agent kinds that have one.
 	Roots func() []string
+	// Now is the clock; nil means time.Now. The idle test inside a pass reads it afresh.
+	Now func() time.Time
 }
 
 var (
@@ -51,7 +53,11 @@ func Tick(d Deps, sc SchedConfig, cc Config, now time.Time) bool {
 	if !d.Enabled() || !idle(d, sc, now) || (!lastRun.IsZero() && now.Sub(lastRun) < sc.MinInterval) {
 		return false
 	}
-	lastRun = now
+	clock := d.Now
+	if clock == nil {
+		clock = time.Now
+	}
+	stopped := false
 	seen := map[string]bool{}
 	for _, root := range d.Roots() {
 		if root == "" || seen[root] {
@@ -59,11 +65,16 @@ func Tick(d Deps, sc SchedConfig, cc Config, now time.Time) bool {
 		}
 		seen[root] = true
 		// Re-checked per skill: a turn that began meanwhile ends the pass.
-		res := Run(root, now, cc, func() bool { return d.Enabled() && idle(d, sc, now) })
+		res := Run(root, now, cc, func() bool { return d.Enabled() && idle(d, sc, clock()) })
+		stopped = stopped || res.Stopped
 		if len(res.Stale)+len(res.Archived)+len(res.Revived) > 0 {
 			log.Printf("skill curator: %s: marked stale [%s], archived [%s], no longer stale [%s]", root,
 				strings.Join(res.Stale, " "), strings.Join(res.Archived, " "), strings.Join(res.Revived, " "))
 		}
+	}
+	// A pass cut short does not start the MinInterval wait: it should resume at the next idle tick.
+	if !stopped {
+		lastRun = now
 	}
 	return true
 }
