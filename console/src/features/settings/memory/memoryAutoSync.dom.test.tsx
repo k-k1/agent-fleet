@@ -119,6 +119,34 @@ describe("flipping the Agent memory switch", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/agents/memory/auto-sync?action=wake&to=on", "POST", { action: "wake" });
   });
 
+  it("names Muse Code's diverged notes, unmapped folders and the personal notes that wait for a choice", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.startsWith("api/agents/memory/auto-sync/preview")
+          ? {
+              to: "on",
+              projects: [
+                { id: "a", counts: { new: 1 } },
+                { agent: "muse", id: "a", counts: { new: 2, diverged: 1 } },
+              ],
+              totals: { new: 3, diverged: 1 },
+              apply: 3,
+              museUnmapped: 4,
+              musePersonal: 5,
+            }
+          : idle,
+      ),
+    );
+    await mount();
+    await click(switchButtons()[0]);
+    const text = document.body.textContent ?? "";
+    // One project holding both agents' notes is one project.
+    expect(text).toContain(t("mem.as_confirm_on_body", { n: 3, projects: 1 }));
+    expect(text).toContain(t("mem.as_confirm_muse_diverged", { n: 1 }));
+    expect(text).toContain(t("mem.as_muse_unmapped", { n: 4 }));
+    expect(text).toContain(t("mem.as_confirm_muse_personal", { n: 5 }));
+  });
+
   it("says what the write-back will do when switching off", async () => {
     setSettings({ ...settingsDefaults(), agentMemory: true });
     api.mockImplementation((path: string) =>
@@ -191,6 +219,39 @@ describe("the run's status under the switch", () => {
     expect(text).toContain("shared");
     expect(text).toContain(t("mem.as_reason_af_changed"));
     expect(text).toContain("github-token");
+  });
+
+  it("lists Muse Code's per-item conflicts and the personal notes that need confirmation", async () => {
+    api.mockResolvedValue({
+      phase: "on",
+      want: true,
+      settled: true,
+      nativeMemoryOff: true,
+      run: {
+        kind: "import",
+        started: "2026-10-14T09:00:00Z",
+        finished: "2026-10-14T09:00:05Z",
+        complete: true,
+        projects: [{ agent: "muse", id: "a", counts: { imported: 2 } }],
+        museUnmapped: 1,
+        museFailed: 2,
+        musePersonal: 3,
+        rows: [
+          { agent: "muse", project: "a", name: "mine", status: "diverged", reason: "other_source" },
+          { agent: "muse", project: "user", name: "personal", status: "needs_confirmation", reason: "choose_user_scope" },
+        ],
+      },
+    });
+    setSettings({ ...settingsDefaults(), agentMemory: true });
+    await mount();
+    const text = host!.textContent ?? "";
+    expect(text).toContain(t("mem.as_last_import", { imported: 2, updated: 0, unchanged: 0 }));
+    expect(text).toContain(t("mem.as_muse_unmapped", { n: 1 }));
+    expect(text).toContain(t("mem.as_muse_failed", { n: 2 }));
+    expect(text).toContain(t("mem.as_status_diverged"));
+    expect(text).toContain(t("mem.as_reason_other_source"));
+    expect(text).toContain(t("mem.as_muse_personal_name", { n: 3 }));
+    expect(text).toContain(t("mem.as_status_needs_confirmation"));
   });
 
   it("offers retry and 'switch native memory back on anyway' once the write-back keeps failing", async () => {

@@ -51,7 +51,10 @@ export function useFlipAgentMemory(): (next: boolean) => Promise<boolean> {
         if (next) {
           if (t.secret) detail.push(tr("mem.as_confirm_secret", { n: t.secret }));
           if (t.conflict) detail.push(tr("mem.as_confirm_conflict", { n: t.conflict }));
+          if (t.diverged) detail.push(tr("mem.as_confirm_muse_diverged", { n: t.diverged }));
           if (preview.unmapped) detail.push(tr("mem.as_unmapped", { n: preview.unmapped }));
+          if (preview.museUnmapped) detail.push(tr("mem.as_muse_unmapped", { n: preview.museUnmapped }));
+          if (preview.musePersonal) detail.push(tr("mem.as_confirm_muse_personal", { n: preview.musePersonal }));
         } else {
           if (t.conflict) detail.push(tr("mem.as_confirm_conflict_off", { n: t.conflict }));
           if (t.secret) detail.push(tr("mem.as_confirm_secret_off", { n: t.secret }));
@@ -66,7 +69,8 @@ export function useFlipAgentMemory(): (next: boolean) => Promise<boolean> {
               {preview
                 ? tr(next ? "mem.as_confirm_on_body" : "mem.as_confirm_off_body", {
                     n: preview.apply,
-                    projects: preview.projects.length,
+                    // A project with both Claude and Muse notes is listed once per agent.
+                    projects: new Set(preview.projects.map((p) => p.id)).size,
                   })
                 : tr(running ? "mem.as_confirm_unknown" : "mem.as_confirm_stopped")}
             </p>
@@ -215,13 +219,18 @@ export function AutoSyncPanel() {
         </p>
       )}
       {(run?.unmapped ?? 0) > 0 && <p className="muted ds-note">{tr("mem.as_unmapped", { n: run?.unmapped ?? 0 })}</p>}
+      {(run?.museUnmapped ?? 0) > 0 && <p className="muted ds-note">{tr("mem.as_muse_unmapped", { n: run?.museUnmapped ?? 0 })}</p>}
+      {(run?.museFailed ?? 0) > 0 && <p className="muted ds-note">{tr("mem.as_muse_failed", { n: run?.museFailed ?? 0 })}</p>}
       {(run?.noRoot ?? 0) > 0 && <p className="muted ds-note">{tr("mem.as_no_root", { n: run?.noRoot ?? 0 })}</p>}
       {rows.length > 0 && (
         <PreviewSection summary={tr("mem.as_rows", { n: rows.length + (run?.rowsCut ?? 0) })} open>
           <ul className="mem-ci-items">
             {rows.map((r, i) => (
               <li key={r.project + "/" + r.name + i}>
-                <span className="mem-af-name">{r.name}</span>{" "}
+                {r.agent === "muse" && <span className="muted">{tr("mem.as_agent_muse")} · </span>}
+                <span className="mem-af-name">
+                  {r.status === "needs_confirmation" ? tr("mem.as_muse_personal_name", { n: run?.musePersonal ?? 0 }) : r.name}
+                </span>{" "}
                 <span className="muted">
                   · {statusLabel(r.status)}
                   {r.reason ? " · " + reasonLabel(r.reason) : ""}

@@ -62,9 +62,23 @@ Claude Code keeps a memory of its own (`MEMORY.md` and the like). Flipping the s
 | Agent | While on | When switched back off |
 |---|---|---|
 | Codex | Switches codex's own `features.memories` off. Nothing is imported or written back | Puts back the earlier value (never turns it on by itself) |
-| Muse Code | Starts Muse Code with its own memory switched off. This wins over the setting in your own environment | Changes nothing; Muse keeps its default |
+| Muse Code | Starts Muse Code with its own memory switched off. This wins over the setting in your own environment. Turning the switch on also imports Muse's existing notes, as below | Changes nothing; Muse keeps its default. Nothing is written back into Muse's stores |
 
 For both, only sessions **started** after the flip are affected. A running session keeps what it started with.
+
+#### What is imported from Muse Code
+
+Turning the switch on runs the same import as [Import from muse](import-export.md#import-from-muse), in the same background run as Claude's and with the same rules: secrets are skipped, a memory you made agents forget is not brought back, and a note whose Agent Fleet version differs is never overwritten.
+
+| Muse store | On turning the switch on |
+|---|---|
+| Project notes (`.agents/memory` in a working copy) | Imported into that working copy's project. They sit inside the repository and may be committed to git |
+| Personal project notes | Imported into the project of the matching working copy |
+| Personal notes | **Not imported.** They would be visible to every project, so the page lists them as "needs your confirmation". Import them yourself with **Import from muse** and the user-wide option |
+
+- The dialog also counts the Muse notes it leaves alone and the personal notes that are waiting. Under the switch, a Muse note whose Agent Fleet version differs is listed as "Agent Fleet has its own version, left as is"
+- Switching on twice imports nothing twice. A Muse folder that cannot be read is counted and skipped; it never stops the switch
+- Muse sessions already running keep using their own memory, and what they save is not imported again by itself. Use **Import from muse** for that
 
 ## When it goes wrong
 

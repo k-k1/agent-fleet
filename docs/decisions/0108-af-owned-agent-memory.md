@@ -1000,3 +1000,15 @@ paths instead of three, which was the larger cost per clone once the stores were
   one release. Archived and superseded memories leave every agent-facing read path (#3495).
 - Decision 8 (agents publish at once, reviewed after) is unchanged for agents. The background review
   this record's decision 8 anticipated (0117) is removed; 0130's consolidator queues for the member.
+
+## Note (2026-11-11): the switch's import phase also carries muse's memory across (#3858)
+
+- Decision 6 (carry-over on the switch) now covers muse beside claude: the `importing` phase and the
+  catch-up import run the muse import (project and personal-project stores) with the same rules as
+  the member's own import. Per-item conflicts are reported as `diverged` rows, secrets as rule names.
+- muse's personal store goes to the user scope, which every project reads, so the switch never writes
+  it: the run counts it (`musePersonal`) and lists one `needs_confirmation` row.
+- muse is best effort: an unreadable or unmappable folder is counted (`museFailed`, `museUnmapped`) and
+  never sets the run's error, so it cannot keep the phase in `importing`.
+- Switching off still writes nothing into muse's stores. The project store is inside the repository and
+  may be committed; whether and how to write back is open until measured on a live muse.
