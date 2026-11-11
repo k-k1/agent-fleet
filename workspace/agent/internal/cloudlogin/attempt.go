@@ -69,11 +69,24 @@ func (a *Attempt) Live() bool {
 }
 
 // End moves a live attempt to phase and stops its process; a finished one keeps its phase.
-func (a *Attempt) End(phase, message string) {
+func (a *Attempt) End(phase, message string) { a.end(phase, message, false) }
+
+// endIfStarting is End for an attempt that has still shown no URL, decided under the
+// attempt's lock: an authorize that lands between a check and the End must not be undone.
+// It reports whether the attempt was ended.
+func (a *Attempt) endIfStarting(phase, message string) bool { return a.end(phase, message, true) }
+
+func (a *Attempt) end(phase, message string, onlyStarting bool) bool {
 	a.mu.Lock()
-	if a.phase == PhaseStarting || a.phase == PhaseAuthorize {
+	ended := false
+	if a.phase == PhaseStarting || (a.phase == PhaseAuthorize && !onlyStarting) {
 		a.phase, a.message, a.ended = phase, message, time.Now()
 		a.url, a.code = "", ""
+		ended = true
+	}
+	if onlyStarting && !ended {
+		a.mu.Unlock()
+		return false
 	}
 	stop, stdin := a.stop, a.stdin
 	a.mu.Unlock()
@@ -84,6 +97,7 @@ func (a *Attempt) End(phase, message string) {
 		// Unblocks a Submit stuck on a pipe the process does not read.
 		_ = stdin.Close()
 	}
+	return ended
 }
 
 // authorize records what the member needs to finish the login, while the attempt is live.
@@ -179,6 +193,12 @@ type Process struct {
 	Env  []string
 	// Timeout kills the process (and the attempt fails) when it outlives it.
 	Timeout time.Duration
+	// URLDeadline overrides the default urlDeadline for this process (zero = default).
+	URLDeadline time.Duration
+	// NoURLMessage is what the member sees when the deadline passes without a URL; empty
+	// uses a generic sentence. A backend whose Console maps its message to a translation
+	// sets it to the exact key text.
+	NoURLMessage string
 	// Stdin keeps a pipe to the process's stdin for one Attempt.Submit; without it
 	// stdin is the null device.
 	Stdin bool
@@ -255,10 +275,12 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 		defer close(drained)
 		watchOutput(s.LogPrefix, a, pr, p.Parse, &seen)
 	}()
-	go failIfNoURL(a, done, &seen, s.LogPrefix, p.Name)
+	waited := make(chan struct{})
+	go failIfNoURL(a, waited, &seen, s.LogPrefix, p)
 	go func() {
 		defer close(done)
 		err := cmd.Wait()
+		close(waited)
 		// Wait does not wait for the reader, and a failed login's reason is the last thing
 		// the process prints: Exited reads the output only once the reader has seen it all.
 		// A child the process left behind can hold the pipe open, so the wait is bounded and
@@ -289,32 +311,35 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 	return a, nil
 }
 
-// urlDeadline is how long an attempt may stay in "starting": every login CLI prints its
-// URL within seconds, so past this the output format is not one the parser knows (aws-cli
-// 2.36 moved its URLs to a new host and the login sat for the full process timeout, ten
-// minutes, saying nothing). A var so a test can shorten it.
+// urlDeadline is how long an attempt may stay in "starting": a login CLI prints its URL
+// within seconds, so past this its output is not in a form the parser knows, and waiting
+// out the process timeout (ten minutes) would only hide that. A var so a test can shorten it.
 var urlDeadline = 60 * time.Second
 
-// failIfNoURL ends an attempt still in "starting" once urlDeadline has passed, with a reason
-// the member sees. Ending it stops the process, which closes the output and makes
-// watchOutput log the redacted shape of what was not understood.
-func failIfNoURL(a *Attempt, done <-chan struct{}, seen *atomic.Int64, prefix, name string) {
-	t := time.NewTimer(urlDeadline)
+// failIfNoURL ends an attempt still in "starting" once the deadline has passed, with a
+// reason the member sees. A process that already exited is left to Exited, whose message
+// is the specific one. Ending the attempt stops the process, which closes the output and
+// makes watchOutput log the redacted shape of what was not understood.
+func failIfNoURL(a *Attempt, waited <-chan struct{}, seen *atomic.Int64, prefix string, p Process) {
+	d := urlDeadline
+	if p.URLDeadline > 0 {
+		d = p.URLDeadline
+	}
+	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
-	case <-done:
+	case <-waited:
 		return
 	case <-t.C:
 	}
-	if a.View().Phase != PhaseStarting {
-		return
+	msg := p.NoURLMessage
+	if msg == "" {
+		msg = p.Name + " showed no sign-in URL in time. Start it again; if it keeps happening, log in from a terminal."
 	}
-	msg := name + " printed nothing within " + urlDeadline.String()
-	if seen.Load() > 0 {
-		msg = name + " printed output but no sign-in URL the Agent recognises (its output format may have changed); see the Agent log"
+	n := seen.Load()
+	if a.endIfStarting(PhaseFailed, msg) {
+		log.Printf("%s: no sign-in URL after %s bytes=%d: attempt ended", prefix, d, n)
 	}
-	log.Printf("%s: still starting after %s bytes=%d: ending the attempt", prefix, urlDeadline, seen.Load())
-	a.End(PhaseFailed, msg)
 }
 
 // outputDrainWait bounds how long an exited process's output may take to reach the reader

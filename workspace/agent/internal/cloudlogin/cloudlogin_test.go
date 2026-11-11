@@ -163,6 +163,52 @@ func TestAttemptStuckInStartingFailsAtTheDeadline(t *testing.T) {
 	}
 }
 
+// The backend's own message is what the member gets, and a process that already exited is
+// left to Exited, whose message is the specific one.
+func TestDeadlineUsesTheBackendMessageAndLeavesAnExitedProcessAlone(t *testing.T) {
+	s := newStore(t)
+	a, err := s.Start("k", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "sleep 30"},
+		Timeout: 60 * time.Second, URLDeadline: 200 * time.Millisecond, NoURLMessage: "backend says no url",
+		Parse:  func(string) (string, string, error) { return "", "", nil },
+		Exited: func(error) (bool, string) { return false, "exited" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := waitFor(t, a, PhaseFailed); v.Message != "backend says no url" {
+		t.Fatalf("view = %+v", v)
+	}
+	b, err := s.Start("k2", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "exit 3"},
+		Timeout: 60 * time.Second, URLDeadline: 300 * time.Millisecond, NoURLMessage: "deadline message",
+		Parse: func(string) (string, string, error) { return "", "", nil },
+		Exited: func(error) (bool, string) {
+			time.Sleep(600 * time.Millisecond) // a slow Exited, past the deadline
+			return false, "specific exit message"
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := waitFor(t, b, PhaseFailed); v.Message != "specific exit message" {
+		t.Fatalf("view = %+v, want Exited's message", v)
+	}
+}
+
+// endIfStarting never undoes an attempt that already showed its URL.
+func TestEndIfStartingLeavesAnAuthorizingAttempt(t *testing.T) {
+	s := newStore(t)
+	a := s.Begin("k", "", "prod", func() {})
+	a.authorize("https://x.invalid/", "ABCD-EFGH")
+	if a.endIfStarting(PhaseFailed, "late") {
+		t.Fatal("endIfStarting ended an authorizing attempt")
+	}
+	if v := a.View(); v.Phase != PhaseAuthorize || v.URL == "" {
+		t.Fatalf("view = %+v", v)
+	}
+}
+
 // A login that already showed its URL is left alone by the deadline.
 func TestAttemptThatShowedItsURLSurvivesTheDeadline(t *testing.T) {
 	old := urlDeadline
