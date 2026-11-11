@@ -61,6 +61,7 @@ func HandleServersGet(w http.ResponseWriter, r *http.Request) {
 		Servers:         out,
 		TenantFetchedAt: reg.TenantFetchedAt,
 		Shadowed:        reg.Shadowed,
+		WatchSources:    reg.WatchSources,
 	})
 }
 
@@ -231,9 +232,12 @@ func writeMCPErr(w http.ResponseWriter, err error) {
 // at nil alike. The same-named fields on mcpreg.Registry do carry `omitempty`, but that is
 // a different type on a different path and must not be copied here. Shadowed can be nil
 // (i.e. `null`); normalizing it to an empty slice would emit `[]`, which is not the same
-// value.
+// value. watchSources was added later, as an omitempty pointer.
 type mcpRegistryWire struct {
 	Servers         []mcpServerWire `json:"servers"`
 	TenantFetchedAt int64           `json:"tenantFetchedAt"`
 	Shadowed        []string        `json:"shadowed"`
+	// WatchSources is the tenant switch for member-added watch sources; absent until a tenant
+	// snapshot exists, so the Console can tell "off" from "unknown".
+	WatchSources *bool `json:"watchSources,omitempty"`
 }

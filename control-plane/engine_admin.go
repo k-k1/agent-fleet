@@ -55,7 +55,7 @@ type engineAdminAPI struct {
 // The message names the far deployment rather than saying "not allowed": the operator's next act
 // is to go and do it over there, and a refusal that does not say where is a dead end.
 func (a engineAdminAPI) refuseBorrowedWrite(w http.ResponseWriter, e *engineRuntimeState, what string) bool {
-	if e == nil || !e.def.remote() {
+	if e == nil || !e.def.Remote() {
 		return false
 	}
 	writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineNotOurs,
@@ -103,7 +103,7 @@ func (a engineAdminAPI) putIdle(w http.ResponseWriter, r *http.Request, ident st
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
-	if e.def.notManagedHere() {
+	if e.def.NotManagedHere() {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 			"engine " + key + " is externally managed and has no local idle timer"})
 		return
@@ -184,7 +184,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	// engine has no box here to stop (ADR 0076 decision 5). Refused rather than silently stored
 	// as `on`: the setting outlives this row's lifecycle, so a stored `ondemand` would come back
 	// as a real mode the day the role moves into the stack.
-	if val == engineModeOnDemand && e.def.notManagedHere() {
+	if val == engineModeOnDemand && e.def.NotManagedHere() {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
 			"engine " + key + " is externally managed: it is on or off, never on-demand"})
 		return

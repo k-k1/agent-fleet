@@ -186,7 +186,7 @@ func (r *engineRegistry) applyComfyPanel(u, key string) bool {
 	r.comfyMu.Lock()
 	defer r.comfyMu.Unlock()
 	cur := r.get("image")
-	if cur != nil && !cur.def.notManagedHere() {
+	if cur != nil && !cur.def.NotManagedHere() {
 		return false
 	}
 	var next *engineRuntimeState
@@ -204,7 +204,7 @@ func (r *engineRegistry) applyComfyPanel(u, key string) bool {
 	// Read again under the lock that guards the swap: the table reloader can adopt a managed image
 	// row (and start its controller) while buildComfy ran, and overwriting it would leave that
 	// controller driving a GPU nothing in the registry can reach.
-	if now := r.byKey["image"]; now != nil && !now.def.notManagedHere() {
+	if now := r.byKey["image"]; now != nil && !now.def.NotManagedHere() {
 		return false
 	}
 	if next != nil {
@@ -213,7 +213,7 @@ func (r *engineRegistry) applyComfyPanel(u, key string) bool {
 	}
 	// Cleared with nothing to fall back to. A borrowed row is left alone — the panel never put it
 	// there — and anything else the panel or the environment synthesised goes.
-	if now := r.byKey["image"]; now != nil && !now.def.remote() {
+	if now := r.byKey["image"]; now != nil && !now.def.Remote() {
 		delete(r.byKey, "image")
 	}
 	return true
@@ -222,7 +222,7 @@ func (r *engineRegistry) applyComfyPanel(u, key string) bool {
 // engineComfyManaged reports whether a managed table row holds the image role.
 func (r *engineRegistry) engineComfyManaged() bool {
 	e := r.get("image")
-	return e != nil && !e.def.notManagedHere()
+	return e != nil && !e.def.NotManagedHere()
 }
 
 // engineComfyLanStatus is what the panel reads, as GET /api/admin/engines' `comfy_lan` and as the
@@ -270,13 +270,13 @@ func (a engineAdminAPI) comfyLanStatus(ctx context.Context) engineComfyLanStatus
 	if e := a.reg.get("image"); e != nil {
 		out.URL = e.def.URL
 		switch {
-		case !e.def.notManagedHere():
+		case !e.def.NotManagedHere():
 			out.Source = "table"
-		case e.def.remote():
+		case e.def.Remote():
 			out.Source = "remote"
-		case e.def.origin == engineOriginPanel:
+		case e.def.Origin == engineOriginPanel:
 			out.Source = "panel"
-		case e.def.origin == engineOriginEnv:
+		case e.def.Origin == engineOriginEnv:
 			out.Source = "env"
 		default:
 			out.Source = "table"
@@ -286,9 +286,9 @@ func (a engineAdminAPI) comfyLanStatus(ctx context.Context) engineComfyLanStatus
 		fb := a.reg.comfyFallback
 		out.FallbackURL = fb.URL
 		switch {
-		case fb.origin == engineOriginEnv:
+		case fb.Origin == engineOriginEnv:
 			out.FallbackSource = "env"
-		case fb.remote():
+		case fb.Remote():
 			out.FallbackSource = "remote"
 		default:
 			out.FallbackSource = "table"
@@ -451,7 +451,7 @@ var errEngineRedirectOffOrigin = errors.New("the engine answered with a redirect
 // port (and onto a subdomain), so a 302 from the saved URL would hand the panel's key to a
 // machine nobody saved. Other rows keep net/http's own redirect rules.
 func engineDo(eng *engineRuntimeState, req *http.Request) (*http.Response, error) {
-	if eng != nil && eng.def.origin == engineOriginPanel {
+	if eng != nil && eng.def.Origin == engineOriginPanel {
 		req = req.WithContext(context.WithValue(req.Context(), engineOriginPinKey{}, true))
 	}
 	return engineClient.Do(req)

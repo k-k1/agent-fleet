@@ -174,7 +174,12 @@ describe("HomeBreakdownSection", () => {
     // 10 + 2 + 2 GiB from the cleanups that exist.
     expect(text).toContain("今ある掃除で約 14 GB 空けられます");
     expect(text).toContain("今 10 GB 空けられます。");
-    expect(text).toContain("これだけを消す機能はまだありません");
+    expect(text).toContain("動いていない作業コピーのビルド成果物");
+    // A working copy with build output points at the cleanup that can drop it; one that could
+    // not be judged does not.
+    const drops = buttons().filter((b) => b.textContent === "ビルド成果物を削除…");
+    expect(drops.length).toBeGreaterThan(0);
+    expect(drops.length).toBe(result.repos.filter((r) => !r.unjudged && r.regenerable > 0).length);
     expect(text).toContain(".gradle");
     expect(text).toContain("ビルド成果物 1.8 GB");
     expect(text).toContain("git リポジトリとして読めないため");

@@ -91,9 +91,12 @@ export function McpTab() {
     if (running) reload();
   }, [running, reload]);
 
+  // Definite false only; see Registry.watchSources.
+  const watchBlocked = reg?.watchSources === false;
+
   const save = async (f: Form) => {
     const path = f.id ? `api/mcp-servers/${encodeURIComponent(f.id)}` : "api/mcp-servers";
-    const res = await apiJSON(path, f.id ? "PUT" : "POST", bodyOf(f));
+    const res = await apiJSON(path, f.id ? "PUT" : "POST", bodyOf(f, watchBlocked));
     if (res && res.error) {
       toast(tr("mcp.save_failed", { msg: errText(res.error) }));
       return false;
@@ -109,6 +112,8 @@ export function McpTab() {
       const { [key]: _drop, ...rest } = p;
       return rest;
     });
+    // Unlike save, the probe keeps targets.watch: /test is not behind the CP's watch gate, and the
+    // Agent narrows the probe environment for a watch source.
     const res = await apiJSON("api/mcp-servers/test", "POST", bodyOf(f));
     setProbes((p) => ({ ...p, [key]: probeOfAnswer(res, (e) => errText(e as any)) }));
   };
@@ -236,6 +241,7 @@ export function McpTab() {
                   egress={egress}
                   onProposed={recheckEgress}
                   submitLabel={tr("common.save")}
+                  watchBlocked={watchBlocked}
                 />
               </li>
             ) : secretFor && secretFor.id === s.id ? (
@@ -271,6 +277,7 @@ export function McpTab() {
             egress={egress}
             onProposed={recheckEgress}
             submitLabel={tr("mcp.add")}
+            watchBlocked={watchBlocked}
           />
         </div>
       ) : (

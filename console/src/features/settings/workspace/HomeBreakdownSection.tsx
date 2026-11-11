@@ -216,6 +216,11 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
                           size: humanSize(r.regenerable),
                         })}
                   </span>
+                  {!r.unjudged && r.regenerable > 0 && (
+                    <Button small icon="trash" onClick={openTrash}>
+                      {tr("machine.home_repo_drop")}
+                    </Button>
+                  )}
                   <PlaceLine place={r} />
                 </Row>
               ))}

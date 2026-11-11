@@ -232,7 +232,7 @@ func (a engineAdminAPI) discoverModelsGrant(w http.ResponseWriter, r *http.Reque
 	// A borrowed row's catalogue is a read-only mirror of the far deployment's (ADR 0079
 	// decision 7), and there is nothing on THIS deployment's network behind it — the LAN it
 	// would dial is the far side's, not this one's (ADR 0082 decision 7).
-	if e.def.remote() {
+	if e.def.Remote() {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineNotOurs,
 			"engine " + key + " is borrowed from " + e.def.URL + ", and its catalogue is a read-only" +
 				" mirror — there is nothing on this deployment's own network to discover"})
@@ -242,7 +242,7 @@ func (a engineAdminAPI) discoverModelsGrant(w http.ResponseWriter, r *http.Reque
 	// directly. A managed comfy row is asleep most of the time and starting it to answer this
 	// button would be exactly the GPU purchase decision 7 forbids; a non-comfy provider (an LLM
 	// role, or the retired sdcpp vocabulary) has no /object_info at all.
-	if !e.def.external() || e.def.Provider != "comfy" {
+	if !e.def.External() || e.def.Provider != "comfy" {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineDiscoverUnsupported,
 			"engine " + key + " is not an external ComfyUI row — discovery only reads a LAN machine" +
 				" this deployment does not manage and never starts"})

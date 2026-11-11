@@ -52,6 +52,7 @@ func onlyMemoryTools(t *testing.T, names map[string]bool) {
 }
 
 func TestMCPMemoryResourceDiscovery(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	if !isAuthExempt(mcpOAuthMemPRMPath) {
 		t.Fatal("the memory endpoint's metadata must be reachable without a session")
@@ -77,9 +78,9 @@ func TestMCPMemoryResourceDiscovery(t *testing.T) {
 }
 
 func TestMCPMemoryResourceOffIs404AndBare401(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
-	t.Setenv("AF_MCP_OAUTH", "")
-	e.api = newMCPOAuthAPI(config{mgr: e.mgr, brand: newBrandResolver(brandConfig{}, nil)})
+	e.api = newMCPOAuthAPIWith(config{mgr: e.mgr, brand: newBrandResolver(brandConfig{}, nil)}, mcpOAuthSwitches{mcpEnabled: true})
 	e.mux = http.NewServeMux()
 	e.api.mount(e.mux)
 	e.api.mountMCP(e.mux, mcpsrv.New(cpDeps{e.mgr}))
@@ -94,6 +95,7 @@ func TestMCPMemoryResourceOffIs404AndBare401(t *testing.T) {
 // An OAuth connection made for /mcp/memory lists and calls only the memory tools there, is
 // refused at /mcp, and a /mcp connection is refused at /mcp/memory.
 func TestMCPMemoryResourceOAuthTokensAreSplit(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	e.allowExternalMemory()
 	id := e.registerClient(loopbackCB)
@@ -143,6 +145,7 @@ func TestMCPMemoryResourceOAuthTokensAreSplit(t *testing.T) {
 
 // A refresh keeps the grant's resource, and asking to move it is invalid_target.
 func TestMCPMemoryResourceRefreshKeepsTheBinding(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	e.allowExternalMemory()
 	id := e.registerClient(loopbackCB)
@@ -177,6 +180,7 @@ func TestMCPMemoryResourceRefreshKeepsTheBinding(t *testing.T) {
 // A code is redeemed only for the resource it was issued for, and an unknown resource is refused
 // at authorize.
 func TestMCPMemoryResourceCodeIsBoundToItsResource(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	verifier, challenge := pkcePair()
@@ -197,6 +201,7 @@ func TestMCPMemoryResourceCodeIsBoundToItsResource(t *testing.T) {
 
 // A memory grant does not make a silent (prompt=none) /mcp grant, nor the reverse.
 func TestMCPMemoryResourcePromptNoneIsPerResource(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	_, challenge := pkcePair()
@@ -217,6 +222,7 @@ func TestMCPMemoryResourcePromptNoneIsPerResource(t *testing.T) {
 }
 
 func TestMCPMemoryResourceConsentPageSaysMemoryOnly(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient("https://claude.ai/api/mcp/auth_callback")
 	_, challenge := pkcePair()
@@ -236,6 +242,7 @@ func TestMCPMemoryResourceConsentPageSaysMemoryOnly(t *testing.T) {
 // PATs get the same split: a memory PAT works only at /mcp/memory, a /mcp PAT (every token
 // issued before the split included) only at /mcp.
 func TestMCPMemoryResourcePATsAreSplit(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	e.allowExternalMemory()
 	pats := newPATAPI(e.mgr)
@@ -287,6 +294,7 @@ func TestMCPMemoryResourcePATsAreSplit(t *testing.T) {
 
 // "MCP tokens & apps" reads the binding of a connection from the list.
 func TestMCPMemoryResourceConnectedListNamesTheResource(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	e.connectTo(id, loopbackCB, "read", testMemResource)

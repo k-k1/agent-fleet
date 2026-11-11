@@ -180,7 +180,7 @@ var engineUsageClient = newAgentClient(10*time.Second, newAgentTransport())
 func engineUsageRowFor(def engineDef, claims engineSessionClaims, u engineUsage,
 	took time.Duration, ok bool) (engineUsageRow, bool) {
 
-	if def.api() != engineAPIChat {
+	if def.APIFamily() != engineAPIChat {
 		return engineUsageRow{}, false
 	}
 	row := engineUsageRow{

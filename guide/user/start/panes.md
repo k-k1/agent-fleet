@@ -73,4 +73,4 @@ Managed sessions have the chat view only ([Start a session](../sessions/start.md
 
 - [Use the keyboard and the command palette](shortcuts.md): keys for moving between panes
 - [Find your way around the screen](console-tour.md)
-- [Icons, badges, and menus](../../member/badges-and-menus.md): what Ctrl+click opens, item by item
+- [Icons, badges and menus](../../ref/console-ui.md): the pane buttons and the right-click menu items

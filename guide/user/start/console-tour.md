@@ -87,5 +87,5 @@ What you open is shown in a pane of the main area. When nothing is open, **Home*
 - [Use the keyboard and the command palette](shortcuts.md)
 - [Split the screen into panes](panes.md)
 - [Use it on a phone](phone.md)
-- [Icons, badges, and menus](../../member/badges-and-menus.md): what the marks on screen mean
+- [Icons, badges and menus](../../ref/console-ui.md): what the marks on screen mean
 - [Settings](../../ref/settings.md): every settings tab

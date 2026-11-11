@@ -73,4 +73,4 @@ source_of_truth: "Console のメイン領域と、上部バーの「外観」"
 
 - [キーボードとコマンドパレットで操作する](shortcuts.ja.md)：ペインを移るキー
 - [画面の見かた](console-tour.ja.md)
-- [アイコン・バッジ・メニュー](../../member/badges-and-menus.ja.md)：Ctrl+クリックで開くときの項目ごとの違い
+- [アイコン・バッジ・メニュー](../../ref/console-ui.ja.md)：ペインのボタンと右クリックメニューの項目

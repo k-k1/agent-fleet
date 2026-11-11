@@ -11,6 +11,9 @@
 //     Below the two stages, unnumbered (③ is the shelf's final reclaim): the cache left
 //     behind by sessions that are gone for good, one sized row per cache — the only delete
 //     here with no trash behind it, so it says so.
+//     Last, also unnumbered: build output (node_modules, target, ...) inside dormant
+//     worktrees, surveyed on demand and dropped one working copy at a time after a dry run
+//     (WorktreeOutputSection). Never part of the checkboxes or the one-shots above.
 //   Trash — the gz safety net that delete_session/delete_branch write before removing
 //     anything: restore (undo) or purge (reclaim for good).
 import { useEffect, useMemo, useState } from "react";
@@ -27,6 +30,7 @@ import { cleanupReasonParts } from "./cleanupReason.ts";
 import { groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
 import { useSessionUI } from "./ui.ts";
 import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
+import { WorktreeOutputSection } from "./WorktreeOutputSection.tsx";
 import type { Session } from "../../types/session.ts";
 
 /** Refusals of a deleted worktree's restore that a new branch name gets past — the recreate
@@ -670,6 +674,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                 )}
               </>
             )}
+            <WorktreeOutputSection onChanged={onChanged} />
           </div>
         )}
 

@@ -320,7 +320,8 @@ func homeRoots(home string) map[string]homeusage.Root {
 		gitx.ReposRoot(): {Cat: homeusage.CatSource},
 	}
 	for _, c := range toolCaches {
-		if d := c.dir(); strings.HasPrefix(d, home+string(filepath.Separator)) {
+		// A partial row (Gradle) frees only part of its folder, so the folder is not "reclaimable".
+		if d := c.dir(); c.plan == nil && strings.HasPrefix(d, home+string(filepath.Separator)) {
 			r[d] = homeusage.Root{Cat: homeusage.CatToolCache, Part: c.Name, Reclaimable: true}
 		}
 	}
