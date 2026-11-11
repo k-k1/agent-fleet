@@ -798,3 +798,52 @@ func TestSetEnabledTenantRecordsOptOut(t *testing.T) {
 		t.Fatal("opt-out not cleared")
 	}
 }
+
+// The Console reads the tenant switch from the registry snapshot: a fetched snapshot carries a
+// definite true/false, and one that was never fetched carries none, so "unknown" is not "off".
+func TestComposeCarriesWatchSources(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		reg := compose(&secrets.Data{}, tenantCache{FetchedAt: 10, WatchSources: on}, map[string]bool{})
+		if reg.WatchSources == nil || *reg.WatchSources != on {
+			t.Fatalf("WatchSources = %v, want %v", reg.WatchSources, on)
+		}
+		b, _ := json.Marshal(reg)
+		if want := fmt.Sprintf(`"watchSources":%v`, on); !strings.Contains(string(b), want) {
+			t.Fatalf("wire %s lacks %s", b, want)
+		}
+	}
+	reg := compose(&secrets.Data{}, tenantCache{}, map[string]bool{})
+	if reg.WatchSources != nil {
+		t.Fatalf("an unfetched snapshot reports %v", *reg.WatchSources)
+	}
+}
+
+// While the tenant blocks watch sources an edit that cannot send targets.watch keeps the stored
+// mark (the definition stays paused); once the switch is on, an explicit omission clears it.
+func TestUpdateKeepsWatchMarkWhileBlocked(t *testing.T) {
+	withTempHome(t)
+	d, err := Create(ServerDef{Name: "wiki", Transport: TransportHTTP, URL: "https://mcp.example.com/mcp",
+		Enabled: true, Targets: Targets{Session: true, Watch: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit := func(label string) ServerDef {
+		in := d
+		in.Label = label
+		in.Targets.Watch = false
+		out, err := Update(d.ID, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if out := edit("a"); !out.Targets.Watch {
+		t.Fatal("the watch mark was dropped while the tenant blocks watch sources")
+	}
+	if err := setWatchSources(true); err != nil {
+		t.Fatal(err)
+	}
+	if out := edit("b"); out.Targets.Watch {
+		t.Fatal("the mark survived an edit that unticked it with the switch on")
+	}
+}

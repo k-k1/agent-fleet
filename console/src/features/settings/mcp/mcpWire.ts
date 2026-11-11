@@ -79,6 +79,10 @@ export interface Registry {
   servers: McpServer[];
   tenantFetchedAt?: number;
   shadowed?: string[];
+  // The tenant switch for member-added watch sources. Only a definite false blocks the form:
+  // absent (an older Agent, no tenant snapshot yet, or a failed load) leaves the checkbox usable, because
+  // the CP refuses a forbidden save anyway and a wrongly disabled box could never be undone.
+  watchSources?: boolean;
 }
 
 // needsMemberSecrets reports whether a row is waiting on THIS member to type a header
@@ -414,14 +418,14 @@ export const formOf = (s: McpServer): Form => ({
 // bodyOf builds the wire definition. The transport decides which half is sent: the
 // agent refuses a definition carrying both (a stdio server with a URL is a mistake,
 // not a merge), so the unused half is omitted rather than sent empty.
-export const bodyOf = (f: Form): Record<string, unknown> => {
+export const bodyOf = (f: Form, watchBlocked = false): Record<string, unknown> => {
   const base: Record<string, unknown> = {
     id: f.id || undefined,
     name: f.name.trim(),
     label: f.label.trim(),
     transport: f.transport,
     enabled: f.enabled,
-    targets: { assistant: f.assistant, session: f.session, ...(f.watch ? { watch: true } : {}) },
+    targets: { assistant: f.assistant, session: f.session, ...(f.watch && !watchBlocked ? { watch: true } : {}) },
     kinds: f.kinds,
     timeoutMs: Number(f.timeoutMs) || 0,
   };
