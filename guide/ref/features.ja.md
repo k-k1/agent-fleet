@@ -173,7 +173,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
 | 配備形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
-| 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [operator 02](../operate/02-install.ja.md) / [アップグレードする](../operate/run/upgrade.ja.md) / [バックアップして復元する](../operate/run/backup-restore.ja.md) |
+| 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [インストールする](../operate/install.ja.md) / [アップグレードする](../operate/run/upgrade.ja.md) / [バックアップして復元する](../operate/run/backup-restore.ja.md) |
 | 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 04](../operate/04-secure.ja.md) |
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 04](../operate/04-secure.ja.md#egress-統制の運用) |
 | MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [operator 04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ) |

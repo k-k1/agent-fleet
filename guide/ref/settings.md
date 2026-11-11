@@ -88,7 +88,7 @@ wherever the Control Plane serves the engine panel, **Cloud cost** on AWS.
 
 | Section | Configures | Details |
 |---|---|---|
-| Tenants | creating tenants; each tenant's limits and idle auto-stop, its use of the self-hosted engines and its model-ingest grant, its members | [operate/02](../operate/02-install.md#7-the-first-tenant-and-members) |
+| Tenants | creating tenants; each tenant's limits and idle auto-stop, its use of the self-hosted engines and its model-ingest grant, its members | [Install Agent Fleet](../operate/install.md#7-welcome-members) |
 | Sign-in method register | approving the sign-in methods tenants define for themselves | [operate/05](../operate/05-signin.md#7-a-sign-in-method-a-tenant-defines-itself) |
 | Egress | outbound traffic from workspaces: observe (log-only) or enforce, the allowlist, members' proposals | [operate/04](../operate/04-secure.md#operating-egress-control) |
 | MCP sign-in hosts | which client hosts the MCP OAuth server trusts (deployment-wide) | [operate/04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only) |
