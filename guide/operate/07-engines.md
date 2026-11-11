@@ -10,8 +10,8 @@ English | [日本語](07-engines.ja.md)
 The fleet's own GPU engines and the speech engine are run from one place, the Admin modal, which only a
 super_admin sees. This chapter is that panel: what each mode costs, the GPU class, taking models in,
 reading the state. Where an engine comes from is a different question, with a chapter each:
-[08 your own ComfyUI](08-image-engine.md), [09 another deployment's engines](09-borrowed-engine.md) and
-[10 your own llama.cpp](10-llm-lan.md). A tenant administrator sees a reduced model screen only if you
+[08 your own ComfyUI](engines/comfyui.md), [09 another deployment's engines](engines/borrow.md) and
+[10 your own llama.cpp](engines/llama-cpp.md). A tenant administrator sees a reduced model screen only if you
 granted it ([Choose who may use the inference engines and which models](../admin/resources/engines.md#take-models-in)).
 
 ## Inference engines (self-hosted GPUs — super_admin only)
@@ -235,7 +235,7 @@ generation, no strength, no size choice), from up to three reference pictures. *
 both generates and edits (up to ten references) and **shares no file with them**: its
 autoencoder is a different one that the loader accepts and decodes to noise, so its parts are
 taken in as files of their own even where the edit families' are already held. The ComfyUI version a
-Qwen-Image 2.1 row needs is covered under [registering models by hand](08-image-engine.md#registering-the-models-by-hand).
+Qwen-Image 2.1 row needs is covered under [registering models by hand](engines/comfyui.md#register-the-models).
 
 When a press is refused because something already holds its destination, the
 card names it (**held by** the registered row, the ingest job, the bucket object or the running
@@ -315,7 +315,7 @@ The **Read aloud** section of the Admin modal has two jobs: it starts and stops 
   only turns the route on or off, and the engine itself is never started or stopped from here. A
   deployment whose VOICEVOX is neither ECS-managed nor reachable has nothing to route to, and the switch
   stays at disabled. A
-  speech engine cannot be borrowed from another deployment ([09](09-borrowed-engine.md)).
+  speech engine cannot be borrowed from another deployment ([09](engines/borrow.md)).
 - **The dictionary** applies to everyone's text-to-speech (a member's personal dictionary overrides
   the same spelling): one `spelling=reading` per line, `#` for a comment. Other members pick up a saved
   change on their next Console load. When a product name or an in-house term is consistently

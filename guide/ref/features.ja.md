@@ -193,7 +193,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
 | 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
 | 音声エンジンと共通の読み仮名辞書 | 配備管理者（super_admin）| 管理 → 読み上げ | [operator 07](../operate/07-engines.ja.md#読み上げ音声エンジンと共通の読み仮名辞書) |
-| 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 08](../operate/08-image-engine.ja.md) |
-| 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 09](../operate/09-borrowed-engine.ja.md) |
-| 自前の llama.cpp でのチャット推論 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 10](../operate/10-llm-lan.ja.md) |
+| 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 08](../operate/engines/comfyui.ja.md) |
+| 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 09](../operate/engines/borrow.ja.md) |
+| 自前の llama.cpp でのチャット推論 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 10](../operate/engines/llama-cpp.ja.md) |
 | コンテナ内のユーザーガイド | — | 自動 | [roles.md](roles.ja.md) |

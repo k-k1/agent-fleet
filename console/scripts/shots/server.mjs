@@ -81,8 +81,10 @@ const exact = {
   // admin modal (guide scene operate-brand). Every other run stays a plain member or tenant admin.
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
-    // The operate guide's pages (SHOT_OPERATE_RUN, SHOT_OPERATE_SIGNIN) are the deployment administrator's.
-    super_admin: process.env.SHOT_OPERATE_RUN === "1" || !!process.env.SHOT_OPERATE_SIGNIN,
+    // The operate guide's pages (SHOT_OPERATE_RUN, SHOT_OPERATE_SIGNIN, SHOT_OPERATE_ENGINES) are
+    // the deployment administrator's.
+    super_admin:
+      process.env.SHOT_OPERATE_RUN === "1" || !!process.env.SHOT_OPERATE_SIGNIN || !!process.env.SHOT_OPERATE_ENGINES,
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
   // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
@@ -302,6 +304,9 @@ const exact = {
         "/api/admin/tenants/demo/watch-sources": () => ({ enabled: false }),
       }
     : {}),
+  // Admin › Inference engines for the operate engine pages (SHOT_OPERATE_ENGINES): a deployment
+  // whose only image engine is a ComfyUI on the LAN, set from the panel over an AF_COMFY_URL.
+  ...(process.env.SHOT_OPERATE_ENGINES ? { "/api/admin/engines": () => fx.operateEnginesLan() } : {}),
   // Admin › Appearance for the operate pages (SHOT_OPERATE_RUN): a staging deployment branded
   // violet from this screen, over an environment that names none.
   ...(process.env.SHOT_OPERATE_RUN === "1"

@@ -195,7 +195,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Hugging Face and Civitai tokens for gated downloads | deployment admin (super_admin) | Admin → API tokens | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
 | Civitai Red (the NSFW sister domain) as a search source | deployment admin (super_admin), where the deployment was given it | Admin → API tokens | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
 | The speech engine and the shared pronunciation dictionary | deployment admin (super_admin) | Admin → Read aloud | [operator 07](../operate/07-engines.md#read-aloud-the-speech-engine-and-the-shared-dictionary) |
-| Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 08](../operate/08-image-engine.md) |
-| Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 09](../operate/09-borrowed-engine.md) |
-| Chat inference on a llama.cpp of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 10](../operate/10-llm-lan.md) |
+| Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 08](../operate/engines/comfyui.md) |
+| Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 09](../operate/engines/borrow.md) |
+| Chat inference on a llama.cpp of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 10](../operate/engines/llama-cpp.md) |
 | The user guide inside containers | — | automatic | [roles.md](roles.md) |

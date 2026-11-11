@@ -55,16 +55,21 @@ Anything not here yet is in "Chapters not yet moved" below. The commands are in 
 | [Find the cause from the symptom](diagnose/checklist.md) | Read the log and health, and narrow the cause down from the symptom table: the three constraints of driving Docker from a container, TLS, the FAQ |
 | [Cannot log in](diagnose/cannot-login.md) | Find out why sign-in is refused, a button is missing, or a removed person still gets in |
 
+## Inference engines
+
+| Page | What you can do |
+|---|---|
+| [Generate images on your own ComfyUI](engines/comfyui.md) | Point the image engine at a ComfyUI on your network, register its models and close the routes to it |
+| [Borrow another deployment's engines](engines/borrow.md) | Use the chat and image engines of an Agent Fleet on AWS from a deployment on your own host, and issue the token as the lender |
+| [Chat on a llama.cpp on your LAN](engines/llama-cpp.md) | Point the chat engine at a llama-server on your network |
+
 ## Chapters not yet moved
 
 - [04 Securing it](04-secure.md): threat model, the remaining risks, egress control, MCP sign-in and its trusted hosts, the development sign-in, offboarding, reporting channel
 - [07 Inference engines and read aloud](07-engines.md): the Admin panel for the deployment's own GPU engines, the speech engine and the shared dictionary
-- [08 Image generation on your own ComfyUI](08-image-engine.md): pointing sessions at a ComfyUI on your own network
-- [09 Borrowing another deployment's engines](09-borrowed-engine.md): using an AWS fleet's llm and image engines from a deployment on your own host
-- [10 Chat inference on your own llama.cpp](10-llm-lan.md): pointing sessions' chat at a llama.cpp on your own network
 - [11 The ecs-ec2 slot pool](11-slot-pool.md): replacing slots, memory protection for the management plane, stopping a wedged slot
 - [12 Keys at rest](12-keys.md): AWS KMS custody, re-sealing earlier values, a key of its own for each home
 
-The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md)
+The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md), [08 Image generation on your own ComfyUI](08-image-engine.md), [09 Borrowing another deployment's engines](09-borrowed-engine.md), [10 Chat inference on your own llama.cpp](10-llm-lan.md)
 
 What each target supports is in [Deployment targets](../ref/deploy-targets.md); who may do what is in [Roles](../ref/roles.md).

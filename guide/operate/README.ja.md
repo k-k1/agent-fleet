@@ -55,16 +55,21 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [症状から原因を探す](diagnose/checklist.ja.md) | ログとヘルスを見て、症状の表から原因を絞る。コンテナから Docker を動かす 3 つの制約、TLS、よくある質問 |
 | [ログインできない](diagnose/cannot-login.ja.md) | サインインが拒否される・ボタンが出ない・外した人がまだ使えるときに、原因を探す |
 
+## 推論エンジン
+
+| ページ | できること |
+|---|---|
+| [自前の ComfyUI で画像を生成する](engines/comfyui.ja.md) | 画像エンジンを自分のネットワークの ComfyUI に向け、モデルを登録し、届く経路を閉じる |
+| [別のデプロイのエンジンを借りる](engines/borrow.ja.md) | 自分のホストの配備から、AWS の Agent Fleet のチャットと画像のエンジンを使う。貸す側としてトークンを発行する |
+| [LAN の llama.cpp でチャットする](engines/llama-cpp.ja.md) | チャットのエンジンを自分のネットワークの llama-server に向ける |
+
 ## まだ移していない章
 
 - [04 守る](04-secure.ja.md)：脅威モデル、残るリスク、外向き通信の統制、MCP のサインインと信頼するホスト、開発用のサインイン、オフボーディング、報告の経路
 - [07 推論エンジンと読み上げ](07-engines.ja.md)：配備自前の GPU エンジンの管理パネル、音声エンジンと共通の辞書
-- [08 自前の ComfyUI で画像を生成する](08-image-engine.ja.md)：自分のネットワークの中の ComfyUI をセッションから使わせる
-- [09 別の配備のエンジンを借りる](09-borrowed-engine.ja.md)：自分のホストの配備から、AWS のフリートの llm / image エンジンを使う
-- [10 自前の llama.cpp でチャットの推論を担う](10-llm-lan.ja.md)：自分のネットワークの中の llama.cpp を、セッションのチャットに使わせる
 - [11 ecs-ec2 のスロットプール](11-slot-pool.ja.md)：スロットの入れ替え、管理プレーンのメモリの保護、動かなくなったスロットの停止
 - [12 保存時の鍵](12-keys.ja.md)：AWS KMS による鍵の管理、以前の値の封じ直し、ホームごとの専用の鍵
 
-次の章の内容は、上のページに移りました: [01 配備形態を選ぶ](01-choose.ja.md)・[02 初期構築](02-install.ja.md)・[03 動かし続ける](03-run.ja.md)・[05 サインイン方式](05-signin.ja.md)・[06 切り分ける](06-diagnose.ja.md)
+次の章の内容は、上のページに移りました: [01 配備形態を選ぶ](01-choose.ja.md)・[02 初期構築](02-install.ja.md)・[03 動かし続ける](03-run.ja.md)・[05 サインイン方式](05-signin.ja.md)・[06 切り分ける](06-diagnose.ja.md)・[08 自前の ComfyUI で画像を生成する](08-image-engine.ja.md)・[09 別の配備のエンジンを借りる](09-borrowed-engine.ja.md)・[10 自前の llama.cpp でチャットの推論を担う](10-llm-lan.ja.md)
 
 各形態が何に対応しているかは [配備形態](../ref/deploy-targets.ja.md)、誰が何をできるかは [ロールとできること](../ref/roles.ja.md) にあります。
