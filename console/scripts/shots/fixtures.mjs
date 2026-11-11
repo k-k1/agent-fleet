@@ -2211,6 +2211,63 @@ export function memoryChanges(locale, limit) {
   return { changes: changes.slice(0, limit || changes.length) };
 }
 
+// Memory snapshots, for the user guide's snapshots page (SHOT_MEMIO_GUIDE): the claude and codex
+// roots, a history with one snapshot of each trigger a reader meets, and the diff of the newest.
+// RootsPayload / Snapshot in console/src/features/settings/memory/memoryTypes.ts.
+export function memioRoots() {
+  const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString().replace(/\.\d+Z$/, "Z");
+  return {
+    roots: [
+      { kind: "claude", label: "Claude Code", scopes: true, files: 14, bytes: 23 * 1024, modified: ago(2), projects: [
+        { slug: "-home-dev-repos-webshop", display: "webshop" },
+        { slug: "-home-dev-repos-payments-api", display: "payments-api" },
+      ] },
+      { kind: "codex", label: "Codex", scopes: false, files: 3, bytes: 6 * 1024, modified: ago(30), projects: [], toggleable: true, enabled: true },
+    ],
+    auto: true,
+    autoLocked: false,
+    lastSnapshot: ago(2),
+  };
+}
+export function memioSnapshots() {
+  const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString().replace(/\.\d+Z$/, "Z");
+  const web = { slug: "-home-dev-repos-webshop", display: "webshop" };
+  const pay = { slug: "-home-dev-repos-payments-api", display: "payments-api" };
+  const s = (n, h, trigger, kinds, projects, files) => {
+    const rev = n.toString(16).padStart(2, "0") + "7d3e9b41c6a2f0e85d1c";
+    return { rev, short: rev.slice(0, 7), at: ago(h), subject: trigger, trigger, kinds, projects, files };
+  };
+  return {
+    snapshots: [
+      s(9, 2, "auto", ["claude"], [web], 9),
+      s(8, 5, "agent-memory", ["af"], [], 1),
+      s(7, 6, "agent-memory", ["af"], [], 1),
+      s(6, 20, "manual", ["claude", "codex"], [web, pay], 17),
+      s(5, 26, "pre-export", ["claude"], [pay], 5),
+      s(4, 30, "auto", ["codex"], [], 3),
+      s(3, 49, "restore", ["claude"], [web], 9),
+      s(2, 49, "pre-restore", ["claude"], [web], 9),
+      s(1, 72, "auto", ["claude"], [web, pay], 14),
+    ],
+  };
+}
+export function memioDiff(locale) {
+  const ja = locale === "ja";
+  return {
+    diff: [
+      "diff --git a/claude/-home-dev-repos-webshop/checkout-tests.md b/claude/-home-dev-repos-webshop/checkout-tests.md",
+      "--- a/claude/-home-dev-repos-webshop/checkout-tests.md",
+      "+++ b/claude/-home-dev-repos-webshop/checkout-tests.md",
+      "@@ -3,4 +3,5 @@",
+      ja ? " 決済まわりのテストは、先にモックを起動してから流す。" : " Start the payment mock before running the checkout tests.",
+      "-make mock-pay && npm test",
+      "+make mock-pay && npm test -- checkout",
+      ja ? "+モックがないと 30 秒のタイムアウトで全件失敗する。" : "+Without the mock every test fails on a 30 s timeout.",
+      "",
+    ].join("\n"),
+  };
+}
+
 // Moving a session to another agent (ADR 0115), for the "move" scene: the preview the dialog reads
 // for the Claude session in the webshop worktree. Uncommitted work and a queued follow-up travel
 // with it. MovePreview in console/src/features/sessions/move.ts.

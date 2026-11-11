@@ -126,6 +126,14 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [Discord・Slack とつなぐ](integrations/chat-bridge.ja.md) | セッションの通知を Discord や Slack で受け、返信やボタンで答える |
 | [監視ツールとつなぐ](integrations/ops-monitoring.ja.md) | PagerDuty・Grafana・CloudWatch・AWS を見ながら、アシスタントにインシデントの整理を手伝ってもらう |
 
+## メモリ
+
+| ページ | できること |
+|---|---|
+| [メモリを取り込む・書き出す](memory/import-export.ja.md) | Claude Code や muse のメモリを取り込み、Claude Code へ書き戻す。なくなったプロジェクトのメモリを移す |
+| [スナップショットでメモリを戻す](memory/snapshots.ja.md) | Claude Code や Codex 自身のメモリの履歴を見て、ある時点に戻す。別の環境へ持っていく |
+| [外部のエージェントからメモリを使う](memory/external.ja.md) | 手元の Claude Code や claude.ai から Agent Fleet のメモリを使う。手元のメモリを持ち込む |
+
 ## 画像
 
 | ページ | できること |

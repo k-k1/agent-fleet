@@ -49,7 +49,7 @@ Open **⚙Settings → "MCP tokens & apps"**, a tab in the **Outside access** gr
 - A token works only at the endpoint it was issued for. The list's "**Endpoint**" column shows which
 - There is no "no expiry". When the operator has set a shorter maximum, that number of days is offered instead
 
-Memory-only tokens and the memory setting are in [Agent memory](../../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent).
+Memory-only tokens and the memory setting are in [Use memory from an external agent](../memory/external.md).
 
 ## Register it in your own Claude Code
 
@@ -128,7 +128,7 @@ Connected to a session, it would let that session stop or delete its sibling ses
 - **Registering this deployment's `/mcp` as a session's MCP server.** It is refused with "This is this deployment's own /mcp endpoint".
   That is a guard against accidents, not a security boundary
 - **Pointing a claude.ai connector at `/mcp`.** claude.ai hands the connectors you add there to this workspace's sessions too.
-  Agent Fleet cannot see them, so it cannot refuse them either. Use a [memory-only connector](../../member/19-outside-access.md#a-memory-only-connector-for-claudeai) for claude.ai
+  Agent Fleet cannot see them, so it cannot refuse them either. Use a [memory-only connector](../memory/external.md#use-mcpmemory-for-claudeai) for claude.ai
 - **Pasting a token into a prompt, or leaving it in a file in the workspace.** Within its scope it allows the same (read: view every session; write: drive and delete them too)
 - **Putting the Console's session cookie in the workspace.** It is your signed-in authority itself
 

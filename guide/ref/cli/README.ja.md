@@ -14,9 +14,10 @@ source_of_truth: "各コマンドの --help"
 |---|---|
 | [af-aws-exec](af-aws-exec.ja.md) | AWS プロファイルの権限で、コマンドを 1 つ実行する |
 | [af-gcloud-exec](af-gcloud-exec.ja.md) | Google Cloud のプロファイルのトークンで、コマンドを 1 つ実行する |
+| [af-memory](af-memory.ja.md) | Agent Fleet のメモリの変更の一覧・取り込み・書き戻し・リントを、端末から行う |
 | [af-watch-hook](af-watch-hook.ja.md) | プライベートリポジトリに Webhook を足し、見張りに合図が届くようにする |
 
-ほかのコマンド（`af-db`、`af-memory`、`af-scratch`、`af-arch-repair`）のページは、順に追加します。
+ほかのコマンド（`af-db`、`af-scratch`、`af-arch-repair`）のページは、順に追加します。
 
 ## サインイン済みの CLI
 

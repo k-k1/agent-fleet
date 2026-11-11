@@ -36,7 +36,7 @@ Sign in to the Console from the client and allow it on the consent page; that is
 
 > [!IMPORTANT]
 > **For claude.ai, use `/mcp/memory`.** claude.ai hands the connectors you add there to this workspace's sessions too, so a
-> connector to `/mcp` would give those sessions your full authority ([A memory-only connector](../../member/19-outside-access.md#a-memory-only-connector-for-claudeai)).
+> connector to `/mcp` would give those sessions your full authority ([A memory-only connector](../memory/external.md#use-mcpmemory-for-claudeai)).
 
 To connect Claude Code, register the server for your user, then choose `/mcp` → `agent-fleet` → **Authenticate** inside Claude Code.
 
@@ -64,7 +64,7 @@ The scopes are:
 | `write` | Read, plus act: send to sessions and similar. Save and forget memory |
 
 - `read` starts selected. `write` is offered only when the app asked for `write`. You can always choose less than the app asked for
-- Memory is reachable only once you have [allowed outside use of memory](../../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent) and your tenant administrator has not blocked it
+- Memory is reachable only once you have [allowed outside use of memory](../memory/external.md#before-you-start) and your tenant administrator has not blocked it
 - `admin:dangerous` is never granted this way. Use a token if you need it
 
 Once you allow it, the client receives an access token that expires after an hour and renews it on its own to stay connected. You are not asked again.

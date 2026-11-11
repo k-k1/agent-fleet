@@ -117,8 +117,8 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | エージェントの接続 | メンバー | エージェント |
 | エージェントへの指示 | メンバー | エージェントへの指示 |
 | Agent Fleet 共有メモリの管理 | メンバー | エージェントメモリ（[18](../member/18-agent-memory.ja.md#エージェントメモリ)） |
-| エージェント自前のメモリの版管理 | メンバー | メモリのスナップショット（[18](../member/18-agent-memory.ja.md#メモリのスナップショット)） |
-| Agent Fleet の外のエージェントから Agent Fleet のメモリを使う（既定はオフ）| メンバー | エージェントメモリ → 設定（[18](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う)） |
+| エージェント自前のメモリの版管理 | メンバー | メモリのスナップショット（[スナップショットでメモリを戻す](../user/memory/snapshots.ja.md)） |
+| Agent Fleet の外のエージェントから Agent Fleet のメモリを使う（既定はオフ）| メンバー | エージェントメモリ → 設定（[外部のエージェントからメモリを使う](../user/memory/external.ja.md)） |
 | Muse Code の contributor モード（既定はオフ）| メンバー | エージェント → Muse Code → 動作（[09](../user/agents/muse.ja.md#動作設定)）
 | Git ホスティングの接続 | メンバー | Git ホスティング |
 | 内部リポジトリ | メンバー | 内部リポジトリ |

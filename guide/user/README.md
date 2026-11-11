@@ -126,6 +126,14 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Connect Discord and Slack](integrations/chat-bridge.md) | Get session notifications in Discord or Slack, and answer by replying or with buttons |
 | [Connect monitoring tools](integrations/ops-monitoring.md) | Have the assistant help sort out an incident while it looks at PagerDuty, Grafana, CloudWatch and AWS |
 
+## Memory
+
+| Page | What you can do |
+|---|---|
+| [Import and export memory](memory/import-export.md) | Bring Claude Code's or muse's memory in and write it back to Claude Code; move the memories of a project that no longer exists |
+| [Restore memory from a snapshot](memory/snapshots.md) | See the history of Claude Code's and Codex's own memory, restore a point in time, take it to another environment |
+| [Use memory from an external agent](memory/external.md) | Use Agent Fleet memory from your own Claude Code or claude.ai; bring your own memory in |
+
 ## Images
 
 | Page | What you can do |

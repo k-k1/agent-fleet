@@ -36,7 +36,7 @@ claude.ai・ChatGPT・Claude Code・Codex を、トークンを発行せずに�
 
 > [!IMPORTANT]
 > **claude.ai では `/mcp/memory` を使ってください。** claude.ai は、そこで追加したコネクタをこのワークスペースのセッションにも渡すので、
-> `/mcp` につなぐとセッションにあなたの全権限が渡ります（[メモリ専用のコネクタ](../../member/19-outside-access.ja.md#メモリ専用のコネクタclaudeai-向け)）。
+> `/mcp` につなぐとセッションにあなたの全権限が渡ります（[メモリ専用のコネクタ](../memory/external.ja.md#claudeai-には-mcpmemory-を使う)）。
 
 Claude Code でつなぐときは、サーバーを自分のユーザー用に登録してから、Claude Code の中で `/mcp` → `agent-fleet` → **Authenticate** を選びます。
 
@@ -64,7 +64,7 @@ claude mcp add --transport http --scope user agent-fleet https://<Console のア
 | `write` | 読み取りに加えて、セッションへの送信などの操作。メモリの保存と忘却 |
 
 - 最初は `read` が選ばれています。`write` は、アプリが `write` を求めたときだけ選べます。アプリの求めより狭く選ぶこともできます
-- メモリが使えるのは、あなたが [外からのメモリの利用](../../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う) を許可していて、テナント管理者がブロックしていないときだけです
+- メモリが使えるのは、あなたが [外からのメモリの利用](../memory/external.ja.md#始める前に) を許可していて、テナント管理者がブロックしていないときだけです
 - `admin:dangerous` は、この方法では渡せません。必要ならトークンを使います
 
 許可すると、クライアントは 1 時間で切れるアクセストークンを受け取り、自分で更新しながら接続を保ちます。毎回の確認はありません。

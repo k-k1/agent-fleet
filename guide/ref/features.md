@@ -119,8 +119,8 @@ explains them.
 | Agent connections | member | Agents |
 | Instructions to agents | member | Agent instructions |
 | Agent Fleet shared memory management | member | Agent memory ([18](../member/18-agent-memory.md#agent-memory)) |
-| Version history of agents' own memory | member | Memory snapshots ([18](../member/18-agent-memory.md#memory-snapshots)) |
-| Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([18](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)) |
+| Version history of agents' own memory | member | Memory snapshots ([Restore memory from a snapshot](../user/memory/snapshots.md)) |
+| Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([Use memory from an external agent](../user/memory/external.md)) |
 | Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([09](../user/agents/muse.md#behavior)) |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
