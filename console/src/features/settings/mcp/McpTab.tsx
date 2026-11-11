@@ -37,6 +37,8 @@ import { takeReturn } from "./mcpOAuth.ts";
 // running workspace — a stopped one would otherwise render an empty registry as if the
 // user had registered nothing.
 
+const WATCH_REFRESH_MS = 30_000;
+
 // --- tab -------------------------------------------------------------------------
 
 export function McpTab() {
@@ -90,6 +92,22 @@ export function McpTab() {
   useEffect(() => {
     if (running) reload();
   }, [running, reload]);
+
+  // While a form is open, re-read the registry when it opens, on window focus and every
+  // WATCH_REFRESH_MS, so a tenant administrator turning the watch-source switch on enables the
+  // checkbox without reopening the form. reload() only replaces `reg`; the form's own state is
+  // never touched, so what the member already typed survives.
+  const formOpen = form !== null;
+  useEffect(() => {
+    if (!running || !formOpen) return;
+    reload();
+    const timer = setInterval(reload, WATCH_REFRESH_MS);
+    window.addEventListener("focus", reload);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", reload);
+    };
+  }, [running, formOpen, reload]);
 
   // Definite false only; see Registry.watchSources.
   const watchBlocked = reg?.watchSources === false;
