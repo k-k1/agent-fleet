@@ -22,6 +22,7 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   setLocale("en");
   vi.useFakeTimers();
   watchSources = false;
@@ -32,6 +33,7 @@ afterEach(() => {
   host?.remove();
   root = host = null;
   vi.useRealTimers();
+  delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
 });
 
 const flush = () => act(async () => {});
@@ -85,5 +87,31 @@ describe("McpTab watch switch refresh", () => {
       vi.advanceTimersByTime(120_000);
     });
     expect(apiMock).not.toHaveBeenCalled();
+  });
+
+  it("stops polling and listening when the form is cancelled while the tab stays mounted", async () => {
+    await mountOpenForm();
+    const cancel = [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Cancel")!;
+    await act(async () => cancel.click());
+    await flush();
+    apiMock.mockClear();
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      vi.advanceTimersByTime(120_000);
+    });
+    expect(apiMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale answer that arrives after a newer one", async () => {
+    await mountOpenForm();
+    expect(box().disabled).toBe(true);
+    const resolvers: Array<(v: unknown) => void> = [];
+    apiMock.mockImplementation(() => new Promise((r) => resolvers.push(r)) as never);
+    await act(async () => window.dispatchEvent(new Event("focus"))); // A (old)
+    await act(async () => window.dispatchEvent(new Event("focus"))); // B (newer)
+    await act(async () => resolvers[1]({ servers: [], watchSources: true }));
+    expect(box().disabled).toBe(false);
+    await act(async () => resolvers[0]({ servers: [], watchSources: false }));
+    expect(box().disabled).toBe(false);
   });
 });

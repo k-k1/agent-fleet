@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, isTransientErr, errText, rawJSON } from "../../../core/api/client.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
@@ -71,10 +71,23 @@ export function McpTab() {
   // A CP 502 while the agent is still booting must not render as "no servers
   // registered" — retry, and never downgrade a snapshot we already have
   // (the useConnections / ws-boot-view lesson).
+  // Only the newest request may write `reg`: overlapping reloads (timer, focus, save) can answer
+  // out of order, and a stale answer would re-disable a checkbox a newer one had enabled.
+  // Unmount bumps it too, so a late answer never lands on an unmounted tab.
+  const reqId = useRef(0);
+  useEffect(
+    () => () => {
+      reqId.current++;
+    },
+    [],
+  );
   const reload = useCallback(() => {
+    const id = ++reqId.current;
+    const stale = () => id !== reqId.current;
     const attempt = (left: number) => {
       api("api/mcp-servers")
         .then((d) => {
+          if (stale()) return;
           if (d && !d.error) {
             setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
             return;
@@ -83,6 +96,7 @@ export function McpTab() {
           else setReg((prev) => prev ?? { servers: [] });
         })
         .catch(() => {
+          if (stale()) return;
           if (left > 0) setTimeout(() => attempt(left - 1), 1200);
           else setReg((prev) => prev ?? { servers: [] });
         });
