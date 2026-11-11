@@ -23,7 +23,7 @@ Both are cosmetic. Nothing about access or data depends on them.
 
 Open "**Admin**" from the account menu and pick "**Appearance**" under "**Deployment**". Only deployment administrators (super_admin) can open it.
 
-![Admin's "Appearance". Violet is picked among eight swatches, the label reads staging, and below them are the preview "[staging] Agent Fleet — Console" and the "Save" and "Follow the environment" buttons](../../assets/operate-brand-en-light.webp)
+![Admin's "Appearance". Violet is picked among eight swatches, the label reads staging, and below them are a preview of the title prefixed with staging and the "Save" and "Follow the environment" buttons](../../assets/operate-brand-en-light.webp)
 
 | Field | Effect |
 |---|---|

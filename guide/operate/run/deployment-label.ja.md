@@ -23,7 +23,7 @@ source_of_truth: "Console の「管理」→「見た目」、`control-plane/bra
 
 アカウントメニューの「**管理**」を開き、「**配備全体**」の「**見た目**」を選びます。配備管理者（super_admin）だけが開けます。
 
-![「管理」の「見た目」。8 色の見本から紫が選ばれ、ラベルに staging と入っていて、その下に「[staging] Agent Fleet — Console」のプレビューと「保存」「環境変数に戻す」のボタンがある](../../assets/operate-brand-ja-light.webp)
+![「管理」の「見た目」。8 色の見本から紫が選ばれ、ラベルに staging と入っていて、その下に staging のラベルが付いたタイトルのプレビューと「保存」「環境変数に戻す」のボタンがある](../../assets/operate-brand-ja-light.webp)
 
 | 項目 | 効果 |
 |---|---|
