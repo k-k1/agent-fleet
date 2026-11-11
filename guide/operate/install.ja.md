@@ -202,5 +202,5 @@ IdP ごとに、`.env` で埋めるキーが違います。
 
 - [テナントとプロビジョニングの方式を決める](install-decisions.ja.md)
 - [05 サインイン方式](05-signin.ja.md)
-- [03 動かし続ける](03-run.ja.md)：バックアップ・アップグレード・停止
+- [バックアップして復元する](run/backup-restore.ja.md)・[アップグレードする](run/upgrade.ja.md)・[アイドル停止と強制停止を使う](run/idle-stop.ja.md)
 - [04 守る](04-secure.ja.md)

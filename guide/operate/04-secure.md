@@ -53,7 +53,7 @@ risks", grouped by deployment target (every target, `docker` and `native`, `ecs`
 - **`AF_MASTER_KEY`**: **store it in a vault separate from the DB and homes, and back it up
   independently**. Never place it in the data area or in backup archives (by design it never
   goes in). For when it is generated and how to store it, see [Install Agent Fleet](install.md#2-generate-the-secrets); for the
-  identity requirement at restore time, see [03](03-run.md).
+  identity requirement at restore time, see [Back up and restore](run/backup-restore.md#restore).
   **Without it, members' stored credentials are kept unencrypted in their homes.** That is
   only meant for `AUTH=dev`: under any other `AUTH` the Control Plane still starts, but logs a
   `WARNING` at start-up and shows a warning banner in the administration screen. Setting the
@@ -477,8 +477,7 @@ client is served.
     service account, Workload Identity on GKE). Blocking that route is the cluster's job (a
     NetworkPolicy egress rule, or GKE metadata concealment); the Control Plane does not do it.
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
-    be replaced: reserve them in Admin → Slots ([03-run](03-run.md), "ecs-ec2:
-    replacing slots after a launch template change").
+    be replaced: reserve them in Admin → Slots ([11](11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change)).
 
   `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and
   stops suppressing the SDKs' metadata lookup. It removes none of the network protections above,

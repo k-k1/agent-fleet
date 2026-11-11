@@ -202,5 +202,5 @@ Only a tenant that is **already empty** can be deleted. Clear it in this order:
 
 - [Choose the tenant and provisioning model](install-decisions.md)
 - [05 Sign-in methods](05-signin.md)
-- [03 Running it](03-run.md): backup, upgrades, stopping
+- [Back up and restore](run/backup-restore.md), [Upgrade](run/upgrade.md), [Use idle stop and force-stop](run/idle-stop.md)
 - [04 Securing it](04-secure.md)

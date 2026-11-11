@@ -24,9 +24,22 @@ Anything not here yet is in "Chapters not yet moved" below. The commands are in 
 | [Install Agent Fleet](install.md) | Generate the secrets, configure sign-in, start it, sign in as the first administrator and welcome members |
 | [Choose the tenant and provisioning model](install-decisions.md) | Decide how the certificate is obtained, invitation or automatic admission, how tenants are split, and each tenant's sign-in |
 
+## Day-to-day operations
+
+| Page | What you can do |
+|---|---|
+| [Back up and restore](run/backup-restore.md) | Run `backup.sh` on a schedule and restore on another host |
+| [Upgrade](run/upgrade.md) | Move to a new release and move workspaces onto the new image |
+| [Install into a closed network](run/air-gapped.md) | Provide images, TLS, CLIs and diagram icons on a host that cannot reach the outside |
+| [Give every agent instructions](run/fleet-policy.md) | Have every agent read operating rules through the fleet policy |
+| [Run opencode's shared server](run/opencode-server.md) | Manage the server behind Terminal sessions and the opencode release |
+| [Expose it to the internet](run/public-internet.md) | Know what gets through when probes arrive, and narrow the entry |
+| [Tell deployments apart](run/deployment-label.md) | Give each deployment a colour and a label |
+| [Use idle stop and force-stop](run/idle-stop.md) | Set the auto-stop times, stop workspaces that will not stop, pause the deployment |
+
+
 ## Chapters not yet moved
 
-- [03 Running it](03-run.md): backup, restore, upgrades, air-gapped networks, idle stop and pausing
 - [04 Securing it](04-secure.md): threat model, the remaining risks, egress control, MCP sign-in and its trusted hosts, the development sign-in, offboarding, reporting channel
 - [05 Sign-in methods](05-signin.md): what to create at Google, Entra ID, GitHub or another OIDC provider, which value goes where, and how to check it
 - [06 Diagnosing it](06-diagnose.md): incident response and FAQ, including the three constraints that break silently
@@ -37,6 +50,6 @@ Anything not here yet is in "Chapters not yet moved" below. The commands are in 
 - [11 The ecs-ec2 slot pool](11-slot-pool.md): replacing slots, memory protection for the management plane, stopping a wedged slot
 - [12 Keys at rest](12-keys.md): AWS KMS custody, re-sealing earlier values, a key of its own for each home
 
-The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md)
+The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md)
 
 What each target supports is in [Deployment targets](../ref/deploy-targets.md); who may do what is in [Roles](../ref/roles.md).

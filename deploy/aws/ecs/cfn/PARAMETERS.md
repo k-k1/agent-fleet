@@ -1066,7 +1066,7 @@ Go durations (`90m`). `0` turns a timer off where the CP reads it with `interval
 seven; `AgentSilentStopAfter` is off when empty or `0`);
 an unparseable value falls back to the default, so a typo does not stop the task. The idle timers
 only matter while the reaper runs (`AF_IDLE_SWEEP_INTERVAL`, not exposed). Behaviour:
-`guide/operate/03-run.md`; defaults: `guide/ref/limits.md`.
+`guide/operate/run/idle-stop.md`; defaults: `guide/ref/limits.md`.
 
 `AgentSilentStopAfter` is the only one of these that is off by default. `update.sh` does not set
 it, so turn it on (or change it) with
@@ -1075,7 +1075,7 @@ keeps the value. To turn it off, deploy `AgentSilentStopAfter=0` (the CP reads `
 pass an empty override: `deploy --parameter-overrides AgentSilentStopAfter=` did not clear a value on a
 live stack; to return to empty use `clear-params.sh` (README, "Clearing a parameter"). It needs `AF_AGENT_SILENT_AFTER`
 (default `3m`, not exposed as a parameter) to be on; see
-`guide/operate/03-run.md#stopping-a-silent-agent-automatically-off-by-default`.
+`guide/operate/run/idle-stop.md#stop-a-silent-agent-automatically`.
 
 ### GitHub sign-in extras
 

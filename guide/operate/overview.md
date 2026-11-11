@@ -69,7 +69,7 @@ On one host, `docker compose` manages just two services.
 
 - `docker compose down`, or restarting the Control Plane, does not stop workspaces. Members are not disconnected
 - Pausing the Control Plane for a backup does not affect running workspaces
-- Stopping compose does not stop everything. Forcibly stopping every workspace is a separate operation ([03 Running it](03-run.md))
+- Stopping compose does not stop everything. Forcibly stopping every workspace is a separate operation ([Use idle stop and force-stop](run/idle-stop.md#force-stop-a-workspace))
 
 ### Where the data lives
 

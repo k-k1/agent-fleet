@@ -1714,6 +1714,7 @@ TASK_PAGES = (
     "admin/overview.", "admin/members/", "admin/access/", "admin/defaults/", "admin/resources/",
     "admin/audit.", "admin/usage.", "admin/mcp-distribute.", "admin/memory-outside.", "admin/watch-sources.",
     "operate/overview.", "operate/choose.", "operate/install.", "operate/install-decisions.",
+    "operate/run/",
 )
 
 # What a reader of a task page has no use for: why it was decided, when it was measured,
