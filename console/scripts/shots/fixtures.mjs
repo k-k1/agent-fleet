@@ -2952,7 +2952,7 @@ export function settingsTtsStatus() {
 }
 // ---- end settings pages ----
 
-// ---- tenant administration pages (guide/admin/, SHOT_ADMIN_GUIDE) ----
+// ---- tenant administration pages (guide/admin/, SHOT_ADMIN_OUTSIDE) ----
 // Fictional tenant "demo": three members, a week of ordinary changes, six months of running time.
 
 export const adminAudit = () => {

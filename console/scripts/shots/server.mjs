@@ -277,10 +277,10 @@ const exact = {
   "/api/admin/cloud-cost": () => fx.adminCloudCost(),
   // Tenant settings -> members -> detail (the entry point appears only with --admin).
   "/api/admin/tenants": () => fx.adminTenants(),
-  // The tenant administration pages of the guide (SHOT_ADMIN_GUIDE, run with SHOTS_ADMIN=1): the
+  // The tenant administration pages of the guide (SHOT_ADMIN_OUTSIDE, run with SHOTS_ADMIN=1): the
   // audit log, running time, an empty MCP distribution and the two tenant switches. Without it
   // these routes stay unhandled, as before.
-  ...(process.env.SHOT_ADMIN_GUIDE
+  ...(process.env.SHOT_ADMIN_OUTSIDE
     ? {
         "/api/admin/audit": () => fx.adminAudit(),
         "/api/admin/usage": () => fx.adminUsage(),

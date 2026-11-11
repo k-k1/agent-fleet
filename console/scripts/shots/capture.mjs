@@ -2555,7 +2555,7 @@ const SCENES = [
     // Tenant settings › Operations › Audit: the toolbar and the newest rows.
     name: "admin-audit",
     guide: true,
-    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_GUIDE: "1" },
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
     clip: ".audit-view",
     pad: 8,
     sections: FOCUS_TREE,
@@ -2570,7 +2570,7 @@ const SCENES = [
     // Tenant settings › Operations › Running time: the six-month trend with the change per month.
     name: "admin-usage-monthly",
     guide: true,
-    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_GUIDE: "1" },
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
     clip: ".usage-view .monthly-trend",
     pad: 8,
     sections: FOCUS_TREE,
@@ -2587,7 +2587,7 @@ const SCENES = [
     // "members enter the value" ticked.
     name: "admin-mcp-form",
     guide: true,
-    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_GUIDE: "1" },
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
     clip: ".adm-mcp-form",
     pad: 8,
     sections: FOCUS_TREE,
@@ -2620,7 +2620,7 @@ const SCENES = [
     // Tenant settings › Operations › External memory access: the allow/block switch.
     name: "admin-ext-memory",
     guide: true,
-    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_GUIDE: "1" },
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
     clip: ".ext-memory",
     pad: 8,
     sections: FOCUS_TREE,
@@ -2635,7 +2635,7 @@ const SCENES = [
     // Tenant settings › Operations › Watch sources: the switch in its initial "block" state.
     name: "admin-watch-sources",
     guide: true,
-    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_GUIDE: "1" },
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
     clip: ".watch-src",
     pad: 8,
     sections: FOCUS_TREE,
