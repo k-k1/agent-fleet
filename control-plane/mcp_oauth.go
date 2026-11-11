@@ -101,14 +101,34 @@ type mcpOAuthAPI struct {
 	reg   *rateLimiter
 }
 
+// mcpOAuthSwitches is the process environment the OAuth server reads at construction. Tests
+// pass their own so they need no t.Setenv, which would forbid t.Parallel.
+type mcpOAuthSwitches struct {
+	mcpEnabled   bool   // AF_MCP_ENABLED == "true"
+	oauthOn      bool   // AF_MCP_OAUTH == "1"
+	trustedHosts string // AF_MCP_OAUTH_TRUSTED_HOSTS
+}
+
+func mcpOAuthSwitchesFromEnv() mcpOAuthSwitches {
+	return mcpOAuthSwitches{
+		mcpEnabled:   envx.Or("AF_MCP_ENABLED", "") == "true",
+		oauthOn:      envx.Or("AF_MCP_OAUTH", "") == "1",
+		trustedHosts: envx.Or("AF_MCP_OAUTH_TRUSTED_HOSTS", ""),
+	}
+}
+
 func newMCPOAuthAPI(cfg config) *mcpOAuthAPI {
+	return newMCPOAuthAPIWith(cfg, mcpOAuthSwitchesFromEnv())
+}
+
+func newMCPOAuthAPIWith(cfg config, sw mcpOAuthSwitches) *mcpOAuthAPI {
 	m := cfg.mgr
 	a := &mcpOAuthAPI{mgr: m, now: time.Now, brand: cfg.brand,
 		cimd: newCIMDCache(64), reg: newRateLimiter(mcpOAuthRegPerHour, time.Hour, 10000)}
-	a.fallback, a.fallbackSource = envTrustedHosts()
+	a.fallback, a.fallbackSource = trustedHostsFrom(sw.trustedHosts)
 	a.fetch = fetchCIMDDocument
 	base := strings.TrimRight(m.publicBaseURL, "/")
-	if envx.Or("AF_MCP_ENABLED", "") == "true" && envx.Or("AF_MCP_OAUTH", "") == "1" && strings.HasPrefix(base, "https://") {
+	if sw.mcpEnabled && sw.oauthOn && strings.HasPrefix(base, "https://") {
 		a.issuer, a.resource, a.memoryResource = base+mcpOAuthPath, base+"/mcp", base+mcpsrv.MemoryPath
 	}
 	m.mcpOAuthServed.Store(a.issuer != "")

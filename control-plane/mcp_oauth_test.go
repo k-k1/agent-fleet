@@ -33,6 +33,10 @@ const (
 	loopbackCB   = "http://127.0.0.1:53682/callback"
 )
 
+// oauthServed is the switch set of a deployment that serves the OAuth server with no
+// operator trusted-host list.
+var oauthServed = mcpOAuthSwitches{mcpEnabled: true, oauthOn: true}
+
 type mcpOAuthEnv struct {
 	t     *testing.T
 	mgr   *manager
@@ -49,9 +53,6 @@ type mcpOAuthEnv struct {
 
 func newMCPOAuthEnv(t *testing.T) *mcpOAuthEnv {
 	t.Helper()
-	t.Setenv("AF_MCP_ENABLED", "true")
-	t.Setenv("AF_MCP_OAUTH", "1")
-	t.Setenv("AF_MCP_OAUTH_TRUSTED_HOSTS", "")
 	ctx := context.Background()
 	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -78,7 +79,7 @@ func newMCPOAuthEnv(t *testing.T) *mcpOAuthEnv {
 		publicBaseURL: testBase,
 	}
 	e := &mcpOAuthEnv{t: t, mgr: mgr, ident: ident, tenA: dflt, clock: time.Now(), docs: map[string]string{}}
-	e.api = newMCPOAuthAPI(config{mgr: mgr, publicBaseURL: testBase, brand: newBrandResolver(brandConfig{}, nil)})
+	e.api = newMCPOAuthAPIWith(config{mgr: mgr, publicBaseURL: testBase, brand: newBrandResolver(brandConfig{}, nil)}, oauthServed)
 	e.api.now = e.now
 	e.api.fetch = func(_ context.Context, u string) ([]byte, time.Duration, error) {
 		e.fetches.Add(1)
@@ -261,19 +262,21 @@ func toolNames(t *testing.T, rec *httptest.ResponseRecorder) map[string]bool {
 // --- enablement and discovery -----------------------------------------------------
 
 func TestMCPOAuthOffEverythingIs404AndMCPKeepsBare401(t *testing.T) {
-	for name, set := range map[string]func(*testing.T){
-		"flag unset":    func(t *testing.T) { t.Setenv("AF_MCP_OAUTH", "") },
-		"mcp disabled":  func(t *testing.T) { t.Setenv("AF_MCP_ENABLED", "") },
+	t.Parallel()
+	for name, set := range map[string]func(*mcpOAuthSwitches){
+		"flag unset":    func(sw *mcpOAuthSwitches) { sw.oauthOn = false },
+		"mcp disabled":  func(sw *mcpOAuthSwitches) { sw.mcpEnabled = false },
 		"http base url": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newMCPOAuthEnv(t)
+			sw := oauthServed
 			if set != nil {
-				set(t)
+				set(&sw)
 			} else {
 				e.mgr.publicBaseURL = "http://af.example.com"
 			}
-			e.api = newMCPOAuthAPI(config{mgr: e.mgr, brand: newBrandResolver(brandConfig{}, nil)})
+			e.api = newMCPOAuthAPIWith(config{mgr: e.mgr, brand: newBrandResolver(brandConfig{}, nil)}, sw)
 			mux := http.NewServeMux()
 			e.api.mount(mux)
 			mux.HandleFunc("/mcp", e.api.withOAuth(mcpsrv.New(cpDeps{e.mgr})).HandleMCP)
@@ -295,6 +298,7 @@ func TestMCPOAuthOffEverythingIs404AndMCPKeepsBare401(t *testing.T) {
 }
 
 func TestMCPOAuthMetadataAndChallenge(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	rec := e.do("GET", mcpOAuthMetadataPath, "", nil)
 	var md map[string]any
@@ -336,6 +340,7 @@ func TestMCPOAuthMetadataAndChallenge(t *testing.T) {
 }
 
 func TestMCPOAuthAuthGateExemptions(t *testing.T) {
+	t.Parallel()
 	newMCPOAuthEnv(t)
 	for _, p := range []string{mcpOAuthPRMPath, mcpOAuthMetadataPath, mcpOAuthToken, mcpOAuthRegister, mcpOAuthRevoke} {
 		if !isAuthExempt(p) {
@@ -352,6 +357,7 @@ func TestMCPOAuthAuthGateExemptions(t *testing.T) {
 // --- redirect rule ---------------------------------------------------------------
 
 func TestMCPOAuthRedirectRule(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	for raw, want := range map[string]redirectClass{
 		"http://127.0.0.1:53682/callback":                       redirectLoopback,
@@ -400,14 +406,14 @@ func TestMCPOAuthRedirectRule(t *testing.T) {
 		}
 	}
 	// The operator list is honoured, in both directions.
-	t.Setenv("AF_MCP_OAUTH_TRUSTED_HOSTS", "claude.ai, mcp.corp.example")
-	api := newMCPOAuthAPI(config{mgr: e.mgr})
+	api := newMCPOAuthAPIWith(config{mgr: e.mgr}, mcpOAuthSwitches{trustedHosts: "claude.ai, mcp.corp.example"})
 	if api.classifyRedirect(api.fallback, "https://chatgpt.com/cb") != redirectRefused || api.classifyRedirect(api.fallback, "https://mcp.corp.example/cb") != redirectHosted {
 		t.Error("the configured trusted-host list was not applied")
 	}
 }
 
 func TestMCPOAuthUntrustedRedirectIsAPageNeverARedirect(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	// A client registered earlier whose host has since left the trusted list.
 	id := e.registerClient("https://claude.ai/api/mcp/auth_callback", loopbackCB)
@@ -422,7 +428,6 @@ func TestMCPOAuthUntrustedRedirectIsAPageNeverARedirect(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || rec.Header().Get("Location") != "" {
 		t.Errorf("unknown client: %d", rec.Code)
 	}
-	t.Setenv("AF_MCP_OAUTH_TRUSTED_HOSTS", "chatgpt.com")
 	e.api.fallback = parseTrustedClientHosts("chatgpt.com")
 	if rec := e.authorize(e.authQuery(id, "https://claude.ai/api/mcp/auth_callback", challenge)); rec.Code != http.StatusBadRequest {
 		t.Errorf("a host dropped from the trusted list still worked: %d", rec.Code)
@@ -432,6 +437,7 @@ func TestMCPOAuthUntrustedRedirectIsAPageNeverARedirect(t *testing.T) {
 // --- client registration ---------------------------------------------------------
 
 func TestMCPOAuthDCRRules(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	reg := func(body string) *httptest.ResponseRecorder {
 		return e.do("POST", mcpOAuthRegister, body, map[string]string{"Content-Type": "application/json"})
@@ -459,6 +465,7 @@ func TestMCPOAuthDCRRules(t *testing.T) {
 }
 
 func TestMCPOAuthDCRRateLimitAndCap(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ok := 0
 	for i := 0; i < mcpOAuthRegPerHour+3; i++ {
@@ -485,6 +492,7 @@ func TestMCPOAuthDCRRateLimitAndCap(t *testing.T) {
 }
 
 func TestMCPOAuthDCRClientWithoutGrantIsDeletedAndTokenSaysInvalidClient(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	stale := e.registerClient(loopbackCB)
 	kept := e.registerClient(loopbackCB)
@@ -507,6 +515,7 @@ func TestMCPOAuthDCRClientWithoutGrantIsDeletedAndTokenSaysInvalidClient(t *test
 // --- CIMD (the SSRF guard) -------------------------------------------------------
 
 func TestMCPOAuthCIMDOnlyFetchesTrustedHosts(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	const good = "https://claude.ai/oauth/client.json"
 	e.docs[good] = `{"client_id":"` + good + `","client_name":"Claude","redirect_uris":["https://claude.ai/api/mcp/auth_callback","https://evil.example/cb"]}`
@@ -548,6 +557,7 @@ func TestMCPOAuthCIMDOnlyFetchesTrustedHosts(t *testing.T) {
 }
 
 func TestMCPOAuthCIMDDocumentMustNameItself(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	const id = "https://chatgpt.com/oauth/client.json"
 	_, challenge := pkcePair()
@@ -575,6 +585,7 @@ func TestMCPOAuthCIMDDocumentMustNameItself(t *testing.T) {
 // The fixture preserves ChatGPT's published document, including its preferred method
 // and its supported-method list: the preference alone does not rule out a public client.
 func TestMCPOAuthCIMDChatGPT(t *testing.T) {
+	t.Parallel()
 	body, err := os.ReadFile("testdata/chatgpt-oauth-client.json")
 	if err != nil {
 		t.Fatal(err)
@@ -647,6 +658,7 @@ func TestMCPOAuthCIMDChatGPT(t *testing.T) {
 }
 
 func TestCIMDCacheIsBounded(t *testing.T) {
+	t.Parallel()
 	c := newCIMDCache(3)
 	now := time.Now()
 	for i := 0; i < 20; i++ {
@@ -658,6 +670,7 @@ func TestCIMDCacheIsBounded(t *testing.T) {
 }
 
 func TestFetchCIMDDocumentGuards(t *testing.T) {
+	t.Parallel()
 	// The real dial guard refuses a loopback server.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
 	defer srv.Close()
@@ -708,6 +721,7 @@ func TestFetchCIMDDocumentGuards(t *testing.T) {
 // --- authorize -------------------------------------------------------------------
 
 func TestMCPOAuthAuthorizeErrorsCarryIssAndBindResource(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	_, challenge := pkcePair()
@@ -759,6 +773,7 @@ func TestMCPOAuthAuthorizeErrorsCarryIssAndBindResource(t *testing.T) {
 }
 
 func TestMCPOAuthAuthorizeAppliesTheTenantNetworkRestriction(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	_, challenge := pkcePair()
@@ -789,6 +804,7 @@ func TestMCPOAuthAuthorizeAppliesTheTenantNetworkRestriction(t *testing.T) {
 }
 
 func TestMCPOAuthConsentPageContent(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	other, err := e.mgr.store.CreateTenant(context.Background(), "acme", "Acme Corp")
 	if err != nil {
@@ -831,6 +847,7 @@ func TestMCPOAuthConsentPageContent(t *testing.T) {
 }
 
 func TestMCPOAuthConsentDefaultsToRead(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, requested, chosen, wantScope string
 		canWrite                           bool
@@ -878,6 +895,7 @@ func TestMCPOAuthConsentDefaultsToRead(t *testing.T) {
 }
 
 func TestMCPOAuthConsentPOSTChecks(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	_, challenge := pkcePair()
@@ -933,6 +951,7 @@ func TestMCPOAuthConsentPOSTChecks(t *testing.T) {
 }
 
 func TestMCPOAuthPromptNoneNeedsAnExistingWiderGrant(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	_, challenge := pkcePair()
@@ -968,6 +987,7 @@ func TestMCPOAuthPromptNoneNeedsAnExistingWiderGrant(t *testing.T) {
 // --- token endpoint --------------------------------------------------------------
 
 func TestMCPOAuthFullFlowAndPrincipal(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	tk := e.connect(id, loopbackCB, "read write")
@@ -1009,6 +1029,7 @@ func TestMCPOAuthFullFlowAndPrincipal(t *testing.T) {
 }
 
 func TestMCPOAuthMCPRejectsATokenBoundElsewhere(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	now := e.now().Unix()
@@ -1036,6 +1057,7 @@ func TestMCPOAuthMCPRejectsATokenBoundElsewhere(t *testing.T) {
 }
 
 func TestMCPOAuthTokenEndpointRules(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	// authorize helper that stops at a code.
@@ -1090,6 +1112,7 @@ func TestMCPOAuthTokenEndpointRules(t *testing.T) {
 }
 
 func TestMCPOAuthReplayedCodeRevokesTheGrant(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	tk := e.connect(id, loopbackCB, "read write")
@@ -1110,6 +1133,7 @@ func TestMCPOAuthReplayedCodeRevokesTheGrant(t *testing.T) {
 }
 
 func TestMCPOAuthRefreshRotatesAndReuseRevokesTheGrant(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	tk := e.connect(id, loopbackCB, "read write")
@@ -1147,6 +1171,7 @@ func TestMCPOAuthRefreshRotatesAndReuseRevokesTheGrant(t *testing.T) {
 }
 
 func TestMCPOAuthConcurrentRefreshesHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	tk := e.connect(id, loopbackCB, "read")
@@ -1171,6 +1196,7 @@ func TestMCPOAuthConcurrentRefreshesHaveOneWinner(t *testing.T) {
 }
 
 func TestMCPOAuthRefreshNarrowsNeverWidens(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	tk := e.connect(id, loopbackCB, "read")
@@ -1196,6 +1222,7 @@ func TestMCPOAuthRefreshNarrowsNeverWidens(t *testing.T) {
 }
 
 func TestMCPOAuthGrantLifetimes(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	// Idle: 30 days without use ends the grant.
@@ -1224,6 +1251,7 @@ func TestMCPOAuthGrantLifetimes(t *testing.T) {
 }
 
 func TestMCPOAuthRevoke(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	other := e.registerClient(loopbackCB)
@@ -1253,6 +1281,7 @@ func TestMCPOAuthRevoke(t *testing.T) {
 }
 
 func TestMCPOAuthGrantFollowsMembership(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	tk := e.connect(id, loopbackCB, "read")
@@ -1267,6 +1296,7 @@ func TestMCPOAuthGrantFollowsMembership(t *testing.T) {
 // --- audit and secrets -----------------------------------------------------------
 
 func TestMCPOAuthAuditsAndNeverLogsATokenValue(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	log.SetOutput(&logs)
 	defer log.SetOutput(os.Stderr)
@@ -1316,6 +1346,7 @@ func TestMCPOAuthAuditsAndNeverLogsATokenValue(t *testing.T) {
 }
 
 func TestMCPOAuthTokenIssuanceNeedsTheAuditRow(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	verifier, challenge := pkcePair()
@@ -1331,6 +1362,7 @@ func TestMCPOAuthTokenIssuanceNeedsTheAuditRow(t *testing.T) {
 }
 
 func TestMCPOAuthRefreshNeedsTheAuditRow(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	tk := e.connect(id, loopbackCB, "read")
@@ -1366,6 +1398,7 @@ func (g *grantHold) CreateMCPOAuthGrantFromCode(ctx context.Context, gr store.MC
 }
 
 func TestMCPOAuthReplayDuringTheFirstRedemptionLeavesNoLiveToken(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	verifier, challenge := pkcePair()
@@ -1388,6 +1421,7 @@ func TestMCPOAuthReplayDuringTheFirstRedemptionLeavesNoLiveToken(t *testing.T) {
 }
 
 func TestMCPOAuthLoopbackMatchIgnoresOnlyThePort(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	for _, c := range []struct {
 		reg, req string
@@ -1407,6 +1441,7 @@ func TestMCPOAuthLoopbackMatchIgnoresOnlyThePort(t *testing.T) {
 }
 
 func TestMCPOAuthRevocationsAreAuditedUnderTheGrantsTenant(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)
 	ctx := context.Background()
@@ -1436,18 +1471,14 @@ func TestMCPOAuthRevocationsAreAuditedUnderTheGrantsTenant(t *testing.T) {
 }
 
 func TestMCPOAuthDisabledAuthorizeIs404BehindTheAuthGateToo(t *testing.T) {
+	t.Parallel()
 	for _, on := range []bool{false, true} {
 		cfg := oauthTestConfig(t)
 		cfg.mgr.publicBaseURL = testBase
 		cfg.mgr.store = brandTestStore(t)
-		if !on {
-			t.Setenv("AF_MCP_OAUTH", "")
-		} else {
-			t.Setenv("AF_MCP_OAUTH", "1")
-			t.Setenv("AF_MCP_ENABLED", "true")
-		}
+		sw := mcpOAuthSwitches{mcpEnabled: on, oauthOn: on}
 		mux := http.NewServeMux()
-		newMCPOAuthAPI(cfg).mount(mux)
+		newMCPOAuthAPIWith(cfg, sw).mount(mux)
 		gate := cfg.authGate(mux)
 		for _, path := range []string{mcpOAuthAuthorize, mcpOAuthConsent} {
 			req := httptest.NewRequest("GET", testBase+path, nil)
@@ -1466,6 +1497,7 @@ func TestMCPOAuthDisabledAuthorizeIs404BehindTheAuthGateToo(t *testing.T) {
 }
 
 func TestFetchCIMDDocumentLeavesNoConnectionBehind(t *testing.T) {
+	t.Parallel()
 	var open atomic.Int32
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
 	ts.Config.ConnState = func(_ net.Conn, s http.ConnState) {
@@ -1494,6 +1526,7 @@ func TestFetchCIMDDocumentLeavesNoConnectionBehind(t *testing.T) {
 }
 
 func TestMCPOAuthAuthorizeNamesAnUntrustedClientHost(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	_, challenge := pkcePair()
 	cb := "https://claude.ai/api/mcp/auth_callback"

@@ -215,7 +215,12 @@ func validHostName(h string) bool {
 
 // envTrustedHosts is the start-up fallback and the source it came from.
 func envTrustedHosts() (trustedHosts, string) {
-	if v := envx.Or("AF_MCP_OAUTH_TRUSTED_HOSTS", ""); v != "" {
+	return trustedHostsFrom(envx.Or("AF_MCP_OAUTH_TRUSTED_HOSTS", ""))
+}
+
+// trustedHostsFrom is envTrustedHosts for an explicit value of the variable.
+func trustedHostsFrom(v string) (trustedHosts, string) {
+	if v != "" {
 		return parseTrustedClientHosts(v), trustSourceEnv
 	}
 	return parseTrustedClientHosts(defaultMCPOAuthTrustedHosts), trustSourceDefault
