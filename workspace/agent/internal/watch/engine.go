@@ -150,6 +150,7 @@ func (e *Engine) load() {
 		}
 	}
 	e.state.Subs = keep
+	e.migrateAliasedLocked()
 	e.dropUnwatchedLocked()
 	// A restart re-reads every live subject (ADR 0133 §5, the start-up poll); maxPollsPerTick
 	// spreads the reads over the first ticks.
@@ -206,6 +207,7 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if len(r.Types) == 0 && len(src.Types()) == 1 {
 		r.Types = src.Types() // a source with one type (time) needs none asked for
 	}
+	r.Types = canonPatterns(r.Types, aliasesOf(src))
 	if tc, ok := src.(TypeChecker); ok {
 		if err := tc.CheckTypes(r.Types); err != nil {
 			return Subscription{}, err

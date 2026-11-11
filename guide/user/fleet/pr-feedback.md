@@ -66,9 +66,11 @@ Events it can watch include checks finishing, a merge conflict, the pull request
 - **No double notice.** With PR feedback on, a session that watches its own pull request for failed checks, a change request or new unresolved threads hears that from its watch only, and PR feedback does not repeat it after the watch ends. What it does not watch still comes from PR feedback
 - In the session it arrives as a line starting with `[agent-fleet:notice kind=watch`. Text from the pull request (check names, reviewer names) is quoted and marked as data, not instructions
 
-### GitHub Actions runs
+### CI runs: GitHub Actions and Bitbucket Pipelines
 
-A workflow run that is not tied to a pull request (a nightly or release workflow, or one the agent started by hand) can be watched too. The agent passes a run or a workflow instead of a pull request, with the types `github.workflow_run.completed` (every finished run) or `github.workflow_run.failed` (only failures). Pull request types are refused for these.
+A workflow run that is not tied to a pull request (a nightly or release workflow, or one the agent started by hand) can be watched too. The agent passes a run or a workflow instead of a pull request, with the types `ci.run.completed` (every finished run) or `ci.run.failed` (only failures). The same two types work on GitHub and on Bitbucket, so one subscription fits both. The older names `github.workflow_run.completed` and `github.workflow_run.failed` still work and mean the same; a run is told once even if both spellings are asked for. Pull request types are refused for these.
+
+GitHub Actions:
 
 | `ref` | Fires when |
 |---|---|
@@ -80,6 +82,17 @@ A workflow run that is not tied to a pull request (a nightly or release workflow
 - What counts as "after" is decided from GitHub's own run numbers and timestamps, not this workspace's clock
 - The notice says the run number, the attempt and the result. The workflow's name and the names and links of failed jobs are quoted data, as for check names
 - Reads are conditional (an unchanged run costs no request quota), quick while the run is queued or running, and count in the same limits as pull request watches
+
+Bitbucket Pipelines works the same way, with `source` set to `bitbucket` (a `bitbucket.org` run URL needs no source). The shapes are the Actions ones:
+
+| `ref` | Fires when |
+|---|---|
+| a run URL (`https://bitbucket.org/w/r/pipelines/results/123`) or `w/r:run/123` | that run completes. A run that has already completed is told at once |
+| `w/r:pipelines`, with a custom pipeline `w/r:pipelines/nightly`, with a branch `w/r:pipelines@main` or both `w/r:pipelines/nightly@main` | the next run (of that custom pipeline, on that branch) completes. Only a run that started after the watch was made counts |
+
+- A stopped (cancelled) or expired run counts as failed, as a cancelled Actions run does. The notice says the run number and the result; the branch and the names of failed steps are quoted data
+- Bitbucket allows few requests an hour, so a workspace can hold at most 5 Pipelines watches, and a run is checked about once a minute while it runs (every 5 minutes while waiting for the next one). Your Bitbucket connection needs permission to read Pipelines; if it lacks it, the agent is told to reconnect
+- A new run is recognised from Bitbucket's own build numbers and timestamps, and the next 250 runs of the repository are searched for the branch; a branch that is quiet among very busy ones can be missed
 
 ### Send the notices to the parent
 
@@ -107,6 +120,7 @@ An agent can also set a timer (`watch` with `source: time`): "tell me in 20 minu
 | Watches per workspace | 200 |
 | Timers with `wake` | 250 outstanding wake bookings per member, shared by all that member's workspaces |
 | Bitbucket watches | 10 per workspace, read about every 5 minutes (to stay within Bitbucket's hourly request limit) |
+| Bitbucket Pipelines watches | 5 per workspace, counted separately from the pull request watches above |
 
 - On Bitbucket, new unresolved review threads cannot be watched: Bitbucket does not report which threads are resolved
 - On Bitbucket, a pull request counts as ready to merge once someone approved it and nobody asks for changes
