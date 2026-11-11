@@ -112,6 +112,8 @@ export function McpTab() {
       const { [key]: _drop, ...rest } = p;
       return rest;
     });
+    // Unlike save, the probe keeps targets.watch: /test is not behind the CP's watch gate, and the
+    // Agent narrows the probe environment for a watch source.
     const res = await apiJSON("api/mcp-servers/test", "POST", bodyOf(f));
     setProbes((p) => ({ ...p, [key]: probeOfAnswer(res, (e) => errText(e as any)) }));
   };

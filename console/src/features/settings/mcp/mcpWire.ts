@@ -80,7 +80,7 @@ export interface Registry {
   tenantFetchedAt?: number;
   shadowed?: string[];
   // The tenant switch for member-added watch sources. Only a definite false blocks the form:
-  // absent (an older Agent, or a snapshot that failed to load) leaves the checkbox usable, because
+  // absent (an older Agent, no tenant snapshot yet, or a failed load) leaves the checkbox usable, because
   // the CP refuses a forbidden save anyway and a wrongly disabled box could never be undone.
   watchSources?: boolean;
 }

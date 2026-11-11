@@ -59,11 +59,11 @@ describe("ServerForm watch source checkbox", () => {
     expect(note()?.textContent).toMatch(/tenant administrator/);
   });
 
-  it("shows an existing watch server read-only (checked, disabled) with the clearing warning", () => {
+  it("shows an existing watch server read-only (checked, disabled) with the paused note", () => {
     mount(true, true);
     expect(box().checked).toBe(true);
     expect(box().disabled).toBe(true);
-    expect(note()?.textContent).toMatch(/clears the mark/);
+    expect(note()?.textContent).toMatch(/paused/);
   });
 
   it("re-enables in place when the switch is turned on", () => {

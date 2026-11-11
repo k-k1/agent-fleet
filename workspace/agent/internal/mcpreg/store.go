@@ -176,10 +176,10 @@ type Registry struct {
 	TenantFetchedAt int64       `json:"tenantFetchedAt,omitempty"`
 	// Shadowed lists user-scope names that lost a collision against a tenant row.
 	Shadowed []string `json:"shadowed,omitempty"`
-	// WatchSources is the tenant switch for member-added watch sources, always emitted: the
-	// Console tells "off" (false) from "an Agent that predates the field" (absent) and only
-	// disables the Watch source checkbox on a definite false.
-	WatchSources bool `json:"watchSources"`
+	// WatchSources is the tenant switch for member-added watch sources. Nil until a tenant
+	// snapshot has been fetched (TenantFetchedAt == 0): the Console disables the Watch source
+	// checkbox only on a definite false, and "not known yet" must not read as "off".
+	WatchSources *bool `json:"watchSources,omitempty"`
 }
 
 // Load composes the effective registry. Secrets are NOT masked — callers that hand
@@ -193,7 +193,11 @@ func Load() (Registry, error) {
 }
 
 func compose(s *secrets.Data, tc tenantCache, opted map[string]bool) Registry {
-	reg := Registry{TenantFetchedAt: tc.FetchedAt, WatchSources: tc.WatchSources}
+	reg := Registry{TenantFetchedAt: tc.FetchedAt}
+	if tc.FetchedAt != 0 {
+		on := tc.WatchSources
+		reg.WatchSources = &on
+	}
 	taken := map[string]bool{}
 
 	for _, d := range builtinDefs(s) {
@@ -403,6 +407,12 @@ func Update(id string, in ServerDef) (ServerDef, error) {
 		if d.ID != id && strings.EqualFold(d.Name, in.Name) {
 			return ServerDef{}, fmt.Errorf("%w: %s", ErrNameTaken, in.Name)
 		}
+	}
+	// While the tenant blocks watch sources the Console cannot send targets.watch (the CP would
+	// refuse it), so an edit of another field must not drop the mark: the definition stays
+	// paused and comes back when the administrator turns the switch on (ADR 0133 §8).
+	if stored.Targets.Watch && !WatchSourcesAllowed() {
+		in.Targets.Watch = true
 	}
 	in = MergeSecrets(in, stored)
 	s.MCP[idx] = in

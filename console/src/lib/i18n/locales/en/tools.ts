@@ -137,7 +137,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "mcp.target_session": "Sessions",
   "mcp.target_watch": "Watch source",
   "mcp.watch_blocked": "Your tenant administrator controls whether MCP servers can be watch sources, and it is currently off.",
-  "mcp.watch_blocked_set": "Your tenant administrator has turned watch sources off. This server is still marked as one, but the watch engine ignores it, and saving other changes here clears the mark.",
+  "mcp.watch_blocked_set": "Your tenant administrator has turned watch sources off. This server stays marked as one but is paused until they turn it back on; saving other changes keeps the mark.",
   "mcp.target_none": "None",
   "mcp.kinds_all": "Every agent",
   "mcp.not_ready":
