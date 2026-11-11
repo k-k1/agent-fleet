@@ -7,8 +7,10 @@ package main
 //
 // These are not Agent Fleet's own leftovers (cleanup_cache.go counts those). They belong to
 // go, npm (npx too), uv, pip, Maven and Gradle, grow without bound, and were measured at 34G (go-build) and 41G
-// (npm) in one home (docs/log/116). All of them are regenerable: emptying one costs the next
-// build or install a slower first run and nothing else.
+// (npm) in one home (docs/log/116). go, npm, uv, pip and Maven are regenerable: emptying one
+// costs the next build or install a slower first run and nothing else. The two Gradle rows
+// are not: a removed version is downloaded again only with access to services.gradle.org, so
+// they are manual-only and not a candidate for any automatic policy (gradlecache).
 //
 // Manual only, never on a timer (docs/log/116): neither Go nor npm can evict by age, so the
 // only cleanup is "all of it", and when that happens is the person's call.
@@ -46,7 +48,7 @@ type toolCache struct {
 	// could point anywhere and emptying "through" it would delete what it points at.
 	noFollow bool
 	// plan, when set, makes the row partial: only what it lists is sized and removed, and
-	// the directory itself and the rest of it stay (gradle_caches.go).
+	// the directory itself and the rest of it stay (internal/gradlecache).
 	plan func(dir string) gradlecache.Plan
 }
 
@@ -65,7 +67,7 @@ var toolCaches = []toolCache{
 	// or settings.xml), so the default location is the only one. The directory is
 	// ~/.m2/repository, never ~/.m2: settings.xml and settings-security.xml live beside it.
 	{Name: "maven", rel: ".m2/repository", users: argvRunsMaven, noFollow: true},
-	// Gradle is partial rows: only versions no project pins (gradle_caches.go). The
+	// Gradle is partial rows: only versions no project pins (internal/gradlecache). The
 	// directories are caches/ and wrapper/dists, never ~/.gradle (gradle.properties lives there).
 	{Name: "gradle-caches", env: "GRADLE_USER_HOME", envSub: "caches", rel: ".gradle/caches", users: argvRunsGradle, noFollow: true, plan: planGradleCaches},
 	{Name: "gradle-wrapper", env: "GRADLE_USER_HOME", envSub: "wrapper/dists", rel: ".gradle/wrapper/dists", users: argvRunsGradle, noFollow: true, plan: planGradleDists},
@@ -298,6 +300,11 @@ func handleDeleteToolCache(w http.ResponseWriter, r *http.Request) {
 		p := c.plan(c.dir())
 		if p.Skipped != "" {
 			httpx.WriteErr(w, http.StatusConflict, "pins_unknown", c.Name+": "+p.Skipped)
+			return
+		}
+		// The survey walk above can take seconds; look again right before removing.
+		if pids := cacheUsers(c); len(pids) > 0 {
+			httpx.WriteErr(w, http.StatusConflict, "cache_in_use", c.Name+" is in use by pid "+joinInts(pids))
 			return
 		}
 		bytes, files, err = emptyGradlePlan(p)

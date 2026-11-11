@@ -38,11 +38,8 @@ import (
 	"strings"
 )
 
-const (
-	// A wrapper sits at a project root or, for multi-build repositories, a few levels down.
-	pinScanDepth   = 6
-	pinScanEntries = 500_000
-)
+// pinScanEntries caps the repositories walk; hitting it makes the plan "skipped".
+const pinScanEntries = 500_000
 
 // Plan is what a partial row would remove right now.
 type Plan struct {
@@ -85,8 +82,9 @@ func pinnedVersions(root, home string) (map[string]bool, string) {
 			return filepath.SkipAll
 		}
 		if d.IsDir() {
-			rel, _ := filepath.Rel(root, p)
-			if p != root && (pinScanSkip[d.Name()] || strings.Count(rel, string(filepath.Separator)) >= pinScanDepth) {
+			// Only names are pruned, never depth: a wrapper deep in a monorepo must still pin its
+			// version, and the entry cap already turns a huge tree into "skipped".
+			if p != root && pinScanSkip[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
@@ -106,10 +104,13 @@ func pinnedVersions(root, home string) (map[string]bool, string) {
 		return nil, fail
 	}
 	// A Gradle installed through SDKMAN runs without a wrapper and uses caches/<its version>.
-	if ents, err := os.ReadDir(filepath.Join(home, ".sdkman", "candidates", "gradle")); err == nil {
-		for _, e := range ents {
-			pins[e.Name()] = true
-		}
+	sdk := filepath.Join(home, ".sdkman", "candidates", "gradle")
+	ents, err := os.ReadDir(sdk)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, "cannot read " + sdk + ": " + err.Error()
+	}
+	for _, e := range ents {
+		pins[e.Name()] = true
 	}
 	return pins, ""
 }
@@ -140,8 +141,11 @@ func wrapperVersion(path string) (string, bool) {
 // project pins. Links are never candidates: they are not ours to follow.
 func plan(dir, repos, home string, re *regexp.Regexp, versionOf func(name string) string) Plan {
 	ents, err := os.ReadDir(dir)
-	if err != nil {
+	if os.IsNotExist(err) {
 		return Plan{}
+	}
+	if err != nil {
+		return Plan{Skipped: "cannot read " + dir + ": " + err.Error()}
 	}
 	pins, why := pinnedVersions(repos, home)
 	if why != "" {

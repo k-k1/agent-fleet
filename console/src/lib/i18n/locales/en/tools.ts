@@ -518,7 +518,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.tool_in_use": "{name} is in use by a running build or install. Try again when it finishes.",
   "machine.tool_empty_failed": "Couldn't empty {name}: ",
   "machine.tool_note":
-    "Caches that go, npm (including npx), uv, pip, Maven and Gradle keep in your home. The two Gradle rows (gradle-caches, gradle-wrapper) hold only the versions no project in ~/repos pins. They grow without limit and are never emptied automatically. Measuring reads every file, so it runs only when you press the button.",
+    "Caches that go, npm (including npx), uv, pip, Maven and Gradle keep in your home. The two Gradle rows (gradle-caches, gradle-wrapper) hold only the versions no project in ~/repos pins (projects elsewhere and a plain gradle without a wrapper are not looked at). They grow without limit and are never emptied automatically. Measuring reads every file, so it runs only when you press the button.",
   "machine.left_title": "Leftover files",
   "machine.left_failed": "Couldn't measure the leftover files.",
   "machine.left_kind_chromium": "Chromium throwaway profiles",

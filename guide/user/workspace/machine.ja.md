@@ -106,7 +106,8 @@ go・npm（npx を含む）・uv・pip・Maven・Gradle がホームに溜める
 - Gradle は 2 行、「**gradle-caches**」（`~/.gradle/caches/<バージョン>`）と「**gradle-wrapper**」（`~/.gradle/wrapper/dists`）で出ます。
   `~/repos`（worktree を含む）の `gradle-wrapper.properties` がどれも指定していないバージョンだけが対象です。
   共有のキャッシュ（`modules-2` など）・`gradle.properties`・`~/.gradle/jdks` には触れません
-- 読めない wrapper ファイルが 1 つでもあると、Gradle の行は「**対象外**」と出て、何も消しません
+- `~/repos` を完全には読めないとき（読めないフォルダ、バージョンを読み取れない wrapper ファイル、大きすぎるツリー）は、Gradle の行が「**対象外**」と出て、何も消しません
+- 「指定されていない」の範囲は `~/repos` だけです。ほかの場所のプロジェクト、wrapper を使わない素の `gradle`、別の `GRADLE_USER_HOME` や `-g` は見ていないので、それらが使うバージョンも消えることがあります（次のビルドが取り直しますが、オフラインでは失敗します）
 - 消した Gradle バージョンは、それを必要とする次のビルドが取り直します（`services.gradle.org` に届く必要があります）
 - `~/.m2/repository` や `~/.npm/_npx` がシンボリックリンクのときは出ません。ターミナルから消してください
 

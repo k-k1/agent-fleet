@@ -515,7 +515,7 @@ export const tools = {
   "machine.tool_in_use": "{name} は実行中のビルドかインストールが使っています。終わってからもう一度押してください。",
   "machine.tool_empty_failed": "{name} を空にできませんでした: ",
   "machine.tool_note":
-    "go・npm（npx を含む）・uv・pip・Maven・Gradle がホームに溜めるキャッシュです。Gradle の 2 行（gradle-caches・gradle-wrapper）は、~/repos のどのプロジェクトも指定していないバージョンだけです。上限なく増え、自動では消えません。数えるには全ファイルを読むので、ボタンを押したときだけ測ります。",
+    "go・npm（npx を含む）・uv・pip・Maven・Gradle がホームに溜めるキャッシュです。Gradle の 2 行（gradle-caches・gradle-wrapper）は、~/repos のどのプロジェクトも指定していないバージョンだけです（ほかの場所のプロジェクトや、wrapper を使わない素の gradle は見ていません）。上限なく増え、自動では消えません。数えるには全ファイルを読むので、ボタンを押したときだけ測ります。",
   "machine.left_title": "使われなくなったファイル",
   "machine.left_failed": "使われなくなったファイルを測れませんでした。",
   "machine.left_kind_chromium": "Chromium の使い捨てプロファイル",

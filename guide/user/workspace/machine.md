@@ -108,7 +108,8 @@ on their own.
 - Gradle appears as two rows, **gradle-caches** (`~/.gradle/caches/<version>`) and **gradle-wrapper** (`~/.gradle/wrapper/dists`). They hold only
   the Gradle versions that no `gradle-wrapper.properties` under `~/repos` (worktrees included) asks for. The shared
   caches (`modules-2` and so on), `gradle.properties` and `~/.gradle/jdks` are never touched
-- If any wrapper file cannot be read, the Gradle rows show **Not offered** and nothing is removed
+- If `~/repos` cannot be read completely (an unreadable folder, a wrapper file without a recognisable version, a very large tree), the Gradle rows show **Not offered** and nothing is removed
+- "Not pinned" only covers `~/repos`: projects elsewhere, a plain `gradle` run without a wrapper, and a custom `GRADLE_USER_HOME` or `-g` are not looked at, so a version they use can be removed (the next build downloads it again, which fails offline)
 - A removed Gradle version is downloaded again by the next build that needs it, which needs access to `services.gradle.org`
 - `~/.m2/repository` or `~/.npm/_npx` do not appear when they are symbolic links. Delete them from a terminal
 

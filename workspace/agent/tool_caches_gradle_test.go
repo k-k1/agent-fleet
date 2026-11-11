@@ -238,3 +238,54 @@ func TestHomeRootsDoNotCallPartialGradleFoldersReclaimable(t *testing.T) {
 		}
 	}
 }
+
+// A wrapper far below the repository root still pins its version: pruning by depth would
+// have left it unseen and its caches removable.
+func TestGradlePinsComeFromDeepWrappers(t *testing.T) {
+	home, _ := isolateToolCaches(t)
+	g := gradleHome(t, home)
+	wrapperProps(t, filepath.Join(home, "repos", "r", "a", "b", "c", "d", "e", "f", "g"), "gradle-8.14.3-bin.zip")
+	if rec := deleteRow(t, "gradle-caches"); rec.Code != 200 {
+		t.Fatal(rec.Body)
+	}
+	if !pathExists(filepath.Join(g, "caches", "8.14.3", "x")) {
+		t.Fatal("a version pinned by a deep wrapper was removed")
+	}
+}
+
+func TestGradleRowsFollowGradleUserHome(t *testing.T) {
+	home, _ := isolateToolCaches(t)
+	moved := t.TempDir()
+	t.Setenv("GRADLE_USER_HOME", moved)
+	writeSized(t, filepath.Join(moved, "caches", "7.6", "x"), 10)
+	writeSized(t, filepath.Join(moved, "wrapper", "dists", "gradle-7.6-bin", "h", "d"), 10)
+	wrapperProps(t, filepath.Join(home, "repos", "app"), "gradle-8.1.1-bin.zip")
+	for _, n := range []string{"gradle-caches", "gradle-wrapper"} {
+		if rec := deleteRow(t, n); rec.Code != 200 {
+			t.Fatalf("%s: %d %s", n, rec.Code, rec.Body)
+		}
+	}
+	if pathExists(filepath.Join(moved, "caches", "7.6")) || pathExists(filepath.Join(moved, "wrapper", "dists", "gradle-7.6-bin")) {
+		t.Fatal("the moved Gradle home was not used")
+	}
+}
+
+func TestGradleFailsClosedWhenSdkmanIsUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	home, _ := isolateToolCaches(t)
+	g := gradleHome(t, home)
+	sdk := filepath.Join(home, ".sdkman", "candidates", "gradle")
+	writeSized(t, filepath.Join(sdk, "7.6", "f"), 1)
+	if err := os.Chmod(sdk, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sdk, 0o755) })
+	if rec := deleteRow(t, "gradle-caches"); rec.Code != 409 {
+		t.Fatalf("status %d, want 409", rec.Code)
+	}
+	if !pathExists(filepath.Join(g, "caches", "7.6")) {
+		t.Fatal("removed although SDKMAN could not be read")
+	}
+}
