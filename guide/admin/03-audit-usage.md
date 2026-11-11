@@ -6,156 +6,16 @@ audience: "a tenant administrator reviewing what happened and what it cost"
 
 English | [日本語](03-audit-usage.ja.md)
 
-The audit log lets you trace "who did what"; running time tallies "how much was used". Both are
-available from the tenant settings rail, scoped to your own tenant.
+What this chapter held now lives on one page per task.
 
-## Audit log ("Audit")
+| What you want to do | Page |
+|---|---|
+| Check who changed what, what is and is not recorded, the two rows of an operation that cannot be undone | [Read the audit log](audit.md) |
+| Running time per member, the trend by month, cloud cost | [Read running time and cloud cost](usage.md) |
 
-The **"Audit"** section is the **record of change operations** that happened within the tenant. Each
-row is one operation, with the following columns.
+Questions about adding members, limits and force-stopping are answered in [01 Members](01-members.md) and [02 Resource limits and sessions](02-limits.md).
 
-- **Time**: when it was done.
-- **Action**: what was done (`fs.*` = file operations, `git.*` = commits, checkouts, and so on,
-  `repo.*` = repository creation / deletion, `session.*` = session creation / fork / stop,
-  `connection.*` = credential saves, removals and sign-ins, `mcp.*` = MCP server changes,
-  `engine.*` = the self-hosted inference engines, etc.).
-- **Actor**: who did it (email address). Besides human operations, the actor can also be an
-  external Claude client (MCP) or a system action (auto-stop, etc.).
-- **Target**: which file, repository, or session it was done to.
-
-Typing "Action / target / user" into the search field at the top filters the list. The log does not
-auto-refresh, so press the refresh button when you want the latest. The item count appears at the
-top right.
-
-### What is recorded, and what is not
-
-Only **operations that change or destroy something** are recorded. This is a deliberate line, so
-keep it in mind.
-
-- **Recorded**: operations that "change state": file upload / creation / rename / deletion, git
-  commit / checkout / fetch, repository clone / deletion, session creation / fork / stop, and so on.
-  The self-hosted inference engines write here too, because they spend money without anybody
-  asking: `engine.<engine>.offer` is one line per GPU instance bought, and its detail carries the
-  instance type and the hourly price that were actually bought; `engine.<engine>.box` is what the
-  Control Plane did to an instance it owns (stopped it, replaced it); `engine.<engine>.ingest` and
-  `engine.<engine>.model.complete` are models taken in or completed; `engine.hf_token` and
-  `engine.civitai_token` are the API tokens registered or removed. These lines belong to the
-  deployment rather than to a tenant, so they appear in a deployment administrator's audit view.
-  Members' inbox ([Ask a teammate through the inbox](../user/team/inbox.md)) writes `inbox.send`
-  (kind and recipients, never the text), `inbox.claim`, `inbox.decline`, `inbox.release`, `inbox.done`,
-  `inbox.withdraw`, `inbox.pr`, `inbox.block` / `inbox.unblock` and `inbox.launch`. Tenant switches write
-  `limit_board.set` and `tenant.member_defaults`; switching the development sign-in writes `dev_idp.set`, a
-  deployment row.
-  Credential writes are recorded too, without ever naming a secret: `connection.<kind>.save` and
-  `connection.<kind>.delete` (git, aws, cloudwatch, discord, grafana, jira, lcpp, pagerduty, slack,
-  svn, opencode and the agent CLIs), `connection.<kind>.api_key` (codex, muse), `connection.opencode.oauth_delete`,
-  `connection.<kind>.signin` (one row, written by the call that finished the sign-in; a still-pending poll, a repeat of
-  the finishing poll and a poll made while already signed in write nothing) and `mcp.server.create` / `update` / `delete` / `secrets` / `oauth_client`.
-  The target is the git host, the provider key's variable name or the MCP server id, and empty
-  otherwise. A failed write (an error answer from the workspace) leaves no row. `session.spend_cap`,
-  `session.lock` and `repo.lock` record who set a spend cap or flipped a deletion lock.
-  The Control Plane itself writes `workspace.agent_silent` when a running workspace's Agent stops
-  answering, `workspace.agent_recovered` when it answers again, and `workspace.agent_silent_stop`
-  when the deployment's automatic stop for a silent Agent stops the workspace.
-- **Not recorded**: plain **reads** (just opening and viewing a file, just browsing a list) are
-  not kept by default. And **raw terminal input/output (the very characters flowing across the
-  screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.
-
-### Operations that cannot be undone leave two rows
-
-Clean home, deleting a home's backups, destroying a workspace, removing a member, deleting a
-member for good, deleting a tenant, terminating a pool slot, purging an engine model's files, deleting a tenant's
-sign-in method and deleting or renaming an internal repository are recorded **before** they run, as `<action>.requested` (for example
-`workspace.destroy.requested`), and again when they finish, as `<action>` with the outcome in its
-detail: what was done, what could not be deleted, or the error. If the request cannot be written
-to the audit log, the operation is refused with "the audit log could not record who asked for it"
-and nothing is done; try again once the database is back. A `.requested` row with no outcome row
-after it means the outcome was lost, not that nothing happened; check the target.
-
-Therefore the audit log cannot trace "what exactly that member typed in the terminal". What it can
-trace is "when, who, against which file or session, made what kind of change". The design intent
-behind the recording scope is laid out in the developer documentation.
-
-## Running time ("Running time")
-
-The **"Running time"** section tallies each member's **workspace running time**. What is counted is
-"how much infrastructure was occupied" (the time a workspace was up), not Claude fees. Claude is
-"bring your own" (BYO): each member logs in with their own subscription (seat), so the cost borne
-by the operator is the occupancy time. The value is sampled roughly every 5 minutes, so it is an
-approximation with some margin of error.
-
-- **Period**: set dates with "From" and "To", and press "Apply" to take effect.
-- **Per member**: each member's running time appears as a bar chart, with "Total running" and the
-  "Members" count at the top.
-- **CSV**: the "CSV" button exports the data for the displayed period and scope as-is (usable for
-  cost allocation, known as showback, and internal reporting).
-
-The option to switch tenants appears only for super_admin. Your running-time screen is always scoped
-to your own tenant.
-
-## Cloud cost ("Cloud cost")
-
-**Tenant settings → Operations → Cloud cost** puts a price on what Running time counts in hours: the AWS
-invoice, attributed to each member by cost allocation tag. **The item exists only on a deployment running
-on AWS**, because nowhere else has a bill to read.
-
-- **Only what is tagged to a person appears.** For each member that is their workspace's slot hours,
-  persistent home volume and that volume's snapshots, and the headline is labelled "Attributable to
-  members". Shared infrastructure (NAT, DNS, load balancer, database, the idle slot pool) is deliberately
-  never divided between members, and your screen does not show the deployment's shared bill at all. The
-  figure is therefore **not** the full cost of running your team, and it is not an invoice.
-- **It runs about 24 hours behind, and the most recent days are not final.** The screen says how far
-  behind it is.
-- **Nothing is available from before cost attribution was switched on**, and it cannot be backfilled.
-  The screen says which day that is.
-- **Period**: "From" and "To", then "Apply", as in Running time. Amounts are in the currency of the
-  bill; nothing is converted.
-- The member detail carries the same figure for one person, with the daily trend and what it was
-  spent on.
-
----
-
-## FAQ
-
-**Q. Is adding members invite-based or automatic?**
-It depends on deployment settings. With auto-join (the default), permitted logins join
-automatically on first login; with invite-only, only people an administrator has added can enter.
-Switching the mode is IT's domain. For details, see "Auto-join and invite-only" in
-[01-members.md](01-members.md).
-
-**Q. What happens to a member who hits a limit?**
-Nothing that is already running gets stopped. Only the attempt to start something new is rejected,
-and the Console shows a "limit reached" message. Once they tidy up, they can continue. For details,
-see "What members experience when a limit is hit" in [02-limits.md](02-limits.md).
-
-**Q. Can I only see my own tenant?**
-Yes. Members, sessions, audit, and running time are all scoped to your own tenant. The option to switch
-tenants is not shown. Only a super_admin can see the whole deployment.
-
-**Q. Can I see in the audit log the actual commands a member typed in the terminal?**
-No. Raw terminal input/output is not stored. What the audit log can trace is the kind, actor,
-target, and time of change operations (files, git, sessions, etc.).
-
-**Q. Does running time include Claude fees?**
-No. What is counted is workspace running time (infrastructure occupancy). Claude charges sit on each member's
-own subscription.
-
-**Q. I want to promote a member to administrator, but there's no button.**
-As tenant_admin you cannot grant rights. Only a super_admin can grant roles. Ask your IT
-department / deployment administrator ("What the roles mean" in [01-members.md](01-members.md)).
-
-**Q. I want to delete a member who has left the company.**
-You can. From "Operations" on the member detail: **Remove member → Force-stop the workspace →
-Clean home → Delete backups** (where offered), in that order ("Removing a member" in
-[01-members.md](01-members.md)).
-
-**Q. Where is egress (external traffic) control?**
-Egress (external traffic) control is super_admin only. When traffic control becomes necessary,
-consult your IT department ([operate/README.md](../operate/README.md)).
-
-**Q. If I force-stop a workspace, does that member's work disappear?**
-No. The container merely stops for the moment; the contents of home (repositories and settings)
-remain. The member can start it again from the Console.
+## Not moved yet
 
 **Q. A member says their agent CLI has been the same version for weeks. Is that normal?**
 Look at **Settings → Toolchain**, at the line under the tool-version table: "Upstream release
@@ -166,8 +26,3 @@ not read a particular source, or that it has had no clean run for over 48 hours)
 standing still says nothing about upstream, and it is your deployment administrator's monitoring
 that needs looking at ([operate/](../operate/README.md)). If the line is **absent altogether**,
 this deployment cannot reach GitHub and simply does not know; that is not itself a fault.
-
----
-
-- Back to: [02 Resource limits and sessions](02-limits.md)
-- Guide index: [../README.md](../member/README.md)

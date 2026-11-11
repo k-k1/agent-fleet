@@ -158,15 +158,15 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | ワークスペースのサイズ | 配備管理者 | — | [deploy-targets.md](deploy-targets.ja.md) |
 | サインイン方式とサインイン規則 | テナント管理者 | サインイン方式 / サインイン規則 | [admin 05](../admin/05-access.ja.md#サインイン方式とサインイン規則) |
 | 接続元の制限 | テナント管理者 | 接続元の制限 | [admin 05](../admin/05-access.ja.md#接続元の制限) |
-| 外のアプリが MCP OAuth でテナントに接続してよいか | テナント管理者 | 接続元の制限 → MCP OAuth | [admin 04](../admin/04-mcp-outside.ja.md#mcp-oauth) |
+| 外のアプリが MCP OAuth でテナントに接続してよいか | テナント管理者 | 接続元の制限 → MCP OAuth | [MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める) |
 | 連携アプリの OAuth | テナント管理者 | 連携アプリの OAuth | [admin 05](../admin/05-access.ja.md) |
 | ブランチ命名ルール — チームの既定のブランチ名と起点 | テナント管理者 | ブランチ命名ルール | [admin 06](../admin/06-team-defaults.ja.md#ブランチ命名ルール) |
 | メンバーの既定 — 新しいメンバーがつなぐエージェント | テナント管理者 | メンバーの既定 | [admin 06](../admin/06-team-defaults.ja.md#メンバーの既定) |
-| メンバーが外部から Agent Fleet のメモリを使ってよいか | テナント管理者 | 外部からのメモリ利用 | [admin 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用) |
-| 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../admin/04-mcp-outside.ja.md) |
-| 監査 | テナント管理者 | 監査 | [admin 03](../admin/03-audit-usage.ja.md) |
-| 稼働時間 | テナント管理者 | 稼働時間 | [admin 03](../admin/03-audit-usage.ja.md#稼働時間稼働時間) |
-| クラウド費用をメンバーごとに（AWS のみ）| テナント管理者 | クラウド費用 | [admin 03](../admin/03-audit-usage.ja.md#クラウド費用クラウド費用) |
+| メンバーが外部から Agent Fleet のメモリを使ってよいか | テナント管理者 | 外部からのメモリ利用 | [外部からのメモリの利用を許可する](../admin/memory-outside.ja.md) |
+| 連携サーバーの配布 | テナント管理者 | MCP 配布 | [MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md) |
+| 監査 | テナント管理者 | 監査 | [監査ログを見る](../admin/audit.ja.md) |
+| 稼働時間 | テナント管理者 | 稼働時間 | [稼働時間とクラウド費用を見る](../admin/usage.ja.md#稼働時間を見る) |
+| クラウド費用をメンバーごとに（AWS のみ）| テナント管理者 | クラウド費用 | [稼働時間とクラウド費用を見る](../admin/usage.ja.md#クラウド費用を見る) |
 
 ## 配備を運用する
 

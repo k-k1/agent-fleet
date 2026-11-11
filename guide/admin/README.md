@@ -29,6 +29,21 @@ administrators are also working members: for everyday development read
 5. [Who may sign in, and from where](05-access.md): sign-in methods, login rules, allowed networks, your own OAuth apps
 6. [Team defaults](06-team-defaults.md): the team's branch naming rules, and the agent new members are pointed at
 
+## Audit and usage
+
+| Page | What you can do |
+|---|---|
+| [Read the audit log](audit.md) | Check when, who, against what and what kind of change was made in your tenant |
+| [Read running time and cloud cost](usage.md) | See each member's running time and cloud cost for a period and by month, and export it as CSV |
+
+## Outside connections
+
+| Page | What you can do |
+|---|---|
+| [Distribute an MCP server to everyone](mcp-distribute.md) | Hand a shared MCP server to every member of the tenant, and stop outside apps' OAuth connections |
+| [Allow memory use from outside](memory-outside.md) | Decide whether members may use memory from agents outside Agent Fleet |
+| [Allow MCP servers as watch sources](watch-sources.md) | Decide whether members may make their own MCP servers a source for the `watch` tool |
+
 ## Getting in
 
 The account menu at the top right (the button showing your email) has **Tenant
@@ -71,7 +86,7 @@ Touring it once, before it matters, is what stops you being lost when it does.
 3. **Learn the limits in force**: under Limits & idle. They are read-only for you;
    per-member session limits are yours ([02 Limits](02-limits.md)).
 4. **Read the audit and usage screens once** while everything is normal. That is what
-   lets you notice "this is different from usual" later ([03 Audit](03-audit-usage.md)).
+   lets you notice "this is different from usual" later ([Read the audit log](audit.md)).
 
 Day to day, the rhythm is: a glance at Sessions in the morning, an export from Running
 time at month end.

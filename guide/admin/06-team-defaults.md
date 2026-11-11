@@ -93,5 +93,5 @@ A member who already has the page open sees the change after a reload. The welco
 only until a member creates a first session or starts a first chat, so the default matters for
 members who have not started yet.
 
-Saving is recorded in the [audit log](03-audit-usage.md) as `tenant.member_defaults`, with the
+Saving is recorded in the [audit log](audit.md) as `tenant.member_defaults`, with the
 chosen agent.

@@ -130,5 +130,5 @@ It was not used for 30 days, or 90 days have passed since you allowed it. Follow
 
 - [Drive your workspace from an external Claude](external-claude.md): connect with a token; how an instruction looks to the session
 - [Move work from your own Claude Code into the workspace](move-work-in.md): move work from a Claude Code connected by signing in
-- [MCP distribution and outside access](../../admin/04-mcp-outside.md): an administrator enables MCP OAuth
+- [Stop outside apps from connecting with OAuth](../../admin/mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth): an administrator enables MCP OAuth
 - [Handle credentials safely](../security/credentials.md)

@@ -192,7 +192,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
 ## MCP サーバーと外部接続
 
 利用者は ⚙設定 →「MCP サーバー（セッションで使う）」で**自分の MCP サーバーを登録**でき、テナント管理者は
-**全メンバーへ配布**できます（[admin/04](../admin/04-mcp-outside.ja.md#mcp-サーバーをテナント全員に配るあなたの権限)）。運用者として押さえる点は
+**全メンバーへ配布**できます（[admin/04](../admin/mcp-distribute.ja.md)）。運用者として押さえる点は
 4 つです。
 
 - **秘密の置き場所。** 環境変数とヘッダの値は封筒暗号で保存されます。加えて、そのサーバーを使う各エージェント CLI の
@@ -209,7 +209,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   この入口から、メンバーは自分のエージェントに自分の Agent Fleet メモリを使わせることもできます。メンバーごとの別設定で、
   既定はオフです（[メンバー編](../user/memory/external.ja.md#始める前に) 設定 > エージェントメモリ > 設定）。外からの保存・部分編集・忘却は監査されます（`memory.entry.save` /
   `memory.entry.patch` / `memory.entry.forget`、実行者は `mcp`、対象はプロジェクト ID）。テナント管理者はテナント全体でこれをブロックでき
-  （[管理 04](../admin/04-mcp-outside.ja.md#agent-fleet-の外からのメモリ利用)）、`AF_MCP_ENABLED` はエンドポイント全体を止めます。
+  （[管理 04](../admin/memory-outside.ja.md)）、`AF_MCP_ENABLED` はエンドポイント全体を止めます。
 
 ### リモート MCP クライアント向けのサインイン（OAuth）
 

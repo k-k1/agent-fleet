@@ -160,15 +160,15 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
 | Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [admin 05](../admin/05-access.md#sign-in-methods-and-login-rules) |
 | Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md#allowed-networks) |
-| Whether outside apps may connect to the tenant through MCP OAuth | tenant admin | Allowed networks → MCP OAuth | [admin 04](../admin/04-mcp-outside.md#mcp-oauth) |
+| Whether outside apps may connect to the tenant through MCP OAuth | tenant admin | Allowed networks → MCP OAuth | [Distribute an MCP server to everyone](../admin/mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth) |
 | Integration app OAuth | tenant admin | Integration OAuth apps | [admin 05](../admin/05-access.md) |
 | Branch naming rules — the team's default branch names and base | tenant admin | Branch naming rules | [admin 06](../admin/06-team-defaults.md#branch-naming-rules) |
 | Member defaults — the agent new members connect | tenant admin | Member defaults | [admin 06](../admin/06-team-defaults.md#member-defaults) |
-| Whether members may use Agent Fleet memory from outside | tenant admin | External memory access | [admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet) |
-| Distributing integration servers | tenant admin | MCP distribution | [admin 04](../admin/04-mcp-outside.md) |
-| Audit | tenant admin | Audit | [admin 03](../admin/03-audit-usage.md) |
-| Running time | tenant admin | Running time | [admin 03](../admin/03-audit-usage.md#running-time-running-time) |
-| Cloud cost, per member (AWS only) | tenant admin | Cloud cost | [admin 03](../admin/03-audit-usage.md#cloud-cost-cloud-cost) |
+| Whether members may use Agent Fleet memory from outside | tenant admin | External memory access | [Allow memory use from outside](../admin/memory-outside.md) |
+| Distributing integration servers | tenant admin | MCP distribution | [Distribute an MCP server to everyone](../admin/mcp-distribute.md) |
+| Audit | tenant admin | Audit | [Read the audit log](../admin/audit.md) |
+| Running time | tenant admin | Running time | [Read running time and cloud cost](../admin/usage.md#read-running-time) |
+| Cloud cost, per member (AWS only) | tenant admin | Cloud cost | [Read running time and cloud cost](../admin/usage.md#read-cloud-cost) |
 
 ## Operating a deployment
 

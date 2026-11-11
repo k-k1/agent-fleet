@@ -17,7 +17,7 @@ read-only for you, and one is yours to register but somebody else's to approve.
 | **Integration OAuth apps** | yours |
 
 Outside apps that connect to your tenant through MCP OAuth are a fifth switch, covered with the
-rest of the outside access in [04](04-mcp-outside.md#mcp-oauth).
+rest of the outside access in [Distribute an MCP server to everyone](mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth).
 
 ## Allowed networks
 
@@ -43,7 +43,7 @@ Three more things worth knowing:
 - It applies to your tenant. Someone who also belongs to another tenant reaches that
   one under its own rules.
 - The **MCP OAuth** panel sits on this same screen; it is about outside apps, not about
-  networks, and is covered in [04](04-mcp-outside.md#mcp-oauth).
+  networks, and is covered in [Distribute an MCP server to everyone](mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth).
 
 ## Integration OAuth apps
 

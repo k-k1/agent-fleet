@@ -228,7 +228,7 @@ in the Console.
 ## MCP servers and external connections
 
 Users register **their own MCP servers** under ⚙ Settings → MCP servers (used by sessions), and a tenant admin can
-**distribute one to every member** ([admin/04](../admin/04-mcp-outside.md#distributing-an-mcp-server-to-everyone-in-the-tenant-your-permission)). Four things matter to
+**distribute one to every member** ([admin/04](../admin/mcp-distribute.md)). Four things matter to
 an operator.
 
 - **Where secrets live.** Environment variable and header values are stored with envelope
@@ -250,7 +250,7 @@ an operator.
   use their Agent Fleet memory; it is a separate per-member setting, off by default ([member guide](../user/memory/external.md#before-you-start),
   Settings > Agent memory > Settings). External saves, patches, feedback reports and forgets are audited (`memory.entry.save` /
   `memory.entry.patch` / `memory.entry.feedback` / `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
-  whole tenant ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)); `AF_MCP_ENABLED` turns the whole endpoint off.
+  whole tenant ([admin 04](../admin/memory-outside.md)); `AF_MCP_ENABLED` turns the whole endpoint off.
 
 ### Sign-in for remote MCP clients (OAuth)
 

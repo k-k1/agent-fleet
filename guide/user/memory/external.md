@@ -35,7 +35,7 @@ A memory saved from outside is read by every kind of session in the workspace. I
 2. Keep the workspace running. The memory lives inside it, so it cannot be used while the workspace is stopped
 
 If your tenant administrator has blocked memory from outside, the memory tools never appear, whatever this setting and your token say
-([for administrators](../../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)).
+([for administrators](../../admin/memory-outside.md)).
 
 ## Connect a client
 
