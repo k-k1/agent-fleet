@@ -136,8 +136,10 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 		if inst == "" || probe.claimLive(vol) {
 			continue
 		}
+		if _, seen := byInstance[inst]; !seen {
+			ids = append(ids, inst)
+		}
 		byInstance[inst] = vol
-		ids = append(ids, inst)
 	}
 	if len(ids) == 0 {
 		return
@@ -182,6 +184,12 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 	raw := ec2TagValue(inst.Tags, ec2TagDarkSince)
 	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning {
 		// Booting or being stopped is not dark, and a stamp left from before is of no use.
+		// A terminated box cannot be tagged (the tags go with it); trying would log a
+		// failure nobody can act on every sweep.
+		if inst.State != nil && (inst.State.Name == ec2types.InstanceStateNameTerminated ||
+			inst.State.Name == ec2types.InstanceStateNameShuttingDown) {
+			return
+		}
 		f.clearDarkStamp(ctx, id, raw)
 		return
 	}

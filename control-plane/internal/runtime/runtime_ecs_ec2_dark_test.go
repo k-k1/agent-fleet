@@ -186,6 +186,18 @@ func TestSweepDarkSlotDoesNotActOnWhatItCannotProve(t *testing.T) {
 			t.Fatal("stamp survived the box being stopped")
 		}
 	})
+	t.Run("terminated box is not tagged", func(t *testing.T) {
+		h, f, _ := darkHarness(t)
+		_ = f.sweep(ctx)
+		h.ec2.instances["i-dark"].State.Name = "terminated"
+		h.ec2.calls = nil
+		_ = f.sweep(ctx)
+		for _, c := range h.ec2.calls {
+			if strings.HasPrefix(c, "DeleteTags") {
+				t.Fatalf("tried to untag a terminated box: %q", c)
+			}
+		}
+	})
 	t.Run("off and unset do nothing", func(t *testing.T) {
 		for _, action := range []string{darkActionOff, ""} {
 			h, f, _ := darkHarness(t)
