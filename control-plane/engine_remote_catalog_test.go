@@ -161,7 +161,7 @@ func newTestRemoteRegistry(rem *engineRemotes) *engineRegistry {
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
 	reg.build = func(d engineDef) *engineRuntimeState {
 		st := &engineRuntimeState{def: d, catalog: newEngineCatalog(nil, d.Key)}
-		if d.remote() {
+		if d.Remote() {
 			st.remote = rem.forKey(d.Key)
 			st.catalog.source = st.remote.catalogSource()
 		}
@@ -225,12 +225,12 @@ func TestRemoteMirrorReadsTheFarCatalogue(t *testing.T) {
 		{img, engineAPIImages, "comfy", srv.URL},
 		{llm, engineAPIChat, "llamacpp", srv.URL},
 	} {
-		if c.e.def.api() != c.api || c.e.def.Provider != c.provider {
-			t.Errorf("%s = %s/%s, want %s/%s", c.e.def.Key, c.e.def.api(), c.e.def.Provider, c.api, c.provider)
+		if c.e.def.APIFamily() != c.api || c.e.def.Provider != c.provider {
+			t.Errorf("%s = %s/%s, want %s/%s", c.e.def.Key, c.e.def.APIFamily(), c.e.def.Provider, c.api, c.provider)
 		}
-		if !c.e.def.remote() || c.e.def.external() {
+		if !c.e.def.Remote() || c.e.def.External() {
 			t.Errorf("%s lifecycle = %q, want remote (external fails a cold start the far side would have waited out)",
-				c.e.def.Key, c.e.def.lifecycle())
+				c.e.def.Key, c.e.def.LifecycleKind())
 		}
 		// The far FLEET's URL, not the far engine's: the request goes through its gateway.
 		if c.e.def.URL != c.url {
@@ -425,7 +425,7 @@ func TestBorrowingOnlyCPAdoptsThroughTheRealBuilder(t *testing.T) {
 	// The poll's first tick is immediate rather than an interval away, so that a launch menu is
 	// not empty for ten minutes after a restart. It runs on its own goroutine; this waits for it.
 	e := waitForBorrowedRow(t, reg, "image")
-	if !e.def.remote() || e.def.Provider != "comfy" {
+	if !e.def.Remote() || e.def.Provider != "comfy" {
 		t.Errorf("def = %+v, want the far declaration", e.def)
 	}
 	if e.remote == nil || e.catalog.source == nil {
@@ -435,7 +435,7 @@ func TestBorrowingOnlyCPAdoptsThroughTheRealBuilder(t *testing.T) {
 	if got := e.modelIDs(ctx); !reflect.DeepEqual(got, []string{"comfy/sdxl-base-1.0"}) {
 		t.Errorf("model ids = %v, want the borrowed checkpoint", got)
 	}
-	if !e.def.notManagedHere() {
+	if !e.def.NotManagedHere() {
 		t.Error("the borrowed row would be given an ECS service to move a desired count on")
 	}
 }
@@ -565,7 +565,7 @@ func TestRemoteCatalogueDoesNotReplaceALocalRow(t *testing.T) {
 	if reg.get("image") != local {
 		t.Fatal("the borrowed row replaced the managed one, which leaves its ECS service with nobody to stop it")
 	}
-	if local.def.remote() || local.def.Service != "af-image" || local.def.Provider != "sdcpp" {
+	if local.def.Remote() || local.def.Service != "af-image" || local.def.Provider != "sdcpp" {
 		t.Errorf("the local row was rewritten: %+v", local.def)
 	}
 	if local.catalog.source != nil {

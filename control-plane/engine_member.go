@@ -77,7 +77,7 @@ func (e *engineRuntimeState) memberSourceRow(ctx context.Context) (map[string]an
 	warm := e.warm(ctx)
 	row := map[string]any{
 		"key":   e.def.Key,
-		"api":   e.def.api(),
+		"api":   e.def.APIFamily(),
 		"warm":  warm,
 		"queue": e.queueRow(),
 	}
@@ -99,11 +99,11 @@ func (e *engineRuntimeState) memberSourceRow(ctx context.Context) (map[string]an
 			}
 		}
 	}
-	if e.def.notManagedHere() {
+	if e.def.NotManagedHere() {
 		// Decision 4: a row this deployment does not manage carries no state, no idle window and
 		// no stop time — the same omission engine_admin_row.go's row() makes and for the same reason,
 		// nothing here started it, so nothing here may say when it will stop.
-		row["lifecycle"] = e.def.lifecycle()
+		row["lifecycle"] = e.def.LifecycleKind()
 		return row, true
 	}
 	cfg := e.controlCfg(ctx)
@@ -160,7 +160,7 @@ func enginesMemberPayload(ctx context.Context, reg *engineRegistry, gate engineR
 	for _, e := range reg.list() {
 		// ADR 0084 decision 7/8, gate 4: a role this tenant or member was denied gets no row, the
 		// same "do not offer and then refuse" rule gate 1 applies to the catalogue (decision 5).
-		if !gate.engineRoleAllowed(e.def.api()) {
+		if !gate.engineRoleAllowed(e.def.APIFamily()) {
 			continue
 		}
 		full, ok := e.memberSourceRow(ctx)

@@ -1,14 +1,20 @@
-package main
+// Package engine holds the engine domain that has moved out of the control plane's package
+// main (#3810, Plan A step 3). This first cluster is the declared half: the row type of the
+// engine table, its ingest block and the predicates over them. It has no outward dependency
+// (no manager, no apiError, no store), so unlike internal/tenantsrv it needs no interface
+// seam; a later file that does (runtime state, registry) will declare one in a deps.go of its own.
+//
+// control-plane/engine_wiring.go aliases every name back into main, which is why the engine
+// call sites and the engine test files that build &manager{} are untouched.
 
-// engine_def.go — the row type of the engine table and its pure predicates (split out of
-// engines.go; no runtime state lives here).
+package engine
 
 import (
 	"strings"
 	"time"
 )
 
-// engineDef is one row of the table 60-engines wrote. Every field is declared by the stack
+// Def is one row of the table 60-engines wrote. Every field is declared by the stack
 // rather than derived here (ADR 0053): the engine is asleep most of the time, so anything
 // the CP would have to ask the engine for is something it cannot ask.
 //
@@ -19,9 +25,9 @@ import (
 // overwrite an administrator's choice on every CP restart. Everything else here (service, URL,
 // health, capacity provider, idle, deadline, mode) really is a property of the vessel and stays
 // the stack's to declare.
-type engineDef struct {
+type Def struct {
 	Key string `json:"key"` // "llm" — the path segment, the log prefix, the settings prefix
-	API string `json:"api"` // "chat" | "images" — see engineAPI* below
+	API string `json:"api"` // "chat" | "images" — see APIChat and APIImages below
 	// Lifecycle says who owns starting and stopping this engine. Empty — every row written
 	// before ADR 0076 — is this deployment: an ECS service whose desired count the controller
 	// moves. "external" is a row that is nothing but a URL, a ComfyUI on the operator's own
@@ -83,17 +89,17 @@ type engineDef struct {
 	IdleSec          int    `json:"idleSec"`
 	StartDeadlineSec int    `json:"startDeadlineSec"`
 	Mode             string `json:"mode"` // the DEFAULT mode; a stored setting wins
-	// origin says which of the CP's own sources synthesised this row: "" for a table row,
-	// engineOriginEnv for AF_COMFY_URL, engineOriginPanel for the admin panel. Never in the JSON
+	// Origin says which of the CP's own sources synthesised this row: "" for a table row,
+	// OriginEnv for AF_COMFY_URL, OriginPanel for the admin panel. Never in the JSON
 	// table — an operator cannot declare it — and it decides where the row's bearer comes from
-	// (engineComfyPanel's precedence: a panel URL never presents an environment key).
-	origin string
+	// (engineComfyPanel in package main's precedence: a panel URL never presents an environment key).
+	Origin string `json:"-"`
 }
 
 // Where a synthesised image row came from (ADR 0076 decision 2 and its 2026-10-04 addendum).
 const (
-	engineOriginEnv   = "env"
-	engineOriginPanel = "panel"
+	OriginEnv   = "env"
+	OriginPanel = "panel"
 )
 
 // The two lifecycles that are not this deployment's, and they are NOT the same question
@@ -107,74 +113,74 @@ const (
 // Both are DECLARED and never inferred from the URL's shape (ADR 0053): a URL that happens to
 // contain /engine/ must not silently change what a row means.
 const (
-	engineLifecycleExternal = "external"
-	engineLifecycleRemote   = "remote"
+	LifecycleExternal = "external"
+	LifecycleRemote   = "remote"
 )
 
-// lifecycle is the declared lifecycle, folded. "" is this deployment's own ECS service.
-func (d engineDef) lifecycle() string {
+// LifecycleKind is the declared lifecycle, folded. "" is this deployment's own ECS service.
+func (d Def) LifecycleKind() string {
 	return strings.ToLower(strings.TrimSpace(d.Lifecycle))
 }
 
-// external reports whether this row is reachable and nothing here can start it.
+// External reports whether this row is reachable and nothing here can start it.
 //
 // 🔴 This is the NARROW of the two questions and the only one that produces an immediate failure.
 // A remote row must answer FALSE here: the far fleet is what starts that engine, so the request is
 // worth holding, and an answer of true would make a borrowed cold start fail every time
 // (ADR 0076 decision 4 is about an engine nothing can start — see ensureStarted).
-func (d engineDef) external() bool {
-	return d.lifecycle() == engineLifecycleExternal
+func (d Def) External() bool {
+	return d.LifecycleKind() == LifecycleExternal
 }
 
-// remote reports whether this row is another Agent Fleet's gateway (ADR 0079 decision 1).
-func (d engineDef) remote() bool {
-	return d.lifecycle() == engineLifecycleRemote
+// Remote reports whether this row is another Agent Fleet's gateway (ADR 0079 decision 1).
+func (d Def) Remote() bool {
+	return d.LifecycleKind() == LifecycleRemote
 }
 
-// notManagedHere reports whether the vessel is somebody else's: no ECS service to move a desired
+// NotManagedHere reports whether the vessel is somebody else's: no ECS service to move a desired
 // count on, no controller, no ladder, nothing here to start or stop.
 //
 // 🔴 This is the predicate almost every branch actually wants, and getting it wrong is silent.
 // ADR 0079's review counted nine call sites of the single `external()` this replaces: eight of
 // them meant THIS one, and the ninth (warm) meant neither.
-func (d engineDef) notManagedHere() bool {
-	return d.external() || d.remote()
+func (d Def) NotManagedHere() bool {
+	return d.External() || d.Remote()
 }
 
-// offersSpec is the offer list this role declares. `offers` when the stack writes one, and the
+// OffersSpec is the offer list this role declares. `offers` when the stack writes one, and the
 // ADR 0074 ladder otherwise — every rung of which is an on-demand offer.
-func (d engineDef) offersSpec() string {
+func (d Def) OffersSpec() string {
 	if s := strings.TrimSpace(d.Offers); s != "" {
 		return s
 	}
 	return d.Classes
 }
 
-// engineOfferBudgetDefault is the default registration ceiling (ADR 0077 decision 1).
-const engineOfferBudgetDefault = 300 * time.Second
+// OfferBudgetDefault is the default registration ceiling (ADR 0077 decision 1).
+const OfferBudgetDefault = 300 * time.Second
 
-// offerBudget is how long one offer is waited on.
-func (d engineDef) offerBudget() time.Duration {
+// OfferBudget is how long one offer is waited on.
+func (d Def) OfferBudget() time.Duration {
 	if d.OfferBudgetSec > 0 {
 		return time.Duration(d.OfferBudgetSec) * time.Second
 	}
-	return engineOfferBudgetDefault
+	return OfferBudgetDefault
 }
 
-type engineTable struct {
-	Engines []engineDef `json:"engines"`
+type Table struct {
+	Engines []Def `json:"engines"`
 	// Ingest is deployment-wide rather than per engine: one Fargate task definition stages a
 	// file for whichever role asked for it (ADR 0072 decision 6). Absent on a table written
 	// before phase P4, which is why every field is checked before use rather than assumed.
-	Ingest engineIngestDef `json:"ingest"`
+	Ingest IngestDef `json:"ingest"`
 }
 
-// engineIngestDef is what the Control Plane needs to START an ingest and to say why one failed.
+// IngestDef is what the Control Plane needs to START an ingest and to say why one failed.
 //
 // Declared by the stack, like everything else here (ADR 0053): a `RunTask` needs a task
 // definition, subnets and a security group, and the CP cannot ask CloudFormation for them at
 // request time.
-type engineIngestDef struct {
+type IngestDef struct {
 	TaskDef        string   `json:"taskDef"`
 	Subnets        []string `json:"subnets"`
 	SecurityGroups []string `json:"securityGroups"`
@@ -201,7 +207,7 @@ type engineIngestDef struct {
 	CivitaiTokenSecret string `json:"civitaiTokenSecret"`
 }
 
-func (d engineIngestDef) ok() bool {
+func (d IngestDef) OK() bool {
 	return strings.TrimSpace(d.TaskDef) != "" && len(d.Subnets) > 0
 }
 
@@ -216,17 +222,17 @@ func (d engineIngestDef) ok() bool {
 //     when it stores the file (ADR 0071 decision 9, ADR 0069 decision 9). Counting both here
 //     would put an `engine.image` row with no tokens in it next to the real one.
 const (
-	engineAPIChat   = "chat"
-	engineAPIImages = "images"
+	APIChat   = "chat"
+	APIImages = "images"
 )
 
-// api is the engine's API family, defaulting to chat. The default matters: a table written by
+// APIFamily is the engine's API family, defaulting to chat. The default matters: a table written by
 // the P0 stack has no `api` field at all, and the CP is upgraded before the stack is.
-func (d engineDef) api() string {
+func (d Def) APIFamily() string {
 	if v := strings.TrimSpace(d.API); v != "" {
 		return v
 	}
-	return engineAPIChat
+	return APIChat
 }
 
 // imageServableProviders is the images-API vocabulary THIS BUILD implements a client for (ADR
@@ -237,9 +243,9 @@ func (d engineDef) api() string {
 // tools/list with no error anywhere.
 var imageServableProviders = map[string]bool{"comfy": true, "openai-compat": true}
 
-// imageProviderServable answers whether THIS BUILD can serve a row's declared provider. Always
+// ImageProviderServable answers whether THIS BUILD can serve a row's declared provider. Always
 // true off the images API: the chat role's provider vocabulary (llamacpp and friends) is a
 // different question this ADR does not touch.
-func imageProviderServable(d engineDef) bool {
-	return d.api() != engineAPIImages || imageServableProviders[strings.TrimSpace(d.Provider)]
+func ImageProviderServable(d Def) bool {
+	return d.APIFamily() != APIImages || imageServableProviders[strings.TrimSpace(d.Provider)]
 }

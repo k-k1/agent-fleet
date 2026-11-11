@@ -1000,7 +1000,7 @@ func TestParseEngineTableReadsBothRoles(t *testing.T) {
 		t.Fatalf("engines = %+v", tab.Engines)
 	}
 	img := tab.Engines[1]
-	if img.api() != engineAPIImages || img.Provider != "sdcpp" || img.Health != "/v1/models" {
+	if img.APIFamily() != engineAPIImages || img.Provider != "sdcpp" || img.Health != "/v1/models" {
 		t.Fatalf("image row = %+v", img)
 	}
 	// sd-server has no API key of any kind, so the second lock the llm role has does not

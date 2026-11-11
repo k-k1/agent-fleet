@@ -116,7 +116,7 @@ const engineRemotePlainHoldSeconds = 75
 // global default would raise managed rows above the ecs-ec2 ingress ALB's 60-second idle timeout
 // (deploy/aws/ecs/cfn/30-ingress.yaml) and reintroduce exactly the 504 the 45 s exists to avoid.
 func enginePlainHoldFor(eng *engineRuntimeState) time.Duration {
-	if eng != nil && eng.def.remote() {
+	if eng != nil && eng.def.Remote() {
 		return enginePlainHoldOf(engineRemotePlainHoldSeconds)
 	}
 	return enginePlainHoldOf(engineManagedPlainHoldSeconds)
@@ -255,7 +255,7 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 		writeAPIErr(w, aerr)
 		return
 	}
-	if aerr := gate.forbidden(eng.def.api()); aerr != nil {
+	if aerr := gate.forbidden(eng.def.APIFamily()); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -295,7 +295,7 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 		// ADR 0084 decision 7/8, gate 1 (the main one): a role this tenant or member was denied is
 		// dropped from the catalogue exactly like an engine switched off — never offered and
 		// then refused, which is the shape decision 8 rules out.
-		if !gate.engineRoleAllowed(e.def.api()) {
+		if !gate.engineRoleAllowed(e.def.APIFamily()) {
 			continue
 		}
 		served, _ := e.servedModel()
@@ -343,7 +343,7 @@ func engineCatalogRowFor(d engineDef, models []store.EngineModel, warm, negative
 	}
 	row := map[string]any{
 		"key":        d.Key,
-		"api":        d.api(),
+		"api":        d.APIFamily(),
 		"provider":   d.Provider,
 		"base_url":   "/engine/" + d.Key + "/v1",
 		"models":     ids,
@@ -513,7 +513,7 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	if aerr := gate.forbidden(eng.def.api()); aerr != nil {
+	if aerr := gate.forbidden(eng.def.APIFamily()); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -571,7 +571,7 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 	//
 	// Only when a model is actually named, and only for chat: the image route deliberately
 	// sends no `model` (sd-server holds one, chosen at startup), and a GET has no body.
-	if eng.def.api() == engineAPIChat {
+	if eng.def.APIFamily() == engineAPIChat {
 		if m := engineRequestModel(body); m != "" && !engineCatalogHolds(eng.catalog.enabled(r.Context()), m) {
 			writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown",
 				"no model " + m + " in this engine's catalogue"})
@@ -683,7 +683,7 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	if aerr := gate.forbidden(eng.def.api()); aerr != nil {
+	if aerr := gate.forbidden(eng.def.APIFamily()); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -711,7 +711,7 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 	// token mint is also what learns the far side's own base path (engine_remote_token.go), so
 	// the target has to be built after it, not before.
 	bearer := eng.apiKey
-	if eng.def.remote() {
+	if eng.def.Remote() {
 		far, err := eng.remote.sessionToken(ctx, claims.Session)
 		if err != nil {
 			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable", err.Error()})
@@ -830,7 +830,7 @@ type enginePropsModelWindow struct {
 func (g engineGateway) enginePropsAugmentRouterWindow(ctx context.Context, eng *engineRuntimeState,
 	bearer string, body []byte) []byte {
 
-	if eng.def.remote() {
+	if eng.def.Remote() {
 		return body
 	}
 	var props struct {
@@ -931,7 +931,7 @@ func enginePropsLiveModelWindows(ctx context.Context, eng *engineRuntimeState, b
 // asked yet (or answered without a base_url), and an unknown one is an error rather than a guess.
 func enginePropsTarget(eng *engineRuntimeState) (string, error) {
 	base := strings.TrimRight(eng.def.URL, "/")
-	if eng.def.remote() {
+	if eng.def.Remote() {
 		far := strings.TrimRight(eng.remote.upstreamBase(), "/")
 		if far == "" {
 			return "", fmt.Errorf("%s has not said where its %s engine lives (no base_url on its token answer)",
@@ -1042,7 +1042,7 @@ func (g engineGateway) pendingGuard(ctx context.Context, eng *engineRuntimeState
 // — so the Agent states it in `X-AF-Model`, which is the same header the usage accounting
 // reads to know which model answered.
 func engineRequestedModelID(eng *engineRuntimeState, body []byte, r *http.Request) string {
-	if eng.def.api() == engineAPIChat {
+	if eng.def.APIFamily() == engineAPIChat {
 		if m := engineRequestModel(body); m != "" {
 			return m
 		}
@@ -1420,7 +1420,7 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 	// decisions 4 and 8). Bought first, because the far gateway states its own base path in the
 	// same answer and the URL below is built from it.
 	bearer := eng.apiKey
-	if eng.def.remote() {
+	if eng.def.Remote() {
 		tok, err := eng.remote.sessionToken(ctx, claims.Session)
 		if err != nil {
 			return upstreamStart{err: engineRelayErr(ctx, eng, err)}
@@ -1498,7 +1498,7 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 func engineUpstreamTarget(eng *engineRuntimeState, r *http.Request) (string, error) {
 	base := strings.TrimRight(eng.def.URL, "/")
 	middle := engineUpstreamPrefix(eng.def.Provider)
-	if eng.def.remote() {
+	if eng.def.Remote() {
 		far := strings.TrimRight(eng.remote.upstreamBase(), "/")
 		if far == "" {
 			return "", fmt.Errorf("%s has not said where its %s engine lives (no base_url on its token answer)",
@@ -1530,7 +1530,7 @@ func engineUpstreamTarget(eng *engineRuntimeState, r *http.Request) (string, err
 // alone stays correct, the loosening without this branch answers `engine_waking` to a caller who
 // is no longer there.
 func engineRelayErr(ctx context.Context, eng *engineRuntimeState, err error) error {
-	if err == nil || eng == nil || !eng.def.remote() {
+	if err == nil || eng == nil || !eng.def.Remote() {
 		return err
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
@@ -1585,7 +1585,7 @@ func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState)
 	// way an operator reaches for this first — puts the probe on the far GATEWAY as
 	// /engine/image/v1/health, which records demand over there and buys a GPU box. Before
 	// engineHealthy, therefore, and not inside it.
-	if eng.def.remote() {
+	if eng.def.Remote() {
 		return nil
 	}
 	// 🔥 An EXTERNAL row that was just found not answering is refused without probing again
@@ -1598,13 +1598,13 @@ func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState)
 	//
 	// Managed rows never take this branch: theirs is the wait for a box being bought, where "not
 	// answering" is the expected state and remembering it would refuse the engine mid-start.
-	if eng.def.external() && eng.downRecently() {
+	if eng.def.External() && eng.downRecently() {
 		return eng.ensureStarted(ctx)
 	}
 	waitStarted := time.Now()
 	for {
 		healthy := engineHealthy(ctx, eng)
-		if eng.def.external() {
+		if eng.def.External() {
 			eng.noteProbe(healthy)
 		}
 		if healthy {

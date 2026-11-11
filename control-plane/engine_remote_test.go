@@ -41,20 +41,20 @@ func TestEngineLifecyclePredicatesSplit(t *testing.T) {
 		{"managed", false, false, false},
 	} {
 		d := engineDef{Lifecycle: c.lifecycle}
-		if got := d.external(); got != c.external {
-			t.Errorf("%q.external() = %v, want %v", c.lifecycle, got, c.external)
+		if got := d.External(); got != c.external {
+			t.Errorf("%q.External() = %v, want %v", c.lifecycle, got, c.external)
 		}
-		if got := d.remote(); got != c.remote {
+		if got := d.Remote(); got != c.remote {
 			t.Errorf("%q.remote() = %v, want %v", c.lifecycle, got, c.remote)
 		}
-		if got := d.notManagedHere(); got != c.notManagedHere {
-			t.Errorf("%q.notManagedHere() = %v, want %v", c.lifecycle, got, c.notManagedHere)
+		if got := d.NotManagedHere(); got != c.notManagedHere {
+			t.Errorf("%q.NotManagedHere() = %v, want %v", c.lifecycle, got, c.notManagedHere)
 		}
 	}
 	// 🔴 The one that matters most, stated on its own because it is the whole reason the predicate
 	// was split: a remote row answering external() would inherit ADR 0076 decision 4 and fail
 	// every cold start, since ensureStarted's refusal is the "nobody starts it" answer.
-	if (engineDef{Lifecycle: engineLifecycleRemote}).external() {
+	if (engineDef{Lifecycle: engineLifecycleRemote}).External() {
 		t.Fatal("a remote row answers external() — it would fail every borrowed cold start")
 	}
 }
@@ -69,7 +69,7 @@ func TestParseEngineTableAllowsARemoteRowWithoutAService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a remote row without a service was refused: %v", err)
 	}
-	if len(tab.Engines) != 1 || !tab.Engines[0].remote() {
+	if len(tab.Engines) != 1 || !tab.Engines[0].Remote() {
 		t.Fatalf("table = %+v", tab.Engines)
 	}
 	// And it still needs the two things nothing can invent.

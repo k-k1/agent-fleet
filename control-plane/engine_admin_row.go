@@ -100,14 +100,14 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		//
 		// Asked of the chat role only. The image role's LoRAs name a ComfyUI FAMILY in the same
 		// column and are chosen per request, so "no row has that id" is not a fault there.
-		if e.def.api() == engineAPIChat && engineModelIsLora(m) && !engineLoraBasePresent(m, catalogue) {
+		if e.def.APIFamily() == engineAPIChat && engineModelIsLora(m) && !engineLoraBasePresent(m, catalogue) {
 			mr["lora_base_missing"] = true
 		}
 		modelRows = append(modelRows, mr)
 	}
 	row := map[string]any{
 		"key":      e.def.Key,
-		"api":      e.def.api(),
+		"api":      e.def.APIFamily(),
 		"provider": e.def.Provider,
 		"models":   ids,
 		// Every row, enabled or not: this panel is where an administrator turns one ON, so a
@@ -129,12 +129,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	// `state`, `desired`, `box`, `stop_eta`, `idle_secs` and the window. Omitted rather than
 	// zeroed: an idle window of 0 is configured to mean "never stops", which is a claim nothing
 	// here is entitled to make about somebody else's box.
-	if e.def.notManagedHere() {
+	if e.def.NotManagedHere() {
 		// The row's OWN lifecycle, not the constant this branch used to write: a remote row that
 		// announced itself as `external` would leave the Console's "another fleet" label nothing
 		// to branch on, and "externally managed" is true but unhelpful when there is a fleet with
 		// a panel of its own on the other end (ADR 0079 decision 10).
-		row["lifecycle"] = e.def.lifecycle()
+		row["lifecycle"] = e.def.LifecycleKind()
 		row["url"] = e.def.URL
 	} else {
 		// The demand window, always reported as the length it actually is. A client that
@@ -159,7 +159,7 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	// What this deployment excludes from every image (ADR 0072 follow-up, negative prompts).
 	// Only offered where a negative prompt can reach anything at all: the chat role has no such
 	// thing, and a box that would draw one is a panel asking for a setting nothing reads.
-	if e.def.api() == engineAPIImages {
+	if e.def.APIFamily() == engineAPIImages {
 		row["negative_always"] = e.negativeAlways(ctx)
 		row["negative_max"] = engineNegativeMaxRunes
 	}
