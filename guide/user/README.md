@@ -164,6 +164,19 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Use translation and purpose-built assistants](chat/purpose-assistants.md) | Translate or summarize a file; make your own assistant and set up AI assistance |
 | [Collect memos and hand them over](chat/memos.md) | Collect instructions as they come, tidy them, and send them to a session together |
 
+## Memory
+
+| Page | What you can do |
+|---|---|
+| [Read and correct agent memory](memory/overview.md) | Read, rewrite, pin and forget what agents remember |
+| [Check memory changes](memory/changes.md) | See who changed what and when, and revert a bad change |
+| [Set how memory is used](memory/settings.md) | Let sessions use memory, and carry Claude Code's memory across |
+| [Find stale memories](memory/lint.md) | Check for memories that use missing paths or retired terms, and mark them |
+| [Use memory tidy-up](memory/tidy-up.md) | Have a model draft fixes to memory, and approve them one by one |
+| [Import and export memory](memory/import-export.md) | Bring Claude Code's or muse's memory in and write it back to Claude Code; move the memories of a project that no longer exists |
+| [Restore memory from a snapshot](memory/snapshots.md) | See the history of Claude Code's and Codex's own memory, restore a point in time, take it to another environment |
+| [Use memory from an external agent](memory/external.md) | Use Agent Fleet memory from your own Claude Code or claude.ai; bring your own memory in |
+
 ## Outside access
 
 | Page | What you can do |

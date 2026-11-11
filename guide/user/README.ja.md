@@ -164,6 +164,19 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [翻訳や専用のアシスタントを使う](chat/purpose-assistants.ja.md) | ファイルを翻訳・要約する。自分用のアシスタントを作り、AI 補助を設定する |
 | [メモをためて渡す](chat/memos.ja.md) | 思いついた指示をためて整理し、まとめてセッションに送る |
 
+## メモリ
+
+| ページ | できること |
+|---|---|
+| [エージェントのメモリを見る・直す](memory/overview.ja.md) | エージェントが覚えたことを読み、書き直し、ピン留めし、忘れさせる |
+| [メモリの変更を確かめる](memory/changes.ja.md) | 誰が・いつ・何を変えたかを確かめ、まずい変更を元に戻す |
+| [メモリの使いかたを設定する](memory/settings.ja.md) | セッションにメモリを使わせる。Claude Code のメモリを引き継ぐ |
+| [古くなったメモリを見つける](memory/lint.ja.md) | なくなったパスや廃止した用語を使うメモリを点検し、印を付ける |
+| [メモリの自動整理を使う](memory/tidy-up.ja.md) | メモリを直す提案をモデルに作らせ、1 件ずつ承認する |
+| [メモリを取り込む・書き出す](memory/import-export.ja.md) | Claude Code や muse のメモリを取り込み、Claude Code へ書き戻す。なくなったプロジェクトのメモリを移す |
+| [スナップショットでメモリを戻す](memory/snapshots.ja.md) | Claude Code や Codex 自身のメモリの履歴を見て、ある時点に戻す。別の環境へ持っていく |
+| [外部のエージェントからメモリを使う](memory/external.ja.md) | 手元の Claude Code や claude.ai から Agent Fleet のメモリを使う。手元のメモリを持ち込む |
+
 ## 外からつなぐ
 
 | ページ | できること |

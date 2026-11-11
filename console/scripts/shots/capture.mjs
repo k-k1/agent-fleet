@@ -2443,6 +2443,104 @@ const SCENES = [
     settle: 2500,
   },
   // ---- end settings pages ----
+  // ---- memory import/export pages (SHOT_MEMIO_GUIDE) ----
+  {
+    // Settings › Agent memory › Import & export: the hub of cards, grouped Import / Export /
+    // Maintenance, each with its Start button.
+    name: "memio-hub",
+    guide: true,
+    stubEnv: { SHOT_MEMIO_GUIDE: "1" },
+    clip: "#shot-memio-hub",
+    pad: 8,
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      [...document.querySelectorAll(".mem-viewnav-tab")].find((el) => /取り込み・書き出し|Import & export/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "1300px"; m.style.maxHeight = "none"; }
+      const panel = document.querySelector(".mem-ie-group")?.parentElement;
+      panel?.setAttribute("id", "shot-memio-hub");
+      panel?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Settings › Memory snapshots › History: the status line with Snapshot now, the history with its
+    // trigger badges (two Agent Fleet memory writes folded into one line) and the newest diff.
+    name: "memio-snapshots",
+    guide: true,
+    stubEnv: { SHOT_MEMIO_GUIDE: "1" },
+    clip: ".mem-tab",
+    pad: 8,
+    sections: FOCUS_TREE,
+    settings: "memorysnapshots",
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      [...document.querySelectorAll(".mem-viewnav-tab")].find((el) => /^(履歴|History)/.test((el.textContent || "").trim()))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "1100px"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Settings › Agent memory › Settings: only the outside-access choice, its note and the
+    // "How to connect" link (the rest of the view belongs to the memory settings page).
+    name: "memio-external",
+    guide: true,
+    stubEnv: { SHOT_MEMIO_GUIDE: "1" },
+    clip: "#shot-memio-ext",
+    pad: 8,
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      [...document.querySelectorAll(".mem-viewnav-tab")].find((el) => /^(設定|Settings)/.test((el.textContent || "").trim()))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "1900px"; m.style.maxHeight = "none"; }
+      const label = [...document.querySelectorAll(".ds-label")].find((el) =>
+        /^(Agent Fleet の外からメモリを使わせる|Use Agent Fleet memory from outside Agent Fleet)$/.test((el.textContent || "").trim()));
+      const row = label?.closest(".ds-row");
+      if (row) {
+        // The row, its note and the "How to connect" link are siblings; wrap the three to clip them.
+        const note = row.nextElementSibling;
+        const link = note?.nextElementSibling;
+        const wrap = document.createElement("div");
+        wrap.id = "shot-memio-ext";
+        row.before(wrap);
+        wrap.append(row);
+        if (note) wrap.append(note);
+        if (link) wrap.append(link);
+        wrap.scrollIntoView({ block: "start" });
+      }
+    })()`,
+    settle: 1500,
+  },
+  // ---- end memory import/export pages ----
   // ---- getting-started pages (guide/user/start/) ----
   {
     // Home on a first-run member: the welcome card with the workspace started and no agent yet.
@@ -2536,6 +2634,112 @@ const SCENES = [
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     action: `(async () => { document.querySelector(".ws-stale-pill")?.click(); })()`,
     settle: 800,
+  },
+  // ---- the memory pages (SHOT_MEMORY_GUIDE) ----
+  // One webshop project and the user scope, the same memories in every scene (fixtures.mjs
+  // memoryGuide*). The three Memory pane scenes open the pane on one view each; the settings and
+  // lint scenes open Settings › Agent memory.
+  {
+    // The Memory pane's Memories view: the list, and a project memory opened with its actions.
+    name: "memory-view",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "memory", memoryView: "memories" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mem-md-pick")`,
+    action: `(async () => {
+      [...document.querySelectorAll(".mem-md-pick")].find((b) => /checkout-tests-need-payment-mock/.test(b.getAttribute("data-row-key") || b.textContent || ""))?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The Memory pane's Changes view: the newest change selected, its diff and the two ways back.
+    name: "memory-changes",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "memory", memoryView: "changes" })])], colRatios: [1], activeId: "p0" },
+    // The newest change is selected on arrival; wait for its diff rather than a fixed time.
+    ready: `!!document.querySelector(".mem-diff-head button") && !/読み込み中|Loading/.test(document.querySelector(".mem-diff")?.textContent || "")`,
+  },
+  {
+    // Settings › Agent memory › Settings: every switch on, with the tidy-up's status.
+    name: "memory-settings",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mem-tab",
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector(".acct-btn")?.click();
+      await wait(500);
+      [...document.querySelectorAll(".acct-item")].find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await wait(1500);
+      document.querySelector("#mem-af-tab-settings")?.click();
+      // The view is longer than the modal's fixed height: let the modal grow so nothing scrolls away.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Agent memory › Import & export › the lint report, on the webshop project.
+    name: "memory-lint",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mem-wiz",
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector(".acct-btn")?.click();
+      await wait(500);
+      [...document.querySelectorAll(".acct-item")].find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await wait(1500);
+      document.querySelector("#mem-af-tab-importexport")?.click();
+      await wait(800);
+      [...document.querySelectorAll(".mem-ie-card button")].find((b) => /リント|lint/i.test(b.getAttribute("aria-label") || ""))?.click();
+      await wait(1200);
+      // A React-controlled select: set the value through the native setter so onChange fires.
+      const sel = document.querySelector(".mem-wiz .mem-scope select");
+      if (sel) {
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "p-webshop");
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The Memory pane's Proposals view: three pending proposals, the first opened with its preview.
+    name: "memory-proposal",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 880,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "memory", memoryView: "proposals" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mem-cs-actions button")`,
   },
 ];
 

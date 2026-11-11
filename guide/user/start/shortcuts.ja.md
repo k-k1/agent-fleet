@@ -126,4 +126,4 @@ source_of_truth: "Console のショートカット一覧（?）と、⚙設定 �
 - [画面の見かた](console-tour.ja.md)
 - [画面を分けて並べる](panes.ja.md)
 - [ターミナル](../../member/08-terminal.ja.md)：端末の中のコピー＆ペーストや文字の大きさ
-- [エージェントメモリ](../../member/18-agent-memory.ja.md)
+- [エージェントのメモリを見る・直す](../memory/overview.ja.md)

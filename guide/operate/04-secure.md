@@ -247,7 +247,7 @@ an operator.
   on the deployment side it depends on the feature flag (`AF_MCP_ENABLED`) and on whether the
   ingress passes `/mcp`. The scope (read / write / admin:dangerous) and the expiry are the user's
   choice, and they can revoke it themselves. Over that door a member can also let their own agent
-  use their Agent Fleet memory; it is a separate per-member setting, off by default ([member guide](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent),
+  use their Agent Fleet memory; it is a separate per-member setting, off by default ([member guide](../user/memory/external.md#before-you-start),
   Settings > Agent memory > Settings). External saves, patches, feedback reports and forgets are audited (`memory.entry.save` /
   `memory.entry.patch` / `memory.entry.feedback` / `memory.entry.forget`, actor `mcp`, target the project id). A tenant administrator can block it for the
   whole tenant ([admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet)); `AF_MCP_ENABLED` turns the whole endpoint off.

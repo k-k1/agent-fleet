@@ -38,7 +38,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
 | Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓¹⁸ | ✓¹⁷ | — | — |
 | Shares Agent Fleet memory (af memory tools) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
+| The agent's own memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
 | RTK (token savings) | ✓²³ | ✓²³ | ✓²³ | ✓²³ | — | — | ✓²³ | — | — | — | — |
 | Starts child sessions and messages other sessions | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | — | — |
 | Bound to an image studio | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | — | — | — |
@@ -229,7 +229,7 @@ has two sides, and a kind can be on one without the other.
 ## Each agent's own memory
 
 What the switch **"Let sessions use Agent Fleet memory"**
-([18 Agent memory](../member/18-agent-memory.md#settings)) does to the memory a kind keeps by itself.
+([Set how memory is used](../user/memory/settings.md)) does to the memory a kind keeps by itself.
 
 | Kind | While the switch is on | Carried into Agent Fleet memory | Written back when it goes off |
 |---|---|---|---|

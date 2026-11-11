@@ -41,7 +41,7 @@ Each row carries a badge for the file's state.
 | In the agent's own memory folder | **Claude memory**, **Codex memory** (for another agent, **Agent's own memory**). It opens read-only |
 | Anywhere else | **Outside working copy** |
 
-- The memory badges mean the agent kind's own memory files. They are not Agent Fleet's [agent memory](../../member/18-agent-memory.md)
+- The memory badges mean the agent kind's own memory files. They are not Agent Fleet's [agent memory](../memory/overview.md)
 - A file in another working copy carries that working copy's name. It is not part of this session's working-copy diff
 - A file only a subagent edited carries a mark that says so
 
