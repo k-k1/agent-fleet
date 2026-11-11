@@ -521,7 +521,7 @@ func (a engineAdminAPI) getObjects(w http.ResponseWriter, r *http.Request, g eng
 	}
 	// A borrowed engine's bucket is the far deployment's, and this deployment cannot list it at
 	// all — the refusal names where to go rather than answering an empty prefix.
-	if e.def.remote() {
+	if e.def.Remote() {
 		writeAPIRefusal(w, refuse(http.StatusBadRequest, errCodeEngineNotOurs,
 			"engine "+e.def.Key+" is borrowed from "+e.def.URL+", so its bucket is that deployment's to read",
 			nil, nil))
@@ -608,7 +608,7 @@ func (a engineAdminAPI) postObjectRegister(w http.ResponseWriter, r *http.Reques
 		writeAPIRefusal(w, aerr)
 		return
 	}
-	images := e.def.api() == engineAPIImages
+	images := e.def.APIFamily() == engineAPIImages
 	if aerr := engineObjectRegisterable(object, role, key, images); aerr != nil {
 		writeAPIRefusal(w, aerr)
 		return
@@ -697,7 +697,7 @@ func (a engineAdminAPI) postObjectRegister(w http.ResponseWriter, r *http.Reques
 // engineObjectRowKind is what a row registered from bytes is: a checkpoint for an image engine, a
 // gguf for a chat one. The same rule the ingest form applies, and the one thing a key cannot say.
 func engineObjectRowKind(e *engineRuntimeState) string {
-	if e.def.api() == engineAPIChat {
+	if e.def.APIFamily() == engineAPIChat {
 		return "gguf"
 	}
 	return "checkpoint"

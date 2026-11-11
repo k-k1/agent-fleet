@@ -208,7 +208,7 @@ func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry
 		return
 	}
 	e := reg.get(row.Key)
-	if e != nil && !e.def.remote() {
+	if e != nil && !e.def.Remote() {
 		// 🔴 A key a LOCAL row already holds is not borrowed, and the far declaration is not even
 		// mirrored: the registry is one map keyed by role, and quietly replacing a managed row
 		// would leave its ECS service with nobody to stop it at $1.26/hour — the same reasoning
@@ -254,7 +254,7 @@ func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry
 	}
 	if reg.adopt(def) {
 		log.Printf("engines: %s (%s/%s) is borrowed from %s (%d model(s))",
-			row.Key, def.api(), def.Provider, r.base, len(row.Models))
+			row.Key, def.APIFamily(), def.Provider, r.base, len(row.Models))
 		// A role that did not exist a moment ago is the largest change a workspace can be told
 		// about: with no row, generate_image was not advertised at all.
 		go notifyEngineCatalogChanged(context.WithoutCancel(ctx), r.mgr, row.Key)
@@ -265,7 +265,7 @@ func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry
 
 // lifecycleLabel names a row's lifecycle for a log line, including the unnamed one.
 func lifecycleLabel(d engineDef) string {
-	if l := d.lifecycle(); l != "" {
+	if l := d.LifecycleKind(); l != "" {
 		return l
 	}
 	return "managed"

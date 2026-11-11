@@ -173,7 +173,7 @@ func TestComfyPanelWinsOverEnvAtBootAndNeverGetsTheEnvKey(t *testing.T) {
 		}
 		reg := newEngineRegistry(ctx, mgr)
 		e := reg.get("image")
-		if e == nil || e.def.URL != panelSrv.URL || e.def.origin != engineOriginPanel {
+		if e == nil || e.def.URL != panelSrv.URL || e.def.Origin != engineOriginPanel {
 			t.Fatalf("key %q: image row = %+v, want the panel's %s", tc.key, e, panelSrv.URL)
 		}
 		if !engineHealthy(ctx, e) {
@@ -203,7 +203,7 @@ func TestComfyPanelFirstSaveOnACPWithNoEngines(t *testing.T) {
 		t.Fatalf("PUT = %d %s", code, body)
 	}
 	e := reg.get("image")
-	if e == nil || e.def.URL != srv.URL || e.apiKey != "k1" || !e.def.external() {
+	if e == nil || e.def.URL != srv.URL || e.apiKey != "k1" || !e.def.External() {
 		t.Fatalf("after the save the image row is %+v", e)
 	}
 	// Cleared with nothing to fall back to: the role goes away again.
@@ -273,7 +273,7 @@ func TestComfyPanelSaveSwapsTheRowLiveAndClearFallsBackToEnv(t *testing.T) {
 
 	mustOK(t, a, "DELETE", "")
 	back := reg.get("image")
-	if back == nil || back.def.URL != envSrv.URL || back.apiKey != "env-secret" || back.def.origin != engineOriginEnv {
+	if back == nil || back.def.URL != envSrv.URL || back.apiKey != "env-secret" || back.def.Origin != engineOriginEnv {
 		t.Fatalf("after DELETE the row is %+v, want AF_COMFY_URL's with its key", back)
 	}
 }

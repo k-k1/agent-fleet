@@ -545,7 +545,7 @@ func (a engineAdminAPI) engineCompleteRun(ctx context.Context, r *http.Request, 
 		return engineCompleteAnswer{}, nil, refuse(http.StatusNotFound, errCodeEngineModelUnknown,
 			"no model "+id+" for engine "+role, nil, nil)
 	}
-	steps, aerr := engineCompletePlan(ctx, role, e.def.Provider, e.def.api() == engineAPIImages, m, ledger, b)
+	steps, aerr := engineCompletePlan(ctx, role, e.def.Provider, e.def.APIFamily() == engineAPIImages, m, ledger, b)
 	if aerr != nil {
 		return engineCompleteAnswer{}, nil, aerr
 	}

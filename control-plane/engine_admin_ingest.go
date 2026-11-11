@@ -228,7 +228,7 @@ func engineResolvedRow(res engineResolved, tokens engineDeploymentTokens, provid
 // engineIngestKindFor says what an engine takes in, which is what the file list is filtered by.
 // The catalogue's `kind` is the same word the panel sends when it starts one.
 func engineIngestKindFor(e *engineRuntimeState) string {
-	if e.def.api() == engineAPIImages {
+	if e.def.APIFamily() == engineAPIImages {
 		return "checkpoint"
 	}
 	return "gguf"

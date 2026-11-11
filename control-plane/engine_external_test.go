@@ -64,7 +64,7 @@ func TestParseEngineTableAllowsAnExternalRowWithoutAService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an external row without a service was refused: %v", err)
 	}
-	if len(tab.Engines) != 1 || !tab.Engines[0].external() {
+	if len(tab.Engines) != 1 || !tab.Engines[0].External() {
 		t.Fatalf("table = %+v", tab.Engines)
 	}
 
@@ -101,7 +101,7 @@ func TestEngineRegistryFromComfyURLAloneWiresNoAWS(t *testing.T) {
 	if e == nil {
 		t.Fatalf("no image engine: %+v", reg.byKey)
 	}
-	if !e.def.external() || e.def.Provider != "comfy" || e.def.api() != engineAPIImages {
+	if !e.def.External() || e.def.Provider != "comfy" || e.def.APIFamily() != engineAPIImages {
 		t.Errorf("def = %+v, want an external comfy images row", e.def)
 	}
 	if e.def.Health != "/system_stats" {
@@ -212,7 +212,7 @@ func TestEngineLlmEnvRowMatchesTheStackWrittenShape(t *testing.T) {
 	if !ok {
 		t.Fatal("AF_LLM_URL synthesised no row")
 	}
-	if def.Key != "llm" || def.api() != engineAPIChat || def.Provider != "llamacpp" {
+	if def.Key != "llm" || def.APIFamily() != engineAPIChat || def.Provider != "llamacpp" {
 		t.Errorf("def = %+v, want an llm/chat/llamacpp row", def)
 	}
 	if def.URL != "http://lan-host:8080" {
@@ -222,7 +222,7 @@ func TestEngineLlmEnvRowMatchesTheStackWrittenShape(t *testing.T) {
 		t.Errorf("health=%q warmPath=%q, want /health and /models (a llama.cpp router answers "+
 			"/health with ok while holding no weights)", def.Health, def.WarmPath)
 	}
-	if !def.external() {
+	if !def.External() {
 		t.Errorf("lifecycle = %q, want external", def.Lifecycle)
 	}
 }
@@ -251,7 +251,7 @@ func TestEngineRegistryFromLlmURLAloneGivesItsBearer(t *testing.T) {
 	if e == nil {
 		t.Fatalf("no llm engine: %+v", reg.byKey)
 	}
-	if !e.def.external() || e.def.Provider != "llamacpp" || e.def.api() != engineAPIChat {
+	if !e.def.External() || e.def.Provider != "llamacpp" || e.def.APIFamily() != engineAPIChat {
 		t.Errorf("def = %+v, want an external llamacpp chat row", e.def)
 	}
 	if e.apiKey != "lan-bearer" {
@@ -299,10 +299,10 @@ func TestEngineRegistryLlmURLReplacesAHandWrittenRemoteRow(t *testing.T) {
 	if e == nil {
 		t.Fatalf("no llm engine: %+v", reg.byKey)
 	}
-	if e.def.remote() {
+	if e.def.Remote() {
 		t.Error("the llm row is still remote — AF_LLM_URL did not win against the hand-written row")
 	}
-	if !e.def.external() || e.def.URL != up.URL {
+	if !e.def.External() || e.def.URL != up.URL {
 		t.Errorf("def = %+v, want the external AF_LLM_URL row", e.def)
 	}
 	if e.apiKey != "lan-bearer" {
@@ -341,7 +341,7 @@ func TestEngineRegistryLlmURLIgnoredAgainstAManagedRow(t *testing.T) {
 	if e == nil {
 		t.Fatalf("no llm engine: %+v", reg.byKey)
 	}
-	if e.def.external() || e.def.Service != "af-llm" {
+	if e.def.External() || e.def.Service != "af-llm" {
 		t.Errorf("def = %+v, want the managed row untouched", e.def)
 	}
 	if got := buf.String(); !strings.Contains(got, "AF_LLM_URL") || !strings.Contains(got, "is ignored") {
