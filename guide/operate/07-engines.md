@@ -12,7 +12,7 @@ super_admin sees. This chapter is that panel: what each mode costs, the GPU clas
 reading the state. Where an engine comes from is a different question, with a chapter each:
 [08 your own ComfyUI](08-image-engine.md), [09 another deployment's engines](09-borrowed-engine.md) and
 [10 your own llama.cpp](10-llm-lan.md). A tenant administrator sees a reduced model screen only if you
-granted it ([admin 02](../admin/02-limits.md#taking-engine-models-in-only-if-your-tenant-was-granted-it)).
+granted it ([Choose who may use the inference engines and which models](../admin/resources/engines.md#take-models-in)).
 
 ## Inference engines (self-hosted GPUs — super_admin only)
 
@@ -245,7 +245,7 @@ row**, or **Dismiss the job**, which removes a finished line from the ingest his
 Starting an ingest is a **super_admin** action by default. You can grant it to a tenant (Admin modal → the
 tenant → "Limits & idle" → **Inference engine model ingest**), and that tenant's administrators then get a
 reduced model screen of their own. What the grant covers, what stays with you and what they see is written for
-them in [admin 02](../admin/02-limits.md#taking-engine-models-in-only-if-your-tenant-was-granted-it). The grant never
+them in [Choose who may use the inference engines and which models](../admin/resources/engines.md#take-models-in). The grant never
 makes the catalogue per tenant, as the paragraphs below explain.
 
 Both tokens live under the Admin modal's **API tokens** item, which opens even before any engine

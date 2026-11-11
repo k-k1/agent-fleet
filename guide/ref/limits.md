@@ -86,7 +86,7 @@ Read the screen rather than this page.
 - Idle auto-stop: session halt, halt when awaiting a decision, the background-work hold and the
   Workspace stop; `0` is off (unbounded for the hold). An empty field takes the deployment default
   above, except halt when awaiting a decision: empty, it follows the tenant's own session halt when
-  that is set, and only otherwise the deployment default ([admin/02](../admin/02-limits.md#idle-auto-stop))
+  that is set, and only otherwise the deployment default ([Stop workspaces left idle](../admin/resources/idle-stop.md#how-idle-auto-stop-works))
 - Whether the tenant's administrators may take engine models in (off unless granted), and whether
   the tenant may use the self-hosted engines at all, per role (llm / image): allowed unless
   switched off

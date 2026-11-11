@@ -3012,3 +3012,138 @@ export const adminUsage = () => {
     monthly_members_total: members.length,
   };
 };
+
+// --- Admin resource pages of the guide (SHOT_ADMIN_RES) ---------------------------------------
+// The tenant administrator's resource screens: the read-only tenant limits, the engine access
+// table, and a running member whose idle auto-stop is held by a working session and a pin.
+// Served only to a run that sets SHOT_ADMIN_RES, so the other admin scenes keep their data.
+const minutesFromNow = (m) => new Date(Date.now() + m * 60_000).toISOString();
+
+export const adminResTenants = () => ({
+  tenants: [{ slug: "demo", name: "Demo Team", users: 3, running: 1, max_workspaces: 4, max_sessions: 8 }],
+  super_admin: false,
+});
+
+export const adminResMembers = () => {
+  const base = adminMembers().members;
+  return {
+    members: base.map((m) =>
+      m.user_key === "aoi-tanaka"
+        ? {
+            ...m,
+            max_sessions: 4,
+            mem_limit: 16384 * 1048576,
+            disk_gb: 80,
+            idle: {
+              enabled: true,
+              holders: [
+                { kind: "working", session: "checkout-fix", since: minutesFromNow(-12), lapseAt: minutesFromNow(48) },
+                { kind: "pin", session: "nightly-e2e", until: minutesFromNow(170) },
+              ],
+              observedAt: minutesFromNow(-1),
+            },
+          }
+        : m,
+    ),
+  };
+};
+
+export const adminResEngineAccess = () => ({
+  roles: [
+    { role: "llm", tenant_allowed: true, members_only: true },
+    { role: "image", tenant_allowed: true, members_only: false },
+  ],
+  members: [
+    { membership_id: "m1", user_key: "aoi-tanaka", email: "aoi@example.com", role: "tenant_admin", grants: ["llm"] },
+    { membership_id: "m2", user_key: "ren-sato", email: "ren@example.com", role: "member", grants: ["llm", "image"] },
+    { membership_id: "m3", user_key: "mio-kubo", email: "mio@example.com", role: "member", grants: [] },
+  ],
+});
+
+// ---- admin guide pages (SHOT_ADMIN_GUIDE) ----------------------------------------------------
+// The tenant administrator's shelf of the guide: a roster with one card that needs attention, and
+// the sign-in, network, OAuth-app and team-default screens with fictional values. Addresses are
+// from the documentation ranges (RFC 5737 / RFC 3849) and the domains are example.com.
+const agoISO = (ms) => new Date(Date.now() - ms).toISOString();
+export const adminGuideMembers = () => ({
+  members: [
+    {
+      user_key: "aoi-tanaka", email: "aoi@example.com", role: "tenant_admin", status: "active", state: "running",
+      has_workspace: true, max_sessions: 8, slot_class_effective: "",
+      sessions: { live: 2, total: 4, observed_at: agoISO(2 * 60_000) },
+      disk: { used: 12.4 * GIB, total: 50 * GIB, observed_at: agoISO(2 * 60_000) },
+      last_active_at: agoISO(60_000),
+    },
+    {
+      user_key: "ren-sato", email: "ren@example.com", role: "member", status: "active", state: "running",
+      has_workspace: true, max_sessions: 4,
+      sessions: { live: 1, total: 3, observed_at: agoISO(3 * 60_000) },
+      disk: { used: 48.6 * GIB, total: 50 * GIB, observed_at: agoISO(3 * 60_000) },
+      last_active_at: agoISO(5 * 60_000),
+    },
+    {
+      user_key: "mio-kubo", email: "mio@example.com", role: "member", status: "active", state: "stopped",
+      has_workspace: true,
+      sessions: { live: 0, total: 2, observed_at: agoISO(26 * 3600_000) },
+      disk: { used: 7.9 * GIB, total: 50 * GIB, observed_at: agoISO(26 * 3600_000) },
+      last_active_at: agoISO(26 * 3600_000),
+    },
+  ],
+});
+
+export const adminGuideNetwork = () => ({
+  allowed_cidrs: "203.0.113.0/24, 2001:db8:10::/48",
+  your_ip: "203.0.113.24",
+  proxy_hops: 1,
+  editable: true,
+});
+
+export const adminGuideGitOAuth = () => ({
+  providers: [
+    {
+      provider: "github",
+      source: "builtin_oauth",
+      is_default: true,
+      builtin: { oauth_app: true, github_app: true },
+    },
+  ],
+});
+
+export const adminGuideBranchRules = () => ({
+  tenant: "demo",
+  rules: [
+    { match: "*", name: "{prefix}{key}" },
+    { match: "bitbucket.org/acme/*", base: "develop", types: { bugfix: { prefix: "bugfix/", from: ["Bug", "Defect"] } } },
+  ],
+  updated_by: "aoi-tanaka",
+  updated_at: "2026-11-02T09:30:00Z",
+});
+
+export const adminGuideMemberDefaults = () => ({
+  tenant: "demo",
+  defaults: { agent: "claude" },
+  updated_by: "aoi-tanaka",
+  updated_at: "2026-11-02T09:30:00Z",
+});
+
+export const adminGuideProviders = () => ({
+  providers: [{ id: "google", label_ja: "Google でサインイン", label_en: "Sign in with Google" }],
+});
+
+export const adminGuideIdPs = () => ({
+  providers: [
+    {
+      id: "idp-1", name: "entra", provider_id: "t:demo:entra", tenant_slug: "demo", kind: "oidc",
+      issuer: "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0",
+      client_id: "11111111-2222-3333-4444-555555555555", trust: "issuer", allowed_domains: "example.com",
+      label_ja: "Example 社のアカウント", label_en: "Example corporate account",
+      status: "active", usable: true, has_secret: true,
+    },
+    {
+      id: "idp-2", name: "github-org", provider_id: "t:demo:github-org", tenant_slug: "demo", kind: "github",
+      issuer: "https://github.com", client_id: "Ov23liEXAMPLE0000000", trust: "email",
+      allowed_domains: "example.com", allowed_orgs: "example-org",
+      status: "pending", usable: false, has_secret: true,
+    },
+  ],
+});

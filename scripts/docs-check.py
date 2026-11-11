@@ -1711,6 +1711,7 @@ def check_tables(files: list[str], f: Findings) -> None:
 # are replaced page by page.
 TASK_PAGES = (
     "user/", "ref/cli/", "ref/aws-profiles.", "ref/aws-ssm.", "ref/bedrock-route.", "ref/console-ui.",
+    "admin/overview.", "admin/members/", "admin/access/", "admin/defaults/", "admin/resources/",
     "admin/audit.", "admin/usage.", "admin/mcp-distribute.", "admin/memory-outside.", "admin/watch-sources.",
 )
 

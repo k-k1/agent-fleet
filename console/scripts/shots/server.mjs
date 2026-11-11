@@ -30,6 +30,8 @@ const ADMIN = argv.includes("--admin") || process.env.SHOTS_ADMIN === "1";
 // --idle: serve the mirror session as idle with no pending question. The README shot wants the
 // live question card, but that card locks the composer, so anything that needs the composer
 // itself (the skill picker, say) is checked with this on.
+// SHOT_ADMIN_RES: the tenant administrator's resource pages of the guide (fixtures.mjs).
+const ADMIN_RES = process.env.SHOT_ADMIN_RES === "1";
 const IDLE = argv.includes("--idle") || process.env.SHOTS_IDLE === "1";
 // --fleet-lanes N: serve a SYNTHETIC fleet graph of N lanes instead of the hand-written
 // nine. The README shots never pass it; it exists because the figure's geometry only goes
@@ -72,6 +74,8 @@ const exact = {
     scheduler_enabled: true,
     role: "member",
     ...(process.env.SHOT_WS_GUIDE ? { home_wipe: true } : {}),
+    // The admin guide's member detail shows "Clean home", which needs a deployment that can erase one.
+    ...(process.env.SHOT_ADMIN_GUIDE ? { home_erase: true } : {}),
   }),
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
@@ -276,7 +280,7 @@ const exact = {
   "/api/cost/me": () => fx.myCloudCost(),
   "/api/admin/cloud-cost": () => fx.adminCloudCost(),
   // Tenant settings -> members -> detail (the entry point appears only with --admin).
-  "/api/admin/tenants": () => fx.adminTenants(),
+  "/api/admin/tenants": () => (ADMIN_RES ? fx.adminResTenants() : fx.adminTenants()),
   // The tenant administration pages of the guide (SHOT_ADMIN_OUTSIDE, run with SHOTS_ADMIN=1): the
   // audit log, running time, an empty MCP distribution and the two tenant switches. Without it
   // these routes stay unhandled, as before.
@@ -590,6 +594,21 @@ const exact = {
 };
 
 const re = [
+  // The tenant administrator's guide pages (SHOT_ADMIN_GUIDE, with SHOTS_ADMIN): a roster with a
+  // card that needs attention and the tenant-settings screens with fictional values. Listed
+  // first so these win over the plain member routes below.
+  ...(process.env.SHOT_ADMIN_GUIDE
+    ? [
+        [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminGuideMembers()],
+        [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/home-backups$/, () => ({ count: 0, home_exists: true })],
+        [/^\/api\/admin\/tenants\/[^/]+\/network$/, () => fx.adminGuideNetwork()],
+        [/^\/api\/admin\/tenants\/[^/]+\/git-oauth$/, () => fx.adminGuideGitOAuth()],
+        [/^\/api\/admin\/tenants\/[^/]+\/branch-rules$/, () => fx.adminGuideBranchRules()],
+        [/^\/api\/admin\/tenants\/[^/]+\/member-defaults$/, () => fx.adminGuideMemberDefaults()],
+        [/^\/api\/admin\/tenants\/[^/]+\/idp$/, () => fx.adminGuideIdPs()],
+        [/^\/api\/admin\/providers$/, () => fx.adminGuideProviders()],
+      ]
+    : []),
   // The budget dialog of the sessions guide (SHOT_SESSIONS_GUIDE): the spend of the session its
   // budget stopped. Without it the route stays unhandled, as it always was.
   ...(process.env.SHOT_SESSIONS_GUIDE ? [[/^\/api\/sessions\/([^/]+)\/spend$/, (m) => fx.sessionSpendGuide(m[1])]] : []),
@@ -656,7 +675,9 @@ const re = [
   // The four member-detail routes (docs/log/67 §67.15). cost alone stays off the 4-second
   // stats/sessions polling and is fetched on open and on Apply, because it reads a DB refreshed
   // every 6 hours.
-  [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminMembers()],
+  [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => (ADMIN_RES ? fx.adminResMembers() : fx.adminMembers())],
+  // Who may use the self-hosted engines, for the guide's admin engines page only.
+  ...(ADMIN_RES ? [[/^\/api\/admin\/tenants\/[^/]+\/engine-access$/, () => fx.adminResEngineAccess()]] : []),
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/sessions$/, () => fx.adminMemberSessions(LOCALE)],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/cost$/, () => fx.memberCloudCost()],

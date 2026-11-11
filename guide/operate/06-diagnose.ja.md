@@ -50,7 +50,7 @@ source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプト�
 | CP が起動時に「AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms」で終了する | ホームごとの鍵には KMS のカストディアンが要る。`AF_KEY_CUSTODIAN=kms`（と `AF_KMS_KEY_ID`）を設定するか、`AF_WORKSPACE_DEK` を外す（[12](12-keys.ja.md#ホームごとに専用の鍵を持たせる)） |
 | ワークスペースの起動が「open the home's credential-store key」で失敗する | KMS に届かないか、鍵が無効化されているか拒否している。設計どおり master 鍵への切り替えは無い。KMS へのアクセスを直してから起動し直す（[12](12-keys.ja.md#ホームごとに専用の鍵を持たせる)） |
 | リストアのあと、ワークスペースが資格情報の書き込みを拒み、CP のログに資格情報ストアが `unreadable` と出る | ストアがホームの鍵へ移る前の状態からホームを戻した。CP と同じ環境で `af-cp home-dek-status --remigrate <membership-id>` を実行し、ワークスペースを再起動する（[12](12-keys.ja.md#kms-鍵の無効化写しの復元無効に戻すとき)） |
-| ワークスペースのログに `[entrypoint] WARN: npm boot-install failed (retrying next start)` が出る | CLI のインストールに失敗した（ホームの満杯・ネットワーク・チェックサム）。次の起動でやり直し、メンバーの名簿のカードには「直近の起動で CLI のインストールに失敗しました」が出る（[admin/01](../admin/01-members.ja.md#要対応)） |
+| ワークスペースのログに `[entrypoint] WARN: npm boot-install failed (retrying next start)` が出る | CLI のインストールに失敗した（ホームの満杯・ネットワーク・チェックサム）。次の起動でやり直し、メンバーの名簿のカードには「直近の起動で CLI のインストールに失敗しました」が出る（[メンバーの状況を見る](../admin/members/roster.ja.md#要対応のカードに手を打つ)） |
 
 ## DooD の 3 制約の診断（「起動するのに静かに動かない」）
 

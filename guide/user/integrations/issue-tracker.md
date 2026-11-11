@@ -55,7 +55,7 @@ Each one goes away once the tenant administrator has fixed the app and you **rec
 | Confluence: not available. | Every `confluence` command |
 | Confluence: search and comments work, but … | Reading, creating and updating pages with `confluence` |
 
-The tenant administrator's steps are in [the admin guide's Access chapter](../../admin/05-access.md#bitbucket-and-jira).
+The tenant administrator's steps are in [Choose the OAuth apps for integrations](../../admin/access/oauth-apps.md#register-an-app-for-bitbucket-or-jira).
 
 ## Choose what the list shows
 

@@ -409,7 +409,7 @@ reloading the Console**: those answer "the workspace is stopped — start it fir
 left open never keeps a Workspace warm.
 
 One more start rides on the same switch: a tenant can turn on **Start at sign-in**
-(`autostart_on_signin`, off by default; see [Resource limits](../admin/02-limits.md#starting-a-stopped-workspace-at-sign-in)).
+(`autostart_on_signin`, off by default; see [Start the workspace at sign-in](../admin/resources/start-at-signin.md)).
 The Console then asks the Control Plane to start a stopped workspace once, when a member is present
 in a visible tab: after real input, or right after arriving by sign-in or a typed address (a reload does
 not count). The Control Plane enforces the tenant switch, the member's opt-out and the
