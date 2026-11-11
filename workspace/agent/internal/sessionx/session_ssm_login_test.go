@@ -78,3 +78,39 @@ func TestDeviceAuthorizationFindsThePortalURL(t *testing.T) {
 		t.Fatalf("url, code = %q, %q", url, code)
 	}
 }
+
+// TestDeviceAuthorizationFindsTheSigninURL: aws-cli 2.36 prints its URLs on
+// <region>.signin.aws, which neither the user_code nor the device.sso pattern matches.
+func TestDeviceAuthorizationFindsTheSigninURL(t *testing.T) {
+	head := "Browser will not be automatically opened.\nPlease visit the following URL:\n\n" +
+		"https://us-east-1.signin.aws/device\n\nThen enter the code:\n\nABCD-EFGH\n\n" +
+		"Alternatively, you may visit the following URL which will autofill the code upon loading:\n"
+	full := head + "https://us-east-1.signin.aws/device?code=ABCD-EFGH\n"
+	if url, code := DeviceAuthorization(full); url != "https://us-east-1.signin.aws/device?code=ABCD-EFGH" || code != "ABCD-EFGH" {
+		t.Fatalf("url, code = %q, %q", url, code)
+	}
+	// The autofill URL is still arriving: show the complete plain one, never a cut one.
+	if url, _ := DeviceAuthorization(head + "https://us-east-1.signin.aws/dev"); url != "https://us-east-1.signin.aws/device" {
+		t.Fatalf("partial autofill URL: got %q", url)
+	}
+}
+
+// TestDeviceAuthorizationSigninURLEdges pins what the signin.aws pattern takes and refuses.
+// The fixture URLs are stand-ins for the observed aws-cli 2.36 output, whose query part the
+// log redacted; only the host and the line layout are observed.
+func TestDeviceAuthorizationSigninURLEdges(t *testing.T) {
+	cases := []struct{ name, out, want string }{
+		{"crlf", "https://us-east-1.signin.aws/device\r\nThen enter the code:\r\nABCD-EFGH\r\n", "https://us-east-1.signin.aws/device"},
+		{"no trailing newline", "https://us-east-1.signin.aws/device", ""},
+		{"quoted", `{"url": "https://us-east-1.signin.aws/device"}`, "https://us-east-1.signin.aws/device"},
+		{"signin.aws inside another host's path", "https://evil.example/x.signin.aws\n", ""},
+		{"host that only starts with signin.aws", "https://x.signin.awsevil.example/\n", ""},
+		{"user_code URL wins", "https://us-east-1.signin.aws/device\nhttps://d-1.awsapps.com/start/#/device?user_code=ABCD-EFGH\n", "https://d-1.awsapps.com/start/#/device?user_code=ABCD-EFGH"},
+		{"device.sso wins over signin.aws", "https://us-east-1.signin.aws/device\nhttps://device.sso.us-east-1.amazonaws.com/\n", "https://device.sso.us-east-1.amazonaws.com/"},
+	}
+	for _, c := range cases {
+		if got, _ := DeviceAuthorization(c.out); got != c.want {
+			t.Errorf("%s: url = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

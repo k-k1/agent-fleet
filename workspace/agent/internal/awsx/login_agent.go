@@ -351,6 +351,10 @@ func allowedDeviceHosts(sp Profile) []string {
 		suffix = "amazonaws.com.cn"
 	}
 	hosts := []string{"device.sso." + region + "." + suffix}
+	if !china {
+		// aws-cli 2.36 prints its device URLs on the regional sign-in service.
+		hosts = append(hosts, region+".signin.aws")
+	}
 	u, err := url.Parse(sp.StartURL)
 	if err != nil || u.Hostname() == "" {
 		return hosts

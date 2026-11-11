@@ -391,8 +391,8 @@ func TestDeviceURLForIssuerStartURLAdmitsOnlyThePortal(t *testing.T) {
 	}
 	// A path that is not one label never reaches a host name.
 	odd := allowedDeviceHosts(Profile{SSORegion: "ap-northeast-1", StartURL: "https://identitycenter.amazonaws.com/ssoins-1.evil.example"})
-	if deviceURLAllowed("https://ssoins-1.evil.example.portal.ap-northeast-1.app.aws/", odd) || len(odd) != 3 {
-		t.Fatalf("hosts = %v", odd)
+	if deviceURLAllowed("https://ssoins-1.evil.example.portal.ap-northeast-1.app.aws/", odd) || len(odd) != 4 {
+		t.Fatalf("hosts = %v (want device.sso, signin.aws, identitycenter and .awsapps.com)", odd)
 	}
 }
 
@@ -1067,5 +1067,31 @@ func TestTerminalRunCacheLockHeldByALogout(t *testing.T) {
 				t.Fatalf("the held lock kept the run for %s", time.Since(start))
 			}
 		})
+	}
+}
+
+func TestSigninHostIsAllowedForItsOwnRegionOnly(t *testing.T) {
+	allowed := allowedDeviceHosts(Profile{SSORegion: "us-east-1", StartURL: "https://d-0123456789.awsapps.com/start"})
+	for url, want := range map[string]bool{
+		"https://us-east-1.signin.aws/device":         true,
+		"https://eu-west-1.signin.aws/device":         false,
+		"https://us-east-1.signin.aws.evil.example/x": false,
+		"https://evil.us-east-1.signin.aws/device":    false,
+		"https://us-east-1.SIGNIN.AWS/device":         true,
+		"https://us-east-1.signin.aws:8443/device":    true,
+		"https://user@us-east-1.signin.aws/device":    false,
+		"http://us-east-1.signin.aws/device":          false,
+		"https://evil.example/us-east-1.signin.aws":   false,
+	} {
+		if got := deviceURLAllowed(url, allowed); got != want {
+			t.Errorf("deviceURLAllowed(%q) = %t, want %t", url, got, want)
+		}
+	}
+}
+
+func TestSigninHostIsNotAllowedInChina(t *testing.T) {
+	allowed := allowedDeviceHosts(Profile{SSORegion: "cn-north-1", StartURL: "https://d-0123456789.awsapps.cn/start"})
+	if deviceURLAllowed("https://cn-north-1.signin.aws/device", allowed) {
+		t.Fatalf("a signin.aws host was admitted in a China region: %v", allowed)
 	}
 }
