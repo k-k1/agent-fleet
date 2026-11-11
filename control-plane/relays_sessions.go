@@ -54,6 +54,10 @@ var sessionRelays = []agentRelay{
 	{route: "POST /api/cleanup/worktree-output", audit: auditAs("cleanup.worktree_output", query("worktree")), auditIf: removedAny},
 	{route: "GET /api/cleanup/leftovers"},
 	{route: "DELETE /api/cleanup/leftovers/{kind}"},
+	// Per-folder, age-based removal of unmarked ~/.af-work folders (#3881). Audited only when
+	// the answer lists a removed folder; the survey GET changes nothing.
+	{route: "GET /api/cleanup/af-work"},
+	{route: "POST /api/cleanup/af-work", audit: auditAs("cleanup.af_work", nil), auditIf: removedAny},
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	{route: "POST /api/sessions/{name}/input"},

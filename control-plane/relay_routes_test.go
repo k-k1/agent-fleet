@@ -198,6 +198,8 @@ var agentProbeAnswers = map[string]string{
 	"DELETE /mcp-servers/x1/oauth": `{"serverId":"x1","issuer":"https://issuer.invalid","hadGrant":true,"revoked":true}`,
 	// A worktree-output call is audited only when the answer lists a removed directory.
 	"POST /cleanup/worktree-output": `{"status":"candidate","removed":[{"rel":"node_modules","bytes":1}]}`,
+	// An af-work age removal is audited only when the answer lists a removed folder.
+	"POST /cleanup/af-work": `{"removed":[{"name":"x","bytes":1}]}`,
 	// A sign-in step is audited only when the Agent says it stored the credential.
 	"POST /connections/agy/complete":        `{"connected":true,"stored":true}`,
 	"POST /connections/claude/complete":     `{"connected":true,"stored":true}`,

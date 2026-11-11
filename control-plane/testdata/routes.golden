@@ -256,6 +256,8 @@ GET /api/cleanup/home
 POST /api/cleanup/home/measure
 GET /api/cleanup/leftovers
 DELETE /api/cleanup/leftovers/{kind}
+GET /api/cleanup/af-work
+POST /api/cleanup/af-work
 GET /api/cleanup/tool-caches
 DELETE /api/cleanup/tool-caches/{name}
 GET /api/cleanup/usage

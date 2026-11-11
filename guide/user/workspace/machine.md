@@ -147,6 +147,18 @@ Files nothing will read again. Deleting them does not slow the next build.
 - To remove them before the 7 days, use **Delete** on **Work folders of archived sessions**.
   They go at once after a confirmation and cannot be brought back. The sessions can still be restored, but their `$AF_WORK_DIR` starts empty
 
+#### Old folders in `~/.af-work`
+
+Under the Leftover files rows, **Old folders in ~/.af-work** deletes the folders you made yourself, one by one, by age.
+
+1. Enter a number of days (30 to start with) and press **Find folders**. Each folder that no session uses and that has not changed for that long is listed with its size and when it last changed. A folder's age is the newest change anywhere inside it
+2. Untick the folders you want to keep, then press **Delete selected**
+3. A confirmation lists the folders. They go at once and cannot be brought back
+
+- Only folders the Agent did not create are listed (the ones it created go by the rules above). A folder of a session that is not archived, one in use, and one changed within the number of days is never listed or deleted
+- The Agent checks each folder again when you confirm. A folder that changed or was taken by a session in the meantime is skipped, and the message says how many
+- Links are never followed: a symbolic link inside a folder is removed as a link, and what it points to stays
+
 ## When it goes wrong
 
 ### A build exits with status 137
