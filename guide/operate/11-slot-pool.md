@@ -119,3 +119,20 @@ task as `STOPPING`, and the member's next Start waits for it (the service allows
 row shows **task STOPPING N min** for a slot whose agent is not connected. Once the instance is running
 again its agent reports the stop, which is what the member's next Start after a force-stop does; you can
 also start the instance from the EC2 console. The Control Plane does not do that on its own.
+
+## ecs-ec2: noticing a dark slot (detect only)
+
+The Control Plane's sweeper now looks for the wedged slot above before anyone starts the workspace. A
+slot holding a home, with no Start in flight, is **dark** when EC2 says `running`, its ECS agent is
+disconnected (or the instance is not registered), SSM does not report it `Online`, and it was launched or
+started more than `AF_ECS_EC2_DARK_BOOT_GRACE_SEC` (default 300) ago. The first sweep that sees all of that
+tags the instance `af-dark-since`; a sweep that finds either agent healthy removes the tag, and a stop and
+start of the instance voids it. Once the slot has stayed dark for `AF_ECS_EC2_DARK_AFTER_SEC` (default 600,
+raised to at least the boot grace and `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` plus the sweep interval; `0` turns
+the scan off) it writes a log line and one `pool.slot_dark_detected` audit row.
+
+**This release only reports.** It never stops, deregisters or quarantines the slot; stopping it is still
+**Stop (force)** above. `AF_ECS_EC2_DARK_SLOT_ACTION` is `detect` (the default) or `off`; `rescue` and
+`quarantine` are reserved for later releases (ADR 0121) and currently behave as `detect`. Watch the audit
+rows for a slot that was dark but healthy (an agent restart, a long stall): those tell you whether the
+thresholds are safe before any automatic action is switched on.

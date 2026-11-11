@@ -411,3 +411,23 @@ expires on a dead CP, so the replica that resumes can take it.
    or one audit row per episode, with the repeat test taking the maximum), or a fencing token that the
    write target verifies. The #2450 implementation has to settle this before `af-wedge-at` gates anything,
    and until then the repeat rule is advisory and `quarantine` mode is not to be enabled on its strength.
+
+## Implementation notes
+
+**2026-11-11 (first phase, #2450).** Only rung L0 is built: the dark predicate (decision 1), the
+`af-dark-since` anchor and the audit event `pool.slot_dark_detected`, behind
+`AF_ECS_EC2_DARK_SLOT_ACTION` (`off | detect`, default `detect`), `AF_ECS_EC2_DARK_AFTER_SEC` and
+`AF_ECS_EC2_DARK_BOOT_GRACE_SEC` (code: `runtime_ecs_ec2_dark.go`). Where reality differs from the text above:
+
+- `rescue` and `quarantine` are parsed but not implemented; they run as `detect`. L1, L2, the rescue marker, the
+  resume scan, the finalizer, the Start-side background rescue and the pool view are not built.
+- The stamp carries an optional third segment, `<time>/<LaunchTime>/detected`, set when the episode was reported, so
+  that "once per episode" survives a restart without another tag.
+- The workspace-Agent probe does not exist, so a slot whose service is up is observed like any other; that is
+  safe only because nothing acts on the result yet.
+- Since c92499764 and 78e422b29 a force-stop releases the task ENI and no longer quarantines. Moving the force-stop
+  onto the shared gate (decision 4) stays with the rescue phase.
+- The audit row's tenant is resolved by the Control Plane from the home's membership tag, because the sweeper's
+  runtime for a home carries no tenant id.
+
+Follow-ups: #3908
