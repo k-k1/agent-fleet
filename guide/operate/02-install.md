@@ -100,7 +100,7 @@ Which keys you fill in depends on the IdP:
 > administrator under **Tenant settings → Integrations → Integration OAuth apps**. There is no
 > deployment-level setting for them and `BITBUCKET_OAUTH_KEY` / `_SECRET` are not read at all;
 > `GITHUB_OAUTH_CLIENT_ID` above means the sign-in app only. The tenant administrator's
-> side of it is [admin/05 Access](../admin/05-access.md).
+> side of it is [Choose the OAuth apps for integrations](../admin/access/oauth-apps.md).
 
 Three points decide whether this goes smoothly, and all three are covered in detail in
 [05](05-signin.md):

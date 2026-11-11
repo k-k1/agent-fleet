@@ -78,7 +78,7 @@ The force-stop button works even when the Agent is stuck.
 
 Under **Operations**, **Cannot be undone** holds **Clean home**, **Delete backups**, **Remove member**, **Destroy workspace** and **Delete this member**.
 You can run all of them, but unlike force-stop they cannot be reversed. Before pressing one, read what the confirmation dialog says it keeps and deletes.
-How to use them is in [Removing a member](../01-members.md#removing-a-member).
+How to use them is in [Removing a member](../members/remove.md).
 
 When something needs fixing on the host, such as a broken container that a restart does not fix, ask the deployment administrator.
 

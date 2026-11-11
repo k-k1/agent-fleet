@@ -374,7 +374,7 @@ describe("GitHub app source", () => {
       expect(document.querySelectorAll('input[type="checkbox"]').length).toBe(2);
       expect(document.querySelectorAll("details.admin-scopes").length).toBe(0);
       const text = document.body.textContent || "";
-      expect(text).toContain("guide/admin/05-access");
+      expect(text).toContain("guide/admin/access/oauth-apps");
     });
   }
 });

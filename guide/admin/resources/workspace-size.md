@@ -75,7 +75,7 @@ The bigger size reaches the member's screen within a few tens of seconds. Nothin
 | "There is no home yet" | It has never started. The home is created at that size |
 
 - Making it smaller means throwing the home away. Talk to the deployment administrator
-- A member whose home is nearly full, or whose last start could not install a CLI, appears under **Needs attention** in the roster ([Needs attention](../01-members.md#needs-attention))
+- A member whose home is nearly full, or whose last start could not install a CLI, appears under **Needs attention** in the roster ([Needs attention](../members/roster.md#act-on-cards-that-need-attention))
 - How members free up space themselves is in [See your machine and its usage](../../user/workspace/machine.md#free-up-the-home-disk)
 
 ## Choose the machine

@@ -94,7 +94,7 @@ Scenes marked `guide: true` are for the rewritten guide and the public docs site
 default run skips them, so name them in `--only` and pass `--out`. A scene with its own stub data (`stubEnv`:
 `aws-toast`, `ssm-hosts`, `ssm-start`, `gcp-settings`, `gcp-badge`, `gcp-toast`, `chat-settings`, `ops-settings`,
 `images-gallery`, `images-settings`, the workspace pages' `ws-recreate`, `ws-machine`, `ws-toolchains`,
-`ws-databases`, the sessions pages' `sessions-budget`, the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`, the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`, the agent pages' `agents-*` scenes, the file pages' `files-edit`, the preview pages' `preview-settings` and `preview-devidp`, the fleet pages' `fleet-wset`, `fleet-settings`, `fleet-operator`, `fleet-report` and `fleet-schedule`, the team pages' `team-handover`, `team-share`, `team-inbox-compose` and `team-limits`, the chat pages' `chatpages-*`, the outside-access pages' `outside-*`, the settings pages' `settings-*`, the memory pages' `memory-*` and `memio-*` scenes, the admin resource pages' `admin-res-*` scenes and the getting-started pages' `start-welcome` and `start-restart`) runs on its own:
+`ws-databases`, the sessions pages' `sessions-budget`, the conversation pages' `conv-plan`, `conv-skills`, `conv-queue`, `conv-fork` and `conv-translate`, the code pages' `code-git-hosting`, `code-internal-repos`, `code-clone`, the agent pages' `agents-*` scenes, the file pages' `files-edit`, the preview pages' `preview-settings` and `preview-devidp`, the fleet pages' `fleet-wset`, `fleet-settings`, `fleet-operator`, `fleet-report` and `fleet-schedule`, the team pages' `team-handover`, `team-share`, `team-inbox-compose` and `team-limits`, the chat pages' `chatpages-*`, the outside-access pages' `outside-*`, the settings pages' `settings-*`, the memory pages' `memory-*` and `memio-*` scenes, the admin pages' `admin-*` scenes and the getting-started pages' `start-welcome` and `start-restart`) runs on its own:
 
 ```bash
 node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
@@ -126,6 +126,7 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only start-to
 node console/scripts/shots/capture.mjs --locale ja --theme light --only start-welcome --out <dir>  # and start-restart, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only memio-hub --out <dir>  # and memio-snapshots, memio-external, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only memory-view --out <dir>  # and memory-changes, memory-settings, memory-lint, memory-proposal, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only admin-roster --out <dir>  # and every other admin-* scene, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only admin-res-limits --out <dir>  # and admin-res-engine-access, admin-res-member, admin-res-size, admin-res-idle, admin-res-stop, one per run
 ```
 

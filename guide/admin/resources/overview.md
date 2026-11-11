@@ -49,7 +49,7 @@ Agent Fleet sometimes stops a workspace on its own. The roster card then shows t
 - On AWS the reason often names why no machine could take the workspace. That is usually the thing to fix
 - The member was sent a notification with the same content. The display stays until the workspace is next started
 
-How to read the roster is in [Finding your way around](../01-members.md#finding-your-way-around).
+How to read the roster is in [Finding your way around](../members/roster.md#open-the-roster).
 
 ## See the sessions running now
 
