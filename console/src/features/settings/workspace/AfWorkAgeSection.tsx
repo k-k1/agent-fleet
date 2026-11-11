@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../../../core/api/client.ts";
+import { api, apiJSON } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { humanSize } from "../../../lib/filemeta.ts";
@@ -67,9 +67,9 @@ export function AfWorkAgeSection() {
     if (!listed || chosen.length === 0) return;
     setBusy(true);
     try {
-      const res = await api("api/cleanup/af-work", {
-        method: "POST",
-        body: JSON.stringify({ older_than_days: listed.days, names: chosen.map((f) => f.name) }),
+      const res = await apiJSON("api/cleanup/af-work", "POST", {
+        older_than_days: listed.days,
+        names: chosen.map((f) => f.name),
       });
       if (res?.error) setMsg(tr("machine.afage_failed_delete") + (res.error.message ?? res.error.code));
       else {

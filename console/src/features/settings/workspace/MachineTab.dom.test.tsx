@@ -20,17 +20,28 @@ import { __test as feed } from "../../../core/store/wsStatsFeed.ts";
 
 // Per-path answers; anything unlisted gets {} (what an Agent without the endpoint amounts to).
 const answers = vi.hoisted(() => ({ byPath: {} as Record<string, unknown>, calls: [] as string[], bodies: [] as string[] }));
-vi.mock("../../../core/api/client.ts", () => ({
-  api: (path: string, opts?: RequestInit) => {
+vi.mock("../../../core/api/client.ts", () => {
+  // Like the Control Plane / Agent: a write with a body but no JSON Content-Type is refused.
+  const api = (path: string, opts?: RequestInit) => {
     answers.calls.push((opts?.method ?? "GET") + " " + path);
-    if (opts?.body) answers.bodies.push(String(opts.body));
+    if (opts?.body) {
+      answers.bodies.push(String(opts.body));
+      const ct = new Headers(opts.headers).get("Content-Type") ?? "";
+      if (!ct.startsWith("application/json")) {
+        return Promise.resolve({ error: { code: "unsupported_media_type", message: "writes take application/json" } });
+      }
+    }
     const a = answers.byPath[path];
     // An Error stands for a request that never got an answer (fetch rejected).
     return a instanceof Error ? Promise.reject(a) : Promise.resolve(a ?? {});
-  },
-  apiJSON: () => Promise.resolve({}),
-  getTenant: () => "default",
-}));
+  };
+  return {
+    api,
+    apiJSON: (path: string, method: string, body?: unknown) =>
+      api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+    getTenant: () => "default",
+  };
+});
 // The feed is driven directly (feed.sample()) rather than by its 4s timer.
 vi.mock("../../../core/push/events.ts", () => ({ onPush: () => () => {}, pushHealthy: () => true, pushPaused: () => false }));
 
@@ -457,6 +468,8 @@ describe("MachineView", () => {
     });
     expect(answers.calls).toContain("POST api/cleanup/af-work");
     expect(JSON.parse(answers.bodies[0])).toEqual({ older_than_days: 30, names: ["scratch-a"] });
+    // The refusal above only fires without the JSON header, so a delete that went through carried it.
+    expect(document.body.textContent).toContain("1 個");
   });
 
   it("asks before removing archived sessions' folders early, and cancel removes nothing", async () => {
