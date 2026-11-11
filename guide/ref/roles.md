@@ -63,6 +63,16 @@ row back for approval.
 administrator (the ingest grant in the tenant's limits); enabling a model, the engine
 modes, the use gate and the API tokens stay with the deployment administrator.
 
+## Adding administrators
+
+Only a deployment administrator can make someone a tenant administrator.
+
+- The deployment administrator presses **Make an admin of this tenant** under **Permissions** in the member detail, and **Revoke admin** to take it away again
+- The rights they grant apply inside that tenant only; other tenants are not affected
+- A tenant administrator adding people with "Add member" can add plain members (`member`) only
+- A removed administrator who is added back returns as a plain member; only a deployment administrator can make them an administrator again
+- Deployment administrators are set in the deployment's configuration (`SUPER_ADMIN_EMAILS`) and carry a star on the roster
+
 ## Where a tenant administrator has to ask
 
 The split follows blast radius. Anything whose

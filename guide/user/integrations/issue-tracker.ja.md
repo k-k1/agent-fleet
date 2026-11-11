@@ -55,7 +55,7 @@ OAuth の接続では、Atlassian アプリに許可されている範囲によ�
 | Confluence: 利用できません。 | `confluence` のすべてのコマンド |
 | Confluence: 検索とコメントは使えますが… | `confluence` のページの閲覧・作成・更新 |
 
-テナント管理者の手順は [管理者ガイドのアクセス](../../admin/05-access.ja.md#bitbucket-と-jira) にあります。
+テナント管理者の手順は [連携に使う OAuth アプリを選ぶ](../../admin/access/oauth-apps.ja.md#bitbucket-と-jira-のアプリを登録する) にあります。
 
 ## 一覧に出すものを決める
 

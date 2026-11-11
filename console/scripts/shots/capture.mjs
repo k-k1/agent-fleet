@@ -2052,6 +2052,52 @@ const SCENES = [
     })()`,
     settle: 2500,
   },
+  // ---- admin pages (SHOT_ADMIN_GUIDE + SHOTS_ADMIN) ----
+  // Each opens Tenant settings on one section through the account menu, then tags the element to
+  // crop as #shot-admin (the panels share their class names with every other settings tab).
+  ...[
+    { name: "admin-roster", section: "members", clip: [".member-summary", ".member-grid"], target: "null" },
+    { name: "admin-add-member", section: "members", target: `document.querySelector("form.add-member")` },
+    {
+      name: "admin-member-ops",
+      section: "members",
+      // The detail's resources and sessions come first, so the operations panel sits low.
+      height: 2600,
+      open: `[...document.querySelectorAll(".member-card")].find((el) => /ren-sato/.test(el.textContent || ""))?.click();`,
+      target: `[...document.querySelectorAll(".settings-content .admin-panel")].find((el) => /^(操作|Operations)$/.test(el.querySelector("h4")?.textContent?.trim() || ""))`,
+    },
+    { name: "admin-signin-methods", section: "signin", target: `document.querySelector(".settings-content .admin-panel")` },
+    { name: "admin-networks", section: "network", target: `document.querySelector(".settings-content .admin-panel")` },
+    { name: "admin-oauth-github", section: "git-oauth", target: `document.querySelector(".settings-content .admin-panel")` },
+    { name: "admin-branch-rules", section: "branch-rules", target: `document.querySelector(".settings-content .admin-panel")` },
+    { name: "admin-member-defaults", section: "member-defaults", target: `document.querySelector(".settings-content .admin-panel")` },
+  ].map((a) => ({
+    name: a.name,
+    guide: true,
+    stubEnv: { SHOT_ADMIN_GUIDE: "1", SHOTS_ADMIN: "1" },
+    clip: a.clip || "#shot-admin",
+    pad: 12,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: a.height || 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      localStorage.setItem("af-tenant-section", ${JSON.stringify(a.section)});
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /テナント設定|Tenant settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      ${a.open || ""}
+      await new Promise((r) => setTimeout(r, 1500));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+      const t = ${a.target};
+      if (t) t.id = "shot-admin";
+      // A text box shows its whole content rather than a scrolled window of it.
+      for (const ta of document.querySelectorAll(".settings-content textarea")) ta.style.height = ta.scrollHeight + 8 + "px";
+    })()`,
+    settle: 2500,
+  })),
   // ---- team pages (SHOT_TEAM_GUIDE) ----
   {
     // The hand-to-member dialog: two teammates the session is shared with, and a branch with

@@ -72,6 +72,8 @@ const exact = {
     scheduler_enabled: true,
     role: "member",
     ...(process.env.SHOT_WS_GUIDE ? { home_wipe: true } : {}),
+    // The admin guide's member detail shows "Clean home", which needs a deployment that can erase one.
+    ...(process.env.SHOT_ADMIN_GUIDE ? { home_erase: true } : {}),
   }),
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
@@ -578,6 +580,21 @@ const exact = {
 };
 
 const re = [
+  // The tenant administrator's guide pages (SHOT_ADMIN_GUIDE, with SHOTS_ADMIN): a roster with a
+  // card that needs attention and the tenant-settings screens with fictional values. Listed
+  // first so these win over the plain member routes below.
+  ...(process.env.SHOT_ADMIN_GUIDE
+    ? [
+        [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminGuideMembers()],
+        [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/home-backups$/, () => ({ count: 0, home_exists: true })],
+        [/^\/api\/admin\/tenants\/[^/]+\/network$/, () => fx.adminGuideNetwork()],
+        [/^\/api\/admin\/tenants\/[^/]+\/git-oauth$/, () => fx.adminGuideGitOAuth()],
+        [/^\/api\/admin\/tenants\/[^/]+\/branch-rules$/, () => fx.adminGuideBranchRules()],
+        [/^\/api\/admin\/tenants\/[^/]+\/member-defaults$/, () => fx.adminGuideMemberDefaults()],
+        [/^\/api\/admin\/tenants\/[^/]+\/idp$/, () => fx.adminGuideIdPs()],
+        [/^\/api\/admin\/providers$/, () => fx.adminGuideProviders()],
+      ]
+    : []),
   // The budget dialog of the sessions guide (SHOT_SESSIONS_GUIDE): the spend of the session its
   // budget stopped. Without it the route stays unhandled, as it always was.
   ...(process.env.SHOT_SESSIONS_GUIDE ? [[/^\/api\/sessions\/([^/]+)\/spend$/, (m) => fx.sessionSpendGuide(m[1])]] : []),
