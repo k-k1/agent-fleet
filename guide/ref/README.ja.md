@@ -25,6 +25,7 @@ source_of_truth: "能力の事実についてはこのセクション（軸は�
 | [bedrock-route.md](bedrock-route.ja.md) | AWS のプロファイルで claude や opencode を Amazon Bedrock 上で動かすには？ 呼び出しが拒否された理由は？ |
 | [glossary.md](glossary.ja.md) | この言葉は画面とコードで何を指す？ |
 | [browser-pane.md](browser-pane.ja.md) | 動いている Web アプリを人にどう見せる？ |
+| [console-ui.md](console-ui.ja.md) | 画面のこの印やメニューの項目は何？ |
 | [更新履歴](../../deploy/release/notes/SUMMARY.ja.md) | いつ入った？ どの版で直った？ |
 
 ## 表の読み方

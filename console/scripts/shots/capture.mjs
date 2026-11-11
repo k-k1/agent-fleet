@@ -2635,6 +2635,112 @@ const SCENES = [
     action: `(async () => { document.querySelector(".ws-stale-pill")?.click(); })()`,
     settle: 800,
   },
+  // ---- the memory pages (SHOT_MEMORY_GUIDE) ----
+  // One webshop project and the user scope, the same memories in every scene (fixtures.mjs
+  // memoryGuide*). The three Memory pane scenes open the pane on one view each; the settings and
+  // lint scenes open Settings › Agent memory.
+  {
+    // The Memory pane's Memories view: the list, and a project memory opened with its actions.
+    name: "memory-view",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "memory", memoryView: "memories" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mem-md-pick")`,
+    action: `(async () => {
+      [...document.querySelectorAll(".mem-md-pick")].find((b) => /checkout-tests-need-payment-mock/.test(b.getAttribute("data-row-key") || b.textContent || ""))?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The Memory pane's Changes view: the newest change selected, its diff and the two ways back.
+    name: "memory-changes",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "memory", memoryView: "changes" })])], colRatios: [1], activeId: "p0" },
+    // The newest change is selected on arrival; wait for its diff rather than a fixed time.
+    ready: `!!document.querySelector(".mem-diff-head button") && !/読み込み中|Loading/.test(document.querySelector(".mem-diff")?.textContent || "")`,
+  },
+  {
+    // Settings › Agent memory › Settings: every switch on, with the tidy-up's status.
+    name: "memory-settings",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mem-tab",
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector(".acct-btn")?.click();
+      await wait(500);
+      [...document.querySelectorAll(".acct-item")].find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await wait(1500);
+      document.querySelector("#mem-af-tab-settings")?.click();
+      // The view is longer than the modal's fixed height: let the modal grow so nothing scrolls away.
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 2500,
+  },
+  {
+    // Settings › Agent memory › Import & export › the lint report, on the webshop project.
+    name: "memory-lint",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mem-wiz",
+    pad: 12,
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector(".acct-btn")?.click();
+      await wait(500);
+      [...document.querySelectorAll(".acct-item")].find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await wait(1500);
+      document.querySelector("#mem-af-tab-importexport")?.click();
+      await wait(800);
+      [...document.querySelectorAll(".mem-ie-card button")].find((b) => /リント|lint/i.test(b.getAttribute("aria-label") || ""))?.click();
+      await wait(1200);
+      // A React-controlled select: set the value through the native setter so onChange fires.
+      const sel = document.querySelector(".mem-wiz .mem-scope select");
+      if (sel) {
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "p-webshop");
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "auto"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The Memory pane's Proposals view: three pending proposals, the first opened with its preview.
+    name: "memory-proposal",
+    guide: true,
+    stubEnv: { SHOT_MEMORY_GUIDE: "1" },
+    clip: ".mview",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 880,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "memory", memoryView: "proposals" })])], colRatios: [1], activeId: "p0" },
+    ready: `!!document.querySelector(".mem-cs-actions button")`,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------

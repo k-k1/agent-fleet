@@ -51,7 +51,7 @@ func parseEngineTable(raw string) (engineTable, error) {
 		// manages owes one (ADR 0076 decision 1). It stays required for every other row: an
 		// empty service name would leave the controller driving nothing while the launch menu
 		// still offered the model.
-		if d.Service == "" && !d.notManagedHere() {
+		if d.Service == "" && !d.NotManagedHere() {
 			return engineTable{}, fmt.Errorf("engine %d: service is required unless lifecycle is %q or %q",
 				i, engineLifecycleExternal, engineLifecycleRemote)
 		}
@@ -113,7 +113,7 @@ func engineComfyRow(url, origin string) engineDef {
 		URL:       url,
 		Health:    "/system_stats",
 		Lifecycle: engineLifecycleExternal,
-		origin:    origin,
+		Origin:    origin,
 	}
 }
 
@@ -164,7 +164,7 @@ func engineTableWithEnvRow(rows []engineDef, env engineDef, envVar string) []eng
 		if d.Key != env.Key {
 			continue
 		}
-		if !d.notManagedHere() {
+		if !d.NotManagedHere() {
 			log.Printf("engines: %s is a managed row in the engine table, so %s is ignored (take the role out of the stack to move it onto the network)", d.Key, envVar)
 			return rows
 		}
@@ -182,7 +182,7 @@ func engineTableWithEnvRow(rows []engineDef, env engineDef, envVar string) []eng
 // region — from loading an AWS config for a feature it is not using (ADR 0076 decision 3).
 func engineTableNeedsAWS(t engineTable) bool {
 	for _, d := range t.Engines {
-		if !d.notManagedHere() {
+		if !d.NotManagedHere() {
 			return true
 		}
 	}
@@ -210,7 +210,7 @@ func engineEnvAPIKey(d engineDef) string {
 	// 🔴 Never for the admin panel's row: its URL is one an administrator typed in, and a bearer
 	// configured in the environment for some other host must not be sent to it (#957, ADR 0076
 	// 2026-10-04 addendum). An empty panel key means no bearer at all.
-	if !d.external() || d.origin == engineOriginPanel {
+	if !d.External() || d.Origin == engineOriginPanel {
 		return ""
 	}
 	return strings.TrimSpace(envx.Or(engineAPIKeyEnvName(d.Key), ""))

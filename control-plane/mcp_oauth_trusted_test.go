@@ -59,6 +59,7 @@ func (e *trustedAdminEnv) put(hosts string) int {
 }
 
 func TestMCPOAuthTrustedHostsPrecedenceAndReset(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	get := func() mcpOAuthTrustedView {
 		code, v, body := e.call("GET", "root@acme.co.jp", "")
@@ -86,8 +87,7 @@ func TestMCPOAuthTrustedHostsPrecedenceAndReset(t *testing.T) {
 		t.Errorf("reset left %q stored", v)
 	}
 	// With the env var set, it is the fallback, and a saved value still beats it.
-	t.Setenv("AF_MCP_OAUTH_TRUSTED_HOSTS", "claude.ai")
-	e.api.fallback, e.api.fallbackSource = envTrustedHosts()
+	e.api.fallback, e.api.fallbackSource = trustedHostsFrom("claude.ai")
 	if v := get(); v.Source != "env" || !slices.Equal(v.Hosts, []string{"claude.ai"}) {
 		t.Fatalf("env view = %+v", v)
 	}
@@ -99,6 +99,7 @@ func TestMCPOAuthTrustedHostsPrecedenceAndReset(t *testing.T) {
 
 // A saved empty list is "none", which is not the same as nothing saved.
 func TestMCPOAuthTrustedHostsEmptyIsNoneNotUnset(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	if e.put(`[]`) != http.StatusOK {
 		t.Fatal("saving an empty list was refused")
@@ -126,6 +127,7 @@ func mustTrusted(a *mcpOAuthAPI) trustedHosts {
 }
 
 func TestMCPOAuthTrustedHostsValidation(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	e.put(`["claude.ai"]`)
 	for _, bad := range []string{
@@ -153,6 +155,7 @@ func TestMCPOAuthTrustedHostsValidation(t *testing.T) {
 // A saved value that cannot be read must narrow trust to nothing, never fall back to the env or
 // default list.
 func TestMCPOAuthTrustedHostsCorruptSavedValueFailsClosed(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	ctx := context.Background()
 	for _, raw := range []string{"not json", `["https://claude.ai"]`, `{"a":1}`} {
@@ -166,6 +169,7 @@ func TestMCPOAuthTrustedHostsCorruptSavedValueFailsClosed(t *testing.T) {
 }
 
 func TestMCPOAuthTrustedHostsSuperAdminOnly(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	for _, email := range []string{"yamada@acme.co.jp", "boss@acme.co.jp"} {
 		for _, m := range []string{"GET", "PUT", "DELETE"} {
@@ -183,6 +187,7 @@ func TestMCPOAuthTrustedHostsSuperAdminOnly(t *testing.T) {
 }
 
 func TestMCPOAuthTrustedHostsAreAudited(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	e.put(`["claude.ai","mcp.corp.example"]`)
 	e.call("DELETE", "root@acme.co.jp", "")
@@ -211,6 +216,7 @@ func TestMCPOAuthTrustedHostsAreAudited(t *testing.T) {
 // The list applies on the next request at every place it is checked, without a restart, in both
 // directions: authorize (CIMD fetch and redirect), DCR, and the token endpoint.
 func TestMCPOAuthTrustedHostsApplyLive(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	const peer = "https://af.peer.example/oauth/client.json"
 	const peerCB = "https://af.peer.example/mcp-oauth/callback"
@@ -274,6 +280,7 @@ func TestMCPOAuthTrustedHostsApplyLive(t *testing.T) {
 // The effective list is read while saves happen: no reader may see a half-written list (and
 // under -race, no data race).
 func TestMCPOAuthTrustedHostsConcurrentSaveAndRead(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
@@ -303,6 +310,7 @@ func TestMCPOAuthTrustedHostsConcurrentSaveAndRead(t *testing.T) {
 // A grant made through DCR is cut off at the token endpoint when its redirect host leaves the
 // list; a loopback grant is not affected.
 func TestMCPOAuthTrustedHostsRemovalEndsExistingDCRGrants(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	const cb = "https://claude.ai/api/mcp/auth_callback"
 	hosted := e.connect(e.registerClient(cb), cb, "")
@@ -340,6 +348,7 @@ func clientOfRefresh(t *testing.T, e *mcpOAuthEnv, tk tokens) string {
 }
 
 func TestMCPOAuthTrustedHostsNoOpResetAndTrailingGarbage(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	if code, _, _ := e.call("DELETE", "root@acme.co.jp", ""); code != http.StatusOK {
 		t.Fatalf("reset with nothing saved = %d", code)
@@ -358,6 +367,7 @@ func TestMCPOAuthTrustedHostsNoOpResetAndTrailingGarbage(t *testing.T) {
 // An unreadable store is a 5xx, never an empty saved list, and a write is not attempted or
 // audited blind. A corrupt value is reported as such and an admin can still overwrite it.
 func TestMCPOAuthTrustedHostsStoreFailureIsNotAnEmptyList(t *testing.T) {
+	t.Parallel()
 	e := newTrustedAdminEnv(t)
 	ctx := context.Background()
 	e.mgr.store.SetSetting(ctx, mcpOAuthTrustedSetting, "garbage")
@@ -372,5 +382,24 @@ func TestMCPOAuthTrustedHostsStoreFailureIsNotAnEmptyList(t *testing.T) {
 		if code, _, _ := e.call(m, "root@acme.co.jp", `{"hosts":[]}`); code != http.StatusInternalServerError {
 			t.Errorf("%s with the store down = %d, want 500", m, code)
 		}
+	}
+}
+
+// The explicit-switch constructor must not read the process environment: that is what lets the
+// OAuth tests run in parallel without t.Setenv.
+func TestMCPOAuthSwitchesIgnoreTheProcessEnvironment(t *testing.T) {
+	t.Setenv("AF_MCP_ENABLED", "true")
+	t.Setenv("AF_MCP_OAUTH", "1")
+	t.Setenv("AF_MCP_OAUTH_TRUSTED_HOSTS", "env.example")
+	m := &manager{publicBaseURL: testBase}
+	api := newMCPOAuthAPIWith(config{mgr: m}, mcpOAuthSwitches{trustedHosts: "arg.example"})
+	if api.issuer != "" {
+		t.Errorf("issuer = %q, want none: the switches were off", api.issuer)
+	}
+	if api.fallbackSource != trustSourceEnv || !api.fallback.hostTrusted("arg.example") || api.fallback.hostTrusted("env.example") {
+		t.Errorf("fallback = %v (%s), want only arg.example", api.fallback.sorted(), api.fallbackSource)
+	}
+	if env := newMCPOAuthAPI(config{mgr: m}); env.issuer == "" || !env.fallback.hostTrusted("env.example") {
+		t.Error("newMCPOAuthAPI no longer reads the environment")
 	}
 }

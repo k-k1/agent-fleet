@@ -916,6 +916,7 @@
 .clean-badge { font-size: 10px; padding: 1px 6px; border-radius: 9px; white-space: nowrap; }
 .clean-badge-safe { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
 .clean-badge-review { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.clean-badge-regenerable { color: var(--accent, var(--ok)); background: color-mix(in srgb, var(--accent, var(--ok)) 16%, transparent); }
 .clean-badge-keep { color: var(--muted); background: color-mix(in srgb, var(--muted) 14%, transparent); }
 .clean-type { font-size: 11px; color: var(--muted); grid-row: 1; }
 .clean-target { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; grid-row: 1; grid-column: 4; }
@@ -1100,3 +1101,15 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* Build output in dormant worktrees (WorktreeOutputSection) */
+.wto-row { padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.wto-row.is-keep { opacity: 0.7; }
+.wto-head { display: flex; align-items: center; gap: 8px; }
+.wto-spacer { flex: 1; }
+.wto-dirs { list-style: none; margin: 4px 0 0 24px; padding: 0; font-size: 12px; }
+.wto-note { margin: 4px 0 0 24px; color: var(--muted); font-size: 12px; }
+.wto-refused { color: var(--warn); }
+.wto-warn { margin: 6px 0; color: var(--warn); font-size: 12px; }
+.wto-plan { margin-left: 24px; }
+.wto-plan .wto-dirs, .wto-plan .wto-note { margin-left: 0; }

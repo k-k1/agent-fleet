@@ -124,7 +124,7 @@ func (p enginePlan) main() (enginePlanFile, bool) {
 func (a engineAdminAPI) enginePlanFor(ctx context.Context, g engineIngestGrant, e *engineRuntimeState,
 	b engineIngestBody, res engineResolved) (enginePlan, string) {
 	role, provider := e.def.Key, e.def.Provider
-	images := e.def.api() == engineAPIImages
+	images := e.def.APIFamily() == engineAPIImages
 	lora := strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora)
 	rows := e.catalog.list(ctx)
 

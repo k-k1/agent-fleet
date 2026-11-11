@@ -2268,6 +2268,194 @@ export function memioDiff(locale) {
   };
 }
 
+// The user guide's memory pages (SHOT_MEMORY_GUIDE): one webshop project and the user scope, with
+// bodies, a change log whose diffs agree with the bodies, the tidy-up's status and proposals, and a
+// lint report. The same memories run through every scene so the pages tell one story. Shapes:
+// memoryTypes.ts (MemoryListed / MemoryBody / MemoryChange / ChangeDiff / LintReport / ConsolStatus
+// / ConsolProposalView).
+const MG_AGO = (h) => new Date(Date.now() - h * 3600e3).toISOString().replace(/\.\d+Z$/, "Z");
+const MG_WEBSHOP = MEM_PROJECTS.webshop;
+function memoryGuideRows(locale) {
+  const m = (name, project, type, kind, session, h, uses, revision, pinned, desc, body) => ({
+    name, scope: project ? "project" : "user", ...(project ? { project: MG_WEBSHOP } : {}), type,
+    description: L(locale, desc[0], desc[1]), updated: MG_AGO(h), pinned, uses, revision,
+    authorKind: kind, authorSession: session, body: L(locale, body[0], body[1]), created: MG_AGO(h + 160),
+  });
+  return [
+    m("checkout-tests-need-payment-mock", true, "feedback", "claude", "sk4rq2f", 2, 14, 3, true,
+      ["決済のテストは決済モックを起動してから流す", "Start the payment mock before running the checkout tests"],
+      [
+        "決済まわりのテストは `make mock-pay` でモックを起動してから `npm test -- checkout` を流す。\n\nモック無しだと 30 秒のタイムアウトで全件赤になり、テストが壊れたように見える（実測: 42 件中 42 件）。\n\nモックの設定は `scripts/mock-pay.sh` にある。CI は `services:` でモックを立てているので、ローカルだけの手順。",
+        "Run `make mock-pay` before `npm test -- checkout`.\n\nWithout the mock every checkout test fails on a 30 s timeout, which looks like a broken suite (measured: 42 of 42 red).\n\nThe mock's settings live in `scripts/mock-pay.sh`. CI starts the mock as a service, so this is a local step only.",
+      ]),
+    m("staging-deploy-steps", true, "project", "copilot", "sq3hn7v", 7, 5, 1, false,
+      ["ステージングへのデプロイ手順と確認ポイント", "How to deploy to staging and what to check"],
+      ["`make deploy-staging` のあと、`/healthz` が 200 を返すまで待つ。\n\n戻すときは [[deploy-rollback]] を参照。", "After `make deploy-staging`, wait until `/healthz` answers 200.\n\nTo roll back, see [[deploy-rollback]]."]),
+    m("release-branch-naming", true, "project", "codex", "sc9lm3d", 30, 6, 2, false,
+      ["リリースブランチは release/<年>.<週> で切る", "Release branches are release/<year>.<week>"],
+      ["リリースブランチは develop branch から `release/<年>.<週>` の名前で切る（例: `release/2026.45`）。\n\nタグは `v<年>.<週>.<連番>`。", "Cut release branches from the develop branch as `release/<year>.<week>` (e.g. `release/2026.45`).\n\nTags are `v<year>.<week>.<n>`."]),
+    m("cart-session-cookie", true, "project", "kiro", "sk7mt2x", 54, 3, 1, false,
+      ["カートは cart session v1 の Cookie で保持する", "The cart is kept in the cart session v1 cookie"],
+      ["カートの中身は cart session v1 の Cookie（`cart_sid`）で保持する。有効期限は 7 日。", "The cart lives in the cart session v1 cookie (`cart_sid`), valid for 7 days."]),
+    m("prefers-small-prs", false, "user", "opencode", "so5nw6k", 80, 21, 1, false,
+      ["PR は 400 行以内に分けると喜ばれる", "Keep pull requests under about 400 lines"],
+      ["PR は 400 行以内に分ける。超えそうなら、先にリファクタリングだけの PR を出す。", "Keep pull requests under about 400 lines. If one grows past that, send the refactoring first as its own PR."]),
+    m("answer-in-japanese", false, "user", "member", "", 120, 33, 1, false,
+      ["説明は日本語、コミットとコメントは英語", "Explanations in Japanese, commits and comments in English"],
+      ["説明やレポートは日本語で書く。コミットメッセージとコードのコメントは英語。", "Write explanations and reports in Japanese; commit messages and code comments in English."]),
+  ];
+}
+export function memoryGuideList(locale) {
+  return { entries: memoryGuideRows(locale).map(({ body, created, ...row }) => row), withheld: 0 };
+}
+export function memoryGuideRead(locale, name) {
+  const row = memoryGuideRows(locale).find((r) => r.name === name);
+  return row ? { ...row, kinds: ["claude", "codex", "copilot", "kiro", "opencode"] } : { error: { code: "not_found" } };
+}
+// Newest first. Only a memory's newest change is `latest`; the member's own edit is one of them.
+function memoryGuideChangeRows(locale) {
+  const rows = memoryGuideRows(locale);
+  const at = (name) => rows.find((r) => r.name === name);
+  const c = (n, h, op, name, kind, session, latest) => {
+    const r = at(name);
+    return {
+      commit: `${n}e4c9a1b7d3f2a8`, at: MG_AGO(h), op, scope: r.scope, ...(r.project ? { project: r.project } : {}),
+      name, authorKind: kind, authorSession: session, latest, live: true, revertible: true,
+    };
+  };
+  return [
+    c("a1", 2, "update", "checkout-tests-need-payment-mock", "claude", "sk4rq2f", true),
+    c("a2", 7, "create", "staging-deploy-steps", "copilot", "sq3hn7v", true),
+    c("a3", 20, "pin", "checkout-tests-need-payment-mock", "member", "", false),
+    c("a4", 30, "update", "release-branch-naming", "codex", "sc9lm3d", true),
+    c("a5", 54, "create", "cart-session-cookie", "kiro", "sk7mt2x", true),
+    c("a6", 80, "create", "prefers-small-prs", "opencode", "so5nw6k", true),
+    c("a7", 120, "create", "answer-in-japanese", "member", "", true),
+  ];
+}
+export function memoryGuideChanges(locale, limit) {
+  const rows = memoryGuideChangeRows(locale);
+  return { changes: rows.slice(0, limit || rows.length) };
+}
+// The selected change's diff, as `git diff` prints it for the memory's file (agentMemRender's
+// front matter, then the body).
+export function memoryGuideDiff(locale, commit) {
+  const ch = memoryGuideChangeRows(locale).find((c) => c.commit === commit);
+  if (!ch) return { diff: "" };
+  const path = ch.scope === "user" ? `af/user/${ch.name}.md` : `af/projects/${ch.project.id}/${ch.name}.md`;
+  if (ch.commit.startsWith("a1")) {
+    const [oldLine, newLine] = L(locale,
+      ["モック無しだと 30 秒のタイムアウトで全件赤になる。", "モック無しだと 30 秒のタイムアウトで全件赤になり、テストが壊れたように見える（実測: 42 件中 42 件）。"],
+      ["Without the mock every checkout test fails on a 30 s timeout.", "Without the mock every checkout test fails on a 30 s timeout, which looks like a broken suite (measured: 42 of 42 red)."]);
+    const first = L(locale, "決済まわりのテストは `make mock-pay` でモックを起動してから `npm test -- checkout` を流す。", "Run `make mock-pay` before `npm test -- checkout`.");
+    return {
+      diff: [
+        `diff --git a/${path} b/${path}`, "index 3b1f2c4..9d8e7a6 100644", `--- a/${path}`, `+++ b/${path}`,
+        "@@ -5,13 +5,13 @@ type: \"feedback\"",
+        ` kinds: ["claude", "codex", "copilot", "kiro", "opencode"]`,
+        "-revision: 2", "+revision: 3",
+        ` author_kind: "claude"`, ` author_session: "sk4rq2f"`,
+        ` created: "${MG_AGO(162)}"`,
+        `-updated: "${MG_AGO(26)}"`, `+updated: "${MG_AGO(2)}"`,
+        " pinned: true", " ---", ` ${first}`, " ",
+        `-${oldLine}`, `+${newLine}`, "",
+      ].join("\n"),
+    };
+  }
+  const r = memoryGuideRows(locale).find((x) => x.name === ch.name);
+  const body = r.body.split("\n").map((l) => "+" + l);
+  const file = ["---", `name: "${r.name}"`, `description: "${r.description}"`, `type: "${r.type}"`, "revision: 1", `author_kind: "${r.authorKind}"`, "---"];
+  return { diff: [`diff --git a/${path} b/${path}`, "new file mode 100644", "--- /dev/null", `+++ b/${path}`, `@@ -0,0 +1,${file.length + body.length} @@`, ...file.map((l) => "+" + l), ...body, ""].join("\n") };
+}
+export function memoryGuideProjects(locale) {
+  return { projects: [{ project: MG_WEBSHOP, count: 4, orphaned: false, live: true }] };
+}
+export function memoryGuideLintTerms(locale) {
+  return { terms: ["develop branch", "legacy checkout"], rejected: [] };
+}
+// The webshop project's report: four findings of four checks, read at the default branch.
+export function memoryGuideLint(locale, scope) {
+  if (scope !== "project") {
+    return { scope: "user", terms: 2, report: { checked: 2, findings: [], counts: {} } };
+  }
+  return {
+    scope: "project", project: MG_WEBSHOP, ref: "origin/main", commit: "4f2a9c1", terms: 2,
+    report: {
+      checked: 4,
+      findings: [
+        { memory: "staging-deploy-steps", check: "broken-link", subject: "deploy-rollback", line: 3 },
+        { memory: "checkout-tests-need-payment-mock", check: "missing-path", subject: "scripts/mock-pay.sh", line: 5 },
+        { memory: "release-branch-naming", check: "retired-term", subject: "develop branch", line: 1 },
+        { memory: "staging-deploy-steps", check: "oversize", subject: "5312" },
+      ],
+      counts: { "broken-link": 1, "missing-path": 1, "retired-term": 1, oversize: 1 },
+      proposals: [
+        { term: "cart session v1", kind: "superseded-adr", evidence: "ADR 12: Status: Superseded by ADR 31", memories: ["cart-session-cookie"] },
+      ],
+    },
+  };
+}
+// The tidy-up ran 5 hours ago (one a day, after 15 idle minutes), queued two proposals and left one
+// topic waiting because it does not fit one run.
+export function memoryGuideConsolStatus(locale) {
+  return {
+    enabled: true,
+    config: { idleAfter: "15m0s", minInterval: "24h0m0s", proposalTTL: "336h0m0s", tokenBudget: 200000 },
+    lastRun: { id: "run-7c2", started: MG_AGO(5.1), finished: MG_AGO(5), status: "ok", ripe: 3, queued: ["t-release", "t-errors", "t-cart"], delayed: [] },
+    trigger: { lastRun: MG_AGO(5) },
+    counts: { pending: 3, approved: 4, rejected: 1 },
+    waiting: [{ topic: "t-staging", scope: "project", memory: "staging-deploy-steps", cause: "too-large", estimate: 48000 }],
+  };
+}
+function memoryGuideProposalViews(locale) {
+  const rows = memoryGuideRows(locale);
+  const release = rows.find((r) => r.name === "release-branch-naming");
+  const [before, after] = L(locale,
+    ["リリースブランチは develop branch から `release/<年>.<週>` の名前で切る（例: `release/2026.45`）。", "リリースブランチは `main` から `release/<年>.<週>` の名前で切る（例: `release/2026.45`）。"],
+    ["Cut release branches from the develop branch as `release/<year>.<week>` (e.g. `release/2026.45`).", "Cut release branches from `main` as `release/<year>.<week>` (e.g. `release/2026.45`)."]);
+  const tags = release.body.split("\n").slice(1);
+  const p = (id, h, memory, items, evidence, extra = {}) => ({
+    id, topicId: "t-" + id, scope: "project", projectId: MG_WEBSHOP.id, memory, status: "pending",
+    created: MG_AGO(h), expires: MG_AGO(h - 336), items, observationIds: evidence.map((e) => e.id), evidence, ...extra,
+  });
+  const patch = { op: "patch", name: "release-branch-naming", revision: 2,
+    reason: L(locale, "develop ブランチは廃止され、リリースは main から切っている", "The develop branch was retired; releases are cut from main"),
+    edits: [{ old: before, new: after }] };
+  const create = { op: "create", name: "api-error-format", type: "project",
+    description: L(locale, "API のエラー応答は { error: { code, message } } の形", "API errors answer { error: { code, message } }"),
+    reason: L(locale, "3 つのセッションが同じことを別々に書き留めていた", "Three sessions noted the same thing separately"),
+    body: L(locale, "API のエラー応答は常に `{ \"error\": { \"code\": \"…\", \"message\": \"…\" } }`。`code` は英小文字とアンダースコア。", "API errors always answer `{ \"error\": { \"code\": \"…\", \"message\": \"…\" } }`. `code` is lower-case with underscores.") };
+  const retire = { op: "retire", name: "cart-session-cookie", revision: 1,
+    reason: L(locale, "ADR 31 でカートはサーバー側の保存に移った", "ADR 31 moved the cart to server-side storage") };
+  return [
+    {
+      ...p("pr-release", 5, "release-branch-naming", [patch], [
+        { id: "ob1", source: "feedback", memory: "release-branch-naming", rule: "stale", note: L(locale, "develop ブランチはもう無い。release は main から切った（codex · sc9lm3d）", "There is no develop branch any more; the release was cut from main (codex · sc9lm3d)") },
+        { id: "ob2", source: "lint", memory: "release-branch-naming", rule: "retired-term", note: L(locale, "廃止した用語「develop branch」を使っている", "Uses the retired term \"develop branch\"") },
+      ], { targetRevisions: { "release-branch-naming": 2 } }),
+      itemViews: [{ ...patch, diff: [`-${before}`, `+${after}`, ...tags.map((l) => " " + l)].join("\n") }],
+    },
+    {
+      ...p("pr-errors", 5, "checkout-tests-need-payment-mock", [create], [
+        { id: "ob3", source: "feedback", memory: "checkout-tests-need-payment-mock", rule: "wrong", note: L(locale, "エラー形式の説明が決済テストのメモに混ざっている", "The error format is explained inside the checkout-test note") },
+      ]),
+      itemViews: [{ ...create }],
+    },
+    {
+      ...p("pr-cart", 5, "cart-session-cookie", [retire], [
+        { id: "ob4", source: "lint", memory: "cart-session-cookie", rule: "retired-term", note: L(locale, "提案された廃止用語「cart session v1」を使っている", "Uses the proposed retired term \"cart session v1\"") },
+      ], { targetRevisions: { "cart-session-cookie": 1 } }),
+      itemViews: [{ ...retire, retire: { indexLine: "cart-session-cookie — " + rows.find((r) => r.name === "cart-session-cookie").description, stubReason: retire.reason }, diff: rows.find((r) => r.name === "cart-session-cookie").body.split("\n").map((l) => "-" + l).join("\n") }],
+    },
+  ];
+}
+export function memoryGuideProposals(locale) {
+  return { proposals: memoryGuideProposalViews(locale).map(({ itemViews, ...p }) => p) };
+}
+export function memoryGuideProposal(locale, id) {
+  return memoryGuideProposalViews(locale).find((p) => p.id === id) ?? { error: { code: "not_found" } };
+}
+
 // Moving a session to another agent (ADR 0115), for the "move" scene: the preview the dialog reads
 // for the Claude session in the webshop worktree. Uncommitted work and a queued follow-up travel
 // with it. MovePreview in console/src/features/sessions/move.ts.

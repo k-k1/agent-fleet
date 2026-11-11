@@ -87,5 +87,5 @@ Console の画面は 4 つの領域に分かれています。どこに何があ
 - [キーボードとコマンドパレットで操作する](shortcuts.ja.md)
 - [画面を分けて並べる](panes.ja.md)
 - [スマートフォンで使う](phone.ja.md)
-- [アイコン・バッジ・メニュー](../../member/badges-and-menus.ja.md)：画面の印の意味
+- [アイコン・バッジ・メニュー](../../ref/console-ui.ja.md)：画面の印の意味
 - [設定](../../ref/settings.ja.md)：設定のタブの一覧

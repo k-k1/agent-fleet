@@ -357,7 +357,7 @@ func newOfferTestEngineWith(t *testing.T, api engineECSAPI, fleet engineFleetAPI
 	e.def.LaunchTemplate = template
 	e.def.Offers = offers
 	e.ecs.roleAttr = engineBoxRole(e.def)
-	e.classes = parseEngineClasses(e.def.offersSpec())
+	e.classes = parseEngineClasses(e.def.OffersSpec())
 	e.cluster = "cluster"
 	e.settings = st
 	e.catalog = newEngineCatalog(st, "image")
@@ -511,10 +511,10 @@ func TestAnInstanceClassLadderReadsAsAllOnDemandOffers(t *testing.T) {
 	const ladder = "l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;" +
 		"l40s|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.91"
 	d := engineDef{Classes: ladder}
-	if d.offersSpec() != ladder {
-		t.Fatalf("offersSpec = %q, want the ladder verbatim", d.offersSpec())
+	if d.OffersSpec() != ladder {
+		t.Fatalf("offersSpec = %q, want the ladder verbatim", d.OffersSpec())
 	}
-	list := parseEngineClasses(d.offersSpec())
+	list := parseEngineClasses(d.OffersSpec())
 	if len(list) != 2 {
 		t.Fatalf("parsed %d offers", len(list))
 	}
@@ -525,7 +525,7 @@ func TestAnInstanceClassLadderReadsAsAllOnDemandOffers(t *testing.T) {
 	}
 	// And `offers` wins where both are declared.
 	both := engineDef{Classes: ladder, Offers: "spot|S|22000|g6.xlarge|4-8|15000-65536|1.57|spot"}
-	if got := parseEngineClasses(both.offersSpec()); len(got) != 1 || got[0].buy() != engineBuySpot {
+	if got := parseEngineClasses(both.OffersSpec()); len(got) != 1 || got[0].buy() != engineBuySpot {
 		t.Fatalf("offers = %+v, want the declared list to win", got)
 	}
 }
@@ -605,7 +605,7 @@ func TestTheChatRoleMayDeclareASpotOfferAndBuysItOnlyWithConsent(t *testing.T) {
 		Key: "llm", API: engineAPIChat, Service: "af-llm",
 		LaunchTemplate: "lt-llm", Offers: spotAndOdOffers,
 	}
-	e := &engineRuntimeState{def: d, classes: parseEngineClasses(d.offersSpec())}
+	e := &engineRuntimeState{def: d, classes: parseEngineClasses(d.OffersSpec())}
 	e.settings = st
 	e.catalog = newEngineCatalog(st, "llm")
 	e.wireOffers(newEngineFleet(&fakeFleet{}, "llm", "cluster", "lt-llm", []string{"subnet-a"}))

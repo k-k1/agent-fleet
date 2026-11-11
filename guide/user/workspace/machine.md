@@ -79,7 +79,7 @@ to answer.
 | Category | What is in it | How to free it |
 |---|---|---|
 | Working copies: source | The working copies' files (git data included) | Delete merged worktrees from the cleanup screen |
-| Working copies: build output | Untracked `node_modules`, `.next`, `target`, `.gradle`, `build`, `dist` | The same (there is no way yet to delete only these) |
+| Working copies: build output | Untracked `node_modules`, `.next`, `target`, `.gradle`, `build`, `dist` | **Build output in dormant working copies** below (only `node_modules`, `.next`, `target`, `.gradle`) |
 | Tool caches | `~/.cache`, `~/.npm`, `~/.gradle`, `~/.m2` and so on | **Tool caches** below |
 | Runtimes, JDKs and tools | `~/.local`, `~/.nvm` and so on | Uninstall in [Choose your toolchains](toolchains.md) |
 | `~/.af-work` | Sessions' work folders | **Leftover files** below |
@@ -87,6 +87,16 @@ to answer.
 
 It counts the way `du -sx ~` does: hard links once, symlinks not followed, other disks such as `/scratch` not included.
 Below it come the working copies with the most build output, and the folders in `~/.af-work`.
+
+### Build output in dormant working copies
+
+Open the cleanup screen (the **Drop build output…** button on a working-copy row in the breakdown above opens it). The last section, **Build output in dormant working copies**, drops `node_modules`, `.next`, `target` and `.gradle` from a working copy while keeping the working copy itself. `build` and `dist` are never touched.
+
+1. Press **Check**. It only looks at the disk. Each working copy comes back graded **Regenerable** (with the folders and their sizes) or is listed under the ones left alone, with the reason.
+2. Press **Preview** on a row. It checks again and lists exactly what would go, deleting nothing.
+3. Press **Delete build output…** and confirm. **This cannot be undone and does not go to the trash**, and everything inside those folders goes, including files you put there yourself.
+
+A working copy is offered only when nobody has touched it for 30 days, it has no uncommitted or untracked change, and no session or process is using it. Otherwise the row says which of these stopped it (a running session, uncommitted changes, recent activity, a deletion lock, build output in use). A symlink is unlinked, never followed. Nothing here runs by itself.
 
 ### Disk used by Agent Fleet
 
@@ -97,7 +107,7 @@ What Agent Fleet keeps in `~/.cache/agent-fleet` (generated images, thumbnails, 
 
 ### Tool caches
 
-The caches go, npm (npx included), uv, pip and Maven keep in your home. They grow without limit and are never removed
+The caches go, npm (npx included), uv, pip, Maven and Gradle keep in your home. They grow without limit and are never removed
 on their own.
 
 1. Press **Measure** to count them (it reads every file, so it runs only when you press it)
@@ -105,6 +115,12 @@ on their own.
 
 - The next build or install that uses it is slower, once
 - A cache a running build or install is using shows **In use** and cannot be emptied until that finishes
+- Gradle appears as two rows, `gradle-caches` (`~/.gradle/caches/<version>`) and `gradle-wrapper` (`~/.gradle/wrapper/dists`). They hold only
+  the Gradle versions that no `gradle-wrapper.properties` under `~/repos` (worktrees included) asks for. The shared
+  caches (`modules-2` and so on), `gradle.properties` and `~/.gradle/jdks` are never touched
+- If `~/repos` cannot be read completely (an unreadable folder, a wrapper file without a recognisable version, a very large tree), the Gradle rows show **Not offered** and nothing is removed
+- "Not pinned" only covers `~/repos`: projects elsewhere, a plain `gradle` run without a wrapper, and a custom `GRADLE_USER_HOME` or `-g` are not looked at, so a version they use can be removed (the next build downloads it again, which fails offline)
+- A removed Gradle version is downloaded again by the next build that needs it, which needs access to `services.gradle.org`
 - `~/.m2/repository` or `~/.npm/_npx` do not appear when they are symbolic links. Delete them from a terminal
 
 ### Leftover files

@@ -65,7 +65,7 @@ If a feature ships and does not appear here, it is not done
 | Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [See and download files](../user/files/browse.md#download-a-folder-as-zip) |
 | Open a shell from a folder | member | Files tree → right-click a folder → Open shell here | [See and download files](../user/files/browse.md#open-a-shell-from-a-folder) |
 | Links in rendered Markdown — tickets, file paths, loopback URLs that open the workspace preview | member | mirror, chat, file and document viewers | [View documents and diagrams](../user/files/view.md#links-in-documents) |
-| Menu on file and folder links in replies and documents | member | right-click a link | [Icons, badges and menus](../member/badges-and-menus.md#file-and-folder-links-in-replies-and-documents) |
+| Menu on file and folder links in replies and documents | member | right-click a link | [View documents and diagrams](../user/files/view.md#links-in-documents) |
 | Markdown and code editing | member | Files → a file | [Edit a file](../user/files/edit.md) |
 | `.drawio` diagrams | member | Files → a `.drawio` file | [View documents and diagrams](../user/files/view.md) |
 | PDF and Office document preview | member | Files → that document | [View documents and diagrams](../user/files/view.md) |
@@ -75,7 +75,7 @@ If a feature ships and does not appear here, it is not done
 | Image studio — refine the draft by talking to an agent, a person presses generate (edit history, versions, picture history) | member | image generation → Attach an agent | [Finish an image in the studio](../user/images/studio.md) |
 | Image knowledge notes — four sections per model and per family, in `~/imagegen-knowledge/` | member | image generation → Notes, or the file tree | [Finish an image in the studio](../user/images/studio.md#grow-the-knowledge-notes) |
 | Image gallery — a folder's pictures as cards | member | file tree → "Open in gallery", or a session's "Generated images (N)" | [Use the image gallery](../user/images/gallery.md) |
-| Gallery card menu — copy, rename, delete, jump to the session that made it | member | gallery card → right-click | [Icons, badges and menus](../member/badges-and-menus.md#cards-in-the-image-gallery) |
+| Gallery card menu — copy, rename, delete, jump to the session that made it | member | gallery card → right-click | [Use the image gallery](../user/images/gallery.md#act-on-a-card) |
 | Browser pane for a local web app | member | workspace action bar → Preview | [See a web app you started](../user/preview/browser-pane.md); [browser-pane.md](browser-pane.md) for the contract |
 | Preview subdomains (minted on every start) | member | workspace action bar → Preview | [Use preview subdomains](../user/preview/subdomains.md) |
 | Sign in with Google on a preview URL (development OIDC IdP) | member | Settings → Preview subdomains | [Try Google sign-in on a preview](../user/preview/dev-signin.md) |
@@ -98,7 +98,7 @@ If a feature ships and does not appear here, it is not done
 | Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../user/settings/notifications.md) |
 | A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [Tell a session about its pull request's review](../user/fleet/pr-feedback.md#a-session-watches-a-pull-request-itself) |
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [Fix a workspace that will not start or has stopped](../user/troubleshooting/workspace.md#not-responding-appears-beside-the-power-button) |
-| Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
+| Engine pills — is the chat / image engine up | member | top bar | [Use lcpp](../user/agents/lcpp.md) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [Connect Discord and Slack](../user/integrations/chat-bridge.md) |
 | Reply suggestions | member | mirror composer | [Reply to a session](../user/sessions/reply.md#use-reply-suggestions) |
@@ -118,7 +118,7 @@ explains them.
 |---|---|---|
 | Agent connections | member | Agents |
 | Instructions to agents | member | Agent instructions |
-| Agent Fleet shared memory management | member | Agent memory ([18](../member/18-agent-memory.md#agent-memory)) |
+| Agent Fleet shared memory management | member | Agent memory ([Read and correct agent memory](../user/memory/overview.md)) |
 | Version history of agents' own memory | member | Memory snapshots ([Restore memory from a snapshot](../user/memory/snapshots.md)) |
 | Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([Use memory from an external agent](../user/memory/external.md)) |
 | Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([09](../user/agents/muse.md#behavior)) |

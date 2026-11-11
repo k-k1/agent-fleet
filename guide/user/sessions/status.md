@@ -34,7 +34,7 @@ to see the state's name. States that need you show text as well as the mark.
 | Stopped | The process is stopped; it can be resumed later | Resume it if you need it |
 
 The other states (usage limits, spend limits, background work, handoffs, abnormal exits and more) and the other marks a row
-can carry are in [Icons, badges, and menus](../../member/badges-and-menus.md#session-display).
+can carry are in [Icons, badges and menus](../../ref/console-ui.md#session-states).
 
 - Running sessions are refreshed every 4 seconds
 - A Managed session opens straight on its conversation. A Terminal (CLI) session shows a **Chat** / **Terminal** switch at the top, and "Chat" shows the conversation tidied up turn by turn
@@ -94,6 +94,6 @@ Press the note, use the page, or bring the window back into focus, and everythin
 
 ## Related
 
-- [Icons, badges, and menus](../../member/badges-and-menus.md): every state and mark
+- [Icons, badges and menus](../../ref/console-ui.md): every state and mark
 - [Talking to a session](../../member/04-conversation.md): answering questions, permission requests and plans
 - [Start a session](start.md)

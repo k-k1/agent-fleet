@@ -415,7 +415,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// so a managed table row wins over the panel too (ADR 0076 decision 2, 2026-10-04 addendum).
 	var comfyFallback *engineDef
 	for _, d := range table.Engines {
-		if d.Key == "image" && d.notManagedHere() {
+		if d.Key == "image" && d.NotManagedHere() {
 			d := d
 			comfyFallback = &d
 		}
@@ -462,7 +462,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// definition serves both roles.
 	if haveAWS && mgr != nil && mgr.store != nil {
 		reg.startIngest = func(def engineIngestDef) bool {
-			if !def.ok() {
+			if !def.OK() {
 				return false
 			}
 			secrets := func(d engineIngestDef) (*engineHfTokens, *engineCivitaiTokens) {
@@ -538,12 +538,12 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		// the row would pass serve's no-models gate and then 404 `model_unknown` on every request
 		// that names a model. That is precisely the failure ADR 0079 decision 7 exists to prevent,
 		// and it is quieter than the row simply not being there.
-		if d.remote() && rem == nil {
+		if d.Remote() && rem == nil {
 			log.Printf("engines: %s declares lifecycle %q but AF_REMOTE_ENGINE_URL / AF_REMOTE_ENGINE_TOKEN are unset, so there is nothing to borrow from - the role is not served",
 				d.Key, engineLifecycleRemote)
 			return nil
 		}
-		if d.notManagedHere() {
+		if d.NotManagedHere() {
 			// Everything a row this deployment does not own does NOT get (ADR 0076 decision 1,
 			// ADR 0079 decision 1): no ECS adapter, no controller, no demand counter, no active
 			// set, no pending reader, no GPU ladder and no uptime sampler. The catalogue and the
@@ -582,13 +582,13 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			// credential is minted per (key, session) rather than held in apiKey (ADR 0079
 			// decisions 7 and 4). Both hang off this one handle so that nothing else in the
 			// process has to know which flavour of "somebody else's" a row is.
-			if d.remote() {
+			if d.Remote() {
 				st.remote = rem.forKey(d.Key)
 				st.catalog.source = st.remote.catalogSource()
 			}
 			// No `service=`: there is none, and printing an empty one reads as a truncated line.
 			log.Printf("engines: %s (%s) -> %s (%s, health=%s models=%s)",
-				d.Key, d.api(), d.URL, d.lifecycle(), engineHealthPath(d), strings.Join(st.modelIDs(ctx), ","))
+				d.Key, d.APIFamily(), d.URL, d.LifecycleKind(), engineHealthPath(d), strings.Join(st.modelIDs(ctx), ","))
 			return st
 		}
 		st := &engineRuntimeState{
@@ -604,9 +604,9 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			ssm:         ssmc,
 			activeParam: engineActiveParamName(name, d.Key),
 			pending:     newEnginePending(ssmc, name, d.Key),
-			classes:     parseEngineClasses(d.offersSpec()),
+			classes:     parseEngineClasses(d.OffersSpec()),
 			cluster:     cluster,
-			offers:      newEngineOfferRun(d.offerBudget()),
+			offers:      newEngineOfferRun(d.OfferBudget()),
 			audit:       auditor,
 			inflight:    newEngineInFlight(),
 		}
@@ -636,7 +636,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			st.ctrl.uptime = mgr.store
 		}
 		log.Printf("engines: %s (%s) -> %s (service=%s idle=%s deadline=%s models=%s)",
-			d.Key, d.api(), d.URL, d.Service, cfg.idle, cfg.deadline,
+			d.Key, d.APIFamily(), d.URL, d.Service, cfg.idle, cfg.deadline,
 			strings.Join(st.modelIDs(ctx), ","))
 		return st
 	}
@@ -655,7 +655,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		if st == nil {
 			continue
 		}
-		if d.origin == engineOriginPanel {
+		if d.Origin == engineOriginPanel {
 			st.apiKey = panelKey
 		}
 		reg.byKey[d.Key] = st
@@ -774,7 +774,7 @@ func (e *engineRuntimeState) negativeAlways(ctx context.Context) string {
 	// this row mirrors (ADR 0079 decision 7). Reading the local setting instead would answer with
 	// something nobody on the deployment that owns the engine can see — and writing one is refused
 	// for the same reason.
-	if e.def.remote() {
+	if e.def.Remote() {
 		return e.remote.negativeAlways()
 	}
 	keys := engineSettingsFor(e.def.Key)
@@ -794,10 +794,10 @@ func (e *engineRuntimeState) warm(ctx context.Context) bool {
 	// on every load — and answering false would report every borrowed engine cold for ever. The
 	// far deployment already publishes its own observation in the catalogue this row mirrors
 	// (ADR 0079 decision 10), so warmth is READ rather than asked for.
-	if e.def.remote() {
+	if e.def.Remote() {
 		return e.remote.warm()
 	}
-	if !e.def.external() {
+	if !e.def.External() {
 		return false
 	}
 	e.extWarm.mu.Lock()

@@ -25,6 +25,7 @@ fact has one copy, readable from four directions.
 | [bedrock-route.md](bedrock-route.md) | How do I run claude or opencode on Amazon Bedrock with an AWS profile, and why was a call refused? |
 | [glossary.md](glossary.md) | What is this word, on screen and in the code? |
 | [browser-pane.md](browser-pane.md) | How do I show a running web app to a person? |
+| [console-ui.md](console-ui.md) | What does this mark or menu item on the screen mean? |
 | [Release history](../../deploy/release/notes/SUMMARY.md) | When did it ship? Which release fixed it? |
 
 ## How to read these tables

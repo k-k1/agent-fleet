@@ -59,7 +59,6 @@ engine_comfy_guard.go
 engine_comfy_panel.go
 engine_complete.go
 engine_control.go
-engine_def.go
 engine_discover.go
 engine_ecs.go
 engine_family_guess.go
@@ -96,6 +95,7 @@ engine_token.go
 engine_uptime.go
 engine_usage.go
 engine_vae.go
+engine_wiring.go
 engines.go
 enkana.go
 enkana_dict.go

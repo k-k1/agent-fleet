@@ -46,7 +46,7 @@ Right-click a file or folder to open its menu. On a touch screen, long-press; fr
 | Rename, Delete | Rename or delete it. Deleting a folder deletes its contents too, so it asks first |
 
 There are also items to open a file in the reader or the gallery. Every item and when it shows is in
-[Icons, badges, and menus](../../member/badges-and-menus.md#files-folders).
+[Icons, badges and menus](../../ref/console-ui.md#files-and-folders).
 
 ## Add files
 

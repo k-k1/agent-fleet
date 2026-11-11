@@ -151,7 +151,7 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			log.Printf("engines: the table now declares %s, which this process cannot take on - restart the Control Plane to pick it up", d.Key)
 			continue
 		}
-		if e.def.notManagedHere() {
+		if e.def.NotManagedHere() {
 			// An engine somebody else runs has no ladder to carry, no capacity provider to
 			// rename and no service to ask for a restart over (ADR 0076 decision 2). Silently:
 			// neither the synthesised AF_COMFY_URL row nor a borrowed one is in this table at
@@ -159,7 +159,7 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			// restart request about a row the table never mentioned.
 			continue
 		}
-		next := parseEngineClasses(d.offersSpec())
+		next := parseEngineClasses(d.OffersSpec())
 		// 🔴 Adopting a ladder (or dropping the last rung) is not a rung change: the capacity
 		// client and the controller's start gate are attached at construction only when a
 		// ladder exists, so a ladder that appears here would be a list the panel shows and
@@ -186,16 +186,16 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 		// controller's intervals it can move under a running start — and it has to: the default
 		// 180 seconds is too short for a Spot box plus a ComfyUI cold start, and an operator
 		// raising it should not need a Control Plane replacement to be heard (ADR 0075 live run).
-		if e.setOfferBudget(d.offerBudget()) {
+		if e.setOfferBudget(d.OfferBudget()) {
 			changed = true
-			log.Printf("engines: %s offer budget re-read from %s: %s", d.Key, r.name, d.offerBudget())
+			log.Printf("engines: %s offer budget re-read from %s: %s", d.Key, r.name, d.OfferBudget())
 		}
 		if why := engineDefDriftedBeyondClasses(e.def, d); why != "" {
 			log.Printf("engines: %s changed in the table in a way this process cannot take live (%s) - restart the Control Plane", d.Key, why)
 		}
 	}
 	for _, e := range r.reg.list() {
-		if e.def.notManagedHere() {
+		if e.def.NotManagedHere() {
 			// It was never IN this table — such a row comes from the environment, or from the far
 			// deployment's catalogue — so its absence says nothing (ADR 0076 decision 2).
 			continue

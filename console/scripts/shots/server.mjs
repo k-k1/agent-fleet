@@ -42,6 +42,8 @@ const FLEET_LANES = Number(arg("fleet-lanes", "0")) || 0;
 const DEMO_NAME = argv.includes("--demo") ? arg("demo", "day") : "";
 if (DEMO_NAME && !/^[a-z]+$/.test(DEMO_NAME)) throw new Error(`--demo: bad scenario name ${DEMO_NAME}`);
 const DEMO = DEMO_NAME ? (await import(`./demo/${DEMO_NAME}.mjs`)).fixtures(LOCALE, fx) : null;
+// The memory pages of the user guide: their own memory set, served only in a run that asks.
+const MEM_GUIDE = !!process.env.SHOT_MEMORY_GUIDE;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -232,12 +234,30 @@ const exact = {
     ...(process.env.SHOT_FLEET_GUIDE ? fx.fleetGuidePrefs(LOCALE) : {}),
     // The memory pages of the user guide (SHOT_MEMIO_GUIDE): outside access set to read only.
     ...(process.env.SHOT_MEMIO_GUIDE ? { externalMemory: "read" } : {}),
+    // The memory pages of the user guide (SHOT_MEMORY_GUIDE): the outside-client setting, the
+    // tidy-up and the scheduled lint on, so the settings view shows every switch with its status.
+    ...(process.env.SHOT_MEMORY_GUIDE ? { externalMemory: "read", memoryConsolidation: true, memoryLintSchedule: true } : {}),
   }),
-  // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log.
-  "/api/agents/memory/entries/list": () => fx.memoryList(LOCALE),
-  "/api/agents/memory/entries/member-read": (q) => fx.memoryRead(LOCALE, q.get("name") || ""),
+  // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log. The memory
+  // pages of the user guide (SHOT_MEMORY_GUIDE) get their own set, with diffs, the tidy-up's
+  // proposals and a lint report; every other scene keeps the set it was taken with.
+  "/api/agents/memory/entries/list": () => (MEM_GUIDE ? fx.memoryGuideList(LOCALE) : fx.memoryList(LOCALE)),
+  "/api/agents/memory/entries/member-read": (q) =>
+    MEM_GUIDE ? fx.memoryGuideRead(LOCALE, q.get("name") || "") : fx.memoryRead(LOCALE, q.get("name") || ""),
   "/api/agents/memory/entries/member-forgotten": () => ({ forgotten: [], projects: [], withheld: 0 }),
-  "/api/agents/memory/entries/changes": (q) => fx.memoryChanges(LOCALE, Number(q.get("limit") || 0)),
+  "/api/agents/memory/entries/changes": (q) =>
+    MEM_GUIDE ? fx.memoryGuideChanges(LOCALE, Number(q.get("limit") || 0)) : fx.memoryChanges(LOCALE, Number(q.get("limit") || 0)),
+  ...(MEM_GUIDE
+    ? {
+        "/api/agents/memory/entries/diff": (q) => fx.memoryGuideDiff(LOCALE, q.get("commit") || ""),
+        "/api/agents/memory/entries/projects": () => fx.memoryGuideProjects(LOCALE),
+        "/api/agents/memory/entries/lint-terms": () => fx.memoryGuideLintTerms(LOCALE),
+        "/api/agents/memory/entries/lint": (q) => fx.memoryGuideLint(LOCALE, q.get("scope") || ""),
+        "/api/agents/memory-consolidation": () => fx.memoryGuideConsolStatus(LOCALE),
+        "/api/agents/memory-consolidation/proposals": () => fx.memoryGuideProposals(LOCALE),
+        "/api/agents/memory-consolidation/proposal": (q) => fx.memoryGuideProposal(LOCALE, q.get("id") || ""),
+      }
+    : {}),
   "/api/agents/memory/auto-sync": () => ({ phase: "on", want: true, settled: true, nativeMemoryOff: true }),
   // Memory snapshots for the user guide's snapshots page (SHOT_MEMIO_GUIDE); without it the routes
   // stay unhandled, as before.

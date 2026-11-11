@@ -200,6 +200,12 @@ func TestCloudCostMonthlyCoverageAndScope(t *testing.T) {
 	if m[1]["unblended_micro"].(float64) != 1_500_000 || m[1]["partial"] != true || m[1]["estimated"] != false {
 		t.Errorf("July = %v", m[1])
 	}
+	if m[1]["coverage_from"] != "2026-07-10" {
+		t.Errorf("July must say coverage starts 07-10: %v", m[1])
+	}
+	if _, ok := m[2]["coverage_from"]; ok {
+		t.Errorf("the running month is partial for being in progress, not coverage: %v", m[2])
+	}
 	if m[2]["unblended_micro"].(float64) != 2_250_000 || m[2]["estimated"] != true || m[2]["partial"] != true {
 		t.Errorf("Aug = %v (tenant admin must not see ops' 7.0 or the shared 9.0)", m[2])
 	}
@@ -246,6 +252,23 @@ func TestMonthlyCostWithNoDataAtAll(t *testing.T) {
 	got := monthlyCost(nil, sp, "", false, nil)
 	if !got[0].NoCoverage || !got[1].NoCoverage || got[1].ChangeMicro != nil {
 		t.Errorf("no store coverage must read as unknown, got %+v", got)
+	}
+}
+
+func TestMonthlyCostCoverageFromSeparatesTruncationFromTheRunningMonth(t *testing.T) {
+	sp := newMonthSpan(3, time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC))
+	got := monthlyCost(nil, sp, "2026-07-10", false, nil)
+	// June: no coverage at all. July: finished but truncated. August: running.
+	if got[0].CoverageFrom != "" || got[1].CoverageFrom != "2026-07-10" || got[2].CoverageFrom != "" {
+		t.Errorf("coverage_from = %q / %q / %q", got[0].CoverageFrom, got[1].CoverageFrom, got[2].CoverageFrom)
+	}
+	if !got[1].Partial || !got[2].Partial || got[0].Partial {
+		t.Errorf("partial must stay true for both reasons: %+v", got)
+	}
+	// The running month starting before coverage is still reported as running.
+	got = monthlyCost(nil, sp, "2026-08-05", false, nil)
+	if got[2].CoverageFrom != "" || !got[2].Partial {
+		t.Errorf("running month wins: %+v", got[2])
 	}
 }
 

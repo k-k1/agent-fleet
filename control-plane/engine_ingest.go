@@ -881,7 +881,7 @@ func (g *engineIngester) civitai() *engineCivitaiTokens {
 // replacing them on every poll would be churn where the answer never changed.
 func (g *engineIngester) adopt(def engineIngestDef,
 	secrets func(engineIngestDef) (*engineHfTokens, *engineCivitaiTokens)) bool {
-	if g == nil || !def.ok() {
+	if g == nil || !def.OK() {
 		return false
 	}
 	g.defMu.Lock()
@@ -1086,7 +1086,7 @@ func (g *engineIngester) reuse(ctx context.Context, req engineIngestRequest) (st
 
 func (g *engineIngester) runTask(ctx context.Context, req engineIngestRequest) (string, error) {
 	def := g.ingestDef()
-	if g.ecs == nil || !def.ok() {
+	if g.ecs == nil || !def.OK() {
 		return "", fmt.Errorf("this deployment's engine stack declares no ingest task")
 	}
 	out, err := g.ecs.RunTask(ctx, &ecs.RunTaskInput{
@@ -1670,7 +1670,7 @@ func (l *engineIngestLogs) GetLogEvents(ctx context.Context, group, stream strin
 // bytes" is a job handed to the principal that put them there.
 func (g *engineIngester) deleteObjects(ctx context.Context, keys []string) error {
 	def := g.ingestDef()
-	if g == nil || g.ecs == nil || !def.ok() {
+	if g == nil || g.ecs == nil || !def.OK() {
 		return fmt.Errorf("this deployment's engine stack declares no ingest task")
 	}
 	out, err := g.ecs.RunTask(ctx, &ecs.RunTaskInput{
