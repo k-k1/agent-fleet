@@ -24,7 +24,11 @@ var (
 	// device.sso authorization URL.
 	ssmURLWithCode = regexp.MustCompile(`https://[^\s"']*user_code=[^\s"']+`)
 	ssmDeviceURL   = regexp.MustCompile(`https://[^\s"']*device\.sso\.[^\s"']*`)
-	ssmCodeRe      = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
+	// The sign-in service host newer CLIs print (observed in aws-cli 2.36: the portal URL
+	// and the autofill URL both live on <region>.signin.aws, and neither pattern above
+	// matches it).
+	ssmSigninURL = regexp.MustCompile(`https://[^\s"']*\.signin\.aws[^\s"']*`)
+	ssmCodeRe    = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
 )
 
 type ssmLoginStatus struct {
@@ -169,9 +173,25 @@ func DeviceAuthorization(out string) (url, code string) {
 		url = ssmDeviceURL.FindString(out)
 	}
 	if url == "" {
+		url = lastCompleteSigninURL(out)
+	}
+	if url == "" {
 		return "", ""
 	}
 	return url, ssmCodeRe.FindString(out)
+}
+
+// lastCompleteSigninURL is the last signin.aws URL in out that is followed by whitespace:
+// the CLI prints the plain URL first and the code-autofill one last, and a URL still being
+// read at a chunk boundary must not be shown cut short.
+func lastCompleteSigninURL(out string) string {
+	url := ""
+	for _, m := range ssmSigninURL.FindAllStringIndex(out, -1) {
+		if m[1] < len(out) && strings.ContainsRune(" \t\r\n", rune(out[m[1]])) {
+			url = out[m[0]:m[1]]
+		}
+	}
+	return url
 }
 
 // lastNonEmptyLines returns up to n trailing non-blank lines of s, joined by newlines.

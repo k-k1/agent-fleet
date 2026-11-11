@@ -78,3 +78,19 @@ func TestDeviceAuthorizationFindsThePortalURL(t *testing.T) {
 		t.Fatalf("url, code = %q, %q", url, code)
 	}
 }
+
+// TestDeviceAuthorizationFindsTheSigninURL: aws-cli 2.36 prints its URLs on
+// <region>.signin.aws, which neither the user_code nor the device.sso pattern matches.
+func TestDeviceAuthorizationFindsTheSigninURL(t *testing.T) {
+	head := "Browser will not be automatically opened.\nPlease visit the following URL:\n\n" +
+		"https://us-east-1.signin.aws/device\n\nThen enter the code:\n\nABCD-EFGH\n\n" +
+		"Alternatively, you may visit the following URL which will autofill the code upon loading:\n"
+	full := head + "https://us-east-1.signin.aws/device?code=ABCD-EFGH\n"
+	if url, code := DeviceAuthorization(full); url != "https://us-east-1.signin.aws/device?code=ABCD-EFGH" || code != "ABCD-EFGH" {
+		t.Fatalf("url, code = %q, %q", url, code)
+	}
+	// The autofill URL is still arriving: show the complete plain one, never a cut one.
+	if url, _ := DeviceAuthorization(head + "https://us-east-1.signin.aws/dev"); url != "https://us-east-1.signin.aws/device" {
+		t.Fatalf("partial autofill URL: got %q", url)
+	}
+}
