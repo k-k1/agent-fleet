@@ -74,6 +74,9 @@ func autoImportMuse(run *AutoSyncRun, stop func() bool) (stopped bool) {
 			run.MuseFailed++
 		}
 	}
+	if stop() {
+		return true
+	}
 	// The personal store is evaluated only to say what is waiting; nothing in it is written.
 	for _, s := range list.Sources {
 		if s.Scope != museScopePersonal {
@@ -125,7 +128,7 @@ func autoImportMuseSource(run *AutoSyncRun, pr *AutoSyncProject, s agentMemMuseS
 			// Name uniqueness cannot be proven for notes that were not listed, so none is applied
 			// (the member's import refuses the same folder).
 			pr.Counts["skipped"]++
-			run.addRow(AutoSyncRow{Agent: autoAgentMuse, Project: pr.ID, Name: s.Dir, Status: "skipped", Reason: "too_many_files"})
+			run.addRow(AutoSyncRow{Agent: autoAgentMuse, Project: pr.ID, Name: autoMuseRowName(s), Status: "skipped", Reason: "too_many_files"})
 			return autoMuseDone
 		}
 		var todo []agentMemImportReqItem
@@ -161,6 +164,15 @@ func autoImportMuseSource(run *AutoSyncRun, pr *AutoSyncProject, s agentMemMuseS
 	return autoMuseDone
 }
 
+// autoMuseRowName is a name a run row may carry: the folder's own name when it passes the scan,
+// else the scope.
+func autoMuseRowName(s agentMemMuseSource) string {
+	if n := autoShowable(s.Dir); n != "" {
+		return n
+	}
+	return s.Scope
+}
+
 // autoMusePreview adds what the muse import would do to the switch-on preview. A folder that
 // cannot be read is left out: the confirmation must not fail because of muse.
 func autoMusePreview(out *AutoSyncPreview) {
@@ -186,6 +198,12 @@ func autoMusePreview(out *AutoSyncPreview) {
 			continue
 		}
 		pr := acc.get(pv.Project)
+		if pv.Truncate {
+			// The run applies nothing from a folder cut at the file limit, so the preview must not
+			// promise it.
+			pr.Counts["skipped"]++
+			continue
+		}
 		for k, n := range pv.Counts {
 			pr.Counts[k] += n
 			out.Totals[k] += n

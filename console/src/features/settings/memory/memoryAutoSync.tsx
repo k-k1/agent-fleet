@@ -25,7 +25,7 @@ import type { AutoSyncPreview, AutoSyncRun, AutoSyncStatus } from "./memoryTypes
 
 const POLL_MS = 3000;
 // An unknown status or reason from a newer Agent is printed raw rather than breaking the row.
-const reasonLabel = (r: string): string => tMaybe("mem.as_reason_" + r) ?? tMaybe("mem.ce_reason_" + r) ?? tMaybe("mem.ci_reason_" + r) ?? r;
+const reasonLabel = (r: string): string => tMaybe("mem.as_reason_" + r) ?? tMaybe("mem.ce_reason_" + r) ?? tMaybe("mem.ci_reason_" + r) ?? tMaybe("mem.mi_reason_" + r) ?? r;
 const statusLabel = (s: string): string => tMaybe("mem.as_status_" + s) ?? s;
 
 const sum = (run: AutoSyncRun, key: string): number => run.projects.reduce((n, p) => n + (p.counts[key] ?? 0), 0);

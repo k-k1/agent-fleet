@@ -252,6 +252,7 @@ describe("the run's status under the switch", () => {
     expect(text).toContain(t("mem.as_reason_other_source"));
     expect(text).toContain(t("mem.as_muse_personal_name", { n: 3 }));
     expect(text).toContain(t("mem.as_status_needs_confirmation"));
+    expect(text).toContain(t("mem.as_agent_muse"));
   });
 
   it("offers retry and 'switch native memory back on anyway' once the write-back keeps failing", async () => {

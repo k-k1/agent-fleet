@@ -150,6 +150,10 @@ func TestAutoSyncMuseTroubleDoesNotFailTheSwitch(t *testing.T) {
 	for i := 0; i <= agentMemImportMaxFiles; i++ {
 		memoryWrite(t, filepath.Join(big, fmt.Sprintf("n%04d.md", i)), "note")
 	}
+	// The preview agrees with the run: nothing is promised from the oversized folder.
+	if pv, err := autoPreview("on"); err != nil || pv.Apply != 1 {
+		t.Fatalf("preview apply = %+v %v, want 1 (claude's note only)", pv, err)
+	}
 	e.flip(true)
 	st := autoStatus()
 	if st.Phase != autoPhaseOn || !st.Run.Complete || st.Run.Error != "" || st.Run.MuseUnmapped != 1 {
