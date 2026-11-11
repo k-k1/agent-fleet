@@ -68,11 +68,31 @@ type BitbucketPipelines struct {
 
 // NewBitbucketPipelines returns the Pipelines source.
 func NewBitbucketPipelines(auth func() (string, error), renew func(string) (string, error)) *BitbucketPipelines {
-	return &BitbucketPipelines{Auth: auth, Renew: renew, API: "https://api.bitbucket.org", Client: &http.Client{Timeout: 20 * time.Second}}
+	return &BitbucketPipelines{Auth: auth, Renew: renew, API: "https://api.bitbucket.org",
+		Client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: sameOriginRedirect}}
+}
+
+// sameOriginRedirect follows a redirect only to the same scheme and host:port. Go's default keeps
+// the Authorization header for any host that matches by name, so an https -> http hop or another
+// port would otherwise carry the token in clear text or to another service.
+func sameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 3 {
+		return http.ErrUseLastResponse
+	}
+	first := via[0].URL
+	if req.URL.Scheme != first.Scheme || !strings.EqualFold(req.URL.Host, first.Host) {
+		return http.ErrUseLastResponse
+	}
+	return nil
 }
 
 func (p *BitbucketPipelines) Kind() string    { return PipelinesKind }
 func (p *BitbucketPipelines) Types() []string { return []string{EventRunCompleted, EventRunFailed} }
+
+// TypeAliases accepts the github.workflow_run.* spelling here too, as the guide says both sources do.
+func (p *BitbucketPipelines) TypeAliases() map[string]string {
+	return map[string]string{legacyRunPrefix: "ci.run"}
+}
 
 // MaxSubscriptions implements SourceLimiter.
 func (p *BitbucketPipelines) MaxSubscriptions() int { return plMaxSubscriptions }
@@ -470,10 +490,7 @@ func (p *BitbucketPipelines) newRuns(ctx context.Context, repo string, floorBuil
 			return runs, false, nil
 		}
 		// Only a link on this API's own host is followed: the token goes along with it.
-		next = ""
-		if strings.HasPrefix(pg.Next, p.API+"/") {
-			next = pg.Next
-		}
+		next = p.ownLink(pg.Next)
 	}
 	return runs, false, nil
 }
@@ -569,4 +586,15 @@ func (p *BitbucketPipelines) failedSteps(ctx context.Context, repo string, run p
 		}
 	}
 	return out, nil
+}
+
+// ownLink returns link when it points at this API (same scheme and host, compared without case,
+// no userinfo), "" otherwise: the token goes along with whatever is followed.
+func (p *BitbucketPipelines) ownLink(link string) string {
+	u, err := url.Parse(link)
+	api, err2 := url.Parse(p.API)
+	if err != nil || err2 != nil || u.User != nil || u.Scheme != api.Scheme || !strings.EqualFold(u.Host, api.Host) {
+		return ""
+	}
+	return link
 }

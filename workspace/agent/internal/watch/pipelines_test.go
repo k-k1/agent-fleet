@@ -374,3 +374,48 @@ func TestOneSubscriptionShapeWorksOnBothProviders(t *testing.T) {
 	}
 	_ = json.Marshal
 }
+
+func TestPipelinesAcceptTheLegacyTypeSpelling(t *testing.T) {
+	al := (&BitbucketPipelines{}).TypeAliases()
+	if got, _ := canonPattern("github.workflow_run.*", al); got != "ci.run.*" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+// A redirect to another origin must not carry the token: not to another port, not to plain http.
+func TestPipelinesDoNotSendTheTokenToAnotherOrigin(t *testing.T) {
+	var leaked []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = append(leaked, r.Header.Get("Authorization"))
+	}))
+	t.Cleanup(other.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/x", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	p := NewBitbucketPipelines(func() (string, error) { return "Bearer tok", nil }, nil)
+	p.API = srv.URL
+	if _, err := p.Resolve(context.Background(), "w/r:run/5", ""); err == nil {
+		t.Fatal("a redirect answer was taken as a run")
+	}
+	if len(leaked) != 0 {
+		t.Fatalf("token sent to another origin: %v", leaked)
+	}
+}
+
+func TestOwnLinkIsCaseInsensitiveOnTheHostAndRefusesOthers(t *testing.T) {
+	p := &BitbucketPipelines{API: "https://api.bitbucket.org"}
+	for link, want := range map[string]bool{
+		"https://api.bitbucket.org/2.0/x?page=2":      true,
+		"https://API.Bitbucket.org/2.0/x?page=2":      true,
+		"http://api.bitbucket.org/2.0/x":              false,
+		"https://api.bitbucket.org:8443/2.0/x":        false,
+		"https://u:p@api.bitbucket.org/2.0/x":         false,
+		"https://api.bitbucket.org.evil.example/2.0/": false,
+		"": false,
+	} {
+		if (p.ownLink(link) != "") != want {
+			t.Errorf("%q: want %v", link, want)
+		}
+	}
+}

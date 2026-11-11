@@ -1,6 +1,9 @@
 package watch
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // TypeAliaser is a Source that renamed an event type family and still accepts the old name.
 // The map is old prefix -> new prefix ("github.workflow_run" -> "ci.run"); it applies to an exact
@@ -66,23 +69,32 @@ func (e *Engine) migrateAliasedLocked() {
 			continue
 		}
 		s.Types = canonPatterns(s.Types, al)
+		told := make(map[string]string, len(s.Told))
 		for k, v := range s.Told {
-			if nk, changed := canonPattern(k, al); changed {
-				if _, has := s.Told[nk]; !has {
-					s.Told[nk] = v
-				}
-				delete(s.Told, k)
+			if _, changed := canonPattern(k, al); !changed {
+				told[k] = v
 			}
 		}
-		var pend []Event
-		for _, ev := range s.Pending {
-			ev.Type, _ = canonPattern(ev.Type, al)
-			dup := false
-			for _, p := range pend {
-				dup = dup || p.Type == ev.Type
+		for k, v := range s.Told { // the new name wins when both are present
+			if nk, changed := canonPattern(k, al); changed {
+				if _, has := told[nk]; !has {
+					told[nk] = v
+				}
 			}
-			if !dup {
-				pend = append(pend, ev)
+		}
+		s.Told = told
+		// Events already under the new name come first, so they win over an old-name one.
+		var pend []Event
+		for pass := 0; pass < 2; pass++ {
+			for _, ev := range s.Pending {
+				nt, changed := canonPattern(ev.Type, al)
+				if changed != (pass == 1) {
+					continue
+				}
+				ev.Type = nt
+				if !slices.ContainsFunc(pend, func(p Event) bool { return p.Type == ev.Type }) {
+					pend = append(pend, ev)
+				}
 			}
 		}
 		s.Pending = pend

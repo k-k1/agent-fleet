@@ -82,3 +82,17 @@ func TestStateStoredUnderTheOldNamesKeepsItsWatchesQuiet(t *testing.T) {
 		t.Fatalf("old key left: %v", got.Told)
 	}
 }
+
+// When state holds both spellings of a pending type, the newer (new-name) event is the one kept.
+func TestMigrationKeepsTheNewNamePendingEvent(t *testing.T) {
+	e := New(&memStore{}, &fakeSink{}, &GitHubActions{})
+	e.load()
+	e.state.Subs = []Subscription{{ID: "x", Source: ActionsKind, Types: []string{"ci.run.*"},
+		Told:    map[string]string{"github.workflow_run.completed": "old", "ci.run.completed": "new"},
+		Pending: []Event{{Type: "github.workflow_run.completed", Version: "1:1"}, {Type: "ci.run.completed", Version: "2:1"}}}}
+	e.migrateAliasedLocked()
+	s := e.state.Subs[0]
+	if len(s.Pending) != 1 || s.Pending[0].Version != "2:1" || s.Told["ci.run.completed"] != "new" || len(s.Told) != 1 {
+		t.Fatalf("%+v", s)
+	}
+}
