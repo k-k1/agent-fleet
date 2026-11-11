@@ -408,7 +408,7 @@ shell と ssm は「作業中」にならず、muse と lcpp にはターミナ�
 管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
 force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた
 うえで、残る `af-ws-*` コンテナを別途 `docker stop` する必要があります（この点は障害対応の
-[06](06-diagnose.ja.md) でも触れます）。
+[症状から原因を探す](diagnose/checklist.ja.md) でも触れます）。
 
 ## 使わない間の配備を一時停止する
 

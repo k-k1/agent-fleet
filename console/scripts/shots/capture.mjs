@@ -2143,6 +2143,30 @@ const SCENES = [
     })()`,
     settle: 2500,
   })),
+  // ---- operate pages: sign-in (SHOT_OPERATE_SIGNIN) ----
+  {
+    // Admin › Sign-in method register: what the deployment administrator approves, with one row
+    // waiting and its "Approve and activate" button.
+    name: "operate-signin-register",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_SIGNIN: "1" },
+    clip: "#shot-register",
+    pad: 12,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    storage: { "af-admin-place": JSON.stringify({ root: "register", scope: null, scopeSection: "limits" }) },
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      const p = document.querySelector(".admin-modal .admin-panel");
+      if (p) p.id = "shot-register";
+    })()`,
+    settle: 2000,
+  },
   // ---- team pages (SHOT_TEAM_GUIDE) ----
   {
     // The hand-to-member dialog: two teammates the session is shared with, and a branch with

@@ -17,8 +17,8 @@ source_of_truth: "コマンドは `deploy/` 配下のスクリプト、各手順
 2. [導入](02-install.ja.md)：秘密の生成、サインインの設定、初回起動、最初のテナント
 3. [動かし続ける](03-run.ja.md)：バックアップ、復旧、アップグレード、閉域、アイドル停止と一時停止
 4. [守る](04-secure.ja.md)：脅威モデル、残留リスク、egress 統制、MCP のサインインと信頼するホスト、開発用ログインのスイッチ、オフボーディング、報告経路
-5. [サインイン方式](05-signin.ja.md)：Google / Entra ID / GitHub / 他の OIDC で何を作り、どの値をどこに入れ、どう確認するか
-6. [切り分ける](06-diagnose.ja.md)：障害対応と FAQ。**気づかないうちにおかしくなる 3 つの制約**を含む
+5. [サインイン方式](05-signin.ja.md)：下の「サインイン」のページに移りました
+6. [切り分ける](06-diagnose.ja.md)：下の「困ったとき」のページに移りました
 7. [推論エンジンと読み上げ](07-engines.ja.md)：フリート自前の GPU エンジンの管理パネル（モード、GPU クラス、モデルの取り込み、状態の読み方）、音声エンジンと共通辞書
 8. [自前の ComfyUI で画像を生成する](08-image-engine.ja.md)：自分の網の中の ComfyUI をセッションから使わせる。そのとき網を閉じるのは誰の仕事か
 9. [別の配備のエンジンを借りる](09-borrowed-engine.ja.md)：自分のホストの配備から AWS のフリートの llm / image エンジンを使う。2 人の管理者の境目はどこにあるか
@@ -30,6 +30,24 @@ source_of_truth: "コマンドは `deploy/` 配下のスクリプト、各手順
 
 各形態が何に対応しているかは [ref/deploy-targets.md](../ref/deploy-targets.ja.md)、
 誰が何をできるかは [ref/roles.md](../ref/roles.ja.md)。
+
+## サインイン
+
+| ページ | できること |
+|---|---|
+| [サインインの方法を設定する](signin/overview.ja.md) | どの IdP でも共通の準備、リダイレクト URI、設定の置き場所を知り、動いたことを確かめる |
+| [Google でサインインする](signin/google.ja.md) | Google Cloud Console でクライアントを作り、`.env` に書く |
+| [Microsoft Entra ID でサインインする](signin/entra.ja.md) | Entra でアプリを登録し、issuer を自社のディレクトリに固定する |
+| [GitHub でサインインする](signin/github.ja.md) | GitHub の組織のメンバーだけが入れるようにする |
+| [そのほかの OIDC でサインインする](signin/oidc.ja.md) | Okta・Keycloak・Auth0・Cognito・GitLab などをつなぐ |
+| [テナント独自のサインインを承認する](signin/tenant-idp.ja.md) | テナントが登録した IdP を確かめて承認し、止める |
+
+## 困ったとき
+
+| ページ | できること |
+|---|---|
+| [症状から原因を探す](diagnose/checklist.ja.md) | ログとヘルスを見て、症状の表から原因を絞る。コンテナから Docker を動かす 3 つの制約、TLS、よくある質問 |
+| [ログインできない](diagnose/cannot-login.ja.md) | サインインが拒否される・ボタンが出ない・外した人がまだ使えるときに、原因を探す |
 
 ## コマンドの在り処
 
@@ -69,7 +87,7 @@ source_of_truth: "コマンドは `deploy/` 配下のスクリプト、各手順
   閉域配備には自己署名の代替があります（[02 導入](02-install.ja.md)）。
 - **サインイン用のプロバイダ**: Google の OAuth クライアント、または Entra ID / Okta /
   Keycloak / Auth0 / Cognito / GitLab の OIDC アプリ登録。**何個有効にしても、登録する
-  リダイレクト URI は 1 つだけ**です（[05 サインイン](05-signin.ja.md)）。
+  リダイレクト URI は 1 つだけ**です（[サインインの方法を設定する](signin/overview.ja.md)）。
 - **エージェントの席は各メンバーが持ち込みます**。初回起動の後、各自が自分の席でログイン
   します。個人プランより会社の Team/Enterprise 席を推奨します。
 
@@ -106,7 +124,7 @@ source_of_truth: "コマンドは `deploy/` 配下のスクリプト、各手順
 コンテナからホストの Docker デーモンを駆動する方式には、**破ると気づかないうちにおかしくなる制約が 3 つ**
 あります：ホストネットワーク、`DATA_DIR` の絶対パスの一致、docker グループの GID。
 compose の定義がそれを封じ込めていますが、意味は
-[06 切り分ける](06-diagnose.ja.md) が「この症状は何を意味するか」の側から説明します。
+[症状から原因を探す](diagnose/checklist.ja.md#コンテナから-docker-を動かす-3-つの制約) が「この症状は何を意味するか」の側から説明します。
 
 ## 責任チェックリスト
 

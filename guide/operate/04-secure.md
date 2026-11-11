@@ -440,7 +440,7 @@ client is served.
   pinned to your tenant GUID: on the `/common/` or `/organizations/` endpoints every Microsoft
   account on earth reaches the login and a personal account can rewrite its own email address,
   so the CP refuses to start there unless `AF_OIDC_<ID>_ALLOWED_TIDS` is set
-  ([05 §4](05-signin.md) / `docs/build/07-security.md` §7.3).
+  ([Sign in with Microsoft Entra ID](signin/entra.md) / `docs/build/07-security.md` §7.3).
 - **Audit log.** Only mutating / destructive operations are recorded in `audit_log` (reads are
   not, except the export of a member's agent memory, and **raw terminal streams are never
   stored, due to the risk of secrets leaking into them**). super_admins / tenant_admins view it

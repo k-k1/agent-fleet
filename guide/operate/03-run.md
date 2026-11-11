@@ -444,7 +444,7 @@ are outside compose management). To stop a specific Workspace for sure, a super_
 force-stops it from the Admin panel in the Console. When the whole host must be brought fully
 down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
 `af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
-[06](06-diagnose.md)).
+[Find the cause from the symptom](diagnose/checklist.md)).
 
 ## Pausing an idle deployment
 

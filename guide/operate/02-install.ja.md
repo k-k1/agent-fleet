@@ -58,11 +58,11 @@ head -c 32 /dev/urandom | base64
 > 詳細は [04-secure.md](04-secure.ja.md) と `docs/build/07-security.ja.md` §7.6。
 
 あわせて、CP が使う `DOCKER_GID` をホストの docker グループ GID に合わせます（値の求め方は
-runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[06](06-diagnose.ja.md)）。
+runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[症状から原因を探す](diagnose/checklist.ja.md)）。
 
 ## 3. サインイン IdP を設定する
 
-> **通しの手順は [05-signin.md](05-signin.ja.md)** にあります。Google / Microsoft
+> **通しの手順は [サインインの方法を設定する](signin/overview.ja.md)** にあります。Google / Microsoft
 > Entra ID / GitHub / その他 OIDC で何を作るか、どの値を `.env` のどのキーに入れるか、
 > 確認方法、よくある失敗までを扱っています。サインイン設定の正はあちらで、この節は判断の形だけを示します。
 > ここでいったんあちらを終わらせてから、§4 に戻ってきてください。
@@ -75,7 +75,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 このパスは `<PUBLIC_BASE_URL>/oauth2/callback` と完全に一致していなければなりません。ここが
-ズレるとサインイン時に "redirect URI mismatch" になります（よくある失敗・[06](06-diagnose.ja.md)）。
+ズレるとサインイン時に "redirect URI mismatch" になります（よくある失敗・[ログインできない](diagnose/cannot-login.ja.md)）。
 
 どのキーを埋めるかは IdP によって違います。
 
@@ -92,7 +92,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 > サインイン用アプリだけを意味します。テナント管理者側の手順は
 > [連携に使う OAuth アプリを選ぶ](../admin/access/oauth-apps.ja.md)。
 
-うまくいくかどうかを分けるのは次の 3 点で、いずれも [05](05-signin.ja.md) に詳細があります。
+うまくいくかどうかを分けるのは次の 3 点で、いずれも [サインインの方法を設定する](signin/overview.ja.md) に詳細があります。
 
 - **`AF_OIDC_<ID>_TRUST` に既定値はありません（意図的です）**：「その IdP のメールアドレスを
   なぜ信じてよいか」を宣言する欄で、無い provider は推測されず起動時に無効化されます。
@@ -208,7 +208,7 @@ membership が 1 つも無くても Admin パネルに到達できます。招�
 **テナント設定 → サインイン → サインイン方式**（アカウントメニューの「テナント設定」）です。配備管理者は
 **管理 → そのテナント → サインイン方式**から同じ欄を開きます。ここでは一切再起動が要りません。
 
-**入力欄の中身・承認前に確認すること・GitHub の場合の違いは、[05 §7](05-signin.ja.md)**
+**入力欄の中身・承認前に確認すること・GitHub の場合の違いは、[テナント独自のサインインを承認する](signin/tenant-idp.ja.md)**
 にあります。この節に置くのは「判断」の方です。
 
 > **登録しただけでは動きません。** 新しいサインイン方法は「承認待ち」で作られ、配備管理者が
@@ -265,8 +265,8 @@ membership が 1 つも無くても Admin パネルに到達できます。招�
 起動後、CP のログを追い、ヘルスチェックが通ること（Control Plane のループバックのポートの `/healthz` が `ok` を返すこと。正確な確認方法は
 ランブックのトラブルシュートの表）を確認します。
 
-`ok` が返らない・そもそも CP が上がらないときは [06-diagnose.md](06-diagnose.ja.md) の
-「CP が起動しない」を参照してください。
+`ok` が返らない・そもそも CP が上がらないときは [症状から原因を探す](diagnose/checklist.ja.md) の
+「Control Plane が起動しない」を参照してください。
 
 ## 6. 初回サインインと最初の管理者
 
@@ -278,7 +278,7 @@ Console に盾アイコンの **Admin パネル**が見え、配備全体を管�
 > / `_DOMAINS` / `_EMAILS_FILE`）が**すべて空で、かつまだ誰もテナントに招待されていないと全サインインを
 > 拒否**します（fail-closed = 安全側を優先する設計）。新規設置の時点では当然まだ誰も招待されていないので、
 > **最初の管理者を入れるために少なくとも 1 つは設定**してください。
-> 詳細は [06](06-diagnose.ja.md)。
+> 詳細は [ログインできない](diagnose/cannot-login.ja.md)。
 
 ## 7. 最初のテナントとメンバー
 

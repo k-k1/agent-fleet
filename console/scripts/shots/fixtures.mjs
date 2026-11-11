@@ -3130,6 +3130,33 @@ export const adminGuideProviders = () => ({
   providers: [{ id: "google", label_ja: "Google でサインイン", label_en: "Sign in with Google" }],
 });
 
+// The deployment administrator's register of tenant-defined sign-in methods (operate guide,
+// SHOT_OPERATE_SIGNIN): one row waiting for approval, two approved, across three fictional tenants.
+export const operateSigninRegister = () => ({
+  providers: [
+    {
+      id: "idp-11", name: "entra", provider_id: "t:north:entra", tenant_slug: "north", kind: "oidc",
+      issuer: "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000001/v2.0",
+      client_id: "11111111-2222-3333-4444-555555555555", trust: "issuer", allowed_domains: "north.example.com",
+      link_claim: "oid", status: "pending", usable: false, has_secret: true,
+    },
+    {
+      id: "idp-12", name: "github-org", provider_id: "t:labs:github-org", tenant_slug: "labs", kind: "github",
+      issuer: "https://github.com", client_id: "Ov23liEXAMPLE0000001", trust: "email",
+      allowed_domains: "labs.example.com", allowed_orgs: "example-labs",
+      status: "active", usable: true, has_secret: true,
+      approved_by: "admin@example.com", approved_at: "2026-10-20T10:15:00Z",
+    },
+    {
+      id: "idp-13", name: "okta", provider_id: "t:south:okta", tenant_slug: "south", kind: "oidc",
+      issuer: "https://south.okta.example.com", client_id: "0oaEXAMPLE000000001", trust: "email",
+      allowed_domains: "south.example.com",
+      status: "active", usable: true, has_secret: true,
+      approved_by: "admin@example.com", approved_at: "2026-09-02T08:40:00Z",
+    },
+  ],
+});
+
 export const adminGuideIdPs = () => ({
   providers: [
     {

@@ -17,8 +17,8 @@ workflow is assumed; a general grounding in Docker, DNS, OAuth and backups is.
 2. [Install](02-install.md): generating secrets, sign-in configuration, first start, first tenant
 3. [Running it](03-run.md): backup, restore, upgrades, air-gapped networks, idle stop and pausing
 4. [Securing it](04-secure.md): threat model, the residual risks, egress control, MCP sign-in and its trusted hosts, the development sign-in switch, offboarding, reporting channel
-5. [Sign-in methods](05-signin.md): end to end: what to create at Google / Entra ID / GitHub / another OIDC provider, which value goes where, and how to check it
-6. [Diagnosing it](06-diagnose.md): incident response and FAQ, including the three constraints that break silently
+5. [Sign-in methods](05-signin.md): moved to the "Sign-in" pages below
+6. [Diagnosing it](06-diagnose.md): moved to the "When something goes wrong" pages below
 7. [Inference engines and read aloud](07-engines.md): the Admin panel for the fleet's own GPU engines (modes, GPU class, taking models in, reading the state), the speech engine and the shared dictionary
 8. [Image generation on your own ComfyUI](08-image-engine.md): pointing sessions at a ComfyUI on your own network, and the network that is then yours to close
 9. [Borrowing another deployment's engines](09-borrowed-engine.md): using an AWS fleet's llm and image engines from a deployment on your own host, and where the boundary between the two administrators falls
@@ -31,6 +31,24 @@ deep dives that apply to AWS only.
 
 What each target supports is [ref/deploy-targets.md](../ref/deploy-targets.md); who may
 do what is [ref/roles.md](../ref/roles.md).
+
+## Sign-in
+
+| Page | What you can do |
+|---|---|
+| [Set up how people sign in](signin/overview.md) | Learn what every IdP has in common, the redirect URI and where each setting lives, and check that it worked |
+| [Sign in with Google](signin/google.md) | Create a client in Google Cloud Console and put it in `.env` |
+| [Sign in with Microsoft Entra ID](signin/entra.md) | Register an app in Entra and pin the issuer to your directory |
+| [Sign in with GitHub](signin/github.md) | Let in only members of your GitHub organisations |
+| [Sign in with another OIDC IdP](signin/oidc.md) | Connect Okta, Keycloak, Auth0, Cognito, GitLab and others |
+| [Approve a tenant's own sign-in](signin/tenant-idp.md) | Check, approve and stop an IdP a tenant registered |
+
+## When something goes wrong
+
+| Page | What you can do |
+|---|---|
+| [Find the cause from the symptom](diagnose/checklist.md) | Read the log and health, and narrow the cause down from the symptom table: the three constraints of driving Docker from a container, TLS, the FAQ |
+| [Cannot log in](diagnose/cannot-login.md) | Find out why sign-in is refused, a button is missing, or a removed person still gets in |
 
 ## Where the commands are
 
@@ -73,7 +91,7 @@ and observe outbound destinations, all from the browser. Splitting departments i
   ([02 Install](02-install.md)).
 - **A login provider**: a Google OAuth client, or an OIDC app registration at Entra ID
   / Okta / Keycloak / Auth0 / Cognito / GitLab. You register exactly one redirect URI
-  no matter how many providers you enable ([05 Sign-in](05-signin.md)).
+  no matter how many providers you enable ([Set up how people sign in](signin/overview.md)).
 - **Agent seats are brought by each member.** After the first start, each person signs
   in with their own. Company Team/Enterprise seats are preferable to personal ones.
 
@@ -114,7 +132,7 @@ the backup.
 Driving the host's Docker daemon from a container has **three constraints that break
 things silently when violated**: host networking, an identical absolute `DATA_DIR`
 path, and the docker group GID. The compose definition contains them;
-[06 Diagnosing it](06-diagnose.md) explains them from the "what does this symptom mean"
+[Find the cause from the symptom](diagnose/checklist.md#three-constraints-of-driving-docker-from-a-container) explains them from the "what does this symptom mean"
 side.
 
 ## Responsibility checklist

@@ -67,11 +67,11 @@ will refuse to start with it. What each requirement is and what changing each ke
 
 In addition, set the `DOCKER_GID` used by the CP to match the host's docker group GID (how to
 find the value is in the runbook). Getting this wrong results in permission denied on the docker
-socket after startup ([06](06-diagnose.md)).
+socket after startup ([Find the cause from the symptom](diagnose/checklist.md)).
 
 ## 3. Configure the login IdP
 
-> **The full procedure is [05-signin.md](05-signin.md)**: what to create at Google /
+> **The full procedure is [Set up how people sign in](signin/overview.md)**: what to create at Google /
 > Microsoft Entra ID / GitHub / another OIDC IdP, which value goes into which `.env` key, how to
 > confirm it worked, and what usually goes wrong. That page is the source of truth for sign-in
 > configuration; this section is only the shape of the decision. Work through it now and come
@@ -85,7 +85,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 This path must match `<PUBLIC_BASE_URL>/oauth2/callback` exactly. If they diverge, you get
-"redirect URI mismatch" at login (a common failure; see [06](06-diagnose.md)).
+"redirect URI mismatch" at login (a common failure; see [Cannot log in](diagnose/cannot-login.md)).
 
 Which keys you fill in depends on the IdP:
 
@@ -103,7 +103,7 @@ Which keys you fill in depends on the IdP:
 > side of it is [Choose the OAuth apps for integrations](../admin/access/oauth-apps.md).
 
 Three points decide whether this goes smoothly, and all three are covered in detail in
-[05](05-signin.md):
+[Set up how people sign in](signin/overview.md):
 
 - **`AF_OIDC_<ID>_TRUST` has no default, on purpose**: it records *why* this IdP's email address
   may be believed, and a provider without it is disabled at startup rather than guessed at.
@@ -226,7 +226,7 @@ from the Console: **Tenant settings → Sign-in → "Sign-in methods"** (the acc
 which you reach from **Admin → the tenant → "Sign-in methods."** Nothing here needs a restart.
 
 **The step-by-step (what the tenant fills in, what to check before approving, and the GitHub
-variant) is [05 §7](05-signin.md).** What belongs here is the decision:
+variant) is [Approve a tenant's own sign-in](signin/tenant-idp.md).** What belongs here is the decision:
 
 > **A new sign-in method does nothing until you approve it.** It is created as *waiting for
 > approval*, and until a deployment administrator activates it, no
@@ -284,8 +284,8 @@ runbook's "Quick start." After startup, follow the CP's logs and confirm the hea
 passes: `/healthz` on the Control Plane's loopback port answers `ok` (the runbook's troubleshooting table
 has the exact check).
 
-If `ok` does not come back, or the CP does not come up at all, see "CP does not start" in
-[06-diagnose.md](06-diagnose.md).
+If `ok` does not come back, or the CP does not come up at all, see "The Control Plane does not start" in
+[Find the cause from the symptom](diagnose/checklist.md).
 
 ## 6. First login and the first administrator
 
@@ -298,7 +298,7 @@ deployment.
 > (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`) **empty, and nobody invited to a
 > tenant yet, all logins are rejected** (fail-closed = designed to fail safe). On a first
 > install nobody is invited yet, so set at least one of them to get your first administrator in.
-> Details in [06](06-diagnose.md).
+> Details in [Cannot log in](diagnose/cannot-login.md).
 
 ## 7. The first tenant and members
 

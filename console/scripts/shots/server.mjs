@@ -79,7 +79,8 @@ const exact = {
   }),
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
-    super_admin: false,
+    // The operate guide's sign-in pages (SHOT_OPERATE_SIGNIN) are the deployment administrator's.
+    super_admin: !!process.env.SHOT_OPERATE_SIGNIN,
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
   // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
@@ -280,7 +281,13 @@ const exact = {
   "/api/cost/me": () => fx.myCloudCost(),
   "/api/admin/cloud-cost": () => fx.adminCloudCost(),
   // Tenant settings -> members -> detail (the entry point appears only with --admin).
-  "/api/admin/tenants": () => (ADMIN_RES ? fx.adminResTenants() : fx.adminTenants()),
+  "/api/admin/tenants": () => {
+    const d = ADMIN_RES ? fx.adminResTenants() : fx.adminTenants();
+    return process.env.SHOT_OPERATE_SIGNIN ? { ...d, super_admin: true } : d;
+  },
+  // Admin › Sign-in method register of the operate guide (SHOT_OPERATE_SIGNIN). Without it the
+  // route stays unhandled, as before.
+  ...(process.env.SHOT_OPERATE_SIGNIN ? { "/api/admin/idp": () => fx.operateSigninRegister() } : {}),
   // The tenant administration pages of the guide (SHOT_ADMIN_OUTSIDE, run with SHOTS_ADMIN=1): the
   // audit log, running time, an empty MCP distribution and the two tenant switches. Without it
   // these routes stay unhandled, as before.
