@@ -45,6 +45,10 @@ func keepBrowserSocketAlive(ctx context.Context, conn *websocket.Conn) (touch fu
 	touch = func() { _ = conn.SetReadDeadline(time.Now().Add(wait)) }
 	touch()
 	conn.SetPongHandler(func(string) error { touch(); return nil })
+	// ReadMessage does not return for control frames, so a peer that keeps itself alive
+	// with its own pings would otherwise hit the deadline.
+	defPing := conn.PingHandler()
+	conn.SetPingHandler(func(s string) error { touch(); return defPing(s) })
 	go func() {
 		t := time.NewTicker(every)
 		defer t.Stop()

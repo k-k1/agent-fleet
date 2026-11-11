@@ -107,17 +107,44 @@ func TestBrowserWebSocketPingsKeepIdleSocketOpen(t *testing.T) {
 // A client that never reads (so never answers a ping) is dropped after the pong wait,
 // and the Agent leg is closed with it.
 func TestBrowserWebSocketDropsClientThatNeverPongs(t *testing.T) {
-	scaleBrowserKeepalive(t, 30*time.Millisecond, 150*time.Millisecond)
+	scaleBrowserKeepalive(t, 50*time.Millisecond, 300*time.Millisecond)
 	var agentPings atomic.Int32
 	closed := make(chan struct{})
 	agent := startKeepaliveAgent(t, &agentPings, closed)
 	env := newBrowserTestEnv(t, browserTestRuntime{endpoint: agent.URL, state: "running"})
 	_, stop := dialBrowserCP(t, env) // never reads: no pong
 	defer stop()
+	waitBrowserConns(t, env.mgr.conns, env.workspace.ID, 1) // the bridge was really established
 	select {
 	case <-closed:
 	case <-time.After(3 * time.Second):
 		t.Fatal("silent client was not dropped")
 	}
+	if agentPings.Load() == 0 {
+		t.Fatal("agent leg never received a ping before the drop")
+	}
 	waitBrowserConns(t, env.mgr.conns, env.workspace.ID, 0)
+}
+
+// A peer that keeps the socket alive with its own pings (and never answers ours) is not
+// dropped: an inbound ping counts as liveness.
+func TestBrowserWebSocketInboundPingsExtendDeadline(t *testing.T) {
+	scaleBrowserKeepalive(t, 50*time.Millisecond, 300*time.Millisecond)
+	var agentPings atomic.Int32
+	closed := make(chan struct{})
+	agent := startKeepaliveAgent(t, &agentPings, closed)
+	env := newBrowserTestEnv(t, browserTestRuntime{endpoint: agent.URL, state: "running"})
+	client, stop := dialBrowserCP(t, env)
+	defer stop()
+	waitBrowserConns(t, env.mgr.conns, env.workspace.ID, 1)
+	for end := time.Now().Add(900 * time.Millisecond); time.Now().Before(end); time.Sleep(60 * time.Millisecond) {
+		if err := client.WriteControl(websocket.PingMessage, nil, time.Now().Add(time.Second)); err != nil {
+			t.Fatalf("ping: %v", err)
+		}
+	}
+	select {
+	case <-closed:
+		t.Fatal("socket dropped although the client kept pinging")
+	default:
+	}
 }
