@@ -39,9 +39,11 @@ func managedMeta(kind string) session.Meta {
 	return session.Meta{Dir: "/d", Name: "n", Kind: kind, Driver: session.DriverManaged}
 }
 
-// The kinds whose driver signal was measured through a silent `sleep 120` (ADR 0055, 2026-10-17
-// addendum). Adding a kind here needs that measurement, not a guess.
-var managedMeasuredKinds = []string{session.KindCursor, session.KindKiro, session.KindCodex, session.KindOpencode}
+// The kinds whose driver has a signal: cursor, kiro, codex and opencode were measured through a
+// silent `sleep 120` (ADR 0055, 2026-10-17 addendum); lcpp runs in-process and reports its own
+// running turn (2026-11-11 addendum). Adding a kind here needs a measurement or a design, not a
+// guess.
+var managedMeasuredKinds = []string{session.KindCursor, session.KindKiro, session.KindCodex, session.KindOpencode, session.KindLcpp}
 
 func TestManagedProgressPerKind(t *testing.T) {
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
@@ -78,7 +80,7 @@ func TestManagedProgressPerKind(t *testing.T) {
 func TestManagedProgressUnmeasuredKindsStayUnbounded(t *testing.T) {
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	h5 := now.Add(-5 * time.Hour)
-	for _, kind := range []string{session.KindMuse, session.KindLcpp, session.KindCopilot} {
+	for _, kind := range []string{session.KindMuse, session.KindCopilot} {
 		if progressTrusted(managedMeta(kind)) {
 			t.Errorf("%s: trusted without a measured signal", kind)
 		}

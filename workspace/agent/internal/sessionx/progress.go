@@ -31,10 +31,10 @@ import (
 //     pane-only kinds codex, cursor, copilot, kiro and opencode, whose pane was measured to
 //     repaint about once a second through a 120 s silent `sleep` (ADR 0055 addendum, #1830).
 //     Managed rows have no pane; the kinds whose driver signal was measured are in
-//     progress_managed.go, and Managed muse / lcpp / copilot have none, so a long silent build
-//     there would look frozen. shell and ssm never show a busy state at all (their WireLive
-//     carries none), and muse and lcpp have no Terminal route (managed-only), so there is no
-//     Terminal row of those kinds to bound (#1943);
+//     progress_managed.go (lcpp's is its own running turn), and Managed muse / copilot have
+//     none, so a long silent build there would look frozen. shell and ssm never show a busy
+//     state at all (their WireLive carries none), and muse and lcpp have no Terminal route
+//     (managed-only), so there is no Terminal row of those kinds to bound (#1943);
 //   - the pane-only kinds do not keep the idle-settle clock themselves, so this file feeds it
 //     (one capture-pane per busy row per poll), and they skip the tool-process probe: codex
 //     keeps setsid() helper daemons under its pane that read as a tool even when idle, which

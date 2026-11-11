@@ -126,6 +126,9 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 		// ctx-watcher goroutine), so this stays as cheap as every other Resume field. See mcp.go.
 		mcpMgr: mcpc.NewManager(mcpCtx),
 	}
+	// In-process, the set of running turns is never lost to a gap in a stream, so it is
+	// trustworthy from the start.
+	h.turns.Reset()
 	handles[m.Name] = h
 	handlesMu.Unlock()
 
@@ -397,6 +400,10 @@ type threadHandle struct {
 	inter        *agents.Interaction
 	replyCh      chan agents.InteractionReply
 	events       chan agents.Event
+
+	// act and turns are the sign of life ManagedProgress reports (progress_managed.go).
+	act   agents.Activity
+	turns agents.InFlight
 }
 
 // bypassNow resolves the effective "run Mutates tools without asking" decision for mode (a
@@ -576,6 +583,7 @@ func (h *threadHandle) resumePump() {
 // store, which is this kind's transcript; a turn can run for hours and must not hold a move off.
 func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	defer lease.Release()
+	defer h.enterTurn()()
 	agents.MarkTurnStartRun(h.sid, t.In)
 	h.setState(agents.TurnStarting)
 	if h.beforeCommit != nil {

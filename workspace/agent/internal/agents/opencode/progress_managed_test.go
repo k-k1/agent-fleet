@@ -155,3 +155,29 @@ func TestStreamEndInvalidatesTheInFlightSets(t *testing.T) {
 		t.Fatal("a stale generation's stream end cleared the current generation's state")
 	}
 }
+
+// The events measured on opencode 2.2.7 for a call into an external MCP server that stays silent
+// for 88 s: session.tool.called and .progress open the call, the whole server-wide stream is
+// silent, then a last .progress arrives together with .success.
+func TestExternalMCPCallStaysAliveUntilItsEnd(t *testing.T) {
+	h, m := progressTestHandle(t)
+	feed("session.execution.started", "")
+	feed("session.step.started", "")
+	feed("session.tool.input.ended", "call_mcp")
+	feed("session.tool.called", "call_mcp")
+	feed("session.tool.progress", "call_mcp")
+	feed("session.step.streamed", "")
+	stale(h)
+
+	got, ok := (managedDriver{}).ManagedProgress(m)
+	if !ok || time.Since(got) > time.Minute {
+		t.Fatalf("external MCP call in flight, silent 2 h: got %v, %v; want now", got, ok)
+	}
+	feed("session.tool.progress", "call_mcp")
+	feed("session.tool.success", "call_mcp")
+	stale(h)
+	got, ok = (managedDriver{}).ManagedProgress(m)
+	if !ok || time.Since(got) < time.Hour {
+		t.Fatalf("MCP call over: got %v, %v; want the stale stamp, so the bound can lapse", got, ok)
+	}
+}
