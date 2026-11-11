@@ -31,7 +31,7 @@ AF_OPENCODE_TUI_STANDALONE=1
 - Each session uses roughly 150–250 MB more memory (measured idle)
 - It applies to Terminal sessions started after the Agent started with this setting. Running sessions keep the mode they started in
 - `AF_OPENCODE_SERVE_DISABLE=1` (managed opencode off) also gives dedicated servers, because there is no shared server to join
-- In a dedicated server's pane, forms with several questions and multiple-choice forms do not appear in the Console. Answer them in the terminal
+- In a dedicated server's pane, no question card appears in the Console: the question lives on that pane's own server, which the Agent does not read. Answer it in the terminal
 
 ## Pin an earlier release
 

@@ -49,7 +49,7 @@ The AWS WAF offers only two choices:
 | Parameter | Effect |
 |---|---|
 | `WafRateLimitPer5Min` | Requests per 5 minutes from one IP before it is blocked. Console polling counts too, so keep it well above what a whole office behind one NAT sends |
-| `WafIpReputation` | Adds AWS's managed IP reputation list (known scanners and botnets). It matches on the source, so it cannot break legitimate traffic |
+| `WafIpReputation` | Adds AWS's managed IP reputation list (known scanners and botnets). Only active when `WafRateLimitPer5Min` is greater than 0. It matches on the source, so it cannot break legitimate traffic |
 
 > [!WARNING]
 > **Signature rules (Core rule set, SQLi, XSS) are left out on purpose.** In this product, code and shell commands flow through ordinary bodies: chat, file writes, terminal input.
