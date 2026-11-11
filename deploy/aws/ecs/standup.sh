@@ -881,7 +881,7 @@ if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
 fi
 echo "==> deploy $AF_STACK_INGRESS (30-ingress)"
 if [ "$AF_DRY" = 1 ]; then
-  echo "DRY: cloudformation deploy --stack-name $AF_STACK_INGRESS --template-file $CFN_DIR/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \\"
+  echo "DRY: cloudformation deploy --stack-name $AF_STACK_INGRESS --template-file $CFN_DIR/30-ingress.yaml [--s3-bucket <CfnTemplatesBucket> above 51,200 bytes] --capabilities CAPABILITY_NAMED_IAM \\"
   echo "     --parameter-overrides $(af_params_masked | tr '\n' ' ')"
 else
   af_cfn_deploy "$AF_STACK_INGRESS" "$CFN_DIR/30-ingress.yaml" \

@@ -15,7 +15,8 @@ Fails when
     entry for a parameter that does not exist stops the task from starting);
   - the default-prefix secrets fall outside what the execution role may read in 20-platform;
   - WS_ENV is exposed (deliberately not: PARAMETERS.md);
-  - the template leaves less than 1 KiB under CloudFormation's 51,200-byte limit.
+  - the template outgrows its byte budget (64 KiB: past the 51,200-byte inline limit, so it is
+    handed over through S3 by af_cfn_deploy; see cfn-template-size-test.py).
 
 Positive controls at the end run the same checks against broken copies.
 
@@ -60,7 +61,10 @@ SECRETS = {
     "RemoteEngineToken": ("AF_REMOTE_ENGINE_TOKEN", "remote-engine-token"),
 }
 NEW_VARS = set(PLAIN.values()) | {v for v, _ in SECRETS.values()}
-MAX_BYTES = 51200 - 1024
+# 30-ingress is deployed after 20-platform, whose bucket af_cfn_deploy hands anything over 51,200
+# bytes through (the S3 limit is 1 MB), so the budget is not the inline limit. 64 KiB leaves
+# ~14 KiB (about thirty parameters) before the next deliberate edit of this constant.
+MAX_BYTES = 64 * 1024
 
 
 def cp_container(tpl):
@@ -165,7 +169,7 @@ def check(tpl, size, patterns):
     if "WS_ENV" in base.cp_env_names() or any("WS_ENV" in str(e) for e in cp_container(tpl)["Environment"]):
         fails.append("WS_ENV is exposed; it is deliberately not (PARAMETERS.md)")
     if size > MAX_BYTES:
-        fails.append("30-ingress.yaml is %d bytes; the budget is %d (1 KiB under 51,200)" % (size, MAX_BYTES))
+        fails.append("30-ingress.yaml is %d bytes; the budget is %d (64 KiB; S3 hand-over above 51,200)" % (size, MAX_BYTES))
     return fails
 
 
@@ -232,6 +236,9 @@ def main():
             fails.append("positive control %r was not caught" % name)
     if not check(tpl, MAX_BYTES + 1, patterns):
         fails.append("positive control 'template over budget' was not caught")
+    # headroom: growth well past the 51,200-byte inline limit must still pass
+    if any("bytes" in f for f in check(tpl, 60000, patterns)):
+        fails.append("a 60,000-byte 30-ingress is refused; the budget leaves no headroom past the inline limit")
     if fails:
         for f in fails:
             print("FAIL:", f)

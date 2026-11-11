@@ -14,7 +14,9 @@ deploy with a CLI error when it crosses the limit:
     `aws cloudformation deploy --template-file` against dummy network / platform exports.
 
 30-ingress and the rest come after the bucket; 30-ingress keeps its own budget in
-cfn-cp-settings-env-test.py.
+cfn-cp-settings-env-test.py (64 KiB, above the inline limit). Because it may therefore need S3,
+every documented or printed `--template-file cfn/30-ingress.yaml` command must carry
+`--s3-bucket` too: the AWS CLI refuses a direct upload over 51,200 bytes before calling the API.
 
 Fails when one of them is within 4 KiB of 51,200 bytes (measured on the file, which is what
 the AWS CLI measures). Long prose belongs in cfn/PARAMETERS.md: a YAML comment counts exactly
@@ -42,6 +44,36 @@ def check(name, size):
     return []
 
 
+def ingress_commands():
+    """(file, line, command text) for each `--template-file .../30-ingress.yaml` under deploy/aws/ecs.
+
+    A command is the line plus its backslash continuations, plus one line either side of the
+    match (the template flag may be on a line of its own).
+    """
+    root = os.path.join(HERE, "..", "aws", "ecs")
+    out = []
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in ("harness", "comfyui", "engine-tools")]
+        for fn in files:
+            if not fn.endswith((".md", ".sh")):
+                continue
+            path = os.path.join(dirpath, fn)
+            with open(path, encoding="utf-8") as fh:
+                lines = fh.read().split("\n")
+            for i, line in enumerate(lines):
+                if "--template-file" in line and "30-ingress.yaml" in line:
+                    j = i
+                    while j + 1 < len(lines) and lines[j].rstrip().endswith("\\"):
+                        j += 1
+                    out.append((os.path.relpath(path, root), i + 1, "\n".join(lines[max(i - 2, 0):j + 2])))
+    return out
+
+
+def check_ingress_commands(cmds):
+    return ["%s:%d deploys 30-ingress with --template-file but no --s3-bucket" % (f, n)
+            for f, n, text in cmds if "--s3-bucket" not in text and "af_cfn_deploy" not in text]
+
+
 def main():
     sizes = {}
     for name in PRE_BUCKET:
@@ -56,12 +88,20 @@ def main():
         # positive control: padding the file by whatever takes it one byte over the budget
         if not check(name, size + max(BUDGET + 1 - size, 0)):
             fails.append("positive control for %s was not caught" % name)
+    cmds = ingress_commands()
+    if not cmds:
+        print("cfn-template-size-test: no 30-ingress deploy command found; the scan is broken")
+        return 2
+    fails += check_ingress_commands(cmds)
+    # positive control: the same commands without the flag are caught
+    if not check_ingress_commands([(f, n, t.replace("--s3-bucket", "--nope")) for f, n, t in cmds]):
+        fails.append("positive control for the --s3-bucket scan was not caught")
     if fails:
         for f in fails:
             print("FAIL:", f)
         return 1
-    print("cfn-template-size-test: ok (%s; budget %d)"
-          % (", ".join("%s %d" % kv for kv in sizes.items()), BUDGET))
+    print("cfn-template-size-test: ok (%s; budget %d; %d 30-ingress commands via S3)"
+          % (", ".join("%s %d" % kv for kv in sizes.items()), BUDGET, len(cmds)))
     return 0
 
 

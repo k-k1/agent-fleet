@@ -2038,6 +2038,9 @@ echo "== case 3b-2: the shipped templates stay inside 51,200 bytes =="
 # like a Description, so "move it to a #" saves nothing.
 CFN_MAX=51200
 for t in "$ECS"/cfn/*.yaml; do
+  # 30-ingress is deployed after 20-platform's bucket exists and keeps its own, larger budget in
+  # cfn-cp-settings-env-test.py (#3550); case 3b proves it goes through S3 past 51,200.
+  [ "$(basename "$t")" = 30-ingress.yaml ] && continue
   sz="$(wc -c < "$t" | tr -d ' ')"
   if [ "$sz" -gt "$CFN_MAX" ]; then
     echo "NG: $(basename "$t") is $sz bytes > $CFN_MAX -- move the prose into cfn/PARAMETERS.md"
