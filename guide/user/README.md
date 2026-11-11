@@ -173,9 +173,9 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 | [Set how memory is used](memory/settings.md) | Let sessions use memory, and carry Claude Code's memory across |
 | [Find stale memories](memory/lint.md) | Check for memories that use missing paths or retired terms, and mark them |
 | [Use memory tidy-up](memory/tidy-up.md) | Have a model draft fixes to memory, and approve them one by one |
-| [Import and export memory](../member/18-agent-memory.md#import-export) | Import the memory of Claude Code and others, and write back to Claude Code |
-| [Roll memory back with snapshots](../member/18-agent-memory.md#memory-snapshots) | See the history of an agent's own memory and go back to an earlier point |
-| [Use memory from an external agent](../member/18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent) | Use Agent Fleet memory from your own Claude Code or claude.ai |
+| [Import and export memory](memory/import-export.md) | Bring Claude Code's or muse's memory in and write it back to Claude Code; move the memories of a project that no longer exists |
+| [Restore memory from a snapshot](memory/snapshots.md) | See the history of Claude Code's and Codex's own memory, restore a point in time, take it to another environment |
+| [Use memory from an external agent](memory/external.md) | Use Agent Fleet memory from your own Claude Code or claude.ai; bring your own memory in |
 
 ## Outside access
 

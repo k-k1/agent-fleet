@@ -232,6 +232,8 @@ const exact = {
     // The fleet pages of the user guide (SHOT_FLEET_GUIDE): the three session switches on (the
     // child limit row appears only then) and two working sets for the switcher.
     ...(process.env.SHOT_FLEET_GUIDE ? fx.fleetGuidePrefs(LOCALE) : {}),
+    // The memory pages of the user guide (SHOT_MEMIO_GUIDE): outside access set to read only.
+    ...(process.env.SHOT_MEMIO_GUIDE ? { externalMemory: "read" } : {}),
     // The memory pages of the user guide (SHOT_MEMORY_GUIDE): the outside-client setting, the
     // tidy-up and the scheduled lint on, so the settings view shows every switch with its status.
     ...(process.env.SHOT_MEMORY_GUIDE ? { externalMemory: "read", memoryConsolidation: true, memoryLintSchedule: true } : {}),
@@ -257,6 +259,15 @@ const exact = {
       }
     : {}),
   "/api/agents/memory/auto-sync": () => ({ phase: "on", want: true, settled: true, nativeMemoryOff: true }),
+  // Memory snapshots for the user guide's snapshots page (SHOT_MEMIO_GUIDE); without it the routes
+  // stay unhandled, as before.
+  ...(process.env.SHOT_MEMIO_GUIDE
+    ? {
+        "/api/agents/memory/roots": () => fx.memioRoots(),
+        "/api/agents/memory/snapshots": () => fx.memioSnapshots(),
+        "/api/agents/memory/diff": () => fx.memioDiff(LOCALE),
+      }
+    : {}),
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
   // Cloud cost (docs/log/67). The whole tab is hidden unless profile.available is true, so

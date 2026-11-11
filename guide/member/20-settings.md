@@ -96,7 +96,7 @@ its **Settings** view. The page is described in [Read and correct agent memory](
 ### Memory snapshots
 
 Version control over the memory an agent keeps in its own files. The page is described in
-[18 Agent memory](18-agent-memory.md#memory-snapshots).
+[Restore memory from a snapshot](../user/memory/snapshots.md).
 
 
 ---

@@ -173,9 +173,9 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [メモリの使いかたを設定する](memory/settings.ja.md) | セッションにメモリを使わせる。Claude Code のメモリを引き継ぐ |
 | [古くなったメモリを見つける](memory/lint.ja.md) | なくなったパスや廃止した用語を使うメモリを点検し、印を付ける |
 | [メモリの自動整理を使う](memory/tidy-up.ja.md) | メモリを直す提案をモデルに作らせ、1 件ずつ承認する |
-| [メモリを取り込む・書き出す](../member/18-agent-memory.ja.md#取り込み書き出し) | Claude Code などのメモリを取り込み、Claude Code へ書き戻す |
-| [スナップショットでメモリを戻す](../member/18-agent-memory.ja.md#メモリのスナップショット) | エージェント自前のメモリの履歴を見て、以前の時点に戻す |
-| [外部のエージェントからメモリを使う](../member/18-agent-memory.ja.md#外部のエージェントから-agent-fleet-のメモリを使う) | 手元の Claude Code や claude.ai から Agent Fleet のメモリを使う |
+| [メモリを取り込む・書き出す](memory/import-export.ja.md) | Claude Code や muse のメモリを取り込み、Claude Code へ書き戻す。なくなったプロジェクトのメモリを移す |
+| [スナップショットでメモリを戻す](memory/snapshots.ja.md) | Claude Code や Codex 自身のメモリの履歴を見て、ある時点に戻す。別の環境へ持っていく |
+| [外部のエージェントからメモリを使う](memory/external.ja.md) | 手元の Claude Code や claude.ai から Agent Fleet のメモリを使う。手元のメモリを持ち込む |
 
 ## 外からつなぐ
 

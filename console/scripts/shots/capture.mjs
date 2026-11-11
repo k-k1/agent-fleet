@@ -2443,6 +2443,104 @@ const SCENES = [
     settle: 2500,
   },
   // ---- end settings pages ----
+  // ---- memory import/export pages (SHOT_MEMIO_GUIDE) ----
+  {
+    // Settings › Agent memory › Import & export: the hub of cards, grouped Import / Export /
+    // Maintenance, each with its Start button.
+    name: "memio-hub",
+    guide: true,
+    stubEnv: { SHOT_MEMIO_GUIDE: "1" },
+    clip: "#shot-memio-hub",
+    pad: 8,
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      [...document.querySelectorAll(".mem-viewnav-tab")].find((el) => /取り込み・書き出し|Import & export/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "1300px"; m.style.maxHeight = "none"; }
+      const panel = document.querySelector(".mem-ie-group")?.parentElement;
+      panel?.setAttribute("id", "shot-memio-hub");
+      panel?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Settings › Memory snapshots › History: the status line with Snapshot now, the history with its
+    // trigger badges (two Agent Fleet memory writes folded into one line) and the newest diff.
+    name: "memio-snapshots",
+    guide: true,
+    stubEnv: { SHOT_MEMIO_GUIDE: "1" },
+    clip: ".mem-tab",
+    pad: 8,
+    sections: FOCUS_TREE,
+    settings: "memorysnapshots",
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      [...document.querySelectorAll(".mem-viewnav-tab")].find((el) => /^(履歴|History)/.test((el.textContent || "").trim()))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "1100px"; m.style.maxHeight = "none"; }
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Settings › Agent memory › Settings: only the outside-access choice, its note and the
+    // "How to connect" link (the rest of the view belongs to the memory settings page).
+    name: "memio-external",
+    guide: true,
+    stubEnv: { SHOT_MEMIO_GUIDE: "1" },
+    clip: "#shot-memio-ext",
+    pad: 8,
+    sections: FOCUS_TREE,
+    settings: "memory",
+    width: 1500,
+    height: 2000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      [...document.querySelectorAll(".mem-viewnav-tab")].find((el) => /^(設定|Settings)/.test((el.textContent || "").trim()))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const m = document.querySelector(".settings-modal");
+      if (m) { m.style.height = "1900px"; m.style.maxHeight = "none"; }
+      const label = [...document.querySelectorAll(".ds-label")].find((el) =>
+        /^(Agent Fleet の外からメモリを使わせる|Use Agent Fleet memory from outside Agent Fleet)$/.test((el.textContent || "").trim()));
+      const row = label?.closest(".ds-row");
+      if (row) {
+        // The row, its note and the "How to connect" link are siblings; wrap the three to clip them.
+        const note = row.nextElementSibling;
+        const link = note?.nextElementSibling;
+        const wrap = document.createElement("div");
+        wrap.id = "shot-memio-ext";
+        row.before(wrap);
+        wrap.append(row);
+        if (note) wrap.append(note);
+        if (link) wrap.append(link);
+        wrap.scrollIntoView({ block: "start" });
+      }
+    })()`,
+    settle: 1500,
+  },
+  // ---- end memory import/export pages ----
   // ---- getting-started pages (guide/user/start/) ----
   {
     // Home on a first-run member: the welcome card with the workspace started and no agent yet.
