@@ -96,7 +96,7 @@ Caddy は、公開ドメインの証明書を Let's Encrypt から自動で取�
 
 - `.env` の編集も Control Plane の再起動も要りません
 - 配備管理者は、**管理** → そのテナント →「サインイン方式」から同じ欄を開くこともできます
-- 欄の中身、承認の前に確かめること、GitHub の組織のときの違いは [05 サインイン方式](05-signin.ja.md#7-テナントが自分で定義するサインイン方式) にあります。テナント管理者側の手順は [サインインの方法を決める](../admin/access/signin-methods.ja.md) です
+- 欄の中身、承認の前に確かめること、GitHub の組織のときの違いは [05 サインイン方式](signin/tenant-idp.ja.md) にあります。テナント管理者側の手順は [サインインの方法を決める](../admin/access/signin-methods.ja.md) です
 
 ### 承認は形だけの手続きではない
 
@@ -137,6 +137,6 @@ Caddy は、公開ドメインの証明書を Let's Encrypt から自動で取�
 ## 関連
 
 - [インストールする](install.ja.md)
-- [05 サインイン方式](05-signin.ja.md)
+- [サインインの方法を設定する](signin/overview.ja.md)
 - [サインインの方法を決める](../admin/access/signin-methods.ja.md)：テナント管理者の画面
 - [メンバーを追加する](../admin/members/add.ja.md)

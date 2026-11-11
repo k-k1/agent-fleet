@@ -50,7 +50,7 @@ Fill in these first:
 | `AF_MASTER_KEY`, `AF_COOKIE_SECRET` | Step 2 |
 | `DOCKER_GID` | The host's docker group GID. The runbook shows how to find it |
 
-A wrong `DOCKER_GID` gives permission denied on the docker socket after start-up ([06 Diagnosing it](06-diagnose.md)).
+A wrong `DOCKER_GID` gives permission denied on the docker socket after start-up ([Find the cause from the symptom](diagnose/checklist.md#three-constraints-of-driving-docker-from-a-container)).
 
 ## 2. Generate the secrets
 
@@ -77,7 +77,7 @@ head -c 32 /dev/urandom | base64
 
 ## 3. Configure the sign-in IdP
 
-What to create at each IdP, which values to enter and how to check it are in [05 Sign-in methods](05-signin.md). Finish that before you go on to step 4.
+What to create at each IdP, which values to enter and how to check it are in [Set up how people sign in](signin/overview.md). Finish that before you go on to step 4.
 
 At the IdP, register exactly one **authorized redirect URI**, however many IdPs you enable:
 
@@ -196,11 +196,11 @@ Only a tenant that is **already empty** can be deleted. Clear it in this order:
 | "redirect URI mismatch" at sign-in | Whether the URI registered at the IdP matches `<PUBLIC_BASE_URL>/oauth2/callback` exactly (step 3) |
 | Sign-in is always refused | Whether the allowlists are all empty (set in step 1; why, in the warning in step 6) |
 | Permission denied on the docker socket after start-up | `DOCKER_GID` (step 1) |
-| `/healthz` does not answer `ok`, or the Control Plane does not come up | "CP does not start" in [06 Diagnosing it](06-diagnose.md#symptom-based-checklist) |
+| `/healthz` does not answer `ok`, or the Control Plane does not come up | "CP does not start" in [06 Diagnosing it](diagnose/checklist.md#look-up-the-symptom) |
 
 ## Related
 
 - [Choose the tenant and provisioning model](install-decisions.md)
-- [05 Sign-in methods](05-signin.md)
+- [Set up how people sign in](signin/overview.md)
 - [Back up and restore](run/backup-restore.md), [Upgrade](run/upgrade.md), [Use idle stop and force-stop](run/idle-stop.md)
 - [04 Securing it](04-secure.md)

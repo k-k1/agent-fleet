@@ -50,7 +50,7 @@ Docker Compose で最初の配備を建て、最初の管理者がサインイ�
 | `AF_MASTER_KEY`・`AF_COOKIE_SECRET` | 手順 2 |
 | `DOCKER_GID` | ホストの docker グループの GID。求め方は runbook にあります |
 
-`DOCKER_GID` を間違えると、起動したあとに docker のソケットで permission denied になります（[06 切り分ける](06-diagnose.ja.md)）。
+`DOCKER_GID` を間違えると、起動したあとに docker のソケットで permission denied になります（[症状から原因を探す](diagnose/checklist.ja.md#コンテナから-docker-を動かす-3-つの制約)）。
 
 ## 2. 秘密を作る
 
@@ -77,7 +77,7 @@ head -c 32 /dev/urandom | base64
 
 ## 3. サインインの IdP を設定する
 
-IdP ごとの作り方・入れる値・確かめ方は [05 サインイン方式](05-signin.ja.md) にあります。そちらを終えてから、手順 4 に進んでください。
+IdP ごとの作り方・入れる値・確かめ方は [サインインの方法を設定する](signin/overview.ja.md) にあります。そちらを終えてから、手順 4 に進んでください。
 
 IdP の **承認済みのリダイレクト URI** には、次の 1 つだけを登録します。有効にする IdP がいくつあっても同じです。
 
@@ -196,11 +196,11 @@ IdP ごとに、`.env` で埋めるキーが違います。
 | サインインで「redirect URI mismatch」 | IdP に登録した URI が `<PUBLIC_BASE_URL>/oauth2/callback` と完全に一致しているか（手順 3） |
 | サインインがいつも拒否される | 許可リストがすべて空ではないか（設定は手順 1、理由は手順 6 の警告） |
 | 起動後、docker のソケットで permission denied | `DOCKER_GID`（手順 1） |
-| `/healthz` が `ok` を返さない、Control Plane が上がらない | [06 切り分ける](06-diagnose.ja.md#症状別確認表) の「CP が起動しない」 |
+| `/healthz` が `ok` を返さない、Control Plane が上がらない | [症状から原因を探す](diagnose/checklist.ja.md#症状から探す) の「CP が起動しない」 |
 
 ## 関連
 
 - [テナントとプロビジョニングの方式を決める](install-decisions.ja.md)
-- [05 サインイン方式](05-signin.ja.md)
+- [サインインの方法を設定する](signin/overview.ja.md)
 - [バックアップして復元する](run/backup-restore.ja.md)・[アップグレードする](run/upgrade.ja.md)・[アイドル停止と強制停止を使う](run/idle-stop.ja.md)
 - [04 守る](04-secure.ja.md)

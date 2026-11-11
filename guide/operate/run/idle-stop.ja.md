@@ -159,7 +159,7 @@ Control Plane 自身が通信できなくなったときのための歯止めが
 | したいこと | 方法 |
 |---|---|
 | 特定のワークスペースを確実に止める | 配備管理者が Console の管理画面から強制停止します（[ワークスペースを強制停止する](../../admin/resources/idle-stop.ja.md#ワークスペースを強制停止する)） |
-| メンテナンスでホスト全体を落とす | Control Plane と Caddy を止めたうえで、残った `af-ws-*` のコンテナを別に `docker stop` します（[切り分ける](../06-diagnose.ja.md)） |
+| メンテナンスでホスト全体を落とす | Control Plane と Caddy を止めたうえで、残った `af-ws-*` のコンテナを別に `docker stop` します（[症状から原因を探す](../diagnose/checklist.ja.md)） |
 
 ## 使わないあいだ配備を一時停止する
 

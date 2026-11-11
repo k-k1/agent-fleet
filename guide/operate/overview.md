@@ -85,7 +85,7 @@ Because a container drives the host's Docker, three things must hold. The compos
 - The same absolute `DATA_DIR` path on the host and in the container
 - The docker group GID
 
-[06 Diagnosing it](06-diagnose.md) reads them from the symptom side.
+[Find the cause from the symptom](diagnose/checklist.md#three-constraints-of-driving-docker-from-a-container) reads them from the symptom side.
 
 ## Responsibility checklist
 

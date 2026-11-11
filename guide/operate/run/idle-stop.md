@@ -159,7 +159,7 @@ A stop leaves `workspace.agent_silent_stop` in the audit log (actor `system`), `
 | Want to | How |
 |---|---|
 | Stop one workspace for certain | A deployment administrator force-stops it from the Console's admin screens ([Force-stop a workspace](../../admin/resources/idle-stop.md#force-stop-a-workspace)) |
-| Take the whole host down for maintenance | Stop the Control Plane and Caddy, then `docker stop` the remaining `af-ws-*` containers separately ([Troubleshooting](../06-diagnose.md)) |
+| Take the whole host down for maintenance | Stop the Control Plane and Caddy, then `docker stop` the remaining `af-ws-*` containers separately ([Find the cause from the symptom](../diagnose/checklist.md)) |
 
 ## Pause the deployment while nobody uses it
 

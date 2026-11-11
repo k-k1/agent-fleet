@@ -374,7 +374,7 @@ Admin モーダルの**開発用ログイン**で、Control Plane の開発用 O
   です。特に Entra ID の issuer は自社テナント GUID に固定してください。`/common/` や
   `/organizations/` では Microsoft アカウントを持つ誰でもサインイン画面に進め、個人アカウントは
   自分の email を付け替えられるため、`AF_OIDC_<ID>_ALLOWED_TIDS` が無い限り CP は起動を拒否します
-  （[05 §4](05-signin.ja.md) / `docs/build/07-security.ja.md` §7.3）。
+  （[Microsoft Entra ID でサインインする](signin/entra.ja.md) / `docs/build/07-security.ja.md` §7.3）。
 - **監査ログ。** 変更・破壊操作のみが `audit_log` に記録されます（読み取りは記録しない。例外はメンバーの
   エージェントメモリーの書き出し。**ターミナルの生ストリームは秘密混入リスクのため保存しません**）。閲覧は super_admin / tenant_admin が Admin の
   audit タブから。運用上の見方は admin 分冊が扱います。
