@@ -103,7 +103,7 @@ go・npm（npx を含む）・uv・pip・Maven・Gradle がホームに溜める
 
 - 次にそれを使うビルドやインストールが、1 回だけ遅くなります
 - 実行中のビルドやインストールが使っているものは「**使用中**」と出て、終わるまで空にできません
-- Gradle は 2 行、「**gradle-caches**」（`~/.gradle/caches/<バージョン>`）と「**gradle-wrapper**」（`~/.gradle/wrapper/dists`）で出ます。
+- Gradle は 2 行、`gradle-caches`（`~/.gradle/caches/<バージョン>`）と `gradle-wrapper`（`~/.gradle/wrapper/dists`）で出ます。
   `~/repos`（worktree を含む）の `gradle-wrapper.properties` がどれも指定していないバージョンだけが対象です。
   共有のキャッシュ（`modules-2` など）・`gradle.properties`・`~/.gradle/jdks` には触れません
 - `~/repos` を完全には読めないとき（読めないフォルダ、バージョンを読み取れない wrapper ファイル、大きすぎるツリー）は、Gradle の行が「**対象外**」と出て、何も消しません

@@ -105,7 +105,7 @@ on their own.
 
 - The next build or install that uses it is slower, once
 - A cache a running build or install is using shows **In use** and cannot be emptied until that finishes
-- Gradle appears as two rows, **gradle-caches** (`~/.gradle/caches/<version>`) and **gradle-wrapper** (`~/.gradle/wrapper/dists`). They hold only
+- Gradle appears as two rows, `gradle-caches` (`~/.gradle/caches/<version>`) and `gradle-wrapper` (`~/.gradle/wrapper/dists`). They hold only
   the Gradle versions that no `gradle-wrapper.properties` under `~/repos` (worktrees included) asks for. The shared
   caches (`modules-2` and so on), `gradle.properties` and `~/.gradle/jdks` are never touched
 - If `~/repos` cannot be read completely (an unreadable folder, a wrapper file without a recognisable version, a very large tree), the Gradle rows show **Not offered** and nothing is removed
