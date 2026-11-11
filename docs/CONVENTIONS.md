@@ -297,6 +297,41 @@ hardware that has not happened, and a residual that a review left.
   real hardware or a deployment. The issue forms under `.github/ISSUE_TEMPLATE/` set the
   type for issues filed on github.com; `gh issue create` does not use them, and neither
   sets a priority.
+- **Two labels say why an issue is not ready to build.** Each is removed the moment its
+  condition ends, so the label always matches the state.
+  - `needs-decision`: it cannot be built until the owner decides or an ADR is written.
+    The first line of the body (or a pinned comment) states the decision as one question
+    with its options. When it is decided, remove the label and write the decision into
+    the issue.
+  - `blocked`: it waits on something outside the issue — a date, an upstream release,
+    another issue. The first line of the body reads `Waiting on: <what>, <when / #N>`.
+    Remove the label when the wait ends.
+- **Close an issue with a three-line comment**, so the reason survives the closed state:
+  the evidence (PR, commit or live-check comment), why it is closed, and what would
+  reopen it. Reopening is always fine. The reason is one of:
+  - *Completed*: every acceptance item has been seen. A live check that could not be run
+    is acceptable only when tests cover the behaviour, the comment names them and says
+    "not seen live: …". Whatever can only be shown on real hardware or a deployment gets
+    or keeps `needs-live-run` and stays open; an issue that carries that label is never
+    closed on tests plus "not seen live", only by the run itself.
+  - *Not planned* (`gh issue close N --reason "not planned"`): the premise is gone
+    (feature retired, superseded by #N, the CLI or version moved on, measured as no
+    longer relevant), or the issue has been idle for 4+ weeks and is not on the current
+    roadmap. Name the evidence; age alone is enough only for the second kind, and never
+    for an issue labelled `blocked`, `needs-decision` or `needs-live-run`, or one whose
+    problem is still real (an open bug, unbuilt planned work). Those are closed only
+    after the owner approves them in an inventory pass.
+  - *Duplicate / superseded*: point at the issue that carries the work.
+- **Umbrella issues do not linger half done.** When part of one is finished and the rest
+  is concrete, file the rest as a new `follow-up` issue and close the parent with a
+  pointer. An ongoing "keep lowering X" issue (a ceiling, a test time) stays open with
+  its target stated in the body.
+- **When a PR that only `Refs` an issue is merged, its author comments on the issue**
+  with what remains (the PR's "Not verified" items), so the issue body plus its last comment always say what is left.
+- **Take inventory periodically.** A pass classifies every open issue (done / verify
+  here / verify on a deployment / verify unavailable / partial / ready / needs-decision /
+  obsolete / waiting) and is recorded as one tracking issue with a table. The
+  classifications are proposals until the owner approves the closes.
 - **Code comments do not cite issues.** A comment carries the reason, not the history
   (see `AGENTS.md`).
 - **An issue is published the moment it is filed**, and it bypasses the secret and
