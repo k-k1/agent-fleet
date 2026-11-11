@@ -38,6 +38,10 @@ Once a deployment administrator approves it, it appears as a button on the tenan
 
 Until it is approved, no button appears on the sign-in page and nobody can sign in with it.
 
+- Rows at the top marked "Deployment-wide" (Google and the like) are sign-in methods set up for the whole deployment. A tenant administrator cannot edit them
+- **Add a sign-in method** adds only your own IdP or a GitHub organisation
+- To change whether this tenant accepts a deployment-wide method or shows its button, ask the deployment administrator
+
 ### Fields for your own IdP
 
 | Field | What to enter |
@@ -45,6 +49,8 @@ Until it is approved, no button appears on the sign-in page and nobody can sign 
 | Name | The identifier used inside the tenant: lowercase letters, digits, `-` and `_` (for example `entra`) |
 | Issuer URL | The IdP's issuer URL. For Entra ID, the URL that contains your own tenant's GUID |
 | client_id and client_secret | Those of the app registered at the IdP. The secret is encrypted on save and never shown |
+
+- In the IdP's app, register `https://<the Console's domain>/oauth2/callback` as the redirect URI (callback URL). This screen does not show it, but it is the same URL as for a GitHub organisation
 | How the email is trusted | Entra ID does not return email_verified, so choose "The issuer is pinned to our own tenant" |
 | Email domains to admit | Required. This method does not use the deployment-wide allow list, so with none nobody gets in |
 | Allowed tenant ids | Entra's tid. Required when the issuer is `common` or `organizations` |
