@@ -10,6 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/skillcurator"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/workitems"
@@ -560,6 +561,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /agents/memory/entries/patch", memoryx.HandleAgentMemoryPatch)
 	mux.HandleFunc("POST /agents/memory/entries/feedback", memoryx.HandleAgentMemoryFeedback)
 	mux.HandleFunc("POST /agents/memory/entries/forget", memoryx.HandleAgentMemoryForget)
+	// The member's way back from the skill curator (#3864): the skill_restore tool calls these on loopback.
+	skillAPI := skillcurator.API{Roots: skillRoots}
+	mux.HandleFunc("GET /agents/skills/archive", skillAPI.HandleList)
+	mux.HandleFunc("POST /agents/skills/archive/restore", skillAPI.HandleRestore)
 	// The same operations for a client outside Agent Fleet (#1988), reached only through the
 	// CP's /mcp. They name the project themselves and answer to the externalMemory setting.
 	mux.HandleFunc("GET /agents/memory/external/projects", memoryx.HandleAgentMemoryExternalProjects)

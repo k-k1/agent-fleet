@@ -1,6 +1,7 @@
 package skillcurator
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -251,5 +252,112 @@ func TestPinClearsStaleMark(t *testing.T) {
 	Run(root, now, DefaultConfig(), nil)
 	if present(filepath.Join(dir, StaleFile)) {
 		t.Fatal("stale mark left on a pinned skill")
+	}
+}
+
+func TestListArchived(t *testing.T) {
+	root := t.TempDir()
+	if got := ListArchived(root); len(got) != 0 {
+		t.Fatalf("no archive: %v", got)
+	}
+	skill(t, root, "afa-a", agentBody(), days(100))
+	Run(root, now, DefaultConfig(), nil)
+	skill(t, root, "afa-a", agentBody(), days(100)) // clash: archived as afa-a.2
+	Run(root, now, DefaultConfig(), nil)
+	// Things Restore would refuse must not be offered: a person's folder, an unmarked skill.
+	ad := filepath.Join(root, ArchiveDir)
+	if err := os.MkdirAll(filepath.Join(ad, "my-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skill(t, ad, "afa-unmarked", "no marker\n", days(100))
+	// Pin the archive time so the order and the value are not the test's wall clock.
+	for n, at := range map[string]time.Time{"afa-a": days(5), "afa-a.2": days(2)} {
+		touch(t, filepath.Join(ad, n, OriginFile), at)
+		if err := os.WriteFile(filepath.Join(ad, n, OriginFile), []byte("afa-a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(filepath.Join(ad, n, OriginFile), at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := ListArchived(root)
+	want := []ArchivedSkill{{Archived: "afa-a", Name: "afa-a", At: days(5)}, {Archived: "afa-a.2", Name: "afa-a", At: days(2)}}
+	if len(got) != 2 || got[0].Archived != want[0].Archived || got[1].Archived != want[1].Archived ||
+		got[0].Name != "afa-a" || got[1].Name != "afa-a" || !got[0].At.Equal(want[0].At) || !got[1].At.Equal(want[1].At) {
+		t.Fatalf("got %+v want %+v", got, want)
+	}
+}
+
+// A .archive that is a link lists nothing: it may point outside the root.
+func TestListArchivedSymlinkRefused(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	skill(t, other, "afa-x", agentBody(), days(1))
+	if err := os.Symlink(other, filepath.Join(root, ArchiveDir)); err != nil {
+		t.Fatal(err)
+	}
+	if got := ListArchived(root); len(got) != 0 {
+		t.Fatalf("listed through a link: %v", got)
+	}
+}
+
+// The base-name guard must be what refuses these: each one passes the prefix test and, through
+// the path join, resolves to a real archived skill, so only filepath.Base tells it apart.
+func TestRestoreBaseNameGuard(t *testing.T) {
+	root := t.TempDir()
+	skill(t, root, "afa-a", agentBody(), days(100))
+	Run(root, now, DefaultConfig(), nil)
+	for _, bad := range []string{"afa-a/../afa-a", "afa-a/", "./afa-a"} {
+		if err := Restore(root, bad, now); err == nil {
+			t.Errorf("restore %q accepted", bad)
+		}
+	}
+	if len(ListArchived(root)) != 1 {
+		t.Fatal("a refused restore moved the skill")
+	}
+}
+
+// A hostile .origin falls back to the archived name instead of steering the destination.
+func TestOriginNameRejectsTraversal(t *testing.T) {
+	dir := t.TempDir()
+	for _, o := range []string{"afa-a/../escape", "../afa-x", "/abs/afa-x", "afa-", "", "nope"} {
+		if err := os.WriteFile(filepath.Join(dir, OriginFile), []byte(o+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := originName(dir, "afa-keep"); got != "afa-keep" {
+			t.Errorf(".origin %q gave %q", o, got)
+		}
+	}
+}
+
+// A refused or failed restore keeps .origin, and a successful one is stamped inside the move.
+func TestRestoreKeepsOriginWhenRefused(t *testing.T) {
+	root := t.TempDir()
+	skill(t, root, "afa-a", agentBody(), days(100))
+	Run(root, now, DefaultConfig(), nil)
+	skill(t, root, "afa-a", agentBody(), days(1)) // the name is taken
+	err := Restore(root, "afa-a", now)
+	if !errors.Is(err, ErrSkillExists) {
+		t.Fatalf("want ErrSkillExists, got %v", err)
+	}
+	if !present(filepath.Join(root, ArchiveDir, "afa-a", OriginFile)) {
+		t.Fatal(".origin lost by a refused restore")
+	}
+}
+
+// A stamp that cannot be made leaves the skill archived, not moved without a use time.
+func TestRestoreStampFailureLeavesArchive(t *testing.T) {
+	root := t.TempDir()
+	skill(t, root, "afa-a", agentBody(), days(100))
+	Run(root, now, DefaultConfig(), nil)
+	// A non-empty directory in .last-used's place makes the stamp's Remove fail.
+	lu := filepath.Join(root, ArchiveDir, "afa-a", LastUsedFile)
+	if err := os.MkdirAll(filepath.Join(lu, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(root, "afa-a", now); err == nil {
+		t.Fatal("stamp failure not reported")
+	}
+	if present(filepath.Join(root, "afa-a")) || !present(filepath.Join(root, ArchiveDir, "afa-a", OriginFile)) {
+		t.Fatal("entry moved or lost despite a failed stamp")
 	}
 }

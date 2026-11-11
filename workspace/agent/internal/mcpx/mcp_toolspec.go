@@ -96,6 +96,7 @@ func toolFamilies() [][]toolSpec {
 		selfReportTools(),
 		peerTools(),
 		branchTools(),
+		skillTools(),
 		watchTools(),
 		agentMemoryTools(),
 		sessionSearchTools(),

@@ -48,6 +48,19 @@ Skills written for another agent and left in the repository are listed too.
 Picking one inserts "Read ‹file› and follow that skill's instructions.",
 so even an agent with no skill mechanism of its own can use the content.
 
+## Bring back a skill the Agent archived
+
+Skills an agent wrote itself (folder names starting with `afa-`) can be archived by the Agent when nobody has used them for 30 days. This only happens when the skill curator is switched on, and it never touches skills you wrote. An archived skill is moved to `.archive/` inside the skills folder; nothing is deleted.
+
+To get one back, ask any session: "list the archived skills" and then "restore afa-foo". The session uses the `skill_restore` tool:
+
+| You ask | What happens |
+|---|---|
+| List | Each archived skill is shown with its name, when it was archived and the skills folder it came from |
+| Restore | The skill moves back under its old name and counts as just used, so the next pass does not archive it again at once |
+
+Restore only touches your own skills folders. It refuses, and changes nothing, when a skill with the same name already exists: rename or remove that one first, then ask again.
+
 ## When it goes wrong
 
 ### The list is empty
