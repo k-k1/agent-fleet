@@ -15,6 +15,8 @@ const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useSessionsStore } = await import("./store.ts");
 
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 let root: Root | null = null;
 
 afterEach(() => {
@@ -51,7 +53,7 @@ describe("ArchivedModal archivedAt", () => {
         r.querySelector(".arch-sub")!.textContent ?? "",
       ]),
     );
-    expect(subs.get("stamped")).toMatch(/11\/5|Nov/);
+    expect(subs.get("stamped")).toMatch(/ · (archived .*(11\/5|Nov)|.*(11\/5|Nov).* にアーカイブ)/);
     expect(subs.get("plain")).not.toMatch(/11\/5|Nov/);
   });
 });

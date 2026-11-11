@@ -21,7 +21,9 @@ import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
 import { descendantNames } from "./family.ts";
 import { useSessionsStore } from "./store.ts";
 
-type ArchivedSession = Session & { started?: string };
+// archivedAt is a shelf-only field (RFC 3339, absent when unstamped), so it is not on `Session`,
+// which the Control Plane's sessionWire contract test pins to the live list.
+type ArchivedSession = Session & { started?: string; archivedAt?: string };
 
 interface ArchivedModalProps {
   onClose?: () => void;

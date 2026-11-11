@@ -216,7 +216,7 @@ func BenchmarkHandleListArchived(b *testing.B) {
 }
 
 // The shelf row carries archivedAt, the stamp the work-folder expiry counts its seven days
-// from, and omits it when the meta has none (archived before the stamp existed).
+// from, and omits it when the meta has none (an unstamped meta).
 func TestHandleListArchived_ArchivedAtRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	const stamp = "2026-11-05T09:30:00Z"

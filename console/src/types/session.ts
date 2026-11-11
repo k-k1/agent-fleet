@@ -169,7 +169,6 @@ export interface Session {
   // removal as a side effect of deleting the working copy). Stop and archive are reversible
   // and still go through. The row's lock badge and the disabled delete items read this.
   locked?: boolean;
-  archivedAt?: string; // RFC 3339; shelf rows only, absent when the Agent has no stamp
   // Keep-awake pin (docs/log/75): exempt from the idle auto-stop until this instant.
   // Past or empty = no pin is held.
   keepAwakeUntil?: string;
