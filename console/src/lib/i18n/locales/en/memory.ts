@@ -325,7 +325,7 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.as_confirm_on_native": "From now on Claude Code's own memory is off for new sessions. Sessions already running keep it, and what they save is imported once the last of them ends.",
   "mem.as_confirm_on_label": "Turn on and import",
   "mem.as_confirm_off_title": "Turn off Agent Fleet memory?",
-  "mem.as_confirm_off_body": "{n} memories are written back to Claude Code ({projects} projects). A snapshot of Claude's memory is taken first, and nothing is overwritten.",
+  "mem.as_confirm_off_body": "{n} memories are written back to Claude Code ({projects} projects). A snapshot of Claude Code's own memory is taken first, and nothing is overwritten.",
   "mem.as_confirm_off_native": "Claude Code's own memory stays off until the write-back has finished, then it resumes.",
   "mem.as_confirm_off_label": "Turn off and write back",
   "mem.as_confirm_unknown": "The counts could not be read. The Agent still carries the memory across by itself.",

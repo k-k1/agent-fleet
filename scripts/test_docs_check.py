@@ -784,6 +784,43 @@ class TaskPageVocabTests(unittest.TestCase):
         self.assertTrue(any("道具" in w for w in old.warns))
 
 
+class OwnMemoryVocabTests(unittest.TestCase):
+    """The old names for an agent's own memory: error on a task page, warning on an old chapter,
+    and the glossary, which names them on purpose, is exempt."""
+
+    def run_vocab(self, rel_path, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / rel_path
+            path.parent.mkdir(parents=True)
+            path.write_text(body)
+            findings = check.Findings()
+            with patch.object(check, "GUIDE", tmp), patch.object(check, "ROOT", str(Path(tmp).parent)), \
+                    patch.object(check, "rel", lambda p: "guide/" + os.path.relpath(p, tmp)):
+                check.check_vocab([str(path)], findings, strict=False)
+            return findings
+
+    def test_task_page_errors_old_chapter_warns(self):
+        for body, word in (("ネイティブメモリを切る\n", "ネイティブメモリ"), ("自前のメモリを使う\n", "自前のメモリ"),
+                           ("Switch native memory back on\n", "native memory"),
+                           ("a Native-memory setting\n", "Native-memory")):
+            with self.subTest(word=word):
+                task = self.run_vocab("user/memory/a.md", body)
+                self.assertTrue(any(word in e for e in task.errors), task.errors + task.warns)
+                old = self.run_vocab("member/a.md", body)
+                self.assertEqual(old.errors, [])
+                self.assertTrue(any(word in w for w in old.warns), old.warns)
+
+    def test_glossary_is_exempt(self):
+        for name in check.OWN_MEMORY_EXEMPT:
+            with self.subTest(name=name):
+                f = self.run_vocab(name, "| エージェント自身のメモリ | native memory | 「ネイティブメモリ」「自前のメモリ」と書かない |\n")
+                self.assertEqual(f.errors + f.warns, [])
+
+    def test_the_term_itself_passes(self):
+        f = self.run_vocab("user/memory/a.md", "エージェント自身のメモリ、Claude Code's own memory, nativeMemory flag\n")
+        self.assertEqual(f.errors + f.warns, [])
+
+
 class HistoryTests(unittest.TestCase):
     """A task page carries no ADR numbers, journal paths, issue numbers or dates."""
 

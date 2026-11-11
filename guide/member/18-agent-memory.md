@@ -453,8 +453,8 @@ The view you leave open is remembered. It needs the running workspace.
 ### Targets
 
 - **Targets**: what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
-  default, so enable it here if you want it. Turning on Agent memory switches codex's memory off once; if you
-  turn it on here after that, it stays on beside Agent memory and is left on when Agent memory is turned off
+  default, so enable it here if you want it. Turning on Agent Fleet memory switches codex's memory off once; if you
+  turn it on here after that, it stays on beside Agent Fleet memory and is left on when Agent Fleet memory is turned off
   (see [Settings](#settings)).
 - **Automatic snapshots**: taken a few minutes after an agent stops (nothing is stored if nothing changed).
   "Snapshot now" takes one by hand. On some deployments the operator has disabled automatic snapshots.

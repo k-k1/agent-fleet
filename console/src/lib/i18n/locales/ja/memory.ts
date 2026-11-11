@@ -324,7 +324,7 @@ export const memory = {
   "mem.as_confirm_on_native": "以後に起動するセッションでは Claude Code 自身のメモリを切ります。すでに動いているセッションはそのまま使い続け、保存された内容は最後のセッションが終わった時点で取り込みます。",
   "mem.as_confirm_on_label": "オンにして取り込む",
   "mem.as_confirm_off_title": "Agent Fleet のメモリをオフにしますか？",
-  "mem.as_confirm_off_body": "{n} 件を Claude Code へ書き戻します（{projects} プロジェクト）。先に Claude のメモリのスナップショットを取り、上書きはしません。",
+  "mem.as_confirm_off_body": "{n} 件を Claude Code へ書き戻します（{projects} プロジェクト）。先に Claude Code 自身のメモリのスナップショットを取り、上書きはしません。",
   "mem.as_confirm_off_native": "書き戻しが終わるまで Claude Code 自身のメモリは切ったままで、終わると再開します。",
   "mem.as_confirm_off_label": "オフにして書き戻す",
   "mem.as_confirm_unknown": "件数を読めませんでした。それでも Agent が自動で引き継ぎます。",
