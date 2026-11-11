@@ -10,7 +10,7 @@ English | [日本語](12-keys.ja.md)
 By default every secret the Control Plane seals is protected by a key derived from `AF_MASTER_KEY`. On
 `ecs` / `ecs-ec2` that custody can move to AWS KMS, and each member's home can then have a key of its own.
 This chapter is what each step decides, and what disabling a key does and does not shred. The threat
-model these answer is in [04 Securing it](04-secure.md#residual-risks-what-to-do-about-them); the parameters
+model these answer is in [Understand the threat model and residual risks](secure/threat-model.md#prepare-for-the-remaining-risks); the parameters
 are in the [ECS runbook](../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default).
 
 ## Keys at rest on AWS KMS
@@ -64,7 +64,7 @@ role (not the task role) is what the key must admit; the template grants `kms:De
 key, via SSM only. The steps, the key policy and the back-out are in
 `deploy/aws/ecs/cfn/PARAMETERS.md` under "`MasterKeyKmsKeyArn`". It changes
 who can read the value at rest; the value itself must not change (see "What changing it costs" in
-[04 Securing it](04-secure.md#the-deployment-keys-requirements-and-what-changing-them-costs)).
+[Handle the deployment keys](secure/deployment-keys.md)).
 
 ## Re-sealing values stored before the switch
 

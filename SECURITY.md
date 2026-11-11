@@ -123,7 +123,7 @@ informed choice — not undisclosed bugs.
   inside the VPC (the CP, EFS) follows the security groups, not the gateway; and
   workspaces get an egress address of their own, a second one to allow-list next to
   the NAT gateway's
-  ([04 Operating egress control](guide/operate/04-secure.md#operating-egress-control),
+  ([Control outbound traffic](guide/operate/secure/egress.md),
   [Choose the egress route on AWS](guide/operate/choose.md#choose-the-egress-route-on-aws),
   [07 §7.8](docs/build/07-security.md#78-egress-control-)).
 

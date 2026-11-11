@@ -68,7 +68,7 @@ head -c 32 /dev/urandom | base64
 ```
 
 - A shorter value, or one that only repeats a pattern, still starts, but logs a `WARNING` and shows a warning banner in the administration screen. A later release will refuse to start with it
-- The requirements, and what changing each key costs, are in [04 Securing it](04-secure.md#the-deployment-keys-requirements-and-what-changing-them-costs)
+- The requirements, and what changing each key costs, are in [Handle the deployment keys](secure/deployment-keys.md)
 
 > [!IMPORTANT]
 > **The moment you generate `AF_MASTER_KEY`, record it in a password vault or secret manager, kept apart from the data.**
@@ -203,4 +203,4 @@ Only a tenant that is **already empty** can be deleted. Clear it in this order:
 - [Choose the tenant and provisioning model](install-decisions.md)
 - [Set up how people sign in](signin/overview.md)
 - [Back up and restore](run/backup-restore.md), [Upgrade](run/upgrade.md), [Use idle stop and force-stop](run/idle-stop.md)
-- [04 Securing it](04-secure.md)
+- [Understand the threat model and residual risks](secure/threat-model.md)

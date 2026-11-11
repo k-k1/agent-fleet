@@ -271,7 +271,7 @@ made it true.
 
 Two ways to make it true:
 
-- **Egress control in enforce mode** ([04 Securing it](04-secure.md)): a private
+- **Egress control in enforce mode** ([Control outbound traffic](secure/egress.md)): a private
   address that is not on the allowlist is refused. Note the caveat on that page:
   the proxy can block, but nothing yet forces workspace traffic through it, so this is the
   direction, not yet the answer.
