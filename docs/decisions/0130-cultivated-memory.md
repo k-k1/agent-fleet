@@ -849,7 +849,7 @@ until a writer records uses the age is the age of the last write; no transcript 
 the marker and the prefix and should touch `.last-used` when a skill is offered or read. Follow-up: #1562.
 
 **Note (2026-11-11, #3863): the run record says why an observation was dropped.** A run that ended
-`dropped 1, queued 0` gave no way to tell an invalid engine answer from a refused retire or exported
+`dropped 1, queued 0` gave no way to tell an invalid engine answer from a refused exported
 memory. The report now carries `droppedReasons: [{observation, reason}]` (observation = the observation id), at
 most 20 entries with `droppedReasonsMore` counting the rest, each reason cut to 120 runes, and every entry is also
 written to the Agent log. A reason is one of a fixed set of phrases (classification / patch / compose answer failed
