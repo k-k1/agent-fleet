@@ -33,6 +33,17 @@ Anything not here yet is under "Chapters not yet rewritten" below. For your own 
 | [Limit the networks people sign in from](access/networks.md) | Narrow where your tenant can be used from to a set of address ranges |
 | [Choose the OAuth apps for integrations](access/oauth-apps.md) | Decide which app "Connect with OAuth" uses for GitHub, Bitbucket and Jira |
 
+## Resources
+
+| Page | What you can do |
+|---|---|
+| [See how resources are used](resources/overview.md) | See members' resources and the sessions running now, and narrow down the cause when things are slow |
+| [Set session limits](resources/session-limits.md) | Set each member's session limit, and check the tenant-wide limits and the limit board |
+| [Choose who may use the inference engines and which models](resources/engines.md) | Choose the members who may use the self-hosted engines, and take models in when allowed |
+| [Set the workspace size](resources/workspace-size.md) | Set memory, CPU, disk and the machine, and grow a home |
+| [Stop workspaces left idle](resources/idle-stop.md) | Read the idle-stop outlook, and force-stop a workspace that runs away |
+| [Start the workspace at sign-in](resources/start-at-signin.md) | Have a stopped workspace start when its member opens the Console |
+
 ## Team defaults
 
 | Page | What you can do |
@@ -42,10 +53,9 @@ Anything not here yet is under "Chapters not yet rewritten" below. For your own 
 
 ## Chapters not yet rewritten
 
-1. [Resource limits and sessions](02-limits.md): per-member limits, engine access, the limit board, home size and machine, what is running, force-stopping
-2. [Audit and usage](03-audit-usage.md): who changed what, running time, cloud cost
-3. [MCP distribution and outside access](04-mcp-outside.md): handing servers to the whole team, outside apps connecting through MCP OAuth, memory used from outside Agent Fleet
+1. [Audit and usage](03-audit-usage.md): who changed what, running time, cloud cost
+2. [MCP distribution and outside access](04-mcp-outside.md): handing servers to the whole team, outside apps connecting through MCP OAuth, memory used from outside Agent Fleet
 
-These chapters have moved to the pages above: [01 Member management](01-members.md), [05 Who may sign in, and from where](05-access.md), [06 Team defaults](06-team-defaults.md)
+These chapters have moved to the pages above: [01 Member management](01-members.md), [02 Resource limits and sessions](02-limits.md), [05 Who may sign in, and from where](05-access.md), [06 Team defaults](06-team-defaults.md)
 
 What each role may do is in [Roles and what they may do](../ref/roles.md).

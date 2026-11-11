@@ -127,6 +127,7 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only start-we
 node console/scripts/shots/capture.mjs --locale ja --theme light --only memio-hub --out <dir>  # and memio-snapshots, memio-external, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only memory-view --out <dir>  # and memory-changes, memory-settings, memory-lint, memory-proposal, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only admin-roster --out <dir>  # and every other admin-* scene, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only admin-res-limits --out <dir>  # and admin-res-engine-access, admin-res-member, admin-res-size, admin-res-idle, admin-res-stop, one per run
 ```
 
 - `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that

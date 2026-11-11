@@ -30,7 +30,7 @@ Choose one here and the step then reads, for example, "Your team's default is Cl
 ![The "Agent to point new members at" screen: under the explanation, the "Default agent" selector and the "Save" button](../../assets/admin-member-defaults-en-light.webp)
 
 - **None** brings back the ordinary wording that lists the choices
-- Agents that need no account of the member's own are not offered: the shell, SSM and the deployment's inference engines. Who may use the inference engines is set under [Resource limits and sessions](../02-limits.md#who-may-use-the-inference-engines-you-can-set-this)
+- Agents that need no account of the member's own are not offered: the shell, SSM and the deployment's inference engines. Who may use the inference engines is set under [Resource limits and sessions](../resources/engines.md#choose-the-members-who-may-use-them)
 - Each save is recorded in the audit log as `tenant.member_defaults`, with the agent chosen
 
 ## When members see it

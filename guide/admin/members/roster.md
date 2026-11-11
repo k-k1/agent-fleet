@@ -80,7 +80,7 @@ These three arrive as Console notifications (the bell) without opening the roste
 - The home notice clears only once more than 3 GiB is free and usage is under 85 %
 - On a deployment whose homes sit on a shared host or filesystem, no home notice is sent, because the figure is not the member's
 - A stopped or unreachable workspace sends none
-- A workspace that does not respond is force-stopped from the member detail ([Force-stopping a workspace](../02-limits.md#force-stopping-a-workspace))
+- A workspace that does not respond is force-stopped from the member detail ([Force-stopping a workspace](../resources/idle-stop.md#force-stop-a-workspace))
 
 ## How fresh the figures are
 
