@@ -20,14 +20,16 @@ import (
 // skipped and it goes straight to ready.
 
 var (
-	// Prefer the autofill URL that carries the user_code (one-click); fall back to any
-	// device.sso authorization URL.
+	// In order of preference: the autofill URL that carries the user_code (one-click), any
+	// device.sso authorization URL, then a signin.aws URL (see ssmSigninURL).
 	ssmURLWithCode = regexp.MustCompile(`https://[^\s"']*user_code=[^\s"']+`)
 	ssmDeviceURL   = regexp.MustCompile(`https://[^\s"']*device\.sso\.[^\s"']*`)
 	// The sign-in service host newer CLIs print (observed in aws-cli 2.36: the portal URL
 	// and the autofill URL both live on <region>.signin.aws, and neither pattern above
-	// matches it).
-	ssmSigninURL = regexp.MustCompile(`https://[^\s"']*\.signin\.aws[^\s"']*`)
+	// matches it). The host is anchored: a "/" cannot appear before signin.aws, so the
+	// string inside another host's path does not match. What follows the match is checked
+	// by lastCompleteSigninURL, because the regexp cannot say "and then a delimiter".
+	ssmSigninURL = regexp.MustCompile(`https://[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.signin\.aws(?:[/?#][^\s"']*)?`)
 	ssmCodeRe    = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
 )
 
@@ -181,13 +183,14 @@ func DeviceAuthorization(out string) (url, code string) {
 	return url, ssmCodeRe.FindString(out)
 }
 
-// lastCompleteSigninURL is the last signin.aws URL in out that is followed by whitespace:
-// the CLI prints the plain URL first and the code-autofill one last, and a URL still being
-// read at a chunk boundary must not be shown cut short.
+// lastCompleteSigninURL is the last signin.aws URL in out that is followed by a delimiter
+// (whitespace or a quote): the CLI prints the plain URL first and the code-autofill one
+// last, a URL still being read at a chunk boundary must not be shown cut short, and
+// "x.signin.awsevil.example" must not yield the "x.signin.aws" prefix of another host.
 func lastCompleteSigninURL(out string) string {
 	url := ""
 	for _, m := range ssmSigninURL.FindAllStringIndex(out, -1) {
-		if m[1] < len(out) && strings.ContainsRune(" \t\r\n", rune(out[m[1]])) {
+		if m[1] < len(out) && strings.ContainsRune(" \t\r\n\"'", rune(out[m[1]])) {
 			url = out[m[0]:m[1]]
 		}
 	}

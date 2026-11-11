@@ -1077,9 +1077,21 @@ func TestSigninHostIsAllowedForItsOwnRegionOnly(t *testing.T) {
 		"https://eu-west-1.signin.aws/device":         false,
 		"https://us-east-1.signin.aws.evil.example/x": false,
 		"https://evil.us-east-1.signin.aws/device":    false,
+		"https://us-east-1.SIGNIN.AWS/device":         true,
+		"https://us-east-1.signin.aws:8443/device":    true,
+		"https://user@us-east-1.signin.aws/device":    false,
+		"http://us-east-1.signin.aws/device":          false,
+		"https://evil.example/us-east-1.signin.aws":   false,
 	} {
 		if got := deviceURLAllowed(url, allowed); got != want {
 			t.Errorf("deviceURLAllowed(%q) = %t, want %t", url, got, want)
 		}
+	}
+}
+
+func TestSigninHostIsNotAllowedInChina(t *testing.T) {
+	allowed := allowedDeviceHosts(Profile{SSORegion: "cn-north-1", StartURL: "https://d-0123456789.awsapps.cn/start"})
+	if deviceURLAllowed("https://cn-north-1.signin.aws/device", allowed) {
+		t.Fatalf("a signin.aws host was admitted in a China region: %v", allowed)
 	}
 }
