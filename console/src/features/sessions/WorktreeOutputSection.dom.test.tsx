@@ -256,6 +256,28 @@ describe("WorktreeOutputSection", () => {
     expect(realPosts()).toHaveLength(1);
   });
 
+  it("calls a 4xx refusal of the delete a definite no-op, not an unknown outcome", async () => {
+    await openSurvey();
+    await click(btn("プレビュー"));
+    postAnswer = async (dry) =>
+      dry ? { status: 200, body: cand("web@a") } : { status: 404, body: { error: { code: "not_found", message: "no such working copy" } } };
+    await click(btn("ビルド成果物を削除…"));
+    await click(confirmBtn());
+    expect(text()).toContain("何も削除していません");
+    expect(text()).not.toContain("分かりません");
+  });
+
+  it("starts one preview for two clicks in the same tick (the ref lock, not the disabled state)", async () => {
+    await openSurvey();
+    const b = btn("プレビュー")!;
+    await act(async () => {
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(posts()).toHaveLength(1);
+  });
+
   it("says plainly when the Agent has no such endpoint", async () => {
     surveyStatus = 404;
     survey = "404 page not found";

@@ -104,9 +104,9 @@ export function WorktreeOutputSection({ onChanged }: { onChanged?: () => void })
       put(name, { phase: "deleting", report: planned });
       const res = await applyWorktreeOutput(name, false);
       if (res.kind === "error") {
-        // The request may have got through before the answer was lost: say so rather than
-        // offering the same delete again from a plan that is no longer true.
-        put(name, { phase: "failed", message: res.message, unknown: true });
+        // Unless the Agent refused the request outright (4xx), it may have got through before
+        // the answer was lost: say so rather than offering the same delete again.
+        put(name, { phase: "failed", message: res.message, unknown: !res.definite });
         return;
       }
       if (res.report.status === "refused") {

@@ -87,7 +87,9 @@ export async function loadSurvey(): Promise<SurveyResult> {
 
 export type ApplyResult =
   | { kind: "report"; report: WtoReport }
-  | { kind: "error"; message: string };
+  // definite = the Agent refused the request itself (4xx: bad name, no such working copy), so
+  // nothing was deleted; otherwise (5xx, a lost connection) the outcome of a delete is unknown.
+  | { kind: "error"; message: string; definite: boolean };
 
 /** One POST for one worktree. `dryRun` false DELETES. A 409 carries the Report of a refusal,
  *  so it is a result, not an error; anything else without a Report (400, 404, 502, a network
@@ -98,8 +100,8 @@ export async function applyWorktreeOutput(name: string, dryRun: boolean): Promis
     const res = await raw(`api/cleanup/worktree-output?${q}`, { method: "POST" });
     const body = await res.json().catch(() => null);
     if (isReport(body)) return { kind: "report", report: body };
-    return { kind: "error", message: body?.error ? errText(body.error) : "" };
+    return { kind: "error", message: body?.error ? errText(body.error) : "", definite: res.status >= 400 && res.status < 500 };
   } catch {
-    return { kind: "error", message: "" };
+    return { kind: "error", message: "", definite: false };
   }
 }

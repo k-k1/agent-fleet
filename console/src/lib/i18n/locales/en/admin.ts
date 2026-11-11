@@ -900,7 +900,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.wto_delete": "Delete build output…",
   "clean.wto_deleting": "Deleting…",
   "clean.wto_confirm_title": "Delete the build output of {name}?",
-  "clean.wto_confirm_body": "Removes {count} folder(s), {size}, for good. They do not go to the trash and cannot be restored. Anything inside them goes too, including files you added by hand. The working copy itself stays.",
+  "clean.wto_confirm_body": "As of the preview, removes {count} folder(s), {size}, for good. They do not go to the trash and cannot be restored. Anything inside them goes too, including files you added by hand. The working copy itself stays.",
   "clean.wto_confirm_do": "Delete for good",
   "clean.wto_done": "Dropped {size} of build output from {name}.",
   "clean.wto_nothing": "No build output to drop.",

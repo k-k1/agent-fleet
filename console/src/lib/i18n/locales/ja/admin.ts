@@ -897,7 +897,7 @@ export const admin = {
   "clean.wto_delete": "ビルド成果物を削除…",
   "clean.wto_deleting": "削除しています…",
   "clean.wto_confirm_title": "{name} のビルド成果物を削除しますか？",
-  "clean.wto_confirm_body": "{count} 個のフォルダ（{size}）を完全に削除します。ごみ箱には入らず、元に戻せません。中に自分で置いたファイルがあればそれも消えます。作業コピーそのものは残ります。",
+  "clean.wto_confirm_body": "プレビュー時点で {count} 個のフォルダ（{size}）を完全に削除します。ごみ箱には入らず、元に戻せません。中に自分で置いたファイルがあればそれも消えます。作業コピーそのものは残ります。",
   "clean.wto_confirm_do": "完全に削除",
   "clean.wto_done": "{name} のビルド成果物 {size} を削除しました。",
   "clean.wto_nothing": "消せるビルド成果物はありません。",
