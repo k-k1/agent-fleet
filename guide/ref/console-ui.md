@@ -99,14 +99,14 @@ What they mean and how to read them is in [Launch a session from a repository](.
 | Badge | Meaning |
 |---|---|
 | Uncommitted | There are uncommitted changes |
+| = parent | The worktree is on the same commit as its parent |
+| parent +N · FF ok | The parent is N commits ahead and can be fast-forwarded in |
+| unmerged N | N commits only the worktree has are not in the parent |
+| diverged N↕M · no FF | Both the worktree and the parent have commits of their own |
+| n/a | The relation to the parent cannot be worked out |
 | ↑N | N commits ahead of origin |
 | ↓N FF ok | origin is N commits ahead, and a fast-forward is possible |
 | ↑N ↓M needs merge | It has diverged from origin |
-| = parent | The worktree is on the same commit as its parent |
-| unmerged N | N commits only the worktree has are not in the parent |
-| parent +N · FF ok | The parent is N commits ahead and can be fast-forwarded in |
-| diverged N↕M · no FF | Both the worktree and the parent have commits of their own |
-| n/a | The relation to the parent cannot be worked out |
 | `●N` | The number of running sessions |
 | A bare number | The number of stopped sessions |
 | Lock · broadcast | Locked against deletion · shared |
@@ -189,10 +189,10 @@ The row's `⋯`, right-click, the session's tab and a card in the sessions overv
 | Group | Items |
 |---|---|
 | Run | Resume · Re-login and resume (SSM) · Stop (resumable later) · Switch to terminal execution / Switch to managed execution · Open the remote session |
-| View & names | Generated images (N) · Menu of repository {name} · Copy the ID · Rename · Rename the branch (worktree sessions) |
+| View & names | Generated images (N) · Menu of repository {name} · Copy the ID ({name}) · Rename · Rename the branch (worktree sessions) |
 | Hand over & keep | Hand off to another agent… · Move to another agent… · Hand off to a member… · Share… · Export as Markdown (three ways) |
 | Working sets | Assign to working sets (sessions that belong to no repository) |
-| Behaviour | Lock against deletion / Unlock · Keep awake (4h) / Stop keeping awake · Stop when this turn ends / Don't stop after this turn · Spend budget… ("Raise budget & resume…" once the budget stopped it) |
+| Behaviour | Lock against deletion / Unlock (allow deletion) · Keep awake (4h) / Stop keeping awake · Stop when this turn ends / Don't stop after this turn · Spend budget… ("Raise budget & resume…" once the budget stopped it) |
 | Clean up | Archive (remove from the list) · Delete (shell and SSM) · Recreate working copy (worktree)… · Recreate (current conversation goes to the archive) |
 
 ![The right-click menu of a session row](../assets/sessions-menu-en-light.webp)
@@ -264,7 +264,7 @@ How to use them is in [Use the image gallery](../user/images/gallery.md#act-on-a
 | Target | Items |
 |---|---|
 | An assistant in the "+" list | New chat · Open in a new pane · Edit and Delete (assistants you made only) |
-| A chat row | Copy ID · Rename · Working sets · Lock against deletion / Unlock · Delete this chat |
+| A chat row | Copy ID ({id}) · Rename · Working sets · Lock against deletion / Unlock (allow deletion) · Delete this chat |
 
 - A built-in assistant can be neither edited nor deleted
 
