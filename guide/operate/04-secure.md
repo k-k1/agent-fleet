@@ -477,7 +477,7 @@ client is served.
     service account, Workload Identity on GKE). Blocking that route is the cluster's job (a
     NetworkPolicy egress rule, or GKE metadata concealment); the Control Plane does not do it.
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
-    be replaced: reserve them in Admin → Slots ([11](11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change)).
+    be replaced: reserve them in Admin → Slots ([Replace and stop slots](aws-ecs/slot-maintenance.md#outdated-slots)).
 
   `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and
   stops suppressing the SDKs' metadata lookup. It removes none of the network protections above,

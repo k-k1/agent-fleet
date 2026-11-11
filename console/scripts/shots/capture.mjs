@@ -2629,6 +2629,30 @@ const SCENES = [
     })()`,
     settle: 1500,
   },
+  {
+    // Admin › Slots (operate/aws-ecs/slot-maintenance): an outdated slot with its automatic
+    // replacement, a reserved one, a wedged one with Stop (force), and the bulk reservation.
+    name: "operate-slots",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_KEYS: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      for (let i = 0; i < 50 && ![...document.querySelectorAll(".admin-modal .settings-rail-item")].some((b) => /^(スロット|Slots)$/.test((b.textContent || "").trim())); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(スロット|Slots)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .pool-table"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".admin-modal .pool-view .admin-panel")?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
   // ---- end operate pages ----
   // ---- memory import/export pages (SHOT_MEMIO_GUIDE) ----
   {

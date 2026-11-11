@@ -407,7 +407,7 @@ Admin モーダルの**開発用ログイン**で、Control Plane の開発用 O
     Workload Identity）を塞ぎません。その経路を塞ぐのはクラスタの役目です（NetworkPolicy の egress 規則、
     または GKE のメタデータ隠蔽）。Control Plane はそれをしません。
   - **ecs-ec2**: スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。残っている
-    スロットは入れ替えが要ります。管理 → スロットで入れ替え予約してください（[11 章](11-slot-pool.ja.md#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え)）。
+    スロットは入れ替えが要ります。管理 → スロットで入れ替え予約してください（[スロットを入れ替える・止める](aws-ecs/slot-maintenance.ja.md#古いスロット)）。
 
   Control Plane の `AF_WS_WORKLOAD_AWS=1` は ECS のタスクロールをワークスペースに戻し、SDK のメタデータ参照の
   抑止をやめます。上のネットワークの防護はどれも外さないので、docker のワークスペースがホストのインスタンス

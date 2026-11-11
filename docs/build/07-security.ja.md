@@ -400,7 +400,7 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
   Agent のどのルートもセッション内のコードから呼べる。人の押下でだけ始まるべき機能は、ルート認証に
   頼らず結果をその押下に結び付ける（[decisions/0102](../decisions/0102-aws-login-through-the-console.ja.md)）。
 
-- メンバーごとの**ブリッジトークン**（メモ・スケジュール・MCP・ドキュメント・エンジン発行・Git OAuth・AWS／GCP プロファイル・ブランチ規則、`AF_PROVIDED_ROUTES=1` のときはルート発行）、内部 git トークン、開発用 IdP のクライアントシークレットも認証情報である。`AGENT_TOKEN` と同じ経路で Workspace に届き、タスク定義の `environment` には決して入れない（古いリビジョンは削除されず、`DescribeTaskDefinition` と CloudTrail は `environment` をそのまま返す）。`ecs` / `ecs-ec2` では `/af-ws/<workspace>/` 配下の SSM SecureString を `secrets` 経由で、docker では 0600 の env ファイル、kubernetes では Secret で渡す（名前の一覧は `runtime/secret_env.go`）。各ブリッジトークンは、署名鍵・membership id・membership の**ブリッジ epoch**（`membership.bridge_epoch`。epoch 0 は鍵そのままなので、アップグレードでは何も無効にならない）の HMAC。削除・再有効化・管理者のローテーション（`POST /api/admin/rotate-bridge-tokens`）で epoch が進み、リクエストごとに読み直すので、それ以前のトークンは即座に通らなくなる。動作中のコンテナは古いトークンを持ったままなので、再起動するまでコンソールに「再起動が必要」と出る。署名鍵は `AF_TOKEN_SIGN_VERSION` で選ぶルートから導出する（0＝既定は従来どおり master そのもの、1 以上は領域分離したルート。トークン鍵が認証情報鍵と導出元を共有せず、保存済みの認証情報に触れずにローテーションできる）。`af-cp advance-bridge-epochs --yes` で全 membership を一度に進める。運用は [ガイド 12](../../guide/operate/12-keys.ja.md#ブリッジトークンのローテーション) を参照。
+- メンバーごとの**ブリッジトークン**（メモ・スケジュール・MCP・ドキュメント・エンジン発行・Git OAuth・AWS／GCP プロファイル・ブランチ規則、`AF_PROVIDED_ROUTES=1` のときはルート発行）、内部 git トークン、開発用 IdP のクライアントシークレットも認証情報である。`AGENT_TOKEN` と同じ経路で Workspace に届き、タスク定義の `environment` には決して入れない（古いリビジョンは削除されず、`DescribeTaskDefinition` と CloudTrail は `environment` をそのまま返す）。`ecs` / `ecs-ec2` では `/af-ws/<workspace>/` 配下の SSM SecureString を `secrets` 経由で、docker では 0600 の env ファイル、kubernetes では Secret で渡す（名前の一覧は `runtime/secret_env.go`）。各ブリッジトークンは、署名鍵・membership id・membership の**ブリッジ epoch**（`membership.bridge_epoch`。epoch 0 は鍵そのままなので、アップグレードでは何も無効にならない）の HMAC。削除・再有効化・管理者のローテーション（`POST /api/admin/rotate-bridge-tokens`）で epoch が進み、リクエストごとに読み直すので、それ以前のトークンは即座に通らなくなる。動作中のコンテナは古いトークンを持ったままなので、再起動するまでコンソールに「再起動が必要」と出る。署名鍵は `AF_TOKEN_SIGN_VERSION` で選ぶルートから導出する（0＝既定は従来どおり master そのもの、1 以上は領域分離したルート。トークン鍵が認証情報鍵と導出元を共有せず、保存済みの認証情報に触れずにローテーションできる）。`af-cp advance-bridge-epochs --yes` で全 membership を一度に進める。運用は [ブリッジトークンを入れ替える](../../guide/operate/keys/bridge-tokens.ja.md) を参照。
 
 ### 7.5.1 メンバー由来の印
 
@@ -525,7 +525,7 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   暗号化コンテキストで key ref に結び付け、KMS が失敗すれば失敗する（フェイルクローズ）。同じ custodian が
   上のテナントの秘密と、セッションの引き継ぎ・共有のペイロードも封印する。KMS へ切り替える前に封じた値は
   形式で見分けて local の custodian が開き、KMS の失敗で振り分けることは無い。`af-cp rewrap-keys` が
-  それを一度に KMS で封じ直す（2026-10-10 追記、[operate/12](../../guide/operate/12-keys.ja.md#切り替え前に保存された値を封じ直す)）。
+  それを一度に KMS で封じ直す（2026-10-10 追記、[operate/keys/kms](../../guide/operate/keys/kms.ja.md#切り替える前に保存された値を封じ直す)）。
 - ⚠️ **正直な限界**: local の custodian では KEK がマスター鍵由来で、実効強度は単一のマスター鍵と同等。
   KMS では鍵の無効化で切り替え後に封じたものが shred されるが、ワークスペースの DEK 自体は今もマスター鍵と
   ユーザーキーから導出する（封筒保存より前に書かれたストアを開けるため）ので、メンバーの資格情報ストアは

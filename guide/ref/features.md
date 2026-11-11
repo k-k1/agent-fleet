@@ -180,13 +180,13 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Audit log and egress control | deployment admin | Admin | [operator 04](../operate/04-secure.md#operating-egress-control) |
 | Which client hosts MCP OAuth trusts | deployment admin (super_admin) | Admin → MCP sign-in hosts | [operator 04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only) |
 | The development OIDC IdP for preview URLs | deployment admin (super_admin) | Admin → Dev sign-in | [operator 04](../operate/04-secure.md#development-sign-in-dev-oidc-idp-superadmin-only) |
-| Keys at rest on AWS KMS, and a key of its own for each home | deployment admin | a stack parameter, then a shell | [operator 12](../operate/12-keys.md) |
+| Keys at rest on AWS KMS, and a key of its own for each home | deployment admin | a stack parameter, then a shell | [Put the keys at rest on AWS KMS](../operate/keys/kms.md), [Give each home its own key](../operate/keys/home-keys.md) |
 | The deployment's colour and label (Appearance) | deployment admin (super_admin) | Admin → Appearance | [Tell deployments apart](../operate/run/deployment-label.md) |
 | Pausing an idle deployment | deployment admin | a shell | [Use idle stop and force-stop](../operate/run/idle-stop.md#pause-the-deployment-while-nobody-uses-it) |
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [Connect monitoring tools](../user/integrations/ops-monitoring.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
-| Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [operator 11](../operate/11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change) |
-| Force-stopping a wedged slot | deployment admin (super_admin) | Admin → Slots → Stop (force) | [operator 11](../operate/11-slot-pool.md#ecs-ec2-stopping-a-wedged-slot) |
+| Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [Replace and stop slots](../operate/aws-ecs/slot-maintenance.md#outdated-slots) |
+| Force-stopping a wedged slot | deployment admin (super_admin) | Admin → Slots → Stop (force) | [Replace and stop slots](../operate/aws-ecs/slot-maintenance.md#stop-a-slot-that-does-not-answer) |
 | The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [operator 07](../operate/07-engines.md#the-gpu-instance-class) |
 | Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
 | The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engines → Model catalogue → Bucket | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |

@@ -96,7 +96,7 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | 開発用ログイン | プレビュー用サブドメイン上のアプリ向けの、開発用 OIDC IdP のスイッチ | [operate/04](../operate/04-secure.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
 | 推論エンジン | 自前エンジンのモード・GPU クラス・モデルカタログ・状態と稼働実績 | [operate/07](../operate/07-engines.ja.md) |
 | API トークン | モデル取り込み用の Hugging Face と Civitai のトークン、Civitai Red のスイッチ | [operate/07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
-| スロット | `ecs-ec2` のスロットプール: スロットの入れ替え、動かなくなったスロットの強制停止 | [operate/11](../operate/11-slot-pool.ja.md) |
+| スロット | `ecs-ec2` のスロットプール: スロットの入れ替え、動かなくなったスロットの強制停止 | [スロットを入れ替える・止める](../operate/aws-ecs/slot-maintenance.ja.md) |
 | セッション・稼働時間・クラウド費用・監査・MCP 配布 | テナントの各画面を、全テナント横断で見る | [admin/](../admin/README.ja.md) |
 
 ## 配備の変数
@@ -110,8 +110,8 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `AUTH` | サインインの方式。`oauth`（CP 内蔵）/ `proxy`（前段のゲートウェイ）/ `dev`（サインインなし・単独）。**既定値はなく、未設定だと Control Plane は起動を拒否する**（native は `dev` を使う）。Docker やクラウドで `dev` を使うには `AF_ALLOW_INSECURE_DEV_AUTH=1` も必要で、`PUBLIC_BASE_URL` が https のときは拒否される |
 | `DATA_DIR` | 永続する状態がすべてここにあるため、**バックアップすべき対象** |
 | `AF_MASTER_KEY` | at-rest 暗号の根。**失うと保存済みの資格情報は復元できない** |
-| `AF_KEY_CUSTODIAN` | 保存時の鍵を誰が持つか: `local`（既定。`AF_MASTER_KEY` から導く）か `kms`（AWS KMS。`AF_KMS_KEY_ID` と組で。[operate/12](../operate/12-keys.ja.md#aws-kms-で保存時の鍵を守る)）。未知の値や不足は起動時に拒否 |
-| `AF_WORKSPACE_DEK` | `derived`（既定）か `random`: メンバーのホームごとに KMS で封じた専用の鍵を持たせる。移し替えた資格情報ストアは `AF_MASTER_KEY` から導いた鍵では開けなくなり、KMS 鍵を無効化すると Control Plane は鍵を開けなくなる（ワークスペースとランタイムにすでに渡した写しでは今も開ける）。`random` は `AF_KEY_CUSTODIAN=kms` が前提で、無効にしても元には戻らない（[operate/12](../operate/12-keys.ja.md#ホームごとに専用の鍵を持たせる)） |
+| `AF_KEY_CUSTODIAN` | 保存時の鍵を誰が持つか: `local`（既定。`AF_MASTER_KEY` から導く）か `kms`（AWS KMS。`AF_KMS_KEY_ID` と組で。[保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)）。未知の値や不足は起動時に拒否 |
+| `AF_WORKSPACE_DEK` | `derived`（既定）か `random`: メンバーのホームごとに KMS で封じた専用の鍵を持たせる。移し替えた資格情報ストアは `AF_MASTER_KEY` から導いた鍵では開けなくなり、KMS 鍵を無効化すると Control Plane は鍵を開けなくなる（ワークスペースとランタイムにすでに渡した写しでは今も開ける）。`random` は `AF_KEY_CUSTODIAN=kms` が前提で、無効にしても元には戻らない（[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md)） |
 | `SUPER_ADMIN_EMAILS` | 誰が配備管理者か |
 | `PUBLIC_BASE_URL` | 利用者が到達する URL。OAuth のコールバックもここから組み立てる |
 | `WS_MEMORY` | ワークスペースの既定メモリ上限 |
