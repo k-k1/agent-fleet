@@ -168,6 +168,7 @@ Anything not here yet is in the chapters of [Using Agent Fleet](../member/README
 
 | Page | What you can do |
 |---|---|
+| [Choose which memory your agents use](memory/which-memory.md) | Tell instruction files, the agent's own memory and Agent Fleet memory apart, and choose which to use |
 | [Read and correct agent memory](memory/overview.md) | Read, rewrite, pin and forget what agents remember |
 | [Check memory changes](memory/changes.md) | See who changed what and when, and revert a bad change |
 | [Set how memory is used](memory/settings.md) | Let sessions use memory, and carry Claude Code's memory across |
