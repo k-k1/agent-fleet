@@ -97,7 +97,7 @@ func wireArchivedRow(m session.Meta) session.Session {
 		Display: session.Display(m), Color: m.Color, Label: m.Label,
 		Started: startedLabel(m), CreatedAt: m.CreatedAt, Branch: m.Branch,
 		Resumable: stoppedResumable(m),
-		Locked:    m.Locked, Archived: m.Archived,
+		Locked:    m.Locked, Archived: m.Archived, ArchivedAt: m.ArchivedAt,
 		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
 	}
 }

@@ -291,6 +291,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "arch.delete_old": "Delete old ones",
   "arch.no_match": "No matching archives.",
   "arch.no_workdir": "No working directory",
+  "arch.archived_on": " · archived {date}",
   "arch.folder_missing_suffix": " · folder missing",
   "arch.recreate": "Recreate working copy",
   "arch.recreate_title": "Recreate the deleted worktree at its original path so these sessions can resume",

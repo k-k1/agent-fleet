@@ -15,7 +15,7 @@ import { api, raw } from "../../core/api/client.ts";
 import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { t, useLocale, useT } from "../../lib/i18n/index.ts";
-import { compareText } from "../../lib/intl.ts";
+import { compareText, fmtDateTime } from "../../lib/intl.ts";
 import type { Session } from "../../types/session.ts";
 import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
 import { descendantNames } from "./family.ts";
@@ -346,6 +346,7 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedMo
                                 <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                               </span>
                               {s.started ? " · " + s.started : ""}
+                              {s.archivedAt ? tr("arch.archived_on", { date: fmtDateTime(s.archivedAt) }) : ""}
                               {s.resumable === false ? tr("arch.folder_missing_suffix") : ""}
                             </span>
                           </div>

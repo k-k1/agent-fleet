@@ -372,6 +372,10 @@ type Session struct {
 	// Console badges the row and disables its delete item off this flag.
 	Locked   bool `json:"locked,omitempty"`
 	Archived bool `json:"archived,omitempty"`
+	// ArchivedAt mirrors Meta.ArchivedAt (RFC 3339), sent on the shelf rows only. The work-folder
+	// expiry counts its seven days from it, so without it nothing outside the Agent can check
+	// that rule. Omitted when the meta carries no stamp.
+	ArchivedAt string `json:"archivedAt,omitempty"`
 	// KeepAwakeUntil mirrors Meta.KeepAwakeUntil: while it is in the future the
 	// idle-stop reaper leaves this session AND its workspace alone (docs/log/75). Carried
 	// on stopped rows too — a pin that is set has to be visible before it expires, or it
