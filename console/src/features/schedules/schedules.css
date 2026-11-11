@@ -348,3 +348,8 @@
   word-break: break-word;
   font-family: var(--mono);
 }
+
+/* Gate section of the detail modal: the checkbox row reuses .sched-target; the last-check line
+   sits under the fields as plain hint text. */
+.sched-gate .sched-gate-last { margin-top: 6px; }
+.sched-gate [data-invalid] { color: var(--err); }

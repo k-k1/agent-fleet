@@ -158,3 +158,10 @@
 - **この slice に含めないもの**（#1763 の後続）: Console のフォームと表示、`create_schedule` / `update_schedule` の引数と
   ペルソナ文、上限が変化を止めたときの通知、失敗するゲートのバックオフ、ゲート付きで `stop_after_run` を既定にすること、
   `refire_after`。後続: #3809。
+
+**補足（2026-11-11、#3809）**: `create_schedule` / `update_schedule` の `gate` 引数とオペレーターのペルソナ文は先に入っていた。
+今回 Console のスケジュール詳細モーダルにゲート欄を加えた（利用者の保存済み作業項目クエリの選択、fingerprint モード、2 つの上限、
+`gate.last_eval_at` / `gate.last_verdict` による読み取り専用の「最終確認」行）。モーダルは `gate` を編集した時だけ、しかも
+常に全体を送る（CP は渡された値から保存 spec を作り直すため）。未着手: 上限で見送った時の通知、ゲートのバックオフ、
+`stop_after_run` の既定、`refire_after`、実機での確認（#3809）。
+

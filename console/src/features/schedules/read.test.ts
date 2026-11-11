@@ -15,6 +15,10 @@ import {
   nextRunText,
   nextRunDetail,
   canonicalTargets,
+  gateFormOf,
+  gateFormError,
+  gatePatchOf,
+  gateVerdictLine,
 } from "./read.ts";
 
 const base: ScheduleDTO = { id: "sch_1", spec_kind: "cron", spec: "0 9 * * *", enabled: true };
@@ -192,5 +196,68 @@ describe("nextRunText / nextRunDetail (#3217)", () => {
   it("an unknown zone name is still auto", () => {
     setFormatPrefs("auto", "Not/AZone");
     expect(nextRunText(s)).toBe(s.next_run_local);
+  });
+});
+
+describe("gate form", () => {
+  const gate = { kind: "work_items", query_id: "q1", fingerprint: "keys+updated", max_fires_per_day: 5, min_fire_gap_s: 90 };
+
+  it("sends nothing while the form equals the stored gate", () => {
+    expect(gatePatchOf(gate, gateFormOf(gate))).toBeUndefined();
+    expect(gatePatchOf(undefined, gateFormOf(undefined))).toBeUndefined();
+  });
+
+  it("round-trips every field when one of them changes", () => {
+    const f = { ...gateFormOf(gate), queryId: "q2" };
+    // The caps and the mode ride along: the CP rebuilds the spec from the object, so dropping
+    // them would reset them to the defaults.
+    expect(gatePatchOf(gate, f)).toEqual({ kind: "work_items", query_id: "q2", fingerprint: "keys+updated", max_fires_per_day: 5, min_fire_gap_s: 90 });
+  });
+
+  it("does not send output-only fields", () => {
+    const withLedger = { ...gate, fired_at: "x", last_eval_at: "y", last_verdict: "fire" };
+    const p = gatePatchOf(withLedger, { ...gateFormOf(withLedger), maxFires: "3" })!;
+    expect(Object.keys(p).sort()).toEqual(["fingerprint", "kind", "max_fires_per_day", "min_fire_gap_s", "query_id"]);
+  });
+
+  it("omits blank caps so the CP applies its defaults", () => {
+    const f = { on: true, queryId: "q1", fingerprint: "keys", maxFires: "", minGap: "" };
+    expect(gatePatchOf(undefined, f)).toEqual({ kind: "work_items", query_id: "q1", fingerprint: "keys" });
+  });
+
+  it("removes the gate with kind none, only when there was one", () => {
+    expect(gatePatchOf(gate, { ...gateFormOf(gate), on: false })).toEqual({ kind: "none" });
+    expect(gatePatchOf(undefined, { ...gateFormOf(undefined), on: false })).toBeUndefined();
+  });
+
+  it("refuses a missing query and out-of-range caps", () => {
+    const ok = { on: true, queryId: "q1", fingerprint: "keys", maxFires: "", minGap: "" };
+    expect(gateFormError(ok)).toBe("");
+    expect(gateFormError({ ...ok, queryId: "" })).toBe("query");
+    expect(gateFormError({ ...ok, maxFires: "0" })).toBe("caps");
+    expect(gateFormError({ ...ok, maxFires: "25" })).toBe("caps");
+    expect(gateFormError({ ...ok, minGap: "59" })).toBe("caps");
+    expect(gateFormError({ ...ok, minGap: "86401" })).toBe("caps");
+    expect(gateFormError({ ...ok, minGap: "1h" })).toBe("caps");
+    expect(gateFormError({ ...ok, maxFires: "24", minGap: "60" })).toBe("");
+    expect(gateFormError({ ...ok, on: false, queryId: "", maxFires: "x" })).toBe("");
+  });
+});
+
+describe("gateVerdictLine", () => {
+  const now = Date.parse("2026-11-11T12:00:00Z");
+  it("names the known verdicts and echoes an unknown one instead of throwing", () => {
+    expect(gateVerdictLine({ last_verdict: "clear", last_eval_at: "2026-11-11T11:30:00Z" }, now).text).toBe("該当なし");
+    expect(gateVerdictLine({ last_verdict: "unchanged" }, now).text).toBe("前回の発火から変化なし");
+    expect(gateVerdictLine({ last_verdict: "fire" }, now).text).toBe("発火しました");
+    expect(gateVerdictLine({ last_verdict: "claimed" }, now).text).toBe("発火しました");
+    expect(gateVerdictLine({ last_verdict: "capped_day" }, now).text).toBe("変化ありですが発火上限で見送り");
+    expect(gateVerdictLine({ last_verdict: "brand_new_verdict" }, now).text).toBe("brand_new_verdict");
+    expect(gateVerdictLine({ last_verdict: "error:gate:query gone" }, now).text).toContain("gate:query gone");
+    expect(gateVerdictLine(undefined, now)).toEqual({ at: "", text: "" });
+  });
+  it("shows hh:mm for today and tolerates a bad timestamp", () => {
+    expect(gateVerdictLine({ last_verdict: "clear", last_eval_at: "2026-11-11T11:30:00Z" }, now).at).toMatch(/\d{2}:\d{2}$/);
+    expect(gateVerdictLine({ last_verdict: "clear", last_eval_at: "garbage" }, now).at).toBe("");
   });
 });

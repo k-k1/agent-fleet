@@ -187,3 +187,11 @@ stay in #1763.
 - **Not in this slice** (#1763 follow-ups): the Console form and display, the `create_schedule` / `update_schedule`
   arguments and persona text, a notice when a cap holds a changed result back, backoff of a failing gate,
   `stop_after_run` defaulting to on for a gated schedule, `refire_after`. Follow-ups: #3809.
+
+**Note (2026-11-11, #3809):** the `create_schedule` / `update_schedule` `gate` argument and the operator persona text had
+already landed. The Console now has the gate section in the schedule detail modal (query picker over the member's saved
+work-item queries, fingerprint mode, the two caps, and a read-only "last checked" line from `gate.last_eval_at` /
+`gate.last_verdict`). The modal sends `gate` only when it was edited, and then always whole, because the CP rebuilds the
+stored spec from it. Still open: the cap-held-back notice, gate backoff, `stop_after_run` default, `refire_after`, and the
+live run (#3809).
+

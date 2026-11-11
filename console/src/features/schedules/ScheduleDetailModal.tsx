@@ -8,7 +8,7 @@
 // Only the fields the user actually changed are PATCHed, so re-saving an unchanged spec
 // never resets next_run (an interval's initialNextRun is now+interval). The CP validates
 // the spec/enums and recomputes next_run when the timing changed.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -20,11 +20,17 @@ import {
   type ScheduleDTO,
   type ScheduleEditable,
   canonicalTargets,
+  gateFormError,
+  gateFormOf,
+  gatePatchOf,
+  gateVerdictLine,
   nextRunDetail,
   scheduleTargets,
   scheduleTitle,
 } from "./read.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
+import { workItemList } from "../workitems/api.ts";
+import { readWorkItems, type WorkItemQuery } from "../workitems/read.ts";
 
 // The agent kinds this picker offers come from the registry cap (AgentCaps.scheduledRuns),
 // never from a list kept here: the hand-kept copy this replaced had already lost agy, whose
@@ -65,6 +71,30 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
   const [stopAfterRun, setStopAfterRun] = useState(!!s.stop_after_run);
   const [targets, setTargets] = useState<string[]>(() => canonicalTargets(scheduleTargets(s)));
   const [silent, setSilent] = useState(!!s.silent);
+  // The gate (ADR 0021 addendum). A gate can only sit on a recurring session_mode=new schedule; one
+  // that already has a gate keeps its section so it can be removed. A kind this Console does not
+  // know is shown read-only and never patched, so saving another field cannot rewrite it.
+  const [gateForm, setGateForm] = useState(() => gateFormOf(s.gate));
+  const gateKnown = !s.gate || s.gate.kind === "work_items" || s.gate.kind === "none";
+  const gateFits = s.session_mode === "new" && specKind !== "once";
+  const showGate = gateKnown ? gateFits || !!s.gate : !!s.gate;
+  const [queries, setQueries] = useState<WorkItemQuery[] | null>(null);
+  const [queriesFailed, setQueriesFailed] = useState(false);
+  useEffect(() => {
+    if (!showGate || !gateKnown) return;
+    let live = true;
+    void workItemList()
+      .then((res) => {
+        if (!live) return;
+        const { payload } = readWorkItems(res);
+        if (payload) setQueries(payload.queries);
+        else setQueriesFailed(true);
+      })
+      .catch(() => live && setQueriesFailed(true));
+    return () => {
+      live = false;
+    };
+  }, [showGate, gateKnown]);
   const toggleTarget = (target: string, on: boolean) =>
     setTargets((cur) => canonicalTargets(on ? [...cur, target] : cur.filter((x) => x !== target)));
 
@@ -88,13 +118,20 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
     if (stopAfterRun !== !!s.stop_after_run) p.stop_after_run = stopAfterRun;
     if (targets.join(",") !== canonicalTargets(scheduleTargets(s)).join(",")) p.deliver_to = targets;
     if (silent !== !!s.silent) p.silent = silent;
+    // A gate the schedule cannot carry (once, or not session_mode=new) is never patched in; only
+    // removing an existing one is allowed then, otherwise the CP refuses the whole save.
+    if (gateKnown && (gateFits || s.gate)) {
+      const g = gatePatchOf(s.gate, gateForm);
+      if (g) p.gate = g;
+    }
     return p;
-  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report, stopAfterRun, targets, silent]);
+  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report, stopAfterRun, targets, silent, gateKnown, gateFits, gateForm]);
 
   const dirty = Object.keys(patch).length > 0;
   // Reporting on with no target would deliver nowhere while looking switched on.
   const targetsOk = !report || targets.length > 0;
-  const canSave = dirty && !busy && targetsOk && prompt.trim().length > 0 && spec.trim().length > 0;
+  const gateErr = !gateKnown ? "" : !gateFits ? (s.gate && gateForm.on ? "fit" : "") : gateFormError(gateForm);
+  const canSave = dirty && !busy && targetsOk && gateErr === "" && prompt.trim().length > 0 && spec.trim().length > 0;
 
   const save = async () => {
     if (!canSave) return;
@@ -285,6 +322,104 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
           />
         </div>
 
+        {showGate && (
+          <fieldset className="ui-field sched-gate">
+            <legend className="ui-field-label">{tr("sched.gate_title")}</legend>
+            {gateKnown ? (
+              <>
+                <label className="sched-target">
+                  <input
+                    type="checkbox"
+                    checked={gateForm.on}
+                    onChange={(e) => setGateForm((f) => ({ ...f, on: e.target.checked }))}
+                  />
+                  <span>{tr("sched.gate_enable")}</span>
+                </label>
+                <div className="ui-field-hint">{tr("sched.gate_hint")}</div>
+                {gateErr === "fit" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_unfit")}</div>}
+                {gateForm.on && (
+                  <>
+                    <div className="ui-field">
+                      <label className="ui-field-label" htmlFor="sched-gate-query">
+                        {tr("sched.gate_query")}
+                      </label>
+                      <select
+                        id="sched-gate-query"
+                        value={gateForm.queryId}
+                        onChange={(e) => setGateForm((f) => ({ ...f, queryId: e.target.value }))}
+                      >
+                        <option value="">{tr("sched.gate_query_ph")}</option>
+                        {/* The stored query stays selectable when the list does not hold it (not loaded yet,
+                            deleted since): otherwise the select would silently show "choose" and a save
+                            would point the gate somewhere else. */}
+                        {gateForm.queryId && !(queries ?? []).some((q) => q.id === gateForm.queryId) && (
+                          <option value={gateForm.queryId}>{tr("sched.gate_query_unknown", { id: gateForm.queryId })}</option>
+                        )}
+                        {(queries ?? []).map((q) => (
+                          <option key={q.id} value={q.id}>
+                            {q.label || q.query}
+                          </option>
+                        ))}
+                      </select>
+                      {queriesFailed && <div className="ui-field-hint">{tr("sched.gate_queries_failed")}</div>}
+                      {queries && queries.length === 0 && <div className="ui-field-hint">{tr("sched.gate_queries_none")}</div>}
+                      {gateErr === "query" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_query_pick")}</div>}
+                    </div>
+                    <div className="ui-field">
+                      <label className="ui-field-label" htmlFor="sched-gate-fp">
+                        {tr("sched.gate_fingerprint")}
+                      </label>
+                      <select
+                        id="sched-gate-fp"
+                        value={gateForm.fingerprint}
+                        onChange={(e) => setGateForm((f) => ({ ...f, fingerprint: e.target.value }))}
+                      >
+                        <option value="keys">{tr("sched.gate_fp_keys")}</option>
+                        <option value="keys+updated">{tr("sched.gate_fp_updated")}</option>
+                      </select>
+                      <div className="ui-field-hint">{tr("sched.gate_fp_hint")}</div>
+                    </div>
+                    <div className="ui-field-row">
+                      <div className="ui-field sched-narrow">
+                        <label className="ui-field-label" htmlFor="sched-gate-max">
+                          {tr("sched.gate_max_fires")}
+                        </label>
+                        <input
+                          id="sched-gate-max"
+                          type="text"
+                          inputMode="numeric"
+                          value={gateForm.maxFires}
+                          placeholder="2"
+                          onChange={(e) => setGateForm((f) => ({ ...f, maxFires: e.target.value }))}
+                        />
+                      </div>
+                      <div className="ui-field sched-narrow">
+                        <label className="ui-field-label" htmlFor="sched-gate-gap">
+                          {tr("sched.gate_min_gap")}
+                        </label>
+                        <input
+                          id="sched-gate-gap"
+                          type="text"
+                          inputMode="numeric"
+                          value={gateForm.minGap}
+                          placeholder="21600"
+                          onChange={(e) => setGateForm((f) => ({ ...f, minGap: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                    <div className="ui-field-hint" data-invalid={gateErr === "caps" || undefined}>
+                      {tr("sched.gate_caps_hint")}
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <div className="ui-field-hint">{tr("sched.gate_unsupported", { kind: s.gate?.kind ?? "" })}</div>
+            )}
+            {s.gate && <GateLastLine gate={s.gate} />}
+          </fieldset>
+        )}
+
         {/* Read-only: the advanced execution fields, changed via the operator chat. */}
         <div className="sched-readonly">
           <div className="sched-readonly-head">{tr("sched.detail_readonly")}</div>
@@ -327,5 +462,16 @@ function ReadRow({ label, value }: { label: string; value?: string | number }) {
       <dt className="sched-dt">{label}</dt>
       <dd className="sched-dd">{v}</dd>
     </>
+  );
+}
+
+// The last evaluation, read-only. An unknown verdict is shown as the CP sent it.
+function GateLastLine({ gate }: { gate: NonNullable<ScheduleDTO["gate"]> }) {
+  const tr = useT();
+  const { at, text } = gateVerdictLine(gate);
+  return (
+    <div className="ui-field-hint sched-gate-last">
+      {text ? (at ? tr("sched.gate_last", { at, text }) : text) : tr("sched.gate_last_never")}
+    </div>
   );
 }
