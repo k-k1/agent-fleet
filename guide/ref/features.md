@@ -175,14 +175,14 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Deployment targets | deployment admin | before start | [deploy-targets.md](deploy-targets.md) |
-| Install, upgrade, back up, restore | deployment admin | a shell | [operator 02](../operate/02-install.md) / [03](../operate/03-run.md) |
+| Install, upgrade, back up, restore | deployment admin | a shell | [operator 02](../operate/02-install.md) / [Upgrade](../operate/run/upgrade.md) / [Back up and restore](../operate/run/backup-restore.md) |
 | Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 04](../operate/04-secure.md) |
 | Audit log and egress control | deployment admin | Admin | [operator 04](../operate/04-secure.md#operating-egress-control) |
 | Which client hosts MCP OAuth trusts | deployment admin (super_admin) | Admin → MCP sign-in hosts | [operator 04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only) |
 | The development OIDC IdP for preview URLs | deployment admin (super_admin) | Admin → Dev sign-in | [operator 04](../operate/04-secure.md#development-sign-in-dev-oidc-idp-superadmin-only) |
 | Keys at rest on AWS KMS, and a key of its own for each home | deployment admin | a stack parameter, then a shell | [operator 12](../operate/12-keys.md) |
-| The deployment's colour and label (Appearance) | deployment admin (super_admin) | Admin → Appearance | [operator 03](../operate/03-run.md#telling-two-deployments-apart-colour-and-label) |
-| Pausing an idle deployment | deployment admin | a shell | [operator 03](../operate/03-run.md#pausing-an-idle-deployment) |
+| The deployment's colour and label (Appearance) | deployment admin (super_admin) | Admin → Appearance | [Tell deployments apart](../operate/run/deployment-label.md) |
+| Pausing an idle deployment | deployment admin | a shell | [Use idle stop and force-stop](../operate/run/idle-stop.md#pause-the-deployment-while-nobody-uses-it) |
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [Connect monitoring tools](../user/integrations/ops-monitoring.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [operator 11](../operate/11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change) |

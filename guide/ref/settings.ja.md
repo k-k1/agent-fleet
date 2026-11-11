@@ -92,7 +92,7 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | 通信 | ワークスペースからの外向き通信: 観測（log-only）か enforce か、許可リスト、メンバーの申請 | [operate/04](../operate/04-secure.ja.md#egress-統制の運用) |
 | MCP ログイン許可ホスト | MCP OAuth サーバーが信頼するクライアントのホスト（配備全体）| [operate/04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ) |
 | 読み上げ | 音声エンジンのモードと、共通の読み仮名辞書 | [operate/07](../operate/07-engines.ja.md#読み上げ音声エンジンと共通の読み仮名辞書) |
-| 見た目 | この配備の色とラベル。ほかの配備と見分けるため | [operate/03](../operate/03-run.ja.md#2-つの配備を見分ける色とラベル) |
+| 見た目 | この配備の色とラベル。ほかの配備と見分けるため | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
 | 開発用ログイン | プレビュー用サブドメイン上のアプリ向けの、開発用 OIDC IdP のスイッチ | [operate/04](../operate/04-secure.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
 | 推論エンジン | 自前エンジンのモード・GPU クラス・モデルカタログ・状態と稼働実績 | [operate/07](../operate/07-engines.ja.md) |
 | API トークン | モデル取り込み用の Hugging Face と Civitai のトークン、Civitai Red のスイッチ | [operate/07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
@@ -121,8 +121,8 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `AF_MCP_OAUTH` | `1` で、Control Plane が `/mcp` の OAuth 認可サーバーにもなり、ホスト型のクライアントはメンバーのサインインで接続できる。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` が要り、どれか欠けると OAuth のパスは 404。各テナントは自分の分をオフにもできる（[MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)）。残りは [operate/04](../operate/04-secure.ja.md#リモート-mcp-クライアント向けのサインインoauth) |
 | `AF_GITHUB_WEBHOOK_SECRET` | このデプロイの GitHub App の Webhook シークレット。設定すると、Control Plane は App の配信を `/webhooks/github` で受け付ける（App の Webhook URL は `<PUBLIC_BASE_URL>/webhooks/github`）。受けた配信は、実行中の Workspace に「公開リポジトリのプルリクエストを早めに確認して」と知らせるためだけに使う。未設定ならこのエンドポイントは存在せず、ウォッチはポーリングだけで動く。プライベートリポジトリの配信はこの経路では無視する。配信の中身は何も渡さない。 |
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | MCP OAuth が信頼するクライアントのホスト、または `https://host/path` の URL プレフィックス（カンマ区切り。ホスト名だけなら全パス）。既定は `https://claude.ai/api/mcp/auth_callback`・`claude.com`・`chatgpt.com`、`none` でループバックのクライアントだけ。管理モーダルの **MCP ログイン許可ホスト** で保存した一覧がこの変数に優先する（[operate/04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ)）|
-| `AF_EFS_BACKUP` | 手で設定しない。`ecs` / `ecs-ec2` で `update.sh` と `standup.sh` が ingress スタックの `EfsBackup` パラメータ（`present`・`off`・`missing`）から埋め、`missing` なら管理画面に「日次の EFS バックアップがない」バナーが出る（[operate/03](../operate/03-run.ja.md#アップグレード)） |
-| `AF_SESSION_IDLE_TIMEOUT`・`AF_WS_IDLE_TIMEOUT`・`AF_BACKGROUND_HOLD_MAX`・`AF_WORKSPACE_START_DEADLINE` | アイドルのセッションと Workspace を止めるタイミング。既定値は [上限](limits.ja.md#配備が決めるもの)、動きは [operate/03](../operate/03-run.ja.md#アイドル停止と-force-stop) |
+| `AF_EFS_BACKUP` | 手で設定しない。`ecs` / `ecs-ec2` で `update.sh` と `standup.sh` が ingress スタックの `EfsBackup` パラメータ（`present`・`off`・`missing`）から埋め、`missing` なら管理画面に「日次の EFS バックアップがない」バナーが出る（[アップグレードする](../operate/run/upgrade.ja.md#efs-バックアップがないという通知)） |
+| `AF_SESSION_IDLE_TIMEOUT`・`AF_WS_IDLE_TIMEOUT`・`AF_BACKGROUND_HOLD_MAX`・`AF_WORKSPACE_START_DEADLINE` | アイドルのセッションと Workspace を止めるタイミング。既定値は [上限](limits.ja.md#配備が決めるもの)、動きは [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#アイドル自動停止の時間を決める) |
 
 ### AWS ECS の場合
 

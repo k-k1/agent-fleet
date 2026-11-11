@@ -173,14 +173,14 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
 | 配備形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
-| 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [operator 02](../operate/02-install.ja.md) / [03](../operate/03-run.ja.md) |
+| 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [operator 02](../operate/02-install.ja.md) / [アップグレードする](../operate/run/upgrade.ja.md) / [バックアップして復元する](../operate/run/backup-restore.ja.md) |
 | 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 04](../operate/04-secure.ja.md) |
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 04](../operate/04-secure.ja.md#egress-統制の運用) |
 | MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [operator 04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ) |
 | プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [operator 04](../operate/04-secure.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
 | AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [operator 12](../operate/12-keys.ja.md) |
-| この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [operator 03](../operate/03-run.ja.md#2-つの配備を見分ける色とラベル) |
-| 使わない間の配備の一時停止 | 配備管理者 | 端末 | [operator 03](../operate/03-run.ja.md#使わない間の配備を一時停止する) |
+| この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
+| 使わない間の配備の一時停止 | 配備管理者 | 端末 | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え) |

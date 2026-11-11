@@ -2581,6 +2581,31 @@ const SCENES = [
     action: `(async () => {${openMember('(secs) => secs.filter((x) => x.querySelector(".danger-zone"))')}})()`,
   },
   // ---- end admin resource pages ----
+  // ---- operate pages: day-to-day operations (SHOT_OPERATE_RUN) ----
+  {
+    // Admin › Deployment › Appearance: the colour swatches, the label and the preview a
+    // deployment administrator sets to tell staging from production.
+    name: "operate-brand",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_RUN: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(見た目|Appearance)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .swatch"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".admin-modal .admin-panel")?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
+  // ---- end operate pages ----
   // ---- memory import/export pages (SHOT_MEMIO_GUIDE) ----
   {
     // Settings › Agent memory › Import & export: the hub of cards, grouped Import / Export /

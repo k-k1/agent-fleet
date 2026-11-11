@@ -66,7 +66,7 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   `-v` マウントを作るので、`DATA_DIR` は CP の内側でも同じ絶対パスに解決されなければなりません。
   ずれると**空の home がマウント**されます。**症状: Workspace は起動するのに home が空・作業が
   見当たらない**。リストア後にこの症状が出たら、復元先の `DATA_DIR` が元とパス（少なくとも
-  basename）で食い違っていないか確認します（[03](03-run.ja.md)）。
+  basename）で食い違っていないか確認します（[バックアップして復元する](run/backup-restore.ja.md#復元する)）。
 - **(C) `user: "1000:1000"` + `group_add: <DOCKER_GID>`**：home は uid 1000（Workspace の `dev`
   ユーザー）所有で作られ、CP は docker ソケットを使うためにホストの docker グループが要ります。
   `DOCKER_GID` が違うと**ソケットで permission denied**。**症状: Workspace を起動しようとすると
@@ -160,7 +160,7 @@ A. 保存済みの全資格情報と、**すべての過去バックアップが
 
 **Q. バックアップに何が入って、何が入らない？**
 A. 入るのは DB・各ユーザーの home・平文の Claude 状態・Caddy 証明書。入らないのは `shared/jvm`
-（再取得可能）と **`AF_MASTER_KEY`**。詳細は [03](03-run.ja.md)。
+（再取得可能）と **`AF_MASTER_KEY`**。詳細は [バックアップして復元する](run/backup-restore.ja.md#アーカイブに入るもの)。
 
 **Q. Workspace は起動するのに home が空。**
 A. ほぼ DooD 制約 (B)。`DATA_DIR` が CP の内外で同一絶対パスか、リストア時に basename が一致して
@@ -170,18 +170,18 @@ A. ほぼ DooD 制約 (B)。`DATA_DIR` が CP の内外で同一絶対パスか�
 A. 入れられますが、条件があります。リリースに image tar は添付しなくなったので、GHCR の image を
 社内レジストリへミラーして `REGISTRY` をそこへ向けるか、`release.sh --save` ＋ `load-images.sh` で
 持ち込みます。TLS は `tls internal`、Claude は `CLAUDE_INSTALL=0` で焼き込み image を使います
-（[03](03-run.ja.md) の air-gap）。なお、フリートは起動できてもエージェント自身は
+（[閉じたネットワークに入れる](run/air-gapped.ja.md#エージェントの-cli-を焼き込む)）。なお、フリートは起動できてもエージェント自身は
 モデルのエンドポイントに到達できなければ動きません。
 
 **Q. ダウングレードしたい。**
 A. 非対応です。migration は前方互換で自動適用され、古い CP は新スキーマを理解できません。後退は
 「古い image に戻す」ではなく「アップグレード前に取ったバックアップからリストアする」で行います
-（[03](03-run.ja.md)）。
+（[アップグレードする](run/upgrade.ja.md#上げる前に)）。
 
 **Q. `docker compose down` したのに Workspace が残っている。**
 A. 正常です。Workspace（`af-ws-*`）は compose 管理外で、CP が `docker run` で起こしたものです。
 確実に止めるには Admin パネルの force-stop、またはホスト全体を落とすなら残る `af-ws-*` を別途
-`docker stop` します（[03](03-run.ja.md)）。
+`docker stop` します（[アイドル停止と強制停止を使う](run/idle-stop.ja.md#ワークスペースを強制停止する)）。
 
 **Q. 複数ホストに分散（HA・水平スケール）できる？**
 A. 提供モデルは 1 社 = 1 配備です。compose では CP が 1 台のホストの Docker デーモンを駆動するので、
