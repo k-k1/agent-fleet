@@ -28,7 +28,7 @@ var (
 	// and the autofill URL both live on <region>.signin.aws, and neither pattern above
 	// matches it). The host is anchored: a "/" cannot appear before signin.aws, so the
 	// string inside another host's path does not match. What follows the match is checked
-	// by lastCompleteSigninURL, because the regexp cannot say "and then a delimiter".
+	// by completeURL, because the regexp cannot say "and then a delimiter".
 	ssmSigninURL = regexp.MustCompile(`https://[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.signin\.aws(?:[/?#][^\s"']*)?`)
 	ssmCodeRe    = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
 )
@@ -150,7 +150,11 @@ func parseSSMLogin(buf string, alive bool) ssmLoginStatus {
 	if strings.Contains(buf, "Starting session with SessionId:") {
 		return ssmLoginStatus{Phase: "ready"}
 	}
-	if url, code := DeviceAuthorization(buf); url != "" {
+	// capture-pane prints each row with a newline, but a pane that ends without one must not
+	// leave a finished URL undetectable: this snapshot never grows a "next chunk". The
+	// price is that a URL the CLI is still writing at the very end of the pane can show cut
+	// short for one poll; the CLI prints a URL as one line, so that window is a single write.
+	if url, code := DeviceAuthorization(buf + "\n"); url != "" {
 		return ssmLoginStatus{Phase: "authorize", URL: url, Code: code}
 	}
 	if !alive {
@@ -170,12 +174,12 @@ func parseSSMLogin(buf string, alive bool) ssmLoginStatus {
 // patterns accept any https host, so a caller that shows the URL to a person checks the
 // host itself.
 func DeviceAuthorization(out string) (url, code string) {
-	url = ssmURLWithCode.FindString(out)
+	url = completeURL(ssmURLWithCode, out, false)
 	if url == "" {
-		url = ssmDeviceURL.FindString(out)
+		url = completeURL(ssmDeviceURL, out, false)
 	}
 	if url == "" {
-		url = lastCompleteSigninURL(out)
+		url = completeURL(ssmSigninURL, out, true)
 	}
 	if url == "" {
 		return "", ""
@@ -183,15 +187,25 @@ func DeviceAuthorization(out string) (url, code string) {
 	return url, ssmCodeRe.FindString(out)
 }
 
-// lastCompleteSigninURL is the last signin.aws URL in out that is followed by a delimiter
-// (whitespace or a quote): the CLI prints the plain URL first and the code-autofill one
-// last, a URL still being read at a chunk boundary must not be shown cut short, and
-// "x.signin.awsevil.example" must not yield the "x.signin.aws" prefix of another host.
-func lastCompleteSigninURL(out string) string {
+// completeURL is the first (or, with last, the last) match of re in out that is followed by
+// a delimiter (whitespace or a quote). A match that ends exactly at the end of out is
+// refused: out is a prefix of a stream, the URL may still be arriving, and a cut-short URL
+// shown to the member is wrong in a way the next chunk only corrects later. The same check
+// also stops "x.signin.awsevil.example" from yielding the "x.signin.aws" prefix of another
+// host. The CLI prints the plain signin URL first and the code-autofill one last, hence
+// last for that pattern.
+//
+// A caller whose out is a finished snapshot rather than a stream (the tmux pane in
+// parseSSMLogin) must terminate it with a newline first: a snapshot is re-read unchanged,
+// so a URL that ends it would otherwise never be detected.
+func completeURL(re *regexp.Regexp, out string, last bool) string {
 	url := ""
-	for _, m := range ssmSigninURL.FindAllStringIndex(out, -1) {
+	for _, m := range re.FindAllStringIndex(out, -1) {
 		if m[1] < len(out) && strings.ContainsRune(" \t\r\n\"'", rune(out[m[1]])) {
 			url = out[m[0]:m[1]]
+			if !last {
+				break
+			}
 		}
 	}
 	return url

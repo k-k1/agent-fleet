@@ -114,3 +114,34 @@ func TestDeviceAuthorizationSigninURLEdges(t *testing.T) {
 		}
 	}
 }
+
+// TestDeviceAuthorizationRefusesACutURL: the user_code and device.sso patterns hold back a
+// URL that ends exactly at the end of the output, like the signin.aws one, and show it once
+// a delimiter follows.
+func TestDeviceAuthorizationRefusesACutURL(t *testing.T) {
+	const withCode = "https://d-1.awsapps.com/start/#/device?user_code=ABCD-EFGH"
+	const device = "https://device.sso.us-east-1.amazonaws.com/"
+	cases := []struct{ name, out, want string }{
+		{"user_code cut", "ABCD-EFGH\n" + withCode, ""},
+		{"user_code complete", "ABCD-EFGH\n" + withCode + "\n", withCode},
+		{"user_code quoted", `{"u": "` + withCode + `"}`, withCode},
+		{"device.sso cut", device, ""},
+		{"device.sso complete", device + "\n", device},
+		{"cut user_code leaves the complete device.sso one", device + "\n" + withCode, device},
+	}
+	for _, c := range cases {
+		if got, _ := DeviceAuthorization(c.out); got != c.want {
+			t.Errorf("%s: url = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestParseSSMLoginURLAtPaneEnd: a pane snapshot is re-read unchanged, so a URL that ends
+// it without a newline is a finished one and must be detected.
+func TestParseSSMLoginURLAtPaneEnd(t *testing.T) {
+	const url = "https://d-1.awsapps.com/start/#/device?user_code=ABCD-EFGH"
+	got := parseSSMLogin("Then enter the code:\nABCD-EFGH\n"+url, true)
+	if got.Phase != "authorize" || got.URL != url || got.Code != "ABCD-EFGH" {
+		t.Fatalf("parseSSMLogin = %+v, want authorize with %q", got, url)
+	}
+}
