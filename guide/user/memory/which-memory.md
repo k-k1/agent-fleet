@@ -20,7 +20,7 @@ There are three things an agent "remembers".
 | Who writes it | You (your team, for the repository's files) | The agent itself, while it works | Agents, with af's `memory_*` tools. You can write it in the memory view too |
 | Where it lives | The repository (committed) and each agent's instruction file | Each kind's own files (Claude Code's `MEMORY.md` and the rest, Codex's `~/.codex/memories/`) | Inside the workspace, in a store Agent Fleet manages |
 | Which agents read it | The kinds that read that file. Agent instructions reach most kinds | Only the kind that wrote it | With the switch on, every kind that has af's memory tools |
-| Where you see or undo it in the Console | ⚙ Settings > **Agent instructions** | ⚙ Settings > **Memory snapshots** (Claude Code and Codex) | ⚙ Settings > **Agent memory** > **Memories** and **Changes** |
+| Where you see or undo it in the Console | ⚙ Settings > **Agent instructions** | ⚙ Settings > **Memory snapshots** (Claude Code, Codex and Muse Code) | ⚙ Settings > **Agent memory** > **Memories** and **Changes** |
 | When the switch is on | A short fixed note on the memory tools goes in beside your text | Switched off for the kinds that support it (next table) | New sessions read and write it |
 
 The switch is **Let sessions use Agent Fleet memory** under ⚙ Settings > Agent memory > Settings (off by default). How to turn it on is in [Set how memory is used](settings.md).

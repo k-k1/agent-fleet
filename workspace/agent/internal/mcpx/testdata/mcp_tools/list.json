@@ -1324,7 +1324,7 @@
       "name": "get_image_studio"
     },
     "get_memory_snapshot#1": {
-      "description": "指定時点のエージェント自身のメモリ（claude / codex。Agent Fleet のメモリは含まない）の中身を返す。その時点に何が入っていたか（kind 別・プロジェクト別のファイル数）と、その snapshot が入れた変更の差分を返す。rev（list_memory_snapshots の id）か at（日時。その時刻以前の直近 snapshot に解決）のどちらかを指定する。restore_memory_snapshot で戻す前に「戻したら何がどう変わるか」を確認するために呼ぶ。差分が大きい時は path で絞る。",
+      "description": "指定時点のエージェント自身のメモリ（claude / codex / muse。Agent Fleet のメモリは含まない）の中身を返す。その時点に何が入っていたか（kind 別・プロジェクト別のファイル数）と、その snapshot が入れた変更の差分を返す。rev（list_memory_snapshots の id）か at（日時。その時刻以前の直近 snapshot に解決）のどちらかを指定する。restore_memory_snapshot で戻す前に「戻したら何がどう変わるか」を確認するために呼ぶ。差分が大きい時は path で絞る。",
       "inputSchema": {
         "properties": {
           "at": {
@@ -1592,7 +1592,7 @@
       "name": "list_cleanup_candidates"
     },
     "list_memory_snapshots#1": {
-      "description": "エージェント自身のメモリ（claude の auto-memory / codex の memories）の変更履歴を新しい順に返す。memory_* ツールで読み書きする Agent Fleet のメモリとは別物で、そちらの変更はここに出ない（Console のエージェントメモリの「変更」で見る）。各行は時刻・契機（auto/manual/pre-restore/restore/import）・変更されたプロジェクトを持つ。「メモリがいつ変わったか」「おかしくなったのはいつからか」を聞かれた時や、restore_memory_snapshot で戻す時点を選ぶ前に呼ぶ。中身の差分は get_memory_snapshot を見る。",
+      "description": "エージェント自身のメモリ（claude の auto-memory / codex の memories / muse の個人メモリ）の変更履歴を新しい順に返す。memory_* ツールで読み書きする Agent Fleet のメモリとは別物で、そちらの変更はここに出ない（Console のエージェントメモリの「変更」で見る）。各行は時刻・契機（auto/manual/pre-restore/restore/import）・変更されたプロジェクトを持つ。「メモリがいつ変わったか」「おかしくなったのはいつからか」を聞かれた時や、restore_memory_snapshot で戻す時点を選ぶ前に呼ぶ。中身の差分は get_memory_snapshot を見る。",
       "inputSchema": {
         "properties": {
           "limit": {
@@ -2220,7 +2220,7 @@
       "name": "restore_cleanup_archive"
     },
     "restore_memory_snapshot#1": {
-      "description": "エージェント自身のメモリ（claude / codex）を指定時点へ戻す。Agent Fleet のメモリ（memory_* ツールのメモリ）は戻さない。rev（list_memory_snapshots の id）か at（日時）で戻す先を指定し、範囲は all（全体）／projects（claude のプロジェクト単位）／kinds（claude・codex 単位）で指定する。範囲は必ず明示すること（省略は拒否される）。履歴は書き換えず、戻す直前の状態も自動で snapshot に残るので、この操作自体を後から取り消せる。誤って消した／誤学習したメモリを戻す時に使う。実行前に必ず get_memory_snapshot で戻り先の中身を確認し、『どの時点へ・どの範囲を戻すか』を利用者に示して承認を得ること。対象 kind のセッションが実行中だと結果の busy=true で返る。",
+      "description": "エージェント自身のメモリ（claude / codex / muse）を指定時点へ戻す。Agent Fleet のメモリ（memory_* ツールのメモリ）は戻さない。rev（list_memory_snapshots の id）か at（日時）で戻す先を指定し、範囲は all（全体）／projects（claude のプロジェクト単位）／kinds（claude・codex・muse 単位）で指定する。範囲は必ず明示すること（省略は拒否される）。履歴は書き換えず、戻す直前の状態も自動で snapshot に残るので、この操作自体を後から取り消せる。誤って消した／誤学習したメモリを戻す時に使う。実行前に必ず get_memory_snapshot で戻り先の中身を確認し、『どの時点へ・どの範囲を戻すか』を利用者に示して承認を得ること。対象 kind のセッションが実行中だと結果の busy=true で返る。",
       "inputSchema": {
         "properties": {
           "all": {
@@ -2232,7 +2232,7 @@
             "type": "string"
           },
           "kinds": {
-            "description": "まるごと戻す kind（claude / codex）",
+            "description": "まるごと戻す kind（claude / codex / muse）",
             "items": {
               "type": "string"
             },

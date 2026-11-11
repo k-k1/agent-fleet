@@ -399,12 +399,28 @@ func memoryApplyScopeToLive(t memoryScopeTarget, stagingRoot string) (written, d
 		if same {
 			continue
 		}
-		if cerr := memoryCopyFile(desired[rel], dst); cerr != nil {
+		if cerr := memoryReplaceFile(desired[rel], dst); cerr != nil {
 			return written, deleted, cerr
 		}
 		written = append(written, t.Root.RepoPrefix+"/"+rel)
 	}
 	return written, deleted, nil
+}
+
+// memoryReplaceFile writes src over dst through a temp file and a rename, so a process that
+// has dst open (a live muse or claude reading its notes) sees the old or the new content, never
+// a truncated half. The temp name is not a note (no .md), so the allowlist never versions it.
+func memoryReplaceFile(src, dst string) error {
+	tmp := dst + ".af-restore.tmp"
+	if err := memoryCopyFile(src, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // memoryPrepareDest returns the absolute destination path and creates the directories along the
