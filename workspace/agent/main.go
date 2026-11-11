@@ -355,15 +355,7 @@ func serve() {
 		Enabled:  uiprefs.AgentSkillCuration,
 		Activity: memconsol.SessionActivity,
 		// The user skills root of every kind that has one; roots may repeat, the curator de-duplicates.
-		Roots: func() []string {
-			var roots []string
-			for _, kind := range instrSupportedKinds {
-				if ops, ok := instrOpsOf(kind); ok && ops.SkillsDir != nil {
-					roots = append(roots, ops.SkillsDir())
-				}
-			}
-			return roots
-		},
+		Roots: func() []string { roots, _ := skillRoots(); return roots },
 	})
 	// The retired memory review's pending queue is exported once (ADR 0130 decision 2) and the
 	// review's state removed. A failure leaves the queue where it is and is retried next start.

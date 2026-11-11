@@ -3889,6 +3889,33 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: set_image_draft","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このセッションと画像スタジオの結びが変わりました。スタジオのペインから結び直してください","type":"text"}],"isError":true,"resultType":"complete"}}
+## skill_restore absent
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> GET /agents/skills/archive
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## skill_restore empty {}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> GET /agents/skills/archive
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## skill_restore unknown {"zz_unknown":1}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  -> GET /agents/skills/archive
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for skill_restore","type":"text"}],"isError":true,"resultType":"complete"}}
+## skill_restore not-object [1]
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for skill_restore: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+## skill_restore badtype-archived {"archived":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"cannot read skill_restore arguments: json: cannot unmarshal array into Go struct field skillRestoreArgs.archived of type string","type":"text"}],"isError":true,"resultType":"complete"}}
+## skill_restore badtype-root {"root":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"cannot read skill_restore arguments: json: cannot unmarshal array into Go struct field skillRestoreArgs.root of type string","type":"text"}],"isError":true,"resultType":"complete"}}
+## skill_restore full {"archived":"v","root":"v"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /agents/skills/archive/restore {"archived":"v","root":"v"}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## stop_session absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはセッションの停止を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}

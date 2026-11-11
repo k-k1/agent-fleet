@@ -440,3 +440,25 @@ type instrStateWire struct {
 	Targets    []instrTarget `json:"targets"`
 	FleetBytes int           `json:"fleet_bytes"`
 }
+
+// skillRoots is the user skills root of every agent kind that has one, de-duplicated, with the
+// kinds that share each. The curator's pass and the member's restore routes both read it, so a
+// restore can only reach the roots the curator works on.
+func skillRoots() (roots []string, kinds map[string][]string) {
+	kinds = map[string][]string{}
+	for _, kind := range instrSupportedKinds {
+		ops, ok := instrOpsOf(kind)
+		if !ok || ops.SkillsDir == nil {
+			continue
+		}
+		root := ops.SkillsDir()
+		if root == "" {
+			continue
+		}
+		if _, seen := kinds[root]; !seen {
+			roots = append(roots, root)
+		}
+		kinds[root] = append(kinds[root], kind)
+	}
+	return roots, kinds
+}

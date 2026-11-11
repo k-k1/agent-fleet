@@ -253,3 +253,48 @@ func TestPinClearsStaleMark(t *testing.T) {
 		t.Fatal("stale mark left on a pinned skill")
 	}
 }
+
+func TestListArchived(t *testing.T) {
+	root := t.TempDir()
+	if got := ListArchived(root); len(got) != 0 {
+		t.Fatalf("no archive: %v", got)
+	}
+	skill(t, root, "afa-a", agentBody(), days(100))
+	Run(root, now, DefaultConfig(), nil)
+	skill(t, root, "afa-a", agentBody(), days(100)) // clash: archived as afa-a.2
+	Run(root, now, DefaultConfig(), nil)
+	// Things Restore would refuse must not be offered: a person's folder, an unmarked skill.
+	ad := filepath.Join(root, ArchiveDir)
+	if err := os.MkdirAll(filepath.Join(ad, "my-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skill(t, ad, "afa-unmarked", "no marker\n", days(100))
+	// Pin the archive time so the order and the value are not the test's wall clock.
+	for n, at := range map[string]time.Time{"afa-a": days(5), "afa-a.2": days(2)} {
+		touch(t, filepath.Join(ad, n, OriginFile), at)
+		if err := os.WriteFile(filepath.Join(ad, n, OriginFile), []byte("afa-a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(filepath.Join(ad, n, OriginFile), at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := ListArchived(root)
+	want := []ArchivedSkill{{Archived: "afa-a", Name: "afa-a", At: days(5)}, {Archived: "afa-a.2", Name: "afa-a", At: days(2)}}
+	if len(got) != 2 || got[0].Archived != want[0].Archived || got[1].Archived != want[1].Archived ||
+		got[0].Name != "afa-a" || got[1].Name != "afa-a" || !got[0].At.Equal(want[0].At) || !got[1].At.Equal(want[1].At) {
+		t.Fatalf("got %+v want %+v", got, want)
+	}
+}
+
+// A .archive that is a link lists nothing: it may point outside the root.
+func TestListArchivedSymlinkRefused(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	skill(t, other, "afa-x", agentBody(), days(1))
+	if err := os.Symlink(other, filepath.Join(root, ArchiveDir)); err != nil {
+		t.Fatal(err)
+	}
+	if got := ListArchived(root); len(got) != 0 {
+		t.Fatalf("listed through a link: %v", got)
+	}
+}

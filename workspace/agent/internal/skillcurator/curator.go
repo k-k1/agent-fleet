@@ -190,6 +190,54 @@ func Archived(root string) []string {
 	return out
 }
 
+// ArchivedSkill is one entry of a root's archive, as a member sees it.
+type ArchivedSkill struct {
+	// Archived is the entry's name under .archive/ (it may carry a clash suffix); this is what
+	// Restore takes.
+	Archived string
+	// Name is the name the skill will have again: its .origin record, else Archived.
+	Name string
+	// At is when it was archived: the mtime of its .origin record, else of the directory.
+	At time.Time
+}
+
+// originName is the name a restore gives the skill; Restore and ListArchived must agree on it.
+func originName(src, archived string) string {
+	if b, err := os.ReadFile(filepath.Join(src, OriginFile)); err == nil {
+		if o := strings.TrimSpace(string(b)); o != "" && filepath.Base(o) == o && strings.HasPrefix(o, Prefix) {
+			return o
+		}
+	}
+	return archived
+}
+
+// ListArchived lists what Restore would accept under root/.archive, oldest archive first. Only
+// entries Restore itself would take are listed (a plain directory carrying the agent marker),
+// so a stray folder a person dropped in the archive is not offered. A missing or non-plain
+// archive directory lists nothing.
+func ListArchived(root string) []ArchivedSkill {
+	ad := filepath.Join(root, ArchiveDir)
+	if realArchiveDir(ad) != nil {
+		return nil
+	}
+	var out []ArchivedSkill
+	for _, n := range Archived(root) {
+		if !Candidate(ad, n) {
+			continue
+		}
+		src := filepath.Join(ad, n)
+		at := time.Time{}
+		if st, err := os.Lstat(filepath.Join(src, OriginFile)); err == nil {
+			at = st.ModTime()
+		} else if st, err := os.Lstat(src); err == nil {
+			at = st.ModTime()
+		}
+		out = append(out, ArchivedSkill{Archived: n, Name: originName(src, n), At: at})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	return out
+}
+
 // Restore moves an archived skill back to root under its original name (from its .origin
 // record) and clears its stale mark. It refuses when that name is taken, when the archive is not
 // a plain directory, or when the archived entry no longer carries the marker. The skill gets a
@@ -203,12 +251,7 @@ func Restore(root, archived string, now time.Time) error {
 	if filepath.Base(archived) != archived || !Candidate(ad, archived) {
 		return fmt.Errorf("%q is not an archived agent skill", archived)
 	}
-	name := archived
-	if b, err := os.ReadFile(filepath.Join(src, OriginFile)); err == nil {
-		if o := strings.TrimSpace(string(b)); o != "" && filepath.Base(o) == o && strings.HasPrefix(o, Prefix) {
-			name = o
-		}
-	}
+	name := originName(src, archived)
 	dst := filepath.Join(root, name)
 	if exists(dst) {
 		return fmt.Errorf("%s already exists", name)
