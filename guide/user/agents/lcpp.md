@@ -38,7 +38,7 @@ While it is set:
 
 - The launch dialog's model list is that server's
 - lcpp sessions connect straight to that server. They do not go through the Control Plane, so limits your tenant administrator set on engines do not apply
-- The "**Chat**" pill at the top of the screen reports that server too: its state (**Connected** / **Not reachable** / **Checking**) and the model it found ([Badges and menus](../../member/badges-and-menus.md#the-engine-pills-in-the-top-bar))
+- The "**Chat**" pill at the top of the screen reports that server too: its state (**Connected** / **Not reachable** / **Checking**) and the model it found ([Icons, badges and menus](../../ref/console-ui.md#engine-pills))
 
 Clear the field to go back to the deployment's engine.
 

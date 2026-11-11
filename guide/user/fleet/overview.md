@@ -79,4 +79,4 @@ On a phone, **Sessions** may sit inside the **⋯** on the action bar.
 
 - [Read a session's state](../sessions/status.md): what the state marks mean
 - [See how sessions relate over time](graph.md)
-- [Icons, badges and menus](../../member/badges-and-menus.md): every menu item
+- [Icons, badges and menus](../../ref/console-ui.md): every menu item

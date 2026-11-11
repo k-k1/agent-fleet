@@ -118,4 +118,4 @@ Console の言語・タイムゾーン・テーマ・フォントを、自分の
 - [ツールチェーンを選ぶ](../workspace/toolchains.ja.md)：シェルとエージェントのタイムゾーン
 - [通知を受け取る](notifications.ja.md)
 - [読み上げを使う](read-aloud.ja.md)
-- [アイコン・バッジ・メニュー](../../member/badges-and-menus.ja.md)
+- [アイコン・バッジ・メニュー](../../ref/console-ui.ja.md)

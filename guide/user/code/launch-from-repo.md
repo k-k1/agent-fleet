@@ -81,7 +81,7 @@ The numbers at the end of a row mean this.
 | A coloured number | The pane number showing this repository's commit graph |
 
 - For a collapsed repository, the counts include its worktrees' sessions
-- Every icon is listed in [Icons, badges, and menus](../../member/badges-and-menus.md)
+- Every icon is listed in [Icons, badges and menus](../../ref/console-ui.md)
 
 ## What you can do with right-click
 
