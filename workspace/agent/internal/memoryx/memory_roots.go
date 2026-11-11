@@ -25,12 +25,13 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
 // memoryRoot declares one version-controlled memory root.
 type memoryRoot struct {
-	Kind string // "claude" | "codex" — must match the session kind (the busy check reads it)
+	Kind string // "claude" | "codex" | "muse" — must match the session kind (the busy check reads it)
 	// Label is the Console display name. i18n lives on the front end, so this is the plain
 	// kind name.
 	Label string
@@ -54,6 +55,11 @@ type memoryRoot struct {
 	// feature is off by default, so on an environment where it was never enabled the root
 	// itself does not appear.
 	RequireDir bool
+	// QuietWhenAbsent keeps the root always active (snapshot, restore and import all resolve
+	// it, and a restore recreates a deleted store) but hides it from the Targets list while its
+	// live dir is missing. There is nothing for the member to switch on, so a row saying
+	// "absent" would only be noise on every environment without muse.
+	QuietWhenAbsent bool
 }
 
 // memoryRootDecls is the declaration table itself, before existence detection. Kept separate
@@ -87,6 +93,23 @@ func memoryRootDecls() []memoryRoot {
 			Exclude:    []string{".git/**", "phase2_workspace_diff.md", "*.sqlite", "*.sqlite-*"},
 			Scopes:     false,
 			RequireDir: true,
+		},
+		{
+			Kind:  "muse",
+			Label: "Muse Code",
+			// The personal-project and personal stores (~/.local/share/muse/memory/{projects,
+			// personal}); the same stores the muse import reads. The project store
+			// (<working copy>/.agents/memory) is deliberately NOT a root: it lives inside the
+			// repository, a team may commit it, and git already is its history. Restoring it
+			// from here would also rewrite tracked files under someone's feet.
+			Dir:        filepath.Join(muse.DataHome(), "memory"),
+			RepoPrefix: "muse",
+			// Notes only. .muse-memory.lock (muse's own lock file) must never be copied or
+			// restored: a stale lock written back could wedge a live muse. MEMORY.md is a
+			// note too, so the index and the notes stay consistent after a restore.
+			Include:         []string{"personal/**/*.md", "projects/**/*.md"},
+			Scopes:          false,
+			QuietWhenAbsent: true,
 		},
 	}
 }
@@ -163,6 +186,11 @@ func memoryRootByKind(kind string) (memoryRoot, bool) {
 func memoryAllowed(r memoryRoot, rel string) bool {
 	rel = filepath.ToSlash(rel)
 	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
+		return false
+	}
+	// A ".." segment anywhere would let personal/**/*.md match a path that leaves the root, and
+	// the restore's own temp files (memoryReplaceFile) are never memory whatever the root.
+	if strings.Contains(rel, "..") || strings.HasSuffix(rel, memoryRestoreTmpSuffix) {
 		return false
 	}
 	matched := false

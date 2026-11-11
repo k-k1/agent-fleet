@@ -7,7 +7,7 @@ source_of_truth: "Console ⚙ Settings > Memory snapshots"
 
 English | [日本語](snapshots.ja.md)
 
-See the history of the agent's own memory (what Claude Code and Codex keep in their own files), and put it back to how it was at a point in time.
+See the history of the agent's own memory (what Claude Code, Codex and Muse Code keep in their own files), and put it back to how it was at a point in time.
 "It learned something it shouldn't have" and "when did this go wrong" become fixable after the fact. You can also take it to another environment.
 
 How it differs from Agent Fleet memory is in [Choose which memory your agents use](which-memory.md). Check and revert Agent Fleet memory's changes in the memory Changes view.
@@ -52,7 +52,7 @@ History lists the snapshots newest first. Select one to see the diff of what cha
 
 1. In History, select the snapshot of the point you want back
 2. Press **"Restore this point"**
-3. Choose what to restore: "Everything", or "Pick what to restore" and pick agent kinds or projects
+3. Choose what to restore: "Everything", or "Pick what to restore" and pick agent kinds (Claude Code, Codex, Muse Code) or projects
 4. Press **"Restore"**, then **"Restore"** in the confirmation
 
 - **A restore can be undone too.** The state just before it is snapshotted automatically (trigger pre-restore)
@@ -66,6 +66,8 @@ Targets lists the memory being versioned, per agent kind, with its file count, s
   conversations
 - Turning on Agent Fleet memory switches Codex's memory off once. If you turn it on here after that, it runs beside Agent Fleet memory and
   stays on when Agent Fleet memory is turned off
+- **Muse Code's memory** is versioned when it exists: the notes under `~/.local/share/muse/memory/` (its personal and personal-project stores), restored as one kind. Muse Code's *project* memory (`.agents/memory` inside a repository) is not versioned here, because it lives in the repository and git is its history
+- Restoring Muse Code's memory while a Muse Code session is running is allowed: files are replaced one at a time and never half-written, and Muse Code's lock file is left alone. Anything it writes after the restore shows up as a new snapshot
 - The **Automatic snapshots** switch decides whether snapshots are taken by themselves. Nothing is stored when nothing changed. On some deployments the operator has disabled automatic snapshots
 
 ## Export
@@ -122,7 +124,7 @@ Targets shows Codex as "Memories are off (Codex's own default)". Turn it on, and
 ### The import says "Cannot import: this environment has no destination for"
 
 An agent kind's own memory in the file is not in use in this environment (for example, Codex's memory is off).
-That kind cannot be selected. For Codex, turn it on in Targets and import again.
+That kind cannot be selected. For Codex, turn it on in Targets and import again. Muse Code's memory has no such switch: it can always be imported, and its folder is created if it is missing.
 
 ### The import says "The secret scan of the imported contents failed"
 

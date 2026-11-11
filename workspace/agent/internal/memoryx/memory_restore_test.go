@@ -152,8 +152,8 @@ func TestMemoryRestoreAllScopeIsReversible(t *testing.T) {
 	if got := memoryReadLive(t, filepath.Join(mem, "a.md")); got != "rewritten\n" {
 		t.Errorf("claude root not restored by all-scope: %q", got)
 	}
-	if len(back.Scopes) != 2 {
-		t.Errorf("all-scope should cover both roots, got %v", back.Scopes)
+	if len(back.Scopes) != 3 {
+		t.Errorf("all-scope should cover claude, codex and muse, got %v", back.Scopes)
 	}
 
 	// Undo the undo: restoring to the pre-restore rev brings the v4 state back.
@@ -342,7 +342,7 @@ func TestMemoryResolveScopeRejectsBadInput(t *testing.T) {
 	}
 	// An all-scope request swallows the project one (a duplicated prefix is not applied twice).
 	targets, err := memoryResolveScope(memoryRestoreScope{All: true, Projects: []string{"-home-dev-repos-demo"}})
-	if err != nil || len(targets) != 2 {
+	if err != nil || len(targets) != 3 {
 		t.Fatalf("all+projects = %+v err=%v", targets, err)
 	}
 }

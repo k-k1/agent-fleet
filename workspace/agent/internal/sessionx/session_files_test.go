@@ -596,7 +596,7 @@ func TestSessionFileTouchesResolvesRootsPerPollNotPerRow(t *testing.T) {
 	resolvedRootsMu.Lock()
 	n := rootResolutions - before
 	resolvedRootsMu.Unlock()
-	if n > 5 { // at most once per root, for the roots that do not exist here
+	if n > 8 { // at most once per root that does not exist here (claude, codex, muse, work dir, ...); 20 rows would be 20+
 		t.Fatalf("one poll over 20 rows resolved roots %d times; want it independent of the rows", n)
 	}
 }
