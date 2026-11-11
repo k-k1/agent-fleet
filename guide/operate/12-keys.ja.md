@@ -215,7 +215,7 @@ ECS は **実行ロール**でこれを復号するので、鍵が許可すべ�
 
 ## ブリッジトークンのローテーション
 
-メンバーごとのブリッジトークン、内部 git トークン、開発用 IdP のクライアントシークレットは、Workspace が Control Plane を呼ぶための認証情報です。SSM SecureString（ECS）、0600 の env ファイル（docker）、Secret（kubernetes）で渡し、タスク定義の `environment` には入れません。ブリッジトークンには membership の **epoch** が入り、現在の epoch のものだけが通ります。
+メンバーごとのブリッジトークン、内部 git トークン、開発用 IdP のクライアントシークレットは、Workspace が Control Plane を呼ぶための認証情報です。SSM SecureString（ECS）、0600 の env ファイル（docker）、Secret（kubernetes）で渡し、タスク定義の `environment` には入れません。ブリッジトークンには membership の **epoch** が入り、現在の epoch のものだけが通ります。デプロイが提供する Bedrock ルートをオンにしている（`AF_PROVIDED_ROUTES=1`）と、ルート発行用のトークン `AF_ROUTE_ISSUE_TOKEN` も 0.44.0 から同じ経路で渡し、同じ epoch に結び付くので、下の手順で一緒に無効になります。
 
 - **特定のメンバー。** `POST /api/admin/rotate-bridge-tokens`（`{"tenant_slug", "user_key"}`、テナント管理者）でそのメンバーの epoch を進めます。動作中の Workspace は再起動するまで古いトークンを持ち、コンソールに「再起動が必要」と出ます。メンバーの削除と、同じ membership の再有効化でも進みます。
 - **全員を一度に。** トークンを `environment` から出したリリースへ上げたあとも、古いタスク定義のリビジョン、CloudTrail、ログには、それ以前のトークンが残っている可能性があります。すべての Workspace がそのリリースになったら、Control Plane のデータベースに対して `af-cp advance-bridge-epochs`（件数の確認だけ）、続けて `af-cp advance-bridge-epochs --yes` を実行します（ECS では `rewrap-keys` と同じ単発タスク）。動作中のすべての Workspace のトークンが即座に無効になるので、静かな時間帯に再起動します（「再起動が必要」のバッジが対象を示します）。アップグレードだけでは何も無効になりません。epoch 0 は、どの Workspace も既に持っているトークンそのものです。

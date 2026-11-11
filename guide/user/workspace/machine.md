@@ -155,7 +155,7 @@ Under the Leftover files rows, **Old folders in ~/.af-work** deletes the folders
 2. Untick the folders you want to keep, then press **Delete selected**
 3. A confirmation lists the folders. They go at once and cannot be brought back
 
-- Only folders the Agent did not create are listed (the ones it created go by the rules above). A folder of a session that is not archived, one in use, and one changed within the number of days is never listed or deleted
+- Only folders the Agent did not create are listed (the ones it created go by the rules above). A session's folder (an archived session's folder goes by its own row above), one in use, and one changed within the number of days are never listed or deleted
 - The Agent checks each folder again when you confirm. A folder that changed or was taken by a session in the meantime is skipped, and the message says how many
 - Links are never followed: a symbolic link inside a folder is removed as a link, and what it points to stays
 

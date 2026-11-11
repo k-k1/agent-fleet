@@ -258,7 +258,9 @@ The per-membership bridge tokens, the internal git token and the dev IdP client 
 credentials a workspace uses to call the Control Plane. They reach a workspace as SSM
 SecureStrings (ECS), a 0600 env file (docker) or a Secret (kubernetes), never as plain
 task-definition `environment`. Each bridge token carries the membership's **epoch**, and only the
-current epoch verifies.
+current epoch verifies. With the deployment's Bedrock route on (`AF_PROVIDED_ROUTES=1`), the route issuing token
+`AF_ROUTE_ISSUE_TOKEN` travels the same way from 0.44.0 and is bound to the same epoch, so the
+steps below retire it too.
 
 - **One member.** `POST /api/admin/rotate-bridge-tokens` (`{"tenant_slug", "user_key"}`, tenant
   admin) advances that member's epoch. Their running workspace keeps the old tokens until it is

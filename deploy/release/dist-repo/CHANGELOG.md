@@ -3,6 +3,15 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.44.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.44.0) — pending
+
+A schedule can now wait for a saved work item query to turn up something new before it starts a
+session, and a chat thread can start a new session or move to another one with `!start` and
+`!attach`. Bitbucket Pipelines runs can be watched like GitHub Actions runs, Settings › Machine can
+clear build output, unpinned Gradle versions and old `~/.af-work` folders, and Muse Code's own
+memory is versioned and imported like Claude Code's. Read the Upgrade notes if you run the ECS
+templates or the deployment's Bedrock route.
+
 ## [0.43.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.43.0) — 2026-11-10
 
 Sessions can now wait for a pull request, a review or a set time with the new `watch` tool, and an

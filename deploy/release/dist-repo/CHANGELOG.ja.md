@@ -3,6 +3,15 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.44.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.44.0) — pending
+
+スケジュールが、保存した作業項目クエリに新しい結果が出たときだけセッションを起動できるようになり、
+チャットのスレッドから `!start` と `!attach` で新しいセッションを始めたり、別のセッションへ移したり
+できます。Bitbucket Pipelines の実行も GitHub Actions と同じように待て、設定 › マシン からビルド成果物・
+使われていない Gradle のバージョン・古い `~/.af-work` のフォルダを片付けられます。Muse Code 自身の
+メモリも、Claude Code と同じように履歴を取って取り込みます。ECS のテンプレートやデプロイが提供する
+Bedrock ルートを使っている場合は、アップグレードの注意を読んでください。
+
 ## [0.43.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.43.0) — 2026-11-10
 
 新しい `watch` ツールで、セッションがプルリクエスト・レビュー・指定した時刻を待てるようになり、任意で
