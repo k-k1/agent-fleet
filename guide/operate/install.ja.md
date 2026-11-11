@@ -194,7 +194,7 @@ IdP ごとに、`.env` で埋めるキーが違います。
 | 症状 | 見るところ |
 |---|---|
 | サインインで「redirect URI mismatch」 | IdP に登録した URI が `<PUBLIC_BASE_URL>/oauth2/callback` と完全に一致しているか（手順 3） |
-| サインインがいつも拒否される | 許可リストがすべて空ではないか（手順 6） |
+| サインインがいつも拒否される | 許可リストがすべて空ではないか（設定は手順 1、理由は手順 6 の警告） |
 | 起動後、docker のソケットで permission denied | `DOCKER_GID`（手順 1） |
 | `/healthz` が `ok` を返さない、Control Plane が上がらない | [06 切り分ける](06-diagnose.ja.md#症状別確認表) の「CP が起動しない」 |
 

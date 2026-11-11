@@ -41,7 +41,7 @@ ECS is often assumed to be cheaper; it is the other way round. Monthly figures:
 
 | Team size | ec2-single | ECS (weekdays, 8 hours) | Verdict |
 |---|---|---|---|
-| up to 5 | **$67** (t3.large) | $154 | **ec2-single, no contest**. ECS cannot earn back its $110 floor |
+| up to 5 | **$87** (t3.large, with a 30 GB disk and a static IP) | $154 | **ec2-single, no contest**. ECS cannot earn back its $110 floor |
 | up to 15 | $283 (8 vCPU / 32 GB) | $240 | Roughly even. Decide on operational effort and isolation needs |
 | 20 | $283–368 | **$285** | About the same. This is the crossover, and past it things other than cost decide |
 | 20, running 24/7 | $283 | $830 | If it never idles, one VM is far cheaper |
@@ -77,7 +77,7 @@ Where starts are frequent, choose **ecs-ec2**.
 
 | | NAT gateway (`nat-gateway`, the default) | Egress gateway (`gateway`) |
 |---|---|---|
-| Recording | None. The Admin Egress tab stays empty | Every workspace connection, by name and address, attributed to the workspace. The Egress tab shows counts per host; the attributed events are at `GET /api/admin/egress/events` |
+| Recording | None. The **Admin** "Egress" tab stays empty | Every workspace connection, by name and address, attributed to the workspace. The "Egress" tab shows counts per host; the attributed events are at `GET /api/admin/egress/events` |
 | Allowlist | Not enforced | log-only or enforce |
 | Hourly cost | The NAT gateway | The NAT gateway (still used by the Control Plane and hosts), plus a small instance and its address |
 | Per-GB cost | NAT data processing on all workspace traffic, S3 included | None for workspace traffic, only normal data transfer |
