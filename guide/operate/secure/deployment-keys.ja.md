@@ -96,4 +96,4 @@ Control Plane は、セッション・サインインの state・プレビュー
 - [インストールする](../install.ja.md#2-秘密を作る)：鍵を作って保管する
 - [保存時の鍵](../12-keys.ja.md)：KMS で鍵を守る、ホームごとの鍵
 - [バックアップして復元する](../run/backup-restore.ja.md#復元する)：復元には同じ `AF_MASTER_KEY` が要る
-- [脅威モデルと残るリスク](threat-model.ja.md)
+- [脅威モデルと残るリスクを知る](threat-model.ja.md)

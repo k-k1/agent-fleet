@@ -3,7 +3,7 @@ audience: "配備の防御に責任を持つ人（ホストの端末と配備管
 source_of_truth: "`SECURITY.md`（脅威モデルと残るリスクの一覧）。運用の手順はこのページ"
 ---
 
-# 脅威モデルと残るリスク
+# 脅威モデルと残るリスクを知る
 
 [English](threat-model.md) | 日本語
 

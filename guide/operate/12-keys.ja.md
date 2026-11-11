@@ -10,7 +10,7 @@ source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/
 既定では、Control Plane が封じるすべての秘密は `AF_MASTER_KEY` から導いた鍵で守られます。`ecs` / `ecs-ec2` では、その
 管理を AWS KMS に移せて、さらに各メンバーのホームに専用の鍵を持たせられます。この章は、各ステップが何を決めるか、
 そして鍵を無効にすると何が破棄され、何が破棄されないかを扱います。これが答える脅威モデルは
-[脅威モデルと残るリスク](secure/threat-model.ja.md#残るリスクに備える)、パラメータは
+[脅威モデルと残るリスクを知る](secure/threat-model.ja.md#残るリスクに備える)、パラメータは
 [ECS のランブック](../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default) にあります。
 
 ## AWS KMS で保存時の鍵を守る

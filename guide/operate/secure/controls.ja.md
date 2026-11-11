@@ -127,7 +127,7 @@ Control Plane に `AF_WS_WORKLOAD_AWS=1` を設定すると、ECS のタスク�
 
 ## 関連
 
-- [脅威モデルと残るリスク](threat-model.ja.md)
+- [脅威モデルと残るリスクを知る](threat-model.ja.md)
 - [アクセスを取り消す・super_admin を引き継ぐ](offboarding.ja.md)
 - [サインインの方法を設定する](../signin/overview.ja.md)
 - [インターネットに公開する](../run/public-internet.ja.md)

@@ -11,7 +11,7 @@ source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプト�
 
 | やりたいこと | ページ |
 |---|---|
-| 隔離の境界、残るリスクへの備え、脆弱性の報告 | [脅威モデルと残るリスク](secure/threat-model.ja.md) |
+| 隔離の境界、残るリスクへの備え、脆弱性の報告 | [脅威モデルと残るリスクを知る](secure/threat-model.ja.md) |
 | `AF_MASTER_KEY` と `AF_COOKIE_SECRET` の要件、鍵のない配備、鍵の前に保存された値、用途ごとの cookie の鍵 | [配備の鍵を扱う](secure/deployment-keys.ja.md) |
 | ワークスペースからの外向きの通信を観測し、許可リストで絞る | [外向きの通信を制御する](secure/egress.ja.md) |
 | `/mcp` の OAuth、信頼するクライアントのホスト、メンバーの OAuth の MCP サーバー、`/mcp` のログ | [MCP と外部接続のサインインを運用する](secure/mcp.ja.md) |
