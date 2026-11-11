@@ -36,9 +36,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routegw"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/skillcurator"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // buildVersion is stamped by the release pipeline via
@@ -347,6 +349,22 @@ func serve() {
 	// The scheduled lint --apply (ADR 0130 decision 5): its own switch (memoryLintSchedule, default
 	// off) and window, no model; see internal/memlintsched.
 	memlintsched.Start(context.Background(), memlintsched.Production())
+	// The skill curator (#1562): off unless the member switched agentSkillCuration on; moves only
+	// marked agent-authored skills, only while idle. See internal/skillcurator.
+	skillcurator.Start(context.Background(), skillcurator.Deps{
+		Enabled:  uiprefs.AgentSkillCuration,
+		Activity: memconsol.SessionActivity,
+		// The user skills root of every kind that has one; roots may repeat, the curator de-duplicates.
+		Roots: func() []string {
+			var roots []string
+			for _, kind := range instrSupportedKinds {
+				if ops, ok := instrOpsOf(kind); ok && ops.SkillsDir != nil {
+					roots = append(roots, ops.SkillsDir())
+				}
+			}
+			return roots
+		},
+	})
 	// The retired memory review's pending queue is exported once (ADR 0130 decision 2) and the
 	// review's state removed. A failure leaves the queue where it is and is retried next start.
 	if err := memreview.MigrateQueue(); err != nil {

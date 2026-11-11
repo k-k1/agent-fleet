@@ -272,6 +272,15 @@ func memoryLintScheduleNeedsMark(before, after map[string]any) bool {
 	return on(after) && !on(before)
 }
 
+// agentSkillCurationNeedsMark says whether replacing `before` with `after` switches the skill
+// curator on (agentSkillCuration, #1562): it moves skill directories unattended, so turning it on
+// is the member's decision and not a session's. Only a boolean true is on, the reading
+// uiprefs.AgentSkillCuration applies. Turning it off needs nothing.
+func agentSkillCurationNeedsMark(before, after map[string]any) bool {
+	on := func(m map[string]any) bool { b, _ := m["agentSkillCuration"].(bool); return b }
+	return on(after) && !on(before)
+}
+
 // museContributorNeedsMark says whether replacing `before` with `after` switches Muse Code's
 // contributor mode on (museContributorMode, #2535). Only a boolean true is on, the reading
 // uiprefs.MuseContributorMode applies, so a write of any other value cannot slip past as "not on".
@@ -332,7 +341,7 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// The mark guards this route, not ui-prefs.json: a session that can write the file can set
 	// the same switches without it (07-security §7.5.1, Limits).
 	prev := uiprefs.Read()
-	if (museContributorNeedsMark(prev, obj) || memoryConsolidationNeedsMark(prev, obj) || memoryLintScheduleNeedsMark(prev, obj)) && !memberorigin.RequireBody(w, r, body) {
+	if (museContributorNeedsMark(prev, obj) || memoryConsolidationNeedsMark(prev, obj) || memoryLintScheduleNeedsMark(prev, obj) || agentSkillCurationNeedsMark(prev, obj)) && !memberorigin.RequireBody(w, r, body) {
 		return
 	}
 	// The retired memory review keys (ADR 0130 decision 2) are dropped on save, whatever sent

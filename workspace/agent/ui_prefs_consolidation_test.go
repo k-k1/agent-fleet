@@ -92,3 +92,25 @@ func TestMemoryLintScheduleSwitchNeedsTheMemberOriginMarkToTurnOn(t *testing.T) 
 		t.Fatal(`the string "true" read as on`)
 	}
 }
+
+// The skill curator moves files unattended, so its switch is the member's: an unmarked write
+// cannot turn it on, switching off needs nothing, and it is off when missing or not a boolean.
+func TestAgentSkillCurationSwitchNeedsTheMemberOriginMarkToTurnOn(t *testing.T) {
+	writeUIPrefs(t, `{}`)
+	if uiprefs.AgentSkillCuration() {
+		t.Fatal("the curator is on by default")
+	}
+	if rec := putPrefs(t, `{"agentSkillCuration":true}`, false); rec.Code == http.StatusOK {
+		t.Fatalf("an unmarked write switched the curator on: %d", rec.Code)
+	}
+	if rec := putPrefs(t, `{"agentSkillCuration":true}`, true); rec.Code != http.StatusOK || !uiprefs.AgentSkillCuration() {
+		t.Fatalf("a marked write: %d %s", rec.Code, rec.Body)
+	}
+	if rec := putPrefs(t, `{"agentSkillCuration":false}`, false); rec.Code != http.StatusOK || uiprefs.AgentSkillCuration() {
+		t.Fatalf("switching off without a mark: %d", rec.Code)
+	}
+	writeUIPrefs(t, `{"agentSkillCuration":"true"}`)
+	if uiprefs.AgentSkillCuration() {
+		t.Fatal(`the string "true" read as on`)
+	}
+}
