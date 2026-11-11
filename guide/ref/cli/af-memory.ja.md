@@ -37,7 +37,7 @@ af-memory --help
 | `muse-import` | muse のメモを取り込む | `--dry-run` なしなら書く |
 | `export-sources` | Claude Code へ書き戻せるプロジェクトを一覧する | 書かない |
 | `export` | プロジェクトのメモリを Claude Code 自身のメモリへ書き戻す | `--dry-run` なしなら書く |
-| `lint` | メモリを点検してレポートを出す | `--apply` なしなら書かない |
+| `lint` | メモリを点検してレポートを出す | `--apply` を付けたときだけ書く |
 | `--help`（`-h`・`help`） | 使いかたを表示する | 書かない |
 
 ## 終了コード
@@ -86,8 +86,8 @@ af-memory import --project <slug>
 `import-sources` は、Claude のプロジェクトごとにファイル数と取り込み先を表示します。取り込めないものは、取り込み先の代わりに理由が出ます。
 
 ```
--home-dev-repos-acme-shop        12 files  -> acme-shop
--home-dev-repos-old-tool          3 files  no_project
+-home-dev-repos-acme-shop                                      12 files  -> acme-shop
+-home-dev-repos-old-tool                                        3 files  no_project
 ```
 
 `import` は、まずプレビューを状態ごとに表示し、新規（`new`）と更新（`update`）のものを 50 件ずつ取り込みます。
@@ -177,8 +177,8 @@ af-memory export --project <ID か名前> [--overwrite <名前>]...
 
 | 表示 | すること |
 |---|---|
-| `newer edit(s) were kept under hidden names` | 書き戻し中に Claude 側で変わった編集が、別の名前で残っています。表示された名前のファイルを手で戻します |
-| `file(s) could not be written` | 書けなかったファイルがあります |
+| `<N> newer edit(s) were kept under hidden names` | 書き戻し中に Claude 側で変わった編集が、別の名前で残っています。表示された名前のファイルを手で戻します |
+| `<N> file(s) could not be written` | 書けなかったファイルがあります |
 | `MEMORY.md could not be updated` | 書き戻し中に `MEMORY.md` が変わったか、書けませんでした。プレビューからやり直します |
 
 ## lint
@@ -206,7 +206,7 @@ af-memory lint [--user | --project <ID か名前>] [--json] [--apply]
 
 | 指摘 | 意味 |
 |---|---|
-| `broken-link` | どのメモリにも向かない `[[リンク]]` |
+| `broken-link` | どのメモリにも向かない `[[名前]]` のリンク |
 | `missing-path` | 既定ブランチにないパス |
 | `missing-symbol` | 既定ブランチのどこにもないシンボル |
 | `missing-adr` | 記録のない ADR 番号 |

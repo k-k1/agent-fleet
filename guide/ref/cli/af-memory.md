@@ -86,8 +86,8 @@ af-memory import --project <slug>
 `import-sources` prints each Claude project with its file count and the project it imports into. One that cannot be imported shows a reason instead.
 
 ```
--home-dev-repos-acme-shop        12 files  -> acme-shop
--home-dev-repos-old-tool          3 files  no_project
+-home-dev-repos-acme-shop                                      12 files  -> acme-shop
+-home-dev-repos-old-tool                                        3 files  no_project
 ```
 
 `import` first prints the preview by status, then imports the new (`new`) and updated (`update`) items 50 at a time.
@@ -177,8 +177,8 @@ In these cases the write-back ends with exit status 1.
 
 | Message | What to do |
 |---|---|
-| `newer edit(s) were kept under hidden names` | An edit made in Claude during the write-back is kept under another name. Move the file named above back by hand |
-| `file(s) could not be written` | Some files could not be written |
+| `<N> newer edit(s) were kept under hidden names` | An edit made in Claude during the write-back is kept under another name. Move the file named above back by hand |
+| `<N> file(s) could not be written` | Some files could not be written |
 | `MEMORY.md could not be updated` | `MEMORY.md` changed during the write-back or could not be written. Start again from the preview |
 
 ## lint
