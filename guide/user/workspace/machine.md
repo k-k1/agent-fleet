@@ -97,7 +97,7 @@ What Agent Fleet keeps in `~/.cache/agent-fleet` (generated images, thumbnails, 
 
 ### Tool caches
 
-The caches go, npm (npx included), uv, pip and Maven keep in your home. They grow without limit and are never removed
+The caches go, npm (npx included), uv, pip, Maven and Gradle keep in your home. They grow without limit and are never removed
 on their own.
 
 1. Press **Measure** to count them (it reads every file, so it runs only when you press it)
@@ -105,6 +105,11 @@ on their own.
 
 - The next build or install that uses it is slower, once
 - A cache a running build or install is using shows **In use** and cannot be emptied until that finishes
+- Gradle appears as two rows, **gradle-caches** (`~/.gradle/caches/<version>`) and **gradle-wrapper** (`~/.gradle/wrapper/dists`). They hold only
+  the Gradle versions that no `gradle-wrapper.properties` under `~/repos` (worktrees included) asks for. The shared
+  caches (`modules-2` and so on), `gradle.properties` and `~/.gradle/jdks` are never touched
+- If any wrapper file cannot be read, the Gradle rows show **Not offered** and nothing is removed
+- A removed Gradle version is downloaded again by the next build that needs it, which needs access to `services.gradle.org`
 - `~/.m2/repository` or `~/.npm/_npx` do not appear when they are symbolic links. Delete them from a terminal
 
 ### Leftover files

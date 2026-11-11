@@ -6,7 +6,7 @@ package main
 //   DELETE /cleanup/tool-caches/{name} → empty that cache
 //
 // These are not Agent Fleet's own leftovers (cleanup_cache.go counts those). They belong to
-// go, npm (npx too), uv, pip and Maven, grow without bound, and were measured at 34G (go-build) and 41G
+// go, npm (npx too), uv, pip, Maven and Gradle, grow without bound, and were measured at 34G (go-build) and 41G
 // (npm) in one home (docs/log/116). All of them are regenerable: emptying one costs the next
 // build or install a slower first run and nothing else.
 //
@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gradlecache"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -43,6 +45,9 @@ type toolCache struct {
 	// sit beside unrelated data (~/.m2/settings.xml, the rest of ~/.npm), so a link there
 	// could point anywhere and emptying "through" it would delete what it points at.
 	noFollow bool
+	// plan, when set, makes the row partial: only what it lists is sized and removed, and
+	// the directory itself and the rest of it stay (gradle_caches.go).
+	plan func(dir string) gradlecache.Plan
 }
 
 // isSymlink reports whether p's last element is a symlink.
@@ -60,6 +65,10 @@ var toolCaches = []toolCache{
 	// or settings.xml), so the default location is the only one. The directory is
 	// ~/.m2/repository, never ~/.m2: settings.xml and settings-security.xml live beside it.
 	{Name: "maven", rel: ".m2/repository", users: argvRunsMaven, noFollow: true},
+	// Gradle is partial rows: only versions no project pins (gradle_caches.go). The
+	// directories are caches/ and wrapper/dists, never ~/.gradle (gradle.properties lives there).
+	{Name: "gradle-caches", env: "GRADLE_USER_HOME", envSub: "caches", rel: ".gradle/caches", users: argvRunsGradle, noFollow: true, plan: planGradleCaches},
+	{Name: "gradle-wrapper", env: "GRADLE_USER_HOME", envSub: "wrapper/dists", rel: ".gradle/wrapper/dists", users: argvRunsGradle, noFollow: true, plan: planGradleDists},
 	{Name: "npx", env: "npm_config_cache", envSub: "_npx", rel: ".npm/_npx", users: argvRunsNpx, noFollow: true},
 }
 
@@ -199,6 +208,8 @@ type toolCacheRow struct {
 	// Busy lists the pids that could be using the cache right now; the Console disables the
 	// button and a DELETE answers 409 while it is non-empty.
 	Busy []int `json:"busy,omitempty"`
+	// Skipped is why a partial row offers nothing (its pinned versions could not be read).
+	Skipped string `json:"skipped,omitempty"`
 	usagePlace
 }
 
@@ -243,10 +254,18 @@ func measureToolCaches(now time.Time) *toolCacheUsage {
 		if c.noFollow && isSymlink(dir) {
 			continue // never walked or emptied through a link; see toolCache.noFollow
 		}
-		budget := toolCacheMaxEntries
 		row := toolCacheRow{Name: c.Name, Busy: cacheUsers(c), usagePlace: placeOf(dir)}
-		row.Bytes, row.Files = walkSize(dir, &budget)
-		u.Truncated = u.Truncated || budget <= 0
+		if c.plan != nil {
+			p := c.plan(dir)
+			row.Skipped = p.Skipped
+			var trunc bool
+			row.Bytes, row.Files, trunc = measureGradlePlan(p)
+			u.Truncated = u.Truncated || trunc
+		} else {
+			budget := toolCacheMaxEntries
+			row.Bytes, row.Files = walkSize(dir, &budget)
+			u.Truncated = u.Truncated || budget <= 0
+		}
 		u.Caches = append(u.Caches, row)
 	}
 	return u
@@ -272,7 +291,19 @@ func handleDeleteToolCache(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "cache_is_symlink", c.Name+" cache directory is a symlink; empty its target by hand")
 		return
 	}
-	bytes, files, err := emptyDir(c.dir())
+	var bytes int64
+	var files int
+	var err error
+	if c.plan != nil {
+		p := c.plan(c.dir())
+		if p.Skipped != "" {
+			httpx.WriteErr(w, http.StatusConflict, "pins_unknown", c.Name+": "+p.Skipped)
+			return
+		}
+		bytes, files, err = emptyGradlePlan(p)
+	} else {
+		bytes, files, err = emptyDir(c.dir())
+	}
 	toolCacheUsageCache.mu.Lock()
 	toolCacheUsageCache.val = nil
 	toolCacheUsageCache.mu.Unlock()
@@ -336,4 +367,41 @@ func joinInts(xs []int) string {
 		s[i] = strconv.Itoa(x)
 	}
 	return strings.Join(s, ", ")
+}
+
+// --- Gradle rows (internal/gradlecache decides what no project pins) ---
+
+func planGradleCaches(dir string) gradlecache.Plan {
+	return gradlecache.PlanCaches(dir, gitx.ReposRoot(), homeDir())
+}
+
+func planGradleDists(dir string) gradlecache.Plan {
+	return gradlecache.PlanDists(dir, gitx.ReposRoot(), homeDir())
+}
+
+func argvRunsGradle(argv []string) bool { return gradlecache.ArgvRuns(argv) }
+
+// measureGradlePlan sizes what the plan would remove.
+func measureGradlePlan(p gradlecache.Plan) (bytes int64, files int, truncated bool) {
+	budget := toolCacheMaxEntries
+	for _, d := range p.Remove {
+		b, f := walkSize(d, &budget)
+		bytes, files = bytes+b, files+f
+	}
+	return bytes, files, budget <= 0
+}
+
+// emptyGradlePlan removes the planned directories, re-checking each is still a real
+// directory (not swapped for a link since the plan was made).
+func emptyGradlePlan(p gradlecache.Plan) (bytes int64, files int, err error) {
+	bytes, files, _ = measureGradlePlan(p)
+	for _, d := range p.Remove {
+		if fi, lerr := os.Lstat(d); lerr != nil || !fi.IsDir() {
+			continue
+		}
+		if rerr := removeTree(d); rerr != nil && err == nil {
+			err = rerr
+		}
+	}
+	return bytes, files, err
 }

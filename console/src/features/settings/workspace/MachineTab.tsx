@@ -396,9 +396,11 @@ interface ToolCacheRow extends Place {
   files: number;
   /** pids that could be using the cache; the Agent refuses to empty it while non-empty. */
   busy?: number[];
+  /** why a Gradle row offers nothing: the versions the projects pin could not be read. */
+  skipped?: string;
 }
 
-// ToolCacheSection — the go / npm / npx / uv / pip / Maven caches in home, and emptying one (docs/log/116).
+// ToolCacheSection — the go / npm / npx / uv / pip / Maven / Gradle caches in home, and emptying one (docs/log/116).
 //
 // Not part of DiskSection: those rows are Agent Fleet's own and are walked when the tab
 // opens. These run to hundreds of thousands of files, so they are measured only on a press.
@@ -456,6 +458,8 @@ function ToolCacheSection() {
           <PlaceLine place={r} />
           {r.busy?.length ? (
             <span className="muted">{tr("machine.tool_busy", { pids: r.busy.join(", ") })}</span>
+          ) : r.skipped ? (
+            <span className="muted">{tr("machine.tool_skipped", { why: r.skipped })}</span>
           ) : (
             r.bytes > 0 && (
               <Button small icon="trash" onClick={() => setConfirm(r)}>

@@ -506,6 +506,7 @@ export const tools = {
   "machine.tool_failed": "ツールのキャッシュを測れませんでした。",
   "machine.tool_none": "ツールのキャッシュは見つかりませんでした。",
   "machine.tool_empty": "空にする",
+  "machine.tool_skipped": "対象外: {why}",
   "machine.tool_busy": "使用中（pid {pids}）",
   "machine.tool_confirm_title": "{name} のキャッシュを空にしますか？",
   "machine.tool_confirm_body":
@@ -514,7 +515,7 @@ export const tools = {
   "machine.tool_in_use": "{name} は実行中のビルドかインストールが使っています。終わってからもう一度押してください。",
   "machine.tool_empty_failed": "{name} を空にできませんでした: ",
   "machine.tool_note":
-    "go・npm（npx を含む）・uv・pip・Maven がホームに溜めるキャッシュです。上限なく増え、自動では消えません。数えるには全ファイルを読むので、ボタンを押したときだけ測ります。",
+    "go・npm（npx を含む）・uv・pip・Maven・Gradle がホームに溜めるキャッシュです。Gradle の 2 行（gradle-caches・gradle-wrapper）は、~/repos のどのプロジェクトも指定していないバージョンだけです。上限なく増え、自動では消えません。数えるには全ファイルを読むので、ボタンを押したときだけ測ります。",
   "machine.left_title": "使われなくなったファイル",
   "machine.left_failed": "使われなくなったファイルを測れませんでした。",
   "machine.left_kind_chromium": "Chromium の使い捨てプロファイル",
@@ -549,7 +550,7 @@ export const tools = {
   "machine.home_cat_agent": "Agent Fleet のデータ",
   "machine.home_cat_other": "その他",
   "machine.home_cat_reclaimable": "今 {size} 空けられます。",
-  "machine.home_hint_tool_cache": "下の「ツールのキャッシュ」で go / npm / npx / uv / pip / Maven のキャッシュを空にできます。",
+  "machine.home_hint_tool_cache": "下の「ツールのキャッシュ」で go / npm / npx / uv / pip / Maven / Gradle のキャッシュを空にできます。",
   "machine.home_hint_af_work": "セッションがもうないフォルダです。下の「使われなくなったファイル」で消せます。",
   "machine.home_hint_trash": "掃除画面の「ごみ箱」タブで、古いものを完全に削除できます。",
   "machine.home_none_regenerable": "追跡ファイルを含まない node_modules・.next・target・.gradle・build・dist です。これだけを消す機能はまだありません。マージ済みの worktree を掃除画面で丸ごと消すと空きます。",

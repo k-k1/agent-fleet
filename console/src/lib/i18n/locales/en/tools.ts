@@ -509,6 +509,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.tool_failed": "Couldn't measure the tool caches.",
   "machine.tool_none": "No tool caches found.",
   "machine.tool_empty": "Empty",
+  "machine.tool_skipped": "Not offered: {why}",
   "machine.tool_busy": "In use (pid {pids})",
   "machine.tool_confirm_title": "Empty the {name} cache?",
   "machine.tool_confirm_body":
@@ -517,7 +518,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.tool_in_use": "{name} is in use by a running build or install. Try again when it finishes.",
   "machine.tool_empty_failed": "Couldn't empty {name}: ",
   "machine.tool_note":
-    "Caches that go, npm (including npx), uv, pip and Maven keep in your home. They grow without limit and are never emptied automatically. Measuring reads every file, so it runs only when you press the button.",
+    "Caches that go, npm (including npx), uv, pip, Maven and Gradle keep in your home. The two Gradle rows (gradle-caches, gradle-wrapper) hold only the versions no project in ~/repos pins. They grow without limit and are never emptied automatically. Measuring reads every file, so it runs only when you press the button.",
   "machine.left_title": "Leftover files",
   "machine.left_failed": "Couldn't measure the leftover files.",
   "machine.left_kind_chromium": "Chromium throwaway profiles",
@@ -552,7 +553,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.home_cat_agent": "Agent Fleet data",
   "machine.home_cat_other": "Other",
   "machine.home_cat_reclaimable": "{size} can be freed today.",
-  "machine.home_hint_tool_cache": "Empty the go / npm / npx / uv / pip / Maven caches under Tool caches below.",
+  "machine.home_hint_tool_cache": "Empty the go / npm / npx / uv / pip / Maven / Gradle caches under Tool caches below.",
   "machine.home_hint_af_work": "Folders whose session is gone; delete them under Leftover files below.",
   "machine.home_hint_trash": "Delete old archives permanently from the Clean up window's trash.",
   "machine.home_none_regenerable": "node_modules, .next, target, .gradle, build and dist that hold no tracked file. Nothing removes these yet; deleting a whole merged worktree in the Clean up window does.",

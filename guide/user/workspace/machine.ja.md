@@ -96,13 +96,18 @@ Agent Fleet が `~/.cache/agent-fleet` に溜めるもの（生成した画像�
 
 ### ツールのキャッシュ
 
-go・npm（npx を含む）・uv・pip・Maven がホームに溜めるキャッシュです。上限なく増え、自動では消えません。
+go・npm（npx を含む）・uv・pip・Maven・Gradle がホームに溜めるキャッシュです。上限なく増え、自動では消えません。
 
 1. 「**測る**」を押して量を数えます（全ファイルを読むので、押したときだけ数えます）
 2. 「**空にする**」を押し、確認のあとで削除します
 
 - 次にそれを使うビルドやインストールが、1 回だけ遅くなります
 - 実行中のビルドやインストールが使っているものは「**使用中**」と出て、終わるまで空にできません
+- Gradle は 2 行、「**gradle-caches**」（`~/.gradle/caches/<バージョン>`）と「**gradle-wrapper**」（`~/.gradle/wrapper/dists`）で出ます。
+  `~/repos`（worktree を含む）の `gradle-wrapper.properties` がどれも指定していないバージョンだけが対象です。
+  共有のキャッシュ（`modules-2` など）・`gradle.properties`・`~/.gradle/jdks` には触れません
+- 読めない wrapper ファイルが 1 つでもあると、Gradle の行は「**対象外**」と出て、何も消しません
+- 消した Gradle バージョンは、それを必要とする次のビルドが取り直します（`services.gradle.org` に届く必要があります）
 - `~/.m2/repository` や `~/.npm/_npx` がシンボリックリンクのときは出ません。ターミナルから消してください
 
 ### 使われなくなったファイル
