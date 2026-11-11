@@ -30,7 +30,7 @@ These do not vary by deployment.
 | Folder zip download: reading time | 45 s | Refused with 413 (below the load balancer's 60 s idle timeout, because nothing is sent until the archive is built). Cooperative: checked between reads and after the last one, so a call already stuck on a hung volume holds the build slot until it returns |
 | Folder zip download: transfer time | 15 min | The connection is closed; a stalled client cannot hold the one build slot longer |
 | Folder zip download: concurrent builds | 1 per workspace | A second press waits up to 2 s, then 503 "busy"; each build holds a temp file of up to the byte limit on the home volume |
-| A "working" session with no sign of life | 1 hour | It stops keeping the Workspace awake. Only for the session kinds whose progress the Agent observes; the time counts from the last output, state change or (for some kinds) running tool, not from the start of the turn. A session whose progress cannot be read keeps holding, and the "do not auto-stop" pin and background work are exempt ([operate/03](../operate/03-run.md#what-keeps-a-workspace-awake) lists the kinds) |
+| A "working" session with no sign of life | 1 hour | It stops keeping the Workspace awake. Only for the session kinds whose progress the Agent observes; the time counts from the last output, state change or (for some kinds) running tool, not from the start of the turn. A session whose progress cannot be read keeps holding, and the "do not auto-stop" pin and background work are exempt ([Use idle stop and force-stop](../operate/run/idle-stop.md#what-keeps-a-workspace-awake) lists the kinds) |
 | A question, plan or permission left by a stopped session | 14 days | The carried card is dropped ([Reply to a session](../user/sessions/reply.md#answer-the-cards-a-stopped-session-left)) |
 | Agent memory: one memory | 200 KiB body, 2,000-character description | Refused ([member/18](../member/18-agent-memory.md)) |
 | Agent memory: the index a session receives | described part 24 KiB by default (the `memory_index` tool's `budget` takes 4–64 KiB), each description cut to 150 characters; then names only, within 8 KiB | Past the names budget the rest is only counted ("and N more") |
@@ -65,8 +65,8 @@ Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates mo
 | Idle Workspace stopped after | 2 hours | `AF_WS_IDLE_TIMEOUT`; `0` turns it off |
 | Background work keeps a Workspace awake for | 2 hours | `AF_BACKGROUND_HOLD_MAX`; `0` = unbounded |
 | A terminal with no typing still counts as someone there for | 30 minutes | `AF_PRESENCE_IDLE_TIMEOUT` |
-| A Workspace still starting is stopped after | 30 minutes | `AF_WORKSPACE_START_DEADLINE`; `0` turns it off ([operate/03](../operate/03-run.md#a-start-that-never-finishes)) |
-| A Workspace whose Agent stays silent is stopped after | off | `AF_AGENT_SILENT_STOP_AFTER` (minimum `10m`; [operate/03](../operate/03-run.md#stopping-a-silent-agent-automatically-off-by-default)) |
+| A Workspace still starting is stopped after | 30 minutes | `AF_WORKSPACE_START_DEADLINE`; `0` turns it off ([Use idle stop and force-stop](../operate/run/idle-stop.md#stop-starts-that-never-finish)) |
+| A Workspace whose Agent stays silent is stopped after | off | `AF_AGENT_SILENT_STOP_AFTER` (minimum `10m`; [Use idle stop and force-stop](../operate/run/idle-stop.md#stop-a-silent-agent-automatically)) |
 | Home and state volumes (kubernetes) | 50 GiB and 5 GiB | `AF_K8S_HOME_GIB`, `AF_K8S_STATE_GIB` |
 | Raw egress events (one per workspace connection through the egress gateway) kept for | 30 days | `AF_EGRESS_EVENT_RETENTION_DAYS`; `0` keeps them forever. The per-host daily counts stay; on AWS set the 30-ingress parameter `EgressEventRetentionDays` (empty keeps 30) ([operate/04](../operate/04-secure.md#operating-egress-control)) |
 

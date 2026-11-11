@@ -52,8 +52,8 @@ risks", grouped by deployment target (every target, `docker` and `native`, `ecs`
   **give each deployment its own AWS account** and limit who administers it.
 - **`AF_MASTER_KEY`**: **store it in a vault separate from the DB and homes, and back it up
   independently**. Never place it in the data area or in backup archives (by design it never
-  goes in). For when it is generated and how to store it, see [02 §2](02-install.md); for the
-  identity requirement at restore time, see [03](03-run.md).
+  goes in). For when it is generated and how to store it, see [Install Agent Fleet](install.md#2-generate-the-secrets); for the
+  identity requirement at restore time, see [Back up and restore](run/backup-restore.md#restore).
   **Without it, members' stored credentials are kept unencrypted in their homes.** That is
   only meant for `AUTH=dev`: under any other `AUTH` the Control Plane still starts, but logs a
   `WARNING` at start-up and shows a warning banner in the administration screen. Setting the
@@ -221,7 +221,7 @@ in the Console.
 > The exception is AWS (`ecs` / `ecs-ec2`) with `00-network`'s `EgressRoute=gateway`: the
 > workspace route table then goes through an egress gateway (Squid), so a workspace has no other
 > way out and enforce applies to it. That option is new and was verified on a test deployment
-> only, **not yet in production** (see "Choosing the egress route on AWS" in [choosing a target](01-choose.md)).
+> only, **not yet in production** (see [Choose the egress route on AWS](choose.md#choose-the-egress-route-on-aws)).
 > Elsewhere, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in `docs/build/07-security.md` §7.8.
 
@@ -428,7 +428,7 @@ client is served.
   logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take effect
   without a CP restart** (removals likewise). The check runs **on every request**, not just at
   sign-in, so removing someone locks them out on their very next request instead of waiting out
-  `AF_SESSION_TTL`. That is the offboarding path. Configuration is in [02 §6](02-install.md).
+  `AF_SESSION_TTL`. That is the offboarding path. Configuration is in [Install Agent Fleet](install.md#6-sign-in-as-the-first-administrator).
 - **Being invited is itself permission to reach the login.** Somebody added to a tenant in the
   Admin panel can sign in without also appearing in `AF_OAUTH_ALLOWED_*`, so a deployment run
   on invitations keeps one roster instead of two lists that drift apart. Passing the door does
@@ -477,8 +477,7 @@ client is served.
     service account, Workload Identity on GKE). Blocking that route is the cluster's job (a
     NetworkPolicy egress rule, or GKE metadata concealment); the Control Plane does not do it.
   - **ecs-ec2**: the slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`; retained slots have to
-    be replaced: reserve them in Admin → Slots ([03-run](03-run.md), "ecs-ec2:
-    replacing slots after a launch template change").
+    be replaced: reserve them in Admin → Slots ([11](11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change)).
 
   `AF_WS_WORKLOAD_AWS=1` on the Control Plane hands the ECS task role back to workspaces and
   stops suppressing the SDKs' metadata lookup. It removes none of the network protections above,

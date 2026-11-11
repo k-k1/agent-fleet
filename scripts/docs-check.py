@@ -1713,6 +1713,8 @@ TASK_PAGES = (
     "user/", "ref/cli/", "ref/aws-profiles.", "ref/aws-ssm.", "ref/bedrock-route.", "ref/console-ui.",
     "admin/overview.", "admin/members/", "admin/access/", "admin/defaults/", "admin/resources/",
     "admin/audit.", "admin/usage.", "admin/mcp-distribute.", "admin/memory-outside.", "admin/watch-sources.",
+    "operate/overview.", "operate/choose.", "operate/install.", "operate/install-decisions.",
+    "operate/run/",
     "operate/signin/", "operate/diagnose/",
 )
 

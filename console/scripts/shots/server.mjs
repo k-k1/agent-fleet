@@ -77,10 +77,12 @@ const exact = {
     // The admin guide's member detail shows "Clean home", which needs a deployment that can erase one.
     ...(process.env.SHOT_ADMIN_GUIDE ? { home_erase: true } : {}),
   }),
+  // SHOT_OPERATE_RUN: the operate pages' deployment administrator, so the account menu offers the
+  // admin modal (guide scene operate-brand). Every other run stays a plain member or tenant admin.
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
-    // The operate guide's sign-in pages (SHOT_OPERATE_SIGNIN) are the deployment administrator's.
-    super_admin: !!process.env.SHOT_OPERATE_SIGNIN,
+    // The operate guide's pages (SHOT_OPERATE_RUN, SHOT_OPERATE_SIGNIN) are the deployment administrator's.
+    super_admin: process.env.SHOT_OPERATE_RUN === "1" || !!process.env.SHOT_OPERATE_SIGNIN,
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
   // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
@@ -298,6 +300,31 @@ const exact = {
         "/api/admin/mcp-servers": () => ({ servers: [] }),
         "/api/admin/tenants/demo/external-memory": () => ({ enabled: true }),
         "/api/admin/tenants/demo/watch-sources": () => ({ enabled: false }),
+      }
+    : {}),
+  // Admin › Appearance for the operate pages (SHOT_OPERATE_RUN): a staging deployment branded
+  // violet from this screen, over an environment that names none.
+  ...(process.env.SHOT_OPERATE_RUN === "1"
+    ? {
+        "/api/admin/brand": () => ({
+          color: "violet",
+          hex: "#7c4dff",
+          label: "staging",
+          name: "[staging] Agent Fleet",
+          source: "admin",
+          env: { color: "", label: "" },
+          presets: [
+            { name: "teal", hex: "#149ba7" },
+            { name: "blue", hex: "#2f6fed" },
+            { name: "violet", hex: "#7c4dff" },
+            { name: "magenta", hex: "#c2447d" },
+            { name: "red", hex: "#d94b4b" },
+            { name: "orange", hex: "#e07a1f" },
+            { name: "green", hex: "#2f9e44" },
+            { name: "slate", hex: "#64748b" },
+          ],
+          max_label: 16,
+        }),
       }
     : {}),
   "/api/admin/workspace-sizing": () => ({

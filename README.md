@@ -85,7 +85,7 @@ exists in Japanese (`docs/img/*-ja.webp`, e.g. [the console](docs/img/console-ja
 ## Trying it
 
 Which edition suits you is a twenty-minute decision, laid out in
-[Choosing a deployment target](guide/operate/01-choose.md):
+[Choose where to deploy](guide/operate/choose.md):
 
 | Edition | For |
 |---|---|

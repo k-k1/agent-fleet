@@ -124,7 +124,7 @@ informed choice — not undisclosed bugs.
   workspaces get an egress address of their own, a second one to allow-list next to
   the NAT gateway's
   ([04 Operating egress control](guide/operate/04-secure.md#operating-egress-control),
-  [01 Choosing the egress route on AWS](guide/operate/01-choose.md#choosing-the-egress-route-on-aws),
+  [Choose the egress route on AWS](guide/operate/choose.md#choose-the-egress-route-on-aws),
   [07 §7.8](docs/build/07-security.md#78-egress-control-)).
 
 - **Without a preview domain, the path-form preview runs a workspace app on the Console
@@ -154,7 +154,7 @@ informed choice — not undisclosed bugs.
   CP's own entries. New names that would collide are refused, but a collision stored
   earlier stays as it is: the CP logs `data root name collision` at start-up, and only
   an administrator can move it
-  ([operate/02 §7](guide/operate/02-install.md#7-the-first-tenant-and-members)). Check
+  ([Names a tenant slug cannot take](guide/operate/install.md#names-a-tenant-slug-cannot-take)). Check
   the start-up log after an upgrade.
 
 - **`native` is single-user only, and the user is the operator.** There is no
