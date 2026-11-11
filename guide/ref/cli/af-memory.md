@@ -195,7 +195,7 @@ af-memory lint [--user | --project <id or name>] [--json] [--apply]
 | `--user` | Checks the user-wide memory only |
 | `--project <id or name>` | Checks one project only. Not together with `--user` |
 | `--json` | Prints the report as JSON |
-| `--apply` | Writes what it finds into the memories as reasons ([`--apply`](#--apply)) |
+| `--apply` | Writes what it finds into the memories as reasons ([`--apply`](#write-the-findings)) |
 
 ```
 == acme-shop: 24 memories, 2 finding(s)  [refs/remotes/origin/main @ 3f9c2a1e5b07]
@@ -218,7 +218,7 @@ af-memory lint [--user | --project <id or name>] [--json] [--apply]
 - Proposed retired terms may be listed. Whether one goes on your list is decided in the Console
 - The exit status says whether the command worked. It is 0 even when there are findings
 
-### --apply
+### Write the findings
 
 Writes what the report finds into the memories.
 

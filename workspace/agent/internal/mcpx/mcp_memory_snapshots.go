@@ -28,7 +28,9 @@ type restoreMemorySnapshotArgs struct {
 }
 
 // memorySnapshotTools read and restore the history of claude's and codex's own memories
-// (docs/log/39). Restoring is --write's.
+// (docs/log/39). Restoring is --write's. The descriptions call it the agent's own memory, never by the
+// Console's name for AF memory (エージェントメモリ): a model reading the tool list has to tell the
+// two stores apart.
 func memorySnapshotTools() []toolSpec {
 	return []toolSpec{
 		{
@@ -40,7 +42,7 @@ func memorySnapshotTools() []toolSpec {
 					// the model acks and writes the file itself would be a second exit bypassing that
 					// defence. Export and import stay a Console action the user performs.
 					"name": "list_memory_snapshots",
-					"description": "エージェントメモリ（claude の auto-memory / codex の memories）の変更履歴を新しい順に返す。各行は時刻・契機（auto/manual/pre-restore/restore/import）・変更されたプロジェクトを持つ。" +
+					"description": "エージェント自身のメモリ（claude の auto-memory / codex の memories）の変更履歴を新しい順に返す。memory_* ツールで読み書きする Agent Fleet のメモリとは別物で、そちらの変更はここに出ない（Console のエージェントメモリの「変更」で見る）。各行は時刻・契機（auto/manual/pre-restore/restore/import）・変更されたプロジェクトを持つ。" +
 						"「メモリがいつ変わったか」「おかしくなったのはいつからか」を聞かれた時や、restore_memory_snapshot で戻す時点を選ぶ前に呼ぶ。中身の差分は get_memory_snapshot を見る。",
 					"inputSchema": map[string]any{
 						"type": "object",
@@ -67,7 +69,7 @@ func memorySnapshotTools() []toolSpec {
 			operator: func() map[string]any {
 				return map[string]any{
 					"name": "get_memory_snapshot",
-					"description": "指定時点のエージェントメモリの中身を返す。その時点に何が入っていたか（kind 別・プロジェクト別のファイル数）と、その snapshot が入れた変更の差分を返す。" +
+					"description": "指定時点のエージェント自身のメモリ（claude / codex。Agent Fleet のメモリは含まない）の中身を返す。その時点に何が入っていたか（kind 別・プロジェクト別のファイル数）と、その snapshot が入れた変更の差分を返す。" +
 						"rev（list_memory_snapshots の id）か at（日時。その時刻以前の直近 snapshot に解決）のどちらかを指定する。restore_memory_snapshot で戻す前に「戻したら何がどう変わるか」を確認するために呼ぶ。差分が大きい時は path で絞る。",
 					"inputSchema": map[string]any{
 						"type": "object",
@@ -128,7 +130,7 @@ func memorySnapshotTools() []toolSpec {
 					// description, the model either plays it too safe and refuses what the user asked
 					// for, or takes it too lightly and skips the confirmation.
 					"name": "restore_memory_snapshot",
-					"description": "エージェントメモリを指定時点へ戻す。rev（list_memory_snapshots の id）か at（日時）で戻す先を指定し、範囲は all（全体）／projects（claude のプロジェクト単位）／kinds（claude・codex 単位）で指定する。範囲は必ず明示すること（省略は拒否される）。" +
+					"description": "エージェント自身のメモリ（claude / codex）を指定時点へ戻す。Agent Fleet のメモリ（memory_* ツールのメモリ）は戻さない。rev（list_memory_snapshots の id）か at（日時）で戻す先を指定し、範囲は all（全体）／projects（claude のプロジェクト単位）／kinds（claude・codex 単位）で指定する。範囲は必ず明示すること（省略は拒否される）。" +
 						"履歴は書き換えず、戻す直前の状態も自動で snapshot に残るので、この操作自体を後から取り消せる。誤って消した／誤学習したメモリを戻す時に使う。" +
 						"実行前に必ず get_memory_snapshot で戻り先の中身を確認し、『どの時点へ・どの範囲を戻すか』を利用者に示して承認を得ること。対象 kind のセッションが実行中だと結果の busy=true で返る。",
 					"inputSchema": map[string]any{

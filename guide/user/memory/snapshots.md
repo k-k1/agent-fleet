@@ -7,7 +7,7 @@ source_of_truth: "Console ⚙ Settings > Memory snapshots"
 
 English | [日本語](snapshots.ja.md)
 
-See the history of the memory Claude Code and Codex keep in their own files, and put it back to how it was at a point in time.
+See the history of the agent's own memory (what Claude Code and Codex keep in their own files), and put it back to how it was at a point in time.
 "It learned something it shouldn't have" and "when did this go wrong" become fixable after the fact. You can also take it to another environment.
 
 Agent Fleet memory, the memory every kind of agent shares, is a different thing. Check and revert its changes in the memory Changes view.
@@ -121,7 +121,7 @@ Targets shows Codex as "Memories are off (Codex's own default)". Turn it on, and
 
 ### The import says "Cannot import: this environment has no destination for"
 
-A kind of agent memory in the file is not in use in this environment (for example, Codex's memory is off).
+An agent kind's own memory in the file is not in use in this environment (for example, Codex's memory is off).
 That kind cannot be selected. For Codex, turn it on in Targets and import again.
 
 ### The import says "The secret scan of the imported contents failed"

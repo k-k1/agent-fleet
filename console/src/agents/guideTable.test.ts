@@ -58,7 +58,7 @@ const UNMAPPED_ROWS: Record<string, string> = {
   "Receives your agent instructions": "an Agent-side apply path",
   "Receives integration (MCP) servers": "an Agent-side materialiser",
   "Shares Agent Fleet memory (af memory tools)": "af MCP tools on every session surface (ADR 0108), not a Console cap",
-  "Agent memory is version-managed": "a repo convention, no cap",
+  "The agent's own memory is version-managed": "a repo convention, no cap",
   "RTK (token savings)": "no Console cap; derived from the Go source by scripts/docs-check.py (DERIVED_ROWS)",
   "Starts child sessions and messages other sessions":
     "follows the Agent's Caps().MCPClient, which kindCatalog.ts holds rather than AgentCaps; checked by scripts/docs-check.py (CAPS_ROWS)",

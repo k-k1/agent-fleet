@@ -73,7 +73,7 @@ For both, only sessions **started** after the flip are affected. A running sessi
 "**The write-back keeps failing**" appears under the switch, with the reason. Until it succeeds Claude Code's own memory stays off, and Agent Fleet retries with growing pauses.
 
 - **Retry now** tries again at once
-- **Switch native memory back on anyway** gives Claude Code its memory back without waiting for the write-back. What Agent Fleet holds does not appear on the Claude side until a write-back succeeds
+- **Switch Claude Code's own memory back on anyway** gives Claude Code its memory back without waiting for the write-back. What Agent Fleet holds does not appear on the Claude side until a write-back succeeds
 
 ### Memory is on, but sessions do not use it
 
