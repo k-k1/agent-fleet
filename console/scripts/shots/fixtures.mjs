@@ -2952,6 +2952,67 @@ export function settingsTtsStatus() {
 }
 // ---- end settings pages ----
 
+// ---- tenant administration pages (guide/admin/, SHOT_ADMIN_OUTSIDE) ----
+// Fictional tenant "demo": three members, a week of ordinary changes, six months of running time.
+
+export const adminAudit = () => {
+  const rows = [
+    ["2026-09-15T09:42:10Z", "aoi@example.com", "git.commit", "web-shop"],
+    ["2026-09-15T09:30:02Z", "ren@example.com", "session.create", "s7k2qd1"],
+    ["2026-09-15T09:12:44Z", "aoi@example.com", "tenant.watch_sources", "demo"],
+    ["2026-09-15T08:58:31Z", "mio@example.com", "fs.upload", "web-shop/docs/spec.md"],
+    ["2026-09-15T08:40:19Z", "aoi@example.com", "mcp.server.create", "team-wiki"],
+    ["2026-09-14T18:05:00Z", "", "workspace.agent_silent", "ren-sato"],
+    ["2026-09-14T17:22:47Z", "ren@example.com", "connection.git.save", "github.com"],
+    ["2026-09-14T16:10:05Z", "aoi@example.com", "workspace.destroy", "old-member"],
+    ["2026-09-14T16:09:58Z", "aoi@example.com", "workspace.destroy.requested", "old-member"],
+    ["2026-09-14T15:31:12Z", "mio@example.com", "pat.create", "pat_3f9a"],
+  ];
+  return {
+    audit: rows.map(([at, email, action, target], i) => ({
+      id: String(100 - i),
+      tenant: "demo",
+      tenant_id: "t-demo",
+      actor_kind: email ? "user" : "system",
+      actor_id: email ? "u-" + email.split("@")[0] : "",
+      actor_email: email,
+      action,
+      target,
+      detail: "",
+      http_status: 200,
+      at,
+    })),
+  };
+};
+
+const H = 3600;
+const usageMonths = (hours) =>
+  hours.map((h, i) => ({
+    month: ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"][i],
+    running_secs: h * H,
+    partial: i === 5,
+    change_pct: i === 0 ? null : Math.round(((h - hours[i - 1]) / hours[i - 1]) * 1000) / 10,
+  }));
+
+export const adminUsage = () => {
+  const members = [
+    ["aoi-tanaka", "aoi@example.com", [96, 104, 118, 122, 131, 58]],
+    ["ren-sato", "ren@example.com", [64, 71, 69, 80, 92, 41]],
+    ["mio-kubo", "mio@example.com", [22, 30, 41, 38, 47, 19]],
+  ];
+  const sum = (i) => members.reduce((a, m) => a + m[2][i], 0);
+  const tot = (m) => m[2].reduce((a, b) => a + b, 0);
+  return {
+    from: "2026-09-01",
+    to: "2026-09-15",
+    days: [],
+    totals: members.map(([k, e, h]) => ({ tenant: "demo", user_key: k, email: e, running_secs: h[5] * H, running_hours: h[5] })),
+    monthly: usageMonths([0, 1, 2, 3, 4, 5].map(sum)),
+    monthly_members: members.map((m) => ({ tenant: "demo", user_key: m[0], email: m[1], total_secs: tot(m) * H, months: usageMonths(m[2]) })),
+    monthly_members_total: members.length,
+  };
+};
+
 // --- Admin resource pages of the guide (SHOT_ADMIN_RES) ---------------------------------------
 // The tenant administrator's resource screens: the read-only tenant limits, the engine access
 // table, and a running member whose idle auto-stop is held by a working session and a pin.

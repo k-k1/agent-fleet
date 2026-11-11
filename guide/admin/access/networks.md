@@ -45,7 +45,7 @@ From outside the list, sign-in still works but the tenant's contents will not op
 - MCP and the built-in Git are called from inside the member's own workspace, so they say nothing about where the person is. To stop them, remove the member ([Remove a member](../members/remove.md))
 - It applies to this tenant only. Someone who also belongs to another tenant reaches that one under its own rules
 - This is an access restriction, not network defence: the request reaches the control plane and is refused after the session is checked. To stop requests before they arrive, have the deployment administrator narrow it at the load balancer
-- **MCP OAuth** on the same screen is about outside apps connecting ([MCP distribution and outside access](../04-mcp-outside.md#mcp-oauth))
+- **MCP OAuth** on the same screen is about outside apps connecting ([MCP distribution and outside access](../mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth))
 
 ## When it goes wrong
 

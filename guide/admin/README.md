@@ -51,11 +51,21 @@ Anything not here yet is under "Chapters not yet rewritten" below. For your own 
 | [Set the branch naming rules](defaults/branch-rules.md) | Line up the branch names and starting branches proposed when work starts from an issue |
 | [Set member defaults](defaults/members.md) | Decide which agent new members are pointed at |
 
-## Chapters not yet rewritten
+## Audit and usage
 
-1. [Audit and usage](03-audit-usage.md): who changed what, running time, cloud cost
-2. [MCP distribution and outside access](04-mcp-outside.md): handing servers to the whole team, outside apps connecting through MCP OAuth, memory used from outside Agent Fleet
+| Page | What you can do |
+|---|---|
+| [Read the audit log](audit.md) | Check when, who, against what and what kind of change was made in your tenant |
+| [Read running time and cloud cost](usage.md) | See each member's running time and cloud cost for a period and by month, and export it as CSV |
 
-These chapters have moved to the pages above: [01 Member management](01-members.md), [02 Resource limits and sessions](02-limits.md), [05 Who may sign in, and from where](05-access.md), [06 Team defaults](06-team-defaults.md)
+## Outside connections
+
+| Page | What you can do |
+|---|---|
+| [Distribute an MCP server to everyone](mcp-distribute.md) | Hand a shared MCP server to every member of the tenant, and stop outside apps' OAuth connections |
+| [Allow memory use from outside](memory-outside.md) | Decide whether members may use memory from agents outside Agent Fleet |
+| [Allow MCP servers as watch sources](watch-sources.md) | Decide whether members may make their own MCP servers a source for the `watch` tool |
+
+These chapters have moved to the pages above: [01 Member management](01-members.md), [02 Resource limits and sessions](02-limits.md), [03 Audit and usage](03-audit-usage.md), [04 MCP distribution and outside access](04-mcp-outside.md), [05 Who may sign in, and from where](05-access.md), [06 Team defaults](06-team-defaults.md)
 
 What each role may do is in [Roles and what they may do](../ref/roles.md).

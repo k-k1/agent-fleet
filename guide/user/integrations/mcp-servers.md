@@ -120,7 +120,7 @@ Each row carries a label saying who registered it.
 - The **built-in** Agent Fleet server goes to every session with no setup. Sessions use it to report that they are done or to propose a handoff
 - The PagerDuty, Grafana, CloudWatch and AWS integrations appear in the list once you connect them on the **Ops & monitoring** tab
 
-How administrators distribute servers is in [MCP distribution and outside access](../../admin/04-mcp-outside.md).
+How administrators distribute servers is in [Distribute an MCP server to everyone](../../admin/mcp-distribute.md).
 
 ## Use a server as a watch source
 
@@ -181,5 +181,5 @@ opencode and Cursor have no equivalent setting, so a timeout is ignored there.
 ## Related
 
 - [Agents — what each kind can do](../../ref/agents.md): which agents receive MCP servers
-- [MCP distribution and outside access](../../admin/04-mcp-outside.md): administrators distribute a server to the whole tenant
+- [Distribute an MCP server to everyone](../../admin/mcp-distribute.md): administrators distribute a server to the whole tenant
 - [MCP tokens & apps](../outside/external-claude.md): let an outside app drive this Workspace

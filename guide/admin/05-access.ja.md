@@ -14,4 +14,4 @@ audience: "入り方を決めるテナント管理者"
 | テナントを使える接続元を、決まったアドレスの範囲に絞る | [サインインできるネットワークを絞る](access/networks.ja.md) |
 | GitHub・Bitbucket・Jira の「OAuth で接続」が使うアプリを決める | [連携に使う OAuth アプリを選ぶ](access/oauth-apps.ja.md) |
 
-外のアプリが MCP OAuth でテナントに接続できるかは、[04](04-mcp-outside.ja.md#mcp-oauth) にあります。
+外のアプリが MCP OAuth でテナントに接続できるかは、[04](mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める) にあります。

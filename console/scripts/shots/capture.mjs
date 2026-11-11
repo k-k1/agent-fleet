@@ -56,6 +56,15 @@ const OPEN_START_HUB = `
         await wait(1000);
       }`;
 
+// Opens Tenant settings from the account menu and picks one rail item by its label (ja|en).
+const openTenantSection = (label) => `
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /テナント設定|Tenant settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 2000));
+      [...document.querySelectorAll(".settings-rail button")].find((el) => ${label}.test((el.textContent || "").trim()))?.click();
+      await new Promise((r) => setTimeout(r, 1500));`;
+
 // Tenant settings for the guide's admin resource pages (SHOT_ADMIN_RES): open the modal from the
 // account menu and pick a rail item. The modal grows to its content so a clip below the fold is
 // on screen.
@@ -2670,6 +2679,103 @@ const SCENES = [
     settle: 1500,
   },
   // ---- end memory import/export pages ----
+  // ---- tenant administration pages (guide/admin/) ----
+  {
+    // Tenant settings › Operations › Audit: the toolbar and the newest rows.
+    name: "admin-audit",
+    guide: true,
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
+    clip: ".audit-view",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "home" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${openTenantSection("/^(監査|Audit)$/")}
+    })()`,
+    settle: 1000,
+  },
+  {
+    // Tenant settings › Operations › Running time: the six-month trend with the change per month.
+    name: "admin-usage-monthly",
+    guide: true,
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
+    clip: ".usage-view .monthly-trend",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1200,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "home" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${openTenantSection("/^(稼働時間|Running time)$/")}
+      document.querySelector(".usage-view .monthly-trend")?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1000,
+  },
+  {
+    // Tenant settings › Operations › MCP distribution: the add form with a URL filled in and
+    // "members enter the value" ticked.
+    name: "admin-mcp-form",
+    guide: true,
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
+    clip: ".adm-mcp-form",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1400,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "home" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${openTenantSection("/^(MCP 配布|MCP distribution)$/")}
+      [...document.querySelectorAll(".mcp-admin button")].find((el) => /配布する MCP サーバーを追加|Distribute an MCP server/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 800));
+      const form = document.querySelector(".adm-mcp-form");
+      const setVal = (el, v) => {
+        const proto = Object.getPrototypeOf(el);
+        Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      const inputs = [...(form?.querySelectorAll("input.cinput") || [])];
+      if (inputs[0]) setVal(inputs[0], /配布/.test(document.body.textContent || "") ? "チーム Wiki" : "Team wiki");
+      await new Promise((r) => setTimeout(r, 300));
+      const url = form?.querySelector('input[placeholder="https://"]');
+      if (url) setVal(url, "https://wiki.example.com/mcp");
+      await new Promise((r) => setTimeout(r, 300));
+      const box = [...(form?.querySelectorAll("label") || [])].find((el) => /認証の値は各メンバーが入力する|Each member enters the credential/.test(el.textContent || ""));
+      box?.querySelector("input")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      form?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1000,
+  },
+  {
+    // Tenant settings › Operations › External memory access: the allow/block switch.
+    name: "admin-ext-memory",
+    guide: true,
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
+    clip: ".ext-memory",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "home" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${openTenantSection("/^(外部からのメモリ利用|External memory access)$/")}
+    })()`,
+    settle: 1000,
+  },
+  {
+    // Tenant settings › Operations › Watch sources: the switch in its initial "block" state.
+    name: "admin-watch-sources",
+    guide: true,
+    stubEnv: { SHOTS_ADMIN: "1", SHOT_ADMIN_OUTSIDE: "1" },
+    clip: ".watch-src",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1000,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "home" })])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {${openTenantSection("/^(ウォッチのソース|Watch sources)$/")}
+    })()`,
+    settle: 1000,
+  },
+  // ---- end tenant administration pages ----
   // ---- getting-started pages (guide/user/start/) ----
   {
     // Home on a first-run member: the welcome card with the workspace started and no agent yet.

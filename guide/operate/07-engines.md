@@ -299,7 +299,7 @@ and the darker it is the longer the engine was up in that hour.
   running"; "what did it cost" is answered by the cloud cost screen. The one real price this
   deployment knows is the hourly rate of each instance it bought, and that is written once, in the
   audit log's `engine.<engine>.offer` line, with the instance type that was actually bought
-  ([admin 03](../admin/03-audit-usage.md)).
+  ([Read the audit log](../admin/audit.md)).
 
 ## Read aloud (the speech engine and the shared dictionary)
 

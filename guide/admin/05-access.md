@@ -14,4 +14,4 @@ This chapter has moved to the pages below.
 | Narrow where your tenant can be used from to a set of address ranges | [Limit the networks people sign in from](access/networks.md) |
 | Decide which app "Connect with OAuth" uses for GitHub, Bitbucket and Jira | [Choose the OAuth apps for integrations](access/oauth-apps.md) |
 
-Whether outside apps may connect to your tenant through MCP OAuth is in [04](04-mcp-outside.md#mcp-oauth).
+Whether outside apps may connect to your tenant through MCP OAuth is in [04](mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth).

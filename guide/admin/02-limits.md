@@ -19,5 +19,5 @@ What this chapter covered has moved to one page per task.
 
 ---
 
-- Read next: [03 Audit and usage](03-audit-usage.md)
+- Read next: [Read the audit log](audit.md)
 - Back to: [01 Member management](01-members.md)

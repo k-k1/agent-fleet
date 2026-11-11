@@ -121,6 +121,7 @@ node console/scripts/shots/capture.mjs --locale ja --theme light --only fleet-ws
 node console/scripts/shots/capture.mjs --locale ja --theme light --only team-handover --out <dir>  # and team-share, team-inbox, team-inbox-compose, team-limits, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only chatpages-chat --out <dir>  # and every other chatpages-* scene, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only outside-token-issued --out <dir>  # and outside-apps, one per run
+node console/scripts/shots/capture.mjs --locale ja --theme light --only admin-audit --out <dir>  # and admin-usage-monthly, admin-mcp-form, admin-ext-memory, admin-watch-sources, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only settings-display --out <dir>  # and settings-notifications, settings-tts, one per run
 node console/scripts/shots/capture.mjs --locale ja --theme light --only start-tour,start-palette,start-appearance,start-phone --out <dir>
 node console/scripts/shots/capture.mjs --locale ja --theme light --only start-welcome --out <dir>  # and start-restart, one per run
