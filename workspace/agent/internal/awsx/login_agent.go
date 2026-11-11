@@ -128,6 +128,7 @@ func HandleLoginStart(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := startLoginAttempt(bin, req.Key, req.ID, sp)
 	if err != nil {
+		log.Printf("aws-login: start failed profile=%s: %v", sp.Name, err)
 		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		return
 	}
@@ -184,6 +185,7 @@ func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := startLoginAttempt(bin, sp.SSOSession(), "", sp)
 	if err != nil {
+		log.Printf("aws-login: start failed profile=%s: %v", sp.Name, err)
 		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		return
 	}
@@ -466,6 +468,10 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 				}
 				return true, ""
 			}
+			// A clean exit without a usable token in the staging cache is a different failure
+			// from a non-zero exit, and both end in the same message for the member.
+			st := readCacheStateAt(staged)
+			log.Printf("aws-login: not completed cleanExit=%t cachePresent=%t", err == nil, st.Present)
 			msg := "aws sso login did not complete"
 			var ee *exec.ExitError
 			if errors.As(err, &ee) {
