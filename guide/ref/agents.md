@@ -38,7 +38,7 @@ because "does this apply to a plain shell session?" is a real question.
 | Receives your agent instructions | ✓ | ✓ | ✓ | ✓ | —⁸ | ✓ | ✓ | ✓¹⁰ | ✓¹⁶ | — | — |
 | Receives integration (MCP) servers | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓¹⁸ | ✓¹⁷ | — | — |
 | Shares Agent Fleet memory (af memory tools) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Agent memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
+| The agent's own memory is version-managed | ✓ | ✓ | — | — | — | — | — | — | — | — | — |
 | RTK (token savings) | ✓²³ | ✓²³ | ✓²³ | ✓²³ | — | — | ✓²³ | — | — | — | — |
 | Starts child sessions and messages other sessions | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | ✓²⁴ | — | — |
 | Bound to an image studio | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | ✓²⁵ | — | — | — |
@@ -235,7 +235,7 @@ What the switch **"Let sessions use Agent Fleet memory"**
 |---|---|---|---|
 | claude | New sessions, and the assistant chat, run with Claude Code's auto-memory off | ✓ (imported in the background) | ✓ |
 | codex | codex's `features.memories` is switched off, and your value is restored when the switch goes off | — | — |
-| muse | New hosts start with Muse Code's native memory off | Once, with **Import from muse** | — |
+| muse | New hosts start with Muse Code's own memory off | Once, with **Import from muse** | — |
 | other kinds | Nothing is changed | — | — |
 
 ## claude: the "API key" route

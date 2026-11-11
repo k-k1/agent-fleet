@@ -17,7 +17,7 @@ audience: "エージェントに学んだことを覚えさせたい人、覚え
 | 古くなったメモリを点検する | [古くなったメモリを見つける](../user/memory/lint.ja.md) |
 | メモリを直す提案をモデルに作らせる | [メモリの自動整理を使う](../user/memory/tidy-up.ja.md) |
 | Claude Code などのメモリを取り込む・書き戻す | [メモリを取り込む・書き出す](../user/memory/import-export.ja.md) |
-| エージェント自前のメモリをスナップショットで戻す | [スナップショットでメモリを戻す](../user/memory/snapshots.ja.md) |
+| エージェント自身のメモリをスナップショットで戻す | [スナップショットでメモリを戻す](../user/memory/snapshots.ja.md) |
 | 外部のエージェントから Agent Fleet のメモリを使う | [外部のエージェントからメモリを使う](../user/memory/external.ja.md) |
 
 ## エージェントメモリ

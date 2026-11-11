@@ -129,6 +129,14 @@ SLANG_BANNED = (
     (re.compile(r"\b(?:GPU|engine|fleet's) box(?:es)?\b|\bwhich box\b|\bbuy(?:s|ing)? (?:a|the) box\b"),
      "\"box\" (write instance)"),
 )
+# The agent's own memory has one name (ref/glossary.md); these are the variants it replaced, which
+# readers took for Agent Fleet memory or for a separate feature. The glossary names them on
+# purpose, so it is exempt.
+OWN_MEMORY_BANNED = (
+    (re.compile(r"ネイティブメモリ|自前のメモリ"), "「ネイティブメモリ」「自前のメモリ」(write エージェント自身のメモリ)"),
+    (re.compile(r"\bnative[ -]memory\b", re.I), "\"native memory\" (write the agent's own memory)"),
+)
+OWN_MEMORY_EXEMPT = ("ref/glossary.md", "ref/glossary.ja.md")
 
 
 @dataclass
@@ -650,9 +658,11 @@ def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
         banned = list(SLANG_BANNED)
         if sh in READER_FACING:
             banned += list(VOCAB_BANNED)
+        g = os.path.relpath(path, GUIDE).replace(os.sep, "/")
+        if g not in OWN_MEMORY_EXEMPT:
+            banned += list(OWN_MEMORY_BANNED)
         # A task page is written to the current rules, so a hit there is an error even
         # without --strict; the old chapters only warn until they are rewritten.
-        g = os.path.relpath(path, GUIDE).replace(os.sep, "/")
         task = any(g.startswith(t) for t in TASK_PAGES)
         for pattern, label in banned:
             hit = pattern.search(body)

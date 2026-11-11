@@ -375,8 +375,10 @@ export function MemorySnapshotsTab() {
             {data?.inactive?.some((r) => r.toggleable && !r.enabled) && (
               <p className="muted ds-hint">{tr("mem.codex_cost_hint")}</p>
             )}
-            {/* By design codex's own memory keeps running beside Agent Fleet memory (agent_memory_autosync.go
-            leaves the flag as the member set it); say so, or the two read as one. */}
+            {/* Turning Agent Fleet memory on switches codex's features.memories off and turning it off puts
+            the recorded value back (agent_memory_autosync.go, autoCodexReconcile); a value the member sets
+            meanwhile is kept and is what gets restored. So codex memories that are on here were turned on
+            by the member and run beside Agent Fleet memory; say so, or the two read as one. */}
             {agentMemoryOn && [...(data?.roots ?? []), ...(data?.inactive ?? [])].some((r) => r.toggleable && r.enabled) && (
               <p className="muted ds-hint">{tr("mem.codex_dual_hint")}</p>
             )}
