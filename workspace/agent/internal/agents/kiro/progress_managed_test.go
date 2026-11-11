@@ -149,3 +149,29 @@ func TestReadLoopMessagesStampTheHandle(t *testing.T) {
 		t.Fatal("a notification did not stamp the handle")
 	}
 }
+
+// The sequence measured on kiro-cli 2.37.0 for a call into an external MCP server (a stdio server
+// that stays silent for 90 s): `tool_call` carries no status at all, the runtime sends nothing for
+// the whole call, the MCP server leads a group of its own (so GroupToolIn sees nothing), and
+// `tool_call_update` status=completed closes it.
+func TestExternalMCPCallWithoutStatusKeepsAStaleRowHolding(t *testing.T) {
+	m := registered(t, "prog-ext-mcp", 2*time.Hour, kiroTable(false))
+	setCalls(m.Name, func(h *threadHandle) {
+		h.onNotify("session/update", []byte(`{"update":{"sessionUpdate":"tool_call","toolCallId":"tooluse_mcp","title":"Running: @slow/slow_wait"}}`))
+		act, _ := h.ProgressForTest()
+		act.TouchAt(time.Now().Add(-2 * time.Hour))
+	})
+	got, ok := (managedDriver{}).ManagedProgress(m)
+	if !ok || time.Since(got) > time.Minute {
+		t.Fatalf("external MCP call open, silent 2 h: got %v, %v; want now", got, ok)
+	}
+	setCalls(m.Name, func(h *threadHandle) {
+		h.onNotify("session/update", []byte(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"tooluse_mcp","status":"completed","title":"Running: @slow/slow_wait"}}`))
+		act, _ := h.ProgressForTest()
+		act.TouchAt(time.Now().Add(-2 * time.Hour))
+	})
+	got, ok = (managedDriver{}).ManagedProgress(m)
+	if !ok || time.Since(got) < time.Hour {
+		t.Fatalf("MCP call completed: got %v, %v; want the stale stamp, so the bound can lapse", got, ok)
+	}
+}

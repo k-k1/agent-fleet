@@ -10,7 +10,8 @@ import (
 // Managed rows have no pane, so the signs progressOf reads for Terminal rows do not exist.
 // A Managed row reports progress only for a kind whose driver implements
 // agents.ManagedProgressReporter, which a kind earns by a MEASURED signal that stays fresh
-// through a long silent tool (ADR 0055, 2026-10-17 addendum). Every other Managed kind keeps
+// through a long silent tool (ADR 0055, 2026-10-17 addendum), or, for the in-process lcpp, by
+// reporting its own running turn (2026-11-11 addendum). Every other Managed kind keeps
 // holding without bound: "could not observe" must never read as "not moving".
 
 // managedProgressMeasured reports whether this Managed row's kind has a measured signal.

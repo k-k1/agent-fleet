@@ -349,3 +349,54 @@ session), hence a per-session stamp, `workspace_session_input.last_input_at`.
   a failed lookup does not halt (logged). The local `watchingSession` check stays the fast path.
 - With `presenceGrace` disabled (attached means watched) attachment is replica-local, so the shared check answers
   "not watched". Not verified on a real HA deployment.
+
+## Addendum (2026-11-11): Managed lcpp, and a call into an external MCP server (#3887)
+
+The 2026-10-17 addendum left two Managed cases holding without bound because no signal had been
+measured for them.
+
+**Managed lcpp (in-process).** There is no child process, daemon or event stream to read, so nothing
+was measured: the signal is the handle's own state. "A tool is in flight" is defined as "`runTurn` is
+executing", from the moment the turn leaves the queue until its messages are persisted. A counter of
+open tool calls was rejected: the silent stretches of a turn are not only tools. A model request that
+has produced no chunk yet, an engine wake retry and a compaction are unbounded in time too (the HTTP
+client has no timeout of its own), and none of them is a tool call. Bash (at most 30 min) and MCP
+`tools/call` (60 s) are the bounded ones.
+
+- Decision: Managed lcpp is in `progressTrusted` (`managedProgressMeasured`). `ManagedProgress`
+  (`agents/lcpp/progress_managed.go`) answers "now" while a turn runs, the moment the last turn ended
+  once it is over, and gives no answer for a handle that never ran a turn since it was created (keeps
+  holding). A row left "working" after the turn ended (a crash between the state write and the turn's
+  end) can therefore lapse; a running turn never does.
+- Safe side: a call that hangs inside the turn cannot be told from a long one, and a wait for the
+  user's approval or `ask_user` is inside the turn too, so both hold until the turn is stopped.
+- Test: a blocked model request with a two-hour-old stamp keeps holding; after it returns the stale
+  stamp lapses (`TestRunningTurnKeepsAStaleRowHolding`, which fails without `enterTurn`).
+
+**A call into an external MCP server.** A stdio MCP server whose one tool stays silent for 90 s (no
+progress notifications), reached through each runtime's own protocol, sampled once every 5 s along
+with the process table, in a throwaway working directory:
+
+| Kind (version) | Does the runtime message stay fresh? | Process rule sees the MCP server? | Signal that does | Observed |
+|---|---|---|---|---|
+| kiro (kiro-cli 2.37.0) | no: the last message was 90 s before the call ended | no: the server leads a group of its own and no session leader sits under the runtime | `tool_call` (carries no status) opens the call, `tool_call_update` completed closes it | open for the whole 90 s |
+| codex (codex-cli 0.167.1) | no: 90 s gap, and the model does not poll an MCP call (it polled the shell command) | not used (shared daemon) | `item/started` `mcpToolCall` inProgress ... `item/completed` | open for the whole 90 s |
+| opencode (2.2.7) | no: the whole server-wide stream was silent for 88 s | not used (shared daemon) | `session.tool.called` / `.progress` ... `.success` | open for the whole call |
+| cursor (2026.11.10) | not measured | not measured | not measured | not measured |
+
+- Decision: kiro, codex and opencode need no code change: the open-call / open-item sets the 2026-10-17
+  addendum already uses cover an MCP call (codex's set is keyed on any item type). Regression tests
+  replay the measured sequences with a two-hour-old stamp and an idle process table, and pin that the
+  row lapses once the call is closed.
+- cursor was **not measured**: the account on the measuring Workspace answers every prompt with
+  "Upgrade your plan to continue" (tried auto, composer-2.5 and gpt-5.2), so no tool call ran. cursor
+  shares the ACP handle with kiro, so the same tracking applies by protocol, but no sign of how cursor
+  reports an MCP call was seen; nothing is claimed for it. Its MCP process cannot be read from the
+  process table either (the earlier measurement only covered the local shell tool). If cursor sends no
+  open `tool_call` for an MCP call, a call longer than the one-hour lapse would release the row. Left
+  as is (no code change); follow-up: #3906.
+- Versions differ from the 2026-10-17 table (kiro 2.31.0, codex 0.163.0, opencode 2.0.32). Only
+  the MCP case was run on the newer ones; the local shell case was not repeated. Re-measure when
+  bumping a CLI version.
+- Still holding without bound: Managed muse and copilot (not logged in on the measuring Workspace
+  in October; not re-run here).

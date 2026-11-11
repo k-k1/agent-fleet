@@ -126,7 +126,7 @@ func TestProgressTrusted(t *testing.T) {
 		{session.Meta{Kind: session.KindCursor, Driver: session.DriverManaged}, true},
 		{session.Meta{Kind: session.KindKiro, Driver: session.DriverManaged}, true},
 		{session.Meta{Kind: session.KindMuse, Driver: session.DriverManaged}, false},
-		{session.Meta{Kind: session.KindLcpp, Driver: session.DriverManaged}, false},
+		{session.Meta{Kind: session.KindLcpp, Driver: session.DriverManaged}, true}, // in-process: its own running turn
 		{session.Meta{Kind: session.KindCopilot, Driver: session.DriverManaged}, false},
 		// No measured signal: keep holding.
 		{session.Meta{Kind: session.KindMuse}, false},

@@ -90,3 +90,24 @@ func TestManagedProgressWithoutHandleOrMessage(t *testing.T) {
 		t.Fatal("answered for a thread never heard from")
 	}
 }
+
+// The item measured on codex-cli 0.167.1 for a call into an external MCP server that stays silent
+// for 90 s: an `mcpToolCall` item opens with status inProgress, and the thread sends nothing (the
+// model does not poll, unlike a shell command) until the item completes.
+func TestOpenMCPToolCallItemKeepsAStaleRowHolding(t *testing.T) {
+	h, m := progressHandle(t, "prog-mcp", "thr_mcp")
+	notify("turn/started", `{"threadId":"thr_mcp","turn":{"id":"t1"}}`)
+	notify("item/started", `{"threadId":"thr_mcp","item":{"id":"exec-88a","type":"mcpToolCall","tool":"slow_wait","status":"inProgress"}}`)
+	h.act.TouchAt(time.Now().Add(-2 * time.Hour))
+
+	got, ok := (managedDriver{}).ManagedProgress(m)
+	if !ok || time.Since(got) > time.Minute {
+		t.Fatalf("open mcpToolCall item, silent 2 h: got %v, %v; want now", got, ok)
+	}
+	notify("item/completed", `{"threadId":"thr_mcp","item":{"id":"exec-88a","type":"mcpToolCall","tool":"slow_wait","status":"completed"}}`)
+	h.act.TouchAt(time.Now().Add(-2 * time.Hour))
+	got, ok = (managedDriver{}).ManagedProgress(m)
+	if !ok || time.Since(got) < time.Hour {
+		t.Fatalf("mcpToolCall completed: got %v, %v; want the stale stamp, so the bound can lapse", got, ok)
+	}
+}
