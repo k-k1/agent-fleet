@@ -58,7 +58,7 @@ export function MonthlyTrend({
                   {r.estimated && <span className="muted"> {tr("monthly.estimated")}</span>}
                   {r.partial && (
                     <span className="muted" title={r.noCoverage === undefined ? undefined : tr("monthly.partial_cost_hint")}>
-                      {" "}({r.coverageFrom ? tr("monthly.partial_coverage", { day: r.coverageFrom }) : tr("monthly.partial")})
+                      {" "}{r.coverageFrom ? tr("monthly.partial_coverage", { day: r.coverageFrom }) : `(${tr("monthly.partial")})`}
                     </span>
                   )}
                 </span>

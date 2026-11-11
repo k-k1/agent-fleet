@@ -106,7 +106,7 @@ func monthlyUsage(rows []store.UsageRow, sp monthSpan) []usageMonth {
 // the days the store has (cost allocation is not retroactive): it is unknown, not zero.
 // Partial covers the running month and a month that starts before the first covered day.
 // CoverageFrom tells the two apart: it is the first covered day (YYYY-MM-DD) of a finished
-// month that Partial because the data starts mid-month, and is absent for the running month
+// month that is partial because the data starts mid-month, and is absent for the running month
 // (running wins when both hold) and for complete months. A separate additive key keeps
 // `partial` meaning what it always did for existing readers.
 // SharedMicro is set only on the super_admin deployment-wide view.

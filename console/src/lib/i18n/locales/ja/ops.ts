@@ -240,7 +240,7 @@ export const ops = {
   "monthly.note_utc": "月の区切りは日次の値と同じく UTC です。",
   "monthly.partial": "途中",
   "monthly.partial_coverage": "一部のデータ（{day}から）",
-  "monthly.no_coverage":"データなし",
+  "monthly.no_coverage": "データなし",
   "monthly.no_coverage_hint": "コスト配賦を有効にする前の月のため表示できません（0 ではありません）。",
   "monthly.partial_cost_hint": "未確定: 今月はまだ途中、またはコストデータの開始前から始まる月です。",
   "monthly.estimated": "概算",

@@ -39,7 +39,8 @@ describe("MonthlyTrend", () => {
       root.render(<MonthlyTrend title="T" rows={rows} format={(v) => `$${v / 1e6}`} />);
     });
     const aug = host.querySelector('[data-month="2026-08"]')!;
-    expect(aug.textContent).toContain("2026-08-20");
+    expect(aug.textContent).toContain("partial data (from 2026-08-20)");
+    expect(aug.textContent).not.toContain("((");
     expect(aug.textContent).not.toMatch(/so far|途中/);
     expect(aug.className).toContain("partial");
     // An older CP sends only partial: true; that still reads as the running month.
