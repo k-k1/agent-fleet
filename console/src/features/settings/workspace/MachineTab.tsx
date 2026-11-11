@@ -9,6 +9,7 @@ import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
 import { PlaceLine, type Place } from "./machinePlace.tsx";
 import { HomeBreakdownSection } from "./HomeBreakdownSection.tsx";
+import { AfWorkAgeSection } from "./AfWorkAgeSection.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
 import { TrendChart } from "../../../ui/TrendChart.tsx";
@@ -591,6 +592,7 @@ function LeftoverSection() {
       {msg && <p className="ds-note">{msg}</p>}
       {truncated && <p className="muted ds-note">{tr("machine.disk_truncated")}</p>}
       <p className="muted ds-note">{tr("machine.left_note")}</p>
+      <AfWorkAgeSection />
       {confirm && (
         <ConfirmDialog
           title={tr("machine.left_confirm_title", { name: leftoverLabel(confirm.kind) })}

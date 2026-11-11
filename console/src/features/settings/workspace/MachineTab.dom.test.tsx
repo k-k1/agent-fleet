@@ -19,10 +19,11 @@ import type { WsMachine } from "../../../lib/machine.ts";
 import { __test as feed } from "../../../core/store/wsStatsFeed.ts";
 
 // Per-path answers; anything unlisted gets {} (what an Agent without the endpoint amounts to).
-const answers = vi.hoisted(() => ({ byPath: {} as Record<string, unknown>, calls: [] as string[] }));
+const answers = vi.hoisted(() => ({ byPath: {} as Record<string, unknown>, calls: [] as string[], bodies: [] as string[] }));
 vi.mock("../../../core/api/client.ts", () => ({
   api: (path: string, opts?: RequestInit) => {
     answers.calls.push((opts?.method ?? "GET") + " " + path);
+    if (opts?.body) answers.bodies.push(String(opts.body));
     const a = answers.byPath[path];
     // An Error stands for a request that never got an answer (fetch rejected).
     return a instanceof Error ? Promise.reject(a) : Promise.resolve(a ?? {});
@@ -52,6 +53,7 @@ beforeEach(() => {
   feed.reset();
   answers.byPath = {};
   answers.calls = [];
+  answers.bodies = [];
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -424,6 +426,37 @@ describe("MachineView", () => {
     expect(document.body.querySelector(".confirm-title")).toBeNull();
     expect(answers.calls).toContain("DELETE api/cleanup/leftovers/chromium");
     expect(section().textContent).toContain("Chromium の使い捨てプロファイル を 1551 個削除しました");
+  });
+
+  it("lists old ~/.af-work folders per folder, confirms with the list, and deletes only the ticked ones", async () => {
+    const folders = [
+      { name: "scratch-a", bytes: 5 * 2 ** 20, modified: "2026-09-01T00:00:00Z", path: "~/.af-work/scratch-a" },
+      { name: "scratch-b", bytes: 2 * 2 ** 20, modified: "2026-09-02T00:00:00Z", path: "~/.af-work/scratch-b" },
+    ];
+    answers.byPath["api/cleanup/af-work?older_than_days=30"] = { older_than_days: 30, folders };
+    answers.byPath["api/cleanup/af-work"] = { older_than_days: 30, removed: [folders[0]] };
+    await mount(shared);
+    const click = async (root: ParentNode, label: string) =>
+      act(async () => {
+        [...root.querySelectorAll("button")].find((b) => b.textContent?.startsWith(label))!.click();
+      });
+    await click(document.body, "フォルダを探す");
+    expect(answers.calls).toContain("GET api/cleanup/af-work?older_than_days=30");
+    const boxes = [...document.body.querySelectorAll<HTMLInputElement>("input[type=checkbox]")];
+    expect(boxes).toHaveLength(2);
+    await act(async () => {
+      boxes[1].click();
+    });
+    await click(document.body, "選んだものを削除");
+    const dialog = document.body.querySelector(".confirm-title")!.closest("[role=dialog]")!;
+    expect(dialog.textContent).toContain("~/.af-work/scratch-a");
+    expect(dialog.textContent).not.toContain("~/.af-work/scratch-b");
+    expect(answers.calls.some((c) => c.startsWith("POST"))).toBe(false);
+    await act(async () => {
+      [...dialog.querySelectorAll("button")].filter((b) => b.textContent === "削除").pop()!.click();
+    });
+    expect(answers.calls).toContain("POST api/cleanup/af-work");
+    expect(JSON.parse(answers.bodies[0])).toEqual({ older_than_days: 30, names: ["scratch-a"] });
   });
 
   it("asks before removing archived sessions' folders early, and cancel removes nothing", async () => {

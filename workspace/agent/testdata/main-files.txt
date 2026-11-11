@@ -51,6 +51,7 @@ jdk_install_http.go
 jdk_latest_http.go
 kiro_install_http.go
 leftovers.go
+leftovers_afwork_age.go
 main.go
 mcp_wiring.go
 memo_paste.go

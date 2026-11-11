@@ -136,6 +136,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /cleanup/worktree-output", wtoutput.HandleApply)
 	mux.HandleFunc("GET /cleanup/leftovers", handleLeftoverUsage)
 	mux.HandleFunc("DELETE /cleanup/leftovers/{kind}", handleDeleteLeftovers)
+	mux.HandleFunc("GET /cleanup/af-work", handleAfWorkOldList)
+	mux.HandleFunc("POST /cleanup/af-work", handleAfWorkOldRemove)
 	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites
 	// on deletion (DELETE and its old name /stop, and the shell / ssm a deleted working copy
 	// sends to the trash) and, though the stopped-TTL sweep only archives, on that too — a pinned row is one

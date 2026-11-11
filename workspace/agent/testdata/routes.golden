@@ -139,6 +139,8 @@ GET /cleanup/home
 POST /cleanup/home/measure
 GET /cleanup/leftovers
 DELETE /cleanup/leftovers/{kind}
+GET /cleanup/af-work
+POST /cleanup/af-work
 GET /cleanup/tool-caches
 DELETE /cleanup/tool-caches/{name}
 GET /cleanup/usage

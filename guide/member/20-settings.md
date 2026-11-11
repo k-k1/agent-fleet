@@ -181,7 +181,7 @@ When your workspace was running, as a grid of hours. How to read it is in
 
 ### Machine
 
-The size of the machine your workspace runs on, its memory and disk usage, and how to free disk space:
+The size of the machine your workspace runs on, its memory and disk usage, and how to free disk space (including deleting your old `~/.af-work` folders by age):
 [See your machine and its usage](../user/workspace/machine.md).
 
 ### Toolchains
