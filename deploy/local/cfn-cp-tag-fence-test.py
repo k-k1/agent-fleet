@@ -347,6 +347,11 @@ INVENTORY = [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-retire": T}),
         on_existing("ec2:CreateTags", "instance", dict(SLOT, **{"af-replaces-home": "vol-home"}),
                     {"af-slot-retire": T})]),
+    # The dark-slot scan (ADR 0121, detect only): the stamp is the only write it makes.
+    ("internal/runtime/runtime_ecs_ec2_dark.go", "writeDarkStamp", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-dark-since": T})]),
+    ("internal/runtime/runtime_ecs_ec2_dark.go", "clearDarkStamp", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-dark-since": None})]),
     ("internal/runtime/runtime_ecs_ec2_volumes.go", "clearSlotFree", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-idle-since": None})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "CreateTags", 1, [

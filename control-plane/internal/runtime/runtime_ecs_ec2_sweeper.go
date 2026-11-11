@@ -47,6 +47,9 @@ func (f *ecsEC2Factory) sweep(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("describe home volumes: %w", err)
 	}
+	// First in the pass, so any later stage that learns to act on a slot (ADR 0121) sees the
+	// stamp this scan just wrote.
+	f.sweepDarkSlots(ctx, vols.Volumes)
 	for i := range vols.Volumes {
 		f.sweepVolume(ctx, &vols.Volumes[i])
 	}

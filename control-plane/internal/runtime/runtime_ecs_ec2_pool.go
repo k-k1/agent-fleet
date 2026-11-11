@@ -194,6 +194,13 @@ type ec2PoolConfig struct {
 	// Only ec2HostReserveAuto, ec2HostReserveOff and values >= 0 are valid; parseHostReserveMiB
 	// never returns anything else.
 	hostReserveMiB int64
+	// darkAction / darkAfter / darkBootGrace configure the dark-slot scan (ADR 0121):
+	// AF_ECS_EC2_DARK_SLOT_ACTION (off | detect, default detect), AF_ECS_EC2_DARK_AFTER_SEC
+	// (default 600, 0 = off) and AF_ECS_EC2_DARK_BOOT_GRACE_SEC (default 300). The zero
+	// value of darkAction is "off", so a pool built without them never scans.
+	darkAction    string
+	darkAfter     time.Duration
+	darkBootGrace time.Duration
 }
 
 const (
@@ -263,6 +270,8 @@ type ecsEC2Factory struct {
 	leases HomeLeaseStore
 	// onAutoReplace is Config.OnSlotAutoReplace.
 	onAutoReplace func(context.Context, SlotAutoReplace)
+	// onSlotDark is Config.OnSlotDark.
+	onSlotDark func(context.Context, SlotDark)
 	// bg / sleep replace the probe runtime's background runner and sleeper when set; only
 	// tests do, to drive ForceStopSlot's delayed re-stop without waiting for it.
 	bg    func(context.Context, func(context.Context))
@@ -334,7 +343,11 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		// previously unbounded in practice. See the field comment for the incident.
 		slotLostAfter:  time.Duration(EnvInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
 		hostReserveMiB: parseHostReserveMiB(envOr("AF_ECS_EC2_HOST_RESERVE_MB", "auto")),
+		darkAction:     parseDarkAction(os.Getenv("AF_ECS_EC2_DARK_SLOT_ACTION")),
+		darkAfter:      time.Duration(EnvInt("AF_ECS_EC2_DARK_AFTER_SEC", 600)) * time.Second,
+		darkBootGrace:  time.Duration(EnvInt("AF_ECS_EC2_DARK_BOOT_GRACE_SEC", 300)) * time.Second,
 	}
+	pool.clampDark()
 	if err := pool.validate(); err != nil {
 		return nil, err
 	}
@@ -349,6 +362,7 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		leases: mcfg.HomeLeases,
 
 		onAutoReplace: mcfg.OnSlotAutoReplace,
+		onSlotDark:    mcfg.OnSlotDark,
 	}
 	if f.leases == nil {
 		log.Printf("ecs-ec2: no store for home leases; a home is serialised within this Control Plane only")

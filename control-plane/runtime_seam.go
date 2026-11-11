@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
@@ -62,6 +63,7 @@ func newRuntimeFactory(profile string, m *manager) (runtime.RuntimeFactory, erro
 		RootDataDir:          func(ws runtime.Workspace) string { return m.rootedDataDir(store.Workspace(ws)) },
 		HomeLeases:           m.store,
 		OnSlotAutoReplace:    m.auditSlotAutoReplace,
+		OnSlotDark:           m.auditSlotDark,
 		OnAddressesReleasing: addressReleaseHook(m),
 	})
 }
@@ -121,5 +123,23 @@ func (m *manager) auditSlotAutoReplace(ctx context.Context, ev runtime.SlotAutoR
 		Action: "pool.slot_replace_auto", Target: ev.OldSlot, Detail: detail, At: store.NowTS(),
 	}); err != nil {
 		log.Printf("audit: automatic slot replacement of %s for %s not recorded: %v", ev.OldSlot, ev.Workspace, err)
+	}
+}
+
+// auditSlotDark records that the ecs-ec2 sweeper saw a slot with a home go dark (ADR 0121).
+// Detect-only: nothing was done to the slot. The tenant is resolved from the membership the
+// sweeper read off the home's tags; when it cannot be (a removed member) the row is
+// deployment-wide rather than lost.
+func (m *manager) auditSlotDark(ctx context.Context, ev runtime.SlotDark) {
+	tenantID := ""
+	if mv, ok, err := m.store.GetMembershipByID(ctx, ev.MembershipID); err == nil && ok {
+		tenantID = mv.TenantID
+	}
+	detail := fmt.Sprintf("workspace=%s volume=%s dark_since=%s", ev.Workspace, ev.Volume, ev.Since.UTC().Format(time.RFC3339))
+	if err := m.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: tenantID, ActorKind: "system", ActorID: "slot-dark",
+		Action: "pool.slot_dark_detected", Target: ev.Slot, Detail: detail, At: store.NowTS(),
+	}); err != nil {
+		log.Printf("audit: dark slot %s for %s not recorded: %v", ev.Slot, ev.Workspace, err)
 	}
 }
