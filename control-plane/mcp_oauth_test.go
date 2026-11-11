@@ -1295,8 +1295,8 @@ func TestMCPOAuthGrantFollowsMembership(t *testing.T) {
 
 // --- audit and secrets -----------------------------------------------------------
 
+// Serial: it replaces the process-wide standard logger output.
 func TestMCPOAuthAuditsAndNeverLogsATokenValue(t *testing.T) {
-	t.Parallel()
 	var logs bytes.Buffer
 	log.SetOutput(&logs)
 	defer log.SetOutput(os.Stderr)

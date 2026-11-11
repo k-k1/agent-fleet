@@ -19,7 +19,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -213,12 +212,8 @@ func validHostName(h string) bool {
 	return true
 }
 
-// envTrustedHosts is the start-up fallback and the source it came from.
-func envTrustedHosts() (trustedHosts, string) {
-	return trustedHostsFrom(envx.Or("AF_MCP_OAUTH_TRUSTED_HOSTS", ""))
-}
-
-// trustedHostsFrom is envTrustedHosts for an explicit value of the variable.
+// trustedHostsFrom is the start-up fallback for the value of AF_MCP_OAUTH_TRUSTED_HOSTS, and the
+// source it came from.
 func trustedHostsFrom(v string) (trustedHosts, string) {
 	if v != "" {
 		return parseTrustedClientHosts(v), trustSourceEnv
