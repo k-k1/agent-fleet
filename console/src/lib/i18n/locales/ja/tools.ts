@@ -135,6 +135,8 @@ export const tools = {
   "mcp.target_assistant": "アシスタント",
   "mcp.target_session": "セッション",
   "mcp.target_watch": "ウォッチのソース",
+  "mcp.watch_blocked": "MCP サーバーをウォッチのソースにできるかどうかはテナント管理者が決めます。現在はオフです。",
+  "mcp.watch_blocked_set": "テナント管理者がウォッチのソースをオフにしています。このサーバーは印が付いたままですがウォッチでは使われず、ここで他の項目を保存すると印は外れます。",
   "mcp.target_none": "なし",
   "mcp.kinds_all": "すべてのエージェント",
   "mcp.not_ready":

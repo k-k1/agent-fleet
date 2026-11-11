@@ -176,6 +176,10 @@ type Registry struct {
 	TenantFetchedAt int64       `json:"tenantFetchedAt,omitempty"`
 	// Shadowed lists user-scope names that lost a collision against a tenant row.
 	Shadowed []string `json:"shadowed,omitempty"`
+	// WatchSources is the tenant switch for member-added watch sources, always emitted: the
+	// Console tells "off" (false) from "an Agent that predates the field" (absent) and only
+	// disables the Watch source checkbox on a definite false.
+	WatchSources bool `json:"watchSources"`
 }
 
 // Load composes the effective registry. Secrets are NOT masked — callers that hand
@@ -189,7 +193,7 @@ func Load() (Registry, error) {
 }
 
 func compose(s *secrets.Data, tc tenantCache, opted map[string]bool) Registry {
-	reg := Registry{TenantFetchedAt: tc.FetchedAt}
+	reg := Registry{TenantFetchedAt: tc.FetchedAt, WatchSources: tc.WatchSources}
 	taken := map[string]bool{}
 
 	for _, d := range builtinDefs(s) {

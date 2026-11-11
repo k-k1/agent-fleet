@@ -798,3 +798,18 @@ func TestSetEnabledTenantRecordsOptOut(t *testing.T) {
 		t.Fatal("opt-out not cleared")
 	}
 }
+
+// The Console reads the tenant switch from the registry snapshot; false must stay on the wire
+// (not omitted) so it can tell "off" from an Agent that predates the field.
+func TestComposeCarriesWatchSources(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		reg := compose(&secrets.Data{}, tenantCache{WatchSources: on}, map[string]bool{})
+		if reg.WatchSources != on {
+			t.Fatalf("WatchSources = %v, want %v", reg.WatchSources, on)
+		}
+		b, _ := json.Marshal(reg)
+		if want := fmt.Sprintf(`"watchSources":%v`, on); !strings.Contains(string(b), want) {
+			t.Fatalf("wire %s lacks %s", b, want)
+		}
+	}
+}

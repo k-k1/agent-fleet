@@ -138,6 +138,7 @@ export function ServerForm({
   egress,
   onProposed,
   submitLabel,
+  watchBlocked = false,
 }: {
   form: Form;
   setForm: (f: Form | null) => void;
@@ -147,6 +148,8 @@ export function ServerForm({
   egress: EgressCheck | null;
   onProposed: () => void;
   submitLabel: string;
+  // The tenant has the watch-sources switch off: the box is read-only and the hint says who decides.
+  watchBlocked?: boolean;
 }) {
   const tr = useT();
   const [busy, setBusy] = useState(false);
@@ -291,11 +294,21 @@ export function ServerForm({
                   <input type="checkbox" checked={form.session} onChange={(e) => patch({ session: e.target.checked })} />
                   {tr("mcp.target_session")}
                 </label>
-                <label className="mcp-check">
-                  <input type="checkbox" checked={form.watch} onChange={(e) => patch({ watch: e.target.checked })} />
+                <label className="mcp-check" title={watchBlocked ? tr("mcp.watch_blocked") : undefined}>
+                  <input
+                    type="checkbox"
+                    checked={form.watch}
+                    disabled={watchBlocked}
+                    onChange={(e) => patch({ watch: e.target.checked })}
+                  />
                   {tr("mcp.target_watch")}
                 </label>
               </div>
+              {watchBlocked && (
+                <p className="muted mcp-watch-blocked" role="note">
+                  {form.watch ? tr("mcp.watch_blocked_set") : tr("mcp.watch_blocked")}
+                </p>
+              )}
             </Field>
             <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>
               <div className="mcp-checks">
