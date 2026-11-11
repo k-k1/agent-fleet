@@ -173,6 +173,10 @@ func parseSSMLogin(buf string, alive bool) ssmLoginStatus {
 // `aws sso login --use-device-code` printed; url is "" while neither is there yet. The
 // patterns accept any https host, so a caller that shows the URL to a person checks the
 // host itself.
+//
+// out is taken to be a prefix of a stream: a URL that ends exactly at the end of out is held
+// back until a delimiter follows it. A caller passing a finished snapshot (a tmux pane)
+// must terminate it with a newline, or a URL ending it is never reported.
 func DeviceAuthorization(out string) (url, code string) {
 	url = completeURL(ssmURLWithCode, out, false)
 	if url == "" {
