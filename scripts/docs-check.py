@@ -1699,7 +1699,7 @@ def check_tables(files: list[str], f: Findings) -> None:
 # Pages written to the task-page rules (docs/CONVENTIONS.md §12), relative to guide/.
 # A directory ends with "/". The old chapters are not listed: they cite ADRs freely and
 # are replaced page by page.
-TASK_PAGES = ("user/", "ref/cli/", "ref/aws-profiles.", "ref/aws-ssm.", "ref/bedrock-route.")
+TASK_PAGES = ("user/", "ref/cli/", "ref/aws-profiles.", "ref/aws-ssm.", "ref/bedrock-route.", "ref/console-ui.")
 
 # What a reader of a task page has no use for: why it was decided, when it was measured,
 # which issue changed it. Those stay in docs/; the page states the rule as it is now.

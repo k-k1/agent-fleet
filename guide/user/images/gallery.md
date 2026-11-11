@@ -72,7 +72,7 @@ Right-click a card (or press the Menu key) to open its menu.
 | A picture a session made | All of the above, plus "**Open …, the session that generated this**" |
 
 - Deleting cannot be undone; it asks first
-- The menu items are also listed in [Badges and menus](../../member/badges-and-menus.md#cards-in-the-image-gallery)
+- The menu items are also listed in [Icons, badges and menus](../../ref/console-ui.md#image-gallery-cards)
 
 ## Wait for new pictures
 

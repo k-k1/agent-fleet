@@ -56,7 +56,7 @@ That is how it is built. The terminal background stays dark whatever the theme. 
 | A right-click menu closes at once | It closes on a click outside, on Escape, and when the window loses focus. Focus goes back to the item it was opened from |
 
 A right-click menu also opens with the **Menu key** or **Shift+F10** while the item has focus.
-What the menus contain is in [Icons, badges, and menus](../../member/badges-and-menus.md#right-click-menus).
+What the menus contain is in [Icons, badges and menus](../../ref/console-ui.md#right-click-menus).
 
 ## Related
 

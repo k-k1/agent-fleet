@@ -118,4 +118,4 @@ You do not satisfy that method's rules. Ask your administrator about the organiz
 - [Choose your toolchains](../workspace/toolchains.md): the time zone of the shell and the agents
 - [Get notified](notifications.md)
 - [Use read-aloud](read-aloud.md)
-- [Icons, badges, and menus](../../member/badges-and-menus.md)
+- [Icons, badges and menus](../../ref/console-ui.md)
