@@ -311,19 +311,23 @@ hardware that has not happened, and a residual that a review left.
   reopen it. Reopening is always fine. The reason is one of:
   - *Completed*: every acceptance item has been seen. A live check that could not be run
     is acceptable only when tests cover the behaviour, the comment names them and says
-    "not seen live: …". Whatever can only be shown on real hardware or a deployment
-    keeps `needs-live-run` and stays open.
+    "not seen live: …". Whatever can only be shown on real hardware or a deployment gets
+    or keeps `needs-live-run` and stays open; an issue that carries that label is never
+    closed on tests plus "not seen live", only by the run itself.
   - *Not planned* (`gh issue close N --reason "not planned"`): the premise is gone
     (feature retired, superseded by #N, the CLI or version moved on, measured as no
     longer relevant), or the issue has been idle for 4+ weeks and is not on the current
-    roadmap. Name the evidence; age alone is enough only for the second kind.
+    roadmap. Name the evidence; age alone is enough only for the second kind, and never
+    for an issue labelled `blocked`, `needs-decision` or `needs-live-run`, or one whose
+    problem is still real (an open bug, unbuilt planned work). Those are closed only
+    after the owner approves them in an inventory pass.
   - *Duplicate / superseded*: point at the issue that carries the work.
 - **Umbrella issues do not linger half done.** When part of one is finished and the rest
   is concrete, file the rest as a new `follow-up` issue and close the parent with a
   pointer. An ongoing "keep lowering X" issue (a ceiling, a test time) stays open with
   its target stated in the body.
-- **A PR that only `Refs` an issue comments on it** with what remains (the PR's "Not
-  verified" items), so the issue body plus its last comment always say what is left.
+- **When a PR that only `Refs` an issue is merged, its author comments on the issue**
+  with what remains (the PR's "Not verified" items), so the issue body plus its last comment always say what is left.
 - **Take inventory periodically.** A pass classifies every open issue (done / verify
   here / verify on a deployment / verify unavailable / partial / ready / needs-decision /
   obsolete / waiting) and is recorded as one tracking issue with a table. The

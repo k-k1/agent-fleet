@@ -163,7 +163,7 @@ into an ADR, a `docs/log/` journal, `roadmap.md` or your memory. Then point at i
 journal's residual list. Keep the issue short and link the section that holds the
 evidence. Pass `--label` when you file it: one of `bug` / `enhancement` /
 `documentation`, one `priority: high|medium|low`, plus `follow-up`, `needs-live-run`,
-`needs-decision` (waits on the owner's decision or an ADR) or `blocked` (waits on
+`needs-decision` (waits on the owner's decision or an ADR; first body line states the question with its options) or `blocked` (waits on
 something outside the issue; first body line `Waiting on: <what>, <when / #N>`) where
 they apply. Close an issue with a three-line comment: evidence, why, and what would
 reopen it. An issue is public the moment it is filed and skips the secret scans, so no
