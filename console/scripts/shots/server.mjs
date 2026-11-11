@@ -77,9 +77,12 @@ const exact = {
     // The admin guide's member detail shows "Clean home", which needs a deployment that can erase one.
     ...(process.env.SHOT_ADMIN_GUIDE ? { home_erase: true } : {}),
   }),
+  // SHOT_OPERATE_RUN: the operate pages' deployment administrator, so the account menu offers the
+  // admin modal (guide scene operate-brand). Every other run stays a plain member or tenant admin.
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
-    super_admin: false,
+    // The operate guide's pages (SHOT_OPERATE_RUN, SHOT_OPERATE_SIGNIN) are the deployment administrator's.
+    super_admin: process.env.SHOT_OPERATE_RUN === "1" || !!process.env.SHOT_OPERATE_SIGNIN,
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
   // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
@@ -280,7 +283,13 @@ const exact = {
   "/api/cost/me": () => fx.myCloudCost(),
   "/api/admin/cloud-cost": () => fx.adminCloudCost(),
   // Tenant settings -> members -> detail (the entry point appears only with --admin).
-  "/api/admin/tenants": () => (ADMIN_RES ? fx.adminResTenants() : fx.adminTenants()),
+  "/api/admin/tenants": () => {
+    const d = ADMIN_RES ? fx.adminResTenants() : fx.adminTenants();
+    return process.env.SHOT_OPERATE_SIGNIN ? { ...d, super_admin: true } : d;
+  },
+  // Admin › Sign-in method register of the operate guide (SHOT_OPERATE_SIGNIN). Without it the
+  // route stays unhandled, as before.
+  ...(process.env.SHOT_OPERATE_SIGNIN ? { "/api/admin/idp": () => fx.operateSigninRegister() } : {}),
   // The tenant administration pages of the guide (SHOT_ADMIN_OUTSIDE, run with SHOTS_ADMIN=1): the
   // audit log, running time, an empty MCP distribution and the two tenant switches. Without it
   // these routes stay unhandled, as before.
@@ -291,6 +300,31 @@ const exact = {
         "/api/admin/mcp-servers": () => ({ servers: [] }),
         "/api/admin/tenants/demo/external-memory": () => ({ enabled: true }),
         "/api/admin/tenants/demo/watch-sources": () => ({ enabled: false }),
+      }
+    : {}),
+  // Admin › Appearance for the operate pages (SHOT_OPERATE_RUN): a staging deployment branded
+  // violet from this screen, over an environment that names none.
+  ...(process.env.SHOT_OPERATE_RUN === "1"
+    ? {
+        "/api/admin/brand": () => ({
+          color: "violet",
+          hex: "#7c4dff",
+          label: "staging",
+          name: "[staging] Agent Fleet",
+          source: "admin",
+          env: { color: "", label: "" },
+          presets: [
+            { name: "teal", hex: "#149ba7" },
+            { name: "blue", hex: "#2f6fed" },
+            { name: "violet", hex: "#7c4dff" },
+            { name: "magenta", hex: "#c2447d" },
+            { name: "red", hex: "#d94b4b" },
+            { name: "orange", hex: "#e07a1f" },
+            { name: "green", hex: "#2f9e44" },
+            { name: "slate", hex: "#64748b" },
+          ],
+          max_label: 16,
+        }),
       }
     : {}),
   "/api/admin/workspace-sizing": () => ({

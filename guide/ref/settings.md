@@ -88,12 +88,12 @@ wherever the Control Plane serves the engine panel, **Cloud cost** on AWS.
 
 | Section | Configures | Details |
 |---|---|---|
-| Tenants | creating tenants; each tenant's limits and idle auto-stop, its use of the self-hosted engines and its model-ingest grant, its members | [operate/02](../operate/02-install.md#7-the-first-tenant-and-members) |
-| Sign-in method register | approving the sign-in methods tenants define for themselves | [operate/05](../operate/05-signin.md#7-a-sign-in-method-a-tenant-defines-itself) |
+| Tenants | creating tenants; each tenant's limits and idle auto-stop, its use of the self-hosted engines and its model-ingest grant, its members | [Install Agent Fleet](../operate/install.md#7-welcome-members) |
+| Sign-in method register | approving the sign-in methods tenants define for themselves | [Approve a tenant's own sign-in](../operate/signin/tenant-idp.md) |
 | Egress | outbound traffic from workspaces: observe (log-only) or enforce, the allowlist, members' proposals | [operate/04](../operate/04-secure.md#operating-egress-control) |
 | MCP sign-in hosts | which client hosts the MCP OAuth server trusts (deployment-wide) | [operate/04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only) |
 | Read aloud | the speech engine's mode, and the shared pronunciation dictionary | [operate/07](../operate/07-engines.md#read-aloud-the-speech-engine-and-the-shared-dictionary) |
-| Appearance | the deployment's colour and label, to tell one deployment from the next | [operate/03](../operate/03-run.md#telling-two-deployments-apart-colour-and-label) |
+| Appearance | the deployment's colour and label, to tell one deployment from the next | [Tell deployments apart](../operate/run/deployment-label.md) |
 | Dev sign-in | the development OIDC IdP switch, for apps on preview subdomains | [operate/04](../operate/04-secure.md#development-sign-in-dev-oidc-idp-superadmin-only) |
 | Inference engines | the self-hosted engines: mode, GPU class, model catalogue, state and history | [operate/07](../operate/07-engines.md) |
 | API tokens | the Hugging Face and Civitai tokens, and the Civitai Red switch, for taking models in | [operate/07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
@@ -123,8 +123,8 @@ everything else:
 | `AF_MCP_OAUTH` | `1` also makes the Control Plane an OAuth authorization server for `/mcp`, so hosted clients connect by signing the member in. Needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`; with any of the three missing the OAuth paths answer 404. Each tenant can still switch it off for itself ([Distribute an MCP server to everyone](../admin/mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth)); [operate/04](../operate/04-secure.md#sign-in-for-remote-mcp-clients-oauth) has the rest |
 | `AF_GITHUB_WEBHOOK_SECRET` | The webhook secret of this deployment's GitHub App. Set, the Control Plane accepts the App's deliveries at `/webhooks/github` (set the App's webhook URL to `<PUBLIC_BASE_URL>/webhooks/github`) and uses them only to tell running workspaces to check a public repository's pull request sooner; unset, that endpoint does not exist and watches rely on polling alone. Deliveries about private repositories are ignored on this path. Nothing of a delivery is passed on. |
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | the client hosts or `https://host/path` URL prefixes MCP OAuth trusts, comma-separated (a bare host means any path); the default is `https://claude.ai/api/mcp/auth_callback`, `claude.com` and `chatgpt.com`, and `none` leaves loopback clients only. A list saved in the Admin modal (**MCP sign-in hosts**) wins over this variable ([operate/04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only)) |
-| `AF_EFS_BACKUP` | not set by hand: on `ecs` / `ecs-ec2`, `update.sh` and `standup.sh` fill it from the ingress stack's `EfsBackup` parameter (`present`, `off` or `missing`), and `missing` raises the Admin screen's "no daily EFS backup" banner ([operate/03](../operate/03-run.md#upgrade)) |
-| `AF_SESSION_IDLE_TIMEOUT`, `AF_WS_IDLE_TIMEOUT`, `AF_BACKGROUND_HOLD_MAX`, `AF_WORKSPACE_START_DEADLINE` | when idle sessions and Workspaces are stopped; the defaults are in [limits](limits.md#set-by-the-deployment) and the behaviour in [operate/03](../operate/03-run.md#idle-stop-and-force-stop) |
+| `AF_EFS_BACKUP` | not set by hand: on `ecs` / `ecs-ec2`, `update.sh` and `standup.sh` fill it from the ingress stack's `EfsBackup` parameter (`present`, `off` or `missing`), and `missing` raises the Admin screen's "no daily EFS backup" banner ([Upgrade](../operate/run/upgrade.md#the-missing-efs-backup-notice)) |
+| `AF_SESSION_IDLE_TIMEOUT`, `AF_WS_IDLE_TIMEOUT`, `AF_BACKGROUND_HOLD_MAX`, `AF_WORKSPACE_START_DEADLINE` | when idle sessions and Workspaces are stopped; the defaults are in [limits](limits.md#set-by-the-deployment) and the behaviour in [Use idle stop and force-stop](../operate/run/idle-stop.md#set-the-idle-auto-stop-times) |
 
 ### On AWS ECS
 

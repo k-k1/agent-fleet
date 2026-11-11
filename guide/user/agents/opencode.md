@@ -99,7 +99,7 @@ RTK rewrites commands every time ([Check prices and usage](usage.md#save-tokens-
 - **Your agent instructions do reach it.** They are written into a marked block of opencode's global `AGENTS.md`. The block is rewritten on every save, so do not edit it by hand ([Write down how you work, once](instructions.md))
 - **Terminal (CLI) sessions share one opencode server.** No server is started per session, so adding sessions costs little memory. Conversation, environment and state stay separate per session. When the shared server is unavailable, the session starts on a server of its own automatically
 - **Questions are answered in a form.** When opencode asks something, a question card appears in the session view. Pick an option or type your own. "**Cancel — back to chat**" withdraws the form, and the agent moves on
-- A Terminal (CLI) session on its own server answers forms with several questions or multiple-choice items in the terminal
+- A Terminal (CLI) session on its own server shows no question card in the Console; answer its questions in the terminal
 - A pending form is lost if the opencode server restarts before you answer
 - **The to-do list appears only when you enable `experimental.todo` in your own opencode configuration.** Its absence does not mean the connection dropped
 - Conversations made with opencode 1 are taken in, under the same session ID, the first time opencode 2 starts. You can resume them where they left off
