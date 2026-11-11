@@ -25,4 +25,4 @@ const (
 	engineOfferBudgetDefault = engine.OfferBudgetDefault
 )
 
-var imageProviderServable = engine.ImageProviderServable
+func imageProviderServable(d engineDef) bool { return engine.ImageProviderServable(d) }

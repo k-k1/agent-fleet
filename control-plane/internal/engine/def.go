@@ -2,10 +2,10 @@
 // main (#3810, Plan A step 3). This first cluster is the declared half: the row type of the
 // engine table, its ingest block and the predicates over them. It has no outward dependency
 // (no manager, no apiError, no store), so unlike internal/tenantsrv it needs no interface
-// seam; the first file that does (runtime state, registry) will declare one in deps.go.
+// seam; a later file that does (runtime state, registry) will declare one in a deps.go of its own.
 //
 // control-plane/engine_wiring.go aliases every name back into main, which is why the engine
-// call sites and the 24 engine test files that build &manager{} are untouched.
+// call sites and the engine test files that build &manager{} are untouched.
 
 package engine
 
@@ -93,7 +93,7 @@ type Def struct {
 	// OriginEnv for AF_COMFY_URL, OriginPanel for the admin panel. Never in the JSON
 	// table — an operator cannot declare it — and it decides where the row's bearer comes from
 	// (engineComfyPanel in package main's precedence: a panel URL never presents an environment key).
-	Origin string
+	Origin string `json:"-"`
 }
 
 // Where a synthesised image row came from (ADR 0076 decision 2 and its 2026-10-04 addendum).
