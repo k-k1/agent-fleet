@@ -253,6 +253,9 @@ func serve() {
 	// writes lineage for sessions that predate the ledger.
 	sessionx.FleetGraphResync()
 	sessionx.FleetGraphBackfillFromMeta()
+	// Fill the main-transcript usage cache in the background so the first get_session_usage
+	// without a name after a restart is not a cold parse of every session.
+	go sessionx.WarmMainUsage()
 	go fleetgraph.StartActivityPruner()
 	// Delivery ledger for browser attach handoffs (docs/log/53, completion-notice section):
 	// pick up the ones where resolveBrowserHandoff finished last boot but
