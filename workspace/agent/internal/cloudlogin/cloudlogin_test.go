@@ -141,6 +141,51 @@ func TestParseErrorEndsTheAttempt(t *testing.T) {
 	}
 }
 
+// An attempt whose output the parser never turns into a URL fails with a reason at the
+// deadline instead of waiting out the process timeout.
+func TestAttemptStuckInStartingFailsAtTheDeadline(t *testing.T) {
+	old := urlDeadline
+	urlDeadline = 300 * time.Millisecond
+	defer func() { urlDeadline = old }()
+	s := newStore(t)
+	a, err := s.Start("k", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "echo something unexpected; sleep 30"},
+		Timeout: 60 * time.Second,
+		Parse:   func(string) (string, string, error) { return "", "", nil },
+		Exited:  func(error) (bool, string) { return false, "exited" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := waitFor(t, a, PhaseFailed)
+	if !strings.Contains(v.Message, "no sign-in URL") {
+		t.Fatalf("view = %+v", v)
+	}
+}
+
+// A login that already showed its URL is left alone by the deadline.
+func TestAttemptThatShowedItsURLSurvivesTheDeadline(t *testing.T) {
+	old := urlDeadline
+	urlDeadline = 200 * time.Millisecond
+	defer func() { urlDeadline = old }()
+	s := newStore(t)
+	a, err := s.Start("k", "", "prod", Process{
+		Name: "test login", Path: "/bin/sh", Args: []string{"-c", "echo url; sleep 30"},
+		Timeout: 60 * time.Second,
+		Parse:   func(string) (string, string, error) { return "https://x.invalid/", "ABCD-EFGH", nil },
+		Exited:  func(error) (bool, string) { return false, "exited" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, a, PhaseAuthorize)
+	time.Sleep(600 * time.Millisecond)
+	if v := a.View(); v.Phase != PhaseAuthorize {
+		t.Fatalf("view = %+v, want it still authorizing", v)
+	}
+	a.End(PhaseCancelled, "")
+}
+
 // Exited runs before Cleanup: a backend that holds a lock from the start lets go of it in
 // Cleanup, and its Exited still needs it (gcpx records the finished login under it).
 func TestExitedRunsBeforeCleanup(t *testing.T) {

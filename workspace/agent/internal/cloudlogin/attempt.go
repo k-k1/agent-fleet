@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -249,10 +250,12 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 	began := time.Now()
 	log.Printf("%s: %s started pid=%d profile=%s", s.LogPrefix, p.Name, cmd.Process.Pid, profile)
 	drained := make(chan struct{})
+	var seen atomic.Int64
 	go func() {
 		defer close(drained)
-		watchOutput(s.LogPrefix, a, pr, p.Parse)
+		watchOutput(s.LogPrefix, a, pr, p.Parse, &seen)
 	}()
+	go failIfNoURL(a, done, &seen, s.LogPrefix, p.Name)
 	go func() {
 		defer close(done)
 		err := cmd.Wait()
@@ -286,6 +289,34 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 	return a, nil
 }
 
+// urlDeadline is how long an attempt may stay in "starting": every login CLI prints its
+// URL within seconds, so past this the output format is not one the parser knows (aws-cli
+// 2.36 moved its URLs to a new host and the login sat for the full process timeout, ten
+// minutes, saying nothing). A var so a test can shorten it.
+var urlDeadline = 60 * time.Second
+
+// failIfNoURL ends an attempt still in "starting" once urlDeadline has passed, with a reason
+// the member sees. Ending it stops the process, which closes the output and makes
+// watchOutput log the redacted shape of what was not understood.
+func failIfNoURL(a *Attempt, done <-chan struct{}, seen *atomic.Int64, prefix, name string) {
+	t := time.NewTimer(urlDeadline)
+	defer t.Stop()
+	select {
+	case <-done:
+		return
+	case <-t.C:
+	}
+	if a.View().Phase != PhaseStarting {
+		return
+	}
+	msg := name + " printed nothing within " + urlDeadline.String()
+	if seen.Load() > 0 {
+		msg = name + " printed output but no sign-in URL the Agent recognises (its output format may have changed); see the Agent log"
+	}
+	log.Printf("%s: still starting after %s bytes=%d: ending the attempt", prefix, urlDeadline, seen.Load())
+	a.End(PhaseFailed, msg)
+}
+
 // outputDrainWait bounds how long an exited process's output may take to reach the reader
 // before Exited runs without the rest. A var so a test can shorten it.
 var outputDrainWait = 2 * time.Second
@@ -296,7 +327,7 @@ var outputDrainWait = 2 * time.Second
 // The log gets byte counts and booleans only: it says whether the process spoke and whether
 // the parser found a URL and a code, which is what tells "the CLI printed nothing" from
 // "the CLI printed something the parser did not recognise".
-func watchOutput(prefix string, a *Attempt, r io.Reader, parse func(string) (string, string, error)) {
+func watchOutput(prefix string, a *Attempt, r io.Reader, parse func(string) (string, string, error), seen *atomic.Int64) {
 	var buf bytes.Buffer
 	chunk := make([]byte, 4096)
 	total, announced := 0, false
@@ -304,6 +335,7 @@ func watchOutput(prefix string, a *Attempt, r io.Reader, parse func(string) (str
 		n, err := r.Read(chunk)
 		if n > 0 {
 			total += n
+			seen.Store(int64(total))
 			if total == n {
 				log.Printf("%s: first output bytes=%d", prefix, n)
 			}
