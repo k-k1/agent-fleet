@@ -299,6 +299,7 @@ export const sessions = {
   "arch.delete_old": "古いものを削除",
   "arch.no_match": "一致するアーカイブはありません。",
   "arch.no_workdir": "作業ディレクトリなし",
+  "arch.archived_on": " · {date} にアーカイブ",
   "arch.folder_missing_suffix": " · フォルダ無し",
   "arch.recreate": "作業コピーを作り直す",
   "arch.recreate_title": "削除された worktree を元のパスに作り直し、ここのセッションを再開できるようにします",

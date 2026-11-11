@@ -214,3 +214,23 @@ func BenchmarkHandleListArchived(b *testing.B) {
 		}
 	})
 }
+
+// The shelf row carries archivedAt, the stamp the work-folder expiry counts its seven days
+// from, and omits it when the meta has none (an unstamped meta).
+func TestHandleListArchived_ArchivedAtRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	const stamp = "2026-11-05T09:30:00Z"
+	session.WriteMeta(session.Meta{Name: "arch_at_a", Dir: dir, Kind: session.KindCodex, Archived: true, ArchivedAt: stamp})
+	session.WriteMeta(session.Meta{Name: "arch_at_b", Dir: dir, Kind: session.KindCodex, Archived: true})
+
+	got := map[string]map[string]any{}
+	for _, r := range listArchivedRows(t, "arch_at_") {
+		got[r["name"].(string)] = r
+	}
+	if v, _ := got["arch_at_a"]["archivedAt"].(string); v != stamp {
+		t.Errorf("archivedAt = %q, want %q", v, stamp)
+	}
+	if _, ok := got["arch_at_b"]["archivedAt"]; ok {
+		t.Errorf("an unstamped row carries archivedAt: %v", got["arch_at_b"]["archivedAt"])
+	}
+}
