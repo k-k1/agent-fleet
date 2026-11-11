@@ -126,7 +126,7 @@ Switching the mode is IT's domain. For details, see "Auto-join and invite-only" 
 **Q. What happens to a member who hits a limit?**
 Nothing that is already running gets stopped. Only the attempt to start something new is rejected,
 and the Console shows a "limit reached" message. Once they tidy up, they can continue. For details,
-see "What members experience when a limit is hit" in [02-limits.md](02-limits.md).
+see [What members see when a limit is hit](resources/overview.md#what-members-see-when-a-limit-is-hit).
 
 **Q. Can I only see my own tenant?**
 Yes. Members, sessions, audit, and running time are all scoped to your own tenant. The option to switch
@@ -169,5 +169,5 @@ this deployment cannot reach GitHub and simply does not know; that is not itself
 
 ---
 
-- Back to: [02 Resource limits and sessions](02-limits.md)
+- Back to: [Stop workspaces left idle](resources/idle-stop.md)
 - Guide index: [../README.md](../member/README.md)

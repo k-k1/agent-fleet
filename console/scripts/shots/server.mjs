@@ -30,6 +30,8 @@ const ADMIN = argv.includes("--admin") || process.env.SHOTS_ADMIN === "1";
 // --idle: serve the mirror session as idle with no pending question. The README shot wants the
 // live question card, but that card locks the composer, so anything that needs the composer
 // itself (the skill picker, say) is checked with this on.
+// SHOT_ADMIN_RES: the tenant administrator's resource pages of the guide (fixtures.mjs).
+const ADMIN_RES = process.env.SHOT_ADMIN_RES === "1";
 const IDLE = argv.includes("--idle") || process.env.SHOTS_IDLE === "1";
 // --fleet-lanes N: serve a SYNTHETIC fleet graph of N lanes instead of the hand-written
 // nine. The README shots never pass it; it exists because the figure's geometry only goes
@@ -276,7 +278,7 @@ const exact = {
   "/api/cost/me": () => fx.myCloudCost(),
   "/api/admin/cloud-cost": () => fx.adminCloudCost(),
   // Tenant settings -> members -> detail (the entry point appears only with --admin).
-  "/api/admin/tenants": () => fx.adminTenants(),
+  "/api/admin/tenants": () => (ADMIN_RES ? fx.adminResTenants() : fx.adminTenants()),
   "/api/admin/workspace-sizing": () => ({
     runtime: "ecs-ec2",
     cpu_effective: false,
@@ -644,7 +646,9 @@ const re = [
   // The four member-detail routes (docs/log/67 §67.15). cost alone stays off the 4-second
   // stats/sessions polling and is fetched on open and on Apply, because it reads a DB refreshed
   // every 6 hours.
-  [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminMembers()],
+  [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => (ADMIN_RES ? fx.adminResMembers() : fx.adminMembers())],
+  // Who may use the self-hosted engines, for the guide's admin engines page only.
+  ...(ADMIN_RES ? [[/^\/api\/admin\/tenants\/[^/]+\/engine-access$/, () => fx.adminResEngineAccess()]] : []),
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/sessions$/, () => fx.adminMemberSessions(LOCALE)],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/cost$/, () => fx.memberCloudCost()],

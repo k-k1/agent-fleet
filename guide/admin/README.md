@@ -23,11 +23,22 @@ administrators are also working members: for everyday development read
 ## Chapters
 
 1. [Members](01-members.md): adding, removing, and the offboarding sequence
-2. [Resource limits and sessions](02-limits.md): per-member limits, engine access, the limit board, home size and machine, what is running, force-stopping
+2. [Resource limits and sessions](02-limits.md): moved to the pages under "Resources" below
 3. [Audit and usage](03-audit-usage.md): who changed what, running time, cloud cost
 4. [MCP distribution and outside access](04-mcp-outside.md): handing servers to the whole team, outside apps connecting through MCP OAuth, memory used from outside Agent Fleet
 5. [Who may sign in, and from where](05-access.md): sign-in methods, login rules, allowed networks, your own OAuth apps
 6. [Team defaults](06-team-defaults.md): the team's branch naming rules, and the agent new members are pointed at
+
+## Resources
+
+| Page | What you can do |
+|---|---|
+| [See how resources are used](resources/overview.md) | See members' resources and the sessions running now, and narrow down the cause when things are slow |
+| [Set session limits](resources/session-limits.md) | Set each member's session limit, and check the tenant-wide limits and the limit board |
+| [Choose who may use the inference engines and which models](resources/engines.md) | Choose the members who may use the self-hosted engines, and take models in when allowed |
+| [Set the workspace size](resources/workspace-size.md) | Set memory, CPU, disk and the machine, and grow a home |
+| [Stop workspaces left idle](resources/idle-stop.md) | Read the idle-stop outlook, and force-stop a workspace that runs away |
+| [Start the workspace at sign-in](resources/start-at-signin.md) | Have a stopped workspace start when its member opens the Console |
 
 ## Getting in
 
@@ -69,7 +80,7 @@ Touring it once, before it matters, is what stops you being lost when it does.
 2. **Look over the member list**: who currently belongs
    ([01 Members](01-members.md)).
 3. **Learn the limits in force**: under Limits & idle. They are read-only for you;
-   per-member session limits are yours ([02 Limits](02-limits.md)).
+   per-member session limits are yours ([Set session limits](resources/session-limits.md)).
 4. **Read the audit and usage screens once** while everything is normal. That is what
    lets you notice "this is different from usual" later ([03 Audit](03-audit-usage.md)).
 

@@ -84,7 +84,7 @@ Cursor, Copilot, Kiro or Muse, or **None**, and press **Save**. **None** brings 
 wording that lists the choices.
 
 Agents that need no account of the member's own are not offered: the shell and SSM, and the
-deployment's own engine (who may use that is set under [who may use the inference engines](02-limits.md#who-may-use-the-inference-engines-you-can-set-this)).
+deployment's own engine (who may use that is set under [who may use the inference engines](resources/engines.md#choose-the-members-who-may-use-them)).
 
 ### When members see it
 

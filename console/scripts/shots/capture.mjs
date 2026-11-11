@@ -56,6 +56,42 @@ const OPEN_START_HUB = `
         await wait(1000);
       }`;
 
+// Tenant settings for the guide's admin resource pages (SHOT_ADMIN_RES): open the modal from the
+// account menu and pick a rail item. The modal grows to its content so a clip below the fold is
+// on screen.
+const openTenant = (rail) => `
+  document.querySelector(".acct-btn")?.click();
+  await new Promise((r) => setTimeout(r, 500));
+  [...document.querySelectorAll(".acct-item")].find((el) => /テナント設定|Tenant settings/.test(el.textContent || ""))?.click();
+  for (let i = 0; i < 50 && !document.querySelector(".tenant-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+  [...document.querySelectorAll(".tenant-modal .settings-rail-item")].find((b) => ${rail}.test(b.textContent || ""))?.click();
+  await new Promise((r) => setTimeout(r, 1500));
+  const modal = document.querySelector(".tenant-modal");
+  if (modal) { modal.style.height = "auto"; modal.style.maxHeight = "none"; }
+`;
+// The member detail of aoi-tanaka with only the sections `keep` picks left visible, each tagged
+// shot-<n> in order so the clip can name them.
+const openMember = (keep) => `${openTenant("/^(メンバー|Members)$/")}
+  [...document.querySelectorAll(".member-card")].find((c) => /aoi-tanaka/.test(c.textContent || ""))?.click();
+  for (let i = 0; i < 50 && !document.querySelector(".member-detail .ws-size"); i++) await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 2500));
+  const secs = [...document.querySelectorAll(".member-detail > section")];
+  const keep = (${keep})(secs);
+  secs.forEach((sec) => { if (!keep.includes(sec)) sec.style.display = "none"; });
+  keep.forEach((sec, i) => { sec.id = "shot-" + i; });
+`;
+const ADMIN_RES_ENV = { SHOTS_ADMIN: "1", SHOT_ADMIN_RES: "1" };
+const ADMIN_RES_BASE = {
+  guide: true,
+  stubEnv: ADMIN_RES_ENV,
+  pad: 0,
+  sections: FOCUS_TREE,
+  width: 1500,
+  height: 1800,
+  layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+  settle: 2000,
+};
+
 const SCENES = [
   {
     name: "console",
@@ -2443,6 +2479,53 @@ const SCENES = [
     settle: 2500,
   },
   // ---- end settings pages ----
+  // ---- admin resource pages (SHOT_ADMIN_RES) ----
+  {
+    // Tenant settings › Limits & idle as a tenant administrator sees it: read-only figures.
+    ...ADMIN_RES_BASE,
+    name: "admin-res-limits",
+    clip: ".tenant-summary",
+    action: `(async () => {${openTenant("/上限・自動停止|Limits/")}})()`,
+  },
+  {
+    // Tenant settings › Engine access: chat restricted to ticked members, images open to all.
+    ...ADMIN_RES_BASE,
+    name: "admin-res-engine-access",
+    clip: ".engine-access",
+    action: `(async () => {${openTenant("/推論エンジンの利用者|Engine access/")}})()`,
+  },
+  {
+    // Member detail: the resource meters and the size card below them.
+    ...ADMIN_RES_BASE,
+    name: "admin-res-member",
+    clip: ["#shot-0", "#shot-1"],
+    action: `(async () => {${openMember('(secs) => secs.filter((x) => x.classList.contains("ws-size") || (x.nextElementSibling && x.nextElementSibling.classList && x.nextElementSibling.classList.contains("ws-size")))')}})()`,
+  },
+  {
+    // Member detail: the size editor opened with Change.
+    ...ADMIN_RES_BASE,
+    name: "admin-res-size",
+    clip: "#shot-0",
+    action: `(async () => {${openMember('(secs) => secs.filter((x) => x.classList.contains("ws-size"))')}
+      document.querySelector("#shot-0 .ws-size-edit")?.click();
+      await new Promise((r) => setTimeout(r, 800));
+    })()`,
+  },
+  {
+    // Member detail: the idle auto-stop outlook held by a working session and a pin.
+    ...ADMIN_RES_BASE,
+    name: "admin-res-idle",
+    clip: ["#shot-0"],
+    action: `(async () => {${openMember("(secs) => secs.slice(0, 1)")}})()`,
+  },
+  {
+    // Member detail: Operations, with force-stop above the irreversible actions.
+    ...ADMIN_RES_BASE,
+    name: "admin-res-stop",
+    clip: ["#shot-0"],
+    action: `(async () => {${openMember('(secs) => secs.filter((x) => x.querySelector(".danger-zone"))')}})()`,
+  },
+  // ---- end admin resource pages ----
   // ---- memory import/export pages (SHOT_MEMIO_GUIDE) ----
   {
     // Settings › Agent memory › Import & export: the hub of cards, grouped Import / Export /

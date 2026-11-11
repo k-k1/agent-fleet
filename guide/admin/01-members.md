@@ -15,7 +15,7 @@ follow the breadcrumb at the top of the panel (Members › the person).
 **The tenant's numbers**: **Tenant › Limits & idle** in the rail shows this tenant's display
 name, its member count, the number of workspaces currently running ("N running"), and the
 tenant-wide limits ("Limits — Workspace: X / Session: Y"). This is **read-only** (a super_admin
-sets the caps; see [02-limits.md](02-limits.md)).
+sets the caps; see [Set session limits](resources/session-limits.md)).
 
 The roster has one card per member. Clicking a card takes you to the member detail.
 
@@ -46,7 +46,7 @@ A card that needs you has a warning edge and a **Needs attention** mark. Hoverin
 the reasons, which are:
 
 - "The Control Plane stopped this workspace": the platform stopped it itself (see
-  [02-limits.md](02-limits.md#viewing-a-members-resources)).
+  [See how resources are used](resources/overview.md#see-a-members-resources)).
 - "A session is still holding it past its deadline": the workspace is running and a session is
   still holding it open after its deadline.
 - "The home disk is nearly full": the home is over 90 % full or has less than
@@ -73,7 +73,7 @@ the member's tenant one Console notification (the bell) when:
   failure and sends nothing.
 - **A running workspace's Agent has stopped answering** for several minutes: one notice per outage,
   and the member detail marks it **Not responding**
-  ([02-limits.md](02-limits.md#force-stopping-a-workspace)).
+  ([When it says Not responding](resources/idle-stop.md#when-it-says-not-responding)).
 
 Each notice names the member and opens their detail when you click it. It is sent once per
 crossing, not on every sample, and the "already notified" mark is stored in the database, so a
@@ -109,7 +109,7 @@ so opening the roster makes no call to any workspace. They can lag what the memb
 
 The member detail gathers that member's workspace resources, running sessions, and the various
 operations. Resources and sessions, force-stop, and limit settings are covered in
-[02-limits.md](02-limits.md).
+[See how resources are used](resources/overview.md), [Stop workspaces left idle](resources/idle-stop.md) and [Set session limits](resources/session-limits.md).
 
 Where the Control Plane reads the home folder's size itself (local, native), the detail's disk tile
 never waits for that measurement: it shows the last one with how old it is ("as of 3 minutes ago"),
@@ -188,7 +188,7 @@ order:
    Inviting never changes the email address of a person who already exists. An address is attached
    only to a new person; if the user key belongs to someone in another tenant and you pass an
    email, the invite is refused (409) and you invite by user key only. Someone who signs in through **another tenant's** own sign-in method cannot be added here (409 `identity_bound_to_other_tenant`); and if a person cannot sign in through your tenant's method because another tenant still has them on its roster, that tenant removes them first (removed memberships do not count), then they sign in again.
-2. **Force-stop the workspace**: stop what is running ([02-limits.md](02-limits.md)).
+2. **Force-stop the workspace**: stop what is running ([Force-stop a workspace](resources/idle-stop.md#force-stop-a-workspace)).
 3. **Clean home**: erase everything in their home **except their logins and connections** (git
    credentials, SSH keys, the encrypted connection store, Claude and Codex logins). **This cannot be
    undone.** Those logins and connections go only when the workspace is destroyed (below).
@@ -262,5 +262,5 @@ the developer documentation, along with the table structure.
 
 ---
 
-- Read next: [02 Resource limits and sessions](02-limits.md)
+- Read next: [See how resources are used](resources/overview.md)
 - Back to: [admin/README.md](README.md)

@@ -2951,3 +2951,50 @@ export function settingsTtsStatus() {
   };
 }
 // ---- end settings pages ----
+
+// --- Admin resource pages of the guide (SHOT_ADMIN_RES) ---------------------------------------
+// The tenant administrator's resource screens: the read-only tenant limits, the engine access
+// table, and a running member whose idle auto-stop is held by a working session and a pin.
+// Served only to a run that sets SHOT_ADMIN_RES, so the other admin scenes keep their data.
+const minutesFromNow = (m) => new Date(Date.now() + m * 60_000).toISOString();
+
+export const adminResTenants = () => ({
+  tenants: [{ slug: "demo", name: "Demo Team", users: 3, running: 1, max_workspaces: 4, max_sessions: 8 }],
+  super_admin: false,
+});
+
+export const adminResMembers = () => {
+  const base = adminMembers().members;
+  return {
+    members: base.map((m) =>
+      m.user_key === "aoi-tanaka"
+        ? {
+            ...m,
+            max_sessions: 4,
+            mem_limit: 16384 * 1048576,
+            disk_gb: 80,
+            idle: {
+              enabled: true,
+              holders: [
+                { kind: "working", session: "checkout-fix", since: minutesFromNow(-12), lapseAt: minutesFromNow(48) },
+                { kind: "pin", session: "nightly-e2e", until: minutesFromNow(170) },
+              ],
+              observedAt: minutesFromNow(-1),
+            },
+          }
+        : m,
+    ),
+  };
+};
+
+export const adminResEngineAccess = () => ({
+  roles: [
+    { role: "llm", tenant_allowed: true, members_only: true },
+    { role: "image", tenant_allowed: true, members_only: false },
+  ],
+  members: [
+    { membership_id: "m1", user_key: "aoi-tanaka", email: "aoi@example.com", role: "tenant_admin", grants: ["llm"] },
+    { membership_id: "m2", user_key: "ren-sato", email: "ren@example.com", role: "member", grants: ["llm", "image"] },
+    { membership_id: "m3", user_key: "mio-kubo", email: "mio@example.com", role: "member", grants: [] },
+  ],
+});

@@ -151,12 +151,12 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 |---|---|---|---|
 | Members | tenant admin | Members | [admin 01](../admin/01-members.md) |
 | Deleting a member's home backups (where the deployment keeps them) | tenant admin | Members → the member | [admin 01](../admin/01-members.md) |
-| Sessions across the tenant | tenant admin | Sessions | [admin 02](../admin/02-limits.md) |
-| Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../admin/02-limits.md) |
-| Limit board on / off for the tenant | tenant admin | Limit board | [admin 02](../admin/02-limits.md) |
-| Whether this tenant may use the llm / image engines, and whether its administrators may take models in | deployment admin (super_admin) | Tenant settings → Limits | [admin 02](../admin/02-limits.md) |
-| Which of the tenant's members may use the llm / image engines | tenant admin | Engine access | [admin 02](../admin/02-limits.md#who-may-use-the-inference-engines-you-can-set-this) |
-| Taking engine models in, when the tenant was granted it | tenant admin | Inference engine models | [admin 02](../admin/02-limits.md#taking-engine-models-in-only-if-your-tenant-was-granted-it) |
+| Sessions across the tenant | tenant admin | Sessions | [See how resources are used](../admin/resources/overview.md#see-the-sessions-running-now) |
+| Limits and idle auto-stop | tenant admin (read) | Limits & idle | [Set session limits](../admin/resources/session-limits.md#check-the-tenant-wide-limits), [Stop workspaces left idle](../admin/resources/idle-stop.md) |
+| Limit board on / off for the tenant | tenant admin | Limit board | [Set session limits](../admin/resources/session-limits.md#decide-whether-to-use-the-limit-board) |
+| Whether this tenant may use the llm / image engines, and whether its administrators may take models in | deployment admin (super_admin) | Tenant settings → Limits | [Choose who may use the inference engines and which models](../admin/resources/engines.md) |
+| Which of the tenant's members may use the llm / image engines | tenant admin | Engine access | [Choose who may use the inference engines and which models](../admin/resources/engines.md#choose-the-members-who-may-use-them) |
+| Taking engine models in, when the tenant was granted it | tenant admin | Inference engine models | [Choose who may use the inference engines and which models](../admin/resources/engines.md#take-models-in) |
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
 | Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [admin 05](../admin/05-access.md#sign-in-methods-and-login-rules) |
 | Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md#allowed-networks) |
