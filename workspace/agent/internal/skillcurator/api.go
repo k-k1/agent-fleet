@@ -1,6 +1,7 @@
 package skillcurator
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -126,6 +127,10 @@ func (a API) HandleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := Restore(root, entry.Archived, time.Now()); err != nil {
+		if errors.Is(err, ErrSkillExists) { // a skill appeared since the check above
+			httpx.WriteErr(w, http.StatusConflict, "skill_exists", "a skill named "+entry.Name+" already exists; nothing was restored")
+			return
+		}
 		httpx.WriteErr(w, http.StatusInternalServerError, "restore_failed", err.Error())
 		return
 	}

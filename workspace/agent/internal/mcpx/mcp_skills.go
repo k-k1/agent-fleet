@@ -38,6 +38,10 @@ func skillRestoreSchema() map[string]any {
 }
 
 func mcpSkillRestore(id json.RawMessage, raw json.RawMessage) []byte {
+	// A write on the member's skills: the session surface only, never the assistant surface.
+	if !selfReportOnly() {
+		return mcpToolErr(id, "skill_restore is only available from a session's Agent Fleet server")
+	}
 	var a skillRestoreArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a); err != nil {

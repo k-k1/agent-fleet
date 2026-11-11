@@ -75,3 +75,18 @@ func TestSkillRestoreListsAndRestores(t *testing.T) {
 		t.Fatalf("name clash: %q isErr=%v", text, isErr)
 	}
 }
+
+// The assistant surface is read-only for the member's files: it gets neither a list nor a restore.
+func TestSkillRestoreRefusedOutsideASession(t *testing.T) {
+	old := selfReportOnly()
+	t.Cleanup(func() { setSelfReportOnly(old) })
+	setSelfReportOnly(false)
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+	if _, isErr := skillRestoreCall(t, map[string]any{"archived": "afa-x", "root": "~/.claude/skills"}); !isErr || hit {
+		t.Fatalf("isError=%v reachedAgent=%v", isErr, hit)
+	}
+}
