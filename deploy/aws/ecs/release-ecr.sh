@@ -141,10 +141,15 @@ if [ -n "$ENGINES_STACK" ]; then
   esac
 fi
 
+# 30-ingress may exceed the 51,200-byte inline limit, so the hand-off bucket (a 20-platform
+# output) is part of the printed command; resolved here because the operator's shell has none.
+CFN_BUCKET="$("${AWS[@]}" cloudformation describe-stacks --stack-name "${PLATFORM_STACK:-af-ecs-platform}" \
+  --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text 2>/dev/null || true)"
+case "$CFN_BUCKET" in ""|None) CFN_BUCKET="<CfnTemplatesBucket output of the platform stack>" ;; esac
 cat <<EOF
 ==> done: pushed :$VERSION to $ECR_HOST/af-{control-plane,workspace}
 next: aws cloudformation deploy --stack-name af-ecs-ingress \\
-        --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \\
+        --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \\
         --parameter-overrides ImageTag=$VERSION \\
         --profile $PROFILE --region $REGION
       (keep the previous values for the other parameters. The CP does a rolling

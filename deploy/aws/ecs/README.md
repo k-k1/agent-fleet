@@ -190,8 +190,9 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
    redirect URIs — that single URI serves every provider you enable. Pass the
    fqdn/zone + client id + allowed/super-admin emails as parameters at deploy:
    ```bash
+   CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text --profile <p> --region <r>)
    aws cloudformation deploy --stack-name af-ecs-ingress \
-     --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \
+     --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides GoogleClientId=<id> \
        Fqdn=af.example.com HostedZoneId=<your-zone-id> \
        AllowedEmails=you@example.com SuperAdminEmails=you@example.com \
@@ -319,7 +320,7 @@ What each command does and when to run it: `guide/operate/12-keys.md`.
 
 ```bash
 # 30-ingress: serve /mcp, then (optionally) let hosted MCP clients sign in with OAuth
-aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides McpEnabled=on McpOAuth=on
 ```
 
@@ -338,7 +339,7 @@ Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#mcp-mcp-and-mcp-oauth) and
 
 ```bash
 # 30-ingress: Bedrock the deployment pays for (ADR 0129 Q1, acceptance only)
-aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ProvidedRoutes=on
 ```
 
@@ -358,7 +359,7 @@ Off adds nothing. Details: [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#provided-rout
 ### Timers, GitHub sign-in extras and LAN / borrowed engines (optional, empty by default)
 
 ```bash
-aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides WsIdleTimeout=4h ComfyUrl=http://10.0.0.5:8188 ComfyApiKey=on
 ```
@@ -540,8 +541,9 @@ the adapter launches. To move a deployment to a new release:
 3. **Re-deploy ingress with only the tag overridden** (all other parameters keep
    their previous values):
    ```bash
+   CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text --profile <p> --region <r>)
    aws cloudformation deploy --stack-name af-ecs-ingress \
-     --template-file cfn/30-ingress.yaml --capabilities CAPABILITY_NAMED_IAM \
+     --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides ImageTag=<v> \
      --profile <p> --region <r>
    ```
@@ -834,6 +836,32 @@ zero bytes. Long explanations have to leave the file, not change syntax inside i
 months, and a warning would have been too. Crossing the wall again should be a deliberate
 edit to that constant, visible in the diff — while `af_cfn_deploy` keeps measuring at run
 time, so a template that does cross it still deploys instead of dying.
+
+### 30-ingress may cross the wall again (2026-11-11, #3550)
+
+Staying inside the wall had run out of road: `30-ingress.yaml` sat 200 bytes under its
+50,176-byte test budget, the prose had already left (above), and every new parameter —
+a `Parameters` entry, a condition, an `Environment` line — costs 300–500 bytes, so each PR
+that added one failed CI and was trimmed by hand. Only nested stacks or a second template
+would make room without S3, and moving resources between stacks replaces them; the ALB and
+its listeners must not be replaced, so that is out.
+
+So the S3 route stopped being only a safety net **for this one template**: 30-ingress is
+always deployed after 20-platform's bucket exists (stand-up order 00 → 10 → 20 → images →
+40 → 30), which is the property the pre-bucket templates lack. What changed:
+
+- `cfn-cp-settings-env-test.py` budget for 30-ingress: 51,200 − 1,024 → **65,536** (about
+  14 KiB, thirty-odd parameters of room). Raising it again stays a deliberate edit.
+- case **3b-2** exempts 30-ingress from the 51,200 limit (the others keep it);
+  `cfn-template-size-test.py` keeps the pre-bucket templates 4 KiB under it.
+- Every hand-typed `aws cloudformation deploy` of 30-ingress (`--template-file`) in this
+  README, `PARAMETERS.md` and `release-ecr.sh`'s hint now carries
+  `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` (the AWS CLI refuses a direct upload over
+  51,200 bytes before calling the API), and `cfn-template-size-test.py` fails on one that
+  does not. `CFN_BUCKET` is the 20-platform output `CfnTemplatesBucket`:
+  `CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text)`.
+- The template itself did not change: no logical ID, parameter or resource moved, so an
+  existing stack updates in place.
 
 ### Round trip, measured (2026-09-02)
 
@@ -1236,7 +1264,7 @@ service supports it:
 | ec2 | 00-network (VPC/subnets/NAT/SG/S3 gateway endpoint; the egress gateway with `EgressRoute=gateway`) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, route tables and routes, security groups, VPC endpoints (the S3 gateway endpoint with its policy: `ec2:CreateVpcEndpoint`/`ModifyVpcEndpoint`/`DeleteVpcEndpoints`); for the gateway also network interfaces, `AssociateAddress`/`DisassociateAddress` (its Elastic IP, `DescribeAddresses` for a handed-in one), launch templates (`CreateLaunchTemplate`/`CreateLaunchTemplateVersion`/`DeleteLaunchTemplate`), and `RunInstances`/`CreateTags` (checked when the Auto Scaling group is created from the launch template) |
 | autoscaling | 00-network's egress gateway (`EgressRoute=gateway`; `pause.sh` scales it through the stack) | Create/Update/Delete/Describe AutoScalingGroups, plus `iam:CreateServiceLinkedRole` for `autoscaling.amazonaws.com` once per account |
 | secretsmanager | 00-network's egress agent token (`EgressRoute=gateway`) | CreateSecret/DeleteSecret/DescribeSecret, GetRandomPassword (the stack generates the value) |
-| s3 | 10-data's egress event archive bucket (`EgressArchive=create`, off by default) | CreateBucket/DeleteBucket, Put/GetBucketPolicy, PutBucketEncryption, PutLifecycleConfiguration, PutBucketPublicAccessBlock, PutBucketTagging |
+| s3 | 10-data's egress event archive bucket (`EgressArchive=create`, off by default) | CreateBucket/DeleteBucket, Put/GetBucketPolicy, PutBucketEncryption, PutLifecycleConfiguration, PutBucketPublicAccessBlock, PutBucketTagging; and on 20-platform's `CfnTemplatesBucket` `s3:PutObject` / `s3:GetObject` (the CLI uploads any template over 51,200 bytes, 30-ingress included) |
 | ecr | 20-platform repos + image push | CreateRepository/DeleteRepository/Describe*, GetAuthorizationToken, BatchCheckLayerAvailability, InitiateLayerUpload, UploadLayerPart, CompleteLayerUpload, PutImage |
 | ecs | 20-platform cluster + 30-ingress service | Create/Delete/Describe cluster & service, RegisterTaskDefinition, plus `iam:CreateServiceLinkedRole` once per account |
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
@@ -1794,7 +1822,7 @@ aws cloudformation deploy --stack-name af-ecs-ec2-pool \
   --template-file cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides NetworkStackName=af-ecs-network PlatformStackName=af-ecs-platform
 # then point the CP at it (this is the whole switch, and the whole rollback):
-aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ingress.yaml \
+aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides WsRuntime=ecs-ec2 Ec2SlotLaunchTemplate=lt-0123456789abcdef0 ...
 ```
 

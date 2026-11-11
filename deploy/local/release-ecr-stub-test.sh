@@ -85,6 +85,7 @@ docker image inspect agent-fleet/workspace:1.2.3
 docker tag agent-fleet/workspace:1.2.3 $H/af-workspace:1.2.3
 docker push $H/af-workspace:1.2.3
 aws --profile p1 --region ap-northeast-1 cloudformation describe-stacks --stack-name af-ecs-ingress --query Stacks[0].Parameters[?ParameterKey=='EnginesSsmParam'].ParameterValue --output text
+aws --profile p1 --region ap-northeast-1 cloudformation describe-stacks --stack-name af-ecs-platform --query Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue --output text
 EOF
 expect_set "$WORK/want1"
 expect_order "ecr describe-repositories" "docker tag agent-fleet/control-plane:1.2.3"
@@ -118,6 +119,7 @@ docker image inspect agent-fleet/workspace:2.0.0
 docker tag agent-fleet/workspace:2.0.0 $H2/af-workspace:2.0.0
 docker push $H2/af-workspace:2.0.0
 aws --profile p2 --region us-east-1 cloudformation describe-stacks --stack-name af-ecs-ingress --query Stacks[0].Parameters[?ParameterKey=='EnginesSsmParam'].ParameterValue --output text
+aws --profile p2 --region us-east-1 cloudformation describe-stacks --stack-name af-ecs-platform --query Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue --output text
 EOF
 expect_set "$WORK/want2"
 expect_order "docker load" "docker tag agent-fleet/control-plane:2.0.0"
@@ -164,6 +166,7 @@ crane manifest ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-11
 aws --profile p1 --region ap-northeast-1 ecr get-login-password
 crane auth login $H -u AWS --password-stdin
 crane copy ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-11 $H/af-engine-tools:2026-09-11
+aws --profile p1 --region ap-northeast-1 cloudformation describe-stacks --stack-name af-ecs-platform --query Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue --output text
 EOF
 expect_set "$WORK/want4"
 # The repository is 20-platform's, and it is checked before anything is copied into it — the

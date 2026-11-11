@@ -12,6 +12,12 @@ does not have to travel to the API to do its job. YAML comments count toward the
 exactly like `Description:` does, so moving a paragraph into a `#` comment would have saved
 nothing; it had to leave the file. Nothing here was shortened in the move.
 
+**Deploying by hand.** `30-ingress.yaml` is allowed to grow past 51,200 bytes (budget 64 KiB,
+`deploy/local/cfn-cp-settings-env-test.py`), so every `aws cloudformation deploy` of it below
+carries `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn`, where
+`CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text)`.
+`standup.sh` / `update.sh` do this by themselves (`af_cfn_deploy`).
+
 Order matches the template. Parameters not listed here are self-explanatory in it
 (`NetworkStackName`, `PlatformStackName`, `CpPort`, `CpCpu`, `CpMemory`, …).
 
@@ -941,17 +947,17 @@ Turning it on (`update.sh` overrides only `ImageTag` and the facts it reads from
 stacks, so it is not the way to set these):
 
 ```
-aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides McpEnabled=on McpOAuth=on
 ```
 
 Parameters not named in `--parameter-overrides` keep the stack's previous value, so nothing
 else moves. Unknown or new parameters on `update.sh`'s own run get the template default (off).
-Template-size note: the template keeps about 1 KB under the 51,200-byte wall (see the
-README); `deploy/local/cfn-cp-settings-env-test.py` fails below 1 KiB. Write new
+Template-size note: the template may exceed the 51,200-byte inline limit (it then goes
+through S3, see the README); `deploy/local/cfn-cp-settings-env-test.py` fails above 64 KiB.
+Keep prose here rather than in the template all the same. Write new
 parameters in block style (`Default:` on its own line): `standup.sh`'s preflight reads
-required parameters line by line and reports every flow-style one as missing. Parameters have been paid
-for by moving prose out of the template, so the next one needs the same.
+required parameters line by line and reports every flow-style one as missing.
 
 ## Provided routes
 
@@ -1017,7 +1023,7 @@ administrators set). It does four things.
   creates on the route fail at the Agent until then).
 
 ```
-aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ProvidedRoutes=on
 ```
 
@@ -1127,7 +1133,7 @@ Setting any of these (`update.sh` overrides only `ImageTag` and the facts it rea
 other stacks, `EfsBackup`, `WorkspaceSubnets`, `EgressProxyAddr`, `EgressTokenSecretArn` and `EgressArchiveBucket`, so it never does):
 
 ```
-aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
   --capabilities CAPABILITY_NAMED_IAM --parameter-overrides WsIdleTimeout=4h ComfyUrl=http://10.0.0.5:8188 ComfyApiKey=on
 ```
 

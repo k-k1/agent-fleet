@@ -482,7 +482,7 @@ jobs:
       - name: EFS file-system policy and home task mount (offline template evaluation)
         run: python3 ./deploy/local/cfn-efs-policy-test.py
       # Timers, GitHub sign-in extras and LAN / borrowed engines (#2596): empty adds no env
-      # entry, each secret has its own switch, and 30-ingress keeps 1 KiB under the wall.
+      # entry, each secret has its own switch, and 30-ingress keeps its 64 KiB budget (S3 hand-over past 51,200).
       - name: CP settings parameters (offline template evaluation)
         run: python3 ./deploy/local/cfn-cp-settings-env-test.py
       # Execution-role split and the slot role's /af-cp, /af-ws parameter Deny (#3446).
