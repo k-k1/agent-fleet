@@ -106,4 +106,6 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.gate_v_not_running": "skipped (workspace not running)",
   "sched.gate_v_unreachable": "skipped (agent not reachable)",
   "sched.gate_v_error": "check failed: {detail}",
+  "sched.gate_query_pick": "Choose a saved query for the gate.",
+  "sched.gate_unfit": "A gate fits recurring new-session schedules only. Turn it off to save this change.",
 };

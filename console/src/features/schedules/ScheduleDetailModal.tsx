@@ -118,17 +118,19 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
     if (stopAfterRun !== !!s.stop_after_run) p.stop_after_run = stopAfterRun;
     if (targets.join(",") !== canonicalTargets(scheduleTargets(s)).join(",")) p.deliver_to = targets;
     if (silent !== !!s.silent) p.silent = silent;
-    if (gateKnown) {
+    // A gate the schedule cannot carry (once, or not session_mode=new) is never patched in; only
+    // removing an existing one is allowed then, otherwise the CP refuses the whole save.
+    if (gateKnown && (gateFits || s.gate)) {
       const g = gatePatchOf(s.gate, gateForm);
       if (g) p.gate = g;
     }
     return p;
-  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report, stopAfterRun, targets, silent, gateKnown, gateForm]);
+  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report, stopAfterRun, targets, silent, gateKnown, gateFits, gateForm]);
 
   const dirty = Object.keys(patch).length > 0;
   // Reporting on with no target would deliver nowhere while looking switched on.
   const targetsOk = !report || targets.length > 0;
-  const gateErr = gateKnown ? gateFormError(gateForm) : "";
+  const gateErr = !gateKnown ? "" : !gateFits ? (s.gate && gateForm.on ? "fit" : "") : gateFormError(gateForm);
   const canSave = dirty && !busy && targetsOk && gateErr === "" && prompt.trim().length > 0 && spec.trim().length > 0;
 
   const save = async () => {
@@ -334,6 +336,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
                   <span>{tr("sched.gate_enable")}</span>
                 </label>
                 <div className="ui-field-hint">{tr("sched.gate_hint")}</div>
+                {gateErr === "fit" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_unfit")}</div>}
                 {gateForm.on && (
                   <>
                     <div className="ui-field">
@@ -360,7 +363,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
                       </select>
                       {queriesFailed && <div className="ui-field-hint">{tr("sched.gate_queries_failed")}</div>}
                       {queries && queries.length === 0 && <div className="ui-field-hint">{tr("sched.gate_queries_none")}</div>}
-                      {gateErr === "query" && <div className="ui-field-hint">{tr("sched.gate_query_ph")}</div>}
+                      {gateErr === "query" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_query_pick")}</div>}
                     </div>
                     <div className="ui-field">
                       <label className="ui-field-label" htmlFor="sched-gate-fp">

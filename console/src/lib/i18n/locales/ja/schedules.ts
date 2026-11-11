@@ -104,4 +104,6 @@ export const schedules = {
   "sched.gate_v_not_running": "見送り（ワークスペース停止中）",
   "sched.gate_v_unreachable": "見送り（エージェントに届かず）",
   "sched.gate_v_error": "確認に失敗: {detail}",
+  "sched.gate_query_pick": "ゲートに使う保存済みクエリを選んでください。",
+  "sched.gate_unfit": "ゲートは繰り返し実行の新規セッションにだけ付けられます。この変更を保存するにはゲートを外してください。",
 };

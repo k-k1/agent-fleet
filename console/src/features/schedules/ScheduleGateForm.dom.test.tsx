@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+g.IS_REACT_ACT_ENVIRONMENT = true;
+
 vi.mock("./api.ts", () => ({ scheduleUpdate: vi.fn() }));
 vi.mock("../workitems/api.ts", () => ({ workItemList: vi.fn() }));
 
@@ -149,6 +152,38 @@ describe("ScheduleDetailModal gate", () => {
     await render({ gate: { kind: "command", last_verdict: "fire" } });
     expect(document.querySelector("#sched-gate-query")).toBeNull();
     expect(document.querySelector(".sched-gate input[type=checkbox]")).toBeNull();
+    // Another field is edited and saved: the unknown gate must stay out of the patch.
+    await act(async () => {
+      const i = el<HTMLInputElement>("#sched-label");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(i, "y");
+      i.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => save().click());
+    expect(update).toHaveBeenLastCalledWith("sch_1", { spec_label: "y" });
+  });
+
+  it("ignores a half-set gate once the schedule becomes a once", async () => {
+    await render({});
+    await act(async () => el<HTMLInputElement>(".sched-gate input[type=checkbox]").click());
+    await pick("#sched-kind", "once");
+    expect(document.querySelector(".sched-gate")).toBeNull();
+    await act(async () => save().click());
+    expect(update).toHaveBeenLastCalledWith("sch_1", { spec_kind: "once" });
+  });
+
+  it("blocks a gated schedule becoming a once while the gate is on, and allows it with the gate off", async () => {
+    await render({ gate });
+    await pick("#sched-kind", "once");
     expect(save().disabled).toBe(true);
+    expect(el(".sched-gate [data-invalid]")).not.toBeNull();
+    await act(async () => el<HTMLInputElement>(".sched-gate input[type=checkbox]").click());
+    await act(async () => save().click());
+    expect(update).toHaveBeenLastCalledWith("sch_1", { spec_kind: "once", gate: { kind: "none" } });
+  });
+
+  it("marks a missing query as an error", async () => {
+    await render({});
+    await act(async () => el<HTMLInputElement>(".sched-gate input[type=checkbox]").click());
+    expect(el(".sched-gate [data-invalid]")).not.toBeNull();
   });
 });
