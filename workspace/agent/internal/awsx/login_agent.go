@@ -456,6 +456,8 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 		// that bindLanding publishes only once Settings is checked under the key's lock.
 		Env:     cloudexec.SetEnv(verifierEnv(baseEnv(os.Environ()), cfg), "HOME="+dir),
 		Timeout: loginAttemptTimeout,
+		// What the member reads when the CLI shows no URL in time.
+		NoURLMessage: "aws sso login showed no sign-in URL in time. Start it again; if it keeps happening, log in from a terminal with af-aws-exec --login.",
 		Parse: func(out string) (string, string, error) {
 			url, code := sessionx.DeviceAuthorization(out)
 			if url != "" && !deviceURLAllowed(url, allowed) {
