@@ -139,6 +139,13 @@ type AutoSyncRun struct {
 	Unmapped int           `json:"unmapped,omitempty"`
 	NoRoot   int           `json:"noRoot,omitempty"`
 	Rows     []AutoSyncRow `json:"rows,omitempty"`
+	// MuseUnmapped counts muse project folders no AF project maps to (or two do); MuseFailed counts
+	// muse folders that could not be read or applied. Neither fails the run: muse is carried
+	// across on a best-effort basis beside claude. MusePersonal counts the notes of muse's
+	// personal store that are waiting for the member's explicit choice (they go to the user scope).
+	MuseUnmapped int `json:"museUnmapped,omitempty"`
+	MuseFailed   int `json:"museFailed,omitempty"`
+	MusePersonal int `json:"musePersonal,omitempty"`
 	// RowsCut counts the rows left out of Rows.
 	RowsCut int `json:"rowsCut,omitempty"`
 	// Notified latches once the Console was told about the leftovers of this run.
@@ -149,6 +156,8 @@ type AutoSyncRun struct {
 // secret, invalid, forgotten) or write-back (written, updated, removed, unchanged, conflict,
 // secret, skipped).
 type AutoSyncProject struct {
+	// Agent names the memory the counts come from; empty is claude, "muse" is muse's own stores.
+	Agent   string         `json:"agent,omitempty"`
 	ID      string         `json:"id"`
 	Display string         `json:"display,omitempty"`
 	Counts  map[string]int `json:"counts"`
@@ -157,6 +166,7 @@ type AutoSyncProject struct {
 // AutoSyncRow is one file the run did not apply. Name passed the scan to be shown; secret rows
 // carry the rule names only.
 type AutoSyncRow struct {
+	Agent   string   `json:"agent,omitempty"` // as AutoSyncProject.Agent
 	Project string   `json:"project"`
 	Name    string   `json:"name"`
 	Status  string   `json:"status"`
@@ -692,7 +702,7 @@ func autoImportAll(run *AutoSyncRun, auto bool, stop func() bool) (stopped bool)
 			if len(todo) == 0 || pass == autoImportPasses {
 				// What is left after the applies: the last evaluation says what the run did not
 				// bring in, and why.
-				autoImportLeftovers(run, &pr, pv)
+				autoImportLeftovers(run, &pr, pv.Items)
 				break
 			}
 			for at := 0; at < len(todo); at += autoImportChunk {
@@ -717,30 +727,34 @@ func autoImportAll(run *AutoSyncRun, auto bool, stop func() bool) (stopped bool)
 		}
 		run.Projects = append(run.Projects, pr)
 	}
-	return false
+	return autoImportMuse(run, stop)
 }
 
 // autoImportLeftovers counts what an evaluation still lists and records the files the member has
 // to look at. A forgotten memory is counted and never listed: it is gone on purpose.
-func autoImportLeftovers(run *AutoSyncRun, pr *AutoSyncProject, pv *agentMemImportPreview) {
-	for _, it := range pv.Items {
+func autoImportLeftovers(run *AutoSyncRun, pr *AutoSyncProject, items []agentMemImportItem) {
+	row := func(it agentMemImportItem, status, reason string) AutoSyncRow {
+		return AutoSyncRow{Agent: pr.Agent, Project: pr.ID, Name: it.Name, Status: status, Reason: reason}
+	}
+	for _, it := range items {
 		switch it.Status {
 		case claudeImportNew, claudeImportUpdate:
 			// Still to do after the passes: the file kept changing under the apply.
 			pr.Counts["skipped"]++
-			run.addRow(AutoSyncRow{Project: pr.ID, Name: it.Name, Status: "skipped", Reason: "changed_since_preview"})
+			run.addRow(row(it, "skipped", "changed_since_preview"))
 		case claudeImportUnchanged, claudeImportForgotten:
 			pr.Counts[it.Status]++
-		case claudeImportConflict, claudeImportInvalid:
+		case claudeImportConflict, claudeImportInvalid, museImportDiverged:
+			// diverged is muse's conflict: AF holds its own version, which the import never replaces.
 			pr.Counts[it.Status]++
-			run.addRow(AutoSyncRow{Project: pr.ID, Name: it.Name, Status: it.Status, Reason: it.Reason})
+			run.addRow(row(it, it.Status, it.Reason))
 		case claudeImportSecret:
 			pr.Counts[it.Status]++
-			row := AutoSyncRow{Project: pr.ID, Name: it.Name, Status: it.Status}
+			r := row(it, it.Status, "")
 			for _, f := range it.Findings {
-				row.Rules = appendUnique(row.Rules, f.Rule)
+				r.Rules = appendUnique(r.Rules, f.Rule)
 			}
-			run.addRow(row)
+			run.addRow(r)
 		}
 	}
 }
@@ -931,6 +945,9 @@ type AutoSyncPreview struct {
 	Apply    int            `json:"apply"`
 	Unmapped int            `json:"unmapped,omitempty"`
 	NoRoot   int            `json:"noRoot,omitempty"`
+	// MuseUnmapped and MusePersonal are the run's fields of the same names (muse's carry-over).
+	MuseUnmapped int `json:"museUnmapped,omitempty"`
+	MusePersonal int `json:"musePersonal,omitempty"`
 }
 
 func autoPreview(to string) (AutoSyncPreview, error) {
@@ -953,6 +970,7 @@ func autoPreview(to string) (AutoSyncPreview, error) {
 				out.Totals[k] += n
 			}
 		}
+		autoMusePreview(&out)
 		out.Apply = out.Totals[claudeImportNew] + out.Totals[claudeImportUpdate]
 	case "off":
 		list, err := agentMemExportList()
@@ -977,7 +995,10 @@ func autoPreview(to string) (AutoSyncPreview, error) {
 	default:
 		return out, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "to must be \"on\" or \"off\"")
 	}
-	sort.Slice(out.Projects, func(i, j int) bool { return out.Projects[i].ID < out.Projects[j].ID })
+	sort.SliceStable(out.Projects, func(i, j int) bool {
+		a, b := out.Projects[i], out.Projects[j]
+		return a.ID < b.ID || a.ID == b.ID && a.Agent < b.Agent
+	})
 	return out, nil
 }
 

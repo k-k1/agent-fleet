@@ -395,6 +395,8 @@ export type AutoSyncPhase =
   "off" | "importing" | "on" | "writing_back" | "unreadable";
 
 export interface AutoSyncProject {
+  /** Whose memory the counts are: absent is Claude Code, "muse" is Muse Code's own stores. */
+  agent?: string;
   id: string;
   display?: string;
   /** import: imported, updated, unchanged, conflict, secret, invalid, forgotten, skipped; write-back: written, updated, removed, unchanged, conflict, secret, skipped */
@@ -403,6 +405,7 @@ export interface AutoSyncProject {
 
 /** One file a run did not apply. Names passed the scan; a secret row carries rule names only. */
 export interface AutoSyncRow {
+  agent?: string;
   project: string;
   name: string;
   status: string;
@@ -420,6 +423,10 @@ export interface AutoSyncRun {
   projects: AutoSyncProject[];
   unmapped?: number;
   noRoot?: number;
+  /** Muse Code: folders no project maps to, folders that could not be read, and notes of the personal store waiting for the member's choice. */
+  museUnmapped?: number;
+  museFailed?: number;
+  musePersonal?: number;
   rows?: AutoSyncRow[];
   rowsCut?: number;
 }
@@ -450,6 +457,8 @@ export interface AutoSyncPreview {
   apply: number;
   unmapped?: number;
   noRoot?: number;
+  museUnmapped?: number;
+  musePersonal?: number;
 }
 
 /** What "revert this run" did to one commit of the run. */

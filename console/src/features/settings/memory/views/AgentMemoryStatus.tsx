@@ -26,8 +26,10 @@ const POLL_MS = 4000;
 // by itself, or the last run left conflicts or skipped secrets.
 function needsAttention(st: AutoSyncStatus | undefined): boolean {
   if (!st) return false;
-  const left = (st.run?.projects ?? []).reduce((n, p) => n + (p.counts.conflict ?? 0) + (p.counts.secret ?? 0), 0);
-  return !!st.failing || (st.problems ?? []).length > 0 || left > 0;
+  const left = (st.run?.projects ?? []).reduce((n, p) => n + (p.counts.conflict ?? 0) + (p.counts.secret ?? 0) + (p.counts.diverged ?? 0), 0);
+  // Muse's personal notes wait for the member's choice; unreadable Muse folders need a look too.
+  const muse = (st.run?.musePersonal ?? 0) + (st.run?.museFailed ?? 0);
+  return !!st.failing || (st.problems ?? []).length > 0 || left + muse > 0;
 }
 
 export function AgentMemoryStatus({
