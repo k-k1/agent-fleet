@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, isTransientErr, errText, rawJSON } from "../../../core/api/client.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
@@ -37,6 +37,8 @@ import { takeReturn } from "./mcpOAuth.ts";
 // running workspace — a stopped one would otherwise render an empty registry as if the
 // user had registered nothing.
 
+const WATCH_REFRESH_MS = 30_000;
+
 // --- tab -------------------------------------------------------------------------
 
 export function McpTab() {
@@ -69,10 +71,23 @@ export function McpTab() {
   // A CP 502 while the agent is still booting must not render as "no servers
   // registered" — retry, and never downgrade a snapshot we already have
   // (the useConnections / ws-boot-view lesson).
+  // Only the newest request may write `reg`: overlapping reloads (timer, focus, save) can answer
+  // out of order, and a stale answer would re-disable a checkbox a newer one had enabled.
+  // Unmount bumps it too, so a late answer never lands on an unmounted tab.
+  const reqId = useRef(0);
+  useEffect(
+    () => () => {
+      reqId.current++;
+    },
+    [],
+  );
   const reload = useCallback(() => {
+    const id = ++reqId.current;
+    const stale = () => id !== reqId.current;
     const attempt = (left: number) => {
       api("api/mcp-servers")
         .then((d) => {
+          if (stale()) return;
           if (d && !d.error) {
             setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
             return;
@@ -81,6 +96,7 @@ export function McpTab() {
           else setReg((prev) => prev ?? { servers: [] });
         })
         .catch(() => {
+          if (stale()) return;
           if (left > 0) setTimeout(() => attempt(left - 1), 1200);
           else setReg((prev) => prev ?? { servers: [] });
         });
@@ -90,6 +106,22 @@ export function McpTab() {
   useEffect(() => {
     if (running) reload();
   }, [running, reload]);
+
+  // While a form is open, re-read the registry when it opens, on window focus and every
+  // WATCH_REFRESH_MS, so a tenant administrator turning the watch-source switch on enables the
+  // checkbox without reopening the form. reload() only replaces `reg`; the form's own state is
+  // never touched, so what the member already typed survives.
+  const formOpen = form !== null;
+  useEffect(() => {
+    if (!running || !formOpen) return;
+    reload();
+    const timer = setInterval(reload, WATCH_REFRESH_MS);
+    window.addEventListener("focus", reload);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", reload);
+    };
+  }, [running, formOpen, reload]);
 
   // Definite false only; see Registry.watchSources.
   const watchBlocked = reg?.watchSources === false;
