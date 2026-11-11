@@ -199,7 +199,6 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 	hold := &rootHold{unlock: unlock}
 	ca := &consoleAttempt{p: p, hold: hold}
 	var id string
-	var noURL *time.Timer
 	// urlOnce lets go of the start's lock the first time the URL is seen, and only then:
 	// Parse runs again on every later output (the whole output so far, URL included), and
 	// by then the lock it would release is the one the code's submit took for the exchange.
@@ -213,7 +212,11 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 		Args:    LoginArgs(p, force),
 		Env:     AgentEnv(os.Environ(), root),
 		Timeout: loginAttemptTimeout,
-		Stdin:   true,
+		// The generic deadline ends an attempt that prints no URL; the Console maps this
+		// exact message to its translation.
+		URLDeadline:  urlWait,
+		NoURLMessage: msgNoURL,
+		Stdin:        true,
 		Parse: func(out string) (string, string, error) {
 			outMu.Lock()
 			lastOut = out
@@ -237,9 +240,6 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 		Cleanup: func() {
 			hold.close()
 			attemptsMu.Lock()
-			if noURL != nil {
-				noURL.Stop()
-			}
 			ca.gone = true
 			delete(attempts, id)
 			attemptsMu.Unlock()
@@ -253,11 +253,6 @@ func startLoginAttempt(bin, requestID string, p Profile, force bool) (*cloudlogi
 	id = a.ID
 	if !ca.gone {
 		attempts[id] = ca
-		noURL = time.AfterFunc(urlWait, func() {
-			if a.View().Phase == cloudlogin.PhaseStarting {
-				a.End(cloudlogin.PhaseFailed, msgNoURL)
-			}
-		})
 	}
 	attemptsMu.Unlock()
 	return a, nil
