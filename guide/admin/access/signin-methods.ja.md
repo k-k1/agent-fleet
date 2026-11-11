@@ -49,13 +49,13 @@ source_of_truth: "Console のテナント設定 >「サインイン › サイ�
 | 名前 | テナントの中で使う識別子。英小文字・数字・`-`・`_`（例: `entra`） |
 | issuer（発行者 URL） | IdP の issuer URL。Entra は自社テナントの GUID を含む URL |
 | client_id・client_secret | IdP に登録したアプリのもの。secret は保存時に暗号化され、画面には出ません |
-
-- IdP 側のアプリには、リダイレクト URI（コールバック URL）として `https://<Console のドメイン>/oauth2/callback` を登録します。この画面には出ませんが、GitHub の組織と同じ URL です
 | email の信頼方法 | Entra は email_verified を返さないので、「issuer が自社テナントに固定されている」を選びます |
 | 受け入れるメールドメイン | 必須です。この方法は配備共通の許可リストを使わないので、空だと誰も入れません |
 | 許可する tenant id | Entra の tid。issuer が `common` / `organizations` のときは必須です |
 | 同一アカウントの見分け方 | 既定は sub。同じ Entra に別のアプリ登録があるときは oid を選ぶと、同じ人として扱われます |
 | ボタンの文言（日本語）・（英語） | サインイン画面のボタンに出す文字 |
+
+- IdP 側のアプリには、リダイレクト URI（コールバック URL）として `https://<Console のドメイン>/oauth2/callback` を登録します。この画面には出ませんが、GitHub の組織と同じ URL です
 
 同じドメインを 2 つのテナントが持つことはできません。
 

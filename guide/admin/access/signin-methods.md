@@ -49,13 +49,13 @@ Until it is approved, no button appears on the sign-in page and nobody can sign 
 | Name | The identifier used inside the tenant: lowercase letters, digits, `-` and `_` (for example `entra`) |
 | Issuer URL | The IdP's issuer URL. For Entra ID, the URL that contains your own tenant's GUID |
 | client_id and client_secret | Those of the app registered at the IdP. The secret is encrypted on save and never shown |
-
-- In the IdP's app, register `https://<the Console's domain>/oauth2/callback` as the redirect URI (callback URL). This screen does not show it, but it is the same URL as for a GitHub organisation
 | How the email is trusted | Entra ID does not return email_verified, so choose "The issuer is pinned to our own tenant" |
 | Email domains to admit | Required. This method does not use the deployment-wide allow list, so with none nobody gets in |
 | Allowed tenant ids | Entra's tid. Required when the issuer is `common` or `organizations` |
 | How the same account is recognised | sub by default. When the same Entra ID has another app registration, choose oid and the person is treated as the same account |
 | Button label (Japanese) and (English) | The text on the sign-in page's button |
+
+- In the IdP's app, register `https://<the Console's domain>/oauth2/callback` as the redirect URI (callback URL). This screen does not show it, but it is the same URL as for a GitHub organisation
 
 Two tenants cannot hold the same domain.
 
