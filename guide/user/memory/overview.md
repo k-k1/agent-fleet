@@ -19,7 +19,7 @@ This page shows how to read what agents remembered, rewrite it, pin it and make 
 | Make agents forget a memory you do not want | A forgotten memory disappears from every agent's view |
 | Check the [changes](changes.md) and revert bad ones | Reports a memory that was stale or wrong with `memory_feedback` |
 
-- Memory has one scope per project plus a "user-wide" scope that every project receives. A worktree shares its repository's
+- Memory has one scope per project plus a "user-wide" scope that every project receives. A worktree shares its repository's memory
 - What one agent learned survives a switch of agent kind, a handoff, and a child session of another kind
 - An agent's save is shared at once, **without your approval**. A save that looks like it holds a secret is refused
 

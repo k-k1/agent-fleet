@@ -68,10 +68,10 @@ Open one and **If you approve** appears before the Approve button.
 
 | Kind | Approving it |
 |---|---|
-| patch | Rewrites part of one memory. **Before** and **After** are shown side by side with their revisions |
-| create | Creates one new memory. Its scope, name, type, description and text are shown |
-| replace | Writes a new memory and marks the memories it replaces as superseded, hidden from agents. It is published as one change, and one revert undoes all of it |
-| retire | Marks the memory archived and hides it from agents. Nothing is deleted. The text that will be hidden and the reason a read will return are shown |
+| Change | Rewrites part of one memory. **Before** and **After** are shown side by side with their revisions |
+| New memory | Creates one new memory. Its scope, name, type, description and text are shown |
+| Replacement | Writes a new memory and marks the memories it replaces as superseded, hidden from agents. It is published as one change, and one revert undoes all of it |
+| Retire | Marks the memory archived and hides it from agents. Nothing is deleted. The text that will be hidden and the reason a read will return are shown |
 | Advice only | The model's draft failed validation. It cannot be approved: read it and fix the memory by hand in the Memories tab |
 
 - Below that come the evidence (the reports and lint findings it rests on) and the revisions the suggestion was drafted against

@@ -27,7 +27,7 @@ Open the **Changes** tab of the [Memory view](overview.md#open-the-memory-view).
 
 | What a row shows | Meaning |
 |---|---|
-| Operation | **created**, **updated**, **forgotten**, **reverted**, **imported**, **pin changed**, **replaced** or **retired** |
+| Operation | **created**, **updated**, **forgotten**, **reverted**, **imported**, **pin changed**, **replaced** or **retired**. Changes written by lint show as `lint` (`lint-rename` for a renamed path) |
 | Memory and scope | The memory's name, and its project or **User-wide (shared with every project)**. When one change moved several memories, "+ names" follows |
 | Author | The agent kind and session. Your own actions show as **You (Console)** |
 
