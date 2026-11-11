@@ -35,7 +35,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[usage]** Session usage answers in time after a restart ([#3885](https://github.com/k-k1/agent-fleet/issues/3885))
 - **[console]** Archived date on archived sessions, partial cost months worded as such, rail folds kept across sign-out ([#3874](https://github.com/k-k1/agent-fleet/issues/3874), [#3843](https://github.com/k-k1/agent-fleet/issues/3843), [#3787](https://github.com/k-k1/agent-fleet/issues/3787))
 - **[ECS]** `update.sh` carries on past a failed side stack and exits non-zero ([#3555](https://github.com/k-k1/agent-fleet/issues/3555))
-- **[ECS]** `30-ingress` deployed through S3, past the inline template limit ([#3550](https://github.com/k-k1/agent-fleet/issues/3550))
+- **[ECS]** `30-ingress` may grow past the inline template limit and then deploys through S3 ([#3550](https://github.com/k-k1/agent-fleet/issues/3550))
 
 **Fixed**
 

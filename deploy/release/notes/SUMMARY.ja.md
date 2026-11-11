@@ -34,7 +34,7 @@
 - **[使用量]** 再起動のあとでもセッションの使用量が時間内に返る ([#3885](https://github.com/k-k1/agent-fleet/issues/3885))
 - **[Console]** アーカイブした日の表示、一部だけの費用の月の表記、サインアウトしても残る左ペインの折りたたみ ([#3874](https://github.com/k-k1/agent-fleet/issues/3874), [#3843](https://github.com/k-k1/agent-fleet/issues/3843), [#3787](https://github.com/k-k1/agent-fleet/issues/3787))
 - **[ECS]** `update.sh` は任意のスタック（50-tts・60-engines）が失敗しても続け、0 以外で終わる ([#3555](https://github.com/k-k1/agent-fleet/issues/3555))
-- **[ECS]** `30-ingress` を S3 経由でデプロイし、インラインの上限を超えられるように ([#3550](https://github.com/k-k1/agent-fleet/issues/3550))
+- **[ECS]** `30-ingress` がインラインの上限を超えられるように（超えたら S3 経由でデプロイ） ([#3550](https://github.com/k-k1/agent-fleet/issues/3550))
 
 **Fixed**
 
