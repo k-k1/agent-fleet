@@ -79,4 +79,4 @@ source_of_truth: "Console のセッション一覧ペイン"
 
 - [セッションの状態を読む](../sessions/status.ja.md)：状態の印の意味
 - [セッションのつながりを時系列で見る](graph.ja.md)
-- [アイコン・バッジ・メニュー](../../member/badges-and-menus.ja.md)：メニューの項目の一覧
+- [アイコン・バッジ・メニュー](../../ref/console-ui.ja.md)：メニューの項目の一覧
