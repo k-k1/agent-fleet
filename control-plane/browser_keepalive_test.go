@@ -54,7 +54,15 @@ func dialBrowserCP(t *testing.T, env browserTestEnv) (*websocket.Conn, func()) {
 		cp.Close()
 		t.Fatalf("CP dial: %v", err)
 	}
-	return c, func() { c.Close(); cp.Close() }
+	stop := func() { c.Close(); cp.Close() }
+	// Registered after scaleBrowserKeepalive's cleanup, so it runs first: the bridge
+	// goroutine reads the package-level intervals when it starts, and the restore must
+	// not race that read.
+	t.Cleanup(func() {
+		stop()
+		waitBrowserConns(t, env.mgr.conns, env.workspace.ID, 0)
+	})
+	return c, stop
 }
 
 // An idle pane socket receives pings on both legs, stays open well past the scaled idle
