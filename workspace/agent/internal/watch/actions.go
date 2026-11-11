@@ -31,11 +31,16 @@ import (
 // look new. Run ids only grow, so id > floor is the rule; the creation time is a second guard.
 // A floor in the subject also means watches made while the workflow is quiet share one read.
 
-// Event types of the Actions source (provider-prefixed, ADR 0133 §3).
+// Event types of the CI run sources (Actions and Bitbucket Pipelines), shared across providers
+// (ADR 0133 §3). The Actions source used to name them github.workflow_run.*; that spelling is an
+// alias that the engine rewrites to the shared one (see TypeAliases), never a second event.
 const (
-	EventRunCompleted = "github.workflow_run.completed"
-	EventRunFailed    = "github.workflow_run.failed"
+	EventRunCompleted = "ci.run.completed"
+	EventRunFailed    = "ci.run.failed"
 )
+
+// legacyRunPrefix is the old provider-prefixed family, kept as an accepted spelling.
+const legacyRunPrefix = "github.workflow_run"
 
 // ActionsKind is the Actions source's name.
 const ActionsKind = "github_actions"
@@ -62,6 +67,12 @@ func NewGitHubActions(gh *GitHub) *GitHubActions { return &GitHubActions{GH: gh}
 
 func (a *GitHubActions) Kind() string    { return ActionsKind }
 func (a *GitHubActions) Types() []string { return []string{EventRunCompleted, EventRunFailed} }
+
+// TypeAliases keeps subscriptions that name github.workflow_run.* working: they are rewritten to
+// ci.run.* when made and when stored state is loaded, with their told versions.
+func (a *GitHubActions) TypeAliases() map[string]string {
+	return map[string]string{legacyRunPrefix: "ci.run"}
+}
 
 const (
 	actRepo = `[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+`

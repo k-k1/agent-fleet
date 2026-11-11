@@ -422,6 +422,46 @@ says there is no such pull request (a 404 on the repository or the PR, or no PR 
 with `watch.ended` after the usual three reads. A failed, held-off or rate-limited read is still a plain error and never
 ends a watch. Still open in #3780: Bitbucket Pipelines and the live check against a private repository.
 
+*Note, 2026-11-11 (#3875, Bitbucket Pipelines and `ci.run.*`).* Bitbucket Pipelines runs are a watch source, and the
+run types are now shared by both providers. Decisions:
+
+- **Shared types: `ci.run.completed` and `ci.run.failed`.** Both the Actions source and the new Pipelines source emit
+  only these. The `github.workflow_run.*` names are **aliased, not duplicated**: a source may implement
+  `TypeAliaser` (old prefix -> new prefix), and the engine rewrites a pattern that uses the old spelling when the
+  watch is made. A pattern naming both spellings collapses to one, so a run is one event per type and is told once
+  (the de-duplication key stays `(type, version)`, per subscription). The `list_watches` and notice type is the
+  shared name even for a watch asked for with the old one.
+- **Existing subscriptions keep firing exactly once.** A subscription stored before this change holds the old names
+  in its patterns, its `Told` versions and its pending events; loading state rewrites all three, so a run already
+  told as `github.workflow_run.completed` is not told again as `ci.run.completed`, and one still pending is told
+  once. The Actions versions (`run id:attempt`) are unchanged. Not changed: the `workflow_run` webhook event of the
+  Control Plane is GitHub's own name and has nothing to do with the watch type.
+- **A source of its own, `bitbucket_pipelines`**, beside `bitbucket` (pull requests) for the reason `github_actions`
+  sits beside `github`. Refs follow the Actions shapes: a run is `https://bitbucket.org/w/r/pipelines/results/<n>` or
+  `w/r:run/<n>`; the next run is `w/r:pipelines[/<custom pipeline>][@branch]` (Pipelines has no workflow file; the
+  custom pipeline name, `target.selector.pattern`, is its nearest counterpart). A bitbucket.org URL routes by itself;
+  the bare forms are the Actions shapes, so they mean Pipelines only with `source: bitbucket`.
+- **"Next run" floor** is taken from Bitbucket's answer as for Actions, as the highest build number and newest
+  `created_on` among the newest listed runs (the `Date` header when there is none). Build numbers are
+  repository-wide and only grow, so a run counts when its number is above the floor and it was created at or after
+  the floor time; the branch and custom pipeline are filtered client-side, since the list has no documented filter
+  for them. The list is followed through Bitbucket's `next` links (50 per page, 5 pages), stopping at the first page
+  that reaches the floor; a link off `api.bitbucket.org` is never followed; a failing later page fails the read.
+- **Version and failure.** Version is `build number:completed_on (unix)`, so a run finished again is news. `FAILED`,
+  `ERROR`, `STOPPED` (cancelled) and `EXPIRED` also emit `ci.run.failed`, as a cancelled Actions run does; the steps
+  that did not succeed are read once per finished run and go into Data with the branch, not into the summary.
+- **Budget and auth.** Bitbucket Cloud allows 1,000 requests an hour per account, shared with the pull request list,
+  so the source is limited to 5 live watches per workspace and reads at 1 minute (running), 2 minutes (pending), 5
+  minutes (waiting for the next run) and 30 minutes (a finished run). A 429 holds the source off until `Retry-After`.
+  It uses the same Bitbucket connection as the PR source (OAuth token renewed once on a 401; a pasted API token is
+  not renewable and asks for reconnecting), sends it only to `api.bitbucket.org`, and never puts it in an error or a
+  log. A 403 is a refusal naming the missing Pipelines read scope.
+- Not built: webhook pokes for Pipelines runs (registrations still list pull request and Actions subjects only; no
+  Pipelines subject is registered), and `watch.ended` for a deleted *repository* beyond the 404 rule (a 404 on a run
+  or on the list ends the watch after the usual three reads). **Not verified live against a real Bitbucket
+  repository**: the response fields and the build-number run endpoint are from the API reference and are covered only
+  by tests against a fake server.
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled

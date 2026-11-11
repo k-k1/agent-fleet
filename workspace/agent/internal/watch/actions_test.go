@@ -69,7 +69,7 @@ func TestActionsTypesAreItsOwn(t *testing.T) {
 	if err := checkTypes([]string{"pr.merged"}, a.Types()); err == nil {
 		t.Fatal("a run watch accepted pr.merged")
 	}
-	if err := checkTypes([]string{"github.workflow_run.*"}, a.Types()); err != nil {
+	if err := checkTypes([]string{"ci.run.*"}, a.Types()); err != nil {
 		t.Fatal(err)
 	}
 	if err := checkTypes([]string{EventRunFailed}, (&GitHub{}).Types()); err == nil {
@@ -340,10 +340,11 @@ func TestEngineRefusesPRTypesForARunAndFiresOnAnAlreadyCompletedRun(t *testing.T
 		t.Fatal(err)
 	}
 	e.Tick(ctx)
-	if len(sink.told) != 1 || sink.told[0] != "s:github.workflow_run.completed:55:1" {
+	// The legacy spelling is accepted and the watch is stored and told under the shared name.
+	if len(sink.told) != 1 || sink.told[0] != "s:ci.run.completed:55:1" {
 		t.Fatalf("told %v", sink.told)
 	}
-	if !strings.Contains(sink.notices[0], "source=github_actions type=github.workflow_run.completed subject=github:o/r/actions/runs/55") {
+	if !strings.Contains(sink.notices[0], "source=github_actions type=ci.run.completed subject=github:o/r/actions/runs/55") {
 		t.Fatalf("notice %s", sink.notices[0])
 	}
 }

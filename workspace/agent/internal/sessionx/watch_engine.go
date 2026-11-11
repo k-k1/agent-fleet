@@ -68,7 +68,8 @@ func watchEngine() *watch.Engine {
 		})
 		gh.Threads = watchThreads
 		bb := &watch.Bitbucket{Read: watchBitbucketPR}
-		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{}, watch.NewGitHubActions(gh))
+		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{}, watch.NewGitHubActions(gh),
+			watch.NewBitbucketPipelines(bitbucketAuth, renewBitbucketAuth))
 		watchEngineInst.SetWaker(cpWaker{})
 		watchEngineInst.Dynamic = watchMCPSources().Lookup
 	})
@@ -339,8 +340,18 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	if src == "github" && watch.LooksLikeActionsRef(req.Ref) {
 		src = watch.ActionsKind
 	}
-	if src == watch.ActionsKind {
+	// A Bitbucket Pipelines run is likewise its own source. A bitbucket.org pipelines URL names
+	// it whatever the caller left the source at; the bare forms (w/r:run/<n>, w/r:pipelines) are
+	// the Actions shapes, so they mean Pipelines only with source bitbucket.
+	if (src == "github" || src == "bitbucket") && watch.LooksLikePipelinesRef(req.Ref) ||
+		src == "bitbucket" && watch.LooksLikePipelinesShortRef(req.Ref) {
+		src = watch.PipelinesKind
+	}
+	switch src {
+	case watch.ActionsKind:
 		repoProvider = "github"
+	case watch.PipelinesKind:
+		repoProvider = "bitbucket"
 	}
 	// Checked before the multiplication: a huge value would overflow time.Duration into a short,
 	// accepted lifetime.

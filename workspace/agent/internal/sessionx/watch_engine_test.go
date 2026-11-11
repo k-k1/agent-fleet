@@ -288,8 +288,57 @@ func (stubActions) Kind() string { return watch.ActionsKind }
 func (stubActions) Types() []string {
 	return []string{watch.EventRunCompleted, watch.EventRunFailed}
 }
+func (stubActions) TypeAliases() map[string]string {
+	return map[string]string{"github.workflow_run": "ci.run"}
+}
 func (stubActions) Resolve(context.Context, string, string) (watch.Resolved, error) {
 	return watch.Resolved{Subject: "github:o/r/actions/runs/5"}, nil
+}
+
+type stubPipelines struct{}
+
+func (stubPipelines) Kind() string    { return watch.PipelinesKind }
+func (stubPipelines) Types() []string { return []string{watch.EventRunCompleted, watch.EventRunFailed} }
+func (stubPipelines) Poll(context.Context, watch.SubjectID, json.RawMessage, []string) ([]watch.Event, json.RawMessage, watch.Hint, error) {
+	return nil, nil, watch.Hint{}, nil
+}
+func (stubPipelines) Resolve(context.Context, string, string) (watch.Resolved, error) {
+	return watch.Resolved{Subject: "bitbucket:w/r/pipelines/runs/5"}, nil
+}
+
+// A Pipelines run URL goes to its source whatever the source field says; the bare forms, which
+// are the Actions shapes, go there only with source bitbucket.
+func TestWatchRoutesAPipelinesReferenceToItsSource(t *testing.T) {
+	newWatchFixture(t)
+	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir()})
+	useWatchEngine(t, watch.New(watchDiskStore{}, newWatchSink(), stubSource{}, stubActions{}, stubPipelines{}))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sessions/{name}/watches", HandleWatchCreate)
+	do := func(body string) (int, watch.Subscription) {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("POST", "/sessions/a/watches", strings.NewReader(body)))
+		var c struct{ Watch watch.Subscription }
+		_ = json.Unmarshal(rec.Body.Bytes(), &c)
+		return rec.Code, c.Watch
+	}
+	for _, body := range []string{
+		`{"ref":"https://bitbucket.org/w/r/pipelines/results/5","types":["ci.run.completed"]}`,
+		`{"source":"bitbucket","ref":"https://bitbucket.org/w/r/pipelines/results/5","types":["ci.run.*"]}`,
+		`{"source":"bitbucket","ref":"w/r:run/5","types":["ci.run.failed"]}`,
+		`{"source":"bitbucket","ref":"w/r:pipelines@main","types":["ci.run.completed"]}`,
+	} {
+		if code, w := do(body); code != 200 || w.Source != watch.PipelinesKind {
+			t.Fatalf("%s: %d %+v", body, code, w)
+		}
+	}
+	// The same bare shape with the default source is still an Actions run.
+	if code, w := do(`{"ref":"o/r:run/5","types":["ci.run.completed"]}`); code != 200 || w.Source != watch.ActionsKind {
+		t.Fatalf("actions shape: %d %+v", code, w)
+	}
+	// A pull request on Bitbucket stays a pull request.
+	if code, w := do(`{"source":"bitbucket","ref":"w/r#1","types":["pr.merged"]}`); code == 200 && w.Source == watch.PipelinesKind {
+		t.Fatalf("bitbucket pr rerouted: %d %+v", code, w)
+	}
 }
 
 // A workflow run reference sent with the default source is a run watch; a pull request

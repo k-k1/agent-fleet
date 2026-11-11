@@ -391,6 +391,39 @@ subject が持つ下限は Agent しか知らず Control Plane は導けない�
 `watch.ended` で見張りが終わる。読み取りの失敗・保留・レート制限は通常のエラーのままで、見張りを終わらせない。
 #3780 に残るもの: Bitbucket Pipelines とプライベートリポジトリでの実機確認。
 
+*補足、2026-11-11（#3875、Bitbucket Pipelines と `ci.run.*`）。* Bitbucket Pipelines の実行を見張りのソースに加え、
+実行の種類を両方のプロバイダーで共通にした。決めたこと:
+
+- **共通の種類は `ci.run.completed` と `ci.run.failed`。** Actions ソースも新しい Pipelines ソースも、これだけを出す。
+  `github.workflow_run.*` は**別名として残し、二重には出さない**。ソースが `TypeAliaser`（旧プレフィックス → 新プレフィックス）
+  を実装すると、見張りを作るとき旧綴りのパターンをエンジンが書き換える。両方の綴りを指定しても 1 つにまとまるので、
+  1 つの実行は種類ごとに 1 件のイベントで、1 回だけ伝える（重複排除のキーは購読ごとの `(type, version)` のまま）。旧名で頼んだ
+  見張りでも、`list_watches` と知らせに出る種類は共通名になる。
+- **既存の購読は、これまでどおりちょうど 1 回だけ発火する。** この変更の前に保存された購読は、パターン・伝え済みの版（`Told`）・
+  保留中のイベントに旧名を持つ。状態の読み込み時にその 3 つを書き換えるので、`github.workflow_run.completed` として伝え済みの
+  実行が `ci.run.completed` として再度伝わることはなく、保留中だったものは 1 回だけ伝わる。Actions の版（`実行 id:試行`）は
+  変えていない。Control Plane の `workflow_run` webhook イベントは GitHub 自身の名前で、見張りの種類とは無関係。
+- **専用のソース `bitbucket_pipelines`。** `github_actions` が `github` の隣にあるのと同じ理由で、`bitbucket`（PR）の隣に置く。
+  ref は Actions の形に合わせる: 実行は `https://bitbucket.org/w/r/pipelines/results/<n>` か `w/r:run/<n>`、次の実行は
+  `w/r:pipelines[/<カスタムパイプライン>][@ブランチ]`（Pipelines にワークフローファイルはなく、`target.selector.pattern` である
+  カスタムパイプライン名が最も近い）。bitbucket.org の URL は自動で振り分け、短い形は Actions と同じ形なので
+  `source: bitbucket` のときだけ Pipelines として扱う。
+- **「次の実行」の床**は Actions と同じく Bitbucket の答えから取る。新しい順に取った実行のうち最大のビルド番号と最新の
+  `created_on`（実行がなければ `Date` ヘッダー）。ビルド番号はリポジトリ全体で増える一方なので、番号が床より大きく、
+  かつ床の時刻以後に作られた実行だけが対象。ブランチとカスタムパイプラインは、一覧に文書化された絞り込みがないため
+  クライアント側で絞る。一覧は Bitbucket の `next` リンクをたどり（1 ページ 50 件、最大 5 ページ）、床に届いた最初のページで止める。
+  `api.bitbucket.org` 以外へのリンクはたどらず、後ろのページが失敗したら読み取り全体を失敗にする。
+- **版と失敗。** 版は `ビルド番号:completed_on（unix）` なので、もう一度終わった実行は新しい知らせになる。`FAILED`・`ERROR`・
+  `STOPPED`（キャンセル）・`EXPIRED` は `ci.run.failed` も出す（Actions のキャンセルと同じ扱い）。成功しなかったステップは
+  終わった実行ごとに 1 回読み、ブランチとともに概要ではなく Data に入れる。
+- **予算と認証。** Bitbucket Cloud は 1 アカウント 1 時間 1,000 リクエストで、PR 一覧と共有する。そのため 1 ワークスペースの
+  見張りは 5 件まで、読み取りは実行中 1 分・待機中 2 分・次の実行待ち 5 分・終わった実行 30 分。429 は `Retry-After` まで
+  ソースを止める。PR ソースと同じ Bitbucket 接続を使い（OAuth は 401 で 1 回更新、貼り付けた API トークンは更新できず再接続を促す）、
+  `api.bitbucket.org` にだけ送り、エラーやログには出さない。403 は Pipelines 読み取りスコープの不足を名指しする拒否。
+- 作っていないもの: Pipelines 実行への webhook poke（登録は PR と Actions の対象のみで、Pipelines の対象は登録しない）。
+  **実際の Bitbucket リポジトリでは未確認**: 応答のフィールドとビルド番号での実行取得は API リファレンスに基づき、
+  偽サーバーに対するテストだけで確かめている。
+
 ## Rejected
 
 - **専用の `watch_pr` ツールと速い `branchpr`。** PR の場合はすぐ解けるが、手作りの見張りが 6 つ目になる。次の
