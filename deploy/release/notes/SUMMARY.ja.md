@@ -28,12 +28,12 @@
 - **[メモリ]** 自動整理がメモリの退役を提案（課題・PR の状態を確認） ([#3788](https://github.com/k-k1/agent-fleet/issues/3788))
 - **[メモリ]** lint の自動マーク: アイドルの間に `af-memory lint --apply`、既定はオフ ([#3767](https://github.com/k-k1/agent-fleet/issues/3767))
 - **[メモリ]** エージェントメモリのスイッチの説明を実際の動きに。エージェント自身のメモリの呼び方を 1 つに ([#3856](https://github.com/k-k1/agent-fleet/issues/3856), [#3857](https://github.com/k-k1/agent-fleet/issues/3857))
-- **[外観]** このブラウザだけの **文字のコントラスト**（標準・強め・最強） ([#3786](https://github.com/k-k1/agent-fleet/issues/3786))
+- **[外観]** このブラウザだけの「**文字のコントラスト**」（標準・強め・最強） ([#3786](https://github.com/k-k1/agent-fleet/issues/3786))
 - **[ecs-ec2]** 応答しないスロットを監査記録と `af-dark-since` タグで知らせる（検知のみ） ([#2450](https://github.com/k-k1/agent-fleet/issues/2450))
 - **[起動導線]** ホームでの起動も「作業を始める」ダイアログで ([#3785](https://github.com/k-k1/agent-fleet/issues/3785))
 - **[使用量]** 再起動のあとでもセッションの使用量が時間内に返る ([#3885](https://github.com/k-k1/agent-fleet/issues/3885))
 - **[Console]** アーカイブした日の表示、一部だけの費用の月の表記、サインアウトしても残る左ペインの折りたたみ ([#3874](https://github.com/k-k1/agent-fleet/issues/3874), [#3843](https://github.com/k-k1/agent-fleet/issues/3843), [#3787](https://github.com/k-k1/agent-fleet/issues/3787))
-- **[ECS]** `update.sh` は失敗した脇のスタックを越えて続け、0 以外で終わる ([#3555](https://github.com/k-k1/agent-fleet/issues/3555))
+- **[ECS]** `update.sh` は任意のスタック（50-tts・60-engines）が失敗しても続け、0 以外で終わる ([#3555](https://github.com/k-k1/agent-fleet/issues/3555))
 - **[ECS]** `30-ingress` を S3 経由でデプロイし、インラインの上限を超えられるように ([#3550](https://github.com/k-k1/agent-fleet/issues/3550))
 
 **Fixed**
