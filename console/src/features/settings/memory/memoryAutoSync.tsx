@@ -227,7 +227,7 @@ export function AutoSyncPanel() {
           <ul className="mem-ci-items">
             {rows.map((r, i) => (
               <li key={r.project + "/" + r.name + i}>
-                {r.agent === "muse" && <span className="muted">{tr("mem.as_agent_muse")} · </span>}
+                {r.agent && <span className="muted">{tMaybe("mem.as_agent_" + r.agent) ?? r.agent} · </span>}
                 <span className="mem-af-name">
                   {r.status === "needs_confirmation" ? tr("mem.as_muse_personal_name", { n: run?.musePersonal ?? 0 }) : r.name}
                 </span>{" "}
