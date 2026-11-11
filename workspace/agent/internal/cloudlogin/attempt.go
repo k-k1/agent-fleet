@@ -244,10 +244,12 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 		return a, nil
 	}
 	pw.Close()
+	began := time.Now()
+	log.Printf("%s: %s started pid=%d profile=%s", s.LogPrefix, p.Name, cmd.Process.Pid, profile)
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
-		watchOutput(a, pr, p.Parse)
+		watchOutput(s.LogPrefix, a, pr, p.Parse)
 	}()
 	go func() {
 		defer close(done)
@@ -269,6 +271,10 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 		// and Cleanup is where it lets go.
 		ok, msg := p.Exited(err)
 		cleanup()
+		// Neither the process's output nor msg's source text is logged beyond what Exited
+		// itself composed: the output may hold the device code.
+		log.Printf("%s: %s exited pid=%d after=%s waitErr=%v ok=%t reason=%q", s.LogPrefix, p.Name,
+			cmd.Process.Pid, time.Since(began).Round(time.Second), err, ok, msg)
 		if ok {
 			a.End(PhaseDone, "")
 		} else {
@@ -284,23 +290,40 @@ var outputDrainWait = 2 * time.Second
 
 // watchOutput feeds the process's output to parse until it yields a URL. The output is
 // kept only in memory and never logged: it may hold the code.
-func watchOutput(a *Attempt, r io.Reader, parse func(string) (string, string, error)) {
+//
+// The log gets byte counts and booleans only: it says whether the process spoke and whether
+// the parser found a URL and a code, which is what tells "the CLI printed nothing" from
+// "the CLI printed something the parser did not recognise".
+func watchOutput(prefix string, a *Attempt, r io.Reader, parse func(string) (string, string, error)) {
 	var buf bytes.Buffer
 	chunk := make([]byte, 4096)
+	total, announced := 0, false
 	for {
 		n, err := r.Read(chunk)
+		if n > 0 {
+			total += n
+			if total == n {
+				log.Printf("%s: first output bytes=%d", prefix, n)
+			}
+		}
 		if n > 0 && buf.Len() < 64<<10 {
 			buf.Write(chunk[:n])
 			url, code, perr := parse(buf.String())
 			if perr != nil {
+				log.Printf("%s: output refused by parser: %v", prefix, perr)
 				a.End(PhaseFailed, perr.Error())
 				return
 			}
 			if url != "" {
+				if !announced {
+					log.Printf("%s: authorization found url=true code=%t", prefix, code != "")
+					announced = true
+				}
 				a.authorize(url, code)
 			}
 		}
 		if err != nil {
+			log.Printf("%s: output closed bytes=%d authorization=%t", prefix, total, announced)
 			return
 		}
 	}
