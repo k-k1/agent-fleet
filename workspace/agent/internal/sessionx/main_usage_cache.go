@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // mainUsageCache keeps each session's folded main-transcript usage, keyed by the stamp the kind's
@@ -14,20 +15,32 @@ import (
 // workspace, 28 s on the first call after an agent restart (the relay gives up at 15 s) and 6-11 s
 // warm. With it only a transcript that changed is parsed again.
 type mainUsageCache struct {
-	mu   sync.Mutex
-	m    map[string]mainUsageEntry
-	idle time.Duration
+	mu     sync.Mutex
+	m      map[string]mainUsageEntry
+	flight map[string]*mainUsageFlight
+	idle   time.Duration
+	seq    atomic.Uint64
+	// sourceOf is UsageSourceOf; tests give a cache their own to count or order the reads.
+	sourceOf func(session.Meta) (string, func() ([]transcript.Turn, bool))
+}
+
+// mainUsageFlight is one parse in progress; callers of the same session and stamp wait for it.
+type mainUsageFlight struct {
+	done chan struct{}
+	u    sessionUsage
+	ok   bool
 }
 
 type mainUsageEntry struct {
 	createdAt string // a recreated name is a new session; never serve its predecessor's figure
 	stamp     string
+	seq       uint64 // order in which stamps were taken; the later stamp's figure stands
 	val       sessionUsage
 	used      time.Time
 }
 
 func newMainUsageCache(idle time.Duration) *mainUsageCache {
-	return &mainUsageCache{m: map[string]mainUsageEntry{}, idle: idle}
+	return &mainUsageCache{m: map[string]mainUsageEntry{}, flight: map[string]*mainUsageFlight{}, idle: idle, sourceOf: UsageSourceOf}
 }
 
 var mainUsage = newMainUsageCache(10 * time.Minute)
@@ -39,12 +52,29 @@ func (c *mainUsageCache) get(m session.Meta, now time.Time) sessionUsage {
 }
 
 // getBy returns m's main-transcript usage, or ok=false without parsing when the figure is not
-// cached and deadline (zero: none) has passed. The stamp is taken before the read, so a write that lands
-// during the parse leaves the cached stamp behind the file and the next call parses again. A kind
-// with no stamp, or a read that reports it may be stale, is never cached. Entries not read for
-// idle are dropped on every call, so deleted and archived sessions cannot accumulate.
+// cached and deadline (zero: none) has passed. The stamp is taken before the read, so a write
+// that lands during the parse leaves the cached stamp behind the file and the next call parses
+// again. A kind with no stamp, or a read that reports it may be stale, is never cached. Entries
+// not read for idle are dropped on every call, so deleted and archived sessions cannot accumulate.
+//
+// Concurrent callers (the boot warm-up and a request) share one parse per session and stamp.
+// When two parses of different stamps overlap, the one whose stamp was taken later wins the store
+// (seq), so a slow parse of an older stamp never overwrites a newer entry.
 func (c *mainUsageCache) getBy(m session.Meta, now, deadline time.Time) (sessionUsage, bool) {
-	stamp, load := UsageSourceOf(m)
+	pastDeadline := func() bool { return !deadline.IsZero() && time.Now().After(deadline) }
+	if pastDeadline() {
+		// Past the budget an uncached session costs nothing, not even the stamp's disk reads:
+		// 100+ of those on a loaded host would spend the time the budget exists to protect.
+		c.mu.Lock()
+		_, cached := c.m[m.Name]
+		c.mu.Unlock()
+		if !cached {
+			return sessionUsage{}, false
+		}
+	}
+	seq := c.seq.Add(1)
+	stamp, load := c.sourceOf(m)
+	var key string
 	if stamp != "" {
 		c.mu.Lock()
 		e, ok := c.m[m.Name]
@@ -57,21 +87,52 @@ func (c *mainUsageCache) getBy(m session.Meta, now, deadline time.Time) (session
 			c.mu.Unlock()
 			return cloneUsage(e.val), true
 		}
+		if pastDeadline() {
+			c.mu.Unlock()
+			return sessionUsage{}, false
+		}
+		key = m.Name + "\x00" + m.CreatedAt + "\x00" + stamp
+		if f, ok := c.flight[key]; ok {
+			c.mu.Unlock()
+			<-f.done
+			return cloneUsage(f.u), f.ok
+		}
+		f := &mainUsageFlight{done: make(chan struct{})}
+		c.flight[key] = f
 		c.mu.Unlock()
-	}
-	if !deadline.IsZero() && time.Now().After(deadline) {
-		return sessionUsage{}, false
-	}
-	turns, ok := load()
-	u := AggregateUsage(turns)
-	if stamp == "" || !ok {
+		defer func() {
+			c.mu.Lock()
+			delete(c.flight, key)
+			c.mu.Unlock()
+			close(f.done)
+		}()
+		turns, ok := load()
+		u := AggregateUsage(turns)
+		f.u, f.ok = cloneUsage(u), true
+		if !ok {
+			return u, true
+		}
+		c.mu.Lock()
+		if e, ok := c.m[m.Name]; ok && e.createdAt == m.CreatedAt && e.seq > seq {
+			if e.used.After(now) {
+				now = e.used
+			}
+			c.mu.Unlock()
+			return u, true // a parse whose stamp was taken later has already stored its figure
+		}
+		if e, ok := c.m[m.Name]; ok && e.used.After(now) {
+			now = e.used // never move the idle clock backwards
+		}
+		c.m[m.Name] = mainUsageEntry{createdAt: m.CreatedAt, stamp: stamp, seq: seq, val: cloneUsage(u), used: now}
+		c.pruneLocked(now)
+		c.mu.Unlock()
 		return u, true
 	}
-	c.mu.Lock()
-	c.m[m.Name] = mainUsageEntry{createdAt: m.CreatedAt, stamp: stamp, val: cloneUsage(u), used: now}
-	c.pruneLocked(now)
-	c.mu.Unlock()
-	return u, true
+	if pastDeadline() {
+		return sessionUsage{}, false
+	}
+	turns, _ := load()
+	return AggregateUsage(turns), true
 }
 
 func (c *mainUsageCache) pruneLocked(now time.Time) {

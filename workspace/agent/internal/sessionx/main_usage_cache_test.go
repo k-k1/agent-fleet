@@ -2,10 +2,12 @@ package sessionx
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,8 +102,12 @@ func TestMainUsageCacheDropsIdleSessions(t *testing.T) {
 	other, write2 := mainFixture(t, "mainusage3885d")
 	write2(mainBody(5, false), now.Add(-time.Hour))
 	c.get(other, now.Add(2*time.Minute))
-	if c.len() != 1 {
-		t.Fatalf("idle entry not dropped: len = %d, want 1", c.len())
+	c.mu.Lock()
+	_, hasOld := c.m[m.Name]
+	_, hasNew := c.m[other.Name]
+	c.mu.Unlock()
+	if hasOld || !hasNew {
+		t.Fatalf("idle entry not dropped: old=%v new=%v, want false and true", hasOld, hasNew)
 	}
 }
 
@@ -177,11 +183,121 @@ func TestHandleSessionsUsagePendingPastBudget(t *testing.T) {
 	if n, p := call(); n != 0 || p < 1 {
 		t.Fatalf("cold call past budget: mine=%d pending=%d, want 0 and >=1", n, p)
 	}
-	for i := 0; i < 200 && mainUsageWarming.Load(); i++ {
+	// Only the background pass the cold call kicked off can fill the cache now.
+	for i := 0; i < 500; i++ {
+		mainUsage.mu.Lock()
+		_, cached := mainUsage.m[m.Name]
+		mainUsage.mu.Unlock()
+		if cached {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	mainUsage.get(m, time.Now()) // the background pass or this call: either way it is cached now
 	if n, _ := call(); n != 1 {
 		t.Fatalf("warm call: mine=%d, want 1", n)
+	}
+}
+
+// Not cached (no stamp, or a read that may be stale) means never stored.
+func TestMainUsageCacheSkipsUnstampedAndPartialReads(t *testing.T) {
+	m := session.Meta{Name: "mainusage3885h", CreatedAt: "2026-11-11T09:00:00Z"}
+	c := newMainUsageCache(time.Hour)
+	turnsOf := func(out int) []transcript.Turn {
+		return []transcript.Turn{{Role: "user"}, {Role: "assistant", OutTok: out}}
+	}
+	c.sourceOf = func(session.Meta) (string, func() ([]transcript.Turn, bool)) {
+		return "", func() ([]transcript.Turn, bool) { return turnsOf(4), true }
+	}
+	if got := c.get(m, time.Now()).Cumulative.OutTok; got != 4 || c.len() != 0 {
+		t.Fatalf("unstamped: out=%d len=%d, want 4 and 0", got, c.len())
+	}
+	c.sourceOf = func(session.Meta) (string, func() ([]transcript.Turn, bool)) {
+		return "S", func() ([]transcript.Turn, bool) { return turnsOf(4), false }
+	}
+	if got := c.get(m, time.Now()).Cumulative.OutTok; got != 4 || c.len() != 0 {
+		t.Fatalf("partial read: out=%d len=%d, want 4 and 0", got, c.len())
+	}
+}
+
+// Past the budget an uncached session must not even be stamped (the disk reads are the cost).
+func TestMainUsageCachePastDeadlineDoesNoSourceRead(t *testing.T) {
+	m := session.Meta{Name: "mainusage3885i", CreatedAt: "2026-11-11T09:00:00Z"}
+	c := newMainUsageCache(time.Hour)
+	calls := 0
+	c.sourceOf = func(session.Meta) (string, func() ([]transcript.Turn, bool)) {
+		calls++
+		return "S", func() ([]transcript.Turn, bool) { return nil, true }
+	}
+	if _, ok := c.getBy(m, time.Now(), time.Now().Add(-time.Second)); ok || calls != 0 {
+		t.Fatalf("ok=%v source reads=%d, want false and 0", ok, calls)
+	}
+}
+
+// Two parses overlap: the one that took its stamp later keeps its figure when the older, slower
+// one finishes last, and the idle clock never moves backwards.
+func TestMainUsageCacheLaterStampWinsAndUsedNeverRewinds(t *testing.T) {
+	m := session.Meta{Name: "mainusage3885j", CreatedAt: "2026-11-11T09:00:00Z"}
+	c := newMainUsageCache(time.Hour)
+	release, started := make(chan struct{}), make(chan struct{})
+	n := 0
+	c.sourceOf = func(session.Meta) (string, func() ([]transcript.Turn, bool)) {
+		n++
+		if n == 1 { // the slow parse of the older stamp
+			return "S1", func() ([]transcript.Turn, bool) {
+				close(started)
+				<-release
+				return []transcript.Turn{{Role: "assistant", OutTok: 1}}, true
+			}
+		}
+		return "S2", func() ([]transcript.Turn, bool) {
+			return []transcript.Turn{{Role: "assistant", OutTok: 2}}, true
+		}
+	}
+	t0 := time.Now()
+	done := make(chan struct{})
+	go func() { c.get(m, t0); close(done) }()
+	<-started
+	c.get(m, t0.Add(10*time.Second))
+	close(release)
+	<-done
+	c.mu.Lock()
+	e := c.m[m.Name]
+	c.mu.Unlock()
+	if e.stamp != "S2" || e.val.Cumulative.OutTok != 2 {
+		t.Fatalf("stale parse overwrote the newer entry: stamp=%s out=%d", e.stamp, e.val.Cumulative.OutTok)
+	}
+	if !e.used.Equal(t0.Add(10 * time.Second)) {
+		t.Fatalf("used rewound to %v", e.used)
+	}
+}
+
+// Concurrent callers of one session and stamp share a single parse.
+func TestMainUsageCacheSharesOneParse(t *testing.T) {
+	m := session.Meta{Name: "mainusage3885k", CreatedAt: "2026-11-11T09:00:00Z"}
+	c := newMainUsageCache(time.Hour)
+	var parses atomic.Int32
+	release := make(chan struct{})
+	c.sourceOf = func(session.Meta) (string, func() ([]transcript.Turn, bool)) {
+		return "S", func() ([]transcript.Turn, bool) {
+			parses.Add(1)
+			<-release
+			return []transcript.Turn{{Role: "assistant", OutTok: 3}}, true
+		}
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if got := c.get(m, time.Now()).Cumulative.OutTok; got != 3 {
+				t.Errorf("out = %d, want 3", got)
+			}
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if p := parses.Load(); p != 1 {
+		t.Fatalf("parses = %d, want 1", p)
 	}
 }
