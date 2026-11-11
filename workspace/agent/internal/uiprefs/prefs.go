@@ -314,6 +314,15 @@ func MemoryLintScheduleEnabled() bool {
 	return AgentMemory() && MemoryLintSchedule()
 }
 
+// AgentSkillCuration is the member's switch for the skill curator (#1562, ui-prefs
+// agentSkillCuration): while the workspace is idle it marks unused agent-authored skills stale and
+// moves old ones to an archive directory. Only a boolean true is on; missing or malformed reads as
+// off, because a pass moves files nobody is watching.
+func AgentSkillCuration() bool {
+	v, _ := Read()["agentSkillCuration"].(bool)
+	return v
+}
+
 // MuseContributorMode is the member's choice to run Muse Code in contributor mode (ui-prefs
 // museContributorMode, #2535), under which the vendor may use the conversation to improve its
 // product. Only a boolean true is on; missing or malformed reads as off, so nobody is opted in

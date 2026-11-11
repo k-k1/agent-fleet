@@ -263,6 +263,10 @@ const PREFS = {
   // renames as commits authored `lint`, no model involved. Default false, like the Agent's own missing-key answer
   // (uiprefs.MemoryLintSchedule); separate from memoryConsolidation, and it also needs agentMemory on.
   memoryLintSchedule: agentDefaulted(false, { normalize: isTrue }), // opt-in (ADR 0130) — commits land in the memory store unattended
+  // The skill curator (#1562): while idle the Agent marks unused agent-authored skills stale and moves old ones to an
+  // archive directory. No Settings control yet; the key exists so a save from the Console keeps it. Default false, like
+  // the Agent's own missing-key answer (uiprefs.AgentSkillCuration).
+  agentSkillCuration: agentDefaulted(false, { normalize: isTrue }), // opt-in (#1562) — skill directories are moved unattended
   // Muse Code's contributor mode (#2535, Settings > Agents > Muse Code): on, Meta may use the
   // conversations to improve its product. Default false, like the Agent's own missing-key answer
   // (uiprefs.MuseContributorMode). A muse session records the value it was created with and keeps
