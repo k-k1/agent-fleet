@@ -207,7 +207,7 @@ internal/sessionx/session_turn.go handleManagedTurn x1 {discard,op,sent,stop}
 internal/sessionx/session_turn.go handleManagedTurn x1 {op,sent}
 internal/sessionx/session_turn.go handleQueueEdit x1 {dismissed,op,sent}
 internal/sessionx/session_turn.go handleQueueEdit x1 {op,removed,sent}
-internal/sessionx/session_usage.go HandleSessionsUsage x1 {sessions}
+internal/sessionx/session_usage.go HandleSessionsUsage x1 {pending,sessions} cond{pending}
 internal/svnx/svn.go HandleCheckout x1 {job}
 internal/svnx/svn.go HandleDeleteConn x1 {forgot}
 internal/svnx/svn_auth.go HandleAuth x1 {trustCert,urlPrefix,username}

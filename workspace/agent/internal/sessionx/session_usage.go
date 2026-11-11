@@ -75,6 +75,11 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 	// another resident timer.
 	maybeFoldSessionUsage()
 	out := []sessionUsage{}
+	pending := 0
+	var deadline time.Time
+	if nameFilter == "" {
+		deadline = time.Now().Add(mainUsageColdBudget)
+	}
 	for _, m := range session.ListMetas() {
 		if m.Archived || (nameFilter != "" && m.Name != nameFilter) {
 			continue
@@ -82,7 +87,11 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 		if !AgentOf(m.Kind).Caps().CanTranscript {
 			continue
 		}
-		u := AggregateUsage(UsageTurns(m))
+		u, ok := mainUsage.getBy(m, time.Now(), deadline)
+		if !ok {
+			pending++
+			continue
+		}
 		addSubagentUsage(&u, m)
 		u.Name, u.Display, u.Kind = m.Name, session.Display(m), string(m.Kind)
 		overlayKiroLiveUsage(m, &u)
@@ -94,7 +103,13 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 			"no transcript-capable session named "+nameFilter)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": out})
+	resp := map[string]any{"sessions": out}
+	if pending > 0 {
+		// Sessions left out because their transcripts were not parsed yet; ask again shortly.
+		resp["pending"] = pending
+		go WarmMainUsage()
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // overlayKiroLiveUsage fills a running managed kiro session's context + credits from
