@@ -246,3 +246,20 @@ func TestAfWorkAgeHTTP(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestAfWorkAgePutsBackAFolderWrittenAfterTheDetach(t *testing.T) {
+	f := newAgeFixture(t)
+	f.folder("a", false, 40*day)
+	afWorkAfterDetach = func(target string) { writeSized(t, filepath.Join(target, "sub", "late"), 5) }
+	t.Cleanup(func() { afWorkAfterDetach = nil })
+	res := f.remove(30, "a")
+	if len(res.Removed) != 0 || len(res.Skipped) != 1 || res.Skipped[0].Reason != "changed" {
+		t.Fatalf("%+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(f.work(), "a", "sub", "late")); err != nil {
+		t.Fatalf("the folder was not put back: %v", err)
+	}
+	if got := entries(t, f.work()); !eq(got, []string{"a"}) {
+		t.Fatalf("left %v", got)
+	}
+}

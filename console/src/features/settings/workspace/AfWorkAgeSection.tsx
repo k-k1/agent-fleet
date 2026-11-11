@@ -36,18 +36,21 @@ export function AfWorkAgeSection() {
   const n = Number(days);
   const valid = Number.isInteger(n) && n >= 1 && n <= 3650;
 
-  const find = async () => {
-    if (!valid) return;
+  // queryDays: a delete refreshes with the days it ran with, not what is typed now.
+  const find = async (queryDays?: number) => {
+    const q = queryDays ?? n;
+    if (queryDays === undefined && !valid) return;
+    if (queryDays === undefined) setMsg("");
     setBusy(true);
     setErr(false);
     try {
-      const res = await api("api/cleanup/af-work?older_than_days=" + n);
+      const res = await api("api/cleanup/af-work?older_than_days=" + q);
       if (!res || res.error || !Array.isArray(res.folders)) throw new Error("");
       if (res.unsupported) {
         setListed(null);
         return;
       }
-      setListed({ days: n, folders: res.folders });
+      setListed({ days: q, folders: res.folders });
       setPicked(new Set(res.folders.map((f: AgeFolder) => f.name)));
       setTruncated(!!res.truncated);
     } catch {
@@ -85,7 +88,7 @@ export function AfWorkAgeSection() {
       setBusy(false);
       setConfirm(false);
     }
-    await find();
+    await find(listed.days);
   };
 
   const toggle = (name: string) =>
@@ -110,7 +113,7 @@ export function AfWorkAgeSection() {
           style={{ width: 80 }}
         />
         <span className="muted">{tr("machine.afage_days")}</span>
-        <Button small icon="search" onClick={find} disabled={busy || !valid}>
+        <Button small icon="search" onClick={() => find()} disabled={busy || !valid}>
           {tr("machine.afage_find")}
         </Button>
       </Row>
@@ -154,7 +157,7 @@ export function AfWorkAgeSection() {
           <ul>
             {chosen.map((f) => (
               <li key={f.name}>
-                <code>{f.path}</code> ({humanSize(f.bytes)})
+                <code>{f.path || "~/.af-work/" + f.name}</code> ({humanSize(f.bytes)})
               </li>
             ))}
           </ul>

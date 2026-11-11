@@ -56,8 +56,9 @@ type afWorkOldList struct {
 // newestMtime is the latest modification time of dir and everything below it, without
 // following a symlink (a link's own time counts, its target is never read). complete=false
 // when the budget ran out: the real newest time may be later, so the caller treats the
-// folder as fresh.
-func newestMtime(dir string, budget *int) (newest time.Time, complete bool) {
+// folder as fresh. The walk stops at the first entry newer than cutoff: the folder is then
+// not old whatever else is inside, and the rest of the tree is not worth the budget.
+func newestMtime(dir string, cutoff time.Time, budget *int) (newest time.Time, complete bool) {
 	complete = true
 	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if *budget <= 0 {
@@ -73,6 +74,9 @@ func newestMtime(dir string, budget *int) (newest time.Time, complete bool) {
 		if info, ierr := d.Info(); ierr == nil {
 			if info.ModTime().After(newest) {
 				newest = info.ModTime()
+				if !newest.Before(cutoff) {
+					return filepath.SkipAll
+				}
 			}
 		} else {
 			complete = false
@@ -131,7 +135,7 @@ func afWorkOldFolders(home string, pins map[string]string, days int) afWorkOldLi
 			continue
 		}
 		before := budget
-		newest, complete := newestMtime(l.path(), &budget)
+		newest, complete := newestMtime(l.path(), cutoff, &budget)
 		if !complete || !newest.Before(cutoff) {
 			out.Truncated = out.Truncated || budget <= 0
 			continue
@@ -214,10 +218,13 @@ func removeOldAfWork(home string, pins map[string]string, days int, names []stri
 			skip(name, why)
 			continue
 		}
+		if afWorkAfterDetach != nil {
+			afWorkAfterDetach(target)
+		}
 		// A write that landed between the walk and the rename shows up on the detached tree;
 		// put the folder back rather than delete what was just written.
 		budget := toolCacheMaxEntries
-		if newest, complete := newestMtime(target, &budget); !complete || !newest.Before(cutoff()) {
+		if newest, complete := newestMtime(target, cutoff(), &budget); !complete || !newest.Before(cutoff()) {
 			if err := os.Rename(target, l.path()); err != nil {
 				log.Printf("leftovers: af-work age: restore %s: %v", l.path(), err)
 			}
@@ -236,6 +243,9 @@ func removeOldAfWork(home string, pins map[string]string, days int, names []stri
 	}
 	return res
 }
+
+// afWorkAfterDetach is a test seam: it runs once a folder is detached, before the final age check.
+var afWorkAfterDetach func(target string)
 
 func parseOlderThanDays(s string) (int, bool) {
 	n := 0
