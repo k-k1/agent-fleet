@@ -136,6 +136,9 @@ func TestMemoryRootsCodexPresenceGated(t *testing.T) {
 func memoryRootKinds() []string {
 	var out []string
 	for _, r := range memoryRoots() {
+		if r.Kind == "muse" {
+			continue // always active; covered by memory_muse_root_test.go
+		}
 		out = append(out, r.Kind)
 	}
 	return out

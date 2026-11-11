@@ -55,9 +55,10 @@ type memoryRoot struct {
 	// feature is off by default, so on an environment where it was never enabled the root
 	// itself does not appear.
 	RequireDir bool
-	// QuietWhenAbsent keeps an inactive RequireDir root out of the Targets list. There is
-	// nothing for the member to switch on (muse creates its store on first write), so a row
-	// saying "absent" would only be noise on every environment without muse.
+	// QuietWhenAbsent keeps the root always active (snapshot, restore and import all resolve
+	// it, and a restore recreates a deleted store) but hides it from the Targets list while its
+	// live dir is missing. There is nothing for the member to switch on, so a row saying
+	// "absent" would only be noise on every environment without muse.
 	QuietWhenAbsent bool
 }
 
@@ -108,7 +109,6 @@ func memoryRootDecls() []memoryRoot {
 			// note too, so the index and the notes stay consistent after a restore.
 			Include:         []string{"personal/**/*.md", "projects/**/*.md"},
 			Scopes:          false,
-			RequireDir:      true,
 			QuietWhenAbsent: true,
 		},
 	}
@@ -150,7 +150,7 @@ func memoryInactiveRoots() []memoryInactiveRoot {
 	}
 	out := []memoryInactiveRoot{}
 	for _, r := range memoryRootDecls() {
-		if active[r.Kind] || r.QuietWhenAbsent {
+		if active[r.Kind] {
 			continue
 		}
 		v := memoryInactiveRoot{Kind: r.Kind, Label: r.Label, Reason: "absent"}
@@ -186,6 +186,11 @@ func memoryRootByKind(kind string) (memoryRoot, bool) {
 func memoryAllowed(r memoryRoot, rel string) bool {
 	rel = filepath.ToSlash(rel)
 	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
+		return false
+	}
+	// A ".." segment anywhere would let personal/**/*.md match a path that leaves the root, and
+	// the restore's own temp files (memoryReplaceFile) are never memory whatever the root.
+	if strings.Contains(rel, "..") || strings.HasSuffix(rel, memoryRestoreTmpSuffix) {
 		return false
 	}
 	matched := false

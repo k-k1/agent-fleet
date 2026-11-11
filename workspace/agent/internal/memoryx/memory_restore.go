@@ -407,14 +407,21 @@ func memoryApplyScopeToLive(t memoryScopeTarget, stagingRoot string) (written, d
 	return written, deleted, nil
 }
 
+// memoryRestoreTmpSuffix marks the temp file memoryReplaceFile writes next to its target.
+// memoryAllowed refuses it for every root, so a leftover from a crash is never versioned.
+const memoryRestoreTmpSuffix = ".af-restore.tmp"
+
 // memoryReplaceFile writes src over dst through a temp file and a rename, so a process that
 // has dst open (a live muse or claude reading its notes) sees the old or the new content, never
-// a truncated half. The temp name is not a note (no .md), so the allowlist never versions it.
+// a truncated half. The existing file's permission bits are kept, as the old in-place copy did.
 func memoryReplaceFile(src, dst string) error {
-	tmp := dst + ".af-restore.tmp"
+	tmp := dst + memoryRestoreTmpSuffix
 	if err := memoryCopyFile(src, tmp); err != nil {
 		_ = os.Remove(tmp)
 		return err
+	}
+	if st, err := os.Lstat(dst); err == nil && st.Mode().IsRegular() {
+		_ = os.Chmod(tmp, st.Mode().Perm())
 	}
 	if err := os.Rename(tmp, dst); err != nil {
 		_ = os.Remove(tmp)

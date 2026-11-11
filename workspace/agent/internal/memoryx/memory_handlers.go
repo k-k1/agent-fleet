@@ -60,6 +60,11 @@ func HandleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 	busy := memoryBusyKinds()
 	views := make([]memoryRootView, 0, len(roots))
 	for _, root := range roots {
+		if root.QuietWhenAbsent {
+			if st, err := os.Stat(root.Dir); err != nil || !st.IsDir() {
+				continue
+			}
+		}
 		v := memoryRootView{
 			Kind: root.Kind, Label: root.Label, Scopes: root.Scopes,
 			Busy: busy[root.Kind], Projects: []memoryProjectRef{},

@@ -124,7 +124,7 @@ Targets shows Codex as "Memories are off (Codex's own default)". Turn it on, and
 ### The import says "Cannot import: this environment has no destination for"
 
 An agent kind's own memory in the file is not in use in this environment (for example, Codex's memory is off).
-That kind cannot be selected. For Codex, turn it on in Targets and import again.
+That kind cannot be selected. For Codex, turn it on in Targets and import again. Muse Code's memory has no such switch: it can always be imported, and its folder is created if it is missing.
 
 ### The import says "The secret scan of the imported contents failed"
 

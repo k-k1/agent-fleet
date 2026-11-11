@@ -27,7 +27,7 @@ type restoreMemorySnapshotArgs struct {
 	Projects []string `json:"projects"`
 }
 
-// memorySnapshotTools read and restore the history of claude's and codex's own memories
+// memorySnapshotTools read and restore the history of claude's, codex's and muse's own memories
 // (docs/log/39). Restoring is --write's. The descriptions call it the agent's own memory, never by the
 // Console's name for AF memory (エージェントメモリ): a model reading the tool list has to tell the
 // two stores apart.
@@ -58,7 +58,7 @@ func memorySnapshotTools() []toolSpec {
 				if limit <= 0 {
 					limit = 20
 				}
-				// claude's and codex's history only, like get_memory_snapshot's diff: commits that touch
+				// claude's, codex's and muse's history only, like get_memory_snapshot's diff: commits that touch
 				// nothing but the AF memory are left out before the limit applies (ADR 0108).
 				path = "/agents/memory/snapshots?native=1&limit=" + strconv.Itoa(limit)
 				return mcpAgentGETRelay(req, p, path)
@@ -108,7 +108,7 @@ func memorySnapshotTools() []toolSpec {
 				if a.Path != "" {
 					q.Set("path", a.Path)
 				}
-				// claude's and codex's memories only: the AF memory's history (af/) is not this tool's,
+				// claude's, codex's and muse's memories only: the AF memory's history (af/) is not this tool's,
 				// and it is withheld from sessions and the assistant alike while its switch is off.
 				q.Set("native", "1")
 				diff, err := agentGET("/agents/memory/diff?" + q.Encode())
