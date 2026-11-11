@@ -51,7 +51,7 @@ Only operations that change state are recorded.
 | `repo.*` | Repository clones, creation and deletes, and the delete lock (`repo.lock`) |
 | `session.*` | Session creation, fork, delete, move and sharing, the spend cap (`session.spend_cap`) and the delete lock (`session.lock`) |
 | `connection.*` | Credentials saved, deleted and signed in. A sign-in is one row, from the call that completed it |
-| `mcp.server.*` | MCP servers created, updated, deleted, and their secrets |
+| `mcp.*` | MCP servers created, updated, deleted, and their secrets (personal registrations and tenant distributions), and outside apps' OAuth connections |
 | `inbox.*` | Inbox requests sent, taken, declined, done and so on. The body is not kept |
 | `membership.*`, `member.*` | Members added and removed, roles, limits |
 | `tenant.*`, `limit_board.set` | Tenant settings changes (`tenant.external_memory`, `tenant.watch_sources` and so on) |

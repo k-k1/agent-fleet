@@ -66,16 +66,16 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | 利用枠ボード | テナントのメンバーが利用上限の状況を公開できるかどうか（既定はオン。オンでも各メンバーは自分で選ぶまで非公開）|
 | サインイン方式 | 自社の IdP や GitHub 組織を入口にする（承認が要る）|
 | サインイン規則 | 効いている参加方式とドメイン（読み取り専用）|
-| 接続元の制限 | メンバーがどこから接続してよいか。同じ画面にある **MCP OAuth** の欄で、外のアプリが OAuth でテナントに接続してよいかも決める（[admin 04](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)）|
+| 接続元の制限 | メンバーがどこから接続してよいか。同じ画面にある **MCP OAuth** の欄で、外のアプリが OAuth でテナントに接続してよいかも決める（[MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)）|
 | 連携アプリの OAuth | テナント自身の GitHub / Bitbucket OAuth アプリ |
 | MCP 配布 | 全メンバーへ渡す連携サーバー |
 | ブランチ命名ルール | 新しいブランチの名前と起点の、テナントとしての既定（リポジトリのパターンごと・JSON の一覧）。メンバーのワークスペースは 5 分以内に取り込む。**助言のみ**——外れた名前は警告になるだけで拒否されない |
-| ウォッチのソース | メンバーが自分の MCP サーバーをウォッチのソースにできるか。ブロック（既定）だと設定を断り、テナントのソースをすべて止める（[管理 04](../admin/watch-sources.ja.md)） |
-| 外部からのメモリ利用 | メンバーが `/mcp`（またはメモリ専用の `/mcp/memory`）経由で Agent Fleet の外のエージェントから自分のメモリを使えるか。許可（既定）ならメンバーが各自で有効にでき、ブロックするとテナント全体からメモリのツールを引き上げる（[管理 04](../admin/memory-outside.ja.md)） |
+| ウォッチのソース | メンバーが自分の MCP サーバーをウォッチのソースにできるか。ブロック（既定）だと設定を断り、テナントのソースをすべて止める（[MCP サーバーをウォッチのソースに許可する](../admin/watch-sources.ja.md)） |
+| 外部からのメモリ利用 | メンバーが `/mcp`（またはメモリ専用の `/mcp/memory`）経由で Agent Fleet の外のエージェントから自分のメモリを使えるか。許可（既定）ならメンバーが各自で有効にでき、ブロックするとテナント全体からメモリのツールを引き上げる（[外部からのメモリの利用を許可する](../admin/memory-outside.ja.md)） |
 | メンバーの既定 | 初回のようこそカードが「エージェントを接続」で名指しするエージェント（Claude・Codex・opencode・Cursor・Copilot・Kiro・Muse・指定しない）。メンバーは Console を読み込むたびに読む。**案内のみ**——ほかのエージェントで接続しても手順は完了になる（[管理 06](../admin/06-team-defaults.ja.md#メンバーの既定)） |
 | 監査 | 誰が・いつ・何を変えたか |
 | 稼働時間 | メンバー毎のワークスペース稼働時間（書き出し可）＋テナント全体の時間別ヒートマップ |
-| クラウド費用 | テナントのクラウド費用をメンバーごとに。AWS で動く配備だけ（[admin 03](../admin/usage.ja.md#クラウド費用を見る)）|
+| クラウド費用 | テナントのクラウド費用をメンバーごとに。AWS で動く配備だけ（[稼働時間とクラウド費用を見る](../admin/usage.ja.md#クラウド費用を見る)）|
 | 推論エンジンのモデル | 自前エンジンへモデルを足すモデルカタログを開く（配備管理者がテナントにモデルの取り込みを許した場合だけ。モデルの有効化は配備管理者のまま）|
 
 ## 管理モーダル
@@ -117,8 +117,8 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `WS_MEMORY` | ワークスペースの既定メモリ上限 |
 | `AF_PREVIEW_DOMAIN` | プレビュー用サブドメイン（`<ワークスペース>-<ポート>.<ドメイン>`）の親ドメイン。そのためのワイルドカードの DNS 名と証明書が要る。未設定ならプレビュー用サブドメインは無く、Console 自身のプレビューのパスだけになる。`AF_COOKIE_SECRET` と `PUBLIC_BASE_URL` も一緒に設定する。どちらかが無いと、プレビューのサインインを信頼できないか戻る先の Console が無いため、Control Plane が起動時に警告する |
 | `AF_DEV_IDP` | `0` にすると、開発用ログイン（プレビュー用サブドメイン上のメンバーのアプリが Google の代わりにサインインに使える、Console のオリジン上の OIDC プロバイダ）を、配備管理者のスイッチにかかわらずオフに固定する。未設定ならそのスイッチに従い、スイッチは既定でオン。提供するのは `AF_PREVIEW_DOMAIN` と `PUBLIC_BASE_URL` があるときだけ |
-| `AF_MCP_ENABLED` | `true` で `/mcp` エンドポイントとメモリ専用の `/mcp/memory`（Personal Access Token）を提供する。それ以外（`1` を含む）はオフ。テナント単位のメモリのスイッチ（[admin 04](../admin/memory-outside.ja.md)）は別の、もっと狭いスイッチ |
-| `AF_MCP_OAUTH` | `1` で、Control Plane が `/mcp` の OAuth 認可サーバーにもなり、ホスト型のクライアントはメンバーのサインインで接続できる。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` が要り、どれか欠けると OAuth のパスは 404。各テナントは自分の分をオフにもできる（[admin 04](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)）。残りは [operate/04](../operate/04-secure.ja.md#リモート-mcp-クライアント向けのサインインoauth) |
+| `AF_MCP_ENABLED` | `true` で `/mcp` エンドポイントとメモリ専用の `/mcp/memory`（Personal Access Token）を提供する。それ以外（`1` を含む）はオフ。テナント単位のメモリのスイッチ（[外部からのメモリの利用を許可する](../admin/memory-outside.ja.md)）は別の、もっと狭いスイッチ |
+| `AF_MCP_OAUTH` | `1` で、Control Plane が `/mcp` の OAuth 認可サーバーにもなり、ホスト型のクライアントはメンバーのサインインで接続できる。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` が要り、どれか欠けると OAuth のパスは 404。各テナントは自分の分をオフにもできる（[MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)）。残りは [operate/04](../operate/04-secure.ja.md#リモート-mcp-クライアント向けのサインインoauth) |
 | `AF_GITHUB_WEBHOOK_SECRET` | このデプロイの GitHub App の Webhook シークレット。設定すると、Control Plane は App の配信を `/webhooks/github` で受け付ける（App の Webhook URL は `<PUBLIC_BASE_URL>/webhooks/github`）。受けた配信は、実行中の Workspace に「公開リポジトリのプルリクエストを早めに確認して」と知らせるためだけに使う。未設定ならこのエンドポイントは存在せず、ウォッチはポーリングだけで動く。プライベートリポジトリの配信はこの経路では無視する。配信の中身は何も渡さない。 |
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | MCP OAuth が信頼するクライアントのホスト、または `https://host/path` の URL プレフィックス（カンマ区切り。ホスト名だけなら全パス）。既定は `https://claude.ai/api/mcp/auth_callback`・`claude.com`・`chatgpt.com`、`none` でループバックのクライアントだけ。管理モーダルの **MCP ログイン許可ホスト** で保存した一覧がこの変数に優先する（[operate/04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ)）|
 | `AF_EFS_BACKUP` | 手で設定しない。`ecs` / `ecs-ec2` で `update.sh` と `standup.sh` が ingress スタックの `EfsBackup` パラメータ（`present`・`off`・`missing`）から埋め、`missing` なら管理画面に「日次の EFS バックアップがない」バナーが出る（[operate/03](../operate/03-run.ja.md#アップグレード)） |

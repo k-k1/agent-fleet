@@ -51,7 +51,7 @@ source_of_truth: "Console のテナント設定 →「運用」→「監査」�
 | `repo.*` | リポジトリの clone・作成・削除、削除ロックの切り替え（`repo.lock`） |
 | `session.*` | セッションの作成・fork・削除・移動・共有、支出上限（`session.spend_cap`）、削除ロック（`session.lock`） |
 | `connection.*` | 認証情報の保存・削除・サインイン。サインインは完了させた呼び出しの 1 行だけ |
-| `mcp.server.*` | MCP サーバーの作成・更新・削除・シークレット |
+| `mcp.*` | MCP サーバーの作成・更新・削除・シークレット（個人の登録と、テナントへの配布）、外のアプリの OAuth 接続 |
 | `inbox.*` | 受信箱の依頼の送信・引き受け・辞退・完了など。本文は残さない |
 | `membership.*`・`member.*` | メンバーの追加・外す・ロール・上限の変更 |
 | `tenant.*`・`limit_board.set` | テナント設定の変更（`tenant.external_memory`、`tenant.watch_sources` など） |

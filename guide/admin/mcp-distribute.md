@@ -14,8 +14,8 @@ Choose whether everyone shares one token, each member enters their own value, or
 
 | What you do | What happens on the members' side |
 |---|---|
-| Add a server under "MCP distribution" in Tenant settings | Within five minutes it appears in each member's MCP server list, labelled "tenant" |
-| Choose how credentials are handled | With the value distributed it just works; per-member values show "Enter value", OAuth shows "Sign in" |
+| Add a server under "MCP distribution" in Tenant settings | Within five minutes it appears in each member's MCP server list, labelled "Tenant" |
+| Choose how credentials are handled | With the value distributed it just works; per-member values show "Enter values", OAuth shows "Sign in" |
 | Disable or delete it | From the next fetch, it is no longer handed to members |
 
 It takes effect in sessions started after the fetch. Sessions already running do not change.
@@ -36,7 +36,7 @@ It takes effect in sessions started after the fetch. Sessions already running do
 
 ![The "Distribute an MCP server" form: display name, ID and URL, the credentials checkbox, the authentication choice and the closed Advanced section](../assets/admin-mcp-form-en-light.webp)
 
-Distributed servers appear in members' **⚙ Settings → Connections → "MCP servers (used by sessions)"**, labelled "tenant".
+Distributed servers appear in members' **⚙ Settings → Connections → "MCP servers (used by sessions)"**, labelled "Tenant".
 Members can only run the connection test and disable it in their own workspace; they cannot edit or delete it.
 
 ## Decide how credentials are handled
