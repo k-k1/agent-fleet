@@ -175,7 +175,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Deployment targets | deployment admin | before start | [deploy-targets.md](deploy-targets.md) |
-| Install, upgrade, back up, restore | deployment admin | a shell | [operator 02](../operate/02-install.md) / [03](../operate/03-run.md) |
+| Install, upgrade, back up, restore | deployment admin | a shell | [Install Agent Fleet](../operate/install.md) / [03](../operate/03-run.md) |
 | Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 04](../operate/04-secure.md) |
 | Audit log and egress control | deployment admin | Admin | [operator 04](../operate/04-secure.md#operating-egress-control) |
 | Which client hosts MCP OAuth trusts | deployment admin (super_admin) | Admin → MCP sign-in hosts | [operator 04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only) |
