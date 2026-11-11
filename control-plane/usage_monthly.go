@@ -105,16 +105,21 @@ func monthlyUsage(rows []store.UsageRow, sp monthSpan) []usageMonth {
 // costMonth is one month of cloud cost. NoCoverage means the month lies wholly outside
 // the days the store has (cost allocation is not retroactive): it is unknown, not zero.
 // Partial covers the running month and a month that starts before the first covered day.
+// CoverageFrom tells the two apart: it is the first covered day (YYYY-MM-DD) of a finished
+// month that Partial because the data starts mid-month, and is absent for the running month
+// (running wins when both hold) and for complete months. A separate additive key keeps
+// `partial` meaning what it always did for existing readers.
 // SharedMicro is set only on the super_admin deployment-wide view.
 type costMonth struct {
-	Month       string   `json:"month"`
-	Unblended   int64    `json:"unblended_micro"`
-	SharedMicro *int64   `json:"shared_micro,omitempty"`
-	Estimated   bool     `json:"estimated"`
-	Partial     bool     `json:"partial"`
-	NoCoverage  bool     `json:"no_coverage"`
-	ChangeMicro *int64   `json:"change_micro,omitempty"`
-	ChangePct   *float64 `json:"change_pct,omitempty"`
+	Month        string   `json:"month"`
+	Unblended    int64    `json:"unblended_micro"`
+	SharedMicro  *int64   `json:"shared_micro,omitempty"`
+	Estimated    bool     `json:"estimated"`
+	Partial      bool     `json:"partial"`
+	CoverageFrom string   `json:"coverage_from,omitempty"`
+	NoCoverage   bool     `json:"no_coverage"`
+	ChangeMicro  *int64   `json:"change_micro,omitempty"`
+	ChangePct    *float64 `json:"change_pct,omitempty"`
 }
 
 // monthlyCost buckets cost rows by month. withShared fills SharedMicro; isShared says
@@ -143,6 +148,9 @@ func monthlyCost(rows []store.CloudCostRow, sp monthSpan, firstDay string, withS
 		covered := firstDay != "" && monthEnd(k) >= firstDay
 		m.NoCoverage = !covered
 		m.Partial = k == sp.Current || (covered && k+"-01" < firstDay)
+		if covered && k != sp.Current && k+"-01" < firstDay {
+			m.CoverageFrom = firstDay
+		}
 		if withShared {
 			v := shared[k]
 			m.SharedMicro = &v

@@ -9,6 +9,8 @@ export interface MonthRow {
   /** Seconds for hours, micro-units for money. */
   value: number;
   partial?: boolean;
+  /** First covered day of a finished month cut short by where the data starts (not still running). */
+  coverageFrom?: string;
   noCoverage?: boolean;
   estimated?: boolean;
   /** Percent against the previous month; absent when there is nothing to compare with. */
@@ -56,7 +58,7 @@ export function MonthlyTrend({
                   {r.estimated && <span className="muted"> {tr("monthly.estimated")}</span>}
                   {r.partial && (
                     <span className="muted" title={r.noCoverage === undefined ? undefined : tr("monthly.partial_cost_hint")}>
-                      {" "}({tr("monthly.partial")})
+                      {" "}({r.coverageFrom ? tr("monthly.partial_coverage", { day: r.coverageFrom }) : tr("monthly.partial")})
                     </span>
                   )}
                 </span>
@@ -89,6 +91,7 @@ export function costMonthRows(monthly: any[] | undefined, sharedFmt?: (v: number
     month: m.month,
     value: m.unblended_micro || 0,
     partial: !!m.partial,
+    coverageFrom: m.coverage_from || undefined,
     noCoverage: !!m.no_coverage,
     estimated: !!m.estimated,
     changePct: m.change_pct ?? null,

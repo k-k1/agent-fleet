@@ -242,6 +242,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "cost.breakdown": "What it was spent on",
   "monthly.note_utc": "Months are cut in UTC, like the daily figures.",
   "monthly.partial": "so far",
+  "monthly.partial_coverage": "partial data (from {day})",
   "monthly.no_coverage": "no data",
   "monthly.no_coverage_hint": "Before cost allocation was switched on, so there is nothing to show (not zero).",
   "monthly.partial_cost_hint": "Incomplete: this month is still running or starts before cost data begins.",
