@@ -20,6 +20,8 @@ source_of_truth: "画面欄は Console の文字列、実装欄はコード"
 | マネージド | paneless / managed driver | 共有ランタイムで動き、チャット画面から操作する。端末は無い |
 | ターミナル（CLI）| tmux pane / PTY | エージェント自身の対話画面を端末で直接操作する |
 | エージェント | kind | CLI のコーディング AI（claude / codex / opencode ほか）。[agents.md](agents.ja.md) |
+| エージェントメモリ | AF memory（`memoryx`、メモリリポジトリの `af/`） | Agent Fleet 自身のメモリ。af の `memory_*` ツールで全種類のエージェントが共有する。本文では「Agent Fleet のメモリ」と書き、「エージェントメモリ」は設定のタブ名 |
+| エージェント自身のメモリ | native memory（`claude`/`codex` のルート、`?native=1`） | エージェントの種類が自分で持つメモリ：Claude Code の自動メモリ、Codex の `memories`、Muse Code のメモリ。Agent Fleet のメモリとは別物で、メモリのスナップショットが版管理する。見出しでは「Claude Code 自身のメモリ」のように縮めてよい。画面では「ネイティブメモリ」「自前のメモリ」と書かず、「自動メモリ」は Claude の機能名を指す文だけで使う |
 | ハーネス | kind | エージェントのループを動かすプログラム（Claude Code・opencode・codex・`lcpp`）。セッションの kind そのもので、今の画面では「エージェント」と書く。画面に「ハーネス」はまだ出ない（ADR 0128） |
 | ルート | route（`usagex.Record.Route`） | モデル呼び出しの行き先と、使った認証情報。OpenCode Zen、OpenCode Go のサブスク、配備のエンジン（`af-engine-llm`）、メンバー自身の llama.cpp（`member-llamacpp`）など。使用量台帳に、呼び出しごとの証拠から記録する（セッションの現在の設定からは決して導かない）。空は「記録なし」。画面にはまだ出ない（ADR 0128） |
 | メーカー | maker / `model_provider.go` の「provider」 | モデルを作った側（Anthropic・OpenAI・Zhipu）。ルートとは別物で、同じメーカーのモデルに複数のルートで届くことがある。コードの「provider」はここではメーカーを指す。画面にはまだ出ない（ADR 0128） |

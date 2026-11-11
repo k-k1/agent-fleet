@@ -394,7 +394,7 @@ refused.
   overwritten, conflicts and secrets kept and listed), and Claude Code's own memory stays off until that has
   finished, so a session started in between cannot write files the write-back would then trip over. If the
   write-back keeps failing, Claude Code's memory stays off and Agent Fleet retries with growing pauses; the
-  page then offers **Retry now** and **Switch native memory back on anyway**. Under the switch the page shows
+  page then offers **Retry now** and **Switch Claude Code's own memory back on anyway**. Under the switch the page shows
   where the run is, what the last one did and the files it left (conflicts, skipped secrets), and one
   notification tells you when a run left any. The work survives a restart of the workspace: it
   resumes where the phase says it was, and a switch that changed while the workspace was stopped is carried
@@ -403,10 +403,10 @@ refused.
   codex. If you edit that flag while the switch is on, your value is the one restored. Only Claude sessions *started* after the change are
   affected; a running session keeps what it started with.
 
-- **Muse Code's own memory**: while the switch is on, Agent Fleet starts Muse Code with its native memory
+- **Muse Code's own memory**: while the switch is on, Agent Fleet starts Muse Code with its own memory
   switched off: Muse has no `read_memory` / `add_memory` / `edit_memory`
   tools, no memory snapshot in its context and no "use persistent memory" paragraph in its prompt, so it uses
-  the af tools like every other kind. While the switch is on it wins over a native-memory setting in your own environment; with the switch off
+  the af tools like every other kind. While the switch is on it wins over an own-memory setting in your own environment; with the switch off
   Agent Fleet changes nothing and Muse keeps its default. This covers
   Muse sessions and the assistant chat. Only Muse hosts *started* after the change are affected; a running
   session keeps what it started with.
@@ -431,7 +431,7 @@ refused.
 
 ## Memory snapshots
 
-Version control over the memory an agent accumulates by itself (claude's auto-memory, codex's memories), so
+Version control over the agent's own memory (Claude Code's auto-memory, codex's memories), so
 "it learned something it shouldn't have" and "when did this go wrong" are fixable after the fact. This is separate from
 [Agent memory](#agent-memory), which is Agent Fleet's own shared memory. The page shows the last snapshot, whether
 automatic snapshots are on and **Snapshot now** at the top, over three views: **History · Targets · Export & import**.

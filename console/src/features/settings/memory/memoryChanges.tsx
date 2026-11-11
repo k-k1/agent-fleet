@@ -38,7 +38,6 @@ export function AgentMemorySwitch() {
       </Row>
       <AutoSyncPanel />
       <p className="muted ds-note">{tr("mem.af_switch_note")}</p>
-      {!enabled && <p className="muted ds-note">{tr("mem.af_switch_off_export")}</p>}
     </>
   );
 }
