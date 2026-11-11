@@ -9,6 +9,7 @@ English | [日本語](overview.ja.md)
 
 Agent memory is Agent Fleet's own memory, shared by every kind of agent.
 This page shows how to read what agents remembered, rewrite it, pin it and make agents forget it.
+How it differs from instruction files and the agent's own memory is in [Choose which memory your agents use](which-memory.md).
 
 ## How it works
 

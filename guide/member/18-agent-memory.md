@@ -10,6 +10,7 @@ This chapter has moved into pages, one per thing you want to do.
 
 | What you want to do | Page |
 |---|---|
+| Choose between instruction files, the agent's own memory and Agent Fleet memory | [Choose which memory your agents use](../user/memory/which-memory.md) |
 | Read, correct, pin and forget what agents remember | [Read and correct agent memory](../user/memory/overview.md) |
 | Check who changed what and when, and revert it | [Check memory changes](../user/memory/changes.md) |
 | Let sessions use memory, or stop them | [Set how memory is used](../user/memory/settings.md) |

@@ -10,7 +10,7 @@ English | [日本語](snapshots.ja.md)
 See the history of the memory Claude Code and Codex keep in their own files, and put it back to how it was at a point in time.
 "It learned something it shouldn't have" and "when did this go wrong" become fixable after the fact. You can also take it to another environment.
 
-Agent Fleet memory, the memory every kind of agent shares, is a different thing. Check and revert its changes in the memory Changes view.
+How it differs from Agent Fleet memory is in [Choose which memory your agents use](which-memory.md). Check and revert Agent Fleet memory's changes in the memory Changes view.
 
 ## How it works
 

@@ -8,7 +8,7 @@ source_of_truth: "the Settings view of the Console's Settings > Agent memory"
 English | [日本語](settings.ja.md)
 
 Agent memory is **off by default**. Turn on one switch and every kind of session reads and writes the same memory.
-The memory that Claude Code and Muse Code keep on their own is switched to match, by itself.
+What the switch does to the agent's own memory is summed up in [Choose which memory your agents use](which-memory.md).
 
 ## How it works
 
