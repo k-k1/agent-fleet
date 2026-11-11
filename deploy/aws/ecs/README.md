@@ -190,6 +190,7 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
    redirect URIs — that single URI serves every provider you enable. Pass the
    fqdn/zone + client id + allowed/super-admin emails as parameters at deploy:
    ```bash
+   CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text --profile <p> --region <r>)
    aws cloudformation deploy --stack-name af-ecs-ingress \
      --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides GoogleClientId=<id> \
@@ -540,6 +541,7 @@ the adapter launches. To move a deployment to a new release:
 3. **Re-deploy ingress with only the tag overridden** (all other parameters keep
    their previous values):
    ```bash
+   CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text --profile <p> --region <r>)
    aws cloudformation deploy --stack-name af-ecs-ingress \
      --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides ImageTag=<v> \
@@ -1262,7 +1264,7 @@ service supports it:
 | ec2 | 00-network (VPC/subnets/NAT/SG/S3 gateway endpoint; the egress gateway with `EgressRoute=gateway`) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, route tables and routes, security groups, VPC endpoints (the S3 gateway endpoint with its policy: `ec2:CreateVpcEndpoint`/`ModifyVpcEndpoint`/`DeleteVpcEndpoints`); for the gateway also network interfaces, `AssociateAddress`/`DisassociateAddress` (its Elastic IP, `DescribeAddresses` for a handed-in one), launch templates (`CreateLaunchTemplate`/`CreateLaunchTemplateVersion`/`DeleteLaunchTemplate`), and `RunInstances`/`CreateTags` (checked when the Auto Scaling group is created from the launch template) |
 | autoscaling | 00-network's egress gateway (`EgressRoute=gateway`; `pause.sh` scales it through the stack) | Create/Update/Delete/Describe AutoScalingGroups, plus `iam:CreateServiceLinkedRole` for `autoscaling.amazonaws.com` once per account |
 | secretsmanager | 00-network's egress agent token (`EgressRoute=gateway`) | CreateSecret/DeleteSecret/DescribeSecret, GetRandomPassword (the stack generates the value) |
-| s3 | 10-data's egress event archive bucket (`EgressArchive=create`, off by default) | CreateBucket/DeleteBucket, Put/GetBucketPolicy, PutBucketEncryption, PutLifecycleConfiguration, PutBucketPublicAccessBlock, PutBucketTagging |
+| s3 | 10-data's egress event archive bucket (`EgressArchive=create`, off by default) | CreateBucket/DeleteBucket, Put/GetBucketPolicy, PutBucketEncryption, PutLifecycleConfiguration, PutBucketPublicAccessBlock, PutBucketTagging; and on 20-platform's `CfnTemplatesBucket` `s3:PutObject` / `s3:GetObject` (the CLI uploads any template over 51,200 bytes, 30-ingress included) |
 | ecr | 20-platform repos + image push | CreateRepository/DeleteRepository/Describe*, GetAuthorizationToken, BatchCheckLayerAvailability, InitiateLayerUpload, UploadLayerPart, CompleteLayerUpload, PutImage |
 | ecs | 20-platform cluster + 30-ingress service | Create/Delete/Describe cluster & service, RegisterTaskDefinition, plus `iam:CreateServiceLinkedRole` once per account |
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |

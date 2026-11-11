@@ -953,11 +953,11 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 Parameters not named in `--parameter-overrides` keep the stack's previous value, so nothing
 else moves. Unknown or new parameters on `update.sh`'s own run get the template default (off).
-Template-size note: the template keeps about 1 KB under the 51,200-byte wall (see the
-README); `deploy/local/cfn-cp-settings-env-test.py` fails below 1 KiB. Write new
+Template-size note: the template may exceed the 51,200-byte inline limit (it then goes
+through S3, see the README); `deploy/local/cfn-cp-settings-env-test.py` fails above 64 KiB.
+Keep prose here rather than in the template all the same. Write new
 parameters in block style (`Default:` on its own line): `standup.sh`'s preflight reads
-required parameters line by line and reports every flow-style one as missing. Parameters have been paid
-for by moving prose out of the template, so the next one needs the same.
+required parameters line by line and reports every flow-style one as missing.
 
 ## Provided routes
 

@@ -45,10 +45,11 @@ def check(name, size):
 
 
 def ingress_commands():
-    """(file, line, command text) for each `--template-file .../30-ingress.yaml` under deploy/aws/ecs.
+    """(file, line, command text) for each `--template-file ... 30-ingress.yaml` command under deploy/aws/ecs.
 
-    A command is the line plus its backslash continuations, plus one line either side of the
-    match (the template flag may be on a line of its own).
+    A command is a line joined with its backslash continuations, so the flag and the file name
+    may sit on different lines. `echo "DRY: ..."` lines are skipped: they print a plan for a
+    human, and the real call goes through af_cfn_deploy, which adds the bucket by itself.
     """
     root = os.path.join(HERE, "..", "aws", "ecs")
     out = []
@@ -60,18 +61,26 @@ def ingress_commands():
             path = os.path.join(dirpath, fn)
             with open(path, encoding="utf-8") as fh:
                 lines = fh.read().split("\n")
-            for i, line in enumerate(lines):
-                if "--template-file" in line and "30-ingress.yaml" in line:
-                    j = i
-                    while j + 1 < len(lines) and lines[j].rstrip().endswith("\\"):
-                        j += 1
-                    out.append((os.path.relpath(path, root), i + 1, "\n".join(lines[max(i - 2, 0):j + 2])))
+            out += [(os.path.relpath(path, root), n, t) for n, t in ingress_blocks(lines)]
+    return out
+
+
+def ingress_blocks(lines):
+    out, i = [], 0
+    while i < len(lines):
+        j = i
+        while j + 1 < len(lines) and lines[j].rstrip().endswith("\\"):
+            j += 1
+        text = "\n".join(lines[i:j + 1])
+        if "--template-file" in text and "30-ingress.yaml" in text and 'echo "DRY:' not in text:
+            out.append((i + 1, text))
+        i = j + 1
     return out
 
 
 def check_ingress_commands(cmds):
     return ["%s:%d deploys 30-ingress with --template-file but no --s3-bucket" % (f, n)
-            for f, n, text in cmds if "--s3-bucket" not in text and "af_cfn_deploy" not in text]
+            for f, n, text in cmds if "--s3-bucket" not in text]
 
 
 def main():
@@ -94,8 +103,10 @@ def main():
         return 2
     fails += check_ingress_commands(cmds)
     # positive control: the same commands without the flag are caught
-    if not check_ingress_commands([(f, n, t.replace("--s3-bucket", "--nope")) for f, n, t in cmds]):
-        fails.append("positive control for the --s3-bucket scan was not caught")
+    if len(check_ingress_commands([(f, n, t.replace("--s3-bucket", "--nope")) for f, n, t in cmds])) != len(cmds):
+        fails.append("positive control for the --s3-bucket scan did not catch every command")
+    if len(ingress_blocks(["aws cloudformation deploy \\", "  --template-file \\", "  cfn/30-ingress.yaml"])) != 1:
+        fails.append("positive control: a flag and file name on separate lines was not seen")
     if fails:
         for f in fails:
             print("FAIL:", f)
