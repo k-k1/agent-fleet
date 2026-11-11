@@ -3,7 +3,7 @@
 // tests pure logic, not React rendering — see notifications/read.test.ts). The section
 // component owns fetch/poll/state; everything here is a plain function over the DTO.
 import { t, type MsgKey } from "../../lib/i18n/index.ts";
-import { fmtDateTime, hasExplicitFormat } from "../../lib/intl.ts";
+import { fmtDateTime, hasExplicitFormat, zonedDayKey } from "../../lib/intl.ts";
 
 // Wire shape returned by GET /api/schedules — mirrors the CP scheduleDTO (schedule.go).
 // The list response already carries every field below; the detail/edit modal (P5.2) reads
@@ -40,6 +40,9 @@ export interface ScheduleDTO {
   deliver_to?: string[];
   // The silent sentinel: a run whose final answer is exactly [SILENT] delivers nothing.
   silent?: boolean;
+  // The gate (ADR 0021 addendum 2026-11-10): absent = clock-only. fired_at / last_eval_at /
+  // last_verdict are output only; the CP ignores them on a patch.
+  gate?: ScheduleGate;
   enabled: boolean;
   next_run?: string;
   next_run_local?: string;
@@ -51,6 +54,19 @@ export interface ScheduleDTO {
   // the schedule is stored but will never fire until an operator enables it. Relayed to the
   // user as a warning toast.
   warning?: string;
+}
+
+// Mirrors the CP scheduleGateDTO (control-plane/scheduler_gate.go). `kind` is the only required
+// member; an unknown kind or verdict is carried as a plain string, never assumed to be known.
+export interface ScheduleGate {
+  kind: "work_items" | "none" | string;
+  query_id?: string;
+  fingerprint?: "keys" | "keys+updated" | string;
+  max_fires_per_day?: number;
+  min_fire_gap_s?: number;
+  fired_at?: string;
+  last_eval_at?: string;
+  last_verdict?: string;
 }
 
 // The subset the detail/edit modal patches — the structured fields that need no NL->spec
@@ -70,6 +86,9 @@ export interface ScheduleEditable {
   stop_after_run?: boolean;
   deliver_to?: string[];
   silent?: boolean;
+  // Always the whole gate when present: the CP rebuilds the stored spec from it, so a partial
+  // object would silently reset the omitted caps to their defaults. kind "none" removes it.
+  gate?: Pick<ScheduleGate, "kind" | "query_id" | "fingerprint" | "max_fires_per_day" | "min_fire_gap_s">;
 }
 
 // The delivery targets a schedule may name, in the CP's canonical order. A Discord or Slack
@@ -267,4 +286,105 @@ export function nextRunDetail(s: Pick<ScheduleDTO, "next_run" | "next_run_local"
   const mine = nextRunText(s);
   const local = s.next_run_local ?? "";
   return mine && local && mine !== local ? `${mine} (${local})` : mine;
+}
+
+// --- The gate's last evaluation -------------------------------------------------------
+// gate.last_verdict values the CP writes (scheduler_gate.go). Anything else, including a verdict
+// a newer CP adds, falls through to its raw text rather than to a wrong sentence.
+const GATE_VERDICT_KEYS: Record<string, MsgKey> = {
+  clear: "sched.gate_v_clear",
+  unchanged: "sched.gate_v_unchanged",
+  fire: "sched.gate_v_fire",
+  claimed: "sched.gate_v_fire",
+  capped_gap: "sched.gate_v_capped",
+  capped_day: "sched.gate_v_capped",
+  not_running: "sched.gate_v_not_running",
+  unreachable: "sched.gate_v_unreachable",
+};
+
+export interface GateVerdictLine {
+  /** hh:mm of the last check (with the date when it was not today), or "" when never checked. */
+  at: string;
+  /** The verdict sentence, or "" when there is none yet. */
+  text: string;
+}
+
+const GATE_TIME_FMT: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
+const GATE_DATETIME_FMT: Intl.DateTimeFormatOptions = { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" };
+
+/** The read-only "last checked hh:mm: clear / unchanged / fired" line. */
+export function gateVerdictLine(g: Pick<ScheduleGate, "last_eval_at" | "last_verdict"> | undefined, now: number = Date.now()): GateVerdictLine {
+  const raw = (g?.last_verdict || "").trim();
+  let text = "";
+  if (raw.startsWith("error:")) text = t("sched.gate_v_error", { detail: raw.slice("error:".length).trim() });
+  else if (raw) {
+    const key = GATE_VERDICT_KEYS[raw];
+    text = key ? t(key) : raw;
+  }
+  let at = "";
+  const evalAt = g?.last_eval_at ? new Date(g.last_eval_at) : null;
+  if (evalAt && !Number.isNaN(evalAt.getTime())) {
+    at = zonedDayKey(evalAt) === zonedDayKey(now) ? fmtDateTime(evalAt, GATE_TIME_FMT) : fmtDateTime(evalAt, GATE_DATETIME_FMT);
+  }
+  return { at, text };
+}
+
+// --- The gate form ---------------------------------------------------------------------
+// The CP bounds (scheduler_gate.go). Checked here only to keep Save from sending a request the CP
+// would refuse; the CP stays the judge.
+export const GATE_MAX_FIRES_RANGE = [1, 24] as const;
+export const GATE_MIN_GAP_RANGE = [60, 86400] as const;
+
+export interface GateForm {
+  on: boolean;
+  queryId: string;
+  fingerprint: string;
+  /** Text of the number input; "" = leave to the CP default. */
+  maxFires: string;
+  minGap: string;
+}
+
+/** The form's initial state for a schedule's gate (none = off with the CP's default mode). */
+export function gateFormOf(g: ScheduleGate | undefined): GateForm {
+  return {
+    on: !!g && g.kind !== "none",
+    queryId: g?.query_id ?? "",
+    fingerprint: g?.fingerprint || "keys",
+    maxFires: g?.max_fires_per_day ? String(g.max_fires_per_day) : "",
+    minGap: g?.min_fire_gap_s ? String(g.min_fire_gap_s) : "",
+  };
+}
+
+function capValue(text: string): number | null {
+  const s = text.trim();
+  return /^\d+$/.test(s) ? Number(s) : null;
+}
+
+/** Why the form cannot be saved, or "" when it can. */
+export function gateFormError(f: GateForm): "" | "query" | "caps" {
+  if (!f.on) return "";
+  if (!f.queryId) return "query";
+  const inRange = (text: string, [lo, hi]: readonly [number, number]) => {
+    if (text.trim() === "") return true;
+    const n = capValue(text);
+    return n !== null && n >= lo && n <= hi;
+  };
+  return inRange(f.maxFires, GATE_MAX_FIRES_RANGE) && inRange(f.minGap, GATE_MIN_GAP_RANGE) ? "" : "caps";
+}
+
+/** The `gate` to PATCH, or undefined when the form equals what the schedule already has (the
+ * field is then left out, and the CP keeps the gate and its ledger). When sent, it always carries
+ * every input field: the CP rebuilds the stored spec from it, so a partial object would reset
+ * the omitted caps to their defaults. */
+export function gatePatchOf(orig: ScheduleGate | undefined, f: GateForm): ScheduleEditable["gate"] | undefined {
+  const before = gateFormOf(orig);
+  if (!f.on) return before.on ? { kind: "none" } : undefined;
+  if (before.on && before.queryId === f.queryId && before.fingerprint === f.fingerprint &&
+      before.maxFires === f.maxFires && before.minGap === f.minGap) return undefined;
+  const out: NonNullable<ScheduleEditable["gate"]> = { kind: "work_items", query_id: f.queryId, fingerprint: f.fingerprint };
+  const mf = capValue(f.maxFires);
+  const mg = capValue(f.minGap);
+  if (mf !== null && f.maxFires.trim() !== "") out.max_fires_per_day = mf;
+  if (mg !== null && f.minGap.trim() !== "") out.min_fire_gap_s = mg;
+  return out;
 }
