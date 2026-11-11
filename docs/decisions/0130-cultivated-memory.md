@@ -847,3 +847,13 @@ one. It runs only while the workspace is idle and only with the member's `agentS
 turning it on needs the member-origin mark). "Used" is the later of `.last-used`'s and `SKILL.md`'s mtime, so
 until a writer records uses the age is the age of the last write; no transcript is read. Step 4's writer must emit
 the marker and the prefix and should touch `.last-used` when a skill is offered or read. Follow-up: #1562.
+
+**Note (2026-11-11, #3863): the run record says why an observation was dropped.** A run that ended
+`dropped 1, queued 0` gave no way to tell an invalid engine answer from a refused exported
+memory. The report now carries `droppedReasons: [{observation, reason}]` (observation = the observation id), at
+most 20 entries with `droppedReasonsMore` counting the rest, each reason cut to 120 runes, and every entry is also
+written to the Agent log. A reason is one of a fixed set of phrases (classification / patch / compose answer failed
+validation; the patch edits the description; superseded by a replace of the same proposal; or "refused:" plus the
+validator's kind: changed or gone, no revival, name exists, secret scan, schema or link). The model's wording, a
+validator's own message and any memory text are never copied in, because they can quote secret material. The key is
+camelCase like the rest of the report. Not done: the live re-run of the #3788 check with the reason visible. Follow-up: #3863.

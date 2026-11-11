@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -50,17 +51,64 @@ type Report struct {
 	Delayed []Delay  `json:"delayed"`
 	// TooLarge are the ripe topics no run can take (CauseTooLarge): not delayed, and not retried
 	// until the memory or the budget changes. Each carries its smallest estimate.
-	TooLarge  []Delay           `json:"tooLarge"`
-	Calls     int               `json:"calls"`
-	Dropped   int               `json:"dropped"`  // engine answers that failed validation
-	Rejected  int               `json:"rejected"` // items the adapter's own checks refused
-	Skipped   int               `json:"skipped"`  // observations left out by the secret scan
-	Tokens    int               `json:"tokens"`   // measured when the runner reported usage, else estimated
-	Estimated bool              `json:"estimated,omitempty"`
-	Models    map[string]string `json:"models,omitempty"`
+	TooLarge []Delay `json:"tooLarge"`
+	Calls    int     `json:"calls"`
+	Dropped  int     `json:"dropped"` // engine answers that failed validation
+	// DroppedReasons says why observations were dropped, one short fixed phrase each (never model
+	// output or memory text); at most maxDroppedReasons are kept and the rest are only counted in
+	// DroppedReasonsMore. Dropped counts answers, so the two need not match.
+	DroppedReasons     []DroppedReason   `json:"droppedReasons,omitempty"`
+	DroppedReasonsMore int               `json:"droppedReasonsMore,omitempty"`
+	Rejected           int               `json:"rejected"` // items the adapter's own checks refused
+	Skipped            int               `json:"skipped"`  // observations left out by the secret scan
+	Tokens             int               `json:"tokens"`   // measured when the runner reported usage, else estimated
+	Estimated          bool              `json:"estimated,omitempty"`
+	Models             map[string]string `json:"models,omitempty"`
 	// Manual is set on a run the member started; All on one that took every waiting topic.
 	Manual bool `json:"manual,omitempty"`
 	All    bool `json:"all,omitempty"`
+}
+
+// DroppedReason is why one observation was dropped. Reason is always one of the fixed phrases of
+// this file (dropReason*, problemReason): the model's wording, a refused memory's text and the
+// validators' own messages can all carry secret material and never reach the record.
+type DroppedReason struct {
+	Observation string `json:"observation"`
+	Reason      string `json:"reason"`
+}
+
+// Bounds on the dropped-reason record, so one bad run cannot grow the stored report.
+const (
+	maxDroppedReasons   = 20
+	maxDroppedReasonLen = 120
+)
+
+// The reasons a drop carries besides a validation problem's.
+const (
+	dropReasonClassify   = "the classification answer failed validation"
+	dropReasonPatch      = "the patch answer failed validation"
+	dropReasonCompose    = "the compose answer failed validation; kept as advice"
+	dropReasonDescEdit   = "the patch edits the description, which a patch cannot apply"
+	dropReasonSuperseded = "the memory is superseded by a replace of the same proposal"
+)
+
+// problemReason is the fixed phrase for a refused item, by the validator's problem kind. The
+// problem's own message is not used: it can quote a name or the store's schema error.
+func problemReason(op string, pr *Problem) string {
+	var what string
+	switch pr.Kind {
+	case ProbStale:
+		what = "the memory changed or is gone since the engine read it"
+	case ProbForgotten:
+		what = "the name was forgotten or existed before (no revival)"
+	case ProbExists:
+		what = "a memory by that name exists"
+	case ProbSecret:
+		what = "the text failed the secret scan"
+	default:
+		what = "the memory failed the schema or link check"
+	}
+	return op + " refused: " + what
 }
 
 // RunInput is everything a run needs; the trigger builds it, tests build it with fakes.
@@ -232,6 +280,20 @@ type worker struct {
 	cutCause, cutDetail string
 }
 
+// noteDrop records why an observation was dropped, in the run record (capped) and the Agent log.
+// The reason must be one of the fixed phrases; it is cut to maxDroppedReasonLen regardless.
+func (w *worker) noteDrop(o Observation, reason string) {
+	if r := []rune(reason); len(r) > maxDroppedReasonLen {
+		reason = string(r[:maxDroppedReasonLen-1]) + "…"
+	}
+	log.Printf("memory consolidation: dropped observation %s: %s", o.ID, reason)
+	if len(w.rep.DroppedReasons) >= maxDroppedReasons {
+		w.rep.DroppedReasonsMore++
+		return
+	}
+	w.rep.DroppedReasons = append(w.rep.DroppedReasons, DroppedReason{Observation: o.ID, Reason: reason})
+}
+
 // gate is asked before every model call: a turn that started since the run began, or a spent
 // budget, defers the rest. The idle check itself belongs to the trigger (Decide); only a
 // member-started manual run reaches Run without it. This is the second half of decision 6 ("when
@@ -318,6 +380,7 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 			if memengine.IsInvalid(err) {
 				w.rep.Dropped++
 				dropped[o.ID] = true
+				w.noteDrop(o, dropReasonClassify)
 				continue
 			}
 			return err
@@ -352,11 +415,12 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 			}
 			used = append(used, c.obs)
 		case memengine.OpAdd, memengine.OpSupersede, memengine.OpMerge:
-			it, ok := w.addItem(t, c)
+			it, pr, ok := w.addItem(t, c)
 			if !ok && c.ans.Operation == memengine.OpAdd && c.obs.Candidate != nil {
 				// The memory an exported proposal carried failed a check (no revival, a name that
 				// exists, the schema, a secret): it is refused, not turned into advice.
 				dropped[c.obs.ID] = true
+				w.noteDrop(c.obs, problemReason("the exported memory", pr))
 				continue
 			}
 			if !ok {
@@ -391,6 +455,7 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 			// after that, and the replace already carries the observation.
 			for _, c := range cs {
 				dropped[c.obs.ID] = true
+				w.noteDrop(c.obs, dropReasonSuperseded)
 			}
 			continue
 		}
@@ -414,6 +479,7 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 				w.rep.Dropped++
 				for _, c := range cs {
 					dropped[c.obs.ID] = true
+					w.noteDrop(c.obs, dropReasonPatch)
 				}
 				continue
 			}
@@ -439,6 +505,7 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 			w.rep.Dropped++
 			for _, c := range cs {
 				dropped[c.obs.ID] = true
+				w.noteDrop(c.obs, dropReasonDescEdit)
 			}
 			continue
 		}
@@ -446,6 +513,7 @@ func (w *worker) topic1(ctx context.Context, st *State, r RipeTopic) error {
 			w.rep.Rejected++
 			for _, c := range cs {
 				dropped[c.obs.ID] = true
+				w.noteDrop(c.obs, problemReason("the patch", pr))
 			}
 			continue
 		}
@@ -518,6 +586,7 @@ func (w *worker) composeItem(ctx context.Context, t Topic, c classified) (Item, 
 	if err != nil {
 		if memengine.IsInvalid(err) {
 			w.rep.Dropped++
+			w.noteDrop(c.obs, dropReasonCompose)
 			return Item{}, false, nil
 		}
 		return Item{}, false, err
@@ -537,18 +606,18 @@ func (w *worker) composeItem(ctx context.Context, t Topic, c classified) (Item, 
 // addItem turns an add into a create when an exported 0117 proposal carried the memory; the text is
 // then the member's own export, not a model's. An add with no candidate is written by composeItem.
 // The candidate is still untrusted and goes through validateItem like anything else.
-func (w *worker) addItem(t Topic, c classified) (Item, bool) {
+func (w *worker) addItem(t Topic, c classified) (Item, *Problem, bool) {
 	if c.obs.Candidate == nil || c.ans.Operation != memengine.OpAdd {
-		return Item{}, false
+		return Item{}, nil, false
 	}
 	cd := c.obs.Candidate
 	it := Item{Op: OpCreate, Name: cd.Name, Description: cd.Description, Type: cd.Type, Body: cd.Body,
 		Reason: c.ans.Reason, Role: string(c.role)}
 	if pr := validateItem(t.Scope, t.ProjectID, it); pr != nil {
 		w.rep.Rejected++
-		return Item{}, false
+		return Item{}, pr, false
 	}
-	return it, true
+	return it, nil, true
 }
 
 // retireItem turns a retire answer into an item. The model's text is not trusted: the reason is
