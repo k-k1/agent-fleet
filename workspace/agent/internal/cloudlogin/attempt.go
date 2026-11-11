@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -324,9 +326,31 @@ func watchOutput(prefix string, a *Attempt, r io.Reader, parse func(string) (str
 		}
 		if err != nil {
 			log.Printf("%s: output closed bytes=%d authorization=%t", prefix, total, announced)
+			if !announced {
+				// The parser never recognised the output: its shape is the evidence.
+				log.Printf("%s: unparsed output shape: %s", prefix, redactedShape(buf.String()))
+			}
 			return
 		}
 	}
+}
+
+var (
+	shapeCodeRe  = regexp.MustCompile(`[A-Za-z0-9]{4}-[A-Za-z0-9]{4}`)
+	shapeQueryRe = regexp.MustCompile(`(https?://[^\s/?#"']*)[^\s"']*`)
+)
+
+// redactedShape renders out for the log with the device code and everything after a URL's
+// host removed, so what is left says how the CLI laid its output out (lines, escapes, which
+// host) and cannot be used to sign in. Capped so a QR code cannot flood the log.
+func redactedShape(out string) string {
+	out = shapeQueryRe.ReplaceAllString(out, "$1/<redacted>")
+	out = shapeCodeRe.ReplaceAllString(out, "<CODE>")
+	const limit = 2048
+	if len(out) > limit {
+		out = out[:limit] + "...(truncated)"
+	}
+	return strconv.Quote(out)
 }
 
 // RelayedByCP is a hint for the log only: the Control Plane marks what it relays, and an
