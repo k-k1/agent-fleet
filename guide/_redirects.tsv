@@ -293,6 +293,12 @@ member/lite.md#1-what-you-can-do-with-agent-fleet	user/start/overview.md
 member/lite.md#2-logging-in-and-reading-the-screen	user/start/console-tour.md
 member/lite.md#3-one-time-setup	user/start/quickstart.md
 member/lite.md#an-important-ground-rule	user/start/without-terminal.md#dont-answer-questions-meant-for-someone-else
+member/18-agent-memory.md#memories	user/memory/overview.md
+member/18-agent-memory.md#changes	user/memory/changes.md
+member/18-agent-memory.md#lint-report	user/memory/lint.md
+member/18-agent-memory.md#reasons-from-lint-and-from-readers	user/memory/lint.md#write-the-findings-into-memory
+member/18-agent-memory.md#consolidation-proposals-opt-in	user/memory/tidy-up.md
+member/18-agent-memory.md#settings	user/memory/settings.md
 member/badges-and-menus.md#session-display	ref/console-ui.md#session-states
 member/badges-and-menus.md#repository-status-display	ref/console-ui.md#badges-on-a-repository-row
 member/badges-and-menus.md#the-engine-pills-in-the-top-bar	ref/console-ui.md#engine-pills

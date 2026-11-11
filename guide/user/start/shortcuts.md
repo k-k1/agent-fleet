@@ -126,4 +126,4 @@ Agent memory lives inside the workspace, so it can only be searched while the wo
 - [Find your way around the screen](console-tour.md)
 - [Split the screen into panes](panes.md)
 - [Terminal](../../member/08-terminal.md): copy and paste and text size inside the terminal
-- [Agent memory](../../member/18-agent-memory.md)
+- [Read and correct agent memory](../memory/overview.md)

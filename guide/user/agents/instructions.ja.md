@@ -90,5 +90,5 @@ copilot と Kiro には専用のファイルで、lcpp にはシステムプロ�
 ## 関連
 
 - [手元の Claude Code の設定を持ち込む](bring-claude-setup.ja.md)：スキル・フック・サブエージェント
-- [エージェントメモリ](../../member/18-agent-memory.ja.md#設定)
+- [メモリの使いかたを設定する](../memory/settings.ja.md)：どの種類にも共有のメモリを渡すスイッチ
 - [エージェントを選ぶ](choose.ja.md)

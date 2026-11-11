@@ -90,5 +90,5 @@ Instructions are read when a session starts. Start the session again.
 ## Related
 
 - [Bring your Claude Code setup](bring-claude-setup.md): skills, hooks and subagents
-- [Agent memory](../../member/18-agent-memory.md#settings)
+- [Set how memory is used](../memory/settings.md): the switch that gives every kind the shared memory
 - [Choose an agent](choose.md)
