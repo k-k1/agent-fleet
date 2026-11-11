@@ -81,8 +81,9 @@ const exact = {
   // admin modal (guide scene operate-brand). Every other run stays a plain member or tenant admin.
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
-    // The operate guide's pages (SHOT_OPERATE_RUN, SHOT_OPERATE_SIGNIN) are the deployment administrator's.
-    super_admin: process.env.SHOT_OPERATE_RUN === "1" || !!process.env.SHOT_OPERATE_SIGNIN,
+    // The operate guide's pages (SHOT_OPERATE_RUN, SHOT_OPERATE_SIGNIN, SHOT_OPERATE_GPU) are the
+    // deployment administrator's.
+    super_admin: process.env.SHOT_OPERATE_RUN === "1" || !!process.env.SHOT_OPERATE_SIGNIN || !!process.env.SHOT_OPERATE_GPU,
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
   // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
@@ -325,6 +326,17 @@ const exact = {
           ],
           max_label: 16,
         }),
+      }
+    : {}),
+  // The operate guide's engine pages (SHOT_OPERATE_GPU): the inference engine panel, the chat
+  // engine's catalogue search and Read aloud. Without it these routes stay unhandled, as before,
+  // so the Admin rail keeps the items it was shot with.
+  ...(process.env.SHOT_OPERATE_GPU
+    ? {
+        "/api/admin/engines": () => fx.operateGpuEngines(),
+        "/api/admin/engines/llm/ingest/search": () => fx.operateGpuSearch(),
+        "/api/admin/engines/llm/objects": () => ({ objects: [] }),
+        "/api/admin/tts": () => fx.operateGpuTts(LOCALE),
       }
     : {}),
   "/api/admin/workspace-sizing": () => ({
@@ -710,6 +722,9 @@ const re = [
   // stats/sessions polling and is fetched on open and on Apply, because it reads a DB refreshed
   // every 6 hours.
   [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => (ADMIN_RES ? fx.adminResMembers() : fx.adminMembers())],
+  ...(process.env.SHOT_OPERATE_GPU
+    ? [[/^\/api\/admin\/engines\/([^/]+)\/hourly$/, (m) => fx.operateGpuHourly(decodeURIComponent(m[1]))]]
+    : []),
   // Who may use the self-hosted engines, for the guide's admin engines page only.
   ...(ADMIN_RES ? [[/^\/api\/admin\/tenants\/[^/]+\/engine-access$/, () => fx.adminResEngineAccess()]] : []),
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],

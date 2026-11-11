@@ -72,7 +72,7 @@ Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates mo
 
 The self-hosted engines' own auto-stop is not in this table: **Stop after** is set per role under
 Admin → Inference engines, and a saved value wins over the engine stack's default from the
-controller's next pass ([operate/07](../operate/07-engines.md#inference-engines-self-hosted-gpus-superadmin-only)).
+controller's next pass ([Run inference engines on your own GPUs](../operate/engines/gpu.md#set-the-idle-stop)).
 
 ## Set per tenant
 

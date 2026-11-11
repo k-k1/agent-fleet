@@ -91,11 +91,11 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | サインイン方法の登録簿 | テナントが自分で定義したサインイン方式の承認 | [テナント独自のサインインを承認する](../operate/signin/tenant-idp.ja.md) |
 | 通信 | ワークスペースからの外向き通信: 観測（log-only）か enforce か、許可リスト、メンバーの申請 | [operate/04](../operate/04-secure.ja.md#egress-統制の運用) |
 | MCP ログイン許可ホスト | MCP OAuth サーバーが信頼するクライアントのホスト（配備全体）| [operate/04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ) |
-| 読み上げ | 音声エンジンのモードと、共通の読み仮名辞書 | [operate/07](../operate/07-engines.ja.md#読み上げ音声エンジンと共通の読み仮名辞書) |
+| 読み上げ | 音声エンジンのモードと、共通の読み仮名辞書 | [読み上げエンジンを動かす](../operate/engines/read-aloud.ja.md) |
 | 見た目 | この配備の色とラベル。ほかの配備と見分けるため | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
 | 開発用ログイン | プレビュー用サブドメイン上のアプリ向けの、開発用 OIDC IdP のスイッチ | [operate/04](../operate/04-secure.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
-| 推論エンジン | 自前エンジンのモード・GPU クラス・モデルカタログ・状態と稼働実績 | [operate/07](../operate/07-engines.ja.md) |
-| API トークン | モデル取り込み用の Hugging Face と Civitai のトークン、Civitai Red のスイッチ | [operate/07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
+| 推論エンジン | 自前エンジンのモード・GPU クラス・モデルカタログ・状態と稼働実績 | [自前の GPU で推論エンジンを動かす](../operate/engines/gpu.ja.md) |
+| API トークン | モデル取り込み用の Hugging Face と Civitai のトークン、Civitai Red のスイッチ | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#トークンを登録する) |
 | スロット | `ecs-ec2` のスロットプール: スロットの入れ替え、動かなくなったスロットの強制停止 | [operate/11](../operate/11-slot-pool.ja.md) |
 | セッション・稼働時間・クラウド費用・監査・MCP 配布 | テナントの各画面を、全テナント横断で見る | [admin/](../admin/README.ja.md) |
 
