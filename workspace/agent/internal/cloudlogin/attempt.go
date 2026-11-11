@@ -313,7 +313,7 @@ func (s *Store[S]) Start(key, requestID, profile string, p Process) (*Attempt, e
 
 // urlDeadline is how long an attempt may stay in "starting": a login CLI prints its URL
 // within seconds, so past this its output is not in a form the parser knows, and waiting
-// out the process timeout (ten minutes) would only hide that. A var so a test can shorten it.
+// out the process timeout (fifteen minutes) would only hide that. A var so a test can shorten it.
 var urlDeadline = 60 * time.Second
 
 // failIfNoURL ends an attempt still in "starting" once the deadline has passed, with a
@@ -331,6 +331,13 @@ func failIfNoURL(a *Attempt, waited <-chan struct{}, seen *atomic.Int64, prefix 
 	case <-waited:
 		return
 	case <-t.C:
+		// A tie with the exit is decided for the exit: Exited has the specific message, and
+		// a login that finished at once must not turn into a failure.
+		select {
+		case <-waited:
+			return
+		default:
+		}
 	}
 	msg := p.NoURLMessage
 	if msg == "" {
