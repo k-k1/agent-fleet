@@ -25,6 +25,43 @@ const (
 	browserWriteTimeout          = 5 * time.Second
 )
 
+// Keepalive for both legs of the bridge. A static page produces no frames and the
+// member sends nothing, so without a ping the socket is silent and the load balancer's
+// 60 s idle timeout (ALB default) closes it. Variables so tests can scale them down.
+var (
+	browserPingEvery = 20 * time.Second
+	// browserPongWait bounds how long a peer may stay silent (no frame, no pong) before
+	// the socket is dropped; it must exceed browserPingEvery by at least one round trip.
+	browserPongWait = 50 * time.Second
+)
+
+// keepBrowserSocketAlive pings conn every browserPingEvery until ctx ends and arms a
+// read deadline that every inbound frame or pong pushes forward. Pings go through
+// WriteControl, which gorilla allows concurrently with the data writer, so they never
+// need the bridge's write path. The caller's read loop must call the returned touch
+// after each message; the pong handler is installed here.
+func keepBrowserSocketAlive(ctx context.Context, conn *websocket.Conn) (touch func()) {
+	every, wait := browserPingEvery, browserPongWait
+	touch = func() { _ = conn.SetReadDeadline(time.Now().Add(wait)) }
+	touch()
+	conn.SetPongHandler(func(string) error { touch(); return nil })
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(browserWriteTimeout)) != nil {
+					return
+				}
+			}
+		}
+	}()
+	return touch
+}
+
 var (
 	errBrowserControlBackpressure = errors.New("browser control queue is full")
 	errBrowserControlTooLarge     = errors.New("browser control message is too large")
@@ -192,10 +229,12 @@ func (a browserAPI) socketToAgent(w http.ResponseWriter, r *http.Request, res *r
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	out := newBrowserOutbound()
+	touchUp := keepBrowserSocketAlive(ctx, up)
+	touchDown := keepBrowserSocketAlive(ctx, down)
 	errc := make(chan error, 3)
-	go func() { errc <- readBrowserAgent(ctx, up, out) }()
+	go func() { errc <- readBrowserAgent(ctx, up, out, touchUp) }()
 	go func() { errc <- writeBrowserClient(ctx, down, out) }()
-	go func() { errc <- relayBrowserControls(down, up, viewer) }()
+	go func() { errc <- relayBrowserControls(down, up, viewer, touchDown) }()
 	<-errc
 }
 
@@ -296,12 +335,13 @@ func (q *browserOutbound) enqueue(typ int, data []byte) error {
 	return nil
 }
 
-func readBrowserAgent(ctx context.Context, src *websocket.Conn, out *browserOutbound) error {
+func readBrowserAgent(ctx context.Context, src *websocket.Conn, out *browserOutbound, touch func()) error {
 	for {
 		typ, data, err := src.ReadMessage()
 		if err != nil {
 			return err
 		}
+		touch()
 		if typ != websocket.TextMessage && typ != websocket.BinaryMessage {
 			return errors.New("unsupported browser message type from Agent")
 		}
@@ -345,12 +385,13 @@ func writeBrowserClient(ctx context.Context, dst browserMessageWriter, out *brow
 	}
 }
 
-func relayBrowserControls(src, dst *websocket.Conn, viewer *browserViewer) error {
+func relayBrowserControls(src, dst *websocket.Conn, viewer *browserViewer, touch func()) error {
 	for {
 		typ, data, err := src.ReadMessage()
 		if err != nil {
 			return err
 		}
+		touch()
 		// An interaction report is for the CP alone: it bounds the viewer's presence
 		// (browserViewer.noteInteraction) and the Agent has no handler for it.
 		if browserInteraction(data, typ) {
