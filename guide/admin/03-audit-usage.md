@@ -120,8 +120,8 @@ on AWS**, because nowhere else has a bill to read.
 **Q. Is adding members invite-based or automatic?**
 It depends on deployment settings. With auto-join (the default), permitted logins join
 automatically on first login; with invite-only, only people an administrator has added can enter.
-Switching the mode is IT's domain. For details, see "Auto-join and invite-only" in
-[01-members.md](01-members.md).
+Switching the mode is IT's domain. For details, see
+[Add a member](members/add.md#invite-only-and-auto-join).
 
 **Q. What happens to a member who hits a limit?**
 Nothing that is already running gets stopped. Only the attempt to start something new is rejected,
@@ -142,12 +142,11 @@ own subscription.
 
 **Q. I want to promote a member to administrator, but there's no button.**
 As tenant_admin you cannot grant rights. Only a super_admin can grant roles. Ask your IT
-department / deployment administrator ("What the roles mean" in [01-members.md](01-members.md)).
+department / deployment administrator ([Roles and what they may do](../ref/roles.md#adding-administrators)).
 
 **Q. I want to delete a member who has left the company.**
 You can. From "Operations" on the member detail: **Remove member → Force-stop the workspace →
-Clean home → Delete backups** (where offered), in that order ("Removing a member" in
-[01-members.md](01-members.md)).
+Clean home → Delete backups** (where offered), in that order ([Remove a member](members/remove.md)).
 
 **Q. Where is egress (external traffic) control?**
 Egress (external traffic) control is super_admin only. When traffic control becomes necessary,

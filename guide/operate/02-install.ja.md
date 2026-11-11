@@ -90,7 +90,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 > **テナント設定 → 連携 → 連携アプリの OAuth** で登録します。配備側の設定は無く、
 > `BITBUCKET_OAUTH_KEY` / `_SECRET` は一切読まれません。上の `GITHUB_OAUTH_CLIENT_ID` は
 > サインイン用アプリだけを意味します。テナント管理者側の手順は
-> [admin/05 入り方](../admin/05-access.ja.md)。
+> [連携に使う OAuth アプリを選ぶ](../admin/access/oauth-apps.ja.md)。
 
 うまくいくかどうかを分けるのは次の 3 点で、いずれも [05](05-signin.ja.md) に詳細があります。
 

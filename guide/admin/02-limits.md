@@ -154,7 +154,7 @@ procedure on a deployment where the disk axis reads "Workspace home (persistent)
 
 The roster also flags this on its own: a card whose home disk is nearly full, or whose last start
 could not install a CLI, is listed under "Needs attention"
-([01-members.md](01-members.md#needs-attention)).
+([Check on your members](members/roster.md#act-on-cards-that-need-attention)).
 
 Three constraints apply.
 
@@ -328,7 +328,7 @@ Below it, ruled off under **"Cannot be undone"**, are exactly what the heading s
 only the ones it can perform, and the member's state decides the rest: "Remove member" appears for
 a current member, while "Destroy workspace" and "Delete this member" appear only after removal,
 Destroy while the member still has a workspace and Delete once it is gone
-([01-members.md](01-members.md#removing-a-member)). **All of them are yours to
+([Remove a member](members/remove.md)). **All of them are yours to
 run**. The point is that an employee leaving should not become a ticket for IT. Read what each
 confirmation dialog says it keeps and deletes before you press it. **Situations that need heavier
 measures** (the container is broken and restarting doesn't fix it, host-side intervention is
@@ -374,4 +374,4 @@ heavy" across tenants, your screen alone can't settle it, so share it with IT.
 ---
 
 - Read next: [03 Audit and usage](03-audit-usage.md)
-- Back to: [01 Member management](01-members.md)
+- Back to: [Administering a tenant](README.md)

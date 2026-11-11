@@ -52,7 +52,7 @@ included here as well. The working directory is `deploy/compose/`.
 | The CP exits at boot with "AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms" | A key of its own for each home needs the KMS custodian. Set `AF_KEY_CUSTODIAN=kms` (with `AF_KMS_KEY_ID`) or drop `AF_WORKSPACE_DEK` ([12](12-keys.md#a-key-of-its-own-for-each-home)) |
 | A workspace start fails with "open the home's credential-store key" | KMS cannot be reached, or the key is disabled or refuses. There is no fallback to the master key, by design; fix KMS access and start again ([12](12-keys.md#a-key-of-its-own-for-each-home)) |
 | After a restore, a workspace refuses to write credentials and the CP log says its credential store is `unreadable` | The home came back from before its store moved to its own key. Run `af-cp home-dek-status --remigrate <membership-id>` with the CP's environment, then restart the workspace ([12](12-keys.md#disabling-the-kms-key-restoring-a-copy-turning-it-off)) |
-| The workspace log shows `[entrypoint] WARN: npm boot-install failed (retrying next start)` | A CLI failed to install (a full home, the network, a checksum). It is retried at the next start, and the member's roster card says "A CLI failed to install at the last start" ([admin/01](../admin/01-members.md#needs-attention)) |
+| The workspace log shows `[entrypoint] WARN: npm boot-install failed (retrying next start)` | A CLI failed to install (a full home, the network, a checksum). It is retried at the next start, and the member's roster card says "A CLI failed to install at the last start" ([Check on your members](../admin/members/roster.md#act-on-cards-that-need-attention)) |
 
 ## Diagnosing the 3 DooD constraints ("starts but silently doesn't work")
 

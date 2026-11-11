@@ -149,8 +149,8 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Members | tenant admin | Members | [admin 01](../admin/01-members.md) |
-| Deleting a member's home backups (where the deployment keeps them) | tenant admin | Members → the member | [admin 01](../admin/01-members.md) |
+| Members | tenant admin | Members | [Check on your members](../admin/members/roster.md) |
+| Deleting a member's home backups (where the deployment keeps them) | tenant admin | Members → the member | [Remove a member](../admin/members/remove.md#4-delete-the-backups) |
 | Sessions across the tenant | tenant admin | Sessions | [admin 02](../admin/02-limits.md) |
 | Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../admin/02-limits.md) |
 | Limit board on / off for the tenant | tenant admin | Limit board | [admin 02](../admin/02-limits.md) |
@@ -158,12 +158,12 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Which of the tenant's members may use the llm / image engines | tenant admin | Engine access | [admin 02](../admin/02-limits.md#who-may-use-the-inference-engines-you-can-set-this) |
 | Taking engine models in, when the tenant was granted it | tenant admin | Inference engine models | [admin 02](../admin/02-limits.md#taking-engine-models-in-only-if-your-tenant-was-granted-it) |
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
-| Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [admin 05](../admin/05-access.md#sign-in-methods-and-login-rules) |
-| Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md#allowed-networks) |
+| Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [Choose how people sign in](../admin/access/signin-methods.md) |
+| Connection-source restriction | tenant admin | Allowed networks | [Limit the networks people sign in from](../admin/access/networks.md) |
 | Whether outside apps may connect to the tenant through MCP OAuth | tenant admin | Allowed networks → MCP OAuth | [admin 04](../admin/04-mcp-outside.md#mcp-oauth) |
-| Integration app OAuth | tenant admin | Integration OAuth apps | [admin 05](../admin/05-access.md) |
-| Branch naming rules — the team's default branch names and base | tenant admin | Branch naming rules | [admin 06](../admin/06-team-defaults.md#branch-naming-rules) |
-| Member defaults — the agent new members connect | tenant admin | Member defaults | [admin 06](../admin/06-team-defaults.md#member-defaults) |
+| Integration app OAuth | tenant admin | Integration OAuth apps | [Choose the OAuth apps for integrations](../admin/access/oauth-apps.md) |
+| Branch naming rules — the team's default branch names and base | tenant admin | Branch naming rules | [Set the branch naming rules](../admin/defaults/branch-rules.md) |
+| Member defaults — the agent new members connect | tenant admin | Member defaults | [Set member defaults](../admin/defaults/members.md) |
 | Whether members may use Agent Fleet memory from outside | tenant admin | External memory access | [admin 04](../admin/04-mcp-outside.md#memory-from-outside-agent-fleet) |
 | Distributing integration servers | tenant admin | MCP distribution | [admin 04](../admin/04-mcp-outside.md) |
 | Audit | tenant admin | Audit | [admin 03](../admin/03-audit-usage.md) |
