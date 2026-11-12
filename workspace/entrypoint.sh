@@ -94,22 +94,38 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
     // is opencode 1, which oc_drop_v1 removes and af-arch-repair must never install again
     // (ADR 0127).
     const skip = new Set(["@anthropic-ai/claude-code", "opencode-ai", "@opencode/cli", "@openai/codex", "@github/copilot"]);
-    const out = [];
+    // A list still pending from an earlier change (its reinstall failed, so those packages are
+    // not installed now) is merged, not overwritten; what is installed wins for the same name.
+    const byName = new Map();
+    try {
+      for (const l of fs.readFileSync(process.argv[2], "utf8").split("\n")) {
+        const at = l.trim().lastIndexOf("@");
+        if (at > 0) byName.set(l.trim().slice(0, at), l.trim());
+      }
+    } catch {}
     const add = (rel) => {
       try {
         const p = JSON.parse(fs.readFileSync(path.join(root, rel, "package.json"), "utf8"));
-        if (p.name && p.version && !skip.has(p.name)) out.push(p.name + "@" + p.version);
+        if (p.name && p.version && !skip.has(p.name)) byName.set(p.name, p.name + "@" + p.version);
       } catch {}
     };
+    const done = () => {
+      const out = [...byName.values()];
+      if (out.length) process.stdout.write(out.join("\n") + "\n");
+      process.exit(0);
+    };
     let ents = [];
-    try { ents = fs.readdirSync(root); } catch { process.exit(0); }
+    try { ents = fs.readdirSync(root); } catch { done(); }
     for (const e of ents) {
       if (e.startsWith("@")) {              // scoped packages: descend one level
         try { for (const s of fs.readdirSync(path.join(root, e))) add(e + "/" + s); } catch {}
       } else if (e !== ".bin") add(e);
     }
-    if (out.length) process.stdout.write(out.join("\n") + "\n");
-  ' "$HOME/.local/lib/node_modules" > "$HOME/.local/share/agent-fleet/arch-repair-npm" 2>/dev/null || true
+    done();
+  ' "$HOME/.local/lib/node_modules" "$HOME/.local/share/agent-fleet/arch-repair-npm" \
+    > "$HOME/.local/share/agent-fleet/arch-repair-npm.new" 2>/dev/null \
+    && mv -f "$HOME/.local/share/agent-fleet/arch-repair-npm.new" "$HOME/.local/share/agent-fleet/arch-repair-npm" \
+    || rm -f "$HOME/.local/share/agent-fleet/arch-repair-npm.new"
   [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ] || rm -f "$HOME/.local/share/agent-fleet/arch-repair-npm"
   for rel in \
     .local/bin/claude .local/bin/codex .local/bin/opencode .local/bin/opencode2 .local/bin/copilot \
@@ -143,8 +159,11 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
   done
   # The repair itself runs at the end of the start, once node / java / go are selected;
   # running it here would reinstall with the pre-selection python / node. Just leave the
-  # marker for af-arch-repair.
+  # marker for af-arch-repair. The marker also goes to disk before the stamp below: a start
+  # killed before the repair finishes would otherwise leave the stamp current and the full
+  # pass (the pip and uv detection) never run. af-arch-repair removes it at the end of that pass.
   AF_ARCH_REPAIR_FROM="$af_arch_was"
+  printf '%s\n' "$af_arch_was" > "$HOME/.local/share/agent-fleet/arch-repair-change" 2>/dev/null || true
 fi
 if [ -n "$af_arch_now" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
   mkdir -p "$(dirname "$AF_ARCH_STAMP")" 2>/dev/null || true
@@ -1403,9 +1422,24 @@ fi
 # When the python major changed in the same start, pip reinstalls are not attempted (the
 # same version may not exist for the new python, and it would silently resolve another
 # one); that degrades to a notice.
-if [ -n "${AF_ARCH_REPAIR_FROM:-}" ] || [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ]; then
-  AF_REPAIR_PY=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1) \
-    af-arch-repair "${AF_ARCH_REPAIR_FROM:-?}" "$af_arch_now" || true
+# A reinstall that failed is retried at later starts, where the arch stamp is already
+# current: `af-arch-repair --due` says whether a list of failures is pending and the give-up
+# is not recorded yet; the cap (3 started retries) keeps a package that never installs, or a
+# run killed every time, from costing every start.
+# A change start that did not finish its pass (arch-repair-change is still there) is redone
+# in full as a "rerun", which counts against the same cap.
+af_repair_py=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1)
+af_repair_mark=""
+read -r af_repair_mark 2>/dev/null < "$HOME/.local/share/agent-fleet/arch-repair-change" || true
+if [ -n "${AF_ARCH_REPAIR_FROM:-}" ]; then
+  AF_ARCH_REPAIR_AUTO=change AF_REPAIR_PY=$af_repair_py \
+    af-arch-repair "$AF_ARCH_REPAIR_FROM" "$af_arch_now" || true
+elif [ -n "$af_repair_mark" ]; then
+  AF_ARCH_REPAIR_AUTO=rerun AF_REPAIR_PY=$af_repair_py \
+    af-arch-repair "$af_repair_mark" "$af_arch_now" || true
+elif af-arch-repair --due; then
+  AF_ARCH_REPAIR_AUTO=retry AF_REPAIR_PY=$af_repair_py \
+    af-arch-repair "?" "$af_arch_now" || true
 fi
 # Surface what could not be repaired (build outputs under ~/repos, self-built binaries)
 # where the user will see it. The [entrypoint] / [arch-repair] output above goes only to

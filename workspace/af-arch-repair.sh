@@ -25,37 +25,138 @@
 #   壊れているものを名指しするところまで。
 #
 # 使い方: af-arch-repair <前のアーキ> <いまのアーキ>   （amd64 / arm64）
+#         af-arch-repair --due   (exit 0 when an automatic retry is waiting, 1 otherwise)
+#
+# ## Retries
+#
+# A reinstall that fails leaves its list behind (arch-repair-npm / -pip / -uv, one item per
+# line), and every later start re-runs this script while a list is non-empty — the arch stamp
+# is already current by then, so without these lists nothing would ever run again. The
+# entrypoint asks `--due` and passes AF_ARCH_REPAIR_AUTO=change|rerun|retry; a run by hand
+# passes none and leaves the counter alone.
+#
+# The retries are capped at MAX_RETRIES starts after the one that changed architecture: a
+# package that cannot be installed (gone from the index, no wheel for this arch, no network
+# at all) would otherwise add its timeouts to every start forever. A retry is counted when
+# it STARTS, so a run killed every time (an OOM kill, a stop during the install) uses up the
+# cap like a failing one. Once the cap is reached, one more start runs without installing
+# anything: it writes the leftovers into arch-residue as a `pkgs:` line, so the member's
+# notification names them (the only place they can read it), and only then records that it
+# gave up. The lists stay; a run by hand still uses them.
 set -uo pipefail
+
+STATE="$HOME/.local/share/agent-fleet"
+NPM_MANIFEST="$STATE/arch-repair-npm"
+PIP_MANIFEST="$STATE/arch-repair-pip"
+UV_MANIFEST="$STATE/arch-repair-uv"
+# "<retries started> <architecture before the change> <gave up: 0|1>", one atomic file.
+TRIES_FILE="$STATE/arch-repair-tries"
+MAX_RETRIES=3
+
+pending() { [ -s "$NPM_MANIFEST" ] || [ -s "$PIP_MANIFEST" ] || [ -s "$UV_MANIFEST" ]; }
+T_STARTED=0; T_WAS=""; T_GAVE_UP=0
+read_tries() {
+  local n="" w="" g=""
+  # 2>/dev/null goes first: it has to be in place before the redirection that can fail.
+  read -r n w g 2>/dev/null < "$TRIES_FILE" || true
+  case "$n" in '' | *[!0-9]*) T_STARTED=0 ;; *) T_STARTED="$n" ;; esac
+  T_WAS="$w"
+  [ "$g" = 1 ] && T_GAVE_UP=1 || T_GAVE_UP=0
+}
+write_tries() {
+  { printf '%s %s %s\n' "$1" "$2" "$3" > "$TRIES_FILE.tmp.$$" && mv -f "$TRIES_FILE.tmp.$$" "$TRIES_FILE"; } 2>/dev/null \
+    || rm -f "$TRIES_FILE.tmp.$$"
+}
+
+# Due while a list is pending and the give-up has not been recorded: below the cap that is a
+# retry, at the cap it is the run that writes the notification.
+if [ "${1:-}" = --due ]; then
+  read_tries
+  pending && [ "$T_GAVE_UP" = 0 ]
+  exit
+fi
 
 WAS="${1:-}"; NOW="${2:-}"
 [ -n "$NOW" ] || { echo "usage: af-arch-repair <was> <now>" >&2; exit 2; }
 REPAIR_PY="${AF_REPAIR_PY:-1}"
-STATE="$HOME/.local/share/agent-fleet"
-NPM_MANIFEST="$STATE/arch-repair-npm"
+MODE="${AF_ARCH_REPAIR_AUTO:-}"
 say() { echo "[arch-repair] $*"; }
-fail=0
+mkdir -p "$STATE" 2>/dev/null || true
+
+# The start that changed architecture resets the counter. A retry, and a rerun of a change
+# start that was killed before its pass finished (rerun: arch-repair-change still there),
+# count themselves before doing anything, so the cap holds even when no run ever finishes.
+# Past the cap a run installs nothing (INSTALL=0) and only reports. A retry start knows no
+# "before" architecture, so it reads the one the change start recorded (messages only).
+INSTALL=1
+read_tries
+case "$MODE" in
+  change) T_STARTED=0; T_GAVE_UP=0; write_tries 0 "$WAS" 0 ;;
+  retry | rerun)
+    case "$WAS" in '' | '?') WAS="${T_WAS:-?}" ;; esac
+    if [ "$T_STARTED" -lt "$MAX_RETRIES" ]; then
+      T_STARTED=$((T_STARTED + 1))
+      write_tries "$T_STARTED" "$WAS" 0
+    else
+      INSTALL=0
+    fi
+    ;;
+esac
+# A retry start only retries what failed before; the change start, its rerun and a run by
+# hand look at everything.
+want() { [ "$INSTALL" = 1 ] && { [ "$MODE" != retry ] || [ -s "$1" ]; }; }
+# The lists are written before any install and an item leaves only after its own install
+# succeeded, always through a temp file and mv: a run killed at any point leaves a list that
+# still names everything not yet done, never a truncated one.
+list_write() {
+  local f="$1"; shift
+  if [ "$#" -gt 0 ]; then
+    if ! { printf '%s\n' "$@" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"; } 2>/dev/null; then
+      rm -f "$f.tmp.$$"
+    fi
+  else
+    rm -f "$f"
+  fi
+}
+list_drop() {
+  local f="$1" item="$2" rest=()
+  [ -e "$f" ] || return 0
+  mapfile -t rest < <(grep -vxF -- "$item" "$f")
+  list_write "$f" ${rest[@]+"${rest[@]}"}
+}
 
 # ---------------------------------------------------------------- pip --user
 # 壊れているのは**拡張モジュールを持つ dist だけ**で、純 python のものはアーキが変わっても
 # 無傷である（実測: この環境では 35 dist 中 8 個）。拡張のファイル名にはアーキが入っている
 # （`_greenlet.cpython-311-x86_64-linux-gnu.so`）ので、RECORD を読めば壊れている dist を
 # 厳密に列挙できる——推測ではなく、そのファイルがどのアーキ用かを見て判定している。
+#
+# Every entry of a list left by an earlier failure is attempted again, whatever is on disk:
+# a failed or killed install can leave a package that looks installed (METADATA without
+# RECORD, a half-written tree), so only an install that exited 0 takes an entry off the list.
+# The version comes from disk, though, when the package is there: the member may have
+# upgraded it since, and reinstalling the listed version would be a silent downgrade. A
+# forced reinstall of the installed version rebuilds its native parts; the listed version is
+# used only for a package that is gone.
 pip_broken() {
-  python3 - "$NOW" <<'PY'
-import os, sys, glob
+  python3 - "$NOW" "$PIP_MANIFEST" <<'PY'
+import os, re, sys, glob
 mach = {"amd64": "x86_64", "arm64": "aarch64"}.get(sys.argv[1], "")
 if not mach:
     raise SystemExit(0)
 others = [m for m in ("x86_64", "aarch64") if m != mach]
-out = []
+norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+def vkey(v):
+    # Highest version wins when an interrupted upgrade left two dist-infos side by side.
+    for mod in ("packaging.version", "pip._vendor.packaging.version"):
+        try:
+            return (1, __import__(mod, fromlist=["Version"]).Version(v))
+        except Exception:
+            pass
+    return (0, [(0, int(x)) if x.isdigit() else (1, x) for x in re.split(r"[.+!-]", v)])
+out, installed = {}, {}
 for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/site-packages")):
     for di in glob.glob(os.path.join(sp, "*.dist-info")):
-        try:
-            body = open(os.path.join(di, "RECORD"), encoding="utf-8", errors="replace").read()
-        except OSError:
-            continue
-        if not any(("-" + m + "-linux") in body for m in others):
-            continue
         # 表示名と版は METADATA が正（dist-info のディレクトリ名は `-`→`_` に正規化されて
         # いて、そのまま出すと利用者が PyPI で探せない名前になる）。
         name = ver = ""
@@ -67,25 +168,62 @@ for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/si
         except OSError:
             continue
         if name and ver:
-            out.append(name + "==" + ver)
+            k = norm(name)
+            if k not in installed or vkey(ver) > vkey(installed[k][1]):
+                installed[k] = (name, ver)
+        try:
+            body = open(os.path.join(di, "RECORD"), encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if not any(("-" + m + "-linux") in body for m in others):
+            continue
+        if name and ver:
+            out[norm(name)] = name + "==" + ver
+try:
+    for line in open(sys.argv[2], encoding="utf-8"):
+        req = line.strip()
+        if req:
+            out.setdefault(norm(req.split("==")[0]), req)
+except OSError:
+    pass
+# Whatever is installed decides the version, at its highest; the detected or listed one is
+# used only for a package that is gone.
+out = {k: ("==".join(installed[k]) if k in installed else v) for k, v in out.items()}
 if out:
-    print("\n".join(sorted(set(out))))
+    print("\n".join(sorted(out.values())))
 PY
 }
 
-if [ "$REPAIR_PY" = 1 ]; then
+if [ "$INSTALL" != 1 ]; then
+  :
+elif [ "$REPAIR_PY" != 1 ]; then
+  # The python major moved: the recorded versions may not exist for the new python, so an
+  # earlier failure is not retried either.
+  [ -s "$PIP_MANIFEST" ] && say "pip: Python のメジャー版が変わったので、前回失敗した入れ直しはやめます: $(tr '\n' ' ' < "$PIP_MANIFEST")"
+  rm -f "$PIP_MANIFEST"
+elif want "$PIP_MANIFEST"; then
   mapfile -t PKGS < <(pip_broken)
+  list_write "$PIP_MANIFEST" ${PKGS[@]+"${PKGS[@]}"}
   if [ "${#PKGS[@]}" -gt 0 ]; then
     say "pip: ${#PKGS[@]} 件を同じ版で入れ直します: ${PKGS[*]}"
     # ⚠️ --no-deps は必須。壊れているのは拡張を持つ dist だけで、その依存（純 python）は
     #    正常に残っている。付けないと依存ツリー全体が再解決され、**アーキ変更のはずが
     #    バージョン更新になる**。
-    if pip install --user --force-reinstall --no-deps "${PKGS[@]}"; then
+    # One package per install, so one that cannot be installed does not keep the others in
+    # the list: the list has to name exactly what still fails.
+    PIP_FAILED=()
+    for pkg in "${PKGS[@]}"; do
+      if pip install --user --force-reinstall --no-deps "$pkg"; then
+        list_drop "$PIP_MANIFEST" "$pkg"
+      else
+        PIP_FAILED+=("$pkg")
+      fi
+    done
+    if [ "${#PIP_FAILED[@]}" -eq 0 ]; then
       say "pip: 完了"
     else
-      say "WARN: pip の入れ直しに失敗しました（ネットワーク？）。次の起動でもう一度試します"
-      say "WARN:   手で直す: pip install --user --force-reinstall --no-deps ${PKGS[*]}"
-      fail=1
+      say "WARN: pip の入れ直しに失敗しました（ネットワーク？）: ${PIP_FAILED[*]}"
+      say "WARN:   手で直す: pip install --user --force-reinstall --no-deps ${PIP_FAILED[*]}"
     fi
   fi
 fi
@@ -93,31 +231,64 @@ fi
 # ---------------------------------------------------------------- uv tools
 # uv の tool は 1 本ずつが独立した venv なので、壊れ方は pip と同じ。⚠️ `uv tool upgrade` は
 # 使わない——あれは版を上げる操作で、ここでやりたいのは「同じ版で入れ直す」である。
-if command -v uv >/dev/null 2>&1 && [ -d "$HOME/.local/share/uv/tools" ]; then
-  for d in "$HOME"/.local/share/uv/tools/*; do
-    [ -d "$d" ] || continue
-    tool="$(basename "$d")"
-    # その venv に他アーキの拡張が居るときだけ入れ直す（純 python の tool は無傷）。
-    if ! find "$d" -name "*-linux-gnu.so" 2>/dev/null \
-        | grep -qv -- "-$([ "$NOW" = arm64 ] && echo aarch64 || echo x86_64)-linux-gnu.so"; then
-      continue
-    fi
-    ver="$(python3 - "$d" "$tool" <<'PY'
-import os, sys, glob
+# Every listed tool is attempted again, whether or not its environment is there or looks
+# fixed: a failed install can leave a directory that passes the check below.
+UV_TOOLS="$HOME/.local/share/uv/tools"
+uv_foreign() {
+  find "$1" -name "*-linux-gnu.so" 2>/dev/null \
+    | grep -qv -- "-$([ "$NOW" = arm64 ] && echo aarch64 || echo x86_64)-linux-gnu.so"
+}
+uv_ver() {
+  python3 - "$1" "$2" <<'PY'
+import os, re, sys, glob
+def vkey(v):
+    # Highest version wins when an interrupted upgrade left two dist-infos side by side.
+    for mod in ("packaging.version", "pip._vendor.packaging.version"):
+        try:
+            return (1, __import__(mod, fromlist=["Version"]).Version(v))
+        except Exception:
+            pass
+    return (0, [(0, int(x)) if x.isdigit() else (1, x) for x in re.split(r"[.+!-]", v)])
 d, tool = sys.argv[1], sys.argv[2].replace("-", "_").lower()
+vers = []
 for di in glob.glob(os.path.join(d, "lib/python*/site-packages/*.dist-info")):
     base = os.path.basename(di)[: -len(".dist-info")]
     name, _, ver = base.rpartition("-")
     if name.replace("-", "_").lower() == tool:
-        print(ver)
-        break
+        vers.append(ver)
+if vers:
+    print(max(vers, key=vkey))
 PY
-)"
-    req="$tool${ver:+==$ver}"
+}
+if want "$UV_MANIFEST"; then
+  UV_TODO=()
+  for d in "$UV_TOOLS"/*; do
+    [ -d "$d" ] || continue
+    tool="$(basename "$d")"
+    # その venv に他アーキの拡張が居るときだけ入れ直す（純 python の tool は無傷）。
+    uv_foreign "$d" || continue
+    ver="$(uv_ver "$d" "$tool")"
+    UV_TODO+=("$tool${ver:+==$ver}")
+  done
+  # A listed tool is tried at the version its environment holds now (see pip), at the listed
+  # one only when the environment is gone or names no version.
+  if [ -s "$UV_MANIFEST" ]; then
+    while IFS= read -r req; do
+      [ -n "$req" ] || continue
+      tool="${req%%==*}"
+      printf '%s\n' ${UV_TODO[@]+"${UV_TODO[@]}"} | grep -q -- "^$tool\(==\|\$\)" && continue
+      ver=""; [ -d "$UV_TOOLS/$tool" ] && ver="$(uv_ver "$UV_TOOLS/$tool" "$tool")"
+      if [ -n "$ver" ]; then UV_TODO+=("$tool==$ver"); else UV_TODO+=("$req"); fi
+    done < "$UV_MANIFEST"
+  fi
+  mapfile -t UV_TODO < <(printf '%s\n' ${UV_TODO[@]+"${UV_TODO[@]}"} | grep -v '^$' | sort -u)
+  list_write "$UV_MANIFEST" ${UV_TODO[@]+"${UV_TODO[@]}"}
+  for req in ${UV_TODO[@]+"${UV_TODO[@]}"}; do
     say "uv tool: $req を入れ直します"
-    if ! uv tool install --force --reinstall "$req"; then
+    if command -v uv >/dev/null 2>&1 && uv tool install --force --reinstall "$req"; then
+      list_drop "$UV_MANIFEST" "$req"
+    else
       say "WARN: uv tool $req の入れ直しに失敗しました。手で直す: uv tool install --force --reinstall $req"
-      fail=1
     fi
   done
 fi
@@ -129,20 +300,45 @@ fi
 # だけ**なので、利用者が `npm i -g` で入れたものは黙って消えていた——entrypoint 自身が
 # 掲げている「自分で入れたツールは消さない」に反する唯一の場所だった。
 # 消す前に entrypoint が控えた一覧をここで戻す。
-if [ -s "$NPM_MANIFEST" ]; then
-  mapfile -t GLOBALS < <(grep -v '^[[:space:]]*$' "$NPM_MANIFEST")
+# Every entry is installed again until its own install exits 0; what is on disk proves
+# nothing, since an install killed half-way can leave a package.json behind. The version is
+# the installed one when a package.json names one (the member may have upgraded it, see
+# pip), the listed one otherwise.
+if [ "$INSTALL" = 1 ] && [ -s "$NPM_MANIFEST" ]; then
+  mapfile -t GLOBALS < <(python3 - "$NPM_MANIFEST" "$HOME/.local/lib/node_modules" <<'PY'
+import json, os, sys
+seen = set()
+for line in open(sys.argv[1], encoding="utf-8"):
+    spec = line.strip()
+    at = spec.rfind("@")
+    if at <= 0 or spec[:at] in seen:
+        continue
+    seen.add(spec[:at])
+    try:
+        with open(os.path.join(sys.argv[2], spec[:at], "package.json"), encoding="utf-8") as f:
+            have = json.load(f).get("version", "")
+    except (OSError, ValueError, AttributeError):
+        have = ""
+    print(spec[:at] + "@" + have if isinstance(have, str) and have else spec)
+PY
+)
+  list_write "$NPM_MANIFEST" ${GLOBALS[@]+"${GLOBALS[@]}"}
   if [ "${#GLOBALS[@]}" -gt 0 ]; then
     say "npm -g: ${#GLOBALS[@]} 件を同じ版で入れ直します: ${GLOBALS[*]}"
-    if npm install -g --prefix "$HOME/.local" "${GLOBALS[@]}"; then
+    NPM_FAILED=()
+    for spec in "${GLOBALS[@]}"; do
+      if npm install -g --prefix "$HOME/.local" "$spec"; then
+        list_drop "$NPM_MANIFEST" "$spec"
+      else
+        NPM_FAILED+=("$spec")
+      fi
+    done
+    if [ "${#NPM_FAILED[@]}" -eq 0 ]; then
       say "npm -g: 完了"
-      rm -f "$NPM_MANIFEST"
     else
-      say "WARN: npm -g の入れ直しに失敗しました。次の起動でもう一度試します"
-      say "WARN:   手で直す: npm install -g --prefix ~/.local ${GLOBALS[*]}"
-      fail=1
+      say "WARN: npm -g の入れ直しに失敗しました: ${NPM_FAILED[*]}"
+      say "WARN:   手で直す: npm install -g --prefix ~/.local ${NPM_FAILED[*]}"
     fi
-  else
-    rm -f "$NPM_MANIFEST"
   fi
 fi
 
@@ -213,14 +409,59 @@ if [ -n "$stale" ]; then
   say "⚠️  直す: node_modules → npm ci ／ target → cargo clean && cargo build ／ .venv → 作り直し"
 fi
 
+# What is still to be reinstalled, and whether a later start will try again. Read from the
+# lists rather than tracked on the way, so the summary and the notification cannot disagree
+# with what the next start actually does.
+left=()
+for kind in pip uv npm; do
+  case "$kind" in pip) f="$PIP_MANIFEST" ;; uv) f="$UV_MANIFEST" ;; npm) f="$NPM_MANIFEST" ;; esac
+  [ -s "$f" ] || continue
+  while IFS= read -r l; do [ -n "${l// /}" ] && left+=("$kind:$l"); done < "$f"
+done
+retries_left=$(( MAX_RETRIES - T_STARTED ))
+# A rerun past the cap gives up on a change pass that never finished: the pip / uv scan may
+# never have run, so the lists can be empty while old-arch packages remain. That give-up has
+# to be said too — it goes into the notification as a `scan:` line with the command to run.
+scan_cmd=""
+[ "$MODE" = rerun ] && [ "$INSTALL" = 0 ] && scan_cmd="af-arch-repair ${WAS:-<was>} $NOW"
+# Only leftovers no start will retry go into the notification: a transient failure that the
+# next start fixes should not reach the member at all.
+gave_up=""
+[ "${#left[@]}" -gt 0 ] && [ "$retries_left" -le 0 ] && gave_up="${left[*]}"
+
 # 検出結果を「いま壊れている集合」として書き出す。通知はこの内容のハッシュを event_id に
 # するので、集合が変わらない限り増えず、直せば集合から消えて自然に鳴り止む
 # （ADR 0068 決定 4 の続き・出来事は 1 回・残骸は状態）。
+# Written whole through a temp file, and before the give-up is recorded below: a run killed
+# in between is due again and writes it again, so the notification is never skipped.
+RESIDUE="$STATE/arch-residue"
 { [ -n "$stale" ] && printf 'repos: %s\n' "$stale"
   [ -n "$orphans" ] && printf 'bin:%s\n' "$orphans"
+  [ -n "$gave_up" ] && printf 'pkgs: %s\n' "$gave_up"
+  [ -n "$scan_cmd" ] && printf 'scan: %s\n' "$scan_cmd"
   true
-} > "$STATE/arch-residue" 2>/dev/null || true
-[ -s "$STATE/arch-residue" ] || rm -f "$STATE/arch-residue"
+} > "$RESIDUE.tmp.$$" 2>/dev/null || true
+if [ -s "$RESIDUE.tmp.$$" ]; then mv -f "$RESIDUE.tmp.$$" "$RESIDUE" 2>/dev/null || rm -f "$RESIDUE.tmp.$$"
+else rm -f "$RESIDUE.tmp.$$" "$RESIDUE"; fi
 
-[ "$fail" = 0 ] && say "完了" || say "一部やり直しが残っています（次の起動で再試行します）"
+# The counter and the change marker are written last. A change start (or its rerun) that got
+# here no longer has to be redone; past the cap a rerun gives up on that too, now that the
+# residue says so.
+case "$MODE" in change | rerun) rm -f "$STATE/arch-repair-change" ;; esac
+if [ "${#left[@]}" -eq 0 ]; then
+  rm -f "$TRIES_FILE"
+elif [ -n "$gave_up" ]; then
+  write_tries "$T_STARTED" "$WAS" 1
+fi
+
+if [ -n "$scan_cmd" ]; then
+  say "WARN: アーキテクチャが変わったあとの確認が、何度やっても最後まで終わりませんでした。自動ではもう試しません。$scan_cmd を実行してください"
+fi
+if [ "${#left[@]}" -eq 0 ]; then
+  [ -n "$scan_cmd" ] || say "完了"
+elif [ "$retries_left" -gt 0 ]; then
+  say "入れ直せなかったものが残っています: ${left[*]}（次の起動で自動でもう一度試します。自動で試すのはあと $retries_left 回です）"
+else
+  say "入れ直せなかったものが残っています: ${left[*]}（自動ではもう試しません。上の WARN: の行のコマンドか、af-arch-repair ${WAS:-<was>} $NOW を実行してください）"
+fi
 exit 0
