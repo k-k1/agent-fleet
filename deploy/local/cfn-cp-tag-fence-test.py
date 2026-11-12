@@ -357,6 +357,13 @@ INVENTORY = [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-wedged-since": T})]),
     ("internal/runtime/runtime_ecs_ec2_wedged.go", "clearWedgedStamp", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-wedged-since": None})]),
+    # Rung L1 (ADR 0121): the rescue marker and the episode time, both on a running or stopped slot.
+    ("internal/runtime/runtime_ecs_ec2_dark_rescue.go", "writeRescueMarker", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-rescue": T})]),
+    ("internal/runtime/runtime_ecs_ec2_dark_rescue.go", "dropRescueMarker", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-rescue": "vol-1/e/begun/1/t/"})]),
+    ("internal/runtime/runtime_ecs_ec2_dark_rescue.go", "finalizeRescue", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-wedge-at": T})]),
     ("internal/runtime/runtime_ecs_ec2_volumes.go", "clearSlotFree", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-idle-since": None})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "CreateTags", 1, [

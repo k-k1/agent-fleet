@@ -484,6 +484,54 @@ rescue writes a marker (code: `runtime_ecs_ec2_rescue.go`). Where the code chose
 - No IAM or tag-fence change: nothing in the Control Plane writes `af-rescue` yet, and reading it is `DescribeInstances`.
   The writer (#3964) adds its `CreateTags` / `DeleteTags` entries to `deploy/local/cfn-cp-tag-fence-test.py` and the role.
 
+**2026-11-12 (rung L1, first phase, #3964).** `AF_ECS_EC2_DARK_SLOT_ACTION=rescue` now runs the preparation half of rung L1
+(code: `runtime_ecs_ec2_dark_rescue.go`; the default stays `detect`). Built: the ownership token, the marker, the end of the
+occupant's Start, the fixed set of pending SSM commands and their cancel, the guarded section (mount lock outer, claim lock
+inner), the resume scan and the finalizer. **Not built, so no AWS call here deregisters, stops or detaches anything:** decision 2
+steps 4-6, the audit actions `pool.slot_dark_rescued` / `_blocked`, `blocked_since` and the bounds that feed it. A rescue therefore
+ends after its guarded check and removes its own `begun` marker; the next pass may begin again while the slot stays dark. Where the
+code chose among readings of the text above:
+
+- **Identity of the probed Agent: refuse.** The Agent's `/healthz` answers `{"ok": true, ...}` and carries no task or instance
+  identity, so a probe through the shared Service Connect alias cannot say which task answered. Rather than rely on the 2-minute
+  margin of the 2026-11-12 probe note, a slot whose service is up (`DesiredCount > 0`) is never rescued, whatever the probe says.
+  The check is made again under the claim lock in the preparation step, not taken from the decision. Only a slot the member
+  stopped (service at 0) is rescued. Lifting this needs the Agent to report its task identity (a follow-up issue).
+- `g_d` is read before the legs of the predicate that need a call (SSM, the probe), per slot, in `rescue` mode only. The locked step
+  requires the count to equal it and the home still to be on the same running box in the same launch epoch with no live claim.
+- The marker is written first, naming `g_d + 1`, and the count is then bumped and must read back `g_d + 1`: under the claim lock
+  nothing else can move it, and a marker written after the bump would leave a window in which the count says "somebody owns this"
+  and nothing says who. A bump that does not read back, or any failed write or read before it, drops the marker (matched on its
+  value) and aborts.
+- Ending the Start is the bump plus clearing the phase and the claim. The service is not updated: it is already at 0 (checked under
+  the same lock), and `markIdle` is deliberately not called, so a rescue that does not finish does not restart the dormancy clock.
+- The set of pending commands is listed with a failed read as an error (unlike the force-stop's best-effort cancel) and fixed in
+  the preparation step. A resumed rescue lists again only under the claim lock with the count still `g_r`.
+- The mount lock has a bounded wait (`rescueMountBudget`); a rescue that does not get it keeps its marker and the next pass resumes.
+  The token is re-verified inside the claim lock nested in the mount lock before any guarded step; a lock not taken, an unreadable
+  count or a lapsed lease aborts the step. `ifOwned`'s unguarded fallback is not used.
+- The resume scan reads each marker under the claim lock (so a rescue still preparing on another replica is waited for, not
+  mistaken for one whose count never moved) and runs whatever the action is, short of `off`, because a marker outlives the setting
+  that wrote it. A marker that matches and whose phase is `begun` continues while the action is `rescue`; every other marker is
+  finalized. A marker that does not parse is left alone and still fences its home.
+- The finalizer takes the per-instance lease through the same lease store as the home locks (`lockSubject`, key
+  `ec2-slot-wedge/<instance id>`; process-local semaphore without a store). Open question 8 stays open: `af-wedge-at` is advisory and
+  nothing gates on it.
+- The pool view reads `rescuing` / `blocked` / `rescued` from the marker (`begun`..`detaching`; `blocked_since` set; `detached`).
+- IAM: no change to the role (instance tag writes on this pool are already allowed except `af-pool` / `af-role`); the three new call
+  sites are in `deploy/local/cfn-cp-tag-fence-test.py`. No new `StopInstances`, `DetachVolume` or `DeregisterContainerInstance` site
+  exists yet, so `cfn-cp-ec2-scope-test.py` has nothing to add in this phase.
+
+Follow-ups: #3993
+
+**2026-11-12 (L1 first phase, review round 1).** The marker is first written with phase `preparing` (an eighth value, before `begun`) and
+advanced to `begun` only after the bump has been read back. A count equal to `g_r` proves nothing while the marker is `preparing`: a
+rescue that died between the marker write and the bump leaves a marker naming `g_d + 1`, and a member's next Start reaches that same
+number. `preparing` is never resumed; the finalizer just removes it (like `begun`, no episode). The claim lease is also re-checked by
+the clock before the bump, not only after it.
+
+Round 2: the claim lease is also re-checked by the clock after the marker advances, before the claim is dropped (the read and delete are inlined with a check between), and after the command listing; a lapse aborts with the marker left for the resume scan, and the listed set is not used.
+
 **2026-11-12 (the wedged predicate, #3963; owner's decision of the same day).** Decision 1 describes a slot whose agents
 are silent. Production on 2026-11-12 showed the opposite shape: an 8 GiB slot thrashed for about an hour with its ECS agent
 connected and SSM `Online`, the old task stayed `STOPPING` for more than 30 minutes, and the CP's calls to the Agent on `:7700`

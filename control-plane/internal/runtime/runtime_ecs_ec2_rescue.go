@@ -23,6 +23,11 @@ const (
 	// until a step first fails its bound.
 	ec2TagRescue = "af-rescue"
 
+	// rescuePhasePreparing is the marker as first written, before the Start count was bumped
+	// and read back. Its Gen is a prediction: a member's Start after a crash can reach the
+	// same number, so a count equal to Gen proves nothing until the rescue has confirmed its
+	// own bump by advancing the marker to begun. Never resumable, only finalized.
+	rescuePhasePreparing     rescuePhase = "preparing"
 	rescuePhaseBegun         rescuePhase = "begun"
 	rescuePhaseDeregistering rescuePhase = "deregistering"
 	rescuePhaseDeregistered  rescuePhase = "deregistered"
@@ -34,10 +39,10 @@ const (
 
 type rescuePhase string
 
-// valid reports whether p is one of the seven phases of decision 4.
+// valid reports whether p is one of the phases of decision 4 (plus preparing).
 func (p rescuePhase) valid() bool {
 	switch p {
-	case rescuePhaseBegun, rescuePhaseDeregistering, rescuePhaseDeregistered,
+	case rescuePhasePreparing, rescuePhaseBegun, rescuePhaseDeregistering, rescuePhaseDeregistered,
 		rescuePhaseStopping, rescuePhaseStopped, rescuePhaseDetaching, rescuePhaseDetached:
 		return true
 	}

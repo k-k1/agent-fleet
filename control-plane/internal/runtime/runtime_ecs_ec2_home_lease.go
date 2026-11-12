@@ -37,6 +37,9 @@ type HomeLeaseStore interface {
 const (
 	homeLockMount = "ec2-home-mount/"
 	homeLockClaim = "ec2-home-claim/"
+	// homeLockWedge is the per-instance lease that serialises the af-wedge-at finalizers of
+	// every rescue of one box (ADR 0121 decision 4). Keyed by instance id, not workspace.
+	homeLockWedge = "ec2-slot-wedge/"
 	// homeStartGen names the Start count in cp_counter.
 	homeStartGen = "ec2-start-gen/"
 )
@@ -69,6 +72,9 @@ var homeLeaseProcess = fmt.Sprintf("%d-%x", time.Now().UnixNano(), rand.Uint32()
 // localKey keys the process-local maps. replica is empty in production; a test that
 // stands two CPs up in one process gives each its own, so they share nothing but the store.
 func (e *ecsEC2Runtime) localKey() string { return e.replica + e.base.name }
+
+// wedgeLocks is the process-local half of homeLockWedge (replica + instance id -> homeSem).
+var wedgeLocks sync.Map
 
 // homeSem is a process-local lock a waiter can give up on: a channel of one.
 type homeSem chan struct{}
@@ -215,11 +221,17 @@ func (g *homeLockGuard) open() (cmds map[string]string, unknown bool) {
 // the lock up earlier lets another holder umount and detach while that command can still
 // mount.
 func (e *ecsEC2Runtime) lockHome(ctx context.Context, which string) (context.Context, func(), error) {
-	sem := localSem(lockMap(which), e.localKey())
+	return e.lockSubject(ctx, which, e.base.name)
+}
+
+// lockSubject is lockHome for a lock keyed by something other than the workspace: the
+// per-instance finalizer lease of ADR 0121 decision 4 (homeLockWedge, keyed by instance id).
+func (e *ecsEC2Runtime) lockSubject(ctx context.Context, which, subject string) (context.Context, func(), error) {
+	sem := localSem(lockMap(which), e.replica+subject)
 	select {
 	case sem <- struct{}{}:
 	case <-ctx.Done():
-		return nil, nil, fmt.Errorf("%w: %s%s: %w", errHomeLockLost, which, e.base.name, ctx.Err())
+		return nil, nil, fmt.Errorf("%w: %s%s: %w", errHomeLockLost, which, subject, ctx.Err())
 	}
 	g := &homeLockGuard{e: e, store: e.leases != nil, pending: map[string]string{}}
 	if e.leases == nil {
@@ -235,7 +247,7 @@ func (e *ecsEC2Runtime) lockHome(ctx context.Context, which string) (context.Con
 			})
 		}, nil
 	}
-	name := which + e.base.name
+	name := which + subject
 	holder := fmt.Sprintf("%s-%d", homeLeaseProcess, homeLeaseHolders.Add(1))
 	ttl := e.homeLeaseTTL()
 	logged := false
@@ -380,8 +392,11 @@ func ssmSendRefused(err error) bool {
 }
 
 func lockMap(which string) *sync.Map {
-	if which == homeLockClaim {
+	switch which {
+	case homeLockClaim:
 		return &claimGenLocks
+	case homeLockWedge:
+		return &wedgeLocks
 	}
 	return &homeMountLocks
 }
