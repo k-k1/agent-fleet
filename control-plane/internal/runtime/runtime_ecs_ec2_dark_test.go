@@ -261,3 +261,40 @@ func TestDarkStampRoundTripAndClamp(t *testing.T) {
 func ec2tagKV(k, v string) ec2types.Tag {
 	return ec2types.Tag{Key: aws.String(k), Value: aws.String(v)}
 }
+
+// The pool view reports the stamp's first observation and the observing rung for a running slot
+// in the stamp's launch epoch, with or without the `/detected` third segment, and nothing for a
+// stamp from an earlier launch.
+func TestPoolStatusShowsDarkSinceAndRung(t *testing.T) {
+	ctx := context.Background()
+	h, f, _ := darkHarness(t)
+	slot := func() ec2SlotView {
+		st, err := f.PoolStatus(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range st.Slots {
+			if s.InstanceID == "i-dark" {
+				return s
+			}
+		}
+		t.Fatal("slot missing from the pool view")
+		return ec2SlotView{}
+	}
+	if s := slot(); s.DarkSince != "" || s.Rung != "" {
+		t.Fatalf("no stamp yet, got dark_since=%q rung=%q", s.DarkSince, s.Rung)
+	}
+	launch := h.ec2.instances["i-dark"].LaunchTime.UTC().Truncate(time.Second)
+	since := time.Now().Add(-20 * time.Minute).UTC().Truncate(time.Second)
+	for _, detected := range []bool{false, true} {
+		h.ec2.setInstanceTag("i-dark", ec2TagDarkSince, darkStamp{since: since, launch: launch, detected: detected}.String())
+		s := slot()
+		if s.DarkSince != since.Format(time.RFC3339) || s.Rung != darkRungObserving {
+			t.Fatalf("detected=%t: dark_since=%q rung=%q", detected, s.DarkSince, s.Rung)
+		}
+	}
+	h.ec2.setInstanceTag("i-dark", ec2TagDarkSince, darkStamp{since: since, launch: launch.Add(-time.Hour)}.String())
+	if s := slot(); s.DarkSince != "" || s.Rung != "" {
+		t.Fatalf("a stamp from an earlier launch must not show, got dark_since=%q rung=%q", s.DarkSince, s.Rung)
+	}
+}

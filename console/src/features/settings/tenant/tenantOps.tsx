@@ -15,7 +15,7 @@ import { MonthlyTrend, usageMonthRows } from "../../../ui/MonthlyTrend.tsx";
 import { MemberMonthlyTable, usageMemberRows } from "../../../ui/MemberMonthly.tsx";
 import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { fmtDateTime, DATETIME_FULL, compareText } from "../../../lib/intl.ts";
-import { useLocale, useT } from "../../../lib/i18n/index.ts";
+import { tMaybe, useLocale, useT } from "../../../lib/i18n/index.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { Tenant } from "../parts/adminShared.ts";
 import { UptimeAdminView } from "../../usage/UptimeHeatmap.tsx";
@@ -240,7 +240,7 @@ export function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
             {shown.map((a) => (
               <div key={a.id} className="adm-audit-row">
                 <span className="as-time muted">{fmtAt(a.at)}</span>
-                <span className={"audit-action cat-" + auditCat(a.action)}>{a.action}</span>
+                <span className={"audit-action cat-" + auditCat(a.action)} title={tMaybe("audit.action." + a.action)}>{a.action}</span>
                 <span className="asx-user mono" title={a.actor_id}>{a.actor_email || a.actor_kind}</span>
                 <span className="as-name mono" title={a.target}>{a.target}</span>
                 {isSuper && <span className="as-repo muted">{a.tenant}</span>}
