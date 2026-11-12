@@ -304,6 +304,9 @@ type usageTurnRow struct {
 	// drops a re-append.
 	Orphan    bool
 	OrphanKey string
+	// sizeUnknown marks a row whose input size the ledger would not record (a subagent's); set
+	// only by spendOfRows so the budget prices it like the ledger does.
+	sizeUnknown bool
 	// Route and Billing are the per-call evidence of the calls this row folds
 	// (transcript.Turn.Route/Billing), merged by noteRoute: a row whose calls disagree reads as
 	// unresolved.

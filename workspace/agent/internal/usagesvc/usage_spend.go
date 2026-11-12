@@ -71,7 +71,14 @@ func spendOfTurns(m session.Meta, turns []transcript.Turn) session.Spend {
 // oldest first for SpendCrossingBound to find the last turn that stayed under the cap.
 func spendOfRows(m session.Meta, rows, subagentRows []usageTurnRow) session.Spend {
 	if len(subagentRows) > 0 {
-		rows = append(rows[:len(rows):len(rows)], subagentRows...)
+		// A subagent row has no known input size in the ledger (usageRecordOf), so it is priced
+		// at the base tier here too: both views must give one amount.
+		subs := make([]usageTurnRow, len(subagentRows))
+		for i, r := range subagentRows {
+			r.sizeUnknown = true
+			subs[i] = r
+		}
+		rows = append(rows[:len(rows):len(rows)], subs...)
 		sort.SliceStable(rows, func(i, j int) bool { return rowEnd(rows[i].TS).Before(rowEnd(rows[j].TS)) })
 	}
 	var sp session.Spend
@@ -91,7 +98,10 @@ func spendOfRows(m session.Meta, rows, subagentRows []usageTurnRow) session.Spen
 		agg := usageAgg{In: r.Tokens.In, Out: r.Tokens.Out,
 			CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate}
 		// The row's input is one call's snapshot, so it picks the context tier (usage_tier.go).
-		agg.addBand(r.Tokens.In+r.Tokens.CacheRead+r.Tokens.CacheCreate, agg.In, agg.Out, agg.CacheRead, agg.CacheCreate)
+		// Same rule as the ledger's ctx: not for subagent or orphan rows.
+		if !r.sizeUnknown && !r.Orphan {
+			agg.addBand(r.Tokens.In+r.Tokens.CacheRead+r.Tokens.CacheCreate, agg.In, agg.Out, agg.CacheRead, agg.CacheCreate)
+		}
 		if agg.In+agg.Out+agg.CacheRead+agg.CacheCreate == 0 {
 			continue
 		}

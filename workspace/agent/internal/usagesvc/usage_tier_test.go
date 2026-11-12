@@ -315,3 +315,20 @@ func TestUsageTierSeriesEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+// The budget must price a subagent or orphan row at the base tier, as the ledger does (no ctx).
+func TestSpendOfRowsSubagentAndOrphanStayAtBase(t *testing.T) {
+	UseIsolatedUsageDir(t)
+	UseUsageCatalog(t, tierFixture)
+	m := session.Meta{Kind: session.KindCodex, Name: "s"}
+	big := usageTurnRow{Model: "gpt-6-sol", Tokens: usagex.Tokens{In: 400000, Out: 1000}}
+	base := (400000*2.0 + 1000*10.0) / 1e6
+	if got := spendOfRows(m, nil, []usageTurnRow{big}).USD; math.Abs(got-base) > 1e-9 {
+		t.Errorf("subagent row = %v, want base %v", got, base)
+	}
+	orphan := big
+	orphan.Orphan = true
+	if got := spendOfRows(m, []usageTurnRow{orphan}, nil).USD; math.Abs(got-base) > 1e-9 {
+		t.Errorf("orphan row = %v, want base %v", got, base)
+	}
+}
