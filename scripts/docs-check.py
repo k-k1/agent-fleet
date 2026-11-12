@@ -1716,7 +1716,7 @@ TASK_PAGES = (
     "operate/overview.", "operate/choose.", "operate/install.", "operate/install-decisions.",
     "operate/run/",
     "operate/signin/", "operate/diagnose/", "operate/secure/",
-    "operate/keys/", "operate/aws-ecs/slot-maintenance.",
+    "operate/keys/", "operate/aws-ecs/",
     "operate/engines/",
 )
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Agent Fleet — update an ECS / ecs-ec2 deployment in one command (README §Upgrade, executable).
+# Agent Fleet — update an ECS / ecs-ec2 deployment in one command (guide/operate/aws-ecs/upgrade.md, executable).
 #
 #   VERSION=0.2.0 deploy/aws/ecs/update.sh --profile af-sandbox --region ap-northeast-1
 #   VERSION=0.2.0 deploy/aws/ecs/update.sh --profile p --region r --push   # from the ECR push on
 #
 # The counterpart of `docker compose pull && docker compose up -d` for a compose deployment
 # (deploy/compose/README.md §Upgrade) and of `deploy/local/run-dev.sh` for dev. Running the
-# runbook by hand from README §Upgrade is fine; this exists because three of its steps are
+# steps by hand from guide/operate/aws-ecs/upgrade.md is fine; this exists because three of its steps are
 # pitfalls unless you already know them:
 #
 #  1. A tag can be deployed while it is not in ECR. CloudFormation only takes a string, so an
@@ -323,7 +323,7 @@ if [ -z "$WS_SUBNETS" ]; then
   cat >&2 <<EOF
 NOTE: $NETWORK_STACK has no WorkspaceSubnets output (its 00-network template has no workspace
       subnets), so workspaces run in the private subnets. This script never deploys 00-network.
-      To move them, follow README "Upgrading from v0.34.x": 00-network with S3EndpointEnabled=false
+      To move them, follow guide/operate/aws-ecs/upgrade.md, "Upgrade from v0.34.x": 00-network with S3EndpointEnabled=false
       through a change set, this script again, every running workspace stopped and started, and
       only then S3EndpointEnabled=true. Do not deploy the new 00-network with its defaults:
       S3EndpointEnabled defaults to true, and the endpoint's policy then refuses (AccessDenied) the

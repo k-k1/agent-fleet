@@ -21,7 +21,7 @@ The commands are in each deployment type's runbook. This page covers what happen
 | Type | Runbook |
 |---|---|
 | Docker Compose | [The compose runbook, "Upgrade"](../../../deploy/compose/README.md#upgrade) |
-| ECS (`ecs` / `ecs-ec2`) | [The ECS runbook, "Upgrade (runbook)"](../../../deploy/aws/ecs/README.md#upgrade-runbook) |
+| ECS (`ecs` / `ecs-ec2`) | [Upgrade on ECS](../aws-ecs/upgrade.md) |
 | Kubernetes | [The Kubernetes runbook, "Upgrading the CP"](../../../deploy/kubernetes/README.md#upgrading-the-cp) |
 
 ## Before you upgrade
@@ -45,8 +45,8 @@ Set `VERSION` in `.env` to the new tag, fetch (or build) the images, and run `do
 | Watch | What happens |
 |---|---|
 | Some releases need one stack updated before another | `update.sh` checks this first and stops before touching anything. It prints the standalone `aws cloudformation deploy` command; run it, then run `update.sh` again |
-| `update.sh` does not update the data stack | It detects, read-only, a `Persistence=retain` deployment with no daily EFS backup, warns, and prints the change-set commands. The procedure is step 1a of the runbook |
-| `update.sh` does not update the network stack (`00-network`) either | Update it by hand. Deploying the new template with its defaults makes its S3 endpoint deny every S3 request from workspaces that have not restarted yet (AccessDenied). Schedule a maintenance window in which every running workspace restarts. The procedure is the runbook's "Upgrading from v0.34.x" |
+| `update.sh` does not update the data stack | It detects, read-only, a `Persistence=retain` deployment with no daily EFS backup, warns, and prints the change-set commands. The procedure is in [Check that the EFS backup exists](../aws-ecs/upgrade.md#check-that-the-efs-backup-exists) |
+| `update.sh` does not update the network stack (`00-network`) either | Update it by hand. Deploying the new template with its defaults makes its S3 endpoint deny every S3 request from workspaces that have not restarted yet (AccessDenied). Schedule a maintenance window in which every running workspace restarts. The procedure is in [Upgrade from v0.34.x](../aws-ecs/upgrade.md#upgrade-from-v034x) |
 | On `ecs-ec2`, a release changed the slots' launch template | Existing slots only get it when they are replaced ([Replace and stop slots](../aws-ecs/slot-maintenance.md#outdated-slots)) |
 
 ### The missing EFS backup notice

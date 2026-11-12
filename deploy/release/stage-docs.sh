@@ -69,7 +69,15 @@ for entry in "${RUNBOOKS[@]}"; do
     exit 1
   }
   cp "$ROOT/$src" "$DEST/operate/runbooks/$name.md"
+  # A runbook links into the guide relative to its place in the repository
+  # (deploy/aws/ecs/ -> ../../../guide/); the copy sits in operate/runbooks/, two levels
+  # under the staged guide root.
+  sed -i -e 's#](\(\.\./\)\{1,\}guide/#](../../#g' "$DEST/operate/runbooks/$name.md"
 done
+# The ECS index links its parameter references next to the templates (cfn/), which are not
+# staged; in the copy they point at the repository instead, as the guide pages do.
+sed -i -e 's#](cfn/#](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/#g' \
+  "$DEST/operate/runbooks/aws-ecs.md"
 
 cat > "$DEST/operate/runbooks/README.md" <<'EOF'
 # Runbooks
@@ -108,8 +116,11 @@ rewrite_runbook_links() {  # <dir> <prefix>
       -e "s#\.\./\.\./deploy/aws/ec2-single/README\.md#${prefix}aws-ec2-single.md#g" \
       -e "s#\.\./\.\./deploy/kubernetes/README\.md#${prefix}kubernetes.md#g" \
       "$f"
-  done < <(find "$dir" -maxdepth 1 -name "*.md" -print0)
+  done < <(find "$dir" -maxdepth 2 -name "*.md" -not -path "*/runbooks/*" -print0)
 }
+# -maxdepth 2 reaches the task pages one level down (operate/aws-ecs/, ref/cli/): their
+# `../../../deploy/…` loses the same `../../deploy/…` tail, so the one prefix is right at
+# both depths.
 rewrite_runbook_links "$DEST/operate" "runbooks/"
 rewrite_runbook_links "$DEST/ref" "../operate/runbooks/"
 

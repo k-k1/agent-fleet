@@ -48,7 +48,7 @@ source_of_truth: "`control-plane/bridge_epoch.go`、`control-plane/bridge_epoch_
 3. 静かな時間帯に `af-cp advance-bridge-epochs --yes` を実行します。ブリッジトークンと内部 git トークンの epoch が、1 回だけ進みます
 4. 動いているワークスペースを再起動します。「**要再起動**」が出ているものが対象です
 
-ECS では `af-cp` を Control Plane のタスク定義を使う単発のタスクとして動かします。貼り付けるコマンドは [ECS の手順書](../../../deploy/aws/ecs/README.md#running-af-cp-commands-against-the-control-planes-database) にあります。
+ECS では `af-cp` を Control Plane のタスク定義を使う単発のタスクとして動かします。貼り付けるコマンドは [Control Plane のデータベースに対して af-cp を実行する](../aws-ecs/options.ja.md#control-plane-のデータベースに対して-af-cp-を実行する) にあります。
 
 ## 署名鍵を入れ替える
 

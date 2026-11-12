@@ -6,7 +6,7 @@ to pass — and this file holds the rest: the measurements, the trade-offs and t
 
 **Why the split.** CloudFormation refuses a template body over **51,200 bytes** and
 `30-ingress.yaml` crossed that line, so `env.sh` has to hand it over through S3
-(see [the 51,200-byte wall](../README.md#the-51200-byte-wall-why-a-deploy-can-stop-working-without-anyone-touching-it)).
+(see [Keep templates under the size limit](../../../../guide/operate/aws-ecs/template-size.md)).
 The prose was 40% of the file — 21,630 bytes of the 54,681 — and prose is the one part that
 does not have to travel to the API to do its job. YAML comments count toward the limit
 exactly like `Description:` does, so moving a paragraph into a `#` comment would have saved
@@ -656,7 +656,7 @@ lowercase value, and a stricter `AllowedValues` would reject it on the next upda
 ### `SsmPrefix`
 
 SSM SecureString path prefix holding the CP secrets, created out of band before deploy (see
-[the README](../README.md#prerequisites-once-per-account)). Params: `cookie-secret`,
+[Build on ECS](../../../../guide/operate/aws-ecs/install.md#1-put-the-control-planes-secrets-in-ssm)). Params: `cookie-secret`,
 `master-key`, plus `google-client-secret` / `oidc-client-secret` / `github-client-secret`
 depending on the IdPs in use.
 Optional, each behind its own switch: `github-login-client-secret`, `comfy-api-key`,
@@ -1073,7 +1073,7 @@ it, so turn it on (or change it) with
 `aws cloudformation deploy … --parameter-overrides AgentSilentStopAfter=30m`; the next `update.sh`
 keeps the value. To turn it off, deploy `AgentSilentStopAfter=0` (the CP reads `0` as off). Do not
 pass an empty override: `deploy --parameter-overrides AgentSilentStopAfter=` did not clear a value on a
-live stack; to return to empty use `clear-params.sh` (README, "Clearing a parameter"). It needs `AF_AGENT_SILENT_AFTER`
+live stack; to return to empty use `clear-params.sh` ([Clear a parameter](../../../../guide/operate/aws-ecs/upgrade.md#clear-a-parameter)). It needs `AF_AGENT_SILENT_AFTER`
 (default `3m`, not exposed as a parameter) to be on; see
 `guide/operate/run/idle-stop.md#stop-a-silent-agent-automatically`.
 
@@ -1407,7 +1407,7 @@ itself, not the Console's zone.
 
 ### `CpDbUnavailableFilter:`
 
---- "the Control Plane cannot reach its database", made visible (README, "Alarms") ---
+--- "the Control Plane cannot reach its database", made visible (guide/operate/aws-ecs/alarms.md) ---
 The marker is control-plane/store_postgres_secret.go's logDBUnavailable: change both or neither.
 
 ### `CpDbUnavailableAlarm:`

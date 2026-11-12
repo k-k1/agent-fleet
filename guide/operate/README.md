@@ -79,7 +79,15 @@ The commands are in each target's runbook; these pages say what they decide.
 
 | Page | What you can do |
 |---|---|
+| [Understand the ECS layout](aws-ecs/overview.md) | Learn which stack builds what, and in which order to build them |
+| [Build on ECS](aws-ecs/install.md) | Prepare the account, deploy the stacks, push the images and get to the first sign-in |
+| [Turn on optional features with stack parameters](aws-ecs/options.md) | Turn on preview subdomains, KMS, remote MCP, provided routes, timers and outside engines, and WAF |
+| [Set up the alarm for an unreachable database](aws-ecs/alarms.md) | Get an email when the Control Plane can no longer reach its database |
+| [Upgrade on ECS](aws-ecs/upgrade.md) | Move to a new release with `update.sh`, roll back, and clear a parameter |
+| [Keep templates under the size limit](aws-ecs/template-size.md) | Deploy `30-ingress`, which is over 51,200 bytes, through S3 |
+| [IAM permissions for deploying](aws-ecs/iam.md) | Give the people or CI who deploy the least permissions, service by service |
 | [Replace and stop slots](aws-ecs/slot-maintenance.md) | On `ecs-ec2`, replace outdated slots and notice and stop a slot that does not answer |
+| [Troubleshoot ECS](aws-ecs/troubleshooting.md) | Find build, upgrade and start problems from the symptom |
 
 ## Inference engines
 

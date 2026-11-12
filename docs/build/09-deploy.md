@@ -206,7 +206,7 @@ busy" test, so a row never offers what the DELETE would refuse.
 
 Seven CloudFormation stacks, in deploy order `00-network → 10-data → 20-platform →
 (40-ec2-pool) → (50-tts) → (60-engines) → 30-ingress`; the ones in parentheses are
-optional. The runbook's "Stack decomposition" says what each one owns.
+optional. The operator guide's [ECS layout page](../../guide/operate/aws-ecs/overview.md) says what each one owns.
 
 - **The ownership boundary**: the templates build **static infrastructure once**.
   Per-workspace resources are **created at runtime by the CP under deterministic names**
@@ -320,7 +320,7 @@ substrate underneath it.
   tag either it stops and names the workflow that makes it.
 - The actual procedures (`backup.sh`, `restore.sh`, upgrade, air-gapped) are the
   [compose runbook](../../deploy/compose/README.md) and, for ECS, the
-  [ecs runbook](../../deploy/aws/ecs/README.md) §Upgrade.
+  [ECS upgrade page](../../guide/operate/aws-ecs/upgrade.md).
 
 ## 9.8 Cost characteristics
 
@@ -472,3 +472,263 @@ resort, four minutes and no interruption because it is blue/green:
 ```sh
 aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-deployment
 ```
+
+## 9.10 The ECS runbook's developer sections
+
+These sections were in `deploy/aws/ecs/README.md` until its procedures moved to the operator
+guide (`guide/operate/aws-ecs/`). They are kept here verbatim because only someone changing
+Agent Fleet runs them, or because they are the history behind a rule the guide now states
+without its story: the prove-out sequence and E2E completion gate of the ECS adapter, the
+51,200-byte template incident and its round trip, the cold-start measurement, and the
+development deployment (`dev-deploy.sh`), which bakes `main` through this repository's
+workflows. Headings are one level down; links into `docs/log/` are plain text.
+
+
+### Prove-out sequence
+
+Runs from a host (or an Agent Fleet workspace — dogfooding) with **dedicated
+sandbox** credentials. AWS API calls are just HTTPS; the heavy compute (ECS tasks,
+RDS) lives in AWS, so this host's build/OOM limits don't gate it.
+
+- **S0** — `aws sts get-caller-identity` in the sandbox; pick a region.
+- **S1** — deploy `00-network.yaml`; confirm the deploy → `delete-stack` loop and
+  the standing cost (NAT is the main one, see below). **proven.**
+- **S1.5** — deploy `10-data.yaml` (EFS+RDS) and `20-platform.yaml` (ECR/cluster/SC
+  namespace/IAM); confirm and tear down. **proven.**
+- **S2** — with ECR up (from `20`), push the CP + Workspace images (§ECR push below).
+  ECS can't pull until they're in ECR.
+- **S3** — deploy `30-ingress.yaml`; the CP/Console service boots, CP-native
+  Google OAuth login works, RDS reachable.
+- **S4** — with `runtime_ecs.go` (stage 2) implemented, the CP **dynamically provisions a
+  workspace** (exercises the real adapter) → the E2E gate below.
+
+CFN authoring (S1–S3) and the stage-2 Go code are **parallel tracks**; they meet at S4.
+
+### E2E completion gate (frozen spec §20b.7.14)
+
+1. login (CP-native Google OAuth) → tenant → workspace Start (Service desired 1, RUNNING, healthz).
+2. session create → terminal attach (CP→Service Connect→Agent) → I/O.
+3. Stop (desired 0) → re-Start resumes home/claude state (EFS persists).
+4. P3-9 reaper: idle → stage-1 halt → stage-2 desired 0; no fire while attached.
+5. **no plaintext secret**: `describe-task-definition` shows the DEK only as an SSM
+   `valueFrom` ARN, never as an `environment` value.
+
+### A development deployment: `dev-deploy.sh`
+
+`update.sh` deploys a **released** tag. A deployment kept for development wants the
+opposite: whatever is on `main` right now, without cutting a version. That is
+`dev-deploy.sh` (docs/log/73), and it ends by calling `update.sh` — the pre-flight checks
+above are the reason, and writing a second copy of them for the dev path would mean the
+checks are what drifts.
+
+```bash
+./dev-deploy.sh --profile <p> --region <r>            # origin/main → the dev deployment
+./dev-deploy.sh --profile <p> --region <r> --dry-run  # just the plan
+```
+
+It names the tag (`<next patch>-dev-<sha8>`), bakes it through `dev-image.yml` (GHCR,
+never a release tag), copies it into ECR **index and all**, and moves `ImageTag`.
+Three things it decides for you:
+
+- **Whether the workspace image needs baking at all.** Only when `workspace/` changed
+  since the deployed tag; otherwise the workspace image is re-tagged inside ECR, which
+  copies no bytes. Baking it costs ~10 minutes of QEMU.
+- **That the golden snapshot does not have to be re-baked** when those bytes are
+  identical (docs/log/72 §72.6.4 paid 10 minutes and two slots for exactly that).
+- **That this is not somebody's live deployment.** It refuses any `Fqdn` but the dev
+  one unless `--allow-fqdn` says otherwise: moving `ImageTag` puts a "restart required"
+  badge in front of everyone running a workspace there.
+- **Whether the engine tools image has to be carried over.** `af-engine-tools` holds the
+  fetch sidecar and the ingest steps (ADR 0072), it is not part of `dev-image.yml`, and
+  only `standup.sh` used to copy it — so a dev deploy left the engines' fetch containers
+  with nothing to pull. Now: the tag the engines stack asks for is carried into ECR when
+  it is not there, and a per-commit tag is baked when `deploy/aws/ecs/engine-tools/` has
+  changed since the deployed commit. 🔴 It cannot set `EngineToolsImageTag` itself (it
+  only runs `update.sh` on the ingress stack), so in that second case it prints the tag
+  to set in `params/60-engines` — otherwise the deployment looks current and runs the
+  previous release's scripts.
+
+⚠️ It bakes **origin's** ref. Local commits that are not pushed are silently not in it.
+
+
+### The 51,200-byte wall (why a deploy can stop working without anyone touching it)
+
+CloudFormation refuses a template body over **51,200 bytes**; anything larger has to be
+handed over through S3. `cfn/30-ingress.yaml` crossed that line on **2026-09-01** (PR #277,
+RDS managed-password rotation: 50,191 → 54,681 bytes), and at that moment **every path that
+deploys it stopped working** — `standup.sh` (build it) and `update.sh` (every release,
+production included), because both call the same `cloudformation deploy --template-file`.
+
+It was found on 2026-09-02, by the first stand-up since. Three things kept it hidden:
+
+1. **The AWS CLI refuses on file size before it calls the API.** The failure is a CLI error,
+   not a CloudFormation one, so there is nothing in the stack events to find.
+2. **`update.sh` looked healthy.** It only ever overrides `ImageTag`, so people think of it
+   as a parameter change — but it passes the whole template on every run, so it was equally
+   broken.
+3. **The stand-up path had never been exercised end to end.** Creating `30-ingress` is the
+   only operation that had not been run since the growth.
+
+★ The general rule this is an instance of: **a deployment script is only verified along the
+paths somebody actually runs.** Green unit tests do not touch it, and a path that is skipped
+because "it obviously still works" is exactly the one that rots. That is why the fix is not
+just "big templates go to S3":
+
+- `env.sh`'s **`af_cfn_deploy` is the only entry point** to `cloudformation deploy`, and it
+  **measures the file on every call**. Remembering that "30-ingress is the big one" would
+  reproduce the incident on whichever template grows next.
+- The staging bucket lives in **20-platform** (created before 30-ingress, outlives it;
+  putting it in 30-ingress would need the bucket to deploy the stack that creates it).
+  Objects expire after 7 days.
+- `teardown.sh` **empties the bucket before deleting 20-platform** — CloudFormation cannot
+  delete a non-empty bucket, and a teardown that dies half-way is how "the create path is
+  never exercised" gets reproduced.
+- `deploy/local/ecs-lifecycle-stub-test.sh` cases **3b / 3c** run both of those on every CI
+  run, against a deliberately padded template. A fix nobody executes is the original bug.
+
+#### Back inside the wall (2026-09-04)
+
+The S3 route is the safety net, not the resting state — it needs a bucket that only exists
+once 20-platform is up, it constrains the teardown order, and its failures surface as CLI
+errors with nothing in the stack events. So `30-ingress.yaml` was put back under the limit:
+**54,681 → 40,493 bytes**, with no parameter, default or resource changed.
+
+What moved was prose. Parameter `Description:` bodies were 21,630 bytes — **40% of the
+template** — and they are the one part that does not have to reach the API to do its job;
+they now live in [`cfn/PARAMETERS.md`](../../deploy/aws/ecs/cfn/PARAMETERS.md), in full, with the template
+keeping a line or two per parameter.
+
+⚠️ **A YAML comment costs exactly what a `Description:` costs.** The limit is on the
+template *body*, so `#` is not a cheaper place to put a paragraph — moving one there saves
+zero bytes. Long explanations have to leave the file, not change syntax inside it.
+
+`ecs-lifecycle-stub-test.sh` case **3b-2** now fails the build when any `cfn/*.yaml` exceeds
+51,200 bytes. It is a hard failure on purpose: the growth in 2026-09-01 was silent for three
+months, and a warning would have been too. Crossing the wall again should be a deliberate
+edit to that constant, visible in the diff — while `af_cfn_deploy` keeps measuring at run
+time, so a template that does cross it still deploys instead of dying.
+
+#### 30-ingress may cross the wall again (2026-11-11, #3550)
+
+Staying inside the wall had run out of road: `30-ingress.yaml` sat 200 bytes under its
+50,176-byte test budget, the prose had already left (above), and every new parameter —
+a `Parameters` entry, a condition, an `Environment` line — costs 300–500 bytes, so each PR
+that added one failed CI and was trimmed by hand. Only nested stacks or a second template
+would make room without S3, and moving resources between stacks replaces them; the ALB and
+its listeners must not be replaced, so that is out.
+
+So the S3 route stopped being only a safety net **for this one template**: 30-ingress is
+always deployed after 20-platform's bucket exists (stand-up order 00 → 10 → 20 → images →
+40 → 30), which is the property the pre-bucket templates lack. What changed:
+
+- `cfn-cp-settings-env-test.py` budget for 30-ingress: 51,200 − 1,024 → **65,536** (about
+  14 KiB, thirty-odd parameters of room). Raising it again stays a deliberate edit.
+- case **3b-2** exempts 30-ingress from the 51,200 limit (the others keep it);
+  `cfn-template-size-test.py` keeps the pre-bucket templates 4 KiB under it.
+- Every hand-typed `aws cloudformation deploy` of 30-ingress (`--template-file`) in this
+  README, `PARAMETERS.md` and `release-ecr.sh`'s hint now carries
+  `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` (the AWS CLI refuses a direct upload over
+  51,200 bytes before calling the API), and `cfn-template-size-test.py` fails on one that
+  does not. `CFN_BUCKET` is the 20-platform output `CfnTemplatesBucket`:
+  `CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text)`.
+- The template itself did not change: no logical ID, parameter or resource moved, so an
+  existing stack updates in place.
+
+#### Round trip, measured (2026-09-02)
+
+Teardown → stand-up had never been done end to end. It has now, on the dev deployment, at
+`0.14.3-dev-ecbbcc59`:
+
+| Step | Result |
+|---|---|
+| `dev-image.yml`, `image=both`, 2 architectures | ~11 min; both images are `[amd64, arm64]` indexes |
+| `standup.sh` 00 → 10 → 20 → images → 40 → 30 | `30-ingress` went through S3, `CREATE_COMPLETE` |
+| CP boot | `metadata store: postgres`, `/readyz` 200 |
+| Agent, both architectures | golden bake booted real workspaces: `Agent healthy` 99 s (arm64) / 101 s (x86_64) |
+| CP → Agent | the Cloud Map fallback fired and succeeded: `did not resolve through the Service Connect alias -> using 10.20.x.x:7700 from Cloud Map` |
+| `teardown.sh` | 5 stacks gone; sweep and an independent count both show 0 stacks / 0 NAT / 0 RDS / 0 ALB / 0 EC2 / 0 EFS / 0 ECR |
+
+⚠️ **Check `/readyz`, not `/healthz`.** `/healthz` answers 200 with a dead database — that is
+how the RDS rotation outage stayed silent for so long. `/readyz` is the one that touches it.
+
+Two rough edges found on the way, **both since closed**:
+
+- **`standup.sh`'s preflight compares the capture against the templates** (parameters with
+  no `Default` must be present). It previously checked only that the capture *files existed*,
+  so a capture older than the templates would fail **after** 00–20 were already built — the
+  most expensive moment to find out. It no longer counts those parameters by a fixed
+  indentation either: it takes the depth of the first key under `Parameters:`, and **says so
+  when it reads none at all**. A parser that quietly reports "0 required" is the same shape
+  as the wall above — a check that is not running, with nothing to see.
+- **`teardown.sh`'s bucket-emptying step prints why it failed.** It used to swallow stderr
+  (`>/dev/null 2>&1 || echo "(skip: …)"`), so "the bucket was already gone" and "it could
+  not be emptied" looked identical — and the next thing to fail is the 20-platform delete,
+  by which point the reason has been thrown away.
+
+### Known behavior: a cold Start answers `starting`, not `running`
+
+A cold workspace Start pays a full image pull on every launch (Fargate keeps no
+image cache between tasks). Measured end-to-end in the sandbox (2026-08-15,
+`docs/log/62` §62.9): **126s on a fresh home, 128–218s on a warm one** — the earlier
+"~100s" was optimistic. `POST
+/api/workspace/start` does **not** wait for that: it returns as soon as the ECS
+service sits at `desiredCount 1`, with the live state — normally `starting`.
+Poll `GET /api/workspace` for the transition to `running`; the Console already
+does (4s, and it walks the cold start to `running` without a reload).
+
+Older builds blocked the request on the Agent readiness wait
+(`AF_ECS_START_TIMEOUT_SEC`, then 90s) and so outlived the ALB's **60s** idle
+timeout — the *HTTP request* died with a **504** while the workspace converged
+fine behind it. Fixed in `control-plane/runtime_ecs.go` (`watchReady`): the
+readiness poll now runs in the background for a log line only
+(`ecs start: service <name> Agent healthy <n>s after Start`), on a budget
+deliberately longer (default **300s**) than any request may take. `30-ingress.yaml`
+now spells the ALB's `idle_timeout` out at its default 60s so the ceiling is
+visible. 🚧 Verified by unit tests only — not re-run against a live ECS stack.
+
+Note `running` here means the ECS **task** is RUNNING, which is a moment before
+the entrypoint has finished and the Agent answers. A create issued in that window
+still gets `502 workspace agent unreachable`; retry.
+
+**The split has been measured** (2026-08-15,
+`docs/log/62-ecs-start-latency.md` §62.9–62.10),
+and the answer was not the image. A warm-home Stop→Start costs **~101s**: **4–8s**
+for ECS to create the task, **16s** provision (ENI attach), **35s** image pull
+(918 MiB compressed, 34 layers), **~25s** EFS mount + container create, **21s**
+entrypoint. Image pull is ~35% of that — under the 40% decision gate and under 40s
+absolute — so SOCI lazy loading was **rejected**.
+
+⚠️ **Benchmarking caveat, learned the hard way**: restarting a workspace *right
+after* stopping it (within a minute or two) makes ECS take **40–143s** just to
+create the task, because the previous task is still being torn down while the new
+deployment lands on top of it. That is a property of the measurement loop, not of
+production (a workspace is stopped by the reaper and started minutes-to-hours
+later). **State the stop→start gap whenever you quote a restart number.**
+Re-measure the same way if any of this changes:
+
+```bash
+# image pull window (and the surrounding task lifecycle)
+aws ecs describe-tasks --cluster <cluster> --tasks <task-arn> \
+  --query 'tasks[0].{created:createdAt,pullStart:pullStartedAt,pullStop:pullStoppedAt,started:startedAt}'
+# entrypoint cost (boot-install of the pinned CLIs on a fresh home is NOT a pull)
+aws logs tail <ws-log-group> --since 10m
+```
+
+Note the workspace image pushed here is the **lean** variant
+(`BAKE_AGENT_CLIS=0`), so a *fresh home* additionally pays a one-time
+npm/GitHub boot-install inside the entrypoint (~60s for all CLIs, measured in
+`workspace/entrypoint.sh`). That cost is network, not image pull, and it does
+not recur — `~/.local` persists on EFS. So measure **two** scenarios and judge
+on the second: a first Start on an empty home (pull + boot-install) and a
+Stop→Start on a warm home (pull only). The warm one is what scale-to-zero pays
+every time.
+
+To isolate the pull with no EFS/entrypoint noise, register a throwaway task
+definition for the same image with `entryPoint` overridden (`run-task
+--overrides` can override `command` but **not** `entryPoint`, and
+`entrypoint.sh` ends in `exec "$@"`, so overriding the command alone still runs
+the whole entrypoint). Every `run-task` is cold by construction — Fargate keeps
+no image cache between tasks. The full recipe, the delta arithmetic and the
+decision gate are in
+`docs/log/62-ecs-start-latency.md` §62.7
+(conclusion on SOCI: conditional yes, gated on this measurement).

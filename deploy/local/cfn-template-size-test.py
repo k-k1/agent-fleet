@@ -45,23 +45,27 @@ def check(name, size):
 
 
 def ingress_commands():
-    """(file, line, command text) for each `--template-file ... 30-ingress.yaml` command under deploy/aws/ecs.
+    """(file, line, command text) for each `--template-file ... 30-ingress.yaml` command under
+    deploy/aws/ecs and guide/operate/aws-ecs (the operator guide's ECS pages, where the runbook's
+    procedures live).
 
     A command is a line joined with its backslash continuations, so the flag and the file name
     may sit on different lines. `echo "DRY: ..."` lines are skipped: they print a plan for a
     human, and the real call goes through af_cfn_deploy, which adds the bucket by itself.
     """
-    root = os.path.join(HERE, "..", "aws", "ecs")
+    repo = os.path.join(HERE, "..", "..")
+    roots = [os.path.join(HERE, "..", "aws", "ecs"), os.path.join(repo, "guide", "operate", "aws-ecs")]
     out = []
-    for dirpath, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in ("harness", "comfyui", "engine-tools")]
-        for fn in files:
-            if not fn.endswith((".md", ".sh")):
-                continue
-            path = os.path.join(dirpath, fn)
-            with open(path, encoding="utf-8") as fh:
-                lines = fh.read().split("\n")
-            out += [(os.path.relpath(path, root), n, t) for n, t in ingress_blocks(lines)]
+    for root in roots:
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in ("harness", "comfyui", "engine-tools")]
+            for fn in files:
+                if not fn.endswith((".md", ".sh")):
+                    continue
+                path = os.path.join(dirpath, fn)
+                with open(path, encoding="utf-8") as fh:
+                    lines = fh.read().split("\n")
+                out += [(os.path.relpath(path, repo), n, t) for n, t in ingress_blocks(lines)]
     return out
 
 

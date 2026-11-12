@@ -48,7 +48,7 @@ After you upgrade to the release that moves the tokens out of the task definitio
 3. In a quiet window, run `af-cp advance-bridge-epochs --yes`. It advances the bridge and internal git token epochs once
 4. Restart the running workspaces. The ones showing "**Restart needed**" are the ones to restart
 
-On ECS, run `af-cp` as a one-off task of the Control Plane's task definition. The command to paste is in the [ECS runbook](../../../deploy/aws/ecs/README.md#running-af-cp-commands-against-the-control-planes-database).
+On ECS, run `af-cp` as a one-off task of the Control Plane's task definition. The command to paste is in [Run af-cp commands against the Control Plane's database](../aws-ecs/options.md#run-af-cp-commands-against-the-control-planes-database).
 
 ## Rotate the signing keys
 

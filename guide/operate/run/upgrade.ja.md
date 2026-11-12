@@ -21,7 +21,7 @@ source_of_truth: "`deploy/compose/README.md` と `deploy/aws/ecs/update.sh`（�
 | 形態 | 手順書 |
 |---|---|
 | Docker Compose | [compose の手順書の「Upgrade」](../../../deploy/compose/README.md#upgrade) |
-| ECS（`ecs` / `ecs-ec2`） | [ECS の手順書の「Upgrade (runbook)」](../../../deploy/aws/ecs/README.md#upgrade-runbook) |
+| ECS（`ecs` / `ecs-ec2`） | [アップグレードする（ECS）](../aws-ecs/upgrade.ja.md) |
 | Kubernetes | [Kubernetes の手順書の「Upgrading the CP」](../../../deploy/kubernetes/README.md#upgrading-the-cp) |
 
 ## 上げる前に
@@ -45,8 +45,8 @@ source_of_truth: "`deploy/compose/README.md` と `deploy/aws/ecs/update.sh`（�
 | 気をつけること | 起きること |
 |---|---|
 | 版によって、あるスタックを先に更新する必要がある | `update.sh` が最初に確かめ、何にも触れずに止まります。単独で実行する `aws cloudformation deploy` のコマンドを表示するので、実行してから `update.sh` をもう一度実行します |
-| データスタックは `update.sh` では更新されない | `Persistence=retain` で日次の EFS バックアップがない配備を、`update.sh` が読み取りだけで見つけて警告し、変更セットのコマンドを表示します。手順は手順書の手順 1a です |
-| ネットワークスタック（`00-network`）も `update.sh` では更新されない | 手で更新します。新しいテンプレートを既定値のまま入れると、その S3 エンドポイントが、まだ再起動していないワークスペースの S3 リクエストをすべて拒否します（AccessDenied）。動いているワークスペースをすべて再起動するメンテナンスの時間を取ってください。手順は手順書の「Upgrading from v0.34.x」です |
+| データスタックは `update.sh` では更新されない | `Persistence=retain` で日次の EFS バックアップがない配備を、`update.sh` が読み取りだけで見つけて警告し、変更セットのコマンドを表示します。手順は [EFS のバックアップがあるか確かめる](../aws-ecs/upgrade.ja.md#efs-のバックアップがあるか確かめる) にあります |
+| ネットワークスタック（`00-network`）も `update.sh` では更新されない | 手で更新します。新しいテンプレートを既定値のまま入れると、その S3 エンドポイントが、まだ再起動していないワークスペースの S3 リクエストをすべて拒否します（AccessDenied）。動いているワークスペースをすべて再起動するメンテナンスの時間を取ってください。手順は [v0.34.x から上げる](../aws-ecs/upgrade.ja.md#v034x-から上げる) にあります |
 | `ecs-ec2` で、リリースがスロットの起動テンプレートを変えた | 今あるスロットには、入れ替えたときにしか届きません（[スロットを入れ替える・止める](../aws-ecs/slot-maintenance.ja.md#古いスロット)） |
 
 ### EFS バックアップがないという通知
