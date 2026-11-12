@@ -197,8 +197,8 @@ func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident s
 		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
 		return
 	}
-	detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t cancelled=%d cancel_failed=%d forced=%t deregistered=%t",
-		orDash(res.Workspace), orDash(res.PreviousState), res.AgentConnected, res.SSMOnline, body.OverrideHealthy,
+	detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t predicate=%s cancelled=%d cancel_failed=%d forced=%t deregistered=%t",
+		orDash(res.Workspace), orDash(res.PreviousState), res.AgentConnected, res.SSMOnline, body.OverrideHealthy, orDash(res.Predicate),
 		res.CancelledCommands, res.CancelFailed, res.Forced, res.Deregistered)
 	var aerr *APIError
 	switch {
@@ -215,6 +215,8 @@ func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident s
 		aerr = &APIError{http.StatusConflict, "slot_started_again", err.Error()}
 	case errors.Is(err, runtime.ErrSlotHealthy):
 		aerr = &APIError{http.StatusConflict, "slot_healthy", err.Error()}
+	case errors.Is(err, runtime.ErrSlotRescueActive):
+		aerr = &APIError{http.StatusConflict, "slot_rescue_active", err.Error()}
 	default:
 		aerr = internalErr(err)
 	}

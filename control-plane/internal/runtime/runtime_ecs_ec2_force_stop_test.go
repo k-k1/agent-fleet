@@ -18,7 +18,8 @@ import (
 func wedgedSlot(t *testing.T) *ec2Harness {
 	t.Helper()
 	h := newEC2Harness(t)
-	h.ec2.addSlot("i-wedge", "ap-northeast-1a", "m7i.large", true, false)
+	inst := h.ec2.addSlot("i-wedge", "ap-northeast-1a", "m7i.large", true, false)
+	inst.LaunchTime = aws.Time(time.Now().Add(-2 * time.Hour))
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.attach("vol-1", "i-wedge", time.Now())
 	h.ci.registered["i-wedge"] = false
@@ -40,10 +41,11 @@ func TestForceStopSlotRefusesAHealthySlotUnlessOverridden(t *testing.T) {
 	if len(h.ec2.stopForce) != 0 || ec2TagValue(h.ec2.instances["i-wedge"].Tags, EC2TagRole) != ec2RoleSlot {
 		t.Fatalf("a refused force-stop touched the slot: stops=%v calls=%v", h.ec2.stopForce, h.ec2.calls)
 	}
-	// Half a signal is still healthy: ECS answers, SSM does not.
+	// Half a signal is not the dark predicate (it needs both legs silent), and a connected
+	// slot with nothing wrong in ECS is not wedged either: only the override stops it.
 	h.ssmc.online["i-wedge"] = false
-	if _, err := f.ForceStopSlot(ctx, "i-wedge", false); err != nil {
-		t.Fatalf("ECS connected but SSM dark is wedged enough: %v", err)
+	if _, err := f.ForceStopSlot(ctx, "i-wedge", false); !errors.Is(err, ErrSlotHealthy) {
+		t.Fatalf("ECS connected but SSM dark met neither predicate: %v", err)
 	}
 }
 
@@ -112,7 +114,15 @@ func TestForceStopSlotWedgedFlow(t *testing.T) {
 	if res.StoppingTask != "STOPPING" {
 		t.Fatalf("stopping task = %q, want STOPPING", res.StoppingTask)
 	}
-	if len(h.ec2.calls) == 0 || !strings.HasPrefix(h.ec2.calls[len(h.ec2.calls)-1], "StopInstances") {
+	// The stop is the last call on the box; only the tag bookkeeping of the token's
+	// finalizer follows it.
+	last := ""
+	for _, c := range h.ec2.calls {
+		if !strings.HasPrefix(c, "CreateTags") && !strings.HasPrefix(c, "DeleteTags") {
+			last = c
+		}
+	}
+	if !strings.HasPrefix(last, "StopInstances") {
 		t.Fatalf("the stop must come last: %v", h.ec2.calls)
 	}
 	// The member's next Start wakes this same, stopped slot through the ordinary path.
@@ -311,12 +321,13 @@ func TestForceStopSlotDoesNotDeregisterAfterAStartLanded(t *testing.T) {
 	ctx := context.Background()
 	h := wedgedSlot(t)
 	h.ec2.giveTaskENI("i-wedge")
-	h.ssmc.onList = func() {
-		h.ssmc.onList = nil
+	// After the token is taken and before any destructive call, no lock held.
+	hookAt("prepared", func() {
 		if err := h.rt.Start(ctx); err != nil {
 			t.Errorf("Start: %v", err)
 		}
-	}
+	})
+	defer func() { rescueStepHook = nil }()
 	_, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
 	if !errors.Is(err, ErrSlotStartedAgain) {
 		t.Fatalf("ForceStopSlot = %v, want ErrSlotStartedAgain", err)

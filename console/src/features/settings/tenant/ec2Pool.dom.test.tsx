@@ -537,6 +537,22 @@ describe("replacement reservations", () => {
       expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-hot/force-stop", "POST", { override_healthy: true });
     });
 
+    // The server's gate is the sweeper's predicates: a registered slot already seen wedged needs
+    // no override, so the dialog must not ask for one.
+    it("on a registered slot that is seen wedged, shows no acknowledgement and sends no override", async () => {
+      api.mockResolvedValue({
+        ...WEDGED,
+        slots: WEDGED.slots.map((s) => (s.instance_id === "i-hot" ? { ...s, wedged_since: new Date(Date.now() - 12 * 60000).toISOString(), wedged_rung: "observing" } : s)),
+      });
+      apiJSON.mockResolvedValue({ instance_id: "i-hot", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-hot")).find((b) => b.textContent === "停止（強制）")!.click());
+      expect(document.querySelector(".confirm input[type=checkbox]")).toBeNull();
+      const a = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => a[a.length - 1].click());
+      expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-hot/force-stop", "POST", {});
+    });
+
     it("on an unregistered slot, shows no acknowledgement and sends no override", async () => {
       api.mockResolvedValue(WEDGED);
       apiJSON.mockResolvedValue({ instance_id: "i-wedge", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });

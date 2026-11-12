@@ -241,6 +241,9 @@ INVENTORY = [
     # deregisterContainerInstance, which is already a call site of the sweeper.
     ("internal/runtime/runtime_ecs_ec2_dark_rescue_steps.go", "rescueStopStage", "StopInstances", 1, [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
+    # The operator force-stop's stop, sent under the rescue token (#3966).
+    ("internal/runtime/runtime_ecs_ec2_force_stop_owned.go", "rescueStopSend", "StopInstances", 1, [
+        request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
     ("internal/runtime/runtime_ecs_ec2_dark_rescue_steps.go", "rescueDetachStage", "DetachVolume", 1, [
         request("ec2:DetachVolume", [ec2("instance", "i-slot", SLOT), ec2("volume", "vol-home", HOME)])]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "backOffReservedSlot", "DetachVolume", 1, [

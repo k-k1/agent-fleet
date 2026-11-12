@@ -540,7 +540,10 @@ export function PoolView() {
                             variant="danger"
                             onClick={() => {
                               setStopErr("");
-                              setStopOverride(s.registered);
+                              // A registered slot the sweeper has seen wedged meets the server's wedged
+                              // predicate without the override; any other registered slot answers its
+                              // health check and needs it.
+                              setStopOverride(s.registered && !s.wedged_since);
                               setStopAck(false);
                               setStopping(s);
                             }}
