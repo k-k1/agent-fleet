@@ -329,7 +329,7 @@ those variables in for one `exec`:
 - **`issue attachment add|list|download|delete`** (#3945; jira-cli 1.7.0 has no attachment
   command): routed the same way to `workspace-agent jira-attachment`
   (`internal/jirax/jira_attachment.go`), stdin closed, refused under `--debug`. A value of `--name` /
-  `-o` that starts with `-` (`-o -` aside) is refused: the wrapper picks the credential from its own
+  `-o` that starts with `-` (a lone `-` aside) is refused: the wrapper picks the credential from its own
   argv scan, which reads `--` as the end of the flags, so `--name -- --config other.yml` would
   otherwise upload to this connection's Jira. `add` POSTs each file
   as its own `multipart/form-data` request to `/rest/api/3/issue/KEY/attachments` with

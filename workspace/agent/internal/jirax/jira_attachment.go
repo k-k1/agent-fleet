@@ -66,7 +66,7 @@ func parseJiraAttachmentArgs(args []string) (jiraAttachmentArgs, error) {
 	var pos []string
 	valued := map[string]bool{"-c": true, "--config": true, "-p": true, "--project": true,
 		"--name": true, "-o": true, "--output": true}
-	// A value of --name / -o that looks like a flag is refused, "-o -" aside: the wrapper chose the
+	// A value of --name / -o that starts with "-" is refused, a lone "-" aside: the wrapper chose the
 	// credential from its own reading of argv, which takes "--" as the end of the flags and does
 	// not know these flags take a value, so `--name -- --config other.yml` would send the file
 	// to this connection's Jira although the caller named another config.

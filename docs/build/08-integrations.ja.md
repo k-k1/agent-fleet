@@ -300,7 +300,7 @@ Jira は git でなく作業項目インボックス
   「そのコマンドはない」と答える。
 - **`issue attachment add|list|download|delete`**（#3945。jira-cli 1.7.0 には添付のコマンドがない）:
   同じ形で `workspace-agent jira-attachment`（`internal/jirax/jira_attachment.go`）へ渡す。標準入力は閉じ、
-  `--debug` では断る。`-` で始まる `--name` / `-o` の値は断る（`-o -` は除く）。ラッパーは自分の argv の読みで
+  `--debug` では断る。`-` で始まる `--name` / `-o` の値は断る（単独の `-` は除く）。ラッパーは自分の argv の読みで
   資格情報を選び、そこでは `--` がフラグの終わりなので、断らないと `--name -- --config other.yml` がこの接続の
   Jira に添付してしまう。`add` はファイルごとに 1 回、`/rest/api/3/issue/KEY/attachments` へ
   `multipart/form-data` を POST する（`X-Atlassian-Token: no-check`、正確な `Content-Length` 付き。
