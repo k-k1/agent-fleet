@@ -65,6 +65,8 @@ It leaves you at the `cp .env.example .env` step of step 1 below. The steps on t
 
 ## 1. Configure and start from source
 
+Create `DATA_DIR` so that the user the Control Plane runs as (uid 1000, `user: "1000:1000"` in `docker-compose.yml`) can write it. An ordinary user cannot create the default `/srv/agent-fleet/data`, so 4) below creates it with `sudo` and hands it to 1000:1000.
+
 ```bash
 cd deploy/compose
 cp .env.example .env
@@ -75,9 +77,12 @@ head -c 32 /dev/urandom | base64   # -> AF_COOKIE_SECRET
 getent group docker | cut -d: -f3  # -> DOCKER_GID
 # 3) fill in PUBLIC_DOMAIN / PUBLIC_BASE_URL / your IdP (GOOGLE_OAUTH_* and/or
 #    AF_OIDC_*) / AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR in .env
-mkdir -p "$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
+# 4) create DATA_DIR owned by uid 1000, the user the CP runs as (the default
+#    /srv/agent-fleet/data needs sudo):
+DATA_DIR="$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
+sudo mkdir -p "$DATA_DIR" && sudo chown 1000:1000 "$DATA_DIR"
 
-# 4) build the per-user workspace image (compose builds only the CP; the CP
+# 5) build the per-user workspace image (compose builds only the CP; the CP
 #    launches workspaces from WS_IMAGE, agent-fleet/workspace:dev by default):
 docker build -t agent-fleet/workspace:dev ../../workspace
 
@@ -87,12 +92,11 @@ docker compose logs -f cp
 
 - Store `AF_MASTER_KEY` in a password vault the moment you generate it. It is in neither `DATA_DIR` nor the backups ([Handle the deployment keys](../secure/deployment-keys.md))
 - A wrong `DOCKER_GID` gives "permission denied" on the docker socket
-- `DATA_DIR` defaults to `/srv/agent-fleet/data`, which an ordinary user cannot create, so the `mkdir` above fails there. The Control Plane writes as uid 1000 (`user: "1000:1000"` in `docker-compose.yml`), so a directory created as root must be handed to 1000:1000, e.g. `sudo mkdir -p /srv/agent-fleet/data && sudo chown 1000:1000 /srv/agent-fleet/data`
 - `.env.example` itself explains each variable. What to choose is in steps 1–4 of [Install Agent Fleet](../install.md)
 
 ## 2. Start from the published release images
 
-To run a published release instead of building, leave `REGISTRY`, `VERSION` and `WS_IMAGE` at the values the bundle ships with, skip 4) of step 1, and pull.
+To run a published release instead of building, leave `REGISTRY`, `VERSION` and `WS_IMAGE` at the values the bundle ships with, skip 5) of step 1 (the image build), and pull.
 
 ```bash
 docker compose pull                                  # cp + caddy

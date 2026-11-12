@@ -27,7 +27,7 @@ This is Docker Compose on one VM, not the ECS deployment. Compare it with ECS in
 |---|---|
 | The AWS CLI and IAM rights to deploy | EC2, Route 53 and CloudFormation. No SSM write and no IAM capabilities are needed |
 | A Route 53 public hosted zone | If the domain is not delegated to that zone, see [The DNS caveat](#the-dns-caveat) below |
-| Docker on your machine | Builds the release bundle and images |
+| Docker on an x86_64 (amd64) machine | Builds the release bundle and images. The instance is amd64, so images built on an arm64 machine such as an Apple Silicon Mac do not run on it |
 | An IdP client for sign-in | [Set up how people sign in](signin/overview.md) |
 
 ## 1. Create the stack
@@ -87,6 +87,9 @@ scp -i deploy/aws/ec2-single/agent-fleet-test-key \
 ```
 
 `0.1.0` is an example; use the version you build. `--save` writes, besides the bundle (`agent-fleet-<version>.tar.gz`), a tar of the images saved with `docker save` (`agent-fleet-images-<version>.tar.gz`).
+
+> [!IMPORTANT]
+> **Run this on an x86_64 (amd64) machine.** `--save` writes the images for the architecture of the machine it runs on only (it refuses several architectures). The template's AMI is amd64 Ubuntu, so images built on an arm64 machine do not run on the instance.
 
 ## 3. Start it on the instance
 

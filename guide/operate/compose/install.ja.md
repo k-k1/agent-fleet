@@ -65,6 +65,8 @@ SAML しかない IdP（HENNGE One・TrustLogin・CloudGate など）は、oauth
 
 ## 1. 設定を書いてソースから起動する
 
+`DATA_DIR` は、Control Plane が動くユーザー（uid 1000、`docker-compose.yml` の `user: "1000:1000"`）が書けるようにして作ります。既定の `/srv/agent-fleet/data` はふつうのユーザーには作れないので、下の 4) のとおり `sudo` で作って所有者を 1000:1000 にします。
+
 ```bash
 cd deploy/compose
 cp .env.example .env
@@ -75,9 +77,12 @@ head -c 32 /dev/urandom | base64   # -> AF_COOKIE_SECRET
 getent group docker | cut -d: -f3  # -> DOCKER_GID
 # 3) fill in PUBLIC_DOMAIN / PUBLIC_BASE_URL / your IdP (GOOGLE_OAUTH_* and/or
 #    AF_OIDC_*) / AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR in .env
-mkdir -p "$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
+# 4) create DATA_DIR owned by uid 1000, the user the CP runs as (the default
+#    /srv/agent-fleet/data needs sudo):
+DATA_DIR="$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
+sudo mkdir -p "$DATA_DIR" && sudo chown 1000:1000 "$DATA_DIR"
 
-# 4) build the per-user workspace image (compose builds only the CP; the CP
+# 5) build the per-user workspace image (compose builds only the CP; the CP
 #    launches workspaces from WS_IMAGE, agent-fleet/workspace:dev by default):
 docker build -t agent-fleet/workspace:dev ../../workspace
 
@@ -87,12 +92,11 @@ docker compose logs -f cp
 
 - `AF_MASTER_KEY` は、作ったその場でパスワード金庫に控えます。`DATA_DIR` にもバックアップにも入りません（[配備の鍵を扱う](../secure/deployment-keys.ja.md)）
 - `DOCKER_GID` を間違えると、docker のソケットで permission denied になります
-- `DATA_DIR` の既定は `/srv/agent-fleet/data` で、ふつうのユーザーは `/srv` の下に作れないので、上の `mkdir` は失敗します。Control Plane は uid 1000（`docker-compose.yml` の `user: "1000:1000"`）で書くので、root で作ったら所有者を 1000:1000 にします。例: `sudo mkdir -p /srv/agent-fleet/data && sudo chown 1000:1000 /srv/agent-fleet/data`
 - 各変数の意味は `.env.example` 自体に書いてあります。何を選ぶかは [インストールする](../install.ja.md) の手順 1〜4 です
 
 ## 2. 公開リリースのイメージで起動する
 
-ビルドせずに公開リリースを動かすときは、`REGISTRY`・`VERSION`・`WS_IMAGE` をバンドルに入っている値のままにし、手順 1 の 4) を飛ばしてイメージを取得します。
+ビルドせずに公開リリースを動かすときは、`REGISTRY`・`VERSION`・`WS_IMAGE` をバンドルに入っている値のままにし、手順 1 の 5)（イメージのビルド）を飛ばしてイメージを取得します。
 
 ```bash
 docker compose pull                                  # cp + caddy

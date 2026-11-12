@@ -27,7 +27,7 @@ ECS の配備ではなく、1 台の VM の上の Docker Compose です。ECS �
 |---|---|
 | AWS CLI と、デプロイする IAM の権限 | EC2・Route 53・CloudFormation。SSM の書き込みも IAM の capability も要りません |
 | Route 53 のパブリックホストゾーン | ドメインがそのゾーンに委任されていないときは、下の [DNS の注意](#dns-の注意) |
-| 手元の Docker | リリースのバンドルとイメージを作ります |
+| x86_64（amd64）のマシンの Docker | リリースのバンドルとイメージを作ります。インスタンスは amd64 なので、Apple Silicon などの arm64 のマシンで作ったイメージは動きません |
 | サインイン用の IdP のクライアント | [サインインの方法を設定する](signin/overview.ja.md) |
 
 ## 1. スタックを建てる
@@ -87,6 +87,9 @@ scp -i deploy/aws/ec2-single/agent-fleet-test-key \
 ```
 
 `0.1.0` は例です。作る版に置き換えます。`--save` を付けると、バンドル（`agent-fleet-<版>.tar.gz`）に加えて、イメージを `docker save` した tar（`agent-fleet-images-<版>.tar.gz`）もできます。
+
+> [!IMPORTANT]
+> **x86_64（amd64）のマシンで実行してください。** `--save` は、実行したマシンのアーキテクチャのイメージだけを書き出します（複数のアーキテクチャを指定すると `--save` は断ります）。テンプレートの AMI は amd64 の Ubuntu なので、arm64 のマシンで作ったイメージはインスタンスで動きません。
 
 ## 3. インスタンスで起動する
 
