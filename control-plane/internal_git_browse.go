@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net/http"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -83,7 +82,7 @@ func (a gitServerAPI) browseCtx(w http.ResponseWriter, r *http.Request, mv store
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_path", "invalid path"})
 		return "", "", "", false
 	}
-	bareDir = filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, name+".git")
+	bareDir = datalayout.GitRepoDir(a.dataRoot, mv.TenantSlug, name)
 	return bareDir, ref, path, true
 }
 

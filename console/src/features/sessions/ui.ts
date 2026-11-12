@@ -13,6 +13,7 @@ interface SessionUI {
   archivedOpen: boolean; // the archive browser
   archivedDir: string | null; // …scoped to one working copy's folder, when opened from its row
   cleanupOpen: boolean; // the cleanup panel (docs/log/32)
+  reclaimOpen: boolean; // the confirm behind the low-disk notice's "Clean regenerable items…" (#3880)
   budget: Session | null; // spend budget / "raise and resume" target (#1054)
   moveFromLimit: boolean; // …opened from the mirror's limit banner (quota-left kinds first)
   move: Session | null; // move to another agent kind, and its retry / cancel / reopen (ADR 0115)
@@ -21,6 +22,7 @@ interface SessionUI {
   openSsmResume(name: string, force: boolean): void;
   openArchived(dir?: string): void;
   openCleanup(): void;
+  openReclaim(): void;
   openBudget(s: Session): void;
   openMove(s: Session, fromLimit?: boolean): void;
   close(): void; // clears every session dialog
@@ -33,6 +35,7 @@ export const useSessionUI = create<SessionUI>((set) => ({
   archivedOpen: false,
   archivedDir: null,
   cleanupOpen: false,
+  reclaimOpen: false,
   budget: null,
   move: null,
   moveFromLimit: false,
@@ -41,8 +44,9 @@ export const useSessionUI = create<SessionUI>((set) => ({
   openSsmResume: (name, force) => set({ ssmResume: { name, force } }),
   openArchived: (dir) => set({ archivedOpen: true, archivedDir: dir || null }),
   openCleanup: () => set({ cleanupOpen: true }),
+  openReclaim: () => set({ reclaimOpen: true }),
   openBudget: (s) => set({ budget: s }),
   openMove: (s, fromLimit = false) => set({ move: s, moveFromLimit: fromLimit }),
   close: () =>
-    set({ rename: null, branchRename: null, ssmResume: null, archivedOpen: false, archivedDir: null, cleanupOpen: false, budget: null, move: null, moveFromLimit: false }),
+    set({ rename: null, branchRename: null, ssmResume: null, archivedOpen: false, archivedDir: null, cleanupOpen: false, reclaimOpen: false, budget: null, move: null, moveFromLimit: false }),
 }));

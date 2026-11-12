@@ -1,8 +1,10 @@
 package gitfsck
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -218,6 +220,23 @@ func TestEnsureHonoursIncludedOverride(t *testing.T) {
 	for k, want := range map[string]string{"receive.fsckObjects": "false", "receive.fsck.badTimezone": "error", "receive.fsck.badDate": "warn"} {
 		if got := fsckMust(t, bare, "", "config", "--includes", "--get", k); got != want {
 			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+}
+
+// The startup pass states its count even when it found nothing, so silence can no
+// longer mean "ran and scanned the wrong tree" (#3926).
+func TestRunLogsZeroCount(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	for _, root := range []string{filepath.Join(t.TempDir(), "absent"), t.TempDir()} {
+		buf.Reset()
+		if ok, failed := Run(context.Background(), root); ok != 0 || failed != 0 {
+			t.Fatalf("Run = %d,%d", ok, failed)
+		}
+		if !strings.Contains(buf.String(), "fsck config checked on 0 repo(s), 0 failed") {
+			t.Fatalf("log = %q", buf.String())
 		}
 	}
 }

@@ -100,7 +100,7 @@ func (e *fsckConfigError) Error() string { return "set " + e.key + ": " + e.err.
 // one broken directory must never keep the Control Plane from starting. It returns
 // the number of repositories visited and failed.
 func Backfill(ctx context.Context, dataRoot string) (ok, failed int) {
-	root := filepath.Join(dataRoot, datalayout.GitDir)
+	root := datalayout.GitRoot(dataRoot)
 	tenants, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -135,5 +135,14 @@ func Backfill(ctx context.Context, dataRoot string) (ok, failed int) {
 			ok++
 		}
 	}
+	return ok, failed
+}
+
+// Run is the startup pass: Backfill, then one log line that is printed even when no
+// repository was found. Silence is indistinguishable from a pass that never ran or
+// scanned the wrong tree (#3926). The line names no path.
+func Run(ctx context.Context, dataRoot string) (ok, failed int) {
+	ok, failed = Backfill(ctx, dataRoot)
+	log.Printf("internal-git: fsck config checked on %d repo(s), %d failed", ok, failed)
 	return ok, failed
 }

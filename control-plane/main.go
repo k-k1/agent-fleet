@@ -544,11 +544,8 @@ func main() {
 
 	// receive.fsckObjects on existing internal repositories (#3493). Background and
 	// failure-tolerant: a broken repository is logged and skipped, never fatal.
-	go func() {
-		if ok, failed := gitfsck.Backfill(context.Background(), mgr.dataRoot); ok > 0 || failed > 0 {
-			log.Printf("internal-git: fsck config checked on %d repo(s), %d failed", ok, failed)
-		}
-	}()
+	// The root is read here, not inside the goroutine, and is the one the git server serves from.
+	go gitfsck.Run(context.Background(), mgr.dataRoot)
 
 	// Internal git maintenance (P2/P3): repack bare repos (`git gc --auto`) and prune
 	// orphaned LFS objects, sequential — cheap on the shared host. Default 24h;

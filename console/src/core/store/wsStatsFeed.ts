@@ -18,11 +18,14 @@
 // mounted AND the push stream is down, because on ecs-ec2 every GET /api/workspace/stats is
 // a DescribeVolumes + DescribeServices (the adapter's State()), and the events tick is
 // already paying for one of those every 4 seconds — a second poller doubles that per user.
-import { useSyncExternalStore } from "react";
+import { createElement, useSyncExternalStore } from "react";
 import { api, getTenant } from "../api/client.ts";
 import { onPush, pushHealthy, pushPaused } from "../push/events.ts";
 import { toast } from "../../ui/toast.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { pushToastLog } from "../../lib/toastLog.ts";
+import { HomeLowNotice } from "../../features/sessions/HomeLowNotice.tsx";
+import { loadCachedWalk, reclaimEstimate } from "./homeReclaim.ts";
 import { nextHomeDiskPressure } from "./homeDiskPressure.ts";
 
 /** The Agent's `mem_pressure` axis for one sample (ADR 0120 phase 0, measure only). `available:
@@ -126,13 +129,18 @@ function noticeHomePressure(d: any): void {
   const next = nextHomeDiskPressure(homePressure, d.disk_used, d.disk_total);
   if (next && !homePressure) {
     const gib = (n: number) => (n / 1024 ** 3).toFixed(1);
+    // The reclaimable figure comes from a walk that already finished (see homeReclaim.ts): ask for
+    // the Agent's last one once per crossing, never per tick, and never start one.
     // toast() reports whether a provider took it; if not yet, stay un-pressured and try next tick.
-    if (!toast(t("disk.home_low", { free: gib(d.disk_total - d.disk_used), total: gib(d.disk_total) }), {
+    if (!toast(createElement(HomeLowNotice, { free: gib(d.disk_total - d.disk_used), total: gib(d.disk_total) }), {
       kind: "warn",
       duration: 0,
       persist: true,
       key: "home-disk-low",
     })) return;
+    // The provider logs only string toasts to the notification center, and this one is a node.
+    pushToastLog("warn", t("disk.home_low", { free: gib(d.disk_total - d.disk_used), total: gib(d.disk_total) }));
+    if (reclaimEstimate() == null) void loadCachedWalk();
   }
   homePressure = next;
 }

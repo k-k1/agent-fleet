@@ -8,6 +8,7 @@ import { useSessionUI } from "../../sessions/ui.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
 import { PlaceLine, type Place } from "./machinePlace.tsx";
+import { emptyToolCache, loadToolCaches, type ToolCacheRow } from "./toolCaches.ts";
 import { HomeBreakdownSection } from "./HomeBreakdownSection.tsx";
 import { AfWorkAgeSection } from "./AfWorkAgeSection.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
@@ -390,17 +391,6 @@ function DiskSection() {
   );
 }
 
-// The /cleanup/tool-caches answer (workspace/agent/tool_caches.go).
-interface ToolCacheRow extends Place {
-  name: string;
-  bytes: number;
-  files: number;
-  /** pids that could be using the cache; the Agent refuses to empty it while non-empty. */
-  busy?: number[];
-  /** why a Gradle row offers nothing: the versions the projects pin could not be read. */
-  skipped?: string;
-}
-
 // ToolCacheSection — the go / npm / npx / uv / pip / Maven / Gradle caches in home, and emptying one (docs/log/116).
 //
 // Not part of DiskSection: those rows are Agent Fleet's own and are walked when the tab
@@ -422,11 +412,10 @@ function ToolCacheSection() {
     setMeasuring(true);
     setErr(false);
     try {
-      const res = await api("api/cleanup/tool-caches");
-      // An Agent older than the endpoint answers with an error.
-      if (!res || res.error || !Array.isArray(res.caches)) throw new Error("");
+      // An Agent older than the endpoint answers with an error, which loadToolCaches throws.
+      const res = await loadToolCaches();
       setRows(res.caches);
-      setTruncated(!!res.truncated);
+      setTruncated(res.truncated);
     } catch {
       setErr(true);
     } finally {
@@ -437,7 +426,7 @@ function ToolCacheSection() {
   const empty = async (row: ToolCacheRow) => {
     setBusy(true);
     try {
-      const res = await api("api/cleanup/tool-caches/" + encodeURIComponent(row.name), { method: "DELETE" });
+      const res = await emptyToolCache(row.name);
       if (res?.error?.code === "cache_in_use") setMsg(tr("machine.tool_in_use", { name: row.name }));
       else if (res?.error) setMsg(tr("machine.tool_empty_failed", { name: row.name }) + (res.error.message ?? res.error.code));
       else setMsg(tr("machine.tool_emptied", { name: row.name, size: humanSize(res?.bytes ?? row.bytes) }));
