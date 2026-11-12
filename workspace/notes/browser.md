@@ -100,7 +100,7 @@ what it shows, and never claim a page "looks right" based on it.
 - Limits the user works within: at most **2 pages**, viewport ≤ **1600×1200**, ~**12 fps**.
   `target-unreachable` = the port isn't listening yet (start the server, then Reload);
   `crashed` / `disconnected` = the in-container Chromium died or the socket dropped, and they
-  reconnect from the toolbar. The full table is `ref/browser-pane.md` in the shipped guide.
+  reconnect from the toolbar. The full table is https://agent-fleet.org/docs/ref/browser-pane/.
 - On a **smartphone** the action bar has no Preview button; the same port / path fields and
   "Open in pane" are in the popover behind **⋯** at the right end of the bar.
 - **Verification honesty:** only say you "verified" / 「確認しました」 a UI when **you** drove it

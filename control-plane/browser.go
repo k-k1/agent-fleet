@@ -175,7 +175,7 @@ func browserUnavailableErr(runtimeID string) *apiError {
 	return &apiError{http.StatusConflict, "browser_unavailable",
 		"Browser features are not available on this workspace runtime (" + runtimeID + "): " +
 			"Chromium's sandbox needs user namespaces or a setuid helper, which this runtime's " +
-			"restricted workspace container does not allow. See ref/browser-pane.md in the user guide."}
+			"restricted workspace container does not allow. See https://agent-fleet.org/docs/ref/browser-pane/."}
 }
 
 // socket bridges /ws/browser to the Agent while keeping browser-specific

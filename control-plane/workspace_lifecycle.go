@@ -92,7 +92,7 @@ func (m *manager) backfill(ctx context.Context) error {
 		log.Printf("WARNING: data root name check: %v", err)
 	} else {
 		for _, c := range cs {
-			log.Printf("WARNING: data root name collision under %s: %s (guide/operate/install.md#names-a-tenant-slug-cannot-take)", m.dataRoot, c)
+			log.Printf("WARNING: data root name collision under %s: %s (https://agent-fleet.org/docs/operate/install/#names-a-tenant-slug-cannot-take)", m.dataRoot, c)
 		}
 	}
 	for _, e := range entries {
