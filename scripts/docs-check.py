@@ -686,10 +686,16 @@ POLITE_END_RE = re.compile(
 )
 # A plain-form predicate: a verb in the dictionary, た or ない form, an adjective, or the
 # copula だ / である. Checked after POLITE_END_RE, which already took ます / です / ください.
-# A noun ending (体言止め: "…の一覧。", "…していること。", "…いないか。") is left alone: in a
-# list it is a fragment, and elsewhere it is rare enough for review to catch.
+# The past forms count too: 終わった, しなかった, よかった.
+# A noun ending (体言止め: "…の一覧。", "…していること。", "これは必要。") is not detected: in a
+# list it is a fragment, and telling a plain noun-ended sentence from one needs a parser;
+# flagging every noun ending was hundreds of false positives. Review catches those.
 # A counter ("値は 1 つ") and the noun かた ("動きかた") end like a verb and are not one.
-PLAIN_END_RE = re.compile(r"(?:[うくすぬむぶぐるだ]|(?<!\d )(?<!\d)つ|(?<!っ)(?<!か)た|い)$")
+PLAIN_END_RE = re.compile(r"(?:[うくすぬむぶぐるだ]|(?<!\d )(?<!\d)つ|(?<!か)た|い)$")
+# Nouns made from a verb stem end in い like an adjective ("設定の違い"), and a noun ending is
+# not checked (above). Only the ones that can end a sentence in the guide are listed; there is
+# no telling 違い from 高い without a dictionary.
+NOUN_I_RE = re.compile(r"(?:違|扱|使|払|狙|願|伝|迷|戦|行|争|集|誘|伺)い$")
 STYLE_LIST_RE = re.compile(r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
 # An image's alt text describes the screenshot, not a sentence of the page.
 STYLE_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -756,7 +762,8 @@ def plain_sentences(text: str, item: bool) -> list[str]:
         # A link list or a command list describes the target after "：" in the short form.
         t = re.sub(r"^\s*(?:\[[^\]]*\]\([^)]*\)|X)\s*[：:].*$", "", t)
     # A bold lead-in ("**秘密は表示しない。** 本文") is the label of what follows, not prose.
-    t = re.sub(r"^\*\*[^*]+\*\*", "", t.lstrip())
+    # An aside right after it ("**…あります**（SDXL 系に多い）。") belongs to the label.
+    t = re.sub(r"^\*\*[^*]+\*\*(?:（[^（）]*）|\([^()]*\))?", "", t.lstrip())
     t = STYLE_IMAGE_RE.sub("", t)
     t = STYLE_LINK_RE.sub(r"\1", t)
     prev = None
@@ -771,12 +778,14 @@ def plain_sentences(text: str, item: bool) -> list[str]:
         prev = None
         while prev != s:
             prev = s
-            s = STYLE_TRAIL_PAREN_RE.sub("", s).rstrip()
+            m = STYLE_TRAIL_PAREN_RE.search(s)
+            # A sentence wholly in parentheses ("（処理を終了する）。") is checked by its inside.
+            s = (s[: m.start()].rstrip() or m.group(0)[1:-1].strip()) if m else s
             if s.count("（") < s.count("）") or s.count("(") < s.count(")"):
                 s = s.rstrip("）) ")
         if not s or not re.search(r"[぀-ヿ一-鿿]", s):
             continue
-        if not POLITE_END_RE.search(s) and PLAIN_END_RE.search(s):
+        if not POLITE_END_RE.search(s) and PLAIN_END_RE.search(s) and not NOUN_I_RE.search(s):
             out.append(s)
     return out
 

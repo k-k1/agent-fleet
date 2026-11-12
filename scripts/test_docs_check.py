@@ -937,6 +937,14 @@ class PoliteTests(unittest.TestCase):
             "> 既定のまま使える。\n",
             "数分かかる\nので、応答のあとで終わる。\n",
             "（起動を頼み直す。ECS は同じタスクを返す）。\n",
+            "処理は終わった。\n",
+            "停止しなかった。\n",
+            "結果はよかった。\n",
+            "- 処理は終わった。次に進みます\n",
+            "- 1 つ目です。停止しなかった。\n",
+            "（処理を終了する）。\n",
+            "次に進みます。（処理を終了する）。\n",
+            "設定は高い。\n",
         ):
             with self.subTest(body=body):
                 self.assertNotEqual(self.plain(body), [])
@@ -958,6 +966,11 @@ class PoliteTests(unittest.TestCase):
             "![設定の画面。一覧が並ぶ。](a.png)\n",
             "値は 1 つ、置き場も 1 つ。\n",
             "- 相手にこのセッションを共有していること。\n",
+            "**動きかた。** 順に説明します。\n",
+            "使いかたは次のとおりです。\n",
+            "確認するのは設定の違い。\n",
+            "- **VAE がない場合があります**（SDXL 系に多い）。宣言してください\n",
+            "既定のまま使います（終了する）。\n",
         ):
             with self.subTest(body=body):
                 self.assertEqual(self.plain(body), [])
