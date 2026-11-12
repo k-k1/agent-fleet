@@ -329,6 +329,12 @@ func (f *fakeEC2) DescribeInstances(ctx context.Context, in *ec2.DescribeInstanc
 				return []string{ec2TagValue(inst.Tags, strings.TrimPrefix(name, "tag:"))}
 			case name == "instance-id":
 				return []string{id}
+			case name == "tag-key":
+				var keys []string
+				for _, t := range inst.Tags {
+					keys = append(keys, aws.ToString(t.Key))
+				}
+				return keys
 			case name == "instance-state-name":
 				return []string{string(inst.State.Name)}
 			case name == "instance-type":

@@ -354,3 +354,27 @@ home がなくなった、のいずれかを見つけたスキャンも、同じ
 - 監査行のテナントは、スイーパーのランタイムがテナント ID を持たないため、ホームの membership タグから CP が解決する。
 
 未着手の分: #3908
+
+**2026-11-12（防護柵、#3961）。** 決定 3 の規則 1・2・4 と `af-rescue` タグ型を組み込んだ。救出がマーカーを書くまでは働かない
+（コード: `runtime_ecs_ec2_rescue.go`）。上の本文の読み方が分かれたところは次のとおりにした。
+
+- 規則 2 は `releaseGate`。`releaseSlotSince` がマウントロックを取った直後に呼ぶ。プールのインスタンスのうち `af-rescue` キーを持つ
+  もの（終了済み以外）を列挙し、このホームのボリューム ID を名指すマーカーがあれば拒否する。既定は拒否で、決定が除外する呼び出し元だけが
+  context で名乗り出る（`asHomeOwner`: `releaseAndReplace`、`replaceReservedSlot` の `moveHomeOff`、そして `Stop` がすでにカウントを
+  進めている `Destroy` / `EraseHome`。`asRescue`: 救出自身の解放で、フェーズではなくボリューム・エポック・`g_r` で照合する）。
+  そのため追い出し、`makeRoom`、休止、スイーパー、ベイカーは呼び出し側を変えずに拒否され、後から増える解放元も、除外すべきだと
+  誰かが主張するまで拒否される。マーカーの読み取りに失敗したら拒否し、ボリューム ID で始まるが解釈できない値も拒否する。
+- `makeRoom` の犠牲は同じゲートで拒否する。`evictLongestIdle` は次の候補を試さず、拒否をその Start に返す（候補選択での
+  スキップは、本文どおり最適化のままにする）。
+- 規則 1: `slotTypeMatches` は `af-role=quarantined` を最初に「不一致」と答える。`releaseSlotSince` は `stopping` のボックスを待って
+  いなかった（`instanceRunning` が「動いていない」と読み、umount を飛ばしていた）。今はロックの下で最大 5 分待ち、それでも
+  ならデタッチせずに失敗させる。
+- 規則 4: `terminateSlot(…, intent)` は `terminateAutomatic`、`terminateMakeRoom`（`af-rescue` か `af-dark-since` を持つボックスも拒否）、
+  `terminateOperator` を取る。ゲートはボックスを読み直し、読み取りに失敗したら拒否する。`makeRoom` は、終了されなかったボックスを
+  待たずに拒否を返す。
+- `makeRoom` は `af-rescue` か `af-dark-since` を持つボックスを選ばない。一覧を読んだ後にどちらかが付いたボックスは、ホームを解放する
+  **前**と終了の時点の 2 回、`terminateSlot`（`terminateMakeRoom`）が拒否し、拒否されたら Start を失敗させず次の候補へ進む。
+  スタンプだけでもボックスは守られる。検知のみのモードはマーカーが無くてもスタンプを書くので、「マーカーまで働かない」が成り立つのは
+  救出についてだけで、スタンプ付きのボックスは `makeRoom` に回収されない（意図した動作）。
+- IAM とタグフェンスの変更は無い。Control Plane はまだ `af-rescue` を書かず、読むのは `DescribeInstances` だけ。書き手（#3964）が
+  `deploy/local/cfn-cp-tag-fence-test.py` とロールに `CreateTags` / `DeleteTags` の項目を足す。
