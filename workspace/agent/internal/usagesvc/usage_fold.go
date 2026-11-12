@@ -304,6 +304,9 @@ type usageTurnRow struct {
 	// drops a re-append.
 	Orphan    bool
 	OrphanKey string
+	// sizeUnknown marks a row whose input size the ledger would not record (a subagent's); set
+	// only by spendOfRows so the budget prices it like the ledger does.
+	sizeUnknown bool
 	// Route and Billing are the per-call evidence of the calls this row folds
 	// (transcript.Turn.Route/Billing), merged by noteRoute: a row whose calls disagree reads as
 	// unresolved.
@@ -1034,6 +1037,12 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 		CostUSD:  r.CostUSD,
 		OK:       true,
 		Measured: MeasuredForKind(m.Kind),
+	}
+	if agent == "" && !r.Orphan {
+		// The row's input is one call's snapshot (replace, not sum; see foldTurnRows), so it
+		// is that call's input size. A subagent row is a delta against what was written before,
+		// which is not a size, so it stays unknown (priced at the base tier).
+		rec.Ctx = r.Tokens.In + r.Tokens.CacheRead + r.Tokens.CacheCreate
 	}
 	if rec.TS == "" {
 		rec.TS = time.Now().UTC().Format(time.RFC3339)

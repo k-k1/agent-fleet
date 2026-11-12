@@ -287,6 +287,7 @@ func HandleSeries(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp.UnpricedSpend += agg.Spend
 		}
+		agg.Bands = nil // pricing input only; not part of the response
 		k := usageDimValue(s.Key, by)
 		a := byBucket[s.T][k]
 		a.add(agg)

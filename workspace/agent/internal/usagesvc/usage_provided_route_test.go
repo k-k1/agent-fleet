@@ -3,6 +3,7 @@ package usagesvc
 import (
 	"encoding/json"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -36,7 +37,7 @@ func TestProvidedRouteRowsStayApartFromMemberBedrock(t *testing.T) {
 		t.Fatalf("%d keys, want 3 (bedrock, bedrock-deployment, bedrock-tenant): %+v", len(mixed), mixed)
 	}
 	mk := keyOf(member[0])
-	if mixed[mk] != alone[mk] {
+	if !reflect.DeepEqual(mixed[mk], alone[mk]) {
 		t.Fatalf("the member's bedrock aggregate moved: alone %+v, beside provided rows %+v", alone[mk], mixed[mk])
 	}
 	if a := mixed[mk]; a.In != 300 || a.Out != 30 || a.Calls != 2 {
@@ -69,7 +70,7 @@ func TestProvidedRouteRowsStayApartFromMemberBedrock(t *testing.T) {
 	if want := []string{usagex.RouteBedrock, usagex.RouteBedrockDeployment, usagex.RouteBedrockTenant}; !slices.Equal(slices.Sorted(maps.Keys(got)), want) {
 		t.Fatalf("rolled-up routes = %v, want %v", slices.Sorted(maps.Keys(got)), want)
 	}
-	if got[usagex.RouteBedrock] != alone[mk] {
+	if !reflect.DeepEqual(got[usagex.RouteBedrock], alone[mk]) {
 		t.Fatalf("bedrock after the round trip = %+v, want %+v", got[usagex.RouteBedrock], alone[mk])
 	}
 	kb, _ := json.Marshal(mk)
