@@ -45,9 +45,9 @@ source_of_truth: "コマンドは `deploy/` 配下の runbook とスクリプト
 | ホストからは届く Control Plane の URL に、ワークスペースから届かない | 下の [ワークスペースから公開 URL に届かない](#ワークスペースから公開-url-に届かない) |
 | TLS の証明書が発行されない | 下の [TLS の証明書が発行されない](#tls-の証明書が発行されない) |
 | サインインできない・ボタンが出ない・外したはずの人が使える | [ログインできない](cannot-login.ja.md) |
-| 起動時に `AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms` で終わる | ホームごとの鍵には KMS の鍵管理が要ります。`AF_KEY_CUSTODIAN=kms`（と `AF_KMS_KEY_ID`）を設定するか、`AF_WORKSPACE_DEK` を外します（[保存時の鍵](../12-keys.ja.md#ホームごとに専用の鍵を持たせる)） |
-| ワークスペースの起動が `open the home's credential-store key` で失敗する | KMS に届かないか、鍵が無効か、拒否されています。master 鍵に切り替える道はありません。KMS へのアクセスを直してから起動し直します（[保存時の鍵](../12-keys.ja.md#ホームごとに専用の鍵を持たせる)） |
-| リストアのあと、ワークスペースが資格情報の書き込みを拒み、ログに資格情報ストアが `unreadable` と出る | ストアがホームの鍵に移る前の状態から戻しました。Control Plane と同じ環境で `af-cp home-dek-status --remigrate <membership-id>` を実行し、ワークスペースを起動し直します（[保存時の鍵](../12-keys.ja.md#kms-鍵の無効化写しの復元無効に戻すとき)） |
+| 起動時に `AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms` で終わる | ホームごとの鍵には KMS の鍵管理が要ります。`AF_KEY_CUSTODIAN=kms`（と `AF_KMS_KEY_ID`）を設定するか、`AF_WORKSPACE_DEK` を外します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md)） |
+| ワークスペースの起動が `open the home's credential-store key` で失敗する | KMS に届かないか、鍵が無効か、拒否されています。master 鍵に切り替える道はありません。KMS へのアクセスを直してから起動し直します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md)） |
+| リストアのあと、ワークスペースが資格情報の書き込みを拒み、ログに資格情報ストアが `unreadable` と出る | ストアがホームの鍵に移る前の状態から戻しました。Control Plane と同じ環境で `af-cp home-dek-status --remigrate <membership-id>` を実行し、ワークスペースを起動し直します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md#移す前の写しを戻したとき)） |
 | ワークスペースのログに `[entrypoint] WARN: npm boot-install failed (retrying next start)` と出る | CLI のインストールに失敗しました（home が満杯・ネットワーク・チェックサム）。次の起動でやり直します。名簿のカードには「直近の起動で CLI のインストールに失敗しました」と出ます（[メンバーの状況を見る](../../admin/members/roster.ja.md#要対応のカードに手を打つ)） |
 
 ## コンテナから Docker を動かす 3 つの制約

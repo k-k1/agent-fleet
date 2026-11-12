@@ -97,7 +97,7 @@ wherever the Control Plane serves the engine panel, **Cloud cost** on AWS.
 | Dev sign-in | the development OIDC IdP switch, for apps on preview subdomains | [Use development sign-in](../operate/secure/dev-signin.md#turn-the-development-oidc-idp-on-or-off) |
 | Inference engines | the self-hosted engines: mode, GPU class, model catalogue, state and history | [operate/07](../operate/07-engines.md) |
 | API tokens | the Hugging Face and Civitai tokens, and the Civitai Red switch, for taking models in | [operate/07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
-| Slots | the `ecs-ec2` slot pool: replacing slots, force-stopping a wedged one | [operate/11](../operate/11-slot-pool.md) |
+| Slots | the `ecs-ec2` slot pool: replacing slots, force-stopping a wedged one | [Replace and stop slots](../operate/aws-ecs/slot-maintenance.md) |
 | Sessions, Running time, Cloud cost, Audit, MCP | the tenant views, across every tenant | [admin/](../admin/README.md) |
 
 ## Deployment variables
@@ -112,8 +112,8 @@ everything else:
 | `AUTH` | how people sign in: `oauth` (the Control Plane's own), `proxy` (an upstream gateway), `dev` (no sign-in, single user). **No default: the Control Plane refuses to start without it** (the native runtime takes `dev`). `dev` on Docker or a cloud runtime also needs `AF_ALLOW_INSECURE_DEV_AUTH=1`, and is refused when `PUBLIC_BASE_URL` is https |
 | `DATA_DIR` | where all persistent state lives (the thing to back up) |
 | `AF_MASTER_KEY` | the root of at-rest encryption. Lose it and the stored credentials are unrecoverable |
-| `AF_KEY_CUSTODIAN` | who holds the at-rest keys: `local` (the default, derived from `AF_MASTER_KEY`) or `kms` (AWS KMS, with `AF_KMS_KEY_ID`; [operate/12](../operate/12-keys.md#keys-at-rest-on-aws-kms)). Rejected at boot if unknown or incomplete |
-| `AF_WORKSPACE_DEK` | `derived` (the default) or `random`: a KMS-sealed key of its own for each member's home, so a credential store that has moved to it no longer opens with a key derived from `AF_MASTER_KEY` and the Control Plane cannot unwrap it once the KMS key is disabled (copies already handed to the workspace and its runtime still open it). `random` needs `AF_KEY_CUSTODIAN=kms`; turning it off does not undo it ([operate/12](../operate/12-keys.md#a-key-of-its-own-for-each-home)) |
+| `AF_KEY_CUSTODIAN` | who holds the at-rest keys: `local` (the default, derived from `AF_MASTER_KEY`) or `kms` (AWS KMS, with `AF_KMS_KEY_ID`; [Put the keys at rest on AWS KMS](../operate/keys/kms.md)). Rejected at boot if unknown or incomplete |
+| `AF_WORKSPACE_DEK` | `derived` (the default) or `random`: a KMS-sealed key of its own for each member's home, so a credential store that has moved to it no longer opens with a key derived from `AF_MASTER_KEY` and the Control Plane cannot unwrap it once the KMS key is disabled (copies already handed to the workspace and its runtime still open it). `random` needs `AF_KEY_CUSTODIAN=kms`; turning it off does not undo it ([Give each home its own key](../operate/keys/home-keys.md)) |
 | `SUPER_ADMIN_EMAILS` | who is a deployment administrator |
 | `PUBLIC_BASE_URL` | the address people reach, and what OAuth callbacks are built from |
 | `WS_MEMORY` | the default memory ceiling for a workspace |

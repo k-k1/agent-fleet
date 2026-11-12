@@ -81,9 +81,8 @@ const exact = {
   // admin modal (guide scene operate-brand). Every other run stays a plain member or tenant admin.
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
-    // The operate guide's pages (SHOT_OPERATE_RUN, SHOT_OPERATE_SIGNIN, SHOT_OPERATE_SECURE) are the
-    // deployment administrator's.
-    super_admin: process.env.SHOT_OPERATE_RUN === "1" || !!process.env.SHOT_OPERATE_SIGNIN || !!process.env.SHOT_OPERATE_SECURE,
+    // The operate guide's pages (SHOT_OPERATE_*) are the deployment administrator's.
+    super_admin: ["SHOT_OPERATE_RUN", "SHOT_OPERATE_SIGNIN", "SHOT_OPERATE_SECURE", "SHOT_OPERATE_KEYS", "SHOT_OPERATE_GPU", "SHOT_OPERATE_ENGINES"].some((k) => !!process.env[k]),
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
   // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
@@ -288,6 +287,9 @@ const exact = {
     const d = ADMIN_RES ? fx.adminResTenants() : fx.adminTenants();
     return process.env.SHOT_OPERATE_SIGNIN || process.env.SHOT_OPERATE_SECURE ? { ...d, super_admin: true } : d;
   },
+  // Admin › Slots of the operate guide (SHOT_OPERATE_KEYS): an ecs-ec2 pool with an outdated, a
+  // reserved and a wedged slot. Without it the route stays unhandled and the tab is hidden.
+  ...(process.env.SHOT_OPERATE_KEYS === "1" ? { "/api/admin/ec2-pool": () => fx.operateSlots() } : {}),
   // Admin › Sign-in method register of the operate guide (SHOT_OPERATE_SIGNIN). Without it the
   // route stays unhandled, as before.
   ...(process.env.SHOT_OPERATE_SIGNIN ? { "/api/admin/idp": () => fx.operateSigninRegister() } : {}),

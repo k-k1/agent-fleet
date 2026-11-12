@@ -119,7 +119,7 @@ func weakKeyRefusal(authMode string, weakMaster, weakCookie bool) error {
 	}
 	return fmt.Errorf("AUTH=%s and %s shorter than 32 bytes of key material (or a repeated pattern): refusing to start. "+
 		"Generate a new value with `head -c 32 /dev/urandom | base64`; do not replace AF_MASTER_KEY on a deployment that "+
-		"already holds sealed values before reading guide/operate/secure/deployment-keys.md and guide/operate/12-keys.md "+
+		"already holds sealed values before reading guide/operate/secure/deployment-keys.md and guide/operate/keys/kms.md "+
 		"(changing AF_COOKIE_SECRET only signs everyone out once). AUTH=dev is exempt",
 		authMode, strings.Join(names, " and ")+weakKeyVerb(len(names)))
 }

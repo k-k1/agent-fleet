@@ -8,7 +8,7 @@ source_of_truth: "the Control Plane's key check at start (`control-plane/master_
 English | [日本語](deployment-keys.ja.md)
 
 What the two keys that protect everything else, `AF_MASTER_KEY` and `AF_COOKIE_SECRET`, must be, and what happens when you change them.
-This page also covers adding a key to a deployment that ran without one and sealing the values stored before it. Protecting the key with KMS and per-home keys are in [Keys at rest](../12-keys.md).
+This page also covers adding a key to a deployment that ran without one and sealing the values stored before it. Protecting the key with KMS and per-home keys are in [Put the keys at rest on AWS KMS](../keys/kms.md).
 
 ## How it works
 
@@ -74,7 +74,7 @@ af-cp rewrap-keys --seal-plaintext
 - It works with local keys and with `AF_KEY_CUSTODIAN=kms`, sealing with whichever is configured
 - It seals one row at a time and opens the sealed value again to compare before writing. It exits with status 0 only when a final read-only check finds nothing left
 - The banner disappears within minutes (or at the next restart)
-- With KMS as well, follow with `af-cp rewrap-keys` in [Keys at rest](../12-keys.md)
+- With KMS as well, follow with `af-cp rewrap-keys` in [Put the keys at rest on AWS KMS](../keys/kms.md)
 
 Those values were readable from the database and the backups. **Rotate them at their issuer too** (IdP and Git OAuth client secrets, MCP tokens, Hugging Face, Civitai and ComfyUI tokens), and delete backups you no longer need.
 
@@ -94,6 +94,6 @@ A replica older than 0.42.0 cannot read the new format, so upgrade in this order
 ## Related
 
 - [Install Agent Fleet](../install.md#2-generate-the-secrets): generate and keep the keys
-- [Keys at rest](../12-keys.md): KMS for the key, per-home keys
+- [Put the keys at rest on AWS KMS](../keys/kms.md): KMS for the key, per-home keys
 - [Back up and restore](../run/backup-restore.md#restore): a restore needs the same `AF_MASTER_KEY`
 - [Understand the threat model and residual risks](threat-model.md)

@@ -178,13 +178,13 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [外向きの通信を制御する](../operate/secure/egress.ja.md) |
 | MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
 | プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [開発用サインインを使う](../operate/secure/dev-signin.ja.md#開発用-oidc-idp-をオンオフする) |
-| AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [operator 12](../operate/12-keys.ja.md) |
+| AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)・[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md) |
 | この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
 | 使わない間の配備の一時停止 | 配備管理者 | 端末 | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
-| 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え) |
-| 動かなくなったスロットの強制停止 | 配備管理者（super_admin）| 管理 → スロット → 停止（強制）| [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-動かなくなったスロットの停止) |
+| 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [スロットを入れ替える・止める](../operate/aws-ecs/slot-maintenance.ja.md#古いスロット) |
+| 動かなくなったスロットの強制停止 | 配備管理者（super_admin）| 管理 → スロット → 停止（強制）| [スロットを入れ替える・止める](../operate/aws-ecs/slot-maintenance.ja.md#応答しないスロットを止める) |
 | 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [operator 07](../operate/07-engines.ja.md#gpu-のインスタンスクラス) |
 | モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
 | S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジン → モデルカタログ → バケット | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |

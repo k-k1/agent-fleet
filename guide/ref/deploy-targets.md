@@ -157,7 +157,7 @@ before the workspace runs, as on `ecs-ec2`. An administrator's Clean home remove
 with the workspace stopped. Both keep the logins, connections and Claude's state, which live on a
 second volume of their own. The home volume itself is kept.
 
-¹⁴ Off by default; the operator turns it on in the stack ([operate/12](../operate/12-keys.md#keys-at-rest-on-aws-kms)).
+¹⁴ Off by default; the operator turns it on in the stack ([Put the keys at rest on AWS KMS](../operate/keys/kms.md)).
 The secrets the Control Plane itself seals after the switch (MCP connection headers, sign-in
 client secrets, engine tokens, session handoffs and shares) are then sealed with keys from AWS
 KMS, so disabling the KMS key makes them unreadable. The key to a member's stored credentials is

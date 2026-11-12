@@ -65,7 +65,7 @@ Treat approval as a way to reduce accidents. What actually contains the agent is
 ### The key is the ceiling
 
 By default the key protecting each workspace's credentials is derived from `AF_MASTER_KEY`, so the whole is as strong as that one key.
-On AWS the key can be held by KMS ([Keys at rest](../12-keys.md)).
+On AWS the key can be held by KMS ([Put the keys at rest on AWS KMS](../keys/kms.md)).
 
 ## Report a vulnerability
 

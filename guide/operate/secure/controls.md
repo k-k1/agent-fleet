@@ -98,7 +98,7 @@ Blocking it on the network is the host's job.
 | The compose EC2 host (`deploy/aws/ec2-single`) | IMDSv2 with hop limit 1 (`HttpTokens: required`, `HttpPutResponseHopLimit: 1`). The host-network Control Plane is one hop away and can use the instance profile; workspaces on the docker bridge are two hops away and get no token. Apply it directly to a running instance rather than through a stack update (commands in the [ec2-single runbook](../../../deploy/aws/ec2-single/README.md#instance-metadata-imds)); when the Ubuntu AMI parameter has moved on, a stack update can replace the instance |
 | Any other docker host in a cloud | The same metadata settings, or a host firewall rule in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridge. It needs root on the host (compose itself needs no new privilege) |
 | Kubernetes | The variable does not block the cluster's metadata server (the node's service account, Workload Identity on GKE). Block that path in the cluster, with a NetworkPolicy egress rule or GKE metadata concealment. The Control Plane does not do it |
-| ecs-ec2 | The slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`. Older slots need replacing: schedule it in Admin > Slots ([The ecs-ec2 slot pool](../11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change)) |
+| ecs-ec2 | The slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`. Older slots need replacing: schedule it in Admin > Slots ([Replace and stop slots](../aws-ecs/slot-maintenance.md#outdated-slots)) |
 | native | Workspaces run directly on the member's machine, so leave it as it is: the instance role there is that machine's own |
 
 ### When workspaces get the task role

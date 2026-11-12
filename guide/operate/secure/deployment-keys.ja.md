@@ -8,7 +8,7 @@ source_of_truth: "Control Plane の起動時の鍵の検査（`control-plane/mas
 [English](deployment-keys.md) | 日本語
 
 配備のすべてを守る 2 つの鍵、`AF_MASTER_KEY` と `AF_COOKIE_SECRET` の要件と、変えたときに何が起きるかがわかります。
-鍵なしで動かしてきた配備に鍵を入れる手順と、鍵の前に保存された値を封じる手順も扱います。KMS で鍵を守る方法とホームごとの鍵は [保存時の鍵](../12-keys.ja.md) にあります。
+鍵なしで動かしてきた配備に鍵を入れる手順と、鍵の前に保存された値を封じる手順も扱います。KMS で鍵を守る方法とホームごとの鍵は [保存時の鍵を AWS KMS にする](../keys/kms.ja.md) にあります。
 
 ## 全体像
 
@@ -74,7 +74,7 @@ af-cp rewrap-keys --seal-plaintext
 - ローカルの鍵でも `AF_KEY_CUSTODIAN=kms` でも動き、設定されているほうで封じます
 - 1 行ずつ封じ、封じた値を開き直して照らし合わせてから書きます。最後の読み取りだけの確認で残りがないときだけ、終了コード 0 で終わります
 - 警告の帯は数分以内（か次の再起動）で消えます
-- KMS も使うときは、続けて [保存時の鍵](../12-keys.ja.md) の `af-cp rewrap-keys` を行います
+- KMS も使うときは、続けて [保存時の鍵を AWS KMS にする](../keys/kms.ja.md) の `af-cp rewrap-keys` を行います
 
 これらの値は、データベースとバックアップから読める状態でした。**発行元でもローテーションしてください**（IdP と Git OAuth のクライアントシークレット、MCP のトークン、Hugging Face・Civitai・ComfyUI のトークン）。要らないバックアップは消します。
 
@@ -94,6 +94,6 @@ Control Plane は、セッション・サインインの state・プレビュー
 ## 関連
 
 - [インストールする](../install.ja.md#2-秘密を作る)：鍵を作って保管する
-- [保存時の鍵](../12-keys.ja.md)：KMS で鍵を守る、ホームごとの鍵
+- [保存時の鍵を AWS KMS にする](../keys/kms.ja.md)：KMS で鍵を守る、ホームごとの鍵
 - [バックアップして復元する](../run/backup-restore.ja.md#復元する)：復元には同じ `AF_MASTER_KEY` が要る
 - [脅威モデルと残るリスクを知る](threat-model.ja.md)

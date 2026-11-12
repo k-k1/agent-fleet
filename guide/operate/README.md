@@ -67,15 +67,27 @@ Anything not here yet is in "Chapters not yet moved" below. The commands are in 
 | [Other operational controls](secure/controls.md) | Keep the preview domain, the sign-in allowlist, the audit log and the host's cloud identity right |
 | [Revoke access and hand over super_admin](secure/offboarding.md) | Remove people, end everybody's sessions, change the deployment administrator |
 
+## Keys
+
+| Page | What you can do |
+|---|---|
+| [Put the keys at rest on AWS KMS](keys/kms.md) | On AWS, protect what the Control Plane seals with KMS and re-seal values stored before the switch |
+| [Give each home its own key](keys/home-keys.md) | On AWS, seal each member's credential store under a key of its home's own |
+| [Rotate the bridge tokens](keys/bridge-tokens.md) | Invalidate workspace tokens for one member or for everyone at once |
+
+## ECS
+
+| Page | What you can do |
+|---|---|
+| [Replace and stop slots](aws-ecs/slot-maintenance.md) | On `ecs-ec2`, replace outdated slots and notice and stop a slot that does not answer |
+
 ## Chapters not yet moved
 
 - [07 Inference engines and read aloud](07-engines.md): the Admin panel for the deployment's own GPU engines, the speech engine and the shared dictionary
 - [08 Image generation on your own ComfyUI](08-image-engine.md): pointing sessions at a ComfyUI on your own network
 - [09 Borrowing another deployment's engines](09-borrowed-engine.md): using an AWS fleet's llm and image engines from a deployment on your own host
 - [10 Chat inference on your own llama.cpp](10-llm-lan.md): pointing sessions' chat at a llama.cpp on your own network
-- [11 The ecs-ec2 slot pool](11-slot-pool.md): replacing slots, memory protection for the management plane, stopping a wedged slot
-- [12 Keys at rest](12-keys.md): AWS KMS custody, re-sealing earlier values, a key of its own for each home
 
-The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [04 Securing it](04-secure.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md)
+The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [04 Securing it](04-secure.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md), [11 The ecs-ec2 slot pool](11-slot-pool.md), [12 Keys at rest](12-keys.md)
 
 What each target supports is in [Deployment targets](../ref/deploy-targets.md); who may do what is in [Roles](../ref/roles.md).

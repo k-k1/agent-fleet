@@ -3238,3 +3238,43 @@ export const operateDevIdp = () => ({
   issuer: "https://console.example.com/dev-idp",
   clients: 3,
 });
+
+// Admin › Slots for the operate guide's slot page (SHOT_OPERATE_KEYS): one slot outdated and
+// replaced automatically at its next start, one reserved by hand, one wedged (running, agent not
+// connected, a task stuck STOPPING) and one healthy. Instance ids, AMI and names are invented.
+export const operateSlots = () => ({
+  runtime: "ecs-ec2",
+  pool: "demo-pool",
+  max_slots: 8,
+  slot_sleep_sec: 1800,
+  slot_terminate_sec: 7 * 86400,
+  hibernate_after_sec: 0,
+  template_latest: "7",
+  auto_replace_outdated: true,
+  auto_bake: true,
+  slots: [
+    {
+      instance_id: "i-0a1b2c3d4e5f60011", instance_type: "m7i.xlarge", az: "ap-northeast-1a",
+      state: "stopped", registered: false, workspace: "af-ws-demo-hana", idle_minutes: 190,
+      template_version: "6", template_outdated: true, outdated_reasons: ["ami_behind"], ami: "ami-0123456789abcdef0",
+    },
+    {
+      instance_id: "i-0a1b2c3d4e5f60012", instance_type: "m7i.xlarge", az: "ap-northeast-1c",
+      state: "running", registered: true, workspace: "af-ws-demo-ken", idle_minutes: 4,
+      template_version: "6", template_outdated: true, outdated_reasons: ["template_changed"],
+      replace_reserved: true, replace_reserved_at: "2026-11-10T09:00:00Z",
+    },
+    {
+      instance_id: "i-0a1b2c3d4e5f60013", instance_type: "m7i.large", az: "ap-northeast-1a",
+      state: "running", registered: false, workspace: "af-ws-demo-mio", idle_minutes: 38,
+      template_version: "7", stopping_task: "STOPPING", stopping_task_minutes: 24,
+    },
+    {
+      instance_id: "i-0a1b2c3d4e5f60014", instance_type: "m7i.large", az: "ap-northeast-1c",
+      state: "running", registered: true, workspace: "af-ws-demo-sora", idle_minutes: 1,
+      template_version: "7",
+    },
+  ],
+  homes: [],
+  goldens: [],
+});

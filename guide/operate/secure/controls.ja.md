@@ -98,7 +98,7 @@ Control Plane は、SDK がメタデータを問い合わせないようにし�
 | compose 用の EC2 ホスト（`deploy/aws/ec2-single`） | IMDSv2 とホップ数 1（`HttpTokens: required`・`HttpPutResponseHopLimit: 1`）。ホストのネットワークの Control Plane は 1 ホップなのでインスタンスプロファイルを使え、docker のブリッジ上のワークスペースは 2 ホップなのでトークンを得られません。既存のインスタンスには、スタックの更新ではなく、動いているインスタンスに直接適用します（コマンドは [ec2-single の手順書](../../../deploy/aws/ec2-single/README.md#instance-metadata-imds)）。Ubuntu の AMI のパラメータが進んでいると、スタックの更新でインスタンスが作り直されることがあります |
 | クラウドの上のそれ以外の docker ホスト | 同じメタデータの設定か、Docker の `DOCKER-USER` チェーンでワークスペースのブリッジからの `169.254.169.254` を拒むファイアウォールの規則。ホストの root が要ります（compose 自体に新しい権限は要りません） |
 | Kubernetes | この変数は、クラスタのメタデータサーバー（ノードのサービスアカウント、GKE では Workload Identity）を塞ぎません。NetworkPolicy の egress の規則か GKE のメタデータの隠蔽で、クラスタの側で塞ぎます。Control Plane はこれをしません |
-| ecs-ec2 | スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。古いスロットは、管理 > スロット で入れ替えを予約します（[ecs-ec2 のスロットプール](../11-slot-pool.ja.md#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え)） |
+| ecs-ec2 | スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。古いスロットは、管理 > スロット で入れ替えを予約します（[スロットを入れ替える・止める](../aws-ecs/slot-maintenance.ja.md#古いスロット)） |
 | native | ワークスペースはメンバーのマシンで直接動くので、そのままにします。そこのインスタンスロールは、そのマシン自身のものです |
 
 ### ワークスペースにタスクロールを渡すとき
