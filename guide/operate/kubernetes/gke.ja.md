@@ -229,7 +229,7 @@ $TF output -raw kustomize_deployment > "$OVERLAY/deployment.yaml"
 
 ### 外向き通信のイベントを保存する（任意）
 
-CP は、生の外向き通信のイベントを消す前に、過ぎた日（UTC）ごとに Cloud Storage に書き出せます（`AF_EGRESS_ARCHIVE_URL`。[外向きの通信を制御する](../secure/egress.ja.md#記録を残す)）。既定はオフで、`egress_archive = false` なら plan にバケットも権限も CP の新しい設定も出ません。
+CP は、生の外向き通信のイベントを消す前に、過ぎた日（UTC）ごとに Cloud Storage に書き出せます（`AF_EGRESS_ARCHIVE_URL`）。この設定のことは [外向きの通信を制御する](../secure/egress.ja.md#記録を残す) にあります。既定はオフで、`egress_archive = false` なら plan にバケットも権限も CP の新しい設定も出ません。
 
 | 変数 | 既定 | 意味 |
 |---|---|---|
