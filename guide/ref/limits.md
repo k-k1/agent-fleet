@@ -76,9 +76,17 @@ controller's next pass ([Run inference engines on your own GPUs](../operate/engi
 
 ## Set per tenant
 
-There is no fixed number to quote: a tenant administrator sees the values in force
-under **Tenant settings → Limits & idle**, and a deployment administrator sets them.
-Read the screen rather than this page.
+There is no fixed number to quote: a deployment administrator sets them per tenant, and the
+screen shows the values in force. Read the screen rather than this page.
+
+- A tenant administrator sees, under **Tenant settings → Limits & idle**, only the workspaces per
+  tenant and the sessions per member ("**Limits — Workspace: X / Session: Y**", `∞` for no limit),
+  next to the tenant's **Default machine** where the deployment offers a choice (which they pick
+  themselves). The other values below are not on their screen; they ask the
+  deployment administrator ([Set session limits](../admin/resources/session-limits.md#check-the-tenant-wide-limits))
+- A deployment administrator sees and edits all of them in the same place
+
+What is set per tenant:
 
 - Workspaces per tenant, and sessions per member
 - Workspace size (CPU, memory, disk) where the target supports it;
@@ -87,6 +95,9 @@ Read the screen rather than this page.
   Workspace stop; `0` is off (unbounded for the hold). An empty field takes the deployment default
   above, except halt when awaiting a decision: empty, it follows the tenant's own session halt when
   that is set, and only otherwise the deployment default ([Stop workspaces left idle](../admin/resources/idle-stop.md#how-idle-auto-stop-works))
+- Whether members' stopped workspaces start when they sign in ([Start the workspace at sign-in](../admin/resources/start-at-signin.md)),
+  and the quiet time before an automatic image refresh (empty is 15 minutes, `0` never;
+  [Restart onto a new image automatically](../admin/resources/idle-stop.md#restart-onto-a-new-image-automatically))
 - Whether the tenant's administrators may take engine models in (off unless granted), and whether
   the tenant may use the self-hosted engines at all, per role (llm / image): allowed unless
   switched off
