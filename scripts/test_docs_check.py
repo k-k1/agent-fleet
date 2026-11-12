@@ -604,6 +604,14 @@ class SettingsPagesTests(unittest.TestCase):
         self.write([("Display", "[a](../user/a.md)"), ("Keyboard", "[b](../user/b.md)")], [("表示", "[a](../user/a.ja.md)")])
         self.assertIn("differs from the translation", self.errors())
 
+    def test_a_row_without_the_page_cell_is_counted_and_named(self):
+        self.write([("Display", "[a](../user/a.md)")], [("表示", "[a](../user/a.ja.md)")])
+        en = self.ref / "settings.md"
+        en.write_text(en.read_text() + "| Keyboard | x |\n")
+        out = self.errors()
+        self.assertIn("tab 'Keyboard' does not point at a page under user/", out)
+        self.assertIn("differs from the translation", out)
+
     def test_a_missing_page_column_is_an_error_not_a_skip(self):
         (self.ref / "settings.md").write_text("| Tab | Configures |\n|---|---|\n| Display | x |\n")
         (self.ref / "settings.ja.md").write_text("| タブ | 決めるもの |\n|---|---|\n| 表示 | x |\n")

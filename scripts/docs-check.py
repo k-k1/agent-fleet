@@ -1302,8 +1302,8 @@ def settings_tab_rows(path: str, page_head: str) -> list[tuple[str, str]]:
         if col < 0:
             col = cells.index(page_head) if page_head in cells else -1
             continue
-        if len(cells) > col:
-            rows.append((cells[0], cells[col]))
+        # A row too short to reach the page column is a row with no page, not a row to skip.
+        rows.append((cells[0], cells[col] if len(cells) > col else ""))
     return rows
 
 

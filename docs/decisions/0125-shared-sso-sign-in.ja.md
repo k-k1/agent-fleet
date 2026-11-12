@@ -236,7 +236,7 @@ start URL でまとめるのは、取り込み時のレガシーなプロファ�
 
 ### 9. ドキュメント
 
-`guide/member/16-cloud-accounts.md`（と `.ja.md`）で、サインイン、全メンバーに及ぶログアウト、改名や
+`guide/user/integrations/aws-sso.md`（と `.ja.md`）で、サインイン、全メンバーに及ぶログアウト、改名や
 ポータル変更で何が起きるかを説明する。`workspace/notes/aws.md`（`af-aws` スキル）には、ログインリクエストが
 単一のプロファイルではなくサインインを名指しすることがある、と書く。
 

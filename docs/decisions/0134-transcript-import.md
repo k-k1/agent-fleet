@@ -16,7 +16,7 @@ English | [日本語](0134-transcript-import.ja.md)
 
 A member who ran a Claude Code or Codex session on their own computer can continue it in the
 workspace today only through the summary hand-off over `/mcp` (`create_session` with
-`initial_prompt`, `guide/member/19-outside-access.md`). That carries what the outside model chooses
+`initial_prompt`, `guide/user/outside/move-work-in.md`). That carries what the outside model chooses
 to write. ADR 0115 already turns a session's transcript into a file the target reads
 (`Handover`, `agent/internal/sessionx/session_handover.go:104`), without a model in between. #3029
 asks for the same with an external file as the source: the member drops the transcript on the

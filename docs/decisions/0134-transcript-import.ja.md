@@ -15,7 +15,7 @@
 ## Context
 
 自分のコンピュータで Claude Code や Codex のセッションを動かしたメンバーが、それをワークスペースで続ける手段は
-今のところ `/mcp` 越しの要約引き継ぎ（`initial_prompt` 付きの `create_session`、`guide/member/19-outside-access.md`）
+今のところ `/mcp` 越しの要約引き継ぎ（`initial_prompt` 付きの `create_session`、`guide/user/outside/move-work-in.md`）
 だけである。それが運ぶのは外側のモデルが書くことにした内容に限られる。ADR 0115 は、セッションの転写を、間にモデルを
 挟まずに移動先が読むファイルへ変える（`Handover`、`agent/internal/sessionx/session_handover.go:104`）。#3029 は
 同じことを、外部のファイルを入力にして求めている。メンバーが転写を Console にドロップする。
