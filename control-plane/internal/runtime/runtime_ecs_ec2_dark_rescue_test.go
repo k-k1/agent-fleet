@@ -188,6 +188,29 @@ func (w *rescueWorld) untouched() {
 	}
 }
 
+// rescued asserts the whole ladder ran once: one graceful stop, the home off the box, the
+// episode recorded and the marker gone.
+func (w *rescueWorld) rescued() {
+	w.t.Helper()
+	if got := w.h.ec2.stopForce; len(got) != 1 || got[0] {
+		w.t.Fatalf("StopInstances Force flags = %v, want one graceful stop", got)
+	}
+	if got := attachedInstance(w.vol()); got != "" {
+		w.t.Fatalf("the home is still on %q", got)
+	}
+	if w.h.ec2.instances["i-dark"].State.Name != ec2types.InstanceStateNameStopped {
+		w.t.Fatalf("the box is %s", w.h.ec2.instances["i-dark"].State.Name)
+	}
+	for _, c := range w.h.ec2.calls {
+		if strings.HasPrefix(c, "TerminateInstances") {
+			w.t.Fatalf("terminated: %v", w.h.ec2.calls)
+		}
+	}
+	if w.marker() != "" || w.wedgeAt() == "" {
+		w.t.Fatalf("marker %q wedge-at %q: the episode must be recorded and the marker gone", w.marker(), w.wedgeAt())
+	}
+}
+
 func (w *rescueWorld) cancelled() []string {
 	w.h.ssmc.mu.Lock()
 	defer w.h.ssmc.mu.Unlock()
@@ -241,18 +264,13 @@ func TestRescuePreparesInTheOrderTheADRFixes(t *testing.T) {
 		if got := w.cancelled(); len(got) != 1 || got[0] != "cmd-1" {
 			t.Fatalf("cancelled %v; only the CP's own command is the rescue's to cancel", got)
 		}
-		w.untouched()
-		if w.marker() != "" {
-			t.Fatalf("marker %q left behind; this phase has no later step to carry it", w.marker())
-		}
-		if w.wedgeAt() != "" {
-			t.Fatalf("a rescue that never acted on the box recorded an episode: %q", w.wedgeAt())
-		}
+		w.rescued()
 		if w.count() != gd+1 {
 			t.Fatalf("count %d, want %d", w.count(), gd+1)
 		}
-		if len(*w.events) != 1 {
-			t.Fatalf("detected events = %d, want 1", len(*w.events))
+		if evs := *w.events; len(evs) != 2 || evs[0].Action != "" || evs[1].Action != "rescued" ||
+			evs[1].Volume != "vol-1" || evs[1].Slot != "i-dark" || evs[1].Workspace != rescueWorkspace || evs[1].MembershipID != "M-1" {
+			t.Fatalf("events = %+v, want detected then one rescued", evs)
 		}
 	})
 }
@@ -358,12 +376,18 @@ func TestRescueCrashAtEveryStepThenResume(t *testing.T) {
 				if w.marker() != "" {
 					t.Fatalf("the resume scan left %q", w.marker())
 				}
-				if w.wedgeAt() != "" {
-					t.Fatalf("a rescue that never acted on the box recorded %q", w.wedgeAt())
-				}
 				if w.count() != wantCount {
 					t.Fatalf("resume moved the count %d -> %d", wantCount, w.count())
 				}
+				if step == "marked" {
+					// An unconfirmed marker is only finalized: nothing was acted on.
+					if w.wedgeAt() != "" {
+						t.Fatalf("recorded %q for a rescue that never acted on the box", w.wedgeAt())
+					}
+					w.untouched()
+					return
+				}
+				w.rescued()
 				if step != "marked" {
 					// A marker whose count never moved is not a rescue to continue: the commands are
 					// listed again only under the claim lock with the count still g_r.
@@ -380,7 +404,6 @@ func TestRescueCrashAtEveryStepThenResume(t *testing.T) {
 						t.Fatalf("the CP's pending command was never cancelled: %v", w.cancelled())
 					}
 				}
-				w.untouched()
 			})
 		})
 	}
@@ -590,10 +613,7 @@ func TestRescueBusyMountLockLeavesTheMarkerAndTheNextPassFinishes(t *testing.T) 
 		}
 		<-sem
 		w.pass(w.f)
-		if w.marker() != "" {
-			t.Fatalf("the next pass left %q", w.marker())
-		}
-		w.untouched()
+		w.rescued()
 	})
 }
 

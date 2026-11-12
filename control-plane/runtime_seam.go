@@ -126,8 +126,9 @@ func (m *manager) auditSlotAutoReplace(ctx context.Context, ev runtime.SlotAutoR
 	}
 }
 
-// auditSlotDark records that the ecs-ec2 sweeper saw a slot with a home go dark (ADR 0121).
-// Detect-only: nothing was done to the slot. The tenant is resolved from the membership the
+// auditSlotDark records what the ecs-ec2 sweeper did about a slot with a home that went dark
+// (ADR 0121): the detection of an episode (nothing was done to the slot), a rescue that took the
+// home off a stopped instance, or a rescue blocked at a bound. The tenant is resolved from the membership the
 // sweeper read off the home's tags; when it cannot be (a removed member) the row is
 // deployment-wide rather than lost.
 func (m *manager) auditSlotDark(ctx context.Context, ev runtime.SlotDark) {
@@ -136,9 +137,16 @@ func (m *manager) auditSlotDark(ctx context.Context, ev runtime.SlotDark) {
 		tenantID = mv.TenantID
 	}
 	detail := fmt.Sprintf("workspace=%s volume=%s dark_since=%s", ev.Workspace, ev.Volume, ev.Since.UTC().Format(time.RFC3339))
+	action := "pool.slot_dark_detected"
+	switch ev.Action {
+	case "rescued":
+		action = "pool.slot_dark_rescued"
+	case "blocked":
+		action = "pool.slot_dark_blocked"
+	}
 	if err := m.store.InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: tenantID, ActorKind: "system", ActorID: "slot-dark",
-		Action: "pool.slot_dark_detected", Target: ev.Slot, Detail: detail, At: store.NowTS(),
+		Action: action, Target: ev.Slot, Detail: detail, At: store.NowTS(),
 	}); err != nil {
 		log.Printf("audit: dark slot %s for %s not recorded: %v", ev.Slot, ev.Workspace, err)
 	}

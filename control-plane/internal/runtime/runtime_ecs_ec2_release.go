@@ -120,7 +120,14 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	}
 	// The home is off the slot: what follows is bookkeeping, owed even if the lease is
 	// lost now.
-	ctx = outer
+	e.afterDetach(outer, volumeID, instanceID)
+	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
+	return nil
+}
+
+// afterDetach is what a detach owes the pool: wait for the device to be free, take the home
+// off the dormant set and hand the slot back as free. Shared with the dark-slot rescue.
+func (e *ecsEC2Runtime) afterDetach(ctx context.Context, volumeID, instanceID string) {
 	// Do not call the slot free until it really is: the attachment point outlives the
 	// DetachVolume response (see attachHomeWithRetry), and a Start that lands in that
 	// window would grow the pool instead of swapping onto this slot.
@@ -133,8 +140,6 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	// existed a released slot simply left every path that could ever stop it (§64.31).
 	e.untagSlotOwner(ctx, instanceID)
 	e.markSlotFree(ctx, instanceID)
-	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
-	return nil
 }
 
 // waitNotStopping returns once the box is no longer `stopping`. Bounded: a box that stays

@@ -49,6 +49,17 @@ func (p rescuePhase) valid() bool {
 	return false
 }
 
+// rank orders the phases by progress; an unknown phase ranks below all of them.
+func (p rescuePhase) rank() int {
+	for i, q := range []rescuePhase{rescuePhasePreparing, rescuePhaseBegun, rescuePhaseDeregistering, rescuePhaseDeregistered,
+		rescuePhaseStopping, rescuePhaseStopped, rescuePhaseDetaching, rescuePhaseDetached} {
+		if p == q {
+			return i
+		}
+	}
+	return -1
+}
+
 // rescueMarker is the parsed af-rescue value.
 type rescueMarker struct {
 	Volume string

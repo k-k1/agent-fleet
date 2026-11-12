@@ -448,3 +448,31 @@ Follow-ups: #3993
 時計で確認する。
 
 第 2 巡: クレームのリースは、マーカーを進めたあと、クレームを消す前（読み取りと削除を展開し間に確認を入れた）、コマンド一覧のあとにも時計で確認する。失効したらマーカーを残して中断し（再開スキャンが判断する）、得た集合は使わない。
+
+**2026-11-12（L1 段階、第 2 段、#3964）。** L1 の破壊的な後半を作った（コード: `runtime_ecs_ec2_dark_rescue_steps.go`）。これで
+`rescue` は、サービスが停止中のスロットについて決定 2 を最後まで実行する。既定は `detect` のまま。本文の読み方が分かれたところは
+次のとおりにした。
+
+- 各段階はマーカーのフェーズから始まり、フェーズを信用せず世界を読み直す。段階: (4) タスク ENI が付いていれば、フェーズ
+  `deregistering`、強制登録解除、ENI が消えたことの上限付きポーリング（2 秒間隔 15 回）、`deregistered`（タスク ENI の無い
+  インスタンスは登録解除しない）。(5) フェーズ `stopping`、通常の `StopInstances`、`stopped` までの上限付きポーリング（2 秒間隔
+  90 回）、`stopped`。(6) ロックの下で直前に EC2 へ尋ね `stopped` であることを要求し、フェーズ `detaching`、`DetachVolume`、
+  `detached`、そして解放が負うプールの後始末（`releaseSlotSince` と共有する `afterDetach`）。待ちの間はロックを持たない。デタッチは
+  `releaseSlotSince` 経由ではなくガード付き区間の中で直接呼ぶ。`releaseSlotSince` は自分でマウントロックを取り、クレームロック無しで
+  カウントを読むため。そのため救出はまだ `asRescue` を使っていない。
+- 破壊的な呼び出しとフェーズの書き込みはすべて `rescueGuarded`（マウントロックが外側、内側のクレームロックの下でトークンを検証し直す）
+  の中で行い、直前にリースを時計で確認する。フェーズの書き込みが失敗したら、その呼び出しの前に手順を止める。意図のフェーズが
+  インスタンスに無いままの副作用は起きない。
+- **Force** はマーカーで決める: フェーズがすでに `stopping` で、インスタンスがまだ `stopping` で、`blocked_since` がある（前のパスの
+  上限付き待ちが尽きた）ときだけ。最初の停止には付けず、インスタンスの LaunchTime が救出のエポックと違うとき（それは停止ではなく
+  追い越し）にも付けない。
+- **blocked**: 上限が尽きると `blocked_since` を一度だけ書き（再試行では保ち、フェーズが完了したら消す）、そのパスを終える。次のパスが
+  同じフェーズから再開する。監査 `pool.slot_dark_blocked` は `blocked_since` を最初に書いたときに、`pool.slot_dark_rescued` はデタッチが
+  完了したとき、または再開が `detaching` / `detached` でホームが無くカウントがまだ `g_r` のときに出す。どちらも既存のコールバック
+  （`SlotDark.Action`）を使う。プールビューの `blocked` / `rescued` はマーカーから読む。
+- 再開は、アクションが `rescue` の間、進行中のフェーズ（`preparing` と `detached` を除く）を続ける。`begun` より後のフェーズはコマンドを
+  もう一度一覧もキャンセルもしない。`rescueBlockedAfter`、強制デタッチ、隔離（L2）は作っていない。
+- `DetachVolume` が成功したのに `detached` の書き込みが失敗した場合も `afterDetach` を行い、救出済みとして終える。マーカーは
+  ホームが無い `detaching` のままになり、ファイナライザが記録する。
+- IAM: 変更なし。`ecs:DeregisterContainerInstance`、`ec2:StopInstances`、`ec2:DetachVolume` は付与済みで、新しい 2 つの呼び出し箇所を
+  `deploy/local/cfn-cp-ec2-scope-test.py` に登録した。実 AWS では動かしていない。未解決事項 1・4・5 は残る。
