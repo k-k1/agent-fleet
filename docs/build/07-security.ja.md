@@ -636,7 +636,7 @@ SNI で判定するので、許可された名前なら 443 番のどの公開�
 記録されずに通る。それ以外のインターネット宛の通信は、SSH の git や他のリゾルバへの直接の DNS も含めて
 落とす。VPC 内の通信（CP、2049 番の EFS）はセキュリティグループに従い、gateway を通らない。
 Workspace は NAT gateway ではなく gateway 自身のアドレスから出る
-（[deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) の「Egress gateway」）。
+（ガイドの [外向きの通信をゲートウェイで制御する](../../guide/operate/aws-ecs/egress-gateway.ja.md)）。
 
 それ以外では柵が無い: `docker` に内部専用の network は無く、`native` はホストのネットワークを
 共有し、Kubernetes の NetworkPolicy はインターネットを通し、AWS の既定の `EgressRoute=nat-gateway`

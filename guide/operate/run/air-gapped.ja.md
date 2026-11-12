@@ -1,6 +1,6 @@
 ---
 audience: "外のネットワークに出られないホストに配備を入れる人"
-source_of_truth: "`deploy/compose/README.md` の「Air-gapped install」と `control-plane drawio-preseed`（食い違ったら手順書とコードが正）"
+source_of_truth: "`deploy/compose/release.sh`・`load-images.sh` と `control-plane drawio-preseed`（食い違ったらスクリプトとコードが正）"
 ---
 
 # 閉じたネットワークに入れる
@@ -8,7 +8,6 @@ source_of_truth: "`deploy/compose/README.md` の「Air-gapped install」と `con
 [English](air-gapped.md) | 日本語
 
 インターネットに出られないホストにも、Agent Fleet を入れられます。イメージ・TLS・エージェントの CLI・図のアイコンを、外に頼らずに用意します。
-コマンドは [compose の手順書の「Air-gapped install」](../../../deploy/compose/README.md#air-gapped-install) にあります。
 
 ## 全体像
 
@@ -32,7 +31,21 @@ source_of_truth: "`deploy/compose/README.md` の「Air-gapped install」と `con
 | `ghcr.io/k-k1/agent-fleet/*` を社内のレジストリにミラーし、`REGISTRY` をそこに向ける | 社内にレジストリがある。`docker compose pull` がそのまま使え、保守が軽い |
 | ネットワークのあるマシンで `release.sh --save` を実行してイメージを書き出し、対象のホストで `load-images.sh` で読み込む | レジストリがない。アップグレードのたびにビルド・コピー・読み込みを繰り返します |
 
-手で持ち込んだイメージは `agent-fleet/{control-plane,workspace}:<版>` という名前になります。対象のホストの `.env` では `REGISTRY=agent-fleet` にして、名前を合わせます。
+手で持ち込むときは、ネットワークのあるマシンでイメージを書き出します。
+
+```bash
+VERSION=<version> deploy/compose/release.sh --save
+#   -> deploy/compose/dist/agent-fleet-images-<version>.tar.gz  (docker save, gzip)
+```
+
+その tar とバンドルを対象のホストにコピーし、そこで読み込みます。
+
+```bash
+deploy/compose/load-images.sh agent-fleet-images-<version>.tar.gz
+docker compose up -d
+```
+
+手で持ち込んだイメージは `agent-fleet/{control-plane,workspace}:<版>` という名前になります（`REGISTRY=` で変えられます）。対象のホストの `.env` では `REGISTRY=agent-fleet` にして、名前を合わせます。
 
 ## TLS を用意する
 
@@ -68,4 +81,5 @@ control-plane drawio-preseed --from /path/to/stencils --all  # 全部：203 件�
 ## 関連
 
 - [アップグレードする](upgrade.ja.md)
+- [ネイティブパッケージを更新する](../native/update.ja.md#手で持ち込む)：ネイティブパッケージを外に出られないホストに入れる
 - [導入](../02-install.ja.md)

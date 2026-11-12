@@ -1,6 +1,6 @@
 ---
 audience: "Whoever moves a deployment to a new release"
-source_of_truth: "`deploy/compose/README.md` and `deploy/aws/ecs/update.sh` (where they disagree, the runbook and the script win)"
+source_of_truth: "`deploy/compose/docker-compose.yml`, the ECS runbook and `deploy/aws/ecs/update.sh` (where they disagree, the runbook and the script win)"
 ---
 
 # Upgrade
@@ -20,8 +20,8 @@ The commands are in each deployment type's runbook. This page covers what happen
 
 | Type | Runbook |
 |---|---|
-| Docker Compose | [The compose runbook, "Upgrade"](../../../deploy/compose/README.md#upgrade) |
-| ECS (`ecs` / `ecs-ec2`) | [The ECS runbook, "Upgrade (runbook)"](../../../deploy/aws/ecs/README.md#upgrade-runbook) |
+| Docker Compose | [Upgrade Docker Compose](#upgrade-docker-compose) below |
+| ECS (`ecs` / `ecs-ec2`) | [Upgrade on ECS](../aws-ecs/upgrade.md) |
 | Kubernetes | [Upgrade the CP](../kubernetes/upgrade.md) |
 
 ## Before you upgrade
@@ -34,9 +34,20 @@ The commands are in each deployment type's runbook. This page covers what happen
 
 Set `VERSION` in `.env` to the new tag, fetch (or build) the images, and run `docker compose up -d`.
 
+```bash
+# edit .env: VERSION=<new tag>, and point WS_IMAGE at the matching workspace tag
+# (WS_IMAGE is an independent variable — it is not derived from VERSION)
+docker compose pull            # or rebuild: docker compose build
+# the workspace image is not a compose service — pull/rebuild it separately:
+docker pull <WS_IMAGE>         # or rebuild: docker build -t <WS_IMAGE> ../../workspace
+docker compose up -d
+```
+
 - Images come from GHCR (`ghcr.io/k-k1/agent-fleet/*`), resolved from `REGISTRY` and `VERSION`. No registry login is needed
 - **The workspace image is not a compose service.** `docker compose pull` does not fetch it, so `docker pull` it separately or rebuild it. `WS_IMAGE` is a separate variable, not derived from `VERSION`; point it at the matching tag
-- `docker compose up -d` does not touch running workspaces, and a Docker restart keeps the environment they were created with
+- `docker compose up -d` does not touch running workspaces, and a Docker restart keeps the environment they were created with. After upgrading (and after changing `AF_WS_WORKLOAD_AWS`), stop and start each workspace ([Move workspaces to the new image](#move-workspaces-onto-the-new-image))
+- On a cloud VM, check the protection of the host's cloud identity afterwards ([Other operational controls](../secure/controls.md#keep-the-hosts-cloud-identity-from-workspaces))
+- The native package is in [Update the native package](../native/update.md)
 
 ## Upgrade ECS
 
@@ -45,8 +56,8 @@ Set `VERSION` in `.env` to the new tag, fetch (or build) the images, and run `do
 | Watch | What happens |
 |---|---|
 | Some releases need one stack updated before another | `update.sh` checks this first and stops before touching anything. It prints the standalone `aws cloudformation deploy` command; run it, then run `update.sh` again |
-| `update.sh` does not update the data stack | It detects, read-only, a `Persistence=retain` deployment with no daily EFS backup, warns, and prints the change-set commands. The procedure is step 1a of the runbook |
-| `update.sh` does not update the network stack (`00-network`) either | Update it by hand. Deploying the new template with its defaults makes its S3 endpoint deny every S3 request from workspaces that have not restarted yet (AccessDenied). Schedule a maintenance window in which every running workspace restarts. The procedure is the runbook's "Upgrading from v0.34.x" |
+| `update.sh` does not update the data stack | It detects, read-only, a `Persistence=retain` deployment with no daily EFS backup, warns, and prints the change-set commands. The procedure is in [Check that the EFS backup exists](../aws-ecs/upgrade.md#check-that-the-efs-backup-exists) |
+| `update.sh` does not update the network stack (`00-network`) either | Update it by hand. Deploying the new template with its defaults makes its S3 endpoint deny every S3 request from workspaces that have not restarted yet (AccessDenied). Schedule a maintenance window in which every running workspace restarts. The procedure is in [Upgrade from v0.34.x](../aws-ecs/upgrade.md#upgrade-from-v034x) |
 | On `ecs-ec2`, a release changed the slots' launch template | Existing slots only get it when they are replaced ([Replace and stop slots](../aws-ecs/slot-maintenance.md#outdated-slots)) |
 
 ### The missing EFS backup notice

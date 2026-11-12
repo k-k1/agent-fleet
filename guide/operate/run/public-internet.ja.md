@@ -59,4 +59,4 @@ AWS の WAF で選べるのは 2 つだけです。
 
 - [脅威モデルと残るリスクを知る](../secure/threat-model.ja.md)
 - [外向きの通信を制御する](../secure/egress.ja.md)
-- [ECS の手順書](../../../deploy/aws/ecs/README.md)
+- [WAF を置く](../aws-ecs/options.ja.md#waf-を置く)

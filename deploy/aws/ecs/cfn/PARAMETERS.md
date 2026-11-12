@@ -6,7 +6,7 @@ to pass — and this file holds the rest: the measurements, the trade-offs and t
 
 **Why the split.** CloudFormation refuses a template body over **51,200 bytes** and
 `30-ingress.yaml` crossed that line, so `env.sh` has to hand it over through S3
-(see [the 51,200-byte wall](../README.md#the-51200-byte-wall-why-a-deploy-can-stop-working-without-anyone-touching-it)).
+(see [Keep templates under the size limit](../../../../guide/operate/aws-ecs/template-size.md)).
 The prose was 40% of the file — 21,630 bytes of the 54,681 — and prose is the one part that
 does not have to travel to the API to do its job. YAML comments count toward the limit
 exactly like `Description:` does, so moving a paragraph into a `#` comment would have saved
@@ -109,7 +109,7 @@ stays `false` until every running workspace has been restarted (README, NAT bull
 ### `EgressProxyAddr` / `EgressTokenSecretArn`
 
 00-network's outputs of the same names, present only with `EgressRoute=gateway` (ADR 0122,
-#2717; README, "Egress gateway"). Derived facts like `WorkspaceSubnets`: `standup.sh` and
+#2717; guide/operate/aws-ecs/egress-gateway.md). Derived facts like `WorkspaceSubnets`: `standup.sh` and
 `update.sh` pass them (empty once the network is back on `nat-gateway`), and a deploy by hand
 must too. With `EgressTokenSecretArn` set:
 
@@ -353,7 +353,7 @@ terminate"; a smaller value simply skips the sleeping stage.
 It is not the way to move retained slots onto a changed launch template: a slot below `$Latest`
 is replaced at its workspace's next start by itself (switch: the CP env
 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS`, default on), and you can reserve slots for replacement in
-the Console's Settings → Admin → Slots tab to force it; each workspace moves to a new slot at its next start (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
+the Console's Settings → Admin → Slots tab to force it; each workspace moves to a new slot at its next start (`guide/operate/aws-ecs/slot-maintenance.md`, "Move slots onto new user data").
 
 ### `Ec2HibernateAfterSec`
 
@@ -656,7 +656,7 @@ lowercase value, and a stricter `AllowedValues` would reject it on the next upda
 ### `SsmPrefix`
 
 SSM SecureString path prefix holding the CP secrets, created out of band before deploy (see
-[the README](../README.md#prerequisites-once-per-account)). Params: `cookie-secret`,
+[Build on ECS](../../../../guide/operate/aws-ecs/install.md#1-put-the-control-planes-secrets-in-ssm)). Params: `cookie-secret`,
 `master-key`, plus `google-client-secret` / `oidc-client-secret` / `github-client-secret`
 depending on the IdPs in use.
 Optional, each behind its own switch: `github-login-client-secret`, `comfy-api-key`,
@@ -1029,7 +1029,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 `deploy/local/cfn-provided-routes-test.py` checks all of the above offline. The CP needs an
 AWS identity from its environment for this (the task role here). `ec2-single` has none and does
-not offer provided routes (`deploy/aws/ec2-single/README.md`).
+not offer provided routes (`guide/operate/aws-ec2-single.md`, "Protect the instance metadata").
 
 ### `SessionTtl` / `CookiePurposeKeys` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
 
@@ -1073,7 +1073,7 @@ it, so turn it on (or change it) with
 `aws cloudformation deploy … --parameter-overrides AgentSilentStopAfter=30m`; the next `update.sh`
 keeps the value. To turn it off, deploy `AgentSilentStopAfter=0` (the CP reads `0` as off). Do not
 pass an empty override: `deploy --parameter-overrides AgentSilentStopAfter=` did not clear a value on a
-live stack; to return to empty use `clear-params.sh` (README, "Clearing a parameter"). It needs `AF_AGENT_SILENT_AFTER`
+live stack; to return to empty use `clear-params.sh` ([Clear a parameter](../../../../guide/operate/aws-ecs/upgrade.md#clear-a-parameter)). It needs `AF_AGENT_SILENT_AFTER`
 (default `3m`, not exposed as a parameter) to be on; see
 `guide/operate/run/idle-stop.md#stop-a-silent-agent-automatically`.
 
@@ -1278,7 +1278,7 @@ are redirected to Squid and the 443 relay, 3128 is the explicit proxy, and every
 entry and records the rest. A security group cannot name ports an organisation adds later and drops
 without a record, so nftables' `input` chain admits only 3128 and the redirected flows. The group has
 no egress rules (all outbound), which the relay needs to dial named ports (ADR 0122, addendum
-2026-11-05; README, "Egress gateway"). The template is within 19 bytes of its size budget
+2026-11-05; guide/operate/aws-ecs/egress-gateway.md). The template is within 19 bytes of its size budget
 (`cfn-template-size-test.py`): put prose here, not in the template.
 
 ### Egress gateway group
@@ -1407,7 +1407,7 @@ itself, not the Console's zone.
 
 ### `CpDbUnavailableFilter:`
 
---- "the Control Plane cannot reach its database", made visible (README, "Alarms") ---
+--- "the Control Plane cannot reach its database", made visible (guide/operate/aws-ecs/alarms.md) ---
 The marker is control-plane/store_postgres_secret.go's logDBUnavailable: change both or neither.
 
 ### `CpDbUnavailableAlarm:`

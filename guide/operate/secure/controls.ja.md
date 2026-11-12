@@ -17,6 +17,7 @@ source_of_truth: "Control Plane のサインイン・cookie・ワークスペー
 | サインインの許可リスト | 外す人はリストから消す。空のままだと誰も入れない |
 | IdP ごとの信頼の宣言 | `AF_OIDC_<ID>_TRUST` を必ず書き、Entra ID は自社のテナントに固定する |
 | ホストのクラウドの身元 | ワークスペースからメタデータのエンドポイントに届かないようにする |
+| compose のホスト | Docker のソケットに触れる人を絞り、`AF_MASTER_KEY` をデータと別に保管する |
 | 監査ログ | 管理 > 監査 で、変更と破壊的な操作を追う |
 
 ## プレビュー用ドメインを別のドメインに置く
@@ -95,7 +96,7 @@ Control Plane は、SDK がメタデータを問い合わせないようにし�
 
 | ホスト | やること |
 |---|---|
-| compose 用の EC2 ホスト（`deploy/aws/ec2-single`） | IMDSv2 とホップ数 1（`HttpTokens: required`・`HttpPutResponseHopLimit: 1`）。ホストのネットワークの Control Plane は 1 ホップなのでインスタンスプロファイルを使え、docker のブリッジ上のワークスペースは 2 ホップなのでトークンを得られません。既存のインスタンスには、スタックの更新ではなく、動いているインスタンスに直接適用します（コマンドは [ec2-single の手順書](../../../deploy/aws/ec2-single/README.md#instance-metadata-imds)）。Ubuntu の AMI のパラメータが進んでいると、スタックの更新でインスタンスが作り直されることがあります |
+| compose 用の EC2 ホスト（`deploy/aws/ec2-single`） | IMDSv2 とホップ数 1（`HttpTokens: required`・`HttpPutResponseHopLimit: 1`）。ホストのネットワークの Control Plane は 1 ホップなのでインスタンスプロファイルを使え、docker のブリッジ上のワークスペースは 2 ホップなのでトークンを得られません。既存のインスタンスには、スタックの更新ではなく、動いているインスタンスに直接適用します（コマンドは [EC2 1 台に構築する](../aws-ec2-single.ja.md#インスタンスのメタデータを守る)）。Ubuntu の AMI のパラメータが進んでいると、スタックの更新でインスタンスが作り直されることがあります |
 | クラウドの上のそれ以外の docker ホスト | 同じメタデータの設定か、Docker の `DOCKER-USER` チェーンでワークスペースのブリッジからの `169.254.169.254` を拒むファイアウォールの規則。ホストの root が要ります（compose 自体に新しい権限は要りません） |
 | Kubernetes | この変数は、クラスタのメタデータサーバー（ノードのサービスアカウント、GKE では Workload Identity）を塞ぎません。NetworkPolicy の egress の規則か GKE のメタデータの隠蔽で、クラスタの側で塞ぎます。Control Plane はこれをしません |
 | ecs-ec2 | スロットのユーザーデータが `ECS_AWSVPC_BLOCK_IMDS=true` を設定します。古いスロットは、管理 > スロット で入れ替えを予約します（[スロットを入れ替える・止める](../aws-ecs/slot-maintenance.ja.md#古いスロット)） |
@@ -115,7 +116,7 @@ Control Plane に `AF_WS_WORKLOAD_AWS=1` を設定すると、ECS のタスク�
 1. Control Plane とワークスペースのイメージを更新します（`AF_WS_WORKLOAD_AWS` を変えたときも同じです）
 2. すべてのワークスペースを Console で**停止してから起動**します。コンテナが作り直されます
 3. 上の表のホストの設定を適用します
-4. セッションのシェルから、環境を表示せずに確かめます（3 つの確認は [ec2-single の手順書](../../../deploy/aws/ec2-single/README.md#instance-metadata-imds)）
+4. セッションのシェルから、環境を表示せずに確かめます（3 つの確認は [EC2 1 台に構築する](../aws-ec2-single.ja.md#インスタンスのメタデータを守る)）
 
 | 確認 | `AF_WS_WORKLOAD_AWS` がオフ（既定） | `AF_WS_WORKLOAD_AWS=1` |
 |---|---|---|
@@ -124,6 +125,15 @@ Control Plane に `AF_WS_WORKLOAD_AWS=1` を設定すると、ECS のタスク�
 | IMDSv2 のトークンの要求 | 成功しない | ホストがメタデータを遮っている所では、やはり失敗しなければならない |
 
 メンバーは `af-aws-exec` で、自分として AWS のコマンドを動かします（[af-aws-exec](../../ref/cli/af-aws-exec.ja.md)）。
+
+## compose のホストを守る
+
+| 項目 | やること |
+|---|---|
+| `docker.sock` | Control Plane はマウントした Docker のソケットでホストのデーモンを動かすので、この配備の中ではホストの root と同じです。Control Plane やホストが破られると、**この配備の**隔離が崩れます（会社ごとに配備を分けているので、ほかの会社には及びません）。ホストを操作できる人を絞ります。Docker の API の範囲を狭めるなら、フィルタする proxy をソケットの前に置きます |
+| `AF_MASTER_KEY` | データとは別の金庫に置き、別にバックアップします。データのディレクトリには置きません（[配備の鍵を扱う](deployment-keys.ja.md)） |
+
+脅威モデルの全体と脆弱性の報告のしかたは [脅威モデルと残るリスクを知る](threat-model.ja.md) と `SECURITY.md` にあります。
 
 ## 関連
 

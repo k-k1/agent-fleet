@@ -142,7 +142,7 @@ af_efs_backup_check() {
         echo "         The backup vault and plan were added to 10-data in 0.26.0; a data stack stood up earlier"
         echo "         never got them, and nothing else updates that stack. Every member's Claude state and"
         echo "         home on the EFS is unprotected against deletion or corruption. This upgrade does not"
-        echo "         fix it — do it with a change set (README \"EFS backup and restore\", \"Turning it on\"):"
+        echo "         fix it — do it with a change set (guide/operate/aws-ecs/backup.md, \"Turn backups on for a running deployment\"):"
         echo "           aws cloudformation deploy --stack-name $data --template-file $(dirname "${BASH_SOURCE[0]}")/cfn/10-data.yaml \\"
         echo "             --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset \\"
         echo "             --profile $profile --region $region"

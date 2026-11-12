@@ -65,7 +65,7 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 | 形態 | 置き場所 |
 |---|---|
 | compose / docker | compose ファイルの隣の `.env` |
-| native | `af start` の環境、または systemd unit の `Environment=`（[native の手順書](../../../deploy/native/README.md)） |
+| native | `af start` の環境、または systemd unit の `Environment=`（[systemd でサービスとして動かす](../native/service.ja.md)） |
 
 - `AF_LLM_URL` は近道です。`AF_ENGINES_JSON`（AWS ならエンジンのスタックの表）に `lifecycle: "external"` の `llm` 行を自分で書いても同じになります
 - 鍵はどちらの書き方でも `AF_ENGINE_API_KEY_LLM` から読みます。`AF_LLM_API_KEY` という変数はありません

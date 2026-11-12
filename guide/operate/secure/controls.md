@@ -17,6 +17,7 @@ The controls that protect the deployment and fit on no other page. Each of them,
 | The sign-in allowlist | Remove people from it to remove them. Left empty, nobody gets in |
 | Each IdP's trust declaration | Always set `AF_OIDC_<ID>_TRUST`, and pin Entra ID to your own tenant |
 | The host's cloud identity | Keep workspaces from reaching the metadata endpoint |
+| The compose host | Limit who can touch the Docker socket, and keep `AF_MASTER_KEY` apart from the data |
 | The audit log | Follow changes and destructive operations in Admin > Audit |
 
 ## Put the preview domain on a separate domain
@@ -95,7 +96,7 @@ Blocking it on the network is the host's job.
 
 | Host | What to do |
 |---|---|
-| The compose EC2 host (`deploy/aws/ec2-single`) | IMDSv2 with hop limit 1 (`HttpTokens: required`, `HttpPutResponseHopLimit: 1`). The host-network Control Plane is one hop away and can use the instance profile; workspaces on the docker bridge are two hops away and get no token. Apply it directly to a running instance rather than through a stack update (commands in the [ec2-single runbook](../../../deploy/aws/ec2-single/README.md#instance-metadata-imds)); when the Ubuntu AMI parameter has moved on, a stack update can replace the instance |
+| The compose EC2 host (`deploy/aws/ec2-single`) | IMDSv2 with hop limit 1 (`HttpTokens: required`, `HttpPutResponseHopLimit: 1`). The host-network Control Plane is one hop away and can use the instance profile; workspaces on the docker bridge are two hops away and get no token. Apply it directly to a running instance rather than through a stack update (commands in [Deploy on a single EC2 instance](../aws-ec2-single.md#protect-the-instance-metadata)); when the Ubuntu AMI parameter has moved on, a stack update can replace the instance |
 | Any other docker host in a cloud | The same metadata settings, or a host firewall rule in Docker's `DOCKER-USER` chain that rejects `169.254.169.254` from the workspace bridge. It needs root on the host (compose itself needs no new privilege) |
 | Kubernetes | The variable does not block the cluster's metadata server (the node's service account, Workload Identity on GKE). Block that path in the cluster, with a NetworkPolicy egress rule or GKE metadata concealment. The Control Plane does not do it |
 | ecs-ec2 | The slot user data sets `ECS_AWSVPC_BLOCK_IMDS=true`. Older slots need replacing: schedule it in Admin > Slots ([Replace and stop slots](../aws-ecs/slot-maintenance.md#outdated-slots)) |
@@ -115,7 +116,7 @@ A running docker workspace keeps the environment it was created with; `docker co
 1. Update the Control Plane and workspace images (the same when you change `AF_WS_WORKLOAD_AWS`)
 2. **Stop and then start** every workspace in the Console. The containers are recreated
 3. Apply the host settings in the table above
-4. Check from a session's shell without printing the environment (the three checks are in the [ec2-single runbook](../../../deploy/aws/ec2-single/README.md#instance-metadata-imds))
+4. Check from a session's shell without printing the environment (the three checks are in [Deploy on a single EC2 instance](../aws-ec2-single.md#protect-the-instance-metadata))
 
 | Check | `AF_WS_WORKLOAD_AWS` off (default) | `AF_WS_WORKLOAD_AWS=1` |
 |---|---|---|
@@ -124,6 +125,15 @@ A running docker workspace keeps the environment it was created with; `docker co
 | An IMDSv2 token request | Does not succeed | Where the host blocks metadata, it must still fail |
 
 Members run AWS commands as themselves with `af-aws-exec` ([af-aws-exec](../../ref/cli/af-aws-exec.md)).
+
+## Protect the compose host
+
+| Item | What to do |
+|---|---|
+| `docker.sock` | The Control Plane drives the host daemon through the mounted Docker socket, so within this deployment it is equivalent to host root. A compromise of the Control Plane or the host breaks isolation for **this** deployment only (companies are separate deployments). Restrict who can operate the host. To narrow the Docker API surface, put a filtering proxy in front of the socket |
+| `AF_MASTER_KEY` | Keep it in a separate vault with its own backup, never in the data directory ([Handle the deployment keys](deployment-keys.md)) |
+
+The full threat model and how to report a vulnerability are in [Understand the threat model and residual risks](threat-model.md) and `SECURITY.md`.
 
 ## Related
 

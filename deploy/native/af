@@ -9,7 +9,7 @@
 #
 # Host requirements: Linux kernel (unprivileged user namespaces) + bash/coreutils/tar +
 # curl or wget. zstd is bundled as bin/zstd, so the host does not need it.
-# See the bundled README.md for details.
+# See guide/operate/native/install.md (docs/operate/native/ in this package) for details.
 set -euo pipefail
 
 # Resolve the real path so the package directory is found even when launched via
@@ -117,7 +117,7 @@ ERROR: bubblewrap cannot run unprivileged (unprivileged user namespaces unavaila
   Plain WSL2 normally works out of the box. On bare-metal Ubuntu 23.10+ you need to
   relax the AppArmor restriction once:
     sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-  To make it permanent, put the same setting under /etc/sysctl.d/ (see README.md).
+  To make it permanent, put the same setting under /etc/sysctl.d/ (see docs/operate/native/install.md in the package).
   On kernels with userns disabled entirely, the native package cannot run
   (use the Docker setup instead).
 EOF

@@ -1,6 +1,6 @@
 ---
 audience: "Deployment administrators who want sessions on a compose / native / docker deployment to use a ComfyUI on their own network"
-source_of_truth: "The \"LAN ComfyUI (image engine)\" panel under Admin → Inference engines, and the environment the Control Plane reads at start. How to write it: `deploy/native/README.md` and `deploy/compose/.env.example`"
+source_of_truth: "The \"LAN ComfyUI (image engine)\" panel under Admin → Inference engines, and the environment the Control Plane reads at start. How to write it: `deploy/compose/.env.example`"
 ---
 
 # Generate images on your own ComfyUI
@@ -93,7 +93,7 @@ The Control Plane reads these once at start. Restart the Control Plane after cha
 | Target | Where it goes |
 |---|---|
 | compose / docker | `.env` next to the compose file |
-| native | The environment of `af start`, or `Environment=` in the systemd unit ([the native runbook](../../../deploy/native/README.md#image-generation-on-a-comfyui-on-your-network--optional)) |
+| native | The environment of `af start`, or `Environment=` in the systemd unit ([Run it as a systemd service](../native/service.md)). Example: `AF_COMFY_URL=http://<host>:8188 af start` |
 
 ### Which setting is used
 
@@ -112,7 +112,18 @@ To stop image generation, turn the engine **off** on the Inference engines scree
 ## Run more than one image engine
 
 Every image engine is one row of the engine table. `AF_COMFY_URL` is a shortcut that writes one row with the key `image`.
-On `compose` / `native` / `docker`, any other row goes in `AF_ENGINES_JSON`, which the Control Plane reads at start (row format: [the native runbook's "More than one engine row"](../../../deploy/native/README.md#more-than-one-engine-row)).
+On `compose` / `native` / `docker`, any other row goes in `AF_ENGINES_JSON`, which the Control Plane reads at start (row format: the example below).
+
+```bash
+AF_ENGINES_JSON='{"engines":[
+  {"key":"comfy-lan","api":"images","provider":"comfy",
+   "url":"http://192.168.1.20:8188","health":"/system_stats","lifecycle":"external"},
+  {"key":"oai-image","api":"images","provider":"openai-compat",
+   "url":"http://192.168.1.21:8000","health":"/v1/models","lifecycle":"external"}
+]}' af start
+```
+
+- One JSON document with an `engines` array, read once at startup like the variables above
 
 | What you want | How to write it |
 |---|---|

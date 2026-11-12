@@ -79,6 +79,7 @@ FROM --platform=$BUILDPLATFORM debian:trixie-slim AS docs
 WORKDIR /src
 COPY guide/                             guide/
 COPY deploy/release/stage-docs.sh       deploy/release/
+COPY deploy/release/md-links.awk        deploy/release/
 COPY deploy/release/notes/              deploy/release/notes/
 COPY deploy/compose/README.md           deploy/compose/
 COPY deploy/native/README.md            deploy/native/

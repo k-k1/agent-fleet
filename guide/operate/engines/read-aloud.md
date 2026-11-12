@@ -28,13 +28,40 @@ The VOICEVOX engine is not in the package. Provide it for your deployment target
 
 | Target | What to provide |
 |---|---|
-| AWS ECS | The speech engine stack (`50-tts`). It normally runs at zero and is started and stopped from this screen ([ECS runbook](../../../deploy/aws/ecs/README.md#optional-japanese-speech-the-voicevox-engine-cfn50-ttsyaml)) |
-| native, WSL | Run VOICEVOX on Windows, or VOICEVOX ENGINE on Linux ([native runbook](../../../deploy/native/README.md#text-to-speech-tts--zundamon--optional)) |
+| AWS ECS | The speech engine stack (`50-tts`). It normally runs at zero and is started and stopped from this screen ([Add Japanese read-aloud](../aws-ecs/tts.md)) |
+| native, WSL | Run VOICEVOX on Windows, or VOICEVOX ENGINE on Linux ([Provide it on native and WSL](#provide-it-on-native-and-wsl) below) |
 | Others | Run a VOICEVOX ENGINE the Control Plane can reach over HTTP |
 
 - The Control Plane's `AF_VOICEVOX_URL` says where the engine is. The default is `http://127.0.0.1:50021`
 - For Polly, set `AF_POLLY_REGION` and AWS credentials the Control Plane's process can see
 - While the engine is down, only speech fails. When it is back, read-aloud recovers from the next sentence
+
+### Provide it on native and WSL
+
+The WSL or Linux side needs no audio setup: **playback** happens in the browser (on the Windows side under WSL2).
+All that is needed is that the Control Plane reaches a VOICEVOX engine over HTTP. Provide it in one of these ways; leaving it out affects no other feature.
+
+| Way | What to do |
+|---|---|
+| A. Run it on the Windows side (WSL2) | Launching the [VOICEVOX](https://voicevox.hiroshiba.jp/) Windows app exposes the same HTTP API at `127.0.0.1:50021` on the Windows side |
+| B. Run it directly inside WSL or Linux | Extract the Linux (CPU) build of [VOICEVOX ENGINE](https://github.com/VOICEVOX/voicevox_engine) and start it with `./run`. The default is `127.0.0.1:50021`; it takes about 1 GB resident and needs no Docker. The default URL matches, so `af start` needs no changes |
+
+For A, it depends on WSL2's networking mode:
+
+- In **mirrored mode** (`networkingMode=mirrored` under `[wsl2]` in `%UserProfile%\.wslconfig`, Windows 11 22H2 or later), WSL reaches it at `localhost:50021`, so it works **as is with `af start`, no configuration**
+- In the default **NAT mode**, WSL cannot reach the Windows loopback. Run the standalone engine (the Windows build of VOICEVOX ENGINE) with `run.exe --host 0.0.0.0`, and point at the Windows host IP as WSL sees it (`ip route | awk '/^default/{print $3}'`). Windows Firewall must allow inbound connections from the vEthernet (WSL) interface
+
+```bash
+AF_VOICEVOX_URL=http://<windows-host-ip>:50021 af start
+```
+
+To change the URL or port, start with `AF_VOICEVOX_URL` (a full URL including the port). `af` passes your shell environment through to the Control Plane.
+
+```bash
+AF_VOICEVOX_URL=http://127.0.0.1:50022 af start
+```
+
+Under systemd, add `Environment=AF_VOICEVOX_URL=...` to the unit's `[Service]` section ([Run it as a systemd service](../native/service.md)).
 
 ## Choose the engine's mode
 

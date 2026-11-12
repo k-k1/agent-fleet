@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Agent Fleet — stand a deployment up / rebuild it (the executable form of the order in
-# README §Stack decomposition).
+# guide/operate/aws-ecs/overview.md, "Deploy order").
 #
 #   deploy/aws/ecs/standup.sh --profile <p> --region <r>          # plan and preflight (default)
 #   deploy/aws/ecs/standup.sh --profile <p> --region <r> --yes    # execute
@@ -211,7 +211,7 @@ key_too_short() {
 # can still finish and the operator sees the problem before the first task does.
 for s in cookie-secret master-key; do
   if ! have_ssm "$SSM_PREFIX/$s"; then
-    say_missing "no SSM $SSM_PREFIX/$s (README §30-ingress stand-up, step 2)"
+    say_missing "no SSM $SSM_PREFIX/$s (guide/operate/aws-ecs/install.md, step 1 of starting the Control Plane)"
     continue
   fi
   key_too_short "$SSM_PREFIX/$s" && rc=0 || rc=$?
@@ -252,7 +252,7 @@ if [ -n "$gw_alloc" ] && [ "$(af_read_one_param 00-network EgressRoute)" = gatew
     --query 'Addresses[0].[PublicIp,NetworkInterfaceId]' --output text 2>/dev/null || true)"
   read -r gw_ip gw_ni <<<"$gw_got" || true
   case "${gw_ip:-None}" in
-    None) say_missing "GatewayEipAllocationId $gw_alloc is not an address in $AF_PROFILE/$AF_REGION (README, \"Egress gateway\")" ;;
+    None) say_missing "GatewayEipAllocationId $gw_alloc is not an address in $AF_PROFILE/$AF_REGION (guide/operate/aws-ecs/egress-gateway.md)" ;;
     "$gw_addr") ;;
     *) say_missing "GatewayEipAddress '$gw_addr' is not the address of $gw_alloc ($gw_ip)" ;;
   esac
@@ -916,7 +916,7 @@ EOF
       echo "    ✓ interface attached, Squid and the agent running, first policy applied"
     else
       echo "⚠️  the egress gateway is not ready: workspaces have no egress until it is." >&2
-      echo "    On the instance: /var/log/af-egress-gateway.log, journalctl -u af-egress-agent (README, \"Egress gateway\")." >&2
+      echo "    On the instance: /var/log/af-egress-gateway.log, journalctl -u af-egress-agent (guide/operate/aws-ecs/egress-gateway.md)." >&2
     fi
   fi
 fi
@@ -926,6 +926,6 @@ cat <<EOF
 ==> up: ${URL:-https://$AF_FQDN}  (ImageTag=$TAG)
     what matters next:
       - there is no golden yet. A new user's first launch is merely slow, not broken (the CP bakes one itself)
-      - the cost allocation tags are not discovered by AWS until one Workspace has been raised (README §Prerequisites)
+      - the cost allocation tags are not discovered by AWS until one Workspace has been raised (guide/operate/aws-ecs/install.md, "Split spend per member")
       - for a dev deployment update with deploy/aws/ecs/dev-deploy.sh from now on; for a release, update.sh
 EOF

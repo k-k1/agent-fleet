@@ -156,7 +156,7 @@ of it being there:
 | `admin/` | a tenant administrator: members, limits, the audit log |
 | `operate/` | whoever installs and keeps a deployment alive (host-level; needs shell access) |
 | `ref/` | the capability tables everyone consults, and the glossary |
-| `operate/runbooks/` | the command procedures, copied in from `deploy/` at release time |
+| `operate/runbooks/` | the `deploy/` READMEs, copied in at release time: each is an index of its target's procedure pages in `operate/` |
 
 **Match the shelf to who is asking.** A member's "how do I…" is answered from `member/`; do not
 hand them a host-level procedure out of `operate/` — inside a container there is no root and no

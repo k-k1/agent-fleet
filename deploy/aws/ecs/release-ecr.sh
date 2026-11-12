@@ -5,7 +5,7 @@
 #     [--account 123456789012] [--images-tar dist/agent-fleet-images-0.2.0.tar.gz] \
 #     [--registry agent-fleet]
 #
-# The hand-typed command sequence in the runbook (README §ECR push) is the source of
+# The hand-typed command sequence (guide/operate/aws-ecs/install.md, "Push by hand") is the source of
 # truth; this script is its transcript. Steps: resolve the account via sts -> check
 # that the ECR repos exist (never create them — the repos are owned by the
 # 20-platform CFN stack; an out-of-band create breaks the later CFN deploy with

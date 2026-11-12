@@ -29,7 +29,7 @@ Agent Fleet を何の上で動かすかを決めます。あとから変える�
 | こういうとき | 選ぶ形態 | 理由 |
 |---|---|---|
 | その機械に Docker を入れられない | **native** | コンテナを使いません。**1 人で使うときだけ** です。コンテナの境界がないので、共有のモードでは起動を拒否します |
-| 機械が Mac（Apple Silicon） | macOS 用の overlay を重ねた **compose**、または Linux VM の中の **native** | **1 人で使うときだけ** で、`127.0.0.1` で動かします。colima・OrbStack・Docker Desktop と、Lima・OrbStack の VM での native で確かめています。Intel の Mac は対象外です。手順は compose の runbook の「macOS」 |
+| 機械が Mac（Apple Silicon） | macOS 用の overlay を重ねた **compose**、または Linux VM の中の **native** | **1 人で使うときだけ** で、`127.0.0.1` で動かします。colima・OrbStack・Docker Desktop と、Lima・OrbStack の VM での native で確かめています。Intel の Mac は対象外です。手順は [macOS（Apple Silicon）で動かす](compose/macos.ja.md) |
 | AWS に置きたい、少人数、費用を抑えたい | **ec2-single** | 中身は VM の上の compose です。別のランタイムではありません |
 | タスク単位の隔離、メンバーごとの障害の分離、イメージの順次の入れ替えが要る | **ecs** | 得られるのは隔離で、節約ではありません |
 | 上に加えて、起動の速さとディスクの性能が要る | **ecs-ec2** | インスタンスのプールと、メンバーごとの永続ディスクを使います |
@@ -88,7 +88,7 @@ ECS のほうが安くなると思われがちですが、実際は逆です。�
 
 - egress ゲートウェイは新しく、テスト用の配備でだけ確かめています。**本番ではまだ使っていません**
 - `pause.sh` はゲートウェイも止め、同じ送信元のアドレスのまま戻します
-- 設定と制約は [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) の「Egress gateway」にあります
+- 設定と制約は [外向きの通信をゲートウェイで制御する](aws-ecs/egress-gateway.ja.md) にあります
 
 ## Kubernetes を選ぶとき、選ばないとき
 
@@ -127,6 +127,6 @@ ECS のほうが安くなると思われがちですが、実際は逆です。�
 
 ## 関連
 
-- [セルフホストの全体像](overview.ja.md#コマンドの場所)：形態ごとの runbook
+- [セルフホストの全体像](overview.ja.md#コマンドの場所)：形態ごとの手順
 - [インストールする](install.ja.md)
 - [配備形態](../ref/deploy-targets.ja.md)

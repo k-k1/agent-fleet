@@ -8,7 +8,6 @@ source_of_truth: "コマンドは `deploy/` 配下の runbook、各手順が何�
 [English](README.md) | 日本語
 
 Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 ページに 1 つずつまとめています。
-コマンドは各形態の runbook にあり、ここの各ページはそれが何を決めるのかを書きます。
 
 ## はじめに
 
@@ -79,7 +78,25 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 
 | ページ | できること |
 |---|---|
+| [ECS 構成の全体像](aws-ecs/overview.ja.md) | どのスタックが何を作り、どの順番に建てるかを知る |
+| [ECS に構築する](aws-ecs/install.ja.md) | アカウントを準備し、スタックをデプロイしてイメージを push し、サインインできるところまで進める |
+| [パラメータで任意の機能をオンにする](aws-ecs/options.ja.md) | プレビュー用のサブドメイン・KMS・リモートの MCP・提供ルート・タイマーと外部のエンジン・WAF をオンにする |
+| [データベースに届かないときのアラームを設定する](aws-ecs/alarms.ja.md) | Control Plane がデータベースに届かなくなったら、メールで知らせを受け取る |
+| [アップグレードする](aws-ecs/upgrade.ja.md) | `update.sh` で新しいリリースに上げ、戻し、パラメータを空に戻す |
+| [テンプレートの大きさの上限に気をつける](aws-ecs/template-size.ja.md) | 51,200 バイトを超える `30-ingress` を S3 経由でデプロイする |
+| [デプロイに必要な IAM 権限](aws-ecs/iam.ja.md) | デプロイする人や CI に、サービスごとの最小の権限を与える |
+| [ワークスペースの大きさを決める](aws-ecs/workspace-size.ja.md) | 全ワークスペースの CPU・メモリ・作業ディスクの既定と、キャッシュを EFS から移す条件を決める |
+| [決まった時刻の起動を有効にする](aws-ecs/schedules.ja.md) | スケジューラーを止める、または起動の遅い配備で待ち時間を延ばす |
+| [外向きの IP アドレスを固定する](aws-ecs/egress-ip.ja.md) | 許可リストに載せるアドレスを調べ、作り直しても変わらないようにする |
+| [外向きの通信をゲートウェイで制御する](aws-ecs/egress-gateway.ja.md) | ワークスペースの通信を egress ゲートウェイに通し、アドレスを登録し、一時停止し、元に戻す |
+| [日本語の読み上げを足す](aws-ecs/tts.ja.md) | VOICEVOX のエンジンのスタックを建て、自動の起動と停止を調整する |
+| [推論エンジンを足す](aws-ecs/engines.ja.md) | GPU のエンジンのスタックを建て、モデルを手で S3 に置き、制御を調整する |
+| [費用を抑える](aws-ecs/cost.ja.md) | 常にかかる費用を知り、つまみを選び、動いているスタックを S3 ゲートウェイエンドポイントに移す |
+| [EFS をバックアップ・復元する](aws-ecs/backup.ja.md) | EFS の毎日のバックアップを有効にし、1 人分かファイルシステム全体を戻す |
+| [スクリプトで構築・一時停止・撤去する](aws-ecs/lifecycle.ja.md) | 配備を記録し、一時停止と再開をし、各スクリプトが何をどの順でするかを知る |
+| [撤去する](aws-ecs/teardown.ja.md) | 止まらない順番ですべてを消し、残るものを知る |
 | [スロットを入れ替える・止める](aws-ecs/slot-maintenance.ja.md) | `ecs-ec2` で古いスロットを入れ替え、応答しないスロットに気づいて止める |
+| [ECS で困ったとき](aws-ecs/troubleshooting.ja.md) | 構築・アップグレード・起動のつまずきを、症状から探す |
 
 ## 推論エンジン
 
@@ -92,6 +109,30 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [自前の ComfyUI で画像を生成する](engines/comfyui.ja.md) | 画像エンジンを自分のネットワークの ComfyUI に向け、モデルを登録し、届く経路を閉じる |
 | [別のデプロイのエンジンを借りる](engines/borrow.ja.md) | 自分のホストの配備から、AWS の Agent Fleet のチャットと画像のエンジンを使う。貸す側としてトークンを発行する |
 | [LAN の llama.cpp でチャットする](engines/llama-cpp.ja.md) | チャットのエンジンを自分のネットワークの llama-server に向ける |
+
+## Docker Compose
+
+| ページ | できること |
+|---|---|
+| [Docker Compose で構築する](compose/install.ja.md) | `.env` を書き、ソースからか公開リリースのイメージで起動し、最初の管理者としてサインインする |
+| [macOS（Apple Silicon）で動かす](compose/macos.ja.md) | Mac の Docker のエンジンか Linux の VM で、1 人用に動かす |
+| [ワークスペースから CP に届かないとき](compose/workspace-listener.ja.md) | ワークスペース専用のリスナーで、ホストの外に出ない経路を渡す |
+
+## ネイティブパッケージ
+
+| ページ | できること |
+|---|---|
+| [ネイティブパッケージを入れる](native/install.ja.md) | Docker のない 1 人用の Linux や WSL2 に入れて、`af start` で使い始める |
+| [ネイティブパッケージを更新する](native/update.ja.md) | 新しい版を用意して再起動で切り替え、版を固定し、閉じたネットワークに持ち込む |
+| [systemd でサービスとして動かす](native/service.ja.md) | `af start` をユーザーのサービスにして、端末を閉じても動かし続ける |
+| [リセット・アンインストールする](native/uninstall.ja.md) | データを消してやり直すか、ホストから取り除く |
+
+## そのほかの構成
+
+| ページ | できること |
+|---|---|
+| [WSL で個人用に動かす](wsl.ja.md) | WSL2 の中の Docker で、サインインなしに 1 人で試す |
+| [EC2 1 台に構築する](aws-ec2-single.ja.md) | CloudFormation で EC2 を 1 台建て、リリースのバンドルで Docker Compose の配備を動かす |
 
 ## Kubernetes
 

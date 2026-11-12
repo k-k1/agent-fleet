@@ -37,9 +37,8 @@ deployment" is the most expensive kind of documentation error here.
 **On a Mac (Apple Silicon).** `docker` runs with Docker Desktop, OrbStack or colima through
 `deploy/compose/docker-compose.macos.yml`, and `native` runs inside a Linux VM (Lima or an
 OrbStack machine) with the `linux-arm64` package; neither runs on macOS itself. Single user
-only, reached on `127.0.0.1`. What was checked and when to check again:
-`deploy/macos/README.md`; the steps: "macOS" in
-[deploy/compose/README.md](../../deploy/compose/README.md#macos-apple-silicon).
+only, reached on `127.0.0.1`. The steps:
+[Run on an Apple Silicon Mac](../operate/compose/macos.md).
 
 `docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate
@@ -168,15 +167,15 @@ every target.
 
 ## Where the procedure lives
 
-The commands are in the runbooks, kept next to what they operate;
-[operate/](../operate/README.md) explains what happens and what to watch out for:
+The commands are on the per-target pages under [operate/](../operate/README.md); the README in
+each `deploy/` directory is an index of those pages:
 
-| Target | Runbook |
+| Target | Procedure |
 |---|---|
-| docker (compose) | [deploy/compose/README.md](../../deploy/compose/README.md) |
-| native | [deploy/native/README.md](../../deploy/native/README.md), and [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) for a personal WSL2 machine |
+| docker (compose) | [Deploy with Docker Compose](../operate/compose/install.md) |
+| native | [Install the native package](../operate/native/install.md), and [Run it for yourself on WSL](../operate/wsl.md) for a personal WSL2 machine |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
-| a single EC2 VM running compose | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| a single EC2 VM running compose | [Deploy on a single EC2 instance](../operate/aws-ec2-single.md) |
 | kubernetes (preview; GKE, and other clusters) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 `ec2-single` is not a separate runtime profile. It is `docker` on a VM, and it exists

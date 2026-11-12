@@ -26,7 +26,7 @@ Which members of which tenant may use them is decided by the tenant administrato
 ## Before you start
 
 A GPU instance can be bought on an AWS ECS deployment that has the engine stack (`60-engines`).
-How to build the stack and its parameters are in the [ECS runbook](../../../deploy/aws/ecs/README.md#optional-the-fleets-own-inference-engines-cfn60-enginesyaml).
+How to build the stack and its parameters are in the [Add inference engines](../aws-ecs/engines.md).
 
 A deployment without GPUs can list other engines on the same screen.
 

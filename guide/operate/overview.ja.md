@@ -101,19 +101,19 @@ Agent Fleet を自分の基盤で動かすときに、何ができて、何を�
 
 ## コマンドの場所
 
-この棚ではコマンドを繰り返しません。コマンドは操作する対象の隣にある runbook にあり、リリースのバンドルにも入っています。
-ワークスペースの中では、同じファイルが `operate/runbooks/` に置かれ、コンテナからも読めます。
+コマンドは、形態ごとの手順のページにあります。`deploy/` の各ディレクトリの README は、そのページへの目次です。
+ワークスペースの中では、その目次が `operate/runbooks/` に置かれ、コンテナからも読めます。
 
-| 形態 | runbook |
+| 形態 | 手順 |
 |---|---|
-| compose（既定） | [deploy/compose/README.md](../../deploy/compose/README.md) |
-| native | [deploy/native/README.md](../../deploy/native/README.md) |
-| 個人の WSL2 | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
+| compose（既定） | [Docker Compose で構築する](compose/install.ja.md) |
+| native | [ネイティブパッケージを入れる](native/install.ja.md) |
+| 個人の WSL2 | [WSL で個人用に動かす](wsl.ja.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
-| ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| ec2-single | [EC2 1 台に構築する](aws-ec2-single.ja.md) |
 | kubernetes（プレビュー） | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
-この棚の説明と runbook のスクリプトが食い違ったら、正しいのはスクリプトです。
+この棚の説明とスクリプトが食い違ったら、正しいのはスクリプトです。
 
 ## エージェントが自律して動くことについて
 
@@ -122,6 +122,7 @@ Agent Fleet を自分の基盤で動かすときに、何ができて、何を�
 - その操作は破壊的なことや取り消せないことがあり、つないだ AI プロバイダやクラウドのアカウントに費用がかかることもあります
 - 運用する人と各メンバーは、自分がつないだワークスペース・資格情報・リポジトリ・基盤と、エージェントのしたことを確かめる責任を持ちます。権限を絞った資格情報を使い、バックアップを取り、破壊的な操作には承認を挟んでください
 - Agent Fleet は Apache License 2.0 で配布され、無保証です。使って生じた損害・データの消失・停止・費用について、作者は責任を負いません。`LICENSE` と、同梱の OSS の表示は `NOTICE` を見てください
+- 公式のリリースは <https://github.com/k-k1/agent-fleet-dist> からだけ出ます。バンドルやパッケージを人に渡すときは、Apache-2.0 の §4(d) により、`NOTICE` の表示（この URL を含む）を一緒に渡します。受け取った人が元をたどれるようにするためです
 
 ## 関連
 
