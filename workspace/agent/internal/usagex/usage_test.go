@@ -18,6 +18,7 @@ func TestContextWindowGuess(t *testing.T) {
 		{"claude-sonnet-5", 0, 1_000_000},
 		{"anthropic/claude-sonnet-5", 0, 1_000_000}, // provider-prefixed, as opencode reports it
 		{"claude-opus-9", 0, 1_000_000},             // unknown future model
+		{"claude-haiku-5-5", 0, 1_000_000},          // the haiku line is 1M from 5.5 on
 		// The 200k exceptions. Do not mistake the generation number "4-5" for "5".
 		{"claude-opus-4-5", 0, 200_000},
 		{"claude-sonnet-4-5-20250929", 0, 200_000},

@@ -19,6 +19,7 @@ describe("contextWindow", () => {
       "claude-mythos-5",
       "anthropic/claude-sonnet-5", // provider-prefixed, as opencode reports it
       "claude-opus-9", // unknown future model
+      "claude-haiku-5-5", // the haiku line is 1M from 5.5 on
     ]) {
       expect(contextWindow(m, 0), m).toBe(1000000);
     }
