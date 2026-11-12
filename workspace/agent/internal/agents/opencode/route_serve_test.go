@@ -94,10 +94,11 @@ func TestRouteServeIsTheSessionsOwn(t *testing.T) {
 	useMajor(t, 2)
 	log := useFakeRouteServe(t)
 	withGateway(t, &fakeGateway{})
-	// A provider key the workspace stores, which reaches the shared server and must not reach
-	// this one even when the Agent's own environment carries it.
+	// A provider key the workspace stores, which must not reach this server even when the Agent's
+	// own environment carries it, and whatever the usage preference (off: the shared server gets
+	// no key at all, so its key list names none to drop).
 	prevPref := UsagePref
-	UsagePref = func() string { return UsageZen }
+	UsagePref = func() string { return UsageOff }
 	t.Cleanup(func() { UsagePref = prevPref })
 	if err := secrets.Update(func(d *secrets.Data) error {
 		d.Opencode = map[string]string{"ANTHROPIC_API_KEY": "workspace-key"}
@@ -106,6 +107,10 @@ func TestRouteServeIsTheSessionsOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "workspace-key")
+	t.Setenv(opencodeKeyEnv, "zen-key")
+	t.Setenv(EngineProviderKeyEnv, "engine-token")
+	t.Setenv("AF_ROUTE_ISSUE_TOKEN", "issue-token")
+	t.Setenv("AF_ENGINE_ISSUE_TOKEN", "issue-token")
 	t.Setenv(sharedServeEnv, "1")
 	t.Setenv("OPENCODE_CONFIG_DIR", "/elsewhere")
 	m := managedBedrockMeta(t, "oc_route1")
@@ -133,7 +138,8 @@ func TestRouteServeIsTheSessionsOwn(t *testing.T) {
 			t.Errorf("server environment lacks %s…", prefix)
 		}
 	}
-	for _, banned := range []string{"ANTHROPIC_API_KEY=", sharedServeEnv + "=", "OPENCODE_CONFIG_DIR=", "AF_SESSION_SID="} {
+	for _, banned := range []string{"ANTHROPIC_API_KEY=", opencodeKeyEnv + "=", EngineProviderKeyEnv + "=",
+		"AF_ROUTE_ISSUE_TOKEN=", "AF_ENGINE_ISSUE_TOKEN=", sharedServeEnv + "=", "OPENCODE_CONFIG_DIR=", "AF_SESSION_SID="} {
 		if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, banned) }) {
 			t.Errorf("server environment carries %s", banned)
 		}
@@ -161,7 +167,11 @@ func TestRouteServeIsTheSessionsOwn(t *testing.T) {
 		t.Fatalf("second ensure = %q %d %v, want the same server", addr2, gen2, err)
 	}
 
+	g := agents.CurrentRouteGateway().(*fakeGateway)
 	stopRouteServe(m.Name, "test")
+	if g.endedFor(m.Name) == 0 {
+		t.Fatal("a stopped server's route token was not ended")
+	}
 	if alive(roots[0]) {
 		t.Fatal("the server outlived its stop")
 	}
@@ -214,7 +224,8 @@ func TestRouteServeThatNeverAnswersLeavesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	withGateway(t, &fakeGateway{})
+	g := &fakeGateway{}
+	withGateway(t, g)
 	old := routeServeStartTimeout
 	routeServeStartTimeout = time.Second
 	t.Cleanup(func() { routeServeStartTimeout = old })
@@ -224,6 +235,9 @@ func TestRouteServeThatNeverAnswersLeavesNothing(t *testing.T) {
 	}
 	if routeServeOf(m.Name) != nil {
 		t.Fatal("a failed server is still registered")
+	}
+	if g.endedFor(m.Name) == 0 {
+		t.Fatal("a failed start kept its route token")
 	}
 	b, err := os.ReadFile(pidFile)
 	if err != nil {
@@ -296,4 +310,103 @@ func mustURL(t *testing.T, s string) *url.URL {
 		t.Fatal(err)
 	}
 	return u
+}
+
+// A server being stopped while its session's handle stays (the workspace's shutdown) is not a
+// server that stopped answering: the handle is not marked lost, so no reconcile starts another.
+func TestRouteServeStopIsNoFailure(t *testing.T) {
+	isolatedHome(t)
+	useMajor(t, 2)
+	useFakeRouteServe(t)
+	withGateway(t, &fakeGateway{})
+	m := managedBedrockMeta(t, "oc_route6")
+	addr, _, err := ensureRouteServe(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &threadHandle{name: m.Name, routed: true, alive: true, addr: addr, events: make(chan agents.Event, 64)}
+	handlesMu.Lock()
+	handles[m.Name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() { forgetHandle(m.Name, h) })
+	for i := 0; i < 5; i++ {
+		if _, _, err := ensureRouteServe(m); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(300 * time.Millisecond) // the event stream is up
+		stopRouteServe(m.Name, "shutdown")
+		time.Sleep(1500 * time.Millisecond) // past the monitor's health probe
+		h.mu.Lock()
+		lost := !h.alive
+		h.mu.Unlock()
+		if lost {
+			t.Fatalf("round %d: a deliberate stop marked the handle lost", i)
+		}
+	}
+}
+
+// A stop that finds no handle still ends the session's server: a Resume may be starting it.
+func TestDropHandleWithoutHandleStopsTheServer(t *testing.T) {
+	isolatedHome(t)
+	useMajor(t, 2)
+	useFakeRouteServe(t)
+	withGateway(t, &fakeGateway{})
+	m := managedBedrockMeta(t, "oc_route7")
+	if _, _, err := ensureRouteServe(m); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopRouteServe(m.Name, "test") })
+	before := dropEpochOf(m.Name)
+	DropHandle(m.Name)
+	if routeServeOf(m.Name) != nil {
+		t.Fatal("the server outlived a stop of its session")
+	}
+	if dropEpochOf(m.Name) == before {
+		t.Fatal("the stop was not recorded for a Resume in flight")
+	}
+}
+
+// A Resume whose conversation cannot be prepared leaves no server behind: a create or fork that
+// fails is never listed, so nothing would stop it.
+func TestResumeThatFailsStopsItsServer(t *testing.T) {
+	isolatedHome(t)
+	useMajor(t, 2)
+	useFakeRouteServe(t)
+	withGateway(t, &fakeGateway{})
+	m := managedBedrockMeta(t, "oc_route8")
+	t.Cleanup(func() {
+		stopRouteServe(m.Name, "test")
+		DropHandle(m.Name)
+	})
+	if _, err := (managedDriver{}).resume(m); err == nil {
+		t.Fatal("the stand-in has no session API; resume should fail")
+	}
+	if routeServeOf(m.Name) != nil {
+		t.Fatal("a failed resume left its server running")
+	}
+}
+
+// A start that fails before a process runs (here: an opencode that is not a valid executable) takes back
+// the bearer it was issued.
+func TestRouteServeStartFailureEndsItsToken(t *testing.T) {
+	isolatedHome(t)
+	useMajor(t, 2)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte{0x7f, 0x45, 0x4c, 0x46, 0}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	g := &fakeGateway{}
+	withGateway(t, g)
+	m := managedBedrockMeta(t, "oc_route9")
+	if _, _, err := ensureRouteServe(m); err == nil {
+		stopRouteServe(m.Name, "test")
+		t.Fatal("a server that cannot be executed was started")
+	}
+	if len(g.loopback) == 0 {
+		t.Fatal("the start failed before the route issued a token; the test checks nothing")
+	}
+	if g.endedFor(m.Name) == 0 {
+		t.Fatal("a failed start kept its route token")
+	}
 }

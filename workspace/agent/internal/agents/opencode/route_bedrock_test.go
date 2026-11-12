@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -30,6 +31,27 @@ type fakeGateway struct {
 	loopback []session.Meta
 	sockets  int
 	refuse   *agents.RouteRefusal
+	mu       sync.Mutex
+	ended    []string
+}
+
+func (f *fakeGateway) EndSession(name string) int {
+	f.mu.Lock()
+	f.ended = append(f.ended, name)
+	f.mu.Unlock()
+	return 1
+}
+
+func (f *fakeGateway) endedFor(name string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, e := range f.ended {
+		if e == name {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeGateway) Issue(session.Meta) (agents.RouteGrant, *agents.RouteRefusal) {

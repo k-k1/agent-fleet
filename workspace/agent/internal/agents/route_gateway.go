@@ -55,6 +55,20 @@ func CurrentRouteGateway() RouteGateway {
 	return routeGateway.g
 }
 
+// RouteSessionEnder is the gateway's revocation of every token of one session. A harness that
+// mints a token for a runtime of its own (a Managed private server) ends it when that runtime
+// fails to start or stops, rather than leaving it to the sweep.
+type RouteSessionEnder interface {
+	EndSession(name string) int
+}
+
+// EndRouteSession revokes session's route tokens on the running gateway, if it can.
+func EndRouteSession(session string) {
+	if e, ok := CurrentRouteGateway().(RouteSessionEnder); ok {
+		e.EndSession(session)
+	}
+}
+
 // RouteOffering is the gateway's answer to whether a route it serves is offered to the launch
 // dialog now: a provided route only while the Control Plane says the member may use it
 // (ADR 0129 D3, ADR 0084 decision 8's first place). A gateway without it offers every route.

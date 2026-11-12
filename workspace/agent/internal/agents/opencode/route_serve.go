@@ -34,8 +34,11 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -175,6 +178,14 @@ func startRouteServe(m session.Meta) (string, int, error) {
 	if err != nil {
 		return "", 0, err
 	}
+	// A start that does not end with a server answering takes its bearer back; the caller root
+	// is gone with it, but a token nobody can use should not wait for the sweep either.
+	started := false
+	defer func() {
+		if !started {
+			agents.EndRouteSession(m.Name)
+		}
+	}()
 	if ref := configConflict(append(globalConfigFiles(), projectConfigFiles(m)...)); ref != nil {
 		return "", 0, ref
 	}
@@ -223,6 +234,7 @@ func startRouteServe(m session.Meta) (string, int, error) {
 			routeServes.gen++
 			rs.gen, rs.up = routeServes.gen, true
 			routeServes.mu.Unlock()
+			started = true
 			go monitorRouteEvents(rs)
 			log.Printf("opencode: session %s: route server started (gen %d, pid %d, %s)", m.Name, rs.gen, cmd.Process.Pid, rs.addr)
 			return rs.addr, rs.gen, nil
@@ -261,9 +273,10 @@ func startPinned(rs *routeServe) (*agents.StderrTail, error) {
 // waitRouteServe reaps rs and, when nobody asked it to end, records the death on the session and
 // lets reconcile start a replacement (the same path as the shared server's death).
 func waitRouteServe(rs *routeServe, tail *agents.StderrTail) {
-	err := rs.cmd.Wait()
-	tail.Release()
-	close(rs.done)
+	// The pid stops being the session's caller root before it is reaped: once reaped it can be
+	// reused, and the gateway's tree walk would take the new process's descendants for the
+	// session's.
+	waitExitedNoReap(rs.cmd.Process.Pid)
 	routeServes.mu.Lock()
 	deliberate, wasUp := rs.stopping, rs.up
 	rs.up = false
@@ -271,6 +284,9 @@ func waitRouteServe(rs *routeServe, tail *agents.StderrTail) {
 		delete(routeServes.byName, rs.name)
 	}
 	routeServes.mu.Unlock()
+	err := rs.cmd.Wait()
+	tail.Release()
+	close(rs.done)
 	if deliberate || !wasUp {
 		return
 	}
@@ -296,6 +312,17 @@ func waitRouteServe(rs *routeServe, tail *agents.StderrTail) {
 	})
 	h.runtimeLost()
 	goReconcile("route server death: " + rs.name)
+}
+
+// waitExitedNoReap blocks until pid has exited and leaves it a zombie for cmd.Wait to reap.
+func waitExitedNoReap(pid int) {
+	var info unix.Siginfo
+	for {
+		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if err != unix.EINTR {
+			return
+		}
+	}
 }
 
 // exitOf reads a wait error as an exit code and the signal that ended the process (0 for none).
@@ -345,6 +372,7 @@ func stopRouteServeLocked(rs *routeServe, reason string) {
 		_ = rs.cmd.Process.Kill()
 		<-rs.done
 	}
+	agents.EndRouteSession(rs.name)
 	log.Printf("opencode: session %s: route server stopped (%s)", rs.name, reason)
 }
 
@@ -364,21 +392,30 @@ func stopAllRouteServes() {
 // routeServeEnv is a private server's environment: the Agent's own without the variables that
 // would widen or replace the route's config, the session's identity for its shell and MCP
 // children, the route's bearer and region, the inline config, and the server's credentials.
-// Nothing of keyEnv (provider keys, the engine token) and no AF_OPENCODE_SHARED_SERVE: this
+// No provider key, engine token or credential-issuing token and no AF_OPENCODE_SHARED_SERVE: this
 // server is the session's, as a --standalone pane's is.
 func routeServeEnv(base []string, name string, plan agents.RoutePlan, password string) []string {
 	drop := append([]string{"AF_SESSION_SID", "AF_SESSION_NAME", "AF_WORK_DIR", sharedServeEnv,
 		"OPENCODE_SERVER_USERNAME", "OPENCODE_SERVER_PASSWORD"}, plan.Unset...)
-	// The names keyEnv gives the shared server, should the Agent's own environment carry one.
-	for _, kv := range keyEnv() {
-		if k, _, ok := strings.Cut(kv, "="); ok {
-			drop = append(drop, k)
-		}
-	}
+	drop = append(drop, routeServeSecretEnv()...)
 	env := withoutEnv(base, drop...)
 	env = agents.WithSessionEnv(env, name)
 	return mergeCommandEnv(env, append(append(append([]string(nil), plan.Env...), plan.Settings...),
 		"OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password))
+}
+
+// routeServeSecretEnv names what a private server must not inherit whatever the usage preference
+// or the store holds right now: every provider key the workspace stores, opencode's own key, the
+// engine token, and the Agent's credential-issuing tokens (the route's and the engine's), which
+// would let the session's tools mint credentials beyond its route.
+func routeServeSecretEnv() []string {
+	names := []string{opencodeKeyEnv, EngineProviderKeyEnv, "AF_ROUTE_ISSUE_TOKEN", "AF_ENGINE_ISSUE_TOKEN"}
+	if s, err := secrets.Load(); err == nil {
+		for k := range s.Opencode {
+			names = append(names, k)
+		}
+	}
+	return names
 }
 
 // freeLoopbackPort asks the kernel for a free loopback port. Another process can take it before
@@ -408,6 +445,12 @@ func monitorRouteEvents(rs *routeServe) {
 		case <-rs.done:
 			return
 		default:
+		}
+		routeServes.mu.Lock()
+		current := routeServes.byName[rs.name] == rs && !rs.stopping
+		routeServes.mu.Unlock()
+		if !current {
+			return // being stopped or already replaced: a closed stream is no failure
 		}
 		if !healthy(rs.addr) {
 			// The process is still there but does not answer: the next Resume replaces it
