@@ -46,6 +46,7 @@ OAuth のトークンは呼び出しのたびに確かめられ、期限が近�
 | 課題を作る | `jira issue create -p PROJ`（親は `-P PROJ-100`） |
 | コメントする | `jira issue comment add PROJ-1 "…"` |
 | コメントを直す・消す | `jira issue comment edit PROJ-1 10001 -b "…"`、`jira issue comment delete PROJ-1 10001` |
+| ファイルを添付する・添付を一覧・ダウンロード・削除する | `jira issue attachment add PROJ-1 shot.png`、`jira issue attachment list PROJ-1`、`jira issue attachment download PROJ-1 10010`、`jira issue attachment delete PROJ-1 10010` |
 | ステータスを進める | `jira issue move PROJ-1 "In Progress"` |
 | 担当者を決める | `jira issue assign PROJ-1 <ユーザー>` |
 
@@ -54,6 +55,8 @@ OAuth のトークンは呼び出しのたびに確かめられ、期限が近�
 - **コメントの ID** は `jira issue view PROJ-1 --raw` の `.fields.comment.comments[].id` でわかります
 - **直したり消したりするコメントは決まっています。** エージェントには、そのセッションで自分が書いたコメントか、あなたが指定したコメントだけを
   編集・削除するよう伝えてあります
+- **添付はファイルとして付きます。** 画像は課題に添付されるだけで、コメントや説明文の中には入りません。
+  エージェントには、そのセッションで自分が付けた添付か、あなたが指定した添付だけを削除するよう伝えてあります
 - **作った課題の親は確かめてください。** 親を付けて作ると、Agent Fleet が親を確実に送るように調整しますが、すべての種類のプロジェクトでは確かめられていません
 
 ## ボード・スプリント・エピックを使う

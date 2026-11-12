@@ -29,6 +29,10 @@ case "$1" in
     cat "/proc/$PPID/comm" >"$STUB_DIR/comment.parent" 2>/dev/null
     [ ! -f "$STUB_DIR/comment.hang" ] || exec sleep 60
     [ ! -f "$STUB_DIR/comment.exit" ] || exit "$(cat "$STUB_DIR/comment.exit")"; echo "stub: comment done" ;;
+  jira-attachment) printf '%s\n' "$@" >"$STUB_DIR/attach.argv"; cat >"$STUB_DIR/attach.stdin"
+    cat "/proc/$PPID/cmdline" 2>/dev/null | tr '\0' ' ' >"$STUB_DIR/attach.parent"
+    [ ! -f "$STUB_DIR/attach.hang" ] || exec sleep 60
+    [ ! -f "$STUB_DIR/attach.exit" ] || exit "$(cat "$STUB_DIR/attach.exit")"; echo "stub: attach done" ;;
   jira-description-required) shift; printf '%s\n' "$@" >"$STUB_DIR/req.argv"
     [ ! -f "$STUB_DIR/req.out" ] || cat "$STUB_DIR/req.out"; exit 0 ;;
   jira-description) shift; printf '%s\n' "$@" >"$STUB_DIR/desc.argv"; cat >"$STUB_DIR/desc.stdin"
@@ -88,7 +92,8 @@ run() {
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
   rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak" "$T/jira.count" "$T/jira.parent" "$T/stdin.seen" \
-    "$T/desc.argv" "$T/desc.stdin" "$T/comment.argv" "$T/comment.stdin" "$T/comment.parent"
+    "$T/desc.argv" "$T/desc.stdin" "$T/comment.argv" "$T/comment.stdin" "$T/comment.parent" \
+    "$T/attach.argv" "$T/attach.stdin" "$T/attach.parent"
   "${RUN_PRE[@]}" env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
     TMPDIR="$T/tmp" AF_JIRA_RETRY_WAIT=0 "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" <"${RUN_IN:-/dev/null}"
   rc=$?
@@ -1377,6 +1382,41 @@ exec 9>&-
 reset; oauth; echo 60 >"$T/plan.1.hang"
 run AF_JIRA_TIMEOUT=0.5 -- -c "$T/other.yml" issue create -s x
 [ "$rc" = 124 ] && grep -q 'did not answer within 0.5 s' "$T/err" || fail "own config: no timeout (rc=$rc)"
+# 13b. `issue attachment …` is not a jira-cli command either: for a config of ours it goes to the
+#      Agent's jira-attachment with the original argv and no stdin, the real jira never started.
+for verb in "add K-1 shot.png" "list K-1" "download K-1 5 -o -" "delete K-1 5"; do
+  reset; oauth; rm -f "$T/attach.argv" "$T/attach.stdin" "$T/jira.seen" "$T/agent.leak"
+  # shellcheck disable=SC2086
+  printf 'stdin data\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
+    bash "$WRAPPER" issue attachment $verb >"$T/out" 2>"$T/err"
+  rc=$?
+  [ "$rc" = 0 ] && [ ! -f "$T/jira.seen" ] || fail "attachment $verb: rc=$rc or real jira ran"
+  [ "$(tr '\n' ' ' <"$T/attach.argv")" = "jira-attachment issue attachment $verb " ] || fail "attachment $verb: argv '$(tr '\n' ' ' <"$T/attach.argv")'"
+  [ ! -s "$T/attach.stdin" ] || fail "attachment $verb: stdin handed to the helper"
+  [ ! -f "$T/agent.leak" ] || fail "attachment $verb: the helper saw a token"
+  no_leak "attachment $verb" fake-oauth-tok
+done
+# add and download get 600 s by default, list and delete 120 s.
+grep -q '^timeout -k 5 120 workspace-agent jira-attachment ' "$T/attach.parent" || fail "attachment delete bound: '$(cat "$T/attach.parent")'"
+reset; oauth; run -- issues attachments add K-1 a.png
+grep -q '^timeout -k 5 600 workspace-agent jira-attachment ' "$T/attach.parent" || fail "attachment add bound: '$(cat "$T/attach.parent")'"
+echo 1 >"$T/attach.exit"
+run -- issue attachment add K-1 a.png
+[ "$rc" = 1 ] || fail "attachment add: Agent status not kept ($rc)"
+rm -f "$T/attach.exit"
+# A timed-out upload says the files may be there.
+reset; oauth; touch "$T/attach.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue attachment add K-1 a.png
+[ "$rc" = 124 ] && grep -q 'files may have been attached' "$T/err" || fail "attachment add timeout: rc=$rc '$(cat "$T/err")'"
+rm -f "$T/attach.hang"
+# A debug run is refused, never forwarded; the user's own setup goes to the real jira.
+reset; oauth; rm -f "$T/attach.argv"
+run -- --debug issue attachment list K-1
+[ "$rc" = 1 ] && [ ! -f "$T/attach.argv" ] && [ ! -f "$T/jira.seen" ] || fail "attachment debug: rc=$rc, forwarded or ran"
+grep -q 'not available in a debug run' "$T/err" || fail "attachment debug: no explanation"
+reset; oauth; rm -f "$T/attach.argv"
+run JIRA_API_TOKEN=mine -- issue attachment list K-1
+[ -f "$T/jira.seen" ] && [ ! -f "$T/attach.argv" ] || fail "attachment own token: not passed to the real jira"
 reset; oauth; echo 60 >"$T/plan.1.hang"
 run AF_JIRA_TIMEOUT=0.5 JIRA_API_TOKEN=own -- issue move K-1 Done
 [ "$rc" = 124 ] || fail "own token: no timeout (rc=$rc)"

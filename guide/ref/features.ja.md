@@ -59,6 +59,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | サインイン済みの `jira` をセッションで使う | メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md) |
 | サインイン済みの `confluence`（Jira の接続）をセッションで使う | メンバー | どのセッションでも | [Confluence を使う](../user/integrations/confluence.ja.md) |
 | Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
+| Jira の課題にファイルを添付する・添付を一覧・ダウンロード・削除する（`jira issue attachment`）| メンバー | どのセッションでも | [Jira を使う](../user/integrations/jira.ja.md#エージェントに頼む) |
 | Subversion の作業コピー — 更新、ログを表示、ローカルの変更 | メンバー | リポジトリ → SVN の行 | [Subversion のリポジトリを使う](../user/code/svn.ja.md) |
 | ファイルツリーとビューア | メンバー | ファイル | [ファイルを見る・ダウンロードする](../user/files/browse.ja.md) |
 | フォルダを zip でダウンロードする | メンバー | ファイルツリーまたはギャラリー → 右クリック → zip でダウンロード | [ファイルを見る・ダウンロードする](../user/files/browse.ja.md#フォルダを-zip-でダウンロードする) |

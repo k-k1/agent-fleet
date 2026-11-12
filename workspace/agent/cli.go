@@ -265,6 +265,14 @@ var subcommands = []subcommand{
 		run:     jirax.RunComment,
 	},
 	{
+		// `jira issue attachment add|list|download|delete` for the PATH wrapper at
+		// /usr/local/bin/jira: jira-cli has no attachment command. See internal/jirax/jira_attachment.go.
+		name:    "jira-attachment",
+		summary: "Jira attachment add / list / download / delete for the jira wrapper",
+		hidden:  true,
+		run:     jirax.RunAttachment,
+	},
+	{
 		// The description of `jira issue create|edit`, set as ADF for the PATH wrapper at
 		// /usr/local/bin/jira. See internal/jirax/jira_description.go.
 		name:    "jira-description",
