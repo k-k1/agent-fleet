@@ -104,7 +104,7 @@ arm64 のクラスを書く前に、この順で準備します。
 | 残るもの | 入れ直すもの |
 |---|---|
 | ホームそのもの | `~/.local` の CLI・nvm の node・Chromium など、系統ごとのもの。次の起動で自動で入れ直す |
-| `~/repos` の中身 | `node_modules`・`target`・`.venv` など、メンバーがビルドしたもの。メンバーが自分で入れ直す |
+| `~/repos` の中身 | `node_modules`・`target`・`.venv` など、メンバーがビルドしたもの。メンバーが自分で入れ直す。[af-arch-repair](../../ref/cli/af-arch-repair.ja.md) が通知で名前を出す |
 
 保存する前に、Console が警告を出します。
 

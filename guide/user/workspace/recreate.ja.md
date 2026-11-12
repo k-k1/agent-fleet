@@ -29,7 +29,7 @@ source_of_truth: "Console の設定 >「危険な操作」と、ワークスペ�
 | ログインと接続（`~/.config`・`~/.ssh`・`~/.gitconfig`・`~/.git-credentials`・`~/.claude`・`~/.claude.json`・`~/.codex`） | 残る | 残る | 残る |
 | Claude の設定と状態（`$CLAUDE_CONFIG_DIR`。保存したメモリも含む） | 残る | 残る | 残る |
 | ホームの外（`/usr`・`/opt`・`/tmp` など） | イメージに戻る | イメージに戻る | イメージに戻る |
-| `/scratch`（作業ディスクがある配備だけ） | **消える** | **消える** | **消える** |
+| `/scratch`（作業ディスクがある配備だけ。[af-scratch](../../ref/cli/af-scratch.ja.md)） | **消える** | **消える** | **消える** |
 | 実行中のセッション | 停止する（あとで再開できる） | **失われる** | **失われる** |
 
 > [!WARNING]
