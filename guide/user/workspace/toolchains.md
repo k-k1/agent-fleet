@@ -114,14 +114,17 @@ See [Fix a workspace that will not start or has stopped](../troubleshooting/work
 
 ### An agent CLI has been the same version for weeks
 
-Look at the line under the "**Tool versions**" table: "**Upstream release watch: last clean run …**".
-New releases of each CLI are watched every 2 hours, and the versions this deployment installs only move when that watch finds a new one.
+A workspace's CLI is the version the image fixes, or, when [the update at start](#keep-the-agent-clis-on-the-latest-version) is on, the latest version at that start.
+First check whether **Update the agent CLIs and rtk to the latest on start** under **Agent CLI updates** is on.
+
+The line under the "**Tool versions**" table, "**Upstream release watch: last clean run …**", tells you whether the watch for new releases of each CLI (every 2 hours) is working.
+The watch finding a new version and that version reaching the image are separate steps.
 
 | What the line shows | What it means |
 |---|---|
-| A recent clean run and no warning | No new version has come out. There is nothing to do |
-| "The watcher cannot read …" or "The watcher has not had a clean run for over 48 hours" | The version standing still says nothing about upstream. Ask your deployment administrator to check the watch |
-| No line at all | This deployment cannot reach GitHub, so it does not know. That is not itself a fault |
+| A recent clean run and no warning | The watch is working. The version stands still because of the update-at-start setting or the image's version. If it matters, ask your deployment administrator |
+| "The watcher cannot read …" or "The watcher has not had a clean run for over 48 hours" | The watch is not working properly, and a new version may have been missed. Ask your deployment administrator to check the watch |
+| No line at all | The watch's state is unknown (for example, this deployment cannot reach GitHub). That is not itself a fault |
 
 ## Related
 
