@@ -1,6 +1,6 @@
 ---
 audience: "a deployment administrator (super_admin) of an ecs-ec2 deployment, where workspaces run on a pool of EC2 slots"
-source_of_truth: "`deploy/aws/ecs/README.md` for the commands and parameters; the Admin → Slots page for each slot's state"
+source_of_truth: "`deploy/aws/ecs/cfn/40-ec2-pool.yaml` and `deploy/aws/ecs/cfn/PARAMETERS.md` for the commands and parameters; the Admin → Slots page for each slot's state"
 ---
 
 # Replace and stop slots
@@ -8,7 +8,7 @@ source_of_truth: "`deploy/aws/ecs/README.md` for the commands and parameters; th
 English | [日本語](slot-maintenance.ja.md)
 
 This is for AWS `ecs-ec2` deployments only. Move workspaces off outdated slots onto new ones, and stop a slot that no longer answers.
-On `ecs-ec2` a workspace runs on an EC2 slot taken from a pool, and its home is an EBS volume that stays attached to that slot while it is stopped. The stack parameters and commands are in the [ECS runbook's "EC2 slot pool"](../../../deploy/aws/ecs/README.md#optional-ec2-slot-pool-wsruntimeecs-ec2).
+On `ecs-ec2` a workspace runs on an EC2 slot taken from a pool, and its home is an EBS volume that stays attached to that slot while it is stopped. How to build the pool, and its parameters, are in [Start using the EC2 slot pool](slot-pool.md).
 
 ## How it works
 
@@ -101,7 +101,7 @@ To finish the move:
 3. **Members stop and start their workspaces** when it suits them. The start launches a new slot of the workspace's class from `$Latest` first, moves the home off the old slot through the same release the sweeper uses (unmount before detach; refused while a task runs) and terminates the old instance
    - The home volume is never deleted
    - Do not terminate slot instances by hand while a home is attached
-   - `Ec2SlotTerminateAfterSec` is not for this; it is a standing cost trade-off (`deploy/aws/ecs/cfn/PARAMETERS.md`)
+   - `Ec2SlotTerminateAfterSec` is not for this; it is a standing cost trade-off ([Three limits](slot-pool.md#three-limits))
 4. **Verify from a shell in a workspace on a new slot**
    - The IMDSv2 token request must not answer `200` (it times out: `000`), also with a clean environment (`env -i`)
 
@@ -127,7 +127,7 @@ So that a workspace that eats all the memory does not leave a slot whose EC2 is 
 - The ECS agent runs as a docker container, not as a child of `ecs.service`, so `af-protect-mgmt` looks for its scope. It re-applies every 30 seconds, so it follows an agent restart
 - `af-protect-mgmt` also lowers the OOM score of the ECS and SSM agents, including an SSM agent already running at first boot
 - When memory runs short, the kernel reclaims the workspace containers' pages first
-- The total fits inside the host reserve (`AF_ECS_EC2_HOST_RESERVE_MB`, 1024 MiB or more by default). A reserve below 832 MiB makes the protected amount exceed the reserve
+- The total fits inside the host reserve (`AF_ECS_EC2_HOST_RESERVE_MB`, 2 GiB under the default `auto`). A reserve below 832 MiB makes the protected amount exceed the reserve
 - It assumes cgroup v2 (the Amazon Linux 2023 default)
 
 This is a launch template change. It reaches existing slots only through the replacement in [Outdated slots](#outdated-slots).
@@ -196,4 +196,5 @@ A slot is considered dark when all of these hold:
 
 - [Upgrade](../run/upgrade.md)
 - [Use idle stop and force-stop](../run/idle-stop.md)
-- [The ECS runbook's "EC2 slot pool"](../../../deploy/aws/ecs/README.md#optional-ec2-slot-pool-wsruntimeecs-ec2)
+- [Start using the EC2 slot pool](slot-pool.md)
+- [Troubleshoot the slot pool](slot-troubleshooting.md)

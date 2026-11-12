@@ -290,7 +290,8 @@ const exact = {
   // Tenant settings -> members -> detail (the entry point appears only with --admin).
   "/api/admin/tenants": () => {
     const d = ADMIN_RES ? fx.adminResTenants() : fx.adminTenants();
-    return process.env.SHOT_OPERATE_SIGNIN || process.env.SHOT_OPERATE_SECURE ? { ...d, super_admin: true } : d;
+    // SHOT_OPERATE_SLOT_HOMES: the limits editor (and its slot-pool fields) is super_admin's view.
+    return process.env.SHOT_OPERATE_SIGNIN || process.env.SHOT_OPERATE_SECURE || process.env.SHOT_OPERATE_SLOT_HOMES ? { ...d, super_admin: true } : d;
   },
   // Admin › Slots of the operate guide (SHOT_OPERATE_KEYS): an ecs-ec2 pool with an outdated, a
   // reserved and a wedged slot. Without it the route stays unhandled and the tab is hidden.

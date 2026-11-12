@@ -502,7 +502,8 @@ These sections were in `deploy/aws/ecs/README.md` until its procedures moved to 
 guide (`guide/operate/aws-ecs/`). They are kept here verbatim because only someone changing
 Agent Fleet runs them, or because they are the history behind a rule the guide now states
 without its story: the prove-out sequence and E2E completion gate of the ECS adapter, the
-51,200-byte template incident and its round trip, the cold-start measurement, and the
+51,200-byte template incident and its round trip, the cold-start measurement, the slot-AMI
+bake that was tried and removed, and the
 development deployment (`dev-deploy.sh`), which bakes `main` through this repository's
 workflows. Headings are one level down; links into `docs/log/` are plain text.
 
@@ -757,3 +758,15 @@ no image cache between tasks. The full recipe, the delta arithmetic and the
 decision gate are in
 `docs/log/62-ecs-start-latency.md` §62.7
 (conclusion on SOCI: conditional yes, gated on this measurement).
+
+### Baking the workspace image into the slot AMI: tried, measured, removed
+
+**Baking the workspace image into the slot AMI: tried, measured, removed.** A slot's root
+volume IS the image cache, so baking the image in does remove the pull (31.8s → **0.185s**,
+measured) — and makes the slot **slower overall**, because a private AMI's root is lazily
+loaded from a fresh snapshot: the instance took ~56s longer to join the cluster and a new user's
+first start measured **179–192s against 144s** on the stock ECS-optimized AMI. The script
+and the CP-side reporting were removed rather than left as a not-recommended option; the
+measurement and the reasoning are in docs/log/64 §64.24 / ADR 0045 decision 19. **`SlotAmiId` stays
+at its default** (the ECS-optimized AMI's SSM parameter; since #3318 the CP also reads that parameter
+itself at launch, so slots follow it without a deploy — decision 7).

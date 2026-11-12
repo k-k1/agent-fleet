@@ -95,7 +95,11 @@ What people running Agent Fleet on their own infrastructure want to do, one task
 | [Back up and restore EFS](aws-ecs/backup.md) | Turn on daily EFS backups and restore one member or the whole file system |
 | [Stand up, pause and tear down with the scripts](aws-ecs/lifecycle.md) | Record a deployment, pause and resume it, and know what each script does in which order |
 | [Tear a deployment down](aws-ecs/teardown.md) | Delete everything in an order that does not stall, and know what survives |
+| [Start using the EC2 slot pool](aws-ecs/slot-pool.md) | Move workspaces onto EC2 slots with EBS homes (`ecs-ec2`), and know what changes and what it costs |
+| [Choose the slots' machine types](aws-ecs/slot-types.md) | Offer slot classes such as a cheaper or a Graviton one, and set the default |
+| [Set up home hibernation and spare copies](aws-ecs/slot-homes.md) | Hibernate unused homes, keep copies outside the AZ, restore from one, and destroy a workspace |
 | [Replace and stop slots](aws-ecs/slot-maintenance.md) | On `ecs-ec2`, replace outdated slots and notice and stop a slot that does not answer |
+| [Troubleshoot the slot pool](aws-ecs/slot-troubleshooting.md) | Find slot and home problems from the symptom, and remove a quarantined slot |
 | [Troubleshoot ECS](aws-ecs/troubleshooting.md) | Find build, upgrade and start problems from the symptom |
 
 ## Inference engines
