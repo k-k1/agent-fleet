@@ -202,7 +202,7 @@ func (w *rescueWorld) decision() darkDecision {
 
 func hookAt(step string, fn func()) {
 	done := false
-	rescueStepHook = func(s string) error {
+	rescueStepHook = func(_ context.Context, s string) error {
 		if s == step && !done {
 			done = true
 			fn()
@@ -216,7 +216,7 @@ func TestRescuePreparesInTheOrderTheADRFixes(t *testing.T) {
 		w.arm()
 		gd := w.count()
 		seen, markers := map[string]string{}, map[string]string{}
-		rescueStepHook = func(step string) error {
+		rescueStepHook = func(_ context.Context, step string) error {
 			seen[step] = fmt.Sprintf("count=%d cancelled=%d", w.count(), len(w.cancelled()))
 			markers[step] = w.marker()
 			return nil
@@ -226,13 +226,13 @@ func TestRescuePreparesInTheOrderTheADRFixes(t *testing.T) {
 		// The marker is written before the count moves and before any command is cancelled,
 		// and names the g_r the bump is about to produce.
 		m, ok := parseRescueMarker(markers["marked"])
-		if !ok || m.Phase != rescuePhaseBegun || m.Gen != gd+1 || m.Volume != "vol-1" {
+		if !ok || m.Phase != rescuePhasePreparing || m.Gen != gd+1 || m.Volume != "vol-1" {
 			t.Fatalf("marker at 'marked' = %q (%+v)", markers["marked"], m)
 		}
 		if want := fmt.Sprintf("count=%d cancelled=0", gd); seen["marked"] != want {
 			t.Fatalf("at 'marked': %s, want %s", seen["marked"], want)
 		}
-		if want := fmt.Sprintf("count=%d cancelled=0", gd+1); seen["counted"] != want || markers["counted"] != markers["marked"] {
+		if want := fmt.Sprintf("count=%d cancelled=0", gd+1); seen["counted"] != want || !strings.Contains(markers["counted"], "/begun/") {
 			t.Fatalf("at 'counted': %s %q, want %s", seen["counted"], markers["counted"], want)
 		}
 		if !strings.Contains(seen["cancelled"], "cancelled=1") {
@@ -325,7 +325,7 @@ func TestRescueCrashAtEveryStepThenResume(t *testing.T) {
 			bothModes(t, func(t *testing.T, w *rescueWorld) {
 				w.arm()
 				gd := w.count()
-				rescueStepHook = func(s string) error {
+				rescueStepHook = func(_ context.Context, s string) error {
 					if s == step {
 						return errRescueCrash
 					}
@@ -336,7 +336,11 @@ func TestRescueCrashAtEveryStepThenResume(t *testing.T) {
 
 				// What a dead process leaves: the marker, written before the first side effect.
 				m, ok := parseRescueMarker(w.marker())
-				if !ok || m.Phase != rescuePhaseBegun || m.Gen != gd+1 {
+				wantPhase := rescuePhaseBegun
+				if step == "marked" {
+					wantPhase = rescuePhasePreparing // the bump is not confirmed yet
+				}
+				if !ok || m.Phase != wantPhase || m.Gen != gd+1 {
 					t.Fatalf("after a crash at %q the marker is %q", step, w.marker())
 				}
 				wantCount := gd + 1
@@ -596,7 +600,7 @@ func TestRescueBusyMountLockLeavesTheMarkerAndTheNextPassFinishes(t *testing.T) 
 func TestRescueActionNoLongerRescueFinalizesWhatItWrote(t *testing.T) {
 	w := newRescueWorld(t, true)
 	w.arm()
-	rescueStepHook = func(s string) error {
+	rescueStepHook = func(_ context.Context, s string) error {
 		if s == "listed" {
 			return errRescueCrash
 		}
@@ -796,4 +800,65 @@ func TestPoolStatusShowsTheRescueRung(t *testing.T) {
 	if rung != darkRungRescued || since != m.Began.UTC().Format(time.RFC3339) {
 		t.Fatalf("detached: since %q rung %q", since, rung)
 	}
+}
+
+// A rescue that died after writing its marker and before its bump leaves a marker naming g+1.
+// A member's Start that reaches g+1 next must not read as that rescue's own count.
+func TestRescueUnconfirmedMarkerIsNeverResumedAgainstAnotherStart(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		w.arm()
+		gd := w.count()
+		rescueStepHook = func(_ context.Context, s string) error {
+			if s == "marked" {
+				return errRescueCrash
+			}
+			return nil
+		}
+		w.pass(w.f)
+		rescueStepHook = nil
+
+		// The member starts: the real count increment, and a mount command of its own.
+		g, err := w.rt().beginStart(context.Background())
+		if err != nil || g != gd+1 {
+			t.Fatalf("beginStart = %d, %v; want %d", g, err, gd+1)
+		}
+		w.h.ssmc.mu.Lock()
+		w.h.ssmc.unfinished = append(w.h.ssmc.unfinished,
+			ssmtypes.Command{CommandId: aws.String("cmd-new-start"), Comment: aws.String(slotVolumeCommandComment)})
+		w.h.ssmc.mu.Unlock()
+
+		w.restarted().resumeRescues(context.Background())
+		for _, c := range w.cancelled() {
+			t.Fatalf("cancelled %q: the new Start's command is not the rescue's", c)
+		}
+		if w.marker() != "" || w.count() != gd+1 {
+			t.Fatalf("marker %q count %d", w.marker(), w.count())
+		}
+		w.untouched()
+	})
+}
+
+// The claim lease lapsing while the marker is being written must stop the rescue before its
+// bump: another CP may have counted a Start meanwhile, and the bump would overtake it.
+func TestRescueLeaseLapsedAfterTheMarkerDoesNotBump(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		w.arm()
+		gd := w.count()
+		rescueStepHook = func(ctx context.Context, s string) error {
+			if s == "marked" {
+				homeGuardOf(ctx).markLost() // the lease ran out during the marker write
+				w.startLands()              // and another CP counted a Start
+			}
+			return nil
+		}
+		w.pass(w.f)
+		rescueStepHook = nil
+		if w.count() != gd+1 {
+			t.Fatalf("count %d, want %d: the rescue bumped past a Start counted under the lapsed lease", w.count(), gd+1)
+		}
+		if w.marker() != "" || len(w.cancelled()) != 0 {
+			t.Fatalf("marker %q cancelled %v", w.marker(), w.cancelled())
+		}
+		w.untouched()
+	})
 }

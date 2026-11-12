@@ -523,3 +523,9 @@ code chose among readings of the text above:
   exists yet, so `cfn-cp-ec2-scope-test.py` has nothing to add in this phase.
 
 Follow-ups: #3993
+
+**2026-11-12 (L1 first phase, review round 1).** The marker is first written with phase `preparing` (an eighth value, before `begun`) and
+advanced to `begun` only after the bump has been read back. A count equal to `g_r` proves nothing while the marker is `preparing`: a
+rescue that died between the marker write and the bump leaves a marker naming `g_d + 1`, and a member's next Start reaches that same
+number. `preparing` is never resumed; the finalizer just removes it (like `begun`, no episode). The claim lease is also re-checked by
+the clock before the bump, not only after it.

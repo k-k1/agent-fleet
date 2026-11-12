@@ -45,16 +45,16 @@ var (
 
 // rescueStepHook is the crash matrix's seam: a test sets it, and a step that gets an error
 // back returns at once, leaving the world as a dead process would. Nil in production.
-var rescueStepHook func(step string) error
+var rescueStepHook func(ctx context.Context, step string) error
 
 // errRescueCrash is what a test hook returns to stop a rescue where it stands.
 var errRescueCrash = errors.New("test: process died here")
 
-func rescueStep(step string) error {
+func rescueStep(ctx context.Context, step string) error {
 	if rescueStepHook == nil {
 		return nil
 	}
-	return rescueStepHook(step)
+	return rescueStepHook(ctx, step)
 }
 
 var (
@@ -198,23 +198,43 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 		return m, nil, fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 
-	m = rescueMarker{Volume: volumeID, Epoch: d.launch, Phase: rescuePhaseBegun, Gen: g + 1, Began: e.now().UTC().Truncate(time.Second)}
+	m = rescueMarker{Volume: volumeID, Epoch: d.launch, Phase: rescuePhasePreparing, Gen: g + 1, Began: e.now().UTC().Truncate(time.Second)}
+	preparing := m.String()
 	if err := e.writeRescueMarker(lctx, d.slot, m); err != nil {
-		e.dropRescueMarker(ctx, d.slot, m.String())
+		e.dropRescueMarker(ctx, d.slot, preparing)
 		return rescueMarker{}, nil, fmt.Errorf("%w: marker: %w", errRescueAborted, err)
 	}
-	if err := rescueStep("marked"); err != nil {
+	if err := rescueStep(lctx, "marked"); err != nil {
 		return rescueMarker{}, nil, err
+	}
+	// Asked by the clock before the bump, not after it: a lease that lapsed during the marker
+	// write means another CP may have counted a Start since, and a bump now would overtake it.
+	if err := guard.check(); err != nil {
+		e.dropRescueMarker(ctx, d.slot, preparing)
+		return rescueMarker{}, nil, fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 	gr, err := e.bumpStartCount(lctx)
 	if err == nil && gr != m.Gen {
 		err = fmt.Errorf("the count is %d, expected %d", gr, m.Gen)
 	}
 	if err != nil {
-		e.dropRescueMarker(ctx, d.slot, m.String())
+		e.dropRescueMarker(ctx, d.slot, preparing)
 		return rescueMarker{}, nil, fmt.Errorf("%w: bump: %w", errRescueAborted, err)
 	}
-	if err := rescueStep("counted"); err != nil {
+	// The bump is confirmed: only now is the marker one a resume may continue.
+	m.Phase = rescuePhaseBegun
+	if err := guard.check(); err == nil {
+		err = e.writeRescueMarker(lctx, d.slot, m)
+		if err != nil {
+			e.dropRescueMarker(ctx, d.slot, preparing)
+			e.dropRescueMarker(ctx, d.slot, m.String())
+			return rescueMarker{}, nil, fmt.Errorf("%w: marker: %w", errRescueAborted, err)
+		}
+	} else {
+		e.dropRescueMarker(ctx, d.slot, preparing)
+		return rescueMarker{}, nil, fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+	if err := rescueStep(lctx, "counted"); err != nil {
 		return rescueMarker{}, nil, err
 	}
 
@@ -224,7 +244,7 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 	e.clearBlockedPhase()
 	e.setPhase("")
 	e.dropClaimOnStop(lctx)
-	if err := rescueStep("ended-start"); err != nil {
+	if err := rescueStep(lctx, "ended-start"); err != nil {
 		return rescueMarker{}, nil, err
 	}
 
@@ -233,7 +253,7 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 		e.dropRescueMarker(ctx, d.slot, m.String())
 		return rescueMarker{}, nil, fmt.Errorf("%w: list commands: %w", errRescueAborted, err)
 	}
-	if err := rescueStep("listed"); err != nil {
+	if err := rescueStep(lctx, "listed"); err != nil {
 		return rescueMarker{}, nil, err
 	}
 	return m, ids, nil
@@ -331,18 +351,18 @@ func listSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID
 // lock held, then the guarded steps. Decision 2 steps 4-6 are not built, so the guarded
 // section only proves the rescue still owns the home, and the rescue then ends.
 func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, cmds ssmSlotCommands, slot string, m rescueMarker, ids []string) {
-	if err := rescueStep("before-cancel"); err != nil {
+	if err := rescueStep(ctx, "before-cancel"); err != nil {
 		return
 	}
 	cancelled, failed := cancelCommandIDs(ctx, cmds, slot, ids)
 	if cancelled+failed > 0 {
 		log.Printf("ecs-ec2 sweep: rescue of %s: cancelled %d pending commands on %s (%d failed)", rt.base.name, cancelled, slot, failed)
 	}
-	if err := rescueStep("cancelled"); err != nil {
+	if err := rescueStep(ctx, "cancelled"); err != nil {
 		return
 	}
-	err := rt.rescueGuarded(ctx, m, slot, func(context.Context) error {
-		return rescueStep("guarded")
+	err := rt.rescueGuarded(ctx, m, slot, func(ctx context.Context) error {
+		return rescueStep(ctx, "guarded")
 	})
 	switch {
 	case err == nil:
@@ -447,7 +467,7 @@ func (e *ecsEC2Runtime) rescueOwned(ctx context.Context, m rescueMarker, instanc
 // marker (matched on its exact value, raw) is removed. A lease not had, a read or a write
 // that fails leaves the marker for the next pass.
 func (e *ecsEC2Runtime) finalizeRescue(ctx context.Context, instanceID, raw string, m rescueMarker) {
-	if m.Phase != rescuePhaseBegun {
+	if m.Phase != rescuePhaseBegun && m.Phase != rescuePhasePreparing {
 		ctx, unlock, err := e.lockBounded(ctx, homeLockWedge, instanceID, rescueWedgeBudget)
 		if err != nil {
 			log.Printf("ecs-ec2: finalizing the rescue of %s: no lease, the marker stays: %v", instanceID, err)
