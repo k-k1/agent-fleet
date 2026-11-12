@@ -146,6 +146,10 @@ type Slot = {
    *  slots whose agent is not connected. Cleared by starting the instance once. */
   stopping_task?: string;
   stopping_task_minutes?: number;
+  /** When the dark-slot scan first saw this running slot dark (RFC 3339; ADR 0121), and the rung
+   *  it is on. Only "observing" is produced today; the rest are reserved for the rescue rungs. */
+  dark_since?: string;
+  rung?: "observing" | "rescuing" | "blocked" | "rescued" | "quarantined" | "";
 };
 /** The reply to a force-stop (#2449). */
 type ForceStopReply = {
@@ -455,6 +459,17 @@ export function PoolView() {
                       {!s.quarantined && s.state === "running" && !s.registered && (
                         <span className="muted"> {tr("pool.not_registered")}</span>
                       )}
+                      {s.dark_since && !s.quarantined && (
+                        <span
+                          className="pool-badge outdated"
+                          title={tr(s.rung === "observing" ? "pool.dark_title" : "pool.dark_title_later", { since: s.dark_since })}
+                        >
+                          {tr("pool.dark", {
+                            min: String(Math.max(0, Math.floor((Date.now() - Date.parse(s.dark_since)) / 60000)) || 0),
+                            rung: s.rung ? tr(darkRungKey(s.rung)) : "",
+                          })}
+                        </span>
+                      )}
                       {s.stopping_task && (
                         <span
                           className="pool-badge outdated"
@@ -714,6 +729,17 @@ export function PoolView() {
 // first half (seed boot, boot-install, releasing the slot) no snapshot exists yet — so a
 // surface without these stages tells an operator investigating slow first starts that there is
 // no golden, the opposite of what is happening.
+const DARK_RUNG_KEYS = {
+  observing: "pool.rung_observing",
+  rescuing: "pool.rung_rescuing",
+  blocked: "pool.rung_blocked",
+  rescued: "pool.rung_rescued",
+  quarantined: "pool.rung_quarantined",
+} as const;
+// A rung this Console does not know (a newer Control Plane) gets a generic label rather than a
+// blank or a wrong one.
+const darkRungKey = (r: string): MsgKey => DARK_RUNG_KEYS[r as keyof typeof DARK_RUNG_KEYS] ?? "pool.rung_unknown";
+
 const BAKE_STEPS = ["seed", "boot", "capture", "snapshot", "probe", "published"];
 const STEP_LABEL: Record<string, MsgKey> = {
   seed: "pool.bake_step_seed",
