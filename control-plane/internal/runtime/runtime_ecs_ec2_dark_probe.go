@@ -91,8 +91,8 @@ func (a *agentProbes) forget(slot string) {
 	delete(a.m, slot)
 }
 
-// LastAgentProbe returns the Agent probe of a slot from the latest dark-slot pass that
-// reached it, and when it ran. ok is false when that pass did not probe the slot (service
+// LastAgentProbe returns the Agent probe of a slot from the latest dark-slot or wedged-slot
+// pass that reached it, and when it ran. ok is false when that pass did not probe the slot (service
 // down, a cluster leg healthy, a claim, the slot gone, a read failed) or none has run: each
 // pass starts empty. A caller must still check At against its own freshness bound.
 func (f *ecsEC2Factory) LastAgentProbe(slot string) (AgentProbe, time.Time, bool) {
@@ -196,9 +196,18 @@ const probeStaleGrace = 2 * time.Minute
 // one that stopped less than probeStaleGrace ago, may still reply and must keep the slot
 // unknown. Any read that fails, a missing container instance or an unreadable task is false.
 func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot string) bool {
+	tasks, ok := f.serviceTasks(ctx, service)
+	return ok && f.tasksRunOnlyOn(ctx, tasks, slot)
+}
+
+// serviceTasks reads every task of a service that is desired RUNNING or desired STOPPED
+// (a stopping task is the latter, and a stopped one stays listed for a while). ok is false
+// when any read failed or a listed task could not be described: a partial view of the
+// tasks is not an answer.
+func (f *ecsEC2Factory) serviceTasks(ctx context.Context, service string) ([]ecstypes.Task, bool) {
 	lister, ok := f.ci.(ecsTaskLister)
 	if !ok {
-		return false
+		return nil, false
 	}
 	cluster := aws.String(f.base.cfg.cluster)
 	var arns []string
@@ -210,7 +219,7 @@ func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot str
 				DesiredStatus: desired, NextToken: next,
 			})
 			if err != nil {
-				return false
+				return nil, false
 			}
 			arns = append(arns, listed.TaskArns...)
 			if listed.NextToken == nil {
@@ -219,49 +228,85 @@ func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot str
 			next = listed.NextToken
 		}
 	}
-	now := f.darkNow()
-	cis := map[string]bool{}
-	running := false
+	var tasks []ecstypes.Task
 	for _, chunk := range chunkStrings(arns, 100) {
 		described, err := lister.DescribeTasks(ctx, &ecs.DescribeTasksInput{Cluster: cluster, Tasks: chunk})
 		if err != nil || len(described.Failures) > 0 || len(described.Tasks) != len(chunk) {
+			return nil, false
+		}
+		tasks = append(tasks, described.Tasks...)
+	}
+	return tasks, true
+}
+
+// containerInstanceSlots maps container instance ARNs to EC2 instance ids. ok is false when
+// any ARN could not be resolved (a failure, a missing instance, a failed call).
+func (f *ecsEC2Factory) containerInstanceSlots(ctx context.Context, arns []string) (map[string]string, bool) {
+	// Several tasks can sit on one container instance, and the API answers once per distinct
+	// instance, so the input is deduplicated before the counts are compared. An empty ARN
+	// cannot be placed: not an answer.
+	seen := map[string]bool{}
+	var uniq []string
+	for _, a := range arns {
+		if a == "" {
+			return nil, false
+		}
+		if !seen[a] {
+			seen[a] = true
+			uniq = append(uniq, a)
+		}
+	}
+	m := make(map[string]string, len(uniq))
+	for _, chunk := range chunkStrings(uniq, 100) {
+		out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster: aws.String(f.base.cfg.cluster), ContainerInstances: chunk,
+		})
+		if err != nil || len(out.Failures) > 0 || len(out.ContainerInstances) != len(chunk) {
+			return nil, false
+		}
+		for _, ci := range out.ContainerInstances {
+			m[aws.ToString(ci.ContainerInstanceArn)] = aws.ToString(ci.Ec2InstanceId)
+		}
+	}
+	return m, true
+}
+
+// tasksRunOnlyOn applies the rule of serviceRunsOnlyOn to tasks already read.
+func (f *ecsEC2Factory) tasksRunOnlyOn(ctx context.Context, tasks []ecstypes.Task, slot string) bool {
+	now := f.darkNow()
+	cis := map[string]bool{}
+	running := false
+	for _, t := range tasks {
+		if aws.ToString(t.LastStatus) == "STOPPED" {
+			if t.StoppedAt == nil {
+				return false // no stop time, so no evidence the grace has passed
+			}
+			if now.Sub(*t.StoppedAt) >= probeStaleGrace {
+				continue // stopped well past the margin
+			}
+		}
+		ci := aws.ToString(t.ContainerInstanceArn)
+		if ci == "" {
 			return false
 		}
-		for _, t := range described.Tasks {
-			if aws.ToString(t.LastStatus) == "STOPPED" {
-				if t.StoppedAt == nil {
-					return false // no stop time, so no evidence the grace has passed
-				}
-				if now.Sub(*t.StoppedAt) >= probeStaleGrace {
-					continue // stopped well past the margin
-				}
-			}
-			ci := aws.ToString(t.ContainerInstanceArn)
-			if ci == "" {
-				return false
-			}
-			cis[ci] = true
-			if aws.ToString(t.LastStatus) == "RUNNING" {
-				running = true
-			}
+		cis[ci] = true
+		if aws.ToString(t.LastStatus) == "RUNNING" {
+			running = true
 		}
 	}
-	if !running {
-		return false
-	}
-	if len(cis) == 0 {
+	if !running || len(cis) == 0 {
 		return false
 	}
 	var ciArns []string
 	for a := range cis {
 		ciArns = append(ciArns, a)
 	}
-	out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{Cluster: cluster, ContainerInstances: ciArns})
-	if err != nil || len(out.Failures) > 0 || len(out.ContainerInstances) != len(ciArns) {
+	slots, ok := f.containerInstanceSlots(ctx, ciArns)
+	if !ok {
 		return false
 	}
-	for _, ci := range out.ContainerInstances {
-		if aws.ToString(ci.Ec2InstanceId) != slot {
+	for _, id := range slots {
+		if id != slot {
 			return false
 		}
 	}

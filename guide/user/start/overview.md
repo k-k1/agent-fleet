@@ -48,7 +48,7 @@ The tables of what can be done and who can do it are in the [reference](../../re
 in the [release history](../../../deploy/release/notes/SUMMARY.md).
 
 > [!TIP]
-> While your workspace is running, this guide opens inside the Console from **User guide** in the account menu at the top right.
+> **User guide** in the account menu at the top right of the Console opens this guide on the docs site in a new browser tab.
 
 ## Related
 

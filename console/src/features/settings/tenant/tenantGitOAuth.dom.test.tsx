@@ -22,7 +22,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 
-import { setLocale } from "../../../lib/i18n/index.ts";
+import { setLocale, t } from "../../../lib/i18n/index.ts";
 import { TenantGitOAuthView } from "./tenantGitOAuth.tsx";
 
 let root: Root | null = null;
@@ -373,8 +373,17 @@ describe("GitHub app source", () => {
       await mount();
       expect(document.querySelectorAll('input[type="checkbox"]').length).toBe(2);
       expect(document.querySelectorAll("details.admin-scopes").length).toBe(0);
-      const text = document.body.textContent || "";
-      expect(text).toContain("guide/admin/access/oauth-apps");
+      const links = [...document.querySelectorAll<HTMLAnchorElement>("p.admin-hint a")].filter((a) =>
+        a.href.includes("/docs/"),
+      );
+      expect(links.length).toBeGreaterThan(0);
+      for (const a of links) {
+        expect(a.getAttribute("href")).toBe(
+          `https://agent-fleet.org/docs/${loc === "ja" ? "ja/" : ""}admin/access/oauth-apps/`,
+        );
+        expect(a.target).toBe("_blank");
+        expect(a.textContent).toBe(t("tenant.git_oauth_scopes_guide"));
+      }
     });
   }
 });

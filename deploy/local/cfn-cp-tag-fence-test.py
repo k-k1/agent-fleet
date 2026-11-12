@@ -352,6 +352,11 @@ INVENTORY = [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-dark-since": T})]),
     ("internal/runtime/runtime_ecs_ec2_dark.go", "clearDarkStamp", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-dark-since": None})]),
+    # The wedged-slot scan (ADR 0121 amendment, detect only): the stamp is the only write it makes.
+    ("internal/runtime/runtime_ecs_ec2_wedged.go", "writeWedgedStamp", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-wedged-since": T})]),
+    ("internal/runtime/runtime_ecs_ec2_wedged.go", "clearWedgedStamp", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-wedged-since": None})]),
     # Rung L1 (ADR 0121): the rescue marker and the episode time, both on a running or stopped slot.
     ("internal/runtime/runtime_ecs_ec2_dark_rescue.go", "writeRescueMarker", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-rescue": T})]),

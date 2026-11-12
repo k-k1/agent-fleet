@@ -612,6 +612,16 @@ describe("replacement reservations", () => {
       expect(badge?.getAttribute("title")).toContain("何もしていません");
     });
 
+    it("shows the wedged stamp as its own badge, beside the dark one", async () => {
+      api.mockResolvedValue(withDark({ registered: true, wedged_since: new Date(Date.now() - 12 * 60000).toISOString(), wedged_rung: "observing" }));
+      await mount();
+      expect(rowText()).toContain("最後の観測: 固着 12 分・観測中");
+      expect(rowText()).not.toContain("応答なし");
+      const badge = Array.from(host!.querySelectorAll(".pool-badge")).find((b) => b.textContent?.includes("固着"));
+      expect(badge?.getAttribute("title")).toContain("今の確認ではありません");
+      expect(badge?.getAttribute("title")).toContain("何もしていません");
+    });
+
     it("shows nothing for a slot without a stamp", async () => {
       api.mockResolvedValue(withDark({}));
       await mount();

@@ -27,5 +27,5 @@ item, newest release first, with each release's full notes one click away.
 If you would rather never open a terminal, [Start here if you don't use the terminal](user/start/without-terminal.md) is the
 short way round.
 
-While your workspace is running you can open this guide in the Console at any time,
-from **"User guide"** in the account menu.
+In the Console, **"User guide"** in the account menu opens this guide on the docs site in a new
+browser tab.

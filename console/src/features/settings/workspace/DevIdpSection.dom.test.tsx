@@ -7,8 +7,6 @@ import { FRAMEWORKS, fileText, renderFiles } from "./devIdpSnippets.ts";
 
 const toastSpy = vi.fn();
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => (m: string) => toastSpy(m) }));
-const openTargetInNew = vi.fn();
-vi.mock("../../../layout/store.ts", () => ({ useLayoutStore: { getState: () => ({ openTargetInNew }) } }));
 
 import { DevIdpSection } from "./DevIdpSection.tsx";
 import { t } from "../../../lib/i18n/index.ts";
@@ -48,7 +46,6 @@ const setSelect = (sel: HTMLSelectElement, v: string) =>
 beforeEach(() => {
   g.IS_REACT_ACT_ENVIRONMENT = true;
   toastSpy.mockReset();
-  openTargetInNew.mockReset();
   rotate.mockReset();
 });
 afterEach(() => {
@@ -152,11 +149,10 @@ describe("DevIdpSection", () => {
     await mount();
     await click([...host!.querySelectorAll(".dip-creds button")].find((b) => b.textContent === t("env.devidp_rotate"))!);
     expect(rotate).toHaveBeenCalledTimes(1);
-    await click(host!.querySelector(".dip-link")!);
-    // The shipped markdown chapter as a file pane, not the getting-started checklist.
-    expect(openTargetInNew).toHaveBeenCalledWith(
-      { content: { kind: "file", filePath: expect.stringMatching(/^\/usr\/local\/share\/agent-fleet\/docs\/user\/preview\/dev-signin(\.ja)?\.md$/) } },
-      true,
-    );
+    // The guide page on the docs site in a new tab, not the getting-started checklist.
+    const link = host!.querySelector<HTMLAnchorElement>("a.dip-link")!;
+    expect(link.getAttribute("href")).toMatch(/^https:\/\/agent-fleet\.org\/docs\/(ja\/)?user\/preview\/dev-signin\/$/);
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toBe("noopener noreferrer");
   });
 });

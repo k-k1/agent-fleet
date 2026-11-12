@@ -82,6 +82,10 @@ type Config struct {
 	// OnSlotDark is told once per episode when the ecs-ec2 sweeper has seen a slot with a
 	// home dark (ECS and SSM agents silent) for darkAfter (ADR 0121). nil = not recorded.
 	OnSlotDark func(context.Context, SlotDark)
+	// OnSlotWedged is told once per episode when the ecs-ec2 sweeper has seen a slot with a
+	// home wedged (a task stuck STOPPING, or the Agent failing its probe while ECS says the
+	// task is healthy) for wedgedAfter (ADR 0121 amendment). nil = not recorded.
+	OnSlotWedged func(context.Context, SlotWedged)
 	// OnAddressesReleasing is told the addresses a docker or Kubernetes workspace holds just
 	// before Stop takes them away (egress attribution). nil = not recorded.
 	OnAddressesReleasing AddressReleaseHook
