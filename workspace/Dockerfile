@@ -815,6 +815,8 @@ COPY af-db.sh /usr/local/bin/af-db
 # AF agent memory from the command line (ADR 0108): same shape as af-db, the implementation is
 # `workspace-agent af-memory`.
 COPY af-memory.sh /usr/local/bin/af-memory
+# The Console's low-disk cleanup from a terminal (#3882): same shape, `workspace-agent af-clean`.
+COPY af-clean.sh /usr/local/bin/af-clean
 # アーキ変更後に利用者自身の ~/.local 導入物を同じ版で戻す（entrypoint から呼ばれる）。
 # entrypoint に埋めず別ファイルにしてあるのは、単体で走らせて検証できるようにするため。
 COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
@@ -826,7 +828,7 @@ COPY af-aws-exec.sh /usr/local/bin/af-aws-exec
 COPY af-gcloud-exec.sh /usr/local/bin/af-gcloud-exec
 # Webhook hooks for private repositories (ADR 0133 step 4): `workspace-agent watch-hook`.
 COPY af-watch-hook.sh /usr/local/bin/af-watch-hook
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/bkt /usr/local/bin/jira /usr/local/bin/confluence /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-memory /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec /usr/local/bin/af-gcloud-exec /usr/local/bin/af-watch-hook
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/bkt /usr/local/bin/jira /usr/local/bin/confluence /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-memory /usr/local/bin/af-clean /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec /usr/local/bin/af-gcloud-exec /usr/local/bin/af-watch-hook
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # agent-fleet-caller.js (stamps the calling opencode session on af's MCP tools so a

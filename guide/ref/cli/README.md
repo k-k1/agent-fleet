@@ -13,6 +13,7 @@ usage with `--help`.
 | Command | What it does |
 |---|---|
 | [af-aws-exec](af-aws-exec.md) | Run one command with the permissions of an AWS profile |
+| [af-clean](af-clean.md) | List and remove regenerable build output and caches, as the Console's low-disk cleanup does |
 | [af-gcloud-exec](af-gcloud-exec.md) | Run one command with a token of a Google Cloud profile |
 | [af-memory](af-memory.md) | List, import, write back and lint Agent Fleet memory from a terminal |
 | [af-watch-hook](af-watch-hook.md) | Add a webhook to a private repository so watches are poked |

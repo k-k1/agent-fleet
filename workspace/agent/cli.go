@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/afclean"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afmemory"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -61,6 +62,16 @@ var subcommands = []subcommand{
 		operands: "<verb>",
 		summary:  "per-working-copy Postgres for tests: up|url|env|reset|down|status",
 		run:      runAFDB,
+	},
+	{
+		// Behind the af-clean PATH shim (#3882, phase 7 of #3079): the Console's low-disk cleanup
+		// from a terminal, through this workspace's own Agent. A subcommand and a shim rather
+		// than a script, like af-memory: it needs the Agent's loopback address and AGENT_TOKEN,
+		// and the logic is Go with tests.
+		name:     "af-clean",
+		operands: "[--dry-run | --apply] [--json]",
+		summary:  "list (default) or remove the regenerable items the Console's low-disk cleanup offers",
+		run:      afclean.Run,
 	},
 	{
 		// Behind the af-memory PATH shim (ADR 0108): the command-line side of AF memory, talking

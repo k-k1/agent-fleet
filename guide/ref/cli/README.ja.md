@@ -13,6 +13,7 @@ source_of_truth: "各コマンドの --help"
 | コマンド | できること |
 |---|---|
 | [af-aws-exec](af-aws-exec.ja.md) | AWS プロファイルの権限で、コマンドを 1 つ実行する |
+| [af-clean](af-clean.ja.md) | Console の容量不足の掃除と同じ、再生成できるビルド成果物とキャッシュの一覧と削除を、端末から行う |
 | [af-gcloud-exec](af-gcloud-exec.ja.md) | Google Cloud のプロファイルのトークンで、コマンドを 1 つ実行する |
 | [af-memory](af-memory.ja.md) | Agent Fleet のメモリの変更の一覧・取り込み・書き戻し・リントを、端末から行う |
 | [af-watch-hook](af-watch-hook.ja.md) | プライベートリポジトリに Webhook を足し、見張りに合図が届くようにする |
