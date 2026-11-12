@@ -70,8 +70,8 @@ aws cloudformation describe-stacks --stack-name agent-fleet-test \
 Route 53 の A レコードが効くのは、ドメインがそのホストゾーンに委任されているときだけです（レジストラの NS がゾーンの `awsdns-*` のサーバー）。
 ドメインがほかの DNS にあるときは、どちらかにします。
 
-- その DNS に A レコードを足す
-- DNS を使わず、Elastic IP の **sslip.io** を使う。`Fqdn`・`PUBLIC_DOMAIN` を `<ダッシュ区切りの IP>.sslip.io`（例: `203-0-113-7.sslip.io`）にすると、設定なしでその IP に解決され、本物の Let's Encrypt の証明書も取れます
+- その DNS に A レコードを足します
+- DNS を使わず、Elastic IP の **sslip.io** を使います。`Fqdn`・`PUBLIC_DOMAIN` を `<ダッシュ区切りの IP>.sslip.io`（例: `203-0-113-7.sslip.io`）にすると、設定なしでその IP に解決され、本物の Let's Encrypt の証明書も取れます
 
 ## 2. バンドルをインスタンスに送る
 
