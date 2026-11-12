@@ -127,6 +127,7 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 	if !ok {
 		return // a client that cannot read SSM liveness cannot prove the SSM leg
 	}
+	f.probes.reset()
 	probe := f.probeRuntime()
 	byInstance := map[string]*ec2types.Volume{}
 	var ids []string
@@ -267,7 +268,12 @@ func (f *ecsEC2Factory) darkAgentLeg(ctx context.Context, pass *darkProbePass, s
 		f.probes.forget(slot)
 		return AgentProbeFailed
 	}
-	res := f.probeAgent(ctx, pass, rt.Endpoint())
+	// The alias may point at a task on another box; an answer only speaks for this slot
+	// when the service's tasks are all on it.
+	res := AgentProbeUnknown
+	if f.serviceRunsOnlyOn(ctx, rt.base.name, slot) {
+		res = f.probeAgent(ctx, pass, rt.Endpoint())
+	}
 	f.probes.set(slot, probeObservation{Result: res, At: f.darkNow()})
 	if res != AgentProbeFailed {
 		log.Printf("ecs-ec2 sweep: dark-slot scan: Agent of %s on %s probe %s", rt.base.name, slot, res)

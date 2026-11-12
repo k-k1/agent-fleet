@@ -449,6 +449,10 @@ while ECS still reported the task healthy.
   (`AF_ECS_EC2_DARK_PROBE_TIMEOUT_SEC`, default 5); slots behind an exhausted budget are `unknown` this pass.
 - The latest result per slot, with its time, is read through `ecsEC2Factory.LastAgentProbe`, for the wedged
   predicate (#3963) to use as a signal of its own. Nothing acts on it yet (L1/L2 stay unbuilt).
+- The service alias may resolve to a task on another box (a task replacement, the 30 s Cloud Map cache), so a slot is
+  probed only when every live task of its service is on that EC2 instance (`ListTasks` / `DescribeTasks` /
+  `DescribeContainerInstances`); any read that fails, or a task elsewhere, is `unknown` and nothing is sent. Each pass
+  starts with an empty `LastAgentProbe` map, so a slot the pass did not probe has no value.
 - This supersedes the 2026-11-11 note's bullet that a service-up slot is observed like any other.
 
 Follow-ups: #3908

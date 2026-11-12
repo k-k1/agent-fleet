@@ -30,6 +30,7 @@ func darkHarness(t *testing.T) (*ec2Harness, *ecsEC2Factory, *[]SlotDark) {
 	// The workspace service is nominally up, which is what keeps the volume sweep from
 	// releasing the home and is exactly the shape the scan exists for.
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	h.ci.running = append(h.ci.running, runningTask("af-ws-acme-alice", "i-dark"))
 	h.rt.pool.darkAction = darkActionDetect
 	h.rt.pool.darkAfter = 10 * time.Minute
 	h.rt.pool.darkBootGrace = 5 * time.Minute
@@ -388,6 +389,7 @@ func TestDarkAgentProbeBudgetExhaustedIsUnknown(t *testing.T) {
 	h.ec2.attach("vol-2", "i-dark2", time.Now().Add(-2*time.Hour))
 	h.ci.registered["i-dark2"] = false
 	h.ecs.services["af-ws-acme-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	h.ci.running = append(h.ci.running, runningTask("af-ws-acme-bob", "i-dark2"))
 	now := time.Now()
 	f.clock = func() time.Time { return now }
 	f.pool.darkProbeBudget = 10 * time.Second
@@ -433,5 +435,85 @@ func TestDarkAgentProbeCancelledContextIsUnknown(t *testing.T) {
 	}
 	if len(doer.reqs) != 0 {
 		t.Fatal("sent a request on a cancelled context")
+	}
+}
+
+func runningTask(service, instance string) ecstypes.Task {
+	return ecstypes.Task{
+		TaskArn: aws.String("arn:task/" + service), Group: aws.String("service:" + service),
+		ContainerInstanceArn: aws.String("arn:ci/" + instance), LastStatus: aws.String("RUNNING"),
+	}
+}
+
+// A healthy answer through the service alias proves nothing about this slot when the
+// service's task runs on another box: it must neither clear the stamp nor be recorded.
+func TestDarkAgentProbeNeedsTheServiceTaskOnThisSlot(t *testing.T) {
+	ctx := context.Background()
+	for name, mutate := range map[string]func(h *ec2Harness){
+		"task on another instance": func(h *ec2Harness) {
+			h.ci.running = []ecstypes.Task{runningTask("af-ws-acme-alice", "i-other")}
+		},
+		"old and new task on two boxes": func(h *ec2Harness) {
+			h.ci.running = append(h.ci.running, runningTask("af-ws-acme-alice", "i-other"))
+			h.ci.running[1].TaskArn = aws.String("arn:task/second")
+		},
+		"no task listed": func(h *ec2Harness) { h.ci.running = nil },
+		"task describe failure": func(h *ec2Harness) {
+			h.ci.taskFailures = []ecstypes.Failure{{Arn: aws.String("arn:task/af-ws-acme-alice"), Reason: aws.String("MISSING")}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, f, _ := darkHarness(t)
+			_ = f.sweep(ctx)
+			stamp := darkStampOf(h)
+			if stamp == "" {
+				t.Fatal("setup: no stamp")
+			}
+			mutate(h)
+			doer := &fakeAgentDoer{status: 200}
+			f.agentHTTP = doer
+			_ = f.sweep(ctx)
+			if darkStampOf(h) != stamp {
+				t.Fatalf("an answer from another task changed the stamp: %q -> %q", stamp, darkStampOf(h))
+			}
+			if len(doer.reqs) != 0 {
+				t.Fatalf("probed although the task is not provably on this slot")
+			}
+			if r, _, ok := f.LastAgentProbe("i-dark"); !ok || r != AgentProbeUnknown {
+				t.Fatalf("LastAgentProbe = %v, %v; want unknown", r, ok)
+			}
+		})
+	}
+}
+
+// Each pass starts empty: a slot that recovered, was claimed, vanished or could not be read
+// must not keep the failed of an earlier pass.
+func TestLastAgentProbeDoesNotOutliveThePass(t *testing.T) {
+	ctx := context.Background()
+	for name, change := range map[string]func(h *ec2Harness){
+		"ecs agent reconnects": func(h *ec2Harness) { h.ci.registered["i-dark"] = true },
+		"ssm comes online":     func(h *ec2Harness) { h.ssmc.online = map[string]bool{"i-dark": true} },
+		"cluster read fails":   func(h *ec2Harness) { h.ci.describeErr = errors.New("throttled") },
+		"slot gone": func(h *ec2Harness) {
+			delete(h.ec2.instances, "i-dark")
+			delete(h.ec2.volumes, "vol-1")
+		},
+		"live claim": func(h *ec2Harness) {
+			h.ec2.volumes["vol-1"].Tags = append(h.ec2.volumes["vol-1"].Tags,
+				ec2tagKV(EC2TagClaim, "i-dark"), ec2tagKV(ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339)))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, f, _ := darkHarness(t)
+			_ = f.sweep(ctx)
+			if r, _, ok := f.LastAgentProbe("i-dark"); !ok || r != AgentProbeFailed {
+				t.Fatalf("setup: LastAgentProbe = %v, %v", r, ok)
+			}
+			change(h)
+			_ = f.sweep(ctx)
+			if r, _, ok := f.LastAgentProbe("i-dark"); ok {
+				t.Fatalf("stale probe %v survived the pass", r)
+			}
+		})
 	}
 }

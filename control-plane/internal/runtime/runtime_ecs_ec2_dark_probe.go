@@ -9,6 +9,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
 // Probe of the workspace Agent for a slot whose service is up (ADR 0121 decision 1, last
@@ -72,15 +76,25 @@ func (a *agentProbes) set(slot string, o probeObservation) {
 	a.m[slot] = o
 }
 
+// reset drops every observation. A pass starts from nothing so that a slot the pass did not
+// probe (recovered, claimed, gone, a read failed) carries no value from an earlier pass, and
+// a slot that disappeared does not stay in the map.
+func (a *agentProbes) reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.m = nil
+}
+
 func (a *agentProbes) forget(slot string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	delete(a.m, slot)
 }
 
-// LastAgentProbe returns the latest Agent probe of a slot and when it ran. ok is false when
-// the slot was never probed or its last pass did not probe it (service down, a leg healthy,
-// a read failed): a caller must check At against its own freshness bound.
+// LastAgentProbe returns the Agent probe of a slot from the latest dark-slot pass that
+// reached it, and when it ran. ok is false when that pass did not probe the slot (service
+// down, a cluster leg healthy, a claim, the slot gone, a read failed) or none has run: each
+// pass starts empty. A caller must still check At against its own freshness bound.
 func (f *ecsEC2Factory) LastAgentProbe(slot string) (AgentProbe, time.Time, bool) {
 	f.probes.mu.Lock()
 	defer f.probes.mu.Unlock()
@@ -166,4 +180,65 @@ func classifyProbeError(err error) AgentProbe {
 		return AgentProbeFailed
 	}
 	return AgentProbeUnknown
+}
+
+// serviceRunsOnlyOn reports whether every live task of the workspace service runs on the EC2
+// instance slot, and at least one does. The alias the probe dials resolves to whichever task
+// Service Connect (or the Cloud Map fallback, cached for 30 s) points at, so after a task
+// replacement or a slot move an answer may come from a task on another box. Any read that
+// fails, a missing container instance or an unreadable task is false: the caller then
+// treats the slot as unknown.
+func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot string) bool {
+	lister, ok := f.ci.(ecsTaskLister)
+	if !ok {
+		return false
+	}
+	cluster := aws.String(f.base.cfg.cluster)
+	var arns []string
+	var next *string
+	for {
+		listed, err := lister.ListTasks(ctx, &ecs.ListTasksInput{
+			Cluster: cluster, ServiceName: aws.String(service),
+			DesiredStatus: ecstypes.DesiredStatusRunning, NextToken: next,
+		})
+		if err != nil {
+			return false
+		}
+		arns = append(arns, listed.TaskArns...)
+		if listed.NextToken == nil {
+			break
+		}
+		next = listed.NextToken
+	}
+	cis := map[string]bool{}
+	for _, chunk := range chunkStrings(arns, 100) {
+		described, err := lister.DescribeTasks(ctx, &ecs.DescribeTasksInput{Cluster: cluster, Tasks: chunk})
+		if err != nil || len(described.Failures) > 0 || len(described.Tasks) != len(chunk) {
+			return false
+		}
+		for _, t := range described.Tasks {
+			ci := aws.ToString(t.ContainerInstanceArn)
+			if ci == "" {
+				return false
+			}
+			cis[ci] = true
+		}
+	}
+	if len(cis) == 0 {
+		return false
+	}
+	var ciArns []string
+	for a := range cis {
+		ciArns = append(ciArns, a)
+	}
+	out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{Cluster: cluster, ContainerInstances: ciArns})
+	if err != nil || len(out.Failures) > 0 || len(out.ContainerInstances) != len(ciArns) {
+		return false
+	}
+	for _, ci := range out.ContainerInstances {
+		if aws.ToString(ci.Ec2InstanceId) != slot {
+			return false
+		}
+	}
+	return true
 }
