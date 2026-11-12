@@ -75,6 +75,19 @@ printf '\n[gone](../../guide/operate/nope.md)\n' >> "$R3/deploy/compose/README.m
 if bash "$R3/deploy/release/stage-docs.sh" "$T/out3" > "$T/log3" 2>&1; then fail "a dead prose link did not fail the staging"; fi
 grep -qF "operate/runbooks/compose.md links to '../nope.md'" "$T/log3" || { cat "$T/log3"; fail "the failure does not name the link"; }
 echo "ok: dead prose link fails"
+# md-links.awk itself: a code span that runs across lines keeps the link inside it,
+# while an unmatched backtick does not reach past a blank line.
+AWKF="$(dirname "$SRC")/md-links.awk"
+printf 'old.md\tNEW\n' > "$T/map"
+# shellcheck disable=SC2016  # backticks are the Markdown under test, not expansions
+printf 'Before `code\n[x](old.md)\nstill code` after [y](old.md)\n\nOpen `tick\n\n[z](old.md)\n' > "$T/span.md"
+awk -v mode=rewrite -v map="$T/map" -f "$AWKF" "$T/span.md" > "$T/span.out"
+# shellcheck disable=SC2016
+printf 'Before `code\n[x](old.md)\nstill code` after [y](NEW)\n\nOpen `tick\n\n[z](NEW)\n' > "$T/span.want"
+cmp -s "$T/span.out" "$T/span.want" || { diff "$T/span.want" "$T/span.out"; fail "multi-line code span"; }
+[ "$(awk -v mode=links -f "$AWKF" "$T/span.md" | wc -l)" = 2 ] || fail "links mode counted a link inside a multi-line code span"
+echo "ok: multi-line code span kept, unmatched backtick stops at the paragraph"
+
 # pin-md-links.sh: a bundle README's prose links that leave the bundle go to the tag,
 # a link that resolves inside the bundle and every link in code stay; check then passes,
 # and a planted dead prose link fails it.

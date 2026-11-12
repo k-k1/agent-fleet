@@ -11,7 +11,7 @@
 # variable may be named after a builtin such as close().
 function prose(seg,   out, m, t, i, pre) {
   if (mode == "links") {
-    while (match(seg, /\]\([^) ]+\)/)) {
+    while (match(seg, /\]\([^) \n]+\)/)) {
       print substr(seg, RSTART + 2, RLENGTH - 3)
       seg = substr(seg, RSTART + RLENGTH)
     }
@@ -42,8 +42,17 @@ function line_out(s,   out, n, run, rest, cl, k) {
   }
   return out prose(s)
 }
+# Code spans may run across lines within a paragraph, so prose is handled a paragraph at
+# a time: lines are buffered until a blank line, a fence or the end of the file, and the
+# paragraph is scanned as one string (backtick runs are matched across its newlines).
+function flush() {
+  if (npara == 0) return
+  r = line_out(para)
+  if (mode == "rewrite") print r
+  para = ""; npara = 0
+}
 BEGIN {
-  nmap = 0
+  nmap = 0; npara = 0; para = ""
   if (mode == "rewrite") while ((getline l < map) > 0) { t = index(l, "\t"); nmap++; from[nmap] = substr(l, 1, t - 1); to[nmap] = substr(l, t + 1) }
 }
 {
@@ -53,10 +62,11 @@ BEGIN {
     if (mode == "rewrite") print
     next
   }
-  if (match($0, /^ ? ? ?(```+|~~~+)/)) { f = substr($0, RSTART, RLENGTH); sub(/^ */, "", f); fence = f
+  if (match($0, /^ ? ? ?(```+|~~~+)/)) { flush(); f = substr($0, RSTART, RLENGTH); sub(/^ */, "", f); fence = f
     if (mode == "rewrite") print
     next
   }
-  r = line_out($0)
-  if (mode == "rewrite") print r
+  if ($0 ~ /^[ \t]*$/) { flush(); if (mode == "rewrite") print; next }
+  para = (npara ? para "\n" : "") $0; npara++
 }
+END { flush() }
