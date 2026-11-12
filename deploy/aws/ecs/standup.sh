@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Agent Fleet — stand a deployment up / rebuild it (the executable form of the order in
-# README §Stack decomposition).
+# guide/operate/aws-ecs/overview.md, "Deploy order").
 #
 #   deploy/aws/ecs/standup.sh --profile <p> --region <r>          # plan and preflight (default)
 #   deploy/aws/ecs/standup.sh --profile <p> --region <r> --yes    # execute
@@ -211,7 +211,7 @@ key_too_short() {
 # can still finish and the operator sees the problem before the first task does.
 for s in cookie-secret master-key; do
   if ! have_ssm "$SSM_PREFIX/$s"; then
-    say_missing "no SSM $SSM_PREFIX/$s (README §30-ingress stand-up, step 2)"
+    say_missing "no SSM $SSM_PREFIX/$s (guide/operate/aws-ecs/install.md, step 1 of starting the Control Plane)"
     continue
   fi
   key_too_short "$SSM_PREFIX/$s" && rc=0 || rc=$?
@@ -926,6 +926,6 @@ cat <<EOF
 ==> up: ${URL:-https://$AF_FQDN}  (ImageTag=$TAG)
     what matters next:
       - there is no golden yet. A new user's first launch is merely slow, not broken (the CP bakes one itself)
-      - the cost allocation tags are not discovered by AWS until one Workspace has been raised (README §Prerequisites)
+      - the cost allocation tags are not discovered by AWS until one Workspace has been raised (guide/operate/aws-ecs/install.md, "Split spend per member")
       - for a dev deployment update with deploy/aws/ecs/dev-deploy.sh from now on; for a release, update.sh
 EOF

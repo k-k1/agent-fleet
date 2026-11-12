@@ -180,7 +180,7 @@ home ボリュームのツリーだけを消す（`toolchain_uninstall.go`）。
 
 CloudFormation スタックは 7 本で、配備順は `00-network → 10-data → 20-platform →
 （40-ec2-pool）→（50-tts）→（60-engines）→ 30-ingress`（括弧は任意）。各スタックが何を持つかは
-runbook の「Stack decomposition」。
+運用ガイドの [ECS 構成の全体像](../../guide/operate/aws-ecs/overview.ja.md)。
 
 - **所有権の境界**: テンプレートは**静的基盤を 1 回だけ**作る。Workspace ごとのリソースは
   **CP が実行時に決定論的な名前で作る** — アダプタはステートレス（全部名前かタグで見つける）で、
@@ -279,8 +279,8 @@ Workspace イメージと Agent は全ターゲットで同一物 — それが�
 - 実手順（`backup.sh`・`restore.sh`・アップグレード・air-gapped）はガイドの
   [バックアップして復元する](../../guide/operate/run/backup-restore.ja.md)・
   [アップグレードする](../../guide/operate/run/upgrade.ja.md)・
-  [閉じたネットワークに入れる](../../guide/operate/run/air-gapped.ja.md)、ECS は [ecs runbook](../../deploy/aws/ecs/README.md)
-  の §Upgrade。
+  [閉じたネットワークに入れる](../../guide/operate/run/air-gapped.ja.md)、ECS は
+  [アップグレードする（ECS）](../../guide/operate/aws-ecs/upgrade.ja.md)。
 
 ## 9.8 コスト特性（ec2-single / ECS）
 
@@ -416,3 +416,200 @@ CP は接続を開けないとき `DB_UNAVAILABLE` を出す。`30-ingress.yaml`
 ```sh
 aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-deployment
 ```
+
+## 9.10 ECS runbook の開発者向けの節
+
+以下は、手順が運用ガイド（`guide/operate/aws-ecs/`）に移るまで `deploy/aws/ecs/README.md` にあった節で、
+ここにそのまま移した（英語版が原文、こちらはその訳）。Agent Fleet を変える人だけが実行するもの、または
+ガイドが経緯を省いて規則だけを書いている、その経緯にあたるもの: ECS アダプタの検証手順と E2E 完了ゲート、
+開発用デプロイ（このリポジトリのワークフローで `main` を焼く `dev-deploy.sh`）、51,200 バイトのテンプレートの
+件とその往復、コールドスタートの計測。見出しは 1 段下げ、`docs/log/` へのリンクは文字にした。
+
+### 検証手順（Prove-out sequence）
+
+**専用のサンドボックス**の認証情報を持つホスト（または Agent Fleet のワークスペース — ドッグフーディング）から
+実行する。AWS の API 呼び出しはただの HTTPS で、重い計算（ECS タスク、RDS）は AWS 側にあるので、
+このホストのビルド / OOM の制限は効かない。
+
+- **S0** — サンドボックスで `aws sts get-caller-identity`。リージョンを選ぶ。
+- **S1** — `00-network.yaml` をデプロイ。デプロイ → `delete-stack` の往復と常時の費用（主に NAT）を確かめる。**実証済み。**
+- **S1.5** — `10-data.yaml`（EFS+RDS）と `20-platform.yaml`（ECR/クラスター/SC 名前空間/IAM）をデプロイ。確かめて撤去。**実証済み。**
+- **S2** — ECR ができたら（`20` から）、CP と Workspace のイメージを push（下の §ECR push）。ECR に入るまで ECS は取得できない。
+- **S3** — `30-ingress.yaml` をデプロイ。CP/Console のサービスが起動し、CP ネイティブの Google OAuth ログインが動き、RDS に届く。
+- **S4** — `runtime_ecs.go`（段 2）を実装した状態で、CP が**ワークスペースを動的に用意する**（本物のアダプタを通す）→ 下の E2E ゲート。
+
+CFN の作成（S1–S3）と段 2 の Go のコードは**並行の線**で、S4 で合流する。
+
+*移すときに足した注記（原文ではない）: S2 の「下の §ECR push」は、運用ガイドの [イメージを ECR に push する](../../guide/operate/aws-ecs/install.ja.md#イメージを-ecr-に-push-する) に移った。*
+
+### E2E 完了ゲート（凍結仕様 §20b.7.14）
+
+1. ログイン（CP ネイティブの Google OAuth）→ テナント → ワークスペースの Start（Service desired 1、RUNNING、healthz）。
+2. セッション作成 → ターミナル接続（CP→Service Connect→Agent）→ 入出力。
+3. Stop（desired 0）→ 再 Start でホームと claude の状態が戻る（EFS が残る）。
+4. P3-9 リーパー: アイドル → 段 1 停止 → 段 2 desired 0。接続中は発火しない。
+5. **平文の秘密がない**: `describe-task-definition` で DEK は SSM の `valueFrom` の ARN としてだけ出て、`environment` の値には出ない。
+
+### 開発用デプロイ: `dev-deploy.sh`
+
+`update.sh` は**リリース済み**のタグをデプロイする。開発用に置いているデプロイが欲しいのはその逆で、
+版を切らずに今の `main` を載せたい。それが `dev-deploy.sh`（docs/log/73）で、最後に `update.sh` を呼ぶ —
+上の事前チェックがその理由で、開発用の経路にチェックの写しを書くと、ずれるのはチェックの方になる。
+
+```bash
+./dev-deploy.sh --profile <p> --region <r>            # origin/main → the dev deployment
+./dev-deploy.sh --profile <p> --region <r> --dry-run  # just the plan
+```
+
+タグを決め（`<next patch>-dev-<sha8>`）、`dev-image.yml`（GHCR、リリースのタグには決してしない）で焼き、
+ECR に**インデックスごと**写し、`ImageTag` を動かす。代わりに決めてくれること:
+
+- **ワークスペースのイメージを焼く必要があるか。** デプロイ済みのタグから `workspace/` が変わったときだけ。
+  それ以外はワークスペースのイメージを ECR の中でタグ付けし直すだけで、バイトは写さない。焼くと QEMU で約 10 分。
+- **中身が同じならゴールデンスナップショットを焼き直さなくてよいこと**（docs/log/72 §72.6.4 はまさにそれで 10 分とスロット 2 台を払った）。
+- **誰かの本番のデプロイではないこと。** `--allow-fqdn` がない限り、開発用以外の `Fqdn` を拒否する。
+  `ImageTag` を動かすと、そこでワークスペースを動かしている全員に「要再起動」のバッジが出るため。
+- **エンジンのツールのイメージを運ぶ必要があるか。** `af-engine-tools` は取得のサイドカーと取り込みの手順を持ち（ADR 0072）、
+  `dev-image.yml` には含まれず、以前は `standup.sh` だけが写していた — そのため開発用デプロイでは、エンジンの取得の
+  コンテナが取得するものがなかった。今は、エンジンのスタックが求めるタグが ECR になければ運び、デプロイ済みのコミットから
+  `deploy/aws/ecs/engine-tools/` が変わっていればコミットごとのタグを焼く。🔴 `EngineToolsImageTag` は自分では設定できない
+  （ingress スタックに `update.sh` を実行するだけ）ので、後者の場合は `params/60-engines` に設定するタグを表示する —
+  そうしないと、デプロイは最新に見えて前のリリースのスクリプトを動かす。
+
+⚠️ 焼くのは **origin の** ref。push していないローカルのコミットは、黙って含まれない。
+
+### 51,200 バイトの壁（誰も触っていないのにデプロイが止まる理由）
+
+CloudFormation は **51,200 バイト**を超えるテンプレート本文を拒否し、それより大きいものは S3 経由で渡す必要がある。
+`cfn/30-ingress.yaml` は **2026-09-01** にこの線を越え（PR #277、RDS の管理パスワードのローテーション: 50,191 → 54,681 バイト）、
+その瞬間に**それをデプロイするすべての経路が止まった** — `standup.sh`（構築）と `update.sh`（本番を含むすべてのリリース）。
+どちらも同じ `cloudformation deploy --template-file` を呼ぶため。
+
+見つかったのは 2026-09-02、その後最初の構築でだった。隠れていた理由は 3 つ:
+
+1. **AWS CLI は API を呼ぶ前にファイルの大きさで拒否する。** 失敗は CloudFormation ではなく CLI のエラーで、スタックのイベントには何もない。
+2. **`update.sh` は正常に見えた。** 上書きするのは `ImageTag` だけなので、パラメータの変更だと思われがちだが、毎回テンプレート全体を渡すので同じように壊れていた。
+3. **構築の経路は端から端まで通したことがなかった。** `30-ingress` の作成は、大きくなってから一度も実行されていない唯一の操作だった。
+
+★ これはより一般的な規則の一例: **デプロイのスクリプトは、誰かが実際に通す経路でしか検証されていない。**
+緑の単体テストはそこに触れず、「当然まだ動く」と飛ばした経路こそが腐る。だから直し方は「大きいテンプレートは S3 へ」だけではない:
+
+- `env.sh` の **`af_cfn_deploy` が `cloudformation deploy` の唯一の入り口**で、**呼ぶたびにファイルを測る**。
+  「30-ingress が大きい」と覚えておくやり方は、次に大きくなったテンプレートで同じ事故を繰り返す。
+- 受け渡しの S3 Bucket は **20-platform** にある（30-ingress より先にでき、後まで残る。30-ingress に置くと、
+  それを作るスタックのデプロイにその S3 Bucket が要ることになる）。オブジェクトは 7 日で消える。
+- `teardown.sh` は **20-platform を消す前に S3 Bucket を空にする** — CloudFormation は空でない S3 Bucket を消せず、
+  途中で死ぬ撤去こそが「作成の経路が通されない」状態を再現する。
+- `deploy/local/ecs-lifecycle-stub-test.sh` のケース **3b / 3c** が、わざと膨らませたテンプレートで、
+  CI のたびにこの両方を実行する。誰も実行しない修正は、元のバグそのもの。
+
+#### 壁の内側に戻した（2026-09-04）
+
+S3 の経路は安全網であって定位置ではない — 20-platform ができて初めて存在する S3 Bucket が要り、撤去の順番を縛り、
+失敗はスタックのイベントに何も残らない CLI のエラーとして出る。そこで `30-ingress.yaml` を上限の内側に戻した:
+**54,681 → 40,493 バイト**。パラメータ・既定値・リソースは何も変えていない。
+
+動かしたのは説明文。パラメータの `Description:` の本文が 21,630 バイト — **テンプレートの 40%** — で、
+API に届かなくても役目を果たせる唯一の部分だった。今は [`cfn/PARAMETERS.md`](../../deploy/aws/ecs/cfn/PARAMETERS.md) に全文があり、
+テンプレートにはパラメータごとに 1〜2 行だけを残している。
+
+⚠️ **YAML のコメントは `Description:` とまったく同じだけかかる。** 上限はテンプレートの*本文*にかかるので、
+段落を `#` に移しても 1 バイトも減らない。長い説明はファイルの中で書き方を変えるのではなく、ファイルの外に出す。
+
+`ecs-lifecycle-stub-test.sh` のケース **3b-2** は、どれかの `cfn/*.yaml` が 51,200 バイトを超えるとビルドを失敗させる。
+わざと強い失敗にしている: 2026-09-01 の膨張は 3 か月気づかれず、警告でも同じだったはず。壁をまた越えるのは、
+差分に見える、その定数のわざとの変更であるべき — 一方で `af_cfn_deploy` は実行時に測り続けるので、
+越えたテンプレートも死なずにデプロイされる。
+
+#### 30-ingress はまた壁を越えてよい（2026-11-11、#3550）
+
+壁の内側に留まる余地が尽きた: `30-ingress.yaml` はテストの予算 50,176 バイトの 200 バイト下にあり、説明文はすでに
+出してあり（上）、新しいパラメータは 1 つごとに — `Parameters` の項目、条件、`Environment` の行 — 300〜500 バイトかかるので、
+足す PR はどれも CI に落ちて手で削っていた。S3 なしで場所を作れるのはネストしたスタックか 2 つ目のテンプレートだけで、
+スタックの間でリソースを動かすと作り直しになる。ALB とそのリスナーは作り直してはいけないので、それはできない。
+
+そこで S3 の経路は、**このテンプレートに限って**、安全網であるだけではなくなった: 30-ingress は必ず 20-platform の
+S3 Bucket ができたあとにデプロイされ（構築の順番 00 → 10 → 20 → イメージ → 40 → 30）、それが S3 Bucket より前のテンプレートにはない性質。
+変えたこと:
+
+- `cfn-cp-settings-env-test.py` の 30-ingress の予算: 51,200 − 1,024 → **65,536**（約 14 KiB、パラメータ 30 個あまりの余地）。また上げるのも、わざとの変更のまま。
+- ケース **3b-2** は 30-ingress を 51,200 の上限から外す（ほかはそのまま）。`cfn-template-size-test.py` は S3 Bucket より前のテンプレートを上限の 4 KiB 下に保つ。
+- この README・`PARAMETERS.md`・`release-ecr.sh` のヒントにある、30-ingress を手で打つ `aws cloudformation deploy`（`--template-file`）は、
+  すべて `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` を付けた（AWS CLI は 51,200 バイトを超える直接のアップロードを API を呼ぶ前に拒否する）。
+  付いていないものがあれば `cfn-template-size-test.py` が失敗する。`CFN_BUCKET` は 20-platform の出力 `CfnTemplatesBucket`:
+  `CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text)`。
+- テンプレート自体は変えていない: 論理 ID・パラメータ・リソースはどれも動いていないので、今のスタックはその場で更新される。
+
+#### 往復を測った（2026-09-02）
+
+撤去 → 構築を端から端まで通したことはなかった。開発用デプロイで、`0.14.3-dev-ecbbcc59` で通した:
+
+| 手順 | 結果 |
+|---|---|
+| `dev-image.yml`、`image=both`、2 アーキテクチャ | 約 11 分。両方のイメージが `[amd64, arm64]` のインデックス |
+| `standup.sh` 00 → 10 → 20 → イメージ → 40 → 30 | `30-ingress` は S3 を通り、`CREATE_COMPLETE` |
+| CP の起動 | `metadata store: postgres`、`/readyz` 200 |
+| Agent、両アーキテクチャ | ゴールデンの焼き付けが本物のワークスペースを起動: `Agent healthy` 99 秒（arm64）/ 101 秒（x86_64） |
+| CP → Agent | Cloud Map への切り替えが働いて成功: `did not resolve through the Service Connect alias -> using 10.20.x.x:7700 from Cloud Map` |
+| `teardown.sh` | 5 つのスタックが消え、掃除と独立した数え上げのどちらも 0 スタック / 0 NAT / 0 RDS / 0 ALB / 0 EC2 / 0 EFS / 0 ECR |
+
+⚠️ **`/healthz` ではなく `/readyz` を見る。** `/healthz` はデータベースが死んでいても 200 を返す — RDS のローテーションの障害が
+長く気づかれなかったのはそのため。データベースに触るのは `/readyz`。
+
+途中で見つかった粗い所が 2 つあり、**どちらも直した**:
+
+- **`standup.sh` の事前チェックは、キャプチャをテンプレートと突き合わせる**（`Default` のないパラメータがあること）。
+  以前はキャプチャの*ファイルがあるか*だけを見ていたので、テンプレートより古いキャプチャは 00–20 を建てた**あとで**失敗した —
+  いちばん高くつく時点。そのパラメータを固定のインデントで数えることもやめた: `Parameters:` の下の最初のキーの深さを取り、
+  **1 つも読めなかったときはそう言う**。「必須 0 個」と黙って報告するパーサーは、上の壁と同じ形 — 動いていないのに何も見えないチェック。
+- **`teardown.sh` の S3 Bucket を空にする手順は、失敗した理由を表示する。** 以前は stderr を捨てていた
+  （`>/dev/null 2>&1 || echo "(skip: …)"`）ので、「S3 Bucket はもうなかった」と「空にできなかった」が同じに見えた —
+  そして次に失敗するのは 20-platform の削除で、その時点で理由は捨てられている。
+
+### 既知の挙動: コールドスタートの Start は `running` ではなく `starting` を返す
+
+コールドのワークスペースの Start は、起動のたびにイメージ全体を取得する（Fargate はタスクの間でイメージをキャッシュしない）。
+サンドボックスで端から端まで測った値（2026-08-15、`docs/log/62` §62.9）: **新しいホームで 126 秒、使ったホームで 128〜218 秒** —
+以前の「約 100 秒」は楽観的だった。`POST /api/workspace/start` はそれを**待たない**: ECS のサービスが `desiredCount 1` になった
+時点で、今の状態 — ふつうは `starting` — を返す。`running` への移行は `GET /api/workspace` をポーリングして見る。
+Console はすでにそうしている（4 秒間隔で、再読み込みなしにコールドスタートを `running` まで進める）。
+
+古いビルドは、リクエストを Agent の準備待ち（`AF_ECS_START_TIMEOUT_SEC`、当時 90 秒）で止めていたので、ALB の **60 秒**の
+アイドルタイムアウトを超えた — ワークスペースは裏で問題なく収束しているのに、*HTTP リクエスト*は **504** で死んだ。
+`control-plane/runtime_ecs.go`（`watchReady`）で直した: 準備のポーリングは今は裏でログの 1 行
+（`ecs start: service <name> Agent healthy <n>s after Start`）のためだけに動き、その予算はどのリクエストよりもわざと長い
+（既定 **300 秒**）。`30-ingress.yaml` は、上限が見えるように ALB の `idle_timeout` を既定の 60 秒のまま明記した。
+🚧 単体テストでだけ確かめた — 本物の ECS のスタックではやり直していない。
+
+ここでの `running` は ECS の**タスク**が RUNNING という意味で、エントリーポイントが終わって Agent が応答する少し前。
+その間に出した作成は `502 workspace agent unreachable` になる。やり直す。
+
+**内訳は測ってある**（2026-08-15、`docs/log/62-ecs-start-latency.md` §62.9–62.10）。答えはイメージではなかった。
+使ったホームの Stop→Start は **約 101 秒**: ECS がタスクを作るのに **4〜8 秒**、準備（ENI の取り付け）**16 秒**、
+イメージの取得 **35 秒**（圧縮で 918 MiB、34 レイヤー）、EFS のマウントとコンテナの作成 **約 25 秒**、エントリーポイント **21 秒**。
+イメージの取得はその約 35% — 判断の基準の 40% より下、絶対値でも 40 秒より下 — なので、SOCI の遅延読み込みは**見送った**。
+
+⚠️ **測るときの注意（痛い目を見て学んだ）**: 止めた*直後*（1〜2 分以内）にワークスペースを起動し直すと、前のタスクの片付け中に
+新しいデプロイが重なるので、ECS はタスクを作るだけで **40〜143 秒**かかる。これは計測のループの性質で、本番の性質ではない
+（ワークスペースはリーパーが止め、数分から数時間後に起動される）。**再起動の数字を出すときは、止めてから起動するまでの間隔を必ず書く。**
+何かが変わったら、同じやり方で測り直す:
+
+```bash
+# image pull window (and the surrounding task lifecycle)
+aws ecs describe-tasks --cluster <cluster> --tasks <task-arn> \
+  --query 'tasks[0].{created:createdAt,pullStart:pullStartedAt,pullStop:pullStoppedAt,started:startedAt}'
+# entrypoint cost (boot-install of the pinned CLIs on a fresh home is NOT a pull)
+aws logs tail <ws-log-group> --since 10m
+```
+
+ここで push したワークスペースのイメージは **軽量版**（`BAKE_AGENT_CLIS=0`）なので、*新しいホーム*ではエントリーポイントの中で
+npm / GitHub からの起動時のインストールが 1 回だけ加わる（全 CLI で約 60 秒、`workspace/entrypoint.sh` で測った）。
+これはイメージの取得ではなくネットワークの時間で、繰り返さない — `~/.local` は EFS に残る。だから**2 つ**の場面を測り、
+2 つ目で判断する: 空のホームでの最初の Start（取得 + インストール）と、使ったホームの Stop→Start（取得だけ）。
+スケールトゥゼロが毎回払うのは後者。
+
+EFS やエントリーポイントの雑音なしに取得だけを切り出すには、同じイメージで `entryPoint` を上書きした使い捨てのタスク定義を登録する
+（`run-task --overrides` は `command` を上書きできるが `entryPoint` は**できない**。`entrypoint.sh` は `exec "$@"` で終わるので、
+コマンドだけを上書きしてもエントリーポイント全体が動く）。`run-task` は作りからしていつもコールド — Fargate はタスクの間で
+イメージをキャッシュしない。手順の全体、差分の計算、判断の基準は `docs/log/62-ecs-start-latency.md` §62.7 にある
+（SOCI の結論: この計測を条件に、条件付きで可）。

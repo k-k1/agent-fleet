@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""00-network from v0.34.x to this tree: the change sets the README promises, checked offline.
+"""00-network from v0.34.x to this tree: the change sets the upgrade page promises, checked offline.
 
     python3 deploy/local/cfn-network-upgrade-test.py
 
@@ -10,8 +10,9 @@ tree's endpoint has a policy that refuses (AccessDenied, no NAT fallback) the S3
 does not list, so it must stay off until every workspace has been restarted into a workspace
 subnet. A rehearsal on a real stack (#2763) found the README describing a change set nobody
 gets ("Add only, six resources") and nothing warning that a deploy with the defaults switches
-the restricted endpoint on at once. The README's "Upgrading from v0.34.x" block now names the
-shapes; this pins them to the two templates, so changing either one makes the text wrong here
+the restricted endpoint on at once. The "Upgrade from v0.34.x" section of the operator guide's
+ECS upgrade page (guide/operate/aws-ecs/upgrade.md, which the runbook's procedure moved to) now
+names the shapes; this pins them to the two templates, so changing either one makes the text wrong here
 first. It fails when
 
   - the step-1 deploy (S3EndpointEnabled=false) is not exactly Add of the six workspace
@@ -45,12 +46,12 @@ except ImportError:
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 NEW = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn", "00-network.yaml")
 OLD = os.path.join(ROOT, "deploy", "local", "testdata", "00-network.v0.34.1.yaml")
-README = os.path.join(ROOT, "deploy", "aws", "ecs", "README.md")
+README = os.path.join(ROOT, "guide", "operate", "aws-ecs", "upgrade.md")
 TAG, TAG_PATH = "v0.34.1", "deploy/aws/ecs/cfn/00-network.yaml"
 
 SIX = {"WorkspaceSubnet0", "WorkspaceSubnet1", "WorkspaceRt", "WorkspaceDefaultRoute",
        "WorkspaceAssoc0", "WorkspaceAssoc1"}
-BLOCK_HEADING = "Upgrading from v0.34.x"
+BLOCK_HEADING = "## Upgrade from v0.34.x"
 
 
 class CfnLoader(yaml.SafeLoader):
@@ -158,13 +159,11 @@ def expect(errors, what, cs, add=(), remove=(), modify=()):
 
 
 def readme_block(text):
+    # The section runs to the next H2: its rollback table is an H3 inside it.
     start = text.find(BLOCK_HEADING)
     if start < 0:
         return ""
-    end = text.find("\n## ", start)
-    nxt = text.find("\n### ", start + 1)
-    if 0 <= nxt and (end < 0 or nxt < end):
-        end = nxt
+    end = text.find("\n## ", start + 1)
     return text[start:end if end >= 0 else len(text)]
 
 

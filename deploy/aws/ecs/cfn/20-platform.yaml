@@ -730,7 +730,7 @@ Resources:
               # Account prerequisite, not expressible here: an IAM role can only call
               # the Billing APIs when the account has "IAM user and role access to Billing
               # Information" enabled. Without it this policy is present and every call
-              # still fails - see deploy/aws/ecs/README.md.
+              # still fails - see guide/operate/aws-ecs/install.md.
               - Sid: CostExplorerRead
                 Effect: Allow
                 Action:

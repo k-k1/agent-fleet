@@ -1,6 +1,6 @@
 ---
 audience: "a deployment administrator on AWS who wants members' credential stores protected by a key of each home's own"
-source_of_truth: "`deploy/aws/ecs/README.md` and `deploy/aws/ecs/cfn/PARAMETERS.md` for the parameters; `af-cp home-dek-status --help` for the command"
+source_of_truth: "`deploy/aws/ecs/cfn/30-ingress.yaml` and `deploy/aws/ecs/cfn/PARAMETERS.md` for the parameters; `af-cp home-dek-status --help` for the command"
 ---
 
 # Give each home its own key
@@ -8,7 +8,7 @@ source_of_truth: "`deploy/aws/ecs/README.md` and `deploy/aws/ecs/cfn/PARAMETERS.
 English | [日本語](home-keys.ja.md)
 
 This is for AWS deployments (`ecs` / `ecs-ec2`) only. Each member's home gets a random key, and its credential store (`secrets.enc`) is sealed under that key.
-Even someone holding `AF_MASTER_KEY` can then no longer open the store, and disabling the KMS key makes it unreadable. [Put the keys at rest on AWS KMS](kms.md) comes first. The parameters are in the [ECS runbook](../../../deploy/aws/ecs/README.md#a-key-of-its-own-for-each-home-optional-kms-only).
+Even someone holding `AF_MASTER_KEY` can then no longer open the store, and disabling the KMS key makes it unreadable. [Put the keys at rest on AWS KMS](kms.md) comes first. The parameters are in [Turn on optional features with stack parameters](../aws-ecs/options.md#give-each-home-its-own-key).
 
 ## How it works
 
@@ -64,7 +64,7 @@ The workspace's `/healthz` reports the outcome, never a key.
 - If the 15 minutes run out, or the Control Plane restarts while it waits, the home stays migrating and is confirmed at a later start
 - A workspace that is already running keeps both keys in its environment until it is restarted
 
-`af-cp home-dek-status` counts migrating and confirmed homes. On ECS, run it as a one-off task the same way as `rewrap-keys` ([ECS runbook](../../../deploy/aws/ecs/README.md#running-af-cp-commands-against-the-control-planes-database)).
+`af-cp home-dek-status` counts migrating and confirmed homes. On ECS, run it as a one-off task the same way as `rewrap-keys` ([Run af-cp commands against the Control Plane's database](../aws-ecs/options.md#run-af-cp-commands-against-the-control-planes-database)).
 
 ## When a home's key is removed
 
@@ -170,4 +170,4 @@ A workspace image older than the Control Plane loses nothing as long as the stor
 
 - [Put the keys at rest on AWS KMS](kms.md)
 - [Rotate the bridge tokens](bridge-tokens.md)
-- [The ECS runbook's "A key of its own for each home"](../../../deploy/aws/ecs/README.md#a-key-of-its-own-for-each-home-optional-kms-only)
+- [Turn on optional features with stack parameters](../aws-ecs/options.md#give-each-home-its-own-key)

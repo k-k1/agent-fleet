@@ -1,6 +1,6 @@
 ---
 audience: "メンバーの資格情報ストアを、ホームごとの鍵で守りたい AWS 上の配備管理者"
-source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/ecs/cfn/PARAMETERS.md`、コマンドは `af-cp home-dek-status --help`"
+source_of_truth: "パラメータは `deploy/aws/ecs/cfn/30-ingress.yaml` と `deploy/aws/ecs/cfn/PARAMETERS.md`、コマンドは `af-cp home-dek-status --help`"
 ---
 
 # ホームごとに鍵を分ける
@@ -8,7 +8,7 @@ source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/
 [English](home-keys.md) | 日本語
 
 AWS の配備（`ecs` / `ecs-ec2`）だけの機能です。メンバーのホームごとにランダムな鍵を作り、資格情報ストア（`secrets.enc`）をその鍵で封じます。
-`AF_MASTER_KEY` を持つ人でもストアを開けなくなり、KMS 鍵の無効化でストアを読めなくできます。先に [保存時の鍵を AWS KMS にする](kms.ja.md) が必要です。パラメータは [ECS の手順書](../../../deploy/aws/ecs/README.md#a-key-of-its-own-for-each-home-optional-kms-only) にあります。
+`AF_MASTER_KEY` を持つ人でもストアを開けなくなり、KMS 鍵の無効化でストアを読めなくできます。先に [保存時の鍵を AWS KMS にする](kms.ja.md) が必要です。パラメータは [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#ホームごとに鍵を分ける) にあります。
 
 ## 全体像
 
@@ -64,7 +64,7 @@ AWS の配備（`ecs` / `ecs-ec2`）だけの機能です。メンバーのホ�
 - 15 分を過ぎたとき、または待っている間に Control Plane が再起動したときは、ホームは移行中のままで、あとの起動で確認されます
 - すでに動いているワークスペースは、再起動するまで両方の鍵を環境変数に持ちます
 
-`af-cp home-dek-status` が、移行中と確認済みのホームを数えます。ECS では `rewrap-keys` と同じく単発のタスクとして実行します（[ECS の手順書](../../../deploy/aws/ecs/README.md#running-af-cp-commands-against-the-control-planes-database)）。
+`af-cp home-dek-status` が、移行中と確認済みのホームを数えます。ECS では `rewrap-keys` と同じく単発のタスクとして実行します（[Control Plane のデータベースに対して af-cp を実行する](../aws-ecs/options.ja.md#control-plane-のデータベースに対して-af-cp-を実行する)）。
 
 ## ホームの鍵が消えるとき
 
@@ -170,4 +170,4 @@ Control Plane より古いワークスペースイメージは、ストアがま
 
 - [保存時の鍵を AWS KMS にする](kms.ja.md)
 - [ブリッジトークンを入れ替える](bridge-tokens.ja.md)
-- [ECS の手順書の「A key of its own for each home」](../../../deploy/aws/ecs/README.md#a-key-of-its-own-for-each-home-optional-kms-only)
+- [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#ホームごとに鍵を分ける)
