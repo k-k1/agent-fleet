@@ -1,7 +1,9 @@
 package sessionx
 
 import (
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
 )
@@ -38,8 +40,21 @@ func watchRowsWire(name string) []watchRowWire {
 	return out
 }
 
+// watchErrorRunes bounds the error text on the wire. The engine stores a provider or MCP
+// transport error verbatim, and the poll repeats every row's copy on each answer.
+const watchErrorRunes = 200
+
+// watchWireText cuts s to at most max runes (never mid-rune), marking a cut with an ellipsis.
+func watchWireText(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max-1]) + "…"
+}
+
 func watchRowOf(l watch.Listed) watchRowWire {
-	row := watchRowWire{ID: l.ID, Source: l.Source, Ref: l.Ref, Types: l.Types, URL: l.URL, By: l.Requester, Error: l.LastErr}
+	row := watchRowWire{ID: l.ID, Source: l.Source, Ref: watchWireText(l.Ref, 300), Types: l.Types, URL: watchWireText(l.URL, 500), By: l.Requester,
+		Error: watchWireText(strings.Join(strings.Fields(l.LastErr), " "), watchErrorRunes)}
 	if row.Types == nil {
 		row.Types = []string{}
 	}

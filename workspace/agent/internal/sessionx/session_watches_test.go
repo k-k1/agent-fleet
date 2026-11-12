@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -103,5 +104,17 @@ func TestWatchRowOfFormatsTimesAndNeverNullsTypes(t *testing.T) {
 	}
 	if r := watchRowOf(watch.Listed{}); r.Due != "" || r.Expires != "" {
 		t.Fatalf("zero times formatted: %+v", r)
+	}
+}
+
+// A provider error can be arbitrarily long; the poll carries a bounded, valid-UTF-8 copy.
+func TestWatchRowOfBoundsALongError(t *testing.T) {
+	long := strings.Repeat("あ", 5000) + "\n" + strings.Repeat("x", 5000)
+	row := watchRowOf(watch.Listed{Subscription: watch.Subscription{ID: "w"}, LastErr: long})
+	if n := utf8.RuneCountInString(row.Error); n != watchErrorRunes || !utf8.ValidString(row.Error) || !strings.HasSuffix(row.Error, "…") {
+		t.Fatalf("error runes = %d valid=%v: %q", n, utf8.ValidString(row.Error), row.Error)
+	}
+	if got := watchRowOf(watch.Listed{LastErr: "HTTP 502\n  bad gateway"}).Error; got != "HTTP 502 bad gateway" {
+		t.Fatalf("short error = %q", got)
 	}
 }
