@@ -2757,6 +2757,44 @@ const SCENES = [
     settle: 1500,
   },
   {
+    // Admin › a tenant › Limits & idle on a slot-pool deployment (operate/aws-ecs/slot-homes): the
+    // home hibernation and spare-copy fields, which only exist when the ec2-pool probe answers
+    // ecs-ec2. The values are typed in so the reader sees the format, not the placeholders.
+    name: "operate-slot-homes",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_KEYS: "1", SHOT_OPERATE_SLOT_HOMES: "1" },
+    clip: ["#shot-hib", "#shot-backup"],
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .tenant-card"); i++) await new Promise((r) => setTimeout(r, 200));
+      // The pool probe decides whether the fields render; give it time before opening the tenant.
+      await new Promise((r) => setTimeout(r, 1000));
+      document.querySelector(".admin-modal .tenant-card")?.click();
+      const findGroup = (re) => [...document.querySelectorAll(".admin-modal .admin-fgroup")].find((g) => re.test(g.querySelector("h4")?.textContent || ""));
+      for (let i = 0; i < 50 && !findGroup(/使われない home の退避|Hibernate unused homes/); i++) await new Promise((r) => setTimeout(r, 200));
+      const m = document.querySelector(".admin-modal .settings-content") || document.querySelector(".admin-modal");
+      if (m) { m.style.maxHeight = "none"; m.style.height = "auto"; }
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      const fill = (g, v) => { const el = g?.querySelector("input"); if (el) { setter.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); } };
+      const hib = findGroup(/使われない home の退避|Hibernate unused homes/);
+      const backup = findGroup(/home の予備を取る|Keep a spare copy of each home/);
+      fill(hib, "720h");
+      fill(backup, "24h");
+      hib?.setAttribute("id", "shot-hib");
+      backup?.setAttribute("id", "shot-backup");
+      // The two groups sit below the fold of the modal's own scroller; bring them on screen.
+      hib?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1500,
+  },
+  {
     // Admin › Inference engines (SHOT_OPERATE_GPU): the chat engine's row — the mode, what is
     // running and until when, the idle stop and a GPU class left above the default.
     name: "operate-gpu-engine",

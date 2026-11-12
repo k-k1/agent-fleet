@@ -372,7 +372,7 @@ fi
 # left on an old template launches every future slot without them. It only adds a launch
 # template version; the CP takes $Latest when it launches a slot, so running slots and
 # their homes are untouched, and slots launched before it keep the old user data until
-# they are replaced (README "Patching slots"). SlotAmiId resolves at this update, which is
+# they are replaced (guide/operate/aws-ecs/slot-maintenance.md). SlotAmiId resolves at this update, which is
 # how slots get patched anyway.
 #
 # BEFORE 20-platform, the reverse of this script's usual order: this stack carries the CP's
