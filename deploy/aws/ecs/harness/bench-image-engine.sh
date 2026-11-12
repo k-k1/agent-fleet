@@ -33,7 +33,7 @@
 #   (it disappears from the cluster's container instances ~8 minutes after the last task) —
 #   this script does that wait before RunTask.
 # - **The models have to be in the bucket already.** Stage them with the ingest task
-#   (deploy/aws/ecs/README.md, "Getting a model into the catalogue"); the keys this expects
+#   (guide/operate/aws-ecs/engines.md, "Stage a model into S3 by hand"); the keys this expects
 #   are listed under MODELS below.
 #
 # ## The image

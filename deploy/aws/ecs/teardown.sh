@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent Fleet — tear a whole deployment down (the executable form of README §Teardown).
+# Agent Fleet — tear a whole deployment down (the executable form of guide/operate/aws-ecs/teardown.md).
 #
 #   deploy/aws/ecs/teardown.sh --profile <p> --region <r>          # inventory and plan only (default)
 #   deploy/aws/ecs/teardown.sh --profile <p> --region <r> --yes    # really delete
@@ -177,7 +177,7 @@ if [ "$AF_PERSISTENCE" = retain ]; then
 fi
 for v in $VAULTS; do
   if [ "$AF_PERSISTENCE" != retain ]; then
-    fate="kept — persistence=delete, so --purge-retained does not apply; delete it by hand (README §Teardown, step 9)"
+    fate="kept — persistence=delete, so --purge-retained does not apply; delete it by hand (guide/operate/aws-ecs/teardown.md, step 9)"
   elif [ "$PURGE_RETAINED" = 1 ]; then fate="deleted (--purge-retained)"; else fate="kept"; fi
   echo "    efs backups    : vault $v ($(count "$(list_recovery_points "$v")") recovery points) is $fate"
 done

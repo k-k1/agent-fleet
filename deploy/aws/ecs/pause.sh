@@ -441,7 +441,7 @@ case "$MODE" in
       echo "==> waiting for the egress gateway: interface attached, Squid and its agent running (a boot takes a few minutes)"
       if ! af_gateway_wait "$AF_STACK_NETWORK" up; then
         echo "ERROR: the egress gateway did not come up; the control plane stays down so no workspace starts" >&2
-        echo "       without egress. On the instance: /var/log/af-egress-gateway.log (README, \"Egress gateway\")." >&2
+        echo "       without egress. On the instance: /var/log/af-egress-gateway.log (guide/operate/aws-ecs/egress-gateway.md)." >&2
         echo "       Then run pause.sh --up again." >&2
         exit 1
       fi
@@ -464,7 +464,7 @@ case "$MODE" in
       if ! af_gateway_wait "$AF_STACK_NETWORK" ready; then
         echo "ERROR: the control plane is up but the egress gateway has no policy from it: workspaces" >&2
         echo "       have no egress (it refuses everything). Check the agent (journalctl -u af-egress-agent" >&2
-        echo "       on the instance, README \"Egress gateway\"), then run pause.sh --up again." >&2
+        echo "       on the instance, guide/operate/aws-ecs/egress-gateway.md), then run pause.sh --up again." >&2
         exit 1
       fi
     fi

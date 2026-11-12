@@ -79,6 +79,16 @@ The commands are in each target's runbook; these pages say what they decide.
 
 | Page | What you can do |
 |---|---|
+| [Set the default workspace size](aws-ecs/workspace-size.md) | Set the CPU, memory and working disk every workspace gets, and when caches move off EFS |
+| [Turn on timed wakes](aws-ecs/schedules.md) | Switch the scheduler off, or give a slow-booting deployment more time to wake a workspace |
+| [Pin the outbound IP address](aws-ecs/egress-ip.md) | Find the address to allow-list and keep it across a rebuild |
+| [Control outbound traffic with a gateway](aws-ecs/egress-gateway.md) | Route workspace egress through the egress gateway, register its address, pause it and go back |
+| [Add Japanese read-aloud](aws-ecs/tts.md) | Build the VOICEVOX engine stack and tune its automatic start and stop |
+| [Add inference engines](aws-ecs/engines.md) | Build the GPU engine stack, stage models into S3 by hand and tune the controller |
+| [Keep costs down](aws-ecs/cost.md) | Know the standing cost, pick the levers, and move a running stack onto the S3 gateway endpoint |
+| [Back up and restore EFS](aws-ecs/backup.md) | Turn on daily EFS backups and restore one member or the whole file system |
+| [Stand up, pause and tear down with the scripts](aws-ecs/lifecycle.md) | Record a deployment, pause and resume it, and know what each script does in which order |
+| [Tear a deployment down](aws-ecs/teardown.md) | Delete everything in an order that does not stall, and know what survives |
 | [Replace and stop slots](aws-ecs/slot-maintenance.md) | On `ecs-ec2`, replace outdated slots and notice and stop a slot that does not answer |
 
 ## Inference engines

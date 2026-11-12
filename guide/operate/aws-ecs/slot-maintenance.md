@@ -68,7 +68,49 @@ Reservations and cancellations are in the audit log as `pool.slot_replace_reserv
 | A reserved workspace's start fails with a reason | No new slot could be launched (capacity, quota). The reservation stays, and the workspace is never put back on the old slot. Retry later |
 | A reserved slot is gone | The sweeper terminates a reserved slot with no workspace on it |
 
-How to verify the result is in the [ECS runbook's "Moving retained slots onto new user data"](../../../deploy/aws/ecs/README.md#moving-retained-slots-onto-new-user-data).
+How to verify the result is in [Move slots onto new user data](#move-slots-onto-new-user-data).
+
+## Move slots onto new user data
+
+The workspace task adds `SYS_ADMIN` so Chromium's setuid `chrome-sandbox` can create its namespaces. The slot settings below go with it, and **each applies only to slots launched after the template carries it**. A slot launched earlier is not protected until it is replaced: a new launch template version, then the steps below.
+
+| Setting | What it does | On an older slot |
+|---|---|---|
+| `user.max_user_namespaces=0` | No unprivileged user namespaces, so `SYS_ADMIN` stays reachable only through the setuid helper. Persisted in `/etc/sysctl.d/99-af-userns.conf` and applied before the ECS agent configures; the user data stops on failure, and an `ecs.service` drop-in refuses to start the ECS agent unless the value is 0, also after a reboot | The task keeps the default limit and can create user namespaces |
+| The home volume mounted `nosuid,nodev` by `af-mount` | Setuid binaries and device files on the home do nothing | An already mounted home keeps its old options until it is unmounted and mounted again (a slot move does that) |
+| `ECS_AWSVPC_BLOCK_IMDS=true` in the slot's `ecs.config` | Keeps a workspace task off the slot's instance profile (`SlotRole`) through IMDS. The launch template's hop limit does not, because an `awsvpc` task's ENI reaches IMDS directly | Stays open until the slot is replaced |
+
+- `kernel.unprivileged_bpf_disabled` (1) and `kernel.perf_event_paranoid` (2) were already strict on AL2023 and are not set
+- The task definition gains the capability on a workspace's next start (a new revision); no slot change is needed for that part
+- The ECS agent reads `ecs.config` when the slot is launched. Nothing replaces a slot by itself, and a workspace **stop and start goes back to the same slot** (its home stays attached while stopped)
+- Until then the Agent's own isolation still holds for every SDK that honours `AWS_EC2_METADATA_DISABLED`, but not for a tool that calls IMDS directly
+
+To finish the move:
+
+1. **Update the pool stack.** `update.sh` does it. By hand (parameters keep their previous values) it is the command below. The Control Plane launches slots from the template's `$Latest`, so only new slots change
+
+   ```bash
+   aws cloudformation deploy --stack-name <pool stack> --template-file cfn/40-ec2-pool.yaml \
+     --capabilities CAPABILITY_NAMED_IAM
+   ```
+
+2. **Most slots need nothing: they are replaced by themselves** ([Automatic replacement](#automatic-replacement)). Reserve them when a workspace must never go back to its old slot ([Reserve slots yourself](#reserve-slots-yourself))
+   - Each automatic move is in the audit log as `pool.slot_replace_auto` (actor `slot-auto-replace`), naming the workspace, the old version, `$Latest` and the new slot. A slot whose version cannot be read is left alone
+   - To switch it off, for example while a new template is being validated, set `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false`. Reservations still work
+   - A reservation is a tag on the instance (`af-slot-replace`). It moves nobody by itself and touches no running session
+3. **Members stop and start their workspaces** when it suits them. The start launches a new slot of the workspace's class from `$Latest` first, moves the home off the old slot through the same release the sweeper uses (unmount before detach; refused while a task runs) and terminates the old instance
+   - The home volume is never deleted
+   - Do not terminate slot instances by hand while a home is attached
+   - `Ec2SlotTerminateAfterSec` is not for this; it is a standing cost trade-off (`deploy/aws/ecs/cfn/PARAMETERS.md`)
+4. **Verify from a shell in a workspace on a new slot**
+   - The IMDSv2 token request must not answer `200` (it times out: `000`), also with a clean environment (`env -i`)
+
+     ```bash
+     curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token
+     ```
+
+   - `aws sts get-caller-identity` must fail with "Unable to locate credentials"
+   - Slots still join the cluster and SSM still reaches them (the "**Slots**" page, a workspace start, the home mount), and the workspace's logs still arrive
 
 ## Protect the management agents from running out of memory
 

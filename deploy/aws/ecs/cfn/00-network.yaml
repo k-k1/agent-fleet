@@ -79,7 +79,7 @@ Parameters:
       enforce, decides) every workspace connection. The CP, the slots and the engines stay on
       the NAT gateway either way. Workspaces then egress from the gateway's own address
       (GatewayEipAllocationId), not the NAT address: two addresses to allow-list (#2728).
-      README, "Egress gateway".
+      Guide: egress-gateway.
   GatewayEipAllocationId:
     Type: String
     Default: ""
@@ -433,7 +433,7 @@ Resources:
           Description: Agent port from CP only (no ALB, no cross-workspace)
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-ws-sg" } ]
 
-  # --- Egress gateway (EgressRoute=gateway; ADR 0122 decision 5, README "Egress gateway") ---
+  # --- Egress gateway (EgressRoute=gateway; ADR 0122 decision 5, guide egress-gateway) ---
   # The workspace route targets the fixed GatewayEni, which each instance attaches at boot, so the
   # route target, proxy address and egress address survive replacement. The interface is bound to
   # PublicSubnet0's AZ and the route blackholes during a replacement (PARAMETERS.md, 00-network:

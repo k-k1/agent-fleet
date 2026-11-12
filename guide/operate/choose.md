@@ -88,7 +88,7 @@ Where starts are frequent, choose **ecs-ec2**.
 
 - The egress gateway is new and was checked on a test deployment only. **It is not yet used in production**
 - `pause.sh` stops the gateway too, and brings it back with the same source address
-- Setup and limits: "Egress gateway" in [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md)
+- Setup and limits: [Control outbound traffic with a gateway](aws-ecs/egress-gateway.md)
 
 ## When Kubernetes, and when not
 

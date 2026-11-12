@@ -252,7 +252,7 @@ if [ -n "$gw_alloc" ] && [ "$(af_read_one_param 00-network EgressRoute)" = gatew
     --query 'Addresses[0].[PublicIp,NetworkInterfaceId]' --output text 2>/dev/null || true)"
   read -r gw_ip gw_ni <<<"$gw_got" || true
   case "${gw_ip:-None}" in
-    None) say_missing "GatewayEipAllocationId $gw_alloc is not an address in $AF_PROFILE/$AF_REGION (README, \"Egress gateway\")" ;;
+    None) say_missing "GatewayEipAllocationId $gw_alloc is not an address in $AF_PROFILE/$AF_REGION (guide/operate/aws-ecs/egress-gateway.md)" ;;
     "$gw_addr") ;;
     *) say_missing "GatewayEipAddress '$gw_addr' is not the address of $gw_alloc ($gw_ip)" ;;
   esac
@@ -916,7 +916,7 @@ EOF
       echo "    ✓ interface attached, Squid and the agent running, first policy applied"
     else
       echo "⚠️  the egress gateway is not ready: workspaces have no egress until it is." >&2
-      echo "    On the instance: /var/log/af-egress-gateway.log, journalctl -u af-egress-agent (README, \"Egress gateway\")." >&2
+      echo "    On the instance: /var/log/af-egress-gateway.log, journalctl -u af-egress-agent (guide/operate/aws-ecs/egress-gateway.md)." >&2
     fi
   fi
 fi

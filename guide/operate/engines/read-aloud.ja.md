@@ -28,7 +28,7 @@ VOICEVOX のエンジンはパッケージに含まれていません。形態�
 
 | 形態 | 用意するもの |
 |---|---|
-| AWS の ECS | 音声エンジンのスタック（`50-tts`）。ふだんは 0 台で、この画面から起動・停止します（[ECS の runbook](../../../deploy/aws/ecs/README.md#optional-japanese-speech-the-voicevox-engine-cfn50-ttsyaml)） |
+| AWS の ECS | 音声エンジンのスタック（`50-tts`）。ふだんは 0 台で、この画面から起動・停止します（[日本語の読み上げを足す](../aws-ecs/tts.ja.md)） |
 | native・WSL | Windows の VOICEVOX か、Linux の VOICEVOX ENGINE を動かす（[native の runbook](../../../deploy/native/README.md#text-to-speech-tts--zundamon--optional)） |
 | そのほか | Control Plane から HTTP で届く VOICEVOX ENGINE を動かす |
 

@@ -28,7 +28,7 @@ The VOICEVOX engine is not in the package. Provide it for your deployment target
 
 | Target | What to provide |
 |---|---|
-| AWS ECS | The speech engine stack (`50-tts`). It normally runs at zero and is started and stopped from this screen ([ECS runbook](../../../deploy/aws/ecs/README.md#optional-japanese-speech-the-voicevox-engine-cfn50-ttsyaml)) |
+| AWS ECS | The speech engine stack (`50-tts`). It normally runs at zero and is started and stopped from this screen ([Add Japanese read-aloud](../aws-ecs/tts.md)) |
 | native, WSL | Run VOICEVOX on Windows, or VOICEVOX ENGINE on Linux ([native runbook](../../../deploy/native/README.md#text-to-speech-tts--zundamon--optional)) |
 | Others | Run a VOICEVOX ENGINE the Control Plane can reach over HTTP |
 

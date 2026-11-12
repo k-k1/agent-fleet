@@ -73,7 +73,7 @@ Parameters:
     Description: >-
       Days each daily EFS recovery point is kept when Persistence=retain (ignored
       otherwise). 7 matches the RDS automated backups. Billed per GB-month of
-      backup storage - see the ecs runbook, "EFS backup and restore".
+      backup storage - see guide/operate/aws-ecs/backup.md.
   CustodianKmsKey:
     Type: String
     Default: none

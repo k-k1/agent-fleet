@@ -69,6 +69,11 @@ for entry in "${RUNBOOKS[@]}"; do
     exit 1
   }
   cp "$ROOT/$src" "$DEST/operate/runbooks/$name.md"
+  # A runbook links into the guide from its own directory (deploy/aws/ecs/README.md reaches
+  # it as ../../../guide/). The copy sits at operate/runbooks/, two levels below the staged
+  # guide root, so without this every guide link in a staged runbook is broken.
+  up="$(dirname "$src" | sed -e 's#[^/][^/]*#..#g')/guide/"
+  sed -i -e "s#${up//./\\.}#../../#g" "$DEST/operate/runbooks/$name.md"
 done
 
 cat > "$DEST/operate/runbooks/README.md" <<'EOF'
@@ -96,21 +101,25 @@ EOF
 # --- 3. point the guide at the staged runbooks --------------------------------
 # In the repository the links read `../../deploy/<x>/README.md`, which is correct on
 # GitHub. In a container the same files are at operate/runbooks/, so rewrite them here.
-rewrite_runbook_links() {  # <dir> <prefix>
-  local dir="$1" prefix="$2" f
+# <dir> <prefix> [<up> [<depth>]]: <up> is how the pages at <depth> below <dir> climb to the
+# repository root, `../../` for guide/operate/*.md and `../../../` for guide/operate/*/*.md.
+rewrite_runbook_links() {
+  local dir="$1" prefix="$2" up="${3:-../../}" depth="${4:-1}" f
   [ -d "$dir" ] || return 0
+  up="${up//./\\.}"
   while IFS= read -r -d "" f; do
     sed -i \
-      -e "s#\.\./\.\./deploy/compose/README\.md#${prefix}compose.md#g" \
-      -e "s#\.\./\.\./deploy/native/README\.md#${prefix}native.md#g" \
-      -e "s#\.\./\.\./deploy/local/README-wsl\.md#${prefix}wsl.md#g" \
-      -e "s#\.\./\.\./deploy/aws/ecs/README\.md#${prefix}aws-ecs.md#g" \
-      -e "s#\.\./\.\./deploy/aws/ec2-single/README\.md#${prefix}aws-ec2-single.md#g" \
-      -e "s#\.\./\.\./deploy/kubernetes/README\.md#${prefix}kubernetes.md#g" \
+      -e "s#${up}deploy/compose/README\.md#${prefix}compose.md#g" \
+      -e "s#${up}deploy/native/README\.md#${prefix}native.md#g" \
+      -e "s#${up}deploy/local/README-wsl\.md#${prefix}wsl.md#g" \
+      -e "s#${up}deploy/aws/ecs/README\.md#${prefix}aws-ecs.md#g" \
+      -e "s#${up}deploy/aws/ec2-single/README\.md#${prefix}aws-ec2-single.md#g" \
+      -e "s#${up}deploy/kubernetes/README\.md#${prefix}kubernetes.md#g" \
       "$f"
-  done < <(find "$dir" -maxdepth 1 -name "*.md" -print0)
+  done < <(find "$dir" -mindepth "$depth" -maxdepth "$depth" -name "*.md" -not -path "*/runbooks/*" -print0)
 }
 rewrite_runbook_links "$DEST/operate" "runbooks/"
+rewrite_runbook_links "$DEST/operate" "../runbooks/" "../../../" 2
 rewrite_runbook_links "$DEST/ref" "../operate/runbooks/"
 
 # The same for the release history (step 4): the repository links reach it through

@@ -85,7 +85,7 @@ SSH の git やデータベースは HTTP ではないので、ホストのエ�
 > **止められた TCP の接続も、最初はつながったように見えます。** ゲートウェイは接続をいったん受けて宛先を読んでから切るので、`nc -z` や `connect()` は成功し、そのあとの読み書きが EOF かリセット（`Connection reset by peer`）で失敗します。
 > 「つながった」を「許可された」と読まず、「通信」の記録か、ゲートウェイの `/var/log/squid/af-tcp.log` の `deny` の行で確かめてください。
 
-設定と制約は [ECS の手順書](../../../deploy/aws/ecs/README.md) の「Egress gateway」にあります。
+設定と制約は [外向きの通信をゲートウェイで制御する](../aws-ecs/egress-gateway.ja.md) にあります。
 
 ## メンバーの申請を承認する
 
@@ -140,4 +140,4 @@ egress ゲートウェイが接続を記録する構成（AWS で `EgressRoute=g
 - [MCP と外部接続のサインインを運用する](mcp.ja.md)：MCP サーバーの登録と許可リストの関係
 - [MCP サーバーを全員に配る](../../admin/mcp-distribute.ja.md)：テナント管理者の側
 - [デプロイ先を選ぶ](../choose.ja.md#aws-の出口の経路を選ぶ)：AWS の出口の経路
-- [ECS の手順書](../../../deploy/aws/ecs/README.md)：egress ゲートウェイの設定
+- [外向きの通信をゲートウェイで制御する](../aws-ecs/egress-gateway.ja.md)：egress ゲートウェイの設定

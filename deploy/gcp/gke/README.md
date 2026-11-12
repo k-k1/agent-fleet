@@ -97,7 +97,7 @@ Not measured: egress (negligible in the test), Cloud Logging volume under real u
 growth of the CP disk's snapshots.
 
 **Against ECS.** The ECS deployment's standing cost is ~$107/month
-([deploy/aws/ecs, "Cost & ephemerality"](../../aws/ecs/README.md#cost--ephemerality), Tokyo
+([the ECS guide page "Keep costs down"](../../../guide/operate/aws-ecs/cost.md), Tokyo
 region). Converted at ¥150 to the dollar — an assumption, not part of the measurement — that
 is ~¥16,000/month, so the GKE defaults cost roughly four times as much idle. The gap is the
 high-availability choices, not Kubernetes itself — Cloud SQL `REGIONAL`, a system node in each of two zones, the

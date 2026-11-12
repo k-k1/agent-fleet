@@ -231,6 +231,22 @@ runbook の「Stack decomposition」。
   エンジン表を通して見つける。
 - コスト特性は §9.8。
 
+### ECS のライフサイクルスクリプトを何が固定しているか
+
+ECS の runbook の「Lifecycle scripts」の節（いまはガイドの `guide/operate/aws-ecs/lifecycle.ja.md`）から
+ここへ移した。スクリプトを変える人向けの内容である。
+
+- `./capture-restore-test.sh` が固定するもの（偽の `aws` / `crane` を使い、AWS には触れない。何も作らず、
+  消さず、更新しない。198 回の呼び出しはすべて偽物への読み取り）: `yes` / `no` / `unknown` の判定、
+  `capture-env.sh` が書くものと拒むもの、`teardown.sh` が確認の前に出す 3 つの文。**`dev-deploy.sh`
+  はこのテストでは実行しない**（`gh`・`git ls-remote`・`update.sh` が要る）。そのため、動いている
+  タグを追う手順は弱い 2 つの部品で固定している: 単体としての `af_env_set` と、その呼び出しが
+  `dev-deploy.sh` の成功の経路にまだあることを確かめるソースの検査。呼び出しを消すとソースの検査が
+  赤になるが、**配備したスクリプトが実行されたことは証明しない**。本当の往復を証明するものはここには
+  なく、動いている配備でしか確かめていない。
+- これらのスクリプトが動く順番は、`deploy/local/ecs-lifecycle-stub-test.sh` のスタブのテストが
+  固定している。
+
 ## 9.6 パリティと相違点
 
 Workspace イメージと Agent は全ターゲットで同一物 — それが分割の要点。能力の一覧は
@@ -266,7 +282,7 @@ Workspace イメージと Agent は全ターゲットで同一物 — それが�
   - EFS: `Persistence=retain` はスタックを消したときにファイルシステムを残し、専用のボールトへの
     AWS Backup の日次プラン（復旧ポイントの保持は `EfsBackupRetentionDays`・既定 7 日）を加える。
     復元は手作業 — メンバー 1 人分のディレクトリかファイルシステム全体を、稼働中のデータの横の
-    ディレクトリへ戻してから書き戻す: ecs runbook の §EFS backup and restore。
+    ディレクトリへ戻してから書き戻す: ガイドの [EFS をバックアップ・復元する](../../guide/operate/aws-ecs/backup.ja.md)。
   - EBS の home（`ecs-ec2`）: 守るのは §9.5 の任意の home バックアップ
     （`AF_ECS_EC2_BACKUP_EVERY_SEC`・既定は無効）だけ。
 - **ECS のアップグレードはアプリのタグだけではない。** リリースが新しい ECR リポジトリと、まだ誰も

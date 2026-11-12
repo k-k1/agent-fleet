@@ -919,7 +919,7 @@ case "${AF_EFS_BACKUP_VERDICT:-}" in
   ok|skip|"") ;;
   *) echo
      echo "REMINDER: ${DATA_STACK:-the data stack} still has no confirmed daily EFS backup (see the warning at the top;"
-     echo "          README \"EFS backup and restore\", \"Turning it on\")." ;;
+     echo "          guide/operate/aws-ecs/backup.md, \"Turn backups on for a running deployment\")." ;;
 esac
 
 if [ -n "${golden_stale// /}" ]; then
