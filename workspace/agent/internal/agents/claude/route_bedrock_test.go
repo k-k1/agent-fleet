@@ -238,7 +238,7 @@ func TestBedrockIsItsOwnCredentialAndMetered(t *testing.T) {
 }
 
 // routeOverridesFrom is the CLI version routeOverrides was taken from.
-const routeOverridesFrom = "2.1.322"
+const routeOverridesFrom = "2.1.323"
 
 // The list was read off the pinned CLI's own lists of provider switches, credentials, base URLs
 // and auth skips. A bump of the pin has to look again: run `strings` on the new binary and
