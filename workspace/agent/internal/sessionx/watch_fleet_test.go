@@ -1,13 +1,17 @@
 package sessionx
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
 )
 
@@ -137,5 +141,49 @@ func TestFleetLimitEpisode(t *testing.T) {
 	write(rateLimitState{At: at})
 	if got := fleetLimitEpisode("kid", now); got != at {
 		t.Fatalf("no instant known: %q", got)
+	}
+}
+
+// A hook-less kind whose state source still shows the previous turn's idle just after a new input
+// must not give the new turn an end it has not had: the real end would then reuse that time, and
+// the watch would count one turn end for two. Runs through the real wireSession.
+func TestFleetWatchStaleIdleDoesNotConsumeTheNextTurnEnd(t *testing.T) {
+	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_fleet")
+	polledEndSettle = 3 * time.Second
+	now := time.Now()
+	polledEndNow = func() time.Time { return now }
+	defer func() { polledEndSettle, polledEndNow = 0, time.Now }()
+	oa, op := fleetAlive, fleetPeersOn
+	fleetAlive = func(session.Meta) bool { return true }
+	fleetPeersOn = func() bool { return false }
+	defer func() { fleetAlive, fleetPeersOn = oa, op }()
+
+	turnEnded()                    // turn 1 is over: the source says idle
+	status.Persist(sid, "working") // a new input; the source has not caught up
+	src := &watch.FleetSource{Fleet: watchFleet{}}
+	ctx := watch.WithOwner(watch.WithSubscriber(context.Background(), "parent1"), "parent1")
+	res, err := src.Resolve(ctx, m.Name, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := res.Told[watch.FleetIdle]; v != "" {
+		t.Fatalf("the stale idle was recorded as a turn end and seeded as told: %q", v)
+	}
+	subj := res.Subject
+	evs, _, _, err := src.Poll(ctx, subj, nil, nil)
+	if err != nil || len(evs) != 0 {
+		t.Fatalf("a stale idle fired: %v %v", evs, err)
+	}
+
+	// The new turn runs, then really ends.
+	os.WriteFile(copilot.EventsPath(copilot.SessionID(m)), []byte(`{"type":"user.message"}`+"\n"), 0o600)
+	if o, _ := (watchFleet{}).Observe(m.Name); o.Idle {
+		t.Fatal("a running turn read as idle")
+	}
+	now = now.Add(10 * time.Second)
+	turnEnded()
+	evs, _, _, err = src.Poll(ctx, subj, nil, nil)
+	if err != nil || len(evs) != 1 || evs[0].Type != watch.FleetIdle || evs[0].Version == "" || evs[0].Version == res.Told[watch.FleetIdle] {
+		t.Fatalf("the real turn end was not told as a new version: %+v %v", evs, err)
 	}
 }

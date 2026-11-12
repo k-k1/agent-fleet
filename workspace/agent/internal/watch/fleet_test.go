@@ -325,3 +325,83 @@ func TestFleetNoticeCarriesNoSessionOutput(t *testing.T) {
 		t.Fatalf("notice = %q", n)
 	}
 }
+
+func (f *fakeFleet) setVisible(caller, name string, v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.visible[caller+"|"+name] = v
+}
+
+// A peer watch made while peer messaging was on stops with the permission, for what is already
+// pending and across a restart; the parent's watch on its own child, on the same subject, stays.
+func TestFleetWatchEndsWhenTheMakerLosesSight(t *testing.T) {
+	r := newFleetRig()
+	r.fl.setVisible("peer", "kid", true)
+	r.sink.answers = map[string]Readiness{"peer": Wait} // its notice stays pending
+	r.fl.set("kid", working(""))
+	ctx := context.Background()
+	if _, err := r.e.Subscribe(ctx, Request{Owner: "peer", Source: FleetKind, Ref: "kid", Types: []string{FleetIdle}, Until: UntilDeadline}); err != nil {
+		t.Fatal(err)
+	}
+	r.watch(t, UntilDeadline)
+	r.fl.set("kid", idleAt(turn1))
+	r.tick() // both match; the peer's cannot be delivered yet
+	r.fl.setVisible("peer", "kid", false)
+	e2 := New(r.st, r.sink, &FleetSource{Fleet: r.fl}) // an Agent restart in between
+	e2.now = r.c.now
+	r.sink.answers = map[string]Readiness{}
+	for i := 0; i < 3; i++ {
+		r.c.add(20 * time.Second)
+		e2.Tick(ctx)
+	}
+	var peer, parent []string
+	for _, s := range r.sink.told {
+		if strings.HasPrefix(s, "peer:") {
+			peer = append(peer, s)
+		} else {
+			parent = append(parent, s)
+		}
+	}
+	if len(peer) != 1 || !strings.HasPrefix(peer[0], "peer:"+EventEnded) {
+		t.Fatalf("the peer was told %v, want only the ended notice (nothing about the session)", peer)
+	}
+	if len(parent) != 1 || !strings.HasSuffix(parent[0], turn1) {
+		t.Fatalf("the parent's own watch on its child was disturbed: %v", parent)
+	}
+	r.fl.set("kid", idleAt(turn2))
+	for i := 0; i < 3; i++ {
+		r.c.add(20 * time.Second)
+		e2.Tick(ctx)
+	}
+	for _, s := range r.sink.told {
+		if strings.HasPrefix(s, "peer:") && !strings.HasPrefix(s, "peer:"+EventEnded) {
+			t.Fatalf("a revoked watch heard %s", s)
+		}
+	}
+	if len(r.sink.told) != 3 || !strings.HasSuffix(r.sink.told[2], turn2) {
+		t.Fatalf("told = %v", r.sink.told)
+	}
+}
+
+// A limit that lifts between the watch call and the first read is still told, also when the Agent
+// restarts in between.
+func TestFleetQuotaLiftedBeforeTheFirstRead(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		r := newFleetRig()
+		r.fl.set("kid", FleetObservation{Alive: true, Limit: "ep1"})
+		r.watch(t, "", FleetQuotaReopened)
+		r.fl.set("kid", FleetObservation{Alive: true}) // lifted before the first tick
+		e := r.e
+		if restart {
+			e = New(r.st, r.sink, &FleetSource{Fleet: r.fl})
+			e.now = r.c.now
+		}
+		for i := 0; i < 3; i++ {
+			r.c.add(20 * time.Second)
+			e.Tick(context.Background())
+		}
+		if len(r.sink.told) != 1 || r.sink.told[0] != "parent:fleet.quota.reopened:ep1" {
+			t.Fatalf("restart=%v: told = %v", restart, r.sink.told)
+		}
+	}
+}

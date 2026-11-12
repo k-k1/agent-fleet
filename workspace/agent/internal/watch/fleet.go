@@ -108,7 +108,40 @@ func (f *FleetSource) Resolve(ctx context.Context, ref, _ string) (Resolved, err
 	if obs.Alive && obs.Idle && obs.LastTurnEndAt != "" {
 		res.Told = map[string]string{FleetIdle: obs.LastTurnEndAt}
 	}
+	if obs.Limit != "" {
+		res.Seed, _ = json.Marshal(fleetCursor{Limit: obs.Limit})
+	}
 	return res, nil
+}
+
+// Authorize is asked every tick: the watch's maker (the child that asked, or the owner) must still
+// see the session. A permission that was switched off after Resolve (peer messaging) ends the
+// watch instead of letting its notices keep coming; a parent's watch on its own child stays.
+func (f *FleetSource) Authorize(sub Subscription) bool {
+	name, ok := strings.CutPrefix(string(sub.Subject), fleetSubjectPrefix)
+	if !ok {
+		return false
+	}
+	maker := sub.Requester
+	if maker == "" {
+		maker = sub.Owner
+	}
+	return name != maker && name != sub.Owner && f.Fleet.Visible(maker, name)
+}
+
+// SeedCursor records the usage-limit episode that was open when a watch was made, so a limit that
+// lifts before the first read is still told.
+func (*FleetSource) SeedCursor(raw, seed json.RawMessage) json.RawMessage {
+	var cur, from fleetCursor
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &cur)
+	}
+	if json.Unmarshal(seed, &from) != nil || from.Limit == "" || cur.Limit != "" {
+		return raw
+	}
+	cur.Limit = from.Limit
+	out, _ := json.Marshal(cur)
+	return out
 }
 
 // Poll reports the conditions of one session that hold now.
