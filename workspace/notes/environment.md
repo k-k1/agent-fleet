@@ -120,7 +120,7 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   (Postgres) / `AF_DB_URL_MYSQL`; or pass `"$(af-db url)"` as your own variable. Client:
   `workspace-agent install-pg-client`. **Stop before heavy builds** (`af-db down`) — Postgres
   holds ≈ 47 MB and MySQL ≈ 226 MB of cgroup memory; both idle-stop after 30 min. Manage
-  both from the **Settings → Databases** tab. Verbs, URL forms, exit codes:
+  both from the **Settings → Databases** tab. Subcommands, URL forms, exit codes:
   `ref/cli/af-db.md` in the guide. For other DB servers (`sqlite3`,
   `redis-cli`, …): run tests against a service the user provides, or skip and say so.
 - `ss`, `lsof`, `netstat` are **not installed**; probe a port with

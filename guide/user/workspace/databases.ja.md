@@ -109,7 +109,7 @@ eval "$(af-db env mysql)"
 
 ## コマンド
 
-動詞、オプション、URL の形、終了コードのすべては [af-db のリファレンス](../../ref/cli/af-db.ja.md) にあります。
+サブコマンド、オプション、URL の形、終了コードのすべては [af-db のリファレンス](../../ref/cli/af-db.ja.md) にあります。
 
 `engine` は `postgres`（既定）か `mysql` です。メジャーバージョンは `--major` で選べます（既定は PostgreSQL 17、MySQL 8.4）。
 

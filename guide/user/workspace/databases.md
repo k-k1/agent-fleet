@@ -111,7 +111,7 @@ To start one database over, use that row's **Reset**, not **Stop and remove data
 
 ## Commands
 
-Every verb, option, URL form and exit status is in the [af-db reference](../../ref/cli/af-db.md).
+Every subcommand, option, URL form and exit status is in the [af-db reference](../../ref/cli/af-db.md).
 
 `engine` is `postgres` (the default) or `mysql`. `--major` picks the major version (PostgreSQL 17 and MySQL 8.4 by
 default).

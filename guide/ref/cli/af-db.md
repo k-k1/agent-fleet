@@ -1,5 +1,5 @@
 ---
-audience: "anyone looking up af-db's verbs, options, connection URLs and exit codes"
+audience: "anyone looking up af-db's subcommands, options, connection URLs and exit codes"
 source_of_truth: "af-db's usage, from the workspace-agent in the workspace"
 ---
 
@@ -25,7 +25,7 @@ af-db down     [engine] [--major N] [--purge]
 af-db status   [engine] [--major N] [--json]
 ```
 
-Running it with no arguments, or with a verb it does not know (`--help` included), prints the usage and exits with
+Running it with no arguments, or with a subcommand it does not know (`--help` included), prints the usage and exits with
 status 2.
 
 | Argument | Values |
@@ -36,9 +36,9 @@ status 2.
 Each engine and major is its own server with its own data. `af-db up --major 16` and `af-db up` run two PostgreSQL
 servers side by side.
 
-## Verbs
+## Subcommands
 
-| Verb | What it does | Starts the server |
+| Subcommand | What it does | Starts the server |
 |---|---|---|
 | `up` | Installs the engine if needed and starts it. Prints `<engine>-<major> running on port <port>` | Yes |
 | `url` | Creates the database if needed and prints its connection URL | Yes |
@@ -52,7 +52,7 @@ servers side by side.
 
 ## Options
 
-| Option | Verbs | What it does |
+| Option | Subcommands | What it does |
 |---|---|---|
 | `--db=NAME` | `url`, `env`, `connect`, `create`, `drop`, `reset` | Uses the database `NAME` instead of the working copy's own. Required for `create` and `drop` |
 | `--tcp` | `url`, `env` | Prints a URL that connects over TCP on `127.0.0.1` instead of the unix socket |
@@ -176,7 +176,7 @@ instead.
 |---|---|
 | 0 | Done |
 | 1 | Another error, such as SQL the server refused (a `reset` on PostgreSQL while something is connected to the database) |
-| 2 | Usage error: an unknown verb or option, a missing `--db`, an invalid name |
+| 2 | Usage error: an unknown subcommand or option, a missing `--db`, an invalid name |
 | 3 | The install failed, including a `--major` that is not offered |
 | 4 | The server failed to start |
 | 5 | The server is not running (`create`, `drop`, `reset`). Run `af-db up` first |
