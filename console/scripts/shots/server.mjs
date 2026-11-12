@@ -81,9 +81,8 @@ const exact = {
   // admin modal (guide scene operate-brand). Every other run stays a plain member or tenant admin.
   "/api/tenants": () => ({
     tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
-    // The operate guide's pages (SHOT_OPERATE_RUN, SHOT_OPERATE_SIGNIN, SHOT_OPERATE_GPU) are the
-    // deployment administrator's.
-    super_admin: process.env.SHOT_OPERATE_RUN === "1" || !!process.env.SHOT_OPERATE_SIGNIN || !!process.env.SHOT_OPERATE_GPU,
+    // The operate guide's pages (SHOT_OPERATE_*) are the deployment administrator's.
+    super_admin: ["SHOT_OPERATE_RUN", "SHOT_OPERATE_SIGNIN", "SHOT_OPERATE_SECURE", "SHOT_OPERATE_KEYS", "SHOT_OPERATE_GPU", "SHOT_OPERATE_ENGINES"].some((k) => !!process.env[k]),
   }),
   // SHOT_AGENT_SILENT: the Agent has stopped answering, so the bar shows the "Not responding" badge
   // (guide scene ws-agent-silent). The getting-started pages (SHOT_START_GUIDE=stale) show the bar's
@@ -286,11 +285,24 @@ const exact = {
   // Tenant settings -> members -> detail (the entry point appears only with --admin).
   "/api/admin/tenants": () => {
     const d = ADMIN_RES ? fx.adminResTenants() : fx.adminTenants();
-    return process.env.SHOT_OPERATE_SIGNIN ? { ...d, super_admin: true } : d;
+    return process.env.SHOT_OPERATE_SIGNIN || process.env.SHOT_OPERATE_SECURE ? { ...d, super_admin: true } : d;
   },
+  // Admin › Slots of the operate guide (SHOT_OPERATE_KEYS): an ecs-ec2 pool with an outdated, a
+  // reserved and a wedged slot. Without it the route stays unhandled and the tab is hidden.
+  ...(process.env.SHOT_OPERATE_KEYS === "1" ? { "/api/admin/ec2-pool": () => fx.operateSlots() } : {}),
   // Admin › Sign-in method register of the operate guide (SHOT_OPERATE_SIGNIN). Without it the
   // route stays unhandled, as before.
   ...(process.env.SHOT_OPERATE_SIGNIN ? { "/api/admin/idp": () => fx.operateSigninRegister() } : {}),
+  // Admin › Egress, MCP sign-in hosts and Dev sign-in of the operate guide's security pages
+  // (SHOT_OPERATE_SECURE). Without it these routes stay unhandled, as before.
+  ...(process.env.SHOT_OPERATE_SECURE
+    ? {
+        "/api/admin/egress": () => fx.operateEgress(),
+        "/api/admin/egress/allowlist": () => fx.operateEgressAllowlist(LOCALE),
+        "/api/admin/mcp-oauth/trusted-hosts": () => fx.operateMcpTrusted(),
+        "/api/admin/dev-idp": () => fx.operateDevIdp(),
+      }
+    : {}),
   // The tenant administration pages of the guide (SHOT_ADMIN_OUTSIDE, run with SHOTS_ADMIN=1): the
   // audit log, running time, an empty MCP distribution and the two tenant switches. Without it
   // these routes stay unhandled, as before.
@@ -326,17 +338,6 @@ const exact = {
           ],
           max_label: 16,
         }),
-      }
-    : {}),
-  // The operate guide's engine pages (SHOT_OPERATE_GPU): the inference engine panel, the chat
-  // engine's catalogue search and Read aloud. Without it these routes stay unhandled, as before,
-  // so the Admin rail keeps the items it was shot with.
-  ...(process.env.SHOT_OPERATE_GPU
-    ? {
-        "/api/admin/engines": () => fx.operateGpuEngines(),
-        "/api/admin/engines/llm/ingest/search": () => fx.operateGpuSearch(),
-        "/api/admin/engines/llm/objects": () => ({ objects: [] }),
-        "/api/admin/tts": () => fx.operateGpuTts(LOCALE),
       }
     : {}),
   "/api/admin/workspace-sizing": () => ({
@@ -722,9 +723,6 @@ const re = [
   // stats/sessions polling and is fetched on open and on Apply, because it reads a DB refreshed
   // every 6 hours.
   [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => (ADMIN_RES ? fx.adminResMembers() : fx.adminMembers())],
-  ...(process.env.SHOT_OPERATE_GPU
-    ? [[/^\/api\/admin\/engines\/([^/]+)\/hourly$/, (m) => fx.operateGpuHourly(decodeURIComponent(m[1]))]]
-    : []),
   // Who may use the self-hosted engines, for the guide's admin engines page only.
   ...(ADMIN_RES ? [[/^\/api\/admin\/tenants\/[^/]+\/engine-access$/, () => fx.adminResEngineAccess()]] : []),
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],

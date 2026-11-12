@@ -3175,6 +3175,110 @@ export const adminGuideIdPs = () => ({
   ],
 });
 
+// The deployment administrator's Admin › Egress (operate guide, SHOT_OPERATE_SECURE): log-only, one
+// member's proposal waiting, an added allowlist and the hosts the proxy saw in the last 7 days.
+export function operateEgress() {
+  return {
+    days: 7,
+    mode: "log-only",
+    enforce: false,
+    egress: [
+      { host: "github.com", allowed: 1840, blocked: 0 },
+      { host: "registry.npmjs.org", allowed: 962, blocked: 0 },
+      { host: "pypi.org", allowed: 311, blocked: 0 },
+      { host: "mcp.docs.example.com", allowed: 0, blocked: 27 },
+      { host: "storage.googleapis.com", allowed: 0, blocked: 9 },
+    ],
+  };
+}
+
+export function operateEgressAllowlist(locale) {
+  const ja = locale === "ja";
+  return {
+    builtin: ["console.example.com"],
+    allowlist: [
+      {
+        id: "eg-3", tenant_id: "demo", entry: "mcp.docs.example.com", state: "proposed",
+        reason: ja ? "MCP サーバー docs-search で使用" : "Used by MCP server docs-search",
+        added_by: "aoi@example.com", added_at: "2026-11-10T09:12:00Z",
+      },
+      {
+        id: "eg-1", tenant_id: "demo", entry: "github.com", state: "active",
+        reason: ja ? "ソースの取得" : "Source checkouts",
+        added_by: "admin@example.com", added_at: "2026-10-01T08:00:00Z",
+      },
+      {
+        id: "eg-2", tenant_id: "demo", entry: ".npmjs.org", state: "active",
+        reason: ja ? "npm パッケージ" : "npm packages",
+        added_by: "admin@example.com", added_at: "2026-10-01T08:01:00Z",
+      },
+    ],
+  };
+}
+
+// Admin › MCP sign-in hosts (SHOT_OPERATE_SECURE): a saved list with one host-only entry, so the
+// warning that recommends URL prefixes shows.
+export const operateMcpTrusted = () => ({
+  hosts: ["https://claude.ai/api/mcp/auth_callback", "claude.com", "af.example.com"],
+  source: "admin",
+  fallback: ["https://claude.ai/api/mcp/auth_callback", "claude.com", "chatgpt.com"],
+  fallback_source: "default",
+  host_only: ["claude.com", "af.example.com"],
+  served: true,
+});
+
+// Admin › Dev sign-in (SHOT_OPERATE_SECURE): served, with a preview domain and three workspaces
+// that hold a client.
+export const operateDevIdp = () => ({
+  enabled: true,
+  setting: true,
+  locked: false,
+  missing_base_url: false,
+  missing_preview_domain: false,
+  issuer: "https://console.example.com/dev-idp",
+  clients: 3,
+});
+
+// Admin › Slots for the operate guide's slot page (SHOT_OPERATE_KEYS): one slot outdated and
+// replaced automatically at its next start, one reserved by hand, one wedged (running, agent not
+// connected, a task stuck STOPPING) and one healthy. Instance ids, AMI and names are invented.
+export const operateSlots = () => ({
+  runtime: "ecs-ec2",
+  pool: "demo-pool",
+  max_slots: 8,
+  slot_sleep_sec: 1800,
+  slot_terminate_sec: 7 * 86400,
+  hibernate_after_sec: 0,
+  template_latest: "7",
+  auto_replace_outdated: true,
+  auto_bake: true,
+  slots: [
+    {
+      instance_id: "i-0a1b2c3d4e5f60011", instance_type: "m7i.xlarge", az: "ap-northeast-1a",
+      state: "stopped", registered: false, workspace: "af-ws-demo-hana", idle_minutes: 190,
+      template_version: "6", template_outdated: true, outdated_reasons: ["ami_behind"], ami: "ami-0123456789abcdef0",
+    },
+    {
+      instance_id: "i-0a1b2c3d4e5f60012", instance_type: "m7i.xlarge", az: "ap-northeast-1c",
+      state: "running", registered: true, workspace: "af-ws-demo-ken", idle_minutes: 4,
+      template_version: "6", template_outdated: true, outdated_reasons: ["template_changed"],
+      replace_reserved: true, replace_reserved_at: "2026-11-10T09:00:00Z",
+    },
+    {
+      instance_id: "i-0a1b2c3d4e5f60013", instance_type: "m7i.large", az: "ap-northeast-1a",
+      state: "running", registered: false, workspace: "af-ws-demo-mio", idle_minutes: 38,
+      template_version: "7", stopping_task: "STOPPING", stopping_task_minutes: 24,
+    },
+    {
+      instance_id: "i-0a1b2c3d4e5f60014", instance_type: "m7i.large", az: "ap-northeast-1c",
+      state: "running", registered: true, workspace: "af-ws-demo-sora", idle_minutes: 1,
+      template_version: "7",
+    },
+  ],
+  homes: [],
+  goldens: [],
+});
+
 // The deployment's own GPU engines (operate guide, SHOT_OPERATE_GPU): an on-demand chat engine
 // that is up on a larger-than-default class, and a stopped image engine. Model ids, the instance
 // id and the request counts are invented.

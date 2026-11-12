@@ -68,7 +68,7 @@ head -c 32 /dev/urandom | base64
 ```
 
 - これより短い値や、同じパターンを繰り返しただけの値でも起動はしますが、ログに `WARNING` が出て、管理画面に警告の帯が出ます。今後のリリースでは、その値での起動を拒否します
-- 要件と、鍵を変えるときの代償は [04 守る](04-secure.ja.md#配備の鍵-要件と変更の代償) にあります
+- 要件と、鍵を変えるときの代償は [配備の鍵を扱う](secure/deployment-keys.ja.md) にあります
 
 > [!IMPORTANT]
 > **`AF_MASTER_KEY` は、作ったその場でパスワード金庫かシークレットマネージャに控え、データとは別に保管してください。**
@@ -203,4 +203,4 @@ IdP ごとに、`.env` で埋めるキーが違います。
 - [テナントとプロビジョニングの方式を決める](install-decisions.ja.md)
 - [サインインの方法を設定する](signin/overview.ja.md)
 - [バックアップして復元する](run/backup-restore.ja.md)・[アップグレードする](run/upgrade.ja.md)・[アイドル停止と強制停止を使う](run/idle-stop.ja.md)
-- [04 守る](04-secure.ja.md)
+- [脅威モデルと残るリスクを知る](secure/threat-model.ja.md)

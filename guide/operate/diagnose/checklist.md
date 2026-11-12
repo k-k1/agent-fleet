@@ -45,9 +45,9 @@ The commands are the compose ones, run from `deploy/compose/`.
 | Workspaces cannot reach the Control Plane URL that the host can | See [Workspaces cannot reach the public URL](#workspaces-cannot-reach-the-public-url) below |
 | The TLS certificate is not issued | See [The TLS certificate is not issued](#the-tls-certificate-is-not-issued) below |
 | Cannot sign in, a button is missing, a removed person still gets in | [Cannot log in](cannot-login.md) |
-| Exits at startup with `AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms` | A key per home needs the KMS custodian. Set `AF_KEY_CUSTODIAN=kms` (and `AF_KMS_KEY_ID`), or unset `AF_WORKSPACE_DEK` ([Keys at rest](../12-keys.md#a-key-of-its-own-for-each-home)) |
-| A workspace start fails with `open the home's credential-store key` | KMS is unreachable, or the key is disabled or refusing. There is no fallback to the master key. Fix access to KMS, then start it again ([Keys at rest](../12-keys.md#a-key-of-its-own-for-each-home)) |
-| After a restore, a workspace refuses to write credentials and the log says its credential store is `unreadable` | The home was restored from before the store moved to the home's key. Run `af-cp home-dek-status --remigrate <membership-id>` where the Control Plane runs, then restart the workspace ([Keys at rest](../12-keys.md#disabling-the-kms-key-restoring-a-copy-turning-it-off)) |
+| Exits at startup with `AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms` | A key per home needs the KMS custodian. Set `AF_KEY_CUSTODIAN=kms` (and `AF_KMS_KEY_ID`), or unset `AF_WORKSPACE_DEK` ([Give each home its own key](../keys/home-keys.md)) |
+| A workspace start fails with `open the home's credential-store key` | KMS is unreachable, or the key is disabled or refusing. There is no fallback to the master key. Fix access to KMS, then start it again ([Give each home its own key](../keys/home-keys.md)) |
+| After a restore, a workspace refuses to write credentials and the log says its credential store is `unreadable` | The home was restored from before the store moved to the home's key. Run `af-cp home-dek-status --remigrate <membership-id>` where the Control Plane runs, then restart the workspace ([Give each home its own key](../keys/home-keys.md#restoring-a-copy-from-before-the-move)) |
 | The workspace log has `[entrypoint] WARN: npm boot-install failed (retrying next start)` | Installing a CLI failed (a full home, the network, a checksum). It retries at the next start, and the member's roster card says "A CLI failed to install at the last start" ([Check on your members](../../admin/members/roster.md#act-on-cards-that-need-attention)) |
 
 ## Three constraints of driving Docker from a container
@@ -114,7 +114,7 @@ When somebody says "it doesn't work", first decide whether **it is that one pers
 ### What happens if AF_MASTER_KEY is lost?
 
 Every stored credential and **every past backup become permanently undecryptable**. There is no way back.
-Keep it in a vault separate from the data, and back it up separately ([Security Operations](../04-secure.md)).
+Keep it in a vault separate from the data, and back it up separately ([Understand the threat model and residual risks](../secure/threat-model.md#prepare-for-the-remaining-risks)).
 
 ### What does a backup hold?
 

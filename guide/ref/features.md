@@ -176,17 +176,17 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 |---|---|---|---|
 | Deployment targets | deployment admin | before start | [deploy-targets.md](deploy-targets.md) |
 | Install, upgrade, back up, restore | deployment admin | a shell | [Install Agent Fleet](../operate/install.md) / [Upgrade](../operate/run/upgrade.md) / [Back up and restore](../operate/run/backup-restore.md) |
-| Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 04](../operate/04-secure.md) |
-| Audit log and egress control | deployment admin | Admin | [operator 04](../operate/04-secure.md#operating-egress-control) |
-| Which client hosts MCP OAuth trusts | deployment admin (super_admin) | Admin → MCP sign-in hosts | [operator 04](../operate/04-secure.md#trusted-client-hosts-deployment-wide-superadmin-only) |
-| The development OIDC IdP for preview URLs | deployment admin (super_admin) | Admin → Dev sign-in | [operator 04](../operate/04-secure.md#development-sign-in-dev-oidc-idp-superadmin-only) |
-| Keys at rest on AWS KMS, and a key of its own for each home | deployment admin | a stack parameter, then a shell | [operator 12](../operate/12-keys.md) |
+| Ingress, TLS and sign-in providers | deployment admin | a shell | [Sign-in](../operate/signin/overview.md) |
+| Audit log and egress control | deployment admin | Admin | [Control outbound traffic](../operate/secure/egress.md) |
+| Which client hosts MCP OAuth trusts | deployment admin (super_admin) | Admin → MCP sign-in hosts | [Operate MCP sign-in](../operate/secure/mcp.md#decide-which-client-hosts-to-trust) |
+| The development OIDC IdP for preview URLs | deployment admin (super_admin) | Admin → Dev sign-in | [Use development sign-in](../operate/secure/dev-signin.md#turn-the-development-oidc-idp-on-or-off) |
+| Keys at rest on AWS KMS, and a key of its own for each home | deployment admin | a stack parameter, then a shell | [Put the keys at rest on AWS KMS](../operate/keys/kms.md), [Give each home its own key](../operate/keys/home-keys.md) |
 | The deployment's colour and label (Appearance) | deployment admin (super_admin) | Admin → Appearance | [Tell deployments apart](../operate/run/deployment-label.md) |
 | Pausing an idle deployment | deployment admin | a shell | [Use idle stop and force-stop](../operate/run/idle-stop.md#pause-the-deployment-while-nobody-uses-it) |
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [Connect monitoring tools](../user/integrations/ops-monitoring.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
-| Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [operator 11](../operate/11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change) |
-| Force-stopping a wedged slot | deployment admin (super_admin) | Admin → Slots → Stop (force) | [operator 11](../operate/11-slot-pool.md#ecs-ec2-stopping-a-wedged-slot) |
+| Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [Replace and stop slots](../operate/aws-ecs/slot-maintenance.md#outdated-slots) |
+| Force-stopping a wedged slot | deployment admin (super_admin) | Admin → Slots → Stop (force) | [Replace and stop slots](../operate/aws-ecs/slot-maintenance.md#stop-a-slot-that-does-not-answer) |
 | The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [Run inference engines on your own GPUs](../operate/engines/gpu.md#choose-the-gpu-instance-class) |
 | Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue | [Take models into the inference engines](../operate/engines/models.md#read-the-plan-and-take-it-in) |
 | The S3 bucket as the ledger of what is actually held | deployment admin (super_admin) | Admin → Inference engines → Model catalogue → Bucket | [Take models into the inference engines](../operate/engines/models.md#look-at-the-s3-bucket) |

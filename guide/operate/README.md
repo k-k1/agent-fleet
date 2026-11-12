@@ -55,6 +55,32 @@ Anything not here yet is in "Chapters not yet moved" below. The commands are in 
 | [Find the cause from the symptom](diagnose/checklist.md) | Read the log and health, and narrow the cause down from the symptom table: the three constraints of driving Docker from a container, TLS, the FAQ |
 | [Cannot log in](diagnose/cannot-login.md) | Find out why sign-in is refused, a button is missing, or a removed person still gets in |
 
+## Security
+
+| Page | What you can do |
+|---|---|
+| [Understand the threat model and residual risks](secure/threat-model.md) | Learn where the isolation boundary is, prepare for the remaining risks, report a vulnerability |
+| [Handle the deployment keys](secure/deployment-keys.md) | Meet what `AF_MASTER_KEY` and `AF_COOKIE_SECRET` must be, add a key to a deployment without one, seal old values |
+| [Control outbound traffic](secure/egress.md) | Observe workspaces' outbound traffic and narrow it with an allowlist |
+| [Operate MCP and external-connection sign-in](secure/mcp.md) | Open `/mcp` with OAuth, decide which client hosts to trust, read what arrived in the log |
+| [Use development sign-in](secure/dev-signin.md) | Know where `AUTH=dev` may be used, turn the development OIDC IdP on or off |
+| [Other operational controls](secure/controls.md) | Keep the preview domain, the sign-in allowlist, the audit log and the host's cloud identity right |
+| [Revoke access and hand over super_admin](secure/offboarding.md) | Remove people, end everybody's sessions, change the deployment administrator |
+
+## Keys
+
+| Page | What you can do |
+|---|---|
+| [Put the keys at rest on AWS KMS](keys/kms.md) | On AWS, protect what the Control Plane seals with KMS and re-seal values stored before the switch |
+| [Give each home its own key](keys/home-keys.md) | On AWS, seal each member's credential store under a key of its home's own |
+| [Rotate the bridge tokens](keys/bridge-tokens.md) | Invalidate workspace tokens for one member or for everyone at once |
+
+## ECS
+
+| Page | What you can do |
+|---|---|
+| [Replace and stop slots](aws-ecs/slot-maintenance.md) | On `ecs-ec2`, replace outdated slots and notice and stop a slot that does not answer |
+
 ## Inference engines
 
 | Page | What you can do |
@@ -66,13 +92,10 @@ Anything not here yet is in "Chapters not yet moved" below. The commands are in 
 
 ## Chapters not yet moved
 
-- [04 Securing it](04-secure.md): threat model, the remaining risks, egress control, MCP sign-in and its trusted hosts, the development sign-in, offboarding, reporting channel
 - [08 Image generation on your own ComfyUI](08-image-engine.md): pointing sessions at a ComfyUI on your own network
 - [09 Borrowing another deployment's engines](09-borrowed-engine.md): using an AWS fleet's llm and image engines from a deployment on your own host
 - [10 Chat inference on your own llama.cpp](10-llm-lan.md): pointing sessions' chat at a llama.cpp on your own network
-- [11 The ecs-ec2 slot pool](11-slot-pool.md): replacing slots, memory protection for the management plane, stopping a wedged slot
-- [12 Keys at rest](12-keys.md): AWS KMS custody, re-sealing earlier values, a key of its own for each home
 
-The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md), [07 Inference engines and read aloud](07-engines.md)
+The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [04 Securing it](04-secure.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md), [11 The ecs-ec2 slot pool](11-slot-pool.md), [12 Keys at rest](12-keys.md), [07 Inference engines and read aloud](07-engines.md)
 
 What each target supports is in [Deployment targets](../ref/deploy-targets.md); who may do what is in [Roles](../ref/roles.md).
