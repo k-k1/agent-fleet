@@ -152,8 +152,7 @@ of it being there:
 
 | Shelf | Reader |
 |---|---|
-| `user/` | someone running agents from the Console — one page per task, start here for "how do I…" |
-| `member/` | the short guide for someone who never opens the terminal (`lite.md`); its old chapters moved to `user/` |
+| `user/` | someone running agents from the Console — one page per task, start here for "how do I…"; `user/start/without-terminal.md` for someone who never opens the terminal |
 | `admin/` | a tenant administrator: members, limits, the audit log |
 | `operate/` | whoever installs and keeps a deployment alive (host-level; needs shell access) |
 | `ref/` | the capability tables everyone consults, and the glossary |

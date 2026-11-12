@@ -551,6 +551,9 @@ member/18-agent-memory.md	user/memory/which-memory.md
 member/19-outside-access.md	user/outside/external-claude.md
 member/20-settings.md	ref/settings.md
 member/21-troubleshooting.md	user/troubleshooting/workspace.md
+member/README.md	user/README.md
+member/badges-and-menus.md	ref/console-ui.md
+member/lite.md	user/start/without-terminal.md
 admin/01-members.md	admin/members/roster.md
 admin/02-limits.md	admin/resources/overview.md
 admin/03-audit-usage.md	admin/audit.md

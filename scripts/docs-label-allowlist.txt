@@ -1,8 +1,2 @@
-# Bold-and-quoted text in guide/member and guide/admin that is not a Console label
+# Bold-and-quoted text in guide/user and guide/admin that is not a Console label
 # (check_labels). One `<repo path>: <text>` per line. Say in a comment why it is exempt.
-
-# The question the chapter index answers, not a screen string.
-guide/member/README.ja.md: どうやるの？
-guide/member/README.md: how do I do this?
-# A concrete value the Console fills into "Model: {name}".
-guide/member/badges-and-menus.md: Model: Qwen3.8 27B IQ4_XS

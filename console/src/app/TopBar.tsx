@@ -146,7 +146,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   // lives beside it as README.ja.md — open the one matching the UI locale.
   //
   // The container receives the guide/ tree and nothing else, so the shipped layout
-  // starts at the shelves (member/, admin/, …) — there is no docs/ level in it. The
+  // starts at the shelves (user/, admin/, …) — there is no docs/ level in it. The
   // tree's own README branches by reader, which is what someone clicking "User guide"
   // wants; every container has it (ADR 0064: the guide is not cut by role).
   const openUserGuide = () => openGuidePage("README");

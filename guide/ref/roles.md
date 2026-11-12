@@ -86,7 +86,7 @@ and in most organisations that is the same person as IT or SRE.
 
 ## Which documentation each role receives
 
-The same guide, whatever the role: every container receives [member/](../member/README.md),
+The same guide, whatever the role: every container receives [user/](../user/README.md),
 [admin/](../admin/README.md), [operate/](../operate/README.md) and [ref/](README.md).
 The shelves are cut by reader so that each reader knows where to start, not to hide
 anything. A link inside the guide has to work for everyone who follows it.

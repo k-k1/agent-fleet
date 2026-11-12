@@ -1,7 +1,7 @@
 // Opens a page of the shipped markdown guide as a file pane.
 //
 // The container receives the guide/ tree and nothing else, so the shipped layout starts at
-// the shelves (member/, admin/, …) with no docs/ level. English is canonical (`name.md`); the
+// the shelves (user/, admin/, …) with no docs/ level. English is canonical (`name.md`); the
 // Japanese page sits beside it as `name.ja.md`. The file viewer has no heading-anchor
 // target, so callers open the page, not a section.
 // Native runtime without a rootfs stages the guide elsewhere (AGENT_DOCS_DIR) and the agent
