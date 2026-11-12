@@ -504,9 +504,9 @@ func TestScratchAutoRelocateRefusesSymlinkedComponent(t *testing.T) {
 	}
 }
 
-// One entry per line is the registry format, so a path with a newline is refused at
-// record time instead of being split into two bogus entries.
-func TestScratchDoesNotRecordNewlinePath(t *testing.T) {
+// A path with a newline could never be repaired (the registry is one entry per line,
+// and a target with a newline is refused), so af-scratch refuses to move it at all.
+func TestScratchRefusesNewlinePath(t *testing.T) {
 	state := scratchShim(t)
 	t.Setenv("AF_WS_SCRATCH", t.TempDir())
 	repo := filepath.Join(t.TempDir(), "odd\nname")
@@ -516,15 +516,46 @@ func TestScratchDoesNotRecordNewlinePath(t *testing.T) {
 	cmd := exec.Command("af-scratch", "target")
 	cmd.Dir = repo
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("af-scratch target: %v: %s", err, out)
+	if err == nil {
+		t.Fatalf("af-scratch target exited 0 on a newline path: %s", out)
 	}
-	if !strings.Contains(string(out), "newline") {
-		t.Errorf("no warning about the unrecorded path: %q", out)
-	}
+	assertAbsent(t, filepath.Join(repo, "target"), "a link was made for a newline path")
 	if reg := readRegistry(t, state); len(reg) != 0 {
 		t.Errorf("registry = %q, want nothing recorded", reg)
 	}
+}
+
+// A link target with a newline hides what follows it from a line-based check: here
+// "<artifacts>/a\n/../../<outside>/created". --repair must refuse it as a whole and
+// create nothing, inside or outside the scratch disk.
+func TestScratchRepairRefusesNewlineTarget(t *testing.T) {
+	state := scratchShim(t)
+	scratch := t.TempDir()
+	t.Setenv("AF_WS_SCRATCH", scratch)
+	outside := t.TempDir()
+	rel, err := filepath.Rel(filepath.Join(scratch, "artifacts", "a"), outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to := filepath.Join(scratch, "artifacts", "a") + "\n/" + rel + "/created"
+	link := filepath.Join(t.TempDir(), "target")
+	if err := os.Symlink(to, link); err != nil {
+		t.Fatal(err)
+	}
+	writeRegistry(t, state, link+"\n")
+
+	out := runScratch(t, "--repair")
+
+	assertAbsent(t, filepath.Join(outside, "created"), "--repair followed the part after the newline")
+	assertAbsent(t, filepath.Join(scratch, "artifacts", "a"), "--repair created the part before the newline")
+	if !strings.Contains(out, "not recreating") {
+		t.Errorf("--repair did not report the refusal: %q", out)
+	}
+	// revive_link (--auto, the manual form) must refuse it too.
+	cmd := exec.Command("af-scratch", "target")
+	cmd.Dir = filepath.Dir(link)
+	cmd.CombinedOutput()
+	assertAbsent(t, filepath.Join(outside, "created"), "the manual form followed the part after the newline")
 }
 
 // Duplicates, garbage lines and a last line without its newline (a write cut short)
@@ -584,6 +615,84 @@ func TestScratchRepairStopsAtCap(t *testing.T) {
 	runScratch(t, "--repair")
 	for _, l := range links {
 		assertResolvesToDir(t, l)
+	}
+}
+
+// Links that point outside the scratch disk or are refused must not use up the cap:
+// with a cap of 2, two of each listed first must still leave room for the valid one.
+// Foreign entries are dropped from the registry; refused ones stay for a later run.
+func TestScratchRepairCapCountsOnlyValidLinks(t *testing.T) {
+	state := scratchShim(t)
+	scratch := t.TempDir()
+	t.Setenv("AF_WS_SCRATCH", scratch)
+	t.Setenv("AF_SCRATCH_REPAIR_MAX", "2")
+	dir := t.TempDir()
+	outside := t.TempDir()
+	symlinkAt(t, outside, filepath.Join(scratch, "artifacts", "escape"))
+	var lines []string
+	add := func(name, to string) string {
+		l := filepath.Join(dir, name, "target")
+		symlinkAt(t, to, l)
+		lines = append(lines, l)
+		return l
+	}
+	foreign1 := add("f1", filepath.Join(outside, "f1"))
+	foreign2 := add("f2", filepath.Join(outside, "f2"))
+	refused1 := add("r1", filepath.Join(scratch, "artifacts", "escape", "r1"))
+	refused2 := add("r2", filepath.Join(scratch, "artifacts", "escape", "r2"))
+	valid := add("v", filepath.Join(scratch, "artifacts", dir, "v", "target"))
+	writeRegistry(t, state, strings.Join(lines, "\n")+"\n")
+
+	out := runScratch(t, "--repair")
+
+	assertResolvesToDir(t, valid)
+	if strings.Contains(out, "AF_SCRATCH_REPAIR_MAX") {
+		t.Errorf("the cap was reported as reached with one valid link: %q", out)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("created %v outside the scratch disk", entries)
+	}
+	reg := strings.Join(readRegistry(t, state), "\n")
+	for _, l := range []string{foreign1, foreign2} {
+		if strings.Contains(reg, l) {
+			t.Errorf("foreign link %s kept in the registry", l)
+		}
+	}
+	for _, l := range []string{refused1, refused2, valid} {
+		if !strings.Contains(reg, l) {
+			t.Errorf("link %s dropped from the registry", l)
+		}
+	}
+}
+
+// The foreground read is bounded too: past AF_SCRATCH_REPAIR_SCAN entries --repair
+// stops looking, warns, and keeps the unchecked entries verbatim.
+func TestScratchRepairBoundsTheScan(t *testing.T) {
+	state := scratchShim(t)
+	scratch := t.TempDir()
+	t.Setenv("AF_WS_SCRATCH", scratch)
+	t.Setenv("AF_SCRATCH_REPAIR_SCAN", "2")
+	dir := t.TempDir()
+	var links []string
+	for _, n := range []string{"a", "b", "c"} {
+		l := filepath.Join(dir, n, "target")
+		symlinkAt(t, filepath.Join(scratch, "artifacts", l), l)
+		links = append(links, l)
+	}
+	writeRegistry(t, state, strings.Join(links, "\n")+"\n")
+
+	out := runScratch(t, "--repair")
+
+	assertResolvesToDir(t, links[0])
+	assertResolvesToDir(t, links[1])
+	if _, err := os.Stat(links[2]); err == nil {
+		t.Errorf("%s was handled past the scan bound", links[2])
+	}
+	if !strings.Contains(out, "AF_SCRATCH_REPAIR_SCAN=2") {
+		t.Errorf("no warning past the scan bound: %q", out)
+	}
+	if reg := readRegistry(t, state); len(reg) != 3 {
+		t.Errorf("registry = %q, want all three kept", reg)
 	}
 }
 

@@ -55,14 +55,16 @@ the workspace runs `af-scratch --repair` to recreate each one's directory, empty
 `--auto` on a dangling link recreates it too. Entries whose link is gone are dropped from the list at the next start.
 
 A directory is recreated only when the link points under `$AF_WS_SCRATCH/artifacts/` and no part of the path below
-that is a symlink, `..` or a file. A link that points anywhere else is yours, and af-scratch creates nothing through
+that is a symlink, `..`, a file or contains a newline. af-scratch also refuses to move a directory whose path contains a
+newline, since such a link could never be recreated. A link that points anywhere else is yours, and af-scratch creates nothing through
 it; a refused path is named in the start log.
 
 A link stays dangling after a start, and needs `af-scratch <dir>` (or `af-scratch --repair`) by hand, when:
 
-- its path contains a newline: af-scratch warns and does not put it on the list;
-- the list has more dangling links than `AF_SCRATCH_REPAIR_MAX` (default 500): the rest stay on the list, the start
-  log says how many, and the next `--repair` continues;
+- its path contains a newline and it was made by an older af-scratch: it is not on the list;
+- the list has more valid dangling links than `AF_SCRATCH_REPAIR_MAX` (default 500), or more entries than
+  `AF_SCRATCH_REPAIR_SCAN` (default 5000): the rest stay on the list, the start log says how many, and the next
+  `--repair` continues. Links that point outside the working disk are dropped from the list and do not count;
 - it was made before the list existed, and `--seed` has not reached it yet or cannot find it (see below).
 
 ## Moving a directory yourself
@@ -136,6 +138,7 @@ when things were moved but none is linked any more, it prints nothing.
 | `AF_WS_SCRATCH_AUTO=0` | Turns `--auto` off |
 | `AF_WS_SCRATCH_AUTO_DEPTH` | How many levels `--auto` looks under `<root>`. Default 3. `--seed` looks one level deeper, under `~/repos` |
 | `AF_SCRATCH_REPAIR_MAX` | How many dangling links one `--repair` recreates. Default 500 |
+| `AF_SCRATCH_REPAIR_SCAN` | How many list entries one `--repair` looks at. Default 5000 |
 | `AF_SCRATCH_SEED_TIMEOUT` | How many seconds the start waits for `--seed` before leaving it to the background. Default 20 |
 
 ## Exit status

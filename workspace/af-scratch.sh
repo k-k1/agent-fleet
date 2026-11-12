@@ -70,17 +70,19 @@ record_link() {
   ) 9>>"$LOCK" 2>/dev/null
 }
 
-# scratch_path_ok / scratch_mkdir create a directory under $SCRATCH/artifacts/ and refuse (non-zero,
-# nothing created) when a component is `.` / `..`, or an existing one is a symlink or not
-# a directory. `mkdir -p` alone would follow a symlinked parent (artifacts/x -> /elsewhere)
-# and create directories outside the scratch disk; a lexical prefix check does not catch
-# that. The existing prefix is checked with builtins only and the missing tail made by
-# `mkdir -p`: a component that does not exist yet cannot be a symlink. Keeping the check
-# fork-free lets --repair batch readlink and mkdir for all links (a fork per component
-# or per link measured ~11-13 ms a link on a loaded host).
+# scratch_path_ok accepts a path under $SCRATCH/artifacts/ only when no component is
+# empty, `.`, `..` or a newline, and no existing component is a symlink or a
+# non-directory. `mkdir -p` alone would follow a symlinked parent (artifacts/x ->
+# /elsewhere) and create directories outside the scratch disk; a lexical prefix check
+# does not catch that. It uses builtins only, so --repair can check every target without
+# a fork and create them all with one `mkdir -p` (a fork per component or per link
+# measured ~11-13 ms a link on a loaded host). A component that does not exist yet
+# cannot be a symlink.
 scratch_path_ok() {
   local rest cur comp parts
-  case "$1" in "$SCRATCH"/artifacts/*) ;; *) return 1 ;; esac
+  # A newline would end the `read` below early and hide the components after it (a
+  # later `..` included), so such a target is refused before it is split.
+  case "$1" in *"$NL"*) return 1 ;; "$SCRATCH"/artifacts/*) ;; *) return 1 ;; esac
   rest="${1#"$SCRATCH"/artifacts/}"
   IFS=/ read -r -a parts <<< "$rest"
   for comp in "${parts[@]}"; do
@@ -99,10 +101,25 @@ scratch_path_ok() {
   done
 }
 
+# The check and the mkdir are not atomic: a component swapped for a symlink in between
+# is followed. That gains nothing, since everything here runs as the workspace user and
+# whoever can swap a component can already create directories wherever that user can
+# write; the guard is against stale or foreign links, not an adversary. scratch_mkdir
+# narrows the window by creating one component at a time and re-checking each one;
+# --repair's batched `mkdir -p` keeps the wider window to stay one fork.
 scratch_mkdir() {
+  local rest cur comp parts
   scratch_path_ok "$1" || return 1
-  [ -d "$1" ] || mkdir -p "$1" 2>/dev/null || return 1
-  [ -d "$1" ] && [ ! -L "$1" ]
+  rest="${1#"$SCRATCH"/artifacts/}"
+  IFS=/ read -r -a parts <<< "$rest"
+  cur="$SCRATCH/artifacts"
+  for comp in "" "${parts[@]}"; do
+    [ -n "$comp" ] && cur="$cur/$comp"
+    if [ -L "$cur" ]; then return 1; fi
+    [ -d "$cur" ] && continue
+    mkdir "$cur" 2>/dev/null || true
+    if [ -L "$cur" ] || [ ! -d "$cur" ]; then return 1; fi
+  done
 }
 
 # revive_link succeeds only for a link into $SCRATCH/artifacts/, the only place this
@@ -122,58 +139,72 @@ revive_link() {
 }
 
 # --repair is what the entrypoint runs at every start, in the foreground: it is the
-# barrier that has the links resolve before the first build. Its cost is bounded by
-# AF_SCRATCH_REPAIR_MAX (default 500) revivals, a readlink and a few mkdirs each
-# (measured before dedup went linear: 400 links 12 s on a loaded host); past the cap it
-# warns and leaves the rest for a manual `af-scratch --repair`.
+# barrier that has the links resolve before the first build. Its cost is bounded twice:
+# it looks at no more than AF_SCRATCH_REPAIR_SCAN (default 5000) registry lines, an lstat
+# each (the rest are kept, with a warning), and it recreates no more than
+# AF_SCRATCH_REPAIR_MAX (default 500) targets. Only a dangling link whose target passed
+# scratch_path_ok counts toward that cap, so foreign or refused links cannot starve
+# valid ones. Entries whose link is gone or points outside $SCRATCH/artifacts/ are
+# dropped, so the registry shrinks back as worktrees go.
 if [ "$MODE" = "--repair" ]; then
   [ -f "$REGISTRY" ] || exit 0
-  max="${AF_SCRATCH_REPAIR_MAX:-500}"
-  case "$max" in ''|*[!0-9]*) max=500 ;; esac
+  num() { case "$1" in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac; }
+  max="$(num "${AF_SCRATCH_REPAIR_MAX:-}" 500)"
+  scan="$(num "${AF_SCRATCH_REPAIR_SCAN:-}" 5000)"
   exec 9>>"$LOCK" || exit 0
   flock -w 30 9 || { echo "af-scratch: --repair: the registry is locked, skipping" >&2; exit 0; }
   kept="$REGISTRY.tmp.$$"
-  awk '!seen[$0]++' "$REGISTRY" > "$kept" 2>/dev/null || { rm -f "$kept"; exit 0; }
   out="$kept.out"
+  trap 'rm -f "$kept" "$out"' EXIT
+  awk '!seen[$0]++' "$REGISTRY" > "$kept" 2>/dev/null || exit 0
   : > "$out"
   dangling=()
-  skipped=0
+  unscanned=0
+  n=0
   while IFS= read -r link || [ -n "$link" ]; do
-    [ -n "$link" ] && [ -L "$link" ] || continue
-    printf '%s\n' "$link" >> "$out"
-    [ -e "$link" ] && continue
-    if [ "${#dangling[@]}" -ge "$max" ]; then skipped=$((skipped + 1)); continue; fi
-    dangling+=("$link")
+    n=$((n + 1))
+    if [ "$n" -gt "$scan" ]; then
+      printf '%s\n' "$link" >> "$out"
+      unscanned=$((unscanned + 1))
+      continue
+    fi
+    case "$link" in /*) ;; *) continue ;; esac
+    [ -L "$link" ] || continue
+    if [ -e "$link" ]; then
+      printf '%s\n' "$link" >> "$out"
+    else
+      dangling+=("$link")
+    fi
   done < "$kept"
+  skipped=0
   if [ "${#dangling[@]}" -gt 0 ]; then
-    # One readlink and one mkdir for all of them, NUL-delimited so no target can shift
-    # the pairing. A link that vanished in between makes readlink fail for the batch;
-    # the next start retries.
-    targets=()
-    mapfile -d '' -t targets < <(readlink -z -- "${dangling[@]}" 2>/dev/null || true)
-    if [ "${#targets[@]}" = "${#dangling[@]}" ]; then
-      todo=()
-      for i in "${!dangling[@]}"; do
-        t="${targets[$i]}"
-        case "$t" in "$SCRATCH"/artifacts/*) ;; *) continue ;; esac
-        if scratch_path_ok "$t"; then
-          todo+=("$t")
-        else
-          echo "af-scratch: not recreating $t for ${dangling[$i]}: a path component is a symlink, \`..\` or not a directory" >&2
-        fi
-      done
-      if [ "${#todo[@]}" -gt 0 ]; then
-        mkdir -p -- "${todo[@]}" 2>/dev/null || true
-        made=0
-        for t in "${todo[@]}"; do [ -d "$t" ] && made=$((made + 1)); done
-        echo "af-scratch: recreated $made of ${#todo[@]} link target(s) under $SCRATCH/artifacts (the scratch disk was emptied by a stop)"
+    # One find for all of them prints path and target as NUL-separated pairs: a target
+    # with a newline stays one field, and a link that vanished in between is simply
+    # missing from the output instead of shifting the pairing.
+    todo=()
+    while IFS= read -r -d '' link && IFS= read -r -d '' t; do
+      case "$t" in "$SCRATCH"/artifacts/*) ;; *) continue ;; esac  # not ours any more
+      printf '%s\n' "$link" >> "$out"
+      if ! scratch_path_ok "$t"; then
+        printf "af-scratch: not recreating %q for %s: a path component is a symlink, \`..\`, a newline or not a directory\n" "$t" "$link" >&2
+        continue
       fi
+      if [ "${#todo[@]}" -ge "$max" ]; then skipped=$((skipped + 1)); continue; fi
+      todo+=("$t")
+    done < <(find "${dangling[@]}" -maxdepth 0 -type l -printf '%p\0%l\0' 2>/dev/null || true)
+    if [ "${#todo[@]}" -gt 0 ]; then
+      mkdir -p -- "${todo[@]}" 2>/dev/null || true
+      made=0
+      for t in "${todo[@]}"; do [ -d "$t" ] && made=$((made + 1)); done
+      echo "af-scratch: recreated $made of ${#todo[@]} link target(s) under $SCRATCH/artifacts (the scratch disk was emptied by a stop)"
     fi
   fi
-  mv -f "$out" "$REGISTRY" 2>/dev/null || rm -f "$out"
-  rm -f "$kept"
+  mv -f "$out" "$REGISTRY" 2>/dev/null || true
   if [ "$skipped" -gt 0 ]; then
     echo "af-scratch: --repair stopped at AF_SCRATCH_REPAIR_MAX=$max; $skipped dangling link(s) left, run \`af-scratch --repair\` to finish" >&2
+  fi
+  if [ "$unscanned" -gt 0 ]; then
+    echo "af-scratch: --repair looked at the first AF_SCRATCH_REPAIR_SCAN=$scan registry entries only; $unscanned left unchecked, run \`af-scratch --repair\` with a larger AF_SCRATCH_REPAIR_SCAN" >&2
   fi
   exit 0
 fi
@@ -308,7 +339,7 @@ for target in "$@"; do
   fi
   dest="$(dest_for "$target")"
   if ! scratch_mkdir "$(dirname "$dest")" || [ -L "$dest" ]; then
-    echo "af-scratch: $dest の途中にシンボリックリンクなどがあるため移しません。" >&2
+    echo "af-scratch: $dest には改行や .. が含まれるか、途中にシンボリックリンクなどがあるため移しません。" >&2
     status=1
     continue
   fi
