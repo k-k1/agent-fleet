@@ -128,11 +128,11 @@ Bitbucket Pipelines も同じ形で、`source` に `bitbucket` を指定しま�
 
 ### Webhook で早く知る
 
-見張りは常に、あなた自身の接続によるポーリングで読む。管理者が Webhook を足すと、Control Plane が次の周期を待たずに「このプルリクエストを今読んで」と Workspace に伝える。
-Webhook が Workspace に運ぶのは「このプルリクエストが変わった」という合図だけで、データは渡さず、停止中の Workspace を起こすこともない（停止中の Workspace は起動時に追いつく）。
+見張りは常に、あなた自身の接続によるポーリングで読みます。管理者が Webhook を足すと、Control Plane が次の周期を待たずに「このプルリクエストを今読んで」と Workspace に伝えます。
+Webhook が Workspace に運ぶのは「このプルリクエストが変わった」という合図だけです。データは渡さず、停止中の Workspace を起こすこともありません（停止中の Workspace は起動時に追いつきます）。
 
-- **公開リポジトリ**: デプロイの GitHub App の Webhook を設定してあれば（`AF_GITHUB_WEBHOOK_SECRET`、[設定リファレンス](../../ref/settings.ja.md)）、公開リポジトリの配信で見張りが早くなる。
-- **プライベートリポジトリ**: デプロイ共通の App は全テナントで共有なので、プライベートリポジトリの配信は無視する。プライベートリポジトリには、あなたのテナントの Webhook（リポジトリのフック、またはテナント自身の GitHub App。Bitbucket は常にこれ）が必要。なければ見張りはポーリングのまま（数分以内の遅れ）。Workspace からは [`af-watch-hook`](../../ref/cli/af-watch-hook.ja.md) で作れる。
+- **公開リポジトリ**: デプロイの GitHub App の Webhook を設定してあれば（`AF_GITHUB_WEBHOOK_SECRET`、[設定リファレンス](../../ref/settings.ja.md)）、公開リポジトリの配信で見張りが早くなります。
+- **プライベートリポジトリ**: デプロイ共通の App は全テナントで共有なので、プライベートリポジトリの配信は無視します。プライベートリポジトリには、あなたのテナントの Webhook（リポジトリのフック、またはテナント自身の GitHub App。Bitbucket は常にこれ）が必要です。なければ見張りはポーリングのままです（数分以内の遅れ）。Workspace からは [`af-watch-hook`](../../ref/cli/af-watch-hook.ja.md) で作れます。
 
 #### プライベートリポジトリにフックを足す
 
@@ -142,13 +142,13 @@ af-watch-hook list
 af-watch-hook rm <id>
 ```
 
-`add` は Control Plane にフックを作り、あなた自身の接続（設定 > 接続）でリポジトリに登録する。以後、プルリクエスト・レビュー・コメント・チェックの出来事が Workspace の見張りに合図を送る。フックの秘密は GitHub / Bitbucket にそのまま渡し、表示も保存もしない。`rm` はリポジトリ側と Agent Fleet 側の両方から消す。
+`add` は Control Plane にフックを作り、あなた自身の接続（設定 > 接続）でリポジトリに登録します。以後、プルリクエスト・レビュー・コメント・チェックの出来事が Workspace の見張りに合図を送ります。フックの秘密は GitHub / Bitbucket にそのまま渡し、表示も保存もしません。`rm` はリポジトリ側と Agent Fleet 側の両方から消します。
 
-- **リポジトリの管理者権限が要る。** GitHub は `repo`（または `admin:repo_hook`）スコープの classic トークン、または Webhooks: Read and write の fine-grained トークン。Bitbucket は Webhooks スコープとリポジトリ管理者。足りなければ `add` がそう伝え、何も残さない。リポジトリの管理者に頼むか、ポーリングのままにする
-- **デプロイに公開 URL が要る。** なければ外部のサービスがフックに届かない
-- **すでにフックのあるリポジトリに `add` しても何も変えない。** やり直すには `rm` してから `add` する
-- **自分の GitHub App**: App の設定に貼る Webhook の秘密は一度表示する必要があるが、`af-watch-hook` は秘密を表示しない。表示できるようになるまでは、App が要らない `af-watch-hook add` を使う
-- GitHub Enterprise Server と Bitbucket Data Center は対象外
+- **リポジトリの管理者権限が要ります。** GitHub では `repo`（または `admin:repo_hook`）スコープの classic トークンか、Webhooks: Read and write の fine-grained トークンが必要です。Bitbucket では Webhooks スコープとリポジトリ管理者の権限が必要です。足りなければ `add` がそう伝え、何も残しません。リポジトリの管理者に頼むか、ポーリングのままにしてください
+- **デプロイに公開 URL が要ります。** なければ外部のサービスがフックに届きません
+- **すでにフックのあるリポジトリに `add` しても何も変わりません。** やり直すには `rm` してから `add` します
+- **自分の GitHub App**: App の設定に貼る Webhook の秘密は一度表示する必要がありますが、`af-watch-hook` は秘密を表示しません。表示できるようになるまでは、App が要らない `af-watch-hook add` を使ってください
+- GitHub Enterprise Server と Bitbucket Data Center は対象外です
 
 ## 関連
 

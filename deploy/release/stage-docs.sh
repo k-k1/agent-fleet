@@ -69,11 +69,6 @@ for entry in "${RUNBOOKS[@]}"; do
     exit 1
   }
   cp "$ROOT/$src" "$DEST/operate/runbooks/$name.md"
-  # A runbook links into the guide from its own directory (deploy/aws/ecs/README.md reaches
-  # it as ../../../guide/). The copy sits at operate/runbooks/, two levels below the staged
-  # guide root, so without this every guide link in a staged runbook is broken.
-  up="$(dirname "$src" | sed -e 's#[^/][^/]*#..#g')/guide/"
-  sed -i -e "s#${up//./\\.}#../../#g" "$DEST/operate/runbooks/$name.md"
 done
 
 cat > "$DEST/operate/runbooks/README.md" <<'EOF'
@@ -98,44 +93,43 @@ The shelf that explains what each step decides, and what to watch for, is
 [operate/](../README.md).
 EOF
 
-# --- 3. point the guide at the staged runbooks --------------------------------
-# In the repository the links read `../../deploy/<x>/README.md`, which is correct on
-# GitHub. In a container the same files are at operate/runbooks/, so rewrite them here.
-# <dir> <prefix> [<up> [<depth>]]: <up> is how the pages at <depth> below <dir> climb to the
-# repository root, `../../` for guide/operate/*.md and `../../../` for guide/operate/*/*.md.
-rewrite_runbook_links() {
-  local dir="$1" prefix="$2" up="${3:-../../}" depth="${4:-1}" f
-  [ -d "$dir" ] || return 0
-  up="${up//./\\.}"
-  while IFS= read -r -d "" f; do
-    sed -i \
-      -e "s#${up}deploy/compose/README\.md#${prefix}compose.md#g" \
-      -e "s#${up}deploy/native/README\.md#${prefix}native.md#g" \
-      -e "s#${up}deploy/local/README-wsl\.md#${prefix}wsl.md#g" \
-      -e "s#${up}deploy/aws/ecs/README\.md#${prefix}aws-ecs.md#g" \
-      -e "s#${up}deploy/aws/ec2-single/README\.md#${prefix}aws-ec2-single.md#g" \
-      -e "s#${up}deploy/kubernetes/README\.md#${prefix}kubernetes.md#g" \
-      "$f"
-  done < <(find "$dir" -mindepth "$depth" -maxdepth "$depth" -name "*.md" -not -path "*/runbooks/*" -print0)
-}
-rewrite_runbook_links "$DEST/operate" "runbooks/"
-rewrite_runbook_links "$DEST/operate" "../runbooks/" "../../../" 2
-rewrite_runbook_links "$DEST/ref" "../operate/runbooks/"
+# --- 3. point the guide at the staged runbooks and release history ------------
+# In the repository the links read `../../deploy/<x>/README.md` and
+# `../../deploy/release/notes/…`, which are correct on GitHub. In a container the same
+# files are at operate/runbooks/ and ref/releases/, so rewrite them here.
+#
+# Every page is rewritten by its own depth, never by a list of directories: a fixed list
+# is how the topic directories (operate/keys/, user/start/, …) kept their dead links in
+# every container while the repository and GitHub looked fine. Only links that climb
+# exactly to the repository root are touched, anchored on "](", so a deeper link is never
+# half-rewritten. operate/runbooks/ holds verbatim copies whose links are relative to
+# deploy/ and is left alone.
+while IFS= read -r -d "" f; do
+  rel="${f#"$DEST"/}"
+  slashes="${rel//[^\/]/}"
+  depth=${#slashes}
+  up=""   # from this page to the staged root
+  for ((i = 0; i < depth; i++)); do up="../$up"; done
+  repo="${up//./\\.}\\.\\./"   # one more level reaches the repository root, regex-escaped
+  sed -i \
+    -e "s#](${repo}deploy/compose/README\\.md#](${up}operate/runbooks/compose.md#g" \
+    -e "s#](${repo}deploy/native/README\\.md#](${up}operate/runbooks/native.md#g" \
+    -e "s#](${repo}deploy/local/README-wsl\\.md#](${up}operate/runbooks/wsl.md#g" \
+    -e "s#](${repo}deploy/aws/ecs/README\\.md#](${up}operate/runbooks/aws-ecs.md#g" \
+    -e "s#](${repo}deploy/aws/ec2-single/README\\.md#](${up}operate/runbooks/aws-ec2-single.md#g" \
+    -e "s#](${repo}deploy/kubernetes/README\\.md#](${up}operate/runbooks/kubernetes.md#g" \
+    -e "s#](${repo}deploy/release/notes/#](${up}ref/releases/#g" \
+    "$f"
+done < <(find "$DEST" -path "$DEST/operate/runbooks" -prune -o -name "*.md" -print0)
 
-# The same for the release history (step 4): the repository links reach it through
-# deploy/release/notes, the staged tree has it at ref/releases.
-rewrite_release_links() {  # <dir> <from> <to>
-  local dir="$1" from="$2" to="$3" f
-  [ -d "$dir" ] || return 0
-  while IFS= read -r -d "" f; do
-    sed -i -e "s#${from}deploy/release/notes/#${to}#g" "$f"
-  done < <(find "$dir" -maxdepth 1 -name "*.md" -print0)
-}
-rewrite_release_links "$DEST" "\.\./" "ref/releases/"
-rewrite_release_links "$DEST/ref" "\.\./\.\./" "releases/"
-rewrite_release_links "$DEST/member" "\.\./\.\./" "../ref/releases/"
-rewrite_release_links "$DEST/admin" "\.\./\.\./" "../ref/releases/"
-rewrite_release_links "$DEST/operate" "\.\./\.\./" "../ref/releases/"
+# A relative link that still leaves the staged tree for deploy/ is dead in every
+# container. Fail here rather than ship it: a runbook added to the guide without a row
+# above lands in this check, not in a reader's "file not found".
+if leftovers="$(grep -rnE '\]\((\.\./)+deploy/' --include='*.md' --exclude-dir=runbooks "$DEST")"; then
+  echo "ERROR: staged guide pages still link into deploy/ (add the target to stage-docs.sh step 3):" >&2
+  echo "$leftovers" >&2
+  exit 1
+fi
 
 # --- 4. the release history ---------------------------------------------------
 NOTES="$ROOT/deploy/release/notes"

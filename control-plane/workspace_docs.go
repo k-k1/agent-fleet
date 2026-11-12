@@ -60,7 +60,11 @@ func docsSrcDir() string {
 // it matters when AF_DOCS_DIR points a local dev CP at something wider. Keeping it
 // literal also keeps "what does a container receive" answerable by reading one line,
 // which is how it gets read during a security review.
-var guideShelves = []string{"member", "admin", "operate", "ref", "assets"}
+//
+// A shelf missing here is dead in every container while it looks fine in the repository
+// and in the baked image, so TestGuideShelvesCoverTheGuide fails when a top-level
+// directory of guide/ is neither listed here nor excluded with a reason.
+var guideShelves = []string{"member", "user", "admin", "operate", "ref", "assets"}
 
 // guideRootFiles are the files at the TOP of the guide tree that ship next to the
 // shelves. The tree's own README is the entry point — the page that branches by reader

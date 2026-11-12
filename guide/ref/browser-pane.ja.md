@@ -21,8 +21,8 @@ Workspace の中で動いている Web アプリを見せる手段は 2 つあ�
 **迷ったらブラウザペイン。** 軽量プレビューは「HTTP 応答を 1 回見るだけ」と言い切れる
 ときの省資源な例外です。
 
-どちらの開き方（ポートとパスの欄、どのボタンが既定になるか）もメンバーの手順です:
-[起動した Web アプリを見る](../user/preview/browser-pane.ja.md#開く)。ポート `7700` は Agent 自身が使うので開けません。
+どちらの開き方（ポートとパスの欄、どのボタンが既定になるか）もメンバーの手順です。
+[起動した Web アプリを見る](../user/preview/browser-pane.ja.md#開く)を参照してください。ポート `7700` は Agent 自身が使うので開けません。
 
 ## どちらを選ぶか（代表例）
 
@@ -39,28 +39,28 @@ cookie・redirect・絶対パスのアセットが要るものはブラウザペ
 
 ## lifecycle と資源の上限
 
-- 表示中のブラウザ接続は Workspace を warm に保つ。
-- ペインが非表示になるか、Console のブラウザタブが background になると描画を止める。
-  Page は猶予（[上限](limits.ja.md#製品として固定のもの)参照）の間だけ保持して解放する。戻ったとき、保持中なら同じ Page、解放後なら
-  保存済みの port/path から新しい Page を作る。
-- ペインの identity を layout から削除すると Page を解放する。identity が残る場合
+- 表示中のブラウザ接続は Workspace を warm に保ちます。
+- ペインが非表示になるか、Console のブラウザタブが background になると描画を止めます。
+  Page は猶予（[上限](limits.ja.md#製品として固定のもの)参照）の間だけ保持してから解放します。戻ったとき、保持中なら同じ Page を使い、解放後なら
+  保存済みの port/path から新しい Page を作ります。
+- ペインの identity を layout から削除すると Page を解放します。identity が残る場合
   （最後のペインを閉じて空表示へ戻す等）は上の猶予の扱いになり、**その猶予中も
-  Page の上限を消費し得る**。
-- Workspace の Stop は一時 Page を捨てるが layout の port/path は残す。Start 後、
-  表示中のペインは同じ target から自動で作り直す。
+  Page の上限を消費することがあります**。
+- Workspace の Stop は一時 Page を捨てますが、layout の port/path は残します。Start 後、
+  表示中のペインは同じ target から自動で作り直します。
 - 上限（Chromium のプロセス数・同時 Page 数・viewport・フレームレート）は
   [上限](limits.ja.md#製品として固定のもの)にあります。
-  **動画や高 fps の確認を目的にしない。**
+  **動画や高 fps の確認には使わないでください。**
 
 ## 範囲と既知の制約
 
-- **これは汎用ブラウザではない。** top-level navigation は loopback HTTP(S) に限定し、
-  外部への redirect は止める。
+- **これは汎用ブラウザではない。** top-level navigation は loopback HTTP(S) に限り、
+  外部への redirect は止めます。
 - Console ドロワーは接続中 Page の console message と uncaught error を上限つき（[上限](limits.ja.md#製品として固定のもの)）で
-  保持し、`error` / `warn` を先に見せる。**永続ログではなく、DevTools の代替でもない**
-  （DOM・Network・Sources・Storage は無い）。
+  保持し、`error` / `warn` を先に見せます。**永続ログではなく、DevTools の代替でもありません**
+  （DOM・Network・Sources・Storage はありません）。
 - upload/download・clipboard・drag & drop・音声・動画・WebRTC・permission prompt・
-  複数タブは対象外。
+  複数タブは対象外です。
 - **スマートフォンでは入口が `⋯` の中に移る。** スマホ幅ではワークスペース操作バーに
   「プレビュー」ボタンが無く、右端の `⋯` を開くと同じポート／パス欄と「ペインで開く」が
   並んだポップオーバーが出ます。そこから先はデスクトップと同じです（toolbar・canvas の tap・

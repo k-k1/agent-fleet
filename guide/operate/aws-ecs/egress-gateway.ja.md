@@ -219,7 +219,7 @@ aws ec2 describe-addresses --output text --query \
 
 1. ワークスペースを止めます。ゲートウェイを止めるのは Control Plane より前で、次の 2 つを確かめてからです
    - サービスの desired count にかかわらず、クラスターにワークスペースのタスクが残っていない（`AF_WS_TASK_WAIT_SEC`、既定は 600 秒）
-   - Squid を止めてすべてのトンネルを記録させたうえで、Control Plane がログを全部受け取った。ログのファイルの大きさが、エージェントが `state.json` に記録したオフセットより小さい（`AF_GATEWAY_DRAIN_SEC`、既定は 300 秒）
+   - Squid を止めてすべてのトンネルを記録させたうえで、Control Plane がログを全部受け取っている（ログのファイルの大きさが、エージェントが `state.json` に記録したオフセットより小さいかで確かめます。`AF_GATEWAY_DRAIN_SEC`、既定は 300 秒）
 2. 0 台にするとインスタンスのディスクが消えるので、どちらかを確かめられないときは、`pause.sh` は失敗し、ゲートウェイと Control Plane を動かしたままにします
 
 `--up` は、NAT ゲートウェイと同じデプロイでゲートウェイを起動し、2 回待ちます。
