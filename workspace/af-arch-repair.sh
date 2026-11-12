@@ -32,33 +32,47 @@
 # A reinstall that fails leaves its list behind (arch-repair-npm / -pip / -uv, one item per
 # line), and every later start re-runs this script while a list is non-empty — the arch stamp
 # is already current by then, so without these lists nothing would ever run again. The
-# entrypoint asks `--due` and passes AF_ARCH_REPAIR_AUTO=change|retry; a run by hand passes
-# neither and leaves the counter alone.
+# entrypoint asks `--due` and passes AF_ARCH_REPAIR_AUTO=change|rerun|retry; a run by hand
+# passes none and leaves the counter alone.
 #
 # The retries are capped at MAX_RETRIES starts after the one that changed architecture: a
 # package that cannot be installed (gone from the index, no wheel for this arch, no network
-# at all) would otherwise add its timeouts to every start forever. Once the cap is reached
-# the lists stay (a run by hand still uses them) and the leftovers go into arch-residue as a
-# `pkgs:` line, so the member's notification names them — the only place they can read it.
+# at all) would otherwise add its timeouts to every start forever. A retry is counted when
+# it STARTS, so a run killed every time (an OOM kill, a stop during the install) uses up the
+# cap like a failing one. Once the cap is reached, one more start runs without installing
+# anything: it writes the leftovers into arch-residue as a `pkgs:` line, so the member's
+# notification names them (the only place they can read it), and only then records that it
+# gave up. The lists stay; a run by hand still uses them.
 set -uo pipefail
 
 STATE="$HOME/.local/share/agent-fleet"
 NPM_MANIFEST="$STATE/arch-repair-npm"
 PIP_MANIFEST="$STATE/arch-repair-pip"
 UV_MANIFEST="$STATE/arch-repair-uv"
-TRIES_FILE="$STATE/arch-repair-tries"   # "<automatic retries done> <architecture before the change>"
+# "<retries started> <architecture before the change> <gave up: 0|1>", one atomic file.
+TRIES_FILE="$STATE/arch-repair-tries"
 MAX_RETRIES=3
 
 pending() { [ -s "$NPM_MANIFEST" ] || [ -s "$PIP_MANIFEST" ] || [ -s "$UV_MANIFEST" ]; }
-tries_done() {
-  local n=""
+T_STARTED=0; T_WAS=""; T_GAVE_UP=0
+read_tries() {
+  local n="" w="" g=""
   # 2>/dev/null goes first: it has to be in place before the redirection that can fail.
-  read -r n _ 2>/dev/null < "$TRIES_FILE" || true
-  case "$n" in '' | *[!0-9]*) echo 0 ;; *) echo "$n" ;; esac
+  read -r n w g 2>/dev/null < "$TRIES_FILE" || true
+  case "$n" in '' | *[!0-9]*) T_STARTED=0 ;; *) T_STARTED="$n" ;; esac
+  T_WAS="$w"
+  [ "$g" = 1 ] && T_GAVE_UP=1 || T_GAVE_UP=0
+}
+write_tries() {
+  { printf '%s %s %s\n' "$1" "$2" "$3" > "$TRIES_FILE.tmp.$$" && mv -f "$TRIES_FILE.tmp.$$" "$TRIES_FILE"; } 2>/dev/null \
+    || rm -f "$TRIES_FILE.tmp.$$"
 }
 
+# Due while a list is pending and the give-up has not been recorded: below the cap that is a
+# retry, at the cap it is the run that writes the notification.
 if [ "${1:-}" = --due ]; then
-  pending && [ "$(tries_done)" -lt "$MAX_RETRIES" ]
+  read_tries
+  pending && [ "$T_GAVE_UP" = 0 ]
   exit
 fi
 
@@ -69,22 +83,28 @@ MODE="${AF_ARCH_REPAIR_AUTO:-}"
 say() { echo "[arch-repair] $*"; }
 mkdir -p "$STATE" 2>/dev/null || true
 
-# The counter is reset by the start that changed architecture and counts the retry starts
-# after it. A retry is counted only when its run gets to the end (see the bottom): a start
-# killed half-way has not had its try, and counting it up front could use up the last retry
-# without either retrying or writing the notification. A retry start knows no "before"
-# architecture, so it reads the one the change start recorded (it only appears in messages).
+# The start that changed architecture resets the counter. A retry, and a rerun of a change
+# start that was killed before its pass finished (rerun: arch-repair-change still there),
+# count themselves before doing anything, so the cap holds even when no run ever finishes.
+# Past the cap a run installs nothing (INSTALL=0) and only reports. A retry start knows no
+# "before" architecture, so it reads the one the change start recorded (messages only).
+INSTALL=1
+read_tries
 case "$MODE" in
-  change) printf '0 %s\n' "$WAS" > "$TRIES_FILE" 2>/dev/null || true ;;
-  retry)
-    rec_was=""
-    read -r _ rec_was 2>/dev/null < "$TRIES_FILE" || true
-    case "$WAS" in '' | '?') WAS="${rec_was:-?}" ;; esac
+  change) T_STARTED=0; T_GAVE_UP=0; write_tries 0 "$WAS" 0 ;;
+  retry | rerun)
+    case "$WAS" in '' | '?') WAS="${T_WAS:-?}" ;; esac
+    if [ "$T_STARTED" -lt "$MAX_RETRIES" ]; then
+      T_STARTED=$((T_STARTED + 1))
+      write_tries "$T_STARTED" "$WAS" 0
+    else
+      INSTALL=0
+    fi
     ;;
 esac
-# A retry start only retries what failed before; the change start and a run by hand look at
-# everything.
-want() { [ "$MODE" != retry ] || [ -s "$1" ]; }
+# A retry start only retries what failed before; the change start, its rerun and a run by
+# hand look at everything.
+want() { [ "$INSTALL" = 1 ] && { [ "$MODE" != retry ] || [ -s "$1" ]; }; }
 # The lists are written before any install and an item leaves only after its own install
 # succeeded, always through a temp file and mv: a run killed at any point leaves a list that
 # still names everything not yet done, never a truncated one.
@@ -111,18 +131,18 @@ list_drop() {
 # （`_greenlet.cpython-311-x86_64-linux-gnu.so`）ので、RECORD を読めば壊れている dist を
 # 厳密に列挙できる——推測ではなく、そのファイルがどのアーキ用かを見て判定している。
 #
-# A list left by an earlier failure adds one case detection cannot see: an entry whose package
-# is no longer installed at all (an install killed after it removed the old copy). That entry
-# stays; an entry that is installed and no longer foreign was fixed in the meantime and goes.
+# Every entry of a list left by an earlier failure is attempted again, whatever is on disk:
+# a failed or killed install can leave a package that looks installed (METADATA without
+# RECORD, a half-written tree), so only an install that exited 0 takes an entry off the list.
+# A forced reinstall of the same version is idempotent.
 pip_broken() {
   python3 - "$NOW" "$PIP_MANIFEST" <<'PY'
-import os, re, sys, glob
+import os, sys, glob
 mach = {"amd64": "x86_64", "arm64": "aarch64"}.get(sys.argv[1], "")
 if not mach:
     raise SystemExit(0)
 others = [m for m in ("x86_64", "aarch64") if m != mach]
-norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
-out, installed = [], set()
+out = []
 for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/site-packages")):
     for di in glob.glob(os.path.join(sp, "*.dist-info")):
         # 表示名と版は METADATA が正（dist-info のディレクトリ名は `-`→`_` に正規化されて
@@ -135,8 +155,6 @@ for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/si
                 elif not line.strip(): break
         except OSError:
             continue
-        if name:
-            installed.add(norm(name))
         try:
             body = open(os.path.join(di, "RECORD"), encoding="utf-8", errors="replace").read()
         except OSError:
@@ -148,7 +166,7 @@ for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/si
 try:
     for line in open(sys.argv[2], encoding="utf-8"):
         req = line.strip()
-        if req and norm(req.split("==")[0]) not in installed:
+        if req:
             out.append(req)
 except OSError:
     pass
@@ -157,7 +175,9 @@ if out:
 PY
 }
 
-if [ "$REPAIR_PY" != 1 ]; then
+if [ "$INSTALL" != 1 ]; then
+  :
+elif [ "$REPAIR_PY" != 1 ]; then
   # The python major moved: the recorded versions may not exist for the new python, so an
   # earlier failure is not retried either.
   [ -s "$PIP_MANIFEST" ] && say "pip: Python のメジャー版が変わったので、前回失敗した入れ直しはやめます: $(tr '\n' ' ' < "$PIP_MANIFEST")"
@@ -192,8 +212,8 @@ fi
 # ---------------------------------------------------------------- uv tools
 # uv の tool は 1 本ずつが独立した venv なので、壊れ方は pip と同じ。⚠️ `uv tool upgrade` は
 # 使わない——あれは版を上げる操作で、ここでやりたいのは「同じ版で入れ直す」である。
-# A listed tool whose environment is gone (an install killed half-way) is reinstalled from
-# the list; a listed one whose environment is back to this architecture was fixed and goes.
+# Every listed tool is attempted again, whether or not its environment is there or looks
+# fixed: a failed install can leave a directory that passes the check below.
 UV_TOOLS="$HOME/.local/share/uv/tools"
 uv_foreign() {
   find "$1" -name "*-linux-gnu.so" 2>/dev/null \
@@ -221,9 +241,10 @@ PY
   done
   if [ -s "$UV_MANIFEST" ]; then
     while IFS= read -r req; do
-      [ -n "$req" ] && [ ! -d "$UV_TOOLS/${req%%==*}" ] && UV_TODO+=("$req")
+      [ -n "$req" ] && UV_TODO+=("$req")
     done < "$UV_MANIFEST"
   fi
+  mapfile -t UV_TODO < <(printf '%s\n' ${UV_TODO[@]+"${UV_TODO[@]}"} | grep -v '^$' | sort -u)
   list_write "$UV_MANIFEST" ${UV_TODO[@]+"${UV_TODO[@]}"}
   for req in ${UV_TODO[@]+"${UV_TODO[@]}"}; do
     say "uv tool: $req を入れ直します"
@@ -242,26 +263,10 @@ fi
 # だけ**なので、利用者が `npm i -g` で入れたものは黙って消えていた——entrypoint 自身が
 # 掲げている「自分で入れたツールは消さない」に反する唯一の場所だった。
 # 消す前に entrypoint が控えた一覧をここで戻す。
-# An entry the member has since installed at another version is theirs now and goes; one
-# installed at the listed version is installed again, since an install killed half-way can
-# leave a package.json behind.
-if [ -s "$NPM_MANIFEST" ]; then
-  mapfile -t GLOBALS < <(python3 - "$NPM_MANIFEST" "$HOME/.local/lib/node_modules" <<'PY'
-import json, os, sys
-for line in open(sys.argv[1], encoding="utf-8"):
-    spec = line.strip()
-    at = spec.rfind("@")
-    if at <= 0:
-        continue
-    try:
-        with open(os.path.join(sys.argv[2], spec[:at], "package.json"), encoding="utf-8") as f:
-            have = json.load(f).get("version", "")
-    except (OSError, ValueError):
-        have = ""
-    if have in ("", spec[at + 1:]):
-        print(spec)
-PY
-)
+# Every entry is installed again until its own install exits 0; what is on disk proves
+# nothing, since an install killed half-way can leave a package.json behind.
+if [ "$INSTALL" = 1 ] && [ -s "$NPM_MANIFEST" ]; then
+  mapfile -t GLOBALS < <(grep -v '^[[:space:]]*$' "$NPM_MANIFEST")
   list_write "$NPM_MANIFEST" ${GLOBALS[@]+"${GLOBALS[@]}"}
   if [ "${#GLOBALS[@]}" -gt 0 ]; then
     say "npm -g: ${#GLOBALS[@]} 件を同じ版で入れ直します: ${GLOBALS[*]}"
@@ -358,15 +363,10 @@ for kind in pip uv npm; do
   [ -s "$f" ] || continue
   while IFS= read -r l; do [ -n "${l// /}" ] && left+=("$kind:$l"); done < "$f"
 done
-# The retry is counted here, now that it has run to the end.
-if [ "${#left[@]}" -eq 0 ]; then
-  rm -f "$TRIES_FILE"
-elif [ "$MODE" = retry ]; then
-  printf '%s %s\n' "$(( $(tries_done) + 1 ))" "$WAS" > "$TRIES_FILE" 2>/dev/null || true
-fi
-# The change start ran to the end: a later start no longer has to redo its full pass.
-[ "$MODE" = change ] && rm -f "$STATE/arch-repair-change"
-retries_left=$(( MAX_RETRIES - $(tries_done) ))
+# A change start (or its rerun) that got here no longer has to be redone; past the cap a
+# rerun gives up on that too.
+case "$MODE" in change | rerun) rm -f "$STATE/arch-repair-change" ;; esac
+retries_left=$(( MAX_RETRIES - T_STARTED ))
 # Only leftovers no start will retry go into the notification: a transient failure that the
 # next start fixes should not reach the member at all.
 gave_up=""
@@ -375,12 +375,23 @@ gave_up=""
 # 検出結果を「いま壊れている集合」として書き出す。通知はこの内容のハッシュを event_id に
 # するので、集合が変わらない限り増えず、直せば集合から消えて自然に鳴り止む
 # （ADR 0068 決定 4 の続き・出来事は 1 回・残骸は状態）。
+# Written whole through a temp file, and before the give-up is recorded below: a run killed
+# in between is due again and writes it again, so the notification is never skipped.
+RESIDUE="$STATE/arch-residue"
 { [ -n "$stale" ] && printf 'repos: %s\n' "$stale"
   [ -n "$orphans" ] && printf 'bin:%s\n' "$orphans"
   [ -n "$gave_up" ] && printf 'pkgs: %s\n' "$gave_up"
   true
-} > "$STATE/arch-residue" 2>/dev/null || true
-[ -s "$STATE/arch-residue" ] || rm -f "$STATE/arch-residue"
+} > "$RESIDUE.tmp.$$" 2>/dev/null || true
+if [ -s "$RESIDUE.tmp.$$" ]; then mv -f "$RESIDUE.tmp.$$" "$RESIDUE" 2>/dev/null || rm -f "$RESIDUE.tmp.$$"
+else rm -f "$RESIDUE.tmp.$$" "$RESIDUE"; fi
+
+# The counter is written last.
+if [ "${#left[@]}" -eq 0 ]; then
+  rm -f "$TRIES_FILE"
+elif [ -n "$gave_up" ]; then
+  write_tries "$T_STARTED" "$WAS" 1
+fi
 
 if [ "${#left[@]}" -eq 0 ]; then
   say "完了"

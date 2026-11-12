@@ -1423,16 +1423,20 @@ fi
 # same version may not exist for the new python, and it would silently resolve another
 # one); that degrades to a notice.
 # A reinstall that failed is retried at later starts, where the arch stamp is already
-# current: `af-arch-repair --due` says whether a list of failures is pending and the retry
-# cap (3 starts) is not used up, so a package that never installs stops costing start time.
+# current: `af-arch-repair --due` says whether a list of failures is pending and the give-up
+# is not recorded yet; the cap (3 started retries) keeps a package that never installs, or a
+# run killed every time, from costing every start.
 # A change start that did not finish its pass (arch-repair-change is still there) is redone
-# as a change start.
+# in full as a "rerun", which counts against the same cap.
 af_repair_py=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1)
-af_repair_from="${AF_ARCH_REPAIR_FROM:-}"
-[ -n "$af_repair_from" ] || read -r af_repair_from 2>/dev/null < "$HOME/.local/share/agent-fleet/arch-repair-change" || true
-if [ -n "$af_repair_from" ]; then
+af_repair_mark=""
+read -r af_repair_mark 2>/dev/null < "$HOME/.local/share/agent-fleet/arch-repair-change" || true
+if [ -n "${AF_ARCH_REPAIR_FROM:-}" ]; then
   AF_ARCH_REPAIR_AUTO=change AF_REPAIR_PY=$af_repair_py \
-    af-arch-repair "$af_repair_from" "$af_arch_now" || true
+    af-arch-repair "$AF_ARCH_REPAIR_FROM" "$af_arch_now" || true
+elif [ -n "$af_repair_mark" ]; then
+  AF_ARCH_REPAIR_AUTO=rerun AF_REPAIR_PY=$af_repair_py \
+    af-arch-repair "$af_repair_mark" "$af_arch_now" || true
 elif af-arch-repair --due; then
   AF_ARCH_REPAIR_AUTO=retry AF_REPAIR_PY=$af_repair_py \
     af-arch-repair "?" "$af_arch_now" || true

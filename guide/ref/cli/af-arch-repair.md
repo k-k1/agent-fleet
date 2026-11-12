@@ -33,7 +33,8 @@ af-arch-repair --due
 ```
 
 `--due` changes nothing and prints nothing. It exits with status 0 when a failed reinstall is waiting for an automatic
-retry (see [Retries](#retries)), and 1 otherwise. The workspace's start uses it.
+retry, or for the start that gives up on it and raises the notification (see [Retries](#retries)), and 1 otherwise. The
+workspace's start uses it.
 
 ## What it reinstalls
 
@@ -113,10 +114,10 @@ not change at that start.
 
 | What | Behaviour |
 |---|---|
-| What stays in a list | Exactly the packages whose install has not succeeded yet. Each package is installed on its own and leaves the list when its install succeeds, so one that keeps failing does not hold back the others. A run that is stopped half-way keeps every package it had not finished |
-| What a retry reinstalls | Only the kinds that failed (pip, uv, npm). It checks pip and uv again first, and a package you have fixed, upgraded or reinstalled at another version in the meantime is left alone. A listed package that is no longer installed at all (an install that stopped after removing the old copy) is installed again |
-| How often | At most 3 starts after the one that changed architecture. A package that cannot be installed would otherwise slow down every start. A start stopped before af-arch-repair finished does not count. A start that changed architecture and was stopped before af-arch-repair finished is redone in full at the next start |
-| After the 3rd failed retry | No start retries it. The leftovers are named in the notification, and the lists stay: run the command in the `WARN:` line, or `af-arch-repair <was> <now>` |
+| What stays in a list | Exactly the packages whose install has not exited successfully yet. Each package is installed on its own and leaves the list only when its own install succeeds, so one that keeps failing does not hold back the others. A run that is stopped half-way keeps every package it had not finished |
+| What a retry reinstalls | Only the kinds that failed (pip, uv, npm). Every package in a list is installed again, whatever is on disk: a failed install can leave files that look installed. pip and uv are also checked again, so a package that broke since is added. A listed package you have since upgraded or reinstalled yourself is installed again at the listed version, so run `af-arch-repair` by hand or remove it from the list if you do not want that |
+| How often | At most 3 retry starts after the one that changed architecture. A package that cannot be installed would otherwise slow down every start. A retry counts when it starts, so a start that is stopped during the reinstall counts too. A start that changed architecture and was stopped before af-arch-repair finished is redone in full at the next start, and those reruns count against the same 3 |
+| After the 3rd retry | The next start installs nothing: it names the leftovers in the notification, then records that it gave up, and no start runs af-arch-repair for them again. The lists stay: run the command in the `WARN:` line, or `af-arch-repair <was> <now>` |
 | Run by hand | Retries everything that is broken, whatever the count. When it succeeds, the lists and the notification's leftovers are removed |
 | Python major version changed at that start | A pending pip failure is dropped, not retried: the same version may not exist for the new Python |
 
@@ -125,14 +126,14 @@ not change at that start.
 | Variable | Effect |
 |---|---|
 | `AF_REPAIR_PY=0` | Skips the pip reinstall. The workspace sets it when the Python major version changed in the same start, because the same package version may not exist for the new Python |
-| `AF_ARCH_REPAIR_AUTO` | Set by the workspace's start: `change` resets the retry count, `retry` counts one retry and reinstalls only what failed before. Do not set it yourself |
+| `AF_ARCH_REPAIR_AUTO` | Set by the workspace's start: `change` resets the retry count; `retry` counts one retry and reinstalls only what failed before; `rerun` redoes a change start that was stopped and counts one retry. Past the cap, `retry` and `rerun` install nothing and only report. Do not set it yourself |
 
 ## Exit status
 
 | Status | Meaning |
 |---|---|
-| 0 | It ran, including when a reinstall failed (the output says so). With `--due`: a retry is waiting |
-| 1 | With `--due` only: no retry is waiting |
+| 0 | It ran, including when a reinstall failed (the output says so). With `--due`: a list is pending and the give-up has not been recorded |
+| 1 | With `--due` only: nothing is pending, or the workspace already gave up on it |
 | 2 | `<now>` is missing |
 
 ## Related

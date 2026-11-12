@@ -37,6 +37,11 @@ done
 #   <tool>.kill             the install removes the old copy, then kills af-arch-repair (its
 #                           parent) with SIGKILL, as an OOM kill or a stopped container would
 #   uv.vanish               a failed install that leaves the tool's environment removed
+#   <tool>.partial          a failed install that leaves files which look installed: pip keeps
+#                           METADATA but loses RECORD, uv keeps the directory without the old
+#                           extension
+#   mv.kill                 mv kills af-arch-repair just before it records the give-up, i.e.
+#                           after the residue was written (the counter is written through mv)
 # On success each does what the real reinstall does to the files af-arch-repair inspects.
 cat >"$T/bin/pip" <<'S'
 #!/bin/bash
@@ -45,6 +50,7 @@ echo "pip $pkg" >>"$STUB_DIR/calls"
 sp="$HOME/.local/lib/python3.11/site-packages"
 name="${pkg%%==*}"; ver="${pkg#*==}"
 if [ -e "$STUB_DIR/pip.kill" ]; then rm -rf "$sp/$name"-*.dist-info; kill -9 "$PPID"; exit 137; fi
+[ -e "$STUB_DIR/pip.partial" ] && { rm -f "$sp/$name"-*.dist-info/RECORD; exit 1; }
 [ -e "$STUB_DIR/pip.fail" ] && { echo "ERROR: Could not find a version" >&2; exit 1; }
 grep -qxF -- "$pkg" "$STUB_DIR/pip.failpkgs" 2>/dev/null && { echo "ERROR: no wheel" >&2; exit 1; }
 rm -rf "$sp/$name"-*.dist-info
@@ -58,6 +64,7 @@ for req; do :; done
 echo "uv $req" >>"$STUB_DIR/calls"
 tool="${req%%==*}"; d="$HOME/.local/share/uv/tools/$tool"
 [ -e "$STUB_DIR/uv.vanish" ] && { rm -rf "$d"; echo "error: interrupted" >&2; exit 1; }
+[ -e "$STUB_DIR/uv.partial" ] && { find "$d" -name '*x86_64-linux-gnu.so' -delete; exit 1; }
 [ -e "$STUB_DIR/uv.fail" ] && { echo "error: failed to fetch" >&2; exit 1; }
 rm -rf "$d" && mkdir -p "$d/lib/python3.11/site-packages/$tool-${req#*==}.dist-info"
 : >"$d/lib/python3.11/site-packages/_$tool.cpython-311-aarch64-linux-gnu.so"
@@ -76,7 +83,16 @@ cat >"$T/bin/dpkg" <<'S'
 #!/bin/sh
 echo arm64
 S
-chmod +x "$T/bin/pip" "$T/bin/uv" "$T/bin/npm" "$T/bin/dpkg"
+cat >"$T/bin/mv" <<S
+#!/bin/bash
+for dst; do :; done
+if [ -e "\${STUB_DIR:-/nonexistent}/mv.kill" ] && [ "\${dst##*/}" = arch-repair-tries ] \\
+   && grep -q ' 1\$' "\$2" 2>/dev/null; then
+  kill -9 "\$PPID"; exit 137
+fi
+exec $(command -v mv) "\$@"
+S
+chmod +x "$T/bin/pip" "$T/bin/uv" "$T/bin/npm" "$T/bin/dpkg" "$T/bin/mv"
 
 fails=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1" >&2; fails=$((fails + 1)); fi; }
@@ -116,7 +132,7 @@ start amd64
 check "change start tried pip and uv" '[ "$(calls pip)" = 1 ] && [ "$(calls uv)" = 1 ]'
 check "pip list pending" 'grep -qx "greenlet==3.0.3" "$STATE/arch-repair-pip"'
 check "uv list pending" 'grep -qx "ruff==0.4.1" "$STATE/arch-repair-uv"'
-check "counter reset with the old arch" '[ "$(tries)" = "0 amd64" ]'
+check "counter reset with the old arch" '[ "$(tries)" = "0 amd64 0" ]'
 check "summary promises 3 more tries" 'summary | grep -q "次の起動で自動でもう一度試します。自動で試すのはあと 3 回"'
 check "pending failures are not in the notification yet" '! grep -q "^pkgs:" "$STATE/arch-residue" 2>/dev/null'
 rm -f "$S/pip.fail" "$S/uv.fail"
@@ -150,6 +166,7 @@ start ""
 check "third retry gives up and says to run it by hand" 'summary | grep -q "自動ではもう試しません。上の WARN: の行のコマンドか、af-arch-repair amd64 arm64 を実行してください"'
 check "summary lists what is left" 'summary | grep -q "pip:greenlet==3.0.3 npm:cowsay@1.6.0"'
 check "notification names the abandoned reinstalls" 'grep -qx "pkgs: pip:greenlet==3.0.3 npm:cowsay@1.6.0" "$STATE/arch-residue"'
+check "the give-up is recorded after the residue" '[ "$(tries)" = "3 amd64 1" ]'
 check "--due is false once the cap is used up" '! HOME="$H" "$T/bin/af-arch-repair" --due'
 start ""
 check "fourth start after the change does not run it" '[ ! -s "$S/calls" ]'
@@ -182,22 +199,69 @@ start ""
 check "the next start reinstalls it although detection no longer sees it" '[ "$(calls pip)" = 1 ] && [ -d "$H/$SP_REL/greenlet-3.0.3.dist-info" ]'
 check "and finishes clean" 'summary | grep -qx "\[arch-repair\] 完了" && [ ! -e "$STATE/arch-repair-pip" ]'
 
-echo "== killed on the third retry: the retry is not used up"
+echo "== killed on the third retry: counted, and the next start only reports"
 new_home cap-kill
 touch "$S/npm.fail"
 printf 'cowsay@1.6.0\n' >"$STATE/arch-repair-npm"
 start amd64
 start ""
 start ""
-check "two retries counted" '[ "$(tries)" = "2 amd64" ]'
+check "two retries counted" '[ "$(tries)" = "2 amd64 0" ]'
 rm -f "$S/npm.fail"; touch "$S/npm.kill"
 start ""
-check "the killed third retry is not counted" '[ "$(tries)" = "2 amd64" ]'
-check "--due still true" 'HOME="$H" "$T/bin/af-arch-repair" --due'
-rm -f "$S/npm.kill"; touch "$S/npm.fail"
+check "the killed third retry is counted when it started" '[ "$(tries)" = "3 amd64 0" ]'
+check "--due still true: the give-up is not recorded" 'HOME="$H" "$T/bin/af-arch-repair" --due'
 start ""
-check "the next start does the third retry and gives up" 'summary | grep -q "自動ではもう試しません"'
-check "and the notification names it" 'grep -qx "pkgs: npm:cowsay@1.6.0" "$STATE/arch-residue"'
+check "the next start installs nothing" '[ ! -s "$S/calls" ]'
+check "and writes the notification and the give-up" 'grep -qx "pkgs: npm:cowsay@1.6.0" "$STATE/arch-residue" && [ "$(tries)" = "3 amd64 1" ]'
+start ""
+check "after that nothing runs" '[ ! -s "$S/calls" ] && ! grep -q "arch-repair" "$S/out"'
+
+echo "== killed between the residue and the give-up record"
+new_home give-up-kill
+touch "$S/npm.fail"
+printf 'cowsay@1.6.0\n' >"$STATE/arch-repair-npm"
+start amd64; start ""; start ""
+touch "$S/mv.kill"
+start ""
+check "the kill really happened (no summary line)" '! summary | grep -q "残っています"'
+check "the residue was written first" 'grep -qx "pkgs: npm:cowsay@1.6.0" "$STATE/arch-residue"'
+check "the give-up is not recorded, so it is still due" '[ "$(tries)" = "3 amd64 0" ] && HOME="$H" "$T/bin/af-arch-repair" --due'
+rm -f "$S/mv.kill"
+start ""
+check "the next start records the give-up without installing" '[ ! -s "$S/calls" ] && [ "$(tries)" = "3 amd64 1" ] && grep -qx "pkgs: npm:cowsay@1.6.0" "$STATE/arch-residue"'
+
+echo "== a run killed at every start is still capped"
+new_home kill-always
+touch "$S/npm.kill"
+printf 'cowsay@1.6.0\n' >"$STATE/arch-repair-npm"
+start amd64; start ""; start ""; start ""
+check "three retries started, none finished" '[ "$(tries)" = "3 amd64 0" ] && [ ! -e "$STATE/arch-residue" ]'
+start ""
+check "the fourth start installs nothing and gives up" '[ ! -s "$S/calls" ] && [ "$(tries)" = "3 amd64 1" ]'
+check "with the notification" 'grep -qx "pkgs: npm:cowsay@1.6.0" "$STATE/arch-residue"'
+start ""
+check "and the start after that runs nothing" '[ ! -s "$S/calls" ]'
+
+echo "== a change start killed at every rerun is capped too"
+new_home rerun-kill
+touch "$S/pip.kill"
+printf 'amd64\n' >"$STATE/arch-repair-change"
+start ""; start ""; start ""
+check "three reruns started" '[ "$(tries)" = "3 amd64 0" ] && [ -e "$STATE/arch-repair-change" ]'
+start ""
+check "the fourth gives up: no install, marker gone, notification written" '[ ! -s "$S/calls" ] && [ ! -e "$STATE/arch-repair-change" ] && grep -qx "pkgs: pip:greenlet==3.0.3" "$STATE/arch-residue"'
+
+echo "== failed installs that leave files looking installed stay pending"
+new_home partial-files
+touch "$S/pip.partial" "$S/uv.partial"
+start amd64
+check "pip left METADATA without RECORD" '[ -e "$H/$SP_REL/greenlet-3.0.3.dist-info/METADATA" ] && [ ! -e "$H/$SP_REL/greenlet-3.0.3.dist-info/RECORD" ]'
+check "uv left its directory without the old extension" '[ -d "$H/.local/share/uv/tools/ruff" ] && ! find "$H/.local/share/uv/tools/ruff" -name "*x86_64*" | grep -q .'
+rm -f "$S/pip.partial" "$S/uv.partial"
+start ""
+check "both are attempted again from the lists" '[ "$(calls pip)" = 1 ] && [ "$(calls uv)" = 1 ]'
+check "and leave the lists only now, after exit 0" 'summary | grep -qx "\[arch-repair\] 完了" && [ ! -e "$STATE/arch-repair-pip" ] && [ ! -e "$STATE/arch-repair-uv" ]'
 
 echo "== a uv install that fails and removes the tool's environment"
 new_home uvvanish
@@ -223,11 +287,11 @@ check "npm list holds only the failed package" '[ "$(cat "$STATE/arch-repair-npm
 check "summary names only the failures" 'summary | grep -q ": pip:psutil==5.9.8 npm:left-pad@1.3.0（"'
 check "WARN names only the failed pip package" 'grep -q "手で直す: pip install --user --force-reinstall --no-deps psutil==5.9.8$" "$S/out"'
 : >"$S/npm.failpkgs"
-# The member installs another version by hand: that one is theirs and is not downgraded.
+# A package.json on disk proves nothing: the listed package is installed again.
 mkdir -p "$H/.local/lib/node_modules/left-pad"
-printf '{"name":"left-pad","version":"1.4.0"}\n' >"$H/.local/lib/node_modules/left-pad/package.json"
+printf '{"name":"left-pad","version":"1.3.0"}\n' >"$H/.local/lib/node_modules/left-pad/package.json"
 start ""
-check "an npm package now installed at another version is dropped, not reinstalled" '! grep -q "^npm left-pad" "$S/calls" && [ ! -e "$STATE/arch-repair-npm" ]'
+check "a listed npm package is installed again although a package.json is there" '[ "$(grep -c "^npm left-pad@1.3.0$" "$S/calls")" = 1 ] && [ ! -e "$STATE/arch-repair-npm" ]'
 
 echo "== a second architecture change keeps the pending npm list"
 if command -v node >/dev/null 2>&1; then
