@@ -415,6 +415,7 @@ func serve() {
 
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
 	warmAgentStatuses()
+	startTaskIdentityLookup()
 	if err := http.Serve(ln, httpx.LogRequests(httpx.Gzip(httpx.RequireToken(mux)))); err != nil {
 		log.Fatal(err)
 	}
@@ -431,7 +432,11 @@ var (
 )
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "secrets_key": secretsKeyState, "secrets_key_next": secretsKeyNext, "secrets_key_start": secretsKeyStart})
+	body := map[string]any{"ok": true, "secrets_key": secretsKeyState, "secrets_key_next": secretsKeyNext, "secrets_key_start": secretsKeyStart}
+	if id := currentTaskID(); id != "" {
+		body["task_id"] = id // optional: absent outside ECS and on an Agent older than this field
+	}
+	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
 // --- small helpers ---
