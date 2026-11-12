@@ -89,6 +89,12 @@ EC2 のインスタンスが消えたあとも、クラスターがそれを一�
 
 ### 8. スタックを逆の順に 1 つずつ消す
 
+`Persistence=retain` では、このループの**前に**データベースの削除保護を外します。外さないとデータスタックの削除が失敗し、ループがそこで止まります。`teardown.sh` も、スタックを消す直前に外します。
+
+```bash
+aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protection --apply-immediately
+```
+
 ```bash
 for s in af-ecs-ingress af-ecs-engines af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
   if ! err=$(aws cloudformation describe-stacks --stack-name $s 2>&1 >/dev/null); then
@@ -109,12 +115,11 @@ done
 - `50-tts` を消す前に、エンジンのサービスを 0 台にしておきます。タスクが登録されているあいだは Cloud Map のサービスを消せず、止まりかけのタスクもまさにそれに当たります
 - かかる時間は、`delete` で約 10 分、`retain` で約 16 分（RDS のスナップショットを取るため）です
 
-### 9. `retain` の配備で追加の 4 手順
+### 9. `retain` の配備で残ったものを消す
 
-`Persistence=retain` では、ただの `delete-stack` は最初の手順で失敗します。
+`Persistence=retain` では、データスタックを消しても 3 つのものが残ります。`af-ecs-data` が消えてから消します（削除保護は手順 8 で外してあります）。
 
 ```bash
-aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protection --apply-immediately
 # after af-ecs-data is deleted:
 aws rds delete-db-snapshot --db-snapshot-identifier af-ecs-data-snapshot-db-<suffix>  # DeletionPolicy: Snapshot leaves one
 aws efs delete-file-system --file-system-id <efs>                                     # DeletionPolicy: Retain keeps it
@@ -127,7 +132,7 @@ done
 aws backup delete-backup-vault --backup-vault-name <vault>                            # once the points are gone
 ```
 
-`teardown.sh` は削除保護を外しますが、最後のスナップショット・EFS・バックアップのボールトは、`--purge-retained` を付けたときだけ消します。付けなければ、ボールトの復元ポイントは `EfsBackupRetentionDays` のとおりに自然に期限切れになります。
+`teardown.sh` は手順 8 の前に削除保護を外しますが、最後のスナップショット・EFS・バックアップのボールトは、`--purge-retained` を付けたときだけ消します。付けなければ、ボールトの復元ポイントは `EfsBackupRetentionDays` のとおりに自然に期限切れになります。
 
 ### 10. タスク定義を消す
 

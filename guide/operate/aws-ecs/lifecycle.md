@@ -27,10 +27,18 @@ A deployment is addressed the way `update.sh` addresses one, by **AWS profile**,
 ./standup.sh     --profile <p> --region <r> [--yes]    # build it back
 ```
 
-## What all four share
+## What needs `--yes`
 
-- **Nothing happens without `--yes`.** They print the plan (and, for a teardown, an inventory of what would go) and exit. With `--yes` on a terminal they also make you type the FQDN
-- **Secrets are neither captured nor restored.** The SSM SecureStrings are not CloudFormation parameters; `standup.sh` only checks that they exist. A teardown keeps `/af-cp/*` by default, so the same account can be built into again
+| Script | Without `--yes` | With `--yes` |
+|---|---|---|
+| `capture-env.sh` | Takes no `--yes`: it writes the capture straight away. It refuses to overwrite an existing capture without `--force` | — |
+| `pause.sh` (pausing) | Prints the plan and exits; nothing is stopped | Pauses |
+| `pause.sh --up` | Resumes straight away: `--up` asks for no confirmation | — |
+| `pause.sh --status` | Only reads | — |
+| `teardown.sh` | Prints an inventory of what would go and the plan, and exits | Deletes |
+| `standup.sh` | Prints the plan and exits | Builds |
+
+- Where `--yes` applies, running it on a terminal also makes you type the FQDN
 
 ## Run `capture-env.sh` first
 
@@ -38,6 +46,7 @@ It writes the parameters each stack was deployed with to `~/.config/agent-fleet/
 
 - The templates live in the repository, but **what was passed to them lives only inside the deployment**, and `delete-stack` takes it away
 - `teardown.sh` refuses to run without the capture, and `standup.sh` has nothing to deploy with
+- **Secrets are neither captured nor restored.** The SSM SecureStrings are not CloudFormation parameters; `standup.sh` only checks that they exist. A teardown keeps `/af-cp/*` by default, so the same account can be built into again
 - A parameter captured **empty** takes its value from the stack output of the same name, if there is one. An empty parameter often means "the stack made this itself", and the id of what it made then exists only as an output (`NatEipAllocationId`, for example: [Pin the outbound IP address](egress-ip.md))
 
 ### A capture proves the parameters, not the image

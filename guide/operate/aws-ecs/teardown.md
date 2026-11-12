@@ -89,6 +89,12 @@ List them with `describe-snapshots --owner-ids self` and delete each: 50 GiB per
 
 ### 8. Delete the stacks in reverse order, one at a time
 
+Under `Persistence=retain`, remove the database's deletion protection **before** this loop. Otherwise the data stack's delete fails and the loop stops there. `teardown.sh` does the same right before it deletes the stacks.
+
+```bash
+aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protection --apply-immediately
+```
+
 ```bash
 for s in af-ecs-ingress af-ecs-engines af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
   if ! err=$(aws cloudformation describe-stacks --stack-name $s 2>&1 >/dev/null); then
@@ -109,12 +115,11 @@ done
 - Scale the engine service to 0 before deleting `50-tts`: its Cloud Map service cannot be deleted while a task is still registered, and a task on its way down is exactly that
 - Wall clock: about 10 minutes (`delete`) to about 16 minutes (`retain`, RDS snapshotting)
 
-### 9. Four extra steps for a `retain` deployment
+### 9. Delete what a `retain` deployment kept
 
-Under `Persistence=retain` a plain `delete-stack` fails on the first one.
+Under `Persistence=retain` the data stack's delete leaves three things behind. Delete them once `af-ecs-data` is gone (the deletion protection was already removed in step 8).
 
 ```bash
-aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protection --apply-immediately
 # after af-ecs-data is deleted:
 aws rds delete-db-snapshot --db-snapshot-identifier af-ecs-data-snapshot-db-<suffix>  # DeletionPolicy: Snapshot leaves one
 aws efs delete-file-system --file-system-id <efs>                                     # DeletionPolicy: Retain keeps it
@@ -127,7 +132,7 @@ done
 aws backup delete-backup-vault --backup-vault-name <vault>                            # once the points are gone
 ```
 
-`teardown.sh` removes the deletion protection, but deletes the final snapshot, the EFS and the backup vault only with `--purge-retained`. Without it, the vault's recovery points expire on their own after `EfsBackupRetentionDays`.
+`teardown.sh` removes the deletion protection before step 8, but deletes the final snapshot, the EFS and the backup vault only with `--purge-retained`. Without it, the vault's recovery points expire on their own after `EfsBackupRetentionDays`.
 
 ### 10. Delete the task definitions
 

@@ -245,7 +245,10 @@ ECS の runbook の「Lifecycle scripts」の節（いまはガイドの `guide/
   赤になるが、**配備したスクリプトが実行されたことは証明しない**。本当の往復を証明するものはここには
   なく、動いている配備でしか確かめていない。
 - これらのスクリプトが動く順番は、`deploy/local/ecs-lifecycle-stub-test.sh` のスタブのテストが
-  固定している。
+  固定している。各手順がなぜその位置にあるかは次の節を参照。
+
+（英語版の 2 項目は旧 runbook からの逐語の移動で、ここはその翻訳である。「次の節」は旧 runbook の
+「Teardown」で、いまはガイドの [撤去する](../../guide/operate/aws-ecs/teardown.ja.md)。）
 
 ## 9.6 パリティと相違点
 

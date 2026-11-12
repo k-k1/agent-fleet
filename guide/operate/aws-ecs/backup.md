@@ -44,7 +44,7 @@ So under `Persistence=retain`, `10-data` also declares:
 
 - `teardown.sh` without `--purge-retained` keeps it, and so does switching a stack from `retain` to `delete`
 - The stack id in its name keeps a later stand-up under the same stack name from colliding with it, and `teardown.sh` lists every `<data stack>-efs-*` vault in its plan and sweep, whatever the persistence
-- One case still collides: switching the **same** stack `retain` → `delete` → `retain` (the stack id is unchanged). Delete the kept vault first ([Tear a deployment down](teardown.md#9-four-extra-steps-for-a-retain-deployment))
+- One case still collides: switching the **same** stack `retain` → `delete` → `retain` (the stack id is unchanged). Delete the kept vault first ([Tear a deployment down](teardown.md#9-delete-what-a-retain-deployment-kept))
 
 ## Turn backups on for a running deployment
 

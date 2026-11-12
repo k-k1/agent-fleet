@@ -281,7 +281,10 @@ Moved here from the ECS runbook's "Lifecycle scripts" section, which is now the 
   ran**, and nothing here proves a real round trip. That one is still only ever exercised
   against a live deployment.
 - The order these run in is what the stub test in `deploy/local/ecs-lifecycle-stub-test.sh`
-  pins.
+  pins — see the next section for why each step is where it is.
+
+(Both bullets are verbatim. "The next section" was the runbook's "Teardown", now the guide page
+[Tear a deployment down](../../guide/operate/aws-ecs/teardown.md).)
 
 ## 9.6 Parity and differences
 
