@@ -169,7 +169,7 @@ func TestRouteServeIsTheSessionsOwn(t *testing.T) {
 
 	g := agents.CurrentRouteGateway().(*fakeGateway)
 	stopRouteServe(m.Name, "test")
-	if g.endedFor(m.Name) == 0 {
+	if g.revokedCount() == 0 {
 		t.Fatal("a stopped server's route token was not ended")
 	}
 	if alive(roots[0]) {
@@ -213,10 +213,10 @@ func TestRouteServeIsReplacedAfterItDies(t *testing.T) {
 		t.Fatal("a dead server is still registered")
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for g.endedFor(m.Name) == 0 && time.Now().Before(deadline) {
+	for g.revokedCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if g.endedFor(m.Name) == 0 {
+	if g.revokedCount() == 0 {
 		t.Fatal("a dead server's route token was not ended")
 	}
 	addr2, gen2, err := ensureRouteServe(m)
@@ -250,7 +250,7 @@ func TestRouteServeThatNeverAnswersLeavesNothing(t *testing.T) {
 	if routeServeOf(m.Name) != nil {
 		t.Fatal("a failed server is still registered")
 	}
-	if g.endedFor(m.Name) == 0 {
+	if g.revokedCount() == 0 {
 		t.Fatal("a failed start kept its route token")
 	}
 	b, err := os.ReadFile(pidFile)
@@ -420,7 +420,7 @@ func TestRouteServeStartFailureEndsItsToken(t *testing.T) {
 	if len(g.loopback) == 0 {
 		t.Fatal("the start failed before the route issued a token; the test checks nothing")
 	}
-	if g.endedFor(m.Name) == 0 {
+	if g.revokedCount() == 0 {
 		t.Fatal("a failed start kept its route token")
 	}
 }
@@ -466,5 +466,41 @@ func TestNoRouteServeStartsAfterShutdown(t *testing.T) {
 	}
 	if _, err := os.Stat(log); err == nil {
 		t.Fatal("a process was started after the shutdown began")
+	}
+}
+
+// The stop's check and the start's registration are one step: a start that passed the first check
+// before the stop began is refused when it registers, and starts no process.
+func TestRouteServeStartRefusedOnceClosed(t *testing.T) {
+	isolatedHome(t)
+	useMajor(t, 2)
+	log := useFakeRouteServe(t)
+	g := &fakeGateway{}
+	withGateway(t, g)
+	routeServes.mu.Lock()
+	routeServes.closed = true
+	routeServes.mu.Unlock()
+	t.Cleanup(func() {
+		routeServes.mu.Lock()
+		routeServes.closed = false
+		routeServes.mu.Unlock()
+	})
+	m := managedBedrockMeta(t, "oc_route12")
+	l := routeServeLock(m.Name)
+	l.Lock()
+	_, _, err := startRouteServe(m) // past ensureRouteServe's own check
+	l.Unlock()
+	if err == nil {
+		stopRouteServe(m.Name, "test")
+		t.Fatal("a start registered after the stop began")
+	}
+	if routeServeOf(m.Name) != nil {
+		t.Fatal("a refused start is registered")
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Fatal("a refused start ran a process")
+	}
+	if g.revokedCount() == 0 {
+		t.Fatal("a refused start kept its route token")
 	}
 }

@@ -1,6 +1,7 @@
 package routegw
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"io"
 	"net"
 	"net/http"
@@ -190,5 +191,28 @@ func TestRegistryHoldsOnlyHashes(t *testing.T) {
 	r.Revoke(tok)
 	if _, ok := r.Lookup(tok); ok {
 		t.Fatal("a revoked token still looks up")
+	}
+}
+
+// RevokeToken ends the one token it is given and no other of the same session: a harness ending a
+// dead runtime's bearer must not end the one a switch or a replacement minted since.
+func TestGatewayRevokeTokenEndsOnlyThatToken(t *testing.T) {
+	r := NewRegistry(nil)
+	g := &Gateway{d: Deps{Registry: r}}
+	old, _, err := r.Mint(Binding{Session: "s", Incarnation: "managed", Route: "bedrock", ProfileID: "p"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := r.Mint(Binding{Session: "t", Incarnation: "i", Route: "bedrock", ProfileID: "p"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ agents.RouteTokenRevoker = g
+	g.RevokeToken(old)
+	if _, ok := r.Lookup(old); ok {
+		t.Fatal("the revoked token still looks up")
+	}
+	if _, ok := r.Lookup(other); !ok {
+		t.Fatal("revoking one token ended another")
 	}
 }

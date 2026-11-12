@@ -32,22 +32,22 @@ type fakeGateway struct {
 	sockets  int
 	refuse   *agents.RouteRefusal
 	mu       sync.Mutex
-	ended    []string
+	revoked  []string
 }
 
-func (f *fakeGateway) EndSession(name string) int {
+func (f *fakeGateway) RevokeToken(token string) {
 	f.mu.Lock()
-	f.ended = append(f.ended, name)
+	f.revoked = append(f.revoked, token)
 	f.mu.Unlock()
-	return 1
 }
 
-func (f *fakeGateway) endedFor(name string) int {
+// revokedCount is how many times the test bearer was revoked.
+func (f *fakeGateway) revokedCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n := 0
-	for _, e := range f.ended {
-		if e == name {
+	for _, tok := range f.revoked {
+		if tok == testBearer {
 			n++
 		}
 	}

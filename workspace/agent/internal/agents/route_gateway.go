@@ -55,17 +55,21 @@ func CurrentRouteGateway() RouteGateway {
 	return routeGateway.g
 }
 
-// RouteSessionEnder is the gateway's revocation of every token of one session. A harness that
-// mints a token for a runtime of its own (a Managed private server) ends it when that runtime
-// fails to start or stops, rather than leaving it to the sweep.
-type RouteSessionEnder interface {
-	EndSession(name string) int
+// RouteTokenRevoker is the gateway's revocation of one token. A harness that holds a token for a
+// runtime of its own (a Managed private server) ends it when that runtime fails to start, stops
+// or dies, rather than leaving it to the sweep. One token, not the session's: the session may
+// already hold a newer one (a replacement, or a switch to Terminal) that must survive.
+type RouteTokenRevoker interface {
+	RevokeToken(token string)
 }
 
-// EndRouteSession revokes session's route tokens on the running gateway, if it can.
-func EndRouteSession(session string) {
-	if e, ok := CurrentRouteGateway().(RouteSessionEnder); ok {
-		e.EndSession(session)
+// RevokeRouteToken ends token on the running gateway, if it can.
+func RevokeRouteToken(token string) {
+	if token == "" {
+		return
+	}
+	if r, ok := CurrentRouteGateway().(RouteTokenRevoker); ok {
+		r.RevokeToken(token)
 	}
 }
 

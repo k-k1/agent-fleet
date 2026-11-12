@@ -162,10 +162,10 @@ func Start(d Deps) (stop func(), err error) {
 // route switch), so revocation does not wait for the next call or the sweep.
 func EndSession(name string) int {
 	if g := Default(); g != nil {
-		return g.EndSession(name)
+		return g.Registry().RevokeSession(name)
 	}
 	return 0
 }
 
-// EndSession revokes every route token of session name (agents.RouteSessionEnder).
-func (g *Gateway) EndSession(name string) int { return g.Registry().RevokeSession(name) }
+// RevokeToken ends one route token (agents.RouteTokenRevoker).
+func (g *Gateway) RevokeToken(token string) { g.Registry().Revoke(token) }

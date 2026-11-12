@@ -48,8 +48,10 @@ type routeServe struct {
 	name     string
 	addr     string
 	password string
-	gen      int
-	cmd      *exec.Cmd
+	// token is the route bearer this server was started with, ended with it.
+	token string
+	gen   int
+	cmd   *exec.Cmd
 	// done is closed when the process has exited and been reaped.
 	done chan struct{}
 	// up: the server answered its probe. stopping: af asked it to end, so its exit is no crash.
@@ -189,10 +191,11 @@ func startRouteServe(m session.Meta) (string, int, error) {
 	}
 	// A start that does not end with a server answering takes its bearer back; the caller root
 	// is gone with it, but a token nobody can use should not wait for the sweep either.
+	token := routeBearer(plan)
 	started := false
 	defer func() {
 		if !started {
-			agents.EndRouteSession(m.Name)
+			agents.RevokeRouteToken(token)
 		}
 	}()
 	if ref := configConflict(append(globalConfigFiles(), projectConfigFiles(m)...)); ref != nil {
@@ -210,14 +213,19 @@ func startRouteServe(m session.Meta) (string, int, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("opencode: cannot prepare the session server's password: %w", err)
 	}
-	rs := &routeServe{name: m.Name, addr: "http://127.0.0.1:" + port, password: password, done: make(chan struct{})}
+	rs := &routeServe{name: m.Name, addr: "http://127.0.0.1:" + port, password: password, token: token, done: make(chan struct{})}
 	cmd := exec.Command(spec.Bin, "serve", "--hostname", "127.0.0.1", "--port", port)
 	cmd.Env = routeServeEnv(os.Environ(), m.Name, plan, password)
 	cmd.Dir = paths.HomeDir()
 	rs.cmd = cmd
 	// Registered before the start: the probe below goes through authTransport, which finds the
-	// password by the server's address.
+	// password by the server's address. closed is read in the same critical section, so the
+	// workspace's stop either refuses this start or finds it registered and waits for its lock.
 	routeServes.mu.Lock()
+	if routeServes.closed {
+		routeServes.mu.Unlock()
+		return "", 0, errors.New("opencode: the workspace is stopping; no session server starts now")
+	}
 	routeServes.byName[m.Name] = rs
 	routeServes.mu.Unlock()
 	tail, err := startPinned(rs)
@@ -299,16 +307,7 @@ func waitRouteServe(rs *routeServe, tail *agents.StderrTail) {
 	if deliberate || !wasUp {
 		return
 	}
-	// Its bearer goes with it, unless a replacement already runs: that one's mint ended this
-	// token, and ending the session's tokens now would end the replacement's. The session's lock
-	// orders this after any start in flight; rs.done is closed first, so a stop waiting on it
-	// under that lock is not held up.
-	l := routeServeLock(rs.name)
-	l.Lock()
-	if routeServeOf(rs.name) == nil {
-		agents.EndRouteSession(rs.name)
-	}
-	l.Unlock()
+	agents.RevokeRouteToken(rs.token)
 	code, sig := exitOf(err)
 	log.Printf("opencode: session %s: route server died unexpectedly (gen %d, code %d, sig %d)", rs.name, rs.gen, code, sig)
 	h := handleFor(rs.name)
@@ -402,7 +401,7 @@ func stopRouteServeLocked(rs *routeServe, reason string) {
 		_ = rs.cmd.Process.Kill()
 		<-rs.done
 	}
-	agents.EndRouteSession(rs.name)
+	agents.RevokeRouteToken(rs.token)
 	log.Printf("opencode: session %s: route server stopped (%s)", rs.name, reason)
 }
 
@@ -433,6 +432,16 @@ func routeServeEnv(base []string, name string, plan agents.RoutePlan, password s
 	env = agents.WithSessionEnv(env, name)
 	return mergeCommandEnv(env, append(append(append([]string(nil), plan.Env...), plan.Settings...),
 		"OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password))
+}
+
+// routeBearer is the route token in plan's environment.
+func routeBearer(plan agents.RoutePlan) string {
+	for _, kv := range plan.Env {
+		if v, ok := strings.CutPrefix(kv, "AWS_BEARER_TOKEN_BEDROCK="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // routeServeSecretEnv names what a private server must not inherit whatever the usage preference
