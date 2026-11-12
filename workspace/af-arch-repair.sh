@@ -134,15 +134,19 @@ list_drop() {
 # Every entry of a list left by an earlier failure is attempted again, whatever is on disk:
 # a failed or killed install can leave a package that looks installed (METADATA without
 # RECORD, a half-written tree), so only an install that exited 0 takes an entry off the list.
-# A forced reinstall of the same version is idempotent.
+# The version comes from disk, though, when the package is there: the member may have
+# upgraded it since, and reinstalling the listed version would be a silent downgrade. A
+# forced reinstall of the installed version rebuilds its native parts; the listed version is
+# used only for a package that is gone.
 pip_broken() {
   python3 - "$NOW" "$PIP_MANIFEST" <<'PY'
-import os, sys, glob
+import os, re, sys, glob
 mach = {"amd64": "x86_64", "arm64": "aarch64"}.get(sys.argv[1], "")
 if not mach:
     raise SystemExit(0)
 others = [m for m in ("x86_64", "aarch64") if m != mach]
-out = []
+norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+out, installed = {}, {}
 for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/site-packages")):
     for di in glob.glob(os.path.join(sp, "*.dist-info")):
         # 表示名と版は METADATA が正（dist-info のディレクトリ名は `-`→`_` に正規化されて
@@ -155,6 +159,8 @@ for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/si
                 elif not line.strip(): break
         except OSError:
             continue
+        if name and ver:
+            installed[norm(name)] = name + "==" + ver
         try:
             body = open(os.path.join(di, "RECORD"), encoding="utf-8", errors="replace").read()
         except OSError:
@@ -162,16 +168,17 @@ for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/si
         if not any(("-" + m + "-linux") in body for m in others):
             continue
         if name and ver:
-            out.append(name + "==" + ver)
+            out[norm(name)] = name + "==" + ver
 try:
     for line in open(sys.argv[2], encoding="utf-8"):
         req = line.strip()
         if req:
-            out.append(req)
+            key = norm(req.split("==")[0])
+            out.setdefault(key, installed.get(key, req))
 except OSError:
     pass
 if out:
-    print("\n".join(sorted(set(out))))
+    print("\n".join(sorted(out.values())))
 PY
 }
 
@@ -219,14 +226,8 @@ uv_foreign() {
   find "$1" -name "*-linux-gnu.so" 2>/dev/null \
     | grep -qv -- "-$([ "$NOW" = arm64 ] && echo aarch64 || echo x86_64)-linux-gnu.so"
 }
-if want "$UV_MANIFEST"; then
-  UV_TODO=()
-  for d in "$UV_TOOLS"/*; do
-    [ -d "$d" ] || continue
-    tool="$(basename "$d")"
-    # その venv に他アーキの拡張が居るときだけ入れ直す（純 python の tool は無傷）。
-    uv_foreign "$d" || continue
-    ver="$(python3 - "$d" "$tool" <<'PY'
+uv_ver() {
+  python3 - "$1" "$2" <<'PY'
 import os, sys, glob
 d, tool = sys.argv[1], sys.argv[2].replace("-", "_").lower()
 for di in glob.glob(os.path.join(d, "lib/python*/site-packages/*.dist-info")):
@@ -236,12 +237,26 @@ for di in glob.glob(os.path.join(d, "lib/python*/site-packages/*.dist-info")):
         print(ver)
         break
 PY
-)"
+}
+if want "$UV_MANIFEST"; then
+  UV_TODO=()
+  for d in "$UV_TOOLS"/*; do
+    [ -d "$d" ] || continue
+    tool="$(basename "$d")"
+    # その venv に他アーキの拡張が居るときだけ入れ直す（純 python の tool は無傷）。
+    uv_foreign "$d" || continue
+    ver="$(uv_ver "$d" "$tool")"
     UV_TODO+=("$tool${ver:+==$ver}")
   done
+  # A listed tool is tried at the version its environment holds now (see pip), at the listed
+  # one only when the environment is gone or names no version.
   if [ -s "$UV_MANIFEST" ]; then
     while IFS= read -r req; do
-      [ -n "$req" ] && UV_TODO+=("$req")
+      [ -n "$req" ] || continue
+      tool="${req%%==*}"
+      printf '%s\n' ${UV_TODO[@]+"${UV_TODO[@]}"} | grep -q -- "^$tool\(==\|\$\)" && continue
+      ver=""; [ -d "$UV_TOOLS/$tool" ] && ver="$(uv_ver "$UV_TOOLS/$tool" "$tool")"
+      if [ -n "$ver" ]; then UV_TODO+=("$tool==$ver"); else UV_TODO+=("$req"); fi
     done < "$UV_MANIFEST"
   fi
   mapfile -t UV_TODO < <(printf '%s\n' ${UV_TODO[@]+"${UV_TODO[@]}"} | grep -v '^$' | sort -u)
@@ -264,9 +279,27 @@ fi
 # 掲げている「自分で入れたツールは消さない」に反する唯一の場所だった。
 # 消す前に entrypoint が控えた一覧をここで戻す。
 # Every entry is installed again until its own install exits 0; what is on disk proves
-# nothing, since an install killed half-way can leave a package.json behind.
+# nothing, since an install killed half-way can leave a package.json behind. The version is
+# the installed one when a package.json names one (the member may have upgraded it, see
+# pip), the listed one otherwise.
 if [ "$INSTALL" = 1 ] && [ -s "$NPM_MANIFEST" ]; then
-  mapfile -t GLOBALS < <(grep -v '^[[:space:]]*$' "$NPM_MANIFEST")
+  mapfile -t GLOBALS < <(python3 - "$NPM_MANIFEST" "$HOME/.local/lib/node_modules" <<'PY'
+import json, os, sys
+seen = set()
+for line in open(sys.argv[1], encoding="utf-8"):
+    spec = line.strip()
+    at = spec.rfind("@")
+    if at <= 0 or spec[:at] in seen:
+        continue
+    seen.add(spec[:at])
+    try:
+        with open(os.path.join(sys.argv[2], spec[:at], "package.json"), encoding="utf-8") as f:
+            have = json.load(f).get("version", "")
+    except (OSError, ValueError, AttributeError):
+        have = ""
+    print(spec[:at] + "@" + have if isinstance(have, str) and have else spec)
+PY
+)
   list_write "$NPM_MANIFEST" ${GLOBALS[@]+"${GLOBALS[@]}"}
   if [ "${#GLOBALS[@]}" -gt 0 ]; then
     say "npm -g: ${#GLOBALS[@]} 件を同じ版で入れ直します: ${GLOBALS[*]}"

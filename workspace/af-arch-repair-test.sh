@@ -16,7 +16,7 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENTRY="${ENTRY:-$HERE/entrypoint.sh}"
 T="$(mktemp -d)"
-trap 'rm -rf "$T"' EXIT
+trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
 mkdir -p "$T/bin"
 ln -s "$HERE/af-arch-repair.sh" "$T/bin/af-arch-repair"
 
@@ -262,6 +262,28 @@ rm -f "$S/pip.partial" "$S/uv.partial"
 start ""
 check "both are attempted again from the lists" '[ "$(calls pip)" = 1 ] && [ "$(calls uv)" = 1 ]'
 check "and leave the lists only now, after exit 0" 'summary | grep -qx "\[arch-repair\] 完了" && [ ! -e "$STATE/arch-repair-pip" ] && [ ! -e "$STATE/arch-repair-uv" ]'
+
+echo "== the member upgraded a listed package: the retry keeps the upgrade"
+new_home upgraded
+touch "$S/pip.fail" "$S/uv.fail" "$S/npm.fail"
+printf 'left-pad@1.3.0\n' >"$STATE/arch-repair-npm"
+start amd64
+rm -f "$S/pip.fail" "$S/uv.fail" "$S/npm.fail"
+# By hand, outside af-arch-repair: newer versions, built for this architecture.
+rm -rf "$H/$SP_REL"/greenlet-*.dist-info
+mkdir -p "$H/$SP_REL/greenlet-3.1.0.dist-info"
+printf 'greenlet/_x.cpython-311-aarch64-linux-gnu.so,,\n' >"$H/$SP_REL/greenlet-3.1.0.dist-info/RECORD"
+printf 'Name: greenlet\nVersion: 3.1.0\n\n' >"$H/$SP_REL/greenlet-3.1.0.dist-info/METADATA"
+uvsp="$H/.local/share/uv/tools/ruff/lib/python3.11/site-packages"
+rm -rf "$uvsp" && mkdir -p "$uvsp/ruff-0.5.0.dist-info" && : >"$uvsp/_ruff.cpython-311-aarch64-linux-gnu.so"
+mkdir -p "$H/.local/lib/node_modules/left-pad"
+printf '{"name":"left-pad","version":"1.4.0"}\n' >"$H/.local/lib/node_modules/left-pad/package.json"
+start ""
+check "pip reinstalls the upgraded version, not the listed one" '[ "$(grep "^pip " "$S/calls")" = "pip greenlet==3.1.0" ]'
+check "uv reinstalls the upgraded version" '[ "$(grep "^uv " "$S/calls")" = "uv ruff==0.5.0" ]'
+check "npm reinstalls the upgraded version" '[ "$(grep "^npm " "$S/calls")" = "npm left-pad@1.4.0" ]'
+check "nothing was downgraded" '[ -d "$H/$SP_REL/greenlet-3.1.0.dist-info" ] && grep -q 1.4.0 "$H/.local/lib/node_modules/left-pad/package.json" && [ -d "$uvsp/ruff-0.5.0.dist-info" ]'
+check "the entries leave the lists on success" 'summary | grep -qx "\[arch-repair\] 完了" && [ ! -e "$STATE/arch-repair-pip" ] && [ ! -e "$STATE/arch-repair-uv" ] && [ ! -e "$STATE/arch-repair-npm" ]'
 
 echo "== a uv install that fails and removes the tool's environment"
 new_home uvvanish
