@@ -2,7 +2,8 @@
 
 The CloudFormation templates (`cfn/`) and the scripts (`standup.sh`, `update.sh`, `release-ecr.sh`,
 `pause.sh`, `teardown.sh`, …) for the native AWS adapter (`ecs` / `ecs-ec2`): one ECS service per
-workspace, scaled to zero when it stops. The procedures that use them are in the operator guide:
+workspace, scaled to zero when it stops. The procedures that use them are in the operator guide;
+rows that link a section below are the ones still waiting to move there:
 
 | Page | What it covers |
 |---|---|
@@ -10,19 +11,19 @@ workspace, scaled to zero when it stops. The procedures that use them are in the
 | [Build on ECS](../../../guide/operate/aws-ecs/install.md) | Account prerequisites (service-linked roles, cost allocation tags, capabilities), the ECR push, the `30-ingress` stand-up |
 | [Turn on optional features with stack parameters](../../../guide/operate/aws-ecs/options.md) | Preview subdomains, keys at rest on KMS (and running `af-cp` as a one-off task), remote MCP, provided routes, timers and outside engines, WAF |
 | [Set up the alarm for an unreachable database](../../../guide/operate/aws-ecs/alarms.md) | `CpAlarmEmail`, the `20-platform` redeploy, recovery |
-| [Size workspaces](../../../guide/operate/aws-ecs/workspace-size.md) | Workspace CPU, memory and working disk |
-| [Turn on timed wakes](../../../guide/operate/aws-ecs/schedules.md) | Scheduled execution |
-| [Fix the egress IP address](../../../guide/operate/aws-ecs/egress-ip.md) | The address a customer allow-lists |
-| [Control egress through the gateway](../../../guide/operate/aws-ecs/egress-gateway.md) | `EgressRoute=gateway` |
-| [Add Japanese speech](../../../guide/operate/aws-ecs/tts.md) | The VOICEVOX engine (`cfn/50-tts.yaml`) |
-| [Add inference engines](../../../guide/operate/aws-ecs/engines.md) | The fleet's own engines (`cfn/60-engines.yaml`) |
-| [Use the EC2 slot pool](../../../guide/operate/aws-ecs/slot-pool.md) | `WsRuntime=ecs-ec2` |
+| [Size workspaces](#workspace-size-cpu--memory--working-disk) | Workspace CPU, memory and working disk |
+| [Turn on timed wakes](#scheduled-execution-timed-wakes) | Scheduled execution |
+| [Fix the egress IP address](#egress-ip-the-address-a-customer-allow-lists) | The address a customer allow-lists |
+| [Control egress through the gateway](#egress-gateway-egressroutegateway-adr-0122) | `EgressRoute=gateway` |
+| [Add Japanese speech](#optional-japanese-speech-the-voicevox-engine-cfn50-ttsyaml) | The VOICEVOX engine (`cfn/50-tts.yaml`) |
+| [Add inference engines](#optional-the-fleets-own-inference-engines-cfn60-enginesyaml) | The fleet's own engines (`cfn/60-engines.yaml`) |
+| [Use the EC2 slot pool](#optional-ec2-slot-pool-wsruntimeecs-ec2) | `WsRuntime=ecs-ec2` |
 | [Replace and stop slots](../../../guide/operate/aws-ecs/slot-maintenance.md) | Outdated and unresponsive slots, moving retained slots onto new user data |
 | [Upgrade on ECS](../../../guide/operate/aws-ecs/upgrade.md) | `update.sh`, the manual steps, rollback, `clear-params.sh`, slot AMIs, upgrading from v0.34.x |
-| [Back up and restore EFS](../../../guide/operate/aws-ecs/backup.md) | EFS backup and restore |
-| [Keep costs down](../../../guide/operate/aws-ecs/cost.md) | Cost and ephemerality |
-| [Stand up, pause and tear down with scripts](../../../guide/operate/aws-ecs/lifecycle.md) | The lifecycle scripts |
-| [Tear down](../../../guide/operate/aws-ecs/teardown.md) | Teardown and the orphan sweep |
+| [Back up and restore EFS](#efs-backup-and-restore) | EFS backup and restore |
+| [Keep costs down](#cost--ephemerality) | Cost and ephemerality |
+| [Stand up, pause and tear down with scripts](#lifecycle-scripts-stand-up--pause--tear-down) | The lifecycle scripts |
+| [Tear down](#teardown) | Teardown and the orphan sweep |
 | [IAM permissions for deploying](../../../guide/operate/aws-ecs/iam.md) | The deploying principal's least privilege, the `CpTaskRole` policy budget |
 | [Keep templates under the size limit](../../../guide/operate/aws-ecs/template-size.md) | The 51,200-byte limit and the S3 hand-off |
 | [Troubleshoot ECS](../../../guide/operate/aws-ecs/troubleshooting.md) | Build, parameter, upgrade and start problems by symptom, including a cold start answering `starting` |
