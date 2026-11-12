@@ -150,6 +150,10 @@ type Slot = {
    *  it is on. Only "observing" is produced today; the rest are reserved for the rescue rungs. */
   dark_since?: string;
   rung?: "observing" | "rescuing" | "blocked" | "rescued" | "quarantined" | "";
+  /** When the wedged-slot scan first saw this running slot wedged (its agents answer, but a task is
+   *  stuck stopping or the Agent drops its probe; RFC 3339; ADR 0121 amendment), and the rung. */
+  wedged_since?: string;
+  wedged_rung?: "observing" | "rescuing" | "blocked" | "rescued" | "quarantined" | "";
 };
 /** The reply to a force-stop (#2449). */
 type ForceStopReply = {
@@ -467,6 +471,17 @@ export function PoolView() {
                           {tr("pool.dark", {
                             min: String(Math.max(0, Math.floor((Date.now() - Date.parse(s.dark_since)) / 60000)) || 0),
                             rung: s.rung ? tr(darkRungKey(s.rung)) : "",
+                          })}
+                        </span>
+                      )}
+                      {s.wedged_since && !s.quarantined && (
+                        <span
+                          className="pool-badge outdated"
+                          title={tr(s.wedged_rung === "observing" ? "pool.wedged_title" : "pool.wedged_title_later", { since: s.wedged_since })}
+                        >
+                          {tr("pool.wedged", {
+                            min: String(Math.max(0, Math.floor((Date.now() - Date.parse(s.wedged_since)) / 60000)) || 0),
+                            rung: s.wedged_rung ? tr(darkRungKey(s.wedged_rung)) : "",
                           })}
                         </span>
                       )}

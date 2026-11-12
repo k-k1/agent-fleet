@@ -194,6 +194,26 @@ A slot is considered dark when all of these hold:
 - The Slots table shows a badge "**last seen dark N min · observing**" on the state cell of a running slot with an `af-dark-since` stamp for its current launch. N counts from the first dark observation and the tooltip gives the time. It is the last observation, not a live check: the stamp is removed by the next successful scan of that slot after an agent comes back, and until then it can outlive a recovery (for example when the scan is off, the home is detached, a start holds the slot, or an AWS read failed). A stop and start of the instance drops it at once. The pool API carries it as `dark_since` and `rung`. `rung` is `observing` today; `rescuing`, `blocked`, `rescued` and `quarantined` are reserved for the later rungs. The badge can appear sooner than `pool.slot_dark_detected`, which is written only after `AF_ECS_EC2_DARK_AFTER_SEC`
 - The audit log shows `pool.slot_dark_detected` and the reserved `pool.slot_dark_rescued`, `pool.slot_dark_blocked` and `pool.slot_dark_quarantined` with a one-line explanation as a tooltip
 
+### A slot that answers but is stuck
+
+The same sweep looks for the opposite shape: a slot whose ECS agent is connected, but whose workload cannot make progress. It also **only reports**.
+
+A slot is considered wedged when it holds a home, no start is in flight, EC2 says `running` (launched more than the boot grace ago), its ECS agent is connected, and either:
+
+- a task of its workspace has been `STOPPING` for longer than the stop timeout (`AF_STOP_GRACE_SEC`, 30 seconds by default) plus 5 minutes, or
+- the workspace Agent drops the Control Plane's health probe while ECS reports the task `HEALTHY`. The probe is made only when every task of the service is on that slot; during a task replacement it is unknown and counts for nothing
+
+| Stage | What happens |
+|---|---|
+| The first sweep that sees it wedged | Tags the instance `af-wedged-since` |
+| A sweep that finds it healthy, or its ECS agent disconnected (the dark scan's case) | Removes the tag. A stop and start of the instance voids it too |
+| Wedged for `AF_ECS_EC2_WEDGED_AFTER_SEC` (600 seconds by default) | Writes one log line and one `pool.slot_wedged_detected` audit row (`signal` is `task_stopping` or `agent_probe_failed`) |
+
+- `AF_ECS_EC2_WEDGED_AFTER_SEC` is raised to the same floor as the dark scan's. `0` turns the scan off
+- `AF_ECS_EC2_WEDGED_SLOT_ACTION` is `detect` (the default) or `off`, separate from the dark scan's setting. `release` is reserved for the action that releases the home and currently behaves as `detect`
+- A read that fails counts for nothing: the slot is neither tagged nor cleared
+- The Slots table shows a badge "**last seen wedged N min · observing**", with the same meaning as the dark badge (the last observation, not a live check). The pool API carries it as `wedged_since` and `wedged_rung`
+
 ## Related
 
 - [Upgrade](../run/upgrade.md)

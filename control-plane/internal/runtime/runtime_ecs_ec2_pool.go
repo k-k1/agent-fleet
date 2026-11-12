@@ -206,6 +206,13 @@ type ec2PoolConfig struct {
 	// default 5). Zero means the default.
 	darkProbeBudget  time.Duration
 	darkProbeTimeout time.Duration
+	// wedgedAction / wedgedAfter configure the wedged-slot scan (ADR 0121, amendment of
+	// 2026-11-12): AF_ECS_EC2_WEDGED_SLOT_ACTION (off | detect, default detect) and
+	// AF_ECS_EC2_WEDGED_AFTER_SEC (default 600, 0 = off). A sibling of the dark flag, not the
+	// same one: the dark flag's rung is a rescue of the box, this one's is an ordinary release.
+	// The zero value of wedgedAction is "off", so a pool built without them never scans.
+	wedgedAction string
+	wedgedAfter  time.Duration
 }
 
 const (
@@ -277,6 +284,8 @@ type ecsEC2Factory struct {
 	onAutoReplace func(context.Context, SlotAutoReplace)
 	// onSlotDark is Config.OnSlotDark.
 	onSlotDark func(context.Context, SlotDark)
+	// onSlotWedged is Config.OnSlotWedged.
+	onSlotWedged func(context.Context, SlotWedged)
 	// bg / sleep replace the probe runtime's background runner and sleeper when set; only
 	// tests do, to drive ForceStopSlot's delayed re-stop without waiting for it.
 	bg    func(context.Context, func(context.Context))
@@ -359,8 +368,11 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		darkBootGrace:    time.Duration(EnvInt("AF_ECS_EC2_DARK_BOOT_GRACE_SEC", 300)) * time.Second,
 		darkProbeBudget:  time.Duration(EnvInt("AF_ECS_EC2_DARK_PROBE_BUDGET_SEC", 30)) * time.Second,
 		darkProbeTimeout: time.Duration(EnvInt("AF_ECS_EC2_DARK_PROBE_TIMEOUT_SEC", 5)) * time.Second,
+		wedgedAction:     parseWedgedAction(os.Getenv("AF_ECS_EC2_WEDGED_SLOT_ACTION")),
+		wedgedAfter:      time.Duration(EnvInt("AF_ECS_EC2_WEDGED_AFTER_SEC", 600)) * time.Second,
 	}
 	pool.clampDark()
+	pool.clampWedged()
 	if err := pool.validate(); err != nil {
 		return nil, err
 	}
@@ -376,6 +388,7 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 
 		onAutoReplace: mcfg.OnSlotAutoReplace,
 		onSlotDark:    mcfg.OnSlotDark,
+		onSlotWedged:  mcfg.OnSlotWedged,
 	}
 	if f.leases == nil {
 		log.Printf("ecs-ec2: no store for home leases; a home is serialised within this Control Plane only")

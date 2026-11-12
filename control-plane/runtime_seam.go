@@ -64,6 +64,7 @@ func newRuntimeFactory(profile string, m *manager) (runtime.RuntimeFactory, erro
 		HomeLeases:           m.store,
 		OnSlotAutoReplace:    m.auditSlotAutoReplace,
 		OnSlotDark:           m.auditSlotDark,
+		OnSlotWedged:         m.auditSlotWedged,
 		OnAddressesReleasing: addressReleaseHook(m),
 	})
 }
@@ -141,5 +142,22 @@ func (m *manager) auditSlotDark(ctx context.Context, ev runtime.SlotDark) {
 		Action: "pool.slot_dark_detected", Target: ev.Slot, Detail: detail, At: store.NowTS(),
 	}); err != nil {
 		log.Printf("audit: dark slot %s for %s not recorded: %v", ev.Slot, ev.Workspace, err)
+	}
+}
+
+// auditSlotWedged records that the ecs-ec2 sweeper saw a slot with a home stay wedged: its
+// agents answer, but a task is stuck stopping or the Agent drops its probe (ADR 0121
+// amendment). Detect-only: nothing was done to the slot. Tenant resolution as auditSlotDark.
+func (m *manager) auditSlotWedged(ctx context.Context, ev runtime.SlotWedged) {
+	tenantID := ""
+	if mv, ok, err := m.store.GetMembershipByID(ctx, ev.MembershipID); err == nil && ok {
+		tenantID = mv.TenantID
+	}
+	detail := fmt.Sprintf("workspace=%s volume=%s wedged_since=%s signal=%s", ev.Workspace, ev.Volume, ev.Since.UTC().Format(time.RFC3339), ev.Signal)
+	if err := m.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: tenantID, ActorKind: "system", ActorID: "slot-wedged",
+		Action: "pool.slot_wedged_detected", Target: ev.Slot, Detail: detail, At: store.NowTS(),
+	}); err != nil {
+		log.Printf("audit: wedged slot %s for %s not recorded: %v", ev.Slot, ev.Workspace, err)
 	}
 }

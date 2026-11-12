@@ -55,6 +55,11 @@ type ec2SlotView struct {
 	DarkSince string `json:"dark_since,omitempty"`
 	// Rung is how far the dark-slot ladder has gone: darkRung* below. Empty = not dark.
 	Rung string `json:"rung,omitempty"`
+	// WedgedSince is when the wedged-slot scan first saw this running slot wedged (RFC 3339,
+	// from af-wedged-since; ADR 0121 amendment), and WedgedRung how far it has gone (only
+	// darkRungObserving today). Empty when there is no stamp for the current launch.
+	WedgedSince string `json:"wedged_since,omitempty"`
+	WedgedRung  string `json:"wedged_rung,omitempty"`
 }
 
 // Values of ec2SlotView.Rung (ADR 0121 decision 5). Only observing is produced from the
@@ -78,6 +83,19 @@ func darkView(inst ec2types.Instance) (since, rung string) {
 		return "", ""
 	}
 	st, ok := parseDarkStamp(ec2TagValue(inst.Tags, ec2TagDarkSince))
+	if !ok || !st.launch.Equal(inst.LaunchTime.UTC().Truncate(time.Second)) {
+		return "", ""
+	}
+	return st.since.UTC().Format(time.RFC3339), darkRungObserving
+}
+
+// wedgedView is darkView for af-wedged-since: the last observation, valid only in the launch
+// epoch the stamp names. A pure read.
+func wedgedView(inst ec2types.Instance) (since, rung string) {
+	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning || inst.LaunchTime == nil {
+		return "", ""
+	}
+	st, ok := parseDarkStamp(ec2TagValue(inst.Tags, ec2TagWedgedSince))
 	if !ok || !st.launch.Equal(inst.LaunchTime.UTC().Truncate(time.Second)) {
 		return "", ""
 	}
@@ -356,6 +374,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
 			s.ReplaceReserved = s.ReplaceReservedAt != ""
 			s.DarkSince, s.Rung = darkView(inst)
+			s.WedgedSince, s.WedgedRung = wedgedView(inst)
 			st.Slots = append(st.Slots, s)
 		}
 	}

@@ -194,6 +194,26 @@ Control Plane のスイーパーは、誰かがワークスペースを起動す
 - スロットの一覧では、現在の起動に対する `af-dark-since` があるスロットの状態欄に「**最後の観測: 応答なし N 分・観測中**」というバッジが出ます。N は最初に dark と見たときからの経過で、ツールチップに時刻が出ます。これは最後に観測した状態で、今の確認ではありません。エージェントが戻ったあとも、そのスロットの次のスキャンが成功してタグが外れるまでは残ることがあります（スキャンが off、home が外れている、起動が進行中、AWS の読み取りが失敗した、など）。インスタンスの停止と起動をすると、すぐに消えます。プールの API では `dark_since` と `rung` として返ります。`rung` は今は `observing` だけで、`rescuing`・`blocked`・`rescued`・`quarantined` は後の段階のために予約されています。バッジは `pool.slot_dark_detected` の監査記録より先に出ることがあります
 - 監査ログでは、`pool.slot_dark_detected` と、予約済みの `pool.slot_dark_rescued`・`pool.slot_dark_blocked`・`pool.slot_dark_quarantined` に、ツールチップで 1 行の説明が出ます
 
+### 応答するのに進まないスロット
+
+同じスイープが、逆の形も探す。ECS エージェントは接続中なのに、ワークロードが進まないスロット。こちらも**報告するだけ**。
+
+次がすべて成り立つスロットを wedged（固着）とみなす。home を持ち、起動中の Start が無く、EC2 が `running`（起動の猶予より前に起動）、ECS エージェントが接続中で、さらに次のどちらか。
+
+- ワークスペースのタスクが、停止タイムアウト（`AF_STOP_GRACE_SEC`、既定 30 秒）に 5 分を足した時間より長く `STOPPING` のまま
+- ECS がタスクを `HEALTHY` と報告しているのに、ワークスペース Agent が Control Plane のヘルスプローブを切断する。プローブは、サービスのタスクがすべてそのスロット上にあるときだけ行う。タスクの入れ替え中は不明で、何も数えない
+
+| 段階 | 起きること |
+|---|---|
+| 最初に wedged と見たスイープ | インスタンスに `af-wedged-since` タグを付ける |
+| 健全と確かめたスイープ、または ECS エージェントが切れた（dark のスキャンの対象）スイープ | タグを外す。インスタンスの停止と起動でも無効になる |
+| `AF_ECS_EC2_WEDGED_AFTER_SEC`（既定 600 秒）のあいだ wedged が続いた | ログに 1 行と、監査ログに `pool.slot_wedged_detected` を 1 件残す（`signal` は `task_stopping` か `agent_probe_failed`） |
+
+- `AF_ECS_EC2_WEDGED_AFTER_SEC` は、dark のスキャンと同じ下限まで引き上げられる。`0` でスキャンを止める
+- `AF_ECS_EC2_WEDGED_SLOT_ACTION` は `detect`（既定）か `off`。dark のスキャンの設定とは別。`release` は home を解放するアクションのために予約してあり、今は `detect` として動く
+- 読み取りに失敗したときは何も数えない：タグを付けも外しもしない
+- スロットの一覧では、「**最後の観測: 固着 N 分・観測中**」のバッジが出る。意味は dark のバッジと同じ（最後の観測であって、今の確認ではない）。プール API では `wedged_since` と `wedged_rung`
+
 ## 関連
 
 - [アップグレードする](../run/upgrade.ja.md)
