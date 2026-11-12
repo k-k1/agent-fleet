@@ -18,6 +18,12 @@ func TestContextWindowGuess(t *testing.T) {
 		{"claude-sonnet-5", 0, 1_000_000},
 		{"anthropic/claude-sonnet-5", 0, 1_000_000}, // provider-prefixed, as opencode reports it
 		{"claude-opus-9", 0, 1_000_000},             // unknown future model
+		{"claude-haiku-5-5", 0, 1_000_000},          // the haiku line is 1M from 5.5 on
+		{"claude-haiku-5.5", 0, 1_000_000},          // dotted spelling (copilot)
+		{"anthropic/claude-haiku-5-5", 0, 1_000_000},
+		{"us.anthropic.claude-haiku-5-5", 0, 1_000_000}, // Bedrock
+		{"claude-haiku-5-5@default", 0, 1_000_000},      // Vertex
+		{"claude-haiku-6", 0, 1_000_000},                // future haiku
 		// The 200k exceptions. Do not mistake the generation number "4-5" for "5".
 		{"claude-opus-4-5", 0, 200_000},
 		{"claude-sonnet-4-5-20250929", 0, 200_000},
@@ -26,6 +32,16 @@ func TestContextWindowGuess(t *testing.T) {
 		{"claude-3-5-sonnet-20241022", 0, 200_000},
 		{"claude-3-7-sonnet", 0, 200_000},
 		{"claude-haiku-4-5-20251001", 0, 200_000},
+		{"claude-haiku-4-5", 0, 200_000},
+		{"claude-haiku-4.5", 0, 200_000},
+		{"claude-haiku-4", 0, 200_000},
+		{"anthropic/claude-haiku-4-5", 0, 200_000},
+		{"us.anthropic.claude-haiku-4-5-20251001-v1:0", 0, 200_000},
+		{"claude-haiku-4-5@20251001", 0, 200_000},
+		{"claude-3-haiku-20240307", 0, 200_000},
+		{"claude-3-5-haiku-20241022", 0, 200_000},
+		{"claude-haiku-3-5", 0, 200_000},
+		{"haiku", 0, 200_000}, // bare alias: no generation to read, so the cautious 200k
 		// gpt-5.x, plus non-Claude models of unknown provenance (widened once the
 		// observed usage exceeds it).
 		{"gpt-5.1-codex", 0, 272_000},

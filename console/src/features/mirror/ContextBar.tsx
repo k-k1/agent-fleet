@@ -9,15 +9,15 @@ import { fmtNum } from "../../lib/intl.ts";
 // 4.6 / Sonnet 4.6 onward and new models are expected to stay that way, so 1M is the
 // default and only the *small* windows are enumerated — listing the big ones instead
 // meant every new model (Opus 5, Sonnet 5, …) silently read as 200k until someone
-// remembered to add it. SMALL_WINDOW_CLAUDE covers haiku (200k through 4.5), Claude
+// remembered to add it. SMALL_WINDOW_CLAUDE covers haiku through 4.5 (Haiku 5.5 is 1M), Claude
 // 3.x and older, and Opus 4.0/4.1/4.5 + Sonnet 4.0/4.5 — dated ids look like
 // opus-4-20250514, hence the "4-2" in the class (it can't collide with the 1M-side
 // 4-6/4-7/4-8). GPT-5.x is 272k (codex normally records its real window; this is the
 // fallback for paths without it, e.g. the assistant chat's codex exec). Non-Claude
 // unknowns assume 200k but grow to fit once observed usage exceeds it.
-// Mirrored in Go as contextWindowGuess() (workspace/agent/session_usage.go, the MCP
+// Mirrored in Go as usagex.WindowGuess() (workspace/agent/internal/usagex/usage.go, the MCP
 // get_session_usage aggregation) — keep the two in sync.
-const SMALL_WINDOW_CLAUDE = /haiku|claude-[123]|opus-4-[0125]|sonnet-4-[025]/;
+const SMALL_WINDOW_CLAUDE = /haiku-[1-4](?:\D|$)|claude-[123]|opus-4-[0125]|sonnet-4-[025]/;
 
 export function contextWindow(model: string | null | undefined, used: number): number {
   const m = (model || "").toLowerCase();

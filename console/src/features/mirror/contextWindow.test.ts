@@ -19,6 +19,12 @@ describe("contextWindow", () => {
       "claude-mythos-5",
       "anthropic/claude-sonnet-5", // provider-prefixed, as opencode reports it
       "claude-opus-9", // unknown future model
+      "claude-haiku-5-5", // the haiku line is 1M from 5.5 on
+      "claude-haiku-5.5", // dotted spelling (copilot)
+      "anthropic/claude-haiku-5-5",
+      "us.anthropic.claude-haiku-5-5", // Bedrock
+      "claude-haiku-5-5@default", // Vertex
+      "claude-haiku-6", // future haiku
     ]) {
       expect(contextWindow(m, 0), m).toBe(1000000);
     }
@@ -33,6 +39,16 @@ describe("contextWindow", () => {
       "claude-3-5-sonnet-20241022",
       "claude-3-7-sonnet",
       "claude-haiku-4-5-20251001",
+      "claude-haiku-4-5",
+      "claude-haiku-4.5",
+      "claude-haiku-4",
+      "anthropic/claude-haiku-4-5",
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "claude-haiku-4-5@20251001",
+      "claude-3-haiku-20240307",
+      "claude-3-5-haiku-20241022",
+      "claude-haiku-3-5",
+      "haiku", // bare alias: no generation to read, so the cautious 200k
     ]) {
       expect(contextWindow(m, 0), m).toBe(200000);
     }
