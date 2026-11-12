@@ -56,7 +56,7 @@ Taking a model into the deployment's catalogue is normally the deployment admini
 2. Search for a model on Hugging Face, Civitai or by URL
 3. Read the plan on the card and press **Take it in**
 
-Search and the plan card work as on the deployment administrator's screen. Details are in [Taking models in](../../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants).
+Search and the plan card work as on the deployment administrator's screen. Details are in [Read the plan and take it in](../../operate/engines/models.md#read-the-plan-and-take-it-in).
 
 | What you can do | What only the deployment administrator can do |
 |---|---|
@@ -73,5 +73,5 @@ Search and the plan card work as on the deployment administrator's screen. Detai
 ## Related
 
 - [Generate images](../../user/images/generate.md)
-- [Inference engines and read aloud (for deployment administrators)](../../operate/07-engines.md#inference-engines-self-hosted-gpus-superadmin-only)
+- [Run inference engines on your own GPUs (for deployment administrators)](../../operate/engines/gpu.md)
 - [Set session limits](session-limits.md)

@@ -68,11 +68,11 @@ Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates mo
 | A Workspace still starting is stopped after | 30 minutes | `AF_WORKSPACE_START_DEADLINE`; `0` turns it off ([Use idle stop and force-stop](../operate/run/idle-stop.md#stop-starts-that-never-finish)) |
 | A Workspace whose Agent stays silent is stopped after | off | `AF_AGENT_SILENT_STOP_AFTER` (minimum `10m`; [Use idle stop and force-stop](../operate/run/idle-stop.md#stop-a-silent-agent-automatically)) |
 | Home and state volumes (kubernetes) | 50 GiB and 5 GiB | `AF_K8S_HOME_GIB`, `AF_K8S_STATE_GIB` |
-| Raw egress events (one per workspace connection through the egress gateway) kept for | 30 days | `AF_EGRESS_EVENT_RETENTION_DAYS`; `0` keeps them forever. The per-host daily counts stay; on AWS set the 30-ingress parameter `EgressEventRetentionDays` (empty keeps 30) ([operate/04](../operate/04-secure.md#operating-egress-control)) |
+| Raw egress events (one per workspace connection through the egress gateway) kept for | 30 days | `AF_EGRESS_EVENT_RETENTION_DAYS`; `0` keeps them forever. The per-host daily counts stay; on AWS set the 30-ingress parameter `EgressEventRetentionDays` (empty keeps 30) ([Control outbound traffic](../operate/secure/egress.md#keep-the-records)) |
 
 The self-hosted engines' own auto-stop is not in this table: **Stop after** is set per role under
 Admin → Inference engines, and a saved value wins over the engine stack's default from the
-controller's next pass ([operate/07](../operate/07-engines.md#inference-engines-self-hosted-gpus-superadmin-only)).
+controller's next pass ([Run inference engines on your own GPUs](../operate/engines/gpu.md#set-the-idle-stop)).
 
 ## Set per tenant
 

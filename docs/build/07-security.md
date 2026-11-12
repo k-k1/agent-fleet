@@ -506,7 +506,7 @@ returns the result without storing the token.
   itself, as before; 1 and up are a domain-separated root, so token keys no longer share a
   derivation root with the credential keys and can be rotated without touching a stored
   credential). `af-cp advance-bridge-epochs --yes` advances every membership once. Operating
-  it: [guide 12](../../guide/operate/12-keys.md#rotating-the-bridge-tokens).
+  it: [Rotate the bridge tokens](../../guide/operate/keys/bridge-tokens.md).
 
 ### 7.5.1 The member-origin mark
 
@@ -642,7 +642,7 @@ credentials as exposed and rotate them.
   when KMS does. The same custodian seals the tenant secrets above and the session handoff
   and share payloads. Values sealed before a switch to KMS are opened by the local custodian,
   chosen by their format, never by a KMS failure; `af-cp rewrap-keys` re-seals them under KMS
-  in one pass (2026-10-10 addendum, [operate/12](../../guide/operate/12-keys.md#re-sealing-values-stored-before-the-switch)).
+  in one pass (2026-10-10 addendum, [operate/keys/kms](../../guide/operate/keys/kms.md#re-seal-values-stored-before-the-switch)).
 - ⚠️ **The honest limit**: with the local custodian the KEK derives from the master key, so
   the effective strength equals a single master key. With KMS, disabling the key shreds what
   was sealed after the switch — but the workspace DEK itself is still derived from the master

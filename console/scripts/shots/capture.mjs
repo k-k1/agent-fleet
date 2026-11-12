@@ -2629,6 +2629,196 @@ const SCENES = [
     })()`,
     settle: 1500,
   },
+  // ---- operate pages: security (SHOT_OPERATE_SECURE) ----
+  {
+    // Admin › Deployment › Egress: the mode switch in log-only, a member's proposal waiting for
+    // approval, the added allowlist with the built-in Control Plane host, and the observed destinations.
+    name: "operate-egress",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_SECURE: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(通信|Egress)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .adm-egress-row"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 800));
+      const m = document.querySelector(".admin-modal .settings-content") || document.querySelector(".admin-modal");
+      if (m) { m.style.maxHeight = "none"; m.style.height = "auto"; }
+      (document.querySelector(".admin-modal .admin-stage") || document.querySelector(".admin-modal .admin-panel"))?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Admin › Deployment › MCP sign-in hosts: a saved list with host-only entries, so the warning
+    // that recommends URL prefixes shows, and Reset to default.
+    name: "operate-mcp-trusted",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_SECURE: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(MCP ログイン許可ホスト|MCP sign-in hosts)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal textarea"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 800));
+      const m = document.querySelector(".admin-modal .settings-content") || document.querySelector(".admin-modal");
+      if (m) { m.style.maxHeight = "none"; m.style.height = "auto"; }
+      (document.querySelector(".admin-modal .admin-stage") || document.querySelector(".admin-modal .admin-panel"))?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Admin › Deployment › Dev sign-in: the switch on, the issuer, the number of workspaces holding
+    // a client and the warning never to trust the issuer in production.
+    name: "operate-dev-idp",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_SECURE: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(開発用ログイン|Dev sign-in)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal input[type=checkbox]"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 800));
+      const m = document.querySelector(".admin-modal .settings-content") || document.querySelector(".admin-modal");
+      if (m) { m.style.maxHeight = "none"; m.style.height = "auto"; }
+      (document.querySelector(".admin-modal .admin-stage") || document.querySelector(".admin-modal .admin-panel"))?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Admin › Slots (operate/aws-ecs/slot-maintenance): an outdated slot with its automatic
+    // replacement, a reserved one, a wedged one with Stop (force), and the bulk reservation.
+    name: "operate-slots",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_KEYS: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      for (let i = 0; i < 50 && ![...document.querySelectorAll(".admin-modal .settings-rail-item")].some((b) => /^(スロット|Slots)$/.test((b.textContent || "").trim())); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(スロット|Slots)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .pool-table"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".admin-modal .pool-view .admin-panel")?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Admin › Inference engines (SHOT_OPERATE_GPU): the chat engine's row — the mode, what is
+    // running and until when, the idle stop and a GPU class left above the default.
+    name: "operate-gpu-engine",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_GPU: "1" },
+    clip: "#shot-operate-gpu",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1300,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(推論エンジン|Inference engines)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .engines-class"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".admin-modal .admin-panel")?.setAttribute("id", "shot-operate-gpu");
+    })()`,
+    settle: 1500,
+  },
+  {
+    // The same row's 14-day history, opened, with a blank (unrecorded) stretch on it.
+    name: "operate-gpu-history",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_GPU: "1" },
+    clip: "#shot-operate-gpu",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1500,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(推論エンジン|Inference engines)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .engines-history"); i++) await new Promise((r) => setTimeout(r, 200));
+      const d = document.querySelector(".admin-modal .engines-history");
+      // Only the history: the rest of the row is the operate-gpu-engine picture, and with it
+      // above, the opened grid runs past the bottom of the modal.
+      for (const el of d.parentElement.children) if (el !== d) el.style.display = "none";
+      d.open = true;
+      d.style.width = "fit-content";
+      d.setAttribute("id", "shot-operate-gpu");
+    })()`,
+    settle: 2500,
+  },
+  {
+    // The model catalogue opened from the chat engine's row, on its search face: three invented
+    // GGUF repositories, one gated, each with its Add button.
+    name: "operate-gpu-catalog",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_GPU: "1" },
+    clip: ".engine-catalog-pane",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1300,
+    height: 600,
+    layout: { cols: [col("c0", [pane("p0", null, { kind: "engineAdd", engineKey: "llm", lora: false, view: "search" })])], colRatios: [1], activeId: "p0" },
+    settle: 2500,
+  },
+  {
+    // Admin › Read aloud: the speech engine's mode and state, and the shared reading dictionary.
+    name: "operate-gpu-tts",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_GPU: "1" },
+    clip: "#shot-operate-gpu",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(読み上げ|Read aloud)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .ds-userdict"); i++) await new Promise((r) => setTimeout(r, 200));
+      document.querySelector(".admin-modal .admin-stage")?.setAttribute("id", "shot-operate-gpu");
+    })()`,
+    settle: 1500,
+  },
   // ---- operate pages: engines outside the fleet (SHOT_OPERATE_ENGINES) ----
   ...[
     // Admin › Inference engines: the LAN ComfyUI panel (URL, write-only key, what removing falls back to).

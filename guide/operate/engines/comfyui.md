@@ -133,7 +133,7 @@ On the Inference engines screen this kind of engine appears as "**External**". I
 
 ## Register the models
 
-Nothing takes files in. The model list is a declaration you write. On the Inference engines screen, register each model with the following (the screen is in [Inference engines and read aloud](../07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
+Nothing takes files in. The model list is a declaration you write. On the Inference engines screen, register each model with the following (the screen is in [Take models into the inference engines](models.md)).
 
 | Field | What to write |
 |---|---|
@@ -161,7 +161,7 @@ Workspace containers can reach out through NAT, so unless you act, **sessions ca
 | Way | What it does |
 |---|---|
 | Put a reverse proxy in front of ComfyUI | Require a bearer and give the key to the Control Plane only. Require the same bearer on `/system_stats` (the health check). `comfyui-lan.sh --api-key-file` sets up this proxy. This is the one that works today |
-| Enforce egress control | Drops traffic to private addresses that are not on the allowlist. Workspace traffic is not yet forced through the proxy, though ([Security Operations](../04-secure.md#operating-egress-control)) |
+| Enforce egress control | Drops traffic to private addresses that are not on the allowlist. Workspace traffic is not yet forced through the proxy, though ([Control outbound traffic](../secure/egress.md)) |
 
 With neither, anyone with a session on this deployment can use that GPU.
 
@@ -189,5 +189,5 @@ Check in this order:
 
 - [Borrow another deployment's engines](borrow.md)
 - [Chat on a llama.cpp on your LAN](llama-cpp.md)
-- [Inference engines and read aloud](../07-engines.md): the Inference engines screen and registering models
+- [Take models into the inference engines](models.md): the Inference engines screen and registering models
 - [Deployment targets](../../ref/deploy-targets.md): what each target supports

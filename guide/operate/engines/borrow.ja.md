@@ -178,5 +178,5 @@ URL とトークンは両方そろったときだけ借ります。片方だけ�
 
 - [自前の ComfyUI で画像を生成する](comfyui.ja.md)
 - [LAN の llama.cpp でチャットする](llama-cpp.ja.md)：借りていた `llm` を LAN の llama.cpp に切り替える
-- [推論エンジンと読み上げ](../07-engines.ja.md)：貸す側の推論エンジンの画面
+- [自前の GPU で推論エンジンを動かす](gpu.ja.md)：貸す側の推論エンジンの画面
 - [配備形態](../../ref/deploy-targets.ja.md)

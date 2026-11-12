@@ -77,7 +77,7 @@ The Control Plane reads these once at start. Restart the Control Plane after cha
 1. Set `AF_LLM_URL` (and `AF_ENGINE_API_KEY_LLM`) and restart the Control Plane.
 2. Under Admin → "**Inference engines**", register the models on the `llm` row. Make the **id** the name you gave `--alias`.
 
-Nothing takes files in. Write the id, `base_model` and window (`context_tokens`) so they match llama-server's command. The screen is in [Inference engines and read aloud](../07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants).
+Nothing takes files in. Write the id, `base_model` and window (`context_tokens`) so they match llama-server's command. The screen is in [Take models into the inference engines](models.md).
 
 ## Switching from a borrowed engine
 
@@ -117,5 +117,5 @@ Everything above is a deployment-wide setting. Separately, a member can connect 
 
 - [Generate images on your own ComfyUI](comfyui.md)
 - [Borrow another deployment's engines](borrow.md)
-- [Inference engines and read aloud](../07-engines.md)
+- [Take models into the inference engines](models.md)
 - [Deployment targets](../../ref/deploy-targets.md)

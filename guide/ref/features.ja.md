@@ -174,25 +174,25 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 |---|---|---|---|
 | 配備形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
 | 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [インストールする](../operate/install.ja.md) / [アップグレードする](../operate/run/upgrade.ja.md) / [バックアップして復元する](../operate/run/backup-restore.ja.md) |
-| 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 04](../operate/04-secure.ja.md) |
-| 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 04](../operate/04-secure.ja.md#egress-統制の運用) |
-| MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [operator 04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ) |
-| プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [operator 04](../operate/04-secure.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
-| AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [operator 12](../operate/12-keys.ja.md) |
+| 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [サインイン](../operate/signin/overview.ja.md) |
+| 監査ログと egress 統制 | 配備管理者 | 管理 | [外向きの通信を制御する](../operate/secure/egress.ja.md) |
+| MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
+| プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [開発用サインインを使う](../operate/secure/dev-signin.ja.md#開発用-oidc-idp-をオンオフする) |
+| AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)・[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md) |
 | この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
 | 使わない間の配備の一時停止 | 配備管理者 | 端末 | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
-| 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-起動テンプレートを変えたあとのスロットの入れ替え) |
-| 動かなくなったスロットの強制停止 | 配備管理者（super_admin）| 管理 → スロット → 停止（強制）| [operator 11](../operate/11-slot-pool.ja.md#ecs-ec2-動かなくなったスロットの停止) |
-| 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [operator 07](../operate/07-engines.ja.md#gpu-のインスタンスクラス) |
-| モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
-| S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジン → モデルカタログ → バケット | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
-| 目録のモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
-| 配布元の量子化一覧と、GPU クラスに収まるかの判定 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
-| Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
-| 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [operator 07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
-| 音声エンジンと共通の読み仮名辞書 | 配備管理者（super_admin）| 管理 → 読み上げ | [operator 07](../operate/07-engines.ja.md#読み上げ音声エンジンと共通の読み仮名辞書) |
+| 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [スロットを入れ替える・止める](../operate/aws-ecs/slot-maintenance.ja.md#古いスロット) |
+| 動かなくなったスロットの強制停止 | 配備管理者（super_admin）| 管理 → スロット → 停止（強制）| [スロットを入れ替える・止める](../operate/aws-ecs/slot-maintenance.ja.md#応答しないスロットを止める) |
+| 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [自前の GPU で推論エンジンを動かす](../operate/engines/gpu.ja.md#gpu-のインスタンスクラスを選ぶ) |
+| モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#計画を読んで取り込む) |
+| S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジン → モデルカタログ → バケット | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#s3-bucket-を見る) |
+| 目録のモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#登録済みの行を整える) |
+| 配布元の量子化一覧と、GPU クラスに収まるかの判定 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#別のサイズやバージョンに替える) |
+| Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#トークンを登録する) |
+| 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#トークンを登録する) |
+| 音声エンジンと共通の読み仮名辞書 | 配備管理者（super_admin）| 管理 → 読み上げ | [読み上げエンジンを動かす](../operate/engines/read-aloud.ja.md) |
 | 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 08](../operate/engines/comfyui.ja.md) |
 | 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 09](../operate/engines/borrow.ja.md) |
 | 自前の llama.cpp でのチャット推論 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 10](../operate/engines/llama-cpp.ja.md) |

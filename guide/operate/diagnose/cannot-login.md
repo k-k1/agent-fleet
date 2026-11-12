@@ -113,7 +113,7 @@ Inviting somebody who signs in through another tenant's method is refused with `
 Disabling the account at the IdP **does not end a session they already have**. The signed cookie lasts up to `AF_SESSION_TTL` (7 days by default), and there is no way to revoke one person's.
 
 - Remove them from the roster (**Admin → Tenants → the tenant → Members → Remove member**) or from the allowlist. Either takes effect from the next request
-- To end everybody's sessions at once, rotate `AF_COOKIE_SECRET` ([Security Operations](../04-secure.md))
+- To end everybody's sessions at once, rotate `AF_COOKIE_SECRET` ([Revoke access and hand over super_admin](../secure/offboarding.md#end-everybodys-sessions-now))
 
 ## The cookie is not kept, and people land back on the sign-in page
 

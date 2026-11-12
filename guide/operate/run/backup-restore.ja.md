@@ -84,4 +84,4 @@ cron のエントリの例は手順書にあります。取ったあと、`KEEP`
 ## 関連
 
 - [アップグレードする](upgrade.ja.md)：アップグレードの前には必ずバックアップを取ります
-- [守る](../04-secure.ja.md)：`AF_MASTER_KEY` の紛失が意味すること
+- [配備の鍵を扱う](../secure/deployment-keys.ja.md)：`AF_MASTER_KEY` の紛失が意味すること

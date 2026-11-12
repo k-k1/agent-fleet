@@ -29,7 +29,7 @@ const deploymentWarnPlaintextSecrets = "plaintext_secrets"
 const plaintextSecretsLog = "WARNING: AUTH=%s but AF_MASTER_KEY is not set: workspace credentials " +
 	"(git tokens, the Claude token, API keys, MCP and chat connections) are stored UNENCRYPTED in each member's home. " +
 	"Set AF_MASTER_KEY and restart, stop and start every existing workspace, then have members reconnect " +
-	"their credentials (see guide/operate/04-secure.md)"
+	"their credentials (see guide/operate/secure/deployment-keys.md)"
 
 // plaintextSecrets reports whether this deployment stores workspace credentials unencrypted
 // while signing real people in.
@@ -44,7 +44,7 @@ const deploymentWarnAuthDev = "auth_dev"
 const authDevLog = "WARNING: AUTH=dev with " + auth.AllowInsecureDevAuthEnv + "=1: there is NO authentication and every " +
 	"request is a fixed super_admin. Anyone who can reach this Control Plane controls every workspace. " +
 	"Use it on a machine only you can reach; set AUTH=oauth or AUTH=proxy for anything shared " +
-	"(see guide/operate/04-secure.md)"
+	"(see guide/operate/secure/dev-signin.md)"
 
 // authDevInsecure reports AUTH=dev on a container runtime (reachable only through the explicit
 // opt-in), the case the Console banner exists for. The native runtimes are single-user by design.
@@ -119,7 +119,7 @@ func weakKeyRefusal(authMode string, weakMaster, weakCookie bool) error {
 	}
 	return fmt.Errorf("AUTH=%s and %s shorter than 32 bytes of key material (or a repeated pattern): refusing to start. "+
 		"Generate a new value with `head -c 32 /dev/urandom | base64`; do not replace AF_MASTER_KEY on a deployment that "+
-		"already holds sealed values before reading guide/operate/04-secure.md and guide/operate/12-keys.md "+
+		"already holds sealed values before reading guide/operate/secure/deployment-keys.md and guide/operate/keys/kms.md "+
 		"(changing AF_COOKIE_SECRET only signs everyone out once). AUTH=dev is exempt",
 		authMode, strings.Join(names, " and ")+weakKeyVerb(len(names)))
 }

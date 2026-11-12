@@ -57,5 +57,6 @@ The AWS WAF offers only two choices:
 
 ## Related
 
-- [Security operations](../04-secure.md): the threat model and egress control
+- [Understand the threat model and residual risks](../secure/threat-model.md)
+- [Control outbound traffic](../secure/egress.md)
 - [The ECS runbook](../../../deploy/aws/ecs/README.md)

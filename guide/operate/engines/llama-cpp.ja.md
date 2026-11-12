@@ -77,7 +77,7 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 1. `AF_LLM_URL`（と `AF_ENGINE_API_KEY_LLM`）を設定して、Control Plane を再起動します。
 2. 管理 → 「**推論エンジン**」で、`llm` の行にモデルを登録します。**id** は `--alias` に渡した名前にします。
 
-ファイルを取り込む仕組みはありません。id・`base_model`・窓（`context_tokens`）を、llama-server の起動コマンドと合うように書きます。登録の画面は [推論エンジンと読み上げ](../07-engines.ja.md#モデルの取り込みとテナントとの関係) にあります。
+ファイルを取り込む仕組みはありません。id・`base_model`・窓（`context_tokens`）を、llama-server の起動コマンドと合うように書きます。登録の画面は [推論エンジンにモデルを取り込む](models.ja.md) にあります。
 
 ## 借りていたエンジンから切り替えるとき
 
@@ -117,5 +117,5 @@ Control Plane は自分が持っていないエンジンを待ちません。lla
 
 - [自前の ComfyUI で画像を生成する](comfyui.ja.md)
 - [別のデプロイのエンジンを借りる](borrow.ja.md)
-- [推論エンジンと読み上げ](../07-engines.ja.md)
+- [推論エンジンにモデルを取り込む](models.ja.md)
 - [配備形態](../../ref/deploy-targets.ja.md)

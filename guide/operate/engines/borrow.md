@@ -178,5 +178,5 @@ Look at the borrowing side's Control Plane log first. A borrowed row that never 
 
 - [Generate images on your own ComfyUI](comfyui.md)
 - [Chat on a llama.cpp on your LAN](llama-cpp.md): switch a borrowed `llm` to a llama.cpp on the LAN
-- [Inference engines and read aloud](../07-engines.md): the lending side's Inference engines screen
+- [Run inference engines on your own GPUs](gpu.md): the lending side's Inference engines screen
 - [Deployment targets](../../ref/deploy-targets.md)
