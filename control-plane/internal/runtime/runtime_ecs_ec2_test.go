@@ -104,6 +104,9 @@ type fakeEC2 struct {
 	// in `stopping` instead of `stopped`, the way a wedged box answers a graceful stop.
 	stopForce []bool
 	stopHold  bool
+	// describeInstancesErr, when set, is asked at the start of every DescribeInstances; a
+	// non-nil answer fails the call.
+	describeInstancesErr func() error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -300,6 +303,11 @@ func (f *fakeEC2) DescribeVolumes(_ context.Context, in *ec2.DescribeVolumesInpu
 }
 
 func (f *fakeEC2) DescribeInstances(ctx context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	if fn := f.describeInstancesErr; fn != nil {
+		if err := fn(); err != nil {
+			return nil, err
+		}
+	}
 	if d := f.describeDelay; d > 0 {
 		select {
 		case <-time.After(d):
@@ -793,6 +801,8 @@ type fakeSSMCmd struct {
 	cancelled  []string
 	online     map[string]bool
 	infoErr    error
+	// listErr makes ListCommands fail.
+	listErr error
 }
 
 func (f *fakeSSMCmd) ListCommands(_ context.Context, in *ssm.ListCommandsInput, _ ...func(*ssm.Options)) (*ssm.ListCommandsOutput, error) {
@@ -801,6 +811,9 @@ func (f *fakeSSMCmd) ListCommands(_ context.Context, in *ssm.ListCommandsInput, 
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	out := &ssm.ListCommandsOutput{}
 	if len(in.Filters) == 1 && aws.ToString(in.Filters[0].Value) == "Pending" {
 		out.Commands = append(out.Commands, f.unfinished...)

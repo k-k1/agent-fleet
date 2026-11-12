@@ -1,0 +1,596 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+)
+
+// Rung L1 of ADR 0121, first phase: take ownership of a dark slot's home, write the rescue
+// marker, end the occupant's Start, and cancel the CP's own pending SSM commands, then
+// resume and finalize after a restart. No AWS call here deregisters, stops or detaches
+// anything: those steps (decision 2, steps 4-6) are not built, so a rescue ends where this
+// file's steps end and drops its marker.
+//
+// Which task answered a Service Connect probe cannot be proven (the Agent's /healthz carries
+// no identity), so a slot whose service is up is never rescued, whatever the probe says. The
+// check runs under the claim lock, in rescuePrepare.
+
+const (
+	// ec2TagWedgeAt is the `began` of the latest episode that acted on the box, RFC 3339.
+	// Advisory (ADR 0121 Open question 8): nothing gates on it.
+	ec2TagWedgeAt = "af-wedge-at"
+)
+
+// Bounds on waiting for a lock. They are variables only so a test can shorten them.
+var (
+	// rescueClaimBudget bounds the wait for the claim lock; rescueMountBudget the wait for
+	// the mount lock, after which the rescue stops for this pass and the next one retries.
+	rescueClaimBudget = 20 * time.Second
+	rescueMountBudget = 30 * time.Second
+	// rescueWedgeBudget bounds the wait for the per-instance finalizer lease.
+	rescueWedgeBudget = 10 * time.Second
+	// rescueTagBudget bounds a marker removal that must go out even when the pass's own
+	// context has ended.
+	rescueTagBudget = 15 * time.Second
+)
+
+// rescueStepHook is the crash matrix's seam: a test sets it, and a step that gets an error
+// back returns at once, leaving the world as a dead process would. Nil in production.
+var rescueStepHook func(step string) error
+
+// errRescueCrash is what a test hook returns to stop a rescue where it stands.
+var errRescueCrash = errors.New("test: process died here")
+
+func rescueStep(step string) error {
+	if rescueStepHook == nil {
+		return nil
+	}
+	return rescueStepHook(step)
+}
+
+var (
+	// errRescueStepAside: nothing was written; somebody acted since the decision, or the
+	// slot is not one a rescue may take. The next pass decides again.
+	errRescueStepAside = errors.New("rescue steps aside")
+	// errRescueOvertaken: the rescue owned the home and no longer does (the Start count
+	// moved, the marker or the home is gone). The caller finalizes: the rest is dropped,
+	// the episode is kept.
+	errRescueOvertaken = errors.New("rescue overtaken")
+	// errRescueBusy: the mount lock was not had within its bound. The marker stays; the
+	// next pass resumes.
+	errRescueBusy = errors.New("rescue could not take the mount lock")
+	// errRescueAborted: a lock, a read or a lease failed. The step did not run; the marker
+	// stays and the resume scan retries. A doubt is never read as permission.
+	errRescueAborted = errors.New("rescue step aborted")
+)
+
+// darkDecision is what the dark scan knew when it decided to rescue: the Start count it
+// read before the predicate's legs (g_d), the launch epoch and the home.
+type darkDecision struct {
+	slot   string
+	vol    *ec2types.Volume
+	launch time.Time
+	gd     int64
+}
+
+// lockBounded is lockHome / lockSubject with a bound on the wait only: the context of the
+// work under the lock has no deadline of its own. A wait that ran out, or ran out as the
+// lock arrived, is an error and the lock is given back.
+func (e *ecsEC2Runtime) lockBounded(ctx context.Context, which, subject string, budget time.Duration) (context.Context, func(), error) {
+	wait, cancelWait := context.WithCancel(ctx)
+	timer := time.AfterFunc(budget, cancelWait)
+	lctx, unlock, err := e.lockSubject(wait, which, subject)
+	if err != nil {
+		timer.Stop()
+		cancelWait()
+		return nil, nil, err
+	}
+	if !timer.Stop() {
+		unlock()
+		cancelWait()
+		return nil, nil, fmt.Errorf("%w: %s%s not had within %s", errHomeLockLost, which, subject, budget)
+	}
+	return lctx, func() { unlock(); cancelWait() }, nil
+}
+
+// rescueDarkSlot is the entry from the dark scan for a slot that has been dark for darkAfter.
+func (f *ecsEC2Factory) rescueDarkSlot(ctx context.Context, d darkDecision) {
+	if f.pool.darkAction != darkActionRescue {
+		return
+	}
+	rt := f.runtimeForVolume(d.vol)
+	cmds, ok := f.ssmc.(ssmSlotCommands)
+	if rt == nil || !ok {
+		return
+	}
+	m, ids, err := rt.rescuePrepare(ctx, cmds, d)
+	if err != nil {
+		if !errors.Is(err, errRescueStepAside) {
+			log.Printf("ecs-ec2 sweep: rescue of %s on %s not started: %v", rt.base.name, d.slot, err)
+		}
+		return
+	}
+	log.Printf("ecs-ec2 sweep: rescuing %s from the dark slot %s (marker %s)", rt.base.name, d.slot, m)
+	f.rescueContinue(ctx, rt, cmds, d.slot, m, ids)
+}
+
+// rescueStartCount is g_d: read before the predicate's legs, so a Start that lands while
+// they are read is one the locked step in rescuePrepare sees as a moved count.
+func (f *ecsEC2Factory) rescueStartCount(ctx context.Context, vol *ec2types.Volume) (int64, bool) {
+	rt := f.runtimeForVolume(vol)
+	if rt == nil {
+		return 0, false
+	}
+	g, err := rt.startGenNow(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: rescue: start count of %s unreadable: %v", rt.base.name, err)
+		return 0, false
+	}
+	return g, true
+}
+
+// rescuePrepare is decision 2 step 1 and decision 4's ownership step, under the claim lock
+// alone: require the count still to be g_d and bump it to g_r, write the marker, end any
+// Start as a Stop does, and fix the set of the CP's pending SSM commands. Nothing here waits
+// for the mount lock.
+//
+// The marker goes out before the count moves, naming the g_r the bump will produce: under
+// the claim lock nothing else can bump it, and a marker written after the bump would leave a
+// window in which the count says "somebody owns this" and nothing says who.
+func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands, d darkDecision) (rescueMarker, []string, error) {
+	var m rescueMarker
+	lctx, unlock, err := e.lockBounded(ctx, homeLockClaim, e.base.name, rescueClaimBudget)
+	if err != nil {
+		return m, nil, fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+	defer unlock()
+	guard := homeGuardOf(lctx)
+
+	g, err := e.startGenNow(lctx)
+	if err != nil {
+		return m, nil, fmt.Errorf("%w: start count: %w", errRescueAborted, err)
+	}
+	if g != d.gd {
+		return m, nil, fmt.Errorf("%w: the start count moved (%d, decided at %d)", errRescueStepAside, g, d.gd)
+	}
+	vol, err := e.homeVolume(lctx)
+	if err != nil {
+		return m, nil, fmt.Errorf("%w: home: %w", errRescueAborted, err)
+	}
+	volumeID := aws.ToString(d.vol.VolumeId)
+	if vol == nil || aws.ToString(vol.VolumeId) != volumeID || attachedInstance(vol) != d.slot {
+		return m, nil, fmt.Errorf("%w: the home is no longer on %s", errRescueStepAside, d.slot)
+	}
+	if e.claimLive(vol) {
+		return m, nil, fmt.Errorf("%w: a Start holds a live claim", errRescueStepAside)
+	}
+	svc, exists, err := e.base.describeService(lctx)
+	if err != nil {
+		return m, nil, fmt.Errorf("%w: service: %w", errRescueAborted, err)
+	}
+	if exists && svc.DesiredCount > 0 {
+		// A probe through the shared alias cannot say which task answered, so a service that
+		// is up is not rescued: the container may be serving its member.
+		return m, nil, fmt.Errorf("%w: the service is up and the Agent's identity is not proven", errRescueStepAside)
+	}
+	inst, err := e.slotInstance(lctx, d.slot)
+	if err != nil {
+		return m, nil, fmt.Errorf("%w: slot: %w", errRescueAborted, err)
+	}
+	if inst == nil || inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning ||
+		inst.LaunchTime == nil || !inst.LaunchTime.UTC().Truncate(time.Second).Equal(d.launch) ||
+		ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleSlot {
+		return m, nil, fmt.Errorf("%w: the box is not the running slot the decision saw", errRescueStepAside)
+	}
+	if v := ec2TagValue(inst.Tags, ec2TagRescue); v != "" {
+		return m, nil, fmt.Errorf("%w: a rescue marker is already on the box", errRescueStepAside)
+	}
+	if err := guard.check(); err != nil {
+		return m, nil, fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+
+	m = rescueMarker{Volume: volumeID, Epoch: d.launch, Phase: rescuePhaseBegun, Gen: g + 1, Began: e.now().UTC().Truncate(time.Second)}
+	if err := e.writeRescueMarker(lctx, d.slot, m); err != nil {
+		e.dropRescueMarker(ctx, d.slot, m.String())
+		return rescueMarker{}, nil, fmt.Errorf("%w: marker: %w", errRescueAborted, err)
+	}
+	if err := rescueStep("marked"); err != nil {
+		return rescueMarker{}, nil, err
+	}
+	gr, err := e.bumpStartCount(lctx)
+	if err == nil && gr != m.Gen {
+		err = fmt.Errorf("the count is %d, expected %d", gr, m.Gen)
+	}
+	if err != nil {
+		e.dropRescueMarker(ctx, d.slot, m.String())
+		return rescueMarker{}, nil, fmt.Errorf("%w: bump: %w", errRescueAborted, err)
+	}
+	if err := rescueStep("counted"); err != nil {
+		return rescueMarker{}, nil, err
+	}
+
+	// End the Start the way a Stop does. The service is already at desired 0 (checked above,
+	// and a Start that could raise it needs the claim lock we hold); the bump overtook any
+	// Start that was converging. The dormancy clock is deliberately not restarted.
+	e.clearBlockedPhase()
+	e.setPhase("")
+	e.dropClaimOnStop(lctx)
+	if err := rescueStep("ended-start"); err != nil {
+		return rescueMarker{}, nil, err
+	}
+
+	ids, err := listSlotVolumeCommandIDs(lctx, cmds, d.slot)
+	if err != nil {
+		e.dropRescueMarker(ctx, d.slot, m.String())
+		return rescueMarker{}, nil, fmt.Errorf("%w: list commands: %w", errRescueAborted, err)
+	}
+	if err := rescueStep("listed"); err != nil {
+		return rescueMarker{}, nil, err
+	}
+	return m, ids, nil
+}
+
+// bumpStartCount is beginStart's increment, for a caller that already holds the claim lock.
+func (e *ecsEC2Runtime) bumpStartCount(lctx context.Context) (int64, error) {
+	if e.leases == nil {
+		return e.generation().Add(1), nil
+	}
+	gen, err := e.leases.BumpCPCounter(lctx, homeStartGen+e.base.name)
+	if err = homeGuardOf(lctx).outcome(err); err != nil {
+		return 0, err
+	}
+	return gen, nil
+}
+
+// slotInstance reads one instance of this pool by id; nil when it is not there.
+func (e *ecsEC2Runtime) slotInstance(ctx context.Context, instanceID string) (*ec2types.Instance, error) {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(EC2TagPool, e.pool.pool),
+			{Name: aws.String("instance-id"), Values: []string{instanceID}},
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range out.Reservations {
+		for i := range r.Instances {
+			if aws.ToString(r.Instances[i].InstanceId) == instanceID {
+				return &r.Instances[i], nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (e *ecsEC2Runtime) writeRescueMarker(ctx context.Context, instanceID string, m rescueMarker) error {
+	_, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagRescue), Value: aws.String(m.String())}},
+	})
+	return err
+}
+
+// dropRescueMarker removes the marker only while it still carries exactly value: EC2 deletes
+// a tag given a value only if the value matches, so a late-resuming old rescue can never
+// delete a newer rescue's marker. It runs on its own deadline: it is the cleanup after a
+// failure, and the failure may be the pass's own context ending.
+func (e *ecsEC2Runtime) dropRescueMarker(ctx context.Context, instanceID, value string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rescueTagBudget)
+	defer cancel()
+	_, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagRescue), Value: aws.String(value)}},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2: removing the rescue marker on %s failed (the resume scan will): %v", instanceID, err)
+	}
+	return err
+}
+
+// listSlotVolumeCommandIDs lists the CP's own unfinished commands on the box. Unlike
+// cancelSlotVolumeCommands a failed read is an error: the set is fixed from this answer, so
+// a partial one would be a rescue that cancelled some of what holds the mount lock.
+func listSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID string) ([]string, error) {
+	var ids []string
+	for _, status := range []string{"Pending", "InProgress"} {
+		var next *string
+		for {
+			out, err := c.ListCommands(ctx, &ssm.ListCommandsInput{
+				InstanceId: aws.String(instanceID),
+				Filters:    []ssmtypes.CommandFilter{{Key: ssmtypes.CommandFilterKeyStatus, Value: aws.String(status)}},
+				NextToken:  next,
+			})
+			if err != nil {
+				return nil, err
+			}
+			for _, cmd := range out.Commands {
+				if aws.ToString(cmd.Comment) == slotVolumeCommandComment {
+					ids = append(ids, aws.ToString(cmd.CommandId))
+				}
+			}
+			if next = out.NextToken; next == nil {
+				break
+			}
+		}
+	}
+	return ids, nil
+}
+
+// rescueContinue runs what follows the preparation: cancel exactly the fixed set with no
+// lock held, then the guarded steps. Decision 2 steps 4-6 are not built, so the guarded
+// section only proves the rescue still owns the home, and the rescue then ends.
+func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, cmds ssmSlotCommands, slot string, m rescueMarker, ids []string) {
+	if err := rescueStep("before-cancel"); err != nil {
+		return
+	}
+	cancelled, failed := cancelCommandIDs(ctx, cmds, slot, ids)
+	if cancelled+failed > 0 {
+		log.Printf("ecs-ec2 sweep: rescue of %s: cancelled %d pending commands on %s (%d failed)", rt.base.name, cancelled, slot, failed)
+	}
+	if err := rescueStep("cancelled"); err != nil {
+		return
+	}
+	err := rt.rescueGuarded(ctx, m, slot, func(context.Context) error {
+		return rescueStep("guarded")
+	})
+	switch {
+	case err == nil:
+		// The destructive steps are the next change; a rescue that cannot take them ends
+		// here and says so, instead of leaving a marker that fences every releaser for good.
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s ends after its preparation; deregister/stop/detach are not built", rt.base.name, slot)
+		rt.finalizeRescue(ctx, slot, m.String(), m)
+	case errors.Is(err, errRescueOvertaken):
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s overtaken: %v", rt.base.name, slot, err)
+		rt.finalizeRescue(ctx, slot, m.String(), m)
+	case errors.Is(err, errRescueCrash):
+	default:
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s stopped for this pass: %v", rt.base.name, slot, err)
+	}
+}
+
+// cancelCommandIDs cancels exactly ids. A command that cannot be cancelled is counted: the
+// mount lock bound is what then keeps the rescue from waiting on it for good.
+func cancelCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID string, ids []string) (cancelled, failed int) {
+	for _, id := range ids {
+		if _, err := c.CancelCommand(ctx, &ssm.CancelCommandInput{CommandId: aws.String(id), InstanceIds: []string{instanceID}}); err != nil {
+			log.Printf("ecs-ec2: cancelling SSM command %s on %s: %v", id, instanceID, err)
+			failed++
+			continue
+		}
+		cancelled++
+	}
+	return cancelled, failed
+}
+
+// rescueGuarded runs fn only while this rescue still owns the home, under the mount lock
+// with the token re-verified under the claim lock nested inside it (decision 4, lock order).
+// A lock not taken, a count not readable and a lease that lapsed abort the step: the
+// unguarded fallback of ifOwned is deliberately not used.
+func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m rescueMarker, instanceID string, fn func(context.Context) error) error {
+	mctx, unlockMount, err := e.lockBounded(ctx, homeLockMount, e.base.name, rescueMountBudget)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errRescueBusy, err)
+	}
+	defer unlockMount()
+	cctx, unlockClaim, err := e.lockBounded(mctx, homeLockClaim, e.base.name, rescueClaimBudget)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+	defer unlockClaim()
+	if err := e.rescueOwned(cctx, m, instanceID); err != nil {
+		return err
+	}
+	// Asked here, not left to the contexts: their end is a timer's callback, which a
+	// goroutine resumed past the deadline can outrun.
+	if err := homeGuardOf(mctx).check(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+	if err := homeGuardOf(cctx).check(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+	err = fn(cctx)
+	if lost := homeGuardOf(cctx).check(); lost != nil && err == nil {
+		err = lost
+	}
+	return err
+}
+
+// rescueOwned is the token check of decision 4: the count is exactly g_r, the box carries
+// this rescue's marker in this launch epoch, and the home is still on the box.
+func (e *ecsEC2Runtime) rescueOwned(ctx context.Context, m rescueMarker, instanceID string) error {
+	g, err := e.startGenNow(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: start count: %w", errRescueAborted, err)
+	}
+	if g != m.Gen {
+		return fmt.Errorf("%w: the start count is %d, the rescue holds %d", errRescueOvertaken, g, m.Gen)
+	}
+	inst, err := e.slotInstance(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("%w: slot: %w", errRescueAborted, err)
+	}
+	if inst == nil {
+		return fmt.Errorf("%w: the box is gone", errRescueOvertaken)
+	}
+	cur, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue))
+	if !ok || !cur.sameRescue(m) {
+		return fmt.Errorf("%w: the box does not carry this rescue's marker", errRescueOvertaken)
+	}
+	if inst.LaunchTime == nil || !inst.LaunchTime.UTC().Truncate(time.Second).Equal(m.Epoch) {
+		return fmt.Errorf("%w: the box was started again", errRescueOvertaken)
+	}
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: home: %w", errRescueAborted, err)
+	}
+	if vol == nil || aws.ToString(vol.VolumeId) != m.Volume || attachedInstance(vol) != instanceID {
+		return fmt.Errorf("%w: the home is no longer on the box", errRescueOvertaken)
+	}
+	return nil
+}
+
+// finalizeRescue is the finalizer of decision 4. It touches tags only, so it needs no count
+// or epoch match. A marker still at `begun` took no action on the box and is just removed;
+// any later phase may have acted on it, so it is an episode: af-wedge-at gets the marker's
+// `began` if that is later than what is there, under the per-instance lease, and then the
+// marker (matched on its exact value, raw) is removed. A lease not had, a read or a write
+// that fails leaves the marker for the next pass.
+func (e *ecsEC2Runtime) finalizeRescue(ctx context.Context, instanceID, raw string, m rescueMarker) {
+	if m.Phase != rescuePhaseBegun {
+		ctx, unlock, err := e.lockBounded(ctx, homeLockWedge, instanceID, rescueWedgeBudget)
+		if err != nil {
+			log.Printf("ecs-ec2: finalizing the rescue of %s: no lease, the marker stays: %v", instanceID, err)
+			return
+		}
+		defer unlock()
+		inst, err := e.slotInstance(ctx, instanceID)
+		if err != nil {
+			log.Printf("ecs-ec2: finalizing the rescue of %s: reading the box: %v", instanceID, err)
+			return
+		}
+		if inst == nil {
+			return // gone, and its tags with it
+		}
+		cur, err := time.Parse(time.RFC3339, ec2TagValue(inst.Tags, ec2TagWedgeAt))
+		if err != nil || m.Began.After(cur) {
+			// The clock decides, not the lease's timer callback.
+			if err := homeGuardOf(ctx).check(); err != nil {
+				log.Printf("ecs-ec2: finalizing the rescue of %s: lease lapsed, the marker stays: %v", instanceID, err)
+				return
+			}
+			if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+				Resources: []string{instanceID},
+				Tags:      []ec2types.Tag{{Key: aws.String(ec2TagWedgeAt), Value: aws.String(m.Began.UTC().Format(time.RFC3339))}},
+			}); err != nil {
+				log.Printf("ecs-ec2: recording the episode on %s failed, the marker stays: %v", instanceID, err)
+				return
+			}
+		}
+	}
+	e.dropRescueMarker(ctx, instanceID, raw)
+}
+
+// resumeRescues is the resume scan: every marker on a box of this pool, whatever the box's
+// state. A marker that still matches (same home on the box, same launch epoch, count still
+// g_r) and whose action is still `rescue` continues; any other is finalized. The match is
+// read under the claim lock, so a rescue that is still preparing on another replica is
+// waited for rather than mistaken for one whose count never moved.
+func (f *ecsEC2Factory) resumeRescues(ctx context.Context) {
+	probe := f.probeRuntime()
+	insts, err := probe.rescueMarkedInstances(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: rescue resume scan skipped, cannot read the markers: %v", err)
+		return
+	}
+	cmds, _ := f.ssmc.(ssmSlotCommands)
+	for _, inst := range insts {
+		id := aws.ToString(inst.InstanceId)
+		raw := ec2TagValue(inst.Tags, ec2TagRescue)
+		m, ok := parseRescueMarker(raw)
+		if !ok {
+			log.Printf("ecs-ec2 sweep: the rescue marker on %s does not parse (%q); leaving it, it still fences its home", id, raw)
+			continue
+		}
+		f.resumeRescue(ctx, probe, cmds, inst, raw, m)
+	}
+}
+
+func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, cmds ssmSlotCommands, inst ec2types.Instance, raw string, m rescueMarker) {
+	id := aws.ToString(inst.InstanceId)
+	// Filtered, not looked up by id: a volume that is gone answers an error by id, which
+	// would read as "could not ask".
+	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{{Name: aws.String("volume-id"), Values: []string{m.Volume}}},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: resume of the rescue on %s: reading %s: %v", id, m.Volume, err)
+		return
+	}
+	var vol *ec2types.Volume
+	for i := range vols.Volumes {
+		if s := vols.Volumes[i].State; s != ec2types.VolumeStateDeleting && s != ec2types.VolumeStateDeleted {
+			vol = &vols.Volumes[i]
+		}
+	}
+	var rt *ecsEC2Runtime
+	if vol != nil {
+		rt = f.runtimeForVolume(vol)
+	}
+	if rt == nil {
+		// The home is gone, or it carries no owner the sweeper can lock for: no count to
+		// compare, so nothing of the rescue can continue.
+		probe.finalizeRescue(ctx, id, raw, m)
+		return
+	}
+	var ids []string
+	strict, err := func() (bool, error) {
+		lctx, unlock, err := rt.lockBounded(ctx, homeLockClaim, rt.base.name, rescueClaimBudget)
+		if err != nil {
+			return false, err
+		}
+		defer unlock()
+		g, err := rt.startGenNow(lctx)
+		if err != nil {
+			return false, err
+		}
+		strict := attachedInstance(vol) == id && inst.LaunchTime != nil &&
+			inst.LaunchTime.UTC().Truncate(time.Second).Equal(m.Epoch) && g == m.Gen
+		// Only a rescue this build can continue lists commands again, under the claim lock
+		// with the count at g_r, and cancels only what the listing returns.
+		if strict && f.pool.darkAction == darkActionRescue && m.Phase == rescuePhaseBegun && cmds != nil {
+			ids, err = listSlotVolumeCommandIDs(lctx, cmds, id)
+			if err != nil {
+				return false, err
+			}
+		}
+		return strict, homeGuardOf(lctx).check()
+	}()
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: resume of the rescue on %s: %v; the marker stays", id, err)
+		return
+	}
+	if !strict || f.pool.darkAction != darkActionRescue || m.Phase != rescuePhaseBegun || cmds == nil {
+		// Not a rescue this pass can carry on (overtaken, or the action is no longer
+		// `rescue`, or a phase this build never writes): record the episode, drop the rest.
+		rt.finalizeRescue(ctx, id, raw, m)
+		return
+	}
+	log.Printf("ecs-ec2 sweep: resuming the rescue of %s on %s (phase %s)", rt.base.name, id, m.Phase)
+	f.rescueContinue(ctx, rt, cmds, id, m, ids)
+}
+
+// rescueMarkedInstances lists the boxes of this pool that carry a marker, in any live state.
+func (e *ecsEC2Runtime) rescueMarkedInstances(ctx context.Context) ([]ec2types.Instance, error) {
+	var out []ec2types.Instance
+	var next *string
+	for {
+		res, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+			Filters: []ec2types.Filter{
+				tagFilter(EC2TagPool, e.pool.pool),
+				{Name: aws.String("tag-key"), Values: []string{ec2TagRescue}},
+				{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+			},
+			NextToken: next,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range res.Reservations {
+			out = append(out, r.Instances...)
+		}
+		if next = res.NextToken; next == nil || *next == "" {
+			return out, nil
+		}
+	}
+}
