@@ -25,15 +25,68 @@
 #   壊れているものを名指しするところまで。
 #
 # 使い方: af-arch-repair <前のアーキ> <いまのアーキ>   （amd64 / arm64）
+#         af-arch-repair --due   (exit 0 when an automatic retry is waiting, 1 otherwise)
+#
+# ## Retries
+#
+# A reinstall that fails leaves its list behind (arch-repair-npm / -pip / -uv, one item per
+# line), and every later start re-runs this script while a list is non-empty — the arch stamp
+# is already current by then, so without these lists nothing would ever run again. The
+# entrypoint asks `--due` and passes AF_ARCH_REPAIR_AUTO=change|retry; a run by hand passes
+# neither and leaves the counter alone.
+#
+# The retries are capped at MAX_RETRIES starts after the one that changed architecture: a
+# package that cannot be installed (gone from the index, no wheel for this arch, no network
+# at all) would otherwise add its timeouts to every start forever. Once the cap is reached
+# the lists stay (a run by hand still uses them) and the leftovers go into arch-residue as a
+# `pkgs:` line, so the member's notification names them — the only place they can read it.
 set -uo pipefail
+
+STATE="$HOME/.local/share/agent-fleet"
+NPM_MANIFEST="$STATE/arch-repair-npm"
+PIP_MANIFEST="$STATE/arch-repair-pip"
+UV_MANIFEST="$STATE/arch-repair-uv"
+TRIES_FILE="$STATE/arch-repair-tries"   # "<automatic retries done> <architecture before the change>"
+MAX_RETRIES=3
+
+pending() { [ -s "$NPM_MANIFEST" ] || [ -s "$PIP_MANIFEST" ] || [ -s "$UV_MANIFEST" ]; }
+tries_done() {
+  local n=""
+  read -r n _ < "$TRIES_FILE" 2>/dev/null || true
+  case "$n" in '' | *[!0-9]*) echo 0 ;; *) echo "$n" ;; esac
+}
+
+if [ "${1:-}" = --due ]; then
+  pending && [ "$(tries_done)" -lt "$MAX_RETRIES" ]
+  exit
+fi
 
 WAS="${1:-}"; NOW="${2:-}"
 [ -n "$NOW" ] || { echo "usage: af-arch-repair <was> <now>" >&2; exit 2; }
 REPAIR_PY="${AF_REPAIR_PY:-1}"
-STATE="$HOME/.local/share/agent-fleet"
-NPM_MANIFEST="$STATE/arch-repair-npm"
+MODE="${AF_ARCH_REPAIR_AUTO:-}"
 say() { echo "[arch-repair] $*"; }
-fail=0
+mkdir -p "$STATE" 2>/dev/null || true
+
+# The counter is reset by the start that changed architecture and counts the starts after it;
+# that start's own attempt is not a retry. A retry start knows no "before" architecture, so
+# it reads the one the change start recorded (it only appears in messages).
+case "$MODE" in
+  change) printf '0 %s\n' "$WAS" > "$TRIES_FILE" 2>/dev/null || true ;;
+  retry)
+    read -r _ rec_was < "$TRIES_FILE" 2>/dev/null || rec_was=""
+    case "$WAS" in '' | '?') WAS="${rec_was:-?}" ;; esac
+    printf '%s %s\n' "$(( $(tries_done) + 1 ))" "$WAS" > "$TRIES_FILE" 2>/dev/null || true
+    ;;
+esac
+# A retry start only retries what failed before; the change start and a run by hand look at
+# everything.
+want() { [ "$MODE" != retry ] || [ -s "$1" ]; }
+# Writes the list of what is still to be reinstalled, or removes it when nothing is.
+keep_list() {
+  local f="$1"; shift
+  if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$f" 2>/dev/null || true; else rm -f "$f"; fi
+}
 
 # ---------------------------------------------------------------- pip --user
 # 壊れているのは**拡張モジュールを持つ dist だけ**で、純 python のものはアーキが変わっても
@@ -73,8 +126,14 @@ if out:
 PY
 }
 
-if [ "$REPAIR_PY" = 1 ]; then
+if [ "$REPAIR_PY" != 1 ]; then
+  # The python major moved: the recorded versions may not exist for the new python, so an
+  # earlier failure is not retried either.
+  [ -s "$PIP_MANIFEST" ] && say "pip: Python のメジャー版が変わったので、前回失敗した入れ直しはやめます: $(tr '\n' ' ' < "$PIP_MANIFEST")"
+  rm -f "$PIP_MANIFEST"
+elif want "$PIP_MANIFEST"; then
   mapfile -t PKGS < <(pip_broken)
+  keep_list "$PIP_MANIFEST"
   if [ "${#PKGS[@]}" -gt 0 ]; then
     say "pip: ${#PKGS[@]} 件を同じ版で入れ直します: ${PKGS[*]}"
     # ⚠️ --no-deps は必須。壊れているのは拡張を持つ dist だけで、その依存（純 python）は
@@ -83,9 +142,9 @@ if [ "$REPAIR_PY" = 1 ]; then
     if pip install --user --force-reinstall --no-deps "${PKGS[@]}"; then
       say "pip: 完了"
     else
-      say "WARN: pip の入れ直しに失敗しました（ネットワーク？）。次の起動でもう一度試します"
+      say "WARN: pip の入れ直しに失敗しました（ネットワーク？）"
       say "WARN:   手で直す: pip install --user --force-reinstall --no-deps ${PKGS[*]}"
-      fail=1
+      keep_list "$PIP_MANIFEST" "${PKGS[@]}"
     fi
   fi
 fi
@@ -93,7 +152,10 @@ fi
 # ---------------------------------------------------------------- uv tools
 # uv の tool は 1 本ずつが独立した venv なので、壊れ方は pip と同じ。⚠️ `uv tool upgrade` は
 # 使わない——あれは版を上げる操作で、ここでやりたいのは「同じ版で入れ直す」である。
-if command -v uv >/dev/null 2>&1 && [ -d "$HOME/.local/share/uv/tools" ]; then
+UV_FAILED=()
+if ! want "$UV_MANIFEST"; then
+  :
+elif command -v uv >/dev/null 2>&1 && [ -d "$HOME/.local/share/uv/tools" ]; then
   for d in "$HOME"/.local/share/uv/tools/*; do
     [ -d "$d" ] || continue
     tool="$(basename "$d")"
@@ -117,9 +179,13 @@ PY
     say "uv tool: $req を入れ直します"
     if ! uv tool install --force --reinstall "$req"; then
       say "WARN: uv tool $req の入れ直しに失敗しました。手で直す: uv tool install --force --reinstall $req"
-      fail=1
+      UV_FAILED+=("$req")
     fi
   done
+  keep_list "$UV_MANIFEST" ${UV_FAILED[@]+"${UV_FAILED[@]}"}
+else
+  # uv or its tools are gone: there is nothing left to reinstall.
+  rm -f "$UV_MANIFEST"
 fi
 
 # ---------------------------------------------------------------- npm -g
@@ -137,9 +203,8 @@ if [ -s "$NPM_MANIFEST" ]; then
       say "npm -g: 完了"
       rm -f "$NPM_MANIFEST"
     else
-      say "WARN: npm -g の入れ直しに失敗しました。次の起動でもう一度試します"
+      say "WARN: npm -g の入れ直しに失敗しました"
       say "WARN:   手で直す: npm install -g --prefix ~/.local ${GLOBALS[*]}"
-      fail=1
     fi
   else
     rm -f "$NPM_MANIFEST"
@@ -213,14 +278,37 @@ if [ -n "$stale" ]; then
   say "⚠️  直す: node_modules → npm ci ／ target → cargo clean && cargo build ／ .venv → 作り直し"
 fi
 
+# What is still to be reinstalled, and whether a later start will try again. Read from the
+# lists rather than tracked on the way, so the summary and the notification cannot disagree
+# with what the next start actually does.
+left=()
+for kind in pip uv npm; do
+  case "$kind" in pip) f="$PIP_MANIFEST" ;; uv) f="$UV_MANIFEST" ;; npm) f="$NPM_MANIFEST" ;; esac
+  [ -s "$f" ] || continue
+  while IFS= read -r l; do [ -n "${l// /}" ] && left+=("$kind:$l"); done < "$f"
+done
+retries_left=$(( MAX_RETRIES - $(tries_done) ))
+[ "${#left[@]}" -gt 0 ] || rm -f "$TRIES_FILE"
+# Only leftovers no start will retry go into the notification: a transient failure that the
+# next start fixes should not reach the member at all.
+gave_up=""
+[ "${#left[@]}" -gt 0 ] && [ "$retries_left" -le 0 ] && gave_up="${left[*]}"
+
 # 検出結果を「いま壊れている集合」として書き出す。通知はこの内容のハッシュを event_id に
 # するので、集合が変わらない限り増えず、直せば集合から消えて自然に鳴り止む
 # （ADR 0068 決定 4 の続き・出来事は 1 回・残骸は状態）。
 { [ -n "$stale" ] && printf 'repos: %s\n' "$stale"
   [ -n "$orphans" ] && printf 'bin:%s\n' "$orphans"
+  [ -n "$gave_up" ] && printf 'pkgs: %s\n' "$gave_up"
   true
 } > "$STATE/arch-residue" 2>/dev/null || true
 [ -s "$STATE/arch-residue" ] || rm -f "$STATE/arch-residue"
 
-[ "$fail" = 0 ] && say "完了" || say "一部やり直しが残っています（次の起動で再試行します）"
+if [ "${#left[@]}" -eq 0 ]; then
+  say "完了"
+elif [ "$retries_left" -gt 0 ]; then
+  say "入れ直せなかったものが残っています: ${left[*]}（次の起動で自動でもう一度試します。自動で試すのはあと $retries_left 回です）"
+else
+  say "入れ直せなかったものが残っています: ${left[*]}（自動ではもう試しません。上の WARN: の行のコマンドか、af-arch-repair ${WAS:-<was>} $NOW を実行してください）"
+fi
 exit 0

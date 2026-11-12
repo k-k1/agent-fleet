@@ -1403,9 +1403,16 @@ fi
 # When the python major changed in the same start, pip reinstalls are not attempted (the
 # same version may not exist for the new python, and it would silently resolve another
 # one); that degrades to a notice.
-if [ -n "${AF_ARCH_REPAIR_FROM:-}" ] || [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ]; then
-  AF_REPAIR_PY=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1) \
-    af-arch-repair "${AF_ARCH_REPAIR_FROM:-?}" "$af_arch_now" || true
+# A reinstall that failed is retried at later starts, where the arch stamp is already
+# current: `af-arch-repair --due` says whether a list of failures is pending and the retry
+# cap (3 starts) is not used up, so a package that never installs stops costing start time.
+af_repair_py=$([ "${af_py_changed:-0}" = 1 ] && echo 0 || echo 1)
+if [ -n "${AF_ARCH_REPAIR_FROM:-}" ]; then
+  AF_ARCH_REPAIR_AUTO=change AF_REPAIR_PY=$af_repair_py \
+    af-arch-repair "$AF_ARCH_REPAIR_FROM" "$af_arch_now" || true
+elif af-arch-repair --due; then
+  AF_ARCH_REPAIR_AUTO=retry AF_REPAIR_PY=$af_repair_py \
+    af-arch-repair "?" "$af_arch_now" || true
 fi
 # Surface what could not be repaired (build outputs under ~/repos, self-built binaries)
 # where the user will see it. The [entrypoint] / [arch-repair] output above goes only to

@@ -113,7 +113,7 @@ Each kind has its own price and speed, and the names and what they mean are the 
 Choosing a machine of a different CPU family, such as Intel and Arm, shows a warning on the form and makes the next start a few minutes longer.
 
 - The home is kept. What in it was built for one family is reinstalled automatically at start: the agent CLIs, Chromium, the selected JDK and node, and what the member installed (`pip install --user`, `uv tool`, `npm i -g`) as far as it is detected, normally at the same versions
-- Not restored automatically: `node_modules` / `target` / `.venv` under `~/repos` (kept, but reinstall them with `npm ci` and the like) and binaries placed straight in `~/.local/bin`. A notification names the ones it detects; detection has limits, and a failed reinstall raises none ([af-arch-repair](../../ref/cli/af-arch-repair.md))
+- Not restored automatically: `node_modules` / `target` / `.venv` under `~/repos` (kept, but reinstall them with `npm ci` and the like) and binaries placed straight in `~/.local/bin`. A notification names the ones it detects; detection has limits. A failed reinstall is retried at up to 3 later starts and named in the notification only after that ([af-arch-repair](../../ref/cli/af-arch-repair.md))
 - JDK and node versions that are not selected are not restored either. The member reinstalls them from [Toolchains](../../user/workspace/toolchains.md) if needed
 
 ## Related

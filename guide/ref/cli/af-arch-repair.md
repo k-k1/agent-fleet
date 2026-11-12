@@ -9,8 +9,8 @@ English | [日本語](af-arch-repair.ja.md)
 
 Reinstalls, at the same versions, what you installed into your home yourself, after the workspace moved to a machine
 of another CPU architecture (`amd64` ↔ `arm64`). The workspace runs it on its own during that start; you run it by
-hand only to retry or to see what is still broken. Leftovers it finds but must not fix, it names in a Console
-notification. It finds what it looks for, not everything: see [Limits](#limits).
+hand only to retry or to see what is still broken. A reinstall that fails is retried at the next few starts. Leftovers
+it finds but must not fix, and reinstalls it stopped retrying, it names in a Console notification. It finds what it looks for, not everything: see [Limits](#limits).
 
 The tools Agent Fleet itself installs (the agent CLIs, the selected JDK and Node.js, Chromium) are reinstalled by the
 workspace's start, not by af-arch-repair.
@@ -27,6 +27,13 @@ Without `<now>` it prints `usage: af-arch-repair <was> <now>` and exits with sta
 ```sh
 af-arch-repair amd64 arm64
 ```
+
+```sh
+af-arch-repair --due
+```
+
+`--due` changes nothing and prints nothing. It exits with status 0 when a failed reinstall is waiting for an automatic
+retry (see [Retries](#retries)), and 1 otherwise. The workspace's start uses it.
 
 ## What it reinstalls
 
@@ -79,36 +86,51 @@ Its own lines start with `[arch-repair]`; the output of `pip`, `uv` and `npm` ap
 [arch-repair] 完了
 ```
 
-When a reinstall fails it prints a `WARN:` line with the command to run by hand.
+When a reinstall fails it prints a `WARN:` line with the command to run by hand, and the last line names what is
+still to be reinstalled and whether a later start will try again:
+
+```
+[arch-repair] 入れ直せなかったものが残っています: pip:greenlet==3.0.3（次の起動で自動でもう一度試します。自動で試すのはあと 3 回です）
+```
 
 During the workspace's start this output goes to the start log, which you cannot see. What you see is the notification
-**Some things could not be restored automatically**, listing the leftover `~/repos` directories and `~/.local/bin`
-programs. It is raised from the file af-arch-repair writes, `~/.local/share/agent-fleet/arch-residue`, which holds the
+**Some things could not be restored automatically**, listing the leftover `~/repos` directories, `~/.local/bin`
+programs, and the reinstalls no start will retry any more (such as `pip:greenlet==3.0.3` or `npm:cowsay@1.6.0`). It is
+raised from the file af-arch-repair writes, `~/.local/share/agent-fleet/arch-residue`, which holds the
 current leftovers and is removed when there are none. A notification already shown for the same leftovers is not
 shown again.
 
-**A failed reinstall raises no notification.** When pip, uv or npm failed and nothing is left under `~/repos` or in
-`~/.local/bin`, nothing tells you. If a tool you installed yourself stops working after a move, run
-`af-arch-repair <was> <now>` in a terminal and read its `WARN:` lines.
+A failed reinstall reaches the notification only once its automatic retries are used up: a failure the next start
+fixes is never shown. While retries remain, a tool you installed yourself can stay broken for a few starts; run
+`af-arch-repair <was> <now>` in a terminal to retry at once and read its `WARN:` lines.
 
 ## Retries
 
-| What failed | Retried |
+A failed reinstall leaves its list in `~/.local/share/agent-fleet` (`arch-repair-npm`, `arch-repair-pip`,
+`arch-repair-uv`), and the next start runs af-arch-repair again while a list remains, also when the architecture did
+not change at that start.
+
+| What | Behaviour |
 |---|---|
-| npm packages | At the next start: the list stays until the reinstall succeeds |
-| pip packages, uv tools | Only when af-arch-repair runs again: by hand, or at a start that also retries npm. Run the command in the `WARN:` line, or `af-arch-repair <was> <now>` |
+| What a retry reinstalls | Only the kinds that failed (pip, uv, npm). pip and uv are checked again first, so a package you have fixed or upgraded yourself in the meantime is left alone |
+| How often | At most 3 starts after the one that changed architecture. A package that cannot be installed would otherwise slow down every start |
+| After the 3rd failed retry | No start retries it. The leftovers are named in the notification, and the lists stay: run the command in the `WARN:` line, or `af-arch-repair <was> <now>` |
+| Run by hand | Retries everything that is broken, whatever the count. When it succeeds, the lists and the notification's leftovers are removed |
+| Python major version changed at that start | A pending pip failure is dropped, not retried: the same version may not exist for the new Python |
 
 ## Environment
 
 | Variable | Effect |
 |---|---|
 | `AF_REPAIR_PY=0` | Skips the pip reinstall. The workspace sets it when the Python major version changed in the same start, because the same package version may not exist for the new Python |
+| `AF_ARCH_REPAIR_AUTO` | Set by the workspace's start: `change` resets the retry count, `retry` counts one retry and reinstalls only what failed before. Do not set it yourself |
 
 ## Exit status
 
 | Status | Meaning |
 |---|---|
-| 0 | It ran, including when a reinstall failed (the output says so) |
+| 0 | It ran, including when a reinstall failed (the output says so). With `--due`: a retry is waiting |
+| 1 | With `--due` only: no retry is waiting |
 | 2 | `<now>` is missing |
 
 ## Related

@@ -114,7 +114,7 @@ home がネットワークストレージの AWS では、ビルドがこれで�
 Intel と Arm のように CPU の系統が変わる種類を選ぶと、フォームに警告が出て、次の起動が数分長くなります。
 
 - home は残ります。中にある系統ごとのものは、起動のときに自動で入れ直します。エージェントの CLI・Chromium・選択中の JDK と node・メンバーが入れたもののうち見つかったもの（`pip install --user`・`uv tool`・`npm i -g`）が対象で、ふつうはバージョンも変わりません
-- 自動で戻らないのは、`~/repos` の `node_modules` / `target` / `.venv`（消えませんが、`npm ci` などで入れ直します）と、`~/.local/bin` に直接置いたバイナリです。見つかったものは通知で名前が出ます。見つけかたには限界があり、入れ直しの失敗では通知は出ません（[af-arch-repair](../../ref/cli/af-arch-repair.ja.md)）
+- 自動で戻らないのは、`~/repos` の `node_modules` / `target` / `.venv`（消えませんが、`npm ci` などで入れ直します）と、`~/.local/bin` に直接置いたバイナリです。見つかったものは通知で名前が出ます。見つけかたには限界があります。失敗した入れ直しは、あとの起動で最大 3 回やり直し、それでも残ったときだけ通知に名前が出ます（[af-arch-repair](../../ref/cli/af-arch-repair.ja.md)）
 - 選択していない JDK や node のバージョンも戻りません。要るときはメンバーが [ツールチェーン](../../user/workspace/toolchains.ja.md) から入れ直します
 
 ## 関連

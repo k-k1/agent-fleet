@@ -410,7 +410,9 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     // to fix it from a terminal.
     const repos = Array.isArray(n.payload.repos) ? (n.payload.repos as unknown[]).map(String) : [];
     const bins = Array.isArray(n.payload.bins) ? (n.payload.bins as unknown[]).map(String) : [];
-    const items = [...repos, ...bins];
+    // Reinstalls af-arch-repair gave up retrying, as "<pip|uv|npm>:<package and version>".
+    const pkgs = Array.isArray(n.payload.pkgs) ? (n.payload.pkgs as unknown[]).map(String) : [];
+    const items = [...repos, ...bins, ...pkgs];
     const body = items.length ? items.join(", ") : t("notif.arch_residue.body_generic");
     return { title: t("notif.arch_residue.title"), body, speech: t("notif.arch_residue.speech") };
   }
