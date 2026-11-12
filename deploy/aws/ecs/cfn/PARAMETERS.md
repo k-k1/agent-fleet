@@ -109,7 +109,7 @@ stays `false` until every running workspace has been restarted (README, NAT bull
 ### `EgressProxyAddr` / `EgressTokenSecretArn`
 
 00-network's outputs of the same names, present only with `EgressRoute=gateway` (ADR 0122,
-#2717; README, "Egress gateway"). Derived facts like `WorkspaceSubnets`: `standup.sh` and
+#2717; guide/operate/aws-ecs/egress-gateway.md). Derived facts like `WorkspaceSubnets`: `standup.sh` and
 `update.sh` pass them (empty once the network is back on `nat-gateway`), and a deploy by hand
 must too. With `EgressTokenSecretArn` set:
 
@@ -353,7 +353,7 @@ terminate"; a smaller value simply skips the sleeping stage.
 It is not the way to move retained slots onto a changed launch template: a slot below `$Latest`
 is replaced at its workspace's next start by itself (switch: the CP env
 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS`, default on), and you can reserve slots for replacement in
-the Console's Settings → Admin → Slots tab to force it; each workspace moves to a new slot at its next start (`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data").
+the Console's Settings → Admin → Slots tab to force it; each workspace moves to a new slot at its next start (`guide/operate/aws-ecs/slot-maintenance.md`, "Move slots onto new user data").
 
 ### `Ec2HibernateAfterSec`
 
@@ -1278,7 +1278,7 @@ are redirected to Squid and the 443 relay, 3128 is the explicit proxy, and every
 entry and records the rest. A security group cannot name ports an organisation adds later and drops
 without a record, so nftables' `input` chain admits only 3128 and the redirected flows. The group has
 no egress rules (all outbound), which the relay needs to dial named ports (ADR 0122, addendum
-2026-11-05; README, "Egress gateway"). The template is within 19 bytes of its size budget
+2026-11-05; guide/operate/aws-ecs/egress-gateway.md). The template is within 19 bytes of its size budget
 (`cfn-template-size-test.py`): put prose here, not in the template.
 
 ### Egress gateway group

@@ -770,8 +770,8 @@ decides on the HTTP Host or the TLS SNI, so an allowed name reaches any public
 address on 443; DNS to the VPC resolver passes unrecorded; other internet-bound
 traffic, git over SSH and direct DNS elsewhere included, is dropped; traffic inside
 the VPC (the CP, EFS on 2049) follows the security groups and never passes the
-gateway; and workspaces leave from the gateway's own address, not the NAT gateway's ("Egress gateway" in
-[deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md)).
+gateway; and workspaces leave from the gateway's own address, not the NAT gateway's (the guide page
+[Control outbound traffic with a gateway](../../guide/operate/aws-ecs/egress-gateway.md)).
 
 Everywhere else the fence is missing: there is no internal-only network on `docker`,
 `native` shares the host's network, Kubernetes' NetworkPolicy admits the internet, and

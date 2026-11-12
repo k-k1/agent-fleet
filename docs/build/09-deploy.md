@@ -265,6 +265,27 @@ optional. The operator guide's [ECS layout page](../../guide/operate/aws-ecs/ove
   runtime; the CP finds them through the engine table.
 - The cost characteristics are §9.8.
 
+### What pins the ECS lifecycle scripts
+
+Moved here from the ECS runbook's "Lifecycle scripts" section, which is now the guide page
+`guide/operate/aws-ecs/lifecycle.md`; this part is for whoever changes the scripts.
+
+- What `./capture-restore-test.sh` pins (fake `aws` / `crane`, no AWS — it never creates,
+  deletes or updates anything; the 198 calls it makes are reads against the fake): the
+  `yes` / `no` / `unknown` decision and what `capture-env.sh` writes and refuses, and the
+  three sentences `teardown.sh` prints before the confirmation. **`dev-deploy.sh` is never
+  executed by it** — that script needs `gh`, `git ls-remote` and `update.sh` — so the
+  follow-the-live-tag step is pinned in two weaker pieces instead: `af_env_set` as a unit,
+  and a source check that the call to it is still on `dev-deploy.sh`'s success path.
+  Deleting that call turns the source check red; **it does not prove the deployed script
+  ran**, and nothing here proves a real round trip. That one is still only ever exercised
+  against a live deployment.
+- The order these run in is what the stub test in `deploy/local/ecs-lifecycle-stub-test.sh`
+  pins — see the next section for why each step is where it is.
+
+(Both bullets are verbatim. "The next section" was the runbook's "Teardown", now the guide page
+[Tear a deployment down](../../guide/operate/aws-ecs/teardown.md).)
+
 ## 9.6 Parity and differences
 
 The workspace image and the agent are the same artefact on every target — that is the
@@ -305,8 +326,8 @@ substrate underneath it.
   - EFS: `Persistence=retain` keeps the file system when the stack is deleted and adds
     a daily AWS Backup plan (points kept `EfsBackupRetentionDays`, 7 by default) in a
     vault of its own. Restores are manual — one member's directories or the whole file
-    system, into a directory beside the live data and copied back: the ecs runbook's
-    §EFS backup and restore.
+    system, into a directory beside the live data and copied back: the guide page
+    [Back up and restore EFS](../../guide/operate/aws-ecs/backup.md).
   - EBS homes (`ecs-ec2`): only the optional home backups of §9.5
     (`AF_ECS_EC2_BACKUP_EVERY_SEC`, off by default).
 - **On ECS an upgrade is not only the application's tag.** A release can also need a new

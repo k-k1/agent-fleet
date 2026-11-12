@@ -85,7 +85,7 @@ Git over SSH and databases are not HTTP, so a host entry does not let them throu
 > **A blocked TCP connection still looks connected at first.** The gateway accepts the connection, reads the destination and then closes it, so `nc -z` or a bare `connect()` succeeds and the reads and writes after it fail with EOF or a reset (`Connection reset by peer`).
 > Do not read "connected" as "allowed"; check the Egress records or the `deny` lines in `/var/log/squid/af-tcp.log` on the gateway.
 
-Settings and limits are in "Egress gateway" in the [ECS runbook](../../../deploy/aws/ecs/README.md).
+Settings and limits are in [Control outbound traffic with a gateway](../aws-ecs/egress-gateway.md).
 
 ## Approve members' requests
 
@@ -140,4 +140,4 @@ How to prepare the store depends on the target.
 - [Operate MCP and external-connection sign-in](mcp.md): how MCP server registration meets the allowlist
 - [Distribute an MCP server to everyone](../../admin/mcp-distribute.md): the tenant administrator's side
 - [Choose where to deploy](../choose.md#choose-the-egress-route-on-aws): the egress route on AWS
-- [ECS runbook](../../../deploy/aws/ecs/README.md): configuring the egress gateway
+- [Control outbound traffic with a gateway](../aws-ecs/egress-gateway.md): configuring the egress gateway

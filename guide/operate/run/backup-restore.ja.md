@@ -91,7 +91,7 @@ docker compose up -d
 
 | 形態 | バックアップと復元 |
 |---|---|
-| ECS（`ecs` / `ecs-ec2`） | [ECS の手順書の「EFS backup and restore」](../../../deploy/aws/ecs/README.md#efs-backup-and-restore) |
+| ECS（`ecs` / `ecs-ec2`） | [EFS をバックアップ・復元する](../aws-ecs/backup.ja.md) |
 | Kubernetes | [Kubernetes の手順書の「Backups, point-in-time recovery and the restore rehearsal」](../../../deploy/kubernetes/README.md#backups-point-in-time-recovery-and-the-restore-rehearsal) |
 
 ## 関連

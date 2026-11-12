@@ -88,7 +88,7 @@ ECS のほうが安くなると思われがちですが、実際は逆です。�
 
 - egress ゲートウェイは新しく、テスト用の配備でだけ確かめています。**本番ではまだ使っていません**
 - `pause.sh` はゲートウェイも止め、同じ送信元のアドレスのまま戻します
-- 設定と制約は [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) の「Egress gateway」にあります
+- 設定と制約は [外向きの通信をゲートウェイで制御する](aws-ecs/egress-gateway.ja.md) にあります
 
 ## Kubernetes を選ぶとき、選ばないとき
 

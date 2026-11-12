@@ -26,7 +26,7 @@ source_of_truth: "管理モーダルの「推論エンジン」（`console/src/f
 ## 始める前に
 
 GPU のインスタンスを買えるのは AWS の ECS の配備で、エンジンのスタック（`60-engines`）を建てたときです。
-スタックの建て方とパラメータは [ECS の runbook](../../../deploy/aws/ecs/README.md#optional-the-fleets-own-inference-engines-cfn60-enginesyaml) にあります。
+スタックの建て方とパラメータは [推論エンジンを足す](../aws-ecs/engines.ja.md) にあります。
 
 GPU を持たない配備でも、ほかのエンジンを同じ画面に並べられます。
 

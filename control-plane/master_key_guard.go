@@ -58,7 +58,7 @@ func (m *manager) authDevInsecure() bool {
 const deploymentWarnEfsBackupMissing = "efs_backup_missing"
 
 const efsBackupMissingLog = "WARNING: the data stack runs Persistence=retain but has no daily EFS backup " +
-	"(vault and plan were added to 10-data in 0.26.0); see deploy/aws/ecs/README.md, \"EFS backup and restore\""
+	"(vault and plan were added to 10-data in 0.26.0); see guide/operate/aws-ecs/backup.md (\"Turn backups on for a running deployment\")"
 
 // efsBackupMissing reports AF_EFS_BACKUP=missing on an ECS runtime. The ingress stack carries
 // that marker (update.sh / standup.sh fill it from the data stack's outputs), so the CP needs

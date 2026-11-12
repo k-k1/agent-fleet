@@ -195,7 +195,7 @@ GKE で気をつけること:
 - Cloud SQL は RDS と違い、自分で起動し直しません
 - ノード数は Control Plane の名前空間に記録し、`--up` で元に戻します。それまでのあいだ、`terraform plan` はノードプールの差分を報告します
 
-それぞれのスクリプトが従う順番とその理由、終わったあとに確かめることは、手順書の [ECS の「Lifecycle scripts」](../../../deploy/aws/ecs/README.md#lifecycle-scripts-stand-up--pause--tear-down) と [Kubernetes の「Pausing」](../../../deploy/kubernetes/README.md#pausing) にあります。
+それぞれのスクリプトが従う順番とその理由、終わったあとに確かめることは、[スクリプトで構築・一時停止・撤去する](../aws-ecs/lifecycle.ja.md) と、手順書の [Kubernetes の「Pausing」](../../../deploy/kubernetes/README.md#pausing) にあります。
 
 ### 配備を削除する
 
@@ -206,7 +206,7 @@ GKE で気をつけること:
 | AWS で `Persistence=retain` | `--purge-retained` を付けない限り、データベースの最後のスナップショット、EFS のファイルシステムとそのバックアップボールト（ストレージの費用は続きます） |
 | GKE | Control Plane のディスクのスナップショット。先に削除保護を外す必要があります |
 
-何が消えて何が残るかは、手順書の [ECS の「Teardown」](../../../deploy/aws/ecs/README.md#teardown) と [Kubernetes の「Tearing down」](../../../deploy/kubernetes/README.md#tearing-down) にあります。
+何が消えて何が残るかは、[撤去する](../aws-ecs/teardown.ja.md) と、手順書の [Kubernetes の「Tearing down」](../../../deploy/kubernetes/README.md#tearing-down) にあります。
 
 ## 関連
 
