@@ -1450,6 +1450,27 @@ def site_url(page: str, anchor: str = "") -> str:
     return url + (f"#{anchor}" if anchor else "")
 
 
+def site_heading_ids(path: str) -> set[str]:
+    """The heading ids a guide page has on the site, which are not quite `heading_slugs`.
+
+    The site's converter lifts the first H1 into the page title (rendered with the fixed id
+    `_top`), and its slug pass (`console-slug.mjs` in k-k1/agent-fleet-site) gives the
+    Console's slug to each remaining heading in order, suffixing a repeat `-1`, `-2`, … the
+    way github-slugger does. A set of plain slugs would reject `#example-1` for a second
+    `## Example`, and accept the H1's slug, which the site does not have.
+    """
+    ids, seen, title_dropped = {"_top"}, {}, False
+    for m in HEADING_RE.finditer(strip_fenced_blocks(read(path))):
+        if not title_dropped and len(m.group(1)) == 1:
+            title_dropped = True
+            continue
+        base = console_slug(heading_text(m.group(2)))
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        ids.add(f"{base}-{n}" if n else base)
+    return ids
+
+
 def site_page(path: str) -> tuple[list[str], str | None]:
     """The guide/ files a URL path after /docs can be (`/user/a/` -> user/a.md or
     user/a/README.md), or an error when the URL is not in the site's form."""
@@ -1529,7 +1550,7 @@ def check_site_urls(f: Findings) -> None:
                     f.error(f"{where}: {url}: no such page in guide/ (looked for "
                             + " or ".join(pages) + ")")
                 continue
-            if anchor and anchor not in heading_slugs(os.path.join(GUIDE, page)):
+            if anchor and anchor not in site_heading_ids(os.path.join(GUIDE, page)):
                 new = moved.get((page, anchor))
                 if new:
                     f.error(f"{where}: {url}: moved to {site_url(new[0], new[1])}"
@@ -1570,8 +1591,12 @@ def check_notes(f: Findings) -> None:
     shelves = LIVING + RETIRED_SHELVES + ("decisions", "log")
     ref_re = re.compile(
         # The task pages sit in subdirectories (user/integrations/aws-sso.md, ref/cli/af-aws-exec.md),
-        # so a path may go deeper than the shelf.
-        r"`(" + "|".join(shelves) + r")/((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md)`"
+        # so a path may go deeper than the shelf. Quoted or not, and with or without the
+        # repository's `guide/` or `docs/` in front: an agent follows any of them. A path
+        # that continues another one (`af/user/x.md`, the shipped directory, a URL) starts
+        # after a character that cannot begin a page path, and is not this pattern's.
+        r"(?<![A-Za-z0-9_./~$-])(?:guide/|docs/)?(" + "|".join(shelves)
+        + r")/((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md)(?![A-Za-z0-9_/-])"
     )
     # The always-loaded policy is short; the procedures live in topic files under
     # `workspace/notes/`, shipped next to it as `/usr/local/share/agent-fleet/notes/`. The

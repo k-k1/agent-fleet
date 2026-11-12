@@ -158,6 +158,27 @@ class NotesTests(unittest.TestCase):
                 self.assertIn("give the site URL instead: https://agent-fleet.org/docs/ref/cli/af-aws-exec/", errors)
                 self.assertIn("give the site URL instead: https://agent-fleet.org/docs/ja/ref/cli/", errors)
 
+    def test_unquoted_and_repo_prefixed_paths_are_caught(self):
+        for text, message in (
+            ("See guide/ref/no-such-page.md first.", "names a guide page by its path -> ref/no-such-page.md"),
+            ("See `guide/ref/no-such-page.md` first.", "names a guide page by its path -> ref/no-such-page.md"),
+            ("See ref/no-such-page.md first.", "names a guide page by its path -> ref/no-such-page.md"),
+            ("(user/a/b.md)", "names a guide page by its path -> user/a/b.md"),
+            ("See docs/decisions/0132-x.md.", "not shipped -> decisions/0132-x.md"),
+            ("See member/16-cloud-accounts.md.", "a shelf the guide no longer has"),
+        ):
+            with self.subTest(text=text):
+                self.topic.write_text(self.valid + "\n" + text + "\n")
+                self.assertIn(message, self.errors())
+
+    def test_paths_that_only_contain_a_shelf_name_pass(self):
+        self.topic.write_text(self.valid + (
+            "\nMemories live at `af/user/x.md`; skills at ~/user/skill.md or $HOME/user/x.md.\n"
+            "Read `/usr/local/share/agent-fleet/notes/example.md`, https://agent-fleet.org/docs/ref/agents/,\n"
+            "the `user/` shelf, ref/README.mdx and refs/x.md.\n"
+        ))
+        self.assertEqual(self.errors(), "")
+
     def test_shipped_copy_only_in_one_fallback_paragraph(self):
         fallback = "\nOffline, the same pages are under `/usr/local/share/agent-fleet/docs` as `<page>.md`.\n"
         self.policy.write_text("`notes/example.md`\n" + fallback)
@@ -269,6 +290,21 @@ class SiteUrlTests(unittest.TestCase):
                     self.go.write_text("package main\n")
                     where.write_text(f"See {url} here.\n")
                     self.assertIn(message, self.errors())
+
+    def test_repeated_headings_follow_the_sites_suffix_rule(self):
+        (self.root / "guide/ref/cli/af-db.md").write_text(
+            "# af-db\n\n## Example\n\n```\n## Example\n```\n\n## Example\n\n### Example\n\n# Second H1\n"
+        )
+        for anchor in ("example", "example-1", "example-2", "second-h1", "_top"):
+            with self.subTest(anchor=anchor):
+                self.policy.write_text(f"https://agent-fleet.org/docs/ref/cli/af-db/#{anchor}\n")
+                self.assertEqual(self.errors(), "")
+        # example-3 would need a fourth one (the fenced line is not a heading), and the
+        # first H1 is the page title, whose id on the site is _top.
+        for anchor in ("example-3", "af-db"):
+            with self.subTest(anchor=anchor):
+                self.policy.write_text(f"https://agent-fleet.org/docs/ref/cli/af-db/#{anchor}\n")
+                self.assertIn(f"has no heading with the id '{anchor}'", self.errors())
 
     def test_goldens_and_go_tests_are_not_scanned(self):
         testdata = self.root / "workspace/agent/internal/x/testdata/calls.txt"
