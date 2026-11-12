@@ -28,6 +28,8 @@ package sessionx
 //	record: … and this turn's end is not stamped yet        (idempotent, consumes nothing)
 
 import (
+	"time"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -40,10 +42,44 @@ import (
 // already fired it and the persisted state is idle — no double fire.
 func notifyPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
-	if state != "idle" || status.LiveState(sid) != "working" {
+	if state != "idle" || status.LiveState(sid) != "working" || turnJustStarted(sid) {
 		return
 	}
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)
+}
+
+// polledEndSettleDefault is the production value of polledEndSettle. It is a heuristic, not a
+// measurement of how long any kind's source lags: a stale idle that outlives it is still taken as
+// the new turn's end. It stays short because the same gate delays the completion notification of
+// a turn that really ended inside it. The exact fix is an identity from the source itself (a turn
+// id), which these four kinds do not expose today.
+const polledEndSettleDefault = 10 * time.Second
+
+// polledEndSettle is how long after a turn's start (the status record's "working" write) a poll's
+// idle is not yet taken as that turn's end, by BOTH routes that record one (the list's stamp and
+// DriveState's notification). A hook-less kind's state source can still show the
+// PREVIOUS turn's idle for a moment after a new input; stamping it would give the new turn an end
+// before it ran, and the real end then finds the turn already stamped (the observation is one per
+// status Rev) and keeps the early time, so a watch on the session counts one turn end instead of
+// two. A real end inside the window is stamped by a later poll, a few seconds late, which the
+// list already tolerates. Measured limit: a stale idle that outlives the window is still stamped.
+var polledEndSettle = polledEndSettleDefault
+
+// polledEndNow is the clock of that window, replaceable by tests.
+var polledEndNow = time.Now
+
+// turnJustStarted reports whether the status record's working write is younger than the window.
+// TS has whole-second resolution, so the window is effectively one second longer at most.
+func turnJustStarted(sid string) bool {
+	if polledEndSettle <= 0 {
+		return false
+	}
+	st, ok := status.Read(sid)
+	if !ok {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, st.TS)
+	return err == nil && polledEndNow().Sub(at) < polledEndSettle
 }
 
 // recordPolledTurnEnd is the sessions-list half: stamp when the turn ended, fire nothing.
@@ -63,7 +99,7 @@ func recordPolledTurnEnd(m session.Meta, state string) {
 	if !liveStateTraits(m.Kind).PolledTurnEnd {
 		return
 	}
-	if state != "idle" {
+	if state != "idle" || turnJustStarted(sid) {
 		return
 	}
 	status.RecordTurnEnd(sid)

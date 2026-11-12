@@ -60,6 +60,13 @@ type Resolved struct {
 	URL     string // the subject's web page, https only; "" when unknown
 	// At is the instant a timed subject fires (the time source); zero for every other source.
 	At time.Time
+	// Told seeds the versions the subscription counts as already delivered, so a source can say
+	// "the state that holds now is history; tell me the next one" (the fleet source's idle).
+	Told map[string]string
+	// Seed is state of the subject that holds at subscribe time and must survive until the first
+	// read (the fleet source's open usage-limit episode). The engine hands it to the source's
+	// SeedCursor together with the subject's cursor.
+	Seed json.RawMessage
 }
 
 // Source is one provider's adapter.
@@ -113,6 +120,19 @@ type TypeChecker interface {
 	CheckTypes(patterns []string) error
 }
 
+// CursorSeeder is a Source that takes the Seed of a Resolve into the subject's cursor.
+type CursorSeeder interface {
+	SeedCursor(cursor, seed json.RawMessage) json.RawMessage
+}
+
+// SubscriptionAuthorizer is a Source whose access rule can change after Resolve judged it (a
+// session that stopped being visible to the watcher). The engine asks once per tick, before any
+// read is matched or delivered, and ends a subscription that is refused with a watch.ended notice;
+// the subject is shared, so only that subscription goes.
+type SubscriptionAuthorizer interface {
+	Authorize(sub Subscription) bool
+}
+
 type subscriberKey struct{}
 
 // WithSubscriber carries the name of the session that is subscribing into Resolve, so a source
@@ -124,6 +144,20 @@ func WithSubscriber(ctx context.Context, session string) context.Context {
 // SubscriberFrom is the session that is subscribing, "" outside Subscribe.
 func SubscriberFrom(ctx context.Context) string {
 	s, _ := ctx.Value(subscriberKey{}).(string)
+	return s
+}
+
+type ownerKey struct{}
+
+// WithOwner carries the session that will receive the notices into Resolve, so a source can
+// refuse a subject that is the receiver itself. Only the engine sets it.
+func WithOwner(ctx context.Context, session string) context.Context {
+	return context.WithValue(ctx, ownerKey{}, session)
+}
+
+// OwnerFrom is the session that receives the notices, "" outside Subscribe.
+func OwnerFrom(ctx context.Context) string {
+	s, _ := ctx.Value(ownerKey{}).(string)
 	return s
 }
 

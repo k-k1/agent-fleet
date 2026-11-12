@@ -111,6 +111,22 @@ An agent can also set a timer (`watch` with `source: time`): "tell me in 20 minu
 - The booking made for `wake` does not appear under Scheduled execution and cannot be edited there. It is removed when the timer fires, when the agent ends the watch, or when the session holding it ends
 - `list_watches` shows each timer's due time and whether it has a wake
 
+### Waiting for another session
+
+An agent can wait for another session of the workspace instead of setting a timer as a backstop (`watch` with `source: fleet`). `ref` is the session's name, taken from `list_child_sessions` (its own children) or `list_peer_sessions` (any other session, while peer messaging is on). A session cannot watch itself, and a name it could not see in those lists is refused.
+
+| Type | Fires when |
+|---|---|
+| `fleet.session.idle` | the session ended a turn and is waiting for input. Every turn end is one notice, and a restart of the workspace never repeats one |
+| `fleet.session.stopped` | the session is stopped (at once if it already is; stopped again later is told again) |
+| `fleet.quota.reopened` | the usage limit the session was held at has lifted |
+
+- **Idle means what the session list shows.** A session waiting on a question, a plan or a permission is not idle
+- **The turn that ended before the watch does not count.** A session that is idle when the watch is made is told on its next turn end, so a parent can message a child and watch it in either order without being told about the turn before the message. A child that will never run another turn is not told; read its state with `list_child_sessions`
+- **Best effort for agy, copilot, cursor and kiro.** These have no end-of-turn hook, so the end is read from a poll of the agent's own state. Just after a new message the state can still show the previous turn's idle; the workspace ignores an idle within 10 seconds of the turn starting, but one that lasts longer can be taken for the new turn's end, which gives an early notice or misses the real one. A notice can also come a poll later than the end. The agent should check the session's state after a notice before acting on it.
+- **A report and the notice are separate.** `fleet.session.idle` fires whether or not the child also sent its report back, because the case it exists for is a child that ended its turn without one. A parent that already has the report ends the watch with `unwatch`
+- A deleted session ends the watch with a notice. The notice names the session and its state only; nothing the session wrote is in it
+
 ### Seeing and ending a session's watches
 
 A session waiting on a watch looks idle, so the session's chat view lists its live watches in a panel just above the message box, next to the one for background commands. Each row shows what it watches (a pull request, a timer, a CI run, or an extension's own source) with the events in words ("CI finished", "merged"). A timer shows the time left. A warning mark with the error means the source is not answering right now; the watch stays and is read again. A row links out only when its address is on github.com or bitbucket.org; everything else is plain text.
