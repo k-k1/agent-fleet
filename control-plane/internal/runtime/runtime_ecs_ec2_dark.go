@@ -297,11 +297,11 @@ func (f *ecsEC2Factory) darkAgentLeg(ctx context.Context, pass *darkProbePass, s
 	}
 	// The alias may point at a task on another box; an answer only speaks for this slot
 	// when the service's tasks are all on it.
-	res := AgentProbeUnknown
-	if f.serviceRunsOnlyOn(ctx, rt.base.name, slot) {
-		res = f.probeAgent(ctx, pass, rt.Endpoint())
+	res, proven := AgentProbeUnknown, false
+	if tasks, ok := f.serviceTasks(ctx, rt.base.name); ok && f.tasksRunOnlyOn(ctx, tasks, slot) {
+		res, proven = f.probeAgentTask(ctx, pass, rt.Endpoint(), runningTaskIDs(tasks))
 	}
-	f.probes.set(slot, probeObservation{Result: res, At: f.darkNow()})
+	f.probes.set(slot, probeObservation{Result: res, At: f.darkNow(), TaskProven: proven})
 	if res != AgentProbeFailed {
 		log.Printf("ecs-ec2 sweep: dark-slot scan: Agent of %s on %s probe %s", rt.base.name, slot, res)
 	}
