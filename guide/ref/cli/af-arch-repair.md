@@ -39,12 +39,13 @@ retry (see [Retries](#retries)), and 1 otherwise. The workspace's start uses it.
 
 | What | Which ones | How |
 |---|---|---|
-| `pip install --user` packages | Those whose file list names a native extension built for the other architecture. Pure-Python ones are left alone | `pip install --user --force-reinstall --no-deps <name>==<version>`. `--no-deps` keeps their dependencies as they are |
+| `pip install --user` packages | Those whose file list names a native extension built for the other architecture. Pure-Python ones are left alone | `pip install --user --force-reinstall --no-deps <name>==<version>`, one package at a time. `--no-deps` keeps their dependencies as they are |
 | `uv tool` tools | Those whose environment holds a native extension (`*-linux-gnu.so`) built for the other architecture | `uv tool install --force --reinstall <tool>==<version>`. When the tool's version cannot be read, without `==<version>`, so it gets the latest |
-| `npm install -g` packages in `~/.local` | The ones listed when the workspace removed `~/.local/lib/node_modules` at the start of the change | `npm install -g --prefix ~/.local <name>@<version>...` |
+| `npm install -g` packages in `~/.local` | The ones listed when the workspace removed `~/.local/lib/node_modules` at the start of the change | `npm install -g --prefix ~/.local <name>@<version>`, one package at a time |
 
-The npm list exists only during a start that changed architecture. Run by hand, af-arch-repair reinstalls npm packages
-only when a previous attempt failed and left the list behind.
+The workspace writes the npm list at a start that changes architecture, adding what it is about to remove to any
+entries still pending from an earlier change. The list then stays until each of its packages is reinstalled (see
+[Retries](#retries)). Run by hand, af-arch-repair reinstalls npm packages only while that list exists.
 
 ## What it only reports
 
@@ -112,8 +113,9 @@ not change at that start.
 
 | What | Behaviour |
 |---|---|
-| What a retry reinstalls | Only the kinds that failed (pip, uv, npm). pip and uv are checked again first, so a package you have fixed or upgraded yourself in the meantime is left alone |
-| How often | At most 3 starts after the one that changed architecture. A package that cannot be installed would otherwise slow down every start |
+| What stays in a list | Exactly the packages whose install has not succeeded yet. Each package is installed on its own and leaves the list when its install succeeds, so one that keeps failing does not hold back the others. A run that is stopped half-way keeps every package it had not finished |
+| What a retry reinstalls | Only the kinds that failed (pip, uv, npm). It checks pip and uv again first, and a package you have fixed, upgraded or reinstalled at another version in the meantime is left alone. A listed package that is no longer installed at all (an install that stopped after removing the old copy) is installed again |
+| How often | At most 3 starts after the one that changed architecture. A package that cannot be installed would otherwise slow down every start. A start stopped before af-arch-repair finished does not count. A start that changed architecture and was stopped before af-arch-repair finished is redone in full at the next start |
 | After the 3rd failed retry | No start retries it. The leftovers are named in the notification, and the lists stay: run the command in the `WARN:` line, or `af-arch-repair <was> <now>` |
 | Run by hand | Retries everything that is broken, whatever the count. When it succeeds, the lists and the notification's leftovers are removed |
 | Python major version changed at that start | A pending pip failure is dropped, not retried: the same version may not exist for the new Python |

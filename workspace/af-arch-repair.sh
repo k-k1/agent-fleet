@@ -52,7 +52,8 @@ MAX_RETRIES=3
 pending() { [ -s "$NPM_MANIFEST" ] || [ -s "$PIP_MANIFEST" ] || [ -s "$UV_MANIFEST" ]; }
 tries_done() {
   local n=""
-  read -r n _ < "$TRIES_FILE" 2>/dev/null || true
+  # 2>/dev/null goes first: it has to be in place before the redirection that can fail.
+  read -r n _ 2>/dev/null < "$TRIES_FILE" || true
   case "$n" in '' | *[!0-9]*) echo 0 ;; *) echo "$n" ;; esac
 }
 
@@ -68,24 +69,40 @@ MODE="${AF_ARCH_REPAIR_AUTO:-}"
 say() { echo "[arch-repair] $*"; }
 mkdir -p "$STATE" 2>/dev/null || true
 
-# The counter is reset by the start that changed architecture and counts the starts after it;
-# that start's own attempt is not a retry. A retry start knows no "before" architecture, so
-# it reads the one the change start recorded (it only appears in messages).
+# The counter is reset by the start that changed architecture and counts the retry starts
+# after it. A retry is counted only when its run gets to the end (see the bottom): a start
+# killed half-way has not had its try, and counting it up front could use up the last retry
+# without either retrying or writing the notification. A retry start knows no "before"
+# architecture, so it reads the one the change start recorded (it only appears in messages).
 case "$MODE" in
   change) printf '0 %s\n' "$WAS" > "$TRIES_FILE" 2>/dev/null || true ;;
   retry)
-    read -r _ rec_was < "$TRIES_FILE" 2>/dev/null || rec_was=""
+    rec_was=""
+    read -r _ rec_was 2>/dev/null < "$TRIES_FILE" || true
     case "$WAS" in '' | '?') WAS="${rec_was:-?}" ;; esac
-    printf '%s %s\n' "$(( $(tries_done) + 1 ))" "$WAS" > "$TRIES_FILE" 2>/dev/null || true
     ;;
 esac
 # A retry start only retries what failed before; the change start and a run by hand look at
 # everything.
 want() { [ "$MODE" != retry ] || [ -s "$1" ]; }
-# Writes the list of what is still to be reinstalled, or removes it when nothing is.
-keep_list() {
+# The lists are written before any install and an item leaves only after its own install
+# succeeded, always through a temp file and mv: a run killed at any point leaves a list that
+# still names everything not yet done, never a truncated one.
+list_write() {
   local f="$1"; shift
-  if [ "$#" -gt 0 ]; then printf '%s\n' "$@" > "$f" 2>/dev/null || true; else rm -f "$f"; fi
+  if [ "$#" -gt 0 ]; then
+    if ! { printf '%s\n' "$@" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"; } 2>/dev/null; then
+      rm -f "$f.tmp.$$"
+    fi
+  else
+    rm -f "$f"
+  fi
+}
+list_drop() {
+  local f="$1" item="$2" rest=()
+  [ -e "$f" ] || return 0
+  mapfile -t rest < <(grep -vxF -- "$item" "$f")
+  list_write "$f" ${rest[@]+"${rest[@]}"}
 }
 
 # ---------------------------------------------------------------- pip --user
@@ -93,22 +110,21 @@ keep_list() {
 # 無傷である（実測: この環境では 35 dist 中 8 個）。拡張のファイル名にはアーキが入っている
 # （`_greenlet.cpython-311-x86_64-linux-gnu.so`）ので、RECORD を読めば壊れている dist を
 # 厳密に列挙できる——推測ではなく、そのファイルがどのアーキ用かを見て判定している。
+#
+# A list left by an earlier failure adds one case detection cannot see: an entry whose package
+# is no longer installed at all (an install killed after it removed the old copy). That entry
+# stays; an entry that is installed and no longer foreign was fixed in the meantime and goes.
 pip_broken() {
-  python3 - "$NOW" <<'PY'
-import os, sys, glob
+  python3 - "$NOW" "$PIP_MANIFEST" <<'PY'
+import os, re, sys, glob
 mach = {"amd64": "x86_64", "arm64": "aarch64"}.get(sys.argv[1], "")
 if not mach:
     raise SystemExit(0)
 others = [m for m in ("x86_64", "aarch64") if m != mach]
-out = []
+norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+out, installed = [], set()
 for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/site-packages")):
     for di in glob.glob(os.path.join(sp, "*.dist-info")):
-        try:
-            body = open(os.path.join(di, "RECORD"), encoding="utf-8", errors="replace").read()
-        except OSError:
-            continue
-        if not any(("-" + m + "-linux") in body for m in others):
-            continue
         # 表示名と版は METADATA が正（dist-info のディレクトリ名は `-`→`_` に正規化されて
         # いて、そのまま出すと利用者が PyPI で探せない名前になる）。
         name = ver = ""
@@ -119,8 +135,23 @@ for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/si
                 elif not line.strip(): break
         except OSError:
             continue
+        if name:
+            installed.add(norm(name))
+        try:
+            body = open(os.path.join(di, "RECORD"), encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if not any(("-" + m + "-linux") in body for m in others):
+            continue
         if name and ver:
             out.append(name + "==" + ver)
+try:
+    for line in open(sys.argv[2], encoding="utf-8"):
+        req = line.strip()
+        if req and norm(req.split("==")[0]) not in installed:
+            out.append(req)
+except OSError:
+    pass
 if out:
     print("\n".join(sorted(set(out))))
 PY
@@ -133,18 +164,27 @@ if [ "$REPAIR_PY" != 1 ]; then
   rm -f "$PIP_MANIFEST"
 elif want "$PIP_MANIFEST"; then
   mapfile -t PKGS < <(pip_broken)
-  keep_list "$PIP_MANIFEST"
+  list_write "$PIP_MANIFEST" ${PKGS[@]+"${PKGS[@]}"}
   if [ "${#PKGS[@]}" -gt 0 ]; then
     say "pip: ${#PKGS[@]} 件を同じ版で入れ直します: ${PKGS[*]}"
     # ⚠️ --no-deps は必須。壊れているのは拡張を持つ dist だけで、その依存（純 python）は
     #    正常に残っている。付けないと依存ツリー全体が再解決され、**アーキ変更のはずが
     #    バージョン更新になる**。
-    if pip install --user --force-reinstall --no-deps "${PKGS[@]}"; then
+    # One package per install, so one that cannot be installed does not keep the others in
+    # the list: the list has to name exactly what still fails.
+    PIP_FAILED=()
+    for pkg in "${PKGS[@]}"; do
+      if pip install --user --force-reinstall --no-deps "$pkg"; then
+        list_drop "$PIP_MANIFEST" "$pkg"
+      else
+        PIP_FAILED+=("$pkg")
+      fi
+    done
+    if [ "${#PIP_FAILED[@]}" -eq 0 ]; then
       say "pip: 完了"
     else
-      say "WARN: pip の入れ直しに失敗しました（ネットワーク？）"
-      say "WARN:   手で直す: pip install --user --force-reinstall --no-deps ${PKGS[*]}"
-      keep_list "$PIP_MANIFEST" "${PKGS[@]}"
+      say "WARN: pip の入れ直しに失敗しました（ネットワーク？）: ${PIP_FAILED[*]}"
+      say "WARN:   手で直す: pip install --user --force-reinstall --no-deps ${PIP_FAILED[*]}"
     fi
   fi
 fi
@@ -152,18 +192,20 @@ fi
 # ---------------------------------------------------------------- uv tools
 # uv の tool は 1 本ずつが独立した venv なので、壊れ方は pip と同じ。⚠️ `uv tool upgrade` は
 # 使わない——あれは版を上げる操作で、ここでやりたいのは「同じ版で入れ直す」である。
-UV_FAILED=()
-if ! want "$UV_MANIFEST"; then
-  :
-elif command -v uv >/dev/null 2>&1 && [ -d "$HOME/.local/share/uv/tools" ]; then
-  for d in "$HOME"/.local/share/uv/tools/*; do
+# A listed tool whose environment is gone (an install killed half-way) is reinstalled from
+# the list; a listed one whose environment is back to this architecture was fixed and goes.
+UV_TOOLS="$HOME/.local/share/uv/tools"
+uv_foreign() {
+  find "$1" -name "*-linux-gnu.so" 2>/dev/null \
+    | grep -qv -- "-$([ "$NOW" = arm64 ] && echo aarch64 || echo x86_64)-linux-gnu.so"
+}
+if want "$UV_MANIFEST"; then
+  UV_TODO=()
+  for d in "$UV_TOOLS"/*; do
     [ -d "$d" ] || continue
     tool="$(basename "$d")"
     # その venv に他アーキの拡張が居るときだけ入れ直す（純 python の tool は無傷）。
-    if ! find "$d" -name "*-linux-gnu.so" 2>/dev/null \
-        | grep -qv -- "-$([ "$NOW" = arm64 ] && echo aarch64 || echo x86_64)-linux-gnu.so"; then
-      continue
-    fi
+    uv_foreign "$d" || continue
     ver="$(python3 - "$d" "$tool" <<'PY'
 import os, sys, glob
 d, tool = sys.argv[1], sys.argv[2].replace("-", "_").lower()
@@ -175,17 +217,22 @@ for di in glob.glob(os.path.join(d, "lib/python*/site-packages/*.dist-info")):
         break
 PY
 )"
-    req="$tool${ver:+==$ver}"
+    UV_TODO+=("$tool${ver:+==$ver}")
+  done
+  if [ -s "$UV_MANIFEST" ]; then
+    while IFS= read -r req; do
+      [ -n "$req" ] && [ ! -d "$UV_TOOLS/${req%%==*}" ] && UV_TODO+=("$req")
+    done < "$UV_MANIFEST"
+  fi
+  list_write "$UV_MANIFEST" ${UV_TODO[@]+"${UV_TODO[@]}"}
+  for req in ${UV_TODO[@]+"${UV_TODO[@]}"}; do
     say "uv tool: $req を入れ直します"
-    if ! uv tool install --force --reinstall "$req"; then
+    if command -v uv >/dev/null 2>&1 && uv tool install --force --reinstall "$req"; then
+      list_drop "$UV_MANIFEST" "$req"
+    else
       say "WARN: uv tool $req の入れ直しに失敗しました。手で直す: uv tool install --force --reinstall $req"
-      UV_FAILED+=("$req")
     fi
   done
-  keep_list "$UV_MANIFEST" ${UV_FAILED[@]+"${UV_FAILED[@]}"}
-else
-  # uv or its tools are gone: there is nothing left to reinstall.
-  rm -f "$UV_MANIFEST"
 fi
 
 # ---------------------------------------------------------------- npm -g
@@ -195,19 +242,43 @@ fi
 # だけ**なので、利用者が `npm i -g` で入れたものは黙って消えていた——entrypoint 自身が
 # 掲げている「自分で入れたツールは消さない」に反する唯一の場所だった。
 # 消す前に entrypoint が控えた一覧をここで戻す。
+# An entry the member has since installed at another version is theirs now and goes; one
+# installed at the listed version is installed again, since an install killed half-way can
+# leave a package.json behind.
 if [ -s "$NPM_MANIFEST" ]; then
-  mapfile -t GLOBALS < <(grep -v '^[[:space:]]*$' "$NPM_MANIFEST")
+  mapfile -t GLOBALS < <(python3 - "$NPM_MANIFEST" "$HOME/.local/lib/node_modules" <<'PY'
+import json, os, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    spec = line.strip()
+    at = spec.rfind("@")
+    if at <= 0:
+        continue
+    try:
+        with open(os.path.join(sys.argv[2], spec[:at], "package.json"), encoding="utf-8") as f:
+            have = json.load(f).get("version", "")
+    except (OSError, ValueError):
+        have = ""
+    if have in ("", spec[at + 1:]):
+        print(spec)
+PY
+)
+  list_write "$NPM_MANIFEST" ${GLOBALS[@]+"${GLOBALS[@]}"}
   if [ "${#GLOBALS[@]}" -gt 0 ]; then
     say "npm -g: ${#GLOBALS[@]} 件を同じ版で入れ直します: ${GLOBALS[*]}"
-    if npm install -g --prefix "$HOME/.local" "${GLOBALS[@]}"; then
+    NPM_FAILED=()
+    for spec in "${GLOBALS[@]}"; do
+      if npm install -g --prefix "$HOME/.local" "$spec"; then
+        list_drop "$NPM_MANIFEST" "$spec"
+      else
+        NPM_FAILED+=("$spec")
+      fi
+    done
+    if [ "${#NPM_FAILED[@]}" -eq 0 ]; then
       say "npm -g: 完了"
-      rm -f "$NPM_MANIFEST"
     else
-      say "WARN: npm -g の入れ直しに失敗しました"
-      say "WARN:   手で直す: npm install -g --prefix ~/.local ${GLOBALS[*]}"
+      say "WARN: npm -g の入れ直しに失敗しました: ${NPM_FAILED[*]}"
+      say "WARN:   手で直す: npm install -g --prefix ~/.local ${NPM_FAILED[*]}"
     fi
-  else
-    rm -f "$NPM_MANIFEST"
   fi
 fi
 
@@ -287,8 +358,15 @@ for kind in pip uv npm; do
   [ -s "$f" ] || continue
   while IFS= read -r l; do [ -n "${l// /}" ] && left+=("$kind:$l"); done < "$f"
 done
+# The retry is counted here, now that it has run to the end.
+if [ "${#left[@]}" -eq 0 ]; then
+  rm -f "$TRIES_FILE"
+elif [ "$MODE" = retry ]; then
+  printf '%s %s\n' "$(( $(tries_done) + 1 ))" "$WAS" > "$TRIES_FILE" 2>/dev/null || true
+fi
+# The change start ran to the end: a later start no longer has to redo its full pass.
+[ "$MODE" = change ] && rm -f "$STATE/arch-repair-change"
 retries_left=$(( MAX_RETRIES - $(tries_done) ))
-[ "${#left[@]}" -gt 0 ] || rm -f "$TRIES_FILE"
 # Only leftovers no start will retry go into the notification: a transient failure that the
 # next start fixes should not reach the member at all.
 gave_up=""
