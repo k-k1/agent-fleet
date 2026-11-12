@@ -12,6 +12,7 @@ import { displayName } from "../../lib/sessionview.ts";
 import { openSessionTerminal } from "./open.ts";
 import { ArchivedModal } from "./ArchivedModal.tsx";
 import { CleanupModal } from "./CleanupModal.tsx";
+import { ReclaimModal } from "./ReclaimModal.tsx";
 import { SsmLoginModal } from "./SsmLoginModal.tsx";
 import { SessionTitleModal } from "./SessionTitleModal.tsx";
 import { BranchRenameModal } from "./BranchRenameModal.tsx";
@@ -26,6 +27,7 @@ export function SessionModals() {
   const archivedOpen = useSessionUI((s) => s.archivedOpen);
   const archivedDir = useSessionUI((s) => s.archivedDir);
   const cleanupOpen = useSessionUI((s) => s.cleanupOpen);
+  const reclaimOpen = useSessionUI((s) => s.reclaimOpen);
   const budget = useSessionUI((s) => s.budget);
   const move = useSessionUI((s) => s.move);
   const moveFromLimit = useSessionUI((s) => s.moveFromLimit);
@@ -60,6 +62,17 @@ export function SessionModals() {
             void refreshSessions();
             // Recreating a worktree adds a working copy, not just sessions.
             void useReposStore.getState().refresh();
+          }}
+        />
+      )}
+      {reclaimOpen && (
+        // Removes worktree output and tool caches only, but a worktree's working copy changes
+        // shape under the repo tree and the file tree, so refresh what CleanupModal refreshes.
+        <ReclaimModal
+          onClose={close}
+          onChanged={() => {
+            void useReposStore.getState().refresh();
+            useFilesStore.getState().bump();
           }}
         />
       )}

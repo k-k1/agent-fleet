@@ -19,6 +19,8 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   danger?: boolean;
   busy?: boolean;
+  /** Confirm is inert (nothing to confirm yet) while Cancel and Esc still work. */
+  confirmDisabled?: boolean;
   onConfirm?: () => void;
   onCancel?: () => void;
 }
@@ -29,6 +31,7 @@ export function ConfirmDialog({
   confirmLabel,
   danger = true,
   busy = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -59,7 +62,7 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={onCancel} disabled={busy}>
             {tr("ui.cancel")}
           </Button>
-          <Button variant={danger ? "danger" : "default"} onClick={onConfirm} disabled={busy} data-autofocus>
+          <Button variant={danger ? "danger" : "default"} onClick={onConfirm} disabled={busy || confirmDisabled} data-autofocus>
             {busy ? tr("ui.running") : confirmLabel ?? tr("ui.run")}
           </Button>
         </div>

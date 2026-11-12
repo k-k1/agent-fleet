@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../core/api/client.ts";
+import { publishWalk } from "../../../core/store/homeReclaim.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { humanSize } from "../../../lib/filemeta.ts";
 import { fmtDateTime, relTime } from "../../../lib/intl.ts";
@@ -103,6 +104,8 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
       }
       setFailed(false);
       setSt(res);
+      // The low-disk notice quotes this walk's figure; it never starts one of its own.
+      publishWalk(res.result);
     } catch {
       if (alive.current) setFailed(true);
     }
