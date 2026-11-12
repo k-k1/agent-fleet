@@ -4,7 +4,10 @@ import { setLocale, tMaybe } from "./index.ts";
 // The dark-slot audit actions (ADR 0121 decision 4) are labelled in both languages; the audit
 // view shows the label as a tooltip on the raw action name.
 describe("dark-slot audit action labels", () => {
-  const actions = ["detected", "rescued", "blocked", "quarantined"].map((a) => "pool.slot_dark_" + a);
+  const actions = [
+    ...["detected", "rescued", "blocked", "quarantined"].map((a) => "pool.slot_dark_" + a),
+    "pool.slot_wedged_detected",
+  ];
   for (const locale of ["en", "ja"]) {
     it("has a label for each action in " + locale, () => {
       setLocale(locale);

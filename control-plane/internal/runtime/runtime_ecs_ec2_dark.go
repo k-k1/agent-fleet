@@ -135,7 +135,6 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 	if !ok {
 		return // a client that cannot read SSM liveness cannot prove the SSM leg
 	}
-	f.probes.reset()
 	probe := f.probeRuntime()
 	byInstance := map[string]*ec2types.Volume{}
 	var ids []string

@@ -531,3 +531,71 @@ number. `preparing` is never resumed; the finalizer just removes it (like `begun
 the clock before the bump, not only after it.
 
 Round 2: the claim lease is also re-checked by the clock after the marker advances, before the claim is dropped (the read and delete are inlined with a check between), and after the command listing; a lapse aborts with the marker left for the resume scan, and the listed set is not used.
+
+**2026-11-12 (the wedged predicate, #3963; owner's decision of the same day).** Decision 1 describes a slot whose agents
+are silent. Production on 2026-11-12 showed the opposite shape: an 8 GiB slot thrashed for about an hour with its ECS agent
+connected and SSM `Online`, the old task stayed `STOPPING` for more than 30 minutes, and the CP's calls to the Agent on `:7700`
+failed fast (`connection reset`, `EOF`) while ECS reported the task `HEALTHY`. No rung above would have acted. An ordinary
+background `releaseSlot` recovered it (umount 8 s, task `STOPPED` about 75 s later). Decisions 1–5 stand unchanged; this adds a
+second predicate beside the dark one, with the same scope, the same anchor rules and the same rollout.
+
+*The wedged predicate.* A slot is **wedged** at one sweep when all of these hold:
+
+- EC2 `running`, launched or started at least `darkBootGrace` ago, with a home attached and no live claim (the scope of
+  decision 1: a Start that holds a claim owns the verdict);
+- its ECS agent is **connected**. "The agents still answer" is the definition, and it keeps the two predicates apart: a slot
+  whose ECS agent is silent belongs to the dark scan (and to #2447's blocked-phase line), so one box never produces both
+  episodes;
+- **either** a task of the workspace service on this slot has been `STOPPING` (or `DEACTIVATING` / `DEPROVISIONING`) for longer
+  than 120 s plus `wedgedStopGrace` (5 minutes; both constants). 120 s is the ceiling of every `stopTimeout` this repo registers
+  (`AF_STOP_GRACE_SEC` is clamped to 1–120 s), so a task registered under a different setting than the CP's current one is not
+  misjudged; a healthy stop ends within the timeout plus the agent's report, **or** the workspace Agent probe (`LastAgentProbe`, #3960 / PR #3971) is `failed`
+  while ECS reports the task on this slot `HEALTHY`.
+
+*What is not a signal.* A task stopping within 120 s plus the grace; a stopping task with no stop time (it cannot be
+dated); a deployment rolling (more than one task, or a task on another box, or a task not yet `HEALTHY`); a probe that is
+`healthy`; a probe that is `unknown`. Each of these leaves no stamp, and a probe that is `unknown` or a stopping task that
+cannot be dated also leaves an existing stamp alone.
+
+*A read that fails is not an answer*, as in decision 1: a failed service, task or container-instance read makes the pass unknown
+for that slot, and so does a failed cluster read for the whole scan. Only reads that succeeded can say "not wedged" and clear the
+stamp.
+
+*Probe-identity caveat (from the #3971 review).* The Service Connect alias cannot prove which task answered. A probe result
+speaks for a slot only when every task of the service that could still answer the alias is on that slot (tasks desired
+`STOPPED` but not gone, and tasks stopped less than 2 minutes ago, count, as in the 2026-11-12 Agent probe note), and while a task
+is being replaced the probe is **unknown**, not failed. The stopping-task signal needs no probe and no identity guess: it reads
+the task's own container instance.
+
+*The `mem-pressure` line.* The Agent's `mem-pressure` log line going silent was considered as a third signal and **not used**:
+the CP has no cheap way to read an Agent's log (it would be a CloudWatch Logs read per slot per sweep, or an Agent endpoint
+that does not exist), and the two signals above cover the observed incident. It can be added when a cheap source exists.
+
+*The anchor.* The instance tag `af-wedged-since`, `<time>/<LaunchTime>[/detected]`, the shape and rules of `af-dark-since`: the first
+pass that finds the predicate true writes it, a pass that finds the slot not wedged (or the box not running, or its ECS agent
+silent) clears it, a stamp from another `LaunchTime` is rewritten so every start re-arms the clock, and `detected` is set when the
+episode is reported so that "once per episode" survives a restart. `wedgedAfter`
+(`AF_ECS_EC2_WEDGED_AFTER_SEC`, default 600 s, 0 = off) is clamped up like `darkAfter` to the larger of `darkBootGrace` and
+`slotLostAfter + sweepEvery`. No external timestamp shortens it: a task's `StoppingAt` already gates the signal, and the clock
+starts at the first sweep that saw the whole predicate.
+
+*The action (decided here, not built).* The ordinary `releaseSlot` path on the slot's home: the SSM umount, the stop of the
+task, the detach, with the slot left in service. It runs under the ownership token of decision 4 (taken under the claim lock,
+checked before each destructive call), the same token the L1 rescue uses, and it does not touch the box (no deregistration, no
+`StopInstances`), because the agents answer. It follows the wedged stamp reaching `detected`; it needs SSM `Online` for the
+umount, and what a wedged slot with SSM offline does is for the implementation to settle (#3991).
+
+*The flag.* A **sibling**, `AF_ECS_EC2_WEDGED_SLOT_ACTION` (`off | detect | release`, default `detect`; `release` is parsed and
+runs as `detect` until the action exists), not `AF_ECS_EC2_DARK_SLOT_ACTION`. The two ladders end in different actions (a rescue
+of the box against an ordinary release of the home), their detect-only windows have to show different false-positive rates before
+either is enabled, and the wedged scan makes extra AWS reads (a service read, task lists and a container-instance read per scoped
+slot per sweep), so an operator must be able to switch it off without losing the dark scan.
+
+*Surfaces.* Audit `pool.slot_wedged_detected` once per episode (`workspace`, `volume`, `wedged_since`, `signal` =
+`task_stopping` | `agent_probe_failed`); the pool view's `wedged_since` and `wedged_rung` (`observing` today) and a Console badge
+beside the dark one; IAM: `af-wedged-since` needs no template change (the slot tag-write statement already allows any key but
+`af-pool` / `af-role` on a pool resource; the key is entered in `deploy/local/cfn-cp-tag-fence-test.py`). Unlike `af-dark-since`
+the stamp does **not** exclude the box from `makeRoom`: a wedged slot's remedy *is* the ordinary release, and `makeRoom`'s victim
+release goes through it.
+
+Follow-ups: #3991 (the release action).
