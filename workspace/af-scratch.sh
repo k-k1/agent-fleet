@@ -5,6 +5,8 @@
 #   af-scratch target build       # several at once
 #   af-scratch --status           # what is relocated now
 #   af-scratch --auto <dir>       # relocate ahead of time for the projects under dir (the Agent runs this on a new clone)
+#   af-scratch --repair           # recreate the scratch side of links left dangling by a stop (the entrypoint runs this)
+#   af-scratch --seed             # once: add links made before the registry existed (the entrypoint runs this)
 #
 # Why (measured, docs/log/63 §63.4): on ECS `~` is EFS (NFS), with a fixed ~14.5ms per
 # file. A tree of tens of thousands of files is 9x+ slower there, and neither more
@@ -25,7 +27,7 @@ if [ -z "$SCRATCH" ]; then
   # --auto は Agent が clone / worktree 作成のたびに best-effort で叩く。作業ディスクが
   # 無い構成（docker / native、または退避が無効なデプロイ）では黙って何もしないこと——
   # ここで失敗を返すと、逃がす動機が無いだけの正常な環境でログが埋まる。
-  [ "$MODE" = "--auto" ] && exit 0
+  case "$MODE" in --auto|--repair|--seed) exit 0 ;; esac
   echo "af-scratch: この Workspace には作業ディスクがありません（AF_WS_SCRATCH 未設定）。" >&2
   echo "  ローカルディスクにホームが載っている構成では、逃がす意味がないので何もしません。" >&2
   exit 1
@@ -34,6 +36,79 @@ fi
 # 逃がし先はワークツリー毎に分ける。同名の node_modules が複数プロジェクトにあっても
 # 衝突しないよう、絶対パスをそのまま階層に写す。
 dest_for() { printf '%s/artifacts%s\n' "$SCRATCH" "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; }
+
+# --- Links that outlive the disk they point at ---------------------------------------
+#
+# The scratch disk is new and empty after every stop, but the links live in ~/repos and
+# survive, so each one dangles until its target is recreated. Build tools do not do it:
+# Gradle 8.14 fails with "Failed to create parent directory", and Java's File.mkdirs() /
+# Files.createDirectories(), which Maven uses, refuse a dangling symlink (measured, #3987);
+# Rust's create_dir_all() (cargo) does the same by reading of its code.
+#
+# The registry lists every link this script made, one absolute path per line, so the
+# entrypoint can revive them without walking ~/repos. It lives in home (persistent), not
+# on the scratch disk it describes. Entries whose link is gone are dropped by --repair.
+STATE_DIR="${AF_SCRATCH_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/af-scratch}"
+REGISTRY="$STATE_DIR/links"
+
+record_link() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+  grep -qxF -- "$1" "$REGISTRY" 2>/dev/null || printf '%s\n' "$1" >> "$REGISTRY" 2>/dev/null || true
+}
+
+# revive_link succeeds only for a link into $SCRATCH/artifacts/, the only place this
+# script ever links to, and recreates its target when it dangles. A link pointing
+# anywhere else is the user's (a share into the parent clone, say): mkdir through it
+# would create directories outside the scratch disk, so it fails and touches nothing.
+revive_link() {
+  link="$1"
+  [ -L "$link" ] || return 1
+  t="$(readlink "$link")" || return 1
+  case "$t" in
+    */../*|*/..) return 1 ;;
+    "$SCRATCH"/artifacts/*) ;;
+    *) return 1 ;;
+  esac
+  [ -e "$link" ] && return 0
+  mkdir -p "$t" 2>/dev/null || return 1
+  echo "af-scratch: recreated $t for $link (the scratch disk was emptied by a stop)"
+}
+
+if [ "$MODE" = "--repair" ]; then
+  if [ -f "$REGISTRY" ]; then
+    # Rewritten without the entries whose link is gone. Runs at start, before anything
+    # else can append, so the rewrite loses no concurrent record_link.
+    kept="$REGISTRY.tmp.$$"
+    : > "$kept" 2>/dev/null || kept=/dev/null
+    while IFS= read -r link; do
+      [ -n "$link" ] && [ -L "$link" ] || continue
+      [ "$kept" != /dev/null ] && grep -qxF -- "$link" "$kept" && continue
+      printf '%s\n' "$link" >> "$kept"
+      revive_link "$link" || true
+    done < "$REGISTRY"
+    [ "$kept" = /dev/null ] || mv -f "$kept" "$REGISTRY" 2>/dev/null || rm -f "$kept"
+  fi
+  exit 0
+fi
+
+# --seed finds the links made before the registry existed, once per home: a scan bounded
+# to what --auto creates (target/build at most AF_WS_SCRATCH_AUTO_DEPTH levels below a
+# clone in ~/repos). It is a directory walk on EFS, so the entrypoint runs it in the
+# background and the marker keeps every later start from paying for it again.
+if [ "$MODE" = "--seed" ]; then
+  if [ ! -e "$STATE_DIR/seeded" ] && [ -d "${AF_SCRATCH_REPOS:-$HOME/repos}" ]; then
+    find "${AF_SCRATCH_REPOS:-$HOME/repos}" -mindepth 2 -maxdepth "$(( ${AF_WS_SCRATCH_AUTO_DEPTH:-3} + 1 ))" \
+      \( -name .git -o -name node_modules -o -name .venv -o -name dist \) -prune -o \
+      -type l \( -name target -o -name build \) -print 2>/dev/null |
+      while IFS= read -r link; do
+        case "$(readlink "$link")" in "$SCRATCH"/artifacts/*) ;; *) continue ;; esac
+        record_link "$link"
+        revive_link "$link" || true
+      done || true
+    { mkdir -p "$STATE_DIR" && : > "$STATE_DIR/seeded"; } 2>/dev/null || true
+  fi
+  exit 0
+fi
 
 if [ "${1:-}" = "--status" ]; then
   base="$SCRATCH/artifacts"
@@ -56,7 +131,8 @@ fi
 # directory", Python 3.13), so a pre-created link breaks the stock command.
 #
 # 安全側の規則:
-#   - 既に symlink → 触らない（利用者が親クローンへ張った共有かもしれない）
+#   - Already a symlink: leave it (it may be the user's share into the parent clone), except
+#     that a dangling link into $SCRATCH/artifacts is revived (see revive_link)
 #   - 実体があり、**git が無視していない** → 触らない（追跡物を動かすことは絶対にしない）
 #   - 実体があり、git が無視している → 移して symlink に置き換える
 #   - 実体が無い → 空の逃がし先を作って symlink を張る（この経路が本命）
@@ -65,7 +141,10 @@ fi
 # AF_WS_SCRATCH_AUTO=0 turns the step off.
 auto_relocate() {
   target="$1"
-  if [ -L "$target" ]; then return 0; fi
+  if [ -L "$target" ]; then
+      revive_link "$target" && record_link "$target"
+      return 0
+  fi
   if [ -e "$target" ]; then
     if ! git -C "$(dirname "$target")" check-ignore -q "$target" 2>/dev/null; then return 0; fi
   fi
@@ -77,7 +156,9 @@ auto_relocate() {
   else
     mkdir -p "$dest" 2>/dev/null || return 0
   fi
-  ln -s "$dest" "$target" 2>/dev/null && echo "af-scratch: $target -> $dest（Workspace 停止で消えます）"
+  ln -s "$dest" "$target" 2>/dev/null || return 0
+  record_link "${dest#"$SCRATCH/artifacts"}"
+  echo "af-scratch: $target -> $dest（Workspace 停止で消えます）"
 }
 
 if [ "$MODE" = "--auto" ]; then
@@ -117,6 +198,10 @@ for target in "$@"; do
       echo "af-scratch: 注意: .venv へのリンクは uv venv / uv sync なら使えますが、python3 -m venv .venv は失敗します。" >&2 ;;
   esac
   if [ -L "$target" ]; then
+    if [ ! -e "$target" ] && revive_link "$target"; then
+      record_link "$(cd "$(dirname "$target")" && pwd)/$(basename "$target")"
+      continue
+    fi
     echo "af-scratch: $target は既に symlink です（-> $(readlink "$target")）。何もしません。"
     continue
   fi
@@ -131,6 +216,7 @@ for target in "$@"; do
     mkdir -p "$dest"
   fi
   ln -s "$dest" "$target"
+  record_link "${dest#"$SCRATCH/artifacts"}"
   echo "af-scratch: $target -> $dest（Workspace 停止で消えます）"
 done
 exit "$status"

@@ -26,7 +26,7 @@ skip and say so.
 - Some dotfiles (`~/.config`, `~/.ssh`, `~/.gitconfig`, `~/.claude`, `~/.codex`, …) may be
   symlinks onto always-available storage. **Never "repair" them into real copies.**
 - When `$AF_WS_SCRATCH` is set, `target` / `build` are symlinks into a disk that vanishes on
-  **stop**: an empty link is expected, so **run builds unconditionally**. Never put tracked files
+  **stop**: start recreates them empty, so **run builds unconditionally**. Never put tracked files
   or uncommitted work on `/scratch`.
   Details: `notes/environment.md`.
 - **Throwaway files go in `$AF_WORK_DIR`** (probes, review checkouts, bundles, screenshots,

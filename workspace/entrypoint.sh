@@ -305,6 +305,16 @@ if [ -n "${AF_WS_SCRATCH:-}" ]; then
     # keep running on EFS and just log the fact.
     echo "[entrypoint] scratch: $AF_WS_SCRATCH に書けないため退避をスキップします"
   fi
+  # The af-scratch links in ~/repos (target, build) survived the stop but their scratch-side
+  # directories did not, and a build does not create through a dangling link (Gradle fails,
+  # measured in #3987; Maven's and cargo's mkdir calls refuse one too). This is outside the size check because af-scratch links regardless
+  # of disk size. --repair walks only the registry (one lstat per link); --seed is the
+  # one-time ~/repos walk for links made before the registry existed, so it goes to the
+  # background.
+  if command -v af-scratch >/dev/null 2>&1; then
+    af-scratch --repair 2>&1 | sed 's/^/[entrypoint] scratch: /' || true
+    ( af-scratch --seed 2>&1 | sed 's/^/[entrypoint] scratch: /' & ) || true
+  fi
 fi
 
 # --- boot-install (lean variant; docs/log/35 §35.4.1 / §35.7.1-6) ----------------

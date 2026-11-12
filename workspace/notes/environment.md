@@ -46,6 +46,12 @@ unset — there is no working disk and every path stays where you put it.
   the first build writes to them. So an empty `target` / `build` symlink in a fresh checkout is
   expected; a `[ -d build ] || …` check now thinks the build happened, so **run builds
   unconditionally**. Anything git tracks is never moved.
+- **After a stop the links come back empty, not dangling.** The disk is new, and Gradle fails
+  on a dangling `build` (`Failed to create parent directory`; Maven and cargo refuse one too),
+  so the entrypoint runs `af-scratch --repair`, which recreates the target of every link
+  af-scratch recorded in `~/.local/state/af-scratch/links` — only targets under
+  `$AF_WS_SCRATCH/artifacts/`. Still dangling (a link made by hand, deep, before that list
+  existed)? `af-scratch <dir>` on it recreates it.
 - **`node_modules` and `.venv` stay in the home.** npm replaces a symlinked `node_modules` with a
   real directory on every install (and `npm ci` empties the link's target first), so it cannot be
   relocated; `af-scratch node_modules` refuses. `python3 -m venv .venv` fails on a symlink;
