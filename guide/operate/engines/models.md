@@ -142,7 +142,7 @@ The verdict is **Fits**, **Tight (n%)** or **Will not fit this class**, and a mo
 | Qwen-Image 2.1 | Generate and edit | Up to 10 |
 
 Qwen-Image 2.1 shares no file with the edit families. Its autoencoder is a different one, so its parts are taken in as files of its own even where the edit families' parts are already held.
-The ComfyUI version a Qwen-Image 2.1 row needs is in [Registering the models by hand](../08-image-engine.md#registering-the-models-by-hand).
+The ComfyUI version a Qwen-Image 2.1 row needs is in [Generate images on your own ComfyUI](comfyui.md#register-the-models).
 
 A request that names no size is drawn at the size its family decides: 1024×1024 for the megapixel-era families and 512×512 for SD 1.5. A row's own size list wins over that.
 

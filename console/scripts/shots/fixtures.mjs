@@ -3379,3 +3379,39 @@ export const operateGpuTts = (locale) => ({
   polly: { ready: true },
   dict: (locale === "ja" ? "# 製品名" : "# Product names") + "\nagent-fleet=エージェントフリート\nWebshop=ウェブショップ\nkubectl=キューブコントロール\n",
 });
+
+// Admin › Inference engines on a compose deployment (SHOT_OPERATE_ENGINES): one external image row
+// pointing at a ComfyUI on the LAN, the panel's URL and key in effect over AF_COMFY_URL. Private
+// addresses and example.com only.
+export function operateEnginesLan() {
+  return {
+    super_admin: true,
+    engines: [
+      {
+        key: "image",
+        api: "images",
+        provider: "comfy",
+        lifecycle: "external",
+        managed: false,
+        mode: "on",
+        url: "http://192.168.10.20:8188",
+        models: ["studio-xl"],
+        has_models: true,
+        model_rows: [],
+      },
+    ],
+    comfy_lan: {
+      available: true,
+      source: "panel",
+      url: "http://192.168.10.20:8188",
+      panel_url: "http://192.168.10.20:8188",
+      panel_key_set: true,
+      env_url: "http://192.168.10.5:8188",
+      env_key_set: false,
+      fallback_source: "env",
+      fallback_url: "http://192.168.10.5:8188",
+      updated_by: "admin@example.com",
+      updated_at: "2026-11-02T09:30:00Z",
+    },
+  };
+}

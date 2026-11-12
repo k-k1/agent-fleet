@@ -2819,6 +2819,37 @@ const SCENES = [
     })()`,
     settle: 1500,
   },
+  // ---- operate pages: engines outside the fleet (SHOT_OPERATE_ENGINES) ----
+  ...[
+    // Admin › Inference engines: the LAN ComfyUI panel (URL, write-only key, what removing falls back to).
+    ["operate-engines-comfy-lan", '[data-testid="comfy-lan-panel"]'],
+    // Admin › Inference engines: the lender's form that shows a borrowing deployment its token.
+    ["operate-engines-issue-token", ".engines-issue"],
+  ].map(([name, target]) => ({
+    name,
+    guide: true,
+    stubEnv: { SHOT_OPERATE_ENGINES: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1400,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(推論エンジン|Inference engines)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(${JSON.stringify(target)}); i++) await new Promise((r) => setTimeout(r, 200));
+      const m = document.querySelector(".admin-modal");
+      if (m) { m.style.height = "1300px"; m.style.maxHeight = "none"; }
+      const el = document.querySelector(${JSON.stringify(target)});
+      el?.setAttribute("id", "shot-operate");
+      el?.scrollIntoView({ block: "start" });
+    })()`,
+    settle: 1500,
+  })),
   // ---- end operate pages ----
   // ---- memory import/export pages (SHOT_MEMIO_GUIDE) ----
   {

@@ -32,9 +32,9 @@ GPU を持たない配備でも、ほかのエンジンを同じ画面に並べ�
 
 | エンジン | ページ |
 |---|---|
-| 自分のネットワークの中の ComfyUI | [08 自前の ComfyUI で画像を生成する](../08-image-engine.ja.md) |
-| 別の配備のエンジン | [09 別の配備のエンジンを借りる](../09-borrowed-engine.ja.md) |
-| 自分のネットワークの中の llama.cpp | [10 自前の llama.cpp でチャットの推論を担う](../10-llm-lan.ja.md) |
+| 自分のネットワークの中の ComfyUI | [自前の ComfyUI で画像を生成する](comfyui.ja.md) |
+| 別の配備のエンジン | [別のデプロイのエンジンを借りる](borrow.ja.md) |
+| 自分のネットワークの中の llama.cpp | [LAN の llama.cpp でチャットする](llama-cpp.ja.md) |
 
 ## 推論エンジンの画面を開く
 

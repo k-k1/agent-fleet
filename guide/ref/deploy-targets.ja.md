@@ -76,7 +76,7 @@ source_of_truth: "この表（行は Control Plane が受け付ける runtime �
 
 ⁴ **自分の網の中ですでに動いている** ComfyUI を、環境変数 1 つで指すか、
 LAN の ComfyUI・借りたエンジン・OpenAI 互換のサーバを、エンジンの行として並べる
-（[operate/08](../operate/08-image-engine.ja.md)）。
+（[operate/08](../operate/engines/comfyui.ja.md)）。
 
 ⁵ フリート自身の GPU を、要求が来たときに買う。Fargate に相当するものは無い。
 なお**どの形態でも**、セッションは**メンバー自身の CLI のプラン**（Codex /
@@ -84,7 +84,7 @@ Antigravity）で画像を生成できる。この行が指すのは**配備が�
 ことである。
 
 ⁶ `ecs-ec2` ではフリート自身の GPU。`docker`・`native`・`kubernetes` では、**自分の網の中ですでに
-動いている** llama.cpp を環境変数 1 つで指す（[operate/10](../operate/10-llm-lan.ja.md)）。
+動いている** llama.cpp を環境変数 1 つで指す（[operate/10](../operate/engines/llama-cpp.ja.md)）。
 
 ⁷ Control Plane 自身はメンバーの EFS のホームをマウントできないので、スタックが宣言した短い
 タスク（`30-ingress` の `HomeOpsTaskDef`）を起動し、それがファイルシステムをマウントして

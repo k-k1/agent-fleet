@@ -32,9 +32,9 @@ A deployment without GPUs can list other engines on the same screen.
 
 | Engine | Page |
 |---|---|
-| A ComfyUI on your own network | [08 Image generation on your own ComfyUI](../08-image-engine.md) |
-| Another deployment's engines | [09 Borrowing another deployment's engines](../09-borrowed-engine.md) |
-| A llama.cpp on your own network | [10 Chat inference on your own llama.cpp](../10-llm-lan.md) |
+| A ComfyUI on your own network | [Generate images on your own ComfyUI](comfyui.md) |
+| Another deployment's engines | [Borrow another deployment's engines](borrow.md) |
+| A llama.cpp on your own network | [Chat on a llama.cpp on your LAN](llama-cpp.md) |
 
 ## Open the inference engines screen
 

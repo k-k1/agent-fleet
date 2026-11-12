@@ -315,6 +315,9 @@ const exact = {
         "/api/admin/tenants/demo/watch-sources": () => ({ enabled: false }),
       }
     : {}),
+  // Admin › Inference engines for the operate engine pages (SHOT_OPERATE_ENGINES): a deployment
+  // whose only image engine is a ComfyUI on the LAN, set from the panel over an AF_COMFY_URL.
+  ...(process.env.SHOT_OPERATE_ENGINES ? { "/api/admin/engines": () => fx.operateEnginesLan() } : {}),
   // Admin › Appearance for the operate pages (SHOT_OPERATE_RUN): a staging deployment branded
   // violet from this screen, over an environment that names none.
   ...(process.env.SHOT_OPERATE_RUN === "1"
