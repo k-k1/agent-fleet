@@ -57,7 +57,7 @@ Kubernetes の配備で、データベースと CP のディスクのバック�
    gcloud sql backups list --instance "$PREFIX-pg" --project "$PROJECT"
    gcloud sql backups restore <backup-id> --restore-instance "$PREFIX-pg" --project "$PROJECT"
    ```
-3. ディスクは、スナップショットのあとに内部の git プロバイダを使ったときだけ戻します。今のディスクは残し、スナップショットから新しいディスクを作り、それから claim をそちらに向けます。新しいディスクを作れなければ、まだ何も変わっていません。手順の部品は [スナップショットからディスクとボリュームを作る](backup.ja.md#スナップショットからディスクとボリュームを作る) にあります
+3. ディスクは、スナップショットのあとに内部の git プロバイダを使ったときだけ戻します。今のディスクは残し、スナップショットから新しいディスクを作り、それから claim をそちらに向けます。新しいディスクを作れなければ、まだ何も変わっていません。手順の部品は [スナップショットからディスクとボリュームを作る](backup.ja.md#スナップショットからディスクとボリュームを作る) にあります。そうでなければこの手順は飛ばします。claim `af-cp-data` は今のディスクに結び付いたままで、それで何が変わるかは手順 4 と 5 にあります
    ```bash
    OLD_PV="$PV" OLD_DISK="$DISK"                      # from "Find the CP's disk"
    NAME="$PREFIX-cp-data-restore-$(date +%Y%m%d%H%M)" CLAIM=af-cp-data SNAP="$PREFIX-cp-data-before-<version>"
@@ -67,14 +67,15 @@ Kubernetes の配備で、データベースと CP のディスクのバック�
    # ... the volume part of "Make a disk and a volume from a snapshot" ...
    ```
    手順 4 の前にやめるときは、新しいボリュームを消し、古いボリュームに結び付いた claim を作り直します（`kubectl patch pv "$OLD_PV" -p '{"spec":{"claimRef":null}}'` のあと、`volumeName: $OLD_PV` の claim `af-cp-data`）
-4. オーバーレイに前のタグを設定し、`kubectl apply -k` します。claim が作り直されて、戻したボリュームに結び付きます。それと、CP がディスクのゾーンで動いていることを確かめます
+4. オーバーレイに前のタグを設定し、`kubectl apply -k` します。手順 3 を実行したなら、claim が作り直されて戻したボリュームに結び付きます。飛ばしたなら、claim は消しておらず元のボリュームのままです。それと、CP がディスクのゾーンで動いていることを確かめます
    ```bash
-   kubectl -n "$PREFIX-cp" get pvc af-cp-data          # Bound, VOLUME = $NAME
+   kubectl -n "$PREFIX-cp" get pvc af-cp-data          # Bound; VOLUME = $NAME if step 3 ran, else the volume it had
    kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
    kubectl -n "$PREFIX-cp" get pods -o wide -l app.kubernetes.io/name=af-cp   # a node in $ZONE
    ```
-5. 戻した配備を確かめたら（サインインし、リポジトリをクローンする）、ディスクを片付けます。古いディスクを消し、戻したボリュームを StorageClass の `Delete` に戻し（破棄や撤去でほかと同じく消えるように）、スナップショットの予定を新しいディスクに移します
+5. **手順 3 を実行したときだけです。** 飛ばしたなら、ディスクもスナップショットの予定も元のままなので、することはありません。実行したなら、戻した配備を確かめてから（サインインし、リポジトリをクローンする）、ディスクを片付けます。古いディスクを消し、戻したボリュームを StorageClass の `Delete` に戻し（破棄や撤去でほかと同じく消えるように）、スナップショットの予定を新しいディスクに移します
    ```bash
+   echo "old: $OLD_PV $OLD_DISK  new: $NAME"          # all three set by step 3 in this shell; if not, stop
    kubectl delete pv "$OLD_PV"
    gcloud compute disks delete "$OLD_DISK" --zone "$ZONE" --project "$PROJECT"
    kubectl patch pv "$NAME" -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'

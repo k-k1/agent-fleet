@@ -57,7 +57,7 @@ Going back means **restoring both backups of step 2 of the upgrade and the previ
    gcloud sql backups list --instance "$PREFIX-pg" --project "$PROJECT"
    gcloud sql backups restore <backup-id> --restore-instance "$PREFIX-pg" --project "$PROJECT"
    ```
-3. The disk, only if the internal git provider was used since the snapshot: keep the current disk, make a new one from the snapshot, and only then point the claim at it. If the new disk cannot be made, nothing has changed yet. The building blocks are in [Make a disk and a volume from a snapshot](backup.md#make-a-disk-and-a-volume-from-a-snapshot)
+3. The disk, only if the internal git provider was used since the snapshot: keep the current disk, make a new one from the snapshot, and only then point the claim at it. If the new disk cannot be made, nothing has changed yet. The building blocks are in [Make a disk and a volume from a snapshot](backup.md#make-a-disk-and-a-volume-from-a-snapshot). Otherwise skip this step: the claim `af-cp-data` stays as it is, bound to its current disk, and steps 4 and 5 say what that changes
    ```bash
    OLD_PV="$PV" OLD_DISK="$DISK"                      # from "Find the CP's disk"
    NAME="$PREFIX-cp-data-restore-$(date +%Y%m%d%H%M)" CLAIM=af-cp-data SNAP="$PREFIX-cp-data-before-<version>"
@@ -67,14 +67,15 @@ Going back means **restoring both backups of step 2 of the upgrade and the previ
    # ... the volume part of "Make a disk and a volume from a snapshot" ...
    ```
    To back out before step 4: delete the new volume, then recreate the claim bound to the old one (`kubectl patch pv "$OLD_PV" -p '{"spec":{"claimRef":null}}'`, then a claim `af-cp-data` with `volumeName: $OLD_PV`)
-4. Set the previous tag in the overlay and `kubectl apply -k` it. The claim is recreated and binds to the restored volume; check that, and that the CP runs in the disk's zone
+4. Set the previous tag in the overlay and `kubectl apply -k` it. If step 3 ran, the claim is recreated and binds to the restored volume; if you skipped it, the claim was never deleted and keeps its volume. Check that, and that the CP runs in the disk's zone
    ```bash
-   kubectl -n "$PREFIX-cp" get pvc af-cp-data          # Bound, VOLUME = $NAME
+   kubectl -n "$PREFIX-cp" get pvc af-cp-data          # Bound; VOLUME = $NAME if step 3 ran, else the volume it had
    kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
    kubectl -n "$PREFIX-cp" get pods -o wide -l app.kubernetes.io/name=af-cp   # a node in $ZONE
    ```
-5. Once the restored deployment is confirmed (sign in, clone a repository), put the disks back in order: remove the old one, give the restored volume the StorageClass's `Delete` again (so Destroy and teardown remove it as they remove any other), and move the snapshot schedule to the new disk
+5. **Only if step 3 ran.** If you skipped it there is nothing to do: the disk and its snapshot schedule are the ones you had. Otherwise, once the restored deployment is confirmed (sign in, clone a repository), put the disks back in order: remove the old one, give the restored volume the StorageClass's `Delete` again (so Destroy and teardown remove it as they remove any other), and move the snapshot schedule to the new disk
    ```bash
+   echo "old: $OLD_PV $OLD_DISK  new: $NAME"          # all three set by step 3 in this shell; if not, stop
    kubectl delete pv "$OLD_PV"
    gcloud compute disks delete "$OLD_DISK" --zone "$ZONE" --project "$PROJECT"
    kubectl patch pv "$NAME" -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
