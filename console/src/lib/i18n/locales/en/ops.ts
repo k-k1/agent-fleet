@@ -135,6 +135,9 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.force_stop_title": "Stop slot {id} (force)?",
   "pool.force_stop_body":
     "For a slot that is running but wedged: its ECS agent is not connected and SSM is not answering. This ends the start in progress on it, cancels the commands the Control Plane has queued on it, and stops the instance (a normal shutdown first, then Force if it has not stopped). The slot stays in the pool and the home stays on it: the member's next Start wakes this same slot, and the reboot clears whatever thrashed. The member on it (if any) sees the workspace as stopped; ask them to start it only once this row shows asleep.",
+  "pool.force_stop_override_warn":
+    "This slot is healthy: its ECS agent is connected and SSM may still answer, so the server would normally refuse. Overriding stops the instance anyway. Whatever is running in the occupant's workspace on it is killed without warning, the workspace shows as stopped, and anything not yet saved to its home is lost.",
+  "pool.force_stop_override_ack": "I understand the agents still answer, and I want to stop this slot anyway (override healthy)",
   "pool.force_stop_occupant": "Occupant: {ws}",
   "pool.force_stop_failed": "Could not stop it: {msg}",
   "pool.force_stop_done":
