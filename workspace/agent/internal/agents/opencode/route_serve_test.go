@@ -188,7 +188,8 @@ func TestRouteServeIsReplacedAfterItDies(t *testing.T) {
 	isolatedHome(t)
 	useMajor(t, 2)
 	useFakeRouteServe(t)
-	withGateway(t, &fakeGateway{})
+	g := &fakeGateway{}
+	withGateway(t, g)
 	m := managedBedrockMeta(t, "oc_route2")
 	addr, gen, err := ensureRouteServe(m)
 	if err != nil {
@@ -196,6 +197,12 @@ func TestRouteServeIsReplacedAfterItDies(t *testing.T) {
 	}
 	t.Cleanup(func() { stopRouteServe(m.Name, "test") })
 	rs := routeServeOf(m.Name)
+	// A handle on it, so the death is a crash of a running session and not a start's leftover.
+	h := &threadHandle{name: m.Name, routed: true, alive: true, addr: addr, events: make(chan agents.Event, 64)}
+	handlesMu.Lock()
+	handles[m.Name] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() { forgetHandle(m.Name, h) })
 	_ = rs.cmd.Process.Kill()
 	select {
 	case <-rs.done:
@@ -204,6 +211,13 @@ func TestRouteServeIsReplacedAfterItDies(t *testing.T) {
 	}
 	if routeServeOf(m.Name) != nil || len(agents.RuntimeRoots(m.Name)) != 0 {
 		t.Fatal("a dead server is still registered")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for g.endedFor(m.Name) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if g.endedFor(m.Name) == 0 {
+		t.Fatal("a dead server's route token was not ended")
 	}
 	addr2, gen2, err := ensureRouteServe(m)
 	if err != nil {
@@ -408,5 +422,49 @@ func TestRouteServeStartFailureEndsItsToken(t *testing.T) {
 	}
 	if g.endedFor(m.Name) == 0 {
 		t.Fatal("a failed start kept its route token")
+	}
+}
+
+// The cleanup of one Resume ends only the server it used: a later Resume's server is left alone.
+func TestStopRouteServeGenSparesAnotherGeneration(t *testing.T) {
+	isolatedHome(t)
+	useMajor(t, 2)
+	useFakeRouteServe(t)
+	withGateway(t, &fakeGateway{})
+	m := managedBedrockMeta(t, "oc_route10")
+	_, gen, err := ensureRouteServe(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopRouteServe(m.Name, "test") })
+	stopRouteServeGen(m.Name, gen-1, "an older resume failed")
+	if routeServeOf(m.Name) == nil {
+		t.Fatal("an older generation's cleanup stopped the current server")
+	}
+	stopRouteServeGen(m.Name, gen, "this resume failed")
+	if routeServeOf(m.Name) != nil {
+		t.Fatal("the generation's own cleanup left it running")
+	}
+}
+
+// Once the workspace's graceful stop has begun, no server starts: a reconcile racing it would
+// leave one behind.
+func TestNoRouteServeStartsAfterShutdown(t *testing.T) {
+	isolatedHome(t)
+	useMajor(t, 2)
+	log := useFakeRouteServe(t)
+	withGateway(t, &fakeGateway{})
+	t.Cleanup(func() {
+		routeServes.mu.Lock()
+		routeServes.closed = false
+		routeServes.mu.Unlock()
+	})
+	stopAllRouteServes()
+	if _, _, err := ensureRouteServe(managedBedrockMeta(t, "oc_route11")); err == nil {
+		stopRouteServe("oc_route11", "test")
+		t.Fatal("a server started after the shutdown began")
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Fatal("a process was started after the shutdown began")
 	}
 }

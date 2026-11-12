@@ -151,12 +151,12 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	ses, err = managedSession(addr, m, cwd, ocSid, ses)
 	if err != nil {
 		h.mu.Lock()
-		serving := h.alive
+		serving := h.alive && h.gen == gen
 		h.mu.Unlock()
 		if m.Route != nil && !serving {
 			// A server nothing runs on: a create or fork that failed here is never listed, so no
-			// stop would ever reach it.
-			stopRouteServe(m.Name, "resume failed")
+			// stop would ever reach it. Only this generation: a later Resume's server is not ours.
+			stopRouteServeGen(m.Name, gen, "resume failed")
 		}
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 		h.mu.Unlock()
 		forgetHandle(m.Name, h)
 		if m.Route != nil {
-			stopRouteServe(m.Name, "stopped while resuming")
+			stopRouteServeGen(m.Name, gen, "stopped while resuming")
 		}
 		return nil, fmt.Errorf("opencode: session %s was stopped while it was resuming", m.Name)
 	}

@@ -61,6 +61,9 @@ var routeServes = struct {
 	mu     sync.Mutex
 	byName map[string]*routeServe
 	gen    int
+	// closed: the workspace's graceful stop has begun; no server starts after it, or a reconcile
+	// racing the stop would leave one behind.
+	closed bool
 	// locks serializes the start and stop of one session's server; a start waits seconds for the
 	// probe, and other sessions must not wait with it.
 	locks map[string]*sync.Mutex
@@ -152,6 +155,12 @@ func ensureRouteServe(m session.Meta) (string, int, error) {
 	l := routeServeLock(m.Name)
 	l.Lock()
 	defer l.Unlock()
+	routeServes.mu.Lock()
+	closed := routeServes.closed
+	routeServes.mu.Unlock()
+	if closed {
+		return "", 0, errors.New("opencode: the workspace is stopping; no session server starts now")
+	}
 	if rs := routeServeOf(m.Name); rs != nil {
 		routeServes.mu.Lock()
 		up := rs.up && !rs.stopping
@@ -290,6 +299,16 @@ func waitRouteServe(rs *routeServe, tail *agents.StderrTail) {
 	if deliberate || !wasUp {
 		return
 	}
+	// Its bearer goes with it, unless a replacement already runs: that one's mint ended this
+	// token, and ending the session's tokens now would end the replacement's. The session's lock
+	// orders this after any start in flight; rs.done is closed first, so a stop waiting on it
+	// under that lock is not held up.
+	l := routeServeLock(rs.name)
+	l.Lock()
+	if routeServeOf(rs.name) == nil {
+		agents.EndRouteSession(rs.name)
+	}
+	l.Unlock()
 	code, sig := exitOf(err)
 	log.Printf("opencode: session %s: route server died unexpectedly (gen %d, code %d, sig %d)", rs.name, rs.gen, code, sig)
 	h := handleFor(rs.name)
@@ -350,6 +369,17 @@ func stopRouteServe(name, reason string) {
 	}
 }
 
+// stopRouteServeGen ends the session's server only when it is still generation gen: the cleanup of
+// a Resume that failed must not end a server a later Resume started.
+func stopRouteServeGen(name string, gen int, reason string) {
+	l := routeServeLock(name)
+	l.Lock()
+	defer l.Unlock()
+	if rs := routeServeOf(name); rs != nil && rs.gen == gen {
+		stopRouteServeLocked(rs, reason)
+	}
+}
+
 // routeServeStopGrace is how long a server gets after SIGTERM before SIGKILL; a var for tests.
 var routeServeStopGrace = 6 * time.Second
 
@@ -379,6 +409,7 @@ func stopRouteServeLocked(rs *routeServe, reason string) {
 // stopAllRouteServes ends every private server (the workspace's graceful stop).
 func stopAllRouteServes() {
 	routeServes.mu.Lock()
+	routeServes.closed = true
 	names := make([]string, 0, len(routeServes.byName))
 	for n := range routeServes.byName {
 		names = append(names, n)
@@ -446,10 +477,7 @@ func monitorRouteEvents(rs *routeServe) {
 			return
 		default:
 		}
-		routeServes.mu.Lock()
-		current := routeServes.byName[rs.name] == rs && !rs.stopping
-		routeServes.mu.Unlock()
-		if !current {
+		if !routeServeCurrent(rs) {
 			return // being stopped or already replaced: a closed stream is no failure
 		}
 		if !healthy(rs.addr) {
@@ -460,8 +488,16 @@ func monitorRouteEvents(rs *routeServe) {
 				h.mu.Lock()
 				ours := h.addr == rs.addr
 				h.mu.Unlock()
+				// Again after the probe, which a stop can overlap, and under the session's lock: a
+				// stop has either begun (not current) or starts after the handle is marked lost.
+				l := routeServeLock(rs.name)
+				l.Lock()
+				ours = ours && routeServeCurrent(rs)
 				if ours {
 					h.runtimeLost()
+				}
+				l.Unlock()
+				if ours {
 					goReconcile("route server not answering: " + rs.name)
 				}
 			}
@@ -469,6 +505,14 @@ func monitorRouteEvents(rs *routeServe) {
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+// routeServeCurrent reports that rs is still the session's registered server and nobody asked it
+// to end.
+func routeServeCurrent(rs *routeServe) bool {
+	routeServes.mu.Lock()
+	defer routeServes.mu.Unlock()
+	return routeServes.byName[rs.name] == rs && !rs.stopping
 }
 
 func streamRouteEvents(rs *routeServe) error {
