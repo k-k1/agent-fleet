@@ -86,17 +86,19 @@ ID だと、最初のターンで AccessDenied や `model_not_found` のよう�
 
 ## 呼び出しが拒否されたとき
 
-認証や接続に関する拒否はゲートウェイ自身が HTTP 401（待てば直りうるものは 503）で返し、
-必ず `x-should-retry: false` を付けます。claude は再試行せず、メッセージ中のコードとともに 1 回だけ表示します。
-（転送できない要求は固有のステータスのままです: `route_operation_not_allowed` と `route_model_not_selected` は 404、
+拒否はゲートウェイ自身が返し、必ず `x-should-retry: false` を付けます。
+ルートのトークンや AWS のログインに関する拒否は HTTP 401、使えるものに関する拒否（印の付いていないプロファイル、
+オフの付与、許可されていないモデル）は 412、待てば直りうるものは 503 で返します。Claude Code は 401 のときだけ
+メッセージの前に「AWS authentication failed · refresh your AWS credentials …」を付け、412 の拒否はメッセージだけを表示します。401・412・503 は 1 回だけ表示され再試行されません。
+（転送できない要求は固有のステータスのままで、claude が再試行することがあります（400 は 8 回送られます）: `route_operation_not_allowed` と `route_model_not_selected` は 404、
 `route_bad_model` は 400、`route_request_too_large` は 413。）
 
 | コード | 意味 | 対処 |
 |---|---|---|
 | `route_token_invalid`（401） | ルートのトークンがない、未知、期限切れ、または失効した（セッション停止、プロファイルや選択の変更）。 | セッションを起動し直す。 |
 | `route_caller_forbidden`（401） | トークンを、発行先のセッション以外のプロセスが提示した。トークンは失効しない。 | そのセッション自身のターミナルからモデルを呼ぶ。他のセッションからは呼ばない。 |
-| `route_connection_forbidden`（401） | セッション開始後に、プロファイルのモデルのルートの印が外された、または削除された（セッション作成時の同じ拒否は 403）。トークンは失効する。 | 印を付け直すか、別のプロファイルで新しいセッションを始める。 |
-| `route_session_ended`、`route_selection_changed`、`route_connection_changed`（401） | セッションが終わった、このルートをもう選んでいない、またはプロファイルが編集された。トークンは失効する。 | 新しいセッションを始める。 |
+| `route_connection_forbidden`（412） | セッション開始後に、プロファイルのモデルのルートの印が外された、または削除された（セッション作成時の同じ拒否は 403）。トークンは失効する。 | 印を付け直すか、別のプロファイルで新しいセッションを始める。 |
+| `route_session_ended`、`route_selection_changed`（401）、`route_connection_changed`（401。呼び出し時にプロファイルの編集を見つけた場合は 412） | セッションが終わった、このルートをもう選んでいない、またはプロファイルが編集された。トークンは失効する。 | 新しいセッションを始める。 |
 | `route_login_required`、`route_confirmation_required`（401） | プロファイルに SSO サインイン、または「使用前に確認」の承認が要る。 | サインインまたは許可すると、次の呼び出しは通る。 |
 | `route_connection_unavailable`（503） | Agent がいま設定の AWS プロファイルを読めない。 | 少し待ってやり直す。 |
 | `route_upstream_unavailable`、`route_credentials_unavailable`（503） | いま Bedrock または資格情報に届かない。 | 少し待ってやり直す。 |

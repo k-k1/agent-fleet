@@ -366,7 +366,7 @@ func (g *Gateway) authorize(token string, caller procID, transport string, calle
 	// The token is not revoked: a process that only read it must not be able to end the owner's
 	// route by presenting it. A token is served only on the transport it was issued for.
 	if !callerOK || transport != bindingTransport(b) || !inTree(g.d.ProcRoot, caller, g.d.Roots(b.Session)) {
-		return nil, &refusal{http.StatusForbidden, "route_caller_forbidden",
+		return nil, &refusal{http.StatusUnauthorized, "route_caller_forbidden",
 			"this route token belongs to another session's process; only the session it was issued to may use it"}
 	}
 	revoke := func(status int, code, msg string) (*call, *refusal) {
@@ -429,7 +429,7 @@ func (g *Gateway) approvalRefusal(c connection, m session.Meta) *refusal {
 			msg = err.Error()
 		}
 	}
-	return &refusal{http.StatusForbidden, "route_confirmation_required", msg}
+	return &refusal{http.StatusUnauthorized, "route_confirmation_required", msg}
 }
 
 func credKey(identity, region string) string { return identity + "|" + region }
@@ -491,7 +491,7 @@ func (g *Gateway) credentials(c *call, fresh bool) (awsx.RouteCredentials, *refu
 		ref = nil
 	case errors.Is(err, awsx.ErrLoginRequired):
 		cr = awsx.RouteCredentials{}
-		ref = &refusal{http.StatusForbidden, "route_login_required", fmt.Sprintf(
+		ref = &refusal{http.StatusUnauthorized, "route_login_required", fmt.Sprintf(
 			"the SSO login for profile %q is required; sign in from the Console, or run `af-aws-exec --profile %s -- true` in a terminal", c.conn.profile.Name, c.conn.profile.Name)}
 	default:
 		cr = awsx.RouteCredentials{}

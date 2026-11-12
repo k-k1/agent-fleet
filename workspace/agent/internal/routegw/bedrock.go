@@ -57,9 +57,11 @@ func upstreamClient() *http.Client {
 // (measured, claude 2.1.318 against a stand-in on the socket): it backs off and retries a 401 or
 // a 403 about seven times over 45 seconds and ignores `x-should-retry: false` on a 403; a 400
 // goes out eight times at once; a 404 is shown as "model not available"; a 429 is a rate limit.
-// A 401 or a 503 with `x-should-retry: false` is sent once and shown at once with this message
-// (the 401 under the CLI's "AWS authentication failed" line). So every refusal that waiting
-// does not clear goes out as 401, every one that it may clear as 503, both with the header.
+// A 401, 503, 409 or 412 with `x-should-retry: false` is sent once and shown at once with this
+// message; only the 401 comes under the CLI's "AWS authentication failed · refresh your AWS
+// credentials" line (measured, #3891), so 401 is kept for refusals about the member's AWS login
+// or the route token, a refusal of what the caller may do (403, 409: a grant off, a profile no
+// longer marked, a model not allowed) goes out as 412, and one that waiting may clear as 503.
 func writeRefusal(w http.ResponseWriter, r *refusal) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Amzn-Errortype", r.code)
@@ -243,8 +245,8 @@ func wireStatus(status int) int {
 	switch {
 	case status >= 500:
 		return http.StatusServiceUnavailable
-	case status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusConflict:
-		return http.StatusUnauthorized
+	case status == http.StatusForbidden || status == http.StatusConflict:
+		return http.StatusPreconditionFailed
 	default:
 		return status
 	}

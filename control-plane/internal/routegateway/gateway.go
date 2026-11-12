@@ -225,9 +225,12 @@ func fromContract(r *providedroutes.Refusal) *routeRefusal {
 
 // writeRouteRefusal answers in the shape and statuses the Agent's gateway answers a harness in
 // (workspace/agent/internal/routegw/bedrock.go writeRefusal), because the Agent passes this
-// answer through: a refusal waiting does not clear goes out as 401, one it may clear as 503,
-// both with x-should-retry: false, which Claude Code shows once instead of retrying (measured
-// in ADR 0128 P2b part 2).
+// answer through: a refusal of authentication goes out as 401, one of what the caller may do
+// (forbidden, conflict) as 412, one waiting may clear as 503, all with x-should-retry: false,
+// which Claude Code shows once instead of retrying (measured in ADR 0128 P2b part 2). 412, not
+// 401, for the middle class: Claude Code prefixes every 401 with "AWS authentication failed ·
+// refresh your AWS credentials", which sends a member after credentials that are not the
+// problem, while 412 shows the message alone and still goes out once (measured, #3891).
 func writeRouteRefusal(w http.ResponseWriter, r *routeRefusal) {
 	for k, v := range r.header {
 		w.Header().Set(k, v)
@@ -239,8 +242,8 @@ func writeRouteRefusal(w http.ResponseWriter, r *routeRefusal) {
 	switch {
 	case status >= 500:
 		status = http.StatusServiceUnavailable
-	case status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusConflict:
-		status = http.StatusUnauthorized
+	case status == http.StatusForbidden || status == http.StatusConflict:
+		status = http.StatusPreconditionFailed
 	}
 	w.WriteHeader(status)
 	b, _ := json.Marshal(map[string]string{"message": r.msg, "code": r.code})
