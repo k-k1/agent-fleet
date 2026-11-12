@@ -14,11 +14,12 @@ The stacks and their order are in [Understand the ECS layout](overview.md).
 
 | What you do | What happens |
 |---|---|
-| Once per account, create the service-linked roles and set up cost allocation | ECS clusters can be created, and spend can be split per member |
+| Once per account, create the service-linked roles. If you will split spend, also turn on billing access in Billing | ECS clusters can be created. The Control Plane can read spend |
 | Deploy `00-network`, `10-data` and `20-platform` | The network, EFS and RDS, ECR, the cluster and the IAM roles are built |
 | Push the images to ECR | ECS can pull them |
 | Put the Control Plane's secrets in SSM and register the redirect URI with your IdP | The Control Plane can read its secrets, and the IdP can send sign-ins back |
 | Deploy `30-ingress` | The certificate, ALB, DNS and Control Plane service are built, and you can sign in to the Console |
+| If you split spend, start one workspace on the day you build | The Control Plane writes the tags; once AWS discovers the keys (up to 24 hours), the Control Plane activates the cost allocation tags |
 
 These are the same steps `standup.sh` runs in order. Run the commands from `deploy/aws/ecs/` in the repository.
 
@@ -41,37 +42,12 @@ aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
 
 For a deployment that declares a `spot` offer, run the third line too.
 
-### Split spend per member (optional)
+### Turn on billing access (optional)
 
-Optional, but it cannot be backfilled: if you want it, do it on day one. In the Billing console of the payer account, set two things the templates cannot set.
+If you will split spend per member, turn on "IAM user and role access to Billing information" in the Billing console of the payer account. The templates cannot set it.
+While it is off, every `ce:GetCostAndUsage` call by `CpTaskRole` fails even though the policy is attached.
 
-**Deploying the stacks does none of this.** The templates carry only the IAM permission (`ce:GetCostAndUsage` on `CpTaskRole`). The tags are written by the running Control Plane, and there is no CloudFormation resource that activates a cost allocation tag.
-
-1. Turn on "IAM user and role access to Billing information". While it is off, every `ce:GetCostAndUsage` call by `CpTaskRole` fails even though the policy is attached
-2. **Start one workspace.** The Control Plane writes the tags onto resources. Start it on day one even if nobody uses it yet
-3. Wait for AWS to discover the tag keys (up to 24 hours)
-4. Activate the cost allocation tags. **Normally the Control Plane does this for you** (see below)
-
-| Point | Details |
-|---|---|
-| Not retroactive | Spend from before activation can never be attributed to anyone. Neither can the spend during the wait |
-| Once per key per account | Activation is keyed on the tag key alone, with no value dimension. New tenants and members need nothing |
-| Payer account only | Under AWS Organizations only the management (payer) account can activate |
-| An unseen key cannot be activated | A key AWS has never seen on a real resource is refused with `ValidationException: Tag keys not found` |
-| Do not activate `af-workspace` | Its value is derived from the member's email address, and activating it copies that into the billing data (CUR, Cost Explorer, invoice CSVs). The Control Plane joins on `af-membership`, an opaque random id |
-
-The Control Plane retries activation on every poller tick until AWS has discovered each key. It skips `af-workspace` and leaves alone any tag a person switched off.
-
-Activate by hand only if you removed the `CostAllocationTagActivation` statement from `CpTaskRole`, or if the Console reports it could not.
-
-```bash
-aws ce update-cost-allocation-tags-status --region us-east-1 \
-  --cost-allocation-tags-status '[{"TagKey":"af-membership","Status":"Active"},
-    {"TagKey":"af-tenant","Status":"Active"},{"TagKey":"af-role","Status":"Active"},
-    {"TagKey":"af-pool","Status":"Active"},{"TagKey":"af-slot-size","Status":"Active"}]'
-```
-
-`list-cost-allocation-tags` shows what AWS has found. A key listed as `Inactive` can be made `Active` at once; a key missing from the list is one nothing has written yet. The wait applies only the first time a key appears.
+Activating the cost allocation tags comes after the build ([Split spend per member](#split-spend-per-member-optional)).
 
 ## Deploy the base stacks
 
@@ -222,7 +198,40 @@ ACM's DNS validation and the Route 53 alias are automated. Certificate issuance 
 
 1. Check that `https://<your-fqdn>/readyz` answers 200. `/healthz` answers 200 even with a dead database, so `/readyz` is the one to check
 2. Open the Console and sign in as one of the `SuperAdminEmails`
-3. If you split spend per member, start one workspace now
+3. If you split spend per member, start one workspace now ([Split spend per member](#split-spend-per-member-optional))
+
+## Split spend per member (optional)
+
+Optional, but it cannot be backfilled: if you want it, start on the day you build.
+
+**Deploying the stacks does none of this.** The templates carry only the IAM permission (`ce:GetCostAndUsage` on `CpTaskRole`). The tags are written by the running Control Plane, and there is no CloudFormation resource that activates a cost allocation tag. The order is:
+
+1. Before the build, turn on billing access ([Turn on billing access](#turn-on-billing-access-optional))
+2. Deploy the stacks and start the Control Plane (the steps above on this page)
+3. **Start one workspace.** The Control Plane writes the tags onto resources. Start it on the day you build, even if nobody uses it yet
+4. Wait for AWS to discover the tag keys (up to 24 hours)
+5. Activate the cost allocation tags. **Normally the Control Plane does this for you** (see below)
+
+| Point | Details |
+|---|---|
+| Not retroactive | Spend from before activation can never be attributed to anyone. Neither can the spend during the wait |
+| Once per key per account | Activation is keyed on the tag key alone, with no value dimension. New tenants and members need nothing |
+| Payer account only | Under AWS Organizations only the management (payer) account can activate |
+| An unseen key cannot be activated | A key AWS has never seen on a real resource is refused with `ValidationException: Tag keys not found` |
+| Do not activate `af-workspace` | Its value is derived from the member's email address, and activating it copies that into the billing data (CUR, Cost Explorer, invoice CSVs). The Control Plane joins on `af-membership`, an opaque random id |
+
+The Control Plane retries activation on every poller tick until AWS has discovered each key. It skips `af-workspace` and leaves alone any tag a person switched off.
+
+Activate by hand only if you removed the `CostAllocationTagActivation` statement from `CpTaskRole`, or if the Console reports it could not.
+
+```bash
+aws ce update-cost-allocation-tags-status --region us-east-1 \
+  --cost-allocation-tags-status '[{"TagKey":"af-membership","Status":"Active"},
+    {"TagKey":"af-tenant","Status":"Active"},{"TagKey":"af-role","Status":"Active"},
+    {"TagKey":"af-pool","Status":"Active"},{"TagKey":"af-slot-size","Status":"Active"}]'
+```
+
+`list-cost-allocation-tags` shows what AWS has found. A key listed as `Inactive` can be made `Active` at once; a key missing from the list is one nothing has written yet. The wait applies only the first time a key appears.
 
 ## Related
 

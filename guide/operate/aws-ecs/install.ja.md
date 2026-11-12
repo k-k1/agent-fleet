@@ -14,11 +14,12 @@ AWS の ECS に Agent Fleet を建て、Control Plane を起動して、IdP で�
 
 | あなたがやること | 起きること |
 |---|---|
-| アカウントごとに 1 回、サービスにリンクされたロールとコストの設定をする | ECS のクラスターを作れるようになり、費用をメンバーごとに分けられるようになる |
+| アカウントごとに 1 回、サービスにリンクされたロールを作る。費用を分けるなら、Billing の請求情報へのアクセスもオンにする | ECS のクラスターを作れるようになる。Control Plane が費用を読めるようになる |
 | `00-network`・`10-data`・`20-platform` をデプロイする | ネットワーク、EFS と RDS、ECR・クラスター・IAM ロールができる |
 | イメージを ECR に push する | ECS がイメージを取れるようになる |
 | Control Plane の秘密を SSM に入れ、IdP にリダイレクト URI を登録する | Control Plane が秘密を読み、IdP がサインインを戻せるようになる |
 | `30-ingress` をデプロイする | 証明書・ALB・DNS・Control Plane のサービスができ、Console にサインインできる |
+| 費用を分けるなら、構築した日にワークスペースを 1 つ起動する | Control Plane がタグを書き、AWS がキーを見つけたあと（最大 24 時間）、Control Plane がコスト配分タグを有効にする |
 
 ここに書いた手順は、`standup.sh` が順番どおりに実行するものと同じです。コマンドは、リポジトリの `deploy/aws/ecs/` で実行します。
 
@@ -41,37 +42,12 @@ aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
 
 `spot` のオファーを宣言する配備では、3 行目も実行します。
 
-### 費用をメンバーごとに分ける（任意）
+### 請求情報へのアクセスをオンにする（任意）
 
-任意ですが、あとから取り戻せないので、使うなら初日に済ませます。支払いアカウントの Billing のコンソールで、テンプレートでは設定できない 2 つのことをします。
+費用をメンバーごとに分けるなら、支払いアカウントの Billing のコンソールで「IAM ユーザーとロールによる請求情報へのアクセス」をオンにします。テンプレートでは設定できません。
+オフのままだと、ポリシーが付いていても `CpTaskRole` の `ce:GetCostAndUsage` はすべて失敗します。
 
-**スタックをデプロイしただけでは何も起きません。** テンプレートが付けるのは `CpTaskRole` の `ce:GetCostAndUsage` の権限だけです。タグを書くのは動いている Control Plane で、コスト配分タグを有効にする CloudFormation のリソースはありません。
-
-1. 「IAM ユーザーとロールによる請求情報へのアクセス」をオンにします。オフのままだと、ポリシーが付いていても `CpTaskRole` の `ce:GetCostAndUsage` はすべて失敗します
-2. **ワークスペースを 1 つ起動します。** Control Plane がリソースにタグを書きます。誰も使っていなくても初日に起動してください
-3. AWS がタグのキーを見つけるのを待ちます（最大 24 時間）
-4. コスト配分タグを有効にします。**ふだんは Control Plane が自動で行います**（下を参照）
-
-| こと | 中身 |
-|---|---|
-| さかのぼらない | 有効にする前の日の費用は、誰の分かを後から分けられません。待つ間の費用も同じです |
-| キーごとにアカウントで 1 回 | 有効にするのはタグのキーだけで、値の区別はありません。テナントやメンバーが増えても、何もいりません |
-| 支払いアカウントだけ | AWS Organizations では、管理（支払い）アカウントだけが有効にできます |
-| 見たことのないキーは有効にできない | AWS がまだ実際のリソースで見ていないキーは `ValidationException: Tag keys not found` で拒否されます |
-| `af-workspace` は有効にしない | 値がメンバーのメールアドレスから作られるので、有効にすると請求データ（CUR・Cost Explorer・請求書の CSV）にそれが写ります。Control Plane が結び付けに使うのは、ランダムな ID の `af-membership` です |
-
-Control Plane は、AWS が各キーを見つけるまで、ポーリングのたびにタグの有効化をやり直します。`af-workspace` は飛ばし、人がオフにしたタグには触りません。
-
-手で有効にするのは、`CpTaskRole` から `CostAllocationTagActivation` の文を外したときか、Console が有効にできなかったと伝えてきたときだけです。
-
-```bash
-aws ce update-cost-allocation-tags-status --region us-east-1 \
-  --cost-allocation-tags-status '[{"TagKey":"af-membership","Status":"Active"},
-    {"TagKey":"af-tenant","Status":"Active"},{"TagKey":"af-role","Status":"Active"},
-    {"TagKey":"af-pool","Status":"Active"},{"TagKey":"af-slot-size","Status":"Active"}]'
-```
-
-AWS が何を見つけたかは `list-cost-allocation-tags` でわかります。`Inactive` で載っているキーはすぐ `Active` にでき、載っていないキーはまだ何もタグを書いていません。待つのは、そのキーが初めて現れるときだけです。
+コスト配分タグの有効化は、構築したあとに行います（[費用をメンバーごとに分ける](#費用をメンバーごとに分ける任意)）。
 
 ## 土台のスタックをデプロイする
 
@@ -222,7 +198,40 @@ ACM の DNS 検証と Route 53 のエイリアスは自動です。最初のデ�
 
 1. `https://<your-fqdn>/readyz` が 200 を返すことを確かめます。`/healthz` はデータベースが死んでいても 200 を返すので、確かめるのは `/readyz` です
 2. Console を開き、`SuperAdminEmails` の人でサインインします
-3. 費用をメンバーごとに分けるなら、ここでワークスペースを 1 つ起動します
+3. 費用をメンバーごとに分けるなら、ここでワークスペースを 1 つ起動します（[費用をメンバーごとに分ける](#費用をメンバーごとに分ける任意)）
+
+## 費用をメンバーごとに分ける（任意）
+
+任意ですが、あとから取り戻せないので、使うなら構築した日に始めます。
+
+**スタックをデプロイしただけでは何も起きません。** テンプレートが付けるのは `CpTaskRole` の `ce:GetCostAndUsage` の権限だけです。タグを書くのは動いている Control Plane で、コスト配分タグを有効にする CloudFormation のリソースはありません。順番は次のとおりです。
+
+1. 構築する前に、請求情報へのアクセスをオンにしておきます（[請求情報へのアクセスをオンにする](#請求情報へのアクセスをオンにする任意)）
+2. スタックをデプロイし、Control Plane を起動します（このページの上の手順）
+3. **ワークスペースを 1 つ起動します。** Control Plane がリソースにタグを書きます。誰も使っていなくても、構築した日に起動してください
+4. AWS がタグのキーを見つけるのを待ちます（最大 24 時間）
+5. コスト配分タグを有効にします。**ふだんは Control Plane が自動で行います**（下を参照）
+
+| こと | 中身 |
+|---|---|
+| さかのぼらない | 有効にする前の日の費用は、誰の分かを後から分けられません。待つ間の費用も同じです |
+| キーごとにアカウントで 1 回 | 有効にするのはタグのキーだけで、値の区別はありません。テナントやメンバーが増えても、何もいりません |
+| 支払いアカウントだけ | AWS Organizations では、管理（支払い）アカウントだけが有効にできます |
+| 見たことのないキーは有効にできない | AWS がまだ実際のリソースで見ていないキーは `ValidationException: Tag keys not found` で拒否されます |
+| `af-workspace` は有効にしない | 値がメンバーのメールアドレスから作られるので、有効にすると請求データ（CUR・Cost Explorer・請求書の CSV）にそれが写ります。Control Plane が結び付けに使うのは、ランダムな ID の `af-membership` です |
+
+Control Plane は、AWS が各キーを見つけるまで、ポーリングのたびにタグの有効化をやり直します。`af-workspace` は飛ばし、人がオフにしたタグには触りません。
+
+手で有効にするのは、`CpTaskRole` から `CostAllocationTagActivation` の文を外したときか、Console が有効にできなかったと伝えてきたときだけです。
+
+```bash
+aws ce update-cost-allocation-tags-status --region us-east-1 \
+  --cost-allocation-tags-status '[{"TagKey":"af-membership","Status":"Active"},
+    {"TagKey":"af-tenant","Status":"Active"},{"TagKey":"af-role","Status":"Active"},
+    {"TagKey":"af-pool","Status":"Active"},{"TagKey":"af-slot-size","Status":"Active"}]'
+```
+
+AWS が何を見つけたかは `list-cost-allocation-tags` でわかります。`Inactive` で載っているキーはすぐ `Active` にでき、載っていないキーはまだ何もタグを書いていません。待つのは、そのキーが初めて現れるときだけです。
 
 ## 関連
 
