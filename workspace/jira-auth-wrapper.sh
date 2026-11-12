@@ -514,9 +514,29 @@ if [ -n "$comment_cmd" ]; then
   exec workspace-agent jira-comment "$@"
 fi
 
+# The verb of `issue attachment VERB`, read the way the helper reads argv: the generic scan above
+# does not know that --name and -o take a value, so `attachment --name x add` would yield "x" and
+# an upload would get the short bound and no "may have been attached" line.
+attach_verb() {
+  local a nx="" dd="" n=0
+  for a in "$@"; do
+    if [ -n "$nx" ]; then nx=""; continue; fi
+    if [ -z "$dd" ]; then
+      case "$a" in
+        --) dd=1; continue ;;
+        -c | --config | -p | --project | --name | -o | --output) nx=1; continue ;;
+        -?*) continue ;;
+      esac
+    fi
+    n=$((n + 1))
+    if [ "$n" = 3 ]; then printf '%s' "$a"; return 0; fi
+  done
+}
+
 # Attachments: the helper reads files named on the command line, never stdin.
 if [ -n "$attach_cmd" ]; then
   exec </dev/null
+  sub3="$(attach_verb "$@")"
   case "$sub3" in add | download) bdef=600 ;; *) bdef=120 ;; esac
   if [ "$sub3" = add ] && [ -n "$(attempt_limit "$bdef")" ] && command -v timeout >/dev/null 2>&1; then
     bwhat="files may have been attached"

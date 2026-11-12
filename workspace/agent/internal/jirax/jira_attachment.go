@@ -20,9 +20,11 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -31,7 +33,14 @@ import (
 // jiraTransferClient carries uploads and downloads, whose size jiraHTTPClient's 20 s cannot
 // bound. The wrapper bounds the whole run (AF_JIRA_TIMEOUT); this is only the backstop for a
 // helper started without it.
-var jiraTransferClient = &http.Client{Timeout: 30 * time.Minute}
+//
+// Redirects are never followed: the Authorization header would go with them to any port or
+// subdomain of the API host and over plain HTTP, and an upload's 302 would be re-sent as a GET
+// whose 200 reads as success. A 3xx is reported as the failure it is.
+var jiraTransferClient = &http.Client{
+	Timeout:       30 * time.Minute,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 const jiraAttachmentUsage = `usage:
   jira issue attachment add KEY FILE... [--name NAME]
@@ -180,10 +189,15 @@ func RunAttachment(args []string) {
 		cc := *s.Jira
 		c = &cc
 	}
-	os.Exit(jiraAttachmentRun(c, args, os.Stdout, os.Stderr))
+	// The wrapper's timeout ends this process with TERM; cancelling the transfer instead lets a
+	// download remove its temporary file rather than leave a partial copy beside the destination.
+	sctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	rc := jiraAttachmentRun(sctx, c, args, os.Stdout, os.Stderr)
+	stop()
+	os.Exit(rc)
 }
 
-func jiraAttachmentRun(c *secrets.JiraCreds, args []string, stdout, stderr io.Writer) int {
+func jiraAttachmentRun(ctx context.Context, c *secrets.JiraCreds, args []string, stdout, stderr io.Writer) int {
 	a, err := parseJiraAttachmentArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, "jira:", err)
@@ -217,11 +231,11 @@ func jiraAttachmentRun(c *secrets.JiraCreds, args []string, stdout, stderr io.Wr
 	}
 	switch a.verb {
 	case "add":
-		return jiraAttachmentAdd(c, a, stdout, stderr)
+		return jiraAttachmentAdd(ctx, c, a, stdout, stderr)
 	case "list":
 		return jiraAttachmentList(c, a, stdout, stderr)
 	case "download":
-		return jiraAttachmentDownload(c, a, stdout, stderr)
+		return jiraAttachmentDownload(ctx, c, a, stdout, stderr)
 	}
 	return jiraAttachmentDelete(c, a, stdout, stderr)
 }
@@ -299,16 +313,22 @@ func oneLine(s string) string {
 	}, s)
 }
 
-func jiraAttachmentAdd(c *secrets.JiraCreds, a jiraAttachmentArgs, stdout, stderr io.Writer) int {
+func jiraAttachmentAdd(ctx context.Context, c *secrets.JiraCreds, a jiraAttachmentArgs, stdout, stderr io.Writer) int {
 	u := APIBase(c) + "/rest/api/3/issue/" + a.key + "/attachments"
 	for i, f := range a.files {
 		name := a.name
 		if name == "" {
 			name = filepath.Base(f)
 		}
-		raw, status, err := jiraUpload(c, u, f, name)
+		raw, status, err := jiraUpload(ctx, c, u, f, name)
 		if err != nil {
 			fmt.Fprintf(stderr, "jira: %v; %s may have been attached - check `jira issue attachment list %s` before running it again\n", err, f, a.key)
+			jiraAttachmentNotSent(a.files[i+1:], stderr)
+			return 1
+		}
+		if status >= 500 {
+			// A gateway can answer 5xx after Jira stored the file.
+			fmt.Fprintf(stderr, "jira: %s: %s; it may have been attached - check `jira issue attachment list %s` before running it again\n", f, jiraAttachmentFailure(a, status, raw), a.key)
 			jiraAttachmentNotSent(a.files[i+1:], stderr)
 			return 1
 		}
@@ -339,20 +359,20 @@ func jiraAttachmentNotSent(rest []string, stderr io.Writer) {
 // the closing boundary, with an exact Content-Length: a chunked upload is refused with 411 by some
 // proxies in front of Jira. A 401 on OAuth is answered by a renewal and one more attempt (Jira
 // refused the request, so nothing was attached); any other failure is never re-sent.
-func jiraUpload(c *secrets.JiraCreds, u, path, name string) ([]byte, int, error) {
+func jiraUpload(ctx context.Context, c *secrets.JiraCreds, u, path, name string) ([]byte, int, error) {
 	if err := EnsureFresh(c); err != nil {
 		return nil, 0, err
 	}
-	raw, status, err := jiraUploadOnce(c, u, path, name)
+	raw, status, err := jiraUploadOnce(ctx, c, u, path, name)
 	if err == nil && status == http.StatusUnauthorized && c.AuthKind == "oauth" {
 		if rerr := RefreshNow(c); rerr == nil {
-			raw, status, err = jiraUploadOnce(c, u, path, name)
+			raw, status, err = jiraUploadOnce(ctx, c, u, path, name)
 		}
 	}
 	return raw, status, err
 }
 
-func jiraUploadOnce(c *secrets.JiraCreds, u, path, name string) ([]byte, int, error) {
+func jiraUploadOnce(ctx context.Context, c *secrets.JiraCreds, u, path, name string) ([]byte, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("cannot read %s: %v", path, err)
@@ -367,7 +387,7 @@ func jiraUploadOnce(c *secrets.JiraCreds, u, path, name string) ([]byte, int, er
 		return nil, 0, fmt.Errorf("cannot read %s: %v", path, err)
 	}
 	body := io.MultiReader(bytes.NewReader(head), io.LimitReader(f, fi.Size()), bytes.NewReader(tail))
-	req, err := http.NewRequest(http.MethodPost, u, body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -413,21 +433,23 @@ func jiraContentType(f io.Reader, name string) string {
 	return http.DetectContentType(buf[:n])
 }
 
-func jiraAttachmentDownload(c *secrets.JiraCreds, a jiraAttachmentArgs, stdout, stderr io.Writer) int {
+func jiraAttachmentDownload(ctx context.Context, c *secrets.JiraCreds, a jiraAttachmentArgs, stdout, stderr io.Writer) int {
 	at, err := jiraFindAttachment(c, a)
 	if err != nil {
 		fmt.Fprintln(stderr, "jira:", err)
 		return 1
 	}
+	// Only an explicit -o - means stdout: an attachment may itself be named "-".
+	toStdout := a.output == "-"
 	dest := a.output
 	if dest == "" {
 		dest = jiraSafeFileName(at.Filename, at.ID)
-	} else if dest != "-" {
+	} else if !toStdout {
 		if fi, err := os.Stat(dest); err == nil && fi.IsDir() {
 			dest = filepath.Join(dest, jiraSafeFileName(at.Filename, at.ID))
 		}
 	}
-	if dest != "-" && !a.force {
+	if !toStdout && !a.force {
 		if _, err := os.Lstat(dest); err == nil {
 			fmt.Fprintf(stderr, "jira: %s already exists (pass --force to replace it, or -o PATH)\n", dest)
 			return 1
@@ -440,11 +462,11 @@ func jiraAttachmentDownload(c *secrets.JiraCreds, a jiraAttachmentArgs, stdout, 
 	// redirect=false: Jira streams the content itself instead of answering 303 to the media
 	// host, so the download is one request to the host the credential is for.
 	u := APIBase(c) + "/rest/api/3/attachment/content/" + a.id + "?redirect=false"
-	resp, err := jiraDownloadOnce(c, u)
+	resp, err := jiraDownloadOnce(ctx, c, u)
 	if err == nil && resp.StatusCode == http.StatusUnauthorized && c.AuthKind == "oauth" {
 		resp.Body.Close()
 		if rerr := RefreshNow(c); rerr == nil {
-			resp, err = jiraDownloadOnce(c, u)
+			resp, err = jiraDownloadOnce(ctx, c, u)
 		}
 	}
 	if err != nil {
@@ -457,40 +479,55 @@ func jiraAttachmentDownload(c *secrets.JiraCreds, a jiraAttachmentArgs, stdout, 
 		fmt.Fprintln(stderr, "jira:", jiraAttachmentFailure(a, resp.StatusCode, raw))
 		return 1
 	}
-	if dest == "-" {
+	if toStdout {
 		if _, err := io.Copy(stdout, resp.Body); err != nil {
 			fmt.Fprintln(stderr, "jira: download cut off:", jiraTransportError(err))
 			return 1
 		}
 		return 0
 	}
-	// Written beside the destination and renamed at the end, so a cut-off download never
-	// leaves a truncated file under the real name.
+	// Written beside the destination and published at the end, so a cut-off download never
+	// leaves a truncated file under the real name; the deferred removal also covers a cancel.
 	tmp, err := os.CreateTemp(filepath.Dir(dest), ".jira-attachment-*")
 	if err != nil {
 		fmt.Fprintln(stderr, "jira:", err)
 		return 1
 	}
+	defer os.Remove(tmp.Name())
 	n, cerr := io.Copy(tmp, resp.Body)
 	if err := tmp.Close(); cerr == nil {
 		cerr = err
 	}
 	if cerr != nil {
-		os.Remove(tmp.Name())
 		fmt.Fprintln(stderr, "jira: download cut off:", jiraTransportError(cerr))
 		return 1
 	}
-	if err := os.Rename(tmp.Name(), dest); err != nil {
-		os.Remove(tmp.Name())
-		fmt.Fprintln(stderr, "jira:", err)
+	if a.force {
+		err = os.Rename(tmp.Name(), dest)
+	} else {
+		// link(2) fails when the name exists, so a file that appeared during the transfer (another
+		// session downloading the same attachment) is never replaced; the Lstat above only gives
+		// the early answer.
+		err = os.Link(tmp.Name(), dest)
+		if os.IsExist(err) {
+			fmt.Fprintf(stderr, "jira: %s appeared during the download; not replaced (pass --force, or -o PATH)\n", dest)
+			return 1
+		}
+	}
+	if err != nil {
+		if !a.force {
+			fmt.Fprintf(stderr, "jira: cannot publish %s without replacing anything (%v); pass --force to rename it into place\n", dest, err)
+		} else {
+			fmt.Fprintln(stderr, "jira:", err)
+		}
 		return 1
 	}
 	fmt.Fprintf(stdout, "Downloaded %q from %s to %s (%d bytes)\n", at.Filename, a.key, dest, n)
 	return 0
 }
 
-func jiraDownloadOnce(c *secrets.JiraCreds, u string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+func jiraDownloadOnce(ctx context.Context, c *secrets.JiraCreds, u string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -330,12 +330,15 @@ those variables in for one `exec`:
   command): routed the same way to `workspace-agent jira-attachment`
   (`internal/jirax/jira_attachment.go`), stdin closed, refused under `--debug`. `add` POSTs each file
   as its own `multipart/form-data` request to `/rest/api/3/issue/KEY/attachments` with
-  `X-Atlassian-Token: no-check` and an exact `Content-Length` (no chunked upload), never re-sent; it
-  stops at the first failure and names the files not sent. `list` reads `?fields=attachment`;
+  `X-Atlassian-Token: no-check` and an exact `Content-Length` (no chunked upload), never re-sent
+  except once after an OAuth 401 and a renewal (Jira refused it, so nothing was stored); it stops at
+  the first failure and names the files not sent, and a transport failure or a 5xx says the current
+  file may have been attached. Redirects are never followed (the credential would go with them). `list` reads `?fields=attachment`;
   `download` and `delete` first check that the ID is on that issue, then
   `GET /rest/api/3/attachment/content/ID?redirect=false` (one request, to the host the credential is
   for; written to a temporary file and renamed, under the attachment's base name, never over an
-  existing file without `--force`) or `DELETE /rest/api/3/attachment/ID`. Scopes: `write:jira-work` /
+  existing file without `--force`, published with link(2) so a file that appears meanwhile is kept;
+  a TERM from the wrapper's timeout cancels the transfer and removes the temporary file) or `DELETE /rest/api/3/attachment/ID`. Scopes: `write:jira-work` /
   `read:jira-work`. Uploads and downloads use their own HTTP client (the 20 s one cannot carry a
   large file); the wrapper's default bound for `add` / `download` is 600 s (`AF_JIRA_TIMEOUT`
   still overrides it), 120 s for the others. Not yet run against a live Jira (non-ASCII file names,

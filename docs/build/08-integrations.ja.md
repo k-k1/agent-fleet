@@ -302,10 +302,13 @@ Jira は git でなく作業項目インボックス
   同じ形で `workspace-agent jira-attachment`（`internal/jirax/jira_attachment.go`）へ渡す。標準入力は閉じ、
   `--debug` では断る。`add` はファイルごとに 1 回、`/rest/api/3/issue/KEY/attachments` へ
   `multipart/form-data` を POST する（`X-Atlassian-Token: no-check`、正確な `Content-Length` 付き。
-  チャンク転送はしない）。再送はせず、最初の失敗で止まって送っていないファイルを示す。`list` は
+  チャンク転送はしない）。OAuth の 401 を受けて更新した後の 1 回（Jira が断ったので何も保存されていない）を除き
+  再送はせず、最初の失敗で止まって送っていないファイルを示す。通信の失敗と 5xx のときは、そのファイルが添付済みの
+  可能性があると伝える。リダイレクトは追わない（資格情報が一緒に付いていくため）。`list` は
   `?fields=attachment` を読む。`download` と `delete` は ID がその課題のものかを先に確かめてから、
   `GET /rest/api/3/attachment/content/ID?redirect=false`（資格情報の宛先のホストへの 1 回の要求。一時ファイルに
-  書いて改名し、名前は添付名のベース名だけ。`--force` が無ければ既存のファイルを上書きしない）か
+  書いて改名し、名前は添付名のベース名だけ。`--force` が無ければ既存のファイルを上書きしない。公開は link(2) なので、転送中に現れたファイルも残る。ラッパーの
+  期限による TERM では転送を取り消して一時ファイルを消す）か
   `DELETE /rest/api/3/attachment/ID` を送る。スコープは `write:jira-work` / `read:jira-work`。アップロードと
   ダウンロードは専用の HTTP クライアントを使う（20 秒の方では大きいファイルを運べない）。ラッパーの既定の上限は
   `add` / `download` が 600 秒（`AF_JIRA_TIMEOUT` で上書きできる）、それ以外が 120 秒。実際の Jira ではまだ

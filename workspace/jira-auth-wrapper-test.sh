@@ -1400,6 +1400,15 @@ done
 grep -q '^timeout -k 5 120 workspace-agent jira-attachment ' "$T/attach.parent" || fail "attachment delete bound: '$(cat "$T/attach.parent")'"
 reset; oauth; run -- issues attachments add K-1 a.png
 grep -q '^timeout -k 5 600 workspace-agent jira-attachment ' "$T/attach.parent" || fail "attachment add bound: '$(cat "$T/attach.parent")'"
+# Flags before the verb are read as the helper reads them: --name and -o take a value.
+reset; oauth; run -- issue attachment --name shot.png add K-1 a.png
+grep -q '^timeout -k 5 600 workspace-agent jira-attachment ' "$T/attach.parent" || fail "attachment --name before add: '$(cat "$T/attach.parent")'"
+reset; oauth; run -- issue attachment -o /tmp download K-1 5
+grep -q '^timeout -k 5 600 workspace-agent jira-attachment ' "$T/attach.parent" || fail "attachment -o before download: '$(cat "$T/attach.parent")'"
+reset; oauth; touch "$T/attach.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue attachment --name x.png add K-1 a.png
+[ "$rc" = 124 ] && grep -q 'files may have been attached' "$T/err" || fail "attachment --name add timeout: rc=$rc '$(cat "$T/err")'"
+rm -f "$T/attach.hang"
 echo 1 >"$T/attach.exit"
 run -- issue attachment add K-1 a.png
 [ "$rc" = 1 ] || fail "attachment add: Agent status not kept ($rc)"

@@ -2,6 +2,7 @@ package jirax
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -69,7 +70,7 @@ func tokenCreds(srv *httptest.Server) *secrets.JiraCreds {
 
 func runAttach(c *secrets.JiraCreds, args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
-	rc := jiraAttachmentRun(c, args, &out, &errb)
+	rc := jiraAttachmentRun(context.Background(), c, args, &out, &errb)
 	return rc, out.String(), errb.String()
 }
 
@@ -361,5 +362,118 @@ func TestJiraAttachmentAddOAuthRenewsOn401(t *testing.T) {
 	if len(calls) != 2 || calls[1].path != "/ex/jira/cid/rest/api/3/issue/T-1/attachments" ||
 		string(calls[1].content) != "hello" || calls[1].auth != "Bearer at1" {
 		t.Errorf("calls = %+v", calls)
+	}
+}
+
+// A 3xx is never followed: the credential would go with it, and an upload's 302 turned into a GET
+// that answers 200 must not read as attached.
+func TestJiraAttachmentNeverFollowsRedirects(t *testing.T) {
+	elsewhere, other := newAttachStub(t, func(_ int, w http.ResponseWriter, _ *http.Request) { io.WriteString(w, `[]`) })
+	srv, _ := newAttachStub(t, func(_ int, w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/rest/api/3/issue/T-1" {
+			io.WriteString(w, issueWithAttachments)
+			return
+		}
+		http.Redirect(w, r, elsewhere.URL+"/landing", http.StatusFound)
+	})
+	f := writeFile(t, t.TempDir(), "a.txt", "a")
+	if rc, _, errs := runAttach(tokenCreds(srv), "issue", "attachment", "add", "T-1", f); rc != 1 || !strings.Contains(errs, "(302)") {
+		t.Errorf("add: rc=%d err=%q", rc, errs)
+	}
+	t.Chdir(t.TempDir())
+	if rc, _, errs := runAttach(tokenCreds(srv), "issue", "attachment", "download", "T-1", "501"); rc != 1 || !strings.Contains(errs, "(302)") {
+		t.Errorf("download: rc=%d err=%q", rc, errs)
+	}
+	if _, err := os.Stat("shot.png"); err == nil {
+		t.Errorf("download wrote a file")
+	}
+	if n := len(other.seen()); n != 0 {
+		t.Errorf("redirect target got %d requests", n)
+	}
+}
+
+// A 5xx on an upload leaves the file's state unknown, and says so.
+func TestJiraAttachmentAdd5xxMayBeAttached(t *testing.T) {
+	srv, _ := newAttachStub(t, func(_ int, w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusGatewayTimeout) })
+	f := writeFile(t, t.TempDir(), "a.txt", "a")
+	rc, _, errs := runAttach(tokenCreds(srv), "issue", "attachment", "add", "T-1", f)
+	if rc != 1 || !strings.Contains(errs, "may have been attached") {
+		t.Errorf("rc=%d err=%q", rc, errs)
+	}
+}
+
+// Without --force a file that appears while the content is in flight is kept, and no temporary
+// file is left behind.
+func TestJiraAttachmentDownloadNeverReplacesALateFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	srv, _ := newAttachStub(t, func(_ int, w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/rest/api/3/attachment/content/") {
+			_ = os.WriteFile(filepath.Join(dir, "shot.png"), []byte("THEIRS"), 0o600)
+			io.WriteString(w, "DATA")
+			return
+		}
+		io.WriteString(w, issueWithAttachments)
+	})
+	rc, _, errs := runAttach(tokenCreds(srv), "issue", "attachment", "download", "T-1", "501")
+	if rc != 1 || !strings.Contains(errs, "appeared during the download") {
+		t.Errorf("rc=%d err=%q", rc, errs)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "shot.png")); string(got) != "THEIRS" {
+		t.Errorf("late file replaced: %q", got)
+	}
+	assertNoTemp(t, dir)
+}
+
+// A cancel mid-transfer (the wrapper's TERM) removes the partial copy.
+func TestJiraAttachmentDownloadCancelLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	started := make(chan struct{})
+	srv, _ := newAttachStub(t, func(_ int, w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/rest/api/3/attachment/content/") {
+			io.WriteString(w, "PART")
+			w.(http.Flusher).Flush()
+			close(started)
+			<-r.Context().Done()
+			return
+		}
+		io.WriteString(w, issueWithAttachments)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-started; cancel() }()
+	var out, errb bytes.Buffer
+	rc := jiraAttachmentRun(ctx, tokenCreds(srv), []string{"issue", "attachment", "download", "T-1", "501"}, &out, &errb)
+	if rc != 1 {
+		t.Errorf("rc=%d err=%q", rc, errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "shot.png")); err == nil {
+		t.Errorf("partial file published")
+	}
+	assertNoTemp(t, dir)
+}
+
+// An attachment named "-" is saved as a file; only an explicit -o - writes to stdout.
+func TestJiraAttachmentDownloadDashName(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	srv, _ := newAttachStub(t, func(_ int, w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/rest/api/3/attachment/content/") {
+			io.WriteString(w, "DATA")
+			return
+		}
+		io.WriteString(w, `{"fields":{"attachment":[{"id":"7","filename":"-","size":4}]}}`)
+	})
+	rc, out, errs := runAttach(tokenCreds(srv), "issue", "attachment", "download", "T-1", "7")
+	if got, _ := os.ReadFile(filepath.Join(dir, "-")); rc != 0 || string(got) != "DATA" || strings.Contains(out, "DATA") {
+		t.Errorf("rc=%d file=%q out=%q err=%q", rc, got, out, errs)
+	}
+}
+
+func assertNoTemp(t *testing.T, dir string) {
+	t.Helper()
+	left, _ := filepath.Glob(filepath.Join(dir, ".jira-attachment-*"))
+	if len(left) != 0 {
+		t.Errorf("temporary files left: %v", left)
 	}
 }
