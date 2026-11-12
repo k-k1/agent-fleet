@@ -182,12 +182,18 @@ func classifyProbeError(err error) AgentProbe {
 	return AgentProbeUnknown
 }
 
-// serviceRunsOnlyOn reports whether every live task of the workspace service runs on the EC2
-// instance slot, and at least one does. The alias the probe dials resolves to whichever task
-// Service Connect (or the Cloud Map fallback, cached for 30 s) points at, so after a task
-// replacement or a slot move an answer may come from a task on another box. Any read that
-// fails, a missing container instance or an unreadable task is false: the caller then
-// treats the slot as unknown.
+// probeStaleGrace is how long after a task of the service stopped its endpoint may still be
+// answering the alias: the Cloud Map fallback caches an address for 30 s (agent_dial.go) and
+// a kept-alive connection can outlive the task's removal from the listing. Twice the cache
+// TTL plus the keepalive period, rounded up.
+const probeStaleGrace = 2 * time.Minute
+
+// serviceRunsOnlyOn reports whether the service's answer can only come from the EC2 instance
+// slot: at least one task is RUNNING on it, and every other task that could still answer the
+// alias is on it too. The alias resolves to whichever task Service Connect (or the Cloud Map
+// cache) points at, so a task being stopped on another box (desired STOPPED, not yet gone), or
+// one that stopped less than probeStaleGrace ago, may still reply and must keep the slot
+// unknown. Any read that fails, a missing container instance or an unreadable task is false.
 func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot string) bool {
 	lister, ok := f.ci.(ecsTaskLister)
 	if !ok {
@@ -195,34 +201,47 @@ func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot str
 	}
 	cluster := aws.String(f.base.cfg.cluster)
 	var arns []string
-	var next *string
-	for {
-		listed, err := lister.ListTasks(ctx, &ecs.ListTasksInput{
-			Cluster: cluster, ServiceName: aws.String(service),
-			DesiredStatus: ecstypes.DesiredStatusRunning, NextToken: next,
-		})
-		if err != nil {
-			return false
+	for _, desired := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
+		var next *string
+		for {
+			listed, err := lister.ListTasks(ctx, &ecs.ListTasksInput{
+				Cluster: cluster, ServiceName: aws.String(service),
+				DesiredStatus: desired, NextToken: next,
+			})
+			if err != nil {
+				return false
+			}
+			arns = append(arns, listed.TaskArns...)
+			if listed.NextToken == nil {
+				break
+			}
+			next = listed.NextToken
 		}
-		arns = append(arns, listed.TaskArns...)
-		if listed.NextToken == nil {
-			break
-		}
-		next = listed.NextToken
 	}
+	now := f.darkNow()
 	cis := map[string]bool{}
+	running := false
 	for _, chunk := range chunkStrings(arns, 100) {
 		described, err := lister.DescribeTasks(ctx, &ecs.DescribeTasksInput{Cluster: cluster, Tasks: chunk})
 		if err != nil || len(described.Failures) > 0 || len(described.Tasks) != len(chunk) {
 			return false
 		}
 		for _, t := range described.Tasks {
+			if aws.ToString(t.LastStatus) == "STOPPED" && (t.StoppedAt == nil || now.Sub(*t.StoppedAt) >= probeStaleGrace) {
+				continue // gone long enough that no cache can still point at it
+			}
 			ci := aws.ToString(t.ContainerInstanceArn)
 			if ci == "" {
 				return false
 			}
 			cis[ci] = true
+			if aws.ToString(t.LastStatus) == "RUNNING" {
+				running = true
+			}
 		}
+	}
+	if !running {
+		return false
 	}
 	if len(cis) == 0 {
 		return false

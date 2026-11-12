@@ -457,6 +457,19 @@ func TestDarkAgentProbeNeedsTheServiceTaskOnThisSlot(t *testing.T) {
 			h.ci.running = append(h.ci.running, runningTask("af-ws-acme-alice", "i-other"))
 			h.ci.running[1].TaskArn = aws.String("arn:task/second")
 		},
+		"old task still stopping on another instance": func(h *ec2Harness) {
+			old := runningTask("af-ws-acme-alice", "i-other")
+			old.TaskArn = aws.String("arn:task/old")
+			old.LastStatus = aws.String("STOPPING")
+			h.ci.stopping = []ecstypes.Task{old}
+		},
+		"old task stopped seconds ago on another instance": func(h *ec2Harness) {
+			old := runningTask("af-ws-acme-alice", "i-other")
+			old.TaskArn = aws.String("arn:task/old")
+			old.LastStatus = aws.String("STOPPED")
+			old.StoppedAt = aws.Time(time.Now().Add(-20 * time.Second))
+			h.ci.stopping = []ecstypes.Task{old}
+		},
 		"no task listed": func(h *ec2Harness) { h.ci.running = nil },
 		"task describe failure": func(h *ec2Harness) {
 			h.ci.taskFailures = []ecstypes.Failure{{Arn: aws.String("arn:task/af-ws-acme-alice"), Reason: aws.String("MISSING")}}
@@ -515,5 +528,21 @@ func TestLastAgentProbeDoesNotOutliveThePass(t *testing.T) {
 				t.Fatalf("stale probe %v survived the pass", r)
 			}
 		})
+	}
+}
+
+// A task that stopped long ago on another box cannot be what the alias reaches any more.
+func TestDarkAgentProbeIgnoresLongStoppedTasks(t *testing.T) {
+	h, f, _ := darkHarness(t)
+	old := runningTask("af-ws-acme-alice", "i-other")
+	old.TaskArn = aws.String("arn:task/old")
+	old.LastStatus = aws.String("STOPPED")
+	old.StoppedAt = aws.Time(time.Now().Add(-10 * time.Minute))
+	h.ci.stopping = []ecstypes.Task{old}
+	doer := &fakeAgentDoer{status: 200}
+	f.agentHTTP = doer
+	_ = f.sweep(context.Background())
+	if len(doer.reqs) != 1 {
+		t.Fatalf("probes = %d, want 1", len(doer.reqs))
 	}
 }
