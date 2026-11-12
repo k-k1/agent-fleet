@@ -411,7 +411,8 @@ Google Cloud で確かめる。
 
 
 ```bash
-# in a shell with kubectl pointed at this cluster (guide/operate/kubernetes/gke.md, step 3)
+# with the shell variables of guide/operate/kubernetes/gke.md (LOCATION is the cluster's own
+# location: the region, or the zone of a zonal cluster) and kubectl pointed at it (step 3)
 W=$(mktemp -d); umask 077
 kubectl -n "$PREFIX-cp" create token af-cp --duration=1h > "$W/cp-token"
 kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > "$W/ca.crt"
@@ -495,9 +496,9 @@ Pod（cordon するノード上のメンバーのワークスペースなど）�
   ```bash
   export AF_K8S_LIVE_NODE_MODE=auto-repair AF_K8S_LIVE_NODE_RECOVER_WAIT=32m
   export AF_K8S_LIVE_GKE_PROJECT="$PROJECT,$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
-  export AF_K8S_LIVE_GKE_LOCATION="$REGION" AF_K8S_LIVE_GKE_CLUSTER="$PREFIX-gke"
+  export AF_K8S_LIVE_GKE_LOCATION="$LOCATION" AF_K8S_LIVE_GKE_CLUSTER="$PREFIX-gke"
   export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=1800 systemctl start kubelet && systemctl stop kubelet'"
-  export AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD='gcloud container operations list --location '"$REGION"' --project '"$PROJECT"' --filter="operationType=AUTO_REPAIR_NODES AND startTime>={since}" --format=json'
+  export AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD='gcloud container operations list --location '"$LOCATION"' --project '"$PROJECT"' --filter="operationType=AUTO_REPAIR_NODES AND startTime>={since}" --format=json'
   # STATUS_CMD and START_CMD as above; no HALT_CMD
   go test -count=1 -run 'TestKubernetesLiveNodeUnreachable' -v -timeout 75m ./internal/runtime/
   ```
