@@ -288,7 +288,7 @@ func TestSweepWedgedSlotRearmsOnANewLaunchEpoch(t *testing.T) {
 }
 
 func TestWedgedConfig(t *testing.T) {
-	for in, want := range map[string]string{"": wedgedActionDetect, "detect": wedgedActionDetect, "OFF": wedgedActionOff, "release": wedgedActionDetect, "bogus": wedgedActionDetect} {
+	for in, want := range map[string]string{"": wedgedActionDetect, "detect": wedgedActionDetect, "OFF": wedgedActionOff, "release": wedgedActionRelease, "bogus": wedgedActionDetect} {
 		if got := parseWedgedAction(in); got != want {
 			t.Errorf("parseWedgedAction(%q) = %q, want %q", in, got, want)
 		}

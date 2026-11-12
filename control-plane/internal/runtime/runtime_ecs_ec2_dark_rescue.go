@@ -84,6 +84,11 @@ type darkDecision struct {
 	vol    *ec2types.Volume
 	launch time.Time
 	gd     int64
+	// wedged marks the wedged-slot release: the service may be up, which instead of
+	// stepping aside must be shown to still be wedged under the claim lock (stillWedged),
+	// and the marker carries the wedged kind.
+	wedged      bool
+	stillWedged func(context.Context) bool
 }
 
 // lockBounded is lockHome / lockSubject with a bound on the wait only: the context of the
@@ -191,7 +196,11 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 	if err != nil {
 		return m, nil, fmt.Errorf("%w: service: %w", errRescueAborted, err)
 	}
-	if exists && svc.DesiredCount > 0 {
+	if d.wedged {
+		if d.stillWedged == nil || !d.stillWedged(lctx) {
+			return m, nil, fmt.Errorf("%w: the slot no longer reads as wedged", errRescueStepAside)
+		}
+	} else if exists && svc.DesiredCount > 0 {
 		// A probe through the shared alias cannot say which task answered, so a service that
 		// is up is not rescued: the container may be serving its member.
 		return m, nil, fmt.Errorf("%w: the service is up and the Agent's identity is not proven", errRescueStepAside)
@@ -212,7 +221,7 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 		return m, nil, fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 
-	m = rescueMarker{Volume: volumeID, Epoch: d.launch, Phase: rescuePhasePreparing, Gen: g + 1, Began: e.now().UTC().Truncate(time.Second)}
+	m = rescueMarker{Volume: volumeID, Epoch: d.launch, Phase: rescuePhasePreparing, Gen: g + 1, Began: e.now().UTC().Truncate(time.Second), Wedged: d.wedged}
 	preparing := m.String()
 	if err := e.writeRescueMarker(lctx, d.slot, m); err != nil {
 		e.dropRescueMarker(ctx, d.slot, preparing)
@@ -391,6 +400,12 @@ func listSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID
 // lock held, prove the rescue still owns the home, then the steps of decision 2 (steps 4-6,
 // rescueSteps). The outcome decides the audit event and what is left on the box.
 func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, cmds ssmSlotCommands, slot string, m rescueMarker, ids []string) {
+	steps := rt.rescueSteps
+	if m.Wedged {
+		steps = func(ctx context.Context, slot string, m *rescueMarker) error {
+			return rt.wedgedReleaseSteps(ctx, cmds, slot, m)
+		}
+	}
 	if err := rescueStep(ctx, "before-cancel"); err != nil {
 		return
 	}
@@ -406,18 +421,17 @@ func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, c
 	})
 	blockedBefore := m.BlockedSince
 	if err == nil {
-		err = rt.rescueSteps(ctx, slot, &m)
+		err = steps(ctx, slot, &m)
 	}
-	ev := SlotDark{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name, MembershipID: rt.base.membershipID}
 	switch {
 	case err == nil:
-		log.Printf("ecs-ec2 sweep: rescued %s from the dark slot %s: the instance is stopped and the home detached", rt.base.name, slot)
+		log.Printf("ecs-ec2 sweep: rescued %s from the slot %s: the home is detached (wedged release: %t)", rt.base.name, slot, m.Wedged)
 		rt.finalizeRescue(ctx, slot, m.String(), m)
-		f.reportRescue(ctx, ev, "rescued")
+		f.reportEpisode(ctx, rt, slot, m, "rescued")
 	case errors.Is(err, errRescueBlocked):
 		log.Printf("ecs-ec2 sweep: rescue of %s on %s is blocked (phase %s): %v", rt.base.name, slot, m.Phase, err)
 		if blockedBefore.IsZero() || !blockedBefore.Equal(m.BlockedSince) {
-			f.reportRescue(ctx, ev, "blocked")
+			f.reportEpisode(ctx, rt, slot, m, "blocked")
 		}
 	case errors.Is(err, errRescueOvertaken):
 		log.Printf("ecs-ec2 sweep: rescue of %s on %s overtaken: %v", rt.base.name, slot, err)
@@ -426,6 +440,20 @@ func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, c
 	default:
 		log.Printf("ecs-ec2 sweep: rescue of %s on %s stopped for this pass: %v", rt.base.name, slot, err)
 	}
+}
+
+// reportEpisode routes the outcome of a marker's episode to the audit callback of its ladder:
+// a dark rescue's is SlotDark, a wedged release's is SlotWedged ("rescued" is its "released").
+func (f *ecsEC2Factory) reportEpisode(ctx context.Context, rt *ecsEC2Runtime, slot string, m rescueMarker, action string) {
+	if m.Wedged {
+		if action == "rescued" {
+			action = "released"
+		}
+		f.reportWedged(ctx, SlotWedged{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name,
+			MembershipID: rt.base.membershipID}, action)
+		return
+	}
+	f.reportRescue(ctx, SlotDark{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name, MembershipID: rt.base.membershipID}, action)
 }
 
 // reportRescue hands a rescue event to the audit callback. Nothing here can fail the rescue.
@@ -585,6 +613,11 @@ func (e *ecsEC2Runtime) finalizeRescue(ctx context.Context, instanceID, raw stri
 			}
 		}
 	}
+	if m.Wedged {
+		// The stamp's clock described the episode that is over; left in place, the next home
+		// to land on this box would meet an expired wait.
+		e.clearWedgedStampOn(ctx, instanceID)
+	}
 	e.dropRescueMarker(ctx, instanceID, raw)
 }
 
@@ -658,7 +691,7 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 			inst.LaunchTime.UTC().Truncate(time.Second).Equal(m.Epoch) && g == m.Gen
 		// Only a rescue this build can continue lists commands again, under the claim lock
 		// with the count at g_r, and cancels only what the listing returns.
-		if strict && f.pool.darkAction == darkActionRescue && m.Phase == rescuePhaseBegun && cmds != nil {
+		if strict && f.canContinue(m) && m.Phase == rescuePhaseBegun && cmds != nil {
 			ids, err = listSlotVolumeCommandIDs(lctx, cmds, id)
 			if err != nil {
 				return false, err
@@ -670,21 +703,29 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 		log.Printf("ecs-ec2 sweep: resume of the rescue on %s: %v; the marker stays", id, err)
 		return
 	}
-	if !strict || f.pool.darkAction != darkActionRescue || m.Phase == rescuePhasePreparing || m.Phase == rescuePhaseDetached || cmds == nil {
+	if !strict || !f.canContinue(m) || m.Phase == rescuePhasePreparing || m.Phase == rescuePhaseDetached || cmds == nil {
 		// Not a rescue this pass can carry on (overtaken, the action is no longer `rescue`, a
 		// marker whose bump was never confirmed, or one already detached): record the
 		// episode, drop the rest. `detaching` with the home gone is complete when the count
 		// is still g_r: nobody else could have moved it while the marker existed (decision 3,
 		// rule 2), so it was this rescue.
 		if (m.Phase == rescuePhaseDetaching || m.Phase == rescuePhaseDetached) && !stillOnBox && count == m.Gen {
-			f.reportRescue(ctx, SlotDark{Slot: id, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name,
-				MembershipID: rt.base.membershipID}, "rescued")
+			f.reportEpisode(ctx, rt, id, m, "rescued")
 		}
 		rt.finalizeRescue(ctx, id, raw, m)
 		return
 	}
 	log.Printf("ecs-ec2 sweep: resuming the rescue of %s on %s (phase %s)", rt.base.name, id, m.Phase)
 	f.rescueContinue(ctx, rt, cmds, id, m, ids)
+}
+
+// canContinue is whether this build may carry a marker on: the action of the ladder that
+// wrote it must still be the one that acts.
+func (f *ecsEC2Factory) canContinue(m rescueMarker) bool {
+	if m.Wedged {
+		return f.pool.wedgedAction == wedgedActionRelease
+	}
+	return f.pool.darkAction == darkActionRescue
 }
 
 // rescueMarkedInstances lists the boxes of this pool that carry a marker, in any live state.

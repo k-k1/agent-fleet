@@ -286,6 +286,10 @@ type ecsEC2Factory struct {
 	onSlotDark func(context.Context, SlotDark)
 	// onSlotWedged is Config.OnSlotWedged.
 	onSlotWedged func(context.Context, SlotWedged)
+	// wedgedBlocked remembers, per slot, the launch epoch whose "SSM offline" block was
+	// already reported, so a slot left blocked does not repeat the audit row every sweep. It
+	// is in memory: a restart reports once more.
+	wedgedBlocked sync.Map
 	// bg / sleep replace the probe runtime's background runner and sleeper when set; only
 	// tests do, to drive ForceStopSlot's delayed re-stop without waiting for it.
 	bg    func(context.Context, func(context.Context))

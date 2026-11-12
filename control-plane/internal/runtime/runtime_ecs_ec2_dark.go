@@ -128,7 +128,7 @@ func parseDarkStamp(v string) (darkStamp, bool) {
 func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Volume) {
 	// A marker outlives the setting that wrote it, so the resume scan runs whatever the
 	// action is, short of a pool built without one.
-	if f.pool.darkAction != "" && f.pool.darkAction != darkActionOff {
+	if (f.pool.darkAction != "" && f.pool.darkAction != darkActionOff) || f.pool.wedgedAction == wedgedActionRelease {
 		f.resumeRescues(ctx)
 	}
 	if (f.pool.darkAction != darkActionDetect && f.pool.darkAction != darkActionRescue) || f.pool.darkAfter <= 0 {

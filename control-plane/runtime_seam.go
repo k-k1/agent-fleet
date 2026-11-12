@@ -153,18 +153,33 @@ func (m *manager) auditSlotDark(ctx context.Context, ev runtime.SlotDark) {
 	}
 }
 
-// auditSlotWedged records that the ecs-ec2 sweeper saw a slot with a home stay wedged: its
-// agents answer, but a task is stuck stopping or the Agent drops its probe (ADR 0121
-// amendment). Detect-only: nothing was done to the slot. Tenant resolution as auditSlotDark.
+// auditSlotWedged records what the ecs-ec2 sweeper did about a slot with a home that stayed
+// wedged: its agents answer, but a task is stuck stopping or the Agent drops its probe (ADR 0121
+// amendment). The detection of an episode changed nothing on the slot; "released" says the
+// release took the home off it, "blocked" that it could not (reason, when known, says why).
+// Tenant resolution as auditSlotDark.
 func (m *manager) auditSlotWedged(ctx context.Context, ev runtime.SlotWedged) {
 	tenantID := ""
 	if mv, ok, err := m.store.GetMembershipByID(ctx, ev.MembershipID); err == nil && ok {
 		tenantID = mv.TenantID
 	}
-	detail := fmt.Sprintf("workspace=%s volume=%s wedged_since=%s signal=%s", ev.Workspace, ev.Volume, ev.Since.UTC().Format(time.RFC3339), ev.Signal)
+	at := ev.Since.UTC().Format(time.RFC3339)
+	detail := fmt.Sprintf("workspace=%s volume=%s wedged_since=%s signal=%s", ev.Workspace, ev.Volume, at, ev.Signal)
+	action := "pool.slot_wedged_detected"
+	switch ev.Action {
+	case "released":
+		action = "pool.slot_wedged_released"
+		detail = fmt.Sprintf("workspace=%s volume=%s release_began=%s", ev.Workspace, ev.Volume, at)
+	case "blocked":
+		action = "pool.slot_wedged_blocked"
+		detail = fmt.Sprintf("workspace=%s volume=%s release_began=%s", ev.Workspace, ev.Volume, at)
+		if ev.Reason != "" {
+			detail += " reason=" + ev.Reason
+		}
+	}
 	if err := m.store.InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: tenantID, ActorKind: "system", ActorID: "slot-wedged",
-		Action: "pool.slot_wedged_detected", Target: ev.Slot, Detail: detail, At: store.NowTS(),
+		Action: action, Target: ev.Slot, Detail: detail, At: store.NowTS(),
 	}); err != nil {
 		log.Printf("audit: wedged slot %s for %s not recorded: %v", ev.Slot, ev.Workspace, err)
 	}

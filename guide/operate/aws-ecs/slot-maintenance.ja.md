@@ -196,7 +196,7 @@ Control Plane のスイーパーは、誰かがワークスペースを起動す
 
 ### 応答するのに進まないスロット
 
-同じスイープが、逆の形も探します。ECS エージェントは接続中なのに、ワークロードが進まないスロットです。こちらも**報告するだけ**です。
+同じスイープが、逆の形も探します。ECS エージェントは接続中なのに、ワークロードが進まないスロットです。既定では**報告するだけ**です。`AF_ECS_EC2_WEDGED_SLOT_ACTION=release` にすると、次に述べる解放も行います。
 
 次がすべて成り立つスロットを wedged（固着）とみなします。home を持ち、起動中の Start が無く、EC2 が `running`（起動の猶予より前に起動）で、ECS エージェントが接続中で、さらに次のどちらかに当てはまるものです。
 
@@ -210,9 +210,10 @@ Control Plane のスイーパーは、誰かがワークスペースを起動す
 | `AF_ECS_EC2_WEDGED_AFTER_SEC`（既定 600 秒）のあいだ wedged が続いた | ログに 1 行と、監査ログに `pool.slot_wedged_detected` を 1 件残します（`signal` は `task_stopping` か `agent_probe_failed`） |
 
 - `AF_ECS_EC2_WEDGED_AFTER_SEC` は、dark のスキャンと同じ下限まで引き上げられます。`0` でスキャンを止めます
-- `AF_ECS_EC2_WEDGED_SLOT_ACTION` は `detect`（既定）か `off` で、dark のスキャンの設定とは別です。`release` は home を解放するアクションのために予約してあり、今は `detect` として動きます
+- `AF_ECS_EC2_WEDGED_SLOT_ACTION` は `detect`（既定）、`off`、`release` のいずれかで、dark のスキャンの設定とは別です。`release` は、報告済み（`pool.slot_wedged_detected`）のスロットに対して、home の所有権を取り、Stop と同じようにワークスペースのサービスを 0 にし、SSM で home をアンマウントし、タスクが消えるのを待ってから home をデタッチします。スロットはプールに残り、インスタンスの停止や登録解除はしません（エージェントが応答しているためです）。そのスロット上のメンバーのワークスペースは停止し、次の Start では home が空いています。実行の直前にもう一度スロットがまだ固着していることを確かめ、そのあいだにメンバーが Start した場合はメンバーが優先され、home は取り外されません。detect だけの期間に誤検知が無いと分かるまでは、`detect` のままにしてください
+- 解放にはアンマウントのためにスロットの SSM が `Online` である必要があります。そうでないときは、Control Plane はスロットに触れず、`pool.slot_wedged_blocked` を 1 件（理由 `ssm_offline`）残し、SSM が戻れば解放します。アンマウントやタスクの停止が上限（アンマウントは 3 分）までに終わらないときは、home を付けたまま止まり、`pool.slot_wedged_blocked` を 1 回だけ残して、スイープごとにやり直します。解放が終わると `pool.slot_wedged_released` を残します
 - 読み取りに失敗したときは何も数えません。タグを付けも外しもしません
-- スロットの一覧には、「**最後の観測: 固着 N 分・観測中**」のバッジが出ます。意味は dark のバッジと同じで、最後の観測であって今の確認ではありません。プール API では `wedged_since` と `wedged_rung` で返します
+- スロットの一覧には、「**最後の観測: 固着 N 分・観測中**」のバッジが出ます。意味は dark のバッジと同じで、最後の観測であって今の確認ではありません。プール API では `wedged_since` と `wedged_rung` で返します。`wedged_rung` は、タグからは `observing`、解放のマーカーがインスタンスにあるあいだは `releasing`、`blocked`、`released` です
 
 ## 関連
 
