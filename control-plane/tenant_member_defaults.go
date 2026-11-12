@@ -113,10 +113,29 @@ func (a adminAPI) setTenantMemberDefaults(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	d, aerr := decodeTenantMemberDefaults(w, r)
+	d, sent, aerr := decodeTenantMemberDefaults(w, r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
+	}
+	// A group the body leaves out keeps its stored value: an older Console, or a script written
+	// before the groups existed, sends only `agent` and must not wipe them. Clearing a group is
+	// explicit: {} for launch and ops, [] for repos.
+	if !sent.launch || !sent.repos || !sent.ops {
+		_, cur, err := loadTenantMemberDefaults(r, a.mgr.store, t.ID)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		if !sent.launch {
+			d.Launch = cur.Launch
+		}
+		if !sent.repos {
+			d.Repos = cur.Repos
+		}
+		if !sent.ops {
+			d.Ops = cur.Ops
+		}
 	}
 	b, err := json.Marshal(d)
 	if err != nil {
@@ -136,38 +155,44 @@ func (a adminAPI) setTenantMemberDefaults(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, tenantMemberDefaultsAdminWire{Tenant: t.Slug, Defaults: d, UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt})
 }
 
+// groupsSent says which groups the PUT body carried (a JSON null counts as left out).
+type groupsSent struct{ launch, repos, ops bool }
+
 // decodeTenantMemberDefaults reads a PUT body strictly: a misspelt key would otherwise be dropped
 // and the admin would believe the default says something it does not.
-func decodeTenantMemberDefaults(w http.ResponseWriter, r *http.Request) (tenantMemberDefaultsWire, *apiError) {
+func decodeTenantMemberDefaults(w http.ResponseWriter, r *http.Request) (tenantMemberDefaultsWire, groupsSent, *apiError) {
 	var d tenantMemberDefaultsWire
 	var in *tenantMemberDefaultsWire
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, tenantMemberDefaultsMaxBody))
 	var tooBig *http.MaxBytesError
 	if errors.As(err, &tooBig) {
-		return d, &apiError{http.StatusRequestEntityTooLarge, "body_too_large", "member defaults are at most 4 KiB"}
+		return d, groupsSent{}, &apiError{http.StatusRequestEntityTooLarge, "body_too_large", "member defaults are at most 4 KiB"}
 	}
 	if err != nil {
-		return d, &apiError{http.StatusBadRequest, "bad_request", err.Error()}
+		return d, groupsSent{}, &apiError{http.StatusBadRequest, "bad_request", err.Error()}
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		return d, &apiError{http.StatusBadRequest, "invalid_defaults", "invalid member defaults: " + err.Error()}
+		return d, groupsSent{}, &apiError{http.StatusBadRequest, "invalid_defaults", "invalid member defaults: " + err.Error()}
 	}
 	// The save replaces the document, so `null` must not read as "clear everything".
 	if in == nil {
-		return d, &apiError{http.StatusBadRequest, "invalid_defaults", "member defaults must be an object"}
+		return d, groupsSent{}, &apiError{http.StatusBadRequest, "invalid_defaults", "member defaults must be an object"}
 	}
 	d = *in
 	d.normalize()
 	// A second Decode must reach the end: dec.More() lets `{"agent":"codex"}]` through.
 	if extra := dec.Decode(&struct{}{}); !errors.Is(extra, io.EOF) {
-		return d, &apiError{http.StatusBadRequest, "invalid_defaults", "unexpected data after the defaults object"}
+		return d, groupsSent{}, &apiError{http.StatusBadRequest, "invalid_defaults", "unexpected data after the defaults object"}
 	}
 	if err := d.validate(); err != nil {
-		return d, &apiError{http.StatusBadRequest, "invalid_defaults", err.Error()}
+		return d, groupsSent{}, &apiError{http.StatusBadRequest, "invalid_defaults", err.Error()}
 	}
-	return d, nil
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(body, &raw) // already decoded once above
+	present := func(k string) bool { v, ok := raw[k]; return ok && string(bytes.TrimSpace(v)) != "null" }
+	return d, groupsSent{present("launch"), present("repos"), present("ops")}, nil
 }
 
 // auditDetail lists what the save set. Everything in the document is non-secret by validation, so
@@ -221,7 +246,7 @@ var (
 
 var (
 	// A model id is a short token (claude-opus-4-7, gpt-5.2, bedrock-style ids with : and /).
-	launchModelRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$`)
+	launchModelRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@#\[\]-]{0,99}$`)
 	// "owner/name", optionally with subgroups (GitLab): the path half of a remote, no host.
 	teamRepoRe = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+){1,3}$`)
 	awsAcctRe  = regexp.MustCompile(`^[0-9]{12}$`)
@@ -283,7 +308,7 @@ func plainHTTPSURL(field, v string) error {
 		return nil
 	}
 	u, err := url.Parse(v)
-	if err != nil || len(v) > maxOpsURLLen || u.Scheme != "https" || u.Host == "" ||
+	if err != nil || len(v) > maxOpsURLLen || u.Scheme != "https" || u.Hostname() == "" ||
 		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(v, " \t\r\n") {
 		return fmt.Errorf("%s must be an https URL without credentials, query or fragment", field)
 	}

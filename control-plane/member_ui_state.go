@@ -38,6 +38,7 @@ type memberUIStateWire struct {
 	// Launch and Ops are the member's own override of the tenant's launch defaults and ops
 	// settings (decision 8, P3): the top layer of the precedence, "" / null = not overridden.
 	// They prefill the launch dialog; the Agent's ui-prefs are never written from here.
+	// In a PATCH, a null group is the same as an absent one (left alone); {} clears the override.
 	Launch *launchDefaultsWire `json:"launch,omitempty"`
 	Ops    *opsSettingsWire    `json:"ops,omitempty"`
 }

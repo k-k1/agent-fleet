@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -185,11 +186,34 @@ func TestTenantMemberDefaultsP3Groups(t *testing.T) {
 			t.Errorf("accepted %s: %d %s", bad, w.Code, w.Body.String())
 		}
 	}
-	tooMany := `{"repos":["` + strings.Repeat(`a/b","`, maxTeamRepos) + `a/c"]}`
-	if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", tooMany); w.Code != http.StatusBadRequest {
+	// Distinct entries, so only the count check can refuse the 21st; exactly the cap passes.
+	repoList := func(n int) string {
+		var q []string
+		for i := 0; i < n; i++ {
+			q = append(q, fmt.Sprintf(`"acme/r%d"`, i))
+		}
+		return `{"repos":[` + strings.Join(q, ",") + `]}`
+	}
+	if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", repoList(maxTeamRepos+1)); w.Code != http.StatusBadRequest {
 		t.Errorf("accepted %d repos: %d", maxTeamRepos+1, w.Code)
 	}
+	if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", repoList(maxTeamRepos)); w.Code != http.StatusOK {
+		t.Errorf("refused %d repos: %d %s", maxTeamRepos, w.Code, w.Body.String())
+	}
+	// Ordinary model ids, including opencode's provider/model#variant, and a normal URL pass.
+	for _, ok := range []string{
+		`{"launch":{"model":"stub/stub-2#high"}}`,
+		`{"ops":{"grafana_url":"https://grafana.acme.example:3000/d/home"}}`,
+	} {
+		if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", ok); w.Code != http.StatusOK {
+			t.Errorf("refused %s: %d %s", ok, w.Code, w.Body.String())
+		}
+	}
+	if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", `{"ops":{"grafana_url":"https://:443/path"}}`); w.Code != http.StatusBadRequest {
+		t.Errorf("accepted a URL with no host: %d", w.Code)
+	}
 
+	// Leave the repos list as the test below expects it.
 	put := `{"agent":"claude","launch":{"model":"claude-opus-4-7","driver":"managed","permission_mode":"ask","budget_usd":5},` +
 		`"repos":["acme/api","acme/web"],` +
 		`"ops":{"grafana_url":"https://grafana.acme.example/d/home","aws_sso_start_url":"https://acme.awsapps.com/start","aws_account_id":"123456789012","aws_role_name":"ReadOnly"}}`
@@ -197,7 +221,7 @@ func TestTenantMemberDefaultsP3Groups(t *testing.T) {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
 	var detail string
-	if err := st.DB().QueryRow(`SELECT detail FROM audit_log WHERE action='tenant.member_defaults'`).Scan(&detail); err != nil ||
+	if err := st.DB().QueryRow(`SELECT detail FROM audit_log WHERE action='tenant.member_defaults' AND detail LIKE 'agent=claude%'`).Scan(&detail); err != nil ||
 		!strings.Contains(detail, "agent=claude") || !strings.Contains(detail, "launch.budget_usd=5") ||
 		!strings.Contains(detail, "repos=acme/api,acme/web") || !strings.Contains(detail, "ops.aws_account_id=123456789012") {
 		t.Errorf("audit detail = %q (%v)", detail, err)
@@ -247,5 +271,45 @@ func TestTenantMemberDefaultsP3Groups(t *testing.T) {
 	a = read(http.MethodPatch, `{"launch":{"agent":"","model":"","driver":"","permission_mode":"","budget_usd":null}}`)
 	if a.Effective.Launch.Model != "claude-opus-4-7" || a.Effective.Launch.Agent != "claude" {
 		t.Errorf("effective after clearing = %+v", a.Effective.Launch)
+	}
+}
+
+// An older Console (or script) saves only `agent`: the groups it does not know must survive.
+func TestTenantMemberDefaultsPutKeepsOmittedGroups(t *testing.T) {
+	st := p3Store(t)
+	mgr := p3Manager(t, st)
+	seedGitOAuthTenant(t, st, "sub", "admin@sub.co.jp")
+	full := `{"agent":"claude","launch":{"model":"m1","budget_usd":3},"repos":["acme/api"],"ops":{"aws_role_name":"ReadOnly"}}`
+	if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", full); w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", `{"agent":"codex","launch":null}`)
+	b := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(b, `"agent":"codex"`) || !strings.Contains(b, `"model":"m1"`) ||
+		!strings.Contains(b, `"acme/api"`) || !strings.Contains(b, `"ReadOnly"`) {
+		t.Fatalf("an agent-only save dropped groups: %d %s", w.Code, b)
+	}
+	// Explicit empties clear.
+	w = memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", `{"agent":"codex","launch":{},"repos":[],"ops":{}}`)
+	b = w.Body.String()
+	if w.Code != http.StatusOK || strings.Contains(b, `"m1"`) || strings.Contains(b, `acme/api`) || strings.Contains(b, `ReadOnly`) {
+		t.Fatalf("explicit empties did not clear: %d %s", w.Code, b)
+	}
+}
+
+// A null group in a member PATCH is left alone; {} clears the override.
+func TestMemberUIStateNullGroupIsNoOpAndEmptyClears(t *testing.T) {
+	st := p3Store(t)
+	mgr := p3Manager(t, st)
+	sub := seedGitOAuthTenant(t, st, "sub", "admin@sub.co.jp")
+	addBranchRulesMember(t, st, sub.ID, "user@sub.co.jp", "member")
+	memberUIStateCall(mgr, http.MethodPatch, "sub", "user@sub.co.jp", `{"launch":{"model":"m2"},"ops":{"aws_role_name":"R"}}`)
+	w := memberUIStateCall(mgr, http.MethodPatch, "sub", "user@sub.co.jp", `{"launch":null,"ops":null}`)
+	if !strings.Contains(w.Body.String(), `"launch":{"agent":"","model":"m2"`) {
+		t.Errorf("null cleared the override: %s", w.Body.String())
+	}
+	w = memberUIStateCall(mgr, http.MethodPatch, "sub", "user@sub.co.jp", `{"launch":{},"ops":{}}`)
+	if strings.Contains(w.Body.String(), `m2`) {
+		t.Errorf("{} did not clear: %s", w.Body.String())
 	}
 }
