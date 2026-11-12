@@ -26,7 +26,7 @@ another process, and do not unset `AWS_EC2_METADATA_DISABLED`.
 
 The variable only stops tools that honour it. The network block behind it is the operator's: it
 holds once they have finished the 0.26.0 migration (retained ecs-ec2 slots replaced, existing
-ec2-single instances moved to hop limit 1 — `operate/04-secure.md`, "Other operational controls",
+ec2-single instances moved to hop limit 1 — `operate/secure/controls.md`, "Keep the host's cloud identity from workspaces",
 in the user guide). Until then, a tool that ignores the variable can still reach the host's
 instance role, so nothing you see in the shell proves the boundary.
 

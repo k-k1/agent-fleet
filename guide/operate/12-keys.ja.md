@@ -10,7 +10,7 @@ source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/
 既定では、Control Plane が封じるすべての秘密は `AF_MASTER_KEY` から導いた鍵で守られます。`ecs` / `ecs-ec2` では、その
 管理を AWS KMS に移せて、さらに各メンバーのホームに専用の鍵を持たせられます。この章は、各ステップが何を決めるか、
 そして鍵を無効にすると何が破棄され、何が破棄されないかを扱います。これが答える脅威モデルは
-[04 セキュリティ運用](04-secure.ja.md#残存リスク-運用でどう扱うか)、パラメータは
+[脅威モデルと残るリスクを知る](secure/threat-model.ja.md#残るリスクに備える)、パラメータは
 [ECS のランブック](../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default) にあります。
 
 ## AWS KMS で保存時の鍵を守る
@@ -59,7 +59,7 @@ ECS は **実行ロール**でこれを復号するので、鍵が許可すべ�
 テンプレートは、その 1 つの鍵に対する `kms:Decrypt` だけを、SSM 経由に限って付与します。手順・キーポリシー・
 元に戻し方は `deploy/aws/ecs/cfn/PARAMETERS.md` の「`MasterKeyKmsKeyArn`」にあります。
 変わるのは保存時に誰が読めるかだけで、値そのものは変えてはいけません
-（[04 守る](04-secure.ja.md#配備の鍵-要件と変更の代償) の「変更の代償」を参照）。
+（[配備の鍵を扱う](secure/deployment-keys.ja.md) の「変更の代償」を参照）。
 
 ## 切り替え前に保存された値を封じ直す
 

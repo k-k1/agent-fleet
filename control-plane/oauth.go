@@ -139,7 +139,7 @@ const cookieFormatV2 = "v2."
 // Per-purpose keys are the default. A replica older than the release that reads the labelled
 // format (0.42.0) cannot read it, so a rolling update from before that release would sign
 // people out whenever a request met an old replica: update to 0.42.0 first
-// (guide/operate/04-secure.md). AF_COOKIE_PURPOSE_KEYS=0 keeps issuing the unlabelled format for
+// (guide/operate/secure/deployment-keys.md). AF_COOKIE_PURPOSE_KEYS=0 keeps issuing the unlabelled format for
 // one more release; either setting accepts both formats on read, the unlabelled one until
 // legacyCookieUntil when per-purpose keys are on.
 

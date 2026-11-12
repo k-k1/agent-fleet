@@ -129,7 +129,7 @@ identity of their own:
 - The machine's identity is withheld too: the SDKs' instance metadata lookup is switched off
   (`AWS_EC2_METADATA_DISABLED=true`). A tool that ignores that variable is stopped only by the host's network block,
   which holds once your administrator has finished the 0.26.0 migration
-  ([operator guide 04](../../operate/04-secure.md), "Other operational controls").
+  ([Other operational controls](../../operate/secure/controls.md#keep-the-hosts-cloud-identity-from-workspaces)).
 - A workspace that runs directly on your own machine is left as it is: an instance role there is your machine's, and
   the SDKs still find it.
 

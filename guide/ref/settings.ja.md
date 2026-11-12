@@ -89,11 +89,11 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 |---|---|---|
 | テナント一覧 | テナントの作成。各テナントの上限とアイドル自動停止、自前エンジンの利用可否とモデル取り込みの許可、メンバー | [インストールする](../operate/install.ja.md#7-メンバーを迎える) |
 | サインイン方法の登録簿 | テナントが自分で定義したサインイン方式の承認 | [テナント独自のサインインを承認する](../operate/signin/tenant-idp.ja.md) |
-| 通信 | ワークスペースからの外向き通信: 観測（log-only）か enforce か、許可リスト、メンバーの申請 | [operate/04](../operate/04-secure.ja.md#egress-統制の運用) |
-| MCP ログイン許可ホスト | MCP OAuth サーバーが信頼するクライアントのホスト（配備全体）| [operate/04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ) |
+| 通信 | ワークスペースからの外向き通信: 観測（log-only）か enforce か、許可リスト、メンバーの申請 | [外向きの通信を制御する](../operate/secure/egress.ja.md) |
+| MCP ログイン許可ホスト | MCP OAuth サーバーが信頼するクライアントのホスト（配備全体）| [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
 | 読み上げ | 音声エンジンのモードと、共通の読み仮名辞書 | [operate/07](../operate/07-engines.ja.md#読み上げ音声エンジンと共通の読み仮名辞書) |
 | 見た目 | この配備の色とラベル。ほかの配備と見分けるため | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
-| 開発用ログイン | プレビュー用サブドメイン上のアプリ向けの、開発用 OIDC IdP のスイッチ | [operate/04](../operate/04-secure.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
+| 開発用ログイン | プレビュー用サブドメイン上のアプリ向けの、開発用 OIDC IdP のスイッチ | [開発用サインインを使う](../operate/secure/dev-signin.ja.md#開発用-oidc-idp-をオンオフする) |
 | 推論エンジン | 自前エンジンのモード・GPU クラス・モデルカタログ・状態と稼働実績 | [operate/07](../operate/07-engines.ja.md) |
 | API トークン | モデル取り込み用の Hugging Face と Civitai のトークン、Civitai Red のスイッチ | [operate/07](../operate/07-engines.ja.md#モデルの取り込みとテナントとの関係) |
 | スロット | `ecs-ec2` のスロットプール: スロットの入れ替え、動かなくなったスロットの強制停止 | [operate/11](../operate/11-slot-pool.ja.md) |
@@ -118,9 +118,9 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `AF_PREVIEW_DOMAIN` | プレビュー用サブドメイン（`<ワークスペース>-<ポート>.<ドメイン>`）の親ドメイン。そのためのワイルドカードの DNS 名と証明書が要る。未設定ならプレビュー用サブドメインは無く、Console 自身のプレビューのパスだけになる。`AF_COOKIE_SECRET` と `PUBLIC_BASE_URL` も一緒に設定する。どちらかが無いと、プレビューのサインインを信頼できないか戻る先の Console が無いため、Control Plane が起動時に警告する |
 | `AF_DEV_IDP` | `0` にすると、開発用ログイン（プレビュー用サブドメイン上のメンバーのアプリが Google の代わりにサインインに使える、Console のオリジン上の OIDC プロバイダ）を、配備管理者のスイッチにかかわらずオフに固定する。未設定ならそのスイッチに従い、スイッチは既定でオン。提供するのは `AF_PREVIEW_DOMAIN` と `PUBLIC_BASE_URL` があるときだけ |
 | `AF_MCP_ENABLED` | `true` で `/mcp` エンドポイントとメモリ専用の `/mcp/memory`（Personal Access Token）を提供する。それ以外（`1` を含む）はオフ。テナント単位のメモリのスイッチ（[外部からのメモリの利用を許可する](../admin/memory-outside.ja.md)）は別の、もっと狭いスイッチ |
-| `AF_MCP_OAUTH` | `1` で、Control Plane が `/mcp` の OAuth 認可サーバーにもなり、ホスト型のクライアントはメンバーのサインインで接続できる。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` が要り、どれか欠けると OAuth のパスは 404。各テナントは自分の分をオフにもできる（[MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)）。残りは [operate/04](../operate/04-secure.ja.md#リモート-mcp-クライアント向けのサインインoauth) |
+| `AF_MCP_OAUTH` | `1` で、Control Plane が `/mcp` の OAuth 認可サーバーにもなり、ホスト型のクライアントはメンバーのサインインで接続できる。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` が要り、どれか欠けると OAuth のパスは 404。各テナントは自分の分をオフにもできる（[MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)）。残りは [MCP のサインインを運用する](../operate/secure/mcp.ja.md#リモートの-mcp-クライアントを-oauth-でサインインさせる) |
 | `AF_GITHUB_WEBHOOK_SECRET` | このデプロイの GitHub App の Webhook シークレット。設定すると、Control Plane は App の配信を `/webhooks/github` で受け付ける（App の Webhook URL は `<PUBLIC_BASE_URL>/webhooks/github`）。受けた配信は、実行中の Workspace に「公開リポジトリのプルリクエストを早めに確認して」と知らせるためだけに使う。未設定ならこのエンドポイントは存在せず、ウォッチはポーリングだけで動く。プライベートリポジトリの配信はこの経路では無視する。配信の中身は何も渡さない。 |
-| `AF_MCP_OAUTH_TRUSTED_HOSTS` | MCP OAuth が信頼するクライアントのホスト、または `https://host/path` の URL プレフィックス（カンマ区切り。ホスト名だけなら全パス）。既定は `https://claude.ai/api/mcp/auth_callback`・`claude.com`・`chatgpt.com`、`none` でループバックのクライアントだけ。管理モーダルの **MCP ログイン許可ホスト** で保存した一覧がこの変数に優先する（[operate/04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ)）|
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | MCP OAuth が信頼するクライアントのホスト、または `https://host/path` の URL プレフィックス（カンマ区切り。ホスト名だけなら全パス）。既定は `https://claude.ai/api/mcp/auth_callback`・`claude.com`・`chatgpt.com`、`none` でループバックのクライアントだけ。管理モーダルの **MCP ログイン許可ホスト** で保存した一覧がこの変数に優先する（[MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める)）|
 | `AF_EFS_BACKUP` | 手で設定しない。`ecs` / `ecs-ec2` で `update.sh` と `standup.sh` が ingress スタックの `EfsBackup` パラメータ（`present`・`off`・`missing`）から埋め、`missing` なら管理画面に「日次の EFS バックアップがない」バナーが出る（[アップグレードする](../operate/run/upgrade.ja.md#efs-バックアップがないという通知)） |
 | `AF_SESSION_IDLE_TIMEOUT`・`AF_WS_IDLE_TIMEOUT`・`AF_BACKGROUND_HOLD_MAX`・`AF_WORKSPACE_START_DEADLINE` | アイドルのセッションと Workspace を止めるタイミング。既定値は [上限](limits.ja.md#配備が決めるもの)、動きは [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#アイドル自動停止の時間を決める) |
 
