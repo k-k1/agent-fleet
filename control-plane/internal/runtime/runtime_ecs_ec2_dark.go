@@ -13,8 +13,8 @@ import (
 
 // Dark-slot detection (ADR 0121, rung L0). A slot is dark when EC2 says `running` while both
 // the ECS agent and the SSM agent are silent. This file only observes: it stamps the instance,
-// logs and reports one audit event per episode. It never stops, deregisters, detaches or
-// quarantines anything; those rungs are not built (ADR 0121 decision 5, rollout).
+// logs and reports one audit event per episode. Acting on a dark slot (rung L1, only under
+// AF_ECS_EC2_DARK_SLOT_ACTION=rescue) lives in runtime_ecs_ec2_dark_rescue.go.
 
 const (
 	// ec2TagDarkSince is `<first dark observation>/<LaunchTime>[/detected]`, written on the
@@ -22,9 +22,10 @@ const (
 	// a stamp from before a stop/start unusable: LaunchTime moves on every start.
 	ec2TagDarkSince = "af-dark-since"
 
-	// Values of AF_ECS_EC2_DARK_SLOT_ACTION. Only these two are implemented.
+	// Values of AF_ECS_EC2_DARK_SLOT_ACTION. `quarantine` is not implemented.
 	darkActionOff    = "off"
 	darkActionDetect = "detect"
+	darkActionRescue = "rescue"
 
 	darkStampDetected = "detected"
 )
@@ -42,19 +43,21 @@ type SlotDark struct {
 }
 
 // parseDarkAction maps AF_ECS_EC2_DARK_SLOT_ACTION onto an implemented action. Unset is
-// detect, the ADR's first-release default. `rescue` and `quarantine` name rungs that do not
-// exist yet; they fall back to detect, which only writes a tag, rather than to off, so that an
-// operator who asked for more still gets the evidence the detect-only window exists to gather.
+// detect, the ADR's first-release default. `quarantine` names a rung that does not exist yet;
+// it falls back to detect, which only writes a tag, rather than to off, so that an operator
+// who asked for more still gets the evidence the detect-only window exists to gather.
 func parseDarkAction(raw string) string {
 	switch v := strings.ToLower(strings.TrimSpace(raw)); v {
 	case "", darkActionDetect:
 		return darkActionDetect
 	case darkActionOff:
 		return darkActionOff
-	case "rescue", "quarantine":
+	case darkActionRescue:
+		return darkActionRescue
+	case "quarantine":
 		log.Printf("ecs-ec2: AF_ECS_EC2_DARK_SLOT_ACTION=%s is not implemented yet; running detect-only", v)
 	default:
-		log.Printf("ecs-ec2: AF_ECS_EC2_DARK_SLOT_ACTION=%q is not one of off|detect; running detect-only", raw)
+		log.Printf("ecs-ec2: AF_ECS_EC2_DARK_SLOT_ACTION=%q is not one of off|detect|rescue; running detect-only", raw)
 	}
 	return darkActionDetect
 }
@@ -120,7 +123,12 @@ func parseDarkStamp(v string) (darkStamp, bool) {
 // A read that fails is not an answer: a failed ECS or SSM call leaves the slot untouched (no
 // stamp, no clear), because "could not ask" and "asked and it was silent" must not look alike.
 func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Volume) {
-	if f.pool.darkAction != darkActionDetect || f.pool.darkAfter <= 0 {
+	// A marker outlives the setting that wrote it, so the resume scan runs whatever the
+	// action is, short of a pool built without one.
+	if f.pool.darkAction != "" && f.pool.darkAction != darkActionOff {
+		f.resumeRescues(ctx)
+	}
+	if (f.pool.darkAction != darkActionDetect && f.pool.darkAction != darkActionRescue) || f.pool.darkAfter <= 0 {
 		return
 	}
 	cmds, ok := f.ssmc.(ssmSlotCommands)
@@ -206,6 +214,13 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 	if now.Sub(launch) < f.pool.darkBootGrace {
 		return // still inside the boot/wake grace: neither dark nor shown healthy
 	}
+	// g_d: read before the legs that need a call, so a Start that lands while they are read
+	// moves the count the rescue's locked step compares against.
+	var gd int64
+	canRescue := false
+	if f.pool.darkAction == darkActionRescue {
+		gd, canRescue = f.rescueStartCount(ctx, vol)
+	}
 	online, err := ssmOnline(ctx, cmds, id)
 	if err != nil {
 		log.Printf("ecs-ec2 sweep: dark-slot scan: SSM state of %s unknown: %v", id, err)
@@ -233,7 +248,16 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 		}
 		return
 	}
-	if stamp.detected || now.Sub(stamp.since) < f.pool.darkAfter {
+	if now.Sub(stamp.since) < f.pool.darkAfter {
+		return
+	}
+	rescue := func() {
+		if canRescue {
+			f.rescueDarkSlot(ctx, darkDecision{slot: id, vol: vol, launch: launch, gd: gd})
+		}
+	}
+	if stamp.detected {
+		rescue()
 		return
 	}
 	// Mark first, report second: a failed mark is retried next pass with the event still
@@ -244,11 +268,12 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 	}
 	ev := SlotDark{Slot: id, Volume: aws.ToString(vol.VolumeId), Since: stamp.since,
 		MembershipID: ec2TagValue(vol.Tags, EC2TagMembership), Workspace: ec2TagValue(vol.Tags, EC2TagWorkspace)}
-	log.Printf("ecs-ec2 sweep: slot %s holding %s has been dark since %s (%.0fm); detect-only, no action taken",
-		id, ev.Workspace, stamp.since.Format(time.RFC3339), now.Sub(stamp.since).Minutes())
+	log.Printf("ecs-ec2 sweep: slot %s holding %s has been dark since %s (%.0fm); action %s",
+		id, ev.Workspace, stamp.since.Format(time.RFC3339), now.Sub(stamp.since).Minutes(), f.pool.darkAction)
 	if f.onSlotDark != nil {
 		f.onSlotDark(ctx, ev)
 	}
+	rescue()
 }
 
 // darkAgentLeg is the Agent leg of the predicate. A slot whose service is down has no Agent

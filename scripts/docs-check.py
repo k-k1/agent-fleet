@@ -26,7 +26,10 @@ The checks:
   settings   every personal settings tab in ref/settings points at a page under user/
   features   member rows of the feature catalogue point at a task page on the user/ shelf
   knowledge  the assistant knowledge covers the member rows of the feature catalogue
-  notes      the operating policy shipped to every container points only at shipped shelves
+  notes      the operating policy shipped to every container names guide pages only by site URL,
+             and the shipped copy only in its one fallback line
+  site       every https://agent-fleet.org/docs/ URL in the policy, the topic notes, the
+             assistant knowledge and Go strings maps to a guide page and heading
   emphasis   every ** in guide/, docs/ and the release notes renders as bold on GitHub
   labels     a quoted bold label in user/ and admin/ exists in the Console's catalogue
   size       a guide chapter stays within CHAPTER_LINE_BUDGET lines (warning only)
@@ -56,6 +59,7 @@ import os
 import re
 import sys
 import unicodedata
+import urllib.parse
 from dataclasses import dataclass, field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1411,8 +1415,152 @@ def check_features(f: Findings) -> None:
                 )
 
 
+SITE = "https://agent-fleet.org/docs/"
+SHIPPED_DOCS = "/usr/local/share/agent-fleet/docs"
+# The path stops at anything a guide path cannot hold, so `<page>` in a template and the
+# punctuation after a URL in prose are not read as part of it.
+SITE_URL_RE = re.compile(
+    re.escape(SITE.rstrip("/")) + r"(?P<path>/[A-Za-z0-9._~/-]*)?(?:#(?P<anchor>[^\s`'\"<>)\]]*))?"
+)
+
+# Where an agent, a member or an operator reads a site URL into the guide: the policy and the
+# topic notes, the assistant's knowledge, and Go strings (error text, log lines, MCP results).
+SITE_URL_ROOTS = (
+    ("workspace/workspace-notes.md", ()),
+    ("workspace/notes", (".md",)),
+    ("workspace/agent/knowledge", (".md",)),
+    ("workspace/agent", (".go",)),
+    ("control-plane", (".go",)),
+)
+
+
+def site_url(page: str, anchor: str = "") -> str:
+    """The site URL of a guide page given relative to guide/ (`user/a.md`, `ref/cli/README.ja.md`).
+
+    The site's routes (ADR 0131 §2): `X.md` is `/docs/X/`, `X.ja.md` is `/docs/ja/X/`, and a
+    `README.md` is its directory's index.
+    """
+    page = page.replace(os.sep, "/")
+    ja = page.endswith(".ja.md")
+    stem = page[: -len(".ja.md")] if ja else (page[: -len(".md")] if page.endswith(".md") else page)
+    if stem == "README" or stem.endswith("/README"):
+        stem = stem[: -len("README")]
+    stem = stem.strip("/")
+    url = SITE + ("ja/" if ja else "") + (stem + "/" if stem else "")
+    return url + (f"#{anchor}" if anchor else "")
+
+
+def site_heading_ids(path: str) -> set[str]:
+    """The heading ids a guide page has on the site, which are not quite `heading_slugs`.
+
+    The site's converter lifts the first H1 into the page title (rendered with the fixed id
+    `_top`), and its slug pass (`console-slug.mjs` in k-k1/agent-fleet-site) gives the
+    Console's slug to each remaining heading in order, suffixing a repeat `-1`, `-2`, … the
+    way github-slugger does. A set of plain slugs would reject `#example-1` for a second
+    `## Example`, and accept the H1's slug, which the site does not have.
+    """
+    ids, seen, title_dropped = {"_top"}, {}, False
+    for m in HEADING_RE.finditer(strip_fenced_blocks(read(path))):
+        if not title_dropped and len(m.group(1)) == 1:
+            title_dropped = True
+            continue
+        base = console_slug(heading_text(m.group(2)))
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        ids.add(f"{base}-{n}" if n else base)
+    return ids
+
+
+def site_page(path: str) -> tuple[list[str], str | None]:
+    """The guide/ files a URL path after /docs can be (`/user/a/` -> user/a.md or
+    user/a/README.md), or an error when the URL is not in the site's form."""
+    if not path.endswith("/"):
+        return [], "write it with the trailing slash the site serves pages at"
+    route = path.strip("/")
+    ja = route == "ja" or route.startswith("ja/")
+    if ja:
+        route = route[len("ja"):].strip("/")
+    segments = route.split("/") if route else []
+    if any(s in ("README", "readme", "", ".", "..") or s.endswith(".md") for s in segments):
+        return [], "a route has no .md and no README; a README is served at its directory"
+    ext = ".ja.md" if ja else ".md"
+    if not route:
+        return ["README" + ext], None
+    return [route + ext, route + "/README" + ext], None
+
+
+def check_site_urls(f: Findings) -> None:
+    """Does every site URL into the guide name a page, and a heading, that exist?
+
+    The policy, the topic notes, the assistant's knowledge and Go strings send agents and
+    people to `https://agent-fleet.org/docs/` (ADR 0132 decision 4). No link checker
+    follows those: the site's own validator only sees the site, so a page that is renamed
+    or a heading that is reworded leaves every one of them on a 404 nobody notices. The
+    URL is mapped back to `guide/` by the site's route rule and the anchor checked with
+    the Console's slug rule (the site uses the same one, ADR 0131 §2). A URL whose page
+    or section is only in `guide/_redirects.tsv` still works through the redirect, but it
+    is an old path, so it fails with the new one, as `check_redirects` does for paths.
+    """
+    redirects = os.path.join(GUIDE, "_redirects.tsv")
+    moved: dict[tuple[str, str], str] = {}
+    if os.path.exists(redirects):
+        # check_redirects reports a malformed row; here it is only skipped.
+        for _, old, new in load_redirects(Findings(), redirects):
+            old_page, _, old_anchor = old.partition("#")
+            new_page, _, new_anchor = new.partition("#")
+            moved[(old_page, old_anchor)] = (new_page, new_anchor)
+            moved[(counterpart(old_page), old_anchor)] = (counterpart(new_page), new_anchor)
+    candidates = []
+    for rel_root, exts in SITE_URL_ROOTS:
+        base = os.path.join(ROOT, rel_root)
+        if os.path.isfile(base):
+            candidates.append(base)
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            # testdata holds goldens generated from the Go text that is scanned here.
+            dirnames[:] = [d for d in dirnames if d not in ("node_modules", "testdata")]
+            candidates += [os.path.join(dirpath, n) for n in filenames
+                           if n.endswith(exts) and not n.endswith("_test.go")]
+    for path in sorted(set(candidates)):
+        body = read(path)
+        if SITE.rstrip("/") not in body:
+            continue
+        for m in SITE_URL_RE.finditer(body):
+            where = f"{rel(path)}:{body.count(chr(10), 0, m.start()) + 1}"
+            url = m.group(0)
+            # Prose punctuation after a URL is not part of it.
+            url = url.rstrip(".,;:")
+            raw_path = m.group("path") or ""
+            if m.group("anchor") is None:
+                raw_path = raw_path.rstrip(".,;:")
+            anchor = urllib.parse.unquote((m.group("anchor") or "").rstrip(".,;:"))
+            pages, why = site_page(raw_path)
+            if why:
+                f.error(f"{where}: {url}: {why}")
+                continue
+            page = next((p for p in pages if os.path.isfile(os.path.join(GUIDE, p))), None)
+            if page is None:
+                # A section row wins over the row of its whole page.
+                new = next((moved[(p, anchor)] for p in pages if anchor and (p, anchor) in moved), None)
+                new = new or next((moved[(p, "")] for p in pages if (p, "") in moved), None)
+                if new:
+                    f.error(f"{where}: {url}: moved to {site_url(new[0], new[1] or anchor)}"
+                            " (guide/_redirects.tsv); point at the new page")
+                else:
+                    f.error(f"{where}: {url}: no such page in guide/ (looked for "
+                            + " or ".join(pages) + ")")
+                continue
+            if anchor and anchor not in site_heading_ids(os.path.join(GUIDE, page)):
+                new = moved.get((page, anchor))
+                if new:
+                    f.error(f"{where}: {url}: moved to {site_url(new[0], new[1])}"
+                            " (guide/_redirects.tsv); point at the new section")
+                else:
+                    f.error(f"{where}: {url}: guide/{page} has no heading with the id '{anchor}'")
+
+
 def check_notes(f: Findings) -> None:
-    """Does the operating policy shipped to every container name only existing shelves?
+    """Does the operating policy shipped to every container name the guide only by site URL?
 
     `workspace/workspace-notes.md` is baked into the image and read by every agent at
     startup. If it is left behind when the tree is rearranged, one stale spot misdirects
@@ -1428,6 +1576,13 @@ def check_notes(f: Findings) -> None:
     member received only use/ and ref/. Role-scoped distribution was dropped (ADR 0064),
     so there is no room and no need to escape via a caveat: a shelf can either be pointed
     at or not, and what cannot be pointed at gets rewritten.
+
+    A guide page is named by its site URL (ADR 0132 decision 4; `check_site_urls` resolves
+    it), never by its path in the container: the shipped copy is a fallback for when the
+    site cannot be reached, and it may be removed. So a backticked `shelf/page.md` is an
+    error, and so is `/usr/local/share/agent-fleet/docs` with a page after it. The bare
+    directory may be named in one paragraph per file, the fallback line; a second
+    paragraph is how the grep instructions creep back.
     """
     notes = os.path.join(ROOT, "workspace", "workspace-notes.md")
     if not os.path.exists(notes):
@@ -1436,8 +1591,12 @@ def check_notes(f: Findings) -> None:
     shelves = LIVING + RETIRED_SHELVES + ("decisions", "log")
     ref_re = re.compile(
         # The task pages sit in subdirectories (user/integrations/aws-sso.md, ref/cli/af-aws-exec.md),
-        # so a path may go deeper than the shelf.
-        r"`(" + "|".join(shelves) + r")/((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md)`"
+        # so a path may go deeper than the shelf. Quoted or not, and with or without the
+        # repository's `guide/` or `docs/` in front: an agent follows any of them. A path
+        # that continues another one (`af/user/x.md`, the shipped directory, a URL) starts
+        # after a character that cannot begin a page path, and is not this pattern's.
+        r"(?<![A-Za-z0-9_./~$-])(?:guide/|docs/)?(" + "|".join(shelves)
+        + r")/((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md)(?![A-Za-z0-9_/-])"
     )
     # The always-loaded policy is short; the procedures live in topic files under
     # `workspace/notes/`, shipped next to it as `/usr/local/share/agent-fleet/notes/`. The
@@ -1453,6 +1612,7 @@ def check_notes(f: Findings) -> None:
         else []
     )
     topics_named: set[str] = set()
+    shipped_docs_re = re.compile(re.escape(SHIPPED_DOCS) + r"(/[^\s`'\")\]]*)?")
 
     def paragraphs(path: str) -> list[tuple[int, str]]:
         # Search within a paragraph, not a line: searching by line fails on nothing more
@@ -1477,7 +1637,24 @@ def check_notes(f: Findings) -> None:
         (f"notes/{n}", os.path.join(notes_dir, n)) for n in topics_shipped
     ]
     for label, path in shipped:
+        fallback_at = 0
         for lineno, block in paragraphs(path):
+            for m in shipped_docs_re.finditer(block):
+                page = (m.group(1) or "").rstrip(".,;:").strip("/")
+                if page:
+                    f.error(
+                        f"{label}:{lineno}: names a guide page by its path in the container"
+                        f" -> {SHIPPED_DOCS}/{page} (give {site_url(page)} instead; the shipped"
+                        " copy is only the fallback)"
+                    )
+                elif fallback_at:
+                    f.error(
+                        f"{label}:{lineno}: names the shipped guide again (first at line"
+                        f" {fallback_at}); only the one fallback line may, every other"
+                        " pointer is a site URL"
+                    )
+                else:
+                    fallback_at = lineno
             for m in topic_re.finditer(block):
                 fname = m.group(1)
                 if label == "workspace-notes.md":
@@ -1504,13 +1681,10 @@ def check_notes(f: Findings) -> None:
                         " (only guide/ is in the container; point at a guide/ shelf)"
                     )
                     continue
-                if not os.path.exists(os.path.join(GUIDE, name, fname)):
-                    f.error(
-                        f"{label}:{lineno}: points at a file that does not exist"
-                        f" on that shelf -> {name}/{fname}"
-                        " (every agent reads these instructions, so a stale pointer"
-                        " misdirects all of them)"
-                    )
+                f.error(
+                    f"{label}:{lineno}: names a guide page by its path -> {name}/{fname}"
+                    f" (give the site URL instead: {site_url(f'{name}/{fname}')})"
+                )
     for n in topics_shipped:
         if n not in topics_named:
             f.error(
@@ -1922,16 +2096,17 @@ REDIRECT_POINTER_ROOTS = (
 )
 
 
-def load_redirects(f: Findings) -> list[tuple[int, str, str]]:
+def load_redirects(f: Findings, path: str = "") -> list[tuple[int, str, str]]:
     """Read guide/_redirects.tsv as (line number, old, new), both relative to guide/.
 
     A row names the English page; the Japanese counterpart (`X.ja.md`) is redirected the
     same way without a row of its own, so the two languages cannot drift apart.
     """
-    if not os.path.exists(REDIRECTS):
+    path = path or REDIRECTS
+    if not os.path.exists(path):
         return []
     rows = []
-    with open(REDIRECTS, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for n, line in enumerate(fh, 1):
             line = line.rstrip("\n")
             if not line.strip() or line.startswith("#"):
@@ -2449,7 +2624,7 @@ def main() -> int:
         help=(
             "comma-separated check names "
             "(links,anchors,closure,chapters,index,lang,header,vocab,polite,frozen,"
-            "ref,mcp,settings,features,knowledge,notes,tables,redirects,console-guide,emphasis,labels,history,size)"
+            "ref,mcp,settings,features,knowledge,notes,site,tables,redirects,console-guide,emphasis,labels,history,size)"
         ),
     )
     args = ap.parse_args()
@@ -2493,6 +2668,8 @@ def main() -> int:
         check_knowledge(f)
     if run("notes"):
         check_notes(f)
+    if run("site"):
+        check_site_urls(f)
     if run("tables"):
         check_tables(files + root, f)
     if run("redirects"):

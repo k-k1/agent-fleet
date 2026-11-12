@@ -141,22 +141,57 @@ class NotesTests(unittest.TestCase):
     def test_topic_references_are_checked(self):
         self.topic.write_text(self.valid + "\nRead:\n`notes/missing.md`\n`ref/missing.md`\n`log/private.md`")
         errors = self.errors()
-        for message in ("not in the image", "does not exist", "not shipped"):
+        for message in ("not in the image", "names a guide page by its path -> ref/missing.md", "not shipped"):
             self.assertIn(message, errors)
 
-    def test_nested_guide_paths_are_checked(self):
+    def test_guide_page_path_is_an_error_even_when_it_exists(self):
         (self.root / "guide/ref/cli").mkdir(parents=True)
         (self.root / "guide/ref/cli/af-aws-exec.md").write_text("# af-aws-exec\n")
-        self.topic.write_text(self.valid + "\nRead:\n`ref/cli/af-aws-exec.md`")
+        (self.root / "guide/ref/cli/README.ja.md").write_text("# CLI\n")
+        for where in (self.topic, self.policy):
+            with self.subTest(where=where.name):
+                self.topic.write_text(self.valid)
+                self.policy.write_text("`notes/example.md`\n")
+                self.assertEqual(self.errors(), "")
+                where.write_text(where.read_text() + "\nRead:\n`ref/cli/af-aws-exec.md` and `ref/cli/README.ja.md`\n")
+                errors = self.errors()
+                self.assertIn("give the site URL instead: https://agent-fleet.org/docs/ref/cli/af-aws-exec/", errors)
+                self.assertIn("give the site URL instead: https://agent-fleet.org/docs/ja/ref/cli/", errors)
+
+    def test_unquoted_and_repo_prefixed_paths_are_caught(self):
+        for text, message in (
+            ("See guide/ref/no-such-page.md first.", "names a guide page by its path -> ref/no-such-page.md"),
+            ("See `guide/ref/no-such-page.md` first.", "names a guide page by its path -> ref/no-such-page.md"),
+            ("See ref/no-such-page.md first.", "names a guide page by its path -> ref/no-such-page.md"),
+            ("(user/a/b.md)", "names a guide page by its path -> user/a/b.md"),
+            ("See docs/decisions/0132-x.md.", "not shipped -> decisions/0132-x.md"),
+            ("See member/16-cloud-accounts.md.", "a shelf the guide no longer has"),
+        ):
+            with self.subTest(text=text):
+                self.topic.write_text(self.valid + "\n" + text + "\n")
+                self.assertIn(message, self.errors())
+
+    def test_paths_that_only_contain_a_shelf_name_pass(self):
+        self.topic.write_text(self.valid + (
+            "\nMemories live at `af/user/x.md`; skills at ~/user/skill.md or $HOME/user/x.md.\n"
+            "Read `/usr/local/share/agent-fleet/notes/example.md`, https://agent-fleet.org/docs/ref/agents/,\n"
+            "the `user/` shelf, ref/README.mdx and refs/x.md.\n"
+        ))
         self.assertEqual(self.errors(), "")
-        self.topic.write_text(self.valid + "\nRead:\n`ref/cli/af-aws-exec-typo.md`")
-        self.assertIn("does not exist", self.errors())
+
+    def test_shipped_copy_only_in_one_fallback_paragraph(self):
+        fallback = "\nOffline, the same pages are under `/usr/local/share/agent-fleet/docs` as `<page>.md`.\n"
+        self.policy.write_text("`notes/example.md`\n" + fallback)
+        self.topic.write_text(self.valid + fallback)
+        self.assertEqual(self.errors(), "")
+        self.topic.write_text(self.valid + fallback + "\nAlso grep /usr/local/share/agent-fleet/docs here.\n")
+        self.assertIn("names the shipped guide again", self.errors())
+        self.topic.write_text(self.valid + "\nSee /usr/local/share/agent-fleet/docs/ref/agents.md.\n")
+        errors = self.errors()
+        self.assertIn("names a guide page by its path in the container", errors)
+        self.assertIn("https://agent-fleet.org/docs/ref/agents/", errors)
 
     def test_retired_shelf_is_an_error(self):
-        (self.root / "guide/user").mkdir(parents=True)
-        (self.root / "guide/user/README.md").write_text("# Using\n")
-        self.topic.write_text(self.valid + "\nRead:\n`user/README.md`")
-        self.assertEqual(self.errors(), "")
         for where in (self.topic, self.policy):
             with self.subTest(where=where.name):
                 self.topic.write_text(self.valid)
@@ -177,6 +212,119 @@ class NotesTests(unittest.TestCase):
             with self.subTest(new=new[:40]):
                 self.topic.write_text(self.valid.replace(old, new))
                 self.assertIn(error, self.errors())
+
+
+class SiteUrlTests(unittest.TestCase):
+    """Site URLs in the policy, the notes, the knowledge and Go strings resolve against guide/."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        guide = self.root / "guide"
+        (guide / "user/integrations").mkdir(parents=True)
+        (guide / "ref/cli").mkdir(parents=True)
+        (guide / "README.md").write_text("# Guide\n")
+        (guide / "README.ja.md").write_text("# ガイド\n")
+        (guide / "user/integrations/aws-sso.md").write_text("# Use AWS SSO\n\n## Log in\n")
+        (guide / "user/integrations/aws-sso.ja.md").write_text("# AWS SSO を使う\n\n## ログインする\n")
+        (guide / "ref/cli/README.md").write_text("# CLIs\n")
+        (guide / "ref/cli/af-db.md").write_text("# af-db\n")
+        (guide / "_redirects.tsv").write_text(
+            "member/16-cloud-accounts.md\tuser/integrations/aws-sso.md\n"
+            "ref/cli/af-db.md#old-section\tuser/integrations/aws-sso.md#log-in\n"
+        )
+        self.policy = self.root / "workspace/workspace-notes.md"
+        self.notes = self.root / "workspace/notes"
+        self.notes.mkdir(parents=True)
+        self.policy.write_text("")
+        self.knowledge = self.root / "workspace/agent/knowledge/af-usage.md"
+        self.knowledge.parent.mkdir(parents=True)
+        self.knowledge.write_text("")
+        self.go = self.root / "control-plane/guard.go"
+        self.go.parent.mkdir(parents=True)
+        self.go.write_text("package main\n")
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(guide)).start()
+
+    def errors(self):
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_site_urls(findings)
+        return "\n".join(findings.errors)
+
+    def test_valid_urls_pass(self):
+        self.policy.write_text(
+            "The guide is https://agent-fleet.org/docs/ (Japanese https://agent-fleet.org/docs/ja/).\n"
+            "See https://agent-fleet.org/docs/user/integrations/aws-sso/#log-in, and\n"
+            "https://agent-fleet.org/docs/ref/cli/. Template: `https://agent-fleet.org/docs/<page>/`.\n"
+        )
+        (self.notes / "aws.md").write_text("https://agent-fleet.org/docs/ja/user/integrations/aws-sso/#ログインする\n")
+        self.knowledge.write_text("正は https://agent-fleet.org/docs/ja/user/integrations/aws-sso/#%E3%83%AD%E3%82%B0%E3%82%A4%E3%83%B3%E3%81%99%E3%82%8B 。\n")
+        self.go.write_text('package main\n\nconst hint = "see https://agent-fleet.org/docs/ref/cli/af-db/"\n')
+        self.assertEqual(self.errors(), "")
+
+    def test_each_defect_is_caught_in_each_place(self):
+        for where in (self.policy, self.notes / "aws.md", self.knowledge, self.go):
+            for url, message in (
+                ("https://agent-fleet.org/docs/ref/cli/af-dbx/", "no such page in guide/"),
+                ("https://agent-fleet.org/docs/ja/ref/cli/af-db/", "no such page in guide/ (looked for ref/cli/af-db.ja.md"),
+                ("https://agent-fleet.org/docs/user/integrations/aws-sso/#nope", "has no heading with the id 'nope'"),
+                ("https://agent-fleet.org/docs/ja/user/integrations/aws-sso/#log-in", "aws-sso.ja.md has no heading"),
+                ("https://agent-fleet.org/docs/ref/cli/af-db", "trailing slash"),
+                ("https://agent-fleet.org/docs/ref/cli/README/", "a route has no .md and no README"),
+                ("https://agent-fleet.org/docs/ref/cli/af-db.md/", "a route has no .md and no README"),
+                ("https://agent-fleet.org/docs/member/16-cloud-accounts/",
+                 "moved to https://agent-fleet.org/docs/user/integrations/aws-sso/ "),
+                ("https://agent-fleet.org/docs/ja/member/16-cloud-accounts/",
+                 "moved to https://agent-fleet.org/docs/ja/user/integrations/aws-sso/ "),
+                ("https://agent-fleet.org/docs/ref/cli/af-db/#old-section",
+                 "moved to https://agent-fleet.org/docs/user/integrations/aws-sso/#log-in"),
+            ):
+                with self.subTest(where=where.name, url=url):
+                    for other in (self.policy, self.knowledge):
+                        other.write_text("")
+                    for other in self.notes.iterdir():
+                        other.unlink()
+                    self.go.write_text("package main\n")
+                    where.write_text(f"See {url} here.\n")
+                    self.assertIn(message, self.errors())
+
+    def test_repeated_headings_follow_the_sites_suffix_rule(self):
+        (self.root / "guide/ref/cli/af-db.md").write_text(
+            "# af-db\n\n## Example\n\n```\n## Example\n```\n\n## Example\n\n### Example\n\n# Second H1\n"
+        )
+        for anchor in ("example", "example-1", "example-2", "second-h1", "_top"):
+            with self.subTest(anchor=anchor):
+                self.policy.write_text(f"https://agent-fleet.org/docs/ref/cli/af-db/#{anchor}\n")
+                self.assertEqual(self.errors(), "")
+        # example-3 would need a fourth one (the fenced line is not a heading), and the
+        # first H1 is the page title, whose id on the site is _top.
+        for anchor in ("example-3", "af-db"):
+            with self.subTest(anchor=anchor):
+                self.policy.write_text(f"https://agent-fleet.org/docs/ref/cli/af-db/#{anchor}\n")
+                self.assertIn(f"has no heading with the id '{anchor}'", self.errors())
+
+    def test_goldens_and_go_tests_are_not_scanned(self):
+        testdata = self.root / "workspace/agent/internal/x/testdata/calls.txt"
+        testdata.parent.mkdir(parents=True)
+        testdata.write_text("https://agent-fleet.org/docs/nope/\n")
+        (self.root / "control-plane/guard_test.go").write_text('const u = "https://agent-fleet.org/docs/nope/"\n')
+        self.assertEqual(self.errors(), "")
+
+    def test_site_url_round_trips_the_route_rule(self):
+        for page, url in (
+            ("README.md", "https://agent-fleet.org/docs/"),
+            ("README.ja.md", "https://agent-fleet.org/docs/ja/"),
+            ("ref/cli/README.md", "https://agent-fleet.org/docs/ref/cli/"),
+            ("user/integrations/aws-sso.ja.md", "https://agent-fleet.org/docs/ja/user/integrations/aws-sso/"),
+        ):
+            with self.subTest(page=page):
+                self.assertEqual(check.site_url(page), url)
+                pages, why = check.site_page(url[len("https://agent-fleet.org/docs"):])
+                self.assertIsNone(why)
+                self.assertIn(page, pages)
 
 
 class CapsRowTests(unittest.TestCase):
