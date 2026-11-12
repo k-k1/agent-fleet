@@ -201,6 +201,11 @@ type ec2PoolConfig struct {
 	darkAction    string
 	darkAfter     time.Duration
 	darkBootGrace time.Duration
+	// darkProbeBudget bounds all Agent probes of one sweep pass and darkProbeTimeout one
+	// probe (AF_ECS_EC2_DARK_PROBE_BUDGET_SEC, default 30; AF_ECS_EC2_DARK_PROBE_TIMEOUT_SEC,
+	// default 5). Zero means the default.
+	darkProbeBudget  time.Duration
+	darkProbeTimeout time.Duration
 }
 
 const (
@@ -277,6 +282,12 @@ type ecsEC2Factory struct {
 	bg    func(context.Context, func(context.Context))
 	sleep func(context.Context, time.Duration) error
 
+	// probes is the latest Agent probe per slot (LastAgentProbe). agentHTTP and clock
+	// replace the CP's shared client and time.Now; only tests set them.
+	probes    agentProbes
+	agentHTTP httpDoer
+	clock     func() time.Time
+
 	subnetMu sync.Mutex
 	subnetAZ map[string]string // subnet-id -> AZ, resolved once
 }
@@ -341,11 +352,13 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		// Default ON, unlike the other timers here: this one does not change what the
 		// product does in the normal case, it only puts an end to a wait that was
 		// previously unbounded in practice. See the field comment for the incident.
-		slotLostAfter:  time.Duration(EnvInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
-		hostReserveMiB: parseHostReserveMiB(envOr("AF_ECS_EC2_HOST_RESERVE_MB", "auto")),
-		darkAction:     parseDarkAction(os.Getenv("AF_ECS_EC2_DARK_SLOT_ACTION")),
-		darkAfter:      time.Duration(EnvInt("AF_ECS_EC2_DARK_AFTER_SEC", 600)) * time.Second,
-		darkBootGrace:  time.Duration(EnvInt("AF_ECS_EC2_DARK_BOOT_GRACE_SEC", 300)) * time.Second,
+		slotLostAfter:    time.Duration(EnvInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
+		hostReserveMiB:   parseHostReserveMiB(envOr("AF_ECS_EC2_HOST_RESERVE_MB", "auto")),
+		darkAction:       parseDarkAction(os.Getenv("AF_ECS_EC2_DARK_SLOT_ACTION")),
+		darkAfter:        time.Duration(EnvInt("AF_ECS_EC2_DARK_AFTER_SEC", 600)) * time.Second,
+		darkBootGrace:    time.Duration(EnvInt("AF_ECS_EC2_DARK_BOOT_GRACE_SEC", 300)) * time.Second,
+		darkProbeBudget:  time.Duration(EnvInt("AF_ECS_EC2_DARK_PROBE_BUDGET_SEC", 30)) * time.Second,
+		darkProbeTimeout: time.Duration(EnvInt("AF_ECS_EC2_DARK_PROBE_TIMEOUT_SEC", 5)) * time.Second,
 	}
 	pool.clampDark()
 	if err := pool.validate(); err != nil {

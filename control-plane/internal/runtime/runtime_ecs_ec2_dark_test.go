@@ -3,7 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -29,6 +34,8 @@ func darkHarness(t *testing.T) (*ec2Harness, *ecsEC2Factory, *[]SlotDark) {
 	h.rt.pool.darkAfter = 10 * time.Minute
 	h.rt.pool.darkBootGrace = 5 * time.Minute
 	f := h.factory()
+	// The service is up, so the Agent leg decides: the default fake drops the connection.
+	f.agentHTTP = &fakeAgentDoer{err: &url.Error{Op: "Get", URL: "http://af-ws-acme-alice:7700/healthz", Err: syscall.ECONNRESET}}
 	var events []SlotDark
 	f.onSlotDark = func(_ context.Context, ev SlotDark) { events = append(events, ev) }
 	return h, f, &events
@@ -260,4 +267,171 @@ func TestDarkStampRoundTripAndClamp(t *testing.T) {
 
 func ec2tagKV(k, v string) ec2types.Tag {
 	return ec2types.Tag{Key: aws.String(k), Value: aws.String(v)}
+}
+
+// fakeAgentDoer is the transport behind the Agent probe: it answers every request with err
+// or status, and records the requests it saw.
+type fakeAgentDoer struct {
+	err    error
+	status int
+	onDo   func()
+	reqs   []*http.Request
+}
+
+func (d *fakeAgentDoer) Do(req *http.Request) (*http.Response, error) {
+	d.reqs = append(d.reqs, req)
+	if d.onDo != nil {
+		d.onDo()
+	}
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &http.Response{StatusCode: d.status, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+var _ net.Error = timeoutErr{}
+
+func TestDarkAgentProbeDecidesAServiceUpSlot(t *testing.T) {
+	ctx := context.Background()
+	getErr := func(err error) error { return &url.Error{Op: "Get", URL: "http://x:7700/healthz", Err: err} }
+	cases := []struct {
+		name      string
+		doer      *fakeAgentDoer
+		want      AgentProbe
+		wantStamp bool
+	}{
+		{"connection reset", &fakeAgentDoer{err: getErr(syscall.ECONNRESET)}, AgentProbeFailed, true},
+		{"EOF", &fakeAgentDoer{err: getErr(io.EOF)}, AgentProbeFailed, true},
+		{"proxy 503", &fakeAgentDoer{status: 503}, AgentProbeFailed, true},
+		{"healthy", &fakeAgentDoer{status: 200}, AgentProbeHealthy, false},
+		{"timeout is not an answer", &fakeAgentDoer{err: getErr(timeoutErr{})}, AgentProbeUnknown, false},
+		{"deadline", &fakeAgentDoer{err: getErr(context.DeadlineExceeded)}, AgentProbeUnknown, false},
+		{"no route", &fakeAgentDoer{err: getErr(&net.DNSError{Err: "no such host", IsNotFound: true})}, AgentProbeUnknown, false},
+		{"cp side error", &fakeAgentDoer{err: errors.New("boom")}, AgentProbeUnknown, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, f, _ := darkHarness(t)
+			f.agentHTTP = tc.doer
+			if err := f.sweep(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := darkStampOf(h) != ""; got != tc.wantStamp {
+				t.Fatalf("stamped = %v, want %v", got, tc.wantStamp)
+			}
+			res, _, ok := f.LastAgentProbe("i-dark")
+			if !ok || res != tc.want {
+				t.Fatalf("LastAgentProbe = %v, %v; want %v", res, ok, tc.want)
+			}
+			if len(tc.doer.reqs) != 1 {
+				t.Fatalf("probes = %d, want 1", len(tc.doer.reqs))
+			}
+			req := tc.doer.reqs[0]
+			if req.URL.String() != "http://af-ws-acme-alice:7700/healthz" || req.Header.Get("Authorization") != "" {
+				t.Fatalf("request = %s auth=%q", req.URL, req.Header.Get("Authorization"))
+			}
+		})
+	}
+}
+
+func TestDarkAgentProbeUnknownKeepsAnExistingStamp(t *testing.T) {
+	ctx := context.Background()
+	h, f, _ := darkHarness(t)
+	_ = f.sweep(ctx)
+	stamp := darkStampOf(h)
+	if stamp == "" {
+		t.Fatal("setup: no stamp")
+	}
+	f.agentHTTP = &fakeAgentDoer{err: timeoutErr{}}
+	_ = f.sweep(ctx)
+	if darkStampOf(h) != stamp {
+		t.Fatalf("an unknown probe changed the stamp: %q -> %q", stamp, darkStampOf(h))
+	}
+	f.agentHTTP = &fakeAgentDoer{status: 200}
+	_ = f.sweep(ctx)
+	if darkStampOf(h) != "" {
+		t.Fatal("a healthy Agent did not clear the stamp")
+	}
+}
+
+func TestDarkAgentProbeServiceDownIsNotProbed(t *testing.T) {
+	ctx := context.Background()
+	h, f, _ := darkHarness(t)
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	doer := &fakeAgentDoer{status: 200}
+	f.agentHTTP = doer
+	_ = f.sweep(ctx)
+	if len(doer.reqs) != 0 {
+		t.Fatalf("probed a slot whose service is down: %d requests", len(doer.reqs))
+	}
+	if darkStampOf(h) == "" {
+		t.Fatal("a service-down dark slot was not stamped")
+	}
+	if _, _, ok := f.LastAgentProbe("i-dark"); ok {
+		t.Fatal("a probe result is recorded for a slot that was not probed")
+	}
+}
+
+func TestDarkAgentProbeBudgetExhaustedIsUnknown(t *testing.T) {
+	ctx := context.Background()
+	h, f, _ := darkHarness(t)
+	// A second dark slot behind the first; each probe consumes the whole budget.
+	inst := h.ec2.addSlot("i-dark2", "ap-northeast-1a", "m7i.large", true, false)
+	inst.LaunchTime = aws.Time(time.Now().Add(-2 * time.Hour))
+	h.ec2.addHomeVolume("vol-2", "M-2", "af-ws-acme-bob", "ap-northeast-1a")
+	h.ec2.attach("vol-2", "i-dark2", time.Now().Add(-2*time.Hour))
+	h.ci.registered["i-dark2"] = false
+	h.ecs.services["af-ws-acme-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	now := time.Now()
+	f.clock = func() time.Time { return now }
+	f.pool.darkProbeBudget = 10 * time.Second
+	doer := &fakeAgentDoer{err: syscall.ECONNRESET, onDo: func() { now = now.Add(11 * time.Second) }}
+	f.agentHTTP = doer
+	if err := f.sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(doer.reqs) != 1 {
+		t.Fatalf("probes = %d, want 1: the budget must stop the second", len(doer.reqs))
+	}
+	stamped := 0
+	for _, id := range []string{"i-dark", "i-dark2"} {
+		if ec2TagValue(h.ec2.instances[id].Tags, ec2TagDarkSince) != "" {
+			stamped++
+		}
+	}
+	if stamped != 1 {
+		t.Fatalf("stamped %d slots, want exactly the one that was probed", stamped)
+	}
+	failed, unknown := 0, 0
+	for _, id := range []string{"i-dark", "i-dark2"} {
+		switch r, _, _ := f.LastAgentProbe(id); r {
+		case AgentProbeFailed:
+			failed++
+		case AgentProbeUnknown:
+			unknown++
+		}
+	}
+	if failed != 1 || unknown != 1 {
+		t.Fatalf("failed=%d unknown=%d, want 1 and 1", failed, unknown)
+	}
+}
+
+func TestDarkAgentProbeCancelledContextIsUnknown(t *testing.T) {
+	_, f, _ := darkHarness(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	doer := &fakeAgentDoer{err: syscall.ECONNRESET}
+	f.agentHTTP = doer
+	if got := f.probeAgent(ctx, f.newDarkProbePass(), "http://x:7700"); got != AgentProbeUnknown {
+		t.Fatalf("cancelled context = %v", got)
+	}
+	if len(doer.reqs) != 0 {
+		t.Fatal("sent a request on a cancelled context")
+	}
 }

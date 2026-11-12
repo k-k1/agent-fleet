@@ -430,4 +430,25 @@ expires on a dead CP, so the replica that resumes can take it.
 - The audit row's tenant is resolved by the Control Plane from the home's membership tag, because the sweeper's
   runtime for a home carries no tenant id.
 
+**2026-11-12 (Agent probe, #3960).** Decision 1's last condition is built (`runtime_ecs_ec2_dark_probe.go`).
+Open question 6 is answered by the #3908 / #2450 production observations: the probe is cheap and honest, because on
+a thrashing box the CP's calls to the Agent on `:7700` through Service Connect failed fast (`connection reset`, `EOF`)
+while ECS still reported the task healthy.
+
+- The probe is one `GET /healthz` through the CP's shared Agent client (`healthzClient`, with the Cloud Map fallback),
+  at the endpoint the CP proxy uses (`http://<container name>:7700`). `/healthz` is the Agent's open route, so no
+  bearer token is sent and none can reach a log line.
+- It returns `healthy`, `failed` or `unknown`. `failed` is only a connection that was made and then dropped (reset,
+  EOF, broken pipe) or a Service Connect 502/503/504. A timeout, no route, a DNS error, a CP-side error, a cancelled
+  context and an exhausted budget are `unknown`: a slow Agent is not called failed, so a thrashing box that hangs
+  without resetting stays unjudged (the conservative side; revisit with the detect-only data).
+- A slot is probed only when the ECS and SSM legs are already silent and its service has `DesiredCount > 0`. `failed`
+  completes the predicate, `healthy` clears the stamp, `unknown` neither stamps nor clears. A slot whose service is
+  down (or missing) is not probed and is dark as before. A failed read of the service is `unknown`.
+- One pass has a probing budget (`AF_ECS_EC2_DARK_PROBE_BUDGET_SEC`, default 30) and each probe a timeout
+  (`AF_ECS_EC2_DARK_PROBE_TIMEOUT_SEC`, default 5); slots behind an exhausted budget are `unknown` this pass.
+- The latest result per slot, with its time, is read through `ecsEC2Factory.LastAgentProbe`, for the wedged
+  predicate (#3963) to use as a signal of its own. Nothing acts on it yet (L1/L2 stay unbuilt).
+- This supersedes the 2026-11-11 note's bullet that a service-up slot is observed like any other.
+
 Follow-ups: #3908
