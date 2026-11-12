@@ -336,6 +336,10 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if runs := cloudruns.ForSession(name); len(runs) > 0 {
 		resp["cloudRuns"] = runs
 	}
+	// Live watches (#3947), working or idle: one in-memory engine read, no provider call.
+	if ws := watchRowsWire(name); len(ws) > 0 {
+		resp["watches"] = ws
+	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -561,6 +565,9 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	}
 	if runs := cloudruns.ForSession(meta.Name); len(runs) > 0 {
 		resp["cloudRuns"] = runs
+	}
+	if ws := watchRowsWire(meta.Name); len(ws) > 0 {
+		resp["watches"] = ws
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }

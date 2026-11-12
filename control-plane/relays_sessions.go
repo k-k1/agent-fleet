@@ -63,6 +63,10 @@ var sessionRelays = []agentRelay{
 	{route: "POST /api/sessions/{name}/input"},
 	// Drop a peer message queued behind the user's answer (#1031).
 	{route: "DELETE /api/sessions/{name}/pending-peer/{id}"},
+	// End one of the session's watches from the mirror's watches panel (#3947). Steering, like
+	// the shell stop beside it: the owner is the path's session, so one session cannot end
+	// another's watch.
+	{route: "DELETE /api/sessions/{name}/watches/{id}"},
 	// Semantic turn ops + Interaction reply (docs/log/27 P1.5) — proxied verbatim.
 	{route: "POST /api/sessions/{name}/turn"},
 	{route: "POST /api/sessions/{name}/respond"},

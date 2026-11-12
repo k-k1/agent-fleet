@@ -582,6 +582,40 @@ export async function sessionStopBackgroundShell(
   return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
 }
 
+/** One live watch of a session (#3947), as the transcript poll's `watches` lists it. `ref` and
+ *  `error` are member-, session- or ext-source-written text: render them as text only. */
+export interface SessionWatch {
+  id: string;
+  /** "github" | "bitbucket" | "time" | "github_actions" | "bitbucket_pipelines" | "ext.<name>" */
+  source: string;
+  ref: string;
+  types: string[];
+  url?: string;
+  /** RFC 3339: when a time watch fires. */
+  due?: string;
+  /** RFC 3339: when the watch ends on its own. */
+  expires?: string;
+  /** The child session that asked for it with notify parent. */
+  by?: string;
+  /** The provider's last read error: it is not answering. */
+  error?: string;
+}
+
+/** sessionEndWatch ends one watch of the session. code "not_found" means it had already gone. */
+export async function sessionEndWatch(
+  session: string,
+  id: string,
+): Promise<{ ok: boolean; code?: string; message?: string }> {
+  const r = await apiJSON(
+    `api/sessions/${encodeURIComponent(session)}/watches/${encodeURIComponent(id)}`,
+    "DELETE",
+  ).catch(() => ({ error: { message: t("err.network") } }));
+  const err = r?.error as ApiError | undefined;
+  if (!err) return { ok: true };
+  const code = typeof err.code === "string" ? err.code : "";
+  return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
+}
+
 /** What one second stop (or stop-and-discard) threw away, kept by the driver until a tab
  *  restores or dismisses it (decision 4). `items` carry no state: all were still queued. */
 export interface Discard {

@@ -8,6 +8,7 @@ import {
   sessionRemoveQueued,
   sessionDropPendingPeer,
   sessionStopBackgroundShell,
+  sessionEndWatch,
   sessionDismissDiscard,
   sessionCancelInteraction,
   isMemberOrigin,
@@ -16,7 +17,7 @@ import {
   sessionPermissionRespond,
 } from "../../../core/api/client.ts";
 import { agentOf } from "../../../agents/registry.ts";
-import type { BackgroundShell, Discard, InteractionAnswer, PermissionChoice, QueueItem, TurnResult } from "../../../core/api/client.ts";
+import type { BackgroundShell, SessionWatch, Discard, InteractionAnswer, PermissionChoice, QueueItem, TurnResult } from "../../../core/api/client.ts";
 import type { Attachment } from "../../../lib/attachDraft.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
@@ -55,7 +56,7 @@ export function useMirrorActions({
 }) {
   const {
     turns, stateSession, applyEchoes, setStatus, setFinalizing, finalizingRef, wasWorkingRef, discards,
-    discardNotices, setDiscardNotices, setPendingPeers, setBgShells, setBgStopping, queueOpsRef, queuedCount, draft, setDraft, sending,
+    discardNotices, setDiscardNotices, setPendingPeers, setBgShells, setBgStopping, setWatches, setWatchEnding, queueOpsRef, queuedCount, draft, setDraft, sending,
     setSending, sendingRef, attach, attachments, setHistIdx, statusRef, tickRef, inputRef, pendingSendsRef,
   } = st;
 
@@ -405,6 +406,24 @@ export function useMirrorActions({
     setTimeout(() => tickRef.current?.(), 250);
   };
 
+  // Ends one watch (#3947). A watch that is already gone counts as ended: the member wanted it
+  // gone and it is, so the row leaves and the toast only says why nothing was ended just now.
+  const endWatch = async (w: SessionWatch) => {
+    if (wsDown()) return;
+    setWatchEnding((p) => new Set(p).add(w.id));
+    const res = await sessionEndWatch(session, w.id);
+    setWatchEnding((p) => {
+      const n = new Set(p);
+      n.delete(w.id);
+      return n;
+    });
+    if (res.ok || res.code === "not_found") {
+      setWatches((list) => list.filter((x) => x.id !== w.id));
+      if (!res.ok) toast(tr("mirror.watch_gone"));
+    } else toast(res.message || tr("mirror.send_failed"));
+    setTimeout(() => tickRef.current?.(), 250);
+  };
+
   // The discard notice's two actions (decision 4). Restoring the last member entry and a close
   // both tell the driver to drop the discard, so other tabs stop offering it; a failure there only
   // leaves it offered elsewhere, and nothing is ever sent twice, so it is not reported.
@@ -496,7 +515,7 @@ export function useMirrorActions({
 
   return {
     postInput, wsDown, postKeys, newestIdx, sendPrompt, driveInput, sendKeys, sendSeq, sendInterrupt,
-    cancelQuestion, draftBusy, intoDraft, takeQueued, dropPendingPeer, stopBackgroundShell, restoreDiscard, closeDiscard,
+    cancelQuestion, draftBusy, intoDraft, takeQueued, dropPendingPeer, stopBackgroundShell, endWatch, restoreDiscard, closeDiscard,
     sendApproval, sendPermission, sendRespond,
   };
 }
