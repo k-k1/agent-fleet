@@ -80,7 +80,8 @@ interface WorkspaceStore {
   browserUnavailable: string;
   /** Where this workspace's agent serves the user guide from when that is not the image's
    * fixed path (native runtime without a rootfs; control-plane workspacePayload), or "" for
-   * the fixed path. Read through lib/guideDocs.ts. */
+   * the fixed path. Nothing in the Console reads it: the user guide opens on the docs site
+   * (lib/guideDocs.ts, ADR 0132). It stays while the shipped copy does, and goes with it. */
   docsRoot: string;
   refresh(): Promise<void>;
   /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic

@@ -11,7 +11,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
-import { openGuidePage } from "../../../lib/guideDocs.ts";
+import { guideLinkProps } from "../../../lib/guideDocs.ts";
 import {
   FRAMEWORKS,
   fileText,
@@ -232,9 +232,9 @@ function Examples({
           <Icon name="device-desktop" />
           <span>
             {tr("env.devidp_note_local")}{" "}
-            <button type="button" className="dip-link" onClick={() => openGuidePage("user/preview/dev-signin")}>
+            <a className="dip-link" {...guideLinkProps("user/preview/dev-signin")}>
               {tr("env.devidp_note_local_link")}
-            </button>
+            </a>
           </span>
         </li>
       </ul>

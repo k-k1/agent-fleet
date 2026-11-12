@@ -10,7 +10,7 @@ import { useDeploymentVersion, imageLabel } from "../features/settings/deploymen
 import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES, PANE_LAYOUTS } from "../lib/settings.ts";
 import { useT } from "../lib/i18n/index.ts";
-import { openGuidePage } from "../lib/guideDocs.ts";
+import { guideLinkProps } from "../lib/guideDocs.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { buildInfo, buildLabel } from "../lib/version.ts";
 import { useBrandStore } from "../lib/brand.ts";
@@ -142,14 +142,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
     });
   };
   const openGuide = useSettingsUI((st) => st.openGuide);
-  // The guide ships per language: English is canonical (README.md), Japanese
-  // lives beside it as README.ja.md — open the one matching the UI locale.
-  //
-  // The container receives the guide/ tree and nothing else, so the shipped layout
-  // starts at the shelves (user/, admin/, …) — there is no docs/ level in it. The
-  // tree's own README branches by reader, which is what someone clicking "User guide"
-  // wants; every container has it (ADR 0064: the guide is not cut by role).
-  const openUserGuide = () => openGuidePage("README");
+  // The guide's top page branches by reader, which is what someone clicking "User guide"
+  // wants. It is a real link (to the docs site, in a new tab) so middle-click and
+  // copy-link work.
+  const userGuide = guideLinkProps("README");
   const run = (fn: () => void) => {
     setMenuOpen(false);
     fn();
@@ -382,9 +378,9 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     <div className="acct-sep" />
                   </>
                 )}
-                <Button className="acct-item" role="menuitem" onClick={() => run(openUserGuide)}>
+                <a className="acct-item" role="menuitem" {...userGuide} onClick={() => setMenuOpen(false)}>
                   <Icon name="book" /> {tr("topbar.user_guide")}
-                </Button>
+                </a>
                 {/* Way back in after dismissing the first-run card with "later" (launch flow Ph1). */}
                 <Button className="acct-item" role="menuitem" onClick={() => run(openGuide)}>
                   <Icon name="rocket" /> {tr("topbar.guide")}

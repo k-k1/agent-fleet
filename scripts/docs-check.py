@@ -1990,15 +1990,15 @@ def check_redirects(files: list[str], f: Findings) -> None:
                                      + (r"(?![A-Za-z0-9_.-])" if old_anchor else r"(?![A-Za-z0-9_.#-])")),
                           lang_old, lang_new))
 
-    # Code also names a page without its extension: the Console's openGuidePage("user/preview/browser-pane")
-    # adds ".md" (or ".ja.md") itself. That form is only matched as a whole string literal in code, where a
-    # page path cannot be mistaken for prose.
+    # Code also names a page without its extension: the Console's guideLinkProps("user/preview/browser-pane")
+    # turns it into a site URL itself. That form is only matched as a whole string literal in code, where a
+    # page path cannot be mistaken for prose; it may carry an anchor ("user/preview/browser-pane#section").
     bare = []
     for _, old, new in rows:
         if "#" in old:
             continue
         old_bare, new_bare = old[: -len(".md")], new.partition("#")[0][: -len(".md")]
-        bare.append((re.compile(r"(?<=[\"'`])(?:guide/)?" + re.escape(old_bare) + r"(?=[\"'`])"),
+        bare.append((re.compile(r"(?<=[\"'`])(?:guide/)?" + re.escape(old_bare) + r"(?=[\"'`#])"),
                      old_bare, new_bare))
 
     candidates = list(files)
@@ -2057,6 +2057,49 @@ def check_redirects(files: list[str], f: Findings) -> None:
                 reported.add(line)
                 f.errors.append(f"{rel(path)}:{line}: '{old}' moved to '{new}' (guide/_redirects.tsv); "
                                 "point at the new path")
+
+
+# A literal page id handed to console/src/lib/guideDocs.ts, with its optional anchor: a string
+# used in both languages, or `{ en: "…", ja: "…" }` when the translated headings differ.
+_Q = r"[\"'`]"
+CONSOLE_GUIDE_CALL_RE = re.compile(
+    r"\b(?:openGuidePage|guideLinkProps|guideUrl)\(\s*" + _Q + r"([^\"'`]+)" + _Q
+    + r"(?:\s*,\s*(?:" + _Q + r"([^\"'`]*)" + _Q
+    + r"|\{\s*en\s*:\s*" + _Q + r"([^\"'`]*)" + _Q + r"\s*,\s*ja\s*:\s*" + _Q + r"([^\"'`]*)" + _Q + r"\s*,?\s*\}))?"
+)
+
+
+def check_console_guide(f: Findings) -> None:
+    """Does every guide page the Console links to exist in guide/, with its anchor, in both languages?
+
+    The Console opens the guide on the docs site (`lib/guideDocs.ts`), so a page id that
+    names no page is a 404 that no link checker follows and no test notices. A page id is the
+    path under guide/ without extension; the anchor is a heading id under the Console's slug
+    rule, which the site also uses. Test files are skipped: their ids are fixtures.
+    """
+    for dirpath, dirnames, filenames in os.walk(os.path.join(ROOT, "console", "src")):
+        dirnames[:] = [d for d in dirnames if d != "node_modules"]
+        for name in sorted(filenames):
+            if not name.endswith((".ts", ".tsx")) or ".test." in name:
+                continue
+            path = os.path.join(dirpath, name)
+            body = read(path)
+            for m in CONSOLE_GUIDE_CALL_RE.finditer(body):
+                line = body.count("\n", 0, m.start()) + 1
+                where = f"{os.path.relpath(path, ROOT)}:{line}"
+                page, _, inline = m.group(1).partition("#")
+                both = m.group(2) if m.group(2) is not None else inline
+                for lang, anchor in (("en", m.group(3) if m.group(3) is not None else both),
+                                     ("ja", m.group(4) if m.group(4) is not None else both)):
+                    rel_page = f"{page}.md" if lang == "en" else f"{page}.ja.md"
+                    target = os.path.join(GUIDE, rel_page)
+                    if not os.path.isfile(target):
+                        f.errors.append(f"{where}: guide page '{page}' has no guide/{rel_page}")
+                    elif anchor and anchor not in heading_slugs(target):
+                        f.errors.append(
+                            f"{where}: guide/{rel_page} has no heading with the id '{anchor}'"
+                            + ("; pass { en, ja } when the languages' headings differ" if anchor == both else "")
+                        )
 
 
 def check_emphasis(files: list[str], f: Findings) -> None:
@@ -2382,7 +2425,7 @@ def main() -> int:
         help=(
             "comma-separated check names "
             "(links,anchors,closure,chapters,index,lang,header,vocab,polite,frozen,"
-            "ref,mcp,settings,features,knowledge,notes,emphasis,labels,size)"
+            "ref,mcp,settings,features,knowledge,notes,tables,redirects,console-guide,emphasis,labels,history,size)"
         ),
     )
     args = ap.parse_args()
@@ -2430,6 +2473,8 @@ def main() -> int:
         check_tables(files + root, f)
     if run("redirects"):
         check_redirects(files + root, f)
+    if run("console-guide"):
+        check_console_guide(f)
     if run("emphasis"):
         check_emphasis(files, f)
     if run("labels"):
