@@ -245,10 +245,9 @@ The CP can write each past UTC day of raw egress events to Cloud Storage before 
 `cp.env` is touched only after `terraform output` succeeded: drop the old key and add the current line only when there is one. An empty output means the archive is off, and a key left behind would keep the CP archiving to a bucket it no longer has grants on.
 
 ```bash
-cd overlays/<yours>
-if line=$(terraform -chdir=<path to deploy/gcp/gke> output -raw egress_archive_env); then
-  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' cp.env
-  [ -z "$line" ] || printf '%s\n' "$line" >> cp.env
+if line=$($TF output -raw egress_archive_env); then
+  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' "deploy/kubernetes/overlays/$PREFIX/cp.env"
+  [ -z "$line" ] || printf '%s\n' "$line" >> "deploy/kubernetes/overlays/$PREFIX/cp.env"
 else
   echo "terraform output failed: cp.env left as it was" >&2; false
 fi

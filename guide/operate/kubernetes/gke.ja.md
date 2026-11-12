@@ -245,10 +245,9 @@ CP は、生の外向き通信のイベントを消す前に、過ぎた日（UT
 `cp.env` は、`terraform output` が成功したときだけ書き換えます。古いキーを消し、行があるときだけ今の行を足します。出力が空ならオフで、キーを残すと、権限のなくなったバケットに CP が書き続けます。
 
 ```bash
-cd overlays/<yours>
-if line=$(terraform -chdir=<path to deploy/gcp/gke> output -raw egress_archive_env); then
-  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' cp.env
-  [ -z "$line" ] || printf '%s\n' "$line" >> cp.env
+if line=$($TF output -raw egress_archive_env); then
+  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' "deploy/kubernetes/overlays/$PREFIX/cp.env"
+  [ -z "$line" ] || printf '%s\n' "$line" >> "deploy/kubernetes/overlays/$PREFIX/cp.env"
 else
   echo "terraform output failed: cp.env left as it was" >&2; false
 fi
