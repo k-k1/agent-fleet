@@ -6,6 +6,7 @@ import type {
   QueueItem,
   PendingPeer,
   BackgroundShell,
+  SessionWatch,
 } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
 import type { PermissionChoice } from "../../../core/api/client.ts";
@@ -81,6 +82,9 @@ export function useMirrorState({
   // The background shells themselves (claude only, #3279), and the pids a stop is in flight for.
   const [bgShells, setBgShells] = useState<BackgroundShell[]>([]);
   const [bgStopping, setBgStopping] = useState<ReadonlySet<number>>(new Set());
+  // The session's live watches (#3947), and the ids an end is in flight for.
+  const [watches, setWatches] = useState<SessionWatch[]>([]);
+  const [watchEnding, setWatchEnding] = useState<ReadonlySet<string>>(new Set());
   // "Finalizing" bridges the gap between claude finishing (status flips to idle — its
   // Stop hook, or the TUI heal firing once the spinner clears during answer streaming)
   // and the reply actually landing in the transcript jsonl a poll later. In that window
@@ -262,7 +266,7 @@ export function useMirrorState({
     turns, setTurns, stateSession, setStateSession, pendingSends, setPendingSends, pendingSendsRef,
     applyEchoes, loaded, setLoaded, handoffs, setHandoffs, updateHandoff, termState, setTermState,
     compactProg, setCompactProg, retry, setRetry, status, setStatus, bgBusy, setBgBusy, bgBusyReason, setBgBusyReason,
-    bgShells, setBgShells, bgStopping, setBgStopping,
+    bgShells, setBgShells, bgStopping, setBgStopping, watches, setWatches, watchEnding, setWatchEnding,
     finalizing, setFinalizing, finalizingRef, wasWorkingRef, busy, turnBusy, tasks, setTasks, files, setFiles,
     queuedPrompts, setQueuedPrompts, queuedItems, setQueuedItems, discards, setDiscards, discardNotices,
     setDiscardNotices, pendingPeers, setPendingPeers, cloudRuns, setCloudRuns, queueOpsRef, queueShown, queuedCount, discardView,

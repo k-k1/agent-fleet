@@ -52,6 +52,7 @@ import { restoreNoteCards } from "./parts/RestoreNote.tsx";
 import { DiscardNotice } from "./parts/DiscardNotice.tsx";
 import { PendingPeersNotice } from "./parts/PendingPeersNotice.tsx";
 import { BackgroundShellsPanel } from "./parts/BackgroundShellsPanel.tsx";
+import { WatchesPanel } from "./parts/WatchesPanel.tsx";
 import { CloudRunGroup, cloudRunCards, placeRuns, toolKey } from "../cloudruns/cloudRuns.tsx";
 import { MirrorConfirmCards } from "../awsconfirm/AwsConfirmCard.tsx";
 import { useAwsConfirmStore } from "../awsconfirm/store.ts";
@@ -305,7 +306,7 @@ function MirrorViewBody({
   }, [readOnly, alive, termState]);
 
   const actions = useMirrorActions({ session, kind: sessionMeta?.kind, running, managed, toast, st, scroll });
-  const { wsDown, postKeys, draftBusy, dropPendingPeer, stopBackgroundShell, restoreDiscard, closeDiscard } = actions;
+  const { wsDown, postKeys, draftBusy, dropPendingPeer, stopBackgroundShell, endWatch, restoreDiscard, closeDiscard } = actions;
 
   const input = composerInput({ session, settings, signal, agent, managed, readOnly, toast, st, sendPrompt: actions.sendPrompt });
   const { composerLocked, onDragEnter, onDragOver, onDragLeave, onDrop, send } = input;
@@ -741,6 +742,11 @@ function MirrorViewBody({
       {!readOnly && (
         <BackgroundShellsPanel shells={st.bgShells} stopping={st.bgStopping} onStop={(sh) => void stopBackgroundShell(sh)} />
       )}
+      <WatchesPanel
+        watches={st.watches}
+        ending={st.watchEnding}
+        onEnd={readOnly ? undefined : (w) => void endWatch(w)}
+      />
       {!readOnly && <MirrorConfirmCards session={session} />}
       {managed && !readOnly && running && !composerBlock && (
         <DiscardNotice notices={discardView} draftBusy={draftBusy} onRestore={restoreDiscard} onClose={closeDiscard} />

@@ -436,3 +436,69 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   font-size: 12px;
   padding: 1px 8px;
 }
+
+/* Watches the session is waiting on (#3947), above the composer beside the background-shells
+   panel and drawn like it. A watch whose source is not answering takes the warning colour. */
+.mirror-watches {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.mirror-watches .mw-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-watches .mw-msg {
+  flex: 1;
+  min-width: 0;
+}
+.mirror-watches .mw-items {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.mirror-watches .mw-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mirror-watches .mw-ref {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mirror-watches .mw-meta {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  max-width: 55%;
+  color: var(--muted);
+}
+.mirror-watches .mw-err {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 24ch;
+}
+.mirror-watches .mw-warn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--warn);
+}
+.mirror-watches .mw-end {
+  flex: none;
+  font-size: 12px;
+  padding: 1px 8px;
+}
