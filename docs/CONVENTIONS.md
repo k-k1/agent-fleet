@@ -350,6 +350,16 @@ Terms are decided by the "Screen" column of `guide/ref/glossary.md`. This sectio
   buttons that open a dialog. Everywhere else use the majority form (`送信`,
   `セッションを削除`, `API トークン`).
 - **Kana.** Write すでに and ない in hiragana, not 既に / 無い.
+- **Guide prose is です・ます調.** Every sentence that ends with 。 in the Japanese guide ends in the
+  polite form (`読みます`, `ありません`, `必要です`), not the plain one (`読む`, `無い`, `必要`). The short
+  form stays where it is not prose: table cells, badges, headings, list items that are not full
+  sentences (no 。), checklist items (`- [ ]`), the description after `：` in a link list, a bold
+  lead-in label (`**秘密は表示しない。** …`), and quoted text (「…」, code).
+  `docs-check.py` (polite) enforces part of this rule: it refuses a sentence elsewhere that ends in a
+  plain-form predicate (a verb including its past and negative forms, an adjective, or だ), such as
+  `読む。` or `終わった。`. It does not detect a noun-ended sentence such as `これは必要。`, so review
+  still has to catch those. A sentence that must stay plain goes into its `POLITE_EXEMPT` with a
+  reason.
 - **Words Japanese engineers use.** Write the term an engineer would say, usually the katakana loanword: ツール, not
   道具; インスタンス, not 箱; S3 Bucket, not バケツ. A plain native word that only translates the English reads as
   odd. `docs-check.py` (vocab) refuses the ones met so far; add a word to its `SLANG_BANNED` when a review finds
