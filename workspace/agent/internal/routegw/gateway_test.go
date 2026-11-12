@@ -558,18 +558,18 @@ func TestTokenDiesWhenTheConnectionChangesOrIsRevoked(t *testing.T) {
 			p := e.settings["bedrock-invoke"]
 			p.ModelRoute = false
 			e.settings["bedrock-invoke"] = p
-		}, 401, routes.CodeRouteForbidden},
-		"deleted": {func(e *env) { delete(e.settings, "bedrock-invoke") }, 401, routes.CodeRouteForbidden},
+		}, 412, routes.CodeRouteForbidden},
+		"deleted": {func(e *env) { delete(e.settings, "bedrock-invoke") }, 412, routes.CodeRouteForbidden},
 		"repointed (role edited)": {func(e *env) {
 			p := e.settings["bedrock-invoke"]
 			p.RoleName = "Admin"
 			e.settings["bedrock-invoke"] = p
-		}, 401, "route_connection_changed"},
+		}, 412, "route_connection_changed"},
 		"replaced by another row of the same name": {func(e *env) {
 			p := e.settings["bedrock-invoke"]
 			p.ID = "p2"
 			e.settings["bedrock-invoke"] = p
-		}, 401, routes.CodeRouteForbidden},
+		}, 412, routes.CodeRouteForbidden},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

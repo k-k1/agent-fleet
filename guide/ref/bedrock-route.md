@@ -96,17 +96,19 @@ per member and a monthly ceiling for the tenant.
 
 ## When a call is refused
 
-The gateway answers an authentication or connection refusal itself with HTTP 401 (a refusal
-that waiting may clear, 503), always with `x-should-retry: false`, so claude shows it once, with the code in the message,
-and does not retry. (Requests the gateway cannot forward keep their own status: `route_operation_not_allowed` 404,
+The gateway answers a refusal itself, always with `x-should-retry: false`, so claude shows it once, with the
+message, and does not retry. A refusal about the route token or the AWS login goes out as HTTP 401, one about what you
+may use (a profile that is not marked, a grant that is off, a model that is not allowed) as 412, one that waiting may
+clear as 503. Claude Code prints "AWS authentication failed · refresh your AWS credentials …" before the message of a
+401 only; the 412 refusals show the message alone. (Requests the gateway cannot forward keep their own status: `route_operation_not_allowed` 404,
 `route_model_not_selected` 404, `route_bad_model` 400, `route_request_too_large` 413.)
 
 | Code | Meaning | What to do |
 |---|---|---|
 | `route_token_invalid` (401) | The route token is missing, unknown, expired, or was revoked (the session stopped, or the profile or selection changed). | Start the session again. |
 | `route_caller_forbidden` (401) | The token was presented by a process outside the session it was issued to. The token is not revoked. | Call the model from the session's own terminal, not from another session. |
-| `route_connection_forbidden` (401) | The profile was unmarked as a model route or deleted since the session started (at session creation the same refusal is 403). The token is revoked. | Mark the profile again, or start a new session on another profile. |
-| `route_session_ended`, `route_selection_changed`, `route_connection_changed` (401) | The session ended, no longer selects this route, or its profile was edited. The token is revoked. | Start a new session. |
+| `route_connection_forbidden` (412) | The profile was unmarked as a model route or deleted since the session started (at session creation the same refusal is 403). The token is revoked. | Mark the profile again, or start a new session on another profile. |
+| `route_session_ended`, `route_selection_changed` (401), `route_connection_changed` (401, or 412 when the profile is found edited at a call) | The session ended, no longer selects this route, or its profile was edited. The token is revoked. | Start a new session. |
 | `route_login_required`, `route_confirmation_required` (401) | The profile needs an SSO sign-in or your "Confirm before use" approval. | Sign in or allow it; the next call goes through. |
 | `route_connection_unavailable` (503) | The Agent cannot read the AWS profiles in Settings right now. | Try again in a moment. |
 | `route_upstream_unavailable`, `route_credentials_unavailable` (503) | Bedrock or the credentials could not be reached right now. | Try again in a moment. |
