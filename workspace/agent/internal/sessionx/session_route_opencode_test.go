@@ -36,10 +36,10 @@ func openOpencodeBedrock(t *testing.T) {
 	t.Cleanup(func() { agents.SetRouteGateway(prev) })
 }
 
-// opencode's bedrock row is Terminal only (a Managed session shares one serve that sits in no
-// session's tree): a Managed create naming it is refused before anything is made, and its model
-// is checked by the route, not by the kind's catalogue, which lists no Bedrock model.
-func TestOpencodeBedrockCreateIsTerminalOnlyAndOwnsItsModel(t *testing.T) {
+// opencode's bedrock row runs under either driver (a Managed session gets a server of its own,
+// #4004), and its model is checked by the route, not by the kind's catalogue, which lists no
+// Bedrock model.
+func TestOpencodeBedrockCreateRunsUnderEitherDriverAndOwnsItsModel(t *testing.T) {
 	p := newCreateProbe(t)
 	openOpencodeBedrock(t)
 	opencodeModelsFn = func() []string { return []string{"opencode/big-pickle"} }
@@ -48,13 +48,11 @@ func TestOpencodeBedrockCreateIsTerminalOnlyAndOwnsItsModel(t *testing.T) {
 	route := map[string]any{"route": "bedrock", "connection": "prof1@eu-west-1"}
 	const model = "amazon-bedrock/anthropic.claude-sonnet-4-6"
 
-	before := p.sideEffects()
+	// Managed passes the route's checks and starts the session's own server, whose first step is
+	// the gateway's loopback grant; this test's gateway refuses every grant ("unused").
 	rec := p.post(map[string]any{"kind": "opencode", "dir": p.repo, "driver": "managed", "model": model, "route": route}, "")
-	if rec.Code != http.StatusBadRequest || routeCode(t, rec.Body.String()) != routes.CodeRouteUnsupported {
-		t.Fatalf("managed: %d %s, want 400 %s", rec.Code, rec.Body.String(), routes.CodeRouteUnsupported)
-	}
-	if d := before.diff(p.sideEffects()); d != "" {
-		t.Fatalf("a refused managed create left side effects: %s", d)
+	if routeCode(t, rec.Body.String()) != "unused" {
+		t.Fatalf("managed: %d %s, want the start to reach the gateway's loopback grant", rec.Code, rec.Body.String())
 	}
 	rec = p.post(map[string]any{"kind": "opencode", "dir": p.repo, "model": "opencode/big-pickle", "route": route}, "")
 	if rec.Code != http.StatusBadRequest || routeCode(t, rec.Body.String()) != routes.CodeRouteModel {
@@ -75,9 +73,9 @@ func TestOpencodeBedrockCreateIsTerminalOnlyAndOwnsItsModel(t *testing.T) {
 	}
 }
 
-// A stored bedrock selection refuses every start under Managed and the switch to it, before the
-// running runtime is touched.
-func TestOpencodeBedrockRefusesManagedOnStartAndSwitch(t *testing.T) {
+// A stored bedrock selection starts under Managed as under Terminal: a Managed session runs on a
+// private server of its own (#4004).
+func TestOpencodeBedrockStartsUnderEitherDriver(t *testing.T) {
 	isolateAgentState(t)
 	fakeTmux(t)
 	openOpencodeBedrock(t)
@@ -85,15 +83,9 @@ func TestOpencodeBedrockRefusesManagedOnStartAndSwitch(t *testing.T) {
 	m := session.Meta{Name: "oc_bedrock", Dir: t.TempDir(), Kind: session.KindOpencode,
 		Model: "amazon-bedrock/anthropic.claude-sonnet-4-6", Route: &sel, CreatedAt: "2026-11-08T10:00:00Z"}
 	session.WriteMeta(m)
-	if rec := postDriver(t, m.Name, `{"driver":"managed"}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), routes.CodeRouteUnsupported) {
-		t.Fatalf("switch to managed: %d %s", rec.Code, rec.Body.String())
-	}
-	if got, _ := session.ReadMeta(m.Name); got.DriverKind() != session.DriverTUI {
-		t.Fatalf("the refused switch changed the driver to %q", got.Driver)
-	}
 	m.Driver = session.DriverManaged
-	if ref := startRefusalOf(m); ref == nil || ref.Code != routes.CodeRouteUnsupported {
-		t.Fatalf("a managed start of a bedrock session = %+v", ref)
+	if ref := startRefusalOf(m); ref != nil {
+		t.Fatalf("a managed start of a bedrock session was refused: %+v", ref)
 	}
 	m.Driver = ""
 	if ref := startRefusalOf(m); ref != nil {

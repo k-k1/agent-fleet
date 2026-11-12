@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -99,7 +100,12 @@ var supervisor = &Supervisor{}
 // very situation that needs recovery look like zero demand.
 func dependents() int {
 	handlesMu.Lock()
-	n := len(handles)
+	n := 0
+	for _, h := range handles {
+		if !h.routed {
+			n++ // a session on a route runs on its own server (route_serve.go)
+		}
+	}
 	handlesMu.Unlock()
 	if oauthBusy() {
 		n++
@@ -539,7 +545,7 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int)
 	recordLifecycle("died", gen, fmt.Sprintf("code %d, sig %d", code, sig))
 	// Thread-level record, on every managed session that was live. A session that
 	// recovers is cleared by reconcile's baseline write (same as a tui restart).
-	for _, h := range liveHandles() {
+	for _, h := range sharedHandles() {
 		base, _ := status.ReadExit(h.name)
 		oom := okOOM && oomNow > base.OOMBase
 		status.PersistExit(h.name, status.ExitInfo{
@@ -696,7 +702,7 @@ func busyTerminals(addr string) []string {
 // (b) owned by a managed handle — a TUI-attached user's own experiments outside AF
 // sessions are not ours to wait on.
 func busyManaged(addr string) []*threadHandle {
-	hs := liveHandles()
+	hs := sharedHandles()
 	if len(hs) == 0 {
 		return nil
 	}
@@ -761,7 +767,7 @@ func (s *Supervisor) monitorEvents(addr string, gen int) {
 			s.mu.Unlock()
 			if wasUp && ownerless {
 				log.Printf("opencode serve: adopted daemon lost (gen %d): %v", gen, err)
-				for _, h := range liveHandles() {
+				for _, h := range sharedHandles() {
 					h.runtimeLost()
 				}
 				goReconcile("adopted daemon lost")
@@ -784,7 +790,7 @@ func (s *Supervisor) streamEvents(addr string, gen int) error {
 	// generation's monitor must not touch the handles of the current one.
 	defer func() {
 		if s.Generation() == gen {
-			for _, h := range liveHandles() {
+			for _, h := range sharedHandles() {
 				h.tools.Unknown()
 			}
 		}
@@ -804,18 +810,23 @@ func (s *Supervisor) streamEvents(addr string, gen int) error {
 	}
 	// Events are not replayed across a reconnect, so a tool call announced during the gap is
 	// invisible: the in-flight sets are unknown until a turn boundary shows up on this stream.
-	for _, h := range liveHandles() {
+	for _, h := range sharedHandles() {
 		h.tools.Unknown()
 	}
-	sc := bufio.NewScanner(res.Body)
+	return readServeEvents(res.Body, func() bool { return s.Generation() == gen })
+}
+
+// readServeEvents hands every event of an SSE body to handleServeEvent while current says the
+// stream still belongs to the server that is running.
+func readServeEvents(body io.Reader, current func() bool) error {
+	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for sc.Scan() {
-		line := sc.Text()
-		data, ok := strings.CutPrefix(line, "data: ")
+		data, ok := strings.CutPrefix(sc.Text(), "data: ")
 		if !ok {
 			continue
 		}
-		if s.Generation() != gen {
+		if !current() {
 			return nil
 		}
 		handleServeEvent([]byte(data))

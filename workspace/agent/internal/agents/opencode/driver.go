@@ -94,7 +94,13 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if !session.DirExists(m.Dir) {
 		return nil, agents.DirGoneErr(m.Dir)
 	}
-	addr, gen, err := Serve().Ensure()
+	// A session with an explicit route runs on a private server of its own (route_serve.go); the
+	// route is fixed for the session's life, so a handle never moves between the two.
+	ensure := func() (string, int, error) { return Serve().Ensure() }
+	if m.Route != nil {
+		ensure = func() (string, int, error) { return ensureRouteServe(m) }
+	}
+	addr, gen, err := ensure()
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +113,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 			name:   m.Name,
 			dir:    cwd,
 			ocSid:  ocSid,
+			routed: m.Route != nil,
 			events: make(chan agents.Event, 64),
 		}
 		handles[m.Name] = h
@@ -312,6 +319,18 @@ func handleFor(name string) *threadHandle {
 // liveHandles snapshots the currently-alive handles.
 func liveHandles() []*threadHandle { return managedKind.Live() }
 
+// sharedHandles is liveHandles without the sessions on their own route servers: what the shared
+// daemon's death, drain and event stream concern.
+func sharedHandles() []*threadHandle {
+	var out []*threadHandle
+	for _, h := range liveHandles() {
+		if !h.routed {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // DropHandle detaches a managed session from its runtime handle (stop/halt/
 // archive): abort any running turn, clear the queue, forget the handle. The
 // conversation stays in the SQLite store — a later Resume reattaches.
@@ -339,6 +358,10 @@ func DropHandle(name string) {
 	h.mu.Unlock()
 	if running && ses != "" {
 		abortSession(addr, ses)
+	}
+	if h.routed {
+		// After the abort, which goes to this very server.
+		stopRouteServe(name, "session stopped")
 	}
 }
 
@@ -368,7 +391,10 @@ func AbortManaged() { managedKind.Abort() }
 
 // Shutdown stops the shared daemon through its supervisor (Serve). Call it only after
 // AbortManaged, so the daemon's drain has no turn left to wait for.
-func Shutdown() { Serve().Shutdown() }
+func Shutdown() {
+	stopAllRouteServes()
+	Serve().Shutdown()
+}
 
 // ReconcileManaged re-attaches managed opencode sessions after an Agent boot,
 // daemon restart or daemon death (§6). It covers every managed meta not already treated
@@ -437,6 +463,8 @@ type threadHandle struct {
 	name  string
 	dir   string
 	ocSid string
+	// routed: the session runs on its own route server, not the shared one (route_serve.go).
+	routed bool
 
 	mu sync.Mutex
 	// resumeMu serializes Resume end-to-end (same §32 competition as codex: two

@@ -115,20 +115,19 @@ func TestBedrockRouteIsGatedUntilItsLiveAcceptance(t *testing.T) {
 	}
 }
 
-func TestBedrockRouteIsTerminalOnly(t *testing.T) {
-	a := agentImpl{}
-	if ref := a.CheckRouteDriver(RouteBedrock, session.DriverManaged); ref == nil || ref.Code != routes.CodeRouteUnsupported {
-		t.Fatalf("managed = %+v", ref)
-	}
-	if ref := a.CheckRouteDriver(RouteBedrock, session.DriverTUI); ref != nil {
-		t.Fatalf("terminal = %+v", ref)
-	}
+// A Managed session takes the route too: ApplyRoute gives it the same plan as a pane (#4004).
+func TestBedrockRouteAppliesUnderManaged(t *testing.T) {
 	isolatedHome(t)
-	withGateway(t, &fakeGateway{})
+	g := &fakeGateway{}
+	withGateway(t, g)
 	m := bedrockMeta(t, "managed")
 	m.Driver = session.DriverManaged
-	if _, err := a.ApplyRoute(m, bedrockSel()); err == nil {
-		t.Fatal("ApplyRoute for a managed session was accepted")
+	plan, err := agentImpl{}.ApplyRoute(m, bedrockSel())
+	if err != nil {
+		t.Fatalf("ApplyRoute for a managed session: %v", err)
+	}
+	if len(g.loopback) != 1 || !slices.ContainsFunc(plan.Env, func(kv string) bool { return strings.HasPrefix(kv, "AWS_BEARER_TOKEN_BEDROCK=") }) {
+		t.Fatalf("no loopback bearer for the managed session: issued %d, env %v", len(g.loopback), plan.Env)
 	}
 }
 

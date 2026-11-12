@@ -135,7 +135,7 @@ func serveRejectsAuth(addr string) bool {
 type authTransport struct{ base http.RoundTripper }
 
 func (t authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if p := servePassword(); p != "" && req.Header.Get("Authorization") == "" && sameServeHost(req.URL) {
+	if p := passwordFor(req.URL); p != "" && req.Header.Get("Authorization") == "" {
 		req = req.Clone(req.Context())
 		req.SetBasicAuth(serveUser, p)
 	}
@@ -150,6 +150,18 @@ func (t authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 func sameServeHost(u *url.URL) bool {
 	want, err := url.Parse(serveAddr())
 	return err == nil && want.Host == u.Host
+}
+
+// passwordFor is the password of the daemon u is addressed to: the shared one, or a session's
+// private route server (route_serve.go). Each password goes to its own server's host only.
+func passwordFor(u *url.URL) string {
+	if sameServeHost(u) {
+		return servePassword()
+	}
+	if rs := routeServeByHost(u.Host); rs != nil {
+		return rs.password
+	}
+	return ""
 }
 
 // --- health ---------------------------------------------------------------------
@@ -321,7 +333,7 @@ func sendTurn(addr, ses string, req *http.Request, st agents.ThreadSettings) (*h
 		} `json:"data"`
 	}
 	_ = json.Unmarshal(promptBody, &userMsg)
-	gen := Serve().Generation()
+	gen := serveGenOf(addr)
 	seen, misses, outMisses := false, 0, 0 // failed active reads / failed outcome reads, in a row
 	lastLive := time.Now()                 // the last moment the turn was known to be alive or not yet due
 	for {
@@ -329,7 +341,7 @@ func sendTurn(addr, ses string, req *http.Request, st agents.ThreadSettings) (*h
 		// A new generation means the daemon this turn ran on is gone, whatever the new one
 		// reports. Checked after the read so
 		// that an empty list from the replacement is never taken for "finished".
-		if Serve().Generation() != gen {
+		if serveGenOf(addr) != gen {
 			return nil, errors.New("opencode serve was replaced during the turn")
 		}
 		running := err == nil && m[ses] != ""

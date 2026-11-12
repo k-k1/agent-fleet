@@ -67,7 +67,7 @@ export function routeSelectionBody(route: string, connection?: string): { route:
  *  or undefined when the kind has no route-only models. A route with a model prefix (the kind's
  *  routeModelPrefix; opencode on bedrock: amazon-bedrock/) offers only ids under it, so the kind's
  *  own default ("") is left out. With no such route chosen (none picked, none offered on this
- *  launch, a Managed launch, profiles still loading) every route-only id is left out: the Agent
+ *  launch, profiles still loading) every route-only id is left out: the Agent
  *  lists them whenever the route is open, and they cannot run without it. */
 export function routeModelFilter(kind: string, route: string): ((id: string) => boolean) | undefined {
   const prefixes = Object.values(agentOf(kind).routeModelPrefix ?? {});

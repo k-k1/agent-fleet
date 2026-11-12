@@ -61,3 +61,33 @@ func CurrentRouteGateway() RouteGateway {
 type RouteOffering interface {
 	Offered(route string) bool
 }
+
+// RuntimeRootsFunc names the root processes of a session's runtime that is not a launch pane: a
+// Managed harness that runs a private server for one session's route. The gateway serves a route
+// token only to a process in its owner's tree (routegw/peer.go), and a Managed session has no pane
+// to be that tree.
+type RuntimeRootsFunc func(session string) []int
+
+var runtimeRoots struct {
+	mu  sync.RWMutex
+	fns []RuntimeRootsFunc
+}
+
+// RegisterRuntimeRoots adds a source of runtime roots; adapters call it from init.
+func RegisterRuntimeRoots(fn RuntimeRootsFunc) {
+	runtimeRoots.mu.Lock()
+	runtimeRoots.fns = append(runtimeRoots.fns, fn)
+	runtimeRoots.mu.Unlock()
+}
+
+// RuntimeRoots is every registered source's roots for session, none when no source runs one.
+func RuntimeRoots(session string) []int {
+	runtimeRoots.mu.RLock()
+	fns := runtimeRoots.fns
+	runtimeRoots.mu.RUnlock()
+	var out []int
+	for _, fn := range fns {
+		out = append(out, fn(session)...)
+	}
+	return out
+}

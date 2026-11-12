@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -80,12 +81,12 @@ func agentDeps(ensureAWSCLI func() (string, error)) Deps {
 }
 
 // paneRoots is a session's runtime roots: its launch pane's process, not the active pane's (a
-// pane the member split off is not what the launch started), and none for a dead pane. Only
-// Terminal sessions have one; a managed harness on a route (P2c) needs its own root here, and
-// until then has none and is refused.
+// pane the member split off is not what the launch started), none for a dead pane, and the
+// private server a Managed harness runs for the session's route (agents.RuntimeRoots).
 func paneRoots(name string) []int {
+	roots := agents.RuntimeRoots(name)
 	if pid, ok := tmuxx.LaunchPanePID(name); ok {
-		return []int{pid}
+		roots = append(roots, pid)
 	}
-	return nil
+	return roots
 }
