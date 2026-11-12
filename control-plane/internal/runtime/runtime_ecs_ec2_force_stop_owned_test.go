@@ -387,3 +387,71 @@ func TestOperatorMarkerRoundTripAndOldReaders(t *testing.T) {
 		t.Fatalf("round trip: %q -> %+v", m.String(), got)
 	}
 }
+
+// An aged marker taken over is the operator's new attempt, young by its own clock: another
+// CP's resume scan, running while the handler works, must leave it alone.
+func TestForceStopTakeoverOfAnAgedMarkerIsNotFinalizedByAResume(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	g, _ := h.rt.startGenNow(ctx)
+	m := rescueMarker{Volume: "vol-1", Epoch: slotEpoch(h), Phase: rescuePhaseBegun, Gen: g,
+		Began: time.Now().Add(-time.Hour).UTC().Truncate(time.Second)}
+	h.ec2.setInstanceTag("i-wedge", ec2TagRescue, m.String())
+	f := h.factory()
+	var during string
+	hookAt("prepared", func() {
+		resumer(h, f).resumeRescues(ctx)
+		during = slotMarker(h)
+	})
+	defer func() { rescueStepHook = nil }()
+	if _, err := f.ForceStopSlot(ctx, "i-wedge", true); err != nil {
+		t.Fatalf("ForceStopSlot: %v", err)
+	}
+	cur, ok := parseRescueMarker(during)
+	if !ok || !cur.Operator || time.Since(cur.Began) > time.Minute || !cur.BlockedSince.IsZero() {
+		t.Fatalf("marker after the resume = %q: it must still be the operator's, begun now", during)
+	}
+	if stopsOnBox(h) != 1 || h.ec2.countCalls("DetachVolume") != 0 {
+		t.Fatalf("stops %v calls %v", h.ec2.stopForce, h.ec2.calls)
+	}
+}
+
+// Two operator requests do not share one token: a second press while the first works (even one
+// that took over a blocked rescue) is refused, and nothing is cancelled or stopped twice.
+func TestForceStopSecondOperatorWhileTheFirstWorksIsRefused(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ssmc.unfinished = []ssmtypes.Command{{CommandId: aws.String("cmd-1"), Comment: aws.String(slotVolumeCommandComment)}}
+	g, _ := h.rt.startGenNow(ctx)
+	m := rescueMarker{Volume: "vol-1", Epoch: slotEpoch(h), Phase: rescuePhaseDeregistering, Gen: g,
+		Began: time.Now().Add(-time.Minute).UTC().Truncate(time.Second), BlockedSince: time.Now().UTC().Truncate(time.Second)}
+	h.ec2.setInstanceTag("i-wedge", ec2TagRescue, m.String())
+	f := h.factory()
+	var second error
+	hookAt("prepared", func() {
+		_, second = f.ForceStopSlot(ctx, "i-wedge", true)
+	})
+	defer func() { rescueStepHook = nil }()
+	if _, err := f.ForceStopSlot(ctx, "i-wedge", true); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if !errors.Is(second, ErrSlotRescueActive) {
+		t.Fatalf("second press = %v, want ErrSlotRescueActive", second)
+	}
+	if stopsOnBox(h) != 1 || len(h.ssmc.cancelled) != 1 {
+		t.Fatalf("stops %v cancelled %v: one stop and one cancel", h.ec2.stopForce, h.ssmc.cancelled)
+	}
+}
+
+// A young operator marker is never taken over, even one that carries blocked_since.
+func TestForceStopYoungBlockedOperatorMarkerIsRefused(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	g, _ := h.rt.startGenNow(ctx)
+	m := rescueMarker{Volume: "vol-1", Epoch: slotEpoch(h), Phase: rescuePhaseDeregistering, Gen: g, Operator: true,
+		Began: time.Now().UTC().Truncate(time.Second), BlockedSince: time.Now().UTC().Truncate(time.Second)}
+	h.ec2.setInstanceTag("i-wedge", ec2TagRescue, m.String())
+	if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", true); !errors.Is(err, ErrSlotRescueActive) || stopsOnBox(h) != 0 {
+		t.Fatalf("err %v stops %v", err, h.ec2.stopForce)
+	}
+}

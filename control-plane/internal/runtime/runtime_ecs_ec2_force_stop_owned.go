@@ -107,6 +107,9 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 			// stop phase: its `detaching` is where a stuck umount sits, which is exactly
 			// what an operator takes over.
 			return res, fmt.Errorf("%w (it is past the stop, in phase %s)", ErrSlotRescueActive, cur.Phase)
+		case cur.Operator && time.Since(cur.Began) < forceStopAdoptAfter:
+			// Another operator request holds the token and is working (or has just ended).
+			return res, fmt.Errorf("%w (an operator's force-stop is in progress)", ErrSlotRescueActive)
 		case cur.BlockedSince.IsZero() && time.Since(cur.Began) < forceStopAdoptAfter:
 			return res, ErrSlotRescueActive
 		default:
@@ -286,8 +289,12 @@ func (e *ecsEC2Runtime) adoptRescue(ctx context.Context, cmds ssmSlotCommands, s
 	if err := lapsed("before the marker moves"); err != nil {
 		return rescueMarker{}, nil, err
 	}
+	// A new attempt of the operator's: its own clock, so a resume scan reads it as young and a
+	// second press cannot tell it blocked, and the marker string no longer matches the one any
+	// other handler or the original rescue holds (their guarded steps find it moved).
 	m := cur
 	m.Wedged, m.Operator = false, true
+	m.Began, m.BlockedSince = e.now().UTC().Truncate(time.Second), time.Time{}
 	if err := e.writeRescueMarker(lctx, slot, m); err != nil {
 		return rescueMarker{}, nil, fmt.Errorf("%w: marker: %w", errRescueAborted, err)
 	}
