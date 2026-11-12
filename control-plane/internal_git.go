@@ -151,7 +151,7 @@ func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 
-	dir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, name+".git")
+	dir := datalayout.GitRepoDir(a.dataRoot, mv.TenantSlug, name)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -252,7 +252,7 @@ func (a gitServerAPI) repoDelete(w http.ResponseWriter, r *http.Request, ident s
 		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
-	dir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, name+".git")
+	dir := datalayout.GitRepoDir(a.dataRoot, mv.TenantSlug, name)
 	outcome := ""
 	if err := os.RemoveAll(dir); err != nil {
 		log.Printf("internal git: delete %s: ledger rows removed but the bare remains: %v", dir, err)
@@ -314,8 +314,8 @@ func (a gitServerAPI) repoRename(w http.ResponseWriter, r *http.Request, ident s
 	if !ok {
 		return
 	}
-	oldDir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, oldName+".git")
-	newDir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, newName+".git")
+	oldDir := datalayout.GitRepoDir(a.dataRoot, mv.TenantSlug, oldName)
+	newDir := datalayout.GitRepoDir(a.dataRoot, mv.TenantSlug, newName)
 	if err := os.Rename(oldDir, newDir); err != nil {
 		refuseIrreversible(w, r, in, &apiError{http.StatusInternalServerError, "rename_failed", err.Error()})
 		return
@@ -349,7 +349,7 @@ func (a gitServerAPI) branches(w http.ResponseWriter, r *http.Request, _ store.I
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
 		return
 	}
-	dir := filepath.Join(a.dataRoot, datalayout.GitDir, mv.TenantSlug, name+".git")
+	dir := datalayout.GitRepoDir(a.dataRoot, mv.TenantSlug, name)
 	out, err := exec.CommandContext(r.Context(), "git", "--git-dir", dir,
 		"for-each-ref", "--format=%(refname:short)", "refs/heads").Output()
 	if err != nil {
