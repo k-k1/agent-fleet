@@ -463,6 +463,15 @@ operate/02-install.md#a-tenant-with-its-own-idp	operate/install-decisions.md#wel
 operate/02-install.md#5-start-it-up	operate/install.md#5-start-it
 operate/02-install.md#6-first-login-and-the-first-administrator	operate/install.md#6-sign-in-as-the-first-administrator
 operate/02-install.md#7-the-first-tenant-and-members	operate/install.md#7-welcome-members
+operate/07-engines.md#inference-engines-self-hosted-gpus-superadmin-only	operate/engines/gpu.md
+operate/07-engines.md#the-gpu-instance-class	operate/engines/gpu.md#choose-the-gpu-instance-class
+operate/07-engines.md#a-spot-offer-is-not-bought-until-accept-interruption-is-ticked	operate/engines/gpu.md#allow-spot
+operate/07-engines.md#the-warning-about-whether-a-model-fits	operate/engines/gpu.md#check-whether-a-model-fits
+operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants	operate/engines/models.md
+operate/07-engines.md#reading-the-current-state	operate/engines/status.md#read-the-current-state
+operate/07-engines.md#history-14-days	operate/engines/status.md#look-at-the-uptime-history
+operate/07-engines.md#read-aloud-the-speech-engine-and-the-shared-dictionary	operate/engines/read-aloud.md
+operate/07-engines.md#what-a-picture-keeps-out	operate/engines/gpu.md#set-the-words-kept-out-of-every-picture
 operate/11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change	operate/aws-ecs/slot-maintenance.md#outdated-slots
 operate/11-slot-pool.md#ecs-ec2-memory-protection-for-the-management-plane	operate/aws-ecs/slot-maintenance.md#protect-the-management-agents-from-running-out-of-memory
 operate/11-slot-pool.md#ecs-ec2-stopping-a-wedged-slot	operate/aws-ecs/slot-maintenance.md#stop-a-slot-that-does-not-answer

@@ -1717,6 +1717,7 @@ TASK_PAGES = (
     "operate/run/",
     "operate/signin/", "operate/diagnose/", "operate/secure/",
     "operate/keys/", "operate/aws-ecs/slot-maintenance.",
+    "operate/engines/",
 )
 
 # What a reader of a task page has no use for: why it was decided, when it was measured,

@@ -92,11 +92,11 @@ wherever the Control Plane serves the engine panel, **Cloud cost** on AWS.
 | Sign-in method register | approving the sign-in methods tenants define for themselves | [Approve a tenant's own sign-in](../operate/signin/tenant-idp.md) |
 | Egress | outbound traffic from workspaces: observe (log-only) or enforce, the allowlist, members' proposals | [Control outbound traffic](../operate/secure/egress.md) |
 | MCP sign-in hosts | which client hosts the MCP OAuth server trusts (deployment-wide) | [Operate MCP sign-in](../operate/secure/mcp.md#decide-which-client-hosts-to-trust) |
-| Read aloud | the speech engine's mode, and the shared pronunciation dictionary | [operate/07](../operate/07-engines.md#read-aloud-the-speech-engine-and-the-shared-dictionary) |
+| Read aloud | the speech engine's mode, and the shared pronunciation dictionary | [Run the read-aloud engine](../operate/engines/read-aloud.md) |
 | Appearance | the deployment's colour and label, to tell one deployment from the next | [Tell deployments apart](../operate/run/deployment-label.md) |
 | Dev sign-in | the development OIDC IdP switch, for apps on preview subdomains | [Use development sign-in](../operate/secure/dev-signin.md#turn-the-development-oidc-idp-on-or-off) |
-| Inference engines | the self-hosted engines: mode, GPU class, model catalogue, state and history | [operate/07](../operate/07-engines.md) |
-| API tokens | the Hugging Face and Civitai tokens, and the Civitai Red switch, for taking models in | [operate/07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
+| Inference engines | the self-hosted engines: mode, GPU class, model catalogue, state and history | [Run inference engines on your own GPUs](../operate/engines/gpu.md) |
+| API tokens | the Hugging Face and Civitai tokens, and the Civitai Red switch, for taking models in | [Take models into the inference engines](../operate/engines/models.md#register-the-tokens) |
 | Slots | the `ecs-ec2` slot pool: replacing slots, force-stopping a wedged one | [Replace and stop slots](../operate/aws-ecs/slot-maintenance.md) |
 | Sessions, Running time, Cloud cost, Audit, MCP | the tenant views, across every tenant | [admin/](../admin/README.md) |
 

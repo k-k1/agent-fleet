@@ -81,13 +81,21 @@ Anything not here yet is in "Chapters not yet moved" below. The commands are in 
 |---|---|
 | [Replace and stop slots](aws-ecs/slot-maintenance.md) | On `ecs-ec2`, replace outdated slots and notice and stop a slot that does not answer |
 
+## Inference engines
+
+| Page | What you can do |
+|---|---|
+| [Run inference engines on your own GPUs](engines/gpu.md) | choose each role's mode, set the idle stop and the GPU instance class, and the words kept out of every picture |
+| [Take models into the inference engines](engines/models.md) | find models on Hugging Face and Civitai, take them in and enable them; let a tenant take models in |
+| [Check the inference engines' state and history](engines/status.md) | read the running instance and the requests, and look at 14 days of uptime |
+| [Run the read-aloud engine](engines/read-aloud.md) | provide and run the VOICEVOX engine, and keep the shared pronunciation dictionary |
+
 ## Chapters not yet moved
 
-- [07 Inference engines and read aloud](07-engines.md): the Admin panel for the deployment's own GPU engines, the speech engine and the shared dictionary
 - [08 Image generation on your own ComfyUI](08-image-engine.md): pointing sessions at a ComfyUI on your own network
 - [09 Borrowing another deployment's engines](09-borrowed-engine.md): using an AWS fleet's llm and image engines from a deployment on your own host
 - [10 Chat inference on your own llama.cpp](10-llm-lan.md): pointing sessions' chat at a llama.cpp on your own network
 
-The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [04 Securing it](04-secure.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md), [11 The ecs-ec2 slot pool](11-slot-pool.md), [12 Keys at rest](12-keys.md)
+The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [04 Securing it](04-secure.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md), [11 The ecs-ec2 slot pool](11-slot-pool.md), [12 Keys at rest](12-keys.md), [07 Inference engines and read aloud](07-engines.md)
 
 What each target supports is in [Deployment targets](../ref/deploy-targets.md); who may do what is in [Roles](../ref/roles.md).

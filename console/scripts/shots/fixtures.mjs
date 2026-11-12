@@ -3278,3 +3278,104 @@ export const operateSlots = () => ({
   homes: [],
   goldens: [],
 });
+
+// The deployment's own GPU engines (operate guide, SHOT_OPERATE_GPU): an on-demand chat engine
+// that is up on a larger-than-default class, and a stopped image engine. Model ids, the instance
+// id and the request counts are invented.
+export const operateGpuEngines = () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  return {
+    super_admin: true,
+    catalog_sources: ["hf", "civitai"],
+    engines: [
+      {
+        key: "llm", api: "chat", provider: "llamacpp",
+        models: ["demo-coder-30b-q4"], mode: "ondemand", enabled: true, managed: true,
+        state: "running", desired: 1, warm: true, warm_model: "demo-coder-30b-q4",
+        box: { id: "i-0a1b2c3d4e5f60718", status: "ACTIVE", instance_type: "g6e.xlarge", since: iso(now - 95 * 60e3) },
+        classes: [
+          { id: "l4", label: "L4 24GB", vram_mib: 22528, types: ["g6.xlarge"], usd_per_hour: 0.98 },
+          { id: "l40s", label: "L40S 48GB", vram_mib: 45056, types: ["g6e.xlarge"], usd_per_hour: 2.1 },
+        ],
+        class: { id: "l40s", label: "L40S 48GB", vram_mib: 45056, types: ["g6e.xlarge"], usd_per_hour: 2.1 },
+        class_default: "l4", class_is_default: false,
+        vram_need_mib: 27648, vram_need_source: "declared", vram_need_model: "demo-coder-30b-q4", vram_fits: true,
+        idle_secs: 1800, idle_min_secs: 600, stop_eta: iso(now + 22 * 60e3),
+        window_secs: 900, window_units: 14, window_counted_secs: 900, last_demand: iso(now - 8 * 60e3),
+      },
+      {
+        key: "image", api: "images", provider: "comfy",
+        models: ["demo-anime-xl"], mode: "ondemand", enabled: true, managed: true,
+        state: "stopped", desired: 0, idle_secs: 1200, idle_min_secs: 600,
+        classes: [{ id: "l4", label: "L4 24GB", vram_mib: 22528, types: ["g6.xlarge"], usd_per_hour: 0.98 }],
+        class: { id: "l4", label: "L4 24GB", vram_mib: 22528, types: ["g6.xlarge"], usd_per_hour: 0.98 },
+        class_default: "l4", class_is_default: true,
+        negative_always: "",
+        window_secs: 900, window_units: 0, window_counted_secs: 900,
+      },
+    ],
+  };
+};
+
+// Fourteen days of one engine's hours (GET /api/admin/engines/{key}/hourly): weekday working
+// hours mostly up, a cold start and a drain on each side, weekends stopped, and a two-hour gap
+// with no record at all (the Control Plane was down) so the blank cell is on the picture.
+export const operateGpuHourly = (key) => {
+  const end = new Date();
+  end.setUTCMinutes(0, 0, 0);
+  const hours = [];
+  for (let i = 14 * 24; i >= 0; i--) {
+    const t = new Date(end.getTime() - i * 3600e3);
+    const local = new Date(t.getTime() + 9 * 3600e3); // shaped on a Tokyo working day
+    const h = local.getUTCHours();
+    const dow = local.getUTCDay();
+    if (i >= 100 && i < 102) continue;
+    const weekday = dow >= 1 && dow <= 5;
+    const hh = t.toISOString().slice(0, 13);
+    if (!weekday || h < 9 || h > 19) {
+      hours.push({ hour: hh, samples: 60, observed_secs: 3600 });
+      continue;
+    }
+    const seed = (i * 37) % 11;
+    if (h === 9) hours.push({ hour: hh, samples: 60, observed_secs: 3600, starting_secs: 540, running_secs: 1800 + seed * 60 });
+    else if (h === 19) hours.push({ hour: hh, samples: 60, observed_secs: 3600, running_secs: 900, draining_secs: 450 });
+    else hours.push({ hour: hh, samples: 60, observed_secs: 3600, running_secs: seed > 8 ? 1500 : 3600 });
+  }
+  return { engine: key, from: hours[0].hour, to: hours[hours.length - 1].hour, interval_secs: 60, hours };
+};
+
+// The chat engine's catalogue search (POST /api/admin/engines/llm/ingest/search): three invented
+// GGUF repositories, one of them gated.
+export const operateGpuSearch = () => ({
+  hits: [
+    {
+      source: "hf", ref: "example-labs/demo-coder-14b-GGUF", model_ref: "example-labs/demo-coder-14b-GGUF",
+      name: "example-labs/demo-coder-14b-GGUF", downloads: 182000, likes: 940, trending: 61,
+      license: "apache-2.0", commercial_use: "yes", bytes: 9_100_000_000, context_length: 131072,
+      updated_at: "2026-10-28T03:00:00Z",
+    },
+    {
+      source: "hf", ref: "example-labs/demo-chat-8b-GGUF", model_ref: "example-labs/demo-chat-8b-GGUF",
+      name: "example-labs/demo-chat-8b-GGUF", downloads: 96000, likes: 410, trending: 22,
+      license: "other", license_name: "demo-community-license", commercial_use: "unknown",
+      gated: true, gated_kind: "auto", bytes: 5_200_000_000, context_length: 32768,
+      updated_at: "2026-10-12T03:00:00Z",
+    },
+    {
+      source: "hf", ref: "sample-ai/tiny-assistant-3b-GGUF", model_ref: "sample-ai/tiny-assistant-3b-GGUF",
+      name: "sample-ai/tiny-assistant-3b-GGUF", downloads: 41000, likes: 120, trending: 9,
+      license: "mit", commercial_use: "yes", bytes: 2_000_000_000, context_length: 65536,
+      updated_at: "2026-09-30T03:00:00Z",
+    },
+  ],
+});
+
+// Admin › Read aloud (GET /api/admin/tts): an on-demand VOICEVOX engine that is up, Polly ready,
+// and a short shared dictionary of invented product names.
+export const operateGpuTts = (locale) => ({
+  mode: "ondemand", enabled: true, managed: true,
+  engine: { state: "running", ready: true },
+  polly: { ready: true },
+  dict: (locale === "ja" ? "# 製品名" : "# Product names") + "\nagent-fleet=エージェントフリート\nWebshop=ウェブショップ\nkubectl=キューブコントロール\n",
+});
