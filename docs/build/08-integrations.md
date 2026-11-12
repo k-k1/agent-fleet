@@ -326,6 +326,26 @@ those variables in for one `exec`:
   ADF (`internal/jirax/jira_adf.go`, goldmark) rather than through jira-cli's wiki converter (#2476), so an edit
   repairs a garbled comment. A `--debug` run is refused. The user's own setup (next bullet) is
   exec'd unchanged, where jira answers that it has no such command.
+- **`issue attachment add|list|download|delete`** (#3945; jira-cli 1.7.0 has no attachment
+  command): routed the same way to `workspace-agent jira-attachment`
+  (`internal/jirax/jira_attachment.go`), stdin closed, refused under `--debug`. A value of `--name` /
+  `-o` that starts with `-` (a lone `-` aside) is refused: the wrapper picks the credential from its own
+  argv scan, which reads `--` as the end of the flags, so `--name -- --config other.yml` would
+  otherwise upload to this connection's Jira. `add` POSTs each file
+  as its own `multipart/form-data` request to `/rest/api/3/issue/KEY/attachments` with
+  `X-Atlassian-Token: no-check` and an exact `Content-Length` (no chunked upload), never re-sent
+  except once after an OAuth 401 and a renewal (Jira refused it, so nothing was stored); it stops at
+  the first failure and names the files not sent, and a transport failure or a 5xx says the current
+  file may have been attached. Redirects are never followed (the credential would go with them). `list` reads `?fields=attachment`;
+  `download` and `delete` first check that the ID is on that issue, then
+  `GET /rest/api/3/attachment/content/ID?redirect=false` (one request, to the host the credential is
+  for; written to a temporary file and renamed, under the attachment's base name, never over an
+  existing file without `--force`, published with link(2) so a file that appears meanwhile is kept;
+  a TERM from the wrapper's timeout cancels the transfer and removes the temporary file) or `DELETE /rest/api/3/attachment/ID`. Scopes: `write:jira-work` /
+  `read:jira-work`. Uploads and downloads use their own HTTP client (the 20 s one cannot carry a
+  large file); the wrapper's default bound for `add` / `download` is 600 s (`AF_JIRA_TIMEOUT`
+  still overrides it), 120 s for the others. Not yet run against a live Jira (non-ASCII file names,
+  the site's size limit): #3945.
 - **Bodies as ADF (`comment add`, `issue create -b/-T`, `issue edit -b`)** (#2809): jira-cli sends
   them as v2 wiki markup, where `{{code}}` and `*bold*` only work at a word boundary, which
   Japanese text and full-width brackets are not. For a config of ours, `comment add` with a body

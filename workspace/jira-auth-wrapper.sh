@@ -36,6 +36,9 @@
 #   `workspace-agent jira-comment`, which holds the token itself and calls REST v3 (the body is
 #   Markdown converted to ADF there); the wrapper never sees the token for it. A user-owned
 #   config or an explicit token never gets here: those exec jira unchanged, as for everything else.
+# - `issue attachment add|list|download|delete` does not exist in jira-cli either and goes to
+#   `workspace-agent jira-attachment` the same way (upload and download stream files, so add and
+#   download get a longer default bound: 600 s).
 # - Bodies are sent as ADF, not as jira-cli's v2 wiki markup, where `{{code}}` and `*bold*` next to
 #   Japanese text stay literal: `comment add` goes to `workspace-agent jira-comment` as well, and
 #   the description of `issue create|edit` is set by `workspace-agent jira-description` after
@@ -78,7 +81,7 @@ set +xa
 unset comment_cmd cred tok server auth login cfg sub sub2 sub3 proj cfg_argv own_init debug prev conf managed gen
 unset eff key cdir types derived yaml hint basekey soft npos ikey haveproj hasasg dd pv site why
 unset sbody stmpl spos spbody ssum injected fpid fsig fout spos3 spos4 nobody brc bin bout
-unset dkey dfile dout derr skip rest lim rc berr bwhat snoinput sweb sskip sbad shelp
+unset dkey dfile dout derr skip rest lim rc berr bwhat snoinput sweb sskip sbad shelp attach_cmd bdef
 
 real="${AF_JIRA_REAL:-/usr/local/libexec/jira}"
 
@@ -287,11 +290,11 @@ run_bounded() {
 # run_write CMD ARGS...: runs a write, bounded by timeout(1) when no terminal is attached, and
 # leaves its exit status in brc. bin / bout / berr, when set, are its stdin / stdout / stderr
 # files (replayed before the timeout message); bwhat replaces "the issue may have been created"
-# and the like in that message. Signals meant for the wrapper are forwarded: a bash that dies on
+# and the like in that message; bdef replaces the default bound of 120 s. Signals meant for the wrapper are forwarded: a bash that dies on
 # TERM would leave timeout and jira behind. A timeout or a signal ends the wrapper here.
 run_write() {
   local lim pid="" rc start sig="" what
-  lim="$(attempt_limit 120)"
+  lim="$(attempt_limit "${bdef:-120}")"
   # Duplicated, not reopened: /dev/stdin cannot be reopened when it is a socket.
   if [ -n "${bin:-}" ]; then exec 3<"$bin"; else exec 3<&0; fi
   if [ -n "${bout:-}" ]; then exec 4>"$bout"; else exec 4>&1; fi
@@ -468,9 +471,13 @@ if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && [ "$sub2" = comment ] &&
   { [ "$sub3" = edit ] || [ "$sub3" = delete ]; }; then
   comment_cmd=1
 fi
+attach_cmd=""
+if { [ "$sub" = issue ] || [ "$sub" = issues ]; } && { [ "$sub2" = attachment ] || [ "$sub2" = attachments ]; }; then
+  attach_cmd=1
+fi
 if [ -n "$debug" ]; then
-  if [ -n "$comment_cmd" ]; then
-    echo "jira: comment $sub3 is not available in a debug run (it would print the Authorization header)" >&2
+  if [ -n "$comment_cmd" ] || [ -n "$attach_cmd" ]; then
+    echo "jira: $sub2 $sub3 is not available in a debug run (it would print the Authorization header)" >&2
     exit 1
   fi
   echo "jira: debug output prints the Authorization header, so this run gets no credential from the connection" >&2
@@ -505,6 +512,41 @@ if [ -n "$comment_cmd" ]; then
     exec timeout -k "$(kill_grace)" "$lim" workspace-agent jira-comment "$@"
   fi
   exec workspace-agent jira-comment "$@"
+fi
+
+# The verb of `issue attachment VERB`, read the way the helper reads argv: the generic scan above
+# does not know that --name and -o take a value, so `attachment --name x add` would yield "x" and
+# an upload would get the short bound and no "may have been attached" line.
+attach_verb() {
+  local a nx="" dd="" n=0
+  for a in "$@"; do
+    if [ -n "$nx" ]; then nx=""; continue; fi
+    if [ -z "$dd" ]; then
+      case "$a" in
+        --) dd=1; continue ;;
+        -c | --config | -p | --project | --name | -o | --output) nx=1; continue ;;
+        -?*) continue ;;
+      esac
+    fi
+    n=$((n + 1))
+    if [ "$n" = 3 ]; then printf '%s' "$a"; return 0; fi
+  done
+}
+
+# Attachments: the helper reads files named on the command line, never stdin.
+if [ -n "$attach_cmd" ]; then
+  exec </dev/null
+  sub3="$(attach_verb "$@")"
+  case "$sub3" in add | download) bdef=600 ;; *) bdef=120 ;; esac
+  if [ "$sub3" = add ] && [ -n "$(attempt_limit "$bdef")" ] && command -v timeout >/dev/null 2>&1; then
+    bwhat="files may have been attached"
+    run_write workspace-agent jira-attachment "$@"
+    exit "$brc"
+  fi
+  if nontty && command -v timeout >/dev/null 2>&1 && lim="$(attempt_limit "$bdef")" && [ -n "$lim" ]; then
+    exec timeout -k "$(kill_grace)" "$lim" workspace-agent jira-attachment "$@"
+  fi
+  exec workspace-agent jira-attachment "$@"
 fi
 
 # First value of a `key=value` line in the helper's answer on stdin.

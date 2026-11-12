@@ -219,6 +219,11 @@ directory belongs to someone else.
   `jira issue view KEY --raw` (`.fields.comment.comments[].id`). Edit or delete only a comment you
   posted in this session or one the user named. They refuse a `--debug` run and a config of the
   user's own (jira then says it has no such command).
+- **Jira attachments: `jira issue attachment add KEY FILE… [--name NAME]`, `list KEY`,
+  `download KEY ID [-o PATH|-]`, `delete KEY ID`** exist only through the wrapper too (same
+  limits). An `add` that fails or times out may still have attached the file: `list` before
+  re-running it. `download` never replaces a file without `--force`. Delete only an attachment
+  you added in this session or one the user named.
 - **Jira over a flaky network:** the wrapper re-runs read-only commands (`issue view|list`,
   `board|sprint|epic|project list`, `me`) up to twice after a connection reset or timeout and prints
   only the last attempt; writes are never re-run, so after a failed **or timed-out** write

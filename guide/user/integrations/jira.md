@@ -46,6 +46,7 @@ Agents can do things like these.
 | Create an issue | `jira issue create -p PROJ` (parent: `-P PROJ-100`) |
 | Comment | `jira issue comment add PROJ-1 "…"` |
 | Edit or delete a comment | `jira issue comment edit PROJ-1 10001 -b "…"`, `jira issue comment delete PROJ-1 10001` |
+| Attach a file, list, download or delete attachments | `jira issue attachment add PROJ-1 shot.png`, `jira issue attachment list PROJ-1`, `jira issue attachment download PROJ-1 10010`, `jira issue attachment delete PROJ-1 10010` |
 | Move an issue | `jira issue move PROJ-1 "In Progress"` |
 | Assign an issue | `jira issue assign PROJ-1 <user>` |
 
@@ -54,6 +55,8 @@ Agents can do things like these.
 - **Find a comment's ID** with `jira issue view PROJ-1 --raw` (`.fields.comment.comments[].id`)
 - **Only certain comments get edited or deleted.** Agents are told to edit or delete only a comment they posted in that
   session, or one you named
+- **Attachments are files only.** An image is attached to the issue, not placed inside a comment or the description.
+  Agents are told to delete only an attachment they added in that session, or one you named
 - **Check the parent of an issue that was created with one.** Agent Fleet adjusts the call so that the parent is sent,
   but this has not been confirmed for every kind of project
 

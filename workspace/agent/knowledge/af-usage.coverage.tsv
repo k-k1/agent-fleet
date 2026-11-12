@@ -106,6 +106,7 @@ Subversion の作業コピー — 更新、ログを表示、ローカルの変�
 プレビュー URL で Google サインインを使う（開発用 OIDC IdP）	10
 Agent Fleet の外のエージェントから Agent Fleet のメモリを使う（既定はオフ）	8
 Jira のコメントを編集・削除する（`jira issue comment edit` / `delete`）	2
+Jira の課題にファイルを添付する・添付を一覧・ダウンロード・削除する（`jira issue attachment`）	2
 フォルダからシェルを開く	2
 サインインでリモート MCP クライアントを接続する（OAuth。配備が有効にしているとき）— 接続済みアプリ、最近の呼び出し	7
 `/mcp` から送った入力の「MCP 経由」バッジ	7
