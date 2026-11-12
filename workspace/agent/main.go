@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/taskid"
 	"log"
 	"net"
 	"net/http"
@@ -415,7 +416,7 @@ func serve() {
 
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
 	warmAgentStatuses()
-	startTaskIdentityLookup()
+	taskid.Start()
 	if err := http.Serve(ln, httpx.LogRequests(httpx.Gzip(httpx.RequireToken(mux)))); err != nil {
 		log.Fatal(err)
 	}
@@ -433,7 +434,7 @@ var (
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{"ok": true, "secrets_key": secretsKeyState, "secrets_key_next": secretsKeyNext, "secrets_key_start": secretsKeyStart}
-	if id := currentTaskID(); id != "" {
+	if id := taskid.Current(); id != "" {
 		body["task_id"] = id // optional: absent outside ECS and on an Agent older than this field
 	}
 	httpx.WriteJSON(w, http.StatusOK, body)

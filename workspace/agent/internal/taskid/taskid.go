@@ -1,4 +1,5 @@
-package main
+// Package taskid reads the ECS task this Agent runs in.
+package taskid
 
 import (
 	"context"
@@ -29,19 +30,20 @@ const (
 	taskIDMaxLen         = 128
 )
 
-// taskIDValue holds the id once it is known; empty means unknown (outside ECS, or the
+// value holds the id once it is known; empty means unknown (outside ECS, or the
 // metadata endpoint has not answered), and /healthz then omits the field.
-var taskIDValue atomic.Value
+var value atomic.Value
 
-func currentTaskID() string {
-	s, _ := taskIDValue.Load().(string)
+// Current returns the task id, or "" when it is not known.
+func Current() string {
+	s, _ := value.Load().(string)
 	return s
 }
 
-// startTaskIdentityLookup reads the task id in the background. It never blocks start-up and
+// Start reads the task id in the background. It never blocks start-up and
 // never fails it: a lookup that gives up leaves the field absent, which the CP reads as
 // "identity not proven".
-func startTaskIdentityLookup() {
+func Start() {
 	base := os.Getenv("ECS_CONTAINER_METADATA_URI_V4")
 	if base == "" {
 		return // not on ECS
@@ -52,7 +54,7 @@ func startTaskIdentityLookup() {
 				time.Sleep(taskMetadataRetry)
 			}
 			if id := fetchTaskID(context.Background(), base); id != "" {
-				taskIDValue.Store(id)
+				value.Store(id)
 				return
 			}
 		}
@@ -104,3 +106,6 @@ func taskIDFromARN(arn string) string {
 	}
 	return id
 }
+
+// SetForTest replaces the id; tests in other packages use it to drive /healthz.
+func SetForTest(id string) { value.Store(id) }
