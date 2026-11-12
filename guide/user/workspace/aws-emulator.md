@@ -101,7 +101,7 @@ rely on regions to keep two sessions apart.
 
 - **RDS, ElastiCache and ECS do not run.** They start real Docker containers, and the workspace has no Docker
 - RDS still answers `available` and returns an endpoint such as `localhost:5432` where no database of yours is, and
-  where another PostgreSQL in the workspace may be listening. When you need a database, use `af-db`
+  where another PostgreSQL in the workspace may be listening. When you need a database, use [`af-db`](../../ref/cli/af-db.md)
   ([Run database-backed tests](databases.md))
 - **It is an emulator.** A template or IAM policy that works here can still fail on AWS.
   Use it for trial and error, and check against real AWS with `af-aws-exec` before relying on it
