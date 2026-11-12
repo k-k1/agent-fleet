@@ -59,6 +59,7 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "notif.arch_residue.title": "Some things could not be restored automatically",
   "notif.arch_residue.body_generic": "The CPU family changed",
   "notif.arch_residue.speech": "The CPU family changed and some things could not be restored automatically.",
+  "notif.arch_residue.scan_incomplete": "The check after the change did not finish: run {cmd}",
   "notif.start_deadline.title": "Your workspace was stopped because it did not finish starting",
   "notif.start_deadline.body_limit": "It was still starting after {minutes} min",
   "notif.start_deadline.body_generic": "It stayed in the starting state too long",

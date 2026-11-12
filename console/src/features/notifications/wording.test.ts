@@ -86,6 +86,22 @@ describe("notification row headings", () => {
     expect(w.speech).toBe(ja["notif.arch_residue.speech"]);
   });
 
+  it("architecture residue names the reinstalls that are no longer retried", () => {
+    setLocale("ja");
+    const w = notificationWording({
+      kind: "arch-residue",
+      displayName: "",
+      payload: { repos: ["demo/node_modules"], pkgs: ["pip:greenlet==3.0.3", "npm:cowsay@1.6.0"] },
+    });
+    expect(w.body).toBe("demo/node_modules, pip:greenlet==3.0.3, npm:cowsay@1.6.0");
+  });
+
+  it("architecture residue tells the member to run the scan that never finished", () => {
+    setLocale("ja");
+    const w = notificationWording({ kind: "arch-residue", displayName: "", payload: { scan: "af-arch-repair amd64 arm64" } });
+    expect(w.body).toBe("変更後の確認が終わっていません。af-arch-repair amd64 arm64 を実行してください");
+  });
+
   it("architecture residue with an empty payload still has a body", () => {
     setLocale("ja");
     const w = notificationWording({ kind: "arch-residue", displayName: "", payload: {} });

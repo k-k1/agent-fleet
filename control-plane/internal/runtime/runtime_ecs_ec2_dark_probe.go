@@ -280,12 +280,12 @@ func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot str
 // (a stopping task is the latter, and a stopped one stays listed for a while). ok is false
 // when any read failed or a listed task could not be described: a partial view of the
 // tasks is not an answer.
-func (f *ecsEC2Factory) serviceTasks(ctx context.Context, service string) ([]ecstypes.Task, bool) {
-	lister, ok := f.ci.(ecsTaskLister)
+func listServiceTasks(ctx context.Context, ci ecsContainerInstanceAPI, clusterName string, service string) ([]ecstypes.Task, bool) {
+	lister, ok := ci.(ecsTaskLister)
 	if !ok {
 		return nil, false
 	}
-	cluster := aws.String(f.base.cfg.cluster)
+	cluster := aws.String(clusterName)
 	var arns []string
 	for _, desired := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
 		var next *string
@@ -313,6 +313,15 @@ func (f *ecsEC2Factory) serviceTasks(ctx context.Context, service string) ([]ecs
 		tasks = append(tasks, described.Tasks...)
 	}
 	return tasks, true
+}
+
+func (f *ecsEC2Factory) serviceTasks(ctx context.Context, service string) ([]ecstypes.Task, bool) {
+	return listServiceTasks(ctx, f.ci, f.base.cfg.cluster, service)
+}
+
+// serviceTasks is the same read for a runtime (the wedged release runs inside one).
+func (e *ecsEC2Runtime) serviceTasks(ctx context.Context, service string) ([]ecstypes.Task, bool) {
+	return listServiceTasks(ctx, e.ci, e.base.cfg.cluster, service)
 }
 
 // containerInstanceSlots maps container instance ARNs to EC2 instance ids. ok is false when

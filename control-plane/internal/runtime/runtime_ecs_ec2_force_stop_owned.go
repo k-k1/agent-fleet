@@ -101,7 +101,10 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 			if err := occ.dropRescueMarker(ctx, id, raw); err != nil {
 				return res, fmt.Errorf("%w: could not remove the stale marker: %w", ErrSlotRescueActive, err)
 			}
-		case cur.Phase.rank() >= rescuePhaseStopped.rank():
+		case cur.Phase.rank() >= rescuePhaseStopped.rank() && !cur.Wedged:
+			// A dark rescue past the stop is finishing by itself. A wedged release has no
+			// stop phase: its `detaching` is where a stuck umount sits, which is exactly
+			// what an operator takes over.
 			return res, fmt.Errorf("%w (it is past the stop, in phase %s)", ErrSlotRescueActive, cur.Phase)
 		case cur.BlockedSince.IsZero() && time.Since(cur.Began) < forceStopAdoptAfter:
 			return res, ErrSlotRescueActive
@@ -154,7 +157,9 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	}
 	eniCtx, cancelENI := context.WithDeadline(ctx, eniDeadline)
 	defer cancelENI()
-	if m.Phase.rank() <= rescuePhaseDeregistered.rank() {
+	// A taken-over wedged release is past the phases the ENI stage normally runs in, but its
+	// slot is a running box that may well hold a task ENI: the gate is not skipped for it.
+	if m.Phase.rank() <= rescuePhaseDeregistered.rank() || (adopted && m.Wedged) {
 		if out, err := f.ec2.DescribeInstances(eniCtx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}}); err == nil {
 			res.Deregistered = instancesHoldTaskENI(out)
 		}

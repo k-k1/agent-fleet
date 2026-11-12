@@ -65,6 +65,11 @@ Either move is skipped when it cannot be done safely, for example a `target` or 
 already a symlink. `node_modules` and npm's cache stay in the home;
 `.venv` and other build output move only when a member moves them with [af-scratch](../../ref/cli/af-scratch.md). On AWS, where the home is network storage, this is what makes builds faster.
 
+The links to `target` and `build` stay in the home across a stop, while the working disk comes back empty. At every
+start, before any session runs, the workspace recreates the directories they point to, empty, so builds keep working.
+What was built before the stop is gone, and the next build starts from scratch. The limits (very many links, links from
+before this was added) are in [af-scratch](../../ref/cli/af-scratch.md#where-things-go).
+
 ## Grow the home
 
 When someone asks for more home space, a deployment whose disk field reads **Workspace home (persistent)** lets you grow it on the spot. There is no need to ask the deployment administrator.
@@ -113,7 +118,7 @@ Each kind has its own price and speed, and the names and what they mean are the 
 Choosing a machine of a different CPU family, such as Intel and Arm, shows a warning on the form and makes the next start a few minutes longer.
 
 - The home is kept. What in it was built for one family is reinstalled automatically at start: the agent CLIs, Chromium, the selected JDK and node, and what the member installed (`pip install --user`, `uv tool`, `npm i -g`) as far as it is detected, normally at the same versions
-- Not restored automatically: `node_modules` / `target` / `.venv` under `~/repos` (kept, but reinstall them with `npm ci` and the like) and binaries placed straight in `~/.local/bin`. A notification names the ones it detects; detection has limits, and a failed reinstall raises none ([af-arch-repair](../../ref/cli/af-arch-repair.md))
+- Not restored automatically: `node_modules` / `target` / `.venv` under `~/repos` (kept, but reinstall them with `npm ci` and the like) and binaries placed straight in `~/.local/bin`. A notification names the ones it detects; detection has limits. A failed reinstall is retried at up to 3 later starts and named in the notification only after that ([af-arch-repair](../../ref/cli/af-arch-repair.md))
 - JDK and node versions that are not selected are not restored either. The member reinstalls them from [Toolchains](../../user/workspace/toolchains.md) if needed
 
 ## Related

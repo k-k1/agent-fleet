@@ -153,7 +153,7 @@ type Slot = {
   /** When the wedged-slot scan first saw this running slot wedged (its agents answer, but a task is
    *  stuck stopping or the Agent drops its probe; RFC 3339; ADR 0121 amendment), and the rung. */
   wedged_since?: string;
-  wedged_rung?: "observing" | "rescuing" | "blocked" | "rescued" | "quarantined" | "";
+  wedged_rung?: "observing" | "releasing" | "blocked" | "released" | "";
 };
 /** The reply to a force-stop (#2449). */
 type ForceStopReply = {
@@ -481,7 +481,7 @@ export function PoolView() {
                         >
                           {tr("pool.wedged", {
                             min: String(Math.max(0, Math.floor((Date.now() - Date.parse(s.wedged_since)) / 60000)) || 0),
-                            rung: s.wedged_rung ? tr(darkRungKey(s.wedged_rung)) : "",
+                            rung: s.wedged_rung ? tr(wedgedRungKey(s.wedged_rung)) : "",
                           })}
                         </span>
                       )}
@@ -757,6 +757,13 @@ const DARK_RUNG_KEYS = {
 // A rung this Console does not know (a newer Control Plane) gets a generic label rather than a
 // blank or a wrong one.
 const darkRungKey = (r: string): MsgKey => DARK_RUNG_KEYS[r as keyof typeof DARK_RUNG_KEYS] ?? "pool.rung_unknown";
+// The wedged ladder's action is a release, not a rescue: its blocked rung says so.
+const WEDGED_RUNG_KEYS = {
+  releasing: "pool.rung_releasing",
+  blocked: "pool.rung_release_blocked",
+  released: "pool.rung_released",
+} as const;
+const wedgedRungKey = (r: string): MsgKey => WEDGED_RUNG_KEYS[r as keyof typeof WEDGED_RUNG_KEYS] ?? darkRungKey(r);
 
 const BAKE_STEPS = ["seed", "boot", "capture", "snapshot", "probe", "published"];
 const STEP_LABEL: Record<string, MsgKey> = {

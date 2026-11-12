@@ -638,6 +638,20 @@ describe("replacement reservations", () => {
       expect(badge?.getAttribute("title")).toContain("何もしていません");
     });
 
+    for (const [rung, text] of [
+      ["releasing", "home を解放中"],
+      ["blocked", "解放が停止中"],
+      ["released", "home を解放済み"],
+    ] as const) {
+      it(`labels the wedged rung ${rung} as a release, not a rescue`, async () => {
+        const since = new Date(Date.now() - 12 * 60000).toISOString();
+        api.mockResolvedValue(withDark({ registered: true, wedged_since: since, wedged_rung: rung }));
+        await mount();
+        expect(rowText()).toContain("固着 12 分・" + text);
+        expect(rowText()).not.toContain("救出");
+      });
+    }
+
     it("shows nothing for a slot without a stamp", async () => {
       api.mockResolvedValue(withDark({}));
       await mount();

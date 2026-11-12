@@ -227,3 +227,27 @@ func TestForceStopIsOvertakenByAStartAfterTheToken(t *testing.T) {
 		t.Fatalf("err %v stops %v", err, h.ec2.stopForce)
 	}
 }
+
+// The way out of a wedged release that is stuck unmounting: the operator takes its marker over
+// in phase `detaching`, and the ENI gate still runs before the stop.
+func TestForceStopTakesOverABlockedWedgedRelease(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ci.registered["i-wedge"] = true // a wedged slot's ECS agent answers
+	h.ssmc.online["i-wedge"] = true
+	h.ec2.giveTaskENI("i-wedge")
+	g, _ := h.rt.startGenNow(ctx)
+	m := rescueMarker{Volume: "vol-1", Epoch: slotEpoch(h), Phase: rescuePhaseDetaching, Gen: g, Wedged: true,
+		Began: time.Now().Add(-time.Minute).UTC().Truncate(time.Second), BlockedSince: time.Now().UTC().Truncate(time.Second)}
+	h.ec2.setInstanceTag("i-wedge", ec2TagRescue, m.String())
+	res, err := h.factory().ForceStopSlot(ctx, "i-wedge", true)
+	if err != nil {
+		t.Fatalf("ForceStopSlot: %v", err)
+	}
+	if now, _ := h.rt.startGenNow(ctx); now != g {
+		t.Fatalf("count %d, want the release's %d", now, g)
+	}
+	if !res.Deregistered || len(h.ci.deregistered) != 1 || stopsOnBox(h) != 1 || slotMarker(h) != "" {
+		t.Fatalf("res %+v deregistered %v stops %v marker %q: the ENI gate must run before the stop", res, h.ci.deregistered, h.ec2.stopForce, slotMarker(h))
+	}
+}

@@ -56,8 +56,8 @@ type ec2SlotView struct {
 	// Rung is how far the dark-slot ladder has gone: darkRung* below. Empty = not dark.
 	Rung string `json:"rung,omitempty"`
 	// WedgedSince is when the wedged-slot scan first saw this running slot wedged (RFC 3339,
-	// from af-wedged-since; ADR 0121 amendment), and WedgedRung how far it has gone (only
-	// darkRungObserving today). Empty when there is no stamp for the current launch.
+	// from af-wedged-since; ADR 0121 amendment), and WedgedRung how far it has gone (observing,
+	// then releasing, blocked or released). Empty when there is no stamp for the current launch.
 	WedgedSince string `json:"wedged_since,omitempty"`
 	WedgedRung  string `json:"wedged_rung,omitempty"`
 }
@@ -71,6 +71,9 @@ const (
 	darkRungBlocked     = "blocked"
 	darkRungRescued     = "rescued"
 	darkRungQuarantined = "quarantined"
+	// Rungs only the wedged ladder has (blocked is shared): its action is a release.
+	wedgedRungReleasing = "releasing"
+	wedgedRungReleased  = "released"
 )
 
 // darkView reads a slot's dark-slot state from its tags. A stamp counts only while the box is
@@ -82,7 +85,7 @@ const (
 func darkView(inst ec2types.Instance) (since, rung string) {
 	// A marker speaks for the box in any state: a rescued box is stopped, and the rung says
 	// how far the rescue got.
-	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok {
+	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && !m.Wedged {
 		rung = darkRungRescuing
 		switch {
 		case m.Phase == rescuePhaseDetached:
@@ -107,8 +110,24 @@ func darkView(inst ec2types.Instance) (since, rung string) {
 }
 
 // wedgedView is darkView for af-wedged-since: the last observation, valid only in the launch
-// epoch the stamp names. A pure read.
+// epoch the stamp names. A wedged release's marker speaks for the box in any state, as the
+// dark rescue's does: releasing while it works, blocked once a step ran out of its bound,
+// released once the home is off. A pure read.
 func wedgedView(inst ec2types.Instance) (since, rung string) {
+	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && m.Wedged {
+		rung = wedgedRungReleasing
+		switch {
+		case m.Phase == rescuePhaseDetached:
+			rung = wedgedRungReleased
+		case !m.BlockedSince.IsZero():
+			rung = darkRungBlocked
+		}
+		since = m.Began.UTC().Format(time.RFC3339)
+		if st, ok := parseDarkStamp(ec2TagValue(inst.Tags, ec2TagWedgedSince)); ok {
+			since = st.since.UTC().Format(time.RFC3339)
+		}
+		return since, rung
+	}
 	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning || inst.LaunchTime == nil {
 		return "", ""
 	}
