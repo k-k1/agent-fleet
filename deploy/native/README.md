@@ -17,5 +17,5 @@ The procedures are in the user guide:
 | [Borrow another deployment's engines](../../guide/operate/engines/borrow.md) | `AF_REMOTE_ENGINE_URL` / `_TOKEN` / `_KEYS` |
 | [Self-hosting at a glance](../../guide/operate/overview.md) | The disclaimer on autonomous agents |
 
-In the package these links do not resolve: the same pages are under `docs/operate/` in the
-extracted directory, in the Console's user guide, and on GitHub under `guide/operate/`.
+In the package these links point at the same pages under `docs/operate/` in the extracted
+directory; they are also in the Console's user guide.

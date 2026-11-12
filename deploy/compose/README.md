@@ -18,5 +18,5 @@ The procedures are in the user guide:
 | [Other operational controls](../../guide/operate/secure/controls.md) | Protecting the compose host and the host's cloud identity |
 | [Self-hosting at a glance](../../guide/operate/overview.md) | What the operator is responsible for, and the disclaimer on autonomous agents |
 
-In a release bundle these links do not resolve: read the same pages in the Console's user
-guide (under Operate) or on GitHub under `guide/operate/`.
+In a release bundle these links point at the release's tag on GitHub; the same pages are
+also in the Console's user guide.

@@ -70,15 +70,18 @@ REPO_URL="https://github.com/k-k1/agent-fleet"
 REF="${STAGE_DOCS_REF:-main}"
 mkdir -p "$RB"
 
-# Escape a string for use as a literal in a sed expression delimited by '|'.
-sed_lit() { printf '%s' "$1" | sed -e 's/[]\\|$*.^[&]/\\&/g'; }
+# Markdown-aware link handling (prose only; code is left as written): md-links.awk.
+MD_AWK="$HERE/md-links.awk"
+md_links() { awk -v mode=links -f "$MD_AWK" "$1"; }                       # <file>
+md_rewrite() { awk -v mode=rewrite -v map="$2" -f "$MD_AWK" "$1" > "$1.tmp" && mv "$1.tmp" "$1"; }  # <file> <map>
 
 # Rewrite the relative links of one staged runbook copy (see 3. above). The copy's links
 # are relative to its source directory under deploy/, so each is resolved against the
 # repository first and then mapped to where the reader can actually open it.
 rewrite_runbook_copy() {  # <staged file> <source path relative to ROOT>
-  local f="$1" srcdir t path frag resolved new e
+  local f="$1" srcdir t path frag resolved new e map
   srcdir="$(dirname "$2")"
+  map="$(mktemp)"
   while IFS= read -r t; do
     case "$t" in http://*|https://*|mailto:*|\#*|/*) continue ;; esac
     path="${t%%#*}"; frag=""
@@ -93,8 +96,10 @@ rewrite_runbook_copy() {  # <staged file> <source path relative to ROOT>
         done
         [ -n "$new" ] || new="$REPO_URL/blob/$REF/$resolved" ;;
     esac
-    sed -i "s|]($(sed_lit "$t"))|]($(sed_lit "$new$frag"))|g" "$f"
-  done < <(grep -oE '\]\([^) ]+\)' "$f" | sed -E 's/^\]\((.*)\)$/\1/' | sort -u)
+    printf '%s\t%s\n' "$t" "$new$frag" >> "$map"
+  done < <(md_links "$f" | sort -u)
+  md_rewrite "$f" "$map"
+  rm -f "$map"
 }
 
 for entry in "${RUNBOOKS[@]}"; do
@@ -164,7 +169,7 @@ if leftovers="$(grep -rnE '\]\((\.\./)+deploy/' --include='*.md' --exclude-dir=r
   exit 1
 fi
 
-# Every relative link in a staged runbook must land inside the staged tree.
+# Every relative prose link in a staged runbook must land inside the staged tree.
 dead=0
 for f in "$RB"/*.md; do
   while IFS= read -r target; do
@@ -173,7 +178,7 @@ for f in "$RB"/*.md; do
       echo "ERROR: ${f#"$DEST"/} links to '$target', which is not in the staged docs" >&2
       dead=1
     }
-  done < <(grep -oE '\]\([^) ]+\)' "$f" | sed -E 's/^\]\((.*)\)$/\1/')
+  done < <(md_links "$f")
 done
 [ "$dead" = 0 ] || exit 1
 
