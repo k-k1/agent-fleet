@@ -14,11 +14,9 @@ import (
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
-// Rung L1 of ADR 0121, first phase: take ownership of a dark slot's home, write the rescue
-// marker, end the occupant's Start, and cancel the CP's own pending SSM commands, then
-// resume and finalize after a restart. No AWS call here deregisters, stops or detaches
-// anything: those steps (decision 2, steps 4-6) are not built, so a rescue ends where this
-// file's steps end and drops its marker.
+// Rung L1 of ADR 0121: take ownership of a dark slot's home, write the rescue marker, end the
+// occupant's Start, cancel the CP's own pending SSM commands, then (runtime_ecs_ec2_dark_rescue_steps.go)
+// deregister, stop and detach, and resume and finalize after a restart.
 //
 // Which task answered a Service Connect probe cannot be proven (the Agent's /healthz carries
 // no identity), so a slot whose service is up is never rescued, whatever the probe says. The
@@ -71,6 +69,12 @@ var (
 	// errRescueAborted: a lock, a read or a lease failed. The step did not run; the marker
 	// stays and the resume scan retries. A doubt is never read as permission.
 	errRescueAborted = errors.New("rescue step aborted")
+	// errRescueBlocked: a step ran out of its bound (the task ENI did not go, the box did not
+	// stop). Nothing further is done; the marker keeps its phase and carries blocked_since.
+	errRescueBlocked = errors.New("rescue blocked")
+	// errRescueStale: the marker on the box is not the one the caller holds (another replica
+	// advanced it). The caller's copy has been refreshed; it stops for this pass.
+	errRescueStale = errors.New("rescue marker moved on")
 )
 
 // darkDecision is what the dark scan knew when it decided to rescue: the Start count it
@@ -107,7 +111,7 @@ func (f *ecsEC2Factory) rescueDarkSlot(ctx context.Context, d darkDecision) {
 	if f.pool.darkAction != darkActionRescue {
 		return
 	}
-	rt := f.runtimeForVolume(d.vol)
+	rt := f.rescueRuntime(d.vol)
 	cmds, ok := f.ssmc.(ssmSlotCommands)
 	if rt == nil || !ok {
 		return
@@ -121,6 +125,16 @@ func (f *ecsEC2Factory) rescueDarkSlot(ctx context.Context, d darkDecision) {
 	}
 	log.Printf("ecs-ec2 sweep: rescuing %s from the dark slot %s (marker %s)", rt.base.name, d.slot, m)
 	f.rescueContinue(ctx, rt, cmds, d.slot, m, ids)
+}
+
+// rescueRuntime is the runtime the rescue acts through; its waits use the factory's sleeper
+// when one is set, as the probe runtime's do.
+func (f *ecsEC2Factory) rescueRuntime(vol *ec2types.Volume) *ecsEC2Runtime {
+	rt := f.runtimeForVolume(vol)
+	if rt != nil && f.sleep != nil {
+		rt.sleep = f.sleep
+	}
+	return rt
 }
 
 // rescueStartCount is g_d: read before the predicate's legs, so a Start that lands while
@@ -374,8 +388,8 @@ func listSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID
 }
 
 // rescueContinue runs what follows the preparation: cancel exactly the fixed set with no
-// lock held, then the guarded steps. Decision 2 steps 4-6 are not built, so the guarded
-// section only proves the rescue still owns the home, and the rescue then ends.
+// lock held, prove the rescue still owns the home, then the steps of decision 2 (steps 4-6,
+// rescueSteps). The outcome decides the audit event and what is left on the box.
 func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, cmds ssmSlotCommands, slot string, m rescueMarker, ids []string) {
 	if err := rescueStep(ctx, "before-cancel"); err != nil {
 		return
@@ -387,21 +401,38 @@ func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, c
 	if err := rescueStep(ctx, "cancelled"); err != nil {
 		return
 	}
-	err := rt.rescueGuarded(ctx, m, slot, func(ctx context.Context) error {
+	err := rt.rescueGuarded(ctx, &m, slot, func(ctx context.Context) error {
 		return rescueStep(ctx, "guarded")
 	})
+	blockedBefore := m.BlockedSince
+	if err == nil {
+		err = rt.rescueSteps(ctx, slot, &m)
+	}
+	ev := SlotDark{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name, MembershipID: rt.base.membershipID}
 	switch {
 	case err == nil:
-		// The destructive steps are the next change; a rescue that cannot take them ends
-		// here and says so, instead of leaving a marker that fences every releaser for good.
-		log.Printf("ecs-ec2 sweep: rescue of %s on %s ends after its preparation; deregister/stop/detach are not built", rt.base.name, slot)
+		log.Printf("ecs-ec2 sweep: rescued %s from the dark slot %s: the instance is stopped and the home detached", rt.base.name, slot)
 		rt.finalizeRescue(ctx, slot, m.String(), m)
+		f.reportRescue(ctx, ev, "rescued")
+	case errors.Is(err, errRescueBlocked):
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s is blocked (phase %s): %v", rt.base.name, slot, m.Phase, err)
+		if blockedBefore.IsZero() || !blockedBefore.Equal(m.BlockedSince) {
+			f.reportRescue(ctx, ev, "blocked")
+		}
 	case errors.Is(err, errRescueOvertaken):
 		log.Printf("ecs-ec2 sweep: rescue of %s on %s overtaken: %v", rt.base.name, slot, err)
 		rt.finalizeRescue(ctx, slot, m.String(), m)
 	case errors.Is(err, errRescueCrash):
 	default:
 		log.Printf("ecs-ec2 sweep: rescue of %s on %s stopped for this pass: %v", rt.base.name, slot, err)
+	}
+}
+
+// reportRescue hands a rescue event to the audit callback. Nothing here can fail the rescue.
+func (f *ecsEC2Factory) reportRescue(ctx context.Context, ev SlotDark, action string) {
+	ev.Action = action
+	if f.onSlotDark != nil {
+		f.onSlotDark(ctx, ev)
 	}
 }
 
@@ -419,11 +450,30 @@ func cancelCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID string,
 	return cancelled, failed
 }
 
+type rescueMountGuardKey struct{}
+
+// rescueMountGuard is the guard of the mount lock a guarded section runs under; homeGuardOf
+// on the same context is the claim lock's. They are taken at different times and renewed and
+// lapse independently, so a destructive call asks both (rescueLeasesHeld).
+func rescueMountGuard(ctx context.Context) *homeLockGuard {
+	g, _ := ctx.Value(rescueMountGuardKey{}).(*homeLockGuard)
+	return g
+}
+
+// rescueLeasesHeld asks the clock of both leases of a guarded section. Right before every AWS
+// side effect, never earlier: whatever waits between the check and the call is the risk.
+func rescueLeasesHeld(ctx context.Context) error {
+	if err := rescueMountGuard(ctx).check(); err != nil {
+		return err
+	}
+	return homeGuardOf(ctx).check()
+}
+
 // rescueGuarded runs fn only while this rescue still owns the home, under the mount lock
 // with the token re-verified under the claim lock nested inside it (decision 4, lock order).
 // A lock not taken, a count not readable and a lease that lapsed abort the step: the
 // unguarded fallback of ifOwned is deliberately not used.
-func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m rescueMarker, instanceID string, fn func(context.Context) error) error {
+func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m *rescueMarker, instanceID string, fn func(context.Context) error) error {
 	mctx, unlockMount, err := e.lockBounded(ctx, homeLockMount, e.base.name, rescueMountBudget)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errRescueBusy, err)
@@ -434,8 +484,19 @@ func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m rescueMarker, insta
 		return fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 	defer unlockClaim()
-	if err := e.rescueOwned(cctx, m, instanceID); err != nil {
+	cctx = context.WithValue(cctx, rescueMountGuardKey{}, homeGuardOf(mctx))
+	cur, err := e.rescueOwned(cctx, *m, instanceID)
+	if err != nil {
 		return err
+	}
+	// Two replicas can resume one marker. The phase and blocked_since the caller holds are a
+	// snapshot; if the box's marker has moved on (or the caller's write never landed), the
+	// caller is working from the past: adopt what the box says and stop, so the next decision is
+	// made on it. Without this a stale `begun` would write over a `deregistering` that carries
+	// blocked_since, step backwards, and block and audit a second time.
+	if cur.String() != m.String() {
+		*m = cur
+		return fmt.Errorf("%w: the marker is now %s", errRescueStale, cur)
 	}
 	// Asked here, not left to the contexts: their end is a timer's callback, which a
 	// goroutine resumed past the deadline can outrun.
@@ -454,36 +515,36 @@ func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m rescueMarker, insta
 
 // rescueOwned is the token check of decision 4: the count is exactly g_r, the box carries
 // this rescue's marker in this launch epoch, and the home is still on the box.
-func (e *ecsEC2Runtime) rescueOwned(ctx context.Context, m rescueMarker, instanceID string) error {
+func (e *ecsEC2Runtime) rescueOwned(ctx context.Context, m rescueMarker, instanceID string) (rescueMarker, error) {
 	g, err := e.startGenNow(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: start count: %w", errRescueAborted, err)
+		return rescueMarker{}, fmt.Errorf("%w: start count: %w", errRescueAborted, err)
 	}
 	if g != m.Gen {
-		return fmt.Errorf("%w: the start count is %d, the rescue holds %d", errRescueOvertaken, g, m.Gen)
+		return rescueMarker{}, fmt.Errorf("%w: the start count is %d, the rescue holds %d", errRescueOvertaken, g, m.Gen)
 	}
 	inst, err := e.slotInstance(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("%w: slot: %w", errRescueAborted, err)
+		return rescueMarker{}, fmt.Errorf("%w: slot: %w", errRescueAborted, err)
 	}
 	if inst == nil {
-		return fmt.Errorf("%w: the box is gone", errRescueOvertaken)
+		return rescueMarker{}, fmt.Errorf("%w: the box is gone", errRescueOvertaken)
 	}
 	cur, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue))
 	if !ok || !cur.sameRescue(m) {
-		return fmt.Errorf("%w: the box does not carry this rescue's marker", errRescueOvertaken)
+		return rescueMarker{}, fmt.Errorf("%w: the box does not carry this rescue's marker", errRescueOvertaken)
 	}
 	if inst.LaunchTime == nil || !inst.LaunchTime.UTC().Truncate(time.Second).Equal(m.Epoch) {
-		return fmt.Errorf("%w: the box was started again", errRescueOvertaken)
+		return rescueMarker{}, fmt.Errorf("%w: the box was started again", errRescueOvertaken)
 	}
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: home: %w", errRescueAborted, err)
+		return rescueMarker{}, fmt.Errorf("%w: home: %w", errRescueAborted, err)
 	}
 	if vol == nil || aws.ToString(vol.VolumeId) != m.Volume || attachedInstance(vol) != instanceID {
-		return fmt.Errorf("%w: the home is no longer on the box", errRescueOvertaken)
+		return rescueMarker{}, fmt.Errorf("%w: the home is no longer on the box", errRescueOvertaken)
 	}
-	return nil
+	return cur, nil
 }
 
 // finalizeRescue is the finalizer of decision 4. It touches tags only, so it needs no count
@@ -571,7 +632,7 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 	}
 	var rt *ecsEC2Runtime
 	if vol != nil {
-		rt = f.runtimeForVolume(vol)
+		rt = f.rescueRuntime(vol)
 	}
 	if rt == nil {
 		// The home is gone, or it carries no owner the sweeper can lock for: no count to
@@ -580,6 +641,8 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 		return
 	}
 	var ids []string
+	var count int64
+	stillOnBox := false
 	strict, err := func() (bool, error) {
 		lctx, unlock, err := rt.lockBounded(ctx, homeLockClaim, rt.base.name, rescueClaimBudget)
 		if err != nil {
@@ -590,7 +653,8 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 		if err != nil {
 			return false, err
 		}
-		strict := attachedInstance(vol) == id && inst.LaunchTime != nil &&
+		count, stillOnBox = g, attachedInstance(vol) == id
+		strict := stillOnBox && inst.LaunchTime != nil &&
 			inst.LaunchTime.UTC().Truncate(time.Second).Equal(m.Epoch) && g == m.Gen
 		// Only a rescue this build can continue lists commands again, under the claim lock
 		// with the count at g_r, and cancels only what the listing returns.
@@ -606,9 +670,16 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 		log.Printf("ecs-ec2 sweep: resume of the rescue on %s: %v; the marker stays", id, err)
 		return
 	}
-	if !strict || f.pool.darkAction != darkActionRescue || m.Phase != rescuePhaseBegun || cmds == nil {
-		// Not a rescue this pass can carry on (overtaken, or the action is no longer
-		// `rescue`, or a phase this build never writes): record the episode, drop the rest.
+	if !strict || f.pool.darkAction != darkActionRescue || m.Phase == rescuePhasePreparing || m.Phase == rescuePhaseDetached || cmds == nil {
+		// Not a rescue this pass can carry on (overtaken, the action is no longer `rescue`, a
+		// marker whose bump was never confirmed, or one already detached): record the
+		// episode, drop the rest. `detaching` with the home gone is complete when the count
+		// is still g_r: nobody else could have moved it while the marker existed (decision 3,
+		// rule 2), so it was this rescue.
+		if (m.Phase == rescuePhaseDetaching || m.Phase == rescuePhaseDetached) && !stillOnBox && count == m.Gen {
+			f.reportRescue(ctx, SlotDark{Slot: id, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name,
+				MembershipID: rt.base.membershipID}, "rescued")
+		}
 		rt.finalizeRescue(ctx, id, raw, m)
 		return
 	}

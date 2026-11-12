@@ -599,3 +599,35 @@ the stamp does **not** exclude the box from `makeRoom`: a wedged slot's remedy *
 release goes through it.
 
 Follow-ups: #3991 (the release action).
+
+**2026-11-12 (rung L1, second phase, #3964).** The destructive half of L1 is built (code: `runtime_ecs_ec2_dark_rescue_steps.go`), so
+`rescue` now runs decision 2 end to end for a slot whose workspace service is stopped; the default stays `detect`. Where the code chose
+among readings of the text above:
+
+- Each stage starts from the marker's phase and re-reads the world instead of trusting it. The stages: (4) when a task ENI is
+  attached, phase `deregistering`, force-deregister, then a bounded poll (15 polls of 2 s) that the ENI is gone, then `deregistered`
+  (a box with no task ENI is not deregistered); (5) phase `stopping`, a graceful `StopInstances`, a bounded poll (90 polls of 2 s)
+  for `stopped`, then `stopped`; (6) the box asked immediately before, under the locks, and required to say `stopped`, phase
+  `detaching`, `DetachVolume`, then `detached` and the pool bookkeeping a release owes (`afterDetach`, shared with `releaseSlotSince`).
+  The waits hold no lock. The detach is called directly inside the guarded section rather than through `releaseSlotSince`, which
+  takes the mount lock itself and re-reads the count without the claim lock; `asRescue` is therefore not used by the rescue yet.
+- Every destructive call and every phase write runs in `rescueGuarded` (mount lock outer, token re-verified under the claim lock
+  inside), and is preceded by a clock check of the lease. A phase write that fails stops the step before its call: no side effect
+  without its intent phase on the box.
+- **Force** is decided by the marker: only when the phase is already `stopping`, the box is still `stopping` and `blocked_since` is
+  set (the previous pass's bounded wait ran out). It is never sent on the first stop and never when the box's LaunchTime is not the
+  rescue's epoch (that is an overtaking, not a stop).
+- **Blocked**: a bound that runs out writes `blocked_since` once (kept across retries, cleared when a phase completes) and ends the
+  pass; the next pass resumes the same phase. The audit event `pool.slot_dark_blocked` goes out when `blocked_since` is first set;
+  `pool.slot_dark_rescued` when the detach completes, or when a resume finds `detaching` / `detached` with the home gone and the
+  count still `g_r`. Both use the existing callback (`SlotDark.Action`). The pool view's `blocked` and `rescued` come from the marker.
+- A resume continues any in-progress phase (except `preparing` and `detached`) while the action is `rescue`; a phase after `begun`
+  does not list or cancel commands again. `rescueBlockedAfter`, the forced detach and quarantine (L2) are not built.
+- A DetachVolume that succeeded but whose `detached` write failed still runs `afterDetach` and ends as rescued; the marker is then
+  `detaching` with the home gone, which the finalizer records.
+- IAM: none. `ecs:DeregisterContainerInstance`, `ec2:StopInstances` and `ec2:DetachVolume` are already granted; the two new call
+  sites are in `deploy/local/cfn-cp-ec2-scope-test.py`. Not run against real AWS; Open questions 1, 4 and 5 stand.
+
+Review round 1 (second phase): the deregistration is checked against both leases right before its `DeregisterContainerInstance` call (it waits on list and describe calls first; `deregisterContainerInstanceChecked`). Every destructive call asks both the mount and the claim lease (`rescueLeasesHeld`): they are taken at different times and lapse independently. The pool bookkeeping after the detach (`afterDetach`) runs inside the guarded section with both leases still shown to be held, as `releaseSlotSince` does, and is skipped (left to the sweeper) when one has lapsed.
+
+Review round 2 (second phase): the post-detach bookkeeping asks both leases after its wait and before each write (`afterDetach` takes a check; the release path passes none). `rescueGuarded` takes the caller's marker by pointer and compares it with the box's marker under the locks: when another replica (or a lost write) made them differ it adopts the box's and stops with `errRescueStale`, so a stale snapshot never steps a phase backwards or blocks and reports a second time; the next pass decides on the fresh marker.

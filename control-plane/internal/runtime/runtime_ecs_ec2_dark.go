@@ -40,6 +40,9 @@ type SlotDark struct {
 	// Since is when the sweeper first saw the slot dark; the episode was reported once it had
 	// lasted darkAfter.
 	Since time.Time
+	// Action is what the event is: "" for the detection of an episode, "rescued" when the
+	// home was taken off a stopped slot, "blocked" when the rescue stopped at a bound.
+	Action string
 }
 
 // parseDarkAction maps AF_ECS_EC2_DARK_SLOT_ACTION onto an implemented action. Unset is
