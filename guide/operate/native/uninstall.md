@@ -28,7 +28,7 @@ Stop the Control Plane first; `af reset` refuses while it runs.
 ```
 
 - It asks before deleting. `--yes` skips the question
-- After an installer install, `af` works in place of `./af`
+- `./af` is the form for running it in the extracted tar's directory. After an installer install, `af` is `~/.local/bin/af`, so run `af reset` from anywhere
 
 ## Uninstall
 
@@ -42,6 +42,9 @@ rm -f ~/.config/systemd/user/agent-fleet.service \
 # otherwise just stop `af start` with Ctrl-C
 
 # 2. Wipe all data (skip to keep it — data is separate from the program)
+#    installed via install.sh:
+af reset --all
+#    extracted from a tar directly, in the extracted directory:
 ./af reset --all
 
 # 3. Remove the program
@@ -53,7 +56,7 @@ rm -f ~/.local/bin/af && rm -rf ~/.local/opt/agent-fleet
 | Step | Notes |
 |---|---|
 | 1. Stop and remove the units | Without systemd, just stop `af start` with Ctrl-C |
-| 2. Wipe the data | Skip it to keep the data |
+| 2. Wipe the data | `af reset --all` after an installer install; `./af reset --all` in the extracted directory for a tar. Do it before removing the program, or the data stays behind ("When `af` is already gone" below). Skip it to keep the data |
 | 3. Remove the program | If you extracted the tar directly, delete that directory |
 
 ### When `af` is already gone

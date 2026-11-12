@@ -13,7 +13,7 @@ Move the native package to a new version. Getting the new version ready is autom
 
 | What you do | What happens |
 |---|---|
-| Nothing (when you installed with the installer) | A daily timer runs `af update`, which fetches and verifies the new version and stages it beside the current one |
+| Nothing (when the installer could enable the timer) | A daily timer runs `af update`, which fetches and verifies the new version and stages it beside the current one. Without the timer, you run `af update` yourself |
 | Restart when it suits you | It switches to the new version. Running sessions are interrupted |
 | Write `AF_VERSION` to pin a version | Automatic updates do not move past that version |
 
@@ -36,6 +36,8 @@ af update           # download + verify + stage the latest (or AF_VERSION-pinned
 
 The installer enables a **user timer** (`agent-fleet-update.timer`) that runs `af update` daily. It only stages; it does not switch.
 
+- It is enabled only when `systemctl` exists and the user systemd bus is reachable. When it is, the installer prints `auto-update: daily 'af update' timer enabled`
+- If that line did not appear (on WSL with systemd off, for instance), there is no timer: run `af update` above yourself to update. How to turn systemd on in WSL is in [Run it as a systemd service](service.md#when-it-goes-wrong)
 - Opt out at install time with `AF_NO_AUTOUPDATE=1`
 - To stop it later, or to see when it runs next:
 

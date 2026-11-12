@@ -28,7 +28,7 @@ Control Plane を止めてから実行します。動いていると `af reset` 
 ```
 
 - 消す前に確かめます。`--yes` を付けると聞きません
-- インストーラで入れたときは、`./af` の代わりに `af` で実行できます
+- `./af` は、tar を展開したディレクトリで実行するときの形です。インストーラで入れたときは `af` は `~/.local/bin/af` にあるので、どこからでも `af reset` で実行します
 
 ## アンインストールする
 
@@ -42,6 +42,9 @@ rm -f ~/.config/systemd/user/agent-fleet.service \
 # otherwise just stop `af start` with Ctrl-C
 
 # 2. Wipe all data (skip to keep it — data is separate from the program)
+#    installed via install.sh:
+af reset --all
+#    extracted from a tar directly, in the extracted directory:
 ./af reset --all
 
 # 3. Remove the program
@@ -53,7 +56,7 @@ rm -f ~/.local/bin/af && rm -rf ~/.local/opt/agent-fleet
 | 手順 | 補足 |
 |---|---|
 | 1. unit を止めて消す | systemd を使っていなければ、`af start` を Ctrl-C で止めるだけです |
-| 2. データを消す | データを残すなら飛ばします |
+| 2. データを消す | インストーラで入れたなら `af reset --all`、tar を展開したなら、そのディレクトリで `./af reset --all` です。プログラムより先に消します。プログラムを先に消すと、データが残ります（下の「`af` がもうないとき」）。データを残すなら飛ばします |
 | 3. プログラムを消す | tar を直接展開したなら、そのディレクトリを消すだけです |
 
 ### `af` がもうないとき

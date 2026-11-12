@@ -13,7 +13,7 @@ source_of_truth: "`deploy/native/af` の `update` と配布リポジトリの `i
 
 | あなたがやること | 起きること |
 |---|---|
-| 何もしない（インストーラで入れたとき） | 毎日のタイマーが `af update` を実行し、新しい版を取得・検証して、今の版の隣に用意する |
+| 何もしない（インストーラがタイマーを有効にできたとき） | 毎日のタイマーが `af update` を実行し、新しい版を取得・検証して、今の版の隣に用意する。タイマーがなければ、自分で `af update` を実行する |
 | 都合のよいときに再起動する | 新しい版に切り替わる。動いていたセッションは中断される |
 | 版を固定したいときは `AF_VERSION` を書く | 自動の更新がその版より先に進まない |
 
@@ -36,6 +36,8 @@ af update           # download + verify + stage the latest (or AF_VERSION-pinned
 
 インストーラは、`af update` を毎日実行する **ユーザーのタイマー**（`agent-fleet-update.timer`）を有効にします。用意するだけで、切り替えはしません。
 
+- 有効にするのは、`systemctl` があり、ユーザーの systemd に接続できるときだけです。有効にできたときは、インストーラが `auto-update: daily 'af update' timer enabled` と表示します
+- 表示されなかったとき（WSL で systemd が無効など）は、タイマーはありません。上の `af update` を自分で実行して更新します。WSL で systemd を有効にする方法は [systemd でサービスとして動かす](service.ja.md#うまくいかないとき) にあります
 - インストールのときに断るなら `AF_NO_AUTOUPDATE=1` を付けます
 - あとから止めるときや、次に動く時刻を見るときは次のとおりです
 
