@@ -116,4 +116,4 @@ Lowering **"Auto-compact threshold (tokens)"** in ⚙ Settings → Assistant mak
 - [Connect Claude](../agents/claude.md)
 - [Connect Codex](../agents/codex.md)
 - [Connect OpenCode](../agents/opencode.md)
-- [Chat and memos](../../member/10-chat-memo.md)
+- [Ask an assistant](../chat/assistant.md)

@@ -95,5 +95,5 @@ Press the note, use the page, or bring the window back into focus, and everythin
 ## Related
 
 - [Icons, badges and menus](../../ref/console-ui.md): every state and mark
-- [Talking to a session](../../member/04-conversation.md): answering questions, permission requests and plans
+- [Reply to a session](reply.md): answering questions, permission requests and plans
 - [Start a session](start.md)

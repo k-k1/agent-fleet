@@ -116,4 +116,4 @@ Agent Fleet が動かせるのは opencode 2（`@opencode/cli`）だけなので
 - [Claude を接続する](../agents/claude.ja.md)
 - [Codex を接続する](../agents/codex.ja.md)
 - [OpenCode を接続する](../agents/opencode.ja.md)
-- [チャットとメモ](../../member/10-chat-memo.ja.md)
+- [アシスタントに質問する](../chat/assistant.ja.md)

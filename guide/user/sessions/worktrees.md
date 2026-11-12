@@ -91,5 +91,5 @@ git cannot check one branch out into two working copies. Choose another branch, 
 ## Related
 
 - [Start a session](start.md): Start and Start working as a whole
-- [Repositories and git](../../member/06-code.md): creating a working copy with Add in the left pane, switching branches
-- [Stopping, resuming and tidying up](../../member/05-stopping-and-tidying.md): clearing away finished worktrees
+- [Clone a repository](../code/clone.md): creating a working copy with Add in the left pane, switching branches
+- [Clear away finished sessions](cleanup.md): clearing away finished worktrees

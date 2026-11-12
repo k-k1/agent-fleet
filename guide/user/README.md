@@ -7,8 +7,7 @@ source_of_truth: "the Console itself (when the screen and this guide disagree, t
 
 English | [日本語](README.ja.md)
 
-Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
-Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
+Each page covers one thing you want to do.
 
 ## Getting started
 

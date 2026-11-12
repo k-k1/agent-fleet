@@ -152,13 +152,14 @@ of it being there:
 
 | Shelf | Reader |
 |---|---|
-| `member/` | someone running agents from the Console — start here for "how do I…" |
+| `user/` | someone running agents from the Console — one page per task, start here for "how do I…" |
+| `member/` | the short guide for someone who never opens the terminal (`lite.md`); its old chapters moved to `user/` |
 | `admin/` | a tenant administrator: members, limits, the audit log |
 | `operate/` | whoever installs and keeps a deployment alive (host-level; needs shell access) |
 | `ref/` | the capability tables everyone consults, and the glossary |
 | `operate/runbooks/` | the `deploy/` READMEs, copied in at release time: each is an index of its target's procedure pages in `operate/` |
 
-**Match the shelf to who is asking.** A member's "how do I…" is answered from `member/`; do not
+**Match the shelf to who is asking.** A member's "how do I…" is answered from `user/`; do not
 hand them a host-level procedure out of `operate/` — inside a container there is no root and no
 Docker, so those steps are not theirs to run.
 

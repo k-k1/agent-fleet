@@ -59,4 +59,4 @@ source_of_truth: "スマートフォンの幅で開いた Console"
 
 - [画面の見かた](console-tour.ja.md)
 - [セッションに返事をする](../sessions/reply.ja.md)
-- [ターミナル](../../member/08-terminal.ja.md)：端末のコピー＆ペースト
+- [ターミナルを使う](../files/terminal.ja.md)：端末のコピー＆ペースト

@@ -81,7 +81,7 @@ Only the items the chosen agent supports are shown.
 
 ## Session types
 
-Start lists the agents you have connected, and shell. Connecting an agent is in [Agents](../../member/09-agents.md).
+Start lists the agents you have connected, and shell. Connecting an agent is in [Choose an agent](../agents/choose.md).
 
 | Type | What it starts |
 |---|---|
@@ -142,7 +142,7 @@ committing or switching branches.
 
 ### "No agents available" appears
 
-No agent is connected. Sign in to one under Connections in ⚙ Settings ([Agents](../../member/09-agents.md)).
+No agent is connected. Sign in to one under Connections in ⚙ Settings ([Choose an agent](../agents/choose.md)).
 
 ### A codex session will not switch to Terminal (CLI)
 
@@ -154,4 +154,4 @@ and switch.
 - [Work in parallel with worktrees](worktrees.md): choosing the location and the branch
 - [Start from an issue or a ticket](from-issues.md): starting a session from the issue tracker list
 - [Read a session's state](status.md): the row marks and notifications
-- [Talking to a session](../../member/04-conversation.md): working with a session once it is running
+- [Reply to a session](reply.md): working with a session once it is running

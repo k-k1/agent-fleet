@@ -95,7 +95,7 @@ Press it once both items are checked.
 
 They are set per tenant, so ask your administrator. When you belong to no tenant, the Console says "You don't belong to any tenant yet. Ask an administrator to add you."
 
-Other symptoms are in [Troubleshooting](../../member/21-troubleshooting.md).
+Other symptoms are in [Troubleshooting](../README.md#troubleshooting).
 
 ## Related
 

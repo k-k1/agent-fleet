@@ -60,6 +60,6 @@ What the menus contain is in [Icons, badges and menus](../../ref/console-ui.md#r
 
 ## Related
 
-- [Terminal](../../member/08-terminal.md)
-- [Console basics](../../member/02-console-basics.md)
+- [Use the terminal](../files/terminal.md)
+- [Find your way around the screen](../start/console-tour.md)
 - [Use the keyboard and the command palette](../start/shortcuts.md#change-the-keys)

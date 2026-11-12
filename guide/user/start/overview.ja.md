@@ -32,7 +32,7 @@ Agent Fleet は、Claude Code や Codex などのコーディングエージェ�
 | AWS・Google Cloud・Jira・MCP サーバーなどをエージェントに使わせる | [連携](../README.ja.md#連携) |
 | 画像を作る・並べて見比べる | [画像](../README.ja.md#画像) |
 | ワークスペースの環境を整える、作り直す | [ワークスペース](../README.ja.md#ワークスペース) |
-| リポジトリを使わずに、質問・翻訳・要約を頼む | [チャットとメモ](../../member/10-chat-memo.ja.md) |
+| リポジトリを使わずに、質問・翻訳・要約を頼む | [アシスタントに質問する](../chat/assistant.ja.md) |
 
 ## どこから読むか
 

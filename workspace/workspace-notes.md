@@ -253,7 +253,7 @@ directory belongs to someone else.
   hand them the command it printed. Which tools the token reaches: `notes/gcp.md`.
 
 ## Answering questions about this Workspace
-The user guide is at `/usr/local/share/agent-fleet/docs` (`member/` for people running agents,
+The user guide is at `/usr/local/share/agent-fleet/docs` (`user/` for people running agents,
 `admin/`, `operate/`, `ref/`); grep it and cite the file rather than answering from memory, and
 match the shelf to who is asking — a member never runs host-level `operate/` steps. The developer
 documentation (architecture, decisions, journals) is **not** in any container. How to read the

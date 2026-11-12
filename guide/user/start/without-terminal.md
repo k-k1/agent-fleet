@@ -50,4 +50,4 @@ The first things to try, and the frequent questions, are in [Read the frequently
 
 - [What you can do with Agent Fleet](overview.md)
 - [Terms and the big picture](concepts.md)
-- [Troubleshooting](../../member/21-troubleshooting.md)
+- [Troubleshooting](../README.md#troubleshooting)

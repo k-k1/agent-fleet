@@ -59,4 +59,4 @@ In a Terminal (CLI) session or a shell, a row of keys sits under the terminal.
 
 - [Find your way around the screen](console-tour.md)
 - [Reply to a session](../sessions/reply.md)
-- [Terminal](../../member/08-terminal.md): copy and paste in the terminal
+- [Use the terminal](../files/terminal.md): copy and paste in the terminal

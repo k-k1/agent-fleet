@@ -96,7 +96,7 @@ source_of_truth: "Console の左ペイン「リポジトリ」の行と、「作
 | Fast-Forward | upstream へ fast-forward する。worktree では「origin/develop を Fast-Forward で取り込む」（upstream がないときは「親を Fast-Forward で取り込む」）になる |
 | Git Flow を初期化… | [Git Flow を初期化する](git-flow.ja.md)。元の作業コピーにだけ出る |
 | プロジェクト設定… | リポジトリにコミットされた MCP の定義を確かめる（[セッションに MCP サーバーを追加する](../integrations/mcp-servers.ja.md#どのエージェントに渡るか)） |
-| スキル… | そのリポジトリが各エージェントに渡すスキルを確かめる（[09](../../member/09-agents.ja.md)） |
+| スキル… | そのリポジトリが各エージェントに渡すスキルを確かめる（[手元の Claude Code の設定を持ち込む](../agents/bring-claude-setup.ja.md#スキルを確かめる)） |
 | 共有する… | この作業コピーのセッションを、ほかのメンバーに共有する（[会話を共有する](../team/share.ja.md)） |
 | Shell を起動 | その作業コピーで shell のセッションを開く |
 | 画像スタジオを始める | その作業コピーで画像スタジオを始める（[スタジオで画像を仕上げる](../images/studio.ja.md)）。ワークスペースの起動中で、画像生成が使えるときだけ出る |

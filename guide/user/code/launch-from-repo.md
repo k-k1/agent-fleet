@@ -96,7 +96,7 @@ Right-click a row for this menu. Some items are hidden depending on state and lo
 | Fast-Forward | Fast-forwards to the upstream. On a worktree it becomes "Fast-forward from origin/develop" ("Fast-forward from parent" without an upstream) |
 | Initialize Git Flow | [Initialize Git Flow](git-flow.md). Shown on the base working copy only |
 | Project settings… | Check the MCP definitions committed in the repository ([Add an MCP server to your sessions](../integrations/mcp-servers.md#which-agents-get-it)) |
-| Skills… | Check the skills the repository gives each agent ([09](../../member/09-agents.md)) |
+| Skills… | Check the skills the repository gives each agent ([Bring your Claude Code setup](../agents/bring-claude-setup.md#check-your-skills)) |
 | Share… | Share this working copy's sessions with other members ([Share a conversation](../team/share.md)) |
 | Launch Shell | Opens a shell session in that working copy |
 | Start an image studio | Starts an image studio in that working copy ([Finish an image in the studio](../images/studio.md)). Shown only while the workspace is running and image generation is available |

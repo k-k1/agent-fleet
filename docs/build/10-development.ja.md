@@ -774,9 +774,7 @@ Unicode の文字・数字・アンダースコアがない場合だけです。
 以外の行で、括弧引用・太字・メニュー項目の完全一致だけを置換します。
 `guide/ref/settings.ja.md`（英語は `settings.md`）の第 1 列は `table-cell` として
 書き換えます。`set.tab_*` / `tenant.tab_*` の変更は `WARN SETTINGS TAB` を出します。
-`scripts/docs-check.py` の規則は変えず、そのセルを更新して検査を通します。個人設定の日本語タブは対応する
-`guide/member/20-settings.ja.md` の節見出しも手動更新が必要で、表の置換だけでは
-検査を通りません。編集はすべて
+`scripts/docs-check.py` の規則は変えず、そのセルを更新して検査を通します。編集はすべて
 `path:line old -> new` として出力します。
 
 書き込み前に全対象の git status を確認します。ステージ済み・未ステージ・未追跡の変更が

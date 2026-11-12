@@ -569,6 +569,47 @@ class RealSettingTabsTests(unittest.TestCase):
                 self.assertEqual(set(tabs), used)
 
 
+class SettingsPagesTests(unittest.TestCase):
+    """Every personal settings tab row in ref/settings points at a page under user/."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ref = Path(self.tmp.name, "guide/ref")
+        self.ref.mkdir(parents=True)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "GUIDE", str(Path(self.tmp.name, "guide"))).start()
+
+    def write(self, en_rows, ja_rows):
+        for name, head, rows in (("settings.md", "Page", en_rows), ("settings.ja.md", "説明のページ", ja_rows)):
+            table = ["| Group | Tabs |", "|---|---|", "| Personal | Display |", "",
+                     f"| Tab | Configures | {head} |", "|---|---|---|"] + [f"| {t} | x | {p} |" for t, p in rows]
+            (self.ref / name).write_text("\n".join(table) + "\n")
+
+    def errors(self):
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_settings(findings)
+        return "\n".join(findings.errors)
+
+    def test_rows_that_point_at_user_pages_pass(self):
+        self.write([("Display", "[a](../user/settings/display.md)")], [("表示", "[a](../user/settings/display.ja.md)")])
+        self.assertEqual(self.errors(), "")
+
+    def test_a_row_without_a_user_page_is_named(self):
+        self.write([("Display", "none")], [("表示", "[a](../user/settings/display.ja.md)")])
+        self.assertIn("tab 'Display' does not point at a page under user/", self.errors())
+
+    def test_a_row_in_one_language_only_is_caught(self):
+        self.write([("Display", "[a](../user/a.md)"), ("Keyboard", "[b](../user/b.md)")], [("表示", "[a](../user/a.ja.md)")])
+        self.assertIn("differs from the translation", self.errors())
+
+    def test_a_missing_page_column_is_an_error_not_a_skip(self):
+        (self.ref / "settings.md").write_text("| Tab | Configures |\n|---|---|\n| Display | x |\n")
+        (self.ref / "settings.ja.md").write_text("| タブ | 決めるもの |\n|---|---|\n| 表示 | x |\n")
+        self.assertIn("cannot read the personal settings tab table", self.errors())
+
+
 class LabelTests(unittest.TestCase):
     """A quoted bold label must exist in the Console catalogue of the same language."""
 

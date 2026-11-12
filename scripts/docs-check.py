@@ -23,7 +23,7 @@ The checks:
   frozen     no link from a living shelf into docs/log/ (the frozen archive)
   ref        ref/ tables agree with the source of truth in code, and the ✓ marks match the
              translation
-  settings   the settings-tab chapter (member/20-settings) covers the tab list (ref/settings)
+  settings   every personal settings tab in ref/settings points at a page under user/
   features   member rows of the feature catalogue point at a procedure on the member/ shelf
   knowledge  the assistant knowledge covers the member rows of the feature catalogue
   notes      the operating policy shipped to every container points only at shipped shelves
@@ -1279,119 +1279,70 @@ def check_knowledge(f: Findings) -> None:
             )
 
 
-def table_first_column_under(path: str, heading: str) -> list[str]:
-    """First column of the table inside the `## <heading>` section, in order, no header.
+# The personal settings tab table of ref/settings (locale -> (file, page column heading)).
+# The headings are matched against the documents, so they stay in the document's language.
+SETTINGS_PAGE_COLUMNS = (
+    ("settings.ja.md", "説明のページ"),
+    ("settings.md", "Page"),
+)
 
-    ref/settings.md holds three tables (personal settings / tenant settings / deployment
-    variables), so collecting from the whole file would demand that use/ also cover the
-    tenant settings tabs. Those belong to admin/ and have a different reader.
-    """
-    rows: list[str] = []
-    inside = False
-    header_seen = False
+
+def settings_tab_rows(path: str, page_head: str) -> list[tuple[str, str]]:
+    """(tab, page cell) of the table whose header row has the `page_head` column."""
+    rows: list[tuple[str, str]] = []
+    col = -1
     for line in read(path).splitlines():
         s = line.strip()
-        if s.startswith("## "):
-            if inside:
-                break
-            inside = s[3:].strip() == heading
-            continue
-        if not inside or not s.startswith("|"):
+        if not s.startswith("|"):
+            col = -1
             continue
         if set(s) <= set("|-: "):
             continue
-        cell = s.strip("|").split("|")[0].strip()
-        if not header_seen:  # the table's header row
-            header_seen = True
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if col < 0:
+            col = cells.index(page_head) if page_head in cells else -1
             continue
-        if cell:
-            rows.append(cell)
+        if len(cells) > col:
+            rows.append((cells[0], cells[col]))
     return rows
 
 
-def heading3_under(path: str, groups: tuple[str, ...]) -> list[str]:
-    """The `###` headings under a group heading (`## <one of groups>`), in order.
+def check_settings(f: Findings) -> None:
+    """Does every personal settings tab in ref/settings point at the page that explains it?
 
-    A `###` outside a group (such as "when it takes effect") is not a tab, so it is not
-    collected.
+    ref/settings is the one map of the settings dialog. check_ref already makes every
+    Console tab label a row of it, so a new screen always adds a row; this adds the other
+    half — a row whose page cell leads nowhere is a tab the reader can find but not learn
+    to use. Without it the work-item and cloud-cost tabs once sat undocumented while the
+    feature catalogue pointed at them.
+
+    Both languages are read, and must have the same number of tab rows, which catches a
+    tab added in one language only.
     """
-    out: list[str] = []
-    inside = False
-    for line in read(path).splitlines():
-        s = line.strip()
-        if s.startswith("## "):
-            inside = s[3:].strip() in groups
+    counts = {}
+    for name, page_head in SETTINGS_PAGE_COLUMNS:
+        path = os.path.join(GUIDE, "ref", name)
+        if not os.path.exists(path):
+            f.error(f"ref/{name}: missing (it holds the settings tab table)")
             continue
-        if inside and s.startswith("### "):
-            out.append(s[4:].strip())
-    return out
-
-
-# Personal settings tabs of ref/settings.ja.md that need no section in
-# use/20-settings.ja.md (tab name -> reason). Every exemption states its reason: an
-# exemption list that can be extended without one fills up with "it failed, so I removed
-# it" and the check goes back to passing everything. Currently empty.
-USE_SETTINGS_EXEMPT: dict[str, str] = {}
-
-# Group headings matched in the documents, so these stay in the documents' own language.
-USE_SETTINGS_GROUPS_JA = ("個人設定", "接続", "外部からのアクセス", "ワークスペース")
-USE_SETTINGS_GROUPS_EN = ("Personal", "Connections", "Outside access", "Workspace")
-
-
-def check_use_settings(f: Findings) -> None:
-    """Does the settings-tab chapter (use/20-settings) cover the tab list (ref/settings)?
-
-    check_ref already matches the rows of ref/settings against the Console labels, so a
-    new screen always adds a row to ref/. Nothing checked use/, though, so ref/ could be
-    correct while use/ had a hole and everything still passed — in practice the work-item
-    and cloud-cost tabs were missing in both languages, while ref/features pointed at
-    those empty seats as "see 12 Settings". This adds that missing step.
-
-    The name-to-name comparison is between the Japanese versions. The rows of the English
-    ref/settings.md are the English Console labels (Keyboard / Read aloud …) and are not
-    word-for-word the section headings of use/20-settings.md (Keys / Speech …), so only
-    the ja side can be matched by name. The English version is checked by whether it has
-    the same number of sections as its translation, which catches a section added in only
-    one language.
-
-    Only the personal settings table of ref/settings.ja.md is read
-    (`table_first_column_under`).
-    """
-    ref = os.path.join(GUIDE, "ref", "settings.ja.md")
-    use_ja = os.path.join(GUIDE, "member", "20-settings.ja.md")
-    use_en = os.path.join(GUIDE, "member", "20-settings.md")
-    if not all(os.path.exists(p) for p in (ref, use_ja, use_en)):
-        return
-
-    tabs = table_first_column_under(ref, "個人設定")
-    if not tabs:
-        f.error(
-            "ref/settings.ja.md: cannot read the personal settings table"
-            " (the heading or the table's shape changed)"
-        )
-        return
-    sections = heading3_under(use_ja, USE_SETTINGS_GROUPS_JA)
-
-    for tab in tabs:
-        if tab in USE_SETTINGS_EXEMPT:
+        rows = settings_tab_rows(path, page_head)
+        if not rows:
+            f.error(
+                f"ref/{name}: cannot read the personal settings tab table"
+                f" (no table with a '{page_head}' column)"
+            )
             continue
-        if tab not in sections:
-            f.error(
-                f"use/20-settings.ja.md: no section for a settings tab -> '### {tab}'"
-                " (a tab present in ref/settings.ja.md needs a section in both languages)"
-            )
-    for name in sections:
-        if name not in tabs:
-            f.error(
-                f"use/20-settings.ja.md: section left behind with no tab"
-                f" -> '### {name}' (the tab was removed or renamed in the Console)"
-            )
-
-    en = heading3_under(use_en, USE_SETTINGS_GROUPS_EN)
-    if len(en) != len(sections):
+        counts[name] = len(rows)
+        for tab, page in rows:
+            if "](../user/" not in page:
+                f.error(
+                    f"ref/{name}: tab '{tab}' does not point at a page under user/"
+                    f" in its '{page_head}' column ({page or 'empty'})"
+                )
+    if len(counts) == 2 and len(set(counts.values())) != 1:
         f.error(
-            "use/20-settings.md: number of tab sections differs from the translation"
-            f" (en={len(en)} / ja={len(sections)})"
+            "ref/settings.md: number of settings tab rows differs from the translation"
+            f" (en={counts.get('settings.md')} / ja={counts.get('settings.ja.md')})"
         )
 
 
@@ -2425,7 +2376,7 @@ def main() -> int:
         check_ref(f)
         check_ref_parity(f)
     if run("settings"):
-        check_use_settings(f)
+        check_settings(f)
     if run("features"):
         check_features(f)
     if run("knowledge"):

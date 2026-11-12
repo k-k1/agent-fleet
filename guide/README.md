@@ -12,7 +12,7 @@ Otherwise, start wherever you fit.
 
 | You are | Read | It answers |
 |---|---|---|
-| Someone running agents from the Console | [Using Agent Fleet](member/README.md) | How do I do this? |
+| Someone running agents from the Console | [Find what you want to do](user/README.md) | How do I do this? |
 | Someone managing a team's members and limits | [Administering a tenant](admin/README.md) | How do I run this for my team? |
 | Someone installing and keeping a deployment alive | [Operating a deployment](operate/README.md) | How do I stand it up and keep it running? |
 
