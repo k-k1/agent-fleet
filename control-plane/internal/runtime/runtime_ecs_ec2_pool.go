@@ -454,7 +454,7 @@ func (f *ecsEC2Factory) New(ws Workspace, keys SecretKeys, extraEnv []string) Ru
 		sleep:        sleepCtx,
 		leases:       f.leases,
 
-		tenantID: ws.TenantID, workspaceID: ws.ID, onAutoReplace: f.onAutoReplace,
+		tenantID: ws.TenantID, workspaceID: ws.ID, onAutoReplace: f.onAutoReplace, onSlotDark: f.onSlotDark,
 	}
 }
 
