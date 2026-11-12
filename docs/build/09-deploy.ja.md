@@ -439,6 +439,8 @@ aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-de
 
 CFN の作成（S1–S3）と段 2 の Go のコードは**並行の線**で、S4 で合流する。
 
+*移すときに足した注記（原文ではない）: S2 の「下の §ECR push」は、運用ガイドの [イメージを ECR に push する](../../guide/operate/aws-ecs/install.ja.md#イメージを-ecr-に-push-する) に移った。*
+
 ### E2E 完了ゲート（凍結仕様 §20b.7.14）
 
 1. ログイン（CP ネイティブの Google OAuth）→ テナント → ワークスペースの Start（Service desired 1、RUNNING、healthz）。

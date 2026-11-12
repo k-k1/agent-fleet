@@ -17,6 +17,7 @@ The stacks and their order are in [Understand the ECS layout](overview.md).
 | Once per account, create the service-linked roles. If you will split spend, also turn on billing access in Billing | ECS clusters can be created. The Control Plane can read spend |
 | Deploy `00-network`, `10-data` and `20-platform` | The network, EFS and RDS, ECR, the cluster and the IAM roles are built |
 | Push the images to ECR | ECS can pull them |
+| If you use them, deploy `40-ec2-pool`, `50-tts` and `60-engines` | The slot pool, speech and your own inference engines are built |
 | Put the Control Plane's secrets in SSM and register the redirect URI with your IdP | The Control Plane can read its secrets, and the IdP can send sign-ins back |
 | Deploy `30-ingress` | The certificate, ALB, DNS and Control Plane service are built, and you can sign in to the Console |
 | If you split spend, start one workspace on the day you build | The Control Plane writes the tags; once AWS discovers the keys (up to 24 hours), the Control Plane activates the cost allocation tags |
@@ -89,8 +90,6 @@ Without them the change set is refused with `InsufficientCapabilitiesException â
      --profile af-sandbox --region ap-northeast-1
    ```
 
-4. Only if you use them, deploy `40-ec2-pool` (`ecs-ec2`), `50-tts` (speech) and `60-engines` (self-hosted inference), in that order
-
 `Persistence` defaults to `delete`: deleting the stack deletes EFS and RDS with it.
 
 ## Push the images to ECR
@@ -108,8 +107,8 @@ VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region> \
 ```
 
 - The first form is for images built on this machine by `deploy/release/build.sh`, the second for pushing from the images tar made on another machine
-- A deployment that runs its own engines also needs `af-engine-tools` in ECR, under the tag `60-engines` asks for. That image exists only in GHCR and is never built locally or shipped, so it is copied registry to registry with `crane copy` rather than tagged and pushed
-- If neither ECR nor GHCR has that tag, the script stops. Run `engine-tools-image.yml` with that tag first
+- `release-ecr.sh` copies `af-engine-tools` into ECR only when a `60-engines` stack **already exists** (an upgrade). For the first `60-engines`, copy it yourself in [Deploy the optional stacks](#deploy-the-optional-stacks) below
+- `af-engine-tools` exists only in GHCR and is never built locally or shipped, so it is copied registry to registry with `crane copy` rather than tagged and pushed. If neither ECR nor GHCR has that tag, the script stops. Run `engine-tools-image.yml` with that tag first
 
 ### Push by hand
 
@@ -124,6 +123,20 @@ docker tag agent-fleet/workspace:<tag>     <acct>.dkr.ecr.<region>.amazonaws.com
 docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-control-plane:<tag>
 docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag>
 ```
+
+## Deploy the optional stacks
+
+After the images are pushed and before `30-ingress`, deploy only what you use, in this order: `40-ec2-pool` (`ecs-ec2`), `50-tts` (speech), `60-engines` (self-hosted inference).
+
+- The `50-tts` and `60-engines` services cannot start without their engine images in ECR (`af-voicevox`; `af-engine-tools`, `af-llamacpp`, `af-comfyui`), and the stack then sits in `CREATE_IN_PROGRESS`. Put them in ECR **before** the stack
+- For the first `60-engines`, copy `af-engine-tools` from GHCR under `60-engines`' `EngineToolsImageTag`
+
+  ```bash
+  crane copy ghcr.io/k-k1/agent-fleet/engine-tools:<EngineToolsImageTag> <acct>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:<EngineToolsImageTag>
+  ```
+
+- `standup.sh` copies the engine images in this order, then deploys, for each stack that has a parameter file. It is the reliable way to build them
+- Each stack's parameters and images are on the slot pool, speech and inference engine pages, reachable from the [ECS runbook](../../../deploy/aws/ecs/README.md) index
 
 ## Start the Control Plane (`30-ingress`)
 
@@ -159,7 +172,7 @@ How to create the client for each IdP is in [Set up how people sign in](../signi
 
 ### 3. Deploy `30-ingress`
 
-`30-ingress.yaml` is over 51,200 bytes, so it is handed over through the S3 bucket `20-platform` created ([Keep templates under the size limit](template-size.md)).
+`30-ingress.yaml` sits just under the 51,200-byte limit and is allowed to cross it. So that a future release that does cross it does not stop, always hand it over through the S3 bucket `20-platform` created ([Keep templates under the size limit](template-size.md)).
 
 For a deployment that signs in with Google:
 

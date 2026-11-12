@@ -7,15 +7,15 @@ source_of_truth: "`af_cfn_deploy` in `deploy/aws/ecs/env.sh`, `CfnTemplatesBucke
 
 English | [日本語](template-size.ja.md)
 
-CloudFormation does not take a template body over 51,200 bytes directly. `30-ingress.yaml` is over that limit, so it is handed over through S3.
-With this page, a stack you deploy by hand does not stop at the limit.
+CloudFormation does not take a template body over 51,200 bytes directly. `30-ingress.yaml` sits just under that limit and is allowed to cross it, so it is always handed over through S3.
+With this page, a deploy by hand does not stop at the limit, even on a release whose template has grown.
 
 ## How it works
 
 | What you do | What happens |
 |---|---|
 | Deploy with `standup.sh` or `update.sh` | The script measures every template on every call and sends the ones over the limit through S3. Nothing to do |
-| Deploy `30-ingress` by hand | Add `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn`. Without it the AWS CLI refuses |
+| Deploy `30-ingress` by hand | Always add `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn`. For a template over the limit, the AWS CLI refuses without it |
 | Tear down | `teardown.sh` empties the S3 bucket before deleting `20-platform` |
 
 ## When you deploy by hand
@@ -33,7 +33,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 - Templates put in the bucket expire after 7 days
 - Whoever deploys needs `s3:PutObject` and `s3:GetObject` on this bucket ([IAM permissions for deploying](iam.md))
 
-The other templates are inside the limit and can be handed over without S3.
+The other templates are kept inside the limit and are handed over without S3.
 
 ## What the scripts do
 
@@ -56,7 +56,7 @@ The limit applies to the whole template body. A parameter's `Description:` and a
 
 | Symptom | Cause and fix |
 |---|---|
-| `aws cloudformation deploy` ends with an error that the template is too large, and the stack events show nothing | The AWS CLI refuses on size before it calls the API. Run it again with `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` |
+| `aws cloudformation deploy` ends with an error that the template is too large, and the stack events show nothing | The template is over the limit, and the AWS CLI refused on size before calling the API. Run it again with `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` |
 | `af_cfn_deploy` stops with "needs to go via S3, but no hand-off bucket can be resolved" | `20-platform` is not up yet, or its output `CfnTemplatesBucket` cannot be read. Deploy `20-platform` first, or name a bucket with `AF_CFN_BUCKET` |
 | `teardown.sh` fails to delete `20-platform` | The S3 bucket was not emptied. Read the error the bucket-emptying step printed just before |
 

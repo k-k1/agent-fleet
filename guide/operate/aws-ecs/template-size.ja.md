@@ -7,15 +7,15 @@ source_of_truth: "`deploy/aws/ecs/env.sh` の `af_cfn_deploy`、`cfn/20-platform
 
 [English](template-size.md) | 日本語
 
-CloudFormation は、51,200 バイトを超えるテンプレートを直接受け取りません。`30-ingress.yaml` はこの上限を超えるので、S3 を経由して渡します。
-このページを読めば、スタックを手でデプロイしても、上限で止まらずに済みます。
+CloudFormation は、51,200 バイトを超えるテンプレートを直接受け取りません。`30-ingress.yaml` は上限のすぐ下にあり、超えてもよいことになっているので、いつも S3 を経由して渡します。
+このページを読めば、テンプレートが大きくなったリリースでも、手でのデプロイが上限で止まらずに済みます。
 
 ## 全体像
 
 | あなたがやること | 起きること |
 |---|---|
 | `standup.sh`・`update.sh` でデプロイする | スクリプトが毎回テンプレートの大きさを測り、上限を超えるものは自動で S3 経由にする。何もしなくてよい |
-| `30-ingress` を手でデプロイする | `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` を付ける。付けないと AWS CLI が拒否する |
+| `30-ingress` を手でデプロイする | いつも `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` を付ける。上限を超えたテンプレートでは、付けないと AWS CLI が拒否する |
 | 撤去する | `teardown.sh` が、`20-platform` を消す前に S3 Bucket を空にする |
 
 ## 手でデプロイするとき
@@ -33,7 +33,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 - S3 Bucket に置いたテンプレートは、7 日で消えます
 - デプロイする人には、この S3 Bucket への `s3:PutObject` と `s3:GetObject` が要ります（[デプロイに必要な IAM 権限](iam.ja.md)）
 
-ほかのテンプレートは上限の内側にあり、S3 なしでも渡せます。
+ほかのテンプレートは上限の内側に保つことになっていて、S3 なしで渡せます。
 
 ## スクリプトがしていること
 
@@ -56,7 +56,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 | 症状 | 原因と対処 |
 |---|---|
-| `aws cloudformation deploy` が、テンプレートが大きすぎるというエラーで終わる。スタックのイベントには何もない | AWS CLI は API を呼ぶ前に大きさで拒否します。`--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` を付けてやり直します |
+| `aws cloudformation deploy` が、テンプレートが大きすぎるというエラーで終わる。スタックのイベントには何もない | テンプレートが上限を超えていて、AWS CLI が API を呼ぶ前に大きさで拒否しました。`--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` を付けてやり直します |
 | `af_cfn_deploy` が「needs to go via S3, but no hand-off bucket can be resolved」で止まる | `20-platform` がまだないか、出力 `CfnTemplatesBucket` を読めません。先に `20-platform` をデプロイするか、`AF_CFN_BUCKET` で S3 Bucket を指定します |
 | `teardown.sh` で `20-platform` の削除が失敗する | S3 Bucket が空になっていません。直前の、S3 Bucket を空にする手順が表示したエラーを読みます |
 

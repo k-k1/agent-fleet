@@ -504,6 +504,8 @@ RDS) lives in AWS, so this host's build/OOM limits don't gate it.
 
 CFN authoring (S1–S3) and the stage-2 Go code are **parallel tracks**; they meet at S4.
 
+*Note added on the move (not part of the original text): "§ECR push below" in S2 is now [Push the images to ECR](../../guide/operate/aws-ecs/install.md#push-the-images-to-ecr) in the operator guide.*
+
 ### E2E completion gate (frozen spec §20b.7.14)
 
 1. login (CP-native Google OAuth) → tenant → workspace Start (Service desired 1, RUNNING, healthz).

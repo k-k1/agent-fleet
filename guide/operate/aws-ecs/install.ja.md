@@ -17,6 +17,7 @@ AWS の ECS に Agent Fleet を建て、Control Plane を起動して、IdP で�
 | アカウントごとに 1 回、サービスにリンクされたロールを作る。費用を分けるなら、Billing の請求情報へのアクセスもオンにする | ECS のクラスターを作れるようになる。Control Plane が費用を読めるようになる |
 | `00-network`・`10-data`・`20-platform` をデプロイする | ネットワーク、EFS と RDS、ECR・クラスター・IAM ロールができる |
 | イメージを ECR に push する | ECS がイメージを取れるようになる |
+| 使うなら、`40-ec2-pool`・`50-tts`・`60-engines` をデプロイする | スロットプール・読み上げ・自前の推論エンジンができる |
 | Control Plane の秘密を SSM に入れ、IdP にリダイレクト URI を登録する | Control Plane が秘密を読み、IdP がサインインを戻せるようになる |
 | `30-ingress` をデプロイする | 証明書・ALB・DNS・Control Plane のサービスができ、Console にサインインできる |
 | 費用を分けるなら、構築した日にワークスペースを 1 つ起動する | Control Plane がタグを書き、AWS がキーを見つけたあと（最大 24 時間）、Control Plane がコスト配分タグを有効にする |
@@ -89,8 +90,6 @@ aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
      --profile af-sandbox --region ap-northeast-1
    ```
 
-4. 使うときだけ、`40-ec2-pool`（`ecs-ec2`）・`50-tts`（読み上げ）・`60-engines`（自前の推論）をこの順にデプロイします
-
 `Persistence` の既定は `delete` で、スタックを消すと EFS と RDS も消えます。
 
 ## イメージを ECR に push する
@@ -108,8 +107,8 @@ VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region> \
 ```
 
 - 1 行目は、`deploy/release/build.sh` でビルドしたイメージがこのマシンにあるとき、2 行目は別のマシンで作ったイメージの tar から push するときです
-- 自前のエンジンを動かす配備では、`60-engines` が求めるタグの `af-engine-tools` も ECR に入れます。このイメージは GHCR にしかなく、ローカルでビルドも配布もしないので、タグを付けて push するのではなく、レジストリ間で `crane copy` します
-- ECR にも GHCR にもそのタグがないと、スクリプトは止まります。先に `engine-tools-image.yml` をそのタグで実行してください
+- `release-ecr.sh` が `af-engine-tools` を ECR に入れるのは、`60-engines` のスタックが**すでにある**ときだけです（アップグレード）。初めて `60-engines` を建てるときは、次の [任意のスタックをデプロイする](#任意のスタックをデプロイする) で自分で入れます
+- `af-engine-tools` は GHCR にしかなく、ローカルでビルドも配布もしないので、タグを付けて push するのではなく、レジストリ間で `crane copy` します。ECR にも GHCR にもそのタグがないと、スクリプトは止まります。先に `engine-tools-image.yml` をそのタグで実行してください
 
 ### 手で push する
 
@@ -124,6 +123,20 @@ docker tag agent-fleet/workspace:<tag>     <acct>.dkr.ecr.<region>.amazonaws.com
 docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-control-plane:<tag>
 docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag>
 ```
+
+## 任意のスタックをデプロイする
+
+イメージを push したあと、`30-ingress` の前に、使うものだけを `40-ec2-pool`（`ecs-ec2`）・`50-tts`（読み上げ）・`60-engines`（自前の推論）の順にデプロイします。
+
+- `50-tts` と `60-engines` のサービスは、エンジンのイメージ（`af-voicevox`、`af-engine-tools`・`af-llamacpp`・`af-comfyui`）が ECR にないと起動できず、スタックが `CREATE_IN_PROGRESS` のまま進みません。スタックより**先に** ECR に入れます
+- 初めての `60-engines` では、`af-engine-tools` を `60-engines` の `EngineToolsImageTag` のタグで GHCR から写します
+
+  ```bash
+  crane copy ghcr.io/k-k1/agent-fleet/engine-tools:<EngineToolsImageTag> <acct>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:<EngineToolsImageTag>
+  ```
+
+- `standup.sh` は、パラメータのファイルがあるスタックについて、この順番どおりにエンジンのイメージを写してからデプロイします。使うなら `standup.sh` で建てるのが確実です
+- 各スタックのパラメータとイメージは、[ECS の手順書](../../../deploy/aws/ecs/README.md) の索引から、EC2 スロットプール・読み上げ・推論エンジンのページにあります
 
 ## Control Plane を起動する（`30-ingress`）
 
@@ -159,7 +172,7 @@ IdP ごとのクライアントの作りかたは [サインインの方法を�
 
 ### 3. `30-ingress` をデプロイする
 
-`30-ingress.yaml` は 51,200 バイトを超えるので、`20-platform` が作った S3 Bucket を経由して渡します（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）。
+`30-ingress.yaml` は 51,200 バイトの上限のすぐ下にあり、超えてもよいことになっています。将来のリリースで超えても止まらないよう、いつも `20-platform` が作った S3 Bucket を経由して渡します（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）。
 
 Google でサインインする配備では次のとおりです。
 
