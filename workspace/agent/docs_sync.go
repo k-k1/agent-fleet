@@ -1,17 +1,18 @@
 package main
 
-// Role-scoped docs, pulled from the CP when nothing was mounted (docs/build/04 §4.9).
+// The user guide, pulled from the CP when nothing was mounted (docs/build/04 §4.9).
 //
 // The agent-fleet docs under /usr/local/share/agent-fleet/docs are what the Console's
 // user guide opens and what the in-container agents grep to answer questions about this
-// environment. They are NOT baked into the workspace image on purpose: a shared image
-// cannot enforce "a member must not read the internal docs", so the CP bakes them and
-// hands each container only the subset its member's role may see.
+// environment. They are NOT baked into the workspace image: the CP bakes them and hands
+// every container the same tree, whatever the member's role (ADR 0064). Which shelves
+// that tree holds is decided on the CP side alone (guideShelves); this side publishes
+// every top-level entry it receives and must stay that way.
 //
 // On docker / native that handover is a read-only bind mount, and this file does
 // nothing. On ECS there is no host path to mount from — the task runs on Fargate or an
 // EC2 instance the CP never touches — so the directory stayed EMPTY and the guide
-// opened nothing. Here the container pulls the same role-scoped subset over the CP's
+// opened nothing. Here the container pulls the same tree over the CP's
 // internal bridge instead (control-plane/docs_bridge.go).
 //
 // Three properties this file exists to guarantee:
@@ -134,8 +135,8 @@ func fetchWorkspaceDocs(root string) (int, error) {
 	if n == 0 {
 		return 0, nil // deployment stages nothing for this role; leave the dir empty
 	}
-	// Whole archive read cleanly → publish. Top-level subtrees only ("guide", "dev", …),
-	// so a member sees a complete subtree or none of it.
+	// Whole archive read cleanly → publish every top-level entry ("member", "user", …),
+	// each renamed whole, so a reader sees a complete shelf or none of it.
 	entries, err := os.ReadDir(stage)
 	if err != nil {
 		return 0, err

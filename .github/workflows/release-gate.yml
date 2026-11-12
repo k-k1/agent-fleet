@@ -115,7 +115,9 @@ jobs:
           docker run --rm -e LATEST="$LATEST" --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
             set -e
             d=/usr/local/share/agent-fleet/docs
-            for s in member admin operate ref assets; do test -d "$d/$s"; done
+            for s in member user admin operate ref assets; do test -d "$d/$s"; done
+            # A task page linked from member/ and the Console; absent when a shelf list drops user/.
+            test -f "$d/user/integrations/github-cli.ja.md"
             # The runbooks are copied in at staging time (deploy/release/stage-docs.sh)
             # so an operator can read them from inside a workspace.
             test -f "$d/operate/runbooks/compose.md"
@@ -552,7 +554,9 @@ jobs:
           docker run --rm --entrypoint /bin/sh agent-fleet/control-plane:ci-default -c '
             set -e
             d=/usr/local/share/agent-fleet/docs
-            for s in member admin operate ref assets; do test -d "$d/$s"; done
+            for s in member user admin operate ref assets; do test -d "$d/$s"; done
+            # A task page linked from member/ and the Console; absent when a shelf list drops user/.
+            test -f "$d/user/integrations/github-cli.ja.md"
             test -f "$d/README.md"
             test -f "$d/README.ja.md"
             test -f "$d/operate/runbooks/compose.md"
