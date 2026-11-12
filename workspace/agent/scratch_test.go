@@ -696,6 +696,75 @@ func TestScratchRepairBoundsTheScan(t *testing.T) {
 	}
 }
 
+// When find fails, --repair has only a partial answer; rewriting the registry from it
+// would drop entries for good. It must leave the registry byte for byte and say so.
+func TestScratchRepairKeepsRegistryWhenFindFails(t *testing.T) {
+	state := scratchShim(t)
+	scratch := t.TempDir()
+	t.Setenv("AF_WS_SCRATCH", scratch)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "find"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	dir := t.TempDir()
+	var body string
+	for _, n := range []string{"a", "b"} {
+		l := filepath.Join(dir, n, "target")
+		symlinkAt(t, filepath.Join(scratch, "artifacts", l), l)
+		body += l + "\n"
+	}
+	writeRegistry(t, state, body)
+
+	out := runScratch(t, "--repair")
+
+	got, err := os.ReadFile(filepath.Join(state, "links"))
+	if err != nil || string(got) != body {
+		t.Errorf("registry after a failed find = %q (%v), want it unchanged: %q", got, err, body)
+	}
+	if !strings.Contains(out, "left as it was") {
+		t.Errorf("no warning about the failed find: %q", out)
+	}
+	if entries, _ := os.ReadDir(state); len(entries) > 2 { // links + lock
+		t.Errorf("temp files left behind: %v", entries)
+	}
+}
+
+// More dangling paths than fit in one argv (E2BIG) must still all be repaired and
+// stay in the registry. `ulimit -s` shrinks ARG_MAX to its 128 KiB floor, so ~600
+// links of ~250 bytes exceed it without building megabytes of paths.
+func TestScratchRepairPastArgMax(t *testing.T) {
+	state := scratchShim(t)
+	scratch := t.TempDir()
+	t.Setenv("AF_WS_SCRATCH", scratch)
+	dir := t.TempDir()
+	long := strings.Repeat("x", 200)
+	var body strings.Builder
+	var links []string
+	for i := 0; i < 600; i++ {
+		l := filepath.Join(dir, strconv.Itoa(i)+long, "target")
+		symlinkAt(t, filepath.Join(scratch, "artifacts", l), l)
+		body.WriteString(l + "\n")
+		links = append(links, l)
+	}
+	writeRegistry(t, state, body.String())
+
+	cmd := exec.Command("bash", "-c", "ulimit -s 512 && exec af-scratch --repair")
+	cmd.Env = append(os.Environ(), "AF_SCRATCH_REPAIR_MAX=1000")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("--repair: %v: %s", err, out)
+	}
+	for _, l := range links {
+		if _, err := os.Stat(l); err != nil {
+			t.Fatalf("%s not repaired past ARG_MAX: %v (output %q)", l, err, out)
+		}
+	}
+	if n := len(readRegistry(t, state)); n != len(links) {
+		t.Errorf("registry holds %d entries after --repair, want %d", n, len(links))
+	}
+}
+
 // Records made while others record and while --repair rewrites the registry must all
 // land, once each: the Agent's --auto, a background --seed and a start-time --repair
 // can overlap. The registry is pre-filled with dangling links so the rewrite is still

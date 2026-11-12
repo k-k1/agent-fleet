@@ -107,7 +107,8 @@ and `--seed` exit with status 0 and do nothing. They always exit with status 0.
 ## `--repair` and `--seed`
 
 `--repair` reads only the list, so a start pays a check per link and never walks `~/repos`. Writes to the list take a
-lock, so an `--auto` running at the same time is neither lost nor recorded twice.
+lock, so an `--auto` running at the same time is neither lost nor recorded twice. When `--repair` cannot read every
+link, it leaves the list as it was, says so in the start log, and the next start tries again.
 
 `--seed` covers links made before the list existed. It looks for `target` and `build` symlinks up to
 `AF_WS_SCRATCH_AUTO_DEPTH` + 1 levels under `~/repos`, the depth `--auto` uses for a clone there. It adds the ones

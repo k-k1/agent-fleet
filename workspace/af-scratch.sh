@@ -177,10 +177,17 @@ if [ "$MODE" = "--repair" ]; then
     fi
   done < "$kept"
   skipped=0
+  failed=0
   if [ "${#dangling[@]}" -gt 0 ]; then
-    # One find for all of them prints path and target as NUL-separated pairs: a target
-    # with a newline stays one field, and a link that vanished in between is simply
-    # missing from the output instead of shifting the pairing.
+    # find prints path and target as NUL-separated pairs: a target with a newline stays
+    # one field. xargs -0 feeds the paths in chunks under ARG_MAX (one argv of 650 long
+    # paths, ~2.2 MB, failed with E2BIG). Any failure, a link that vanished in between
+    # included, leaves the registry as it was: a rewrite from a partial answer would
+    # drop entries for good.
+    pairs="$kept.pairs"
+    trap 'rm -f "$kept" "$out" "$pairs"' EXIT
+    printf '%s\0' "${dangling[@]}" |
+      xargs -0 sh -c 'exec find "$@" -maxdepth 0 -type l -printf "%p\\0%l\\0"' find > "$pairs" 2>/dev/null || failed=1
     todo=()
     while IFS= read -r -d '' link && IFS= read -r -d '' t; do
       case "$t" in "$SCRATCH"/artifacts/*) ;; *) continue ;; esac  # not ours any more
@@ -191,15 +198,19 @@ if [ "$MODE" = "--repair" ]; then
       fi
       if [ "${#todo[@]}" -ge "$max" ]; then skipped=$((skipped + 1)); continue; fi
       todo+=("$t")
-    done < <(find "${dangling[@]}" -maxdepth 0 -type l -printf '%p\0%l\0' 2>/dev/null || true)
+    done < "$pairs"
     if [ "${#todo[@]}" -gt 0 ]; then
-      mkdir -p -- "${todo[@]}" 2>/dev/null || true
+      printf '%s\0' "${todo[@]}" | xargs -0 mkdir -p -- 2>/dev/null || true
       made=0
       for t in "${todo[@]}"; do [ -d "$t" ] && made=$((made + 1)); done
       echo "af-scratch: recreated $made of ${#todo[@]} link target(s) under $SCRATCH/artifacts (the scratch disk was emptied by a stop)"
     fi
   fi
-  mv -f "$out" "$REGISTRY" 2>/dev/null || true
+  if [ "$failed" = 1 ]; then
+    echo "af-scratch: --repair could not read every link (find failed); the registry is left as it was, the next start retries" >&2
+  else
+    mv -f "$out" "$REGISTRY" 2>/dev/null || echo "af-scratch: --repair could not rewrite $REGISTRY; left as it was" >&2
+  fi
   if [ "$skipped" -gt 0 ]; then
     echo "af-scratch: --repair stopped at AF_SCRATCH_REPAIR_MAX=$max; $skipped dangling link(s) left, run \`af-scratch --repair\` to finish" >&2
   fi
