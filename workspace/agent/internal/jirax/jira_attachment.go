@@ -66,7 +66,15 @@ func parseJiraAttachmentArgs(args []string) (jiraAttachmentArgs, error) {
 	var pos []string
 	valued := map[string]bool{"-c": true, "--config": true, "-p": true, "--project": true,
 		"--name": true, "-o": true, "--output": true}
+	// A value of --name / -o that looks like a flag is refused, "-o -" aside: the wrapper chose the
+	// credential from its own reading of argv, which takes "--" as the end of the flags and does
+	// not know these flags take a value, so `--name -- --config other.yml` would send the file
+	// to this connection's Jira although the caller named another config.
+	var badValue string
 	set := func(name, val string) {
+		if (name == "--name" || name == "-o" || name == "--output") && strings.HasPrefix(val, "-") && val != "-" {
+			badValue = name
+		}
 		switch name {
 		case "--name":
 			a.name = val
@@ -132,6 +140,9 @@ func parseJiraAttachmentArgs(args []string) (jiraAttachmentArgs, error) {
 			pos = append(pos, s)
 		}
 	}
+	if badValue != "" {
+		return a, fmt.Errorf("the value of %s must not start with \"-\"", badValue)
+	}
 	if a.help {
 		return a, nil
 	}
@@ -191,10 +202,20 @@ func RunAttachment(args []string) {
 	}
 	// The wrapper's timeout ends this process with TERM; cancelling the transfer instead lets a
 	// download remove its temporary file rather than leave a partial copy beside the destination.
-	sctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	rc := jiraAttachmentRun(sctx, c, args, os.Stdout, os.Stderr)
+	// Only for the transfers: list and delete go through jiraDo, which takes no context, so a
+	// caught signal there would let a DELETE start after the caller gave up.
+	ctx, stop := context.Background(), func() {}
+	if jiraAttachmentCatchesSignals(args) {
+		ctx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	}
+	rc := jiraAttachmentRun(ctx, c, args, os.Stdout, os.Stderr)
 	stop()
 	os.Exit(rc)
+}
+
+func jiraAttachmentCatchesSignals(args []string) bool {
+	a, err := parseJiraAttachmentArgs(args)
+	return err == nil && (a.verb == "add" || a.verb == "download")
 }
 
 func jiraAttachmentRun(ctx context.Context, c *secrets.JiraCreds, args []string, stdout, stderr io.Writer) int {

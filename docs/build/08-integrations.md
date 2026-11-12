@@ -328,7 +328,10 @@ those variables in for one `exec`:
   exec'd unchanged, where jira answers that it has no such command.
 - **`issue attachment add|list|download|delete`** (#3945; jira-cli 1.7.0 has no attachment
   command): routed the same way to `workspace-agent jira-attachment`
-  (`internal/jirax/jira_attachment.go`), stdin closed, refused under `--debug`. `add` POSTs each file
+  (`internal/jirax/jira_attachment.go`), stdin closed, refused under `--debug`. A value of `--name` /
+  `-o` that starts with `-` (`-o -` aside) is refused: the wrapper picks the credential from its own
+  argv scan, which reads `--` as the end of the flags, so `--name -- --config other.yml` would
+  otherwise upload to this connection's Jira. `add` POSTs each file
   as its own `multipart/form-data` request to `/rest/api/3/issue/KEY/attachments` with
   `X-Atlassian-Token: no-check` and an exact `Content-Length` (no chunked upload), never re-sent
   except once after an OAuth 401 and a renewal (Jira refused it, so nothing was stored); it stops at

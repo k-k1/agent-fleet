@@ -317,6 +317,11 @@ func TestParseJiraAttachmentArgsRejects(t *testing.T) {
 		{"issue", "attachment", "rename", "T-1", "5"},
 		{"issue", "attachment", "list", "T-1", "--debug"},
 		{"issue", "attachment", "list", "T-1", "--force=maybe"},
+		// The wrapper reads "--" as the end of the flags; the config after it would be missed.
+		{"issue", "attachment", "add", "PROJ-1", "report.txt", "--name", "--", "--config", "other.yml"},
+		{"issue", "attachment", "download", "PROJ-1", "5", "-o", "--", "-c", "other.yml"},
+		{"issue", "attachment", "add", "PROJ-1", "report.txt", "--name=-c"},
+		{"issue", "attachment", "download", "PROJ-1", "5", "-o-c"},
 	} {
 		if _, err := parseJiraAttachmentArgs(args); err == nil {
 			t.Errorf("%v: accepted", args)
@@ -325,6 +330,9 @@ func TestParseJiraAttachmentArgsRejects(t *testing.T) {
 	a, err := parseJiraAttachmentArgs([]string{"-c", "cfg.yml", "issue", "attachment", "add", "T-1", "--", "-dash.txt"})
 	if err != nil || len(a.files) != 1 || a.files[0] != "-dash.txt" {
 		t.Errorf("-- file: %+v %v", a, err)
+	}
+	if a, err := parseJiraAttachmentArgs([]string{"issue", "attachment", "download", "T-1", "5", "-o", "-"}); err != nil || a.output != "-" {
+		t.Errorf("-o -: %+v %v", a, err)
 	}
 	if rc, out, _ := runAttach(nil, "issue", "attachment", "--help"); rc != 0 || !strings.Contains(out, "attachment add KEY FILE") {
 		t.Errorf("help: rc=%d out=%q", rc, out)
@@ -475,5 +483,16 @@ func assertNoTemp(t *testing.T, dir string) {
 	left, _ := filepath.Glob(filepath.Join(dir, ".jira-attachment-*"))
 	if len(left) != 0 {
 		t.Errorf("temporary files left: %v", left)
+	}
+}
+
+// Only the transfers catch INT/TERM: list and delete cannot be cancelled mid-call, so they keep
+// the default exit and a DELETE never starts after the caller gave up.
+func TestJiraAttachmentCatchesSignalsOnlyForTransfers(t *testing.T) {
+	for verb, want := range map[string]bool{"add T-1 f": true, "download T-1 5": true, "list T-1": false, "delete T-1 5": false} {
+		args := append([]string{"issue", "attachment"}, strings.Fields(verb)...)
+		if got := jiraAttachmentCatchesSignals(args); got != want {
+			t.Errorf("%s: %v, want %v", verb, got, want)
+		}
 	}
 }
