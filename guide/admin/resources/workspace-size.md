@@ -66,8 +66,9 @@ already a symlink. `node_modules` and npm's cache stay in the home;
 `.venv` and other build output move only when a member moves them with [af-scratch](../../ref/cli/af-scratch.md). On AWS, where the home is network storage, this is what makes builds faster.
 
 The links to `target` and `build` stay in the home across a stop, while the working disk comes back empty. At every
-start the workspace recreates the directories they point to, empty, so builds keep working; what was built before the
-stop is gone and the next build starts from scratch.
+start, before any session runs, the workspace recreates the directories they point to, empty, so builds keep working.
+What was built before the stop is gone, and the next build starts from scratch. The limits (very many links, links from
+before this was added) are in [af-scratch](../../ref/cli/af-scratch.md#where-things-go).
 
 ## Grow the home
 

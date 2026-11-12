@@ -31,8 +31,8 @@ af-scratch --seed
 | `<dir>...` | Moves each directory to the working disk and replaces it with a symlink. A directory that does not exist yet becomes a symlink to its place there |
 | `--status` | Lists what is moved now, with the size of each |
 | `--auto [<root>]` | Moves the output the projects under `<root>` (default: the current directory) are about to produce. The workspace runs this on every new clone and working copy |
-| `--repair` | Recreates the working-disk directory of every link af-scratch made that a stop left dangling. The workspace runs this at every start |
-| `--seed` | Once per home: finds links made by an older af-scratch, which kept no list, and recreates theirs too. The workspace runs this in the background at start |
+| `--repair` | Recreates the working-disk directory of each link on af-scratch's list that a stop left dangling, up to `AF_SCRATCH_REPAIR_MAX`. The workspace runs this at every start, before any session |
+| `--seed` | Until it has once scanned without an error: finds links made by an older af-scratch, which kept no list, adds them to it and recreates theirs too. The workspace runs this at start, for up to `AF_SCRATCH_SEED_TIMEOUT` seconds before any session, then in the background |
 
 With no argument it prints the usage and exits with status 1. There is no `--help`: af-scratch would treat it as a
 directory name.
@@ -50,12 +50,20 @@ af-scratch: target -> /scratch/artifacts/home/dev/repos/shop/target（Workspace 
 
 After a stop the symlink stays, but what it points to is gone, and builds do not create it through the link: Gradle
 fails with `Failed to create parent directory`, and Maven and cargo refuse a dangling link the same way. So af-scratch
-keeps a list of the links it made, in `~/.local/state/af-scratch/links`, and the workspace runs `af-scratch --repair`
-at every start to recreate each one's directory, empty. Running `af-scratch target` or `--auto` on a dangling link
-recreates it too.
+keeps a list of the links it made, in `~/.local/state/af-scratch/links`, and at every start, before any session runs,
+the workspace runs `af-scratch --repair` to recreate each one's directory, empty. Running `af-scratch target` or
+`--auto` on a dangling link recreates it too. Entries whose link is gone are dropped from the list at the next start.
 
-Only a link that points under `$AF_WS_SCRATCH/artifacts/` is recreated. A link that points anywhere else is yours, and
-af-scratch creates nothing through it. Entries whose link is gone are dropped from the list at the next start.
+A directory is recreated only when the link points under `$AF_WS_SCRATCH/artifacts/` and no part of the path below
+that is a symlink, `..` or a file. A link that points anywhere else is yours, and af-scratch creates nothing through
+it; a refused path is named in the start log.
+
+A link stays dangling after a start, and needs `af-scratch <dir>` (or `af-scratch --repair`) by hand, when:
+
+- its path contains a newline: af-scratch warns and does not put it on the list;
+- the list has more dangling links than `AF_SCRATCH_REPAIR_MAX` (default 500): the rest stay on the list, the start
+  log says how many, and the next `--repair` continues;
+- it was made before the list existed, and `--seed` has not reached it yet or cannot find it (see below).
 
 ## Moving a directory yourself
 
@@ -96,11 +104,17 @@ and `--seed` exit with status 0 and do nothing. They always exit with status 0.
 
 ## `--repair` and `--seed`
 
-`--repair` reads only the list, so a start pays one check per link and never walks `~/repos`. `--seed` covers links
-made before the list existed: it looks for `target` and `build` symlinks up to `AF_WS_SCRATCH_AUTO_DEPTH` + 1 levels
-under `~/repos`, the depth `--auto` uses for a clone there, adds those pointing under `$AF_WS_SCRATCH/artifacts/` to the
-list and recreates their directories. It then leaves `~/.local/state/af-scratch/seeded` and does nothing on later
-starts. A link made by hand deeper than that, before the list existed, is not found: run `af-scratch <dir>` on it once.
+`--repair` reads only the list, so a start pays a check per link and never walks `~/repos`. Writes to the list take a
+lock, so an `--auto` running at the same time is neither lost nor recorded twice.
+
+`--seed` covers links made before the list existed. It looks for `target` and `build` symlinks up to
+`AF_WS_SCRATCH_AUTO_DEPTH` + 1 levels under `~/repos`, the depth `--auto` uses for a clone there. It adds the ones
+pointing under `$AF_WS_SCRATCH/artifacts/` to the list and recreates their directories. When the whole scan succeeded it
+leaves `~/.local/state/af-scratch/seeded` and does nothing on later starts. When a directory could not be read or a link
+not recorded, it leaves no marker, and the next start scans again. At start the workspace waits for it up to
+`AF_SCRATCH_SEED_TIMEOUT` seconds (default 20), then lets it finish in the background, so on that one start a link it
+has not reached yet can still dangle for a while. A link made by hand deeper than that, before the list existed, is not
+found: run `af-scratch <dir>` on it once.
 
 ## `--status`
 
@@ -121,6 +135,8 @@ when things were moved but none is linked any more, it prints nothing.
 | `AF_WS_SCRATCH` | The working disk. Set by the deployment; when it is unset, af-scratch does nothing |
 | `AF_WS_SCRATCH_AUTO=0` | Turns `--auto` off |
 | `AF_WS_SCRATCH_AUTO_DEPTH` | How many levels `--auto` looks under `<root>`. Default 3. `--seed` looks one level deeper, under `~/repos` |
+| `AF_SCRATCH_REPAIR_MAX` | How many dangling links one `--repair` recreates. Default 500 |
+| `AF_SCRATCH_SEED_TIMEOUT` | How many seconds the start waits for `--seed` before leaving it to the background. Default 20 |
 
 ## Exit status
 

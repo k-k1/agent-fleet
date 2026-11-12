@@ -47,65 +47,165 @@ dest_for() { printf '%s/artifacts%s\n' "$SCRATCH" "$(cd "$(dirname "$1")" && pwd
 #
 # The registry lists every link this script made, one absolute path per line, so the
 # entrypoint can revive them without walking ~/repos. It lives in home (persistent), not
-# on the scratch disk it describes. Entries whose link is gone are dropped by --repair.
+# on the scratch disk it describes. A path containing a newline is never recorded: one
+# line per entry is what lets --repair dedupe with awk instead of a grep per entry.
+# Every write holds $STATE_DIR/lock (flock), so a --seed in the background, an --auto
+# from the Agent and a --repair rewrite cannot lose or duplicate each other's entries.
 STATE_DIR="${AF_SCRATCH_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/af-scratch}"
 REGISTRY="$STATE_DIR/links"
+LOCK="$STATE_DIR/lock"
+NL='
+'
 
 record_link() {
-  mkdir -p "$STATE_DIR" 2>/dev/null || return 0
-  grep -qxF -- "$1" "$REGISTRY" 2>/dev/null || printf '%s\n' "$1" >> "$REGISTRY" 2>/dev/null || true
+  case "$1" in
+    *"$NL"*) echo "af-scratch: not recording a link whose path contains a newline; after a stop, run af-scratch on it by hand" >&2
+             return 1 ;;
+  esac
+  mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+  (
+    flock -w 30 9 || exit 1
+    grep -qxF -- "$1" "$REGISTRY" 2>/dev/null && exit 0
+    printf '%s\n' "$1" >> "$REGISTRY"
+  ) 9>>"$LOCK" 2>/dev/null
+}
+
+# scratch_path_ok / scratch_mkdir create a directory under $SCRATCH/artifacts/ and refuse (non-zero,
+# nothing created) when a component is `.` / `..`, or an existing one is a symlink or not
+# a directory. `mkdir -p` alone would follow a symlinked parent (artifacts/x -> /elsewhere)
+# and create directories outside the scratch disk; a lexical prefix check does not catch
+# that. The existing prefix is checked with builtins only and the missing tail made by
+# `mkdir -p`: a component that does not exist yet cannot be a symlink. Keeping the check
+# fork-free lets --repair batch readlink and mkdir for all links (a fork per component
+# or per link measured ~11-13 ms a link on a loaded host).
+scratch_path_ok() {
+  local rest cur comp parts
+  case "$1" in "$SCRATCH"/artifacts/*) ;; *) return 1 ;; esac
+  rest="${1#"$SCRATCH"/artifacts/}"
+  IFS=/ read -r -a parts <<< "$rest"
+  for comp in "${parts[@]}"; do
+    case "$comp" in ''|.|..) return 1 ;; esac
+  done
+  cur="$SCRATCH/artifacts"
+  if [ -L "$cur" ]; then return 1; fi
+  [ -e "$cur" ] || return 0
+  [ -d "$cur" ] || return 1
+  for comp in "${parts[@]}"; do
+    cur="$cur/$comp"
+    if [ -L "$cur" ]; then return 1; fi
+    if [ -d "$cur" ]; then continue; fi
+    [ -e "$cur" ] && return 1
+    return 0
+  done
+}
+
+scratch_mkdir() {
+  scratch_path_ok "$1" || return 1
+  [ -d "$1" ] || mkdir -p "$1" 2>/dev/null || return 1
+  [ -d "$1" ] && [ ! -L "$1" ]
 }
 
 # revive_link succeeds only for a link into $SCRATCH/artifacts/, the only place this
 # script ever links to, and recreates its target when it dangles. A link pointing
-# anywhere else is the user's (a share into the parent clone, say): mkdir through it
-# would create directories outside the scratch disk, so it fails and touches nothing.
+# anywhere else is the user's (a share into the parent clone, say) and is left alone.
 revive_link() {
-  link="$1"
+  local link="$1" t
   [ -L "$link" ] || return 1
   t="$(readlink "$link")" || return 1
-  case "$t" in
-    */../*|*/..) return 1 ;;
-    "$SCRATCH"/artifacts/*) ;;
-    *) return 1 ;;
-  esac
+  case "$t" in "$SCRATCH"/artifacts/*) ;; *) return 1 ;; esac
   [ -e "$link" ] && return 0
-  mkdir -p "$t" 2>/dev/null || return 1
+  if ! scratch_mkdir "$t"; then
+    echo "af-scratch: not recreating $t for $link: a path component is a symlink, \`..\` or not a directory" >&2
+    return 1
+  fi
   echo "af-scratch: recreated $t for $link (the scratch disk was emptied by a stop)"
 }
 
+# --repair is what the entrypoint runs at every start, in the foreground: it is the
+# barrier that has the links resolve before the first build. Its cost is bounded by
+# AF_SCRATCH_REPAIR_MAX (default 500) revivals, a readlink and a few mkdirs each
+# (measured before dedup went linear: 400 links 12 s on a loaded host); past the cap it
+# warns and leaves the rest for a manual `af-scratch --repair`.
 if [ "$MODE" = "--repair" ]; then
-  if [ -f "$REGISTRY" ]; then
-    # Rewritten without the entries whose link is gone. Runs at start, before anything
-    # else can append, so the rewrite loses no concurrent record_link.
-    kept="$REGISTRY.tmp.$$"
-    : > "$kept" 2>/dev/null || kept=/dev/null
-    while IFS= read -r link; do
-      [ -n "$link" ] && [ -L "$link" ] || continue
-      [ "$kept" != /dev/null ] && grep -qxF -- "$link" "$kept" && continue
-      printf '%s\n' "$link" >> "$kept"
-      revive_link "$link" || true
-    done < "$REGISTRY"
-    [ "$kept" = /dev/null ] || mv -f "$kept" "$REGISTRY" 2>/dev/null || rm -f "$kept"
+  [ -f "$REGISTRY" ] || exit 0
+  max="${AF_SCRATCH_REPAIR_MAX:-500}"
+  case "$max" in ''|*[!0-9]*) max=500 ;; esac
+  exec 9>>"$LOCK" || exit 0
+  flock -w 30 9 || { echo "af-scratch: --repair: the registry is locked, skipping" >&2; exit 0; }
+  kept="$REGISTRY.tmp.$$"
+  awk '!seen[$0]++' "$REGISTRY" > "$kept" 2>/dev/null || { rm -f "$kept"; exit 0; }
+  out="$kept.out"
+  : > "$out"
+  dangling=()
+  skipped=0
+  while IFS= read -r link || [ -n "$link" ]; do
+    [ -n "$link" ] && [ -L "$link" ] || continue
+    printf '%s\n' "$link" >> "$out"
+    [ -e "$link" ] && continue
+    if [ "${#dangling[@]}" -ge "$max" ]; then skipped=$((skipped + 1)); continue; fi
+    dangling+=("$link")
+  done < "$kept"
+  if [ "${#dangling[@]}" -gt 0 ]; then
+    # One readlink and one mkdir for all of them, NUL-delimited so no target can shift
+    # the pairing. A link that vanished in between makes readlink fail for the batch;
+    # the next start retries.
+    targets=()
+    mapfile -d '' -t targets < <(readlink -z -- "${dangling[@]}" 2>/dev/null || true)
+    if [ "${#targets[@]}" = "${#dangling[@]}" ]; then
+      todo=()
+      for i in "${!dangling[@]}"; do
+        t="${targets[$i]}"
+        case "$t" in "$SCRATCH"/artifacts/*) ;; *) continue ;; esac
+        if scratch_path_ok "$t"; then
+          todo+=("$t")
+        else
+          echo "af-scratch: not recreating $t for ${dangling[$i]}: a path component is a symlink, \`..\` or not a directory" >&2
+        fi
+      done
+      if [ "${#todo[@]}" -gt 0 ]; then
+        mkdir -p -- "${todo[@]}" 2>/dev/null || true
+        made=0
+        for t in "${todo[@]}"; do [ -d "$t" ] && made=$((made + 1)); done
+        echo "af-scratch: recreated $made of ${#todo[@]} link target(s) under $SCRATCH/artifacts (the scratch disk was emptied by a stop)"
+      fi
+    fi
+  fi
+  mv -f "$out" "$REGISTRY" 2>/dev/null || rm -f "$out"
+  rm -f "$kept"
+  if [ "$skipped" -gt 0 ]; then
+    echo "af-scratch: --repair stopped at AF_SCRATCH_REPAIR_MAX=$max; $skipped dangling link(s) left, run \`af-scratch --repair\` to finish" >&2
   fi
   exit 0
 fi
 
 # --seed finds the links made before the registry existed, once per home: a scan bounded
 # to what --auto creates (target/build at most AF_WS_SCRATCH_AUTO_DEPTH levels below a
-# clone in ~/repos). It is a directory walk on EFS, so the entrypoint runs it in the
-# background and the marker keeps every later start from paying for it again.
+# clone in ~/repos). The marker is written only when the walk and every record
+# succeeded; otherwise the next start tries again, because a marker over a failed scan
+# would leave those links dangling for good.
 if [ "$MODE" = "--seed" ]; then
-  if [ ! -e "$STATE_DIR/seeded" ] && [ -d "${AF_SCRATCH_REPOS:-$HOME/repos}" ]; then
-    find "${AF_SCRATCH_REPOS:-$HOME/repos}" -mindepth 2 -maxdepth "$(( ${AF_WS_SCRATCH_AUTO_DEPTH:-3} + 1 ))" \
-      \( -name .git -o -name node_modules -o -name .venv -o -name dist \) -prune -o \
-      -type l \( -name target -o -name build \) -print 2>/dev/null |
-      while IFS= read -r link; do
-        case "$(readlink "$link")" in "$SCRATCH"/artifacts/*) ;; *) continue ;; esac
-        record_link "$link"
-        revive_link "$link" || true
-      done || true
-    { mkdir -p "$STATE_DIR" && : > "$STATE_DIR/seeded"; } 2>/dev/null || true
+  repos="${AF_SCRATCH_REPOS:-$HOME/repos}"
+  [ ! -e "$STATE_DIR/seeded" ] && [ -d "$repos" ] || exit 0
+  mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
+  found="$STATE_DIR/seed.$$"
+  # The entrypoint's timeout sends TERM; without the second trap bash would skip EXIT.
+  trap 'rm -f "$found"' EXIT
+  trap 'exit 143' TERM INT
+  ok=1
+  find "$repos" -mindepth 2 -maxdepth "$(( ${AF_WS_SCRATCH_AUTO_DEPTH:-3} + 1 ))" \
+    \( -name .git -o -name node_modules -o -name .venv -o -name dist \) -prune -o \
+    -type l \( -name target -o -name build \) -print > "$found" 2>/dev/null || ok=0
+  while IFS= read -r link || [ -n "$link" ]; do
+    [ -L "$link" ] || continue
+    case "$(readlink "$link")" in "$SCRATCH"/artifacts/*) ;; *) continue ;; esac
+    record_link "$link" || ok=0
+    revive_link "$link" || true
+  done < "$found"
+  rm -f "$found"
+  if [ "$ok" = 1 ]; then
+    : > "$STATE_DIR/seeded" 2>/dev/null || true
+  else
+    echo "af-scratch: --seed did not finish (a directory could not be read or a link not recorded); the next start retries" >&2
   fi
   exit 0
 fi
@@ -142,22 +242,23 @@ fi
 auto_relocate() {
   target="$1"
   if [ -L "$target" ]; then
-      revive_link "$target" && record_link "$target"
+      if revive_link "$target"; then record_link "$target" || true; fi
       return 0
   fi
   if [ -e "$target" ]; then
     if ! git -C "$(dirname "$target")" check-ignore -q "$target" 2>/dev/null; then return 0; fi
   fi
   dest="$(dest_for "$target")"
-  mkdir -p "$(dirname "$dest")" 2>/dev/null || return 0
+  scratch_mkdir "$(dirname "$dest")" || return 0
+  if [ -L "$dest" ]; then return 0; fi
   if [ -e "$target" ]; then
     rm -rf "$dest"
     mv "$target" "$dest" 2>/dev/null || return 0
   else
-    mkdir -p "$dest" 2>/dev/null || return 0
+    scratch_mkdir "$dest" || return 0
   fi
   ln -s "$dest" "$target" 2>/dev/null || return 0
-  record_link "${dest#"$SCRATCH/artifacts"}"
+  record_link "${dest#"$SCRATCH/artifacts"}" || true
   echo "af-scratch: $target -> $dest（Workspace 停止で消えます）"
 }
 
@@ -199,24 +300,28 @@ for target in "$@"; do
   esac
   if [ -L "$target" ]; then
     if [ ! -e "$target" ] && revive_link "$target"; then
-      record_link "$(cd "$(dirname "$target")" && pwd)/$(basename "$target")"
+      record_link "$(cd "$(dirname "$target")" && pwd)/$(basename "$target")" || true
       continue
     fi
     echo "af-scratch: $target は既に symlink です（-> $(readlink "$target")）。何もしません。"
     continue
   fi
   dest="$(dest_for "$target")"
-  mkdir -p "$(dirname "$dest")"
+  if ! scratch_mkdir "$(dirname "$dest")" || [ -L "$dest" ]; then
+    echo "af-scratch: $dest の途中にシンボリックリンクなどがあるため移しません。" >&2
+    status=1
+    continue
+  fi
   if [ -e "$target" ]; then
     # EFS から読んで書き戻すので、ここは 1 回だけ遅い。次回以降は最初から scratch 側。
     echo "af-scratch: $target を作業ディスクへ移しています…"
     rm -rf "$dest"
     mv "$target" "$dest"
   else
-    mkdir -p "$dest"
+    scratch_mkdir "$dest"
   fi
   ln -s "$dest" "$target"
-  record_link "${dest#"$SCRATCH/artifacts"}"
+  record_link "${dest#"$SCRATCH/artifacts"}" || true
   echo "af-scratch: $target -> $dest（Workspace 停止で消えます）"
 done
 exit "$status"
