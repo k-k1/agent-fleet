@@ -46,8 +46,8 @@ How to read a cell:
 | Tool | What it does | Session | Assistant | Outside | Required parameters |
 |---|---|---|---|---|---|
 | `list_my_sessions` | List the workspace's sessions with their kind, state and working directory | — | ✓ AF read | ✓ `read` | — |
-| `get_session_status` | Show a session's state (working, idle, asking, waiting for plan approval) and its pending question | ✓ | ✓ AF read | ✓ `read` | — |
-| `get_session_output` | Read a session's recent terminal output, continuing from the last read; a session may read only its own children | ✓ "Starting sessions from sessions" | ✓ AF read | ✓ `read` | `name` |
+| `get_session_status` | Show a session's state (working, idle, asking, waiting for plan approval) and its pending question | ✓ | ✓ AF read | ✓ `read` | Session: —; Assistant, Outside: `name` |
+| `get_session_output` | Read a session's recent output. In a session or an assistant it continues from the last read; from outside, pass the returned cursor as `since` to continue, or each call returns the latest tail. A session may read only its own children | ✓ "Starting sessions from sessions" | ✓ AF read | ✓ `read` | `name` |
 | `get_session_usage` | Show each session's context use and cumulative token use | ✓ | ✓ AF read | ✓ `read` | — |
 | `get_agent_usage` | Show each agent CLI's subscription usage and rate limits | ✓ "Starting sessions from sessions" | ✓ AF read | ✓ `read` | — |
 | `search_sessions` | Full-text search over what was said in this workspace's past sessions, stopped and archived ones included | ✓ "Past-session search" | — | — | — |
@@ -119,10 +119,10 @@ How to read a cell:
 | `memory_index` | List the shared memories, without their bodies | ✓ "Agent memory" | — | ✓ `read`, memory | — |
 | `memory_search` | Full-text search over the shared memory | ✓ "Agent memory" | — | ✓ `read`, memory | `query` |
 | `memory_read` | Read one memory with its body | ✓ "Agent memory" | — | ✓ `read`, memory | `name` |
-| `memory_save` | Create or update a memory; it is published at once, and a secret is refused | ✓ "Agent memory" | — | ✓ `write`, memory | `name`, `description`, `body` |
-| `memory_patch` | Change part of a memory without sending it again whole | ✓ "Agent memory" | — | ✓ `write`, memory | `name`, `revision` |
-| `memory_feedback` | Report that a memory you relied on is wrong or out of date | ✓ "Agent memory" | — | ✓ `write`, memory | `name`, `revision`, `verdict` |
-| `memory_forget` | Take a memory out of use; its history stays | ✓ "Agent memory" | — | ✓ `write`, memory | `name`, `revision` |
+| `memory_save` | Create or update a memory; it is published at once, and a secret is refused | ✓ "Agent memory" | — | ✓ `write`, memory | Session: `name`, `description`, `body`; Outside: `name`, `description`, `type`, `body`, `scope` |
+| `memory_patch` | Change part of a memory without sending it again whole | ✓ "Agent memory" | — | ✓ `write`, memory | Session: `name`, `revision`; Outside: `name`, `revision`, `scope` |
+| `memory_feedback` | Report that a memory you relied on is wrong or out of date | ✓ "Agent memory" | — | ✓ `write`, memory | Session: `name`, `revision`, `verdict`; Outside: `name`, `revision`, `verdict`, `scope` |
+| `memory_forget` | Take a memory out of use; its history stays | ✓ "Agent memory" | — | ✓ `write`, memory | Session: `name`, `revision`; Outside: `name`, `revision`, `scope` |
 | `memory_projects` | List the memory's projects with their id, repository and memory count | — | — | ✓ `read`, memory | — |
 
 ## Memory snapshots
@@ -149,11 +149,11 @@ How to read a cell:
 
 | Tool | What it does | Session | Assistant | Outside | Required parameters |
 |---|---|---|---|---|---|
-| `generate_image` | Generate an image from a prompt and return the file paths; it spends your plan's usage | ✓ "Image generation" | — | — | `prompt` |
+| `generate_image` | Generate an image from a prompt and return the file paths; it spends your plan's usage. Offered only while an image provider other than the session's own agent CLI is ready, and never in a session working in the image studio | ✓ "Image generation" | — | — | `prompt` |
 | `get_image_studio` | Read the image studio draft you are working on together | ✓ image studio | — | — | — |
 | `set_image_draft` | Change fields of the studio draft | ✓ image studio | — | — | — |
 | `add_image_knowledge` | Add a note to the studio's knowledge for its model or model family, only when you ask for it | ✓ image studio | — | — | `scope`, `key`, `note` |
-| `run_image_trial` | Make one trial image from the draft as it is | ✓ image studio | — | — | — |
+| `run_image_trial` | Make one trial image from the draft as it is; refused unless "Let the agent run a trial" is on in the studio | ✓ image studio | — | — | — |
 
 ## Branches and work items
 

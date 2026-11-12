@@ -146,12 +146,44 @@ def golden_tools(root: str) -> dict[str, list[dict]]:
     return out
 
 
-def required_params(schemas: list[dict]) -> list[str]:
-    """Parameters every advertised schema of the tool requires, in the first schema's order."""
-    reqs = [list((s.get("inputSchema") or {}).get("required") or []) for s in schemas]
-    if not reqs:
-        return []
-    return [p for p in reqs[0] if all(p in r for r in reqs[1:])]
+def _required(schema: dict) -> tuple[str, ...]:
+    return tuple((schema.get("inputSchema") or {}).get("required") or [])
+
+
+ROUTES = ("session", "assistant", "outside")
+
+
+def required_by_route(root: str) -> dict[str, dict[str, tuple[str, ...]]]:
+    """tool -> route -> the parameters a call on that route cannot leave out.
+
+    The same name is advertised with a different schema per audience (a session's text and
+    the assistant's), and the Control Plane's schema is its own; get_session_status, for one,
+    requires `name` from an assistant or from outside but not from a session. Two audiences of
+    one route that disagree cannot be summed up in one cell, so that stops the generator.
+    """
+    ws = _read_json(root, WS_GOLDEN)
+    cp = _read_json(root, CP_GOLDEN)
+    seen: dict[str, dict[str, dict[tuple[str, ...], str]]] = {}
+    for aud, keys in ws.get("audiences", {}).items():
+        route = "assistant" if aud.startswith("assistant") else "session"
+        for key in keys:
+            schema = ws.get("tools", {}).get(key)
+            if schema is None:
+                raise CatalogueError(f"{WS_GOLDEN}: audience '{aud}' lists {key}, which 'tools' does not hold")
+            seen.setdefault(_tool_name(key), {}).setdefault(route, {}).setdefault(_required(schema), aud)
+    for tool, schema in cp.get("tools", {}).items():
+        seen.setdefault(tool, {}).setdefault("outside", {}).setdefault(_required(schema), "/mcp")
+    out: dict[str, dict[str, tuple[str, ...]]] = {}
+    for tool, routes in seen.items():
+        for route, variants in routes.items():
+            if len(variants) > 1:
+                detail = "; ".join(f"{a}: {', '.join(r) or 'none'}" for r, a in variants.items())
+                raise CatalogueError(
+                    f"{tool} requires different parameters on audiences of the same route ({detail});"
+                    f" {GENERATOR} shows one list per route"
+                )
+            out.setdefault(tool, {})[route] = next(iter(variants))
+    return out
 
 
 def availability(root: str) -> dict[str, dict]:
@@ -202,6 +234,22 @@ def availability(root: str) -> dict[str, dict]:
                 continue
             row(tool)["assistant"] = [grant] if tool in names(nobrowser) else [grant, "browser"]
 
+    # Every tool the workspace golden holds has to land somewhere, and a tool in any session or
+    # assistant audience has to land in that column: a tool whose audience references went
+    # missing, or that sits in a combination the rules above do not read, would otherwise be
+    # printed as "not offered" without a word.
+    for aud, keys in ws.items():
+        col = "assistant" if aud.startswith("assistant") else "session"
+        for tool in {_tool_name(k) for k in keys}:
+            if not row(tool)[col]:
+                raise CatalogueError(
+                    f"{WS_GOLDEN}: {tool} is in audience '{aud}' but {GENERATOR} cannot place it in"
+                    f" the {col} column; say there what that combination means"
+                )
+    for key in _read_json(root, WS_GOLDEN).get("tools", {}):
+        if not any(key in keys for keys in ws.values()):
+            raise CatalogueError(f"{WS_GOLDEN}: {key} is in 'tools' but in no audience")
+
     entries: dict[str, list[tuple[str, str, str, str]]] = {}
     for aud, tools in cp.items():
         parts = aud.split(" ")
@@ -215,6 +263,9 @@ def availability(root: str) -> dict[str, dict]:
             raise CatalogueError(f"{CP_GOLDEN}: audience '{aud}' is not known to {GENERATOR}")
         for tool in tools:
             entries.setdefault(tool, []).append(tuple(parts))
+    for tool in _read_json(root, CP_GOLDEN).get("tools", {}):
+        if tool not in entries:
+            raise CatalogueError(f"{CP_GOLDEN}: {tool} is in 'tools' but in no audience")
     memory_endpoint, memory_gated = set(), set()
     for tool, es in entries.items():
         if any(e[0] == "memory" for e in es):
@@ -378,6 +429,26 @@ Agent Fleet は、エージェントやアシスタントが Agent Fleet 自体�
 """,
 }
 
+ROUTE_NAMES = {
+    "en": {"session": "Session", "assistant": "Assistant", "outside": "Outside"},
+    "ja": {"session": "セッション", "assistant": "アシスタント", "outside": "外部"},
+}
+
+
+def _params_cell(avail: dict, required: dict[str, tuple[str, ...]], lang: str) -> str:
+    """One list when every route that offers the tool requires the same; else one per route."""
+    fmt = lambda ps: ", ".join(f"`{p}`" for p in ps) or "—"  # noqa: E731
+    offered = [r for r in ROUTES if avail.get(r)]
+    lists = [required.get(r, ()) for r in offered]
+    if len(set(lists)) <= 1:
+        return fmt(lists[0] if lists else ())
+    groups: dict[tuple[str, ...], list[str]] = {}
+    for r, ps in zip(offered, lists):
+        groups.setdefault(ps, []).append(ROUTE_NAMES[lang][r])
+    sep = "、" if lang == "ja" else ", "
+    return "; ".join(f"{sep.join(names)}: {fmt(ps)}" for ps, names in groups.items())
+
+
 TABLE_HEAD = {
     "en": "| Tool | What it does | Session | Assistant | Outside | Required parameters |",
     "ja": "| ツール | できること | セッション | アシスタント | 外部 | 必須の引数 |",
@@ -390,8 +461,8 @@ def render(root: str, lang: str) -> str:
     if probs:
         raise CatalogueError("\n".join(probs))
     groups, rows = load_rows(root)
-    golden = golden_tools(root)
     avail = availability(root)
+    required = required_by_route(root)
     out = [INTRO[lang]]
     for g in groups:
         out.append(f"## {g[lang]}\n")
@@ -401,7 +472,7 @@ def render(root: str, lang: str) -> str:
             if r["group"] != g["group"]:
                 continue
             a = avail.get(r["tool"], {"session": [], "assistant": [], "outside": []})
-            params = ", ".join(f"`{p}`" for p in required_params(golden[r["tool"]])) or "—"
+            params = _params_cell(a, required.get(r["tool"], {}), lang)
             out.append(
                 f"| `{r['tool']}` | {r[lang]} | {_cell(a['session'], lang)}"
                 f" | {_cell(a['assistant'], lang)} | {_outside_cell(a['outside'], lang)} | {params} |"

@@ -1166,3 +1166,45 @@ class McpCatalogueTests(unittest.TestCase):
             [f"{self.cat.TOOLS_TSV}: create_session is advertised by a server but has no description row;"
              f" add one, then run {self.cat.GENERATOR}"],
         )
+
+    def test_cp_only_required_parameter_makes_the_page_stale(self):
+        self.cp["tools"]["remote"]["inputSchema"] = {"required": ["id"]}
+        self.write_inputs()
+        self.assertIn(f"{self.cat.PAGES['en']} is stale", self.errors())
+
+    def test_required_parameters_shown_per_route_when_they_differ(self):
+        for a in ("assistant-read", "assistant-read-nobrowser", "assistant-write", "assistant-write-nobrowser"):
+            self.ws["audiences"][a].append("remote#1")
+        self.ws["tools"]["remote#1"] = {"name": "remote"}
+        self.cp["tools"]["remote"]["inputSchema"] = {"required": ["id"]}
+        self.write_inputs()
+        self.generate()
+        self.assertEqual(self.errors(), "")
+        self.assertIn("| `remote` | Remote | — | ✓ AF read | ✓ `read` | Assistant: —; Outside: `id` |",
+                      (self.root / self.cat.PAGES["en"]).read_text())
+        self.assertIn("アシスタント: —; 外部: `id` |", (self.root / self.cat.PAGES["ja"]).read_text())
+
+    def test_one_route_with_two_required_lists(self):
+        self.ws["tools"]["alpha#2"] = {"name": "alpha", "inputSchema": {"required": ["other"]}}
+        self.ws["audiences"]["session-peer"] = ["alpha#2" if k == "alpha#1" else k
+                                                for k in self.ws["audiences"]["session-peer"]]
+        self.write_inputs()
+        self.assertIn("alpha requires different parameters on audiences of the same route", self.errors())
+
+    def test_tool_in_no_audience(self):
+        for keys in self.ws["audiences"].values():
+            keys.remove("alpha#1")
+        self.write_inputs()
+        self.assertIn("alpha#1 is in 'tools' but in no audience", self.errors())
+
+    def test_cp_tool_in_no_audience(self):
+        for keys in self.cp["audiences"].values():
+            keys.clear()
+        self.write_inputs()
+        self.assertIn("remote is in 'tools' but in no audience", self.errors())
+
+    def test_tool_in_an_audience_the_rules_cannot_place(self):
+        for a in ("session-all", "session-all-write"):
+            self.ws["audiences"][a].remove("peer_only#1")
+        self.write_inputs()
+        self.assertIn("peer_only is in audience 'session-peer' but", self.errors())

@@ -4,7 +4,7 @@ af_stop_after_turn	finish	Schedule this session to stop at the end of its turn, 
 propose_session_handoff	finish	Propose to you the first prompt of a follow-up session; it starts nothing itself	続きの作業用のセッションの最初のプロンプトを利用者に提案します。自分では何も起動しません
 list_my_sessions	view	List the workspace's sessions with their kind, state and working directory	ワークスペースのセッションを、種類・状態・作業ディレクトリ付きで一覧します
 get_session_status	view	Show a session's state (working, idle, asking, waiting for plan approval) and its pending question	セッションの今の状態（作業中・待機中・質問中・プラン待ち）と保留中の質問を返します
-get_session_output	view	Read a session's recent terminal output, continuing from the last read; a session may read only its own children	セッションの最近の端末出力を、前回の続きから読みます。セッションから使うときは自分の子だけです
+get_session_output	view	Read a session's recent output. In a session or an assistant it continues from the last read; from outside, pass the returned cursor as `since` to continue, or each call returns the latest tail. A session may read only its own children	セッションの最近の出力を読みます。セッションとアシスタントからは前回の続きから読みます。外部からは、返ってきたカーソルを `since` に渡すと続きを、渡さなければ毎回最新の末尾を返します。セッションから使うときは自分の子だけです
 get_session_usage	view	Show each session's context use and cumulative token use	セッションごとのコンテキスト使用量と累積トークン消費を返します
 get_agent_usage	view	Show each agent CLI's subscription usage and rate limits	各エージェント CLI のサブスクリプション使用量とレート制限を返します
 search_sessions	view	Full-text search over what was said in this workspace's past sessions, stopped and archived ones included	このワークスペースの過去のセッション（停止中・アーカイブ済みを含む）の会話を全文検索します
@@ -61,11 +61,11 @@ detach_chromium	browser	Drop the attachment only; the page and the browser stay 
 request_browser_action	browser	Ask you to do something on the page, such as signing in, or update that request	利用者にログインなどの操作を引き渡す依頼を作成・更新します
 get_browser_action_result	browser	Read what you reported for that request: done, cancelled or pending	利用者が申告した操作の結果（完了・取り消し・保留）を確認します
 set_chromium_control_mode	browser	Switch the attachment between view-only, your control and locked	接続の入力モード（閲覧のみ・利用者が操作・ロック）を切り替えます
-generate_image	image	Generate an image from a prompt and return the file paths; it spends your plan's usage	プロンプトから画像を生成し、ファイルのパスを返します。利用者のプランの枠を消費します
+generate_image	image	Generate an image from a prompt and return the file paths; it spends your plan's usage. Offered only while an image provider other than the session's own agent CLI is ready, and never in a session working in the image studio	プロンプトから画像を生成し、ファイルのパスを返します。利用者のプランの枠を消費します。そのセッション自身のエージェント CLI 以外の画像の提供元が使える状態のときだけ出て、画像スタジオで作業しているセッションには出ません
 get_image_studio	image	Read the image studio draft you are working on together	利用者と一緒に作業しているスタジオのドラフトを読みます
 set_image_draft	image	Change fields of the studio draft	スタジオのドラフトの項目を変更します
 add_image_knowledge	image	Add a note to the studio's knowledge for its model or model family, only when you ask for it	スタジオのモデルや系統の知識メモに 1 行追記します（利用者が頼んだときだけ）
-run_image_trial	image	Make one trial image from the draft as it is	ドラフトのまま試しの画像を 1 枚作ります
+run_image_trial	image	Make one trial image from the draft as it is; refused unless "Let the agent run a trial" is on in the studio	ドラフトのまま試しの画像を 1 枚作ります。スタジオで「エージェントの試走を許す」がオンでないと拒否されます
 branch_name	work	Decide a branch name and its base from your branch naming rules; called before creating or renaming a branch	利用者のブランチ命名規則に沿ったブランチ名とベースを決めます。ブランチを作る・改名する前に呼びます
 link_work_item	work	Link this session to an issue, ticket or pull request, shown on its row in the Console	自分のセッションを Issue・チケット・PR に紐づけます。Console の行に表示されます
 watch	watch	Get a notice in this session when a pull request or another watched subject changes, instead of polling	PR などの対象が変わったときに、ポーリングせずにこのセッションへ通知を受けます
