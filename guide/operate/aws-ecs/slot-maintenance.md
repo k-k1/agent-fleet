@@ -200,7 +200,7 @@ The same sweep looks for the opposite shape: a slot whose ECS agent is connected
 
 A slot is considered wedged when it holds a home, no start is in flight, EC2 says `running` (launched more than the boot grace ago), its ECS agent is connected, and either:
 
-- a task of its workspace has been `STOPPING` for longer than the stop timeout (`AF_STOP_GRACE_SEC`, 30 seconds by default) plus 5 minutes, or
+- a task of its workspace has been `STOPPING` for longer than 7 minutes (the 120-second ceiling of the stop timeout plus 5 minutes), or
 - the workspace Agent drops the Control Plane's health probe while ECS reports the task `HEALTHY`. The probe is made only when every task of the service is on that slot; during a task replacement it is unknown and counts for nothing
 
 | Stage | What happens |

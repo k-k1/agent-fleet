@@ -242,15 +242,31 @@ func (f *ecsEC2Factory) serviceTasks(ctx context.Context, service string) ([]ecs
 // containerInstanceSlots maps container instance ARNs to EC2 instance ids. ok is false when
 // any ARN could not be resolved (a failure, a missing instance, a failed call).
 func (f *ecsEC2Factory) containerInstanceSlots(ctx context.Context, arns []string) (map[string]string, bool) {
-	out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
-		Cluster: aws.String(f.base.cfg.cluster), ContainerInstances: arns,
-	})
-	if err != nil || len(out.Failures) > 0 || len(out.ContainerInstances) != len(arns) {
-		return nil, false
+	// Several tasks can sit on one container instance, and the API answers once per distinct
+	// instance, so the input is deduplicated before the counts are compared. An empty ARN
+	// cannot be placed: not an answer.
+	seen := map[string]bool{}
+	var uniq []string
+	for _, a := range arns {
+		if a == "" {
+			return nil, false
+		}
+		if !seen[a] {
+			seen[a] = true
+			uniq = append(uniq, a)
+		}
 	}
-	m := make(map[string]string, len(arns))
-	for _, ci := range out.ContainerInstances {
-		m[aws.ToString(ci.ContainerInstanceArn)] = aws.ToString(ci.Ec2InstanceId)
+	m := make(map[string]string, len(uniq))
+	for _, chunk := range chunkStrings(uniq, 100) {
+		out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster: aws.String(f.base.cfg.cluster), ContainerInstances: chunk,
+		})
+		if err != nil || len(out.Failures) > 0 || len(out.ContainerInstances) != len(chunk) {
+			return nil, false
+		}
+		for _, ci := range out.ContainerInstances {
+			m[aws.ToString(ci.ContainerInstanceArn)] = aws.ToString(ci.Ec2InstanceId)
+		}
 	}
 	return m, true
 }

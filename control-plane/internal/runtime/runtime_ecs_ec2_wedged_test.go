@@ -339,3 +339,71 @@ func TestPoolStatusShowsWedgedSince(t *testing.T) {
 		}
 	}
 }
+
+// A task registered while AF_STOP_GRACE_SEC was larger outlives a shorter setting: the limit
+// must not follow the CP's current value.
+func TestSweepWedgedSlotStopLimitIgnoresTheCurrentStopGraceSetting(t *testing.T) {
+	t.Setenv("AF_STOP_GRACE_SEC", "10")
+	h, f, events, _ := wedgedHarness(t)
+	h.ci.running = nil
+	// 6 min is past 10 s + 5 min but inside the 120 s ceiling + 5 min.
+	h.ci.stopping = []ecstypes.Task{stuckStoppingTask(6 * time.Minute)}
+	for i := 0; i < 2; i++ {
+		_ = f.sweep(context.Background())
+	}
+	if s := wedgedStampOf(h); s != "" || len(*events) != 0 {
+		t.Fatalf("a stop within the stopTimeout ceiling plus grace was called wedged: %q %v", s, *events)
+	}
+}
+
+// Stuck tasks pile up on one slot: the container instance is asked about once, and the
+// answer is not read as incomplete.
+func TestSweepWedgedSlotSeveralStuckTasksOnOneSlot(t *testing.T) {
+	h, f, _, _ := wedgedHarness(t)
+	h.ci.running = nil
+	a, b := stuckStoppingTask(40*time.Minute), stuckStoppingTask(50*time.Minute)
+	b.TaskArn = aws.String("arn:task/older")
+	h.ci.stopping = []ecstypes.Task{a, b}
+	_ = f.sweep(context.Background())
+	if wedgedStampOf(h) == "" {
+		t.Fatal("two stuck tasks on one container instance were not detected")
+	}
+	// The helper itself: duplicates and chunking, an empty ARN is refused.
+	got, ok := f.containerInstanceSlots(context.Background(), []string{"arn:ci/i-dark", "arn:ci/i-dark"})
+	if !ok || got["arn:ci/i-dark"] != "i-dark" {
+		t.Fatalf("duplicate ARNs: %v %v", got, ok)
+	}
+	if _, ok := f.containerInstanceSlots(context.Background(), []string{"arn:ci/i-dark", ""}); ok {
+		t.Fatal("an empty ARN was accepted")
+	}
+}
+
+// With the dark scan off, a probe the wedged scan stored must not outlive the pass that
+// skipped the slot.
+func TestLastAgentProbeDoesNotOutliveThePassWithDarkOff(t *testing.T) {
+	ctx := context.Background()
+	for name, change := range map[string]func(h *ec2Harness){
+		"live claim": func(h *ec2Harness) {
+			h.ec2.volumes["vol-1"].Tags = append(h.ec2.volumes["vol-1"].Tags,
+				ec2tagKV(EC2TagClaim, "i-dark"), ec2tagKV(ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339)))
+		},
+		"cluster read fails": func(h *ec2Harness) { h.ci.describeErr = errors.New("throttled") },
+		"task read fails": func(h *ec2Harness) {
+			h.ci.taskFailures = []ecstypes.Failure{{Arn: aws.String("arn:task/af-ws-acme-alice"), Reason: aws.String("MISSING")}}
+		},
+		"home detached": func(h *ec2Harness) { delete(h.ec2.volumes, "vol-1") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, f, _, _ := wedgedHarness(t)
+			_ = f.sweep(ctx)
+			if r, _, ok := f.LastAgentProbe("i-dark"); !ok || r != AgentProbeFailed {
+				t.Fatalf("setup: LastAgentProbe = %v, %v", r, ok)
+			}
+			change(h)
+			_ = f.sweep(ctx)
+			if r, _, ok := f.LastAgentProbe("i-dark"); ok {
+				t.Fatalf("stale probe %v survived the pass", r)
+			}
+		})
+	}
+}

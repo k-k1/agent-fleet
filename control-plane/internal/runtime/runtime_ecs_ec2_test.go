@@ -999,7 +999,12 @@ func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, i
 		return nil, err
 	}
 	out := &ecs.DescribeContainerInstancesOutput{}
+	seen := map[string]bool{} // the real API answers once per distinct instance
 	for _, arn := range in.ContainerInstances {
+		if seen[arn] {
+			continue
+		}
+		seen[arn] = true
 		id := strings.TrimPrefix(arn, "arn:ci/")
 		if f.missing[id] {
 			out.Failures = append(out.Failures, ecstypes.Failure{Arn: aws.String(arn), Reason: aws.String("MISSING")})

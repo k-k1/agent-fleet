@@ -499,11 +499,12 @@ second predicate beside the dark one, with the same scope, the same anchor rules
   whose ECS agent is silent belongs to the dark scan (and to #2447's blocked-phase line), so one box never produces both
   episodes;
 - **either** a task of the workspace service on this slot has been `STOPPING` (or `DEACTIVATING` / `DEPROVISIONING`) for longer
-  than its `stopTimeout` (`AF_STOP_GRACE_SEC`, 30 s by default) plus `wedgedStopGrace` (5 minutes, a constant: a healthy stop ends
-  within the timeout plus the agent's report), **or** the workspace Agent probe (`LastAgentProbe`, #3960 / PR #3971) is `failed`
+  than 120 s plus `wedgedStopGrace` (5 minutes; both constants). 120 s is the ceiling of every `stopTimeout` this repo registers
+  (`AF_STOP_GRACE_SEC` is clamped to 1–120 s), so a task registered under a different setting than the CP's current one is not
+  misjudged; a healthy stop ends within the timeout plus the agent's report, **or** the workspace Agent probe (`LastAgentProbe`, #3960 / PR #3971) is `failed`
   while ECS reports the task on this slot `HEALTHY`.
 
-*What is not a signal.* A task stopping within its `stopTimeout` plus grace; a stopping task with no stop time (it cannot be
+*What is not a signal.* A task stopping within 120 s plus the grace; a stopping task with no stop time (it cannot be
 dated); a deployment rolling (more than one task, or a task on another box, or a task not yet `HEALTHY`); a probe that is
 `healthy`; a probe that is `unknown`. Each of these leaves no stamp, and a probe that is `unknown` or a stopping task that
 cannot be dated also leaves an existing stamp alone.

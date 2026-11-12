@@ -29,10 +29,16 @@ const (
 	wedgedActionOff    = "off"
 	wedgedActionDetect = "detect"
 
-	// wedgedStopGrace is added to the task's stopTimeout before a STOPPING task counts. The
-	// stop of a healthy slot ends within stopTimeout plus the agent's report; the incident's
-	// task stayed STOPPING for more than 30 minutes.
+	// wedgedStopGrace is added to the task definition's stopTimeout before a STOPPING task
+	// counts. The stop of a healthy slot ends within stopTimeout plus the agent's report; the
+	// incident's task stayed STOPPING for more than 30 minutes.
 	wedgedStopGrace = 5 * time.Minute
+
+	// wedgedStopLimit is how long a task may be STOPPING before it counts. stopGraceSec, which
+	// sets every task definition this repo registers (docker stop -t and the ECS stopTimeout),
+	// is clamped to 1-120 s, so 120 s is an upper bound on any such task's stopTimeout whatever
+	// the CP's setting was when the task was registered; the grace comes on top.
+	wedgedStopLimit = 120*time.Second + wedgedStopGrace
 
 	wedgedSignalStopping    = "task_stopping"
 	wedgedSignalProbeFailed = "agent_probe_failed"
@@ -247,8 +253,8 @@ func (f *ecsEC2Factory) wedgedVerdictFor(ctx context.Context, pass *darkProbePas
 		return wedgedVerdict{}
 	}
 
-	// Signal 1: an old STOPPING task on this slot.
-	limit := time.Duration(stopGraceSec())*time.Second + wedgedStopGrace
+	// Signal 1: an old STOPPING task on this slot. The limit does not depend on this CP's
+	// current AF_STOP_GRACE_SEC: a task outlives a changed setting.
 	var stuck []ecstypes.Task
 	undated := false
 	for _, t := range tasks {
@@ -261,7 +267,7 @@ func (f *ecsEC2Factory) wedgedVerdictFor(ctx context.Context, pass *darkProbePas
 			undated = true // cannot tell a stuck stop from a young one
 			continue
 		}
-		if now.Sub(*t.StoppingAt) >= limit {
+		if now.Sub(*t.StoppingAt) >= wedgedStopLimit {
 			stuck = append(stuck, t)
 		}
 	}

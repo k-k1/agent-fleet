@@ -49,6 +49,9 @@ func (f *ecsEC2Factory) sweep(ctx context.Context) error {
 	}
 	// First in the pass, so any later stage that learns to act on a slot (ADR 0121) sees the
 	// stamp this scan just wrote.
+	// One reset for both scans: a slot neither of them probed this pass must not keep an
+	// earlier pass's result, whichever scan is switched off or skipped it.
+	f.probes.reset()
 	f.sweepDarkSlots(ctx, vols.Volumes)
 	f.sweepWedgedSlots(ctx, vols.Volumes)
 	for i := range vols.Volumes {
