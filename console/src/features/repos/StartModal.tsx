@@ -4,6 +4,8 @@
 // (repo-less) agent session, and the folded "other" track (shell direct / SSM —
 // its host picker lives here since NewSessionModal was retired in Ph3). Entry
 // points that already know the place (the repo row's launch) skip this hub.
+import { useEffectiveDefaults } from "../../core/store/uiState.ts";
+import { teamFirst } from "./tenantLaunchDefaults.ts";
 import { useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -104,7 +106,11 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
   }, []);
   // Base clones only — worktrees are task copies, launched from their tree rows.
   const bases = groupedRepos(repos).map((g) => g[0]);
-  const visibleBases = bases.filter((r) => {
+  // Team repositories first (ADR 0114 P3): the CP's last-known answer, so they lead even while the
+  // workspace is stopped and the list is the cached one.
+  const eff = useEffectiveDefaults();
+  const { rows: orderedBases, team: teamBases } = teamFirst(bases, eff?.repos);
+  const visibleBases = orderedBases.filter((r) => {
     const q = repoQuery.trim().toLocaleLowerCase();
     return !q || r.name.toLocaleLowerCase().includes(q) || (r.branch || "").toLocaleLowerCase().includes(q);
   });
@@ -379,6 +385,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
                   <span className="start-row-body">
                     <span className="start-row-title">{r.name}</span>
                     <span className="start-row-desc">
+                      {teamBases.has(r) ? tr("start.team_repo") + " · " : ""}
                       {r.branch || ""}
                       {r.dirty ? tr("start.dirty_suffix") : ""}
                     </span>

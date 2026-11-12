@@ -29,7 +29,10 @@ let lcppModels: { id: string; label: string }[] = [];
 let ssmProfiles: unknown[] = [];
 // opencode's launch model catalog (GET /agents/opencode/models).
 let opencodeModels: { id: string; label: string }[] = [];
+// Whether PATCH api/me/ui-state (the member's own default) succeeds.
+let patchResult = true;
 const apiMock = vi.fn(async (url: string) => {
+  if (url.includes("api/me/ui-state")) return patchResult ? {} : { error: { message: "offline" } };
   if (url.includes("api/ssm/profiles")) {
     return ssmProfiles;
   }
@@ -58,6 +61,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
+const { useUIStateStore: uiStore } = await import("../../core/store/uiState.ts");
 const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
@@ -192,6 +196,7 @@ beforeEach(() => {
     { name: "busy", unix: 1, worktree_path: "/home/dev/repos/app@busy" },
   ];
   lcppModels = [];
+  patchResult = true;
   apiMock.mockClear();
   onLaunch = vi.fn<Launch>(async () => ({ ok: true }));
   onClose = vi.fn<() => void>();
@@ -887,3 +892,138 @@ describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
   });
 });
 
+
+// ADR 0114 P3: the tenant's effective launch defaults prefill the dialog, from the cached CP answer.
+describe("tenant launch defaults", () => {
+  const useUIStateStore = uiStore;
+  afterEach(() => useUIStateStore.setState({ state: {} }));
+
+  const ops = { grafana_url: "", aws_sso_start_url: "", aws_account_id: "", aws_role_name: "" };
+  const answer = (agent: string, extra: Record<string, unknown> = {}) => ({
+    effective: { launch: { agent, model: "gpt-x", driver: "", permission_mode: "", budget_usd: 5 }, repos: [], ops },
+    defaults: { agent, launch: { agent: "", model: "gpt-x", driver: "", permission_mode: "", budget_usd: 5 } },
+    ...extra,
+  });
+
+  it("starts on the tenant's agent, model and budget, and launches with them", async () => {
+    useUIStateStore.setState({ state: answer("codex") as never });
+    await render(["claude", "codex"]);
+    await click(byText("Start in a worktree"));
+    const o = launchedWith();
+    expect(o.kind).toBe("codex");
+    expect(o.model).toBe("gpt-x");
+    expect(o.spendCapUsd).toBe(5);
+  });
+
+  it("fills in a late CP answer for untouched fields only (C2)", async () => {
+    await render(["claude", "codex"]);
+    expect(buttons().find((b) => b.classList.contains("active") && /claude/i.test(b.textContent || ""))).toBeTruthy();
+    await act(async () => useUIStateStore.setState({ state: answer("codex") as never }));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("codex");
+    expect(launchedWith().model).toBe("gpt-x");
+    expect(launchedWith().spendCapUsd).toBe(5);
+  });
+
+  it("leaves a budget the member typed when the late answer arrives (C2)", async () => {
+    await render(["claude", "codex"]);
+    await expand("More");
+    const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "9");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => useUIStateStore.setState({ state: answer("claude") as never }));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().spendCapUsd).toBe(9);
+  });
+
+  it("re-resolves the tenant's agent when the kinds list lands after a cached answer (C2)", async () => {
+    useUIStateStore.setState({ state: answer("codex") as never });
+    await render([]);
+    await act(async () => root!.render(<LaunchModal repo="app" branch="main" kinds={["claude", "codex"]} onClose={onClose} onLaunch={onLaunch} />));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("codex");
+  });
+
+  it("does not save a default the CP would refuse, and reports a failed save (C6)", async () => {
+    await render(["claude"]);
+    await expand("More");
+    const save = byText("Use as my default");
+    expect(save.disabled).toBe(false);
+    patchResult = false;
+    await click(save);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Could not save");
+  });
+
+  it("keeps a permission the member set by hand when a late answer changes the agent (C8)", async () => {
+    await render(["claude", "cursor"]);
+    await expand("More");
+    // The permission selector is only offered for kinds with that choice; set it through the UI.
+    const sel = must([...document.querySelectorAll<HTMLSelectElement>("select")].find((e) => [...e.options].some((o) => o.value === "skip")), "permission select");
+    await act(async () => {
+      sel.value = "ask";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => useUIStateStore.setState({ state: answer("cursor", { effective: { launch: { agent: "cursor", model: "", driver: "", permission_mode: "skip", budget_usd: null }, repos: [], ops } }) as never }));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("cursor");
+    expect(launchedWith().skipPermissions).toBe(false);
+  });
+
+  it("a budget saved by the member follows them to another agent card (C9)", async () => {
+    useUIStateStore.setState({
+      state: answer("claude", { launch: { agent: "codex", model: "", driver: "", permission_mode: "", budget_usd: 0 }, effective: { launch: { agent: "claude", model: "", driver: "", permission_mode: "", budget_usd: 0 }, repos: [], ops } }) as never,
+    });
+    await render(["claude", "codex"]);
+    await click(byText("Codex"));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("codex");
+    expect(launchedWith().spendCapUsd).toBe(0);
+  });
+
+  it("will not save an unparsable budget as unset (C10)", async () => {
+    await render(["claude"]);
+    await expand("More");
+    const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
+    for (const bad of ["abc", "1.234", "100001"]) {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, bad);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(byText("Use as my default").disabled).toBe(true);
+    }
+  });
+
+  it("keeps a budget typed while the kinds list was still resolving (C11)", async () => {
+    useUIStateStore.setState({ state: answer("codex") as never });
+    await render([]);
+    await expand("More");
+    const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "9");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => root!.render(<LaunchModal repo="app" branch="main" kinds={["codex"]} onClose={onClose} onLaunch={onLaunch} />));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("codex");
+    expect(launchedWith().spendCapUsd).toBe(9);
+  });
+
+  it("does not move to another agent under a model picked by hand (C12)", async () => {
+    await render(["claude", "codex"]);
+    const picked = byText("Sonnet");
+    await click(picked);
+    await act(async () => useUIStateStore.setState({ state: answer("codex") as never }));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("claude");
+    expect(launchedWith().model).toMatch(/sonnet/i);
+  });
+
+  it("changes nothing without a cached answer", async () => {
+    await render(["claude", "codex"]);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("claude");
+    expect(launchedWith().spendCapUsd).toBeUndefined();
+  });
+});

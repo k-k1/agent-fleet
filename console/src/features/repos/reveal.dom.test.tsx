@@ -17,6 +17,7 @@ vi.mock("../../core/api/client.ts", () => ({
   }),
   isTransientErr: () => false,
   getTenant: () => "",
+  getUser: () => "",
 }));
 
 // jsdom refuses `view: window` in a MouseEvent init ("member view is not of type Window"), so

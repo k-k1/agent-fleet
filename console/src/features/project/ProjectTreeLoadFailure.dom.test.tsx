@@ -13,6 +13,7 @@ vi.mock("../../core/api/client.ts", () => ({
   api: vi.fn(async (url: string) => (url.startsWith("api/repos") ? answer() : {})),
   isTransientErr: (d: { error?: { status?: number } }) => (d?.error?.status ?? 0) >= 500,
   getTenant: () => "",
+  getUser: () => "",
 }));
 
 const { ProjectTree } = await import("./ProjectTree.tsx");
