@@ -3,7 +3,7 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
-## [0.44.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.44.0) — pending
+## [0.44.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.44.0) — 2026-11-12
 
 スケジュールが、保存した作業項目クエリに新しい結果が出たときだけセッションを起動できるようになり、
 チャットのスレッドから `!start` と `!attach` で新しいセッションを始めたり、別のセッションへ移したり

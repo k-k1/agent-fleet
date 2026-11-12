@@ -3,7 +3,7 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
-## [0.44.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.44.0) — pending
+## [0.44.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.44.0) — 2026-11-12
 
 A schedule can now wait for a saved work item query to turn up something new before it starts a
 session, and a chat thread can start a new session or move to another one with `!start` and

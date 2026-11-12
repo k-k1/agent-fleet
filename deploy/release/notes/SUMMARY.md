@@ -13,7 +13,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
-## [0.44.0](0.44.0.md) — pending
+## [0.44.0](0.44.0.md) — 2026-11-12
 
 **CLI pins** — Claude Code 2.1.322, Codex 0.167.1, Copilot 1.0.109, OpenCode 2.2.7, Muse Code 1.4.15-R8339.1
 

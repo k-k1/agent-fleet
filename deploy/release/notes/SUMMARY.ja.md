@@ -12,7 +12,7 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
-## [0.44.0](0.44.0.ja.md) — pending
+## [0.44.0](0.44.0.ja.md) — 2026-11-12
 
 **CLI ピン** — Claude Code 2.1.322 / Codex 0.167.1 / Copilot 1.0.109 / OpenCode 2.2.7 / Muse Code 1.4.15-R8339.1
 
