@@ -8,8 +8,8 @@ user-invocable: false
 Read when: a command touches the user's AWS accounts or resources (deploys, writes, and reads
 too — anything whose account matters), or an AWS command failed with "Unable to locate
 credentials", an SSO/token error, "The config profile (X) could not be found", or `af-aws-exec`
-exited 3. The member-side explanation is `user/integrations/aws-sso.md` in the user guide, and every option,
-exit status and rule is in `ref/cli/af-aws-exec.md`.
+exited 3. The member-side explanation is https://agent-fleet.org/docs/user/integrations/aws-sso/, and every option,
+exit status and rule is in https://agent-fleet.org/docs/ref/cli/af-aws-exec/.
 
 ## The trap
 
@@ -26,8 +26,7 @@ another process, and do not unset `AWS_EC2_METADATA_DISABLED`.
 
 The variable only stops tools that honour it. The network block behind it is the operator's: it
 holds once they have finished the 0.26.0 migration (retained ecs-ec2 slots replaced, existing
-ec2-single instances moved to hop limit 1 — `operate/secure/controls.md`, "Keep the host's cloud identity from workspaces",
-in the user guide). Until then, a tool that ignores the variable can still reach the host's
+ec2-single instances moved to hop limit 1 — https://agent-fleet.org/docs/operate/secure/controls/#keep-the-hosts-cloud-identity-from-workspaces). Until then, a tool that ignores the variable can still reach the host's
 instance role, so nothing you see in the shell proves the boundary.
 
 That isolation is not everywhere. A deployment can hand the ECS task role back
@@ -207,8 +206,7 @@ for an approval nobody sees, and a code from you is exactly what the user is tol
 ## A local emulator is not the user's account
 
 To try AWS code without an account, the user may run MiniStack (an AWS API emulator) in the
-workspace; the setup is `user/workspace/aws-emulator.md` in the guide, "Try AWS code against a
-local emulator". Reach it only through a dedicated profile, under a name used nowhere else, that carries
+workspace; the setup is https://agent-fleet.org/docs/user/workspace/aws-emulator/. Reach it only through a dedicated profile, under a name used nowhere else, that carries
 its `endpoint_url` and dummy keys (`aws --profile ministack …`), never by exporting dummy keys. Name
 that profile on every command: where the workspace's own role is handed back, or on the native
 runtime, a command that leaves it out runs against real AWS. A client that does not read

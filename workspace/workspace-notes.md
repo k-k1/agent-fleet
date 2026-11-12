@@ -41,7 +41,7 @@ skip and say so.
   Connections); read or touch the agents' internal state (`~/.config/agent-fleet`, `~/.claude`,
   `~/.codex`, `~/.local/share/opencode` hold credentials and the encrypted store).
   This binds you, the agent; your user's own personal `skills/`, `agents/` and hooks in
-  `$CLAUDE_CONFIG_DIR` are theirs to manage (`user/agents/bring-claude-setup.md`) and you edit them only when
+  `$CLAUDE_CONFIG_DIR` are theirs to manage (https://agent-fleet.org/docs/user/agents/bring-claude-setup/) and you edit them only when
   they ask, never the credentials or Fleet's own hook entries.
 - Run host-wide destructive commands (runaway `rm -rf`, fork bombs, mining, port scans), or hog
   the shared, memory-constrained host with heavy parallel builds.
@@ -52,7 +52,7 @@ skip and say so.
 - Filing a GitHub issue — Agent Fleet's own tracker or a user's repository — is visible outside
   this workspace: strip secrets, internal hostnames/URLs, and tenant/customer names from logs,
   screenshots or error text before pasting them in, and describe the environment generically
-  instead. Where to file feedback on Agent Fleet itself is `user/troubleshooting/report.md` in the guide.
+  instead. Where to file feedback on Agent Fleet itself is https://agent-fleet.org/docs/user/troubleshooting/report/.
 
 ## Git branches: stay on the branch the session started on
 - **Do not create, switch, or rename branches on your own initiative** — not even when the
@@ -258,11 +258,13 @@ directory belongs to someone else.
   hand them the command it printed. Which tools the token reaches: `notes/gcp.md`.
 
 ## Answering questions about this Workspace
-The user guide is at `/usr/local/share/agent-fleet/docs` (`user/` for people running agents,
-`admin/`, `operate/`, `ref/`); grep it and cite the file rather than answering from memory, and
-match the shelf to who is asking — a member never runs host-level `operate/` steps. The developer
-documentation (architecture, decisions, journals) is **not** in any container. How to read the
-tree and its shelves: `notes/environment.md`.
+The user guide is https://agent-fleet.org/docs/ (`user/` for people running agents, `admin/`,
+`operate/`, `ref/`; Japanese under `/docs/ja/`): read the page there and cite its URL rather than
+answering from memory, and match the shelf to who is asking — a member never runs host-level
+`operate/` steps. When the site cannot be reached, the same pages are under
+`/usr/local/share/agent-fleet/docs` as `<page>.md`. The developer documentation (architecture,
+decisions, journals) is **not** on the site or in any container. How to read the guide and its
+shelves: `notes/environment.md`.
 
 ## Topic files (read the one for your situation, before you start)
 
@@ -278,6 +280,7 @@ All under `/usr/local/share/agent-fleet/notes/`:
 | run any Google Cloud command about the user's projects (`gcloud`, Terraform's Google provider, `kubectl` against GKE, a client library), or one failed with no credentials, a reauthentication error, or `af-gcloud-exec` exit 3 | `/usr/local/share/agent-fleet/notes/gcp.md` |
 | act on an `[agent-fleet…]` note or peer envelope, hand off, message a peer, generate an image, add MCP or change agent configuration | `/usr/local/share/agent-fleet/notes/agent-fleet.md` |
 
-Any guide path named here or in a topic file has to exist in the shipped guide, and any topic file
-named here has to exist in the image — `scripts/docs-check.py` enforces both, because a stale
-pointer in this file misdirects every agent in every container at once.
+A guide page named here or in a topic file is named by its site URL, which has to resolve to a
+page (and heading) of the guide, and any topic file named here has to exist in the image —
+`scripts/docs-check.py` enforces both, because a stale pointer in this file misdirects every agent
+in every container at once.

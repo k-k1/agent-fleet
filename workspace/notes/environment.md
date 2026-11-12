@@ -1,6 +1,6 @@
 ---
 name: af-environment
-description: "Agent Fleet workspace: what survives recreate / clean home / stop, the /scratch task disk, checking your memory and CPU limits (cgroup v2, exit 137 = OOM), what is not installed (no root, no Docker, no DB servers), and how to answer questions about this environment from the shipped guide. Read before planning around a missing tool, before a recreate, or when the user asks how the workspace behaves."
+description: "Agent Fleet workspace: what survives recreate / clean home / stop, the /scratch task disk, checking your memory and CPU limits (cgroup v2, exit 137 = OOM), what is not installed (no root, no Docker, no DB servers), and how to answer questions about this environment from the user guide at agent-fleet.org/docs. Read before planning around a missing tool, before a recreate, or when the user asks how the workspace behaves."
 user-invocable: false
 ---
 # This Workspace: persistence, disk, resources, what is missing, where the docs are
@@ -53,7 +53,7 @@ unset — there is no working disk and every path stays where you put it.
 - Move one yourself any time: `af-scratch target` (`af-scratch --status` lists what is
   relocated). Build output only (`target`, `build`, `dist`) — **never tracked files or
   uncommitted work**, which an ordinary stop destroys. Every form and exit code:
-  `ref/cli/af-scratch.md` in the guide.
+  https://agent-fleet.org/docs/ref/cli/af-scratch/.
 
 ## Memory / CPU — how to check your own numbers
 
@@ -121,7 +121,7 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   `workspace-agent install-pg-client`. **Stop before heavy builds** (`af-db down`) — Postgres
   holds ≈ 47 MB and MySQL ≈ 226 MB of cgroup memory; both idle-stop after 30 min. Manage
   both from the **Settings → Databases** tab. Subcommands, URL forms, exit codes:
-  `ref/cli/af-db.md` in the guide. For other DB servers (`sqlite3`,
+  https://agent-fleet.org/docs/ref/cli/af-db/. For other DB servers (`sqlite3`,
   `redis-cli`, …): run tests against a service the user provides, or skip and say so.
 - `ss`, `lsof`, `netstat` are **not installed**; probe a port with
   `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/`.
@@ -140,21 +140,25 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
 
 ## Answering questions about this Workspace / environment
 
-The user guide is at `/usr/local/share/agent-fleet/docs` — answer from what is there. (Usually
-bind-mounted read-only by the Control Plane; where it can't mount, the Agent downloads the same
-tree at start, so on a fresh container the directory may fill a moment after boot.) When asked how
-this environment behaves (persistence, "recreate" vs "clean home" vs Stop→Start, build/memory
-limits, gh transparent auth, connections, previews, MCP, toolchains, …), grep that tree and cite
-the file rather than answering from memory — specs drift:
-`grep -rni "<topic>" /usr/local/share/agent-fleet/docs`. If the directory is absent **or empty**,
-answer from the policy's highlights and say the docs aren't available here.
+The user guide is https://agent-fleet.org/docs/ — answer from what is there. When asked how this
+environment behaves (persistence, "recreate" vs "clean home" vs Stop→Start, build/memory limits,
+gh transparent auth, connections, previews, MCP, toolchains, …), read the page and cite its URL
+rather than answering from memory — specs drift. Each page `<page>.md` of the guide is at
+`https://agent-fleet.org/docs/<page>/` (a shelf's `README.md` at the shelf's URL), Japanese at
+`https://agent-fleet.org/docs/ja/<page>/`; the site has a search box. The site shows the latest
+release, so a page can describe behaviour newer than this deployment.
 
-**Every container gets the same tree** — it is not cut by role (ADR 0064), so you can rely on all
-of it being there:
+When the site cannot be reached (outbound network may be closed), the same pages are under
+`/usr/local/share/agent-fleet/docs` as `<page>.md`: `grep -rni "<topic>"` that directory, but
+still cite the site URL. (The Control Plane usually bind-mounts it read-only; otherwise the Agent
+downloads it at start, so it may fill a moment after boot.) If neither is available, answer from
+the policy's highlights and say the guide isn't reachable here.
+
+**The guide is not cut by role** (ADR 0064): every shelf is there for everyone.
 
 | Shelf | Reader |
 |---|---|
-| `user/` | someone running agents from the Console — one page per task, start here for "how do I…"; `user/start/without-terminal.md` for someone who never opens the terminal |
+| `user/` | someone running agents from the Console — one page per task, start here for "how do I…"; https://agent-fleet.org/docs/user/start/without-terminal/ for someone who never opens the terminal |
 | `admin/` | a tenant administrator: members, limits, the audit log |
 | `operate/` | whoever installs and keeps a deployment alive (host-level; needs shell access) |
 | `ref/` | the capability tables everyone consults, and the glossary |

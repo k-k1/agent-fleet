@@ -29,7 +29,7 @@ const deploymentWarnPlaintextSecrets = "plaintext_secrets"
 const plaintextSecretsLog = "WARNING: AUTH=%s but AF_MASTER_KEY is not set: workspace credentials " +
 	"(git tokens, the Claude token, API keys, MCP and chat connections) are stored UNENCRYPTED in each member's home. " +
 	"Set AF_MASTER_KEY and restart, stop and start every existing workspace, then have members reconnect " +
-	"their credentials (see guide/operate/secure/deployment-keys.md)"
+	"their credentials (see https://agent-fleet.org/docs/operate/secure/deployment-keys/)"
 
 // plaintextSecrets reports whether this deployment stores workspace credentials unencrypted
 // while signing real people in.
@@ -44,7 +44,7 @@ const deploymentWarnAuthDev = "auth_dev"
 const authDevLog = "WARNING: AUTH=dev with " + auth.AllowInsecureDevAuthEnv + "=1: there is NO authentication and every " +
 	"request is a fixed super_admin. Anyone who can reach this Control Plane controls every workspace. " +
 	"Use it on a machine only you can reach; set AUTH=oauth or AUTH=proxy for anything shared " +
-	"(see guide/operate/secure/dev-signin.md)"
+	"(see https://agent-fleet.org/docs/operate/secure/dev-signin/)"
 
 // authDevInsecure reports AUTH=dev on a container runtime (reachable only through the explicit
 // opt-in), the case the Console banner exists for. The native runtimes are single-user by design.
@@ -58,7 +58,7 @@ func (m *manager) authDevInsecure() bool {
 const deploymentWarnEfsBackupMissing = "efs_backup_missing"
 
 const efsBackupMissingLog = "WARNING: the data stack runs Persistence=retain but has no daily EFS backup " +
-	"(vault and plan were added to 10-data in 0.26.0); see guide/operate/aws-ecs/backup.md (\"Turn backups on for a running deployment\")"
+	"(vault and plan were added to 10-data in 0.26.0); see https://agent-fleet.org/docs/operate/aws-ecs/backup/#turn-backups-on-for-a-running-deployment"
 
 // efsBackupMissing reports AF_EFS_BACKUP=missing on an ECS runtime. The ingress stack carries
 // that marker (update.sh / standup.sh fill it from the data stack's outputs), so the CP needs
@@ -119,7 +119,7 @@ func weakKeyRefusal(authMode string, weakMaster, weakCookie bool) error {
 	}
 	return fmt.Errorf("AUTH=%s and %s shorter than 32 bytes of key material (or a repeated pattern): refusing to start. "+
 		"Generate a new value with `head -c 32 /dev/urandom | base64`; do not replace AF_MASTER_KEY on a deployment that "+
-		"already holds sealed values before reading guide/operate/secure/deployment-keys.md and guide/operate/keys/kms.md "+
+		"already holds sealed values before reading https://agent-fleet.org/docs/operate/secure/deployment-keys/ and https://agent-fleet.org/docs/operate/keys/kms/ "+
 		"(changing AF_COOKIE_SECRET only signs everyone out once). AUTH=dev is exempt",
 		authMode, strings.Join(names, " and ")+weakKeyVerb(len(names)))
 }

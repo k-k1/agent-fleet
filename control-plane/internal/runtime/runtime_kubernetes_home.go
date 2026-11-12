@@ -177,7 +177,7 @@ func homeLayoutScript(vol, record string) string {
 		`[ -d "$H" ] && [ ! -L "$H" ] || fail "$H is missing or not a directory, though the home was migrated"`,
 		`for e in "$V"/.[!.]* "$V"/..?* "$V"/*; do`,
 		`  [ -e "$e" ] || [ -L "$e" ] || continue`,
-		`  case "${e##*/}" in ` + shellQuote(kubeHomeSubPath) + `|lost+found) ;; *) fail "the claim's root holds $e besides the home: an earlier version used the root as the home after the migration (see 'Roll back past the home layout' in guide/operate/kubernetes/upgrade.md)";; esac`,
+		`  case "${e##*/}" in ` + shellQuote(kubeHomeSubPath) + `|lost+found) ;; *) fail "the claim's root holds $e besides the home: an earlier version used the root as the home after the migration (see https://agent-fleet.org/docs/operate/kubernetes/upgrade/#roll-back-past-the-home-layout)";; esac`,
 		`done`,
 		// A home of another owner could only be a subPath the kubelet created; dev cannot
 		// change it, and refusing to start would take the whole workspace away for what
