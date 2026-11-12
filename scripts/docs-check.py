@@ -24,11 +24,11 @@ The checks:
   ref        ref/ tables agree with the source of truth in code, and the ✓ marks match the
              translation
   settings   every personal settings tab in ref/settings points at a page under user/
-  features   member rows of the feature catalogue point at a procedure on the member/ shelf
+  features   member rows of the feature catalogue point at a task page on the user/ shelf
   knowledge  the assistant knowledge covers the member rows of the feature catalogue
   notes      the operating policy shipped to every container points only at shipped shelves
   emphasis   every ** in guide/, docs/ and the release notes renders as bold on GitHub
-  labels     a quoted bold label in member/ and admin/ exists in the Console's catalogue
+  labels     a quoted bold label in user/ and admin/ exists in the Console's catalogue
   size       a guide chapter stays within CHAPTER_LINE_BUDGET lines (warning only)
   history    task pages (user/, ref/cli/ and the ref pages written for them) carry no ADR numbers, journal
              paths, issue numbers or dates, and their titles no preamble or trailing parenthesis
@@ -79,15 +79,15 @@ TREES = (GUIDE, DOCS)
 # Living = shelves that all the conventions apply to (header / lang / vocab / frozen /
 # anchors). Shelf names are unique across both trees, so a shelf is identified without
 # saying which tree it is in.
-LIVING = ("member", "user", "admin", "operate", "ref", "build")
+LIVING = ("user", "admin", "operate", "ref", "build")
 # Reader-facing = shelves that must not use implementation vocabulary. operate/ is
 # written for a reader at a terminal, so commands, paths and variables are fine there,
 # and ref/ is the shelf that carries the mapping table itself (screen column = Console,
 # implementation column = code); neither belongs here (CONVENTIONS §4).
-READER_FACING = ("member", "user", "admin")
+READER_FACING = ("user", "admin")
 # Shelves of the guide/ tree, i.e. what is shipped into containers. Not cut by role
 # (ADR 0064).
-GUIDE_SHELVES = ("member", "user", "admin", "operate", "ref")
+GUIDE_SHELVES = ("user", "admin", "operate", "ref")
 # Bilingual = English is authoritative (X.md), Japanese accompanies it (X.ja.md).
 # decisions/ is not LIVING (an ADR is immutable, so it carries no front matter) but it is
 # bilingual: as with the reader-based shelves, an English-only reader who cannot reach
@@ -153,7 +153,7 @@ class Findings:
 
 
 def rel(path: str) -> str:
-    """Repository-relative path (`guide/member/01-first-day.md`).
+    """Repository-relative path (`guide/user/start/quickstart.md`).
 
     With two trees, returning only the shelf leaves `README.md` ambiguous about which
     tree it belongs to. Error messages stay in a form that can be handed straight to
@@ -168,7 +168,7 @@ def tree(relpath: str) -> str:
 
 
 def shelf(relpath: str) -> str:
-    """Shelf name (`member` / `build` / `log` …). Empty for a file directly in a tree."""
+    """Shelf name (`user` / `build` / `log` …). Empty for a file directly in a tree."""
     parts = relpath.split("/")
     return parts[1] if len(parts) > 2 else ""
 
@@ -613,10 +613,9 @@ def is_shelf_readme(relpath: str) -> bool:
 def check_header(files: list[str], f: Findings, strict: bool) -> None:
     """Does every file on a living shelf have front matter?
 
-    `source_of_truth` alone may be inherited from the shelf README. The 16 files of
-    `guide/member/` and the 6 of `guide/admin/` carry a value that is word-for-word
-    identical, so the same sentence appeared 22 times — boilerplate carrying no
-    information for the reader. Where the value differs per file, as in `guide/ref/`
+    `source_of_truth` alone may be inherited from the shelf README. Where every page of a
+    shelf would carry a word-for-word identical value, writing it on each page repeats one
+    sentence many times — boilerplate carrying no information for the reader. Where the value differs per file, as in `guide/ref/`
     (all 10 differ) and `guide/operate/`, it is what tells a reader who meets a
     contradiction which side to believe, so it is written in each file.
     """
@@ -1346,10 +1345,10 @@ def check_settings(f: Findings) -> None:
         )
 
 
-# Member rows of the feature catalogue whose Details column need not point at use/
+# Member rows of the feature catalogue whose Details column need not point at user/
 # (feature name -> reason). State the reason explicitly, and before adding one confirm
 # that the reader really can reach the procedure: a row exempted while pointing nowhere
-# near `use/` is exactly the shape in which the work-item inbox stayed green without a
+# near `user/` is exactly the shape in which the work-item inbox stayed green without a
 # single chapter.
 FEATURES_EXEMPT: dict[str, str] = {}
 
@@ -1362,10 +1361,7 @@ FEATURES_FILES = (
 
 
 def check_features(f: Findings) -> None:
-    """Do member rows of the feature catalogue point at a procedure on the member shelf?
-
-    A task page under `user/` counts: it is where a member chapter's section goes when it
-    is rewritten.
+    """Do member rows of the feature catalogue point at a task page on the user/ shelf?
 
     `ref/features` declares itself an index of what exists and who can use it, with how
     to do it living behind the link. A row whose Details column only points at a
@@ -1404,11 +1400,11 @@ def check_features(f: Findings) -> None:
             if feature in FEATURES_EXEMPT:
                 continue
             details = cells[header.index(details_head)]
-            if "../member/" not in details and "../user/" not in details:
+            if "../user/" not in details:
                 f.error(
                     f"guide/ref/{name}: Details of '{feature}' does not point at"
-                    f" member/ or user/ ({details or 'empty'})"
-                    " — a member row must point at exactly one chapter that explains how"
+                    f" user/ ({details or 'empty'})"
+                    " — a member row must point at exactly one task page that explains how"
                 )
 
 
@@ -1949,7 +1945,7 @@ def check_redirects(files: list[str], f: Findings) -> None:
                                      + (r"(?![A-Za-z0-9_.-])" if old_anchor else r"(?![A-Za-z0-9_.#-])")),
                           lang_old, lang_new))
 
-    # Code also names a page without its extension: the Console's openGuidePage("member/14-preview-browser")
+    # Code also names a page without its extension: the Console's openGuidePage("user/preview/browser-pane")
     # adds ".md" (or ".ja.md") itself. That form is only matched as a whole string literal in code, where a
     # page path cannot be mistaken for prose.
     bare = []
@@ -1971,7 +1967,7 @@ def check_redirects(files: list[str], f: Findings) -> None:
             # regenerating them follows from fixing the source.
             dirnames[:] = [d for d in dirnames if d not in ("node_modules", "testdata")]
             candidates += [os.path.join(dirpath, n) for n in filenames if n.endswith(exts)]
-    # Markdown links are relative (`08-terminal.md`, `../member/08-terminal.md`), so they
+    # Markdown links are relative (`terminal.md`, `../files/terminal.md`), so they
     # are resolved against the linking file and compared as guide-relative paths.
     moved = {}
     for _, old, new in rows:
@@ -2274,7 +2270,7 @@ def bold_labels(body: str) -> list[tuple[int, str]]:
 
 
 def check_labels(files: list[str], f: Findings) -> None:
-    """Does every quoted bold label in guide/member and guide/admin exist in the Console?
+    """Does every quoted bold label in guide/user and guide/admin exist in the Console?
 
     English files are read against locales/en and `.ja.md` against locales/ja. An
     unreadable catalogue is an error, never a skip: a check that read nothing finds

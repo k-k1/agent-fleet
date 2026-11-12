@@ -135,7 +135,7 @@ func fetchWorkspaceDocs(root string) (int, error) {
 	if n == 0 {
 		return 0, nil // deployment stages nothing for this role; leave the dir empty
 	}
-	// Whole archive read cleanly → publish every top-level entry ("member", "user", …),
+	// Whole archive read cleanly → publish every top-level entry ("user", "ref", …),
 	// each renamed whole, so a reader sees a complete shelf or none of it.
 	entries, err := os.ReadDir(stage)
 	if err != nil {

@@ -645,19 +645,19 @@ class LabelTests(unittest.TestCase):
         (loc / "ja").mkdir(parents=True)
         (loc / "en/a.ts").write_text(self.EN)
         (loc / "ja/a.ts").write_text(self.JA)
-        self.member = self.root / "guide/member"
-        self.member.mkdir(parents=True)
+        self.shelf_dir = self.root / "guide/user"
+        self.shelf_dir.mkdir(parents=True)
         self.addCleanup(patch.stopall)
         patch.object(check, "ROOT", str(self.root)).start()
         patch.object(check, "LOCALES", str(loc)).start()
         patch.object(check, "LABEL_ALLOWLIST", str(self.root / "allow.txt")).start()
 
     def errors(self, en="", ja=""):
-        (self.member / "01-a.md").write_text(en)
-        (self.member / "01-a.ja.md").write_text(ja)
+        (self.shelf_dir / "01-a.md").write_text(en)
+        (self.shelf_dir / "01-a.ja.md").write_text(ja)
         check._cache.clear()
         findings = check.Findings()
-        check.check_labels(sorted(str(p) for p in self.member.glob("*.md")), findings)
+        check.check_labels(sorted(str(p) for p in self.shelf_dir.glob("*.md")), findings)
         return "\n".join(findings.errors)
 
     def test_known_labels_pass(self):
@@ -703,7 +703,7 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(self.errors(en='**"+N"** and **"≈$X"**\n'), "")
 
     def test_allowlist_exempts_one_file_and_text(self):
-        Path(check.LABEL_ALLOWLIST).write_text("# why\nguide/member/01-a.md: Halt\n")
+        Path(check.LABEL_ALLOWLIST).write_text("# why\nguide/user/01-a.md: Halt\n")
         self.assertEqual(self.errors(en='**"Halt"**\n'), "")
         self.assertIn("Halt", self.errors(en='**"Halt"**\n', ja="「**Halt**」\n"))
 
@@ -742,7 +742,7 @@ class SizeAndHeaderTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.shelf = self.root / "guide/member"
+        self.shelf = self.root / "guide/user"
         self.shelf.mkdir(parents=True)
         self.addCleanup(patch.stopall)
         patch.object(check, "ROOT", str(self.root)).start()
@@ -828,7 +828,7 @@ class TaskPageVocabTests(unittest.TestCase):
     def test_task_page_errors_old_chapter_warns(self):
         task = self.run_vocab("user/a.ja.md")
         self.assertTrue(any("道具" in e for e in task.errors), task.errors + task.warns)
-        old = self.run_vocab("member/a.ja.md")
+        old = self.run_vocab("admin/a.ja.md")
         self.assertEqual(old.errors, [])
         self.assertTrue(any("道具" in w for w in old.warns))
 
@@ -855,7 +855,7 @@ class OwnMemoryVocabTests(unittest.TestCase):
             with self.subTest(word=word):
                 task = self.run_vocab("user/memory/a.md", body)
                 self.assertTrue(any(word in e for e in task.errors), task.errors + task.warns)
-                old = self.run_vocab("member/a.md", body)
+                old = self.run_vocab("admin/a.md", body)
                 self.assertEqual(old.errors, [])
                 self.assertTrue(any(word in w for w in old.warns), old.warns)
 
@@ -896,7 +896,7 @@ class HistoryTests(unittest.TestCase):
     def test_code_anchors_and_old_chapters_are_left_alone(self):
         body = "`2026-11-06`\n```\nADR 0128\n```\n[x](#section-123)\n"
         self.assertEqual(self.errors("ref/cli/a.md", body), "")
-        self.assertEqual(self.errors("member/16-x.md", "(ADR 0128)\n"), "")
+        self.assertEqual(self.errors("admin/a.md", "(ADR 0128)\n"), "")
 
 
 if __name__ == "__main__":
@@ -914,17 +914,17 @@ class RedirectTests(unittest.TestCase):
         for rel, body in {
             "user/files/terminal.md": "# Use the terminal\n\n## Copy and paste\n",
             "user/files/terminal.ja.md": "# ターミナルを使う\n\n## コピーと貼り付け\n",
-            "member/README.md": "# Using\n\nSee [the terminal](08-terminal.md#copy-and-paste).\n",
-            "member/README.ja.md": "# 使う\n\n[ターミナル](../user/files/terminal.ja.md)\n",
+            "user/README.md": "# Using\n\nSee [the terminal](08-terminal.md#copy-and-paste).\n",
+            "user/README.ja.md": "# 使う\n\n[ターミナル](files/terminal.ja.md)\n",
         }.items():
             (self.guide / rel).parent.mkdir(parents=True, exist_ok=True)
             (self.guide / rel).write_text(body)
         (self.root / "control-plane").mkdir()
-        (self.root / "control-plane/hint.go").write_text('const hint = "see guide/member/08-terminal.md"\n')
+        (self.root / "control-plane/hint.go").write_text('const hint = "see guide/user/08-terminal.md"\n')
         (self.root / "console").mkdir()
         (self.root / "console/menu.ts").write_text(
-            'openGuidePage("member/08-terminal");\n'
-            'const note = "member/08-terminal-tips";\n'  # a different page that shares the prefix
+            'openGuidePage("user/08-terminal");\n'
+            'const note = "user/08-terminal-tips";\n'  # a different page that shares the prefix
         )
         self.addCleanup(patch.stopall)
         patch.object(check, "ROOT", str(self.root)).start()
@@ -942,30 +942,30 @@ class RedirectTests(unittest.TestCase):
         return "\n".join(findings.errors)
 
     def test_stale_pointers_are_reported_with_the_new_path(self):
-        out = self.errors("member/08-terminal.md\tuser/files/terminal.md\n")
-        self.assertIn("guide/member/README.md:3: link to 'member/08-terminal.md#copy-and-paste' moved to "
+        out = self.errors("user/08-terminal.md\tuser/files/terminal.md\n")
+        self.assertIn("guide/user/README.md:3: link to 'user/08-terminal.md#copy-and-paste' moved to "
                       "'user/files/terminal.md#copy-and-paste'", out)
-        self.assertIn("control-plane/hint.go:1: 'member/08-terminal.md' moved to 'user/files/terminal.md'", out)
+        self.assertIn("control-plane/hint.go:1: 'user/08-terminal.md' moved to 'user/files/terminal.md'", out)
         self.assertNotIn("README.ja.md", out)  # it already points at the new page
 
     def test_page_named_without_extension_in_code(self):
-        out = self.errors("member/08-terminal.md\tuser/files/terminal.md\n")
-        self.assertIn("console/menu.ts:1: 'member/08-terminal' moved to 'user/files/terminal'", out)
+        out = self.errors("user/08-terminal.md\tuser/files/terminal.md\n")
+        self.assertIn("console/menu.ts:1: 'user/08-terminal' moved to 'user/files/terminal'", out)
         self.assertNotIn("console/menu.ts:2", out)
 
     def test_old_page_must_be_gone(self):
-        (self.guide / "member/08-terminal.md").write_text("# Terminal\n")
-        self.assertIn("still exists", self.errors("member/08-terminal.md\tuser/files/terminal.md\n"))
+        (self.guide / "user/08-terminal.md").write_text("# Terminal\n")
+        self.assertIn("still exists", self.errors("user/08-terminal.md\tuser/files/terminal.md\n"))
 
     def test_new_page_and_anchor_must_exist(self):
-        self.assertIn("does not exist", self.errors("member/08-terminal.md\tuser/files/missing.md\n"))
-        self.assertIn("no heading with the id 'nope'", self.errors("member/08-terminal.md\tuser/files/terminal.md#nope\n"))
+        self.assertIn("does not exist", self.errors("user/08-terminal.md\tuser/files/missing.md\n"))
+        self.assertIn("no heading with the id 'nope'", self.errors("user/08-terminal.md\tuser/files/terminal.md#nope\n"))
 
     def test_no_chains_and_no_bad_rows(self):
         self.assertIn("itself redirected", self.errors(
-            "member/08-terminal.md\tuser/files/terminal.md\nuser/files/terminal.md\tuser/files/shell.md\n"))
-        self.assertIn("two tab-separated columns", self.errors("member/08-terminal.md user/files/terminal.md\n"))
-        self.assertIn("English .md page", self.errors("member/08-terminal.ja.md\tuser/files/terminal.ja.md\n"))
+            "user/08-terminal.md\tuser/files/terminal.md\nuser/files/terminal.md\tuser/files/shell.md\n"))
+        self.assertIn("two tab-separated columns", self.errors("user/08-terminal.md user/files/terminal.md\n"))
+        self.assertIn("English .md page", self.errors("user/08-terminal.ja.md\tuser/files/terminal.ja.md\n"))
 
     def test_empty_map_is_quiet(self):
         self.assertEqual(self.errors(""), "")

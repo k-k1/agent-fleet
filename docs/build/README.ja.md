@@ -14,7 +14,7 @@ API の境界、データモデル、脅威モデル、外部連携、ビルド�
 この棚に無いものを探している？
 
 - 配備の運用: [guide/operate/](../../guide/operate/README.ja.md)
-- メンバーや管理者が見るもの・行うこと: [guide/member/](../../guide/member/README.ja.md)、
+- メンバーや管理者が見るもの・行うこと: [guide/user/](../../guide/user/README.ja.md)、
   [guide/admin/](../../guide/admin/README.ja.md)
 - どの種別・プロバイダ・形態・ロールが何に対応するか: [guide/ref/](../../guide/ref/README.ja.md)
 - なぜそうなっているか（退けた案を含む）: [decisions/](../decisions/)

@@ -64,7 +64,7 @@ func docsSrcDir() string {
 // A shelf missing here is dead in every container while it looks fine in the repository
 // and in the baked image, so TestGuideShelvesCoverTheGuide fails when a top-level
 // directory of guide/ is neither listed here nor excluded with a reason.
-var guideShelves = []string{"member", "user", "admin", "operate", "ref", "assets"}
+var guideShelves = []string{"user", "admin", "operate", "ref", "assets"}
 
 // guideRootFiles are the files at the TOP of the guide tree that ship next to the
 // shelves. The tree's own README is the entry point — the page that branches by reader
@@ -115,7 +115,7 @@ func guideRoots(src string) []struct{ Dir, Rel string } {
 }
 
 // writeGuideTarGz streams the guide as a gzipped tar whose paths are relative to the
-// docs root ("member/README.md", …). It is the PULL half of the same provisioning
+// docs root ("user/README.md", …). It is the PULL half of the same provisioning
 // decision stageWorkspaceDocs implements for docker/native: on ECS there is no host
 // path to bind-mount into a Fargate/EC2 task, so the container asks for the identical
 // set over the internal bridge instead (docs_bridge.go).

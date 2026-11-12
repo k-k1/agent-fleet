@@ -85,7 +85,7 @@ IT / SRE と同じ人です。
 ## どのロールにどの文書が届くか
 
 ロールによらず、どのコンテナにも同じガイドが届きます。
-[member/](../member/README.ja.md)・[admin/](../admin/README.ja.md)・
+[user/](../user/README.ja.md)・[admin/](../admin/README.ja.md)・
 [operate/](../operate/README.ja.md)・[ref/](README.ja.md)。セクションを読者で切っているのは
 どこから読み始めればよいかを示すためで、何かを隠すためではありません。ガイドの中のリンクは、
 たどる誰にとっても開ける必要があります。
