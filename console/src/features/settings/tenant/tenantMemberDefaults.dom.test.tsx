@@ -66,7 +66,12 @@ describe("TenantMemberDefaultsPanel", () => {
     apiJSON.mockResolvedValue({ tenant: "acme", defaults: { agent: "claude" }, updated_at: "2026-10-13T00:00:00Z" });
     await choose("claude");
     await act(async () => button(t("common.save")).click());
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/member-defaults", "PUT", { agent: "claude" });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/member-defaults", "PUT", {
+      agent: "claude",
+      launch: { agent: "", model: "", driver: "", permission_mode: "", budget_usd: null },
+      repos: [],
+      ops: { grafana_url: "", aws_sso_start_url: "", aws_account_id: "", aws_role_name: "" },
+    });
     expect(select().value).toBe("claude");
   });
 

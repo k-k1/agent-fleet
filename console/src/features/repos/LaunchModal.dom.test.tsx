@@ -58,6 +58,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
+const { useUIStateStore: uiStore } = await import("../../core/store/uiState.ts");
 const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
@@ -887,3 +888,34 @@ describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
   });
 });
 
+
+// ADR 0114 P3: the tenant's effective launch defaults prefill the dialog, from the cached CP answer.
+describe("tenant launch defaults", () => {
+  const useUIStateStore = uiStore;
+  afterEach(() => useUIStateStore.setState({ state: {} }));
+
+  it("starts on the tenant's agent, model and budget, and launches with them", async () => {
+    useUIStateStore.setState({
+      state: {
+        effective: {
+          launch: { agent: "codex", model: "gpt-x", driver: "", permission_mode: "", budget_usd: 5 },
+          repos: [],
+          ops: { grafana_url: "", aws_sso_start_url: "", aws_account_id: "", aws_role_name: "" },
+        },
+      },
+    });
+    await render(["claude", "codex"]);
+    await click(byText("Start in a worktree"));
+    const o = launchedWith();
+    expect(o.kind).toBe("codex");
+    expect(o.model).toBe("gpt-x");
+    expect(o.spendCapUsd).toBe(5);
+  });
+
+  it("changes nothing without a cached answer", async () => {
+    await render(["claude", "codex"]);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("claude");
+    expect(launchedWith().spendCapUsd).toBeUndefined();
+  });
+});

@@ -17,6 +17,8 @@ vi.mock("../../core/api/client.ts", () => ({
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",
   isTransientErr: () => false,
+  getTenant: () => "",
+  getUser: () => "",
 }));
 
 // The real modal pulls the skills viewer (and its own client calls); the row only has to open it.

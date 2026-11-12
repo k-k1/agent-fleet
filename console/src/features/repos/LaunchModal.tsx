@@ -26,6 +26,8 @@ import { bedrockConnection, bedrockModelOk, regionOk, rememberBedrockModel, reme
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
+import { useEffectiveDefaults, useUIStateStore } from "../../core/store/uiState.ts";
+import { defaultKind, ownLaunch, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
 import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
@@ -227,8 +229,16 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
-  const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : kinds[0] || "claude";
+  // Tenant launch defaults (ADR 0114 P3) only prefill: the last-known CP answer, from the Console's
+  // cache while the workspace is stopped or the CP unreachable. They rank below this repo's last
+  // choice and the member's own Settings › Agents values, and the Agent's ui-prefs are never written.
+  const eff = useEffectiveDefaults();
+  // The member's own override (a CP-held key; never the Agent's ui-prefs). Saved from this dialog.
+  const patchOwn = useUIStateStore((st) => st.patch);
+  const ownDefault = useUIStateStore((st) => !!st.state.launch && Object.values(st.state.launch).some((v) => v !== "" && v !== null));
+  const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : defaultKind(eff, kinds) || kinds[0] || "claude";
   const initialDefault = agentLaunchDefault(settings, initialKind);
+  const modelDefault = (k: string, own: string) => tenantModel(eff, k, settings) || own;
   const [kind, setKind] = useState(initialKind);
   // Same async-kinds hazard as StartModal: mounting while the connection check is still
   // in flight seeds the "claude" fallback above, which would stick even if claude is
@@ -238,24 +248,24 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     const k = kinds[0];
     const d = agentLaunchDefault(settings, k);
     setKind(k);
-    setModel(resolveModel(k, repo, d.model));
+    setModel(resolveModel(k, repo, modelDefault(k, d.model)));
     setEffort(resolveEffort(k, repo, d.effort));
     setStartMode(resolveStartMode(k, repo, d.startMode));
-    setSkipPerm(undefined);
+    setSkipPerm(tenantSkipPerm(eff, k, settings));
     setRoute("");
-    setDriverPick(null);
-  }, [kinds, kind, settings, repo]);
+    setDriverPick(tenantDriver(eff, k, !!agentOf(k).managedDriver));
+  }, [kinds, kind, settings, repo, eff]);
   const tr = useT();
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
-  const [model, setModel] = useState(() => resolveModel(initialKind, repo, initialDefault.model));
+  const [model, setModel] = useState(() => resolveModel(initialKind, repo, modelDefault(initialKind, initialDefault.model)));
   const [effort, setEffort] = useState(() => resolveEffort(initialKind, repo, initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(initialKind, repo, initialDefault.startMode));
   // Permission prompts (docs/log/76). undefined = this dialog never touched the choice, in
   // which case no value is sent and the Agent's per-kind default applies (so changing the
   // setting later still takes effect). Only once touched is it sent, as an override for this
   // session alone.
-  const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
+  const [skipPerm, setSkipPerm] = useState<boolean | undefined>(() => tenantSkipPerm(eff, initialKind, settings));
   // The explicit model route (ADR 0128). "" = the kind's default resolution, which is what a
   // launch has always used and sends no field. Reset on a kind switch: a route belongs to one kind.
   const [route, setRoute] = useState("");
@@ -270,7 +280,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // null = untouched: the driver follows the kind's default, which can change under an open dialog
   // when the kind catalog lands after it. Only a click on the toggle pins a value.
   useKindCatalogVersion();
-  const [driverPick, setDriverPick] = useState<string | null>(null);
+  const [driverPick, setDriverPick] = useState<string | null>(() => tenantDriver(eff, initialKind, !!agentOf(initialKind).managedDriver));
   const driver = driverPick ?? (agentOf(kind).managedDriver ? "managed" : "");
   // The first prompt is written back to localStorage per repository (launchDraft). It survives
   // closing the dialog and is dropped only once a launch succeeded. initialPrompt (the seed
@@ -282,7 +292,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // bad_title.
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle ?? ""));
   // Empty = the user's default budget (Settings › Agents), resolved by the Agent.
-  const [budget, setBudget] = useState("");
+  const [budget, setBudget] = useState(() => tenantBudget(eff, settings));
   // Attachments awaiting the launch: the raw File (+ an object URL when it is an image).
   // Any file type, as in the mirror composer. Uploaded only after the session is minted (in
   // onStartWork), then referenced in the first prompt. Agents without the imagePaste cap
@@ -738,12 +748,12 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                   onClick={() => {
                     const defaults = agentLaunchDefault(settings, k);
                     setKind(k);
-                    setModel(resolveModel(k, repo, defaults.model));
+                    setModel(resolveModel(k, repo, modelDefault(k, defaults.model)));
                     setEffort(resolveEffort(k, repo, defaults.effort));
                     setStartMode(resolveStartMode(k, repo, defaults.startMode));
-                    setSkipPerm(undefined);
+                    setSkipPerm(tenantSkipPerm(eff, k, settings));
                     setRoute("");
-                    setDriverPick(null);
+                    setDriverPick(tenantDriver(eff, k, !!agentOf(k).managedDriver));
                   }}
                 >
                   <Icon name={a.icon} className="seg-ic" />
@@ -1275,6 +1285,30 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
               </span>
             </div>
           )}
+          <div className="ui-field launch-own-default">
+            <Button
+              variant="ghost"
+              onClick={() =>
+                void patchOwn({
+                  launch: ownLaunch({
+                    agent: kind,
+                    model,
+                    driver: agentOf(kind).managedDriver ? (driverManaged ? "managed" : "terminal") : "",
+                    permission_mode: hasPermChoice ? (skipPermEffective ? "skip" : "ask") : "",
+                    budget_usd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : null,
+                  }),
+                })
+              }
+            >
+              {tr("launch.own_default_save")}
+            </Button>
+            {ownDefault && (
+              <Button variant="ghost" onClick={() => void patchOwn({ launch: ownLaunch({}) })}>
+                {tr("launch.own_default_clear")}
+              </Button>
+            )}
+            <span className="ui-field-hint">{tr("launch.own_default_hint")}</span>
+          </div>
         </LaunchSection>
       </div>
 

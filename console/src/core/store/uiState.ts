@@ -15,18 +15,56 @@ export interface OnboardingState {
   track: "" | "dev";
 }
 
+/** Launch defaults: the tenant's, and the member's own override ("" / null = not set at that layer).
+ *  Mirrors launchDefaultsWire. They only prefill the launch dialog; the Agent's ui-prefs are never
+ *  written from them (ADR 0114 P3 note). */
+export interface LaunchDefaults {
+  agent: string;
+  model: string;
+  /** "", "managed" or "terminal". */
+  driver: string;
+  /** "", "ask" or "skip". */
+  permission_mode: string;
+  /** null = unset, 0 = no budget. */
+  budget_usd: number | null;
+}
+
+/** Non-secret ops settings. Mirrors opsSettingsWire. */
+export interface OpsSettings {
+  grafana_url: string;
+  aws_sso_start_url: string;
+  aws_account_id: string;
+  aws_role_name: string;
+}
+
 /** The tenant's defaults for its members (ADR 0114 decision 8). Mirrors tenantMemberDefaultsWire
  *  (control-plane/tenant_member_defaults.go). Read-only here: only a tenant admin sets them. */
 export interface TenantMemberDefaults {
-  /** The agent the first-run card names; "" = none. */
+  /** The agent the first-run card names and the launch dialog starts on; "" = none. */
   agent: string;
+  launch?: LaunchDefaults;
+  /** owner/name paths offered first in Start. */
+  repos?: string[];
+  ops?: OpsSettings;
+}
+
+/** What the member's Console uses: built-in < tenant < the member's own, merged by the CP
+ *  (effectiveWire). Never re-derive it here. */
+export interface EffectiveDefaults {
+  launch: LaunchDefaults;
+  repos: string[];
+  ops: OpsSettings;
 }
 
 /** The whole document. Mirrors memberUIStateWire; a PATCH replaces the top-level keys it carries.
- *  `defaults` comes back on every answer and is never sent. */
+ *  `defaults` and `effective` come back on every answer and are never sent. `launch` is the
+ *  member's own override: `{}`-like (all empty) clears it. */
 export interface MemberUIState {
   onboarding?: OnboardingState;
+  launch?: LaunchDefaults;
+  ops?: OpsSettings;
   defaults?: TenantMemberDefaults;
+  effective?: EffectiveDefaults;
 }
 
 // The keys the first-run card used before ADR 0114. Read once to migrate, then removed.
@@ -206,3 +244,7 @@ export const useUIStateStore = create<UIStateStore>((set, get) => ({
     return done;
   },
 }));
+
+/** The CP-computed effective defaults: the last answer, from the per-(user, tenant) cache while the
+ *  workspace is stopped or the CP is unreachable. undefined until one was ever received. */
+export const useEffectiveDefaults = (): EffectiveDefaults | undefined => useUIStateStore((s) => s.state.effective);

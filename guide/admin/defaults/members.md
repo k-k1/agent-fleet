@@ -33,6 +33,22 @@ Choose one here and the step then reads, for example, "Your team's default is Cl
 - Agents that need no account of the member's own are not offered: the shell, SSM and the deployment's inference engines. Who may use the inference engines is set under [Resource limits and sessions](../resources/engines.md#choose-the-members-who-may-use-them)
 - Each save is recorded in the audit log as `tenant.member_defaults`, with the agent chosen
 
+## Set launch defaults, team repositories and operations settings
+
+Under the agent, the same screen has three more groups. Press **Save** once after changing any of them.
+
+| Group | What members get |
+|---|---|
+| **Launch defaults** (model, driver, permission prompts, budget) | The start-work dialog opens with these values filled in, on the agent chosen above |
+| **Team repositories** (one `owner/name` per line, up to 20) | **Start** lists these repositories first, marked "Team" |
+| **Operations settings** (Grafana URL, AWS SSO start URL, AWS account ID, AWS role name) | Stored for the operations views to read. Nothing in the Console uses them yet |
+
+- Launch defaults only fill in the dialog. They never change a member's Settings or the agent's own settings, and a member's own choices win: their saved default, the last choice in that repository, and the values they set under Settings › Agents
+- Operations settings are links and identifiers only. A URL must be `https` with no user name, query or fragment, so a token cannot be saved there. Secrets stay with each member
+- A group you leave empty is simply not applied. Saving clears the groups you emptied
+- The audit entry `tenant.member_defaults` lists every value saved
+
+
 ## When members see it
 
 - Members read the default each time the Console loads, even while their workspace is stopped

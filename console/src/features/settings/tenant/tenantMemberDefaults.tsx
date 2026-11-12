@@ -6,7 +6,7 @@ import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { MEMBER_DEFAULT_AGENTS, agentOf } from "../../../agents/registry.ts";
-import type { TenantMemberDefaults } from "../../../core/store/uiState.ts";
+import type { LaunchDefaults, OpsSettings, TenantMemberDefaults } from "../../../core/store/uiState.ts";
 
 /** GET/PUT /api/admin/tenants/{slug}/member-defaults. */
 export interface TenantMemberDefaultsView {
@@ -16,10 +16,33 @@ export interface TenantMemberDefaultsView {
   updated_at?: string;
 }
 
+const EMPTY_LAUNCH: LaunchDefaults = { agent: "", model: "", driver: "", permission_mode: "", budget_usd: null };
+const EMPTY_OPS: OpsSettings = { grafana_url: "", aws_sso_start_url: "", aws_account_id: "", aws_role_name: "" };
+
+/** The PUT body: every group, always. The CP keeps a group the body leaves out, so sending all of
+ *  them is what lets an admin clear one. `repos` is one owner/name per line. */
+export function defaultsBody(agent: string, launch: LaunchDefaults, repos: string, ops: OpsSettings) {
+  return {
+    agent,
+    launch: { ...launch, agent: "" },
+    repos: repos.split("\n").map((l) => l.trim()).filter(Boolean),
+    ops,
+  };
+}
+
 export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
   const tr = useT();
   const [view, setView] = useState<TenantMemberDefaultsView | null>(null);
   const [agent, setAgent] = useState("");
+  const [launch, setLaunch] = useState<LaunchDefaults>(EMPTY_LAUNCH);
+  const [repos, setRepos] = useState("");
+  const [ops, setOps] = useState<OpsSettings>(EMPTY_OPS);
+  const fill = (d: TenantMemberDefaults) => {
+    setAgent(d.agent || "");
+    setLaunch({ ...EMPTY_LAUNCH, ...d.launch });
+    setRepos((d.repos || []).join("\n"));
+    setOps({ ...EMPTY_OPS, ...d.ops });
+  };
   const [error, setError] = useState("");
   const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -35,7 +58,7 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
       const d = await api(path);
       if (d && !d.error && d.defaults) {
         setView(d);
-        setAgent(d.defaults.agent || "");
+        fill(d.defaults);
         setError("");
         return;
       }
@@ -53,13 +76,13 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
     setBusy(true);
     setError("");
     try {
-      const res = await apiJSON(path, "PUT", { agent });
+      const res = await apiJSON(path, "PUT", defaultsBody(agent, launch, repos, ops));
       if (res?.error) {
         setError(errDetail(res.error));
         return;
       }
       setView(res);
-      setAgent(res.defaults?.agent || "");
+      if (res.defaults) fill(res.defaults);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {
@@ -104,6 +127,57 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
             ))}
           </select>
         </label>
+        <h4>{tr("tenant.member_defaults_launch")}</h4>
+        <p className="admin-hint">{tr("tenant.member_defaults_launch_note")}</p>
+        <label className="admin-fld">
+          <span className="af-cap">{tr("tenant.member_defaults_model")}</span>
+          <input value={launch.model} onChange={(e) => setLaunch({ ...launch, model: e.target.value.trim() })} />
+        </label>
+        <label className="admin-fld">
+          <span className="af-cap">{tr("tenant.member_defaults_driver")}</span>
+          <select value={launch.driver} onChange={(e) => setLaunch({ ...launch, driver: e.target.value })}>
+            <option value="">{tr("tenant.member_defaults_none")}</option>
+            <option value="managed">{tr("tenant.member_defaults_driver_managed")}</option>
+            <option value="terminal">{tr("tenant.member_defaults_driver_terminal")}</option>
+          </select>
+        </label>
+        <label className="admin-fld">
+          <span className="af-cap">{tr("tenant.member_defaults_perm")}</span>
+          <select value={launch.permission_mode} onChange={(e) => setLaunch({ ...launch, permission_mode: e.target.value })}>
+            <option value="">{tr("tenant.member_defaults_none")}</option>
+            <option value="ask">{tr("tenant.member_defaults_perm_ask")}</option>
+            <option value="skip">{tr("tenant.member_defaults_perm_skip")}</option>
+          </select>
+        </label>
+        <label className="admin-fld">
+          <span className="af-cap">{tr("tenant.member_defaults_budget")}</span>
+          <input
+            inputMode="decimal"
+            value={launch.budget_usd == null ? "" : String(launch.budget_usd)}
+            onChange={(e) => {
+              const v = e.target.value.trim();
+              setLaunch({ ...launch, budget_usd: v === "" || Number.isNaN(Number(v)) ? null : Number(v) });
+            }}
+          />
+        </label>
+        <h4>{tr("tenant.member_defaults_repos")}</h4>
+        <p className="admin-hint">{tr("tenant.member_defaults_repos_note")}</p>
+        <textarea rows={4} value={repos} onChange={(e) => setRepos(e.target.value)} aria-label={tr("tenant.member_defaults_repos")} />
+        <h4>{tr("tenant.member_defaults_ops")}</h4>
+        <p className="admin-hint">{tr("tenant.member_defaults_ops_note")}</p>
+        {(
+          [
+            ["grafana_url", "tenant.member_defaults_grafana"],
+            ["aws_sso_start_url", "tenant.member_defaults_sso"],
+            ["aws_account_id", "tenant.member_defaults_acct"],
+            ["aws_role_name", "tenant.member_defaults_role"],
+          ] as const
+        ).map(([k, label]) => (
+          <label className="admin-fld" key={k}>
+            <span className="af-cap">{tr(label)}</span>
+            <input value={ops[k]} onChange={(e) => setOps({ ...ops, [k]: e.target.value.trim() })} />
+          </label>
+        ))}
         {error && (
           <p className="admin-hint warn" role="alert">
             {error}
