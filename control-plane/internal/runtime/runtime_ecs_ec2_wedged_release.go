@@ -88,7 +88,7 @@ func (f *ecsEC2Factory) releaseWedgedSlot(ctx context.Context, w wedgedDecision)
 		return
 	}
 	log.Printf("ecs-ec2 sweep: releasing the home of %s from the wedged slot %s (marker %s)", rt.base.name, w.slot, m)
-	f.rescueContinue(ctx, rt, cmds, w.slot, m, ids)
+	rt.rescueContinue(ctx, cmds, w.slot, m, ids)
 }
 
 func (f *ecsEC2Factory) rescueNow(rt *ecsEC2Runtime) time.Time {

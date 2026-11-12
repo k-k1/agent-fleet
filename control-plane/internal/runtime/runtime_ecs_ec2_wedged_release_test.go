@@ -581,3 +581,71 @@ func TestWedgedReleaseDetachesOnlyAfterEveryTaskIsStopped(t *testing.T) {
 		})
 	}
 }
+
+// A member's Start that meets a wedged release's marker yields to it exactly as it does to a
+// dark rescue (#3965): it does not count itself (which would overtake the release), shows the
+// line and places the home on another slot once the release has detached it.
+func TestStartYieldsToAWedgedReleaseAndThenPlacesTheHome(t *testing.T) {
+	relModes(t, func(t *testing.T, w *relWorld) {
+		rt := w.h.rt
+		rt.pool.darkAction = darkActionRescue
+		rt.pool.darkAfter = 10 * time.Minute
+		rt.leases = w.f.leases
+		rt.onSlotDark = nil
+		startPhase.Delete(rescueWorkspace)
+		oldPolls := darkStartPolls
+		darkStartPolls = 3
+		t.Cleanup(func() { darkStartPolls = oldPolls; startPhase.Delete(rescueWorkspace) })
+		w.h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", true, false)
+		w.h.ci.registered["i-free"] = true
+		// The stuck-STOPPING shape: the member stopped the workspace, its old task never ended, so
+		// a Start is something the member can ask for (a running workspace has nothing to start).
+		w.h.ecs.services[rescueWorkspace] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0, RunningCount: 1}
+		w.h.ci.running = nil
+		w.h.ci.stopping = []ecstypes.Task{stuckStoppingTask(40 * time.Minute)}
+
+		w.arm()
+		rescueStepHook = func(_ context.Context, s string) error {
+			if s == "cancelled" {
+				return errRescueCrash
+			}
+			return nil
+		}
+		w.sweep()
+		rescueStepHook = nil
+		m, ok := parseRescueMarker(w.marker())
+		if !ok || !m.Wedged || m.Phase != rescuePhaseBegun {
+			t.Fatalf("marker %q", w.marker())
+		}
+		gr := w.count()
+
+		if err := rt.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if w.count() != gr || !isDarkRescuePhase(rt.BootPhase()) {
+			t.Fatalf("the Start counted or showed no line: count %d (release holds %d) phase %q", w.count(), gr, rt.BootPhase())
+		}
+		w.h.runDeferred(context.Background()) // the waiter gives up at its bound, release still pending
+		if w.count() != gr || w.h.ec2.countCalls("AttachVolume") != 0 || !w.attached() {
+			t.Fatalf("a waiter acted on a release in progress: count %d", w.count())
+		}
+
+		// The restarted CP's resume finishes the release.
+		f2 := w.h.factory()
+		f2.pool.wedgedAction = wedgedActionRelease
+		f2.leases = w.f.leases
+		f2.agentHTTP = w.f.agentHTTP
+		f2.resumeRescues(context.Background())
+		if w.attached() || w.marker() != "" {
+			t.Fatalf("release not finished: marker %q", w.marker())
+		}
+		startPhase.Delete(rescueWorkspace)
+		if err := rt.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		// The slot stays in service, so the ordinary placement may pick it again or the free one.
+		if got := attachedInstance(w.h.ec2.volumes["vol-1"]); got == "" {
+			t.Fatal("the Start after the release did not place the home")
+		}
+	})
+}

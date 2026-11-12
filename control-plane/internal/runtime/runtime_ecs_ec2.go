@@ -101,6 +101,10 @@ type ecsEC2Runtime struct {
 	// CP's audit log (recordAutoReplace); onAutoReplace nil = not recorded.
 	tenantID, workspaceID string
 	onAutoReplace         func(context.Context, SlotAutoReplace)
+	// onSlotDark is Config.OnSlotDark, for a rescue a Start began (runtime_ecs_ec2_start_dark.go).
+	onSlotDark func(context.Context, SlotDark)
+	// onSlotWedged is Config.OnSlotWedged, for the wedged release's outcome (reportEpisode).
+	onSlotWedged func(context.Context, SlotWedged)
 	// replica separates the process-local maps of two CPs a test stands up in one
 	// process (localKey). Always empty in production.
 	replica string

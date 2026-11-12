@@ -632,6 +632,76 @@ Review round 1 (second phase): the deregistration is checked against both leases
 
 Review round 2 (second phase): the post-detach bookkeeping asks both leases after its wait and before each write (`afterDetach` takes a check; the release path passes none). `rescueGuarded` takes the caller's marker by pointer and compares it with the box's marker under the locks: when another replica (or a lost write) made them differ it adopts the box's and stops with `errRescueStale`, so a stale snapshot never steps a phase backwards or blocks and reports a second time; the next pass decides on the fresh marker.
 
+**2026-11-12 (the Agent reports its task id, #3993).** The workspace Agent's `/healthz` now carries an optional `task_id`, and the
+probe checks it against the task the CP expects on the slot. Where the code chose among readings of the text above:
+
+- **What is exposed: the task id, not the ARN.** `/healthz` is the Agent's one route that answers without the bearer token, to
+  anything that can reach port 7700 (inside the VPC, through Service Connect). A task ARN contains the AWS account id, so the Agent
+  reports only its last segment, read once from the ECS task metadata endpoint (`ECS_CONTAINER_METADATA_URI_V4`, `/task`). The
+  lookup runs in the background (3 tries, 2 s each), never delays start-up and never fails it; outside ECS, or when it gives up, the
+  field is omitted.
+- **The probe** compares the reported id with the ids of the service's RUNNING tasks (the tasks it already lists). A match marks
+  the observation `TaskProven`. A different id means another task answered the alias: the result is `unknown`. A missing id leaves
+  the `healthy` answer standing, unproven. This deliberately differs from "missing = unknown": turning an old Agent's answer into
+  `unknown` would stop it clearing a dark stamp, which changes detection for every Agent not yet updated. A failed probe has no body
+  and never proves anything.
+- **Rollout order.** Old Agents answer without the field, so nothing is proven and detection behaves as before; the CP may be
+  deployed first or last. Only a consumer that requires `TaskProven` is affected, and none exists yet.
+- **The rescue's refusal of a service-up slot is not lifted.** Identity can only come with an answer, and the verdict that makes a
+  service-up slot dark is a probe that got none, so there is no identity to gate on. Which proof could replace it is
+  follow-up #3998.
+
+**2026-11-12 (the Start side of rung L1, #3965).** A member's Start whose home sits on a dark slot no longer waits on that box. It runs
+only under `AF_ECS_EC2_DARK_SLOT_ACTION=rescue`; with `detect` the Start is unchanged (code: `runtime_ecs_ec2_start_dark.go`). The text of
+decision 3 ("the occupant's own Start overtakes L1 by moving the count") stays true for a Start that meets a rescue it cannot read
+(below); what this note adds is the handover for a Start that can.
+
+*The handover: the Start yields.* The rescue's preparation step bumps the count to `g_r` and ends any Start, so a Start that counted itself
+first would be aborted by the rescue it triggered, and one that counted after would overtake it. The Start therefore does not count in
+those cases. `Start` replaces `beginStart` with `admitStart`, which under the claim lock, with the count `g` read, takes one of three roads:
+
+1. **Nothing dark, no rescue** (the usual case, and every read that fails): it counts itself exactly as before.
+2. **A rescue owns the home**: the box carries this home's marker in phase `begun` to `detaching`, `m.Gen == g` and the epoch is the box's
+   `LaunchTime`. The Start does not count. It sets #2447's blocked-phase line and waits. A marker in `preparing`, for another home, with a
+   moved count or another epoch is not an owner (the first because a count equal to its `g_r` proves nothing, see review round 1), so the
+   Start counts itself and overtakes it as decision 3 says. Checking the marker in the same lock that bumps is what keeps a rescue the
+   sweeper began a moment earlier from being overtaken by a Start that had looked before it.
+3. **The box is dark**: the home's box is a running slot with no live claim, no marker, and an `af-dark-since` stamp of this launch epoch at
+   least `darkAfter` old. The Start takes `g_d = g` under that lock, releases it, and runs the rescue's own preparation step
+   (`rescuePrepare`, inline: a few AWS calls, no waits), which moves the count itself. The Start has not counted, so it cannot overtake
+   its rescue. A preparation that steps aside (the count moved since the decision: a Stop, a newer Start) is decided again, up to
+   `darkAdmitTries` (3) times, after which the Start counts itself. A preparation that fails fails the Start with the cause: a Start that
+   cannot begin its rescue reports it instead of sitting in `starting`.
+
+Either way the Start then ends its request with `nil`, and a background step carries on: when it began the rescue, it runs the rest of it
+(the cancel, then steps 4-6 as the sweeper does; the sweeper's resume scan still finishes it if the process dies); in both cases it then
+**waits** (`awaitRescue`, every 5 s, bounded by the background budget) and acts on what it reads:
+
+- count no longer `g_r` (a Stop, a `Destroy` / `EraseHome`, which Stop first, or a newer Start): it ends. The work is theirs and the rescue,
+  if still running, stops at its next check;
+- home still on the box, marker present: it keeps the line up and refreshes it (a rescue with `blocked_since` reads "stopped at
+  `<phase>`; retried automatically, an operator may have to stop the box"), so a blocked rescue is shown, never waited out in silence;
+- home detached and the marker gone (the finalizer and the pool bookkeeping are done): the **follow-up Start**. It counts itself only
+  if the count is still `g_r`, under the claim lock, then goes on as any Start (`startFrom`) and places the home like a homeless one;
+- home still on the box and the marker gone with the count unmoved (the rescue dropped its preparation): it clears the line and ends.
+
+The follow-up is automatic, and the member's own retry is the same thing without the wait: after the rescue it finds no marker and a
+detached home and counts as usual. Two Starts in a row both yield, both wait, and the first follow-up to count wins; the other finds the
+count moved and ends. `State()` clears the line once the home is off the box, so a waiter that gave up at its bound, or a Start whose rescue
+the sweeper finished, does not leave the Console's dialog open on a stopped workspace.
+
+*Confirmed: the service-up refusal (#3993) does not stand in the way.* A Start of a workspace that `State()` calls `stopped` has the service
+at desired 0 (or none), which is the case `rescuePrepare` allows; a service that is up is `starting` or `running` and never reaches this path.
+
+*Where the home goes.* The home is placed by `placeHome` on a homeless home, as any Start: a hot free slot first, then stopped ones. The
+rescued box is left in service (decision 2), so it is a stopped free slot, the last choice; it is used only when nothing else is free, and
+then it is a fresh boot.
+
+*Not done.* The stamp is trusted as the sweeper left it (up to one sweep old): the Start does not re-ask SSM or the Agent, because the
+service is down and the cost of a rescue of a box that came back is a slower Start, not a lost workspace. Not run against real AWS.
+
+Follow-ups: #3965
+
 **2026-11-12 (the wedged release, #3991).** The action decided in the wedged amendment is built (code: `runtime_ecs_ec2_wedged_release.go`), behind `AF_ECS_EC2_WEDGED_SLOT_ACTION=release`; the default stays `detect`. Where the code chose among readings of the text above:
 
 - **One token, one marker.** The release takes the L1 rescue's token: `rescuePrepare` (claim lock: count equals g_d, marker `preparing`, bump to g_r, `begun`, the Start ended, the CP's pending SSM commands fixed and cancelled) and `rescueGuarded` (mount lock outer, token re-verified under the claim lock inside, both leases asked before every destructive call), and the same resume scan and finalizer. The marker gains an optional seventh field `wedged`; an older CP cannot parse it and so fences the home instead of running the dark ladder on it. A marker is continued only by the ladder that wrote it (`canContinue`): a `wedged` marker is finalized, not continued, when the wedged action is no longer `release`, and a dark marker is never continued by the wedged steps. One marker per home keeps the two ladders from both acting; they are also disjoint by definition (the wedged predicate needs a connected ECS agent, the dark one a silent one).

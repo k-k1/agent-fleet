@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/taskid"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -207,5 +208,26 @@ func TestSlowModelRoutesAreHeldOpen(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), `data: {"status":4`) {
 			t.Errorf("POST %s: want the handler's 4xx in the final frame, got %q", path, rec.Body.String())
 		}
+	}
+}
+
+// The healthz body carries the task id (never the ARN or account id) once known, and omits
+// the key before that, so an old CP or a non-ECS Agent sees the body it always saw.
+func TestHealthzTaskID(t *testing.T) {
+	defer taskid.SetForTest("")
+	taskid.SetForTest("")
+	h := smokeHandler(t)
+	var got map[string]any
+	w := smokeDo(t, h, "GET", "/healthz", "", "")
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if _, has := got["task_id"]; has {
+		t.Fatalf("task_id present before it is known: %s", w.Body.String())
+	}
+	taskid.SetForTest("abc123")
+	w = smokeDo(t, h, "GET", "/healthz", "", "")
+	got = nil
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got["task_id"] != "abc123" || strings.Contains(w.Body.String(), "arn:") {
+		t.Fatalf("body = %s", w.Body.String())
 	}
 }

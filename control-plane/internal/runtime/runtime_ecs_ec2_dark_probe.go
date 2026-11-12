@@ -2,10 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -59,6 +62,8 @@ const (
 type probeObservation struct {
 	Result AgentProbe
 	At     time.Time
+	// TaskProven: the answer named a task the CP expects on the slot (see probeAgentTask).
+	TaskProven bool
 }
 
 // agentProbes is the factory's memory of the latest probe per slot (instance id).
@@ -102,6 +107,15 @@ func (f *ecsEC2Factory) LastAgentProbe(slot string) (AgentProbe, time.Time, bool
 	return o.Result, o.At, ok
 }
 
+// LastAgentTaskProven reports whether the latest probe of the slot was answered by a task the
+// CP expects there. False for an Agent that does not report its task (older than #3993), a
+// probe that failed, or no probe at all.
+func (f *ecsEC2Factory) LastAgentTaskProven(slot string) bool {
+	f.probes.mu.Lock()
+	defer f.probes.mu.Unlock()
+	return f.probes.m[slot].TaskProven
+}
+
 func (f *ecsEC2Factory) darkNow() time.Time {
 	if f.clock != nil {
 		return f.clock()
@@ -130,12 +144,31 @@ func (f *ecsEC2Factory) newDarkProbePass() *darkProbePass {
 // probeAgent makes one GET /healthz against endpoint. It sends no credentials: /healthz is
 // the Agent's open readiness route, so the bearer token never enters this path or its logs.
 func (f *ecsEC2Factory) probeAgent(ctx context.Context, pass *darkProbePass, endpoint string) AgentProbe {
+	res, _ := f.probeAgentTask(ctx, pass, endpoint, nil)
+	return res
+}
+
+// maxHealthzBody bounds how much of the answer is read for the task id.
+const maxHealthzBody = 64 << 10
+
+// probeAgentTask is probeAgent plus the identity check. expected is the ids of the tasks the
+// CP expects on the slot (the task ARN's last segment); the Agent reports its own as task_id.
+//
+//   - The Agent reports an id in expected: the answer is from a task of this slot, proven is true.
+//   - The Agent reports an id outside expected: some other task answered the alias, so the
+//     answer says nothing about this slot and the result is unknown.
+//   - The Agent reports none (an Agent older than #3993, or an unreadable body): the answer
+//     stands as healthy so detection behaves as before, but proven is false, and whatever
+//     needs the identity (a rescue of a service-up slot) must not act on it.
+//
+// A failed probe carries no body and so never proves anything.
+func (f *ecsEC2Factory) probeAgentTask(ctx context.Context, pass *darkProbePass, endpoint string, expected []string) (res AgentProbe, proven bool) {
 	if endpoint == "" || ctx.Err() != nil {
-		return AgentProbeUnknown
+		return AgentProbeUnknown, false
 	}
 	remaining := pass.deadline.Sub(f.darkNow())
 	if remaining <= 0 {
-		return AgentProbeUnknown // budget spent: this slot is not looked at this pass
+		return AgentProbeUnknown, false // budget spent: this slot is not looked at this pass
 	}
 	each := f.pool.darkProbeTimeout
 	if each <= 0 {
@@ -145,22 +178,65 @@ func (f *ecsEC2Factory) probeAgent(ctx context.Context, pass *darkProbePass, end
 	defer cancel()
 	req, err := http.NewRequestWithContext(pctx, http.MethodGet, endpoint+"/healthz", nil)
 	if err != nil {
-		return AgentProbeUnknown
+		return AgentProbeUnknown, false
 	}
 	resp, err := f.agentDoer().Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return AgentProbeUnknown
+			return AgentProbeUnknown, false
 		}
-		return classifyProbeError(err)
+		return classifyProbeError(err), false
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		// What the Service Connect proxy says for an Agent nobody is listening for.
-		return AgentProbeFailed
+		return AgentProbeFailed, false
 	}
-	return AgentProbeHealthy
+	id := healthzTaskID(resp.Body)
+	if id == "" {
+		return AgentProbeHealthy, false
+	}
+	if len(expected) > 0 && slices.Contains(expected, id) {
+		return AgentProbeHealthy, true
+	}
+	if expected != nil {
+		return AgentProbeUnknown, false
+	}
+	return AgentProbeHealthy, false
+}
+
+// healthzTaskID reads the optional task_id of an Agent /healthz answer; "" when absent or
+// the body is not JSON.
+func healthzTaskID(r io.Reader) string {
+	var h struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r, maxHealthzBody)).Decode(&h); err != nil {
+		return ""
+	}
+	return h.TaskID
+}
+
+// taskIDOf is the id segment of a task ARN (arn:aws:ecs:<region>:<acct>:task/<cluster>/<id>).
+func taskIDOf(arn string) string {
+	if i := strings.LastIndex(arn, "/"); i >= 0 {
+		return arn[i+1:]
+	}
+	return ""
+}
+
+// runningTaskIDs are the ids of the RUNNING tasks among tasks.
+func runningTaskIDs(tasks []ecstypes.Task) []string {
+	ids := []string{}
+	for _, t := range tasks {
+		if aws.ToString(t.LastStatus) == "RUNNING" {
+			if id := taskIDOf(aws.ToString(t.TaskArn)); id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
 }
 
 // classifyProbeError maps a transport error onto failed only for the shapes measured on a
@@ -204,12 +280,12 @@ func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot str
 // (a stopping task is the latter, and a stopped one stays listed for a while). ok is false
 // when any read failed or a listed task could not be described: a partial view of the
 // tasks is not an answer.
-func (f *ecsEC2Factory) serviceTasks(ctx context.Context, service string) ([]ecstypes.Task, bool) {
-	lister, ok := f.ci.(ecsTaskLister)
+func listServiceTasks(ctx context.Context, ci ecsContainerInstanceAPI, clusterName string, service string) ([]ecstypes.Task, bool) {
+	lister, ok := ci.(ecsTaskLister)
 	if !ok {
 		return nil, false
 	}
-	cluster := aws.String(f.base.cfg.cluster)
+	cluster := aws.String(clusterName)
 	var arns []string
 	for _, desired := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
 		var next *string
@@ -237,6 +313,15 @@ func (f *ecsEC2Factory) serviceTasks(ctx context.Context, service string) ([]ecs
 		tasks = append(tasks, described.Tasks...)
 	}
 	return tasks, true
+}
+
+func (f *ecsEC2Factory) serviceTasks(ctx context.Context, service string) ([]ecstypes.Task, bool) {
+	return listServiceTasks(ctx, f.ci, f.base.cfg.cluster, service)
+}
+
+// serviceTasks is the same read for a runtime (the wedged release runs inside one).
+func (e *ecsEC2Runtime) serviceTasks(ctx context.Context, service string) ([]ecstypes.Task, bool) {
+	return listServiceTasks(ctx, e.ci, e.base.cfg.cluster, service)
 }
 
 // containerInstanceSlots maps container instance ARNs to EC2 instance ids. ok is false when

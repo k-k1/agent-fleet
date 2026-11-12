@@ -346,8 +346,8 @@ func (f *ecsEC2Factory) wedgedVerdictFor(ctx context.Context, pass *darkProbePas
 		f.probes.forget(slot)
 		return wedgedVerdict{}
 	}
-	res := f.probeAgent(ctx, pass, rt.Endpoint())
-	f.probes.set(slot, probeObservation{Result: res, At: f.darkNow()})
+	res, proven := f.probeAgentTask(ctx, pass, rt.Endpoint(), runningTaskIDs(tasks))
+	f.probes.set(slot, probeObservation{Result: res, At: f.darkNow(), TaskProven: proven})
 	switch res {
 	case AgentProbeFailed:
 		return wedgedVerdict{state: wedgedYes, signal: wedgedSignalProbeFailed}

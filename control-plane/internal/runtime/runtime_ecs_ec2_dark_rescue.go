@@ -18,9 +18,10 @@ import (
 // occupant's Start, cancel the CP's own pending SSM commands, then (runtime_ecs_ec2_dark_rescue_steps.go)
 // deregister, stop and detach, and resume and finalize after a restart.
 //
-// Which task answered a Service Connect probe cannot be proven (the Agent's /healthz carries
-// no identity), so a slot whose service is up is never rescued, whatever the probe says. The
-// check runs under the claim lock, in rescuePrepare.
+// A slot whose service is up is never rescued. The Agent now reports its task id, but only an
+// answer carries it, and the verdict that makes a service-up slot dark is a probe that got no
+// answer, so there is nothing to prove with (ADR 0121, 2026-11-12 note on #3993). The check
+// runs under the claim lock, in rescuePrepare.
 
 const (
 	// ec2TagWedgeAt is the `began` of the latest episode that acted on the box, RFC 3339.
@@ -129,7 +130,7 @@ func (f *ecsEC2Factory) rescueDarkSlot(ctx context.Context, d darkDecision) {
 		return
 	}
 	log.Printf("ecs-ec2 sweep: rescuing %s from the dark slot %s (marker %s)", rt.base.name, d.slot, m)
-	f.rescueContinue(ctx, rt, cmds, d.slot, m, ids)
+	rt.rescueContinue(ctx, cmds, d.slot, m, ids)
 }
 
 // rescueRuntime is the runtime the rescue acts through; its waits use the factory's sleeper
@@ -203,7 +204,7 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 	} else if exists && svc.DesiredCount > 0 {
 		// A probe through the shared alias cannot say which task answered, so a service that
 		// is up is not rescued: the container may be serving its member.
-		return m, nil, fmt.Errorf("%w: the service is up and the Agent's identity is not proven", errRescueStepAside)
+		return m, nil, fmt.Errorf("%w: the service is up and a failed probe carries no task identity", errRescueStepAside)
 	}
 	inst, err := e.slotInstance(lctx, d.slot)
 	if err != nil {
@@ -399,64 +400,71 @@ func listSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID
 // rescueContinue runs what follows the preparation: cancel exactly the fixed set with no
 // lock held, prove the rescue still owns the home, then the steps of decision 2 (steps 4-6,
 // rescueSteps). The outcome decides the audit event and what is left on the box.
-func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, cmds ssmSlotCommands, slot string, m rescueMarker, ids []string) {
-	steps := rt.rescueSteps
-	if m.Wedged {
-		steps = func(ctx context.Context, slot string, m *rescueMarker) error {
-			return rt.wedgedReleaseSteps(ctx, cmds, f.serviceTasks, slot, m)
-		}
-	}
+func (e *ecsEC2Runtime) rescueContinue(ctx context.Context, cmds ssmSlotCommands, slot string, m rescueMarker, ids []string) {
 	if err := rescueStep(ctx, "before-cancel"); err != nil {
 		return
 	}
 	cancelled, failed := cancelCommandIDs(ctx, cmds, slot, ids)
 	if cancelled+failed > 0 {
-		log.Printf("ecs-ec2 sweep: rescue of %s: cancelled %d pending commands on %s (%d failed)", rt.base.name, cancelled, slot, failed)
+		log.Printf("ecs-ec2 sweep: rescue of %s: cancelled %d pending commands on %s (%d failed)", e.base.name, cancelled, slot, failed)
 	}
 	if err := rescueStep(ctx, "cancelled"); err != nil {
 		return
 	}
-	err := rt.rescueGuarded(ctx, &m, slot, func(ctx context.Context) error {
+	err := e.rescueGuarded(ctx, &m, slot, func(ctx context.Context) error {
 		return rescueStep(ctx, "guarded")
 	})
 	blockedBefore := m.BlockedSince
 	if err == nil {
-		err = steps(ctx, slot, &m)
+		if m.Wedged {
+			err = e.wedgedReleaseSteps(ctx, cmds, e.serviceTasks, slot, &m)
+		} else {
+			err = e.rescueSteps(ctx, slot, &m)
+		}
 	}
 	switch {
 	case err == nil:
-		log.Printf("ecs-ec2 sweep: rescued %s from the slot %s: the home is detached (wedged release: %t)", rt.base.name, slot, m.Wedged)
-		rt.finalizeRescue(ctx, slot, m.String(), m)
-		f.reportEpisode(ctx, rt, slot, m, "rescued")
+		log.Printf("ecs-ec2 sweep: rescued %s from the slot %s: the home is detached (wedged release: %t)", e.base.name, slot, m.Wedged)
+		e.finalizeRescue(ctx, slot, m.String(), m)
+		e.reportEpisode(ctx, slot, m, "rescued")
 	case errors.Is(err, errRescueBlocked):
-		log.Printf("ecs-ec2 sweep: rescue of %s on %s is blocked (phase %s): %v", rt.base.name, slot, m.Phase, err)
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s is blocked (phase %s): %v", e.base.name, slot, m.Phase, err)
 		if blockedBefore.IsZero() || !blockedBefore.Equal(m.BlockedSince) {
-			f.reportEpisode(ctx, rt, slot, m, "blocked")
+			e.reportEpisode(ctx, slot, m, "blocked")
 		}
 	case errors.Is(err, errRescueOvertaken):
-		log.Printf("ecs-ec2 sweep: rescue of %s on %s overtaken: %v", rt.base.name, slot, err)
-		rt.finalizeRescue(ctx, slot, m.String(), m)
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s overtaken: %v", e.base.name, slot, err)
+		e.finalizeRescue(ctx, slot, m.String(), m)
 	case errors.Is(err, errRescueCrash):
 	default:
-		log.Printf("ecs-ec2 sweep: rescue of %s on %s stopped for this pass: %v", rt.base.name, slot, err)
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s stopped for this pass: %v", e.base.name, slot, err)
 	}
 }
 
 // reportEpisode routes the outcome of a marker's episode to the audit callback of its ladder:
 // a dark rescue's is SlotDark, a wedged release's is SlotWedged ("rescued" is its "released").
-func (f *ecsEC2Factory) reportEpisode(ctx context.Context, rt *ecsEC2Runtime, slot string, m rescueMarker, action string) {
+func (e *ecsEC2Runtime) reportEpisode(ctx context.Context, slot string, m rescueMarker, action string) {
 	if m.Wedged {
 		if action == "rescued" {
 			action = "released"
 		}
-		f.reportWedged(ctx, SlotWedged{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name,
-			MembershipID: rt.base.membershipID}, action)
+		if e.onSlotWedged != nil {
+			e.onSlotWedged(ctx, SlotWedged{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: e.base.name,
+				MembershipID: e.base.membershipID, Action: action})
+		}
 		return
 	}
-	f.reportRescue(ctx, SlotDark{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name, MembershipID: rt.base.membershipID}, action)
+	e.reportRescue(ctx, SlotDark{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: e.base.name, MembershipID: e.base.membershipID}, action)
 }
 
 // reportRescue hands a rescue event to the audit callback. Nothing here can fail the rescue.
+func (e *ecsEC2Runtime) reportRescue(ctx context.Context, ev SlotDark, action string) {
+	ev.Action = action
+	if e.onSlotDark != nil {
+		e.onSlotDark(ctx, ev)
+	}
+}
+
 func (f *ecsEC2Factory) reportRescue(ctx context.Context, ev SlotDark, action string) {
 	ev.Action = action
 	if f.onSlotDark != nil {
@@ -710,13 +718,13 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 		// is still g_r: nobody else could have moved it while the marker existed (decision 3,
 		// rule 2), so it was this rescue.
 		if (m.Phase == rescuePhaseDetaching || m.Phase == rescuePhaseDetached) && !stillOnBox && count == m.Gen {
-			f.reportEpisode(ctx, rt, id, m, "rescued")
+			rt.reportEpisode(ctx, id, m, "rescued")
 		}
 		rt.finalizeRescue(ctx, id, raw, m)
 		return
 	}
 	log.Printf("ecs-ec2 sweep: resuming the rescue of %s on %s (phase %s)", rt.base.name, id, m.Phase)
-	f.rescueContinue(ctx, rt, cmds, id, m, ids)
+	rt.rescueContinue(ctx, cmds, id, m, ids)
 }
 
 // canContinue is whether this build may carry a marker on: the action of the ladder that
