@@ -194,8 +194,8 @@ describe("useEffortOptions for claude", () => {
   });
 
   it("offers the effort levels for Haiku 5.x and the haiku alias", () => {
-    expect(efforts("haiku")).not.toBe("");
-    expect(efforts("claude-haiku-5-5")).not.toBe("");
+    expect(efforts("haiku")).toBe(",low,medium,high,xhigh,max");
+    expect(efforts("claude-haiku-5-5")).toBe(",low,medium,high,xhigh,max");
   });
 
   it("offers the effort levels for other models (negative control)", () => {
