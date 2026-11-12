@@ -298,6 +298,23 @@ Jira は git でなく作業項目インボックス
   （`internal/jirax/jira_adf.go`、goldmark）。jira-cli の wiki 変換は通さない（#2476）ので、編集で崩れたコメントを
   直せる。`--debug` の実行は断る。利用者自身の設定（次の項目）はそのまま `exec` し、jira が
   「そのコマンドはない」と答える。
+- **`issue attachment add|list|download|delete`**（#3945。jira-cli 1.7.0 には添付のコマンドがない）:
+  同じ形で `workspace-agent jira-attachment`（`internal/jirax/jira_attachment.go`）へ渡す。標準入力は閉じ、
+  `--debug` では断る。`-` で始まる `--name` / `-o` の値は断る（単独の `-` は除く）。ラッパーは自分の argv の読みで
+  資格情報を選び、そこでは `--` がフラグの終わりなので、断らないと `--name -- --config other.yml` がこの接続の
+  Jira に添付してしまう。`add` はファイルごとに 1 回、`/rest/api/3/issue/KEY/attachments` へ
+  `multipart/form-data` を POST する（`X-Atlassian-Token: no-check`、正確な `Content-Length` 付き。
+  チャンク転送はしない）。OAuth の 401 を受けて更新した後の 1 回（Jira が断ったので何も保存されていない）を除き
+  再送はせず、最初の失敗で止まって送っていないファイルを示す。通信の失敗と 5xx のときは、そのファイルが添付済みの
+  可能性があると伝える。リダイレクトは追わない（資格情報が一緒に付いていくため）。`list` は
+  `?fields=attachment` を読む。`download` と `delete` は ID がその課題のものかを先に確かめてから、
+  `GET /rest/api/3/attachment/content/ID?redirect=false`（資格情報の宛先のホストへの 1 回の要求。一時ファイルに
+  書いて改名し、名前は添付名のベース名だけ。`--force` が無ければ既存のファイルを上書きしない。公開は link(2) なので、転送中に現れたファイルも残る。ラッパーの
+  期限による TERM では転送を取り消して一時ファイルを消す）か
+  `DELETE /rest/api/3/attachment/ID` を送る。スコープは `write:jira-work` / `read:jira-work`。アップロードと
+  ダウンロードは専用の HTTP クライアントを使う（20 秒の方では大きいファイルを運べない）。ラッパーの既定の上限は
+  `add` / `download` が 600 秒（`AF_JIRA_TIMEOUT` で上書きできる）、それ以外が 120 秒。実際の Jira ではまだ
+  動かしていない（日本語のファイル名、サイトのサイズ上限）: #3945。
 - **本文を ADF で送る（`comment add`、`issue create -b/-T`、`issue edit -b`）**（#2809）: jira-cli は
   これらを v2 の wiki 記法で送る。wiki 記法の `{{code}}` と `*bold*` は単語の区切りでしか効かず、
   日本語の文字や全角の括弧は区切りにならない。当方の設定なら、コマンドラインの本文・`-T`・端末でない

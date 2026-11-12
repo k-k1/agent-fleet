@@ -616,3 +616,11 @@ Q1 は、同じアダプタとソケットを使うので、ADR 0128 の claude 
   拒否に「AWS authentication failed」と付ける。ほかに合うステータスは無い（403 と 400 は再試行され、404 は「model not
   available」、429 はレート制限と読まれ、503 にすると、待っても晴れない拒否を claude アダプタが再試行できるものと
   分類する）ので、この表示は残り、その後に CP 自身のメッセージが続く。
+
+- 2026-11-12、拒否の表示（#3891）: 上の「ほかに合うステータスは無い」は計測で置き換わった（claude 2.1.322、スタンドイン
+  Bedrock、ステータスごとにダミーのベアラで 1 ターン）。401 は「AWS authentication failed · refresh your AWS credentials …」の
+  後にメッセージが付き、503 は「usually temporary」の注記が付く。402・409・410・412・451 は「API Error: <status> <メッセージ>」
+  だけで、`x-should-retry: false` により 1 回で終わる（400 と 422 は 8 回、404 は「model not available」）。ゲートウェイ
+  （CP の `writeRouteRefusal`、Agent の `wireStatus`）は 403 と 409 の拒否（付与オフ、印なし、許可外モデル、ルート消滅）を
+  412 で返し、401 はトークンと AWS ログインに残す。opencode はステータスより先に `x-should-retry` を読むので再試行しない。
+  実際の提供ルートでは未確認。

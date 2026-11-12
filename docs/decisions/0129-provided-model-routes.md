@@ -658,3 +658,13 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   authentication failed"; no other status fits (403 and 400 are retried, 404 reads as "model not available", 429 as a
   rate limit, and a 503 would make the claude adapter classify a refusal that waiting does not clear as retryable), so
   the label stays, followed by the CP's own message.
+
+- 2026-11-12, refusal wording (#3891): the "no other status fits" remark above is superseded by a measurement (claude
+  2.1.322 against a stand-in Bedrock, one dummy-bearer turn per status). A 401 prints "AWS authentication failed · refresh
+  your AWS credentials (SSO sign-in, access keys, API key or proxy token) and retry · if credentials are current, check
+  AWS permissions and model access · API Error: 401 <message>"; 503 prints "API Error: 503 <message>. This is a
+  server-side issue, usually temporary …"; 402, 409, 410, 412 and 451 print "API Error: <status> <message>" and go out
+  once with `x-should-retry: false`; 400 and 422 go out eight times, 404 reads as "model not available". The gateways
+  (CP `writeRouteRefusal`, Agent `wireStatus`) now send 403 and 409 refusals (grant off, profile unmarked, model not
+  allowed, source gone) as 412, and keep 401 for the token and the AWS login. opencode reads `x-should-retry` before any
+  status, so it does not retry either. Unverified against a real provided route.

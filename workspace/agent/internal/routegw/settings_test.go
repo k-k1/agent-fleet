@@ -225,7 +225,7 @@ func TestAChangeIsEnforcedAtOnceOnCreateStartAndCredentialResolution(t *testing.
 				t.Fatalf("start 1 s after the change = %+v", ref)
 			}
 			// The fresh pull is the copy every later call is checked against too.
-			if resp, body := e.call(tok, invokePath(), `{}`); resp.StatusCode != http.StatusUnauthorized || codeOf(t, body) != c.code {
+			if resp, body := e.call(tok, invokePath(), `{}`); resp.StatusCode != http.StatusPreconditionFailed || codeOf(t, body) != c.code {
 				t.Fatalf("a call after a fresh pull = %d %s", resp.StatusCode, body)
 			}
 		})
@@ -236,7 +236,7 @@ func TestAChangeIsEnforcedAtOnceOnCreateStartAndCredentialResolution(t *testing.
 			e.mu.Unlock()
 			e.advance(3 * time.Second)
 			resp, body := e.call(tok, invokePath(), `{}`)
-			if resp.StatusCode != http.StatusUnauthorized || codeOf(t, body) != c.code {
+			if resp.StatusCode != http.StatusPreconditionFailed || codeOf(t, body) != c.code {
 				t.Fatalf("a call that resolves credentials 3 s after the change = %d %s", resp.StatusCode, body)
 			}
 			if _, n := e.counts(); n != 1 {
@@ -320,7 +320,7 @@ func TestCredentialsLapsingWhileTheBodyArrivesAreNotResolvedOnAStaleCheck(t *tes
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
-	if r.status != http.StatusUnauthorized || codeOf(t, r.body) != routes.CodeRouteForbidden {
+	if r.status != http.StatusPreconditionFailed || codeOf(t, r.body) != routes.CodeRouteForbidden {
 		t.Fatalf("the call = %d %s", r.status, r.body)
 	}
 	if _, n := e.counts(); n != 1 {

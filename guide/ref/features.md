@@ -60,6 +60,7 @@ If a feature ships and does not appear here, it is not done
 | Use `jira` in a session, already signed in | member | any session | [Use Jira](../user/integrations/jira.md) |
 | Use `confluence` in a session, already signed in (the Jira connection) | member | any session | [Use Confluence](../user/integrations/confluence.md) |
 | Edit and delete Jira comments (`jira issue comment edit` / `delete`) | member | any session | [Use Jira](../user/integrations/jira.md#ask-an-agent) |
+| Attach files to Jira issues, list, download and delete attachments (`jira issue attachment`) | member | any session | [Use Jira](../user/integrations/jira.md#ask-an-agent) |
 | Subversion working copies — update, show log, local changes | member | Repositories → an SVN row | [Use a Subversion repository](../user/code/svn.md) |
 | File tree and viewer | member | Files | [See and download files](../user/files/browse.md) |
 | Download a folder as zip | member | Files tree or gallery → right-click → Download as zip | [See and download files](../user/files/browse.md#download-a-folder-as-zip) |

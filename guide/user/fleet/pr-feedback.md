@@ -111,6 +111,14 @@ An agent can also set a timer (`watch` with `source: time`): "tell me in 20 minu
 - The booking made for `wake` does not appear under Scheduled execution and cannot be edited there. It is removed when the timer fires, when the agent ends the watch, or when the session holding it ends
 - `list_watches` shows each timer's due time and whether it has a wake
 
+### Seeing and ending a session's watches
+
+A session waiting on a watch looks idle, so the session's chat view lists its live watches in a panel just above the message box, next to the one for background commands. Each row shows what it watches (a pull request, a timer, a CI run, or an extension's own source) with the events in words ("CI finished", "merged"). A timer shows the time left. A warning mark with the error means the source is not answering right now; the watch stays and is read again. A row links out only when its address is on github.com or bitbucket.org; everything else is plain text.
+
+- **End watch** asks first, then ends that watch, the same as the agent's `unwatch`. If the watch had already ended, the row simply goes. Someone who can only view the session sees the rows without the button
+- A watch a child asked to send to its parent (`notify: parent`) shows on the parent's chat view, marked with the child's name
+- The panel hides when the session has no watches
+
 ### Limits on watches
 
 | Rule | Value |

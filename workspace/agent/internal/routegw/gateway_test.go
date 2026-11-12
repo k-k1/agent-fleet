@@ -558,18 +558,18 @@ func TestTokenDiesWhenTheConnectionChangesOrIsRevoked(t *testing.T) {
 			p := e.settings["bedrock-invoke"]
 			p.ModelRoute = false
 			e.settings["bedrock-invoke"] = p
-		}, 401, routes.CodeRouteForbidden},
-		"deleted": {func(e *env) { delete(e.settings, "bedrock-invoke") }, 401, routes.CodeRouteForbidden},
+		}, 412, routes.CodeRouteForbidden},
+		"deleted": {func(e *env) { delete(e.settings, "bedrock-invoke") }, 412, routes.CodeRouteForbidden},
 		"repointed (role edited)": {func(e *env) {
 			p := e.settings["bedrock-invoke"]
 			p.RoleName = "Admin"
 			e.settings["bedrock-invoke"] = p
-		}, 401, "route_connection_changed"},
+		}, 412, "route_connection_changed"},
 		"replaced by another row of the same name": {func(e *env) {
 			p := e.settings["bedrock-invoke"]
 			p.ID = "p2"
 			e.settings["bedrock-invoke"] = p
-		}, 401, routes.CodeRouteForbidden},
+		}, 412, routes.CodeRouteForbidden},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -988,8 +988,9 @@ func TestClientDisconnectCancelsTheUpstreamRequest(t *testing.T) {
 	}
 }
 
-// Every refusal of the gateway's own goes out once and fails visibly in Claude Code: 401 for what
-// waiting does not clear, 503 for what it may, both with x-should-retry: false (writeRefusal).
+// Every authentication, permission or availability refusal of the gateway's own goes out once and
+// fails visibly in Claude Code: 401 for the token or the AWS login, 412 for what the caller may not
+// use, 503 for what waiting may clear, all with x-should-retry: false (writeRefusal).
 func TestRefusalsAreSentAsNotRetried(t *testing.T) {
 	e := newEnv(t)
 	tok := e.issue(e.session("s1", "p1", ""))

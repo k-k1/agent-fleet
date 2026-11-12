@@ -491,13 +491,13 @@ func TestProvidedRouteGatewayContractRefusals(t *testing.T) {
 		{"caller role header", good, streamPath(prTestModel), prStreamBody, map[string]string{"X-Role-Arn": prTestRole}, 400, providedroutes.CodeRequestRefused},
 		{"caller URL in the query", good, streamPath(prTestModel) + "?endpoint=https://evil.example", prStreamBody, nil, 400, providedroutes.CodeRequestRefused},
 		{"caller Region in the query", good, streamPath(prTestModel) + "?region=eu-west-1", prStreamBody, nil, 400, providedroutes.CodeRequestRefused},
-		{"ARN model id", good, streamPath("arn%3Aaws%3Abedrock%3Aus-east-1%3A111122223333%3Aapplication-inference-profile%2Fx"), prStreamBody, nil, 401, providedroutes.CodeModelNotAllowed},
-		{"model outside the list", good, streamPath("us.anthropic.claude-sonnet-5-5"), prStreamBody, nil, 401, providedroutes.CodeModelNotAllowed},
+		{"ARN model id", good, streamPath("arn%3Aaws%3Abedrock%3Aus-east-1%3A111122223333%3Aapplication-inference-profile%2Fx"), prStreamBody, nil, 412, providedroutes.CodeModelNotAllowed},
+		{"model outside the list", good, streamPath("us.anthropic.claude-sonnet-5-5"), prStreamBody, nil, 412, providedroutes.CodeModelNotAllowed},
 		{"another operation", good, "/model/" + prTestModel + "/count-tokens", prStreamBody, nil, 404, providedroutes.CodeOperationNotAllowed},
 		{"listing models", good, "/foundation-models", "", nil, 404, providedroutes.CodeOperationNotAllowed},
 		{"missing output cap", good, streamPath(prTestModel), `{"messages":[]}`, nil, 400, providedroutes.CodeOutputCap},
 		{"output cap above the model's maximum", good, streamPath(prTestModel), `{"max_tokens":99999999,"messages":[]}`, nil, 400, providedroutes.CodeOutputCap},
-		{"unpriced model", good, streamPath("anthropic.claude-unpriced-x"), prStreamBody, nil, 401, providedroutes.CodeModelUnpriced},
+		{"unpriced model", good, streamPath("anthropic.claude-unpriced-x"), prStreamBody, nil, 412, providedroutes.CodeModelUnpriced},
 	} {
 		resp, body := e.call(c.tok, c.path, c.body, c.hdr)
 		if resp.StatusCode != c.status || refusalCode(t, resp, body) != c.code {
@@ -579,7 +579,7 @@ func TestProvidedRouteGatewayRevocation(t *testing.T) {
 	if err := e.st.SetProvidedRouteGrant(ctx, e.tenant.ID, providedroutes.SourceDeployment, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if resp, body := e.call(tok, streamPath(prTestModel), prStreamBody, nil); resp.StatusCode != 401 || refusalCode(t, resp, body) != "route_not_granted" {
+	if resp, body := e.call(tok, streamPath(prTestModel), prStreamBody, nil); resp.StatusCode != 412 || refusalCode(t, resp, body) != "route_not_granted" {
 		t.Fatalf("grant off: %d %s", resp.StatusCode, body)
 	}
 	if err := e.st.SetProvidedRouteGrant(ctx, e.tenant.ID, providedroutes.SourceDeployment, true, ptrI64(100_000_000)); err != nil {
@@ -599,7 +599,7 @@ func TestProvidedRouteGatewayRevocation(t *testing.T) {
 
 	// The operator re-points the role: the bound session is refused, never moved.
 	e.register("arn:aws:iam::123456789012:role/af-model-route/other", "us-east-1", true, prTestModel)
-	if resp, body := e.call(tok, streamPath(prTestModel), prStreamBody, nil); resp.StatusCode != 401 || refusalCode(t, resp, body) != "route_connection_changed" {
+	if resp, body := e.call(tok, streamPath(prTestModel), prStreamBody, nil); resp.StatusCode != 412 || refusalCode(t, resp, body) != "route_connection_changed" {
 		t.Fatalf("re-pointed: %d %s", resp.StatusCode, body)
 	}
 	// Switched off by the super_admin: deactivated, not deleted.
