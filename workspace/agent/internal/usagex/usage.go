@@ -64,7 +64,7 @@ type ContextUsage struct {
 //   - Claude 3.x and earlier (claude-2 / claude-3-*)
 //   - Opus 4.0/4.1/4.5 and Sonnet 4.0/4.5. Dated ids have the form opus-4-20250514, so
 //     "4-2" counts as an old generation too (it cannot collide with the 1M-side 4-6/4-7/4-8).
-var smallWindowClaudeRe = regexp.MustCompile(`haiku-[1-4]|claude-[123]|opus-4-[0125]|sonnet-4-[025]`)
+var smallWindowClaudeRe = regexp.MustCompile(`haiku-[1-4](?:\D|$)|claude-[123]|opus-4-[0125]|sonnet-4-[025]`)
 
 // WindowGuess mirrors the Console's contextWindow() (ContextBar.tsx — keep
 // the two in sync). Order: 272k for GPT-5.x (codex normally records its real
