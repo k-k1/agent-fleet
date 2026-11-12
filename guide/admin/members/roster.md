@@ -114,7 +114,7 @@ The member detail gathers that member's workspace resources, running sessions an
 - Where the home is the member's own volume, the same card also warns when the home is running low. The rule is the roster mark's, and it appears for a running workspace only
 - On local and native deployments the disk tile shows the last measurement with its age ("as of 3 minutes ago") and measures again about once a minute. On a very large home it shows "measuring…" until the first measurement finishes
 
-Resources, session limits and force-stopping are covered in [Resource limits and sessions](../02-limits.md).
+Resources, session limits and force-stopping start at [See how resources are used](../resources/overview.md).
 
 ## Related
 

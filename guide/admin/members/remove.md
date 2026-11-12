@@ -95,4 +95,4 @@ A removed member's token can be replaced too. Do it before inviting them back ([
 
 - [Check on your members](roster.md)
 - [Add a member](add.md)
-- [Resource limits and sessions](../02-limits.md)
+- [See how resources are used](../resources/overview.md)

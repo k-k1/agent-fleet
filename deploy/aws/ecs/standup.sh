@@ -216,7 +216,7 @@ for s in cookie-secret master-key; do
   fi
   key_too_short "$SSM_PREFIX/$s" && rc=0 || rc=$?
   case "$rc" in
-    0) echo "    ⚠ SSM $SSM_PREFIX/$s is shorter than 32 bytes of key material: the Control Plane will refuse to start with it; generate a new one (guide/operate/04-secure.md, \"The deployment keys\")" ;;
+    0) echo "    ⚠ SSM $SSM_PREFIX/$s is shorter than 32 bytes of key material: the Control Plane will refuse to start with it; generate a new one (guide/operate/secure/deployment-keys.md)" ;;
     2) echo "    ⚠ SSM $SSM_PREFIX/$s could not be read to check its length (needs ssm:GetParameter and kms:Decrypt)" ;;
   esac
 done

@@ -112,6 +112,17 @@ Sessions and shells that were already running keep the old version. Start a new 
 
 See [Fix a workspace that will not start or has stopped](../troubleshooting/workspace.md#this-agents-cli-could-not-be-installed).
 
+### An agent CLI has been the same version for weeks
+
+Look at the line under the "**Tool versions**" table: "**Upstream release watch: last clean run …**".
+New releases of each CLI are watched every 2 hours, and the versions this deployment installs only move when that watch finds a new one.
+
+| What the line shows | What it means |
+|---|---|
+| A recent clean run and no warning | No new version has come out. There is nothing to do |
+| "The watcher cannot read …" or "The watcher has not had a clean run for over 48 hours" | The version standing still says nothing about upstream. Ask your deployment administrator to check the watch |
+| No line at all | This deployment cannot reach GitHub, so it does not know. That is not itself a fault |
+
 ## Related
 
 - [See your machine and its usage](machine.md): the architecture decides which tools are installed

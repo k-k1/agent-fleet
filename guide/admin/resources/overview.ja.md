@@ -89,5 +89,5 @@ audience: "チームのワークスペースがどれだけリソースを使っ
 - [セッション数の上限を決める](session-limits.ja.md)
 - [ワークスペースの大きさを決める](workspace-size.ja.md)
 - [放置されたワークスペースを止める](idle-stop.ja.md)
-- [メンバーの状況を見る](../01-members.ja.md)
+- [メンバーの状況を見る](../members/roster.ja.md)
 - [上限と既定値](../../ref/limits.ja.md)

@@ -148,6 +148,4 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [一時停止する・費用を見る](kubernetes/pause.ja.md) | `pause.sh` で配備を眠らせ、費用を知る |
 | [撤去する](kubernetes/teardown.ja.md) | 配備と残ったものを消す |
 
-次の章の内容は、上のページに移りました: [01 配備形態を選ぶ](01-choose.ja.md)・[02 初期構築](02-install.ja.md)・[03 動かし続ける](03-run.ja.md)・[04 守る](04-secure.ja.md)・[05 サインイン方式](05-signin.ja.md)・[06 切り分ける](06-diagnose.ja.md)・[11 ecs-ec2 のスロットプール](11-slot-pool.ja.md)・[12 保存時の鍵](12-keys.ja.md)・[07 推論エンジンと読み上げ](07-engines.ja.md)・[08 自前の ComfyUI で画像を生成する](08-image-engine.ja.md)・[09 別の配備のエンジンを借りる](09-borrowed-engine.ja.md)・[10 自前の llama.cpp でチャットの推論を担う](10-llm-lan.ja.md)
-
 各形態が何に対応しているかは [配備形態](../ref/deploy-targets.ja.md)、誰が何をできるかは [ロールとできること](../ref/roles.ja.md) にあります。

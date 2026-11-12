@@ -786,8 +786,8 @@ ARN, so a grant on an alias would allow nothing.
 ⚠️ `AF_MASTER_KEY` stays required: values stored before the switch open with it until
 `af-cp rewrap-keys` re-seals them, and it still derives the workspace DEKs and the signing keys
 after that. Do not clear this parameter again while KMS-sealed values exist; the local
-custodian refuses them. The operator's side is `guide/operate/12-keys.md`, "Keys at rest on
-AWS KMS".
+custodian refuses them. The operator's side is `guide/operate/keys/kms.md`, "Put the keys at rest
+on AWS KMS".
 
 ### `WorkspaceDekRandom`
 
@@ -821,11 +821,11 @@ Measured 2026-10-11 on throwaway stacks in a sandbox account (deleted afterwards
 Before turning it on: kept homes keep the derived key until their first start with the flag;
 turning it off only stops keys for new homes (homes that have one keep using it, no
 reconnecting), while going back to a CP that does not know the home's key, or losing `home_dek`,
-can need credentials reconnected (see 04-secure); unmigrated homes and old snapshots are not shredded (#1956). The
+can need credentials reconnected (see `guide/operate/keys/home-keys.md#when-it-goes-wrong`); unmigrated homes and old snapshots are not shredded (#1956). The
 per-workspace SSM parameter `secret-key-next` (deleted best-effort by the next start after confirm, or by Destroy) is under `/af-ws/*`: the CP role's
 `SsmWorkspaceParams` (20-platform: Put/Get/Delete) and the workspace execution role's `ssm-read`
 (GetParameters) already cover it, so no IAM statement was added. Operator view:
-`guide/operate/12-keys.md`, "A key of its own for each home".
+`guide/operate/keys/home-keys.md`, "Give each home its own key".
 
 ### Home task (volume root)
 
@@ -908,7 +908,7 @@ Operator steps, in this order so the CP never loses access:
    `aws ssm put-parameter --type SecureString --overwrite --name /af-cp/master-key --key-id <key ARN> --value "$(aws ssm get-parameter --with-decryption --name /af-cp/master-key --query Parameter.Value --output text)"`
    (a fresh deployment just runs the README's `put-parameter` with `--key-id` and no `--overwrite`).
    Never generate a new value: everything sealed under the old one stops opening
-   ([12 Keys at rest](../../../../guide/operate/12-keys.md)).
+   ([Put the keys at rest on AWS KMS](../../../../guide/operate/keys/kms.md)).
 4. Start a new CP task (a new deployment) and check it reaches RUNNING. A running task already
    holds the value; only a start decrypts.
 
@@ -940,8 +940,7 @@ OAuth path answering 404. `PUBLIC_BASE_URL` here is always `https://<Fqdn>`.
 `McpOAuthTrustedHosts` empty = the CP's built-in list (`claude.ai,claude.com,chatgpt.com`).
 A super admin can override the list at runtime in the Admin modal (Deployment > MCP sign-in
 hosts); the saved list wins and this parameter is the fallback while nothing is saved. `none`
-leaves loopback clients only. Operator view: `guide/operate/04-secure.md`, "Sign-in for remote
-MCP clients".
+leaves loopback clients only. Operator view: `guide/operate/secure/mcp.md#sign-remote-mcp-clients-in-with-oauth`.
 
 Turning it on (`update.sh` overrides only `ImageTag` and the facts it reads from the other
 stacks, so it is not the way to set these):
@@ -1040,7 +1039,7 @@ route. All four default to empty, and the CP treats an empty value as unset (`en
 | Parameter | CP variable | Empty means |
 |---|---|---|
 | `SessionTtl` | `AF_SESSION_TTL`, a Go duration (`72h`), how long the signed sign-in cookie stays valid | 168h |
-| `CookiePurposeKeys` | `AF_COOKIE_PURPOSE_KEYS`, `0` opts out of signing the session / sign-in state / preview cookies with one key per purpose, for one release. Update every task to 0.42.0 or later before this release; see `guide/operate/04-secure.md`, "Per-purpose cookie keys" | on (one key per purpose) |
+| `CookiePurposeKeys` | `AF_COOKIE_PURPOSE_KEYS`, `0` opts out of signing the session / sign-in state / preview cookies with one key per purpose, for one release. Update every task to 0.42.0 or later before this release; see `guide/operate/secure/deployment-keys.md#per-purpose-cookie-keys` | on (one key per purpose) |
 | `GithubAllowedEmails` | `AF_GITHUB_ALLOWED_EMAILS`, comma list admitted by GitHub sign-in besides the org / domain lists | nobody by email |
 | `KmsDataKeyCacheTtl` | `AF_KMS_DATA_KEY_CACHE_TTL`, a Go duration, `0s` = no cache (kms custodian only) | 5m |
 

@@ -20,7 +20,7 @@ Once approved, its button appears on that tenant's own sign-in page, with no `.e
 | Agent Fleet | Shows the approved method's button on `/login/<slug>` |
 
 It is for a tenant with a directory of its own: a group company, a company being integrated, a contractor.
-Whether to split tenants at all is decided in [Initial Setup](../02-install.md).
+Whether to split tenants at all is decided in [Choose the tenant and provisioning model](../install-decisions.md#one-tenant-or-several).
 
 ## Why it needs approval
 
