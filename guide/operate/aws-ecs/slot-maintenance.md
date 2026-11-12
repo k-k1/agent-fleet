@@ -196,7 +196,7 @@ A slot is considered dark when all of these hold:
 
 ### A slot that answers but is stuck
 
-The same sweep looks for the opposite shape: a slot whose ECS agent is connected, but whose workload cannot make progress. It also **only reports**.
+The same sweep looks for the opposite shape: a slot whose ECS agent is connected, but whose workload cannot make progress. By default it **only reports**; `AF_ECS_EC2_WEDGED_SLOT_ACTION=release` adds the release described below.
 
 A slot is considered wedged when it holds a home, no start is in flight, EC2 says `running` (launched more than the boot grace ago), its ECS agent is connected, and either:
 
@@ -210,9 +210,10 @@ A slot is considered wedged when it holds a home, no start is in flight, EC2 say
 | Wedged for `AF_ECS_EC2_WEDGED_AFTER_SEC` (600 seconds by default) | Writes one log line and one `pool.slot_wedged_detected` audit row (`signal` is `task_stopping` or `agent_probe_failed`) |
 
 - `AF_ECS_EC2_WEDGED_AFTER_SEC` is raised to the same floor as the dark scan's. `0` turns the scan off
-- `AF_ECS_EC2_WEDGED_SLOT_ACTION` is `detect` (the default) or `off`, separate from the dark scan's setting. `release` is reserved for the action that releases the home and currently behaves as `detect`
+- `AF_ECS_EC2_WEDGED_SLOT_ACTION` is `detect` (the default), `off` or `release`, separate from the dark scan's setting. `release` acts on a slot that has been reported (`pool.slot_wedged_detected`): it takes ownership of the home, puts the workspace service at 0 as a Stop does, unmounts the home through SSM, waits until ECS reports every task of the workspace `STOPPED`, and detaches the home. The slot stays in service and the instance is not stopped or deregistered, because its agents answer. The member's workspace on it is stopped, so the next start finds its home free. It re-checks that the slot is still wedged just before it acts, and a start by the member in the meantime wins: nothing is detached from under it. Keep `detect` until the detect-only window has shown no false positive
+- A release needs SSM `Online` on the slot for the unmount. When it is not, the Control Plane does not touch the slot and records one `pool.slot_wedged_blocked` row (reason `ssm_offline`); it releases once SSM is back. If the unmount, or the task stopping, does not finish within its bound (3 minutes for the unmount), the release stops there with the home still attached, records `pool.slot_wedged_blocked` once, and retries every sweep. A completed release records `pool.slot_wedged_released`
 - A read that fails counts for nothing: the slot is neither tagged nor cleared
-- The Slots table shows a badge "**last seen wedged N min · observing**", with the same meaning as the dark badge (the last observation, not a live check). The pool API carries it as `wedged_since` and `wedged_rung`
+- The Slots table shows a badge "**last seen wedged N min · observing**", with the same meaning as the dark badge (the last observation, not a live check). The pool API carries it as `wedged_since` and `wedged_rung`. `wedged_rung` is `observing` from the stamp, and `releasing`, `blocked` or `released` while a release's marker is on the instance
 
 ## Related
 

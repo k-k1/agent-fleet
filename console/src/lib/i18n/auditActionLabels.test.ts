@@ -6,7 +6,7 @@ import { setLocale, tMaybe } from "./index.ts";
 describe("dark-slot audit action labels", () => {
   const actions = [
     ...["detected", "rescued", "blocked", "quarantined"].map((a) => "pool.slot_dark_" + a),
-    "pool.slot_wedged_detected",
+    ...["detected", "released", "blocked"].map((a) => "pool.slot_wedged_" + a),
   ];
   for (const locale of ["en", "ja"]) {
     it("has a label for each action in " + locale, () => {

@@ -16,18 +16,19 @@ import (
 // agent still answers but the workload on it cannot make progress: a task is stuck STOPPING,
 // or the Agent drops connections while ECS reports the task HEALTHY. The dark predicate never
 // fires for it (the agents are up), and nothing else looks while the member is away. This
-// file only observes: it stamps the instance, logs and reports one audit event per episode.
-// It never releases, stops or deregisters anything; the release action is not built.
+// file observes: it stamps the instance, logs and reports one audit event per episode. With
+// the action on `release` a slot whose stamp is `detected` is handed to the release
+// (runtime_ecs_ec2_wedged_release.go); it never deregisters or stops the box.
 
 const (
 	// ec2TagWedgedSince has the shape of af-dark-since, `<first observation>/<LaunchTime>[/detected]`,
 	// and the same epoch rule: a stamp from before a stop/start is unusable.
 	ec2TagWedgedSince = "af-wedged-since"
 
-	// Values of AF_ECS_EC2_WEDGED_SLOT_ACTION. `release` names the action that is not built;
-	// it runs as detect.
-	wedgedActionOff    = "off"
-	wedgedActionDetect = "detect"
+	// Values of AF_ECS_EC2_WEDGED_SLOT_ACTION.
+	wedgedActionOff     = "off"
+	wedgedActionDetect  = "detect"
+	wedgedActionRelease = "release"
 
 	// wedgedStopGrace is added to the task definition's stopTimeout before a STOPPING task
 	// counts. The stop of a healthy slot ends within stopTimeout plus the agent's report; the
@@ -54,21 +55,24 @@ type SlotWedged struct {
 	Since time.Time
 	// Signal is what the reporting pass saw: wedgedSignalStopping or wedgedSignalProbeFailed.
 	Signal string
+	// Action is "" for the detection of an episode, "released" when the release took the home
+	// off the slot, or "blocked" when it could not (Reason says why where it is known).
+	// Since is then when the release began, not when the slot was first seen wedged.
+	Action, Reason string
 }
 
-// parseWedgedAction maps AF_ECS_EC2_WEDGED_SLOT_ACTION onto an implemented action. Unset is
-// detect. `release` falls back to detect, which only writes a tag, so an operator who asked
-// for more still gets the evidence the detect-only window exists to gather.
+// parseWedgedAction maps AF_ECS_EC2_WEDGED_SLOT_ACTION onto an action. Unset is detect, and so
+// is a value that is not one of off|detect|release: the fallback only writes a tag.
 func parseWedgedAction(raw string) string {
 	switch v := strings.ToLower(strings.TrimSpace(raw)); v {
 	case "", wedgedActionDetect:
 		return wedgedActionDetect
 	case wedgedActionOff:
 		return wedgedActionOff
-	case "release":
-		log.Printf("ecs-ec2: AF_ECS_EC2_WEDGED_SLOT_ACTION=release is not implemented yet; running detect-only")
+	case wedgedActionRelease:
+		return wedgedActionRelease
 	default:
-		log.Printf("ecs-ec2: AF_ECS_EC2_WEDGED_SLOT_ACTION=%q is not one of off|detect; running detect-only", raw)
+		log.Printf("ecs-ec2: AF_ECS_EC2_WEDGED_SLOT_ACTION=%q is not one of off|detect|release; running detect-only", raw)
 	}
 	return wedgedActionDetect
 }
@@ -111,7 +115,7 @@ const (
 // no live claim. A read that fails is not an answer: it leaves the slot untouched (no stamp,
 // no clear).
 func (f *ecsEC2Factory) sweepWedgedSlots(ctx context.Context, homes []ec2types.Volume) {
-	if f.pool.wedgedAction != wedgedActionDetect || f.pool.wedgedAfter <= 0 {
+	if (f.pool.wedgedAction != wedgedActionDetect && f.pool.wedgedAction != wedgedActionRelease) || f.pool.wedgedAfter <= 0 {
 		return
 	}
 	probe := f.probeRuntime()
@@ -189,6 +193,16 @@ func (f *ecsEC2Factory) scanWedgedSlot(ctx context.Context, pass *darkProbePass,
 	if now.Sub(launch) < f.pool.darkBootGrace {
 		return // still inside the boot/wake grace: neither wedged nor shown healthy
 	}
+	// g_d, the Start count the release's locked step compares against, is read before the
+	// verdict's legs so that a Start landing while they are read is seen as a moved count.
+	// Only a slot already past its wait needs it, and one that carries a marker is somebody's.
+	var gd int64
+	canRelease := false
+	if f.pool.wedgedAction == wedgedActionRelease && ec2TagValue(inst.Tags, ec2TagRescue) == "" {
+		if st, ok := parseDarkStamp(raw); ok && st.launch.Equal(launch) && (st.detected || now.Sub(st.since) >= f.pool.wedgedAfter) {
+			gd, canRelease = f.rescueStartCount(ctx, vol)
+		}
+	}
 	v := f.wedgedVerdictFor(ctx, pass, id, vol, now)
 	switch v.state {
 	case wedgedNo:
@@ -206,7 +220,14 @@ func (f *ecsEC2Factory) scanWedgedSlot(ctx context.Context, pass *darkProbePass,
 		}
 		return
 	}
-	if stamp.detected || now.Sub(stamp.since) < f.pool.wedgedAfter {
+	if now.Sub(stamp.since) < f.pool.wedgedAfter {
+		return
+	}
+	d := wedgedDecision{slot: id, vol: vol, launch: launch, gd: gd, signal: v.signal, pass: pass}
+	if stamp.detected {
+		if canRelease {
+			f.releaseWedgedSlot(ctx, d)
+		}
 		return
 	}
 	// Mark first, report second: a failed mark is retried next pass with the event still
@@ -217,8 +238,17 @@ func (f *ecsEC2Factory) scanWedgedSlot(ctx context.Context, pass *darkProbePass,
 	}
 	ev := SlotWedged{Slot: id, Volume: aws.ToString(vol.VolumeId), Since: stamp.since, Signal: v.signal,
 		MembershipID: ec2TagValue(vol.Tags, EC2TagMembership), Workspace: ec2TagValue(vol.Tags, EC2TagWorkspace)}
-	log.Printf("ecs-ec2 sweep: slot %s holding %s has been wedged (%s) since %s (%.0fm); detect-only, no action taken",
-		id, ev.Workspace, v.signal, stamp.since.Format(time.RFC3339), now.Sub(stamp.since).Minutes())
+	log.Printf("ecs-ec2 sweep: slot %s holding %s has been wedged (%s) since %s (%.0fm); action %s",
+		id, ev.Workspace, v.signal, stamp.since.Format(time.RFC3339), now.Sub(stamp.since).Minutes(), f.pool.wedgedAction)
+	f.reportWedged(ctx, ev, "")
+	if canRelease {
+		f.releaseWedgedSlot(ctx, d)
+	}
+}
+
+// reportWedged hands a wedged-slot event to the audit callback. Nothing here can fail the scan.
+func (f *ecsEC2Factory) reportWedged(ctx context.Context, ev SlotWedged, action string) {
+	ev.Action = action
 	if f.onSlotWedged != nil {
 		f.onSlotWedged(ctx, ev)
 	}
@@ -340,6 +370,7 @@ func (f *ecsEC2Factory) writeWedgedStamp(ctx context.Context, instanceID string,
 }
 
 func (f *ecsEC2Factory) clearWedgedStamp(ctx context.Context, instanceID, current string) {
+	f.wedgedBlocked.Delete(instanceID)
 	if current == "" {
 		return
 	}
@@ -348,5 +379,18 @@ func (f *ecsEC2Factory) clearWedgedStamp(ctx context.Context, instanceID, curren
 		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagWedgedSince)}},
 	}); err != nil {
 		log.Printf("ecs-ec2 sweep: clearing the wedged stamp on %s failed: %v", instanceID, err)
+	}
+}
+
+// clearWedgedStampOn is clearWedgedStamp for the finalizer, which holds a runtime and not the
+// factory. It reads nothing and deletes the key whatever it holds.
+func (e *ecsEC2Runtime) clearWedgedStampOn(ctx context.Context, instanceID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rescueTagBudget)
+	defer cancel()
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagWedgedSince)}},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the wedged stamp on %s failed: %v", instanceID, err)
 	}
 }

@@ -18,7 +18,7 @@ import (
 // them, so that the first marker ever written meets a releaser that already refuses.
 
 const (
-	// ec2TagRescue is `<home volume id>/<launch epoch>/<phase>/<g_r>/<began>/<blocked_since>`,
+	// ec2TagRescue is `<home volume id>/<launch epoch>/<phase>/<g_r>/<began>/<blocked_since>[/wedged]`,
 	// an instance tag written before a rescue's first side effect. `blocked_since` is empty
 	// until a step first fails its bound.
 	ec2TagRescue = "af-rescue"
@@ -71,34 +71,45 @@ type rescueMarker struct {
 	Gen          int64
 	Began        time.Time
 	BlockedSince time.Time // zero until a step first fails its bound
+	// Wedged is set by the wedged-slot release (ADR 0121, amendment of 2026-11-12): the same
+	// token, a different ladder (umount and detach, never deregister or stop). Written as a
+	// seventh field only when set, so an older CP that meets one cannot parse it and fences
+	// the home instead of running the dark ladder on it.
+	Wedged bool
 }
+
+const rescueKindWedged = "wedged"
 
 func (m rescueMarker) String() string {
 	blocked := ""
 	if !m.BlockedSince.IsZero() {
 		blocked = m.BlockedSince.UTC().Format(time.RFC3339)
 	}
-	return strings.Join([]string{
+	fields := []string{
 		m.Volume,
 		m.Epoch.UTC().Format(time.RFC3339),
 		string(m.Phase),
 		strconv.FormatInt(m.Gen, 10),
 		m.Began.UTC().Format(time.RFC3339),
 		blocked,
-	}, "/")
+	}
+	if m.Wedged {
+		fields = append(fields, rescueKindWedged)
+	}
+	return strings.Join(fields, "/")
 }
 
 // parseRescueMarker reads a marker. A value that does not parse is not a marker the caller
 // may act on; releaseGate still treats it as a fence for the volume it names.
 func parseRescueMarker(v string) (rescueMarker, bool) {
 	parts := strings.Split(v, "/")
-	if len(parts) != 6 || parts[0] == "" {
+	if (len(parts) != 6 && len(parts) != 7) || parts[0] == "" || (len(parts) == 7 && parts[6] != rescueKindWedged) {
 		return rescueMarker{}, false
 	}
 	epoch, err1 := time.Parse(time.RFC3339, parts[1])
 	began, err2 := time.Parse(time.RFC3339, parts[4])
 	gen, err3 := strconv.ParseInt(parts[3], 10, 64)
-	m := rescueMarker{Volume: parts[0], Epoch: epoch, Phase: rescuePhase(parts[2]), Gen: gen, Began: began}
+	m := rescueMarker{Volume: parts[0], Epoch: epoch, Phase: rescuePhase(parts[2]), Gen: gen, Began: began, Wedged: len(parts) == 7}
 	if err1 != nil || err2 != nil || err3 != nil || gen < 0 || !m.Phase.valid() {
 		return rescueMarker{}, false
 	}
