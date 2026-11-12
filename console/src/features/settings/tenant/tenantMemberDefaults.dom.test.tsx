@@ -97,3 +97,35 @@ describe("TenantMemberDefaultsPanel", () => {
     expect(select().value).toBe("muse");
   });
 });
+
+describe("TenantMemberDefaultsPanel budget field (C1)", () => {
+  async function typeInto(input: HTMLInputElement, text: string) {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  const budget = () => document.querySelector<HTMLInputElement>('input[inputmode="decimal"]')!;
+
+  it("keeps a half-typed decimal as typed and sends the final number", async () => {
+    api.mockResolvedValue({ tenant: "acme", defaults: { agent: "" } });
+    await mount();
+    for (const t of ["1", "1.", "1.2", "1.25"]) {
+      await typeInto(budget(), t);
+      expect(budget().value).toBe(t);
+    }
+    apiJSON.mockResolvedValue({ tenant: "acme", defaults: { agent: "" } });
+    await act(async () => button(t("common.save")).click());
+    expect(apiJSON.mock.calls[0][2].launch.budget_usd).toBe(1.25);
+  });
+
+  it("refuses an unusable amount and sends nothing", async () => {
+    api.mockResolvedValue({ tenant: "acme", defaults: { agent: "" } });
+    await mount();
+    await typeInto(budget(), "1.256");
+    await act(async () => button(t("common.save")).click());
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(alertText()).toContain(t("tenant.member_defaults_budget_invalid"));
+  });
+});

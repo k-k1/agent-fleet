@@ -784,6 +784,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.member_defaults_perm_ask": "Ask",
   "tenant.member_defaults_perm_skip": "Skip",
   "tenant.member_defaults_budget": "Budget (USD, 0 = none)",
+  "tenant.member_defaults_budget_invalid": "Budget must be a number from 0 to 10000 with at most two decimals, or empty.",
   "tenant.member_defaults_repos": "Team repositories",
   "tenant.member_defaults_repos_note": "One owner/name per line (up to 20). They are listed first in Start.",
   "tenant.member_defaults_ops": "Operations settings",

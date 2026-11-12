@@ -781,6 +781,7 @@ export const admin = {
   "tenant.member_defaults_perm_ask": "確認する",
   "tenant.member_defaults_perm_skip": "省略する",
   "tenant.member_defaults_budget": "予算（USD、0 = なし）",
+  "tenant.member_defaults_budget_invalid": "予算は 0 から 10000 までの数（小数は 2 桁まで）か、空にしてください。",
   "tenant.member_defaults_repos": "チームのリポジトリ",
   "tenant.member_defaults_repos_note": "1 行に 1 つ、owner/name の形式（20 件まで）。「開始」で先頭に並びます。",
   "tenant.member_defaults_ops": "運用ツールの設定",

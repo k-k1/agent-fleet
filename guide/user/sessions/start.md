@@ -153,8 +153,8 @@ and switch.
 
 If your tenant administrator set launch defaults, the dialog opens with them filled in: the team's agent, model, driver, permission prompts and budget. **Start** lists the team's repositories first, marked "Team".
 
-- Your own choices win. The last choice in a repository and the values you set under Settings › Agents are used before the team's
-- Under **Advanced**, **Use as my default** saves the dialog's current agent, model, driver, permission and budget as your starting point everywhere. **Clear my default** puts the team's back. Your Settings are not changed
+- Your own choices win. The last choice in a repository and the values you set under Settings › Agents are used before the team's. A Settings value that equals Agent Fleet's built-in one counts as not set, so to keep such a value against a team default, save it with **Use as my default**
+- Under **Advanced**, **Use as my default** saves the dialog's current agent, model, driver, permission and budget as your starting point whenever you start that agent. The model, an empty one included, applies to that agent only. A value the server would refuse (an agent outside the team list, a budget over $10000) disables the button and says why. **Clear my default** puts the team's back. Your Settings are not changed
 - The defaults are kept in your browser from the last time Agent Fleet answered, so they still apply while your workspace is stopped or Agent Fleet cannot be reached
 
 

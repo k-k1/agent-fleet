@@ -19,6 +19,16 @@ export interface TenantMemberDefaultsView {
 const EMPTY_LAUNCH: LaunchDefaults = { agent: "", model: "", driver: "", permission_mode: "", budget_usd: null };
 const EMPTY_OPS: OpsSettings = { grafana_url: "", aws_sso_start_url: "", aws_account_id: "", aws_role_name: "" };
 
+/** The budget field's text as the CP's number: "" = unset (null), else a finite 0..10000 with at most
+ *  two decimals; undefined = not acceptable. Typing keeps the text, so "1." stays "1." on screen. */
+export function parseBudgetText(text: string): number | null | undefined {
+  const v = text.trim();
+  if (v === "") return null;
+  if (!/^\d+(\.\d{0,2})?$/.test(v)) return undefined;
+  const n = Number(v);
+  return n >= 0 && n <= 10000 ? n : undefined;
+}
+
 /** The PUT body: every group, always. The CP keeps a group the body leaves out, so sending all of
  *  them is what lets an admin clear one. `repos` is one owner/name per line. */
 export function defaultsBody(agent: string, launch: LaunchDefaults, repos: string, ops: OpsSettings) {
@@ -35,11 +45,13 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
   const [view, setView] = useState<TenantMemberDefaultsView | null>(null);
   const [agent, setAgent] = useState("");
   const [launch, setLaunch] = useState<LaunchDefaults>(EMPTY_LAUNCH);
+  const [budgetText, setBudgetText] = useState("");
   const [repos, setRepos] = useState("");
   const [ops, setOps] = useState<OpsSettings>(EMPTY_OPS);
   const fill = (d: TenantMemberDefaults) => {
     setAgent(d.agent || "");
     setLaunch({ ...EMPTY_LAUNCH, ...d.launch });
+    setBudgetText(d.launch?.budget_usd == null ? "" : String(d.launch.budget_usd));
     setRepos((d.repos || []).join("\n"));
     setOps({ ...EMPTY_OPS, ...d.ops });
   };
@@ -73,10 +85,15 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
   }, [load]);
 
   const save = async () => {
+    const budget = parseBudgetText(budgetText);
+    if (budget === undefined) {
+      setError(tr("tenant.member_defaults_budget_invalid"));
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const res = await apiJSON(path, "PUT", defaultsBody(agent, launch, repos, ops));
+      const res = await apiJSON(path, "PUT", defaultsBody(agent, { ...launch, budget_usd: budget }, repos, ops));
       if (res?.error) {
         setError(errDetail(res.error));
         return;
@@ -153,10 +170,10 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
           <span className="af-cap">{tr("tenant.member_defaults_budget")}</span>
           <input
             inputMode="decimal"
-            value={launch.budget_usd == null ? "" : String(launch.budget_usd)}
+            value={budgetText}
             onChange={(e) => {
-              const v = e.target.value.trim();
-              setLaunch({ ...launch, budget_usd: v === "" || Number.isNaN(Number(v)) ? null : Number(v) });
+              setBudgetText(e.target.value);
+              setError("");
             }}
           />
         </label>

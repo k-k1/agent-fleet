@@ -20,14 +20,14 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
-import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
+import { MEMBER_DEFAULT_AGENTS, agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindRoutes, useKindCatalogVersion } from "../../agents/kindCatalog.ts";
 import { bedrockConnection, bedrockModelOk, regionOk, rememberBedrockModel, rememberedBedrockModel, routeModelFilter, useModelRouteProfiles } from "./bedrockProfiles.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { useEffectiveDefaults, useUIStateStore } from "../../core/store/uiState.ts";
-import { defaultKind, ownLaunch, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
+import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
 import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
@@ -233,28 +233,49 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // cache while the workspace is stopped or the CP unreachable. They rank below this repo's last
   // choice and the member's own Settings › Agents values, and the Agent's ui-prefs are never written.
   const eff = useEffectiveDefaults();
+  const uiState = useUIStateStore((st) => st.state);
   // The member's own override (a CP-held key; never the Agent's ui-prefs). Saved from this dialog.
   const patchOwn = useUIStateStore((st) => st.patch);
-  const ownDefault = useUIStateStore((st) => !!st.state.launch && Object.values(st.state.launch).some((v) => v !== "" && v !== null));
-  const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : defaultKind(eff, kinds) || kinds[0] || "claude";
+  const ownDefault = !!uiState.launch && Object.values(uiState.launch).some((v) => v !== "" && v !== null);
+  const pickKind = () => (last.kind && kinds.includes(last.kind) ? last.kind : defaultKind(eff, kinds) || kinds[0] || "claude");
+  const initialKind = pickKind();
   const initialDefault = agentLaunchDefault(settings, initialKind);
-  const modelDefault = (k: string, own: string) => tenantModel(eff, k, settings) || own;
+  // undefined from the tenant layer = no opinion, so the member's Settings value stays; "" from the
+  // member's own saved block is their explicit "the CLI's default".
+  const modelDefault = (k: string, settingsModel: string) => tenantModel(uiState, k, settings) ?? settingsModel;
   const [kind, setKind] = useState(initialKind);
+  // What the dialog last filled in by itself. A field still equal to it was never edited, so a late
+  // answer (the CP's, or the kinds list) may re-seed it; an edited field is left alone.
+  const seeded = useRef<{ kind: string; model: string; skip: boolean | undefined; driver: string | null; budget: string }>({
+    kind: initialKind,
+    model: "",
+    skip: undefined,
+    driver: null,
+    budget: "",
+  });
+  // Switches to kind k and re-resolves what depends on it. `seed` = the dialog chose it, not the user.
+  const switchKind = (k: string, seed: boolean) => {
+    const d = agentLaunchDefault(settings, k);
+    const m = resolveModel(k, repo, modelDefault(k, d.model));
+    const sp = tenantSkipPerm(uiState, k, settings);
+    const dr = tenantDriver(uiState, k);
+    setKind(k);
+    setModel(m);
+    setEffort(resolveEffort(k, repo, d.effort));
+    setStartMode(resolveStartMode(k, repo, d.startMode));
+    setSkipPerm(sp);
+    setRoute("");
+    setDriverPick(dr);
+    seeded.current = { ...seeded.current, kind: seed ? k : seeded.current.kind, model: m, skip: sp, driver: dr };
+  };
   // Same async-kinds hazard as StartModal: mounting while the connection check is still
   // in flight seeds the "claude" fallback above, which would stick even if claude is
   // unavailable. Re-seed once the real list lands and the held kind isn't in it.
   useEffect(() => {
     if (!kinds.length || kinds.includes(kind)) return;
-    const k = kinds[0];
-    const d = agentLaunchDefault(settings, k);
-    setKind(k);
-    setModel(resolveModel(k, repo, modelDefault(k, d.model)));
-    setEffort(resolveEffort(k, repo, d.effort));
-    setStartMode(resolveStartMode(k, repo, d.startMode));
-    setSkipPerm(tenantSkipPerm(eff, k, settings));
-    setRoute("");
-    setDriverPick(tenantDriver(eff, k, !!agentOf(k).managedDriver));
-  }, [kinds, kind, settings, repo, eff]);
+    switchKind(pickKind(), true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kinds, kind, settings, repo]);
   const tr = useT();
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
@@ -265,7 +286,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // which case no value is sent and the Agent's per-kind default applies (so changing the
   // setting later still takes effect). Only once touched is it sent, as an override for this
   // session alone.
-  const [skipPerm, setSkipPerm] = useState<boolean | undefined>(() => tenantSkipPerm(eff, initialKind, settings));
+  const [skipPerm, setSkipPerm] = useState<boolean | undefined>(() => tenantSkipPerm(uiState, initialKind, settings));
   // The explicit model route (ADR 0128). "" = the kind's default resolution, which is what a
   // launch has always used and sends no field. Reset on a kind switch: a route belongs to one kind.
   const [route, setRoute] = useState("");
@@ -280,8 +301,42 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // null = untouched: the driver follows the kind's default, which can change under an open dialog
   // when the kind catalog lands after it. Only a click on the toggle pins a value.
   useKindCatalogVersion();
-  const [driverPick, setDriverPick] = useState<string | null>(() => tenantDriver(eff, initialKind, !!agentOf(initialKind).managedDriver));
-  const driver = driverPick ?? (agentOf(kind).managedDriver ? "managed" : "");
+  const [driverPick, setDriverPick] = useState<string | null>(() => tenantDriver(uiState, initialKind));
+  // A managed-only kind has no Terminal choice, whatever a default or the catalog said earlier.
+  const driver = agentOf(kind).managedDriver && agentOf(kind).terminalDriver === false ? "managed" : (driverPick ?? (agentOf(kind).managedDriver ? "managed" : ""));
+  // The CP's answer, or the kinds list, can arrive after the dialog opened: fill in only what the
+  // member has not touched yet (still equal to what was seeded).
+  const mounted = useRef(false);
+  const lateKey = JSON.stringify([uiState.defaults, uiState.launch, uiState.effective, kinds]);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      seeded.current = { kind: initialKind, model, skip: skipPerm, driver: driverPick, budget };
+      return;
+    }
+    const sd = seeded.current;
+    if (kind === sd.kind) {
+      const want = pickKind();
+      if (want !== kind && kinds.includes(want)) {
+        switchKind(want, true);
+        const bu = tenantBudget(uiState, want, settings);
+        if (budget === sd.budget) setBudget(bu);
+        seeded.current = { ...seeded.current, budget: budget === sd.budget ? bu : sd.budget };
+        return;
+      }
+    }
+    const d = agentLaunchDefault(settings, kind);
+    const m = resolveModel(kind, repo, modelDefault(kind, d.model));
+    const sp = tenantSkipPerm(uiState, kind, settings);
+    const dr = tenantDriver(uiState, kind);
+    const bu = tenantBudget(uiState, kind, settings);
+    if (model === sd.model) setModel(m);
+    if (skipPerm === sd.skip) setSkipPerm(sp);
+    if (driverPick === sd.driver) setDriverPick(dr);
+    if (budget === sd.budget) setBudget(bu);
+    seeded.current = { ...sd, model: model === sd.model ? m : sd.model, skip: skipPerm === sd.skip ? sp : sd.skip, driver: driverPick === sd.driver ? dr : sd.driver, budget: budget === sd.budget ? bu : sd.budget };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lateKey]);
   // The first prompt is written back to localStorage per repository (launchDraft). It survives
   // closing the dialog and is dropped only once a launch succeeded. initialPrompt (the seed
   // from a handoff, a memo send or a work item) outranks the draft.
@@ -292,7 +347,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // bad_title.
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle ?? ""));
   // Empty = the user's default budget (Settings › Agents), resolved by the Agent.
-  const [budget, setBudget] = useState(() => tenantBudget(eff, settings));
+  const [budget, setBudget] = useState(() => tenantBudget(uiState, initialKind, settings));
   // Attachments awaiting the launch: the raw File (+ an object URL when it is an image).
   // Any file type, as in the mirror composer. Uploaded only after the session is minted (in
   // onStartWork), then referenced in the first prompt. Agents without the imagePaste cap
@@ -444,8 +499,28 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // Advanced does the opposite and lists only what moved off its default; all-defaults gets a
   // single word. Always printing 5 items turns the line into another grey band nobody reads.
   const hasBudget = agentOf(kind).caps.transcript;
+  // "Use as my default": the CP refuses an agent outside its list, a malformed model and a budget over
+  // its cap, so those are explained here rather than failing after the press.
+  const [ownBusy, setOwnBusy] = useState(false);
+  const [ownState, setOwnState] = useState<"" | "saved" | "failed">("");
+  const saveOwn = async (block: ReturnType<typeof ownLaunch>) => {
+    setOwnBusy(true);
+    setOwnState("");
+    const ok = await patchOwn({ launch: block });
+    setOwnBusy(false);
+    setOwnState(ok ? "saved" : "failed");
+  };
   const budgetCap = parseCap(budget);
   const budgetInvalid = hasBudget && Number.isNaN(budgetCap);
+  const ownBudget = hasBudget && budget.trim() && !budgetInvalid ? budgetCap : null;
+  const ownProblem = ownLaunchProblem(kind, MEMBER_DEFAULT_AGENTS, model, ownBudget);
+  const ownBlock = ownLaunch({
+    agent: kind,
+    model,
+    driver: agentOf(kind).managedDriver ? (driver === "managed" ? "managed" : "terminal") : "",
+    permission_mode: hasPermChoice ? (skipPermEffective ? "skip" : "ask") : "",
+    budget_usd: ownBudget,
+  });
   const advParts = [
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
     hasEffort && effort ? tr("launch.sum.effort", { v: effortOptions.find(([v]) => v === effort)?.[1] || effort }) : "",
@@ -745,16 +820,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                   type="button"
                   title={tr(a.launchHintKey)}
                   className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " active" : "")}
-                  onClick={() => {
-                    const defaults = agentLaunchDefault(settings, k);
-                    setKind(k);
-                    setModel(resolveModel(k, repo, modelDefault(k, defaults.model)));
-                    setEffort(resolveEffort(k, repo, defaults.effort));
-                    setStartMode(resolveStartMode(k, repo, defaults.startMode));
-                    setSkipPerm(tenantSkipPerm(eff, k, settings));
-                    setRoute("");
-                    setDriverPick(tenantDriver(eff, k, !!agentOf(k).managedDriver));
-                  }}
+                  onClick={() => switchKind(k, false)}
                 >
                   <Icon name={a.icon} className="seg-ic" />
                   {kindDisplayName(k)}
@@ -1286,28 +1352,21 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
             </div>
           )}
           <div className="ui-field launch-own-default">
-            <Button
-              variant="ghost"
-              onClick={() =>
-                void patchOwn({
-                  launch: ownLaunch({
-                    agent: kind,
-                    model,
-                    driver: agentOf(kind).managedDriver ? (driverManaged ? "managed" : "terminal") : "",
-                    permission_mode: hasPermChoice ? (skipPermEffective ? "skip" : "ask") : "",
-                    budget_usd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : null,
-                  }),
-                })
-              }
-            >
+            <Button variant="ghost" disabled={ownBusy || !!ownProblem} onClick={() => void saveOwn(ownBlock)}>
               {tr("launch.own_default_save")}
             </Button>
             {ownDefault && (
-              <Button variant="ghost" onClick={() => void patchOwn({ launch: ownLaunch({}) })}>
+              <Button variant="ghost" disabled={ownBusy} onClick={() => void saveOwn(ownLaunch({}))}>
                 {tr("launch.own_default_clear")}
               </Button>
             )}
-            <span className="ui-field-hint">{tr("launch.own_default_hint")}</span>
+            {ownState === "saved" && <span className="saved-note">{tr("launch.own_default_saved")}</span>}
+            {ownState === "failed" && (
+              <span className="ui-field-hint warn" role="alert">
+                {tr("launch.own_default_failed")}
+              </span>
+            )}
+            <span className="ui-field-hint">{ownProblem ? tr(("launch.own_default_no_" + ownProblem) as never) : tr("launch.own_default_hint")}</span>
           </div>
         </LaunchSection>
       </div>

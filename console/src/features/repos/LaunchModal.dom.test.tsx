@@ -29,7 +29,10 @@ let lcppModels: { id: string; label: string }[] = [];
 let ssmProfiles: unknown[] = [];
 // opencode's launch model catalog (GET /agents/opencode/models).
 let opencodeModels: { id: string; label: string }[] = [];
+// Whether PATCH api/me/ui-state (the member's own default) succeeds.
+let patchResult = true;
 const apiMock = vi.fn(async (url: string) => {
+  if (url.includes("api/me/ui-state")) return patchResult ? {} : { error: { message: "offline" } };
   if (url.includes("api/ssm/profiles")) {
     return ssmProfiles;
   }
@@ -193,6 +196,7 @@ beforeEach(() => {
     { name: "busy", unix: 1, worktree_path: "/home/dev/repos/app@busy" },
   ];
   lcppModels = [];
+  patchResult = true;
   apiMock.mockClear();
   onLaunch = vi.fn<Launch>(async () => ({ ok: true }));
   onClose = vi.fn<() => void>();
@@ -894,22 +898,62 @@ describe("tenant launch defaults", () => {
   const useUIStateStore = uiStore;
   afterEach(() => useUIStateStore.setState({ state: {} }));
 
+  const ops = { grafana_url: "", aws_sso_start_url: "", aws_account_id: "", aws_role_name: "" };
+  const answer = (agent: string, extra: Record<string, unknown> = {}) => ({
+    effective: { launch: { agent, model: "gpt-x", driver: "", permission_mode: "", budget_usd: 5 }, repos: [], ops },
+    defaults: { agent, launch: { agent: "", model: "gpt-x", driver: "", permission_mode: "", budget_usd: 5 } },
+    ...extra,
+  });
+
   it("starts on the tenant's agent, model and budget, and launches with them", async () => {
-    useUIStateStore.setState({
-      state: {
-        effective: {
-          launch: { agent: "codex", model: "gpt-x", driver: "", permission_mode: "", budget_usd: 5 },
-          repos: [],
-          ops: { grafana_url: "", aws_sso_start_url: "", aws_account_id: "", aws_role_name: "" },
-        },
-      },
-    });
+    useUIStateStore.setState({ state: answer("codex") as never });
     await render(["claude", "codex"]);
     await click(byText("Start in a worktree"));
     const o = launchedWith();
     expect(o.kind).toBe("codex");
     expect(o.model).toBe("gpt-x");
     expect(o.spendCapUsd).toBe(5);
+  });
+
+  it("fills in a late CP answer for untouched fields only (C2)", async () => {
+    await render(["claude", "codex"]);
+    expect(buttons().find((b) => b.classList.contains("active") && /claude/i.test(b.textContent || ""))).toBeTruthy();
+    await act(async () => useUIStateStore.setState({ state: answer("codex") as never }));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("codex");
+    expect(launchedWith().model).toBe("gpt-x");
+    expect(launchedWith().spendCapUsd).toBe(5);
+  });
+
+  it("leaves a budget the member typed when the late answer arrives (C2)", async () => {
+    await render(["claude", "codex"]);
+    await expand("More");
+    const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "9");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => useUIStateStore.setState({ state: answer("claude") as never }));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().spendCapUsd).toBe(9);
+  });
+
+  it("re-resolves the tenant's agent when the kinds list lands after a cached answer (C2)", async () => {
+    useUIStateStore.setState({ state: answer("codex") as never });
+    await render([]);
+    await act(async () => root!.render(<LaunchModal repo="app" branch="main" kinds={["claude", "codex"]} onClose={onClose} onLaunch={onLaunch} />));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("codex");
+  });
+
+  it("does not save a default the CP would refuse, and reports a failed save (C6)", async () => {
+    await render(["claude"]);
+    await expand("More");
+    const save = byText("Use as my default");
+    expect(save.disabled).toBe(false);
+    patchResult = false;
+    await click(save);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Could not save");
   });
 
   it("changes nothing without a cached answer", async () => {
