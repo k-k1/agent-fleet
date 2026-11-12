@@ -529,3 +529,5 @@ advanced to `begun` only after the bump has been read back. A count equal to `g_
 rescue that died between the marker write and the bump leaves a marker naming `g_d + 1`, and a member's next Start reaches that same
 number. `preparing` is never resumed; the finalizer just removes it (like `begun`, no episode). The claim lease is also re-checked by
 the clock before the bump, not only after it.
+
+Round 2: the claim lease is also re-checked by the clock after the marker advances, before the claim is dropped (the read and delete are inlined with a check between), and after the command listing; a lapse aborts with the marker left for the resume scan, and the listed set is not used.

@@ -237,13 +237,34 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 	if err := rescueStep(lctx, "counted"); err != nil {
 		return rescueMarker{}, nil, err
 	}
+	// Every write below acts on state a newer Start may own once the lease is gone, so each
+	// is preceded by the clock, never by the lock context alone. A lapse leaves the marker:
+	// the resume scan decides by the count.
+	lapsed := func(what string) error {
+		if err := guard.check(); err != nil {
+			return fmt.Errorf("%w: %s: %w", errRescueAborted, what, err)
+		}
+		return nil
+	}
+	if err := lapsed("after the marker advanced"); err != nil {
+		return rescueMarker{}, nil, err
+	}
 
 	// End the Start the way a Stop does. The service is already at desired 0 (checked above,
 	// and a Start that could raise it needs the claim lock we hold); the bump overtook any
 	// Start that was converging. The dormancy clock is deliberately not restarted.
 	e.clearBlockedPhase()
 	e.setPhase("")
-	e.dropClaimOnStop(lctx)
+	if vol, err := e.homeVolume(lctx); err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: home: %w", errRescueAborted, err)
+	} else if vol != nil && ec2TagValue(vol.Tags, EC2TagClaim) != "" {
+		// dropClaimOnStop reads and then deletes with no check between: a claim written by a
+		// Start counted under a newer lease must survive.
+		if err := lapsed("before dropping the claim"); err != nil {
+			return rescueMarker{}, nil, err
+		}
+		e.unclaim(lctx, aws.ToString(vol.VolumeId))
+	}
 	if err := rescueStep(lctx, "ended-start"); err != nil {
 		return rescueMarker{}, nil, err
 	}
@@ -254,6 +275,11 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 		return rescueMarker{}, nil, fmt.Errorf("%w: list commands: %w", errRescueAborted, err)
 	}
 	if err := rescueStep(lctx, "listed"); err != nil {
+		return rescueMarker{}, nil, err
+	}
+	// The fixed set is only trustworthy if the lease held through the listing: a command a
+	// newer Start sent would otherwise be in it.
+	if err := lapsed("after listing the commands"); err != nil {
 		return rescueMarker{}, nil, err
 	}
 	return m, ids, nil

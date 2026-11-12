@@ -862,3 +862,38 @@ func TestRescueLeaseLapsedAfterTheMarkerDoesNotBump(t *testing.T) {
 		w.untouched()
 	})
 }
+
+// The lease lapsing after the bump: a Start counted under a newer lease must keep its claim and
+// its commands out of this rescue's hands.
+func TestRescueLeaseLapsedAfterTheBumpTouchesNothingOfANewerStart(t *testing.T) {
+	for _, step := range []string{"counted", "ended-start", "listed"} {
+		t.Run(step, func(t *testing.T) {
+			bothModes(t, func(t *testing.T, w *rescueWorld) {
+				w.arm()
+				rescueStepHook = func(ctx context.Context, s string) error {
+					if s != step {
+						return nil
+					}
+					homeGuardOf(ctx).markLost()
+					w.startLands()
+					w.h.ec2.setTag("vol-1", EC2TagClaim, "i-dark") // the new Start's claim
+					w.h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+					w.h.ssmc.mu.Lock()
+					w.h.ssmc.unfinished = append(w.h.ssmc.unfinished,
+						ssmtypes.Command{CommandId: aws.String("cmd-new"), Comment: aws.String(slotVolumeCommandComment)})
+					w.h.ssmc.mu.Unlock()
+					return nil
+				}
+				w.pass(w.f)
+				rescueStepHook = nil
+				if ec2TagValue(w.vol().Tags, EC2TagClaim) != "i-dark" {
+					t.Fatal("the newer Start's claim was deleted")
+				}
+				if got := w.cancelled(); len(got) != 0 {
+					t.Fatalf("cancelled %v after the lease lapsed", got)
+				}
+				w.untouched()
+			})
+		})
+	}
+}
