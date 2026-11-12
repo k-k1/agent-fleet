@@ -289,6 +289,16 @@ func TestTenantMemberDefaultsPutKeepsOmittedGroups(t *testing.T) {
 		!strings.Contains(b, `"acme/api"`) || !strings.Contains(b, `"ReadOnly"`) {
 		t.Fatalf("an agent-only save dropped groups: %d %s", w.Code, b)
 	}
+	// A mis-cased group key is refused, never validated and then discarded as "left out".
+	for _, bad := range []string{`{"LAUNCH":{"model":"opus"}}`, `{"agent":"codex","Repos":["acme/x"]}`, `{"OPS":{}}`} {
+		if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", bad); w.Code != http.StatusBadRequest {
+			t.Errorf("accepted %s: %d %s", bad, w.Code, w.Body.String())
+		}
+	}
+	if w := memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", `{"agent":"codex","launch":{"model":"opus"}}`); w.Code != http.StatusOK ||
+		!strings.Contains(w.Body.String(), `"model":"opus"`) {
+		t.Errorf("canonical keys: %d %s", w.Code, w.Body.String())
+	}
 	// Explicit empties clear.
 	w = memberDefaultsCall(mgr, http.MethodPut, "sub", "admin@sub.co.jp", `{"agent":"codex","launch":{},"repos":[],"ops":{}}`)
 	b = w.Body.String()
@@ -303,13 +313,30 @@ func TestMemberUIStateNullGroupIsNoOpAndEmptyClears(t *testing.T) {
 	mgr := p3Manager(t, st)
 	sub := seedGitOAuthTenant(t, st, "sub", "admin@sub.co.jp")
 	addBranchRulesMember(t, st, sub.ID, "user@sub.co.jp", "member")
-	memberUIStateCall(mgr, http.MethodPatch, "sub", "user@sub.co.jp", `{"launch":{"model":"m2"},"ops":{"aws_role_name":"R"}}`)
-	w := memberUIStateCall(mgr, http.MethodPatch, "sub", "user@sub.co.jp", `{"launch":null,"ops":null}`)
-	if !strings.Contains(w.Body.String(), `"launch":{"agent":"","model":"m2"`) {
-		t.Errorf("null cleared the override: %s", w.Body.String())
+	type doc struct {
+		Launch *launchDefaultsWire `json:"launch"`
+		Ops    *opsSettingsWire    `json:"ops"`
 	}
-	w = memberUIStateCall(mgr, http.MethodPatch, "sub", "user@sub.co.jp", `{"launch":{},"ops":{}}`)
-	if strings.Contains(w.Body.String(), `m2`) {
-		t.Errorf("{} did not clear: %s", w.Body.String())
+	call := func(method, body string) doc {
+		w := memberUIStateCall(mgr, method, "sub", "user@sub.co.jp", body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s: %d %s", method, body, w.Code, w.Body.String())
+		}
+		var d doc
+		if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	if d := call(http.MethodPatch, `{"launch":{"model":"m2"},"ops":{"aws_role_name":"R"}}`); d.Launch == nil || d.Ops == nil {
+		t.Fatalf("not stored: %+v", d)
+	}
+	call(http.MethodPatch, `{"launch":null,"ops":null}`)
+	if d := call(http.MethodGet, ""); d.Launch == nil || d.Launch.Model != "m2" || d.Ops == nil || d.Ops.AWSRoleName != "R" {
+		t.Errorf("null changed the overrides: %+v", d)
+	}
+	call(http.MethodPatch, `{"launch":{},"ops":{}}`)
+	if d := call(http.MethodGet, ""); d.Launch == nil || *d.Launch != (launchDefaultsWire{}) || d.Ops == nil || *d.Ops != (opsSettingsWire{}) {
+		t.Errorf("{} did not clear both: %+v", d)
 	}
 }

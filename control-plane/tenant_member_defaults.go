@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -191,6 +192,14 @@ func decodeTenantMemberDefaults(w http.ResponseWriter, r *http.Request) (tenantM
 	}
 	var raw map[string]json.RawMessage
 	_ = json.Unmarshal(body, &raw) // already decoded once above
+	// encoding/json matches struct keys case-insensitively, but presence is detected by exact key:
+	// "LAUNCH" would validate and then count as left out, and the save would discard it. Refuse
+	// any top-level key that is not spelt canonically.
+	for k := range raw {
+		if k != "agent" && k != "launch" && k != "repos" && k != "ops" {
+			return d, groupsSent{}, &apiError{http.StatusBadRequest, "invalid_defaults", "unknown field " + strconv.Quote(k) + " (keys are lowercase)"}
+		}
+	}
 	present := func(k string) bool { v, ok := raw[k]; return ok && string(bytes.TrimSpace(v)) != "null" }
 	return d, groupsSent{present("launch"), present("repos"), present("ops")}, nil
 }
