@@ -470,6 +470,12 @@ func TestDarkAgentProbeNeedsTheServiceTaskOnThisSlot(t *testing.T) {
 			old.StoppedAt = aws.Time(time.Now().Add(-20 * time.Second))
 			h.ci.stopping = []ecstypes.Task{old}
 		},
+		"old task stopped with unknown stop time": func(h *ec2Harness) {
+			old := runningTask("af-ws-acme-alice", "i-other")
+			old.TaskArn = aws.String("arn:task/old")
+			old.LastStatus = aws.String("STOPPED")
+			h.ci.stopping = []ecstypes.Task{old}
+		},
 		"no task listed": func(h *ec2Harness) { h.ci.running = nil },
 		"task describe failure": func(h *ec2Harness) {
 			h.ci.taskFailures = []ecstypes.Failure{{Arn: aws.String("arn:task/af-ws-acme-alice"), Reason: aws.String("MISSING")}}

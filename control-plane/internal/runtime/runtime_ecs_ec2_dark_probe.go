@@ -182,10 +182,11 @@ func classifyProbeError(err error) AgentProbe {
 	return AgentProbeUnknown
 }
 
-// probeStaleGrace is how long after a task of the service stopped its endpoint may still be
-// answering the alias: the Cloud Map fallback caches an address for 30 s (agent_dial.go) and
-// a kept-alive connection can outlive the task's removal from the listing. Twice the cache
-// TTL plus the keepalive period, rounded up.
+// probeStaleGrace is a conservative operating margin, not a proof of endpoint identity: the
+// Cloud Map fallback caches an address for 30 s (agent_dial.go) and a pooled HTTP connection
+// may outlive that, so a task that stopped less than this long ago is still treated as able to
+// answer the alias. The bound on a pooled connection's life is not known; 2 minutes is a
+// generous multiple of the cache TTL.
 const probeStaleGrace = 2 * time.Minute
 
 // serviceRunsOnlyOn reports whether the service's answer can only come from the EC2 instance
@@ -227,8 +228,13 @@ func (f *ecsEC2Factory) serviceRunsOnlyOn(ctx context.Context, service, slot str
 			return false
 		}
 		for _, t := range described.Tasks {
-			if aws.ToString(t.LastStatus) == "STOPPED" && (t.StoppedAt == nil || now.Sub(*t.StoppedAt) >= probeStaleGrace) {
-				continue // gone long enough that no cache can still point at it
+			if aws.ToString(t.LastStatus) == "STOPPED" {
+				if t.StoppedAt == nil {
+					return false // no stop time, so no evidence the grace has passed
+				}
+				if now.Sub(*t.StoppedAt) >= probeStaleGrace {
+					continue // stopped well past the margin
+				}
 			}
 			ci := aws.ToString(t.ContainerInstanceArn)
 			if ci == "" {

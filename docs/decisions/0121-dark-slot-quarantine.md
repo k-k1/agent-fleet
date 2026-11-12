@@ -451,8 +451,9 @@ while ECS still reported the task healthy.
   predicate (#3963) to use as a signal of its own. Nothing acts on it yet (L1/L2 stay unbuilt).
 - The service alias may resolve to a task on another box (a task replacement, the 30 s Cloud Map cache), so a slot is
   probed only when a task of its service is RUNNING on that EC2 instance and no other task that could still answer the
-  alias is elsewhere: tasks desired STOPPED but not gone, and tasks stopped less than 2 minutes ago (twice the 30 s
-  Cloud Map cache plus keepalive), count (`ListTasks` / `DescribeTasks` / `DescribeContainerInstances`); any read that fails, or a task elsewhere, is `unknown` and nothing is sent. Each pass
+  alias is elsewhere: tasks desired STOPPED but not gone, and tasks stopped less than 2 minutes ago or with no stop time, count. The 2 minutes is
+  a conservative operating margin over the 30 s Cloud Map cache, not a proof of endpoint identity (how long a pooled
+  connection lives is not known) (`ListTasks` / `DescribeTasks` / `DescribeContainerInstances`); any read that fails, or a task elsewhere, is `unknown` and nothing is sent. Each pass
   starts with an empty `LastAgentProbe` map, so a slot the pass did not probe has no value.
 - This supersedes the 2026-11-11 note's bullet that a service-up slot is observed like any other.
 
