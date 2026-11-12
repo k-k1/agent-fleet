@@ -449,3 +449,129 @@ func TestRescueEveryStageResumesFromItsPhase(t *testing.T) {
 		})
 	}
 }
+
+// markGuard lapses one lease of a guarded section: the claim lease is homeGuardOf(ctx), the
+// mount lease rescueMountGuard(ctx).
+func markGuard(ctx context.Context, which string) {
+	if which == "mount" {
+		rescueMountGuard(ctx).markLost()
+	} else {
+		homeGuardOf(ctx).markLost()
+	}
+}
+
+// The deregistration waits on list and describe calls before it sends: a lease that lapses
+// there must stop the call itself, not only the check made before the waits.
+func TestRescueDeregisterIsCheckedAtTheCallNotBeforeTheWaits(t *testing.T) {
+	for _, which := range []string{"claim", "mount"} {
+		t.Run(which, func(t *testing.T) {
+			bothModes(t, func(t *testing.T, w *rescueWorld) {
+				withENI(w)
+				w.arm()
+				var ctx context.Context
+				rescueStepHook = func(c context.Context, s string) error {
+					if s == "deregistering" {
+						ctx = c
+					}
+					return nil
+				}
+				w.h.ci.onDescribeCI = func() {
+					if ctx == nil {
+						return
+					}
+					w.h.ci.onDescribeCI = nil
+					markGuard(ctx, which)
+					w.startLands() // another CP counts a new Start meanwhile
+				}
+				w.pass(w.f)
+				if len(w.h.ci.deregistered) != 0 {
+					t.Fatalf("deregistered %v after the lease lapsed during the lookups", w.h.ci.deregistered)
+				}
+				if w.stopCalls() != 0 || w.detachCalls() != 0 {
+					t.Fatal("a later step ran")
+				}
+			})
+		})
+	}
+}
+
+// The mount lease and the claim lease are taken at different times and lapse independently:
+// every destructive call asks both.
+func TestRescueEitherLeaseLapsingStopsEveryDestructiveCall(t *testing.T) {
+	for _, which := range []string{"claim", "mount"} {
+		for _, step := range []string{"deregistering", "stopping", "detaching"} {
+			t.Run(which+"/"+step, func(t *testing.T) {
+				bothModes(t, func(t *testing.T, w *rescueWorld) {
+					withENI(w)
+					w.arm()
+					rescueStepHook = func(c context.Context, s string) error {
+						if s == step {
+							markGuard(c, which)
+						}
+						return nil
+					}
+					w.pass(w.f)
+					rescueStepHook = nil
+					switch step {
+					case "deregistering":
+						if len(w.h.ci.deregistered) != 0 {
+							t.Fatalf("deregistered with the %s lease lapsed", which)
+						}
+					case "stopping":
+						if w.stopCalls() != 0 {
+							t.Fatalf("stopped with the %s lease lapsed", which)
+						}
+					case "detaching":
+						if w.detachCalls() != 0 {
+							t.Fatalf("detached with the %s lease lapsed", which)
+						}
+					}
+				})
+			})
+		}
+	}
+}
+
+// What a release owes after a detach is written while both locks are still held: a Start that
+// was waiting for them must not be counted, and so cannot own the slot or set its tags, until
+// the bookkeeping is done.
+func TestRescueBookkeepingRunsInsideTheLocks(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		w.arm()
+		started := make(chan int64, 1)
+		rt := w.rt()
+		hookAt("detaching", func() {
+			go func() {
+				g, _ := rt.beginStart(context.Background())
+				started <- g
+			}()
+		})
+		var overtaken []int
+		reads := 0
+		w.h.ec2.describeInstancesErr = func() error {
+			// Only the reads of the bookkeeping itself: it ends when markSlotFree has tagged the slot.
+			if w.h.ec2.countCalls("DetachVolume") > 0 && ec2TagValue(w.h.ec2.instances["i-dark"].Tags, ec2TagSlotIdleSince) == "" {
+				reads++
+				time.Sleep(30 * time.Millisecond) // time for a Start that is not held off to get in
+				if len(started) > 0 {
+					overtaken = append(overtaken, reads)
+				}
+			}
+			return nil
+		}
+		w.pass(w.f)
+		w.h.ec2.describeInstancesErr = nil
+		if reads == 0 {
+			t.Fatal("no bookkeeping read after the detach")
+		}
+		if len(overtaken) > 0 {
+			t.Fatalf("a Start was counted during the bookkeeping (reads %v): it ran after the locks were released", overtaken)
+		}
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the Start never got through")
+		}
+		w.rescued()
+	})
+}

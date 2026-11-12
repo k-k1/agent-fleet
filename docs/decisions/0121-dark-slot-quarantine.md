@@ -559,3 +559,5 @@ among readings of the text above:
   `detaching` with the home gone, which the finalizer records.
 - IAM: none. `ecs:DeregisterContainerInstance`, `ec2:StopInstances` and `ec2:DetachVolume` are already granted; the two new call
   sites are in `deploy/local/cfn-cp-ec2-scope-test.py`. Not run against real AWS; Open questions 1, 4 and 5 stand.
+
+Review round 1 (second phase): the deregistration is checked against both leases right before its `DeregisterContainerInstance` call (it waits on list and describe calls first; `deregisterContainerInstanceChecked`). Every destructive call asks both the mount and the claim lease (`rescueLeasesHeld`): they are taken at different times and lapse independently. The pool bookkeeping after the detach (`afterDetach`) runs inside the guarded section with both leases still shown to be held, as `releaseSlotSince` does, and is skipped (left to the sweeper) when one has lapsed.

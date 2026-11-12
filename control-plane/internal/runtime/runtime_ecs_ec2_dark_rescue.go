@@ -447,6 +447,25 @@ func cancelCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID string,
 	return cancelled, failed
 }
 
+type rescueMountGuardKey struct{}
+
+// rescueMountGuard is the guard of the mount lock a guarded section runs under; homeGuardOf
+// on the same context is the claim lock's. They are taken at different times and renewed and
+// lapse independently, so a destructive call asks both (rescueLeasesHeld).
+func rescueMountGuard(ctx context.Context) *homeLockGuard {
+	g, _ := ctx.Value(rescueMountGuardKey{}).(*homeLockGuard)
+	return g
+}
+
+// rescueLeasesHeld asks the clock of both leases of a guarded section. Right before every AWS
+// side effect, never earlier: whatever waits between the check and the call is the risk.
+func rescueLeasesHeld(ctx context.Context) error {
+	if err := rescueMountGuard(ctx).check(); err != nil {
+		return err
+	}
+	return homeGuardOf(ctx).check()
+}
+
 // rescueGuarded runs fn only while this rescue still owns the home, under the mount lock
 // with the token re-verified under the claim lock nested inside it (decision 4, lock order).
 // A lock not taken, a count not readable and a lease that lapsed abort the step: the
@@ -462,6 +481,7 @@ func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m rescueMarker, insta
 		return fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 	defer unlockClaim()
+	cctx = context.WithValue(cctx, rescueMountGuardKey{}, homeGuardOf(mctx))
 	if err := e.rescueOwned(cctx, m, instanceID); err != nil {
 		return err
 	}

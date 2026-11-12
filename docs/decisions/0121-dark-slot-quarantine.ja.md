@@ -476,3 +476,5 @@ Follow-ups: #3993
   ホームが無い `detaching` のままになり、ファイナライザが記録する。
 - IAM: 変更なし。`ecs:DeregisterContainerInstance`、`ec2:StopInstances`、`ec2:DetachVolume` は付与済みで、新しい 2 つの呼び出し箇所を
   `deploy/local/cfn-cp-ec2-scope-test.py` に登録した。実 AWS では動かしていない。未解決事項 1・4・5 は残る。
+
+第 2 段のレビュー第 1 巡: 登録解除は、`DeregisterContainerInstance` を呼ぶ直前に両方のリースを確認する（その前に list / describe を待つため。`deregisterContainerInstanceChecked`）。破壊的な呼び出しはすべて、マウントとクレームの両方のリースを確認する（`rescueLeasesHeld`）。取得の時刻が違い、別々に失効するため。デタッチ後のプールの後始末（`afterDetach`）は、`releaseSlotSince` と同じくガード付き区間の中で、両リースが有効と示せている間に行い、どちらかが失効していたら行わない（スイープに任せる）。

@@ -926,6 +926,8 @@ type fakeContainerInstances struct {
 	taskPageSize int
 	// onList / onDescribeTasks run at the start of ListTasks / DescribeTasks.
 	onList, onDescribeTasks func()
+	// onDescribeCI runs at the start of DescribeContainerInstances.
+	onDescribeCI func()
 	// taskFailures are returned by DescribeTasks as Failures.
 	taskFailures []ecstypes.Failure
 	// describeErr is returned (once) by DescribeContainerInstances.
@@ -1007,6 +1009,9 @@ func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ec
 }
 
 func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, in *ecs.DescribeContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error) {
+	if f.onDescribeCI != nil {
+		f.onDescribeCI()
+	}
 	if err := f.describeErr; err != nil {
 		f.describeErr = nil
 		return nil, err

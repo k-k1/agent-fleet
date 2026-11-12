@@ -55,7 +55,7 @@ func (e *ecsEC2Runtime) advanceRescue(ctx context.Context, slot string, m *rescu
 	if to.rank() <= m.Phase.rank() {
 		return nil
 	}
-	if err := homeGuardOf(ctx).check(); err != nil {
+	if err := rescueLeasesHeld(ctx); err != nil {
 		return fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 	next := *m
@@ -75,7 +75,7 @@ func (e *ecsEC2Runtime) rescueBlock(ctx context.Context, slot string, m *rescueM
 		next := *m
 		next.BlockedSince = e.now().UTC().Truncate(time.Second)
 		err := e.rescueGuarded(ctx, *m, slot, func(c context.Context) error {
-			if err := homeGuardOf(c).check(); err != nil {
+			if err := rescueLeasesHeld(c); err != nil {
 				return fmt.Errorf("%w: %w", errRescueAborted, err)
 			}
 			if err := e.writeRescueMarker(c, slot, next); err != nil {
@@ -127,11 +127,16 @@ func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *resc
 			if err := rescueStep(c, "deregistering"); err != nil {
 				return err
 			}
-			if err := homeGuardOf(c).check(); err != nil {
+			if err := rescueLeasesHeld(c); err != nil {
 				return fmt.Errorf("%w: %w", errRescueAborted, err)
 			}
 			// A failed call is not decisive: the wait below says whether the ENI went.
-			if derr := e.deregisterContainerInstance(c, slot); derr != nil {
+			if derr := e.deregisterContainerInstanceChecked(c, slot, func() error {
+				if err := rescueLeasesHeld(c); err != nil {
+					return fmt.Errorf("%w: %w", errRescueAborted, err)
+				}
+				return nil
+			}); derr != nil {
 				log.Printf("ecs-ec2: rescue of %s: %v", e.base.name, derr)
 			}
 			return nil
@@ -186,7 +191,7 @@ func (e *ecsEC2Runtime) rescueStopStage(ctx context.Context, slot string, m *res
 			if err := rescueStep(c, "stopping"); err != nil {
 				return err
 			}
-			if err := homeGuardOf(c).check(); err != nil {
+			if err := rescueLeasesHeld(c); err != nil {
 				return fmt.Errorf("%w: %w", errRescueAborted, err)
 			}
 			if _, err := e.ec2.StopInstances(c, &ec2.StopInstancesInput{
@@ -259,7 +264,7 @@ func (e *ecsEC2Runtime) rescueDetachStage(ctx context.Context, slot string, m *r
 		if err := rescueStep(c, "detaching"); err != nil {
 			return err
 		}
-		if err := homeGuardOf(c).check(); err != nil {
+		if err := rescueLeasesHeld(c); err != nil {
 			return fmt.Errorf("%w: %w", errRescueAborted, err)
 		}
 		if _, err := e.ec2.DetachVolume(c, &ec2.DetachVolumeInput{
@@ -268,11 +273,18 @@ func (e *ecsEC2Runtime) rescueDetachStage(ctx context.Context, slot string, m *r
 			return fmt.Errorf("%w: detach %s: %w", errRescueAborted, m.Volume, err)
 		}
 		detached = true
+		// The bookkeeping a release owes runs here, with both locks still held and the leases
+		// still shown to be ours: once they are released a Start that was waiting may have
+		// attached the home and set its owner and idle tags, and these writes would undo them.
+		// A lapsed lease skips it; the sweeper's owner-tag and free-slot repairs cover it.
+		if err := rescueLeasesHeld(c); err == nil {
+			e.afterDetach(c, m.Volume, slot)
+		} else {
+			log.Printf("ecs-ec2: rescue of %s detached %s but its lease lapsed; leaving the bookkeeping to the sweeper: %v", e.base.name, m.Volume, err)
+		}
 		return e.advanceRescue(c, slot, m, rescuePhaseDetached)
 	})
 	if detached {
-		// The home is off the box: the bookkeeping is owed even if the marker write failed.
-		e.afterDetach(ctx, m.Volume, slot)
 		if err := rescueStep(ctx, "detached"); err != nil {
 			return err
 		}

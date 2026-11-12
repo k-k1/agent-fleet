@@ -695,6 +695,14 @@ func (e *ecsEC2Runtime) deregisterSlot(ctx context.Context, instanceID string) {
 // deregisterContainerInstance is deregisterSlot with the failure handed back. Nil also
 // means "the cluster has no container instance for this box".
 func (e *ecsEC2Runtime) deregisterContainerInstance(ctx context.Context, instanceID string) error {
+	return e.deregisterContainerInstanceChecked(ctx, instanceID, nil)
+}
+
+// deregisterContainerInstanceChecked is deregisterContainerInstance with a last word: before
+// the DeregisterContainerInstance call, which follows the list and describe calls it waits
+// on, pre is asked, and an error from it ends the call without deregistering. The dark-slot
+// rescue passes its lease check here, because those waits are where a lease can lapse.
+func (e *ecsEC2Runtime) deregisterContainerInstanceChecked(ctx context.Context, instanceID string, pre func() error) error {
 	arns, err := e.listContainerInstanceARNs(ctx)
 	if err != nil || len(arns) == 0 {
 		return err
@@ -710,6 +718,11 @@ func (e *ecsEC2Runtime) deregisterContainerInstance(ctx context.Context, instanc
 		for _, ci := range out.ContainerInstances {
 			if !isPoolContainerInstance(ci) || aws.ToString(ci.Ec2InstanceId) != instanceID {
 				continue
+			}
+			if pre != nil {
+				if err := pre(); err != nil {
+					return err
+				}
 			}
 			if _, err := e.ci.DeregisterContainerInstance(ctx, &ecs.DeregisterContainerInstanceInput{
 				Cluster:           aws.String(e.base.cfg.cluster),
