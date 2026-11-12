@@ -294,7 +294,7 @@ and a revoke button.
   in the Workspace policy. A prompt starting with `[agent-fleet:` is refused, and shell / ssm
   targets are refused as for peer messages (ADR 0041 decision 5). The envelope names the
   connection, not a client conversation (MCP 2026-07-28 has no session id). No decision above
-  changes. Guide: `guide/member/19-outside-access.md`.
+  changes. Guide: `guide/user/outside/external-claude.md`.
 
 - 2026-10-23, #2567: the trusted-client list is editable at runtime. A super admin edits it in the
   Admin modal (`GET`/`PUT`/`DELETE /api/admin/mcp-oauth/trusted-hosts`, CP setting
@@ -324,7 +324,7 @@ and a revoke button.
   the authenticated principal (a call with none is refused); the Agent wraps the first prompt in
   `[agent-fleet:mcp …]`, records the same "Via MCP" badge source, and refuses a prompt starting
   with `[agent-fleet:`. A shell / ssm session takes no `initial_prompt` over MCP, as it takes no
-  `send_to_session`. No decision above changes. Guide: `guide/member/19-outside-access.md`.
+  `send_to_session`. No decision above changes. Guide: `guide/user/outside/external-claude.md`.
 
 - 2026-11-07, #3486: decision 3's premise that whoever controls a path on a trusted host is that
   host's owner does not hold on large multi-purpose hosts, and dynamic client registration needs no

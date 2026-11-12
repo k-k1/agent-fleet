@@ -8,7 +8,7 @@ source_of_truth: "the Console's browser pane and preview popover, and the error 
 English | [日本語](preview.ja.md)
 
 Find the cause and the fix when an app does not show, does not update, or will not sign in on the browser pane, the lightweight preview or a preview subdomain.
-How to use each of them is in [Preview and browser](../../member/14-preview-browser.md).
+How to use each of them is in [Preview](../README.md#preview).
 
 ## The browser pane shows `target-unreachable`
 
@@ -102,5 +102,5 @@ These messages come from the preview, not from your app.
 
 ## Related
 
-- [Preview and browser](../../member/14-preview-browser.md)
+- [Preview](../README.md#preview)
 - [See your machine and its usage](../workspace/machine.md)

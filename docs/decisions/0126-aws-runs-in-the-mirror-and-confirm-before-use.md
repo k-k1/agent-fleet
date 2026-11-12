@@ -276,7 +276,7 @@ Migrations: the gate's column takes the next numbers (SQLite `0116`, Postgres `0
 - A gated profile needs the member's press once per session (within the scope of decision F), and a run nobody
   answers fails with exit 4.
 - A gated profile is not usable as a plain `aws --profile` name in the workspace (if E is accepted).
-- The guide (`guide/member/16-cloud-accounts.md` and `.ja.md`) states the limits of decision 6 in the member's
+- The guide (`guide/ref/cli/af-aws-exec.md` and `.ja.md`) states the limits of decision 6 in the member's
   terms: the gate catches mistakes, not an agent that sets out to get around it.
 
 ## Decisions taken (2026-10-30, by the user)

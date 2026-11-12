@@ -50,4 +50,4 @@ AI への質問や翻訳、資料を読むこと、開発の進み具合を見�
 
 - [Agent Fleet でできること](overview.ja.md)
 - [用語と全体像](concepts.ja.md)
-- [困ったとき](../../member/21-troubleshooting.ja.md)
+- [困ったとき](../README.ja.md#困ったとき)

@@ -240,7 +240,7 @@ the preview.
 
 ### 9. Documentation
 
-`guide/member/16-cloud-accounts.md` (and `.ja.md`) explains sign-ins, the logout that covers every member,
+`guide/user/integrations/aws-sso.md` (and `.ja.md`) explains sign-ins, the logout that covers every member,
 and what a rename or portal change does. `workspace/notes/aws.md` (the `af-aws` skill) says that a login
 request can name a sign-in rather than a single profile.
 

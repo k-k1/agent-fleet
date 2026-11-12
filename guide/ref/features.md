@@ -46,7 +46,7 @@ If a feature ships and does not appear here, it is not done
 | Read an answer in your own language (translation, no turn spent) | member | mirror, under an answer | [Read an answer in your own language](../user/sessions/translate.md) |
 | Have a session generate an image (`generate_image`) | member | any session not attached to a studio, by asking | [Have a session make images](../user/images/from-session.md) |
 | Start a session from a session (child sessions) — hand a task to another agent, look after what it started | member | Settings → Agents → Session, then any session, by asking | [Start child sessions from a session](../user/fleet/child-sessions.md) |
-| Abort detection and auto-resume | member | automatic | [04 Conversation](../member/04-conversation.md) |
+| Abort detection and auto-resume | member | automatic | [A turn was cut off partway](../user/troubleshooting/sessions.md#a-turn-was-cut-off-partway) |
 
 ## Working with code
 
@@ -86,10 +86,10 @@ If a feature ships and does not appear here, it is not done
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Working sets | member | top of the left pane | [Narrow the view with working sets](../user/fleet/working-sets.md) |
-| Memo queue | member | Memo queue | [10 Chat and memos](../member/10-chat-memo.md) |
+| Memo queue | member | Memo queue | [Collect memos and hand them over](../user/chat/memos.md) |
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [Start from an issue or a ticket](../user/sessions/from-issues.md); [repos.md](repos.md) for what each provider contributes |
 | Scheduled (unattended) runs | member | Schedules | [Run at a set time](../user/fleet/schedules.md) |
-| Notification centre | member | top bar | [20 Settings](../member/20-settings.md) |
+| Notification centre | member | top bar | [Get notified](../user/settings/notifications.md#read-them-in-the-notification-center) |
 | Inbox — messages and requests between members, with claim, launch and PR links | member | top bar → inbox | [Ask a teammate through the inbox](../user/team/inbox.md) |
 | Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [Ask a teammate through the inbox](../user/team/inbox.md) |
 | Attach a session to an inbox message, sharing it with the recipients | member | inbox → New | [Ask a teammate through the inbox](../user/team/inbox.md) |
@@ -99,20 +99,19 @@ If a feature ships and does not appear here, it is not done
 | A session watching a pull request — told when checks finish, conflicts, merges | member | (agent tool `watch`) | [Tell a session about its pull request's review](../user/fleet/pr-feedback.md#a-session-watches-a-pull-request-itself) |
 | Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [Fix a workspace that will not start or has stopped](../user/troubleshooting/workspace.md#not-responding-appears-beside-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Use lcpp](../user/agents/lcpp.md) |
-| Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
+| Assistant chat | member | Assistants | [Ask an assistant](../user/chat/assistant.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [Connect Discord and Slack](../user/integrations/chat-bridge.md) |
 | Reply suggestions | member | mirror composer | [Reply to a session](../user/sessions/reply.md#use-reply-suggestions) |
 | Deletion lock | member | session ⋯ menu | [Clear away finished sessions](../user/sessions/cleanup.md#lock-something-against-deletion) |
 | Cleanup and the trash | member | Clean up | [Clear away finished sessions](../user/sessions/cleanup.md#tidy-up-in-bulk-cleanup) |
 | Keyboard system | member | Settings → Keyboard | [Use the keyboard and the command palette](../user/start/shortcuts.md) |
-| Text-to-speech | member | Settings → Read aloud | [20 Settings](../member/20-settings.md) |
+| Text-to-speech | member | Settings → Read aloud | [Use read-aloud](../user/settings/read-aloud.md) |
 | Skills views — each agent's skills, read-only: personal (Settings) and a repository's (project tree → Skills…) | member | Settings → Skills; repository row menu → Skills… | [Bring your Claude Code setup](../user/agents/bring-claude-setup.md#check-your-skills) |
 
 ## Personal settings
 
 Every row is under **Settings**; the tab is the "Where".
-[settings.md](settings.md) lists the tabs, [20 Settings](../member/20-settings.md)
-explains them.
+[settings.md](settings.md) lists the tabs and the page that explains each.
 
 | Feature | Who | Where |
 |---|---|---|

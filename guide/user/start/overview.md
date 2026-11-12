@@ -32,7 +32,7 @@ sessions keep running after you close the browser.
 | Let agents use AWS, Google Cloud, Jira, MCP servers and more | [Integrations](../README.md#integrations) |
 | Make images and compare them side by side | [Images](../README.md#images) |
 | Set up the workspace environment, or recreate it | [Workspace](../README.md#workspace) |
-| Ask questions, translate or summarize without a repository | [Chat and memos](../../member/10-chat-memo.md) |
+| Ask questions, translate or summarize without a repository | [Ask an assistant](../chat/assistant.md) |
 
 ## Where to start
 

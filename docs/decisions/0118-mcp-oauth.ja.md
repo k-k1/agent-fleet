@@ -268,7 +268,7 @@ CI などのヘッドレスな呼び出しと、OAuth を持たないクライ�
   「MCP 経由: <名前>」のバッジを出し、Workspace の方針では `[agent-fleet:mcp …]` を peer メッセージと同じ権限・
   同じ 4 つの禁止事項で扱う。`[agent-fleet:` で始まる指示は拒否し、shell / ssm の宛先は peer メッセージと同様に
   拒否する（ADR 0041 決定 5）。封筒が示すのは接続であり、クライアント側の会話ではない（MCP 2026-07-28 には
-  セッション ID がない）。上記の決定は変えない。ガイド: `guide/member/19-outside-access.ja.md`。
+  セッション ID がない）。上記の決定は変えない。ガイド: `guide/user/outside/external-claude.ja.md`。
 
 - 2026-10-23, #2567: 信頼するクライアントの一覧を実行時に編集できるようにした。super admin が Admin モーダルで
   編集する（`GET`/`PUT`/`DELETE /api/admin/mcp-oauth/trusted-hosts`、CP の設定 `mcp_oauth_trusted_hosts`、配備全体）。
@@ -293,7 +293,7 @@ CI などのヘッドレスな呼び出しと、OAuth を持たないクライ�
   からは届かない）。接続は認証済みの主体から取り、主体がなければ拒否する。Agent は最初のプロンプトを
   `[agent-fleet:mcp …]` で包み、同じ「MCP 経由」バッジの記録を付け、`[agent-fleet:` で始まるプロンプトは
   拒否する。shell / ssm のセッションは `send_to_session` と同様、MCP 経由の `initial_prompt` を受け付けない。
-  上の決定は何も変わらない。ガイド: `guide/member/19-outside-access.md`。
+  上の決定は何も変わらない。ガイド: `guide/user/outside/external-claude.ja.md`。
 
 - 2026-11-07, #3486: 決定 3 の前提「信頼するホストのパスを管理できる人はそのホストの持ち主である」は、
   多目的の大きなホストでは成り立たず、動的クライアント登録は認証を要しない。信頼リストはホスト名に加えて

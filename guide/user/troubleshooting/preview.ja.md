@@ -8,7 +8,7 @@ source_of_truth: "Console のブラウザペインとプレビューのポップ
 [English](preview.md) | 日本語
 
 ブラウザペイン・軽量プレビュー・プレビュー用サブドメインで、アプリが表示されない、更新されない、サインインできないときに、原因と直し方を探せます。
-それぞれの使い方は [プレビューとブラウザ](../../member/14-preview-browser.ja.md) にあります。
+それぞれの使い方は [プレビュー](../README.ja.md#プレビュー) にあります。
 
 ## ブラウザペインが `target-unreachable` になる
 
@@ -102,5 +102,5 @@ source_of_truth: "Console のブラウザペインとプレビューのポップ
 
 ## 関連
 
-- [プレビューとブラウザ](../../member/14-preview-browser.ja.md)
+- [プレビュー](../README.ja.md#プレビュー)
 - [マシンと使用状況を見る](../workspace/machine.ja.md)

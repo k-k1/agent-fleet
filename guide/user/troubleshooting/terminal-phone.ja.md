@@ -60,6 +60,6 @@ source_of_truth: "Console の設定 >「表示」「キー操作」と、端末�
 
 ## 関連
 
-- [ターミナル](../../member/08-terminal.ja.md)
-- [Console の基本](../../member/02-console-basics.ja.md)
+- [ターミナルを使う](../files/terminal.ja.md)
+- [画面の見かた](../start/console-tour.ja.md)
 - [キーボードとコマンドパレットで操作する](../start/shortcuts.ja.md#キーを変える)

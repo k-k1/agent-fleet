@@ -2,7 +2,7 @@
 //
 // The queue holds follow-ups the member wrote while a turn was running and has not sent yet. It
 // is per session, lives in client memory only, and is NOT the Memo queue (persistent, cross-device,
-// guide/member/10-chat-memo.md) nor the queue the agent keeps for input it already accepted
+// guide/user/chat/memos.md) nor the queue the agent keeps for input it already accepted
 // (ADR 0105). An item enters the transcript only when it is sent; until then it is a draft.
 
 /** One held follow-up: the text as typed and the uploaded attachment paths that go with it. */
