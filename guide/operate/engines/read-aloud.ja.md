@@ -29,12 +29,39 @@ VOICEVOX のエンジンはパッケージに含まれていません。形態�
 | 形態 | 用意するもの |
 |---|---|
 | AWS の ECS | 音声エンジンのスタック（`50-tts`）。ふだんは 0 台で、この画面から起動・停止します（[ECS の runbook](../../../deploy/aws/ecs/README.md#optional-japanese-speech-the-voicevox-engine-cfn50-ttsyaml)） |
-| native・WSL | Windows の VOICEVOX か、Linux の VOICEVOX ENGINE を動かす（[native の runbook](../../../deploy/native/README.md#text-to-speech-tts--zundamon--optional)） |
+| native・WSL | Windows の VOICEVOX か、Linux の VOICEVOX ENGINE を動かす（下の [native と WSL で用意する](#native-と-wsl-で用意する)） |
 | そのほか | Control Plane から HTTP で届く VOICEVOX ENGINE を動かす |
 
 - エンジンの場所は Control Plane の `AF_VOICEVOX_URL` で指定します。既定は `http://127.0.0.1:50021` です
 - Polly を使うときは、`AF_POLLY_REGION` と、Control Plane のプロセスから見える AWS の資格情報を用意します
 - エンジンが止まっているあいだも、失敗するのは声だけです。エンジンが戻れば、次の文から読み上げが戻ります
+
+### native と WSL で用意する
+
+WSL や Linux の側に、音声の設定は要りません。**再生**はブラウザ（WSL2 なら Windows の側）で行います。
+要るのは、Control Plane から HTTP で VOICEVOX のエンジンに届くことだけです。次のどちらかで用意します。用意しなくても、ほかの機能には影響しません。
+
+| 方法 | やること |
+|---|---|
+| A. Windows の側で動かす（WSL2） | [VOICEVOX](https://voicevox.hiroshiba.jp/) の Windows アプリを起動すると、Windows の側の `127.0.0.1:50021` で同じ HTTP API が開きます |
+| B. WSL・Linux の中で直接動かす | [VOICEVOX ENGINE](https://github.com/VOICEVOX/voicevox_engine) の Linux（CPU）版を展開し、`./run` で起動します。既定は `127.0.0.1:50021` で、常駐で約 1 GB を使い、Docker は要りません。既定の URL と同じなので、`af start` はそのままで動きます |
+
+A のとき、WSL2 のネットワークのモードで変わります。
+
+- **ミラーモード**（`%UserProfile%\.wslconfig` の `[wsl2]` に `networkingMode=mirrored`、Windows 11 22H2 以降）なら、WSL から `localhost:50021` で届くので、**`af start` のまま設定は要りません**
+- 既定の **NAT モード**では、WSL から Windows のループバックに届きません。単体のエンジン（VOICEVOX ENGINE の Windows 版）を `run.exe --host 0.0.0.0` で起動し、WSL から見た Windows のホストの IP（`ip route | awk '/^default/{print $3}'`）を指します。Windows のファイアウォールで、vEthernet（WSL）のインターフェースからの受信を許可します
+
+```bash
+AF_VOICEVOX_URL=http://<windows-host-ip>:50021 af start
+```
+
+URL やポートを変えるときは、`AF_VOICEVOX_URL`（ポートまで含めた URL）を付けて起動します。`af` はシェルの環境を Control Plane にそのまま渡します。
+
+```bash
+AF_VOICEVOX_URL=http://127.0.0.1:50022 af start
+```
+
+systemd で動かしているときは、unit の `[Service]` に `Environment=AF_VOICEVOX_URL=...` を足します（[systemd でサービスとして動かす](../native/service.ja.md)）。
 
 ## エンジンのモードを選ぶ
 

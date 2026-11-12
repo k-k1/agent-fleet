@@ -1,6 +1,6 @@
 ---
 audience: "someone standing a deployment up for the first time"
-source_of_truth: "the \"Quick start\" of deploy/compose/README.md for commands, deploy/compose/.env.example for what each variable means (a contradiction is a bug in this page)"
+source_of_truth: "deploy/compose/.env.example for what each variable means (a contradiction is a bug in this page)"
 ---
 
 # Install Agent Fleet
@@ -8,7 +8,7 @@ source_of_truth: "the \"Quick start\" of deploy/compose/README.md for commands, 
 English | [日本語](install.ja.md)
 
 Stand up your first deployment with Docker Compose, up to the point where the first administrator signs in and can welcome members.
-The commands are in the "Quick start" of the [compose runbook](../../deploy/compose/README.md). This page says what each step decides and what to watch for.
+The commands to type are in [Deploy with Docker Compose](compose/install.md). This page says what each step decides and what to watch for.
 
 ## How it works
 
@@ -20,7 +20,7 @@ The commands are in the "Quick start" of the [compose runbook](../../deploy/comp
 | Sign in with an address in `SUPER_ADMIN_EMAILS` | That account becomes the deployment administrator (`super_admin`) |
 | Welcome members | When a member signs in, their workspace is prepared |
 
-You work in `deploy/compose/`. For another target, choose it in [Choose where to deploy](choose.md) and follow its runbook.
+You work in `deploy/compose/`. For another target, choose it in [Choose where to deploy](choose.md) and follow its procedure.
 
 ## Before you start
 
@@ -48,7 +48,7 @@ Fill in these first:
 | `SUPER_ADMIN_EMAILS` | The first deployment administrator's address |
 | `DATA_DIR` | Where the data goes. Its absolute path is hard to change later, so decide it now |
 | `AF_MASTER_KEY`, `AF_COOKIE_SECRET` | Step 2 |
-| `DOCKER_GID` | The host's docker group GID. The runbook shows how to find it |
+| `DOCKER_GID` | The host's docker group GID. How to find it is in [Deploy with Docker Compose](compose/install.md#1-configure-and-start-from-source) |
 
 A wrong `DOCKER_GID` gives permission denied on the docker socket after start-up ([Find the cause from the symptom](diagnose/checklist.md#three-constraints-of-driving-docker-from-a-container)).
 
@@ -135,7 +135,7 @@ Before starting, decide these three. How to choose is in [Choose the tenant and 
 2. Start it with `docker compose up -d`. Add `--build` to build locally instead of using the prebuilt image
 3. Follow the Control Plane's log, and check that `/healthz` on its loopback port answers `ok`
 
-The exact check is in the runbook's troubleshooting table.
+The commands are in [Deploy with Docker Compose](compose/install.md).
 
 ## 6. Sign in as the first administrator
 

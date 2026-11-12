@@ -8,7 +8,6 @@ source_of_truth: "コマンドは `deploy/` 配下の runbook、各手順が何�
 [English](README.md) | 日本語
 
 Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 ページに 1 つずつまとめています。
-コマンドは各形態の runbook にあり、ここの各ページはそれが何を決めるのかを書きます。
 
 ## はじめに
 
@@ -100,6 +99,30 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [自前の ComfyUI で画像を生成する](engines/comfyui.ja.md) | 画像エンジンを自分のネットワークの ComfyUI に向け、モデルを登録し、届く経路を閉じる |
 | [別のデプロイのエンジンを借りる](engines/borrow.ja.md) | 自分のホストの配備から、AWS の Agent Fleet のチャットと画像のエンジンを使う。貸す側としてトークンを発行する |
 | [LAN の llama.cpp でチャットする](engines/llama-cpp.ja.md) | チャットのエンジンを自分のネットワークの llama-server に向ける |
+
+## Docker Compose
+
+| ページ | できること |
+|---|---|
+| [Docker Compose で構築する](compose/install.ja.md) | `.env` を書き、ソースからか公開リリースのイメージで起動し、最初の管理者としてサインインする |
+| [macOS（Apple Silicon）で動かす](compose/macos.ja.md) | Mac の Docker のエンジンか Linux の VM で、1 人用に動かす |
+| [ワークスペースから CP に届かないとき](compose/workspace-listener.ja.md) | ワークスペース専用のリスナーで、ホストの外に出ない経路を渡す |
+
+## ネイティブパッケージ
+
+| ページ | できること |
+|---|---|
+| [ネイティブパッケージを入れる](native/install.ja.md) | Docker のない 1 人用の Linux や WSL2 に入れて、`af start` で使い始める |
+| [ネイティブパッケージを更新する](native/update.ja.md) | 新しい版を用意して再起動で切り替え、版を固定し、閉じたネットワークに持ち込む |
+| [systemd でサービスとして動かす](native/service.ja.md) | `af start` をユーザーのサービスにして、端末を閉じても動かし続ける |
+| [リセット・アンインストールする](native/uninstall.ja.md) | データを消してやり直すか、ホストから取り除く |
+
+## そのほかの構成
+
+| ページ | できること |
+|---|---|
+| [WSL で個人用に動かす](wsl.ja.md) | WSL2 の中の Docker で、サインインなしに 1 人で試す |
+| [EC2 1 台に構築する](aws-ec2-single.ja.md) | CloudFormation で EC2 を 1 台建て、リリースのバンドルで Docker Compose の配備を動かす |
 
 次の章の内容は、上のページに移りました: [01 配備形態を選ぶ](01-choose.ja.md)・[02 初期構築](02-install.ja.md)・[03 動かし続ける](03-run.ja.md)・[04 守る](04-secure.ja.md)・[05 サインイン方式](05-signin.ja.md)・[06 切り分ける](06-diagnose.ja.md)・[11 ecs-ec2 のスロットプール](11-slot-pool.ja.md)・[12 保存時の鍵](12-keys.ja.md)・[07 推論エンジンと読み上げ](07-engines.ja.md)・[08 自前の ComfyUI で画像を生成する](08-image-engine.ja.md)・[09 別の配備のエンジンを借りる](09-borrowed-engine.ja.md)・[10 自前の llama.cpp でチャットの推論を担う](10-llm-lan.ja.md)
 

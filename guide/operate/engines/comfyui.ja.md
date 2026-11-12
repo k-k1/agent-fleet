@@ -1,6 +1,6 @@
 ---
 audience: "自分のネットワークの ComfyUI を、compose / native / docker の配備のセッションから使わせたい配備管理者"
-source_of_truth: "管理 → 推論エンジンの「LAN の ComfyUI（画像エンジン）」パネルと、Control Plane が起動時に読む環境変数。書き方は `deploy/native/README.md` と `deploy/compose/.env.example`"
+source_of_truth: "管理 → 推論エンジンの「LAN の ComfyUI（画像エンジン）」パネルと、Control Plane が起動時に読む環境変数。書き方は `deploy/compose/.env.example`"
 ---
 
 # 自前の ComfyUI で画像を生成する
@@ -93,7 +93,7 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 | 形態 | 置き場所 |
 |---|---|
 | compose / docker | compose ファイルの隣の `.env` |
-| native | `af start` の環境、または systemd unit の `Environment=`（[native の手順書](../../../deploy/native/README.md#image-generation-on-a-comfyui-on-your-network--optional)） |
+| native | `af start` の環境、または systemd unit の `Environment=`（[systemd でサービスとして動かす](../native/service.ja.md)）。例: `AF_COMFY_URL=http://<host>:8188 af start` |
 
 ### どの設定が使われるか
 
@@ -112,7 +112,18 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 ## 画像エンジンを複数並べる
 
 画像エンジンはどれも、エンジン表の 1 行です。`AF_COMFY_URL` は、鍵 `image` の行を 1 本書く近道です。
-それ以外の行は、`compose` / `native` / `docker` なら Control Plane が起動のときに読む `AF_ENGINES_JSON` に書きます（行の形は [native の手順書の「More than one engine row」](../../../deploy/native/README.md#more-than-one-engine-row)）。
+それ以外の行は、`compose` / `native` / `docker` なら Control Plane が起動のときに読む `AF_ENGINES_JSON` に書きます（行の形は下の例）。
+
+```bash
+AF_ENGINES_JSON='{"engines":[
+  {"key":"comfy-lan","api":"images","provider":"comfy",
+   "url":"http://192.168.1.20:8188","health":"/system_stats","lifecycle":"external"},
+  {"key":"oai-image","api":"images","provider":"openai-compat",
+   "url":"http://192.168.1.21:8000","health":"/v1/models","lifecycle":"external"}
+]}' af start
+```
+
+- 1 つの JSON の文書で、`engines` の配列を持ちます。上の変数と同じく、起動のときに 1 回だけ読みます
 
 | やりたいこと | 書き方 |
 |---|---|

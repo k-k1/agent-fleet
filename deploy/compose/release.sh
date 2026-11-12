@@ -202,6 +202,14 @@ rm -f "$OUT"/aws/ec2-single/*-key "$OUT"/aws/ec2-single/*-key.pub "$OUT"/aws/ec2
 # Pin the bundle to this VERSION so `compose up` uses the released images by
 # default (operators still override REGISTRY/VERSION in their .env).
 sed -i "s/^VERSION=.*/VERSION=$VERSION/; s#^REGISTRY=.*#REGISTRY=$REGISTRY#; s#^WS_IMAGE=.*#WS_IMAGE=$WS_IMAGE#" "$OUT/.env.example"
+# The READMEs index guide pages that are not in the bundle: pin every link that does not
+# resolve inside it to the release tag (main for a non-release VERSION such as dev).
+case "$VERSION" in [0-9]*.[0-9]*.[0-9]*) DOCS_REF="v$VERSION" ;; *) DOCS_REF=main ;; esac
+md_specs=("README.md:deploy/compose/README.md")
+while IFS= read -r -d "" m; do
+  md_specs+=("${m#"$OUT"/}:deploy/${m#"$OUT"/}")
+done < <(find "$OUT/aws" -name "*.md" -print0)
+bash "$ROOT/deploy/release/pin-md-links.sh" pin "$OUT" "$DOCS_REF" - "${md_specs[@]}"
 
 # ADR 0037: images are distributed through a registry. The save tar stays as a
 # self-help path for hosts that cannot reach one — it is no longer published.
@@ -245,6 +253,11 @@ fi
 
 echo "==> tar bundle"
 tar -czf "$DIST/agent-fleet-$VERSION.tar.gz" -C "$DIST" "agent-fleet-$VERSION"
+# Check the links where a reader meets them: in the unpacked archive.
+chk="$(mktemp -d)"
+tar -xzf "$DIST/agent-fleet-$VERSION.tar.gz" -C "$chk"
+bash "$ROOT/deploy/release/pin-md-links.sh" check "$chk/agent-fleet-$VERSION"
+rm -rf "$chk"
 
 echo "==> SHA256SUMS"
 (

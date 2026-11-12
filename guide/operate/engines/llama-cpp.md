@@ -65,7 +65,7 @@ The Control Plane reads these once at start. Restart the Control Plane after cha
 | Target | Where it goes |
 |---|---|
 | compose / docker | `.env` next to the compose file |
-| native | The environment of `af start`, or `Environment=` in the systemd unit ([the native runbook](../../../deploy/native/README.md)) |
+| native | The environment of `af start`, or `Environment=` in the systemd unit ([Run it as a systemd service](../native/service.md)) |
 
 - `AF_LLM_URL` is a shortcut. Writing a `llm` row with `lifecycle: "external"` yourself in `AF_ENGINES_JSON` (on AWS, the engine stack's table) does the same
 - Either way the key is read from `AF_ENGINE_API_KEY_LLM`. There is no `AF_LLM_API_KEY`

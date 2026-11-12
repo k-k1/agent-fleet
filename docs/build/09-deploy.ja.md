@@ -17,11 +17,11 @@ source_of_truth: "コード ＋ 各 runbook（`deploy/*/README.md`）"
 | 形態 | 概要 | 状態 | runbook |
 |------|------|------|---------|
 | **local dev** | CP をホストプロセスで起動。`run-dev.sh` はサブコマンド式の単一エントリ（`local` / `wsl` / `native` / `reset`＝データ初期化）、`restart-cp.sh` は CP だけを入れ替える軽量反映。1 人なら `AUTH=dev`、共有するなら `oauth` | ✅ 開発 + 小規模共有で運用中 | [run-dev.sh](../../deploy/local/run-dev.sh) / [restart-cp.sh](../../deploy/local/restart-cp.sh) の冒頭コメント。反映作法は [10](10-development.ja.md) |
-| **wsl（個人）** | `run-dev.sh wsl`: local dev の WSL2 むけプリセット（native dockerd 前提・`AUTH=dev`） | ✅ 個人利用 | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
-| **native** | Docker 無し: CP と Console はホストプロセス、Workspace はダウンロードした rootfs 上の bubblewrap サンドボックスで動く。**1 人専用** — `native` ランタイムは `AUTH=dev` でないと起動を断る | ✅ パッケージとして配布 | [deploy/native/README.md](../../deploy/native/README.md) |
-| **compose** | セルフホスト本命。CP コンテナ + Caddy（自動 TLS）。CP は loopback に bind し、コンテナからホストの Docker デーモンを駆動するための **3 制約**（host ネットワーク・`DATA_DIR` を同じ絶対パスでマウント・docker グループ id）を compose 定義が封じ込める | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
+| **wsl（個人）** | `run-dev.sh wsl`: local dev の WSL2 むけプリセット（native dockerd 前提・`AUTH=dev`） | ✅ 個人利用 | [guide/operate/wsl.md](../../guide/operate/wsl.ja.md) |
+| **native** | Docker 無し: CP と Console はホストプロセス、Workspace はダウンロードした rootfs 上の bubblewrap サンドボックスで動く。**1 人専用** — `native` ランタイムは `AUTH=dev` でないと起動を断る | ✅ パッケージとして配布 | [guide/operate/native/](../../guide/operate/native/install.ja.md) |
+| **compose** | セルフホスト本命。CP コンテナ + Caddy（自動 TLS）。CP は loopback に bind し、コンテナからホストの Docker デーモンを駆動するための **3 制約**（host ネットワーク・`DATA_DIR` を同じ絶対パスでマウント・docker グループ id）を compose 定義が封じ込める | ✅ | [guide/operate/compose/](../../guide/operate/compose/install.ja.md) |
 | **aws — ECS** | 静的基盤は CloudFormation、Workspace ごとのリソースは CP 自身の ECS アダプタが作る。Workspace は Fargate 上のタスク（`ecs`・テンプレートの既定）か、プールから取った EC2 スロット上のタスク（`ecs-ec2`） | ✅ 本番デプロイは `ecs-ec2` で稼働。`ecs` は sandbox で deploy → E2E → teardown まで実証 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
-| **aws — ec2-single** | compose を EC2 VM 1 台に載せる | ✅ 「clean host でリリースバンドルから起動」ゲートの実施環境 | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| **aws — ec2-single** | compose を EC2 VM 1 台に載せる | ✅ 「clean host でリリースバンドルから起動」ゲートの実施環境 | [guide/operate/aws-ec2-single.md](../../guide/operate/aws-ec2-single.ja.md) |
 | **kubernetes** | CP はクラスタ内の Deployment。Workspace は 0 か 1 レプリカの StatefulSet と PersistentVolumeClaim 2 本で、CP 自身の `kubernetes` アダプタが標準 API で作る。kustomize の base を持つ素のマニフェスト（`deploy/kubernetes/`）と、GKE の配備がクラスタの周りに要るものの Terraform（`deploy/gcp/gke/`） | ◐ できているが実クラスタではまだ動かしていない。GKE Standard での受け入れは #1468 | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 - **ec2-single は VM 上の compose** — ランタイムは `docker` で、別のプロファイルではない。
@@ -73,8 +73,7 @@ bind し（`AF_CP_INTERNAL_LISTEN=172.17.0.1:8098`）、Workspace は
 アドレスなので、どのユーザー別ネットワークからも Docker のネットワーク間分離を越えずに届き、LAN や
 tailnet のインタフェースには載らない。`docker` で全インタフェースに bind すると起動時に警告を出す。
 既定では無効（アドレスはホストの Docker とファイアウォールの設定次第で、存在しないアドレスを指定すると
-CP が起動しない）。手順は [`deploy/compose/README.md`](../../deploy/compose/README.md) の
-"Workspace listener"。
+CP が起動しない）。手順は [ワークスペースから CP に届かないとき](../../guide/operate/compose/workspace-listener.ja.md)。
 
 入口の仕事は TLS 終端と転送。`AUTH=oauth` では認証も CP 自身が担い、`AUTH=proxy` のときだけ
 入口側が identity ヘッダを注入する。
@@ -121,7 +120,7 @@ CP が起動しない）。手順は [`deploy/compose/README.md`](../../deploy/c
 | opencode の bedrock ルートの閉鎖（受け入れ確認専用） | `AF_WS_OPENCODE_BEDROCK_ROUTE`（オフ） | `1` で、すべてのワークスペース起動に `AF_OPENCODE_BEDROCK_ROUTE=1` を付ける。これは、独自の実機での受け入れ確認（ADR 0128 決定 14）まで Agent が拒否している opencode の `bedrock` ルート（ターミナル専用）を開く。上の claude 用スイッチとは独立で、規則は同じ（受け入れ確認専用、値は `1` ちょうどだけ、次のワークスペース起動ですべてのランタイムに届く、動作中のワークスペースは Stop → Start が要る） | [ADR 0128](../decisions/0128-harness-route-maker.ja.md) · [guide ref/agents](../../guide/ref/agents.ja.md) |
 | エンジン | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON`・`AF_LLM_URL`・`AF_COMFY_URL` / `AF_COMFY_API_KEY`・`AF_ENGINE_API_KEY_<KEY>`・`AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}`・`AF_ENGINE_ECS_CLUSTER`・`AF_ENGINE_WAKE_TIMEOUT`（900 秒）・`AF_ENGINE_PLAIN_HOLD`・`AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | エンジン表・エンジンの制御器・冷えたエンジンに対するゲートウェイの保留・別デプロイのエンジンの借用 | [decisions/0071](../decisions/0071-self-hosted-inference-engines.ja.md) / [0076](../decisions/0076-external-image-engine-on-lan.ja.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.ja.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.ja.md) |
 | 音声 | `AF_VOICEVOX_URL`（`http://127.0.0.1:50021`）・`AF_TTS_ECS_SERVICE` ほか `AF_TTS_ECS_*`・`AF_TTS_MAX_CHARS`（300）・`AF_POLLY_{REGION,ENGINE}` | URL で指す VOICEVOX、または CP がゼロから起こす ECS 上の VOICEVOX。Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.ja.md) |
-| コンテナレスアダプタ | `AF_NATIVE_AGENT_BIN`（`PATH` 上の `workspace-agent`）・`AF_NATIVE_ROOTFS`・`AF_NATIVE_BWRAP` | Agent バイナリの所在・bubblewrap サンドボックスを有効にする rootfs | [native runbook](../../deploy/native/README.md) |
+| コンテナレスアダプタ | `AF_NATIVE_AGENT_BIN`（`PATH` 上の `workspace-agent`）・`AF_NATIVE_ROOTFS`・`AF_NATIVE_BWRAP` | Agent バイナリの所在・bubblewrap サンドボックスを有効にする rootfs | [ネイティブパッケージを入れる](../../guide/operate/native/install.ja.md) |
 | Kubernetes アダプタ | `AF_K8S_NAMESPACE`・`AF_K8S_WORKSPACE_IMAGE`・`AF_K8S_STORAGE_CLASS`・`AF_K8S_HOME_GIB`・`AF_K8S_STATE_GIB`・`AF_K8S_IMAGE_PULL_SECRET`・`AF_K8S_NODE_SELECTOR`・`AF_K8S_SERVICE_ACCOUNT`（`default`）・`AF_K8S_HOME_SHARED_FS`（未設定。StorageClass が 1 つの共有ファイルシステムでホームを支えるときは `1`。ホームの残量不足の通知を出さない） | `kubernetes` のみ: Workspace の名前空間・イメージ・StorageClass、claim の既定サイズ、ノードプール、Workspace から CP への道（Workspace 専用リスナーの行・§9.3） | [kubernetes runbook](../../deploy/kubernetes/README.md) / [decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) |
 | Workspace 内（CP が注入・**運用者は設定しない**） | `AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_CP_BASE_URL` と機能ごとのトークン（`AF_DOCS_TOKEN`・`AF_MCP_TOKEN`・`AF_MEMO_TOKEN` …）・`native` ではさらに `AGENT_ADDR`・`AF_TMUX_SOCKET`・`AGENT_DOCS_DIR`・設定時（`kubernetes`、任意で `docker`）はさらに `AF_CP_INTERNAL_URL`（要求はこちらを優先し、人が開くリンクは公開 URL のまま） | CP↔Agent 認証・DEK・停止猶予・Agent から CP への経路（`manager.workspaceExtraEnv`）。トークンと DEK は `docker` では 0600 の env ファイル、ECS では SSM SecureString のタスクシークレットで渡る | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
 
@@ -277,9 +276,11 @@ Workspace イメージと Agent は全ターゲットで同一物 — それが�
   スタックは配備でき、fetch コンテナだけが `CannotPullContainerError` のまま、サービスは
   steady state を報告する。イメージを*焼く*ことだけは意図的にやらない: GHCR にもタグが無ければ
   止まり、焼くワークフローの名前を出す。
-- 実手順（`backup.sh`・`restore.sh`・アップグレード・air-gapped）は
-  [compose runbook](../../deploy/compose/README.md)、ECS は運用ガイドの
-  [アップグレードする](../../guide/operate/aws-ecs/upgrade.ja.md)。
+- 実手順（`backup.sh`・`restore.sh`・アップグレード・air-gapped）はガイドの
+  [バックアップして復元する](../../guide/operate/run/backup-restore.ja.md)・
+  [アップグレードする](../../guide/operate/run/upgrade.ja.md)・
+  [閉じたネットワークに入れる](../../guide/operate/run/air-gapped.ja.md)、ECS は
+  [アップグレードする（ECS）](../../guide/operate/aws-ecs/upgrade.ja.md)。
 
 ## 9.8 コスト特性（ec2-single / ECS）
 

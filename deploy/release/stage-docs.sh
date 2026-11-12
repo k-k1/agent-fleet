@@ -21,11 +21,15 @@
 #      templates they operate, and they are part of the release bundle itself. What
 #      they were NOT was reachable from inside a workspace, which is the one place an
 #      operator reads them under pressure. So: copied, not moved.
-#   3. The links to those runbooks are rewritten in the staged copy. In the repository
-#      `guide/operate/…` points at `../../deploy/compose/README.md`, which is right on
-#      GitHub and absent in a container; here it becomes `runbooks/compose.md`, which is
-#      right in a container. One source, correct in both places — and the reason
-#      check_closure grants deploy/ its documented exemptions.
+#   3. The links are rewritten in the staged copy, both ways. A guide page's link to a
+#      runbook (`../../deploy/compose/README.md`) becomes the path to
+#      `operate/runbooks/compose.md`, which is right in a container — and the reason
+#      check_closure grants those READMEs their documented exemptions. A runbook is an
+#      index of guide pages: its links into guide/ become paths into the staged guide, a
+#      link to another runbook becomes that runbook's copy, and a link to anything else
+#      in the repository (a script, a template, docs/), which is not shipped, becomes its
+#      GitHub URL at STAGE_DOCS_REF (default main). A relative link that still lands
+#      nowhere in a staged runbook fails the build.
 #   4. deploy/release/notes -> <dest>/ref/releases/ — the release history: SUMMARY*.md
 #      (the one-line index) and the notes of every version in index.tsv. They stay in
 #      deploy/release/notes because that is also where the dist repo's release bodies
@@ -61,20 +65,58 @@ RUNBOOKS=(
   "aws-ec2-single:deploy/aws/ec2-single/README.md"
   "kubernetes:deploy/kubernetes/README.md"
 )
-mkdir -p "$DEST/operate/runbooks"
+RB="$DEST/operate/runbooks"
+REPO_URL="https://github.com/k-k1/agent-fleet"
+REF="${STAGE_DOCS_REF:-main}"
+mkdir -p "$RB"
+
+# Markdown-aware link handling (prose only; code is left as written): md-links.awk.
+MD_AWK="$HERE/md-links.awk"
+md_links() { awk -v mode=links -f "$MD_AWK" "$1"; }                       # <file>
+md_rewrite() { awk -v mode=rewrite -v map="$2" -f "$MD_AWK" "$1" > "$1.tmp" && mv "$1.tmp" "$1"; }  # <file> <map>
+
+# Rewrite the relative links of one staged runbook copy (see 3. above). The copy's links
+# are relative to its source directory under deploy/, so each is resolved against the
+# repository first and then mapped to where the reader can actually open it.
+rewrite_runbook_copy() {  # <staged file> <source path relative to ROOT>
+  local f="$1" srcdir t path frag resolved new e map
+  srcdir="$(dirname "$2")"
+  map="$(mktemp)"
+  while IFS= read -r t; do
+    case "$t" in http://*|https://*|mailto:*|\#*|/*) continue ;; esac
+    path="${t%%#*}"; frag=""
+    [ "$path" = "$t" ] || frag="#${t#*#}"
+    resolved="$(realpath -m --relative-to="$ROOT" "$ROOT/$srcdir/$path")"
+    new=""
+    case "$resolved" in
+      guide/*) new="$(realpath -m --relative-to="$RB" "$DEST/${resolved#guide/}")" ;;
+      *)
+        for e in "${RUNBOOKS[@]}"; do
+          [ "$resolved" = "${e##*:}" ] && new="${e%%:*}.md"
+        done
+        [ -n "$new" ] || new="$REPO_URL/blob/$REF/$resolved" ;;
+    esac
+    printf '%s\t%s\n' "$t" "$new$frag" >> "$map"
+  done < <(md_links "$f" | sort -u)
+  md_rewrite "$f" "$map"
+  rm -f "$map"
+}
+
 for entry in "${RUNBOOKS[@]}"; do
   name="${entry%%:*}"; src="${entry##*:}"
   [ -f "$ROOT/$src" ] || {
     echo "ERROR: runbook '$src' is missing (stage-docs.sh needs updating)" >&2
     exit 1
   }
-  cp "$ROOT/$src" "$DEST/operate/runbooks/$name.md"
+  cp "$ROOT/$src" "$RB/$name.md"
+  rewrite_runbook_copy "$RB/$name.md" "$src"
 done
 
 cat > "$DEST/operate/runbooks/README.md" <<'EOF'
 # Runbooks
 
-The command procedures, copied here so they are readable from inside a workspace.
+The index of each deployment target's procedure pages, copied here so it is readable
+from inside a workspace.
 
 | File | Target | Source in the repository |
 |---|---|---|
@@ -85,12 +127,8 @@ The command procedures, copied here so they are readable from inside a workspace
 | [aws-ec2-single.md](aws-ec2-single.md) | compose on a single EC2 VM | `deploy/aws/ec2-single/README.md` |
 | [kubernetes.md](kubernetes.md) | kubernetes (GKE first) | `deploy/kubernetes/README.md` |
 
-These are **copies**. Edit them at the source path above, next to the scripts and
-templates they operate — that adjacency is what keeps them true. The copy is made when
-the release is built.
-
-The shelf that explains what each step decides, and what to watch for, is
-[operate/](../README.md).
+These are **copies**, made when the release is built. The procedures themselves are
+the pages of [operate/](../README.md).
 EOF
 
 # --- 3. point the guide at the staged runbooks and release history ------------
@@ -102,8 +140,8 @@ EOF
 # is how the topic directories (operate/keys/, user/start/, …) kept their dead links in
 # every container while the repository and GitHub looked fine. Only links that climb
 # exactly to the repository root are touched, anchored on "](", so a deeper link is never
-# half-rewritten. operate/runbooks/ holds verbatim copies whose links are relative to
-# deploy/ and is left alone.
+# half-rewritten. operate/runbooks/ holds the runbook copies, whose links were already
+# rewritten in step 2, and is left alone.
 while IFS= read -r -d "" f; do
   rel="${f#"$DEST"/}"
   slashes="${rel//[^\/]/}"
@@ -130,6 +168,19 @@ if leftovers="$(grep -rnE '\]\((\.\./)+deploy/' --include='*.md' --exclude-dir=r
   echo "$leftovers" >&2
   exit 1
 fi
+
+# Every relative prose link in a staged runbook must land inside the staged tree.
+dead=0
+for f in "$RB"/*.md; do
+  while IFS= read -r target; do
+    case "$target" in http://*|https://*|mailto:*|\#*) continue ;; esac
+    [ -e "$RB/${target%%#*}" ] || {
+      echo "ERROR: ${f#"$DEST"/} links to '$target', which is not in the staged docs" >&2
+      dead=1
+    }
+  done < <(md_links "$f")
+done
+[ "$dead" = 0 ] || exit 1
 
 # --- 4. the release history ---------------------------------------------------
 NOTES="$ROOT/deploy/release/notes"

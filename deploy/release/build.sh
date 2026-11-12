@@ -194,6 +194,9 @@ EOF
   echo "==> [native] assemble $PKG_NAME"
   install -m 0755 "$ROOT/deploy/native/af" "$OUT/af"
   cp "$ROOT/deploy/native/README.md" "$ROOT/LICENSE" "$ROOT/NOTICE" "$OUT/"
+  # The README indexes guide pages: point it at the staged copy in docs/, and anything
+  # else at the release tag, so its links work where the tar is unpacked.
+  bash "$ROOT/deploy/release/pin-md-links.sh" pin "$OUT" "v$VERSION" docs "README.md:deploy/native/README.md"
   printf '%s\n' "$VERSION" > "$OUT/VERSION"
   # dist.json — where `af update` fetches new releases from (docs/log/42). Formatting
   # pairs with the af launcher's dist_get sed parser (one key per line).
@@ -204,6 +207,11 @@ EOF
 }
 EOF
   tar -czf "$DIST/$PKG_NAME.tar.gz" -C "$DIST" "$PKG_NAME"
+  # Check the links where a reader meets them: in the unpacked archive.
+  chk="$(mktemp -d)"
+  tar -xzf "$DIST/$PKG_NAME.tar.gz" -C "$chk"
+  bash "$ROOT/deploy/release/pin-md-links.sh" check "$chk/$PKG_NAME"
+  rm -rf "$chk"
   if [ "$BUNDLE_ROOTFS" = 1 ]; then
     [ -n "$R_TAR" ] || { echo "ERROR: --bundle-rootfs cannot be combined with --rootfs-json (R is not available locally)" >&2; exit 2; }
     mkdir -p "$OUT/rootfs"

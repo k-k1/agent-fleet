@@ -1029,7 +1029,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 `deploy/local/cfn-provided-routes-test.py` checks all of the above offline. The CP needs an
 AWS identity from its environment for this (the task role here). `ec2-single` has none and does
-not offer provided routes (`deploy/aws/ec2-single/README.md`).
+not offer provided routes (`guide/operate/aws-ec2-single.md`, "Protect the instance metadata").
 
 ### `SessionTtl` / `CookiePurposeKeys` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
 

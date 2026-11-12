@@ -51,6 +51,11 @@ jobs:
       - name: stage the shipped docs
         run: deploy/release/stage-docs.sh "$RUNNER_TEMP/staged-docs"
 
+      # The link rewrites of the staged runbooks and the release archives' READMEs touch
+      # prose links only; a link inside code is an example and must ship as written.
+      - name: stage-docs / pin-md-links regression
+        run: deploy/local/stage-docs-test.sh
+
       # Surfaces the checks kept at warn level during the migration (the vocabulary of the
       # user-facing shelves). Once the shelves are written, fold this into the run above as
       # --strict.

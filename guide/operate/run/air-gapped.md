@@ -1,6 +1,6 @@
 ---
 audience: "Whoever installs a deployment on a host that cannot reach the outside network"
-source_of_truth: "\"Air-gapped install\" in `deploy/compose/README.md` and `control-plane drawio-preseed` (where they disagree, the runbook and the code win)"
+source_of_truth: "`deploy/compose/release.sh`, `load-images.sh` and `control-plane drawio-preseed` (where they disagree, the scripts and the code win)"
 ---
 
 # Install into a closed network
@@ -8,7 +8,6 @@ source_of_truth: "\"Air-gapped install\" in `deploy/compose/README.md` and `cont
 English | [日本語](air-gapped.ja.md)
 
 Agent Fleet also installs on a host that cannot reach the internet. You provide the images, TLS, the agent CLIs and the diagram icons without relying on the outside.
-The commands are in [the compose runbook, "Air-gapped install"](../../../deploy/compose/README.md#air-gapped-install).
 
 ## How it works
 
@@ -32,7 +31,21 @@ Images are distributed through GHCR, and releases carry no image tarball. On a h
 | Mirror `ghcr.io/k-k1/agent-fleet/*` into an internal registry and point `REGISTRY` at it | You have an internal registry. `docker compose pull` works as is and upkeep is light |
 | Export the images with `release.sh --save` on a networked machine and import them on the target with `load-images.sh` | You have no registry. Every upgrade repeats the build, copy and load |
 
-Images carried in by hand are named `agent-fleet/{control-plane,workspace}:<version>`. Set `REGISTRY=agent-fleet` in the target's `.env` to match.
+To carry them in by hand, export the images on a machine with network access.
+
+```bash
+VERSION=<version> deploy/compose/release.sh --save
+#   -> deploy/compose/dist/agent-fleet-images-<version>.tar.gz  (docker save, gzip)
+```
+
+Copy that tar plus the bundle to the target host and import it there.
+
+```bash
+deploy/compose/load-images.sh agent-fleet-images-<version>.tar.gz
+docker compose up -d
+```
+
+Images carried in by hand are named `agent-fleet/{control-plane,workspace}:<version>` (override with `REGISTRY=`). Set `REGISTRY=agent-fleet` in the target's `.env` to match.
 
 ## Provide TLS
 
@@ -68,4 +81,5 @@ control-plane drawio-preseed --from /path/to/stencils --all  # everything: 203 s
 ## Related
 
 - [Upgrade](upgrade.md)
+- [Update the native package](../native/update.md#carry-it-in-by-hand): bring the native package onto a host that cannot reach the internet
 - [Initial setup](../02-install.md)

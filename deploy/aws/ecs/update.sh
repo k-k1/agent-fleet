@@ -5,7 +5,7 @@
 #   VERSION=0.2.0 deploy/aws/ecs/update.sh --profile p --region r --push   # from the ECR push on
 #
 # The counterpart of `docker compose pull && docker compose up -d` for a compose deployment
-# (deploy/compose/README.md §Upgrade) and of `deploy/local/run-dev.sh` for dev. Running the
+# (guide/operate/run/upgrade.md, "Upgrade Docker Compose") and of `deploy/local/run-dev.sh` for dev. Running the
 # steps by hand from guide/operate/aws-ecs/upgrade.md is fine; this exists because three of its steps are
 # pitfalls unless you already know them:
 #
