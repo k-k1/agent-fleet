@@ -174,9 +174,19 @@ kubectl -n default run psql-grant -it --rm --restart=Never --image=postgres:17-a
 
 `-it` と `-W` には端末が要るので、上のコマンドは動きません。代わりに、パスワードを一時的な Secret に入れ、そこから `PGPASSWORD` を読む非対話の Pod で `-c` の文を実行し、両方を消します。パスワードは argv にも Pod の定義にも入りません。
 
-上のブロックの最初の行（`gcloud sql users set-password … --prompt-for-password`）も端末が要ります。端末がないときは `--password` でパスワードを設定し（その `gcloud` の呼び出しの引数に一瞬だけ載ります）、終わったら新しいランダムな値にします。
+上のブロックの最初の行（`gcloud sql users set-password … --prompt-for-password`）も端末が要ります。端末がないときは `--password` でパスワードを設定し（その `gcloud` の呼び出しの引数に一瞬だけ載ります）、終わったら新しいランダムな値にします。たとえば、先に生成したパスワードを設定します。下のブロックは、プロンプトを出さずにその `PGPW` を使います。
 
 ```bash
+PGPW="$(openssl rand -base64 24)"                   # kept only in this shell
+gcloud sql users set-password postgres --instance "$PREFIX-pg" --project "$PROJECT" --password "$PGPW"
+```
+
+権限付与のブロックは `DBUSER` と `DBHOST` を自分で決め、どちらかが空なら止まります。
+
+```bash
+DBUSER="$($TF output -raw cp_database_user)"
+DBHOST="$(gcloud sql instances describe "$PREFIX-pg" --project "$PROJECT" --format='value(ipAddresses[0].ipAddress)')"
+[ -n "$DBUSER" ] && [ -n "$DBHOST" ] || { echo "DBUSER or DBHOST is empty: stop"; exit 1; }
 PWDIR="$(mktemp -d)"; chmod 700 "$PWDIR"
 cleanup() {
   rm -rf "$PWDIR"                                   # the local copy first: it needs no API
@@ -186,7 +196,7 @@ cleanup() {
     || echo "WARNING: secret psql-grant-pw may remain (it holds the postgres password): delete it by hand"
 }
 trap cleanup EXIT                                   # runs under `set -e` too
-read -rs -p 'postgres password: ' PGPW; echo        # or read it from your vault
+[ -n "${PGPW:-}" ] || { read -rs -p 'postgres password: ' PGPW; echo; }   # or read it from your vault
 printf '%s' "$PGPW" > "$PWDIR/PGPASSWORD"; unset PGPW   # printf is a builtin: not in any argv
 kubectl -n default create secret generic psql-grant-pw --from-file=PGPASSWORD="$PWDIR/PGPASSWORD"
 kubectl -n default run psql-grant --restart=Never --image=postgres:17-alpine \

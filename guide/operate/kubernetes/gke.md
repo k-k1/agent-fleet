@@ -174,9 +174,19 @@ kubectl -n default run psql-grant -it --rm --restart=Never --image=postgres:17-a
 
 `-it` and `-W` need a terminal, so the command above cannot run there. Instead, store the password in a temporary Secret, run a non-interactive pod that takes `PGPASSWORD` from it and the statements from `-c`, then delete both. The password stays out of argv and out of the pod spec.
 
-The first line of the block above (`gcloud sql users set-password … --prompt-for-password`) needs a terminal too: without one, set the password with `--password` (it is in that one `gcloud` call's argument list for a moment), and set a new random value afterwards.
+The first line of the block above (`gcloud sql users set-password … --prompt-for-password`) needs a terminal too: without one, set the password with `--password` (it is in that one `gcloud` call's argument list for a moment), and set a new random value afterwards. For example, set a generated one first; the block below then uses `PGPW` instead of prompting:
 
 ```bash
+PGPW="$(openssl rand -base64 24)"                   # kept only in this shell
+gcloud sql users set-password postgres --instance "$PREFIX-pg" --project "$PROJECT" --password "$PGPW"
+```
+
+The grant itself defines `DBUSER` and `DBHOST` on its own and stops if either is empty:
+
+```bash
+DBUSER="$($TF output -raw cp_database_user)"
+DBHOST="$(gcloud sql instances describe "$PREFIX-pg" --project "$PROJECT" --format='value(ipAddresses[0].ipAddress)')"
+[ -n "$DBUSER" ] && [ -n "$DBHOST" ] || { echo "DBUSER or DBHOST is empty: stop"; exit 1; }
 PWDIR="$(mktemp -d)"; chmod 700 "$PWDIR"
 cleanup() {
   rm -rf "$PWDIR"                                   # the local copy first: it needs no API
@@ -186,7 +196,7 @@ cleanup() {
     || echo "WARNING: secret psql-grant-pw may remain (it holds the postgres password): delete it by hand"
 }
 trap cleanup EXIT                                   # runs under `set -e` too
-read -rs -p 'postgres password: ' PGPW; echo        # or read it from your vault
+[ -n "${PGPW:-}" ] || { read -rs -p 'postgres password: ' PGPW; echo; }   # or read it from your vault
 printf '%s' "$PGPW" > "$PWDIR/PGPASSWORD"; unset PGPW   # printf is a builtin: not in any argv
 kubectl -n default create secret generic psql-grant-pw --from-file=PGPASSWORD="$PWDIR/PGPASSWORD"
 kubectl -n default run psql-grant --restart=Never --image=postgres:17-alpine \
