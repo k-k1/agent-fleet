@@ -79,7 +79,7 @@ cron のエントリの例は手順書にあります。取ったあと、`KEEP`
 | 形態 | バックアップと復元 |
 |---|---|
 | ECS（`ecs` / `ecs-ec2`） | [ECS の手順書の「EFS backup and restore」](../../../deploy/aws/ecs/README.md#efs-backup-and-restore) |
-| Kubernetes | [Kubernetes の手順書の「Backups, point-in-time recovery and the restore rehearsal」](../../../deploy/kubernetes/README.md#backups-point-in-time-recovery-and-the-restore-rehearsal) |
+| Kubernetes | [バックアップ・復元する](../kubernetes/backup.ja.md) |
 
 ## 関連
 

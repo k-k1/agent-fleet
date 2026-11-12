@@ -23,16 +23,16 @@ source_of_truth: "この表（行は Control Plane が受け付ける runtime �
 > いますが、本番での利用はまだサポートしていません。既知の制約：このランタイムにはブラウザ機能が
 > ありません（ブラウザペインもヘッドレス Chromium もなし）。ホームは 1 つのゾーンに置かれ、
 > バックアップされません。GKE では、始める前にリージョンの SSD ディスク割り当てが配備に足りている
-> 必要があります（[Preconditions](../../deploy/kubernetes/README.md#preconditions)）。ロードバランサは、
+> 必要があります（[ディスクの割り当て（GKE）](../operate/kubernetes/overview.ja.md#ディスクの割り当てgke)）。ロードバランサは、
 > タイムアウトの設定にかかわらず、使用中の WebSocket を 24 時間で切ります
-> （[7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)）。切れたあとの
+> （[7. ロードバランサを知る](../operate/kubernetes/gke.ja.md#7-ロードバランサを知る)）。切れたあとの
 > ターミナルペインには `[disconnected]` と出て、クリックするかタブに戻るとつなぎ直します。シェルと
 > その tmux セッションは動き続けます。これは接続を強制的に切って確かめたもので、1 日待って確かめた
-> ものではありません。GKE で実測した費用は [The bill](../../deploy/kubernetes/README.md#the-bill) に
+> ものではありません。GKE で実測した費用は [一時停止する・費用を見る](../operate/kubernetes/pause.ja.md#既定の構成の費用) に
 > あります。試用や 1 チームで使うなら、`deploy/gcp/gke` の小さなゾーン構成（1 ゾーン、データベースの
 > 待機系なし）で、請求先アカウントの GKE の無料枠が残っていれば既定の構成の床のおよそ半分になります（ほかの
 > クラスタが無料枠を使っていれば、およそ 3 分の 2）。請求額ではなく、実測した単価からの見積もりです。数字と
-> その前提は `deploy/gcp/gke/README.md` の「Small profile」にあります。
+> その前提は [小さな構成の費用](../operate/kubernetes/pause.ja.md#小さな構成の費用) にあります。
 
 **Mac（Apple Silicon）では。** `docker` は Docker Desktop・OrbStack・colima の上で
 `deploy/compose/docker-compose.macos.yml` を重ねて動き、`native` は Linux VM（Lima または OrbStack の

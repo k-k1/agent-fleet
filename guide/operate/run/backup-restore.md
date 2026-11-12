@@ -79,7 +79,7 @@ Three things to watch:
 | Type | Backup and restore |
 |---|---|
 | ECS (`ecs` / `ecs-ec2`) | [The ECS runbook, "EFS backup and restore"](../../../deploy/aws/ecs/README.md#efs-backup-and-restore) |
-| Kubernetes | [The Kubernetes runbook, "Backups, point-in-time recovery and the restore rehearsal"](../../../deploy/kubernetes/README.md#backups-point-in-time-recovery-and-the-restore-rehearsal) |
+| Kubernetes | [Back up and restore on Kubernetes](../kubernetes/backup.md) |
 
 ## Related
 

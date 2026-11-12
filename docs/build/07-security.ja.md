@@ -99,10 +99,10 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 | クラウドの権限 | なし | タスクロール `WsTaskRole` は**ポリシーを 1 つも持たない**。`AGENT_TOKEN` と DEK はタスク定義の `secrets`（SSM。Workspace 用実行ロール `WsExecRole` が読み、読めるのは `/af-ws/*` だけで `/af-cp/*` は読めない。Control Plane 自身の秘密は別の `ExecRole` が読み、移行の 1 リリースの間は `/af-ws/*` も読め、その後外す）。両ロールは全 Workspace で共有なので、ある Workspace のタスク定義が他の Workspace のパラメータを名指すことは原理上できる。Workspace ごとの絞り込みは後続課題で届く | 同じタスクロール。スロットのインスタンスロールは ECS 登録・SSM 管理・イメージ取得・ログだけ。加えて `/af-cp` と `/af-ws` への `ssm:GetParameter*` を明示 Deny する（`AmazonSSMManagedInstanceCore` は全パラメータの読み取りを許すため） | なし: サービスアカウントのトークンはマウントせず、名前空間とそのサービスアカウントを名指す IAM 付与は無い。GKE では Workspace を載せるプールはすべて GKE メタデータサーバを使い、`169.254.0.0/16` への egress は拒否。`AGENT_TOKEN`・DEK・発行したトークンは Workspace ごとの Secret から `envFrom` で届き、Secret は etcd 内で暗号化（GKE では Cloud KMS） |
 | 機微状態の退避 | Agent の平文状態は 2nd mount（`CLAUDE_CONFIG_DIR=/var/lib/af/claude`）で**ファイルブラウザの範囲外**へ。暗号化ストアは home 据置で Agent の denylist（`fsDeny`）の内側 | 同左（イメージ・Agent は共通） | 同左 | 同じ。2 本目の claim の上 |
 
-**`kubernetes` の列は、runbook の前提条件を満たすクラスタでだけ成り立つ**（NetworkPolicy を
+**`kubernetes` の列は、前提条件を満たすクラスタでだけ成り立つ**（NetworkPolicy を
 強制する CNI・Secret の暗号化・private か承認済みネットワークに限った control plane・kubelet の
 読み取り専用ポートの無効化）。CP からはそれが見えない
-（[deploy/kubernetes/README.md](../../deploy/kubernetes/README.md)・[decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) 決定 7）。
+（[guide/operate/kubernetes/overview.ja.md](../../guide/operate/kubernetes/overview.ja.md#前提条件)・[decisions/0106](../decisions/0106-kubernetes-runtime.ja.md) 決定 7）。
 そこで CP が乗っ取られた場合に届くのは Workspace の名前空間 — すべての Workspace の Secret と、
 作れるが特権にはできない Pod — で、読み取り専用のクラスタロールを通じてもそれ以上には届かない。
 

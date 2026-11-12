@@ -195,7 +195,7 @@ On GKE:
 - Unlike RDS, Cloud SQL does not start itself again
 - Node counts are recorded in the Control Plane's namespace and restored by `--up`. Until then, `terraform plan` reports a node-pool diff
 
-The order each script follows, why, and what to check afterwards are in the runbooks: [ECS, "Lifecycle scripts"](../../../deploy/aws/ecs/README.md#lifecycle-scripts-stand-up--pause--tear-down) and [Kubernetes, "Pausing"](../../../deploy/kubernetes/README.md#pausing).
+The order each script follows, why, and what to check afterwards are in the runbooks: [ECS, "Lifecycle scripts"](../../../deploy/aws/ecs/README.md#lifecycle-scripts-stand-up--pause--tear-down) and [Pause and see the bill](../kubernetes/pause.md).
 
 ### Delete the deployment
 
@@ -206,7 +206,7 @@ To get as close to zero cost as possible, delete the deployment (`teardown.sh` o
 | AWS with `Persistence=retain` | Unless you pass `--purge-retained`: the database's final snapshot, the EFS file system and its backup vault (their storage keeps costing) |
 | GKE | The Control Plane disk's snapshot. Deletion protection must be removed first |
 
-What goes and what stays is in the runbooks: [ECS, "Teardown"](../../../deploy/aws/ecs/README.md#teardown) and [Kubernetes, "Tearing down"](../../../deploy/kubernetes/README.md#tearing-down).
+What goes and what stays is in the runbooks: [ECS, "Teardown"](../../../deploy/aws/ecs/README.md#teardown) and [Tear down](../kubernetes/teardown.md).
 
 ## Related
 

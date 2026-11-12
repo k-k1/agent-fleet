@@ -747,30 +747,53 @@ func TestKubeEraseScriptOnAnEarlierLayout(t *testing.T) {
 	}
 }
 
-// rollbackScript is the move-back script of the runbook's "Rolling back past the home
-// layout", run here as written, so the procedure an operator copies is the one tested.
-func rollbackScript(t *testing.T, vol, record string) string {
+// rollbackPages are the guide pages that carry the move-back script of "Roll back past the
+// home layout", each with that section's heading. Operators copy it from either language,
+// so both are read and must hold the same script.
+var rollbackPages = []struct{ path, heading string }{
+	{"../../../guide/operate/kubernetes/upgrade.md", "## Roll back past the home layout"},
+	{"../../../guide/operate/kubernetes/upgrade.ja.md", "## ホームの配置より前の版に戻す"},
+}
+
+// rollbackScriptIn returns the first bash block after heading in the page at path, with the
+// list indentation removed.
+func rollbackScriptIn(t *testing.T, path, heading string) string {
 	t.Helper()
-	b, err := os.ReadFile("../../../deploy/kubernetes/README.md")
+	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := string(b)
-	i := strings.Index(doc, "#### Rolling back past the home layout")
+	i := strings.Index(doc, heading)
 	if i < 0 {
-		t.Fatal("the runbook has no section Rolling back past the home layout")
+		t.Fatalf("%s has no section %q", path, heading)
 	}
 	doc = doc[i:]
 	i = strings.Index(doc, "```bash\n")
+	if i < 0 {
+		t.Fatalf("no script in the section of %s", path)
+	}
 	j := strings.Index(doc[i+8:], "```")
-	if i < 0 || j < 0 {
-		t.Fatal("no script in the section")
+	if j < 0 {
+		t.Fatalf("no script in the section of %s", path)
 	}
 	var lines []string
 	for _, l := range strings.Split(doc[i+8:i+8+j], "\n") {
 		lines = append(lines, strings.TrimPrefix(l, "   "))
 	}
-	sh := strings.Join(lines, "\n")
+	return strings.Join(lines, "\n")
+}
+
+// rollbackScript is that move-back script, run here as written, so the procedure an
+// operator copies is the one tested.
+func rollbackScript(t *testing.T, vol, record string) string {
+	t.Helper()
+	sh := rollbackScriptIn(t, rollbackPages[0].path, rollbackPages[0].heading)
+	for _, p := range rollbackPages[1:] {
+		if got := rollbackScriptIn(t, p.path, p.heading); got != sh {
+			t.Fatalf("the move-back script in %s differs from the one in %s", p.path, rollbackPages[0].path)
+		}
+	}
 	const head = "V=/v R=/s/wipe/layout\n"
 	if !strings.HasPrefix(sh, head) {
 		t.Fatalf("the script does not start with %q", head)

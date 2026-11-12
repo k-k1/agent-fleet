@@ -465,6 +465,126 @@ cd console-e2e && npm ci && npx playwright test
   slug that scopes every container and network), ports are allocated dynamically, and
   teardown is built in. **One at a time** on a memory-constrained host.
 
+### Kubernetes live harness (`AF_K8S_LIVE`)
+
+Only someone changing the `kubernetes` adapter runs it; an operator never needs it, so it is not in the guide.
+
+ADR 0106 decision 10's live harness runs the adapter against a cluster stood up by
+[Build on GKE](../../guide/operate/kubernetes/gke.md), from a developer's machine: `TestKubernetesLive*` in `control-plane/internal/runtime/runtime_kubernetes_live_test.go`.
+It is skipped (and says so) unless `AF_K8S_LIVE=1`. It creates workspaces named `live-…` with
+real disks in the workspace namespace and removes each one when its test ends, by Destroy and
+then by `kubectl` for anything left; it checks on Google Cloud that the disks are gone too.
+
+The adapter runs with **the CP's own RBAC**: a short-lived token of the `af-cp` service account,
+so a permission missing from `cp-rbac.yaml` fails the run (the harness also checks that the token
+cannot list nodes). The harness's own checks, its cleanup and what stands for someone else (a
+pod deleted behind the CP's back, the runbook's operator) use `kubectl` with your kubeconfig.
+
+```bash
+# in a shell with kubectl pointed at this cluster (guide/operate/kubernetes/gke.md, step 3)
+W=$(mktemp -d); umask 077
+kubectl -n "$PREFIX-cp" create token af-cp --duration=1h > "$W/cp-token"
+kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > "$W/ca.crt"
+export AF_K8S_LIVE=1
+export AF_K8S_LIVE_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+export AF_K8S_LIVE_CA_FILE=$W/ca.crt AF_K8S_LIVE_TOKEN_FILE=$W/cp-token
+export AF_K8S_NAMESPACE=$PREFIX-ws AF_K8S_STORAGE_CLASS=$PREFIX-workspace AF_K8S_SERVICE_ACCOUNT=af-workspace
+export AF_K8S_WORKSPACE_IMAGE=<the image of cp.env>
+export AF_K8S_NODE_SELECTOR=agent-fleet.io/pool=workspace AF_K8S_HOME_GIB=10 AF_K8S_STATE_GIB=5
+export AF_K8S_LIVE_GCE_PROJECT=$PROJECT                     # optional: check the disks on Google Cloud
+# decision 7's probes: the deployment's own addresses (host:port, comma-separated)
+export AF_K8S_LIVE_PROBE_OPEN=af-cp-internal.$PREFIX-cp.svc:8098
+export AF_K8S_LIVE_PROBE_CLOSED=af-cp.$PREFIX-cp.svc:8099,<Cloud SQL private IP>:5432,<an unused node-range address>:22
+cd control-plane
+go test -count=1 -run 'TestKubernetesLive(Lifecycle|StartStopRaces|NetworkProbes)' -v -timeout 50m ./internal/runtime/
+go test -count=1 -run 'TestKubernetesLive(HomeWipes|EraseHomeRestart|DestroyRestart)' -v -timeout 50m ./internal/runtime/
+```
+
+Before it acts, the harness checks that `kubectl`'s current context names the same API server and
+CA as `AF_K8S_LIVE_SERVER` and `AF_K8S_LIVE_CA_FILE`, and pins every call to that context. Each
+command has its own time limit, so a hung step fails the test and its cleanup runs; `go test`'s
+own `-timeout` does not run cleanups, so keep it well above the run, and if it ever fires, do the
+check below by hand.
+
+The token lives an hour, and so does a Google Cloud access token behind `kubectl`: run the
+scenarios in groups, as above, minting a fresh token for each. Each group takes 5–15 minutes.
+A scenario whose race or window was not observed in a run (a Stop that met no pod being created,
+an erase that finished before the restart) fails as `INCONCLUSIVE` rather than passing.
+
+The network probes expect every node's ports closed, the pod's own node included, and
+`AF_K8S_LIVE_PROBE_INTERNET` (default `1.1.1.1:443`) open as the control.
+
+Two scenarios act on nodes and need `AF_K8S_LIVE_DISRUPTIVE=1` as well. Run them only where no
+member's session can be cut. Both need the workspace pool to be able to add a node: on Google
+Cloud a node's boot disk (`workspace_boot_disk_gb`) counts against the region's `SSD_TOTAL_GB`
+quota with `pd-balanced`, and a scale-up refused by the quota leaves the harness's pod pending
+(the autoscaler's `FailedScaleUp` event says so). `AF_K8S_LIVE_GUARD_POD=<namespace>/<pod>`
+names a pod the scenario must leave alone, such as a member's workspace on the nodes it
+cordons: the test fails if its UID, node or restart count changes.
+
+- `TestKubernetesLivePlannedUpgrade` cordons `AF_K8S_LIVE_CORDON_NODES` (comma-separated) for the
+  test and checks that a Start lands elsewhere; it does not drain.
+- `TestKubernetesLiveNodeUnreachable` cuts off the node its workspace lands on and follows "A node
+  that stopped answering" ([guide](../../guide/operate/kubernetes/nodes.md#a-node-that-stopped-answering)). Cordon every other workspace node with `AF_K8S_LIVE_CORDON_NODES`, so
+  that the autoscaler adds a node for it. The test refuses a node created before it began, and it
+  cordons that node itself before checking its pods. Every pod on it must be the harness's own, a
+  DaemonSet's, a static pod, or one named in `AF_K8S_LIVE_NODE_ALLOW_PODS` (`<namespace>/<name
+  prefix>`, comma-separated; on GKE, `kube-system/konnectivity-agent-` is placed on new nodes).
+  It takes three commands with `{node}` and `{zone}` filled in. The stop must cut the node off
+  **without a shutdown the guest sees**. `gcloud compute instances stop` is an ACPI shutdown:
+  the node terminates its pods and reports them before it goes, so Stop rightly settles, and the
+  harness reports that run as `INCONCLUSIVE`. A power-off without a shutdown does not get there
+  on GKE either: the node pool's instance group recreates a VM that terminated within seconds,
+  and the node controller then deletes the old Node object and its pods, so Stop settles with no
+  operator action (also `INCONCLUSIVE`). On GKE the scenario needs a node whose VM keeps running
+  but stops answering. The stop command does that by stopping the kubelet through a node debug
+  pod; `{kubectl}` is the harness's pinned kubectl. It first sets a host timer that starts the
+  kubelet again after 15 minutes, because once the kubelet is down nothing reaches the node
+  through the cluster. `AF_K8S_LIVE_NODE_HALT_CMD` is then the runbook operator's VM stop, run
+  after Stop has failed. The status command prints the VM's id too: a run counts only while the
+  pod, the Node object and the stopped VM stay the ones it cut off, until the pod is gone. If the
+  provider replaced the node or VM in between, that also removes the pod, so the run is
+  `INCONCLUSIVE`. On GKE with node auto-repair, use the auto-repair mode below instead (see
+  "On GKE" under "A node that stopped answering"). The optional `AF_K8S_LIVE_NODE_RECOVER_CMD` (for example
+  `gcloud compute instances reset …`) recovers a node left cut off with its VM running. Without
+  it, the cleanup waits up to 17 minutes for the timer before deleting anything. The cleanup
+  deletes only the debug pods the stop command reported creating, by name and UID. The debug
+  pod has to run as root, hence the custom profile file:
+  ```bash
+  echo '{"securityContext":{"runAsUser":0,"runAsNonRoot":false}}' > "$W/debug-root.json"
+  export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=900 systemctl start kubelet && systemctl stop kubelet'"
+  export AF_K8S_LIVE_NODE_HALT_CMD='gcloud compute instances stop {node} --zone {zone} --project '"$PROJECT"
+  export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status,id)"'
+  export AF_K8S_LIVE_NODE_START_CMD='gcloud compute instances start {node} --zone {zone} --project '"$PROJECT"
+  ```
+
+  On GKE with node auto-repair, set `AF_K8S_LIVE_NODE_MODE=auto-repair`. No halt runs: after Stop
+  has failed, the node's auto-repair must free the pod within 20 minutes while the kubelet is
+  still down. The repair record must name the repair: exactly one `AUTO_REPAIR_NODES` of that
+  node in `AF_K8S_LIVE_GKE_PROJECT` (the project ID and number, comma-separated; operation links
+  carry the number), `AF_K8S_LIVE_GKE_LOCATION` and `AF_K8S_LIVE_GKE_CLUSTER`, started between the
+  cut and the pod's end. That repair must then finish without an error, and the Node object must
+  have been replaced. The kubelet timer
+  has to outlast the 20 minutes, and `AF_K8S_LIVE_NODE_RECOVER_WAIT` has to cover the timer. The
+  harness refuses a wait of 20 minutes or less, or one over 45. The whole set:
+  ```bash
+  export AF_K8S_LIVE_NODE_MODE=auto-repair AF_K8S_LIVE_NODE_RECOVER_WAIT=32m
+  export AF_K8S_LIVE_GKE_PROJECT="$PROJECT,$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+  export AF_K8S_LIVE_GKE_LOCATION="$REGION" AF_K8S_LIVE_GKE_CLUSTER="$PREFIX-gke"
+  export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=1800 systemctl start kubelet && systemctl stop kubelet'"
+  export AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD='gcloud container operations list --location '"$REGION"' --project '"$PROJECT"' --filter="operationType=AUTO_REPAIR_NODES AND startTime>={since}" --format=json'
+  # STATUS_CMD and START_CMD as above; no HALT_CMD
+  go test -count=1 -run 'TestKubernetesLiveNodeUnreachable' -v -timeout 75m ./internal/runtime/
+  ```
+  A pass takes about 21 minutes: about 4 for the first start, up to 20 for the repair, and about
+  2 for the next start. A failure while the node is cut off adds up to the 32-minute wait, which
+  can outlast an hour's token; then check the node and the debug pod by hand. Start with a
+  freshly minted token, for both the CP's token and the Google Cloud token behind kubectl.
+
+Afterwards, check that nothing of the harness is left:
+`kubectl -n "$PREFIX-ws" get sts,pvc,pods,svc,secrets | grep live-`, `kubectl get pv | grep live-`
+and `gcloud compute disks list --project "$PROJECT" --filter="-users:*"`.
+
 ### Detecting upstream CLI breakage
 
 **Why end-to-end is not enough.** `e2e.yml` passes no version build arguments, so it

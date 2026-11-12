@@ -22,7 +22,7 @@ source_of_truth: "`deploy/compose/README.md` と `deploy/aws/ecs/update.sh`（�
 |---|---|
 | Docker Compose | [compose の手順書の「Upgrade」](../../../deploy/compose/README.md#upgrade) |
 | ECS（`ecs` / `ecs-ec2`） | [ECS の手順書の「Upgrade (runbook)」](../../../deploy/aws/ecs/README.md#upgrade-runbook) |
-| Kubernetes | [Kubernetes の手順書の「Upgrading the CP」](../../../deploy/kubernetes/README.md#upgrading-the-cp) |
+| Kubernetes | [CP をアップグレードする](../kubernetes/upgrade.ja.md) |
 
 ## 上げる前に
 

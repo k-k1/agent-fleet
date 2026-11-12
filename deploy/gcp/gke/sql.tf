@@ -18,7 +18,7 @@ resource "google_sql_database_instance" "main" {
     }
 
     # Backups with point-in-time recovery (ADR 0106 decision 13). An upgrade takes an
-    # on-demand backup first as well (README, "Upgrading the CP").
+    # on-demand backup first as well (guide/operate/kubernetes/upgrade.md).
     backup_configuration {
       enabled                        = true
       point_in_time_recovery_enabled = true
@@ -52,7 +52,7 @@ resource "google_sql_database" "agentfleet" {
 }
 
 # The IAM database user bound to the CP's service account. It owns nothing yet: the
-# runbook's one-time grant gives it the database ("Database bootstrap").
+# one-time grant in guide/operate/kubernetes/gke.md (step 4) gives it the database.
 resource "google_sql_user" "cp" {
   name     = trimsuffix(google_service_account.cp.email, ".gserviceaccount.com")
   instance = google_sql_database_instance.main.name

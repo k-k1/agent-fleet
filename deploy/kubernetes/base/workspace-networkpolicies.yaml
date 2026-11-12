@@ -95,7 +95,7 @@ spec:
 # node range excepted left every node's :22 and :10250 open to workspaces; ADR 0106 addendum
 # of 2026-10-03). So no block may contain a node address, and the deployment's node, pod,
 # service and control-plane ranges must lie inside the excluded ranges: deploy/gcp/gke checks
-# that, other clusters check it themselves (README, P15). IPv4 only: with no `::/0` allow,
+# that, other clusters check it themselves (guide/operate/kubernetes/overview.md, P15). IPv4 only: with no `::/0` allow,
 # IPv6 egress stays denied.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

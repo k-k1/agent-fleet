@@ -18,6 +18,7 @@
 # files under docs/ and guide/ are read by a test and are therefore code:
 #   guide/ref/agents.md, guide/ref/agents.ja.md  (console/src/agents/guideTable.test.ts)
 #   docs/decisions/0029-usage-accounting{,.ja}.md (workspace/agent/usage_features_catalog_test.go)
+#   guide/operate/kubernetes/upgrade.md, upgrade.ja.md (control-plane/internal/runtime/runtime_kubernetes_home_test.go)
 # The positive and negative controls are scripts/ci-changes-test.sh.
 set -euo pipefail
 
@@ -25,6 +26,7 @@ inert() {
   case "$1" in
     guide/ref/agents.md | guide/ref/agents.ja.md) return 1 ;;
     docs/decisions/0029-usage-accounting.md | docs/decisions/0029-usage-accounting.ja.md) return 1 ;;
+    guide/operate/kubernetes/upgrade.md | guide/operate/kubernetes/upgrade.ja.md) return 1 ;;
     docs/* | guide/*) return 0 ;;
     scripts/docs-check.py | scripts/test_docs_check.py) return 0 ;;
     */*) return 1 ;;

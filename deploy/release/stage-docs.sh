@@ -69,6 +69,10 @@ for entry in "${RUNBOOKS[@]}"; do
     exit 1
   }
   cp "$ROOT/$src" "$DEST/operate/runbooks/$name.md"
+  # A runbook that has become an index links the guide pages from its place under deploy/
+  # (`../../guide/…` or `../../../guide/…`). In the staged tree the guide is the root, two
+  # levels above operate/runbooks/, so without this every such link is dead in a container.
+  sed -i -E 's#\]\((\.\./){2,3}guide/#](../../#g' "$DEST/operate/runbooks/$name.md"
 done
 
 cat > "$DEST/operate/runbooks/README.md" <<'EOF'

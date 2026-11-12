@@ -1,5 +1,5 @@
 # GKE Standard built by deploy/gcp/gke. Copy this directory per deployment, replace
-# deployment.yaml with Terraform's output and edit cp.env (README, "GKE").
+# deployment.yaml with Terraform's output and edit cp.env (guide/operate/kubernetes/gke.md).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

@@ -8,7 +8,7 @@
 //
 //	AF_K8S_LIVE=1 go test -run 'TestKubernetesLive' -v -timeout 50m ./internal/runtime/
 //
-// with the environment of deploy/kubernetes/README.md, "The live harness". Two identities
+// with the environment of docs/build/10-development.md, "Kubernetes live harness". Two identities
 // are involved, as in the ecs-ec2 harness (useCPTaskRole): the product talks to the API
 // server with a token of the CP's own service account (AF_K8S_LIVE_TOKEN_FILE), so a
 // permission the CP's Role lacks fails the run; the harness's own eyes, its cleanup and
@@ -80,12 +80,12 @@ var kubeLiveIdentity struct {
 func needKubeLive(t *testing.T) *kubeLive {
 	t.Helper()
 	if os.Getenv("AF_K8S_LIVE") != "1" {
-		t.Skip("SKIPPED: live kubernetes harness — set AF_K8S_LIVE=1 with the environment of deploy/kubernetes/README.md, \"The live harness\"")
+		t.Skip("SKIPPED: live kubernetes harness — set AF_K8S_LIVE=1 with the environment of docs/build/10-development.md, \"Kubernetes live harness\"")
 	}
 	for _, k := range []string{"AF_K8S_LIVE_SERVER", "AF_K8S_LIVE_CA_FILE", "AF_K8S_LIVE_TOKEN_FILE",
 		"AF_K8S_NAMESPACE", "AF_K8S_WORKSPACE_IMAGE", "AF_K8S_STORAGE_CLASS"} {
 		if os.Getenv(k) == "" {
-			t.Fatalf("AF_K8S_LIVE=1 but %s is unset (deploy/kubernetes/README.md, \"The live harness\")", k)
+			t.Fatalf("AF_K8S_LIVE=1 but %s is unset (docs/build/10-development.md, \"Kubernetes live harness\")", k)
 		}
 	}
 	kc := os.Getenv("AF_K8S_LIVE_KUBECTL")
@@ -1308,7 +1308,7 @@ func needKubeLiveDisruptive(t *testing.T) *kubeLive {
 	t.Helper()
 	l := needKubeLive(t)
 	if os.Getenv("AF_K8S_LIVE_DISRUPTIVE") != "1" {
-		t.Skip("SKIPPED: disruptive node scenario — set AF_K8S_LIVE_DISRUPTIVE=1 (it cordons nodes or stops a node's VM; read deploy/kubernetes/README.md, \"The live harness\", first)")
+		t.Skip("SKIPPED: disruptive node scenario — set AF_K8S_LIVE_DISRUPTIVE=1 (it cordons nodes or stops a node's VM; read docs/build/10-development.md, \"Kubernetes live harness\", first)")
 	}
 	l.guardPod()
 	return l
