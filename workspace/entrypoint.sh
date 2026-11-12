@@ -324,6 +324,27 @@ if [ -n "${AF_WS_SCRATCH:-}" ]; then
     # keep running on EFS and just log the fact.
     echo "[entrypoint] scratch: $AF_WS_SCRATCH に書けないため退避をスキップします"
   fi
+  # >>> scratch-link-repair (TestEntrypointScratchLinkRepair runs this block)
+  # The af-scratch links in ~/repos (target, build) survived the stop but their scratch-side
+  # directories did not, and a build does not create through a dangling link (Gradle fails,
+  # measured in #3987; Maven's and cargo's mkdir calls refuse one too). Both steps run
+  # before the Agent starts, so no session builds against a dangling link: --repair walks
+  # only the registry (capped by AF_SCRATCH_REPAIR_MAX); --seed is the one-time ~/repos
+  # walk for links made before the registry existed, bounded here by
+  # AF_SCRATCH_SEED_TIMEOUT seconds and finished in the background past that, at the cost
+  # of the links it has not reached yet. This is outside the size check because
+  # af-scratch links at any disk size.
+  if command -v af-scratch >/dev/null 2>&1; then
+    af-scratch --repair 2>&1 | sed 's/^/[entrypoint] scratch: /' || true
+    seed_rc=0
+    seed_out=$(timeout "${AF_SCRATCH_SEED_TIMEOUT:-20}" af-scratch --seed 2>&1) || seed_rc=$?
+    [ -z "$seed_out" ] || printf '%s\n' "$seed_out" | sed 's/^/[entrypoint] scratch: /'
+    if [ "$seed_rc" = 124 ]; then
+      echo "[entrypoint] scratch: af-scratch --seed did not finish in ${AF_SCRATCH_SEED_TIMEOUT:-20}s; continuing in the background"
+      ( af-scratch --seed 2>&1 | sed 's/^/[entrypoint] scratch: /' & ) || true
+    fi
+  fi
+  # <<< scratch-link-repair
 fi
 
 # --- boot-install (lean variant; docs/log/35 §35.4.1 / §35.7.1-6) ----------------
