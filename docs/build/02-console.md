@@ -225,7 +225,7 @@ Two conventions recur in them:
 
 ## 2.5 Information architecture
 
-The screens themselves are described for members in `guide/member/`; this section is the
+The screens themselves are described for members in `guide/user/`; this section is the
 shape a change has to fit.
 
 - **Two bars.** The top bar holds, for example, the app name, the tenant picker (hidden

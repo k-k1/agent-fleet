@@ -191,6 +191,8 @@ A slot is considered dark when all of these hold:
 - `AF_ECS_EC2_DARK_AFTER_SEC` is raised to at least the larger of the boot grace and `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` plus the sweep interval. `0` turns the scan off
 - `AF_ECS_EC2_DARK_SLOT_ACTION` is `detect` (the default) or `off`. `rescue` and `quarantine` are reserved for later and currently behave as `detect`
 - Watch the audit log for a slot recorded as dark that was in fact healthy (an agent restart, a long stall). That tells you whether the thresholds are safe
+- The Slots table shows a badge "**last seen dark N min · observing**" on the state cell of a running slot with an `af-dark-since` stamp for its current launch. N counts from the first dark observation and the tooltip gives the time. It is the last observation, not a live check: the stamp is removed by the next successful scan of that slot after an agent comes back, and until then it can outlive a recovery (for example when the scan is off, the home is detached, a start holds the slot, or an AWS read failed). A stop and start of the instance drops it at once. The pool API carries it as `dark_since` and `rung`. `rung` is `observing` today; `rescuing`, `blocked`, `rescued` and `quarantined` are reserved for the later rungs. The badge can appear sooner than `pool.slot_dark_detected`, which is written only after `AF_ECS_EC2_DARK_AFTER_SEC`
+- The audit log shows `pool.slot_dark_detected` and the reserved `pool.slot_dark_rescued`, `pool.slot_dark_blocked` and `pool.slot_dark_quarantined` with a one-line explanation as a tooltip
 
 ## Related
 

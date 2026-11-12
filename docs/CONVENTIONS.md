@@ -79,14 +79,14 @@ metadata panel (`splitYamlFrontMatter`), so it is **demoted out of the body with
 being lost**.
 
 `source_of_truth` is what makes staleness survivable. For `docs/build/` it is usually
-the code; for `guide/operate/` it is usually a script in `deploy/`; for `guide/member/`
+the code; for `guide/operate/` it is usually a script in `deploy/`; for `guide/user/`
 it is the Console itself. State it, so a reader who finds a contradiction knows which
 side to believe.
 
-- **Only `source_of_truth` may be inherited from the shelf README.** The 16 files in
-  `guide/member/` and the 6 in `guide/admin/` all carried the identical sentence — the
-  same clause 22 times, carrying nothing for the reader. State it once in the shelf
-  README and omit it from the chapters.
+- **Only `source_of_truth` may be inherited from the shelf README.** Where every page of
+  a shelf would carry the identical sentence (on `guide/user/` and `guide/admin/` it is
+  the Console itself), repeating it page after page carries nothing for the reader.
+  State it once in the shelf README and omit it from the pages.
 - **A shelf whose values differ cannot omit it.** All ten files in `guide/ref/` say
   something different ("this table is authoritative"; "the screen column is the Console,
   the implementation column is the code"), and that is real information.
@@ -96,7 +96,7 @@ side to believe.
 
 ## 4. Vocabulary per shelf
 
-- **`guide/member/` and `guide/admin/` speak in screen names only.** The words the
+- **`guide/user/` and `guide/admin/` speak in screen names only.** The words the
   reader sees in the Console are the correct words. Environment variable names,
   internal kind identifiers, API paths and source file paths are not allowed in prose —
   quote them in a code block if you genuinely must show one. Checked by CI.
@@ -232,10 +232,10 @@ A change that users can see is not finished until:
 Do not write "what belongs on this shelf" *into a document the reader sees* — that is an
 instruction to the writer, not guidance for the reader. **It goes here.**
 
-### `guide/member/` — someone running agents from the Console
+### `guide/user/` — someone running agents from the Console
 
-- **Write**: procedures, in the order the reader will actually do them; what a screen,
-  badge or menu means; what to try when something looks wrong, and how to tell "still
+- **Write**: one task per page (§12), its steps in the order the reader will actually do
+  them; what a screen, badge or menu means; what to try when something looks wrong, and how to tell "still
   working" from "stuck".
 - **Do not write**: capability facts (only `guide/ref/` has them); anything the reader
   cannot see on screen (env names, internal identifiers, API paths, source paths);

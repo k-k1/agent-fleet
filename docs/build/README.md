@@ -15,7 +15,7 @@ kind or a deployment target.
 Looking for something this shelf does not hold?
 
 - running a deployment: [guide/operate/](../../guide/operate/README.md)
-- what a member or an administrator sees and does: [guide/member/](../../guide/member/README.md),
+- what a member or an administrator sees and does: [guide/user/](../../guide/user/README.md),
   [guide/admin/](../../guide/admin/README.md)
 - which kind, provider, target or role supports what: [guide/ref/](../../guide/ref/README.md)
 - why it is like this, including what was rejected: [decisions/](../decisions/)

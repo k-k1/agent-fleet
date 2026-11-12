@@ -93,7 +93,7 @@ class CatalogDiffCheckTests(Base):
         self.assertIn("1 changed", out)
 
     def test_unchanged_clause_still_quoted_is_not_pinned(self):
-        self.write("guide/member/page.ja.md", "# ページ\n\nこの操作は取り消せませんので注意してください。\n")
+        self.write("guide/user/page.ja.md", "# ページ\n\nこの操作は取り消せませんので注意してください。\n")
         subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True)
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "quote"],
                        cwd=self.repo, check=True)
@@ -228,16 +228,16 @@ class CatalogDiffCheckTests(Base):
         self.pinned("control-plane/msg.go", 'package p\n\nvar m = "この操作は取り消せませんので注意してください"\n')
 
     def test_pinned_in_guide_even_when_wrapped(self):
-        out = self.pinned("guide/member/page.ja.md", "# ページ\n\nこの操作は取り消せません\nので注意してください。\n")
+        out = self.pinned("guide/user/page.ja.md", "# ページ\n\nこの操作は取り消せません\nので注意してください。\n")
         self.assertIn("page.ja.md:", out)
 
     def test_pinned_in_indented_continuation_with_right_line(self):
-        out = self.pinned("guide/member/page.ja.md",
+        out = self.pinned("guide/user/page.ja.md",
                           "# ページ\n\n- 手順\n  この操作は取り消せません\n  ので注意してください。\n")
         self.assertIn("page.ja.md:4", out)
 
     def test_paragraph_break_is_not_joined_into_a_quote(self):
-        self.write("guide/member/page.ja.md", "この操作は取り消せません\n\nので注意してください。\n")
+        self.write("guide/user/page.ja.md", "この操作は取り消せません\n\nので注意してください。\n")
         self.edit(JA, "この操作は取り消せませんので注意してください。", "元に戻せません。注意してください。")
         code, out = self.run_check()
         self.assertEqual(code, 0, out)
@@ -248,7 +248,7 @@ class CatalogDiffCheckTests(Base):
     def test_pinned_label_in_kagi_and_bold(self):
         for text in ("「停止」を押す\n", "**停止** を押す\n"):
             with self.subTest(text=text):
-                self.write("guide/member/page.ja.md", text)
+                self.write("guide/user/page.ja.md", text)
                 self.edit(JA, '"dom.label": "停止"', '"dom.label": "中断"')
                 code, out = self.run_check("--allow-labels")
                 self.assertEqual(code, 1, out)
@@ -301,17 +301,17 @@ class CatalogDiffCheckTests(Base):
         self.assertGreater(self.counts(out)["pinned"], 0, out)
 
     def test_citation_updated_in_same_change_passes(self):
-        self.write("guide/member/page.ja.md", "「中断」を押す\n")
+        self.write("guide/user/page.ja.md", "「中断」を押す\n")
         self.edit(JA, '"dom.label": "停止"', '"dom.label": "中断"')
         code, out = self.run_check("--allow-labels")
         self.assertEqual(code, 0, out)
 
     def test_list_pinned_prints_only_locations_and_exits_zero(self):
-        self.write("guide/member/page.ja.md", "# ページ\n\n「停止」を押す\n")
+        self.write("guide/user/page.ja.md", "# ページ\n\n「停止」を押す\n")
         self.edit(JA, '"dom.label": "停止"', '"dom.label": "中断"')
         code, out = self.run_check("--list-pinned")
         self.assertEqual(code, 0, out)
-        self.assertIn("guide/member/page.ja.md:3\t", out)
+        self.assertIn("guide/user/page.ja.md:3\t", out)
         self.assertNotIn("failures:", out)
 
 
@@ -511,7 +511,7 @@ class CatalogDiffCheckEnTests(Base):
         self.assertNotIn("WARN", out)
 
     def test_en_ja_guide_and_readme_are_not_searched(self):
-        self.write("guide/member/page.ja.md", "This cannot be undone, so take care before you continue.\n")
+        self.write("guide/user/page.ja.md", "This cannot be undone, so take care before you continue.\n")
         self.write("guide/README.md", "This cannot be undone, so take care before you continue.\n")
         self.write("workspace/agent/knowledge/af-usage.md", "This cannot be undone, so take care before you continue.\n")
         self.edit(EN, "This cannot be undone, so take care before you continue.", "Take care: this is permanent.")
@@ -519,7 +519,7 @@ class CatalogDiffCheckEnTests(Base):
         self.assertEqual(code, 0, out)
 
     def test_en_unchanged_clause_still_quoted_is_not_pinned(self):
-        self.write("guide/member/page.md", "# Page\n\nThis cannot be undone, so take care before you continue.\n")
+        self.write("guide/user/page.md", "# Page\n\nThis cannot be undone, so take care before you continue.\n")
         self.commit_all("quote")
         self.edit(EN, "This cannot be undone, so take care before you continue.",
                   "This cannot be undone, so take care before you continue. Really.")
@@ -704,11 +704,11 @@ class CatalogDiffCheckEnTests(Base):
         return out
 
     def test_en_pinned_in_english_guide_page(self):
-        out = self.en_pinned("guide/member/page.md", "# Page\n\nThis cannot be undone, so take care before you continue.\n")
+        out = self.en_pinned("guide/user/page.md", "# Page\n\nThis cannot be undone, so take care before you continue.\n")
         self.assertIn("page.md:3", out)
 
     def test_en_pinned_in_guide_even_when_wrapped(self):
-        self.en_pinned("guide/member/page.md", "# Page\n\nThis cannot be undone,\n  so take care before you continue.\n")
+        self.en_pinned("guide/user/page.md", "# Page\n\nThis cannot be undone,\n  so take care before you continue.\n")
 
     def test_en_pinned_in_console_test(self):
         self.en_pinned("console/src/x.test.tsx", 'expect(t).toBe("This cannot be undone, so take care before you continue");\n')
@@ -719,7 +719,7 @@ class CatalogDiffCheckEnTests(Base):
     def test_en_pinned_label_in_bold_and_quotes(self):
         for text in ("Press **Stop** now\n", 'Press "Stop" now\n'):
             with self.subTest(text=text):
-                self.write("guide/member/page.md", text)
+                self.write("guide/user/page.md", text)
                 self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
                 code, out = self.run_en("--allow-labels")
                 self.assertEqual(code, 1, out)
@@ -729,36 +729,36 @@ class CatalogDiffCheckEnTests(Base):
     def test_en_pinned_label_in_markdown_quote_forms(self):
         for text in ("Click `Stop` now\n", "Click 'Stop' now\n"):
             with self.subTest(text=text):
-                self.write("guide/member/page.md", text)
+                self.write("guide/user/page.md", text)
                 self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
                 self.assertEnTrips("pinned", "--allow-labels")
                 code, out = self.run_en("--list-pinned")
-                self.assertIn("guide/member/page.md:1\t", out)
-                code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/member/page.md")
+                self.assertIn("guide/user/page.md:1\t", out)
+                code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/user/page.md")
                 self.assertEqual(code, 0, out)
                 self.edit(EN, '"dom.label": "Halt"', '"dom.label": "Stop"')
 
     def test_en_citation_updated_in_same_change_passes(self):
-        self.write("guide/member/page.md", "Press **Halt** now\n")
+        self.write("guide/user/page.md", "Press **Halt** now\n")
         self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
         code, out = self.run_en("--allow-labels")
         self.assertEqual(code, 0, out)
 
     def test_en_list_pinned_prints_locations_and_exits_zero(self):
-        self.write("guide/member/page.md", "# Page\n\nPress **Stop** now\n")
+        self.write("guide/user/page.md", "# Page\n\nPress **Stop** now\n")
         self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
         code, out = self.run_en("--list-pinned")
         self.assertEqual(code, 0, out)
-        self.assertIn("guide/member/page.md:3\t", out)
+        self.assertIn("guide/user/page.md:3\t", out)
         self.assertNotIn("failures:", out)
 
     def test_en_exempt_pin(self):
-        self.write("guide/member/page.md", "Press **Stop** now\n")
+        self.write("guide/user/page.md", "Press **Stop** now\n")
         self.edit(EN, '"dom.label": "Stop"', '"dom.label": "Halt"')
-        code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/member/page.md")
+        code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/user/page.md")
         self.assertEqual(code, 0, out)
         self.assertIn("1 pin(s) exempted", out)
-        code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/member/other.md")
+        code, out = self.run_en("--allow-labels", "--exempt-pin=dom.label@guide/user/other.md")
         self.assertEqual(code, 1, out)
         self.assertIn("matched nothing", out)
 
@@ -858,7 +858,7 @@ class LabelSyncTests(Base):
         return self.run_check('--lang', lang, '--allow-labels', *args)
 
     def page(self, text, lang='ja'):
-        path = f"guide/member/sync{'.ja' if lang == 'ja' else ''}.md"
+        path = f"guide/user/sync{'.ja' if lang == 'ja' else ''}.md"
         self.write(path, text)
         self.commit_all('citation fixture')
         return path
@@ -990,7 +990,7 @@ class LabelSyncTests(Base):
 
     def test_dirty_preflight_never_partially_writes(self):
         first = self.page('**操作ボタン**\n')
-        second = 'guide/member/z-sync.ja.md'
+        second = 'guide/user/z-sync.ja.md'
         self.write(second, '**操作ボタン**\n')
         self.change_unique()
         self.assertEqual(self.sync_run('--rewrite-guide')[0], 2)
@@ -1244,7 +1244,7 @@ class LabelSyncTests(Base):
     def test_rewrite_refuses_symlink_outside_guide(self):
         outside = self.repo / 'manual.ja.md'
         outside.write_text('**操作ボタン**\n')
-        page = self.repo / 'guide/member/sync.ja.md'
+        page = self.repo / 'guide/user/sync.ja.md'
         page.symlink_to(outside)
         self.commit_all('symlink fixture')
         self.change_unique()

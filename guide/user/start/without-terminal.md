@@ -18,6 +18,7 @@ Asking the AI questions, translating, reading documents and following developmen
 | Jot down requests and hand them to development | **Memo queue** in the left pane |
 | Read documents and slides | **Files** in the left pane |
 | See how far development has got | The sessions list in the left pane |
+| Read a conversation a developer shared with you | **Shared sessions** in the left pane |
 
 ## Read these first
 
@@ -26,10 +27,13 @@ Asking the AI questions, translating, reading documents and following developmen
 | 1 | [Start your first session](quickstart.md) | Sign in, start the workspace and connect an agent. Under "Where do you want to start?", choose **Start chatting** |
 | 2 | [Find your way around the screen](console-tour.md) | What sits where in the left pane |
 | 3 | [Ask an assistant](../chat/assistant.md#start-a-chat) | How to ask for answers, translations and summaries, and how a chat differs from a session |
-| 4 | [View documents and diagrams](../files/view.md) | Read documents in the browser |
-| 5 | [Collect memos and hand them over](../chat/memos.md) | Collect requests and hand them over together |
-| 6 | [Read a session's state](../sessions/status.md) | Read development progress from the row marks |
-| 7 | [Use it on a phone](phone.md) | Check progress while you are out |
+| 4 | [Use translation and purpose-built assistants](../chat/purpose-assistants.md) | Translate files and use assistants made for one job |
+| 5 | [View documents and diagrams](../files/view.md) | Read documents in the browser |
+| 6 | [Hand a file to a session](../files/send.md) | Have a file translated or summarised |
+| 7 | [Collect memos and hand them over](../chat/memos.md) | Collect requests and hand them over together |
+| 8 | [Read a session's state](../sessions/status.md) | Read development progress from the row marks |
+| 9 | [Read a conversation shared with you](../team/share.md#read-a-conversation-shared-with-you) | Read, read-only, a conversation a developer shared with you |
+| 10 | [Use it on a phone](phone.md) | Check progress while you are out |
 
 - The "Develop in a repository" steps (connecting a Git service, launching sessions) can be skipped if you do not use them
 - You can stop the workspace when you are done. Press **Start** next time to bring it back ([Stop the workspace at the end of the day](end-of-day.md))

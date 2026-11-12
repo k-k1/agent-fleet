@@ -46,7 +46,7 @@ func TestSafeBrowsePath(t *testing.T) {
 
 		// absolute under the scratch base → served, display path is the absolute path
 		{"abs in scratch", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", true},
-		{"abs in staged docs", AgentFleetDocsRoot() + "/guide/member/README.md", AgentFleetDocsRoot() + "/guide/member/README.md", AgentFleetDocsRoot() + "/guide/member/README.md", true},
+		{"abs in staged docs", AgentFleetDocsRoot() + "/guide/user/README.md", AgentFleetDocsRoot() + "/guide/user/README.md", AgentFleetDocsRoot() + "/guide/user/README.md", true},
 		{"abs in codex generated images", codexGeneratedImagesRoot() + "/job/image.png", codexGeneratedImagesRoot() + "/job/image.png", codexGeneratedImagesRoot() + "/job/image.png", true},
 
 		// absolute outside every allowed root → refused
@@ -70,7 +70,7 @@ func TestSafeBrowsePath(t *testing.T) {
 
 func TestSafeWritableBrowsePathRefusesReadOnlyRoots(t *testing.T) {
 	t.Setenv("AF_BROWSE_ROOT", t.TempDir())
-	for _, p := range []string{scratchRoot() + "/note.txt", AgentFleetDocsRoot() + "/guide/member/README.md"} {
+	for _, p := range []string{scratchRoot() + "/note.txt", AgentFleetDocsRoot() + "/guide/user/README.md"} {
 		if _, _, ok := safeWritableBrowsePath(p); ok {
 			t.Errorf("safeWritableBrowsePath(%q) unexpectedly allowed an absolute read-only path", p)
 		}

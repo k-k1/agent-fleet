@@ -50,6 +50,38 @@ type ec2SlotView struct {
 	// nothing automates it.
 	StoppingTask        string `json:"stopping_task,omitempty"`
 	StoppingTaskMinutes int    `json:"stopping_task_minutes,omitempty"`
+	// DarkSince is when the dark-slot scan first saw this running slot dark (RFC 3339, from
+	// af-dark-since; ADR 0121). Empty when there is no stamp for the current launch.
+	DarkSince string `json:"dark_since,omitempty"`
+	// Rung is how far the dark-slot ladder has gone: darkRung* below. Empty = not dark.
+	Rung string `json:"rung,omitempty"`
+}
+
+// Values of ec2SlotView.Rung (ADR 0121 decision 5). Only observing is produced from the
+// af-dark-since stamp; the others are filled in by the rescue / quarantine rungs.
+const (
+	darkRungObserving   = "observing"
+	darkRungRescuing    = "rescuing"
+	darkRungBlocked     = "blocked"
+	darkRungRescued     = "rescued"
+	darkRungQuarantined = "quarantined"
+)
+
+// darkView reads a slot's dark-slot state from its tags. A stamp counts only while the box is
+// running in the launch epoch the stamp names: LaunchTime moves on every start, so an older
+// stamp describes an episode that is over. The result is the last observation, not a live
+// check: the tag stays until the next successful scan of the slot clears it, so it can outlive
+// a recovery (scan off, home detached, a live claim, an AWS read that failed). A pure read; it
+// never writes.
+func darkView(inst ec2types.Instance) (since, rung string) {
+	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning || inst.LaunchTime == nil {
+		return "", ""
+	}
+	st, ok := parseDarkStamp(ec2TagValue(inst.Tags, ec2TagDarkSince))
+	if !ok || !st.launch.Equal(inst.LaunchTime.UTC().Truncate(time.Second)) {
+		return "", ""
+	}
+	return st.since.UTC().Format(time.RFC3339), darkRungObserving
 }
 
 type ec2HomeView struct {
@@ -323,6 +355,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			s.TemplateOutdated, s.OutdatedReasons, s.AMI = len(reasons) > 0, reasons, aws.ToString(inst.ImageId)
 			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
 			s.ReplaceReserved = s.ReplaceReservedAt != ""
+			s.DarkSince, s.Rung = darkView(inst)
 			st.Slots = append(st.Slots, s)
 		}
 	}
