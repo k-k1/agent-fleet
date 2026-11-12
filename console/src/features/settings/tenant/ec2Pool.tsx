@@ -462,7 +462,7 @@ export function PoolView() {
                       {s.dark_since && !s.quarantined && (
                         <span
                           className="pool-badge outdated"
-                          title={tr("pool.dark_title", { since: s.dark_since })}
+                          title={tr(s.rung === "observing" ? "pool.dark_title" : "pool.dark_title_later", { since: s.dark_since })}
                         >
                           {tr("pool.dark", {
                             min: String(Math.max(0, Math.floor((Date.now() - Date.parse(s.dark_since)) / 60000)) || 0),

@@ -606,19 +606,25 @@ describe("replacement reservations", () => {
     it("shows how long the slot has been dark and the rung", async () => {
       api.mockResolvedValue(withDark({ dark_since: new Date(Date.now() - 25 * 60000).toISOString(), rung: "observing" }));
       await mount();
-      expect(rowText()).toContain("応答なし 25 分・観測中");
+      expect(rowText()).toContain("最後の観測: 応答なし 25 分・観測中");
+      const badge = Array.from(host!.querySelectorAll(".pool-badge")).find((b) => b.textContent?.includes("最後の観測"));
+      expect(badge?.getAttribute("title")).toContain("今の確認ではありません");
+      expect(badge?.getAttribute("title")).toContain("何もしていません");
     });
 
     it("shows nothing for a slot without a stamp", async () => {
       api.mockResolvedValue(withDark({}));
       await mount();
-      expect(rowText()).not.toContain("応答なし");
+      expect(rowText()).not.toContain("最後の観測");
     });
 
     it("labels a rung it knows from the later rungs, and does not blank one it does not", async () => {
       api.mockResolvedValue(withDark({ dark_since: new Date(Date.now() - 5 * 60000).toISOString(), rung: "blocked" }));
       await mount();
       expect(rowText()).toContain("救出が停止中");
+      const badge = Array.from(host!.querySelectorAll(".pool-badge")).find((b) => b.textContent?.includes("最後の観測"));
+      expect(badge?.getAttribute("title")).toContain("今の確認ではありません");
+      expect(badge?.getAttribute("title")).not.toContain("何もしていません");
     });
   });
 });

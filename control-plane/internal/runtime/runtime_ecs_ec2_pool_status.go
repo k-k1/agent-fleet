@@ -69,7 +69,10 @@ const (
 
 // darkView reads a slot's dark-slot state from its tags. A stamp counts only while the box is
 // running in the launch epoch the stamp names: LaunchTime moves on every start, so an older
-// stamp describes an episode that is over. A pure read; it never writes.
+// stamp describes an episode that is over. The result is the last observation, not a live
+// check: the tag stays until the next successful scan of the slot clears it, so it can outlive
+// a recovery (scan off, home detached, a live claim, an AWS read that failed). A pure read; it
+// never writes.
 func darkView(inst ec2types.Instance) (since, rung string) {
 	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning || inst.LaunchTime == nil {
 		return "", ""

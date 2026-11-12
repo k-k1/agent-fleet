@@ -191,7 +191,7 @@ Control Plane のスイーパーは、誰かがワークスペースを起動す
 - `AF_ECS_EC2_DARK_AFTER_SEC` は、起動の猶予と、`AF_ECS_EC2_SLOT_LOST_AFTER_SEC` にスイープの間隔を足した値の大きいほうまで引き上げられます。`0` を指定すると、探すのをやめます
 - `AF_ECS_EC2_DARK_SLOT_ACTION` は `detect`（既定）か `off` です。`rescue` と `quarantine` は今後のために予約されていて、今は `detect` として動きます
 - dark と記録されたのに実際は健全だったスロット（エージェントの再起動や長い停滞）が監査ログに出ないか見ておくと、しきい値が安全かどうか判断できます
-- スロットの一覧では、現在の起動に対する `af-dark-since` があるスロットの状態欄に「**応答なし N 分・観測中**」というバッジが出ます。N は最初に dark と見たときからの経過で、ツールチップに時刻が出ます。エージェントが戻るか、停止と起動をすると消えます。プールの API では `dark_since` と `rung` として返ります。`rung` は今は `observing` だけで、`rescuing`・`blocked`・`rescued`・`quarantined` は後の段階のために予約されています。バッジは `pool.slot_dark_detected` の監査記録より先に出ることがあります
+- スロットの一覧では、現在の起動に対する `af-dark-since` があるスロットの状態欄に「**最後の観測: 応答なし N 分・観測中**」というバッジが出ます。N は最初に dark と見たときからの経過で、ツールチップに時刻が出ます。これは最後に観測した状態で、今の確認ではありません。エージェントが戻ったあとも、そのスロットの次のスキャンが成功してタグが外れるまでは残ることがあります（スキャンが off、home が外れている、起動が進行中、AWS の読み取りが失敗した、など）。インスタンスの停止と起動をすると、すぐに消えます。プールの API では `dark_since` と `rung` として返ります。`rung` は今は `observing` だけで、`rescuing`・`blocked`・`rescued`・`quarantined` は後の段階のために予約されています。バッジは `pool.slot_dark_detected` の監査記録より先に出ることがあります
 - 監査ログでは、`pool.slot_dark_detected` と、予約済みの `pool.slot_dark_rescued`・`pool.slot_dark_blocked`・`pool.slot_dark_quarantined` に、ツールチップで 1 行の説明が出ます
 
 ## 関連
