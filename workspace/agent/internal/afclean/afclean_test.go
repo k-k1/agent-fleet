@@ -19,6 +19,8 @@ type fake struct {
 	changeAfter map[string]bool
 	dryRuns     map[string]int
 	busyDelete  bool
+	// recheck500 makes a worktree's second dry run answer HTTP 500.
+	recheck500 map[string]bool
 }
 
 func (f *fake) did(prefix string) int {
@@ -56,6 +58,11 @@ func (f *fake) client(t *testing.T) *Client {
 			dry := r.URL.Query().Get("dry_run") == "1"
 			if dry {
 				f.dryRuns[name]++
+			}
+			if dry && f.recheck500[name] && f.dryRuns[name] > 1 {
+				w.WriteHeader(500)
+				w.Write([]byte(`{"error":{"code":"boom","message":"agent broke"}}`))
+				return
 			}
 			dirs := `[{"rel":"node_modules","bytes":400}]`
 			if f.changeAfter[name] && f.dryRuns[name] > 1 {
@@ -232,5 +239,30 @@ func TestAgentUnreachable(t *testing.T) {
 	code, _, errw := run(c)
 	if code != 1 || !strings.Contains(errw, "cannot reach the Agent") {
 		t.Errorf("%d %q", code, errw)
+	}
+}
+
+// A re-check that cannot be done is a failure (exit 1, error kept), not a "changed" skip, and
+// no real POST goes out for that item.
+func TestApplyRecheckErrorIsFailure(t *testing.T) {
+	f := &fake{recheck500: map[string]bool{"big": true}}
+	code, out, _ := run(f.client(t), "--apply", "--json")
+	if code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	var r Result
+	_ = json.Unmarshal([]byte(out), &r)
+	for _, it := range r.Items {
+		if it.ID == "wt:big" && (it.Outcome != "failed" || !strings.Contains(it.Detail, "agent broke")) {
+			t.Errorf("big: %q %q", it.Outcome, it.Detail)
+		}
+	}
+	if r.Failed != 1 || r.Skipped != 0 {
+		t.Errorf("failed %d skipped %d", r.Failed, r.Skipped)
+	}
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "POST") && strings.Contains(c, "worktree=big") && !strings.Contains(c, "dry_run=1") {
+			t.Errorf("real POST for big: %s", c)
+		}
 	}
 }

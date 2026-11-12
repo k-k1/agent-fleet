@@ -161,7 +161,7 @@ Under the Leftover files rows, **Old folders in ~/.af-work** deletes the folders
 
 #### From a terminal: `af-clean`
 
-`af-clean` in a terminal of the workspace lists the same items as the low-disk notice's **Clean regenerable items…**: build output in dormant working copies and tool caches that nothing is using. It deletes nothing until you add `--apply`, and then removes exactly what it listed. Leftover files, `~/.af-work`, the trash and archives are not touched from there. Options and output: [af-clean](../../ref/cli/af-clean.md).
+`af-clean` in a terminal of the workspace lists the same items as the low-disk notice's **Clean regenerable items…**: build output in dormant working copies and tool caches that nothing is using. It deletes nothing until you add `--apply`, and then removes the items of a fresh list (not an earlier dry run's). Leftover files, `~/.af-work`, the trash and archives are not touched from there. Options and output: [af-clean](../../ref/cli/af-clean.md).
 
 ## When it goes wrong
 

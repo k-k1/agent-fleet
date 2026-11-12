@@ -1,7 +1,8 @@
 // Package afclean is `workspace-agent af-clean`, behind the af-clean PATH shim: the command-line
 // side of the low-disk cleanup the Console offers from its notice (ReclaimModal, #3880). It
 // holds no classifier of its own. What it proposes is what the Agent's own endpoints report for
-// that modal, filtered by the same rules, and what --apply deletes is exactly that list, one
+// that modal, filtered by the same rules, and what --apply deletes is that list (see applyAll for what the
+// guarantee does and does not cover), one
 // request per item, through the same two delete calls the Console makes:
 //
 //	build output in dormant working copies   GET/POST /cleanup/worktree-output
@@ -34,7 +35,7 @@ const usage = `af-clean — free regenerable disk space, the way the Console's l
 
 Usage:
   af-clean [--dry-run] [--json]     list what would be removed; nothing is deleted (the default)
-  af-clean --apply [--json]         remove exactly what the dry run lists
+  af-clean --apply [--json]         list again, then remove those items
   af-clean --help
 
 It proposes two kinds of item, the same ones the Console's "Clean regenerable items…" offers:
@@ -43,8 +44,11 @@ It proposes two kinds of item, the same ones the Console's "Clean regenerable it
   cache     a package-manager cache (go-build, npm, uv, pip, Maven, Gradle versions nothing pins)
             that no build or install is using
 
-Removal is not reversible and does not go to the trash. Just before each working copy is cleaned
-its list is read again; if it differs from the one printed, that item is skipped. Whatever the
+Removal is not reversible and does not go to the trash. --apply builds its own fresh list; it does
+not reuse the output of an earlier --dry-run, so what it removes can differ from that earlier run.
+Just before each working copy is cleaned its list is read again; if it differs from the one
+printed, that item is skipped. The Agent's delete names only the working copy, so a folder such as
+.next that appears after that last check can still be removed with it. Whatever the
 Agent still refuses (a live session, a cache in use) is reported as "skipped".
 
 Exit status: 0 done, 1 something failed or the Agent could not be asked, 2 usage.
@@ -314,16 +318,24 @@ func propose(c *Client) (*Result, error) {
 
 // --- apply (ReclaimModal's run) ---
 
-// applyAll deletes the listed items and nothing else. A worktree is only cleaned when a fresh
+// applyAll deletes the listed items and no other item. A worktree is only cleaned when a fresh
 // dry run lists the same directories as the proposal did: the real POST names the working copy
 // alone and removes whatever it finds, so a directory that appeared since would otherwise go
-// unseen.
+// unseen. A directory created between that check and the POST is still removed with it: the API
+// takes no expected set, and the Console's ReclaimModal has the same window.
 func applyAll(c *Client, res *Result) {
 	for i := range res.Items {
 		it := &res.Items[i]
 		if it.Kind == "worktree" {
 			dry, err := c.wtoPost(it.Name, true)
-			if err != nil || dry.Status != "candidate" || dirKey(dry.Dirs) != dirKey(it.Dirs) {
+			if err != nil {
+				// The re-check could not be done (Agent gone, HTTP 5xx, unreadable answer): nothing
+				// was deleted, but that is a failure to report, not a "changed" item.
+				it.Outcome, it.Detail = "failed", err.Error()
+				res.Failed++
+				continue
+			}
+			if dry.Status != "candidate" || dirKey(dry.Dirs) != dirKey(it.Dirs) {
 				it.Outcome, it.Detail = "skipped", "changed since it was listed; run af-clean again"
 				res.Skipped++
 				continue
@@ -410,7 +422,7 @@ func render(out io.Writer, res *Result) {
 	}
 	if res.Mode == "dry-run" {
 		if len(res.Items) > 0 {
-			fmt.Fprintf(out, "dry run: %s can be freed; nothing was deleted. Run af-clean --apply to remove exactly this.\n", human(res.Total))
+			fmt.Fprintf(out, "dry run: %s can be freed; nothing was deleted. Run af-clean --apply to list again and remove these items.\n", human(res.Total))
 		}
 		return
 	}
