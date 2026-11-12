@@ -13,7 +13,7 @@ import (
 )
 
 // emptyUIState is the answer for a member who never saved anything in a tenant with no defaults.
-const emptyUIState = `{"defaults":{"agent":""}}`
+const emptyUIState = `{"defaults":{"agent":"","launch":{"agent":"","model":"","driver":"","permission_mode":"","budget_usd":null},"repos":[],"ops":{"grafana_url":"","aws_sso_start_url":"","aws_account_id":"","aws_role_name":""}},"effective":{"launch":{"agent":"","model":"","driver":"","permission_mode":"","budget_usd":null},"repos":[],"ops":{"grafana_url":"","aws_sso_start_url":"","aws_account_id":"","aws_role_name":""}}}`
 
 type uiStateEnv struct {
 	st  *store.SQL
@@ -62,7 +62,7 @@ func TestMemberUIStateRoundTrip(t *testing.T) {
 			if code, body := e.do(t, "GET", "", "u@x"); code != 200 || body != emptyUIState {
 				t.Fatalf("fresh GET = %d %s, want 200 %s", code, body, emptyUIState)
 			}
-			want := `{"onboarding":{"dismissed":true,"track":"dev"},"defaults":{"agent":""}}`
+			want := `{"onboarding":{"dismissed":true,"track":"dev"},"defaults":{"agent":"","launch":{"agent":"","model":"","driver":"","permission_mode":"","budget_usd":null},"repos":[],"ops":{"grafana_url":"","aws_sso_start_url":"","aws_account_id":"","aws_role_name":""}},"effective":{"launch":{"agent":"","model":"","driver":"","permission_mode":"","budget_usd":null},"repos":[],"ops":{"grafana_url":"","aws_sso_start_url":"","aws_account_id":"","aws_role_name":""}}}`
 			if code, body := e.do(t, "PATCH", `{"onboarding":{"dismissed":true,"track":"dev"}}`, "u@x"); code != 200 || body != want {
 				t.Fatalf("PATCH = %d %s, want 200 %s", code, body, want)
 			}

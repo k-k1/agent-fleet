@@ -99,3 +99,23 @@ the like. Tenants differ, so these are tenant configuration. They need the same 
   alone, so it does not wait for the workspace.
 - A member's first-run state now follows them across devices.
 - Any new Console-only state has an obvious home. Decision 1 is the test for whether it belongs here.
+
+## Note (2026-11-12): P3 open question settled
+
+The user decided how tenant launch defaults reach the Agent: **they only prefill the launch dialog
+and the Start hub.** They never seed or write the Agent's `ui-prefs`, and the Agent keeps enforcing
+its own `ui-prefs` as before. Decision 1 stands: no setting lives in two homes.
+
+- The tenant's groups (launch defaults, team repositories, non-secret ops settings) extend
+  `tenant_member_defaults` and the same admin endpoint and `tenant.member_defaults` audit. The
+  launch agent is the document's existing `agent`.
+- The member's own override is Console-only state, so it follows decisions 1 and 3: closed-schema
+  `launch` and `ops` keys in `member_ui_state`.
+- Precedence is decision 8 unchanged (built-in, tenant default, the member's own choice). The CP
+  merges the layers field by field and returns the result as `effective` next to `defaults`; the
+  Console reads it and never re-derives it.
+- Availability follows the branch-rules precedent (0103 decision 10): the Console keeps the last
+  answer in its per-(user, tenant) cache, so the dialog and Start honour the last-known value
+  while the workspace is stopped or the CP is unreachable.
+- Ops settings are validated narrowly (https URLs without credentials, query or fragment, a
+  12-digit account id, a role name). A secret has no field to ride in; secrets stay per member.

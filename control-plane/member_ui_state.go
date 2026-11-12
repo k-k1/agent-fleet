@@ -35,6 +35,11 @@ const memberUIStateRetries = 4
 // core/store/uiState.ts. Add a key here, never an open map (decision 3).
 type memberUIStateWire struct {
 	Onboarding *onboardingStateWire `json:"onboarding,omitempty"`
+	// Launch and Ops are the member's own override of the tenant's launch defaults and ops
+	// settings (decision 8, P3): the top layer of the precedence, "" / null = not overridden.
+	// They prefill the launch dialog; the Agent's ui-prefs are never written from here.
+	Launch *launchDefaultsWire `json:"launch,omitempty"`
+	Ops    *opsSettingsWire    `json:"ops,omitempty"`
 }
 
 // onboardingStateWire is the first-run state that used to live in localStorage: whether the
@@ -52,11 +57,27 @@ func (s *memberUIStateWire) merge(p memberUIStateWire, ifAbsent bool) {
 		o := *p.Onboarding
 		s.Onboarding = &o
 	}
+	if p.Launch != nil && (!ifAbsent || s.Launch == nil) {
+		l := *p.Launch
+		s.Launch = &l
+	}
+	if p.Ops != nil && (!ifAbsent || s.Ops == nil) {
+		o := *p.Ops
+		s.Ops = &o
+	}
 }
 
 func (s memberUIStateWire) validate() error {
 	if o := s.Onboarding; o != nil && o.Track != "" && o.Track != "dev" {
 		return errors.New(`onboarding.track must be "" or "dev"`)
+	}
+	if s.Launch != nil {
+		if err := s.Launch.validate(); err != nil {
+			return err
+		}
+	}
+	if s.Ops != nil {
+		return s.Ops.validate()
 	}
 	return nil
 }
@@ -80,10 +101,12 @@ func decodeMemberUIState(b []byte) (memberUIStateWire, error) {
 
 // memberUIStateResponse is what both routes answer: the member's own document, and beside it the
 // tenant's defaults (decision 8). The defaults are read-only here: a PATCH carrying `defaults`
-// is refused as an unknown key, because only a tenant admin sets them.
+// is refused as an unknown key, because only a tenant admin sets them. `effective` is the CP's
+// merge of built-in < tenant < the member's own keys; the Console reads it and never re-derives.
 type memberUIStateResponse struct {
 	memberUIStateWire
-	Defaults tenantMemberDefaultsWire `json:"defaults"`
+	Defaults  tenantMemberDefaultsWire `json:"defaults"`
+	Effective effectiveWire            `json:"effective"`
 }
 
 type memberUIStateStore interface {
@@ -122,7 +145,7 @@ func (a memberUIStateAPI) respond(w http.ResponseWriter, r *http.Request, mv sto
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "store", err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, memberUIStateResponse{memberUIStateWire: s, Defaults: d})
+	writeJSON(w, http.StatusOK, memberUIStateResponse{memberUIStateWire: s, Defaults: d, Effective: effectiveDefaults(d, s)})
 }
 
 func (a memberUIStateAPI) get(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
