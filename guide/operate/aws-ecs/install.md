@@ -22,7 +22,7 @@ The stacks and their order are in [Understand the ECS layout](overview.md).
 | Deploy `30-ingress` | The certificate, ALB, DNS and Control Plane service are built, and you can sign in to the Console |
 | If you split spend, start one workspace on the day you build | The Control Plane writes the tags; once AWS discovers the keys (up to 24 hours), the Control Plane activates the cost allocation tags |
 
-These are the same steps `standup.sh` runs in order. Run the commands from `deploy/aws/ecs/` in the repository.
+Run the commands from `deploy/aws/ecs/` in the repository. `standup.sh` builds in the same order, but it **rebuilds** from an existing deployment's parameters that `capture-env.sh` saved (`params/30-ingress` and the rest). In a new environment without them it exits at once, so build a first deployment with the steps on this page.
 
 ## Before you start (once per account)
 
@@ -135,7 +135,7 @@ After the images are pushed and before `30-ingress`, deploy only what you use, i
   crane copy ghcr.io/k-k1/agent-fleet/engine-tools:<EngineToolsImageTag> <acct>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:<EngineToolsImageTag>
   ```
 
-- `standup.sh` copies the engine images in this order, then deploys, for each stack that has a parameter file. It is the reliable way to build them
+- `standup.sh` copies the images in this order before deploying, but only when rebuilding from saved parameters. For a first build, copy them by hand: `af-voicevox` for speech is under "Turning it on" in [the ECS runbook's "Optional: Japanese speech"](../../../deploy/aws/ecs/README.md#optional-japanese-speech-the-voicevox-engine-cfn50-ttsyaml), and `af-llamacpp` / `af-comfyui` for the inference engines are step 3 of ["Turning it on" in "Optional: the fleet's own inference engines"](../../../deploy/aws/ecs/README.md#turning-it-on)
 - Each stack's parameters and images are on the slot pool, speech and inference engine pages, reachable from the [ECS runbook](../../../deploy/aws/ecs/README.md) index
 
 ## Start the Control Plane (`30-ingress`)

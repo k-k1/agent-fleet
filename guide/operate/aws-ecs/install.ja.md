@@ -22,7 +22,7 @@ AWS の ECS に Agent Fleet を建て、Control Plane を起動して、IdP で�
 | `30-ingress` をデプロイする | 証明書・ALB・DNS・Control Plane のサービスができ、Console にサインインできる |
 | 費用を分けるなら、構築した日にワークスペースを 1 つ起動する | Control Plane がタグを書き、AWS がキーを見つけたあと（最大 24 時間）、Control Plane がコスト配分タグを有効にする |
 
-ここに書いた手順は、`standup.sh` が順番どおりに実行するものと同じです。コマンドは、リポジトリの `deploy/aws/ecs/` で実行します。
+コマンドは、リポジトリの `deploy/aws/ecs/` で実行します。`standup.sh` も同じ順番で建てますが、`capture-env.sh` で取っておいた既存の配備のパラメータ（`params/30-ingress` など）から**建て直す**ためのスクリプトです。それがない新しい環境では、すぐに終わります。初めて建てるときは、このページの手順で建てます。
 
 ## はじめる前に（アカウントごとに 1 回）
 
@@ -135,7 +135,7 @@ docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag>
   crane copy ghcr.io/k-k1/agent-fleet/engine-tools:<EngineToolsImageTag> <acct>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:<EngineToolsImageTag>
   ```
 
-- `standup.sh` は、パラメータのファイルがあるスタックについて、この順番どおりにエンジンのイメージを写してからデプロイします。使うなら `standup.sh` で建てるのが確実です
+- `standup.sh` はこの順番でイメージを写してからデプロイしますが、取っておいたパラメータがあるときの建て直し専用です。初めて建てるときは手で写します。読み上げの `af-voicevox` は [ECS の手順書の「Optional: Japanese speech」](../../../deploy/aws/ecs/README.md#optional-japanese-speech-the-voicevox-engine-cfn50-ttsyaml) の「Turning it on」、推論エンジンの `af-llamacpp`・`af-comfyui` は [「Optional: the fleet's own inference engines」の「Turning it on」](../../../deploy/aws/ecs/README.md#turning-it-on) の手順 3 にあります
 - 各スタックのパラメータとイメージは、[ECS の手順書](../../../deploy/aws/ecs/README.md) の索引から、EC2 スロットプール・読み上げ・推論エンジンのページにあります
 
 ## Control Plane を起動する（`30-ingress`）
