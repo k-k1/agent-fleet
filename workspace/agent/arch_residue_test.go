@@ -50,7 +50,7 @@ func outbox(t *testing.T, home string) []notice.Event {
 }
 
 func TestParseArchResidue(t *testing.T) {
-	repos, bins, pkgs := parseArchResidue("repos: demo/node_modules other/target\nbin: mytool oldbin\npkgs: pip:greenlet==3.0.3 npm:cowsay@1.6.0\n")
+	repos, bins, pkgs, scan := parseArchResidue("repos: demo/node_modules other/target\nbin: mytool oldbin\npkgs: pip:greenlet==3.0.3 npm:cowsay@1.6.0\nscan: af-arch-repair amd64 arm64\n")
 	if !reflect.DeepEqual(repos, []string{"demo/node_modules", "other/target"}) {
 		t.Fatalf("repos = %v", repos)
 	}
@@ -59,6 +59,22 @@ func TestParseArchResidue(t *testing.T) {
 	}
 	if !reflect.DeepEqual(pkgs, []string{"pip:greenlet==3.0.3", "npm:cowsay@1.6.0"}) {
 		t.Fatalf("pkgs = %v", pkgs)
+	}
+	if scan != "af-arch-repair amd64 arm64" {
+		t.Fatalf("scan = %q", scan)
+	}
+}
+
+// A pass that never finished is a give-up with nothing listed; it must still notify.
+func TestNotifyArchResidueNamesUnfinishedScan(t *testing.T) {
+	home := residueHome(t, "scan: af-arch-repair amd64 arm64\n")
+	runNotifyArchResidue([]string{""})
+	got := outbox(t, home)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(got))
+	}
+	if got[0].Payload["scan"] != "af-arch-repair amd64 arm64" {
+		t.Fatalf("payload.scan = %v", got[0].Payload["scan"])
 	}
 }
 

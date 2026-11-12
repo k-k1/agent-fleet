@@ -42,6 +42,8 @@ done
 #                           extension
 #   mv.kill                 mv kills af-arch-repair just before it records the give-up, i.e.
 #                           after the residue was written (the counter is written through mv)
+#   py.kill                 the pip scan (python3 reading arch-repair-pip) kills af-arch-repair
+#                           before it returns, so no pip list is ever written
 # On success each does what the real reinstall does to the files af-arch-repair inspects.
 cat >"$T/bin/pip" <<'S'
 #!/bin/bash
@@ -92,7 +94,20 @@ if [ -e "\${STUB_DIR:-/nonexistent}/mv.kill" ] && [ "\${dst##*/}" = arch-repair-
 fi
 exec $(command -v mv) "\$@"
 S
-chmod +x "$T/bin/pip" "$T/bin/uv" "$T/bin/npm" "$T/bin/dpkg" "$T/bin/mv"
+# The scan runs in a process substitution, so the script is an ancestor, not the parent: walk
+# up to the process running af-arch-repair and kill that one.
+cat >"$T/bin/python3" <<S
+#!/bin/bash
+if [ -e "\${STUB_DIR:-/nonexistent}/py.kill" ] && [[ "\$*" == *arch-repair-pip* ]]; then
+  p=\$PPID
+  while [ "\$p" -gt 1 ]; do
+    tr '\\0' ' ' </proc/\$p/cmdline | grep -q af-arch-repair && { kill -9 "\$p"; exit 137; }
+    p=\$(awk '/^PPid:/{print \$2}' /proc/\$p/status)
+  done
+fi
+exec $(command -v python3) "\$@"
+S
+chmod +x "$T/bin/pip" "$T/bin/uv" "$T/bin/npm" "$T/bin/dpkg" "$T/bin/mv" "$T/bin/python3"
 
 fails=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1" >&2; fails=$((fails + 1)); fi; }
@@ -251,6 +266,40 @@ start ""; start ""; start ""
 check "three reruns started" '[ "$(tries)" = "3 amd64 0" ] && [ -e "$STATE/arch-repair-change" ]'
 start ""
 check "the fourth gives up: no install, marker gone, notification written" '[ ! -s "$S/calls" ] && [ ! -e "$STATE/arch-repair-change" ] && grep -qx "pkgs: pip:greenlet==3.0.3" "$STATE/arch-residue"'
+
+echo "== the change pass is killed before its scan at every rerun: the give-up still notifies"
+new_home scan-kill
+touch "$S/py.kill"
+printf 'amd64\n' >"$STATE/arch-repair-change"
+start ""; start ""; start ""
+check "three reruns started, no list ever written" '[ "$(tries)" = "3 amd64 0" ] && [ ! -e "$STATE/arch-repair-pip" ] && [ -e "$STATE/arch-repair-change" ]'
+start ""
+check "the fourth start installs nothing" '[ ! -s "$S/calls" ]'
+check "the notification tells the member to run the scan" 'grep -qx "scan: af-arch-repair amd64 arm64" "$STATE/arch-residue"'
+check "the start log says so too" 'grep -q "WARN: .*af-arch-repair amd64 arm64 を実行してください" "$S/out" && ! summary | grep -qx "\[arch-repair\] 完了"'
+check "the marker goes only after that" '[ ! -e "$STATE/arch-repair-change" ]'
+start ""
+check "the start after that runs nothing" '[ ! -s "$S/calls" ] && ! grep -q "arch-repair" "$S/out"'
+rm -f "$S/py.kill"
+: >"$S/calls"
+HOME="$H" STUB_DIR="$S" PATH="$T/bin:$PATH" af-arch-repair amd64 arm64 >"$S/out" 2>&1
+check "a run by hand does the scan and clears the scan line" '[ "$(calls pip)" = 1 ] && ! grep -q "^scan:" "$STATE/arch-residue" 2>/dev/null'
+
+echo "== an interrupted upgrade left two versions side by side: the highest wins"
+new_home two-versions demo==1.9
+touch "$S/pip.fail" "$S/uv.fail"
+start amd64
+check "the listed versions are the old ones" 'grep -qx "demo==1.9" "$STATE/arch-repair-pip" && grep -qx "ruff==0.4.1" "$STATE/arch-repair-uv"'
+rm -f "$S/pip.fail" "$S/uv.fail"
+mkdir -p "$H/$SP_REL/demo-1.10.dist-info"
+printf 'demo/_x.cpython-311-aarch64-linux-gnu.so,,\n' >"$H/$SP_REL/demo-1.10.dist-info/RECORD"
+printf 'Name: demo\nVersion: 1.10\n\n' >"$H/$SP_REL/demo-1.10.dist-info/METADATA"
+uvsp="$H/.local/share/uv/tools/ruff/lib/python3.11/site-packages"
+mkdir -p "$uvsp/ruff-0.10.0.dist-info"
+start ""
+check "pip reinstalls 1.10, not the listed or detected 1.9" '[ "$(grep "^pip " "$S/calls")" = "pip demo==1.10" ]'
+check "and the list is cleared" '[ ! -e "$STATE/arch-repair-pip" ]'
+check "uv takes the highest of 0.4.1 and 0.10.0" '[ "$(grep "^uv " "$S/calls")" = "uv ruff==0.10.0" ]'
 
 echo "== failed installs that leave files looking installed stay pending"
 new_home partial-files

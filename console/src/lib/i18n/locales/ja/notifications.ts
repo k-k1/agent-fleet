@@ -57,6 +57,7 @@ export const notifications = {
   "notif.arch_residue.title": "自動で戻せなかったものがあります",
   "notif.arch_residue.body_generic": "CPU の系統が変わりました",
   "notif.arch_residue.speech": "CPU の系統が変わり、自動で戻せなかったものがあります。",
+  "notif.arch_residue.scan_incomplete": "変更後の確認が終わっていません。{cmd} を実行してください",
   "notif.start_deadline.title": "起動が終わらなかったためワークスペースを停止しました",
   "notif.start_deadline.body_limit": "{minutes} 分たっても起動中のままでした",
   "notif.start_deadline.body_generic": "起動中のまま時間がかかりすぎました",

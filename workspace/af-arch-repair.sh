@@ -146,6 +146,14 @@ if not mach:
     raise SystemExit(0)
 others = [m for m in ("x86_64", "aarch64") if m != mach]
 norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+def vkey(v):
+    # Highest version wins when an interrupted upgrade left two dist-infos side by side.
+    for mod in ("packaging.version", "pip._vendor.packaging.version"):
+        try:
+            return (1, __import__(mod, fromlist=["Version"]).Version(v))
+        except Exception:
+            pass
+    return (0, [(0, int(x)) if x.isdigit() else (1, x) for x in re.split(r"[.+!-]", v)])
 out, installed = {}, {}
 for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/site-packages")):
     for di in glob.glob(os.path.join(sp, "*.dist-info")):
@@ -160,7 +168,9 @@ for sp in glob.glob(os.path.join(os.path.expanduser("~"), ".local/lib/python*/si
         except OSError:
             continue
         if name and ver:
-            installed[norm(name)] = name + "==" + ver
+            k = norm(name)
+            if k not in installed or vkey(ver) > vkey(installed[k][1]):
+                installed[k] = (name, ver)
         try:
             body = open(os.path.join(di, "RECORD"), encoding="utf-8", errors="replace").read()
         except OSError:
@@ -173,10 +183,12 @@ try:
     for line in open(sys.argv[2], encoding="utf-8"):
         req = line.strip()
         if req:
-            key = norm(req.split("==")[0])
-            out.setdefault(key, installed.get(key, req))
+            out.setdefault(norm(req.split("==")[0]), req)
 except OSError:
     pass
+# Whatever is installed decides the version, at its highest; the detected or listed one is
+# used only for a package that is gone.
+out = {k: ("==".join(installed[k]) if k in installed else v) for k, v in out.items()}
 if out:
     print("\n".join(sorted(out.values())))
 PY
@@ -228,14 +240,24 @@ uv_foreign() {
 }
 uv_ver() {
   python3 - "$1" "$2" <<'PY'
-import os, sys, glob
+import os, re, sys, glob
+def vkey(v):
+    # Highest version wins when an interrupted upgrade left two dist-infos side by side.
+    for mod in ("packaging.version", "pip._vendor.packaging.version"):
+        try:
+            return (1, __import__(mod, fromlist=["Version"]).Version(v))
+        except Exception:
+            pass
+    return (0, [(0, int(x)) if x.isdigit() else (1, x) for x in re.split(r"[.+!-]", v)])
 d, tool = sys.argv[1], sys.argv[2].replace("-", "_").lower()
+vers = []
 for di in glob.glob(os.path.join(d, "lib/python*/site-packages/*.dist-info")):
     base = os.path.basename(di)[: -len(".dist-info")]
     name, _, ver = base.rpartition("-")
     if name.replace("-", "_").lower() == tool:
-        print(ver)
-        break
+        vers.append(ver)
+if vers:
+    print(max(vers, key=vkey))
 PY
 }
 if want "$UV_MANIFEST"; then
@@ -396,10 +418,12 @@ for kind in pip uv npm; do
   [ -s "$f" ] || continue
   while IFS= read -r l; do [ -n "${l// /}" ] && left+=("$kind:$l"); done < "$f"
 done
-# A change start (or its rerun) that got here no longer has to be redone; past the cap a
-# rerun gives up on that too.
-case "$MODE" in change | rerun) rm -f "$STATE/arch-repair-change" ;; esac
 retries_left=$(( MAX_RETRIES - T_STARTED ))
+# A rerun past the cap gives up on a change pass that never finished: the pip / uv scan may
+# never have run, so the lists can be empty while old-arch packages remain. That give-up has
+# to be said too — it goes into the notification as a `scan:` line with the command to run.
+scan_cmd=""
+[ "$MODE" = rerun ] && [ "$INSTALL" = 0 ] && scan_cmd="af-arch-repair ${WAS:-<was>} $NOW"
 # Only leftovers no start will retry go into the notification: a transient failure that the
 # next start fixes should not reach the member at all.
 gave_up=""
@@ -414,20 +438,27 @@ RESIDUE="$STATE/arch-residue"
 { [ -n "$stale" ] && printf 'repos: %s\n' "$stale"
   [ -n "$orphans" ] && printf 'bin:%s\n' "$orphans"
   [ -n "$gave_up" ] && printf 'pkgs: %s\n' "$gave_up"
+  [ -n "$scan_cmd" ] && printf 'scan: %s\n' "$scan_cmd"
   true
 } > "$RESIDUE.tmp.$$" 2>/dev/null || true
 if [ -s "$RESIDUE.tmp.$$" ]; then mv -f "$RESIDUE.tmp.$$" "$RESIDUE" 2>/dev/null || rm -f "$RESIDUE.tmp.$$"
 else rm -f "$RESIDUE.tmp.$$" "$RESIDUE"; fi
 
-# The counter is written last.
+# The counter and the change marker are written last. A change start (or its rerun) that got
+# here no longer has to be redone; past the cap a rerun gives up on that too, now that the
+# residue says so.
+case "$MODE" in change | rerun) rm -f "$STATE/arch-repair-change" ;; esac
 if [ "${#left[@]}" -eq 0 ]; then
   rm -f "$TRIES_FILE"
 elif [ -n "$gave_up" ]; then
   write_tries "$T_STARTED" "$WAS" 1
 fi
 
+if [ -n "$scan_cmd" ]; then
+  say "WARN: アーキテクチャが変わったあとの確認が、何度やっても最後まで終わりませんでした。自動ではもう試しません。$scan_cmd を実行してください"
+fi
 if [ "${#left[@]}" -eq 0 ]; then
-  say "完了"
+  [ -n "$scan_cmd" ] || say "完了"
 elif [ "$retries_left" -gt 0 ]; then
   say "入れ直せなかったものが残っています: ${left[*]}（次の起動で自動でもう一度試します。自動で試すのはあと $retries_left 回です）"
 else

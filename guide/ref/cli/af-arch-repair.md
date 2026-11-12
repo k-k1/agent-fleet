@@ -97,7 +97,8 @@ still to be reinstalled and whether a later start will try again:
 
 During the workspace's start this output goes to the start log, which you cannot see. What you see is the notification
 **Some things could not be restored automatically**, listing the leftover `~/repos` directories, `~/.local/bin`
-programs, and the reinstalls no start will retry any more (such as `pip:greenlet==3.0.3` or `npm:cowsay@1.6.0`). It is
+programs, and the reinstalls no start will retry any more (such as `pip:greenlet==3.0.3` or `npm:cowsay@1.6.0`), or, when
+the check after the change never finished, the command to run. It is
 raised from the file af-arch-repair writes, `~/.local/share/agent-fleet/arch-residue`, which holds the
 current leftovers and is removed when there are none. A notification already shown for the same leftovers is not
 shown again.
@@ -115,9 +116,9 @@ not change at that start.
 | What | Behaviour |
 |---|---|
 | What stays in a list | Exactly the packages whose install has not exited successfully yet. Each package is installed on its own and leaves the list only when its own install succeeds, so one that keeps failing does not hold back the others. A run that is stopped half-way keeps every package it had not finished |
-| What a retry reinstalls | Only the kinds that failed (pip, uv, npm). Every package in a list is installed again, whatever is on disk: a failed install can leave files that look installed. pip and uv are also checked again, so a package that broke since is added. The version is the one installed now when the package is present, so a package you have upgraded since keeps your version and only gets its native parts rebuilt. The listed version is used only when the package is gone |
+| What a retry reinstalls | Only the kinds that failed (pip, uv, npm). Every package in a list is installed again, whatever is on disk: a failed install can leave files that look installed. pip and uv are also checked again, so a package that broke since is added. The version is the one installed now when the package is present, the highest one when an interrupted upgrade left two side by side, so a package you have upgraded since keeps your version and only gets its native parts rebuilt. The listed version is used only when the package is gone |
 | How often | At most 3 retry starts after the one that changed architecture. A package that cannot be installed would otherwise slow down every start. A retry counts when it starts, so a start that is stopped during the reinstall counts too. A start that changed architecture and was stopped before af-arch-repair finished is redone in full at the next start, and those reruns count against the same 3 |
-| After the 3rd retry | The next start installs nothing: it names the leftovers in the notification, then records that it gave up, and no start runs af-arch-repair for them again. The lists stay: run the command in the `WARN:` line, or `af-arch-repair <was> <now>` |
+| After the 3rd retry | The next start installs nothing: it names the leftovers in the notification, then records that it gave up, and no start runs af-arch-repair for them again. When the pass after the architecture change never finished, the lists may be incomplete, so the notification also gives the command to run, `af-arch-repair <was> <now>`. The lists stay: run the command in the `WARN:` line, or `af-arch-repair <was> <now>` |
 | Run by hand | Retries everything that is broken, whatever the count. When it succeeds, the lists and the notification's leftovers are removed |
 | Python major version changed at that start | A pending pip failure is dropped, not retried: the same version may not exist for the new Python |
 

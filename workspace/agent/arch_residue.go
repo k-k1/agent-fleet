@@ -67,7 +67,7 @@ func runNotifyArchResidue(args []string) {
 	}
 	body := strings.TrimSpace(string(b))
 
-	repos, bins, pkgs := parseArchResidue(body)
+	repos, bins, pkgs, scan := parseArchResidue(body)
 	ev := notice.New("arch-residue", "", "", "")
 	// TargetType must be explicit: left empty it falls back to the CP's default (session), and
 	// the notification then points at an empty session name the Console cannot open.
@@ -76,6 +76,9 @@ func runNotifyArchResidue(args []string) {
 	ev.Payload["repos"] = repos
 	ev.Payload["bins"] = bins
 	ev.Payload["pkgs"] = pkgs
+	if scan != "" {
+		ev.Payload["scan"] = scan
+	}
 
 	// The key is the set of things currently broken — not a version, not a timestamp. That is
 	// exactly the property wanted: it changes when the residue is fixed, and only then.
@@ -90,10 +93,13 @@ func runNotifyArchResidue(args []string) {
 //	repos: demo/node_modules other/target
 //	bin: mytool
 //	pkgs: pip:greenlet==3.0.3 npm:cowsay@1.6.0
+//	scan: af-arch-repair amd64 arm64
 //
 // pkgs are reinstalls that failed and that no later start will retry (af-arch-repair caps
 // its automatic retries), so the notification is the only place the member learns of them.
-func parseArchResidue(body string) (repos, bins, pkgs []string) {
+// scan is the command to run when the pass after the change never finished within the cap:
+// what it would have found is unknown, so the member is told to run it.
+func parseArchResidue(body string) (repos, bins, pkgs []string, scan string) {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		switch {
@@ -103,6 +109,8 @@ func parseArchResidue(body string) (repos, bins, pkgs []string) {
 			bins = strings.Fields(strings.TrimPrefix(line, "bin:"))
 		case strings.HasPrefix(line, "pkgs:"):
 			pkgs = strings.Fields(strings.TrimPrefix(line, "pkgs:"))
+		case strings.HasPrefix(line, "scan:"):
+			scan = strings.TrimSpace(strings.TrimPrefix(line, "scan:"))
 		}
 	}
 	return
