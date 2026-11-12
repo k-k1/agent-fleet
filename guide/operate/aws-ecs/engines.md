@@ -139,7 +139,8 @@ The instance mirrors the bucket: `image/checkpoints/x.safetensors` becomes `/mod
 > OLD=image/sd_xl_base_1.0.safetensors NEW=image/checkpoints/sd_xl_base_1.0.safetensors
 > size() { aws s3api head-object --bucket "$BUCKET" --key "$1" --query ContentLength --output text; }
 > aws s3 cp "s3://$BUCKET/$OLD" "s3://$BUCKET/$NEW" \
->   && [ "$(size "$NEW")" = "$(size "$OLD")" ] \
+>   && new=$(size "$NEW") && old=$(size "$OLD") \
+>   && [[ "$new" =~ ^[0-9]+$ ]] && [ "$new" = "$old" ] \
 >   && aws s3 rm "s3://$BUCKET/$OLD"      # removed only after the copy succeeded and the sizes match
 > ```
 >
