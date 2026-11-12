@@ -90,6 +90,8 @@ type darkDecision struct {
 	// and the marker carries the wedged kind.
 	wedged      bool
 	stillWedged func(context.Context) bool
+	// operator marks the operator force-stop's token (marker kind `operator`).
+	operator bool
 }
 
 // lockBounded is lockHome / lockSubject with a bound on the wait only: the context of the
@@ -222,7 +224,7 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 		return m, nil, fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 
-	m = rescueMarker{Volume: volumeID, Epoch: d.launch, Phase: rescuePhasePreparing, Gen: g + 1, Began: e.now().UTC().Truncate(time.Second), Wedged: d.wedged}
+	m = rescueMarker{Volume: volumeID, Epoch: d.launch, Phase: rescuePhasePreparing, Gen: g + 1, Began: e.now().UTC().Truncate(time.Second), Wedged: d.wedged, Operator: d.operator}
 	preparing := m.String()
 	if err := e.writeRescueMarker(lctx, d.slot, m); err != nil {
 		e.dropRescueMarker(ctx, d.slot, preparing)
@@ -656,6 +658,12 @@ func (f *ecsEC2Factory) resumeRescues(ctx context.Context) {
 
 func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, cmds ssmSlotCommands, inst ec2types.Instance, raw string, m rescueMarker) {
 	id := aws.ToString(inst.InstanceId)
+	if m.Operator && time.Since(m.Began) < forceStopAdoptAfter {
+		// An operator's force-stop is in progress (or just ended): its handler owns the token,
+		// and finalizing it here would drop the fence under it. One that has aged is a crashed
+		// handler's, and falls through to be finalized, never continued.
+		return
+	}
 	// Filtered, not looked up by id: a volume that is gone answers an error by id, which
 	// would read as "could not ask".
 	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
@@ -730,6 +738,9 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 // canContinue is whether this build may carry a marker on: the action of the ladder that
 // wrote it must still be the one that acts.
 func (f *ecsEC2Factory) canContinue(m rescueMarker) bool {
+	if m.Operator {
+		return false // the operator's handler carries it; the resume scan never does
+	}
 	if m.Wedged {
 		return f.pool.wedgedAction == wedgedActionRelease
 	}

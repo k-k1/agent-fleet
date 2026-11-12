@@ -141,8 +141,8 @@ The page shows such a row with "**(not accepting tasks yet)**" and offers "**Sto
 **Update the `20-platform` stack first.** The Control Plane role needs `ssm:ListCommands`, `ssm:CancelCommand` and `ssm:DescribeInstanceInformation` (statement `SsmSlotForceStop` in `20-platform`). Without them the health check fails with AccessDenied and the action cannot run.
 
 1. Press "**Stop (force)**" on the row. The confirmation names the workspace on the slot; check it and stop
-2. The Control Plane ends the member's start on that slot (their workspace reads as stopped), cancels the commands it queued and stops the instance. A pending umount or mount is what holds the home's lock
-3. The result (commands cancelled, whether Force was used) appears on the page. The audit log records `pool.slot_force_stop` with the workspace, both health signals and the counts
+2. The Control Plane takes the same ownership of the home as the automatic rescue (the `af-rescue` marker and a Start count of its own), ends the member's start on that slot (their workspace reads as stopped), cancels the commands it queued, removes the task ENI if one is attached, and stops the instance. A pending umount or mount is what holds the home's lock
+3. The result (commands cancelled, whether Force was used) appears on the page. The audit log records `pool.slot_force_stop` with the workspace, both health signals, the predicate the slot met (`predicate=dark` or `wedged`; `-` when you overrode) and the counts
 4. Wait for the row to show "**asleep**". The member's next start wakes this same slot through the ordinary path. The reboot clears what was stuck, and the ECS agent reconnects
 
 **The slot is not quarantined, and the home stays on it.** Keeping an instance as evidence is what quarantine is for, and a slot that does not answer is never quarantined automatically.
@@ -150,15 +150,19 @@ The page shows such a row with "**(not accepting tasks yet)**" and offers "**Sto
 ### How the stop proceeds
 
 - It sends a normal shutdown first, so the kernel can unmount the home. If the instance has not stopped after 3 minutes, the Control Plane sends it again with Force. Pressing the button again while it is stopping forces it at once. A timer never acts on an instance started again since
+- For a slot that holds a home, every step runs under the rescue's ownership token and guarded section, so a member's start that arrives meanwhile wins and nothing more is done. The stop is sent, the home is **not** detached, and the marker is removed when the stop has been sent. A slot with no home has nothing to own and takes the direct path
+- If a rescue (or a wedged release) already holds the slot, the action is refused (`slot_rescue_active`) while that rescue is running. Once it shows `blocked`, or has been running for more than 10 minutes, pressing the button takes it over under its own token and carries on with the ENI check and the stop, so a stuck rescue is never a dead end
 - If ECS still has a task network interface (ENI) on the slot, the Control Plane first force-deregisters the slot's container instance and waits for the interface to go. The container instance registers again when the instance restarts
-- An instance stopped with a task ENI attached comes back with two interfaces and no automatically assigned public IPv4. On a public subnet it has no egress and its agent cannot reconnect, so the ENI goes first. A slot with no task ENI is not deregistered
+- An instance stopped with a task ENI attached comes back with two interfaces and no automatically assigned public IPv4. On a public subnet it has no egress and its agent cannot reconnect, so the ENI goes first, **also when you override**: the override replaces only the health check. A slot with no task ENI is not deregistered. Whether a restarted instance regains egress with a task ENI attached, with and without a NAT gateway, has not been measured, so the ENI-first order stays
 - The whole action is held to about 50 seconds, so the reply arrives before the 60-second ingress timeout. The ENI wait gets at most 30 of them
 
 ### When it is refused
 
 | Code | Meaning and fix |
 |---|---|
-| `slot_healthy` | The ECS agent is connected **and** SSM is online. The action is for slots that do not answer. The Console offers **Stop (force)** on a running slot whose agent is connected too, but only after you tick "I understand the agents still answer" in the confirmation, which sends the explicit `override_healthy` override. That stops a workspace running on the slot |
+| `slot_healthy` | The slot meets neither of the sweeper's predicates as of now: dark (ECS agent disconnected, SSM not online and the Agent not answering) or wedged (ECS agent connected, and a task stuck `STOPPING` or the Agent dropping its probe while ECS says `HEALTHY`). A slot still inside the boot grace meets neither. The Console offers **Stop (force)** on a running slot that is only registered too, but only after you tick "I understand the agents still answer" in the confirmation, which sends the explicit `override_healthy` override (a slot already shown as wedged does not ask for it). Whatever the row says, a `slot_healthy` or `slot_health_unknown` answer makes the confirmation show the warning and the acknowledgement, and pressing again sends the override. That stops a workspace running on the slot. A slot whose ECS agent is silent but whose SSM is online, or the reverse, is not dark by that definition and needs the override |
+| `slot_health_unknown` | A health signal (ECS, SSM, the task list or the Agent probe) could not be read, so the predicates cannot say. Retry, or override. The Console offers the override after this refusal, as it does after `slot_healthy` |
+| `slot_rescue_active` | A rescue holds the slot and is not blocked yet. Wait until it shows blocked, or for 10 minutes, then press again |
 | `slot_not_running` | The slot is already stopped |
 | `slot_quarantined` | The slot is quarantined |
 | `slot_task_eni_held` | The task ENI did not go in time. The instance keeps running. Wait a minute and press again |

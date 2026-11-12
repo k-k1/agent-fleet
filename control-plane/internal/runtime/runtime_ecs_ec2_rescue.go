@@ -76,9 +76,16 @@ type rescueMarker struct {
 	// seventh field only when set, so an older CP that meets one cannot parse it and fences
 	// the home instead of running the dark ladder on it.
 	Wedged bool
+	// Operator is set by the operator force-stop: the same token, carried by the handler
+	// that wrote it, never by the sweeper's resume scan (which leaves a young one alone and
+	// only finalizes one that has aged). Written as the seventh field like Wedged.
+	Operator bool
 }
 
-const rescueKindWedged = "wedged"
+const (
+	rescueKindWedged   = "wedged"
+	rescueKindOperator = "operator"
+)
 
 func (m rescueMarker) String() string {
 	blocked := ""
@@ -93,8 +100,11 @@ func (m rescueMarker) String() string {
 		m.Began.UTC().Format(time.RFC3339),
 		blocked,
 	}
-	if m.Wedged {
+	switch {
+	case m.Wedged:
 		fields = append(fields, rescueKindWedged)
+	case m.Operator:
+		fields = append(fields, rescueKindOperator)
 	}
 	return strings.Join(fields, "/")
 }
@@ -103,13 +113,13 @@ func (m rescueMarker) String() string {
 // may act on; releaseGate still treats it as a fence for the volume it names.
 func parseRescueMarker(v string) (rescueMarker, bool) {
 	parts := strings.Split(v, "/")
-	if (len(parts) != 6 && len(parts) != 7) || parts[0] == "" || (len(parts) == 7 && parts[6] != rescueKindWedged) {
+	if (len(parts) != 6 && len(parts) != 7) || parts[0] == "" || (len(parts) == 7 && parts[6] != rescueKindWedged && parts[6] != rescueKindOperator) {
 		return rescueMarker{}, false
 	}
 	epoch, err1 := time.Parse(time.RFC3339, parts[1])
 	began, err2 := time.Parse(time.RFC3339, parts[4])
 	gen, err3 := strconv.ParseInt(parts[3], 10, 64)
-	m := rescueMarker{Volume: parts[0], Epoch: epoch, Phase: rescuePhase(parts[2]), Gen: gen, Began: began, Wedged: len(parts) == 7}
+	m := rescueMarker{Volume: parts[0], Epoch: epoch, Phase: rescuePhase(parts[2]), Gen: gen, Began: began, Wedged: len(parts) == 7 && parts[6] == rescueKindWedged, Operator: len(parts) == 7 && parts[6] == rescueKindOperator}
 	if err1 != nil || err2 != nil || err3 != nil || gen < 0 || !m.Phase.valid() {
 		return rescueMarker{}, false
 	}

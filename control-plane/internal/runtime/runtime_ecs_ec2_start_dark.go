@@ -127,7 +127,9 @@ func (e *ecsEC2Runtime) darkAdmission(lctx context.Context, g int64, mayRescue b
 		// it did before, which overtakes it (ADR 0121 decision 3). `preparing` is no owner
 		// either: a count equal to its g_r proves nothing there (L1 review round 1).
 		m, ok := parseRescueMarker(raw)
-		if ok && m.Volume == volumeID && m.Gen == g && m.Epoch.Equal(launch) &&
+		// An operator's force-stop is not one a Start waits for: the member's Start counts itself
+		// and overtakes it, as it overtakes any operator action.
+		if ok && !m.Operator && m.Volume == volumeID && m.Gen == g && m.Epoch.Equal(launch) &&
 			m.Phase.rank() >= rescuePhaseBegun.rank() && m.Phase != rescuePhaseDetached {
 			return startAdmission{kind: admitYield, slot: slot, marker: m}, true
 		}

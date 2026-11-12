@@ -41,7 +41,13 @@ var (
 var (
 	// ErrSlotHealthy: both agents answer, so this is not a wedged slot and a workspace may
 	// be running on it. Overridable on purpose, by an operator who knows better.
-	ErrSlotHealthy = errors.New("slot is healthy (its ECS agent is connected and SSM is online)")
+	ErrSlotHealthy = errors.New("slot is neither dark nor wedged by the sweeper's predicates (its agents answer, or it has only just started)")
+	// ErrSlotHealthUnknown: a health signal could not be read, so the predicates cannot say.
+	// Overridable like ErrSlotHealthy.
+	ErrSlotHealthUnknown = errors.New("could not tell whether the slot is dark or wedged")
+	// ErrSlotRescueActive: a rescue or release of this slot's home holds its ownership token
+	// and has not failed or aged enough for an operator to take it over.
+	ErrSlotRescueActive = errors.New("a rescue of this slot is in progress; try again when it shows blocked")
 	// ErrSlotNotRunning: nothing to stop. A stopped slot with a task still STOPPING is a
 	// different job (start it once; SlotView.StoppingTask says so).
 	ErrSlotNotRunning = errors.New("slot is not running")
@@ -65,6 +71,9 @@ type SlotForceStop struct {
 	// AgentConnected / SSMOnline are the two health signals the refusal is made on.
 	AgentConnected bool `json:"agent_connected"`
 	SSMOnline      bool `json:"ssm_online"`
+	// Predicate is which shared predicate of ADR 0121 the slot met when the operator did not
+	// override: "dark" or "wedged". Empty when it was overridden or met neither.
+	Predicate string `json:"predicate,omitempty"`
 	// OverrodeHealthy: the slot looked healthy and the operator said stop it anyway.
 	OverrodeHealthy   bool `json:"overrode_healthy"`
 	CancelledCommands int  `json:"cancelled_commands"`
@@ -106,6 +115,11 @@ type SlotForceStop struct {
 //     and Force is a power cut with no unmount; a background re-stop with Force follows
 //     after slotForceStopGrace if the same stop has not finished. A slot already
 //     `stopping` (the operator pressing again) is forced at once.
+//
+// Since #3966 a slot that holds a home takes steps 1-5 on the rescue's ownership token and
+// guarded section (runtime_ecs_ec2_force_stop_owned.go): the health gate is the shared dark or
+// wedged predicate, the Start fence is the af-rescue marker and count, and the ENI stage is the
+// rescue's. The numbered steps above remain the direct path for a slot with no home.
 //
 // The slot is NOT quarantined and the home stays where it is: the member's next Start wakes
 // this same slot through the ordinary path (the home is attached, the instance is stopped).
@@ -164,23 +178,10 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	}
 	probe := f.probeRuntime()
 
-	// 1. health.
-	registered, regErr := probe.registeredSlots(ctx)
-	online, ssmErr := ssmOnline(ctx, cmds, instanceID)
-	res.AgentConnected, res.SSMOnline = registered[instanceID], online
-	if !overrideHealthy {
-		if regErr != nil || ssmErr != nil {
-			return res, fmt.Errorf("could not tell whether the slot is wedged (ECS: %v, SSM: %v); retry, or override", regErr, ssmErr)
-		}
-		if res.AgentConnected && res.SSMOnline {
-			return res, ErrSlotHealthy
-		}
-	}
-	res.OverrodeHealthy = overrideHealthy &&
-		(regErr != nil || ssmErr != nil || (res.AgentConnected && res.SSMOnline))
-
-	// 2. the occupant.
+	// The occupant first: the shared predicates need the home, and the ownership step the
+	// workspace's runtime.
 	var occupant *ecsEC2Runtime
+	var home *ec2types.Volume
 	if holder, err := probe.slotHolder(ctx, instanceID, ""); err != nil {
 		return res, fmt.Errorf("find the home on %s: %w", instanceID, err)
 	} else if holder != "" {
@@ -189,12 +190,26 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 			return res, fmt.Errorf("read the home %s: %w", holder, err)
 		}
 		if len(vols.Volumes) > 0 {
-			res.Workspace = ec2TagValue(vols.Volumes[0].Tags, EC2TagWorkspace)
-			occupant = f.runtimeForVolume(&vols.Volumes[0])
+			home = &vols.Volumes[0]
+			res.Workspace = ec2TagValue(home.Tags, EC2TagWorkspace)
+			occupant = f.rescueRuntime(home)
 		}
 	}
-	log.Printf("ecs-ec2: FORCE-STOPPING slot %s (state %s, ecs agent=%v, ssm online=%v, healthy override=%v, occupant %q)",
-		instanceID, res.PreviousState, res.AgentConnected, res.SSMOnline, res.OverrodeHealthy, res.Workspace)
+
+	// 1. health: the dark or the wedged predicate of ADR 0121, or the operator's word.
+	if err := f.forceStopHealth(ctx, cmds, probe, inst, home, overrideHealthy, &res); err != nil {
+		return res, err
+	}
+	log.Printf("ecs-ec2: FORCE-STOPPING slot %s (state %s, ecs agent=%v, ssm online=%v, predicate %q, healthy override=%v, occupant %q)",
+		instanceID, res.PreviousState, res.AgentConnected, res.SSMOnline, res.Predicate, res.OverrodeHealthy, res.Workspace)
+
+	// A slot with a home runs on the rescue's ownership and guarded steps (ADR 0121 decision 4);
+	// one without has no home to own and keeps the direct path.
+	if occupant != nil && (inst.State.Name == ec2types.InstanceStateNameRunning || ec2TagValue(inst.Tags, ec2TagRescue) != "") {
+		return f.forceStopOwned(ctx, bgCtx, started, cmds, inst, home, occupant, res)
+	}
+
+	// 2. the occupant.
 	// owned runs the destructive calls (deregister, stop) only while no Start has been
 	// accepted since the occupant's was ended, with the check and the call under the same
 	// lock a Start's count bump takes. Nobody to fence (a slot without a home) runs them

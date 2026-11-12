@@ -85,7 +85,7 @@ const (
 func darkView(inst ec2types.Instance) (since, rung string) {
 	// A marker speaks for the box in any state: a rescued box is stopped, and the rung says
 	// how far the rescue got.
-	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && !m.Wedged {
+	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && !m.Wedged && !m.Operator {
 		rung = darkRungRescuing
 		switch {
 		case m.Phase == rescuePhaseDetached:

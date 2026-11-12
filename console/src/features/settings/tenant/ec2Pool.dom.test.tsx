@@ -12,13 +12,17 @@ import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
 const apiJSON = vi.fn();
-vi.mock("../../../core/api/client.ts", () => ({
-  api: (...args: unknown[]) => api(...args),
-  apiJSON: (...args: unknown[]) => apiJSON(...args),
-  rawJSON: () => Promise.resolve(new Response("")),
-  errText: (e: { message?: string }) => e?.message || "",
-  rel: (p: string) => p,
-}));
+vi.mock("../../../core/api/client.ts", async () => {
+  const { tMaybe } = await import("../../../lib/i18n/index.ts");
+  return {
+    api: (...args: unknown[]) => api(...args),
+    apiJSON: (...args: unknown[]) => apiJSON(...args),
+    rawJSON: () => Promise.resolve(new Response("")),
+    // The real errText: the catalogue line for a code, else the server's message.
+    errText: (e: { code?: string; message?: string }) => (e?.code ? tMaybe("err." + e.code) : undefined) ?? e?.message ?? "",
+    rel: (p: string) => p,
+  };
+});
 
 import { PoolView } from "./ec2Pool.tsx";
 
@@ -537,6 +541,22 @@ describe("replacement reservations", () => {
       expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-hot/force-stop", "POST", { override_healthy: true });
     });
 
+    // The server's gate is the sweeper's predicates: a registered slot already seen wedged needs
+    // no override, so the dialog must not ask for one.
+    it("on a registered slot that is seen wedged, shows no acknowledgement and sends no override", async () => {
+      api.mockResolvedValue({
+        ...WEDGED,
+        slots: WEDGED.slots.map((s) => (s.instance_id === "i-hot" ? { ...s, wedged_since: new Date(Date.now() - 12 * 60000).toISOString(), wedged_rung: "observing" } : s)),
+      });
+      apiJSON.mockResolvedValue({ instance_id: "i-hot", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-hot")).find((b) => b.textContent === "停止（強制）")!.click());
+      expect(document.querySelector(".confirm input[type=checkbox]")).toBeNull();
+      const a = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => a[a.length - 1].click());
+      expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-hot/force-stop", "POST", {});
+    });
+
     it("on an unregistered slot, shows no acknowledgement and sends no override", async () => {
       api.mockResolvedValue(WEDGED);
       apiJSON.mockResolvedValue({ instance_id: "i-wedge", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });
@@ -587,7 +607,54 @@ describe("replacement reservations", () => {
       await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
       const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
       await act(async () => actions[actions.length - 1].click());
-      expect(document.querySelector(".confirm")?.textContent).toContain("slot is healthy");
+      // Localized, not the server's English sentence.
+      expect(document.querySelector(".confirm")?.textContent).toContain("dark でも wedged でもありません");
+    });
+
+    // #3966: the server's gate is the sweeper's predicates, which a row cannot show. A refusal on
+    // health always offers the explicit override from the dialog itself.
+    for (const [name, code, slotRow] of [
+      ["an unregistered slot whose SSM is online", "slot_healthy", { instance_id: "i-ssm", state: "running", registered: false, workspace: "af-ws-acme-gina" }],
+      ["a slot still inside the boot grace", "slot_healthy", { instance_id: "i-boot", state: "running", registered: false, workspace: "af-ws-acme-hana" }],
+      ["a slot whose health could not be read", "slot_health_unknown", { instance_id: "i-unk", state: "running", registered: false, workspace: "af-ws-acme-ivy" }],
+      ["a registered slot with a stale wedged badge", "slot_healthy", { instance_id: "i-old", state: "running", registered: true, workspace: "af-ws-acme-jun", wedged_since: new Date(Date.now() - 90 * 60000).toISOString(), wedged_rung: "observing" }],
+    ] as const) {
+      it(`offers the override after a health refusal on ${name}`, async () => {
+        const row = { instance_type: "m7i.large", az: "ap-northeast-1a", idle_minutes: 0, ...slotRow };
+        api.mockResolvedValue({ ...POOL, slots: [...POOL.slots, row] });
+        apiJSON.mockResolvedValueOnce({ error: { code, message: "refused" } });
+        apiJSON.mockResolvedValueOnce({ instance_id: row.instance_id, cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });
+        await mount();
+        await act(async () => buttonsIn(rowOf(row.instance_id)).find((b) => b.textContent === "停止（強制）")!.click());
+        expect(document.querySelector(".confirm input[type=checkbox]")).toBeNull(); // first press: no override
+        const confirm = () => {
+          const a = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+          return a[a.length - 1];
+        };
+        await act(async () => confirm().click());
+        expect(apiJSON).toHaveBeenLastCalledWith("api/admin/ec2-pool/slots/" + row.instance_id + "/force-stop", "POST", {});
+        const dlg = document.querySelector(".confirm")!;
+        expect(dlg.querySelector("input[type=checkbox]")).not.toBeNull();
+        expect(dlg.textContent).toContain("予告なく");
+        expect(confirm().disabled).toBe(true);
+        await act(async () => dlg.querySelector<HTMLInputElement>("input[type=checkbox]")!.click());
+        expect(confirm().disabled).toBe(false);
+        await act(async () => confirm().click());
+        expect(apiJSON).toHaveBeenLastCalledWith("api/admin/ec2-pool/slots/" + row.instance_id + "/force-stop", "POST", { override_healthy: true });
+      });
+    }
+
+    it("says in Japanese what to do while a rescue holds the slot", async () => {
+      api.mockResolvedValue(WEDGED);
+      apiJSON.mockResolvedValue({ error: { code: "slot_rescue_active", message: "a rescue of this slot is in progress" } });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
+      const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => actions[actions.length - 1].click());
+      const text = document.querySelector(".confirm")?.textContent ?? "";
+      expect(text).toContain("10 分");
+      expect(text).not.toContain("a rescue of this slot");
+      expect(document.querySelector(".confirm input[type=checkbox]")).toBeNull(); // not a health refusal
     });
   });
 
