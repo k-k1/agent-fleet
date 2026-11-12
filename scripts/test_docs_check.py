@@ -1059,11 +1059,17 @@ class ConsoleGuideTests(unittest.TestCase):
         out = self.errors(
             '"a": "See guide/admin/access/oauth-apps.md.",\n'
             '"b": "(user/files/terminal.ja.md)",\n'
-            '"c": "a/b.md becomes a--b, docs/log/28-i18n.md",\n',
+            '"c": "a/b.md becomes a--b, docs/log/28-i18n.md",\n'
+            '"d": "トップは guide/README.ja.md です",\n'
+            '"e": "参照guide/admin/access/oauth-apps.ja.mdを見る",\n'
+            '"f": "（admin/access/oauth-apps.ja.md）",\n',
             name="lib/i18n/locales/en/admin.ts")
         self.assertIn("en/admin.ts:1: 'guide/admin/access/oauth-apps.md' names a guide page", out)
         self.assertIn("en/admin.ts:2: 'user/files/terminal.ja.md' names a guide page", out)
         self.assertNotIn(":3:", out)
+        self.assertIn("en/admin.ts:4: 'guide/README.ja.md' names a guide page", out)
+        self.assertIn("en/admin.ts:5: 'guide/admin/access/oauth-apps.ja.md' names a guide page", out)
+        self.assertIn("en/admin.ts:6: 'admin/access/oauth-apps.ja.md' names a guide page", out)
 
     def test_test_files_are_skipped(self):
         self.assertEqual(self.errors('guideUrl("user/nope");\n', name="menu.test.ts"), "")

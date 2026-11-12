@@ -2072,7 +2072,11 @@ CONSOLE_GUIDE_FIELD_RE = re.compile(r"[\"']?\b(en|ja)[\"']?\s*:\s*" + _Q + r"([^
 
 # A guide page written into a Console string as a file path ("guide/admin/x.md", "user/y.ja.md"):
 # the reader has no such file, so a string names the page and the component links it.
-CONSOLE_GUIDE_PATH_RE = re.compile(r"(?<![\w./-])(?:guide/)?(?:user|admin|ref|operate)/[\w./-]+?\.md\b")
+# The edges are ASCII-only on purpose: Python's \w includes CJK, and a Japanese string glues a
+# path straight onto its text ("参照guide/README.ja.md").
+CONSOLE_GUIDE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])(?:guide/[A-Za-z0-9_./-]*?|(?:user|admin|ref|operate)/[A-Za-z0-9_./-]+?)\.md(?![A-Za-z0-9_])"
+)
 
 
 def check_console_guide(f: Findings) -> None:
