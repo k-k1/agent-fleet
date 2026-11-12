@@ -124,7 +124,7 @@ func (f *ecsEC2Factory) rescueDarkSlot(ctx context.Context, d darkDecision) {
 		return
 	}
 	log.Printf("ecs-ec2 sweep: rescuing %s from the dark slot %s (marker %s)", rt.base.name, d.slot, m)
-	f.rescueContinue(ctx, rt, cmds, d.slot, m, ids)
+	rt.rescueContinue(ctx, cmds, d.slot, m, ids)
 }
 
 // rescueRuntime is the runtime the rescue acts through; its waits use the factory's sleeper
@@ -390,45 +390,52 @@ func listSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID
 // rescueContinue runs what follows the preparation: cancel exactly the fixed set with no
 // lock held, prove the rescue still owns the home, then the steps of decision 2 (steps 4-6,
 // rescueSteps). The outcome decides the audit event and what is left on the box.
-func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, cmds ssmSlotCommands, slot string, m rescueMarker, ids []string) {
+func (e *ecsEC2Runtime) rescueContinue(ctx context.Context, cmds ssmSlotCommands, slot string, m rescueMarker, ids []string) {
 	if err := rescueStep(ctx, "before-cancel"); err != nil {
 		return
 	}
 	cancelled, failed := cancelCommandIDs(ctx, cmds, slot, ids)
 	if cancelled+failed > 0 {
-		log.Printf("ecs-ec2 sweep: rescue of %s: cancelled %d pending commands on %s (%d failed)", rt.base.name, cancelled, slot, failed)
+		log.Printf("ecs-ec2 sweep: rescue of %s: cancelled %d pending commands on %s (%d failed)", e.base.name, cancelled, slot, failed)
 	}
 	if err := rescueStep(ctx, "cancelled"); err != nil {
 		return
 	}
-	err := rt.rescueGuarded(ctx, &m, slot, func(ctx context.Context) error {
+	err := e.rescueGuarded(ctx, &m, slot, func(ctx context.Context) error {
 		return rescueStep(ctx, "guarded")
 	})
 	blockedBefore := m.BlockedSince
 	if err == nil {
-		err = rt.rescueSteps(ctx, slot, &m)
+		err = e.rescueSteps(ctx, slot, &m)
 	}
-	ev := SlotDark{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: rt.base.name, MembershipID: rt.base.membershipID}
+	ev := SlotDark{Slot: slot, Volume: m.Volume, Since: m.Began, Workspace: e.base.name, MembershipID: e.base.membershipID}
 	switch {
 	case err == nil:
-		log.Printf("ecs-ec2 sweep: rescued %s from the dark slot %s: the instance is stopped and the home detached", rt.base.name, slot)
-		rt.finalizeRescue(ctx, slot, m.String(), m)
-		f.reportRescue(ctx, ev, "rescued")
+		log.Printf("ecs-ec2 sweep: rescued %s from the dark slot %s: the instance is stopped and the home detached", e.base.name, slot)
+		e.finalizeRescue(ctx, slot, m.String(), m)
+		e.reportRescue(ctx, ev, "rescued")
 	case errors.Is(err, errRescueBlocked):
-		log.Printf("ecs-ec2 sweep: rescue of %s on %s is blocked (phase %s): %v", rt.base.name, slot, m.Phase, err)
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s is blocked (phase %s): %v", e.base.name, slot, m.Phase, err)
 		if blockedBefore.IsZero() || !blockedBefore.Equal(m.BlockedSince) {
-			f.reportRescue(ctx, ev, "blocked")
+			e.reportRescue(ctx, ev, "blocked")
 		}
 	case errors.Is(err, errRescueOvertaken):
-		log.Printf("ecs-ec2 sweep: rescue of %s on %s overtaken: %v", rt.base.name, slot, err)
-		rt.finalizeRescue(ctx, slot, m.String(), m)
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s overtaken: %v", e.base.name, slot, err)
+		e.finalizeRescue(ctx, slot, m.String(), m)
 	case errors.Is(err, errRescueCrash):
 	default:
-		log.Printf("ecs-ec2 sweep: rescue of %s on %s stopped for this pass: %v", rt.base.name, slot, err)
+		log.Printf("ecs-ec2 sweep: rescue of %s on %s stopped for this pass: %v", e.base.name, slot, err)
 	}
 }
 
 // reportRescue hands a rescue event to the audit callback. Nothing here can fail the rescue.
+func (e *ecsEC2Runtime) reportRescue(ctx context.Context, ev SlotDark, action string) {
+	ev.Action = action
+	if e.onSlotDark != nil {
+		e.onSlotDark(ctx, ev)
+	}
+}
+
 func (f *ecsEC2Factory) reportRescue(ctx context.Context, ev SlotDark, action string) {
 	ev.Action = action
 	if f.onSlotDark != nil {
@@ -684,7 +691,7 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 		return
 	}
 	log.Printf("ecs-ec2 sweep: resuming the rescue of %s on %s (phase %s)", rt.base.name, id, m.Phase)
-	f.rescueContinue(ctx, rt, cmds, id, m, ids)
+	rt.rescueContinue(ctx, cmds, id, m, ids)
 }
 
 // rescueMarkedInstances lists the boxes of this pool that carry a marker, in any live state.

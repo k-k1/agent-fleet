@@ -58,6 +58,9 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 		return "starting"
 	}
 	if attachedInstance(vol) == "" {
+		// A Start that yielded to a dark-slot rescue left its line up; the home is off the
+		// box now and nothing is waited for.
+		e.clearDarkRescuePhase()
 		return "stopped"
 	}
 	// Taken BEFORE the service is read: the diagnosis below can wait on several AWS calls,
@@ -299,11 +302,38 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 	}
 	// Mark that a Start has begun, so a teardown still draining from the Stop that the
 	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
-	// workspace's home out from under it.
-	gen, err := e.beginStart(ctx)
-	if err != nil {
-		return err
+	// workspace's home out from under it. Where the home sits on a dark slot (rescue mode),
+	// the count is not moved here: the Start hands over to the rescue instead (admitStart).
+	for try := 0; ; try++ {
+		adm, err := e.admitStart(ctx, try < darkAdmitTries)
+		if err != nil {
+			return err
+		}
+		switch adm.kind {
+		case admitYield:
+			e.yieldToRescue(ctx, adm.slot, adm.marker, nil, nil)
+			return nil
+		case admitRescue:
+			cmds, _ := e.ssmc.(ssmSlotCommands)
+			if darkStartHook != nil {
+				darkStartHook()
+			}
+			m, ids, err := e.rescuePrepare(ctx, cmds, adm.decision)
+			if errors.Is(err, errRescueStepAside) {
+				continue // somebody acted since the decision: decide again on what is there now
+			}
+			if err != nil {
+				return fmt.Errorf("the slot %s holding %s is dark and its rescue could not be started: %w", adm.slot, e.base.name, err)
+			}
+			e.yieldToRescue(ctx, adm.slot, m, cmds, ids)
+			return nil
+		}
+		return e.startFrom(ctx, adm.gen)
 	}
+}
+
+// startFrom is a Start that has been counted (gen): prepare, place, and launch.
+func (e *ecsEC2Runtime) startFrom(ctx context.Context, gen int64) error {
 	e.setPhase("preparing")
 	prep, err := e.prepare(ctx)
 	if err != nil {
