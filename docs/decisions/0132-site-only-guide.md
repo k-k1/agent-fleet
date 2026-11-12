@@ -2,7 +2,8 @@
 
 English | [日本語](0132-site-only-guide.ja.md)
 
-- Status: **proposed** (2026-11-07). The user chose this; it is carried out in phases after the site is live.
+- Status: **accepted** (2026-11-12; proposed 2026-11-07). The user chose this; it is carried out in phases now that
+  the site is live, and the shipped copy stays until the user decides otherwise (see the addenda).
   Follow-ups: #3463.
 - Amends: [0064](0064-docs-three-audiences.md) (the "Shipped: into every container" column for `guide/`) /
   [0131](0131-public-docs-site.md) §2 (the Console's user guide and the agents' knowledge reading the shipped files)
@@ -73,3 +74,18 @@ to stay readable inside a workspace in every release until then.
 - **The site's `/docs/` is not published from `main` until the user says it is ready.** Previews show the work in
   progress; the old layout is never published.
 - Decision 1 (the Console's Guide menu opens the site) waits for the site to be published.
+
+## Addendum (2026-11-12) — accepted; decisions 1 and 4 now, decision 2 only on the user's word
+
+The site is live at `https://agent-fleet.org/docs/` and shows the latest release, so the record is accepted with the
+first addendum as its reading.
+
+- **Decisions 1 and 4 are carried out now.** The Console's Guide menu opens the site (decision 1). The fleet policy,
+  the topic notes, the assistant's knowledge and the Go strings that send someone to the guide give the site URL
+  (decision 4). The policy keeps one fallback line: when the site cannot be reached, the same pages are under
+  `/usr/local/share/agent-fleet/docs` as `<page>.md`.
+- **`docs-check.py` checks the URLs.** Its `site` check maps each `https://agent-fleet.org/docs/` URL in those files
+  back to a page in `guide/` and its anchor to a heading, and fails on a path that is only in `guide/_redirects.tsv`.
+  Its `notes` check fails on a guide page named by its path in the container, outside that fallback line.
+- **Decision 2 (removing the shipped copy) is the last step, and it happens only when the user decides it.** It may
+  never happen. Until then the Control Plane image, the docs bridge and the mounts stay as they are.

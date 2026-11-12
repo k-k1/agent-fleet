@@ -156,7 +156,7 @@ work you could simply do.
   so its PR's notices go to the session that started it (the watch then belongs to the parent);
   a parent running an issue round can ask its children to do that instead of polling their PRs.
   The PR is still polled: a notice can come a minute or more after the event, or sooner where
-  the tenant has set up webhooks (guide: `user/fleet/pr-feedback.md`).
+  the tenant has set up webhooks (guide: https://agent-fleet.org/docs/user/fleet/pr-feedback/).
   - **CI runs not tied to a PR (GitHub Actions, Bitbucket Pipelines)**: `types: [ci.run.completed |
     ci.run.failed]` (or `ci.run.*`) on both providers; the old `github.workflow_run.*` names are
     aliases. GitHub Actions: `ref` a run URL (`https://github.com/o/r/actions/runs/<id>`,

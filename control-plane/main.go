@@ -340,7 +340,7 @@ func main() {
 	if cookiePurposeKeys {
 		log.Print("cookies: per-purpose keys on")
 	} else {
-		log.Print("cookies: single-key format (AF_COOKIE_PURPOSE_KEYS=0 opt-out; it goes away in a later release, guide/operate/secure/deployment-keys.md)")
+		log.Print("cookies: single-key format (AF_COOKIE_PURPOSE_KEYS=0 opt-out; it goes away in a later release, https://agent-fleet.org/docs/operate/secure/deployment-keys/)")
 	}
 	// Internal git provider: the clone host workspaces authenticate against is the
 	// public base's host (Caddy TLS terminus). Recorded on the manager so each
