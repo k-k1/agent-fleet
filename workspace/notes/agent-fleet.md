@@ -177,7 +177,10 @@ work you could simply do.
     `watch {source: fleet, ref: <session name from list_child_sessions / list_peer_sessions>,
     types: [fleet.session.idle]}` tells you when that session ends its next turn (one notice per
     turn end; a turn that ended before the watch does not count, so watch right after you message
-    it). `fleet.session.stopped` and `fleet.quota.reopened` are the other types. It fires even if
+    it). `fleet.session.stopped` and `fleet.quota.reopened` are the other types. For the hook-less
+    kinds (agy, copilot, cursor, kiro) the turn end is read from a poll and is best effort: an idle left
+    over from the previous turn that outlasts ~10 s after your message can give an early notice or
+    miss the real one, so check the child's state (`get_session_status`) after the notice. It fires even if
     the child also reports back, so `unwatch` once the report has arrived. Never yourself.
   - **The member's own sources: `source: ext.<name>`**, for anything else, such as a CI that
     reports nowhere on the PR or a deploy. It works only when the member has an MCP server marked

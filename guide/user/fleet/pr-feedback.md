@@ -123,6 +123,7 @@ An agent can wait for another session of the workspace instead of setting a time
 
 - **Idle means what the session list shows.** A session waiting on a question, a plan or a permission is not idle
 - **The turn that ended before the watch does not count.** A session that is idle when the watch is made is told on its next turn end, so a parent can message a child and watch it in either order without being told about the turn before the message. A child that will never run another turn is not told; read its state with `list_child_sessions`
+- **Best effort for agy, copilot, cursor and kiro.** These have no end-of-turn hook, so the end is read from a poll of the agent's own state. Just after a new message the state can still show the previous turn's idle; the workspace ignores an idle within 10 seconds of the turn starting, but one that lasts longer can be taken for the new turn's end, which gives an early notice or misses the real one. A notice can also come a poll later than the end. The agent should check the session's state after a notice before acting on it.
 - **A report and the notice are separate.** `fleet.session.idle` fires whether or not the child also sent its report back, because the case it exists for is a child that ended its turn without one. A parent that already has the report ends the watch with `unwatch`
 - A deleted session ends the watch with a notice. The notice names the session and its state only; nothing the session wrote is in it
 
