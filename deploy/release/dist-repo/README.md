@@ -89,13 +89,15 @@ Main features:
   control plane fires them on a wall-clock (cron / interval / one-off, timezone-
   and DST-aware), **waking a stopped workspace**, running the prompt, and
   reporting back, so timed work happens even while nobody is watching. Reuse a
-  long-lived session to build up context across runs, or start fresh each time;
+  long-lived session to build up context across runs, or start fresh each time,
+  optionally only when a saved work item query turns up something new;
   browse the schedule list and per-run history (with the session each run drove)
   from the left rail.
 - **Chat bridge (Discord / Slack)**: connect a bot from the Console (guided,
   token-paste wizard) and each session gets its own thread: replies ready,
   questions, plan approvals, permission requests, abnormal exits and completion
-  reports arrive there. Reply in the thread to steer the session, answer
+  reports arrive there. Reply in the thread to steer the session (`!start` a new
+  one, or `!attach` the thread to another), answer
   questions and approve plans with buttons, or @mention the fleet operator to
   drive the whole fleet from chat. Destructive actions triggered from chat
   stop at an approve/deny gate first. An opt-in full-text mode posts the

@@ -12,6 +12,41 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.44.0](0.44.0.ja.md) — 2026-11-12
+
+**CLI ピン** — Claude Code 2.1.322 / Codex 0.167.1 / Copilot 1.0.109 / OpenCode 2.2.7 / Muse Code 1.4.15-R8339.1
+
+**New / Improved**
+
+- **[スケジュール]** ゲート付きのスケジュール: 保存した作業項目クエリの結果が変わったときだけ動かす（発火の上限つき） ([#1763](https://github.com/k-k1/agent-fleet/issues/1763), [#3809](https://github.com/k-k1/agent-fleet/issues/3809))
+- **[チャットブリッジ]** Discord・Slack から `!start` で新しいセッション、`!attach` でスレッドを別のセッションへ ([#1566](https://github.com/k-k1/agent-fleet/issues/1566))
+- **[ウォッチ]** Bitbucket Pipelines の実行と次の実行。2 つの CI で共通の `ci.run.*` ([#3875](https://github.com/k-k1/agent-fleet/issues/3875))
+- **[設定/マシン]** 動いていない作業コピーのビルド成果物を消す ([#3800](https://github.com/k-k1/agent-fleet/issues/3800))
+- **[設定/マシン]** 自分で作った古い `~/.af-work` のフォルダを、日数で 1 つずつ消す ([#3881](https://github.com/k-k1/agent-fleet/issues/3881))
+- **[設定/マシン]** `~/repos` のどのラッパーも使っていない Gradle のバージョンをツールのキャッシュの行に ([#3202](https://github.com/k-k1/agent-fleet/issues/3202))
+- **[メモリ]** Muse Code 自身のメモリをスナップショットに残し、エージェントメモリのスイッチで取り込む ([#3860](https://github.com/k-k1/agent-fleet/issues/3860), [#3858](https://github.com/k-k1/agent-fleet/issues/3858))
+- **[メモリ]** 自動整理がメモリの退役を提案（課題・PR の状態を確認） ([#3788](https://github.com/k-k1/agent-fleet/issues/3788))
+- **[メモリ]** lint の自動マーク: アイドルの間に `af-memory lint --apply`、既定はオフ ([#3767](https://github.com/k-k1/agent-fleet/issues/3767))
+- **[メモリ]** エージェントメモリのスイッチの説明を実際の動きに。エージェント自身のメモリの呼び方を 1 つに ([#3856](https://github.com/k-k1/agent-fleet/issues/3856), [#3857](https://github.com/k-k1/agent-fleet/issues/3857))
+- **[外観]** このブラウザだけの「**文字のコントラスト**」（標準・強め・最強） ([#3786](https://github.com/k-k1/agent-fleet/issues/3786))
+- **[ecs-ec2]** 応答しないスロットを監査記録と `af-dark-since` タグで知らせる（検知のみ） ([#2450](https://github.com/k-k1/agent-fleet/issues/2450))
+- **[起動導線]** ホームでの起動も「作業を始める」ダイアログで ([#3785](https://github.com/k-k1/agent-fleet/issues/3785))
+- **[使用量]** 再起動のあとでもセッションの使用量が時間内に返る ([#3885](https://github.com/k-k1/agent-fleet/issues/3885))
+- **[Console]** アーカイブした日の表示、一部だけの費用の月の表記、サインアウトしても残る左ペインの折りたたみ ([#3874](https://github.com/k-k1/agent-fleet/issues/3874), [#3843](https://github.com/k-k1/agent-fleet/issues/3843), [#3787](https://github.com/k-k1/agent-fleet/issues/3787))
+- **[ECS]** `update.sh` は任意のスタック（50-tts・60-engines）が失敗しても続け、0 以外で終わる ([#3555](https://github.com/k-k1/agent-fleet/issues/3555))
+- **[ECS]** `30-ingress` がインラインの上限を超えられるように（超えたら S3 経由でデプロイ） ([#3550](https://github.com/k-k1/agent-fleet/issues/3550))
+
+**Fixed**
+
+- **[AWS]** aws-cli 2.36 で Console の AWS サインインが「starting」のまま。リンクが出ないログインは 1 分で失敗 ([#3837](https://github.com/k-k1/agent-fleet/issues/3837), [#3839](https://github.com/k-k1/agent-fleet/issues/3839))
+- **[プレビュー]** ロードバランサーの後ろで、1 分無通信のブラウザペインが切れる ([#3842](https://github.com/k-k1/agent-fleet/issues/3842))
+- **[bitbucket]** 2 つのプロセスが同時にトークンを更新すると接続が壊れる ([#3736](https://github.com/k-k1/agent-fleet/issues/3736))
+- **[ウォッチ]** 消えた PR のウォッチがポーリングを続ける。新しい 20 件の後ろの実行をワークフローのウォッチが見落とす ([#3780](https://github.com/k-k1/agent-fleet/issues/3780))
+- **[MCP]** MCP のフォームの「ウォッチのソース」がテナントのスイッチに従わない ([#3844](https://github.com/k-k1/agent-fleet/issues/3844), [#3865](https://github.com/k-k1/agent-fleet/issues/3865))
+- **[作業項目]** 覚えた Jira のリポジトリが別のタブの保存で失われ、忘れさせられない ([#3775](https://github.com/k-k1/agent-fleet/issues/3775))
+- **[セキュリティ]** `AF_ROUTE_ISSUE_TOKEN` がタスク定義の環境変数に平文で書かれていた ([#3452](https://github.com/k-k1/agent-fleet/issues/3452))
+
+---
 ## [0.43.0](0.43.0.ja.md) — 2026-11-10
 
 **CLI ピン** — Claude Code 2.1.321 / Copilot 1.0.108 / rtk 1.2.0

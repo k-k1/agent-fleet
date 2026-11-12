@@ -105,6 +105,17 @@ With **Stop when done** on, the session stops when the run is done. Asking the o
 - A session woken at an hour nobody is watching does not keep holding memory afterwards
 - When the workspace itself stops does not change: a session that has finished its work already does not hold off the idle auto-stop
 
+## Run only when a work item query has something new
+
+A schedule that would otherwise wake an agent just to find nothing (for example "pick up any issue labelled `agent`") can be **gated** on one of your saved work item queries. In **Details / edit**, turn on **Run only when a saved query has a new result** under **Gate**.
+
+- On each due tick the query is checked first. A session starts only when the query matches something and the result differs from the one the gate last fired on
+- **Fires again when** chooses what counts as different: **the set of items changes**, or **the set changes or an item is updated**. Changing the query or this choice forgets what the gate last fired on
+- **Fires per day (max)** and **Gap between fires (min, seconds)** hold back a result that keeps changing. Blank means the defaults (2 per day, 6 hours)
+- A stopped workspace is not woken to check, and a check that fails does not start a session. **Run now** ignores the gate
+- The line under the gate shows when it was last checked and what it decided. A failed check shows **Gate check failed** in the run history and is notified once
+- A gate needs a recurring schedule (cron or interval) that starts a new session each time. The query has to be one of your own **Saved queries** under the left rail's **Issue tracker** ([Connect an issue tracker](../integrations/issue-tracker.md))
+
 ## When it goes wrong
 
 ### It did not run at the set time

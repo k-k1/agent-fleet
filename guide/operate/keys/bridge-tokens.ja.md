@@ -29,7 +29,7 @@ source_of_truth: "`control-plane/bridge_epoch.go`、`control-plane/bridge_epoch_
 
 ワークスペースへは、ECS では SSM SecureString、docker では権限 0600 の env ファイル、Kubernetes では Secret で渡します。タスク定義の `environment` には入れません。
 
-ブリッジトークンにはメンバーシップの **epoch** が入っていて、今の epoch のトークンだけが通ります。入れ替えとは、この epoch を進めることです。
+ブリッジトークンにはメンバーシップの **epoch** が入っていて、今の epoch のトークンだけが通ります。入れ替えとは、この epoch を進めることです。デプロイが提供する Bedrock ルートをオンにしている（`AF_PROVIDED_ROUTES=1`）と、ルート発行用のトークン `AF_ROUTE_ISSUE_TOKEN` も 0.44.0 から同じ経路で渡し、同じ epoch に結び付くので、入れ替えで一緒に無効になります。
 
 ## 1 人分を入れ替える
 

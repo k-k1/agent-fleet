@@ -13,6 +13,41 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.44.0](0.44.0.md) — 2026-11-12
+
+**CLI pins** — Claude Code 2.1.322, Codex 0.167.1, Copilot 1.0.109, OpenCode 2.2.7, Muse Code 1.4.15-R8339.1
+
+**New / Improved**
+
+- **[schedules]** Gated schedules: run only when a saved work item query has a changed result, with fire caps ([#1763](https://github.com/k-k1/agent-fleet/issues/1763), [#3809](https://github.com/k-k1/agent-fleet/issues/3809))
+- **[chat bridge]** `!start` a new session and `!attach` a thread to another session from Discord or Slack ([#1566](https://github.com/k-k1/agent-fleet/issues/1566))
+- **[watch]** Bitbucket Pipelines runs and next runs; shared `ci.run.*` types for both CI sources ([#3875](https://github.com/k-k1/agent-fleet/issues/3875))
+- **[settings › machine]** Drop build output from dormant working copies ([#3800](https://github.com/k-k1/agent-fleet/issues/3800))
+- **[settings › machine]** Delete old self-made `~/.af-work` folders one by one, by age ([#3881](https://github.com/k-k1/agent-fleet/issues/3881))
+- **[settings › machine]** Gradle tool-cache rows for versions no wrapper under `~/repos` pins ([#3202](https://github.com/k-k1/agent-fleet/issues/3202))
+- **[memory]** Muse Code's own memory in snapshots, and imported on the Agent memory switch ([#3860](https://github.com/k-k1/agent-fleet/issues/3860), [#3858](https://github.com/k-k1/agent-fleet/issues/3858))
+- **[memory]** Tidy-up can propose retiring a memory, with issue/PR state checked ([#3788](https://github.com/k-k1/agent-fleet/issues/3788))
+- **[memory]** Automatic lint marks: `af-memory lint --apply` while idle, off by default ([#3767](https://github.com/k-k1/agent-fleet/issues/3767))
+- **[memory]** Agent memory switch note says what it does; one name for the agent's own memory ([#3856](https://github.com/k-k1/agent-fleet/issues/3856), [#3857](https://github.com/k-k1/agent-fleet/issues/3857))
+- **[appearance]** Device-local **Text contrast** (Standard, Strong, Strongest) ([#3786](https://github.com/k-k1/agent-fleet/issues/3786))
+- **[ecs-ec2]** Dark slots reported as an audit entry and an `af-dark-since` tag (detect only) ([#2450](https://github.com/k-k1/agent-fleet/issues/2450))
+- **[start flow]** Launching in home opens the Start work dialog ([#3785](https://github.com/k-k1/agent-fleet/issues/3785))
+- **[usage]** Session usage answers in time after a restart ([#3885](https://github.com/k-k1/agent-fleet/issues/3885))
+- **[console]** Archived date on archived sessions, partial cost months worded as such, rail folds kept across sign-out ([#3874](https://github.com/k-k1/agent-fleet/issues/3874), [#3843](https://github.com/k-k1/agent-fleet/issues/3843), [#3787](https://github.com/k-k1/agent-fleet/issues/3787))
+- **[ECS]** `update.sh` carries on past a failed side stack and exits non-zero ([#3555](https://github.com/k-k1/agent-fleet/issues/3555))
+- **[ECS]** `30-ingress` may grow past the inline template limit and then deploys through S3 ([#3550](https://github.com/k-k1/agent-fleet/issues/3550))
+
+**Fixed**
+
+- **[AWS]** Console AWS sign-in stuck on "starting" with aws-cli 2.36; a login with no link fails after a minute ([#3837](https://github.com/k-k1/agent-fleet/issues/3837), [#3839](https://github.com/k-k1/agent-fleet/issues/3839))
+- **[preview]** Browser pane disconnected after a minute of silence behind a load balancer ([#3842](https://github.com/k-k1/agent-fleet/issues/3842))
+- **[bitbucket]** Connections broke when two processes renewed the token at once ([#3736](https://github.com/k-k1/agent-fleet/issues/3736))
+- **[watch]** Watches on vanished PRs kept polling; workflow watches missed runs behind 20 newer ones ([#3780](https://github.com/k-k1/agent-fleet/issues/3780))
+- **[MCP]** MCP form's Watch source box did not follow the tenant switch ([#3844](https://github.com/k-k1/agent-fleet/issues/3844), [#3865](https://github.com/k-k1/agent-fleet/issues/3865))
+- **[work items]** Remembered Jira repository lost to another tab's save, and could not be forgotten ([#3775](https://github.com/k-k1/agent-fleet/issues/3775))
+- **[security]** `AF_ROUTE_ISSUE_TOKEN` was written in plain task-definition environment ([#3452](https://github.com/k-k1/agent-fleet/issues/3452))
+
+---
 ## [0.43.0](0.43.0.md) — 2026-11-10
 
 **CLI pins** — Claude Code 2.1.321, Copilot 1.0.108, rtk 1.2.0
