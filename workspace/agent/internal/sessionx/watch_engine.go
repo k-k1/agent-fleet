@@ -69,7 +69,7 @@ func watchEngine() *watch.Engine {
 		gh.Threads = watchThreads
 		bb := &watch.Bitbucket{Read: watchBitbucketPR}
 		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{}, watch.NewGitHubActions(gh),
-			watch.NewBitbucketPipelines(bitbucketAuth, renewBitbucketAuth))
+			watch.NewBitbucketPipelines(bitbucketAuth, renewBitbucketAuth), &watch.FleetSource{Fleet: watchFleet{}})
 		watchEngineInst.SetWaker(cpWaker{})
 		watchEngineInst.Dynamic = watchMCPSources().Lookup
 	})

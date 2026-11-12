@@ -60,6 +60,9 @@ type Resolved struct {
 	URL     string // the subject's web page, https only; "" when unknown
 	// At is the instant a timed subject fires (the time source); zero for every other source.
 	At time.Time
+	// Told seeds the versions the subscription counts as already delivered, so a source can say
+	// "the state that holds now is history; tell me the next one" (the fleet source's idle).
+	Told map[string]string
 }
 
 // Source is one provider's adapter.
@@ -124,6 +127,20 @@ func WithSubscriber(ctx context.Context, session string) context.Context {
 // SubscriberFrom is the session that is subscribing, "" outside Subscribe.
 func SubscriberFrom(ctx context.Context) string {
 	s, _ := ctx.Value(subscriberKey{}).(string)
+	return s
+}
+
+type ownerKey struct{}
+
+// WithOwner carries the session that will receive the notices into Resolve, so a source can
+// refuse a subject that is the receiver itself. Only the engine sets it.
+func WithOwner(ctx context.Context, session string) context.Context {
+	return context.WithValue(ctx, ownerKey{}, session)
+}
+
+// OwnerFrom is the session that receives the notices, "" outside Subscribe.
+func OwnerFrom(ctx context.Context) string {
+	s, _ := ctx.Value(ownerKey{}).(string)
 	return s
 }
 

@@ -242,7 +242,7 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if err != nil {
 		return Subscription{}, err
 	}
-	res, err := src.Resolve(WithSubscriber(ctx, r.maker()), r.Ref, r.DefaultRepo)
+	res, err := src.Resolve(WithOwner(WithSubscriber(ctx, r.maker()), r.Owner), r.Ref, r.DefaultRepo)
 	if err != nil {
 		return Subscription{}, err
 	}
@@ -253,6 +253,12 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	sub := Subscription{
 		ID: newID(), Owner: r.Owner, Requester: r.Requester, Source: r.Source, Subject: res.Subject, Ref: r.Ref, URL: res.URL,
 		Types: append([]string(nil), r.Types...), Until: until, Created: now.UTC(), Expires: now.Add(life).UTC(),
+	}
+	if len(res.Told) > 0 {
+		sub.Told = make(map[string]string, len(res.Told))
+		for k, v := range res.Told {
+			sub.Told[k] = v
+		}
 	}
 	timed := !res.At.IsZero()
 	if r.Wake && !timed {
