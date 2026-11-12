@@ -15,7 +15,7 @@ GKE の配備で、失うと困るものを知り、CP のディスクにスナ�
 | あなたがやること | 起きること |
 |---|---|
 | 何もしない | Terraform がデータベースの自動バックアップとポイントインタイムリカバリをオンにしている（`sql_backup_retention_days`、既定は 7 日） |
-| 最初の起動のあとに、CP のディスクにスナップショットの予定を入れる | 毎日スナップショットが取られ、14 日で消える |
+| 最初の起動のあとに、CP のディスクにスナップショットの予定を入れる | 毎日スナップショットが取られ、ディスクがあるあいだは 14 日で消える |
 | データベースを複製して中を確かめ、消す | データベースを戻せることと、かかる時間がわかる |
 | スナップショットからディスクを作り、Pod で中を読み、消す | ディスクを戻せることと、かかる時間がわかる |
 
@@ -48,12 +48,12 @@ ZONE="$(echo "$HANDLE" | cut -d/ -f4)"; DISK="${HANDLE##*/}"
 
 ```bash
 gcloud compute resource-policies create snapshot-schedule "$PREFIX-cp-data" --project "$PROJECT" \
-  --region "$REGION" --daily-schedule --start-time 02:30 --max-retention-days 14   # once
+  --region "$REGION" --daily-schedule --start-time 02:00 --max-retention-days 14   # once; UTC, on the hour
 gcloud compute disks add-resource-policies "$DISK" --zone "$ZONE" --project "$PROJECT" \
   --resource-policies "$PREFIX-cp-data"
 ```
 
-予定で取ったスナップショットは自分で期限切れになります。下の手順やアップグレードで手で取ったものは、消すまで残ります（`gcloud compute snapshots delete <name> --project "$PROJECT"`）。
+予定で取ったスナップショットは、元のディスクがあるあいだは 14 日で消えます。ディスクが消えると（復元で置き換わる、撤去で消す）、`--on-source-disk-delete` の既定が `keep-auto-snapshots` なので、自分で消すまで残ります。ディスクがなくなったあとでも戻せるのはそのためです。下の手順やアップグレードで手で取ったものも、消すまで残ります（`gcloud compute snapshots delete <name> --project "$PROJECT"`）。
 
 ## スナップショットからディスクとボリュームを作る
 

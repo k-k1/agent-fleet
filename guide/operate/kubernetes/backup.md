@@ -15,7 +15,7 @@ The commands assume the shell variables of [Build on GKE](gke.md#shell-variables
 | What you do | What happens |
 |---|---|
 | Nothing | Terraform turns on the database's automated backups and point-in-time recovery (`sql_backup_retention_days`, 7 days by default) |
-| Give the CP's disk a snapshot schedule after the first start | A snapshot is taken daily and expires after 14 days |
+| Give the CP's disk a snapshot schedule after the first start | A snapshot is taken daily and expires after 14 days, while the disk exists |
 | Clone the database, check what is in it, delete the clone | You know the database can be restored, and how long it takes |
 | Make a disk from a snapshot, read it from a pod, delete it | You know the disk can be restored, and how long it takes |
 
@@ -48,12 +48,12 @@ Once after the first start, and again whenever a restore replaced the disk (the 
 
 ```bash
 gcloud compute resource-policies create snapshot-schedule "$PREFIX-cp-data" --project "$PROJECT" \
-  --region "$REGION" --daily-schedule --start-time 02:30 --max-retention-days 14   # once
+  --region "$REGION" --daily-schedule --start-time 02:00 --max-retention-days 14   # once; UTC, on the hour
 gcloud compute disks add-resource-policies "$DISK" --zone "$ZONE" --project "$PROJECT" \
   --resource-policies "$PREFIX-cp-data"
 ```
 
-Scheduled snapshots expire by themselves; the on-demand ones taken below or for an upgrade stay until you delete them (`gcloud compute snapshots delete <name> --project "$PROJECT"`).
+Scheduled snapshots expire after 14 days while their disk exists. When the disk is deleted (replaced by a restore, or removed in a teardown) they are kept, since `--on-source-disk-delete` defaults to `keep-auto-snapshots`, and stay until you delete them; that is what lets you go back after the disk is gone. The on-demand ones taken below or for an upgrade stay until you delete them too (`gcloud compute snapshots delete <name> --project "$PROJECT"`).
 
 ## Make a disk and a volume from a snapshot
 
