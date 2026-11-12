@@ -29,6 +29,7 @@ inert() {
     guide/operate/kubernetes/upgrade.md | guide/operate/kubernetes/upgrade.ja.md) return 1 ;;
     docs/* | guide/*) return 0 ;;
     scripts/docs-check.py | scripts/test_docs_check.py) return 0 ;;
+    scripts/mcp_catalogue.py | scripts/mcp-catalogue/*) return 0 ;;
     */*) return 1 ;;
     *.md | LICENSE | NOTICE) return 0 ;;
   esac

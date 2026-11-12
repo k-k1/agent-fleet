@@ -1,5 +1,6 @@
 """Regression and positive-control fixtures for the shipped policy gate."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -1035,3 +1036,133 @@ class PoliteTests(unittest.TestCase):
         ):
             with self.subTest(body=body):
                 self.assertEqual(self.plain(body), [])
+
+
+class McpCatalogueTests(unittest.TestCase):
+    """check_mcp: the generated MCP tool catalogue against the goldens and tools.tsv."""
+
+    WS_AUDIENCES = (
+        "assistant-read", "assistant-read-nobrowser", "assistant-session-flags", "assistant-write",
+        "assistant-write-nobrowser", "session", "session-all", "session-all-write", "session-chromium",
+        "session-chromium-nobrowser", "session-imagegen", "session-memory", "session-peer",
+        "session-search", "session-spawn", "session-studio", "session-write",
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        self.cat = check._mcp_catalogue()
+        # alpha: every session and every assistant; peer_only: behind one session switch;
+        # remote: the Control Plane's /mcp only, for members with a read token.
+        ws = {a: [] for a in self.WS_AUDIENCES}
+        for a in self.WS_AUDIENCES:
+            ws[a].append("alpha#1")
+        for a in ("session-peer", "session-all", "session-all-write"):
+            ws[a].append("peer_only#1")
+        self.ws = {"audiences": ws, "tools": {
+            "alpha#1": {"name": "alpha", "inputSchema": {"required": ["name"]}},
+            "peer_only#1": {"name": "peer_only"},
+        }}
+        cp = {}
+        for ep in ("mcp", "memory"):
+            for mem in ("false", "true"):
+                for role in ("member", "tenant_admin", "super_admin"):
+                    for scope in ("read", "write", "admin:dangerous"):
+                        cp[f"{ep} memory={mem} {role} {scope}"] = ["remote"] if ep == "mcp" else []
+        self.cp = {"audiences": cp, "tools": {"remote": {"name": "remote"}}}
+        self.rows = {
+            "alpha": "Alpha\tアルファです",
+            "peer_only": "Peer\tピアです",
+            "remote": "Remote\tリモートです",
+        }
+        self.write_inputs()
+        self.generate()
+
+    def write_inputs(self):
+        for rel, data in ((self.cat.WS_GOLDEN, self.ws), (self.cat.CP_GOLDEN, self.cp)):
+            p = self.root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data))
+        tsv = self.root / self.cat.TOOLS_TSV
+        tsv.parent.mkdir(parents=True, exist_ok=True)
+        tsv.write_text("tool\tgroup\ten\tja\n" + "".join(f"{t}\tg\t{d}\n" for t, d in self.rows.items()))
+        (self.root / self.cat.GROUPS_TSV).write_text("group\ten\tja\ng\tGroup\tグループ\n")
+
+    def generate(self):
+        for lang, rel in self.cat.PAGES.items():
+            p = self.root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(self.cat.render(str(self.root), lang))
+
+    def errors(self):
+        findings = check.Findings()
+        check.check_mcp(findings)
+        return "\n".join(findings.errors)
+
+    def test_generated_pages_pass(self):
+        self.assertEqual(self.errors(), "")
+        page = (self.root / self.cat.PAGES["en"]).read_text()
+        self.assertIn('| `alpha` | Alpha | ✓ | ✓ AF read | — | `name` |', page)
+        self.assertIn('| `peer_only` | Peer | ✓ "Messages between sessions" | — | — | — |', page)
+        self.assertIn("| `remote` | Remote | — | — | ✓ `read` | — |", page)
+        self.assertIn("| `peer_only` | ピアです | ✓ 「セッション間メッセージ」 | — | — | — |",
+                      (self.root / self.cat.PAGES["ja"]).read_text())
+
+    def test_tool_without_a_row(self):
+        del self.rows["remote"]
+        self.write_inputs()
+        self.assertIn("remote is advertised by a server but has no description row", self.errors())
+
+    def test_row_for_a_tool_no_golden_has(self):
+        self.rows["ghost"] = "Ghost\tゴースト"
+        self.write_inputs()
+        self.assertIn("ghost is in no golden tools/list", self.errors())
+
+    def test_row_without_a_translation(self):
+        self.rows["alpha"] = "Alpha\t"
+        self.write_inputs()
+        self.assertIn("alpha has no ja description", self.errors())
+
+    def test_page_stale_against_the_golden(self):
+        for aud, tools in self.cp["audiences"].items():
+            if aud.endswith(" read"):
+                tools.clear()  # remote now needs a write token
+        self.write_inputs()
+        self.assertIn(f"{self.cat.PAGES['en']} is stale", self.errors())
+
+    def test_page_stale_against_the_description(self):
+        self.rows["alpha"] = "Alpha, reworded\tアルファです"
+        self.write_inputs()
+        err = self.errors()
+        self.assertIn(f"{self.cat.PAGES['en']} is stale", err)
+        self.assertNotIn(f"{self.cat.PAGES['ja']} is stale", err)
+
+    def test_hand_edited_page(self):
+        p = self.root / self.cat.PAGES["ja"]
+        p.write_text(p.read_text().replace("アルファです", "アルファ"))
+        self.assertIn(f"{self.cat.PAGES['ja']} is stale", self.errors())
+
+    def test_unknown_audience(self):
+        self.ws["audiences"]["session-newflag"] = ["alpha#1"]
+        self.write_inputs()
+        self.assertIn("session-newflag are not known", self.errors())
+
+    def test_real_tree_misses_a_row(self):
+        """Positive control on the real goldens: dropping one row is caught."""
+        patch.stopall()
+        real = Path(check.ROOT)
+        for rel in (self.cat.WS_GOLDEN, self.cat.CP_GOLDEN, self.cat.GROUPS_TSV):
+            (self.root / rel).write_text((real / rel).read_text(encoding="utf-8"), encoding="utf-8")
+        lines = (real / self.cat.TOOLS_TSV).read_text(encoding="utf-8").splitlines(keepends=True)
+        self.assertTrue(any(line.startswith("create_session\t") for line in lines))
+        (self.root / self.cat.TOOLS_TSV).write_text(
+            "".join(line for line in lines if not line.startswith("create_session\t")), encoding="utf-8")
+        self.assertEqual(self.cat.problems(str(real)), [])
+        self.assertEqual(
+            self.cat.problems(str(self.root)),
+            [f"{self.cat.TOOLS_TSV}: create_session is advertised by a server but has no description row;"
+             f" add one, then run {self.cat.GENERATOR}"],
+        )

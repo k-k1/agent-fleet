@@ -1,0 +1,17 @@
+group	en	ja
+finish	Finish and stop	完了と停止
+view	See sessions	セッションを見る
+drive	Start and drive sessions	セッションを起動して操作する
+peer	Messages between sessions	セッション間メッセージ
+memo	Memos	メモ
+schedule	Schedules	定時実行
+cleanup	Clean-up	掃除
+memory	Agent Fleet memory	エージェントメモリ
+snapshot	Memory snapshots	メモリのスナップショット
+browser	Browser (Chromium)	ブラウザ（Chromium）
+image	Images	画像
+work	Branches and work items	ブランチと作業項目
+watch	Watches	ウォッチ
+skill	Skills	スキル
+chat	Assistant conversations	アシスタントの会話
+admin	Administration	管理

@@ -1560,6 +1560,41 @@ def check_notes(f: Findings) -> None:
             f.error(f"notes/{n}: frontmatter must say user-invocable: false (reference text, not a command)")
 
 
+def _mcp_catalogue():
+    """scripts/mcp_catalogue.py, which owns the rules; loaded by path, as its name is not a
+    package import from every working directory."""
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_catalogue.py")
+    spec = importlib.util.spec_from_file_location("mcp_catalogue", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def check_mcp(f: Findings) -> None:
+    """Does the MCP tool catalogue (guide/ref/mcp/) match the servers' golden tool lists?
+
+    The page is generated from the two golden tools/list files and the description file
+    scripts/mcp-catalogue/tools.tsv. A tool a server advertises without a description row,
+    a row for a tool no server has, and a page not regenerated since either changed are all
+    errors: a hand-kept tool list is exactly what drifted before the catalogue was generated.
+    """
+    cat = _mcp_catalogue()
+    probs = cat.problems(ROOT)
+    for p in probs:
+        f.error(f"mcp: {p}")
+    if probs:
+        return
+    try:
+        stale = cat.stale_pages(ROOT)
+    except cat.CatalogueError as e:
+        f.error(f"mcp: {e}")
+        return
+    for rel in stale:
+        f.error(f"mcp: {rel} is stale against the goldens and {cat.TOOLS_TSV}; run python3 {cat.GENERATOR}")
+
+
 def check_ref_parity(f: Findings) -> None:
     """ref/ tables must have their ✓ marks in the same places in English and Japanese.
 
@@ -2347,7 +2382,7 @@ def main() -> int:
         help=(
             "comma-separated check names "
             "(links,anchors,closure,chapters,index,lang,header,vocab,polite,frozen,"
-            "ref,settings,features,knowledge,notes,emphasis,labels,size)"
+            "ref,mcp,settings,features,knowledge,notes,emphasis,labels,size)"
         ),
     )
     args = ap.parse_args()
@@ -2381,6 +2416,8 @@ def main() -> int:
     if run("ref"):
         check_ref(f)
         check_ref_parity(f)
+    if run("mcp"):
+        check_mcp(f)
     if run("settings"):
         check_settings(f)
     if run("features"):
