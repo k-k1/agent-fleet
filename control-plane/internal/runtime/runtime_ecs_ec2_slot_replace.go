@@ -191,7 +191,7 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 			case replacementRetire:
 				// Launched from an older template and never used: give its place under the cap
 				// back so the launch below can have it.
-				_ = e.terminateSlot(ctx, prev, "unused replacement for "+e.base.name+" from an older launch template")
+				_ = e.terminateSlot(ctx, prev, "unused replacement for "+e.base.name+" from an older launch template", terminateAutomatic)
 			}
 		}
 	}
@@ -247,7 +247,7 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 		log.Printf("ecs-ec2: not terminating the reserved slot %s yet (held by %q, %v); the sweeper retires it once free",
 			oldID, holder, err)
 	} else {
-		_ = e.terminateSlot(ctx, oldID, "reserved for replacement, replaced by "+newID)
+		_ = e.terminateSlot(ctx, oldID, "reserved for replacement, replaced by "+newID, terminateAutomatic)
 	}
 	e.clearDormancy(ctx, volID)
 	slotReplaceSeen.set(e.base.name, "")
@@ -290,7 +290,8 @@ func (e *ecsEC2Runtime) recordAutoReplace(ctx context.Context, oldID, newID stri
 // instead of detaching), and claiming a new slot for a home that never left the old one would
 // strand the Start.
 func (e *ecsEC2Runtime) moveHomeOff(ctx context.Context, oldID string) error {
-	if err := e.releaseSlot(ctx); err != nil {
+	// Only the occupant's own Start gets here (replaceReservedSlot): not refused by a rescue marker.
+	if err := e.releaseSlot(asHomeOwner(ctx)); err != nil {
 		return err
 	}
 	vol, err := e.homeVolume(ctx)
@@ -328,7 +329,7 @@ func (e *ecsEC2Runtime) retireUnusedReplacement(ctx context.Context, newID, volI
 		e.unclaim(ctx, volID)
 		return
 	}
-	if err := e.terminateSlot(ctx, newID, "replacement for "+e.base.name+" not used"); err == nil {
+	if err := e.terminateSlot(ctx, newID, "replacement for "+e.base.name+" not used", terminateAutomatic); err == nil {
 		e.unclaim(ctx, volID)
 		return
 	}

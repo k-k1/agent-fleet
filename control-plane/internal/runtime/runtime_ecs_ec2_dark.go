@@ -127,6 +127,7 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 	if !ok {
 		return // a client that cannot read SSM liveness cannot prove the SSM leg
 	}
+	f.probes.reset()
 	probe := f.probeRuntime()
 	byInstance := map[string]*ec2types.Volume{}
 	var ids []string
@@ -150,6 +151,7 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 		return
 	}
 	now := time.Now()
+	pass := f.newDarkProbePass()
 	for _, chunk := range chunkStrings(ids, 100) {
 		out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 			Filters: []ec2types.Filter{
@@ -166,7 +168,7 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 				inst := &r.Instances[i]
 				id := aws.ToString(inst.InstanceId)
 				if vol := byInstance[id]; vol != nil {
-					f.scanDarkSlot(ctx, cmds, inst, vol, registered[id], now)
+					f.scanDarkSlot(ctx, cmds, pass, inst, vol, registered[id], now)
 				}
 			}
 		}
@@ -175,7 +177,7 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 
 // scanDarkSlot applies the predicate of ADR 0121 decision 1 to one slot. The cheap legs run
 // first so the SSM call is made only for a box the cluster cannot reach.
-func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, inst *ec2types.Instance, vol *ec2types.Volume, connected bool, now time.Time) {
+func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, pass *darkProbePass, inst *ec2types.Instance, vol *ec2types.Volume, connected bool, now time.Time) {
 	id := aws.ToString(inst.InstanceId)
 	// A quarantined box is the operator's; an engine box carries af-pool too.
 	if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleSlot {
@@ -213,6 +215,15 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 		f.clearDarkStamp(ctx, id, raw)
 		return
 	}
+	// Both cluster legs are silent. A slot whose service is up may still be serving its
+	// member, so it is dark only if the Agent does not answer either.
+	switch f.darkAgentLeg(ctx, pass, id, vol) {
+	case AgentProbeHealthy:
+		f.clearDarkStamp(ctx, id, raw)
+		return
+	case AgentProbeUnknown:
+		return // could not ask: neither stamp nor clear
+	}
 
 	stamp, ok := parseDarkStamp(raw)
 	if !ok || !stamp.launch.Equal(launch) {
@@ -238,6 +249,36 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 	if f.onSlotDark != nil {
 		f.onSlotDark(ctx, ev)
 	}
+}
+
+// darkAgentLeg is the Agent leg of the predicate. A slot whose service is down has no Agent
+// to ask and is not probed: it counts as failed (the leg is satisfied). A service that is up
+// is probed; a failed read of the service is unknown.
+func (f *ecsEC2Factory) darkAgentLeg(ctx context.Context, pass *darkProbePass, slot string, vol *ec2types.Volume) AgentProbe {
+	rt := f.runtimeForVolume(vol)
+	if rt == nil {
+		return AgentProbeUnknown
+	}
+	s, ok, err := rt.base.describeService(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: dark-slot scan: service of %s unknown: %v", slot, err)
+		return AgentProbeUnknown
+	}
+	if !ok || s.DesiredCount <= 0 {
+		f.probes.forget(slot)
+		return AgentProbeFailed
+	}
+	// The alias may point at a task on another box; an answer only speaks for this slot
+	// when the service's tasks are all on it.
+	res := AgentProbeUnknown
+	if f.serviceRunsOnlyOn(ctx, rt.base.name, slot) {
+		res = f.probeAgent(ctx, pass, rt.Endpoint())
+	}
+	f.probes.set(slot, probeObservation{Result: res, At: f.darkNow()})
+	if res != AgentProbeFailed {
+		log.Printf("ecs-ec2 sweep: dark-slot scan: Agent of %s on %s probe %s", rt.base.name, slot, res)
+	}
+	return res
 }
 
 func (f *ecsEC2Factory) writeDarkStamp(ctx context.Context, instanceID string, s darkStamp) bool {
