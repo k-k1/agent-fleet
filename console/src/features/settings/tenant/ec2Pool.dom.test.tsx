@@ -331,8 +331,8 @@ it("counts held, running and hibernating slots and says eviction happens once th
     await mount();
     expect(buttonsIn(rowOf("i-bad")).map((b) => b.textContent)).toEqual(["終了"]);
     // A healthy slot must not carry it: it is not a general "delete this machine" control.
-    // (Its only action is the replacement reservation.)
-    expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).toEqual(["入れ替えを予約"]);
+    // (Its actions are the override force-stop, #3959, and the replacement reservation.)
+    expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).toEqual(["停止（強制）", "入れ替えを予約"]);
   });
 
   it("renders the terminate button as a bordered danger button", async () => {
@@ -431,7 +431,8 @@ describe("replacement reservations", () => {
     await mount();
     const buttonsIn = (row: Element | null) => Array.from(row?.querySelectorAll("button") || []);
     const bulkBtn = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent?.includes("1 台すべて"));
-    const hot = buttonsIn(rowOf("i-hot"));
+    // The registered running slot also carries the danger-styled override force-stop (#3959).
+    const hot = buttonsIn(rowOf("i-hot")).filter((b) => !b.classList.contains("ui-btn-danger"));
     const done = buttonsIn(rowOf("i-done"));
     expect(bulkBtn).toBeTruthy();
     expect(hot).toHaveLength(1);
@@ -506,12 +507,45 @@ describe("replacement reservations", () => {
       Array.from(host!.querySelectorAll("tbody tr")).find((tr) => tr.textContent?.includes(id)) || null;
     const labelsIn = (id: string) => buttonsIn(rowOf(id)).map((b) => b.textContent);
 
-    it("offers it on a running slot whose agent is not connected only", async () => {
+    it("offers it on a running slot, registered or not, and never on a sleeping one", async () => {
       api.mockResolvedValue(WEDGED);
       await mount();
       expect(labelsIn("i-wedge")).toContain("停止（強制）");
-      expect(labelsIn("i-hot")).not.toContain("停止（強制）");
+      expect(labelsIn("i-hot")).toContain("停止（強制）");
       expect(labelsIn("i-zzz")).not.toContain("停止（強制）");
+    });
+
+    // #3959: the agents of a registered slot still answer, so the server wants the override.
+    it("on a registered slot, needs the acknowledgement, then sends override_healthy", async () => {
+      api.mockResolvedValue(WEDGED);
+      apiJSON.mockResolvedValue({ instance_id: "i-hot", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-hot")).find((b) => b.textContent === "停止（強制）")!.click());
+      const dlg = document.querySelector(".confirm")!;
+      expect(dlg.textContent).toContain("af-ws-acme-alice");
+      expect(dlg.textContent).toContain("予告なく");
+      const confirm = () => {
+        const a = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+        return a[a.length - 1];
+      };
+      expect(confirm().disabled).toBe(true);
+      await act(async () => confirm().click());
+      expect(apiJSON).not.toHaveBeenCalled();
+      await act(async () => dlg.querySelector<HTMLInputElement>("input[type=checkbox]")!.click());
+      expect(confirm().disabled).toBe(false);
+      await act(async () => confirm().click());
+      expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-hot/force-stop", "POST", { override_healthy: true });
+    });
+
+    it("on an unregistered slot, shows no acknowledgement and sends no override", async () => {
+      api.mockResolvedValue(WEDGED);
+      apiJSON.mockResolvedValue({ instance_id: "i-wedge", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 180 });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
+      expect(document.querySelector(".confirm input[type=checkbox]")).toBeNull();
+      const a = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => a[a.length - 1].click());
+      expect(apiJSON).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-wedge/force-stop", "POST", {});
     });
 
     it("shows a task still stopping on a stopped slot, with the guidance", async () => {

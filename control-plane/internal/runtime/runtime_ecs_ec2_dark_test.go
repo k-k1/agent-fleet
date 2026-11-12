@@ -3,7 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,10 +30,13 @@ func darkHarness(t *testing.T) (*ec2Harness, *ecsEC2Factory, *[]SlotDark) {
 	// The workspace service is nominally up, which is what keeps the volume sweep from
 	// releasing the home and is exactly the shape the scan exists for.
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	h.ci.running = append(h.ci.running, runningTask("af-ws-acme-alice", "i-dark"))
 	h.rt.pool.darkAction = darkActionDetect
 	h.rt.pool.darkAfter = 10 * time.Minute
 	h.rt.pool.darkBootGrace = 5 * time.Minute
 	f := h.factory()
+	// The service is up, so the Agent leg decides: the default fake drops the connection.
+	f.agentHTTP = &fakeAgentDoer{err: &url.Error{Op: "Get", URL: "http://af-ws-acme-alice:7700/healthz", Err: syscall.ECONNRESET}}
 	var events []SlotDark
 	f.onSlotDark = func(_ context.Context, ev SlotDark) { events = append(events, ev) }
 	return h, f, &events
@@ -296,5 +304,288 @@ func TestPoolStatusShowsDarkSinceAndRung(t *testing.T) {
 	h.ec2.setInstanceTag("i-dark", ec2TagDarkSince, darkStamp{since: since, launch: launch.Add(-time.Hour)}.String())
 	if s := slot(); s.DarkSince != "" || s.Rung != "" {
 		t.Fatalf("a stamp from an earlier launch must not show, got dark_since=%q rung=%q", s.DarkSince, s.Rung)
+	}
+}
+
+// fakeAgentDoer is the transport behind the Agent probe: it answers every request with err
+// or status, and records the requests it saw.
+type fakeAgentDoer struct {
+	err    error
+	status int
+	onDo   func()
+	reqs   []*http.Request
+}
+
+func (d *fakeAgentDoer) Do(req *http.Request) (*http.Response, error) {
+	d.reqs = append(d.reqs, req)
+	if d.onDo != nil {
+		d.onDo()
+	}
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &http.Response{StatusCode: d.status, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+var _ net.Error = timeoutErr{}
+
+func TestDarkAgentProbeDecidesAServiceUpSlot(t *testing.T) {
+	ctx := context.Background()
+	getErr := func(err error) error { return &url.Error{Op: "Get", URL: "http://x:7700/healthz", Err: err} }
+	cases := []struct {
+		name      string
+		doer      *fakeAgentDoer
+		want      AgentProbe
+		wantStamp bool
+	}{
+		{"connection reset", &fakeAgentDoer{err: getErr(syscall.ECONNRESET)}, AgentProbeFailed, true},
+		{"EOF", &fakeAgentDoer{err: getErr(io.EOF)}, AgentProbeFailed, true},
+		{"proxy 503", &fakeAgentDoer{status: 503}, AgentProbeFailed, true},
+		{"healthy", &fakeAgentDoer{status: 200}, AgentProbeHealthy, false},
+		{"timeout is not an answer", &fakeAgentDoer{err: getErr(timeoutErr{})}, AgentProbeUnknown, false},
+		{"deadline", &fakeAgentDoer{err: getErr(context.DeadlineExceeded)}, AgentProbeUnknown, false},
+		{"no route", &fakeAgentDoer{err: getErr(&net.DNSError{Err: "no such host", IsNotFound: true})}, AgentProbeUnknown, false},
+		{"cp side error", &fakeAgentDoer{err: errors.New("boom")}, AgentProbeUnknown, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, f, _ := darkHarness(t)
+			f.agentHTTP = tc.doer
+			if err := f.sweep(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := darkStampOf(h) != ""; got != tc.wantStamp {
+				t.Fatalf("stamped = %v, want %v", got, tc.wantStamp)
+			}
+			res, _, ok := f.LastAgentProbe("i-dark")
+			if !ok || res != tc.want {
+				t.Fatalf("LastAgentProbe = %v, %v; want %v", res, ok, tc.want)
+			}
+			if len(tc.doer.reqs) != 1 {
+				t.Fatalf("probes = %d, want 1", len(tc.doer.reqs))
+			}
+			req := tc.doer.reqs[0]
+			if req.URL.String() != "http://af-ws-acme-alice:7700/healthz" || req.Header.Get("Authorization") != "" {
+				t.Fatalf("request = %s auth=%q", req.URL, req.Header.Get("Authorization"))
+			}
+		})
+	}
+}
+
+func TestDarkAgentProbeUnknownKeepsAnExistingStamp(t *testing.T) {
+	ctx := context.Background()
+	h, f, _ := darkHarness(t)
+	_ = f.sweep(ctx)
+	stamp := darkStampOf(h)
+	if stamp == "" {
+		t.Fatal("setup: no stamp")
+	}
+	f.agentHTTP = &fakeAgentDoer{err: timeoutErr{}}
+	_ = f.sweep(ctx)
+	if darkStampOf(h) != stamp {
+		t.Fatalf("an unknown probe changed the stamp: %q -> %q", stamp, darkStampOf(h))
+	}
+	f.agentHTTP = &fakeAgentDoer{status: 200}
+	_ = f.sweep(ctx)
+	if darkStampOf(h) != "" {
+		t.Fatal("a healthy Agent did not clear the stamp")
+	}
+}
+
+func TestDarkAgentProbeServiceDownIsNotProbed(t *testing.T) {
+	ctx := context.Background()
+	h, f, _ := darkHarness(t)
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	doer := &fakeAgentDoer{status: 200}
+	f.agentHTTP = doer
+	_ = f.sweep(ctx)
+	if len(doer.reqs) != 0 {
+		t.Fatalf("probed a slot whose service is down: %d requests", len(doer.reqs))
+	}
+	if darkStampOf(h) == "" {
+		t.Fatal("a service-down dark slot was not stamped")
+	}
+	if _, _, ok := f.LastAgentProbe("i-dark"); ok {
+		t.Fatal("a probe result is recorded for a slot that was not probed")
+	}
+}
+
+func TestDarkAgentProbeBudgetExhaustedIsUnknown(t *testing.T) {
+	ctx := context.Background()
+	h, f, _ := darkHarness(t)
+	// A second dark slot behind the first; each probe consumes the whole budget.
+	inst := h.ec2.addSlot("i-dark2", "ap-northeast-1a", "m7i.large", true, false)
+	inst.LaunchTime = aws.Time(time.Now().Add(-2 * time.Hour))
+	h.ec2.addHomeVolume("vol-2", "M-2", "af-ws-acme-bob", "ap-northeast-1a")
+	h.ec2.attach("vol-2", "i-dark2", time.Now().Add(-2*time.Hour))
+	h.ci.registered["i-dark2"] = false
+	h.ecs.services["af-ws-acme-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	h.ci.running = append(h.ci.running, runningTask("af-ws-acme-bob", "i-dark2"))
+	now := time.Now()
+	f.clock = func() time.Time { return now }
+	f.pool.darkProbeBudget = 10 * time.Second
+	doer := &fakeAgentDoer{err: syscall.ECONNRESET, onDo: func() { now = now.Add(11 * time.Second) }}
+	f.agentHTTP = doer
+	if err := f.sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(doer.reqs) != 1 {
+		t.Fatalf("probes = %d, want 1: the budget must stop the second", len(doer.reqs))
+	}
+	stamped := 0
+	for _, id := range []string{"i-dark", "i-dark2"} {
+		if ec2TagValue(h.ec2.instances[id].Tags, ec2TagDarkSince) != "" {
+			stamped++
+		}
+	}
+	if stamped != 1 {
+		t.Fatalf("stamped %d slots, want exactly the one that was probed", stamped)
+	}
+	failed, unknown := 0, 0
+	for _, id := range []string{"i-dark", "i-dark2"} {
+		switch r, _, _ := f.LastAgentProbe(id); r {
+		case AgentProbeFailed:
+			failed++
+		case AgentProbeUnknown:
+			unknown++
+		}
+	}
+	if failed != 1 || unknown != 1 {
+		t.Fatalf("failed=%d unknown=%d, want 1 and 1", failed, unknown)
+	}
+}
+
+func TestDarkAgentProbeCancelledContextIsUnknown(t *testing.T) {
+	_, f, _ := darkHarness(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	doer := &fakeAgentDoer{err: syscall.ECONNRESET}
+	f.agentHTTP = doer
+	if got := f.probeAgent(ctx, f.newDarkProbePass(), "http://x:7700"); got != AgentProbeUnknown {
+		t.Fatalf("cancelled context = %v", got)
+	}
+	if len(doer.reqs) != 0 {
+		t.Fatal("sent a request on a cancelled context")
+	}
+}
+
+func runningTask(service, instance string) ecstypes.Task {
+	return ecstypes.Task{
+		TaskArn: aws.String("arn:task/" + service), Group: aws.String("service:" + service),
+		ContainerInstanceArn: aws.String("arn:ci/" + instance), LastStatus: aws.String("RUNNING"),
+	}
+}
+
+// A healthy answer through the service alias proves nothing about this slot when the
+// service's task runs on another box: it must neither clear the stamp nor be recorded.
+func TestDarkAgentProbeNeedsTheServiceTaskOnThisSlot(t *testing.T) {
+	ctx := context.Background()
+	for name, mutate := range map[string]func(h *ec2Harness){
+		"task on another instance": func(h *ec2Harness) {
+			h.ci.running = []ecstypes.Task{runningTask("af-ws-acme-alice", "i-other")}
+		},
+		"old and new task on two boxes": func(h *ec2Harness) {
+			h.ci.running = append(h.ci.running, runningTask("af-ws-acme-alice", "i-other"))
+			h.ci.running[1].TaskArn = aws.String("arn:task/second")
+		},
+		"old task still stopping on another instance": func(h *ec2Harness) {
+			old := runningTask("af-ws-acme-alice", "i-other")
+			old.TaskArn = aws.String("arn:task/old")
+			old.LastStatus = aws.String("STOPPING")
+			h.ci.stopping = []ecstypes.Task{old}
+		},
+		"old task stopped seconds ago on another instance": func(h *ec2Harness) {
+			old := runningTask("af-ws-acme-alice", "i-other")
+			old.TaskArn = aws.String("arn:task/old")
+			old.LastStatus = aws.String("STOPPED")
+			old.StoppedAt = aws.Time(time.Now().Add(-20 * time.Second))
+			h.ci.stopping = []ecstypes.Task{old}
+		},
+		"old task stopped with unknown stop time": func(h *ec2Harness) {
+			old := runningTask("af-ws-acme-alice", "i-other")
+			old.TaskArn = aws.String("arn:task/old")
+			old.LastStatus = aws.String("STOPPED")
+			h.ci.stopping = []ecstypes.Task{old}
+		},
+		"no task listed": func(h *ec2Harness) { h.ci.running = nil },
+		"task describe failure": func(h *ec2Harness) {
+			h.ci.taskFailures = []ecstypes.Failure{{Arn: aws.String("arn:task/af-ws-acme-alice"), Reason: aws.String("MISSING")}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, f, _ := darkHarness(t)
+			_ = f.sweep(ctx)
+			stamp := darkStampOf(h)
+			if stamp == "" {
+				t.Fatal("setup: no stamp")
+			}
+			mutate(h)
+			doer := &fakeAgentDoer{status: 200}
+			f.agentHTTP = doer
+			_ = f.sweep(ctx)
+			if darkStampOf(h) != stamp {
+				t.Fatalf("an answer from another task changed the stamp: %q -> %q", stamp, darkStampOf(h))
+			}
+			if len(doer.reqs) != 0 {
+				t.Fatalf("probed although the task is not provably on this slot")
+			}
+			if r, _, ok := f.LastAgentProbe("i-dark"); !ok || r != AgentProbeUnknown {
+				t.Fatalf("LastAgentProbe = %v, %v; want unknown", r, ok)
+			}
+		})
+	}
+}
+
+// Each pass starts empty: a slot that recovered, was claimed, vanished or could not be read
+// must not keep the failed of an earlier pass.
+func TestLastAgentProbeDoesNotOutliveThePass(t *testing.T) {
+	ctx := context.Background()
+	for name, change := range map[string]func(h *ec2Harness){
+		"ecs agent reconnects": func(h *ec2Harness) { h.ci.registered["i-dark"] = true },
+		"ssm comes online":     func(h *ec2Harness) { h.ssmc.online = map[string]bool{"i-dark": true} },
+		"cluster read fails":   func(h *ec2Harness) { h.ci.describeErr = errors.New("throttled") },
+		"slot gone": func(h *ec2Harness) {
+			delete(h.ec2.instances, "i-dark")
+			delete(h.ec2.volumes, "vol-1")
+		},
+		"live claim": func(h *ec2Harness) {
+			h.ec2.volumes["vol-1"].Tags = append(h.ec2.volumes["vol-1"].Tags,
+				ec2tagKV(EC2TagClaim, "i-dark"), ec2tagKV(ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339)))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, f, _ := darkHarness(t)
+			_ = f.sweep(ctx)
+			if r, _, ok := f.LastAgentProbe("i-dark"); !ok || r != AgentProbeFailed {
+				t.Fatalf("setup: LastAgentProbe = %v, %v", r, ok)
+			}
+			change(h)
+			_ = f.sweep(ctx)
+			if r, _, ok := f.LastAgentProbe("i-dark"); ok {
+				t.Fatalf("stale probe %v survived the pass", r)
+			}
+		})
+	}
+}
+
+// A task that stopped long ago on another box cannot be what the alias reaches any more.
+func TestDarkAgentProbeIgnoresLongStoppedTasks(t *testing.T) {
+	h, f, _ := darkHarness(t)
+	old := runningTask("af-ws-acme-alice", "i-other")
+	old.TaskArn = aws.String("arn:task/old")
+	old.LastStatus = aws.String("STOPPED")
+	old.StoppedAt = aws.Time(time.Now().Add(-10 * time.Minute))
+	h.ci.stopping = []ecstypes.Task{old}
+	doer := &fakeAgentDoer{status: 200}
+	f.agentHTTP = doer
+	_ = f.sweep(context.Background())
+	if len(doer.reqs) != 1 {
+		t.Fatalf("probes = %d, want 1", len(doer.reqs))
 	}
 }

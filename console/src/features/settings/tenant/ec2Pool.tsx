@@ -226,6 +226,11 @@ export function PoolView() {
   // stays on the page because the 10s poll would wipe a toast.
   const [stopping, setStopping] = useState<Slot | null>(null);
   const [stopErr, setStopErr] = useState("");
+  // A registered slot's agents still answer, so the server refuses its force-stop unless the
+  // body says override_healthy. Whether this dialog sends it is fixed when it opens (the 10s
+  // poll can flip `registered` under it), and only after the operator ticks the box.
+  const [stopOverride, setStopOverride] = useState(false);
+  const [stopAck, setStopAck] = useState(false);
   const [stopped, setStopped] = useState<ForceStopReply | null>(null);
   const [bulkErr, setBulkErr] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -274,7 +279,7 @@ export function PoolView() {
     const d: ForceStopReply & { error?: ApiError } = await apiJSON(
       "api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id) + "/force-stop",
       "POST",
-      {},
+      stopOverride ? { override_healthy: true } : {},
     );
     setBusy(false);
     if (d?.error) {
@@ -510,10 +515,21 @@ export function PoolView() {
                         </Button>
                       ) : (
                         <>
-                        {/* Only for a slot that is up but whose agent is not connected: that is
-                            the wedged shape, and the server refuses a healthy one anyway. */}
-                        {!s.registered && (s.state === "running" || s.state === "pending" || s.state === "stopping") && (
-                          <Button small variant="danger" onClick={() => { setStopErr(""); setStopping(s); }}>
+                        {/* An unregistered slot that is up is the wedged shape: no override needed. A
+                            registered one answers its health check, so only the explicit override
+                            (confirmed in the dialog) reaches it, and only while running. */}
+                        {((!s.registered && (s.state === "running" || s.state === "pending" || s.state === "stopping")) ||
+                          (s.registered && s.state === "running")) && (
+                          <Button
+                            small
+                            variant="danger"
+                            onClick={() => {
+                              setStopErr("");
+                              setStopOverride(s.registered);
+                              setStopAck(false);
+                              setStopping(s);
+                            }}
+                          >
                             {tr("pool.force_stop")}
                           </Button>
                         )}
@@ -666,10 +682,20 @@ export function PoolView() {
           confirmLabel={tr("pool.force_stop")}
           danger
           busy={busy}
+          confirmDisabled={stopOverride && !stopAck}
           onCancel={() => setStopping(null)}
           onConfirm={() => forceStop(stopping)}
         >
           <p>{tr("pool.force_stop_body")}</p>
+          {stopOverride && (
+            <>
+              <p className="warn-text">{tr("pool.force_stop_override_warn")}</p>
+              <label>
+                <input type="checkbox" checked={stopAck} disabled={busy} onChange={(e) => setStopAck(e.target.checked)} />{" "}
+                {tr("pool.force_stop_override_ack")}
+              </label>
+            </>
+          )}
           {stopping.workspace && <p className="mono">{tr("pool.force_stop_occupant", { ws: stopping.workspace })}</p>}
           {stopErr && <p className="warn-text">{stopErr}</p>}
         </ConfirmDialog>

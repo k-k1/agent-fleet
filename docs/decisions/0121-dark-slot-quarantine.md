@@ -430,4 +430,57 @@ expires on a dead CP, so the replica that resumes can take it.
 - The audit row's tenant is resolved by the Control Plane from the home's membership tag, because the sweeper's
   runtime for a home carries no tenant id.
 
+**2026-11-12 (Agent probe, #3960).** Decision 1's last condition is built (`runtime_ecs_ec2_dark_probe.go`).
+Open question 6 is answered by the #3908 / #2450 production observations: the probe is cheap and honest, because on
+a thrashing box the CP's calls to the Agent on `:7700` through Service Connect failed fast (`connection reset`, `EOF`)
+while ECS still reported the task healthy.
+
+- The probe is one `GET /healthz` through the CP's shared Agent client (`healthzClient`, with the Cloud Map fallback),
+  at the endpoint the CP proxy uses (`http://<container name>:7700`). `/healthz` is the Agent's open route, so no
+  bearer token is sent and none can reach a log line.
+- It returns `healthy`, `failed` or `unknown`. `failed` is only a connection that was made and then dropped (reset,
+  EOF, broken pipe) or a Service Connect 502/503/504. A timeout, no route, a DNS error, a CP-side error, a cancelled
+  context and an exhausted budget are `unknown`: a slow Agent is not called failed, so a thrashing box that hangs
+  without resetting stays unjudged (the conservative side; revisit with the detect-only data).
+- A slot is probed only when the ECS and SSM legs are already silent and its service has `DesiredCount > 0`. `failed`
+  completes the predicate, `healthy` clears the stamp, `unknown` neither stamps nor clears. A slot whose service is
+  down (or missing) is not probed and is dark as before. A failed read of the service is `unknown`.
+- One pass has a probing budget (`AF_ECS_EC2_DARK_PROBE_BUDGET_SEC`, default 30) and each probe a timeout
+  (`AF_ECS_EC2_DARK_PROBE_TIMEOUT_SEC`, default 5); slots behind an exhausted budget are `unknown` this pass.
+- The latest result per slot, with its time, is read through `ecsEC2Factory.LastAgentProbe`, for the wedged
+  predicate (#3963) to use as a signal of its own. Nothing acts on it yet (L1/L2 stay unbuilt).
+- The service alias may resolve to a task on another box (a task replacement, the 30 s Cloud Map cache), so a slot is
+  probed only when a task of its service is RUNNING on that EC2 instance and no other task that could still answer the
+  alias is elsewhere: tasks desired STOPPED but not gone, and tasks stopped less than 2 minutes ago or with no stop time, count. The 2 minutes is
+  a conservative operating margin over the 30 s Cloud Map cache, not a proof of endpoint identity (how long a pooled
+  connection lives is not known) (`ListTasks` / `DescribeTasks` / `DescribeContainerInstances`); any read that fails, or a task elsewhere, is `unknown` and nothing is sent. Each pass
+  starts with an empty `LastAgentProbe` map, so a slot the pass did not probe has no value.
+- This supersedes the 2026-11-11 note's bullet that a service-up slot is observed like any other.
+
 Follow-ups: #3908
+
+**2026-11-12 (the fences, #3961).** Decision 3 rules 1, 2 and 4 and the `af-rescue` tag type are built, inert until a
+rescue writes a marker (code: `runtime_ecs_ec2_rescue.go`). Where the code chose among readings of the text above:
+
+- Rule 2 is `releaseGate`, called in `releaseSlotSince` right after the mount lock is taken. It lists the pool's instances
+  carrying the `af-rescue` key (any state but terminated) and refuses when a marker names this home's volume. The default is
+  refuse; the callers the decision exempts opt in on the context (`asHomeOwner`: `releaseAndReplace`, `moveHomeOff` for
+  `replaceReservedSlot`, and `Destroy` / `EraseHome`, whose `Stop` has already moved the count; `asRescue`: a rescue's own
+  releases, matched on volume, epoch and `g_r`, not on phase). So eviction, `makeRoom`, hibernation, the sweeper and the baker
+  are fenced without touching their call sites, and a releaser added later is fenced until someone argues otherwise. A
+  marker read that fails refuses, and a value that does not parse but starts with the volume id refuses.
+- `makeRoom`'s victim is refused through the same gate; `evictLongestIdle` returns the refusal to its Start rather than
+  trying the next candidate (candidate skipping stays the optimisation the text calls it).
+- Rule 1: `slotTypeMatches` answers "mismatch" for `af-role=quarantined` first. `releaseSlotSince` did not wait out a
+  `stopping` box (`instanceRunning` reads it as "not running" and skipped the umount); it now waits, bounded at 5 minutes
+  under the lock, then fails the release.
+- Rule 4: `terminateSlot(…, intent)` with `terminateAutomatic`, `terminateMakeRoom` (also refuses a box carrying `af-rescue` or
+  `af-dark-since`) and `terminateOperator`. The gate re-reads the box; a failed read refuses. `makeRoom` now returns the
+  refusal instead of waiting for a box that was never terminated.
+- `makeRoom` does not choose a box that carries `af-rescue` or `af-dark-since`, and a box that gains one after the list was
+  read is refused by `terminateSlot` (`terminateMakeRoom`) **before** its home is released and again at the terminate; a refusal
+  moves on to the next candidate instead of failing the Start. The stamp alone protects a box: detect-only mode writes it with no
+  marker anywhere, so "inert until a marker" holds for rescue, but a stamped box is deliberately not reclaimed by `makeRoom`.
+- No IAM or tag-fence change: nothing in the Control Plane writes `af-rescue` yet, and reading it is `DescribeInstances`.
+  The writer (#3964) adds its `CreateTags` / `DeleteTags` entries to `deploy/local/cfn-cp-tag-fence-test.py` and the role.
+

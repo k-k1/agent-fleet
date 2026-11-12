@@ -158,7 +158,7 @@ The page shows such a row with "**(not accepting tasks yet)**" and offers "**Sto
 
 | Code | Meaning and fix |
 |---|---|
-| `slot_healthy` | The ECS agent is connected **and** SSM is online. The action is for slots that do not answer. The API has an explicit override for stopping a healthy slot, which the Console never sends; it also stops a workspace running on that slot |
+| `slot_healthy` | The ECS agent is connected **and** SSM is online. The action is for slots that do not answer. The Console offers **Stop (force)** on a running slot whose agent is connected too, but only after you tick "I understand the agents still answer" in the confirmation, which sends the explicit `override_healthy` override. That stops a workspace running on the slot |
 | `slot_not_running` | The slot is already stopped |
 | `slot_quarantined` | The slot is quarantined |
 | `slot_task_eni_held` | The task ENI did not go in time. The instance keeps running. Wait a minute and press again |

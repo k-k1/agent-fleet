@@ -169,6 +169,12 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 	}
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
+			// First, before the reservation or the template is read: a quarantined box is one the
+			// CP may no longer command (SendCommand is granted to af-role=slot), so a home still
+			// attached to it must be released and re-placed, never woken there (ADR 0121 rule 1).
+			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
+				return false, false, false, nil
+			}
 			if !e.pool.noAutoReplace {
 				if lt, ltErr := e.pool.readLaunchTemplate(ctx, e.ec2); ltErr != nil {
 					log.Printf("ecs-ec2: reading the slot launch template for %s: %v", e.base.name, ltErr)
@@ -536,7 +542,7 @@ func (e *ecsEC2Runtime) releaseAndReplace(ctx context.Context, p ec2Placement) (
 		return ec2Placement{}, false
 	}
 	e.ifCurrentStart(ctx, p.gen, func() { e.setPhase("slot: releasing") })
-	if err := e.releaseSlotSince(ctx, p.gen); err != nil {
+	if err := e.releaseSlotSince(asHomeOwner(ctx), p.gen); err != nil {
 		return fail("the old slot could not be released after a size/class change", err)
 	}
 	if e.superseded(ctx, p) {

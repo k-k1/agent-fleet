@@ -329,6 +329,12 @@ func (f *fakeEC2) DescribeInstances(ctx context.Context, in *ec2.DescribeInstanc
 				return []string{ec2TagValue(inst.Tags, strings.TrimPrefix(name, "tag:"))}
 			case name == "instance-id":
 				return []string{id}
+			case name == "tag-key":
+				var keys []string
+				for _, t := range inst.Tags {
+					keys = append(keys, aws.ToString(t.Key))
+				}
+				return keys
 			case name == "instance-state-name":
 				return []string{string(inst.State.Name)}
 			case name == "instance-type":
@@ -897,6 +903,9 @@ type fakeContainerInstances struct {
 	// a value means somebody else's box shares the cluster — an ADR 0071 engine on
 	// Managed Instances.
 	capacityProvider map[string]string
+	// running are the services' live tasks (Group "service:<name>"), listed for a
+	// DesiredStatus RUNNING service query.
+	running []ecstypes.Task
 	// stopping are the service's tasks that were asked to stop and have not reported it.
 	stopping  []ecstypes.Task
 	taskCalls int
@@ -931,6 +940,15 @@ func (f *fakeContainerInstances) ListTasks(_ context.Context, in *ecs.ListTasksI
 		}
 		return out, nil
 	}
+	if in.DesiredStatus == ecstypes.DesiredStatusRunning {
+		out := &ecs.ListTasksOutput{}
+		for _, t := range f.running {
+			if aws.ToString(t.Group) == "service:"+aws.ToString(in.ServiceName) {
+				out.TaskArns = append(out.TaskArns, aws.ToString(t.TaskArn))
+			}
+		}
+		return out, nil
+	}
 	if aws.ToString(in.ServiceName) != "af-ws-acme-alice" || in.DesiredStatus != ecstypes.DesiredStatusStopped {
 		f.badTaskCalls = append(f.badTaskCalls, aws.ToString(in.ServiceName)+"/"+string(in.DesiredStatus))
 	}
@@ -958,7 +976,7 @@ func (f *fakeContainerInstances) DescribeTasks(_ context.Context, in *ecs.Descri
 	}
 	out := &ecs.DescribeTasksOutput{Failures: f.taskFailures}
 	for _, arn := range in.Tasks {
-		for _, t := range f.stopping {
+		for _, t := range append(append([]ecstypes.Task{}, f.stopping...), f.running...) {
 			if aws.ToString(t.TaskArn) == arn {
 				out.Tasks = append(out.Tasks, t)
 			}

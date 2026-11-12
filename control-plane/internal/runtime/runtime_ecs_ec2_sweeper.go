@@ -257,7 +257,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 			log.Printf("ecs-ec2 sweep: releasing %s before terminating slot %s: %v", volumeID, instanceID, err)
 			return
 		}
-		rt.terminateSlot(ctx, instanceID, fmt.Sprintf("%s dormant %.0fm", rt.base.name, idle.Minutes()))
+		rt.terminateSlot(ctx, instanceID, fmt.Sprintf("%s dormant %.0fm", rt.base.name, idle.Minutes()), terminateAutomatic)
 		return
 	}
 	if f.pool.slotSleepAfter <= 0 || idle < f.pool.slotSleepAfter {
@@ -488,7 +488,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			} else if c.outdated {
 				why = "free and below the launch template's $Latest"
 			}
-			probe.terminateSlot(ctx, c.id, why)
+			probe.terminateSlot(ctx, c.id, why, terminateAutomatic)
 			continue
 		}
 		log.Printf("ecs-ec2 sweep: slot %s has held no home for %.0fm; stopping it", c.id, c.idle.Minutes())
@@ -515,7 +515,17 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 // only carries it out. It has two callers with opposite needs — the sweeper, which can
 // only log, and TerminateQuarantinedSlot, which answers an operator waiting on an HTTP
 // request — so it both logs and returns the failure.
-func (e *ecsEC2Runtime) terminateSlot(ctx context.Context, instanceID, why string) error {
+//
+// intent says who is asking (ADR 0121 decision 3, rule 4). Every automatic caller refuses a
+// box whose role is `quarantined`: it is kept as evidence, and an automatic terminate is how
+// R9 destroyed it. Only the operator's TerminateQuarantinedSlot passes terminateOperator.
+func (e *ecsEC2Runtime) terminateSlot(ctx context.Context, instanceID, why string, intent terminateIntent) error {
+	if intent != terminateOperator {
+		if err := e.terminateGate(ctx, instanceID, intent); err != nil {
+			log.Printf("ecs-ec2: not terminating slot %s (%s): %v", instanceID, why, err)
+			return err
+		}
+	}
 	e.deregisterSlot(ctx, instanceID)
 	if _, err := e.ec2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
 		InstanceIds: []string{instanceID},
@@ -524,6 +534,51 @@ func (e *ecsEC2Runtime) terminateSlot(ctx context.Context, instanceID, why strin
 		return err
 	}
 	log.Printf("ecs-ec2: terminated slot %s (%s); its root volume goes with it", instanceID, why)
+	return nil
+}
+
+// terminateIntent is who is asking terminateSlot to end a box.
+type terminateIntent int
+
+const (
+	// terminateAutomatic: the sweeper's stages and the replacement paths.
+	terminateAutomatic terminateIntent = iota
+	// terminateMakeRoom is automatic and also re-reads the box's rescue marker and dark stamp,
+	// because a dark dormant occupant has no running task and so `tasks[id] > 0` does not
+	// exclude it from the victim list.
+	terminateMakeRoom
+	// terminateOperator: an authorised, audited person (TerminateQuarantinedSlot).
+	terminateOperator
+)
+
+// ErrTerminateRefused is an automatic terminate that did not run.
+var ErrTerminateRefused = errors.New("refusing to terminate the slot")
+
+// terminateGate re-reads the box and refuses an automatic terminate of a quarantined one.
+// A read that fails refuses too: not knowing the role is not evidence that it is not
+// quarantined, and the cost of refusing is that the next pass asks again.
+func (e *ecsEC2Runtime) terminateGate(ctx context.Context, instanceID string, intent terminateIntent) error {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		if isAWSNotFound(err) {
+			return nil // already gone: nothing left to protect
+		}
+		return fmt.Errorf("%w: could not read %s: %w", ErrTerminateRefused, instanceID, err)
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
+				return fmt.Errorf("%w: %s is quarantined (only an operator may)", ErrTerminateRefused, instanceID)
+			}
+			if intent == terminateMakeRoom {
+				for _, key := range []string{ec2TagRescue, ec2TagDarkSince} {
+					if ec2TagValue(inst.Tags, key) != "" {
+						return fmt.Errorf("%w: %s carries %s", ErrTerminateRefused, instanceID, key)
+					}
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -618,7 +673,7 @@ func (f *ecsEC2Factory) TerminateQuarantinedSlot(ctx context.Context, instanceID
 			return "", fmt.Errorf("%w: %s is being placed on it", ErrSlotInUse, id)
 		}
 	}
-	if err := probe.terminateSlot(ctx, instanceID, "quarantined, terminated by an operator"); err != nil {
+	if err := probe.terminateSlot(ctx, instanceID, "quarantined, terminated by an operator", terminateOperator); err != nil {
 		return reason, err
 	}
 	return reason, nil
