@@ -23,9 +23,9 @@ The commands assume the shell variables of [Build on GKE](gke.md#shell-variables
 `deploy/gcp/gke/pause.sh` does it in the order that matters, in a shell whose kubectl points at this cluster ([3. Point kubectl at this cluster](gke.md#3-point-kubectl-at-this-cluster)):
 
 ```bash
-deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --status
-deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --yes
-deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --up
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$LOCATION" --prefix "$PREFIX" --status
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$LOCATION" --prefix "$PREFIX" --yes
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$LOCATION" --prefix "$PREFIX" --up
 ```
 
 | Option | Meaning |

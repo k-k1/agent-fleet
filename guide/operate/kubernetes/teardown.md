@@ -26,11 +26,13 @@ Cloud SQL, the cluster and the KMS key are protected against deletion on purpose
 
 1. Destroy every member's workspace in the Console first, so the disks go with their claims
 2. Take the backups of step 2 of [Upgrade the CP](upgrade.md#upgrade) if anything may be wanted later: deleting the overlay deletes the claim `af-cp-data`, and with `reclaimPolicy: Delete` its disk
-3. Delete the overlay, then check that no volume of the deployment is left behind (a `Retain` volume from an unfinished restore keeps its disk), and delete any that remain
+3. Note the CP's disk first ([Find the CP's disk](backup.md#find-the-cps-disk)): a disk the StorageClass made is named after its volume, not after `af-cp-data`, so only its recorded name finds it. Then delete the overlay and check that no volume or disk of the deployment is left behind (a `Retain` volume from an unfinished restore keeps its disk, named `$PREFIX-cp-data-…`), and delete any that remain
    ```bash
+   # first, read PV, HANDLE, ZONE and DISK with the block of "Find the CP's disk"
    kubectl delete -k "$OVERLAY"
    kubectl get pv | grep "$PREFIX-cp"
-   gcloud compute disks list --project "$PROJECT" --filter="name~$PREFIX-cp-data"
+   gcloud compute disks describe "$DISK" --zone "$ZONE" --project "$PROJECT"   # must answer "not found"
+   gcloud compute disks list --project "$PROJECT" --filter="name~$PREFIX-cp-data"   # restored or rehearsal disks
    ```
 4. Lift every protection Terraform set, then apply and destroy
 

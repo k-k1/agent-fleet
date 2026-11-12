@@ -52,7 +52,7 @@ A drain is not a stop. It deletes a workspace's pod but leaves `replicas: 1`, so
 GKE upgrades nodes by itself inside the maintenance window (`maintenance_window`). To upgrade only by the procedure above, add a maintenance exclusion with the scope "no minor or node upgrades" for the period you want to control, and run the node upgrade yourself:
 
 ```bash
-gcloud container clusters update "$PREFIX-gke" --region "$REGION" --project "$PROJECT" \
+gcloud container clusters update "$PREFIX-gke" --location "$LOCATION" --project "$PROJECT" \
   --add-maintenance-exclusion-name hold-nodes \
   --add-maintenance-exclusion-start <start> --add-maintenance-exclusion-end <end> \
   --add-maintenance-exclusion-scope no_minor_or_node_upgrades

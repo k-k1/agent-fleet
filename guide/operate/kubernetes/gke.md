@@ -25,11 +25,14 @@ The preconditions the cluster must meet (P1–P15) are in [The Kubernetes deploy
 
 ## Shell variables
 
+`LOCATION` is where the cluster itself is: the region for a regional cluster, the zone (`node_zones[0]`) for a zonal one such as the small profile.
+
 Every command below runs **from the repository root**, and every `gcloud` command names the project explicitly, so a different default project in your `gcloud` configuration cannot be the one that is changed. Set these once per shell:
 
 ```bash
 PROJECT=<project>          # Terraform's project_id
 REGION=<region>            # Terraform's region
+LOCATION="$REGION"         # the cluster's location: node_zones[0] instead when zonal_cluster = true
 PREFIX=<name_prefix>       # Terraform's name_prefix
 TF="terraform -chdir=deploy/gcp/gke"
 OVERLAY="deploy/kubernetes/overlays/$PREFIX"   # your overlay; point it at the copy once you move it

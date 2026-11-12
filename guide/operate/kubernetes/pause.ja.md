@@ -23,9 +23,9 @@ source_of_truth: "`deploy/gcp/gke/pause.sh` と `deploy/gcp/gke/` の Terraform�
 `deploy/gcp/gke/pause.sh` が、大事な順番どおりに進めます。kubectl がこのクラスターを指しているシェルで実行します（[3. kubectl をこのクラスターに向ける](gke.ja.md#3-kubectl-をこのクラスターに向ける)）。
 
 ```bash
-deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --status
-deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --yes
-deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$REGION" --prefix "$PREFIX" --up
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$LOCATION" --prefix "$PREFIX" --status
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$LOCATION" --prefix "$PREFIX" --yes
+deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$LOCATION" --prefix "$PREFIX" --up
 ```
 
 | オプション | 意味 |

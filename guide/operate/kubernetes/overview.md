@@ -141,7 +141,7 @@ An increase to 2000 GB has been approved within a minute; that is not a promise,
 
 ## Pages in this group
 
-The commands on the operating pages assume the shell variables of the GKE page (`PROJECT`, `REGION`, `PREFIX`, `TF`, `OVERLAY`) and that `kubectl config current-context` is this cluster ([Build on GKE](gke.md#3-point-kubectl-at-this-cluster)).
+The commands on the operating pages assume the shell variables of the GKE page (`PROJECT`, `REGION`, `LOCATION`, `PREFIX`, `TF`, `OVERLAY`) and that `kubectl config current-context` is this cluster ([Build on GKE](gke.md#3-point-kubectl-at-this-cluster)).
 
 | Page | What you can do |
 |---|---|

@@ -25,11 +25,14 @@ Terraform でクラスターとそのまわりを作り、マニフェストを�
 
 ## シェル変数
 
+`LOCATION` はクラスター自体の場所です。リージョンクラスターならリージョン、小さな構成のようなゾーンクラスターならゾーン（`node_zones[0]`）にします。
+
 コマンドはすべて**リポジトリのルートから**実行します。`gcloud` のコマンドはどれもプロジェクトを明示するので、`gcloud` の設定の既定のプロジェクトが違っていても、そちらが変わることはありません。シェルごとに一度設定します。
 
 ```bash
 PROJECT=<project>          # Terraform's project_id
 REGION=<region>            # Terraform's region
+LOCATION="$REGION"         # the cluster's location: node_zones[0] instead when zonal_cluster = true
 PREFIX=<name_prefix>       # Terraform's name_prefix
 TF="terraform -chdir=deploy/gcp/gke"
 OVERLAY="deploy/kubernetes/overlays/$PREFIX"   # your overlay; point it at the copy once you move it

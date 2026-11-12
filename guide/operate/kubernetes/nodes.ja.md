@@ -52,7 +52,7 @@ drain は停止ではありません。ワークスペースの Pod を消して
 GKE は、メンテナンスの時間帯（`maintenance_window`）の中で自分でノードをアップグレードします。上の手順だけでアップグレードしたいときは、制御したい期間に「マイナーとノードのアップグレードなし」の範囲のメンテナンスの除外を足し、ノードのアップグレードを自分で実行します。
 
 ```bash
-gcloud container clusters update "$PREFIX-gke" --region "$REGION" --project "$PROJECT" \
+gcloud container clusters update "$PREFIX-gke" --location "$LOCATION" --project "$PROJECT" \
   --add-maintenance-exclusion-name hold-nodes \
   --add-maintenance-exclusion-start <start> --add-maintenance-exclusion-end <end> \
   --add-maintenance-exclusion-scope no_minor_or_node_upgrades

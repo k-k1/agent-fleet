@@ -141,7 +141,7 @@ gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project
 
 ## このグループのページ
 
-運用のページのコマンドは、GKE のページのシェル変数（`PROJECT`・`REGION`・`PREFIX`・`TF`・`OVERLAY`）が設定済みで、`kubectl config current-context` がこのクラスターであることを前提にしています（[GKE に構築する](gke.ja.md#3-kubectl-をこのクラスターに向ける)）。
+運用のページのコマンドは、GKE のページのシェル変数（`PROJECT`・`REGION`・`LOCATION`・`PREFIX`・`TF`・`OVERLAY`）が設定済みで、`kubectl config current-context` がこのクラスターであることを前提にしています（[GKE に構築する](gke.ja.md#3-kubectl-をこのクラスターに向ける)）。
 
 | ページ | できること |
 |---|---|

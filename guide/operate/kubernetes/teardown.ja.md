@@ -26,11 +26,13 @@ Cloud SQL、クラスター、KMS 鍵は、わざと削除から守られてい�
 
 1. Console で、すべてのメンバーのワークスペースを先に破棄します。ディスクが claim と一緒に消えます
 2. あとで要るかもしれないものがあれば、[CP をアップグレードする](upgrade.ja.md#上げる) の手順 2 のバックアップを取ります。オーバーレイを消すと claim `af-cp-data` が消え、`reclaimPolicy: Delete` なのでそのディスクも消えます
-3. オーバーレイを消し、配備のボリュームが残っていないことを確かめます。終わっていない復元の `Retain` のボリュームは、ディスクを残します。残っていたら消します
+3. 先に CP のディスクを控えます（[CP のディスクを探す](backup.ja.md#cp-のディスクを探す)）。StorageClass が作ったディスクの名前は `af-cp-data` ではなくボリュームの名前なので、控えた名前でしか見つかりません。それからオーバーレイを消し、配備のボリュームとディスクが残っていないことを確かめます。終わっていない復元の `Retain` のボリュームは、ディスク（`$PREFIX-cp-data-…` という名前）を残します。残っていたら消します
    ```bash
+   # first, read PV, HANDLE, ZONE and DISK with the block of "Find the CP's disk"
    kubectl delete -k "$OVERLAY"
    kubectl get pv | grep "$PREFIX-cp"
-   gcloud compute disks list --project "$PROJECT" --filter="name~$PREFIX-cp-data"
+   gcloud compute disks describe "$DISK" --zone "$ZONE" --project "$PROJECT"   # must answer "not found"
+   gcloud compute disks list --project "$PROJECT" --filter="name~$PREFIX-cp-data"   # restored or rehearsal disks
    ```
 4. Terraform が付けた保護をすべて外してから適用し、破棄します
 
