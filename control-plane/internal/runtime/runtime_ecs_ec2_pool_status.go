@@ -57,8 +57,9 @@ type ec2SlotView struct {
 	Rung string `json:"rung,omitempty"`
 }
 
-// Values of ec2SlotView.Rung (ADR 0121 decision 5). Only observing is produced from the
-// af-dark-since stamp; the others are filled in by the rescue / quarantine rungs.
+// Values of ec2SlotView.Rung (ADR 0121 decision 5). Observing comes from the af-dark-since
+// stamp; rescuing, blocked and rescued from the af-rescue marker; quarantined is not produced
+// yet.
 const (
 	darkRungObserving   = "observing"
 	darkRungRescuing    = "rescuing"
@@ -74,6 +75,22 @@ const (
 // a recovery (scan off, home detached, a live claim, an AWS read that failed). A pure read; it
 // never writes.
 func darkView(inst ec2types.Instance) (since, rung string) {
+	// A marker speaks for the box in any state: a rescued box is stopped, and the rung says
+	// how far the rescue got.
+	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok {
+		rung = darkRungRescuing
+		switch {
+		case m.Phase == rescuePhaseDetached:
+			rung = darkRungRescued
+		case !m.BlockedSince.IsZero():
+			rung = darkRungBlocked
+		}
+		since = m.Began.UTC().Format(time.RFC3339)
+		if st, ok := parseDarkStamp(ec2TagValue(inst.Tags, ec2TagDarkSince)); ok {
+			since = st.since.UTC().Format(time.RFC3339)
+		}
+		return since, rung
+	}
 	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning || inst.LaunchTime == nil {
 		return "", ""
 	}
