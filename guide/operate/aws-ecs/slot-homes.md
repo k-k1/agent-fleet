@@ -8,14 +8,14 @@ source_of_truth: "The Console's Admin → a tenant → Limits & idle, `Ec2Hibern
 English | [日本語](slot-homes.ja.md)
 
 On an `ecs-ec2` deployment, hibernate homes nobody uses to snapshots to cut their cost, and keep spare copies so a home can be rebuilt after losing an AZ.
-Both are off by default and can be set per tenant in the Console.
+Both are off by default. A super_admin sets them per tenant under **Admin** in the Console.
 
 ## How it works
 
 | What you do | What happens |
 |---|---|
-| Set the tenant's **Hibernate unused homes** | A home nobody opened for that long becomes a snapshot and its volume is deleted. The next start brings it back |
-| Set the tenant's **Keep a spare copy of each home** | A copy of each home is taken while in use, outside its AZ, at that interval |
+| A super_admin sets the tenant's **Hibernate unused homes** | A home nobody opened for that long becomes a snapshot and its volume is deleted. The next start brings it back |
+| A super_admin sets the tenant's **Keep a spare copy of each home** | A copy of each home is taken while in use, outside its AZ, at that interval |
 | Rebuild a home from a spare copy after losing an AZ | That user can start in an AZ that is alive |
 | Destroy a workspace | The home and every resource of that member are deleted |
 
@@ -36,7 +36,7 @@ Both are triggered by the idle-stop sweeper. **`AF_IDLE_SWEEP_INTERVAL=0` turns 
 | `0` | Never, for this tenant |
 | A duration (`720h` and so on) | The unit goes up to hours, so write days as a multiple of 24h |
 
-These two fields appear under **Admin** only on a slot-pool deployment.
+These two fields appear only on a slot-pool deployment, and only under a super_admin's **Admin**. A tenant administrator's Tenant settings do not show them.
 
 ## Hibernate unused homes
 
@@ -57,8 +57,8 @@ An EBS home bills for the size it is **provisioned** at, whether or not anyone o
 
 The value for a tenant that has not chosen is `Ec2HibernateAfterSec` on `30-ingress` (environment variable `AF_ECS_EC2_HIBERNATE_AFTER_SEC`, in seconds, default `0` = off).
 
-- A retention window is usually the tenant's call, so the tenant setting is both quicker and more correct. It needs no deploy
-- Use `Ec2HibernateAfterSec` when you want a floor for tenants that never choose
+- Retention usually differs between tenants, so a per-tenant value fits better. It needs no deploy
+- Use `Ec2HibernateAfterSec` when you want a default for tenants with no value of their own
 
 ## Keep a spare copy of each home
 
@@ -72,14 +72,15 @@ An EBS home lives in exactly one AZ and cannot be evacuated, so losing that AZ l
 - **Copies are taken while the home is in use.** A copy is the same picture a power cut leaves. Quiescing would mean taking a working person's home away on a timer
 - **They are never restored automatically.** A copy is always older than the home, and handing somebody a silently older home is worse than leaving the decision to an operator
 - The **Spare copy** column of the homes list on the **Slots** page shows how old each home's newest copy is, and shows **none** in a warning colour when there is none
-- **Clean home does not delete them**, and nothing else does as a side effect. They go with **Delete backups**, which a tenant administrator presses in the member detail, and with destroying the workspace ([Remove a member](../../admin/members/remove.md))
+- **Clean home does not delete them.** Clean home deletes the EBS home volume and its hibernation snapshots, and the logins and connections stay on EFS. Nothing else deletes the copies as a side effect either. They go with **Delete backups**, which a tenant administrator presses in the member detail, and with destroying the workspace ([Remove a member](../../admin/members/remove.md))
 - While the home exists, the schedule keeps taking copies of it. For a removed member, delete the copies after cleaning the home
 
 ## Restore a home from a spare copy
 
-After losing an AZ, moving that user is an operator's action.
+After losing an AZ, moving that user is an operator's action. Check that each command succeeded before the next, and stop at the first failure. Keep the old home volume; do not delete it.
 
-1. Pick that user's newest completed copy
+1. Check that the workspace is stopped, and ask the member not to start it until you are done
+2. Pick that user's newest completed copy
 
    ```bash
    snap=$(aws ec2 describe-snapshots --owner-ids self \
@@ -88,19 +89,34 @@ After losing an AZ, moving that user is an operator's action.
      --query 'sort_by(Snapshots,&StartTime)[-1].SnapshotId' --output text)
    ```
 
-2. If the old home volume still exists, delete it or remove its tags first. With two homes for the same `af-membership`, the Control Plane cannot tell which one is real
-3. Recreate it in a healthy AZ with the home tags. `af-role` must be `home` (left as `backup` it is invisible to the Control Plane)
+3. Create a new volume in a healthy AZ and wait until it is `available`. Its `af-role` is `home-restoring`, so the Control Plane cannot see it yet
 
    ```bash
-   aws ec2 create-volume --availability-zone <healthy-az> --snapshot-id "$snap" \
+   new=$(aws ec2 create-volume --availability-zone <healthy-az> --snapshot-id "$snap" \
      --volume-type gp3 --encrypted \
-     --tag-specifications 'ResourceType=volume,Tags=[{Key=af-pool,Value=<pool>},{Key=af-role,Value=home},
-       {Key=af-workspace,Value=<ws>},{Key=af-membership,Value=<membership>},{Key=af-tenant,Value=<tenant>},{Key=Name,Value=<ws>-home}]'
+     --tag-specifications 'ResourceType=volume,Tags=[{Key=af-pool,Value=<pool>},{Key=af-role,Value=home-restoring},
+       {Key=af-workspace,Value=<ws>},{Key=af-membership,Value=<membership>},{Key=af-tenant,Value=<tenant>},{Key=Name,Value=<ws>-home}]' \
+     --query VolumeId --output text)
+   aws ec2 wait volume-available --volume-ids "$new"
    ```
 
-4. The user starts their workspace
+4. If the old home volume still exists, take the home role off it (`None` means there is none)
 
-- Tag in the same call that creates the volume. An untagged volume is invisible to the Control Plane
+   ```bash
+   old=$(aws ec2 describe-volumes --filters Name=tag:af-membership,Values=<membership> Name=tag:af-role,Values=home \
+     --query 'Volumes[0].VolumeId' --output text)
+   aws ec2 create-tags --resources "$old" --tags Key=af-role,Value=home-retired
+   ```
+
+5. Make the new volume the home
+
+   ```bash
+   aws ec2 create-tags --resources "$new" --tags Key=af-role,Value=home
+   ```
+
+6. The user starts the workspace and checks their files. Delete the old volume only once you have decided it is not needed
+
+- **The Control Plane finds a home by `af-membership` and `af-role=home`.** With two, it uses whichever it finds first. Do step 4 before step 5
 - **A spare copy is older than the person's work.** How far back it goes is in the **Spare copy** column
 
 What to do first when you lose an AZ is in [When you lose an AZ](slot-pool.md#when-you-lose-an-az).
@@ -121,7 +137,8 @@ Destroying a workspace **cannot be undone**. It deletes the home and every per-m
 - It accepts only a member who has been removed. A tenant administrator presses **Destroy workspace**, offered in the member detail after the removal ([Remove a member](../../admin/members/remove.md))
 - The API is `DELETE /api/admin/workspaces {tenant_slug,user_key}`. `{"purge": true}` on the call that removes the member does both at once. Removing alone deletes nothing
 - It overrides the deletion locks inside the home: those live inside the home, which cannot be read while the workspace is stopped
-- What is left on EFS is removed by a task that takes a few minutes. The button returns at once and the outcome goes into the audit log when it finishes. Anything that could not be deleted is listed
+- The EFS directories (home, logins, `/home-keep`) are removed by a task that takes a few minutes, when the stack declares the home task (`AF_ECS_HOME_TASK`). The same holds on Fargate. The button returns at once and the outcome goes into the audit log when it finishes
+- The reference `30-ingress` declares that task. On a stack without it the EFS directories stay and keep billing, and they are reported as leftovers in the response and the audit log
 - The golden snapshot carries no `af-membership` tag, so destroying a workspace never touches it
 
 ## Related

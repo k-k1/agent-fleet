@@ -17,7 +17,7 @@ ECS の配備で、ワークスペースを Fargate ではなく EC2 インス�
 | `40-ec2-pool` スタックを建てる | スロット用の起動テンプレートとロールができる。インスタンスはまだ 1 台もない |
 | `30-ingress` を `WsRuntime=ecs-ec2` で更新する | Control Plane がワークスペースをスロットで起動するようになる |
 | 何もしない | 最初の起動でスロットを作り、ユーザーごとの EBS のホームを付ける。使われないスロットは止まる |
-| `30-ingress` を `WsRuntime=ecs` に戻す | Fargate に戻る。これがロールバックのすべて |
+| `30-ingress` を `WsRuntime=ecs` に戻す | Fargate に戻る。設定の切り替えはこれだけ |
 
 スロットは誰のものでもありません。起動のたびに Control Plane が空きのスロットを選び、そのユーザーのボリュームを `/dev/sdf` に付けて SSM でマウントし、タスクをそのインスタンスに固定します。1 台のスロットに載るのは、同時に 1 人だけです。
 
@@ -61,6 +61,15 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 
 2. ワークスペースを 1 つ起動し、「**管理**」→「**スロット**」にスロットが出ることを確かめます。画面の見かたは [スロットを入れ替える・止める](slot-maintenance.ja.md) にあります
 3. 戻すときは、`30-ingress` を `WsRuntime=ecs` で更新します
+
+**ホームの中身は、どちらの向きにも移りません。** Fargate のホームは EFS に、`ecs-ec2` のホームは EBS に、別々に作ります。
+
+| 切り替え | メンバーのホーム |
+|---|---|
+| Fargate → `ecs-ec2` | 新しい EBS のホーム（golden があればそのコピー）から始まる。EFS のホームは残るが、使われない |
+| `ecs-ec2` → Fargate | 前の EFS のホームに戻る。EBS のホームは残って課金が続くが、使われない |
+
+- 切り替える前に、メンバーに作業をコミットして push してもらいます。ホームの中のファイルは自分で移します
 
 - `30-ingress` が 51,200 バイトを超えるので、S3 経由でデプロイします（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）
 - `Ec2SlotLaunchTemplate` が空のままだと、Control Plane はこのプロファイルでは起動しません
@@ -140,7 +149,7 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 | 同じイメージで候補が 2 回失敗した | そのイメージでは焼くのをやめる |
 | golden がないか、古い | 新しいホームは空から作る。初回の起動が遅いだけで、壊れはしない |
 
-どの状況かは、「**管理**」→「**スロット**」の「**golden snapshot**」の欄に出ます。golden は 1 つのプールで 1 つを共有します。`af-membership` タグを持たないので、ワークスペースを破棄しても消えません。
+どの状況かは、「**管理**」→「**スロット**」の「**golden snapshot**」の欄に出ます。golden はアーキテクチャごとに 1 つで、プールの全員で共有します（[Graviton（arm64）のクラスを足す](slot-types.ja.md#gravitonarm64のクラスを足す)）。`af-membership` タグを持たないので、ワークスペースを破棄しても消えません。
 
 ### 手で焼く
 
@@ -171,27 +180,54 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 EBS のボリュームを別の AZ に動かす操作はありません。移すとは、snapshot から作り直すことです。snapshot は AZ を持たないので、ホームの退避がそのまま使えます。
 
 1. そのワークスペースを止めます
-2. ホームを退避させます。テナントの「**使われない home の退避**」に短い値（`1h` など）を入れ、スイーパーに拾わせます。**この値はテナントの全員に効きます**
+2. ホームを退避させます。super_admin が「**管理**」でテナントの「**使われない home の退避**」に短い値（`1h` など）を入れ、スイーパーに拾わせます。**この値はテナントの全員に効きます**。終わったら値を戻します
 3. 移したい AZ にだけ空きのスロットがある状態で起動します。ホームは空いているスロットの AZ（なければスロットを作れた AZ）に戻ります
 
-行き先の AZ を名指しはできません。1 人だけを決まった AZ に移したいときは、AWS CLI で作り直します。ワークスペースが止まっていて、「**スロット**」の画面の home の一覧でそのホームが「**未接続**」になっていることが前提です。
+行き先の AZ を名指しはできません。1 人だけを決まった AZ に移したいときは、AWS CLI で作り直します。各コマンドが成功したことを確かめてから次に進み、失敗したらそこで止めます。どこで止めても、元のボリュームは残っています。
 
-```bash
-# 対象のホームを特定し（停止中で、どこにも付いていないこと）、snapshot を作る
-vol=$(aws ec2 describe-volumes --filters Name=tag:af-workspace,Values=<ws> Name=tag:af-role,Values=home \
-  --query 'Volumes[0].VolumeId' --output text)
-snap=$(aws ec2 create-snapshot --volume-id "$vol" --query SnapshotId --output text)
-aws ec2 wait snapshot-completed --snapshot-ids "$snap"
-# 行き先の AZ に、同じタグで作り直す
-aws ec2 create-volume --availability-zone <target-az> --snapshot-id "$snap" --volume-type gp3 --encrypted \
-  --tag-specifications 'ResourceType=volume,Tags=[{Key=af-pool,Value=<pool>},{Key=af-role,Value=home},
-    {Key=af-workspace,Value=<ws>},{Key=af-membership,Value=<membership>},{Key=af-tenant,Value=<tenant>},{Key=Name,Value=<ws>-home}]'
-aws ec2 delete-volume --volume-id "$vol"   # 新しいほうが available になってから
-aws ec2 delete-snapshot --snapshot-id "$snap"
-```
+1. ワークスペースを止め、「**スロット**」の画面の home の一覧でそのホームが「**未接続**」になっていることを確かめます。終わるまで起動しないよう、メンバーに伝えます（テナントで「**サインイン時の自動起動**」がオンなら、サインインでも起動します）
+2. 元のボリュームを特定し、`available` で、どこにも付いていないこと（`Attachments` が空）を確かめます
 
-- **タグは作成と同じ呼び出しで付けます。** タグのないボリュームは Control Plane から見えず、次の起動がもう 1 つ作って両方に課金されます
-- **古いボリュームは、新しいほうができてから消します。** 逆にすると、途中で失敗したときに何も残りません
+   ```bash
+   vol=$(aws ec2 describe-volumes --filters Name=tag:af-workspace,Values=<ws> Name=tag:af-role,Values=home \
+     --query 'Volumes[0].VolumeId' --output text)
+   aws ec2 describe-volumes --volume-ids "$vol" --query 'Volumes[0].[State,AvailabilityZone,Attachments]'
+   ```
+
+3. snapshot を作り、完了を待ちます
+
+   ```bash
+   snap=$(aws ec2 create-snapshot --volume-id "$vol" --query SnapshotId --output text)
+   aws ec2 wait snapshot-completed --snapshot-ids "$snap"
+   ```
+
+4. 行き先の AZ に新しいボリュームを作り、`available` になるまで待ちます。`af-role` を `home-moving` にしておくので、まだ Control Plane からは見えません
+
+   ```bash
+   new=$(aws ec2 create-volume --availability-zone <target-az> --snapshot-id "$snap" --volume-type gp3 --encrypted \
+     --tag-specifications 'ResourceType=volume,Tags=[{Key=af-pool,Value=<pool>},{Key=af-role,Value=home-moving},
+       {Key=af-workspace,Value=<ws>},{Key=af-membership,Value=<membership>},{Key=af-tenant,Value=<tenant>},{Key=Name,Value=<ws>-home}]' \
+     --query VolumeId --output text)
+   aws ec2 wait volume-available --volume-ids "$new"
+   ```
+
+5. 元のボリュームの役割を外し、新しいボリュームをホームにします。この順にすると、Control Plane からホームが 2 つ見えることがありません
+
+   ```bash
+   aws ec2 create-tags --resources "$vol" --tags Key=af-role,Value=home-retired
+   aws ec2 create-tags --resources "$new" --tags Key=af-role,Value=home
+   ```
+
+6. メンバーがワークスペースを起動し、ファイルがそろっていることと、home の一覧の場所が行き先の AZ であることを確かめます
+7. 確かめ終えてから、元のボリュームと snapshot を消します
+
+   ```bash
+   aws ec2 delete-volume --volume-id "$vol"
+   aws ec2 delete-snapshot --snapshot-id "$snap"
+   ```
+
+- **Control Plane がホームを探すのは `af-membership` と `af-role=home` の組です。** 同じメンバーに `af-role=home` のボリュームが 2 つあると、最初に見つかったほうを使います。手順 5 の順を守ってください
+- 手順 5 より前に止めたときは、新しいボリュームを消すだけで元に戻ります。手順 5 のあとなら、2 つのタグを逆に付け直します
 - 45 GiB のホームの snapshot には 30〜40 分かかります。戻した直後は、触ったところが遅くなります
 
 ### AZ を失ったとき

@@ -17,7 +17,7 @@ The home moves to EBS, so small-file I/O gets much faster, and workspaces can be
 | Build the `40-ec2-pool` stack | The slot launch template and roles exist. There are no instances yet |
 | Update `30-ingress` with `WsRuntime=ecs-ec2` | The Control Plane starts workspaces on slots |
 | Nothing | The first start creates a slot and attaches a per-user EBS home. Slots nobody uses are stopped |
-| Set `30-ingress` back to `WsRuntime=ecs` | Back on Fargate. That is the whole rollback |
+| Set `30-ingress` back to `WsRuntime=ecs` | Back on Fargate. That is the only setting to switch |
 
 Slots belong to nobody. On every start the Control Plane picks a free slot, attaches that user's volume at `/dev/sdf`, mounts it over SSM and pins the task to that instance. One slot serves one user at a time.
 
@@ -61,6 +61,15 @@ How to move someone to another AZ, and what to do when you lose one, is in [Move
 
 2. Start one workspace and check that a slot appears under **Admin** → **Slots**. How to read that page is in [Replace and stop slots](slot-maintenance.md)
 3. To go back, update `30-ingress` with `WsRuntime=ecs`
+
+**Home contents do not move in either direction.** Fargate homes are created on EFS and `ecs-ec2` homes on EBS, separately.
+
+| Switch | Member's home |
+|---|---|
+| Fargate → `ecs-ec2` | Starts from a new EBS home (a copy of the golden, if there is one). The EFS home stays but is not used |
+| `ecs-ec2` → Fargate | Back to the earlier EFS home. The EBS home stays and keeps billing but is not used |
+
+- Before switching, have members commit and push their work. They move any other files in their home themselves
 
 - `30-ingress` is over 51,200 bytes, so it is deployed through S3 ([Keep templates under the size limit](template-size.md))
 - With `Ec2SlotLaunchTemplate` empty, the Control Plane refuses to boot on this profile
@@ -140,7 +149,7 @@ By default the Control Plane bakes it itself.
 | Two candidates failed on the same image | It stops trying on that image |
 | No golden, or a stale one | New homes are built empty. The first start is slower; nothing breaks |
 
-The **Golden snapshot** part of **Admin** → **Slots** says which of these is happening. One golden is shared by the pool. It carries no `af-membership` tag, so destroying a workspace never touches it.
+The **Golden snapshot** part of **Admin** → **Slots** says which of these is happening. There is one golden per architecture, shared by everyone in the pool ([Add a Graviton (arm64) class](slot-types.md#add-a-graviton-arm64-class)). It carries no `af-membership` tag, so destroying a workspace never touches it.
 
 ### Bake it by hand
 
@@ -171,27 +180,54 @@ With `AF_ECS_EC2_GOLDEN_AUTOBAKE=0` this is your job on every release. A deploym
 There is no operation that moves an EBS volume to another AZ. Moving means rebuilding from a snapshot. A snapshot has no AZ, so home hibernation does exactly that.
 
 1. Stop the workspace
-2. Hibernate the home. Put a short value (such as `1h`) in the tenant's **Hibernate unused homes** and let the sweeper pick it up. **This applies to everyone in the tenant**
+2. Hibernate the home. A super_admin puts a short value (such as `1h`) in the tenant's **Hibernate unused homes** under **Admin**, and the sweeper picks it up. **This applies to everyone in the tenant**. Put the value back afterwards
 3. Start it while free slots exist only in the AZ you want. The home comes back in the AZ of a free slot (or, if there is none, the AZ where a slot could be created)
 
-You cannot name the target AZ. To move one person to a named AZ, rebuild the volume with the AWS CLI. The workspace must be stopped, and the home must show **detached** in the homes list on the **Slots** page.
+You cannot name the target AZ. To move one person to a named AZ, rebuild the volume with the AWS CLI. Check that each command succeeded before the next, and stop at the first failure. Wherever you stop, the original volume is still there.
 
-```bash
-# find the home (stopped and attached to nothing) and snapshot it
-vol=$(aws ec2 describe-volumes --filters Name=tag:af-workspace,Values=<ws> Name=tag:af-role,Values=home \
-  --query 'Volumes[0].VolumeId' --output text)
-snap=$(aws ec2 create-snapshot --volume-id "$vol" --query SnapshotId --output text)
-aws ec2 wait snapshot-completed --snapshot-ids "$snap"
-# recreate it in the target AZ with the same tags
-aws ec2 create-volume --availability-zone <target-az> --snapshot-id "$snap" --volume-type gp3 --encrypted \
-  --tag-specifications 'ResourceType=volume,Tags=[{Key=af-pool,Value=<pool>},{Key=af-role,Value=home},
-    {Key=af-workspace,Value=<ws>},{Key=af-membership,Value=<membership>},{Key=af-tenant,Value=<tenant>},{Key=Name,Value=<ws>-home}]'
-aws ec2 delete-volume --volume-id "$vol"   # only once the new one is available
-aws ec2 delete-snapshot --snapshot-id "$snap"
-```
+1. Stop the workspace and check that the home shows **detached** in the homes list on the **Slots** page. Ask the member not to start it until you are done (with the tenant's **Start at sign-in** on, signing in starts it too)
+2. Find the original volume, and check that it is `available` and attached to nothing (`Attachments` empty)
 
-- **Tag in the same call that creates the volume.** An untagged volume is invisible to the Control Plane, and the next start creates another one and bills both
-- **Delete the old volume only after the new one exists.** The other order leaves nothing if a step fails
+   ```bash
+   vol=$(aws ec2 describe-volumes --filters Name=tag:af-workspace,Values=<ws> Name=tag:af-role,Values=home \
+     --query 'Volumes[0].VolumeId' --output text)
+   aws ec2 describe-volumes --volume-ids "$vol" --query 'Volumes[0].[State,AvailabilityZone,Attachments]'
+   ```
+
+3. Snapshot it and wait for completion
+
+   ```bash
+   snap=$(aws ec2 create-snapshot --volume-id "$vol" --query SnapshotId --output text)
+   aws ec2 wait snapshot-completed --snapshot-ids "$snap"
+   ```
+
+4. Create the new volume in the target AZ and wait until it is `available`. Its `af-role` is `home-moving`, so the Control Plane cannot see it yet
+
+   ```bash
+   new=$(aws ec2 create-volume --availability-zone <target-az> --snapshot-id "$snap" --volume-type gp3 --encrypted \
+     --tag-specifications 'ResourceType=volume,Tags=[{Key=af-pool,Value=<pool>},{Key=af-role,Value=home-moving},
+       {Key=af-workspace,Value=<ws>},{Key=af-membership,Value=<membership>},{Key=af-tenant,Value=<tenant>},{Key=Name,Value=<ws>-home}]' \
+     --query VolumeId --output text)
+   aws ec2 wait volume-available --volume-ids "$new"
+   ```
+
+5. Take the home role off the original volume, then give it to the new one. In this order the Control Plane never sees two homes
+
+   ```bash
+   aws ec2 create-tags --resources "$vol" --tags Key=af-role,Value=home-retired
+   aws ec2 create-tags --resources "$new" --tags Key=af-role,Value=home
+   ```
+
+6. The member starts the workspace. Check that their files are there and that the homes list shows the target AZ
+7. Only then delete the original volume and the snapshot
+
+   ```bash
+   aws ec2 delete-volume --volume-id "$vol"
+   aws ec2 delete-snapshot --snapshot-id "$snap"
+   ```
+
+- **The Control Plane finds a home by `af-membership` and `af-role=home`.** With two `af-role=home` volumes for the same member it uses whichever it finds first. Keep the order of step 5
+- If you stop before step 5, deleting the new volume undoes everything. After step 5, swap the two tags back
 - A snapshot of a 45 GiB home takes 30–40 minutes. Right after the restore, the parts you touch are slower
 
 ### When you lose an AZ
