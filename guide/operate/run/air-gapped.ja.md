@@ -49,7 +49,7 @@ docker compose up -d
 
 ## TLS を用意する
 
-閉じたネットワークからは Let's Encrypt を使えません。[導入](../02-install.ja.md) の `tls internal`（自己署名）に切り替えるか、社内 CA の証明書を使います。
+閉じたネットワークからは Let's Encrypt を使えません。[テナントとプロビジョニングの方式を決める](../install-decisions.ja.md#tls-internal-を使うか) の `tls internal`（自己署名）に切り替えるか、社内 CA の証明書を使います。
 
 ## エージェントの CLI を焼き込む
 
@@ -82,4 +82,4 @@ control-plane drawio-preseed --from /path/to/stencils --all  # 全部：203 件�
 
 - [アップグレードする](upgrade.ja.md)
 - [ネイティブパッケージを更新する](../native/update.ja.md#手で持ち込む)：ネイティブパッケージを外に出られないホストに入れる
-- [導入](../02-install.ja.md)
+- [インストールする](../install.ja.md)

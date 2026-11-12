@@ -49,7 +49,7 @@ Images carried in by hand are named `agent-fleet/{control-plane,workspace}:<vers
 
 ## Provide TLS
 
-Let's Encrypt is out of reach from a closed network. Switch to `tls internal` (self-signed) as described in [Initial setup](../02-install.md), or use a certificate from your internal CA.
+Let's Encrypt is out of reach from a closed network. Switch to `tls internal` (self-signed) as described in [Choose the tenant and provisioning model](../install-decisions.md#whether-to-use-tls-internal), or use a certificate from your internal CA.
 
 ## Bake in the agent CLIs
 
@@ -82,4 +82,4 @@ control-plane drawio-preseed --from /path/to/stencils --all  # everything: 203 s
 
 - [Upgrade](upgrade.md)
 - [Update the native package](../native/update.md#carry-it-in-by-hand): bring the native package onto a host that cannot reach the internet
-- [Initial setup](../02-install.md)
+- [Install Agent Fleet](../install.md)

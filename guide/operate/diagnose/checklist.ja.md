@@ -62,7 +62,7 @@ Mac では A の扱いが変わります（[macOS（Apple Silicon）で動かす
 | B. `DATA_DIR` の絶対パス | Control Plane の内側でも、`DATA_DIR` が同じ絶対パスになるようにマウントする。ワークスペースの `-v` はホストのパスで作られるため | ワークスペースは起動するのに home が空・作業が見当たらない |
 | C. ユーザーと docker グループ | `user: "1000:1000"` と `group_add: <DOCKER_GID>` にする。home は uid 1000 で作られ、Control Plane は docker のソケットを使うため | ソケットで permission denied になる、またはワークスペースが起動しない |
 
-リストアのあとで B の症状が出たら、戻した先の `DATA_DIR` が元とパスで（少なくとも最後のディレクトリ名で）食い違っていないかを確かめます（[日常運用](../03-run.ja.md)）。
+リストアのあとで B の症状が出たら、戻した先の `DATA_DIR` が元とパスで（少なくとも最後のディレクトリ名で）食い違っていないかを確かめます（[バックアップして復元する](../run/backup-restore.ja.md#復元する)）。
 
 ## ワークスペースから公開 URL に届かない
 
@@ -81,7 +81,7 @@ Caddy が Let's Encrypt から証明書を取れないときは、次のどれ�
 - 80・443 番ポートに外から届かない（ファイアウォール）
 - Let's Encrypt のレート制限に当たった
 
-公開の DNS を用意できない閉じたネットワークでは、ACME を使わずに `tls internal`（自己署名）に切り替えます（[初期構築](../02-install.ja.md)）。
+公開の DNS を用意できない閉じたネットワークでは、ACME を使わずに `tls internal`（自己署名）に切り替えます（[テナントとプロビジョニングの方式を決める](../install-decisions.ja.md#tls-internal-を使うか)）。
 
 ## 別の人にメールアドレスが付いていないか確かめる
 
@@ -119,28 +119,28 @@ Caddy が Let's Encrypt から証明書を取れないときは、次のどれ�
 
 ### バックアップには何が入る？
 
-入るのは DB・各ユーザーの home・平文の Claude の状態・Caddy の証明書です。入らないのは `shared/jvm`（取り直せます）と `AF_MASTER_KEY` です（[日常運用](../03-run.ja.md)）。
+入るのは DB・各ユーザーの home・平文の Claude の状態・Caddy の証明書です。入らないのは `shared/jvm`（取り直せます）と `AF_MASTER_KEY` です（[バックアップして復元する](../run/backup-restore.ja.md)）。
 
 ### インターネットにつながらないネットワークに入れられる？
 
 入れられます。GHCR のイメージを社内のレジストリにミラーして `REGISTRY` をそこに向けるか、`release.sh --save` と `load-images.sh` で持ち込みます。
-TLS は `tls internal`、Claude は `CLAUDE_INSTALL=0` でイメージに入っているものを使います（[日常運用](../03-run.ja.md)）。
+TLS は `tls internal`、Claude は `CLAUDE_INSTALL=0` でイメージに入っているものを使います（[閉じたネットワークに入れる](../run/air-gapped.ja.md)）。
 ただし、エージェントはモデルのエンドポイントに届かなければ動きません。
 
 ### ダウングレードしたい
 
 できません。マイグレーションは前方互換で自動的に当たり、古い Control Plane は新しいスキーマを読めません。
-戻すときは、古いイメージに戻すのではなく、アップグレードの前に取ったバックアップからリストアします（[日常運用](../03-run.ja.md)）。
+戻すときは、古いイメージに戻すのではなく、アップグレードの前に取ったバックアップからリストアします（[アップグレードする](../run/upgrade.ja.md)）。
 
 ### docker compose down したのに、ワークスペースが残っている
 
 正常です。ワークスペース（`af-ws-*`）は compose の管理外で、Control Plane が `docker run` で起動したものです。
-止めるには管理パネルの強制停止を使うか、ホストごと止めるなら残った `af-ws-*` を別に `docker stop` します（[日常運用](../03-run.ja.md)）。
+止めるには管理パネルの強制停止を使うか、ホストごと止めるなら残った `af-ws-*` を別に `docker stop` します（[アイドル停止と強制停止を使う](../run/idle-stop.ja.md#ワークスペースを強制停止する)）。
 
 ### 複数のホストに分散（HA・水平スケール）できる？
 
 1 社に 1 配備が前提です。compose では Control Plane が 1 台のホストの Docker を動かすので、ワークスペースは複数のホストに分散しません。
-ecs・ecs-ec2 ではワークスペースを AWS 上に置きます（[配備形態を選ぶ](../01-choose.ja.md)）。Control Plane はどの形態でも 1 インスタンスで動き、HA の構成はありません。
+ecs・ecs-ec2 ではワークスペースを AWS 上に置きます（[デプロイ先を選ぶ](../choose.ja.md)）。Control Plane はどの形態でも 1 インスタンスで動き、HA の構成はありません。
 
 ### Google 以外（Microsoft 365・LDAP・SAML など）でサインインしたい
 

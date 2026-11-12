@@ -13,7 +13,7 @@ the switch knows `docker` (also `local` and the empty value), `native` (`wsl`), 
 (`aws`), `ecs-ec2` and `kubernetes` (`k8s`). What each one is and how it is run is [09](09-deploy.md) and
 [01 §1.6](01-architecture.md); what each one supports is
 [ref/deploy-targets](../../guide/ref/deploy-targets.md); the operator's choice is
-[operate/01](../../guide/operate/01-choose.md). This chapter covers what a new adapter
+[operate/choose](../../guide/operate/choose.md). This chapter covers what a new adapter
 has to provide, and what has to change around it.
 
 Read the existing adapters before writing one. They differ more than a new one usually
@@ -185,7 +185,7 @@ add an assertion or a test case that fails if that changes.
 3. The chapters that own per-target facts have your target: [01 §1.6](01-architecture.md),
    [07 §7.2](07-security.md), and in [09](09-deploy.md) the forms (§9.1), the knob (§9.2),
    the environment (§9.4) and the parity table (§9.6).
-4. [operate/01](../../guide/operate/01-choose.md) says **when to choose it**, and, if it
+4. [operate/choose](../../guide/operate/choose.md) says **when to choose it**, and, if it
    is not the obvious choice, when not to.
 5. The runbook sits next to the scripts it operates, and `stage-docs.sh` ships it (§21.5).
 6. [decisions/](../decisions/) records why it exists as a separate target rather than a

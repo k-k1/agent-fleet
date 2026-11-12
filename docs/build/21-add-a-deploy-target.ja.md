@@ -12,7 +12,7 @@ source_of_truth: "`control-plane/internal/runtime/`——`runtime.go` の `Runti
 `docker`（`local` と空値も同じ）、`native`（`wsl`）、`ecs`（`aws`）、`ecs-ec2`、`kubernetes`（`k8s`）です。
 それぞれが何で、どう運用するかは [09](09-deploy.ja.md) と [01 §1.6](01-architecture.ja.md)、
 それぞれが何に対応するかは [ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)、
-運用者の選び方は [operate/01](../../guide/operate/01-choose.ja.md) にあります。この章は、
+運用者の選び方は [operate/choose](../../guide/operate/choose.ja.md) にあります。この章は、
 新しいアダプタが何を用意しなければならないか、その周りで何を変えるかを扱います。
 
 書く前に既存のアダプタを読んでください。互いの差は、新しい 1 本に普通必要な差より大きいです。
@@ -169,7 +169,7 @@ CP は形態ごとの振る舞いの多くを型アサーション（Runtime な
 3. 形態ごとの事実を持つ章にあなたの形態が在る——[01 §1.6](01-architecture.ja.md)、
    [07 §7.2](07-security.ja.md)、[09](09-deploy.ja.md) の形態（§9.1）・ノブ（§9.2）・環境変数
    （§9.4）・対比表（§9.6）。
-4. [operate/01](../../guide/operate/01-choose.ja.md) に**いつ選ぶか**——そして自明な選択でない
+4. [operate/choose](../../guide/operate/choose.ja.md) に**いつ選ぶか**——そして自明な選択でない
    なら**いつ選ばないか**——が書いてある。
 5. runbook が、それが操作するスクリプトの隣に在り、`stage-docs.sh` が出荷している（§21.5）。
 6. [decisions/](../decisions/) に「なぜ既存形態のフラグではなく別形態なのか」の記録が在る——

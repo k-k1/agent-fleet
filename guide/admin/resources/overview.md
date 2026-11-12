@@ -89,5 +89,5 @@ Only the deployment administrator sees the host as a whole, other tenants includ
 - [Set session limits](session-limits.md)
 - [Set the workspace size](workspace-size.md)
 - [Stop workspaces left idle](idle-stop.md)
-- [Members](../01-members.md)
+- [Check on your members](../members/roster.md)
 - [Limits and defaults](../../ref/limits.md)
