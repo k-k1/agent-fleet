@@ -21,6 +21,7 @@ check false 'docs/log/123-x.md\n'
 check false 'docs/img/a.png\nguide/user/x.ja.md\n'
 check false 'README.md\nREADME.ja.md\nCONTRIBUTING.md\nAGENTS.md\nLICENSE\nNOTICE\n'
 check false 'scripts/docs-check.py\nscripts/test_docs_check.py\n'
+check false 'scripts/mcp_catalogue.py\nscripts/mcp-catalogue/tools.tsv\n'
 check false 'guide/ref/agents-other.md\n'
 check false 'guide/operate/kubernetes/gke.md\nguide/operate/kubernetes/upgrade-notes.md\n'
 

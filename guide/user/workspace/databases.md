@@ -18,7 +18,7 @@ database run right there.
 | Look at, start or create databases on the **Databases** tab | Starts the server if needed and creates the working copy's database |
 | Stop them before a memory-heavy build | Stops them with `af-db down` when asked |
 
-`af-db` is the command that runs the workspace's databases. Agents already know how to use it, so asking "make the
+[`af-db`](../../ref/cli/af-db.md) is the command that runs the workspace's databases. Agents already know how to use it, so asking "make the
 database tests pass too" is enough.
 
 > [!NOTE]
@@ -111,15 +111,7 @@ To start one database over, use that row's **Reset**, not **Stop and remove data
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `af-db up [engine]` | Install and start |
-| `af-db url [engine] [--db=NAME] [--tcp]` | Print the connection URL (installing and starting if needed) |
-| `af-db env [engine]` | Print `export` lines for `DATABASE_URL` and friends |
-| `af-db connect [engine] [--db=NAME]` | Open `psql` / `mysql` (starting the server first if it is stopped) |
-| `af-db create` / `drop` / `reset` | Create, delete or empty a database |
-| `af-db down [engine] [--purge]` | Stop (`--purge` removes the data too) |
-| `af-db status [engine]` | Show the state |
+Every subcommand, option, URL form and exit status is in the [af-db reference](../../ref/cli/af-db.md).
 
 `engine` is `postgres` (the default) or `mysql`. `--major` picks the major version (PostgreSQL 17 and MySQL 8.4 by
 default).
@@ -145,14 +137,7 @@ A shell opened before the server started does not have the connection variables.
 
 ### Exit statuses
 
-| Status | Meaning |
-|---|---|
-| 0 | Success |
-| 2 | Usage error |
-| 3 | The install failed |
-| 4 | The server failed to start |
-| 5 | The server is not running |
-| 6 | Not enough memory |
+The [af-db reference](../../ref/cli/af-db.md#exit-status) lists what each exit status means.
 
 ## Related
 

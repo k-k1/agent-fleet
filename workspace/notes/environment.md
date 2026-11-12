@@ -52,7 +52,8 @@ unset — there is no working disk and every path stays where you put it.
   `uv venv` / `uv sync` work through one, so `af-scratch .venv` is fine if you use uv.
 - Move one yourself any time: `af-scratch target` (`af-scratch --status` lists what is
   relocated). Build output only (`target`, `build`, `dist`) — **never tracked files or
-  uncommitted work**, which an ordinary stop destroys.
+  uncommitted work**, which an ordinary stop destroys. Every form and exit code:
+  `ref/cli/af-scratch.md` in the guide.
 
 ## Memory / CPU — how to check your own numbers
 
@@ -119,7 +120,8 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   (Postgres) / `AF_DB_URL_MYSQL`; or pass `"$(af-db url)"` as your own variable. Client:
   `workspace-agent install-pg-client`. **Stop before heavy builds** (`af-db down`) — Postgres
   holds ≈ 47 MB and MySQL ≈ 226 MB of cgroup memory; both idle-stop after 30 min. Manage
-  both from the **Settings → Databases** tab. For other DB servers (`sqlite3`,
+  both from the **Settings → Databases** tab. Subcommands, URL forms, exit codes:
+  `ref/cli/af-db.md` in the guide. For other DB servers (`sqlite3`,
   `redis-cli`, …): run tests against a service the user provides, or skip and say so.
 - `ss`, `lsof`, `netstat` are **not installed**; probe a port with
   `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/`.

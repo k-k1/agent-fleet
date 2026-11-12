@@ -1,24 +1,25 @@
 ---
 audience: "ワークスペースに入っている af- コマンドを調べたい人"
-source_of_truth: "各コマンドの --help"
+source_of_truth: "各コマンドの使いかたの表示"
 ---
 
 # コマンド
 
 [English](README.md) | 日本語
 
-ワークスペースには、Agent Fleet 独自のコマンドが入っています。どれもターミナルからもエージェントからも使え、
-`--help` で使いかたを表示します。
+ワークスペースには、Agent Fleet 独自のコマンドが入っています。どれもターミナルからもエージェントからも使えます。
+ほとんどは `--help` で使いかたを表示します。表示のしかたは各ページにあります。
 
 | コマンド | できること |
 |---|---|
+| [af-arch-repair](af-arch-repair.ja.md) | CPU のアーキテクチャが変わったあと、自分で入れた pip・uv・npm のものを同じ版で入れ直す |
 | [af-aws-exec](af-aws-exec.ja.md) | AWS プロファイルの権限で、コマンドを 1 つ実行する |
 | [af-clean](af-clean.ja.md) | Console の容量不足の掃除と同じ、再生成できるビルド成果物とキャッシュの一覧と削除を、端末から行う |
+| [af-db](af-db.ja.md) | ワークスペースで PostgreSQL と MySQL を動かし、接続 URL を出す |
 | [af-gcloud-exec](af-gcloud-exec.ja.md) | Google Cloud のプロファイルのトークンで、コマンドを 1 つ実行する |
 | [af-memory](af-memory.ja.md) | Agent Fleet のメモリの変更の一覧・取り込み・書き戻し・リントを、端末から行う |
+| [af-scratch](af-scratch.ja.md) | 作業ディスクのある配備で、ビルドの生成物を作業ディスクへ移す |
 | [af-watch-hook](af-watch-hook.ja.md) | プライベートリポジトリに Webhook を足し、見張りに合図が届くようにする |
-
-ほかのコマンド（`af-db`、`af-scratch`、`af-arch-repair`）のページは、順に追加します。
 
 ## サインイン済みの CLI
 

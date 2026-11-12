@@ -77,7 +77,7 @@ Once registered, ask your own Claude in plain words.
 | read | Lookups such as `list_my_sessions`, `get_session_status` and `get_session_output` |
 | write | The above, plus actions such as `send_to_session`, `create_session` and `stop_session` |
 
-The tab's "**What this token can do**" lists the same.
+The tab's "**What this token can do**" lists the same. Every tool, with the scope it needs, is in [MCP tools](../../ref/mcp/README.md).
 
 ## How an instruction looks to the session
 
