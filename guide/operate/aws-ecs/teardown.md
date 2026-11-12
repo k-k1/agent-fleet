@@ -53,20 +53,26 @@ for s in $(aws ecs list-services --cluster $CL --query 'serviceArns[]' --output 
 done
 ```
 
-### 3. Delete slot instances and home volumes (`ecs-ec2` only)
+### 3. Delete pool instances and home volumes
 
 Terminating a slot takes its root volume but **not the home volume**. Homes are detached and kept on purpose, so they survive and keep billing.
 
 ```bash
-IDS=$(aws ec2 describe-instances --filters Name=tag:Name,Values='af-slot-*' \
-  Name=instance-state-name,Values=pending,running,stopping,stopped \
+F="Name=tag:af-pool,Values=$CL"     # this deployment's pool only: its slots and engine instances
+aws ec2 describe-instances --filters "$F" Name=instance-state-name,Values=pending,running,stopping,stopped \
+  --query 'Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key==`af-role`]|[0].Value]' --output table
+IDS=$(aws ec2 describe-instances --filters "$F" Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].InstanceId' --output text)
-aws ec2 terminate-instances --instance-ids $IDS && aws ec2 wait instance-terminated --instance-ids $IDS
-# then every leftover af-ws-*-home volume
-aws ec2 delete-volume --volume-id <vol-id>
+# check the table lists only this deployment's instances, then:
+[ -n "$IDS" ] && aws ec2 terminate-instances --instance-ids $IDS && aws ec2 wait instance-terminated --instance-ids $IDS
+aws ec2 describe-volumes --filters "$F" --query 'Volumes[].[VolumeId,State,Size]' --output table
+# check the home volumes listed, then:
+for v in $(aws ec2 describe-volumes --filters "$F" --query 'Volumes[].VolumeId' --output text); do
+  aws ec2 delete-volume --volume-id "$v"
+done
 ```
 
-`teardown.sh` also terminates the inference engine instances the Control Plane bought here.
+The filter is the `af-pool` tag, whose value is this deployment's cluster (`$CL` from step 1), so nothing of another deployment in the same region is listed. It covers the slots (`ecs-ec2`) and the inference engine instances the Control Plane bought, as `teardown.sh` does. A filter on the `Name` tag alone (`af-slot-*`) would also catch every other deployment's slots.
 
 ### 4. Deregister container instances that stay registered
 
@@ -94,6 +100,16 @@ Under `Persistence=retain`, remove the database's deletion protection **before**
 ```bash
 aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protection --apply-immediately
 ```
+
+Empty the template staging bucket of `20-platform` (`CfnTemplatesBucket`) before the loop too. CloudFormation cannot delete a bucket that still holds objects, so `20-platform` stops at `DELETE_FAILED` and the loop stops there. The bucket is not versioned, so `s3 rm --recursive` is enough.
+
+```bash
+CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name af-ecs-platform \
+  --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text)
+aws s3 rm "s3://$CFN_BUCKET" --recursive
+```
+
+If `20-platform` still ends at `DELETE_FAILED`, read the stack's events for the reason, empty the bucket again, and run the loop again: it skips the stacks already gone.
 
 ```bash
 for s in af-ecs-ingress af-ecs-engines af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do

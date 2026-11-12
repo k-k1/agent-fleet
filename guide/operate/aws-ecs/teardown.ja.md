@@ -53,20 +53,26 @@ for s in $(aws ecs list-services --cluster $CL --query 'serviceArns[]' --output 
 done
 ```
 
-### 3. スロットのインスタンスとホームのボリュームを消す（`ecs-ec2` だけ）
+### 3. プールのインスタンスとホームのボリュームを消す
 
 スロットを終了するとルートボリュームは消えますが、**ホームのボリュームは消えません**。ホームはわざと外して残すので、残って料金がかかり続けます。
 
 ```bash
-IDS=$(aws ec2 describe-instances --filters Name=tag:Name,Values='af-slot-*' \
-  Name=instance-state-name,Values=pending,running,stopping,stopped \
+F="Name=tag:af-pool,Values=$CL"     # this deployment's pool only: its slots and engine instances
+aws ec2 describe-instances --filters "$F" Name=instance-state-name,Values=pending,running,stopping,stopped \
+  --query 'Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key==`af-role`]|[0].Value]' --output table
+IDS=$(aws ec2 describe-instances --filters "$F" Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].InstanceId' --output text)
-aws ec2 terminate-instances --instance-ids $IDS && aws ec2 wait instance-terminated --instance-ids $IDS
-# then every leftover af-ws-*-home volume
-aws ec2 delete-volume --volume-id <vol-id>
+# check the table lists only this deployment's instances, then:
+[ -n "$IDS" ] && aws ec2 terminate-instances --instance-ids $IDS && aws ec2 wait instance-terminated --instance-ids $IDS
+aws ec2 describe-volumes --filters "$F" --query 'Volumes[].[VolumeId,State,Size]' --output table
+# check the home volumes listed, then:
+for v in $(aws ec2 describe-volumes --filters "$F" --query 'Volumes[].VolumeId' --output text); do
+  aws ec2 delete-volume --volume-id "$v"
+done
 ```
 
-`teardown.sh` は、Control Plane が買った推論エンジンのインスタンスもここで終了します。
+絞り込みは `af-pool` のタグで、その値はこの配備のクラスター（手順 1 の `$CL`）です。同じリージョンのほかの配備のものは出ません。`teardown.sh` と同じく、スロット（`ecs-ec2`）と、Control Plane が買った推論エンジンのインスタンスが対象です。`Name` のタグ（`af-slot-*`）だけで絞ると、ほかの配備のスロットまで拾います。
 
 ### 4. 登録が残ったコンテナインスタンスを外す
 
@@ -94,6 +100,16 @@ EC2 のインスタンスが消えたあとも、クラスターがそれを一�
 ```bash
 aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protection --apply-immediately
 ```
+
+ループの前に、`20-platform` のテンプレート置き場の S3 Bucket（`CfnTemplatesBucket`）も空にします。CloudFormation は中身のある S3 Bucket を消せないので、空にしないと `20-platform` が `DELETE_FAILED` で止まり、ループもそこで止まります。バージョニングはないので、`s3 rm --recursive` で足ります。
+
+```bash
+CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name af-ecs-platform \
+  --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text)
+aws s3 rm "s3://$CFN_BUCKET" --recursive
+```
+
+それでも `20-platform` が `DELETE_FAILED` になったら、スタックのイベントで理由を読み、S3 Bucket をもう一度空にしてから、ループをもう一度実行します。消え終わったスタックは飛ばされます。
 
 ```bash
 for s in af-ecs-ingress af-ecs-engines af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do

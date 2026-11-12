@@ -136,10 +136,14 @@ ImageEnabled=true
 > 古い配備では、`image/sd_xl_base_1.0.safetensors` が最上位に置かれています。サーバー側のコピーで移し（NAT も再ダウンロードも使いません）、**同じ変更で**管理画面のカタログの行のキーも直します。行はキーをそのまま指すので、ファイルのない行はデプロイ時ではなく、次のコールドスタートでフェッチのサイドカーが失敗します。
 >
 > ```bash
-> aws s3 cp "s3://$BUCKET/image/sd_xl_base_1.0.safetensors" \
->           "s3://$BUCKET/image/checkpoints/sd_xl_base_1.0.safetensors"
-> aws s3 rm "s3://$BUCKET/image/sd_xl_base_1.0.safetensors"
+> OLD=image/sd_xl_base_1.0.safetensors NEW=image/checkpoints/sd_xl_base_1.0.safetensors
+> size() { aws s3api head-object --bucket "$BUCKET" --key "$1" --query ContentLength --output text; }
+> aws s3 cp "s3://$BUCKET/$OLD" "s3://$BUCKET/$NEW" \
+>   && [ "$(size "$NEW")" = "$(size "$OLD")" ] \
+>   && aws s3 rm "s3://$BUCKET/$OLD"      # removed only after the copy succeeded and the sizes match
 > ```
+>
+> 元のファイルを消すのは、コピーが成功し、コピー先が同じ大きさのときだけです。そうでなければ何も消しません。
 
 ### 取り込みのタスクを動かす
 
@@ -178,7 +182,7 @@ aws ecs run-task --cluster <cluster> --launch-type FARGATE \
 ```
 
 - 分かれたモデル（FLUX.2 klein、Z-Image など、`--diffusion-model`・テキストエンコーダー・VAE の組）も使えます。それぞれ `image/diffusion_models/`・`image/text_encoders/`・`image/vae/` に置きます
-- **コンテナの上書きには、コマンドごとに文字列を 1 つだけ渡します。** コンテナの `EntryPoint` がすでに `["sh","-c"]` なので、`["sh","-c", "<script>"]` を渡すと `sh -c sh -c <script>` になり、何もせずに終了コード 0 で終わります。何も取得していないのに、取り込みが成功したように見えます
+- **上書きするのは、上の例のとおり `environment` だけです。** コンテナに `EntryPoint` はなく、`Command` はスクリプトそのもの（`/opt/af/ingest-fetch.sh`、`/opt/af/ingest-upload.sh`）です。`command` を上書きするときは、シェルの文字列 1 つではなく argv の配列（`["/opt/af/ingest-upload.sh"]`）で渡します
 - **取得の時間は読めません。sha256 も必ず渡します。** 同じ NAT を通しても、Hugging Face からは 4〜236 MB/s と幅があり、ファイルにも経路にも関係なく変わりました。S3 からはどの試行でも 104〜147 MB/s でした。モデルを S3 に置くのはこのためです。途中で切れた 17 GB の GGUF も読み込めてしまい、でたらめに答えます
 
 **ゲートのあるリポジトリ**（Hugging Face の API で `gated: auto`。FLUX.1-dev、SD 3.5 など）は、運用する人が Hugging Face でライセンスに同意し、そのアカウントのトークンを管理画面に登録しておく必要があります（[推論エンジンにモデルを取り込む](../engines/models.ja.md#トークンを登録する)）。

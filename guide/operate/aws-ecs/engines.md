@@ -136,10 +136,14 @@ The instance mirrors the bucket: `image/checkpoints/x.safetensors` becomes `/mod
 > An older deployment has `image/sd_xl_base_1.0.safetensors` at the top level. Move it with a server-side copy (no NAT, no re-download) and correct the catalogue row's key in the admin panel **in the same change**. The row points at the key verbatim, and a row whose file is not there fails in the fetch sidecar at the next cold start, not at deploy time.
 >
 > ```bash
-> aws s3 cp "s3://$BUCKET/image/sd_xl_base_1.0.safetensors" \
->           "s3://$BUCKET/image/checkpoints/sd_xl_base_1.0.safetensors"
-> aws s3 rm "s3://$BUCKET/image/sd_xl_base_1.0.safetensors"
+> OLD=image/sd_xl_base_1.0.safetensors NEW=image/checkpoints/sd_xl_base_1.0.safetensors
+> size() { aws s3api head-object --bucket "$BUCKET" --key "$1" --query ContentLength --output text; }
+> aws s3 cp "s3://$BUCKET/$OLD" "s3://$BUCKET/$NEW" \
+>   && [ "$(size "$NEW")" = "$(size "$OLD")" ] \
+>   && aws s3 rm "s3://$BUCKET/$OLD"      # removed only after the copy succeeded and the sizes match
 > ```
+>
+> The original is removed only when the copy succeeded and the copy has the same size; otherwise nothing is deleted.
 
 ### Run the ingest task
 
@@ -178,7 +182,7 @@ A second checkpoint is the same call with another URL and key. Pick one that is 
 ```
 
 - A split model (FLUX.2 klein, Z-Image: a `--diffusion-model` plus text encoders plus a VAE) works too. Ingest the parts into `image/diffusion_models/`, `image/text_encoders/` and `image/vae/`
-- **The container overrides take one string per command**, because the containers' `EntryPoint` is already `["sh","-c"]`. Passing `["sh","-c", "<script>"]` becomes `sh -c sh -c <script>`, which does nothing and exits with status 0: it reads as a successful ingest that fetched nothing
+- **Override `environment` only, as above.** The containers have no `EntryPoint`; each `Command` is the script itself (`/opt/af/ingest-fetch.sh`, `/opt/af/ingest-upload.sh`). If you ever override `command`, it is an argv array (`["/opt/af/ingest-upload.sh"]`), not one shell string
 - **The fetch time is unpredictable; always give the checksum.** Through the same NAT, Hugging Face delivered anywhere between 4 and 236 MB/s, and nothing about the file or the path predicted which. S3 ran at 104–147 MB/s on every attempt, which is why models are staged there. A truncated 17 GB GGUF still loads, and then answers nonsense
 
 **A gated repository** (`gated: auto` on the Hugging Face API: FLUX.1-dev, SD 3.5) also needs the operator to have accepted the licence on Hugging Face and that account's token registered in the admin screen ([Take models into the inference engines](../engines/models.md#register-the-tokens)).
