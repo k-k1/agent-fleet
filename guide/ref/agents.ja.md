@@ -45,7 +45,7 @@ source_of_truth: "この表（列と印のある行はコードと突き合わ�
 
 ¹ copilot のモデル一覧はプラン依存。Free は「Auto（Copilot が選ぶ）」のみ。
 
-² cursor と agy は reasoning effort をモデル名に畳み込んでいるので、別の指定が無い。
+² cursor と agy は reasoning effort をモデル名に畳み込んでいるので、別の指定はありません。
 
 ³ cursor のマネージド実行はローカルに転写を残さないため、**停止中**の cursor
 セッションには表示するものがありません。実行中のミラーは動き（ツールの出力は簡略表示）、ターミナル（CLI）で
@@ -239,7 +239,7 @@ API キーで従量課金として動きます。**anthropic-subscription** は�
 - 実行中に設定ファイルを編集しても、セッションは経路から外れません。起動時に、経路を上書きしうる変数
   （エンドポイント、認証トークン、クラウドプロバイダの切替、`apiKeyHelper`、もう一方の経路の資格情報）を、
   Agent Fleet が書き込める中で最優先の層（CLI の起動フラグ層）で空に固定します。次の 2 つは、固定できないのでセッションを止めて守ります:
-  managed 設定ファイル（CLI の文書では起動フラグ層より上とされる。ここでは未測定）と、anthropic-api セッションで `ANTHROPIC_API_KEY` を設定する設定ファイル
+  managed 設定ファイル（CLI の文書では起動フラグ層より上とされています。ここでは測っていません）と、anthropic-api セッションで `ANTHROPIC_API_KEY` を設定する設定ファイル
   （キー自体はコマンドラインに載せません）。
 - **Amazon Bedrock。** 3 つ目の経路は、設定 > AWS プロファイル/SSM で「モデルのルート」の印を付けたプロファイルで
   claude を Amazon Bedrock 上で動かします（[Amazon Bedrock のルート](bedrock-route.ja.md)）。**まだ提供していません**。
