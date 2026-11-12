@@ -219,16 +219,56 @@ type catalogFile map[string]struct {
 		Limit       *struct {
 			Context int `json:"context"`
 		} `json:"limit"`
-		Cost *struct {
-			Input      *float64 `json:"input"`
-			Output     *float64 `json:"output"`
-			CacheRead  *float64 `json:"cache_read"`
-			CacheWrite *float64 `json:"cache_write"`
-			// tiers / context_over_200k (the long-context surcharge) are not used: the ledger
-			// has no per-turn input length to match them against, so the lowest tier is
-			// assumed and the estimate can come out low (docs/log/46 §5-c).
-		} `json:"cost"`
+		Cost *catalogCost `json:"cost"`
 	} `json:"models"`
+}
+
+// catalogCost is one model's cost block in models.dev's api.json.
+type catalogCost struct {
+	Input      *float64 `json:"input"`
+	Output     *float64 `json:"output"`
+	CacheRead  *float64 `json:"cache_read"`
+	CacheWrite *float64 `json:"cache_write"`
+	// Tiers are the context tiers: a request whose input exceeds tier.size is billed
+	// at that entry's prices (the whole request, as the vendors do). ContextOver200k
+	// is the older spelling of one 200000 tier, which upstream still emits beside
+	// tiers; tiers wins when both are present (usageCatalogTiers).
+	Tiers []struct {
+		Input      *float64 `json:"input"`
+		Output     *float64 `json:"output"`
+		CacheRead  *float64 `json:"cache_read"`
+		CacheWrite *float64 `json:"cache_write"`
+		Tier       struct {
+			Size int `json:"size"`
+		} `json:"tier"`
+	} `json:"tiers"`
+	ContextOver200k *struct {
+		Input      *float64 `json:"input"`
+		Output     *float64 `json:"output"`
+		CacheRead  *float64 `json:"cache_read"`
+		CacheWrite *float64 `json:"cache_write"`
+	} `json:"context_over_200k"`
+}
+
+// catalogTiers turns the cost block's context tiers into usageTiers, ordered by size. A tier
+// without both input and output prices is dropped (it cannot be applied); a tier that omits a
+// cache price falls back to the multiplier on its own input, like the base tier does.
+func catalogTiers(c *catalogCost) []usageTier {
+	var out []usageTier
+	for _, t := range c.Tiers {
+		if t.Input == nil || t.Output == nil || t.Tier.Size <= 0 {
+			continue
+		}
+		out = append(out, usageTier{Size: t.Tier.Size, Price: usagePrice{
+			In: *t.Input, Out: *t.Output, CacheRead: derefPrice(t.CacheRead), CacheWrite: derefPrice(t.CacheWrite)}})
+	}
+	if len(out) == 0 && c.ContextOver200k != nil && c.ContextOver200k.Input != nil && c.ContextOver200k.Output != nil {
+		o := c.ContextOver200k
+		out = append(out, usageTier{Size: 200000, Price: usagePrice{
+			In: *o.Input, Out: *o.Output, CacheRead: derefPrice(o.CacheRead), CacheWrite: derefPrice(o.CacheWrite)}})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Size < out[j].Size })
+	return out
 }
 
 // parseUsageCatalog extracts only the providers that are indexed. It returns nil when it got
@@ -274,7 +314,7 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 					row.context = m.Limit.Context
 				}
 				if priced {
-					row.price = &usagePrice{In: *m.Cost.Input, Out: *m.Cost.Output, CacheRead: derefPrice(m.Cost.CacheRead)}
+					row.price = &usagePrice{In: *m.Cost.Input, Out: *m.Cost.Output, CacheRead: derefPrice(m.Cost.CacheRead), Tiers: catalogTiers(m.Cost)}
 					row.cacheReadKnown = m.Cost.CacheRead != nil
 				}
 				rows[key] = row
@@ -294,6 +334,7 @@ func parseUsageCatalog(b []byte, origin string, mod time.Time) *usageCatalog {
 			price[key] = usagePrice{
 				In: *m.Cost.Input, Out: *m.Cost.Output,
 				CacheRead: derefPrice(m.Cost.CacheRead), CacheWrite: derefPrice(m.Cost.CacheWrite),
+				Tiers: catalogTiers(m.Cost),
 			}
 		}
 	}

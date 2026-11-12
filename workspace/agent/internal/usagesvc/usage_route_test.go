@@ -2,6 +2,7 @@ package usagesvc
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -190,7 +191,7 @@ func TestPriceLookupRouteFirstThenKind(t *testing.T) {
 	// Empty route: identical to usagePriceOf, and still the kind's gateway price.
 	p, src, ok := usagePriceOfOn(session.KindOpencode, "", "glm-5.2")
 	q, qsrc, qok := usagePriceOf(session.KindOpencode, "glm-5.2")
-	if !ok || !qok || p != q || src != qsrc || src != "catalog:opencode/glm-5.2" || p.In != 1 {
+	if !ok || !qok || !reflect.DeepEqual(p, q) || src != qsrc || src != "catalog:opencode/glm-5.2" || p.In != 1 {
 		t.Fatalf("empty route: %v %q vs %v %q", p, src, q, qsrc)
 	}
 	// A route with its own provider wins over the kind's.

@@ -41,6 +41,9 @@ type usagePrice struct {
 	Out        float64
 	CacheRead  float64
 	CacheWrite float64
+	// Tiers are the context-tiered prices (usage_tier.go), empty for a flat-priced model. The
+	// four fields above are the base tier.
+	Tiers []usageTier
 }
 
 // cacheRead and cacheWrite take the source's value when it states one, the multiplier otherwise.
@@ -195,6 +198,11 @@ func usagePriceOfOn(kind, route, model string) (usagePrice, string, bool) {
 	builtinFirst := len(order) > 0 && order[0] == "anthropic"
 	if builtinFirst {
 		if p, ok := usagePrices[base]; ok {
+			// The table states no tiers. When the catalog prices the same model at the same base
+			// rate, its tiers are the same product's, so graft them rather than lose them.
+			if cp, _, ok := usageCatalogLookupOn(kind, route, model); ok && cp.In == p.In && cp.Out == p.Out {
+				p.Tiers = cp.Tiers
+			}
 			return p, usagePriceSrcBuiltin, true
 		}
 	}
@@ -213,6 +221,9 @@ func usagePriceOfOn(kind, route, model string) (usagePrice, string, bool) {
 //
 //	= in×input + ccreate×cache-write + cread×cache-read + out×output
 //
+// each term at the tier its call's input size selects (usage_tier.go); calls of unknown size
+// are at the base tier.
+//
 // The four kinds are multiplied separately instead of using spend (= in + ccreate + out).
 // Cache reads are outside the definition of spend but are billed, so deriving the amount from
 // spend makes a conversation look cheaper the longer it runs.
@@ -226,9 +237,5 @@ func usageEstCostUSDOn(kind, route, model string, a usageAgg) (float64, string, 
 	if !ok {
 		return 0, "", false
 	}
-	usd := float64(a.In)*p.In +
-		float64(a.CacheCreate)*p.cacheWrite() +
-		float64(a.CacheRead)*p.cacheRead() +
-		float64(a.Out)*p.Out
-	return usd / 1_000_000, src, true
+	return usageTierCostUSD(p, a) / 1_000_000, src, true
 }

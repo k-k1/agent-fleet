@@ -90,6 +90,8 @@ func spendOfRows(m session.Meta, rows, subagentRows []usageTurnRow) session.Spen
 		}
 		agg := usageAgg{In: r.Tokens.In, Out: r.Tokens.Out,
 			CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate}
+		// The row's input is one call's snapshot, so it picks the context tier (usage_tier.go).
+		agg.addBand(r.Tokens.In+r.Tokens.CacheRead+r.Tokens.CacheCreate, agg.In, agg.Out, agg.CacheRead, agg.CacheCreate)
 		if agg.In+agg.Out+agg.CacheRead+agg.CacheCreate == 0 {
 			continue
 		}

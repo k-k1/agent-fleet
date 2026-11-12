@@ -81,6 +81,11 @@ type usageAgg struct {
 	// rollup: prices get revised, so it is recomputed with the current table on every read
 	// (HandleSeries adds it per sample).
 	CostEstUSD float64 `json:"cost_est_usd,omitempty"`
+	// Bands splits out the tokens of calls whose input size is known and above the smallest
+	// tier threshold, so the estimate can price them at a context tier (usage_tier.go). It is a
+	// subset of the totals above, written to the rollup (additive: absent in files written
+	// earlier, which then price at the base tier as before) and stripped from /usage/series.
+	Bands []usageBand `json:"bands,omitempty"`
 }
 
 func (a *usageAgg) add(b usageAgg) {
@@ -94,6 +99,7 @@ func (a *usageAgg) add(b usageAgg) {
 	a.Pixels += b.Pixels
 	a.CostUSD += b.CostUSD
 	a.CostEstUSD += b.CostEstUSD
+	a.addBands(b.Bands)
 }
 
 type usageRollupEntry struct {
@@ -246,6 +252,7 @@ func aggregateUsageRows(rows []usagex.Record, seen map[string]bool) map[usageKey
 		a.Images += r.Images
 		a.Pixels += r.Pixels
 		a.CostUSD += r.CostUSD
+		a.addBand(r.Ctx, r.In, r.Out, r.CacheRead, r.CacheCreate)
 		switch {
 		case r.TokensOnly:
 			// its call is already counted by the row that owns the turn

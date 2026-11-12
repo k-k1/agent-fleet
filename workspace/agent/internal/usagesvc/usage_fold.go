@@ -1035,6 +1035,12 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 		OK:       true,
 		Measured: MeasuredForKind(m.Kind),
 	}
+	if agent == "" && !r.Orphan {
+		// The row's input is one call's snapshot (replace, not sum; see foldTurnRows), so it
+		// is that call's input size. A subagent row is a delta against what was written before,
+		// which is not a size, so it stays unknown (priced at the base tier).
+		rec.Ctx = r.Tokens.In + r.Tokens.CacheRead + r.Tokens.CacheCreate
+	}
 	if rec.TS == "" {
 		rec.TS = time.Now().UTC().Format(time.RFC3339)
 	}

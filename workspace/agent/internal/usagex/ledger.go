@@ -206,6 +206,10 @@ type Record struct {
 	// Absent on every other feature — never write a 0 to mean "no images".
 	Images int `json:"images,omitempty"`
 	Pixels int `json:"pixels,omitempty"`
+	// Ctx is the input size (fresh + cache read + cache create) of the call whose snapshot this
+	// row carries, so the estimate can pick a context-tiered price (#3979). Absent = unknown,
+	// which prices at the base tier; rows written before the field existed are all absent.
+	Ctx int `json:"ctx,omitempty"`
 	// TokensOnly marks a row that adds tokens to a turn another row already counts as a call
 	// (cursor's stop hook beside the transcript fold's row for the same turn). The aggregation
 	// sums its tokens and never counts it as a call, so the two writers cannot double the call
