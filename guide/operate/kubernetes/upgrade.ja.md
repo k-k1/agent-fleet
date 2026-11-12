@@ -37,7 +37,7 @@ Kubernetes の配備で、データベースと CP のディスクのバック�
    ```
 3. オーバーレイの `images:` に新しいタグを設定して適用します。`kubectl apply` がレプリカを 1 に戻します
    ```bash
-   kubectl apply -k "deploy/kubernetes/overlays/$PREFIX"
+   kubectl apply -k "$OVERLAY"
    kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
    ```
 

@@ -28,7 +28,7 @@ Cloud SQL、クラスター、KMS 鍵は、わざと削除から守られてい�
 2. あとで要るかもしれないものがあれば、[CP をアップグレードする](upgrade.ja.md#上げる) の手順 2 のバックアップを取ります。オーバーレイを消すと claim `af-cp-data` が消え、`reclaimPolicy: Delete` なのでそのディスクも消えます
 3. オーバーレイを消し、配備のボリュームが残っていないことを確かめます。終わっていない復元の `Retain` のボリュームは、ディスクを残します。残っていたら消します
    ```bash
-   kubectl delete -k "deploy/kubernetes/overlays/$PREFIX"
+   kubectl delete -k "$OVERLAY"
    kubectl get pv | grep "$PREFIX-cp"
    gcloud compute disks list --project "$PROJECT" --filter="name~$PREFIX-cp-data"
    ```

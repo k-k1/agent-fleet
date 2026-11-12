@@ -32,6 +32,7 @@ PROJECT=<project>          # Terraform's project_id
 REGION=<region>            # Terraform's region
 PREFIX=<name_prefix>       # Terraform's name_prefix
 TF="terraform -chdir=deploy/gcp/gke"
+OVERLAY="deploy/kubernetes/overlays/$PREFIX"   # your overlay; point it at the copy once you move it
 ```
 
 ## 1. Prepare the project (once)
@@ -206,8 +207,8 @@ Only the variant without a terminal has been run as written (with the `read` lin
 ## 5. Prepare the overlay
 
 ```bash
-cp -r deploy/kubernetes/overlays/gke "deploy/kubernetes/overlays/$PREFIX"
-$TF output -raw kustomize_deployment > "deploy/kubernetes/overlays/$PREFIX/deployment.yaml"
+cp -r deploy/kubernetes/overlays/gke "$OVERLAY"
+$TF output -raw kustomize_deployment > "$OVERLAY/deployment.yaml"
 ```
 
 Then edit, in the copy:
@@ -223,6 +224,7 @@ Then edit, in the copy:
 Keep this copy in your own repository or vault, not in a working copy of this one. Moved out of the clone, two things in `kustomization.yaml` must change:
 
 - **The paths.** `resources: ../../base` and `components: ../../components/gke` and `../../components/params` are relative to `deploy/kubernetes/overlays/<name>/` inside this repository and resolve to nothing elsewhere. Point them at the clone's `deploy/kubernetes/base` and `deploy/kubernetes/components/…` with **relative** paths from your overlay: `kubectl kustomize` rejects an absolute directory reference (`new root '…' cannot be absolute`). Check with `kubectl kustomize <your overlay>` before applying
+- **`OVERLAY`.** Set it to the copy's path (`OVERLAY=<your overlay>`) in every shell; every command on these pages that reads or applies the overlay uses `$OVERLAY`, so none of them touches the clone's copy
 - **`newName`.** The copied `images:` entry carries a placeholder `newName` (an Artifact Registry path). With the public images (`ghcr.io/k-k1/agent-fleet/…`) delete the `newName` line and keep `newTag`, so the name stays the public one; with your own Artifact Registry repository set `newName` to it
 
 ### Archive egress events (optional)
@@ -246,8 +248,8 @@ The CP can write each past UTC day of raw egress events to Cloud Storage before 
 
 ```bash
 if line=$($TF output -raw egress_archive_env); then
-  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' "deploy/kubernetes/overlays/$PREFIX/cp.env"
-  [ -z "$line" ] || printf '%s\n' "$line" >> "deploy/kubernetes/overlays/$PREFIX/cp.env"
+  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' "$OVERLAY/cp.env"
+  [ -z "$line" ] || printf '%s\n' "$line" >> "$OVERLAY/cp.env"
 else
   echo "terraform output failed: cp.env left as it was" >&2; false
 fi
@@ -263,7 +265,7 @@ The CP reads one Secret, `af-cp-secrets`, which these manifests never contain. C
 
 ```bash
 kubectl config current-context                # still this cluster (step 3)
-kubectl apply -k "deploy/kubernetes/overlays/$PREFIX"
+kubectl apply -k "$OVERLAY"
 kubectl -n "$PREFIX-cp" create secret generic af-cp-secrets \
   --from-literal=AF_MASTER_KEY="$(cat master-key)" \
   --from-literal=AF_COOKIE_SECRET="$(openssl rand -hex 32)" \

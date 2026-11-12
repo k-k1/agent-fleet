@@ -37,7 +37,7 @@ The commands assume the shell variables of [Build on GKE](gke.md#shell-variables
    ```
 3. Set the new tag under `images:` in your overlay and apply; `kubectl apply` sets replicas back to 1
    ```bash
-   kubectl apply -k "deploy/kubernetes/overlays/$PREFIX"
+   kubectl apply -k "$OVERLAY"
    kubectl -n "$PREFIX-cp" rollout status deployment/af-cp
    ```
 

@@ -28,7 +28,7 @@ Cloud SQL, the cluster and the KMS key are protected against deletion on purpose
 2. Take the backups of step 2 of [Upgrade the CP](upgrade.md#upgrade) if anything may be wanted later: deleting the overlay deletes the claim `af-cp-data`, and with `reclaimPolicy: Delete` its disk
 3. Delete the overlay, then check that no volume of the deployment is left behind (a `Retain` volume from an unfinished restore keeps its disk), and delete any that remain
    ```bash
-   kubectl delete -k "deploy/kubernetes/overlays/$PREFIX"
+   kubectl delete -k "$OVERLAY"
    kubectl get pv | grep "$PREFIX-cp"
    gcloud compute disks list --project "$PROJECT" --filter="name~$PREFIX-cp-data"
    ```

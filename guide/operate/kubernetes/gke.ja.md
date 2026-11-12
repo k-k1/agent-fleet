@@ -32,6 +32,7 @@ PROJECT=<project>          # Terraform's project_id
 REGION=<region>            # Terraform's region
 PREFIX=<name_prefix>       # Terraform's name_prefix
 TF="terraform -chdir=deploy/gcp/gke"
+OVERLAY="deploy/kubernetes/overlays/$PREFIX"   # your overlay; point it at the copy once you move it
 ```
 
 ## 1. プロジェクトを準備する（最初の 1 回）
@@ -206,8 +207,8 @@ kubectl -n default logs psql-grant        # expect GRANT ROLE, ALTER DATABASE, A
 ## 5. オーバーレイを用意する
 
 ```bash
-cp -r deploy/kubernetes/overlays/gke "deploy/kubernetes/overlays/$PREFIX"
-$TF output -raw kustomize_deployment > "deploy/kubernetes/overlays/$PREFIX/deployment.yaml"
+cp -r deploy/kubernetes/overlays/gke "$OVERLAY"
+$TF output -raw kustomize_deployment > "$OVERLAY/deployment.yaml"
 ```
 
 コピーの中で書き換えます。
@@ -223,6 +224,7 @@ $TF output -raw kustomize_deployment > "deploy/kubernetes/overlays/$PREFIX/deplo
 このコピーは、このリポジトリの作業コピーではなく、自分のリポジトリか金庫に置きます。クローンの外に出すと、`kustomization.yaml` の 2 か所を変える必要があります。
 
 - **パス。** `resources: ../../base`、`components: ../../components/gke` と `../../components/params` は、リポジトリの中の `deploy/kubernetes/overlays/<name>/` からの相対パスで、外では何も指しません。オーバーレイからクローンの `deploy/kubernetes/base` と `deploy/kubernetes/components/…` への**相対**パスに書き換えます。`kubectl kustomize` は絶対パスのディレクトリ参照を拒みます（`new root '…' cannot be absolute`）。適用する前に `kubectl kustomize <your overlay>` で確かめます
+- **`OVERLAY`。** シェルごとに、移したコピーのパスにします（`OVERLAY=<your overlay>`）。これらのページでオーバーレイを読む・適用するコマンドはすべて `$OVERLAY` を使うので、クローンの中のコピーには触りません
 - **`newName`。** コピーした `images:` には、仮の `newName`（Artifact Registry のパス）が入っています。公開イメージ（`ghcr.io/k-k1/agent-fleet/…`）を使うなら `newName` の行を消して `newTag` を残し、名前を公開のままにします。自分の Artifact Registry を使うなら、`newName` をそのリポジトリにします
 
 ### 外向き通信のイベントを保存する（任意）
@@ -246,8 +248,8 @@ CP は、生の外向き通信のイベントを消す前に、過ぎた日（UT
 
 ```bash
 if line=$($TF output -raw egress_archive_env); then
-  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' "deploy/kubernetes/overlays/$PREFIX/cp.env"
-  [ -z "$line" ] || printf '%s\n' "$line" >> "deploy/kubernetes/overlays/$PREFIX/cp.env"
+  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' "$OVERLAY/cp.env"
+  [ -z "$line" ] || printf '%s\n' "$line" >> "$OVERLAY/cp.env"
 else
   echo "terraform output failed: cp.env left as it was" >&2; false
 fi
@@ -263,7 +265,7 @@ CP は Secret `af-cp-secrets` を 1 つ読みます。マニフェストには�
 
 ```bash
 kubectl config current-context                # still this cluster (step 3)
-kubectl apply -k "deploy/kubernetes/overlays/$PREFIX"
+kubectl apply -k "$OVERLAY"
 kubectl -n "$PREFIX-cp" create secret generic af-cp-secrets \
   --from-literal=AF_MASTER_KEY="$(cat master-key)" \
   --from-literal=AF_COOKIE_SECRET="$(openssl rand -hex 32)" \
