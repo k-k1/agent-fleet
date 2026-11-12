@@ -86,11 +86,11 @@ ID だと、最初のターンで AccessDenied や `model_not_found` のよう�
 
 ## 呼び出しが拒否されたとき
 
-拒否はゲートウェイ自身が返し、必ず `x-should-retry: false` を付けます。claude は再試行せず、メッセージを 1 回だけ表示します。
+拒否はゲートウェイ自身が返し、必ず `x-should-retry: false` を付けます。
 ルートのトークンや AWS のログインに関する拒否は HTTP 401、使えるものに関する拒否（印の付いていないプロファイル、
 オフの付与、許可されていないモデル）は 412、待てば直りうるものは 503 で返します。Claude Code は 401 のときだけ
-メッセージの前に「AWS authentication failed · refresh your AWS credentials …」を付け、412 の拒否はメッセージだけを表示します。
-（転送できない要求は固有のステータスのままです: `route_operation_not_allowed` と `route_model_not_selected` は 404、
+メッセージの前に「AWS authentication failed · refresh your AWS credentials …」を付け、412 の拒否はメッセージだけを表示します。401・412・503 は 1 回だけ表示され再試行されません。
+（転送できない要求は固有のステータスのままで、claude が再試行することがあります（400 は 8 回送られます）: `route_operation_not_allowed` と `route_model_not_selected` は 404、
 `route_bad_model` は 400、`route_request_too_large` は 413。）
 
 | コード | 意味 | 対処 |

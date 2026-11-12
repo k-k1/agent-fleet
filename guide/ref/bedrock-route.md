@@ -96,11 +96,10 @@ per member and a monthly ceiling for the tenant.
 
 ## When a call is refused
 
-The gateway answers a refusal itself, always with `x-should-retry: false`, so claude shows it once, with the
-message, and does not retry. A refusal about the route token or the AWS login goes out as HTTP 401, one about what you
+The gateway answers a refusal itself, always with `x-should-retry: false`. A refusal about the route token or the AWS login goes out as HTTP 401, one about what you
 may use (a profile that is not marked, a grant that is off, a model that is not allowed) as 412, one that waiting may
 clear as 503. Claude Code prints "AWS authentication failed · refresh your AWS credentials …" before the message of a
-401 only; the 412 refusals show the message alone. (Requests the gateway cannot forward keep their own status: `route_operation_not_allowed` 404,
+401 only; the 401, 412 and 503 refusals are shown once, not retried. (Requests the gateway cannot forward keep their own status, and claude may retry them (a 400 goes out eight times): `route_operation_not_allowed` 404,
 `route_model_not_selected` 404, `route_bad_model` 400, `route_request_too_large` 413.)
 
 | Code | Meaning | What to do |

@@ -988,8 +988,9 @@ func TestClientDisconnectCancelsTheUpstreamRequest(t *testing.T) {
 	}
 }
 
-// Every refusal of the gateway's own goes out once and fails visibly in Claude Code: 401 for what
-// waiting does not clear, 503 for what it may, both with x-should-retry: false (writeRefusal).
+// Every authentication, permission or availability refusal of the gateway's own goes out once and
+// fails visibly in Claude Code: 401 for the token or the AWS login, 412 for what the caller may not
+// use, 503 for what waiting may clear, all with x-should-retry: false (writeRefusal).
 func TestRefusalsAreSentAsNotRetried(t *testing.T) {
 	e := newEnv(t)
 	tok := e.issue(e.session("s1", "p1", ""))
