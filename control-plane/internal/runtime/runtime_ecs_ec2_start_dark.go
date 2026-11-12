@@ -53,6 +53,9 @@ var (
 // locked step: whatever lands there is what rescuePrepare must meet. Nil in production.
 var darkStartHook func()
 
+// afterRescueCountHook runs in startAfterRescue between the count read and the bump. Nil in production.
+var afterRescueCountHook func(ctx context.Context)
+
 type admitKind int
 
 const (
@@ -273,6 +276,16 @@ func (e *ecsEC2Runtime) startAfterRescue(ctx context.Context, gr int64) {
 		if err != nil {
 			fail(gr, err)
 		}
+		return
+	}
+	if afterRescueCountHook != nil {
+		afterRescueCountHook(lctx)
+	}
+	// The count was read under a lease that may have run out since (a paused process, a slow
+	// answer): another replica's Stop or Start can then have completed while it still reads
+	// g_r, and a bump now would overtake that Start. The clock decides, not the timer callback.
+	if homeGuardOf(lctx).check() != nil || lctx.Err() != nil {
+		unlock()
 		return
 	}
 	gen, err := e.bumpStartCount(lctx)

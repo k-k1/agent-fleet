@@ -374,3 +374,30 @@ func TestWaiterDoesNotPlaceOnACountThatIsNotTheRescues(t *testing.T) {
 		}
 	})
 }
+
+// The claim lease lapsing between the follow-up's count read and its bump, with another
+// replica's Start counted meanwhile, must not be overtaken by the follow-up's bump.
+func TestFollowUpDoesNotBumpPastALapsedLease(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		rt := w.startRT()
+		w.freeSlot()
+		w.arm()
+		if err := rt.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		m, _ := parseRescueMarker(w.marker())
+		rt.rescueContinue(context.Background(), w.h.ssmc, "i-dark", m, []string{"cmd-1"})
+		afterRescueCountHook = func(ctx context.Context) {
+			homeGuardOf(ctx).markLost()
+			w.startLands()
+		}
+		t.Cleanup(func() { afterRescueCountHook = nil })
+		rt.awaitRescue(context.Background(), "i-dark", m)
+		if w.count() != m.Gen+1 {
+			t.Fatalf("count %d, want %d: the follow-up bumped past a Start counted under the lapsed lease", w.count(), m.Gen+1)
+		}
+		if got := attachedInstance(w.vol()); got != "" {
+			t.Fatalf("the follow-up placed the home on %q", got)
+		}
+	})
+}
