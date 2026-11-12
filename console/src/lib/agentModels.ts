@@ -15,6 +15,13 @@ import { hiddenModelsFor, isModelHidden, modelMatchesHidden } from "./modelDeny.
 import { t } from "./i18n/index.ts";
 import { agentOf } from "../agents/registry.ts";
 
+// Haiku 4.x and older (`claude-haiku-4-5-…`) and the Claude 3 generation (`claude-3-5-haiku-…`)
+// reject --effort. Mirrors claude.legacyHaikuRe in workspace/agent/internal/agents/claude/models.go.
+export function isLegacyHaiku(model: string): boolean {
+  const m = model.toLowerCase();
+  return m.includes("haiku") && /haiku-[0-4]([^0-9]|$)|claude-3/.test(m);
+}
+
 export type ModelOption = [string, string]; // [value sent as `model`, display label]
 export type EffortOption = [string, string];
 
@@ -492,13 +499,13 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
   void version;
   const rows = descriptors.get(kind) || [];
   const selected = rows.find((m) => m.id === model);
-  // Haiku takes no effort whether named by alias or by a registered full id; the Agent's
-  // claude.EffortsFor draws the same line.
+  // Haiku 4.x and older take no effort, whether named by id or registered full id; Haiku 5+ and
+  // the bare `haiku` alias do. The Agent's claude.EffortsFor draws the same line.
   // copilot's Auto (the only model on Free, and copilot's default) rejects --effort with
   // "Model auto does not support reasoning effort configuration". Offer the default effort only
   // until a concrete non-auto model is picked, matching the backend's launch guard.
   const noEffort =
-    (kind === "claude" && model.toLowerCase().includes("haiku")) ||
+    (kind === "claude" && isLegacyHaiku(model)) ||
     (kind === "copilot" && (model === "" || model === "auto"));
   // Union of the efforts across the catalog (the fallback when the selected model has no
   // metadata).

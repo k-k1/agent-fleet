@@ -187,9 +187,15 @@ describe("useEffortOptions for claude", () => {
 
   // create_session refuses an effort for these (claude.EffortsFor), so the launch dialog must
   // not offer one either.
-  it("offers only Default for Haiku, by alias or by a registered full id", () => {
-    expect(efforts("haiku")).toBe("");
+  it("offers only Default for Haiku 4.x and older ids", () => {
     expect(efforts("claude-haiku-4-5")).toBe("");
+    expect(efforts("claude-haiku-4-5-20251001")).toBe("");
+    expect(efforts("claude-3-5-haiku")).toBe("");
+  });
+
+  it("offers the effort levels for Haiku 5.x and the haiku alias", () => {
+    expect(efforts("haiku")).toBe(",low,medium,high,xhigh,max");
+    expect(efforts("claude-haiku-5-5")).toBe(",low,medium,high,xhigh,max");
   });
 
   it("offers the effort levels for other models (negative control)", () => {
