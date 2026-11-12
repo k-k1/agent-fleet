@@ -465,6 +465,7 @@ export const tools = {
   "reclaim.irreversible": "ごみ箱には入りません。ビルド成果物とキャッシュは自動で作り直されますが、必要になる次のビルドやインストールは一度だけ遅くなります。",
   "reclaim.confirm": "{size} を削除",
   "reclaim.confirm_none": "削除するものがありません",
+  "reclaim.stale": "一覧が表示後に変わったため、何も削除していません。更新後の一覧を確認して、もう一度確定してください。",
   "reclaim.done": "{size} を空けました。スキップ（使用中・拒否）: {skipped} 件、失敗: {failed} 件。",
   "env.boot_failed": "インストール失敗: {reason}",
   "env.boot_failed_title": "このワークスペースの起動時のインストールに失敗しました。次の起動でもう一度試します。",

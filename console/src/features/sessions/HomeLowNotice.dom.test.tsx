@@ -59,4 +59,19 @@ describe("HomeLowNotice", () => {
     await act(async () => store.markCleaned());
     expect(host.querySelector("button")).toBeNull();
   });
+  it("re-arms the expiry when a newer walk of the same size replaces the held one", async () => {
+    vi.useFakeTimers();
+    try {
+      const at = (ageMs: number) => ({ ...walk(0), measured_at: new Date(Date.now() - ageMs).toISOString() });
+      await act(async () => store.publishWalk(at(store.RECENT_WALK_MS - 60_000))); // A: expires in 1 min
+      await act(async () => vi.advanceTimersByTime(30_000));
+      await act(async () => store.publishWalk(at(0))); // B: same bytes, expires in 30 min
+      await act(async () => vi.advanceTimersByTime(40_000)); // past A's expiry
+      expect(host.querySelector("button")).not.toBeNull();
+      await act(async () => vi.advanceTimersByTime(store.RECENT_WALK_MS)); // past B's
+      expect(host.querySelector("button")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

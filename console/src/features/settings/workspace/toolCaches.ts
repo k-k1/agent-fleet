@@ -2,6 +2,7 @@
 // Settings › Machine section and the low-disk notice's cleanup so both empty a cache through
 // the one DELETE.
 import { api } from "../../../core/api/client.ts";
+import { markCleaned } from "../../../core/store/homeReclaim.ts";
 import type { Place } from "./machinePlace.tsx";
 
 export interface ToolCacheRow extends Place {
@@ -24,6 +25,12 @@ export async function loadToolCaches(): Promise<{ caches: ToolCacheRow[]; trunca
 
 /** DELETE: empties one cache. Returns the raw answer ({bytes} or {error}); the Agent itself
  *  refuses while a build or install uses the cache (error.code "cache_in_use"). */
-export function emptyToolCache(name: string): Promise<any> {
-  return api("api/cleanup/tool-caches/" + encodeURIComponent(name), { method: "DELETE" });
+export async function emptyToolCache(name: string): Promise<any> {
+  try {
+    return await api("api/cleanup/tool-caches/" + encodeURIComponent(name), { method: "DELETE" });
+  } finally {
+    // Whatever the answer (a lost one included), the walk behind the low-disk notice's figure may
+    // no longer describe the disk, so every caller of this DELETE retires it.
+    markCleaned();
+  }
 }

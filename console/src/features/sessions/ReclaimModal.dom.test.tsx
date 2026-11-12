@@ -10,6 +10,7 @@ interface Call {
 }
 let calls: Call[] = [];
 let toolCaches: unknown;
+let extraDir = false; // a directory that appears after the list was drawn
 let cacheDelete: (name: string) => { status: number; body: unknown };
 
 const GiB = 2 ** 30;
@@ -32,6 +33,7 @@ const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
   } else if (u.includes("api/cleanup/worktree-output")) {
     const name = new URL(u, "http://x").searchParams.get("worktree")!;
     body = wt(name, name === "a" ? 2 * GiB : GiB);
+    if (extraDir && name === "a") (body as any).dirs.push({ rel: "target", bytes: GiB });
   } else if (u.includes("api/cleanup/tool-caches/") && method === "DELETE") {
     const r = cacheDelete(decodeURIComponent(u.split("/").pop()!));
     status = r.status;
@@ -70,6 +72,7 @@ beforeEach(async () => {
   g.IS_REACT_ACT_ENVIRONMENT = true;
   setLocale("en");
   calls = [];
+  extraDir = false;
   onClose.mockClear();
   onChanged.mockClear();
   store.__test.reset();
@@ -142,5 +145,20 @@ describe("ReclaimModal", () => {
     expect(confirmBtn().disabled).toBe(true);
     await act(async () => confirmBtn().click());
     expect(real()).toEqual([]);
+  });
+
+  it("re-reads the dry run before deleting and stops for a fresh look when the directories changed", async () => {
+    extraDir = true;
+    await act(async () => confirmBtn().click());
+    await flush();
+    expect(real()).toEqual([]);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("The list changed");
+    expect(document.body.textContent).toContain("target");
+    // The second confirm deletes what is now on screen.
+    extraDir = true;
+    await act(async () => confirmBtn().click());
+    await flush();
+    expect(real().length).toBe(3);
   });
 });

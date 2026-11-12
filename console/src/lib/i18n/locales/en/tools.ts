@@ -468,6 +468,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "reclaim.irreversible": "Nothing goes to the trash. Build output and caches are rebuilt on their own; the next build or install that needs them is slower once.",
   "reclaim.confirm": "Delete {size}",
   "reclaim.confirm_none": "Nothing to delete",
+  "reclaim.stale": "The list changed since it was drawn, so nothing was deleted. Check the updated list and confirm again.",
   "reclaim.done": "Freed {size}. Skipped (in use or refused): {skipped}. Failed: {failed}.",
   "env.boot_failed": "install failed: {reason}",
   "env.boot_failed_title": "The install at this workspace's start failed; it is tried again at the next start.",

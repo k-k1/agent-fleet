@@ -13,6 +13,11 @@ import { api } from "../api/client.ts";
  *  can promise space that is no longer there. 30 minutes is the span of one working stint. */
 export const RECENT_WALK_MS = 30 * 60 * 1000;
 
+/** How far ahead of this browser's clock a walk's timestamp may be and still count as "now": the
+ *  Agent and the browser disagree by seconds, not minutes. Beyond it the stamp is untrustworthy
+ *  and the walk is not recent (a day-ahead Agent clock must not stretch "30 minutes" to a day). */
+export const CLOCK_SKEW_MS = 5 * 60 * 1000;
+
 /** The part of the /cleanup/home result the estimate reads. */
 export interface WalkResult {
   measured_at: string;
@@ -64,7 +69,7 @@ export function publishWalk(u: WalkResult | null | undefined): void {
   emit();
 }
 
-/** A cleanup ran: the held walk no longer describes the disk, and neither does the Agent's
+/** A cleanup ran (or may have; callers invalidate on an uncertain outcome too): the held walk no longer describes the disk, and neither does the Agent's
  *  copy of it (it keeps the last result until a new walk finishes). */
 export function markCleaned(): void {
   if (held) spent.add(held.stamp);
@@ -75,7 +80,8 @@ export function markCleaned(): void {
 /** The figure to show, or null: no walk, a walk older than RECENT_WALK_MS, or nothing in it. */
 export function reclaimEstimate(now = Date.now()): number | null {
   if (!held || held.bytes <= 0) return null;
-  return now - held.measuredAt <= RECENT_WALK_MS ? held.bytes : null;
+  const age = now - held.measuredAt;
+  return age >= -CLOCK_SKEW_MS && age <= RECENT_WALK_MS ? held.bytes : null;
 }
 
 /** When the held walk stops being recent (ms epoch), for a view to re-check at. */

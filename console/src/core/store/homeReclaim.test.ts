@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.fn();
 vi.mock("../api/client.ts", () => ({ api: (...a: unknown[]) => api(...a), apiJSON: async () => ({}), getTenant: () => "t" }));
 
-import { RECENT_WALK_MS, __test, loadCachedWalk, markCleaned, publishWalk, reclaimBytes, reclaimEstimate } from "./homeReclaim.ts";
+import { CLOCK_SKEW_MS, RECENT_WALK_MS, __test, loadCachedWalk, markCleaned, publishWalk, reclaimBytes, reclaimEstimate } from "./homeReclaim.ts";
 
 const GIB = 1024 ** 3;
 const walk = (ageMs: number, over: Record<string, unknown> = {}) => ({
@@ -50,6 +50,13 @@ describe("reclaimEstimate", () => {
   it("never shows a walk that is already too old", () => {
     publishWalk(walk(RECENT_WALK_MS + 60_000));
     expect(reclaimEstimate()).toBeNull();
+  });
+  it("rejects a walk stamped in the future beyond the clock-skew allowance", () => {
+    publishWalk(walk(-24 * 3600 * 1000));
+    expect(reclaimEstimate()).toBeNull();
+    __test.reset();
+    publishWalk(walk(-(CLOCK_SKEW_MS - 60_000)));
+    expect(reclaimEstimate()).toBe(3 * GIB);
   });
   it("shows nothing for a walk with nothing reclaimable", () => {
     publishWalk(walk(0, { categories: [], repos: [] }));

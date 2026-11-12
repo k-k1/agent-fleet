@@ -9,6 +9,7 @@
 // reversible (nothing goes to the trash), so the only caller that omits it is the row's
 // confirmed delete in WorktreeOutputSection.
 import { api, errText, raw } from "../../core/api/client.ts";
+import { markCleaned } from "../../core/store/homeReclaim.ts";
 
 export interface WtoDir {
   rel: string;
@@ -95,6 +96,8 @@ export type ApplyResult =
  *  so it is a result, not an error; anything else without a Report (400, 404, 502, a network
  *  failure) is an error whose outcome is unknown for a real delete — the caller re-surveys. */
 export async function applyWorktreeOutput(name: string, dryRun: boolean): Promise<ApplyResult> {
+  // A real delete (answer lost or not) retires the walk behind the low-disk notice's figure.
+  if (!dryRun) markCleaned();
   const q = `worktree=${encodeURIComponent(name)}${dryRun ? "&dry_run=1" : ""}`;
   try {
     const res = await raw(`api/cleanup/worktree-output?${q}`, { method: "POST" });

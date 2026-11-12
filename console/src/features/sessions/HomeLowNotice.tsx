@@ -14,12 +14,13 @@ export function HomeLowNotice({ free, total }: { free: string; total: string }) 
   // The figure is only valid for RECENT_WALK_MS; the store changes nothing as time passes, so
   // a toast left open for hours would keep quoting it without this nudge.
   const [, tick] = useState(0);
+  // Re-armed per walk, not per figure: a newer walk of the same size has a later expiry.
+  const at = reclaimExpiresAt();
   useEffect(() => {
-    const at = reclaimExpiresAt();
     if (est == null || at == null) return;
     const id = setTimeout(() => tick((n) => n + 1), Math.max(0, at - Date.now()) + 50);
     return () => clearTimeout(id);
-  }, [est]);
+  }, [est, at]);
   const openReclaim = useSessionUI((s) => s.openReclaim);
   return (
     <span>
