@@ -151,6 +151,18 @@ class NotesTests(unittest.TestCase):
         self.topic.write_text(self.valid + "\nRead:\n`ref/cli/af-aws-exec-typo.md`")
         self.assertIn("does not exist", self.errors())
 
+    def test_retired_shelf_is_an_error(self):
+        (self.root / "guide/user").mkdir(parents=True)
+        (self.root / "guide/user/README.md").write_text("# Using\n")
+        self.topic.write_text(self.valid + "\nRead:\n`user/README.md`")
+        self.assertEqual(self.errors(), "")
+        for where in (self.topic, self.policy):
+            with self.subTest(where=where.name):
+                self.topic.write_text(self.valid)
+                self.policy.write_text("`notes/example.md`\n")
+                where.write_text(where.read_text() + "\nRead:\n`member/missing-review-probe.md`\n")
+                self.assertIn("a shelf the guide no longer has -> member/missing-review-probe.md", self.errors())
+
     def test_frontmatter_positive_controls(self):
         for old, new, error in (
             ("af-example", "af-wrong", "name must be"),

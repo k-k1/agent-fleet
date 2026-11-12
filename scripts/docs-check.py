@@ -88,6 +88,9 @@ READER_FACING = ("user", "admin")
 # Shelves of the guide/ tree, i.e. what is shipped into containers. Not cut by role
 # (ADR 0064).
 GUIDE_SHELVES = ("user", "admin", "operate", "ref")
+# Shelves the guide no longer has. Recognised only so that a pointer into one fails with
+# "the shelf is gone" instead of passing as an unknown path no check looks at.
+RETIRED_SHELVES = ("member",)
 # Bilingual = English is authoritative (X.md), Japanese accompanies it (X.ja.md).
 # decisions/ is not LIVING (an ADR is immutable, so it carries no front matter) but it is
 # bilingual: as with the reader-based shelves, an English-only reader who cannot reach
@@ -1430,7 +1433,7 @@ def check_notes(f: Findings) -> None:
     if not os.path.exists(notes):
         return
     notes_dir = os.path.join(ROOT, "workspace", "notes")
-    shelves = LIVING + ("decisions", "log")
+    shelves = LIVING + RETIRED_SHELVES + ("decisions", "log")
     ref_re = re.compile(
         # The task pages sit in subdirectories (user/integrations/aws-sso.md, ref/cli/af-aws-exec.md),
         # so a path may go deeper than the shelf.
@@ -1487,6 +1490,13 @@ def check_notes(f: Findings) -> None:
                     )
             for m in ref_re.finditer(block):
                 name, fname = m.group(1), m.group(2)
+                if name in RETIRED_SHELVES:
+                    f.error(
+                        f"{label}:{lineno}: points at a shelf the guide no longer has"
+                        f" -> {name}/{fname} (its pages moved; guide/_redirects.tsv"
+                        " names where)"
+                    )
+                    continue
                 if name not in GUIDE_SHELVES:
                     f.error(
                         f"{label}:{lineno}: points at a shelf that is not shipped"
