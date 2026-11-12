@@ -37,8 +37,8 @@ case "${AF_OS:-$(uname -s)}" in
   A Mac with Apple Silicon is supported for a single user, in one of two ways:
     - the Docker edition (Docker Desktop / OrbStack / colima):
         curl -fsSL https://raw.githubusercontent.com/$REPO/main/install-compose.sh | bash
-      then follow \"macOS\" in the bundle's README.md
-      (https://github.com/k-k1/agent-fleet/blob/main/deploy/compose/README.md#macos-apple-silicon)
+      then follow the guide page \"Run on an Apple Silicon Mac\"
+      (https://github.com/k-k1/agent-fleet/blob/main/guide/operate/compose/macos.md)
     - inside a Linux VM (Lima, an OrbStack machine, ...): run this installer there,
       then open http://localhost:8099 through the VM's port forward." ;;
   *) die "Linux only (including WSL2); ${AF_OS:-$(uname -s)} is unsupported" ;;
@@ -153,7 +153,7 @@ Next steps:
   af start        # first run downloads, verifies and extracts the rootfs (~200 MB)
   # then open http://localhost:8099 in your browser
 Optional text-to-speech (VOICEVOX / Zundamon): see the bundled guide
-  $DEST_ROOT/$VER/README.md
+  $DEST_ROOT/$VER/docs/operate/engines/read-aloud.md
 Cleanup of old versions (optional): remove unused version directories under
   $DEST_ROOT/ (user data lives elsewhere and is not affected)
 EOF

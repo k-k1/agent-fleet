@@ -1,6 +1,6 @@
 ---
 audience: "Control Plane の保存時の鍵を AWS KMS に持たせたい、AWS 上の配備管理者"
-source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/ecs/cfn/PARAMETERS.md`、コマンドは `af-cp rewrap-keys --help`"
+source_of_truth: "パラメータは `deploy/aws/ecs/cfn/30-ingress.yaml` と `deploy/aws/ecs/cfn/PARAMETERS.md`、コマンドは `af-cp rewrap-keys --help`"
 ---
 
 # 保存時の鍵を AWS KMS にする
@@ -8,7 +8,7 @@ source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/
 [English](kms.md) | 日本語
 
 AWS の配備（`ecs` / `ecs-ec2`）だけの機能です。Control Plane が封じて保存する秘密を、`AF_MASTER_KEY` から導いた鍵ではなく AWS KMS の鍵で守れます。
-KMS 鍵を無効にすれば、封じた値をまとめて読めなくできます。コマンドとパラメータは [ECS の手順書](../../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default) にあります。
+KMS 鍵を無効にすれば、封じた値をまとめて読めなくできます。パラメータは [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#保存時の鍵を-kms-にする) にあります。
 
 ## 全体像
 
@@ -73,7 +73,7 @@ Control Plane には `AF_KEY_CUSTODIAN=kms` と `AF_KMS_KEY_ID` が渡ります�
 `af-cp rewrap-keys` は、切り替える前に `AF_MASTER_KEY` で封じた値を、すべて KMS で封じ直します。対象は [KMS が守るもの](#kms-が守るもの) の全部です。実行したあとは、KMS 鍵を無効にするとこれらも読めなくなります。
 
 1. Control Plane が `AF_KEY_CUSTODIAN=kms` で動いていることを確かめます。`local` では実行を拒否します。`local` の Control Plane は、このコマンドが書いた値を開けません
-2. Control Plane と同じ環境（同じ `AF_MASTER_KEY`・`AF_KMS_KEY_ID`・データベースの設定・タスクロール）で、まず `--dry-run` を付けて実行します。ECS では Control Plane のタスク定義を使う単発のタスクとして動かします。貼り付けるコマンドは [ECS の手順書](../../../deploy/aws/ecs/README.md#running-af-cp-commands-against-the-control-planes-database) にあります
+2. Control Plane と同じ環境（同じ `AF_MASTER_KEY`・`AF_KMS_KEY_ID`・データベースの設定・タスクロール）で、まず `--dry-run` を付けて実行します。ECS では Control Plane のタスク定義を使う単発のタスクとして動かします。貼り付けるコマンドは [Control Plane のデータベースに対して af-cp を実行する](../aws-ecs/options.ja.md#control-plane-のデータベースに対して-af-cp-を実行する) にあります
 3. `--dry-run` を外して実行します。終了コード 0 になるまで繰り返します
 4. 終わったら、もう一度 `--dry-run` で確かめます
 
@@ -129,4 +129,4 @@ Control Plane は動かしたままで構いません。ただし次の保存は
 - [ホームごとに鍵を分ける](home-keys.ja.md)
 - [ブリッジトークンを入れ替える](bridge-tokens.ja.md)
 - この機能が答える脅威は [脅威モデルと残るリスクを知る](../secure/threat-model.ja.md#残るリスクに備える) にあります
-- [ECS の手順書の「Keys at rest on KMS」](../../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default)
+- [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#保存時の鍵を-kms-にする)

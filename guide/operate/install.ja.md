@@ -1,6 +1,6 @@
 ---
 audience: "配備をはじめて建てる人"
-source_of_truth: "コマンドは deploy/compose/README.md の「Quick start」、各変数の意味は deploy/compose/.env.example（食い違ったらこのページのバグ）"
+source_of_truth: "各変数の意味は deploy/compose/.env.example（食い違ったらこのページのバグ）"
 ---
 
 # インストールする
@@ -8,7 +8,7 @@ source_of_truth: "コマンドは deploy/compose/README.md の「Quick start」�
 [English](install.md) | 日本語
 
 Docker Compose で最初の配備を建て、最初の管理者がサインインしてメンバーを迎えられるところまで進めます。
-コマンドは [compose の runbook](../../deploy/compose/README.md) の「Quick start」にあります。このページには、各手順で何を決め、何に気をつけるかを書きます。
+打つコマンドは [Docker Compose で構築する](compose/install.ja.md) にあります。このページには、各手順で何を決め、何に気をつけるかを書きます。
 
 ## 全体像
 
@@ -20,7 +20,7 @@ Docker Compose で最初の配備を建て、最初の管理者がサインイ�
 | `SUPER_ADMIN_EMAILS` のアドレスでサインインする | そのアカウントが配備管理者（`super_admin`）になる |
 | メンバーを迎える | メンバーがサインインすると、そのワークスペースを用意する |
 
-作業するディレクトリは `deploy/compose/` です。ほかの形態は [デプロイ先を選ぶ](choose.ja.md) で選び、その runbook に従ってください。
+作業するディレクトリは `deploy/compose/` です。ほかの形態は [デプロイ先を選ぶ](choose.ja.md) で選び、その手順に従ってください。
 
 ## 始める前に
 
@@ -48,7 +48,7 @@ Docker Compose で最初の配備を建て、最初の管理者がサインイ�
 | `SUPER_ADMIN_EMAILS` | 最初の配備管理者のアドレス |
 | `DATA_DIR` | データを置くディレクトリ。絶対パスはあとから変えにくいので、ここで決めます |
 | `AF_MASTER_KEY`・`AF_COOKIE_SECRET` | 手順 2 |
-| `DOCKER_GID` | ホストの docker グループの GID。求め方は runbook にあります |
+| `DOCKER_GID` | ホストの docker グループの GID。求め方は [Docker Compose で構築する](compose/install.ja.md#1-設定を書いてソースから起動する) にあります |
 
 `DOCKER_GID` を間違えると、起動したあとに docker のソケットで permission denied になります（[症状から原因を探す](diagnose/checklist.ja.md#コンテナから-docker-を動かす-3-つの制約)）。
 
@@ -135,7 +135,7 @@ IdP ごとに、`.env` で埋めるキーが違います。
 2. `docker compose up -d` で起動します。ビルド済みのイメージを使わずにローカルでビルドするなら `--build` を付けます
 3. Control Plane のログを追い、ループバックのポートの `/healthz` が `ok` を返すことを確かめます
 
-確かめ方は runbook のトラブルシューティングの表にあります。
+コマンドは [Docker Compose で構築する](compose/install.ja.md) にあります。
 
 ## 6. 最初の管理者としてサインインする
 

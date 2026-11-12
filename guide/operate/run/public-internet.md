@@ -59,4 +59,4 @@ The AWS WAF offers only two choices:
 
 - [Understand the threat model and residual risks](../secure/threat-model.md)
 - [Control outbound traffic](../secure/egress.md)
-- [The ECS runbook](../../../deploy/aws/ecs/README.md)
+- [Put WAF in front](../aws-ecs/options.md#put-waf-in-front)

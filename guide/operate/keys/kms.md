@@ -1,6 +1,6 @@
 ---
 audience: "a deployment administrator on AWS who wants the Control Plane's keys at rest held by AWS KMS"
-source_of_truth: "`deploy/aws/ecs/README.md` and `deploy/aws/ecs/cfn/PARAMETERS.md` for the parameters; `af-cp rewrap-keys --help` for the command"
+source_of_truth: "`deploy/aws/ecs/cfn/30-ingress.yaml` and `deploy/aws/ecs/cfn/PARAMETERS.md` for the parameters; `af-cp rewrap-keys --help` for the command"
 ---
 
 # Put the keys at rest on AWS KMS
@@ -8,7 +8,7 @@ source_of_truth: "`deploy/aws/ecs/README.md` and `deploy/aws/ecs/cfn/PARAMETERS.
 English | [日本語](kms.ja.md)
 
 This is for AWS deployments (`ecs` / `ecs-ec2`) only. The secrets the Control Plane seals and stores can be protected by an AWS KMS key instead of a key derived from `AF_MASTER_KEY`.
-Disabling the KMS key then makes what it sealed unreadable at once. The commands and parameters are in the [ECS runbook](../../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default).
+Disabling the KMS key then makes what it sealed unreadable at once. The parameters are in [Turn on optional features with stack parameters](../aws-ecs/options.md#keep-keys-at-rest-on-kms).
 
 ## How it works
 
@@ -73,7 +73,7 @@ Disabling the key makes the whole deployment unreadable, so restrict who can adm
 `af-cp rewrap-keys` re-seals, under KMS, every value sealed with `AF_MASTER_KEY` before the switch: everything in [What KMS protects](#what-kms-protects). Afterwards, disabling the KMS key makes those unreadable too.
 
 1. Check that the Control Plane runs with `AF_KEY_CUSTODIAN=kms`. The command refuses to run under `local`, and a `local` Control Plane cannot open what the command writes
-2. With the Control Plane's own environment (the same `AF_MASTER_KEY`, `AF_KMS_KEY_ID`, database settings and task role), run it with `--dry-run` first. On ECS, run it as a one-off task of the Control Plane's task definition; the command to paste is in the [ECS runbook](../../../deploy/aws/ecs/README.md#running-af-cp-commands-against-the-control-planes-database)
+2. With the Control Plane's own environment (the same `AF_MASTER_KEY`, `AF_KMS_KEY_ID`, database settings and task role), run it with `--dry-run` first. On ECS, run it as a one-off task of the Control Plane's task definition; the command to paste is in [Run af-cp commands against the Control Plane's database](../aws-ecs/options.md#run-af-cp-commands-against-the-control-planes-database)
 3. Run it without `--dry-run`. Repeat until it exits with status 0
 4. When it is done, confirm with `--dry-run` once more
 
@@ -129,4 +129,4 @@ It changes only who can read the stored value. The value itself must not change 
 - [Give each home its own key](home-keys.md)
 - [Rotate the bridge tokens](bridge-tokens.md)
 - The threats this answers are in [Understand the threat model and residual risks](../secure/threat-model.md#prepare-for-the-remaining-risks)
-- [The ECS runbook's "Keys at rest on KMS"](../../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default)
+- [Turn on optional features with stack parameters](../aws-ecs/options.md#keep-keys-at-rest-on-kms)

@@ -14,15 +14,20 @@ applies no cgroup limits.
 
 | Path | Purpose |
 |------|---------|
-| [`compose/`](compose/README.md) | **On-prem Docker Compose deployment** (the primary self-host target; per-user workspace containers with cgroup quotas). Runbook: setup, keys, backup/restore, upgrades. |
-| [`native/`](native/README.md) | **Docker-less native runtime** for WSL2 / single-user Linux hosts. Ships as the `agent-fleet-native-*` tar (`af` launcher; workspace runs in a bubblewrap sandbox). |
+| [`compose/`](compose/README.md) | **On-prem Docker Compose deployment** (the primary self-host target; per-user workspace containers with cgroup quotas). Procedure: [guide/operate/compose/](../guide/operate/compose/install.md). |
+| [`native/`](native/README.md) | **Docker-less native runtime** for WSL2 / single-user Linux hosts. Ships as the `agent-fleet-native-*` tar (`af` launcher; workspace runs in a bubblewrap sandbox). Procedure: [guide/operate/native/](../guide/operate/native/install.md). |
 | [`aws/ecs/`](aws/ecs/README.md) | **AWS ECS deployment** (CloudFormation templates + `release-ecr.sh` image publishing). |
-| [`aws/ec2-single/`](aws/ec2-single/README.md) | Single-EC2 variant (CloudFormation). |
+| [`aws/ec2-single/`](aws/ec2-single/README.md) | Single-EC2 variant (CloudFormation) running the compose deployment. Procedure: [guide/operate/aws-ec2-single.md](../guide/operate/aws-ec2-single.md). |
 | [`kubernetes/`](kubernetes/README.md) | **Kubernetes deployment** (`AF_RUNTIME=kubernetes`): kustomize base and overlays for the CP, RBAC and NetworkPolicies, and the runbook. GKE Standard first. |
 | [`gcp/gke/`](gcp/gke/README.md) | Terraform around a GKE cluster for the `kubernetes` profile (VPC, cluster, Cloud SQL, NAT, load balancer certificate, IAM). |
 | [`release/`](release/) | Release build & publish tooling: `build.sh` (artifact orchestrator), `publish-dist.sh` (GitHub Releases publish), `dist-repo/` (seed of the public distribution repo incl. `install.sh`). |
 | [`comfyui-lan/`](comfyui-lan/comfyui-lan.sh) | Runs the fleet's pinned ComfyUI image on a LAN GPU host under docker, for `AF_COMFY_URL` / the LAN ComfyUI panel ([guide](../guide/operate/engines/comfyui.md#run-the-fleets-image-on-a-gpu-machine), ADR 0076 P2). |
-| [`local/`](local/) | Local development helpers (`run-dev.sh` etc.), WSL personal-use guide ([README-wsl.md](local/README-wsl.md)), and CI test scripts (stub tests, e2e smoke). |
+| [`local/`](local/) | Local development helpers (`run-dev.sh` etc.), the WSL personal-use preset ([guide/operate/wsl.md](../guide/operate/wsl.md)), and CI test scripts (stub tests, e2e smoke). |
+| [`macos/`](macos/README.md) | The maintainers' macOS acceptance run (`acceptance.sh`) behind the Apple Silicon support claim. Not shipped. |
+
+Each target's README is a short index of its pages in the user guide (`guide/operate/`),
+where the commands live. `release/stage-docs.sh` copies these READMEs into the shipped docs
+as `operate/runbooks/<name>.md` and rewrites their links to the staged guide.
 
 Release engineering design and gates: [docs/log/35-packaging.md](../docs/log/35-packaging.md). Deployment architecture
 and portability: [docs/build/09-deploy.md](../docs/build/09-deploy.md).

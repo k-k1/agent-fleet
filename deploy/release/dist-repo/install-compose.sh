@@ -34,7 +34,7 @@ OS="${AF_OS:-$(uname -s)}"
 case "$OS" in
   Linux) ;;
   # Checked with colima, OrbStack and Docker Desktop (#2961). It needs the overlay.
-  Darwin) echo "NOTE: on macOS, follow \"macOS\" in the bundle's README.md (single user, Apple Silicon)" >&2 ;;
+  Darwin) echo "NOTE: on macOS, follow the guide page guide/operate/compose/macos.md (single user, Apple Silicon)" >&2 ;;
   *) die "the Compose edition runs on a Linux Docker host or a Mac with Apple Silicon" ;;
 esac
 command -v docker >/dev/null 2>&1 \
@@ -133,7 +133,7 @@ cat <<EOF
 Next steps (Compose needs manual config — cannot be fully automated):
   cd agent-fleet-$VER
   cp .env.example .env
-  # macOS: use the values in README.md "macOS" and start with
+  # macOS: use the values in guide/operate/compose/macos.md and start with
   #   docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
   # fill in .env: AF_MASTER_KEY / AF_COOKIE_SECRET / DOCKER_GID /
   #   PUBLIC_DOMAIN / PUBLIC_BASE_URL / SUPER_ADMIN_EMAILS / DATA_DIR
@@ -148,6 +148,7 @@ Next steps (Compose needs manual config — cannot be fully automated):
   docker compose up -d
   docker compose logs -f cp
 
-The extracted README.md is the full runbook (TLS/domain, backup/restore, upgrades,
-AWS ECS under aws/). See it for details.
+The procedures (TLS/domain, backup/restore, upgrades) are in the operator guide:
+  https://github.com/k-k1/agent-fleet/tree/main/guide/operate
+(also in the Console's user guide once it runs). The extracted README.md indexes them.
 EOF

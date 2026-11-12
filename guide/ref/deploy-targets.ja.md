@@ -37,9 +37,8 @@ source_of_truth: "この表（行は Control Plane が受け付ける runtime �
 **Mac（Apple Silicon）では。** `docker` は Docker Desktop・OrbStack・colima の上で
 `deploy/compose/docker-compose.macos.yml` を重ねて動き、`native` は Linux VM（Lima または OrbStack の
 マシン）の中で `linux-arm64` パッケージとして動きます。どちらも macOS そのものの上では動きません。
-単独利用のみで、`127.0.0.1` で使います。何を確認したか・いつ確認し直すかは
-`deploy/macos/README.md`、手順は
-[deploy/compose/README.md](../../deploy/compose/README.md#macos-apple-silicon) の「macOS」にあります。
+単独利用のみで、`127.0.0.1` で使います。手順は
+[macOS（Apple Silicon）で動かす](../operate/compose/macos.ja.md) にあります。
 
 `docker` は `local`、`ecs` は `aws`、`native` は `wsl`、`kubernetes` は `k8s` という綴りでも通ります。
 それ以外は**起動時に失敗**します（知らないうちに docker に切り替わったりしません）。
@@ -160,15 +159,14 @@ EFS にあるので、ほかの形態と同じく残ります。ただし、そ�
 
 ## 手順の在り処
 
-コマンドは runbook にあり、runbook は操作する対象の隣に置いています。何が起きるか、何に気をつけるかは
-[operate/](../operate/README.ja.md) で説明します。
+コマンドは [operate/](../operate/README.ja.md) の形態ごとのページにあります。`deploy/` の各ディレクトリの README は、そのページへの目次です。
 
-| 形態 | runbook |
+| 形態 | 手順 |
 |---|---|
-| docker（compose）| [deploy/compose/README.md](../../deploy/compose/README.md) |
-| native | [deploy/native/README.md](../../deploy/native/README.md)。個人の WSL2 は [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
+| docker（compose）| [Docker Compose で構築する](../operate/compose/install.ja.md) |
+| native | [ネイティブパッケージを入れる](../operate/native/install.ja.md)。個人の WSL2 は [WSL で個人用に動かす](../operate/wsl.ja.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
-| compose を EC2 1 台に載せる | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| compose を EC2 1 台に載せる | [EC2 1 台に構築する](../operate/aws-ec2-single.ja.md) |
 | kubernetes（プレビュー。GKE、およびほかのクラスタ）| [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 `ec2-single` は別の runtime プロファイルではありません。**VM 上の `docker`** です。

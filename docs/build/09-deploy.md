@@ -18,11 +18,11 @@ target can and cannot do (several users, per-user limits, engines, cost attribut
 | Form | Summary | State | Runbook |
 |---|---|---|---|
 | **local dev** | The CP as a host process. `run-dev.sh` is one entry point with subcommands (`local`, `wsl`, `native`, and `reset`, which wipes the data); `restart-cp.sh` swaps only the CP. `AUTH=dev` for one person, `oauth` when shared | ✅ in use for development and small shared setups | the comments at the top of [run-dev.sh](../../deploy/local/run-dev.sh) and [restart-cp.sh](../../deploy/local/restart-cp.sh); the reflect-a-change table is [10](10-development.md) |
-| **wsl (personal)** | `run-dev.sh wsl`: the local form preset for WSL2 with a native dockerd, `AUTH=dev` | ✅ personal use | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
-| **native** | No Docker: the CP and Console run as host processes and the workspace runs in a bubblewrap sandbox on a downloaded rootfs. **Single user only** — the `native` runtime refuses to start unless `AUTH=dev` | ✅ shipped as a package | [deploy/native/README.md](../../deploy/native/README.md) |
-| **compose** | The self-hosting mainline: a CP container plus Caddy for automatic TLS. The CP binds loopback, and **the compose definition contains the three constraints** of driving the host's Docker daemon from a container: the host network, `DATA_DIR` mounted at the same absolute path, and the docker group id | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
+| **wsl (personal)** | `run-dev.sh wsl`: the local form preset for WSL2 with a native dockerd, `AUTH=dev` | ✅ personal use | [guide/operate/wsl.md](../../guide/operate/wsl.md) |
+| **native** | No Docker: the CP and Console run as host processes and the workspace runs in a bubblewrap sandbox on a downloaded rootfs. **Single user only** — the `native` runtime refuses to start unless `AUTH=dev` | ✅ shipped as a package | [guide/operate/native/](../../guide/operate/native/install.md) |
+| **compose** | The self-hosting mainline: a CP container plus Caddy for automatic TLS. The CP binds loopback, and **the compose definition contains the three constraints** of driving the host's Docker daemon from a container: the host network, `DATA_DIR` mounted at the same absolute path, and the docker group id | ✅ | [guide/operate/compose/](../../guide/operate/compose/install.md) |
 | **aws — ECS** | Static infrastructure from CloudFormation, per-workspace resources from the CP's own ECS adapter. A workspace is a task on Fargate (`ecs`, the template default) or on an EC2 slot taken from a pool (`ecs-ec2`) | ✅ `ecs-ec2` runs the production deployment; `ecs` has been proven in a sandbox from deploy through end-to-end to teardown | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
-| **aws — ec2-single** | compose on one EC2 VM | ✅ the host of the "start from the release bundle on a clean host" gate | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| **aws — ec2-single** | compose on one EC2 VM | ✅ the host of the "start from the release bundle on a clean host" gate | [guide/operate/aws-ec2-single.md](../../guide/operate/aws-ec2-single.md) |
 | **kubernetes** | The CP as a Deployment in the cluster; each workspace a StatefulSet at 0 or 1 replicas with two PersistentVolumeClaims, created by the CP's own `kubernetes` adapter over the standard API. Plain manifests with a kustomize base (`deploy/kubernetes/`), and Terraform for what a GKE deployment needs around the cluster (`deploy/gcp/gke/`) | ◐ built, not yet run on a live cluster; the acceptance run on GKE Standard is #1468 | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 - **ec2-single is compose on a VM** — the `docker` runtime, not a separate profile.
@@ -77,8 +77,8 @@ gateway address (`AF_CP_INTERNAL_LISTEN=172.17.0.1:8098`), and workspaces reach 
 local to the host, so every per-user network reaches it without crossing Docker's inter-network
 isolation, and no LAN or tailnet interface carries it; a wildcard bind on `docker` is logged as a
 warning at start. It is off by default (the address depends on the host's Docker and firewall
-configuration, and an address that does not exist stops the CP). Runbook:
-[`deploy/compose/README.md`](../../deploy/compose/README.md) "Workspace listener".
+configuration, and an address that does not exist stops the CP). Procedure:
+[When workspaces cannot reach the CP](../../guide/operate/compose/workspace-listener.md).
 
 The ingress terminates TLS and forwards. With `AUTH=oauth` the CP authenticates for
 itself; only with `AUTH=proxy` does the ingress inject the identity header.
@@ -128,7 +128,7 @@ an index. The value in parentheses is the code's default when the variable is un
 | opencode bedrock route gate (acceptance run only) | `AF_WS_OPENCODE_BEDROCK_ROUTE` (off) | `1` makes every workspace start carry `AF_OPENCODE_BEDROCK_ROUTE=1`, which opens the opencode `bedrock` route (Terminal only) that its Agent otherwise refuses until its own live acceptance (ADR 0128 decision 14). Independent of the claude switch above; the same rules: acceptance run only, exactly `1`, reaches every runtime at the next workspace Start, a running workspace needs Stop → Start | [ADR 0128](../decisions/0128-harness-route-maker.md) · [guide ref/agents](../../guide/ref/agents.md) |
 | Engines | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON` · `AF_LLM_URL` · `AF_COMFY_URL` / `AF_COMFY_API_KEY` · `AF_ENGINE_API_KEY_<KEY>` · `AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}` · `AF_ENGINE_ECS_CLUSTER` · `AF_ENGINE_WAKE_TIMEOUT` (900 s) · `AF_ENGINE_PLAIN_HOLD` · `AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | the engine table, the engine controller, the gateway's hold on a cold engine, and borrowing another deployment's engines | [decisions/0071](../decisions/0071-self-hosted-inference-engines.md) / [0076](../decisions/0076-external-image-engine-on-lan.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.md) |
 | Speech | `AF_VOICEVOX_URL` (`http://127.0.0.1:50021`) · `AF_TTS_ECS_SERVICE` and the other `AF_TTS_ECS_*` · `AF_TTS_MAX_CHARS` (300) · `AF_POLLY_{REGION,ENGINE}` | a VOICEVOX by URL, or the one on ECS that the CP scales from zero; Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.md) |
-| Containerless adapter | `AF_NATIVE_AGENT_BIN` (`workspace-agent` on `PATH`) · `AF_NATIVE_ROOTFS` · `AF_NATIVE_BWRAP` | where the agent binary lives; the rootfs that switches on the bubblewrap sandbox | [native runbook](../../deploy/native/README.md) |
+| Containerless adapter | `AF_NATIVE_AGENT_BIN` (`workspace-agent` on `PATH`) · `AF_NATIVE_ROOTFS` · `AF_NATIVE_BWRAP` | where the agent binary lives; the rootfs that switches on the bubblewrap sandbox | [native install page](../../guide/operate/native/install.md) |
 | Kubernetes adapter | `AF_K8S_NAMESPACE` · `AF_K8S_WORKSPACE_IMAGE` · `AF_K8S_STORAGE_CLASS` · `AF_K8S_HOME_GIB` · `AF_K8S_STATE_GIB` · `AF_K8S_IMAGE_PULL_SECRET` · `AF_K8S_NODE_SELECTOR` · `AF_K8S_SERVICE_ACCOUNT` (`default`) · `AF_K8S_HOME_SHARED_FS` (unset; `1` when the StorageClass backs homes with one shared filesystem, so the home-nearly-full notice is withheld) | `kubernetes` only: the workspace namespace, image and StorageClass, the claims' default sizes, the node pool, and the workspaces' way back to the CP (the workspace listener row, §9.3) | [kubernetes runbook](../../deploy/kubernetes/README.md) / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
 | Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` · where set (on `kubernetes`, optionally on `docker`) also `AF_CP_INTERNAL_URL`, which requests prefer over `AF_CP_BASE_URL` while links for people keep the public one | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker`, as SSM SecureString task secrets on ECS, and as a per-workspace Secret on `kubernetes` | [04](04-agent.md) / [07 §7.5](07-security.md) |
 
@@ -206,7 +206,7 @@ busy" test, so a row never offers what the DELETE would refuse.
 
 Seven CloudFormation stacks, in deploy order `00-network → 10-data → 20-platform →
 (40-ec2-pool) → (50-tts) → (60-engines) → 30-ingress`; the ones in parentheses are
-optional. The runbook's "Stack decomposition" says what each one owns.
+optional. The operator guide's [ECS layout page](../../guide/operate/aws-ecs/overview.md) says what each one owns.
 
 - **The ownership boundary**: the templates build **static infrastructure once**.
   Per-workspace resources are **created at runtime by the CP under deterministic names**
@@ -339,9 +339,11 @@ substrate underneath it.
   containers sit in `CannotPullContainerError` while the service reports a steady state.
   What the script deliberately does not do is *bake* an image — if GHCR has not got the
   tag either it stops and names the workflow that makes it.
-- The actual procedures (`backup.sh`, `restore.sh`, upgrade, air-gapped) are the
-  [compose runbook](../../deploy/compose/README.md) and, for ECS, the
-  [ecs runbook](../../deploy/aws/ecs/README.md) §Upgrade.
+- The actual procedures (`backup.sh`, `restore.sh`, upgrade, air-gapped) are the guide's
+  [Back up and restore](../../guide/operate/run/backup-restore.md),
+  [Upgrade](../../guide/operate/run/upgrade.md) and
+  [Install into a closed network](../../guide/operate/run/air-gapped.md) and, for ECS, the
+  [ECS upgrade page](../../guide/operate/aws-ecs/upgrade.md).
 
 ## 9.8 Cost characteristics
 
@@ -493,3 +495,265 @@ resort, four minutes and no interruption because it is blue/green:
 ```sh
 aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-deployment
 ```
+
+## 9.10 The ECS runbook's developer sections
+
+These sections were in `deploy/aws/ecs/README.md` until its procedures moved to the operator
+guide (`guide/operate/aws-ecs/`). They are kept here verbatim because only someone changing
+Agent Fleet runs them, or because they are the history behind a rule the guide now states
+without its story: the prove-out sequence and E2E completion gate of the ECS adapter, the
+51,200-byte template incident and its round trip, the cold-start measurement, and the
+development deployment (`dev-deploy.sh`), which bakes `main` through this repository's
+workflows. Headings are one level down; links into `docs/log/` are plain text.
+
+
+### Prove-out sequence
+
+Runs from a host (or an Agent Fleet workspace — dogfooding) with **dedicated
+sandbox** credentials. AWS API calls are just HTTPS; the heavy compute (ECS tasks,
+RDS) lives in AWS, so this host's build/OOM limits don't gate it.
+
+- **S0** — `aws sts get-caller-identity` in the sandbox; pick a region.
+- **S1** — deploy `00-network.yaml`; confirm the deploy → `delete-stack` loop and
+  the standing cost (NAT is the main one, see below). **proven.**
+- **S1.5** — deploy `10-data.yaml` (EFS+RDS) and `20-platform.yaml` (ECR/cluster/SC
+  namespace/IAM); confirm and tear down. **proven.**
+- **S2** — with ECR up (from `20`), push the CP + Workspace images (§ECR push below).
+  ECS can't pull until they're in ECR.
+- **S3** — deploy `30-ingress.yaml`; the CP/Console service boots, CP-native
+  Google OAuth login works, RDS reachable.
+- **S4** — with `runtime_ecs.go` (stage 2) implemented, the CP **dynamically provisions a
+  workspace** (exercises the real adapter) → the E2E gate below.
+
+CFN authoring (S1–S3) and the stage-2 Go code are **parallel tracks**; they meet at S4.
+
+*Note added on the move (not part of the original text): "§ECR push below" in S2 is now [Push the images to ECR](../../guide/operate/aws-ecs/install.md#push-the-images-to-ecr) in the operator guide.*
+
+### E2E completion gate (frozen spec §20b.7.14)
+
+1. login (CP-native Google OAuth) → tenant → workspace Start (Service desired 1, RUNNING, healthz).
+2. session create → terminal attach (CP→Service Connect→Agent) → I/O.
+3. Stop (desired 0) → re-Start resumes home/claude state (EFS persists).
+4. P3-9 reaper: idle → stage-1 halt → stage-2 desired 0; no fire while attached.
+5. **no plaintext secret**: `describe-task-definition` shows the DEK only as an SSM
+   `valueFrom` ARN, never as an `environment` value.
+
+### A development deployment: `dev-deploy.sh`
+
+`update.sh` deploys a **released** tag. A deployment kept for development wants the
+opposite: whatever is on `main` right now, without cutting a version. That is
+`dev-deploy.sh` (docs/log/73), and it ends by calling `update.sh` — the pre-flight checks
+above are the reason, and writing a second copy of them for the dev path would mean the
+checks are what drifts.
+
+```bash
+./dev-deploy.sh --profile <p> --region <r>            # origin/main → the dev deployment
+./dev-deploy.sh --profile <p> --region <r> --dry-run  # just the plan
+```
+
+It names the tag (`<next patch>-dev-<sha8>`), bakes it through `dev-image.yml` (GHCR,
+never a release tag), copies it into ECR **index and all**, and moves `ImageTag`.
+Three things it decides for you:
+
+- **Whether the workspace image needs baking at all.** Only when `workspace/` changed
+  since the deployed tag; otherwise the workspace image is re-tagged inside ECR, which
+  copies no bytes. Baking it costs ~10 minutes of QEMU.
+- **That the golden snapshot does not have to be re-baked** when those bytes are
+  identical (docs/log/72 §72.6.4 paid 10 minutes and two slots for exactly that).
+- **That this is not somebody's live deployment.** It refuses any `Fqdn` but the dev
+  one unless `--allow-fqdn` says otherwise: moving `ImageTag` puts a "restart required"
+  badge in front of everyone running a workspace there.
+- **Whether the engine tools image has to be carried over.** `af-engine-tools` holds the
+  fetch sidecar and the ingest steps (ADR 0072), it is not part of `dev-image.yml`, and
+  only `standup.sh` used to copy it — so a dev deploy left the engines' fetch containers
+  with nothing to pull. Now: the tag the engines stack asks for is carried into ECR when
+  it is not there, and a per-commit tag is baked when `deploy/aws/ecs/engine-tools/` has
+  changed since the deployed commit. 🔴 It cannot set `EngineToolsImageTag` itself (it
+  only runs `update.sh` on the ingress stack), so in that second case it prints the tag
+  to set in `params/60-engines` — otherwise the deployment looks current and runs the
+  previous release's scripts.
+
+⚠️ It bakes **origin's** ref. Local commits that are not pushed are silently not in it.
+
+
+### The 51,200-byte wall (why a deploy can stop working without anyone touching it)
+
+CloudFormation refuses a template body over **51,200 bytes**; anything larger has to be
+handed over through S3. `cfn/30-ingress.yaml` crossed that line on **2026-09-01** (PR #277,
+RDS managed-password rotation: 50,191 → 54,681 bytes), and at that moment **every path that
+deploys it stopped working** — `standup.sh` (build it) and `update.sh` (every release,
+production included), because both call the same `cloudformation deploy --template-file`.
+
+It was found on 2026-09-02, by the first stand-up since. Three things kept it hidden:
+
+1. **The AWS CLI refuses on file size before it calls the API.** The failure is a CLI error,
+   not a CloudFormation one, so there is nothing in the stack events to find.
+2. **`update.sh` looked healthy.** It only ever overrides `ImageTag`, so people think of it
+   as a parameter change — but it passes the whole template on every run, so it was equally
+   broken.
+3. **The stand-up path had never been exercised end to end.** Creating `30-ingress` is the
+   only operation that had not been run since the growth.
+
+★ The general rule this is an instance of: **a deployment script is only verified along the
+paths somebody actually runs.** Green unit tests do not touch it, and a path that is skipped
+because "it obviously still works" is exactly the one that rots. That is why the fix is not
+just "big templates go to S3":
+
+- `env.sh`'s **`af_cfn_deploy` is the only entry point** to `cloudformation deploy`, and it
+  **measures the file on every call**. Remembering that "30-ingress is the big one" would
+  reproduce the incident on whichever template grows next.
+- The staging bucket lives in **20-platform** (created before 30-ingress, outlives it;
+  putting it in 30-ingress would need the bucket to deploy the stack that creates it).
+  Objects expire after 7 days.
+- `teardown.sh` **empties the bucket before deleting 20-platform** — CloudFormation cannot
+  delete a non-empty bucket, and a teardown that dies half-way is how "the create path is
+  never exercised" gets reproduced.
+- `deploy/local/ecs-lifecycle-stub-test.sh` cases **3b / 3c** run both of those on every CI
+  run, against a deliberately padded template. A fix nobody executes is the original bug.
+
+#### Back inside the wall (2026-09-04)
+
+The S3 route is the safety net, not the resting state — it needs a bucket that only exists
+once 20-platform is up, it constrains the teardown order, and its failures surface as CLI
+errors with nothing in the stack events. So `30-ingress.yaml` was put back under the limit:
+**54,681 → 40,493 bytes**, with no parameter, default or resource changed.
+
+What moved was prose. Parameter `Description:` bodies were 21,630 bytes — **40% of the
+template** — and they are the one part that does not have to reach the API to do its job;
+they now live in [`cfn/PARAMETERS.md`](../../deploy/aws/ecs/cfn/PARAMETERS.md), in full, with the template
+keeping a line or two per parameter.
+
+⚠️ **A YAML comment costs exactly what a `Description:` costs.** The limit is on the
+template *body*, so `#` is not a cheaper place to put a paragraph — moving one there saves
+zero bytes. Long explanations have to leave the file, not change syntax inside it.
+
+`ecs-lifecycle-stub-test.sh` case **3b-2** now fails the build when any `cfn/*.yaml` exceeds
+51,200 bytes. It is a hard failure on purpose: the growth in 2026-09-01 was silent for three
+months, and a warning would have been too. Crossing the wall again should be a deliberate
+edit to that constant, visible in the diff — while `af_cfn_deploy` keeps measuring at run
+time, so a template that does cross it still deploys instead of dying.
+
+#### 30-ingress may cross the wall again (2026-11-11, #3550)
+
+Staying inside the wall had run out of road: `30-ingress.yaml` sat 200 bytes under its
+50,176-byte test budget, the prose had already left (above), and every new parameter —
+a `Parameters` entry, a condition, an `Environment` line — costs 300–500 bytes, so each PR
+that added one failed CI and was trimmed by hand. Only nested stacks or a second template
+would make room without S3, and moving resources between stacks replaces them; the ALB and
+its listeners must not be replaced, so that is out.
+
+So the S3 route stopped being only a safety net **for this one template**: 30-ingress is
+always deployed after 20-platform's bucket exists (stand-up order 00 → 10 → 20 → images →
+40 → 30), which is the property the pre-bucket templates lack. What changed:
+
+- `cfn-cp-settings-env-test.py` budget for 30-ingress: 51,200 − 1,024 → **65,536** (about
+  14 KiB, thirty-odd parameters of room). Raising it again stays a deliberate edit.
+- case **3b-2** exempts 30-ingress from the 51,200 limit (the others keep it);
+  `cfn-template-size-test.py` keeps the pre-bucket templates 4 KiB under it.
+- Every hand-typed `aws cloudformation deploy` of 30-ingress (`--template-file`) in this
+  README, `PARAMETERS.md` and `release-ecr.sh`'s hint now carries
+  `--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` (the AWS CLI refuses a direct upload over
+  51,200 bytes before calling the API), and `cfn-template-size-test.py` fails on one that
+  does not. `CFN_BUCKET` is the 20-platform output `CfnTemplatesBucket`:
+  `CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name <platform stack> --query "Stacks[0].Outputs[?OutputKey=='CfnTemplatesBucket'].OutputValue" --output text)`.
+- The template itself did not change: no logical ID, parameter or resource moved, so an
+  existing stack updates in place.
+
+#### Round trip, measured (2026-09-02)
+
+Teardown → stand-up had never been done end to end. It has now, on the dev deployment, at
+`0.14.3-dev-ecbbcc59`:
+
+| Step | Result |
+|---|---|
+| `dev-image.yml`, `image=both`, 2 architectures | ~11 min; both images are `[amd64, arm64]` indexes |
+| `standup.sh` 00 → 10 → 20 → images → 40 → 30 | `30-ingress` went through S3, `CREATE_COMPLETE` |
+| CP boot | `metadata store: postgres`, `/readyz` 200 |
+| Agent, both architectures | golden bake booted real workspaces: `Agent healthy` 99 s (arm64) / 101 s (x86_64) |
+| CP → Agent | the Cloud Map fallback fired and succeeded: `did not resolve through the Service Connect alias -> using 10.20.x.x:7700 from Cloud Map` |
+| `teardown.sh` | 5 stacks gone; sweep and an independent count both show 0 stacks / 0 NAT / 0 RDS / 0 ALB / 0 EC2 / 0 EFS / 0 ECR |
+
+⚠️ **Check `/readyz`, not `/healthz`.** `/healthz` answers 200 with a dead database — that is
+how the RDS rotation outage stayed silent for so long. `/readyz` is the one that touches it.
+
+Two rough edges found on the way, **both since closed**:
+
+- **`standup.sh`'s preflight compares the capture against the templates** (parameters with
+  no `Default` must be present). It previously checked only that the capture *files existed*,
+  so a capture older than the templates would fail **after** 00–20 were already built — the
+  most expensive moment to find out. It no longer counts those parameters by a fixed
+  indentation either: it takes the depth of the first key under `Parameters:`, and **says so
+  when it reads none at all**. A parser that quietly reports "0 required" is the same shape
+  as the wall above — a check that is not running, with nothing to see.
+- **`teardown.sh`'s bucket-emptying step prints why it failed.** It used to swallow stderr
+  (`>/dev/null 2>&1 || echo "(skip: …)"`), so "the bucket was already gone" and "it could
+  not be emptied" looked identical — and the next thing to fail is the 20-platform delete,
+  by which point the reason has been thrown away.
+
+### Known behavior: a cold Start answers `starting`, not `running`
+
+A cold workspace Start pays a full image pull on every launch (Fargate keeps no
+image cache between tasks). Measured end-to-end in the sandbox (2026-08-15,
+`docs/log/62` §62.9): **126s on a fresh home, 128–218s on a warm one** — the earlier
+"~100s" was optimistic. `POST
+/api/workspace/start` does **not** wait for that: it returns as soon as the ECS
+service sits at `desiredCount 1`, with the live state — normally `starting`.
+Poll `GET /api/workspace` for the transition to `running`; the Console already
+does (4s, and it walks the cold start to `running` without a reload).
+
+Older builds blocked the request on the Agent readiness wait
+(`AF_ECS_START_TIMEOUT_SEC`, then 90s) and so outlived the ALB's **60s** idle
+timeout — the *HTTP request* died with a **504** while the workspace converged
+fine behind it. Fixed in `control-plane/runtime_ecs.go` (`watchReady`): the
+readiness poll now runs in the background for a log line only
+(`ecs start: service <name> Agent healthy <n>s after Start`), on a budget
+deliberately longer (default **300s**) than any request may take. `30-ingress.yaml`
+now spells the ALB's `idle_timeout` out at its default 60s so the ceiling is
+visible. 🚧 Verified by unit tests only — not re-run against a live ECS stack.
+
+Note `running` here means the ECS **task** is RUNNING, which is a moment before
+the entrypoint has finished and the Agent answers. A create issued in that window
+still gets `502 workspace agent unreachable`; retry.
+
+**The split has been measured** (2026-08-15,
+`docs/log/62-ecs-start-latency.md` §62.9–62.10),
+and the answer was not the image. A warm-home Stop→Start costs **~101s**: **4–8s**
+for ECS to create the task, **16s** provision (ENI attach), **35s** image pull
+(918 MiB compressed, 34 layers), **~25s** EFS mount + container create, **21s**
+entrypoint. Image pull is ~35% of that — under the 40% decision gate and under 40s
+absolute — so SOCI lazy loading was **rejected**.
+
+⚠️ **Benchmarking caveat, learned the hard way**: restarting a workspace *right
+after* stopping it (within a minute or two) makes ECS take **40–143s** just to
+create the task, because the previous task is still being torn down while the new
+deployment lands on top of it. That is a property of the measurement loop, not of
+production (a workspace is stopped by the reaper and started minutes-to-hours
+later). **State the stop→start gap whenever you quote a restart number.**
+Re-measure the same way if any of this changes:
+
+```bash
+# image pull window (and the surrounding task lifecycle)
+aws ecs describe-tasks --cluster <cluster> --tasks <task-arn> \
+  --query 'tasks[0].{created:createdAt,pullStart:pullStartedAt,pullStop:pullStoppedAt,started:startedAt}'
+# entrypoint cost (boot-install of the pinned CLIs on a fresh home is NOT a pull)
+aws logs tail <ws-log-group> --since 10m
+```
+
+Note the workspace image pushed here is the **lean** variant
+(`BAKE_AGENT_CLIS=0`), so a *fresh home* additionally pays a one-time
+npm/GitHub boot-install inside the entrypoint (~60s for all CLIs, measured in
+`workspace/entrypoint.sh`). That cost is network, not image pull, and it does
+not recur — `~/.local` persists on EFS. So measure **two** scenarios and judge
+on the second: a first Start on an empty home (pull + boot-install) and a
+Stop→Start on a warm home (pull only). The warm one is what scale-to-zero pays
+every time.
+
+To isolate the pull with no EFS/entrypoint noise, register a throwaway task
+definition for the same image with `entryPoint` overridden (`run-task
+--overrides` can override `command` but **not** `entryPoint`, and
+`entrypoint.sh` ends in `exec "$@"`, so overriding the command alone still runs
+the whole entrypoint). Every `run-task` is cold by construction — Fargate keeps
+no image cache between tasks. The full recipe, the delta arithmetic and the
+decision gate are in
+`docs/log/62-ecs-start-latency.md` §62.7
+(conclusion on SOCI: conditional yes, gated on this measurement).

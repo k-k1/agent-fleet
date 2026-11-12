@@ -54,7 +54,7 @@ except ImportError:
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CFN = os.path.join("deploy", "aws", "ecs", "cfn")
 SLUGS = ("00-network", "10-data", "20-platform", "40-ec2-pool", "50-tts", "60-engines", "30-ingress")
-# update.sh's order for the stacks that exist before a release (README "One command").
+# update.sh's order for the stacks that exist before a release (guide/operate/aws-ecs/upgrade.md, "What update.sh does").
 UPDATE_ORDER = ("40-ec2-pool", "20-platform", "50-tts", "60-engines", "30-ingress")
 
 # The first two hard limits are IAM's; the managed count is the older default of an adjustable

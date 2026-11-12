@@ -29,7 +29,7 @@ All it needs is one host with Docker, a domain name, and an hour.
 | If | Choose | Why |
 |---|---|---|
 | Docker cannot be installed on the machine | **native** | No containers. **Single user only**: without a container boundary it refuses to start in a shared mode |
-| The machine is a Mac (Apple Silicon) | **compose** with the macOS overlay, or **native** inside a Linux VM | **Single user only**, on `127.0.0.1`. Checked with colima, OrbStack and Docker Desktop, and natively in Lima and OrbStack VMs. Intel Macs are not covered. See "macOS" in the compose runbook |
+| The machine is a Mac (Apple Silicon) | **compose** with the macOS overlay, or **native** inside a Linux VM | **Single user only**, on `127.0.0.1`. Checked with colima, OrbStack and Docker Desktop, and natively in Lima and OrbStack VMs. Intel Macs are not covered. See [Run on an Apple Silicon Mac](compose/macos.md) |
 | You want it on AWS, the team is small, and cost matters | **ec2-single** | It is compose on a VM, not a separate runtime |
 | You need task-level isolation, per-member fault isolation, rolling image replacement | **ecs** | What you buy is isolation, not savings |
 | All of the above, plus fast starts and disk performance | **ecs-ec2** | A pool of instances with a persistent disk per member |
@@ -127,6 +127,6 @@ The domain, the sign-in methods, limits and sizing are ordinary settings you can
 
 ## Related
 
-- [Self-hosting at a glance](overview.md#where-the-commands-are): the runbook for each target
+- [Self-hosting at a glance](overview.md#where-the-commands-are): the procedure for each target
 - [Install Agent Fleet](install.md)
 - [Deployment targets](../ref/deploy-targets.md)

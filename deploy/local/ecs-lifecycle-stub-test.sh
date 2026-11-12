@@ -1547,9 +1547,9 @@ grep -q "could not be read back" "$WORK/outc10" || { cat "$WORK/outc10"; fail "c
 grep -q "now empty" "$WORK/outc10" && fail "clear-params.sh reported 'now empty' without reading it back"
 
 echo "== case 3h-move: update.sh on the way to the workspace subnets (#2763) =="
-# A network without the subnets: the NOTE names the runbook and the trap of the default deploy.
+# A network without the subnets: the NOTE names the upgrade page and the trap of the default deploy.
 upd outm1
-grep -q 'Upgrading from v0.34.x' "$WORK/outm1" || fail "the NOTE does not point at the upgrade block"
+grep -q 'Upgrade from v0.34.x' "$WORK/outm1" || fail "the NOTE does not point at the upgrade block"
 grep -q 'S3EndpointEnabled defaults to true' "$WORK/outm1" || fail "the NOTE does not warn about the default deploy"
 grep -q 'Still in a private subnet' "$WORK/outm1" && fail "update.sh listed private-subnet workspaces with no workspace subnets"
 grep -qi ': none\.$' "$WORK/outm1" && fail "update.sh said none with no workspace subnets to check against"

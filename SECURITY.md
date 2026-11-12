@@ -69,7 +69,7 @@ informed choice — not undisclosed bugs.
   custodian, the CP still starts, and members' stores are written in plaintext**
   (`secrets.json` instead of `secrets.enc`); outside `AUTH=dev` it logs a warning and
   shows super_admins a banner. With `AF_KEY_CUSTODIAN=kms` the CP refuses to start
-  without it. See `deploy/compose/README.md`.
+  without it. See `guide/operate/secure/deployment-keys.md`.
 
 - **Backups are sensitive.** Members' homes (with their store: `secrets.enc`, or the
   plaintext `secrets.json` when no master key is set), the agent CLIs' sign-in

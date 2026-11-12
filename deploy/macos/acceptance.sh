@@ -149,13 +149,13 @@ cmd_docker() {
   [ -n "$DIR" ] && [ -f "$DIR/docker-compose.yml" ] || die "usage: $0 docker <compose bundle dir>"
   DIR="$(cd "$DIR" && pwd)"
   [ -f "$DIR/docker-compose.macos.yml" ] || die "$DIR has no docker-compose.macos.yml (a bundle from before #2960)"
-  [ -f "$DIR/.env" ] || die "$DIR/.env is missing: fill it in from README.md \"macOS\" first"
+  [ -f "$DIR/.env" ] || die "$DIR/.env is missing: fill it in from the guide page guide/operate/compose/macos.md first"
   command -v docker > /dev/null || die "docker not found"
 
   header "docker ($(docker context show 2>/dev/null || echo ?))"
   check engine INFO "server $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo ?), $(docker info --format '{{.OperatingSystem}} {{.Architecture}}' 2>/dev/null || echo ?)"
 
-  # .env as README "macOS" asks for it. A miss here explains most later failures.
+  # .env as the guide's macOS page (guide/operate/compose/macos.md) asks for it. A miss here explains most later failures.
   expect env.auth dev "$(envval AUTH)" AUTH
   expect env.provision auto "$(envval AF_PROVISION)" AF_PROVISION
   expect env.proxy_hops 0 "$(envval AF_TRUSTED_PROXY_HOPS)" AF_TRUSTED_PROXY_HOPS
@@ -301,10 +301,10 @@ cmd_native() {
     cleanup_native; finish
   fi
   check vm.create PASS "$(vm sh -c '. /etc/os-release; echo "$PRETTY_NAME $(uname -m)"' 2>/dev/null || echo ?)"
-  # Ubuntu 23.10+ restricts unprivileged user namespaces; deploy/native/README.md has
+  # Ubuntu 23.10+ restricts unprivileged user namespaces; guide/operate/native/install.md has
   # the operator lift it, so the run does the same and says so.
   if vm sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 > /dev/null 2>&1; then
-    check vm.userns INFO "applied the README's apparmor_restrict_unprivileged_userns=0"
+    check vm.userns INFO "applied the guide's apparmor_restrict_unprivileged_userns=0"
   else
     check vm.userns INFO "sysctl not applicable"
   fi

@@ -1,6 +1,6 @@
 ---
 audience: "配備を新しい版に上げる人"
-source_of_truth: "`deploy/compose/README.md` と `deploy/aws/ecs/update.sh`（食い違ったら手順書とスクリプトが正）"
+source_of_truth: "`deploy/compose/docker-compose.yml`、ECS の手順書と `deploy/aws/ecs/update.sh`（食い違ったら手順書とスクリプトが正）"
 ---
 
 # アップグレードする
@@ -20,8 +20,8 @@ source_of_truth: "`deploy/compose/README.md` と `deploy/aws/ecs/update.sh`（�
 
 | 形態 | 手順書 |
 |---|---|
-| Docker Compose | [compose の手順書の「Upgrade」](../../../deploy/compose/README.md#upgrade) |
-| ECS（`ecs` / `ecs-ec2`） | [ECS の手順書の「Upgrade (runbook)」](../../../deploy/aws/ecs/README.md#upgrade-runbook) |
+| Docker Compose | 下の [Docker Compose で上げる](#docker-compose-で上げる) |
+| ECS（`ecs` / `ecs-ec2`） | [アップグレードする（ECS）](../aws-ecs/upgrade.ja.md) |
 | Kubernetes | [Kubernetes の手順書の「Upgrading the CP」](../../../deploy/kubernetes/README.md#upgrading-the-cp) |
 
 ## 上げる前に
@@ -34,9 +34,20 @@ source_of_truth: "`deploy/compose/README.md` と `deploy/aws/ecs/update.sh`（�
 
 `.env` の `VERSION` を新しいタグに変え、イメージを取得（またはビルド）して `docker compose up -d` します。
 
+```bash
+# edit .env: VERSION=<new tag>, and point WS_IMAGE at the matching workspace tag
+# (WS_IMAGE is an independent variable — it is not derived from VERSION)
+docker compose pull            # or rebuild: docker compose build
+# the workspace image is not a compose service — pull/rebuild it separately:
+docker pull <WS_IMAGE>         # or rebuild: docker build -t <WS_IMAGE> ../../workspace
+docker compose up -d
+```
+
 - イメージは GHCR（`ghcr.io/k-k1/agent-fleet/*`）から取ります。`REGISTRY` と `VERSION` で決まり、レジストリへのログインはいりません
 - **ワークスペースのイメージは compose のサービスではありません。** `docker compose pull` では取れないので、別に `docker pull` するか、ビルドし直します。`WS_IMAGE` は `VERSION` から作られない別の変数なので、合う版を指すように変えます
-- `docker compose up -d` は動いているワークスペースに触りません。Docker を再起動しても、作ったときの環境のままです
+- `docker compose up -d` は動いているワークスペースに触りません。Docker を再起動しても、作ったときの環境のままです。上げたあと（`AF_WS_WORKLOAD_AWS` を変えたあとも）、各ワークスペースを停止して起動します（[ワークスペースを新しいイメージに移す](#ワークスペースを新しいイメージに移す)）
+- クラウドの VM の上なら、そのあとでホストのクラウドの身元の守りを確かめます（[そのほかの運用上の制御](../secure/controls.ja.md#ワークスペースにホストのクラウドの身元を渡さない)）
+- ネイティブパッケージは [ネイティブパッケージを更新する](../native/update.ja.md) です
 
 ## ECS で上げる
 
@@ -45,8 +56,8 @@ source_of_truth: "`deploy/compose/README.md` と `deploy/aws/ecs/update.sh`（�
 | 気をつけること | 起きること |
 |---|---|
 | 版によって、あるスタックを先に更新する必要がある | `update.sh` が最初に確かめ、何にも触れずに止まります。単独で実行する `aws cloudformation deploy` のコマンドを表示するので、実行してから `update.sh` をもう一度実行します |
-| データスタックは `update.sh` では更新されない | `Persistence=retain` で日次の EFS バックアップがない配備を、`update.sh` が読み取りだけで見つけて警告し、変更セットのコマンドを表示します。手順は手順書の手順 1a です |
-| ネットワークスタック（`00-network`）も `update.sh` では更新されない | 手で更新します。新しいテンプレートを既定値のまま入れると、その S3 エンドポイントが、まだ再起動していないワークスペースの S3 リクエストをすべて拒否します（AccessDenied）。動いているワークスペースをすべて再起動するメンテナンスの時間を取ってください。手順は手順書の「Upgrading from v0.34.x」です |
+| データスタックは `update.sh` では更新されない | `Persistence=retain` で日次の EFS バックアップがない配備を、`update.sh` が読み取りだけで見つけて警告し、変更セットのコマンドを表示します。手順は [EFS のバックアップがあるか確かめる](../aws-ecs/upgrade.ja.md#efs-のバックアップがあるか確かめる) にあります |
+| ネットワークスタック（`00-network`）も `update.sh` では更新されない | 手で更新します。新しいテンプレートを既定値のまま入れると、その S3 エンドポイントが、まだ再起動していないワークスペースの S3 リクエストをすべて拒否します（AccessDenied）。動いているワークスペースをすべて再起動するメンテナンスの時間を取ってください。手順は [v0.34.x から上げる](../aws-ecs/upgrade.ja.md#v034x-から上げる) にあります |
 | `ecs-ec2` で、リリースがスロットの起動テンプレートを変えた | 今あるスロットには、入れ替えたときにしか届きません（[スロットを入れ替える・止める](../aws-ecs/slot-maintenance.ja.md#古いスロット)） |
 
 ### EFS バックアップがないという通知

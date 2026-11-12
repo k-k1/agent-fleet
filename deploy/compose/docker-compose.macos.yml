@@ -13,7 +13,7 @@
 # The workspaces call the CP back the same way: PUBLIC_BASE_URL (127.0.0.1 on a Mac)
 # would be each container's own loopback, so the workspace listener on 8098 is
 # switched on and named through host.docker.internal; the CP then adds that name to
-# every workspace (README "Workspace listener").
+# every workspace (guide/operate/compose/workspace-listener.md).
 #
 # Not used on Linux: there host.docker.internal is the docker0 gateway, and the
 # workspace ports are published on 127.0.0.1 only, so the CP could not reach them.

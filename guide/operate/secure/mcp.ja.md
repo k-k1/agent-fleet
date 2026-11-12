@@ -54,7 +54,7 @@ claude.ai・ChatGPT・Claude Code・Codex は、トークンを貼り付ける�
 | Kubernetes | Control Plane の環境ファイル（`cp.env`）に同じ行を足します |
 | ECS | `30-ingress` のパラメータ `McpEnabled=on`・`McpOAuth=on`（必要なら `McpOAuthTrustedHosts`）を、`30-ingress.yaml` に対する個別の `aws cloudformation deploy` で設定します |
 
-ECS の `update.sh` は、これらを有効にも無効にもしません。前回の値を保ち、スタックにまだないパラメータはオフで始まります。手順は [ECS の手順書](../../../deploy/aws/ecs/README.md) にあります。
+ECS の `update.sh` は、これらを有効にも無効にもしません。前回の値を保ち、スタックにまだないパラメータはオフで始まります。手順は [リモートの MCP を公開する](../aws-ecs/options.ja.md#リモートの-mcp-を公開する) にあります。
 
 ### 公開するパスと ingress
 
@@ -230,4 +230,4 @@ mcp-call endpoint="/mcp" http_method="POST" status=400 latency_ms=2 principal="g
 - [MCP サーバーを全員に配る](../../admin/mcp-distribute.ja.md)
 - [セッションに MCP サーバーを追加する](../../user/integrations/mcp-servers.ja.md)
 - [アクセスを取り消す・super_admin を引き継ぐ](offboarding.ja.md)：PAT と OAuth の接続がどう切れるか
-- [ECS の手順書](../../../deploy/aws/ecs/README.md)
+- [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#リモートの-mcp-を公開する)

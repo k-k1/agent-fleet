@@ -95,13 +95,13 @@ Which edition suits you is a twenty-minute decision, laid out in
 | **ec2-single** | AWS, small team: compose on one VM |
 
 A Mac with Apple Silicon is supported for a single user (checked with colima, OrbStack and Docker Desktop, and natively in Lima and OrbStack VMs): compose with
-its [macOS overlay](deploy/compose/README.md#macos-apple-silicon), or native inside a
+its [macOS overlay](guide/operate/compose/macos.md), or native inside a
 Linux VM ([#2961](https://github.com/k-k1/agent-fleet/issues/2961)).
 
 Released bundles pull pinned images from GHCR and are published to the
 [distribution repository](https://github.com/k-k1/agent-fleet-dist); the command
-procedures live next to what they operate ([compose](deploy/compose/README.md),
-[native](deploy/native/README.md), [AWS](deploy/aws/ecs/README.md)). To build the images
+procedures are in the operator guide ([compose](guide/operate/compose/install.md),
+[native](guide/operate/native/install.md), [AWS](deploy/aws/ecs/README.md)). To build the images
 from this tree instead, which is what you want while developing:
 
 ```bash
