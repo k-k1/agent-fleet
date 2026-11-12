@@ -16,6 +16,7 @@ func buildDocsSrc(t *testing.T) string {
 		"README.md",
 		"README.ja.md",
 		"member/03-starting-sessions.md",
+		"user/integrations/github-cli.md",
 		"ref/agents.md",
 		"admin/02-limits.md",
 		"operate/01-install.md",
@@ -79,8 +80,9 @@ func TestStageWorkspaceDocs_ShipsTheGuideOnly(t *testing.T) {
 		// page, which is the only one that branches by reader. Staging the shelves
 		// without it leaves that button opening a file that does not exist.
 		"README.md", "README.ja.md",
-		"member/03-starting-sessions.md", "ref/agents.md", "admin/02-limits.md",
-		"operate/01-install.md", "assets/architecture.drawio",
+		"member/03-starting-sessions.md", "user/integrations/github-cli.md",
+		"ref/agents.md", "admin/02-limits.md", "operate/01-install.md",
+		"assets/architecture.drawio",
 	} {
 		if !got[filepath.FromSlash(f)] {
 			t.Errorf("expected %s present, staged=%v", f, got)
@@ -132,5 +134,58 @@ func TestStageWorkspaceDocs_NoSource(t *testing.T) {
 	}
 	if isDirPath(filepath.Join(dataDir, "docs")) {
 		t.Error("no source → no docs dir should be created")
+	}
+}
+
+// guideTopLevelExcluded names the top-level entries of the repository's guide/ that
+// deliberately do not ship to containers, each with its reason. A new directory or root
+// file under guide/ must land in guideShelves / guideRootFiles or here; anything else is a
+// page that exists in the repository and in the baked image but is dead inside every
+// workspace, which nothing else notices.
+var guideTopLevelExcluded = map[string]string{
+	"_redirects.tsv": "maintainer map of moved pages, served as HTTP redirects by the docs site and read by scripts/docs-check.py; no in-container reader",
+}
+
+// The shipped lists are literal on purpose (see guideShelves), which is what let the
+// user/ shelf go unshipped for two releases. This derives the truth from guide/ itself.
+func TestGuideShelvesCoverTheGuide(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("..", "guide"))
+	if err != nil {
+		t.Fatalf("read the repository's guide/: %v", err)
+	}
+	shipped := map[string]bool{}
+	for _, s := range guideShelves {
+		shipped[s] = true
+	}
+	for _, f := range guideRootFiles {
+		shipped[f] = true
+	}
+	seen := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		seen[name] = true
+		_, excluded := guideTopLevelExcluded[name]
+		switch {
+		case shipped[name] && excluded:
+			t.Errorf("guide/%s is both shipped and excluded; drop one", name)
+		case !shipped[name] && !excluded:
+			kind, list := "root file", "guideRootFiles"
+			if e.IsDir() {
+				kind, list = "shelf", "guideShelves"
+			}
+			t.Errorf("guide/%s (%s) never reaches a container: add it to %s, or to guideTopLevelExcluded with the reason", name, kind, list)
+		}
+	}
+	// A stale entry is harmless to staging (absent sources are skipped) but would let
+	// this test pass against a list that no longer describes guide/.
+	for name := range shipped {
+		if !seen[name] {
+			t.Errorf("%s is shipped but guide/ has no such entry; remove it", name)
+		}
+	}
+	for name := range guideTopLevelExcluded {
+		if !seen[name] {
+			t.Errorf("guideTopLevelExcluded names %s, which guide/ no longer has; remove it", name)
+		}
 	}
 }

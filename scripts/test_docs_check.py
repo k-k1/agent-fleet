@@ -920,3 +920,57 @@ class RedirectTests(unittest.TestCase):
 
     def test_empty_map_is_quiet(self):
         self.assertEqual(self.errors(""), "")
+
+
+class PoliteTests(unittest.TestCase):
+    """The Japanese guide's prose ends in です・ます; the short forms §11 allows pass."""
+
+    def plain(self, body):
+        return [s for _, text, item in check.style_blocks(body) for s in check.plain_sentences(text, item)]
+
+    def test_plain_sentences_are_caught(self):
+        for body in (
+            "見張りはポーリングで読む。\n",
+            "管理者が足すと、すぐに伝える。次も読みます。\n",
+            "ブラウザ機能は一切無い（ペインも無い）。\n",
+            "- 1 つ目です。2 つ目は消す。\n",
+            "> 既定のまま使える。\n",
+            "数分かかる\nので、応答のあとで終わる。\n",
+            "（起動を頼み直す。ECS は同じタスクを返す）。\n",
+            "処理は終わった。\n",
+            "停止しなかった。\n",
+            "結果はよかった。\n",
+            "- 処理は終わった。次に進みます\n",
+            "- 1 つ目です。停止しなかった。\n",
+            "（処理を終了する）。\n",
+            "次に進みます。（処理を終了する）。\n",
+            "設定は高い。\n",
+        ):
+            with self.subTest(body=body):
+                self.assertNotEqual(self.plain(body), [])
+
+    def test_allowed_short_forms_pass(self):
+        for body in (
+            "見張りはポーリングで読みます（設定 > 接続）。\n",
+            "| 列 | 短い形のまま書く。 |\n",
+            "## 見出しは短い形にする。\n",
+            "- 箇条書きの断片は短い形のまま\n",
+            "- [ ] バックアップを取った。\n",
+            "- [手順](x.ja.md)：トークンでつなぐ。\n",
+            "- `stop`：コンテナを消す。\n",
+            "**秘密は表示しない。** Control Plane が一度だけ返します。\n",
+            "「いま rebase した。」と伝えます。\n",
+            "`af-watch-hook add` を使ってください。\n",
+            "```\n本文ではない。\n```\n",
+            "---\naudience: \"全員。\"\n---\n\n本文です。\n",
+            "![設定の画面。一覧が並ぶ。](a.png)\n",
+            "値は 1 つ、置き場も 1 つ。\n",
+            "- 相手にこのセッションを共有していること。\n",
+            "**動きかた。** 順に説明します。\n",
+            "使いかたは次のとおりです。\n",
+            "確認するのは設定の違い。\n",
+            "- **VAE がない場合があります**（SDXL 系に多い）。宣言してください\n",
+            "既定のまま使います（終了する）。\n",
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self.plain(body), [])

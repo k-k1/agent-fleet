@@ -137,7 +137,7 @@ af-memory muse-import --scope personal --into-user [--dry-run]
 | `personal_project` | `~/.local/share/muse/memory/projects` の作業コピー別のフォルダ | `muse-import-sources` が表示する名前 | 対応する作業コピーのプロジェクト |
 | `personal` | `~/.local/share/muse/memory/personal` | なし | ユーザー全体のメモリ |
 
-- 状態は `import` と同じで、ほかに `diverged`（Agent Fleet 側に独自の版がある。取り込まない）があります
+- 状態は `import` と同じで、ほかに `diverged`（Agent Fleet 側に独自の版があり、取り込みません）があります
 - git が追跡しているファイルには `(shared: git tracks this file, teammates may have it)` と付きます
 - フロントマターのないメモには `(no frontmatter: …)` と付き、名前はファイル名、説明は最初の行になります
 - スイッチと秘密情報の検査は `import` と同じです
