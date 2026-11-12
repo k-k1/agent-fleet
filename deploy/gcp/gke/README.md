@@ -1,7 +1,7 @@
 # deploy/gcp/gke — Terraform around a GKE cluster
 
 > **Preview.** The `kubernetes` runtime on GKE is a preview, not yet supported for production;
-> its known limits and what is still being measured are in the runbook's opening note.
+> its known limits are in [the Kubernetes deployment at a glance](../../../guide/operate/kubernetes/overview.md).
 
 What a GKE deployment of the `kubernetes` runtime profile needs outside the cluster's own
 manifests: the VPC, Cloud NAT with a static address, the GKE Standard cluster (Dataplane V2,
@@ -11,8 +11,9 @@ balancer's address with its Certificate Manager certificate and DNS records, and
 ([ADR 0106](../../../docs/decisions/0106-kubernetes-runtime.md) decision 12).
 
 The procedure — preconditions, `terraform init` with your state bucket, the database grant,
-the manifests, and day-2 operations — is the runbook,
-[deploy/kubernetes/README.md](../../kubernetes/README.md).
+the manifests, and day-2 operations — is in the guide, indexed by
+[deploy/kubernetes/README.md](../../kubernetes/README.md); it starts at
+[Build on GKE](../../../guide/operate/kubernetes/gke.md).
 
 | File | What |
 |---|---|
@@ -26,7 +27,7 @@ the manifests, and day-2 operations — is the runbook,
 | `lb.tf` | The global address, Certificate Manager, the DNS records |
 | `iam.tf` | Service accounts and grants, each to one principal on one resource |
 | `archive.tf` | The optional egress archive bucket and the CP's two grants on it (`egress_archive`, off by default) |
-| `pause.sh` | Pause and resume without destroying: node pools to 0, Cloud SQL stopped ([runbook](../../kubernetes/README.md#pausing)) |
+| `pause.sh` | Pause and resume without destroying: node pools to 0, Cloud SQL stopped ([Pause and see the bill](../../../guide/operate/kubernetes/pause.md)) |
 | `outputs.tf` | Includes `kustomize_deployment`, the `deployment.yaml` for the overlay, and `egress_archive_env`, a `cp.env` line |
 | `offline-tests/` | `terraform test` against mocked providers: the version floor and the DNS cache setting of the cluster, the optional egress archive |
 
@@ -41,181 +42,12 @@ terraform test -test-directory=offline-tests                  # no project, cred
 
 ## Cost
 
-**Measured on the acceptance cluster** ([#1468](https://github.com/k-k1/agent-fleet/issues/1468)),
-from the Cloud Billing detailed export: **asia-northeast1**, list prices, **JPY, before
-credits**, 2026-10. Per-day figures are the
-hourly rate of a clean window × 24 — running: four hours with the CP up and no workspace node;
-paused: sixteen hours with everything below at zero. Other regions and currencies scale with
-their rates.
+The measured cost, the egress archive and the small profile are in the guide, next to the
+steps that use them:
 
-The shape measured is this module's defaults: a regional cluster with nodes in two zones; the
-system pool at one e2-standard-2 per zone; the workspace pool n2-standard-8, autoscaled 0–4 per
-zone, with a 200 GB pd-balanced boot disk; Cloud SQL `db-custom-1-3840` `REGIONAL` (HA) with
-10 GB SSD; the global external Application Load Balancer; Cloud NAT.
-
-| Item | Running, no workspace (¥/day) | Paused (¥/day) |
-|---|---:|---:|
-| System pool, e2-standard-2 ×2 (core + RAM) | 649 | 0 |
-| Cloud SQL HA, vCPU + RAM | 663 | 0 |
-| Cloud SQL storage (regional) | 22 | 22 |
-| GKE regional cluster management fee | 377 | 377 |
-| pd-balanced capacity (node boot disks while running; the claims) | 181 | 49 |
-| Load balancer forwarding rule minimum (global) | 94 | 94 |
-| Private Service Connect partner endpoint | 38 | 38 |
-| Cloud NAT address and gateway | 30 | 19 |
-| Managed Service for Prometheus samples | 58 | 0 |
-| Network Intelligence Center | 23 | 0 |
-| DNS, KMS, Secret Manager, BigQuery, Cloud Storage | ~1 | ~1 |
-| **Total** | **~2,140** | **~600** |
-
-Over 30 days that is **~¥64,000 running with no workspace** and **~¥18,000 paused**, of which
-the management fee alone is ~¥11,300.
-
-**A running workspace** puts a workspace node up: one n2-standard-8 is **~¥78/hour** (measured:
-8 core-hours at ¥6.385 plus 32 GiB-hours at ¥0.852), plus its 200 GB boot disk while the node
-exists. The node is billed whole, whether one workspace runs on it or as many as its allocatable
-resources hold; the pool goes back to zero nodes when none runs. Every member's two claims
-(50 GB home, 5 GB state, pd-balanced) bill **always**, stopped or not, as a member's persistent
-home does on ECS. A full acceptance day with a workspace node up about 18.5 hours came to ¥2,325.
-
-**At creation the workspace pool is not at zero.** The pool is created with a node (the
-configuration sets no initial size, so GKE's default of one per zone applies; observed, not
-traced in GKE's documentation), and the autoscaler removes the idle node only after a delay: on a second stand-up of the small
-profile (one zone) it scaled to 0 about 12 minutes after the pool came up. Until then one
-workspace node bills at the hourly rate above (~¥39/hour for `n2-standard-4`), so a short trial
-pays roughly ¥8 for it; with nodes in two zones, twice that. `kubectl get nodes -L agent-fleet.io/pool`
-shows whether it has gone.
-
-The delay is not a fixed 12 minutes. On a later stand-up the node was still there after 20
-minutes and after 70, because about 15 `kube-system` pods (`kube-dns`, `metrics-server`,
-`konnectivity-agent` and others) had been scheduled onto it while the system pool was still
-coming up, and the autoscaler did not move them. The first workspace pod was scheduled onto
-that node. Treat it as standing cost for the length of a trial, not as ¥8; `pause.sh` takes
-the pool to 0 explicitly.
-
-Not measured: egress (negligible in the test), Cloud Logging volume under real use, and the
-growth of the CP disk's snapshots.
-
-**Against ECS.** The ECS deployment's standing cost is ~$107/month
-([the ECS guide page "Keep costs down"](../../../guide/operate/aws-ecs/cost.md), Tokyo
-region). Converted at ¥150 to the dollar — an assumption, not part of the measurement — that
-is ~¥16,000/month, so the GKE defaults cost roughly four times as much idle. The gap is the
-high-availability choices, not Kubernetes itself — Cloud SQL `REGIONAL`, a system node in each of two zones, the
-regional cluster's management fee (one zonal cluster per billing account falls under GKE's free
-tier) — and the workspace pool's whole-node billing, where ECS bills each workspace's own
-Fargate task (1 vCPU + 2 GB). Most of it is a variable (`zonal_cluster`, `sql_availability_type`, `sql_tier`,
-`system_machine_type`, `node_zones`, `workspace_machine_type`, `managed_prometheus`; a
-workspace pod must still fit on one node). The [small profile](#small-profile) below sets them
-for a low standing cost.
-
-**Paused** means the CP scaled to 0, both node pools at 0 nodes and Cloud SQL stopped; the data
-is kept. What still bills is in the right-hand column: the management fee, the forwarding rule,
-the Private Service Connect endpoint, the NAT address, the disks (the claims and the CP's own)
-and Cloud SQL's storage. Only deleting them stops those. `pause.sh` in this directory does it
-and `--up` undoes it ([runbook, "Pausing"](../../kubernetes/README.md#pausing)). Its trap — the
-workspace pool has no taint, so a system pool at 0 lets the autoscaler start a workspace node
-for the cluster's own pods — is why it resizes that pool to 0 itself.
-
-## Egress archive (optional)
-
-The Control Plane can write each past UTC day of raw egress events to Cloud Storage before it
-purges them (`AF_EGRESS_ARCHIVE_URL`, [`docs/build/03-control-plane.md`](../../../docs/build/03-control-plane.md)
-§3.8; the operate guide's "Operating egress control"). It is off by default: with
-`egress_archive = false` the plan has no bucket, no grant and no new setting for the CP.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `egress_archive` | `false` | `true` turns it on. |
-| `egress_archive_existing_bucket` | `""` | Name of a bucket you already have. The module then manages only the CP's grants on it. Empty: the module creates `<name_prefix>-egress-archive-<project_id>`. |
-| `egress_archive_prefix` | `""` | Object prefix inside the bucket (the CP already writes under `egress/`). Segments of `A-Za-z0-9._-` joined by single slashes (`team/prod`); no `.`/`..` segment, no `#?%`, no slash at either end. |
-| `egress_archive_location` | `""` | Location of a created bucket; empty is `region`. |
-| `egress_archive_retention_days` | `null` | Delete archived objects after this many days (created bucket only). `null` never deletes: the archive is the only copy once the events are purged. |
-
-A created bucket has uniform bucket-level access and public access prevention enforced, and
-`force_destroy = false` (Destroy stops at a bucket that still holds archived days). The CP's
-existing Google service account (the Workload Identity one of `iam.tf`; no second identity) gets
-`roles/storage.objectCreator` and `roles/storage.objectViewer` **on that bucket only**. The
-viewer role is not optional: the next run reads back a day it already wrote to verify it, and
-without it that read is a 403 and the purge stops at that day. A bucket you name is not
-modified apart from those two members; keep its public access prevention on yourself.
-
-The CP's setting goes through `cp.env`, like the other deployment-specific ones. Re-runnable
-form: once the output is read, drop the old key and add the current line only when there is one
-(an empty output means the archive is off, and a key left behind would keep the CP archiving to a
-bucket it no longer has grants on):
-
-```bash
-cd overlays/<yours>
-if line=$(terraform -chdir=<path to deploy/gcp/gke> output -raw egress_archive_env); then
-  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' cp.env
-  [ -z "$line" ] || printf '%s\n' "$line" >> cp.env
-else
-  echo "terraform output failed: cp.env left as it was" >&2; false
-fi
-```
-
-cp.env is touched only after `terraform output` succeeded, so a failed read (backend error, wrong
-`-chdir`, output not created yet) is never taken for "archive off": that would delete the key and
-make the next apply purge events unarchived. The block exits non-zero on a failed read: do not re-apply then.
-
-Then re-apply the overlay. `kustomize` refuses a `cp.env` that repeats the key, so do not append
-twice.
-
-**Not yet verified against a real bucket** ([#2733](https://github.com/k-k1/agent-fleet/issues/2733)):
-the first archive, a second run that finds and verifies the objects, and the 403 when the
-viewer role is missing. The offline tests check the plan only.
-
-## Small profile
-
-For a trial or a single team. The commented block at the end of `terraform.tfvars.example`
-sets all of it:
-
-| Setting | Value | Replaces |
-|---|---|---|
-| `node_zones`, `zonal_cluster` | one zone, `true` | a regional cluster with nodes in two zones |
-| `sql_availability_type`, `sql_tier` | `ZONAL`, `db-custom-1-3840` (the smallest dedicated-core tier Postgres offers) | `REGIONAL` |
-| `system_machine_type`, `system_node_count` | `e2-standard-2`, 1 | e2-standard-2 in each of two zones |
-| `workspace_machine_type` | `n2-standard-4` | n2-standard-8 |
-| `managed_prometheus` | `false` | on |
-
-**What it gives up.** Control-plane high availability: a zonal cluster's API server is
-unavailable during its upgrades, when running workspaces keep running but cannot be managed;
-in a zone outage the nodes go too, so running workspaces stop with it. Database high availability: Cloud SQL `ZONAL` has no standby, so a zone
-outage or a maintenance restart takes the CP down until the instance returns (backups and
-point-in-time recovery stay on). Zone-failure tolerance of every kind: the CP, its disk, the
-workspaces' volumes and nodes are all in one zone. `zonal_cluster` replaces the cluster, so
-decide before the first apply; moving an existing deployment is a rebuild.
-
-**Estimated cost**, from the unit prices measured above (asia-northeast1, JPY), running with
-no workspace, per day. The measured prices are before credits; the Small column assumes
-GKE's free tier (a monthly credit per billing account) is still unspent, so the management
-fee is 0. If it is used up by another zonal or Autopilot cluster, add ~¥377/day:
-
-| Item | Defaults | Small | Basis |
-|---|---:|---:|---|
-| System pool | 649 | ~325 | one e2-standard-2 instead of two |
-| Cloud SQL vCPU + RAM | 663 | ~331 | `ZONAL` is half of `REGIONAL` |
-| GKE management fee | 377 | 0 | one zonal cluster per billing account is free; a second one pays |
-| Managed Prometheus samples | 58 | 0 | off |
-| Everything else | 393 | 393 | left unchanged: disks and SQL storage shrink a little, not counted |
-| **Total** | **~2,140** | **~1,050** | |
-
-That is about **¥31,500 per 30 days** against ¥64,000, and still roughly twice the ECS
-standing cost (~¥16,000 at the conversion above). Paused, the management fee goes too:
-about ¥220 per day. A workspace node on `n2-standard-4` is about **¥39/hour** (half of
-n2-standard-8, as the machine's core-hours and GiB-hours scale), and a workspace pod's
-limits must fit its ~4 vCPU / 16 GiB.
-
-**One e2-medium does not fit.** With a single e2-medium system node (about 0.94 vCPU
-allocatable) the CP stays `Pending` ("Insufficient cpu", kube-system already on the node) and its
-claim stays `Pending` with it (`WaitForFirstConsumer`). That is why the profile uses
-`e2-standard-2`. Changing `system_machine_type` on a running cluster is an in-place node pool
-update, about 6 minutes, after which the CP was healthy.
-
-**One zonal run; the cost estimates are unverified.** The profile was stood up once, on a zonal cluster (develop build
-0.30.1-dev-b130ad6b): the first apply took about 18 minutes and the CP was healthy about 14
-minutes after the overlay was applied. That run is the only evidence for the text above; the
-other zones, a regional variant of the profile and other regions are untried. The Cloud SQL
-and system pool figures are scaled from the measured ones, not billed. Shared-core
-Cloud SQL tiers (`db-g1-small`) are cheaper still and untried. The Network Intelligence Center
-charge (~¥23/day) has no variable here.
+| Topic | Page |
+|---|---|
+| The measured cost of the defaults, against ECS, and what bills while paused | [Pause and see the bill](../../../guide/operate/kubernetes/pause.md#what-the-defaults-cost) |
+| The `egress_archive*` variables and the `cp.env` line | [Build on GKE, "Archive egress events"](../../../guide/operate/kubernetes/gke.md#archive-egress-events-optional) |
+| The small profile: its settings and what it gives up | [Build on GKE, "A small profile for a trial"](../../../guide/operate/kubernetes/gke.md#a-small-profile-for-a-trial) |
+| The small profile's estimated cost | [Pause and see the bill](../../../guide/operate/kubernetes/pause.md#what-the-small-profile-costs) |

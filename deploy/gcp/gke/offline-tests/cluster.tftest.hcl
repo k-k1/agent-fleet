@@ -6,8 +6,8 @@
 # Not in tests/: init parses that directory on every run, and Terraform before 1.7 rejects
 # mock_provider there, which would break `terraform init` for the module's 1.6 floor.
 #
-# The live failures they pin are in the runbook's P1 and P11
-# (deploy/kubernetes/README.md).
+# The live failures they pin are preconditions P1 and P11
+# (guide/operate/kubernetes/overview.md).
 
 # Defaults only where the provider validates a value the random mock would not pass.
 mock_provider "google" {
@@ -192,7 +192,7 @@ run "rejects_a_pod_range_wider_than_its_rfc1918_block" {
   expect_failures = [google_compute_subnetwork.nodes]
 }
 
-# The small profile (README, "Small profile"): one zone, a zonal cluster, no managed
+# The small profile (guide/operate/kubernetes/gke.md, "A small profile for a trial"): one zone, a zonal cluster, no managed
 # Prometheus, Cloud SQL ZONAL.
 run "small_profile_plans" {
   command = plan
@@ -254,7 +254,7 @@ run "zonal_cluster_needs_exactly_one_zone" {
 }
 
 # `terraform destroy` must not trip over the CP-owned database or Service Networking's
-# lingering "in use" (#1732); the runbook's "Tearing down" describes these.
+# lingering "in use" (#1732); guide/operate/kubernetes/teardown.md describes these.
 run "destroy_policies_are_set" {
   command = plan
 

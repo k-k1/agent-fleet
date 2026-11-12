@@ -8,7 +8,7 @@
 # The GKE counterpart of deploy/aws/ecs/pause.sh (issue #1639). Names come from
 # deploy/gcp/gke (`name_prefix`): cluster `<prefix>-gke`, Cloud SQL `<prefix>-pg`, namespaces
 # `<prefix>-cp` and `<prefix>-ws`, node pools `system` and `workspace`. Run it in a shell whose
-# kubectl points at the cluster (`terraform output -raw get_credentials`, runbook step 3); it
+# kubectl points at the cluster (`terraform output -raw get_credentials`, guide/operate/kubernetes/gke.md step 3); it
 # addresses that context explicitly and refuses to continue when the cluster is not there.
 #
 # ## The order matters
@@ -51,7 +51,7 @@
 # Only deletion stops these: the GKE cluster management fee, the load balancer's forwarding
 # rule, the Private Service Connect endpoint, Cloud NAT and its reserved address, the
 # persistent disks (every workspace's two claims, the CP's own) and Cloud SQL's storage.
-# Measured in deploy/gcp/gke/README.md "Cost". A stopped Cloud SQL instance, unlike RDS, does
+# Measured in guide/operate/kubernetes/pause.md, "What the defaults cost". A stopped Cloud SQL instance, unlike RDS, does
 # not start itself again after 7 days.
 set -euo pipefail
 
@@ -498,7 +498,7 @@ EOF
     resume:  deploy/gcp/gke/pause.sh --project $PROJECT --location $LOCATION --prefix $PREFIX --up
     remaining cost: the GKE management fee, load balancer forwarding rule, Private Service Connect
     endpoint, Cloud NAT and its address, persistent disks, $dbnote. For close to zero, tear down
-    (runbook "Tearing down").
+    (guide/operate/kubernetes/teardown.md).
 EOF
     ;;
 esac

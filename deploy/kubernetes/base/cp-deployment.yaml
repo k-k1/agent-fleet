@@ -45,7 +45,7 @@ spec:
                 name: af-cp-env
             # Created by the operator, never committed: AF_MASTER_KEY, AF_COOKIE_SECRET,
             # the OAuth client secrets, and AF_DATABASE_URL where the store is not
-            # reached through a sidecar. See the runbook, "Secrets".
+            # reached through a sidecar. See guide/operate/kubernetes/gke.md, step 6.
             - secretRef:
                 name: af-cp-secrets
           env:
@@ -72,7 +72,7 @@ spec:
               value: ghcr.io/k-k1/agent-fleet/workspace:VERSION
             # Not scratch: the internal git provider keeps its bare repositories and LFS
             # objects here, and the git token key (internal_git.go, git_http.go). It is a
-            # persistent claim, backed up with the database (README, "Backups").
+            # persistent claim, backed up with the database (guide/operate/kubernetes/backup.md).
             - name: WS_DATA
               value: /var/lib/af-cp
           readinessProbe:

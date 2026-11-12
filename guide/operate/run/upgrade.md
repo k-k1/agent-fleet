@@ -22,7 +22,7 @@ The commands are in each deployment type's runbook. This page covers what happen
 |---|---|
 | Docker Compose | [Upgrade Docker Compose](#upgrade-docker-compose) below |
 | ECS (`ecs` / `ecs-ec2`) | [Upgrade on ECS](../aws-ecs/upgrade.md) |
-| Kubernetes | [The Kubernetes runbook, "Upgrading the CP"](../../../deploy/kubernetes/README.md#upgrading-the-cp) |
+| Kubernetes | [Upgrade the CP](../kubernetes/upgrade.md) |
 
 ## Before you upgrade
 

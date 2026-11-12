@@ -125,7 +125,8 @@ func homeLayoutContainer(main kContainer) kContainer {
 // So a .af-home or .af-home.new the member made is refused before anything moves, not
 // taken for the migrated home or its staging directory, and a claim recorded as migrated
 // whose root holds anything besides the home is refused too: a pod of an earlier version
-// has used the root as the home again (deploy/kubernetes/README.md, "Rolling back").
+// has used the root as the home again (guide/operate/kubernetes/upgrade.md, "Roll back past
+// the home layout").
 //
 // The moves go into the .new directory renamed into place last, so a pod stopped halfway
 // carries on at the next start and the home never appears with half of its files. An entry
@@ -176,7 +177,7 @@ func homeLayoutScript(vol, record string) string {
 		`[ -d "$H" ] && [ ! -L "$H" ] || fail "$H is missing or not a directory, though the home was migrated"`,
 		`for e in "$V"/.[!.]* "$V"/..?* "$V"/*; do`,
 		`  [ -e "$e" ] || [ -L "$e" ] || continue`,
-		`  case "${e##*/}" in ` + shellQuote(kubeHomeSubPath) + `|lost+found) ;; *) fail "the claim's root holds $e besides the home: an earlier version used the root as the home after the migration (see 'Rolling back' in deploy/kubernetes/README.md)";; esac`,
+		`  case "${e##*/}" in ` + shellQuote(kubeHomeSubPath) + `|lost+found) ;; *) fail "the claim's root holds $e besides the home: an earlier version used the root as the home after the migration (see 'Roll back past the home layout' in guide/operate/kubernetes/upgrade.md)";; esac`,
 		`done`,
 		// A home of another owner could only be a subPath the kubelet created; dev cannot
 		// change it, and refusing to start would take the whole workspace away for what

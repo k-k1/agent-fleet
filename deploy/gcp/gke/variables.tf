@@ -102,7 +102,7 @@ variable "release_channel" {
 }
 
 variable "maintenance_window" {
-  description = "The recurring window in which GKE may upgrade, as an RFC 5545 RRULE with a start and end time (UTC). Node upgrades outside a planned drain cut live sessions (README, \"Upgrading nodes\")."
+  description = "The recurring window in which GKE may upgrade, as an RFC 5545 RRULE with a start and end time (UTC). Node upgrades outside a planned drain cut live sessions (guide/operate/kubernetes/nodes.md)."
   type = object({
     start_time = string
     end_time   = string

@@ -23,16 +23,16 @@ deployment" is the most expensive kind of documentation error here.
 > cluster but is not yet supported for production. Known limits: there are no browser features
 > on this runtime (no browser pane, no headless Chromium), a home lives in one zone and is not
 > backed up, and on GKE the region's SSD disk quota has to hold the deployment before you start
-> ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). The load balancer closes an
+> ([Disk quota (GKE)](../operate/kubernetes/overview.md#disk-quota-gke)). The load balancer closes an
 > active WebSocket after 24 hours whatever its timeout says
-> ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)). After a cut the
+> ([7. Know the load balancer](../operate/kubernetes/gke.md#7-know-the-load-balancer)). After a cut the
 > terminal pane shows `[disconnected]` and reattaches when you click it or come back to the tab;
 > the shell and its tmux session keep running. That was measured with a forced cut, not by
-> waiting out a day. What it costs on GKE, measured: [The bill](../../deploy/kubernetes/README.md#the-bill).
+> waiting out a day. What it costs on GKE, measured: [Pause and see the bill](../operate/kubernetes/pause.md#what-the-defaults-cost).
 > For a trial or one team, `deploy/gcp/gke` has a small zonal profile (one zone, no database
 > standby) at about half the default floor if the billing account's GKE free credit is still unspent
 > (about two thirds if another cluster already uses it). That is an estimate from the measured prices,
-> not a bill; the figures and their assumptions are in `deploy/gcp/gke/README.md`, "Small profile".
+> not a bill; the figures and their assumptions are in [What the small profile costs](../operate/kubernetes/pause.md#what-the-small-profile-costs).
 
 **On a Mac (Apple Silicon).** `docker` runs with Docker Desktop, OrbStack or colima through
 `deploy/compose/docker-compose.macos.yml`, and `native` runs inside a Linux VM (Lima or an

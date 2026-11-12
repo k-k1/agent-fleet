@@ -394,6 +394,122 @@ cd console-e2e && npm ci && npx playwright test
 - 実フリートが動く開発ホストでも安全: 層ごとに別の開発ユーザー（`e2e`・`e2e-ui`・`e2e-live`）を
   使い、ポートは動的確保、teardown を内蔵している。メモリ制約ホストでは**同時に 1 つ**。
 
+### Kubernetes のライブハーネス（`AF_K8S_LIVE`）
+
+走らせるのは `kubernetes` アダプタを変える人だけで、運用する人には要らないので、ガイドには載せない。
+
+ADR 0106 決定 10 のライブハーネスは、[GKE に構築する](../../guide/operate/kubernetes/gke.ja.md) で建てたクラスターに対して、
+開発者の手元からアダプタを動かす: `control-plane/internal/runtime/runtime_kubernetes_live_test.go` の `TestKubernetesLive*`。
+`AF_K8S_LIVE=1` でなければ skip する（そう表示する）。ワークスペースの名前空間に本物のディスクつきの `live-…` という
+ワークスペースを作り、テストの終わりにそれぞれを Destroy で、残ったものは `kubectl` で消す。ディスクが消えたことも
+Google Cloud で確かめる。
+
+アダプタは **CP 自身の RBAC** で動く: `af-cp` サービスアカウントの短命なトークンを使うので、`cp-rbac.yaml` に
+足りない権限があれば実行が失敗する（ハーネスは、そのトークンでノードを一覧できないことも確かめる）。ハーネス自身の
+確認・後始末・ほかの誰かの代役（CP の知らないところで消される Pod、手順書の運用者）は、自分の kubeconfig の
+`kubectl` を使う。
+
+
+```bash
+# with the shell variables of guide/operate/kubernetes/gke.md (LOCATION is the cluster's own
+# location: the region, or the zone of a zonal cluster) and kubectl pointed at it (step 3)
+W=$(mktemp -d); umask 077
+kubectl -n "$PREFIX-cp" create token af-cp --duration=1h > "$W/cp-token"
+kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > "$W/ca.crt"
+export AF_K8S_LIVE=1
+export AF_K8S_LIVE_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+export AF_K8S_LIVE_CA_FILE=$W/ca.crt AF_K8S_LIVE_TOKEN_FILE=$W/cp-token
+export AF_K8S_NAMESPACE=$PREFIX-ws AF_K8S_STORAGE_CLASS=$PREFIX-workspace AF_K8S_SERVICE_ACCOUNT=af-workspace
+export AF_K8S_WORKSPACE_IMAGE=<the image of cp.env>
+export AF_K8S_NODE_SELECTOR=agent-fleet.io/pool=workspace AF_K8S_HOME_GIB=10 AF_K8S_STATE_GIB=5
+export AF_K8S_LIVE_GCE_PROJECT=$PROJECT                     # optional: check the disks on Google Cloud
+# decision 7's probes: the deployment's own addresses (host:port, comma-separated)
+export AF_K8S_LIVE_PROBE_OPEN=af-cp-internal.$PREFIX-cp.svc:8098
+export AF_K8S_LIVE_PROBE_CLOSED=af-cp.$PREFIX-cp.svc:8099,<Cloud SQL private IP>:5432,<an unused node-range address>:22
+cd control-plane
+go test -count=1 -run 'TestKubernetesLive(Lifecycle|StartStopRaces|NetworkProbes)' -v -timeout 50m ./internal/runtime/
+go test -count=1 -run 'TestKubernetesLive(HomeWipes|EraseHomeRestart|DestroyRestart)' -v -timeout 50m ./internal/runtime/
+```
+
+動く前に、ハーネスは `kubectl` のいまのコンテキストが `AF_K8S_LIVE_SERVER` と `AF_K8S_LIVE_CA_FILE` と同じ API
+サーバーと CA を指すことを確かめ、すべての呼び出しをそのコンテキストに固定する。コマンドごとに時間制限があるので、
+止まった手順はテストを失敗させ、後始末が走る。`go test` 自身の `-timeout` は後始末を走らせないので、実行時間より
+十分長くし、もし切れたら下の確認を手で行う。
+
+トークンの寿命は 1 時間で、`kubectl` の裏の Google Cloud のアクセストークンも同じ: 上のようにシナリオを
+グループに分け、グループごとに新しいトークンを発行する。各グループは 5〜15 分かかる。競合や時間窓が実行中に
+観測されなかったシナリオ（作成中の Pod に出会わなかった停止、再起動の前に終わった消去）は、合格ではなく
+`INCONCLUSIVE` で失敗する。
+
+ネットワークの探査は、Pod 自身のノードも含め、すべてのノードのポートが閉じていて、対照の
+`AF_K8S_LIVE_PROBE_INTERNET`（既定 `1.1.1.1:443`）が開いていることを期待する。
+
+ノードに手を出す 2 つのシナリオは、さらに `AF_K8S_LIVE_DISRUPTIVE=1` が要る。メンバーのセッションを切り
+えない場所でだけ走らせる。どちらもワークスペースのプールがノードを足せる必要がある: Google Cloud では
+ノードのブートディスク（`workspace_boot_disk_gb`）が `pd-balanced` でリージョンの `SSD_TOTAL_GB` の割り当てを
+使い、割り当てに拒まれたスケールアップはハーネスの Pod を pending のままにする（オートスケーラーの
+`FailedScaleUp` イベントがそう言う）。`AF_K8S_LIVE_GUARD_POD=<namespace>/<pod>` は、シナリオが触ってはいけない
+Pod（cordon するノード上のメンバーのワークスペースなど）を名指しする: その UID・ノード・再起動回数が変わると
+テストが失敗する。
+
+- `TestKubernetesLivePlannedUpgrade` は、テストのあいだ `AF_K8S_LIVE_CORDON_NODES`（カンマ区切り）を cordon し、
+  起動がほかのノードに着くことを確かめる。drain はしない。
+- `TestKubernetesLiveNodeUnreachable` は、ワークスペースが着いたノードを切り離し、「応答しなくなったノード」
+  （[ガイド](../../guide/operate/kubernetes/nodes.ja.md#応答しなくなったノード)）の手順をたどる。オートスケーラーが
+  そのためにノードを足すよう、ほかのワークスペースのノードはすべて `AF_K8S_LIVE_CORDON_NODES` で cordon する。
+  テストは始まる前に作られたノードを拒み、Pod を確かめる前にそのノードを自分で cordon する。そのノード上の Pod は
+  すべて、ハーネス自身のもの、DaemonSet のもの、static Pod、または `AF_K8S_LIVE_NODE_ALLOW_PODS`
+  （`<namespace>/<name prefix>`、カンマ区切り。GKE では新しいノードに `kube-system/konnectivity-agent-` が置かれる）
+  で名指ししたものでなければならない。`{node}` と `{zone}` を埋めた 3 つのコマンドを取る。停止は、**ゲストに
+  見えるシャットダウンなしに**ノードを切り離す必要がある。`gcloud compute instances stop` は ACPI シャットダウンで、
+  ノードは消える前に Pod を終わらせて報告するので停止は正しく片付き、ハーネスはその実行を `INCONCLUSIVE` と
+  報告する。シャットダウンなしの電源断も GKE ではそこまで届かない: ノードプールのインスタンスグループが、
+  終了した VM を数秒で作り直し、ノードコントローラーが古い Node オブジェクトとその Pod を消すので、停止は運用者の
+  操作なしに片付く（これも `INCONCLUSIVE`）。GKE では、VM は動き続けるのに応答しなくなるノードが要る。停止の
+  コマンドは、ノードのデバッグ Pod を通して kubelet を止めることでそれを作る。`{kubectl}` はハーネスの固定した
+  kubectl。最初にホストのタイマーを仕掛けて 15 分後に kubelet を起こし直す。kubelet が止まると、クラスターを
+  通してノードに届くものはなくなるからだ。`AF_K8S_LIVE_NODE_HALT_CMD` は、停止が失敗したあとに走らせる、手順書の
+  運用者の VM の停止。状態のコマンドは VM の id も出す: 実行が数えられるのは、Pod が消えるまで、Pod・Node
+  オブジェクト・止めた VM が切り離したときのものであり続けるあいだだけ。そのあいだにプロバイダがノードや VM を
+  置き換えたら、それも Pod を消すので、実行は `INCONCLUSIVE`。ノードの自動修復がある GKE では、代わりに下の
+  自動修復モードを使う（ガイドの「応答しなくなったノード」の「GKE では」）。任意の
+  `AF_K8S_LIVE_NODE_RECOVER_CMD`（たとえば `gcloud compute instances reset …`）は、VM が動いたまま切り離された
+  ノードを戻す。これがないと、後始末は何かを消す前にタイマーを最大 17 分待つ。後始末が消すのは、停止のコマンドが
+  作ったと報告したデバッグ Pod だけで、名前と UID で消す。デバッグ Pod は root で動く必要があるので、独自の
+  プロファイルのファイルを使う:
+  ```bash
+  echo '{"securityContext":{"runAsUser":0,"runAsNonRoot":false}}' > "$W/debug-root.json"
+  export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=900 systemctl start kubelet && systemctl stop kubelet'"
+  export AF_K8S_LIVE_NODE_HALT_CMD='gcloud compute instances stop {node} --zone {zone} --project '"$PROJECT"
+  export AF_K8S_LIVE_NODE_STATUS_CMD='gcloud compute instances describe {node} --zone {zone} --project '"$PROJECT"' --format="value(status,id)"'
+  export AF_K8S_LIVE_NODE_START_CMD='gcloud compute instances start {node} --zone {zone} --project '"$PROJECT"
+  ```
+
+  ノードの自動修復がある GKE では `AF_K8S_LIVE_NODE_MODE=auto-repair` にする。halt は走らない: 停止が失敗した
+  あと、kubelet が止まったままのうちに、ノードの自動修復が 20 分以内に Pod を解放する必要がある。修復の記録が
+  その修復を名指しする必要がある: `AF_K8S_LIVE_GKE_PROJECT`（プロジェクト ID と番号、カンマ区切り。操作の
+  リンクには番号が入る）、`AF_K8S_LIVE_GKE_LOCATION`、`AF_K8S_LIVE_GKE_CLUSTER` のそのノードの
+  `AUTO_REPAIR_NODES` がちょうど 1 つ、切り離しから Pod の終わりまでのあいだに始まっていること。その修復が
+  エラーなしに終わり、Node オブジェクトが置き換わっている必要がある。kubelet のタイマーは 20 分より長く、
+  `AF_K8S_LIVE_NODE_RECOVER_WAIT` はタイマーを覆う必要がある。ハーネスは 20 分以下や 45 分を超える待ちを拒む。
+  全体の設定:
+  ```bash
+  export AF_K8S_LIVE_NODE_MODE=auto-repair AF_K8S_LIVE_NODE_RECOVER_WAIT=32m
+  export AF_K8S_LIVE_GKE_PROJECT="$PROJECT,$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+  export AF_K8S_LIVE_GKE_LOCATION="$LOCATION" AF_K8S_LIVE_GKE_CLUSTER="$PREFIX-gke"
+  export AF_K8S_LIVE_NODE_STOP_CMD="{kubectl} debug node/{node} -n default --profile=sysadmin --custom=$W/debug-root.json --image=<workspace image> -- chroot /host sh -c 'systemd-run --on-active=1800 systemctl start kubelet && systemctl stop kubelet'"
+  export AF_K8S_LIVE_NODE_REPAIR_EVIDENCE_CMD='gcloud container operations list --location '"$LOCATION"' --project '"$PROJECT"' --filter="operationType=AUTO_REPAIR_NODES AND startTime>={since}" --format=json'
+  # STATUS_CMD and START_CMD as above; no HALT_CMD
+  go test -count=1 -run 'TestKubernetesLiveNodeUnreachable' -v -timeout 75m ./internal/runtime/
+  ```
+  合格は約 21 分かかる: 最初の起動に約 4 分、修復に最大 20 分、次の起動に約 2 分。ノードを切り離している
+  あいだの失敗は 32 分の待ちを足し、1 時間のトークンを超えることがある。そのときはノードとデバッグ Pod を
+  手で確かめる。CP のトークンと kubectl の裏の Google Cloud のトークンの両方を、新しく発行してから始める。
+
+終わったら、ハーネスのものが何も残っていないことを確かめる:
+`kubectl -n "$PREFIX-ws" get sts,pvc,pods,svc,secrets | grep live-`、`kubectl get pv | grep live-`、
+`gcloud compute disks list --project "$PROJECT" --filter="-users:*"`。
+
 ### 上流 CLI の破壊検知（版ドリフト監視 + contract テスト）
 
 **なぜ E2E だけでは足りないか。** `e2e.yml` は版のビルド引数を渡さないので、常に

@@ -86,7 +86,7 @@ informed choice — not undisclosed bugs.
   backed up in this version, and the CP's own disk (`af-cp-data`, with the git token
   key) is backed up only once the operator gives it a snapshot schedule, again after
   every restore
-  ([deploy/kubernetes/README.md](deploy/kubernetes/README.md#backups-point-in-time-recovery-and-the-restore-rehearsal)).
+  ([guide/operate/kubernetes/backup.md](guide/operate/kubernetes/backup.md#schedule-snapshots)).
   Protect where they are stored.
 
 - **AWS confirm-before-use stops accidental use, not a session that sets out to get
@@ -247,7 +247,7 @@ declare.
   NetworkPolicy-enforcing CNI, application-layer encryption of Secrets, a private or
   authorised-network control-plane endpoint, the kubelet's read-only port off, and the
   rest of the list in
-  [deploy/kubernetes/README.md](deploy/kubernetes/README.md#preconditions). The CP cannot
+  [guide/operate/kubernetes/overview.md](guide/operate/kubernetes/overview.md#preconditions). The CP cannot
   check any of them: a cluster that misses one runs, and is not isolated.
 
 - **Pod creation in the workspace namespace is access to every member.** Each
@@ -261,7 +261,7 @@ declare.
   limit are enforced by eviction after the fact, not as a quota at write time, so a
   workload that writes fast can fill a node's disk first and get its neighbours on that
   node evicted too. Keep disk headroom on the nodes and alert on disk pressure
-  ([deploy/kubernetes/README.md](deploy/kubernetes/README.md#node-disk)).
+  ([guide/operate/kubernetes/nodes.md](guide/operate/kubernetes/nodes.md#node-disk)).
 
 ## Supported versions
 

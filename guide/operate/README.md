@@ -134,6 +134,20 @@ What people running Agent Fleet on their own infrastructure want to do, one task
 | [Run it for yourself on WSL](wsl.md) | Try it alone, with no sign-in, on Docker inside WSL2 |
 | [Deploy on a single EC2 instance](aws-ec2-single.md) | Stand up one EC2 instance with CloudFormation and run the Docker Compose deployment from the release bundle |
 
+## Kubernetes
+
+| Page | What you can do |
+|---|---|
+| [The Kubernetes deployment at a glance](kubernetes/overview.md) | Learn what gets built where, the preconditions the cluster must meet, and the GKE disk quota |
+| [Build on GKE](kubernetes/gke.md) | Stand it up with Terraform and the manifests, from the project to checking the load balancer |
+| [Build on another cluster](kubernetes/other-clusters.md) | Stand it up on a cluster other than GKE from the generic overlay |
+| [Upgrade the CP](kubernetes/upgrade.md) | Back up, move to a new version, and go back if you must |
+| [Back up and restore](kubernetes/backup.md) | Schedule snapshots of the CP's disk and rehearse restoring the database and the disk |
+| [Set up alerts](kubernetes/alerts.md) | Watch the CP, the certificate, pending workspaces and node disk in Cloud Monitoring |
+| [Replace nodes and recover from a stopped node](kubernetes/nodes.md) | Replace nodes without cutting sessions, recover from a node that stopped answering, clean up what Destroy left |
+| [Pause and see the bill](kubernetes/pause.md) | Put the deployment to sleep with `pause.sh`, and know what it costs |
+| [Tear down](kubernetes/teardown.md) | Remove the deployment and the leftovers |
+
 The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [04 Securing it](04-secure.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md), [11 The ecs-ec2 slot pool](11-slot-pool.md), [12 Keys at rest](12-keys.md), [07 Inference engines and read aloud](07-engines.md), [08 Image generation on your own ComfyUI](08-image-engine.md), [09 Borrowing another deployment's engines](09-borrowed-engine.md), [10 Chat inference on your own llama.cpp](10-llm-lan.md)
 
 What each target supports is in [Deployment targets](../ref/deploy-targets.md); who may do what is in [Roles](../ref/roles.md).

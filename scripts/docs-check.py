@@ -1860,6 +1860,7 @@ TASK_PAGES = (
     "operate/keys/", "operate/aws-ecs/",
     "operate/engines/",
     "operate/compose/", "operate/native/", "operate/wsl.", "operate/aws-ec2-single.",
+    "operate/kubernetes/",
 )
 
 # What a reader of a task page has no use for: why it was decided, when it was measured,

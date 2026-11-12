@@ -22,7 +22,7 @@ source_of_truth: "`deploy/compose/docker-compose.yml`、ECS の手順書と `dep
 |---|---|
 | Docker Compose | 下の [Docker Compose で上げる](#docker-compose-で上げる) |
 | ECS（`ecs` / `ecs-ec2`） | [アップグレードする（ECS）](../aws-ecs/upgrade.ja.md) |
-| Kubernetes | [Kubernetes の手順書の「Upgrading the CP」](../../../deploy/kubernetes/README.md#upgrading-the-cp) |
+| Kubernetes | [CP をアップグレードする](../kubernetes/upgrade.ja.md) |
 
 ## 上げる前に
 

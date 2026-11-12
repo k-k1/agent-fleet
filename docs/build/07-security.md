@@ -112,10 +112,10 @@ This table is what separates one member's workspace from another's, and from the
 | Cloud identity | none | the task role `WsTaskRole` has **no policy at all**; `AGENT_TOKEN` and the DEK arrive through the task definition's `secrets` (SSM, read by the workspace execution role `WsExecRole`, which can read `/af-ws/*` and nothing under `/af-cp/*`; the Control Plane's own secrets are read by a separate `ExecRole`; during the migration release it can still read `/af-ws/*`, which is dropped afterwards). Both roles are shared by all workspaces, so one workspace's task definition could in principle name another's parameter: scoping per workspace is a follow-up | the same task role. The slot's instance role carries ECS registration, SSM management, image pull and logs only, plus an explicit Deny of `ssm:GetParameter*` on `/af-cp` and `/af-ws` (`AmazonSSMManagedInstanceCore` would otherwise allow reading every parameter) | none: no service account token is mounted, and no IAM grant names the namespace or its service account. On GKE every workspace pool serves the GKE metadata server and egress to `169.254.0.0/16` is denied. `AGENT_TOKEN`, the DEK and the minted tokens arrive in a per-workspace Secret through `envFrom`; Secrets are encrypted in etcd (Cloud KMS on GKE) |
 | Sensitive state | the agent's plaintext state is moved to a second mount (`CLAUDE_CONFIG_DIR=/var/lib/af/claude`) **outside the file browser's reach**; the encrypted store stays in the home behind the agent's denylist (`fsDeny`) | the same — the image and the agent are common | the same | the same, on the second claim |
 
-**On `kubernetes` the column holds only on a cluster that meets the runbook's preconditions**
+**On `kubernetes` the column holds only on a cluster that meets the preconditions**
 (a NetworkPolicy-enforcing CNI, Secrets encryption, a private or authorised-network control
 plane, the kubelet's read-only port off), which the CP cannot see
-([deploy/kubernetes/README.md](../../deploy/kubernetes/README.md), [decisions/0106](../decisions/0106-kubernetes-runtime.md) decision 7).
+([guide/operate/kubernetes/overview.md](../../guide/operate/kubernetes/overview.md#preconditions), [decisions/0106](../decisions/0106-kubernetes-runtime.md) decision 7).
 A compromised CP there reaches the workspace namespace — every workspace's Secret, and pods it
 can create but not make privileged — and, through its read-only cluster role, nothing else.
 
