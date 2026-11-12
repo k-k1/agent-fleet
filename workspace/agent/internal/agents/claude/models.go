@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -27,10 +28,18 @@ func Models() []agents.ModelChoice {
 	}
 }
 
+// legacyHaikuRe matches the Haiku ids that predate effort support: Haiku 4.x and older
+// (`claude-haiku-4-5-…`, `haiku-4`) and the Claude 3 generation, which puts the version before
+// the tier (`claude-3-5-haiku-…`). The bare `haiku` alias and Haiku 5+ do not match.
+var legacyHaikuRe = regexp.MustCompile(`haiku-[0-4]([^0-9]|$)|claude-3`)
+
 // EffortsFor returns the effort levels model accepts, for a tier alias or a registered full id.
-// Haiku takes none — the Console's launch picker hides effort for it for the same reason.
+// Haiku 4.x and older take none; Haiku 5.5 takes all five, and the bare `haiku` alias tracks the
+// current Haiku so it offers them too. If the alias is pinned to an older model
+// (ANTHROPIC_DEFAULT_HAIKU_MODEL), Claude Code drops the rejected effort and retries, so a launch
+// does not fail. The Console mirrors this in agentModels.ts (isLegacyHaiku).
 func EffortsFor(model string) []string {
-	if strings.Contains(strings.ToLower(model), "haiku") {
+	if legacyHaikuRe.MatchString(strings.ToLower(model)) && strings.Contains(strings.ToLower(model), "haiku") {
 		return nil
 	}
 	return append([]string(nil), efforts...)
