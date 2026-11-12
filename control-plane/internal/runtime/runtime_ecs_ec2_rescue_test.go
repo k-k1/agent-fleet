@@ -99,12 +99,29 @@ func TestRescueMarkerRefusesEviction(t *testing.T) {
 	stillOnTheBox(t, h)
 }
 
-func TestRescueMarkerRefusesMakeRoom(t *testing.T) {
+func TestRescueMarkerKeepsMakeRoomOffTheHome(t *testing.T) {
+	// A marker that is there at selection: the box is not a candidate.
 	h := markedDormant(t)
 	h.rt.base.name, h.rt.base.membershipID = "af-ws-dave", "M-DAVE"
 	h.rt.instanceType = "m7i.xlarge"
-	if _, err := h.rt.makeRoom(context.Background()); !errors.Is(err, ErrReleaseFenced) {
-		t.Fatalf("makeRoom err = %v, want ErrReleaseFenced", err)
+	if ok, err := h.rt.makeRoom(context.Background()); ok || err != nil {
+		t.Fatalf("makeRoom = %v, %v; want nothing taken", ok, err)
+	}
+	stillOnTheBox(t, h)
+
+	// A marker that lands after the list was read: refused before the home is released.
+	h = markedDormant(t)
+	if _, err := h.ec2.DeleteTags(context.Background(), &ec2.DeleteTagsInput{Resources: []string{"i-a"}, Tags: []ec2types.Tag{{Key: aws.String(ec2TagRescue)}}}); err != nil {
+		t.Fatal(err)
+	}
+	h.ec2.afterDescribeVolumes = func() {
+		h.ec2.afterDescribeVolumes = nil
+		h.ec2.setInstanceTag("i-a", ec2TagRescue, rescueFixture().String())
+	}
+	h.rt.base.name, h.rt.base.membershipID = "af-ws-dave", "M-DAVE"
+	h.rt.instanceType = "m7i.xlarge"
+	if _, err := h.rt.makeRoom(context.Background()); !errors.Is(err, ErrTerminateRefused) {
+		t.Fatalf("makeRoom err = %v, want ErrTerminateRefused", err)
 	}
 	stillOnTheBox(t, h)
 }
@@ -390,4 +407,66 @@ type failingDescribeByID struct{ ec2API }
 
 func (failingDescribeByID) DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	return nil, errors.New("throttled")
+}
+
+// roomHarness is a full pool of two large boxes holding dormant homes (bob's idle longest)
+// and dave, who needs an xlarge.
+func roomHarness(t *testing.T) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.rt.pool.maxSlots = 2
+	for _, c := range []struct {
+		id, vol, ws, mem string
+		idle             time.Duration
+	}{
+		{"i-a", "vol-bob", "af-ws-bob", "M-BOB", 2 * time.Hour},
+		{"i-b", "vol-carol", "af-ws-carol", "M-CAROL", time.Hour},
+	} {
+		h.ec2.addSlot(c.id, "ap-northeast-1a", "m7i.large", false, false)
+		h.ci.registered[c.id] = true
+		h.ec2.addHomeVolume(c.vol, c.mem, c.ws, "ap-northeast-1a")
+		h.ec2.attach(c.vol, c.id, time.Now().Add(-3*time.Hour))
+		h.ec2.setTag(c.vol, EC2TagIdleSince, time.Now().Add(-c.idle).UTC().Format(time.RFC3339))
+		h.ecs.services[c.ws] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	}
+	h.rt.base.name, h.rt.base.membershipID = "af-ws-dave", "M-DAVE"
+	h.rt.instanceType = "m7i.xlarge"
+	return h
+}
+
+// A dark stamp (written by detect-only mode, with no marker anywhere) must not make makeRoom
+// pick that box and fail the Start while an ordinary candidate exists.
+func TestMakeRoomSkipsAStampedBoxAndTakesAnOrdinaryOne(t *testing.T) {
+	h := roomHarness(t)
+	h.ec2.setInstanceTag("i-a", ec2TagDarkSince, "2026-11-12T00:00:00Z/2026-11-11T00:00:00Z")
+	ok, err := h.rt.makeRoom(context.Background())
+	if err != nil || !ok {
+		t.Fatalf("makeRoom = %v, %v; want the ordinary box taken", ok, err)
+	}
+	if got := terminatedInstances(h); len(got) != 1 || got[0] != "i-b" {
+		t.Fatalf("terminated %v, want [i-b]", got)
+	}
+	if attachedInstance(h.ec2.volumes["vol-bob"]) != "i-a" {
+		t.Fatal("the stamped box's home was detached")
+	}
+}
+
+// A stamp that lands after the candidates were listed is caught by the gate, and the next
+// candidate is tried; the refused victim's home stays where it is.
+func TestMakeRoomTriesTheNextVictimWhenTheFinalGateRefuses(t *testing.T) {
+	h := roomHarness(t)
+	h.ec2.afterDescribeVolumes = func() {
+		h.ec2.afterDescribeVolumes = nil
+		h.ec2.setInstanceTag("i-a", ec2TagRescue, rescueFixture().String())
+	}
+	ok, err := h.rt.makeRoom(context.Background())
+	if err != nil || !ok {
+		t.Fatalf("makeRoom = %v, %v; want the second victim taken", ok, err)
+	}
+	if got := terminatedInstances(h); len(got) != 1 || got[0] != "i-b" {
+		t.Fatalf("terminated %v, want [i-b]", got)
+	}
+	if attachedInstance(h.ec2.volumes["vol-bob"]) != "i-a" {
+		t.Fatal("the refused victim's home was detached")
+	}
 }

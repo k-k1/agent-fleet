@@ -450,6 +450,10 @@ rescue writes a marker (code: `runtime_ecs_ec2_rescue.go`). Where the code chose
 - Rule 4: `terminateSlot(…, intent)` with `terminateAutomatic`, `terminateMakeRoom` (also refuses a box carrying `af-rescue` or
   `af-dark-since`) and `terminateOperator`. The gate re-reads the box; a failed read refuses. `makeRoom` now returns the
   refusal instead of waiting for a box that was never terminated.
+- `makeRoom` does not choose a box that carries `af-rescue` or `af-dark-since`, and a box that gains one after the list was
+  read is refused by `terminateSlot` (`terminateMakeRoom`) **before** its home is released and again at the terminate; a refusal
+  moves on to the next candidate instead of failing the Start. The stamp alone protects a box: detect-only mode writes it with no
+  marker anywhere, so "inert until a marker" holds for rescue, but a stamped box is deliberately not reclaimed by `makeRoom`.
 - No IAM or tag-fence change: nothing in the Control Plane writes `af-rescue` yet, and reading it is `DescribeInstances`.
   The writer (#3964) adds its `CreateTags` / `DeleteTags` entries to `deploy/local/cfn-cp-tag-fence-test.py` and the role.
 

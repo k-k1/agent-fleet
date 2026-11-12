@@ -609,19 +609,8 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 		idle      time.Duration
 		vol       *ec2types.Volume
 	}
-	var best *candidate
-	take := func(c candidate) {
-		switch {
-		case best == nil:
-		case best.free != c.free:
-			if !c.free {
-				return // an empty box always wins over somebody's dormant one
-			}
-		case c.idle <= best.idle:
-			return
-		}
-		best = &c
-	}
+	var cands []candidate
+	take := func(c candidate) { cands = append(cands, c) }
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
 			id := aws.ToString(inst.InstanceId)
@@ -636,6 +625,12 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 				continue
 			}
 			if claimed[id] || tasks[id] > 0 {
+				continue
+			}
+			// A box a rescue holds, or one the dark scan has stamped, is not a victim: terminateSlot
+			// refuses it anyway (terminateMakeRoom), and choosing it would fail the Start while an
+			// ordinary candidate exists. The stamp is written by detect-only mode too.
+			if ec2TagValue(inst.Tags, ec2TagRescue) != "" || ec2TagValue(inst.Tags, ec2TagDarkSince) != "" {
 				continue
 			}
 			occ, taken := occupied[id]
@@ -655,33 +650,63 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 			}
 		}
 	}
-	if best == nil {
-		return false, nil
+	// An empty box first, then the longest dormant one.
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].free != cands[j].free {
+			return cands[i].free
+		}
+		return cands[i].idle > cands[j].idle
+	})
+	var lastRefusal error
+	for i := range cands {
+		best := &cands[i]
+		ok, err := e.makeRoomFrom(ctx, best.id, best.itype, best.vol, best.idle)
+		if errors.Is(err, ErrReleaseFenced) || errors.Is(err, ErrTerminateRefused) {
+			// Lost a race with a rescue or a stamp that landed after the list was read: another
+			// victim may still do.
+			log.Printf("ecs-ec2: not taking slot %s to make room: %v", best.id, err)
+			lastRefusal = err
+			continue
+		}
+		return ok, err
 	}
-	if best.vol != nil {
-		victim := e.siblingFor(best.vol)
+	if lastRefusal != nil {
+		return false, lastRefusal
+	}
+	return false, nil
+}
+
+// makeRoomFrom releases (when it holds a home) and terminates one chosen victim.
+func (e *ecsEC2Runtime) makeRoomFrom(ctx context.Context, id, itype string, vol *ec2types.Volume, idle time.Duration) (bool, error) {
+	if vol != nil {
+		victim := e.siblingFor(vol)
 		if victim == nil {
-			return false, fmt.Errorf("slot %s holds an unidentifiable home %s", best.id, aws.ToString(best.vol.VolumeId))
+			return false, fmt.Errorf("slot %s holds an unidentifiable home %s", id, aws.ToString(vol.VolumeId))
 		}
 		log.Printf("ecs-ec2: the pool is full of slots %s cannot use; taking %s (%s, %s's, dormant %.0fm) out of it",
-			e.instanceType, best.id, best.itype, victim.base.name, best.idle.Minutes())
+			e.instanceType, id, itype, victim.base.name, idle.Minutes())
 		// Same order and the same reason as the sweeper's terminate stage: releaseSlot is
 		// anchored to the victim's Start generation, so a Start racing this aborts the
 		// release instead of losing its home to a box that is going away.
+		//
+		// The terminate gate is asked first, so a refusal does not leave the home detached from
+		// a box that stays.
+		if err := e.terminateGate(ctx, id, terminateMakeRoom); err != nil {
+			return false, err
+		}
 		if err := victim.releaseSlot(ctx); err != nil {
 			return false, fmt.Errorf("release %s before terminating slot %s: %w",
-				aws.ToString(best.vol.VolumeId), best.id, err)
+				aws.ToString(vol.VolumeId), id, err)
 		}
 	} else {
 		log.Printf("ecs-ec2: the pool is full of slots %s cannot use; taking the empty %s (%s) out of it",
-			e.instanceType, best.id, best.itype)
+			e.instanceType, id, itype)
 	}
-	// Refused for a quarantined box, or one that carries a rescue marker or a dark stamp: the
-	// victim list was read before any of those could land.
-	if err := e.terminateSlot(ctx, best.id, "made room for a "+e.instanceType, terminateMakeRoom); err != nil {
+	// Asked again here, because a marker or stamp can land during the release: the final gate.
+	if err := e.terminateSlot(ctx, id, "made room for a "+e.instanceType, terminateMakeRoom); err != nil {
 		return false, err
 	}
-	return true, e.waitSlotGone(ctx, best.id)
+	return true, e.waitSlotGone(ctx, id)
 }
 
 // waitSlotGone waits until a terminated box stops counting toward the cap.
