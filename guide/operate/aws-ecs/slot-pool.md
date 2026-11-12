@@ -227,7 +227,9 @@ You cannot name the target AZ. To move one person to a named AZ, rebuild the vol
    ```
 
 - **The Control Plane finds a home by `af-membership` and `af-role=home`.** With two `af-role=home` volumes for the same member it uses whichever it finds first. Keep the order of step 5
-- If you stop before step 5, deleting the new volume undoes everything. After step 5, swap the two tags back
+- If you stop before step 5, deleting the new volume undoes everything
+- After step 5 but **before anyone starts the workspace**, set the new volume back to `home-moving` first, then the original back to `home`. In this order the Control Plane never sees two homes
+- **Once the workspace has started, do not swap the tags back.** The new volume holds the member's new work and the original is stale. To go back, stop the workspace first, secure the new work (commit and push it, for example), then move the new volume back to the original AZ with these same steps
 - A snapshot of a 45 GiB home takes 30–40 minutes. Right after the restore, the parts you touch are slower
 
 ### When you lose an AZ

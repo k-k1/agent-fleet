@@ -100,11 +100,17 @@ AZ を失ったあと、そのユーザーを動かすのは管理者の操作�
    aws ec2 wait volume-available --volume-ids "$new"
    ```
 
-4. 古いホームのボリュームが残っていれば、役割を外します（`None` と出たら、残っていません）
+4. 古いホームのボリュームを探します。`None` と出たら残っていないので、次のコマンドは飛ばして手順 5 に進みます
 
    ```bash
    old=$(aws ec2 describe-volumes --filters Name=tag:af-membership,Values=<membership> Name=tag:af-role,Values=home \
      --query 'Volumes[0].VolumeId' --output text)
+   echo "$old"
+   ```
+
+   ボリュームの ID が出たときだけ、その役割を外します
+
+   ```bash
    aws ec2 create-tags --resources "$old" --tags Key=af-role,Value=home-retired
    ```
 

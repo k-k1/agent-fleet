@@ -100,11 +100,17 @@ After losing an AZ, moving that user is an operator's action. Check that each co
    aws ec2 wait volume-available --volume-ids "$new"
    ```
 
-4. If the old home volume still exists, take the home role off it (`None` means there is none)
+4. Look for the old home volume. `None` means there is none: skip the next command and go to step 5
 
    ```bash
    old=$(aws ec2 describe-volumes --filters Name=tag:af-membership,Values=<membership> Name=tag:af-role,Values=home \
      --query 'Volumes[0].VolumeId' --output text)
+   echo "$old"
+   ```
+
+   Only when it printed a volume id, take the home role off it
+
+   ```bash
    aws ec2 create-tags --resources "$old" --tags Key=af-role,Value=home-retired
    ```
 
