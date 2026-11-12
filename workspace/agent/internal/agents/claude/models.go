@@ -31,6 +31,7 @@ func Models() []agents.ModelChoice {
 // legacyHaikuRe matches the Haiku ids that predate effort support: Haiku 4.x and older
 // (`claude-haiku-4-5-…`, `haiku-4`) and the Claude 3 generation, which puts the version before
 // the tier (`claude-3-5-haiku-…`). The bare `haiku` alias and Haiku 5+ do not match.
+// model-id-lint:allow family match for the effort rule, not a model choice
 var legacyHaikuRe = regexp.MustCompile(`haiku-[0-4]([^0-9]|$)|claude-3`)
 
 // EffortsFor returns the effort levels model accepts, for a tier alias or a registered full id.
