@@ -72,6 +72,9 @@ var (
 	// errRescueBlocked: a step ran out of its bound (the task ENI did not go, the box did not
 	// stop). Nothing further is done; the marker keeps its phase and carries blocked_since.
 	errRescueBlocked = errors.New("rescue blocked")
+	// errRescueStale: the marker on the box is not the one the caller holds (another replica
+	// advanced it). The caller's copy has been refreshed; it stops for this pass.
+	errRescueStale = errors.New("rescue marker moved on")
 )
 
 // darkDecision is what the dark scan knew when it decided to rescue: the Start count it
@@ -398,7 +401,7 @@ func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, c
 	if err := rescueStep(ctx, "cancelled"); err != nil {
 		return
 	}
-	err := rt.rescueGuarded(ctx, m, slot, func(ctx context.Context) error {
+	err := rt.rescueGuarded(ctx, &m, slot, func(ctx context.Context) error {
 		return rescueStep(ctx, "guarded")
 	})
 	blockedBefore := m.BlockedSince
@@ -470,7 +473,7 @@ func rescueLeasesHeld(ctx context.Context) error {
 // with the token re-verified under the claim lock nested inside it (decision 4, lock order).
 // A lock not taken, a count not readable and a lease that lapsed abort the step: the
 // unguarded fallback of ifOwned is deliberately not used.
-func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m rescueMarker, instanceID string, fn func(context.Context) error) error {
+func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m *rescueMarker, instanceID string, fn func(context.Context) error) error {
 	mctx, unlockMount, err := e.lockBounded(ctx, homeLockMount, e.base.name, rescueMountBudget)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errRescueBusy, err)
@@ -482,8 +485,18 @@ func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m rescueMarker, insta
 	}
 	defer unlockClaim()
 	cctx = context.WithValue(cctx, rescueMountGuardKey{}, homeGuardOf(mctx))
-	if err := e.rescueOwned(cctx, m, instanceID); err != nil {
+	cur, err := e.rescueOwned(cctx, *m, instanceID)
+	if err != nil {
 		return err
+	}
+	// Two replicas can resume one marker. The phase and blocked_since the caller holds are a
+	// snapshot; if the box's marker has moved on (or the caller's write never landed), the
+	// caller is working from the past: adopt what the box says and stop, so the next decision is
+	// made on it. Without this a stale `begun` would write over a `deregistering` that carries
+	// blocked_since, step backwards, and block and audit a second time.
+	if cur.String() != m.String() {
+		*m = cur
+		return fmt.Errorf("%w: the marker is now %s", errRescueStale, cur)
 	}
 	// Asked here, not left to the contexts: their end is a timer's callback, which a
 	// goroutine resumed past the deadline can outrun.
@@ -502,36 +515,36 @@ func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m rescueMarker, insta
 
 // rescueOwned is the token check of decision 4: the count is exactly g_r, the box carries
 // this rescue's marker in this launch epoch, and the home is still on the box.
-func (e *ecsEC2Runtime) rescueOwned(ctx context.Context, m rescueMarker, instanceID string) error {
+func (e *ecsEC2Runtime) rescueOwned(ctx context.Context, m rescueMarker, instanceID string) (rescueMarker, error) {
 	g, err := e.startGenNow(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: start count: %w", errRescueAborted, err)
+		return rescueMarker{}, fmt.Errorf("%w: start count: %w", errRescueAborted, err)
 	}
 	if g != m.Gen {
-		return fmt.Errorf("%w: the start count is %d, the rescue holds %d", errRescueOvertaken, g, m.Gen)
+		return rescueMarker{}, fmt.Errorf("%w: the start count is %d, the rescue holds %d", errRescueOvertaken, g, m.Gen)
 	}
 	inst, err := e.slotInstance(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("%w: slot: %w", errRescueAborted, err)
+		return rescueMarker{}, fmt.Errorf("%w: slot: %w", errRescueAborted, err)
 	}
 	if inst == nil {
-		return fmt.Errorf("%w: the box is gone", errRescueOvertaken)
+		return rescueMarker{}, fmt.Errorf("%w: the box is gone", errRescueOvertaken)
 	}
 	cur, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue))
 	if !ok || !cur.sameRescue(m) {
-		return fmt.Errorf("%w: the box does not carry this rescue's marker", errRescueOvertaken)
+		return rescueMarker{}, fmt.Errorf("%w: the box does not carry this rescue's marker", errRescueOvertaken)
 	}
 	if inst.LaunchTime == nil || !inst.LaunchTime.UTC().Truncate(time.Second).Equal(m.Epoch) {
-		return fmt.Errorf("%w: the box was started again", errRescueOvertaken)
+		return rescueMarker{}, fmt.Errorf("%w: the box was started again", errRescueOvertaken)
 	}
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: home: %w", errRescueAborted, err)
+		return rescueMarker{}, fmt.Errorf("%w: home: %w", errRescueAborted, err)
 	}
 	if vol == nil || aws.ToString(vol.VolumeId) != m.Volume || attachedInstance(vol) != instanceID {
-		return fmt.Errorf("%w: the home is no longer on the box", errRescueOvertaken)
+		return rescueMarker{}, fmt.Errorf("%w: the home is no longer on the box", errRescueOvertaken)
 	}
-	return nil
+	return cur, nil
 }
 
 // finalizeRescue is the finalizer of decision 4. It touches tags only, so it needs no count

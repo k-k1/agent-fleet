@@ -120,25 +120,47 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	}
 	// The home is off the slot: what follows is bookkeeping, owed even if the lease is
 	// lost now.
-	e.afterDetach(outer, volumeID, instanceID)
+	e.afterDetach(outer, volumeID, instanceID, nil)
 	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
 	return nil
 }
 
 // afterDetach is what a detach owes the pool: wait for the device to be free, take the home
 // off the dormant set and hand the slot back as free. Shared with the dark-slot rescue.
-func (e *ecsEC2Runtime) afterDetach(ctx context.Context, volumeID, instanceID string) {
+func (e *ecsEC2Runtime) afterDetach(ctx context.Context, volumeID, instanceID string, held func() error) {
+	// held, when set, is asked before every write and after the wait: a caller that owns the
+	// slot only while a lease lasts (the dark-slot rescue) must not write a newer owner's
+	// state. A failed check ends the rest, which the sweeper's repairs cover.
+	stop := func() bool {
+		if held == nil {
+			return false
+		}
+		if err := held(); err != nil {
+			log.Printf("ecs-ec2: bookkeeping after detaching %s from %s stopped: %v", volumeID, instanceID, err)
+			return true
+		}
+		return false
+	}
 	// Do not call the slot free until it really is: the attachment point outlives the
 	// DetachVolume response (see attachHomeWithRetry), and a Start that lands in that
 	// window would grow the pool instead of swapping onto this slot.
 	if err := e.waitDeviceFree(ctx, instanceID); err != nil {
 		log.Printf("ecs-ec2: %s detached from %s but the device is still held: %v", volumeID, instanceID, err)
 	}
+	if stop() {
+		return
+	}
 	e.clearIdle(ctx, volumeID)
+	if stop() {
+		return
+	}
 	// The box is back in the pool, so it stops being this person's cost from here on —
 	// and starts its OWN dormancy clock, which is what eventually stops it. Before this
 	// existed a released slot simply left every path that could ever stop it (§64.31).
 	e.untagSlotOwner(ctx, instanceID)
+	if stop() {
+		return
+	}
 	e.markSlotFree(ctx, instanceID)
 }
 

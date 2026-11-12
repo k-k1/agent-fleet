@@ -562,7 +562,7 @@ func TestRescueGuardedStepAbortsWithoutItsLocksOrCount(t *testing.T) {
 			}
 			tc.inject(w)
 			ran := false
-			err = w.rt().rescueGuarded(context.Background(), m, "i-dark", func(context.Context) error { ran = true; return nil })
+			err = w.rt().rescueGuarded(context.Background(), &m, "i-dark", func(context.Context) error { ran = true; return nil })
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
@@ -580,7 +580,7 @@ func TestRescueGuardedStepRunsWhenItOwnsTheHome(t *testing.T) {
 			t.Fatal(err)
 		}
 		ran := false
-		if err := w.rt().rescueGuarded(context.Background(), m, "i-dark", func(c context.Context) error {
+		if err := w.rt().rescueGuarded(context.Background(), &m, "i-dark", func(c context.Context) error {
 			ran = true
 			// Both locks are held while the step runs: neither can be taken from outside.
 			for _, which := range []string{homeLockMount, homeLockClaim} {

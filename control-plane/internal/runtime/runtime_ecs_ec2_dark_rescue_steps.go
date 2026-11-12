@@ -74,7 +74,7 @@ func (e *ecsEC2Runtime) rescueBlock(ctx context.Context, slot string, m *rescueM
 	if m.BlockedSince.IsZero() {
 		next := *m
 		next.BlockedSince = e.now().UTC().Truncate(time.Second)
-		err := e.rescueGuarded(ctx, *m, slot, func(c context.Context) error {
+		err := e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
 			if err := rescueLeasesHeld(c); err != nil {
 				return fmt.Errorf("%w: %w", errRescueAborted, err)
 			}
@@ -120,7 +120,7 @@ func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *resc
 		return fmt.Errorf("%w: ENIs of %s: %w", errRescueAborted, slot, err)
 	}
 	if instancesHoldTaskENI(out) {
-		err := e.rescueGuarded(ctx, *m, slot, func(c context.Context) error {
+		err := e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
 			if err := e.advanceRescue(c, slot, m, rescuePhaseDeregistering); err != nil {
 				return err
 			}
@@ -154,7 +154,7 @@ func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *resc
 			return e.rescueBlock(ctx, slot, m, "the task network interface is still attached")
 		}
 	}
-	err = e.rescueGuarded(ctx, *m, slot, func(c context.Context) error {
+	err = e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
 		return e.advanceRescue(c, slot, m, rescuePhaseDeregistered)
 	})
 	if err != nil {
@@ -176,7 +176,7 @@ func (e *ecsEC2Runtime) rescueStopStage(ctx context.Context, slot string, m *res
 		// what blocked_since records), and is still not finished.
 		force := inst.State.Name == ec2types.InstanceStateNameStopping &&
 			m.Phase == rescuePhaseStopping && !m.BlockedSince.IsZero()
-		err := e.rescueGuarded(ctx, *m, slot, func(c context.Context) error {
+		err := e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
 			// Under the locks, right before the call: the box must still be this epoch's.
 			cur, err := e.readRescueBox(c, slot, m)
 			if err != nil {
@@ -215,7 +215,7 @@ func (e *ecsEC2Runtime) rescueStopStage(ctx context.Context, slot string, m *res
 			return e.rescueBlock(ctx, slot, m, "the instance did not reach stopped")
 		}
 	}
-	err = e.rescueGuarded(ctx, *m, slot, func(c context.Context) error {
+	err = e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
 		return e.advanceRescue(c, slot, m, rescuePhaseStopped)
 	})
 	if err != nil {
@@ -249,7 +249,7 @@ func (e *ecsEC2Runtime) waitRescueStopped(ctx context.Context, slot string, m *r
 // pool bookkeeping a release owes follows outside the locks.
 func (e *ecsEC2Runtime) rescueDetachStage(ctx context.Context, slot string, m *rescueMarker) error {
 	detached := false
-	err := e.rescueGuarded(ctx, *m, slot, func(c context.Context) error {
+	err := e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
 		cur, err := e.readRescueBox(c, slot, m)
 		if err != nil {
 			return err
@@ -278,7 +278,7 @@ func (e *ecsEC2Runtime) rescueDetachStage(ctx context.Context, slot string, m *r
 		// attached the home and set its owner and idle tags, and these writes would undo them.
 		// A lapsed lease skips it; the sweeper's owner-tag and free-slot repairs cover it.
 		if err := rescueLeasesHeld(c); err == nil {
-			e.afterDetach(c, m.Volume, slot)
+			e.afterDetach(c, m.Volume, slot, func() error { return rescueLeasesHeld(c) })
 		} else {
 			log.Printf("ecs-ec2: rescue of %s detached %s but its lease lapsed; leaving the bookkeeping to the sweeper: %v", e.base.name, m.Volume, err)
 		}

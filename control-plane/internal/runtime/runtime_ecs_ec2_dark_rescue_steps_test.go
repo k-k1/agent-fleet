@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -573,5 +574,84 @@ func TestRescueBookkeepingRunsInsideTheLocks(t *testing.T) {
 			t.Fatal("the Start never got through")
 		}
 		w.rescued()
+	})
+}
+
+// A lease that lapses while the bookkeeping waits for the device: a Start that took the slot
+// under a newer lease has set its owner, and the old rescue must not clear it or hand the slot
+// back as free.
+func TestRescueBookkeepingStopsWhenALeaseLapsesDuringItsWaits(t *testing.T) {
+	for _, which := range []string{"claim", "mount"} {
+		t.Run(which, func(t *testing.T) {
+			bothModes(t, func(t *testing.T, w *rescueWorld) {
+				w.arm()
+				var ctx context.Context
+				rescueStepHook = func(c context.Context, s string) error {
+					if s == "detaching" {
+						ctx = c
+					}
+					return nil
+				}
+				fired := false
+				w.h.ec2.describeInstancesErr = func() error {
+					if ctx != nil && !fired && w.h.ec2.countCalls("DetachVolume") > 0 {
+						fired = true
+						markGuard(ctx, which)
+						w.h.ec2.setInstanceTag("i-dark", EC2TagMembership, "M-NEW") // the new owner
+					}
+					return nil
+				}
+				w.pass(w.f)
+				w.h.ec2.describeInstancesErr = nil
+				tags := w.h.ec2.instances["i-dark"].Tags
+				if ec2TagValue(tags, EC2TagMembership) != "M-NEW" {
+					t.Fatalf("the new owner's tag was cleared: %v", tags)
+				}
+				if ec2TagValue(tags, ec2TagSlotIdleSince) != "" {
+					t.Fatal("the slot was handed back as free under a newer owner")
+				}
+			})
+		})
+	}
+}
+
+// Two replicas resume one marker. A replica holding a snapshot older than the box's marker
+// must neither write its phase over the newer one nor block and report a second time.
+func TestRescueStaleMarkerSnapshotNeitherRegressesNorReblocks(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		shortBounds(t)
+		withENI(w)
+		w.h.ci.stickyENI = true
+		w.arm()
+		gd := w.count()
+		// Replica A's snapshot: `begun`, as it read it.
+		old := rescueMarker{Volume: "vol-1", Epoch: w.decision().launch, Phase: rescuePhaseBegun, Gen: gd + 1,
+			Began: time.Now().UTC().Truncate(time.Second)}
+		w.startLands() // g_r
+		w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, old.String())
+		// Replica B advanced the marker: deregistering, blocked.
+		newer := old
+		newer.Phase, newer.BlockedSince = rescuePhaseDeregistering, time.Now().UTC().Truncate(time.Second)
+		w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, newer.String())
+
+		stale := old
+		err := w.rt().rescueSteps(context.Background(), "i-dark", &stale)
+		if !errors.Is(err, errRescueStale) {
+			t.Fatalf("err = %v, want errRescueStale", err)
+		}
+		if w.marker() != newer.String() {
+			t.Fatalf("marker %q: the stale replica wrote over %q", w.marker(), newer.String())
+		}
+		if stale.String() != newer.String() {
+			t.Fatalf("the stale copy was not refreshed: %q", stale.String())
+		}
+		for _, ev := range *w.events {
+			if ev.Action == "blocked" {
+				t.Fatal("a stale replica reported a second blocked event")
+			}
+		}
+		if len(w.h.ci.deregistered) != 0 {
+			t.Fatalf("a stale snapshot sent a deregistration: %v", w.h.ci.deregistered)
+		}
 	})
 }
