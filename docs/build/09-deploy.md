@@ -18,11 +18,11 @@ target can and cannot do (several users, per-user limits, engines, cost attribut
 | Form | Summary | State | Runbook |
 |---|---|---|---|
 | **local dev** | The CP as a host process. `run-dev.sh` is one entry point with subcommands (`local`, `wsl`, `native`, and `reset`, which wipes the data); `restart-cp.sh` swaps only the CP. `AUTH=dev` for one person, `oauth` when shared | ✅ in use for development and small shared setups | the comments at the top of [run-dev.sh](../../deploy/local/run-dev.sh) and [restart-cp.sh](../../deploy/local/restart-cp.sh); the reflect-a-change table is [10](10-development.md) |
-| **wsl (personal)** | `run-dev.sh wsl`: the local form preset for WSL2 with a native dockerd, `AUTH=dev` | ✅ personal use | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
-| **native** | No Docker: the CP and Console run as host processes and the workspace runs in a bubblewrap sandbox on a downloaded rootfs. **Single user only** — the `native` runtime refuses to start unless `AUTH=dev` | ✅ shipped as a package | [deploy/native/README.md](../../deploy/native/README.md) |
-| **compose** | The self-hosting mainline: a CP container plus Caddy for automatic TLS. The CP binds loopback, and **the compose definition contains the three constraints** of driving the host's Docker daemon from a container: the host network, `DATA_DIR` mounted at the same absolute path, and the docker group id | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
+| **wsl (personal)** | `run-dev.sh wsl`: the local form preset for WSL2 with a native dockerd, `AUTH=dev` | ✅ personal use | [guide/operate/wsl.md](../../guide/operate/wsl.md) |
+| **native** | No Docker: the CP and Console run as host processes and the workspace runs in a bubblewrap sandbox on a downloaded rootfs. **Single user only** — the `native` runtime refuses to start unless `AUTH=dev` | ✅ shipped as a package | [guide/operate/native/](../../guide/operate/native/install.md) |
+| **compose** | The self-hosting mainline: a CP container plus Caddy for automatic TLS. The CP binds loopback, and **the compose definition contains the three constraints** of driving the host's Docker daemon from a container: the host network, `DATA_DIR` mounted at the same absolute path, and the docker group id | ✅ | [guide/operate/compose/](../../guide/operate/compose/install.md) |
 | **aws — ECS** | Static infrastructure from CloudFormation, per-workspace resources from the CP's own ECS adapter. A workspace is a task on Fargate (`ecs`, the template default) or on an EC2 slot taken from a pool (`ecs-ec2`) | ✅ `ecs-ec2` runs the production deployment; `ecs` has been proven in a sandbox from deploy through end-to-end to teardown | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
-| **aws — ec2-single** | compose on one EC2 VM | ✅ the host of the "start from the release bundle on a clean host" gate | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| **aws — ec2-single** | compose on one EC2 VM | ✅ the host of the "start from the release bundle on a clean host" gate | [guide/operate/aws-ec2-single.md](../../guide/operate/aws-ec2-single.md) |
 | **kubernetes** | The CP as a Deployment in the cluster; each workspace a StatefulSet at 0 or 1 replicas with two PersistentVolumeClaims, created by the CP's own `kubernetes` adapter over the standard API. Plain manifests with a kustomize base (`deploy/kubernetes/`), and Terraform for what a GKE deployment needs around the cluster (`deploy/gcp/gke/`) | ◐ built, not yet run on a live cluster; the acceptance run on GKE Standard is #1468 | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
 - **ec2-single is compose on a VM** — the `docker` runtime, not a separate profile.
@@ -77,8 +77,8 @@ gateway address (`AF_CP_INTERNAL_LISTEN=172.17.0.1:8098`), and workspaces reach 
 local to the host, so every per-user network reaches it without crossing Docker's inter-network
 isolation, and no LAN or tailnet interface carries it; a wildcard bind on `docker` is logged as a
 warning at start. It is off by default (the address depends on the host's Docker and firewall
-configuration, and an address that does not exist stops the CP). Runbook:
-[`deploy/compose/README.md`](../../deploy/compose/README.md) "Workspace listener".
+configuration, and an address that does not exist stops the CP). Procedure:
+[When workspaces cannot reach the CP](../../guide/operate/compose/workspace-listener.md).
 
 The ingress terminates TLS and forwards. With `AUTH=oauth` the CP authenticates for
 itself; only with `AUTH=proxy` does the ingress inject the identity header.
@@ -128,7 +128,7 @@ an index. The value in parentheses is the code's default when the variable is un
 | opencode bedrock route gate (acceptance run only) | `AF_WS_OPENCODE_BEDROCK_ROUTE` (off) | `1` makes every workspace start carry `AF_OPENCODE_BEDROCK_ROUTE=1`, which opens the opencode `bedrock` route (Terminal only) that its Agent otherwise refuses until its own live acceptance (ADR 0128 decision 14). Independent of the claude switch above; the same rules: acceptance run only, exactly `1`, reaches every runtime at the next workspace Start, a running workspace needs Stop → Start | [ADR 0128](../decisions/0128-harness-route-maker.md) · [guide ref/agents](../../guide/ref/agents.md) |
 | Engines | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON` · `AF_LLM_URL` · `AF_COMFY_URL` / `AF_COMFY_API_KEY` · `AF_ENGINE_API_KEY_<KEY>` · `AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}` · `AF_ENGINE_ECS_CLUSTER` · `AF_ENGINE_WAKE_TIMEOUT` (900 s) · `AF_ENGINE_PLAIN_HOLD` · `AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | the engine table, the engine controller, the gateway's hold on a cold engine, and borrowing another deployment's engines | [decisions/0071](../decisions/0071-self-hosted-inference-engines.md) / [0076](../decisions/0076-external-image-engine-on-lan.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.md) |
 | Speech | `AF_VOICEVOX_URL` (`http://127.0.0.1:50021`) · `AF_TTS_ECS_SERVICE` and the other `AF_TTS_ECS_*` · `AF_TTS_MAX_CHARS` (300) · `AF_POLLY_{REGION,ENGINE}` | a VOICEVOX by URL, or the one on ECS that the CP scales from zero; Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.md) |
-| Containerless adapter | `AF_NATIVE_AGENT_BIN` (`workspace-agent` on `PATH`) · `AF_NATIVE_ROOTFS` · `AF_NATIVE_BWRAP` | where the agent binary lives; the rootfs that switches on the bubblewrap sandbox | [native runbook](../../deploy/native/README.md) |
+| Containerless adapter | `AF_NATIVE_AGENT_BIN` (`workspace-agent` on `PATH`) · `AF_NATIVE_ROOTFS` · `AF_NATIVE_BWRAP` | where the agent binary lives; the rootfs that switches on the bubblewrap sandbox | [native install page](../../guide/operate/native/install.md) |
 | Kubernetes adapter | `AF_K8S_NAMESPACE` · `AF_K8S_WORKSPACE_IMAGE` · `AF_K8S_STORAGE_CLASS` · `AF_K8S_HOME_GIB` · `AF_K8S_STATE_GIB` · `AF_K8S_IMAGE_PULL_SECRET` · `AF_K8S_NODE_SELECTOR` · `AF_K8S_SERVICE_ACCOUNT` (`default`) · `AF_K8S_HOME_SHARED_FS` (unset; `1` when the StorageClass backs homes with one shared filesystem, so the home-nearly-full notice is withheld) | `kubernetes` only: the workspace namespace, image and StorageClass, the claims' default sizes, the node pool, and the workspaces' way back to the CP (the workspace listener row, §9.3) | [kubernetes runbook](../../deploy/kubernetes/README.md) / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
 | Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` · where set (on `kubernetes`, optionally on `docker`) also `AF_CP_INTERNAL_URL`, which requests prefer over `AF_CP_BASE_URL` while links for people keep the public one | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker`, as SSM SecureString task secrets on ECS, and as a per-workspace Secret on `kubernetes` | [04](04-agent.md) / [07 §7.5](07-security.md) |
 
@@ -318,8 +318,10 @@ substrate underneath it.
   containers sit in `CannotPullContainerError` while the service reports a steady state.
   What the script deliberately does not do is *bake* an image — if GHCR has not got the
   tag either it stops and names the workflow that makes it.
-- The actual procedures (`backup.sh`, `restore.sh`, upgrade, air-gapped) are the
-  [compose runbook](../../deploy/compose/README.md) and, for ECS, the
+- The actual procedures (`backup.sh`, `restore.sh`, upgrade, air-gapped) are the guide's
+  [Back up and restore](../../guide/operate/run/backup-restore.md),
+  [Upgrade](../../guide/operate/run/upgrade.md) and
+  [Install into a closed network](../../guide/operate/run/air-gapped.md) and, for ECS, the
   [ecs runbook](../../deploy/aws/ecs/README.md) §Upgrade.
 
 ## 9.8 Cost characteristics

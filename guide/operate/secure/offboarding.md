@@ -83,7 +83,7 @@ Two differences are too late to discover after someone has left. Know them **in 
 
 When you need to invalidate everybody's sessions right now (a leaked cookie, a lost device, an account you cannot reach), the only switch that works on the spot is changing the cookie signing key.
 
-1. Generate a new random value (the [compose runbook](../../../deploy/compose/README.md) has a one-liner for `AF_COOKIE_SECRET`)
+1. Generate a new random value ([Deploy with Docker Compose](../compose/install.md#1-configure-and-start-from-source) has a one-liner for `AF_COOKIE_SECRET`)
 2. Put it in `AF_COOKIE_SECRET` (`.env`, `oauth.env`, the SSM parameter)
 3. Restart the Control Plane
 

@@ -30,7 +30,7 @@ Caddy は、公開ドメインの証明書を Let's Encrypt から自動で取�
 | すでに TLS を終端するプロキシが前にある | Caddy のサービスそのものを外す（Caddyfile の代わりの設定 2） |
 
 - `tls internal` ではブラウザに証明書の警告が出ます。社内の認証局を配るなどの対応を、別に考えてください
-- 切り替え方は、runbook の「Quick start」の脚注と Caddyfile にあります
+- 切り替え方は、`deploy/compose/` の `Caddyfile` にあります（[Docker Compose で構築する](compose/install.ja.md#始める前に)）
 
 ## `AF_PROVISION` を `invite` にするか `auto` にするか
 

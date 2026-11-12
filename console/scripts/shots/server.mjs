@@ -275,7 +275,12 @@ const exact = {
         "/api/agents/memory/diff": () => fx.memioDiff(LOCALE),
       }
     : {}),
-  "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
+  // A native deployment with a newer version staged (guide: operate/native/update). Without
+  // the flag the status says "up to date", so no other scene changes.
+  "/api/update/status": () =>
+    process.env.SHOT_NATIVE_UPDATE
+      ? { current: "0.43.0", installed: "0.44.0", restartRequired: true, systemd: true }
+      : { current: "0.3.0", latest: "0.3.0" },
   "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
   // Cloud cost (docs/log/67). The whole tab is hidden unless profile.available is true, so
   // without this stub the new surface does not exist as far as the harness is concerned.

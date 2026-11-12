@@ -8,7 +8,6 @@ source_of_truth: "the runbooks under `deploy/` for commands; this shelf for what
 English | [日本語](README.ja.md)
 
 What people running Agent Fleet on their own infrastructure want to do, one task per page.
-The commands are in each target's runbook; these pages say what they decide.
 
 ## Getting started
 
@@ -92,6 +91,30 @@ The commands are in each target's runbook; these pages say what they decide.
 | [Generate images on your own ComfyUI](engines/comfyui.md) | Point the image engine at a ComfyUI on your network, register its models and close the routes to it |
 | [Borrow another deployment's engines](engines/borrow.md) | Use the chat and image engines of an Agent Fleet on AWS from a deployment on your own host, and issue the token as the lender |
 | [Chat on a llama.cpp on your LAN](engines/llama-cpp.md) | Point the chat engine at a llama-server on your network |
+
+## Docker Compose
+
+| Page | What you can do |
+|---|---|
+| [Deploy with Docker Compose](compose/install.md) | Write `.env`, start from source or from the published release images, and sign in as the first administrator |
+| [Run on an Apple Silicon Mac](compose/macos.md) | Run it for one person on a Mac's Docker engine or in a Linux VM |
+| [When workspaces cannot reach the CP](compose/workspace-listener.md) | Give workspaces a way to the CP that does not leave the host, through the workspace listener |
+
+## Native package
+
+| Page | What you can do |
+|---|---|
+| [Install the native package](native/install.md) | Install it on a single-user Linux host or WSL2 without Docker, and start with `af start` |
+| [Update the native package](native/update.md) | Stage a new version and switch with a restart, pin a version, carry it into a closed network |
+| [Run it as a systemd service](native/service.md) | Make `af start` a user service that keeps running after you close the terminal |
+| [Reset or uninstall](native/uninstall.md) | Wipe the data and start over, or remove it from the host |
+
+## Other setups
+
+| Page | What you can do |
+|---|---|
+| [Run it for yourself on WSL](wsl.md) | Try it alone, with no sign-in, on Docker inside WSL2 |
+| [Deploy on a single EC2 instance](aws-ec2-single.md) | Stand up one EC2 instance with CloudFormation and run the Docker Compose deployment from the release bundle |
 
 The content of these chapters has moved to the pages above: [01 Choosing a deployment target](01-choose.md), [02 Initial setup](02-install.md), [03 Running it](03-run.md), [04 Securing it](04-secure.md), [05 Sign-in methods](05-signin.md), [06 Diagnosing it](06-diagnose.md), [11 The ecs-ec2 slot pool](11-slot-pool.md), [12 Keys at rest](12-keys.md), [07 Inference engines and read aloud](07-engines.md), [08 Image generation on your own ComfyUI](08-image-engine.md), [09 Borrowing another deployment's engines](09-borrowed-engine.md), [10 Chat inference on your own llama.cpp](10-llm-lan.md)
 

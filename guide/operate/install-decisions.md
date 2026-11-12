@@ -30,7 +30,7 @@ Caddy obtains the public domain's certificate from Let's Encrypt automatically. 
 | A TLS-terminating proxy already sits in front | Remove the Caddy service itself (Caddyfile alternative 2) |
 
 - With `tls internal`, browsers show a certificate warning. Plan separately for things like distributing an internal CA
-- How to switch is in the footnote to the runbook's "Quick start" and in the Caddyfile
+- How to switch is in the `Caddyfile` in `deploy/compose/` ([Deploy with Docker Compose](compose/install.md#before-you-start))
 
 ## `AF_PROVISION`: `invite` or `auto`
 

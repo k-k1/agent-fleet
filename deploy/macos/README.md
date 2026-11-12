@@ -7,10 +7,10 @@ cloud Mac if you have none, and the one script that turns the checklist into a r
 What is being verified:
 
 - **Docker edition** with `deploy/compose/docker-compose.macos.yml`
-  ([compose README, "macOS"](../compose/README.md#macos-apple-silicon)), on each
+  ([Run on an Apple Silicon Mac](../../guide/operate/compose/macos.md)), on each
   engine you can get: Docker Desktop, OrbStack, colima.
 - **Native package** (`linux-arm64`) inside a Linux VM: Lima or an OrbStack machine
-  ([native README](../native/README.md)).
+  ([Install the native package](../../guide/operate/native/install.md)).
 - **Installers** on macOS itself: `install.sh` refuses with guidance, `install-compose.sh`
   verifies with `shasum`.
 
@@ -50,7 +50,7 @@ the Console says it started, never another `af-ws-*` on the same Mac.
 
 | Check | What it proves |
 |---|---|
-| `env.*` | `.env` has the values the compose README asks for; `DOCKER_GID` matches the socket as a container sees it |
+| `env.*` | `.env` has the values the guide's macOS page asks for; `DOCKER_GID` matches the socket as a container sees it |
 | `compose.up`, `cp.health` | the overlay starts and the Console answers on the Mac's `127.0.0.1:8099` |
 | `ws.start` | the CP reached the Agent through `host.docker.internal` (a start still `starting` after the CP's health budget is polled until running) |
 | `ws.arch` | the workspace runs the `linux/arm64` image |
@@ -82,7 +82,7 @@ Docker Desktop just need their first start from the desktop.
   or commit.
 - A compose bundle for that version: `install-compose.sh` with `AF_VERSION=<v>`, or
   `deploy/compose/release.sh` from the checkout.
-- Its `.env`, filled in from the compose README's "macOS" section (secrets included).
+- Its `.env`, filled in from the guide's [Run on an Apple Silicon Mac](../../guide/operate/compose/macos.md) (secrets included).
 - This checkout on the Mac (`git clone`), for the script and the installers.
 
 ## Renting an EC2 Mac (if you have no Mac)
@@ -193,8 +193,7 @@ before). A host left allocated keeps billing.
 ## Reporting
 
 Paste each report into #2961 as a comment. A FAIL either becomes a fix (and this
-directory's script learns the case) or a documented limit in the compose / native
-README, which then says what was actually checked.
+directory's script learns the case) or a documented limit in the guide's macOS page, which then says what was actually checked.
 
 Checked so far (M1 Mac mini, macOS 26.7, release 0.36.0 images), no FAIL: `docker` with
 colima 0.10.3, OrbStack and Docker Desktop 4.97; `native` with Lima 2.2.1 and with an

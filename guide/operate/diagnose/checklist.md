@@ -8,7 +8,7 @@ source_of_truth: "the commands are the runbooks and scripts under `deploy/` (whe
 English | [日本語](checklist.ja.md)
 
 When "it is up but does not work" or "I can't use it", narrow the cause down from the symptom.
-The commands that fix it are in each target's runbook, under "Troubleshooting" (for compose, [deploy/compose/README.md](../../../deploy/compose/README.md)).
+The commands that fix it are on each target's procedure pages (for compose, [Deploy with Docker Compose](../compose/install.md)).
 
 ## How it works
 
@@ -16,7 +16,7 @@ The commands that fix it are in each target's runbook, under "Troubleshooting" (
 |---|---|
 | Look at the Control Plane's log and health | The reason for a failed start or a refused sign-in is usually in the log |
 | Tell one person's problem from everybody's | Everybody points at the deployment; one person points at their workspace or account |
-| Narrow it down with the symptom table, and fix it with the runbook | |
+| Narrow it down with the symptom table, and fix it with the target's procedure | |
 
 The commands are the compose ones, run from `deploy/compose/`.
 
@@ -54,6 +54,7 @@ The commands are the compose ones, run from `deploy/compose/`.
 
 The Control Plane is a container that drives the host's Docker from outside. That arrangement has three constraints that, when broken, **fail silently instead of with an error**.
 The compose definition already keeps them; read this when you change the compose file yourself, or to guess a cause from a symptom.
+On a Mac, A is handled differently ([Run on an Apple Silicon Mac](../compose/macos.md#what-the-overlay-changes)).
 
 | Constraint | What to keep | Symptom when broken |
 |---|---|---|
@@ -70,7 +71,7 @@ and git through the Control Plane all fail at once.
 
 Whatever serves the public URL (a tunnel or reverse proxy) no longer accepts connections from the Docker bridges (it was rebound to one interface, say).
 Set up the workspace-only listener (`AF_CP_INTERNAL_LISTEN` on the docker0 address, `AF_CP_INTERNAL_URL=http://host.docker.internal:<port>`)
-and stop and start each workspace. The steps are under "Workspace listener" in [deploy/compose/README.md](../../../deploy/compose/README.md).
+and stop and start each workspace. The steps are in [When workspaces cannot reach the CP](../compose/workspace-listener.md).
 
 ## The TLS certificate is not issued
 

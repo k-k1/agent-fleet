@@ -83,7 +83,7 @@ cookie そのものは最長 `AF_SESSION_TTL`（既定 7 日）有効なまま�
 
 cookie の漏れ、端末の紛失、連絡の取れないアカウントなど、全員のセッションを今すぐ無効にしたいときに、その場で効くのは cookie の署名鍵を変えることだけです。
 
-1. 新しいランダムな値を作ります（[compose の手順書](../../../deploy/compose/README.md) に `AF_COOKIE_SECRET` を作る 1 行があります）
+1. 新しいランダムな値を作ります（[Docker Compose で構築する](../compose/install.ja.md#1-設定を書いてソースから起動する) に `AF_COOKIE_SECRET` を作る 1 行があります）
 2. `AF_COOKIE_SECRET`（`.env`・`oauth.env`・SSM のパラメータ）に入れます
 3. Control Plane を再起動します
 
