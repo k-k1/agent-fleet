@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
 )
 
 // The operator force-stop on the rescue's ownership and guarded steps (ADR 0121 decision 4,
@@ -65,7 +66,7 @@ func (f *ecsEC2Factory) forceStopHealth(ctx context.Context, cmds ssmSlotCommand
 	}
 	if !override {
 		if unknown {
-			return fmt.Errorf("could not tell whether the slot is dark or wedged (ECS: %v, SSM: %v); retry, or override", regErr, ssmErr)
+			return fmt.Errorf("%w (ECS: %v, SSM: %v, Agent probe or task read included); retry, or override", ErrSlotHealthUnknown, regErr, ssmErr)
 		}
 		if predicate == "" {
 			return ErrSlotHealthy
@@ -114,14 +115,24 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	}
 
 	var ids []string
-	if !adopted {
+	if adopted {
+		// Ownership moves to the operator under the claim lock, with the token verified fresh
+		// there: the marker becomes the operator's (so no resume scan carries it on), the
+		// service goes to 0 and the claim is dropped as a Stop does, and the set of the CP's
+		// pending commands is fixed while the token still holds.
+		var err error
+		m, ids, err = occ.adoptRescue(ctx, cmds, id, m, ec2TagValue(inst.Tags, ec2TagRescue))
+		if err != nil {
+			return res, f.forceStopErr(ctx, ctx, id, err)
+		}
+	} else {
 		// End the occupant's Start (desired 0, the claim dropped), then take the token on the
 		// count that Stop produced.
 		gen, err := occ.stopCounted(ctx)
 		if err != nil {
 			return res, fmt.Errorf("end the start of %s before stopping its slot: %w", res.Workspace, err)
 		}
-		m, ids, err = occ.rescuePrepare(ctx, cmds, darkDecision{slot: id, vol: home, launch: launch, gd: gen})
+		m, ids, err = occ.rescuePrepare(ctx, cmds, darkDecision{slot: id, vol: home, launch: launch, gd: gen, operator: true})
 		if err != nil {
 			if now, cerr := occ.startGenNow(ctx); errors.Is(err, errRescueStepAside) && cerr == nil && now != gen {
 				return res, ErrSlotStartedAgain
@@ -132,23 +143,15 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	if err := rescueStep(ctx, "prepared"); err != nil {
 		return res, err
 	}
-	// What a failed attempt leaves behind: a marker the sweeper's resume scan would carry on
-	// to a detach, which the operator did not ask for. An adopted marker is the rescue's own
-	// and stays.
+	// What a failed attempt leaves behind: an operator marker nobody carries on. Removed, so
+	// it does not fence the home until it ages out.
 	giveUp := func() {
-		if adopted {
-			return
-		}
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*rescueWedgeBudget)
 		defer cancel()
 		occ.finalizeRescue(fctx, id, m.String(), m)
 	}
 
-	if adopted {
-		res.CancelledCommands, res.CancelFailed = cancelSlotVolumeCommands(ctx, cmds, id)
-	} else {
-		res.CancelledCommands, res.CancelFailed = cancelCommandIDs(ctx, cmds, id, ids)
-	}
+	res.CancelledCommands, res.CancelFailed = cancelCommandIDs(ctx, cmds, id, ids)
 
 	// The task ENI, on the rescue's stage: the override never skips it.
 	eniDeadline := started.Add(forceStopENIBudget)
@@ -157,9 +160,9 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	}
 	eniCtx, cancelENI := context.WithDeadline(ctx, eniDeadline)
 	defer cancelENI()
-	// A taken-over wedged release is past the phases the ENI stage normally runs in, but its
+	// A taken-over marker (a wedged release in `detaching`, say) is past the phases the ENI stage runs in, but its
 	// slot is a running box that may well hold a task ENI: the gate is not skipped for it.
-	if m.Phase.rank() <= rescuePhaseDeregistered.rank() || (adopted && m.Wedged) {
+	if m.Phase.rank() <= rescuePhaseDeregistered.rank() || adopted {
 		if out, err := f.ec2.DescribeInstances(eniCtx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}}); err == nil {
 			res.Deregistered = instancesHoldTaskENI(out)
 		}
@@ -198,6 +201,8 @@ func (f *ecsEC2Factory) forceStopErr(ctx, stageCtx context.Context, id string, e
 	switch {
 	case errors.Is(err, errRescueOvertaken):
 		return ErrSlotStartedAgain
+	case errors.Is(err, errRescueStale):
+		return fmt.Errorf("%w (the marker moved on)", ErrSlotRescueActive)
 	case errors.Is(err, errRescueBlocked):
 		return fmt.Errorf("not stopping %s: %w: %v (its commands are already cancelled and the occupant's start is ended)", id, ErrSlotTaskENIHeld, err)
 	case ctx.Err() == nil && stageCtx.Err() != nil:
@@ -232,4 +237,93 @@ func (e *ecsEC2Runtime) rescueStopSend(ctx context.Context, slot string, m *resc
 		}
 		return nil
 	})
+}
+
+// adoptRescue moves a blocked or aged marker to the operator, under the claim lock with
+// everything the token stands on read fresh there: the count is still the marker's g_r, the
+// box carries exactly this marker in this launch epoch, and the home is on it. Then, still
+// under the lock and each step preceded by the clock, it rewrites the marker as the operator's
+// (the resume scan never continues that kind), puts the service at 0 and drops the claim as a
+// Stop does, and fixes the set of the CP's pending commands, so nothing is cancelled that a
+// newer Start sent. The count is not bumped: that would overtake the token being taken over.
+func (e *ecsEC2Runtime) adoptRescue(ctx context.Context, cmds ssmSlotCommands, slot string, cur rescueMarker, raw string) (rescueMarker, []string, error) {
+	lctx, unlock, err := e.lockBounded(ctx, homeLockClaim, e.base.name, rescueClaimBudget)
+	if err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+	defer unlock()
+	guard := homeGuardOf(lctx)
+	lapsed := func(what string) error {
+		if err := guard.check(); err != nil {
+			return fmt.Errorf("%w: %s: %w", errRescueAborted, what, err)
+		}
+		return nil
+	}
+	g, err := e.startGenNow(lctx)
+	if err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: start count: %w", errRescueAborted, err)
+	}
+	if g != cur.Gen {
+		return rescueMarker{}, nil, fmt.Errorf("%w: the start count is %d, the marker holds %d", errRescueOvertaken, g, cur.Gen)
+	}
+	inst, err := e.slotInstance(lctx, slot)
+	if err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: slot: %w", errRescueAborted, err)
+	}
+	if inst == nil || inst.LaunchTime == nil || !inst.LaunchTime.UTC().Truncate(time.Second).Equal(cur.Epoch) {
+		return rescueMarker{}, nil, fmt.Errorf("%w: the box is not the one the marker names", errRescueOvertaken)
+	}
+	if ec2TagValue(inst.Tags, ec2TagRescue) != raw {
+		return rescueMarker{}, nil, fmt.Errorf("%w: the marker changed", errRescueStale)
+	}
+	vol, err := e.homeVolume(lctx)
+	if err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: home: %w", errRescueAborted, err)
+	}
+	if vol == nil || aws.ToString(vol.VolumeId) != cur.Volume || attachedInstance(vol) != slot {
+		return rescueMarker{}, nil, fmt.Errorf("%w: the home is no longer on the box", errRescueOvertaken)
+	}
+	if err := lapsed("before the marker moves"); err != nil {
+		return rescueMarker{}, nil, err
+	}
+	m := cur
+	m.Wedged, m.Operator = false, true
+	if err := e.writeRescueMarker(lctx, slot, m); err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: marker: %w", errRescueAborted, err)
+	}
+	if svc, ok, err := e.base.describeService(lctx); err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: service: %w", errRescueAborted, err)
+	} else if ok && svc.DesiredCount > 0 {
+		if err := lapsed("before scaling the service down"); err != nil {
+			return rescueMarker{}, nil, err
+		}
+		if _, err := e.base.ecs.UpdateService(lctx, &ecs.UpdateServiceInput{
+			Cluster: aws.String(e.base.cfg.cluster), Service: aws.String(e.base.name), DesiredCount: aws.Int32(0),
+		}); err != nil {
+			return rescueMarker{}, nil, fmt.Errorf("%w: scale %s to 0: %w", errRescueAborted, e.base.name, err)
+		}
+	}
+	e.clearBlockedPhase()
+	e.setPhase("")
+	if ec2TagValue(vol.Tags, EC2TagClaim) != "" {
+		if err := lapsed("before dropping the claim"); err != nil {
+			return rescueMarker{}, nil, err
+		}
+		e.unclaim(lctx, aws.ToString(vol.VolumeId))
+	}
+	ids, err := listSlotVolumeCommandIDs(lctx, cmds, slot)
+	if err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: list commands: %w", errRescueAborted, err)
+	}
+	if err := lapsed("after listing the commands"); err != nil {
+		return rescueMarker{}, nil, err
+	}
+	// Nothing can count a Start while the claim lock is held; a count that moved anyway is
+	// another process that bypassed it, and its commands are not ours to cancel.
+	if g2, err := e.startGenNow(lctx); err != nil {
+		return rescueMarker{}, nil, fmt.Errorf("%w: start count: %w", errRescueAborted, err)
+	} else if g2 != cur.Gen {
+		return rescueMarker{}, nil, fmt.Errorf("%w: the start count moved to %d while the commands were listed", errRescueOvertaken, g2)
+	}
+	return m, ids, nil
 }

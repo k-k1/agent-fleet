@@ -215,6 +215,8 @@ func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident s
 		aerr = &APIError{http.StatusConflict, "slot_started_again", err.Error()}
 	case errors.Is(err, runtime.ErrSlotHealthy):
 		aerr = &APIError{http.StatusConflict, "slot_healthy", err.Error()}
+	case errors.Is(err, runtime.ErrSlotHealthUnknown):
+		aerr = &APIError{http.StatusConflict, "slot_health_unknown", err.Error()}
 	case errors.Is(err, runtime.ErrSlotRescueActive):
 		aerr = &APIError{http.StatusConflict, "slot_rescue_active", err.Error()}
 	default:

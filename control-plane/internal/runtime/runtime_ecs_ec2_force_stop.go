@@ -42,6 +42,9 @@ var (
 	// ErrSlotHealthy: both agents answer, so this is not a wedged slot and a workspace may
 	// be running on it. Overridable on purpose, by an operator who knows better.
 	ErrSlotHealthy = errors.New("slot is neither dark nor wedged by the sweeper's predicates (its agents answer, or it has only just started)")
+	// ErrSlotHealthUnknown: a health signal could not be read, so the predicates cannot say.
+	// Overridable like ErrSlotHealthy.
+	ErrSlotHealthUnknown = errors.New("could not tell whether the slot is dark or wedged")
 	// ErrSlotRescueActive: a rescue or release of this slot's home holds its ownership token
 	// and has not failed or aged enough for an operator to take it over.
 	ErrSlotRescueActive = errors.New("a rescue of this slot is in progress; try again when it shows blocked")

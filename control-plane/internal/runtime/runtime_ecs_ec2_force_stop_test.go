@@ -66,7 +66,7 @@ func TestForceStopSlotOverrideStopsAHealthySlot(t *testing.T) {
 func TestForceStopSlotUnreadableHealthRefusesWithoutOverride(t *testing.T) {
 	h := wedgedSlot(t)
 	h.ssmc.infoErr = errors.New("throttled")
-	if _, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false); err == nil || errors.Is(err, ErrSlotHealthy) {
+	if _, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false); !errors.Is(err, ErrSlotHealthUnknown) || errors.Is(err, ErrSlotHealthy) {
 		t.Fatalf("an unreadable SSM state must refuse with its own error, got %v", err)
 	}
 	if len(h.ec2.stopForce) != 0 {

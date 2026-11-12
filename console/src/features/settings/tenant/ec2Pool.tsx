@@ -288,6 +288,14 @@ export function PoolView() {
     setBusy(false);
     if (d?.error) {
       setStopErr(tr("pool.force_stop_failed", { msg: errText(d.error) }));
+      // The server's gate is the sweeper's predicates, which the row cannot show (a slot that
+      // is registered but SSM-online, one still booting, a stale wedged badge, a read that
+      // failed). Whatever the row said, a refusal on health offers the explicit override: the
+      // warning and the acknowledgement appear, and the next press sends override_healthy.
+      if (d.error.code === "slot_healthy" || d.error.code === "slot_health_unknown") {
+        setStopOverride(true);
+        setStopAck(false);
+      }
       return;
     }
     setStopping(null);

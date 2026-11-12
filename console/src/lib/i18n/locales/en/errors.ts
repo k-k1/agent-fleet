@@ -25,6 +25,12 @@ export const errors: Record<keyof typeof jaErrors, string> = {
     "You don't have permission to search AWS instances. Ask your AWS administrator to grant ssm:DescribeInstanceInformation.",
   "err.quota_sessions":
     "You've reached the limit on concurrently running sessions. Stop one of the running sessions before creating another.",
+  "err.slot_healthy":
+    "Right now this slot is neither dark nor wedged (its agents answer, or it has only just started). If you still need it stopped, override in the confirmation and stop it.",
+  "err.slot_health_unknown":
+    "The slot's state could not be read, so it cannot be told whether it is dark or wedged. Wait a moment and retry, or override and stop it if you are sure it must stop.",
+  "err.slot_rescue_active":
+    "A rescue (or release) is already running on this slot. Press again once it shows blocked, or after 10 minutes; a blocked rescue is taken over and continued then.",
   "err.sessions_running":
     "This working copy has running sessions. Switching would swap the files those sessions are using for another branch's and corrupt their work, so it's blocked here. Open the branch as a separate working copy instead.",
   "err.branch_in_use":

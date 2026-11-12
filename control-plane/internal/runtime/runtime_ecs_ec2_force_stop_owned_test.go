@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
 func slotMarker(h *ec2Harness) string {
@@ -249,5 +250,140 @@ func TestForceStopTakesOverABlockedWedgedRelease(t *testing.T) {
 	}
 	if !res.Deregistered || len(h.ci.deregistered) != 1 || stopsOnBox(h) != 1 || slotMarker(h) != "" {
 		t.Fatalf("res %+v deregistered %v stops %v marker %q: the ENI gate must run before the stop", res, h.ci.deregistered, h.ec2.stopForce, slotMarker(h))
+	}
+}
+
+func resumer(h *ec2Harness, f0 *ecsEC2Factory) *ecsEC2Factory {
+	f := h.factory()
+	f.pool.darkAction = darkActionRescue
+	f.pool.wedgedAction = wedgedActionRelease
+	f.leases = f0.leases
+	return f
+}
+
+// Another CP's resume scan must neither continue nor finalize an operator's marker while its
+// handler works: here it runs between the token and the first destructive call.
+func TestForceStopMarkerIsNotCarriedOnByAnotherCPsResume(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	f := h.factory()
+	var during string
+	hookAt("prepared", func() {
+		resumer(h, f).resumeRescues(ctx)
+		during = slotMarker(h)
+	})
+	defer func() { rescueStepHook = nil }()
+	if _, err := f.ForceStopSlot(ctx, "i-wedge", false); err != nil {
+		t.Fatalf("ForceStopSlot: %v", err)
+	}
+	m, ok := parseRescueMarker(during)
+	if !ok || !m.Operator {
+		t.Fatalf("the marker after another CP's resume = %q: it must still be there, as the operator's", during)
+	}
+	if h.ec2.countCalls("DetachVolume") != 0 || stopsOnBox(h) != 1 {
+		t.Fatalf("calls %v stops %v: the resume must not have acted", h.ec2.calls, h.ec2.stopForce)
+	}
+}
+
+// A handler that dies after taking the token leaves a marker no resume scan carries to a
+// detach: young, it is left alone; aged, it is only finalized.
+func TestForceStopCrashedHandlerLeavesNothingToDetach(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	f := h.factory()
+	rescueStepHook = func(_ context.Context, s string) error {
+		if s == "prepared" {
+			return errRescueCrash
+		}
+		return nil
+	}
+	defer func() { rescueStepHook = nil }()
+	if _, err := f.ForceStopSlot(ctx, "i-wedge", false); !errors.Is(err, errRescueCrash) {
+		t.Fatalf("err = %v", err)
+	}
+	rescueStepHook = nil
+	if m, ok := parseRescueMarker(slotMarker(h)); !ok || !m.Operator {
+		t.Fatalf("marker %q", slotMarker(h))
+	}
+	resumer(h, f).resumeRescues(ctx)
+	if slotMarker(h) == "" {
+		t.Fatal("a young operator marker was finalized under its handler")
+	}
+	m, _ := parseRescueMarker(slotMarker(h))
+	m.Began = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	h.ec2.setInstanceTag("i-wedge", ec2TagRescue, m.String())
+	resumer(h, f).resumeRescues(ctx)
+	if slotMarker(h) != "" {
+		t.Fatalf("an aged operator marker was not finalized: %q", slotMarker(h))
+	}
+	if h.ec2.countCalls("DetachVolume") != 0 || stopsOnBox(h) != 0 || len(h.ci.deregistered) != 0 {
+		t.Fatalf("a resume acted for a crashed operator: %v", h.ec2.calls)
+	}
+}
+
+// Taking over fixes the command set under the claim lock with the token read fresh: a count
+// that has already moved past the marker, or moves while the commands are listed, means a
+// newer Start's commands are not cancelled.
+func TestForceStopTakeoverCancelsNothingOnceAStartOvertook(t *testing.T) {
+	adoptable := func(h *ec2Harness, gen int64) {
+		h.ssmc.unfinished = []ssmtypes.Command{{CommandId: aws.String("cmd-start"), Comment: aws.String(slotVolumeCommandComment)}}
+		m := rescueMarker{Volume: "vol-1", Epoch: slotEpoch(h), Phase: rescuePhaseDeregistering, Gen: gen,
+			Began: time.Now().Add(-time.Hour).UTC().Truncate(time.Second)}
+		h.ec2.setInstanceTag("i-wedge", ec2TagRescue, m.String())
+	}
+	t.Run("count already past the marker", func(t *testing.T) {
+		h := wedgedSlot(t)
+		g, _ := h.rt.startGenNow(context.Background())
+		h.rt.generation().Add(1) // a Start was counted after the marker's token
+		adoptable(h, g)
+		_, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", true)
+		if !errors.Is(err, ErrSlotStartedAgain) || len(h.ssmc.cancelled) != 0 || stopsOnBox(h) != 0 {
+			t.Fatalf("err %v cancelled %v stops %v", err, h.ssmc.cancelled, h.ec2.stopForce)
+		}
+	})
+	t.Run("a Start counted while the commands are listed", func(t *testing.T) {
+		h := wedgedSlot(t)
+		g, _ := h.rt.startGenNow(context.Background())
+		adoptable(h, g)
+		h.ssmc.onList = func() { h.ssmc.onList = nil; h.rt.generation().Add(1) }
+		_, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", true)
+		if !errors.Is(err, ErrSlotStartedAgain) || len(h.ssmc.cancelled) != 0 || stopsOnBox(h) != 0 {
+			t.Fatalf("err %v cancelled %v stops %v", err, h.ssmc.cancelled, h.ec2.stopForce)
+		}
+	})
+}
+
+// A wedged release that died after its token but before the scale-down leaves the service at
+// 1: the takeover ends the Start as a Stop does (desired 0, claim dropped, count untouched).
+func TestForceStopTakeoverPutsTheServiceAtZero(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	h.ci.registered["i-wedge"] = true
+	h.ssmc.online["i-wedge"] = true
+	h.ec2.setTag("vol-1", EC2TagClaim, "i-wedge")
+	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+	g, _ := h.rt.startGenNow(ctx)
+	m := rescueMarker{Volume: "vol-1", Epoch: slotEpoch(h), Phase: rescuePhaseBegun, Gen: g, Wedged: true,
+		Began: time.Now().Add(-time.Hour).UTC().Truncate(time.Second)}
+	h.ec2.setInstanceTag("i-wedge", ec2TagRescue, m.String())
+	if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", true); err != nil {
+		t.Fatalf("ForceStopSlot: %v", err)
+	}
+	if got := h.ecs.services["af-ws-acme-alice"].DesiredCount; got != 0 {
+		t.Fatalf("service desired %d, want 0", got)
+	}
+	if now, _ := h.rt.startGenNow(ctx); now != g || stopsOnBox(h) != 1 {
+		t.Fatalf("count %d (was %d) stops %v", now, g, h.ec2.stopForce)
+	}
+}
+
+func TestOperatorMarkerRoundTripAndOldReaders(t *testing.T) {
+	m := rescueFixture()
+	m.Operator = true
+	got, ok := parseRescueMarker(m.String())
+	if !ok || !got.Operator || got.Wedged || !strings.HasSuffix(m.String(), "/operator") {
+		t.Fatalf("round trip: %q -> %+v", m.String(), got)
 	}
 }
