@@ -114,15 +114,19 @@ See [Fix a workspace that will not start or has stopped](../troubleshooting/work
 
 ### An agent CLI has been the same version for weeks
 
-A workspace's CLI is the version the image fixes, or, when [the update at start](#keep-the-agent-clis-on-the-latest-version) is on, the latest version at that start.
-First check whether **Update the agent CLIs and rtk to the latest on start** under **Agent CLI updates** is on.
+A workspace's CLI is usually the version the image fixes, or, when [the update at start](#keep-the-agent-clis-on-the-latest-version) is on, the latest version at that start.
+Check these first.
+
+- Whether **Update the agent CLIs and rtk to the latest on start** under **Agent CLI updates** is on. Even when it is, a start nobody is watching, or a home disk low on space, skips the update
+- Whether "**Tool versions**" shows **install failed: …** or **upgrade skipped: …** ([Check the tool versions](#check-the-tool-versions))
+- Whether you are in a session that was already running before the update ([The version you picked is not the one in use](#the-version-you-picked-is-not-the-one-in-use))
 
 The line under the "**Tool versions**" table, "**Upstream release watch: last clean run …**", tells you whether the watch for new releases of each CLI (every 2 hours) is working.
 The watch finding a new version and that version reaching the image are separate steps.
 
 | What the line shows | What it means |
 |---|---|
-| A recent clean run and no warning | The watch is working. The version stands still because of the update-at-start setting or the image's version. If it matters, ask your deployment administrator |
+| A recent clean run and no warning | The watch is working. If the checks above do not explain why the version stands still, ask your deployment administrator |
 | "The watcher cannot read …" or "The watcher has not had a clean run for over 48 hours" | The watch is not working properly, and a new version may have been missed. Ask your deployment administrator to check the watch |
 | No line at all | The watch's state is unknown (for example, this deployment cannot reach GitHub). That is not itself a fault |
 
