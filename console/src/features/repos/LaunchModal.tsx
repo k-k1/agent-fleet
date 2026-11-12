@@ -247,7 +247,13 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // Fields the member changed by hand. A late answer (the CP's, or the kinds list) may re-seed any
   // field NOT in here; an edited one is never touched, even if it was edited back to its old value.
   const dirty = useRef(new Set<string>());
-  const mark = (f: string) => void dirty.current.add(f);
+  // A model, effort, start mode or route belongs to the kind it was picked for, so editing one also
+  // pins the kind: a late answer must not move the dialog to another agent under it.
+  const KIND_BOUND = ["model", "effort", "startMode", "route"];
+  const mark = (f: string) => {
+    dirty.current.add(f);
+    if (KIND_BOUND.includes(f)) dirty.current.add("kind");
+  };
   // Applies kind k's seeds to every field the member has not edited. `fresh` = a kind change, which
   // also re-resolves what belongs to the kind (effort, start mode, route).
   const seedFields = (k: string, fresh: boolean) => {
@@ -264,7 +270,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // The member picked kind k: that is their choice, and what depended on the old kind starts over.
   const pickKindByHand = (k: string) => {
     mark("kind");
-    for (const f of ["model", "effort", "startMode", "perm", "route", "driver"]) dirty.current.delete(f);
+    for (const f of ["perm", "driver", ...KIND_BOUND]) dirty.current.delete(f);
     setKind(k);
     seedFields(k, true);
   };
@@ -273,8 +279,9 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // unavailable. Re-seed once the real list lands and the held kind isn't in it.
   useEffect(() => {
     if (!kinds.length || kinds.includes(kind)) return;
-    // The held kind cannot launch, so nothing about it is worth keeping.
-    dirty.current.clear();
+    // The held kind cannot launch: what was picked for it goes, but a budget or permission the
+    // member set is valid for any kind and stays.
+    for (const f of ["kind", "driver", ...KIND_BOUND]) dirty.current.delete(f);
     const k = pickKind();
     setKind(k);
     seedFields(k, true);

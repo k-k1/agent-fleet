@@ -995,6 +995,31 @@ describe("tenant launch defaults", () => {
     }
   });
 
+  it("keeps a budget typed while the kinds list was still resolving (C11)", async () => {
+    useUIStateStore.setState({ state: answer("codex") as never });
+    await render([]);
+    await expand("More");
+    const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "9");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => root!.render(<LaunchModal repo="app" branch="main" kinds={["codex"]} onClose={onClose} onLaunch={onLaunch} />));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("codex");
+    expect(launchedWith().spendCapUsd).toBe(9);
+  });
+
+  it("does not move to another agent under a model picked by hand (C12)", async () => {
+    await render(["claude", "codex"]);
+    const picked = byText("Sonnet");
+    await click(picked);
+    await act(async () => useUIStateStore.setState({ state: answer("codex") as never }));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("claude");
+    expect(launchedWith().model).toMatch(/sonnet/i);
+  });
+
   it("changes nothing without a cached answer", async () => {
     await render(["claude", "codex"]);
     await click(byText("Start in a worktree"));
