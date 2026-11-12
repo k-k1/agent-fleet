@@ -431,3 +431,25 @@ expires on a dead CP, so the replica that resumes can take it.
   runtime for a home carries no tenant id.
 
 Follow-ups: #3908
+
+**2026-11-12 (the fences, #3961).** Decision 3 rules 1, 2 and 4 and the `af-rescue` tag type are built, inert until a
+rescue writes a marker (code: `runtime_ecs_ec2_rescue.go`). Where the code chose among readings of the text above:
+
+- Rule 2 is `releaseGate`, called in `releaseSlotSince` right after the mount lock is taken. It lists the pool's instances
+  carrying the `af-rescue` key (any state but terminated) and refuses when a marker names this home's volume. The default is
+  refuse; the callers the decision exempts opt in on the context (`asHomeOwner`: `releaseAndReplace`, `moveHomeOff` for
+  `replaceReservedSlot`, and `Destroy` / `EraseHome`, whose `Stop` has already moved the count; `asRescue`: a rescue's own
+  releases, matched on volume, epoch and `g_r`, not on phase). So eviction, `makeRoom`, hibernation, the sweeper and the baker
+  are fenced without touching their call sites, and a releaser added later is fenced until someone argues otherwise. A
+  marker read that fails refuses, and a value that does not parse but starts with the volume id refuses.
+- `makeRoom`'s victim is refused through the same gate; `evictLongestIdle` returns the refusal to its Start rather than
+  trying the next candidate (candidate skipping stays the optimisation the text calls it).
+- Rule 1: `slotTypeMatches` answers "mismatch" for `af-role=quarantined` first. `releaseSlotSince` did not wait out a
+  `stopping` box (`instanceRunning` reads it as "not running" and skipped the umount); it now waits, bounded at 5 minutes
+  under the lock, then fails the release.
+- Rule 4: `terminateSlot(…, intent)` with `terminateAutomatic`, `terminateMakeRoom` (also refuses a box carrying `af-rescue` or
+  `af-dark-since`) and `terminateOperator`. The gate re-reads the box; a failed read refuses. `makeRoom` now returns the
+  refusal instead of waiting for a box that was never terminated.
+- No IAM or tag-fence change: nothing in the Control Plane writes `af-rescue` yet, and reading it is `DescribeInstances`.
+  The writer (#3964) adds its `CreateTags` / `DeleteTags` entries to `deploy/local/cfn-cp-tag-fence-test.py` and the role.
+

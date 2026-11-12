@@ -73,6 +73,15 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	defer unlock()
 	outer := ctx
 	ctx = lctx
+	// Under the mount lock, at the destructive entry: see releaseGate for why here.
+	if err := e.releaseGate(ctx, aws.ToString(vol.VolumeId)); err != nil {
+		return err
+	}
+	// A box that is still stopping reads as "not running" below and would be detached from
+	// mid-shutdown; wait it out first (ADR 0121 decision 3, rule 1).
+	if err := e.waitNotStopping(ctx, instanceID); err != nil {
+		return err
+	}
 	running, err := e.instanceRunning(ctx, instanceID)
 	if err != nil {
 		return err
@@ -127,6 +136,34 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
 	return nil
 }
+
+// waitNotStopping returns once the box is no longer `stopping`. Bounded: a box that stays
+// there (a wedged guest) is not one to detach from, so the release fails and the next pass
+// asks again.
+func (e *ecsEC2Runtime) waitNotStopping(ctx context.Context, instanceID string) error {
+	for i := 0; i < releaseStoppingPolls; i++ {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err != nil {
+			return err
+		}
+		stopping := false
+		for _, r := range out.Reservations {
+			for _, inst := range r.Instances {
+				stopping = stopping || (inst.State != nil && inst.State.Name == ec2types.InstanceStateNameStopping)
+			}
+		}
+		if !stopping {
+			return nil
+		}
+		if err := e.sleep(ctx, 3*time.Second); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("slot %s is still stopping; not detaching from it", instanceID)
+}
+
+// releaseStoppingPolls x 3 s is how long a release waits for a stopping box.
+const releaseStoppingPolls = 100
 
 // waitDeviceFree polls until the slot no longer lists the home device. The instance view
 // is the conservative one here — it keeps reporting the device while the volume side
@@ -218,7 +255,8 @@ func (e *ecsEC2Runtime) Destroy(ctx context.Context) ([]string, error) {
 	if err := e.Stop(ctx); err != nil {
 		return nil, err
 	}
-	if err := e.releaseSlot(ctx); err != nil {
+	// The owner's own action: its Stop has moved the Start count, which overtakes a rescue.
+	if err := e.releaseSlot(asHomeOwner(ctx)); err != nil {
 		return nil, err
 	}
 	if err := e.deleteHomeVolume(ctx); err != nil {
@@ -261,8 +299,9 @@ func (e *ecsEC2Runtime) EraseHome(ctx context.Context) error {
 		return err
 	}
 	// releaseSlot waits for the task to be gone and refuses while the service wants one,
-	// so a workspace somebody started in the meantime keeps its home.
-	if err := e.releaseSlot(ctx); err != nil {
+	// so a workspace somebody started in the meantime keeps its home. The Stop above moved the
+	// Start count, which overtakes a rescue, so the marker does not refuse this one.
+	if err := e.releaseSlot(asHomeOwner(ctx)); err != nil {
 		return err
 	}
 	// Which volumes this erase makes history of: the live one, and the ones the listed

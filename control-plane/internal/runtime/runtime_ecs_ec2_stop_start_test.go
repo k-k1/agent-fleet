@@ -202,6 +202,11 @@ func TestECSEC2CleanupInFlightLeavesTheRestartsSlotAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.ci.registered["i-hot"] = true
+		// This test pins the cleanup's ownership re-check, so the restart has to land on the
+		// slot. A Start that reads af-role=quarantined no longer does (ADR 0121 rule 1: it
+		// releases and re-places, see TestSlotTypeMatchesTreatsAQuarantinedSlotAsAMismatch),
+		// hence the tag is put back, as it would be if the restart had read the slot first.
+		h.ec2.setInstanceTag("i-hot", EC2TagRole, ec2RoleSlot)
 		if err := h.rt.Start(ctx); err != nil {
 			t.Fatal(err)
 		}

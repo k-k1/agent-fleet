@@ -676,7 +676,11 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 		log.Printf("ecs-ec2: the pool is full of slots %s cannot use; taking the empty %s (%s) out of it",
 			e.instanceType, best.id, best.itype)
 	}
-	e.terminateSlot(ctx, best.id, "made room for a "+e.instanceType)
+	// Refused for a quarantined box, or one that carries a rescue marker or a dark stamp: the
+	// victim list was read before any of those could land.
+	if err := e.terminateSlot(ctx, best.id, "made room for a "+e.instanceType, terminateMakeRoom); err != nil {
+		return false, err
+	}
 	return true, e.waitSlotGone(ctx, best.id)
 }
 
