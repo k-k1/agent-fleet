@@ -378,7 +378,19 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     <div className="acct-sep" />
                   </>
                 )}
-                <a className="acct-item" role="menuitem" {...userGuide} onClick={() => setMenuOpen(false)}>
+                {/* A link, so middle-click and copy-link work; Space is handled because a menuitem
+                    is activated by Space as well as Enter, and a link answers Enter only. */}
+                <a
+                  className="acct-item"
+                  role="menuitem"
+                  {...userGuide}
+                  onClick={() => setMenuOpen(false)}
+                  onKeyDown={(e) => {
+                    if (e.key !== " ") return;
+                    e.preventDefault();
+                    e.currentTarget.click();
+                  }}
+                >
                   <Icon name="book" /> {tr("topbar.user_guide")}
                 </a>
                 {/* Way back in after dismissing the first-run card with "later" (launch flow Ph1). */}

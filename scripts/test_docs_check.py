@@ -1035,6 +1035,36 @@ class ConsoleGuideTests(unittest.TestCase):
         self.assertIn("guide/user/files/terminal.md has no heading with the id 'copy'", out)
         self.assertNotIn("ja.md", out)
 
+    def test_anchor_object_in_either_order(self):
+        for code in ('openGuidePage("user/files/terminal", { ja: "コピー", en: "copy-and-paste" });\n',
+                     "guideLinkProps('user/files/terminal', {\n  'ja':'コピー',\n  \"en\" : `copy-and-paste`,\n});\n"):
+            with self.subTest(code=code):
+                out = self.errors(code)
+                self.assertIn("guide/user/files/terminal.ja.md has no heading with the id 'コピー'", out)
+                self.assertNotIn("terminal.md has no heading", out)
+        for code in ('openGuidePage("user/files/terminal", { en: "copy-and-paste", ja: "コピー" });\n',
+                     'openGuidePage("user/files/terminal", {ja:"コピー と",en:"copy"});\n'):
+            with self.subTest(code=code):
+                out = self.errors(code)
+                self.assertIn("terminal.ja.md has no heading", out)
+        self.assertIn("terminal.md has no heading with the id 'copy'",
+                      self.errors('openGuidePage("user/files/terminal", {ja:"コピーと貼り付け",en:"copy"});\n'))
+
+    def test_anchor_object_needs_both_languages(self):
+        self.assertIn("must give both en and ja", self.errors(
+            'openGuidePage("user/files/terminal", { ja: "コピーと貼り付け", en: anchor });\n'))
+
+    def test_guide_file_paths_in_strings_are_reported(self):
+        (self.root / "console/src/lib/i18n/locales/en").mkdir(parents=True)
+        out = self.errors(
+            '"a": "See guide/admin/access/oauth-apps.md.",\n'
+            '"b": "(user/files/terminal.ja.md)",\n'
+            '"c": "a/b.md becomes a--b, docs/log/28-i18n.md",\n',
+            name="lib/i18n/locales/en/admin.ts")
+        self.assertIn("en/admin.ts:1: 'guide/admin/access/oauth-apps.md' names a guide page", out)
+        self.assertIn("en/admin.ts:2: 'user/files/terminal.ja.md' names a guide page", out)
+        self.assertNotIn(":3:", out)
+
     def test_test_files_are_skipped(self):
         self.assertEqual(self.errors('guideUrl("user/nope");\n', name="menu.test.ts"), "")
 

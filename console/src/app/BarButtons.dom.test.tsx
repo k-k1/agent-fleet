@@ -174,6 +174,21 @@ describe("top bar", () => {
     expect(guide.rel).toBe("noopener noreferrer");
     expect(host!.querySelector(".acct-ver-copy")!.getAttribute("aria-label")).toBe(t("topbar.copy_version"));
   });
+
+  it("activates the user guide link with Space, like the other menu items, and closes the menu", async () => {
+    await mount(<TopBar toggleNav={() => {}} toggleLeft={() => {}} toggleLeftMode={() => {}} />);
+    await click(".acct-btn");
+    const guide = host!.querySelector<HTMLAnchorElement>(".acct-menu a.acct-item")!;
+    const clicked = vi.fn((e: Event) => e.preventDefault()); // jsdom cannot navigate
+    guide.addEventListener("click", clicked);
+    const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    await act(async () => {
+      guide.dispatchEvent(space);
+    });
+    expect(space.defaultPrevented).toBe(true); // no page scroll
+    expect(clicked).toHaveBeenCalledTimes(1);
+    expect(host!.querySelector(".acct-menu")).toBeNull();
+  });
 });
 
 describe("SwatchGrid", () => {

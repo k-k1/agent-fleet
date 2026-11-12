@@ -2060,13 +2060,19 @@ def check_redirects(files: list[str], f: Findings) -> None:
 
 
 # A literal page id handed to console/src/lib/guideDocs.ts, with its optional anchor: a string
-# used in both languages, or `{ en: "…", ja: "…" }` when the translated headings differ.
+# used in both languages, or `{ en: "…", ja: "…" }` (either order) when the translated
+# headings differ. The object is captured whole and its fields read by CONSOLE_GUIDE_FIELD_RE.
 _Q = r"[\"'`]"
 CONSOLE_GUIDE_CALL_RE = re.compile(
     r"\b(?:openGuidePage|guideLinkProps|guideUrl)\(\s*" + _Q + r"([^\"'`]+)" + _Q
-    + r"(?:\s*,\s*(?:" + _Q + r"([^\"'`]*)" + _Q
-    + r"|\{\s*en\s*:\s*" + _Q + r"([^\"'`]*)" + _Q + r"\s*,\s*ja\s*:\s*" + _Q + r"([^\"'`]*)" + _Q + r"\s*,?\s*\}))?"
+    + r"(?:\s*,\s*(?:" + _Q + r"([^\"'`]*)" + _Q + r"|(\{[^{}]*\})))?"
 )
+CONSOLE_GUIDE_FIELD_RE = re.compile(r"[\"']?\b(en|ja)[\"']?\s*:\s*" + _Q + r"([^\"'`]*)" + _Q)
+
+
+# A guide page written into a Console string as a file path ("guide/admin/x.md", "user/y.ja.md"):
+# the reader has no such file, so a string names the page and the component links it.
+CONSOLE_GUIDE_PATH_RE = re.compile(r"(?<![\w./-])(?:guide/)?(?:user|admin|ref|operate)/[\w./-]+?\.md\b")
 
 
 def check_console_guide(f: Findings) -> None:
@@ -2076,7 +2082,12 @@ def check_console_guide(f: Findings) -> None:
     names no page is a 404 that no link checker follows and no test notices. A page id is the
     path under guide/ without extension; the anchor is a heading id under the Console's slug
     rule, which the site also uses. Test files are skipped: their ids are fixtures.
+
+    The i18n catalogues must not name a guide page by file path either: the guide opens on
+    the site, so such a string sends the reader to a file they cannot open. Give the page's
+    title in the string and link it with guideLinkProps instead.
     """
+    locales = os.path.join(ROOT, "console", "src", "lib", "i18n", "locales")
     for dirpath, dirnames, filenames in os.walk(os.path.join(ROOT, "console", "src")):
         dirnames[:] = [d for d in dirnames if d != "node_modules"]
         for name in sorted(filenames):
@@ -2084,13 +2095,22 @@ def check_console_guide(f: Findings) -> None:
                 continue
             path = os.path.join(dirpath, name)
             body = read(path)
+            if path.startswith(locales + os.sep):
+                for m in CONSOLE_GUIDE_PATH_RE.finditer(body):
+                    line = body.count("\n", 0, m.start()) + 1
+                    f.errors.append(f"{os.path.relpath(path, ROOT)}:{line}: '{m.group(0)}' names a guide page as a "
+                                    "file; name the page and link it with guideLinkProps (lib/guideDocs.ts)")
             for m in CONSOLE_GUIDE_CALL_RE.finditer(body):
                 line = body.count("\n", 0, m.start()) + 1
                 where = f"{os.path.relpath(path, ROOT)}:{line}"
                 page, _, inline = m.group(1).partition("#")
                 both = m.group(2) if m.group(2) is not None else inline
-                for lang, anchor in (("en", m.group(3) if m.group(3) is not None else both),
-                                     ("ja", m.group(4) if m.group(4) is not None else both)):
+                per_lang = {}
+                if m.group(3) is not None:
+                    per_lang = dict(CONSOLE_GUIDE_FIELD_RE.findall(m.group(3)))
+                    if set(per_lang) != {"en", "ja"}:
+                        f.errors.append(f"{where}: the anchor object must give both en and ja as string literals")
+                for lang, anchor in (("en", per_lang.get("en", both)), ("ja", per_lang.get("ja", both))):
                     rel_page = f"{page}.md" if lang == "en" else f"{page}.ja.md"
                     target = os.path.join(GUIDE, rel_page)
                     if not os.path.isfile(target):

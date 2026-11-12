@@ -19,6 +19,7 @@ import { api, apiJSON, errText, raw } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { guideLinkProps } from "../../../lib/guideDocs.ts";
 
 interface GitOAuthApp {
   provider: string;
@@ -81,7 +82,13 @@ function ScopeList({ app, group }: { app: GitOAuthApp; group: string }) {
   const entry = (app.scope_group_scopes || []).find((e) => e.group === group);
   // A control plane older than this Console sends no list although the prose points at one;
   // say where the names are instead of leaving "listed below" pointing at nothing.
-  if (!entry) return <p className="admin-hint">{tr("tenant.git_oauth_scopes_missing")}</p>;
+  if (!entry)
+    return (
+      <p className="admin-hint">
+        {tr("tenant.git_oauth_scopes_missing")}{" "}
+        <a {...guideLinkProps("admin/access/oauth-apps")}>{tr("tenant.git_oauth_scopes_guide")}</a>
+      </p>
+    );
   const classic = entry.classic || [];
   const granular = entry.granular || [];
   const both = classic.length > 0 && granular.length > 0;
