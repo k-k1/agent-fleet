@@ -632,6 +632,25 @@ Review round 1 (second phase): the deregistration is checked against both leases
 
 Review round 2 (second phase): the post-detach bookkeeping asks both leases after its wait and before each write (`afterDetach` takes a check; the release path passes none). `rescueGuarded` takes the caller's marker by pointer and compares it with the box's marker under the locks: when another replica (or a lost write) made them differ it adopts the box's and stops with `errRescueStale`, so a stale snapshot never steps a phase backwards or blocks and reports a second time; the next pass decides on the fresh marker.
 
+**2026-11-12 (the Agent reports its task id, #3993).** The workspace Agent's `/healthz` now carries an optional `task_id`, and the
+probe checks it against the task the CP expects on the slot. Where the code chose among readings of the text above:
+
+- **What is exposed: the task id, not the ARN.** `/healthz` is the Agent's one route that answers without the bearer token, to
+  anything that can reach port 7700 (inside the VPC, through Service Connect). A task ARN contains the AWS account id, so the Agent
+  reports only its last segment, read once from the ECS task metadata endpoint (`ECS_CONTAINER_METADATA_URI_V4`, `/task`). The
+  lookup runs in the background (3 tries, 2 s each), never delays start-up and never fails it; outside ECS, or when it gives up, the
+  field is omitted.
+- **The probe** compares the reported id with the ids of the service's RUNNING tasks (the tasks it already lists). A match marks
+  the observation `TaskProven`. A different id means another task answered the alias: the result is `unknown`. A missing id leaves
+  the `healthy` answer standing, unproven. This deliberately differs from "missing = unknown": turning an old Agent's answer into
+  `unknown` would stop it clearing a dark stamp, which changes detection for every Agent not yet updated. A failed probe has no body
+  and never proves anything.
+- **Rollout order.** Old Agents answer without the field, so nothing is proven and detection behaves as before; the CP may be
+  deployed first or last. Only a consumer that requires `TaskProven` is affected, and none exists yet.
+- **The rescue's refusal of a service-up slot is not lifted.** Identity can only come with an answer, and the verdict that makes a
+  service-up slot dark is a probe that got none, so there is no identity to gate on. Which proof could replace it is
+  follow-up #3998.
+
 **2026-11-12 (the Start side of rung L1, #3965).** A member's Start whose home sits on a dark slot no longer waits on that box. It runs
 only under `AF_ECS_EC2_DARK_SLOT_ACTION=rescue`; with `detect` the Start is unchanged (code: `runtime_ecs_ec2_start_dark.go`). The text of
 decision 3 ("the occupant's own Start overtakes L1 by moving the count") stays true for a Start that meets a rescue it cannot read

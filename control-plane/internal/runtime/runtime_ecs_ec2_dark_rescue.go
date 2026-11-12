@@ -18,9 +18,10 @@ import (
 // occupant's Start, cancel the CP's own pending SSM commands, then (runtime_ecs_ec2_dark_rescue_steps.go)
 // deregister, stop and detach, and resume and finalize after a restart.
 //
-// Which task answered a Service Connect probe cannot be proven (the Agent's /healthz carries
-// no identity), so a slot whose service is up is never rescued, whatever the probe says. The
-// check runs under the claim lock, in rescuePrepare.
+// A slot whose service is up is never rescued. The Agent now reports its task id, but only an
+// answer carries it, and the verdict that makes a service-up slot dark is a probe that got no
+// answer, so there is nothing to prove with (ADR 0121, 2026-11-12 note on #3993). The check
+// runs under the claim lock, in rescuePrepare.
 
 const (
 	// ec2TagWedgeAt is the `began` of the latest episode that acted on the box, RFC 3339.
@@ -194,7 +195,7 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 	if exists && svc.DesiredCount > 0 {
 		// A probe through the shared alias cannot say which task answered, so a service that
 		// is up is not rescued: the container may be serving its member.
-		return m, nil, fmt.Errorf("%w: the service is up and the Agent's identity is not proven", errRescueStepAside)
+		return m, nil, fmt.Errorf("%w: the service is up and a failed probe carries no task identity", errRescueStepAside)
 	}
 	inst, err := e.slotInstance(lctx, d.slot)
 	if err != nil {

@@ -312,8 +312,10 @@ func TestPoolStatusShowsDarkSinceAndRung(t *testing.T) {
 type fakeAgentDoer struct {
 	err    error
 	status int
-	onDo   func()
-	reqs   []*http.Request
+	// body replaces the default "{}" answer (the Agent's /healthz JSON).
+	body string
+	onDo func()
+	reqs []*http.Request
 }
 
 func (d *fakeAgentDoer) Do(req *http.Request) (*http.Response, error) {
@@ -324,7 +326,7 @@ func (d *fakeAgentDoer) Do(req *http.Request) (*http.Response, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
-	return &http.Response{StatusCode: d.status, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	return &http.Response{StatusCode: d.status, Body: io.NopCloser(strings.NewReader(cmpOr(d.body, "{}")))}, nil
 }
 
 type timeoutErr struct{}
@@ -587,5 +589,57 @@ func TestDarkAgentProbeIgnoresLongStoppedTasks(t *testing.T) {
 	_ = f.sweep(context.Background())
 	if len(doer.reqs) != 1 {
 		t.Fatalf("probes = %d, want 1", len(doer.reqs))
+	}
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// The Agent reports its task id on /healthz (#3993): a match proves the answer is from this
+// slot's task, a mismatch makes it unknown (another task answered the alias), and no id (an
+// old Agent) leaves the healthy answer standing but unproven.
+func TestDarkAgentProbeTaskIdentity(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body       string
+		wantResult AgentProbe
+		wantProven bool
+	}{
+		"matching task":    {`{"ok":true,"task_id":"af-ws-acme-alice"}`, AgentProbeHealthy, true},
+		"another task":     {`{"ok":true,"task_id":"someone-else"}`, AgentProbeUnknown, false},
+		"old agent, no id": {`{"ok":true}`, AgentProbeHealthy, false},
+		"body is not json": {`ok`, AgentProbeHealthy, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, f, _ := darkHarness(t)
+			f.agentHTTP = &fakeAgentDoer{status: 200, body: tc.body}
+			if err := f.sweep(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			got, _, ok := f.LastAgentProbe("i-dark")
+			if !ok || got != tc.wantResult {
+				t.Fatalf("probe = %v (recorded %v), want %v", got, ok, tc.wantResult)
+			}
+			if p := f.LastAgentTaskProven("i-dark"); p != tc.wantProven {
+				t.Fatalf("proven = %v, want %v", p, tc.wantProven)
+			}
+			if tc.wantResult == AgentProbeUnknown && darkStampOf(h) != "" {
+				t.Fatal("an unproven answer stamped the slot")
+			}
+		})
+	}
+}
+
+// A failed probe has no body, so it never proves a task.
+func TestDarkAgentProbeFailedIsNeverProven(t *testing.T) {
+	_, f, _ := darkHarness(t)
+	if err := f.sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if res, _, _ := f.LastAgentProbe("i-dark"); res != AgentProbeFailed || f.LastAgentTaskProven("i-dark") {
+		t.Fatalf("res = %v proven = %v", res, f.LastAgentTaskProven("i-dark"))
 	}
 }
