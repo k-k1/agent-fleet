@@ -927,6 +927,30 @@ const SCENES = [
     settle: 2500,
   },
   {
+    // Settings › Toolchains on a native deployment: a newer version is staged and waits for
+    // "Restart to apply" (guide: operate/native/update).
+    name: "native-update",
+    guide: true,
+    stubEnv: { SHOT_NATIVE_UPDATE: "1", SHOT_WS_GUIDE: "1" },
+    clip: "#shot-native-update",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "env",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const h = [...document.querySelectorAll(".settings-modal .ds-title")].find((el) => /Agent Fleet/.test(el.textContent || ""));
+      if (h) h.closest(".ds-group").id = "shot-native-update";
+    })()`,
+    settle: 2500,
+  },
+  {
     // Settings › Databases: Postgres running with two databases, MySQL not installed yet.
     name: "ws-databases",
     guide: true,

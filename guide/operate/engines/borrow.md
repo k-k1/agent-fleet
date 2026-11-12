@@ -73,8 +73,16 @@ Borrowing happens only when both the URL and the token are set. With one of them
 
 | Target | Where it goes |
 |---|---|
-| compose / docker | `.env` next to the compose file ([the compose runbook](../../../deploy/compose/README.md)) |
-| native | The environment of `af start`, or `Environment=` in the systemd unit ([the native runbook](../../../deploy/native/README.md#borrowing-another-deployments-engines--optional)) |
+| compose / docker | `.env` next to the compose file ([Deploy with Docker Compose](../compose/install.md)) |
+| native | The environment of `af start`, or `Environment=` in the systemd unit ([Run it as a systemd service](../native/service.md)) |
+
+On native, for example, start it like this. All three are read once at startup, so changing one is a restart.
+
+```bash
+AF_REMOTE_ENGINE_URL=https://af.example.com \
+AF_REMOTE_ENGINE_TOKEN=afei_... \
+  af start
+```
 
 Keep the token where the other `AF_*` secrets live, never in shell history or a ticket.
 

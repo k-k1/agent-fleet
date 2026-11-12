@@ -8,7 +8,7 @@ source_of_truth: "コマンドは `deploy/` 配下の runbook とスクリプト
 [English](checklist.md) | 日本語
 
 「立ち上がったのに動かない」「使えないと言われた」ときに、症状から原因の見当を付けます。
-直すためのコマンドは、各形態の runbook の「Troubleshooting」の節にあります（compose なら [deploy/compose/README.md](../../../deploy/compose/README.md)）。
+直すためのコマンドは、各形態の手順のページにあります（compose なら [Docker Compose で構築する](../compose/install.ja.md)）。
 
 ## 全体像
 
@@ -16,7 +16,7 @@ source_of_truth: "コマンドは `deploy/` 配下の runbook とスクリプト
 |---|---|
 | Control Plane のログとヘルスを見る | 起動の失敗やサインインの拒否の理由は、たいていログに出ている |
 | 1 人だけの問題か、全員の問題かを分ける | 全員なら配備の側、1 人ならその人のワークスペースかアカウントの側 |
-| 症状の表から原因を絞り、runbook の手順で直す | |
+| 症状の表から原因を絞り、各形態の手順で直す | |
 
 コマンドは compose の例で、作業ディレクトリは `deploy/compose/` です。
 
@@ -54,6 +54,7 @@ source_of_truth: "コマンドは `deploy/` 配下の runbook とスクリプト
 
 Control Plane はコンテナですが、ホストの Docker を外から動かします。この方式には、破っても**エラーにならずに静かにおかしくなる**制約が 3 つあります。
 compose の定義はあらかじめ守っているので、compose を自分で変えたときや、症状から見当を付けたいときに読みます。
+Mac では A の扱いが変わります（[macOS（Apple Silicon）で動かす](../compose/macos.ja.md#重ね合わせが変えること)）。
 
 | 制約 | 守ること | 破ったときの症状 |
 |---|---|---|
@@ -70,7 +71,7 @@ Control Plane 経由の git が一斉に失敗します。
 
 公開 URL を受けるもの（トンネルやリバースプロキシ）が、Docker のブリッジからの接続を受けなくなっています（特定のインターフェースに bind し直したなど）。
 ワークスペース専用のリスナーを設定し（`AF_CP_INTERNAL_LISTEN` を docker0 のアドレスに、`AF_CP_INTERNAL_URL=http://host.docker.internal:<port>`）、
-各ワークスペースを止めて起動し直します。手順は [deploy/compose/README.md](../../../deploy/compose/README.md) の「Workspace listener」にあります。
+各ワークスペースを止めて起動し直します。手順は [ワークスペースから CP に届かないとき](../compose/workspace-listener.ja.md) にあります。
 
 ## TLS の証明書が発行されない
 

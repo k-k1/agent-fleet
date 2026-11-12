@@ -72,7 +72,7 @@ Resources:
           Ebs: { VolumeSize: !Ref VolumeSizeGb, VolumeType: gp3, DeleteOnTermination: true }
       Tags:
         - { Key: Name, Value: !Sub "agent-fleet-${AWS::StackName}" }
-      # cloud-init: install Docker (matches deploy/compose/README.md prerequisite)
+      # cloud-init: install Docker (matches the prerequisite in guide/operate/compose/install.md)
       # so the box is compose-ready on first boot.
       UserData:
         Fn::Base64: |

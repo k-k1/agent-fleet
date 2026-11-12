@@ -4,7 +4,7 @@
 # the host as a single user with no auth or tenants (AUTH=dev), and runs
 # workspaces in local Docker (AF_RUNTIME=local). rtk is always baked into every
 # image build; JDKs come from a shared bind mount (skip with WS_JDK=0).
-# Setup steps (installing native dockerd, dependencies): deploy/local/README-wsl.md.
+# Setup steps (installing native dockerd, dependencies): guide/operate/wsl.md.
 #
 # Usage (same as before; env like WS_JDK / WS_SMOKE still applies):
 #   deploy/local/wsl-quickstart.sh

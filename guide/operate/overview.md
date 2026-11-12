@@ -101,19 +101,19 @@ Because a container drives the host's Docker, three things must hold. The compos
 
 ## Where the commands are
 
-This shelf does not repeat commands. They are in the runbook next to the thing they operate, and they ship in the release bundle.
-Inside a workspace the same files are staged under `operate/runbooks/`, so they can be read from the container too.
+The commands are on each target's procedure pages. The README in each `deploy/` directory is an index of those pages.
+Inside a workspace that index is staged under `operate/runbooks/`, so it can be read from the container too.
 
-| Target | Runbook |
+| Target | Procedure |
 |---|---|
-| compose (the default) | [deploy/compose/README.md](../../deploy/compose/README.md) |
-| native | [deploy/native/README.md](../../deploy/native/README.md) |
-| a personal WSL2 machine | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
+| compose (the default) | [Deploy with Docker Compose](compose/install.md) |
+| native | [Install the native package](native/install.md) |
+| a personal WSL2 machine | [Run it for yourself on WSL](wsl.md) |
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
-| ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
+| ec2-single | [Deploy on a single EC2 instance](aws-ec2-single.md) |
 | kubernetes (preview) | [deploy/kubernetes/README.md](../../deploy/kubernetes/README.md) |
 
-If this shelf and a runbook's script disagree, the script is right.
+If this shelf and a script disagree, the script is right.
 
 ## Agents act on their own
 
@@ -122,6 +122,7 @@ If this shelf and a runbook's script disagree, the script is right.
 - Those actions can be destructive or irreversible, and can incur charges on the connected AI provider and cloud accounts
 - The operator and each member are responsible for the workspaces, credentials, repositories and infrastructure they connect, and for checking what the agents did. Use least-privilege credentials, keep backups, and put an approval in front of destructive actions
 - Agent Fleet is distributed under the Apache License 2.0, without warranty. The authors accept no liability for damage, data loss, downtime or cost arising from its use. See `LICENSE`, and `NOTICE` for the bundled open-source notices
+- Official releases come only from <https://github.com/k-k1/agent-fleet-dist>. If you pass a bundle or package on, Apache-2.0 §4(d) requires you to keep the notices in `NOTICE` with it, that URL included, so the next recipient can find the original
 
 ## Related
 

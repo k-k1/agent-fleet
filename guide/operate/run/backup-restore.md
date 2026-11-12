@@ -8,7 +8,6 @@ source_of_truth: "`deploy/compose/backup.sh` and `restore.sh` (where they disagr
 English | [日本語](backup-restore.ja.md)
 
 Pack a Docker Compose deployment's data into an archive on a schedule, so you can bring it back on another host or after losing data.
-The commands are in [the compose runbook, "Backup & restore"](../../../deploy/compose/README.md#backup--restore).
 
 ## How it works
 
@@ -35,10 +34,16 @@ That is everything needed to restore on another host.
 > - The archive holds plaintext Claude state. Lock down who can read where you store it, and encrypt it
 > - The archive also holds the client secrets of the sign-in methods tenants registered, sealed with this key. A key kept next to the data defeats the encryption
 > - Lose `AF_MASTER_KEY` and every past archive becomes undecryptable
+> - Leave `AF_MASTER_KEY` empty and members' credentials are stored unencrypted in their homes, and go into the archive as they are. That is for `AUTH=dev` only ([Handle the deployment keys](../secure/deployment-keys.md#add-a-key-to-a-deployment-without-one))
 
 ## Take a backup
 
 Run `deploy/compose/backup.sh`. In production, run it from cron.
+
+```bash
+deploy/compose/backup.sh              # -> deploy/compose/backups/agent-fleet-<ts>.tar.gz
+OUT_DIR=/mnt/backups KEEP=14 deploy/compose/backup.sh
+```
 
 | Setting | Meaning |
 |---|---|
@@ -46,11 +51,11 @@ Run `deploy/compose/backup.sh`. In production, run it from cron.
 | `KEEP` | How many generations to keep. The default is 7; `0` keeps them all |
 | `--no-stop` | Takes the snapshot without stopping the Control Plane. Use it only when the caller guarantees nothing is writing |
 
-The runbook has an example cron entry. After each run, generations beyond `KEEP` are deleted automatically.
+After each run, generations beyond `KEEP` are deleted automatically.
 
 ### Effect on members
 
-- By default `backup.sh` **stops the Control Plane and Caddy for a few seconds** to take a consistent SQLite snapshot, then starts them again
+- By default `backup.sh` **stops the Control Plane and Caddy for a few seconds** to take a consistent SQLite snapshot, then starts them again. It then tars `${DATA_DIR}`
 - **Members' workspaces (`af-ws-*`) keep running.** They are not compose services. Sessions stay connected and work carries on
 - For those few seconds, Console sign-in and API relaying do not answer; that is all
 
@@ -62,6 +67,14 @@ Do this on a clean host, or on a host that lost its data.
 2. Run `deploy/compose/restore.sh <archive>`
 3. Bring up the Control Plane and Caddy with `docker compose up -d`
 4. Members (or an administrator) press **Start** on each workspace in the Console
+
+```bash
+# 1) recreate .env with the SAME AF_MASTER_KEY (from your vault)
+# 2) restore the archive:
+deploy/compose/restore.sh /mnt/backups/agent-fleet-<ts>.tar.gz
+# 3) bring it up; Start each workspace from the Console to rehydrate containers
+docker compose up -d
+```
 
 Three things to watch:
 

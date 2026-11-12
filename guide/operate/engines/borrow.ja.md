@@ -73,8 +73,16 @@ URL とトークンは両方そろったときだけ借ります。片方だけ�
 
 | 形態 | 置き場所 |
 |---|---|
-| compose / docker | compose ファイルの隣の `.env`（[compose の手順書](../../../deploy/compose/README.md)） |
-| native | `af start` の環境、または systemd unit の `Environment=`（[native の手順書](../../../deploy/native/README.md#borrowing-another-deployments-engines--optional)） |
+| compose / docker | compose ファイルの隣の `.env`（[Docker Compose で構築する](../compose/install.ja.md)） |
+| native | `af start` の環境、または systemd unit の `Environment=`（[systemd でサービスとして動かす](../native/service.ja.md)） |
+
+native なら、たとえば次のように起動します。3 つとも起動のときに 1 回だけ読むので、変えたら再起動します。
+
+```bash
+AF_REMOTE_ENGINE_URL=https://af.example.com \
+AF_REMOTE_ENGINE_TOKEN=afei_... \
+  af start
+```
 
 トークンはほかの `AF_*` の秘密と同じ場所に置きます。シェルの履歴やチケットには書かないでください。
 
