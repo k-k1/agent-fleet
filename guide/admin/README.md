@@ -7,8 +7,8 @@ source_of_truth: "the Console's tenant settings — if a screen disagrees with t
 
 English | [日本語](README.ja.md)
 
-Each page covers one thing you want to do as the person managing the team. The chapters are being rewritten into these pages.
-Anything not here yet is under "Chapters not yet rewritten" below. For your own work, see [Find what you want to do](../user/README.md).
+Each page covers one thing you want to do as the person managing the team.
+For your own work, see [Find what you want to do](../user/README.md).
 
 ## Getting started
 
@@ -65,7 +65,5 @@ Anything not here yet is under "Chapters not yet rewritten" below. For your own 
 | [Distribute an MCP server to everyone](mcp-distribute.md) | Hand a shared MCP server to every member of the tenant, and stop outside apps' OAuth connections |
 | [Allow memory use from outside](memory-outside.md) | Decide whether members may use memory from agents outside Agent Fleet |
 | [Allow MCP servers as watch sources](watch-sources.md) | Decide whether members may make their own MCP servers a source for the `watch` tool |
-
-These chapters have moved to the pages above: [01 Member management](01-members.md), [02 Resource limits and sessions](02-limits.md), [03 Audit and usage](03-audit-usage.md), [04 MCP distribution and outside access](04-mcp-outside.md), [05 Who may sign in, and from where](05-access.md), [06 Team defaults](06-team-defaults.md)
 
 What each role may do is in [Roles and what they may do](../ref/roles.md).

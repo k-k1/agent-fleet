@@ -109,7 +109,7 @@ func TestDocsBridgeServesTheGuideToEveryRole(t *testing.T) {
 		// The entry page the Console's user-guide button opens, plus one file per shelf.
 		"README.md", "README.ja.md",
 		"member/lite.md", "user/integrations/github-cli.md",
-		"ref/agents.md", "admin/02-limits.md", "operate/01-install.md",
+		"ref/agents.md", "admin/resources/overview.md", "operate/install.md",
 	}
 	absent := []string{
 		"build/04-workspace-agent.md", "decisions/0011-console.md", "log/p3-10.md",

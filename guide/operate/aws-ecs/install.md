@@ -136,7 +136,7 @@ After the images are pushed and before `30-ingress`, deploy only what you use, i
   ```
 
 - `standup.sh` copies the images in this order before deploying, but only when rebuilding from saved parameters. For a first build, copy them by hand: `af-voicevox` for speech is under "Turn it on" in [Add Japanese read-aloud](tts.md#turn-it-on), and `af-llamacpp` / `af-comfyui` for the inference engines are step 3 of ["Turn it on" in Add inference engines](engines.md#turn-it-on)
-- Each stack's parameters and images are on the slot pool, speech and inference engine pages, reachable from the [ECS runbook](../../../deploy/aws/ecs/README.md) index
+- Each stack's parameters and images are in [Start using the EC2 slot pool](slot-pool.md), [Add Japanese read-aloud](tts.md) and [Add inference engines](engines.md)
 
 ## Start the Control Plane (`30-ingress`)
 

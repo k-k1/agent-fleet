@@ -62,7 +62,7 @@ On a Mac, A is handled differently ([Run on an Apple Silicon Mac](../compose/mac
 | B. The absolute path of `DATA_DIR` | Mount `DATA_DIR` so it is the same absolute path inside the Control Plane, because workspace `-v` mounts are built from host paths | A workspace starts but its home is empty and the work is missing |
 | C. The user and the docker group | `user: "1000:1000"` and `group_add: <DOCKER_GID>`, because homes are owned by uid 1000 and the Control Plane needs the docker socket | permission denied on the socket, or workspaces fail to start |
 
-If B's symptom shows after a restore, check that the restored `DATA_DIR` does not differ from the original in its path (at least in its last directory name) ([Day-to-Day Operations](../03-run.md)).
+If B's symptom shows after a restore, check that the restored `DATA_DIR` does not differ from the original in its path (at least in its last directory name) ([Back up and restore](../run/backup-restore.md#restore)).
 
 ## Workspaces cannot reach the public URL
 
@@ -81,7 +81,7 @@ When Caddy cannot get a certificate from Let's Encrypt, it is one of these:
 - Ports 80 and 443 cannot be reached from outside (a firewall)
 - Let's Encrypt's rate limit was hit
 
-On a closed network with no public DNS, skip ACME and switch to `tls internal` (self-signed) ([Initial Setup](../02-install.md)).
+On a closed network with no public DNS, skip ACME and switch to `tls internal` (self-signed) ([Choose the tenant and provisioning model](../install-decisions.md#whether-to-use-tls-internal)).
 
 ## Check that no address is attached to the wrong person
 
@@ -119,28 +119,28 @@ Keep it in a vault separate from the data, and back it up separately ([Understan
 
 ### What does a backup hold?
 
-The database, every user's home, the plaintext Claude state and Caddy's certificates. Not `shared/jvm` (it can be fetched again) and not `AF_MASTER_KEY` ([Day-to-Day Operations](../03-run.md)).
+The database, every user's home, the plaintext Claude state and Caddy's certificates. Not `shared/jvm` (it can be fetched again) and not `AF_MASTER_KEY` ([Back up and restore](../run/backup-restore.md#what-the-archive-holds)).
 
 ### Can it run on a network with no internet?
 
 Yes. Mirror the GHCR images into an internal registry and point `REGISTRY` at it, or carry them in with `release.sh --save` and `load-images.sh`.
-TLS uses `tls internal`, and Claude uses the copy in the image with `CLAUDE_INSTALL=0` ([Day-to-Day Operations](../03-run.md)).
+TLS uses `tls internal`, and Claude uses the copy in the image with `CLAUDE_INSTALL=0` ([Install into a closed network](../run/air-gapped.md)).
 The agents still need to reach their model endpoints to work.
 
 ### I want to downgrade
 
 Not supported. Migrations are forward-compatible and applied automatically, and an older Control Plane cannot read the newer schema.
-To go back, restore the backup taken before the upgrade rather than switching to an older image ([Day-to-Day Operations](../03-run.md)).
+To go back, restore the backup taken before the upgrade rather than switching to an older image ([Upgrade](../run/upgrade.md)).
 
 ### Workspaces are still there after docker compose down
 
 That is normal. Workspaces (`af-ws-*`) are not managed by compose; the Control Plane started them with `docker run`.
-Stop them with the force stop in the admin panel, or when taking the whole host down, `docker stop` the remaining `af-ws-*` separately ([Day-to-Day Operations](../03-run.md)).
+Stop them with the force stop in the admin panel, or when taking the whole host down, `docker stop` the remaining `af-ws-*` separately ([Use idle stop and force-stop](../run/idle-stop.md#force-stop-a-workspace)).
 
 ### Can it be spread across several hosts (HA, horizontal scaling)?
 
 The model is one deployment per company. With compose the Control Plane drives one host's Docker, so workspaces are not spread across hosts.
-On ecs and ecs-ec2, workspaces run on AWS ([Choosing a deployment target](../01-choose.md)). The Control Plane runs as one instance on every target; there is no HA setup.
+On ecs and ecs-ec2, workspaces run on AWS ([Choose where to deploy](../choose.md)). The Control Plane runs as one instance on every target; there is no HA setup.
 
 ### I want to sign in with something other than Google (Microsoft 365, LDAP, SAML…)
 

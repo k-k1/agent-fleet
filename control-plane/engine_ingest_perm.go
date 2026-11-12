@@ -21,7 +21,7 @@ package main
 //
 // 🔴 The cost this accepts, and it must be said out loud rather than assumed away: because the
 // catalogue is one, EVERY model id is visible from every tenant. A deployment that reads the
-// grant as isolation would be wrong, so guide/admin/04 states it.
+// grant as isolation would be wrong, so guide/admin/resources/engines.md states it.
 
 import (
 	"net/http"

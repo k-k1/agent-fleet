@@ -1,6 +1,6 @@
 ---
 audience: "ワークスペースが EC2 スロットのプールで動く ecs-ec2 の配備管理者（super_admin）"
-source_of_truth: "コマンドとパラメータは `deploy/aws/ecs/README.md`。各スロットの状態は「管理」→「スロット」の画面"
+source_of_truth: "コマンドとパラメータは `deploy/aws/ecs/cfn/40-ec2-pool.yaml` と `deploy/aws/ecs/cfn/PARAMETERS.md`。各スロットの状態は「管理」→「スロット」の画面"
 ---
 
 # スロットを入れ替える・止める
@@ -8,7 +8,7 @@ source_of_truth: "コマンドとパラメータは `deploy/aws/ecs/README.md`�
 [English](slot-maintenance.md) | 日本語
 
 AWS の `ecs-ec2` の配備だけの作業です。古くなったスロットを新しいスロットに入れ替え、応答しなくなったスロットを止めます。
-`ecs-ec2` では、ワークスペースはプールから取った EC2 スロットの上で動き、ホームは停止中もそのスロットに付いた EBS ボリュームです。スタックのパラメータとコマンドは [ECS の手順書の「EC2 slot pool」](../../../deploy/aws/ecs/README.md#optional-ec2-slot-pool-wsruntimeecs-ec2) にあります。
+`ecs-ec2` では、ワークスペースはプールから取った EC2 スロットの上で動き、ホームは停止中もそのスロットに付いた EBS ボリュームです。プールの建てかたとパラメータは [EC2 スロットプールを使い始める](slot-pool.ja.md) にあります。
 
 ## 全体像
 
@@ -101,7 +101,7 @@ AWS の `ecs-ec2` の配備だけの作業です。古くなったスロット�
 3. **メンバーが、都合のよいときにワークスペースを止めて起動します。** 起動は、ワークスペースのクラスの新しいスロットを `$Latest` から先に起動し、スイーパーと同じ解放（外す前にアンマウント。タスクが動いていれば拒否）でホームを移し、古いインスタンスを終了します
    - ホームのボリュームを消すことはありません
    - ホームが付いたまま、スロットのインスタンスを手で終了しないでください
-   - `Ec2SlotTerminateAfterSec` は移すためのものではありません。費用のための常設の設定です（`deploy/aws/ecs/cfn/PARAMETERS.md`）
+   - `Ec2SlotTerminateAfterSec` は移すためのものではありません。費用のための常設の設定です（[3 つの上限](slot-pool.ja.md#3-つの上限)）
 4. **新しいスロットのワークスペースのシェルで確かめます**
    - IMDSv2 のトークンの要求が `200` を返さないこと（タイムアウトして `000` になる）。環境を空にした（`env -i`）ときも同じ
 
@@ -127,7 +127,7 @@ AWS の `ecs-ec2` の配備だけの作業です。古くなったスロット�
 - ECS エージェントは `ecs.service` の子ではなく docker コンテナとして動くので、`af-protect-mgmt` がそのスコープを探します。30 秒ごとに設定し直すので、エージェントの再起動にも追従します
 - `af-protect-mgmt` は、ECS と SSM のエージェントの OOM スコアも下げます。初回起動時にすでに動いている SSM エージェントにも効きます
 - メモリが足りなくなると、カーネルは先にワークスペースのコンテナのページを回収します
-- 合計はホストの予約（`AF_ECS_EC2_HOST_RESERVE_MB`、既定は 1024 MiB 以上）に収まります。予約を 832 MiB より小さくすると、守る量が予約を上回ります
+- 合計はホストの予約（`AF_ECS_EC2_HOST_RESERVE_MB`、既定の `auto` では 2 GiB）に収まります。予約を 832 MiB より小さくすると、守る量が予約を上回ります
 - cgroup v2（Amazon Linux 2023 の既定）が前提です
 
 これは起動テンプレートの変更です。今あるスロットには、[古いスロット](#古いスロット) の入れ替えを通して届きます。
@@ -196,4 +196,5 @@ Control Plane のスイーパーは、誰かがワークスペースを起動す
 
 - [アップグレードする](../run/upgrade.ja.md)
 - [アイドル停止と強制停止を使う](../run/idle-stop.ja.md)
-- [ECS の手順書の「EC2 slot pool」](../../../deploy/aws/ecs/README.md#optional-ec2-slot-pool-wsruntimeecs-ec2)
+- [EC2 スロットプールを使い始める](slot-pool.ja.md)
+- [スロットプールで困ったとき](slot-troubleshooting.ja.md)

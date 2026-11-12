@@ -18,8 +18,8 @@ func buildDocsSrc(t *testing.T) string {
 		"member/lite.md",
 		"user/integrations/github-cli.md",
 		"ref/agents.md",
-		"admin/02-limits.md",
-		"operate/01-install.md",
+		"admin/resources/overview.md",
+		"operate/install.md",
 		"assets/architecture.drawio",
 		// The developer tree. In production these are not even baked into the CP
 		// image (stage-docs.sh copies guide/ only), but a local dev CP can be pointed
@@ -81,7 +81,7 @@ func TestStageWorkspaceDocs_ShipsTheGuideOnly(t *testing.T) {
 		// without it leaves that button opening a file that does not exist.
 		"README.md", "README.ja.md",
 		"member/lite.md", "user/integrations/github-cli.md",
-		"ref/agents.md", "admin/02-limits.md", "operate/01-install.md",
+		"ref/agents.md", "admin/resources/overview.md", "operate/install.md",
 		"assets/architecture.drawio",
 	} {
 		if !got[filepath.FromSlash(f)] {
