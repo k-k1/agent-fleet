@@ -325,7 +325,7 @@ af-aws-exec --profile deploy-target --account <ID> --region <リージョン> --
   （ワークスペース自身の資格情報を取るもの）、`web_identity_token_file`、`login_session`、`mfa_serial`（エージェントが
   実行すると MFA の入力に誰も答えられない）を持つとき
 - たどる先のプロファイルが資格情報の取り方を 2 つ以上持つとき。たとえば `credential_process` やロールのプロファイルに
-  キーもある（セッショントークンだけでも、`~/.aws/config` に書いたキーでも数えます）。AWS CLI とほかの SDK で使う方が
+  キーもある場合です（セッショントークンだけでも、`~/.aws/config` に書いたキーでも数えます）。AWS CLI とほかの SDK で使う方が
   食い違うためです
 - たどった先の SSO プロファイルの設定が欠けているとき、またはたどる先が壊れているとき
 

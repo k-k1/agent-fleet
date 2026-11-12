@@ -8,7 +8,7 @@ into containers, so the directory boundary *is* the distribution boundary. When 
 boundary erodes, links break silently in the reader's copy, so the conventions are
 machine-checked here rather than left to human review.
 
-Seventeen checks:
+The checks:
 
   links      relative links resolve (anchors ignored); also the root's *.md files
   anchors    a #fragment points at a heading that exists (Console's slug rule in guide/,
@@ -19,6 +19,7 @@ Seventeen checks:
   lang       bilingual closure (en links to .md, ja to .ja.md) and the counterpart exists
   header     every file on a living shelf has front matter (audience / source_of_truth)
   vocab      no implementation vocabulary (AF_* / kind= / /api/) on reader-facing shelves
+  polite     the Japanese guide's prose sentences end in です・ます (CONVENTIONS §11)
   frozen     no link from a living shelf into docs/log/ (the frozen archive)
   ref        ref/ tables agree with the source of truth in code, and the ✓ marks match the
              translation
@@ -672,6 +673,137 @@ def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
                     f" ({hit.group(0)})"
                 )
                 (f.error if strict or task else f.warn)(msg)
+
+
+# --- the polite style of the Japanese guide (CONVENTIONS §11) ----------------
+# The Japanese guide is written in the polite style (です・ます調). A section translated or
+# written in a hurry lands in the plain style and nobody notices in review, because each
+# sentence reads fine alone; only the switch against the rest of the page jars.
+
+# A sentence ending that counts as polite.
+POLITE_END_RE = re.compile(
+    r"(?:です|ます|ません|ました|でした|ましょう|でしょう|ください|ませんか|ですか|ますか|でしょうか)$"
+)
+# A plain-form predicate: a verb in the dictionary, た or ない form, an adjective, or the
+# copula だ / である. Checked after POLITE_END_RE, which already took ます / です / ください.
+# A noun ending (体言止め: "…の一覧。", "…していること。", "…いないか。") is left alone: in a
+# list it is a fragment, and elsewhere it is rare enough for review to catch.
+# A counter ("値は 1 つ") and the noun かた ("動きかた") end like a verb and are not one.
+PLAIN_END_RE = re.compile(r"(?:[うくすぬむぶぐるだ]|(?<!\d )(?<!\d)つ|(?<!っ)(?<!か)た|い)$")
+STYLE_LIST_RE = re.compile(r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
+# An image's alt text describes the screenshot, not a sentence of the page.
+STYLE_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+STYLE_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+STYLE_HTML_RE = re.compile(r"<[^>]+>")
+# Innermost quotation; applied until nothing changes, so nested quotes go too.
+STYLE_QUOTE_RE = re.compile(r"「[^「」]*」|『[^『』]*』")
+STYLE_TRAIL_PAREN_RE = re.compile(r"(?:（[^（）]*）|\([^()]*\))$")
+# Sentences that stay in the short form on purpose, keyed by guide-relative path and a
+# fragment of the sentence's end. Each one says why.
+POLITE_EXEMPT: dict[tuple[str, str], str] = {}
+
+
+def style_blocks(body: str) -> list[tuple[int, str, bool]]:
+    """(first line, text, is a list item) for each prose block of a Japanese page.
+
+    Front matter, fences, tables, headings and HTML are dropped; blockquotes (GitHub alerts)
+    are prose and kept. Line breaks inside a block are joined without a space, the way a
+    Japanese paragraph renders.
+    """
+    lines = strip_fenced_blocks(body).split("\n")
+    m = FM_RE.match(body)
+    skip = m.group(0).count("\n") if m else 0
+    out: list[tuple[int, str, bool]] = []
+    cur: list[str] = []
+    start, item = 0, False
+
+    def flush() -> None:
+        if cur:
+            out.append((start, "".join(cur), item))
+        cur.clear()
+
+    for i, raw in enumerate(lines):
+        if i < skip:
+            continue
+        line = re.sub(r"^\s*>\s?", "", raw)
+        s = line.strip()
+        if not s or s.startswith(("|", "#", "<", "[!")) or re.fullmatch(r"[-*_ ]{3,}", s):
+            flush()
+            continue
+        lm = STYLE_LIST_RE.match(line)
+        if lm:
+            flush()
+            start, item = i + 1, True
+            cur.append(line[lm.end():].strip())
+        else:
+            if not cur:
+                start, item = i + 1, False
+            elif cur[-1][-1:].isascii() and s[:1].isascii():
+                cur.append(" ")
+            cur.append(s)
+    flush()
+    return out
+
+
+def plain_sentences(text: str, item: bool) -> list[str]:
+    """The 。-terminated sentences of one block whose ending is not polite."""
+    # A checklist item records a state ("…を設定した"), not prose.
+    if item and re.match(r"\[[ xX]\]", text):
+        return []
+    t = INLINE_RE.sub("X", text)
+    t = STYLE_HTML_RE.sub("", t)
+    if item:
+        # A link list or a command list describes the target after "：" in the short form.
+        t = re.sub(r"^\s*(?:\[[^\]]*\]\([^)]*\)|X)\s*[：:].*$", "", t)
+    # A bold lead-in ("**秘密は表示しない。** 本文") is the label of what follows, not prose.
+    t = re.sub(r"^\*\*[^*]+\*\*", "", t.lstrip())
+    t = STYLE_IMAGE_RE.sub("", t)
+    t = STYLE_LINK_RE.sub(r"\1", t)
+    prev = None
+    while prev != t:
+        prev, t = t, STYLE_QUOTE_RE.sub("Q", t)
+    t = t.replace("**", "").replace("*", "")
+    out = []
+    for piece in t.split("。")[:-1]:
+        s = piece.strip()
+        # A trailing aside ("…です（設定 > 接続）") is not the ending; a sentence that sits
+        # inside parentheses ("（…返す）") ends just before the closing one.
+        prev = None
+        while prev != s:
+            prev = s
+            s = STYLE_TRAIL_PAREN_RE.sub("", s).rstrip()
+            if s.count("（") < s.count("）") or s.count("(") < s.count(")"):
+                s = s.rstrip("）) ")
+        if not s or not re.search(r"[぀-ヿ一-鿿]", s):
+            continue
+        if not POLITE_END_RE.search(s) and PLAIN_END_RE.search(s):
+            out.append(s)
+    return out
+
+
+def check_polite(files: list[str], f: Findings) -> None:
+    """Does every sentence of the Japanese guide end in the polite style?
+
+    Short forms are allowed where §11 allows them: table cells, headings, list items that
+    are not full sentences (nothing ends with 。), checklist items, the description after
+    "：" in a link list, and quoted text (「…」 and code).
+    """
+    used: set[tuple[str, str]] = set()
+    for path in files:
+        src = rel(path)
+        if tree(src) != "guide" or not is_ja(src):
+            continue
+        g = os.path.relpath(path, GUIDE).replace(os.sep, "/")
+        for line, text, item in style_blocks(read(path)):
+            for s in plain_sentences(text, item):
+                key = next((k for k in POLITE_EXEMPT if k[0] == g and s.endswith(k[1])), None)
+                if key:
+                    used.add(key)
+                    continue
+                f.error(f"{src}:{line}: a sentence in the plain style (…{s[-30:]}。); write です・ます (CONVENTIONS §11)")
+    for key in POLITE_EXEMPT:
+        if key not in used:
+            f.error(f"POLITE_EXEMPT: {key} matches no sentence any more; remove it")
 
 
 def check_frozen(files: list[str], f: Findings) -> None:
@@ -2246,7 +2378,7 @@ def main() -> int:
         default="",
         help=(
             "comma-separated check names "
-            "(links,anchors,closure,chapters,index,lang,header,vocab,frozen,"
+            "(links,anchors,closure,chapters,index,lang,header,vocab,polite,frozen,"
             "ref,settings,features,knowledge,notes,emphasis,labels,size)"
         ),
     )
@@ -2274,6 +2406,8 @@ def main() -> int:
         check_header(files, f, args.strict)
     if run("vocab"):
         check_vocab(files, f, args.strict)
+    if run("polite"):
+        check_polite(files, f)
     if run("frozen"):
         check_frozen(files, f)
     if run("ref"):
