@@ -58,12 +58,13 @@ audience: "メンバーのワークスペースのメモリ・CPU・ディスク
 
 | もの | タイミング |
 |---|---|
-| Go のビルドキャッシュ、Go のモジュールキャッシュ、uv のキャッシュ | 起動のたび。作業ディスクが 30 GiB 以上のとき |
-| 作業コピーの `target`（Rust、Maven）と `build`（Gradle） | 作業コピーをクローンまたは作成したとき。ディスクの大きさは問いません |
+| Go のビルドキャッシュ、Go のモジュールキャッシュ、uv のキャッシュ | 起動のたび。作業ディスクが 30 GiB 以上あり、書き込めるとき |
+| 作業コピーのプロジェクトのファイルの隣にある `target`（Rust、Maven）と `build`（Gradle） | 作業コピーをクローンまたは作成したとき。ディスクの大きさは問いません |
 
-`node_modules`、`.venv`、npm のキャッシュはホームに残ります。ほかのビルドの生成物は、メンバーが
-[af-scratch](../../ref/cli/af-scratch.ja.md) で自分で移せます。
-home がネットワークストレージの AWS では、インストールやビルドがこれで速くなります。
+安全にできないときは、どちらも移しません。たとえば git が追跡している `target` や `build`、すでにシンボリックリンクに
+なっているものです。`node_modules` と npm のキャッシュはホームに残ります。`.venv` や
+ほかのビルドの生成物は、メンバーが [af-scratch](../../ref/cli/af-scratch.ja.md) で移したときだけ移ります。
+home がネットワークストレージの AWS では、ビルドがこれで速くなります。
 
 ## home を広げる
 
@@ -112,8 +113,8 @@ home がネットワークストレージの AWS では、インストールや�
 
 Intel と Arm のように CPU の系統が変わる種類を選ぶと、フォームに警告が出て、次の起動が数分長くなります。
 
-- home は残ります。中にある系統ごとのものは、起動のときに自動で入れ直します。エージェントの CLI・Chromium・選択中の JDK と node・メンバーが入れたもの（`pip install --user`・`uv tool`・`npm i -g`）が対象で、バージョンは変わりません
-- 自動で戻らないのは、`~/repos` の `node_modules` / `target` / `.venv`（消えませんが、`npm ci` などで入れ直します）と、`~/.local/bin` に直接置いたバイナリです。通知で名前が出ます（[af-arch-repair](../../ref/cli/af-arch-repair.ja.md)）
+- home は残ります。中にある系統ごとのものは、起動のときに自動で入れ直します。エージェントの CLI・Chromium・選択中の JDK と node・メンバーが入れたもののうち見つかったもの（`pip install --user`・`uv tool`・`npm i -g`）が対象で、ふつうはバージョンも変わりません
+- 自動で戻らないのは、`~/repos` の `node_modules` / `target` / `.venv`（消えませんが、`npm ci` などで入れ直します）と、`~/.local/bin` に直接置いたバイナリです。見つかったものは通知で名前が出ます。見つけかたには限界があり、入れ直しの失敗では通知は出ません（[af-arch-repair](../../ref/cli/af-arch-repair.ja.md)）
 - 選択していない JDK や node のバージョンも戻りません。要るときはメンバーが [ツールチェーン](../../user/workspace/toolchains.ja.md) から入れ直します
 
 ## 関連

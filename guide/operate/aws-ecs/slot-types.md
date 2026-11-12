@@ -104,7 +104,7 @@ Moving across architectures is safe but not free.
 | What stays | What is reinstalled |
 |---|---|
 | The home itself | Architecture-dependent contents such as the CLIs in `~/.local`, nvm's node and Chromium. Reinstalled automatically on the next start |
-| What is under `~/repos` | What the member built, such as `node_modules`, `target` and `.venv`. The member reinstalls these; [af-arch-repair](../../ref/cli/af-arch-repair.md) names them in a notification |
+| What is under `~/repos` | What the member built, such as `node_modules`, `target` and `.venv`. The member reinstalls these; [af-arch-repair](../../ref/cli/af-arch-repair.md) names the ones it detects in a notification |
 
 The Console warns before saving.
 

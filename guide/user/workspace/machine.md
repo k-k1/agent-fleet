@@ -35,7 +35,7 @@ Open **⚙ Settings → Machine**. **Machine and usage** under **Resources** in 
 - Each value is marked **measured** (read inside the workspace) or **configured** (what the next start will use). While stopped, everything is configured
 - Whether a build gets killed depends on the limit in the Memory row. Part of the instance is held back for the host's own processes
 - The architecture decides which JDK, Node.js and agent CLIs are installed. A tool that cannot run on it is not installed ([Choose your toolchains](toolchains.md))
-- When the architecture changes, the next start reinstalls them, and your own pip, uv and npm installs at the same versions. Build output under `~/repos` is left to you ([af-arch-repair](../../ref/cli/af-arch-repair.md))
+- When the architecture changes, the next start reinstalls them, and the pip, uv and npm installs of your own that it detects, normally at the same versions. Build output under `~/repos` is left to you. What is and is not found: [af-arch-repair](../../ref/cli/af-arch-repair.md)
 
 ### Your own machine, or a shared one
 

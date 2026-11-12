@@ -62,7 +62,11 @@ servers side by side.
 | `--purge` | `down` | Removes the data directory: **every database on that engine and major** |
 | `--json` | `status` | Prints JSON instead of text |
 
-- `--durable` and `--ephemeral` stick to the server: a later `af-db up` without them keeps them.
+- `--durable` and `--ephemeral` take effect only when the server starts. On a running server they are ignored without
+  a message: run `af-db down` first.
+- They stick to the server: a later `af-db up` without them keeps them, and no af-db option turns them off again.
+- `--ephemeral` does not move existing data. It starts the server on a new, empty data directory on the working disk;
+  the data in the home stays where it was and is no longer used.
 - `--persist` is accepted as `--durable`, with a notice.
 
 ## Which database
@@ -74,9 +78,13 @@ Without `--db`, af-db uses the working copy's database, named `af_<directory>_<6
 2. the top of the git repository in the current directory,
 3. the current directory.
 
-Two sessions on the same working copy share its database. When a working copy's directory no longer exists, its
-database is dropped the next time `up`, `url`, `env`, `connect` or `status` finds the server running. A database named
-with `--db` belongs to no working copy and is never dropped this way.
+Two sessions on the same working copy share its database.
+
+When a working copy's directory no longer exists, af-db tries to drop its database the next time `up`, `url`, `env`,
+`connect` or `status` (but not `status --json` without an engine) finds the server running. A drop that fails (on PostgreSQL, while something is connected
+to it) is printed as a warning and tried again next time. A database created with `create --db` or `url --db` belongs
+to no working copy and is never dropped this way. `connect --db=<name>` with the working copy's own name counts as the
+working copy's database.
 
 A name given with `--db` matches `^[a-z_][a-z0-9_]{0,62}$`: lower-case letters, digits and `_`, not starting with a
 digit, at most 63 characters. Any other name exits with status 2.
@@ -108,7 +116,7 @@ With `mysql` the first line is `AF_DB_URL_MYSQL`.
 ### Ports
 
 The server listens on `127.0.0.1` only. af-db first tries the engine's usual port, 5432 for PostgreSQL and 3306 for
-MySQL, then the next 64 ports above it, and takes a free port anywhere when all of those are in use. A server keeps
+MySQL, then the ports above it up to base + 63, and takes a free port anywhere when all of those are in use. A server keeps
 the port it got across restarts while that port is free. Read the port from `af-db status` or the URL rather than
 assuming one.
 
@@ -136,10 +144,12 @@ postgres-17: running  port=5432  sock=/home/dev/.local/state/af-db/run/postgres-
 
 `(shared)` marks a database named with `--db`. With nothing set up yet it prints `af-db: no instances configured`.
 
-`--json` with an engine prints `engine`, `major`, `state` (`running`, `stopped` or `not-configured`), `pid`, `port`,
+`--json` with an engine prints `{"state":"not-configured"}` alone for an engine never started. Otherwise it prints
+`engine`, `major`, `state` (`running` or `stopped`), `pid`, `port`,
 `sockdir`, `datadir`, `databases` (name → working copy, empty for a named one) and `lastUsedAt`, plus `version` and
 `rssBytes` while running. Without an engine it prints `instances`, one row per server with `engine`, `major`, `state`,
-`port` and `datadir`, plus `version` and `rssBytes` while running.
+`port` and `datadir`, plus `version` and `rssBytes` while running. This form does not drop the databases of removed
+working copies.
 
 ## Where things live
 

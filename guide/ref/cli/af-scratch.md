@@ -13,7 +13,7 @@ is local and fast. **Everything on the working disk is gone when the workspace s
 regenerate there. Where the workspace has no working disk, af-scratch does nothing.
 
 Separately from af-scratch, the workspace's start moves the Go build cache, the Go module cache and uv's cache onto
-the working disk when it is 30 GiB or more. `node_modules`, `.venv` and npm's cache always stay in the home.
+the working disk when it is 30 GiB or more. Nothing moves `node_modules` or npm's cache, and `.venv` moves only when you name it yourself.
 
 ## Synopsis
 
@@ -25,7 +25,7 @@ af-scratch --auto [<root>]
 
 | Form | What it does |
 |---|---|
-| `<dir>...` | Moves each directory to the working disk and replaces it with a symlink. A directory that does not exist yet becomes a symlink to a new empty one |
+| `<dir>...` | Moves each directory to the working disk and replaces it with a symlink. A directory that does not exist yet becomes a symlink to its place there |
 | `--status` | Lists what is moved now, with the size of each |
 | `--auto [<root>]` | Moves the output the projects under `<root>` (default: the current directory) are about to produce. The workspace runs this on every new clone and working copy |
 
@@ -51,8 +51,8 @@ recreate the directory run `mkdir -p "$(readlink target)"`, or remove the link a
 | The directory | What happens |
 |---|---|
 | Is already a symlink | Nothing, with a note naming its target |
-| Exists | It is moved to the working disk, once (this run is slow: everything is read off the home), then linked |
-| Does not exist | An empty directory is made on the working disk and linked |
+| Exists | It is moved to the working disk, once (this run is slow: everything is read off the home), then linked. **Whatever was already at its place on the working disk is deleted first** |
+| Does not exist | Its place on the working disk is linked, made empty if it is not there. If it is there (an earlier move, before a stop), it is reused with what it holds |
 | Is named `node_modules` | Refused. npm replaces a symlinked `node_modules` with a real directory on the next install, and `npm ci` empties the working-disk side first |
 | Is named `.venv` | Moved, with a warning: `uv venv` and `uv sync` work through the link, `python3 -m venv .venv` fails on it |
 
@@ -90,8 +90,9 @@ $ af-scratch --status
 /home/dev/repos/app/build                                    96M
 ```
 
-It lists directories whose original path is still a symlink, up to six path levels deep. With nothing moved it prints
-`逃がしているものはありません。`.
+It lists directories whose original path is still a symlink, for original paths up to six levels deep counted from `/`
+(`/home/dev/repos/shop/app/target` is six). When nothing was ever moved it prints `逃がしているものはありません。`;
+when things were moved but none is linked any more, it prints nothing.
 
 ## Environment
 

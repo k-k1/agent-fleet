@@ -9,7 +9,8 @@ English | [日本語](af-arch-repair.ja.md)
 
 Reinstalls, at the same versions, what you installed into your home yourself, after the workspace moved to a machine
 of another CPU architecture (`amd64` ↔ `arm64`). The workspace runs it on its own during that start; you run it by
-hand only to retry or to see what is still broken. What it cannot fix, it names in a Console notification.
+hand only to retry or to see what is still broken. Leftovers it finds but must not fix, it names in a Console
+notification. It finds what it looks for, not everything: see [Limits](#limits).
 
 The tools Agent Fleet itself installs (the agent CLIs, the selected JDK and Node.js, Chromium) are reinstalled by the
 workspace's start, not by af-arch-repair.
@@ -31,8 +32,8 @@ af-arch-repair amd64 arm64
 
 | What | Which ones | How |
 |---|---|---|
-| `pip install --user` packages | Those whose files include a native extension built for the other architecture. Pure-Python ones are left alone | `pip install --user --force-reinstall --no-deps <name>==<version>`. `--no-deps` keeps their dependencies as they are, so nothing moves to a newer version |
-| `uv tool` tools | Those whose environment holds a native extension built for the other architecture | `uv tool install --force --reinstall <tool>==<version>` |
+| `pip install --user` packages | Those whose file list names a native extension built for the other architecture. Pure-Python ones are left alone | `pip install --user --force-reinstall --no-deps <name>==<version>`. `--no-deps` keeps their dependencies as they are |
+| `uv tool` tools | Those whose environment holds a native extension (`*-linux-gnu.so`) built for the other architecture | `uv tool install --force --reinstall <tool>==<version>`. When the tool's version cannot be read, without `==<version>`, so it gets the latest |
 | `npm install -g` packages in `~/.local` | The ones listed when the workspace removed `~/.local/lib/node_modules` at the start of the change | `npm install -g --prefix ~/.local <name>@<version>...` |
 
 The npm list exists only during a start that changed architecture. Run by hand, af-arch-repair reinstalls npm packages
@@ -48,11 +49,25 @@ It does not touch these, and names them instead:
 | Programs you put into `~/.local/bin` yourself, built for the other architecture | Where they came from is unknown | Download or build them again |
 
 af-arch-repair checks the binaries themselves, not whether a directory exists: a pure-JavaScript `node_modules` is not
-reported, and a fixed one stops being reported.
+reported, and a fixed one is no longer reported the next time it runs.
+
+## Limits
+
+What it does not find, it neither fixes nor reports. In particular:
+
+- A pip package is found only through native extension files whose names carry the architecture, and only when its
+  name and version can be read. Others are not reinstalled.
+- Under `~/repos` it looks only at `node_modules`, `target` and `.venv` directly inside each working copy, not in
+  subprojects deeper down. It judges each by the first `.node` file (`node_modules`) or `.so` file (`target`, `.venv`)
+  it finds, so a directory with a mix can go unreported, and programs built there are not checked.
+- In `~/.local/bin` it looks only at programs placed there directly.
+
+When something still fails with `Exec format error` or a missing module after the move, rebuild or reinstall it as
+you would on a new machine.
 
 ## Output
 
-Every line starts with `[arch-repair]`:
+Its own lines start with `[arch-repair]`; the output of `pip`, `uv` and `npm` appears between them as those tools print it:
 
 ```
 [arch-repair] pip: 2 件を同じ版で入れ直します: greenlet==3.0.3 PyYAML==6.0.1
@@ -71,6 +86,10 @@ During the workspace's start this output goes to the start log, which you cannot
 programs. It is raised from the file af-arch-repair writes, `~/.local/share/agent-fleet/arch-residue`, which holds the
 current leftovers and is removed when there are none. A notification already shown for the same leftovers is not
 shown again.
+
+**A failed reinstall raises no notification.** When pip, uv or npm failed and nothing is left under `~/repos` or in
+`~/.local/bin`, nothing tells you. If a tool you installed yourself stops working after a move, run
+`af-arch-repair <was> <now>` in a terminal and read its `WARN:` lines.
 
 ## Retries
 
