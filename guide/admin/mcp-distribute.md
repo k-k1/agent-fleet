@@ -129,7 +129,7 @@ What a tenant administrator cannot finish goes to the deployment administrator. 
 - **Why**: which MCP server, for what work
 - **Until when**: for good, or for a period
 
-The deployment administrator's side is in [Operating egress control](../operate/04-secure.md#operating-egress-control).
+The deployment administrator's side is in [Control outbound traffic](../operate/secure/egress.md#approve-members-requests).
 
 ## Related
 

@@ -76,7 +76,7 @@ source_of_truth: "この表（行は Control Plane が受け付ける runtime �
 
 ⁴ **自分の網の中ですでに動いている** ComfyUI を、環境変数 1 つで指すか、
 LAN の ComfyUI・借りたエンジン・OpenAI 互換のサーバを、エンジンの行として並べる
-（[operate/08](../operate/08-image-engine.ja.md)）。
+（[operate/08](../operate/engines/comfyui.ja.md)）。
 
 ⁵ フリート自身の GPU を、要求が来たときに買う。Fargate に相当するものは無い。
 なお**どの形態でも**、セッションは**メンバー自身の CLI のプラン**（Codex /
@@ -84,7 +84,7 @@ Antigravity）で画像を生成できる。この行が指すのは**配備が�
 ことである。
 
 ⁶ `ecs-ec2` ではフリート自身の GPU。`docker`・`native`・`kubernetes` では、**自分の網の中ですでに
-動いている** llama.cpp を環境変数 1 つで指す（[operate/10](../operate/10-llm-lan.ja.md)）。
+動いている** llama.cpp を環境変数 1 つで指す（[operate/10](../operate/engines/llama-cpp.ja.md)）。
 
 ⁷ Control Plane 自身はメンバーの EFS のホームをマウントできないので、スタックが宣言した短い
 タスク（`30-ingress` の `HomeOpsTaskDef`）を起動し、それがファイルシステムをマウントして
@@ -150,7 +150,7 @@ EFS にあるので、ほかの形態と同じく残る。ただし、その中�
 その場で消す。どちらもログイン・接続・Claude の状態を残す。これらは専用の 2 本目のボリュームに
 あるからだ。ホームのボリューム自体は残る。
 
-¹⁴ 既定はオフで、運用者がスタックで有効にする（[operate/12](../operate/12-keys.ja.md#aws-kms-で保存時の鍵を守る)）。
+¹⁴ 既定はオフで、運用者がスタックで有効にする（[保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)）。
 有効にすると、切り替え後に Control Plane 自身が封じる秘密（MCP 接続のヘッダ、サインインのクライアント
 シークレット、エンジンのトークン、セッションの引き継ぎと共有）は AWS KMS の鍵で封じられ、KMS 鍵を無効に
 すると読めなくなる。メンバーが保存した資格情報の鍵が KMS で包まれるのは、切り替え後に鍵が初めて保存される

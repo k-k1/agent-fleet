@@ -42,12 +42,12 @@ The other targets (AWS, Kubernetes, a machine without Docker) are chosen in [Cho
 
 - Each company builds an independent deployment on its own infrastructure
 - Isolation between companies comes from **separate deployments**, not from boundaries inside a process. A compromise stays inside that one deployment
-- On AWS, that holds only when each deployment has its own AWS account ([04 Securing it](04-secure.md))
+- On AWS, that holds only when each deployment has its own AWS account ([Understand the threat model and residual risks](secure/threat-model.md))
 - The boundaries inside a workspace assume the agent **executes arbitrary code**. What they protect is other users' data, the Control Plane and the host, the secrets, and exfiltration
 
 ### Risks to read before you adopt it
 
-Four risks remain. They are in [04 Securing it](04-secure.md) and in `SECURITY.md`; read them before you decide.
+Four risks remain. They are in [Understand the threat model and residual risks](secure/threat-model.md) and in `SECURITY.md`; read them before you decide.
 
 | Risk | What it means |
 |---|---|

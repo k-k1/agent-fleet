@@ -66,11 +66,11 @@ source_of_truth: "固定値はこの表、テナント / 配備が決めるも�
 | 起動中のまま止めるまで | 30 分 | `AF_WORKSPACE_START_DEADLINE`。`0` で無効（[アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#終わらない起動を止める)）|
 | Agent が応答しないまま止めるまで | 無効 | `AF_AGENT_SILENT_STOP_AFTER`（最小 `10m`。[アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#応答しない-agent-を自動で止める)）|
 | ホームと状態のボリューム（kubernetes）| 50 GiB と 5 GiB | `AF_K8S_HOME_GIB`・`AF_K8S_STATE_GIB` |
-| egress の生イベント（egress ゲートウェイを通ったワークスペースの接続ごとに 1 件）を残す期間 | 30 日 | `AF_EGRESS_EVENT_RETENTION_DAYS`。`0` で無期限。ホストごとの日次の件数は残る。AWS では 30-ingress のパラメータ `EgressEventRetentionDays` で設定（空なら 30 日のまま）（[operate/04](../operate/04-secure.ja.md#egress-統制の運用)） |
+| egress の生イベント（egress ゲートウェイを通ったワークスペースの接続ごとに 1 件）を残す期間 | 30 日 | `AF_EGRESS_EVENT_RETENTION_DAYS`。`0` で無期限。ホストごとの日次の件数は残る。AWS では 30-ingress のパラメータ `EgressEventRetentionDays` で設定（空なら 30 日のまま）（[外向きの通信を制御する](../operate/secure/egress.ja.md#記録を残す)） |
 
 セルフホストのエンジン自身の自動停止はこの表にはありません。「**自動停止まで**」を管理モーダル →
 推論エンジンで役ごとに決め、保存した値はコントローラの次の巡回からエンジンのスタックの既定より
-優先されます（[operate/07](../operate/07-engines.ja.md#推論エンジン自前の-gpusuperadmin-専用)）。
+優先されます（[自前の GPU で推論エンジンを動かす](../operate/engines/gpu.ja.md#自動停止までの時間を決める)）。
 
 ## テナントが決めるもの
 
