@@ -91,7 +91,10 @@ EC2 のインスタンスが消えたあとも、クラスターがそれを一�
 
 ```bash
 for s in af-ecs-ingress af-ecs-engines af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
-  aws cloudformation describe-stacks --stack-name $s >/dev/null 2>&1 || { echo "skip $s (not deployed)"; continue; }
+  if ! err=$(aws cloudformation describe-stacks --stack-name $s 2>&1 >/dev/null); then
+    case "$err" in *"does not exist"*) echo "skip $s (not deployed)"; continue ;; esac
+    echo "$err" >&2; break                     # credentials, permission or network: stop here
+  fi
   aws cloudformation delete-stack --stack-name $s
   aws cloudformation wait stack-delete-complete --stack-name $s || break   # stop on the first failure
 done
@@ -101,7 +104,7 @@ done
 > **1 つずつ消して、待ちます。** CloudFormation は、export しているスタックの削除を、import しているスタックが残っているあいだは**取り消します**（`Cannot delete export … as it is in use by …`）。まとめて消すと、最後のほうは何も起きず、待つループだけが、もう取り消された削除を待ち続けます。
 
 - 順番は `teardown.sh` と同じです。ingress → 推論エンジン（`60-engines`）→ 読み上げ（`50-tts`）→ スロットのプール（`40-ec2-pool`）→ platform → data → network
-- 推論エンジン・読み上げ・プールのスタックは任意です。`af-ecs-engines` は推論エンジンを足したときだけ、`af-ecs-tts` は読み上げを有効にしたときだけ、`af-ecs-pool` は `ecs-ec2` のときだけあります。ループは、存在しないスタックを飛ばします
+- 推論エンジン・読み上げ・プールのスタックは任意です。`af-ecs-engines` は推論エンジンを足したときだけ、`af-ecs-tts` は読み上げを有効にしたときだけ、`af-ecs-pool` は `ecs-ec2` のときだけあります。ループが飛ばすのは、CloudFormation が存在しないと答えたスタック（`does not exist`）だけです。それ以外の `describe-stacks` のエラー（資格情報の期限切れ・権限不足・通信の障害）は表示して止まるので、確かめていないスタックを飛ばしたことにはなりません
 - 上の名前は既定の例です。実際のスタック名（`60-engines.yaml` / `50-tts.yaml` / `40-ec2-pool.yaml` などをデプロイしたときの名前）に置き換えます。`teardown.sh` は名前を配備から読みます
 - `50-tts` を消す前に、エンジンのサービスを 0 台にしておきます。タスクが登録されているあいだは Cloud Map のサービスを消せず、止まりかけのタスクもまさにそれに当たります
 - かかる時間は、`delete` で約 10 分、`retain` で約 16 分（RDS のスナップショットを取るため）です

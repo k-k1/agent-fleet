@@ -91,7 +91,10 @@ List them with `describe-snapshots --owner-ids self` and delete each: 50 GiB per
 
 ```bash
 for s in af-ecs-ingress af-ecs-engines af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
-  aws cloudformation describe-stacks --stack-name $s >/dev/null 2>&1 || { echo "skip $s (not deployed)"; continue; }
+  if ! err=$(aws cloudformation describe-stacks --stack-name $s 2>&1 >/dev/null); then
+    case "$err" in *"does not exist"*) echo "skip $s (not deployed)"; continue ;; esac
+    echo "$err" >&2; break                     # credentials, permission or network: stop here
+  fi
   aws cloudformation delete-stack --stack-name $s
   aws cloudformation wait stack-delete-complete --stack-name $s || break   # stop on the first failure
 done
@@ -101,7 +104,7 @@ done
 > **Issue them one at a time, and wait.** CloudFormation **cancels** the delete of an exporting stack while an importer still exists (`Cannot delete export … as it is in use by …`). Fire them all together and the last ones silently do nothing, while your wait loop spins on a delete that was already cancelled.
 
 - The order is `teardown.sh`'s: ingress → inference engines (`60-engines`) → read-aloud (`50-tts`) → slot pool (`40-ec2-pool`) → platform → data → network
-- The engines, read-aloud and pool stacks are optional: `af-ecs-engines` exists only where inference engines were added, `af-ecs-tts` only where read-aloud was enabled, `af-ecs-pool` only under `ecs-ec2`. The loop skips a stack that does not exist
+- The engines, read-aloud and pool stacks are optional: `af-ecs-engines` exists only where inference engines were added, `af-ecs-tts` only where read-aloud was enabled, `af-ecs-pool` only under `ecs-ec2`. The loop skips only a stack CloudFormation reports as not existing (`does not exist`). Any other `describe-stacks` error (expired credentials, missing permission, network) is printed and stops the loop, so nothing is reported as skipped that was not checked
 - The names above are the default examples. Replace them with your actual stack names (whatever you deployed `60-engines.yaml` / `50-tts.yaml` / `40-ec2-pool.yaml` and the rest as); `teardown.sh` reads them from the deployment
 - Scale the engine service to 0 before deleting `50-tts`: its Cloud Map service cannot be deleted while a task is still registered, and a task on its way down is exactly that
 - Wall clock: about 10 minutes (`delete`) to about 16 minutes (`retain`, RDS snapshotting)
