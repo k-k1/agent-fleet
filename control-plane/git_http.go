@@ -340,7 +340,7 @@ func (a gitServerAPI) gitHTTP(w http.ResponseWriter, r *http.Request) {
 	// Use the token tenant's CANONICAL slug for the on-disk tree: the URL slug is
 	// only EqualFold-equal, and a case-variant would address a sibling directory
 	// outside the real repo tree (orphan objects the GC never sees).
-	tenantRoot := filepath.Join(a.dataRoot, datalayout.GitDir, filepath.Base(mv.TenantSlug))
+	tenantRoot := datalayout.GitTenantDir(a.dataRoot, filepath.Base(mv.TenantSlug))
 	gitBackendServe(w, r, slug, tenantRoot, membershipID)
 }
 

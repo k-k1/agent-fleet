@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
+	"github.com/k-k1/agent-fleet/control-plane/internal/gitfsck"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -187,5 +190,38 @@ func TestInternalGitCreateEnablesFsck(t *testing.T) {
 	out, err := exec.Command("git", "--git-dir", dir, "config", "--local", "receive.fsckObjects").Output()
 	if err != nil || strings.TrimSpace(string(out)) != "true" {
 		t.Fatalf("receive.fsckObjects = %q, %v; want true", out, err)
+	}
+}
+
+// A repository created through the server path before the setting existed is
+// backfilled by the startup pass (#3926): the pass reads the root the server writes to.
+func TestInternalGitRestartBackfillsFsck(t *testing.T) {
+	e := newP2Env(t)
+	e.g.publicBaseURL = "https://af.example"
+	w, r := e.req("POST", "/api/internal-git/repos", map[string]string{"name": "old"})
+	e.g.withMembership(e.g.repoCreate)(w, r)
+	if w.Code != 200 {
+		t.Fatalf("create: want 200 got %d (%s)", w.Code, w.Body.String())
+	}
+	dir := filepath.Join(datalayout.GitRoot(e.g.dataRoot), "default", "old.git")
+	// Simulate a repository from before the setting: drop what creation wrote.
+	if out, err := exec.Command("git", "--git-dir", dir, "config", "--local", "--remove-section", "receive").CombinedOutput(); err != nil {
+		t.Fatalf("strip config: %v: %s", err, out)
+	}
+	if err := exec.Command("git", "--git-dir", dir, "config", "--local", "--get", "receive.fsckObjects").Run(); err == nil {
+		t.Fatal("setup: receive.fsckObjects still set")
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	gitfsck.Run(context.Background(), e.g.dataRoot) // the restart
+
+	out, err := exec.Command("git", "--git-dir", dir, "config", "--local", "receive.fsckObjects").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "true" {
+		t.Fatalf("receive.fsckObjects = %q, %v; want true after the startup pass", out, err)
+	}
+	if !strings.Contains(buf.String(), "fsck config checked on 1 repo(s), 0 failed") {
+		t.Fatalf("log = %q", buf.String())
 	}
 }

@@ -13,7 +13,10 @@
 // and on a $WS_DATA/<name> in deploy/ that is not in Reserved.
 package datalayout
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 const (
 	// GitDir holds the internal git bare repositories, <root>/git/<slug>/<repo>.git.
@@ -53,4 +56,17 @@ func IsReserved(name string) bool {
 		}
 	}
 	return false
+}
+
+// GitRoot is the internal git tree under the data root. Creation, serving, GC and the
+// startup config backfill all resolve it here: a pass that joined its own copy of the
+// path could silently scan a different tree than the one repositories live in.
+func GitRoot(root string) string { return filepath.Join(root, GitDir) }
+
+// GitTenantDir is one tenant's repository directory, <root>/git/<slug>.
+func GitTenantDir(root, slug string) string { return filepath.Join(GitRoot(root), slug) }
+
+// GitRepoDir is one bare repository, <root>/git/<slug>/<name>.git.
+func GitRepoDir(root, slug, name string) string {
+	return filepath.Join(GitTenantDir(root, slug), name+".git")
 }
