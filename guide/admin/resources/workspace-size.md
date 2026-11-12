@@ -54,8 +54,15 @@ What the disk field refers to depends on the deployment. The field's name and th
 | **Workspace home (persistent)** | The home (`~`) itself. Raising it grows the home they already have |
 | Workspace working disk (with "Reported for reference only; nothing enforces it.") | A figure for reference only. The disk size does not change |
 
-With a working disk of 30 GB or more, caches and `node_modules` / `target` / `.venv` / `build` are placed on it automatically.
-On AWS, where the home is network storage, this is what makes installs and builds faster.
+On a deployment with a working disk, the workspace puts regenerable output there by itself:
+
+| What | When |
+|---|---|
+| The Go build cache, the Go module cache and uv's cache | At every start, when the working disk is 30 GiB or more |
+| `target` (Rust, Maven) and `build` (Gradle) of a working copy | When the working copy is cloned or created, at any disk size |
+
+`node_modules`, `.venv` and npm's cache stay in the home. Members can move other build output themselves with
+[af-scratch](../../ref/cli/af-scratch.md). On AWS, where the home is network storage, this is what makes builds faster.
 
 ## Grow the home
 
@@ -105,7 +112,7 @@ Each kind has its own price and speed, and the names and what they mean are the 
 Choosing a machine of a different CPU family, such as Intel and Arm, shows a warning on the form and makes the next start a few minutes longer.
 
 - The home is kept. What in it was built for one family is reinstalled automatically at start: the agent CLIs, Chromium, the selected JDK and node, and what the member installed (`pip install --user`, `uv tool`, `npm i -g`), at the same versions
-- Not restored automatically: `node_modules` / `target` / `.venv` under `~/repos` (kept, but reinstall them with `npm ci` and the like) and binaries placed straight in `~/.local/bin`. The start log names them
+- Not restored automatically: `node_modules` / `target` / `.venv` under `~/repos` (kept, but reinstall them with `npm ci` and the like) and binaries placed straight in `~/.local/bin`. A notification names them ([af-arch-repair](../../ref/cli/af-arch-repair.md))
 - JDK and node versions that are not selected are not restored either. The member reinstalls them from [Toolchains](../../user/workspace/toolchains.md) if needed
 
 ## Related

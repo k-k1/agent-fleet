@@ -12,6 +12,9 @@ workspace a working disk: there the home is network storage, slow for trees of m
 is local and fast. **Everything on the working disk is gone when the workspace stops**, so put only output a build can
 regenerate there. Where the workspace has no working disk, af-scratch does nothing.
 
+Separately from af-scratch, the workspace's start moves the Go build cache, the Go module cache and uv's cache onto
+the working disk when it is 30 GiB or more. `node_modules`, `.venv` and npm's cache always stay in the home.
+
 ## Synopsis
 
 ```sh
