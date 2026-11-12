@@ -202,6 +202,19 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
+	// A tmux attach client's own device queries are dropped before the Console can answer
+	// them too late (tmuxx.AttachQueryFilter). A plain shell keeps them: its programs ask xterm.js.
+	var queries *tmuxx.AttachQueryFilter
+	if name != "" {
+		queries = tmuxx.NewAttachQueryFilter()
+	}
+	relay := func(b []byte) error {
+		if len(b) == 0 {
+			return nil
+		}
+		return writeMsg(websocket.BinaryMessage, b)
+	}
+
 	// PTY -> WS (binary). Closing ptmx on command exit ends this goroutine.
 	go func() {
 		defer ptyDone.Store(true)
@@ -209,11 +222,18 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
-				if werr := writeMsg(websocket.BinaryMessage, buf[:n]); werr != nil {
+				out := buf[:n]
+				if queries != nil {
+					out = queries.Filter(out)
+				}
+				if werr := relay(out); werr != nil {
 					return
 				}
 			}
 			if err != nil {
+				if queries != nil && relay(queries.Flush()) != nil {
+					return
+				}
 				if err != io.EOF {
 					log.Printf("pty read: %v", err)
 				}
