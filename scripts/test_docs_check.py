@@ -1086,6 +1086,7 @@ class RedirectTests(unittest.TestCase):
         (self.root / "console/menu.ts").write_text(
             'openGuidePage("user/08-terminal");\n'
             'const note = "user/08-terminal-tips";\n'  # a different page that shares the prefix
+            'guideLinkProps("user/08-terminal#copy-and-paste");\n'
         )
         self.addCleanup(patch.stopall)
         patch.object(check, "ROOT", str(self.root)).start()
@@ -1113,6 +1114,7 @@ class RedirectTests(unittest.TestCase):
         out = self.errors("user/08-terminal.md\tuser/files/terminal.md\n")
         self.assertIn("console/menu.ts:1: 'user/08-terminal' moved to 'user/files/terminal'", out)
         self.assertNotIn("console/menu.ts:2", out)
+        self.assertIn("console/menu.ts:3: 'user/08-terminal' moved to 'user/files/terminal'", out)
 
     def test_old_page_must_be_gone(self):
         (self.guide / "user/08-terminal.md").write_text("# Terminal\n")
@@ -1130,6 +1132,95 @@ class RedirectTests(unittest.TestCase):
 
     def test_empty_map_is_quiet(self):
         self.assertEqual(self.errors(""), "")
+
+
+class ConsoleGuideTests(unittest.TestCase):
+    """Every guide page id the Console links to exists, with its anchor, in both languages."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        for rel, body in {
+            "guide/README.md": "# Guide\n",
+            "guide/README.ja.md": "# ガイド\n",
+            "guide/user/files/terminal.md": "# Use the terminal\n\n## Copy and paste\n\n## tmux\n",
+            "guide/user/files/terminal.ja.md": "# ターミナルを使う\n\n## コピーと貼り付け\n\n## tmux\n",
+        }.items():
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / rel).write_text(body)
+        (self.root / "console/src").mkdir(parents=True)
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.root / "guide")).start()
+
+    def errors(self, code, name="menu.tsx"):
+        (self.root / "console/src" / name).write_text(code)
+        check._cache.clear()
+        findings = check.Findings()
+        check.check_console_guide(findings)
+        return "\n".join(findings.errors)
+
+    def test_existing_pages_and_anchors_pass(self):
+        self.assertEqual(self.errors(
+            'guideLinkProps("README");\n'
+            'openGuidePage("user/files/terminal#tmux");\n'
+            'guideUrl("user/files/terminal", "tmux");\n'
+            'openGuidePage("user/files/terminal", { en: "copy-and-paste", ja: "コピーと貼り付け" });\n'
+            'openGuidePage(page);\n'  # not a literal: nothing to check
+        ), "")
+
+    def test_missing_page_is_reported(self):
+        out = self.errors('\nguideLinkProps("user/files/termnal");\n')
+        self.assertIn("console/src/menu.tsx:2: guide page 'user/files/termnal' has no guide/user/files/termnal.md", out)
+        self.assertIn("no guide/user/files/termnal.ja.md", out)
+
+    def test_anchor_must_exist_in_each_language(self):
+        out = self.errors('openGuidePage("user/files/terminal#copy-and-paste");\n')
+        self.assertIn("guide/user/files/terminal.ja.md has no heading with the id 'copy-and-paste'; pass { en, ja }", out)
+        self.assertNotIn("terminal.md has no heading", out)
+        out = self.errors('openGuidePage("user/files/terminal", { en: "copy", ja: "コピーと貼り付け" });\n')
+        self.assertIn("guide/user/files/terminal.md has no heading with the id 'copy'", out)
+        self.assertNotIn("ja.md", out)
+
+    def test_anchor_object_in_either_order(self):
+        for code in ('openGuidePage("user/files/terminal", { ja: "コピー", en: "copy-and-paste" });\n',
+                     "guideLinkProps('user/files/terminal', {\n  'ja':'コピー',\n  \"en\" : `copy-and-paste`,\n});\n"):
+            with self.subTest(code=code):
+                out = self.errors(code)
+                self.assertIn("guide/user/files/terminal.ja.md has no heading with the id 'コピー'", out)
+                self.assertNotIn("terminal.md has no heading", out)
+        for code in ('openGuidePage("user/files/terminal", { en: "copy-and-paste", ja: "コピー" });\n',
+                     'openGuidePage("user/files/terminal", {ja:"コピー と",en:"copy"});\n'):
+            with self.subTest(code=code):
+                out = self.errors(code)
+                self.assertIn("terminal.ja.md has no heading", out)
+        self.assertIn("terminal.md has no heading with the id 'copy'",
+                      self.errors('openGuidePage("user/files/terminal", {ja:"コピーと貼り付け",en:"copy"});\n'))
+
+    def test_anchor_object_needs_both_languages(self):
+        self.assertIn("must give both en and ja", self.errors(
+            'openGuidePage("user/files/terminal", { ja: "コピーと貼り付け", en: anchor });\n'))
+
+    def test_guide_file_paths_in_strings_are_reported(self):
+        (self.root / "console/src/lib/i18n/locales/en").mkdir(parents=True)
+        out = self.errors(
+            '"a": "See guide/admin/access/oauth-apps.md.",\n'
+            '"b": "(user/files/terminal.ja.md)",\n'
+            '"c": "a/b.md becomes a--b, docs/log/28-i18n.md",\n'
+            '"d": "トップは guide/README.ja.md です",\n'
+            '"e": "参照guide/admin/access/oauth-apps.ja.mdを見る",\n'
+            '"f": "（admin/access/oauth-apps.ja.md）",\n',
+            name="lib/i18n/locales/en/admin.ts")
+        self.assertIn("en/admin.ts:1: 'guide/admin/access/oauth-apps.md' names a guide page", out)
+        self.assertIn("en/admin.ts:2: 'user/files/terminal.ja.md' names a guide page", out)
+        self.assertNotIn(":3:", out)
+        self.assertIn("en/admin.ts:4: 'guide/README.ja.md' names a guide page", out)
+        self.assertIn("en/admin.ts:5: 'guide/admin/access/oauth-apps.ja.md' names a guide page", out)
+        self.assertIn("en/admin.ts:6: 'admin/access/oauth-apps.ja.md' names a guide page", out)
+
+    def test_test_files_are_skipped(self):
+        self.assertEqual(self.errors('guideUrl("user/nope");\n', name="menu.test.ts"), "")
 
 
 class PoliteTests(unittest.TestCase):

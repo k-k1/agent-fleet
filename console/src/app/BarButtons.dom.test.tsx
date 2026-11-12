@@ -163,10 +163,31 @@ describe("top bar", () => {
   it("keeps the account menu's items as menuitems and the copy button labelled", async () => {
     await mount(<TopBar toggleNav={() => {}} toggleLeft={() => {}} toggleLeftMode={() => {}} />);
     await click(".acct-btn");
-    const items = buttonsIn(".acct-menu").filter((b) => b.classList.contains("acct-item"));
+    const items = Array.from(host!.querySelectorAll(".acct-menu .acct-item"));
     expect(items.length).toBeGreaterThanOrEqual(3);
     for (const b of items) expect(b.getAttribute("role")).toBe("menuitem");
+    // The user guide is a real link to the docs site, opened in a new tab.
+    const guide = host!.querySelector<HTMLAnchorElement>(".acct-menu a.acct-item")!;
+    expect(guide.getAttribute("role")).toBe("menuitem");
+    expect(guide.getAttribute("href")).toMatch(/^https:\/\/agent-fleet\.org\/docs\//);
+    expect(guide.target).toBe("_blank");
+    expect(guide.rel).toBe("noopener noreferrer");
     expect(host!.querySelector(".acct-ver-copy")!.getAttribute("aria-label")).toBe(t("topbar.copy_version"));
+  });
+
+  it("activates the user guide link with Space, like the other menu items, and closes the menu", async () => {
+    await mount(<TopBar toggleNav={() => {}} toggleLeft={() => {}} toggleLeftMode={() => {}} />);
+    await click(".acct-btn");
+    const guide = host!.querySelector<HTMLAnchorElement>(".acct-menu a.acct-item")!;
+    const clicked = vi.fn((e: Event) => e.preventDefault()); // jsdom cannot navigate
+    guide.addEventListener("click", clicked);
+    const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    await act(async () => {
+      guide.dispatchEvent(space);
+    });
+    expect(space.defaultPrevented).toBe(true); // no page scroll
+    expect(clicked).toHaveBeenCalledTimes(1);
+    expect(host!.querySelector(".acct-menu")).toBeNull();
   });
 });
 

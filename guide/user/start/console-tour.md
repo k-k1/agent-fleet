@@ -31,7 +31,8 @@ on the other pages easy to find.
 | Appearance | Language, main area layout, theme and colours |
 | Account menu (your address at the right end) | **Tenant** switching, **User guide**, **Getting-started guide**, **Settings**, **Sign out** |
 
-What this guide calls "⚙ Settings" is the screen that **Settings** in the account menu opens.
+What this guide calls "⚙ Settings" is the screen that **Settings** in the account menu opens. **User guide** opens
+this guide on the docs site in a new browser tab.
 
 ## Workspace action bar
 
