@@ -956,6 +956,45 @@ describe("tenant launch defaults", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Could not save");
   });
 
+  it("keeps a permission the member set by hand when a late answer changes the agent (C8)", async () => {
+    await render(["claude", "cursor"]);
+    await expand("More");
+    // The permission selector is only offered for kinds with that choice; set it through the UI.
+    const sel = must([...document.querySelectorAll<HTMLSelectElement>("select")].find((e) => [...e.options].some((o) => o.value === "skip")), "permission select");
+    await act(async () => {
+      sel.value = "ask";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => useUIStateStore.setState({ state: answer("cursor", { effective: { launch: { agent: "cursor", model: "", driver: "", permission_mode: "skip", budget_usd: null }, repos: [], ops } }) as never }));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("cursor");
+    expect(launchedWith().skipPermissions).toBe(false);
+  });
+
+  it("a budget saved by the member follows them to another agent card (C9)", async () => {
+    useUIStateStore.setState({
+      state: answer("claude", { launch: { agent: "codex", model: "", driver: "", permission_mode: "", budget_usd: 0 }, effective: { launch: { agent: "claude", model: "", driver: "", permission_mode: "", budget_usd: 0 }, repos: [], ops } }) as never,
+    });
+    await render(["claude", "codex"]);
+    await click(byText("Codex"));
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("codex");
+    expect(launchedWith().spendCapUsd).toBe(0);
+  });
+
+  it("will not save an unparsable budget as unset (C10)", async () => {
+    await render(["claude"]);
+    await expand("More");
+    const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
+    for (const bad of ["abc", "1.234", "100001"]) {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, bad);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(byText("Use as my default").disabled).toBe(true);
+    }
+  });
+
   it("changes nothing without a cached answer", async () => {
     await render(["claude", "codex"]);
     await click(byText("Start in a worktree"));
