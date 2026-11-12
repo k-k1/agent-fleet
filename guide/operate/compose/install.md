@@ -87,6 +87,7 @@ docker compose logs -f cp
 
 - Store `AF_MASTER_KEY` in a password vault the moment you generate it. It is in neither `DATA_DIR` nor the backups ([Handle the deployment keys](../secure/deployment-keys.md))
 - A wrong `DOCKER_GID` gives "permission denied" on the docker socket
+- `DATA_DIR` defaults to `/srv/agent-fleet/data`, which an ordinary user cannot create, so the `mkdir` above fails there. The Control Plane writes as uid 1000 (`user: "1000:1000"` in `docker-compose.yml`), so a directory created as root must be handed to 1000:1000, e.g. `sudo mkdir -p /srv/agent-fleet/data && sudo chown 1000:1000 /srv/agent-fleet/data`
 - `.env.example` itself explains each variable. What to choose is in steps 1–4 of [Install Agent Fleet](../install.md)
 
 ## 2. Start from the published release images

@@ -87,6 +87,7 @@ docker compose logs -f cp
 
 - `AF_MASTER_KEY` は、作ったその場でパスワード金庫に控えます。`DATA_DIR` にもバックアップにも入りません（[配備の鍵を扱う](../secure/deployment-keys.ja.md)）
 - `DOCKER_GID` を間違えると、docker のソケットで permission denied になります
+- `DATA_DIR` の既定は `/srv/agent-fleet/data` で、ふつうのユーザーは `/srv` の下に作れないので、上の `mkdir` は失敗します。Control Plane は uid 1000（`docker-compose.yml` の `user: "1000:1000"`）で書くので、root で作ったら所有者を 1000:1000 にします。例: `sudo mkdir -p /srv/agent-fleet/data && sudo chown 1000:1000 /srv/agent-fleet/data`
 - 各変数の意味は `.env.example` 自体に書いてあります。何を選ぶかは [インストールする](../install.ja.md) の手順 1〜4 です
 
 ## 2. 公開リリースのイメージで起動する
