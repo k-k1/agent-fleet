@@ -65,8 +65,9 @@ servers side by side.
 - `--durable` and `--ephemeral` take effect only when the server starts. On a running server they are ignored without
   a message: run `af-db down` first.
 - They stick to the server: a later `af-db up` without them keeps them, and no af-db option turns them off again.
-- `--ephemeral` does not move existing data. It starts the server on a new, empty data directory on the working disk;
-  the data in the home stays where it was and is no longer used.
+- `--ephemeral` does not move existing data. It starts the server on the data directory on the working disk: an
+  existing one if an earlier `--ephemeral` start left it there, otherwise a new, empty one. The data in the home stays
+  where it was and is no longer used. Without a working disk the server keeps using the home.
 - `--persist` is accepted as `--durable`, with a notice.
 
 ## Which database
@@ -83,8 +84,9 @@ Two sessions on the same working copy share its database.
 When a working copy's directory no longer exists, af-db tries to drop its database the next time `up`, `url`, `env`,
 `connect` or `status` (but not `status --json` without an engine) finds the server running. A drop that fails (on PostgreSQL, while something is connected
 to it) is printed as a warning and tried again next time. A database created with `create --db` or `url --db` belongs
-to no working copy and is never dropped this way. `connect --db=<name>` with the working copy's own name counts as the
-working copy's database.
+to no working copy and is not dropped this way, with one exception: if its name is a working copy's own default name,
+running `url`, `env` or `connect` without `--db` in that working copy, or `connect --db=<name>`, ties it to the working
+copy again, and it is dropped once that working copy's directory is gone.
 
 A name given with `--db` matches `^[a-z_][a-z0-9_]{0,62}$`: lower-case letters, digits and `_`, not starting with a
 digit, at most 63 characters. Any other name exits with status 2.

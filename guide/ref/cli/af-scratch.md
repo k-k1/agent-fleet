@@ -13,7 +13,8 @@ is local and fast. **Everything on the working disk is gone when the workspace s
 regenerate there. Where the workspace has no working disk, af-scratch does nothing.
 
 Separately from af-scratch, the workspace's start moves the Go build cache, the Go module cache and uv's cache onto
-the working disk when it is 30 GiB or more. Nothing moves `node_modules` or npm's cache, and `.venv` moves only when you name it yourself.
+the working disk when it is 30 GiB or more (by default; a deployment can change the threshold and the list) and can be
+written. Nothing moves `node_modules` or npm's cache, and `.venv` moves only when you name it yourself.
 
 ## Synopsis
 
