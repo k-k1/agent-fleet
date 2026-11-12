@@ -3,7 +3,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const toast = vi.fn(() => true);
 vi.mock("../../ui/toast.ts", () => ({ toast: (...a: unknown[]) => toast(...(a as [])) }));
-vi.mock("../api/client.ts", () => ({ api: vi.fn(), getTenant: () => "t" }));
+const api = vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined);
+vi.mock("../api/client.ts", () => ({ api: (...a: unknown[]) => api(...a), apiJSON: async () => ({}), getTenant: () => "t" }));
 vi.mock("../push/events.ts", () => ({ onPush: vi.fn(), pushHealthy: () => true, pushPaused: () => false }));
 
 import { __test } from "./wsStatsFeed.ts";
@@ -19,6 +20,7 @@ const tick = (d: unknown) => {
 
 beforeEach(() => {
   toast.mockClear();
+  api.mockClear();
   toast.mockImplementation(() => true);
   __test.reset();
 });
@@ -54,5 +56,12 @@ describe("home disk notice", () => {
     tick(frame(98));
     tick(frame(98));
     expect(toast).toHaveBeenCalledTimes(2);
+  });
+  it("reads the Agent's last walk once per crossing and never starts a walk or polls on later ticks", () => {
+    tick(frame(50));
+    expect(api).not.toHaveBeenCalled();
+    tick(frame(98));
+    for (let i = 0; i < 10; i++) tick(frame(98));
+    expect(api.mock.calls).toEqual([["api/cleanup/home"]]);
   });
 });
