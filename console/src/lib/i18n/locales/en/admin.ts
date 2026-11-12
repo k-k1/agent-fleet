@@ -494,6 +494,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.home_resize_failed":
     "The home could not be grown. The setting is saved, so try saving again later (one volume can only be modified once every 6 hours): {detail}",
   "admin.max_sessions_label": "Max sessions",
+  // A member's 0 is not "unlimited": the tenant's max sessions applies (sessionQuotaExceeded).
+  "admin.max_sessions_zero": "0 = tenant's limit",
+  "admin.max_sessions_hint": "0 uses the tenant's max sessions. Only when that is 0 too is there no limit.",
   "admin.ws_memory": "Workspace memory",
   "admin.eq_hint": "= {hint}",
   "admin.zero_deploy_default": "0 = deploy default",

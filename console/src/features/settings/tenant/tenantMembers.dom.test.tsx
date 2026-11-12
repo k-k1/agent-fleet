@@ -135,6 +135,20 @@ describe("member limit editing", () => {
     const [, , body] = apiJSON.mock.calls.find((c) => c[0] === "api/admin/user-limits")!;
     expect(body).toMatchObject({ mem_limit: 16384 * 1048576, cpu_limit: 4096, disk_gb: 80 });
   });
+
+  // A member's 0 falls back to the tenant's max sessions (sessionQuotaExceeded), so labelling
+  // it "unlimited" told an admin the opposite of what saving it does.
+  it("says a session limit of 0 takes the tenant's limit, not unlimited", async () => {
+    await mount();
+    await openEditor();
+    const field = Array.from(document.querySelectorAll(".limit-edit label.admin-fld")).find((l) =>
+      (l.textContent || "").includes("最大セッション数"),
+    )!;
+    expect(field.querySelector(".af-unit")!.textContent).toBe("0 = テナントの上限");
+    const text = document.querySelector(".limit-edit")!.textContent || "";
+    expect(text).toContain("テナント全体の最大セッション数に従います");
+    expect(text).not.toContain("0 = 無制限");
+  });
 });
 
 // Cleanup runs in three stages (docs/log/61 §61.18): remove the member, discard the workspace,
