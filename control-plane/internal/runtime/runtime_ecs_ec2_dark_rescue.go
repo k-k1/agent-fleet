@@ -403,7 +403,7 @@ func (f *ecsEC2Factory) rescueContinue(ctx context.Context, rt *ecsEC2Runtime, c
 	steps := rt.rescueSteps
 	if m.Wedged {
 		steps = func(ctx context.Context, slot string, m *rescueMarker) error {
-			return rt.wedgedReleaseSteps(ctx, cmds, slot, m)
+			return rt.wedgedReleaseSteps(ctx, cmds, f.serviceTasks, slot, m)
 		}
 	}
 	if err := rescueStep(ctx, "before-cancel"); err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
 // The action of the wedged-slot ladder (ADR 0121, amendment of 2026-11-12): once a slot's
@@ -34,8 +35,8 @@ var (
 	// wedgedUmountBudget bounds the SSM umount, which runs under the mount lock; past it the
 	// command is cancelled and the release is blocked until the next pass.
 	wedgedUmountBudget = 3 * time.Minute
-	// wedgedTaskPolls x rescuePollEvery bounds the wait for the service's tasks to be gone
-	// after the umount (the incident's task stopped about 75 s after it).
+	// wedgedTaskPolls x rescuePollEvery bounds the wait for every task of the service to be
+	// STOPPED after the umount (the incident's task stopped about 75 s after it).
 	wedgedTaskPolls = 60
 )
 
@@ -94,12 +95,16 @@ func (f *ecsEC2Factory) rescueNow(rt *ecsEC2Runtime) time.Time {
 	return rt.now().UTC().Truncate(time.Second)
 }
 
+// serviceTasksFn reads every task of a service, running, stopping and recently stopped
+// (ecsEC2Factory.serviceTasks); ok is false when any read failed.
+type serviceTasksFn func(ctx context.Context, service string) ([]ecstypes.Task, bool)
+
 // wedgedReleaseSteps carries a wedged marker from `begun` to `detached`: the service is put
 // at desired 0, the home is unmounted through SSM, the tasks are waited out, the home is
 // detached. All of it runs in one guarded section, so the mount lock spans the umount and the
 // detach as releaseSlotSince's does; the waits inside are bounded, and one that runs out
 // leaves the marker blocked and the home attached and unmounted (a Start mounts it again).
-func (e *ecsEC2Runtime) wedgedReleaseSteps(ctx context.Context, cmds ssmSlotCommands, slot string, m *rescueMarker) error {
+func (e *ecsEC2Runtime) wedgedReleaseSteps(ctx context.Context, cmds ssmSlotCommands, tasks serviceTasksFn, slot string, m *rescueMarker) error {
 	if m.Phase.rank() >= rescuePhaseDetached.rank() {
 		return nil
 	}
@@ -142,7 +147,7 @@ func (e *ecsEC2Runtime) wedgedReleaseSteps(ctx context.Context, cmds ssmSlotComm
 				return err
 			}
 		}
-		if stuck, err = e.wedgedWaitTasksGone(c); err != nil || stuck != "" {
+		if stuck, err = e.wedgedWaitTasksStopped(c, tasks); err != nil || stuck != "" {
 			return err
 		}
 		// After the waits, before the detach: a Start that landed moves the count and the
@@ -209,18 +214,27 @@ func (e *ecsEC2Runtime) wedgedUmount(c context.Context, cmds ssmSlotCommands, sl
 	return fmt.Sprintf("the umount did not complete: %v", err), nil
 }
 
-// wedgedWaitTasksGone waits, bounded, for the service to have no running or pending task.
-func (e *ecsEC2Runtime) wedgedWaitTasksGone(c context.Context) (string, error) {
+// wedgedWaitTasksStopped waits, bounded, until ECS reports every task of the service STOPPED.
+// The service's running and pending counts are not enough: a task that is STOPPING or
+// DEACTIVATING is in neither, and may still hold the home through its bind mount (a host umount
+// does not prove the container let go). A read that fails is not an answer and keeps waiting.
+// The detach follows only a true answer; there is no force.
+func (e *ecsEC2Runtime) wedgedWaitTasksStopped(c context.Context, tasks serviceTasksFn) (string, error) {
 	for i := 0; ; i++ {
-		svc, ok, err := e.base.describeService(c)
-		if err != nil {
-			return "", fmt.Errorf("%w: service: %w", errRescueAborted, err)
+		live := -1
+		if ts, ok := tasks(c, e.base.name); ok {
+			live = 0
+			for _, t := range ts {
+				if aws.ToString(t.LastStatus) != "STOPPED" {
+					live++
+				}
+			}
 		}
-		if !ok || (svc.RunningCount == 0 && svc.PendingCount == 0) {
+		if live == 0 {
 			return "", nil
 		}
 		if i >= wedgedTaskPolls {
-			return "the service's task did not stop", nil
+			return "a task of the service has not reached STOPPED", nil
 		}
 		if err := e.pollPause(c); err != nil {
 			return "", fmt.Errorf("%w: %w", errRescueAborted, err)

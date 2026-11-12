@@ -39,6 +39,7 @@ func newRelWorld(t *testing.T, store bool) *relWorld {
 			s := h.ecs.services[rescueWorkspace]
 			s.RunningCount = 0
 			h.ecs.services[rescueWorkspace] = s
+			h.ci.running, h.ci.stopping = nil, nil // the task stops after the umount
 		}
 	}
 	oldC, oldM, oldW := rescueClaimBudget, rescueMountBudget, rescueWedgeBudget
@@ -517,6 +518,66 @@ func TestPoolStatusShowsTheWedgedRungs(t *testing.T) {
 				}
 			}
 			t.Fatal("slot missing")
+		})
+	}
+}
+
+// The service's running/pending counts do not see a STOPPING task, and a host umount does not
+// prove the container let go of its bind mount: the detach waits for the tasks themselves to be
+// STOPPED, and never forces.
+func TestWedgedReleaseDetachesOnlyAfterEveryTaskIsStopped(t *testing.T) {
+	for name, task := range map[string]func() ecstypes.Task{
+		"still STOPPING": func() ecstypes.Task { return stuckStoppingTask(40 * time.Minute) },
+		"still RUNNING": func() ecstypes.Task {
+			x := runningTask(rescueWorkspace, "i-dark")
+			x.HealthStatus = ecstypes.HealthStatusHealthy
+			return x
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			relModes(t, func(t *testing.T, w *relWorld) {
+				old := wedgedTaskPolls
+				wedgedTaskPolls = 3
+				t.Cleanup(func() { wedgedTaskPolls = old })
+				// The service counts say 0 once the umount ran, but the task survives it.
+				w.h.ssmc.onSend = func(cmd string) {
+					if strings.HasPrefix(cmd, "af-umount") {
+						s := w.h.ecs.services[rescueWorkspace]
+						s.RunningCount, s.PendingCount = 0, 0
+						w.h.ecs.services[rescueWorkspace] = s
+						w.h.ci.running, w.h.ci.stopping = nil, []ecstypes.Task{task()}
+						if name == "still RUNNING" {
+							w.h.ci.running, w.h.ci.stopping = []ecstypes.Task{task()}, nil
+						}
+					}
+				}
+				w.arm()
+				w.sweep()
+				if !w.attached() || w.calls("DetachVolume") != 0 {
+					t.Fatalf("detached from under a task that has not STOPPED: %v", w.h.ec2.calls)
+				}
+				m, ok := parseRescueMarker(w.marker())
+				if !ok || m.BlockedSince.IsZero() {
+					t.Fatalf("marker %q, want blocked", w.marker())
+				}
+				if got := actions(*w.events); got[len(got)-1] != "blocked" {
+					t.Fatalf("events %v", got)
+				}
+				for _, c := range w.h.ec2.calls {
+					if strings.Contains(c, "force") {
+						t.Fatalf("a forced call: %v", w.h.ec2.calls)
+					}
+				}
+				// The task reaches STOPPED later: the next pass detaches, after that.
+				stopped := runningTask(rescueWorkspace, "i-dark")
+				stopped.LastStatus = aws.String("STOPPED")
+				w.h.ci.running, w.h.ci.stopping = nil, []ecstypes.Task{stopped}
+				w.h.ssmc.onSend = nil
+				w.sweep()
+				if w.attached() || w.marker() != "" {
+					t.Fatalf("not released once the task STOPPED: marker %q calls %v", w.marker(), w.h.ec2.calls)
+				}
+			})
 		})
 	}
 }
