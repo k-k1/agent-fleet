@@ -42,20 +42,28 @@ import (
 // already fired it and the persisted state is idle — no double fire.
 func notifyPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
-	if state != "idle" || status.LiveState(sid) != "working" {
+	if state != "idle" || status.LiveState(sid) != "working" || turnJustStarted(sid) {
 		return
 	}
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)
 }
 
+// polledEndSettleDefault is the production value of polledEndSettle. It is a heuristic, not a
+// measurement of how long any kind's source lags: a stale idle that outlives it is still taken as
+// the new turn's end. It stays short because the same gate delays the completion notification of
+// a turn that really ended inside it. The exact fix is an identity from the source itself (a turn
+// id), which these four kinds do not expose today.
+const polledEndSettleDefault = 10 * time.Second
+
 // polledEndSettle is how long after a turn's start (the status record's "working" write) a poll's
-// idle is not yet taken as that turn's end. A hook-less kind's state source can still show the
+// idle is not yet taken as that turn's end, by BOTH routes that record one (the list's stamp and
+// DriveState's notification). A hook-less kind's state source can still show the
 // PREVIOUS turn's idle for a moment after a new input; stamping it would give the new turn an end
 // before it ran, and the real end then finds the turn already stamped (the observation is one per
 // status Rev) and keeps the early time, so a watch on the session counts one turn end instead of
 // two. A real end inside the window is stamped by a later poll, a few seconds late, which the
 // list already tolerates. Measured limit: a stale idle that outlives the window is still stamped.
-var polledEndSettle = 3 * time.Second
+var polledEndSettle = polledEndSettleDefault
 
 // polledEndNow is the clock of that window, replaceable by tests.
 var polledEndNow = time.Now

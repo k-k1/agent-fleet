@@ -405,3 +405,55 @@ func TestFleetQuotaLiftedBeforeTheFirstRead(t *testing.T) {
 		}
 	}
 }
+
+// An ended-notice-pending (revoked) subscription neither keeps the subject read for it nor shows
+// its health, and a later failure of the subject does not rewrite its reason; another watcher of
+// the same subject still hears the subject is gone.
+func TestFleetRevokedWatchLeaksNothingAboutTheSession(t *testing.T) {
+	r := newFleetRig()
+	r.fl.setVisible("peer", "kid", true)
+	r.sink.answers = map[string]Readiness{"peer": Wait, "parent": Wait}
+	r.fl.set("kid", working(""))
+	ctx := context.Background()
+	if _, err := r.e.Subscribe(ctx, Request{Owner: "peer", Source: FleetKind, Ref: "kid", Types: []string{FleetIdle}}); err != nil {
+		t.Fatal(err)
+	}
+	r.watch(t, "")
+	r.tick()
+	r.fl.setVisible("peer", "kid", false)
+	r.tick() // the peer's ended notice is pending, the receiver is busy
+	r.fl.drop("kid")
+	for i := 0; i < 12; i++ {
+		r.c.add(5 * time.Minute)
+		r.e.Tick(ctx)
+	}
+	l := r.e.List("peer")
+	if len(l) != 1 || l[0].LastErr != "" || !l[0].LastPoll.IsZero() || !l[0].NextPoll.IsZero() {
+		t.Fatalf("a revoked watch lists the subject's health: %+v", l)
+	}
+	r.sink.answers = map[string]Readiness{}
+	r.c.add(time.Minute)
+	r.e.Tick(ctx)
+	r.c.add(time.Minute)
+	r.e.Tick(ctx)
+	var peer, parent string
+	for i, s := range r.sink.told {
+		if strings.HasPrefix(s, "peer:") {
+			peer = s
+		} else {
+			parent = s
+		}
+		_ = i
+	}
+	if peer != "peer:"+EventEnded+":revoked" {
+		t.Fatalf("the peer was told %q, want the revoked ended notice", peer)
+	}
+	if parent != "parent:"+EventEnded+":ended" {
+		t.Fatalf("the parent's watch must still end because the session is gone: %q", parent)
+	}
+	for _, n := range r.sink.notices {
+		if strings.HasPrefix(n, "peer") && strings.Contains(n, "no longer exists") {
+			t.Fatalf("the peer's notice names the deletion: %q", n)
+		}
+	}
+}

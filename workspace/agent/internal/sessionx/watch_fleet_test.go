@@ -149,7 +149,7 @@ func TestFleetLimitEpisode(t *testing.T) {
 // the watch would count one turn end for two. Runs through the real wireSession.
 func TestFleetWatchStaleIdleDoesNotConsumeTheNextTurnEnd(t *testing.T) {
 	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_fleet")
-	polledEndSettle = 3 * time.Second
+	polledEndSettle = polledEndSettleDefault
 	now := time.Now()
 	polledEndNow = func() time.Time { return now }
 	defer func() { polledEndSettle, polledEndNow = 0, time.Now }()
@@ -185,5 +185,46 @@ func TestFleetWatchStaleIdleDoesNotConsumeTheNextTurnEnd(t *testing.T) {
 	evs, _, _, err = src.Poll(ctx, subj, nil, nil)
 	if err != nil || len(evs) != 1 || evs[0].Type != watch.FleetIdle || evs[0].Version == "" || evs[0].Version == res.Told[watch.FleetIdle] {
 		t.Fatalf("the real turn end was not told as a new version: %+v %v", evs, err)
+	}
+}
+
+// The other route that records a polled end, DriveState (get_session_status, the chat chip, the
+// mirror), honours the same window with the production setting, and the notification it guards is
+// still fired once the window has passed.
+func TestFleetWatchDriveStateHonoursTheSettleWindow(t *testing.T) {
+	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_fleet_drive")
+	polledEndSettle = polledEndSettleDefault
+	now := time.Now()
+	polledEndNow = func() time.Time { return now }
+	defer func() { polledEndSettle, polledEndNow = 0, time.Now }()
+	oa, op := fleetAlive, fleetPeersOn
+	fleetAlive = func(session.Meta) bool { return true }
+	fleetPeersOn = func() bool { return false }
+	defer func() { fleetAlive, fleetPeersOn = oa, op }()
+
+	turnEnded()
+	status.Persist(sid, "working") // a new input; the source still shows the old idle
+	if !turnJustStarted(sid) {
+		t.Fatal("control: the new turn is inside the window")
+	}
+	DriveState(m, true, false)
+	if st, _ := status.Read(sid); st.State != "working" || st.TurnEnd {
+		t.Fatalf("DriveState settled a turn that had just begun: %+v", st)
+	}
+	src := &watch.FleetSource{Fleet: watchFleet{}}
+	ctx := watch.WithOwner(watch.WithSubscriber(context.Background(), "parent1"), "parent1")
+	res, err := src.Resolve(ctx, m.Name, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := res.Told[watch.FleetIdle]; v != "" {
+		t.Fatalf("the stale idle became a turn end through DriveState: %q", v)
+	}
+
+	// Past the window the same idle is the turn's end, and the notification gate fires once.
+	now = now.Add(2 * polledEndSettleDefault)
+	DriveState(m, true, false)
+	if st, _ := status.Read(sid); st.State != "idle" || !st.TurnEnd {
+		t.Fatalf("the end after the window was not recorded: %+v", st)
 	}
 }

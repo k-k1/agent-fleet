@@ -421,6 +421,10 @@ func (e *Engine) List(owner string) []Listed {
 		}
 		ss := e.state.Subjects[s.Subject]
 		l := Listed{Subscription: s, LastPoll: ss.LastPoll, NextPoll: ss.NextPoll, LastErr: ss.LastErr}
+		if endedPending(s) {
+			// An ended watch reports nothing of the subject, which another watcher may still read.
+			l.LastPoll, l.NextPoll, l.LastErr = time.Time{}, time.Time{}, ""
+		}
 		l.Told, l.Pending = nil, nil
 		out = append(out, l)
 	}
@@ -569,6 +573,12 @@ func (e *Engine) Tick(ctx context.Context) {
 	e.reconcileWakes(ctx)
 }
 
+// endedPending reports a subscription whose ended notice is waiting for delivery: it is no longer
+// read for, matched against, listed with the subject's health or rewritten by a later failure.
+func endedPending(s Subscription) bool {
+	return len(s.Pending) > 0 && s.Pending[0].Type == EventEnded
+}
+
 // refusedSubscriptions asks each authorizing source about its live subscriptions, without the
 // lock (the answer can read the disk) and before anything is matched or delivered this tick.
 func (e *Engine) refusedSubscriptions() map[string]bool {
@@ -576,7 +586,7 @@ func (e *Engine) refusedSubscriptions() map[string]bool {
 	e.load()
 	var subs []Subscription
 	for _, s := range e.state.Subs {
-		if s.Done || s.Builtin != "" || (len(s.Pending) > 0 && s.Pending[0].Type == EventEnded) {
+		if s.Done || s.Builtin != "" || endedPending(s) {
 			continue
 		}
 		if src, ok := e.Source(s.Source); ok {
@@ -895,7 +905,7 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 	srcOf := map[SubjectID]string{}
 	want := map[SubjectID][]string{}
 	for _, s := range e.state.Subs {
-		if !s.Done && s.Builtin == "" {
+		if !s.Done && s.Builtin == "" && !endedPending(s) {
 			srcOf[s.Subject] = s.Source
 			want[s.Subject] = append(want[s.Subject], s.Types...)
 		}
@@ -934,7 +944,7 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 func (e *Engine) matchLocked(id SubjectID, events []Event) {
 	for i := range e.state.Subs {
 		s := &e.state.Subs[i]
-		if s.Subject != id || s.Done || s.Builtin != "" || (len(s.Pending) > 0 && s.Pending[0].Type == EventEnded) {
+		if s.Subject != id || s.Done || s.Builtin != "" || endedPending(*s) {
 			continue // an ended notice is the last thing that subscription hears
 		}
 		for _, ev := range events {
@@ -1027,8 +1037,8 @@ func (e *Engine) dropUnwatchedLocked() {
 func (e *Engine) endGoneLocked(id SubjectID, reason string, now time.Time) {
 	for i := range e.state.Subs {
 		s := &e.state.Subs[i]
-		if s.Subject != id || s.Done || s.Builtin != "" {
-			continue
+		if s.Subject != id || s.Done || s.Builtin != "" || endedPending(*s) {
+			continue // a revoked watch keeps its own ended notice
 		}
 		s.Until = UntilFirst
 		s.Pending = []Event{{
