@@ -77,7 +77,7 @@ claude mcp add --transport http --scope user agent-fleet https://<Console のア
 | read | `list_my_sessions`・`get_session_status`・`get_session_output` などの参照 |
 | write | 上に加えて、`send_to_session`・`create_session`・`stop_session` などの操作 |
 
-タブの「**このトークンでできること**」にも、同じ一覧があります。
+タブの「**このトークンでできること**」にも、同じ一覧があります。すべてのツールと必要なスコープは [MCP ツール](../../ref/mcp/README.ja.md) にあります。
 
 ## セッションに届く指示の見え方
 

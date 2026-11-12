@@ -30,7 +30,7 @@ your own tools into `~/.local`.
 | Logins and connections (`~/.config`, `~/.ssh`, `~/.gitconfig`, `~/.git-credentials`, `~/.claude`, `~/.claude.json`, `~/.codex`) | stays | stays | stays |
 | Claude's settings and state (`$CLAUDE_CONFIG_DIR`, saved memory included) | stays | stays | stays |
 | Outside your home (`/usr`, `/opt`, `/tmp` and so on) | back to the image | back to the image | back to the image |
-| `/scratch` (only on deployments with a working disk) | **deleted** | **deleted** | **deleted** |
+| `/scratch` (only on deployments with a working disk, [af-scratch](../../ref/cli/af-scratch.md)) | **deleted** | **deleted** | **deleted** |
 | Running sessions | stopped (you can resume them later) | **lost** | **lost** |
 
 > [!WARNING]

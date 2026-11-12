@@ -20,6 +20,7 @@ source_of_truth: "能力の事実についてはこのセクション（軸は�
 | [settings.md](settings.ja.md) | どこで設定する？ 変数名は？ |
 | [limits.md](limits.ja.md) | 既定はいくつ？ 上限は？ |
 | [cli/](cli/README.ja.md) | この `af-` コマンドは何をする？ オプションは？ |
+| [mcp/](mcp/README.ja.md) | この MCP ツールは何をする？ セッション・アシスタント・外部のどこで使える？ |
 | [aws-profiles.md](aws-profiles.ja.md) | AWS プロファイルの取り込み・共有サインイン・ロールの細かい規則は？ |
 | [aws-ssm.md](aws-ssm.ja.md) | SSM ホストのリージョンの決まりかた、AWS からの検索、~/.ssh/config の取り込みの規則は？ |
 | [bedrock-route.md](bedrock-route.ja.md) | AWS のプロファイルで claude や opencode を Amazon Bedrock 上で動かすには？ 呼び出しが拒否された理由は？ |

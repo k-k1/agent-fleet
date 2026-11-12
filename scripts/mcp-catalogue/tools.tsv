@@ -1,0 +1,88 @@
+tool	group	en	ja
+af_report	finish	Report once that an instruction carrying an `[agent-fleet]` note is fully done	`[agent-fleet]` 付きの指示が完全に終わったことを一度だけ報告します
+af_stop_after_turn	finish	Schedule this session to stop at the end of its turn, or cancel that	このターンの終わりに自分自身を停止するよう予約します。予約の取り消しもできます
+propose_session_handoff	finish	Propose to you the first prompt of a follow-up session; it starts nothing itself	続きの作業用のセッションの最初のプロンプトを利用者に提案します。自分では何も起動しません
+list_my_sessions	view	List the workspace's sessions with their kind, state and working directory	ワークスペースのセッションを、種類・状態・作業ディレクトリ付きで一覧します
+get_session_status	view	Show a session's state (working, idle, asking, waiting for plan approval) and its pending question	セッションの今の状態（作業中・待機中・質問中・プラン待ち）と保留中の質問を返します
+get_session_output	view	Read a session's recent output. In a session or an assistant it continues from the last read; from outside, pass the returned cursor as `since` to continue, or each call returns the latest tail. A session may read only its own children	セッションの最近の出力を読みます。セッションとアシスタントからは前回の続きから読みます。外部からは、返ってきたカーソルを `since` に渡すと続きを、渡さなければ毎回最新の末尾を返します。セッションから使うときは自分の子だけです
+get_session_usage	view	Show each session's context use and cumulative token use	セッションごとのコンテキスト使用量と累積トークン消費を返します
+get_agent_usage	view	Show each agent CLI's subscription usage and rate limits	各エージェント CLI のサブスクリプション使用量とレート制限を返します
+search_sessions	view	Full-text search over what was said in this workspace's past sessions, stopped and archived ones included	このワークスペースの過去のセッション（停止中・アーカイブ済みを含む）の会話を全文検索します
+create_session	drive	Start a new session and hand it its first task	新しいセッションを起動して、最初の作業を渡します
+list_child_sessions	drive	List the child sessions this session started, with their state and the slots left	自分が起動した子セッションを、状態と残りの枠付きで一覧します
+rename_child_session	drive	Rename a child session this session started	自分が起動した子セッションのタイトルを付け直します
+list_repos	drive	List the git working copies in the workspace (`~/repos`)	ワークスペースの git 作業コピー（`~/repos`）を一覧します
+list_models	drive	List the models each agent can use right now	エージェントごとに今選べるモデルを一覧します
+send_to_session	drive	Send a prompt to a session to run, resuming it first when it is stopped	セッションにプロンプトを送って実行させます。停止中なら再開してから送ります
+answer_session_question	drive	Answer a session's pending question by choosing an option	セッションが出している質問に、選択肢を選んで答えます
+respond_session_plan	drive	Approve or reject a plan a session is waiting on (claude only)	セッションが承認を待っているプランを承認または却下します（claude のみ）
+stop_session	drive	Stop a session; its conversation and working copy stay and it can be resumed. A session may stop only its own children	セッションを停止します。会話と作業コピーは残り、再開できます。セッションから使うときは自分の子だけです
+stop_session_after_turn	drive	Stop a session once its current turn ends, without interrupting it. A session may do this only to its own children	今のターンが終わったら止まるよう予約します（中断はしません）。セッションから使うときは自分の子だけです
+resume_session	drive	Resume a stopped session with its conversation kept. A session may resume only its own children	停止中のセッションを、会話を保ったまま再開します。セッションから使うときは自分の子だけです
+list_peer_sessions	peer	List the other sessions in the same workspace	同じワークスペースのほかのセッションを一覧します
+send_to_peer_session	peer	Send a short message to another session; a stopped one is resumed to receive it	ほかのセッションに短いメッセージを送ります。停止中なら再開してから届きます
+peek_session_output	peer	Read another session's recent output, read-only	ほかのセッションの最近の出力を読み取り専用で見ます
+list_memos	memo	List your memo queue	利用者のメモキューを一覧します
+add_memo	memo	Add one memo to your memo queue	利用者のメモキューにメモを 1 件追加します
+update_memo	memo	Edit a memo; only the fields passed change	既存のメモを編集します。渡した項目だけが変わります
+delete_memo	memo	Delete a memo by its id	メモを id で削除します
+flush_memos	memo	Send the chosen memos to a session as one message	選んだメモを 1 通にまとめてセッションへ送ります
+list_schedules	schedule	List the schedules	定時実行のスケジュールを一覧します
+get_schedule_runs	schedule	Show a schedule's latest 50 runs	スケジュールの実行履歴（最新 50 件）を返します
+create_schedule	schedule	Register a schedule	定時実行のスケジュールを登録します
+update_schedule	schedule	Edit a schedule	既存のスケジュールを編集します
+delete_schedule	schedule	Delete a schedule	スケジュールを削除します
+pause_schedule	schedule	Pause a schedule	スケジュールを一時停止します
+resume_schedule	schedule	Resume a paused schedule	一時停止したスケジュールを再開します
+run_schedule_now	schedule	Fire a schedule now, to try it	スケジュールを今すぐ発火させます（動作確認用）
+list_cleanup_candidates	cleanup	Inspect and list sessions and worktrees that could be cleaned up	溜まったセッションと worktree を点検し、掃除の候補を返します
+list_cleanup_archives	cleanup	List the archives clean-up set aside	掃除で退避したアーカイブを一覧します
+archive_session	cleanup	Archive a finished session to hide it from the list; it can be restored	終わったセッションをアーカイブして一覧から隠します（復元できます）
+delete_worktree	cleanup	Delete a worktree that is no longer needed; refused while it has uncommitted or unpushed work	不要な worktree を削除します。未コミットや未 push の変更があると拒否されます
+delete_session	cleanup	Delete a session for good to reclaim its disk, after setting it aside in an archive it can be restored from	セッションを完全に削除して容量を回収します。復元できるアーカイブに退避してから削除します
+delete_branch	cleanup	Delete a merged local branch	マージ済みのローカルブランチを削除します
+restore_cleanup_archive	cleanup	Restore a session or branch from a clean-up archive	退避したアーカイブからセッションやブランチを復元します
+purge_cleanup_archive	cleanup	Delete an archive for good; it cannot be restored afterwards	アーカイブを完全に削除します（復元できなくなります）
+memory_index	memory	List the shared memories, without their bodies	共有メモリ（全エージェント共通）を本文なしで一覧します
+memory_search	memory	Full-text search over the shared memory	共有メモリを全文検索します
+memory_read	memory	Read one memory with its body	共有メモリを 1 件、本文付きで読みます
+memory_save	memory	Create or update a memory; it is published at once, and a secret is refused	共有メモリを作成・更新します。すぐに公開され、秘密情報は拒否されます
+memory_patch	memory	Change part of a memory without sending it again whole	共有メモリの一部だけを、全文を送り直さずに書き換えます
+memory_feedback	memory	Report that a memory you relied on is wrong or out of date	頼ったメモリが間違っている・古くなっていることを報告します
+memory_forget	memory	Take a memory out of use; its history stays	共有メモリを公開から外します（履歴は残ります）
+memory_projects	memory	List the memory's projects with their id, repository and memory count	メモリのプロジェクトを、id・リポジトリ・件数付きで一覧します
+list_memory_snapshots	snapshot	List the snapshots of the agents' own memory, newest first	エージェント自身のメモリの変更履歴（スナップショット）を新しい順に返します
+get_memory_snapshot	snapshot	Show the agents' own memory as of a snapshot, with the difference	指定した時点のエージェント自身のメモリの中身と差分を返します
+restore_memory_snapshot	snapshot	Put the agents' own memory back to a snapshot; the range must be given	エージェント自身のメモリを指定した時点に戻します（範囲の指定が必須です）
+list_chromium_targets	browser	List the pages on a loopback Chromium debugging port	ループバックの Chromium デバッグポートにあるページを一覧します
+get_chromium_attachment	browser	Show a Chromium attachment's state, control mode and outcome	Chromium 接続の状態・操作モード・結果を確認します
+attach_chromium	browser	Attach to an existing page so you can see it and give input	既存のページに表示と入力の経路をつなぎ、利用者に見せます
+detach_chromium	browser	Drop the attachment only; the page and the browser stay open	Chromium との接続だけを切ります（ページやブラウザは閉じません）
+request_browser_action	browser	Ask you to do something on the page, such as signing in, or update that request	利用者にログインなどの操作を引き渡す依頼を作成・更新します
+get_browser_action_result	browser	Read what you reported for that request: done, cancelled or pending	利用者が申告した操作の結果（完了・取り消し・保留）を確認します
+set_chromium_control_mode	browser	Switch the attachment between view-only, your control and locked	接続の入力モード（閲覧のみ・利用者が操作・ロック）を切り替えます
+generate_image	image	Generate an image from a prompt and return the file paths; it spends your plan's usage. Offered only while an image provider other than the session's own agent CLI is ready, and never in a session working in the image studio	プロンプトから画像を生成し、ファイルのパスを返します。利用者のプランの枠を消費します。そのセッション自身のエージェント CLI 以外の画像の提供元が使える状態のときだけ出て、画像スタジオで作業しているセッションには出ません
+get_image_studio	image	Read the image studio draft you are working on together	利用者と一緒に作業しているスタジオのドラフトを読みます
+set_image_draft	image	Change fields of the studio draft	スタジオのドラフトの項目を変更します
+add_image_knowledge	image	Add a note to the studio's knowledge for its model or model family, only when you ask for it	スタジオのモデルや系統の知識メモに 1 行追記します（利用者が頼んだときだけ）
+run_image_trial	image	Make one trial image from the draft as it is; refused unless "Let the agent run a trial" is on in the studio	ドラフトのまま試しの画像を 1 枚作ります。スタジオで「エージェントの試走を許す」がオンでないと拒否されます
+branch_name	work	Decide a branch name and its base from your branch naming rules; called before creating or renaming a branch	利用者のブランチ命名規則に沿ったブランチ名とベースを決めます。ブランチを作る・改名する前に呼びます
+link_work_item	work	Link this session to an issue, ticket or pull request, shown on its row in the Console	自分のセッションを Issue・チケット・PR に紐づけます。Console の行に表示されます
+watch	watch	Get a notice in this session when a pull request or another watched subject changes, instead of polling	PR などの対象が変わったときに、ポーリングせずにこのセッションへ通知を受けます
+unwatch	watch	End one of this session's watches	このセッションのウォッチを 1 つ終わらせます
+list_watches	watch	List this session's watches with their expiry and the last read of each subject	このセッションのウォッチを、期限と対象ごとの最後の読み取り結果付きで一覧します
+skill_restore	skill	List or bring back an agent-written skill that was archived as unused	使われずにアーカイブされた、エージェントが書いたスキルを一覧・復元します
+get_chat_plan	chat	Read the work plan pinned to this conversation	この会話に固定された作業計画を読みます
+set_chat_plan	chat	Replace this conversation's work plan as a whole	この会話の作業計画を全文置き換えます
+list_assistants	chat	List the assistants you can consult, built-in and your own	相談できるアシスタント（組み込みと自作）を一覧します
+ask_assistant	chat	Ask another assistant for advice, read-only and for one turn	別のアシスタントに助言を求めます（読み取り専用で 1 ターンだけ）
+list_workspaces	admin	List the tenant's members with the state of their workspace	テナントのメンバーと、そのワークスペースの状態を一覧します
+get_usage	admin	Show the tenant's resource use: members, running workspaces and limits	テナントのリソース使用量（メンバー数・稼働数・上限）を返します
+list_sessions	admin	List sessions across the tenant, or of one member	テナント全体、またはメンバー 1 人のセッションを一覧します
+stop_workspace	admin	Force-stop a member's workspace; the home stays	メンバーのワークスペースを強制停止します（ホームは残ります）
+stop_user_session	admin	Stop a session in a member's workspace; it can be resumed	メンバーのワークスペースのセッションを停止します（再開できます）
+set_user_quota	admin	Set a member's quota: sessions, CPU, memory and disk	メンバーごとのクォータ（セッション数・CPU・メモリ・ディスク）を設定します
+get_egress_stats	admin	Show outbound traffic by destination host (deployment administrators)	送信先ホストごとの外向き通信の観測を返します（配備管理者）
+list_allowlist	admin	List the egress allowlist entries (deployment administrators)	外向き通信の許可リストを一覧します（配備管理者）
+propose_allowlist_change	admin	Propose an allowlist addition; it takes effect only once an administrator approves it in the Console (deployment administrators)	許可リストへの追加を提案します。管理者が Console で承認するまで有効になりません（配備管理者）
+tail_audit	admin	Show recent audit-log entries	直近の監査ログを返します

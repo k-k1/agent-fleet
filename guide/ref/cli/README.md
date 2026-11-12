@@ -1,25 +1,25 @@
 ---
 audience: "anyone looking up the af- commands in a workspace"
-source_of_truth: "each command's --help"
+source_of_truth: "each command's usage"
 ---
 
 # Commands
 
 English | [日本語](README.ja.md)
 
-A workspace comes with Agent Fleet's own commands. Each works from a terminal and for agents alike, and prints its
-usage with `--help`.
+A workspace comes with Agent Fleet's own commands. Each works from a terminal and for agents alike. Most print their
+usage with `--help`; each page shows how to get it.
 
 | Command | What it does |
 |---|---|
+| [af-arch-repair](af-arch-repair.md) | Reinstall your own pip, uv and npm installs at the same versions after the CPU architecture changed |
 | [af-aws-exec](af-aws-exec.md) | Run one command with the permissions of an AWS profile |
 | [af-clean](af-clean.md) | List and remove regenerable build output and caches, as the Console's low-disk cleanup does |
+| [af-db](af-db.md) | Run PostgreSQL and MySQL in the workspace and print connection URLs |
 | [af-gcloud-exec](af-gcloud-exec.md) | Run one command with a token of a Google Cloud profile |
 | [af-memory](af-memory.md) | List, import, write back and lint Agent Fleet memory from a terminal |
+| [af-scratch](af-scratch.md) | Move build output onto the working disk, on deployments that have one |
 | [af-watch-hook](af-watch-hook.md) | Add a webhook to a private repository so watches are poked |
-
-Pages for the other commands (`af-db`, `af-scratch`, `af-arch-repair`) are added one
-by one.
 
 ## CLIs that are already signed in
 
