@@ -3175,6 +3175,70 @@ export const adminGuideIdPs = () => ({
   ],
 });
 
+// The deployment administrator's Admin › Egress (operate guide, SHOT_OPERATE_SECURE): log-only, one
+// member's proposal waiting, an added allowlist and the hosts the proxy saw in the last 7 days.
+export function operateEgress() {
+  return {
+    days: 7,
+    mode: "log-only",
+    enforce: false,
+    egress: [
+      { host: "github.com", allowed: 1840, blocked: 0 },
+      { host: "registry.npmjs.org", allowed: 962, blocked: 0 },
+      { host: "pypi.org", allowed: 311, blocked: 0 },
+      { host: "mcp.docs.example.com", allowed: 0, blocked: 27 },
+      { host: "storage.googleapis.com", allowed: 0, blocked: 9 },
+    ],
+  };
+}
+
+export function operateEgressAllowlist(locale) {
+  const ja = locale === "ja";
+  return {
+    builtin: ["console.example.com"],
+    allowlist: [
+      {
+        id: "eg-3", tenant_id: "demo", entry: "mcp.docs.example.com", state: "proposed",
+        reason: ja ? "MCP サーバー docs-search で使用" : "Used by MCP server docs-search",
+        added_by: "aoi@example.com", added_at: "2026-11-10T09:12:00Z",
+      },
+      {
+        id: "eg-1", tenant_id: "demo", entry: "github.com", state: "active",
+        reason: ja ? "ソースの取得" : "Source checkouts",
+        added_by: "admin@example.com", added_at: "2026-10-01T08:00:00Z",
+      },
+      {
+        id: "eg-2", tenant_id: "demo", entry: ".npmjs.org", state: "active",
+        reason: ja ? "npm パッケージ" : "npm packages",
+        added_by: "admin@example.com", added_at: "2026-10-01T08:01:00Z",
+      },
+    ],
+  };
+}
+
+// Admin › MCP sign-in hosts (SHOT_OPERATE_SECURE): a saved list with one host-only entry, so the
+// warning that recommends URL prefixes shows.
+export const operateMcpTrusted = () => ({
+  hosts: ["https://claude.ai/api/mcp/auth_callback", "claude.com", "af.example.com"],
+  source: "admin",
+  fallback: ["https://claude.ai/api/mcp/auth_callback", "claude.com", "chatgpt.com"],
+  fallback_source: "default",
+  host_only: ["claude.com", "af.example.com"],
+  served: true,
+});
+
+// Admin › Dev sign-in (SHOT_OPERATE_SECURE): served, with a preview domain and three workspaces
+// that hold a client.
+export const operateDevIdp = () => ({
+  enabled: true,
+  setting: true,
+  locked: false,
+  missing_base_url: false,
+  missing_preview_domain: false,
+  issuer: "https://console.example.com/dev-idp",
+  clients: 3,
+});
+
 // Admin › Slots for the operate guide's slot page (SHOT_OPERATE_KEYS): one slot outdated and
 // replaced automatically at its next start, one reserved by hand, one wedged (running, agent not
 // connected, a task stuck STOPPING) and one healthy. Instance ids, AMI and names are invented.

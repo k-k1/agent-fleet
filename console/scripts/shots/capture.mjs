@@ -2629,6 +2629,85 @@ const SCENES = [
     })()`,
     settle: 1500,
   },
+  // ---- operate pages: security (SHOT_OPERATE_SECURE) ----
+  {
+    // Admin › Deployment › Egress: the mode switch in log-only, a member's proposal waiting for
+    // approval, the added allowlist with the built-in Control Plane host, and the observed destinations.
+    name: "operate-egress",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_SECURE: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1600,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(通信|Egress)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .adm-egress-row"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 800));
+      const m = document.querySelector(".admin-modal .settings-content") || document.querySelector(".admin-modal");
+      if (m) { m.style.maxHeight = "none"; m.style.height = "auto"; }
+      (document.querySelector(".admin-modal .admin-stage") || document.querySelector(".admin-modal .admin-panel"))?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Admin › Deployment › MCP sign-in hosts: a saved list with host-only entries, so the warning
+    // that recommends URL prefixes shows, and Reset to default.
+    name: "operate-mcp-trusted",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_SECURE: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1200,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(MCP ログイン許可ホスト|MCP sign-in hosts)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal textarea"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 800));
+      const m = document.querySelector(".admin-modal .settings-content") || document.querySelector(".admin-modal");
+      if (m) { m.style.maxHeight = "none"; m.style.height = "auto"; }
+      (document.querySelector(".admin-modal .admin-stage") || document.querySelector(".admin-modal .admin-panel"))?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
+  {
+    // Admin › Deployment › Dev sign-in: the switch on, the issuer, the number of workspaces holding
+    // a client and the warning never to trust the issuer in production.
+    name: "operate-dev-idp",
+    guide: true,
+    stubEnv: { SHOT_OPERATE_SECURE: "1" },
+    clip: "#shot-operate",
+    pad: 8,
+    sections: FOCUS_TREE,
+    width: 1500,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      [...document.querySelectorAll(".acct-item")].find((el) => /^\\s*(管理|Admin)\\s*$/.test(el.textContent || ""))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal .settings-rail-item"); i++) await new Promise((r) => setTimeout(r, 200));
+      [...document.querySelectorAll(".admin-modal .settings-rail-item")].find((b) => /^(開発用ログイン|Dev sign-in)$/.test((b.textContent || "").trim()))?.click();
+      for (let i = 0; i < 50 && !document.querySelector(".admin-modal input[type=checkbox]"); i++) await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 800));
+      const m = document.querySelector(".admin-modal .settings-content") || document.querySelector(".admin-modal");
+      if (m) { m.style.maxHeight = "none"; m.style.height = "auto"; }
+      (document.querySelector(".admin-modal .admin-stage") || document.querySelector(".admin-modal .admin-panel"))?.setAttribute("id", "shot-operate");
+    })()`,
+    settle: 1500,
+  },
   {
     // Admin › Slots (operate/aws-ecs/slot-maintenance): an outdated slot with its automatic
     // replacement, a reserved one, a wedged one with Stop (force), and the bulk reservation.

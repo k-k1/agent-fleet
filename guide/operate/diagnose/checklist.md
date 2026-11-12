@@ -114,7 +114,7 @@ When somebody says "it doesn't work", first decide whether **it is that one pers
 ### What happens if AF_MASTER_KEY is lost?
 
 Every stored credential and **every past backup become permanently undecryptable**. There is no way back.
-Keep it in a vault separate from the data, and back it up separately ([Security Operations](../04-secure.md)).
+Keep it in a vault separate from the data, and back it up separately ([Understand the threat model and residual risks](../secure/threat-model.md#prepare-for-the-remaining-risks)).
 
 ### What does a backup hold?
 

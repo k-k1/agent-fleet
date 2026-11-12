@@ -174,10 +174,10 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 |---|---|---|---|
 | 配備形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
 | 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [インストールする](../operate/install.ja.md) / [アップグレードする](../operate/run/upgrade.ja.md) / [バックアップして復元する](../operate/run/backup-restore.ja.md) |
-| 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 04](../operate/04-secure.ja.md) |
-| 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 04](../operate/04-secure.ja.md#egress-統制の運用) |
-| MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [operator 04](../operate/04-secure.ja.md#信頼するクライアントのホスト配備全体-superadmin-のみ) |
-| プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [operator 04](../operate/04-secure.ja.md#開発用ログイン開発用-oidc-idp-superadmin-のみ) |
+| 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [サインイン](../operate/signin/overview.ja.md) |
+| 監査ログと egress 統制 | 配備管理者 | 管理 | [外向きの通信を制御する](../operate/secure/egress.ja.md) |
+| MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
+| プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [開発用サインインを使う](../operate/secure/dev-signin.ja.md#開発用-oidc-idp-をオンオフする) |
 | AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)・[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md) |
 | この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
 | 使わない間の配備の一時停止 | 配備管理者 | 端末 | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |

@@ -30,7 +30,7 @@ const deploymentWarnPlaintextSealed = "plaintext_sealed"
 
 const plaintextSealedLog = "WARNING: AF_MASTER_KEY is set but %d stored value(s) (client secrets, MCP headers, " +
 	"tokens) were written without a key and are still unencrypted. Run `af-cp rewrap-keys --seal-plaintext` and " +
-	"rotate those secrets at their issuer (guide/operate/04-secure.md)"
+	"rotate those secrets at their issuer (guide/operate/secure/deployment-keys.md)"
 
 // plaintextSealedTTL bounds how stale the Console's view is after the command ran.
 const plaintextSealedTTL = 5 * time.Minute

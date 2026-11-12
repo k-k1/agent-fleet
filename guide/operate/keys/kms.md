@@ -122,11 +122,11 @@ This is separate from KMS custody above. On ECS the `AF_MASTER_KEY` value sits i
 
 Keep that order. ECS decrypts the value with the **execution role**, so the key must admit the execution role, not the task role. The template grants `kms:Decrypt` on that one key, via SSM only. The steps, the key policy and the back-out are in `deploy/aws/ecs/cfn/PARAMETERS.md` under "`MasterKeyKmsKeyArn`".
 
-It changes only who can read the stored value. The value itself must not change ("What changing it costs" in [Securing it](../04-secure.md#the-deployment-keys-requirements-and-what-changing-them-costs)).
+It changes only who can read the stored value. The value itself must not change ([Handle the deployment keys](../secure/deployment-keys.md#the-two-keys)).
 
 ## Related
 
 - [Give each home its own key](home-keys.md)
 - [Rotate the bridge tokens](bridge-tokens.md)
-- The threats this answers are in [Securing it](../04-secure.md#residual-risks-what-to-do-about-them)
+- The threats this answers are in [Understand the threat model and residual risks](../secure/threat-model.md#prepare-for-the-remaining-risks)
 - [The ECS runbook's "Keys at rest on KMS"](../../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default)

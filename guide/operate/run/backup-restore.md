@@ -84,4 +84,4 @@ Three things to watch:
 ## Related
 
 - [Upgrade](upgrade.md): always take a backup before an upgrade
-- [Security operations](../04-secure.md): what losing `AF_MASTER_KEY` means
+- [Handle the deployment keys](../secure/deployment-keys.md): what losing `AF_MASTER_KEY` means

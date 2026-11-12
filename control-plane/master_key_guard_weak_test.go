@@ -48,7 +48,7 @@ func TestWeakKeyRefusal(t *testing.T) {
 					t.Errorf("%s: the message carries a key value", tc.name)
 				}
 			}
-			if !strings.Contains(err.Error(), "guide/operate/04-secure.md") {
+			if !strings.Contains(err.Error(), "guide/operate/secure/deployment-keys.md") {
 				t.Errorf("%s: no pointer to the guide: %q", tc.name, err)
 			}
 		}

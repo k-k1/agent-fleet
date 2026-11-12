@@ -122,11 +122,11 @@ Control Plane は動かしたままで構いません。ただし次の保存は
 
 この順番を守ってください。ECS はこの値を**実行ロール**で復号するので、鍵が許可するのはタスクロールではなく実行ロールです。テンプレートが付けるのは、その鍵に対する `kms:Decrypt` だけで、SSM を経由する呼び出しに限られます。手順・鍵ポリシー・元に戻しかたは `deploy/aws/ecs/cfn/PARAMETERS.md` の「`MasterKeyKmsKeyArn`」にあります。
 
-変わるのは、保存された値を誰が読めるかだけです。値そのものは変えてはいけません（[守る](../04-secure.ja.md#配備の鍵-要件と変更の代償) の「変更の代償」）。
+変わるのは、保存された値を誰が読めるかだけです。値そのものは変えてはいけません（[配備の鍵を扱う](../secure/deployment-keys.ja.md#2-つの鍵)）。
 
 ## 関連
 
 - [ホームごとに鍵を分ける](home-keys.ja.md)
 - [ブリッジトークンを入れ替える](bridge-tokens.ja.md)
-- この機能が答える脅威は [守る](../04-secure.ja.md#残存リスク-運用でどう扱うか) にあります
+- この機能が答える脅威は [脅威モデルと残るリスクを知る](../secure/threat-model.ja.md#残るリスクに備える) にあります
 - [ECS の手順書の「Keys at rest on KMS」](../../../deploy/aws/ecs/README.md#keys-at-rest-on-kms-optional-off-by-default)
