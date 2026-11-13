@@ -323,6 +323,7 @@ export const mirror = {
   "mirror.watch_src_time": "タイマー",
   "mirror.watch_src_run": "CI 実行",
   "mirror.watch_type_checks_completed": "CI 完了",
+  "mirror.watch_type_checks_failing": "CI 失敗中",
   "mirror.watch_type_checks_failed": "CI 失敗",
   "mirror.watch_type_closed": "クローズ",
   "mirror.watch_type_conflict": "コンフリクト",

@@ -31,6 +31,7 @@ type PRCursor struct {
 
 // PRConditions are the conditions that hold now for one PR the session list's caches answered,
 // in the event vocabulary, with versions that keep the notices of the features they replace:
+//   - pr.checks.failing once per head commit, from the first failed check while others still run;
 //   - pr.checks.failed once per head commit, and only when every check of it finished, so the
 //     notice names every failure;
 //   - pr.review.changes_requested once each time a change request is made anew;
@@ -97,12 +98,16 @@ func PRConditions(subject SubjectID, pr *branchpr.PR, raw json.RawMessage, now t
 	case "closed":
 		ev("pr.closed", cur.ClosedAt, "The PR was closed without merging.", nil)
 	case "open":
-		if pr.Checks == "failure" && !pr.ChecksPending && pr.Head != "" {
+		if pr.Checks == "failure" && pr.Head != "" {
 			data := make([]DataItem, 0, len(pr.FailingChecks))
 			for _, c := range pr.FailingChecks {
 				data = append(data, DataItem{Text: c.Name, URL: c.URL})
 			}
-			ev(typeChecksFailed, pr.Head, "CI failed on head commit "+shortHead(pr.Head)+".", data)
+			if !pr.ChecksPending {
+				ev(typeChecksFailed, pr.Head, "CI failed on head commit "+shortHead(pr.Head)+".", data)
+			} else if len(data) > 0 {
+				ev(typeChecksFailing, pr.Head, "CI is failing on head commit "+shortHead(pr.Head)+", other checks still run.", data)
+			}
 		}
 		if cr {
 			ev("pr.review.changes_requested", strconv.Itoa(cur.CREpisode), "A reviewer requested changes.", nil)
