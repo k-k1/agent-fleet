@@ -20,6 +20,7 @@ fact has one copy, readable from four directions.
 | [settings.md](settings.md) | Where is it configured, and what is the variable? |
 | [limits.md](limits.md) | What is the default, and what is the ceiling? |
 | [cli/](cli/README.md) | What does this `af-` command do, and what are its options? |
+| [workspace-image.md](workspace-image.md) | Which tools does a workspace have, at which version, and under which licence? |
 | [mcp/](mcp/README.md) | Which MCP tool does what, and is it offered to a session, an assistant or an outside client? |
 | [aws-profiles.md](aws-profiles.md) | What are the detailed rules for importing AWS profiles, shared sign-ins and roles? |
 | [aws-ssm.md](aws-ssm.md) | How is an SSM host's region chosen, and what are the rules for searching AWS and importing ~/.ssh/config? |

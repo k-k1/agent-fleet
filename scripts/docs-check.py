@@ -23,6 +23,7 @@ The checks:
   frozen     no link from a living shelf into docs/log/ (the frozen archive)
   ref        ref/ tables agree with the source of truth in code, and the ✓ marks match the
              translation
+  image      the workspace contents page (ref/workspace-image) matches workspace/Dockerfile
   settings   every personal settings tab in ref/settings points at a page under user/
   features   member rows of the feature catalogue point at a task page on the user/ shelf
   knowledge  the assistant knowledge covers the member rows of the feature catalogue
@@ -1789,6 +1790,40 @@ def check_mcp(f: Findings) -> None:
         f.error(f"mcp: {rel} is stale against the goldens and {cat.TOOLS_TSV}; run python3 {cat.GENERATOR}")
 
 
+def _workspace_image():
+    """scripts/workspace_image.py, which owns the rules; loaded by path like _mcp_catalogue."""
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace_image.py")
+    spec = importlib.util.spec_from_file_location("workspace_image", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def check_image(f: Findings) -> None:
+    """Does "What's in the workspace" (guide/ref/workspace-image) match workspace/Dockerfile?
+
+    The page is generated from the Dockerfile's version pins and scripts/workspace-image/tools.tsv.
+    A tool the Dockerfile puts in /usr/local/bin or pins with an ARG *_VERSION but no row
+    describes, a row whose version source the Dockerfile no longer has, and a page not
+    regenerated since either changed are all errors.
+    """
+    img = _workspace_image()
+    probs = img.problems(ROOT)
+    for p in probs:
+        f.error(f"image: {p}")
+    if probs:
+        return
+    try:
+        stale = img.stale_pages(ROOT)
+    except img.ImageError as e:
+        f.error(f"image: {e}")
+        return
+    for rel in stale:
+        f.error(f"image: {rel} is stale against {img.DOCKERFILE} and {img.TOOLS_TSV}; run python3 {img.GENERATOR}")
+
+
 def check_ref_parity(f: Findings) -> None:
     """ref/ tables must have their ✓ marks in the same places in English and Japanese.
 
@@ -2644,7 +2679,7 @@ def main() -> int:
         help=(
             "comma-separated check names "
             "(links,anchors,closure,chapters,index,lang,header,vocab,polite,frozen,"
-            "ref,mcp,settings,features,knowledge,notes,site,tables,redirects,console-guide,emphasis,labels,history,size)"
+            "ref,mcp,image,settings,features,knowledge,notes,site,tables,redirects,console-guide,emphasis,labels,history,size)"
         ),
     )
     args = ap.parse_args()
@@ -2680,6 +2715,8 @@ def main() -> int:
         check_ref_parity(f)
     if run("mcp"):
         check_mcp(f)
+    if run("image"):
+        check_image(f)
     if run("settings"):
         check_settings(f)
     if run("features"):

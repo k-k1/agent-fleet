@@ -40,3 +40,5 @@ Agents are told to use `bkt` rather than an MCP server for Bitbucket, and `jira`
 your saved connection on every call, so unlike an MCP connector it never needs the session restarted after a login
 expires.
 To have agents prefer an Atlassian MCP tool for Jira, see [Use Jira](../../user/integrations/jira.md#have-agents-use-the-atlassian-mcp-tool).
+
+The other tools in a workspace, with their versions and licences, are in [What's in the workspace](../workspace-image.md).

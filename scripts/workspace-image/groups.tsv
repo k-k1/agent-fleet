@@ -1,0 +1,9 @@
+group	en	ja
+af	Agent Fleet commands	Agent Fleet のコマンド
+signin	CLIs that are already signed in	サインイン済みの CLI
+agent	Agent CLIs	エージェントの CLI
+util	Utilities	ユーティリティ
+runtime	Language runtimes	言語ランタイム
+db	Databases	データベース
+mcp	MCP servers	MCP サーバー
+browser	Browser	ブラウザ
