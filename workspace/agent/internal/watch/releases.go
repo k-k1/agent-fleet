@@ -50,8 +50,6 @@ const (
 	// tagsMaxPages bounds how far the tag list is followed (300 tags). A tag listed past it is
 	// never seen, new or not; the tool description says so.
 	tagsMaxPages = 3
-	// tagsMaxKnown bounds the persisted set of known names.
-	tagsMaxKnown = 2000
 	// globMax bounds the pattern. Printable ASCII only, and only the characters a git tag name
 	// uses in practice plus the two wildcards.
 	globMax = 64
@@ -371,6 +369,14 @@ func NewGitHubTags(gh *GitHub) *GitHubTags { return &GitHubTags{GH: gh} }
 func (a *GitHubTags) Kind() string    { return TagsKind }
 func (a *GitHubTags) Types() []string { return []string{EventTagCreated} }
 
+// tagsMaxKnown bounds the persisted known-name set and the generation counts. It is a variable
+// only so a test can reach it. Reaching it ends the watch (goneTagState) instead of dropping
+// names: a name forgotten while still listed would be told as new, and a generation count that
+// stops growing would suppress a recreated tag.
+var tagsMaxKnown = 2000
+
+const goneTagState = "this repository's tag history grew past what a watch can track; watch its releases instead"
+
 // tagCursor is what one Poll keeps for the next. Known is the set of tag names that are history:
 // the ones that existed when the watch was made (seeded by Resolve) plus every one already
 // reported. A tag is new when it is listed and not in Known. GitHub's list is not time-ordered
@@ -462,7 +468,7 @@ func (a *GitHubTags) Resolve(ctx context.Context, ref, defaultRepo string) (Reso
 	if !TokenOK(string(subj)) {
 		return Resolved{}, &ErrRefused{"that reference is too long"}
 	}
-	seed, _ := json.Marshal(tagSeed{Known: boundNames(names, nil)})
+	seed, _ := json.Marshal(tagSeed{Known: sortedNames(names)})
 	return Resolved{Subject: subj, URL: SafeURL("https://github.com/" + r.repo + "/tags"), Seed: seed}, nil
 }
 
@@ -477,39 +483,16 @@ func (*GitHubTags) SeedCursor(raw, seed json.RawMessage) json.RawMessage {
 	if json.Unmarshal(seed, &s) != nil {
 		return raw
 	}
-	cur.Known = boundNames(append(cur.Known, s.Known...), nil)
+	cur.Known = sortedNames(append(cur.Known, s.Known...))
 	cur.Seeded = true
 	out, _ := json.Marshal(cur)
 	return out
 }
 
-// boundNames returns the sorted unique names, at most tagsMaxKnown. Over the bound, the names in
-// keep (those listed now) outlast the others.
-func boundNames(names []string, keep map[string]bool) []string {
+// sortedNames returns the names sorted and without duplicates.
+func sortedNames(names []string) []string {
 	slices.Sort(names)
-	names = slices.Compact(names)
-	if len(names) <= tagsMaxKnown {
-		return names
-	}
-	out := names[:0:0]
-	for _, n := range names {
-		if keep[n] {
-			out = append(out, n)
-		}
-	}
-	for _, n := range names {
-		if len(out) >= tagsMaxKnown {
-			break
-		}
-		if !keep[n] {
-			out = append(out, n)
-		}
-	}
-	if len(out) > tagsMaxKnown {
-		out = out[:tagsMaxKnown]
-	}
-	slices.Sort(out)
-	return out
+	return slices.Compact(names)
 }
 
 func (a *GitHubTags) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, _ []string) ([]Event, json.RawMessage, Hint, error) {
@@ -565,20 +548,24 @@ func (a *GitHubTags) Poll(ctx context.Context, subject SubjectID, raw json.RawMe
 				if cur.Gen == nil {
 					cur.Gen = map[string]int{}
 				}
-				if len(cur.Gen) < tagsMaxKnown {
-					cur.Gen[n]++
+				if _, has := cur.Gen[n]; !has && len(cur.Gen) >= tagsMaxKnown {
+					return nil, raw, Hint{}, &ErrGone{goneTagState}
 				}
+				cur.Gen[n]++
 			} else {
 				absent = append(absent, n)
 			}
 		}
 	}
-	cur.Absent = boundNames(absent, nil)
+	cur.Absent = sortedNames(absent)
 	all := make([]string, 0, len(known))
 	for n := range known {
 		all = append(all, n)
 	}
-	cur.Known = boundNames(all, seen)
+	if len(all) > tagsMaxKnown {
+		return nil, raw, Hint{}, &ErrGone{goneTagState}
+	}
+	cur.Known = sortedNames(all)
 	out, _ := json.Marshal(cur)
 
 	var evs []Event

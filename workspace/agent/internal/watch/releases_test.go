@@ -555,3 +555,40 @@ func TestEngineTellsARecreatedTagAgainButNotTheSameOneTwice(t *testing.T) {
 		t.Fatalf("told again without a change: %v", sink.told)
 	}
 }
+
+// At the state bound the watch ends with a reason; no name is dropped and no count stops growing.
+func TestTagStateBoundEndsTheWatchInsteadOfForgetting(t *testing.T) {
+	old := tagsMaxKnown
+	tagsMaxKnown = 4
+	t.Cleanup(func() { tagsMaxKnown = old })
+	f := newFakeGitHub()
+	a := NewGitHubTags(newTestGitHub(t, f))
+	subj := tagsSubject("o/r", "", 1)
+	ctx := context.Background()
+	var gone *ErrGone
+
+	// Known names past the bound: the 5th distinct name.
+	f.bodies[tagsPath("o/r", 1)] = tagList("a", "b", "c", "d")
+	cur := a.SeedCursor(nil, []byte(`{"known":["a","b","c","d"]}`))
+	if _, _, _, err := a.Poll(ctx, subj, cur, nil); err != nil {
+		t.Fatalf("at the bound: %v", err)
+	}
+	f.bodies[tagsPath("o/r", 1)] = tagList("a", "b", "c", "d", "e")
+	if _, out, _, err := a.Poll(ctx, subj, cur, nil); !errors.As(err, &gone) || string(out) != string(cur) && out != nil {
+		t.Fatalf("past the bound: %v", err)
+	}
+
+	// Generation counts past the bound: a 5th forgotten name cannot be counted.
+	f.bodies[tagsPath("o/r", 1)] = tagList("z")
+	cur2, _ := json.Marshal(tagCursor{Known: []string{"a", "b", "c", "d"}, Absent: []string{"a", "b", "c", "d"}, Seeded: true,
+		Gen: map[string]int{"g1": 1, "g2": 1, "g3": 1, "g4": 1}})
+	if _, _, _, err := a.Poll(ctx, subj, cur2, nil); !errors.As(err, &gone) {
+		t.Fatalf("generation overflow: %v", err)
+	}
+	// An existing key still counts, so a recreated tag is not silenced once the map is full.
+	cur3, _ := json.Marshal(tagCursor{Known: []string{"a"}, Absent: []string{"a"}, Seeded: true,
+		Gen: map[string]int{"a": 1, "g2": 1, "g3": 1, "g4": 1}})
+	if _, out, _, err := a.Poll(ctx, subj, cur3, nil); err != nil || !strings.Contains(string(out), `"a":2`) {
+		t.Fatalf("existing key: %v %s", err, out)
+	}
+}
