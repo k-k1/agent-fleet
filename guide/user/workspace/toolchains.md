@@ -17,6 +17,8 @@ can be installed on the spot.
 | Pick a version or a time zone | Sessions and shells started after this use it |
 | Press **Install** or **Update to …** | It is downloaded into the home volume, and sessions started after that use it |
 | Uninstall a version you no longer use | Space on the home volume is freed |
+| Turn **Start at sign-in** off | Your stopped workspace no longer starts by itself when you open the Console |
+| Turn **Automatic image refresh** on | After an update, the workspace restarts onto the new image once nobody is using it |
 
 Agents, too, use the versions that were selected when their session started.
 
@@ -91,6 +93,60 @@ are updated to their latest version every time the workspace starts.
 - The setting appears only when an administrator allows it
 
 Kiro and Muse Code are not covered: their versions come with the image (for Muse Code, see [Muse Code](../agents/muse.md#update)).
+
+## Start your workspace when you sign in
+
+Where your organization has switched on start at sign-in, a **Start at sign-in** row appears on this tab. With
+**Start my workspace automatically when I sign in** on, opening the Console while your workspace is stopped starts it
+for you.
+
+- It is on by default. Turn it off to start the workspace yourself; it is off for you only
+- It can be changed while the workspace is stopped
+- The row does not appear when the tenant has the feature off, and then nothing starts at sign-in whatever you chose.
+  Your choice is kept, and applies again if the tenant switches it back on
+- On a deployment where automatic starts are turned off altogether, nothing starts either
+
+When it starts:
+
+- In a visible tab, when you are there. Arriving at the Console by signing in, typing its address or opening a
+  bookmark counts by itself, so the workspace starts right away. After a reload, or in a tab that was already open,
+  it starts once you press a key, click, touch or scroll; that input counts for one minute
+- Once per 30 minutes across the tabs of one browser. A workspace that stopped while the tab was open is not started again
+
+While it starts, Home shows **Starting your workspace… (you can keep using Home)**. When your organization's
+workspace limit is reached, nothing starts and Home says so; start it yourself once another workspace stops.
+
+How your administrator turns it on is in [Start the workspace at sign-in](../../admin/resources/start-at-signin.md).
+
+## Restart onto a new image automatically
+
+When Agent Fleet is updated, a running workspace keeps its old image and the workspace bar shows **Restart needed**
+([Stop the workspace at the end of the day](../start/end-of-day.md#a-new-version-is-available-and-restart-needed)).
+With **Restart automatically onto a new image when idle** under **Automatic image refresh** turned on, the workspace
+does that restart by itself once nobody is using it.
+
+| | What happens |
+|---|---|
+| Off (the default) | The workspace keeps its image until you restart it |
+| On | When the image is outdated and the workspace has been quiet for a while, it is stopped and started again |
+
+- Quiet means all of these at once:
+  - No session is running a turn or background work, and none is pinned with **Keep awake** ([Stop when done, or keep a session awake](../sessions/auto-stop.md)). No repository import or
+    image job is running
+  - Nobody is using it: no typing in a terminal and no use of the browser pane recently (30 minutes unless the
+    deployment changed it)
+  - No request (the Console, a preview) has reached the workspace for the quiet time
+- A session waiting on your answer does not hold it off, and neither does a terminal left open without typing
+- The quiet time is set per tenant. Empty takes the deployment default, which is 15 minutes unless the deployment
+  changed it; `0` turns the refresh off
+- When idle auto-stop is due first, the workspace is stopped instead. The next start takes the new image anyway
+- It is a restart, never a recreate: your files and repositories stay. Sessions can be resumed afterwards
+- You get one notification, "**Your workspace was updated automatically**"
+- Each new image is tried automatically only once. If the start fails, the workspace stays stopped and you get
+  "**Automatic update failed; your workspace is stopped**". Start it yourself; it comes up on the new image
+- It can be changed while the workspace is stopped, and is available to every member
+
+The tenant side is in [Stop workspaces left idle](../../admin/resources/idle-stop.md#restart-onto-a-new-image-automatically).
 
 ## Update Agent Fleet
 

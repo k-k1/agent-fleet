@@ -36,6 +36,7 @@ The whole form is shown in [Set the workspace size](workspace-size.md#change-the
 - What counts is running agent sessions. Terminal (shell) and SSM sessions are not counted and still open when the limit is reached
 - A member's own limit replaces the tenant-wide max sessions for them. It may be higher than the tenant's
 - Saving `0` removes the member's own limit, and the tenant-wide max sessions applies. If that is `0` too, there is no limit
+- On a deployment where Agent Fleet is installed on one machine, session limits are not enforced at all
 
 What a member sees at the limit is in [See how resources are used](overview.md#what-members-see-when-a-limit-is-hit).
 
