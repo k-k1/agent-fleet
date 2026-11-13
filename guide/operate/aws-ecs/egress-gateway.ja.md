@@ -44,8 +44,8 @@ Control Plane・スロットのインスタンス・推論エンジン・ホー�
 - Squid が、ワークスペースのサブネットからのポート 80 をインターセプトし、明示プロキシも受けます。インターセプトした 443 は `af-cp egress-relay` が受け、ワークスペースが接続しようとしたアドレスへの CONNECT として Squid に渡します。ほかの TCP は `af-cp egress-relay --mode tcp` が受けます
 - 何も転送しません（`ip_forward=0`）
 - `af-cp egress-agent`（Control Plane のイメージからコピーしたバイナリ）が、ユーザー `squid` として動きます。Control Plane の方針から Squid の許可とモードのファイルを書き、ログを `/internal/egress` に送ります。認証には、スタックが Secrets Manager に作る `AF_EGRESS_TOKEN` を使います
-- Control Plane は `AF_EGRESS_PROXY_ADDR` と `AF_EGRESS_TOKEN` を受け取ります（`30-ingress` の `EgressProxyAddr` / `EgressTokenSecretArn`）。Fargate と `ecs-ec2` のワークスペースのタスク定義にプロキシの変数が入り、`NO_PROXY` にはタスクロールの資格情報のエンドポイント（`169.254.170.2`）、インスタンスメタデータ（`169.254.169.254`）、Control Plane の内部ホストが入ります
-- トークンはワークスペースには届きません。エージェントの資格情報です
+- Control Plane は `AF_EGRESS_PROXY_ADDR` と `AF_EGRESS_TOKEN` を受け取ります（`30-ingress` の `EgressProxyAddr` / `EgressTokenSecretArn`）。Fargate と `ecs-ec2` のワークスペースのタスク定義にプロキシの変数が入り、`NO_PROXY` にはタスクロールの認証情報のエンドポイント（`169.254.170.2`）、インスタンスメタデータ（`169.254.169.254`）、Control Plane の内部ホストが入ります
+- トークンはワークスペースには届きません。エージェントの認証情報です
 
 ## HTTP 以外の TCP を通す
 
@@ -158,11 +158,11 @@ aws ec2 allocate-address --domain vpc --tag-specifications 'ResourceType=elastic
 
 - スタックが自分で割り当てたアドレスは保持されます（`DeletionPolicy: Retain`）
 - 出力の `GatewayEipAllocationId` と `GatewayEipAddress` には、誰が割り当てたかにかかわらずアドレスが入ります。`capture-env.sh` は、取得した値が空だった 2 つのパラメータをこの出力で埋めます（`NatEipAllocationId` と同じ規則）
-- `EgressRoute=gateway` のとき、`standup.sh` は建てる前に、割り当てがまだあること、アドレスが取得したものと同じこと、この配備のゲートウェイのインターフェース以外が持っていないことを確かめます
+- `EgressRoute=gateway` のとき、`standup.sh` は構築する前に、割り当てがまだあること、アドレスが取得したものと同じこと、この配備のゲートウェイのインターフェース以外が持っていないことを確かめます
 
 ### 保持されたアドレスを渡し直す
 
-`nat-gateway` に戻したゲートウェイや撤去した配備では、アドレスが割り当てられたまま、どこにも付かずに残ります（$0.005/時がかかり続けます）。次に `gateway` に切り替えるときや建て直すときは、新しく割り当てさせず、タグで探して渡します。
+`nat-gateway` に戻したゲートウェイや撤去した配備では、アドレスが割り当てられたまま、どこにも付かずに残ります（$0.005/時がかかり続けます）。次に `gateway` に切り替えるときや再構築するときは、新しく割り当てさせず、タグで探して渡します。
 
 ```bash
 aws ec2 describe-addresses --output text --query \
@@ -211,7 +211,7 @@ aws ec2 describe-addresses --output text --query \
 
 `pause.sh` は、`00-network` の `GatewayEnabled` でゲートウェイを止めます。`false` で Auto Scaling グループを 0 台にします。
 
-- `aws autoscaling` で手で 0 台にしないでください。次のスタックのデプロイで元に戻ります
+- `aws autoscaling` で手で 0 台にしないでください。次にスタックをデプロイすると元に戻ります
 - `GatewayEni` と `GatewayEip` は残ります。`--up` で、同じルートの行き先・プロキシのアドレス・送信元アドレスが戻ります。Elastic IP の料金（$0.005/時）はかかり続けます
 - ゲートウェイを止めているあいだ、ワークスペースのルートは**行き先がなく捨てられます**。ワークスペースが動いていないから害がないだけです。`GatewayEnabled=false` のスタックでワークスペースを起動しないでください
 
@@ -219,10 +219,10 @@ aws ec2 describe-addresses --output text --query \
 
 1. ワークスペースを止めます。ゲートウェイを止めるのは Control Plane より前で、次の 2 つを確かめてからです
    - サービスの desired count にかかわらず、クラスターにワークスペースのタスクが残っていない（`AF_WS_TASK_WAIT_SEC`、既定は 600 秒）
-   - Squid を止めてすべてのトンネルを記録させたうえで、Control Plane がログを全部受け取っている（ログファイルの大きさが、エージェントが `state.json` に記録したオフセットより小さいかで確かめます。`AF_GATEWAY_DRAIN_SEC`、既定は 300 秒）
+   - Squid を止めてすべてのトンネルを記録させたうえで、Control Plane がログを全部受け取っている（ログファイルのサイズが、エージェントが `state.json` に記録したオフセットより小さいかで確かめます。`AF_GATEWAY_DRAIN_SEC`、既定は 300 秒）
 2. 0 台にするとインスタンスのディスクが消えるので、どちらかを確かめられないときは、`pause.sh` は失敗し、ゲートウェイと Control Plane を動かしたままにします
 
-`--up` は、NAT ゲートウェイと同じデプロイでゲートウェイを起動し、2 回待ちます。
+`--up` は、NAT ゲートウェイを起動するのと同じデプロイでゲートウェイを起動し、2 回待ちます。
 
 | いつ | 待つもの |
 |---|---|
@@ -247,9 +247,9 @@ aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.y
 ./update.sh --profile <p> --region <r>     # 20-platform's CP grant, then 30-ingress's URL
 ```
 
-- 取得した状態に `EgressArchive=create` があれば、`standup.sh` も建て直しで同じことをします
+- 取得した状態に `EgressArchive=create` があれば、`standup.sh` も再構築で同じことをします
 - S3 Bucket の名前は `af-<data stack>-egress-archive-<account id>-<region>` です。暗号化され、TLS だけを受け、バージョニングはなく、書き出したデータは `EgressArchiveRetentionDays`（既定は 365）日後に消えます
-- スタックを消しても S3 Bucket は**保持されます**。建て直しでは `EgressArchive=existing` で使い直します。`standup.sh` はこれを自分で設定します
+- スタックを消しても S3 Bucket は**保持されます**。再構築では `EgressArchive=existing` で使い直します。`standup.sh` はこれを自分で設定します
 - Control Plane のタスクロールが得るのは、その S3 Bucket の `egress/*` への `s3:PutObject` / `s3:GetObject` と、`s3:ListBucket` だけです。エンドポイントのポリシーも、このアカウントの同じ S3 Bucket だけを通します
 - この方法で作った S3 Bucket でしか動きません。自分の S3 Bucket はエンドポイントで拒否されます
 - パラメータと権限の詳細は `deploy/aws/ecs/cfn/PARAMETERS.md` の「The egress archive」にあります
@@ -285,12 +285,12 @@ Squid・エージェント・中継・この構成（一時停止と再開も含
 3. 方針を見ます
    - `sudo cat /var/lib/af-egress-agent/af-allow.txt /var/lib/af-egress-agent/af-mode.conf` に、エージェントのヘッダーと Control Plane の許可リストが出ます。起動時の仮の内容（`# bootstrap: closed until the first policy`、すべて拒否）のままなら、まだ方針を取っていません
    - `journalctl -u af-egress-agent` に再読み込みが出ます
-4. ワークスペースの端末から、`curl -sI https://example.com`（明示プロキシ）と `curl -sI --noproxy '*' https://example.com`（インターセプト）を実行します。ゲートウェイでは次を確かめます
+4. ワークスペースのターミナルから、`curl -sI https://example.com`（明示プロキシ）と `curl -sI --noproxy '*' https://example.com`（インターセプト）を実行します。ゲートウェイでは次を確かめます
    - `sudo tail /var/log/squid/af-egress.log` に、ワークスペースのアドレス・`TCP_TUNNEL`・SNI の付いた `af1` の行がそれぞれ 1 行
    - `sudo getfattr -n user.af-egress.gen /var/log/squid/af-egress.log` に世代、`sudo cat /var/lib/af-egress-agent/state.json` に送り終えたオフセット
    - 管理の「通信」にそのホストの件数、`GET /api/admin/egress/events` に 2 つのイベントが、ワークスペースに結び付いて出る
 5. ログのローテーション: `sudo squid -k rotate` のあと 1 回リクエストし、エージェントが `af-egress.log.0` を読み終えて新しいファイルに進んだこと（イベントの重複も抜けもないこと）を確かめます
-6. メタデータ: ワークスペースから次を実行し、拒否されることを確かめます。通ってしまうと、ワークスペースがゲートウェイのロールの資格情報を読めます
+6. メタデータ: ワークスペースから次を実行し、拒否されることを確かめます。通ってしまうと、ワークスペースがゲートウェイのロールの認証情報を読めます
 
    ```bash
    curl -s -x <EgressProxyAddr> -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token

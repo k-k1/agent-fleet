@@ -1,5 +1,5 @@
 ---
-audience: "AWS の ECS（`ecs` / `ecs-ec2`）に配備を建てて運用する配備管理者"
+audience: "AWS の ECS（`ecs` / `ecs-ec2`）に配備を構築して運用する配備管理者"
 source_of_truth: "テンプレートは `deploy/aws/ecs/cfn/*.yaml`、パラメータの詳細は `deploy/aws/ecs/cfn/PARAMETERS.md`"
 ---
 
@@ -7,7 +7,7 @@ source_of_truth: "テンプレートは `deploy/aws/ecs/cfn/*.yaml`、パラメ�
 
 [English](overview.md) | 日本語
 
-AWS の ECS に建てる配備（`ecs` / `ecs-ec2`）が、どのスタックでできていて、どの順番に建てるかを知ります。
+AWS の ECS に構築する配備（`ecs` / `ecs-ec2`）が、どのスタックでできていて、どの順番に構築するかを知ります。
 ワークスペースは 1 つが 1 つの ECS サービスで、止めると `desiredCount` が 0 になります（スケールトゥゼロ）。Control Plane とは Service Connect でつながります。
 
 AWS で手軽にセルフホストしたいだけなら、これではなく EC2 1 台の compose を選んでください。違いは [デプロイ先を選ぶ](../choose.ja.md) にあります。
@@ -40,7 +40,7 @@ AWS で手軽にセルフホストしたいだけなら、これではなく EC2
 | テンプレート | 要るとき | 中身 |
 |---|---|---|
 | `cfn/00-network.yaml` | いつも | VPC、2 つの AZ のパブリック・プライベートサブネット、インターネットゲートウェイ、NAT、基本のセキュリティグループ（`alb` / `cp` / `ws`） |
-| `cfn/10-data.yaml` | いつも | EFS ファイルシステムとマウントターゲット、RDS（Postgres、シングル AZ、既定は db.t4g.micro、マスターパスワードは RDS が管理）。`CustodianKmsKey=create` なら、Control Plane の鍵に使う KMS 鍵も |
+| `cfn/10-data.yaml` | いつも | EFS ファイルシステムとマウントターゲット、RDS（Postgres、シングル AZ、既定は db.t4g.micro、マスターパスワードは RDS が管理）。`CustodianKmsKey=create` なら、Control Plane のキーに使う KMS キーも |
 | `cfn/20-platform.yaml` | いつも | ECR（Control Plane とワークスペース、任意のエンジン用の `af-voicevox`・`af-llamacpp`・`af-comfyui`・`af-engine-tools`）、ECS クラスター、Service Connect の名前空間（`af.internal`）、IAM ロール（`cp-task` / `exec` / `ws-task`） |
 | `cfn/40-ec2-pool.yaml` | `WsRuntime=ecs-ec2` のときだけ | ワークスペースのスロットの起動テンプレート、スロットのインスタンスロールとセキュリティグループ。インスタンスは作らず、Control Plane が必要なときに起動する |
 | `cfn/50-tts.yaml` | 日本語の読み上げを使うときだけ | VOICEVOX のエンジン（ふだんはゼロにしておく Fargate のサービス）、Cloud Map の名前、専用のセキュリティグループ |

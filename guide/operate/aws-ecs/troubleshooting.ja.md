@@ -16,7 +16,7 @@ ECS の配備で、構築・アップグレード・ワークスペースの起�
 |---|---|
 | エラーの文言や症状で、下の表を探す | 原因と、どのページの手順で直すか |
 | `/readyz` を見る | Control Plane がデータベースに届くか。`/healthz` はデータベースに触らない |
-| Control Plane のロググループ `/af/<ingress-stack>/cp` を読む | 起動が遅れた理由、秘密の読み直しが失敗した理由など |
+| Control Plane のロググループ `/af/<ingress-stack>/cp` を読む | 起動が遅れた理由、シークレットの読み直しが失敗した理由など |
 
 ## 構築するとき
 
@@ -24,12 +24,12 @@ ECS の配備で、構築・アップグレード・ワークスペースの起�
 |---|---|
 | クラスターの作成が「ECS Service Linked Role is not ready」で失敗する | 新しいアカウントに `AWSServiceRoleForECS` がありません。サービスにリンクされたロールを作ります（[ECS に構築する](install.ja.md#サービスにリンクされたロールを作る)） |
 | 変更セットが `InsufficientCapabilitiesException … Requires capabilities` で拒否される | `--capabilities` が足りません（[スタックに必要な capabilities](install.ja.md#スタックに必要な-capabilities)） |
-| `aws cloudformation deploy` がテンプレートの大きさのエラーで終わり、スタックのイベントに何もない | `30-ingress` を S3 経由で渡していません（[テンプレートの大きさの上限に気をつける](template-size.ja.md)） |
+| `aws cloudformation deploy` がテンプレートのサイズのエラーで終わり、スタックのイベントに何もない | `30-ingress` を S3 経由で渡していません（[テンプレートの大きさの上限に気をつける](template-size.ja.md)） |
 | `30-ingress` が `ServiceLimitExceeded` でロールバックする | Control Plane のタスクロールのインラインポリシーが上限を超えました。追加した権限は管理ポリシーにします（[デプロイに必要な IAM 権限](iam.ja.md#control-plane-のタスクロールのポリシーの上限)） |
-| `20-platform` のデプロイが AlreadyExists で失敗する | ECR のリポジトリをスタックの外で作りました。リポジトリは `20-platform` が作ります |
-| `30-ingress` のデプロイが進まず、失敗もしない | プレビュー用のゾーンが `PreviewDomain` を含んでおらず、ACM の DNS 検証が終わりません（[プレビュー用のサブドメインを使う](options.ja.md#ドメインとゾーンを決める)） |
+| `20-platform` をデプロイすると AlreadyExists で失敗する | ECR のリポジトリをスタックの外で作りました。リポジトリは `20-platform` が作ります |
+| `30-ingress` をデプロイしても進まず、失敗もしない | プレビュー用のゾーンが `PreviewDomain` を含んでおらず、ACM の DNS 検証が終わりません（[プレビュー用のサブドメインを使う](options.ja.md#ドメインとゾーンを決める)） |
 | Entra ID で Control Plane が起動しない | `OidcIssuer` が `/common/` や `/organizations/` です。テナントの GUID で固定します |
-| `AuthMode=dev` で建てたスタックが更新できない | `AuthMode=dev` はもうありません。https の URL の裏では、Control Plane が開発用のサインインを拒否します。`AuthMode=oauth` に切り替えます（[開発用サインインを使う](../secure/dev-signin.ja.md)） |
+| `AuthMode=dev` で構築したスタックが更新できない | `AuthMode=dev` はもうありません。https の URL の裏では、Control Plane が開発用のサインインを拒否します。`AuthMode=oauth` に切り替えます（[開発用サインインを使う](../secure/dev-signin.ja.md)） |
 | コスト配分タグの有効化が `ValidationException: Tag keys not found` で拒否される | AWS がまだそのタグキーを検出していません。ワークスペースを 1 つ起動し、最大 24 時間待ちます（[費用をメンバーごとに分ける](install.ja.md#費用をメンバーごとに分ける任意)） |
 | ポリシーがあるのに、`CpTaskRole` の `ce:GetCostAndUsage` がすべて失敗する | Billing の「IAM ユーザーとロールによる請求情報へのアクセス」がオフです |
 
@@ -39,7 +39,7 @@ ECS の配備で、構築・アップグレード・ワークスペースの起�
 |---|---|
 | `--parameter-overrides Key=` で空にしたのに「No changes」になる | この方法では空になりません。`clear-params.sh` を使います（[パラメータを空に戻す](upgrade.ja.md#パラメータを空に戻す)） |
 | `ComfyApiKey=on` などのスイッチを入れたら、Control Plane のタスクが起動しない | スイッチが読む SSM パラメータがありません。先に作ります（[秘密はスイッチで読む](options.ja.md#秘密はスイッチで読む)） |
-| `WorkspaceDekRandom=on` のデプロイがロールバックする | `CustodianKmsKeyArn` がありません。両方を一緒に渡します（[ホームごとに鍵を分ける](options.ja.md#ホームごとに鍵を分ける)） |
+| `WorkspaceDekRandom=on` でデプロイするとロールバックする | `CustodianKmsKeyArn` がありません。両方を一緒に渡します（[ホームごとに鍵を分ける](options.ja.md#ホームごとに鍵を分ける)） |
 | 新しいリリースに上げたのに、新しいパラメータの機能がオンにならない | `update.sh` は、これらのパラメータに触りません。`30-ingress` を個別にデプロイします（[パラメータを変える](options.ja.md#パラメータを変える)） |
 
 ## アップグレードするとき
@@ -47,9 +47,9 @@ ECS の配備で、構築・アップグレード・ワークスペースの起�
 | 症状 | 原因と対処 |
 |---|---|
 | 上げたあと、Control Plane のタスクが `CannotPullContainerError` で落ちる | そのタグが ECR にありません（push を忘れた、別のリージョンに push した）。`update.sh` はこれを先に確かめます |
-| デプロイが「No changes to deploy」で、Control Plane が古いイメージのまま | 同じタグに push し直したので、テンプレートが変わっていません。`update.sh` を使うか、`--force` を付けます |
+| デプロイすると「No changes to deploy」になり、Control Plane が古いイメージのまま | 同じタグに push し直したので、テンプレートが変わっていません。`update.sh` を使うか、`--force` を付けます |
 | エンジンの取得用コンテナが `CannotPullContainerError` のままなのに、サービスは安定状態と表示される | `af-engine-tools` のイメージが ECR にありません。`update.sh` でやり直します（[`update.sh` がすること](upgrade.ja.md#updatesh-がすること)） |
-| `update.sh` が `FAILED:` で終わる | `50-tts` か `60-engines` のデプロイが失敗しました。`30-ingress` はデプロイ済みです。スタックのイベントで原因を直し、もう一度実行します |
+| `update.sh` が `FAILED:` で終わる | `50-tts` か `60-engines` をデプロイできませんでした。`30-ingress` はデプロイされています。スタックのイベントで原因を直し、もう一度実行します |
 | メンバーに「要再起動」が出ない | `CpTaskRole` に ECR を読む権限がありません。`20-platform` をデプロイし直します（[「要再起動」が出ないとき](upgrade.ja.md#要再起動が出ないとき)） |
 
 ## 動いているとき
@@ -65,12 +65,12 @@ ECS の配備で、構築・アップグレード・ワークスペースの起�
 想定どおりです。`POST /api/workspace/start` は起動を待たずに、ECS のサービスが `desiredCount 1` になった時点で、今の状態（ふつうは `starting`）を返します。
 
 - `running` になったかは `GET /api/workspace` をポーリングして確かめます。Console は 4 秒ごとにポーリングするので、ページを再読み込みしなくても表示が `running` まで進みます
-- Control Plane は裏で Agent の準備を待ち、ログに `ecs start: service <name> Agent healthy <n>s after Start` を 1 行出します。待つ時間は既定で 300 秒で、どのリクエストよりも長くしてあります
+- Control Plane はバックグラウンドで Agent の準備を待ち、ログに `ecs start: service <name> Agent healthy <n>s after Start` を 1 行出します。待つ時間は既定で 300 秒で、どのリクエストよりも長くしてあります
 - ALB のアイドルタイムアウトは 60 秒です。起動の完了を待つようなリクエストは、504 になります
 
 ### `running` なのに `502 workspace agent unreachable` が返る
 
-ここでの `running` は、ECS の**タスク**が RUNNING になったという意味です。そこからエントリーポイントが終わって Agent が応答するまで、少し間があります。その間に作成の要求を送ると 502 になるので、やり直してください。
+ここでの `running` は、ECS の**タスク**が RUNNING になったという意味です。そこからエントリーポイントが終わって Agent が応答するまで、少し間があります。その間に作成のリクエストを送ると 502 になるので、やり直してください。
 
 ### 起動に時間がかかる
 

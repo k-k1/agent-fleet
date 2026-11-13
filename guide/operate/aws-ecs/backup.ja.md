@@ -14,10 +14,10 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 
 | あなたがやること | 起きること |
 |---|---|
-| `Persistence=retain` で建てる | `10-data` が、EFS 用のバックアップボールトと、毎日実行するバックアッププランを作る |
+| `Persistence=retain` で構築する | `10-data` が、EFS 用のバックアップボールトと、毎日実行するバックアッププランを作る |
 | 既存の配備では、変更セットで `10-data` を更新する | `EfsBackup*` の 4 つのリソースだけが追加される |
-| アップグレードの前などに、その場でバックアップを取る | 復元ポイントが 1 つ増える |
-| 復元ポイントから 1 人分を戻す | AWS Backup が、同じファイルシステムの別のディレクトリに復元する。元の場所へは自分で戻す |
+| アップグレードの前などに、その場でバックアップを取る | 復旧ポイントが 1 つ増える |
+| 復旧ポイントから 1 人分を戻す | AWS Backup が、同じファイルシステムの別のディレクトリに復元する。元の場所へは自分で戻す |
 
 ## 何を守るのか
 
@@ -32,7 +32,7 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 
 | リソース | 中身 |
 |---|---|
-| `EfsBackupVault` | ボールト `<data stack>-efs-<stack id の 16 進 8 桁>`（例: `af-ecs-data-efs-1a2b3c4d`、スタックの出力 `EfsBackupVaultName`）。`DeletionPolicy: Retain` で、復元ポイントが残っているボールトは AWS が削除を拒否する。ボールトの名前は 50 文字までなので、`retain` ではデータスタックの名前は 37 文字まで（`standup.sh` が確かめる） |
+| `EfsBackupVault` | ボールト `<data stack>-efs-<stack id の 16 進 8 桁>`（例: `af-ecs-data-efs-1a2b3c4d`、スタックの出力 `EfsBackupVaultName`）。`DeletionPolicy: Retain` で、復旧ポイントが残っているボールトは AWS が削除を拒否する。ボールトの名前は 50 文字までなので、`retain` ではデータスタックの名前は 37 文字まで（`standup.sh` が確かめる） |
 | `EfsBackupPlan` | ルールは 1 つ。毎日 17:00 UTC（02:00 JST）で、各ポイントを `EfsBackupRetentionDays`（既定は **7**、RDS と同じ）日残す |
 | `EfsBackupSelection` + `EfsBackupRole` | 対象はこのファイルシステムだけ。AWS 管理のバックアップ用・復元用のポリシーを使う |
 
@@ -43,7 +43,7 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 ### スタックが消えてもボールトは残る
 
 - `teardown.sh` は `--purge-retained` なしではボールトを残します。スタックを `retain` から `delete` に切り替えても残ります
-- 名前にスタックの ID が入るので、あとで同じスタック名で建てても衝突しません。`teardown.sh` は、`Persistence` の値に関係なく、すべての `<data stack>-efs-*` のボールトを計画と点検の対象に挙げます
+- 名前にスタックの ID が入るので、あとで同じスタック名で構築しても衝突しません。`teardown.sh` は、`Persistence` の値に関係なく、すべての `<data stack>-efs-*` のボールトを計画と点検の対象に挙げます
 - 1 つだけ衝突する場合があります。**同じ**スタックを `retain` → `delete` → `retain` と切り替えたとき（スタックの ID が変わらない）です。残っているボールトを先に消します（[撤去する](teardown.ja.md#9-retain-の配備で残ったものを消す)）
 
 ## 動いている配備でバックアップを有効にする
@@ -96,7 +96,7 @@ aws backup start-backup-job --backup-vault-name "$VAULT" \
   --iam-role-arn "arn:aws:iam::$ACCT:role/$ROLE" --lifecycle DeleteAfterDays=7
 ```
 
-## 復元ポイントを選ぶ
+## 復旧ポイントを選ぶ
 
 新しいものほど後ろに表示されます。
 
@@ -137,7 +137,7 @@ aws backup describe-restore-job --restore-job-id <id>    # wait for COMPLETED
 | ウォームのバックアップストレージ | $0.06/GB 月 |
 | 復元 | $0.024/GB と、項目単位の復元ジョブ 1 回あたり $0.60 |
 
-- 変更の少ないファイルシステムなら、7 日分の復元ポイントの費用は、全体のコピー 1 つと 1 週間分の変更の分ほどです。20 GB のファイルシステムで月 $1.2〜2 ほどです
+- 変更の少ないファイルシステムなら、7 日分の復旧ポイントの費用は、全体のコピー 1 つと 1 週間分の変更の分ほどです。20 GB のファイルシステムで月 $1.2〜2 ほどです
 - スタックを消したあとも、すでに取ったポイントはそれぞれの予定で期限切れになります。`teardown.sh --purge-retained` は、ポイントとボールトをまとめて消します
 
 > [!NOTE]

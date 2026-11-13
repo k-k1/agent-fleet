@@ -25,7 +25,7 @@ The engine's mode and the reading dictionary are set in the admin screen ([Run t
 
 The engine is an ECS **Fargate** service, **normally scaled to zero**.
 
-- Left running at 2 vCPU / 4 GiB it is about $90 a month, against a deployment whose whole run rate is around $165 a month
+- Left running at 2 vCPU / 4 GiB it is about $90 a month, against a standing cost of about $107 a month plus EFS for the rest of the deployment ([Keep costs down](cost.md#the-standing-cost))
 - Most of the day nobody is listening, so it runs only when there is demand
 
 ## Turn it on
