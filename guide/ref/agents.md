@@ -308,14 +308,16 @@ until then a workspace offers it only when its operator has set `AF_OPENCODE_BED
 Control Plane that is `AF_WS_OPENCODE_BEDROCK_ROUTE=1`, which reaches a workspace at its next Start; a workspace
 already running needs Stop → Start). claude's switch does not open it.
 
-- **Terminal (CLI) only.** A Managed opencode session shares one opencode server with every other Managed session,
-  which cannot carry a route of its own, so the route is not offered for a Managed launch and a switch to Managed is
-  refused.
+- **Terminal (CLI) and Managed.** A Managed opencode session normally shares one opencode server with every other
+  Managed session, which cannot carry a route of its own; a Managed session on this route gets a server of its own
+  instead, started with the session and stopped with it. Each such server costs its own memory (one opencode server,
+  a few hundred MB) for as long as the session runs.
 - Where it is offered, pick **Amazon Bedrock** under **Model route**, then the profile (the region is optional), and
   then one of the **amazon-bedrock/…** models: on this route the model picker lists only those, and the dialog does
   not start until one is chosen (opencode's own default model is not on the route). Without the route, these models
   are not listed.
-- The session runs its own private opencode server in its pane (not the workspace's shared one) and never receives
+- The session runs its own private opencode server (in its pane, or beside it under Managed; never the workspace's
+  shared one) and never receives
   AWS credentials: the route gateway signs each model call, and the session holds only a bearer that works from its
   own processes and ends with it. Inside the session only Amazon Bedrock models can be chosen, and the title is
   generated on the session's model.

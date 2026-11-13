@@ -20,7 +20,7 @@ import (
 )
 
 // Explicit routes for opencode (ADR 0128 P2c): `bedrock` on a member's Settings AWS profile marked
-// as a model route, through the AF route gateway, Terminal only.
+// as a model route, through the AF route gateway, in Terminal and Managed.
 //
 // Measured on opencode 2.2.6 against a stand-in gateway (ADR 0128, the P2c note):
 //   - its built-in amazon-bedrock provider sends ConverseStream (`POST <baseURL>/model/<id>/
@@ -32,7 +32,7 @@ import (
 //     is used, with the caller attributed through /proc (routegw/peer_tcp.go);
 //   - the model call leaves from the private `serve --stdio` child of the TUI, inside the pane's
 //     process tree; on af's shared serve it would leave from a daemon in no session's tree, which
-//     is why the route is Terminal only and the pane runs --standalone;
+//     is why the pane runs --standalone;
 //   - inline config (OPENCODE_CONFIG_CONTENT) outranks the global and project files for the
 //     provider's settings, but NOT for `enabled_providers`, where a file wins: a file that sets it
 //     is refused (configConflict);
@@ -41,9 +41,9 @@ import (
 //   - the title is generated on `small_model`, which defaults to an OpenAI model sent to
 //     `<baseURL>/responses`; the route pins it to the session's model.
 //
-// A Managed session runs on af's shared serve, whose process is in no session's tree and whose
-// one environment cannot carry a per-session bearer, so it is never offered the route
-// (CheckRouteDriver).
+// A Managed session on the route does not run on af's shared serve, whose process is in no
+// session's tree and whose one environment cannot carry a per-session bearer: it gets a private
+// server of its own (route_serve.go) with the same environment and inline config a pane gets.
 
 // RouteBedrock is the gateway route.
 const RouteBedrock = "bedrock"
@@ -86,16 +86,6 @@ func (agentImpl) Routes() []string { return []string{RouteBedrock} }
 func (agentImpl) OfferedRoutes() []string {
 	if bedrockOpen() {
 		return []string{RouteBedrock}
-	}
-	return nil
-}
-
-// CheckRouteDriver implements agents.RouteDriverChecker: the route needs the pane's own private
-// server (see the package note above), so a Managed session is refused.
-func (agentImpl) CheckRouteDriver(route, driver string) *agents.RouteRefusal {
-	if route == RouteBedrock && driver != session.DriverTUI {
-		return &agents.RouteRefusal{Status: http.StatusBadRequest, Code: routes.CodeRouteUnsupported,
-			Message: "opencode runs on the bedrock route only as a Terminal (CLI) session: a Managed session shares one opencode server, which cannot carry a route of its own"}
 	}
 	return nil
 }
@@ -218,9 +208,6 @@ func (agentImpl) ApplyRoute(m session.Meta, sel agents.RouteSelection) (agents.R
 	}
 	if !bedrockModel(m.Model) {
 		return agents.RoutePlan{}, notBedrockModel(m.Model)
-	}
-	if ref := (agentImpl{}).CheckRouteDriver(sel.Route, m.DriverKind()); ref != nil {
-		return agents.RoutePlan{}, ref
 	}
 	gw := agents.CurrentRouteGateway()
 	if gw == nil {

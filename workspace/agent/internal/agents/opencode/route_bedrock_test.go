@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -30,6 +31,27 @@ type fakeGateway struct {
 	loopback []session.Meta
 	sockets  int
 	refuse   *agents.RouteRefusal
+	mu       sync.Mutex
+	revoked  []string
+}
+
+func (f *fakeGateway) RevokeToken(token string) {
+	f.mu.Lock()
+	f.revoked = append(f.revoked, token)
+	f.mu.Unlock()
+}
+
+// revokedCount is how many times the test bearer was revoked.
+func (f *fakeGateway) revokedCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, tok := range f.revoked {
+		if tok == testBearer {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeGateway) Issue(session.Meta) (agents.RouteGrant, *agents.RouteRefusal) {
@@ -115,20 +137,19 @@ func TestBedrockRouteIsGatedUntilItsLiveAcceptance(t *testing.T) {
 	}
 }
 
-func TestBedrockRouteIsTerminalOnly(t *testing.T) {
-	a := agentImpl{}
-	if ref := a.CheckRouteDriver(RouteBedrock, session.DriverManaged); ref == nil || ref.Code != routes.CodeRouteUnsupported {
-		t.Fatalf("managed = %+v", ref)
-	}
-	if ref := a.CheckRouteDriver(RouteBedrock, session.DriverTUI); ref != nil {
-		t.Fatalf("terminal = %+v", ref)
-	}
+// A Managed session takes the route too: ApplyRoute gives it the same plan as a pane (#4004).
+func TestBedrockRouteAppliesUnderManaged(t *testing.T) {
 	isolatedHome(t)
-	withGateway(t, &fakeGateway{})
+	g := &fakeGateway{}
+	withGateway(t, g)
 	m := bedrockMeta(t, "managed")
 	m.Driver = session.DriverManaged
-	if _, err := a.ApplyRoute(m, bedrockSel()); err == nil {
-		t.Fatal("ApplyRoute for a managed session was accepted")
+	plan, err := agentImpl{}.ApplyRoute(m, bedrockSel())
+	if err != nil {
+		t.Fatalf("ApplyRoute for a managed session: %v", err)
+	}
+	if len(g.loopback) != 1 || !slices.ContainsFunc(plan.Env, func(kv string) bool { return strings.HasPrefix(kv, "AWS_BEARER_TOKEN_BEDROCK=") }) {
+		t.Fatalf("no loopback bearer for the managed session: issued %d, env %v", len(g.loopback), plan.Env)
 	}
 }
 

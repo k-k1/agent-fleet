@@ -94,7 +94,16 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if !session.DirExists(m.Dir) {
 		return nil, agents.DirGoneErr(m.Dir)
 	}
-	addr, gen, err := Serve().Ensure()
+	// A session with an explicit route runs on a private server of its own (route_serve.go); the
+	// route is fixed for the session's life, so a handle never moves between the two.
+	// A stop of this session while the server starts or the conversation is prepared wins: the
+	// handle is not published alive after it (dropEpoch).
+	epoch := dropEpochOf(m.Name)
+	ensure := func() (string, int, error) { return Serve().Ensure() }
+	if m.Route != nil {
+		ensure = func() (string, int, error) { return ensureRouteServe(m) }
+	}
+	addr, gen, err := ensure()
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +116,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 			name:   m.Name,
 			dir:    cwd,
 			ocSid:  ocSid,
+			routed: m.Route != nil,
 			events: make(chan agents.Event, 64),
 		}
 		handles[m.Name] = h
@@ -140,10 +150,26 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	ses, err = managedSession(addr, m, cwd, ocSid, ses)
 	if err != nil {
+		h.mu.Lock()
+		serving := h.alive && h.gen == gen
+		h.mu.Unlock()
+		if m.Route != nil && !serving {
+			// A server nothing runs on: a create or fork that failed here is never listed, so no
+			// stop would ever reach it. Only this generation: a later Resume's server is not ours.
+			stopRouteServeGen(m.Name, gen, "resume failed")
+		}
 		return nil, err
 	}
 
 	h.mu.Lock()
+	if dropEpochOf(m.Name) != epoch {
+		h.mu.Unlock()
+		forgetHandle(m.Name, h)
+		if m.Route != nil {
+			stopRouteServeGen(m.Name, gen, "stopped while resuming")
+		}
+		return nil, fmt.Errorf("opencode: session %s was stopped while it was resuming", m.Name)
+	}
 	h.addr, h.gen, h.ses, h.alive = addr, gen, ses, true
 	// Revive a queue left behind when a daemon death ended the pump (§31): without this
 	// the entries stall forever.
@@ -312,12 +338,27 @@ func handleFor(name string) *threadHandle {
 // liveHandles snapshots the currently-alive handles.
 func liveHandles() []*threadHandle { return managedKind.Live() }
 
+// sharedHandles is liveHandles without the sessions on their own route servers: what the shared
+// daemon's death, drain and event stream concern.
+func sharedHandles() []*threadHandle {
+	var out []*threadHandle
+	for _, h := range liveHandles() {
+		if !h.routed {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // DropHandle detaches a managed session from its runtime handle (stop/halt/
 // archive): abort any running turn, clear the queue, forget the handle. The
 // conversation stays in the SQLite store — a later Resume reattaches.
 func DropHandle(name string) {
+	markDropped(name)
 	h, ok := managedKind.Take(name)
 	if !ok {
+		// A Resume may be starting this session's private server before it has a handle.
+		stopRouteServe(name, "session stopped")
 		// A Terminal slot has no handle; its turn runs on the shared serve all the same, and
 		// closing the pane does not stop it.
 		if m, ok := session.ReadMeta(name); ok {
@@ -340,6 +381,39 @@ func DropHandle(name string) {
 	if running && ses != "" {
 		abortSession(addr, ses)
 	}
+	if h.routed {
+		// After the abort, which goes to this very server.
+		stopRouteServe(name, "session stopped")
+	}
+}
+
+// dropEpochs counts DropHandle calls per session: a Resume that began before one must not publish
+// its handle alive after it, or a halted session comes back running. Its own lock, taken under
+// h.mu by Resume; handlesMu is taken before h.mu elsewhere (Live).
+var dropEpochs = struct {
+	mu sync.Mutex
+	n  map[string]uint64
+}{n: map[string]uint64{}}
+
+func markDropped(name string) {
+	dropEpochs.mu.Lock()
+	dropEpochs.n[name]++
+	dropEpochs.mu.Unlock()
+}
+
+func dropEpochOf(name string) uint64 {
+	dropEpochs.mu.Lock()
+	defer dropEpochs.mu.Unlock()
+	return dropEpochs.n[name]
+}
+
+// forgetHandle unregisters h when it is still name's handle.
+func forgetHandle(name string, h *threadHandle) {
+	handlesMu.Lock()
+	if handles[name] == h {
+		delete(handles, name)
+	}
+	handlesMu.Unlock()
 }
 
 // RemoveLedger drops a session's ClientMessageID ledger. Only for /stop, which discards
@@ -368,7 +442,10 @@ func AbortManaged() { managedKind.Abort() }
 
 // Shutdown stops the shared daemon through its supervisor (Serve). Call it only after
 // AbortManaged, so the daemon's drain has no turn left to wait for.
-func Shutdown() { Serve().Shutdown() }
+func Shutdown() {
+	stopAllRouteServes()
+	Serve().Shutdown()
+}
 
 // ReconcileManaged re-attaches managed opencode sessions after an Agent boot,
 // daemon restart or daemon death (§6). It covers every managed meta not already treated
@@ -437,6 +514,8 @@ type threadHandle struct {
 	name  string
 	dir   string
 	ocSid string
+	// routed: the session runs on its own route server, not the shared one (route_serve.go).
+	routed bool
 
 	mu sync.Mutex
 	// resumeMu serializes Resume end-to-end (same §32 competition as codex: two

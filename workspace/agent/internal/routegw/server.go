@@ -166,3 +166,6 @@ func EndSession(name string) int {
 	}
 	return 0
 }
+
+// RevokeToken ends one route token (agents.RouteTokenRevoker).
+func (g *Gateway) RevokeToken(token string) { g.Registry().Revoke(token) }

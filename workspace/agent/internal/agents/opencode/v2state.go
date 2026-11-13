@@ -80,6 +80,13 @@ type apiTarget struct {
 // server af cannot reach, so it is read from opencode.db (offline): its history is there, while
 // its running state and forms are not, and the readers answer "unknown" for those.
 var v2TargetFor = func(m session.Meta) apiTarget {
+	if m.DriverKind() == session.DriverManaged && m.Route != nil {
+		// Its own route server (route_serve.go); while that is down, the store.
+		if addr, ok := routeServeAddr(m.Name); ok {
+			return apiTarget{Addr: addr, Client: serveClient}
+		}
+		return apiTarget{offline: true}
+	}
 	if m.DriverKind() == session.DriverManaged || sharedSlot(m) {
 		return apiTarget{Addr: serveAddr(), Client: serveClient}
 	}

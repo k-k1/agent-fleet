@@ -55,9 +55,57 @@ func CurrentRouteGateway() RouteGateway {
 	return routeGateway.g
 }
 
+// RouteTokenRevoker is the gateway's revocation of one token. A harness that holds a token for a
+// runtime of its own (a Managed private server) ends it when that runtime fails to start, stops
+// or dies, rather than leaving it to the sweep. One token, not the session's: the session may
+// already hold a newer one (a replacement, or a switch to Terminal) that must survive.
+type RouteTokenRevoker interface {
+	RevokeToken(token string)
+}
+
+// RevokeRouteToken ends token on the running gateway, if it can.
+func RevokeRouteToken(token string) {
+	if token == "" {
+		return
+	}
+	if r, ok := CurrentRouteGateway().(RouteTokenRevoker); ok {
+		r.RevokeToken(token)
+	}
+}
+
 // RouteOffering is the gateway's answer to whether a route it serves is offered to the launch
 // dialog now: a provided route only while the Control Plane says the member may use it
 // (ADR 0129 D3, ADR 0084 decision 8's first place). A gateway without it offers every route.
 type RouteOffering interface {
 	Offered(route string) bool
+}
+
+// RuntimeRootsFunc names the root processes of a session's runtime that is not a launch pane: a
+// Managed harness that runs a private server for one session's route. The gateway serves a route
+// token only to a process in its owner's tree (routegw/peer.go), and a Managed session has no pane
+// to be that tree.
+type RuntimeRootsFunc func(session string) []int
+
+var runtimeRoots struct {
+	mu  sync.RWMutex
+	fns []RuntimeRootsFunc
+}
+
+// RegisterRuntimeRoots adds a source of runtime roots; adapters call it from init.
+func RegisterRuntimeRoots(fn RuntimeRootsFunc) {
+	runtimeRoots.mu.Lock()
+	runtimeRoots.fns = append(runtimeRoots.fns, fn)
+	runtimeRoots.mu.Unlock()
+}
+
+// RuntimeRoots is every registered source's roots for session, none when no source runs one.
+func RuntimeRoots(session string) []int {
+	runtimeRoots.mu.RLock()
+	fns := runtimeRoots.fns
+	runtimeRoots.mu.RUnlock()
+	var out []int
+	for _, fn := range fns {
+		out = append(out, fn(session)...)
+	}
+	return out
 }

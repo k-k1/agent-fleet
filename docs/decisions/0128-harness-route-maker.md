@@ -737,3 +737,16 @@ table from becoming a menu of models that fail on the first message, which is wh
   schedules send it as `model`. No AWS-side check of the id: the route's role carries `bedrock:InvokeModel*` only and cannot
   list inference profiles, so whether the account and Region serve the id is learnt from Bedrock's answer. Not measured:
   real Bedrock, and the TUI beyond one turn.
+- 2026-11-13, P2's per-credential daemons for opencode (#4004): a Managed opencode session on `bedrock` runs on a
+  private `opencode serve` of its own (`agents/opencode/route_serve.go`), so the route is offered and started under
+  Managed too and `CheckRouteDriver` no longer refuses it. The server gets what a `--standalone` pane gets (the route's
+  bearer, region and inline config; none of the workspace's provider keys or engine token, which are also stripped from
+  the Agent's own environment; no shared-server marker) plus the session's `AF_SESSION_NAME` / `AF_WORK_DIR`, and a
+  random Basic-auth password that `authTransport` sends to that server's host only. Its process is registered through
+  `agents.RegisterRuntimeRoots`, so the gateway's caller check treats it as the session's root as it treats a launch
+  pane. It lives as long as the session's handle (Resume starts it, DropHandle and Shutdown stop it, a server that
+  dies or stops answering is replaced by reconcile) and is started on a pinned OS thread with `Pdeathsig`, so it dies
+  with the Agent: its token lived only in that Agent's gateway. The shared daemon's demand, drain, death handling and
+  event stream leave routed handles out. Measured only against a stand-in server in the unit tests; real opencode and
+  real Bedrock under Managed are #4004's live gate. Not done: idle eviction of a private server while its session
+  runs (the shared daemon has none either while any Managed handle is registered).

@@ -18,6 +18,10 @@ import (
 var realStartMigrationServe = startMigrationServe
 
 func TestMain(m *testing.M) {
+	if os.Getenv(fakeRouteServeEnv) == "1" {
+		runFakeRouteServe() // this binary started as a route server's stand-in (route_serve_test.go)
+		os.Exit(0)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"completed"}`))
 	}))

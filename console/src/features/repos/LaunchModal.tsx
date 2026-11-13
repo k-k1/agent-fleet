@@ -442,11 +442,12 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // Only for kinds whose pending approvals can be answered from the Console (the counterpart
   // of Caps.PermissionChoice on the Go side).
   const hasPermChoice = agentOf(kind).caps.permissionChoice;
-  // Routes the kind declares, and only for a Terminal launch: claude has no managed driver, so a
-  // managed launch could never honour one.
+  // Routes the kind declares, under either execution method: a Managed opencode session on a
+  // route runs on a server of its own (#4004), and claude, which has no Managed, never gets here
+  // with one.
   // bedrock is offered only when the member has a profile marked as a model route: without one
   // the Agent would refuse the launch, and an option that can only fail is not offered.
-  const declaredRoutes = driver === "managed" ? [] : kindRoutes(kind);
+  const declaredRoutes = kindRoutes(kind);
   const modelRouteProfiles = useModelRouteProfiles(declaredRoutes.includes("bedrock"));
   const routeOptions = declaredRoutes.filter((r) => r !== "bedrock" || (modelRouteProfiles?.length ?? 0) > 0);
   const bedrockPick = modelRouteProfiles?.find((p) => p.id === bedrockProfile) ?? modelRouteProfiles?.[0];
