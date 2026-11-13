@@ -139,6 +139,17 @@ func (e *ecsEC2Runtime) rescueENIStageWith(ctx context.Context, slot string, m *
 		return fmt.Errorf("%w: ENIs of %s: %w", errRescueAborted, slot, err)
 	}
 	if instancesHoldTaskENI(out) {
+		// afterDereg is owed once the deregistration call has been sent, however the guarded
+		// section ends: a lease lost while the answer was in flight, an error, a panic. The
+		// box is deregistered all the same.
+		sent, fired := false, false
+		fire := func() {
+			if sent && !fired && afterDereg != nil {
+				fired = true
+				afterDereg()
+			}
+		}
+		defer fire()
 		err := e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
 			if err := e.advanceRescue(c, slot, m, rescuePhaseDeregistering); err != nil {
 				return err
@@ -154,17 +165,16 @@ func (e *ecsEC2Runtime) rescueENIStageWith(ctx context.Context, slot string, m *
 				if err := rescueLeasesHeld(c); err != nil {
 					return fmt.Errorf("%w: %w", errRescueAborted, err)
 				}
+				sent = true
 				return nil
 			}); derr != nil {
 				log.Printf("ecs-ec2: rescue of %s: %v", e.base.name, derr)
 			}
 			return nil
 		})
+		fire()
 		if err != nil {
 			return err
-		}
-		if afterDereg != nil {
-			afterDereg()
 		}
 		if err := rescueStep(ctx, "deregistered-call"); err != nil {
 			return err

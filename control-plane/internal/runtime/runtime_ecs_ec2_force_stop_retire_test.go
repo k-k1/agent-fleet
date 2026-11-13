@@ -163,3 +163,39 @@ func TestForceStopGiveUpAfterTheDeregistrationLeavesTheSlotReserved(t *testing.T
 		t.Fatalf("marker %q left behind", slotMarker(h))
 	}
 }
+
+// The deregistration went out but a lease lapsed while its answer was in flight, so the
+// guarded section ends in an error. The box is deregistered all the same: it must still be
+// reserved, and no stop may follow.
+func TestForceStopReservesWhenALeaseLapsesDuringTheDeregistration(t *testing.T) {
+	// Only the claim lease is checked when the section ends; the mount lease is asked before
+	// the call (rescueGuarded), so a lapse of it after the call is not an error to react to.
+	for _, which := range []string{"claim"} {
+		t.Run(which, func(t *testing.T) {
+			h := wedgedSlot(t)
+			h.ec2.giveTaskENI("i-wedge")
+			var gctx context.Context
+			rescueStepHook = func(c context.Context, s string) error {
+				if s == "deregistering" {
+					gctx = c
+				}
+				return nil
+			}
+			defer func() { rescueStepHook = nil }()
+			h.ci.onDeregister = func() { markGuard(gctx, which) }
+			res, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false)
+			if err == nil {
+				t.Fatalf("ForceStopSlot succeeded after the lease lapsed: %+v", res)
+			}
+			if len(h.ci.deregistered) != 1 {
+				t.Fatalf("deregistered %v, want the call to have gone out", h.ci.deregistered)
+			}
+			if ec2TagValue(h.ec2.instances["i-wedge"].Tags, ec2TagSlotReplace) == "" || !res.Retired {
+				t.Fatalf("deregistered but not reserved (res %+v, err %v)", res, err)
+			}
+			if stopsOnBox(h) != 0 {
+				t.Fatalf("stopped after the lease lapsed: %v", h.ec2.stopForce)
+			}
+		})
+	}
+}

@@ -1008,6 +1008,8 @@ type fakeContainerInstances struct {
 	onList, onDescribeTasks func()
 	// onDescribeCI runs at the start of DescribeContainerInstances.
 	onDescribeCI func()
+	// onDeregister runs after DeregisterContainerInstance has taken effect, before it answers.
+	onDeregister func()
 	// taskFailures are returned by DescribeTasks as Failures.
 	taskFailures []ecstypes.Failure
 	// describeErr is returned (once) by DescribeContainerInstances.
@@ -1130,6 +1132,9 @@ func (f *fakeContainerInstances) DeregisterContainerInstance(_ context.Context, 
 	delete(f.registered, id)
 	if f.sink != nil && !f.stickyENI {
 		f.sink.dropTaskENIs(id)
+	}
+	if f.onDeregister != nil {
+		f.onDeregister()
 	}
 	return &ecs.DeregisterContainerInstanceOutput{}, nil
 }

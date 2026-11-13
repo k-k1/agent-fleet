@@ -57,7 +57,18 @@ func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID strin
 	// whether the ENI went. Its message is kept for the refusal.
 	deregistered = true
 	var derr error
-	dereg := func(c context.Context) { derr = e.deregisterContainerInstance(c, instanceID) }
+	sent, fired := false, false
+	fire := func() {
+		if sent && !fired && afterDereg != nil {
+			fired = true
+			afterDereg()
+		}
+	}
+	defer fire() // owed once the call went out, whatever ends the sequence (an error, a panic)
+	dereg := func(c context.Context) {
+		sent = true
+		derr = e.deregisterContainerInstance(c, instanceID)
+	}
 	if guard == nil {
 		dereg(ctx)
 	} else if !guard(ctx, dereg) {
@@ -69,9 +80,7 @@ func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID strin
 	if derr != nil {
 		log.Printf("ecs-ec2: %v", derr)
 	}
-	if afterDereg != nil {
-		afterDereg()
-	}
+	fire()
 	if werr := e.waitTaskENIsGoneWithin(ctx, instanceID, polls); werr != nil {
 		if ctx.Err() != nil {
 			return deregistered, werr
