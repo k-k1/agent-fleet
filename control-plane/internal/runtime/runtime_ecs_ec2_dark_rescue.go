@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -374,22 +375,47 @@ func (e *ecsEC2Runtime) dropRescueMarker(ctx context.Context, instanceID, value 
 // cancelSlotVolumeCommands a failed read is an error: the set is fixed from this answer, so
 // a partial one would be a rescue that cancelled some of what holds the mount lock.
 func listSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID string) ([]string, error) {
+	ids, err := collectSlotVolumeCommandIDs(ctx, c, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// collectSlotVolumeCommandIDs returns the CP's own Pending and InProgress commands for the
+// box, plus whatever it had gathered when a page failed (callers that need all-or-nothing
+// drop the ids on error).
+//
+// SSM ListCommands rejects InstanceId together with Status=Pending (ValidationException:
+// "An instance ID can't be specified when a command status is Pending because the command
+// hasn't run on the instance yet"). So Pending is listed account-wide and narrowed here to
+// commands addressed to this instance, by InstanceIds or, when that is empty, by a Targets
+// entry keyed InstanceIds. InProgress is listed per instance. No extra filter is added to
+// the Pending query: only the comment, which every command of ours carries, says it is ours.
+func collectSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID string) ([]string, error) {
 	var ids []string
 	for _, status := range []string{"Pending", "InProgress"} {
 		var next *string
 		for {
-			out, err := c.ListCommands(ctx, &ssm.ListCommandsInput{
-				InstanceId: aws.String(instanceID),
-				Filters:    []ssmtypes.CommandFilter{{Key: ssmtypes.CommandFilterKeyStatus, Value: aws.String(status)}},
-				NextToken:  next,
-			})
+			in := &ssm.ListCommandsInput{
+				Filters:   []ssmtypes.CommandFilter{{Key: ssmtypes.CommandFilterKeyStatus, Value: aws.String(status)}},
+				NextToken: next,
+			}
+			if status != "Pending" {
+				in.InstanceId = aws.String(instanceID)
+			}
+			out, err := c.ListCommands(ctx, in)
 			if err != nil {
-				return nil, err
+				return ids, fmt.Errorf("list %s commands: %w", status, err)
 			}
 			for _, cmd := range out.Commands {
-				if aws.ToString(cmd.Comment) == slotVolumeCommandComment {
-					ids = append(ids, aws.ToString(cmd.CommandId))
+				if aws.ToString(cmd.Comment) != slotVolumeCommandComment {
+					continue // somebody else's command, never ours
 				}
+				if status == "Pending" && !commandTargetsInstance(cmd, instanceID) {
+					continue
+				}
+				ids = append(ids, aws.ToString(cmd.CommandId))
 			}
 			if next = out.NextToken; next == nil {
 				break
@@ -397,6 +423,19 @@ func listSlotVolumeCommandIDs(ctx context.Context, c ssmSlotCommands, instanceID
 		}
 	}
 	return ids, nil
+}
+
+// commandTargetsInstance reports whether the command is addressed to the instance.
+func commandTargetsInstance(cmd ssmtypes.Command, instanceID string) bool {
+	if len(cmd.InstanceIds) > 0 {
+		return slices.Contains(cmd.InstanceIds, instanceID)
+	}
+	for _, t := range cmd.Targets {
+		if aws.ToString(t.Key) == "InstanceIds" && slices.Contains(t.Values, instanceID) {
+			return true
+		}
+	}
+	return false
 }
 
 // rescueContinue runs what follows the preparation: cancel exactly the fixed set with no
