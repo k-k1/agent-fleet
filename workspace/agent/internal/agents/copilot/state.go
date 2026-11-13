@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -144,4 +145,33 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// TurnMark is the turn identity's start half (agents.LiveStateTraits.TurnMark): events.jsonl's
+// size, which only grows. Terminal route only; the managed driver reports its own end.
+func TurnMark(m session.Meta) (string, bool) {
+	if m.DriverKind() == session.DriverManaged {
+		return "", false
+	}
+	sid := SessionID(m)
+	if sid == "" {
+		return "", false
+	}
+	return agents.FileSizeMark(EventsPath(sid))
+}
+
+// EndedAfter reports whether the newest event that closes a turn (assistant.turn_end, or the
+// session.shutdown classifyDetail also reads as closed) starts at or after mark. The previous
+// turn's idle ends before the mark, so it never counts as the new turn's end.
+func EndedAfter(m session.Meta, mark string) (after, known bool) {
+	sid := SessionID(m)
+	if sid == "" {
+		return false, false
+	}
+	return agents.EndedAfterOffset(EventsPath(sid), mark, tailWindow, func(line []byte) bool {
+		var ev struct {
+			Type string `json:"type"`
+		}
+		return json.Unmarshal(line, &ev) == nil && (ev.Type == "assistant.turn_end" || ev.Type == "session.shutdown")
+	})
 }

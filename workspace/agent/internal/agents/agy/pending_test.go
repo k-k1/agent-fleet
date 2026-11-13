@@ -401,3 +401,47 @@ func insertTurn(data []byte) func(*sql.DB) error {
 		return err
 	}
 }
+
+// The turn identity: a mark taken at the previous turn's last step; only a run that ends after
+// it is the new turn's.
+func TestTurnMarkAndEndedAfter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir, slot, conv := "/home/dev/repos/proj", "slot-mark", "conv-mark"
+	m := session.Meta{Dir: dir, Name: slot, Kind: session.KindAgy}
+	sids.Write(session.UUID(dir, slot), conv)
+	step := [3]any{14, stepStatusDone, []byte("x")}
+	mkConvDBWithTurns(t, conv, [][3]any{step, step, step}, [][]byte{executorRow(4, 2)})
+
+	mark, ok := TurnMark(m)
+	if !ok || mark != "2" {
+		t.Fatalf("mark %q %v", mark, ok)
+	}
+	if after, known := EndedAfter(m, mark); after || !known {
+		t.Fatalf("the previous turn's end counted: after=%v known=%v", after, known)
+	}
+	db, err := sql.Open("sqlite", conversationDBPath(conv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i := 3; i <= 4; i++ {
+		db.Exec(`INSERT INTO steps (idx, step_type, status, step_payload) VALUES (?,?,?,?)`, i, 14, stepStatusDone, []byte("x"))
+	}
+	if after, known := EndedAfter(m, mark); after || !known {
+		t.Fatalf("a running turn counted: after=%v known=%v", after, known)
+	}
+	db.Exec(`INSERT INTO executor_metadata (idx, data) VALUES (1, ?)`, executorRow(4, 4))
+	if after, known := EndedAfter(m, mark); !after || !known {
+		t.Fatalf("the new end did not count: after=%v known=%v", after, known)
+	}
+	// A conversation with fewer steps than the mark was reset: unknown, not "ended".
+	if _, known := EndedAfter(m, "9"); known {
+		t.Fatal("a reset conversation was compared")
+	}
+	// No executor_metadata (old build): unknown.
+	mkConvDB(t, "conv-old", [][3]any{step})
+	sids.Write(session.UUID(dir, "slot-old"), "conv-old")
+	if _, known := EndedAfter(session.Meta{Dir: dir, Name: "slot-old", Kind: session.KindAgy}, "0"); known {
+		t.Fatal("a DB without a turn log was compared")
+	}
+}

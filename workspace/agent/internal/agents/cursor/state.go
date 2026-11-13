@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -88,4 +89,31 @@ func classify(r io.Reader) string {
 		return "working"
 	}
 	return "idle"
+}
+
+// TurnMark is the turn identity's start half (agents.LiveStateTraits.TurnMark): the transcript's
+// size, which only grows. Terminal route only; the managed driver reports its own end.
+func TurnMark(m session.Meta) (string, bool) {
+	if m.DriverKind() == session.DriverManaged {
+		return "", false
+	}
+	chatID := ChatID(m)
+	if chatID == "" {
+		return "", false
+	}
+	return agents.FileSizeMark(transcriptPath(m.Dir, chatID))
+}
+
+// EndedAfter reports whether the newest turn_ended row starts at or after mark.
+func EndedAfter(m session.Meta, mark string) (after, known bool) {
+	chatID := ChatID(m)
+	if chatID == "" {
+		return false, false
+	}
+	return agents.EndedAfterOffset(transcriptPath(m.Dir, chatID), mark, tailWindow, func(line []byte) bool {
+		var ev struct {
+			Type string `json:"type"`
+		}
+		return json.Unmarshal(line, &ev) == nil && ev.Type == "turn_ended"
+	})
 }

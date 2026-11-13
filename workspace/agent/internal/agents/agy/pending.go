@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"math"
 	"path/filepath"
+	"strconv"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in opencode
 
@@ -371,4 +372,31 @@ func parseAskQuestions(payload []byte) []transcript.Question {
 		out = append(out, tq)
 	}
 	return out
+}
+
+// TurnMark is the turn identity's start half (agents.LiveStateTraits.TurnMark): the idx of the
+// conversation's newest step, which only grows. ok=false while the conversation has no step
+// yet (a first prompt) or is not adopted.
+func TurnMark(m session.Meta) (string, bool) {
+	r, ok := lastStep(m)
+	if !ok {
+		return "", false
+	}
+	return strconv.Itoa(r.idx), true
+}
+
+// EndedAfter reports whether the newest executor run ended at a step after mark. A prompt's
+// own step is written after the mark, so the run that answers it ends beyond it; the previous
+// turn's end (turnEnd) is at or before it. Unknown where the build has no executor_metadata,
+// where it cannot be read, or where the steps are fewer than the mark (a reset conversation).
+func EndedAfter(m session.Meta, mark string) (after, known bool) {
+	at, err := strconv.Atoi(mark)
+	if err != nil {
+		return false, false
+	}
+	r, ok := lastStep(m)
+	if !ok || r.turnLog != turnLogRead || r.idx < at {
+		return false, false
+	}
+	return r.turnEnd > at, true
 }

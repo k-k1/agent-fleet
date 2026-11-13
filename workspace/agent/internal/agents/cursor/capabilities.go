@@ -49,7 +49,7 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 // LiveStateTraits is agents.LiveStater: the classification of the JSONL transcript's tail
 // (LiveState); no hooks, so that poll is where a Terminal turn ends.
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
-	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true}
+	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, TurnMark: TurnMark, EndedAfter: EndedAfter}
 }
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.

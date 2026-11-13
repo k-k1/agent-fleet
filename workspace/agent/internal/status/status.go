@@ -111,6 +111,9 @@ var (
 	// recording it can never overwrite one — see ObservedTurnEnd for why that separation is
 	// load-bearing rather than tidy.
 	observedEnds = fstore.JSON[observedEnd](paths.AgentStateDir, "session-turn-end", ".json")
+	// turnMarks holds where a hook-less kind's state source stood when the turn the status record
+	// describes began (TurnMarkOf). A store of its own, Rev-tagged, for the reason observedEnds is.
+	turnMarks = fstore.JSON[turnMark](paths.AgentStateDir, "session-turn-mark", ".json")
 	// completionKeys stores the stable answer-ready deduplication key for the current turn-end.
 	// Written by PersistTurnEndReason (idempotent — first write wins) and cleared by Persist
 	// when state is "working" (new turn starts). Deliberately NOT cleared by Remove so the key
@@ -124,6 +127,13 @@ var (
 type observedEnd struct {
 	Rev string `json:"rev"`
 	At  string `json:"at"` // RFC3339
+}
+
+// turnMark is a source position tagged with the SessionStatus.Rev of the working write it was
+// taken for. The tag retires it on the next status write, like observedEnd.
+type turnMark struct {
+	Rev  string `json:"rev"`
+	Mark string `json:"mark"`
 }
 
 // PersistExit / ReadExit / RemoveExit manage the per-session exit record (keyed by
@@ -319,6 +329,30 @@ func ObservedTurnEnd(sid string) string {
 	return rec.At
 }
 
+// RecordTurnMark stores the source position mark for the turn that the working write rev opened.
+// It touches only its own store, so it cannot disturb a concurrent status write.
+func RecordTurnMark(sid, rev, mark string) {
+	if rev == "" || mark == "" {
+		return
+	}
+	_ = turnMarks.Write(sid, turnMark{Rev: rev, Mark: mark})
+}
+
+// TurnMarkOf returns the mark of the turn the status record is CURRENTLY describing, ok=false
+// when none was recorded for it (the record was rewritten since, the mark could not be read, or
+// the Agent never saw this turn start). It survives an Agent restart: the store is on disk.
+func TurnMarkOf(sid string) (string, bool) {
+	rec, ok := turnMarks.Read(sid)
+	if !ok || rec.Rev == "" || rec.Mark == "" {
+		return "", false
+	}
+	st, ok := Read(sid)
+	if !ok || st.Rev != rec.Rev {
+		return "", false
+	}
+	return rec.Mark, true
+}
+
 func persist(sid string, s SessionStatus) string {
 	// A timeout still writes: the hook's record is authoritative, and only the conditional
 	// heal (PersistIf) is allowed to give way.
@@ -371,6 +405,7 @@ func Remove(sid string) {
 		_ = os.Remove(lockPath(sid))
 	}
 	observedEnds.Remove(sid)
+	turnMarks.Remove(sid)
 	RemovePendingQuestion(sid)
 	RemovePendingPlan(sid)
 	RemovePendingPermission(sid)

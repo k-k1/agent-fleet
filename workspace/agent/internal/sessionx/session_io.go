@@ -1351,7 +1351,10 @@ func markSessionWorking(name string) (rev string) {
 	if !ok {
 		return ""
 	}
-	return status.PersistRev(session.UUID(meta.Dir, name), "working")
+	sid := session.UUID(meta.Dir, name)
+	rev = status.PersistRev(sid, "working")
+	recordTurnMark(meta, sid, rev)
+	return rev
 }
 
 // viewNavKeys are the keys claude's TUI reads as VIEW navigation when no dialog is up:
