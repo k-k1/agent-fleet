@@ -24,7 +24,7 @@ claude.ai・ChatGPT・Claude Code・Codex を、トークンを発行せずに�
 
 ## 接続する
 
-1. クライアントで、カスタムコネクタかリモートの MCP サーバーを追加します。アドレスは次のどちらかです。クライアント ID とシークレットの欄は空のままにします
+1. クライアントで、カスタムコネクターかリモートの MCP サーバーを追加します。アドレスは次のどちらかです。クライアント ID とシークレットの欄は空のままにします
 
    | アドレス | 使えるもの |
    |---|---|
@@ -35,8 +35,8 @@ claude.ai・ChatGPT・Claude Code・Codex を、トークンを発行せずに�
 3. 確認ページの中身を確かめて（下の表）、「許可する」を押します。断るときは「キャンセル」です。キャンセルすると、アプリに拒否が伝わります
 
 > [!IMPORTANT]
-> **claude.ai では `/mcp/memory` を使ってください。** claude.ai は、そこで追加したコネクタをこのワークスペースのセッションにも渡すので、
-> `/mcp` につなぐとセッションにあなたの全権限が渡ります（[メモリ専用のコネクタ](../memory/external.ja.md#claudeai-には-mcpmemory-を使う)）。
+> **claude.ai では `/mcp/memory` を使ってください。** claude.ai は、そこで追加したコネクターをこのワークスペースのセッションにも渡すので、
+> `/mcp` につなぐとセッションにあなたの全権限が渡ります（[メモリ専用のコネクター](../memory/external.ja.md#claudeai-には-mcpmemory-を使う)）。
 
 Claude Code でつなぐときは、サーバーを自分のユーザー用に登録してから、Claude Code の中で `/mcp` → `agent-fleet` → **Authenticate** を選びます。
 
@@ -109,10 +109,10 @@ claude mcp add --transport http --scope user agent-fleet https://<Console のア
 | JSON-RPC | メソッド（バッチは要素ごと）。`tools/list` なら返したツールの数、エラーならそのコード |
 | プロトコル | プロトコルの世代とバージョン |
 | クライアント | クライアントの名前とバージョン |
-| ヘッダ | `MCP-Protocol-Version`、`Mcp-Method` / `Mcp-Name` の有無、`Accept` |
+| ヘッダー | `MCP-Protocol-Version`、`Mcp-Method` / `Mcp-Name` の有無、`Accept` |
 | 所要時間 | 応答までの時間 |
 
-- トークン、認可のヘッダ、ツールの引数と結果は記録されません
+- トークン、認可のヘッダー、ツールの引数と結果は記録されません
 - 一覧は Control Plane のメモリの中にだけあり、再起動で消えます
 - Control Plane が複数あるときは、それぞれが別に持つので、開いたときに応えたものの分しか見えません。「**更新**」を何度か押すか、運用担当者に Control Plane のログを見てもらってください。ログには、サインインの前に断ったものも含めて、すべてのリクエストが残ります
 

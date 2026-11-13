@@ -175,7 +175,7 @@ A watch is always read by polling, with your own connection. An administrator ca
 tells your workspace to read a pull request right away instead of waiting for the next scheduled read. A webhook carries no data to the workspace,
 only "this pull request changed", and it never starts a stopped workspace (a stopped workspace catches up when it starts).
 
-- **Public repositories**: when the deployment's GitHub App webhook is set up (`AF_GITHUB_WEBHOOK_SECRET`, see [Settings reference](../../ref/settings.md)), deliveries for public repositories speed up watches.
+- **Public repositories**: when the deployment's GitHub App has its webhook set up (a setting made by whoever runs the deployment, see [Settings reference](../../ref/settings.md)), deliveries for public repositories speed up watches.
 - **Private repositories**: the deployment's shared App is ignored for them, because it serves every tenant. A private repository needs a webhook that belongs to your tenant (a repository hook, or your tenant's own GitHub App; Bitbucket always uses one). Without it the watch stays on polling, a few minutes at most behind. Create it from the workspace with [`af-watch-hook`](../../ref/cli/af-watch-hook.md).
 
 #### Add a hook for a private repository
