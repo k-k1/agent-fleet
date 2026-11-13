@@ -8,7 +8,7 @@ source_of_truth: "`deploy/aws/ecs/teardown.sh`（この手順を実行するス�
 [English](teardown.md) | 日本語
 
 ECS の配備を、途中で止まらない順番ですべて消します。
-ふつうは `./teardown.sh --profile <p> --region <r>` を使います。このページは、スクリプトが実行する手順そのものです。どこかの手順が失敗したら、ここに戻ります。
+ふつうは `./teardown.sh --profile <p> --region <r>` を使います。このページは、スクリプトが実行する手順そのものです。スクリプトのどこかの手順が失敗したときは、このページを見て続けます。
 
 ## 全体像
 
@@ -17,7 +17,7 @@ ECS の配備を、途中で止まらない順番ですべて消します。
 | 先に `capture-env.sh` で記録する | 建て直すためのパラメータが残る |
 | `teardown.sh` を実行する | 消えるものの一覧と計画が出る |
 | `teardown.sh --yes` を実行する | 下の手順 1〜11 を順に実行する |
-| `--purge-retained` / `--purge-secrets` を付ける | 残す設定のものと `/af-cp/*` も消す |
+| `--purge-retained` / `--purge-secrets` を付ける | `retain` で残したものと `/af-cp/*` も消える |
 | 最後に Elastic IP と S3 Bucket を自分で消す | 配備のものが何も残らない |
 
 ## 順番が大事な理由
@@ -27,13 +27,13 @@ ECS の配備を、途中で止まらない順番ですべて消します。
 - ワークスペースのサービス、EFS のアクセスポイント、SSM のパラメータ
 - `WsRuntime=ecs-ec2` では、スロットのインスタンス、ホームの EBS ボリューム、ゴールデンスナップショット
 
-先にスタックを消すと、これらが残り、それが握る依存関係で**削除が止まります**。下の順番は、`Persistence=delete` と `=retain` の実際の `ecs-ec2` の配備 2 つで最初から最後まで試し、どちらのアカウントでも点検の数がすべて 0 になったものです。
+先にスタックを消すと、これらが残り、それらが持つ依存関係のせいで**削除が止まります**。下の順番は、`Persistence=delete` と `=retain` の実際の `ecs-ec2` の配備 2 つで最初から最後まで試し、どちらのアカウントでも残りを数える点検の結果がすべて 0 になったものです。
 
 ## 手順
 
 ### 1. Control Plane を先に止める
 
-手順 2〜7 で消すものは、すべて Control Plane の帳簿にあります。Control Plane は必要に応じてスロットを起動するので、動いていると消したものを作り直します。
+手順 2〜7 で消すものは、すべて Control Plane が管理しているものです。Control Plane は必要に応じてスロットを起動するので、動いたままだと、消したものを作り直すことがあります。
 
 ```bash
 CL=af-af-ecs-platform      # cluster = af-<platform stack name>
@@ -44,7 +44,7 @@ aws ecs update-service --cluster $CL --service af-af-ecs-ingress-cp --desired-co
 
 ### 2. ワークスペースのサービスを消す
 
-`af-ws-*` で、ワークスペースを起動したことのあるメンバーごとに 1 つあります。`delete-service --force` はサービスの Cloud Map のエントリも消すので、それを手で消さないでください（`ServiceNotFound` になります）。
+名前は `af-ws-*` で、ワークスペースを起動したことのあるメンバーごとに 1 つあります。`delete-service --force` はサービスの Cloud Map のエントリも消すので、それを手で消さないでください（`ServiceNotFound` になります）。
 
 ```bash
 for s in $(aws ecs list-services --cluster $CL --query 'serviceArns[]' --output text | tr '\t' '\n' | grep /af-ws-); do
@@ -55,7 +55,7 @@ done
 
 ### 3. プールのインスタンスとホームのボリュームを消す
 
-スロットを終了するとルートボリュームは消えますが、**ホームのボリュームは消えません**。ホームはわざと外して残すので、残って料金がかかり続けます。
+スロットを終了するとルートボリュームは消えますが、**ホームのボリュームは消えません**。ホームのボリュームはわざとデタッチして残す設計なので、消すまで料金がかかり続けます。
 
 ```bash
 F="Name=tag:af-pool,Values=$CL"     # this deployment's pool only: its slots and engine instances
@@ -72,22 +72,22 @@ for v in $(aws ec2 describe-volumes --filters "$F" --query 'Volumes[].VolumeId' 
 done
 ```
 
-絞り込みは `af-pool` のタグで、その値はこの配備のクラスター（手順 1 の `$CL`）です。同じリージョンのほかの配備のものは出ません。`teardown.sh` と同じく、スロット（`ecs-ec2`）と、Control Plane が買った推論エンジンのインスタンスが対象です。`Name` のタグ（`af-slot-*`）だけで絞ると、ほかの配備のスロットまで拾います。
+絞り込みは `af-pool` のタグで、その値はこの配備のクラスター（手順 1 の `$CL`）です。同じリージョンのほかの配備のものは出ません。`teardown.sh` と同じく、スロット（`ecs-ec2`）と、Control Plane が調達した推論エンジンのインスタンスが対象です。`Name` のタグ（`af-slot-*`）だけで絞ると、ほかの配備のスロットまで拾います。
 
 ### 4. 登録が残ったコンテナインスタンスを外す
 
-EC2 のインスタンスが消えたあとも、クラスターがそれを一覧に残すことがあります（あるアカウントでは 4 台中 3 台）。そのままだと、プラットフォームのスタックのクラスターの削除が失敗します。1 台ずつ `aws ecs deregister-container-instance --cluster $CL --container-instance <arn> --force` を実行します。
+EC2 のインスタンスが消えたあとも、クラスターがそれを一覧に残すことがあります（あるアカウントでは 4 台中 3 台）。そのままだと、プラットフォームのスタックがクラスターを消せずに失敗します。1 台ずつ `aws ecs deregister-container-instance --cluster $CL --container-instance <arn> --force` を実行します。
 
 ### 5. EFS のアクセスポイントを消す
 
 `describe-access-points --file-system-id <efs>` で一覧し、1 つずつ消します。
 
 - **これを忘れると、`delete-stack af-ecs-data` が止まります**
-- ファイルシステムの ID は `af-ecs-data` の出力 `EfsId` です。`FileSystemId` ではありません。名前を間違えた点検のスクリプトは、何も言わずに何も消しません
+- ファイルシステムの ID は `af-ecs-data` の出力 `EfsId` です。`FileSystemId` ではありません。間違った名前で ID を引く点検のスクリプトは、エラーを出さずに何も消さないまま終わります
 
 ### 6. SSM の `/af-ws/*` を消す
 
-ワークスペースごとの DEK とトークンです。`/af-cp/*` は、`30-ingress` の前に自分で作った Control Plane のシークレットです。同じアカウントに建て直すなら残し、前提条件から試し直すなら消します。
+ワークスペースごとの DEK とトークンです。`/af-cp/*` は、`30-ingress` の前に自分で作った Control Plane のシークレットです。同じアカウントに建て直すなら残し、前提の準備から通しで試し直すなら消します。
 
 ### 7. ゴールデンスナップショットを消す
 
@@ -109,7 +109,7 @@ CFN_BUCKET=$(aws cloudformation describe-stacks --stack-name af-ecs-platform \
 aws s3 rm "s3://$CFN_BUCKET" --recursive
 ```
 
-それでも `20-platform` が `DELETE_FAILED` になったら、スタックのイベントで理由を読み、S3 Bucket をもう一度空にしてから、ループをもう一度実行します。消え終わったスタックは飛ばされます。
+それでも `20-platform` が `DELETE_FAILED` になったら、スタックのイベントで理由を読み、S3 Bucket をもう一度空にしてから、ループをもう一度実行します。削除済みのスタックは飛ばします。
 
 ```bash
 for s in af-ecs-ingress af-ecs-engines af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
@@ -126,9 +126,9 @@ done
 > **1 つずつ消して、待ちます。** CloudFormation は、export しているスタックの削除を、import しているスタックが残っているあいだは**取り消します**（`Cannot delete export … as it is in use by …`）。まとめて消すと、最後のほうは何も起きず、待つループだけが、もう取り消された削除を待ち続けます。
 
 - 順番は `teardown.sh` と同じです。ingress → 推論エンジン（`60-engines`）→ 読み上げ（`50-tts`）→ スロットのプール（`40-ec2-pool`）→ platform → data → network
-- 推論エンジン・読み上げ・プールのスタックは任意です。`af-ecs-engines` は推論エンジンを足したときだけ、`af-ecs-tts` は読み上げを有効にしたときだけ、`af-ecs-pool` は `ecs-ec2` のときだけあります。ループが飛ばすのは、CloudFormation が存在しないと答えたスタック（`does not exist`）だけです。それ以外の `describe-stacks` のエラー（資格情報の期限切れ・権限不足・通信の障害）は表示して止まるので、確かめていないスタックを飛ばしたことにはなりません
+- 推論エンジン・読み上げ・プールのスタックは任意です。`af-ecs-engines` は推論エンジンを足したときだけ、`af-ecs-tts` は読み上げを有効にしたときだけ、`af-ecs-pool` は `ecs-ec2` のときだけあります。ループが飛ばすのは、CloudFormation が存在しないと答えたスタック（`does not exist`）だけです。それ以外の `describe-stacks` のエラー（資格情報の期限切れ・権限不足・通信の障害）は表示して止まるので、確かめていないスタックを「飛ばした」と報告することはありません
 - 上の名前は既定の例です。実際のスタック名（`60-engines.yaml` / `50-tts.yaml` / `40-ec2-pool.yaml` などをデプロイしたときの名前）に置き換えます。`teardown.sh` は名前を配備から読みます
-- `50-tts` を消す前に、エンジンのサービスを 0 台にしておきます。タスクが登録されているあいだは Cloud Map のサービスを消せず、止まりかけのタスクもまさにそれに当たります
+- `50-tts` を消す前に、エンジンのサービスを 0 台にしておきます。タスクが登録されているあいだは Cloud Map のサービスを消せず、停止処理中のタスクもまだ登録されている扱いです
 - かかる時間は、`delete` で約 10 分、`retain` で約 16 分（RDS のスナップショットを取るため）です
 
 ### 9. `retain` の配備で残ったものを消す
@@ -173,9 +173,9 @@ aws backup delete-backup-vault --backup-vault-name <vault>                      
 |---|---|
 | ホストゾーン | 配備のものではない |
 | `/af-cp/*` のシークレット（残したとき） | 同じアカウントに建て直すため。`--purge-secrets` で消える |
-| **NAT ゲートウェイの Elastic IP** | 建て直しで同じアドレスから出るため（[外向きの IP アドレスを固定する](egress-ip.ja.md)） |
+| **NAT ゲートウェイの Elastic IP** | 建て直しても同じアドレスから外へ出られるようにするため（[外向きの IP アドレスを固定する](egress-ip.ja.md)） |
 | **egress ゲートウェイの Elastic IP**（`GatewayEip`、`EgressRoute=gateway` でスタックが割り当てたとき） | 同上（[外向きの通信をゲートウェイで制御する](egress-gateway.ja.md#作り直しても残る)） |
-| **通信の記録の S3 Bucket**（`EgressArchiveBucket`、`EgressArchive=create` のとき） | 中身がスタックより長く残るように |
+| **通信の記録の S3 Bucket**（`EgressArchiveBucket`、`EgressArchive=create` のとき） | 中身をスタックより長く残すため |
 | `60-engines` のモデルの S3 Bucket | 同上。大きなモデルを Hugging Face から取り直すと時間が読めない |
 
 - どれも `Retain` で、`teardown.sh` は触りません

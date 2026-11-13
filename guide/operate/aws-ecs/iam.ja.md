@@ -14,7 +14,7 @@ source_of_truth: "`deploy/aws/ecs/cfn/*.yaml` が作るリソースと、`releas
 
 | あなたがやること | 起きること |
 |---|---|
-| 使い捨てのサンドボックスで試す | VPC・ECS・EFS・RDS・ALB・IAM・ECR・SSM を広く作れる権限で構いません |
+| 使い捨てのサンドボックスで試す | VPC・ECS・EFS・RDS・ALB・IAM・ECR・SSM を広く作れる権限でよい |
 | 本番のアカウントでデプロイする | 下の表のサービスごとの権限に絞る。リソースは、そのサービスが対応していれば `af-` の名前のプレフィックスで絞る |
 
 ## サービスごとの権限
@@ -30,16 +30,16 @@ source_of_truth: "`deploy/aws/ecs/cfn/*.yaml` が作るリソースと、`releas
 | ecs | `20-platform` のクラスターと `30-ingress` のサービス | クラスターとサービスの Create/Delete/Describe、RegisterTaskDefinition。アカウントで 1 回 `iam:CreateServiceLinkedRole` |
 | servicediscovery | Service Connect の名前空間 | 名前空間の Create/Delete/Get |
 | efs | `10-data` のファイルシステムとマウントターゲット | CreateFileSystem/DeleteFileSystem/CreateMountTarget/DeleteMountTarget/Describe* |
-| backup | `10-data` の EFS のバックアップのボールトとプラン（`Persistence=retain`）、バックアップと復元、撤去 | CreateBackupVault/DescribeBackupVault/DeleteBackupVault/ListBackupVaults、BackupPlan の Create/Get/Update/Delete、BackupSelection の Create/Get/Delete、ListBackupPlans。既定の `aws/backup` 鍵への `backup-storage:MountCapsule` と `kms:CreateGrant`/`DescribeKey`。StartBackupJob/StartRestoreJob/DescribeRestoreJob、ListRecoveryPointsByBackupVault/DeleteRecoveryPoint、`10-data` のバックアップのロールへの `iam:PassRole` |
+| backup | `10-data` の EFS のバックアップボールトとバックアッププラン（`Persistence=retain`）、バックアップと復元、撤去 | CreateBackupVault/DescribeBackupVault/DeleteBackupVault/ListBackupVaults、BackupPlan の Create/Get/Update/Delete、BackupSelection の Create/Get/Delete、ListBackupPlans。既定の `aws/backup` 鍵への `backup-storage:MountCapsule` と `kms:CreateGrant`/`DescribeKey`。StartBackupJob/StartRestoreJob/DescribeRestoreJob、ListRecoveryPointsByBackupVault/DeleteRecoveryPoint、`10-data` のバックアップのロールへの `iam:PassRole` |
 | kms | `10-data` の Control Plane の鍵（`CustodianKmsKey=create` のときだけ） | CreateKey、PutKeyPolicy、EnableKeyRotation、DescribeKey、TagResource、CreateAlias/DeleteAlias、ScheduleKeyDeletion（`Persistence=delete` でスタックを消すとき） |
 | rds | `10-data` のインスタンス | CreateDBInstance/DeleteDBInstance/CreateDBSubnetGroup/Describe*（ManageMasterUserPassword には、RDS が管理するシークレットへの `secretsmanager:*` と `kms:DescribeKey` も要る） |
 | elasticloadbalancing | `30-ingress` の ALB・ターゲットグループ・リスナー | ロードバランサー・ターゲットグループ・リスナーの Create/Delete/Describe/Modify |
 | acm | `30-ingress` の証明書 | RequestCertificate/DeleteCertificate/DescribeCertificate |
 | route53 | DNS 検証とエイリアス | ChangeResourceRecordSets/GetHostedZone/ListResourceRecordSets（そのゾーンに対して） |
 | logs | ロググループ | CreateLogGroup/DeleteLogGroup/PutRetentionPolicy/Describe* |
-| iam | `20-platform` の名前付きロール、`10-data` の EFS のバックアップのロール、`00-network` の出口のゲートウェイのロールとインスタンスプロファイル、`30`・`40`・`60` が Control Plane のタスクロールに付ける管理ポリシー | CreateRole/DeleteRole/Get/PassRole、Put/Delete/Attach/DetachRolePolicy、CreatePolicy/DeletePolicy/GetPolicy、ListPolicyVersions の Create/Delete、InstanceProfile の Create/Delete と Add/RemoveRoleFromInstanceProfile（→ `CAPABILITY_NAMED_IAM`。`10-data` と `00-network` は `CAPABILITY_IAM`） |
-| ssm | Control Plane の秘密（スタックの外で作る）、出口のゲートウェイの準備と待機の確認（`pause.sh`・`standup.sh`、`EgressRoute=gateway` のときだけ） | `/af-cp/*` の下の PutParameter/DeleteParameter。`arn:aws:ssm:<region>::document/AWS-RunShellScript` と、`af-egress-gateway=<network stack>` のタグが付いたインスタンス（`ssm:resourceTag/af-egress-gateway`）への `SendCommand`、`GetCommandInvocation` |
-| sts | `release-ecr.sh` がアカウントを知るため | GetCallerIdentity |
+| iam | `20-platform` の名前付きロール、`10-data` の EFS のバックアップのロール、`00-network` の出口のゲートウェイのロールとインスタンスプロファイル、`30`・`40`・`60` が Control Plane のタスクロールに付ける管理ポリシー | CreateRole/DeleteRole/Get/PassRole、Put/Delete/Attach/DetachRolePolicy、CreatePolicy/DeletePolicy/GetPolicy、PolicyVersion の Create/Delete/List、InstanceProfile の Create/Delete と Add/RemoveRoleFromInstanceProfile（→ `CAPABILITY_NAMED_IAM`。`10-data` と `00-network` は `CAPABILITY_IAM`） |
+| ssm | Control Plane のシークレット（スタックの外で作る）、出口のゲートウェイの準備完了とドレインの確認（`pause.sh`・`standup.sh`、`EgressRoute=gateway` のときだけ） | `/af-cp/*` の下の PutParameter/DeleteParameter。`arn:aws:ssm:<region>::document/AWS-RunShellScript` と、`af-egress-gateway=<network stack>` のタグが付いたインスタンス（`ssm:resourceTag/af-egress-gateway`）への `SendCommand`、`GetCommandInvocation` |
+| sts | `release-ecr.sh` がアカウント ID を調べるため | GetCallerIdentity |
 
 ## Control Plane のタスクロールのポリシーの上限
 
@@ -48,7 +48,7 @@ Control Plane のタスクロール（`CpTaskRole`）に権限を足すときに
 | 上限 | 中身 |
 |---|---|
 | インラインポリシー | ロールのインラインポリシーは合計 10,240 文字まで（空白は数えない）。`20-platform` のインラインの `cp-runtime` が約 7,000 を使う |
-| 管理ポリシー | 1 つにつき 6,144 文字まで。ロールに付けられる数は、引き上げられるクォータ |
+| 管理ポリシー | 1 つにつき 6,144 文字まで。ロールに付けられる数はクォータで決まり、引き上げられる |
 
 - ほかのスタックが足す権限（`40-ec2-pool` のスロットの起動、`60-engines` の取り込み、`30-ingress` のホームの操作）は、それぞれ別の `AWS::IAM::ManagedPolicy` です。インラインに入れると上限を超え、`30-ingress` が `ServiceLimitExceeded` でロールバックします
 - 管理ポリシーの名前はアカウント全体で一意なので、リージョンを含みます（`af-<stack>-cp-ingest-<region>` など）

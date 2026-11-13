@@ -16,7 +16,7 @@ Both are off by default. A super_admin sets them per tenant under **Admin** in t
 |---|---|
 | A super_admin sets the tenant's **Hibernate unused homes** | A home nobody opened for that long becomes a snapshot and its volume is deleted. The next start brings it back |
 | A super_admin sets the tenant's **Keep a spare copy of each home** | A copy of each home is taken while in use, outside its AZ, at that interval |
-| Rebuild a home from a spare copy after losing an AZ | That user can start in an AZ that is alive |
+| Rebuild a home from a spare copy after losing an AZ | That user can start in a healthy AZ |
 | Destroy a workspace | The home and every resource of that member are deleted |
 
 Both are triggered by the idle-stop sweeper. **`AF_IDLE_SWEEP_INTERVAL=0` turns off hibernation and spare copies too.**

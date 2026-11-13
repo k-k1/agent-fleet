@@ -14,7 +14,7 @@ ECS の配備で、ワークスペースの外向きの通信を egress ゲー�
 
 | あなたがやること | 起きること |
 |---|---|
-| ワークスペース用のアドレスを先に割り当て、許可リストに登録してもらう | 切り替えの前から、取引先がそのアドレスを通せる |
+| ワークスペース用のアドレスを先に割り当て、許可リストに登録してもらう | 切り替えの前から、接続先の組織がそのアドレスを許可できる |
 | `00-network` を `EgressRoute=gateway` でデプロイし、`update.sh` を実行する | ワークスペースのルートがゲートウェイに向き、Control Plane がワークスペースにプロキシを渡す |
 | 管理の「**通信**」でモードと許可リストを決める | ゲートウェイのエージェントがその方針を Squid に書き、接続を記録して Control Plane に送る |
 | `pause.sh` で一時停止する | ワークスペースが止まり、記録を送り終えてから、ゲートウェイを 0 台にする |
@@ -41,7 +41,7 @@ Control Plane・スロットのインスタンス・推論エンジン・ホー�
 - `PublicSubnet0` に、AL2023 のインスタンス 1 台の Auto Scaling グループを置きます
 - インスタンスは起動時に、スタックが持つネットワークインターフェース `GatewayEni` を付けます。ワークスペースのルートテーブルはこれを指し、その Elastic IP（`GatewayEip`）がワークスペースの送信元アドレス、プライベートアドレスが明示プロキシ（`EgressProxyAddr`、`:3128`）になります
 - 置き換わったインスタンスも同じインターフェースを付けるので、ルート・プロキシのアドレス・送信元アドレスは動きません
-- Squid が、ワークスペースのサブネットからのポート 80 を横取りし、明示プロキシも受けます。横取りした 443 は `af-cp egress-relay` が受け、ワークスペースが接続しようとしたアドレスへの CONNECT として Squid に渡します。ほかの TCP は `af-cp egress-relay --mode tcp` が受けます
+- Squid が、ワークスペースのサブネットからのポート 80 をインターセプトし、明示プロキシも受けます。インターセプトした 443 は `af-cp egress-relay` が受け、ワークスペースが接続しようとしたアドレスへの CONNECT として Squid に渡します。ほかの TCP は `af-cp egress-relay --mode tcp` が受けます
 - 何も転送しません（`ip_forward=0`）
 - `af-cp egress-agent`（Control Plane のイメージからコピーしたバイナリ）が、ユーザー `squid` として動きます。Control Plane の方針から Squid の許可とモードのファイルを書き、ログを `/internal/egress` に送ります。認証には、スタックが Secrets Manager に作る `AF_EGRESS_TOKEN` を使います
 - Control Plane は `AF_EGRESS_PROXY_ADDR` と `AF_EGRESS_TOKEN` を受け取ります（`30-ingress` の `EgressProxyAddr` / `EgressTokenSecretArn`）。Fargate と `ecs-ec2` のワークスペースのタスク定義にプロキシの変数が入り、`NO_PROXY` にはタスクロールの資格情報のエンドポイント（`169.254.170.2`）、インスタンスメタデータ（`169.254.169.254`）、Control Plane の内部ホストが入ります
@@ -54,31 +54,31 @@ SSH の git やデータベースへの接続です。`GatewaySg` はワーク�
 | モード | 起きること |
 |---|---|
 | enforce | 管理者が **`tcp:` のエントリ**を足すまで、HTTP(S) 以外は出ない。名前のない宛先は落として記録する |
-| log-only（既定のモード） | どのポートも通し、拒否される接続として記録する。enforce に切り替えるまで何も閉じない |
+| log-only（既定のモード） | どのポートも通し、遮断候補（`would-deny`）として記録する。enforce に切り替えるまで何も閉じない |
 
 - エントリは管理の「**通信**」で足すか、メンバーの申請を管理者が承認します。例: `tcp:git.example.com:22`、`tcp:db.example.com:1433`
 - クライアントを別のポートへ向けるサービスには、範囲 `tcp:db.example.com:11000-11999` を使えます。最大 2048 ポートで、ホストは完全一致か IPv4 アドレスです。53・80・443・853・3128 は指定できません
-- エージェントは 30 秒ごとにホストを名前解決し、中継は過去 15 分に解決されたアドレスのそのポートへの接続を通します
+- エージェントは 30 秒ごとにホストを名前解決します。中継は、過去 15 分以内に解決したアドレスへの、エントリのポート宛ての接続を通します
 - どの接続も、アドレスとポートで記録され、ほかと同じようにワークスペースに結び付けられます（ポートも宛先の一部です）
 - VPC・リンクローカル（メタデータサービス）・ループバック・このホスト・ポート 53 / 853 は、どちらのモードでも拒否します
 - UDP と ICMP は、セキュリティグループで落とし、記録しません
-- **切り替えの前に、宛先側のファイアウォールで、ゲートウェイの Elastic IP（ワークスペースの送信元アドレス）をそのポートで通してもらいます。** 別のポートの範囲に向けるマネージドなデータベースは、その範囲を通して、エントリでも名前を挙げます
+- **切り替えの前に、宛先側のファイアウォールで、ゲートウェイの Elastic IP（ワークスペースの送信元アドレス）をそのポートで通してもらいます。** クライアントを別のポート範囲へ向けるマネージドデータベースでは、その範囲もファイアウォールで通してもらい、エントリにも含めます
 - 中継のログはインスタンスの `/var/log/squid/af-tcp.log`、サービスは `journalctl -u af-egress-relay-tcp` です
 - この経路は、実機の配備ではまだ動かしていません
 
 ### 拒否された TCP も、最初はつながったように見える
 
-横取りは中継が判断する前に起きるので、中継はワークスペースの接続をいったん受け、元の宛先（`SO_ORIGINAL_DST`）を読み、そのあとで外へつながずにソケットを閉じて拒否します。
+インターセプトは中継が判断する前に起きます。そのため中継は、ワークスペースの接続をいったん受けて元の宛先（`SO_ORIGINAL_DST`）を読み、そのあとで外へはつながずにソケットを閉じて拒否します。
 
 - ワークスペース側のハンドシェイクは終わっています。`nc -z host port` やただの `connect()` は成功します
 - そのあとの読み書きが失敗します（EOF か、`Connection reset by peer` などのリセット）。どちらになるかはタイミングと未読のデータによります。最初の小さな書き込みは手元では成功することもあります
 - 「つながった」は「許可された」の証拠になりません。中継のログ `af-tcp.log` で確かめます
 
-判断を記録できた接続は、`<verdict> <entry>` で終わる 1 行になります。
+判断を記録できた接続は、ログに `<verdict> <entry>` で終わる 1 行として残ります。
 
 | verdict | 意味 |
 |---|---|
-| `deny` | 拒否。enforce では `tcp:` のエントリにない宛先。**どちらのモードでも**、囲われた宛先（VPC・リンクローカル・ループバック・このホスト・ポート 53 / 853 など）と、方針をまだ読み込んでいないあいだのすべての宛先 |
+| `deny` | 拒否。enforce では `tcp:` のエントリにない宛先。**どちらのモードでも**、常に塞いでいる宛先（VPC・リンクローカル・ループバック・このホスト・ポート 53 / 853 など）と、方針をまだ読み込んでいないあいだのすべての宛先 |
 | `would-deny` | log-only が通した接続 |
 | `deny-cap` | 中継の接続数の上限で拒否した接続 |
 | `admit` | 許可した接続 |
@@ -109,9 +109,9 @@ SSH の git やデータベースへの接続です。`GatewaySg` はワーク�
    ```
 
 2. ゲートウェイが通信を通せるようになるまで待ちます（下の表）
-3. 動いているワークスペースは、次の起動でプロキシの変数を受け取ります。それまでは横取りで通ります
+3. 動いているワークスペースは、次の起動でプロキシの変数を受け取ります。それまでは、通信はインターセプトされて通ります
 
-`GatewayEip*` の 2 つのパラメータを渡さないと、スタックが自分でアドレスを割り当てます（保持もします）。その場合、ワークスペースがすでにそのアドレスから出始めてから、アドレスがわかります。
+`GatewayEip*` の 2 つのパラメータを渡さないと、スタックが自分でアドレスを割り当てます（保持もします）。その場合、アドレスがわかるのは、ワークスペースがすでにそのアドレスから外へ出始めたあとです。
 
 最初のコマンドが終わった時点で、ルートは `GatewayEni` に向きます。そのあとの流れは次のとおりです。
 
@@ -121,14 +121,14 @@ SSH の git やデータベースへの接続です。`GatewaySg` はワーク�
 | `update.sh` がエージェントの設定（`/af-egress/<network stack>/agent`）を書き、エージェントが最初の方針を取るまで | Squid がすべて拒否する。Control Plane に届かないゲートウェイは、開かずに閉じたままになる |
 | 最初の方針を取ったあと | 方針どおりに通る |
 
-- 最初の方針を取るまで、`af-egress-install` は失敗して 30 秒後にやり直します（設定がないときはすぐ、方針がないときはエージェントを 30 秒待ってから失敗します）。`update.sh` が設定を書いてからの空白は 1 分ほどに、Control Plane のイメージの最初の取得と Control Plane の起動の時間を足したものです
-- そのあとは 10 分ごとに動きます。新しい Control Plane のイメージは、これでエージェントに届きます
+- 最初の方針を取るまで、`af-egress-install` は失敗して 30 秒後にやり直します（設定がないときはすぐ、方針がないときはエージェントを 30 秒待ってから失敗します）。`update.sh` が設定を書いてから通信が通るまでの空白は、1 分ほどに、Control Plane のイメージの最初の取得と Control Plane の起動にかかる時間を足した長さです
+- `af-egress-install` は、そのあとも 10 分ごとに動きます。新しい Control Plane のイメージは、これでエージェントに届きます
 - インスタンスの置き換えのあとも、最初の方針を取るまではすべて拒否します
 
 エージェントは Control Plane のイメージからコピーしたバイナリなので、ゲートウェイはそのイメージを取得します。
 
 - `GatewayInstanceType` は、いつも `GatewayAmiId` のアーキテクチャに合わせます
-- Control Plane のイメージが単一アーキテクチャのときだけ、その CPU アーキテクチャにも合わせます。マルチアーキテクチャのイメージなら、ゲートウェイは自分のアーキテクチャの版を取ります。x86_64 のゲートウェイを arm64 の Control Plane（`30-ingress` の `CpArch`）の隣で動かせます
+- Control Plane のイメージが単一アーキテクチャのときだけ、その CPU アーキテクチャにも合わせます。マルチアーキテクチャのイメージなら、ゲートウェイは自分のアーキテクチャ向けのイメージを取得します。そのため、x86_64 のゲートウェイと arm64 の Control Plane（`30-ingress` の `CpArch`）を組み合わせられます
 
 ## アドレスを 2 つ登録する
 
@@ -143,7 +143,7 @@ SSH の git やデータベースへの接続です。`GatewaySg` はワーク�
 
 ### 切り替えの前に割り当てる
 
-何も使っていないうちに、許可リストに登録してもらえます。
+先に割り当てておけば、まだ何も使っていないうちに許可リストに登録してもらえます。
 
 ```bash
 aws ec2 allocate-address --domain vpc --tag-specifications 'ResourceType=elastic-ip,Tags=[{Key=Name,Value=af-<network stack>-egress-gateway-eip}]'
@@ -157,7 +157,7 @@ aws ec2 allocate-address --domain vpc --tag-specifications 'ResourceType=elastic
 ### 作り直しても残る
 
 - スタックが自分で割り当てたアドレスは保持されます（`DeletionPolicy: Retain`）
-- 出力の `GatewayEipAllocationId` と `GatewayEipAddress` は、誰が割り当てたかにかかわらずアドレスを運びます。`capture-env.sh` は、空で取得した 2 つのパラメータをこの出力で埋めます（`NatEipAllocationId` と同じ規則）
+- 出力の `GatewayEipAllocationId` と `GatewayEipAddress` には、誰が割り当てたかにかかわらずアドレスが入ります。`capture-env.sh` は、取得した値が空だった 2 つのパラメータをこの出力で埋めます（`NatEipAllocationId` と同じ規則）
 - `EgressRoute=gateway` のとき、`standup.sh` は建てる前に、割り当てがまだあること、アドレスが取得したものと同じこと、この配備のゲートウェイのインターフェース以外が持っていないことを確かめます
 
 ### 保持されたアドレスを渡し直す
@@ -197,7 +197,7 @@ aws ec2 describe-addresses --output text --query \
    変更セットを作って表示します。`TaskDef`（Control Plane のタスク定義）と、新しいリビジョンに従う `Service` の `Modify`、2 つのキーが空になることだけを確かめ、表示された `--execute` のコマンドを実行します（`--yes` で確認を省けます）。
    - `update.sh` は使いません。ゲートウェイがあるあいだは、その出力を渡し直してしまいます
    - `deploy --parameter-overrides EgressProxyAddr= EgressTokenSecretArn=` も使いません。これでは空になりませんでした
-2. 動いているワークスペースをすべて止めて起動し直します（`pause.sh --status` で一覧が出ます）。タスク定義に変数が残っていないことを確かめます。そのあいだも、通信はゲートウェイが横取りしています
+2. 動いているワークスペースをすべて止めて起動し直します（`pause.sh --status` で一覧が出ます）。タスク定義に変数が残っていないことを確かめます。そのあいだも、通信はゲートウェイがインターセプトしています
 
    ```bash
    aws ecs describe-task-definition --task-definition <family> --query "taskDefinition.containerDefinitions[0].environment[?name=='HTTPS_PROXY']"
@@ -219,7 +219,7 @@ aws ec2 describe-addresses --output text --query \
 
 1. ワークスペースを止めます。ゲートウェイを止めるのは Control Plane より前で、次の 2 つを確かめてからです
    - サービスの desired count にかかわらず、クラスターにワークスペースのタスクが残っていない（`AF_WS_TASK_WAIT_SEC`、既定は 600 秒）
-   - Squid を止めてすべてのトンネルを記録させたうえで、Control Plane がログを全部受け取っている（ログのファイルの大きさが、エージェントが `state.json` に記録したオフセットより小さいかで確かめます。`AF_GATEWAY_DRAIN_SEC`、既定は 300 秒）
+   - Squid を止めてすべてのトンネルを記録させたうえで、Control Plane がログを全部受け取っている（ログファイルの大きさが、エージェントが `state.json` に記録したオフセットより小さいかで確かめます。`AF_GATEWAY_DRAIN_SEC`、既定は 300 秒）
 2. 0 台にするとインスタンスのディスクが消えるので、どちらかを確かめられないときは、`pause.sh` は失敗し、ゲートウェイと Control Plane を動かしたままにします
 
 `--up` は、NAT ゲートウェイと同じデプロイでゲートウェイを起動し、2 回待ちます。
@@ -237,7 +237,7 @@ aws ec2 describe-addresses --output text --query \
 
 ## 通信の記録を S3 に残す
 
-Control Plane は、生の通信のイベントを消す前に、過ぎた UTC の 1 日分ずつ S3 に書き出せます（`AF_EGRESS_ARCHIVE_URL`）。`10-data` がそのための S3 Bucket を持つまでは無効です。
+Control Plane は、生の通信のイベントを消す前に、終わった日（UTC）ごとに S3 に書き出せます（`AF_EGRESS_ARCHIVE_URL`）。`10-data` がそのための S3 Bucket を持つまでは無効です。
 
 ```bash
 aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
@@ -248,7 +248,7 @@ aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.y
 ```
 
 - 取得した状態に `EgressArchive=create` があれば、`standup.sh` も建て直しで同じことをします
-- S3 Bucket の名前は `af-<data stack>-egress-archive-<account id>-<region>` です。暗号化され、TLS だけを受け、バージョニングはなく、書き出した日は `EgressArchiveRetentionDays`（既定は 365）日で消えます
+- S3 Bucket の名前は `af-<data stack>-egress-archive-<account id>-<region>` です。暗号化され、TLS だけを受け、バージョニングはなく、書き出したデータは `EgressArchiveRetentionDays`（既定は 365）日後に消えます
 - スタックを消しても S3 Bucket は**保持されます**。建て直しでは `EgressArchive=existing` で使い直します。`standup.sh` はこれを自分で設定します
 - Control Plane のタスクロールが得るのは、その S3 Bucket の `egress/*` への `s3:PutObject` / `s3:GetObject` と、`s3:ListBucket` だけです。エンドポイントのポリシーも、このアカウントの同じ S3 Bucket だけを通します
 - この方法で作った S3 Bucket でしか動きません。自分の S3 Bucket はエンドポイントで拒否されます
@@ -259,11 +259,11 @@ aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.y
 
 Squid・エージェント・中継・この構成（一時停止と再開も含む）は、テスト用の配備でだけ確かめています。**本番ではまだ使っていません。**
 
-- **生のイベントは 30 日で消えます。** Control Plane は、`AF_EGRESS_EVENT_RETENTION_DAYS`（既定は 30。`0` でずっと残す）より古い生の通信のイベントと、それを結び付けるアドレスの期間を消します。ホストごとの日ごとの件数は残ります。ECS のテンプレートにはこのパラメータがないので、配備は既定のままです。長く残すときは、上の S3 への書き出しを使います
-- **enforce は、アドレスではなく TLS の名前（SNI）で判断します。** ワークスペースは、許可された SNI を付ければ、ポート 443 のどの公開アドレスにも送れます（明示プロキシでも横取りでも）。ほかのポート・ループバック・リンクローカル・VPC にはこの方法で届かず、許可リストにない名前はどのアドレスに送っても拒否されます。名前とアドレスを結び付けるには復号が要り、ゲートウェイは復号しません
-- **横取りした 443 は `af-cp egress-relay` を通ります。** Squid 自身の横取り用の HTTPS ポートは SNI を名前解決し直し、ワークスペースのアドレスがその答えにないと接続を拒否します（409、`cache.log` に「Host header forgery」）。DNS の答えが入れ替わる名前（S3・ECR・STS）は、それでほとんど失敗していました
-- 中継は Control Plane のイメージに入っていて、エージェントと一緒に起動します。最初のインストールまで、新しいゲートウェイは横取りした 443 を拒否します（方針を取るまでは、どのみちすべて拒否します）
-- 新しい Control Plane のイメージは中継を再起動し、そのとき開いている横取りの TLS 接続を切ります
+- **生のイベントは 30 日で消えます。** Control Plane は、`AF_EGRESS_EVENT_RETENTION_DAYS`（既定は 30。`0` なら消さない）より古い生の通信のイベントと、それをワークスペースに結び付けるためのアドレスの期間の記録を消します。ホストごとの日ごとの件数は残ります。ECS のテンプレートにはこのパラメータがないので、配備は既定のままです。長く残すときは、上の S3 への書き出しを使います
+- **enforce は、アドレスではなく TLS の名前（SNI）で判断します。** ワークスペースは、許可された SNI を付ければ、ポート 443 のどの公開アドレスにも送れます（明示プロキシでもインターセプトでも）。ほかのポート・ループバック・リンクローカル・VPC にはこの方法で届かず、許可リストにない名前はどのアドレスに送っても拒否されます。名前とアドレスを結び付けるには復号が要り、ゲートウェイは復号しません
+- **インターセプトした 443 は `af-cp egress-relay` を通ります。** Squid 自身のインターセプト用の HTTPS ポートは SNI を名前解決し直し、ワークスペースのアドレスがその答えにないと接続を拒否します（409、`cache.log` に「Host header forgery」）。DNS の答えが入れ替わる名前（S3・ECR・STS）は、この確認でほとんど失敗していました
+- 中継は Control Plane のイメージに入っていて、エージェントと一緒に起動します。最初のインストールまで、新しいゲートウェイはインターセプトした 443 を拒否します（方針を取るまでは、どのみちすべて拒否します）
+- 新しい Control Plane のイメージは中継を再起動し、そのとき開いている、インターセプトした TLS 接続を切ります
 - 中継が持つ接続は最大 4,096 です。Squid が自分の側を閉じて 10 秒たった接続と、書き込みが 2 分止まった接続を閉じます
 
 ## ゲートウェイが動いているか確かめる
@@ -285,11 +285,11 @@ Squid・エージェント・中継・この構成（一時停止と再開も含
 3. 方針を見ます
    - `sudo cat /var/lib/af-egress-agent/af-allow.txt /var/lib/af-egress-agent/af-mode.conf` に、エージェントのヘッダーと Control Plane の許可リストが出ます。起動時の仮の内容（`# bootstrap: closed until the first policy`、すべて拒否）のままなら、まだ方針を取っていません
    - `journalctl -u af-egress-agent` に再読み込みが出ます
-4. ワークスペースの端末から、`curl -sI https://example.com`（明示プロキシ）と `curl -sI --noproxy '*' https://example.com`（横取り）を実行します。ゲートウェイでは次を確かめます
+4. ワークスペースの端末から、`curl -sI https://example.com`（明示プロキシ）と `curl -sI --noproxy '*' https://example.com`（インターセプト）を実行します。ゲートウェイでは次を確かめます
    - `sudo tail /var/log/squid/af-egress.log` に、ワークスペースのアドレス・`TCP_TUNNEL`・SNI の付いた `af1` の行がそれぞれ 1 行
    - `sudo getfattr -n user.af-egress.gen /var/log/squid/af-egress.log` に世代、`sudo cat /var/lib/af-egress-agent/state.json` に送り終えたオフセット
    - 管理の「通信」にそのホストの件数、`GET /api/admin/egress/events` に 2 つのイベントが、ワークスペースに結び付いて出る
-5. ログの切り替え: `sudo squid -k rotate` のあと 1 回リクエストし、エージェントが `af-egress.log.0` を読み終えて新しいファイルに進んだこと（イベントの重複も抜けもないこと）を確かめます
+5. ログのローテーション: `sudo squid -k rotate` のあと 1 回リクエストし、エージェントが `af-egress.log.0` を読み終えて新しいファイルに進んだこと（イベントの重複も抜けもないこと）を確かめます
 6. メタデータ: ワークスペースから次を実行し、拒否されることを確かめます。通ってしまうと、ワークスペースがゲートウェイのロールの資格情報を読めます
 
    ```bash
@@ -297,7 +297,7 @@ Squid・エージェント・中継・この構成（一時停止と再開も含
    ```
 
    Squid の `to_linklocal` が拒否し、nftables も Squid 自身の `169.254.0.0/16` への接続を落とします。
-7. enforce: 管理の「通信」でモードを切り替え、エージェントの再読み込み（`af-mode.conf` に `ssl_bump terminate all` が入る）を待ちます。許可リストにない名前が、ワークスペースから明示プロキシでも横取りでも失敗し、拒否として記録されることを確かめます
+7. enforce: 管理の「通信」でモードを切り替え、エージェントの再読み込み（`af-mode.conf` に `ssl_bump terminate all` が入る）を待ちます。許可リストにない名前が、ワークスペースから明示プロキシでもインターセプトでも失敗し、拒否として記録されることを確かめます
 
 ## 関連
 

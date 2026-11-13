@@ -23,11 +23,11 @@ Diagnosis common to every deployment form is in [Find the cause from the symptom
 | Symptom | Cause and fix |
 |---|---|
 | Creating the cluster fails with "ECS Service Linked Role is not ready" | A fresh account has no `AWSServiceRoleForECS`. Create the service-linked roles ([Build on ECS](install.md#create-the-service-linked-roles)) |
-| The change set is refused with `InsufficientCapabilitiesException … Requires capabilities` | `--capabilities` is short ([Capabilities each stack needs](install.md#capabilities-each-stack-needs)) |
+| The change set is refused with `InsufficientCapabilitiesException … Requires capabilities` | `--capabilities` is missing a capability ([Capabilities each stack needs](install.md#capabilities-each-stack-needs)) |
 | `aws cloudformation deploy` ends with a template size error and the stack events show nothing | `30-ingress` was not handed over through S3 ([Keep templates under the size limit](template-size.md)) |
 | `30-ingress` rolls back with `ServiceLimitExceeded` | The inline policies on the Control Plane's task role went over the limit. Make an added grant a managed policy ([IAM permissions for deploying](iam.md#policy-limits-on-the-control-planes-task-role)) |
 | The `20-platform` deploy fails with AlreadyExists | The ECR repositories were created outside the stack. `20-platform` creates them |
-| The `30-ingress` deploy does not move, and does not fail either | The preview zone does not contain `PreviewDomain`, so ACM's DNS validation never completes ([Use preview subdomains](options.md#choose-the-domain-and-the-zone)) |
+| The `30-ingress` deploy makes no progress, and does not fail either | The preview zone does not contain `PreviewDomain`, so ACM's DNS validation never completes ([Use preview subdomains](options.md#choose-the-domain-and-the-zone)) |
 | With Entra ID the Control Plane does not start | `OidcIssuer` is `/common/` or `/organizations/`. Pin it to your tenant GUID |
 | A stack built with `AuthMode=dev` cannot be updated | `AuthMode=dev` no longer exists: behind an https URL the Control Plane refuses development sign-in. Switch to `AuthMode=oauth` ([Use development sign-in](../secure/dev-signin.md)) |
 | Activating a cost allocation tag is refused with `ValidationException: Tag keys not found` | AWS has not seen the key yet. Start one workspace and wait up to 24 hours ([Split spend per member](install.md#split-spend-per-member-optional)) |

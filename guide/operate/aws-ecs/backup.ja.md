@@ -14,8 +14,8 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 
 | あなたがやること | 起きること |
 |---|---|
-| `Persistence=retain` で建てる | `10-data` が、EFS のバックアップのボールトと毎日のプランを作る |
-| 既存の配備では、変更セットで `10-data` を更新する | 4 つの `EfsBackup*` のリソースだけが足される |
+| `Persistence=retain` で建てる | `10-data` が、EFS 用のバックアップボールトと、毎日実行するバックアッププランを作る |
+| 既存の配備では、変更セットで `10-data` を更新する | `EfsBackup*` の 4 つのリソースだけが追加される |
 | アップグレードの前などに、その場でバックアップを取る | 復元ポイントが 1 つ増える |
 | 復元ポイントから 1 人分を戻す | AWS Backup が、同じファイルシステムの別のディレクトリに復元する。元の場所へは自分で戻す |
 
@@ -32,23 +32,23 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 
 | リソース | 中身 |
 |---|---|
-| `EfsBackupVault` | ボールト `<data stack>-efs-<stack id の 16 進 8 桁>`（例: `af-ecs-data-efs-1a2b3c4d`、スタックの出力 `EfsBackupVaultName`）。`DeletionPolicy: Retain` で、AWS は復元ポイントが残っているボールトを消させない。ボールトの名前は 50 文字までなので、`retain` ではデータスタックの名前は 37 文字まで（`standup.sh` が確かめる） |
+| `EfsBackupVault` | ボールト `<data stack>-efs-<stack id の 16 進 8 桁>`（例: `af-ecs-data-efs-1a2b3c4d`、スタックの出力 `EfsBackupVaultName`）。`DeletionPolicy: Retain` で、復元ポイントが残っているボールトは AWS が削除を拒否する。ボールトの名前は 50 文字までなので、`retain` ではデータスタックの名前は 37 文字まで（`standup.sh` が確かめる） |
 | `EfsBackupPlan` | ルールは 1 つ。毎日 17:00 UTC（02:00 JST）で、各ポイントを `EfsBackupRetentionDays`（既定は **7**、RDS と同じ）日残す |
-| `EfsBackupSelection` + `EfsBackupRole` | このファイルシステムだけを、AWS が管理するバックアップと復元のポリシーで |
+| `EfsBackupSelection` + `EfsBackupRole` | 対象はこのファイルシステムだけ。AWS 管理のバックアップ用・復元用のポリシーを使う |
 
 - `Persistence=delete` では、どれも作りません
-- バックアップは、最初の全体のコピーのあとは増分です。ワークスペースが動いたまま取るので、クラッシュ整合です
+- バックアップは、最初に全体をコピーし、そのあとは増分です。ワークスペースが動いたまま取るので、クラッシュ整合性のバックアップになります
 - **自動で復元することはありません。** 復元はいつも、下の手順のどれかです
 
 ### スタックが消えてもボールトは残る
 
 - `teardown.sh` は `--purge-retained` なしではボールトを残します。スタックを `retain` から `delete` に切り替えても残ります
-- 名前にスタックの ID が入るので、あとで同じスタック名で建てても衝突しません。`teardown.sh` は、残す設定に関係なく、すべての `<data stack>-efs-*` のボールトを計画と点検に挙げます
+- 名前にスタックの ID が入るので、あとで同じスタック名で建てても衝突しません。`teardown.sh` は、`Persistence` の値に関係なく、すべての `<data stack>-efs-*` のボールトを計画と点検の対象に挙げます
 - 1 つだけ衝突する場合があります。**同じ**スタックを `retain` → `delete` → `retain` と切り替えたとき（スタックの ID が変わらない）です。残っているボールトを先に消します（[撤去する](teardown.ja.md#9-retain-の配備で残ったものを消す)）
 
 ## 動いている配備でバックアップを有効にする
 
-`update.sh` は `10-data` を触りません。バックアップは、そのスタックを手で更新したときにだけ入ります。`--parameter-overrides` を付けなければ、パラメータはすべて今の値のままです。変更セットを、実行せずに作って中身を読んでから実行します。
+`update.sh` は `10-data` を触りません。そのため、バックアップはこのスタックを手で更新したときにだけ有効になります。`--parameter-overrides` を付けなければ、パラメータはすべて今の値のままです。変更セットをまず実行せずに作り、中身を確かめてから実行します。
 
 ```bash
 aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
@@ -62,7 +62,7 @@ aws backup list-backup-plans --query "BackupPlansList[].BackupPlanName"   # af-e
 ```
 
 > [!WARNING]
-> 変更セットが 4 つの `EfsBackup*` のリソースを足すだけのときに実行します。特に `FileSystem` の `Modify` があってはいけません。スタックの更新は、動いているファイルシステムを `EfsThroughputMode` の値に動かします（`10-data.yaml` の警告を参照）。そこに `Replacement` があれば、新しい空のファイルシステムになります。
+> 変更セットが `EfsBackup*` の 4 つのリソースを追加するだけのときに実行します。特に `FileSystem` の `Modify` があってはいけません。スタックを更新すると、動いているファイルシステムのスループットモードが `EfsThroughputMode` の値に変わります（`10-data.yaml` の警告を参照）。`FileSystem` に `Replacement` があれば、新しい空のファイルシステムに置き換わります。
 
 ### 管理画面の通知
 
@@ -71,13 +71,13 @@ aws backup list-backup-plans --query "BackupPlansList[].BackupPlanName"   # af-e
 | 値 | 意味 |
 |---|---|
 | `present` | バックアップがある |
-| `missing` | `retain` なのにバックアップがない。`ecs` / `ecs-ec2` では、super_admin の管理画面のすべての節に通知が出る |
+| `missing` | `retain` なのにバックアップがない。`ecs` / `ecs-ec2` では、super_admin が見る管理画面のすべてのセクションに通知が出る |
 | `off` | `retain` ではない |
-| 空 | 一度も書いていない。何も出さない |
+| 空 | 一度も書かれていない。何も表示しない |
 
 - Control Plane は `AF_EFS_BACKUP` として受け取ります。環境変数を読むだけで、CloudFormation や AWS Backup は読まないので、権限は要りません
-- 通知は最後の `update.sh` の時点の状態です。上の変更セットを実行したら、`update.sh` をもう一度実行すると消えます
-- データスタックが読めないときは、パラメータを前の値のままにします
+- 通知は、最後に `update.sh` を実行した時点の状態を表します。上の変更セットを実行したあと、`update.sh` をもう一度実行すると通知が消えます
+- データスタックを読めないときは、パラメータは前の値のまま変わりません
 
 ## その場でバックアップを取る
 
@@ -98,7 +98,7 @@ aws backup start-backup-job --backup-vault-name "$VAULT" \
 
 ## 復元ポイントを選ぶ
 
-新しいものが最後に出ます。
+新しいものほど後ろに表示されます。
 
 ```bash
 aws backup list-recovery-points-by-backup-vault --backup-vault-name "$VAULT" \
@@ -107,7 +107,7 @@ aws backup list-recovery-points-by-backup-vault --backup-vault-name "$VAULT" \
 
 ## 1 人分のディレクトリを戻す
 
-AWS Backup は、動いているデータの上には復元しません。同じファイルシステムに復元すると、元のディレクトリの隣の新しい最上位ディレクトリ `/aws-backup-restore_<timestamp>/` に、下のパスを保ったまま置かれます。1 つのジョブで 5 つのパスまでです。
+AWS Backup は、動いているデータの上には復元しません。同じファイルシステムに復元すると、元のディレクトリと並ぶ新しい最上位ディレクトリ `/aws-backup-restore_<timestamp>/` の下に、元のパスのまま置かれます。1 つのジョブで指定できるパスは 5 つまでです。
 
 ```bash
 aws backup start-restore-job --recovery-point-arn <rp-arn> \
@@ -118,17 +118,17 @@ aws backup start-restore-job --recovery-point-arn <rp-arn> \
 aws backup describe-restore-job --restore-job-id <id>    # wait for COMPLETED
 ```
 
-復元したコピーはどのアクセスポイントの外にもあるので、どのワークスペースからも見えません。元に戻すには、ファイルシステムのルートをマウントする必要があります。プライベートサブネットで、ワークスペースのセキュリティグループを付け、`$EFS` のルートディレクトリ `/` を転送中の暗号化ありで EFS ボリュームにした、root で動く使い捨ての Fargate タスクを使います。
+復元したコピーはどのアクセスポイントの範囲にも入らないので、どのワークスペースからも見えません。元の場所に戻すには、ファイルシステムのルートをマウントする必要があります。そのために、root で動く使い捨ての Fargate タスクを使います。タスクはプライベートサブネットで動かし、ワークスペースのセキュリティグループを付けます。EFS ボリュームには `$EFS` のルートディレクトリ `/` を指定し、転送中の暗号化をオンにします。
 
 1. そのメンバーのワークスペースを止め、起動しないよう頼みます。置き換えるあいだに、だれもディレクトリに書かないようにします
 2. タスクの中で、`mv /mnt/home/<membership> /mnt/home/<membership>.before-restore` を実行し、次に `cp -a /mnt/aws-backup-restore_<ts>/home/<membership> /mnt/home/` を実行します（`claude-config` / `home-keep` も同じ）。所有者はバックアップしたときのまま、つまりアクセスポイントの uid/gid で戻ります
-3. ワークスペースを起動し、メンバーに確かめてもらってから、`.before-restore` と `aws-backup-restore_*` のディレクトリを消します。消すまで、EFS は両方に料金をかけます
+3. ワークスペースを起動し、メンバーに確かめてもらってから、`.before-restore` と `aws-backup-restore_*` のディレクトリを消します。消すまでは、両方のディレクトリに EFS の料金がかかります
 
 ## ファイルシステム全体を戻す
 
-- `ItemsToRestore` なしの同じコマンドで、すべてを動いているファイルシステムの `/aws-backup-restore_<timestamp>/` に復元します。必要なものを、ワークスペースを止めて、同じ使い捨てのタスクで戻します
+- `ItemsToRestore` なしの同じコマンドで、すべてを動いているファイルシステムの `/aws-backup-restore_<timestamp>/` に復元します。ワークスペースを止めてから、必要なものを同じ使い捨てのタスクで戻します
 - 新しいファイルシステムへの復元（`"newFileSystem":"true"`、`file-system-id` なし）は、動いているファイルシステムそのものがなくなったときだけ使います
-- 配備を新しいファイルシステムに移すのは、テンプレートの変更ではできません。`EfsId` は上のスタックに export されていて、Control Plane は古い ID にアクセスポイントを作っています。その場合も、スタックが指すファイルシステムにディレクトリをコピーします
+- 配備を新しいファイルシステムに移すことは、テンプレートの変更だけではできません。`EfsId` は上位のスタックに export されていて、Control Plane は古い ID の上にアクセスポイントを作っています。新しいファイルシステムに復元した場合も、スタックが指しているファイルシステムへディレクトリをコピーします
 
 ## 費用
 
@@ -137,11 +137,11 @@ aws backup describe-restore-job --restore-job-id <id>    # wait for COMPLETED
 | ウォームのバックアップストレージ | $0.06/GB 月 |
 | 復元 | $0.024/GB と、項目単位の復元ジョブ 1 回あたり $0.60 |
 
-- あまり変わらないファイルシステムの 7 日分のポイントは、全体のコピー 1 つと 1 週間分の変更くらいです。20 GB のファイルシステムで月 $1.2〜2 ほどです
+- 変更の少ないファイルシステムなら、7 日分の復元ポイントの費用は、全体のコピー 1 つと 1 週間分の変更の分ほどです。20 GB のファイルシステムで月 $1.2〜2 ほどです
 - スタックを消したあとも、すでに取ったポイントはそれぞれの予定で期限切れになります。`teardown.sh --purge-retained` は、ポイントとボールトをまとめて消します
 
 > [!NOTE]
-> 上の復元の手順は AWS Backup のドキュメントから書いたもので、実際の配備で最初から最後まではまだ試していません。
+> 上の復元の手順は AWS Backup のドキュメントをもとに書いたもので、実際の配備ではまだ最初から最後まで試していません。
 
 ## 関連
 

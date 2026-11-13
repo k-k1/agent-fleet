@@ -7,8 +7,8 @@ source_of_truth: "`deploy/aws/ecs/env.sh` の `af_cfn_deploy`、`cfn/20-platform
 
 [English](template-size.md) | 日本語
 
-CloudFormation は、51,200 バイトを超えるテンプレートを直接受け取りません。`30-ingress.yaml` は上限のすぐ下にあり、超えてもよいことになっているので、いつも S3 を経由して渡します。
-このページを読めば、テンプレートが大きくなったリリースでも、手でのデプロイが上限で止まらずに済みます。
+CloudFormation は、51,200 バイトを超えるテンプレートを直接受け取りません。`30-ingress.yaml` は上限ぎりぎりの大きさで、上限を超えてもよいことにしているので、いつも S3 を経由して渡します。
+このページのとおりにすれば、テンプレートが大きくなったリリースでも、手動のデプロイが上限で止まりません。
 
 ## 全体像
 
@@ -33,7 +33,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 - S3 Bucket に置いたテンプレートは、7 日で消えます
 - デプロイする人には、この S3 Bucket への `s3:PutObject` と `s3:GetObject` が要ります（[デプロイに必要な IAM 権限](iam.ja.md)）
 
-ほかのテンプレートは上限の内側に保つことになっていて、S3 なしで渡せます。
+ほかのテンプレートは上限を超えない大きさに保っているので、S3 を経由せずに渡せます。
 
 ## スクリプトがしていること
 
@@ -43,11 +43,11 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 | `standup.sh`・`update.sh` | `af_cfn_deploy` を通してデプロイする |
 | `teardown.sh` | `20-platform` を消す前に S3 Bucket を空にする。CloudFormation は空でない S3 Bucket を消せないため |
 
-どのテンプレートが大きいかを名前で覚えるのではなく、毎回測ります。次に大きくなったテンプレートでも同じように動きます。
+どのテンプレートが大きいかを名前で覚えるのではなく、毎回測ります。そのため、今後ほかのテンプレートが大きくなっても同じように動きます。
 
 ## テンプレートの説明を短くしている理由
 
-上限はテンプレートの本文全体にかかります。パラメータの `Description:` も、YAML のコメントも、同じだけ数えます。
+上限はテンプレートの本文全体にかかります。パラメータの `Description:` も YAML のコメントも、同じように数に入ります。
 
 - そのため、テンプレートの `Description:` は 1〜2 行だけにしています
 - 測った値・トレードオフ・落とし穴は [`cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md) にあります
@@ -56,9 +56,9 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 | 症状 | 原因と対処 |
 |---|---|
-| `aws cloudformation deploy` が、テンプレートが大きすぎるというエラーで終わる。スタックのイベントには何もない | テンプレートが上限を超えていて、AWS CLI が API を呼ぶ前に大きさで拒否しました。`--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` を付けてやり直します |
+| `aws cloudformation deploy` が、テンプレートが大きすぎるというエラーで終わる。スタックのイベントには何もない | テンプレートが上限を超えていて、AWS CLI が API を呼ぶ前に、サイズを理由に拒否しました。`--s3-bucket "$CFN_BUCKET" --s3-prefix cfn` を付けてやり直します |
 | `af_cfn_deploy` が「needs to go via S3, but no hand-off bucket can be resolved」で止まる | `20-platform` がまだないか、出力 `CfnTemplatesBucket` を読めません。先に `20-platform` をデプロイするか、`AF_CFN_BUCKET` で S3 Bucket を指定します |
-| `teardown.sh` で `20-platform` の削除が失敗する | S3 Bucket が空になっていません。直前の、S3 Bucket を空にする手順が表示したエラーを読みます |
+| `teardown.sh` で `20-platform` の削除が失敗する | S3 Bucket が空になっていません。その直前に、S3 Bucket を空にする手順が表示したエラーを確認します |
 
 ## 関連
 

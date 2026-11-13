@@ -64,8 +64,8 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 | Route 53 | ワイルドカードのエイリアス 1 つ |
 | Control Plane の環境 | プレビュー用のドメイン |
 
-今の証明書には触りません。SAN を足すと証明書が作り直されるので、別の証明書にしています。
-ワークスペースごとに DNS に書くものはありません。1 つのワイルドカードと 1 つの証明書が、すべてのワークスペースとポートに使われるので、URL を出すたびの API の呼び出しや反映待ちもありません。
+今の証明書には触りません。SAN を足すと証明書が作り直されるので、プレビュー用に別の証明書を作ります。
+ワークスペースごとに DNS に書くものはありません。1 つのワイルドカードと 1 つの証明書が、すべてのワークスペースとポートに使われるので、URL を発行するたびに API を呼んだり、DNS の反映を待ったりすることもありません。
 
 ### ドメインとゾーンを決める
 
@@ -82,8 +82,8 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 --parameter-overrides PreviewDomain=pv.af.example.com ...
 ```
 
-- 使うゾーンは、`PreviewDomain` を**含む**必要があります。含まないと ACM の DNS 検証が終わらず、スタックが止まったままになります。失敗にはなりません
-- Console の FQDN の子（`*.af.example.com`）ではなく、**兄弟**（`af.example.com` の隣の `pv.example.com`）にしてください。プレビューのアプリはメンバー自身のコードで、子に置くと `.af.example.com` の cookie を書けます
+- 使うゾーンは、`PreviewDomain` を**含む**必要があります。含まないと ACM の DNS 検証が終わらず、スタックは失敗せずに止まったままになります
+- Console の FQDN の子（`*.af.example.com`）ではなく、**兄弟**（`af.example.com` の隣の `pv.example.com`）にしてください。プレビューのアプリはメンバー自身のコードで、子に置くと、そのアプリが `.af.example.com` の cookie を書けてしまいます
 - 兄弟でも、登録可能ドメインが同じなら、`.example.com` の cookie は書けます。完全に分けるには、別の登録ドメインを使います（[そのほかの運用上の制御](../secure/controls.ja.md#プレビュー用ドメインを別のドメインに置く)）
 
 どのポートを見せるか、URL を起動をまたいで同じにするか、サインインなしで見せるか（既定はオフで、起動のたびにオフに戻ります）は、メンバーが決めます。
@@ -161,7 +161,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 | Control Plane のスイッチ | 提供ルートをオンにする |
 | ルートのロールを作る | Bedrock のモデルを呼ぶことだけができ、メンバーのセッションタグを付けた Control Plane のタスクロールだけが引き受けられる |
 | Control Plane に権限を与える | タスクロールが、そのロールを引き受けられる |
-| 内部の経路を開く | エージェントのモデルの呼び出しが通る Service Connect の `af-cp-internal:8098`。15 分の期限より長いタイムアウトで、60 秒の ALB は通らない |
+| 内部の経路を開く | エージェントからのモデル呼び出しが通る、Service Connect の `af-cp-internal:8098`。タイムアウトは 15 分の期限より長く、60 秒の ALB は経由しない |
 
 オンにしたら、次のことをします。
 
@@ -169,7 +169,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 2. テナントに許可を与え、予算を REST で設定します。テナントに上限を付けて許可し、メンバーに予算を設定するまで、誰も使えません
 3. 動いているワークスペースを停止して起動し直します。起動したときの環境のままなので、そのままではルートを使えません
 
-オフなら何も足しません。予算の決めかたと登録の本文は、[`cfn/PARAMETERS.md` の「Provided routes」](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#provided-routes) にあります。
+オフなら何も足しません。予算の決めかたと、登録のリクエスト本文は、[`cfn/PARAMETERS.md` の「Provided routes」](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#provided-routes) にあります。
 
 ## タイマー・GitHub サインイン・外部のエンジンを設定する
 
@@ -179,7 +179,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
   --parameter-overrides WsIdleTimeout=4h ComfyUrl=http://10.0.0.5:8188 ComfyApiKey=on
 ```
 
-運用のガイドが設定できるとしている Control Plane の変数には、それぞれパラメータがあります。空（既定）なら環境に何も足さず、`update.sh` も設定も消去もしません。
+運用のガイドが設定できるとしている Control Plane の変数には、それぞれパラメータがあります。空（既定）なら環境に何も足しません。`update.sh` も、これらを設定したり消したりしません。
 
 | 種類 | パラメータ |
 |---|---|
@@ -191,7 +191,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 ### 秘密はスイッチで読む
 
-3 つの秘密は、それぞれのスイッチを `on` にしたときだけ、SSM の SecureString から読みます。**先に SSM パラメータを作ってから**スイッチをオンにします。ないパラメータを指すと、タスクが起動しません。
+3 つの秘密は、それぞれのスイッチを `on` にしたときだけ、SSM の SecureString から読みます。**先に SSM パラメータを作ってから**スイッチをオンにします。存在しないパラメータを指していると、タスクが起動しません。
 
 | スイッチ（既定は `off`） | 読む SSM パラメータ |
 |---|---|
@@ -218,7 +218,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 | `WafRateLimitPer5Min` | 1 つの IP から 5 分間に何回のリクエストでブロックするか。`0`（既定）なら Web ACL を作らない。Console のポーリングも含めて数えるので、1 つの NAT の裏にいるオフィス全体が出す量よりずっと上にする |
 | `WafIpReputation` | AWS が管理する IP の評価リスト。本文ではなく送信元で判定する。`WafRateLimitPer5Min` が 0 より大きいときだけ使える |
 
-- 上限を 100 にして 150 回のリクエストを送ると、約 45 秒で `403` になりました。上限を上げると、次の評価でその IP は解除されます
+- 上限を 100 にして 150 回のリクエストを送ると、約 45 秒で `403` になりました。上限を上げると、次の評価でその IP のブロックが解除されます
 - IP の評価リストは、オンにして数分で、`/.env` などを探るスキャナーを止めました
 
 ### シグネチャのルールは使わない
@@ -226,8 +226,8 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 Core rule set・SQLi・XSS・LFI のルールは、あえて用意していません。
 
 - この製品では、チャットのメッセージ、ファイルの書き込み、ターミナルの入力など、ふつうのリクエストの本文にソースコードやシェルのコマンドが入ります。`'; DROP TABLE`・`../../etc/passwd`・`<script>` は正しい通信です
-- これらのルールは実際の作業をランダムに 403 にし、WAF が疑われる前に製品の不具合に見えます
-- WAF は既定で本文の先頭 8 KB しか見ないので、見た目ほど守れません
+- これらのルールは実際の作業をランダムに 403 で止めます。誰かが WAF を疑うより先に、製品の不具合に見えてしまいます
+- WAF は既定で本文の先頭 8 KB しか見ないので、シグネチャのルールは見た目ほどの効果がありません
 
 閉じた配備では、上流で絞る方が安く確実です。`00-network` の `AlbIngressCidr` を自社の範囲にすれば、通信は ALB に届きません。
 

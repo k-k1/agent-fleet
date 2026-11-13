@@ -14,7 +14,7 @@ Left at its default, every parameter here adds nothing and leaves an existing st
 
 | What you do | What happens |
 |---|---|
-| Deploy `30-ingress` naming only that parameter | Only the parameters you name change; every other keeps its previous value. The Control Plane's service is replaced |
+| Deploy `30-ingress` naming only that parameter | Only the parameters you name change; every other one keeps its previous value. The Control Plane's service is replaced |
 | Move to a new release with `update.sh` | It does not touch these parameters. What you turned on stays on, what is off stays off |
 
 | Parameter | Stack | What it turns on |
@@ -60,7 +60,7 @@ Serve the services a member runs in their workspace at a per-start URL.
 | What the parameter adds | Details |
 |---|---|
 | ACM certificate | `*.{PreviewDomain}` |
-| `ListenerCertificate` | Hangs that certificate on the existing 443 listener (SNI) |
+| `ListenerCertificate` | Attaches that certificate to the existing 443 listener (SNI) |
 | Route 53 | One wildcard alias |
 | Control Plane environment | The preview domain |
 

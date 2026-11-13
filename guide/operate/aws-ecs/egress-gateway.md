@@ -8,13 +8,13 @@ source_of_truth: "`deploy/aws/ecs/cfn/00-network.yaml` (`EgressRoute`, `Gateway*
 English | [日本語](egress-gateway.ja.md)
 
 Route the outbound traffic of an ECS deployment's workspaces through the egress gateway.
-Every connection is then recorded with its destination's name, and an allowlist can restrict it. Running the allowlist is [Control outbound traffic](../secure/egress.md).
+Every connection is then recorded with its destination's name, and an allowlist can restrict it. Running the allowlist is covered in [Control outbound traffic](../secure/egress.md).
 
 ## How it works
 
 | What you do | What happens |
 |---|---|
-| Allocate the workspace address first and have it allow-listed | The other side can admit the address before the switch |
+| Allocate the workspace address first and have it allow-listed | The organisation on the other side can admit the address before the switch |
 | Deploy `00-network` with `EgressRoute=gateway`, then run `update.sh` | The workspace route points at the gateway, and the Control Plane hands workspaces the proxy |
 | Choose the mode and the allowlist in Admin → "**Egress**" | The gateway's agent writes that policy into Squid, records connections and ships them to the Control Plane |
 | Pause with `pause.sh` | Workspaces stop, the record is shipped, then the gateway goes to zero instances |
@@ -54,7 +54,7 @@ SSH git and database connections. `GatewaySg` admits all TCP from the workspace 
 | Mode | What happens |
 |---|---|
 | Enforce | Nothing but HTTP(S) leaves until an administrator adds a **`tcp:` entry**. An unnamed destination is dropped and recorded |
-| Log-only (the default mode) | Every port passes and is recorded as refused. Nothing closes until you switch to enforce |
+| Log-only (the default mode) | Every port passes and is recorded as would-deny. Nothing closes until you switch to enforce |
 
 - Entries are added in Admin → "**Egress**", or proposed by a member and approved by an administrator. For example `tcp:git.example.com:22`, `tcp:db.example.com:1433`
 - A service that redirects clients to other ports can take a range, `tcp:db.example.com:11000-11999`: at most 2048 ports, an exact host or an IPv4 address, never 53, 80, 443, 853 or 3128

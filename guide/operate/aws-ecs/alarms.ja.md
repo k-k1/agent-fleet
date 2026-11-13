@@ -7,14 +7,14 @@ source_of_truth: "`deploy/aws/ecs/cfn/30-ingress.yaml` の `CpDbUnavailableFilte
 
 [English](alarms.md) | 日本語
 
-Control Plane がデータベースにつながらなくなったとき、メールで知らせが届くようにします。
+Control Plane がデータベースにつながらなくなったとき、メールで通知が届くようにします。
 任意の設定に見えますが、構築したら必ず設定してください。
 
 ## 全体像
 
 | あなたがやること | 起きること |
 |---|---|
-| 何もしない | Control Plane のログの `DB_UNAVAILABLE` が、CloudWatch のメトリクス `AgentFleet/<stack>/DbUnavailable` になる。誰にも知らせは届かない |
+| 何もしない | Control Plane のログの `DB_UNAVAILABLE` が、CloudWatch のメトリクス `AgentFleet/<stack>/DbUnavailable` になる。誰にも通知されない |
 | `30-ingress` に `CpAlarmEmail` を設定する | SNS のトピックとアラームができ、そのアドレスにメールが届く |
 | 届いた SNS の確認メールで購読を承認する | アラームが鳴ると、メールが届く |
 | `20-platform` をデプロイし直す | RDS がパスワードを入れ替えても、Control Plane が新しいパスワードを読み直せる |
@@ -25,7 +25,7 @@ Control Plane がデータベースにつながらなくなったとき、メー
 
 - `/healthz` はデータベースに触らないので、`ok` を返し続けます
 - そのため ALB のターゲットは正常、ECS のサービスは安定、CloudFormation にもドリフトはありません
-- RDS は管理するマスターパスワードを定期的に入れ替えます。ECS はタスク定義の `secrets` を**タスクの起動時に 1 回だけ**解決するので、動き続けている Control Plane は古いパスワードを出し続けます
+- RDS は管理するマスターパスワードを定期的に入れ替えます。ECS はタスク定義の `secrets` を**タスクの起動時に 1 回だけ**解決するので、動き続けている Control Plane は古いパスワードを使い続けます
 
 Control Plane は、Postgres に拒否されるとシークレットを読み直します。このアラームは、それすら効かなかったときに知らせるものです。
 
@@ -40,14 +40,14 @@ Control Plane は、Postgres に拒否されるとシークレットを読み直
 2. 届いた SNS の確認メールで、購読を承認します。**承認していない購読は、アラームがないのと同じです**
 3. `20-platform` をデプロイし直します（下を参照）
 
-`CpAlarmEmail` の既定は空で、メトリクスはあっても誰にも知らせません。
+`CpAlarmEmail` の既定は空です。その場合、メトリクスはあっても誰にも通知されません。
 
 ### `20-platform` もデプロイし直す
 
 `30-ingress` だけでは足りません。パスワードの読み直しは `CpTaskRole` で動き、そのロールに `secretsmanager:GetSecretValue` の権限が要ります。
 
 - 実行ロールにある同じ権限は、起動時に変数を入れるためだけのものです
-- タスクロールの権限がないと、Control Plane は起動時に入ったパスワードで問題なく動きます。次の入れ替えまでは
+- タスクロールの権限がなくても、Control Plane は起動時に渡されたパスワードで問題なく動きます。ただし、それも次の入れ替えまでです
 
 読み直しが失敗していないかは、次のコマンドで確かめます。何も出なければ問題ありません。
 
