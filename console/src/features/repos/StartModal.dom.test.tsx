@@ -8,8 +8,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { t } from "../../lib/i18n/index.ts";
 
 const initRepo = vi.fn();
+const cloneRepo = vi.fn();
 vi.mock("./clone.ts", () => ({
-  cloneRepo: vi.fn(),
+  cloneRepo: (...a: unknown[]) => cloneRepo(...a),
   svnCheckout: vi.fn(),
   initRepo: (...a: unknown[]) => initRepo(...a),
 }));
@@ -31,6 +32,7 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { StartModal } = await import("./StartModal.tsx");
 const { useReposStore } = await import("./store.ts");
+const { useUIStateStore } = await import("../../core/store/uiState.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 
 let root: Root | null = null;
@@ -78,13 +80,14 @@ function unmount(): void {
 
 beforeEach(async () => {
   initRepo.mockReset();
+  cloneRepo.mockReset();
   onPickRepo.mockReset();
   onPickHome.mockReset();
   apiGet.mockReset();
   apiGet.mockImplementation(async () => []);
   apiPost.mockReset();
   apiPost.mockImplementation(async () => ({}));
-  useReposStore.setState({ repos: [] });
+  useReposStore.setState({ repos: [], loadState: "ok" });
   await mount();
 });
 
@@ -189,5 +192,86 @@ describe("StartModal — Launch an agent at home", () => {
     await click(rowFor(t("start.home_title")));
     expect(onPickHome).toHaveBeenCalledTimes(1);
     expect(document.querySelector("textarea")).toBeNull();
+  });
+});
+
+// Team repositories that are not cloned yet are offered as clone shortcuts into the one clone flow.
+describe("StartModal — uncloned team repositories", () => {
+  const ops = { grafana_url: "", aws_sso_start_url: "", aws_account_id: "", aws_role_name: "" };
+  const launch = { agent: "", model: "", driver: "", permission_mode: "", budget_usd: null };
+  const team = (repos: string[]) =>
+    act(async () => useUIStateStore.setState({ state: { effective: { launch, repos, ops } } as never }));
+
+  async function remount(): Promise<void> {
+    unmount();
+    await mount();
+  }
+
+  it("lists the uncloned one after the cloned team repositories and clones it from the one connected host", async () => {
+    apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? { github: { connected: true } } : []));
+    useReposStore.setState({
+      loadState: "ok",
+      repos: [
+        { name: "zeta", branch: "main", remotePath: "other/zeta" },
+        { name: "api", branch: "main", remotePath: "Acme/Api" },
+      ],
+    });
+    await team(["acme/api", "acme/docs"]);
+    await remount();
+    const titles = rows().map((b) => b.querySelector(".start-row-title")?.textContent);
+    expect(titles.indexOf("api")).toBeLessThan(titles.indexOf("acme/docs"));
+    expect(titles.indexOf("acme/docs")).toBeLessThan(titles.indexOf("zeta"));
+    expect(titles.filter((x) => x === "acme/api")).toHaveLength(0); // cloned: not listed twice
+    cloneRepo.mockResolvedValue({ ok: false });
+    await click(rowFor("acme/docs"));
+    expect(cloneRepo).toHaveBeenCalledWith({ remote_url: "https://github.com/acme/docs.git", branch: "", name: "" }, expect.any(Function));
+  });
+
+  it("offers no shortcut when both providers are connected (the host would be a guess)", async () => {
+    apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? { github: { connected: true }, bitbucket: { connected: true } } : []));
+    await team(["acme/docs"]);
+    await remount();
+    expect(rows().some((b) => b.textContent?.includes("acme/docs"))).toBe(false);
+  });
+
+  it("shows no shortcut until the repository list has loaded (an existing repo would look uncloned)", async () => {
+    apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? { github: { connected: true } } : []));
+    useReposStore.setState({ repos: [], loadState: "loading" });
+    await team(["acme/docs"]);
+    await remount();
+    expect(rows().some((b) => b.textContent?.includes("acme/docs"))).toBe(false);
+    await act(async () => useReposStore.setState({ loadState: "ok" }));
+    expect(rows().some((b) => b.textContent?.includes("acme/docs"))).toBe(true);
+  });
+
+  it("refuses to clone when the connections changed after the list was drawn", async () => {
+    let conns: unknown = { github: { connected: true } };
+    apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? conns : []));
+    await team(["acme/docs"]);
+    await remount();
+    conns = { github: { connected: true }, bitbucket: { connected: true } };
+    await click(rowFor("acme/docs"));
+    expect(cloneRepo).not.toHaveBeenCalled();
+  });
+
+  it("starts one clone for a double click while the connections check is still pending", async () => {
+    let release: (v: unknown) => void = () => {};
+    const slow = new Promise((r) => (release = r));
+    let gate = false;
+    apiGet.mockImplementation(async (path: string) => {
+      if (path !== "api/connections") return [];
+      return gate ? slow : { github: { connected: true } }; // the mount-time reads answer at once
+    });
+    await team(["acme/docs"]);
+    await remount();
+    gate = true;
+    cloneRepo.mockResolvedValue({ ok: false });
+    const row = rowFor("acme/docs");
+    await click(row);
+    await click(row);
+    await act(async () => release({ github: { connected: true } }));
+    expect(cloneRepo).toHaveBeenCalledTimes(1);
+    await click(rowFor("acme/docs")); // released again after the failed clone
+    expect(cloneRepo).toHaveBeenCalledTimes(2);
   });
 });
