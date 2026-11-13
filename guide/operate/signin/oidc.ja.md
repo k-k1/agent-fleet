@@ -1,5 +1,5 @@
 ---
-audience: "配備に IdP をつなぐ配備管理者（ホストの端末と `.env` を扱う人）"
+audience: "配備に IdP をつなぐ配備管理者（ホストのターミナルと `.env` を扱う人）"
 source_of_truth: "`.env` の読み込みは Control Plane のサインイン設定（記述がコードと食い違ったら、このページのバグ）"
 ---
 
@@ -46,7 +46,7 @@ AF_OIDC_OKTA_TRUST=email_verified
 ```
 
 - **issuer は、ブラウザのアドレス欄ではなく discovery ドキュメントからコピーします。** Control Plane は issuer に `/.well-known/openid-configuration` を足して読み、その中の `issuer` が同じ値かを確かめます。末尾のスラッシュの有無は違いとみなしません
-- **`_TRUST`** はメールアドレスを信じる理由で、既定値はありません
+- **`_TRUST`** はメールアドレスを信頼する理由で、既定値はありません
   - その IdP が `email_verified` を出すなら `email_verified`（Okta・Keycloak・Auth0 はたいてい出します）
   - 出さないが、issuer が 1 つのディレクトリに固定されているなら `issuer`
   - 迷ったら `email_verified` から始めます。合っていなくても、拒否されて理由がログに残るだけで、通ってはいけない人が通ることはありません

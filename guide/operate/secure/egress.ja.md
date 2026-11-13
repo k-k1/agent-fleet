@@ -139,5 +139,5 @@ egress ゲートウェイが接続を記録する構成（AWS で `EgressRoute=g
 
 - [MCP と外部接続のサインインを運用する](mcp.ja.md)：MCP サーバーの登録と許可リストの関係
 - [MCP サーバーを全員に配る](../../admin/mcp-distribute.ja.md)：テナント管理者の側
-- [デプロイ先を選ぶ](../choose.ja.md#aws-の出口の経路を選ぶ)：AWS の出口の経路
+- [デプロイ先を選ぶ](../choose.ja.md#aws-の出口の経路を選ぶ)：AWS の外向きの経路
 - [外向きの通信をゲートウェイで制御する](../aws-ecs/egress-gateway.ja.md)：egress ゲートウェイの設定

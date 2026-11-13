@@ -52,12 +52,12 @@ Setting it up is in [Install Agent Fleet](../install.md#6-sign-in-as-the-first-a
 The allowlist is written in email addresses, so why the address an IdP returns can be trusted is the strength of the authorization itself.
 
 - `AF_OIDC_<ID>_TRUST` (`email_verified` or `issuer`) is required. An IdP without it is disabled at start
-- Pin the Entra ID issuer to your own tenant's GUID. With `/common/` or `/organizations/`, anyone with a Microsoft account reaches the sign-in screen, and a personal account can change its own email address
+- Pin the Entra ID issuer to your own tenant's GUID. With `/common/`, `/organizations/` or `/consumers/`, anyone with a Microsoft account reaches the sign-in screen, and a personal account can change its own email address
 - So with such an issuer the Control Plane does not start unless `AF_OIDC_<ID>_ALLOWED_TIDS` is set ([Sign in with Microsoft Entra ID](../signin/entra.md))
 
 ## Read the audit log
 
-- `audit_log` holds changes and destructive operations only. Reads are not recorded (the exception is exporting a member's agent memory)
+- `audit_log` holds changes and destructive operations only. Reads are not recorded. The one exception is `memory.export`, which carries a member's agent memory out of the environment. Writing agent memory back into Claude Code's own memory (`memory.claude_export`) changes that store, so it is recorded too
 - The raw terminal stream is never stored, because secrets can be mixed into it
 - The deployment administrator and tenant administrators read it in Admin > Audit ([Read the audit log](../../admin/audit.md))
 

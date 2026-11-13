@@ -1,5 +1,5 @@
 ---
-audience: "配備の様子がおかしいときに切り分ける配備管理者（ホストの端末を扱う人）"
+audience: "配備の様子がおかしいときに切り分ける配備管理者（ホストのターミナルを扱う人）"
 source_of_truth: "コマンドは `deploy/` 配下の runbook とスクリプト（記述が食い違ったら、このページのバグ）"
 ---
 
@@ -31,7 +31,7 @@ source_of_truth: "コマンドは `deploy/` 配下の runbook とスクリプト
 > [!WARNING]
 > **`/healthz` の `ok` は「製品が動いている」という意味ではありません。** 報告するのはプロセスが動いていることだけで、DB は見ません。
 > API が全部 500 を返し続けている間も、`/healthz` は `ok`、ロードバランサーのターゲットは healthy のままだった例があります。
-> DB まで見るのは `/readyz` です。「動かない」と言われていて `/healthz` が `ok` なら、信じるべきは利用者の声です。
+> DB まで見るのは `/readyz` です。「動かない」と言われていて `/healthz` が `ok` なら、信頼するべきは利用者の声です。
 
 ## 症状から探す
 
@@ -40,15 +40,15 @@ source_of_truth: "コマンドは `deploy/` 配下の runbook とスクリプト
 | Control Plane が起動しない | `docker compose logs cp`。`/healthz` が `ok` を返すか |
 | 全部 500 なのにヘルスチェックは `ok` | `/readyz` が `503` なら DB です。パスワードがローテーションされるマネージド DB では、ローテーション前から動いている Control Plane が古いパスワードを持ったままのことがあります。ログを `DB_UNAVAILABLE` と `DB_SECRET_REFRESH_FAILED` で探し、Control Plane のタスクを作り直してパスワードを読み直させます |
 | docker.sock で permission denied | `DOCKER_GID` がホストの docker グループの GID と同じか（[制約 C](#コンテナから-docker-を動かす-3-つの制約)） |
-| ワークスペースは起動するのに home が空 | `DATA_DIR` が Control Plane の内と外で同じ絶対パスか。リストアのときも同じパスか（[制約 B](#コンテナから-docker-を動かす-3-つの制約)） |
+| ワークスペースは起動するのにホームディレクトリが空 | `DATA_DIR` が Control Plane の内と外で同じ絶対パスか。リストアのときも同じパスか（[制約 B](#コンテナから-docker-を動かす-3-つの制約)） |
 | 起動したワークスペースに届かない | Control Plane と Caddy の両方が `network_mode: host` か（[制約 A](#コンテナから-docker-を動かす-3-つの制約)） |
 | ホストからは届く Control Plane の URL に、ワークスペースから届かない | 下の [ワークスペースから公開 URL に届かない](#ワークスペースから公開-url-に届かない) |
 | TLS の証明書が発行されない | 下の [TLS の証明書が発行されない](#tls-の証明書が発行されない) |
 | サインインできない・ボタンが出ない・外したはずの人が使える | [ログインできない](cannot-login.ja.md) |
-| 起動時に `AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms` で終わる | ホームごとの鍵には KMS の鍵管理が要ります。`AF_KEY_CUSTODIAN=kms`（と `AF_KMS_KEY_ID`）を設定するか、`AF_WORKSPACE_DEK` を外します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md)） |
-| ワークスペースの起動が `open the home's credential-store key` で失敗する | KMS に届かないか、鍵が無効か、拒否されています。master 鍵にフォールバックする経路はありません。KMS へのアクセスを直してから起動し直します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md)） |
-| リストアのあと、ワークスペースが資格情報の書き込みを拒み、ログに資格情報ストアが `unreadable` と出る | ストアがホームの鍵に移る前の状態から復元されています。Control Plane と同じ環境で `af-cp home-dek-status --remigrate <membership-id>` を実行し、ワークスペースを起動し直します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md#移す前の写しを戻したとき)） |
-| ワークスペースのログに `[entrypoint] WARN: npm boot-install failed (retrying next start)` と出る | CLI のインストールに失敗しました（home が満杯・ネットワーク・チェックサム）。次の起動でやり直します。名簿のカードには「直近の起動で CLI のインストールに失敗しました」と出ます（[メンバーの状況を見る](../../admin/members/roster.ja.md#要対応のカードに手を打つ)） |
+| 起動時に `AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms` で終わる | ホームディレクトリごとのキーには KMS のキー管理が要ります。`AF_KEY_CUSTODIAN=kms`（と `AF_KMS_KEY_ID`）を設定するか、`AF_WORKSPACE_DEK` を外します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md)） |
+| ワークスペースの起動が `open the home's credential-store key` で失敗する | KMS に届かないか、キーが無効か、拒否されています。master キーにフォールバックする経路はありません。KMS へのアクセスを直してから起動し直します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md)） |
+| リストアのあと、ワークスペースが認証情報の書き込みを拒み、ログに認証情報ストアが `unreadable` と出る | ストアがホームディレクトリのキーに移る前の状態から復元されています。Control Plane と同じ環境で `af-cp home-dek-status --remigrate <membership-id>` を実行し、ワークスペースを起動し直します（[ホームごとに鍵を分ける](../keys/home-keys.ja.md#移す前の写しを戻したとき)） |
+| ワークスペースのログに `[entrypoint] WARN: npm boot-install failed (retrying next start)` と出る | CLI のインストールに失敗しました（ホームディレクトリが満杯・ネットワーク・チェックサム）。次の起動でやり直します。名簿のカードには「直近の起動で CLI のインストールに失敗しました」と出ます（[メンバーの状況を見る](../../admin/members/roster.ja.md#要対応のカードに手を打つ)） |
 
 ## コンテナから Docker を動かす 3 つの制約
 
@@ -59,8 +59,8 @@ Mac では A の扱いが変わります（[macOS（Apple Silicon）で動かす
 | 制約 | 守ること | 破ったときの症状 |
 |---|---|---|
 | A. ホストのネットワーク | Control Plane と Caddy の両方を `network_mode: host` にする。ワークスペースはホストの `127.0.0.1:<port>` に公開されるため | 起動したワークスペースにブラウザから届かない |
-| B. `DATA_DIR` の絶対パス | Control Plane の内側でも、`DATA_DIR` が同じ絶対パスになるようにマウントする。ワークスペースの `-v` はホストのパスで作られるため | ワークスペースは起動するのに home が空・作業が見当たらない |
-| C. ユーザーと docker グループ | `user: "1000:1000"` と `group_add: <DOCKER_GID>` にする。home は uid 1000 で作られ、Control Plane は docker のソケットを使うため | ソケットで permission denied になる、またはワークスペースが起動しない |
+| B. `DATA_DIR` の絶対パス | Control Plane の内側でも、`DATA_DIR` が同じ絶対パスになるようにマウントする。ワークスペースの `-v` はホストのパスで作られるため | ワークスペースは起動するのにホームディレクトリが空・作業が見当たらない |
+| C. ユーザーと docker グループ | `user: "1000:1000"` と `group_add: <DOCKER_GID>` にする。ホームディレクトリは uid 1000 で作られ、Control Plane は docker のソケットを使うため | ソケットで permission denied になる、またはワークスペースが起動しない |
 
 リストアのあとで B の症状が出たら、戻した先の `DATA_DIR` が元とパスで（少なくとも最後のディレクトリ名で）食い違っていないかを確かめます（[バックアップして復元する](../run/backup-restore.ja.md#復元する)）。
 
@@ -106,7 +106,7 @@ Caddy が Let's Encrypt から証明書を取れないときは、次のどれ�
    - いいえ：その人の側を疑います。次へ進みます
 2. **その人だけの問題を分ける**
    - サインインできない：その人が許可リストに入っているか、`AF_PROVISION=invite` なら名簿に追加済みか
-   - サインインはできるがワークスペースがおかしい：その人のワークスペース（`af-ws-<user>`）の状態を見ます。home が空なら制約 B（ただし全員に出るはずです）。エージェントがつながらないなら、その人自身のエージェントのログインの問題で、本人が Console からログインし直します
+   - サインインはできるがワークスペースがおかしい：その人のワークスペース（`af-ws-<user>`）の状態を見ます。ホームディレクトリが空なら制約 B（ただし全員に出るはずです）。エージェントがつながらないなら、その人自身のエージェントのログインの問題で、本人が Console からログインし直します
    - Console の使いかた：[やりたいことから探す](../../user/README.ja.md) の範囲です
 3. それでも分けられないときは、Control Plane のログで、その人のメールアドレス（ログでは `user_key` に置き換えて出ます）に何が起きているかを見ます
 
@@ -114,12 +114,12 @@ Caddy が Let's Encrypt から証明書を取れないときは、次のどれ�
 
 ### AF_MASTER_KEY をなくすとどうなる？
 
-保存済みのすべての資格情報と、**過去のすべてのバックアップが二度と復号できなくなります**。取り戻す方法はありません。
+保存済みのすべての認証情報と、**過去のすべてのバックアップが二度と復号できなくなります**。取り戻す方法はありません。
 データとは別の安全な保管場所に、別々にバックアップしておきます（[脅威モデルと残るリスクを知る](../secure/threat-model.ja.md#残るリスクに備える)）。
 
 ### バックアップには何が入る？
 
-入るのは DB・各ユーザーの home・平文の Claude の状態・Caddy の証明書です。入らないのは `shared/jvm`（取り直せます）と `AF_MASTER_KEY` です（[バックアップして復元する](../run/backup-restore.ja.md#アーカイブに入るもの)）。
+入るのは DB・各ユーザーのホームディレクトリ・平文の Claude の状態・Caddy の証明書です。入らないのは `shared/jvm`（取り直せます）と `AF_MASTER_KEY` です（[バックアップして復元する](../run/backup-restore.ja.md#アーカイブに入るもの)）。
 
 ### インターネットにつながらないネットワークに入れられる？
 

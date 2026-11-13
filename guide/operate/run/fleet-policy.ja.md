@@ -19,7 +19,7 @@ source_of_truth: "`workspace/workspace-notes.md` と `workspace/notes/`、Worksp
 
 ## 届く場所
 
-方針はイメージに焼き込まれ、各コンテナに配られます。
+方針はビルド時にイメージへ組み込まれ、各コンテナに配られます。
 
 | エージェント | 読む場所 |
 |---|---|
