@@ -462,6 +462,20 @@ run types are now shared by both providers. Decisions:
   repository**: the response fields and the build-number run endpoint are from the API reference and are covered only
   by tests against a fake server.
 
+*Note, 2026-11-13 (#4033, grace window on workflow refs).* A workflow or pipeline watch (`o/r:<file>.yml[@branch]`,
+`w/r:pipelines[...]`) used to admit only runs that started after the watch was made. A run chained from the one the
+caller had just waited for starts seconds before that run's notice arrives, so the watch made in reaction to the notice
+missed it (seen: a dispatched run 3 s before its parent finished, the watch made after). The floor now sits 10 minutes
+before the provider's own clock (its `Date` header, never the host's), to the minute so quiet watches still share a
+subject: the id floor is the highest listed run created before that point, and a run above it that started inside the
+window counts, completed or not. A run in the window that had already completed fires at once; a run that started
+earlier never does. Each run is still told once (version = run id and attempt), and the engine's latest-state rule
+is unchanged, so two runs that are both finished at the first read give one notice for the newer. A repository or
+workflow with no run keeps the old floor (the provider's clock). Run-URL refs are unchanged. The tool description, the
+guide and `workspace/notes/agent-fleet.md` also say: when what you wait for is a PR the run opens, watch the PR, and when
+a run is chained from one you just watched, check `gh run list` first. **Not verified live** against GitHub or Bitbucket;
+covered by tests against a fake server.
+
 ## Rejected
 
 - **A dedicated `watch_pr` tool and a faster `branchpr`.** Solves the PR case quickly but adds the sixth hand-rolled

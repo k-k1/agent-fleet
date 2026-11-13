@@ -28,7 +28,8 @@ import (
 // A pipeline watch is for the NEXT run. As for Actions, the floor comes from Bitbucket's own
 // answer (the highest build number and newest creation time it listed, or its Date header when
 // the repository has no run yet), never from this host's clock. Build numbers only grow within a
-// repository, so build > floor is the rule and the creation time a second guard.
+// repository, so build > floor is the rule and the creation time a second guard. The floor sits
+// runGraceWindow before Bitbucket's clock when the repository has runs (see graceFloorOf).
 //
 // Bitbucket Cloud allows 1,000 requests an hour per account and the pull request list already
 // spends most of them, so reads are slow (see the intervals) and the number of live watches is
@@ -349,6 +350,11 @@ func (p *BitbucketPipelines) Resolve(ctx context.Context, ref, defaultRepo strin
 	// The floor spans every listed run, not just those of the watched branch: build numbers are
 	// repository-wide and only grow, so a higher floor can only be safer.
 	floorBuild, floorUnix := plFloorOf(list.Values)
+	if d, err := http.ParseTime(hdr.Get("Date")); err == nil && len(list.Values) > 0 {
+		// Same grace window as for Actions (runGraceWindow): a run that started just before the
+		// watch was made still counts.
+		floorBuild, floorUnix = graceFloorOf(d, len(list.Values), func(i int) (int64, string) { return list.Values[i].BuildNumber, list.Values[i].CreatedOn })
+	}
 	if floorBuild == 0 && floorUnix == 0 {
 		if d, err := http.ParseTime(hdr.Get("Date")); err == nil {
 			floorUnix = d.Unix() - d.Unix()%60 // to the minute, so quiet watches share a subject

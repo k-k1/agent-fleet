@@ -29,6 +29,8 @@ import (
 // highest run id and the newest creation time it listed, or its Date header when the workflow
 // has no run yet), never from this host's clock: a skewed local clock cannot make an old run
 // look new. Run ids only grow, so id > floor is the rule; the creation time is a second guard.
+// The floor sits runGraceWindow (10 minutes) before GitHub's clock when the workflow has runs, so
+// a run that started just before the watch was made still counts (see graceFloorOf).
 // A floor in the subject also means watches made while the workflow is quiet share one read.
 
 // Event types of the CI run sources (Actions and Bitbucket Pipelines), shared across providers
@@ -282,6 +284,9 @@ func (a *GitHubActions) Resolve(ctx context.Context, ref, defaultRepo string) (R
 		return Resolved{}, fmt.Errorf("GitHub answered %d", status)
 	}
 	floorID, floorUnix := floorOf(list.Runs)
+	if d, err := http.ParseTime(hdr.Get("Date")); err == nil && len(list.Runs) > 0 {
+		floorID, floorUnix = graceFloorOf(d, len(list.Runs), func(i int) (int64, string) { return list.Runs[i].ID, list.Runs[i].CreatedAt })
+	}
 	if floorUnix == 0 && floorID == 0 {
 		// No run yet: GitHub's own clock, from the answer, is the floor.
 		if d, err := http.ParseTime(hdr.Get("Date")); err == nil {
@@ -295,6 +300,29 @@ func (a *GitHubActions) Resolve(ctx context.Context, ref, defaultRepo string) (R
 		return Resolved{}, &ErrRefused{"that reference is too long"}
 	}
 	return Resolved{Subject: subj, URL: SafeURL("https://github.com/" + r.repo + "/actions/workflows/" + r.file)}, nil
+}
+
+// runGraceWindow is how long before a workflow watch was made a run may have started and still
+// count as the next one. A run chained from the one the caller just waited for starts seconds
+// before that run's notice arrives, so the watch is made after it; without the window that run
+// is never seen. Anything older stays old news.
+const runGraceWindow = 10 * time.Minute
+
+// graceFloorOf is the floor of a watch made at GitHub's time now over n listed runs (at(i) gives
+// run i's id and creation time): the highest id among runs created before the window opened, and
+// the window's opening time to the minute so watches made within a minute share a subject. A run
+// above that id and created inside the window counts, completed or not. When no listed run is
+// older than the window the id floor is 0: every older run fails the time guard instead.
+func graceFloorOf(now time.Time, n int, at func(i int) (id int64, created string)) (floorID, floorUnix int64) {
+	open := now.Unix() - int64(runGraceWindow/time.Second)
+	floorUnix = open - open%60
+	for i := 0; i < n; i++ {
+		id, created := at(i)
+		if t, err := time.Parse(time.RFC3339, created); err == nil && t.Unix() < floorUnix {
+			floorID = max(floorID, id)
+		}
+	}
+	return floorID, floorUnix
 }
 
 // floorOf is the highest run id and the newest creation time (unix seconds) among runs.

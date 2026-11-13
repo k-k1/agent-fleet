@@ -216,8 +216,12 @@ func TestResolveWorkflowFloorComesFromGitHubNotTheLocalClock(t *testing.T) {
 	g := newTestGitHub(t, f)
 	g.now = func() time.Time { return time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC) } // a badly skewed local clock
 	a := NewGitHubActions(g)
+	// GitHub's Date puts the window's opening 10 minutes before it (to the minute); both listed
+	// runs are older than that, so the id floor is the highest of them (the grace window
+	// intentionally moves the time floor from the newest run's creation to the window's opening).
+	f.headers.Set("Date", "Tue, 10 Nov 2026 03:00:30 GMT")
 	res, err := a.Resolve(context.Background(), "o/r:"+wfName, "")
-	floor := time.Date(2026, 11, 10, 2, 0, 0, 0, time.UTC).Unix()
+	floor := time.Date(2026, 11, 10, 2, 50, 0, 0, time.UTC).Unix()
 	want := workflowSubject("o/r", wfName, "", 90, floor)
 	if err != nil || res.Subject != want {
 		t.Fatalf("subject %q (%v), want %q", res.Subject, err, want)
@@ -558,5 +562,93 @@ func TestWorkflowPagingIsBoundedAndAFailedLaterPageFailsTheRead(t *testing.T) {
 	var g *ErrGone
 	if err == nil || errors.As(err, &g) {
 		t.Fatalf("a 502 on page 2: %v", err)
+	}
+}
+
+// graceWatch makes a workflow watch at GitHub's time 01:12:10Z over the listed runs (newest
+// first) and returns the engine, the sink and the first-page path the watch will poll.
+func graceWatch(t *testing.T, f *fakeGitHub, listed ...any) (*Engine, *fakeSink, *clock, string) {
+	t.Helper()
+	f.headers.Set("Date", "Fri, 13 Nov 2026 01:12:10 GMT")
+	f.bodies[wfResolvePath("")] = map[string]any{"workflow_runs": listed}
+	a := newTestActions(t, f)
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(a, sink)
+	if _, err := e.Subscribe(context.Background(), Request{Owner: "s", Source: ActionsKind, Ref: "o/r:" + wfName, Types: []string{EventRunCompleted}, Until: UntilDeadline}); err != nil {
+		t.Fatal(err)
+	}
+	// The window opens 10 minutes before GitHub's clock, to the minute.
+	open := time.Date(2026, 11, 13, 1, 2, 0, 0, time.UTC).Unix()
+	return e, sink, c, workflowRunsPath("o/r", wfName, "", actionsListSize, open)
+}
+
+// The case of the issue: the run chained from the one just watched started 3 s before the watch.
+func TestWorkflowWatchCountsARunStartedJustBeforeTheWatchOnceEvenWhenAlreadyCompleted(t *testing.T) {
+	for _, status := range []string{"completed", "in_progress"} {
+		t.Run(status, func(t *testing.T) {
+			f := newFakeGitHub()
+			conclusion := "success"
+			if status != "completed" {
+				conclusion = ""
+			}
+			e, sink, clk, path := graceWatch(t, f,
+				run(100, status, conclusion, "2026-11-13T01:12:07Z", 1),
+				run(90, "completed", "success", "2026-11-13T00:30:00Z", 1))
+			f.bodies[path] = map[string]any{"workflow_runs": []any{run(100, status, conclusion, "2026-11-13T01:12:07Z", 1)}}
+			ctx := context.Background()
+			e.Tick(ctx)
+			clk.add(time.Hour)
+			if status != "completed" {
+				if len(sink.told) != 0 {
+					t.Fatalf("told before completion: %v", sink.told)
+				}
+				f.bodies[path] = map[string]any{"workflow_runs": []any{run(100, "completed", "success", "2026-11-13T01:12:07Z", 1)}}
+				e.Tick(ctx)
+				clk.add(time.Hour)
+			}
+			e.Tick(ctx)
+			clk.add(time.Hour)
+			e.Tick(ctx)
+			clk.add(time.Hour)
+			if len(sink.told) != 1 || !strings.HasSuffix(sink.told[0], ":100:1") {
+				t.Fatalf("told %v", sink.told)
+			}
+		})
+	}
+}
+
+func TestWorkflowWatchNeverCountsARunStartedBeforeTheGraceWindow(t *testing.T) {
+	f := newFakeGitHub()
+	// 11 minutes before the watch: older than the window, so it is old news.
+	old := run(100, "completed", "success", "2026-11-13T01:01:10Z", 1)
+	e, sink, clk, path := graceWatch(t, f, old, run(90, "completed", "success", "2026-11-13T00:30:00Z", 1))
+	f.bodies[path] = map[string]any{"workflow_runs": []any{old}}
+	e.Tick(context.Background())
+	clk.add(time.Hour)
+	e.Tick(context.Background())
+	clk.add(time.Hour)
+	if len(sink.told) != 0 {
+		t.Fatalf("an old run fired: %v", sink.told)
+	}
+}
+
+func TestWorkflowWatchTellsEachRunInTheGraceWindowOnce(t *testing.T) {
+	f := newFakeGitHub()
+	r1 := run(100, "completed", "success", "2026-11-13T01:08:00Z", 1)
+	r0 := run(90, "completed", "success", "2026-11-13T00:30:00Z", 1)
+	e, sink, clk, path := graceWatch(t, f, r1, r0)
+	f.bodies[path] = map[string]any{"workflow_runs": []any{r1}}
+	ctx := context.Background()
+	e.Tick(ctx)
+	clk.add(time.Hour)
+	// A second run starts and finishes later; the first is not told again.
+	r2 := run(101, "completed", "success", "2026-11-13T01:13:00Z", 1)
+	f.bodies[path] = map[string]any{"workflow_runs": []any{r2, r1}}
+	e.Tick(ctx)
+	clk.add(time.Hour)
+	e.Tick(ctx)
+	clk.add(time.Hour)
+	if len(sink.told) != 2 || !strings.HasSuffix(sink.told[0], ":100:1") || !strings.HasSuffix(sink.told[1], ":101:1") {
+		t.Fatalf("told %v", sink.told)
 	}
 }
