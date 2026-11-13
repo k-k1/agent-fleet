@@ -198,7 +198,16 @@ func (f *ecsEC2Factory) forceStopDetached(ctx context.Context, fn func(context.C
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forceStopBudget)
 	go func() {
 		defer cancel()
-		res, err := fn(dctx)
+		// This goroutine is outside net/http's recovery: a panic here would end the whole CP
+		// and leave no audit outcome. It becomes the error of the one answer instead.
+		res, err := func() (res SlotForceStop, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					res, err = partial, fmt.Errorf("force-stop of %s panicked: %v", partial.InstanceID, r)
+				}
+			}()
+			return fn(dctx)
+		}()
 		mu.Lock()
 		finished = true
 		abandoned := gone
@@ -208,7 +217,14 @@ func (f *ecsEC2Factory) forceStopDetached(ctx context.Context, fn func(context.C
 			return
 		}
 		if late != nil {
-			late(res, err)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("ecs-ec2: force-stop of slot %s: outcome callback panicked: %v", res.InstanceID, r)
+					}
+				}()
+				late(res, err)
+			}()
 			return
 		}
 		log.Printf("ecs-ec2: force-stop of slot %s finished after its request ended: %v (%+v)", res.InstanceID, err, res)
@@ -233,18 +249,25 @@ func (f *ecsEC2Factory) forceStopDetached(ctx context.Context, fn func(context.C
 // CP's own context. Whatever way it ends the token is released (finalizeRescue, or giveUp
 // for a failure) and the answer is returned for the audit.
 func (f *ecsEC2Factory) forceStopTokenHeld(ctx, bgCtx context.Context, cmds ssmSlotCommands, inst *ec2types.Instance,
-	occ *ecsEC2Runtime, m rescueMarker, ids []string, adopted bool, res SlotForceStop) (SlotForceStop, error) {
+	occ *ecsEC2Runtime, m rescueMarker, ids []string, adopted bool, res SlotForceStop) (out SlotForceStop, err error) {
 	id := aws.ToString(inst.InstanceId)
 	started := time.Now()
-	if err := rescueStep(ctx, "prepared"); err != nil {
-		return res, err
-	}
 	// What a failed attempt leaves behind: an operator marker nobody carries on. Removed, so
 	// it does not fence the home until it ages out.
 	giveUp := func() {
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*rescueWedgeBudget)
 		defer cancel()
 		occ.finalizeRescue(fctx, id, m.String(), m)
+	}
+	// A panic must not strand the token: release it (bounded) and answer with an error.
+	defer func() {
+		if r := recover(); r != nil {
+			giveUp()
+			out, err = res, fmt.Errorf("force-stop of %s panicked: %v", id, r)
+		}
+	}()
+	if err := rescueStep(ctx, "prepared"); err != nil {
+		return res, err
 	}
 
 	res.CancelledCommands, res.CancelFailed = cancelCommandIDs(ctx, cmds, id, ids)

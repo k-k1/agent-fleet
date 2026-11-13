@@ -523,3 +523,59 @@ func TestForceStopRequestEndedBeforeTheTokenTouchesNothing(t *testing.T) {
 		t.Fatalf("a request that ended before the token touched the box: res %+v stops %v", res, h.ec2.stopForce)
 	}
 }
+
+// A panic in the detached work must not end the process (the goroutine is outside net/http's
+// recovery) or strand the token: it becomes the one answer's error, and the marker is released.
+func TestForceStopPanicBecomesTheOneAnswerAndReleasesTheToken(t *testing.T) {
+	setup := func(t *testing.T) *ec2Harness {
+		h := wedgedSlot(t)
+		h.ec2.giveTaskENI("i-wedge")
+		hookAt("deregistered", func() { panic("boom") })
+		t.Cleanup(func() { rescueStepHook = nil })
+		return h
+	}
+	t.Run("caller still waiting", func(t *testing.T) {
+		h := setup(t)
+		_, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false)
+		if err == nil || !strings.Contains(err.Error(), "panicked") {
+			t.Fatalf("err = %v, want the panic as an error", err)
+		}
+		if m := slotMarker(h); m != "" || stopsOnBox(h) != 0 {
+			t.Fatalf("marker %q stops %v: the token must be released", m, h.ec2.stopForce)
+		}
+	})
+	t.Run("caller gone", func(t *testing.T) {
+		h := setup(t)
+		reqCtx, cancelReq := context.WithCancel(context.Background())
+		defer cancelReq()
+		calls := make(chan error, 2)
+		ctx := WithForceStopLate(reqCtx, func(_ SlotForceStop, err error) { calls <- err })
+		// The panic fires at the hook; cancel the request first so the caller has left.
+		prev := rescueStepHook
+		rescueStepHook = func(c context.Context, s string) error {
+			if s == "deregistered" {
+				cancelReq()
+				time.Sleep(50 * time.Millisecond) // let the waiter observe the cancellation
+			}
+			return prev(c, s)
+		}
+		if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", false); !errors.Is(err, ErrSlotForceStopInProgress) {
+			t.Fatalf("err = %v, want in progress", err)
+		}
+		select {
+		case err := <-calls:
+			if err == nil || !strings.Contains(err.Error(), "panicked") {
+				t.Fatalf("late err = %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("no late outcome after a panic")
+		}
+		time.Sleep(50 * time.Millisecond)
+		if len(calls) != 0 {
+			t.Fatal("more than one outcome")
+		}
+		if m := slotMarker(h); m != "" {
+			t.Fatalf("marker %q left behind", m)
+		}
+	})
+}
