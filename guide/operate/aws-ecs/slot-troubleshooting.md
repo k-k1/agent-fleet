@@ -16,7 +16,7 @@ Build and start problems common to every ECS deployment are in [Troubleshoot ECS
 |---|---|
 | Look at **Admin** → **Slots** | Each slot's state, quarantined slots and slots that do not answer, and the golden snapshot's status |
 | Remove a quarantined slot with **Terminate** | The instance and its root volume are deleted, and the billing stops |
-| Stop a slot that does not answer with **Stop (force)** | The instance stops, and the next start brings the same slot back healthy |
+| Stop a slot that does not answer with **Stop (force)** | The instance stops. The next start brings the same slot back healthy, or, if the container instance had to be deregistered, moves the home to a new slot |
 | Find the symptom in the tables below | The cause, and which page's steps fix it |
 
 How to read the page is in [Replace and stop slots](slot-maintenance.md).
