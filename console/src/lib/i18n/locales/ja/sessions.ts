@@ -733,6 +733,7 @@ export const sessions = {
   "start.dirty_suffix": " ・ 未コミットあり",
   "start.no_repos": "該当するリポジトリはありません",
   "start.team_repo": "チーム",
+  "start.team_clone_desc": "未クローン。{host} からクローンします",
   "start.clone_title": "新しいリポジトリをクローン…",
   "start.newdir_title": "新しいフォルダで始める…",
   "start.newdir_desc": "クローン元がまだないときに使います。~/repos に作って git init します。",

@@ -5,7 +5,7 @@ import { DEFAULT_AGENT_LAUNCH } from "../../lib/settings/normalize.ts";
 import { parseKindCatalog, setKindCatalog } from "../../agents/kindCatalog.ts";
 import { parseBudgetText } from "../settings/tenant/tenantMemberDefaults.tsx";
 import type { EffectiveDefaults, LaunchDefaults, MemberUIState } from "../../core/store/uiState.ts";
-import { defaultKind, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm, teamFirst } from "./tenantLaunchDefaults.ts";
+import { defaultKind, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm, teamFirst, teamCloneHost, teamCloneTargets } from "./tenantLaunchDefaults.ts";
 
 const L = (p: Partial<LaunchDefaults> = {}): LaunchDefaults => ({ agent: "", model: "", driver: "", permission_mode: "", budget_usd: null, ...p });
 // The state the CP would answer: both layers and their field-by-field merge ("" / null = not set).
@@ -103,6 +103,26 @@ describe("tenant launch defaults prefill", () => {
     const { rows, team } = teamFirst([b, a, d, c], ["acme/web", "acme/api"]);
     expect(rows.map((r) => r.name)).toEqual(["a", "c", "b", "d"]);
     expect(team.has(a) && team.has(c) && !team.has(b)).toBe(true);
+  });
+
+  it("takes the clone host only from exactly one connected Git provider", () => {
+    expect(teamCloneHost({ github: { connected: true } })).toBe("github.com");
+    expect(teamCloneHost({ bitbucket: { connected: true }, github: { connected: false } })).toBe("bitbucket.org");
+    expect(teamCloneHost({ github: { connected: true }, bitbucket: { connected: true } })).toBe("");
+    expect(teamCloneHost({ internal: { connected: true } })).toBe("");
+    expect(teamCloneHost(null)).toBe("");
+  });
+
+  it("offers only uncloned team repositories, matched on the remote path like teamFirst", () => {
+    const gh = { github: { connected: true } };
+    const bases = [{ name: "api-copy", remotePath: "Acme/Api" }, { name: "web", remotePath: "other/web" }];
+    const out = teamCloneTargets(bases, ["acme/api", "acme/docs", "ACME/docs", "bad entry", "acme/web"], gh);
+    expect(out).toEqual([
+      { path: "acme/docs", host: "github.com", cloneUrl: "https://github.com/acme/docs.git" },
+      // "web" is taken by another repository: the clone would collide, so no shortcut
+    ]);
+    expect(teamCloneTargets(bases, ["acme/docs"], { github: { connected: true }, bitbucket: { connected: true } })).toEqual([]);
+    expect(teamCloneTargets(bases, undefined, gh)).toEqual([]);
   });
 
   it("says why a dialog value cannot be saved as the member's default (C6)", () => {

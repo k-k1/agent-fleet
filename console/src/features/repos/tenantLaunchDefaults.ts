@@ -15,6 +15,8 @@ import { agentOf } from "../../agents/registry.ts";
 import { agentLaunchDefault } from "../../lib/settings.ts";
 import { DEFAULT_AGENT_LAUNCH } from "../../lib/settings/normalize.ts";
 import type { Settings } from "../../lib/settings.ts";
+import type { ConnectionsStatus } from "../../types/session.ts";
+import { deriveRepoName } from "./reponame.ts";
 
 /** The agent to start on when it is among the launchable kinds, else undefined. */
 export function defaultKind(eff: EffectiveDefaults | undefined, kinds: string[]): string | undefined {
@@ -82,4 +84,51 @@ export function teamFirst<T extends { remotePath?: string }>(bases: T[], teamRep
   const want = new Set((teamRepos || []).map((r) => r.toLowerCase()));
   const team = new Set(bases.filter((r) => r.remotePath && want.has(r.remotePath.toLowerCase())));
   return { rows: [...bases.filter((r) => team.has(r)), ...bases.filter((r) => !team.has(r))], team };
+}
+
+/** The one Git host a bare "owner/name" can be cloned from, or "" when that is not certain.
+ *  The stored team entry carries no host, so it comes from the providers this member has
+ *  connected: exactly one of GitHub / Bitbucket Cloud means one answer. With both (or neither)
+ *  connected the same path could name two different repositories, and a shortcut that clones the
+ *  wrong one is worse than none. The tenant's internal git is not a candidate: its repositories
+ *  are flat names, never "owner/name". */
+export function teamCloneHost(conns: ConnectionsStatus | null | undefined): string {
+  const hosts = (["github.com", "bitbucket.org"] as const).filter((h) => conns?.[h === "github.com" ? "github" : "bitbucket"]?.connected);
+  return hosts.length === 1 ? hosts[0] : "";
+}
+
+export interface TeamCloneTarget {
+  path: string;
+  host: string;
+  cloneUrl: string;
+}
+
+const TEAM_PATH_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/** Team repositories with no working copy yet, as clone shortcuts. A copy counts as present by
+ *  the same remote-path match teamFirst uses (so a clone under another folder name or remote
+ *  spelling is not offered twice). An entry is dropped when the host is ambiguous, when it is not
+ *  a plain owner/name, or when the folder the clone would create is taken by another repository
+ *  (the clone would fail there). */
+export function teamCloneTargets(
+  bases: { name: string; remotePath?: string }[],
+  teamRepos: string[] | undefined,
+  conns: ConnectionsStatus | null | undefined,
+): TeamCloneTarget[] {
+  const host = teamCloneHost(conns);
+  if (!host) return [];
+  const have = new Set(bases.map((r) => r.remotePath?.toLowerCase()).filter((p): p is string => !!p));
+  const taken = new Set(bases.map((r) => r.name));
+  const seen = new Set<string>();
+  const out: TeamCloneTarget[] = [];
+  for (const raw of teamRepos || []) {
+    const path = raw.trim();
+    const key = path.toLowerCase();
+    if (!TEAM_PATH_RE.test(path) || seen.has(key) || have.has(key)) continue;
+    seen.add(key);
+    const cloneUrl = `https://${host}/${path}.git`;
+    if (taken.has(deriveRepoName(cloneUrl))) continue;
+    out.push({ path, host, cloneUrl });
+  }
+  return out;
 }

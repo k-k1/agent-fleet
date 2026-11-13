@@ -723,6 +723,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "start.dirty_suffix": " · uncommitted changes",
   "start.no_repos": "No matching repositories",
   "start.team_repo": "Team",
+  "start.team_clone_desc": "not cloned yet, clones from {host}",
   "start.clone_title": "Clone a new repository…",
   "start.newdir_title": "Start in a new folder…",
   "start.newdir_desc": "Use this when there is nothing to clone from yet. It creates the folder under ~/repos and runs git init.",

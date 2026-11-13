@@ -5,7 +5,7 @@
 // its host picker lives here since NewSessionModal was retired in Ph3). Entry
 // points that already know the place (the repo row's launch) skip this hub.
 import { useEffectiveDefaults } from "../../core/store/uiState.ts";
-import { teamFirst } from "./tenantLaunchDefaults.ts";
+import { teamCloneTargets, teamFirst } from "./tenantLaunchDefaults.ts";
 import { useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -26,6 +26,8 @@ import { CloneForm } from "./CloneForm.tsx";
 import type { CloneSource } from "./CloneForm.tsx";
 import { NewFolderForm, newFolderNameOk } from "./NewFolderForm.tsx";
 import { cloneRepo, initRepo } from "./clone.ts";
+import { getCachedConns } from "./connsCache.ts";
+import type { ConnectionsStatus } from "../../types/session.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionTerminal } from "../sessions/open.ts";
@@ -114,6 +116,38 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
     const q = repoQuery.trim().toLocaleLowerCase();
     return !q || r.name.toLocaleLowerCase().includes(q) || (r.branch || "").toLocaleLowerCase().includes(q);
   });
+  // Team repositories not cloned yet, as shortcuts into the same clone flow. The host comes from
+  // the member's connected Git provider, so they wait for api/connections (cached copy first).
+  const [conns, setConns] = useState<ConnectionsStatus | null>(getCachedConns);
+  useEffect(() => {
+    if (!eff?.repos?.length) return;
+    let alive = true;
+    api("api/connections")
+      .then((d) => alive && d && !d.error && setConns(d as ConnectionsStatus))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [eff?.repos]);
+  const teamClones = teamCloneTargets(bases, eff?.repos, conns).filter((c) => {
+    const q = repoQuery.trim().toLocaleLowerCase();
+    return !q || c.path.toLocaleLowerCase().includes(q);
+  });
+
+  const baseRow = (r: Repo) => (
+    <button key={r.name} type="button" className="start-row" onClick={() => onPickRepo(r)}>
+      <Icon name="repo" className="start-row-ic" />
+      <span className="start-row-body">
+        <span className="start-row-title">{r.name}</span>
+        <span className="start-row-desc">
+          {teamBases.has(r) ? tr("start.team_repo") + " · " : ""}
+          {r.branch || ""}
+          {r.dirty ? tr("start.dirty_suffix") : ""}
+        </span>
+      </span>
+      <Icon name="chevron-right" className="start-row-chev" />
+    </button>
+  );
 
   const startShell = async () => {
     if (busy) return;
@@ -127,10 +161,10 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
   const [src, setSrc] = useState<CloneSource>({ cloneUrl: "", branch: "" });
   const derived = src.cloneUrl ? deriveRepoName(src.cloneUrl) : "";
   const already = derived ? repos.find((r) => r.name === derived) : undefined;
-  const doClone = async () => {
-    if (!src.cloneUrl || busy) return;
+  const doClone = async (url = src.cloneUrl, branch = src.branch) => {
+    if (!url || busy) return;
     setBusy(true);
-    const res = await cloneRepo({ remote_url: src.cloneUrl, branch: src.branch, name: "" }, toast);
+    const res = await cloneRepo({ remote_url: url, branch, name: "" }, toast);
     setBusy(false);
     if (!res.ok) return; // stay here; the toast said why
     const repo = useReposStore.getState().repos.find((r) => r.name === res.name);
@@ -379,21 +413,18 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
               placeholder={tr("start.repo_search_ph")}
             />
             <div className="start-list start-repo-list">
-              {visibleBases.map((r) => (
-                <button key={r.name} type="button" className="start-row" onClick={() => onPickRepo(r)}>
-                  <Icon name="repo" className="start-row-ic" />
+              {visibleBases.filter((r) => teamBases.has(r)).map(baseRow)}
+              {teamClones.map((c) => (
+                <button key={c.path} type="button" className="start-row" disabled={busy} onClick={() => void doClone(c.cloneUrl, "")}>
+                  <Icon name="add" className="start-row-ic" />
                   <span className="start-row-body">
-                    <span className="start-row-title">{r.name}</span>
-                    <span className="start-row-desc">
-                      {teamBases.has(r) ? tr("start.team_repo") + " · " : ""}
-                      {r.branch || ""}
-                      {r.dirty ? tr("start.dirty_suffix") : ""}
-                    </span>
+                    <span className="start-row-title">{c.path}</span>
+                    <span className="start-row-desc">{tr("start.team_repo")} · {tr("start.team_clone_desc", { host: c.host })}</span>
                   </span>
-                  <Icon name="chevron-right" className="start-row-chev" />
                 </button>
               ))}
-              {visibleBases.length === 0 && <span className="start-empty">{tr("start.no_repos")}</span>}
+              {visibleBases.filter((r) => !teamBases.has(r)).map(baseRow)}
+              {visibleBases.length === 0 && teamClones.length === 0 && <span className="start-empty">{tr("start.no_repos")}</span>}
             </div>
             <div className="start-list start-clone-action">
               <button type="button" className="start-row action" onClick={() => setStage("clone")}>
