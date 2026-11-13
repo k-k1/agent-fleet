@@ -126,6 +126,8 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // unknown reason falls back to the generic line above.
   "state.idle_bg_subagent": "Ready · subagent running",
   "state.idle_bg_shell": "Ready · background command running",
+  "state.idle_watches_one": "Ready · {count} watch",
+  "state.idle_watches_other": "Ready · {count} watches",
   "state.idle": "Ready",
   // An outstanding handoff proposal (propose_session_handoff) nobody has launched. The card
   // only exists inside the mirror and raises no notification, so a row left saying "Ready"

@@ -516,6 +516,7 @@ function MirrorViewBody({
         backgroundBusy: bgBusy,
         backgroundBusyReason: bgBusyReason,
         rateLimitResumeAt: sessionMeta?.rateLimitResumeAt,
+        watchCount: st.watches.length,
       } as any)
     : sessionMeta
       ? stateInfo(sessionMeta)
