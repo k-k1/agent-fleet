@@ -396,39 +396,42 @@ func gitStatusEnv(dir string, env []string) (RepoStatus, error) {
 // (branch.<name>.remote = ".") would otherwise be labelled with a bare branch name
 // that reads exactly like the parent-HEAD fallback. Commits the parent has not
 // pushed are deliberately outside the comparison: they are not in the base yet.
-func worktreeIntegrationTarget(parentDir string) (oid, upstream string, err error) {
-	if ref, err := Run(parentDir, "rev-parse", "--symbolic-full-name", "@{upstream}"); err == nil && strings.HasPrefix(ref, "refs/remotes/") {
-		if oid, err := Run(parentDir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil && oid != "" {
+//
+// env is appended to git's environment (nil: git reads the real global config).
+func worktreeIntegrationTarget(parentDir string, env []string) (oid, upstream string, err error) {
+	if ref, err := runEnv(parentDir, env, "rev-parse", "--symbolic-full-name", "@{upstream}"); err == nil && strings.HasPrefix(ref, "refs/remotes/") {
+		if oid, err := runEnv(parentDir, env, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil && oid != "" {
 			return oid, strings.TrimPrefix(ref, "refs/remotes/"), nil
 		}
 	}
-	oid, err = Run(parentDir, "rev-parse", "--verify", "HEAD")
+	oid, err = runEnv(parentDir, env, "rev-parse", "--verify", "HEAD")
 	return oid, "", err
 }
 
 // GitWorktreeIntegration compares the worktree's HEAD with worktreeIntegrationTarget.
 // targetBranch labels the parent-HEAD fallback; an upstream labels itself.
 func GitWorktreeIntegration(parentDir, worktreeDir, targetBranch string) RepoIntegration {
-	r, _ := worktreeIntegration(parentDir, worktreeDir, targetBranch)
+	r, _ := worktreeIntegration(parentDir, worktreeDir, targetBranch, nil)
 	return r
 }
 
 // worktreeIntegration also returns the target's object ID, so a fast-forward goes
 // exactly where the relation was measured even if a fetch moves the ref meanwhile.
-func worktreeIntegration(parentDir, worktreeDir, targetBranch string) (RepoIntegration, string) {
+// env is as for worktreeIntegrationTarget.
+func worktreeIntegration(parentDir, worktreeDir, targetBranch string, env []string) (RepoIntegration, string) {
 	r := RepoIntegration{TargetBranch: targetBranch, Relation: "unknown"}
-	target, upstream, err := worktreeIntegrationTarget(parentDir)
+	target, upstream, err := worktreeIntegrationTarget(parentDir, env)
 	if err != nil {
 		return r, ""
 	}
 	if upstream != "" {
 		r.TargetBranch, r.TargetUpstream = upstream, true
 	}
-	worktreeHead, err := Run(worktreeDir, "rev-parse", "--verify", "HEAD")
+	worktreeHead, err := runEnv(worktreeDir, env, "rev-parse", "--verify", "HEAD")
 	if err != nil {
 		return r, ""
 	}
-	out, err := Run(worktreeDir, "rev-list", "--left-right", "--count", target+"..."+worktreeHead)
+	out, err := runEnv(worktreeDir, env, "rev-list", "--left-right", "--count", target+"..."+worktreeHead)
 	if err != nil {
 		return r, ""
 	}
@@ -1776,7 +1779,7 @@ func HandleRepoFF(w http.ResponseWriter, r *http.Request) {
 // relationship, so it can never create a merge commit or resolve a divergence
 // implicitly.
 func fastForwardWorktreeFromParent(parent, dir string) error {
-	integration, target := worktreeIntegration(parent, dir, "")
+	integration, target := worktreeIntegration(parent, dir, "", nil)
 	if integration.Relation != "contained" {
 		name := "the parent HEAD"
 		if integration.TargetUpstream {

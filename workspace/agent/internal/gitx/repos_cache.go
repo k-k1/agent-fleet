@@ -443,9 +443,9 @@ func (c *repoCache) inspect(dir string, global gitGlobals) (RepoStatus, repoIden
 	identFP, identOK := identFingerprint(dir, global)
 	if !identOK || !e.ident.fresh(identFP, maxIdentAge) {
 		release := c.gitSlot()
-		id, complete := computeIdent(dir)
+		id, complete := computeIdent(dir, global.statusEnv)
 		release()
-		if identOK && complete {
+		if identOK && complete && global.snapshotCurrent() {
 			e.ident.set(identFP, id)
 		} else {
 			e.ident = slot[repoIdent]{val: id}
@@ -469,10 +469,16 @@ func (c *repoCache) inspect(dir string, global gitGlobals) (RepoStatus, repoIden
 // A git that failed (killed, a lock, a transient error) is not the same as "no origin" or
 // "not a worktree", and must not be remembered as if it were: complete=false keeps the
 // result out of the cache so the next call asks again.
-func computeIdent(dir string) (id repoIdent, complete bool) {
+//
+// env is appended to git's environment: the list request's global-config snapshot, which
+// carries the same url.*.insteadOf as the real files; nil reads the real files. The caller
+// keeps its snapshot lease until this returns.
+func computeIdent(dir string, env []string) (id repoIdent, complete bool) {
 	complete = true
 	// Cmd directly: Run flattens the error and loses the exit code.
-	out, err := Cmd(dir, "remote", "get-url", "origin").Output()
+	cmd := Cmd(dir, "remote", "get-url", "origin")
+	cmd.Env = append(cmd.Env, env...)
+	out, err := cmd.Output()
 	switch {
 	case err == nil:
 		origin := strings.TrimSpace(string(out))
@@ -481,13 +487,13 @@ func computeIdent(dir string) (id repoIdent, complete bool) {
 	case !isNoSuchRemote(err):
 		complete = false
 	}
-	abs, err := Run(dir, "rev-parse", "--absolute-git-dir")
+	abs, err := runEnv(dir, env, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return id, false
 	}
 	if strings.Contains(filepath.ToSlash(abs), "/.git/worktrees/") {
 		id.worktree = true
-		common, err := Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+		common, err := runEnv(dir, env, "rev-parse", "--path-format=absolute", "--git-common-dir")
 		if err != nil {
 			return id, false
 		}
@@ -525,9 +531,9 @@ func (c *repoCache) integration(dir, parentDir, targetBranch string, global gitG
 		return e.integ.val
 	}
 	release := c.gitSlot()
-	r := GitWorktreeIntegration(parentDir, dir, targetBranch)
+	r, _ := worktreeIntegration(parentDir, dir, targetBranch, global.statusEnv)
 	release()
-	if ok && r.Relation != "unknown" { // unknown is also what a failed git run reports
+	if ok && r.Relation != "unknown" && global.snapshotCurrent() { // unknown is also what a failed git run reports
 		e.integ.set(fp, r)
 		e.integKey = key
 	} else {
