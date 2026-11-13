@@ -257,7 +257,7 @@ INVENTORY = [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
     ("internal/runtime/runtime_ecs_ec2_sweeper.go", "sweepFreeSlots", "StopInstances", 1, [
         request("ec2:StopInstances", [ec2("instance", "i-slot", SLOT)])]),
-    ("internal/runtime/runtime_ecs_ec2_sweeper.go", "terminateSlotChecked", "TerminateInstances", 1, [
+    ("internal/runtime/runtime_ecs_ec2_sweeper.go", "terminateSlot", "TerminateInstances", 1, [
         request("ec2:TerminateInstances", [ec2("instance", "i-slot", SLOT)]),
         request("ec2:TerminateInstances", [ec2("instance", "i-slot", QUARANTINED)])]),
     # --- homes ---

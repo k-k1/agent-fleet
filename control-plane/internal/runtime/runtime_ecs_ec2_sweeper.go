@@ -527,12 +527,6 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 // box whose role is `quarantined`: it is kept as evidence, and an automatic terminate is how
 // R9 destroyed it. Only the operator's TerminateQuarantinedSlot passes terminateOperator.
 func (e *ecsEC2Runtime) terminateSlot(ctx context.Context, instanceID, why string, intent terminateIntent) error {
-	return e.terminateSlotChecked(ctx, instanceID, why, intent, nil)
-}
-
-// terminateSlotChecked is terminateSlot with a last check asked after the deregistration and
-// right before TerminateInstances; an error from it ends the call without terminating.
-func (e *ecsEC2Runtime) terminateSlotChecked(ctx context.Context, instanceID, why string, intent terminateIntent, last func(context.Context) error) error {
 	if intent != terminateOperator {
 		if err := e.terminateGate(ctx, instanceID, intent); err != nil {
 			log.Printf("ecs-ec2: not terminating slot %s (%s): %v", instanceID, why, err)
@@ -540,11 +534,6 @@ func (e *ecsEC2Runtime) terminateSlotChecked(ctx context.Context, instanceID, wh
 		}
 	}
 	e.deregisterSlot(ctx, instanceID)
-	if last != nil {
-		if err := last(ctx); err != nil {
-			return err
-		}
-	}
 	if _, err := e.ec2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
 		InstanceIds: []string{instanceID},
 	}); err != nil {
@@ -661,49 +650,41 @@ func (f *ecsEC2Factory) TerminateQuarantinedSlot(ctx context.Context, instanceID
 	if inst == nil {
 		return "", ErrSlotNotFound
 	}
-	reason := ec2TagValue(inst.Tags, ec2TagQuarantineReason)
-	if q, held := hasQuarantineRecord(inst.Tags); held && ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleSlot {
-		reason = q.Reason // rung L2: the role stayed `slot`; the no-home guard below is the same
-	} else if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleQuarantined {
+	// Only af-role=quarantined. A rung-L2 slot keeps af-role=slot, so a Start can still be choosing
+	// it when the operator presses Terminate, and nothing locks the picker out: terminating it
+	// could end a box a home was just placed on. The product does not offer that (ADR 0121,
+	// rung L2); an operator removes such a slot from the EC2 console.
+	if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleQuarantined {
 		return "", fmt.Errorf("%w (af-role=%s)", ErrSlotNotQuarantined, ec2TagValue(inst.Tags, EC2TagRole))
 	}
+	reason := ec2TagValue(inst.Tags, ec2TagQuarantineReason)
 
 	// The homes, read the way every other decision in this file reads them: the volume's
 	// attachment is who owns what, and a claim is a placement in flight that has not
 	// attached yet. Quarantine detaches the home it failed to mount, so finding one here
 	// means that detach did not happen — the one case where terminating costs a person
 	// their files rather than the deployment a few dollars.
-	probe := f.probeRuntime()
-	noHome := func(ctx context.Context) error {
-		vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
-			Filters: []ec2types.Filter{
-				tagFilter(EC2TagPool, f.pool.pool),
-				tagFilter(EC2TagRole, ec2RoleHome),
-			},
-		})
-		if err != nil {
-			return err
-		}
-		for i := range vols.Volumes {
-			v := &vols.Volumes[i]
-			id := aws.ToString(v.VolumeId)
-			if attachedInstance(v) == instanceID {
-				return fmt.Errorf("%w: %s is still attached to it", ErrSlotInUse, id)
-			}
-			if ec2TagValue(v.Tags, EC2TagClaim) == instanceID && probe.claimLive(v) {
-				return fmt.Errorf("%w: %s is being placed on it", ErrSlotInUse, id)
-			}
-		}
-		return nil
-	}
-	if err := noHome(ctx); err != nil {
+	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(EC2TagPool, f.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
 		return "", err
 	}
-	// A rung-L2 slot keeps af-role=slot, so a Start can still be choosing it when the operator
-	// presses Terminate. Nothing here can lock that out (no lock is shared with the picker, which
-	// the sweeper's own terminate of a free slot lacks too); the check is asked again right
-	// before TerminateInstances, after the deregistration, to narrow the window.
-	if err := probe.terminateSlotChecked(ctx, instanceID, "quarantined, terminated by an operator", terminateOperator, noHome); err != nil {
+	probe := f.probeRuntime()
+	for i := range vols.Volumes {
+		v := &vols.Volumes[i]
+		id := aws.ToString(v.VolumeId)
+		if attachedInstance(v) == instanceID {
+			return "", fmt.Errorf("%w: %s is still attached to it", ErrSlotInUse, id)
+		}
+		if ec2TagValue(v.Tags, EC2TagClaim) == instanceID && probe.claimLive(v) {
+			return "", fmt.Errorf("%w: %s is being placed on it", ErrSlotInUse, id)
+		}
+	}
+	if err := probe.terminateSlot(ctx, instanceID, "quarantined, terminated by an operator", terminateOperator); err != nil {
 		return reason, err
 	}
 	return reason, nil

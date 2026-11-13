@@ -218,31 +218,45 @@ func withoutQuarantineRecords(tags []ec2types.Tag) []ec2types.Tag {
 	return out
 }
 
-// carryQuarantine is the hand-over: a Start or a Stop is about to count, and the home it
+// carryQuarantine is the hand-over: a Start, a Stop or a rescue is about to count, and the home it
 // belongs to sits on a box that a valid record holds out. The record is written again for the
-// count that is about to exist, before the bump (a record for a count not yet reached is void
+// count that is about to exist, BEFORE the bump (a record for a count not yet reached is void
 // until the bump), so the hold survives the bump and the Start still finds the box a mismatch
-// and moves the home off it. Called under the claim lock. Only under quarantine mode: a
-// pool that has switched it off lets a Start overtake a held box, which is the setting's cost.
-func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) {
+// and moves the home off it. Called under the claim lock, from the one place every count goes
+// through (bumpStartCount, beginStart).
+//
+// It is a required step: a read or a write that fails, or a lease that is gone, is an error and
+// the count is not moved, because a bump without the carry would void the hold and let the next
+// Start reuse the box. Only under quarantine mode; a pool that has switched it off lets a Start
+// overtake a held box, which is the setting's cost.
+func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) error {
 	if !e.pool.quarantines() {
-		return
+		return nil
 	}
 	vol, err := e.homeVolume(ctx)
-	if err != nil || vol == nil {
-		return
+	if err != nil {
+		return fmt.Errorf("carry the quarantine: home: %w", err)
+	}
+	if vol == nil {
+		return nil
 	}
 	holder, slot := aws.ToString(vol.VolumeId), attachedInstance(vol)
 	if slot == "" {
-		return
+		return nil
 	}
 	inst, err := e.slotInstance(ctx, slot)
-	if err != nil || inst == nil {
-		return
+	if err != nil {
+		return fmt.Errorf("carry the quarantine: slot %s: %w", slot, err)
+	}
+	if inst == nil {
+		return nil
 	}
 	for _, r := range quarantineRecordsOf(inst.Tags) {
 		if r.Volume != holder || r.Gen != newGen-1 {
 			continue
+		}
+		if err := homeGuardOf(ctx).check(); err != nil {
+			return fmt.Errorf("carry the quarantine: %w", err)
 		}
 		next := r.quarantineTag
 		next.Gen = newGen
@@ -250,10 +264,11 @@ func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) {
 			Resources: []string{slot},
 			Tags:      []ec2types.Tag{{Key: aws.String(quarantineKey(holder, newGen)), Value: aws.String(next.String())}},
 		}); err != nil {
-			log.Printf("ecs-ec2: carrying the quarantine of %s to start %d failed: %v", slot, newGen, err)
+			return fmt.Errorf("carry the quarantine of %s to start %d: %w", slot, newGen, err)
 		}
-		return
+		return nil
 	}
+	return nil
 }
 
 // clearVoidQuarantines deletes the records whose token is no longer the box's, for a box with a

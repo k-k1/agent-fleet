@@ -504,21 +504,7 @@ func TestQuarantineSurvivesTheStartCountOfItsOwnHome(t *testing.T) {
 	}
 }
 
-func TestTerminateSlotCheckedStopsWhenTheLastCheckFails(t *testing.T) {
-	ctx := context.Background()
-	w := quarantineWorld(t, false)
-	err := w.rt().terminateSlotChecked(ctx, "i-dark", "test", terminateOperator, func(context.Context) error { return ErrSlotInUse })
-	if !errors.Is(err, ErrSlotInUse) {
-		t.Fatalf("err = %v", err)
-	}
-	for _, c := range w.h.ec2.calls {
-		if strings.HasPrefix(c, "TerminateInstances") {
-			t.Fatal("terminated despite the failed last check")
-		}
-	}
-}
-
-func TestQuarantineIsNeverCollectedByTheSweeperAndTerminateOnlyByAnOperator(t *testing.T) {
+func TestQuarantineIsNeverCollectedByTheSweeperOrTheOperatorsTerminate(t *testing.T) {
 	ctx := context.Background()
 	w := quarantineWorld(t, false)
 	w.h.ec2.volumes["vol-1"].Attachments = nil
@@ -526,14 +512,61 @@ func TestQuarantineIsNeverCollectedByTheSweeperAndTerminateOnlyByAnOperator(t *t
 	if err := w.rt().terminateGate(ctx, "i-dark", terminateMakeRoom); !errors.Is(err, ErrTerminateRefused) {
 		t.Fatalf("automatic terminate gate = %v", err)
 	}
-	reason, err := w.f.TerminateQuarantinedSlot(ctx, "i-dark")
-	if err != nil || reason != "repeat: x" {
-		t.Fatalf("operator terminate: %q %v", reason, err)
+	// The operator's Terminate is for af-role=quarantined only: nothing locks a Start that is
+	// choosing an L2 slot out, so the product does not offer it for one.
+	if _, err := w.f.TerminateQuarantinedSlot(ctx, "i-dark"); !errors.Is(err, ErrSlotNotQuarantined) {
+		t.Fatalf("err = %v, want an L2 slot refused", err)
 	}
-	// Without a quarantine it is still refused as before.
-	w2 := quarantineWorld(t, false)
-	w2.h.ec2.volumes["vol-1"].Attachments = nil
-	if _, err := w2.f.TerminateQuarantinedSlot(ctx, "i-dark"); !errors.Is(err, ErrSlotNotQuarantined) {
-		t.Fatalf("err = %v", err)
+}
+
+// The carry is a required step: a failed read or write stops the count, so the hold is never
+// voided by a bump that went ahead without it.
+func TestQuarantineCarryFailureStopsTheCount(t *testing.T) {
+	ctx := context.Background()
+	w := quarantineWorld(t, false)
+	g := w.count()
+	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: g, Reason: "repeat: x", At: time.Now()})
+	w.h.ec2.createTagsFail = func(key, _ string) error {
+		if key == quarantineKey("vol-1", g+1) {
+			return errBoom
+		}
+		return nil
+	}
+	if _, err := w.rt().beginStart(ctx); err == nil {
+		t.Fatal("beginStart went ahead without carrying the quarantine")
+	}
+	if adm, err := w.rt().admitStart(ctx, true); err == nil {
+		t.Fatalf("admitStart = %+v, want the carry failure", adm)
+	}
+	if w.count() != g {
+		t.Fatalf("count %d moved from %d", w.count(), g)
+	}
+	w.h.ec2.createTagsFail = nil
+	w.h.ec2.describeVolumesErr = errBoom
+	if _, err := w.rt().beginStart(ctx); err == nil {
+		t.Fatal("beginStart went ahead although the home could not be read")
+	}
+	if w.count() != g {
+		t.Fatalf("count %d moved from %d", w.count(), g)
+	}
+}
+
+// Every path that counts carries the hold: the operator's force-stop counts twice (the Stop and
+// the rescue's own preparation), and the next Start must still find the box held out.
+func TestQuarantineSurvivesTheForceStopsTwoCounts(t *testing.T) {
+	ctx := context.Background()
+	w := quarantineWorld(t, false)
+	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count(), Reason: "rescue-blocked: x", At: time.Now()})
+	if _, err := w.f.ForceStopSlot(ctx, "i-dark", true); err != nil {
+		t.Fatalf("ForceStopSlot: %v", err)
+	}
+	if _, held := w.rt().quarantineInForce(ctx, w.h.ec2.instances["i-dark"].Tags, "i-dark"); !held {
+		t.Fatalf("records %+v at count %d: the force-stop lost the hold", w.records(), w.count())
+	}
+	if _, err := w.rt().beginStart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if matches, _, _, _ := w.rt().slotTypeMatches(ctx, "i-dark"); matches {
+		t.Fatal("the next Start would reuse the held box")
 	}
 }

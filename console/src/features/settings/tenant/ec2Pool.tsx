@@ -559,13 +559,6 @@ export function PoolView() {
                             {tr("pool.force_stop")}
                           </Button>
                         )}
-                        {/* Rung L2 holds the slot out of the pool but leaves it a slot, so Stop (force) above still
-                            applies; Terminate is offered too (the server refuses while a home is on it). */}
-                        {s.rung === "quarantined" && (
-                          <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
-                            {tr("pool.terminate")}
-                          </Button>
-                        )}
                         <Button
                           small
                           disabled={reserving === s.instance_id}
