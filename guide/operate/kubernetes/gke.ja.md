@@ -82,7 +82,7 @@ $TF apply
 |---|---|
 | `name_prefix` | すべてのリソースと 2 つの Namespace（`<prefix>-cp`、`<prefix>-ws`）の名前になる。1 つのプロジェクトに 2 つ配備するなら、接頭辞も 2 つ要る（P8） |
 | `authorized_networks` | コントロールプレーンのエンドポイントへのアクセスを許可する範囲。StorageClass を作るプロバイダーがそのエンドポイントと通信するので、`apply` は承認済みネットワークから実行する。`enable_private_endpoint = true` なら VPC の中から実行する |
-| `node_cidr`・`pod_cidr`・`service_cidr`・`control_plane_cidr`・`private_service_access_cidr` | クラスターを作ったあとは変えられない。最初の 4 つは RFC 1918 か `100.64.0.0/10` の中に置き、外れると plan が失敗する（P15）。Private Service Access の範囲も同じ範囲の中に置く。ワークスペースの外向きのポリシーはこれらの範囲の外をすべて許可するので、この範囲を拒否できるのは範囲がその中にあるときだけで、plan はこの範囲を確かめない |
+| `node_cidr`・`pod_cidr`・`service_cidr`・`control_plane_cidr`・`private_service_access_cidr` | クラスターを作ったあとは変えられない。最初の 4 つは RFC 1918 か `100.64.0.0/10` の中に置き、外れると plan が失敗する（P15）。Private Service Access の範囲も同じ範囲の中に置く。ワークスペースの外向きのポリシーは、これらの範囲とリンクローカルの `169.254.0.0/16`（メタデータサーバーを含む）の外をすべて許可するので、この範囲を拒否できるのは範囲がその中にあるときだけで、plan はこの範囲を確かめない |
 | `min_master_version` | 作るときのバージョンではなく下限。クラスターはリリースチャンネルの既定のバージョンで始まり、コントロールプレーンがこの下限を下回ると plan のたびに失敗する（P1） |
 
 証明書は、DNS の承認レコードが引けるようになってから発行されます。状態は次で見られ、たいてい 1 時間以内に `ACTIVE` になります。
