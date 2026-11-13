@@ -66,6 +66,24 @@ func TestDescribeKeepsOnlyKnownServiceAndOperation(t *testing.T) {
 	}
 }
 
+func TestDescribeJoinsTheKeptWords(t *testing.T) {
+	for argv, want := range map[string]string{
+		"aws ec2 describe-instances --filters x --region ap-northeast-1": "aws ec2 describe-instances",
+		"aws --region ap-northeast-1 ec2 describe-instances":             "aws",
+		"/usr/bin/aws s3 cp a s3://b/c":                                  "aws s3 cp",
+		"aws ssm not-an-operation-xyz":                                   "aws",
+		"terraform plan":                                                 "terraform",
+		"./a\x00b":                                                       "",
+	} {
+		if got := Describe(strings.Fields(argv)); got != want {
+			t.Errorf("Describe(%q) = %q, want %q", argv, got, want)
+		}
+	}
+	if got := Describe(nil); got != "" {
+		t.Errorf("Describe(nil) = %q", got)
+	}
+}
+
 func TestRowGoesToItsSessionOrToTheWorkspace(t *testing.T) {
 	dir := useRoot(t)
 	liveSession(t, "cr-live")

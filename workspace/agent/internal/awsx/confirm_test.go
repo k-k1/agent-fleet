@@ -453,3 +453,50 @@ func TestConfirmGrantDoesNotSkipTheSettingsCheck(t *testing.T) {
 		t.Fatal("the run never ended")
 	}
 }
+
+func TestCleanCommandKeepsThreePlainWords(t *testing.T) {
+	for in, want := range map[string]string{
+		"aws ec2 describe-instances":           "aws ec2 describe-instances",
+		"/usr/local/bin/aws s3 ls extra words": "aws s3 ls",
+		"model route":                          "model route",
+		"123456789012 / Admin":                 "123456789012",
+		"terra<b>form\tplan":                   "terrabform plan",
+		"  ":                                   "",
+	} {
+		if got := cleanCommand(in); got != want {
+			t.Errorf("cleanCommand(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The request files are writable by every process of the user, so the list cleans the commands
+// it reads instead of trusting that af-aws-exec wrote them.
+func TestConfirmListCleansStoredCommands(t *testing.T) {
+	s := gateEnv(t)
+	gate(t, s, "prod-admin", "s1", gateLongWait)
+	if got := pending(t, 1)[0].Commands; len(got) != 1 || got[0] != "aws" {
+		t.Fatalf("commands = %q, want [aws]", got)
+	}
+	files, _ := filepath.Glob(filepath.Join(confirmDir("requests"), "*.json"))
+	if len(files) != 1 {
+		t.Fatalf("request files = %v", files)
+	}
+	unlock, err := lockConfirm(time.Now().Add(gateSlack))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r confirmRequest
+	if !readJSON(files[0], &r) {
+		t.Fatal("unreadable request")
+	}
+	r.Commands = []string{"aws ec2 describe-instances", "123456789012 / AdministratorAccess", "!!", "aws ec2 describe-instances --x"}
+	err = writeJSONAtomic(files[0], r)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := pending(t, 1)[0].Commands
+	if want := []string{"aws ec2 describe-instances", "123456789012"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+}

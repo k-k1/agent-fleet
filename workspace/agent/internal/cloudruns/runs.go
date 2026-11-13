@@ -364,6 +364,18 @@ func describe(argv []string) (program, service, operation string) {
 	return program, "", ""
 }
 
+// Describe is the command as describe keeps it, its words joined by spaces: "aws ec2
+// describe-instances", "aws" when the operation is not one the CLI knows, "terraform" for
+// another program, "" when the name is not plain characters. Nothing an argument holds besides
+// those names gets through, so the result may be shown where only Settings' words are trusted.
+func Describe(argv []string) string {
+	program, service, operation := describe(argv)
+	if service == "" {
+		return program
+	}
+	return program + " " + service + " " + operation
+}
+
 // prune keeps the newest rows of dir: perSession of them, or, for the workspace's spool,
 // those younger than workspaceKeep and at most workspaceMax.
 func prune(dir string, workspace bool, t time.Time) {

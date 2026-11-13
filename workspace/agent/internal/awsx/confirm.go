@@ -250,7 +250,7 @@ type ConfirmOptions struct {
 	Profile  string
 	Session  string // AF_SESSION_NAME
 	Wait     time.Duration
-	Command  string // the command's first word, cut like a login waiter's
+	Command  string // what runs, as cloudruns.Describe gives it; cleanCommand cuts it again
 	Stderr   io.Writer
 }
 
@@ -440,20 +440,44 @@ func contains(ss []string, s string) bool {
 	return false
 }
 
-// cleanCommand keeps the first word of a command as plain characters; the Console shows it
-// next to Settings' identity, so it must not be able to look like one.
+// cleanCommand keeps up to three words of a command ("aws ec2 describe-instances", "model
+// route") as plain characters, the first one cut to its base name. The Console shows it next to
+// Settings' identity, so it must not be able to look like one; the listing cleans what it reads
+// again, since the request files are writable by any process of the workspace's user.
 func cleanCommand(s string) string {
-	s = filepath.Base(strings.TrimSpace(s))
-	var b strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("._-", r) {
-			b.WriteRune(r)
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return ""
+	}
+	f[0] = filepath.Base(f[0])
+	var words []string
+	for _, w := range f[:min(len(f), 3)] {
+		var b strings.Builder
+		for _, r := range w {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("._-", r) {
+				b.WriteRune(r)
+			}
+			if b.Len() >= 64 {
+				break
+			}
 		}
-		if b.Len() >= 32 {
+		if b.Len() == 0 {
 			break
 		}
+		words = append(words, b.String())
 	}
-	return b.String()
+	return strings.Join(words, " ")
+}
+
+// cleanCommands is cleanCommand over a stored list, dropping what cleans to nothing.
+func cleanCommands(cs []string) []string {
+	var out []string
+	for _, c := range cs {
+		if c = cleanCommand(c); c != "" && !contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func newRequestID() string {

@@ -136,7 +136,8 @@ Ask as you normally would.
 > Show me the S3 buckets in Staging
 
 When the login has expired, a toast saying "**An agent is waiting for an AWS login**" appears at the bottom of the
-screen, with the session that is waiting and the command it wants to run.
+screen, with the session that is waiting and the command it wants to run. For `aws` the command shows the service and
+operation when the CLI knows them (`aws s3 cp`); any other program shows its name alone, never its arguments.
 
 ![The "An agent is waiting for an AWS login" toast. It shows the Production profile, the session that asked and its command (npx cdk deploy), a Log in button, and the time left before the request is withdrawn](../../assets/aws-toast-en-light.webp)
 
@@ -170,7 +171,8 @@ Press "**Export as ~/.aws/config**" below the list to download your profiles in 
 - **Turn on "Confirm before use"**: it is in the profile's form. When it is on, a session that is about to use the
   profile for the first time asks "**This session wants to use an AWS profile that asks for confirmation**". Press
   "**Allow for this session**", and the permission lasts 8 hours or until the session ends. Suits production
-  profiles.
+  profiles. The card names the command; for `aws` it shows the service and operation when the CLI knows them
+  (`aws s3 cp`), never the arguments. Shown as a notification, the card's session name opens that session.
 - **Add `--account`**: if the account ID differs, nothing runs. Put it in deploy runbooks and in instructions to
   agents.
 

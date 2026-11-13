@@ -637,3 +637,34 @@ func TestExpiresInSecFollowsTheSweepRule(t *testing.T) {
 		t.Fatal("an ended attempt still hides the countdown")
 	}
 }
+
+func TestCleanWaiterCommandKeepsPlainWords(t *testing.T) {
+	for in, want := range map[string]string{
+		"aws ec2 describe-instances":    "aws ec2 describe-instances",
+		"  terraform  ":                 "terraform",
+		"aws s3 cp <b>x</b> y":          "aws s3 cp bx/b y",
+		"aws ec2 ** describe-instances": "aws ec2",
+		"a b c d e f g h i j":           "a b c d e f g h",
+		"":                              "",
+	} {
+		if got := CleanWaiterCommand(in); got != want {
+			t.Errorf("CleanWaiterCommand(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// 96 bytes: three words of 40, 40 and 14 fit exactly; a third word of 15 would make 97 and is dropped.
+	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	if got, want := CleanWaiterCommand(a+" "+b+" "+strings.Repeat("c", 14)), a+" "+b+" "+strings.Repeat("c", 14); got != want || len(got) != 96 {
+		t.Errorf("at 96 bytes: got %q (%d)", got, len(got))
+	}
+	if got := CleanWaiterCommand(a + " " + b + " " + strings.Repeat("c", 15)); got != a+" "+b {
+		t.Errorf("past 96 bytes: got %q (%d)", got, len(got))
+	}
+}
+
+// The list cleans what it reads, words included: any agent can write the request file.
+func TestRecentWaitersKeepTheCommandsWords(t *testing.T) {
+	got := RecentWaiters([]Waiter{{Session: "s1", Command: "aws ec2 describe-instances"}, {Session: "s1", Command: "aws\tsts  get-caller-identity;rm"}}, 5)
+	if len(got) != 2 || got[0].Command != "aws sts get-caller-identityrm" || got[1].Command != "aws ec2 describe-instances" {
+		t.Fatalf("waiters = %+v", got)
+	}
+}

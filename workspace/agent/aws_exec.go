@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -194,12 +193,10 @@ func runAWSExec(args []string) {
 	interactive := cloudexec.IsTerminal(os.Stdin) && cloudexec.IsTerminal(os.Stderr)
 	if awsx.NeedsConfirmation(o.Settings, o.Profile) {
 		wait, _ := consoleLoginWaitFor(sessionName, interactive)
-		cmd := ""
-		if len(o.Argv) > 0 {
-			cmd = o.Argv[0]
-		}
+		// The card names the aws service and operation, so the member can tell a read from a
+		// write; Describe keeps no word of the arguments besides names the pinned CLI knows.
 		cr, cerr := awsx.ConfirmGate(awsx.ConfirmOptions{Settings: o.Settings, Profile: o.Profile, Session: sessionName,
-			Wait: wait, Command: cmd, Stderr: os.Stderr})
+			Wait: wait, Command: cloudruns.Describe(o.Argv), Stderr: os.Stderr})
 		if cerr != nil {
 			run.Refuse(cloudruns.RefusedConfirm)
 			awsExec.Fail(cloudexec.ExitConfirmRequired, cerr.Error())
@@ -225,7 +222,8 @@ func runAWSExec(args []string) {
 		name := os.Getenv("AF_SESSION_NAME")
 		o.ConsoleLogin = true
 		o.ConsoleWait, o.TerminalConsole = consoleLoginWaitFor(name, o.Interactive)
-		o.Waiter = awsx.LoginWaiter{Session: name, Command: filepath.Base(o.Argv[0]), Profile: o.Profile}
+		// Named as on the confirmation card: "aws <service> <operation>" from known names only.
+		o.Waiter = awsx.LoginWaiter{Session: name, Command: cloudruns.Describe(o.Argv), Profile: o.Profile}
 	}
 	if gated {
 		// The wait for the member's confirmation can be long: the member's own files may define

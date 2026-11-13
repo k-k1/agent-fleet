@@ -202,6 +202,36 @@ func TestAWSExecConfirmBeforeUse(t *testing.T) {
 	}
 }
 
+// The card names the aws service and operation the run asks for, and nothing else of its
+// arguments: the operation's parameters stay out.
+func TestAWSExecConfirmNamesTheOperation(t *testing.T) {
+	_, env := gatedHome(t)
+	const sentinel = "zq-sentinel-c0fd"
+	wait := startWrapper(t, env, "--profile", "prod-admin", "-q", "--no-login", "--",
+		"aws", "ec2", "describe-instances", "--endpoint-url", "https://"+sentinel, "--filters", sentinel)
+	id := pendingID(t)
+	rec := httptest.NewRecorder()
+	awsx.HandleConfirmList(rec, httptest.NewRequest("GET", "/aws-confirm", nil))
+	answerAs(t, id, "deny")
+	if code, stderr := wait(); code != 4 {
+		t.Fatalf("denied run: exit %d\n%s", code, stderr)
+	}
+	var got struct {
+		Requests []struct {
+			Commands []string `json:"commands"`
+		} `json:"requests"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Requests) != 1 {
+		t.Fatalf("list = %v %s", err, rec.Body.String())
+	}
+	if c := got.Requests[0].Commands; len(c) != 1 || c[0] != "aws ec2 describe-instances" {
+		t.Fatalf("commands = %q, want [aws ec2 describe-instances]", c)
+	}
+	if strings.Contains(rec.Body.String(), sentinel) {
+		t.Fatalf("the list holds an argument: %s", rec.Body.String())
+	}
+}
+
 // G4: the member's own definition added while a run waits for confirmation wins: the run
 // refuses after the approval instead of running the withheld profile from its own config, and
 // the CLI is never started for it.
