@@ -51,9 +51,9 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
 | [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic のコーディングエージェント | `2.1.323` | [提供元の規約](https://www.anthropic.com/legal/commercial-terms) |
-| [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI のコーディングエージェント | `0.168.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.168.0/LICENSE) |
-| [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.2.7` | [MIT](https://github.com/anomalyco/opencode/blob/v2.2.7/LICENSE) |
-| [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.110` | [提供元の規約](https://github.com/github/copilot-cli/blob/v1.0.110/LICENSE.md) |
+| [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI のコーディングエージェント | `0.169.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.169.0/LICENSE) |
+| [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.3.0` | [MIT](https://github.com/anomalyco/opencode/blob/v2.3.0/LICENSE) |
+| [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.111` | [提供元の規約](https://github.com/github/copilot-cli/blob/v1.0.111/LICENSE.md) |
 | [Antigravity CLI (`agy`)](https://antigravity.google/) | Google のコーディングエージェント | `1.5.8` | [提供元の規約](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor のコーディングエージェント | `2026.10.22-27dcf5f` | [提供元の規約](https://cursor.com/terms-of-service) |
 | [Kiro CLI (`kiro-cli`)](https://kiro.dev/cli/) | AWS の Kiro のコーディングエージェント | `3.1.0` | [提供元の規約](https://kiro.dev/license/) |
