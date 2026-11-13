@@ -37,8 +37,11 @@ var ErrSlotStartedAgain = errors.New("the workspace was started again while its 
 // one destructive call, the deregistration, through guard. A guard that refuses (false)
 // ends the sequence with ErrSlotStartedAgain before anything is deregistered; nil runs
 // the call unguarded. The wait is not guarded and does not hold any lock.
+//
+// afterDereg, when set, runs right after the deregistration call and before the wait, so a
+// give-up in the wait still finds whatever it set.
 func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID string, polls int,
-	guard func(context.Context, func(context.Context)) bool) (deregistered bool, err error) {
+	guard func(context.Context, func(context.Context)) bool, afterDereg func()) (deregistered bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -54,7 +57,18 @@ func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID strin
 	// whether the ENI went. Its message is kept for the refusal.
 	deregistered = true
 	var derr error
-	dereg := func(c context.Context) { derr = e.deregisterContainerInstance(c, instanceID) }
+	sent, fired := false, false
+	fire := func() {
+		if sent && !fired && afterDereg != nil {
+			fired = true
+			afterDereg()
+		}
+	}
+	defer fire() // owed once the call went out, whatever ends the sequence (an error, a panic)
+	dereg := func(c context.Context) {
+		sent = true
+		derr = e.deregisterContainerInstance(c, instanceID)
+	}
 	if guard == nil {
 		dereg(ctx)
 	} else if !guard(ctx, dereg) {
@@ -66,6 +80,7 @@ func (e *ecsEC2Runtime) releaseSlotTaskENI(ctx context.Context, instanceID strin
 	if derr != nil {
 		log.Printf("ecs-ec2: %v", derr)
 	}
+	fire()
 	if werr := e.waitTaskENIsGoneWithin(ctx, instanceID, polls); werr != nil {
 		if ctx.Err() != nil {
 			return deregistered, werr
