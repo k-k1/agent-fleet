@@ -107,6 +107,9 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	started := startedLabel(m)
 	// The live-dependent fields (state / remote URL / context / resumable / bg-busy)
 	// diverge by kind — the agent computes them (see WireLive per implementation).
+	if alive {
+		reconcileInputDelivery(m)
+	}
 	li := AgentOf(m.Kind).WireLive(m, alive)
 	// The overview card's usage facts, for the kinds whose WireLive does not read them itself
 	// (overview_facts.go). A field the agent did fill wins: lcpp knows its window exactly.
@@ -141,6 +144,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		KeepAwakeUntil: m.KeepAwakeUntil, StopAfterTurnAt: stopArmVisible(m),
 		SpendCapUSD: m.SpendCapUSD, SpendCapHitAt: m.SpendCapHitAt,
 		LastTurnEndAt: lastTurnEndAt(m),
+		// The list's own reason for an idle that is not a turn end (status.InputNotDelivered).
+		InputNotDelivered: alive && status.InputNotDelivered(session.UUID(m.Dir, m.Name)),
 		// Origin / OriginSession ride the wire so a caller outside this process can answer
 		// "is this one of MY children" without reading metas off disk (ADR 0073): the MCP
 		// server's steering gate and per-parent budget, and the Console's mirror attribution

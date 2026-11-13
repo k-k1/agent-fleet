@@ -409,6 +409,24 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	return found && r.turnEnd >= first, true
 }
 
+// InputSeen reports whether a user step exists after the mark idx (agents.LiveStateTraits.InputSeen).
+// Unknown where the steps cannot be read or are fewer than the mark (a reset conversation).
+func InputSeen(m session.Meta, mark string) (seen, known bool) {
+	at, err := strconv.Atoi(mark)
+	if err != nil {
+		return false, false
+	}
+	r, ok := lastStep(m)
+	if !ok || r.idx < at {
+		return false, false
+	}
+	_, found, ok := firstUserStepAfter(r.conv, at)
+	if !ok {
+		return false, false
+	}
+	return found, true
+}
+
 // stepTypeUser is the steps.step_type of the user's own input (measured, v1.2.14).
 const stepTypeUser = 14
 

@@ -72,6 +72,12 @@ type SessionStatus struct {
 	// while that hook runs. Empty on a record written by an older agent, by a heal, or by a
 	// kind without hooks — all of which read as "no ledger", i.e. the pane decides.
 	PromptID string `json:"promptId,omitempty"`
+	// InputNotDelivered marks an idle written because the input of the turn that stood "working"
+	// never reached the kind's source within its window (PersistInputNotDelivered). It is NOT a
+	// turn end: TurnEnd stays false, so no end is stamped, no idle watch version exists and no
+	// completion is told. It is a flag on the record, not a state, so every reader of State keeps
+	// working; a late input flips it back (ReopenDelivered).
+	InputNotDelivered bool `json:"inputNotDelivered,omitempty"`
 }
 
 // ExitInfo records WHY a session's agent process terminated, so the sessions list can

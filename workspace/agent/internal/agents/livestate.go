@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -51,6 +52,16 @@ type LiveStateTraits struct {
 	// needed table), which sends the caller back to the window, never to "always idle".
 	TurnMark   func(m session.Meta) (mark string, ok bool)
 	EndedAfter func(m session.Meta, mark string) (after, known bool)
+	// InputSeen is the delivery half of the same identity: whether the new input's own user
+	// line / step has reached the source at or after mark, known=false when the source cannot
+	// say (same cases as EndedAfter). A turn whose input never shows up is the one a stored
+	// "working" would otherwise hold until the next input (sessionx.reconcileInputDelivery).
+	// Set together with TurnMark and EndedAfter, and with InputWindow.
+	InputSeen func(m session.Meta, mark string) (seen, known bool)
+	// InputWindow is how long after the working write the user line may still be missing
+	// before the input counts as not delivered. It only bounds a transient: an input that lands
+	// later is picked up again by InputSeen, so too short costs a brief idle, never a lost turn.
+	InputWindow time.Duration
 }
 
 // scanLines calls fn with the byte offset and text of each line in at most the last window
@@ -147,6 +158,32 @@ func firstLineFrom(path string, at int64, match func(line []byte) bool) (off int
 			return 0, false, nil
 		}
 	}
+}
+
+// InputSeenOffset is InputSeen for an append-only JSONL file: a line accepted by isStart at or
+// after mark. known=false when the file is unreadable or smaller than mark (rotated, truncated).
+// A file that does not exist yet is a known "not seen" only for mark 0.
+func InputSeenOffset(path, mark string, isStart func(line []byte) bool) (seen, known bool) {
+	at, err := strconv.ParseInt(mark, 10, 64)
+	if err != nil {
+		return false, false
+	}
+	fi, err := os.Stat(path)
+	switch {
+	case err == nil:
+		if fi.Size() < at {
+			return false, false
+		}
+	case os.IsNotExist(err) && at == 0:
+		return false, true
+	default:
+		return false, false
+	}
+	_, found, err := firstLineFrom(path, at, isStart)
+	if err != nil {
+		return false, false
+	}
+	return found, true
 }
 
 // EndedAfterOffset is EndedAfter for an append-only JSONL file. It needs the PAIR: a line

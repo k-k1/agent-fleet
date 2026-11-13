@@ -393,6 +393,11 @@ type Session struct {
 	// "the turn ended" apart from "an idle we cannot explain" (status.SessionStatus.TurnEnd,
 	// docs/log/51), and a fabricated time would be read as evidence of completion.
 	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
+	// InputNotDelivered is true while the session reads idle because the last input never reached
+	// the CLI (hook-less kinds: the new user line did not show up in the kind's source within its
+	// window). It is not a turn end: LastTurnEndAt is not set and no idle watch version exists.
+	// It clears when the input appears late or the next input starts a turn.
+	InputNotDelivered bool `json:"inputNotDelivered,omitempty"`
 	// LastSay is the opening line of the agent's newest utterance — one line, whitespace
 	// collapsed, capped at 120 runes by the agent that produced it (ADR 0078 decision 12).
 	// Empty when the session has not spoken yet, and for agy, shell and ssm, which are not

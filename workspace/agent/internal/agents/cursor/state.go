@@ -111,15 +111,27 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	if chatID == "" {
 		return false, false
 	}
-	return agents.EndedAfterOffset(transcriptPath(m.Dir, chatID), mark, tailWindow, func(line []byte) bool {
-		var ev struct {
-			Role string `json:"role"`
-		}
-		return json.Unmarshal(line, &ev) == nil && (ev.Role == "user")
-	}, func(line []byte) bool {
+	return agents.EndedAfterOffset(transcriptPath(m.Dir, chatID), mark, tailWindow, isUserRow, func(line []byte) bool {
 		var ev struct {
 			Type string `json:"type"`
 		}
 		return json.Unmarshal(line, &ev) == nil && ev.Type == "turn_ended"
 	})
+}
+
+// InputSeen reports whether a user row reached the transcript at or after mark
+// (agents.LiveStateTraits.InputSeen).
+func InputSeen(m session.Meta, mark string) (seen, known bool) {
+	chatID := ChatID(m)
+	if chatID == "" {
+		return false, false
+	}
+	return agents.InputSeenOffset(transcriptPath(m.Dir, chatID), mark, isUserRow)
+}
+
+func isUserRow(line []byte) bool {
+	var ev struct {
+		Role string `json:"role"`
+	}
+	return json.Unmarshal(line, &ev) == nil && ev.Role == "user"
 }

@@ -456,3 +456,32 @@ func TestTurnMarkAndEndedAfter(t *testing.T) {
 		t.Fatal("a DB without a turn log was compared")
 	}
 }
+
+func TestInputSeen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir, slot, conv := "/home/dev/repos/proj", "slot-seen", "conv-seen"
+	m := session.Meta{Dir: dir, Name: slot, Kind: session.KindAgy}
+	sids.Write(session.UUID(dir, slot), conv)
+	step := [3]any{14, stepStatusDone, []byte("x")}
+	mkConvDBWithTurns(t, conv, [][3]any{step, step}, [][]byte{executorRow(4, 1)})
+	mark, _ := TurnMark(m)
+	if seen, known := InputSeen(m, mark); seen || !known {
+		t.Fatalf("no new step yet: seen=%v known=%v", seen, known)
+	}
+	db, err := sql.Open("sqlite", conversationDBPath(conv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.Exec(`INSERT INTO steps (idx, step_type, status, step_payload) VALUES (2,15,?,?)`, stepStatusDone, []byte("x"))
+	if seen, known := InputSeen(m, mark); seen || !known {
+		t.Fatalf("a non-user step counted: seen=%v known=%v", seen, known)
+	}
+	db.Exec(`INSERT INTO steps (idx, step_type, status, step_payload) VALUES (3,14,?,?)`, stepStatusDone, []byte("x"))
+	if seen, known := InputSeen(m, mark); !seen || !known {
+		t.Fatalf("the new user step was missed: seen=%v known=%v", seen, known)
+	}
+	if _, known := InputSeen(m, "9"); known {
+		t.Fatal("a reset conversation was compared")
+	}
+}
