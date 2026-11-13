@@ -250,6 +250,25 @@ describe("a stalled-tree notice is badged, not shown as typed input", () => {
     const el = render(turn(undefined), OWNER);
     expect(el.querySelector(".mt-op")).toBeNull();
   });
+  it.each<[string, Parameters<typeof tr>[0]]>([
+    ["stalled-tree", "mirror.from_notice"],
+    ["watch", "mirror.from_notice_watch"],
+    ["pr-feedback", "mirror.from_notice_pr_feedback"],
+    ["something-new", "mirror.from_notice_other"],
+  ])("badges kind=%s by its own label", (kind, key) => {
+    const turns: Turn[] = [
+      { role: "user", text: `[agent-fleet:notice kind=${kind} type=pr_checks reply=none] body`, idx: 1, source: "notice" },
+    ];
+    const badge = render(turns, OWNER).querySelector(".mt-op");
+    expect(badge?.textContent).toContain(tr(key));
+    if (kind !== "stalled-tree") expect(badge?.textContent).not.toContain(tr("mirror.from_notice"));
+  });
+  it("falls back to the generic badge when the envelope is missing or quoted later", () => {
+    for (const text of ["no envelope", "see [agent-fleet:notice kind=watch reply=none] above"]) {
+      const el = render([{ role: "user", text, idx: 1, source: "notice" }], OWNER);
+      expect(el.querySelector(".mt-op")?.textContent).toContain(tr("mirror.from_notice_other"));
+    }
+  });
 });
 
 describe("folding the work trace never flaps back", () => {

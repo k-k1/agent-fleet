@@ -66,6 +66,20 @@ export function peerIntentOf(text: string): PeerIntent | null {
   return m && PEER_INTENTS.includes(m) ? (m as PeerIntent) : null;
 }
 
+// noticeKindOf reads the notice kind out of the leading `[agent-fleet:notice kind=… …]` envelope
+// (stalled_tree.go, notice.go, pr_feedback.go). Every notice turn carries the same origin tag, so
+// the kind lives only in this text. Anchored at the start and confined to the bracket (no "]"
+// inside), so a body that merely quotes an envelope is never read. Anything else — no kind, an
+// unknown kind, no envelope — is "other": the badge then says plainly "Notice" instead of guessing.
+const NOTICE_ENVELOPE_RE = /^\[agent-fleet:notice ([^\]]{0,400})\]/;
+export type NoticeKind = "stalled-tree" | "watch" | "pr-feedback" | "other";
+export function noticeKindOf(text: string): { kind: NoticeKind } {
+  const head = NOTICE_ENVELOPE_RE.exec(text)?.[1] ?? "";
+  const kind = /(?:^|\s)kind=([a-z-]+)(?=\s|$)/.exec(head)?.[1];
+  if (kind === "stalled-tree" || kind === "watch" || kind === "pr-feedback") return { kind };
+  return { kind: "other" };
+}
+
 // spawnParentOf reads the parent session's name out of the envelope the Agent prepends to the
 // launch task of a session another SESSION started (session_spawn.go SpawnEnvelope, ADR 0073).
 //

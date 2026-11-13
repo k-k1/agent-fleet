@@ -369,6 +369,15 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.from_notice": "Stalled-tree notice",
   "mirror.from_notice_title":
     "An automated check from the agent: this session and all its live children have been idle for a while with no message in flight. Typed neither by you nor by the assistant.",
+  "mirror.from_notice_watch": "Watch notice",
+  "mirror.from_notice_watch_title":
+    "An automated notice from the agent: a PR or other event you asked it to watch has changed. Typed neither by you nor by the assistant.",
+  "mirror.from_notice_pr_feedback": "PR feedback",
+  "mirror.from_notice_pr_feedback_title":
+    "An automated notice from the agent: new review feedback arrived on a pull request. Typed neither by you nor by the assistant.",
+  "mirror.from_notice_other": "Notice",
+  "mirror.from_notice_other_title":
+    "An automated notice from the agent. Typed neither by you nor by the assistant.",
   "mirror.from_chat": "From {provider}",
   "mirror.from_chat_title": "Sent as a reply from chat ({provider}), not typed at the console.",
   "mirror.from_peer": "From another session",
