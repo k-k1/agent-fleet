@@ -19,7 +19,12 @@ import (
 
 // AnsiRe matches the CSI/escape sequences and lone control chars Ink emits while
 // redrawing, so flow output can be scraped as plain text.
-var AnsiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
+//
+// The OSC alternative must come first and consume the whole sequence: claude prints
+// its authorize URL as an OSC 8 hyperlink (ESC ] 8 ;; URL BEL URL ESC ] 8 ;; BEL), and
+// stripping only ESC and BEL leaves "]8;;URLURL]8;;", which the URL scrape reads as one
+// URL with a corrupted state parameter, so the sign-in page refuses it.
+var AnsiRe = regexp.MustCompile(`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
 
 // Flow is one running login flow: the interactive CLI process, the handle its output
 // arrives on, and the accumulated output (scraped for URLs/codes/errors).
@@ -167,6 +172,31 @@ func (f *Flow) WaitFor(re *regexp.Regexp, timeout time.Duration) string {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return ""
+}
+
+// WaitForURL is WaitFor for a URL scraped with a trailing \S+: it accepts a match only once
+// something follows it in the cleaned output (by greediness, whitespace), so a read that ends
+// mid-URL, or inside the OSC 8 sequence that closes a hyperlink (left as "]8;;" until its BEL
+// arrives), is not handed to the browser truncated or with a remnant glued on. The CLIs print
+// the URL on its own line; when the output ends or the timeout hits first, the last match is
+// returned as WaitFor would have.
+func (f *Flow) WaitForURL(re *regexp.Regexp, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	last := ""
+	for time.Now().Before(deadline) {
+		ended := f.Ended()
+		s := f.Clean()
+		if loc := re.FindStringIndex(s); loc != nil {
+			last = s[loc[0]:loc[1]]
+			if loc[1] < len(s) || ended {
+				return last
+			}
+		} else if ended {
+			return ""
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return last
 }
 
 // NewFlowID mints an opaque flow id the client uses to address a pending flow.
