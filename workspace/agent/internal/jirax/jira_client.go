@@ -7,8 +7,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +20,67 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-var jiraHTTPClient = &http.Client{Timeout: 20 * time.Second}
+// jiraHTTPClient carries every JSON REST call. Go's default redirect policy re-sends the
+// Authorization header to another port of the same host, to subdomains and across an HTTPS to
+// HTTP hop, so a 3xx could carry the credential off the API origin; jiraCheckRedirect closes that.
+var jiraHTTPClient = &http.Client{Timeout: 20 * time.Second, CheckRedirect: jiraCheckRedirect}
+
+// errJiraRedirectRefused marks a redirect the policy refuses (another origin, a downgrade, a write, a loop). It is
+// deterministic, so jiraDo never retries it.
+var errJiraRedirectRefused = errors.New("redirect refused")
+
+// jiraOrigin is scheme://host:port with the scheme's default port made explicit, so
+// "https://h" and "https://h:443" are one origin and nothing looser is.
+func jiraOrigin(u *url.URL) string {
+	scheme, port := strings.ToLower(u.Scheme), u.Port()
+	if port == "" {
+		switch scheme {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		}
+	}
+	host := u.Hostname()
+	// Only ASCII letters are folded, and an IPv6 zone (case-sensitive, it names an interface) not
+	// at all. strings.ToLower would also map U+0130 to "i", merging two hosts the resolver tells
+	// apart; a Unicode and a punycode spelling of one host are refused instead (fail closed).
+	zone := ""
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host, zone = host[:i], host[i:]
+	}
+	host = strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, host) + zone
+	return scheme + "://" + net.JoinHostPort(host, port)
+}
+
+// jiraCheckRedirect follows a redirect only for a GET or HEAD, only within the exact origin of
+// the first request, and never from HTTPS to HTTP. A write is never redirected: Go turns a
+// 301/302/303 POST/PUT/DELETE into a GET, whose 200 would read as the write having succeeded. Anything else fails the call instead of sending the Authorization
+// header there. No Jira Cloud call the Agent makes needs a cross-origin hop: site and
+// api.atlassian.com/ex/jira/<cloudId> answer in place, and attachment content is fetched with
+// redirect=false precisely so that no hop to the media host happens.
+func jiraCheckRedirect(req *http.Request, via []*http.Request) error {
+	first := via[0].URL
+	if via[0].Method != http.MethodGet && via[0].Method != http.MethodHead {
+		return errJiraRedirectRefused
+	}
+	// Past the limit is refused with the same sentinel so that jiraDo does not re-send the chain.
+	if len(via) >= 10 {
+		return errJiraRedirectRefused
+	}
+	if first.Scheme == "https" && req.URL.Scheme != "https" {
+		return errJiraRedirectRefused
+	}
+	if jiraOrigin(req.URL) != jiraOrigin(first) {
+		return errJiraRedirectRefused
+	}
+	return nil
+}
 
 // CloudAPIBase is Atlassian's OAuth-side API host. A var, not a const, for the same
 // reason bbTokenURL is one: the site resolution and the 3LO request path are real HTTP
