@@ -56,6 +56,9 @@ var Entries = []string{
 	"session-status",
 	"session-exit",
 	"session-turn-end",
+	// A hook-less kind's source position at turn start (status.RecordTurnMark). Introduced
+	// directly under AgentStateDir.
+	"session-turn-mark",
 	"session-injections",
 	"session-auth-resume",
 	"session-abort-resume",

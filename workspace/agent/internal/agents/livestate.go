@@ -1,6 +1,14 @@
 package agents
 
-import "github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+import (
+	"bufio"
+	"bytes"
+	"io"
+	"os"
+	"strconv"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
 
 // LiveStater is an optional Agent capability: the live-state verdicts the kind's own store or
 // runtime gives beyond the status store its hooks write. sessionx's DriveState (the mirror and
@@ -30,4 +38,146 @@ type LiveStateTraits struct {
 	// limit. RateLimitedManagedOnly restricts it to Managed sessions.
 	RateLimited            func(name string) bool
 	RateLimitedManagedOnly bool
+	// TurnMark and EndedAfter are the kind's turn identity: where its state source stands when
+	// a turn starts, and whether the newest turn end in it lies after that. Both are nil for a
+	// kind whose source exposes no position (kiro's is a pane scrape), which keeps sessionx's
+	// settle window as the only guard. Without them a poll right after a new input can read the
+	// previous turn's idle as this turn's end.
+	//
+	// TurnMark returns an opaque token, ok=false when the source cannot be read (not created
+	// yet, managed driver, unreadable): the turn then has no identity and the window applies.
+	// EndedAfter says whether the newest turn end lies after mark; known=false when the source
+	// cannot say (unreadable, rotated or truncated below the mark, a build without the
+	// needed table), which sends the caller back to the window, never to "always idle".
+	TurnMark   func(m session.Meta) (mark string, ok bool)
+	EndedAfter func(m session.Meta, mark string) (after, known bool)
+}
+
+// scanLines calls fn with the byte offset and text of each line in at most the last window
+// bytes of the file at path, returning the file size it saw and the offset the first reported
+// line may follow (the window's base). A read that starts mid-file drops its first, probably
+// cut, line. Offsets are absolute and only grow, which is what makes "after the mark taken at
+// turn start" a plain compare.
+func scanLines(path string, window int64, fn func(off int64, line []byte)) (size, base int64, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return 0, 0, err
+	}
+	size = fi.Size()
+	from := int64(0)
+	if size > window {
+		from = size - window
+	}
+	buf := make([]byte, size-from)
+	if _, err := f.ReadAt(buf, from); err != nil && err != io.EOF {
+		return size, from, err
+	}
+	base = from
+	if from > 0 {
+		i := bytes.IndexByte(buf, '\n')
+		if i < 0 {
+			return size, from, nil
+		}
+		buf, base = buf[i+1:], from+int64(i)+1
+	}
+	for off := 0; off < len(buf); {
+		end := bytes.IndexByte(buf[off:], '\n')
+		line := buf[off:]
+		next := len(buf)
+		if end >= 0 {
+			line, next = buf[off:off+end], off+end+1
+		}
+		fn(base+int64(off), line)
+		off = next
+	}
+	return size, from, nil
+}
+
+// FileSizeMark is the turn mark of an append-only file: its size now, "0" while it does not
+// exist yet (every line it will ever hold lies after that). ok=false for any other failure.
+func FileSizeMark(path string) (string, bool) {
+	fi, err := os.Stat(path)
+	switch {
+	case err == nil:
+		return strconv.FormatInt(fi.Size(), 10), true
+	case os.IsNotExist(err):
+		return "0", true
+	}
+	return "", false
+}
+
+// firstLineFrom streams the file from byte offset at and returns the offset of the first line
+// accepted by match. A mark that falls inside a line (the CLI was mid-write) skips that line's
+// remainder: it began before the mark.
+func firstLineFrom(path string, at int64, match func(line []byte) bool) (off int64, found bool, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false, err
+	}
+	defer f.Close()
+	off = at
+	if at > 0 {
+		var prev [1]byte
+		if _, err := f.ReadAt(prev[:], at-1); err != nil {
+			return 0, false, err
+		}
+		if prev[0] != '\n' {
+			// Mid-line: skip to the next line start.
+			br := bufio.NewReader(io.NewSectionReader(f, at, 1<<62))
+			rest, err := br.ReadBytes('\n')
+			if err != nil {
+				return 0, false, nil
+			}
+			off += int64(len(rest))
+		}
+	}
+	br := bufio.NewReader(io.NewSectionReader(f, off, 1<<62))
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 && match(bytes.TrimRight(line, "\n")) {
+			return off, true, nil
+		}
+		off += int64(len(line))
+		if err != nil {
+			return 0, false, nil
+		}
+	}
+}
+
+// EndedAfterOffset is EndedAfter for an append-only JSONL file. It needs the PAIR: a line
+// accepted by isStart at or after mark (the new input reaching the source) and, after that
+// start, a line accepted by isEnd. An end alone proves nothing: the previous turn's late end (a
+// shutdown flush, or a previous run's huge tail followed by its end) can land after the
+// baseline but before the new input shows up, and growth of the file is no evidence of input.
+// The start is therefore searched from the mark forward, not in the tail window, so a turn
+// that wrote more than a window still has its real start found, and a source without one
+// denies the end. known=false when the file is unreadable or smaller than mark (rotated or
+// truncated: offsets from before are meaningless).
+func EndedAfterOffset(path, mark string, window int64, isStart, isEnd func(line []byte) bool) (after, known bool) {
+	at, err := strconv.ParseInt(mark, 10, 64)
+	if err != nil {
+		return false, false
+	}
+	lastEnd := int64(-1)
+	size, _, err := scanLines(path, window, func(off int64, line []byte) {
+		if isEnd(line) {
+			lastEnd = off
+		}
+	})
+	if err != nil || size < at {
+		return false, false
+	}
+	if lastEnd < at {
+		return false, true
+	}
+	first, found, err := firstLineFrom(path, at, isStart)
+	if err != nil {
+		return false, false
+	}
+	return found && lastEnd > first, true
 }

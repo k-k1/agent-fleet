@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"math"
 	"path/filepath"
+	"strconv"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in opencode
 
@@ -371,4 +372,57 @@ func parseAskQuestions(payload []byte) []transcript.Question {
 		out = append(out, tq)
 	}
 	return out
+}
+
+// TurnMark is the turn identity's start half (agents.LiveStateTraits.TurnMark): the idx of the
+// conversation's newest step, which only grows. ok=false while the conversation has no step
+// yet (a first prompt) or is not adopted.
+func TurnMark(m session.Meta) (string, bool) {
+	r, ok := lastStep(m)
+	if !ok {
+		return "", false
+	}
+	return strconv.Itoa(r.idx), true
+}
+
+// EndedAfter reports whether the newest executor run ended at or after the first user step
+// following mark, i.e. the run that answers the new input. Unknown where the build has no executor_metadata,
+// where it cannot be read, or where the steps are fewer than the mark (a reset conversation).
+func EndedAfter(m session.Meta, mark string) (after, known bool) {
+	at, err := strconv.Atoi(mark)
+	if err != nil {
+		return false, false
+	}
+	r, ok := lastStep(m)
+	if !ok || r.turnLog != turnLogRead || r.idx < at {
+		return false, false
+	}
+	// The previous run can close after the mark too (its own last steps were still landing), so
+	// the end must follow the NEW input's own user step. No user step after the mark yet, or a
+	// cannot prove the pairing (a table or column that cannot be read is unknown, below).
+	first, found, ok := firstUserStepAfter(r.conv, at)
+	if !ok {
+		return false, false
+	}
+	// A readable steps table with no user step after the mark is a denial (the input has not
+	// landed; the end seen is the previous run's), not an unknown.
+	return found && r.turnEnd >= first, true
+}
+
+// stepTypeUser is the steps.step_type of the user's own input (measured, v1.2.14).
+const stepTypeUser = 14
+
+// firstUserStepAfter: ok=false only when the steps table cannot be read; a read that finds no
+// user step reports found=false.
+func firstUserStepAfter(conv string, idx int) (first int, found, ok bool) {
+	db, err := sql.Open("sqlite", "file:"+conversationDBPath(conv)+"?mode=ro&_pragma=busy_timeout(3000)")
+	if err != nil {
+		return 0, false, false
+	}
+	defer db.Close()
+	var n sql.NullInt64
+	if err := db.QueryRow(`SELECT MIN(idx) FROM steps WHERE idx > ? AND step_type = ?`, idx, stepTypeUser).Scan(&n); err != nil {
+		return 0, false, false
+	}
+	return int(n.Int64), n.Valid, true
 }

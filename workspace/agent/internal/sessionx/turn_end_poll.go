@@ -42,17 +42,62 @@ import (
 // already fired it and the persisted state is idle — no double fire.
 func notifyPolledTurnEnd(m session.Meta, state string) {
 	sid := session.UUID(m.Dir, m.Name)
-	if state != "idle" || status.LiveState(sid) != "working" || turnJustStarted(sid) {
+	if state != "idle" || status.LiveState(sid) != "working" || !idleEndsThisTurn(m, sid) {
 		return
 	}
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)
 }
 
+// turnMarkBaseline is where a kind's source stood at some instant; ok=false when it has no
+// identity or could not be read.
+type turnMarkBaseline struct {
+	mark string
+	ok   bool
+}
+
+// captureTurnMark reads the baseline for a turn about to be delivered to session name. It must
+// run BEFORE the input reaches the CLI (a fast turn can end before the working write that
+// follows delivery), and is recorded only by the working write that delivery succeeded with.
+// Kinds without TurnMark (kiro) and an unreadable source give none: the window applies.
+func captureTurnMark(name string) turnMarkBaseline {
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		return turnMarkBaseline{}
+	}
+	t := liveStateTraits(m.Kind)
+	if !t.PolledTurnEnd || t.TurnMark == nil || t.EndedAfter == nil {
+		return turnMarkBaseline{}
+	}
+	mark, ok := t.TurnMark(m)
+	return turnMarkBaseline{mark: mark, ok: ok}
+}
+
+// idleEndsThisTurn reports whether an idle just read from m's source is the end of the turn the
+// status record started, for both routes that record one. With a turn identity (the mark taken
+// at the working write and a source that can say where its newest end lies) the answer is exact
+// and immediate: an end after the mark counts at once, however quickly the turn ran, and one
+// before it never does. Without one (kiro, no mark because the Agent never saw the start, an
+// unreadable or rotated source) it is the settle window below.
+func idleEndsThisTurn(m session.Meta, sid string) bool {
+	t := liveStateTraits(m.Kind)
+	if t.EndedAfter != nil {
+		if mark, ok := status.TurnMarkOf(sid); ok {
+			if after, known := t.EndedAfter(m, mark); known {
+				// A readable source that denies this turn's end is believed: no elapsed time turns
+				// it into a completion (a long tool run can look idle through a tail read, and
+				// a synthesized end would be told, then reused by the real one).
+				return after
+			}
+		}
+	}
+	return !turnJustStarted(sid)
+}
+
 // polledEndSettleDefault is the production value of polledEndSettle. It is a heuristic, not a
 // measurement of how long any kind's source lags: a stale idle that outlives it is still taken as
 // the new turn's end. It stays short because the same gate delays the completion notification of
-// a turn that really ended inside it. The exact fix is an identity from the source itself (a turn
-// id), which these four kinds do not expose today.
+// a turn that really ended inside it. Only the fallback now: a kind with a turn identity
+// (idleEndsThisTurn) never consults it.
 const polledEndSettleDefault = 10 * time.Second
 
 // polledEndSettle is how long after a turn's start (the status record's "working" write) a poll's
@@ -99,7 +144,7 @@ func recordPolledTurnEnd(m session.Meta, state string) {
 	if !liveStateTraits(m.Kind).PolledTurnEnd {
 		return
 	}
-	if state != "idle" || turnJustStarted(sid) {
+	if state != "idle" || !idleEndsThisTurn(m, sid) {
 		return
 	}
 	status.RecordTurnEnd(sid)
