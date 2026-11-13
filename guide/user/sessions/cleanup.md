@@ -24,7 +24,7 @@ You can also ask the [Fleet Operator](../fleet/operator.md) to do the same surve
 
 ## What stays and what goes
 
-The only thing that goes on its own is an archived session's scratch folder. A conversation is gone for good only when you delete it permanently from the trash.
+The only thing that goes on its own is an archived session's work folder. A conversation is gone for good only when you delete it permanently from the trash.
 
 | | Archive | Delete (to the trash) | Delete permanently from the trash |
 |---|---|---|---|
@@ -54,9 +54,9 @@ Archived sessions are listed behind the **"Open archive (restore)"** icon in the
 | **"Delete old ones"** | Moves everything archived 30 or more days ago to the trash |
 
 - A session left stopped for 7 days moves to the archive on its own ([Stop and resume a session](stop-resume.md#leave-a-session-stopped))
-- Nothing leaves the archive on its own, except the scratch folder (what agents use as `$AF_WORK_DIR`), which is removed 7 days after archiving
-- Restore within 7 days and the scratch folder is kept. One already removed is created afresh at the next launch
-- While a session is locked, its scratch folder is kept. To free the space sooner, delete it from [See your machine and its usage](../workspace/machine.md#leftover-files)
+- Nothing leaves the archive on its own, except the session's work folder (where its agent keeps throwaway files), which is removed 7 days after archiving
+- Restore within 7 days and the work folder is kept. One already removed is created afresh at the next launch
+- While a session is locked, its work folder is kept. To free the space sooner, delete it from [See your machine and its usage](../workspace/machine.md#leftover-files)
 
 A throwaway shell / SSM is not archived: **"Delete"** in its ⋯ menu moves it to the trash.
 

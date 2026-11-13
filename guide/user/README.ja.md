@@ -54,7 +54,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [内蔵の Git を使う](code/internal-git.ja.md) | 外部のサービスを使わずに、テナントの中にリポジトリを置く |
 | [リポジトリからセッションを起動する](code/launch-from-repo.ja.md) | リポジトリの行からセッションを起動し、行のバッジで状態を読む |
 | [Git Flow を初期化する](code/git-flow.ja.md) | 課題から作るブランチを、git-flow の流儀にそろえる |
-| [コミットグラフでコミットする](code/commit.ja.md) | 履歴と差分を見て、端末を開かずにコミットする |
+| [コミットグラフでコミットする](code/commit.ja.md) | 履歴と差分を見て、ターミナルを開かずにコミットする |
 | [Subversion のリポジトリを使う](code/svn.ja.md) | Subversion のリポジトリをチェックアウトして、セッションで作業する |
 
 ## ファイルとターミナル
@@ -65,7 +65,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [ドキュメントや図を表示する](files/view.ja.md) | Markdown・スライド・`.drawio` の図・PDF・Office の文書を Console で読む |
 | [ファイルを編集する](files/edit.ja.md) | 開いたファイルをその場で直して保存する。AI に書き換えを提案させる |
 | [ファイルをセッションに渡す](files/send.ja.md) | 選んだ範囲を、指示を添えてセッションやアシスタントに送る |
-| [ターミナルを使う](files/terminal.ja.md) | ブラウザの端末でコピー・貼り付けをし、入力の遅延を確かめ、フォントを変える |
+| [ターミナルを使う](files/terminal.ja.md) | ブラウザのターミナルでコピー・貼り付けをし、入力の遅延を確かめ、フォントを変える |
 
 ## プレビュー
 
@@ -83,7 +83,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | [エージェントを選ぶ](agents/choose.ja.md) | 契約に合うエージェントを選んで接続し、既定モデルや使わないモデルを決める |
 | [Claude を接続する](agents/claude.ja.md) | Claude Code をセッションで動かす。リモートコントロールを使う |
 | [Codex を接続する](agents/codex.ja.md) | ChatGPT のサブスクか API キーで Codex を動かす |
-| [OpenCode を接続する](agents/opencode.ja.md) | いくつものプロバイダのモデルを、OpenCode で切り替えて使う |
+| [OpenCode を接続する](agents/opencode.ja.md) | いくつものプロバイダーのモデルを、OpenCode で切り替えて使う |
 | [GitHub Copilot を接続する](agents/copilot.ja.md) | GitHub の接続だけで Copilot CLI を動かす |
 | [Cursor を接続する](agents/cursor.ja.md) | Cursor のアカウントで Cursor CLI を動かす |
 | [Kiro を接続する](agents/kiro.ja.md) | Kiro を導入し、Builder ID などで動かす |
@@ -114,7 +114,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | ページ | できること |
 |---|---|
 | [AWS SSO を使う](integrations/aws-sso.ja.md) | エージェントに、あなたの権限で AWS のコマンドを実行してもらう |
-| [SSM で EC2 にログインする](integrations/aws-ssm.ja.md) | EC2 に、ブラウザの端末からログインする |
+| [SSM で EC2 にログインする](integrations/aws-ssm.ja.md) | EC2 に、ブラウザのターミナルからログインする |
 | [Google Cloud を使う](integrations/gcloud.ja.md) | エージェントに、あなたの権限で Google Cloud のコマンドを実行してもらう |
 | [セッションに MCP サーバーを追加する](integrations/mcp-servers.ja.md) | 社内のツールや外部のサービスを、MCP サーバーとしてエージェントに使わせる |
 | [課題管理サービスを接続する](integrations/issue-tracker.ja.md) | Jira の課題や GitHub の Issue を左ペインに並べ、そこからセッションを始める |
@@ -139,7 +139,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 | ページ | できること |
 |---|---|
 | [ワークスペースを作り直す](workspace/recreate.ja.md) | 壊れた環境を、最新のイメージで作り直す |
-| [マシンと使用状況を見る](workspace/machine.ja.md) | マシンの大きさと、メモリ・ディスクの使い方を確かめ、ディスクの空きを作る |
+| [マシンと使用状況を見る](workspace/machine.ja.md) | マシンのサイズと、メモリ・ディスクの使い方を確かめ、ディスクの空きを作る |
 | [ツールチェーンを選ぶ](workspace/toolchains.ja.md) | Node.js・Java・Go のバージョンとタイムゾーンを選ぶ |
 | [データベースを使うテストを動かす](workspace/databases.ja.md) | ワークスペースの中の PostgreSQL と MySQL でテストを動かす |
 | [AWS のコードを手元のエミュレーターで試す](workspace/aws-emulator.ja.md) | 本物のアカウントに触らずに、AWS のコードを試す |
@@ -197,7 +197,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 
 | ページ | できること |
 |---|---|
-| [資格情報を安全に扱う](security/credentials.ja.md) | トークンや鍵をどこに置き、どこに書かないかを知る |
+| [資格情報を安全に扱う](security/credentials.ja.md) | トークンやキーをどこに置き、どこに書かないかを知る |
 
 ## 困ったとき
 

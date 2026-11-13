@@ -1,5 +1,5 @@
 ---
-audience: "端末に触れずに Agent Fleet を使う人"
+audience: "ターミナルに触れずに Agent Fleet を使う人"
 source_of_truth: "Console そのもの（画面と食い違ったら画面が正）"
 ---
 
