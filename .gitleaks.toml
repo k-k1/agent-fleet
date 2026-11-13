@@ -38,6 +38,10 @@ regexes = [
   # made-up curl -u user:password command line that the Claude audit import must not record, in two
   # spellings. Not a credential; later commits use an af-test-fixture- value.
   '''me:(hunter2|" \+ tok \+ ")''',
+  # control-plane/internal/runtime/runtime_ecs_ec2_dark_quarantine.go in 22492377d and its merge: the line
+  # `key := ec2TagWedgeAtPrefix + ...` is a Go constant name (an EC2 tag key prefix), not a credential.
+  # Later commits name the variable recordKey, which the rule does not match.
+  '''ec2TagWedgeAtPrefix''',
 ]
 
 [[allowlists]]

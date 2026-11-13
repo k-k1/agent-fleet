@@ -55,6 +55,9 @@ type ec2SlotView struct {
 	DarkSince string `json:"dark_since,omitempty"`
 	// Rung is how far the dark-slot ladder has gone: darkRung* below. Empty = not dark.
 	Rung string `json:"rung,omitempty"`
+	// RescueActive: the box carries a dark-slot rescue marker (running, blocked or finishing).
+	// The Console offers the force-stop on a quarantined row only while it is set.
+	RescueActive bool `json:"rescue_active,omitempty"`
 	// WedgedSince is when the wedged-slot scan first saw this running slot wedged (RFC 3339,
 	// from af-wedged-since; ADR 0121 amendment), and WedgedRung how far it has gone (observing,
 	// then releasing, blocked or released). Empty when there is no stamp for the current launch.
@@ -419,6 +422,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
 			s.ReplaceReserved = s.ReplaceReservedAt != ""
 			s.DarkSince, s.Rung = darkView(inst)
+			s.RescueActive = ec2TagValue(inst.Tags, ec2TagRescue) != ""
 			s.WedgedSince, s.WedgedRung = wedgedView(inst)
 			st.Slots = append(st.Slots, s)
 		}

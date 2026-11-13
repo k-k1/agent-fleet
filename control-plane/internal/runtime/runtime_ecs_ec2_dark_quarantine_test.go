@@ -400,7 +400,8 @@ func TestForceStopTakesOverAnL2QuarantinedBlockedRescueButNotOtherQuarantines(t 
 	if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", true); err != nil {
 		t.Fatalf("ForceStopSlot on an L2 quarantine with a blocked rescue: %v", err)
 	}
-	if stopsOnBox(h) != 1 || slotMarker(h) != "" {
+	// The stop is sent, and the marker is the rescue's own again so that the sweep finishes it.
+	if back, ok := parseRescueMarker(slotMarker(h)); stopsOnBox(h) != 1 || !ok || back.Operator || back.Phase != rescuePhaseStopping {
 		t.Fatalf("stops %v marker %q", h.ec2.stopForce, slotMarker(h))
 	}
 	// Without a marker there is nothing to finish: the box is for Terminate.
@@ -421,7 +422,10 @@ func TestQuarantineWriteIsBoundedAndSettlesWhenItsOutcomeIsUnknown(t *testing.T)
 	w.arm()
 	var slept []time.Duration
 	w.rt() // the factory's sleeper is shared by every runtime it builds
-	w.f.sleep = func(_ context.Context, d time.Duration) error {
+	w.f.sleep = func(sctx context.Context, d time.Duration) error {
+		if sctx.Err() != nil {
+			t.Errorf("the settle wait was handed a cancelled context: %v", sctx.Err())
+		}
 		slept = append(slept, d)
 		return nil
 	}
@@ -495,4 +499,44 @@ func TestRecordEpisodeMakesRoomBeforeWritingOnAFullBox(t *testing.T) {
 			t.Fatalf("marker %q survived: a finalizer that cannot record must not hold the home", w.marker())
 		}
 	})
+}
+
+// The operator's force-stop on an L2-quarantined blocked rescue must not strand the home: the
+// marker goes back to the rescue's own kind, and the next sweep carries on to the detach.
+func TestForceStopOnAnL2QuarantinedRescueHandsItBackAndTheNextSweepDetaches(t *testing.T) {
+	for name, fail := range map[string]bool{"stop sent": false, "stop fails": true} {
+		t.Run(name, func(t *testing.T) {
+			w := quarantineWorld(t, false)
+			shortBounds(t)
+			withENI(w)
+			w.h.ci.stickyENI = true
+			w.arm()
+			w.pass(w.f)
+			m, _ := parseRescueMarker(w.marker())
+			m.BlockedSince = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+			w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, m.String())
+			w.pass(w.f)
+			if w.role() != ec2RoleQuarantined {
+				t.Fatal("setup: not quarantined")
+			}
+			w.h.ci.stickyENI = false
+			w.h.ec2.dropTaskENIs("i-dark")
+			if fail {
+				w.h.ec2.stopErr = errBoom
+			}
+			_, err := w.f.ForceStopSlot(context.Background(), "i-dark", true)
+			if fail != (err != nil) {
+				t.Fatalf("ForceStopSlot err = %v", err)
+			}
+			w.h.ec2.stopErr = nil
+			back, ok := parseRescueMarker(w.marker())
+			if !ok || back.Operator || back.Wedged || !back.BlockedSince.IsZero() {
+				t.Fatalf("marker %q: want the dark rescue's own marker back", w.marker())
+			}
+			w.pass(w.f)
+			if attachedInstance(w.vol()) != "" || w.marker() != "" || w.role() != ec2RoleQuarantined {
+				t.Fatalf("home on %q marker %q role %q: the next sweep must finish the rescue", attachedInstance(w.vol()), w.marker(), w.role())
+			}
+		})
+	}
 }

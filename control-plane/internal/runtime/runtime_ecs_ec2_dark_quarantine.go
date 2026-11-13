@@ -169,8 +169,8 @@ const ec2TagLimit = 50
 // episode is logged and not recorded, so the marker still goes: a finalizer that fails the
 // same way every sweep would hold the member's home for good.
 func (e *ecsEC2Runtime) recordEpisode(ctx context.Context, instanceID string, tags []ec2types.Tag, m rescueMarker) error {
-	key := ec2TagWedgeAtPrefix + m.Began.UTC().Format(episodeKeyLayout)
-	exists := ec2TagValue(tags, key) != ""
+	recordKey := ec2TagWedgeAtPrefix + m.Began.UTC().Format(episodeKeyLayout)
+	exists := ec2TagValue(tags, recordKey) != ""
 	// The window is measured from now, not from this episode: a record is dead once no
 	// episode that is still to begin can be within the window of it.
 	cutoff := e.now().Add(-e.pool.repeatWindow())
@@ -188,7 +188,7 @@ func (e *ecsEC2Runtime) recordEpisode(ctx context.Context, instanceID string, ta
 	dropped := map[string]bool{}
 	recs := episodeRecordsOf(tags) // oldest first
 	for _, r := range recs {
-		if r.at.Before(cutoff) && r.key != key {
+		if r.at.Before(cutoff) && r.key != recordKey {
 			drop = append(drop, ec2types.Tag{Key: aws.String(r.key)})
 			dropped[r.key] = true
 			total--
@@ -198,7 +198,7 @@ func (e *ecsEC2Runtime) recordEpisode(ctx context.Context, instanceID string, ta
 		if total <= ec2TagLimit {
 			break
 		}
-		if !dropped[r.key] && r.key != key {
+		if !dropped[r.key] && r.key != recordKey {
 			drop = append(drop, ec2types.Tag{Key: aws.String(r.key)})
 			dropped[r.key] = true
 			total--
@@ -223,7 +223,7 @@ func (e *ecsEC2Runtime) recordEpisode(ctx context.Context, instanceID string, ta
 	}
 	_, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{instanceID},
-		Tags: []ec2types.Tag{{Key: aws.String(key),
+		Tags: []ec2types.Tag{{Key: aws.String(recordKey),
 			Value: aws.String(m.Began.UTC().Format(time.RFC3339) + "/" + episodeKind(m))}},
 	})
 	return err
@@ -267,7 +267,7 @@ func (e *ecsEC2Runtime) quarantineApplies(m rescueMarker) bool {
 var (
 	// quarantineWriteBudget caps the one CreateTags (and so how long it can be in flight).
 	quarantineWriteBudget = 10 * time.Second
-	// quarantineSettle is how long a write whose outcome is unknown is waited out, locks held.
+	// quarantineSettle is how long a write whose outcome is unknown is waited out.
 	quarantineSettle = 5 * time.Second
 )
 
@@ -275,15 +275,16 @@ var (
 // section: the mount lock outer, the token re-verified under the claim lock inside it, both
 // leases asked right before the write, and the box re-read there.
 //
-// What this does and does not fence. A tag write cannot be conditional, so a request that was
-// already sent cannot be taken back, and checking the marker before sending proves nothing
-// about a request that is delayed afterwards. The protocol is instead that the request is
-// never in flight without the locks: it carries a deadline no later than either lease and
-// the write budget, is not retried by the SDK, and when its outcome is unknown (an error or
-// the deadline) the locks are kept for quarantineSettle more, so that whatever AWS received
-// has been applied before anybody else can finalize the marker, re-place the home or read
-// the box. It assumes an AWS request that has not been applied within that settle time
-// after its deadline is not applied later; the guide's return procedure waits longer.
+// This is NOT a fence, and nothing here can make it one. An EC2 tag write cannot be
+// conditional, and a request that was already sent cannot be taken back or bounded by a
+// client-side deadline: a late one can land after the leases are gone, after another replica
+// finalized the marker, and after an operator returned the slot. What this does is make a late
+// write unlikely and cheap: a deadline no later than either lease and the write budget, no SDK
+// retry, and, when the outcome is unknown, a wait of quarantineSettle that the cancellation of
+// the pass does not cut short. What a late write costs is bounded: the slot reads quarantined
+// until the next Start of a home on it re-places that home, or an operator returns it again.
+// The guarantee that a returned slot stays returned is operational, not code: the guide has the
+// operator switch the action off on every replica before returning a slot (ADR 0121, rung L2).
 //
 // A box that is already quarantined is left alone and reported nothing: the decision is
 // once per box, not once per pass.
@@ -317,8 +318,10 @@ func (e *ecsEC2Runtime) rescueQuarantine(ctx context.Context, slot string, m *re
 		err = e.writeDarkQuarantine(wctx, slot, why)
 		cancel()
 		if err != nil {
-			// Outcome unknown: keep the locks until a request that was received has landed.
-			_ = e.sleep(c, quarantineSettle)
+			// Outcome unknown. The wait must not die with the pass: that is exactly when it is needed.
+			sctx, scancel := context.WithTimeout(context.WithoutCancel(c), 2*quarantineSettle)
+			_ = e.sleep(sctx, quarantineSettle)
+			scancel()
 			return fmt.Errorf("%w: quarantine %s: %w", errRescueAborted, slot, err)
 		}
 		reason = why

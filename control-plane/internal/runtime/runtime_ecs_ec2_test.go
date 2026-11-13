@@ -81,6 +81,7 @@ type fakeEC2 struct {
 	// maxTags, when set, makes CreateTags refuse a request that leaves a resource with more tags
 	// (EC2's limit is 50); createTagsDeadline records the context deadline each key was sent with.
 	maxTags            int
+	stopErr            error // makes StopInstances fail without stopping
 	createTagsDeadline map[string]time.Time
 	// deleteTagsErr makes DeleteTags fail, without deleting anything, for a request that
 	// names this tag key.
@@ -757,6 +758,9 @@ func (f *fakeEC2) StartInstances(_ context.Context, in *ec2.StartInstancesInput,
 func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _ ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.stopErr != nil {
+		return nil, f.stopErr
+	}
 	for _, id := range in.InstanceIds {
 		f.log("StopInstances %s", id)
 		f.stopForce = append(f.stopForce, aws.ToBool(in.Force))
