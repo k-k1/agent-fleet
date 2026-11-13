@@ -752,7 +752,7 @@ func TestKubeEraseScriptOnAnEarlierLayout(t *testing.T) {
 // so both are read and must hold the same script.
 var rollbackPages = []struct{ path, heading string }{
 	{"../../../guide/operate/kubernetes/upgrade.md", "## Roll back past the home layout"},
-	{"../../../guide/operate/kubernetes/upgrade.ja.md", "## ホームの配置より前の版に戻す"},
+	{"../../../guide/operate/kubernetes/upgrade.ja.md", "## ホームディレクトリの配置より前のバージョンに戻す"},
 }
 
 // rollbackScriptIn returns the first bash block after heading in the page at path, with the

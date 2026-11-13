@@ -57,7 +57,7 @@ cp -r deploy/kubernetes/overlays/generic "$OVERLAY"
    kubectl config current-context                # the cluster you mean
    kubectl apply -k "$OVERLAY"
    ```
-5. CP の Namespace に CP の Secret を作ります。キーに加えてストアの DSN を `AF_DATABASE_URL` として入れ、ロールアウトを待ちます。使うサインインのシークレット（`GOOGLE_OAUTH_CLIENT_SECRET`、`AF_OIDC_<ID>_CLIENT_SECRET`、`GITHUB_OAUTH_CLIENT_SECRET`）も同じ Secret に入れます。キーの要件は [配備の鍵を扱う](../secure/deployment-keys.ja.md) にあります。イメージにプルシークレットが要るなら、ここで `$WS_NS` に、`AF_K8S_IMAGE_PULL_SECRET` に書いた名前で作ります
+5. CP の Namespace に CP の Secret を作ります。キーに加えてストアの DSN を `AF_DATABASE_URL` として入れ、ロールアウトを待ちます。使うサインインのシークレット（`GOOGLE_OAUTH_CLIENT_SECRET`、`AF_OIDC_<ID>_CLIENT_SECRET`、`GITHUB_OAUTH_CLIENT_SECRET`）も同じ Secret に入れます。キーの要件は [配備のキーを扱う](../secure/deployment-keys.ja.md) にあります。イメージにプルシークレットが要るなら、ここで `$WS_NS` に、`AF_K8S_IMAGE_PULL_SECRET` に書いた名前で作ります
    ```bash
    kubectl -n "$CP_NS" create secret generic af-cp-secrets \
      --from-literal=AF_MASTER_KEY="$(cat master-key)" \
@@ -68,7 +68,7 @@ cp -r deploy/kubernetes/overlays/generic "$OVERLAY"
    ```
 6. クラスターの ingress を Service `af-cp`（ポート 8099）の前に置きます。ingress は、手順 3 のポリシーが許可する送信元にします
    - WebSocket を通し、アイドルタイムアウトを長くします
-   - `AF_TRUSTED_PROXY_HOPS` を、`X-Forwarded-For` に追記するプロキシの数にします。数えるのは、そのプロキシを通らないと CP に届かないものだけです（理由は [GKE に構築する](gke.ja.md#7-ロードバランサを知る)）。変えたらオーバーレイを適用し直します
+   - `AF_TRUSTED_PROXY_HOPS` を、`X-Forwarded-For` に追記するプロキシの数にします。数えるのは、そのプロキシを通らないと CP に届かないものだけです（理由は [GKE に構築する](gke.ja.md#7-ロードバランサーを知る)）。変えたらオーバーレイを適用し直します
 7. claim `af-cp-data` のバックアップを用意します。GKE での例は [バックアップ・復元する](backup.ja.md#残すべきもの) にあります
 8. P1〜P14 を自分で満たします。これらを代わりに確かめる仕組みはありません
 

@@ -39,7 +39,7 @@ WantedBy=default.target
 
 - `%h` はホームディレクトリです。`ExecStart` のパスは、インストーラーで入れたとき（`~/.local/bin/af` のリンク）のものです
 - tar を手で展開したときは、展開した場所の `af` を指定します。例: `ExecStart=%h/agent-fleet-native-<v>-linux-<arch>/af start`。本当のパスは `readlink -f "$(command -v af)"` でわかります
-- `AF_SYSTEMD_UNIT` は、Console の「**再起動して適用**」がこの unit を見つけるためのものです（[ネイティブパッケージを更新する](update.ja.md#用意した版に切り替える)）
+- `AF_SYSTEMD_UNIT` は、Console の「**再起動して適用**」がこの unit を見つけるためのものです（[ネイティブパッケージを更新する](update.ja.md#用意したバージョンに切り替える)）
 - 読み上げ・画像・エンジンを借りるための環境変数は、`[Service]` に `Environment=` の行で足します（例: `Environment=AF_VOICEVOX_URL=...`）
 
 ## 2. 有効にする

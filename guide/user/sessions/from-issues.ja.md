@@ -213,4 +213,4 @@ GitHub がマージできると言っているプルリクエストには、「*
 - [課題管理サービスを接続する](../integrations/issue-tracker.ja.md)：Jira の接続と、一覧に出すクエリ
 - [Jira を使う](../integrations/jira.ja.md)：エージェントに Jira の課題を扱ってもらう
 - [GitHub の CLI を使う](../integrations/github-cli.ja.md)：エージェントに `gh` でプルリクエストを扱ってもらう
-- [ワークツリーで並行して作業する](worktrees.ja.md)：作業コピーとブランチ
+- [worktree で並行して作業する](worktrees.ja.md)：作業コピーとブランチ

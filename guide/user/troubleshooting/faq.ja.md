@@ -73,7 +73,7 @@ source_of_truth: "Console そのものと、各ページの説明"
 ## いくつもの作業を同時に進めていい？
 
 進めてかまいません。セッションごとに別の作業コピー（worktree）で作業すれば、編集がぶつかりません。
-既定で worktree が作られます（[ワークツリーで並行して作業する](../sessions/worktrees.ja.md)）。
+既定で worktree が作られます（[worktree で並行して作業する](../sessions/worktrees.ja.md)）。
 
 ## opencode が、新しいセッションの種類に出てこない
 

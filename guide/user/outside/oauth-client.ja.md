@@ -130,5 +130,5 @@ claude mcp add --transport http --scope user agent-fleet https://<Console のア
 
 - [外部の Claude からワークスペースを動かす](external-claude.ja.md)：トークンでつなぐ。セッションに届く指示の見え方
 - [手元の Claude Code の作業をワークスペースに移す](move-work-in.ja.md)：サインインでつないだ Claude Code から、作業を移す
-- [外のアプリからの OAuth 接続を止める](../../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)：管理者が MCP OAuth を有効にする
-- [資格情報を安全に扱う](../security/credentials.ja.md)
+- [外部のアプリからの OAuth 接続を止める](../../admin/mcp-distribute.ja.md#外部のアプリからの-oauth-接続を止める)：管理者が MCP OAuth を有効にする
+- [認証情報を安全に扱う](../security/credentials.ja.md)

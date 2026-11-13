@@ -3,7 +3,7 @@ audience: "複数の配備（本番・ステージング・手元）を運用す
 source_of_truth: "Console の「管理」→「見た目」、`control-plane/brand.go`"
 ---
 
-# 複数のデプロイを見分ける
+# 複数の配備を見分ける
 
 [English](deployment-label.md) | 日本語
 

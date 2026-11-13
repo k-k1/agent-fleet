@@ -46,7 +46,7 @@ EBS のホームは AZ の外に出られません。Control Plane は、その�
 
 AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う](#az-を移す失う) にあります。
 
-## プールを建てる
+## プールを構築する
 
 1. `40-ec2-pool` をデプロイし、`30-ingress` を `WsRuntime=ecs-ec2` で更新します。`Ec2SlotLaunchTemplate` には `40-ec2-pool` の出力 `SlotLaunchTemplateId` を渡します
 
@@ -71,7 +71,7 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 
 - 切り替える前に、メンバーに作業をコミットして push してもらいます。ホームディレクトリの中のファイルは自分で移します
 
-- `30-ingress` が 51,200 バイトを超えるので、S3 経由でデプロイします（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）
+- `30-ingress` が 51,200 バイトを超えるので、S3 経由でデプロイします（[テンプレートのサイズの上限に気をつける](template-size.ja.md)）
 - `Ec2SlotLaunchTemplate` が空のままだと、Control Plane はこのプロファイルでは起動しません
 - 一度構築したあとは、`update.sh` がプールのスタックも一緒に更新します（[アップグレードする](upgrade.ja.md)）
 
@@ -90,7 +90,7 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 | `Ec2SlotSleepSec` | `AF_ECS_EC2_SLOT_SLEEP_SEC` | `900` | タスクのないインスタンスを**停止**するまでの秒数。コンピューティングの課金が止まり、ルートボリュームの課金は続く。`0` で止めない |
 | `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0`（オフ） | 同じタイマーの次の段階。過ぎるとインスタンスを**終了**し、ルートボリュームも消える。`14400`（4 時間）がおすすめ |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | ユーザーごとのホームのボリューム（gp3）の GiB |
-| `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0`（オフ） | 使われないホームを退避するまでの、配備の既定（[ホームの休止と予備のコピーを設定する](slot-homes.ja.md)） |
+| `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0`（オフ） | 使われないホームを退避するまでの、配備の既定（[ホームディレクトリの休止と予備のコピーを設定する](slot-homes.ja.md)） |
 | `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | スロットのメモリのうち、ワークスペースに渡さない分（[ワークスペースが使えるメモリ](#ワークスペースが使えるメモリ)） |
 | — | `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` | `300` | EC2 では `running` なのにクラスターからエージェントに到達できないスロットを、あきらめてワークスペースをほかで作り直すまでの秒数。`0` で呼び出し側が許すかぎり待つ |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1`（オン） | golden snapshot を自動でビルドする（[golden snapshot](#golden-snapshot)） |
@@ -135,7 +135,7 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 
 新しいホームは、初回の起動で 4 つの CLI などの導入（boot-install、約 48 秒）と、空の npm キャッシュの分だけ遅くなります。それを済ませたホームを 1 つビルドしておくと、以後の新しいユーザーはそのコピーから始まります。これが golden snapshot です。
 
-### 自動で焼く
+### 自動でビルドする
 
 既定では、Control Plane が自分でビルドします。
 
@@ -151,7 +151,7 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 
 どの状況かは、「**管理**」→「**スロット**」の「**golden snapshot**」の欄に出ます。golden はアーキテクチャごとに 1 つで、プールの全員で共有します（[Graviton（arm64）のクラスを足す](slot-types.ja.md#gravitonarm64のクラスを足す)）。`af-membership` タグを持たないので、ワークスペースを破棄しても消えません。
 
-### 手で焼く
+### 手動でビルドする
 
 `AF_ECS_EC2_GOLDEN_AUTOBAKE=0` にした配備では、リリースのたびに自分でビルドします。自動でビルドする配備でも、その場でビルドしたいときに使えます。
 
@@ -234,7 +234,7 @@ EBS のボリュームを別の AZ に動かす操作はありません。移す
 
 ### AZ を失ったとき
 
-ホームはほかの AZ へ移せないので、障害が起きる前に備えておく必要があります。[予備のコピー](slot-homes.ja.md#ホームの予備のコピーを取る) をオンにしておいてください。
+ホームはほかの AZ へ移せないので、障害が起きる前に備えておく必要があります。[予備のコピー](slot-homes.ja.md#ホームディレクトリの予備のコピーを取る) をオンにしておいてください。
 
 | 対象 | 起きること |
 |---|---|
@@ -245,7 +245,7 @@ EBS のボリュームを別の AZ に動かす操作はありません。移す
 
 1. 障害の AZ のサブネットを Control Plane の `AF_ECS_SUBNETS` から外し、Control Plane を再起動します。新しいホームとスロットがその AZ を選ばなくなります
    - 参照用のスタックでは、`AF_ECS_SUBNETS` は `00-network` の `PrivateSubnets` から入ります。パラメータでは外せず、タスク定義を手で直すと次にデプロイすると元に戻ります
-2. AZ が戻らないときは、予備のコピーからホームを作り直します（[予備からホームを戻す](slot-homes.ja.md#予備からホームを戻す)）
+2. AZ が戻らないときは、予備のコピーからホームを作り直します（[予備からホームディレクトリを戻す](slot-homes.ja.md#予備からホームディレクトリを戻す)）
 
 ## 使い始める前に知っておくこと
 
@@ -296,8 +296,8 @@ EBS のボリュームを別の AZ に動かす操作はありません。移す
 ## 関連
 
 - [スロットのマシンの種類を選ぶ](slot-types.ja.md)
-- [ホームの休止と予備のコピーを設定する](slot-homes.ja.md)
+- [ホームディレクトリの休止と予備のコピーを設定する](slot-homes.ja.md)
 - [スロットを入れ替える・止める](slot-maintenance.ja.md)
 - [スロットプールで困ったとき](slot-troubleshooting.ja.md)
-- [ワークスペースの大きさを決める](workspace-size.ja.md)：Fargate のサイズ
+- [ワークスペースのサイズを決める](workspace-size.ja.md)：Fargate のサイズ
 - [費用を抑える](cost.ja.md)

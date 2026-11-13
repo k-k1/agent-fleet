@@ -90,7 +90,7 @@ docker compose up -d --build     # from source
 docker compose logs -f cp
 ```
 
-- `AF_MASTER_KEY` は、作ったその場でパスワードマネージャーに控えます。`DATA_DIR` にもバックアップにも入りません（[配備の鍵を扱う](../secure/deployment-keys.ja.md)）
+- `AF_MASTER_KEY` は、作ったその場でパスワードマネージャーに控えます。`DATA_DIR` にもバックアップにも入りません（[配備のキーを扱う](../secure/deployment-keys.ja.md)）
 - `DOCKER_GID` を間違えると、docker のソケットで permission denied になります
 - 各変数の意味は `.env.example` 自体に書いてあります。何を選ぶかは [インストールする](../install.ja.md) の手順 1〜4 です
 

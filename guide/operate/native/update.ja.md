@@ -46,7 +46,7 @@ systemctl --user disable --now agent-fleet-update.timer   # stop auto-staging
 systemctl --user list-timers agent-fleet-update.timer     # when it next runs
 ```
 
-## 用意した版に切り替える
+## 用意したバージョンに切り替える
 
 切り替えとは、メインのサービスを再起動することです。都合のよいときに、どちらかで行います。
 

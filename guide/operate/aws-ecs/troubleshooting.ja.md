@@ -24,7 +24,7 @@ ECS の配備で、構築・アップグレード・ワークスペースの起�
 |---|---|
 | クラスターの作成が「ECS Service Linked Role is not ready」で失敗する | 新しいアカウントに `AWSServiceRoleForECS` がありません。サービスにリンクされたロールを作ります（[ECS に構築する](install.ja.md#サービスにリンクされたロールを作る)） |
 | 変更セットが `InsufficientCapabilitiesException … Requires capabilities` で拒否される | `--capabilities` が足りません（[スタックに必要な capabilities](install.ja.md#スタックに必要な-capabilities)） |
-| `aws cloudformation deploy` がテンプレートのサイズのエラーで終わり、スタックのイベントに何もない | `30-ingress` を S3 経由で渡していません（[テンプレートの大きさの上限に気をつける](template-size.ja.md)） |
+| `aws cloudformation deploy` がテンプレートのサイズのエラーで終わり、スタックのイベントに何もない | `30-ingress` を S3 経由で渡していません（[テンプレートのサイズの上限に気をつける](template-size.ja.md)） |
 | `30-ingress` が `ServiceLimitExceeded` でロールバックする | Control Plane のタスクロールのインラインポリシーが上限を超えました。追加した権限は管理ポリシーにします（[デプロイに必要な IAM 権限](iam.ja.md#control-plane-のタスクロールのポリシーの上限)） |
 | `20-platform` をデプロイすると AlreadyExists で失敗する | ECR のリポジトリをスタックの外で作りました。リポジトリは `20-platform` が作ります |
 | `30-ingress` をデプロイしても進まず、失敗もしない | プレビュー用のゾーンが `PreviewDomain` を含んでおらず、ACM の DNS 検証が終わりません（[プレビュー用のサブドメインを使う](options.ja.md#ドメインとゾーンを決める)） |
@@ -38,8 +38,8 @@ ECS の配備で、構築・アップグレード・ワークスペースの起�
 | 症状 | 原因と対処 |
 |---|---|
 | `--parameter-overrides Key=` で空にしたのに「No changes」になる | この方法では空になりません。`clear-params.sh` を使います（[パラメータを空に戻す](upgrade.ja.md#パラメータを空に戻す)） |
-| `ComfyApiKey=on` などのスイッチを入れたら、Control Plane のタスクが起動しない | スイッチが読む SSM パラメータがありません。先に作ります（[秘密はスイッチで読む](options.ja.md#秘密はスイッチで読む)） |
-| `WorkspaceDekRandom=on` でデプロイするとロールバックする | `CustodianKmsKeyArn` がありません。両方を一緒に渡します（[ホームごとに鍵を分ける](options.ja.md#ホームごとに鍵を分ける)） |
+| `ComfyApiKey=on` などのスイッチを入れたら、Control Plane のタスクが起動しない | スイッチが読む SSM パラメータがありません。先に作ります（[シークレットはスイッチで読む](options.ja.md#シークレットはスイッチで読む)） |
+| `WorkspaceDekRandom=on` でデプロイするとロールバックする | `CustodianKmsKeyArn` がありません。両方を一緒に渡します（[ホームディレクトリごとにキーを分ける](options.ja.md#ホームディレクトリごとにキーを分ける)） |
 | 新しいリリースに上げたのに、新しいパラメータの機能がオンにならない | `update.sh` は、これらのパラメータに触りません。`30-ingress` を個別にデプロイします（[パラメータを変える](options.ja.md#パラメータを変える)） |
 
 ## アップグレードするとき

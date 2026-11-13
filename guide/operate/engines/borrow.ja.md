@@ -3,7 +3,7 @@ audience: "compose / native / docker の配備から、AWS で動く別の Agent
 source_of_truth: "Control Plane が起動時に読む環境変数と、貸す側の管理 → 推論エンジンの「借用トークンを発行して見せる」。どのエンジンとモデルがあるかは貸す側のカタログ"
 ---
 
-# 別のデプロイのエンジンを借りる
+# 別の配備のエンジンを借りる
 
 [English](borrow.md) | 日本語
 

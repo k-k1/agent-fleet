@@ -54,4 +54,4 @@ source_of_truth: "Console の ⚙設定 >「エージェントへの指示」「
 - [スナップショットでメモリを戻す](snapshots.ja.md)：エージェント自身のメモリの履歴
 - [メモリを取り込む・書き出す](import-export.ja.md)：Claude Code や muse のメモリを持ち込む
 - [外部のエージェントからメモリを使う](external.ja.md)：Agent Fleet の外から使う
-- [エージェント — 種別ごとにできること](../../ref/agents.ja.md#エージェント自身のメモリ)：種類ごとの対応
+- [エージェント — 種類ごとにできること](../../ref/agents.ja.md#エージェント自身のメモリ)：種類ごとの対応
