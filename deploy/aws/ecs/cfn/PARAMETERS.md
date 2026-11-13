@@ -850,8 +850,11 @@ their own.
 
 **Upgrade order: 10-data, then 30-ingress.** `update.sh` stops before touching anything when the
 data stack lacks the `CpDataEfsId` output. Rolling 10-data back removes the exports 30-ingress
-imports, so roll 30-ingress back first. Procedure and the orphaned repository rows:
-`guide/operate/aws-ecs/upgrade.md`, "The Control Plane's data root".
+imports, so roll 30-ingress back first. The first upgrade replaces the task whose disk holds every
+repository created or pushed since it started: copy those out before it, then clear the orphaned
+rows and push them back (`guide/operate/aws-ecs/upgrade.md`, "The Control Plane's data root").
+Restoring from a recovery point needs its own path (`backup.md`, "Restore the Control Plane's
+repositories"): the members' root-mount restore cannot reach this file system.
 
 ### Home task (volume root)
 

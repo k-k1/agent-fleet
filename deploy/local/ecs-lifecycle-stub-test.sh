@@ -214,7 +214,7 @@ case "$args" in
   *"backup get-backup-selection"*"length(NotResources"*) printf '0\t0\t0\n' ;;
   *"backup get-backup-selection"*"BackupSelection.Resources"*)
     [ "${STUB_VAULT:-}" = noplan ] && echo "arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-other" \
-      || echo "arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-1" ;;
+      || printf 'arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-1\tarn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-cp\n' ;;
   # 00-network's GatewayEni (EgressRoute=gateway), before the database lookup below.
   *"logical-resource-id GatewayEni"*) echo "eni-gw" ;;
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;

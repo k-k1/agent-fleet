@@ -39,7 +39,8 @@ RDS のスナップショットと、EFS のオンデマンドの復旧ポイン
 ```bash
 ./efs-backup-check.sh --profile <p> --region <r> --stack af-ecs-ingress   # read-only
 aws cloudformation describe-stacks --stack-name af-ecs-data \
-  --query "Stacks[0].Outputs[?OutputKey=='EfsBackupVaultName'].OutputValue" --output text
+  --query "Stacks[0].Outputs[?OutputKey=='EfsBackupVaultName'].OutputValue" --output text \
+  --profile <p> --region <r>
 ```
 
 `EfsBackupVaultName` が出ない（`None`）なら、データスタックは v0.26.0 より前のままです。`Persistence` が何であっても、**EFS のバックアップはありません**。
@@ -48,7 +49,7 @@ aws cloudformation describe-stacks --stack-name af-ecs-data \
 
 1. `deploy --no-execute-changeset` で変更セットを作ります。パラメータを渡さなければ、保存されている値のままです
 2. `describe-change-set` で中身を見ます
-3. 足されるのが `EfsBackup*` の 4 つのリソースだけのときだけ、`execute-change-set` で実行します。`FileSystem` か `Db` に `Modify` や `Replacement` があれば、実行せずに止めます。`retain` ではどちらも消さずに残す設定ですが、作り直されると新しい空のリソースになります
+3. 足されるのが `EfsBackup*` の 4 つのリソースと、Control Plane のファイルシステムより古いデータスタックでは `CpData*` の 5 つのリソースだけのときだけ、`execute-change-set` で実行します。後者の場合は、読めるリポジトリを先に写す [Control Plane のデータルート](#control-plane-のデータルート) の手順に従います。`FileSystem` か `Db` に `Modify` や `Replacement` があれば、実行せずに止めます。`retain` ではどちらも消さずに残す設定ですが、作り直されると新しい空のリソースになります
 
 v0.26.0 より前に構築した `Persistence=retain` の配備は、それ以来 EFS のバックアップがないまま動いていて、ほかにそれを知らせるものはありません。v0.26.0 を越えて上げたら、この確認を 1 回実行してください。データスタックの出力に `EfsBackupVaultName` が出て、翌朝に日次の復旧ポイントがあれば（`aws backup list-recovery-points-by-backup-vault`）完了です。
 
@@ -176,35 +177,63 @@ Control Plane は、内部 git のリポジトリとその LFS オブジェク�
 
 ### v0.45.x 以前から上げる
 
-先に `10-data` を更新します。`30-ingress` が新しいファイルシステムを読み込むためで、読めないうちは `update.sh` が「no readable CpDataEfsId output」で止まります。止まったときは何も変えていません。
+上げるまで、リポジトリは動いている Control Plane タスク自身のディスクにあり、アップグレードはそのタスクを入れ替えます。いま Console に並んでいるリポジトリは 2 種類です。
+
+| 種類 | 見分けかた | どうなるか |
+|---|---|---|
+| タスクが最後に起動してから作られた、または push されたもの | `git ls-remote <clone URL>` が答える | まだ読める。**先に外へ写さないと（手順 3）、唯一のコピーが古いタスクと一緒に消える** |
+| それより古いもの | `git ls-remote` が失敗する（not found） | もう空。行だけが残っている |
+
+`update.sh` より先に `10-data` を更新します。`30-ingress` が新しいファイルシステムを読み込むためで、読めないうちは `update.sh` が「no readable CpDataEfsId output」で止まります。止まったときは何も変えていません。
 
 1. **バックアップを取る**（[上げる前に](#上げる前に)）
-2. **`10-data` を変更セットで更新する**。パラメータは今のまま
+2. **作業の時間帯を知らせる。** 手順 7 が終わるまで、内部リポジトリの作成・名前の変更・push をしないよう、メンバーに頼みます。止める仕組みはありません。手順 3 で写したあとの push は失われます。デプロイ中は、古いタスクと新しいタスクの両方が少しの間 `/git/` に応答します
+3. **まだ読めるリポジトリを全部外へ写す。** テナントごとに、そのテナントの管理者が、`git` と `git-lfs` のあるマシンから、Console に出る clone URL（設定 >「内部リポジトリ」）を使って行います。どれが答えて、どれが答えなかったかを控えておきます
+
+   ```bash
+   git ls-remote <clone URL> > /dev/null && echo readable || echo lost
+   git clone --mirror <clone URL> <name>.git
+   git -C <name>.git lfs fetch --all
+   git -C <name>.git for-each-ref | wc -l     # 手順 7 のために数を控える
+   ```
+
+4. **`10-data` を変更セットで更新する。** パラメータは今のままです。どのコマンドにも同じ `--profile` と `--region` を付けます
 
    ```bash
    aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
-     --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset --profile <p> --region <r>
+     --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset \
+     --profile <p> --region <r>
    aws cloudformation describe-change-set --change-set-name <表示された ARN> \
-     --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text
+     --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text \
+     --profile <p> --region <r>
    ```
 
    - 期待するのは `CpDataEfsSg`、`CpDataFileSystem`、`CpDataAccessPoint`、`CpDataMountTarget0`、`CpDataMountTarget1` の *Add*
-   - `retain` では `EfsBackupSelection` の *Modify* も出ます（置き換えになることもあります）。復旧ポイントはボールトに残るので問題ありません
-   - `FileSystem` か `Db` に何か出たら、実行せずに止めます
-   - それ以外なら `execute-change-set --change-set-name <ARN>` を実行し、`wait stack-update-complete --stack-name af-ecs-data` で待ちます
+   - バックアップがすでにある `retain` では、`EfsBackupSelection` の *Modify* も出ます（置き換えになることもあります）。復旧ポイントはボールトに残るので問題ありません
+   - v0.26.0 より前のデータスタック（出力に `EfsBackupVaultName` がない）の `retain` では、`EfsBackup*` の 4 つの *Add* も出ます（[動いている配備でバックアップを有効にする](backup.ja.md#動いている配備でバックアップを有効にする)）
+   - `FileSystem` か `Db` に何か出たら、またはそれ以外のものが出たら、実行せずに止めます
+   - それ以外なら実行して待ちます
 
-3. **いつもどおり `update.sh` を実行する**。新しい Control Plane のタスクは、空のファイルシステムで起動します
+   ```bash
+   aws cloudformation execute-change-set --change-set-name <その ARN> --profile <p> --region <r>
+   aws cloudformation wait stack-update-complete --stack-name af-ecs-data --profile <p> --region <r>
+   ```
 
-**移すものはありません。何も残っていないからです。** アップグレード前に作ったリポジトリは中身をすでに失っていますが、行はデータベースに残っています。
+5. **いつもどおり `update.sh` を実行する。** 新しい Control Plane のタスクは、空のファイルシステムで起動します
+6. **古い行を片付ける。** Console で、並んでいるリポジトリを 2 種類とも削除します。新しいファイルシステムにはどれもありませんし、データベースに名前が残っていると同じ名前では作れません（already exists）。削除すると、テナントの LFS の上限に数えられていた分も戻ります
+7. **写したものを戻す。** それぞれ元の名前で作り直し、写しを push します。Console で作ったリポジトリは `main` から始まります。元の既定ブランチが別だったなら、メンバーに伝えてください
 
-- 一覧（設定 >「内部リポジトリ」）には出たままで、clone も push も失敗します
-- その LFS オブジェクトは、テナントの LFS の上限に数えられたままです
+   ```bash
+   git -C <name>.git lfs push --all <clone URL>
+   git -C <name>.git push --mirror <clone URL>
+   git ls-remote <clone URL> | wc -l            # 手順 3 の数（HEAD の分だけずれることがある）
+   ```
 
-Console で 1 つずつ削除するか、同じ名前で作り直して、履歴を持っているメンバーの clone から push し直してください。
+手順 3 で答えなかったリポジトリは、配備からは戻せません。メンバーの手元に clone があれば、同じように作り直したリポジトリへ push できます。
 
 ### 戻す
 
-`30-ingress` を v0.45.x に戻すと、`WS_DATA` は `/tmp` に戻ります。その間に push されたものは `CpDataFileSystem` に残りますが、もう一度上げるまでは見えません。`10-data` に足したものは、そのままで構いません。
+`30-ingress` を v0.45.x に戻すと、`WS_DATA` は `/tmp` に戻ります。その間に push されたものは `CpDataFileSystem` に残りますが応答されず、戻したあとの push はまたタスクのディスクに置かれます。`10-data` に足したものは、そのままで構いません。
 
 ## v0.34.x から上げる
 

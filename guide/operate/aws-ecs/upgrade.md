@@ -39,7 +39,8 @@ For `Persistence=retain` deployments only. `update.sh` runs the same check and w
 ```bash
 ./efs-backup-check.sh --profile <p> --region <r> --stack af-ecs-ingress   # read-only
 aws cloudformation describe-stacks --stack-name af-ecs-data \
-  --query "Stacks[0].Outputs[?OutputKey=='EfsBackupVaultName'].OutputValue" --output text
+  --query "Stacks[0].Outputs[?OutputKey=='EfsBackupVaultName'].OutputValue" --output text \
+  --profile <p> --region <r>
 ```
 
 No output (`None`) for `EfsBackupVaultName` means the data stack is still from before v0.26.0: **there is no EFS backup**, whatever `Persistence` says.
@@ -48,7 +49,7 @@ No output (`None`) for `EfsBackupVaultName` means the data stack is still from b
 
 1. Create a change set with `deploy --no-execute-changeset`. Parameters keep their stored values when none are given
 2. Read it with `describe-change-set`
-3. Execute it with `execute-change-set` only if it adds the four `EfsBackup*` resources and nothing else. A `Modify` or `Replacement` on `FileSystem` or `Db` means stop and do not execute: both are retained under `retain`, but a replacement is still a new, empty resource
+3. Execute it with `execute-change-set` only if it adds the four `EfsBackup*` resources and, on a data stack older than the Control Plane's file system, the five `CpData*` resources, and nothing else. In that second case follow [The Control Plane's data root](#the-control-planes-data-root) instead, which copies the readable repositories out first. A `Modify` or `Replacement` on `FileSystem` or `Db` means stop and do not execute: both are retained under `retain`, but a replacement is still a new, empty resource
 
 A `Persistence=retain` deployment stood up before v0.26.0 has had no EFS backup since, and nothing else says so. After upgrading past v0.26.0, run this check once. You are done when `EfsBackupVaultName` appears in the data stack's outputs and a daily recovery point exists the next morning (`aws backup list-recovery-points-by-backup-vault`).
 
@@ -176,35 +177,63 @@ The Control Plane keeps the internal git provider's repositories and their LFS o
 
 ### Upgrade from v0.45.x or earlier
 
-`10-data` has to be updated first: `30-ingress` imports the new file system, and `update.sh` stops with "no readable CpDataEfsId output" until it can read it. Nothing is changed when it stops.
+Until the upgrade, the repositories are on the running Control Plane task's own disk, and the upgrade replaces that task. Two kinds of repository are listed in the Console now:
+
+| Kind | How to tell | What happens |
+|---|---|---|
+| Created or pushed to since the task last started | `git ls-remote <clone URL>` answers | Still readable. **Its only copy goes with the old task** unless you copy it out first (step 3) |
+| Older than the task | `git ls-remote` fails ("not found") | Already empty; only its row remains |
+
+`10-data` has to be updated before `update.sh`: `30-ingress` imports the new file system, and `update.sh` stops with "no readable CpDataEfsId output" until it can read it. Nothing is changed when it stops.
 
 1. **Back up** ([Before you upgrade](#before-you-upgrade))
-2. **Update `10-data` through a change set**, with the parameters it already has
+2. **Announce a window.** Ask members not to create, rename or push to internal repositories until step 7. Nothing enforces it: a push after its repository was copied in step 3 is lost, and during the deploy the old and new task both serve `/git/` for a moment
+3. **Copy out every repository that is still readable.** A tenant administrator of each tenant does it, from a machine with `git` and `git-lfs`, using the clone URLs the Console lists (Settings > "Internal repos"). Keep a list of which repositories answered and which did not
+
+   ```bash
+   git ls-remote <clone URL> > /dev/null && echo readable || echo lost
+   git clone --mirror <clone URL> <name>.git
+   git -C <name>.git lfs fetch --all
+   git -C <name>.git for-each-ref | wc -l     # keep this count for step 7
+   ```
+
+4. **Update `10-data` through a change set**, with the parameters it already has. The same `--profile` and `--region` go on every command
 
    ```bash
    aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
-     --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset --profile <p> --region <r>
+     --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset \
+     --profile <p> --region <r>
    aws cloudformation describe-change-set --change-set-name <the ARN it printed> \
-     --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text
+     --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text \
+     --profile <p> --region <r>
    ```
 
    - Expect *Add* of `CpDataEfsSg`, `CpDataFileSystem`, `CpDataAccessPoint`, `CpDataMountTarget0` and `CpDataMountTarget1`
-   - Under `retain`, also *Modify* `EfsBackupSelection`, possibly as a replacement. That is harmless: the recovery points stay in the vault
-   - Anything on `FileSystem` or `Db`: stop and do not execute
-   - Otherwise run `execute-change-set --change-set-name <ARN>` and wait with `wait stack-update-complete --stack-name af-ecs-data`
+   - Under `retain` with backups already on, also *Modify* `EfsBackupSelection`, possibly as a replacement. That is harmless: the recovery points stay in the vault
+   - Under `retain` on a data stack from before v0.26.0 (no `EfsBackupVaultName` output), also *Add* of the four `EfsBackup*` resources ([Turn backups on for a running deployment](backup.md#turn-backups-on-for-a-running-deployment))
+   - Anything on `FileSystem` or `Db`, or anything else: stop and do not execute
+   - Otherwise execute it and wait
 
-3. **Run `update.sh`** as usual. The new Control Plane task starts on the empty file system
+   ```bash
+   aws cloudformation execute-change-set --change-set-name <the ARN> --profile <p> --region <r>
+   aws cloudformation wait stack-update-complete --stack-name af-ecs-data --profile <p> --region <r>
+   ```
 
-**Nothing is migrated, because nothing survived.** A repository created before the upgrade has already lost its contents, but its row is still in the database:
+5. **Run `update.sh`** as usual. The new Control Plane task starts on the empty file system
+6. **Clear the old rows.** In the Console, delete every listed repository, both kinds: the new file system has none of them, and creating a repository under a name the database still lists is refused ("already exists"). Deleting one also releases the LFS bytes it counted toward the tenant's limit
+7. **Put back what you copied.** Create each repository again under its old name, then push the copy. A repository created in the Console starts on `main`; if the old default branch was another one, tell its members
 
-- it is still listed (Settings > "Internal repos"), and a clone or push of it fails
-- its LFS objects still count toward the tenant's LFS limit
+   ```bash
+   git -C <name>.git lfs push --all <clone URL>
+   git -C <name>.git push --mirror <clone URL>
+   git ls-remote <clone URL> | wc -l            # the count from step 3, give or take HEAD
+   ```
 
-Delete each one in the Console, or create it again under the same name and push to it from a member's clone that still has the history.
+Repositories that did not answer in step 3 cannot be recovered from the deployment. A member's own clone, if one exists, can be pushed into a re-created repository the same way.
 
 ### Go back
 
-Taking `30-ingress` back to v0.45.x puts `WS_DATA` back on `/tmp`. What was pushed in the meantime stays on `CpDataFileSystem` but is not served until you upgrade again. The `10-data` additions can stay.
+Taking `30-ingress` back to v0.45.x puts `WS_DATA` back on `/tmp`. What was pushed in the meantime stays on `CpDataFileSystem` but is not served, and anything pushed after going back is on the task's disk again. The `10-data` additions can stay.
 
 ## Upgrade from v0.34.x
 

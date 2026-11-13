@@ -260,7 +260,9 @@ if [ -z "$(af_stack_output "$DATA_STACK" CpDataEfsId)" ]; then
   echo "ERROR: $DATA_STACK has no readable CpDataEfsId output - it predates the Control Plane's own" >&2
   echo "       file system, or could not be read. If it predates it, update it from this release's" >&2
   echo "       cfn/10-data.yaml first (same parameters; it only adds resources), then run this script" >&2
-  echo "       again. guide/operate/aws-ecs/upgrade.md, \"The Control Plane's data root\". Nothing was changed." >&2
+  echo "       again. Before that, copy out every internal git repository that still answers: this" >&2
+  echo "       upgrade replaces the task whose disk holds their only copy. guide/operate/aws-ecs/upgrade.md," >&2
+  echo "       \"The Control Plane's data root\". Nothing was changed." >&2
   exit 1
 fi
 # The same verdict goes to the Console: the ingress stack carries it to the Control Plane as

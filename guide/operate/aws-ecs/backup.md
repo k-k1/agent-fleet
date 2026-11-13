@@ -15,7 +15,7 @@ This applies to `Persistence=retain` deployments only.
 | What you do | What happens |
 |---|---|
 | Build with `Persistence=retain` | `10-data` creates an EFS backup vault and a daily plan |
-| On an existing deployment, update `10-data` through a change set | Only the four `EfsBackup*` resources are added |
+| On an existing deployment, update `10-data` through a change set | The four `EfsBackup*` resources are added (and, on a stack older than the Control Plane's file system, the five `CpData*` ones) |
 | Take a backup on demand, before an upgrade for example | One more recovery point |
 | Restore one member from a recovery point | AWS Backup restores into a new directory on the same file system; you put it back yourself |
 
@@ -57,13 +57,15 @@ aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.y
   --profile <p> --region <r>
 # the command prints the change set's ARN
 aws cloudformation describe-change-set --change-set-name <arn> \
-  --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output table
-aws cloudformation execute-change-set --change-set-name <arn>
-aws backup list-backup-plans --query "BackupPlansList[].BackupPlanName"   # af-ecs-data-efs-daily
+  --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output table \
+  --profile <p> --region <r>
+aws cloudformation execute-change-set --change-set-name <arn> --profile <p> --region <r>
+aws backup list-backup-plans --query "BackupPlansList[].BackupPlanName" \
+  --profile <p> --region <r>   # af-ecs-data-efs-daily
 ```
 
 > [!WARNING]
-> Execute only if the change set adds the four `EfsBackup*` resources and nothing else, in particular no `Modify` of `FileSystem`. A stack update moves the live file system to whatever `EfsThroughputMode` says (see the warning in `10-data.yaml`), and any `Replacement` there is a new, empty file system.
+> Execute only if the change set adds the four `EfsBackup*` resources and, on a data stack older than the Control Plane's file system, the five `CpData*` resources ([The Control Plane's data root](upgrade.md#the-control-planes-data-root): copy the readable repositories out before that upgrade), and nothing else, in particular no `Modify` of `FileSystem`. A stack update moves the live file system to whatever `EfsThroughputMode` says (see the warning in `10-data.yaml`), and any `Replacement` there is a new, empty file system.
 
 ### The notice in the admin screen
 
@@ -82,7 +84,7 @@ aws backup list-backup-plans --query "BackupPlansList[].BackupPlanName"   # af-e
 
 ## Take a backup on demand
 
-Before an upgrade, or before touching someone's home by hand.
+Before an upgrade, or before touching someone's home by hand. For the Control Plane's repositories, run the same job with `CpDataEfsId` in place of `EfsId`.
 
 ```bash
 EFS=$(aws cloudformation describe-stacks --stack-name af-ecs-data \
@@ -108,6 +110,8 @@ aws backup list-recovery-points-by-backup-vault --backup-vault-name "$VAULT" \
 
 ## Restore one member's directory
 
+This section and the next are for the members' file system (`EfsId`). The Control Plane's repositories are restored differently: [Restore the Control Plane's repositories](#restore-the-control-planes-repositories).
+
 AWS Backup never restores over live data. A restore into the same file system lands under a new top-level directory, `/aws-backup-restore_<timestamp>/`, beside the originals, keeping the paths below it. Up to five paths per job.
 
 ```bash
@@ -130,6 +134,19 @@ The restored copy is outside every access point, so no workspace can see it. Put
 - The same command without `ItemsToRestore` restores everything into `/aws-backup-restore_<timestamp>/` on the live file system. Put back what is needed with the same one-off task, workspaces stopped
 - Restore into a new file system (`"newFileSystem":"true"`, no `file-system-id`) only when the live one itself is gone
 - Moving the deployment onto a new file system is not a template change: `EfsId` is exported to the stacks above, and the Control Plane has created access points on the old ID. Even then, copy the directories onto the file system the stacks name
+
+## Restore the Control Plane's repositories
+
+The internal git repositories are on `CpDataFileSystem`, under `/cp-data/git/<tenant slug>/<repo>.git`. The member restore above does not reach them: that file system's mount targets accept NFS only from the Control Plane's security group, every mount must go through an access point, and the Control Plane's own grant covers only its access point (`/cp-data`). A restore lands under `/aws-backup-restore_<timestamp>/`, outside that access point, so the Control Plane cannot see it either.
+
+1. **Stop the Control Plane**, so nothing writes to the repositories: `aws ecs update-service --cluster <cluster> --service af-<ingress stack>-cp --desired-count 0 --profile <p> --region <r>`. The Console is down until step 5
+2. **Restore into the same file system**, `"file-system-id"` being the data stack's `CpDataEfsId` output and `ItemsToRestore` either `["/cp-data/git"]` or single repositories such as `["/cp-data/git/<slug>/<repo>.git"]`
+3. **Make the copy reachable.** Create a temporary access point on `CpDataFileSystem` with root directory `/aws-backup-restore_<ts>/cp-data` and POSIX user `0:0`, and a temporary task role whose policy allows `elasticfilesystem:ClientMount`, `ClientWrite` and `ClientRootAccess` on that file system
+4. **Copy it back with a one-off Fargate task** that has that role, the Control Plane's security group (`CpSgId`), the private subnets, and two EFS volumes with transit encryption and IAM authorization: the temporary access point at `/restore`, and `CpDataAccessPointId` at `/cp-data`. In it, move the current tree aside (`mv /cp-data/git /cp-data/git.before-restore`, or one repository at a time) and run `cp -a /restore/git /cp-data/`
+5. **Start the Control Plane** again (`--desired-count 1`), check the repositories, then delete `git.before-restore`, the restored files under the temporary access point, the access point, the task definition and the role. EFS bills the copies until then
+
+- The default branch, the ledger rows and the LFS ledger are in RDS and are not part of this restore. A repository restored by name must still be listed in the Console; one deleted since needs its row created again first (create it in the Console before step 1)
+- A restore into a new file system is for losing `CpDataFileSystem` itself. Copy its tree onto the file system the stack names, as above; the stack's export cannot be pointed at another file system
 
 ## Cost
 
