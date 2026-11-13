@@ -322,36 +322,20 @@ func ssmOnline(ctx context.Context, c ssmSlotCommands, instanceID string) (bool,
 // instance. Best effort: a command that cannot be cancelled is counted, not fatal, since
 // the stop that follows ends it anyway.
 func cancelSlotVolumeCommands(ctx context.Context, c ssmSlotCommands, instanceID string) (cancelled, failed int) {
-	for _, status := range []string{"Pending", "InProgress"} {
-		var next *string
-		for {
-			out, err := c.ListCommands(ctx, &ssm.ListCommandsInput{
-				InstanceId: aws.String(instanceID),
-				Filters:    []ssmtypes.CommandFilter{{Key: ssmtypes.CommandFilterKeyStatus, Value: aws.String(status)}},
-				NextToken:  next,
-			})
-			if err != nil {
-				log.Printf("ecs-ec2: listing %s SSM commands on %s: %v", status, instanceID, err)
-				failed++
-				break
-			}
-			for _, cmd := range out.Commands {
-				if aws.ToString(cmd.Comment) != slotVolumeCommandComment {
-					continue // somebody else's command, never ours to cancel
-				}
-				if _, err := c.CancelCommand(ctx, &ssm.CancelCommandInput{
-					CommandId: cmd.CommandId, InstanceIds: []string{instanceID},
-				}); err != nil {
-					log.Printf("ecs-ec2: cancelling SSM command %s on %s: %v", aws.ToString(cmd.CommandId), instanceID, err)
-					failed++
-					continue
-				}
-				cancelled++
-			}
-			if next = out.NextToken; next == nil {
-				break
-			}
+	ids, err := collectSlotVolumeCommandIDs(ctx, c, instanceID)
+	if err != nil {
+		log.Printf("ecs-ec2: listing SSM commands on %s: %v", instanceID, err)
+		failed++
+	}
+	for _, id := range ids {
+		if _, err := c.CancelCommand(ctx, &ssm.CancelCommandInput{
+			CommandId: aws.String(id), InstanceIds: []string{instanceID},
+		}); err != nil {
+			log.Printf("ecs-ec2: cancelling SSM command %s on %s: %v", id, instanceID, err)
+			failed++
+			continue
 		}
+		cancelled++
 	}
 	return cancelled, failed
 }

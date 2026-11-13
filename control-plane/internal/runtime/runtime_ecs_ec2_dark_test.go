@@ -27,6 +27,7 @@ func darkHarness(t *testing.T) (*ec2Harness, *ecsEC2Factory, *[]SlotDark) {
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.attach("vol-1", "i-dark", time.Now().Add(-2*time.Hour))
 	h.ci.registered["i-dark"] = false
+	h.ssmc.box = "i-dark"
 	// The workspace service is nominally up, which is what keeps the volume sweep from
 	// releasing the home and is exactly the shape the scan exists for.
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}

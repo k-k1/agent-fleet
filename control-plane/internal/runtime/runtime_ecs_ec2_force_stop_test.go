@@ -24,6 +24,7 @@ func wedgedSlot(t *testing.T) *ec2Harness {
 	h.ec2.attach("vol-1", "i-wedge", time.Now())
 	h.ci.registered["i-wedge"] = false
 	h.ssmc.online = map[string]bool{"i-wedge": false}
+	h.ssmc.box = "i-wedge"
 	return h
 }
 
@@ -74,12 +75,16 @@ func TestForceStopSlotUnreadableHealthRefusesWithoutOverride(t *testing.T) {
 	}
 }
 
+// Drives the operator force-stop of a wedged, occupied slot through the fake SSM, which
+// refuses InstanceId with Status=Pending like the real API: the owned rescue's command
+// listing must not trip it, and only this box's own Pending command is cancelled.
 func TestForceStopSlotWedgedFlow(t *testing.T) {
 	ctx := context.Background()
 	h := wedgedSlot(t)
 	h.ssmc.unfinished = []ssmtypes.Command{
 		{CommandId: aws.String("cmd-umount"), Comment: aws.String(slotVolumeCommandComment)},
 		{CommandId: aws.String("cmd-foreign"), Comment: aws.String("somebody else")},
+		{CommandId: aws.String("cmd-other-box"), Comment: aws.String(slotVolumeCommandComment), InstanceIds: []string{"i-elsewhere"}},
 	}
 	h.ci.stopping = []ecstypes.Task{{
 		TaskArn: aws.String("arn:task/1"), ContainerInstanceArn: aws.String("arn:ci/i-wedge"),

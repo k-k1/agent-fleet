@@ -848,6 +848,12 @@ type fakeSSMCmd struct {
 	infoErr    error
 	// listErr makes ListCommands fail.
 	listErr error
+	// box is the instance a command in unfinished is addressed to when it names none.
+	box string
+	// pageSize, when positive, splits the Pending list into pages of that size.
+	pageSize int
+	// listCalls counts ListCommands calls that reached the list.
+	listCalls int
 }
 
 func (f *fakeSSMCmd) ListCommands(_ context.Context, in *ssm.ListCommandsInput, _ ...func(*ssm.Options)) (*ssm.ListCommandsOutput, error) {
@@ -859,10 +865,39 @@ func (f *fakeSSMCmd) ListCommands(_ context.Context, in *ssm.ListCommandsInput, 
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	out := &ssm.ListCommandsOutput{}
-	if len(in.Filters) == 1 && aws.ToString(in.Filters[0].Value) == "Pending" {
-		out.Commands = append(out.Commands, f.unfinished...)
+	status := ""
+	for _, flt := range in.Filters {
+		if flt.Key == ssmtypes.CommandFilterKeyStatus {
+			status = aws.ToString(flt.Value)
+		}
 	}
+	// The real API refuses this pairing every time: the command has not reached the
+	// instance yet, so it cannot be listed by instance.
+	if in.InstanceId != nil && status == "Pending" {
+		return nil, errors.New("ValidationException: An instance ID can't be specified when a command status is Pending because the command hasn't run on the instance yet. Remove the instance ID from the command, or try another status value.")
+	}
+	f.listCalls++
+	out := &ssm.ListCommandsOutput{}
+	if status != "Pending" {
+		return out, nil
+	}
+	all := make([]ssmtypes.Command, len(f.unfinished))
+	for i, c := range f.unfinished {
+		if len(c.InstanceIds) == 0 && len(c.Targets) == 0 && f.box != "" {
+			c.InstanceIds = []string{f.box}
+		}
+		all[i] = c
+	}
+	start := 0
+	if in.NextToken != nil {
+		start, _ = strconv.Atoi(*in.NextToken)
+	}
+	end := len(all)
+	if f.pageSize > 0 && start+f.pageSize < end {
+		end = start + f.pageSize
+		out.NextToken = aws.String(strconv.Itoa(end))
+	}
+	out.Commands = all[start:end]
 	return out, nil
 }
 
