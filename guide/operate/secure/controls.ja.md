@@ -52,12 +52,12 @@ Control Plane は次の安全策を備えています。
 許可リストはメールアドレスで書くので、IdP が返すアドレスをなぜ信頼してよいかが、認可の強さそのものになります。
 
 - `AF_OIDC_<ID>_TRUST`（`email_verified` か `issuer`）は必須です。宣言のない IdP は、起動時に無効になります
-- Entra ID の issuer は、自社のテナントの GUID に固定してください。`/common/` や `/organizations/` では、Microsoft アカウントを持つ人なら誰でもサインインの画面まで進めます。また、個人のアカウントは自分のメールアドレスを変更できます
+- Entra ID の issuer は、自社のテナントの GUID に固定してください。`/common/`・`/organizations/`・`/consumers/` では、Microsoft アカウントを持つ人なら誰でもサインインの画面まで進めます。また、個人のアカウントは自分のメールアドレスを変更できます
 - そのため、`/common/` などの issuer では、`AF_OIDC_<ID>_ALLOWED_TIDS` がない限り Control Plane は起動しません（[Microsoft Entra ID でサインインする](../signin/entra.ja.md)）
 
 ## 監査ログを読む
 
-- `audit_log` に残るのは、変更と破壊的な操作だけです。読み取りは残しません（例外は、メンバーのエージェントメモリの書き出し）
+- `audit_log` に残るのは、変更と破壊的な操作だけです。読み取りは残しません。唯一の例外は、メンバーのエージェントメモリを環境の外へ持ち出す `memory.export` です。エージェントメモリを Claude Code 自身のメモリへ書き戻す操作（`memory.claude_export`）は、その保存先を変更するので、これも残ります
 - ターミナルの生のストリームは、シークレットが混じるおそれがあるので保存しません
 - 配備管理者とテナント管理者が 管理 > 監査 で読みます（[監査ログを見る](../../admin/audit.ja.md)）
 
