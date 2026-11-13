@@ -20,7 +20,7 @@ import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
 import { looksForeign, translatableTexts, turnTranslateKey } from "../translate.ts";
 import { authResolved, footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
-import { foldParts, mcpViaOf, peerIntentOf, peerSenderOf, spawnParentOf, spendOf, splitSessionEnvelope } from "./model.ts";
+import { foldParts, mcpViaOf, noticeKindOf, peerIntentOf, peerSenderOf, spawnParentOf, spendOf, splitSessionEnvelope } from "./model.ts";
 import { paintTurnMarks } from "./markPaint.ts";
 import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Group, Part } from "./types.ts";
@@ -42,6 +42,19 @@ import {
   WorkDisclosure,
   formatTS,
 } from "./blocks.tsx";
+
+const NOTICE_LABEL = {
+  "stalled-tree": "mirror.from_notice",
+  watch: "mirror.from_notice_watch",
+  "pr-feedback": "mirror.from_notice_pr_feedback",
+  other: "mirror.from_notice_other",
+} as const;
+const NOTICE_TITLE = {
+  "stalled-tree": "mirror.from_notice_title",
+  watch: "mirror.from_notice_watch_title",
+  "pr-feedback": "mirror.from_notice_pr_feedback_title",
+  other: "mirror.from_notice_other_title",
+} as const;
 
 function TranscriptTurnImpl({
   turn,
@@ -422,7 +435,9 @@ function TranscriptTurnImpl({
   // unattributed 「続けて」 in the transcript is the most confusing kind of injected turn.
   const fromAutoResume = isUser && turn.source === "auto-resume";
   // Stalled-tree notice: the agent's automated check to a parent whose children are all idle.
+  // Badged by the envelope's kind: watch and PR-feedback notices share the origin tag.
   const fromNotice = isUser && turn.source === "notice";
+  const notice = fromNotice ? noticeKindOf(turn.text ?? "") : null;
   // Chat-bridge origin (docs/log/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -474,8 +489,11 @@ function TranscriptTurnImpl({
           </span>
         )}
         {fromNotice && (
-          <span className="mt-op mt-sched" title={tr("mirror.from_notice_title")}>
-            <Icon name="clock" /> {tr("mirror.from_notice")}
+          <span
+            className="mt-op mt-sched"
+            title={tr(NOTICE_TITLE[notice!.kind])}
+          >
+            <Icon name="clock" /> {tr(NOTICE_LABEL[notice!.kind])}
           </span>
         )}
         {fromPeer && (

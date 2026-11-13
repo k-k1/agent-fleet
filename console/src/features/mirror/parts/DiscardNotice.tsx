@@ -26,7 +26,8 @@ export function originLabel(o: TurnOrigin | undefined): string {
     case "auto-resume":
       return tr("mirror.from_auto_resume");
     case "notice":
-      return tr("mirror.from_notice");
+      // The origin carries no text, so the notice kind is unknown here.
+      return tr("mirror.from_notice_other");
     default:
       return o?.kind || "?";
   }

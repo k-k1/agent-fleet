@@ -392,6 +392,15 @@ export const mirror = {
   "mirror.from_notice": "停滞通知",
   "mirror.from_notice_title":
     "このセッションと配下の子セッションがすべて待機状態のまま、やり取り中のメッセージもない状態が続いたため、Agent が自動で送った確認です。あなたもアシスタントも入力していません。",
+  "mirror.from_notice_watch": "ウォッチ通知",
+  "mirror.from_notice_watch_title":
+    "ウォッチしていた PR などの状態が変わったため、Agent が自動で送った通知です。あなたもアシスタントも入力していません。",
+  "mirror.from_notice_pr_feedback": "PR フィードバック",
+  "mirror.from_notice_pr_feedback_title":
+    "プルリクエストに新しいレビューコメントが届いたため、Agent が自動で送った通知です。あなたもアシスタントも入力していません。",
+  "mirror.from_notice_other": "通知",
+  "mirror.from_notice_other_title":
+    "Agent が自動で送った通知です。あなたもアシスタントも入力していません。",
   "mirror.from_chat": "{provider} から",
   "mirror.from_chat_title": "チャット（{provider} など）から返信で送られた入力です。コンソールで入力したものではありません。",
   "mirror.from_peer": "別のセッションから",
