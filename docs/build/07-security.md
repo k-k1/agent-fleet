@@ -547,7 +547,7 @@ their conversations elsewhere. Add the relay row with `sign` (or sign in the han
   cookie and the gateway identity headers, so the member's login cookie never reaches the workspace.
 - **Relayed request headers are an allow-list** (`control-plane/internal/relayhdr`), not a denylist: content
   negotiation, conditional and range headers, the WebSocket handshake, Fetch Metadata and Client Hints (`Sec-WebSocket-*`, `Sec-Fetch-*`, `Sec-CH-*`), `X-Forwarded-Host` /
-  `-Proto` / `-Prefix`, and a few framework headers (`Next-*`, `Hx-*`, `Turbo-*`, CSRF tokens) reach the Agent
+  `-Proto` / `-Prefix`, and a few framework headers (`Next-*` and Next.js's `X-Nextjs-Request-Id` / `-Html-Request-Id`, `Hx-*`, `Turbo-*`, CSRF tokens) reach the Agent
   and a previewed app; anything else a front gateway adds (access-token, group and OIDC headers, for
   example) is dropped. The name (never the value) of each dropped header is logged once per process
   (`relay: dropped request header`), and `AF_RELAY_EXTRA_HEADERS` (comma-separated names, a trailing `*`
