@@ -75,7 +75,7 @@ It stops or deletes everything billed by the hour, in the one order that strands
 | Order | What stops | On the way back (`--up`) |
 |---|---|---|
 | 1 | Workspaces | Members start their own |
-| 2 | The slots and the inference engines' GPU instances, waited for; `--fast` ends them directly | — |
+| 2 | The slots and the inference engines' GPU instances, waited for; `--fast` stops the slots and terminates the GPU instances directly | — |
 | 3 | The egress gateway (with `EgressRoute=gateway`) | Started with the NAT gateway, and waited for before and after the Control Plane |
 | 4 | The Control Plane | After the database |
 | 5 | A sweep that terminates any inference engine instance still alive | — |

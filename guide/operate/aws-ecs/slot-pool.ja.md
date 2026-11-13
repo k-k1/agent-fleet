@@ -86,7 +86,7 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 | `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | Intel の 2 クラス | `instanceType:memoryMiB[:vcpu]` を小さい順に。名前つきのクラスも書ける（[スロットのマシンの種類を選ぶ](slot-types.ja.md)） |
 | `Ec2SlotAmiArm64` | `AF_ECS_EC2_AMI_ARM64` | 空 | arm64 のクラスを使うときだけ必須（[スロットのマシンの種類を選ぶ](slot-types.ja.md)） |
 | `Ec2DefaultSlotClass` | `AF_ECS_EC2_DEFAULT_SLOT_CLASS` | 空（最初のクラス） | 自分にもテナントにも指定がないメンバーが載るクラス |
-| `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | すべてのクラスを合わせたインスタンスの上限。上限に達すると、費用が増える代わりに起動が失敗する |
+| `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | すべてのクラスを合わせたインスタンスの上限。上限に達すると、費用を増やすのではなく、起動を失敗させる |
 | `Ec2SlotSleepSec` | `AF_ECS_EC2_SLOT_SLEEP_SEC` | `900` | タスクのないインスタンスを**停止**するまでの秒数。コンピューティングの課金が止まり、ルートボリュームの課金は続く。`0` で止めない |
 | `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0`（オフ） | 同じ時計の次の段階。過ぎるとインスタンスを**終了**し、ルートボリュームも消える。`14400`（4 時間）がおすすめ |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | ユーザーごとのホームのボリューム（gp3）の GiB |
