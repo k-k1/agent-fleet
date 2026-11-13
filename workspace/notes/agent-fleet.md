@@ -153,7 +153,7 @@ work you could simply do.
   this. `until: first` (default) ends after one notice; `deadline` keeps it (`expires_in_hours`, ≤ 720).
   `list_watches` / `unwatch` manage them. `pr.checks.failing` is told once per head commit as soon
   as one check fails while others still run (the failures so far as data); `pr.checks.failed` /
-  `pr.checks.completed` still wait for every check, and `pr.checks.*` includes `failing`. GitHub and Bitbucket (`source: bitbucket`; no
+  `pr.checks.completed` still wait for every check, and `pr.checks.*` includes `failing`, so the default `until: first` ends on it: to wait for the final result name `pr.checks.completed` / `pr.checks.failed`, and for both the early failure and the final result use `until: deadline`. GitHub and Bitbucket (`source: bitbucket`; no
   `pr.review.threads_unresolved` there). A child can pass `notify: parent`
   so its PR's notices go to the session that started it (the watch then belongs to the parent);
   a parent running an issue round can ask its children to do that instead of polling their PRs.

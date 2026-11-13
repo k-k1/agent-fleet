@@ -149,3 +149,34 @@ func TestFailingIsToldOncePerHeadAndNotRepeatedAfterARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A pattern watch with the default until:first ends on the early failing notice and never hears
+// the final result; until:deadline hears both.
+func TestChecksPatternEndsOnFailingByDefaultAndDeadlineHearsBoth(t *testing.T) {
+	run := func(until string) ([]string, int) {
+		src := &fakeSource{events: []Event{ev("pr.checks.failing", "h1")}, hint: Hint{After: time.Minute}}
+		sink := &fakeSink{answer: Ready}
+		e, _, c := newTestEngine(src, sink)
+		ctx := context.Background()
+		if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.checks.*"}, Until: until}); err != nil {
+			t.Fatal(err)
+		}
+		e.Tick(ctx)
+		src.events = []Event{ev("pr.checks.completed", "h1:fp"), ev("pr.checks.failed", "h1:fp")}
+		c.add(2 * time.Minute)
+		e.Tick(ctx)
+		c.add(time.Minute) // one notice per owner per tick
+		e.Tick(ctx)
+		return sink.told, len(e.List("a"))
+	}
+	if told, live := run(UntilFirst); strings.Join(told, ",") != "a:pr.checks.failing:h1" || live != 0 {
+		t.Fatalf("default until: told %v, live %d", told, live)
+	}
+	told, live := run(UntilDeadline)
+	if len(told) != 3 || told[0] != "a:pr.checks.failing:h1" || live != 1 {
+		t.Fatalf("deadline: told %v, live %d", told, live)
+	}
+	if byName := strings.Join(told[1:], ","); !strings.Contains(byName, "pr.checks.completed") || !strings.Contains(byName, "pr.checks.failed") {
+		t.Fatalf("deadline missed the final result: %v", told)
+	}
+}
