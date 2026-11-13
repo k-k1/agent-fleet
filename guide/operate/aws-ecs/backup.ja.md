@@ -145,52 +145,25 @@ aws backup describe-restore-job --restore-job-id <id>    # wait for COMPLETED
 
 内部 git のリポジトリは `CpDataFileSystem` の `/cp-data/git/<tenant slug>/<repo>.git` にあり、各リポジトリの LFS オブジェクトはその中（`lfs/objects/`）にあります。上のメンバー向けの手順では届きません。このファイルシステムのマウントターゲットは Control Plane のセキュリティグループからの NFS しか受けず、マウントは必ずアクセスポイントを通す必要があり、Control Plane 自身の許可はそのアクセスポイント（`/cp-data`）だけに限られるからです。復元先の `/aws-backup-restore_<timestamp>/` はそのアクセスポイントの外なので、Control Plane からも見えません。
 
-リポジトリの一部は RDS にもあります。行、既定ブランチ、そして LFS オブジェクトをテナントの上限に数える台帳です。ファイルをそのまま写しても、これらは戻りません。そのため、次のように分けます。
+**復元したファイルを Control Plane のパスへ直接コピーしてはいけません。** リポジトリの一部は RDS にあります。行、既定ブランチ、そして LFS オブジェクトをテナントの上限に数える台帳です。リポジトリが一覧に残っていても、台帳の行が消えていることがあります（git の GC は、消した LFS オブジェクトの台帳の行も消します）。そのため、ファイルをそのまま写すと、二度と数えられないオブジェクトがディスクに置かれることがあります。復元したリポジトリは、必ず Control Plane を通した push で戻します。push なら台帳が書かれます。
 
-| リポジトリ | 戻しかた |
-|---|---|
-| まだ Console に並んでいる（行が RDS にある） | 下の手順でファイルを写し戻す |
-| 復旧ポイントのあとで削除した | 写し戻しでは戻せません。LFS オブジェクトが台帳の行なしでディスクに置かれ、二度と数えられなくなるからです。代わりに Control Plane を通して push し直します（[削除したリポジトリ](#削除したリポジトリ)） |
-
-写し戻したあとも、復旧ポイントより後にアップロードされたオブジェクトは台帳に数えられたままです。多めに数える側にずれるので、安全です。
-
-1. **Control Plane を止め、タスクが 1 つも動いていないことを確かめる。** リポジトリに何も書かれないようにします。手順 6 まで Console は使えません
+1. **同じファイルシステムに復元する。** `"file-system-id"` はデータスタックの出力 `CpDataEfsId`、`ItemsToRestore` は `["/cp-data/git/<slug>/<repo>.git"]` のように必要なリポジトリ（または `["/cp-data/git"]`）を指定します。`aws backup describe-restore-job --restore-job-id <id> --query Status --profile <p> --region <r>` が `COMPLETED` になるまで待ちます。Control Plane のパスには何も触れないので、Control Plane は動かしたままで構いません
+2. **コピーに届くようにする。** `CpDataFileSystem` に、ルートディレクトリ `/aws-backup-restore_<ts>/cp-data`、POSIX ユーザー `0:0` の一時的なアクセスポイントを作ります。あわせて、そのファイルシステムへの `elasticfilesystem:ClientMount` と `ClientRootAccess`、それに自分で決めた S3 の場所への `s3:PutObject` を許す一時的なタスクロールを作ります
+3. **使い捨ての Fargate タスクで書き出す。** そのロールを使い、Control Plane のセキュリティグループ（`CpSgId`）とプライベートサブネットで、`tar` と AWS CLI のあるイメージを動かします。EFS ボリュームは 1 つで、転送中の暗号化と IAM 認可をオンにし、一時的なアクセスポイントを `/restore` にマウントします。リポジトリごとに `tar -C /restore/git/<slug> -czf - <repo>.git` をその S3 の場所へ書き出します
+4. **それぞれの tar を、そのテナントの管理者のワークスペースに入れ**、ホームの下の専用のディレクトリに展開します（下の `rescue` と `putback` は今のディレクトリの `<repo>.git` と `<repo>.refs` を使うので、復元したコピーと `rescue` のコピーを同じディレクトリに置かないでください）。そこでは git が内部 git に認証できるよう設定済みです
+5. **Control Plane を通して戻す。** そのリポジトリがまだ一覧にあって応答するなら、先に [ECS でのアップグレード](upgrade.ja.md#v045x-以前から上げる) の `rescue`（手順 3）で写しておきます。復元すると、今の中身は置き換わるからです。次に Console で削除し、同じ名前で作り直して、復元したコピーを push します。Console で作ったリポジトリは `main` から始まります。元の既定ブランチが別だったなら、メンバーに伝えてください
 
    ```bash
-   aws ecs update-service --cluster <cluster> --service af-<ingress stack>-cp --desired-count 0 --profile <p> --region <r>
-   aws ecs wait services-stable --cluster <cluster> --services af-<ingress stack>-cp --profile <p> --region <r>
-   aws ecs describe-services --cluster <cluster> --services af-<ingress stack>-cp \
-     --query 'services[0].runningCount' --output text --profile <p> --region <r>     # 0 であること
+   cd <tar を展開したディレクトリ>
+   git -C <repo>.git for-each-ref --format='%(objectname)%09%(refname)' | sort > <repo>.refs
+   putback <repo> <clone URL>    # アップグレードのページの手順 7 の関数
    ```
 
-2. **同じファイルシステムに復元する。** `"file-system-id"` はデータスタックの出力 `CpDataEfsId`、`ItemsToRestore` は `["/cp-data/git"]`（全体）か、`["/cp-data/git/<slug>/<repo>.git"]` のように必要なリポジトリだけを指定します。`aws backup describe-restore-job --restore-job-id <id> --query Status` が `COMPLETED` になるまで待ち、それまでは何もコピーしません
-3. **コピーに届くようにする。** `CpDataFileSystem` に、ルートディレクトリ `/aws-backup-restore_<ts>/cp-data`、POSIX ユーザー `0:0` の一時的なアクセスポイントを作ります。あわせて、そのファイルシステムへの `elasticfilesystem:ClientMount`、`ClientWrite`、`ClientRootAccess` を許す一時的なタスクロールを作ります
-4. **使い捨ての Fargate タスクを起動する。** そのロールを使い、Control Plane のセキュリティグループ（`CpSgId`）とプライベートサブネットで動かします。EFS ボリュームは 2 つで、どちらも転送中の暗号化と IAM 認可をオンにします。一時的なアクセスポイントを `/restore` に、`CpDataAccessPointId` を `/cp-data` にマウントします
-5. **復元したものだけを写し戻す。** 復元したリポジトリごとに、次を実行します
+   `putback` は LFS オブジェクトを先に、ref をその後に push し、push のあとに Control Plane が返す ref が復元したものと一致しなければ止まります。LFS オブジェクトは、`git-lfs` がベアリポジトリで期待する場所（`lfs/objects/`）にあるので、1 つずつアップロードされ、台帳に数えられます
 
-   ```bash
-   set -e
-   r=git/<slug>/<repo>.git
-   test -d "/restore/$r"
-   mv "/cp-data/$r" "/cp-data/$r.before-restore"
-   cp -a "/restore/$r" "/cp-data/$r"
-   ```
+6. **片付ける。** 一時的なアクセスポイントの下に復元したファイル、そのアクセスポイント、タスク定義、ロール、S3 のオブジェクトを消します。消すまでは、復元したコピーに EFS の料金がかかります
 
-   ツリー全体を入れ替えてよいのは、全体（`/cp-data/git`）を復元したときだけです: `mv /cp-data/git /cp-data/git.before-restore && cp -a /restore/git /cp-data/`。一部のリポジトリだけを復元したあとにツリーを入れ替えると、ほかのリポジトリがすべて Control Plane のパスから外れ、手順 6 で消えてしまいます
-
-6. **Control Plane を起動し直し**（`--desired-count 1`）、リポジトリを確かめてから、`.before-restore` のコピー、一時的なアクセスポイントの下に復元したファイル、そのアクセスポイント、タスク定義、ロールを消します。消すまでは、コピーに EFS の料金がかかります
-
-### 削除したリポジトリ
-
-1. 手順 1〜4 と同じように復元し、届くようにします（Control Plane のパスに何も写さないなら、Control Plane は動かしたままで構いません）
-2. 復元したディレクトリ `/restore/git/<slug>/<repo>.git` を、テナントの管理者に渡します。たとえば、使い捨てのタスクが tar にして、あなたが決めた S3 の場所に書き出します（その場合、タスクのロールにはそこへの `s3:PutObject` も要ります）
-3. 管理者は Console でリポジトリを作り直し、ワークスペースで展開して push します。LFS オブジェクトは、`git-lfs` がベアリポジトリで期待する場所（`lfs/objects/`）にあるので、アップロードは Control Plane を通り、台帳に数えられます
-
-   ```bash
-   git -C <repo>.git lfs push --all <clone URL> && git -C <repo>.git push --mirror <clone URL>
-   ```
-
-- 新しいファイルシステムへの復元は、`CpDataFileSystem` そのものを失ったときのためのものです。上と同じように、スタックが指すファイルシステムへツリーをコピーします。スタックの export を別のファイルシステムに向けることはできません
+- 新しいファイルシステムへの復元（`"newFileSystem":"true"`）は、`CpDataFileSystem` そのものを失ったときのためのものです。新しいファイルシステムに一時的なアクセスポイントを作り、同じように書き出します。スタックの export を別のファイルシステムに向けることはできません
 
 ## 費用
 

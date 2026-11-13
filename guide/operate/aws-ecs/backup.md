@@ -145,52 +145,25 @@ The restored copy is outside every access point, so no workspace can see it. Put
 
 The internal git repositories are on `CpDataFileSystem`, under `/cp-data/git/<tenant slug>/<repo>.git`, with each repository's LFS objects inside it (`lfs/objects/`). The member restore above does not reach them: that file system's mount targets accept NFS only from the Control Plane's security group, every mount must go through an access point, and the Control Plane's own grant covers only its access point (`/cp-data`). A restore lands under `/aws-backup-restore_<timestamp>/`, outside that access point, so the Control Plane cannot see it either.
 
-What a repository is also lives in RDS: its row, its default branch, and the LFS ledger that counts its objects toward the tenant's limit. A raw copy of files restores none of that. So:
+**Never copy restored files into the Control Plane's path.** Part of every repository is in RDS: its row, its default branch, and the LFS ledger that counts its objects toward the tenant's limit. Rows can be gone even when the repository is still listed (git GC deletes the ledger row of an LFS object it removes), so a raw copy can put objects on disk that are never counted again. A restored repository always goes back by a push through the Control Plane, which writes the ledger.
 
-| The repository | How |
-|---|---|
-| Still listed in the Console (its row is in RDS) | Copy the files back, below |
-| Deleted since the recovery point | Not by copying: the LFS objects would be on disk with no ledger rows, never counted again. Push it back through the Control Plane instead ([A deleted repository](#a-deleted-repository)) |
-
-Objects uploaded after the recovery point stay counted in the ledger after a copy-back; that over-count is the safe direction.
-
-1. **Stop the Control Plane and wait until no task runs**, so nothing writes to the repositories. The Console is down until step 6
+1. **Restore into the same file system**, with `"file-system-id"` the data stack's `CpDataEfsId` output and `ItemsToRestore` the repositories you need, such as `["/cp-data/git/<slug>/<repo>.git"]` (or `["/cp-data/git"]`). Wait until `aws backup describe-restore-job --restore-job-id <id> --query Status --profile <p> --region <r>` says `COMPLETED`. The Control Plane keeps running: nothing touches its path
+2. **Make the copy reachable.** Create a temporary access point on `CpDataFileSystem` with root directory `/aws-backup-restore_<ts>/cp-data` and POSIX user `0:0`, and a temporary task role whose policy allows `elasticfilesystem:ClientMount` and `ClientRootAccess` on that file system, and `s3:PutObject` on an S3 location you choose
+3. **Export it with a one-off Fargate task** that has that role, the Control Plane's security group (`CpSgId`), the private subnets, an image with `tar` and the AWS CLI, and one EFS volume with transit encryption and IAM authorization: the temporary access point, at `/restore`. Per repository it writes `tar -C /restore/git/<slug> -czf - <repo>.git` to the S3 location
+4. **Get each tar into a workspace of a tenant administrator** of that tenant and unpack it under the home, in a directory of its own (`rescue` and `putback` below use `<repo>.git` and `<repo>.refs` in the current directory, so the restored copy and a rescue copy must not share one). git there already authenticates to the internal git
+5. **Put it back through the Control Plane.** If the repository is still listed and answers, copy it out first with `rescue` from [Upgrade on ECS](upgrade.md#upgrade-from-v045x-or-earlier) (step 3): the restore replaces whatever it holds now. Then delete it in the Console, create it again under the same name, and push the restored copy. A repository created in the Console starts on `main`; if the old default branch was another one, tell its members
 
    ```bash
-   aws ecs update-service --cluster <cluster> --service af-<ingress stack>-cp --desired-count 0 --profile <p> --region <r>
-   aws ecs wait services-stable --cluster <cluster> --services af-<ingress stack>-cp --profile <p> --region <r>
-   aws ecs describe-services --cluster <cluster> --services af-<ingress stack>-cp \
-     --query 'services[0].runningCount' --output text --profile <p> --region <r>     # must be 0
+   cd <the directory the tar was unpacked in>
+   git -C <repo>.git for-each-ref --format='%(objectname)%09%(refname)' | sort > <repo>.refs
+   putback <repo> <clone URL>    # the function from the upgrade page, step 7
    ```
 
-2. **Restore into the same file system**, with `"file-system-id"` the data stack's `CpDataEfsId` output and `ItemsToRestore` either `["/cp-data/git"]` (everything) or the repositories you need, such as `["/cp-data/git/<slug>/<repo>.git"]`. Wait for `aws backup describe-restore-job --restore-job-id <id> --query Status` to say `COMPLETED`; do not copy anything before that
-3. **Make the copy reachable.** Create a temporary access point on `CpDataFileSystem` with root directory `/aws-backup-restore_<ts>/cp-data` and POSIX user `0:0`, and a temporary task role whose policy allows `elasticfilesystem:ClientMount`, `ClientWrite` and `ClientRootAccess` on that file system
-4. **Start a one-off Fargate task** with that role, the Control Plane's security group (`CpSgId`), the private subnets, and two EFS volumes with transit encryption and IAM authorization: the temporary access point at `/restore`, and `CpDataAccessPointId` at `/cp-data`
-5. **Copy back only what you restored.** For each restored repository:
+   `putback` pushes the LFS objects first, then the refs, and stops unless the Control Plane lists exactly the restored refs afterwards. The LFS objects are where `git-lfs` expects them in a bare repository (`lfs/objects/`), so each one is uploaded and counted
 
-   ```bash
-   set -e
-   r=git/<slug>/<repo>.git
-   test -d "/restore/$r"
-   mv "/cp-data/$r" "/cp-data/$r.before-restore"
-   cp -a "/restore/$r" "/cp-data/$r"
-   ```
+6. **Clean up**: the restored files under the temporary access point, the access point, the task definition, the role and the S3 objects. EFS bills the restored copy until then
 
-   Only after a whole-tree restore (`/cp-data/git`) may the whole tree be swapped: `mv /cp-data/git /cp-data/git.before-restore && cp -a /restore/git /cp-data/`. After a restore of single repositories, swapping the tree would move every other repository out of the Control Plane's path, and step 6 deletes it
-
-6. **Start the Control Plane** again (`--desired-count 1`), check the repositories, then delete the `.before-restore` copies, the restored files under the temporary access point, the access point, the task definition and the role. EFS bills the copies until then
-
-### A deleted repository
-
-1. Restore it and make it reachable as in steps 1–4 (the Control Plane can stay running when nothing is copied into its path)
-2. Hand the restored directory `/restore/git/<slug>/<repo>.git` to a tenant administrator, for example as a tar file the one-off task writes to an S3 location you choose (its role then also needs `s3:PutObject` there)
-3. The administrator creates the repository again in the Console and, from a workspace, unpacks it and pushes it. The LFS objects are where `git-lfs` expects them in a bare repository (`lfs/objects/`), so the upload goes through the Control Plane and is counted
-
-   ```bash
-   git -C <repo>.git lfs push --all <clone URL> && git -C <repo>.git push --mirror <clone URL>
-   ```
-
-- A restore into a new file system is for losing `CpDataFileSystem` itself. Copy its tree onto the file system the stack names, as above; the stack's export cannot be pointed at another file system
+- A restore into a new file system (`"newFileSystem":"true"`) is for losing `CpDataFileSystem` itself. Export from it the same way, with the temporary access point on the new file system; the stack's export cannot be pointed at another file system
 
 ## Cost
 

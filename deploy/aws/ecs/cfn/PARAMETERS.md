@@ -854,7 +854,8 @@ imports, so roll 30-ingress back first. The first upgrade replaces the task whos
 repository created or pushed since it started: copy those out before it, then clear the orphaned
 rows and push them back (`guide/operate/aws-ecs/upgrade.md`, "The Control Plane's data root").
 Restoring from a recovery point needs its own path (`backup.md`, "Restore the Control Plane's
-repositories"): the members' root-mount restore cannot reach this file system.
+repositories"): the members' root-mount restore cannot reach this file system, and a restored
+repository goes back only by a push through the CP, never a file copy, so the LFS ledger is written.
 
 ### Home task (volume root)
 
