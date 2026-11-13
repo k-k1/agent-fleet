@@ -54,7 +54,7 @@ claude.ai, ChatGPT, Claude Code and Codex then connect by having the member sign
 | Kubernetes | Add the same lines to the Control Plane's environment file (`cp.env`) |
 | ECS | Set the `30-ingress` parameters `McpEnabled=on` and `McpOAuth=on` (and `McpOAuthTrustedHosts` if needed) with a separate `aws cloudformation deploy` of `30-ingress.yaml` |
 
-On ECS, `update.sh` neither turns these on nor off: parameters keep their previous value, and one the stack does not have yet starts off. The steps are in [Serve remote MCP](../aws-ecs/options.md#serve-remote-mcp).
+On ECS, `update.sh` turns these neither on nor off: parameters keep their previous value, and one the stack does not have yet starts off. The steps are in [Serve remote MCP](../aws-ecs/options.md#serve-remote-mcp).
 
 ### The public paths and the ingress
 

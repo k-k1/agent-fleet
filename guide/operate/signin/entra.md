@@ -25,7 +25,7 @@ Under **Microsoft Entra ID → App registrations → New registration**:
 
 1. Give it a name (it appears on the consent screen). Under **Supported account types**, choose **Accounts in this organizational directory only** (single tenant). Choosing multi-tenant here is how the Control Plane ends up refusing to start
 2. Add the redirect URI on the **Web** platform with `https://<PUBLIC_DOMAIN>/oauth2/callback` ([Register the redirect URI](overview.md#register-the-redirect-uri))
-   - Registered as a **Single-page application**, the code cannot be exchanged with a client secret, and it fails only at the first sign-in
+   - Registered as a **Single-page application**, the code cannot be exchanged with a client secret, and the failure shows only at the first sign-in
 3. Under **Certificates & secrets → New client secret**, create one and copy its **Value** on the spot
    - The value is shown once. The **Secret ID** beside it is not the secret
    - **Put the expiry date in your calendar.** When it lapses, every sign-in through this button fails at the token exchange while nothing looks wrong in Agent Fleet
@@ -52,11 +52,11 @@ AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
 | `AF_OIDC_<ID>_LABEL_JA`, `_LABEL_EN` | The button label |
 
 - An **id** uses `a-z 0-9 - _`, up to 32 characters, starting with a letter or digit. In key names `-` becomes `_` (`entra-id` gives `AF_OIDC_ENTRA_ID_*`). The id also shows in tenants' lists of sign-in methods, so keep it short and stable
-- **`_TRUST` has no default.** The allowlist is written in email addresses, so you have to state why this IdP's addresses can be believed. An IdP without it is not guessed at; it is left out at startup
+- **`_TRUST` has no default.** The allowlist is written in email addresses, so you have to state why this IdP's addresses can be trusted. An IdP without it is not guessed at; it is left out at startup
   - `email_verified`: take only addresses the IdP itself says it has verified
   - `issuer`: the issuer is pinned to one directory, so that directory's addresses are taken as correct
   - **Entra does not send `email_verified`.** With `email_verified`, every Entra sign-in is refused as unverified
-- **Pin the issuer to your directory's GUID.** With a `/common/`, `/organizations/` or `/consumers/` issuer, anybody with a Microsoft account reaches the sign-in, and a personal Microsoft account can change its own email address, which makes the allowlist meaningless
+- **Pin the issuer to your directory's GUID.** With a `/common/`, `/organizations/` or `/consumers/` issuer, anybody with a Microsoft account reaches the sign-in page, and a personal Microsoft account can change its own email address, which makes the allowlist meaningless
   - If you do use one of those issuers, list the directory GUIDs you accept in `AF_OIDC_<ID>_ALLOWED_TIDS`. Without them the Control Plane refuses to start
 
 Then restart the Control Plane and go through [Check that it worked](overview.md#check-that-it-worked).

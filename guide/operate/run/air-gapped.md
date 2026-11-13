@@ -61,7 +61,7 @@ The default workspace image is the lean variant: it ships without the agent CLIs
 ## Fill the diagram icon cache
 
 The bundled drawio viewer draws diagrams offline, but vendor icons (AWS, GCP, Azure, Kubernetes, rack equipment and so on) are not bundled.
-Normally the Control Plane fetches and caches them on first use. Without the outside, that fetch fails and **diagrams silently degrade to boxes, colours and labels**.
+Normally the Control Plane fetches and caches them on first use. Without outside access, that fetch fails and **diagrams silently degrade to boxes, colours and labels**.
 
 To avoid it, fill the cache from a directory you carry in.
 

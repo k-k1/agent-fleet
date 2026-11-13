@@ -59,7 +59,7 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | ページ | できること |
 |---|---|
 | [脅威モデルと残るリスクを知る](secure/threat-model.ja.md) | 隔離の境界がどこにあるかを知り、残るリスクに備え、脆弱性を報告する |
-| [配備の鍵を扱う](secure/deployment-keys.ja.md) | `AF_MASTER_KEY` と `AF_COOKIE_SECRET` の要件を守り、鍵のない配備に鍵を入れ、古い値を封じる |
+| [配備の鍵を扱う](secure/deployment-keys.ja.md) | `AF_MASTER_KEY` と `AF_COOKIE_SECRET` の要件を満たし、鍵のない配備に鍵を入れ、古い値を封じる |
 | [外向きの通信を制御する](secure/egress.ja.md) | ワークスペースの外向きの通信を観測し、許可リストで絞る |
 | [MCP と外部接続のサインインを運用する](secure/mcp.ja.md) | `/mcp` を OAuth で開き、信頼するクライアントのホストを決め、届いたものをログで読む |
 | [開発用サインインを使う](secure/dev-signin.ja.md) | `AUTH=dev` を使ってよい場所を知り、開発用 OIDC IdP をオン・オフする |
@@ -93,7 +93,7 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [推論エンジンを足す](aws-ecs/engines.ja.md) | GPU のエンジンのスタックを建て、モデルを手で S3 に置き、制御を調整する |
 | [費用を抑える](aws-ecs/cost.ja.md) | 常にかかる費用を知り、つまみを選び、動いているスタックを S3 ゲートウェイエンドポイントに移す |
 | [EFS をバックアップ・復元する](aws-ecs/backup.ja.md) | EFS の毎日のバックアップを有効にし、1 人分かファイルシステム全体を戻す |
-| [スクリプトで構築・一時停止・撤去する](aws-ecs/lifecycle.ja.md) | 配備を記録し、一時停止と再開をし、各スクリプトが何をどの順でするかを知る |
+| [スクリプトで構築・一時停止・撤去する](aws-ecs/lifecycle.ja.md) | 配備を記録し、一時停止・再開し、各スクリプトが何をどの順でするかを知る |
 | [撤去する](aws-ecs/teardown.ja.md) | 止まらない順番ですべてを消し、残るものを知る |
 | [EC2 スロットプールを使い始める](aws-ecs/slot-pool.ja.md) | ワークスペースを EBS のホームつきの EC2 スロット（`ecs-ec2`）に載せ、何が変わり何にお金がかかるかを知る |
 | [スロットのマシンの種類を選ぶ](aws-ecs/slot-types.ja.md) | 安い種類や Graviton など、スロットのクラスを用意し、既定を決める |

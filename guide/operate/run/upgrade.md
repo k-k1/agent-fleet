@@ -45,7 +45,7 @@ docker compose up -d
 
 - Images come from GHCR (`ghcr.io/k-k1/agent-fleet/*`), resolved from `REGISTRY` and `VERSION`. No registry login is needed
 - **The workspace image is not a compose service.** `docker compose pull` does not fetch it, so `docker pull` it separately or rebuild it. `WS_IMAGE` is a separate variable, not derived from `VERSION`; point it at the matching tag
-- `docker compose up -d` does not touch running workspaces, and a Docker restart keeps the environment they were created with. After upgrading (and after changing `AF_WS_WORKLOAD_AWS`), stop and start each workspace ([Move workspaces to the new image](#move-workspaces-onto-the-new-image))
+- `docker compose up -d` does not touch running workspaces, and a Docker restart keeps the environment they were created with. After upgrading (and after changing `AF_WS_WORKLOAD_AWS`), stop and start each workspace ([Move workspaces onto the new image](#move-workspaces-onto-the-new-image))
 - On a cloud VM, check the protection of the host's cloud identity afterwards ([Other operational controls](../secure/controls.md#keep-the-hosts-cloud-identity-from-workspaces))
 - The native package is in [Update the native package](../native/update.md)
 

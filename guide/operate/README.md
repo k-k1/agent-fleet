@@ -71,7 +71,7 @@ What people running Agent Fleet on their own infrastructure want to do, one task
 | Page | What you can do |
 |---|---|
 | [Put the keys at rest on AWS KMS](keys/kms.md) | On AWS, protect what the Control Plane seals with KMS and re-seal values stored before the switch |
-| [Give each home its own key](keys/home-keys.md) | On AWS, seal each member's credential store under a key of its home's own |
+| [Give each home its own key](keys/home-keys.md) | On AWS, seal each member's credential store under its home's own key |
 | [Rotate the bridge tokens](keys/bridge-tokens.md) | Invalidate workspace tokens for one member or for everyone at once |
 
 ## ECS
@@ -106,10 +106,10 @@ What people running Agent Fleet on their own infrastructure want to do, one task
 
 | Page | What you can do |
 |---|---|
-| [Run inference engines on your own GPUs](engines/gpu.md) | choose each role's mode, set the idle stop and the GPU instance class, and the words kept out of every picture |
-| [Take models into the inference engines](engines/models.md) | find models on Hugging Face and Civitai, take them in and enable them; let a tenant take models in |
-| [Check the inference engines' state and history](engines/status.md) | read the running instance and the requests, and look at 14 days of uptime |
-| [Run the read-aloud engine](engines/read-aloud.md) | provide and run the VOICEVOX engine, and keep the shared pronunciation dictionary |
+| [Run inference engines on your own GPUs](engines/gpu.md) | Choose each role's mode, set the idle stop and the GPU instance class, and the words kept out of every picture |
+| [Take models into the inference engines](engines/models.md) | Find models on Hugging Face and Civitai, take them in and enable them; let a tenant take models in |
+| [Check the inference engines' state and history](engines/status.md) | Read the running instance and the requests, and look at 14 days of uptime |
+| [Run the read-aloud engine](engines/read-aloud.md) | Provide and run the VOICEVOX engine, and keep the shared pronunciation dictionary |
 | [Generate images on your own ComfyUI](engines/comfyui.md) | Point the image engine at a ComfyUI on your network, register its models and close the routes to it |
 | [Borrow another deployment's engines](engines/borrow.md) | Use the chat and image engines of an Agent Fleet on AWS from a deployment on your own host, and issue the token as the lender |
 | [Chat on a llama.cpp on your LAN](engines/llama-cpp.md) | Point the chat engine at a llama-server on your network |
