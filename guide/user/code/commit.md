@@ -47,7 +47,7 @@ The header shows the current branch and these buttons. When space is tight they 
 ![The "webshop — Changes" pane: two staged files (M) and three unstaged ones, the commit message "Add checkout input validation", "Stage all tracked (-a)", the "Commit" button, and the commit author below](../../assets/code-changes-en-light.webp)
 
 - The "Stage" and "Unstage" buttons appear when you hover over a row
-- Tracked files can also be "**Discard changes**"d. They go after a confirmation and cannot be brought back
+- Tracked files also offer "**Discard changes**". The changes go after a confirmation and cannot be brought back
 - With an empty message you see "A commit message is required"
 
 ### Change the commit author
@@ -68,7 +68,7 @@ Click a row of the commit graph to see that commit's changed files and diff.
 | Item | What it does |
 |---|---|
 | Show details | Opens that commit's diff |
-| Start work on {branch}… | Starts work in a working copy of that branch's own |
+| Start work on {branch}… | Starts work in a working copy of its own for that branch |
 | Switch branch: {branch} | Switches the current working copy to that branch |
 | Switch to remote branch: {branch} | Switches to the remote branch |
 | Check out (detached HEAD) | Checks out that commit |

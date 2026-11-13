@@ -51,7 +51,7 @@ The card's "**Behavior**" picks the default model, the models to exclude and so 
 Before your first session, read [lcpp: what hardware measurement found](../../ref/agents.md#lcpp-what-hardware-measurement-found). In short:
 
 - With the engine instance stopped, the first turn takes minutes
-- The context window has a lower bound worth choosing
+- There is a minimum context window worth choosing
 - Only a few model families are confirmed to work
 
 ## Good to know
