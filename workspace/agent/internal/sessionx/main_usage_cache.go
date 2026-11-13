@@ -43,8 +43,6 @@ func newMainUsageCache(idle time.Duration) *mainUsageCache {
 	return &mainUsageCache{m: map[string]mainUsageEntry{}, flight: map[string]*mainUsageFlight{}, idle: idle, sourceOf: UsageSourceOf}
 }
 
-var mainUsage = newMainUsageCache(10 * time.Minute)
-
 // get returns m's main-transcript usage; see getBy.
 func (c *mainUsageCache) get(m session.Meta, now time.Time) sessionUsage {
 	u, _ := c.getBy(m, now, time.Time{})
@@ -158,26 +156,35 @@ func (c *mainUsageCache) len() int {
 	return len(c.m)
 }
 
-// mainUsageColdBudget bounds how long one all-sessions read spends parsing transcripts that are
-// not cached. The relay gives up at 15 s; the first call after an agent restart has an empty
-// cache, so without a bound it parses every transcript (28 s measured on 141 sessions). Past the
-// budget the remaining uncached sessions are left out and counted as pending while a background
-// pass fills the cache, so the next call is warm.
+// mainUsageColdBudget bounds how long one all-sessions read waits for sessions whose figures are
+// not cached (allSessionsUsage). The relay gives up at 15 s; a cold cache means parsing every
+// transcript (28 s measured on 141 sessions). Past the budget the unfinished sessions are counted
+// as pending while a background pass fills the cache, so the next call is warm.
 var mainUsageColdBudget = 8 * time.Second
 
-var mainUsageWarming atomic.Bool
+// usageCacheIdle is how long the usage read's caches keep a session nobody has read. Every entry
+// is checked against its file stamps before it is served, so age never makes one wrong; the drop
+// exists only so deleted and archived sessions do not pile up. A short idle turns a quiet spell
+// into a cold call: at 10 minutes every first read after a break re-parsed every transcript
+// (measured: 28 s, against 0.5 s warm on the same 117 sessions). The figures are a few words per
+// session and per subagent, so keeping them for a day costs nothing worth saving.
+const usageCacheIdle = 24 * time.Hour
 
-// WarmMainUsage fills the cache for every transcript-capable session, one at a time, so the first
-// all-sessions read after an agent restart finds it warm. Only one pass runs at a time.
-func WarmMainUsage() {
-	if !mainUsageWarming.CompareAndSwap(false, true) {
-		return
-	}
-	defer mainUsageWarming.Store(false)
+var mainUsage = newMainUsageCache(usageCacheIdle)
+
+// usageMetas lists the sessions the usage read reports: not archived, and of a kind that keeps a
+// transcript (shell and ssm do not).
+func usageMetas() []session.Meta {
+	var out []session.Meta
 	for _, m := range session.ListMetas() {
-		if m.Archived || !AgentOf(m.Kind).Caps().CanTranscript {
-			continue
+		if !m.Archived && AgentOf(m.Kind).Caps().CanTranscript {
+			out = append(out, m)
 		}
-		mainUsage.get(m, time.Now())
 	}
+	return out
 }
+
+// WarmSessionUsage starts filling the usage read's caches (main transcript and subagents) for every
+// transcript-capable session, so the first all-sessions read after an agent restart finds them
+// warm. It joins the running pass when there is one, and does not wait for it.
+func WarmSessionUsage() { joinUsagePass(usageMetas()) }
