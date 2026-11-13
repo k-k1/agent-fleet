@@ -91,4 +91,5 @@ copilot と Kiro には専用のファイルで、lcpp にはシステムプロ�
 
 - [手元の Claude Code の設定を持ち込む](bring-claude-setup.ja.md)：スキル・フック・サブエージェント
 - [メモリの使いかたを設定する](../memory/settings.ja.md)：どの種類にも共有のメモリを渡すスイッチ
+- [スキルやコマンドを呼び出す](../sessions/skills.ja.md#agent-fleet-が入れるスキル)：方針の手順を入れた `af-` のスキル
 - [エージェントを選ぶ](choose.ja.md)

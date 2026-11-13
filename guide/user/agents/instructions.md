@@ -91,4 +91,5 @@ Instructions are read when a session starts. Start the session again.
 
 - [Bring your Claude Code setup](bring-claude-setup.md): skills, hooks and subagents
 - [Set how memory is used](../memory/settings.md): the switch that gives every kind the shared memory
+- [Call a skill or a command](../sessions/skills.md#skills-agent-fleet-puts-in): the `af-` skills that carry the policy's procedures
 - [Choose an agent](choose.md)
