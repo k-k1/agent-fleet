@@ -5,7 +5,10 @@ The tools, their purpose, upstream and licence come from scripts/workspace-image
 (group titles in groups.tsv). Every version is read from workspace/Dockerfile, the file the
 image and the versions.json pins are built from, so the page cannot advertise a version the
 image does not carry. The licence column is hand-kept: each one was checked against the
-upstream LICENSE file or terms page named in licence_url, never guessed.
+upstream LICENSE file or terms page named in licence_url, never guessed. A licence_url may hold
+`{version}` (the resolved version) or `{v0}`, `{v1}`, ... (its dot-separated parts), so a link
+names the file at the tag that is installed and follows a pin bump; a project can change its
+licence between releases, so after a bump that moves to a new major, re-check the licence.
 
     python3 scripts/workspace_image.py          # rewrite both pages
     python3 scripts/workspace_image.py --check  # exit 1 if a row is missing or a page is stale
@@ -140,6 +143,24 @@ def resolve(df: Dockerfile, spec: str) -> dict:
     raise ImageError(f"unknown version source '{spec}'")
 
 
+_PLACEHOLDER = re.compile(r"\{([a-z0-9]*)\}")
+
+
+def licence_url(r: dict, v: dict) -> str:
+    """The row's licence_url with the installed version filled in."""
+    url = r["licence_url"]
+    names = _PLACEHOLDER.findall(url)
+    if not names:
+        return url
+    if v["kind"] != "pin":
+        raise ImageError(f"licence_url has {{{names[0]}}} but version '{r['version']}' pins nothing")
+    fields = {"version": v["value"]} | {f"v{i}": part for i, part in enumerate(v["value"].split("."))}
+    for n in names:
+        if n not in fields:
+            raise ImageError(f"licence_url names {{{n}}}, which version {v['value']} does not have")
+    return _PLACEHOLDER.sub(lambda m: fields[m.group(1)], url)
+
+
 def load_rows(root: str) -> tuple[list[dict], list[dict]]:
     groups = _read_tsv(root, GROUPS_TSV, ("group", "en", "ja"))
     tools = _read_tsv(root, TOOLS_TSV, TOOL_COLUMNS)
@@ -182,9 +203,14 @@ def problems(root: str) -> list[str]:
             out.append(f"{where}: {r['id']}'s licence '{r['licence']}' is not an SPDX expression, 'vendor' or 'see upstream'")
         covered_bins |= set(r["bins"].split())
         try:
-            resolve(df, r["version"])
+            v = resolve(df, r["version"])
         except ImageError as e:
             out.append(f"{where}: {r['id']}: version {e}")
+        else:
+            try:
+                licence_url(r, v)
+            except ImageError as e:
+                out.append(f"{where}: {r['id']}: {e}")
         m = re.match(r"(?:arg|deb):([A-Z0-9_]+)", r["version"])
         if m:
             used_args.add(m.group(1))
@@ -321,12 +347,13 @@ def _version_cell(v: dict, lang: str) -> str:
     return base
 
 
-def _licence_cell(r: dict, lang: str) -> str:
+def _licence_cell(r: dict, v: dict, lang: str) -> str:
+    url = licence_url(r, v)
     if r["licence"] == "vendor":
-        return TEXT[lang]["vendor"].format(u=r["licence_url"])
+        return TEXT[lang]["vendor"].format(u=url)
     if r["licence"] == "see upstream":
-        return TEXT[lang]["upstream"].format(u=r["licence_url"])
-    return f"[{r['licence']}]({r['licence_url']})"
+        return TEXT[lang]["upstream"].format(u=url)
+    return f"[{r['licence']}]({url})"
 
 
 def render(root: str, lang: str) -> str:
@@ -347,7 +374,7 @@ def render(root: str, lang: str) -> str:
             v = resolve(df, r["version"])
             out.append(
                 f"| [{r['name']}]({_link(r['url'], lang)}) | {r[lang]} | {_version_cell(v, lang)}"
-                f" | {_licence_cell(r, lang)} |"
+                f" | {_licence_cell(r, v, lang)} |"
             )
         out.append("")
     out.append(LICENCE[lang])

@@ -37,14 +37,14 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 HEADER = "\t".join(img.TOOL_COLUMNS)
 ROWS = {
-    "gh": "gh\tcli\tgh\tGitHub CLI\thttps://example.org/gh\tMIT\thttps://example.org/gh/LICENSE\targ:GH_VERSION\tGitHub\tGitHub を使う",
+    "gh": "gh\tcli\tgh\tGitHub CLI\thttps://example.org/gh\tMIT\thttps://example.org/gh/blob/v{version}/LICENSE\targ:GH_VERSION\tGitHub\tGitHub を使う",
     "jq": "jq\tcli\tjqq\tjq\thttps://example.org/jq\tMIT\thttps://example.org/jq/LICENSE\tapt:jq\tJSON\tJSON を加工する",
     "git": "git\tcli\t\tGit\thttps://example.org/git\tGPL-2.0-only\thttps://example.org/git/COPYING\tapt:git\tVCS\tバージョン管理",
     "uv": "uv\tcli\t\tuv\thttps://example.org/uv\tMIT OR Apache-2.0\thttps://example.org/uv/L\tlatest:uv\tPython\tPython",
     "go": "go\trt\t\tGo\thttps://example.org/go\tBSD-3-Clause\thttps://example.org/go/L\targ:GO_VERSION;select\tGo\tGo",
     "node": "node\trt\t\tNode.js\thttps://example.org/node\tMIT\thttps://example.org/node/L\tfrom:node;select\tJS\tJS",
     "java": "java\trt\t\tJava\thttps://example.org/java\tvendor\thttps://example.org/java/terms\tselect\tJava\tJava",
-    "chromium": "chromium\trt\t\tChromium\thttps://example.org/c\tBSD-3-Clause\thttps://example.org/c/L\tdeb:CHROMIUM_VERSION\tBrowser\tブラウザ",
+    "chromium": "chromium\trt\t\tChromium\thttps://example.org/c\tBSD-3-Clause\thttps://example.org/c/{v0}_{v1}/L\tdeb:CHROMIUM_VERSION\tBrowser\tブラウザ",
 }
 
 
@@ -78,12 +78,12 @@ class WorkspaceImageTests(unittest.TestCase):
         self.generate()
         self.assertEqual(img.stale_pages(str(self.root)), [])
         en = (self.root / img.PAGES["en"]).read_text()
-        self.assertIn("| [GitHub CLI](https://example.org/gh) | GitHub | `2.0.0` | [MIT](https://example.org/gh/LICENSE) |", en)
+        self.assertIn("| [GitHub CLI](https://example.org/gh) | GitHub | `2.0.0` | [MIT](https://example.org/gh/blob/v2.0.0/LICENSE) |", en)
         self.assertIn("| Debian 13 (trixie) package |", en)
         self.assertIn("Latest at image build", en)
         self.assertIn("image default `1.2.3`", en)
         self.assertIn("image default `22`", en)
-        self.assertIn("| `150.0.1` |", en)
+        self.assertIn("| `150.0.1` | [BSD-3-Clause](https://example.org/c/150_0/L) |", en)
         self.assertIn("[Vendor terms](https://example.org/java/terms)", en)
         ja = (self.root / img.PAGES["ja"]).read_text()
         self.assertIn("イメージの既定は `22`", ja)
@@ -115,6 +115,14 @@ class WorkspaceImageTests(unittest.TestCase):
         self.assertIn("installs no apt package 'mercurial'", out)
         self.assertIn("not python:<major>", out)
         self.assertIn("no unpinned `pip install` of 'poetry'", out)
+
+    def test_licence_url_placeholders(self):
+        self.rows["git"] = self.rows["git"].replace("git/COPYING", "git/{version}/COPYING")
+        self.rows["chromium"] = self.rows["chromium"].replace("{v1}", "{v7}")
+        self.write()
+        out = self.problems()
+        self.assertIn("git: licence_url has {version} but version 'apt:git' pins nothing", out)
+        self.assertIn("chromium: licence_url names {v7}, which version 150.0.1 does not have", out)
 
     def test_bad_licence_and_unknown_group(self):
         self.rows["jq"] = self.rows["jq"].replace("\tMIT\t", "\tprobably MIT\t").replace("jq\tcli", "jq\tnope", 1)

@@ -37,23 +37,23 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub をコマンドラインから使う。Git ホスティングの接続でサインイン済み | `2.103.3` | [MIT](https://github.com/cli/cli/blob/trunk/LICENSE) |
-| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket のプルリクエストとパイプラインを扱う。Git ホスティングの接続でサインイン済み | `0.37.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/master/LICENSE) |
-| [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira の課題を扱う。課題管理の接続でサインイン済み | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/main/LICENSE) |
-| [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence のページを扱う。Jira と同じ Atlassian 接続でサインイン済み | `2.31.0` | [MIT](https://github.com/pchuri/confluence-cli/blob/main/LICENSE) |
+| [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub をコマンドラインから使う。Git ホスティングの接続でサインイン済み | `2.103.3` | [MIT](https://github.com/cli/cli/blob/v2.103.3/LICENSE) |
+| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket のプルリクエストとパイプラインを扱う。Git ホスティングの接続でサインイン済み | `0.37.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.37.0/LICENSE) |
+| [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira の課題を扱う。課題管理の接続でサインイン済み | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
+| [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence のページを扱う。Jira と同じ Atlassian 接続でサインイン済み | `2.31.0` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.0/LICENSE) |
 | [Apache Subversion (`svn`)](https://subversion.apache.org/) | Subversion のリポジトリを、接続の認証情報で扱う | Debian 13 (trixie) のパッケージ | [Apache-2.0](https://github.com/apache/subversion/blob/trunk/LICENSE) |
-| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS をコマンドラインから使う。`af-aws-exec` を通して実行する | `2.36.46` | [Apache-2.0](https://github.com/aws/aws-cli/blob/v2/LICENSE.txt) |
-| [Session Manager plugin](https://github.com/aws/session-manager-plugin) | AWS CLI から SSM のセッションを開く | `1.2.835.0` | [Apache-2.0](https://github.com/aws/session-manager-plugin/blob/mainline/LICENSE) |
-| [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud をコマンドラインから使う。`af-gcloud-exec` を通して実行する | `587.0.0` | [Apache-2.0](https://cloud.google.com/sdk) |
+| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS をコマンドラインから使う。`af-aws-exec` を通して実行する | `2.36.46` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.36.46/LICENSE.txt) |
+| [Session Manager plugin](https://github.com/aws/session-manager-plugin) | AWS CLI から SSM のセッションを開く | `1.2.835.0` | [Apache-2.0](https://github.com/aws/session-manager-plugin/blob/1.2.835.0/LICENSE) |
+| [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud をコマンドラインから使う。`af-gcloud-exec` を通して実行する | `587.0.0` | [Apache-2.0](https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-587.0.0-linux-x86_64.tar.gz) |
 
 ## エージェントの CLI
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
 | [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic のコーディングエージェント | `2.1.323` | [提供元の規約](https://www.anthropic.com/legal/commercial-terms) |
-| [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI のコーディングエージェント | `0.168.0` | [Apache-2.0](https://github.com/openai/codex/blob/main/LICENSE) |
-| [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.2.7` | [MIT](https://github.com/anomalyco/opencode/blob/dev/LICENSE) |
-| [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.110` | [提供元の規約](https://github.com/github/copilot-cli/blob/main/LICENSE.md) |
+| [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI のコーディングエージェント | `0.168.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.168.0/LICENSE) |
+| [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.2.7` | [MIT](https://github.com/anomalyco/opencode/blob/v2.2.7/LICENSE) |
+| [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.110` | [提供元の規約](https://github.com/github/copilot-cli/blob/v1.0.110/LICENSE.md) |
 | [Antigravity CLI (`agy`)](https://antigravity.google/) | Google のコーディングエージェント | `1.5.8` | [提供元の規約](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor のコーディングエージェント | `2026.10.22-27dcf5f` | [提供元の規約](https://cursor.com/terms-of-service) |
 | [Kiro CLI (`kiro-cli`)](https://kiro.dev/cli/) | AWS の Kiro のコーディングエージェント | `3.1.0` | [提供元の規約](https://kiro.dev/license/) |
@@ -73,15 +73,15 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | [bat](https://github.com/sharkdp/bat) | 構文を色分けして表示する `cat` | Debian 13 (trixie) のパッケージ | [MIT OR Apache-2.0](https://github.com/sharkdp/bat#license) |
 | [jq](https://jqlang.org/) | JSON を加工する | Debian 13 (trixie) のパッケージ | [MIT](https://github.com/jqlang/jq/blob/master/COPYING) |
 | [uv](https://github.com/astral-sh/uv) | Python のパッケージとツールを管理する（`uv`、`uvx`） | イメージのビルド時の最新 | [MIT OR Apache-2.0](https://github.com/astral-sh/uv#license) |
-| [npm](https://github.com/npm/cli) | Node.js のパッケージマネージャー | `11.21.2` | [Artistic-2.0](https://github.com/npm/cli/blob/latest/LICENSE) |
-| [rtk](https://github.com/rtk-ai/rtk) | エージェント向けにコマンドの出力を短くし、トークンを節約する | `1.2.0` | [Apache-2.0](https://github.com/rtk-ai/rtk/blob/develop/LICENSE) |
+| [npm](https://github.com/npm/cli) | Node.js のパッケージマネージャー | `11.21.2` | [Artistic-2.0](https://github.com/npm/cli/blob/v11.21.2/LICENSE) |
+| [rtk](https://github.com/rtk-ai/rtk) | エージェント向けにコマンドの出力を短くし、トークンを節約する | `1.2.0` | [Apache-2.0](https://github.com/rtk-ai/rtk/blob/v1.2.0/LICENSE) |
 
 ## 言語ランタイム
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
 | [Node.js](https://nodejs.org/) | JavaScript のランタイム | [選択式](../user/workspace/toolchains.ja.md)。イメージの既定は `22` | [MIT](https://github.com/nodejs/node/blob/main/LICENSE) |
-| [Go](https://go.dev/) | Go のツールチェーン | [選択式](../user/workspace/toolchains.ja.md)。イメージの既定は `1.26.10` | [BSD-3-Clause](https://github.com/golang/go/blob/master/LICENSE) |
+| [Go](https://go.dev/) | Go のツールチェーン | [選択式](../user/workspace/toolchains.ja.md)。イメージの既定は `1.26.10` | [BSD-3-Clause](https://github.com/golang/go/blob/go1.26.10/LICENSE) |
 | [Java (Eclipse Temurin)](https://adoptium.net/) | Eclipse Adoptium の Java 開発キット | [選択式](../user/workspace/toolchains.ja.md) | [GPL-2.0-only WITH Classpath-exception-2.0](https://adoptium.net/docs/faq/) |
 | [Java (Amazon Corretto)](https://aws.amazon.com/corretto/) | Amazon の Java 開発キット | [選択式](../user/workspace/toolchains.ja.md) | [GPL-2.0-only WITH Classpath-exception-2.0](https://github.com/corretto/corretto-21/blob/develop/LICENSE) |
 | [Python](https://www.python.org/) | Python。pip と venv 付き | Debian 13 (trixie) のパッケージ | [PSF-2.0](https://github.com/python/cpython/blob/main/LICENSE) |
@@ -90,22 +90,22 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [PostgreSQL](https://www.postgresql.org/) | `af-db` で必要なときに起動する | `17.11.0` | [PostgreSQL](https://www.postgresql.org/about/licence/) |
-| [MySQL Community Server](https://dev.mysql.com/) | `af-db` で必要なときに起動する | `8.4.6` | [GPL-2.0-only WITH Universal-FOSS-exception-1.0](https://github.com/mysql/mysql-server/blob/8.4/LICENSE) |
+| [PostgreSQL](https://www.postgresql.org/) | `af-db` で必要なときに起動する | `17.11.0` | [PostgreSQL](https://github.com/postgres/postgres/blob/REL_17_11/COPYRIGHT) |
+| [MySQL Community Server](https://dev.mysql.com/) | `af-db` で必要なときに起動する | `8.4.6` | [GPL-2.0-only](https://github.com/mysql/mysql-server/blob/mysql-8.4.6/LICENSE) |
 
 ## MCP サーバー
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [mcp-grafana](https://github.com/grafana/mcp-grafana) | Grafana 連携で使う、Grafana の MCP サーバー | `2.2.0` | [Apache-2.0](https://github.com/grafana/mcp-grafana/blob/main/LICENSE) |
-| [awslabs.cloudwatch-mcp-server](https://github.com/awslabs/mcp) | CloudWatch 連携で使う、Amazon CloudWatch の MCP サーバー | `0.2.1` | [Apache-2.0](https://github.com/awslabs/mcp/blob/main/LICENSE) |
-| [mcp-proxy-for-aws](https://github.com/aws/mcp-proxy-for-aws) | AWS のリモート MCP サーバーに SigV4 署名でつなぐ | `1.7.0` | [Apache-2.0](https://github.com/aws/mcp-proxy-for-aws/blob/main/LICENSE) |
+| [mcp-grafana](https://github.com/grafana/mcp-grafana) | Grafana 連携で使う、Grafana の MCP サーバー | `2.2.0` | [Apache-2.0](https://github.com/grafana/mcp-grafana/blob/v2.2.0/LICENSE) |
+| [awslabs.cloudwatch-mcp-server](https://github.com/awslabs/mcp) | CloudWatch 連携で使う、Amazon CloudWatch の MCP サーバー | `0.2.1` | [Apache-2.0](https://pypi.org/project/awslabs.cloudwatch-mcp-server/0.2.1/) |
+| [mcp-proxy-for-aws](https://github.com/aws/mcp-proxy-for-aws) | AWS のリモート MCP サーバーに SigV4 署名でつなぐ | `1.7.0` | [Apache-2.0](https://github.com/aws/mcp-proxy-for-aws/blob/v1.7.0/LICENSE) |
 
 ## ブラウザ
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [Chromium](https://www.chromium.org/) | エージェントがスクリーンショットやページの確認に使うヘッドレスブラウザ | `156.0.8078.79` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/main/LICENSE) |
+| [Chromium](https://www.chromium.org/) | エージェントがスクリーンショットやページの確認に使うヘッドレスブラウザ | `156.0.8078.79` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.79/LICENSE) |
 | [Noto Sans CJK](https://github.com/notofonts/noto-cjk) | 日本語・中国語・韓国語のページを表示するフォント | Debian 13 (trixie) のパッケージ | [OFL-1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE) |
 
 ## ライセンス
