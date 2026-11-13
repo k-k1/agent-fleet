@@ -25,10 +25,10 @@ issuer を自社のディレクトリに固定して `.env` に書きます。
 
 1. 名前を付けます（同意画面に出ます）。**サポートされているアカウントの種類** は **この組織ディレクトリのみに含まれるアカウント**（シングルテナント）を選びます。ここで複数テナントを選ぶと、Control Plane が起動しなくなる原因になります
 2. リダイレクト URI を **Web** のプラットフォームで追加し、`https://<PUBLIC_DOMAIN>/oauth2/callback` を入れます（[リダイレクト URI を登録する](overview.ja.md#リダイレクト-uri-を登録する)）
-   - **シングルページ アプリケーション** で登録すると、client secret でのコード交換ができません。しかも失敗するのは最初のサインインのときです
+   - **シングルページ アプリケーション** で登録すると、client secret でのコード交換ができません。しかも、失敗がわかるのは最初にサインインしたときです
 3. **証明書とシークレット → 新しいクライアント シークレット** で作り、表示された **値** をその場で控えます
-   - 値は一度しか表示されません。隣の **シークレット ID** は secret ではありません
-   - **有効期限をカレンダーに入れておきます。** 期限が切れると、Agent Fleet 側には何も起きていないまま、このボタンのサインインが全員トークン交換で失敗します
+   - 値は一度しか表示されません。隣の **シークレット ID** はシークレットそのものではありません
+   - **有効期限をカレンダーに入れておきます。** 期限が切れると、Agent Fleet 側には何も起きていないまま、このボタンからのサインインは全員、トークン交換で失敗します
 4. 概要から **ディレクトリ (テナント) ID** と **アプリケーション (クライアント) ID** を控えます
 5. アクセス許可は、標準の OIDC のもの（`openid`・`email`・`profile`）で足ります。ユーザーの同意を止めているディレクトリでは、管理者が一度同意します
 
@@ -56,7 +56,7 @@ AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
   - `email_verified`：IdP 自身が確認済みとしたアドレスだけを受け取ります
   - `issuer`：issuer が 1 つのディレクトリに固定されているので、そのディレクトリのアドレスを正しいものとします
   - **Entra は `email_verified` を出しません。** `email_verified` にすると、Entra からのサインインはすべて「未確認」で拒否されます
-- **issuer は自社のディレクトリの GUID に固定します。** `/common/`・`/organizations/`・`/consumers/` の issuer では、Microsoft アカウントを持つ誰もがサインイン画面まで進めます。個人の Microsoft アカウントは自分でメールアドレスを付け替えられるので、許可リストも意味をなくします
+- **issuer は自社のディレクトリの GUID に固定します。** `/common/`・`/organizations/`・`/consumers/` の issuer では、Microsoft アカウントを持つ誰もがサインイン画面まで進めます。個人の Microsoft アカウントは自分でメールアドレスを付け替えられるので、許可リストも意味がなくなります
   - これらの issuer を使うときは、受け入れるディレクトリの GUID を `AF_OIDC_<ID>_ALLOWED_TIDS` に並べます。並べていないと、Control Plane は起動を拒否します
 
 書いたら Control Plane を起動し直し、[動いたことを確かめる](overview.ja.md#動いたことを確かめる) の手順で確認します。
@@ -86,14 +86,14 @@ AF_OIDC_ENTRA_LINK_CLAIM=oid
 
 ## うまくいかないとき
 
-### 起動時に、複数テナント向けのエンドポイントを理由に Control Plane が終わる
+### 起動時に、複数テナント向けのエンドポイントを理由に Control Plane が終了する
 
 issuer が `/common/`・`/organizations/`・`/consumers/` のどれかで、`AF_OIDC_<ID>_ALLOWED_TIDS` が空です。issuer を
 `https://login.microsoftonline.com/<directory-tenant-id>/v2.0` に固定するか、受け入れるディレクトリを並べます。
 
 ### Entra の画面に AADSTS で始まるコードが出る
 
-当たるのはたいてい次の 2 つで、どちらも Entra 側の設定です。`.env` を変えても直りません。
+原因はたいてい次の 2 つで、どちらも Entra 側の設定です。`.env` を変えても直りません。
 
 - client secret が無効：**値** ではなく **シークレット ID** を貼った、または期限が切れた
 - リダイレクト URI が一致しない：プラットフォームの種類が違う、または 1 文字違う
@@ -105,7 +105,7 @@ issuer が `/common/`・`/organizations/`・`/consumers/` のどれかで、`AF_
 
 ### ログに discovery …: issuer mismatch と出る
 
-設定した issuer が、IdP の名乗る issuer と違います。手で打たずに、discovery ドキュメントからコピーします。
+設定した issuer が、IdP が名乗る issuer と違います。手で打たずに、discovery ドキュメントからコピーします。
 
 ### 何か月も動いていたのに全員が拒否される
 

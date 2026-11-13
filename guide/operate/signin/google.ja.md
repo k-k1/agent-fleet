@@ -35,7 +35,7 @@ GOOGLE_OAUTH_CLIENT_ID=<client-id>.apps.googleusercontent.com
 GOOGLE_OAUTH_CLIENT_SECRET=<client-secret>
 ```
 
-- 書くのはこの 2 つだけです。2 つを設定すると Google のボタンが有効になり、IdP の id は `google` になります
+- 書くのはこの 2 つだけです。両方を設定すると Google のボタンが有効になり、IdP の id は `google` になります
 - `AF_OIDC_PROVIDERS` に `google` を足す必要はありません。`AF_OIDC_GOOGLE_*` というキーもありません
 - issuer・エンドポイント・信頼の規則は組み込みで、変えられません。受け取るのは Google が `email_verified` を付けたアドレスだけで、要求するスコープは `openid email` です
 - 個人の `gmail.com` のアドレスも、Google の確認は通ります。自社の人だけに絞るのは `AF_OAUTH_ALLOWED_DOMAINS` の役目です

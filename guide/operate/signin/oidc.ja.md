@@ -7,8 +7,8 @@ source_of_truth: "`.env` の読み込みは Control Plane のサインイン設�
 
 [English](oidc.md) | 日本語
 
-Okta・Keycloak・Auth0・Cognito・GitLab など、OIDC を話す IdP でこの配備にサインインできるようにします。
-どれも同じしくみに載るので、IdP にアプリを登録して `.env` に 5 行書くだけです。
+Okta・Keycloak・Auth0・Cognito・GitLab など、OIDC に対応した IdP でこの配備にサインインできるようにします。
+どれも同じしくみで扱うので、IdP にアプリを登録して `.env` に 5 行書くだけです。
 
 ## 全体像
 
@@ -47,9 +47,9 @@ AF_OIDC_OKTA_TRUST=email_verified
 
 - **issuer は、ブラウザのアドレス欄ではなく discovery ドキュメントからコピーします。** Control Plane は issuer に `/.well-known/openid-configuration` を足して読み、その中の `issuer` が同じ値かを確かめます。末尾のスラッシュの有無は違いとみなしません
 - **`_TRUST`** はメールアドレスを信じる理由で、既定値はありません
-  - その IdP が `email_verified` を出すなら `email_verified`（Okta・Keycloak・Auth0 の多くは出します）
+  - その IdP が `email_verified` を出すなら `email_verified`（Okta・Keycloak・Auth0 はたいてい出します）
   - 出さないが、issuer が 1 つのディレクトリに固定されているなら `issuer`
-  - 迷ったら `email_verified` から始めます。外れていても、理由がログに残る拒否になるだけで、通ってはいけない人が通ることはありません
+  - 迷ったら `email_verified` から始めます。合っていなくても、拒否されて理由がログに残るだけで、通ってはいけない人が通ることはありません
 - issuer は `https` にします。`http` は、ローカルの Keycloak や Dex で開発するときのために `localhost`・`127.0.0.1`・`::1` にだけ許され、そのとき Control Plane は警告を出します
 - id を並べれば、ボタンも増えます（`AF_OIDC_PROVIDERS=entra,okta` など）
 - id の決まり、ふだんは要らない設定（スコープ・PKCE・IdP ごとの許可リスト）、別のアプリ登録をまたいで同じ人と見なす設定は、Entra と同じです（[Microsoft Entra ID でサインインする](entra.ja.md)）

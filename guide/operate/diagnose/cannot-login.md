@@ -93,7 +93,7 @@ In that tenant's **Sign-in methods**, "**Accept**" is off for the IdP the person
 A method a tenant registered claimed an address that has signed in before. This stops that method from taking over an existing account.
 
 - Have them sign in the way they normally do
-- With **the same GitHub account**, the deployment-wide GitHub and a tenant's GitHub are the same person. This appears when they pressed a different IdP's button
+- With **the same GitHub account**, they are the same person through either the deployment-wide GitHub or a tenant's GitHub. This appears when they pressed a different IdP's button
 - If they have both accounts, have them sign in the usual way and add that method under **Settings → Personal → Account**, "**Add a sign-in method**". Only a method that claims the same email address can be added, and it must meet that method's own organisation and domain conditions
 - If people without the other account are stuck, keep their method on "**Accept**". If its button is in the way, turn off only "**Show button**"
 

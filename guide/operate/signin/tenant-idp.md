@@ -46,7 +46,7 @@ The same rows also open from **Admin → Tenants → the tenant → Sign-in meth
 
 | What to check | Why |
 |---|---|
-| The issuer is the company's own directory (not `common` or `organizations`) | With a multi-tenant issuer, anybody with a Microsoft account reaches the sign-in |
+| The issuer is the company's own directory (not `common` or `organizations`) | With a multi-tenant issuer, anybody with a Microsoft account reaches the sign-in page |
 | On a GitHub row, the allowed organisations are the company's | GitHub's issuer is `github.com` for every tenant, so it tells you nothing |
 | The admitted email domains are the company's | Approval is given for this range of domains. Do not approve a row that claims a domain other people here use |
 
@@ -88,7 +88,7 @@ You or the tenant administrator can press "**Suspend**" at any time. Stop an IdP
 A row of the kind "**A GitHub organization**" has **Allowed GitHub organizations** instead of an issuer. Active membership of that organisation is the evidence that a person belongs to the company.
 
 - The tenant creates the OAuth App in its own organisation. Sharing yours would have each tenant's organisation owner approve "the app that is also used for git connections"
-- Your `.env` needs no GitHub settings. Deployment-wide GitHub sign-in can stay off while the tenants' work
+- Your `.env` needs no GitHub settings. Deployment-wide GitHub sign-in can stay off while the tenants' methods work
 - The organisation has to approve the app, as for deployment-wide GitHub; here it is the tenant's organisation owner who does it ([Sign in with GitHub](github.md#the-organisation-has-to-approve-the-app))
 - Email domains to admit are required for GitHub too
 - Two tenants may register the same organisation. Which one a person enters is decided by the email domain, and a domain belongs to one tenant

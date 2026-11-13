@@ -8,7 +8,7 @@ source_of_truth: "`.env` の読み込みは Control Plane のサインイン設�
 [English](github.md) | 日本語
 
 指定した GitHub の組織のメンバーが、GitHub アカウントでこの配備にサインインできるようにします。
-サインインを認めるのは「その組織のアクティブなメンバーであること」で、GitHub アカウントを持っていることではありません。
+サインインの条件は「その組織のアクティブなメンバーであること」で、GitHub アカウントを持っているだけでは入れません。
 
 ## 全体像
 
@@ -17,19 +17,19 @@ source_of_truth: "`.env` の読み込みは Control Plane のサインイン設�
 | GitHub で OAuth App を作る | |
 | 組織のオーナーに、その OAuth App を承認してもらう | |
 | 許可する組織と OAuth App の値を `.env` に書き、起動し直す | `AF_GITHUB_ALLOWED_ORGS` があれば、GitHub のボタンをサインイン画面の最後に出す |
-| | サインインのたびに組織のメンバーかどうかを GitHub に確かめ、結果をしばらくメモリに持つ |
+| | サインインのたびに組織のメンバーかどうかを GitHub に確かめ、結果をしばらくメモリに保持する |
 
 GitHub にはユーザーのサインインに使う OIDC がないので、専用の設定になります。
 
 ## GitHub で OAuth App を作る
 
-1. **OAuth App** を作ります（GitHub App ではありません）。**Settings → Developer settings → OAuth Apps → New OAuth App** です。個人ではなく組織に持たせたいなら、組織の側で作ります
+1. **OAuth App** を作ります（GitHub App ではありません）。**Settings → Developer settings → OAuth Apps → New OAuth App** です。個人ではなく組織の所有にしたいなら、組織の側で作ります
 2. **Authorization callback URL** に `https://<PUBLIC_DOMAIN>/oauth2/callback` を入れます（[リダイレクト URI を登録する](overview.ja.md#リダイレクト-uri-を登録する)）。**Homepage URL** は Console の URL でかまいません
 3. **client secret** を作って控えます（一度しか表示されません）
 4. 組織がサードパーティの OAuth App を制限しているなら、**組織のオーナーがこの OAuth App を承認します**（組織の設定の、サードパーティ アプリケーションのアクセス ポリシーの欄です）。承認されるまでは、設定がすべて正しくても全員が拒否されます
 
 Console の GitHub の **接続** が使う OAuth App（`GITHUB_OAUTH_CLIENT_ID`）を、そのまま使ってもかまいません。コールバック URL を足すだけです。
-スコープは認可のたびに渡すので、1 つのアプリで git の接続（`repo`）とサインイン（`read:org user:email`）を両方こなせます。
+スコープは認可のたびに渡すので、1 つのアプリで git の接続（`repo`）とサインイン（`read:org user:email`）の両方に使えます。
 組織の承認を 1 回で両方に効かせたくないなら、別のアプリにします。
 
 ## .env に書く
@@ -60,7 +60,7 @@ AF_GITHUB_ALLOWED_DOMAINS=example.com      # 強くすすめます
 |---|---|---|
 | `AF_GITHUB_ALLOWED_EMAILS` | なし | 受け入れるメールアドレス |
 | `AF_GITHUB_LABEL_JA`・`_LABEL_EN` | 組み込みの文言 | ボタンの文言 |
-| `AF_GITHUB_MEMBERSHIP_TTL` | `10m` | 組織のメンバーだという結果を持っておく時間 |
+| `AF_GITHUB_MEMBERSHIP_TTL` | `10m` | 組織のメンバーかどうかの結果を保持する時間 |
 | `AF_GITHUB_MEMBERSHIP_GRACE` | `1h` | GitHub に届かないとき、最後の結果で通し続ける時間。過ぎたら拒否します |
 | `AF_GITHUB_PKCE` | 有効 | `off` で PKCE を送りません |
 
@@ -78,8 +78,8 @@ third-party OAuth apps, an org owner must approve this OAuth app before anyone c
 
 ### Control Plane を起動し直すと、もう一度サインインを求められる
 
-組織のメンバーかどうかの結果と、それを更新するためのトークンは、メモリにだけ持っています。起動し直すと確かめ直す材料がなくなるので、
-「許可されていません」ではなく「もう一度サインインしてください」になります。GitHub 側のセッションが続いていれば、たいてい操作なしで戻ります。
+組織のメンバーかどうかの結果と、それを更新するためのトークンは、メモリにだけ保持しています。起動し直すと確かめ直す材料がなくなるので、
+「許可されていません」ではなく「もう一度サインインしてください」になります。GitHub 側のセッションが続いていれば、たいてい何も操作せずに元どおり使えます。
 故障ではありません。
 
 ### GitHub のユーザー名を変えても、アカウントは変わらない
@@ -95,7 +95,7 @@ third-party OAuth apps, an org owner must approve this OAuth app before anyone c
 ### 特定の人だけ拒否される
 
 - その人の GitHub の主アドレス（確認済み）が `AF_GITHUB_ALLOWED_DOMAINS` の外にある：会社のアドレスを GitHub で確認して主アドレスにしてもらうか、別のボタンでサインインしてもらいます
-- 組織のメンバーシップが招待中（pending）のまま：招待を受けてもらいます
+- 組織のメンバーシップが招待中（pending）のまま：招待を承諾してもらいます
 
 ### the GitHub account has no primary verified email address と出る
 

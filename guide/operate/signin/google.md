@@ -35,10 +35,10 @@ GOOGLE_OAUTH_CLIENT_ID=<client-id>.apps.googleusercontent.com
 GOOGLE_OAUTH_CLIENT_SECRET=<client-secret>
 ```
 
-- These two are all. Setting both turns the Google button on, and the IdP's id is `google`
+- These two are all you write. Setting both turns the Google button on, and the IdP's id is `google`
 - You do not add `google` to `AF_OIDC_PROVIDERS`, and there are no `AF_OIDC_GOOGLE_*` keys
 - The issuer, the endpoints and the trust rule are built in and cannot be changed. Only addresses Google marks `email_verified` are taken, and the scopes asked for are `openid email`
-- A personal `gmail.com` address passes Google's check too. Keeping the button to your own people is the job of `AF_OAUTH_ALLOWED_DOMAINS`
+- A personal `gmail.com` address passes Google's check too. Limiting sign-in to your own people is the job of `AF_OAUTH_ALLOWED_DOMAINS`
 
 Then restart the Control Plane and go through [Check that it worked](overview.md#check-that-it-worked).
 

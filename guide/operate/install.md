@@ -196,7 +196,7 @@ Only a tenant that is **already empty** can be deleted. Clear it in this order:
 | "redirect URI mismatch" at sign-in | Whether the URI registered at the IdP matches `<PUBLIC_BASE_URL>/oauth2/callback` exactly (step 3) |
 | Sign-in is always refused | Whether the allowlists are all empty (set in step 1; why, in the warning in step 6) |
 | Permission denied on the docker socket after start-up | `DOCKER_GID` (step 1) |
-| `/healthz` does not answer `ok`, or the Control Plane does not come up | "CP does not start" in [06 Diagnosing it](diagnose/checklist.md#look-up-the-symptom) |
+| `/healthz` does not answer `ok`, or the Control Plane does not come up | "CP does not start" in [Find the cause from the symptom](diagnose/checklist.md#look-up-the-symptom) |
 
 ## Related
 

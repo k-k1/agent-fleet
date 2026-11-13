@@ -8,7 +8,7 @@ source_of_truth: "`control-plane/bridge_epoch.go`、`control-plane/bridge_epoch_
 [English](bridge-tokens.md) | 日本語
 
 ワークスペースが Control Plane を呼ぶときのトークンを、1 人分だけ、または全員分まとめて無効にします。
-入れ替えは配備のどの形態でも同じです。一斉の入れ替えは、主に AWS の配備（`ecs` / `ecs-ec2`）で、古いタスク定義やログに残ったトークンを消すためのものです。
+入れ替えは配備のどの形態でも同じです。全員分を一度に入れ替えるのは、主に AWS の配備（`ecs` / `ecs-ec2`）で、古いタスク定義やログに残ったトークンを消すためのものです。
 
 ## 全体像
 
@@ -29,7 +29,7 @@ source_of_truth: "`control-plane/bridge_epoch.go`、`control-plane/bridge_epoch_
 
 ワークスペースへは、ECS では SSM SecureString、docker では権限 0600 の env ファイル、Kubernetes では Secret で渡します。タスク定義の `environment` には入れません。
 
-ブリッジトークンにはメンバーシップの **epoch** が入っていて、今の epoch のトークンだけが通ります。入れ替えとは、この epoch を進めることです。デプロイが提供する Bedrock ルートをオンにしている（`AF_PROVIDED_ROUTES=1`）と、ルート発行用のトークン `AF_ROUTE_ISSUE_TOKEN` も 0.44.0 から同じ経路で渡し、同じ epoch に結び付くので、入れ替えで一緒に無効になります。
+ブリッジトークンにはメンバーシップの **epoch** が入っていて、今の epoch のトークンだけが通ります。入れ替えとは、この epoch を進めることです。配備が提供する Bedrock ルートをオンにしている（`AF_PROVIDED_ROUTES=1`）と、ルート発行用のトークン `AF_ROUTE_ISSUE_TOKEN` も 0.44.0 から同じ経路で渡し、同じ epoch に結び付くので、入れ替えで一緒に無効になります。
 
 ## 1 人分を入れ替える
 
@@ -41,7 +41,7 @@ source_of_truth: "`control-plane/bridge_epoch.go`、`control-plane/bridge_epoch_
 
 ## 全員分を一度に入れ替える
 
-トークンをタスク定義の `environment` から外したリリースへ上げても、それより前のトークンは古いタスク定義のリビジョン、CloudTrail、ログに残っているかもしれません。アップグレードだけでは何も無効になりません。今のトークンは epoch 0 で、どのワークスペースもすでに持っているものだからです。
+トークンをタスク定義の `environment` から外したリリースへ上げても、それより前に発行したトークンは古いタスク定義のリビジョン、CloudTrail、ログに残っているかもしれません。アップグレードだけでは何も無効になりません。今のトークンは epoch 0 で、どのワークスペースもすでに持っているものだからです。
 
 1. すべてのワークスペースがそのリリースで動いていることを確かめます
 2. Control Plane のデータベースに対して `af-cp advance-bridge-epochs` を実行します。対象のメンバーシップの数を出すだけで、何も変えません
@@ -52,12 +52,12 @@ ECS では `af-cp` を Control Plane のタスク定義を使う単発のタス�
 
 ## 署名鍵を入れ替える
 
-`AF_TOKEN_SIGN_VERSION` は、トークンの鍵を導くもとを選びます。
+`AF_TOKEN_SIGN_VERSION` は、トークンの鍵の導出元を選びます。
 
-| 値 | 導くもと |
+| 値 | 導出元 |
 |---|---|
 | 未設定、または `0` | 配備の `AF_MASTER_KEY` |
-| `1` 以上 | `AF_MASTER_KEY` から導いた専用のもと。トークンの鍵が、保存済みの資格情報を封じる鍵から分かれます |
+| `1` 以上 | `AF_MASTER_KEY` から導いた専用の導出元。トークンの鍵が、保存済みの資格情報を封じる鍵とは別になります |
 
 - 値を変えると、保存済みの資格情報に触れずに、すべてのトークンが無効になります。変えるたびに、すべてのワークスペースを再起動してください
 - 0 以上の整数でない値を設定すると、Control Plane は起動しません

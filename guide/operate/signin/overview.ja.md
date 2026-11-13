@@ -26,7 +26,7 @@ Google・Microsoft Entra ID・GitHub・そのほかの OIDC の IdP を配備に
 - 有効にする IdP ごとに、client secret を持つ**機密クライアント**が要ります
 - **いくつでも同時に有効にできます。** ボタンの順番は、Google が先頭、次に `AF_OIDC_PROVIDERS` に並べた順の OIDC、GitHub が最後です
 - **設定に不備のある IdP は、その IdP だけが無効になります。** Control Plane が起動を止めるのは、使える方法が 1 つもないときと、Entra の issuer が危険な指定のとき（[Microsoft Entra ID でサインインする](entra.ja.md)）だけです
-- **SAML しかない IdP**（HENNGE One・TrustLogin・CloudGate など）と LDAP は、Control Plane では扱いません。oauth2-proxy や Keycloak を前段に置き、`AUTH=proxy` でそのゲートウェイが付けるメールアドレスを信じさせます。このモードではこの章のページは使いません
+- **SAML しかない IdP**（HENNGE One・TrustLogin・CloudGate など）と LDAP は、Control Plane では扱いません。oauth2-proxy や Keycloak を前段に置き、`AUTH=proxy` で、そのゲートウェイが付けるメールアドレスを信頼させます。このモードではこの章のページは使いません
 - `.env` の変更は、**次に Control Plane を起動したとき**から効きます。テナントが Console から登録する IdP は、承認した時点で効きます
 
 ## リダイレクト URI を登録する
@@ -86,7 +86,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 
 ## 動いたことを確かめる
 
-上から順に確かめます。各段は次の段の前提です。コマンドは compose の例です。ほかの形態では、Control Plane のログを
+上から順に確かめます。各手順は、その前の手順が済んでいることを前提にしています。コマンドは compose の例です。ほかの形態では、Control Plane のログを
 その形態の runbook（[配備を運用する](../README.ja.md) から開けます）の方法で読みます。
 
 1. **どの方法が組み立てられたか**を見ます。有効な配備共通の IdP の id が、ボタンの順に 1 行で出ます。ここにない id は組み立てられていないので、サインイン画面をいくら見ても理由はわかりません
@@ -95,7 +95,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
    docker compose logs cp | grep "login providers:"
    ```
 
-2. **足りない IdP の理由**を見ます。`WARNING: login provider "…" disabled — …` の行に、足りない設定や不正な設定の名前が出ます。いちばん多いのは、既定値のない `AF_OIDC_<ID>_TRUST` です。Google と GitHub は専用の行を出します
+2. **外された IdP の理由**を見ます。`WARNING: login provider "…" disabled — …` の行に、足りない設定や不正な設定の名前が出ます。いちばん多いのは、既定値のない `AF_OIDC_<ID>_TRUST` です。Google と GitHub は専用の行を出します
 
    ```sh
    docker compose logs cp | grep -i "login provider"
@@ -108,7 +108,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 4. **`https://<PUBLIC_DOMAIN>/login` を開き**、ボタンの数を数えます。手順 1 の id の数だけ、Google が先頭、GitHub が最後に並びます
    - 「サインイン方法が設定されていません。管理者に連絡してください。」と出るなら、手順 1 で何も組み立てられていません
    - 既定テナント（`default`）で「**ボタンに出す**」を外した方法は、ここにも出ません。このページは既定テナントのページとして描かれるためです。数が合わないときは、まず既定テナントのサインイン方法の一覧を見ます
-   - 既定テナントの「**受け入れる**」の絞り込みは、ここには効きません。どのテナントにも属していない人の唯一の入口なので、ボタンが 0 個になる道を作らないためです
+   - 既定テナントの「**受け入れる**」の絞り込みは、ここには効きません。どのテナントにも属していない人の唯一の入口なので、ボタンが 0 個になる事態を避けるためです
 
 5. **`https://<PUBLIC_DOMAIN>/login/<slug>` を開きます**。そのテナントが受け入れる配備共通のボタン（「ボタンに出す」を外したものを除く）のあとに、そのテナント自身の承認済みの方法が並びます。承認済みなのにボタンがないときは、理由がログに出ます
 
@@ -119,7 +119,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
    - すべてのボタンを隠す指定は無視されるので、この画面が空になることはありません
    - 存在しない slug でもエラーにならず、ふつうのサインイン画面が出ます。わざとそうしているので、追いかけなくてかまいません
 
-6. **GitHub のときだけ**、拒否されると結論を出す前に `docker compose logs cp | grep "returned 403"` を見ます（[GitHub でサインインする](github.ja.md#組織の承認が要る)）
+6. **GitHub のときだけ**、拒否の理由を判断する前に `docker compose logs cp | grep "returned 403"` を見ます（[GitHub でサインインする](github.ja.md#組織の承認が要る)）
 
 7. **入れるはずのアカウントで、通しで 1 回サインインします**
    - 「新しいワークスペースを作成しました」という画面に着いたら、そのメールアドレスはこの配備が初めて見るアドレスです。人が間違った場所で作業を始める前に気づくための画面です

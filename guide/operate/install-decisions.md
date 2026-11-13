@@ -96,7 +96,7 @@ It happens with group subsidiaries, companies still being merged, outsourcing pa
 
 - No `.env` edit and no Control Plane restart is needed
 - A deployment administrator can also open the same fields from **Admin** → the tenant → "Sign-in methods"
-- The fields, what to check before approving, and how a GitHub organization differs are in [05 Sign-in methods](signin/tenant-idp.md). The tenant administrator's side is [Choose how people sign in](../admin/access/signin-methods.md)
+- The fields, what to check before approving, and how a GitHub organization differs are in [Approve a tenant's own sign-in](signin/tenant-idp.md). The tenant administrator's side is [Choose how people sign in](../admin/access/signin-methods.md)
 
 ### Approval is not a formality
 

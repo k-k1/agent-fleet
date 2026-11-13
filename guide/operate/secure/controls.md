@@ -14,7 +14,7 @@ The controls that protect the deployment and fit on no other page. Each of them,
 | Control | What you do |
 |---|---|
 | The preview domain | Put it on a registrable domain other than the Console's |
-| The sign-in allowlist | Remove people from it to remove them. Left empty, nobody gets in |
+| The sign-in allowlist | Remove people from it to shut them out. Left empty, nobody gets in |
 | Each IdP's trust declaration | Always set `AF_OIDC_<ID>_TRUST`, and pin Entra ID to your own tenant |
 | The host's cloud identity | Keep workspaces from reaching the metadata endpoint |
 | The compose host | Limit who can touch the Docker socket, and keep `AF_MASTER_KEY` apart from the data |
