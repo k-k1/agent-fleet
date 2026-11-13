@@ -516,6 +516,10 @@ function MirrorViewBody({
         backgroundBusy: bgBusy,
         backgroundBusyReason: bgBusyReason,
         rateLimitResumeAt: sessionMeta?.rateLimitResumeAt,
+        // From the meta, like rateLimitResumeAt: the polled status is a bare string, and
+        // without it a pending handoff would lose to the watch chip against the documented order.
+        handoffPending: sessionMeta?.handoffPending,
+        watchCount: st.watches.length,
       } as any)
     : sessionMeta
       ? stateInfo(sessionMeta)

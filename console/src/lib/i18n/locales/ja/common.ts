@@ -127,6 +127,8 @@ export const common = {
   // 知らない値のときは上の汎用文言に落ちる。
   "state.idle_bg_subagent": "入力待ち · サブエージェント実行中",
   "state.idle_bg_shell": "入力待ち · BG コマンド実行中",
+  "state.idle_watches_one": "入力待ち · ウォッチ {count} 件",
+  "state.idle_watches_other": "入力待ち · ウォッチ {count} 件",
   "state.idle": "入力待ち",
   // 未起動の引き継ぎ提案が残っている（propose_session_handoff）。カードはミラーの中にしか無く
   // 通知も出ないので、行が「入力待ち」のままだと次の一歩が誰にも見えない。handoff_short は

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { displayName, elapsedShort, remainingShort, resumeClock, stateInfo, stripLabelTag } from "./sessionview.ts";
-import { t } from "./i18n/index.ts";
+import { t, tCount } from "./i18n/index.ts";
 
 // The state-chip mapping. What is pinned here is that "auth expired" (docs/log/47 §4-8) gets a chip
 // of its own: shown as idle, users keep sending to a session that cannot move; folded into the
@@ -203,6 +203,36 @@ describe("stateInfo (an unlaunched handoff proposal)", () => {
   it("does not displace a live state that describes what the session is doing now", () => {
     expect(stateInfo({ ...idle, state: "working" }).text).toBe(t("state.working"));
     expect(stateInfo({ ...idle, state: "question" }).text).toBe(t("state.question"));
+  });
+});
+
+// Idle with live watches (#3951): the mirror header says what the session is waiting for.
+describe("stateInfo (idle with live watches)", () => {
+  const idle = { kind: "claude", alive: true, state: "idle" };
+
+  it("counts the watches in the idle chip, singular and plural", () => {
+    expect(stateInfo({ ...idle, watchCount: 2 }).text).toBe(tCount("state.idle_watches", 2));
+    expect(stateInfo({ ...idle, watchCount: 2 }).text).toContain("2");
+    expect(stateInfo({ ...idle, watchCount: 1 }).text).toBe(tCount("state.idle_watches", 1));
+    expect(stateInfo({ ...idle, watchCount: 2 }).text).not.toBe(t("state.idle"));
+  });
+
+  it("is the plain chip with 0 or no watches", () => {
+    expect(stateInfo({ ...idle, watchCount: 0 }).text).toBe(t("state.idle"));
+    expect(stateInfo(idle).text).toBe(t("state.idle"));
+  });
+
+  it("keeps background work's chip and a pending handoff's chip", () => {
+    expect(stateInfo({ ...idle, watchCount: 2, backgroundBusy: true, backgroundBusyReason: "shell" }).text).toBe(
+      t("state.idle_bg_shell"),
+    );
+    expect(stateInfo({ ...idle, watchCount: 2, handoffPending: true }).text).toBe(t("state.idle_handoff"));
+  });
+
+  it("never shows on a non-idle or stopped session", () => {
+    for (const state of ["working", "question", "plan", "limited", "blocked"])
+      expect(stateInfo({ ...idle, state, watchCount: 2 }).text).not.toBe(tCount("state.idle_watches", 2));
+    expect(stateInfo({ kind: "claude", alive: false, watchCount: 2 }).text).toBe(t("state.stopped"));
   });
 });
 

@@ -6,7 +6,7 @@
 import { agentOf } from "../agents/registry.ts";
 import type { StateInfo } from "../agents/registry.ts";
 import type { Session } from "../types/session.ts";
-import { t } from "./i18n/index.ts";
+import { t, tCount } from "./i18n/index.ts";
 import type { MsgKey } from "./i18n/index.ts";
 import { zonedParts } from "./intl.ts";
 
@@ -69,6 +69,11 @@ export interface SessionState {
   carried?: string;
   /** The last handoff this session proposed has not been launched. Live and stopped rows alike. */
   handoffPending?: boolean;
+  /**
+   * Live watches the session is waiting on. Only the mirror header knows it (the transcript
+   * poll carries the list); session rows have no such field on their wire, so they never set it.
+   */
+  watchCount?: number;
 }
 
 // handoffChip is the "…, and a handoff is waiting to be launched" chip, in the two run states
@@ -230,6 +235,12 @@ export const stateInfo = (s: SessionState): StateInfo => {
       // handoff chip takes its place as soon as it does, whereas a session showing the plain
       // idle chip is one the user has no reason to open again.
       if (s.handoffPending) return handoffChip(true);
+      // Idle with live watches: the session is not finished, it is waiting for an event the
+      // user cannot otherwise see from the header. Ranked below backgroundBusy (a running
+      // command is the more urgent fact and keeps its own chip) and below a pending handoff
+      // (an action the user has to take); 0 / absent keeps the plain idle chip.
+      if (s.watchCount && s.watchCount > 0)
+        return { cls: "on", icon: "eye", text: tCount("state.idle_watches", s.watchCount) };
       return { cls: "on", icon: "check", text: t("state.idle") };
   }
 };
