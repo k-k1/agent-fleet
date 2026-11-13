@@ -929,3 +929,46 @@ func TestRescueLeaseLapsedAfterTheBumpTouchesNothingOfANewerStart(t *testing.T) 
 		})
 	}
 }
+
+// A guarded step handed a context that has already ended never runs. The lock waits inside
+// rescueGuarded select between a free lock and the done context, so one attempt proves
+// little: the loop is what makes a missing check fail reliably.
+func TestRescueGuardedNeverRunsOnAnEndedContext(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		m, _, err := w.rt().rescuePrepare(context.Background(), w.h.ssmc, w.decision())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		for i := 0; i < 200; i++ {
+			ran := false
+			err := w.rt().rescueGuarded(ctx, &m, "i-dark", func(context.Context) error { ran = true; return nil })
+			if ran || !errors.Is(err, context.Canceled) {
+				t.Fatalf("attempt %d: ran=%v err=%v; want no run and a canceled error", i, ran, err)
+			}
+		}
+	})
+}
+
+// The ENI stage on a context that has already ended (the force-stop's ENI deadline spent by
+// the steps before it) does not deregister the container instance.
+func TestRescueENIStageDoesNotDeregisterOnAnEndedContext(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		w.h.ec2.giveTaskENI("i-dark")
+		m, _, err := w.rt().rescuePrepare(context.Background(), w.h.ssmc, w.decision())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		for i := 0; i < 200; i++ {
+			if err := w.rt().rescueENIStage(ctx, "i-dark", &m); !errors.Is(err, errRescueAborted) {
+				t.Fatalf("attempt %d: err = %v, want errRescueAborted", i, err)
+			}
+		}
+		if len(w.h.ci.deregistered) != 0 {
+			t.Fatalf("deregistered %v on an ended context", w.h.ci.deregistered)
+		}
+	})
+}

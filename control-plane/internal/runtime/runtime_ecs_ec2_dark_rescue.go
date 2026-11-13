@@ -514,6 +514,12 @@ func rescueLeasesHeld(ctx context.Context) error {
 // A lock not taken, a count not readable and a lease that lapsed abort the step: the
 // unguarded fallback of ifOwned is deliberately not used.
 func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m *rescueMarker, instanceID string, fn func(context.Context) error) error {
+	// A step that starts on a context that has already ended must not run: the lock waits
+	// below select between a free lock and the done context and pick either, so without this
+	// the destructive call would sometimes go out past the deadline.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
 	mctx, unlockMount, err := e.lockBounded(ctx, homeLockMount, e.base.name, rescueMountBudget)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errRescueBusy, err)
