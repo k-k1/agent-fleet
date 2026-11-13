@@ -174,6 +174,31 @@ func (f *Flow) WaitFor(re *regexp.Regexp, timeout time.Duration) string {
 	return ""
 }
 
+// WaitForURL is WaitFor for a URL scraped with a trailing \S+: it accepts a match only once
+// something follows it in the cleaned output (by greediness, whitespace), so a read that ends
+// mid-URL, or inside the OSC 8 sequence that closes a hyperlink (left as "]8;;" until its BEL
+// arrives), is not handed to the browser truncated or with a remnant glued on. The CLIs print
+// the URL on its own line; when the output ends or the timeout hits first, the last match is
+// returned as WaitFor would have.
+func (f *Flow) WaitForURL(re *regexp.Regexp, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	last := ""
+	for time.Now().Before(deadline) {
+		ended := f.Ended()
+		s := f.Clean()
+		if loc := re.FindStringIndex(s); loc != nil {
+			last = s[loc[0]:loc[1]]
+			if loc[1] < len(s) || ended {
+				return last
+			}
+		} else if ended {
+			return ""
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return last
+}
+
 // NewFlowID mints an opaque flow id the client uses to address a pending flow.
 func NewFlowID() string {
 	b := make([]byte, 8)

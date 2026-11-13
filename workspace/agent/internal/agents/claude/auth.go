@@ -54,7 +54,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := f.WaitFor(urlRe, 20*time.Second)
+	url := f.WaitForURL(urlRe, 20*time.Second)
 	if url == "" {
 		f.Close()
 		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "setup-token did not emit an authorize URL")

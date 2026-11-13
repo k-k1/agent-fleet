@@ -133,7 +133,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
-	url := sanitizeAuthURL(f.WaitFor(urlRe, 20*time.Second))
+	url := sanitizeAuthURL(f.WaitForURL(urlRe, 20*time.Second))
 	if url == "" {
 		f.Close()
 		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "agy did not print an authorization URL")
