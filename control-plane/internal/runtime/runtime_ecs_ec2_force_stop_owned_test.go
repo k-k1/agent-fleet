@@ -527,15 +527,18 @@ func TestForceStopRequestEndedBeforeTheTokenTouchesNothing(t *testing.T) {
 // A panic in the detached work must not end the process (the goroutine is outside net/http's
 // recovery) or strand the token: it becomes the one answer's error, and the marker is released.
 func TestForceStopPanicBecomesTheOneAnswerAndReleasesTheToken(t *testing.T) {
-	setup := func(t *testing.T) *ec2Harness {
+	setup := func(t *testing.T, beforePanic func()) *ec2Harness {
 		h := wedgedSlot(t)
 		h.ec2.giveTaskENI("i-wedge")
-		hookAt("deregistered", func() { panic("boom") })
+		hookAt("deregistered", func() {
+			beforePanic()
+			panic("boom")
+		})
 		t.Cleanup(func() { rescueStepHook = nil })
 		return h
 	}
 	t.Run("caller still waiting", func(t *testing.T) {
-		h := setup(t)
+		h := setup(t, func() {})
 		_, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false)
 		if err == nil || !strings.Contains(err.Error(), "panicked") {
 			t.Fatalf("err = %v, want the panic as an error", err)
@@ -545,21 +548,20 @@ func TestForceStopPanicBecomesTheOneAnswerAndReleasesTheToken(t *testing.T) {
 		}
 	})
 	t.Run("caller gone", func(t *testing.T) {
-		h := setup(t)
 		reqCtx, cancelReq := context.WithCancel(context.Background())
 		defer cancelReq()
+		released := make(chan struct{})
+		// Hold the worker at the hook until ForceStopSlot has returned, so the caller is
+		// certainly gone before the panic fires.
+		h := setup(t, func() {
+			cancelReq()
+			<-released
+		})
 		calls := make(chan error, 2)
 		ctx := WithForceStopLate(reqCtx, func(_ SlotForceStop, err error) { calls <- err })
-		// The panic fires at the hook; cancel the request first so the caller has left.
-		prev := rescueStepHook
-		rescueStepHook = func(c context.Context, s string) error {
-			if s == "deregistered" {
-				cancelReq()
-				time.Sleep(50 * time.Millisecond) // let the waiter observe the cancellation
-			}
-			return prev(c, s)
-		}
-		if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", false); !errors.Is(err, ErrSlotForceStopInProgress) {
+		_, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+		close(released)
+		if !errors.Is(err, ErrSlotForceStopInProgress) {
 			t.Fatalf("err = %v, want in progress", err)
 		}
 		select {
