@@ -24,6 +24,9 @@ import (
 // (MetadataStore) is the source of truth; `rts` is an in-memory cache of built
 // runtimes keyed by membership id. The Agent contract is unchanged.
 type manager struct {
+	// gitDataRefusal is the 503 message of the internal git feature while the data root is
+	// not durable but the deployment requires it (data_durable.go); "" = feature on.
+	gitDataRefusal string
 	// sessionsShare coalesces the per-tick Agent sessions read of /api/events subscribers.
 	sessionsShare sessionsShare
 	// eventsHub runs one /api/events ticker per workspace with subscribers (events_hub.go).

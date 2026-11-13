@@ -113,6 +113,10 @@ func (a gitServerAPI) reposList(w http.ResponseWriter, r *http.Request, _ store.
 // and its ledger row, then returns the clone URL. Idempotent-ish: a duplicate
 // name is a 409.
 func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
+	if e := a.mgr.gitDataRefused(); e != nil {
+		writeAPIErr(w, e)
+		return
+	}
 	if a.publicBaseURL == "" {
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "not_configured", "internal git requires PUBLIC_BASE_URL"})
 		return

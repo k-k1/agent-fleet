@@ -269,6 +269,8 @@ func main() {
 	}
 	reconcileSSMSignIns(ctx, st)
 	mgr.store = st
+	mgr.initGitDataGuard()
+	logOrphanGitRepos(ctx, st, mgr.dataRoot)
 	if len(mgr.master32) > 0 && mgr.custodian != nil {
 		mgr.plaintextSealed.init(st)
 		if n := mgr.plaintextSealed.count(); n > 0 {
