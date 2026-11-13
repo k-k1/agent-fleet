@@ -45,7 +45,7 @@ collide:
 ```
 $ af-scratch target
 af-scratch: target を作業ディスクへ移しています…
-af-scratch: target -> /scratch/artifacts/home/dev/repos/shop/target（Workspace 停止で消えます）
+af-scratch: target -> /scratch/artifacts/home/dev/repos/shop/target（ワークスペース停止で消えます）
 ```
 
 After a stop the symlink stays, but what it points to is gone, and builds do not create it through the link: Gradle

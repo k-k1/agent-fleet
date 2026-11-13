@@ -58,14 +58,14 @@ Tenants can be added later. When in doubt, start with one and split when you nee
 
 ## Decide each tenant's sign-in
 
-Once tenants are split, **Admin** → open the tenant → "Sign-in methods" and "Login rules" decide each tenant's sign-in.
+Once tenants are split, **Admin** → open the tenant → "Sign-in methods" and "Sign-in rules" decide each tenant's sign-in.
 
 | Setting | Screen | What it does | Where it applies |
 |---|---|---|---|
 | **Accept** | Sign-in methods | This method may be used to enter this tenant | Checked on every request, not only by hiding the button |
 | **Show button** | Sign-in methods | Removes **only the button** from this tenant's sign-in page, leaving the method accepted | Display only. Somebody who signs in with a hidden method still gets in |
-| **Auto-join domains** | Login rules | An address in this domain joins this tenant on first sign-in | One tenant per domain |
-| **Invite domains** | Login rules | Bounds who may be added as a member | Only when adding a member. Not checked on every request |
+| **Auto-join domains** | Sign-in rules | An address in this domain joins this tenant on first sign-in | One tenant per domain |
+| **Invite domains** | Sign-in rules | Bounds who may be added as a member | Only when adding a member. Not checked on every request |
 
 - "Sign-in methods" lists the methods the deployment enables in `.env` ("Deployment-wide") together with the ones the tenant registered itself. Two toggles on each row decide them
 - **Only a deployment administrator can flip the toggles.** A tenant administrator sees the same list read-only ([Choose how people sign in](../admin/access/signin-methods.md))

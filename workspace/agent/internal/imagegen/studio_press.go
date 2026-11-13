@@ -198,7 +198,7 @@ func writeStudioPressErr(w http.ResponseWriter, err error, agent bool) {
 		msg := "other trial pictures are already waiting in this workspace (at most " +
 			fmt.Sprint(imagegenTrialMax) + "); press again once one of them has come back"
 		if agent {
-			msg = "他の試走がすでに " + fmt.Sprint(imagegenTrialMax) + " 枚待っています（ワークスペース共通の枠）。" +
+			msg = "他のテスト生成がすでに " + fmt.Sprint(imagegenTrialMax) + " 枚待っています（ワークスペース共通の枠）。" +
 				"結果が get_image_studio に出るのを待ってから試してください。続けて呼び直さないでください"
 		}
 		httpx.WriteErr(w, http.StatusTooManyRequests, "trial_pending", msg)

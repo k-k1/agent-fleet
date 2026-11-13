@@ -240,7 +240,7 @@ describe("MachineView", () => {
     nearlyFull();
     const text = await mount(shared);
     expect(text).toContain("ディスク全体");
-    expect(text).not.toContain("home ディスク");
+    expect(text).not.toContain("ホームディスク");
     const bar = [...host!.querySelectorAll(".mu-chart")].find((el) => el.querySelector(".mu-bar"))!;
     expect(bar.className).not.toMatch(/is-(warn|crit)/);
   });
@@ -249,7 +249,7 @@ describe("MachineView", () => {
     // The positive control for the test above: same 95%, own box — label and tint both flip.
     nearlyFull();
     const text = await mount(ec2);
-    expect(text).toContain("home ディスク");
+    expect(text).toContain("ホームディスク");
     expect(text).not.toContain("ディスク全体");
     const bar = [...host!.querySelectorAll(".mu-chart")].find((el) => el.querySelector(".mu-bar"))!;
     expect(bar.className).toContain("is-crit");

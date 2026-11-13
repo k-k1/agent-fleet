@@ -9,7 +9,7 @@ source_of_truth: "af-clean --help（ワークスペースの workspace-agent に
 
 ターミナルから ホームディレクトリのディスクを空けます。Console の容量不足の通知にある **再生成できるものを掃除…** と同じ一覧を使います。
 ワークスペースの Agent に消せるものを尋ね、その分だけを消します。動いているワークスペースの中でだけ使えます。
-Console 側の説明は [マシンと使用状況を見る](../../user/workspace/machine.ja.md#home-ディスクの空きを作る) にあります。
+Console 側の説明は [マシンと使用状況を見る](../../user/workspace/machine.ja.md#ホームディスクの空きを作る) にあります。
 
 ## 書式
 

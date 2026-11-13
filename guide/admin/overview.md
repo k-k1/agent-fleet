@@ -48,7 +48,7 @@ Whatever stays inside one team belongs to its tenant administrator, including th
 | Branch naming rules and the agent new members are pointed at | **you** |
 | Registering a sign-in method, allowed networks, integration OAuth apps | **you** (a sign-in method needs approval) |
 | Creating tenants, tenant-wide limits and idle auto-stop, granting admin rights | deployment administrator |
-| Changing the login rules, approving a sign-in method, whether your tenant may use the self-hosted engines | deployment administrator |
+| Changing the sign-in rules, approving a sign-in method, whether your tenant may use the self-hosted engines | deployment administrator |
 | Egress control, the speech engine, the shared dictionary, MCP sign-in hosts, the development OIDC IdP | deployment administrator |
 | Backups, upgrades, host incident response | deployment administrator |
 

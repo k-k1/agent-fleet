@@ -609,7 +609,7 @@ describe("the spawn badge tooltip", () => {
 
   it.each([
     ["en", "build-api started it with create_session"],
-    ["ja", "build-api が create_session で起こしました"],
+    ["ja", "build-api が create_session で起動しました"],
   ])("names the parent session (%s)", (locale, phrase) => {
     setLocale(locale);
     const title = render(SPAWNED, RECIPIENT).querySelector(".mt-peer")?.getAttribute("title") ?? "";

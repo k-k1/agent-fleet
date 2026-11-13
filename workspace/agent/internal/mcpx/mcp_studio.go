@@ -27,9 +27,9 @@ const mcpStudioNoGenerateImage = "このセッションは画像スタジオに�
 // mcpStudioTrialNotAllowed is run_image_trial's refusal while the studio does not allow agent
 // trials. The tool is listed regardless (mcpStudioAdvertise), so this is the only place the agent
 // learns the switch is the member's, and that calling again before they flip it is pointless.
-const mcpStudioTrialNotAllowed = "このスタジオではエージェントの試走が許可されていません。" +
-	"利用者がスタジオの設定で「エージェントの試走を許す」をオンにするまで呼ばないでください。" +
-	"試したいときは、オンにするよう利用者に頼むか、スタジオの試走ボタンを押してもらってください"
+const mcpStudioTrialNotAllowed = "このスタジオではエージェントのテスト生成が許可されていません。" +
+	"利用者がスタジオの設定で「エージェントのテスト生成を許す」をオンにするまで呼ばないでください。" +
+	"試したいときは、オンにするよう利用者に頼むか、スタジオのテスト生成ボタンを押してもらってください"
 
 // studioFile is the part of a studio's stored file this process reads. The Agent owns the file
 // (internal/imagegen ImageStudio); these two keys are the ones the session side decides by.
@@ -183,12 +183,12 @@ var (
 func mcpRunImageTrial(req mcpReq, studio, self string) []byte {
 	// The heartbeat keeps opencode, which cuts a silent call at 60 s, on the line meanwhile
 	// (mcp_imagegen.go).
-	stop := startProgressHeartbeat(req, "試走しています…")
+	stop := startProgressHeartbeat(req, "テスト生成しています…")
 	defer stop()
 	body, _ := json.Marshal(map[string]any{"mode": "agent_trial", "session": self})
 	out, err := agentDo(http.MethodPost, "/imagegen/studios/"+studio+"/press", body)
 	if err != nil {
-		return mcpToolErr(req.ID, "試走できませんでした: "+agentErrDetail(err))
+		return mcpToolErr(req.ID, "テスト生成できませんでした: "+agentErrDetail(err))
 	}
 	var pressed struct {
 		Version string `json:"version"`
@@ -197,7 +197,7 @@ func mcpRunImageTrial(req mcpReq, studio, self string) []byte {
 		} `json:"jobs"`
 	}
 	if json.Unmarshal([]byte(out), &pressed) != nil || len(pressed.Jobs) == 0 {
-		return mcpToolErr(req.ID, "試走の結果を読み取れませんでした")
+		return mcpToolErr(req.ID, "テスト生成の結果を読み取れませんでした")
 	}
 	jobID := pressed.Jobs[0].ID
 	deadline := time.Now().Add(mcpStudioTrialWait)
@@ -208,7 +208,7 @@ func mcpRunImageTrial(req mcpReq, studio, self string) []byte {
 				value := map[string]any{
 					"version": pressed.Version, "job": jobID, "files": j.Files,
 					"warnings": append([]string{}, j.Warnings...), "elapsed_ms": j.ElapsedMS,
-					"note": "パスは試走の絵。確かめる必要があるときだけ開くこと。warnings は実際に起きたこと。",
+					"note": "パスはテスト生成の絵。確かめる必要があるときだけ開くこと。warnings は実際に起きたこと。",
 				}
 				// The seed this picture came out at — what "make a variation of THIS one" needs.
 				if len(j.Files) > 0 && j.Files[0].Seed != nil {
@@ -216,13 +216,13 @@ func mcpRunImageTrial(req mcpReq, studio, self string) []byte {
 				}
 				return mcpStructuredResult(req.ID, value)
 			case "failed", "cancelled":
-				return mcpToolErr(req.ID, "試走 "+pressed.Version+" は失敗しました: "+firstNonEmpty(j.Error, j.State))
+				return mcpToolErr(req.ID, "テスト生成 "+pressed.Version+" は失敗しました: "+firstNonEmpty(j.Error, j.State))
 			}
 		}
 		if !time.Now().Before(deadline) {
 			return mcpStructuredResult(req.ID, map[string]any{
 				"version": pressed.Version, "job": jobID, "state": "running",
-				"note": "試走はまだ終わっていません（エンジンが起動中のことがあります）。結果は次の get_image_studio の since に出ます。呼び直さないでください。",
+				"note": "テスト生成はまだ終わっていません（エンジンが起動中のことがあります）。結果は次の get_image_studio の since に出ます。呼び直さないでください。",
 			})
 		}
 		time.Sleep(min(mcpStudioTrialPoll, time.Until(deadline)))

@@ -29,7 +29,7 @@ For your own work, see [Find what you want to do](../user/README.md).
 
 | Page | What you can do |
 |---|---|
-| [Choose how people sign in](access/signin-methods.md) | Register your company's IdP or a GitHub organisation, and read the login rules |
+| [Choose how people sign in](access/signin-methods.md) | Register your company's IdP or a GitHub organisation, and read the sign-in rules |
 | [Limit the networks people sign in from](access/networks.md) | Narrow where your tenant can be used from to a set of address ranges |
 | [Choose the OAuth apps for integrations](access/oauth-apps.md) | Decide which app "Connect with OAuth" uses for GitHub, Bitbucket and Jira |
 

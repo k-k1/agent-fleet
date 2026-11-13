@@ -78,7 +78,7 @@ export const errors = {
   "err.permission_pending":
     "エージェントが許可の判断待ちです。許可カード（ないときは端末）から許可・拒否してから送信してください（テキストは許可メニューに取り込まれ、そのまま許可になります）。",
   "err.interaction_pending":
-    "エージェントが対話中のプロンプトを表示しています。カード（無いときは端末）から回答してから送信してください。",
+    "エージェントが対話中のプロンプトを表示しています。カード（ないときは端末）から回答してから送信してください。",
   "err.auth_expired":
     "このワークスペースの Claude のログインが期限切れです。再認証（アカウントメニュー > 設定 > 接続 > エージェント）してから送信してください（この状態で送るとターミナルは文字を受け取りますが、ターンは一つも始まりません）。",
   "err.auth_expired_kind":
@@ -106,7 +106,7 @@ export const errors = {
   "err.member_origin_unavailable": "ワークスペースのエージェントが起動直後か、再起動が必要です。1 分ほど待ってから再試行してください。",
   "err.too_many_uploads": "別のメモリのインポートが実行中です。完了してから再度お試しください。",
   "err.upload_timeout": "アップロードが止まったか、時間がかかりすぎました。もう一度お試しください。",
-  "err.cli_install_no_space": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。home ディスクが満杯です。空きを作ってからワークスペースを再起動してください。",
+  "err.cli_install_no_space": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。ホームディスクが満杯です。空きを作ってからワークスペースを再起動してください。",
   "err.cli_install_network": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。ネットワークエラーです。ワークスペースを再起動してもう一度お試しください。",
   "err.cli_install_checksum": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。ダウンロードがチェックサムと一致しませんでした。ワークスペースを再起動してもう一度お試しください。",
   "err.cli_install_other": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。設定 › ツールチェーンとワークスペースのログを確認してください。",
@@ -212,8 +212,8 @@ export const errors = {
   "err.mcp_url_scheme": "URL は http / https で指定してください",
   "err.mcp_url_host": "URL にホストがありません",
   "err.mcp_url_credentials": "URL に資格情報を埋め込まないでください（ヘッダを使ってください）",
-  "err.mcp_url_own_endpoint": "これはこのデプロイ自身の /mcp エンドポイントです。接続するとセッションにあなたの /mcp の全権限（任意セッションの操作・削除・管理ツール）が渡るため登録できません。別の Agent Fleet デプロイなら接続できます",
-  "err.mcp_url_own_memory_endpoint": "これはこのデプロイ自身の /mcp/memory エンドポイントです。セッションは組み込みの af ツールで Agent Fleet のメモリをすでに使えるため、接続しても同じツールが重複するだけです。",
+  "err.mcp_url_own_endpoint": "これはこの配備自身の /mcp エンドポイントです。接続するとセッションにあなたの /mcp の全権限（任意セッションの操作・削除・管理ツール）が渡るため登録できません。別の Agent Fleet の配備なら接続できます",
+  "err.mcp_url_own_memory_endpoint": "これはこの配備自身の /mcp/memory エンドポイントです。セッションは組み込みの af ツールで Agent Fleet のメモリをすでに使えるため、接続しても同じツールが重複するだけです。",
   "err.mcp_auth_unknown": "その認証方式は不明です",
   "err.mcp_oauth_remote_only": "OAuth のサインインはリモートサーバー専用です",
   "err.mcp_oauth_authorization_header": "OAuth のサーバーには固定のヘッダを付けられません。外すか、別の認証を選んでください",
@@ -224,7 +224,7 @@ export const errors = {
   "err.mcp_oauth_user_secret": "OAuth のサーバーでは、メンバーにヘッダの値を入力させられません。「認証の値は各メンバーが入力する」を外すか、別の認証を選んでください",
   "err.oauth_not_required": "このサーバーは OAuth を求めていません",
   "err.oauth_discovery_failed": "サーバーの OAuth メタデータを使えませんでした。接続テストで理由を確認してください",
-  "err.as_endpoints_unusable": "認可サーバーの認可エンドポイントかトークンエンドポイントが無いか、https ではありません",
+  "err.as_endpoints_unusable": "認可サーバーの認可エンドポイントかトークンエンドポイントがないか、https ではありません",
   "err.registration_failed": "認可サーバーが動的クライアント登録を拒否しました",
   "err.not_oauth_server": "サインインできるのは、登録済みのリモートサーバーだけです",
   "err.bad_authorize_url": "認可のアドレスを使えません",
@@ -309,7 +309,7 @@ export const errors = {
   "err.memory_too_large": "ファイルが大きすぎます",
   "err.memory_not_found": "そのメモリはありません",
   "err.memory_conflict": "メモリが先に更新されています。読み直してからやり直してください",
-  "err.memory_no_project": "このセッションには作業コピーが無いため、プロジェクトのメモリを使えません",
+  "err.memory_no_project": "このセッションには作業コピーがないため、プロジェクトのメモリを使えません",
   "err.memory_disabled": "Agent Fleet のメモリは設定でオフになっています（設定 → エージェントメモリ → 設定）",
   "err.tenant_idp_link_claim_required":
     "この配備には、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
@@ -413,8 +413,8 @@ export const errors = {
   "err.civitai_token_put_failed": "トークンを配備の秘密に書き込めませんでした",
   // --- 画像生成の待ち行列（ADR 0081 レーン A）。これまで proxy されていなかった経路なので、
   // 符号はここが初出になる。Agent の message は英語なので、目録に無いと英語がそのまま出る。
-  "err.queue_full": "画像の待ち行列がいっぱいです。今の分が処理されてから投入してください。",
-  "err.trial_pending": "試走がすでに待っています。1 枚見てから次を頼んでください。",
+  "err.queue_full": "画像のキューがいっぱいです。今の分が処理されてから投入してください。",
+  "err.trial_pending": "テスト生成がすでに待っています。1 枚見てから次を頼んでください。",
   "err.bad_params": "steps / cfg / sampler / scheduler のどれかがこのエンジンで使えない値です。",
   "err.bad_prompt": "プロンプトが空です。",
   "err.bad_op": "その操作はできません。",

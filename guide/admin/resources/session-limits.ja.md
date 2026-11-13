@@ -54,7 +54,7 @@ audience: "メンバーが同時に動かせるセッションの数を決める
 
 | 設定 | 説明しているページ |
 |---|---|
-| 最大 内部リポジトリ・最大 LFS 容量 | [内蔵の Git を使う](../../user/code/internal-git.ja.md) |
+| 最大内部リポジトリ数・最大 LFS 容量 | [内蔵の Git を使う](../../user/code/internal-git.ja.md) |
 | ワークスペースごとのメモリ上限 | [ワークスペースのサイズを決める](workspace-size.ja.md) |
 | アイドル自動停止 | [放置されたワークスペースを止める](idle-stop.ja.md) |
 | サインイン時の自動起動 | [サインインしたらワークスペースを起動する](start-at-signin.ja.md) |

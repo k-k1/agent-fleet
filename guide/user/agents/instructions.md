@@ -45,7 +45,7 @@ Agent instructions come in three layers, and this setting is the middle one.
 | **Agent instructions** | **You** | **This setting** |
 | Repository instructions (`CLAUDE.md`, `AGENTS.md`) | The whole team (committed) | Edit the repository |
 
-The workspace policy can be read with "**Read the guide**" on the same screen.
+The workspace policy can be read with "**Read the policy**" on the same screen.
 
 ## Check that it arrived
 

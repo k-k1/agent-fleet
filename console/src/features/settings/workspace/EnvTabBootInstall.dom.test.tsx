@@ -80,7 +80,7 @@ const rowOf = (name: string) =>
 describe("EnvTab boot-install outcome", () => {
   it("names the reason where the CLI is missing", async () => {
     await mount();
-    expect(rowOf("claude").textContent).toContain("インストール失敗: home ディスク満杯");
+    expect(rowOf("claude").textContent).toContain("インストール失敗: ホームディスク満杯");
   });
   it("also says so when an older copy is still there", async () => {
     await mount();
