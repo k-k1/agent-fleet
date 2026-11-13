@@ -90,7 +90,7 @@ A **PDF** is shown as its pages. The header says `1 / 12` style page numbers; tu
 
 To find text in a PDF:
 
-1. Click the PDF and press Ctrl+F (Cmd+F on a Mac), or press "**Find in PDF**" in the toolbar
+1. Click the PDF and press Ctrl+F (⌘+F on a Mac), or press "**Find in PDF**" in the toolbar
 2. Type the words. Every page is searched, including words wrapped across lines
 3. Enter moves to the next match and Shift+Enter to the previous one. Esc closes the search bar
 

@@ -98,7 +98,7 @@ When you show it to colleagues:
 
 - Give them the link copied with "**Share**" under "Preview". That link keeps working across starts; the raw URL answers 404 after every restart
 - It appears in their "Preview" under "**Shared with you**". While your workspace is stopped it says "Stopped" and does not open. They cannot start it, so they may ask you to
-- While they have it open, your workspace does not stop by itself, and the running cost is yours. A screen merely left open stops it in the end
+- While they have it open, your workspace does not stop by itself, and the running cost is yours. If they merely leave the screen open, it still stops in the end
 
 If you gave the URL to the wrong person, press "**Discard and mint a new one**".
 

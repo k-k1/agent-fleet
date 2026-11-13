@@ -39,7 +39,7 @@ and of the deployment's own engines, stay in the launch list.
 
 | Choice | opencode.ai models in the list | What you need |
 |---|---|---|
-| None (my own keys) | None. `OPENCODE_API_KEY` is not passed even when saved | Your own provider's API key, or an own engine |
+| None (my own keys) | None. `OPENCODE_API_KEY` is not passed even when saved | Your own provider's API key, or the deployment's own engine |
 | Free models only | The free models usable without authentication. Subject to congestion and free-tier limits | Nothing |
 | Go (subscription) | The subscription models (`opencode-go/…`) | An opencode.ai API key. Signing in to the account is optional |
 | Zen (metered) | The metered models (`opencode/…`); with a Go subscription as well, both | Either an account sign-in or an API key |
