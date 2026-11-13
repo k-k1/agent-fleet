@@ -52,7 +52,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 
 | Tool | What it is for | Version | Licence |
 |---|---|---|---|
-| [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic's coding agent | `2.1.323` | [Vendor terms](https://www.anthropic.com/legal/commercial-terms) |
+| [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic's coding agent | `2.1.325` | [Vendor terms](https://www.anthropic.com/legal/commercial-terms) |
 | [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI's coding agent | `0.169.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.169.0/LICENSE) |
 | [opencode](https://github.com/anomalyco/opencode) | An open-source coding agent that works with many model providers | `2.3.0` | [MIT](https://github.com/anomalyco/opencode/blob/v2.3.0/LICENSE) |
 | [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub's coding agent | `1.0.111` | [Vendor terms](https://github.com/github/copilot-cli/blob/v1.0.111/LICENSE.md) |

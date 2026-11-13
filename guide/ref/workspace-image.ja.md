@@ -50,7 +50,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic のコーディングエージェント | `2.1.323` | [提供元の規約](https://www.anthropic.com/legal/commercial-terms) |
+| [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic のコーディングエージェント | `2.1.325` | [提供元の規約](https://www.anthropic.com/legal/commercial-terms) |
 | [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI のコーディングエージェント | `0.169.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.169.0/LICENSE) |
 | [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.3.0` | [MIT](https://github.com/anomalyco/opencode/blob/v2.3.0/LICENSE) |
 | [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.111` | [提供元の規約](https://github.com/github/copilot-cli/blob/v1.0.111/LICENSE.md) |
