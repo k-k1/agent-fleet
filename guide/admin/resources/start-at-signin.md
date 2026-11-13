@@ -32,8 +32,8 @@ It starts when a member whose workspace is stopped opens the Console in a visibl
 
 | Starts | Does not start |
 |---|---|
-| Right after arriving at the Console by signing in or typing the address | A reload |
-| In a visible tab, after a key press, click, touch or scroll in the last minute | A tab nobody is using, or a tab in the background |
+| Right after arriving at the Console by signing in, typing the address or opening a bookmark: that arrival counts as use by itself | A reload on its own, with no key press, click, touch or scroll after it |
+| In a visible tab, including after a reload, after a key press, click, touch or scroll in the last minute | A tab nobody is using, or a tab in the background |
 | | A workspace that stopped while the tab was open (idle auto-stop, the member's own stop, a force-stop) |
 | | When the workspace's state cannot be read |
 | | When the tenant's max workspaces is reached |

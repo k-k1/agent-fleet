@@ -341,7 +341,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.image_refresh_quiet": "Quiet time before an automatic image refresh",
   "admin.image_refresh_quiet_ph": "e.g. 15m (empty = 15m, 0 = never)",
   "admin.image_refresh_hint":
-    "Only members who switched on \u201cRestart automatically onto a new image\u201d are affected. A workspace with an outdated image is restarted (never recreated) once nothing has been active for this long: no working or waiting session, no open terminal, preview or browser pane, no recent request. At most one attempt per image.",
+    "Only members who switched on \u201cRestart automatically onto a new image\u201d are affected. A workspace with an outdated image is restarted (never recreated) once nothing has been active for this long: no session running a turn or background work or pinned awake, nobody typing in a terminal or using the browser pane, no recent request. A session waiting on an answer or a terminal left open does not hold it off. At most one attempt per image.",
   "admin.backup_title": "Keep a spare copy of each home",
   "admin.backup_every": "Copy every",
   "admin.backup_ph": "e.g. 24h (empty = deploy default)",

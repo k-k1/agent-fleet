@@ -89,9 +89,10 @@ When Agent Fleet is updated, running workspaces keep the old image. If a member 
 | Setting | Where | Who decides |
 |---|---|---|
 | **Automatic image refresh** ("Restart automatically onto a new image when idle") | Settings → Toolchains | The member. Off by default |
-| **Quiet time before an automatic image refresh** | The tenant's idle auto-stop | The deployment administrator. Empty is 15 minutes; `0` never |
+| **Quiet time before an automatic image refresh** | The tenant's idle auto-stop | The deployment administrator. Empty takes the deployment default, 15 minutes unless the deployment changed it; `0` never |
 
-- It restarts once there has been no working or waiting session, no open terminal, preview or browser pane, and no recent request for the quiet time
+- It restarts once, for the quiet time, no session has run a turn or background work or been pinned with Keep awake, no repository import or image job has run, nobody has typed in a terminal or used the browser pane recently (30 minutes unless the deployment changed it), and no request (the Console, a preview) has reached the workspace
+- A session waiting on a person and a terminal left open without typing do not hold it off. When **Workspace stop after** is due first, the workspace is stopped instead, and its next start takes the new image
 - It is never recreated, so files stay. Sessions can be resumed, and the member gets one notification
 - Each image is tried automatically only once. If the start fails, the workspace stays stopped
 
