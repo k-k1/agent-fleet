@@ -104,6 +104,10 @@ export interface TeamCloneTarget {
 }
 
 const TEAM_PATH_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+// The stored value is a path without ".git" (that is what remotePath holds). An entry that ends in
+// it would clone "<name>.git.git", a different repository than the one the admin meant, so it is
+// refused rather than guessed at; "." / ".." segments are never a repository.
+const teamPathOk = (p: string) => TEAM_PATH_RE.test(p) && !/\.git$/i.test(p) && !p.split("/").some((seg) => /^\.+$/.test(seg));
 
 /** Team repositories with no working copy yet, as clone shortcuts. A copy counts as present by
  *  the same remote-path match teamFirst uses (so a clone under another folder name or remote
@@ -124,7 +128,7 @@ export function teamCloneTargets(
   for (const raw of teamRepos || []) {
     const path = raw.trim();
     const key = path.toLowerCase();
-    if (!TEAM_PATH_RE.test(path) || seen.has(key) || have.has(key)) continue;
+    if (!teamPathOk(path) || seen.has(key) || have.has(key)) continue;
     seen.add(key);
     const cloneUrl = `https://${host}/${path}.git`;
     if (taken.has(deriveRepoName(cloneUrl))) continue;

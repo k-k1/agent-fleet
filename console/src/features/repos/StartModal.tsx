@@ -5,7 +5,8 @@
 // its host picker lives here since NewSessionModal was retired in Ph3). Entry
 // points that already know the place (the repo row's launch) skip this hub.
 import { useEffectiveDefaults } from "../../core/store/uiState.ts";
-import { teamCloneTargets, teamFirst } from "./tenantLaunchDefaults.ts";
+import type { TeamCloneTarget } from "./tenantLaunchDefaults.ts";
+import { teamCloneHost, teamCloneTargets, teamFirst } from "./tenantLaunchDefaults.ts";
 import { useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -26,7 +27,6 @@ import { CloneForm } from "./CloneForm.tsx";
 import type { CloneSource } from "./CloneForm.tsx";
 import { NewFolderForm, newFolderNameOk } from "./NewFolderForm.tsx";
 import { cloneRepo, initRepo } from "./clone.ts";
-import { getCachedConns } from "./connsCache.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -118,18 +118,21 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
   });
   // Team repositories not cloned yet, as shortcuts into the same clone flow. The host comes from
   // the member's connected Git provider, so they wait for api/connections (cached copy first).
-  const [conns, setConns] = useState<ConnectionsStatus | null>(getCachedConns);
+  // Only a fresh answer counts: a cached one may predate a connect / disconnect, and the host
+  // decides what gets cloned.
+  const [conns, setConns] = useState<ConnectionsStatus | null>(null);
+  const reposLoaded = useReposStore((s) => s.loadState) === "ok";
   useEffect(() => {
     if (!eff?.repos?.length) return;
     let alive = true;
     api("api/connections")
-      .then((d) => alive && d && !d.error && setConns(d as ConnectionsStatus))
-      .catch(() => {});
+      .then((d) => alive && setConns(d && !d.error ? (d as ConnectionsStatus) : null))
+      .catch(() => alive && setConns(null));
     return () => {
       alive = false;
     };
   }, [eff?.repos]);
-  const teamClones = teamCloneTargets(bases, eff?.repos, conns).filter((c) => {
+  const teamClones = (reposLoaded ? teamCloneTargets(bases, eff?.repos, conns) : []).filter((c) => {
     const q = repoQuery.trim().toLocaleLowerCase();
     return !q || c.path.toLocaleLowerCase().includes(q);
   });
@@ -172,6 +175,19 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
       setStage("place"); // the hub stays mounted below the launch stage — leave it reset
       onPickRepo(repo);
     } else onClose(); // clone landed but the fresh list hasn't caught up — the tree has it
+  };
+
+  // Re-reads the connections right before cloning: the host was inferred from them, so a
+  // provider connected since the list was drawn must stop the clone instead of redirecting it.
+  const cloneTeam = async (c: TeamCloneTarget) => {
+    if (busy) return;
+    const d = await api("api/connections").catch(() => null);
+    if (!d || d.error || teamCloneHost(d as ConnectionsStatus) !== c.host) {
+      setConns(d && !d.error ? (d as ConnectionsStatus) : null);
+      toast(tr("start.team_clone_host_changed"), { kind: "error" });
+      return;
+    }
+    await doClone(c.cloneUrl, "");
   };
 
   // --- newdir: start with no import source (create ~/repos/<name> and `git init`) ---
@@ -415,7 +431,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
             <div className="start-list start-repo-list">
               {visibleBases.filter((r) => teamBases.has(r)).map(baseRow)}
               {teamClones.map((c) => (
-                <button key={c.path} type="button" className="start-row" disabled={busy} onClick={() => void doClone(c.cloneUrl, "")}>
+                <button key={c.path} type="button" className="start-row" disabled={busy} onClick={() => void cloneTeam(c)}>
                   <Icon name="add" className="start-row-ic" />
                   <span className="start-row-body">
                     <span className="start-row-title">{c.path}</span>

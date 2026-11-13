@@ -123,6 +123,8 @@ describe("tenant launch defaults prefill", () => {
     ]);
     expect(teamCloneTargets(bases, ["acme/docs"], { github: { connected: true }, bitbucket: { connected: true } })).toEqual([]);
     expect(teamCloneTargets(bases, undefined, gh)).toEqual([]);
+    // a ".git" suffix would clone "<name>.git.git", another repository: refused, not guessed at
+    expect(teamCloneTargets(bases, ["acme/docs.git", "acme/../x", "acme/.."], gh)).toEqual([]);
   });
 
   it("says why a dialog value cannot be saved as the member's default (C6)", () => {

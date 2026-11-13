@@ -87,7 +87,7 @@ beforeEach(async () => {
   apiGet.mockImplementation(async () => []);
   apiPost.mockReset();
   apiPost.mockImplementation(async () => ({}));
-  useReposStore.setState({ repos: [] });
+  useReposStore.setState({ repos: [], loadState: "ok" });
   await mount();
 });
 
@@ -210,6 +210,7 @@ describe("StartModal — uncloned team repositories", () => {
   it("lists the uncloned one after the cloned team repositories and clones it from the one connected host", async () => {
     apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? { github: { connected: true } } : []));
     useReposStore.setState({
+      loadState: "ok",
       repos: [
         { name: "zeta", branch: "main", remotePath: "other/zeta" },
         { name: "api", branch: "main", remotePath: "Acme/Api" },
@@ -231,5 +232,25 @@ describe("StartModal — uncloned team repositories", () => {
     await team(["acme/docs"]);
     await remount();
     expect(rows().some((b) => b.textContent?.includes("acme/docs"))).toBe(false);
+  });
+
+  it("shows no shortcut until the repository list has loaded (an existing repo would look uncloned)", async () => {
+    apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? { github: { connected: true } } : []));
+    useReposStore.setState({ repos: [], loadState: "loading" });
+    await team(["acme/docs"]);
+    await remount();
+    expect(rows().some((b) => b.textContent?.includes("acme/docs"))).toBe(false);
+    await act(async () => useReposStore.setState({ loadState: "ok" }));
+    expect(rows().some((b) => b.textContent?.includes("acme/docs"))).toBe(true);
+  });
+
+  it("refuses to clone when the connections changed after the list was drawn", async () => {
+    let conns: unknown = { github: { connected: true } };
+    apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? conns : []));
+    await team(["acme/docs"]);
+    await remount();
+    conns = { github: { connected: true }, bitbucket: { connected: true } };
+    await click(rowFor("acme/docs"));
+    expect(cloneRepo).not.toHaveBeenCalled();
   });
 });
