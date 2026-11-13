@@ -492,7 +492,7 @@ export const admin = {
     "home を拡張できませんでした。設定は保存済みなので、時間をおいて保存し直してください（同じボリュームは 6 時間に 1 度しか変更できません）: {detail}",
   "admin.max_sessions_label": "最大セッション数",
   "admin.max_sessions_zero": "0 = テナントの上限",
-  "admin.max_sessions_hint": "0 を指定すると、テナント全体の最大セッション数に従います。テナントの値も 0 のときだけ上限がなくなります。",
+  "admin.max_sessions_hint": "0 を指定すると、テナント全体の最大セッション数に従います。",
   "admin.ws_memory": "ワークスペースのメモリ",
   "admin.eq_hint": "= {hint}",
   "admin.zero_deploy_default": "0 = 配備の既定",

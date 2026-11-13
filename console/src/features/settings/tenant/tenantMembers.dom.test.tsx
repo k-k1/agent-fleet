@@ -31,6 +31,7 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
 import { MemberView } from "./tenantMemberDetail.tsx";
 import { useTenantStore } from "../../../core/store/tenant.ts";
+import { setLocale } from "../../../lib/i18n/index.ts";
 
 const MEMBER = {
   user_key: "a-x-com",
@@ -138,17 +139,29 @@ describe("member limit editing", () => {
 
   // A member's 0 falls back to the tenant's max sessions (sessionQuotaExceeded), so labelling
   // it "unlimited" told an admin the opposite of what saving it does.
-  it("says a session limit of 0 takes the tenant's limit, not unlimited", async () => {
-    await mount();
-    await openEditor();
-    const field = Array.from(document.querySelectorAll(".limit-edit label.admin-fld")).find((l) =>
-      (l.textContent || "").includes("最大セッション数"),
-    )!;
-    expect(field.querySelector(".af-unit")!.textContent).toBe("0 = テナントの上限");
-    const text = document.querySelector(".limit-edit")!.textContent || "";
-    expect(text).toContain("テナント全体の最大セッション数に従います");
-    expect(text).not.toContain("0 = 無制限");
-  });
+  const ZERO_COPY = {
+    en: { label: "Max sessions", unit: "0 = tenant's limit", hint: "0 uses the tenant's max sessions.", wrong: "unlimited" },
+    ja: { label: "最大セッション数", unit: "0 = テナントの上限", hint: "0 を指定すると、テナント全体の最大セッション数に従います。", wrong: "無制限" },
+  } as const;
+  for (const loc of ["en", "ja"] as const) {
+    it(`says a session limit of 0 takes the tenant's limit, not unlimited (${loc})`, async () => {
+      setLocale(loc);
+      try {
+        const c = ZERO_COPY[loc];
+        await mount();
+        await openEditor();
+        const field = Array.from(document.querySelectorAll(".limit-edit label.admin-fld")).find((l) =>
+          (l.textContent || "").includes(c.label),
+        )!;
+        expect(field.querySelector(".af-unit")!.textContent).toBe(c.unit);
+        const text = document.querySelector(".limit-edit")!.textContent || "";
+        expect(text).toContain(c.hint);
+        expect(text).not.toContain(c.wrong);
+      } finally {
+        setLocale("ja");
+      }
+    });
+  }
 });
 
 // Cleanup runs in three stages (docs/log/61 §61.18): remove the member, discard the workspace,

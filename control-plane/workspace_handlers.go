@@ -1338,7 +1338,8 @@ func (a workspaceAPI) ssmInstances(w http.ResponseWriter, r *http.Request, res *
 
 // sessionQuotaExceeded returns a 429 apiError when the caller is at its per-user
 // (or tenant-default) concurrent-session cap, else nil. A member's 0/unset falls back
-// to the tenant's max sessions; only a tenant 0/unset is unlimited. Shared
+// to the tenant's max sessions, and a tenant 0/unset sets no cap; the exceptions
+// below (unmetered kinds, the native runtime) are never capped. Shared
 // by session create and fork (both add a running session). If the workspace isn't
 // reachable the check is skipped — the proxy reports the real error.
 //

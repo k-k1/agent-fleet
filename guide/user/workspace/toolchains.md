@@ -108,8 +108,9 @@ for you.
 
 When it starts:
 
-- Right after you arrive at the Console by signing in or typing its address, not on a reload
-- Only in a visible tab where you pressed a key, clicked, touched or scrolled in the last minute
+- In a visible tab, when you are there. Arriving at the Console by signing in, typing its address or opening a
+  bookmark counts by itself, so the workspace starts right away. After a reload, or in a tab that was already open,
+  it starts once you press a key, click, touch or scroll; that input counts for one minute
 - Once per 30 minutes across the tabs of one browser. A workspace that stopped while the tab was open is not started again
 
 While it starts, Home shows **Starting your workspace… (you can keep using Home)**. When your organization's
@@ -129,9 +130,16 @@ does that restart by itself once nobody is using it.
 | Off (the default) | The workspace keeps its image until you restart it |
 | On | When the image is outdated and the workspace has been quiet for a while, it is stopped and started again |
 
-- Quiet means no working or waiting session, no open terminal, preview or browser pane, and no recent request to the
-  workspace. How long it must stay quiet is set per tenant: 15 minutes unless the deployment administrator changed it,
-  and never when they set it to `0`
+- Quiet means all of these at once:
+  - No session is running a turn or background work, and none is pinned with **Keep awake** ([Stop when done, or keep a session awake](../sessions/auto-stop.md)). No repository import or
+    image job is running
+  - Nobody is using it: no typing in a terminal and no use of the browser pane recently (30 minutes unless the
+    deployment changed it)
+  - No request (the Console, a preview) has reached the workspace for the quiet time
+- A session waiting on your answer does not hold it off, and neither does a terminal left open without typing
+- The quiet time is set per tenant. Empty takes the deployment default, which is 15 minutes unless the deployment
+  changed it; `0` turns the refresh off
+- When idle auto-stop is due first, the workspace is stopped instead. The next start takes the new image anyway
 - It is a restart, never a recreate: your files and repositories stay. Sessions can be resumed afterwards
 - You get one notification, "**Your workspace was updated automatically**"
 - Each new image is tried automatically only once. If the start fails, the workspace stays stopped and you get
