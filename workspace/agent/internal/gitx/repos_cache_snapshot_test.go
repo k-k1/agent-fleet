@@ -115,21 +115,39 @@ func TestSnapshotIdentNotCachedAcrossAnEdit(t *testing.T) {
 	}
 }
 
+// The global config here is one the fingerprint can follow (insteadOf, no [branch]), so the
+// integration slot is cacheable and only the snapshotCurrent guard keeps a result computed
+// from the old snapshot out of it.
 func TestSnapshotIntegrationNotCachedAcrossAnEdit(t *testing.T) {
 	home := isolateGlobalConfig(t)
 	parent, wt := noUpstreamClone(t)
+	mustGit(t, parent, "config", "branch.main.remote", "origin")
+	mustGit(t, parent, "config", "branch.main.merge", "refs/heads/main")
 	cfg := filepath.Join(home, ".gitconfig")
-	writeFile(t, cfg, globalUpstream)
-	c := newTestCache()
-	g := globalConfigPaths()
-	defer g.done()
-	writeFile(t, cfg, "[user]\n\tname = x\n")
-	if got := c.integration(wt, parent, "main", g); !got.TargetUpstream {
-		t.Fatalf("old snapshot should give the upstream, got %+v", got)
+	writeFile(t, cfg, insteadOfGitlab)
+	cached := func(edit bool) bool {
+		c := newTestCache()
+		g := globalConfigPaths()
+		defer g.done()
+		if !g.simple || g.statusEnv == nil {
+			t.Fatalf("setup: simple=%v snapshot=%v, want a cacheable config with a snapshot", g.simple, g.statusEnv != nil)
+		}
+		if edit {
+			writeFile(t, cfg, "[user]\n\tname = x\n")
+			defer writeFile(t, cfg, insteadOfGitlab)
+		}
+		if got := c.integration(wt, parent, "main", g); got.Relation == "unknown" {
+			t.Fatalf("integration = %+v", got)
+		}
+		e := c.entry(wt)
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.integ.valid
 	}
-	g2 := globalConfigPaths()
-	defer g2.done()
-	if got := c.integration(wt, parent, "main", g2); got.TargetUpstream {
-		t.Errorf("after the edit still %+v (stale integration was cached)", got)
+	if !cached(false) {
+		t.Fatal("control: an unedited config must be cached")
+	}
+	if cached(true) {
+		t.Error("a result from the old snapshot was cached under the new fingerprint")
 	}
 }
