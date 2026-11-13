@@ -200,9 +200,9 @@ func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident s
 	// finish records the outcome. It runs on the handler's thread, or, when the request ended
 	// after the force-stop had taken its token, from the runtime once the work is done.
 	finish := func(ctx context.Context, res runtime.SlotForceStop, err error) *APIError {
-		detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t predicate=%s cancelled=%d cancel_failed=%d forced=%t deregistered=%t",
+		detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t predicate=%s cancelled=%d cancel_failed=%d forced=%t deregistered=%t retired=%t",
 			orDash(res.Workspace), orDash(res.PreviousState), res.AgentConnected, res.SSMOnline, body.OverrideHealthy, orDash(res.Predicate),
-			res.CancelledCommands, res.CancelFailed, res.Forced, res.Deregistered)
+			res.CancelledCommands, res.CancelFailed, res.Forced, res.Deregistered, res.Retired)
 		aerr := forceStopAPIError(err)
 		if aerr != nil {
 			in.Done(ctx, "error "+aerr.Code+": "+aerr.Message+" ("+detail+")", aerr.Status)

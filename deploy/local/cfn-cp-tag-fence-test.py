@@ -392,6 +392,8 @@ INVENTORY = [
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "clearReplacesHome", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", dict(SLOT, **{"af-replaces-home": "vol-home"}),
                     {"af-replaces-home": None})]),
+    ("internal/runtime/runtime_ecs_ec2_force_stop.go", "retireDeregisteredSlot", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-replace": T})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "retireUnusedReplacement", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-replace": T})]),
     ("internal/runtime/runtime_ecs_ec2_sweeper.go", "sweepSlotOwnerTags", "DeleteTags", 2, [
