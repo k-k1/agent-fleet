@@ -19,7 +19,7 @@ This is where you add tools Agent Fleet does not ship with, such as an internal 
 | Disable a server you do not need | Does not receive a disabled server |
 
 > [!NOTE]
-> These are servers **your sessions use**. To let an outside app drive this Workspace, use
+> These are servers **your sessions use**. To let an outside app drive this workspace, use
 > [MCP tokens & apps](../outside/external-claude.md) under **Outside access**.
 
 ## Register a server
@@ -129,7 +129,7 @@ An MCP server of yours can also feed the `watch` tool: the workspace calls the s
 Turn on "**Watch source**" under **Advanced → Used by**. It is independent of "**Sessions**": the server needs no access to your sessions.
 
 - Your tenant admin has to allow it first (Tenant settings → **Watch sources**). Until then the save is refused
-- A session watches it with `source` `ext.<ID>` (the ID in lower case, `-` as `_`; an ID that starts with a digit cannot be one) and types that start with `ext.<ID>.`
+- A session watches it with `source` `ext.<ID>` (the ID in lower case, `-` as `_`; an ID that starts with a digit cannot be used) and types that start with `ext.<ID>.`
 - The server receives only the subject references and its own cursors, never session text, and a `ref` is one line of ASCII (200 characters at most)
 - What the server answers reaches the session as quoted data, never as an instruction. Its events go only to your own sessions
 - A local (stdio) server starts with a reduced environment (`PATH`, `HOME`, `LANG`, `TMPDIR` and the variables you set on it)
@@ -182,4 +182,4 @@ opencode and Cursor have no equivalent setting, so a timeout is ignored there.
 
 - [Agents — what each kind can do](../../ref/agents.md): which agents receive MCP servers
 - [Distribute an MCP server to everyone](../../admin/mcp-distribute.md): administrators distribute a server to the whole tenant
-- [MCP tokens & apps](../outside/external-claude.md): let an outside app drive this Workspace
+- [MCP tokens & apps](../outside/external-claude.md): let an outside app drive this workspace

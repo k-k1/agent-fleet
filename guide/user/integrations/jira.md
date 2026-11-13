@@ -50,7 +50,7 @@ Agents can do things like these.
 | Move an issue | `jira issue move PROJ-1 "In Progress"` |
 | Assign an issue | `jira issue assign PROJ-1 <user>` |
 
-- **What is written carries your name.** It reaches as far as your Jira account is allowed
+- **What is written carries your name.** It can do only what your Jira account is allowed to do
 - **Comments and descriptions can be Markdown.** `code` and **bold** next to Japanese text, lists and tables show in Jira as written
 - **Find a comment's ID** with `jira issue view PROJ-1 --raw` (`.fields.comment.comments[].id`)
 - **Only certain comments get edited or deleted.** Agents are told to edit or delete only a comment they posted in that
@@ -139,7 +139,7 @@ Looking up an assignee needs a project. Pass `-p PROJ`, or run `jira init --proj
 ### Boards, sprints or epics fail with an authorization error
 
 The OAuth connection lacks the Jira Software scopes. Ask the tenant administrator, as in [the note above](#use-boards-sprints-and-epics).
-Meanwhile the links `jira` prints point at `api.atlassian.com` rather than your site.
+In this state, the links `jira` prints point at `api.atlassian.com` rather than your site.
 
 ### Use Jira Data Center
 
