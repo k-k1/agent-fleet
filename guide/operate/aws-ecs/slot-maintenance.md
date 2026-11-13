@@ -143,9 +143,9 @@ The page shows such a row with "**(not accepting tasks yet)**" and offers "**Sto
 1. Press "**Stop (force)**" on the row. The confirmation names the workspace on the slot; check it and stop
 2. The Control Plane takes the same ownership of the home as the automatic rescue (the `af-rescue` marker and a Start count of its own), ends the member's start on that slot (their workspace reads as stopped), cancels the commands it queued, removes the task ENI if one is attached, and stops the instance. A pending umount or mount is what holds the home's lock
 3. The result (commands cancelled, whether Force was used) appears on the page. The audit log records `pool.slot_force_stop` with the workspace, both health signals, the predicate the slot met (`predicate=dark` or `wedged`; `-` when you overrode) and the counts
-4. Wait for the row to show "**asleep**". The member's next start wakes this same slot through the ordinary path. The reboot clears what was stuck, and the ECS agent reconnects
+4. Wait for the row to show "**asleep**". If the Control Plane removed the task ENI (it deregistered the container instance), the slot is reserved for replacement: the member's next start launches a new slot, moves the home there and retires the old one, because the old slot's ECS agent does not register again. Otherwise the next start wakes this same slot through the ordinary path, the reboot clears what was stuck, and the ECS agent reconnects
 
-**The slot is not quarantined, and the home stays on it.** Keeping an instance as evidence is what quarantine is for, and a slot that does not answer is never quarantined automatically.
+**The slot is not quarantined, and the home stays on it until the next start.** Keeping an instance as evidence is what quarantine is for, and a slot that does not answer is never quarantined automatically.
 
 ### How the stop proceeds
 
