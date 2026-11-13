@@ -136,7 +136,7 @@ Agent Fleet は、エージェントやアシスタントが Agent Fleet 自体�
 |---|---|---|---|---|---|
 | `list_chromium_targets` | ループバックの Chromium デバッグポートにあるページを一覧します | ✓ ブラウザあり | ✓ AF 読み取り、ブラウザあり | — | `port` |
 | `get_chromium_attachment` | Chromium 接続の状態・操作モード・結果を確認します | ✓ ブラウザあり | ✓ AF 読み取り、ブラウザあり | — | `attachment_id` |
-| `attach_chromium` | 既存のページに接続し、利用者が見て入力できるようにします | ✓ ブラウザあり | ✓ AF 書き込み、ブラウザあり | — | `port`, `target_id` |
+| `attach_chromium` | 既存のページに接続して、利用者に見せます。接続直後は表示のみで、入力するには操作モードの切り替えが要ります | ✓ ブラウザあり | ✓ AF 書き込み、ブラウザあり | — | `port`, `target_id` |
 | `detach_chromium` | Chromium との接続だけを切ります（ページやブラウザは閉じません） | ✓ ブラウザあり | ✓ AF 書き込み、ブラウザあり | — | `attachment_id` |
 | `request_browser_action` | 利用者にログインなどの操作を引き渡す依頼を作成・更新します | ✓ ブラウザあり | ✓ AF 書き込み、ブラウザあり | — | `attachment_id`, `message` |
 | `get_browser_action_result` | その依頼について利用者が報告した結果（完了・取り消し・保留）を確認します | ✓ ブラウザあり | ✓ AF 書き込み、ブラウザあり | — | `attachment_id` |

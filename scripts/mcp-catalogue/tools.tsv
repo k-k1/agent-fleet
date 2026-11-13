@@ -56,7 +56,7 @@ get_memory_snapshot	snapshot	Show the agents' own memory as of a snapshot, with 
 restore_memory_snapshot	snapshot	Put the agents' own memory back to a snapshot; the range must be given	エージェント自身のメモリを指定した時点に戻します（範囲の指定が必須です）
 list_chromium_targets	browser	List the pages on a loopback Chromium debugging port	ループバックの Chromium デバッグポートにあるページを一覧します
 get_chromium_attachment	browser	Show a Chromium attachment's state, control mode and outcome	Chromium 接続の状態・操作モード・結果を確認します
-attach_chromium	browser	Attach to an existing page so you can see it and give input	既存のページに接続し、利用者が見て入力できるようにします
+attach_chromium	browser	Attach to an existing page so you can see it; it starts view-only, and input needs a control-mode switch	既存のページに接続して、利用者に見せます。接続直後は表示のみで、入力するには操作モードの切り替えが要ります
 detach_chromium	browser	Drop the attachment only; the page and the browser stay open	Chromium との接続だけを切ります（ページやブラウザは閉じません）
 request_browser_action	browser	Ask you to do something on the page, such as signing in, or update that request	利用者にログインなどの操作を引き渡す依頼を作成・更新します
 get_browser_action_result	browser	Read what you reported for that request: done, cancelled or pending	その依頼について利用者が報告した結果（完了・取り消し・保留）を確認します
