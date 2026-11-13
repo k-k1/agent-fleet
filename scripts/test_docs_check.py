@@ -994,6 +994,32 @@ class TaskPageVocabTests(unittest.TestCase):
         self.assertTrue(any("道具" in w for w in old.warns))
 
 
+class DecidedTermsVocabTests(unittest.TestCase):
+    """The words the guide-wide term pass replaced are refused on a task page, and the
+    lookbehind keeps 施錠 legal."""
+
+    def run_vocab(self, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "user/a.ja.md"
+            path.parent.mkdir(parents=True)
+            path.write_text(body)
+            findings = check.Findings()
+            with patch.object(check, "GUIDE", tmp), patch.object(check, "ROOT", str(Path(tmp).parent)), \
+                    patch.object(check, "rel", lambda p: "guide/" + os.path.relpath(p, tmp)):
+                check.check_vocab([str(path)], findings, strict=False)
+            return findings
+
+    def test_replaced_words_are_errors(self):
+        for word in ("待ち行列", "錠を掛ける", "試走", "封じる", "身元", "プールを建てる", "イメージを焼く"):
+            with self.subTest(word=word):
+                f = self.run_vocab(f"ここで{word}ことがあります。\n")
+                self.assertTrue(f.errors, word)
+
+    def test_new_words_and_shijo_pass(self):
+        f = self.run_vocab("キューにロックを掛け、施錠した扉の前でプールを構築します。\n")
+        self.assertEqual(f.errors, [])
+
+
 class OwnMemoryVocabTests(unittest.TestCase):
     """The old names for an agent's own memory: error on a task page, warning on an old chapter,
     and the glossary, which names them on purpose, is exempt."""
