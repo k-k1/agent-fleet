@@ -19,7 +19,12 @@ import (
 
 // AnsiRe matches the CSI/escape sequences and lone control chars Ink emits while
 // redrawing, so flow output can be scraped as plain text.
-var AnsiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
+//
+// The OSC alternative must come first and consume the whole sequence: claude prints
+// its authorize URL as an OSC 8 hyperlink (ESC ] 8 ;; URL BEL URL ESC ] 8 ;; BEL), and
+// stripping only ESC and BEL leaves "]8;;URLURL]8;;", which the URL scrape reads as one
+// URL with a corrupted state parameter, so the sign-in page refuses it.
+var AnsiRe = regexp.MustCompile(`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
 
 // Flow is one running login flow: the interactive CLI process, the handle its output
 // arrives on, and the accumulated output (scraped for URLs/codes/errors).
