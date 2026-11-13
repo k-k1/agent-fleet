@@ -193,6 +193,8 @@ func TestHandleSessionsUsagePendingPastBudget(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	// A spent budget answers nothing at all, so the warm call gets a real one.
+	mainUsageColdBudget = 5 * time.Second
 	if n, _ := call(); n != 1 {
 		t.Fatalf("warm call: mine=%d, want 1", n)
 	}
