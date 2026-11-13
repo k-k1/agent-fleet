@@ -8,7 +8,7 @@ source_of_truth: "Control Plane の起動時のキーの検査（`control-plane/
 [English](deployment-keys.md) | 日本語
 
 配備のすべてを守る 2 つのキー、`AF_MASTER_KEY` と `AF_COOKIE_SECRET` の要件と、変えたときに何が起きるかがわかります。
-キーなしで動かしてきた配備にキーを入れる手順と、キーを設定する前に保存された値を暗号化する手順も扱います。KMS でキーを守る方法とホームディレクトリごとのキーは [保存時のキーを AWS KMS にする](../keys/kms.ja.md) にあります。
+キーなしで動かしてきた配備にキーを入れる手順と、キーを設定する前に保存された値を暗号化する手順も扱います。KMS でキーを守る方法とホームごとのキーは [保存時のキーを AWS KMS にする](../keys/kms.ja.md) にあります。
 
 ## 全体像
 
@@ -94,6 +94,6 @@ Control Plane は、セッション・サインインの state・プレビュー
 ## 関連
 
 - [インストールする](../install.ja.md#2-シークレットを作る)：キーを作って保管する
-- [保存時のキーを AWS KMS にする](../keys/kms.ja.md)：KMS でキーを守る、ホームディレクトリごとのキー
+- [保存時のキーを AWS KMS にする](../keys/kms.ja.md)：KMS でキーを守る、ホームごとのキー
 - [バックアップして復元する](../run/backup-restore.ja.md#復元する)：復元には同じ `AF_MASTER_KEY` が要る
 - [脅威モデルと残るリスクを知る](threat-model.ja.md)

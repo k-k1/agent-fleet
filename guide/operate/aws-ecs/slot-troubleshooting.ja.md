@@ -99,5 +99,5 @@ EC2 は動いていてステータスチェックも `ok` なのに、ECS エー
 
 - [スロットを入れ替える・止める](slot-maintenance.ja.md)
 - [EC2 スロットプールを使い始める](slot-pool.ja.md)
-- [ホームディレクトリの休止と予備のコピーを設定する](slot-homes.ja.md)
+- [ホームの休止と予備のコピーを設定する](slot-homes.ja.md)
 - [ECS で困ったとき](troubleshooting.ja.md)

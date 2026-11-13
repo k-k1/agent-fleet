@@ -179,7 +179,7 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `DATA_DIR` | 永続する状態がすべてここにあるため、**バックアップすべき対象** |
 | `AF_MASTER_KEY` | 保存時の暗号化の大元になるキー。**失うと保存済みの認証情報は復元できない** |
 | `AF_KEY_CUSTODIAN` | 保存時のキーを誰が持つか: `local`（既定。`AF_MASTER_KEY` から導く）か `kms`（AWS KMS。`AF_KMS_KEY_ID` と組で。[保存時のキーを AWS KMS にする](../operate/keys/kms.ja.md)）。未知の値や不足は起動時に拒否 |
-| `AF_WORKSPACE_DEK` | `derived`（既定）か `random`: メンバーのホームディレクトリごとに KMS で暗号化した専用のキーを持たせる。移し替えた認証情報ストアは `AF_MASTER_KEY` から導出したキーでは開けなくなり、KMS キーを無効化すると Control Plane はそのキーをアンラップできなくなる（ワークスペースとランタイムにすでに渡した写しでは今も開ける）。`random` は `AF_KEY_CUSTODIAN=kms` が前提で、無効にしても元には戻らない（[ホームディレクトリごとにキーを分ける](../operate/keys/home-keys.ja.md)） |
+| `AF_WORKSPACE_DEK` | `derived`（既定）か `random`: メンバーのホームごとに KMS で暗号化した専用のキーを持たせる。移し替えた認証情報ストアは `AF_MASTER_KEY` から導出したキーでは開けなくなり、KMS キーを無効化すると Control Plane はそのキーをアンラップできなくなる（ワークスペースとランタイムにすでに渡した写しでは今も開ける）。`random` は `AF_KEY_CUSTODIAN=kms` が前提で、無効にしても元には戻らない（[ホームごとにキーを分ける](../operate/keys/home-keys.ja.md)） |
 | `SUPER_ADMIN_EMAILS` | 誰が配備管理者か |
 | `PUBLIC_BASE_URL` | 利用者が到達する URL。OAuth のコールバックもここから組み立てる |
 | `WS_MEMORY` | ワークスペースの既定メモリ上限 |

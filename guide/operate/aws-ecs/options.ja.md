@@ -102,7 +102,7 @@ Control Plane が暗号化して保存するシークレットを、`AF_MASTER_K
 1. `10-data` を `CustodianKmsKey=create` でデプロイします。キーは RDS と同じく `Persistence` に従います
 2. `10-data` の出力 `CustodianKmsKeyArn` を、`30-ingress` の `CustodianKmsKeyArn` に渡します
 
-### ホームディレクトリごとにキーを分ける
+### ホームごとにキーを分ける
 
 ```bash
 # 30-ingress, together with CustodianKmsKeyArn above
@@ -110,7 +110,7 @@ Control Plane が暗号化して保存するシークレットを、`AF_MASTER_K
 ```
 
 - `CustodianKmsKeyArn` なしで `WorkspaceDekRandom=on` にすると、テンプレートのルールがスタックの操作を失敗させ、ロールバックします。変更セットは作れて、失敗はスタックのイベントに出ます
-- オンにする前に確かめることと、オフに戻したときに起きることは、[ホームディレクトリごとにキーを分ける](../keys/home-keys.ja.md) にあります
+- オンにする前に確かめることと、オフに戻したときに起きることは、[ホームごとにキーを分ける](../keys/home-keys.ja.md) にあります
 - ワークスペースごとの SSM パラメータ `secret-key-next` は `/af-ws/*` の下にあり、Control Plane のロールとワークスペースの実行ロールがすでに読めます
 
 ### Control Plane のデータベースに対して `af-cp` を実行する
@@ -126,7 +126,7 @@ aws ecs run-task --cluster <cluster> --launch-type FARGATE \
   --overrides '{"containerOverrides":[{"name":"cp","command":["rewrap-keys","--dry-run"]}]}'
 ```
 
-出力は Control Plane のロググループに出ます。各コマンドが何をし、いつ実行するかは、[保存時のキーを AWS KMS にする](../keys/kms.ja.md#切り替える前に保存された値を暗号化し直す) と [ホームディレクトリごとにキーを分ける](../keys/home-keys.ja.md) にあります。
+出力は Control Plane のロググループに出ます。各コマンドが何をし、いつ実行するかは、[保存時のキーを AWS KMS にする](../keys/kms.ja.md#切り替える前に保存された値を暗号化し直す) と [ホームごとにキーを分ける](../keys/home-keys.ja.md) にあります。
 
 ## リモートの MCP を公開する
 

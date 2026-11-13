@@ -179,7 +179,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [外向きの通信を制御する](../operate/secure/egress.ja.md) |
 | MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
 | プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [開発用サインインを使う](../operate/secure/dev-signin.ja.md#開発用-oidc-idp-をオンオフする) |
-| AWS KMS による保存時のキーと、ホームディレクトリごとの専用キー | 配備管理者 | スタックのパラメータ、それからシェル | [保存時のキーを AWS KMS にする](../operate/keys/kms.ja.md)・[ホームディレクトリごとにキーを分ける](../operate/keys/home-keys.ja.md) |
+| AWS KMS による保存時のキーと、ホームごとの専用キー | 配備管理者 | スタックのパラメータ、それからシェル | [保存時のキーを AWS KMS にする](../operate/keys/kms.ja.md)・[ホームごとにキーを分ける](../operate/keys/home-keys.ja.md) |
 | この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数の配備を見分ける](../operate/run/deployment-label.ja.md) |
 | 使わない間の配備の一時停止 | 配備管理者 | シェル | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
