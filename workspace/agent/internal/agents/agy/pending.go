@@ -399,27 +399,30 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	}
 	// The previous run can close after the mark too (its own last steps were still landing), so
 	// the end must follow the NEW input's own user step. No user step after the mark yet, or a
-	// build whose step_type does not say, cannot prove the pairing: unknown, so the caller's
-	// window guards it as before rather than this holding the end back for good.
-	first, ok := firstUserStepAfter(r.conv, at)
+	// cannot prove the pairing (a table or column that cannot be read is unknown, below).
+	first, found, ok := firstUserStepAfter(r.conv, at)
 	if !ok {
 		return false, false
 	}
-	return r.turnEnd >= first, true
+	// A readable steps table with no user step after the mark is a denial (the input has not
+	// landed; the end seen is the previous run's), not an unknown.
+	return found && r.turnEnd >= first, true
 }
 
 // stepTypeUser is the steps.step_type of the user's own input (measured, v1.2.14).
 const stepTypeUser = 14
 
-func firstUserStepAfter(conv string, idx int) (int, bool) {
+// firstUserStepAfter: ok=false only when the steps table cannot be read; a read that finds no
+// user step reports found=false.
+func firstUserStepAfter(conv string, idx int) (first int, found, ok bool) {
 	db, err := sql.Open("sqlite", "file:"+conversationDBPath(conv)+"?mode=ro&_pragma=busy_timeout(3000)")
 	if err != nil {
-		return 0, false
+		return 0, false, false
 	}
 	defer db.Close()
-	var first sql.NullInt64
-	if err := db.QueryRow(`SELECT MIN(idx) FROM steps WHERE idx > ? AND step_type = ?`, idx, stepTypeUser).Scan(&first); err != nil || !first.Valid {
-		return 0, false
+	var n sql.NullInt64
+	if err := db.QueryRow(`SELECT MIN(idx) FROM steps WHERE idx > ? AND step_type = ?`, idx, stepTypeUser).Scan(&n); err != nil {
+		return 0, false, false
 	}
-	return int(first.Int64), true
+	return int(n.Int64), n.Valid, true
 }

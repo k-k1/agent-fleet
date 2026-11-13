@@ -416,9 +416,9 @@ func TestTurnMarkAndEndedAfter(t *testing.T) {
 	if !ok || mark != "2" {
 		t.Fatalf("mark %q %v", mark, ok)
 	}
-	// No new input yet: the pairing is unknown (the window guards), and in no case an end.
-	if after, _ := EndedAfter(m, mark); after {
-		t.Fatal("the previous turn's end counted")
+	// No new input yet: a readable table denies the end.
+	if after, known := EndedAfter(m, mark); after || !known {
+		t.Fatalf("the previous turn's end counted: after=%v known=%v", after, known)
 	}
 	db, err := sql.Open("sqlite", conversationDBPath(conv))
 	if err != nil {
@@ -428,13 +428,13 @@ func TestTurnMarkAndEndedAfter(t *testing.T) {
 	ins := func(idx, typ int) {
 		db.Exec(`INSERT INTO steps (idx, step_type, status, step_payload) VALUES (?,?,?,?)`, idx, typ, stepStatusDone, []byte("x"))
 	}
-	// The previous run's own tail lands after the mark (no user input yet): the pairing cannot be
-	// proved, so it is unknown and the caller's window guards it.
+	// The previous run's own tail lands after the mark (no user input yet): the readable table
+	// denies the end.
 	ins(3, 15)
 	ins(4, 15)
 	db.Exec(`INSERT INTO executor_metadata (idx, data) VALUES (1, ?)`, executorRow(4, 4))
-	if _, known := EndedAfter(m, mark); known {
-		t.Fatal("a late previous run was judged without the new input's step")
+	if after, known := EndedAfter(m, mark); after || !known {
+		t.Fatalf("a late previous run was judged without the new input's step: after=%v known=%v", after, known)
 	}
 	ins(5, 14) // the new input
 	if after, known := EndedAfter(m, mark); after || !known {

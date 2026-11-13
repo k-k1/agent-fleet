@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bufio"
 	"bytes"
 	"io"
 	"os"
@@ -110,23 +111,60 @@ func FileSizeMark(path string) (string, bool) {
 	return "", false
 }
 
+// firstLineFrom streams the file from byte offset at and returns the offset of the first line
+// accepted by match. A mark that falls inside a line (the CLI was mid-write) skips that line's
+// remainder: it began before the mark.
+func firstLineFrom(path string, at int64, match func(line []byte) bool) (off int64, found bool, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false, err
+	}
+	defer f.Close()
+	off = at
+	if at > 0 {
+		var prev [1]byte
+		if _, err := f.ReadAt(prev[:], at-1); err != nil {
+			return 0, false, err
+		}
+		if prev[0] != '\n' {
+			// Mid-line: skip to the next line start.
+			br := bufio.NewReader(io.NewSectionReader(f, at, 1<<62))
+			rest, err := br.ReadBytes('\n')
+			if err != nil {
+				return 0, false, nil
+			}
+			off += int64(len(rest))
+		}
+	}
+	br := bufio.NewReader(io.NewSectionReader(f, off, 1<<62))
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 && match(bytes.TrimRight(line, "\n")) {
+			return off, true, nil
+		}
+		off += int64(len(line))
+		if err != nil {
+			return 0, false, nil
+		}
+	}
+}
+
 // EndedAfterOffset is EndedAfter for an append-only JSONL file. It needs the PAIR: a line
 // accepted by isStart at or after mark (the new input reaching the source) and, after that
 // start, a line accepted by isEnd. An end alone proves nothing: the previous turn's late end (a
-// shutdown flush) can land after the baseline but before the new input shows up. When the
-// window begins past the mark, more than a window of lines were written since the baseline, so
-// the window's start stands in for the start line. known=false when the file is unreadable or
-// smaller than mark (rotated or truncated: offsets from before are meaningless).
+// shutdown flush, or a previous run's huge tail followed by its end) can land after the
+// baseline but before the new input shows up, and growth of the file is no evidence of input.
+// The start is therefore searched from the mark forward, not in the tail window, so a turn
+// that wrote more than a window still has its real start found, and a source without one
+// denies the end. known=false when the file is unreadable or smaller than mark (rotated or
+// truncated: offsets from before are meaningless).
 func EndedAfterOffset(path, mark string, window int64, isStart, isEnd func(line []byte) bool) (after, known bool) {
 	at, err := strconv.ParseInt(mark, 10, 64)
 	if err != nil {
 		return false, false
 	}
-	first, lastEnd := int64(-1), int64(-1)
-	size, from, err := scanLines(path, window, func(off int64, line []byte) {
-		if first < 0 && off >= at && isStart(line) {
-			first = off
-		}
+	lastEnd := int64(-1)
+	size, _, err := scanLines(path, window, func(off int64, line []byte) {
 		if isEnd(line) {
 			lastEnd = off
 		}
@@ -134,8 +172,12 @@ func EndedAfterOffset(path, mark string, window int64, isStart, isEnd func(line 
 	if err != nil || size < at {
 		return false, false
 	}
-	if first < 0 && from > at {
-		first = from
+	if lastEnd < at {
+		return false, true
 	}
-	return first >= 0 && lastEnd > first, true
+	first, found, err := firstLineFrom(path, at, isStart)
+	if err != nil {
+		return false, false
+	}
+	return found && lastEnd > first, true
 }

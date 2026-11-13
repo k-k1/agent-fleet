@@ -40,11 +40,16 @@ func TestEndedAfterOffset(t *testing.T) {
 	if after, known := EndedAfterOffset(p, mark, 1<<20, isStart, isEnd); !after || !known {
 		t.Fatalf("new end: after=%v known=%v", after, known)
 	}
-	// More than a window written since the mark: the window's start stands in for the start line.
-	big := "{\"t\":\"u\"}\n{\"t\":\"end\"}\n" + strings.Repeat("{\"t\":\"x\"}\n", 40) + "{\"t\":\"end\"}\n"
-	write(big)
-	if after, known := EndedAfterOffset(p, "10", 64, isStart, isEnd); !after || !known {
-		t.Fatalf("a turn longer than the window: after=%v known=%v", after, known)
+	// More than a window written since the mark. The previous run's huge tail and end, with no
+	// new input yet, is not this turn's; a real start followed by a huge turn and its end is.
+	huge := strings.Repeat("{\"t\":\"x\"}\n", 40)
+	write("{\"t\":\"u\"}\n{\"t\":\"end\"}\n" + huge + "{\"t\":\"end\"}\n")
+	if after, known := EndedAfterOffset(p, "14", 64, isStart, isEnd); after || !known {
+		t.Fatalf("a previous run's big tail invented a new input: after=%v known=%v", after, known)
+	}
+	write("{\"t\":\"u\"}\n{\"t\":\"end\"}\n{\"t\":\"u\"}\n" + huge + "{\"t\":\"end\"}\n")
+	if after, known := EndedAfterOffset(p, "14", 64, isStart, isEnd); !after || !known {
+		t.Fatalf("a real start before a turn longer than the window: after=%v known=%v", after, known)
 	}
 	// Truncated below the mark: offsets mean nothing any more.
 	write("{\"t\":\"end\"}\n")
