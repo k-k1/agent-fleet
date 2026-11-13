@@ -43,6 +43,8 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 )
 
 const (
@@ -119,7 +121,7 @@ func fetchWorkspaceDocs(root string) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := (&http.Client{Timeout: 2 * time.Minute}).Do(req)
+	resp, err := (redirectpolicy.Client(2 * time.Minute)).Do(req)
 	if err != nil {
 		return 0, err
 	}

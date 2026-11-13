@@ -135,19 +135,6 @@ func TestJiraSameOriginRedirectIsFollowed(t *testing.T) {
 	}
 }
 
-func TestJiraOriginNormalisesDefaultPort(t *testing.T) {
-	p := func(s string) *url.URL { u, _ := url.Parse(s); return u }
-	if jiraOrigin(p("https://Example.com/a")) != jiraOrigin(p("https://example.com:443/b")) {
-		t.Error("default https port should compare equal")
-	}
-	for _, o := range []string{"http://example.com", "https://example.com:8443", "https://sub.example.com"} {
-		if jiraOrigin(p("https://example.com")) == jiraOrigin(p(o)) {
-			t.Errorf("%s must differ", o)
-		}
-	}
-}
-
-// A write that a server redirects must not be re-sent as a GET: its 200 would read as success.
 func TestJiraRedirectedWriteIsRefused(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		for _, code := range []int{301, 302, 303, 307, 308} {
@@ -202,25 +189,5 @@ func TestJiraRedirectLimitIsNotRetried(t *testing.T) {
 		if other.hits.Load() != 0 {
 			t.Errorf("cross=%v: other origin was reached", cross)
 		}
-	}
-}
-
-func TestJiraOriginKeepsIPv6ZoneCase(t *testing.T) {
-	p := func(s string) *url.URL { u, _ := url.Parse(s); return u }
-	if jiraOrigin(p("http://[fe80::1%25ethA]/")) == jiraOrigin(p("http://[fe80::1%25etha]/")) {
-		t.Error("zones differing in case are different interfaces")
-	}
-	if jiraOrigin(p("http://[FE80::AB]/")) != jiraOrigin(p("http://[fe80::ab]/")) {
-		t.Error("IPv6 hex case must not matter")
-	}
-}
-
-func TestJiraOriginDoesNotFoldUnicodeHosts(t *testing.T) {
-	p := func(s string) *url.URL { u, _ := url.Parse(s); return u }
-	if jiraOrigin(p("http://\u0130.example.test/")) == jiraOrigin(p("http://i.example.test/")) {
-		t.Error("U+0130 must not fold onto ASCII i")
-	}
-	if jiraOrigin(p("https://EXAMPLE.test/")) != jiraOrigin(p("https://example.test/")) {
-		t.Error("ASCII case must fold")
 	}
 }

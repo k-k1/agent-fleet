@@ -21,6 +21,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/redirectpolicy"
 )
 
 // Generic OIDC login client (docs/log/61 §61.6 + ADR0043 decision 1). One implementation
@@ -76,7 +77,10 @@ var NewTenantHTTPClient = func(timeout time.Duration) *http.Client {
 	return egressallow.NewPublicOnlyClient(timeout)
 }
 
-var oidcHTTPClient = &http.Client{Timeout: oidcClientTimeout}
+// oidcHTTPClient carries client_secret in the code exchange and the access token to userinfo,
+// so a redirect off the IdP's origin (or any redirected POST) is refused; the tenant client
+// (egressallow) refuses every redirect already.
+var oidcHTTPClient = redirectpolicy.Client(oidcClientTimeout)
 
 type Endpoints struct {
 	Issuer    string `json:"issuer"`

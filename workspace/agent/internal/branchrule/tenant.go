@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 )
 
 // TenantPollInterval is how often the Agent pulls the tenant rules.
@@ -106,7 +107,7 @@ func FetchTenant(ctx context.Context, path string) (TenantFetchResult, error) {
 		return TenantFetchResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := redirectpolicy.Client(0).Do(req)
 	if err != nil {
 		return TenantFetchResult{}, err
 	}

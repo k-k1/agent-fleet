@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
@@ -69,7 +70,7 @@ type CPRoutes interface {
 // the CP injects only while it serves provided routes.
 type cpRoutes struct{ client *http.Client }
 
-func newCPRoutes() CPRoutes { return cpRoutes{client: &http.Client{Timeout: 15 * time.Second}} }
+func newCPRoutes() CPRoutes { return cpRoutes{client: redirectpolicy.Client(15 * time.Second)} }
 
 func (c cpRoutes) Base() string { return cpurl.Request() }
 

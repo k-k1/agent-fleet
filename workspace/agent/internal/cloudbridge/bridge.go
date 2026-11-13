@@ -24,6 +24,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 )
 
 // PollInterval matches the other CP-backed pulls: an edit in Settings lands without
@@ -77,6 +78,11 @@ func (b *Bridge[P]) Configured() bool {
 	return os.Getenv("AF_CP_BASE_URL") != "" && os.Getenv(b.TokenEnv) != ""
 }
 
+// fetchClient carries the bridge bearer token to the CP. The CP answers in place; a redirect
+// off its origin fails the fetch (the caller then falls back to the cache) instead of taking
+// the token along.
+var fetchClient = redirectpolicy.Client(10 * time.Second)
+
 // Fetch pulls the member's profiles from the CP.
 func (b *Bridge[P]) Fetch() (List[P], error) {
 	base := cpurl.Request()
@@ -92,7 +98,7 @@ func (b *Bridge[P]) Fetch() (List[P], error) {
 	if b.Version != "" {
 		req.Header.Set(b.VersionHeader, b.Version)
 	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := fetchClient.Do(req)
 	if err != nil {
 		return List[P]{}, err
 	}

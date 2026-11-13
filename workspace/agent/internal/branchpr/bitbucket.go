@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 )
 
 // Bitbucket Cloud has no batched lookup like GraphQL aliases, so a refresh asks once per
@@ -71,7 +73,7 @@ func NewBitbucket(auth func() (string, error)) *Cache {
 	c := &Cache{
 		Token:    auth,
 		Endpoint: "https://api.bitbucket.org",
-		Client:   &http.Client{Timeout: 20 * time.Second},
+		Client:   redirectpolicy.Client(20 * time.Second),
 		Async:    func(f func()) { go f() },
 		entries:  map[Key]*entry{},
 		batch:    batchSize,

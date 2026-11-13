@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -600,7 +601,7 @@ func discordDo(method, path, token string, body any, out any) error {
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		resp, err := (redirectpolicy.Client(10 * time.Second)).Do(req)
 		if err != nil {
 			return err
 		}

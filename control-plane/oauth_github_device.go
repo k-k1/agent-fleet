@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -55,7 +56,7 @@ const (
 // that one goes through agentHTTPClient, whose Transport carries the Cloud Map
 // fallback (agent_dial.go) — using the default client there is what made the Bitbucket
 // save fail with "no such host" for every workspace created after the CP task started.
-var ghDeviceHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var ghDeviceHTTPClient = redirectpolicy.Client(20 * time.Second)
 
 // ghDeviceFlow is one in-flight authorization.
 //

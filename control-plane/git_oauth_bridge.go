@@ -39,6 +39,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -205,7 +206,7 @@ func jiraRefreshGrant(ctx context.Context, key, secret, refreshToken string) (bb
 	})
 	status, b, err := jiraRefreshRetry.post(ctx, payload)
 	if err != nil {
-		return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_unreachable", err.Error()}
+		return bbRefreshToken{}, upstreamTokenErr("jira_unreachable", "jira", err)
 	}
 	if status != http.StatusOK {
 		if transientStatus(status) {
@@ -263,7 +264,10 @@ func bbRefreshGrant(key, secret, refreshToken string) (bbRefreshToken, *apiError
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := bbHTTPClient.Do(req)
 		if err != nil {
-			last = &apiError{http.StatusBadGateway, "bitbucket_unreachable", err.Error()}
+			last = upstreamTokenErr("bitbucket_unreachable", "bitbucket", err)
+			if redirectpolicy.IsRefused(err) {
+				return bbRefreshToken{}, last // deterministic, not a blip: do not re-send the secrets
+			}
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {

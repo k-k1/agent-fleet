@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -75,7 +76,7 @@ func slackDo(method, token string, body any, out any) error {
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
-		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		resp, err := (redirectpolicy.Client(10 * time.Second)).Do(req)
 		if err != nil {
 			return err
 		}

@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/redirectpolicy"
 )
 
 // jiraBackoff bounds one token-endpoint call as a whole. budget is the hard ceiling: no
@@ -112,6 +114,9 @@ func (b jiraBackoff) post(ctx context.Context, payload []byte) (status int, body
 			}
 		}
 		status, body, err = b.once(ctx, payload)
+		if redirectpolicy.IsRefused(err) {
+			return status, body, err // deterministic: asking again only repeats the first request
+		}
 		if err == nil && !transientStatus(status) {
 			return status, body, nil
 		}
