@@ -214,7 +214,7 @@ case "$args" in
   *"backup get-backup-selection"*"length(NotResources"*) printf '0\t0\t0\n' ;;
   *"backup get-backup-selection"*"BackupSelection.Resources"*)
     [ "${STUB_VAULT:-}" = noplan ] && echo "arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-other" \
-      || echo "arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-1" ;;
+      || printf 'arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-1\tarn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-cp\n' ;;
   # 00-network's GatewayEni (EgressRoute=gateway), before the database lookup below.
   *"logical-resource-id GatewayEni"*) echo "eni-gw" ;;
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
@@ -223,6 +223,9 @@ case "$args" in
   # 10-data's HomeOpsEfsRoleArn (EFS file-system policy). STUB_NO_HOME_ROLE=1 = a data stack older than it.
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='HomeOpsEfsRoleArn']"*)
     [ "${STUB_NO_HOME_ROLE:-0}" = 1 ] || echo "arn:aws:iam::111122223333:role/t-data-HomeOpsEfsRole-X" ;;
+  # 10-data's CpDataEfsId (the CP's own data root, #4089). STUB_NO_CP_DATA=1 = a data stack older than it.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CpDataEfsId']"*)
+    [ "${STUB_NO_CP_DATA:-0}" = 1 ] || echo "fs-cp" ;;
   # 00-network's workspace subnets (#2716). Unset = a network stack older than them.
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='WorkspaceSubnets']"*)
     [ "${STUB_WS_SUBNETS_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
@@ -1172,8 +1175,8 @@ grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--paramete
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
 
-echo "== case 3h-home: update.sh stops before anything runs when 10-data lacks HomeOpsEfsRoleArn or cannot be found =="
-for knob in STUB_NO_HOME_ROLE STUB_INGRESS_UNREADABLE; do
+echo "== case 3h-home: update.sh stops before anything runs when 10-data lacks HomeOpsEfsRoleArn / CpDataEfsId or cannot be found =="
+for knob in STUB_NO_HOME_ROLE STUB_NO_CP_DATA STUB_INGRESS_UNREADABLE; do
   : > "$LOG"
   if env "$knob=1" VERSION=9.9.9-dev-test STUB_ECR_HAS=1 \
     "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hh" 2>&1; then
@@ -2666,8 +2669,11 @@ order "cloudformation wait stack-delete-complete --stack-name t-network" "rds de
 order "cloudformation wait stack-delete-complete --stack-name t-network" "efs delete-file-system"
 has "rds delete-db-snapshot --db-snapshot-identifier t-data-snapshot-db-xyz"
 has "efs delete-file-system --file-system-id fs-1"
+# The Control Plane's own file system (CpDataEfsId, #4089) follows Persistence the same way.
+has "efs delete-file-system --file-system-id fs-cp"
 # The sweep looks the real resources up again and counts them (nothing is left behind silently)
 order "efs delete-file-system" "efs describe-file-systems --file-system-id fs-1"
+order "efs delete-file-system --file-system-id fs-cp" "efs describe-file-systems --file-system-id fs-cp"
 # The vault refuses deletion while it holds a recovery point, so the points go first, and
 # the vault is found by its prefix even though 10-data is already gone.
 order "cloudformation wait stack-delete-complete --stack-name t-network" "backup delete-recovery-point"

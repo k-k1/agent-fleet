@@ -827,6 +827,36 @@ per-workspace SSM parameter `secret-key-next` (deleted best-effort by the next s
 (GetParameters) already cover it, so no IAM statement was added. Operator view:
 `guide/operate/keys/home-keys.md`, "Give each home its own key".
 
+### Control Plane data root (`CpDataFileSystem`)
+
+`WS_DATA` holds the internal git provider's bare repositories and LFS objects, the only copy of
+what members push there, so it cannot be the task's own disk: every replacement emptied it while
+the repositories' rows stayed in RDS (#4089). 10-data declares a file system for it alone, and
+30-ingress mounts it at `/var/lib/af-cp` (`WS_DATA`) and sets `AF_DATA_DURABLE_REQUIRED=1`.
+
+Not an access point on the shared `FileSystem`: its policy admits any client that names an access
+point and its mount targets take NFS from the workspace SG, so a workspace task that learned the
+id could mount every tenant's repositories. Here the mount targets take NFS only from `CpSg`, and
+the file-system policy holds only Denies (no access point, no TLS, not through a mount target).
+With a policy present EFS needs an Allow, so an anonymous client is refused and the only Allow is
+the CP task role's identity grant (`CpDataEfsMount`), bound to the one access point. The role is
+not named in the policy because 20-platform creates it after 10-data. The access point presents
+uid/gid 0: the CP runs as root and git refuses a repository another uid owns, hence
+`ClientRootAccess`.
+
+The default deployment configuration overlaps the old and new CP task for a moment, so two tasks
+share the repositories then. git's lock files hold on NFSv4.1, and gc and the fsck backfill take
+their own.
+
+**Upgrade order: 10-data, then 30-ingress.** `update.sh` stops before touching anything when the
+data stack lacks the `CpDataEfsId` output. Rolling 10-data back removes the exports 30-ingress
+imports, so roll 30-ingress back first. The first upgrade replaces the task whose disk holds every
+repository created or pushed since it started: copy those out before it, then clear the orphaned
+rows and push them back (`guide/operate/aws-ecs/upgrade.md`, "The Control Plane's data root").
+Restoring from a recovery point needs its own path (`backup.md`, "Restore the Control Plane's
+repositories"): the members' root-mount restore cannot reach this file system, and a restored
+repository goes back only by a push through the CP, never a file copy, so the LFS ledger is written.
+
 ### Home task (volume root)
 
 The file system ROOT, as uid 0, not the member's access point. A task definition's volumes

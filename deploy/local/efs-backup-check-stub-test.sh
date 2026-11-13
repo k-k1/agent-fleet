@@ -21,7 +21,8 @@ mkdir -p "$STUB"
 
 # Knobs (environment): STUB_PERSISTENCE, STUB_VAULT, STUB_EFS, STUB_PLAN, STUB_SELECTIONS (ids),
 # STUB_RESOURCES (get-backup-selection Resources), STUB_EXTRA (NotResources/Conditions/tags
-# lengths, TAB separated), STUB_BACKUP_DENIED=1, STUB_PLAN_DENIED=1, STUB_INGRESS_DENIED=1.
+# lengths, TAB separated), STUB_BACKUP_DENIED=1, STUB_PLAN_DENIED=1, STUB_INGRESS_DENIED=1,
+# STUB_CP_EFS (CpDataEfsId; unset = a data stack older than it), STUB_CP_DENIED=1.
 #
 # The stub is an allowlist: after the global --profile/--region are stripped (and checked), the
 # remaining arguments must match one known read call EXACTLY, query included. Anything else is
@@ -43,6 +44,9 @@ case "$*" in
     echo "${STUB_VAULT:-None}" ;;
   "$DS custom-data $Q Stacks[0].Outputs[?OutputKey=='EfsId'].OutputValue --output text")
     echo "${STUB_EFS:-fs-0abc}" ;;
+  "$DS custom-data $Q Stacks[0].Outputs[?OutputKey=='CpDataEfsId'].OutputValue --output text")
+    [ -z "${STUB_CP_DENIED:-}" ] || { echo "Throttling" >&2; exit 254; }
+    echo "${STUB_CP_EFS:-None}" ;;
   "$DS custom-data $Q Stacks[0].StackId --output text")
     echo "arn:aws:cloudformation:ap-northeast-1:111122223333:stack/custom-data/0000" ;;
   "cloudformation describe-stack-resources --stack-name custom-data --logical-resource-id EfsBackupPlan $Q StackResources[0].PhysicalResourceId --output text")
@@ -104,6 +108,14 @@ WANT=unknown;  v retain vault "$A/fs-1" UNREADABLE
 WANT=unknown;  v retain vault "" ""
 WANT=unknown;  v retain UNREADABLE "$A/fs-1" ""
 WANT=unknown;  v "" "" "" ""
+# The Control Plane's file system (#4089): both ARNs must be selected; absent = older stack.
+WANT=ok;       v retain vault "$A/fs-1" "$A/fs-1$TAB$A/fs-cp" "$A/fs-cp"
+WANT=ok;       v retain vault "$A/fs-1" "$A/fs-1" ""
+WANT=no-plan;  v retain vault "$A/fs-1" "$A/fs-1" "$A/fs-cp"
+WANT=no-plan;  v retain vault "$A/fs-1" "$A/fs-cp" "$A/fs-cp"
+WANT=unknown;  v retain vault "$A/fs-1" "$A/fs-1" UNREADABLE
+WANT=unknown;  v retain vault "$A/fs-1" "$A/fs-1 $A/*" "$A/fs-cp"
+WANT=skip;     v delete "" "$A/fs-1" "" UNREADABLE
 
 echo "== case 1: Persistence=delete -- nothing expected, nothing said =="
 STUB_PERSISTENCE=delete check 0
@@ -114,11 +126,15 @@ STUB_VAULT=None check 1
 says "NO daily EFS backup (no-vault)"
 says "--no-execute-changeset"
 says "never a Modify/Replacement of FileSystem or Db"
+says "adds the four"; saysnt "replaces) EfsBackupSelection"
 saysnt "execute-change-set"
 
 echo "== case 3: retain, vault but the plan selects nothing -- warns =="
 STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=None check 1
 says "(no-plan)"
+# with a plan in place the repair rewrites the selection; it adds no EfsBackup* resources
+says "modifies (or"; says "replaces) EfsBackupSelection"; saysnt "adds the four"
+says "never a Modify/Replacement of FileSystem or Db"
 
 echo "== case 4: retain, plan selects another file system / region -- warns =="
 STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-other" check 1
@@ -131,6 +147,22 @@ STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="$ARN" check 
 says "has vault v and a plan selecting"; saysnt "WARNING"
 STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="$ARN\tarn:other:file-system/fs-9" check 0
 STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="arn:other:file-system/fs-9\t$ARN" check 0
+
+echo "== case 5b: a data stack with the Control Plane's file system needs both selected (#4089) =="
+CPARN="arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-0cp"
+STUB_CP_EFS=fs-0cp STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="$ARN\t$CPARN" check 0
+says "the members and the Control Plane"; saysnt "WARNING"
+# the home file system alone no longer reads as protected
+STUB_CP_EFS=fs-0cp STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="$ARN" check 1
+says "(no-plan)"; says "$CPARN"; saysnt "has vault"
+STUB_CP_EFS=fs-0cp STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="$CPARN" check 1
+says "(no-plan)"
+# its output unreadable: unknown, never ok on the home file system alone
+STUB_CP_DENIED=1 STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="$ARN\t$CPARN" check 1
+says "could not confirm"; saysnt "has vault"; saysnt "NO daily"
+# the fix it prints names the CpData* additions as expected, still never FileSystem or Db
+STUB_VAULT=None check 1
+says "five CpData* resources"
 
 echo "== case 6: AWS Backup / plan lookup not readable -- never reads as protected, never as missing =="
 STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_BACKUP_DENIED=1 check 1
@@ -208,5 +240,11 @@ mutant write 's/^  AF_EFS_BACKUP_VERDICT="\$(af_efs_backup_verdict/  "${AWS[@]}"
 expect_red write
 mutant region 's/elasticfilesystem:\$region:/elasticfilesystem:us-east-1:/'
 expect_red region
+# The Control Plane's file system dropped from the verdict: the home-only selection goes green.
+mutant cponly 's/"\$res" "\$cp_arn")/"$res")/'
+got=0
+( STUB_CP_EFS=fs-0cp STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="$ARN" check 1 "$WORK/cponly.sh" ) \
+  > "$WORK/mut.out" 2>&1 || got=$?
+[ "$got" != 0 ] || { echo "NG: mutant cponly was not caught"; exit 1; }
 
 echo "OK: the EFS backup preflight decides correctly"

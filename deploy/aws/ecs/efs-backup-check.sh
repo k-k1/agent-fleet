@@ -13,7 +13,7 @@
 # The decision is a pure function (af_efs_backup_verdict) so the stub test can walk every branch
 # without AWS; af_efs_backup_check gathers the facts and prints.
 
-# af_efs_backup_verdict <persistence> <vault-name> <efs-arn> <selected-resources>
+# af_efs_backup_verdict <persistence> <vault-name> <efs-arn> <selected-resources> [<cp-efs-arn>]
 # Prints one of: skip | ok | no-vault | no-plan | unknown.
 #   <persistence>         the data stack's Persistence parameter; "" when it could not be read.
 #   <vault-name>          the data stack's EfsBackupVaultName output ("" when absent);
@@ -23,21 +23,32 @@
 #                         selection of the plan, plus the token COMPLEX for a selection that
 #                         has NotResources, Conditions or ListOfTags (not evaluated here);
 #                         "" when there is none; "UNREADABLE" when a read failed.
+#   <cp-efs-arn>          the Control Plane's own file system (CpDataEfsId, #4089), which must be
+#                         selected too; "" for a data stack older than it (only <efs-arn> is
+#                         required then); "UNREADABLE" when its output could not be read.
 # Only an exact ARN match counts; a wildcard resource is COMPLEX (unevaluated), not a miss. When in doubt this answers unknown, never ok: a missing
 # permission, or a selection this cannot evaluate, must not read as protected.
 af_efs_backup_verdict() {
-  local persistence="$1" vault="$2" arn="$3" sel="$4" tok complex=0
+  local persistence="$1" vault="$2" arn="$3" sel="$4" cp="${5:-}" tok complex=0 want found missing=0
   if [ "$vault" = UNREADABLE ] || [ -z "$persistence" ]; then echo unknown; return 0; fi
   if [ "$persistence" != retain ]; then echo skip; return 0; fi
   if [ -z "$vault" ]; then echo no-vault; return 0; fi
-  if [ "$sel" = UNREADABLE ] || [ -z "$arn" ]; then echo unknown; return 0; fi
+  if [ "$sel" = UNREADABLE ] || [ -z "$arn" ] || [ "$cp" = UNREADABLE ]; then echo unknown; return 0; fi
   # shellcheck disable=SC2086  # word splitting on any whitespace is the tokenising
   for tok in $sel; do
-    [ "$tok" = "$arn" ] && { echo ok; return 0; }
-    # A pattern is not evaluated, and it may well cover the file system: unknown, not "missing".
+    # A pattern is not evaluated, and it may well cover a file system: unknown, not "missing".
     case "$tok" in COMPLEX|*[\*\?]*) complex=1 ;; esac
   done
-  if [ "$complex" = 1 ]; then echo unknown; else echo no-plan; fi
+  # Every required file system needs its exact ARN; one of them covered does not cover the other.
+  for want in $arn $cp; do
+    found=0
+    # shellcheck disable=SC2086
+    for tok in $sel; do [ "$tok" = "$want" ] && found=1; done
+    [ "$found" = 1 ] || missing=1
+  done
+  if [ "$missing" = 0 ]; then echo ok
+  elif [ "$complex" = 1 ]; then echo unknown
+  else echo no-plan; fi
 }
 
 # af_efs_backup_marker <verdict>
@@ -73,6 +84,7 @@ af_efs_backup_data_stack() {
 af_efs_backup_check() {
   local data="$1" profile="$2" region="$3"
   local persistence="" vault="" efs="" sid_arn="" arn="" plan="" sel_ids sid got extra res="" rc=0
+  local cp_efs="" cp_arn=""
   local part acct
   if [ -z "$data" ]; then
     persistence=""
@@ -94,6 +106,21 @@ af_efs_backup_check() {
     part="$(echo "$sid_arn" | cut -d: -f2)"; acct="$(echo "$sid_arn" | cut -d: -f5)"
     [ -n "$efs" ] && [ -n "$part" ] && [ -n "$acct" ] \
       && arn="arn:$part:elasticfilesystem:$region:$acct:file-system/$efs"
+    # The Control Plane's own file system (#4089). No output = a data stack older than it, which
+    # is judged on EfsId alone; a failed read must not drop the requirement, so it is unknown.
+    if cp_efs="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$data" \
+      --query "Stacks[0].Outputs[?OutputKey=='CpDataEfsId'].OutputValue" --output text 2>/dev/null)"; then
+      case "$cp_efs" in None) cp_efs="" ;; esac
+      if [ -n "$cp_efs" ]; then
+        if [ -n "$part" ] && [ -n "$acct" ]; then
+          cp_arn="arn:$part:elasticfilesystem:$region:$acct:file-system/$cp_efs"
+        else
+          cp_arn=UNREADABLE
+        fi
+      fi
+    else
+      cp_arn=UNREADABLE
+    fi
   fi
   if [ -n "$vault" ] && [ "$vault" != UNREADABLE ]; then
     if plan="$("${AWS[@]}" cloudformation describe-stack-resources --stack-name "$data" \
@@ -125,10 +152,10 @@ af_efs_backup_check() {
       [ "$rc" = 0 ] || res=UNREADABLE
     fi
   fi
-  AF_EFS_BACKUP_VERDICT="$(af_efs_backup_verdict "$persistence" "$vault" "$arn" "$res")"
+  AF_EFS_BACKUP_VERDICT="$(af_efs_backup_verdict "$persistence" "$vault" "$arn" "$res" "$cp_arn")"
   case "$AF_EFS_BACKUP_VERDICT" in
     skip) echo "==> EFS backup: $data runs Persistence=${persistence:-delete} — no EFS backup is expected" ;;
-    ok)   echo "==> EFS backup: $data has vault $vault and a plan selecting its file system" ;;
+    ok)   echo "==> EFS backup: $data has vault $vault and a plan selecting its file system${cp_arn:+s (the members and the Control Plane)}" ;;
     unknown)
       {
         echo "WARNING: could not confirm the daily EFS backup of ${data:-the data stack (its name could not be read)}"
@@ -146,8 +173,23 @@ af_efs_backup_check() {
         echo "           aws cloudformation deploy --stack-name $data --template-file $(dirname "${BASH_SOURCE[0]}")/cfn/10-data.yaml \\"
         echo "             --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset \\"
         echo "             --profile $profile --region $region"
-        echo "         Read the change set (describe-change-set) and execute it only if it adds the four"
-        echo "         EfsBackup* resources and nothing else — never a Modify/Replacement of FileSystem or Db."
+        if [ "$AF_EFS_BACKUP_VERDICT" = no-plan ]; then
+          echo "         The plan does not select ${arn:-the members file system}${cp_arn:+ and $cp_arn (the Control Plane) together}:"
+          echo "         every file system it names must be listed by its exact ARN."
+        fi
+        # What a correct change set looks like depends on what is missing: a stack without the
+        # vault gains the four EfsBackup* resources; one with a plan only rewrites its selection.
+        if [ "$AF_EFS_BACKUP_VERDICT" = no-vault ]; then
+          echo "         Read the change set (describe-change-set) and execute it only if it adds the four"
+          echo "         EfsBackup* resources,"
+        else
+          echo "         Read the change set (describe-change-set) and execute it only if it modifies (or"
+          echo "         replaces) EfsBackupSelection,"
+        fi
+        echo "         plus the five CpData* resources on a stack older than the Control Plane's file system"
+        echo "         (copy its readable internal git repositories out first: guide/operate/aws-ecs/upgrade.md,"
+        echo "         \"The Control Plane's data root\"), and nothing else — never a Modify/Replacement of FileSystem or Db."
+        echo "         guide/operate/aws-ecs/backup.md, \"Turn backups on for a running deployment\"."
       } >&2 ;;
   esac
   return 0

@@ -5,7 +5,7 @@ Transform: AWS::LanguageExtensions
 Description: >-
   agent-fleet ECS adapter (P3-7) - data substrate: one encrypted EFS filesystem
   (per-workspace access points are created by the Control Plane at runtime, not
-  here) and an RDS PostgreSQL instance for the MetadataStore. Imports network from
+  here), a second one for the Control Plane's own data root, and an RDS PostgreSQL instance for the MetadataStore. Imports network from
   the 00-network stack. Persistence=delete (default) is dev-ephemeral (DeletionPolicy
   Delete, no backups); a production environment deploys with Persistence=retain
   (EFS Retain + daily AWS Backup, RDS Snapshot + backups + deletion protection).
@@ -298,6 +298,7 @@ Resources:
         IamRoleArn: !GetAtt EfsBackupRole.Arn
         Resources:
           - !Sub "arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${FileSystem}"
+          - !Sub "arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${CpDataFileSystem}"
 
   MountTarget0:
     Type: AWS::EFS::MountTarget
@@ -310,6 +311,101 @@ Resources:
     Properties:
       FileSystemId: !Ref FileSystem
       SecurityGroups: [ !Ref EfsSg ]
+      SubnetId: !Select [ 1, !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
+
+  # --- The Control Plane's own data root (WS_DATA) ---
+  # The internal git provider's bare repositories and LFS objects live under WS_DATA and are
+  # the only copy of what members push there; the task's own disk is lost on every CP task
+  # replacement (#4089). A file system of its own, not an access point on FileSystem: that
+  # one's policy admits any client that names an access point, and its mount targets take NFS
+  # from every workspace task, so a workspace could mount every tenant's repositories.
+  # Two fences here: NFS only from the CP's SG, and no anonymous mount at all. With a policy
+  # present EFS admits a client only on an Allow, and this policy has none: the CP task role's
+  # identity grant (30-ingress, CpDataEfsMount) is the only Allow. It cannot be named here as
+  # a principal, because 20-platform creates that role after this stack.
+  CpDataEfsSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} CP data EFS mount targets (NFS from the Control Plane)"
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId:
+            Fn::ImportValue: !Sub "${NetworkStackName}-CpSgId"
+          Description: NFS from the Control Plane only
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-cp-data-efs-sg" } ]
+
+  # elastic, not a parameter: a few GiB of repositories under bursting would sit at the 1 MiB/s
+  # floor once the credits drain (ADR 0087), and it never needs provisioned throughput.
+  CpDataFileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: !If [ IsRetain, Retain, Delete ]
+    UpdateReplacePolicy: !If [ IsRetain, Retain, Delete ]
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      FileSystemTags:
+        - { Key: Name, Value: !Sub "af-${AWS::StackName}-cp-data" }
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyWithoutAccessPoint
+            Effect: Deny
+            Principal: { AWS: "*" }
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientRootAccess
+            Condition:
+              "Null": { "elasticfilesystem:AccessPointArn": "true" }
+          - Sid: DenyOutsideMountTarget
+            Effect: Deny
+            Principal: { AWS: "*" }
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientRootAccess
+            Condition:
+              Bool: { "elasticfilesystem:AccessedViaMountTarget": "false" }
+          - Sid: DenyWithoutTls
+            Effect: Deny
+            Principal: { AWS: "*" }
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientRootAccess
+            Condition:
+              Bool: { "aws:SecureTransport": "false" }
+
+  # uid/gid 0: the CP runs as root, and git refuses a repository owned by another uid
+  # ("dubious ownership"), so the access point must present root. That is why the CP's grant
+  # carries ClientRootAccess.
+  CpDataAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref CpDataFileSystem
+      PosixUser: { Uid: "0", Gid: "0" }
+      RootDirectory:
+        Path: /cp-data
+        CreationInfo: { OwnerUid: "0", OwnerGid: "0", Permissions: "0700" }
+      AccessPointTags:
+        - { Key: Name, Value: !Sub "af-${AWS::StackName}-cp-data" }
+
+  CpDataMountTarget0:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref CpDataFileSystem
+      SecurityGroups: [ !Ref CpDataEfsSg ]
+      SubnetId: !Select [ 0, !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
+  CpDataMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref CpDataFileSystem
+      SecurityGroups: [ !Ref CpDataEfsSg ]
       SubnetId: !Select [ 1, !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
 
   # --- RDS (MetadataStore, stage 3a) ---
@@ -586,6 +682,16 @@ Outputs:
   EfsId:
     Value: !Ref FileSystem
     Export: { Name: !Sub "${AWS::StackName}-EfsId" }
+  CpDataEfsId:
+    Description: The Control Plane's own file system (its WS_DATA), mounted by 30-ingress's CP task.
+    Value: !Ref CpDataFileSystem
+    Export: { Name: !Sub "${AWS::StackName}-CpDataEfsId" }
+  CpDataAccessPointId:
+    Value: !Ref CpDataAccessPoint
+    Export: { Name: !Sub "${AWS::StackName}-CpDataAccessPointId" }
+  CpDataAccessPointArn:
+    Value: !GetAtt CpDataAccessPoint.Arn
+    Export: { Name: !Sub "${AWS::StackName}-CpDataAccessPointArn" }
   HomeOpsEfsRoleArn:
     Description: Task role of 30-ingress's home task; the only principal FileSystemPolicy lets mount without an access point.
     Value: !GetAtt HomeOpsEfsRole.Arn

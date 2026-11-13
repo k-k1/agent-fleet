@@ -108,6 +108,11 @@ SSM_PREFIX="$(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)"
 HOSTED_ZONE="$(af_stack_param "$AF_STACK_INGRESS" HostedZoneId)"
 [ -n "$HOSTED_ZONE" ] || HOSTED_ZONE="$(captured_param HostedZoneId)"
 EFS_ID="$(af_stack_output "$AF_STACK_DATA" EfsId)"
+# The Control Plane's own file system (its data root, #4089) follows Persistence like EFS_ID;
+# a data stack older than it has none. Holds no runtime access points, so only 9b and the
+# residue count see it.
+CP_EFS_ID="$(af_stack_output "$AF_STACK_DATA" CpDataEfsId)"
+RETAINED_EFS="$EFS_ID${EFS_ID:+${CP_EFS_ID:+ }}$CP_EFS_ID"
 # 10-data names its EFS backup vault `<data stack>-efs-<stack id suffix>`, so every vault an
 # earlier build of the same stack name left behind is found by prefix, the stack does not
 # have to exist, and a deployment that is on `delete` now still shows the vault of its
@@ -173,7 +178,7 @@ count() {
 echo "    runtime residue: workspaces=$(count "$WS_SVCS") pool-instances=$(count "$SLOTS") (engine boxes=$(count "$ENGINE_BOXES")) volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
 echo "    keeping        : hosted zone $HOSTED_ZONE / $SSM_PREFIX/* $([ "$PURGE_SECRETS" = 1 ] && echo '(NO — --purge-secrets)')"
 if [ "$AF_PERSISTENCE" = retain ]; then
-  echo "    retain         : RDS final snapshot + EFS $EFS_ID are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
+  echo "    retain         : RDS final snapshot + EFS $RETAINED_EFS are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
 fi
 for v in $VAULTS; do
   if [ "$AF_PERSISTENCE" != retain ]; then
@@ -431,15 +436,15 @@ if [ "$AF_PERSISTENCE" = retain ]; then
           || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
       fi
     done
-    if [ -n "$EFS_ID" ]; then
-      echo "==> 9b. deleting the retained EFS $EFS_ID"
+    for fs in $RETAINED_EFS; do
+      echo "==> 9b. deleting the retained EFS $fs"
       if [ "$AF_DRY" = 1 ]; then
-        echo "DRY: efs delete-file-system --file-system-id $EFS_ID"
+        echo "DRY: efs delete-file-system --file-system-id $fs"
       else
-        err="$("${AWS[@]}" efs delete-file-system --file-system-id "$EFS_ID" 2>&1)" \
+        err="$("${AWS[@]}" efs delete-file-system --file-system-id "$fs" 2>&1)" \
           || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
       fi
-    fi
+    done
     # AWS refuses to delete a vault that still holds recovery points, and deleting a point
     # is asynchronous (it sits in DELETING for a while), so wait for the vault to empty. A
     # deployment that went retain before 10-data declared backups has no vault at all.
@@ -473,7 +478,7 @@ if [ "$AF_PERSISTENCE" = retain ]; then
         || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
     done
   else
-    echo "==> 9. persistence=retain: kept the RDS final snapshot, EFS $EFS_ID and the EFS backup vault (--purge-retained deletes them)"
+    echo "==> 9. persistence=retain: kept the RDS final snapshot, EFS $RETAINED_EFS and the EFS backup vault (--purge-retained deletes them)"
   fi
 fi
 
@@ -559,9 +564,10 @@ left "log groups /af" "$("${AWS[@]}" logs describe-log-groups --log-group-name-p
 # EFS and RDS are the only resources that can outlive the stacks (Persistence=retain), so
 # go as far as counting them. Kept on purpose by retain they are not residue, so say which
 # of the two it is.
-efs_left=""
-[ -n "$EFS_ID" ] && efs_left="$("${AWS[@]}" efs describe-file-systems --file-system-id "$EFS_ID" \
-  --query 'FileSystems[].FileSystemId' --output text 2>/dev/null | txt || true)"
+efs_left="$(for fs in $RETAINED_EFS; do
+  "${AWS[@]}" efs describe-file-systems --file-system-id "$fs" \
+    --query 'FileSystems[].FileSystemId' --output text 2>/dev/null | txt || true
+done)"
 rds_left="$("${AWS[@]}" rds describe-db-instances \
   --query "DBInstances[?starts_with(DBInstanceIdentifier,'$AF_STACK_DATA')].DBInstanceIdentifier" \
   --output text 2>/dev/null | txt || true)"

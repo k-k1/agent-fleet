@@ -40,7 +40,7 @@ The stacks are layered so that the network, which is slow to rebuild, can outliv
 | Template | When you need it | Contents |
 |---|---|---|
 | `cfn/00-network.yaml` | Always | VPC, public and private subnets in two AZs, internet gateway, NAT, the base security groups (`alb` / `cp` / `ws`) |
-| `cfn/10-data.yaml` | Always | The EFS file system and its mount targets, RDS (Postgres, single-AZ, `db.t4g.micro` by default, master password managed by RDS). With `CustodianKmsKey=create`, also the KMS key for the Control Plane's keys |
+| `cfn/10-data.yaml` | Always | The EFS file system and its mount targets, a second EFS file system that only the Control Plane mounts (its data root: the internal git repositories), RDS (Postgres, single-AZ, `db.t4g.micro` by default, master password managed by RDS). With `CustodianKmsKey=create`, also the KMS key for the Control Plane's keys |
 | `cfn/20-platform.yaml` | Always | ECR (Control Plane and workspace, plus `af-voicevox`, `af-llamacpp`, `af-comfyui` and `af-engine-tools` for the optional engines), the ECS cluster, the Service Connect namespace (`af.internal`), IAM roles (`cp-task` / `exec` / `ws-task`) |
 | `cfn/40-ec2-pool.yaml` | Only with `WsRuntime=ecs-ec2` | The launch template of a workspace slot, the slot's instance role and security group. It creates no instances: the Control Plane launches them on demand |
 | `cfn/50-tts.yaml` | Only for Japanese speech | The VOICEVOX engine (a Fargate service normally scaled to zero), its Cloud Map name, a dedicated security group |
