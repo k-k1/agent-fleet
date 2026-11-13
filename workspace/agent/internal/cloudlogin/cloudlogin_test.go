@@ -651,8 +651,13 @@ func TestCleanWaiterCommandKeepsPlainWords(t *testing.T) {
 			t.Errorf("CleanWaiterCommand(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := CleanWaiterCommand(strings.Repeat("abcdefghij ", 20)); len(got) > 96 {
-		t.Errorf("CleanWaiterCommand kept %d bytes: %q", len(got), got)
+	// 96 bytes: three words of 40, 40 and 14 fit exactly; a third word of 15 would make 97 and is dropped.
+	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	if got, want := CleanWaiterCommand(a+" "+b+" "+strings.Repeat("c", 14)), a+" "+b+" "+strings.Repeat("c", 14); got != want || len(got) != 96 {
+		t.Errorf("at 96 bytes: got %q (%d)", got, len(got))
+	}
+	if got := CleanWaiterCommand(a + " " + b + " " + strings.Repeat("c", 15)); got != a+" "+b {
+		t.Errorf("past 96 bytes: got %q (%d)", got, len(got))
 	}
 }
 
