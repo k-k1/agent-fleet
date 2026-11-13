@@ -25,7 +25,7 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 
 | 形態 | EFS にあるもの |
 |---|---|
-| `ecs` | 全員のホーム（`/home/<membership>`）と Claude の状態（`/claude-config/<membership>`） |
+| `ecs` | 全員のホームディレクトリ（`/home/<membership>`）と Claude の状態（`/claude-config/<membership>`） |
 | `ecs-ec2` | Claude の状態と、残すドットファイル（`/home-keep/<membership>`）。ホームそのものは EBS にある |
 
 そのため、`Persistence=retain` では `10-data` が次も作ります。
