@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,5 +108,58 @@ func TestForceStopReservesTheDeregisteredSlotBeforeTheStopIsSent(t *testing.T) {
 	}
 	if atStop == "" || stopsAtHook != 0 {
 		t.Fatalf("reservation %q with %d stops sent when the stop was about to go out; want it set first", atStop, stopsAtHook)
+	}
+}
+
+// #4098: an ENI that needs longer than the old 15-poll window (about 30 s) to go must not make
+// the detached force-stop give up half done; it waits for the ENI and stops the box.
+func TestForceStopWaitsForAnENIThatReleasesAfterTheOldWindow(t *testing.T) {
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	h.ci.stickyENI = true // the ENI outlives the deregistration until the sleep hook drops it
+	f := h.factory()
+	sleeps := 0
+	f.sleep = func(c context.Context, d time.Duration) error {
+		sleeps++
+		if sleeps == rescueENIPolls+5 { // past the old cap
+			h.ec2.dropTaskENIs("i-wedge")
+		}
+		return sleepCtx(c, time.Millisecond)
+	}
+	res, err := f.ForceStopSlot(context.Background(), "i-wedge", false)
+	if err != nil || !res.Deregistered || !res.Retired || stopsOnBox(h) != 1 {
+		t.Fatalf("ForceStopSlot = %+v, %v; stops %v (sleeps %d)", res, err, h.ec2.stopForce, sleeps)
+	}
+	if sleeps <= rescueENIPolls {
+		t.Fatalf("only %d polls: the test did not outlast the old window", sleeps)
+	}
+	if slotMarker(h) != "" {
+		t.Fatalf("marker %q left behind", slotMarker(h))
+	}
+}
+
+// An ENI that never goes: the force-stop gives up, but never leaves the slot deregistered and
+// unreserved, and the answer says the next Start replaces it.
+func TestForceStopGiveUpAfterTheDeregistrationLeavesTheSlotReserved(t *testing.T) {
+	old := forceStopENIBudget
+	forceStopENIBudget = 300 * time.Millisecond
+	defer func() { forceStopENIBudget = old }()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	h.ci.stickyENI = true
+	f := h.factory()
+	f.sleep = func(c context.Context, d time.Duration) error { return sleepCtx(c, 10*time.Millisecond) }
+	res, err := f.ForceStopSlot(context.Background(), "i-wedge", false)
+	if !errors.Is(err, ErrSlotTaskENIHeld) || !strings.Contains(err.Error(), "reserved for replacement") {
+		t.Fatalf("err = %v, want ErrSlotTaskENIHeld saying the slot is reserved", err)
+	}
+	if !res.Deregistered || !res.Retired || stopsOnBox(h) != 0 {
+		t.Fatalf("res %+v stops %v", res, h.ec2.stopForce)
+	}
+	if ec2TagValue(h.ec2.instances["i-wedge"].Tags, ec2TagSlotReplace) == "" {
+		t.Fatal("deregistered, given up and not reserved")
+	}
+	if slotMarker(h) != "" {
+		t.Fatalf("marker %q left behind", slotMarker(h))
 	}
 }

@@ -26,15 +26,20 @@ const slotVolumeCommandComment = "agent-fleet slot volume"
 // enough that a box that will never answer ACPI does not sit in `stopping` for the hour.
 const slotForceStopGrace = 3 * time.Minute
 
-// The whole force-stop answers inside one request, behind a 60 s idle ingress timeout, and
-// every AWS call in it (health, occupant stop, SSM listing, the ENI wait, the stop) adds to
-// the clock. So there is one wall-clock budget for the call, a deadline for the ENI stage
-// that leaves forceStopStopReserve for the stop and the reply, and no stage may outlive
-// them. They are variables only so a test can shorten them.
+// The request waits for the answer behind a 60 s idle ingress timeout, so forceStopBudget
+// bounds that wait (and the work before the token, and the homeless path, which stays on the
+// request). Once the rescue token is taken the work runs detached (forceStopDetached) and is
+// bounded by forceStopRunBudget instead: a task ENI takes from a few seconds to over a
+// minute to go (42 s measured, #4098), so the ENI stage gets forceStopENIBudget there, with
+// forceStopStopReserve left for the stop. Both stay well under forceStopAdoptAfter, the age
+// at which another operator may take the marker over. Variables only so a test can shorten them.
 var (
 	forceStopBudget      = 50 * time.Second
-	forceStopENIBudget   = 30 * time.Second
+	forceStopRunBudget   = 6 * time.Minute
+	forceStopENIBudget   = 3 * time.Minute
 	forceStopStopReserve = 10 * time.Second
+	// forceStopENIPolls caps the owned path's ENI polls (2 s apart); the ENI deadline binds first.
+	forceStopENIPolls = 150
 )
 
 // Refusals ForceStopSlot adds to the ones TerminateQuarantinedSlot exports.
@@ -242,7 +247,11 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	eniCtx, cancelENI := context.WithDeadline(ctx, eniDeadline)
 	defer cancelENI()
 	var eniErr error
-	if res.Deregistered, eniErr = probe.releaseSlotTaskENI(eniCtx, instanceID, slotENIReleasePolls, owned); eniErr != nil {
+	// Reserved the moment the deregistration has returned, before the wait that can give up
+	// (#4098): a deregistered slot is never offered again.
+	if res.Deregistered, eniErr = probe.releaseSlotTaskENI(eniCtx, instanceID, slotENIReleasePolls, owned, func() {
+		res.Retired = f.retireDeregisteredSlot(ctx, instanceID)
+	}); eniErr != nil {
 		if errors.Is(eniErr, ErrSlotStartedAgain) {
 			return res, eniErr
 		}
@@ -253,10 +262,7 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 		return res, fmt.Errorf("not stopping %s: %w (its commands are already cancelled and the occupant's start is ended)", instanceID, eniErr)
 	}
 
-	// 5. stop. A deregistered slot is reserved first, so no Start can be handed it (#4086).
-	if res.Deregistered {
-		res.Retired = f.retireDeregisteredSlot(ctx, instanceID)
-	}
+	// 5. stop.
 	res.Forced = inst.State.Name == ec2types.InstanceStateNameStopping
 	var stopErr error
 	if !owned(ctx, func(c context.Context) {
@@ -291,6 +297,9 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 // is never touched here. Reports false when the tag could not be written: the stop has
 // already gone out, so that is logged, not an error of the stop.
 func (f *ecsEC2Factory) retireDeregisteredSlot(ctx context.Context, instanceID string) bool {
+	// Owed even when the request ended: the box is already deregistered.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
 	_, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{instanceID},
 		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotReplace), Value: aws.String(time.Now().UTC().Format(time.RFC3339))}},

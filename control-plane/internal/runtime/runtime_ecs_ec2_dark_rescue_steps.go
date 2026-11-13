@@ -121,6 +121,13 @@ func (e *ecsEC2Runtime) readRescueBox(ctx context.Context, slot string, m *rescu
 // attached (so ECS lets go of it) and verify, bounded, that the ENI is physically gone.
 // Deregistration is assumed to do nothing else. A box with no task ENI is not deregistered.
 func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *rescueMarker) error {
+	return e.rescueENIStageWith(ctx, slot, m, rescueENIPolls, nil)
+}
+
+// rescueENIStageWith is rescueENIStage with the wait's poll cap and a hook. afterDereg runs
+// right after the deregistration call has returned and before any wait that can give up, so
+// whatever must hold for a deregistered box holds even when the wait fails.
+func (e *ecsEC2Runtime) rescueENIStageWith(ctx context.Context, slot string, m *rescueMarker, polls int, afterDereg func()) error {
 	// A context that has already ended (the force-stop's ENI deadline, spent by the steps before
 	// it) must not be left to the lock wait below: with a free lock and a done context a select
 	// picks either, and the deregistration would sometimes go out.
@@ -156,10 +163,13 @@ func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *resc
 		if err != nil {
 			return err
 		}
+		if afterDereg != nil {
+			afterDereg()
+		}
 		if err := rescueStep(ctx, "deregistered-call"); err != nil {
 			return err
 		}
-		if err := e.waitTaskENIsGoneWithin(ctx, slot, rescueENIPolls); err != nil {
+		if err := e.waitTaskENIsGoneWithin(ctx, slot, polls); err != nil {
 			if ctx.Err() != nil {
 				return fmt.Errorf("%w: %w", errRescueAborted, ctx.Err())
 			}

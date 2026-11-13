@@ -371,9 +371,9 @@ func TestForceStopSlotENIWaitStopsAtItsDeadlineWhenAWSCallsAreSlow(t *testing.T)
 // Pre-steps that already used the budget leave no time for the ENI stage: refuse without
 // deregistering anything.
 func TestForceStopSlotRefusesWithoutDeregisteringWhenNoTimeIsLeft(t *testing.T) {
-	old := forceStopBudget
-	forceStopBudget = 5 * time.Second // below forceStopStopReserve: no ENI time at all
-	defer func() { forceStopBudget = old }()
+	old := forceStopRunBudget
+	forceStopRunBudget = 5 * time.Second // below forceStopStopReserve: no ENI time at all
+	defer func() { forceStopRunBudget = old }()
 	h := wedgedSlot(t)
 	h.ec2.giveTaskENI("i-wedge")
 	_, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false)
