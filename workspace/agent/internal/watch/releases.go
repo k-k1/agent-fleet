@@ -51,7 +51,7 @@ const (
 	// never seen, new or not; the tool description says so.
 	tagsMaxPages = 3
 	// tagsMaxKnown bounds the persisted set of known names.
-	tagsMaxKnown = 600
+	tagsMaxKnown = 2000
 	// globMax bounds the pattern. Printable ASCII only, and only the characters a git tag name
 	// uses in practice plus the two wildcards.
 	globMax = 64
@@ -255,8 +255,13 @@ func NewGitHubReleases(gh *GitHub) *GitHubReleases { return &GitHubReleases{GH: 
 func (a *GitHubReleases) Kind() string    { return ReleasesKind }
 func (a *GitHubReleases) Types() []string { return []string{EventReleasePublished} }
 
+// releasesCursor keeps the list and the newest release already reported. A release is new only
+// above both the floor and that mark, so a later edit (the newest turned back into a draft, its
+// tag renamed out of the pattern) cannot make an older candidate the best again and tell it twice.
 type releasesCursor struct {
-	List ghCached[[]ghRelease] `json:"list"`
+	List   ghCached[[]ghRelease] `json:"list"`
+	MarkAt int64                 `json:"mark_at,omitempty"`
+	MarkID int64                 `json:"mark_id,omitempty"`
 }
 
 func (a *GitHubReleases) Resolve(ctx context.Context, ref, defaultRepo string) (Resolved, error) {
@@ -317,7 +322,7 @@ func (a *GitHubReleases) Poll(ctx context.Context, subject SubjectID, raw json.R
 	for i := range cur.List.Val {
 		r := &cur.List.Val[i]
 		u, ok := r.publishedUnix()
-		if !ok || (u < floorUnix || u == floorUnix && r.ID <= floorID) {
+		if !ok || (u < floorUnix || u == floorUnix && r.ID <= floorID) || (u < cur.MarkAt || u == cur.MarkAt && r.ID <= cur.MarkID) {
 			continue
 		}
 		if (r.Prerelease && !pre) || !relTagNameRE.MatchString(r.TagName) || !globMatch(glob, r.TagName) {
@@ -326,6 +331,9 @@ func (a *GitHubReleases) Poll(ctx context.Context, subject SubjectID, raw json.R
 		if best == nil || u > bestAt || u == bestAt && r.ID > best.ID {
 			best, bestAt = r, u
 		}
+	}
+	if best != nil {
+		cur.MarkAt, cur.MarkID = bestAt, best.ID
 	}
 	out, _ := json.Marshal(cur)
 	var evs []Event
@@ -376,7 +384,11 @@ type tagCursor struct {
 	Pages  map[string]ghCached[[]ghTag] `json:"pages,omitempty"`
 	Known  []string                     `json:"known,omitempty"`
 	Absent []string                     `json:"absent,omitempty"`
-	Seeded bool                         `json:"seeded,omitempty"`
+	// Gen counts how often a name was forgotten and came back. It is part of the version of a
+	// created tag (the name, then name#2, ...), because the engine tells one version once and a
+	// tag created again must be news even when its name was the last one told.
+	Gen    map[string]int `json:"gen,omitempty"`
+	Seeded bool           `json:"seeded,omitempty"`
 }
 
 type tagSeed struct {
@@ -423,7 +435,10 @@ func (a *GitHubTags) Resolve(ctx context.Context, ref, defaultRepo string) (Reso
 	for _, t := range first {
 		names = append(names, t.Name)
 	}
-	for page := 2; len(first) == tagsPerPage && page <= tagsMaxPages; page++ {
+	// The floor must be the whole list: a name that is merely past the page cap would be taken
+	// for new the day a deletion moves it into view. A longer list is refused, never half-seeded.
+	last := len(first)
+	for page := 2; last == tagsPerPage && page <= tagsMaxPages+1; page++ {
 		var more []ghTag
 		st, _, _, err := a.GH.getHdr(ctx, tagsPath(r.repo, page), "", &more)
 		if err != nil {
@@ -432,11 +447,15 @@ func (a *GitHubTags) Resolve(ctx context.Context, ref, defaultRepo string) (Reso
 		if st != http.StatusOK {
 			return Resolved{}, fmt.Errorf("GitHub answered %d for the tag list", st)
 		}
+		if page > tagsMaxPages {
+			if len(more) > 0 {
+				return Resolved{}, &ErrRefused{fmt.Sprintf("%s has more than %d tags; its tag list cannot be read in full, so a new tag could not be told from an old one. Watch its releases instead (o/r:releases)", r.repo, tagsMaxPages*tagsPerPage)}
+			}
+			break
+		}
+		last = len(more)
 		for _, t := range more {
 			names = append(names, t.Name)
-		}
-		if len(more) < tagsPerPage {
-			break
 		}
 	}
 	subj := tagsSubject(r.repo, r.glob, ghDate(hdr))
@@ -543,6 +562,12 @@ func (a *GitHubTags) Poll(ctx context.Context, subject SubjectID, raw json.RawMe
 			}
 			if prev[n] {
 				delete(known, n)
+				if cur.Gen == nil {
+					cur.Gen = map[string]int{}
+				}
+				if len(cur.Gen) < tagsMaxKnown {
+					cur.Gen[n]++
+				}
 			} else {
 				absent = append(absent, n)
 			}
@@ -560,12 +585,16 @@ func (a *GitHubTags) Poll(ctx context.Context, subject SubjectID, raw json.RawMe
 	if len(fresh) > 0 {
 		sort.Strings(fresh)
 		newest := fresh[len(fresh)-1] // names carry no date; the greatest is the best guess at the latest
+		version := newest
+		if g := cur.Gen[newest]; g > 0 {
+			version = fmt.Sprintf("%s#%d", newest, g+1)
+		}
 		var data []DataItem
 		for _, n := range fresh[:len(fresh)-1] {
 			data = append(data, DataItem{Text: "Also created: " + n})
 		}
 		evs = []Event{{
-			Source: TagsKind, Subject: subject, Type: EventTagCreated, Version: newest,
+			Source: TagsKind, Subject: subject, Type: EventTagCreated, Version: version,
 			Summary: fmt.Sprintf("New tag created in %s: %s.", repo, newest), Data: data, At: a.GH.clock().UTC(),
 		}}
 	}

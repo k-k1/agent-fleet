@@ -174,8 +174,9 @@ work you could simply do.
     published or a tag created after the `watch` call fires, never an existing one; drafts never,
     pre-releases only with `+pre`. The pattern is a glob on the tag name (letters, digits
     `. _ - / +`, `*`, `?`; 64 characters at most), anything else is refused. The notice carries
-    the repo and tag; the release name and notes arrive as quoted data. Only the first 300 tags
-    of a repository are read.
+    the repo and tag; the release name and notes arrive as quoted data. A tags watch is refused for a
+    repository with more than 300 tags (use releases); a tag deleted and created again is told
+    again.
   - **Timers: `source: time`** instead of `sleep` or a wait loop. `ref` is an RFC 3339 time with
     an offset or a wait (`in 20m`, `2h30m`, `3d`), at most 30 days ahead; no `types`; the notice
     is `time.fired`. A timer fires while the Workspace runs. One that fell due while the Workspace

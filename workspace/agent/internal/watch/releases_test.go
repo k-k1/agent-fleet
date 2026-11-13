@@ -194,21 +194,24 @@ func TestReleasesWatchFiresOnlyForARealNewRelease(t *testing.T) {
 	if len(evs) != 1 || evs[0].Type != EventReleasePublished || evs[0].Version != "150" || evs[0].Source != ReleasesKind {
 		t.Fatalf("published draft: %+v", evs)
 	}
-	// The same published instant as the floor with a higher id is new; with a lower id it is not.
+	// The same published instant as the floor with a higher id is new; with a lower id it is not
+	// (read from a fresh cursor: the mark of what was told above sits later than the floor).
+	cur = nil
 	if evs := poll(rel(199, "v2.0.2", "2026-11-10T02:00:00Z", false, false), old); len(evs) != 0 {
 		t.Fatalf("same-second lower id fired: %v", evs)
 	}
 	if evs := poll(rel(201, "v2.0.3", "2026-11-10T02:00:00Z", false, false), old); len(evs) != 1 {
 		t.Fatalf("same-second higher id: %v", evs)
 	}
+	cur = nil
 	// Two new releases between reads: the newest is told.
 	evs = poll(rel(260, "v2.6", "2026-11-11T00:00:00Z", false, false), rel(250, "v2.5", "2026-11-10T09:00:00Z", false, false), old)
 	if len(evs) != 1 || evs[0].Version != "260" {
 		t.Fatalf("two releases: %+v", evs)
 	}
-	// A release that is edited into a draft and back is the same version (told once by the engine).
-	if evs = poll(rel(260, "v2.6", "2026-11-11T00:00:00Z", false, false)); len(evs) != 1 || evs[0].Version != "260" {
-		t.Fatalf("version is the release id: %+v", evs)
+	// A release already reported is not reported again by the next read.
+	if evs = poll(rel(260, "v2.6", "2026-11-11T00:00:00Z", false, false)); len(evs) != 0 {
+		t.Fatalf("a reported release fired again: %+v", evs)
 	}
 }
 
@@ -383,7 +386,7 @@ func TestTagsWatchDeletedThenRecreatedTagIsCreatedAgainOnlyAfterTwoCompleteReads
 	r.poll("v1.0")
 	r.poll("v1.0")
 	evs := r.poll("v1.0", "v1.1")
-	if len(evs) != 1 || evs[0].Version != "v1.1" {
+	if len(evs) != 1 || evs[0].Version != "v1.1#2" {
 		t.Fatalf("recreated tag: %+v", evs)
 	}
 }
@@ -450,5 +453,105 @@ func TestSeedCursorMergesIntoAnExistingSubjectCursor(t *testing.T) {
 	_ = json.Unmarshal(cur, &c)
 	if strings.Join(c.Known, ",") != "a,b" || !c.Seeded {
 		t.Fatalf("%+v", c)
+	}
+}
+
+func TestResolveTagsRefusesAListItCannotReadInFull(t *testing.T) {
+	f := newFakeGitHub()
+	a := NewGitHubTags(newTestGitHub(t, f))
+	page := func(p int, n int) []any {
+		var names []string
+		for i := 0; i < n; i++ {
+			names = append(names, fmt.Sprintf("t%d-%03d", p, i))
+		}
+		return tagList(names...)
+	}
+	for p := 1; p <= tagsMaxPages; p++ {
+		f.bodies[tagsPath("o/r", p)] = page(p, tagsPerPage)
+	}
+	// Exactly the cap: the list is complete, so it is accepted.
+	f.bodies[tagsPath("o/r", tagsMaxPages+1)] = tagList()
+	if _, err := a.Resolve(context.Background(), "o/r:tags", ""); err != nil {
+		t.Fatalf("a list of exactly %d tags: %v", tagsMaxPages*tagsPerPage, err)
+	}
+	// One more tag than the cap: refused, because deleting a listed tag would move an old one into
+	// view and it would be taken for new.
+	f.bodies[tagsPath("o/r", tagsMaxPages+1)] = page(tagsMaxPages+1, 1)
+	_, err := a.Resolve(context.Background(), "o/r:tags", "")
+	var refused *ErrRefused
+	if !errors.As(err, &refused) || !strings.Contains(refused.Reason, "more than 300 tags") {
+		t.Fatalf("a list past the cap: %v", err)
+	}
+}
+
+// The newest release turned back into a draft (or its tag renamed out of the pattern) must not
+// make the older new release the best candidate again.
+func TestReleasesEditedNewestDoesNotTellAnOlderOneTwice(t *testing.T) {
+	f := newFakeGitHub()
+	subj := releasesSubject("o/r", false, "", 10, time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC).Unix())
+	a := NewGitHubReleases(newTestGitHub(t, f))
+	A := rel(20, "v1", "2026-11-10T01:00:00Z", false, false)
+	B := rel(30, "v2", "2026-11-10T02:00:00Z", false, false)
+	var cur []byte
+	poll := func(list ...any) []Event {
+		f.bodies[releasesPath("o/r")] = list
+		evs, c, _, err := a.Poll(context.Background(), subj, cur, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cur = c
+		return evs
+	}
+	if evs := poll(A); len(evs) != 1 || evs[0].Version != "20" {
+		t.Fatalf("A: %v", evs)
+	}
+	if evs := poll(B, A); len(evs) != 1 || evs[0].Version != "30" {
+		t.Fatalf("B: %v", evs)
+	}
+	drafted := rel(30, "v2", "", true, false)
+	if evs := poll(drafted, A); len(evs) != 0 {
+		t.Fatalf("A told again after B was drafted: %v", evs)
+	}
+	renamed := rel(30, "v2 renamed", "2026-11-10T02:00:00Z", false, false)
+	if evs := poll(renamed, A); len(evs) != 0 {
+		t.Fatalf("A told again after B left the filter: %v", evs)
+	}
+}
+
+// Through the engine, with a watch that stays (until deadline): a tag told, deleted, and created
+// again is told again, and the same tag seen twice in a row is not.
+func TestEngineTellsARecreatedTagAgainButNotTheSameOneTwice(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[tagsPath("o/r", 1)] = tagList("v1.0")
+	f.headers.Set("Date", "Tue, 10 Nov 2026 03:00:42 GMT")
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(NewGitHubTags(newTestGitHub(t, f)), sink)
+	ctx := context.Background()
+	if _, err := e.Subscribe(ctx, Request{Owner: "s", Source: TagsKind, Ref: "o/r:tags", Types: []string{EventTagCreated}, Until: UntilDeadline}); err != nil {
+		t.Fatal(err)
+	}
+	step := func(names ...string) {
+		f.bodies[tagsPath("o/r", 1)] = tagList(names...)
+		c.add(10 * time.Minute)
+		e.Tick(ctx)
+	}
+	step("v1.0")
+	if len(sink.told) != 0 {
+		t.Fatalf("an existing tag was told: %v", sink.told)
+	}
+	step("v1.0", "v1.1")
+	step("v1.0", "v1.1") // unchanged: nothing more
+	if strings.Join(sink.told, ",") != "s:github.tag.created:v1.1" {
+		t.Fatalf("first creation: %v", sink.told)
+	}
+	step("v1.0") // gone once
+	step("v1.0") // gone twice: forgotten
+	step("v1.0", "v1.1")
+	if strings.Join(sink.told, ",") != "s:github.tag.created:v1.1,s:github.tag.created:v1.1#2" {
+		t.Fatalf("recreation: %v", sink.told)
+	}
+	step("v1.0", "v1.1")
+	if len(sink.told) != 2 {
+		t.Fatalf("told again without a change: %v", sink.told)
 	}
 }
