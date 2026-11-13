@@ -804,10 +804,33 @@ Resources:
               ForAllValues:StringEquals:
                 kms:EncryptionContextKeys: [af:purpose, af:key_ref]
 
+  # The CP's mount of its own data root (10-data CpDataFileSystem, #4089). That file system's
+  # policy has no Allow, so this identity grant is the only thing that admits a mount, and
+  # only through its one access point. ClientRootAccess: the access point presents uid 0.
+  CpDataEfsMount:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-data-efs-${AWS::Region}"
+      Roles:
+        - !Select [1, !Split ["/", !ImportValue {"Fn::Sub": "${PlatformStackName}-CpTaskRoleArn"}]]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: MountCpData
+            Effect: Allow
+            Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite, elasticfilesystem:ClientRootAccess]
+            Resource: !Sub
+              - "arn:${AWS::Partition}:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${Fs}"
+              - Fs: !ImportValue {"Fn::Sub": "${DataStackName}-CpDataEfsId"}
+            Condition:
+              StringEquals:
+                elasticfilesystem:AccessPointArn: !ImportValue {"Fn::Sub": "${DataStackName}-CpDataAccessPointArn"}
+
   TaskDef:
     Type: AWS::ECS::TaskDefinition
-    # DependsOn: the family is a string CloudFormation does not order by.
-    DependsOn: [HomeOpsTaskDef, CpHomeOpsManagedPolicy]
+    # DependsOn: the family is a string CloudFormation does not order by; the mount grant
+    # must exist before a task of this revision mounts the data root.
+    DependsOn: [HomeOpsTaskDef, CpHomeOpsManagedPolicy, CpDataEfsMount]
     Properties:
       Family: !Sub "af-${AWS::StackName}-cp"
       RequiresCompatibilities: [FARGATE]
@@ -822,6 +845,14 @@ Resources:
         Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
       TaskRoleArn:
         Fn::ImportValue: !Sub "${PlatformStackName}-CpTaskRoleArn"
+      Volumes:
+        - Name: cp-data
+          EFSVolumeConfiguration:
+            FilesystemId: !ImportValue {"Fn::Sub": "${DataStackName}-CpDataEfsId"}
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !ImportValue {"Fn::Sub": "${DataStackName}-CpDataAccessPointId"}
+              IAM: ENABLED
       ContainerDefinitions:
         - Name: cp
           Essential: true
@@ -835,7 +866,9 @@ Resources:
           Environment:
             # ECS/awsvpc: bind non-loopback; CpSg limits 8099 to the ALB SG.
             - {Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}"}
-            - {Name: WS_DATA, Value: /tmp}   # unused for state now (store = RDS/Postgres, below)
+            # Durable: the internal git's repositories and LFS objects (10-data CpDataFileSystem).
+            - {Name: WS_DATA, Value: /var/lib/af-cp}
+            - {Name: AF_DATA_DURABLE_REQUIRED, Value: "1"}
             # RDS Postgres metadata store; the password arrives as a secret, never hardcoded in a plaintext URL/env value.
             - {Name: AF_DB_HOST, Value: !ImportValue {"Fn::Sub": "${DataStackName}-DbEndpoint"}}
             - {Name: AF_DB_PORT, Value: !ImportValue {"Fn::Sub": "${DataStackName}-DbPort"}}
@@ -997,6 +1030,7 @@ Resources:
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/cookie-secret"
             - Name: AF_MASTER_KEY
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/master-key"
+          MountPoints: [{SourceVolume: cp-data, ContainerPath: /var/lib/af-cp}]
           LogConfiguration:
             LogDriver: awslogs
             Options:

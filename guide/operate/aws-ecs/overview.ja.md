@@ -40,7 +40,7 @@ AWS で手軽にセルフホストしたいだけなら、これではなく EC2
 | テンプレート | 要るとき | 中身 |
 |---|---|---|
 | `cfn/00-network.yaml` | いつも | VPC、2 つの AZ のパブリック・プライベートサブネット、インターネットゲートウェイ、NAT、基本のセキュリティグループ（`alb` / `cp` / `ws`） |
-| `cfn/10-data.yaml` | いつも | EFS ファイルシステムとマウントターゲット、RDS（Postgres、シングル AZ、既定は db.t4g.micro、マスターパスワードは RDS が管理）。`CustodianKmsKey=create` なら、Control Plane のキーに使う KMS キーも |
+| `cfn/10-data.yaml` | いつも | EFS ファイルシステムとマウントターゲット、Control Plane だけがマウントする 2 つ目の EFS ファイルシステム（データルート。内部 git のリポジトリを置く）、RDS（Postgres、シングル AZ、既定は db.t4g.micro、マスターパスワードは RDS が管理）。`CustodianKmsKey=create` なら、Control Plane のキーに使う KMS キーも |
 | `cfn/20-platform.yaml` | いつも | ECR（Control Plane とワークスペース、任意のエンジン用の `af-voicevox`・`af-llamacpp`・`af-comfyui`・`af-engine-tools`）、ECS クラスター、Service Connect の名前空間（`af.internal`）、IAM ロール（`cp-task` / `exec` / `ws-task`） |
 | `cfn/40-ec2-pool.yaml` | `WsRuntime=ecs-ec2` のときだけ | ワークスペースのスロットの起動テンプレート、スロットのインスタンスロールとセキュリティグループ。インスタンスは作らず、Control Plane が必要なときに起動する |
 | `cfn/50-tts.yaml` | 日本語の読み上げを使うときだけ | VOICEVOX のエンジン（ふだんはゼロにしておく Fargate のサービス）、Cloud Map の名前、専用のセキュリティグループ |

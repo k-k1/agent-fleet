@@ -27,6 +27,7 @@ This applies to `Persistence=retain` deployments only.
 |---|---|
 | `ecs` | Every member's home (`/home/<membership>`) and Claude state (`/claude-config/<membership>`) |
 | `ecs-ec2` | The Claude state and the kept dotfiles (`/home-keep/<membership>`); the home itself is on EBS |
+| Both | On a file system of its own (`CpDataFileSystem`), the Control Plane's data root: the internal git provider's repositories and their LFS objects. For anything a member pushed only there, this is the only copy |
 
 So under `Persistence=retain`, `10-data` also declares:
 
@@ -34,7 +35,7 @@ So under `Persistence=retain`, `10-data` also declares:
 |---|---|
 | `EfsBackupVault` | Vault `<data stack>-efs-<8 hex digits of the stack id>` (e.g. `af-ecs-data-efs-1a2b3c4d`; the stack output `EfsBackupVaultName`). `DeletionPolicy: Retain`; AWS refuses to delete a vault that still holds recovery points. Vault names stop at 50 characters, so under `retain` the data stack name is limited to 37 (`standup.sh` checks) |
 | `EfsBackupPlan` | One rule, daily at 17:00 UTC (02:00 JST), each point kept `EfsBackupRetentionDays` (default **7**, the same as RDS) |
-| `EfsBackupSelection` + `EfsBackupRole` | This file system only, backed up with the AWS-managed backup and restore policies |
+| `EfsBackupSelection` + `EfsBackupRole` | The members' file system and the Control Plane's (`CpDataFileSystem`), backed up with the AWS-managed backup and restore policies |
 
 - `Persistence=delete` creates none of it
 - Backups are incremental after the first full copy, and crash-consistent (taken while workspaces are running)

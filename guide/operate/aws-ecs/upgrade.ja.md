@@ -130,7 +130,7 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 
 ## `00-network` と `10-data` は上げない
 
-`00-network` と `10-data` は、この手順にも `update.sh` にも含まれません。どちらかが要るリリースは、リリースノートにそう書きます。下の [v0.34.x から上げる](#v034x-から上げる) がその例です。
+`00-network` と `10-data` は、この手順にも `update.sh` にも含まれません。どちらかが要るリリースは、リリースノートにそう書きます。下の [Control Plane のデータルート](#control-plane-のデータルート) と [v0.34.x から上げる](#v034x-から上げる) がその例です。
 
 ## パラメータを空に戻す
 
@@ -163,6 +163,48 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 - 上げたあと最初の新しい AMI で、すべてのスロットが一斉に古くなり、次の起動で入れ替わります
 
 古いスロットがどう入れ替わるかは [スロットを入れ替える・止める](slot-maintenance.ja.md) にあります。
+
+## Control Plane のデータルート
+
+Control Plane は、内部 git のリポジトリとその LFS オブジェクトを、データルート（`WS_DATA`）の下に置きます。v0.45.x まではそれが Control Plane タスク自身のディスクの `/tmp` で、タスクが入れ替わるたび（アップグレード、再起動、タスクの異常終了）に空になっていました。以降のリリースでは、専用のファイルシステムをマウントします。
+
+| 項目 | 内容 |
+|---|---|
+| ファイルシステム | `10-data` の `CpDataFileSystem`。暗号化あり、スループットは elastic、`Retain` / `Delete` は `Persistence` に従う。`retain` では日次バックアップの対象（[EFS のバックアップと復元](backup.ja.md)） |
+| マウントできるもの | Control Plane のタスクだけ。専用のアクセスポイント（`/cp-data`）1 つを通し、TLS と IAM 認可が要る。マウントターゲットは Control Plane のセキュリティグループからの NFS しか受けず、ポリシーは匿名のクライアントを通さない |
+| タスクの中 | `/var/lib/af-cp`。これが `WS_DATA`。`30-ingress` は `AF_DATA_DURABLE_REQUIRED=1` も設定する |
+
+### v0.45.x 以前から上げる
+
+先に `10-data` を更新します。`30-ingress` が新しいファイルシステムを読み込むためで、読めないうちは `update.sh` が「no readable CpDataEfsId output」で止まります。止まったときは何も変えていません。
+
+1. **バックアップを取る**（[上げる前に](#上げる前に)）
+2. **`10-data` を変更セットで更新する**。パラメータは今のまま
+
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
+     --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset --profile <p> --region <r>
+   aws cloudformation describe-change-set --change-set-name <表示された ARN> \
+     --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text
+   ```
+
+   - 期待するのは `CpDataEfsSg`、`CpDataFileSystem`、`CpDataAccessPoint`、`CpDataMountTarget0`、`CpDataMountTarget1` の *Add*
+   - `retain` では `EfsBackupSelection` の *Modify* も出ます（置き換えになることもあります）。復旧ポイントはボールトに残るので問題ありません
+   - `FileSystem` か `Db` に何か出たら、実行せずに止めます
+   - それ以外なら `execute-change-set --change-set-name <ARN>` を実行し、`wait stack-update-complete --stack-name af-ecs-data` で待ちます
+
+3. **いつもどおり `update.sh` を実行する**。新しい Control Plane のタスクは、空のファイルシステムで起動します
+
+**移すものはありません。何も残っていないからです。** アップグレード前に作ったリポジトリは中身をすでに失っていますが、行はデータベースに残っています。
+
+- 一覧（設定 >「内部リポジトリ」）には出たままで、clone も push も失敗します
+- その LFS オブジェクトは、テナントの LFS の上限に数えられたままです
+
+Console で 1 つずつ削除するか、同じ名前で作り直して、履歴を持っているメンバーの clone から push し直してください。
+
+### 戻す
+
+`30-ingress` を v0.45.x に戻すと、`WS_DATA` は `/tmp` に戻ります。その間に push されたものは `CpDataFileSystem` に残りますが、もう一度上げるまでは見えません。`10-data` に足したものは、そのままで構いません。
 
 ## v0.34.x から上げる
 

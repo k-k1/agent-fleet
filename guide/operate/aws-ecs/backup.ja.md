@@ -27,6 +27,7 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 |---|---|
 | `ecs` | 全員のホームディレクトリ（`/home/<membership>`）と Claude の状態（`/claude-config/<membership>`） |
 | `ecs-ec2` | Claude の状態と、残すドットファイル（`/home-keep/<membership>`）。ホームそのものは EBS にある |
+| どちらも | 専用のファイルシステム（`CpDataFileSystem`）に、Control Plane のデータルート。内部 git のリポジトリと、その LFS オブジェクト。メンバーがそこにだけ push したものは、これが唯一のコピー |
 
 そのため、`Persistence=retain` では `10-data` が次も作ります。
 
@@ -34,7 +35,7 @@ ECS の配備で、EFS に置いたメンバーのデータを毎日バックア
 |---|---|
 | `EfsBackupVault` | ボールト `<data stack>-efs-<stack id の 16 進 8 桁>`（例: `af-ecs-data-efs-1a2b3c4d`、スタックの出力 `EfsBackupVaultName`）。`DeletionPolicy: Retain` で、復旧ポイントが残っているボールトは AWS が削除を拒否する。ボールトの名前は 50 文字までなので、`retain` ではデータスタックの名前は 37 文字まで（`standup.sh` が確かめる） |
 | `EfsBackupPlan` | ルールは 1 つ。毎日 17:00 UTC（02:00 JST）で、各ポイントを `EfsBackupRetentionDays`（既定は **7**、RDS と同じ）日残す |
-| `EfsBackupSelection` + `EfsBackupRole` | 対象はこのファイルシステムだけ。AWS 管理のバックアップ用・復元用のポリシーを使う |
+| `EfsBackupSelection` + `EfsBackupRole` | 対象はメンバーのファイルシステムと、Control Plane のファイルシステム（`CpDataFileSystem`）。AWS 管理のバックアップ用・復元用のポリシーを使う |
 
 - `Persistence=delete` では、どれも作りません
 - バックアップは、最初に全体をコピーし、そのあとは増分です。ワークスペースが動いたまま取るので、クラッシュ整合性のバックアップになります

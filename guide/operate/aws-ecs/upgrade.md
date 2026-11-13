@@ -130,7 +130,7 @@ The same operation with the previous tag rolls back.
 
 ## `00-network` and `10-data` are not upgraded
 
-`00-network` and `10-data` are part of neither this procedure nor `update.sh`. A release that needs either says so in its release notes. [Upgrade from v0.34.x](#upgrade-from-v034x) below is one.
+`00-network` and `10-data` are part of neither this procedure nor `update.sh`. A release that needs either says so in its release notes. [The Control Plane's data root](#the-control-planes-data-root) and [Upgrade from v0.34.x](#upgrade-from-v034x) below are two.
 
 ## Clear a parameter
 
@@ -163,6 +163,48 @@ With `WsRuntime=ecs-ec2` the Control Plane reads Amazon's public ECS-optimized A
 - The first new AMI after the upgrade makes every slot outdated at once; they are replaced at their next start
 
 How outdated slots are replaced is in [Replace and stop slots](slot-maintenance.md).
+
+## The Control Plane's data root
+
+The Control Plane keeps the internal git provider's repositories and their LFS objects under its data root (`WS_DATA`). Up to v0.45.x that was `/tmp` on the Control Plane task's own disk, so every replacement of the task (an upgrade, a restart, a failed task) emptied it. Later releases mount a file system of its own instead.
+
+| What | Where |
+|---|---|
+| File system | `10-data`'s `CpDataFileSystem`: encrypted, elastic throughput, `Retain` / `Delete` following `Persistence`, in the daily backup under `retain` ([Back up and restore EFS](backup.md)) |
+| Who can mount it | The Control Plane task only, through its one access point (`/cp-data`), with TLS and IAM authorization. Its mount targets take NFS only from the Control Plane's security group, and its policy admits no anonymous client |
+| Inside the task | `/var/lib/af-cp`, which is `WS_DATA`. `30-ingress` also sets `AF_DATA_DURABLE_REQUIRED=1` |
+
+### Upgrade from v0.45.x or earlier
+
+`10-data` has to be updated first: `30-ingress` imports the new file system, and `update.sh` stops with "no readable CpDataEfsId output" until it can read it. Nothing is changed when it stops.
+
+1. **Back up** ([Before you upgrade](#before-you-upgrade))
+2. **Update `10-data` through a change set**, with the parameters it already has
+
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-data --template-file cfn/10-data.yaml \
+     --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_IAM --no-execute-changeset --profile <p> --region <r>
+   aws cloudformation describe-change-set --change-set-name <the ARN it printed> \
+     --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text
+   ```
+
+   - Expect *Add* of `CpDataEfsSg`, `CpDataFileSystem`, `CpDataAccessPoint`, `CpDataMountTarget0` and `CpDataMountTarget1`
+   - Under `retain`, also *Modify* `EfsBackupSelection`, possibly as a replacement. That is harmless: the recovery points stay in the vault
+   - Anything on `FileSystem` or `Db`: stop and do not execute
+   - Otherwise run `execute-change-set --change-set-name <ARN>` and wait with `wait stack-update-complete --stack-name af-ecs-data`
+
+3. **Run `update.sh`** as usual. The new Control Plane task starts on the empty file system
+
+**Nothing is migrated, because nothing survived.** A repository created before the upgrade has already lost its contents, but its row is still in the database:
+
+- it is still listed (Settings > "Internal repos"), and a clone or push of it fails
+- its LFS objects still count toward the tenant's LFS limit
+
+Delete each one in the Console, or create it again under the same name and push to it from a member's clone that still has the history.
+
+### Go back
+
+Taking `30-ingress` back to v0.45.x puts `WS_DATA` back on `/tmp`. What was pushed in the meantime stays on `CpDataFileSystem` but is not served until you upgrade again. The `10-data` additions can stay.
 
 ## Upgrade from v0.34.x
 
