@@ -201,7 +201,7 @@ A second checkpoint is the same call with another URL and key. Pick one that is 
 `llama-server` runs as a router: every enabled model appears in the picker with its own context window. Two things are the administrator's to weigh:
 
 - Every enabled GGUF is synced onto the instance, so the cold start grows with their total size (the panel estimates it per model)
-- `LlmModelsMax` (default **1**) caps how many models are held at once. Under that cap a request for another model waits for the current answer to finish and then pays a full reload. The panel names the model in VRAM and counts the changes
+- `LlmModelsMax` (default **1**) caps how many models are held at once. Once that cap is reached, a request for another model waits for the current answer to finish and then pays a full reload. The panel names the model in VRAM and counts the changes
 
 ## Things worth knowing
 

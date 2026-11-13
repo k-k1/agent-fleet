@@ -22,7 +22,7 @@ AWS の ECS に Agent Fleet を建て、Control Plane を起動して、IdP で�
 | `30-ingress` をデプロイする | 証明書・ALB・DNS・Control Plane のサービスができ、Console にサインインできる |
 | 費用を分けるなら、構築した日にワークスペースを 1 つ起動する | Control Plane がタグを書き、AWS がキーを見つけたあと（最大 24 時間）、Control Plane がコスト配分タグを有効にする |
 
-コマンドは、リポジトリの `deploy/aws/ecs/` で実行します。`standup.sh` も同じ順番で建てますが、`capture-env.sh` で取っておいた既存の配備のパラメータ（`params/30-ingress` など）から**建て直す**ためのスクリプトです。それがない新しい環境では、すぐに終わります。初めて建てるときは、このページの手順で建てます。
+コマンドは、リポジトリの `deploy/aws/ecs/` で実行します。`standup.sh` も同じ順番で建てますが、`capture-env.sh` で取っておいた既存の配備のパラメータ（`params/30-ingress` など）から**建て直す**ためのスクリプトです。そのパラメータがない新しい環境では、すぐに終了します。初めて建てるときは、このページの手順で建ててください。
 
 ## はじめる前に（アカウントごとに 1 回）
 
@@ -32,7 +32,7 @@ AWS の ECS に Agent Fleet を建て、Control Plane を起動して、IdP で�
 
 自前の推論エンジン（`60-engines`）を動かすなら、`CreateFleet` の前に AWS が求める `AWSServiceRoleForEC2Fleet` も作っておきます。なくても呼び出しが通ったアカウントはありましたが、作っておく方が安全です。
 
-`standup.sh` はこの 2 つを作ります。手で作るときは次のとおりです。何度実行しても同じで、2 回目の「has been taken」のエラーは無視して構いません。
+`standup.sh` はこの 2 つを作ります。手で作るときは次のとおりです。何度実行しても結果は同じで、再実行したときの「has been taken」のエラーは無視して構いません。
 
 ```bash
 aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
@@ -56,8 +56,8 @@ aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
 
 | スタック | `--capabilities` | 理由 |
 |---|---|---|
-| `00-network` | `CAPABILITY_IAM` | 出口のゲートウェイのインスタンスロールを宣言している |
-| `10-data` | `CAPABILITY_AUTO_EXPAND CAPABILITY_IAM` | `Transform: AWS::LanguageExtensions` を宣言している。`Persistence=retain` では、EFS のバックアップに使う名前のない IAM ロールも作る |
+| `00-network` | `CAPABILITY_IAM` | egress ゲートウェイのインスタンスロールを宣言している |
+| `10-data` | `CAPABILITY_AUTO_EXPAND CAPABILITY_IAM` | `Transform: AWS::LanguageExtensions` を宣言している。`Persistence=retain` では、AWS Backup が EFS のバックアップに使う、名前のない IAM ロールも作る |
 | `20-platform` | `CAPABILITY_NAMED_IAM` | 名前付きの IAM ロールを作る |
 | `40-ec2-pool`・`60-engines`・`30-ingress` | `CAPABILITY_NAMED_IAM` | Control Plane のタスクロールに、名前付きの管理ポリシーを付ける |
 
@@ -94,7 +94,7 @@ aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
 
 ## イメージを ECR に push する
 
-ECR のリポジトリは `20-platform` が持っています。先に `20-platform` をデプロイしてください。リポジトリを別に作ると、あとで `20-platform` のデプロイが AlreadyExists で失敗します。
+ECR のリポジトリは `20-platform` が持っています。先に `20-platform` をデプロイしてください。スタックの外でリポジトリを先に作ると、あとで `20-platform` のデプロイが AlreadyExists で失敗します。
 
 `release-ecr.sh` はリポジトリがあることを確かめるだけで、作りません。
 
@@ -129,19 +129,19 @@ docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag>
 イメージを push したあと、`30-ingress` の前に、使うものだけを `40-ec2-pool`（`ecs-ec2`）・`50-tts`（読み上げ）・`60-engines`（自前の推論）の順にデプロイします。
 
 - `50-tts` と `60-engines` のサービスは、エンジンのイメージ（`af-voicevox`、`af-engine-tools`・`af-llamacpp`・`af-comfyui`）が ECR にないと起動できず、スタックが `CREATE_IN_PROGRESS` のまま進みません。スタックより**先に** ECR に入れます
-- 初めての `60-engines` では、`af-engine-tools` を `60-engines` の `EngineToolsImageTag` のタグで GHCR から写します
+- 初めての `60-engines` では、`af-engine-tools` を `60-engines` の `EngineToolsImageTag` のタグで GHCR からコピーします
 
   ```bash
   crane copy ghcr.io/k-k1/agent-fleet/engine-tools:<EngineToolsImageTag> <acct>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:<EngineToolsImageTag>
   ```
 
-- `standup.sh` はこの順番でイメージを写してからデプロイしますが、取っておいたパラメータがあるときの建て直し専用です。初めて建てるときは手で写します。読み上げの `af-voicevox` は [日本語の読み上げを足す](tts.ja.md#有効にする) の「有効にする」、推論エンジンの `af-llamacpp`・`af-comfyui` は [推論エンジンを足す](engines.ja.md#有効にする) の「有効にする」の手順 3 にあります
+- `standup.sh` はこの順番でイメージをコピーしてからデプロイしますが、取っておいたパラメータがあるときの建て直し専用です。初めて建てるときは手でコピーします。読み上げの `af-voicevox` は [日本語の読み上げを足す](tts.ja.md#有効にする) の「有効にする」、推論エンジンの `af-llamacpp`・`af-comfyui` は [推論エンジンを足す](engines.ja.md#有効にする) の「有効にする」の手順 3 にあります
 - 各スタックのパラメータとイメージは、[EC2 スロットプールを使い始める](slot-pool.ja.md)・[日本語の読み上げを足す](tts.ja.md)・[推論エンジンを足す](engines.ja.md) にあります
 
 ## Control Plane を起動する（`30-ingress`）
 
 サインインは Control Plane 自身が行います（`AuthMode=oauth`）。Google、または任意の OIDC の IdP（Entra ID・Okta・Keycloak・Auth0・Cognito・GitLab）を使えます。ALB は TLS を終端するだけです。
-Control Plane の状態は RDS の Postgres に、ワークスペースのホームは EFS に置きます。どちらも `10-data` のエクスポートから配線されるので、`10-data` が先に要ります。
+Control Plane の状態は RDS の Postgres に、ワークスペースのホームは EFS に置きます。どちらも `10-data` のエクスポートを参照して設定されるので、先に `10-data` をデプロイしておく必要があります。
 
 ### 1. Control Plane の秘密を SSM に入れる
 
@@ -161,18 +161,18 @@ aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
 ```
 
 - IdP のシークレットは、使う IdP の分だけ入れます。値は自分の端末で入力し、共有の画面には出さないでください
-- `master-key` を `aws/ssm` ではなく自前の KMS 鍵で暗号化するときは、その `put-parameter` に `--key-id <鍵の ARN>` を足し、**先に** `20-platform` の `MasterKeyKmsKeyArn` を同じ ARN にします。実行ロールの `kms:Decrypt` が、Control Plane のタスクが起動する前に要るからです。詳しくは [保存時の鍵を AWS KMS にする](../keys/kms.ja.md#afmasterkey-のパラメータを自前の鍵で暗号化する) にあります
+- `master-key` を `aws/ssm` ではなく自前の KMS 鍵で暗号化するときは、その `put-parameter` に `--key-id <鍵の ARN>` を足します。そのうえで、**先に** `20-platform` の `MasterKeyKmsKeyArn` を同じ ARN にしておきます。Control Plane のタスクが起動する前に、実行ロールに `kms:Decrypt` の権限が要るからです。詳しくは [保存時の鍵を AWS KMS にする](../keys/kms.ja.md#afmasterkey-のパラメータを自前の鍵で暗号化する) にあります
 
 GitHub と Bitbucket の OAuth アプリは、配備の設定ではありません。CloudFormation のパラメータも SSM の項目もなく、テナント管理者が Console で登録します（[連携に使う OAuth アプリを選ぶ](../../admin/access/oauth-apps.ja.md)）。
 
 ### 2. IdP にリダイレクト URI を登録する
 
-IdP のクライアントの許可するリダイレクト URI に、`https://<your-fqdn>/oauth2/callback` を足します。有効にするすべての IdP で、この 1 つの URI を使います。
+IdP のクライアントで、許可するリダイレクト URI に `https://<your-fqdn>/oauth2/callback` を足します。有効にするすべての IdP で、この 1 つの URI を使います。
 IdP ごとのクライアントの作りかたは [サインインの方法を設定する](../signin/overview.ja.md) にあります。
 
 ### 3. `30-ingress` をデプロイする
 
-`30-ingress.yaml` は 51,200 バイトの上限のすぐ下にあり、超えてもよいことになっています。将来のリリースで超えても止まらないよう、いつも `20-platform` が作った S3 Bucket を経由して渡します（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）。
+`30-ingress.yaml` の大きさは 51,200 バイトの上限のすぐ下で、上限を超えることも許容しています。将来のリリースで超えてもデプロイが止まらないよう、いつも `20-platform` が作った S3 Bucket を経由して渡します（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）。
 
 Google でサインインする配備では次のとおりです。
 
@@ -202,14 +202,14 @@ Microsoft Entra ID（や Okta・Keycloak など）の配備では、`GoogleClien
 | `Fqdn` / `HostedZoneId` | Console の名前と、それを含む Route 53 のホストゾーン。ゾーンはこのアカウントにある必要があります |
 | `AllowedEmails` / `AllowedDomains` | サインインを許すメールアドレスとドメイン |
 | `SuperAdminEmails` | 配備管理者（super_admin）になる人 |
-| `OidcIssuer` | Entra ID ではテナントの GUID で固定します。`/common/` や `/organizations/` では世界中の Microsoft アカウントがサインインの画面に届き、個人のアカウントは自分のメールアドレスを書き換えられます。そのため Control Plane は、`OidcAllowedTids` がないかぎり起動しません |
+| `OidcIssuer` | Entra ID ではテナントの GUID で固定します。`/common/` や `/organizations/` では世界中の Microsoft アカウントがサインインの画面まで進めてしまい、個人のアカウントは自分のメールアドレスを書き換えられます。そのため Control Plane は、`OidcAllowedTids` が設定されていないかぎり起動しません |
 | `ImageTag` | リリースのイメージでは `ImageTag=<v>` を足します。既定の `dev` は、開発用に push した `:dev` に合わせたものです |
 
-ACM の DNS 検証と Route 53 のエイリアスは自動です。最初のデプロイは、証明書の発行で数分長くかかります。
+ACM の DNS 検証と Route 53 のエイリアスは自動で設定されます。最初のデプロイは、証明書の発行で数分長くかかります。
 
 ### 4. 動いたことを確かめる
 
-1. `https://<your-fqdn>/readyz` が 200 を返すことを確かめます。`/healthz` はデータベースが死んでいても 200 を返すので、確かめるのは `/readyz` です
+1. `https://<your-fqdn>/readyz` が 200 を返すことを確かめます。`/healthz` はデータベースが落ちていても 200 を返すので、確かめるのは `/readyz` です
 2. Console を開き、`SuperAdminEmails` の人でサインインします
 3. 費用をメンバーごとに分けるなら、ここでワークスペースを 1 つ起動します（[費用をメンバーごとに分ける](#費用をメンバーごとに分ける任意)）
 
@@ -225,13 +225,13 @@ ACM の DNS 検証と Route 53 のエイリアスは自動です。最初のデ�
 4. AWS がタグのキーを見つけるのを待ちます（最大 24 時間）
 5. コスト配分タグを有効にします。**ふだんは Control Plane が自動で行います**（下を参照）
 
-| こと | 中身 |
+| 要点 | 中身 |
 |---|---|
 | さかのぼらない | 有効にする前の日の費用は、誰の分かを後から分けられません。待つ間の費用も同じです |
-| キーごとにアカウントで 1 回 | 有効にするのはタグのキーだけで、値の区別はありません。テナントやメンバーが増えても、何もいりません |
+| キーごとにアカウントで 1 回 | 有効にするのはタグのキーだけで、値の区別はありません。テナントやメンバーが増えても、追加の作業はいりません |
 | 支払いアカウントだけ | AWS Organizations では、管理（支払い）アカウントだけが有効にできます |
 | 見たことのないキーは有効にできない | AWS がまだ実際のリソースで見ていないキーは `ValidationException: Tag keys not found` で拒否されます |
-| `af-workspace` は有効にしない | 値がメンバーのメールアドレスから作られるので、有効にすると請求データ（CUR・Cost Explorer・請求書の CSV）にそれが写ります。Control Plane が結び付けに使うのは、ランダムな ID の `af-membership` です |
+| `af-workspace` は有効にしない | 値がメンバーのメールアドレスから作られるので、有効にすると請求データ（CUR・Cost Explorer・請求書の CSV）にそのアドレスが載ります。Control Plane が費用の突き合わせに使うのは、ランダムな ID の `af-membership` です |
 
 Control Plane は、AWS が各キーを見つけるまで、ポーリングのたびにタグの有効化をやり直します。`af-workspace` は飛ばし、人がオフにしたタグには触りません。
 
@@ -244,7 +244,7 @@ aws ce update-cost-allocation-tags-status --region us-east-1 \
     {"TagKey":"af-pool","Status":"Active"},{"TagKey":"af-slot-size","Status":"Active"}]'
 ```
 
-AWS が何を見つけたかは `list-cost-allocation-tags` でわかります。`Inactive` で載っているキーはすぐ `Active` にでき、載っていないキーはまだ何もタグを書いていません。待つのは、そのキーが初めて現れるときだけです。
+AWS が何を見つけたかは `list-cost-allocation-tags` でわかります。`Inactive` で載っているキーはすぐ `Active` にでき、載っていないキーは、まだどのリソースにも書かれていません。待つのは、そのキーが初めて現れるときだけです。
 
 ## 関連
 

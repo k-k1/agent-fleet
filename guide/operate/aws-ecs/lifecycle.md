@@ -75,7 +75,7 @@ It stops or deletes everything billed by the hour, in the one order that strands
 | Order | What stops | On the way back (`--up`) |
 |---|---|---|
 | 1 | Workspaces | Members start their own |
-| 2 | The slots and the inference engines' GPU instances, waited for; `--fast` ends them directly | — |
+| 2 | The slots and the inference engines' GPU instances, waited for; `--fast` stops the slots and terminates the GPU instances directly | — |
 | 3 | The egress gateway (with `EgressRoute=gateway`) | Started with the NAT gateway, and waited for before and after the Control Plane |
 | 4 | The Control Plane | After the database |
 | 5 | A sweep that terminates any inference engine instance still alive | — |
@@ -91,7 +91,7 @@ It stops or deletes everything billed by the hour, in the one order that strands
 A NAT gateway has no "stop", so it is deleted, **through `00-network`'s `NatEnabled` parameter, never with `delete-nat-gateway`**: the stack would keep a dead physical id and the next update would fail.
 
 - `pause.sh` runs `cloudformation deploy` of `cfn/00-network.yaml` with `NatEnabled=false` / `true`; every other parameter keeps its live value
-- A round trip is 1–2 minutes each way, and the egress IP is unchanged because `NatEip` is retained
+- Deleting and recreating it take 1–2 minutes each, and the egress IP is unchanged because `NatEip` is retained
 - Nothing in a private subnet reaches ECR, logs or the internet while the gateway is gone
 - A capture taken while paused records `NatEnabled=false`; `standup.sh` overrides it to `true`
 - `pause.sh` deploys the template of **this checkout**, so a network stack older than it gains the workspace subnets on a pause or a resume. It gains the S3 endpoint only switched off (`S3EndpointEnabled=false`, passed when the stack has never had the switch)

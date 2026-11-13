@@ -30,7 +30,7 @@ AWS で手軽にセルフホストしたいだけなら、これではなく EC2
 | 静的な土台 | CloudFormation（`deploy/aws/ecs/cfn/`） | VPC・サブネット・NAT・セキュリティグループ、EFS ファイルシステム、RDS、ECR、ECS クラスター、Service Connect の名前空間、IAM ロール、ALB（ACM、TLS の終端だけ）、Control Plane と Console のサービス |
 | ワークスペースごと | 動いている Control Plane | ECS サービス、タスク定義、EFS アクセスポイント、SSM の SecureString パラメータ |
 
-- Control Plane はワークスペースのリソースを、決まった名前とタグで見つけます。どこにも状態を持ちません
+- Control Plane はワークスペースのリソースを、決まった名前とタグで見つけます。それらについての状態を自分では持ちません
 - スタックは配備ごとに 1 回デプロイするだけです。ワークスペースが増えても減っても、スタックは変わりません
 
 ## スタックの分けかた
@@ -40,7 +40,7 @@ AWS で手軽にセルフホストしたいだけなら、これではなく EC2
 | テンプレート | 要るとき | 中身 |
 |---|---|---|
 | `cfn/00-network.yaml` | いつも | VPC、2 つの AZ のパブリック・プライベートサブネット、インターネットゲートウェイ、NAT、基本のセキュリティグループ（`alb` / `cp` / `ws`） |
-| `cfn/10-data.yaml` | いつも | EFS ファイルシステムとマウントターゲット、RDS（Postgres、シングル AZ、既定は db.t4g.micro、マスターパスワードは RDS が管理）。`CustodianKmsKey=create` なら Control Plane の鍵の KMS 鍵も |
+| `cfn/10-data.yaml` | いつも | EFS ファイルシステムとマウントターゲット、RDS（Postgres、シングル AZ、既定は db.t4g.micro、マスターパスワードは RDS が管理）。`CustodianKmsKey=create` なら、Control Plane の鍵に使う KMS 鍵も |
 | `cfn/20-platform.yaml` | いつも | ECR（Control Plane とワークスペース、任意のエンジン用の `af-voicevox`・`af-llamacpp`・`af-comfyui`・`af-engine-tools`）、ECS クラスター、Service Connect の名前空間（`af.internal`）、IAM ロール（`cp-task` / `exec` / `ws-task`） |
 | `cfn/40-ec2-pool.yaml` | `WsRuntime=ecs-ec2` のときだけ | ワークスペースのスロットの起動テンプレート、スロットのインスタンスロールとセキュリティグループ。インスタンスは作らず、Control Plane が必要なときに起動する |
 | `cfn/50-tts.yaml` | 日本語の読み上げを使うときだけ | VOICEVOX のエンジン（ふだんはゼロにしておく Fargate のサービス）、Cloud Map の名前、専用のセキュリティグループ |

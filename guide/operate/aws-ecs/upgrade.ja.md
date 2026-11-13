@@ -14,12 +14,12 @@ ECS の配備を新しいリリースに上げ、問題があれば前のリリ�
 
 | あなたがやること | 起きること |
 |---|---|
-| 先に RDS と EFS のバックアップを取る | 戻る道ができる |
+| 先に RDS と EFS のバックアップを取る | 元に戻せるようになる |
 | `update.sh` を実行する | イメージを確かめ、`20-platform` などを順に更新し、`30-ingress` の `ImageTag` を変える。Control Plane のサービスがブルー/グリーンで入れ替わる |
 | 何もしない | 動いているワークスペースは古いイメージのまま。次に停止して起動したときに新しいイメージになる |
 | 前のタグでもう一度上げる | 前のリリースに戻る |
 
-Control Plane とワークスペースのイメージは、同じ版で一緒に上げます。`30-ingress` のパラメータ `ImageTag`（既定は `dev`）が、両方のタグです。
+Control Plane とワークスペースのイメージは、同じバージョンにそろえて一緒に上げます。`30-ingress` のパラメータ `ImageTag`（既定は `dev`）が、両方のタグです。
 
 ## 上げる前に
 
@@ -30,7 +30,7 @@ Control Plane とワークスペースのイメージは、同じ版で一緒に
 - `Persistence=retain` なら RDS には日次の自動バックアップがありますが、最新のものはほぼ 1 日前かもしれません
 - EFS に日次のバックアップがあるのは、データスタックにバックアップのボールトとプランがあるときだけです（次で確かめます）
 
-RDS のスナップショットと、EFS のオンデマンドの復旧ポイントを取ってください。EFS の復旧ポイントにはボールトが要るので、古い配備では先に次の確認をします。
+RDS のスナップショットと、EFS のオンデマンドの復元ポイントを取ってください。EFS の復元ポイントにはボールトが要るので、古い配備では先に次の確認をします。
 
 ### EFS のバックアップがあるか確かめる
 
@@ -48,9 +48,9 @@ aws cloudformation describe-stacks --stack-name af-ecs-data \
 
 1. `deploy --no-execute-changeset` で変更セットを作ります。パラメータを渡さなければ、保存されている値のままです
 2. `describe-change-set` で中身を見ます
-3. 足されるのが `EfsBackup*` の 4 つのリソースだけのときだけ、`execute-change-set` で実行します。`FileSystem` か `Db` に `Modify` や `Replacement` があれば、実行せずに止めます。`retain` ではどちらも残す設定ですが、作り直しは新しい空のリソースです
+3. 足されるのが `EfsBackup*` の 4 つのリソースだけのときだけ、`execute-change-set` で実行します。`FileSystem` か `Db` に `Modify` や `Replacement` があれば、実行せずに止めます。`retain` ではどちらも消さずに残す設定ですが、作り直されると新しい空のリソースになります
 
-v0.26.0 より前に建てた `Persistence=retain` の配備は、それ以来 EFS のバックアップがなく、ほかに知らせるものもありません。v0.26.0 を越えて上げたら、この確認を 1 回実行してください。データスタックの出力に `EfsBackupVaultName` が出て、翌朝に日次の復旧ポイントがあれば（`aws backup list-recovery-points-by-backup-vault`）完了です。
+v0.26.0 より前に建てた `Persistence=retain` の配備は、それ以来 EFS のバックアップがないまま動いていて、ほかにそれを知らせるものはありません。v0.26.0 を越えて上げたら、この確認を 1 回実行してください。データスタックの出力に `EfsBackupVaultName` が出て、翌朝に日次の復元ポイントがあれば（`aws backup list-recovery-points-by-backup-vault`）完了です。
 
 ## `update.sh` で上げる
 
@@ -74,15 +74,15 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 
 | すること | 中身 |
 |---|---|
-| EFS のバックアップがないと警告する | `Persistence=retain` だけ。読み取りだけで確かめ、ないときは直す変更セットのコマンドを、デプロイの前と最後に表示する。上げるのは止めず、`10-data` も更新しない。ファイルシステムの ARN をそのまま名指すバックアップの選択だけを数え、読めなかったときや、`NotResources`・`Conditions`・タグで選んでいるときは「確認できない」と報告する |
+| EFS のバックアップがないと警告する | `Persistence=retain` だけ。読み取りだけで確かめ、ないときは直す変更セットのコマンドを、デプロイの前と最後に表示する。上げるのは止めず、`10-data` も更新しない。バックアップの選択は、ファイルシステムの ARN をそのまま指定しているものだけを数え、読めなかったときや、`NotResources`・`Conditions`・タグで選んでいるときは「確認できない」と報告する |
 | ECR にないタグを拒否する | CloudFormation は文字列を保存するだけなので、push を忘れてもデプロイは成功し、Control Plane のタスクが `CannotPullContainerError` で落ちる。両方のリポジトリを先に確かめる |
-| 空の変更セットに気づく | 同じタグに push し直すとテンプレートが変わらず、デプロイは「No changes to deploy」になり、古いイメージのまま動き続ける。そのときは `ecs update-service --force-new-deployment` に切り替え、サービスが落ち着くまで待つ |
-| `ecs-ec2` でスロットプールをデプロイし直す | スロットのユーザーデータにセキュリティの設定があるため。起動テンプレートのバージョンを足すだけで、今あるスロットは起動したときのユーザーデータのまま。プールのスタックが見つからないと**止まる**（探すのに `cloudformation:ListExports` が要る）。`--pool-stack <stack>` で名指しできる |
-| 失敗した追加のスタックを越えて進み、最後に失敗する | `50-tts` と `60-engines` のデプロイが失敗しても、`30-ingress` までデプロイして Control Plane を上げ、最後に `FAILED:` でスタックを名指して 0 以外の終了コードで終わる。スタックのイベントで原因を直し、もう一度実行する。それより前の失敗（イメージの確認、`20-platform`、スロットプール）では止まる |
-| リポジトリ・イメージ・スタックの順を守る | `20-platform`（ECR のリポジトリを持つ）を変更セットで先にデプロイし、作り直すものがないときだけ実行する。次に `af-engine-tools:<EngineToolsImageTag>` を GHCR から ECR に入れ、それから `60-engines` をデプロイする。逆の順では、スタックは成功してもエンジンの取得のコンテナが `CannotPullContainerError` のままになる。GHCR にもタグがなければ止まるので、先に `engine-tools-image.yml` を実行する |
+| 空の変更セットに気づく | 同じタグに push し直すとテンプレートが変わらず、デプロイは「No changes to deploy」になり、古いイメージのまま動き続ける。そのときは `ecs update-service --force-new-deployment` に切り替え、サービスが安定するまで待つ |
+| `ecs-ec2` でスロットプールをデプロイし直す | スロットのユーザーデータにセキュリティの設定があるため。起動テンプレートのバージョンを足すだけで、今あるスロットは起動したときのユーザーデータのまま。プールのスタックが見つからないと**止まる**（探すのに `cloudformation:ListExports` が要る）。`--pool-stack <stack>` で指定できる |
+| 追加のスタックが失敗しても先に進み、最後に失敗として終わる | `50-tts` と `60-engines` のデプロイが失敗しても、`30-ingress` までデプロイして Control Plane を上げ、最後に `FAILED:` に続けてスタック名を示し、0 以外の終了コードで終わる。スタックのイベントで原因を直し、もう一度実行する。それより前の失敗（イメージの確認、`20-platform`、スロットプール）では止まる |
+| リポジトリ・イメージ・スタックの順を守る | `20-platform`（ECR のリポジトリを持つ）を変更セットで先にデプロイし、作り直すものがないときだけ実行する。次に `af-engine-tools:<EngineToolsImageTag>` を GHCR から ECR に入れ、それから `60-engines` をデプロイする。逆の順では、スタックは成功してもエンジンの取得用のコンテナが `CannotPullContainerError` のままになる。GHCR にもタグがなければ止まるので、先に `engine-tools-image.yml` を実行する |
 | 空になった値を消す | ネットワークやデータのスタックにもうない値（ダウングレード後の `WorkspaceSubnets` など）を、`30-ingress` と `20-platform` で変更セットを使って消し、読み戻す。ネットワークスタックを読めなければ、何も消さずに止まる |
-| 古いイメージのワークスペースを一覧する | 自動では動かないため。ワークスペースは止めない。止めるとそのメンバーのセッションが切れるので、いつにするかはメンバーが決める |
-| プライベートサブネットに残るワークスペースを一覧する | ネットワークスタックにワークスペース用のサブネットがあるとき。`S3EndpointEnabled` がすでに `true` なら警告になる。`00-network` はデプロイしない |
+| 古いイメージのワークスペースを一覧する | 自動では新しいイメージに移らないため。ワークスペースは止めない。止めるとそのメンバーのセッションが切れるので、いつにするかはメンバーが決める |
+| プライベートサブネットに残る、動いているワークスペースを一覧する | ネットワークスタックにワークスペース用のサブネットがあるとき。`S3EndpointEnabled` がすでに `true` なら警告になる。`00-network` はデプロイしない |
 | 残ったゴールデンスナップショットを知らせる | `ecs-ec2` だけ。前のイメージで作ったゴールデンは使われず、新しいメンバーのホームは空から作られる（最初の起動が遅くなるだけ）。自動の作り直し（既定でオン）なら、空きスロットが 2 つあれば数分で置き換わる。オフなら `bake-golden.sh` で作り直す |
 
 ## 手で上げる
@@ -116,9 +116,9 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 
 ### 「要再起動」が出ないとき
 
-「要再起動」は、ワークスペースが起動したときのイメージと、タグが今指すイメージを、Control Plane が ECR で比べて出します。版の番号は比べません。
+「要再起動」は、ワークスペースが起動したときのイメージと、タグが今指すイメージを、Control Plane が ECR で比べて出します。バージョン番号は比べません。
 
-- そのために、`CpTaskRole` に、ワークスペースのリポジトリに対する `ecr:BatchGetImage` / `ecr:DescribeImages` が要ります。古い配備では、`20-platform` を 1 回デプロイし直してください。権限がないと比べられず、エラーも出ないまま、バッジが出ません
+- そのために、`CpTaskRole` に、ワークスペースのリポジトリに対する `ecr:BatchGetImage` / `ecr:DescribeImages` が要ります。古い配備では、`20-platform` を 1 回デプロイし直してください。権限がないと比較が失敗しますが、エラーは出ず、バッジも出ません
 - `AF_ECS_WORKSPACE_IMAGE` が ECR のイメージでない配備（GHCR を直接使うなど）には、バッジは出ません
 
 ## 戻す
@@ -135,7 +135,7 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 ## パラメータを空に戻す
 
 `aws cloudformation deploy --parameter-overrides Key=` では、動いているスタックの値が空になりませんでした（「No changes」）。CLI は空の値を送っていて、原因はわかっていません。
-`update.sh` と `standup.sh` は、空にする値を自分で空にして読み戻します。手で空にするときは `clear-params.sh` を使います。
+`update.sh` と `standup.sh` は、空にする必要のある値を自分で空にし、読み戻して確かめます。手で空にするときは `clear-params.sh` を使います。
 
 ```bash
 ./clear-params.sh --profile <p> --region <r> --stack <stack> <Key>...
@@ -146,7 +146,7 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 | 実行のしかた | 中身 |
 |---|---|
 | オプションなし | 変更セットを作り、リソースの変更と空になるキーを表示し、変更セットを残して、実行するコマンドを表示して止まる |
-| `--execute <change-set-name> <Key>...` | 表示を読んで良ければ実行する。変更セットがない、`AVAILABLE` でない、そのキーを空にするだけのものでないときは拒否する（なくなっていたり実行中だったりしなければ、その変更セットを消す）。実行後に各値を読み戻す |
+| `--execute <change-set-name> <Key>...` | 表示を確かめて問題なければ、これで実行する。変更セットがない、`AVAILABLE` でない、そのキーを空にするだけのものでないときは拒否する（なくなっていたり実行中だったりしなければ、その変更セットを消す）。実行後に各値を読み戻す |
 | `--yes` | 作る・表示する・実行するを 1 回で行う |
 | `--dry-run` | 作って表示し、変更セットを消す |
 
@@ -155,11 +155,11 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 
 ## `ecs-ec2`: スロットの AMI は Amazon の SSM パラメータに従う
 
-`WsRuntime=ecs-ec2` では、Control Plane が Amazon の公開している ECS 最適化の AL2023 の AMI のパラメータ（x86_64 と arm64）を約 1 時間ごとに読み、その AMI でスロットを起動します。デプロイしなくても、スロットは Amazon の更新に追随します。
+`WsRuntime=ecs-ec2` では、Control Plane が、Amazon の公開している ECS 最適化 AL2023 AMI の SSM パラメータ（x86_64 と arm64）を約 1 時間ごとに自分で読み、その AMI でスロットを起動します。デプロイしなくても、スロットは Amazon の更新に追随します。
 
 - `SlotAmiId`・`SlotAmiIdArm64`・`Ec2SlotAmiArm64` は、最初の値と、読めないときの予備の値です
 - Control Plane のロールに、`arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/amazon-linux-2023/*` への `ssm:GetParameter` と `ec2:DescribeLaunchTemplateVersions` が要ります。どちらも `20-platform` にあるので、新しい Control Plane の**前か同時に** `20-platform` をデプロイします
-- それまでは、Control Plane はログに 1 行出して静かに予備の値を使い、AMI を理由にスロットを古いとはしません
+- それまでは、Control Plane はログに 1 行出して静かに予備の値を使い、AMI を理由にスロットを古いと判定することはありません
 - 上げたあと最初の新しい AMI で、すべてのスロットが一斉に古くなり、次の起動で入れ替わります
 
 古いスロットがどう入れ替わるかは [スロットを入れ替える・止める](slot-maintenance.ja.md) にあります。
@@ -173,7 +173,7 @@ v0.34.x の `00-network` には、ポリシーのない S3 のゲートウェイ
 **新しい `00-network` を既定値のままデプロイしないでください。** `S3EndpointEnabled` の既定は `true` で、変更セットはワークスペース用の 6 つのリソースの *Add* と `S3Endpoint` の *Modify*（ポリシー）になります。実行すると、プライベートサブネットに残るすべてのワークスペースの S3 のリクエストが、一斉に拒否されます。
 
 1. **バックアップを取ります**（[上げる前に](#上げる前に)）
-2. **`00-network` を `S3EndpointEnabled=false` で、変更セットを使ってデプロイします。** スタックに `CAPABILITY_IAM` が要るようになりました（`EgressRoute=gateway` のときだけ作る出口のゲートウェイのインスタンスロールを宣言しているため）
+2. **`00-network` を `S3EndpointEnabled=false` で、変更セットを使ってデプロイします。** スタックに `CAPABILITY_IAM` が要るようになりました（`EgressRoute=gateway` のときだけ作る egress ゲートウェイのインスタンスロールを宣言しているため）
 
    ```bash
    aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \

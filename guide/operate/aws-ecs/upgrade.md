@@ -50,7 +50,7 @@ No output (`None`) for `EfsBackupVaultName` means the data stack is still from b
 2. Read it with `describe-change-set`
 3. Execute it with `execute-change-set` only if it adds the four `EfsBackup*` resources and nothing else. A `Modify` or `Replacement` on `FileSystem` or `Db` means stop and do not execute: both are retained under `retain`, but a replacement is still a new, empty resource
 
-A `Persistence=retain` deployment stood up before v0.26.0 has had no EFS backup since, and nothing else says so. After upgrading past v0.26.0, run this check once. `EfsBackupVaultName` appearing in the data stack's outputs and a daily recovery point the next morning (`aws backup list-recovery-points-by-backup-vault`) close it.
+A `Persistence=retain` deployment stood up before v0.26.0 has had no EFS backup since, and nothing else says so. After upgrading past v0.26.0, run this check once. You are done when `EfsBackupVaultName` appears in the data stack's outputs and a daily recovery point exists the next morning (`aws backup list-recovery-points-by-backup-vault`).
 
 ## Upgrade with `update.sh`
 
@@ -159,7 +159,7 @@ With `WsRuntime=ecs-ec2` the Control Plane reads Amazon's public ECS-optimized A
 
 - `SlotAmiId`, `SlotAmiIdArm64` and `Ec2SlotAmiArm64` are the initial and fallback values
 - The Control Plane's role needs `ssm:GetParameter` on `arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/amazon-linux-2023/*` and `ec2:DescribeLaunchTemplateVersions`. Both are in `20-platform`: deploy it **before or with** the new Control Plane
-- Until then the Control Plane falls back quietly (one log line) and calls no slot outdated on its AMI
+- Until then the Control Plane falls back quietly (one log line) and never marks a slot outdated because of its AMI
 - The first new AMI after the upgrade makes every slot outdated at once; they are replaced at their next start
 
 How outdated slots are replaced is in [Replace and stop slots](slot-maintenance.md).
