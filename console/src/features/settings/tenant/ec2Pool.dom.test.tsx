@@ -603,6 +603,19 @@ describe("replacement reservations", () => {
       expect(host!.querySelector("[role=status]")?.textContent).toContain("3 分");
     });
 
+    // #4087: the server answers 202 when the request ended after it had taken over the stop.
+    it("shows an accepted, still-running stop as in progress, not as done", async () => {
+      api.mockResolvedValue(WEDGED);
+      apiJSON.mockResolvedValue({ instance_id: "i-wedge", cancelled_commands: 0, cancel_failed: 0, forced: false, force_after_sec: 0, in_progress: true });
+      await mount();
+      await act(async () => buttonsIn(rowOf("i-wedge")).find((b) => b.textContent === "停止（強制）")!.click());
+      const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+      await act(async () => actions[actions.length - 1].click());
+      const status = host!.querySelector("[role=status]")?.textContent || "";
+      expect(status).toContain("受け付けました");
+      expect(status).not.toContain("停止を送りました");
+    });
+
     it("keeps Stop (force) on a slot that is still stopping, for the second press", async () => {
       api.mockResolvedValue({
         ...POOL,

@@ -1,6 +1,7 @@
 package tenantsrv
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -166,6 +167,10 @@ func orDash(s string) string {
 // a quarantined slot (409 slot_quarantined), and a slot whose agents both answer (409 slot_healthy — the Console sets the
 // override only after the operator confirms the agents still answer). Whatever the adapter managed before failing is
 // kept in the audit line, since the occupant's Start may be ended with the stop still unsent.
+//
+// Once the adapter has taken its ownership token the work runs on the CP's own context, and the
+// request only bounds the wait: when the client goes away or the time runs out first, the answer
+// is 202 with in_progress=true and the audit outcome is written when the work ends.
 func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -192,41 +197,66 @@ func (a Admin) ForceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident s
 	if !ok {
 		return
 	}
-	res, ok, err := a.cp.ForceStopSlot(r.Context(), id, body.OverrideHealthy)
+	// finish records the outcome. It runs on the handler's thread, or, when the request ended
+	// after the force-stop had taken its token, from the runtime once the work is done.
+	finish := func(ctx context.Context, res runtime.SlotForceStop, err error) *APIError {
+		detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t predicate=%s cancelled=%d cancel_failed=%d forced=%t deregistered=%t",
+			orDash(res.Workspace), orDash(res.PreviousState), res.AgentConnected, res.SSMOnline, body.OverrideHealthy, orDash(res.Predicate),
+			res.CancelledCommands, res.CancelFailed, res.Forced, res.Deregistered)
+		aerr := forceStopAPIError(err)
+		if aerr != nil {
+			in.Done(ctx, "error "+aerr.Code+": "+aerr.Message+" ("+detail+")", aerr.Status)
+			return aerr
+		}
+		in.Done(ctx, detail, http.StatusOK)
+		return nil
+	}
+	ctx := runtime.WithForceStopLate(r.Context(), func(res runtime.SlotForceStop, err error) {
+		// The request is gone; this is the outcome the 202 promised.
+		finish(context.Background(), res, err)
+	})
+	res, ok, err := a.cp.ForceStopSlot(ctx, id, body.OverrideHealthy)
 	if !ok {
 		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
 		return
 	}
-	detail := fmt.Sprintf("workspace=%s state=%s agent_connected=%t ssm_online=%t override=%t predicate=%s cancelled=%d cancel_failed=%d forced=%t deregistered=%t",
-		orDash(res.Workspace), orDash(res.PreviousState), res.AgentConnected, res.SSMOnline, body.OverrideHealthy, orDash(res.Predicate),
-		res.CancelledCommands, res.CancelFailed, res.Forced, res.Deregistered)
-	var aerr *APIError
-	switch {
-	case err == nil:
-	case errors.Is(err, runtime.ErrSlotNotFound):
-		aerr = &APIError{http.StatusNotFound, "no_such_slot", err.Error()}
-	case errors.Is(err, runtime.ErrSlotNotRunning):
-		aerr = &APIError{http.StatusConflict, "slot_not_running", err.Error()}
-	case errors.Is(err, runtime.ErrSlotQuarantined):
-		aerr = &APIError{http.StatusConflict, "slot_quarantined", err.Error()}
-	case errors.Is(err, runtime.ErrSlotTaskENIHeld):
-		aerr = &APIError{http.StatusConflict, "slot_task_eni_held", err.Error()}
-	case errors.Is(err, runtime.ErrSlotStartedAgain):
-		aerr = &APIError{http.StatusConflict, "slot_started_again", err.Error()}
-	case errors.Is(err, runtime.ErrSlotHealthy):
-		aerr = &APIError{http.StatusConflict, "slot_healthy", err.Error()}
-	case errors.Is(err, runtime.ErrSlotHealthUnknown):
-		aerr = &APIError{http.StatusConflict, "slot_health_unknown", err.Error()}
-	case errors.Is(err, runtime.ErrSlotRescueActive):
-		aerr = &APIError{http.StatusConflict, "slot_rescue_active", err.Error()}
-	default:
-		aerr = internalErr(err)
+	if errors.Is(err, runtime.ErrSlotForceStopInProgress) {
+		// No in.Done: the late callback writes the single outcome row when the work ends.
+		writeJSON(w, http.StatusAccepted, struct {
+			runtime.SlotForceStop
+			InProgress bool `json:"in_progress"`
+		}{res, true})
+		return
 	}
-	if aerr != nil {
-		in.Done(r.Context(), "error "+aerr.Code+": "+aerr.Message+" ("+detail+")", aerr.Status)
+	if aerr := finish(r.Context(), res, err); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	in.Done(r.Context(), detail, http.StatusOK)
 	writeJSON(w, http.StatusOK, res)
+}
+
+// forceStopAPIError maps the adapter's answers onto the API's; nil for success.
+func forceStopAPIError(err error) *APIError {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, runtime.ErrSlotNotFound):
+		return &APIError{http.StatusNotFound, "no_such_slot", err.Error()}
+	case errors.Is(err, runtime.ErrSlotNotRunning):
+		return &APIError{http.StatusConflict, "slot_not_running", err.Error()}
+	case errors.Is(err, runtime.ErrSlotQuarantined):
+		return &APIError{http.StatusConflict, "slot_quarantined", err.Error()}
+	case errors.Is(err, runtime.ErrSlotTaskENIHeld):
+		return &APIError{http.StatusConflict, "slot_task_eni_held", err.Error()}
+	case errors.Is(err, runtime.ErrSlotStartedAgain):
+		return &APIError{http.StatusConflict, "slot_started_again", err.Error()}
+	case errors.Is(err, runtime.ErrSlotHealthy):
+		return &APIError{http.StatusConflict, "slot_healthy", err.Error()}
+	case errors.Is(err, runtime.ErrSlotHealthUnknown):
+		return &APIError{http.StatusConflict, "slot_health_unknown", err.Error()}
+	case errors.Is(err, runtime.ErrSlotRescueActive):
+		return &APIError{http.StatusConflict, "slot_rescue_active", err.Error()}
+	default:
+		return internalErr(err)
+	}
 }

@@ -129,11 +129,22 @@ type forceStopFactory struct {
 	res      runtime.SlotForceStop
 	fsErr    error
 	override []bool
+	// lateRes / lateErr, when lateErr or inProgress is set, make the adapter answer
+	// ErrSlotForceStopInProgress and deliver this final answer to the late callback.
+	inProgress bool
+	lateRes    runtime.SlotForceStop
+	lateErr    error
 }
 
-func (f *forceStopFactory) ForceStopSlot(_ context.Context, id string, override bool) (runtime.SlotForceStop, error) {
+func (f *forceStopFactory) ForceStopSlot(ctx context.Context, id string, override bool) (runtime.SlotForceStop, error) {
 	f.asked = append(f.asked, id)
 	f.override = append(f.override, override)
+	if f.inProgress {
+		if fn := runtime.ForceStopLateFrom(ctx); fn != nil {
+			fn(f.lateRes, f.lateErr)
+		}
+		return f.res, runtime.ErrSlotForceStopInProgress
+	}
 	return f.res, f.fsErr
 }
 
@@ -169,6 +180,31 @@ func TestForceStopPoolSlotAuditsWhatTheAdapterDid(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no audit row for the force-stop: %+v", rows)
+	}
+}
+
+// The adapter ends the wait after taking its token (the request ended): the Console gets 202
+// in_progress, the audit has the intent now and exactly one outcome row once the work is done.
+func TestForceStopPoolSlotInProgressAnswers202AndAuditsTheLateOutcome(t *testing.T) {
+	f := &forceStopFactory{
+		inProgress: true,
+		res:        runtime.SlotForceStop{InstanceID: "i-wedge", Workspace: "af-ws-x"},
+		lateRes:    runtime.SlotForceStop{InstanceID: "i-wedge", Workspace: "af-ws-x", Deregistered: true, Forced: false},
+	}
+	st, adm := poolSlotFixture(t, f)
+	w := callForceStop(adm, "i-wedge", "boss@acme.co.jp", "")
+	if w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"in_progress":true`) {
+		t.Fatalf("force-stop = %d %s", w.Code, w.Body.String())
+	}
+	rows, _ := st.ListAuditByTenant(context.Background(), "", 10)
+	outcomes := 0
+	for _, a := range rows {
+		if a.Action == "pool.slot_force_stop" && a.HTTPStatus == http.StatusOK && strings.Contains(a.Detail, "deregistered=true") {
+			outcomes++
+		}
+	}
+	if outcomes != 1 {
+		t.Fatalf("want exactly one outcome row from the late answer, got %d: %+v", outcomes, rows)
 	}
 }
 

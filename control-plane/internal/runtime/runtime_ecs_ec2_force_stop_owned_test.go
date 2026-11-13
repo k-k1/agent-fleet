@@ -455,3 +455,71 @@ func TestForceStopYoungBlockedOperatorMarkerIsRefused(t *testing.T) {
 		t.Fatalf("err %v stops %v", err, h.ec2.stopForce)
 	}
 }
+
+// The request ends right after the deregistration (a closed Console page). The work belongs to
+// the CP from the moment the token is taken, so the stop still goes out, the token is released
+// and the episode recorded; the caller only learns it is in progress, and the final answer
+// reaches the late callback that writes the audit outcome.
+func TestForceStopFinishesWhenTheRequestEndsAfterTheDeregistration(t *testing.T) {
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	defer cancelReq()
+	type late struct {
+		res SlotForceStop
+		err error
+	}
+	lateCh := make(chan late, 1)
+	ctx := WithForceStopLate(reqCtx, func(r SlotForceStop, err error) { lateCh <- late{r, err} })
+	// Hold the work at the hook until the caller has stopped waiting, so the order is certain.
+	released := make(chan struct{})
+	hookAt("deregistered", func() {
+		cancelReq()
+		<-released
+	})
+	defer func() { rescueStepHook = nil }()
+
+	res, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+	if !errors.Is(err, ErrSlotForceStopInProgress) {
+		t.Fatalf("ForceStopSlot after the request ended = %+v, %v; want ErrSlotForceStopInProgress", res, err)
+	}
+	close(released)
+	var got late
+	select {
+	case got = <-lateCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the force-stop never finished after its request ended")
+	}
+	if got.err != nil || !got.res.Deregistered || stopsOnBox(h) != 1 {
+		t.Fatalf("late answer %+v, %v; stops %v", got.res, got.err, h.ec2.stopForce)
+	}
+	if slotMarker(h) != "" || latestEpisode(h.ec2.instances["i-wedge"].Tags) == "" {
+		t.Fatalf("marker %q episode %q: the token must be released and the episode recorded",
+			slotMarker(h), latestEpisode(h.ec2.instances["i-wedge"].Tags))
+	}
+}
+
+// A request that ends before the token is taken refuses cleanly and touches nothing: no
+// deregistration, no stop, and the caller gets the failure, not "in progress".
+func TestForceStopRequestEndedBeforeTheTokenTouchesNothing(t *testing.T) {
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rescueStepHook = func(c context.Context, step string) error {
+		if step == "counted" { // inside the token's preparation, before it is complete
+			cancel()
+			return c.Err()
+		}
+		return nil
+	}
+	defer func() { rescueStepHook = nil }()
+
+	res, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+	if err == nil || errors.Is(err, ErrSlotForceStopInProgress) {
+		t.Fatalf("ForceStopSlot = %+v, %v; want a refusal", res, err)
+	}
+	if stopsOnBox(h) != 0 || res.Deregistered {
+		t.Fatalf("a request that ended before the token touched the box: res %+v stops %v", res, h.ec2.stopForce)
+	}
+}
