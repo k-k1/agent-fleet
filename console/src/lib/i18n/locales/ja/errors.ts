@@ -440,6 +440,7 @@ export const errors = {
   "err.audit_unavailable": "何もしませんでした。誰が依頼したかを監査ログに記録できなかったためです。データベースが復旧してから再度お試しください。",
   "err.git_repo_create_forbidden": "このテナントでのあなたの役割では、リポジトリを作成できません。",
   "err.git_repo_manage_forbidden": "リポジトリの名前の変更と削除は、作成した人かテナント管理者だけができます。",
+  "err.git_data_not_durable": "内部 Git は止められています。この配備の Control Plane のデータ領域が永続ストレージにないため、Control Plane の入れ替えでリポジトリが失われてしまいます。運用担当者に連絡してください（AF_DATA_DURABLE_REQUIRED）。",
   "err.handoff_take_lost": "起動の前に引き継ぎが取り下げられたか、別の画面で確保されました。セッションは作っていません。",
   "err.inbox_invalid_recipient": "宛先に、このテナントで受け取れないメンバーが含まれています。",
   "err.inbox_recipient_not_accepting": "宛先に、あなたからは受け取らない設定の人がいます。",

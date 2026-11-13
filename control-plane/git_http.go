@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/cgi"
@@ -15,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/datadurable"
 	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -300,6 +303,15 @@ func (a gitServerAPI) authorizeGitRepo(r *http.Request, slug, repoSeg string) (n
 // a repository or a token. LFS clients get the JSON error body they expect.
 func (a gitServerAPI) requireBase(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Before authentication, like the base check: it says nothing about a token.
+		if e := a.mgr.gitDataRefused(); e != nil {
+			if strings.Contains(r.URL.Path, "/info/lfs/") {
+				writeLFSErr(w, e.status, e.message)
+				return
+			}
+			http.Error(w, e.message, e.status)
+			return
+		}
 		if a.publicBaseURL != "" {
 			h(w, r)
 			return
@@ -364,4 +376,66 @@ var gitBackendServe = func(w http.ResponseWriter, r *http.Request, slug, tenantR
 func requireGitAuth(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Basic realm="agent-fleet internal git"`)
 	http.Error(w, "authentication required", http.StatusUnauthorized)
+}
+
+// gitDataNotDurableMsg is the 503 body. It names the variable and points at the guide so
+// that a member can pass it on to the operator verbatim.
+var gitDataNotDurableMsg = "internal git is disabled: this deployment requires durable storage for the Control Plane's data directory (" +
+	envDataDurableRequired + " is set) but the directory is not on durable storage, so repositories would be lost when the Control Plane is replaced. " +
+	"Ask your operator; see " + dataDurableDocsURL
+
+const (
+	envDataDurableRequired = "AF_DATA_DURABLE_REQUIRED"
+	dataDurableDocsURL     = "https://agent-fleet.org/docs/ref/settings/#deployment-variables"
+	// orphanLogMax bounds the boot-time orphan listing so a stack with thousands of lost
+	// repositories cannot flood the log; the total is always printed.
+	orphanLogMax = 50
+)
+
+// initGitDataGuard runs once at boot. Required and not durable: the internal git feature
+// is refused (never the boot) and the log says so loudly.
+func (m *manager) initGitDataGuard() {
+	var mounts []datadurable.Mount
+	if f, err := os.Open("/proc/self/mountinfo"); err == nil {
+		mounts = datadurable.ParseMountInfo(f)
+		f.Close()
+	}
+	if why := datadurable.Refused(os.Getenv(envDataDurableRequired), m.dataRoot, mounts, datadurable.ResolveExisting); why != "" {
+		m.gitDataRefusal = gitDataNotDurableMsg
+		log.Printf("WARNING: internal git is DISABLED: %s=1 but %s. Repository creation and /git/ answer 503 until the data directory is on durable storage (%s)",
+			envDataDurableRequired, why, dataDurableDocsURL)
+	}
+}
+
+// gitDataRefused is the 503 for the internal git feature, or nil when it may run.
+func (m *manager) gitDataRefused() *apiError {
+	if m == nil || m.gitDataRefusal == "" {
+		return nil
+	}
+	return &apiError{http.StatusServiceUnavailable, errCodeGitDataNotDurable, m.gitDataRefusal}
+}
+
+// logOrphanGitRepos writes the boot-time orphan report: one summary line and at most
+// orphanLogMax names. Nothing is deleted: the rows are the only record of what was lost,
+// A push alone cannot restore one (create rejects the existing name, and there is no bare to
+// receive into): delete the row, re-create the repository, then push from a member's clone.
+func logOrphanGitRepos(ctx context.Context, st datadurable.Lister, root string) {
+	missing, err := datadurable.MissingGitRepos(ctx, st, root)
+	if err != nil {
+		log.Printf("WARNING: internal git orphan check: %v", err)
+		return
+	}
+	if len(missing) == 0 {
+		return
+	}
+	shown := missing
+	if len(shown) > orphanLogMax {
+		shown = shown[:orphanLogMax]
+	}
+	more := ""
+	if len(missing) > len(shown) {
+		more = fmt.Sprintf(" ... and %d more", len(missing)-len(shown))
+	}
+	log.Printf("WARNING: %d internal git repositories are in the ledger but have no bare repository under %s (lost with the data directory?); nothing was deleted. Listed: %s%s",
+		len(missing), datalayout.GitRoot(root), strings.Join(shown, ", "), more)
 }

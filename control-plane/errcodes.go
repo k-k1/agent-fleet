@@ -196,6 +196,9 @@ const (
 	// tenant_admin, because deleting takes the bare and its LFS objects with it.
 	errCodeGitRepoCreateForbidden = "git_repo_create_forbidden"
 	errCodeGitRepoManageForbidden = "git_repo_manage_forbidden"
+	// The internal git feature is refused because AF_DATA_DURABLE_REQUIRED is set and the
+	// data root is not durable storage (data_durable.go). Always a 503.
+	errCodeGitDataNotDurable = "git_data_not_durable"
 
 	// The member inbox (ADR 0111, inbox.go). An unknown, removed or other-tenant recipient
 	// is one code with one message, so the answer tells nobody who exists. A recipient who
