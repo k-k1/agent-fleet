@@ -54,7 +54,7 @@ thing.
 | Log in | login | Authenticating to an external CLI or service (claude, Civitai, gcloud). Authenticating to Agent Fleet itself is "sign in" (サインイン) |
 | Kind | kind | The kind of an agent or session (claude, codex, shell and the rest). Japanese writes 種類, never 種別 |
 | Credentials | credentials | Tokens, keys and logins that let you into a service. Japanese writes 認証情報, never 資格情報 (the screen label 資格情報の扱い stays as it is) |
-| Secret | secret | A value that is never displayed: a token, password or API key. Japanese writes シークレット, never 秘密; 秘密鍵, 公開鍵 and 暗号鍵 stay |
+| Secret | secret | A sensitive value such as a token, password or API key. It is hidden once entered; one shown at creation is shown that once and never again. Japanese writes シークレット, never 秘密; 秘密鍵, 公開鍵 and 暗号鍵 stay |
 | Sign-in method | sign-in method | An entry point a tenant registers: its own IdP or a GitHub organisation. Japanese prose writes サインイン方法; only a reference to today's tab name keeps its label, サインイン方式 |
 | Watch | watch | A session waiting on changes to a pull request or an outside system. Japanese writes ウォッチ, never 見張り |
 | Restore point | restore point | A point you can go back to. Japanese writes 復旧ポイント, never 復元ポイント |
