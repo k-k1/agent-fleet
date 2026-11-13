@@ -11,6 +11,10 @@ on:
         description: "agy version to verify (latest for self-update-enabled Workspaces)"
         type: string
         default: latest
+      model:
+        description: "Model for the contract's real turn (empty = the test's default, a cheap one with quota)"
+        type: string
+        default: ""
 
 permissions:
   actions: read # the failure report lists this run's failed steps
@@ -91,6 +95,7 @@ jobs:
         working-directory: workspace/agent
         env:
           E2E_REQUIRE: "1"
+          AF_AGY_CONTRACT_MODEL: ${{ inputs.model }}
         run: go test -tags contract -run '^TestDriftAgyToolHooks$' -count=1 -v -timeout 8m ./...
       - name: remember successfully tested latest
         if: success() && inputs.cli_version == 'latest'
