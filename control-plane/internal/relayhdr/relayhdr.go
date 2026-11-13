@@ -39,6 +39,10 @@ var allowedHeaders = map[string]bool{
 	"X-Requested-With": true, "X-Csrf-Token": true, "X-Csrftoken": true, "X-Xsrf-Token": true,
 	"Rsc": true, "Traceparent": true, "Tracestate": true, "Baggage": true,
 	"X-Request-Id": true,
+	// Next.js 16 dev: the client renders a navigation only after React's debug info for this
+	// request id arrives over the HMR socket, and the server finds that socket by the HTML
+	// request id. Drop either and every client-side navigation hangs on "Rendering…".
+	"X-Nextjs-Request-Id": true, "X-Nextjs-Html-Request-Id": true,
 }
 
 // allowedPrefixes are families: Sec-WebSocket-* (handshake), Sec-Fetch-* (Fetch Metadata) and

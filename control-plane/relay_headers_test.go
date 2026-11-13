@@ -27,7 +27,8 @@ var neededHeaders = map[string]string{
 	"Range": "bytes=0-9", "If-None-Match": `"etag"`, "If-Modified-Since": "Wed, 21 Oct 2015 07:28:00 GMT",
 	"Content-Type": "application/json", "Origin": "http://example.com", "Referer": "https://cp.example/x",
 	"User-Agent": "test-agent", "Last-Event-Id": "7", "Sec-Fetch-Site": "same-origin",
-	"Next-Action": "abc", "X-Csrftoken": "synthetic-django-csrf", "X-Requested-With": "XMLHttpRequest", "X-Csrf-Token": "synthetic-csrf",
+	"Next-Action": "abc", "X-Nextjs-Request-Id": "1a2b3c", "X-Nextjs-Html-Request-Id": "4d5e6f",
+	"X-Csrftoken": "synthetic-django-csrf", "X-Requested-With": "XMLHttpRequest", "X-Csrf-Token": "synthetic-csrf",
 }
 
 func putHeaders(r *http.Request, m map[string]string) {
