@@ -29,6 +29,16 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
+// agyContractModel is the model the contract's real turn runs on. agy's default model has
+// an exhausted quota on the contract sign-in, which turned this contract red as INCONCLUSIVE;
+// an explicit cheap model keeps it independent of that. AF_AGY_CONTRACT_MODEL overrides it.
+func agyContractModel() string {
+	if m := strings.TrimSpace(os.Getenv("AF_AGY_CONTRACT_MODEL")); m != "" {
+		return m
+	}
+	return "gemini-3.8-flash-low"
+}
+
 func TestDriftAgyToolHooks(t *testing.T) {
 	needBin(t, "agy")
 	if !agy.SignedIn() {
@@ -68,7 +78,9 @@ func TestDriftAgyToolHooks(t *testing.T) {
 	ran := filepath.Join(work, "tool-ran")
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "agy", "--dangerously-skip-permissions", "--print",
+	cmd := exec.CommandContext(ctx, "agy", "--dangerously-skip-permissions",
+		// --print takes the next argv as its prompt, so --model must come before it.
+		"--model", agyContractModel(), "--print",
 		"Run exactly this shell command and nothing else, then reply with the word done:\n\n```\ntouch "+session.ShellQuote(ran)+"\n```")
 	cmd.Dir = work
 	cmd.Env = agy.Env(os.Environ())
