@@ -520,9 +520,48 @@ func TestQuarantineIsNeverCollectedByTheSweeperOrTheOperatorsTerminate(t *testin
 	}
 }
 
-// The carry is a required step: a failed read or write stops the count, so the hold is never
-// voided by a bump that went ahead without it.
-func TestQuarantineCarryFailureStopsTheCount(t *testing.T) {
+// The count is bumped first and the carry follows for the count that bump reserved. The carry
+// is tried three times; one success keeps the hold, and three failures fail the Start loudly.
+func TestQuarantineCarryRetriesAndFailsTheStartWhenEveryAttemptFails(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		failFirst int // how many carry writes fail before one succeeds; 99 = all
+		wantErr   bool
+	}{"succeeds on the second attempt": {1, false}, "succeeds on the third": {2, false}, "all attempts fail": {99, true}} {
+		t.Run(name, func(t *testing.T) {
+			w := quarantineWorld(t, false)
+			g := w.count()
+			w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: g, Reason: "repeat: x", At: time.Now()})
+			failed := 0
+			w.h.ec2.createTagsFail = func(key, _ string) error {
+				if key == quarantineKey("vol-1", g+1) && failed < tc.failFirst {
+					failed++
+					return errBoom
+				}
+				return nil
+			}
+			_, err := w.rt().beginStart(ctx)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("beginStart err = %v, want error %v", err, tc.wantErr)
+			}
+			if w.count() != g+1 {
+				t.Fatalf("count %d: the bump comes first and is not undone", w.count())
+			}
+			_, held := w.rt().quarantineInForce(ctx, w.h.ec2.instances["i-dark"].Tags, "i-dark")
+			if held == tc.wantErr {
+				t.Fatalf("held=%v with wantErr=%v: the hold survives exactly when a carry succeeded", held, tc.wantErr)
+			}
+			if tc.wantErr && failed != carryAttempts {
+				t.Fatalf("attempts %d, want %d", failed, carryAttempts)
+			}
+		})
+	}
+}
+
+// N6: a carry that failed before reaching EC2 for the count it was meant for can no longer match
+// a later Start's token: the count was bumped first, so the number belongs to the failed
+// attempt's own Start, and the next Start gets a higher one.
+func TestQuarantineFailedCarryCannotMatchALaterStartsToken(t *testing.T) {
 	ctx := context.Background()
 	w := quarantineWorld(t, false)
 	g := w.count()
@@ -534,21 +573,20 @@ func TestQuarantineCarryFailureStopsTheCount(t *testing.T) {
 		return nil
 	}
 	if _, err := w.rt().beginStart(ctx); err == nil {
-		t.Fatal("beginStart went ahead without carrying the quarantine")
+		t.Fatal("the failed carry did not fail the Start")
 	}
-	if adm, err := w.rt().admitStart(ctx, true); err == nil {
-		t.Fatalf("admitStart = %+v, want the carry failure", adm)
-	}
-	if w.count() != g {
-		t.Fatalf("count %d moved from %d", w.count(), g)
-	}
+	// The failed attempt's write lands late, after the failure; then another Start counts.
 	w.h.ec2.createTagsFail = nil
-	w.h.ec2.describeVolumesErr = errBoom
-	if _, err := w.rt().beginStart(ctx); err == nil {
-		t.Fatal("beginStart went ahead although the home could not be read")
+	late := quarantineTag{Volume: "vol-1", Gen: g + 1, Reason: "repeat: x", At: time.Now()}
+	if _, err := w.rt().beginStart(ctx); err != nil {
+		t.Fatal(err)
 	}
-	if w.count() != g {
-		t.Fatalf("count %d moved from %d", w.count(), g)
+	if w.count() != g+2 {
+		t.Fatalf("count %d, want %d: the number the failed attempt used is not handed out again", w.count(), g+2)
+	}
+	w.setQuarantine(late) // the delayed write applies now
+	if _, held := w.rt().quarantineInForce(ctx, w.h.ec2.instances["i-dark"].Tags, "i-dark"); held {
+		t.Fatal("a delayed write of a failed attempt matched the next Start's token")
 	}
 }
 
@@ -572,10 +610,9 @@ func TestQuarantineSurvivesTheForceStopsTwoCounts(t *testing.T) {
 	}
 }
 
-// N5: the carry is a long AWS call before the bump. A lease that lapses during it must stop the
-// count, on both entrances (a Start and a Stop through beginStart, and admitStart/rescue through
-// bumpStartCount).
-func TestQuarantineCarryLeaseLapsingDuringItsCallStopsTheCount(t *testing.T) {
+// N5: the lease is asked after each answer in the carry. A lease that lapses while the tag write is
+// in flight ends the attempts (nothing more is written) and fails the Start, on both entrances.
+func TestQuarantineCarryLeaseLapsingDuringItsCallStopsTheAttempts(t *testing.T) {
 	ctx := context.Background()
 	for name, enter := range map[string]func(w *rescueWorld) error{
 		"beginStart": func(w *rescueWorld) error { _, err := w.rt().beginStart(ctx); return err },
@@ -585,18 +622,20 @@ func TestQuarantineCarryLeaseLapsingDuringItsCallStopsTheCount(t *testing.T) {
 			w := quarantineWorld(t, true)
 			g := w.count()
 			w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: g, Reason: "repeat: x", At: time.Now()})
+			writes := 0
 			w.h.ec2.onCreateTags = func(c context.Context, in *ec2.CreateTagsInput) {
 				for _, tg := range in.Tags {
 					if aws.ToString(tg.Key) == quarantineKey("vol-1", g+1) {
+						writes++
 						homeGuardOf(c).markLost() // the lease is gone while the write is in flight
 					}
 				}
 			}
 			if err := enter(w); err == nil {
-				t.Fatal("the count went ahead after the lease lapsed during the carry")
+				t.Fatal("the Start went ahead after the lease lapsed during the carry")
 			}
-			if w.count() != g {
-				t.Fatalf("count %d, want %d: a stale handler must not overtake a newer Start", w.count(), g)
+			if writes != 1 {
+				t.Fatalf("%d carry writes: a lapsed lease must end the attempts", writes)
 			}
 		})
 	}

@@ -68,27 +68,18 @@ func (e *ecsEC2Runtime) beginStart(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	defer unlock()
-	if e.pool.quarantines() {
-		cur, err := e.startGenNow(lctx)
-		if err == nil {
-			err = e.carryQuarantine(lctx, cur+1) // before the bump: see carryQuarantine
-		}
-		if err != nil {
-			return 0, fmt.Errorf("count the start of %s: %w", e.base.name, err)
-		}
-		// The carry is a long AWS call before the bump: a lease that lapsed during it means a
-		// newer Start may already hold this count, and a bump now would overtake it.
-		if err := homeGuardOf(lctx).check(); err != nil {
-			return 0, fmt.Errorf("count the start of %s: %w", e.base.name, err)
-		}
-	}
+	var gen int64
 	if e.leases == nil {
-		return e.generation().Add(1), nil
+		gen = e.generation().Add(1)
+	} else {
+		gen, err = e.leases.BumpCPCounter(lctx, homeStartGen+e.base.name)
+		if err = homeGuardOf(lctx).outcome(err); err != nil {
+			// A count that landed after the lock was lost stays: a higher count only makes a
+			// release or a failed launch leave the home alone.
+			return 0, fmt.Errorf("count the start of %s: %w", e.base.name, err)
+		}
 	}
-	gen, err := e.leases.BumpCPCounter(lctx, homeStartGen+e.base.name)
-	if err = homeGuardOf(lctx).outcome(err); err != nil {
-		// A count that landed after the lock was lost stays: a higher count only makes a
-		// release or a failed launch leave the home alone.
+	if err := e.carryAfterBump(lctx, gen); err != nil {
 		return 0, fmt.Errorf("count the start of %s: %w", e.base.name, err)
 	}
 	return gen, nil

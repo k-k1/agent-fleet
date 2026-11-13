@@ -307,24 +307,17 @@ func (e *ecsEC2Runtime) rescuePrepare(ctx context.Context, cmds ssmSlotCommands,
 
 // bumpStartCount is beginStart's increment, for a caller that already holds the claim lock.
 func (e *ecsEC2Runtime) bumpStartCount(lctx context.Context) (int64, error) {
-	if e.pool.quarantines() {
-		cur, err := e.startGenNow(lctx)
-		if err == nil {
-			err = e.carryQuarantine(lctx, cur+1) // before the bump: see carryQuarantine
-		}
-		if err != nil {
-			return 0, err
-		}
-		// See beginStart: the lease is asked again after the carry and before the bump.
-		if err := homeGuardOf(lctx).check(); err != nil {
-			return 0, err
-		}
-	}
+	var gen int64
 	if e.leases == nil {
-		return e.generation().Add(1), nil
+		gen = e.generation().Add(1)
+	} else {
+		var err error
+		gen, err = e.leases.BumpCPCounter(lctx, homeStartGen+e.base.name)
+		if err = homeGuardOf(lctx).outcome(err); err != nil {
+			return 0, err
+		}
 	}
-	gen, err := e.leases.BumpCPCounter(lctx, homeStartGen+e.base.name)
-	if err = homeGuardOf(lctx).outcome(err); err != nil {
+	if err := e.carryAfterBump(lctx, gen); err != nil {
 		return 0, err
 	}
 	return gen, nil

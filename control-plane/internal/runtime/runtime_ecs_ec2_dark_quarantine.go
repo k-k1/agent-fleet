@@ -218,17 +218,45 @@ func withoutQuarantineRecords(tags []ec2types.Tag) []ec2types.Tag {
 	return out
 }
 
-// carryQuarantine is the hand-over: a Start, a Stop or a rescue is about to count, and the home it
-// belongs to sits on a box that a valid record holds out. The record is written again for the
-// count that is about to exist, BEFORE the bump (a record for a count not yet reached is void
-// until the bump), so the hold survives the bump and the Start still finds the box a mismatch
-// and moves the home off it. Called under the claim lock, from the one place every count goes
-// through (bumpStartCount, beginStart).
+// carryAttempts is how many times the carry is tried under the claim lock.
+const carryAttempts = 3
+
+// carryAfterBump is the hand-over: a Start, a Stop or a rescue has just counted, and the home it
+// belongs to sits on a box that a valid record held out. The record is written again for the
+// new count so the hold survives and the Start still finds the box a mismatch and moves the home
+// off it. Called under the claim lock, from the one place every count goes through
+// (bumpStartCount, beginStart).
 //
-// It is a required step: a read or a write that fails, or a lease that is gone, is an error and
-// the count is not moved, because a bump without the carry would void the hold and let the next
-// Start reuse the box. Only under quarantine mode; a pool that has switched it off lets a Start
+// The count is bumped FIRST. The new count is then ours alone, reserved by the bump under the
+// lock, so a write for it that fails with an unknown outcome and lands late can only ever be
+// read as this attempt's own: no later attempt can be handed the same number. (Writing for
+// a count not yet reached would let a failed attempt's delayed write match another Start.)
+// The carry is tried carryAttempts times, the lease asked after every answer. If every attempt
+// fails the caller fails loudly: the count has moved and the hold is lost, so the box is an
+// ordinary slot again and the next Start may reuse it. That is the accepted residual of a
+// persistent AWS or IAM failure at this moment; if the box goes dark again, the rescue ladder
+// takes it again. Only under quarantine mode; a pool that has switched it off lets a Start
 // overtake a held box, which is the setting's cost.
+func (e *ecsEC2Runtime) carryAfterBump(ctx context.Context, gen int64) error {
+	if !e.pool.quarantines() {
+		return nil
+	}
+	var err error
+	for i := 0; i < carryAttempts; i++ {
+		if err = e.carryQuarantine(ctx, gen); err == nil {
+			return nil
+		}
+		if homeGuardOf(ctx).check() != nil || ctx.Err() != nil {
+			break // a lease that is gone ends the attempts: nothing more may be written
+		}
+	}
+	log.Printf("ecs-ec2: LOST THE QUARANTINE of the box under %s: carrying it to start %d failed (%v); the box can be reused until it goes dark again",
+		e.base.name, gen, err)
+	return fmt.Errorf("the quarantine could not be carried to start %d: %w", gen, err)
+}
+
+// carryQuarantine is one attempt of carryAfterBump: it finds the record that was in force at the
+// previous count and writes it again for newGen (already reserved by the bump).
 func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) error {
 	if !e.pool.quarantines() {
 		return nil
@@ -274,7 +302,7 @@ func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) error
 		}); err != nil {
 			return fmt.Errorf("carry the quarantine of %s to start %d: %w", slot, newGen, err)
 		}
-		return homeGuardOf(ctx).check() // the answer, too, is asked about before the count moves
+		return homeGuardOf(ctx).check()
 	}
 	return nil
 }
