@@ -54,7 +54,7 @@ Agents use commands like these.
 | Create a page | `confluence create "Title" SPACE --content "…"` |
 | Update a page | `confluence update PAGE_ID …` |
 
-- **What is written carries your name.** It reaches as far as your Atlassian account is allowed
+- **What is written carries your name.** It can do only what your Atlassian account is allowed to do
 - **Pages can be read and written as Markdown.** Japanese, emoji, tables, lists, and `code` or **bold** next to Japanese text are kept as they are
 - **Someone else's edit is never overwritten.** If another person changed the page after it was read, the update is
   refused. The agent reads the page again and redoes the edit

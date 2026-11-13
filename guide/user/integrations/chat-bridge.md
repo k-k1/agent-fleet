@@ -109,7 +109,7 @@ literally, put anything in front of it (for example a backtick).
 
 | Command | What it does |
 |---|---|
-| `!start <first instruction>` | Starts a new session with the same kind, model, driver and working copy as the thread's session, and gives it the instruction. It gets a thread of its own when its first notification arrives |
+| `!start <first instruction>` | Starts a new session with the same agent, model, execution method and working copy as the thread's session, and gives it the instruction. It gets a thread of its own when its first notification arrives |
 | `!attach <session>` | Binds **this thread** to another existing session. Replies here now go to that session |
 
 - `!attach` moves the thread: the session it was bound to loses it and opens a new thread with its next notification,
@@ -122,7 +122,7 @@ literally, put anything in front of it (for example a backtick).
 - The thread that `!attach` took away from the target is told it was replaced and no longer takes replies
 - The same rules as a reply apply: only the person who connected can use them, and only inside a session's thread.
   Shell and SSM sessions can be neither started from nor attached
-- `!start` never takes a repository, kind or host from the message. To start something else, use the Console or the
+- `!start` never takes a repository, agent or host from the message. To start something else, use the Console or the
   Fleet Operator thread
 
 ## Talk to the Fleet Operator

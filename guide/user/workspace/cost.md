@@ -41,7 +41,7 @@ Open **⚙ Settings → Running time**. It is a grid of 24 hours down and dates 
 - **What the shading shows** switches between **Sessions open**, **Sessions working** and **Running time**
 - Hover over a cell to see that hour's breakdown (minutes running, the most sessions)
 - Switch to **Table** for the same figures as numbers
-- Times are in your device's time zone
+- Times are in the time zone chosen in **⚙ Settings → "Display"** (by default, your browser's)
 - Recording samples every few minutes, so a cell is accurate to one sample
 
 A band of colour through the night is more often a workspace left running than work being done.

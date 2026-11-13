@@ -86,7 +86,7 @@ What happens when you forget the profile depends on the workspace.
 | A workspace in the usual setup (no AWS identity handed in) | Stops with "Unable to locate credentials" |
 | A workspace whose administrator gave the workspace role back, or the native runtime with the machine's own credentials | Runs against real AWS as that identity |
 
-In the last two, never leave the profile out. The details are in
+In either case of the second row, never leave the profile out. The details are in
 [af-aws-exec](../../ref/cli/af-aws-exec.md#why-a-command-needs-a-profile).
 
 ## Share one server between several sessions

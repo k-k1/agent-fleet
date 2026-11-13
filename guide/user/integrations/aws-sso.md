@@ -120,7 +120,7 @@ and one login covers all of them.
 - **To create one**: in the profile's form, choose "**New shared sign-in…**" under **Sign-in** and enter a name and
   the portal. For the next profile, pick that sign-in from the list
 - **To group profiles you already have**: check the box at the start of their rows and press "**Share one
-  sign-in**". Name the sign-in after the profile that is logged in now, and nobody has to log in again
+  sign-in**". Name the sign-in after the profile that is logged in now, and you do not have to log in again
 
 Grouped profiles are listed under one heading, and you log in and out from the heading. **Logging out logs out every
 profile in the sign-in.** To take a profile out, choose "**Its own sign-in**" under **Sign-in**. After you rename a
