@@ -103,7 +103,7 @@ Opening the roster asks no workspace anything. Apart from memory and CPU, the fi
 
 **Memory and CPU** show "Live usage: reading…" until the first reading arrives.
 
-- CPU reads "CPU 25% of 4 vCPU limit" where the runtime enforces a CPU limit, otherwise like "CPU 200% (100% = 1 core)"
+- CPU reads "CPU 25% of 4 vCPU limit" where the platform enforces a CPU limit, otherwise like "CPU 200% (100% = 1 core)"
 - At most three are read at a time. Cards off screen, hidden by the filter or stopped are not read, nor is anything while the browser tab is in the background
 
 ## Look at the member detail

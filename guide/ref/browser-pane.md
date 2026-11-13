@@ -7,16 +7,16 @@ source_of_truth: "this file for terminology and what the pane can and cannot do;
 
 English | [日本語](browser-pane.ja.md)
 
-Two different things can show a web app running inside a Workspace, and picking the
+Two different things can show a web app running inside a workspace, and picking the
 wrong one wastes a round trip. This is the contract for both.
 
 ## The two routes
 
 | Term | Contract |
 |---|---|
-| **Browser pane** (the button says "open in pane") | Chromium inside the Workspace opens `http://127.0.0.1:{port}{path}` directly and relays rendering and input to a Console pane. Use it for HMR, WebSocket, SSE, cookies, redirects, absolute asset paths, and anything the person needs to operate. |
+| **Browser pane** (the button says "open in pane") | Chromium inside the workspace opens `http://127.0.0.1:{port}{path}` directly and relays rendering and input to a Console pane. Use it for HMR, WebSocket, SSE, cookies, redirects, absolute asset paths, and anything the person needs to operate. |
 | **Lightweight preview** | A low-cost HTTP proxy opened in a new tab. Only for looking at JSON, a health endpoint or a simple static page once. No HMR, no WebSocket, no SSE; apps that depend on the root path, absolute assets, redirects or cookie paths are not guaranteed to work. |
-| **Page** | The temporary Chromium Page and its own browser context that the pane owns. How many may exist per Workspace is in [limits](limits.md#fixed-in-the-product); they share no cookies or storage. |
+| **Page** | The temporary Chromium Page and its own browser context that the pane owns. How many may exist per workspace is in [limits](limits.md#fixed-in-the-product); they share no cookies or storage. |
 
 **When in doubt, use the browser pane.** The lightweight preview is the cheap
 exception for "I just need to see one HTTP response".
@@ -37,20 +37,20 @@ browser pane; a single look at one HTTP response goes to the lightweight preview
 The three states the pane can show (`target-unreachable`, `disconnected`, `crashed`), what each
 means and what to do are in
 [See a web app you started — when it goes wrong](../user/preview/browser-pane.md#the-pane-shows-a-state-instead-of-the-page).
-The contract behind them: every recovery action (Reconnect, a Console reload, a Workspace
+The contract behind them: every recovery action (Reconnect, a Console reload, a workspace
 stop/start) creates a *new* Page at the current port and path, so cookies, storage and half-typed
 input are not restored.
 
 ## Lifecycle and resource limits
 
-- A visible browser connection keeps the Workspace warm.
+- A visible browser connection keeps the workspace warm.
 - When the pane is hidden or the Console's browser tab goes to the background,
   rendering stops. The Page is held for a grace period (see [limits](limits.md#fixed-in-the-product)) and then released. On return you
   get the same Page if it was held, or a new one built from the saved port and path.
 - Removing the pane's identity from the layout releases the Page. Where the identity
   survives (closing the last pane back to an empty view), the grace period applies
   instead, and the Page still counts against the limit during that grace period.
-- A Workspace stop discards the temporary Page but keeps the port and path in the
+- A workspace stop discards the temporary Page but keeps the port and path in the
   layout; after start, a visible pane rebuilds itself from the same target.
 - Ceilings (Chromium processes, concurrent Pages, viewport, frame rate) are in
   [limits](limits.md#fixed-in-the-product). It is not built for video or high-frame-rate checking.
@@ -78,7 +78,7 @@ on `kubernetes` runs under the Pod Security `restricted` level, which sets NoNew
 `chrome-sandbox` cannot elevate) and the runtime's default seccomp profile (no user namespaces).
 A Fargate task cannot be given `SYS_ADMIN`, so the same default seccomp profile refuses the
 namespaces the setuid helper would create. Either way Chromium's sandbox cannot start; running
-Chromium without its sandbox was decided against (ADR 0106, addendum 2026-10-04). `ecs-ec2`,
+Chromium without its sandbox is ruled out. `ecs-ec2`,
 `docker` and `native` are not affected.
 
 What you see instead:
@@ -95,7 +95,7 @@ What you see instead:
 The decision comes from the deployment's runtime, so it is the same for every member of it and
 shows even while the workspace is stopped.
 
-## For agents working inside a Workspace
+## For agents working inside a workspace
 
 You have no tool that opens, drives or sees this pane; it belongs to the person. Tell
 them the exact port and path and point them at Preview → open in pane. Never claim a

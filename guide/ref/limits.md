@@ -24,7 +24,7 @@ These do not vary by deployment.
 | Browser pane: frame rate | 12 fps while visible (JPEG quality 70) | Not usable for video |
 | Browser pane: hidden page retention | 60 seconds | After that the page is released and rebuilt from the saved port and path on return |
 | Browser pane: console messages kept | 200 | Oldest are dropped; this is not a persistent log |
-| Folder zip download: files / folders / depth | 20,000 / 4,000 / 32 levels | Refused with 413 and a message naming the limit; nothing is truncated (ADR 0111) |
+| Folder zip download: files / folders / depth | 20,000 / 4,000 / 32 levels | Refused with 413 and a message naming the limit; nothing is truncated |
 | Folder zip download: bytes read | 512 MiB | Counted on the bytes actually read, not the listing, so a file that grows mid-build is caught; refused with 413 |
 | Folder zip download: entries looked at / summed name length | 100,000 / 4 MiB | Refused with 413 |
 | Folder zip download: reading time | 45 s | Refused with 413 (below the load balancer's 60 s idle timeout, because nothing is sent until the archive is built). Cooperative: checked between reads and after the last one, so a call already stuck on a hung volume holds the build slot until it returns |
@@ -37,12 +37,12 @@ These do not vary by deployment.
 | Agent memory: Changes / Forgotten | the Console's Changes view shows the newest 100 and the memory history 300, and **Load older changes** pages back to the first change; `af-memory changes` lists 30 by default and `--limit` up to 300; the forgotten list shows 300 at a time with **Load older forgotten memories** | Nothing is out of reach in the Console; `af-memory changes` does not page |
 | Jumping to an older turn from a search hit | 8,000 transcript positions back, in at most 4 requests | The turn is not reached; a notice says it is too far back, and scrolling up loads it |
 
-> **Why the title limit is worth naming.** It used to differ per layer: a handoff
+> **Why the title limit is worth naming.** It once differed per layer: a handoff
 > proposal accepted 512 bytes, showed it on the card and in the launch dialog and let
-> you edit it, and then session creation alone refused it at 80, surfacing as
+> you edit it, and then session creation alone refused it at 80, surfacing only as
 > "failed to start worktree: title is too long". A limit enforced at different values
 > in different layers produces failures that appear only at one specific moment, which
-> is the hardest kind to diagnose.
+> is the hardest kind to diagnose. So there is one value, kept in one place.
 
 ## Set by the deployment
 

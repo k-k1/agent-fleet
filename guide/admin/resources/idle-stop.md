@@ -78,7 +78,7 @@ The force-stop button works even when the Agent is stuck.
 
 Under **Operations**, **Cannot be undone** holds **Clean home**, **Delete backups**, **Remove member**, **Destroy workspace** and **Delete this member**.
 You can run all of them, but unlike force-stop they cannot be reversed. Before pressing one, read what the confirmation dialog says it keeps and deletes.
-How to use them is in [Removing a member](../members/remove.md).
+How to use them is in [Remove a member](../members/remove.md).
 
 When something needs fixing on the host, such as a broken container that a restart does not fix, ask the deployment administrator.
 
@@ -91,7 +91,11 @@ When Agent Fleet is updated, running workspaces keep the old image. If a member 
 | **Automatic image refresh** ("Restart automatically onto a new image when idle") | Settings → Toolchains | The member. Off by default |
 | **Quiet time before an automatic image refresh** | The tenant's idle auto-stop | The deployment administrator. Empty takes the deployment default, 15 minutes unless the deployment changed it; `0` never |
 
-- It restarts once, for the quiet time, no session has run a turn or background work or been pinned with Keep awake, no repository import or image job has run, nobody has typed in a terminal or used the browser pane recently (30 minutes unless the deployment changed it), and no request (the Console, a preview) has reached the workspace
+- It restarts once none of the following has happened for the quiet time:
+  - a session ran a turn or background work, or is pinned with Keep awake
+  - a repository import or image job ran
+  - someone typed in a terminal or used the browser pane recently (within 30 minutes unless the deployment changed it)
+  - a request (the Console, a preview) reached the workspace
 - A session waiting on a person and a terminal left open without typing do not hold it off. When **Workspace stop after** is due first, the workspace is stopped instead, and its next start takes the new image
 - It is never recreated, so files stay. Sessions can be resumed, and the member gets one notification
 - Each image is tried automatically only once. If the start fails, the workspace stays stopped

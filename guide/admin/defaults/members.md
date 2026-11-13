@@ -30,7 +30,7 @@ Choose one here and the step then reads, for example, "Your team's default is Cl
 ![The "Agent to point new members at" screen: under the explanation, the "Default agent" selector and the "Save" button](../../assets/admin-member-defaults-en-light.webp)
 
 - **None** brings back the ordinary wording that lists the choices
-- Agents that need no account of the member's own are not offered: the shell, SSM and the deployment's inference engines. Who may use the inference engines is set under [Resource limits and sessions](../resources/engines.md#choose-the-members-who-may-use-them)
+- Agents that need no account of the member's own are not offered: the shell, SSM and the deployment's inference engines. Who may use the inference engines is set under [Choose who may use the inference engines and which models](../resources/engines.md#choose-the-members-who-may-use-them)
 - Each save is recorded in the audit log as `tenant.member_defaults`, with the agent chosen
 
 ## Set launch defaults, team repositories and operations settings
@@ -47,7 +47,6 @@ Under the agent, the same screen has three more groups. Press **Save** once afte
 - Operations settings are links and identifiers only. A URL must be `https` with no user name, query or fragment, so a token cannot be saved there. Secrets stay with each member
 - A group you leave empty is simply not applied. Saving clears the groups you emptied
 - The audit entry `tenant.member_defaults` lists every value saved
-
 
 ## When members see it
 
