@@ -363,3 +363,99 @@ func TestExpiredWatchIsNotRevivedByARepeat(t *testing.T) {
 		t.Fatalf("records = %d", len(e.List("a")))
 	}
 }
+
+type aliasSource struct{ *fakeSource }
+
+// Resolve spells "#1" and a pull request URL as the canonical o/r#1.
+func (a aliasSource) Resolve(ctx context.Context, ref, repo string) (Resolved, error) {
+	if ref == "#1" || ref == "https://example.test/o/r/pull/1" {
+		ref = "o/r#1"
+	}
+	return a.fakeSource.Resolve(ctx, ref, repo)
+}
+
+func TestRepeatAtTheLimitInAnotherSpellingOfTheRef(t *testing.T) {
+	e, _, _ := newTestEngine(aliasSource{&fakeSource{}}, &fakeSink{answer: Ready})
+	ctx := context.Background()
+	var first Subscription
+	for i := 0; i < MaxPerOwner; i++ {
+		s, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#" + strconv.Itoa(i+1), Types: []string{"pr.merged"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = s
+		}
+	}
+	for _, ref := range []string{"#1", "https://example.test/o/r/pull/1"} {
+		again, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: ref, Types: []string{"pr.merged"}})
+		if err != nil || !again.Existing || again.ID != first.ID {
+			t.Fatalf("%s: %+v, %v", ref, again, err)
+		}
+	}
+	var refused *ErrRefused
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "#99", Types: []string{"pr.merged"}}); !errors.As(err, &refused) {
+		t.Fatalf("a new subject at the limit: %v", err)
+	}
+}
+
+func TestDeadlineFailedCIOverlapIsOneNoticeUntilANewVersion(t *testing.T) {
+	for _, order := range [][2]string{{"pr.checks.*", "pr.checks.failed"}, {"pr.checks.failed", "pr.checks.*"}} {
+		src := &fakeSource{events: failedCI("v1"), hint: Hint{After: time.Minute}}
+		sink := &fakeSink{answer: Ready}
+		e, _, c := newTestEngine(src, sink)
+		ctx := context.Background()
+		for _, ty := range order {
+			r := subReq("a", ty)
+			r.Until = UntilDeadline
+			e.Subscribe(ctx, r)
+		}
+		for i := 0; i < 3; i++ {
+			e.Tick(ctx)
+			c.add(2 * time.Minute)
+		}
+		if len(sink.told) != 1 {
+			t.Fatalf("%v: told = %v, want one", order, sink.told)
+		}
+		src.events = failedCI("v2")
+		for i := 0; i < 3; i++ {
+			c.add(2 * time.Minute)
+			e.Tick(ctx)
+		}
+		if len(sink.told) != 2 || len(e.List("a")) != 2 {
+			t.Fatalf("%v: told = %v, watches = %d", order, sink.told, len(e.List("a")))
+		}
+	}
+}
+
+func TestFailedDeliveryRestoresTheClaimingWatchsOwnPending(t *testing.T) {
+	src := &fakeSource{events: failedCI("v1"), hint: Hint{After: time.Hour}}
+	sink := &fakeSink{answer: Ready, injectErr: errors.New("busy")}
+	e, _, _ := newTestEngine(src, sink)
+	ctx := context.Background()
+	r := subReq("a", "pr.checks.*")
+	r.Until = UntilDeadline
+	e.Subscribe(ctx, r)
+	e.Tick(ctx)
+	e.Tick(ctx)
+	sink.injectErr = nil
+	e.Tick(ctx)
+	if len(sink.told) != 1 || sink.told[0] != "a:pr.checks.completed:v1" {
+		t.Fatalf("told = %v", sink.told)
+	}
+	e.Tick(ctx)
+	if len(sink.told) != 1 {
+		t.Fatalf("the covered failed event was told again: %v", sink.told)
+	}
+}
+
+func TestExtensionTypesWithAnEqualVersionStaySeparate(t *testing.T) {
+	a := Event{Subject: "ext.demo:x", Type: "ext.demo.completed", Version: "1"}
+	b := Event{Subject: "ext.demo:x", Type: "ext.demo.failed", Version: "1"}
+	if sameResult(a, b) || sameResult(b, a) {
+		t.Fatal("independent extension types were merged")
+	}
+	if !sameResult(Event{Subject: "s", Type: "ci.run.completed", Version: "1"}, Event{Subject: "s", Type: "ci.run.failed", Version: "1"}) {
+		t.Fatal("ci.run pair not merged")
+	}
+}

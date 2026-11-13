@@ -358,12 +358,14 @@ func (e *Engine) findSameLocked(sub Subscription, now time.Time) int {
 }
 
 // mayRepeatLocked is the cheap guess, before Resolve, that r repeats a watch its owner holds: the
-// same reference as given, with the same source, types, until, wake and maker. Only the early
-// limit check relies on it; whether it is a repeat is decided after Resolve.
+// same source, types, until, wake and maker. The reference is not compared, because another
+// spelling of it (#1, a URL) names the same subject; whether it is a repeat is decided after
+// Resolve. Only the early limit check relies on it, and the check after Resolve still refuses a
+// watch that is not one.
 func (e *Engine) mayRepeatLocked(r Request, until string) bool {
 	probe := Subscription{Owner: r.Owner, Requester: r.Requester, Source: r.Source, Types: r.Types, Until: until, Wake: r.Wake}
 	for _, s := range e.state.Subs {
-		if s.Builtin == "" && !s.Done && !endedPending(s) && s.Ref == r.Ref {
+		if s.Builtin == "" && !s.Done && !endedPending(s) {
 			probe.Subject, probe.Due = s.Subject, s.Due
 			if sameWatch(s, probe) {
 				return true
@@ -759,6 +761,9 @@ type claimed struct {
 	evs    []Event
 	wasEnd bool
 	member bool
+	// extra are the claiming watch's own pending events that the notice also covered; they are
+	// consumed and restored with evs but not delivered.
+	extra []Event
 	// twins are the owner's other watches on the same subject that held the same events and
 	// were advanced by this one notice, without a notice of their own.
 	twins []claimed
@@ -837,6 +842,18 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 			s.setTold(ev)
 			s.dropPending(ev.Type)
 		}
+		var extra []Event
+		if s.Builtin == "" && !member {
+			// What this watch still holds that tells the same thing (a failed run's completed and
+			// failed events) is told by this notice too.
+			for _, p := range slices.Clone(s.Pending) {
+				if slices.ContainsFunc(evs, func(ev Event) bool { return sameResult(p, ev) }) {
+					s.setTold(p)
+					s.dropPending(p.Type)
+					extra = append(extra, p)
+				}
+			}
+		}
 		end := false
 		if s.Builtin != "" {
 			s.Sent++
@@ -846,7 +863,7 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 		} else if s.Until == UntilFirst {
 			s.Done, end = true, true
 		}
-		cl := claimed{sub: before, evs: evs, wasEnd: end, member: member}
+		cl := claimed{sub: before, evs: evs, extra: extra, wasEnd: end, member: member}
 		if s.Builtin == "" && !member {
 			cl.twins = e.collapseTwinsLocked(i, evs)
 		}
@@ -898,24 +915,20 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 
 // sameResult reports whether a and b tell a session the same thing. Equal type and version is
 // the same event. A failed CI result is also reported as X.completed and X.failed with one
-// version (pr.checks.*, ci.run.*), so those two are one result: a X.failed exists only when the
-// run failed, and the version names that run. Any other pair of types is never merged, however
-// equal the versions.
+// version for the families that are known to do so (pr.checks, ci.run): an X.failed exists only
+// when the run failed, and the version names that run. Any other pair of types is never merged,
+// however equal the versions: a source a member adds gives each of its types an independent
+// version.
 func sameResult(a, b Event) bool {
 	if a.Subject != b.Subject || a.Version != b.Version {
 		return false
 	}
-	if a.Type == b.Type {
-		return true
-	}
-	pa, ca := strings.CutSuffix(a.Type, ".completed")
-	pb, fb := strings.CutSuffix(b.Type, ".failed")
-	if ca && fb && pa == pb {
-		return true
-	}
-	pa, fa := strings.CutSuffix(a.Type, ".failed")
-	pb, cb := strings.CutSuffix(b.Type, ".completed")
-	return fa && cb && pa == pb
+	return a.Type == b.Type || ciPair[a.Type] == b.Type
+}
+
+var ciPair = map[string]string{
+	"pr.checks.completed": "pr.checks.failed", "pr.checks.failed": "pr.checks.completed",
+	EventRunCompleted: EventRunFailed, EventRunFailed: EventRunCompleted,
 }
 
 // collapseTwinsLocked advances the owner's other session watches on the same subject that hold
@@ -993,8 +1006,9 @@ func (e *Engine) releaseLocked(c claimed) {
 	} else {
 		return // ended since
 	}
-	for i := len(c.evs) - 1; i >= 0; i-- {
-		ev := c.evs[i]
+	all := append(slices.Clone(c.evs), c.extra...)
+	for i := len(all) - 1; i >= 0; i-- {
+		ev := all[i]
 		if v, ok := s.Told[ev.Type]; !ok || v != ev.Version {
 			continue
 		}

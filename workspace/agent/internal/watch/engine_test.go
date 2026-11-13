@@ -173,7 +173,7 @@ func TestDeadlineWatchDeliversEachNewVersionOnce(t *testing.T) {
 }
 
 func TestNotYetKeepsPendingAndOneNoticePerOwnerPerTick(t *testing.T) {
-	src := &fakeSource{events: []Event{ev("pr.checks.completed", "v1"), ev("pr.checks.failed", "v1")}, hint: Hint{After: time.Hour}}
+	src := &fakeSource{events: []Event{ev("pr.checks.completed", "v1"), ev("pr.checks.failed", "f1")}, hint: Hint{After: time.Hour}}
 	sink := &fakeSink{answer: Wait}
 	e, _, _ := newTestEngine(src, sink)
 	if _, err := e.Subscribe(context.Background(), Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.checks.*"}, Until: UntilDeadline}); err != nil {
