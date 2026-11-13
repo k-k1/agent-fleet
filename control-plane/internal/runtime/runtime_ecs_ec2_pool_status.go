@@ -63,8 +63,8 @@ type ec2SlotView struct {
 }
 
 // Values of ec2SlotView.Rung (ADR 0121 decision 5). Observing comes from the af-dark-since
-// stamp; rescuing, blocked and rescued from the af-rescue marker; quarantined is not produced
-// yet.
+// stamp; rescuing, blocked and rescued from the af-rescue marker; quarantined from a quarantined
+// box whose reason is rung L2's.
 const (
 	darkRungObserving   = "observing"
 	darkRungRescuing    = "rescuing"
@@ -83,6 +83,10 @@ const (
 // a recovery (scan off, home detached, a live claim, an AWS read that failed). A pure read; it
 // never writes.
 func darkView(inst ec2types.Instance) (since, rung string) {
+	// Rung L2: the af-quarantine tag. It outranks the marker, which is still on the box while
+	// the rescue is retried or finishing. A read-only view: a void one reads as quarantined
+	// until the sweeper clears it.
+	qtag, quarantined := hasQuarantineRecord(inst.Tags)
 	// A marker speaks for the box in any state: a rescued box is stopped, and the rung says
 	// how far the rescue got.
 	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && !m.Wedged && !m.Operator {
@@ -97,7 +101,13 @@ func darkView(inst ec2types.Instance) (since, rung string) {
 		if st, ok := parseDarkStamp(ec2TagValue(inst.Tags, ec2TagDarkSince)); ok {
 			since = st.since.UTC().Format(time.RFC3339)
 		}
+		if quarantined {
+			rung = darkRungQuarantined
+		}
 		return since, rung
+	}
+	if quarantined {
+		return qtag.At.UTC().Format(time.RFC3339), darkRungQuarantined
 	}
 	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning || inst.LaunchTime == nil {
 		return "", ""
@@ -409,7 +419,14 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			s.TemplateOutdated, s.OutdatedReasons, s.AMI = len(reasons) > 0, reasons, aws.ToString(inst.ImageId)
 			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
 			s.ReplaceReserved = s.ReplaceReservedAt != ""
-			s.DarkSince, s.Rung = darkView(inst)
+			// A void record is not a quarantine: the view reads the box without it.
+			view := inst
+			if q, held := probe.quarantineInForce(ctx, inst.Tags, id); held {
+				s.QuarantineReason = q.Reason // rung L2: the row stays a slot (Quarantined is the role's)
+			} else {
+				view.Tags = withoutQuarantineRecords(inst.Tags)
+			}
+			s.DarkSince, s.Rung = darkView(view)
 			s.WedgedSince, s.WedgedRung = wedgedView(inst)
 			st.Slots = append(st.Slots, s)
 		}

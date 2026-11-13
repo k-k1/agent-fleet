@@ -339,6 +339,18 @@ it("counts held, running and hibernating slots and says eviction happens once th
     expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).toEqual(["停止（強制）", "入れ替えを予約"]);
   });
 
+  // Rung L2 keeps af-role=slot, so the row keeps a slot's actions. It gets no Terminate: nothing
+  // locks a Start that is choosing the slot out, so the product does not offer it (ADR 0121).
+  it("offers a slot held out by the dark-slot ladder only its slot actions", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      slots: [{ instance_id: "i-l2", instance_type: "m7i.large", az: "ap-northeast-1a", state: "running", registered: false,
+        workspace: "", idle_minutes: 0, rung: "quarantined", dark_since: "2026-11-13T00:00:00Z", quarantine_reason: "repeat: x" }],
+    });
+    await mount();
+    expect(buttonsIn(rowOf("i-l2")).map((b) => b.textContent)).toEqual(["停止（強制）", "入れ替えを予約"]);
+  });
+
   it("renders the terminate button as a bordered danger button", async () => {
     api.mockResolvedValue(QUARANTINED);
     await mount();

@@ -301,6 +301,7 @@ func (f *ecsEC2Factory) GoldenFor(ctx context.Context, role, arch string) (Golde
 // not a trade this feature gets to make (the cost of not baking is a slow first start,
 // which is exactly what the golden is for and therefore nobody's emergency).
 func (f *ecsEC2Factory) BakeBlocked(ctx context.Context) (bool, string, error) {
+	probe := f.probeRuntime()
 	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(EC2TagPool, f.pool.pool),
@@ -313,7 +314,11 @@ func (f *ecsEC2Factory) BakeBlocked(ctx context.Context) (bool, string, error) {
 	}
 	n := 0
 	for _, r := range out.Reservations {
-		n += len(r.Instances)
+		for _, inst := range r.Instances {
+			if _, held := probe.quarantineInForce(ctx, inst.Tags, aws.ToString(inst.InstanceId)); !held {
+				n++
+			}
+		}
 	}
 	// One free slot is not enough: the bake needs one for the seed AND, later, one for
 	// the probe, and a bake that gets half way and then cannot place its probe would

@@ -147,7 +147,7 @@ type Slot = {
   stopping_task?: string;
   stopping_task_minutes?: number;
   /** When the dark-slot scan first saw this running slot dark (RFC 3339; ADR 0121), and the rung
-   *  it is on. Only "observing" is produced today; the rest are reserved for the rescue rungs. */
+   *  it is on. A quarantined slot's rung is "quarantined" (rung L2). */
   dark_since?: string;
   rung?: "observing" | "rescuing" | "blocked" | "rescued" | "quarantined" | "";
   /** When the wedged-slot scan first saw this running slot wedged (its agents answer, but a task is

@@ -42,6 +42,12 @@ func (e *ecsEC2Runtime) rescueSteps(ctx context.Context, slot string, m *rescueM
 			return err
 		}
 	}
+	if m.Phase.rank() < rescuePhaseDetaching.rank() {
+		// Rung L2, first trigger: the slot is out of the free list before its home is detached.
+		if err := e.rescueRepeatStage(ctx, slot, m); err != nil {
+			return err
+		}
+	}
 	if m.Phase.rank() < rescuePhaseDetached.rank() {
 		return e.rescueDetachStage(ctx, slot, m)
 	}
@@ -115,6 +121,12 @@ func (e *ecsEC2Runtime) readRescueBox(ctx context.Context, slot string, m *rescu
 // attached (so ECS lets go of it) and verify, bounded, that the ENI is physically gone.
 // Deregistration is assumed to do nothing else. A box with no task ENI is not deregistered.
 func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *rescueMarker) error {
+	// A context that has already ended (the force-stop's ENI deadline, spent by the steps before
+	// it) must not be left to the lock wait below: with a free lock and a done context a select
+	// picks either, and the deregistration would sometimes go out.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
 	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{slot}})
 	if err != nil {
 		return fmt.Errorf("%w: ENIs of %s: %w", errRescueAborted, slot, err)

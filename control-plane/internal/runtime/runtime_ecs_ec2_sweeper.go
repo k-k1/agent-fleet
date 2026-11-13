@@ -372,6 +372,9 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		for _, inst := range r.Instances {
 			id := aws.ToString(inst.InstanceId)
 			stamp := ec2TagValue(inst.Tags, ec2TagSlotIdleSince)
+			if _, held := probe.quarantineInForce(ctx, inst.Tags, id); held {
+				continue // rung L2: held out of the pool, kept as evidence, collected by nothing
+			}
 			if busy[id] {
 				// Occupied. Repair the other direction too — a mark left on a taken slot
 				// would otherwise stop it the moment its home is released next time, with
@@ -571,7 +574,7 @@ func (e *ecsEC2Runtime) terminateGate(ctx context.Context, instanceID string, in
 	}
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
-			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
+			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined || e.heldOut(ctx, inst) {
 				return fmt.Errorf("%w: %s is quarantined (only an operator may)", ErrTerminateRefused, instanceID)
 			}
 			if intent == terminateMakeRoom {
@@ -647,6 +650,10 @@ func (f *ecsEC2Factory) TerminateQuarantinedSlot(ctx context.Context, instanceID
 	if inst == nil {
 		return "", ErrSlotNotFound
 	}
+	// Only af-role=quarantined. A rung-L2 slot keeps af-role=slot, so a Start can still be choosing
+	// it when the operator presses Terminate, and nothing locks the picker out: terminating it
+	// could end a box a home was just placed on. The product does not offer that (ADR 0121,
+	// rung L2); an operator removes such a slot from the EC2 console.
 	if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleQuarantined {
 		return "", fmt.Errorf("%w (af-role=%s)", ErrSlotNotQuarantined, ec2TagValue(inst.Tags, EC2TagRole))
 	}

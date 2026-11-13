@@ -365,8 +365,24 @@ INVENTORY = [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-rescue": T})]),
     ("internal/runtime/runtime_ecs_ec2_dark_rescue.go", "dropRescueMarker", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-rescue": "vol-1/e/begun/1/t/"})]),
-    ("internal/runtime/runtime_ecs_ec2_dark_rescue.go", "finalizeRescue", "CreateTags", 1, [
-        on_existing("ec2:CreateTags", "instance", SLOT, {"af-wedge-at": T})]),
+    # One record per episode, never overwritten, and the prune of the records the repeat window
+    # can no longer see (ADR 0121 Open question 8, option b). Any key but af-pool / af-role is
+    # allowed on a resource of this pool, so no template change is needed for the new keys.
+    ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "recordEpisode", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-wedge-at-20261113T000000Z": T})]),
+    ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "recordEpisode", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-wedge-at-20261112T000000Z": None, "af-wedge-at": None})]),
+    # Rung L2 (ADR 0121): af-quarantine-<home>-<g_r>, one token-fenced tag per token on a slot that KEEPS af-role=slot (so no
+    # role value is added and the CP keeps SSM on the box). Any key but af-pool / af-role is
+    # allowed on a resource of this pool; the delete matches the value so a newer tag survives.
+    ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "writeDarkQuarantine", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-quarantine-vol-home-7":
+                    "vol-home:7/repeat: dark again within 24h0m0s of 2026-11-12T00:00:00Z/2026-11-13T00:00:00Z"})]),
+    ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "carryQuarantine", "CreateTags", 1, [
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-quarantine-vol-home-8":
+                    "vol-home:8/repeat: x/2026-11-13T00:00:00Z"})]),
+    ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "clearVoidQuarantine", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-quarantine-vol-home-6": "vol-home:6/repeat: x/2026-11-13T00:00:00Z"})]),
     ("internal/runtime/runtime_ecs_ec2_volumes.go", "clearSlotFree", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-idle-since": None})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "CreateTags", 1, [

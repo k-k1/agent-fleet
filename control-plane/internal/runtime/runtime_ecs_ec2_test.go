@@ -78,6 +78,13 @@ type fakeEC2 struct {
 	// createTagsErr makes CreateTags fail, without tagging anything, for a request that
 	// names this tag key.
 	createTagsErr map[string]error
+	// maxTags, when set, makes CreateTags refuse a request that leaves a resource with more tags
+	// (EC2's limit is 50); createTagsDeadline records the context deadline each key was sent with.
+	maxTags            int
+	onCreateTags       func(ctx context.Context, in *ec2.CreateTagsInput) // runs inside the call, before it applies
+	createTagsFail     func(key, value string) error                      // fails a CreateTags by key and value
+	stopErr            error                                              // makes StopInstances fail without stopping
+	createTagsDeadline map[string]time.Time
 	// deleteTagsErr makes DeleteTags fail, without deleting anything, for a request that
 	// names this tag key.
 	deleteTagsErr map[string]error
@@ -252,7 +259,8 @@ func filterMatch(filters []ec2types.Filter, get func(name string) []string) bool
 		hit := false
 		for _, want := range fl.Values {
 			for _, h := range have {
-				if h == want {
+				// EC2 filter values take a trailing * as a wildcard.
+				if h == want || (strings.HasSuffix(want, "*") && strings.HasPrefix(h, strings.TrimSuffix(want, "*"))) {
 					hit = true
 				}
 			}
@@ -556,10 +564,28 @@ func (f *fakeEC2) DetachVolume(_ context.Context, in *ec2.DetachVolumeInput, _ .
 	return &ec2.DetachVolumeOutput{}, nil
 }
 
-func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
+func (f *fakeEC2) CreateTags(ctx context.Context, in *ec2.CreateTagsInput, _ ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.onCreateTags != nil {
+		f.mu.Unlock()
+		f.onCreateTags(ctx, in)
+		f.mu.Lock()
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		if f.createTagsDeadline == nil {
+			f.createTagsDeadline = map[string]time.Time{}
+		}
+		for _, t := range in.Tags {
+			f.createTagsDeadline[aws.ToString(t.Key)] = dl
+		}
+	}
 	for _, t := range in.Tags {
+		if f.createTagsFail != nil {
+			if err := f.createTagsFail(aws.ToString(t.Key), aws.ToString(t.Value)); err != nil {
+				return nil, err
+			}
+		}
 		if err := f.createTagsErr[aws.ToString(t.Key)]; err != nil {
 			f.log("CreateTags REFUSED %s", aws.ToString(t.Key))
 			return nil, err
@@ -578,6 +604,22 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 			tags = &sn.Tags
 		} else {
 			continue
+		}
+		if f.maxTags > 0 {
+			// EC2 refuses a request that would leave a resource over its tag limit, and applies none of it.
+			n := len(*tags)
+			for _, t := range in.Tags {
+				found := false
+				for i := range *tags {
+					found = found || aws.ToString((*tags)[i].Key) == aws.ToString(t.Key)
+				}
+				if !found {
+					n++
+				}
+			}
+			if n > f.maxTags {
+				return nil, errors.New("TagLimitExceeded: the maximum number of tags (50) was exceeded")
+			}
 		}
 		for _, t := range in.Tags {
 			// OVERWRITE, like the real API. Appending left two tags with the same key and
@@ -729,6 +771,9 @@ func (f *fakeEC2) StartInstances(_ context.Context, in *ec2.StartInstancesInput,
 func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _ ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.stopErr != nil {
+		return nil, f.stopErr
+	}
 	for _, id := range in.InstanceIds {
 		f.log("StopInstances %s", id)
 		f.stopForce = append(f.stopForce, aws.ToBool(in.Force))
