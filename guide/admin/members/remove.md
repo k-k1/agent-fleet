@@ -69,7 +69,7 @@ Everything in the home is erased except logins and connections.
 
 A removed member stays on the roster marked "removed", so that steps 2 to 4 remain within reach later.
 
-1. In the removed member's **Operations**, press **Destroy workspace**. The home and whatever the runtime made for this person are deleted. **This cannot be undone**
+1. In the removed member's **Operations**, press **Destroy workspace**. The home and whatever was created for this person's workspace are deleted. **This cannot be undone**
 2. Once it is destroyed, **Delete this member** appears in the same place; press it
 
 **Delete this member** does not appear while the workspace is still there, because the home and its cloud resources would be left with nothing pointing at them.

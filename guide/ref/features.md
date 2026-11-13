@@ -121,7 +121,7 @@ Every row is under **Settings**; the tab is the "Where".
 | Agent Fleet shared memory management | member | Agent memory ([Read and correct agent memory](../user/memory/overview.md)) |
 | Version history of agents' own memory | member | Memory snapshots ([Restore memory from a snapshot](../user/memory/snapshots.md)) |
 | Agent Fleet memory from an agent outside Agent Fleet (off by default) | member | Agent memory → Settings ([Use memory from an external agent](../user/memory/external.md)) |
-| Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([09](../user/agents/muse.md#behavior)) |
+| Muse Code contributor mode (off by default) | member | Agents → Muse Code → Behaviour ([Connect Muse Code](../user/agents/muse.md#behavior)) |
 | Git hosting connections | member | Git hosting |
 | Internal repositories | member | Internal repos |
 | AWS profiles and SSM | member | AWS profiles/SSM ([Use AWS SSO](../user/integrations/aws-sso.md), [Log in to EC2 with SSM](../user/integrations/aws-ssm.md)) |
@@ -138,7 +138,7 @@ Every row is under **Settings**; the tab is the "Where".
 | Display, language and keys | member | Display / Keyboard |
 | Export / import settings | member | Export / import |
 | Toolchains | member | Toolchains |
-| Databases (Postgres / MySQL — install, start, stop, reset) | member | Toolchains |
+| Databases (Postgres / MySQL — install, start, stop, reset) | member | Databases |
 | Preview-subdomain settings | member | Preview subdomains (only where they are issued) |
 | Destructive actions | member | Danger zone (Recreate, Clean home; only where the deployment can perform them — [deploy-targets.md](deploy-targets.md)) |
 
@@ -195,7 +195,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Hugging Face and Civitai tokens for gated downloads | deployment admin (super_admin) | Admin → API tokens | [Take models into the inference engines](../operate/engines/models.md#register-the-tokens) |
 | Civitai Red (the NSFW sister domain) as a search source | deployment admin (super_admin), where the deployment was given it | Admin → API tokens | [Take models into the inference engines](../operate/engines/models.md#register-the-tokens) |
 | The speech engine and the shared pronunciation dictionary | deployment admin (super_admin) | Admin → Read aloud | [Run the read-aloud engine](../operate/engines/read-aloud.md) |
-| Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 08](../operate/engines/comfyui.md) |
-| Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [operator 09](../operate/engines/borrow.md) |
-| Chat inference on a llama.cpp of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [operator 10](../operate/engines/llama-cpp.md) |
+| Image generation on a ComfyUI of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [Generate images on your own ComfyUI](../operate/engines/comfyui.md) |
+| Borrowing another deployment's llm / image engines | deployment admin (super_admin) | a shell, plus a membership on the far deployment | [Borrow another deployment's engines](../operate/engines/borrow.md) |
+| Chat inference on a llama.cpp of your own | deployment admin (super_admin) | a shell, then Admin → Inference engines | [Chat on a llama.cpp on your LAN](../operate/engines/llama-cpp.md) |
 | The user guide inside containers | — | automatic | [roles.md](roles.md) |

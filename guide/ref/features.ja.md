@@ -7,10 +7,10 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 
 [English](features.md) | 日本語
 
-製品ができることを 1 行 1 つ、読者が出会う場所で束ねています。**誰が**はそれを使える
+製品の機能を 1 行に 1 つずつ、読者がその機能に出会う場所ごとにまとめています。**誰が**はそれを使える
 最小のロール（[roles.md](roles.ja.md)）、**どこ**は Console がその画面を呼ぶ名前です。
 
-**機能を出したのにここに行が無ければ、その機能は完了していません**
+**機能を出したのにここに行がなければ、その機能は完了していません**
 （`docs/CONVENTIONS.ja.md` §8）。
 
 ## セッションを扱う
@@ -120,7 +120,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | Agent Fleet 共有メモリの管理 | メンバー | エージェントメモリ（[エージェントのメモリを見る・直す](../user/memory/overview.ja.md)） |
 | エージェント自身のメモリの版管理 | メンバー | メモリのスナップショット（[スナップショットでメモリを戻す](../user/memory/snapshots.ja.md)） |
 | Agent Fleet の外のエージェントから Agent Fleet のメモリを使う（既定はオフ）| メンバー | エージェントメモリ → 設定（[外部のエージェントからメモリを使う](../user/memory/external.ja.md)） |
-| Muse Code の contributor モード（既定はオフ）| メンバー | エージェント → Muse Code → 動作（[09](../user/agents/muse.ja.md#動作設定)）
+| Muse Code の contributor モード（既定はオフ）| メンバー | エージェント → Muse Code → 動作（[Muse Code を接続する](../user/agents/muse.ja.md#動作設定)）
 | Git ホスティングの接続 | メンバー | Git ホスティング |
 | 内部リポジトリ | メンバー | 内部リポジトリ |
 | AWS プロファイルと SSM | メンバー | AWS プロファイル/SSM（[AWS SSO を使う](../user/integrations/aws-sso.ja.md)、[SSM で EC2 にログインする](../user/integrations/aws-ssm.ja.md)） |
@@ -137,14 +137,14 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 表示・言語・キー操作 | メンバー | 表示 / キー操作 |
 | 設定の書き出し / 取り込み | メンバー | 書き出し / 取り込み |
 | ツールチェーン | メンバー | ツールチェーン |
-| データベース（Postgres / MySQL — 導入・起動・停止・リセット） | メンバー | ツールチェーン |
+| データベース（Postgres / MySQL — 導入・起動・停止・リセット） | メンバー | データベース |
 | プレビュー用サブドメインの設定 | メンバー | プレビュー用サブドメイン（発行する配備のみ）|
-| 危険な操作 | メンバー | 危険な操作（作り直し・ホームの掃除。配備が実行できる場合だけ——[deploy-targets.md](deploy-targets.ja.md)） |
+| 危険な操作 | メンバー | 危険な操作（作り直し・ホームの掃除。配備が実行できる場合だけ。[deploy-targets.md](deploy-targets.ja.md)） |
 
 ## テナントの管理
 
-いずれも**テナント設定**の中。セクションは [admin/](../admin/README.ja.md)、
-どれが読み取り専用かは [roles.md](roles.ja.md)。
+いずれも**テナント設定**の中にあります。セクションは [admin/](../admin/README.ja.md)、
+どれが読み取り専用かは [roles.md](roles.ja.md) にあります。
 
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
@@ -174,27 +174,27 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
 | 配備形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
-| 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [インストールする](../operate/install.ja.md) / [アップグレードする](../operate/run/upgrade.ja.md) / [バックアップして復元する](../operate/run/backup-restore.ja.md) |
-| 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [サインイン](../operate/signin/overview.ja.md) |
+| 導入・更新・バックアップ・復旧 | 配備管理者 | シェル | [インストールする](../operate/install.ja.md) / [アップグレードする](../operate/run/upgrade.ja.md) / [バックアップして復元する](../operate/run/backup-restore.ja.md) |
+| 入口・TLS・サインイン方式 | 配備管理者 | シェル | [サインイン](../operate/signin/overview.ja.md) |
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [外向きの通信を制御する](../operate/secure/egress.ja.md) |
 | MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
 | プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [開発用サインインを使う](../operate/secure/dev-signin.ja.md#開発用-oidc-idp-をオンオフする) |
-| AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それから端末 | [保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)・[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md) |
+| AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それからシェル | [保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)・[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md) |
 | この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
-| 使わない間の配備の一時停止 | 配備管理者 | 端末 | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |
+| 使わない間の配備の一時停止 | 配備管理者 | シェル | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | 起動テンプレート変更後のスロットの入れ替え | 配備管理者（super_admin）| 管理 → スロット | [スロットを入れ替える・止める](../operate/aws-ecs/slot-maintenance.ja.md#古いスロット) |
 | 動かなくなったスロットの強制停止 | 配備管理者（super_admin）| 管理 → スロット → 停止（強制）| [スロットを入れ替える・止める](../operate/aws-ecs/slot-maintenance.ja.md#応答しないスロットを止める) |
 | 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [自前の GPU で推論エンジンを動かす](../operate/engines/gpu.ja.md#gpu-のインスタンスクラスを選ぶ) |
-| モデルの取り込み — 検索・計画カード・1 押し | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#計画を読んで取り込む) |
+| モデルの取り込み — 検索・計画カード・ワンクリックでの取り込み | 配備管理者（super_admin）、許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#計画を読んで取り込む) |
 | S3 Bucket — 配備が実際に持っているものの台帳 | 配備管理者（super_admin）| 管理 → 推論エンジン → モデルカタログ → バケット | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#s3-bucket-を見る) |
-| 目録のモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#登録済みの行を整える) |
+| カタログのモデル名・作例・ファミリー分類 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#登録済みの行を整える) |
 | 配布元の量子化一覧と、GPU クラスに収まるかの判定 | 配備管理者（super_admin）、または許可されたテナント管理者 | 管理 → 推論エンジン → モデルカタログ → 登録済み | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#別のサイズやバージョンに替える) |
 | Hugging Face / Civitai のトークン（ログインが要る取り込み）| 配備管理者（super_admin）| 管理 → API トークン | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#トークンを登録する) |
-| 検索の出所としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#トークンを登録する) |
+| 検索先としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#トークンを登録する) |
 | 音声エンジンと共通の読み仮名辞書 | 配備管理者（super_admin）| 管理 → 読み上げ | [読み上げエンジンを動かす](../operate/engines/read-aloud.ja.md) |
-| 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 08](../operate/engines/comfyui.ja.md) |
-| 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| 端末と、向こうの配備のメンバーシップ 1 つ | [operator 09](../operate/engines/borrow.ja.md) |
-| 自前の llama.cpp でのチャット推論 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 10](../operate/engines/llama-cpp.ja.md) |
+| 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| シェル、それから 管理 → 推論エンジン | [自前の ComfyUI で画像を生成する](../operate/engines/comfyui.ja.md) |
+| 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| シェルと、向こうの配備のメンバーシップ 1 つ | [別のデプロイのエンジンを借りる](../operate/engines/borrow.ja.md) |
+| 自前の llama.cpp でのチャット推論 | 配備管理者（super_admin）| シェル、それから 管理 → 推論エンジン | [LAN の llama.cpp でチャットする](../operate/engines/llama-cpp.ja.md) |
 | コンテナ内のユーザーガイド | — | 自動 | [roles.md](roles.ja.md) |

@@ -74,7 +74,7 @@ The kinds are `feature`, `bugfix`, `hotfix`, `release`, `support`, `docs`, `chor
 ## When members get them
 
 - Each member's workspace asks for the rules when it starts and every five minutes after that, so running workspaces get a change within five minutes
-- While the control plane cannot be reached, a workspace keeps using the last rules it received rather than going back to the built-in names
+- While the Control Plane cannot be reached, a workspace keeps using the last rules it received rather than going back to the built-in names
 - In the launch dialog, a field that came from the tenant's rules shows its source as `tenant: <match>`
 
 There is no setting that makes the rules binding. A name that does not follow them gets a note in the launch and rename dialogs, nothing more.

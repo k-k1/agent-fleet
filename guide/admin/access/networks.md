@@ -44,19 +44,19 @@ From outside the list, sign-in still works but the tenant's contents will not op
 
 - MCP and the built-in Git are called from inside the member's own workspace, so they say nothing about where the person is. To stop them, remove the member ([Remove a member](../members/remove.md))
 - It applies to this tenant only. Someone who also belongs to another tenant reaches that one under its own rules
-- This is an access restriction, not network defence: the request reaches the control plane and is refused after the session is checked. To stop requests before they arrive, have the deployment administrator narrow it at the load balancer
-- **MCP OAuth** on the same screen is about outside apps connecting ([MCP distribution and outside access](../mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth))
+- This is an access restriction, not network defence: the request reaches the Control Plane and is refused after the session is checked. To stop requests before they arrive, have the deployment administrator narrow it at the load balancer
+- **MCP OAuth** on the same screen is about outside apps connecting ([Distribute an MCP server to everyone](../mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth))
 
 ## When it goes wrong
 
 ### Your address reads "cannot be determined"
 
-The control plane cannot tell where requests come from, so no rule can be applied.
+The Control Plane cannot tell where requests come from, so no rule can be applied.
 Do not guess at a range; ask the deployment administrator to check the `AF_TRUSTED_PROXY_HOPS` setting.
 
 ### It says a proxy is not declared, and you cannot save
 
-A proxy sits in front of the control plane but the deployment has not declared it. Every request then looks like it comes from the proxy, and a rule meant to narrow would let everyone in, so saving is blocked.
+A proxy sits in front of the Control Plane but the deployment has not declared it. Every request then looks like it comes from the proxy, and a rule meant to narrow would let everyone in, so saving is blocked.
 Contact the deployment administrator.
 
 ## Related
