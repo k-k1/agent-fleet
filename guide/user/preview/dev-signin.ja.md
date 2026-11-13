@@ -125,7 +125,7 @@ spring:
 
 ## テスト用ペルソナで試す
 
-admin や viewer のような権限の出し分けを試すときは、「**テスト用ペルソナ**」で身元を足します。
+admin や viewer のような権限の出し分けを試すときは、「**テスト用ペルソナ**」で ID を足します。
 
 1. 「**ハンドル**」と、必要なら「**表示名**」を入れて「**追加**」を押します
 2. アプリでサインインすると確認の画面が出るので、自分かペルソナを選びます
@@ -139,7 +139,7 @@ admin や viewer のような権限の出し分けを試すときは、「**テ�
 
 自分の PC の `http://localhost:<ポート>` で動くアプリも、同じ IdP でサインインできます。ワークスペースが停止中でも使えます。
 
-1. ワークスペースの端末で 3 つの値を読みます：`printenv AF_DEV_IDP_ISSUER AF_DEV_IDP_CLIENT_ID AF_DEV_IDP_CLIENT_SECRET`。secret はコンテナの中にしかないので、読むときだけワークスペースを起動してください
+1. ワークスペースのターミナルで 3 つの値を読みます：`printenv AF_DEV_IDP_ISSUER AF_DEV_IDP_CLIENT_ID AF_DEV_IDP_CLIENT_SECRET`。secret はコンテナの中にしかないので、読むときだけワークスペースを起動してください
 2. 3 つを PC の環境変数に設定します
 3. アプリのコールバックを `http://localhost:<ポート>/<コールバックのパス>` にします。`127.0.0.1` でも、ポートは何番でも構いません
 4. その PC のブラウザで Console にサインインしたままにします。ほかのログインは要りません
@@ -159,8 +159,8 @@ admin や viewer のような権限の出し分けを試すときは、「**テ�
 
 - 置き換わるのはサインインだけです。Google API のアクセストークン（Calendar、Drive など）は得られず、`picture` もありません
 - トークンの寿命は 10 分、サインインのコードは 60 秒です
-- サインインの要求には、`none` 以外の `prompt`、`max_age`、`query` 以外の `response_mode` を付けられません。付けると `invalid_request` のエラーが返ります。Google 向けの例にある `prompt: "consent"` は外してください
-- 署名の鍵は 30 日ごとに替わり、古い鍵も 24 時間は JWKS に残ります。鍵を固定せず、ライブラリに discovery の URL から取らせてください
+- サインインのリクエストには、`none` 以外の `prompt`、`max_age`、`query` 以外の `response_mode` を付けられません。付けると `invalid_request` のエラーが返ります。Google 向けの例にある `prompt: "consent"` は外してください
+- 署名鍵は 30 日ごとに替わり、古い署名鍵も 24 時間は JWKS に残ります。署名鍵を固定せず、ライブラリに discovery の URL から取らせてください
 
 ## 困ったとき
 
