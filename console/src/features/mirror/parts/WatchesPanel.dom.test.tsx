@@ -5,12 +5,17 @@ import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { answerConfirm, confirmDialog } from "../../../test/confirmDialog.ts";
 import { WatchesPanel } from "./WatchesPanel.tsx";
 import { t } from "../../../lib/i18n/index.ts";
+import { useWorkItemStore } from "../../workitems/store.ts";
+import type { WorkItem } from "../../workitems/read.ts";
+import { useWorkItemModal } from "../../workitems/modal.ts";
 import type { SessionWatch } from "../../../core/api/client.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 afterEach(() => {
+  useWorkItemModal.getState().close();
+  useWorkItemStore.setState({ payload: null });
   act(() => root?.unmount());
   vi.useRealTimers();
   host?.remove();
@@ -118,5 +123,72 @@ describe("WatchesPanel", () => {
     expect(rows()[0].textContent).toContain(t("mirror.watch_in", { time: "5m" }));
     act(() => vi.advanceTimersByTime(6 * 60_000));
     expect(rows()[0].textContent).toContain(t("mirror.watch_due"));
+  });
+
+  describe("ticket links (#4010)", () => {
+    const click = (a: Element, init: MouseEventInit = {}) => {
+      const ev = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
+      act(() => {
+        a.dispatchEvent(ev);
+      });
+      return ev;
+    };
+    const link = (i: number) => rows()[i].querySelector<HTMLAnchorElement>("a.mw-ref")!;
+
+    it("opens the work item modal on a plain click and keeps the URL on the anchor", () => {
+      mount([pr]);
+      expect(link(0).getAttribute("href")).toBe("https://github.com/o/r/pull/1");
+      const ev = click(link(0));
+      expect(ev.defaultPrevented).toBe(true);
+      const detail = useWorkItemModal.getState().detail;
+      expect(detail?.item).toMatchObject({ provider: "github", key: "o/r#1" });
+      expect(detail?.reference).toBe(true);
+    });
+
+    it("keeps the linked pull request URL on the stand-in of an uncached ticket", () => {
+      mount([pr]);
+      click(link(0));
+      const detail = useWorkItemModal.getState().detail;
+      expect(detail?.reference).toBe(true);
+      expect(detail?.item.url).toBe("https://github.com/o/r/pull/1");
+    });
+
+    it("opens the cached row, read at click time, when the ticket is in the inbox", () => {
+      mount([pr]);
+      const row = { id: "x", queryId: "q", provider: "github", kind: "pr", key: "o/r#1", title: "Cached PR", state: "open", url: "https://github.com/o/r/pull/1", assignee: "", labels: [], labelColors: {}, repo: "o/r", updatedAt: "" } as unknown as WorkItem;
+      // Arrives after the panel was drawn: the lookup must not be frozen at render.
+      act(() => useWorkItemStore.setState({ payload: { items: [row], queries: [], fetchedAt: "", running: false, sessions: [] } }));
+      click(link(0));
+      const detail = useWorkItemModal.getState().detail;
+      expect(detail?.reference).toBe(false);
+      expect(detail?.item.title).toBe("Cached PR");
+    });
+
+    it("opens a Bitbucket pull request the same way", () => {
+      mount([{ ...pr, source: "bitbucket", ref: "o/r#2", url: "https://bitbucket.org/o/r/pull-requests/2" }]);
+      click(link(0));
+      expect(useWorkItemModal.getState().detail?.item).toMatchObject({ provider: "bitbucket", key: "o/r#2" });
+    });
+
+    it("leaves a Ctrl/Cmd/Shift click to the tracker page", () => {
+      mount([pr]);
+      for (const init of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }]) {
+        expect(click(link(0), init).defaultPrevented).toBe(false);
+      }
+      expect(useWorkItemModal.getState().detail).toBeNull();
+    });
+
+    it("keeps the external link for a URL that names no ticket", () => {
+      mount([{ ...pr, url: "https://github.com/o/r/compare/a...b" }]);
+      expect(click(link(0)).defaultPrevented).toBe(false);
+      expect(useWorkItemModal.getState().detail).toBeNull();
+    });
+
+    it("keeps a CI run row an external link", () => {
+      mount([{ ...run, url: "https://github.com/o/r/actions/runs/55" }]);
+      expect(link(0).target).toBe("_blank");
+      expect(click(link(0)).defaultPrevented).toBe(false);
+      expect(useWorkItemModal.getState().detail).toBeNull();
+    });
   });
 });
