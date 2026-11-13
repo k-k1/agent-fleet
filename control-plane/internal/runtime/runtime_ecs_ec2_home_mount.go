@@ -68,6 +68,9 @@ func (e *ecsEC2Runtime) beginStart(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	defer unlock()
+	if cur, err := e.startGenNow(lctx); err == nil {
+		e.carryQuarantine(lctx, cur+1) // before the bump: see carryQuarantine
+	}
 	if e.leases == nil {
 		return e.generation().Add(1), nil
 	}

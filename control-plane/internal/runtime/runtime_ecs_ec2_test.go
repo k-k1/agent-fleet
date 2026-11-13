@@ -258,7 +258,8 @@ func filterMatch(filters []ec2types.Filter, get func(name string) []string) bool
 		hit := false
 		for _, want := range fl.Values {
 			for _, h := range have {
-				if h == want {
+				// EC2 filter values take a trailing * as a wildcard.
+				if h == want || (strings.HasSuffix(want, "*") && strings.HasPrefix(h, strings.TrimSuffix(want, "*"))) {
 					hit = true
 				}
 			}

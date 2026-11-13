@@ -41,7 +41,7 @@ func (w *rescueWorld) realRole() string {
 
 // quarantine is the box's af-quarantine tag, if it parses.
 func (w *rescueWorld) quarantine() (quarantineTag, bool) {
-	return quarantineOf(w.h.ec2.instances["i-dark"].Tags)
+	return hasQuarantineRecord(w.h.ec2.instances["i-dark"].Tags)
 }
 
 // seedEpisode puts one per-episode record on the box, `ago` before now.
@@ -207,12 +207,17 @@ func TestQuarantineFailedWriteStopsBeforeTheDetachAndIsRetried(t *testing.T) {
 	w := quarantineWorld(t, false)
 	w.seedEpisode(time.Hour, episodeKindDark)
 	w.arm()
-	w.h.ec2.createTagsErr = map[string]error{ec2TagQuarantine: errBoom}
+	w.h.ec2.createTagsFail = func(key, _ string) error {
+		if strings.HasPrefix(key, ec2TagQuarantinePrefix) {
+			return errBoom
+		}
+		return nil
+	}
 	w.pass(w.f)
 	if w.role() != ec2RoleSlot || w.detachCalls() != 0 || attachedInstance(w.vol()) != "i-dark" || w.marker() == "" {
 		t.Fatalf("role %q detaches %d marker %q: a quarantine that could not be written must hold the detach", w.role(), w.detachCalls(), w.marker())
 	}
-	w.h.ec2.createTagsErr = nil
+	w.h.ec2.createTagsFail = nil
 	w.pass(w.f)
 	w.rescued()
 	if w.role() != ec2RoleQuarantined {
@@ -370,7 +375,11 @@ func TestQuarantineTagRoundTripAndRejectsGarbage(t *testing.T) {
 }
 
 func (w *rescueWorld) setQuarantine(q quarantineTag) {
-	w.h.ec2.setInstanceTag("i-dark", ec2TagQuarantine, q.String())
+	w.h.ec2.setInstanceTag("i-dark", quarantineKey(q.Volume, q.Gen), q.String())
+}
+
+func (w *rescueWorld) records() []quarantineRec {
+	return quarantineRecordsOf(w.h.ec2.instances["i-dark"].Tags)
 }
 
 // A late quarantine write that lands after a Start moved the box on is void: it does not hold
@@ -392,7 +401,7 @@ func TestQuarantineLateWriteAfterAStartIsIgnoredAndCleared(t *testing.T) {
 		t.Fatalf("matches=%v err=%v: a void quarantine must not move anybody", matches, err)
 	}
 	w.pass(w.f)
-	if _, ok := w.quarantine(); ok || ec2TagValue(w.h.ec2.instances["i-dark"].Tags, ec2TagQuarantine) != "" {
+	if len(w.records()) != 0 {
 		t.Fatal("the sweeper left a void quarantine on the box")
 	}
 	// A late write for another home's token, or of an older count, is void the same way.
@@ -402,23 +411,22 @@ func TestQuarantineLateWriteAfterAStartIsIgnoredAndCleared(t *testing.T) {
 		t.Fatal("a quarantine naming another home was not cleared")
 	}
 	// A malformed value holds nothing.
-	w.h.ec2.setInstanceTag("i-dark", ec2TagQuarantine, "garbage")
+	w.h.ec2.setInstanceTag("i-dark", ec2TagQuarantinePrefix+"garbage", "garbage")
 	if matches, _, _, _ := w.rt().slotTypeMatches(context.Background(), "i-dark"); !matches {
 		t.Fatal("a malformed tag held the box")
 	}
 }
 
-// A valid quarantine keeps the box out of every free-slot walk, and a void one does not.
-func TestQuarantineValidBlocksPlacementAndVoidDoesNot(t *testing.T) {
+// A valid quarantine keeps the box out of every free-slot walk.
+func TestQuarantineValidBlocksPlacement(t *testing.T) {
 	ctx := context.Background()
 	w := quarantineWorld(t, false)
-	// Free the box: no home on it, so the walk sees it.
-	w.h.ec2.volumes["vol-1"].Attachments = nil
-	cands, err := w.rt().freeSlots(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	w.h.ec2.volumes["vol-1"].Attachments = nil // free the box: no home on it
 	has := func() bool {
+		cands, err := w.rt().freeSlots(ctx, "")
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, c := range cands {
 			if c.id == "i-dark" {
 				return true
@@ -427,18 +435,85 @@ func TestQuarantineValidBlocksPlacementAndVoidDoesNot(t *testing.T) {
 		return false
 	}
 	if !has() {
-		t.Skip("the harness box is not a free candidate; nothing to compare")
+		t.Fatal("setup: the harness box must be a free candidate")
 	}
 	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count(), Reason: "repeat: x", At: time.Now()})
-	cands, _ = w.rt().freeSlots(ctx, "")
 	if has() {
 		t.Fatal("a quarantined box was offered to a Start")
 	}
-	if n, _ := w.rt().poolSize(ctx); n != 0 {
-		// the harness may hold other slots; the quarantined one must not be counted
-		w.h.ec2.setInstanceTag("i-dark", ec2TagQuarantine, "garbage")
-		if m, _ := w.rt().poolSize(ctx); m != n+1 {
-			t.Fatalf("pool size %d held out, %d once the tag is void", n, m)
+}
+
+// A late record for an old token, on a box that has a live home, is void for EVERY reader: it
+// neither shrinks the pool count, nor refuses the terminate gate, nor reads as quarantined in the
+// pool view, whichever home's runtime asks.
+func TestQuarantineVoidRecordOnALiveHomeIsIgnoredByEveryReader(t *testing.T) {
+	ctx := context.Background()
+	w := quarantineWorld(t, false)
+	base, err := w.rt().poolSize(ctx)
+	if err != nil || base == 0 {
+		t.Fatalf("baseline pool size %d err %v", base, err)
+	}
+	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count() + 5, Reason: "repeat: x", At: time.Now()}) // not the home's count
+	if n, _ := w.rt().poolSize(ctx); n != base {
+		t.Fatalf("pool size %d, want %d: a void record must not shrink it", n, base)
+	}
+	if blocked, _, _ := w.f.BakeBlocked(ctx); blocked && base < 2 {
+		t.Fatal("bake capacity counted a void record")
+	}
+	if err := w.rt().terminateGate(ctx, "i-dark", terminateMakeRoom); errors.Is(err, ErrTerminateRefused) && strings.Contains(err.Error(), "quarantined") {
+		t.Fatalf("terminate gate refused on a void record: %v", err)
+	}
+	st, err := w.f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sl := range st.Slots {
+		if sl.InstanceID == "i-dark" && sl.Rung == darkRungQuarantined {
+			t.Fatal("the pool view shows a void record as quarantined")
+		}
+	}
+	// The same record with the home's own count is in force, for the same readers.
+	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count(), Reason: "repeat: y", At: time.Now().Add(time.Second)})
+	if n, _ := w.rt().poolSize(ctx); n != base-1 {
+		t.Fatalf("pool size %d, want %d once the record is in force", n, base-1)
+	}
+}
+
+// A normal Start or Stop counts on a home that sits on a quarantined box: the quarantine is
+// carried to the new count first, so the box stays a mismatch and the home is moved off it.
+func TestQuarantineSurvivesTheStartCountOfItsOwnHome(t *testing.T) {
+	ctx := context.Background()
+	w := quarantineWorld(t, false)
+	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count(), Reason: "rescue-blocked: x", At: time.Now()})
+	if _, err := w.rt().beginStart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	matches, _, _, err := w.rt().slotTypeMatches(ctx, "i-dark")
+	if err != nil || matches {
+		t.Fatalf("matches=%v err=%v: after the Start's count the box must still be held out", matches, err)
+	}
+	// A second, late write for the OLD token adds a void record and cannot undo the carried one.
+	w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: w.count() - 1, Reason: "stale", At: time.Now().Add(time.Minute)})
+	w.pass(w.f)
+	recs := w.records()
+	if len(recs) != 1 || recs[0].Gen != w.count() {
+		t.Fatalf("records %+v: the stale one must be cleared and the carried one kept", recs)
+	}
+	if matches, _, _, _ := w.rt().slotTypeMatches(ctx, "i-dark"); matches {
+		t.Fatal("the hold was lost")
+	}
+}
+
+func TestTerminateSlotCheckedStopsWhenTheLastCheckFails(t *testing.T) {
+	ctx := context.Background()
+	w := quarantineWorld(t, false)
+	err := w.rt().terminateSlotChecked(ctx, "i-dark", "test", terminateOperator, func(context.Context) error { return ErrSlotInUse })
+	if !errors.Is(err, ErrSlotInUse) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, c := range w.h.ec2.calls {
+		if strings.HasPrefix(c, "TerminateInstances") {
+			t.Fatal("terminated despite the failed last check")
 		}
 	}
 }

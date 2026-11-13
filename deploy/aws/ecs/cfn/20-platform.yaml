@@ -595,9 +595,7 @@ Resources:
                       - af-replaces-home
                       - "aws:*"
               # Bookkeeping on pool resources: claim, idle and hibernation marks, owner and
-              # tenant tags, home-wipe marks, bake marks, the per-episode af-wedge-at-<time>
-              # records and the dark-slot ladder's af-quarantine (ADR 0121 rung L2: a tag, not
-              # an af-role value, so the box stays reachable by SSM). None of them is af-pool or af-role.
+              # tenant tags, home-wipe marks, bake marks. None of them is af-pool or af-role.
               # Null=false: a DeleteTags that names no key deletes EVERY tag, af-pool and
               # af-role included, and ForAllValues alone is true for an absent key.
               # IgnoreCase: IAM matches tag-key condition names case-insensitively while EC2

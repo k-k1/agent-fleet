@@ -40,10 +40,13 @@ const (
 	episodeKindOperator = "operator"
 	episodeKindLegacy   = "legacy"
 
-	// ec2TagQuarantine is rung L2's quarantine: `<home volume>:<g_r>/<reason>/<RFC 3339>`. The
-	// box keeps af-role=slot, so SSM and every operator action still reach it. The reason has
-	// no '/' and only the characters EC2 allows in a tag value.
-	ec2TagQuarantine = "af-quarantine"
+	// ec2TagQuarantinePrefix starts the key of one of rung L2's quarantine records, which is
+	// `af-quarantine-<home volume>-<g_r>` with the value `<home volume>:<g_r>/<reason>/<RFC 3339>`.
+	// One record per token, never overwritten: a single tag would let a delayed write for an
+	// old token replace the current one, and the cleanup of the old one would then delete the
+	// quarantine itself. The box keeps af-role=slot, so SSM and every operator action still
+	// reach it. The reason has no '/' and only the characters EC2 allows in a tag value.
+	ec2TagQuarantinePrefix = "af-quarantine-"
 
 	defaultDarkRepeatWindow   = 24 * time.Hour
 	defaultRescueBlockedAfter = 30 * time.Minute
@@ -96,31 +99,104 @@ func parseQuarantineTag(v string) (quarantineTag, bool) {
 	return quarantineTag{Volume: token[:colon], Gen: gen, Reason: v[first+1 : last], At: at}, true
 }
 
-func quarantineOf(tags []ec2types.Tag) (quarantineTag, bool) {
-	v := ec2TagValue(tags, ec2TagQuarantine)
-	if v == "" {
+// quarantineRec is one af-quarantine-* record on a box.
+type quarantineRec struct {
+	key string
+	quarantineTag
+}
+
+func quarantineKey(volume string, gen int64) string {
+	return ec2TagQuarantinePrefix + volume + "-" + strconv.FormatInt(gen, 10)
+}
+
+// quarantineRecordsOf reads every record that parses, oldest decision first.
+func quarantineRecordsOf(tags []ec2types.Tag) []quarantineRec {
+	var out []quarantineRec
+	for _, t := range tags {
+		key := aws.ToString(t.Key)
+		if !strings.HasPrefix(key, ec2TagQuarantinePrefix) {
+			continue
+		}
+		if q, ok := parseQuarantineTag(aws.ToString(t.Value)); ok {
+			out = append(out, quarantineRec{key: key, quarantineTag: q})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	return out
+}
+
+// hasQuarantineRecord is the parse-only view: whether any record is on the box. It is for the
+// operator's Terminate and the status page; a reader that decides something about a slot asks
+// quarantineInForce.
+func hasQuarantineRecord(tags []ec2types.Tag) (quarantineTag, bool) {
+	recs := quarantineRecordsOf(tags)
+	if len(recs) == 0 {
 		return quarantineTag{}, false
 	}
-	return parseQuarantineTag(v)
+	return recs[len(recs)-1].quarantineTag, true
 }
 
-// slotHeldOut is what a free-slot walk asks: does the box carry a quarantine that parses. A
-// walk looks at slots with no home on them, where a quarantine cannot have been overtaken, so
-// parsing is the whole test. (A slot with a home goes through quarantineHolds.) The role stays
-// `slot`, so this has to be asked wherever a walk would otherwise pick, stop, replace or
-// terminate the box.
-func slotHeldOut(inst ec2types.Instance) bool {
-	_, ok := quarantineOf(inst.Tags)
-	return ok
+// quarantineInForce is whether a record on the box is in force, for any reader, with whatever
+// runtime it has. A record is in force while its token is the box's own: with no home on the
+// box, any record is (it holds the box out of the pool); with a home on it, only a record that
+// names that home and carries that workspace's current Start count. Every other record is void:
+// a Start moved on, another home is there, or a late write for an old token. A read that
+// fails keeps the box out: nothing is placed on a doubt. The count is read from the OWNER's
+// runtime, whoever asks.
+func (e *ecsEC2Runtime) quarantineInForce(ctx context.Context, tags []ec2types.Tag, instanceID string) (quarantineTag, bool) {
+	recs := quarantineRecordsOf(tags)
+	if len(recs) == 0 {
+		return quarantineTag{}, false
+	}
+	newest := recs[len(recs)-1].quarantineTag
+	holder, err := e.slotHolder(ctx, instanceID, "")
+	if err != nil || holder == "" {
+		return newest, true
+	}
+	var gen int64
+	var genErr error
+	haveGen := false
+	for _, r := range recs {
+		if r.Volume != holder {
+			continue
+		}
+		if !haveGen {
+			gen, genErr = e.holderGen(ctx, holder)
+			haveGen = true
+		}
+		if genErr != nil || r.Gen == gen {
+			return r.quarantineTag, true
+		}
+	}
+	return quarantineTag{}, false
 }
 
-// withoutQuarantinedSlots drops quarantined boxes from a DescribeInstances answer.
-func withoutQuarantinedSlots(out *ec2.DescribeInstancesOutput) *ec2.DescribeInstancesOutput {
+// holderGen is the Start count of the workspace that owns volume.
+func (e *ecsEC2Runtime) holderGen(ctx context.Context, volumeID string) (int64, error) {
+	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
+	if err != nil || len(out.Volumes) == 0 {
+		return 0, fmt.Errorf("read %s: %v", volumeID, err)
+	}
+	rt := e.siblingFor(&out.Volumes[0])
+	if rt == nil {
+		return 0, fmt.Errorf("no runtime for %s", volumeID)
+	}
+	return rt.startGenNow(ctx)
+}
+
+// heldOut is quarantineInForce for a caller that has only the instance.
+func (e *ecsEC2Runtime) heldOut(ctx context.Context, inst ec2types.Instance) bool {
+	_, held := e.quarantineInForce(ctx, inst.Tags, aws.ToString(inst.InstanceId))
+	return held
+}
+
+// withoutQuarantined drops the boxes held out of the pool from a DescribeInstances answer.
+func (e *ecsEC2Runtime) withoutQuarantined(ctx context.Context, out *ec2.DescribeInstancesOutput) *ec2.DescribeInstancesOutput {
 	kept := &ec2.DescribeInstancesOutput{}
 	for _, r := range out.Reservations {
 		var insts []ec2types.Instance
 		for _, inst := range r.Instances {
-			if !slotHeldOut(inst) {
+			if _, held := e.quarantineInForce(ctx, inst.Tags, aws.ToString(inst.InstanceId)); !held {
 				insts = append(insts, inst)
 			}
 		}
@@ -132,39 +208,63 @@ func withoutQuarantinedSlots(out *ec2.DescribeInstancesOutput) *ec2.DescribeInst
 	return kept
 }
 
-// quarantineHolds is whether q is a quarantine in force for the box, asked by a runtime that
-// knows its own home. A quarantine is valid while its token is the box's current ownership
-// token: with no home on the box it is valid (it holds the box out of the pool); with a home
-// on it, only if that is the home the token names and that home's Start count has not moved.
-// Anything else is void: a later Start, a return, a re-placement or a late write onto a box that
-// has moved on. A read that fails keeps the box out (nothing is placed on a doubt).
-func (e *ecsEC2Runtime) quarantineHolds(ctx context.Context, q quarantineTag, instanceID string) bool {
-	holder, err := e.slotHolder(ctx, instanceID, "")
-	if err != nil || holder == "" {
-		return true
+func withoutQuarantineRecords(tags []ec2types.Tag) []ec2types.Tag {
+	var out []ec2types.Tag
+	for _, t := range tags {
+		if !strings.HasPrefix(aws.ToString(t.Key), ec2TagQuarantinePrefix) {
+			out = append(out, t)
+		}
 	}
-	if holder != q.Volume {
-		return false
-	}
-	vol, err := e.homeVolume(ctx)
-	if err != nil {
-		return true
-	}
-	if vol == nil || aws.ToString(vol.VolumeId) != holder {
-		return true // another workspace's home: its count is not ours to read
-	}
-	g, err := e.startGenNow(ctx)
-	return err != nil || g == q.Gen
+	return out
 }
 
-// clearVoidQuarantines deletes a quarantine whose token is no longer the box's, while holding
-// the claim lock of the home on it, with the value matched exactly so a newer one is never
-// deleted. Readers already ignore a void tag; this only keeps it from lingering.
+// carryQuarantine is the hand-over: a Start or a Stop is about to count, and the home it
+// belongs to sits on a box that a valid record holds out. The record is written again for the
+// count that is about to exist, before the bump (a record for a count not yet reached is void
+// until the bump), so the hold survives the bump and the Start still finds the box a mismatch
+// and moves the home off it. Called under the claim lock. Only under quarantine mode: a
+// pool that has switched it off lets a Start overtake a held box, which is the setting's cost.
+func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) {
+	if !e.pool.quarantines() {
+		return
+	}
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil {
+		return
+	}
+	holder, slot := aws.ToString(vol.VolumeId), attachedInstance(vol)
+	if slot == "" {
+		return
+	}
+	inst, err := e.slotInstance(ctx, slot)
+	if err != nil || inst == nil {
+		return
+	}
+	for _, r := range quarantineRecordsOf(inst.Tags) {
+		if r.Volume != holder || r.Gen != newGen-1 {
+			continue
+		}
+		next := r.quarantineTag
+		next.Gen = newGen
+		if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+			Resources: []string{slot},
+			Tags:      []ec2types.Tag{{Key: aws.String(quarantineKey(holder, newGen)), Value: aws.String(next.String())}},
+		}); err != nil {
+			log.Printf("ecs-ec2: carrying the quarantine of %s to start %d failed: %v", slot, newGen, err)
+		}
+		return
+	}
+}
+
+// clearVoidQuarantines deletes the records whose token is no longer the box's, for a box with a
+// home on it, while holding the claim lock of that home, each value matched exactly so a newer
+// record is never deleted. Readers already ignore a void record; this only keeps it from
+// lingering.
 func (f *ecsEC2Factory) clearVoidQuarantines(ctx context.Context, homes []ec2types.Volume) {
 	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(EC2TagPool, f.pool.pool),
-			{Name: aws.String("tag-key"), Values: []string{ec2TagQuarantine}},
+			{Name: aws.String("tag-key"), Values: []string{ec2TagQuarantinePrefix + "*"}},
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
 		},
 	})
@@ -181,13 +281,11 @@ func (f *ecsEC2Factory) clearVoidQuarantines(ctx context.Context, homes []ec2typ
 				}
 			}
 			if home == nil {
-				continue // no home on it: a quarantine holds the box, and there is no token to compare
+				continue // no home on it: every record holds the box, and there is no token to compare
 			}
-			rt := f.rescueRuntime(home)
-			if rt == nil {
-				continue
+			if rt := f.rescueRuntime(home); rt != nil {
+				rt.clearVoidQuarantine(ctx, id, aws.ToString(home.VolumeId))
 			}
-			rt.clearVoidQuarantine(ctx, id, aws.ToString(home.VolumeId))
 		}
 	}
 }
@@ -202,31 +300,36 @@ func (e *ecsEC2Runtime) clearVoidQuarantine(ctx context.Context, id, holder stri
 	if err != nil || inst == nil {
 		return
 	}
-	raw := ec2TagValue(inst.Tags, ec2TagQuarantine)
-	if raw == "" {
+	g, err := e.startGenNow(ctx)
+	if err != nil {
 		return
 	}
-	if q, ok := parseQuarantineTag(raw); ok {
-		g, err := e.startGenNow(ctx)
-		if err != nil || (q.Volume == holder && g == q.Gen) {
-			return // still in force (or unreadable)
-		}
-	}
 	// The home on the box is read again under the lock: a Start that moved the box on is why this runs.
-	if v, err := e.homeVolume(ctx); err != nil || v == nil || attachedInstance(v) != id {
+	if v, err := e.homeVolume(ctx); err != nil || v == nil || attachedInstance(v) != id || aws.ToString(v.VolumeId) != holder {
+		return
+	}
+	var void []ec2types.Tag
+	for _, t := range inst.Tags {
+		key := aws.ToString(t.Key)
+		if !strings.HasPrefix(key, ec2TagQuarantinePrefix) {
+			continue
+		}
+		if q, ok := parseQuarantineTag(aws.ToString(t.Value)); ok && q.Volume == holder && q.Gen == g {
+			continue // in force
+		}
+		void = append(void, ec2types.Tag{Key: t.Key, Value: t.Value})
+	}
+	if len(void) == 0 {
 		return
 	}
 	if err := homeGuardOf(ctx).check(); err != nil {
 		return
 	}
-	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
-		Resources: []string{id},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagQuarantine), Value: aws.String(raw)}},
-	}); err != nil {
-		log.Printf("ecs-ec2 sweep: clearing the void quarantine on %s: %v", id, err)
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{Resources: []string{id}, Tags: void}); err != nil {
+		log.Printf("ecs-ec2 sweep: clearing the void quarantine records on %s: %v", id, err)
 		return
 	}
-	log.Printf("ecs-ec2 sweep: cleared the void quarantine %q on %s", raw, id)
+	log.Printf("ecs-ec2 sweep: cleared %d void quarantine record(s) on %s", len(void), id)
 }
 
 // quarantines is whether rung L2 is on for this pool.
@@ -432,7 +535,7 @@ func (e *ecsEC2Runtime) quarantineApplies(m rescueMarker) bool {
 // sent can land after the leases are gone, after the marker is finalized, after a Start moved
 // the box on, or after an operator cleared the tag. So the tag carries the ownership token of
 // this rescue (the home and its Start count g_r) and every reader fences on it: a quarantine
-// whose token is no longer the box's is void and is ignored (quarantineHolds), then deleted
+// whose token is no longer the box's is void and is ignored (quarantineInForce), then deleted
 // (clearVoidQuarantine). A late write therefore cannot hold a box that a Start has moved on to;
 // at worst it holds an idle box with no home, which an operator clears by deleting the tag.
 // That is why L2 leaves af-role alone: a role write that outlives its owner would also cut
@@ -450,7 +553,7 @@ func (e *ecsEC2Runtime) rescueQuarantine(ctx context.Context, slot string, m *re
 		if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleSlot {
 			return nil // another kind of quarantine, or not a slot: nothing to add
 		}
-		if cur, ok := quarantineOf(inst.Tags); ok && cur.Volume == m.Volume && cur.Gen == m.Gen {
+		if ec2TagValue(inst.Tags, quarantineKey(m.Volume, m.Gen)) != "" {
 			return nil
 		}
 		why, ok := decide(inst)
@@ -488,7 +591,7 @@ func (e *ecsEC2Runtime) writeDarkQuarantine(ctx context.Context, instanceID stri
 	}
 	_, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{instanceID},
-		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagQuarantine), Value: aws.String(q.String())}},
+		Tags:      []ec2types.Tag{{Key: aws.String(quarantineKey(q.Volume, q.Gen)), Value: aws.String(q.String())}},
 	})
 	return err
 }

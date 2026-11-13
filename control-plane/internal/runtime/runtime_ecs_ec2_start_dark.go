@@ -93,6 +93,7 @@ func (e *ecsEC2Runtime) admitStart(ctx context.Context, mayRescue bool) (startAd
 	if adm, ok := e.darkAdmission(lctx, g, mayRescue); ok {
 		return adm, nil
 	}
+	e.carryQuarantine(lctx, g+1) // before the bump: see carryQuarantine
 	gen, err := e.bumpStartCount(lctx)
 	if err != nil {
 		return startAdmission{}, fmt.Errorf("count the start of %s: %w", e.base.name, err)

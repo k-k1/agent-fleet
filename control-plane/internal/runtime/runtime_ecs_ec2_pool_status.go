@@ -86,7 +86,7 @@ func darkView(inst ec2types.Instance) (since, rung string) {
 	// Rung L2: the af-quarantine tag. It outranks the marker, which is still on the box while
 	// the rescue is retried or finishing. A read-only view: a void one reads as quarantined
 	// until the sweeper clears it.
-	qtag, quarantined := quarantineOf(inst.Tags)
+	qtag, quarantined := hasQuarantineRecord(inst.Tags)
 	// A marker speaks for the box in any state: a rescued box is stopped, and the rung says
 	// how far the rescue got.
 	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && !m.Wedged && !m.Operator {
@@ -419,10 +419,14 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			s.TemplateOutdated, s.OutdatedReasons, s.AMI = len(reasons) > 0, reasons, aws.ToString(inst.ImageId)
 			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
 			s.ReplaceReserved = s.ReplaceReservedAt != ""
-			s.DarkSince, s.Rung = darkView(inst)
-			if q, ok := quarantineOf(inst.Tags); ok {
+			// A void record is not a quarantine: the view reads the box without it.
+			view := inst
+			if q, held := probe.quarantineInForce(ctx, inst.Tags, id); held {
 				s.QuarantineReason = q.Reason // rung L2: the row stays a slot (Quarantined is the role's)
+			} else {
+				view.Tags = withoutQuarantineRecords(inst.Tags)
 			}
+			s.DarkSince, s.Rung = darkView(view)
 			s.WedgedSince, s.WedgedRung = wedgedView(inst)
 			st.Slots = append(st.Slots, s)
 		}

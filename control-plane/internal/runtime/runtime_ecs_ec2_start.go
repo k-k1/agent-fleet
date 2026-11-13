@@ -177,7 +177,7 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 			}
 			// Rung L2: held out of the pool by a token-fenced tag. Valid only while its token is
 			// the box's own; a void one (a Start moved on, a late write) must not move anybody.
-			if q, ok := quarantineOf(inst.Tags); ok && e.quarantineHolds(ctx, q, instanceID) {
+			if _, held := e.quarantineInForce(ctx, inst.Tags, instanceID); held {
 				return false, false, false, nil
 			}
 			if !e.pool.noAutoReplace {
