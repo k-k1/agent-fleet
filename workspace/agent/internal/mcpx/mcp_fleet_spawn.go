@@ -464,7 +464,8 @@ func fleetSpawnTools() []toolSpec {
 						"it away, leaving stop_session / resume_session / get_session_output nothing to name. Call it " +
 						"before your last turn too, to tell your user which children you left and how they stand. " +
 						"lastTurnEndAt separates a child that FINISHED from one that never started - idle means both. It " +
-						"is absent while a child is mid-turn and after a restart. " +
+						"is absent while a child is mid-turn and after a restart. inputNotDelivered: true means the last " +
+						"message never reached the child's CLI, so it is idle without having run a turn: send it again. " +
 						"Archived sessions are not listed and hold no slot.",
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}

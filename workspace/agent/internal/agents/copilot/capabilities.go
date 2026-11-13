@@ -4,6 +4,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
+	"time"
 )
 
 // Optional agents capabilities of the copilot kind, each delegating to this package's own function.
@@ -46,7 +47,7 @@ func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any {
 // LiveStateTraits is agents.LiveStater: the classification of events.jsonl (LiveState); no hooks,
 // so that poll is where a Terminal turn ends.
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
-	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, TurnMark: TurnMark, EndedAfter: EndedAfter}
+	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 30 * time.Second}
 }
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredPartial: the transcript only carries output tokens.

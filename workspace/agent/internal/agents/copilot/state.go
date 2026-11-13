@@ -168,22 +168,33 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	if sid == "" {
 		return false, false
 	}
-	typeIs := func(types ...string) func([]byte) bool {
-		return func(line []byte) bool {
-			var ev struct {
-				Type string `json:"type"`
-			}
-			if json.Unmarshal(line, &ev) != nil {
-				return false
-			}
-			for _, t := range types {
-				if ev.Type == t {
-					return true
-				}
-			}
-			return false
-		}
-	}
 	return agents.EndedAfterOffset(EventsPath(sid), mark, tailWindow,
 		typeIs("user.message"), typeIs("assistant.turn_end", "session.shutdown"))
+}
+
+// InputSeen reports whether the new input's user.message reached events.jsonl at or after mark
+// (agents.LiveStateTraits.InputSeen).
+func InputSeen(m session.Meta, mark string) (seen, known bool) {
+	sid := SessionID(m)
+	if sid == "" {
+		return false, false
+	}
+	return agents.InputSeenOffset(EventsPath(sid), mark, typeIs("user.message"))
+}
+
+func typeIs(types ...string) func([]byte) bool {
+	return func(line []byte) bool {
+		var ev struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(line, &ev) != nil {
+			return false
+		}
+		for _, t := range types {
+			if ev.Type == t {
+				return true
+			}
+		}
+		return false
+	}
 }

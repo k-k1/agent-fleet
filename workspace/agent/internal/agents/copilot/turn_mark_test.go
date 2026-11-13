@@ -38,3 +38,32 @@ func TestTurnMarkAndEndedAfter(t *testing.T) {
 		t.Fatalf("the shutdown did not count: %v %v", after, known)
 	}
 }
+
+func TestInputSeen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COPILOT_HOME", filepath.Join(t.TempDir(), ".copilot"))
+	m := session.Meta{Name: "co-seen", Dir: t.TempDir(), Kind: session.KindCopilot}
+	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	p := EventsPath(SessionID(m))
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	closed := `{"type":"user.message"}` + "\n" + `{"type":"assistant.turn_end"}` + "\n"
+	os.WriteFile(p, []byte(closed), 0o600)
+	mark, _ := TurnMark(m)
+	if seen, known := InputSeen(m, mark); seen || !known {
+		t.Fatalf("the previous input counted: %v %v", seen, known)
+	}
+	os.WriteFile(p, []byte(closed+`{"type":"assistant.turn_end"}`+"\n"), 0o600)
+	if seen, known := InputSeen(m, mark); seen || !known {
+		t.Fatalf("a late end is not an input: %v %v", seen, known)
+	}
+	os.WriteFile(p, []byte(closed+`{"type":"user.message"}`+"\n"), 0o600)
+	if seen, known := InputSeen(m, mark); !seen || !known {
+		t.Fatalf("the new input was missed: %v %v", seen, known)
+	}
+	os.WriteFile(p, []byte("x\n"), 0o600) // truncated below the mark
+	if _, known := InputSeen(m, mark); known {
+		t.Fatal("a rotated source was compared")
+	}
+}

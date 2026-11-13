@@ -73,6 +73,9 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// status file holds only turn start and end, so a waiting prompt would read "working".
 	live := liveStateTraits(m.Kind)
 	if live.State != nil {
+		if live.PolledTurnEnd {
+			reconcileInputDelivery(m)
+		}
 		if st := live.State(m); st != "" {
 			// Turn end. A kind with no Stop hook observes its completion only in this poll, so
 			// it persists idle AND fires the notification, or the operator's completion-report

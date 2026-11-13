@@ -3,9 +3,13 @@ package agents
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -51,6 +55,16 @@ type LiveStateTraits struct {
 	// needed table), which sends the caller back to the window, never to "always idle".
 	TurnMark   func(m session.Meta) (mark string, ok bool)
 	EndedAfter func(m session.Meta, mark string) (after, known bool)
+	// InputSeen is the delivery half of the same identity: whether the new input's own user
+	// line / step has reached the source at or after mark, known=false when the source cannot
+	// say (same cases as EndedAfter). A turn whose input never shows up is the one a stored
+	// "working" would otherwise hold until the next input (sessionx.reconcileInputDelivery).
+	// Set together with TurnMark and EndedAfter, and with InputWindow.
+	InputSeen func(m session.Meta, mark string) (seen, known bool)
+	// InputWindow is how long after the working write the user line may still be missing
+	// before the input counts as not delivered. It only bounds a transient: an input that lands
+	// later is picked up again by InputSeen, so too short costs a brief idle, never a lost turn.
+	InputWindow time.Duration
 }
 
 // scanLines calls fn with the byte offset and text of each line in at most the last window
@@ -98,17 +112,72 @@ func scanLines(path string, window int64, fn func(off int64, line []byte)) (size
 	return size, from, nil
 }
 
-// FileSizeMark is the turn mark of an append-only file: its size now, "0" while it does not
-// exist yet (every line it will ever hold lies after that). ok=false for any other failure.
+// markPrefixLen bounds the prefix fingerprinted into a file mark.
+const markPrefixLen = 256
+
+// FileSizeMark is the turn mark of an append-only file: "size:n:fp", its size now plus a
+// fingerprint of its first n (at most markPrefixLen) bytes, "0" while it does not exist yet
+// (every line it will ever hold lies after that). The fingerprint is what tells the same file
+// grown from a replacement (a resumed CLI, a rewritten file) that has regrown past the size: an
+// offset compare alone would read the new file's lines before the mark as "not there" and call a
+// running turn's input undelivered. ok=false for any other failure.
 func FileSizeMark(path string) (string, bool) {
 	fi, err := os.Stat(path)
 	switch {
 	case err == nil:
-		return strconv.FormatInt(fi.Size(), 10), true
 	case os.IsNotExist(err):
 		return "0", true
+	default:
+		return "", false
 	}
-	return "", false
+	size := fi.Size()
+	n := size
+	if n > markPrefixLen {
+		n = markPrefixLen
+	}
+	fp, ok := prefixFingerprint(path, n)
+	if !ok {
+		return "", false
+	}
+	return strconv.FormatInt(size, 10) + ":" + strconv.FormatInt(n, 10) + ":" + fp, true
+}
+
+func prefixFingerprint(path string, n int64) (string, bool) {
+	if n == 0 {
+		return "", true
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(buf)
+	return hex.EncodeToString(sum[:8]), true
+}
+
+// parseFileMark returns the offset of a FileSizeMark and whether path still holds the file the
+// mark was taken from (its prefix is unchanged). A plain integer is a mark without a fingerprint
+// and is trusted as before. ok=false for an unparseable mark or a different file.
+func parseFileMark(path, mark string) (at int64, ok bool) {
+	parts := strings.Split(mark, ":")
+	at, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || (len(parts) != 1 && len(parts) != 3) {
+		return 0, false
+	}
+	if len(parts) == 3 {
+		n, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || n < 0 || n > at {
+			return 0, false
+		}
+		if fp, ok := prefixFingerprint(path, n); !ok || fp != parts[2] {
+			return 0, false
+		}
+	}
+	return at, true
 }
 
 // firstLineFrom streams the file from byte offset at and returns the offset of the first line
@@ -149,6 +218,32 @@ func firstLineFrom(path string, at int64, match func(line []byte) bool) (off int
 	}
 }
 
+// InputSeenOffset is InputSeen for an append-only JSONL file: a line accepted by isStart at or
+// after mark. known=false when the file is unreadable or smaller than mark (rotated, truncated).
+// A file that does not exist yet is a known "not seen" only for mark 0.
+func InputSeenOffset(path, mark string, isStart func(line []byte) bool) (seen, known bool) {
+	at, ok := parseFileMark(path, mark)
+	if !ok {
+		return false, false
+	}
+	fi, err := os.Stat(path)
+	switch {
+	case err == nil:
+		if fi.Size() < at {
+			return false, false
+		}
+	case os.IsNotExist(err) && at == 0:
+		return false, true
+	default:
+		return false, false
+	}
+	_, found, err := firstLineFrom(path, at, isStart)
+	if err != nil {
+		return false, false
+	}
+	return found, true
+}
+
 // EndedAfterOffset is EndedAfter for an append-only JSONL file. It needs the PAIR: a line
 // accepted by isStart at or after mark (the new input reaching the source) and, after that
 // start, a line accepted by isEnd. An end alone proves nothing: the previous turn's late end (a
@@ -159,8 +254,8 @@ func firstLineFrom(path string, at int64, match func(line []byte) bool) (off int
 // denies the end. known=false when the file is unreadable or smaller than mark (rotated or
 // truncated: offsets from before are meaningless).
 func EndedAfterOffset(path, mark string, window int64, isStart, isEnd func(line []byte) bool) (after, known bool) {
-	at, err := strconv.ParseInt(mark, 10, 64)
-	if err != nil {
+	at, ok := parseFileMark(path, mark)
+	if !ok {
 		return false, false
 	}
 	lastEnd := int64(-1)

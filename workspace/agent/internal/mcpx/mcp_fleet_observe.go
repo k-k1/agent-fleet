@@ -150,6 +150,9 @@ func mcpListChildSessions(id json.RawMessage, self string) []byte {
 		if s.LastTurnEndAt != "" {
 			row["lastTurnEndAt"] = s.LastTurnEndAt
 		}
+		if s.InputNotDelivered {
+			row["inputNotDelivered"] = true
+		}
 		rows = append(rows, row)
 	}
 	left := limit - len(rows)

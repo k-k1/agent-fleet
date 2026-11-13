@@ -4,6 +4,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
+	"time"
 )
 
 // Optional agents capabilities of the agy kind, each delegating to this package's own function.
@@ -41,7 +42,7 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 // clears the optimistic "working" /input stored: that poll is where a turn ends, and a stale
 // "working" reads idle.
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
-	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true, TurnMark: TurnMark, EndedAfter: EndedAfter}
+	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true, StaleWorkingIdle: true, TurnMark: TurnMark, EndedAfter: EndedAfter, InputSeen: InputSeen, InputWindow: 45 * time.Second}
 }
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.

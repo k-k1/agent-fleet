@@ -35,3 +35,22 @@ func TestTurnMarkAndEndedAfter(t *testing.T) {
 		t.Fatalf("the new end did not count: %v %v", after, known)
 	}
 }
+
+func TestInputSeen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "cu-seen", Dir: t.TempDir(), Kind: session.KindCursor}
+	chat := "11111111-1111-4111-8111-111111111113"
+	sids.Write(session.UUID(m.Dir, m.Name), chat)
+	p := transcriptPath(m.Dir, chat)
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	closed := transcriptFixture + `{"type":"turn_ended","status":"success"}` + "\n"
+	os.WriteFile(p, []byte(closed), 0o600)
+	mark, _ := TurnMark(m)
+	if seen, known := InputSeen(m, mark); seen || !known {
+		t.Fatalf("the previous input counted: %v %v", seen, known)
+	}
+	os.WriteFile(p, []byte(closed+`{"role":"user","message":{}}`+"\n"), 0o600)
+	if seen, known := InputSeen(m, mark); !seen || !known {
+		t.Fatalf("the new input was missed: %v %v", seen, known)
+	}
+}

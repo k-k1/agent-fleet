@@ -28,6 +28,7 @@ package sessionx
 //	record: … and this turn's end is not stamped yet        (idempotent, consumes nothing)
 
 import (
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -148,4 +149,61 @@ func recordPolledTurnEnd(m session.Meta, state string) {
 		return
 	}
 	status.RecordTurnEnd(sid)
+}
+
+// seenInputRev remembers, per sid, the status Rev whose input was already seen in the source, so
+// a long running turn does not re-scan its source from the mark on every list poll.
+var seenInputRev sync.Map
+
+// reconcileInputDelivery settles the two ways a hook-less kind's stored state can disagree with
+// whether its input arrived, on POSITIVE evidence from the source (never on elapsed time alone):
+//
+//   - "working" past the kind's InputWindow with a readable source that has no new user line
+//     after the turn mark: the input was not taken. The record goes idle, flagged, with no turn
+//     end (status.PersistInputNotDelivered).
+//   - flagged idle whose input has appeared since: back to working with the same mark, so the
+//     real end is counted as a normal turn end.
+//
+// A source that cannot say (unreadable, rotated, no mark) changes nothing. A turn whose input is
+// seen is never touched, however long it runs. Both routes call it before they read the state.
+func reconcileInputDelivery(m session.Meta) {
+	t := liveStateTraits(m.Kind)
+	if !t.PolledTurnEnd || t.InputSeen == nil || t.InputWindow <= 0 {
+		return
+	}
+	sid := session.UUID(m.Dir, m.Name)
+	st, ok := status.Read(sid)
+	if !ok {
+		return
+	}
+	switch {
+	case st.State == "working" && !st.InputNotDelivered:
+		if v, ok := seenInputRev.Load(sid); ok && v == st.Rev {
+			return
+		}
+		at, err := time.Parse(time.RFC3339, st.TS)
+		if err != nil || polledEndNow().Sub(at) < t.InputWindow {
+			return
+		}
+		mark, ok := status.TurnMarkOf(sid)
+		if !ok {
+			return
+		}
+		seen, known := t.InputSeen(m, mark)
+		switch {
+		case !known:
+		case seen:
+			seenInputRev.Store(sid, st.Rev)
+		default:
+			status.PersistInputNotDelivered(sid, st.Rev, mark)
+		}
+	case st.State == "idle" && st.InputNotDelivered:
+		mark, ok := status.TurnMarkOf(sid)
+		if !ok {
+			return
+		}
+		if seen, known := t.InputSeen(m, mark); known && seen {
+			status.ReopenDelivered(sid, st.Rev, mark)
+		}
+	}
 }

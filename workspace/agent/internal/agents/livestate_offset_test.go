@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,5 +87,26 @@ func TestScanLinesTailWindow(t *testing.T) {
 func TestFileSizeMarkMissingFileIsZero(t *testing.T) {
 	if m, ok := FileSizeMark(filepath.Join(t.TempDir(), "none")); !ok || m != "0" {
 		t.Fatalf("%q %v", m, ok)
+	}
+}
+
+func TestMarkFingerprintDetectsAReplacedFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "e.jsonl")
+	old := `{"role":"user","old":true}` + "\n" + `{"type":"end"}` + "\n"
+	os.WriteFile(p, []byte(old), 0o600)
+	mark, _ := FileSizeMark(p)
+	isUser := func(l []byte) bool { return bytes.Contains(l, []byte(`"role":"user"`)) }
+	// Replaced by a different file that regrew beyond the old size.
+	os.WriteFile(p, []byte(`{"role":"user","new":true}`+"\n"+strings.Repeat(`{"type":"tool"}`+"\n", 20)), 0o600)
+	if _, known := InputSeenOffset(p, mark, isUser); known {
+		t.Fatal("a replaced file was compared by offset")
+	}
+	if _, known := EndedAfterOffset(p, mark, 1<<20, isUser, isUser); known {
+		t.Fatal("a replaced file was compared by offset (end)")
+	}
+	// The same file, grown, still compares.
+	os.WriteFile(p, []byte(old+`{"role":"user"}`+"\n"), 0o600)
+	if seen, known := InputSeenOffset(p, mark, isUser); !seen || !known {
+		t.Fatalf("grown file: %v %v", seen, known)
 	}
 }
