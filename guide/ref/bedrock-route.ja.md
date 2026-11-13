@@ -8,7 +8,7 @@ source_of_truth: "Console の設定 >「AWS プロファイル/SSM」、claude �
 [English](bedrock-route.md) | 日本語
 
 設定の「AWS プロファイル/SSM」のプロファイルを使って、claude や opencode のセッションのモデルを Amazon Bedrock で動かせます。
-セッションには AWS の資格情報が渡りません。ワークスペースの中のゲートウェイが、モデル呼び出しを 1 つずつ署名します。
+セッションには AWS の認証情報が渡りません。ワークスペースの中のゲートウェイが、モデル呼び出しを 1 つずつ署名します。
 
 ## 印とゲートウェイ
 
@@ -17,8 +17,8 @@ source_of_truth: "Console の設定 >「AWS プロファイル/SSM」、claude �
 - **印の意味**: そのプロファイルのロールが `bedrock:InvokeModel*`（モデルを実行する呼び出し）だけを許可し、それより広い
   権限を持たないことを示します。印を付けるのはあなたで、Agent Fleet はロールの権限を読めず確かめられません。権限を確かめた
   プロファイルにだけ付けてください。
-- **ゲートウェイがすること**: ワークスペースの中で動き、各モデル呼び出しをプロファイルの一時的な資格情報で署名して転送します。
-  呼び出しをするセッションには AWS の資格情報が渡りません。
+- **ゲートウェイがすること**: ワークスペースの中で動き、各モデル呼び出しをプロファイルの一時的な認証情報で署名して転送します。
+  呼び出しをするセッションには AWS の認証情報が渡りません。
 - **転送するもの**: `invoke`、`invoke-with-response-stream`、`converse`、`converse-stream` だけです。モデルの一覧取得
   など、ほかの AWS 操作はできません。
 - **印のないプロファイル**はルートとして拒否され、その理由は呼び出しへの応答に出ます。
@@ -59,7 +59,7 @@ source_of_truth: "Console の設定 >「AWS プロファイル/SSM」、claude �
 この欄は必須で、このルートを選んでいる間は起動ダイアログの通常のモデル選択は隠れます。ルートのリージョンの Bedrock
 コンソールに出ていて、アカウントがアクセスできる ID を選んでください。セッションはサブエージェントや claude 自身の小さな
 裏方の呼び出しも含めてすべての呼び出しにその 1 つの ID を使い、ほかのモデルへ切り替えることはありません。別のモデルを
-名指しする呼び出しは、AWS へ届く前にゲートウェイが拒否します（`route_model_not_selected`）。ティア名（Opus / Sonnet /
+指定する呼び出しは、AWS へ届く前にゲートウェイが拒否します（`route_model_not_selected`）。ティア名（Opus / Sonnet /
 Haiku）、`claude-…` の ID、ARN は起動の時点で断ります。それらだと claude が自分で Bedrock の ID を選び、アカウントが
 使えなければ古いモデルを順に試して、試行ごとにゲートウェイへの呼び出しと使用量の行が 1 つずつ増えるからです。Agent Fleet は ID が
 アカウントで使えるかを確かめられません（ルートのロールはモデルの呼び出ししかできません）。アカウントやリージョンが使えない
@@ -90,7 +90,7 @@ ID だと、最初のターンで AccessDenied や `model_not_found` のよう�
 ルートのトークンや AWS のログインに関する拒否は HTTP 401、使えるものに関する拒否（印の付いていないプロファイル、
 オフの付与、許可されていないモデル）は 412、待てば直りうるものは 503 で返します。Claude Code は 401 のときだけ
 メッセージの前に「AWS authentication failed · refresh your AWS credentials …」を付け、412 の拒否はメッセージだけを表示します。401・412・503 は 1 回だけ表示され再試行されません。
-（転送できない要求は固有のステータスのままで、claude が再試行することがあります（400 は 8 回送られます）: `route_operation_not_allowed` と `route_model_not_selected` は 404、
+（転送できないリクエストは固有のステータスのままで、claude が再試行することがあります（400 は 8 回送られます）: `route_operation_not_allowed` と `route_model_not_selected` は 404、
 `route_bad_model` は 400、`route_request_too_large` は 413。）
 
 | コード | 意味 | 対処 |
@@ -101,8 +101,8 @@ ID だと、最初のターンで AccessDenied や `model_not_found` のよう�
 | `route_session_ended`、`route_selection_changed`（401）、`route_connection_changed`（401。呼び出し時にプロファイルの編集を見つけた場合は 412） | セッションが終わった、このルートをもう選んでいない、またはプロファイルが編集された。トークンは失効する。 | 新しいセッションを始める。 |
 | `route_login_required`、`route_confirmation_required`（401） | プロファイルに SSO サインイン、または「使用前に確認」の承認が要る。 | サインインまたは許可すると、次の呼び出しは通る。 |
 | `route_connection_unavailable`（503） | Agent がいま設定の AWS プロファイルを読めない。 | 少し待ってやり直す。 |
-| `route_upstream_unavailable`、`route_credentials_unavailable`（503） | いま Bedrock または資格情報に届かない。 | 少し待ってやり直す。 |
+| `route_upstream_unavailable`、`route_credentials_unavailable`（503） | いま Bedrock または認証情報に届かない。 | 少し待ってやり直す。 |
 | `route_model_mismatch`（400、起動時） | このルートの claude のセッションを、Bedrock のモデル ID ではないモデルで始めようとした。空、`opus` のようなティア名、`claude-…` の ID、ARN のどれか（起動ダイアログ、REST API、af の MCP ツール、スケジュールのどれからでも）。何も起動していない。 | `us.anthropic.…` のような Bedrock のモデル ID をモデルとして送る。 |
-| `route_model_not_selected`（404） | セッションを始めたときの Bedrock のモデル ID と違うモデルを名指しした。AWS には何も送っていない。トークンは失効しない。 | その ID で新しいセッションを始める。 |
+| `route_model_not_selected`（404） | セッションを始めたときの Bedrock のモデル ID と違うモデルを指定した。AWS には何も送っていない。トークンは失効しない。 | その ID で新しいセッションを始める。 |
 
 AccessDenied や `model_not_found` のような Bedrock の答えはそのまま転送されます。ゲートウェイのコードではありません。

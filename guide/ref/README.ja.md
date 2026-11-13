@@ -27,7 +27,7 @@ source_of_truth: "能力の事実についてはこのセクション（軸は�
 | [glossary.md](glossary.ja.md) | この言葉は画面とコードで何を指す？ |
 | [browser-pane.md](browser-pane.ja.md) | 動いている Web アプリを人にどう見せる？ |
 | [console-ui.md](console-ui.ja.md) | 画面のこの印やメニューの項目は何？ |
-| [更新履歴](../../deploy/release/notes/SUMMARY.ja.md) | いつ入った？ どの版で直った？ |
+| [更新履歴](../../deploy/release/notes/SUMMARY.ja.md) | いつ入った？ どのバージョンで直った？ |
 
 ## 表の読み方
 
@@ -36,4 +36,4 @@ source_of_truth: "能力の事実についてはこのセクション（軸は�
 - **推測の数字は書きません。** 誰も計測していない上限には、それらしい既定値を
   置かず「画面を見てください」と書いています（[limits.md](limits.ja.md)）。
 - **「—」は「できない」とは限りません。** [features.md](features.ja.md) の詳細欄の「—」は
-  「手順を書いたページがまだない」であって、機能が無いという意味ではありません。
+  「手順を書いたページがまだない」であって、機能がないという意味ではありません。

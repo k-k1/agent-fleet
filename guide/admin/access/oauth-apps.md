@@ -35,7 +35,7 @@ On the GitHub card under **Tenant settings → Integrations → Integration OAut
 | None | No "Connect with OAuth"; members paste an access token | |
 
 - The built-in apps need no registration. GitHub's device flow uses no secret and the token goes only into the member's own workspace, so nobody else can see it
-- On a deployment where the deployment administrator has turned the built-in apps off, the card says so (`AF_GITHUB_BUILTIN_APPS=off`)
+- On a deployment where the deployment administrator has turned the built-in apps off, the card says so
 - **Reset to default** clears your choice
 
 ### Use your own app
@@ -58,7 +58,7 @@ On the GitHub card under **Tenant settings → Integrations → Integration OAut
 
 - The client_secret is encrypted on save and never shown again. When you edit later, leave it empty to keep the stored one; enter it only to change it
 - **Remove registration** takes "Connect with OAuth" away. Members connected with a token are unaffected
-- If the card says `PUBLIC_BASE_URL` is not set, there is no callback URL to register. Ask the deployment administrator to set it
+- If the card says the deployment's public address is not set, there is no callback URL to register. Ask the deployment administrator to set it; the card names the setting
 
 ### Bitbucket's Permissions
 

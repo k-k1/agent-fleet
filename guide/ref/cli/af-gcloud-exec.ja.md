@@ -28,9 +28,9 @@ af-gcloud-exec --version
 |---|---|
 | `--profile <名前>` | 使うプロファイル。必須です。名前は `--list` で確かめられます |
 | `--project <ID>` | プロファイルのプロジェクト。必須です。違うと何も実行せずに止めます（[`--project`](#--project)） |
-| `--login` | プロファイルに使えるログインがないとき、いつもこの端末で gcloud のログインを始めます |
-| `--no-login` | ログインを求めず、端末で実行するコマンドを表示して終了コード 3 で終わります |
-| `-q`, `--quiet` | 実行する身元とトークンの残り時間の行を表示しません |
+| `--login` | プロファイルに使えるログインがないとき、いつもこのターミナルで gcloud のログインを始めます |
+| `--no-login` | ログインを求めず、ターミナルで実行するコマンドを表示して終了コード 3 で終わります |
+| `-q`, `--quiet` | 実行するIDとトークンの残り時間の行を表示しません |
 | `--list` | 設定からプロファイルを読み直して、使える名前を一覧にします |
 | `-h`, `--help` | ヘルプを表示します |
 | `--version` | バージョン（属する workspace-agent のビルド）を表示します |
@@ -92,12 +92,12 @@ prod-app    (not exported: Settings labels Prod App / prod-app all map to this n
 ## コマンドが受け取るもの
 
 コマンドが受け取るのは、プロファイルの一時的な**アクセストークン**だけです。自分の gcloud のログインも、アプリケーションの
-デフォルト認証情報も、マシン自身の Google の身元も渡りません。自分の `~/.config/gcloud` は読みも変えもしません。
+デフォルト認証情報も、マシン自身の Google のIDも渡りません。自分の `~/.config/gcloud` は読みも変えもしません。
 
 | 環境変数 | 中身 |
 |---|---|
 | `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` | トークンのファイル。gcloud と GKE 認証プラグインはここから読みます |
-| `GOOGLE_OAUTH_ACCESS_TOKEN` | トークンそのもの。Terraform の Google プロバイダはここから読みます |
+| `GOOGLE_OAUTH_ACCESS_TOKEN` | トークンそのもの。Terraform の Google プロバイダーはここから読みます |
 | `CLOUDSDK_CONFIG` | 空の、この実行専用の gcloud の設定ディレクトリ |
 | `CLOUDSDK_CORE_PROJECT`・`GOOGLE_CLOUD_PROJECT`・`GOOGLE_PROJECT` | プロファイルのプロジェクト |
 | `CLOUDSDK_BILLING_QUOTA_PROJECT`・`GOOGLE_BILLING_PROJECT`・`GOOGLE_CLOUD_QUOTA_PROJECT` | 割り当てプロジェクト（空欄ならプロジェクト）。`USER_PROJECT_OVERRIDE=true` も付きます |
@@ -111,18 +111,18 @@ prod-app    (not exported: Settings labels Prod App / prod-app all map to this n
 | ツール | トークンを使うか |
 |---|---|
 | `gcloud`（`gcloud storage` を含む） | 使う |
-| GKE クラスタへの `kubectl` | 使う（GKE 認証プラグイン経由。[kubectl を使う](#kubectl-を使う)） |
-| Terraform の Google プロバイダ | 使う（割り当てプロジェクト付き。実行中のトークンの更新は届きません） |
+| GKE クラスターへの `kubectl` | 使う（GKE 認証プラグイン経由。[kubectl を使う](#kubectl-を使う)） |
+| Terraform の Google プロバイダー | 使う（割り当てプロジェクト付き。実行中のトークンの更新は届きません） |
 | `bq` | 使う。SDK に入っていますがパスは通っていないので、`~/.local/share/agent-fleet/google-cloud-sdk/bin/bq` で実行します |
 | `gsutil` | **使わない**。トークンを無視します。代わりに `gcloud storage` を使ってください |
 | Google のクライアントライブラリ（Go・Python・Node など） | プログラムがトークンを渡したときだけ（[クライアントライブラリから使う](#クライアントライブラリから使う)） |
 
-`gsutil` は、自分の boto の設定がなければ**認証なしで**要求を送ります。公開バケットは応答するので、読めたように見えます。
-設定があれば、その設定にある別の身元で動くことがあります。
+`gsutil` は、自分の boto の設定がなければ**認証なしで**リクエストを送ります。公開バケットは応答するので、読めたように見えます。
+設定があれば、その設定にある別のIDで動くことがあります。
 
 ### kubectl を使う
 
-クラスタの接続情報を一度プロファイル経由で取り、`kubectl` も `af-gcloud-exec` 経由で実行します。
+クラスターの接続情報を一度プロファイル経由で取り、`kubectl` も `af-gcloud-exec` 経由で実行します。
 GKE 認証プラグインはトークンを gcloud に求め、gcloud がトークンを持つのは `af-gcloud-exec` の中だけだからです。
 
 ```sh
@@ -133,7 +133,7 @@ af-gcloud-exec --profile prod --project acme-shop-prod -- kubectl get pods
 ### クライアントライブラリから使う
 
 クライアントライブラリで作ったプログラムは、そのままでは「File … was not found」や「no such file or directory」のようなエラーで止まります。
-これは意図したものです。止めないと、自分の gcloud のログインやマシンの身元など、別の身元を見つけてしまいます。
+これは意図したものです。止めないと、自分の gcloud のログインやマシンのIDなど、別のIDを見つけてしまいます。
 
 プログラムがトークンを自分で受け取るように書きます。
 
@@ -180,9 +180,9 @@ af-gcloud-exec --profile prod --project acme-shop-prod -- kubectl get pods
 |---|---|
 | エージェント | Console にログインを頼み、1 分半ほど待ちます。間に合わなければ終了コード 3 で終わります |
 | ワークスペースのほかのセッション（シェルのスクリプトなど） | Console に頼み、数秒待ちます |
-| ワークスペースの端末 | Console に頼み、最大 10 分待ちます。Ctrl-C で待つのをやめると終了コード 3 で終わり、依頼は Console に残ります |
-| `--login` を付けたとき | その端末で gcloud のログインを始めます |
-| `--no-login` を付けたとき、ワークスペースの外 | 終了コード 3 と、端末で実行するコマンドを表示して終わります |
+| ワークスペースのターミナル | Console に頼み、最大 10 分待ちます。Ctrl-C で待つのをやめると終了コード 3 で終わり、依頼は Console に残ります |
+| `--login` を付けたとき | そのターミナルで gcloud のログインを始めます |
+| `--no-login` を付けたとき、ワークスペースの外 | 終了コード 3 と、ターミナルで実行するコマンドを表示して終わります |
 
 Console に頼んだときは、標準エラーに次のように出ます。依頼はプロファイルごとに 1 つで、2 つ目の実行は同じ依頼を待ちます。
 
@@ -192,14 +192,14 @@ af-gcloud-exec: Google Cloud login for profile "prod" requested in the Agent Fle
 
 Console で依頼が取り消されたときは、そのプロファイルについて 1 分ほど再び頼みません。
 
-### 端末でログインする
+### ターミナルでログインする
 
 ```sh
 af-gcloud-exec --profile <名前> --project <プロジェクト ID> --login -- true
 ```
 
-表示される URL をブラウザで開いてログインし、ページに出る確認コードを**その**端末に貼り付けます。
-貼り付けてよいのは、いま自分で始めたログインのコードだけです。Claude Code からなら、プロンプトで `!` に続けて入力すると自分の端末として実行できます。
+表示される URL をブラウザで開いてログインし、ページに出る確認コードを**その**ターミナルに貼り付けます。
+貼り付けてよいのは、いま自分で始めたログインのコードだけです。Claude Code からなら、プロンプトで `!` に続けて入力すると自分のターミナルとして実行できます。
 
 Google Cloud の VM の上で直接動くワークスペースでは、gcloud が VM で個人アカウントを使うかを尋ねます。Console のログインはこれに答えないので、
 この方法でログインしてください。
@@ -215,19 +215,19 @@ Google Cloud の VM の上で直接動くワークスペースでは、gcloud �
 
 ## Google Cloud SDK
 
-- はじめて使うときに、固定されたバージョンの Google Cloud SDK と GKE 認証プラグインをホームにインストールします。ダウンロードは約 85 MB で、ディスクを約 510 MB 使います
+- はじめて使うときに、固定されたバージョンの Google Cloud SDK と GKE 認証プラグインをホームディレクトリにインストールします。ダウンロードは約 85 MB で、ディスクを約 510 MB 使います
 - 停止しても作り直しても残ります。インストール後は、設定の「**ツールチェーン**」タブのツールのバージョンの表に gcloud が出ます
 - その後は、gcloud の各コマンドの初回だけ数秒遅くなります
-- 端末で素の `gcloud` を実行すると同じプログラムが動きますが、使うのは（あれば）自分のログインで、プロファイルのものではありません
+- ターミナルで素の `gcloud` を実行すると同じプログラムが動きますが、使うのは（あれば）自分のログインで、プロファイルのものではありません
 
 ## 止まったときのメッセージ
 
 | メッセージ | 意味 | すること |
 |---|---|---|
 | 終了コード 3、`the login was requested in the Agent Fleet Console and is waiting …` | ログインがまだないか、Google が保存済みのログインを断り、待つのをやめました | トーストか設定からログインし、もう一度実行します |
-| 終了コード 3、`the token of profile … has ended and could not be renewed, so the command was stopped: …` | 実行中にトークンが切れ、ログインし直しが必要です | メッセージに端末のコマンドがあればそれを実行し、なければ Console でログインします |
+| 終了コード 3、`the token of profile … has ended and could not be renewed, so the command was stopped: …` | 実行中にトークンが切れ、ログインし直しが必要です | メッセージにターミナルのコマンドがあればそれを実行し、なければ Console でログインします |
 | 終了コード 3、`the login request was cancelled in the Agent Fleet Console` | 依頼を取り消しました | ログインするなら設定から行います |
-| 終了コード 3、`Google Cloud login required … log in from a terminal with:` | Console に頼めませんでした（`--no-login`、ワークスペースの外） | 表示されたコマンドを自分の端末で実行します |
+| 終了コード 3、`Google Cloud login required … log in from a terminal with:` | Console に頼めませんでした（`--no-login`、ワークスペースの外） | 表示されたコマンドを自分のターミナルで実行します |
 | `is for project X, not Y; --project must be the profile's project` | このプロジェクトには違うプロファイルです | `--list` で選び直します |
 | `no Google Cloud profile …`、`not exported: …` | その名前は使えるプロファイルにありません | 設定で追加するか直します |
 | `gcloud could not mint a token: …` | ログインの問題ではありません。権限がない（借用するサービスアカウントへの権限を含む）、API が有効でない、ネットワーク | メッセージの理由を直します |
@@ -237,12 +237,12 @@ Google Cloud の VM の上で直接動くワークスペースでは、gcloud �
 | `could not renew the token of profile … trying again until it ends in N minutes` | 使っているトークンをまだ更新できていません | 待ちます。先にトークンが切れたらコマンドは止まります |
 | `the profile's login is now X, not Y, which the command started as; run it again` | 実行中に、そのプロファイルが別のアカウントでログインし直されました | もう一度実行します |
 | `the profile changed in Settings while this run started; run it again` | 実行の開始中に、設定でプロファイルが変わりました | もう一度実行します。アカウントやプロジェクトが変わっていれば `--list` で確かめます |
-| `waiting for another af-gcloud-exec or a profile sync …` | 端末でのログインか別の実行が、ワークスペースの gcloud の保存場所を使っています | 何もしません。終われば続きます |
+| `waiting for another af-gcloud-exec or a profile sync …` | ターミナルでのログインか別の実行が、ワークスペースの gcloud の保存場所を使っています | 何もしません。終われば続きます |
 
 ## 保証しないこと
 
-- コマンドはあなたとして動くので、自分の gcloud のディレクトリを含めてホームを読めます。`af-gcloud-exec` は、Google の認証情報を探す
+- コマンドはあなたとして動くので、自分の gcloud のディレクトリを含めてホームディレクトリを読めます。`af-gcloud-exec` は、Google の認証情報を探す
   標準の方法（gcloud とクライアントライブラリのもの）が、渡したトークン以外を見つけないようにするだけです
 - 自分の設定を持つ `gsutil` のように、別の場所を探すツールは対象外です
-- Google Cloud の VM や Kubernetes の Pod の上で動くワークスペースでは、標準の方法を無視するプログラムが、VM やノードの身元
+- Google Cloud の VM や Kubernetes の Pod の上で動くワークスペースでは、標準の方法を無視するプログラムが、VM やノードのID
   （GKE では Workload Identity）に届く可能性があります。管理者がネットワークで経路を塞がないかぎり、ワークスペースからは防げません

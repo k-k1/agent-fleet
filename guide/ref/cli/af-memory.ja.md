@@ -7,8 +7,8 @@ source_of_truth: "af-memory --help（ワークスペースの workspace-agent �
 
 [English](af-memory.md) | 日本語
 
-ワークスペースの端末から、Agent Fleet のメモリを扱います。変更の一覧、Claude Code と muse のメモリの取り込み、
-Claude Code への書き戻し、リントができます。どれもワークスペースの Agent に頼むので、Console と同じスイッチと秘密情報の検査が効きます。
+ワークスペースのターミナルから、Agent Fleet のメモリを扱います。変更の一覧、Claude Code と muse のメモリの取り込み、
+Claude Code への書き戻し、リントができます。どれもワークスペースの Agent に頼むので、Console と同じスイッチとシークレットの検査が効きます。
 Console での使いかたは [メモリを取り込む・書き出す](../../user/memory/import-export.ja.md) にあります。
 
 ## 書式
@@ -66,7 +66,7 @@ af-memory changes [--limit N]
 ```
 
 1 行に、日時・操作・`<プロジェクト>/<名前>`（ユーザー全体のメモリは `user/<名前>`）・書き手の種類とセッションが並びます。
-秘密情報の検査で引っかかった変更は表示せず、その件数を最後に出します。
+シークレットの検査で引っかかった変更は表示せず、その件数を最後に出します。
 
 ## import-sources・import
 
@@ -98,7 +98,7 @@ af-memory import --project <slug>
 | `update` | Claude のファイルのほうが新しい。Agent Fleet 側のコピーを上書きする |
 | `unchanged` | 変わっていない |
 | `forgotten` | 忘れたメモリ。取り込まない |
-| `secret` | 秘密情報の疑い。取り込まない（検出したファイル・行と、マスクしたヒントが出ます） |
+| `secret` | シークレットの疑い。取り込まない（検出したファイル・行と、マスクしたヒントが出ます） |
 | `invalid` | 取り込めない（理由が出ます） |
 
 ```
@@ -140,7 +140,7 @@ af-memory muse-import --scope personal --into-user [--dry-run]
 - 状態は `import` と同じで、ほかに `diverged`（Agent Fleet 側に独自のバージョンがあり、取り込みません）があります
 - git が追跡しているファイルには `(shared: git tracks this file, teammates may have it)` と付きます
 - フロントマターのないメモには `(no frontmatter: …)` と付き、名前はファイル名、説明は最初の行になります
-- スイッチと秘密情報の検査は `import` と同じです
+- スイッチとシークレットの検査は `import` と同じです
 
 ## export-sources・export
 
@@ -163,8 +163,8 @@ af-memory export --project <ID か名前> [--overwrite <名前>]...
 | `new` | Claude にないファイルを作る |
 | `update` | 前に書き戻したファイルを更新する |
 | `remove` | Agent Fleet で忘れたので、前に書き戻したファイルを消す |
-| `conflict` | Agent Fleet が書いていない、または書いたあとに変わったファイル。`--overwrite` で名指ししない限り残す |
-| `secret` | 秘密情報の疑い。書かない |
+| `conflict` | Agent Fleet が書いていない、または書いたあとに変わったファイル。`--overwrite` で指定しない限り残す |
+| `secret` | シークレットの疑い。書かない |
 | `unchanged` | 変わっていない |
 | `native_only` | Claude にだけある。消さない |
 

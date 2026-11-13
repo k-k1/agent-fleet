@@ -44,8 +44,8 @@ How a new person gets into this tenant is decided by the deployment's settings a
 
 | Mechanism | Who gets in | Decided by |
 |---|---|---|
-| Invite-only (`AF_PROVISION=invite`, the default of a new install) | Only people added to the roster | deployment administrator |
-| Auto-join (`AF_PROVISION=auto`) | Everyone allowed to sign in joins the default tenant at first sign-in | deployment administrator |
+| Invite-only (the default of a new install) | Only people added to the roster | deployment administrator |
+| Auto-join | Everyone allowed to sign in joins the default tenant at first sign-in | deployment administrator |
 | Auto-join domains (login rules) | People with an address in the domain join this tenant at first sign-in | deployment administrator |
 
 - Someone already on a roster gets in according to the roster, whatever the mechanism

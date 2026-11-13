@@ -14,7 +14,7 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 |---|---|---|---|
 | 個人 | 自分 | アカウントメニュー → **設定** | 即座、または次のセッションから |
 | テナント | テナント管理者 | アカウントメニュー → **テナント設定** | そのテナントのメンバーに |
-| 配備 | 配備を運用する人 | 環境変数（起動前）| 再起動時 |
+| 配備 | 配備の運用担当者 | 環境変数（起動前）| 再起動時 |
 
 狭い層が広い層の範囲を超えることはできません。個人設定はテナントの上限を超えられず、テナント設定は
 配備が許す範囲を超えられません。設定した値が効いている値と違うときは、1 つ外の層を見てください。
@@ -38,17 +38,17 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | タブ | 決めるもの | 説明のページ |
 |---|---|---|
 | 表示 | 言語・地域の形式・タイムゾーン・テーマ・情報密度 | [表示とアカウントを変える](../user/settings/display.ja.md) |
-| アカウント | 自分のアカウントに紐づくサインイン方式 | [表示とアカウントを変える](../user/settings/display.ja.md#サインイン方法を追加する) |
+| アカウント | 自分のアカウントに紐づくサインイン方法 | [表示とアカウントを変える](../user/settings/display.ja.md#サインイン方法を追加する) |
 | キー操作 | ショートカットと再割り当て | [キーボードとコマンドパレットで操作する](../user/start/shortcuts.ja.md#キーを変える) |
 | 読み上げ | 読み上げエンジンと声 | [読み上げを使う](../user/settings/read-aloud.ja.md) |
 | 通知 | 何を、どう知らせるか | [通知を受け取る](../user/settings/notifications.ja.md) |
 | 利用枠ボード | 利用上限に対する自分の状況を、このテナントの誰に・どこまで見せるか（既定は非公開）。メンバーが自分に公開している状況 | [使用量の上限の状況を見せ合う](../user/team/usage-limits.ja.md) |
 | アシスタント | アシスタントチャットのエージェントとモデル | [アシスタントに質問する](../user/chat/assistant.ja.md#回答の言語とモデルを決める)・[フリート・オペレーターに任せる](../user/fleet/operator.ja.md#自動応答を調整する) |
 | AI 補助 | タイトル・ブランチ名・返信候補・編集提案・計画更新・翻訳の既定エージェントとモデル、機能ごとのオン／オフ・エージェント・モデルの上書き | [翻訳や専用のアシスタントを使う](../user/chat/purpose-assistants.ja.md#ai-補助を設定する) |
-| エージェントへの指示 | このワークスペースで起こす全エージェントに足される文 | [作業のしかたを一度だけ書いておく](../user/agents/instructions.ja.md) |
+| エージェントへの指示 | このワークスペースで起動する全エージェントに足される文 | [作業のしかたを一度だけ書いておく](../user/agents/instructions.ja.md) |
 | スキル | 各エージェント（Claude・Codex・OpenCode・Muse）の個人スキル。読み込まれるフォルダ、どれが優先されるか、各ファイルの中身。読み取り専用 | [手元の Claude Code の設定を持ち込む](../user/agents/bring-claude-setup.ja.md#スキルを確かめる) |
 | エージェントメモリ | Agent Fleet 自身の共有メモリ。4 つの表示: メモリ（閲覧・検索・作成・編集・ピン留め・忘れさせる・忘却を取り消す・履歴の消去）、変更（変更一覧と元に戻す・忘れさせる）、取り込み・書き出し（カードのハブ：Claude Code・muse・メモリのバンドルからの取り込み、Claude Code への書き戻し、プロジェクトの移動）、設定（セッション用スイッチと同期の状態、外部からの利用） | [エージェントのメモリを見る・直す](../user/memory/overview.ja.md) |
-| メモリのスナップショット | エージェント自身のメモリ（各エージェント種別が持つメモリ）の版管理。3 つの表示: 履歴（この時点に戻すつき。Agent Fleet のメモリの書き込みは頼まない限り隠す）、対象（対象のルート・codex のメモリ・自動スナップショット）、書き出し・取り込み | [スナップショットでメモリを戻す](../user/memory/snapshots.ja.md) |
+| メモリのスナップショット | エージェント自身のメモリ（各エージェントの種類が持つメモリ）のバージョン管理。3 つの表示: 履歴（この時点に戻すつき。Agent Fleet のメモリの書き込みは頼まない限り隠す）、対象（対象のルートディレクトリ・codex のメモリ・自動スナップショット）、書き出し・取り込み | [スナップショットでメモリを戻す](../user/memory/snapshots.ja.md) |
 | エージェント | 各エージェントの接続・既定モデル・除外するモデル・挙動。llama.cpp のオン／オフと自分の llama-server 接続先、Muse Code の導入とログイン。セッショングループ — 停止中セッションのアーカイブまでの日数・セッション間メッセージ・セッションからのセッション起動と子セッションの同時本数・過去セッションの検索（`search_sessions` ツール。コマンドパレットの「会話」はこの設定に関係なく使えます）・画像生成と画像生成の優先順位 | [エージェントを選ぶ](../user/agents/choose.ja.md)・[セッションを止める・再開する](../user/sessions/stop-resume.ja.md#停止したまま置いておくと)・[セッション同士でやりとりさせる](../user/fleet/messages.ja.md)・[セッションから子セッションを起動する](../user/fleet/child-sessions.ja.md)・[セッションに画像を作らせる](../user/images/from-session.ja.md) |
 | Git ホスティング | GitHub / Bitbucket の接続 | [Git のサービスを接続する](../user/code/connect-git.ja.md) |
 | 運用・監視 | 監視連携 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
@@ -88,7 +88,7 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | 別のサインイン方法でも入れるようにしたい | アカウント |
 | Enter で送信したい | キー操作（送信キー） |
 | ペインをタブで切り替えたい | 表示（メイン領域の配置） |
-| ショートカットを変えたい / 端末にキーを渡したい | キー操作 |
+| ショートカットを変えたい / ターミナルにキーを渡したい | キー操作 |
 | 回答を読み上げてほしい | 読み上げ |
 | Slack への通知だけ止めたい | 通知（サービス通知） |
 | アシスタントを英語で答えさせたい | アシスタント（回答言語） |
@@ -140,7 +140,7 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | ブランチ命名ルール | 新しいブランチの名前と起点の、テナントとしての既定（リポジトリのパターンごと・JSON の一覧）。メンバーのワークスペースは 5 分以内に取り込む。**助言のみ**。外れた名前は警告になるだけで、拒否はされない |
 | ウォッチのソース | メンバーが自分の MCP サーバーをウォッチのソースにできるか。ブロック（既定）だと設定を断り、テナントのソースをすべて止める（[MCP サーバーをウォッチのソースに許可する](../admin/watch-sources.ja.md)） |
 | 外部からのメモリ利用 | メンバーが `/mcp`（またはメモリ専用の `/mcp/memory`）経由で Agent Fleet の外のエージェントから自分のメモリを使えるか。許可（既定）ならメンバーが各自で有効にでき、ブロックするとテナント全体からメモリのツールを引き上げる（[外部からのメモリの利用を許可する](../admin/memory-outside.ja.md)） |
-| メンバーの既定 | 初回のようこそカードが「エージェントを接続」で名指しするエージェント（Claude・Codex・opencode・Cursor・Copilot・Kiro・Muse・指定しない）。メンバーは Console を読み込むたびに読む。**案内のみ**で、ほかのエージェントを接続しても手順は完了になる（[メンバーの既定値を決める](../admin/defaults/members.ja.md)） |
+| メンバーの既定 | 初回のようこそカードが「エージェントを接続」で指定するエージェント（Claude・Codex・opencode・Cursor・Copilot・Kiro・Muse・指定しない）。メンバーは Console を読み込むたびに読む。**案内のみ**で、ほかのエージェントを接続しても手順は完了になる（[メンバーの既定値を決める](../admin/defaults/members.ja.md)） |
 | 監査 | 誰が・いつ・何を変えたか |
 | 稼働時間 | メンバーごとのワークスペース稼働時間（書き出し可）＋テナント全体の時間別ヒートマップ |
 | クラウド費用 | テナントのクラウド費用をメンバーごとに。AWS で動く配備だけ（[稼働時間とクラウド費用を見る](../admin/usage.ja.md#クラウド費用を見る)）|
@@ -156,7 +156,7 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | 項目 | 決めるもの | 詳細 |
 |---|---|---|
 | テナント一覧 | テナントの作成。各テナントの上限とアイドル自動停止、自前エンジンの利用可否とモデル取り込みの許可、メンバー | [インストールする](../operate/install.ja.md#7-メンバーを迎える) |
-| サインイン方法の登録簿 | テナントが自分で定義したサインイン方式の承認 | [テナント独自のサインインを承認する](../operate/signin/tenant-idp.ja.md) |
+| サインイン方法の登録簿 | テナントが自分で定義したサインイン方法の承認 | [テナント独自のサインインを承認する](../operate/signin/tenant-idp.ja.md) |
 | 通信 | ワークスペースからの外向き通信: 観測（log-only）か enforce か、許可リスト、メンバーの申請 | [外向きの通信を制御する](../operate/secure/egress.ja.md) |
 | MCP ログイン許可ホスト | MCP OAuth サーバーが信頼するクライアントのホスト（配備全体）| [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
 | 読み上げ | 音声エンジンのモードと、共通の読み仮名辞書 | [読み上げエンジンを動かす](../operate/engines/read-aloud.ja.md) |
@@ -177,14 +177,14 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `AF_RUNTIME` | 配備形態（[deploy-targets.md](deploy-targets.ja.md)）。不明な値は**起動時に拒否**される |
 | `AUTH` | サインインの方式。`oauth`（CP 内蔵）/ `proxy`（前段のゲートウェイ）/ `dev`（サインインなし・単独）。**既定値はなく、未設定だと Control Plane は起動を拒否する**（native は `dev` を使う）。Docker やクラウドで `dev` を使うには `AF_ALLOW_INSECURE_DEV_AUTH=1` も必要で、`PUBLIC_BASE_URL` が https のときは拒否される |
 | `DATA_DIR` | 永続する状態がすべてここにあるため、**バックアップすべき対象** |
-| `AF_MASTER_KEY` | 保存時の暗号化の大元になる鍵。**失うと保存済みの資格情報は復元できない** |
-| `AF_KEY_CUSTODIAN` | 保存時の鍵を誰が持つか: `local`（既定。`AF_MASTER_KEY` から導く）か `kms`（AWS KMS。`AF_KMS_KEY_ID` と組で。[保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)）。未知の値や不足は起動時に拒否 |
-| `AF_WORKSPACE_DEK` | `derived`（既定）か `random`: メンバーのホームごとに KMS で封じた専用の鍵を持たせる。移し替えた資格情報ストアは `AF_MASTER_KEY` から導いた鍵では開けなくなり、KMS 鍵を無効化すると Control Plane は鍵を開けなくなる（ワークスペースとランタイムにすでに渡した写しでは今も開ける）。`random` は `AF_KEY_CUSTODIAN=kms` が前提で、無効にしても元には戻らない（[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md)） |
+| `AF_MASTER_KEY` | 保存時の暗号化の大元になるキー。**失うと保存済みの認証情報は復元できない** |
+| `AF_KEY_CUSTODIAN` | 保存時のキーを誰が持つか: `local`（既定。`AF_MASTER_KEY` から導く）か `kms`（AWS KMS。`AF_KMS_KEY_ID` と組で。[保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)）。未知の値や不足は起動時に拒否 |
+| `AF_WORKSPACE_DEK` | `derived`（既定）か `random`: メンバーのホームディレクトリごとに KMS で暗号化した専用のキーを持たせる。移し替えた認証情報ストアは `AF_MASTER_KEY` から導出したキーでは開けなくなり、KMS キーを無効化すると Control Plane はそのキーをアンラップできなくなる（ワークスペースとランタイムにすでに渡した写しでは今も開ける）。`random` は `AF_KEY_CUSTODIAN=kms` が前提で、無効にしても元には戻らない（[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md)） |
 | `SUPER_ADMIN_EMAILS` | 誰が配備管理者か |
 | `PUBLIC_BASE_URL` | 利用者が到達する URL。OAuth のコールバックもここから組み立てる |
 | `WS_MEMORY` | ワークスペースの既定メモリ上限 |
 | `AF_PREVIEW_DOMAIN` | プレビュー用サブドメイン（`<ワークスペース>-<ポート>.<ドメイン>`）の親ドメイン。そのためのワイルドカードの DNS 名と証明書が要る。未設定ならプレビュー用サブドメインはなく、Console 自身のプレビューのパスだけになる。`AF_COOKIE_SECRET` と `PUBLIC_BASE_URL` も一緒に設定する。どちらかがないと、プレビューのサインインを信頼できないか、戻る先の Console がないため、Control Plane が起動時に警告する |
-| `AF_DEV_IDP` | `0` にすると、開発用ログイン（プレビュー用サブドメイン上のメンバーのアプリが Google の代わりにサインインに使える、Console のオリジン上の OIDC プロバイダ）を、配備管理者のスイッチにかかわらずオフに固定する。未設定ならそのスイッチに従い、スイッチは既定でオン。提供するのは `AF_PREVIEW_DOMAIN` と `PUBLIC_BASE_URL` があるときだけ |
+| `AF_DEV_IDP` | `0` にすると、開発用ログイン（プレビュー用サブドメイン上のメンバーのアプリが Google の代わりにサインインに使える、Console のオリジン上の OIDC プロバイダー）を、配備管理者のスイッチにかかわらずオフに固定する。未設定ならそのスイッチに従い、スイッチは既定でオン。提供するのは `AF_PREVIEW_DOMAIN` と `PUBLIC_BASE_URL` があるときだけ |
 | `AF_MCP_ENABLED` | `true` で `/mcp` エンドポイントとメモリ専用の `/mcp/memory`（Personal Access Token）を提供する。それ以外（`1` を含む）はオフ。テナント単位のメモリのスイッチ（[外部からのメモリの利用を許可する](../admin/memory-outside.ja.md)）は別の、もっと狭いスイッチ |
 | `AF_MCP_OAUTH` | `1` で、Control Plane が `/mcp` の OAuth 認可サーバーにもなり、ホスト型のクライアントはメンバーのサインインで接続できる。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` が要り、どれか欠けると OAuth のパスは 404。各テナントは自分の分をオフにもできる（[MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める)）。残りは [MCP のサインインを運用する](../operate/secure/mcp.ja.md#リモートの-mcp-クライアントを-oauth-でサインインさせる) |
 | `AF_GITHUB_WEBHOOK_SECRET` | この配備の GitHub App の Webhook シークレット。設定すると、Control Plane は App の配信を `/webhooks/github` で受け付ける（App の Webhook URL は `<PUBLIC_BASE_URL>/webhooks/github`）。受けた配信は、実行中のワークスペースに「公開リポジトリのプルリクエストを早めに確認して」と知らせるためだけに使う。未設定ならこのエンドポイントは存在せず、ウォッチはポーリングだけで動く。プライベートリポジトリの配信はこの経路では無視する。配信の中身は何も渡さない。 |
@@ -205,7 +205,7 @@ Control Plane は自分の既定値のままです。
 | `AF_LLM_URL`・`AF_COMFY_URL`・`AF_REMOTE_ENGINE_URL`・`AF_REMOTE_ENGINE_KEYS` | `LlmUrl`・`ComfyUrl`・`RemoteEngineUrl`・`RemoteEngineKeys` |
 | `AF_GITHUB_LOGIN_CLIENT_SECRET`・`AF_COMFY_API_KEY`・`AF_REMOTE_ENGINE_TOKEN` | スイッチ `GithubLoginSecret`・`ComfyApiKey`・`RemoteEngineToken`（`on`）。値は SSM SecureString の `<SsmPrefix>/github-login-client-secret`・`/comfy-api-key`・`/remote-engine-token` から読むので、先に作っておきます |
 
-`WS_ENV` には ECS 用のパラメータを意図して用意していません。自由形式の `KEY=VAL` で、秘密の値も平文の環境変数に載るためです。パラメータは
+`WS_ENV` には ECS 用のパラメータを意図して用意していません。自由形式の `KEY=VAL` で、シークレットの値も平文の環境変数に載るためです。パラメータは
 `30-ingress.yaml` に対する個別の `aws cloudformation deploy` で設定します（`update.sh` が上書きするのは `ImageTag` と、ほかのスタックから読む事実 `EfsBackup`・`WorkspaceSubnets`・`EgressProxyAddr`・`EgressTokenSecretArn`・`EgressArchiveBucket` だけです）。
 詳しくは
 [`deploy/aws/ecs/cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)。

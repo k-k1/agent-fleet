@@ -46,7 +46,7 @@ purge_cleanup_archive	cleanup	Delete an archive for good; it cannot be restored 
 memory_index	memory	List the shared memories, without their bodies	共有メモリ（全エージェント共通）を本文なしで一覧します
 memory_search	memory	Full-text search over the shared memory	共有メモリを全文検索します
 memory_read	memory	Read one memory with its body	共有メモリを 1 件、本文付きで読みます
-memory_save	memory	Create or update a memory; it is published at once, and a secret is refused	共有メモリを作成・更新します。すぐに公開され、秘密情報は拒否されます
+memory_save	memory	Create or update a memory; it is published at once, and a secret is refused	共有メモリを作成・更新します。すぐに公開され、シークレットは拒否されます
 memory_patch	memory	Change part of a memory without sending it again whole	共有メモリの一部だけを、全文を送り直さずに書き換えます
 memory_feedback	memory	Report that a memory you relied on is wrong or out of date	頼ったメモリが間違っている・古くなっていることを報告します
 memory_forget	memory	Take a memory out of use; its history stays	共有メモリを公開から外します（履歴は残ります）
@@ -65,7 +65,7 @@ generate_image	image	Generate an image from a prompt and return the file paths; 
 get_image_studio	image	Read the image studio draft you are working on together	利用者と一緒に作業しているスタジオの下書きを読みます
 set_image_draft	image	Change fields of the studio draft	スタジオの下書きの項目を変更します
 add_image_knowledge	image	Add a note to the studio's knowledge for its model or model family, only when you ask for it	スタジオのモデルや系統の知識メモに 1 行追記します（利用者が頼んだときだけ）
-run_image_trial	image	Make one trial image from the draft as it is; refused unless "Let the agent run a trial" is on in the studio	下書きのまま試走の画像を 1 枚作ります。スタジオで「エージェントの試走を許す」がオンでないと拒否されます
+run_image_trial	image	Make one trial image from the draft as it is; refused unless "Let the agent run a trial" is on in the studio	下書きのままテスト生成の画像を 1 枚作ります。スタジオで「エージェントの試走を許す」がオンでないと拒否されます
 branch_name	work	Decide a branch name and its base from your branch naming rules; called before creating or renaming a branch	利用者のブランチ命名規則に沿ったブランチ名とベースを決めます。ブランチを作る・改名する前に呼びます
 link_work_item	work	Link this session to an issue, ticket or pull request, shown on its row in the Console	自分のセッションを Issue・チケット・PR に紐づけます。Console の行に表示されます
 watch	watch	Get a notice in this session when a pull request or another watched subject changes, instead of polling	PR などの監視対象が変わったときに、ポーリングせずにこのセッションで通知を受け取ります
@@ -79,9 +79,9 @@ ask_assistant	chat	Ask another assistant for advice, read-only and for one turn	
 list_workspaces	admin	List the tenant's members with the state of their workspace	テナントのメンバーと、そのワークスペースの状態を一覧します
 get_usage	admin	Show the tenant's resource use: members, running workspaces and limits	テナントのリソース使用量（メンバー数・稼働数・上限）を返します
 list_sessions	admin	List sessions across the tenant, or of one member	テナント全体、またはメンバー 1 人のセッションを一覧します
-stop_workspace	admin	Force-stop a member's workspace; the home stays	メンバーのワークスペースを強制停止します（ホームは残ります）
+stop_workspace	admin	Force-stop a member's workspace; the home stays	メンバーのワークスペースを強制停止します（ホームディレクトリは残ります）
 stop_user_session	admin	Stop a session in a member's workspace; it can be resumed	メンバーのワークスペースのセッションを停止します（再開できます）
-set_user_quota	admin	Set a member's quota: sessions, CPU, memory and disk	メンバーごとのクォータ（セッション数・CPU・メモリ・ディスク）を設定します
+set_user_quota	admin	Set a member's quota: sessions, CPU, memory and disk	メンバーごとの利用上限（セッション数・CPU・メモリ・ディスク）を設定します
 get_egress_stats	admin	Show outbound traffic by destination host (deployment administrators)	外向き通信を送信先ホストごとに返します（配備管理者）
 list_allowlist	admin	List the egress allowlist entries (deployment administrators)	外向き通信の許可リストを一覧します（配備管理者）
 propose_allowlist_change	admin	Propose an allowlist addition; it takes effect only once an administrator approves it in the Console (deployment administrators)	許可リストへの追加を提案します。管理者が Console で承認するまで有効になりません（配備管理者）

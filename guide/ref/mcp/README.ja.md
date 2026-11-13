@@ -116,7 +116,7 @@ Agent Fleet は、エージェントやアシスタントが Agent Fleet 自体�
 | `memory_index` | 共有メモリ（全エージェント共通）を本文なしで一覧します | ✓ 「エージェントメモリ」 | — | ✓ `read`、メモリ | — |
 | `memory_search` | 共有メモリを全文検索します | ✓ 「エージェントメモリ」 | — | ✓ `read`、メモリ | `query` |
 | `memory_read` | 共有メモリを 1 件、本文付きで読みます | ✓ 「エージェントメモリ」 | — | ✓ `read`、メモリ | `name` |
-| `memory_save` | 共有メモリを作成・更新します。すぐに公開され、秘密情報は拒否されます | ✓ 「エージェントメモリ」 | — | ✓ `write`、メモリ | セッション: `name`, `description`, `body`; 外部: `name`, `description`, `type`, `body`, `scope` |
+| `memory_save` | 共有メモリを作成・更新します。すぐに公開され、シークレットは拒否されます | ✓ 「エージェントメモリ」 | — | ✓ `write`、メモリ | セッション: `name`, `description`, `body`; 外部: `name`, `description`, `type`, `body`, `scope` |
 | `memory_patch` | 共有メモリの一部だけを、全文を送り直さずに書き換えます | ✓ 「エージェントメモリ」 | — | ✓ `write`、メモリ | セッション: `name`, `revision`; 外部: `name`, `revision`, `scope` |
 | `memory_feedback` | 頼ったメモリが間違っている・古くなっていることを報告します | ✓ 「エージェントメモリ」 | — | ✓ `write`、メモリ | セッション: `name`, `revision`, `verdict`; 外部: `name`, `revision`, `verdict`, `scope` |
 | `memory_forget` | 共有メモリを公開から外します（履歴は残ります） | ✓ 「エージェントメモリ」 | — | ✓ `write`、メモリ | セッション: `name`, `revision`; 外部: `name`, `revision`, `scope` |
@@ -150,7 +150,7 @@ Agent Fleet は、エージェントやアシスタントが Agent Fleet 自体�
 | `get_image_studio` | 利用者と一緒に作業しているスタジオの下書きを読みます | ✓ 画像スタジオ | — | — | — |
 | `set_image_draft` | スタジオの下書きの項目を変更します | ✓ 画像スタジオ | — | — | — |
 | `add_image_knowledge` | スタジオのモデルや系統の知識メモに 1 行追記します（利用者が頼んだときだけ） | ✓ 画像スタジオ | — | — | `scope`, `key`, `note` |
-| `run_image_trial` | 下書きのまま試走の画像を 1 枚作ります。スタジオで「エージェントの試走を許す」がオンでないと拒否されます | ✓ 画像スタジオ | — | — | — |
+| `run_image_trial` | 下書きのままテスト生成の画像を 1 枚作ります。スタジオで「エージェントの試走を許す」がオンでないと拒否されます | ✓ 画像スタジオ | — | — | — |
 
 ## ブランチと作業項目
 
@@ -189,9 +189,9 @@ Agent Fleet は、エージェントやアシスタントが Agent Fleet 自体�
 | `list_workspaces` | テナントのメンバーと、そのワークスペースの状態を一覧します | — | — | ✓ `read`、管理者 | — |
 | `get_usage` | テナントのリソース使用量（メンバー数・稼働数・上限）を返します | — | — | ✓ `read`、管理者 | — |
 | `list_sessions` | テナント全体、またはメンバー 1 人のセッションを一覧します | — | — | ✓ `read`、管理者 | — |
-| `stop_workspace` | メンバーのワークスペースを強制停止します（ホームは残ります） | — | — | ✓ `write`、管理者 | `user_key` |
+| `stop_workspace` | メンバーのワークスペースを強制停止します（ホームディレクトリは残ります） | — | — | ✓ `write`、管理者 | `user_key` |
 | `stop_user_session` | メンバーのワークスペースのセッションを停止します（再開できます） | — | — | ✓ `write`、管理者 | `user_key`, `name` |
-| `set_user_quota` | メンバーごとのクォータ（セッション数・CPU・メモリ・ディスク）を設定します | — | — | ✓ `write`、管理者 | `user_key` |
+| `set_user_quota` | メンバーごとの利用上限（セッション数・CPU・メモリ・ディスク）を設定します | — | — | ✓ `write`、管理者 | `user_key` |
 | `get_egress_stats` | 外向き通信を送信先ホストごとに返します（配備管理者） | — | — | ✓ `read`、管理者 | — |
 | `list_allowlist` | 外向き通信の許可リストを一覧します（配備管理者） | — | — | ✓ `read`、管理者 | — |
 | `propose_allowlist_change` | 許可リストへの追加を提案します。管理者が Console で承認するまで有効になりません（配備管理者） | — | — | ✓ `write`、管理者 | `entry` |

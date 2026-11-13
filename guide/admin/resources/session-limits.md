@@ -54,11 +54,13 @@ The deployment administrator also sets the following per tenant. Their values do
 
 | Setting | Where it is explained |
 |---|---|
-| Max internal repositories, max LFS size | Creating or uploading beyond them is refused |
+| Max internal repositories, max LFS size | [Use the built-in Git](../../user/code/internal-git.md) |
 | Per-workspace memory cap | [Set the workspace size](workspace-size.md) |
 | Idle auto-stop | [Stop workspaces left idle](idle-stop.md) |
 | Start at sign-in | [Start the workspace at sign-in](start-at-signin.md) |
 | Inference engine use and model ingest | [Choose who may use the inference engines and which models](engines.md) |
+
+Creating an internal repository or uploading LFS content beyond these limits is refused.
 
 ## Decide whether to use the limit board
 
