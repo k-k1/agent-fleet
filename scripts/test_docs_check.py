@@ -1397,6 +1397,8 @@ class McpCatalogueTests(unittest.TestCase):
             ("listRepos", "snake_case"),
             ("Get_thing", "snake_case"),
             ("session_list", "known verb"),
+            ("delete", "bare verb"),
+            ("get", "bare verb"),
         ):
             with self.subTest(name=name):
                 self.add_cp_tool(name)
@@ -1407,6 +1409,9 @@ class McpCatalogueTests(unittest.TestCase):
                     if name in self.cp["audiences"][k]:
                         self.cp["audiences"][k].remove(name)
                 del self.rows[name]
+
+    def test_a_trailing_newline_is_not_snake_case(self):
+        self.assertIn("snake_case", "".join(self.cat.name_problems(["list_foo\n"])))
 
     def test_grandfathered_and_well_formed_names_pass(self):
         for name in ("af_report", "memory_save", "branch_name", "list_new_thing", "watch"):

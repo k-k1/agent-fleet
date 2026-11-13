@@ -41,6 +41,9 @@ TOOL_VERBS = frozenset(
     "propose purge rename request respond restore resume run search send set stop tail unwatch "
     "update watch".split()
 )
+# A bare verb names its operation and its subject on its own only for these two (rule 3); any
+# other single word, `get` or `delete` say, leaves the object open.
+TOOL_BARE_VERBS = frozenset({"watch", "unwatch"})
 # Names that predate the rule and stay as they are: the shared memory API (noun-first), two
 # single exceptions, and the two af_ tools (ADR 0135 option A). A new tool never joins this list.
 TOOL_NAME_EXCEPTIONS = frozenset(
@@ -67,10 +70,16 @@ def name_problems(tools) -> list[str]:
     for tool in sorted(tools):
         if tool in TOOL_NAME_EXCEPTIONS:
             continue
-        if not TOOL_NAME_RE.match(tool):
+        if not TOOL_NAME_RE.fullmatch(tool):
             out.append(f"{tool}: not lower-case snake_case (docs/decisions/0135-mcp-tool-naming.md rule 2)")
         elif tool.startswith("af_"):
             out.append(f"{tool}: carries the af_ prefix (rule 1); clients already add mcp__<server>__")
+        elif "_" not in tool:
+            if tool not in TOOL_BARE_VERBS:
+                out.append(
+                    f"{tool}: a bare verb names no object (rule 3); name it <verb>_<object>, or add it to"
+                    f" TOOL_BARE_VERBS in {GENERATOR} if the verb alone fixes the subject"
+                )
         elif tool.split("_")[0] not in TOOL_VERBS:
             out.append(
                 f"{tool}: does not start with a known verb (rule 3); name it <verb>_<object>, or add the"
