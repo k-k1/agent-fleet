@@ -194,12 +194,10 @@ func runAWSExec(args []string) {
 	interactive := cloudexec.IsTerminal(os.Stdin) && cloudexec.IsTerminal(os.Stderr)
 	if awsx.NeedsConfirmation(o.Settings, o.Profile) {
 		wait, _ := consoleLoginWaitFor(sessionName, interactive)
-		cmd := ""
-		if len(o.Argv) > 0 {
-			cmd = o.Argv[0]
-		}
+		// The card names the aws service and operation, so the member can tell a read from a
+		// write; Describe keeps no word of the arguments besides names the pinned CLI knows.
 		cr, cerr := awsx.ConfirmGate(awsx.ConfirmOptions{Settings: o.Settings, Profile: o.Profile, Session: sessionName,
-			Wait: wait, Command: cmd, Stderr: os.Stderr})
+			Wait: wait, Command: cloudruns.Describe(o.Argv), Stderr: os.Stderr})
 		if cerr != nil {
 			run.Refuse(cloudruns.RefusedConfirm)
 			awsExec.Fail(cloudexec.ExitConfirmRequired, cerr.Error())

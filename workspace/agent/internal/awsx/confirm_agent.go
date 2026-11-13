@@ -158,7 +158,7 @@ func HandleConfirmList(w http.ResponseWriter, r *http.Request) {
 		ts, _ := currentTargets(req, settings)
 		last, _ := time.Parse(time.RFC3339, req.LastAt)
 		left := int64(last.Add(confirmPendingTTL).Sub(now).Seconds())
-		out = append(out, ConfirmRequestWire{ID: req.ID, Session: req.Session, Targets: ts, Commands: req.Commands,
+		out = append(out, ConfirmRequestWire{ID: req.ID, Session: req.Session, Targets: ts, Commands: cleanCommands(req.Commands),
 			FirstAt: req.FirstAt, LastAt: req.LastAt, ExpiresInSec: max(left, 0)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].FirstAt < out[j].FirstAt })
