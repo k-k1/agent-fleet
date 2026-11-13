@@ -69,6 +69,7 @@ func watchEngine() *watch.Engine {
 		gh.Threads = watchThreads
 		bb := &watch.Bitbucket{Read: watchBitbucketPR}
 		watchEngineInst = watch.New(watchDiskStore{}, newWatchSink(), gh, bb, &watch.Time{}, watch.NewGitHubActions(gh),
+			watch.NewGitHubReleases(gh), watch.NewGitHubTags(gh),
 			watch.NewBitbucketPipelines(bitbucketAuth, renewBitbucketAuth), &watch.FleetSource{Fleet: watchFleet{}})
 		watchEngineInst.SetWaker(cpWaker{})
 		watchEngineInst.Dynamic = watchMCPSources().Lookup
@@ -340,6 +341,13 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 	if src == "github" && watch.LooksLikeActionsRef(req.Ref) {
 		src = watch.ActionsKind
 	}
+	// New releases and new tags are their own sources as well, so a releases watch cannot be
+	// asked for a tag type. No other reference has this shape.
+	if src == "github" {
+		if k := watch.ReleasesKindOf(req.Ref); k != "" {
+			src = k
+		}
+	}
 	// A Bitbucket Pipelines run is likewise its own source. A bitbucket.org pipelines URL names
 	// it whatever the caller left the source at; the bare forms (w/r:run/<n>, w/r:pipelines) are
 	// the Actions shapes, so they mean Pipelines only with source bitbucket.
@@ -348,7 +356,7 @@ func HandleWatchCreate(w http.ResponseWriter, r *http.Request) {
 		src = watch.PipelinesKind
 	}
 	switch src {
-	case watch.ActionsKind:
+	case watch.ActionsKind, watch.ReleasesKind, watch.TagsKind:
 		repoProvider = "github"
 	case watch.PipelinesKind:
 		repoProvider = "bitbucket"
