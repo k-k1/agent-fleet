@@ -103,7 +103,7 @@ Adjust this under **Automatic turns** in **⚙ Settings → Assistant**.
 | Unattended auto-reply limit | How many times in a row it may act without you saying anything. At the limit a pause notice appears, and it resumes when you send your next message | 10 (50 at most; it cannot be unlimited) |
 | Auto-reply model | Runs only the automatic replies on a lighter model such as haiku, to save tokens (claude conversations only) | Same as the conversation |
 | Auto-reply bundling window | Handles the reports that arrive within this time in one go. Cards and notifications still arrive at once. 0 to 300 seconds; 0 is Immediate | 60 seconds |
-| Quiet completion reports | On a normal completion, no automatic reply, only the card and the notification. Interruptions, failures, questions and plans are handled as before | Off |
+| Quiet completion reports | On a normal completion, no automatic reply, only the card and the notification. Interruptions, failures, questions and plans are still handled as usual | Off |
 | Auto-pilot (auto-handle questions & plans) | Answers questions with the session's recommendation, and has another session review a plan through to approval. Each decision is shared in the chat. A question without a clear recommendation, or a choice or plan with a destructive or irreversible operation, comes to you instead | Off |
 | Auto-resume interrupted turns | Sends "continue" to a turn cut off by a dropped connection or a temporary rate limit, up to twice in a row. An interruption that sending again would not fix, such as a usage limit or no balance, comes to you for a decision | On |
 

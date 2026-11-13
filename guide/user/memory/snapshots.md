@@ -46,7 +46,7 @@ History lists the snapshots newest first. Select one to see the diff of what cha
 - **Find a time**: enter a date and time in Point in time and press **"Go to this time"** to select the snapshot of that moment
 - **Agent Fleet memory writes are hidden**, because the memory Changes view already lists them.
   Each run of them is folded into one line, "Agent Fleet memory writes hidden: N", and **"See them in Agent memory > Changes"** opens them.
-  To list them, tick "Show Agent Fleet memory writes" (remembered on this device)
+  To list them, tick "Show Agent Fleet memory writes" (remembered in this browser)
 
 ## Restore a point in time
 

@@ -42,7 +42,7 @@ A session can add one memo to the memo queue: "there is another bug next to the 
 
 - **It sees that another session is stopped on a question or a plan approval, but not the text.** Reading it would give a session material to answer, on your behalf, a question meant for you. A session that finds one stopped tells you, and goes no further
 - **It cannot drive other sessions.** Sending instructions, answering questions, approving plans, starting, stopping or deleting sessions and sending memos to sessions belong to the [Fleet Operator](operator.md) and the Console
-- The exceptions are what you open in Settings
+- The exceptions are what you turn on in Settings
   - "Messages between sessions": send short messages and read other sessions' output ([Let sessions message each other](messages.md))
   - "Starting sessions from sessions": start children and look after them ([Start child sessions from a session](child-sessions.md))
 
