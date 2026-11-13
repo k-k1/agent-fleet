@@ -1,5 +1,5 @@
 ---
-audience: "GKE Standard に Agent Fleet を建てる人（Google Cloud のプロジェクトとクラスターの管理権限を持つ SRE）"
+audience: "GKE Standard に Agent Fleet を構築する人（Google Cloud のプロジェクトとクラスターの管理権限を持つ SRE）"
 source_of_truth: "`deploy/gcp/gke/` の Terraform と `deploy/kubernetes/` のマニフェスト（食い違ったらそちらが正）"
 ---
 
@@ -15,13 +15,13 @@ Terraform でクラスターとそのまわりを作り、マニフェストを�
 | あなたがやること | 起きること |
 |---|---|
 | 1. プロジェクトにログインし、API を有効にし、ステート用バケットを用意する | Terraform が使える状態になる |
-| 2. `terraform apply` する | VPC、クラスターと 2 つのノードプール、Cloud SQL、KMS 鍵、ロードバランサのアドレス・証明書・DNS、StorageClass、IAM の付与ができる |
+| 2. `terraform apply` する | VPC、クラスターと 2 つのノードプール、Cloud SQL、KMS キー、ロードバランサーのアドレス・証明書・DNS、StorageClass、IAM の付与ができる |
 | 3. kubectl をこのクラスターに向ける | 以降の `kubectl` が、ほかのクラスターではなくこのクラスターに届く |
 | 4. データベースの権限を付ける（最初の 1 回） | CP の IAM データベースユーザーがデータベースの所有者になる |
-| 5. オーバーレイをコピーして書き換える | 配備ごとの設定（URL、サインイン、イメージの版）が決まる |
+| 5. オーバーレイをコピーして書き換える | 配備ごとの設定（URL、サインイン、イメージのバージョン）が決まる |
 | 6. オーバーレイを適用し、Secret を作る | CP が起動する |
-| 7. ロードバランサを知る | WebSocket が切れる条件がわかる |
-| 8. 確かめる | 権限・隔離・名前解決・ホームの所有者が正しいとわかる |
+| 7. ロードバランサーを知る | WebSocket が切れる条件がわかる |
+| 8. 確かめる | 権限・隔離・名前解決・ホームディレクトリの所有者が正しいとわかる |
 
 ## シェル変数
 
@@ -40,7 +40,7 @@ OVERLAY="deploy/kubernetes/overlays/$PREFIX"   # your overlay; point it at the c
 
 ## 1. プロジェクトを準備する（最初の 1 回）
 
-1. 2 回ログインします。下のコマンド用の `gcloud` と、Terraform のプロバイダ用の Application Default Credentials です
+1. 2 回ログインします。下のコマンド用の `gcloud` と、Terraform のプロバイダー用の Application Default Credentials です
    ```bash
    gcloud auth login
    gcloud auth application-default login
@@ -80,10 +80,10 @@ $TF apply
 
 | 変数 | 気をつけること |
 |---|---|
-| `name_prefix` | すべてのリソースと 2 つの名前空間（`<prefix>-cp`、`<prefix>-ws`）の名前になる。1 つのプロジェクトに 2 つ配備するなら、接頭辞も 2 つ要る（P8） |
-| `authorized_networks` | コントロールプレーンのエンドポイントへのアクセスを許可する範囲。StorageClass を作るプロバイダがそのエンドポイントと通信するので、`apply` は承認済みネットワークから実行する。`enable_private_endpoint = true` なら VPC の中から実行する |
-| `node_cidr`・`pod_cidr`・`service_cidr`・`control_plane_cidr`・`private_service_access_cidr` | クラスターを作ったあとは変えられない。最初の 4 つは RFC 1918 か `100.64.0.0/10` の中に置き、外れると plan が失敗する（P15）。Private Service Access の範囲も同じ範囲の中に置く（外向きのポリシーは、これらの範囲を拒否することでしかこの範囲を拒否できないため） |
-| `min_master_version` | 作るときの版ではなく下限。クラスターはリリースチャンネルの既定の版で始まり、コントロールプレーンがこの下限を下回ると plan のたびに失敗する（P1） |
+| `name_prefix` | すべてのリソースと 2 つの Namespace（`<prefix>-cp`、`<prefix>-ws`）の名前になる。1 つのプロジェクトに 2 つ配備するなら、接頭辞も 2 つ要る（P8） |
+| `authorized_networks` | コントロールプレーンのエンドポイントへのアクセスを許可する範囲。StorageClass を作るプロバイダーがそのエンドポイントと通信するので、`apply` は承認済みネットワークから実行する。`enable_private_endpoint = true` なら VPC の中から実行する |
+| `node_cidr`・`pod_cidr`・`service_cidr`・`control_plane_cidr`・`private_service_access_cidr` | クラスターを作ったあとは変えられない。最初の 4 つは RFC 1918 か `100.64.0.0/10` の中に置き、外れると plan が失敗する（P15）。Private Service Access の範囲も同じ範囲の中に置く。ワークスペースの外向きのポリシーはこれらの範囲の外をすべて許可するので、この範囲を拒否できるのは範囲がその中にあるときだけで、plan はこの範囲を確かめない |
+| `min_master_version` | 作るときのバージョンではなく下限。クラスターはリリースチャンネルの既定のバージョンで始まり、コントロールプレーンがこの下限を下回ると plan のたびに失敗する（P1） |
 
 証明書は、DNS の承認レコードが引けるようになってから発行されます。状態は次で見られ、たいてい 1 時間以内に `ACTIVE` になります。
 
@@ -93,13 +93,13 @@ gcloud certificate-manager certificates describe $PREFIX-cert --project "$PROJEC
 
 ### Terraform が付ける権限
 
-どれも 1 つのプリンシパルに、1 つのリソースについて付けます。ワークスペースの名前空間を名指しするものはありません。
+どれも 1 つのプリンシパルに、1 つのリソースについて付けます。ワークスペースの Namespace を指定するものはありません。
 
 | プリンシパル | 付く権限 |
 |---|---|
 | CP のサービスアカウント | Cloud SQL のクライアントとインスタンスユーザー（このインスタンスに条件付け）、リポジトリの Artifact Registry の読み取り |
 | ノードのサービスアカウント | Artifact Registry の読み取りと、ノードの最小のロール（`roles/container.defaultNodeServiceAccount`。ログ、メトリクス、1.33 からはオートスケーラーのメトリクス） |
-| GKE のサービスエージェント | Secret の鍵での暗号化と復号 |
+| GKE のサービスエージェント | Secret のキーでの暗号化と復号 |
 | CP の Kubernetes サービスアカウント `<prefix>-cp/af-cp` | CP のサービスアカウントとして動ける |
 
 ### 試用向けの小さな構成
@@ -120,17 +120,17 @@ gcloud certificate-manager certificates describe $PREFIX-cert --project "$PROJEC
 - **データベースの高可用性。** Cloud SQL の `ZONAL` には待機系がありません。ゾーンの障害やメンテナンスの再起動のあいだ、CP は止まります。バックアップとポイントインタイムリカバリはオンのままです
 - **ゾーン障害への耐性すべて。** CP、そのディスク、ワークスペースのボリュームとノードが、すべて 1 つのゾーンにあります。ゾーンが落ちると、動いているワークスペースも止まります
 
-`zonal_cluster` を変えるとクラスターが作り直されます。最初の `apply` の前に決めてください。既存の配備をこの構成に移すには、建て直しが必要です。
+`zonal_cluster` を変えるとクラスターが作り直されます。最初の `apply` の前に決めてください。既存の配備をこの構成に移すには、再構築が必要です。
 
 - ワークスペースの Pod の上限は、`n2-standard-4` の約 4 vCPU / 16 GiB に収める必要があります
 - システムノードが e2-medium 1 台だと、割り当て可能な CPU が約 0.94 vCPU しかなく、CP が `Pending`（"Insufficient cpu"）のままになり、その claim も `Pending` のままです。そのため、この構成では `e2-standard-2` を使います。動いているクラスターで `system_machine_type` を変えると、ノードプールがその場で更新され、約 6 分かかります
-- この構成はゾーンクラスターで一度建てただけです（最初の `apply` に約 18 分、オーバーレイを適用してから CP が健全になるまで約 14 分）。ほかのゾーン、リージョン版、ほかのリージョンは試していません。共有コアの Cloud SQL の階層（`db-g1-small`）も試していません
+- この構成はゾーンクラスターで一度構築しただけです（最初の `apply` に約 18 分、オーバーレイを適用してから CP が健全になるまで約 14 分）。ほかのゾーン、リージョン版、ほかのリージョンは試していません。共有コアの Cloud SQL の階層（`db-g1-small`）も試していません
 
 費用の見積もりは [一時停止する・費用を見る](pause.ja.md#小さな構成の費用) にあります。
 
 ## 3. kubectl をこのクラスターに向ける
 
-Terraform は kubeconfig に触りません。**`kubectl` のコマンドを打つ前に**、このクラスターの資格情報を取り、いまのコンテキストがこのクラスターであることを確かめます。そうしないと、下の名前空間・RBAC・Secret が、kubeconfig が指していた別のクラスターに入ります。
+Terraform は kubeconfig に触りません。**`kubectl` のコマンドを打つ前に**、このクラスターの認証情報を取り、いまのコンテキストがこのクラスターであることを確かめます。そうしないと、下の Namespace ・RBAC・Secret が、kubeconfig が指していた別のクラスターに入ります。
 
 ```bash
 eval "$($TF output -raw get_credentials)"     # gcloud container clusters get-credentials …
@@ -144,10 +144,10 @@ kubectl get nodes -L agent-fleet.io/pool      # the system and workspace pools
 
 CP のデータベースユーザーは、パスワードのない IAM ユーザーで、最初は何の権限もありません。組み込みの `postgres` ユーザーとして、クラスター内の一時的な Pod から、このユーザーにデータベースの所有権を渡します。
 
-- インスタンスは非公開 IP だけで、ワークスペースは VPC の外にあり、`cloud-sql-proxy` も入っていません。そのため、権限付与はクラスターのノード上の Pod（制限されたセキュリティコンテキストで動く、短命な `postgres:17-alpine`）から実行します
-- `postgres` のパスワードは、ここではなく金庫に保管します
+- インスタンスは非公開 IP だけで、ワークスペースは VPC の外にあり、`cloud-sql-proxy` も入っていません。そのため、権限付与はクラスターのノード上の Pod（制限されたセキュリティコンテキストで動く、一時的な `postgres:17-alpine`）から実行します
+- `postgres` のパスワードは、ここではなくシークレットストアに保管します
 
-### 端末があるとき
+### ターミナルがあるとき
 
 ```bash
 gcloud sql users set-password postgres --instance "$PREFIX-pg" --project "$PROJECT" --prompt-for-password
@@ -167,14 +167,14 @@ kubectl -n default run psql-grant -it --rm --restart=Never --image=postgres:17-a
 3. `\q` で抜けます
 
 - 対話の `psql` は SQL のエラーで終わらないので、返答を読んでください
-- パスワードは Pod の端末を通して `psql` に渡るだけで、コマンドライン・Pod の定義・API オブジェクトのどこにも残りません
+- パスワードは Pod のターミナルを通して `psql` に渡るだけで、コマンドライン・Pod の定義・API オブジェクトのどこにも残りません
 - Pod は抜けると消えます（`--rm`）。接続が切れて残ったときは `kubectl -n default delete pod psql-grant` で消します
 
-### 端末がないとき（スクリプト、CI、エージェントのシェル）
+### ターミナルがないとき（スクリプト、CI、エージェントのシェル）
 
-`-it` と `-W` には端末が要るので、上のコマンドは動きません。代わりに、パスワードを一時的な Secret に入れ、そこから `PGPASSWORD` を読む非対話の Pod で `-c` の文を実行し、両方を消します。パスワードは argv にも Pod の定義にも入りません。
+`-it` と `-W` にはターミナルが要るので、上のコマンドは動きません。代わりに、パスワードを一時的な Secret に入れ、そこから `PGPASSWORD` を読む非対話の Pod で `-c` の文を実行し、両方を消します。パスワードは argv にも Pod の定義にも入りません。
 
-上のブロックの最初の行（`gcloud sql users set-password … --prompt-for-password`）も端末が要ります。端末がないときは `--password` でパスワードを設定し（その `gcloud` の呼び出しの引数に一瞬だけ載ります）、終わったら新しいランダムな値にします。たとえば、次のように生成したパスワードを先に設定しておくと、下のブロックはプロンプトを出さずにその `PGPW` を使います。
+上のブロックの最初の行（`gcloud sql users set-password … --prompt-for-password`）もターミナルが要ります。ターミナルがないときは `--password` でパスワードを設定し（その `gcloud` の呼び出しの引数に一瞬だけ載ります）、終わったら新しいランダムな値にします。たとえば、次のように生成したパスワードを先に設定しておくと、下のブロックはプロンプトを出さずにその `PGPW` を使います。
 
 ```bash
 PGPW="$(openssl rand -base64 24)"                   # kept only in this shell
@@ -211,11 +211,11 @@ kubectl -n default logs psql-grant        # expect GRANT ROLE, ALTER DATABASE, A
 
 - `EXIT` の trap は、先にパスワードのファイルを消し、それから削除を 1 つずつ試します。`kubectl delete` が 1 つ失敗しても（ログインの期限切れ、接続なし）残りは飛ばしません。Secret を消せなかったときはそう表示するので、手で消します
 - trap は `wait` が時間切れになっても、`set -e` でコマンドが失敗しても動きます。`|| echo` があるので、trap が動く前に `logs` で `ERROR` を読めます
-- パスワードのファイルは、実行中だけ手元のモード 700 のディレクトリに置かれます。それが受け入れられないなら、FIFO か金庫のファイルの仕組みを使います
+- パスワードのファイルは、実行中だけ手元のモード 700 のディレクトリに置かれます。それが受け入れられないなら、FIFO かシークレットストアのファイルの仕組みを使います
 - Pod が `Failed` で終わったら、`logs` に `ERROR` が出ていて、権限は付いていません
 - 終わったら `postgres` のパスワードを新しくします（`gcloud sql users set-password … --prompt-for-password`、または保管しないランダムな値）。古い値は、実行中ずっと Secret オブジェクトに入っていたためです
 
-この形のまま実行して確かめたのは、端末がないときの方法だけです（`read` の行を生成したパスワードに置き換えて実行しました）。端末があるときの `-it … -W` の形は、そのまま実行して確かめてはいません。
+この形のまま実行して確かめたのは、ターミナルがないときの方法だけです（`read` の行を生成したパスワードに置き換えて実行しました）。ターミナルがあるときの `-it … -W` の形は、そのまま実行して確かめてはいません。
 
 ## 5. オーバーレイを用意する
 
@@ -230,11 +230,11 @@ $TF output -raw kustomize_deployment > "$OVERLAY/deployment.yaml"
 |---|---|
 | `cp.env` | `PUBLIC_BASE_URL` と `PUBLIC_DOMAIN`（`fqdn`）、`AF_PREVIEW_DOMAIN`（Terraform の `preview_domain`、または空）、サインインの設定、`SUPER_ADMIN_EMAILS`。`AF_TRUSTED_PROXY_HOPS=2` はそのまま（[7. ロードバランサを知る](#7-ロードバランサを知る)） |
 | `kustomization.yaml` | `images:` の CP のイメージとリリースのタグ |
-| `base/cp-data.yaml` | CP 自身のディスクとして 20 GiB を要求する。内部の git プロバイダにそれ以上のデータを置くなら、コピーの中でパッチを当てる |
+| `base/cp-data.yaml` | CP 自身のディスクとして 20 GiB を要求する。内部の git プロバイダーにそれ以上のデータを置くなら、コピーの中でパッチを当てる |
 
 ### クローンの外に置く
 
-このコピーは、このリポジトリの作業コピーではなく、自分のリポジトリか金庫に置きます。クローンの外に出すと、`kustomization.yaml` の 2 か所を変える必要があります。
+このコピーは、このリポジトリの作業コピーではなく、自分のリポジトリかシークレットストアに置きます。クローンの外に出すと、`kustomization.yaml` の 2 か所を変える必要があります。
 
 - **パス。** `resources: ../../base`、`components: ../../components/gke` と `../../components/params` は、リポジトリの中の `deploy/kubernetes/overlays/<name>/` からの相対パスで、外では何も指しません。オーバーレイからクローンの `deploy/kubernetes/base` と `deploy/kubernetes/components/…` への**相対**パスに書き換えます。`kubectl kustomize` は絶対パスのディレクトリ参照を拒みます（`new root '…' cannot be absolute`）。適用する前に `kubectl kustomize <your overlay>` で確かめます
 - **`OVERLAY`。** シェルごとに、移したコピーのパスにします（`OVERLAY=<your overlay>`）。これらのページでオーバーレイを読む・適用するコマンドはすべて `$OVERLAY` を使うので、クローンの中のコピーには触りません
@@ -253,9 +253,9 @@ CP は、生の外向き通信のイベントを消す前に、終わった日�
 | `egress_archive_retention_days` | `null` | 保存したオブジェクトをこの日数で消す（作ったバケットだけ）。`null` なら消さない。イベントが消されたあとは、保存したものが唯一のコピーになる |
 
 - 作るバケットは、均一なバケットレベルのアクセスと公開アクセスの防止が強制され、`force_destroy = false` です。保存した日のデータが残っているバケットがあると、破棄はそこで止まります
-- CP の既存の Google サービスアカウント（Workload Identity のもの。2 つめの身元は作りません）に、**そのバケットだけについて** `roles/storage.objectCreator` と `roles/storage.objectViewer` が付きます
+- CP の既存の Google サービスアカウント（Workload Identity のもの。2 つめの ID は作りません）に、**そのバケットだけについて** `roles/storage.objectCreator` と `roles/storage.objectViewer` が付きます
 - 閲覧のロールは省けません。次の実行は、すでに書いた日を読み返して確かめます。それがないと読み返しが 403 になり、その日で削除が止まります
-- 名指ししたバケットは、その 2 つの IAM メンバー以外は変更しません。公開アクセスの防止は自分でオンのままにします
+- 指定したバケットは、その 2 つの IAM メンバー以外は変更しません。公開アクセスの防止は自分でオンのままにします
 
 `cp.env` は、`terraform output` が成功したときだけ書き換えます。古いキーを消し、出力に行があるときだけ現在の行を足します。出力が空なら保存はオフです。このときキーを残すと、権限のなくなったバケットに CP が書き込み続けます。
 
@@ -274,7 +274,7 @@ fi
 
 ## 6. オーバーレイを適用し、Secret を作る
 
-CP は Secret `af-cp-secrets` を 1 つ読みます。マニフェストには入っていません。名前空間ができたら作ります。
+CP は Secret `af-cp-secrets` を 1 つ読みます。マニフェストには入っていません。Namespace ができたら作ります。
 
 ```bash
 kubectl config current-context                # still this cluster (step 3)
@@ -286,16 +286,16 @@ kubectl -n "$PREFIX-cp" create secret generic af-cp-secrets \
 ```
 
 - Secret ができるまで、CP の Pod は `CreateContainerConfigError` で待ち、できると自分で起動します
-- `AF_MASTER_KEY` は `head -c 32 /dev/urandom | base64` で作ります（compose と同じです）。Kubernetes の Secret や手元のファイルだけでなく、このクラスターより長く残る場所（Secret Manager や金庫）に保管します（P14）
-- CP を作り直すとき（新しいクラスター、`af-cp-secrets` の削除）にまた要ります。違う鍵では、古い鍵で暗号化したものを読めません
-- ほかのサインインの秘密（`AF_OIDC_<ID>_CLIENT_SECRET`、`GITHUB_OAUTH_CLIENT_SECRET`）も同じ Secret に入れます
+- `AF_MASTER_KEY` は `head -c 32 /dev/urandom | base64` で作ります（compose と同じです）。Kubernetes の Secret や手元のファイルだけでなく、このクラスターより長く残る場所（Secret Manager やシークレットストア）に保管します（P14）
+- CP を作り直すとき（新しいクラスター、`af-cp-secrets` の削除）にまた要ります。違うキーでは、古いキーで暗号化したものを読めません
+- ほかのサインインのシークレット（`AF_OIDC_<ID>_CLIENT_SECRET`、`GITHUB_OAUTH_CLIENT_SECRET`）も同じ Secret に入れます
 - 1 つを入れ替えるときは、`kubectl create secret … --dry-run=client -o yaml | kubectl apply -f -` のあと `kubectl -n "$PREFIX-cp" rollout restart deployment/af-cp` を実行します
 
-鍵の要件は [配備の鍵を扱う](../secure/deployment-keys.ja.md) にあります。
+キーの要件は [配備の鍵を扱う](../secure/deployment-keys.ja.md) にあります。
 
 ## 7. ロードバランサを知る
 
-Gateway `af-cp`（`components/gke/gateway.yaml`）が、GKE に**グローバル外部**アプリケーションロードバランサを作らせます。従来版のロードバランサは、使用中の WebSocket でもバックエンドのタイムアウトで閉じるので使いません。ターミナル、ミラー、ブラウザペインは WebSocket なので、2 つの制限が効きます。
+Gateway `af-cp`（`components/gke/gateway.yaml`）が、GKE に**グローバル外部**アプリケーションロードバランサーを作らせます。従来版のロードバランサーは、使用中の WebSocket でもバックエンドのタイムアウトで閉じるので使いません。ターミナル、ミラー、ブラウザペインは WebSocket なので、2 つの制限が効きます。
 
 | WebSocket | 切れる条件 |
 |---|---|
@@ -305,15 +305,15 @@ Gateway `af-cp`（`components/gke/gateway.yaml`）が、GKE に**グローバル
 - `timeoutSec` を変えるには、そのファイルで値を変え、オーバーレイを `kubectl apply -k` します。GKE は数分でバックエンドサービスを更新します（`gcloud compute backend-services list --project "$PROJECT"` に値が出ます）
 - Console は同じソケットで、5 秒ごとの往復の ping と 15 秒ごとのハートビートを送ります。誰も入力していないターミナルが、`timeoutSec` の 3600 秒を過ぎてから 67 分以上つながったままだった例があります。ping によって、接続がアイドルと見なされなかったためです
 - 隠れたタブ、凍結したページ、スリープしたマシンではブラウザがタイマーを遅らせたり止めたりすることがあり、そのときどうなるかは確かめていません
-- 24 時間の切断は、実際に 24 時間待っては確かめていません。強制的な切断（CP の再起動）は確かめています。ターミナルペインに `[disconnected]` と出て、クリックするとページを再読み込みせずに数秒で再接続し、シェルとその tmux セッションはそのまま残ります。ロードバランサによる切断もブラウザには同じ不正な切断として届くので、同じように戻ります
+- 24 時間の切断は、実際に 24 時間待っては確かめていません。強制的な切断（CP の再起動）は確かめています。ターミナルペインに `[disconnected]` と出て、クリックするとページを再読み込みせずに数秒で再接続し、シェルとその tmux セッションはそのまま残ります。ロードバランサーによる切断もブラウザには同じ不正な切断として届くので、同じように戻ります
 
 ### `AF_TRUSTED_PROXY_HOPS` は 2 のまま
 
-ロードバランサは、受け取った `X-Forwarded-For` に `<client>, <load balancer>` を足し、CP は右から数えます。ロードバランサの前に何もなければ、2 で実際のクライアントを指します。
+ロードバランサーは、受け取った `X-Forwarded-For` に `<client>, <load balancer>` を足し、CP は右から数えます。ロードバランサーの前に何もなければ、2 で実際のクライアントを指します。
 
-- 前に CDN やプロキシを置いて値を上げてよいのは、ロードバランサにそのプロキシからしか届かず（たとえばプロキシのアドレスだけを通す Cloud Armor のポリシー）、**かつ**プロキシがどのエントリを足すか置き換えるかを確かめたときだけです
-- そうでないと、自分で `X-Forwarded-For` を付けてロードバランサに直接送ったクライアントが、CP から見えるアドレスを自由に選べ、テナントのネットワーク制限をすり抜けられます
-- この構成は、ロードバランサの前のプロキシをサポートしません
+- 前に CDN やプロキシを置いて値を上げてよいのは、ロードバランサーにそのプロキシからしか届かず（たとえばプロキシのアドレスだけを通す Cloud Armor のポリシー）、**かつ**プロキシがどのエントリを足すか置き換えるかを確かめたときだけです
+- そうでないと、自分で `X-Forwarded-For` を付けてロードバランサーに直接送ったクライアントが、CP から見えるアドレスを自由に選べ、テナントのネットワーク制限をすり抜けられます
+- この構成は、ロードバランサーの前のプロキシをサポートしません
 
 ## 8. 確かめる
 
@@ -325,7 +325,7 @@ kubectl -n "$PREFIX-cp" get gateway af-cp     # PROGRAMMED True, ADDRESS = lb_ad
 curl -sS https://<fqdn>/readyz
 ```
 
-**`PROGRAMMED True` では足りません。`/readyz` そのものを待ちます。** ロールアウトが終わっても、ロードバランサの準備ができたとは限りません。
+**`PROGRAMMED True` では足りません。`/readyz` そのものを待ちます。** ロールアウトが終わっても、ロードバランサーの準備ができたとは限りません。
 
 - CP の準備ができてから `/readyz` が 200 を返すまで、5〜6 分かかったことがあります。そのあいだ、DNS はすでに新しいアドレスを指していても、`curl` は `000`（接続なし）を返しました
 - Gateway が `PROGRAMMED True` になってからも、`/readyz` が約 4 分 `000` を返し続けたことがあります
@@ -389,15 +389,15 @@ for ip in $nodes; do for port in 22 10250 10256; do probe "$ip" "$port"; done; d
 probe 1.1.1.1 443
 ```
 
-### ホームの持ち主
+### ホームディレクトリのオーナー
 
-そのワークスペースのターミナルで確かめます。ホームの所有者が `dev` で、ほかの誰も書き込めない状態でないと、`af-gcloud-exec` と `af-aws-exec` はその下に状態を置くのを拒みます。
+そのワークスペースのターミナルで確かめます。ホームディレクトリの所有者が `dev` で、ほかの誰も書き込めない状態でないと、`af-gcloud-exec` と `af-aws-exec` はその下に状態を置くのを拒みます。
 
 ```bash
 stat -c '%U:%G %A' /home/dev    # dev:dev drwxr-sr-x — no w for group or other (the s, from fsGroup, is harmless)
 ```
 
-- ホームは、ホームの claim の中のディレクトリ `.af-home` です。`dev` として動く init コンテナが、エージェントの起動前にそれを作り、以前のホームのファイルをそこへ移します
+- ホームディレクトリは、ホームディレクトリ用の claim の中のディレクトリ `.af-home` です。`dev` として動く init コンテナが、エージェントの起動前にそれを作り、以前のホームディレクトリのファイルをそこへ移します
 - claim のルートは、kubelet が残したとおり `root:dev` でグループ書き込みつきのままです
 
 ## 困ったとき
@@ -405,10 +405,10 @@ stat -c '%U:%G %A' /home/dev    # dev:dev drwxr-sr-x — no w for group or other
 | 症状 | 原因と対処 |
 |---|---|
 | CP の Pod が `CreateContainerConfigError` のまま | `af-cp-secrets` がまだない。[6.](#6-オーバーレイを適用しsecret-を作る) で作ると自分で起動する |
-| `curl https://<fqdn>/readyz` が `000` を返す | ロードバランサの準備がまだ。数分かかるので、[8.](#8-確かめる) のループで待つ |
+| `curl https://<fqdn>/readyz` が `000` を返す | ロードバランサーの準備がまだ。数分かかるので、[8.](#8-確かめる) のループで待つ |
 | 証明書が `ACTIVE` にならない | DNS の承認レコードがまだ引けない。たいてい 1 時間以内 |
 | ワークスペースの Pod が `Pending` で、スケールアップが `QUOTA_EXCEEDED` | SSD の割り当て切れ。[ディスクの割り当て（GKE）](overview.ja.md#ディスクの割り当てgke) |
-| ワークスペースの Pod が `Init` で止まる | `kubectl logs <pod> -c home-layout` に理由が出る。以前の版に戻したあとなら [ホームの配置より前の版に戻す](upgrade.ja.md#ホームの配置より前の版に戻す) |
+| ワークスペースの Pod が `Init` で止まる | `kubectl logs <pod> -c home-layout` に理由が出る。以前のバージョンに戻したあとなら [ホームの配置より前の版に戻す](upgrade.ja.md#ホームの配置より前の版に戻す) |
 | ワークスペースからの名前解決がすべて失敗する | NodeLocal DNSCache がオン（P11） |
 | `kubectl kustomize` が `new root '…' cannot be absolute` を返す | オーバーレイのパスが絶対パス。[クローンの外に置く](#クローンの外に置く) |
 

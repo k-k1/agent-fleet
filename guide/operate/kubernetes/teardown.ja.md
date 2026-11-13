@@ -16,11 +16,11 @@ GKE の配備を、データベース・クラスター・ネットワークま�
 |---|---|
 | Console で全メンバーのワークスペースを破棄する | ディスクが claim と一緒に消える |
 | 必要ならバックアップを取る | オーバーレイを消すと `af-cp-data` のディスクも消えるので、その前に残したいものを残しておける |
-| オーバーレイを `kubectl delete -k` する | 名前空間、CP、そのディスクが消える |
+| オーバーレイを `kubectl delete -k` する | Namespace、CP、そのディスクが消える |
 | 削除保護を外して `terraform destroy` する | Cloud SQL、クラスター、ネットワークなどが消える |
 | スナップショットと予定を手で消す | 費用が残らない |
 
-Cloud SQL、クラスター、KMS 鍵には、意図的に削除保護をかけています。
+Cloud SQL、クラスター、KMS キーには、意図的に削除保護をかけています。
 
 ## 撤去の手順
 
@@ -40,7 +40,7 @@ Cloud SQL、クラスター、KMS 鍵には、意図的に削除保護をかけ�
 |---|---|
 | クラスター | `deletion_protection = false` |
 | Cloud SQL のインスタンス | `deletion_protection = false`（Terraform 自身の保護）と `settings.deletion_protection_enabled = false`（Cloud SQL API の保護。これだけでも削除を拒む）の**両方** |
-| KMS 鍵 | `prevent_destroy` を消す |
+| KMS キー | `prevent_destroy` を消す |
 
 ```bash
 $TF apply
@@ -73,13 +73,13 @@ gcloud compute networks peerings delete servicenetworking-googleapis-com --netwo
 
 - 上の削除の設定があると、destroy はデータベースとユーザーを飛ばし（0 秒）、Cloud SQL のインスタンスを約 2.5 分で消し、サービスネットワーキングの接続、アドレス範囲、サブネット、VPC を、長く待たされることも、手でピアリングを削除することもなく消しました
 - 最初の `$TF destroy` が、`google_certificate_manager_certificate_map` で 1 回失敗することがあります（ターゲット HTTPS プロキシに "already being used by"）。Gateway のコントローラーが、クラスターが消えたあと非同期にそのプロキシを消すためです。1 分ほどおいて `$TF destroy` をもう一度実行します。タイミングによるもので、3 回の撤去のうち 1 回で起き、残りは 1 回の destroy で終わりました
-- `terraform init` も、プロバイダのダウンロード中に "connection reset by peer" で 1 回失敗することがあります。もう一度実行します
-- ワークスペースの名前空間を先に消していると、`kubectl delete -k` がその名前空間のネットワークポリシーについて `NotFound` で終了コード 1 を返します。何も残らないので問題ありません
-- KMS のキーリングと鍵の名前は、destroy のあと使い直せません。鍵のバージョンは破棄がスケジュールされる（30 日）だけで、キーリングは削除できないためです。同じ `name_prefix` でスタックを作り直すと、`kms.tf` で "already exists" になります。別の接頭辞を使うか、キーリングと鍵を新しいステートに import します
+- `terraform init` も、プロバイダーのダウンロード中に "connection reset by peer" で 1 回失敗することがあります。もう一度実行します
+- ワークスペースの Namespace を先に消していると、`kubectl delete -k` がその Namespace のネットワークポリシーについて `NotFound` で終了コード 1 を返します。何も残らないので問題ありません
+- KMS のキーリングとキーの名前は、destroy のあと使い直せません。キーのバージョンは破棄がスケジュールされる（30 日後。`kms.tf` は `destroy_scheduled_duration` を設定しないので、Cloud KMS の既定値です）だけで、キーリングは削除できないためです。同じ `name_prefix` でスタックを作り直すと、`kms.tf` で "already exists" になります。別の接頭辞を使うか、キーリングとキーを新しいステートに import します
 
 ## 手で消すもの
 
-- KMS 鍵は Google Cloud が消さず、バージョンの破棄がスケジュールされるだけです
+- KMS キーは Google Cloud が消さず、バージョンの破棄がスケジュールされるだけです
 - CP のディスクのスナップショットとスナップショットの予定は、destroy のあとも残ります。いらなくなったら `gcloud compute snapshots delete` と `gcloud compute resource-policies delete` で消します
 
 手で消すものはこれだけです。データベースとユーザーはインスタンスと一緒に消え、Private Service Access の予約アドレス範囲は Terraform のリソースなので destroy が消します。

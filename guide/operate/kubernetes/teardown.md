@@ -75,7 +75,7 @@ On one zonal cluster with the small profile:
 - The first `$TF destroy` can fail once on `google_certificate_manager_certificate_map` ("already being used by" a target HTTPS proxy). The Gateway controller removes that proxy asynchronously after the cluster is gone; run `$TF destroy` again after a minute or so. It depends on timing: of three teardowns it failed on one, and the others finished in a single run
 - `terraform init` can also fail once with "connection reset by peer" while downloading a provider; run it again
 - `kubectl delete -k` exits with status 1 with `NotFound` for the workspace namespace's network policies when that namespace was deleted first. Nothing is left behind; it is harmless
-- The KMS key ring and the key's name cannot be used again after a destroy: the key's versions are only scheduled for destruction (30 days) and a key ring can never be deleted. Anyone who re-creates a stack with the same `name_prefix` hits an "already exists" error on `kms.tf`; use another prefix, or import the key ring and key into the new state
+- The KMS key ring and the key's name cannot be used again after a destroy: the key's versions are only scheduled for destruction (after 30 days, Cloud KMS's default, since `kms.tf` does not set `destroy_scheduled_duration`) and a key ring can never be deleted. Anyone who re-creates a stack with the same `name_prefix` hits an "already exists" error on `kms.tf`; use another prefix, or import the key ring and key into the new state
 
 ## What you delete by hand
 

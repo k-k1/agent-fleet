@@ -82,7 +82,7 @@ The variables in `terraform.tfvars` to watch:
 |---|---|
 | `name_prefix` | Names every resource and the two namespaces (`<prefix>-cp`, `<prefix>-ws`). Two deployments in one project need two prefixes (P8) |
 | `authorized_networks` | Who may reach the control-plane endpoint. The provider that creates the StorageClass talks to that endpoint, so `apply` must run from an authorised network — or, with `enable_private_endpoint = true`, from inside the VPC |
-| `node_cidr`, `pod_cidr`, `service_cidr`, `control_plane_cidr`, `private_service_access_cidr` | Cannot change after the cluster exists. The first four must lie inside RFC 1918 or `100.64.0.0/10`, and a plan fails otherwise (P15). Keep the Private Service Access range there too, since the egress policy denies it only through those ranges |
+| `node_cidr`, `pod_cidr`, `service_cidr`, `control_plane_cidr`, `private_service_access_cidr` | Cannot change after the cluster exists. The first four must lie inside RFC 1918 or `100.64.0.0/10`, and a plan fails otherwise (P15). Keep the Private Service Access range there too: the workspace egress policy allows every address outside those ranges, so it blocks this range only when the range lies inside them, and the plan does not check this one |
 | `min_master_version` | A floor, not the version the cluster is created at: the cluster starts at the release channel's default, and every plan fails if the control plane runs below the floor (P1) |
 
 The certificate is issued once the DNS authorisation records resolve. This shows its state; it is usually `ACTIVE` within an hour:

@@ -1,5 +1,5 @@
 ---
-audience: "Docker Compose で配備を建てる人（ホストの端末を扱う情シス / SRE）"
+audience: "Docker Compose で配備を構築する人（ホストのターミナルを扱う情シス / SRE）"
 source_of_truth: "`deploy/compose/` の `docker-compose.yml`・`.env.example`・スクリプト（食い違ったらこのページのバグ）"
 ---
 
@@ -7,14 +7,14 @@ source_of_truth: "`deploy/compose/` の `docker-compose.yml`・`.env.example`・
 
 [English](install.md) | 日本語
 
-1 台の Linux ホストに Docker Compose で Agent Fleet を建て、最初の管理者がサインインできるところまでのコマンドをまとめます。
+1 台の Linux ホストに Docker Compose で Agent Fleet を構築し、最初の管理者がサインインできるところまでのコマンドをまとめます。
 各手順で何を決めるかは [インストールする](../install.ja.md) にあります。このページは、その手順を実際に打つときに開きます。
 
 ## 全体像
 
 | あなたがやること | 起きること |
 |---|---|
-| `.env` を作り、秘密・`DOCKER_GID`・公開 URL・IdP を書く | Control Plane がこの値で起動する |
+| `.env` を作り、シークレット・`DOCKER_GID`・公開 URL・IdP を書く | Control Plane がこの値で起動する |
 | ワークスペースのイメージを用意する（ビルドか取得） | Control Plane がメンバーごとに `docker run` でワークスペースを起動できる |
 | `docker compose up -d` で起動する | Control Plane（`cp`）と Caddy が動き、Caddy が TLS の証明書を取る |
 | `SUPER_ADMIN_EMAILS` のアカウントでサインインする | そのアカウントが配備管理者になり、ワークスペースを起動できる |
@@ -30,8 +30,8 @@ source_of_truth: "`deploy/compose/` の `docker-compose.yml`・`.env.example`・
 | `.env.example` | すべての設定。`.env` にコピーして使います |
 | `backup.sh`・`restore.sh` | バックアップと復元（[バックアップして復元する](../run/backup-restore.ja.md)） |
 | `load-images.sh` | ローカルの tar からイメージを読み込む。レジストリに届かないホスト専用です（[閉じたネットワークに入れる](../run/air-gapped.ja.md)） |
-| `release.sh` | 版の付いたリリースのバンドルを作る。メンテナー向けです |
-| `docker-compose.macos.yml` | Mac で動かすための重ね合わせ（[macOS（Apple Silicon）で動かす](macos.ja.md)） |
+| `release.sh` | バージョンの付いたリリースのバンドルを作る。メンテナー向けです |
+| `docker-compose.macos.yml` | Mac で動かすためのオーバーレイ（[macOS（Apple Silicon）で動かす](macos.ja.md)） |
 
 リリースのイメージは GHCR に公開されています。
 
@@ -46,7 +46,7 @@ source_of_truth: "`deploy/compose/` の `docker-compose.yml`・`.env.example`・
 | Docker（Engine と `docker compose`）が動く Linux ホスト | Apple Silicon の Mac なら 1 人で使えます（[macOS（Apple Silicon）で動かす](macos.ja.md)） |
 | 公開ドメインと、このホストを指す DNS の A / AAAA レコード | TLS に使います。社内だけなら `Caddyfile` の `tls internal` を使います |
 | サインイン用の IdP のクライアント | Google の OAuth 2.0 ウェブクライアント、または Entra ID・Okta・Keycloak・Auth0・Cognito・GitLab の OIDC アプリ。登録するリダイレクト URI は、いくつ使っても 1 つです |
-| エージェントの席 | 各メンバーが最初の起動のあとに Console から自分の席でログインします。個人の Pro / Max より、会社の Team / Enterprise の席をおすすめします |
+| エージェントのシート | 各メンバーが最初の起動のあとに Console から自分のシートでログインします。個人の Pro / Max より、会社の Team / Enterprise のシートをおすすめします |
 | （`agy` を使うなら）RDRAND を出す CPU | 下の「Antigravity CLI と RDRAND」 |
 
 SAML しかない IdP（HENNGE One・TrustLogin・CloudGate など）は、oauth2-proxy か Keycloak を前に置いて `AUTH=proxy` で使います。
@@ -61,7 +61,7 @@ SAML しかない IdP（HENNGE One・TrustLogin・CloudGate など）は、oauth
 ## 公開リリースから始めるとき
 
 [配布リポジトリ](https://github.com/k-k1/agent-fleet-dist) の `install-compose.sh` が、バンドルの取得・検証・展開と、GHCR からのイメージの取得までを行います。
-終わると、下の手順 1 の `cp .env.example .env` から続けられます。このページの手順は、手作業で（またはソースから）建てる場合のものです。
+終わると、下の手順 1 の `cp .env.example .env` から続けられます。このページの手順は、手作業で（またはソースから）構築する場合のものです。
 
 ## 1. 設定を書いてソースから起動する
 
@@ -90,7 +90,7 @@ docker compose up -d --build     # from source
 docker compose logs -f cp
 ```
 
-- `AF_MASTER_KEY` は、作ったその場でパスワード金庫に控えます。`DATA_DIR` にもバックアップにも入りません（[配備の鍵を扱う](../secure/deployment-keys.ja.md)）
+- `AF_MASTER_KEY` は、作ったその場でパスワードマネージャーに控えます。`DATA_DIR` にもバックアップにも入りません（[配備の鍵を扱う](../secure/deployment-keys.ja.md)）
 - `DOCKER_GID` を間違えると、docker のソケットで permission denied になります
 - 各変数の意味は `.env.example` 自体に書いてあります。何を選ぶかは [インストールする](../install.ja.md) の手順 1〜4 です
 

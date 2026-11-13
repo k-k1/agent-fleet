@@ -26,13 +26,13 @@ AWS で別の Agent Fleet を運用しているなら、そちらのエンジン
 
 ## フリートのイメージを GPU マシンで動かす
 
-ComfyUI がまだないなら、`deploy/comfyui-lan/comfyui-lan.sh` で、`ecs-ec2` の画像エンジンと同じ版の ComfyUI イメージ（`ghcr.io/k-k1/agent-fleet/comfyui`）を起動できます。
-セッションが送るワークフローは、この版で試験されています。
+ComfyUI がまだないなら、`deploy/comfyui-lan/comfyui-lan.sh` で、`ecs-ec2` の画像エンジンと同じバージョンの ComfyUI イメージ（`ghcr.io/k-k1/agent-fleet/comfyui`）を起動できます。
+セッションが送るワークフローは、このバージョンで試験されています。
 
 マシンに必要なもの:
 
 - x86_64 の Linux（イメージは amd64 だけ）と Docker Engine
-- NVIDIA のドライバ（`nvidia-smi -L` が GPU を列挙する）と [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+- NVIDIA のドライバー（`nvidia-smi -L` が GPU を列挙する）と [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 - このリポジトリの clone、または `deploy/comfyui-lan/` と `deploy/aws/ecs/cfn/60-engines.yaml`（イメージのタグをここから読みます）
 
 欠けているものがあれば、スクリプトは何も変えずに止まり、何が足りないかを表示します。
@@ -40,7 +40,7 @@ ComfyUI がまだないなら、`deploy/comfyui-lan/comfyui-lan.sh` で、`ecs-e
 
 | オプション | 決めること |
 |---|---|
-| `--models <dir>` | ComfyUI の `models/` として読み取り専用でマウントするフォルダ。種類のフォルダ（`checkpoints/`・`diffusion_models/`・`clip/`・`text_encoders/`・`vae/`・`loras/`）はなければ作ります。ファイルはダウンロードしません |
+| `--models <dir>` | ComfyUI の `models/` として読み取り専用でマウントするフォルダー。種類のフォルダー（`checkpoints/`・`diffusion_models/`・`clip/`・`text_encoders/`・`vae/`・`loras/`）はなければ作ります。ファイルはダウンロードしません |
 | `--bind <addr>` | ポートを公開するアドレス。既定は `127.0.0.1` で、Control Plane が同じマシンにあるときだけ使えます。別のマシンなら LAN のアドレスを渡します。`0.0.0.0` は `--all-interfaces` を付けたときだけ受け付けます |
 | `--port <n>` | 公開するポート。既定は `8188` です |
 | `--api-key-file <file>` | Bearer キーを検証するリバースプロキシ（Caddy）を ComfyUI の前に置き、ComfyUI 自体は公開しません。ファイルには 24 文字以上のキーを 1 つ書き、所有者だけが読めるようにします |
@@ -88,7 +88,7 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 | 変数 | 意味 |
 |---|---|
 | `AF_COMFY_URL` | ポートまで含めた URL を、Control Plane から見た形で書きます（例: `http://192.168.1.20:8188`）。設定すると画像エンジンの行ができます |
-| `AF_COMFY_API_KEY` | 任意。`Authorization: Bearer` として送ります。生成の要求にもヘルスチェックにも付きます |
+| `AF_COMFY_API_KEY` | 任意。`Authorization: Bearer` として送ります。生成のリクエストにもヘルスチェックにも付きます |
 
 | 形態 | 置き場所 |
 |---|---|
@@ -158,11 +158,11 @@ ComfyUI にいまあるチェックポイント・LoRA・VAE のファイル名�
 
 気をつけること:
 
-- **ファイルは種類のフォルダの直下に置きます。** サブフォルダ（`checkpoints/sdxl/x.safetensors`）は `x.safetensors` として届き、`Value not in list` で失敗します
+- **ファイルは種類のフォルダーの直下に置きます。** サブフォルダー（`checkpoints/sdxl/x.safetensors`）は `x.safetensors` として届き、`Value not in list` で失敗します
 - 必要なファイルが欠けている行には印が付きます。見ているのは宣言だけで、ファイルがディスクにあるかは確かめません
-- **VAE を同梱していないチェックポイントがあります**（配布サイトの SDXL 系に多い）。そのままでは、すべての要求が `VAE is invalid: None` で失敗します。同じ行の 2 つ目のファイルとして、フラグ `--vae` で VAE を宣言してください
-- 配備がヘッダを読んで VAE の有無に印を付けるのは、取り込んだモデルだけです。手で登録した行では読めないので、印は付きません
-- **Qwen-Image 2.1** の行には、ComfyUI が v0.37.0 以上である必要があります。古い版でも登録はできますが、生成はすべて失敗します
+- **VAE を同梱していないチェックポイントがあります**（配布サイトの SDXL 系に多い）。そのままでは、すべてのリクエストが `VAE is invalid: None` で失敗します。同じ行の 2 つ目のファイルとして、フラグ `--vae` で VAE を宣言してください
+- 配備がヘッダーを読んで VAE の有無に印を付けるのは、取り込んだモデルだけです。手で登録した行では読めないので、印は付きません
+- **Qwen-Image 2.1** の行には、ComfyUI が v0.37.0 以上である必要があります。古いバージョンでも登録はできますが、生成はすべて失敗します
 
 ## ComfyUI に届く経路を閉じる
 
@@ -180,7 +180,7 @@ ComfyUI 自体には認証がなく、その API でプロンプトの投入や�
 
 ### 画像の生成がすぐに失敗する
 
-Control Plane は自分が持っていないエンジンを待ちません。ComfyUI が答えないと、要求はすぐに `503 engine_unavailable` で断られます。レスポンスの本文には、試した URL とヘルスチェックのパスが入ります。
+Control Plane は自分が持っていないエンジンを待ちません。ComfyUI が答えないと、リクエストはすぐに `503 engine_unavailable` で断られます。レスポンスの本文には、試した URL とヘルスチェックのパスが入ります。
 
 次の順に確かめます。
 

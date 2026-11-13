@@ -105,8 +105,8 @@ Its model information is a read-only copy of the lender's catalogue.
 
 | Action | On the borrowing side |
 |---|---|
-| On / off | Yes. Off only closes this deployment's route and does nothing to the lender's instances |
-| On-demand | No. There is no instance here to let go |
+| "**Disabled**" / "**Always on**" | Yes. Disabled only closes this deployment's route and does nothing to the lender's instances |
+| "**On demand**" | No. The button is not shown, and there is no instance here to let go |
 | Enabling or disabling, default, registering, deleting or taking in a model | No. Refused with `400 engine_not_ours`. Do it on the lending side's Admin screen |
 | Editing "excluded from every image" | No. Do it on the lending side |
 

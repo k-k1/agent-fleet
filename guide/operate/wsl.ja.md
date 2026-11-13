@@ -26,7 +26,7 @@ Windows の WSL2 で、Agent Fleet を 1 人で試せるように、コマンド
 |---|---|
 | サインイン | `AUTH=dev` の固定ユーザー `dev` です。サインインの画面も oauth2-proxy もなく、すべてのリクエストが `dev` になります。スクリプトが `AF_ALLOW_INSECURE_DEV_AUTH=1` も渡します |
 | テナント | `default` のテナントが内部で作られ、`dev` が自動で入ります。所属が 1 つなので、テナントを選ぶ画面は出ません |
-| 暗号化 | `AF_MASTER_KEY` を設定しないので、保存時の暗号化はオフです。秘密は平文の JSON で保存されます。個人で試すぶんには許容範囲です |
+| 暗号化 | `AF_MASTER_KEY` を設定しないので、保存時の暗号化はオフです。シークレットは平文の JSON で保存されます。個人で試すぶんには許容範囲です |
 | ランタイム | `AF_RUNTIME=local` です。ワークスペースのコンテナは WSL の中の Docker で起動し、本番の形態と同じくコンテナの隔離とワークスペースごとの cgroup の上限があります |
 
 コードを変える必要はありません。どれも `run-dev.sh wsl` の既定の振る舞いです。
@@ -79,7 +79,7 @@ deploy/local/run-dev.sh wsl        # the old wsl-quickstart.sh wraps this (still
 5. `AUTH=dev`・`AF_RUNTIME=local` で Control Plane を起動します
 
 - 初回は、イメージのビルドと JDK の展開に時間がかかります
-- イメージはエージェントの CLI を含まない軽量版です。CLI は、ワークスペースの初回の起動のときに決められた版が入ります。`BAKE_AGENT_CLIS=1` を付けると、焼き込んで初回の起動を速くできます
+- イメージはエージェントの CLI を含まない軽量版です。CLI は、ワークスペースの初回の起動のときに決められたバージョンが入ります。`BAKE_AGENT_CLIS=1` を付けると、CLI をイメージに組み込んでビルドし、初回の起動を速くできます
 - 古い `deploy/local/wsl-quickstart.sh` は、同じものを呼ぶだけの互換のためのスクリプトです
 
 `run-dev.sh` は、サブコマンドで動作を選びます。
@@ -101,7 +101,7 @@ Control Plane は `http://localhost:8099` で待ち受けます。WSL2 の local
 GitHub のクローンとプッシュを OAuth のデバイスフローで使うには、GitHub の OAuth App の `client_id` を Console に登録します。環境変数は使いません。
 
 1. GitHub（Settings → Developer settings → OAuth Apps）で OAuth App を作り、**Enable Device Flow をオン**にします
-2. Console のテナント設定で、その `client_id` を登録します（[連携に使う OAuth アプリを選ぶ](../admin/access/oauth-apps.ja.md)）。`client_id` は秘密ではありません
+2. Console のテナント設定で、その `client_id` を登録します（[連携に使う OAuth アプリを選ぶ](../admin/access/oauth-apps.ja.md)）。`client_id` はシークレットではありません
 3. ワークスペースから GitHub の連携を始めます。デバイスコードと確認の URL が案内されます。`gh auth login` は要りません
 
 - この構成は 1 人に固定で、`AUTH` は常に `dev` です。`oauth.env` に `AUTH=oauth` と書いても使われません
@@ -112,7 +112,7 @@ GitHub のクローンとプッシュを OAuth のデバイスフローで使う
 
 | 項目 | 扱い |
 |---|---|
-| rtk（トークンを節約する Bash のフック） | ワークスペースの起動のときに、決められた版を入れます（`BAKE_AGENT_CLIS=1` ならイメージに焼き込みます）。フックはエントリポイントが自動で用意します |
+| rtk（トークンを節約する Bash のフック） | ワークスペースの起動のときに、決められたバージョンを入れます（`BAKE_AGENT_CLIS=1` ならイメージに組み込んでビルドします）。フックはエントリポイントが自動で用意します |
 | JDK | 既定は、イメージを軽く保つ **共有の bind mount**（`WS_JVM_DIR`）です |
 
 どの環境でも、コンテナの中から JDK を入れられます。
@@ -121,7 +121,7 @@ GitHub のクローンとプッシュを OAuth のデバイスフローで使う
 workspace-agent install-jdk 21     # install the latest GA Temurin into ~/.local/share/agent-fleet/jvm
 ```
 
-- Console の **設定 → ツールチェーン** で Java の版を選ぶと、足りない版を次のコンテナの起動で入れ、各セッションに `JAVA_HOME` を渡します（[ツールチェーンを選ぶ](../user/workspace/toolchains.ja.md)）
+- Console の **設定 → ツールチェーン** で Java のバージョンを選ぶと、足りないバージョンを次のコンテナの起動で入れ、各セッションに `JAVA_HOME` を渡します（[ツールチェーンを選ぶ](../user/workspace/toolchains.ja.md)）
 - `WS_JDK=0` で起動すると、共有の JDK を用意せず、この入れ方だけに頼ります
 - エージェントの CLI と rtk を最新版に追従させる設定も同じタブにあります（[エージェントの CLI を最新にする](../user/workspace/toolchains.ja.md#エージェントの-cli-を最新にする)）
 
@@ -132,7 +132,7 @@ workspace-agent install-jdk 21     # install the latest GA Temurin into ~/.local
 | 止める | フォアグラウンドの Control Plane を `Ctrl-C` します。起動したワークスペースのコンテナは残るので、必要なら `docker ps`・`docker stop <name>` で止めます |
 | データの場所 | `~/.local/share/agent-fleet`（DB・ユーザーごとの home・共有の JDK） |
 | 消す | Control Plane を止めてから `deploy/local/run-dev.sh reset`。既定では `dev` のワークスペース（home と claude-config）だけを消し、DB と共有の JDK は残します。`--all` で DB と共有の JDK まで消します（JDK は次の実行で用意し直します） |
-| ビルドし直す | CLI の版を上げたときなどは、`run-dev.sh wsl` をもう一度実行します。イメージがビルドし直されます |
+| ビルドし直す | CLI のバージョンを上げたときなどは、`run-dev.sh wsl` をもう一度実行します。イメージがビルドし直されます |
 
 `reset` は、消す前にどちらのランタイムの残り（コンテナ・Agent のプロセス・専用の tmux）も片付けるので、どの形で動かしていても安全です。
 

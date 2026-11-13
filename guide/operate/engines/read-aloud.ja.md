@@ -33,7 +33,7 @@ VOICEVOX のエンジンはパッケージに含まれていません。形態�
 | そのほか | Control Plane から HTTP で届く VOICEVOX ENGINE を動かす |
 
 - エンジンの場所は Control Plane の `AF_VOICEVOX_URL` で指定します。既定は `http://127.0.0.1:50021` です
-- Polly を使うときは、`AF_POLLY_REGION` と、Control Plane のプロセスから見える AWS の資格情報を用意します
+- Polly を使うときは、`AF_POLLY_REGION` と、Control Plane のプロセスから見える AWS の認証情報を用意します
 - エンジンが止まっているあいだも、失敗するのは声だけです。エンジンが戻れば、次の文から読み上げが戻ります
 
 ### native と WSL で用意する

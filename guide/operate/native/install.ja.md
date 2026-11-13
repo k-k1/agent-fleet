@@ -14,10 +14,10 @@ Docker のない 1 人用の Linux（WSL2 を含む）に Agent Fleet を入れ�
 
 | あなたがやること | 起きること |
 |---|---|
-| インストーラを実行するか、tar を展開する | `af` コマンドが使えるようになる |
+| インストーラーを実行するか、tar を展開する | `af` コマンドが使えるようになる |
 | `af start` を実行する | 初回だけ rootfs（約 200 MB）を取得・検証・展開し、Control Plane と Console がホストのプロセスとして動き出す |
 | ブラウザで `http://localhost:8099` を開く | サインインなしで Console が開く。ワークスペースは bubblewrap のサンドボックスで動く |
-| ワークスペースを初めて起動する | エージェントの CLI を、決められた版で仮想の HOME に入れる |
+| ワークスペースを初めて起動する | エージェントの CLI を、決められたバージョンで仮想の HOME に入れる |
 
 複数の人で使うときや、コンテナの隔離と CPU・メモリの上限が要るときは、Docker を使う形態（[Docker Compose で構築する](../compose/install.ja.md) など）を選びます。
 
@@ -45,7 +45,7 @@ echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/6
 
 ## 1. インストールする
 
-配布リポジトリ（[k-k1/agent-fleet-dist](https://github.com/k-k1/agent-fleet-dist)）のインストーラを使うと、`~/.local/opt/agent-fleet/<v>/` に展開し、`~/.local/bin/af` にリンクを張ります。
+配布リポジトリ（[k-k1/agent-fleet-dist](https://github.com/k-k1/agent-fleet-dist)）のインストーラーを使うと、`~/.local/opt/agent-fleet/<v>/` に展開し、`~/.local/bin/af` にリンクを張ります。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash
@@ -55,7 +55,7 @@ af start            # first run only: fetch, verify, and extract the rootfs (~20
 
 | 環境変数 | 意味 |
 |---|---|
-| `AF_VERSION` | 入れる版。既定は最新のリリースです |
+| `AF_VERSION` | 入れるバージョン。既定は最新のリリースです |
 | `AF_PREFIX` | インストール先の接頭辞。既定は `~/.local` です |
 | `AF_NO_AUTOUPDATE` | `1` にすると、毎日の自動更新のタイマーを有効にしません（[ネイティブパッケージを更新する](update.ja.md)） |
 
@@ -84,9 +84,9 @@ cd agent-fleet-native-<v>-linux-<arch>
 
 | CLI | 入るとき |
 |---|---|
-| claude・codex・opencode・cursor・copilot・agy・rtk | ワークスペースの初回の起動で、`versions.json` で決まった版を仮想の HOME に入れます。ネットワークが要るのはこのときだけです |
+| claude・codex・opencode・cursor・copilot・agy・rtk | ワークスペースの初回の起動で、`versions.json` で決まったバージョンを仮想の HOME に入れます。ネットワークが要るのはこのときだけです |
 | kiro（約 855 MB） | 初めて Kiro のセッションを起動したとき |
-| Muse Code | 頼むまで入りません。接続のカードの「**Muse Code を導入**」で、決められた版をホームに入れます |
+| Muse Code | 頼むまで入りません。接続のカードの「**Muse Code を導入**」で、決められたバージョンをホームディレクトリに入れます |
 
 ## データの置き場所
 
@@ -105,9 +105,9 @@ cd agent-fleet-native-<v>-linux-<arch>
 
 ワンクリックの「OAuth で接続」も使いたいときは、OAuth アプリを Console のテナントの設定で登録します（[連携に使う OAuth アプリを選ぶ](../../admin/access/oauth-apps.ja.md)）。環境変数はありません。
 
-| プロバイダ | 入れるもの | 用意のしかた |
+| プロバイダー | 入れるもの | 用意のしかた |
 |---|---|---|
-| GitHub（デバイスフロー） | `client_id` だけ | GitHub → Settings → Developer settings → OAuth Apps で、**Enable Device Flow をオン**にした OAuth App を作ります。`client_id` は秘密ではありません。デバイスフローはコールバックの URL が要らないので、`localhost` でもそのまま動きます |
+| GitHub（デバイスフロー） | `client_id` だけ | GitHub → Settings → Developer settings → OAuth Apps で、**Enable Device Flow をオン**にした OAuth App を作ります。`client_id` はシークレットではありません。デバイスフローはコールバックの URL が要らないので、`localhost` でもそのまま動きます |
 | Bitbucket（認可コード） | Key と Secret | **Callback URL** が `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback` と完全に一致する OAuth consumer を作ります。`PUBLIC_BASE_URL` は Console を開く URL（`http://localhost:8099` など）にします。貼り付ける URL は画面に出ます |
 
 1 人で使うネイティブの配備では、コールバックの要らない GitHub のデバイスフローがいちばん簡単です。
@@ -118,7 +118,7 @@ cd agent-fleet-native-<v>-linux-<arch>
 |---|---|
 | 1 人だけ | `AUTH=dev` に固定です。コンテナの隔離はなく、すべてのワークスペースが同じ OS ユーザーのまま、bubblewrap のサンドボックスで動きます |
 | メモリの上限がない | cgroup を使わないので、`WS_MEMORY` は効きません。重いビルドでホストごと落ちることがあります |
-| ブラウザペインの Chromium は初回に取得する | 決められた版を約 200 MB 取得します。下の「Chromium のサンドボックスが動かないとき」 |
+| ブラウザペインの Chromium は初回に取得する | 決められたバージョンを約 200 MB 取得します。下の「Chromium のサンドボックスが動かないとき」 |
 
 ### Chromium のサンドボックスが動かないとき
 
