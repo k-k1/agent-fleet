@@ -673,16 +673,6 @@ func (f *ecsEC2Factory) resumeRescue(ctx context.Context, probe *ecsEC2Runtime, 
 	if vol != nil {
 		rt = f.rescueRuntime(vol)
 	}
-	if m.Operator && rt != nil && isDarkQuarantine(inst.Tags) && attachedInstance(vol) == id {
-		// An aged operator marker on a box rung L2 quarantined, with the home still on it: the
-		// operator's handler could not hand the rescue back. Finalizing would strand the home
-		// (the box is out of the pool), so the rescue is handed back here, under the same token
-		// checks, and the next pass carries it on. A failure leaves the marker for the next pass.
-		if !rt.handBackRescue(ctx, id, &m, m.Began) {
-			log.Printf("ecs-ec2 sweep: handing the rescue on %s back from an aged operator marker failed; the marker stays", id)
-		}
-		return
-	}
 	if rt == nil {
 		// The home is gone, or it carries no owner the sweeper can lock for: no count to
 		// compare, so nothing of the rescue can continue.

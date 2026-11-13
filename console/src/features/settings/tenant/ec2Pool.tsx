@@ -150,8 +150,6 @@ type Slot = {
    *  it is on. A quarantined slot's rung is "quarantined" (rung L2). */
   dark_since?: string;
   rung?: "observing" | "rescuing" | "blocked" | "rescued" | "quarantined" | "";
-  /** The box carries a dark-slot rescue marker: on a quarantined row it is what makes Stop (force) apply. */
-  rescue_active?: boolean;
   /** When the wedged-slot scan first saw this running slot wedged (its agents answer, but a task is
    *  stuck stopping or the Agent drops its probe; RFC 3339; ADR 0121 amendment), and the rung. */
   wedged_since?: string;
@@ -535,29 +533,9 @@ export function PoolView() {
                         terminate stage filters on af-role=slot and never collects it). */}
                     <td className="pool-actions">
                       {s.quarantined ? (
-                        <>
-                        {/* A box quarantined by the dark-slot ladder while its rescue still runs or is
-                            blocked keeps its home: Stop (force) takes that rescue over, which Terminate
-                            cannot (it refuses a box that holds a home). Not for a mount-failure quarantine,
-                            nor once the rescue has ended. */}
-                        {s.rung === "quarantined" && s.rescue_active && !!s.workspace && s.state !== "stopped" && (
-                          <Button
-                            small
-                            variant="danger"
-                            onClick={() => {
-                              setStopErr("");
-                              setStopOverride(true);
-                              setStopAck(false);
-                              setStopping(s);
-                            }}
-                          >
-                            {tr("pool.force_stop")}
-                          </Button>
-                        )}
                         <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
                           {tr("pool.terminate")}
                         </Button>
-                        </>
                       ) : (
                         <>
                         {/* An unregistered slot that is up is the wedged shape: no override needed. A
@@ -579,6 +557,13 @@ export function PoolView() {
                             }}
                           >
                             {tr("pool.force_stop")}
+                          </Button>
+                        )}
+                        {/* Rung L2 holds the slot out of the pool but leaves it a slot, so Stop (force) above still
+                            applies; Terminate is offered too (the server refuses while a home is on it). */}
+                        {s.rung === "quarantined" && (
+                          <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
+                            {tr("pool.terminate")}
                           </Button>
                         )}
                         <Button

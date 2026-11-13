@@ -137,6 +137,9 @@ func parseDarkStamp(v string) (darkStamp, bool) {
 // A read that fails is not an answer: a failed ECS or SSM call leaves the slot untouched (no
 // stamp, no clear), because "could not ask" and "asked and it was silent" must not look alike.
 func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Volume) {
+	if f.pool.darkAction != darkActionOff && f.pool.darkAction != "" {
+		f.clearVoidQuarantines(ctx, homes)
+	}
 	// A marker outlives the setting that wrote it, so the resume scan runs whatever the
 	// action is, short of a pool built without one.
 	if (f.pool.darkAction != "" && f.pool.darkAction != darkActionOff) || f.pool.wedgedAction == wedgedActionRelease {

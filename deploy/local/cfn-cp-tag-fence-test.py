@@ -372,12 +372,14 @@ INVENTORY = [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-wedge-at-20261113T000000Z": T})]),
     ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "recordEpisode", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-wedge-at-20261112T000000Z": None, "af-wedge-at": None})]),
-    # Rung L2 (ADR 0121): the same three keys the mount-failure quarantine writes, from the
-    # dark-slot rescue's guarded section.
+    # Rung L2 (ADR 0121): af-quarantine, a token-fenced tag on a slot that KEEPS af-role=slot (so no
+    # role value is added and the CP keeps SSM on the box). Any key but af-pool / af-role is
+    # allowed on a resource of this pool; the delete matches the value so a newer tag survives.
     ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "writeDarkQuarantine", "CreateTags", 1, [
-        on_existing("ec2:CreateTags", "instance", SLOT, {"af-role": "quarantined",
-                    "af-quarantine-reason": "dark-slot repeat: dark again within 24h0m0s of 2026-11-12T00:00:00Z",
-                    "af-quarantine-at": T})]),
+        on_existing("ec2:CreateTags", "instance", SLOT, {"af-quarantine":
+                    "vol-home:7/repeat: dark again within 24h0m0s of 2026-11-12T00:00:00Z/2026-11-13T00:00:00Z"})]),
+    ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "clearVoidQuarantine", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-quarantine": "vol-home:7/repeat: x/2026-11-13T00:00:00Z"})]),
     ("internal/runtime/runtime_ecs_ec2_volumes.go", "clearSlotFree", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-idle-since": None})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "CreateTags", 1, [

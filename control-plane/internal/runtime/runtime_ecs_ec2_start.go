@@ -175,6 +175,11 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
 				return false, false, false, nil
 			}
+			// Rung L2: held out of the pool by a token-fenced tag. Valid only while its token is
+			// the box's own; a void one (a Start moved on, a late write) must not move anybody.
+			if q, ok := quarantineOf(inst.Tags); ok && e.quarantineHolds(ctx, q, instanceID) {
+				return false, false, false, nil
+			}
 			if !e.pool.noAutoReplace {
 				if lt, ltErr := e.pool.readLaunchTemplate(ctx, e.ec2); ltErr != nil {
 					log.Printf("ecs-ec2: reading the slot launch template for %s: %v", e.base.name, ltErr)

@@ -55,9 +55,6 @@ type ec2SlotView struct {
 	DarkSince string `json:"dark_since,omitempty"`
 	// Rung is how far the dark-slot ladder has gone: darkRung* below. Empty = not dark.
 	Rung string `json:"rung,omitempty"`
-	// RescueActive: the box carries a dark-slot rescue marker (running, blocked or finishing).
-	// The Console offers the force-stop on a quarantined row only while it is set.
-	RescueActive bool `json:"rescue_active,omitempty"`
 	// WedgedSince is when the wedged-slot scan first saw this running slot wedged (RFC 3339,
 	// from af-wedged-since; ADR 0121 amendment), and WedgedRung how far it has gone (observing,
 	// then releasing, blocked or released). Empty when there is no stamp for the current launch.
@@ -86,9 +83,10 @@ const (
 // a recovery (scan off, home detached, a live claim, an AWS read that failed). A pure read; it
 // never writes.
 func darkView(inst ec2types.Instance) (since, rung string) {
-	// Rung L2: the reason prefix tells it from a mount-failure quarantine. It outranks the
-	// marker, which is still on the box while the rescue is retried or finishing.
-	quarantined := isDarkQuarantine(inst.Tags)
+	// Rung L2: the af-quarantine tag. It outranks the marker, which is still on the box while
+	// the rescue is retried or finishing. A read-only view: a void one reads as quarantined
+	// until the sweeper clears it.
+	qtag, quarantined := quarantineOf(inst.Tags)
 	// A marker speaks for the box in any state: a rescued box is stopped, and the rung says
 	// how far the rescue got.
 	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && !m.Wedged && !m.Operator {
@@ -109,7 +107,7 @@ func darkView(inst ec2types.Instance) (since, rung string) {
 		return since, rung
 	}
 	if quarantined {
-		return ec2TagValue(inst.Tags, ec2TagQuarantineAt), darkRungQuarantined
+		return qtag.At.UTC().Format(time.RFC3339), darkRungQuarantined
 	}
 	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning || inst.LaunchTime == nil {
 		return "", ""
@@ -422,7 +420,9 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
 			s.ReplaceReserved = s.ReplaceReservedAt != ""
 			s.DarkSince, s.Rung = darkView(inst)
-			s.RescueActive = ec2TagValue(inst.Tags, ec2TagRescue) != ""
+			if q, ok := quarantineOf(inst.Tags); ok {
+				s.QuarantineReason = q.Reason // rung L2: the row stays a slot (Quarantined is the role's)
+			}
 			s.WedgedSince, s.WedgedRung = wedgedView(inst)
 			st.Slots = append(st.Slots, s)
 		}

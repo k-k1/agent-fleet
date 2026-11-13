@@ -58,7 +58,7 @@ func (e *ecsEC2Runtime) slotsOfMyType(ctx context.Context, az string) (*ec2.Desc
 	// very box the operator wants gone. EC2 cannot filter on a tag being absent, so it is
 	// dropped here, the one place both placement paths read. So is a replacement launched
 	// for somebody else's home that has not moved onto it yet (pendingReplacementsForOthers).
-	out = withoutReservedSlots(out)
+	out = withoutQuarantinedSlots(withoutReservedSlots(out))
 	return withoutSlots(out, e.pendingReplacementsForOthers(ctx, out)), nil
 }
 
@@ -777,7 +777,11 @@ func (e *ecsEC2Runtime) poolSize(ctx context.Context) (int, error) {
 	}
 	n := 0
 	for _, r := range out.Reservations {
-		n += len(r.Instances)
+		for _, inst := range r.Instances {
+			if !slotHeldOut(inst) { // a held-out box is not capacity, like a quarantined role
+				n++
+			}
+		}
 	}
 	return n, nil
 }

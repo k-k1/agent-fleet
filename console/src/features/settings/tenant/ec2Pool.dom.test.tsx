@@ -339,27 +339,16 @@ it("counts held, running and hibernating slots and says eviction happens once th
     expect(buttonsIn(rowOf("i-hot")).map((b) => b.textContent)).toEqual(["停止（強制）", "入れ替えを予約"]);
   });
 
-  // Rung L2: a box quarantined while its rescue runs keeps its home, and Stop (force) is the way
-  // to take that rescue over. Terminate alone would be refused for the attached home.
-  it("offers Stop (force) on a quarantined row only while a dark-slot rescue is on it", async () => {
-    const row = (over: object) => ({
-      instance_id: "i-l2", instance_type: "m7i.large", az: "ap-northeast-1a", state: "running", registered: false,
-      workspace: "af-ws-acme-dave", idle_minutes: 0, quarantined: true, quarantine_reason: "dark-slot rescue-blocked: x",
-      rung: "quarantined", rescue_active: true, ...over,
+  // Rung L2 keeps af-role=slot: the row is a slot with a quarantined rung, so its usual actions stay
+  // and Terminate is added (the server refuses it while a home is on the slot).
+  it("adds Terminate to a slot row held out by the dark-slot ladder", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      slots: [{ instance_id: "i-l2", instance_type: "m7i.large", az: "ap-northeast-1a", state: "running", registered: false,
+        workspace: "", idle_minutes: 0, rung: "quarantined", dark_since: "2026-11-13T00:00:00Z", quarantine_reason: "repeat: x" }],
     });
-    const labels = async (r: object) => {
-      api.mockResolvedValue({ ...POOL, slots: [row(r)] });
-      await mount();
-      const out = buttonsIn(rowOf("i-l2")).map((b) => b.textContent);
-      act(() => root?.unmount());
-      host?.remove();
-      return out;
-    };
-    expect(await labels({})).toEqual(["停止（強制）", "終了"]);
-    // A mount-failure quarantine, a rescue that has ended, and a box with no home get Terminate only.
-    expect(await labels({ rung: "", quarantine_reason: "mount failed" })).toEqual(["終了"]);
-    expect(await labels({ rescue_active: false })).toEqual(["終了"]);
-    expect(await labels({ workspace: "" })).toEqual(["終了"]);
+    await mount();
+    expect(buttonsIn(rowOf("i-l2")).map((b) => b.textContent)).toEqual(["停止（強制）", "終了", "入れ替えを予約"]);
   });
 
   it("renders the terminate button as a bordered danger button", async () => {

@@ -117,13 +117,6 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 		}
 	}
 
-	// A dark rescue that rung L2 has quarantined is not the operator's to end: the box is out of
-	// the pool and nothing but that rescue will take the home off it. The operator's stop is
-	// one more step of it, and the marker goes back to the rescue's own kind afterwards, so the
-	// resume scan carries on from the stop to the detach (handBack).
-	darkOrigin := adopted && !m.Wedged && !m.Operator && isDarkQuarantine(inst.Tags)
-	origBegan := m.Began
-
 	var ids []string
 	if adopted {
 		// Ownership moves to the operator under the claim lock, with the token verified fresh
@@ -158,10 +151,6 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	giveUp := func() {
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*rescueWedgeBudget)
 		defer cancel()
-		if darkOrigin {
-			occ.handBackOrKeep(fctx, id, &m, origBegan)
-			return
-		}
 		occ.finalizeRescue(fctx, id, m.String(), m)
 	}
 
@@ -200,11 +189,7 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	// Done with the token: the episode is recorded and the marker goes, as after a rescue's
 	// last step. The home stays where it is.
 	fctx, cancelFin := context.WithTimeout(context.WithoutCancel(ctx), 3*rescueWedgeBudget)
-	if darkOrigin {
-		occ.handBackOrKeep(fctx, id, &m, origBegan)
-	} else {
-		occ.finalizeRescue(fctx, id, m.String(), m)
-	}
+	occ.finalizeRescue(fctx, id, m.String(), m)
 	cancelFin()
 	infoCtx, cancelInfo := context.WithTimeout(ctx, 3*time.Second)
 	res.StoppingTask, _ = f.probeRuntime().stoppingTaskOn(infoCtx, id)
@@ -212,44 +197,6 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	log.Printf("ecs-ec2: force-stop of slot %s sent under the rescue token (forced=%v, adopted=%v, cancelled %d commands, %d failed, stopping task %q)",
 		id, res.Forced, adopted, res.CancelledCommands, res.CancelFailed, res.StoppingTask)
 	return res, nil
-}
-
-// handBackOrKeep hands the rescue back, a few times if need be. When it cannot, the operator's
-// marker is KEPT, never finalized: the home is on an out-of-pool box that nothing but this
-// rescue will empty, so dropping the token would strand it. The resume scan converts a kept
-// operator marker on an L2-quarantined box once it has aged (resumeRescue).
-func (e *ecsEC2Runtime) handBackOrKeep(ctx context.Context, slot string, m *rescueMarker, began time.Time) {
-	for i := 0; i < 3; i++ {
-		if e.handBackRescue(ctx, slot, m, began) {
-			return
-		}
-		if ctx.Err() != nil || e.sleep(ctx, time.Second) != nil {
-			break
-		}
-	}
-	log.Printf("ecs-ec2: the operator marker on %s stays; the resume scan hands the rescue back once it has aged", slot)
-}
-
-// handBackRescue rewrites the operator's marker as the dark rescue's own (kind and began as
-// before, blocked_since cleared: a fresh attempt), in the guarded section, so that the resume
-// scan continues it from its phase to the detach. False when the write could not be made; the
-// caller keeps the marker (handBackOrKeep).
-func (e *ecsEC2Runtime) handBackRescue(ctx context.Context, slot string, m *rescueMarker, began time.Time) bool {
-	back := *m
-	back.Operator, back.Wedged = false, false
-	back.Began, back.BlockedSince = began, time.Time{}
-	err := e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
-		if err := rescueLeasesHeld(c); err != nil {
-			return fmt.Errorf("%w: %w", errRescueAborted, err)
-		}
-		return e.writeRescueMarker(c, slot, back)
-	})
-	if err != nil {
-		log.Printf("ecs-ec2: handing the rescue of %s on %s back after the operator's stop failed: %v", e.base.name, slot, err)
-		return false
-	}
-	*m = back
-	return true
 }
 
 // forceStopErr maps a rescue-step error onto the errors the API and the Console know.

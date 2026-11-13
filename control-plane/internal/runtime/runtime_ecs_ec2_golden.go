@@ -313,7 +313,11 @@ func (f *ecsEC2Factory) BakeBlocked(ctx context.Context) (bool, string, error) {
 	}
 	n := 0
 	for _, r := range out.Reservations {
-		n += len(r.Instances)
+		for _, inst := range r.Instances {
+			if !slotHeldOut(inst) {
+				n++
+			}
+		}
 	}
 	// One free slot is not enough: the bake needs one for the seed AND, later, one for
 	// the probe, and a bake that gets half way and then cannot place its probe would

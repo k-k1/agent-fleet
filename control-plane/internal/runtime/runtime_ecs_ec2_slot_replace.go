@@ -398,7 +398,7 @@ func (e *ecsEC2Runtime) adoptableReplacement(ctx context.Context, id, az, volID 
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
 			if ec2TagValue(inst.Tags, EC2TagPool) != e.pool.pool || ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleSlot ||
-				slotExcluded(inst) || string(inst.InstanceType) != e.instanceType || inst.State == nil ||
+				slotExcluded(inst) || slotHeldOut(inst) || string(inst.InstanceType) != e.instanceType || inst.State == nil ||
 				inst.Placement == nil || aws.ToString(inst.Placement.AvailabilityZone) != az {
 				return false, replacementSkip
 			}

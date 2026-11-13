@@ -372,6 +372,9 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		for _, inst := range r.Instances {
 			id := aws.ToString(inst.InstanceId)
 			stamp := ec2TagValue(inst.Tags, ec2TagSlotIdleSince)
+			if slotHeldOut(inst) && !busy[id] {
+				continue // rung L2: held out of the pool, kept as evidence, collected by nothing
+			}
 			if busy[id] {
 				// Occupied. Repair the other direction too — a mark left on a taken slot
 				// would otherwise stop it the moment its home is released next time, with
@@ -571,7 +574,7 @@ func (e *ecsEC2Runtime) terminateGate(ctx context.Context, instanceID string, in
 	}
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
-			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined {
+			if ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined || slotHeldOut(inst) {
 				return fmt.Errorf("%w: %s is quarantined (only an operator may)", ErrTerminateRefused, instanceID)
 			}
 			if intent == terminateMakeRoom {
@@ -647,10 +650,12 @@ func (f *ecsEC2Factory) TerminateQuarantinedSlot(ctx context.Context, instanceID
 	if inst == nil {
 		return "", ErrSlotNotFound
 	}
-	if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleQuarantined {
+	reason := ec2TagValue(inst.Tags, ec2TagQuarantineReason)
+	if q, held := quarantineOf(inst.Tags); held && ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleSlot {
+		reason = q.Reason // rung L2: the role stayed `slot`; the no-home guard below is the same
+	} else if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleQuarantined {
 		return "", fmt.Errorf("%w (af-role=%s)", ErrSlotNotQuarantined, ec2TagValue(inst.Tags, EC2TagRole))
 	}
-	reason := ec2TagValue(inst.Tags, ec2TagQuarantineReason)
 
 	// The homes, read the way every other decision in this file reads them: the volume's
 	// attachment is who owns what, and a claim is a placement in flight that has not
