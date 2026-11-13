@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -418,7 +419,7 @@ func TestWakeBookedForARefusedWatchIsCancelled(t *testing.T) {
 	ctx := context.Background()
 	e, st, _, w := newTimeEngine(&fakeSink{answer: Ready})
 	for i := 0; i < MaxPerOwner-1; i++ {
-		if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "time", Ref: "in 20m"}); err != nil {
+		if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "time", Ref: "in " + strconv.Itoa(i+1) + "h"}); err != nil {
 			t.Fatal(err)
 		}
 	}

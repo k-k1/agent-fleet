@@ -280,8 +280,21 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 		defer e.endBooking(id)
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.load()
+	// Checked under the lock that appends, so two concurrent identical calls end in one record.
+	// Before the limits: repeating a watch the session already holds is not a new watch.
+	if i := e.findSameLocked(sub); i >= 0 {
+		existing, err := e.extendExistingLocked(i, sub.Expires)
+		e.mu.Unlock()
+		if sub.WakeID != "" {
+			// This call's booking is not needed: the existing watch has its own. It is outstanding
+			// in state.Wakes and no subscription holds it, so reconcile cancels it.
+			e.endBooking(sub.WakeID)
+			e.reconcileWakes(ctx)
+		}
+		return existing, err
+	}
+	defer e.mu.Unlock()
 	if err := e.limitsLocked(r.Owner); err != nil {
 		return Subscription{}, err
 	}
@@ -306,6 +319,48 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 		return Subscription{}, errors.New("the watch could not be saved")
 	}
 	return sub, nil
+}
+
+// sameWatch reports whether a and b are one watch asked for twice: the same owner on the same
+// subject through the same source, for the same canonical set of types, ending the same way,
+// with the same wake and (for a timer) due time. Requester is not part of it: the owner is who
+// hears the notices, so a parent's own call and a child's notify parent are the same watch.
+func sameWatch(a, b Subscription) bool {
+	if a.Owner != b.Owner || a.Source != b.Source || a.Subject != b.Subject || a.Until != b.Until ||
+		a.Wake != b.Wake || !a.Due.Equal(b.Due) {
+		return false
+	}
+	at, bt := slices.Clone(a.Types), slices.Clone(b.Types)
+	slices.Sort(at)
+	slices.Sort(bt)
+	return slices.Equal(slices.Compact(at), slices.Compact(bt))
+}
+
+// findSameLocked is the index of the live session watch that sub repeats, or -1.
+func (e *Engine) findSameLocked(sub Subscription) int {
+	for i, s := range e.state.Subs {
+		if !s.Done && s.Builtin == "" && !endedPending(s) && sameWatch(s, sub) {
+			return i
+		}
+	}
+	return -1
+}
+
+// extendExistingLocked answers a repeated watch call with the watch already held, its expiry
+// raised to the later of the two. The returned copy carries Existing; the stored record does not.
+func (e *Engine) extendExistingLocked(i int, expires time.Time) (Subscription, error) {
+	s := &e.state.Subs[i]
+	if expires.After(s.Expires) {
+		prev := s.Expires
+		s.Expires = expires
+		if !e.save() {
+			s.Expires = prev
+			return Subscription{}, errors.New("the watch could not be saved")
+		}
+	}
+	out := cloneSub(*s)
+	out.Existing = true
+	return out, nil
 }
 
 func (e *Engine) checkLimits(owner string) error {
@@ -684,6 +739,9 @@ type claimed struct {
 	evs    []Event
 	wasEnd bool
 	member bool
+	// twins are the owner's other watches on the same subject that held the same events and
+	// were advanced by this one notice, without a notice of their own.
+	twins []claimed
 }
 
 // deliver asks each candidate's owner whether it can take a notice (without the lock), claims
@@ -768,7 +826,11 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 		} else if s.Until == UntilFirst {
 			s.Done, end = true, true
 		}
-		claims = append(claims, claimed{before, evs, end, member})
+		cl := claimed{sub: before, evs: evs, wasEnd: end, member: member}
+		if s.Builtin == "" && !member {
+			cl.twins = e.collapseTwinsLocked(i, evs)
+		}
+		claims = append(claims, cl)
 		changed = true
 	}
 	if changed && !e.save() {
@@ -797,10 +859,12 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 			if c.sub.Builtin == "" {
 				e.noteUserDeliveryLocked(c.sub.Owner, c.evs, now)
 			}
-			if c.wasEnd {
-				if i := e.subIndexLocked(c.sub.ID); i >= 0 {
-					e.state.Subs = append(e.state.Subs[:i], e.state.Subs[i+1:]...)
-					e.dropUnwatchedLocked()
+			for _, d := range append([]claimed{c}, c.twins...) {
+				if d.wasEnd {
+					if i := e.subIndexLocked(d.sub.ID); i >= 0 {
+						e.state.Subs = append(e.state.Subs[:i], e.state.Subs[i+1:]...)
+						e.dropUnwatchedLocked()
+					}
 				}
 			}
 		}
@@ -810,6 +874,44 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 			log.Printf("watch: could not deliver %s to %s: %v", eventsKey(c.evs), c.sub.Owner, err)
 		}
 	}
+}
+
+// collapseTwinsLocked advances the owner's other session watches on the same subject that hold
+// one of evs (same type and version) as pending, because one notice already tells it: two watches
+// of one session on one PR (pr.checks.completed and pr.checks.*, or duplicates from before
+// Subscribe was idempotent) would otherwise cost the session a turn each. Each twin's Told,
+// Pending and until bookkeeping advance as if it had delivered the event itself, so an until
+// first watch still ends. Only the same owner is collapsed: another owner (the parent of a
+// notify parent watch) is a different reader, and a different version is a different event.
+func (e *Engine) collapseTwinsLocked(i int, evs []Event) []claimed {
+	src := &e.state.Subs[i]
+	var out []claimed
+	for j := range e.state.Subs {
+		t := &e.state.Subs[j]
+		if j == i || t.Done || t.Builtin != "" || t.Notify == NotifyMember || t.Owner != src.Owner || t.Subject != src.Subject {
+			continue
+		}
+		var same []Event
+		for _, ev := range evs {
+			if slices.ContainsFunc(t.Pending, func(p Event) bool { return p.Type == ev.Type && p.Version == ev.Version }) {
+				same = append(same, ev)
+			}
+		}
+		if len(same) == 0 {
+			continue
+		}
+		before := cloneSub(*t)
+		for _, ev := range same {
+			t.setTold(ev)
+			t.dropPending(ev.Type)
+		}
+		end := false
+		if t.Until == UntilFirst {
+			t.Done, end = true, true
+		}
+		out = append(out, claimed{sub: before, evs: same, wasEnd: end})
+	}
+	return out
 }
 
 func (s *Subscription) dropPending(typ string) {
@@ -835,6 +937,9 @@ func cloneSub(s Subscription) Subscription {
 // state or retired it while the delivery ran, and none of that may be lost. A type whose Told
 // moved meanwhile (an observation took a watch's tomb for a newer state) keeps the newer record.
 func (e *Engine) releaseLocked(c claimed) {
+	for _, t := range c.twins {
+		e.releaseLocked(t)
+	}
 	var s *Subscription
 	if i := e.subIndexLocked(c.sub.ID); i >= 0 {
 		s = &e.state.Subs[i]
