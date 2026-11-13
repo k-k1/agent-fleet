@@ -162,7 +162,7 @@ work you could simply do.
     aliases. GitHub Actions: `ref` a run URL (`https://github.com/o/r/actions/runs/<id>`,
     `/attempts/<n>` optional) or `o/r:run/<id>` (fires when that run completes, at once if it
     already has; a re-run is told again), or `o/r:<file>.yml[@branch]` (the NEXT run: a run that
-    started after the `watch` call, or up to 10 minutes before it, counts, finished or not; an
+    started after the `watch` call, or about 10 minutes before it (rounded down to the minute), counts, finished or not; a second watch made inside that window repeats the run; an
     older one never does; to follow a run you just started, watch the run). **When what you wait
     for is a PR the run opens, watch the PR (or the branch's PR), not the workflow's next run; when
     a run is chained from one you just watched, run `gh run list` for it first.**

@@ -466,7 +466,7 @@ run types are now shared by both providers. Decisions:
 `w/r:pipelines[...]`) used to admit only runs that started after the watch was made. A run chained from the one the
 caller had just waited for starts seconds before that run's notice arrives, so the watch made in reaction to the notice
 missed it (seen: a dispatched run 3 s before its parent finished, the watch made after). The floor now sits 10 minutes
-before the provider's own clock (its `Date` header, never the host's), to the minute so quiet watches still share a
+before the provider's own clock (its `Date` header, never the host's), rounded down to the minute (so the window is 10 to 11 minutes), so quiet watches still share a
 subject: the id floor is the highest listed run created before that point, and a run above it that started inside the
 window counts, completed or not. A run in the window that had already completed fires at once; a run that started
 earlier never does. Each run is still told once (version = run id and attempt), and the engine's latest-state rule
