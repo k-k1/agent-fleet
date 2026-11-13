@@ -71,7 +71,7 @@ func (f *cacheFixture) fresh(t *testing.T, dir string) (RepoStatus, repoIdent) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, _ := computeIdent(dir)
+	id, _ := computeIdent(dir, nil)
 	return st, id
 }
 
