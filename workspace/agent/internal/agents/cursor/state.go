@@ -104,13 +104,19 @@ func TurnMark(m session.Meta) (string, bool) {
 	return agents.FileSizeMark(transcriptPath(m.Dir, chatID))
 }
 
-// EndedAfter reports whether the newest turn_ended row starts at or after mark.
+// EndedAfter reports whether a user row (the new input) reached the transcript after mark and a
+// turn_ended row followed it.
 func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	chatID := ChatID(m)
 	if chatID == "" {
 		return false, false
 	}
 	return agents.EndedAfterOffset(transcriptPath(m.Dir, chatID), mark, tailWindow, func(line []byte) bool {
+		var ev struct {
+			Role string `json:"role"`
+		}
+		return json.Unmarshal(line, &ev) == nil && (ev.Role == "user")
+	}, func(line []byte) bool {
 		var ev struct {
 			Type string `json:"type"`
 		}

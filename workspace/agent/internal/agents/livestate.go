@@ -52,20 +52,20 @@ type LiveStateTraits struct {
 	EndedAfter func(m session.Meta, mark string) (after, known bool)
 }
 
-// LastLineStart reads at most the last window bytes of the file at path and returns the byte
-// offset at which the newest line accepted by match begins (found=false when none does), plus
-// the file size it saw. It is the shared reader behind the JSONL kinds' turn identity: a line's
-// offset only grows, so "this end lies after the mark taken at turn start" is a plain compare.
-// A read that starts mid-file drops its first, probably cut, line.
-func LastLineStart(path string, window int64, match func(line []byte) bool) (start, size int64, found bool, err error) {
+// scanLines calls fn with the byte offset and text of each line in at most the last window
+// bytes of the file at path, returning the file size it saw and the offset the first reported
+// line may follow (the window's base). A read that starts mid-file drops its first, probably
+// cut, line. Offsets are absolute and only grow, which is what makes "after the mark taken at
+// turn start" a plain compare.
+func scanLines(path string, window int64, fn func(off int64, line []byte)) (size, base int64, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, 0, false, err
+		return 0, 0, err
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return 0, 0, false, err
+		return 0, 0, err
 	}
 	size = fi.Size()
 	from := int64(0)
@@ -74,13 +74,13 @@ func LastLineStart(path string, window int64, match func(line []byte) bool) (sta
 	}
 	buf := make([]byte, size-from)
 	if _, err := f.ReadAt(buf, from); err != nil && err != io.EOF {
-		return 0, size, false, err
+		return size, from, err
 	}
-	base := from
+	base = from
 	if from > 0 {
 		i := bytes.IndexByte(buf, '\n')
 		if i < 0 {
-			return 0, size, false, nil
+			return size, from, nil
 		}
 		buf, base = buf[i+1:], from+int64(i)+1
 	}
@@ -91,12 +91,10 @@ func LastLineStart(path string, window int64, match func(line []byte) bool) (sta
 		if end >= 0 {
 			line, next = buf[off:off+end], off+end+1
 		}
-		if match(line) {
-			start, found = base+int64(off), true
-		}
+		fn(base+int64(off), line)
 		off = next
 	}
-	return start, size, found, nil
+	return size, from, nil
 }
 
 // FileSizeMark is the turn mark of an append-only file: its size now, "0" while it does not
@@ -112,17 +110,32 @@ func FileSizeMark(path string) (string, bool) {
 	return "", false
 }
 
-// EndedAfterOffset is EndedAfter for an append-only JSONL file: the newest line accepted by
-// isEnd starts at or after mark. known=false when the file is unreadable or smaller than mark
-// (rotated or truncated: offsets from before are meaningless).
-func EndedAfterOffset(path, mark string, window int64, isEnd func(line []byte) bool) (after, known bool) {
+// EndedAfterOffset is EndedAfter for an append-only JSONL file. It needs the PAIR: a line
+// accepted by isStart at or after mark (the new input reaching the source) and, after that
+// start, a line accepted by isEnd. An end alone proves nothing: the previous turn's late end (a
+// shutdown flush) can land after the baseline but before the new input shows up. When the
+// window begins past the mark, more than a window of lines were written since the baseline, so
+// the window's start stands in for the start line. known=false when the file is unreadable or
+// smaller than mark (rotated or truncated: offsets from before are meaningless).
+func EndedAfterOffset(path, mark string, window int64, isStart, isEnd func(line []byte) bool) (after, known bool) {
 	at, err := strconv.ParseInt(mark, 10, 64)
 	if err != nil {
 		return false, false
 	}
-	start, size, found, err := LastLineStart(path, window, isEnd)
+	first, lastEnd := int64(-1), int64(-1)
+	size, from, err := scanLines(path, window, func(off int64, line []byte) {
+		if first < 0 && off >= at && isStart(line) {
+			first = off
+		}
+		if isEnd(line) {
+			lastEnd = off
+		}
+	})
 	if err != nil || size < at {
 		return false, false
 	}
-	return found && start >= at, true
+	if first < 0 && from > at {
+		first = from
+	}
+	return first >= 0 && lastEnd > first, true
 }

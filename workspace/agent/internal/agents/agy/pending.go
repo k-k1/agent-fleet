@@ -385,9 +385,8 @@ func TurnMark(m session.Meta) (string, bool) {
 	return strconv.Itoa(r.idx), true
 }
 
-// EndedAfter reports whether the newest executor run ended at a step after mark. A prompt's
-// own step is written after the mark, so the run that answers it ends beyond it; the previous
-// turn's end (turnEnd) is at or before it. Unknown where the build has no executor_metadata,
+// EndedAfter reports whether the newest executor run ended at or after the first user step
+// following mark, i.e. the run that answers the new input. Unknown where the build has no executor_metadata,
 // where it cannot be read, or where the steps are fewer than the mark (a reset conversation).
 func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	at, err := strconv.Atoi(mark)
@@ -398,5 +397,29 @@ func EndedAfter(m session.Meta, mark string) (after, known bool) {
 	if !ok || r.turnLog != turnLogRead || r.idx < at {
 		return false, false
 	}
-	return r.turnEnd > at, true
+	// The previous run can close after the mark too (its own last steps were still landing), so
+	// the end must follow the NEW input's own user step. No user step after the mark yet, or a
+	// build whose step_type does not say, cannot prove the pairing: unknown, so the caller's
+	// window guards it as before rather than this holding the end back for good.
+	first, ok := firstUserStepAfter(r.conv, at)
+	if !ok {
+		return false, false
+	}
+	return r.turnEnd >= first, true
+}
+
+// stepTypeUser is the steps.step_type of the user's own input (measured, v1.2.14).
+const stepTypeUser = 14
+
+func firstUserStepAfter(conv string, idx int) (int, bool) {
+	db, err := sql.Open("sqlite", "file:"+conversationDBPath(conv)+"?mode=ro&_pragma=busy_timeout(3000)")
+	if err != nil {
+		return 0, false
+	}
+	defer db.Close()
+	var first sql.NullInt64
+	if err := db.QueryRow(`SELECT MIN(idx) FROM steps WHERE idx > ? AND step_type = ?`, idx, stepTypeUser).Scan(&first); err != nil || !first.Valid {
+		return 0, false
+	}
+	return int(first.Int64), true
 }

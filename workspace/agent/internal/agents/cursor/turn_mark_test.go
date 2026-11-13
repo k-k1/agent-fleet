@@ -26,6 +26,10 @@ func TestTurnMarkAndEndedAfter(t *testing.T) {
 	if after, known := EndedAfter(m, mark); after || !known {
 		t.Fatalf("the previous turn's end counted: %v %v", after, known)
 	}
+	os.WriteFile(p, []byte(closed+`{"type":"turn_ended","status":"success"}`+"\n"), 0o600)
+	if after, known := EndedAfter(m, mark); after || !known {
+		t.Fatalf("a late previous end counted as the new turn's: %v %v", after, known)
+	}
 	os.WriteFile(p, []byte(closed+`{"role":"user","message":{}}`+"\n"+`{"type":"turn_ended","status":"success"}`+"\n"), 0o600)
 	if after, known := EndedAfter(m, mark); !after || !known {
 		t.Fatalf("the new end did not count: %v %v", after, known)

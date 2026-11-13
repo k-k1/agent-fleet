@@ -27,6 +27,11 @@ func TestTurnMarkAndEndedAfter(t *testing.T) {
 	if after, known := EndedAfter(m, mark); after || !known {
 		t.Fatalf("the previous turn's end counted: %v %v", after, known)
 	}
+	// The previous process's shutdown flushes after the baseline, before the new input shows up.
+	os.WriteFile(p, []byte(closed+`{"type":"session.shutdown"}`+"\n"), 0o600)
+	if after, known := EndedAfter(m, mark); after || !known {
+		t.Fatalf("a late previous shutdown counted as the new turn's end: %v %v", after, known)
+	}
 	// A graceful shutdown closes the turn too (classifyDetail), so it is an end as well.
 	os.WriteFile(p, []byte(closed+`{"type":"user.message"}`+"\n"+`{"type":"session.shutdown"}`+"\n"), 0o600)
 	if after, known := EndedAfter(m, mark); !after || !known {

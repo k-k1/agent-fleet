@@ -126,6 +126,32 @@ func TestTurnIdentityMarkExpiresWithTheStatusRecord(t *testing.T) {
 	}
 }
 
+// The previous process's shutdown flushes between the baseline and the new input reaching the
+// source: an end with no start after the mark is not this turn's, window or not.
+func TestTurnIdentityLatePreviousEndIsNotThisTurns(t *testing.T) {
+	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_ident_late")
+	turnEnded()
+	pre := captureTurnMark(m.Name)
+	appendEvents(t, m, `{"type":"session.shutdown"}`)
+	markSessionWorkingFrom(m.Name, pre)
+	recordPolledTurnEnd(m, "idle")
+	DriveState(m, true, false)
+	if status.ObservedTurnEnd(sid) != "" {
+		t.Fatal("a late previous end was stamped as the new turn's")
+	}
+	if st, _ := status.Read(sid); st.State != "working" || st.TurnEnd {
+		t.Fatalf("a late previous end settled the new turn: %+v", st)
+	}
+	// Control: once the new input shows up, its end counts at once, window or not.
+	polledEndSettle = polledEndSettleDefault
+	defer func() { polledEndSettle = 0 }()
+	appendEvents(t, m, `{"type":"user.message"}`, `{"type":"assistant.turn_end"}`)
+	recordPolledTurnEnd(m, "idle")
+	if status.ObservedTurnEnd(sid) == "" {
+		t.Fatal("the real end after the new input was held back")
+	}
+}
+
 // A readable source that denies the end is believed however long the turn runs. Recorded shape:
 // a huge tool result line (> the 128 KiB tail) pushes the turn's own start out of the tail
 // read, which then classifies idle while the tool or model is still running.
