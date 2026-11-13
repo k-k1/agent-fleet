@@ -199,3 +199,28 @@ func TestForceStopReservesWhenALeaseLapsesDuringTheDeregistration(t *testing.T) 
 		})
 	}
 }
+
+// A container instance an earlier, half-done attempt already deregistered is not in the
+// cluster list, so the deregistration sends nothing; with its task ENI still attached, a
+// repeated force-stop that gives up must still leave the slot reserved.
+func TestForceStopReservesASlotAnEarlierAttemptAlreadyDeregistered(t *testing.T) {
+	old := forceStopENIBudget
+	forceStopENIBudget = 300 * time.Millisecond
+	defer func() { forceStopENIBudget = old }()
+	h := wedgedSlot(t)
+	delete(h.ci.registered, "i-wedge") // not listed: nothing left to deregister
+	h.ec2.giveTaskENI("i-wedge")
+	h.ci.stickyENI = true
+	f := h.factory()
+	f.sleep = func(c context.Context, d time.Duration) error { return sleepCtx(c, 10*time.Millisecond) }
+	res, err := f.ForceStopSlot(context.Background(), "i-wedge", false)
+	if !errors.Is(err, ErrSlotTaskENIHeld) {
+		t.Fatalf("err = %v, want the ENI give-up", err)
+	}
+	if len(h.ci.deregistered) != 0 {
+		t.Fatalf("deregistered %v: the fixture was meant to have nothing to deregister", h.ci.deregistered)
+	}
+	if !res.Retired || ec2TagValue(h.ec2.instances["i-wedge"].Tags, ec2TagSlotReplace) == "" {
+		t.Fatalf("an already-deregistered slot with its ENI held was left unreserved (res %+v)", res)
+	}
+}

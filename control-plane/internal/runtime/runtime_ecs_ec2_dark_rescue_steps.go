@@ -169,6 +169,11 @@ func (e *ecsEC2Runtime) rescueENIStageWith(ctx context.Context, slot string, m *
 				return nil
 			}); derr != nil {
 				log.Printf("ecs-ec2: rescue of %s: %v", e.base.name, derr)
+			} else {
+				// A clean answer without the pre-check having run means the container instance
+				// is not in the cluster any more: an earlier attempt already deregistered it and
+				// its task ENI is still here. That box is as deregistered as one sent now.
+				sent = true
 			}
 			return nil
 		})
