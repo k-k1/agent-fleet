@@ -158,4 +158,4 @@ gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project
 
 - [デプロイ先を選ぶ](../choose.ja.md)
 - [配備形態](../../ref/deploy-targets.ja.md)
-- [配備の鍵を扱う](../secure/deployment-keys.ja.md)
+- [配備のキーを扱う](../secure/deployment-keys.ja.md)

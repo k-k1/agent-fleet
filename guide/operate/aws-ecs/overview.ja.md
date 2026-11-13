@@ -60,7 +60,7 @@ AWS で手軽にセルフホストしたいだけなら、これではなく EC2
 ### パラメータの詳細
 
 配備で調整するパラメータのほとんどは `30-ingress.yaml` にあります。テンプレートの `Description:` は 1〜2 行だけで、測った値・トレードオフ・落とし穴は [`cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md) にあります。`60-engines` のパラメータは [`cfn/PARAMETERS-60-engines.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS-60-engines.md) です。
-説明をテンプレートの外に置く理由は [テンプレートの大きさの上限に気をつける](template-size.ja.md) にあります。
+説明をテンプレートの外に置く理由は [テンプレートのサイズの上限に気をつける](template-size.ja.md) にあります。
 
 ## 名前の付けかた
 

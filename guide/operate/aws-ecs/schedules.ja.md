@@ -44,4 +44,4 @@ source_of_truth: "`deploy/aws/ecs/cfn/30-ingress.yaml` のパラメータと、C
 
 - [決まった時刻に実行する](../../user/fleet/schedules.ja.md)：メンバーがスケジュールを作る
 - [アイドル停止と強制停止を使う](../run/idle-stop.ja.md)
-- [ワークスペースの大きさを決める](workspace-size.ja.md)
+- [ワークスペースのサイズを決める](workspace-size.ja.md)

@@ -3,7 +3,7 @@ audience: "AWS の ECS（`ecs` / `ecs-ec2`）のスタックを手でデプロ�
 source_of_truth: "`deploy/aws/ecs/env.sh` の `af_cfn_deploy`、`cfn/20-platform.yaml` の `CfnTemplatesBucket`"
 ---
 
-# テンプレートの大きさの上限に気をつける
+# テンプレートのサイズの上限に気をつける
 
 [English](template-size.md) | 日本語
 

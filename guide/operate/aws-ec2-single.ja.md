@@ -151,7 +151,7 @@ aws ec2 modify-instance-metadata-options --instance-id <id> \
 curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token
 ```
 
-ほかの形態の扱いは [そのほかの運用上の制御](secure/controls.ja.md#ワークスペースにホストのクラウドの身元を渡さない) にあります。
+ほかの形態の扱いは [そのほかの運用上の制御](secure/controls.ja.md#ワークスペースにホストのクラウドの-id-を渡さない) にあります。
 
 ## 4. 片付ける
 

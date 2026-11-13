@@ -3,12 +3,12 @@ audience: "AWS の ECS 配備で、ワークスペースの既定の CPU・メ�
 source_of_truth: "`deploy/aws/ecs/cfn/30-ingress.yaml` のパラメータと、Control Plane の ECS アダプター（`control-plane/internal/runtime/runtime_ecs.go`）"
 ---
 
-# ワークスペースの大きさを決める
+# ワークスペースのサイズを決める
 
 [English](workspace-size.md) | 日本語
 
 ECS の配備で、すべてのワークスペースが既定で受け取る CPU・メモリ・作業ディスクを決めます。
-メンバーごとのサイズは、テナント管理者が Console で変えます（[ワークスペースの大きさを決める](../../admin/resources/workspace-size.ja.md)）。その値は、テナントの上限を超えないように切り詰められます。
+メンバーごとのサイズは、テナント管理者が Console で変えます（[ワークスペースのサイズを決める](../../admin/resources/workspace-size.ja.md)）。その値は、テナントの上限を超えないように切り詰められます。
 
 ## 全体像
 
@@ -74,6 +74,6 @@ CloudFormation はパラメータの値を覚えています。`0` で作った�
 
 ## 関連
 
-- [ワークスペースの大きさを決める](../../admin/resources/workspace-size.ja.md)：メンバーごとのサイズ（テナント管理者）
+- [ワークスペースのサイズを決める](../../admin/resources/workspace-size.ja.md)：メンバーごとのサイズ（テナント管理者）
 - [費用を抑える](cost.ja.md)
 - [上限と既定値](../../ref/limits.ja.md)

@@ -57,4 +57,4 @@ Control Plane のタスクロール（`CpTaskRole`）に権限を足すときに
 
 - [ECS に構築する](install.ja.md)
 - [ECS 構成の全体像](overview.ja.md)
-- [テンプレートの大きさの上限に気をつける](template-size.ja.md)
+- [テンプレートのサイズの上限に気をつける](template-size.ja.md)
