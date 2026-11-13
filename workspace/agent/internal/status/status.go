@@ -330,9 +330,19 @@ func ObservedTurnEnd(sid string) string {
 }
 
 // RecordTurnMark stores the source position mark for the turn that the working write rev opened.
-// It touches only its own store, so it cannot disturb a concurrent status write.
+// It touches only its own store, so it cannot disturb a concurrent status write, and it writes
+// under the sid's status lock only while rev is still the current record: a slow writer of an
+// older turn finds a newer Rev and gives way instead of overwriting the newer turn's mark.
 func RecordTurnMark(sid, rev, mark string) {
 	if rev == "" || mark == "" {
+		return
+	}
+	unlock, ok := lockSid(sid)
+	defer unlock()
+	if !ok {
+		return
+	}
+	if st, has := Read(sid); !has || st.Rev != rev {
 		return
 	}
 	_ = turnMarks.Write(sid, turnMark{Rev: rev, Mark: mark})

@@ -839,6 +839,9 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 	// Use the same type-and-submit primitive as server-side initial prompts. In
 	// particular, Codex/OpenCode need bracketed paste so a long prompt's trailing Enter
 	// is not swallowed while their input widget is still consuming the paste.
+	// The turn identity's baseline is taken BEFORE the input reaches the CLI: a turn that ends
+	// before markSessionWorking runs would otherwise end before the mark and read as stale.
+	pre := captureTurnMark(name)
 	if err := typeLineAndSubmit(name, pane, prompt); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return "", false
@@ -847,7 +850,7 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 	// session working, or codex sticks on "in progress" (no Stop hook fires to clear it).
 	// Real prompts still mark working so the chip reacts before the agent's own hook.
 	if !slashCmdRe.MatchString(strings.TrimSpace(prompt)) {
-		workingRev = markSessionWorking(name)
+		workingRev = markSessionWorkingFrom(name, pre)
 		// The same predicate decides that a stop-after-turn arm is superseded (docs/log/85):
 		// what releases the arm is new WORK arriving, and a slash command starts none.
 		cancelStopArmOnNewPrompt(name)
@@ -1102,6 +1105,7 @@ func typeInitialPrompt(name, prompt string) string {
 	if metaOK {
 		base = deliveryBaseline(meta)
 	}
+	pre := captureTurnMark(name) // before delivery, see submitPromptTUI
 	if typeLineAndSubmit(name, pane, prompt) != nil {
 		return session.InitialPromptFailed
 	}
@@ -1111,7 +1115,7 @@ func typeInitialPrompt(name, prompt string) string {
 	time.Sleep(900 * time.Millisecond)
 	_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
 	// A real task starts a turn — mark working so the chip reacts before the agent's hook.
-	markSessionWorking(name)
+	markSessionWorkingFrom(name, pre)
 	// Delivery confirmation (docs/log/38): after typing and the nudge, check for evidence
 	// that a turn actually started and run one self-heal pass if there is none. This path
 	// is a goroutine detached from the create response, so failure cannot be returned over
@@ -1346,14 +1350,26 @@ func writeBlockedErr(w http.ResponseWriter, state, kind string) {
 
 // markSessionWorking optimistically marks the session working so a poll immediately
 // after a send doesn't read a stale idle before claude's UserPromptSubmit hook fires.
+//
+// It records no turn mark: only the two prompt-delivery sites, which can take the baseline
+// before the input is delivered, use markSessionWorkingFrom. Any other caller's turn keeps the
+// settle window.
 func markSessionWorking(name string) (rev string) {
+	return markSessionWorkingFrom(name, turnMarkBaseline{})
+}
+
+// markSessionWorkingFrom is markSessionWorking that ties pre, the source position taken before
+// the input was delivered, to the working write it makes.
+func markSessionWorkingFrom(name string, pre turnMarkBaseline) (rev string) {
 	meta, ok := session.ReadMeta(name)
 	if !ok {
 		return ""
 	}
 	sid := session.UUID(meta.Dir, name)
 	rev = status.PersistRev(sid, "working")
-	recordTurnMark(meta, sid, rev)
+	if pre.ok {
+		status.RecordTurnMark(sid, rev, pre.mark)
+	}
 	return rev
 }
 

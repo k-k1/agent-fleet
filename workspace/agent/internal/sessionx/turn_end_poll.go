@@ -48,24 +48,29 @@ func notifyPolledTurnEnd(m session.Meta, state string) {
 	agents.MarkTurnEnd(sid, agents.TurnCompleted)
 }
 
-// recordTurnMark stores, at the status record's working write rev, where the kind's own source
-// stands, so a later poll can tell an idle that closed THIS turn from the previous turn's. Kinds
-// without TurnMark (kiro) and a source that cannot be read record nothing: the window applies.
-func recordTurnMark(m session.Meta, sid, rev string) {
-	t := liveStateTraits(m.Kind)
-	if !t.PolledTurnEnd || t.TurnMark == nil || t.EndedAfter == nil {
-		return
-	}
-	if mark, ok := t.TurnMark(m); ok {
-		status.RecordTurnMark(sid, rev, mark)
-	}
+// turnMarkBaseline is where a kind's source stood at some instant; ok=false when it has no
+// identity or could not be read.
+type turnMarkBaseline struct {
+	mark string
+	ok   bool
 }
 
-// polledIdentityBound caps how long a source that shows idle with no end after the turn's mark
-// is believed to be showing the previous turn's. Past it the turn is one whose input produced
-// nothing (rejected, swallowed), and the idle is its end, as the window would have taken it:
-// holding it longer would leave the persisted "working" for good.
-const polledIdentityBound = 2 * time.Minute
+// captureTurnMark reads the baseline for a turn about to be delivered to session name. It must
+// run BEFORE the input reaches the CLI (a fast turn can end before the working write that
+// follows delivery), and is recorded only by the working write that delivery succeeded with.
+// Kinds without TurnMark (kiro) and an unreadable source give none: the window applies.
+func captureTurnMark(name string) turnMarkBaseline {
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		return turnMarkBaseline{}
+	}
+	t := liveStateTraits(m.Kind)
+	if !t.PolledTurnEnd || t.TurnMark == nil || t.EndedAfter == nil {
+		return turnMarkBaseline{}
+	}
+	mark, ok := t.TurnMark(m)
+	return turnMarkBaseline{mark: mark, ok: ok}
+}
 
 // idleEndsThisTurn reports whether an idle just read from m's source is the end of the turn the
 // status record started, for both routes that record one. With a turn identity (the mark taken
@@ -78,21 +83,14 @@ func idleEndsThisTurn(m session.Meta, sid string) bool {
 	if t.EndedAfter != nil {
 		if mark, ok := status.TurnMarkOf(sid); ok {
 			if after, known := t.EndedAfter(m, mark); known {
-				return after || turnOlderThan(sid, polledIdentityBound)
+				// A readable source that denies this turn's end is believed: no elapsed time turns
+				// it into a completion (a long tool run can look idle through a tail read, and
+				// a synthesized end would be told, then reused by the real one).
+				return after
 			}
 		}
 	}
 	return !turnJustStarted(sid)
-}
-
-// turnOlderThan reports whether the status record's working write is at least d old.
-func turnOlderThan(sid string, d time.Duration) bool {
-	st, ok := status.Read(sid)
-	if !ok {
-		return false
-	}
-	at, err := time.Parse(time.RFC3339, st.TS)
-	return err == nil && polledEndNow().Sub(at) >= d
 }
 
 // polledEndSettleDefault is the production value of polledEndSettle. It is a heuristic, not a

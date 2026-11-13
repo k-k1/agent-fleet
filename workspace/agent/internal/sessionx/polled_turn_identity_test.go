@@ -28,9 +28,9 @@ func appendEvents(t *testing.T, m session.Meta, lines ...string) {
 	}
 }
 
-// startTurn is what POST /input does: the working write, then the mark.
+// startTurn is what POST /input does: the baseline before delivery, then the working write.
 func startTurn(m session.Meta) string {
-	return markSessionWorking(m.Name)
+	return markSessionWorkingFrom(m.Name, captureTurnMark(m.Name))
 }
 
 func TestTurnIdentityStaleIdleIsNotThisTurnsEnd(t *testing.T) {
@@ -63,11 +63,13 @@ func TestTurnIdentityFastTurnIsToldWithoutWaiting(t *testing.T) {
 	turnEnded()
 	polledEndSettle = polledEndSettleDefault
 	defer func() { polledEndSettle = 0 }()
-	startTurn(m)
+	// Production order: baseline, delivery (the CLI runs the whole turn), THEN the working write.
+	pre := captureTurnMark(m.Name)
 	appendEvents(t, m, `{"type":"user.message"}`, `{"type":"assistant.turn_end"}`)
+	markSessionWorkingFrom(m.Name, pre)
 	recordPolledTurnEnd(m, "idle")
 	if status.ObservedTurnEnd(sid) == "" {
-		t.Fatal("a turn that ended inside the old window was held back")
+		t.Fatal("a turn that ended before the working write was dropped as stale")
 	}
 }
 
@@ -124,23 +126,40 @@ func TestTurnIdentityMarkExpiresWithTheStatusRecord(t *testing.T) {
 	}
 }
 
-// An idle with no end after the mark is believed to be stale only for a bound; a turn whose
-// input produced nothing must not leave "working" behind for good.
-func TestTurnIdentityStaleIdleIsBounded(t *testing.T) {
-	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_ident_bound")
+// A readable source that denies the end is believed however long the turn runs. Recorded shape:
+// a huge tool result line (> the 128 KiB tail) pushes the turn's own start out of the tail
+// read, which then classifies idle while the tool or model is still running.
+func TestTurnIdentityLongRunningTurnIsNeverSynthesizedComplete(t *testing.T) {
+	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_ident_long")
 	turnEnded()
 	startTurn(m)
-	now := time.Now()
+	appendEvents(t, m, `{"type":"user.message"}`, `{"type":"assistant.turn_start"}`,
+		`{"type":"tool.execution_complete","data":{"result":{"content":"`+strings.Repeat("x", 140*1024)+`"}}}`)
+	if st := copilot.LiveState(m); st != "idle" {
+		t.Fatalf("control: the tail read should misread this shape as idle, got %q", st)
+	}
+	now := time.Now().Add(3 * time.Minute)
 	polledEndNow = func() time.Time { return now }
 	defer func() { polledEndNow = time.Now }()
 	recordPolledTurnEnd(m, "idle")
+	DriveState(m, true, false)
 	if status.ObservedTurnEnd(sid) != "" {
-		t.Fatal("stale idle stamped inside the bound")
+		t.Fatal("a running turn was stamped as ended by elapsed time")
 	}
-	now = now.Add(polledIdentityBound + time.Second)
-	recordPolledTurnEnd(m, "idle")
-	if status.ObservedTurnEnd(sid) == "" {
-		t.Fatal("a turn that produced nothing was held forever")
+	if st, _ := status.Read(sid); st.State != "working" || st.TurnEnd {
+		t.Fatalf("a running turn was settled by elapsed time: %+v", st)
+	}
+}
+
+// A slow writer of an older turn must not take the newer turn's mark away.
+func TestTurnMarkRecordedByASlowOlderWriterGivesWay(t *testing.T) {
+	_, sid, _ := polledTurnEndFixture(t, "copilot_ident_slow")
+	revA := status.PersistRev(sid, "working")
+	revB := status.PersistRev(sid, "working")
+	status.RecordTurnMark(sid, revB, "200")
+	status.RecordTurnMark(sid, revA, "100")
+	if mark, ok := status.TurnMarkOf(sid); !ok || mark != "200" {
+		t.Fatalf("the newer turn's mark was overwritten: %q %v", mark, ok)
 	}
 }
 
