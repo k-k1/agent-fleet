@@ -102,7 +102,7 @@ Once at least one method is approved, the screen shows "Sign-in URL for this ten
 - Before suspending, have those people link another sign-in method to their account (**Settings → Personal → Account**). Once it is suspended they cannot add one themselves
 - **Delete** stops everyone who used that method from signing in. Their workspaces, homes and stored credentials are kept
 
-## Read the login rules
+## Read the sign-in rules
 
 **Sign-in → Sign-in rules** shows the rules in force, so you can see why an invitation was refused without asking anyone.
 

@@ -147,7 +147,7 @@ Console に出る状態の印、バッジ、右クリックメニューの項目
 
 | 表示 | 場所 | 意味 |
 |---|---|---|
-| AWS・Google Cloud のマーク | ワークスペース操作バー | プロファイルのログイン状態（[AWS プロファイルの仕様](aws-profiles.ja.md#aws-バッジ)、[Google Cloud を使う](../user/integrations/gcloud.ja.md#ws-バーの-google-cloud-バッジ)） |
+| AWS・Google Cloud のマーク | ワークスペース操作バー | プロファイルのログイン状態（[AWS プロファイルの仕様](aws-profiles.ja.md#aws-バッジ)、[Google Cloud を使う](../user/integrations/gcloud.ja.md#ワークスペース操作バーの-google-cloud-バッジ)） |
 | 要再起動 | 電源ボタンの隣 | ワークスペースが更新前のまま動いている。押すと「**今すぐ再起動**」が出る（[一日の終わりにワークスペースを止める](../user/start/end-of-day.ja.md#新しいバージョンがありますと要再起動)） |
 | 新しいスロットへ移動 | 電源ボタンの隣 | 管理者がこのワークスペースのマシンを入れ替える対象にした。次の起動が少し遅くなるが、ファイルやログインは引き継がれる |
 | 応答なし | 電源ボタンの隣 | Agent が数分間応答していない（[ワークスペースが起動しない・止まった](../user/troubleshooting/workspace.ja.md#電源ボタンの横に応答なしと出る)） |
