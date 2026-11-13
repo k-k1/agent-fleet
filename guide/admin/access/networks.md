@@ -52,7 +52,7 @@ From outside the list, sign-in still works but the tenant's contents will not op
 ### Your address reads "cannot be determined"
 
 The Control Plane cannot tell where requests come from, so no rule can be applied.
-Do not guess at a range; ask the deployment administrator to check the `AF_TRUSTED_PROXY_HOPS` setting.
+Do not guess at a range; ask the deployment administrator to check the setting for how many proxies sit in front of the Control Plane (the message names it).
 
 ### It says a proxy is not declared, and you cannot save
 

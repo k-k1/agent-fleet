@@ -23,10 +23,10 @@ thing.
 | Agent | kind | A CLI coding AI: claude, codex, opencode and the rest. See [agents.md](agents.md) |
 | Agent memory | AF memory (`memoryx`, `af/` in the memory repo) | Agent Fleet's own memory, shared by every kind through af's `memory_*` tools. Running text says "Agent Fleet memory"; "Agent memory" is the settings tab |
 | Agent's own memory | native memory (`claude`/`codex` roots, `?native=1`) | The memory an agent kind keeps by itself: Claude Code's auto-memory, Codex's `memories`, Muse Code's memory. Not Agent Fleet memory; Memory snapshots version it. Headings may shorten it to "Claude Code's own memory". Never "native memory" on screen; "auto-memory" only where the sentence names Claude's feature |
-| Harness | kind | The program that runs the agent loop: Claude Code, opencode, codex, `lcpp`. This is the session kind, unchanged; "Agent" above is the screen word for it today. Not on screen as "harness" yet (ADR 0128) |
-| Route | route (`usagex.Record.Route`) | Where a model call went and with which credential: OpenCode Zen, the OpenCode Go subscription, the deployment's engine (`af-engine-llm`), a member's llama.cpp (`member-llamacpp`). Recorded per call in the usage ledger from the call's own evidence, never from the session's current settings; empty means not recorded. Not on screen yet (ADR 0128) |
-| Maker | maker / "provider" in `model_provider.go` | Who built the model: Anthropic, OpenAI, Zhipu. Not the route: one maker's model can be reached over several routes. The code's word "provider" means the maker here. Not on screen yet (ADR 0128) |
-| Billing | billing (`usagex.Record.Billing`) | How one call was charged: `subscription-included`, `subscription-extra` (usage credits past a window), `metered`, `self-hosted`, `free`, or `unknown`. A call whose billing cannot be told from evidence is `unknown` (also what an empty value reads as), never "included". Not on screen yet (ADR 0128), and not the "opencode.ai billing" choice on the opencode card, which picks a route |
+| Harness | kind | The program that runs the agent loop: Claude Code, opencode, codex, `lcpp`. This is the session kind, unchanged; "Agent" above is the screen word for it today. Not on screen as "harness" yet |
+| Route | route (`usagex.Record.Route`) | Where a model call went and with which credential: OpenCode Zen, the OpenCode Go subscription, the deployment's engine (`af-engine-llm`), a member's llama.cpp (`member-llamacpp`). Recorded per call in the usage ledger from the call's own evidence, never from the session's current settings; empty means not recorded. The ledger value is not on screen yet. Japanese prose writes 経路, so it is not confused with root (ルート); only the screen labels "Model route" and "Continue on the API route" keep ルート |
+| Maker | maker / "provider" in `model_provider.go` | Who built the model: Anthropic, OpenAI, Zhipu. Not the route: one maker's model can be reached over several routes. The code's word "provider" means the maker here. Not on screen yet |
+| Billing | billing (`usagex.Record.Billing`) | How one call was charged: `subscription-included`, `subscription-extra` (usage credits past a window), `metered`, `self-hosted`, `free`, or `unknown`. A call whose billing cannot be told from evidence is `unknown` (also what an empty value reads as), never "included". Not on screen yet, and not the "opencode.ai billing" choice on the opencode card, which picks a route |
 | Assistant | assistant chat | A purpose-specific chat that uses no repository. Not a session |
 | Mirror | transcript / mirror | The rendered view of a running or stopped conversation |
 | Working copy | working copy / dir | The folder of a repository inside the workspace that you actually edit |
@@ -49,12 +49,20 @@ thing.
 | Tenant | tenant | One team or department. Members of different tenants are invisible to each other |
 | Slot | slot | On the EC2 target, one pooled instance a workspace can be placed on |
 | Deployment | deployment | One installation of Agent Fleet. One company runs one |
-| Start / spawn | start / spawn | A person starting a session or workspace is "start" (起動). Only a session starting a child session is "spawn" (起こす) |
+| Start | start / spawn | Starting a session or workspace, whether a person starts it or a session starts a child session. Japanese writes 起動 for both, never 起こす |
 | Sign in | sign-in (IdP) | Authenticating to Agent Fleet itself. Authenticating to an external CLI or service (claude, Civitai, gcloud) is "log in" (ログイン) in the Japanese UI |
 | Log in | login | Authenticating to an external CLI or service (claude, Civitai, gcloud). Authenticating to Agent Fleet itself is "sign in" (サインイン) |
+| Kind | kind | The kind of an agent or session (claude, codex, shell and the rest). Japanese writes 種類, never 種別 |
+| Credentials | credentials | Tokens, keys and logins that let you into a service. Japanese writes 認証情報, never 資格情報 (the screen label 資格情報の扱い stays as it is) |
+| Secret | secret | A value that is never displayed: a token, password or API key. Japanese writes シークレット, never 秘密; 秘密鍵, 公開鍵 and 暗号鍵 stay |
+| Sign-in method | sign-in method | An entry point a tenant registers: its own IdP or a GitHub organisation. Japanese prose writes サインイン方法; only a reference to today's tab name keeps its label, サインイン方式 |
+| Watch | watch | A session waiting on changes to a pull request or an outside system. Japanese writes ウォッチ, never 見張り |
+| Restore point | restore point | A point you can go back to. Japanese writes 復旧ポイント, never 復元ポイント |
+| Home directory | home directory / `~` | The workspace's persistent home directory. Japanese writes ホームディレクトリ; ホーム alone means the Home screen |
 | Deploy | deploy | Used only as a verb (デプロイする). The noun is "deployment" (配備): "deployment default", "deployment-wide" |
-| This browser | browser-local | The scope of settings stored in the browser you are using (Japanese: このブラウザ, never この端末). "端末" is reserved for the terminal emulator |
-| Usage limit | usage limit / quota | The cap on how much you may use (利用枠). The cap on the number of child sessions is "child cap" (子の上限); "slot" is only the EC2 sense |
+| This browser | browser-local | The scope of settings stored in the browser you are using (Japanese: このブラウザ, never この端末). Japanese writes ターミナル for the terminal emulator and デバイス for the reader's device, never 端末 |
+| Usage allowance | usage allowance | An allocation that gets used up, such as a subscription's five-hour window (利用枠). A cap you set is a "usage cap" (利用上限); "quota" (クォータ) is only a cloud or Kubernetes quota (Service Quotas, ResourceQuota). The cap on the number of child sessions is "child cap" (子の上限); "slot" is only the EC2 sense |
+| Usage cap | usage cap | A limit an administrator or member sets on how much may be used (利用上限) |
 | Child cap | child session cap | The most child sessions one session may start (子の上限) |
 | Collapse / fold | collapse / fold | Folding something away on screen only (畳む). Ending a session is written "stop" or "end" (停止 / 終了) |
 | On / Off | on / off | Switches in prose are "オン／オフ", never Latin ON / OFF. When the control's own name is "有効" / "無効" (enabled / disabled), follow it |

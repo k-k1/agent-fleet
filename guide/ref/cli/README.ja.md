@@ -12,18 +12,18 @@ source_of_truth: "各コマンドの使いかたの表示"
 
 | コマンド | できること |
 |---|---|
-| [af-arch-repair](af-arch-repair.ja.md) | CPU のアーキテクチャが変わったあと、自分で入れた pip・uv・npm のものを同じ版で入れ直す |
+| [af-arch-repair](af-arch-repair.ja.md) | CPU のアーキテクチャが変わったあと、自分で入れた pip・uv・npm のものを同じバージョンで入れ直す |
 | [af-aws-exec](af-aws-exec.ja.md) | AWS プロファイルの権限で、コマンドを 1 つ実行する |
-| [af-clean](af-clean.ja.md) | Console の容量不足の掃除と同じ、再生成できるビルド成果物とキャッシュの一覧と削除を、端末から行う |
+| [af-clean](af-clean.ja.md) | Console の容量不足の掃除と同じ、再生成できるビルド成果物とキャッシュの一覧と削除を、ターミナルから行う |
 | [af-db](af-db.ja.md) | ワークスペースで PostgreSQL と MySQL を動かし、接続 URL を出す |
 | [af-gcloud-exec](af-gcloud-exec.ja.md) | Google Cloud のプロファイルのトークンで、コマンドを 1 つ実行する |
-| [af-memory](af-memory.ja.md) | Agent Fleet のメモリの変更の一覧・取り込み・書き戻し・リントを、端末から行う |
+| [af-memory](af-memory.ja.md) | Agent Fleet のメモリの変更の一覧・取り込み・書き戻し・リントを、ターミナルから行う |
 | [af-scratch](af-scratch.ja.md) | 作業ディスクのある配備で、ビルドの生成物を作業ディスクへ移す |
-| [af-watch-hook](af-watch-hook.ja.md) | プライベートリポジトリに Webhook を足し、見張りに合図が届くようにする |
+| [af-watch-hook](af-watch-hook.ja.md) | プライベートリポジトリに Webhook を足し、ウォッチに合図が届くようにする |
 
 ## サインイン済みの CLI
 
-次のコマンドは、セッションでも端末でも、どのエージェントでも、設定でつないだ接続を使います。端末でログインする
+次のコマンドは、セッションでもターミナルでも、どのエージェントでも、設定でつないだ接続を使います。ターミナルでログインする
 必要はなく、期限が近いトークンは使うときに更新されます。
 
 | コマンド | 使う接続 | 詳しく |
