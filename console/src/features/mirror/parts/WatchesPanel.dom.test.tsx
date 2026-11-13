@@ -5,6 +5,8 @@ import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { answerConfirm, confirmDialog } from "../../../test/confirmDialog.ts";
 import { WatchesPanel } from "./WatchesPanel.tsx";
 import { t } from "../../../lib/i18n/index.ts";
+import { useWorkItemStore } from "../../workitems/store.ts";
+import type { WorkItem } from "../../workitems/read.ts";
 import { useWorkItemModal } from "../../workitems/modal.ts";
 import type { SessionWatch } from "../../../core/api/client.ts";
 
@@ -13,6 +15,7 @@ let host: HTMLDivElement | null = null;
 
 afterEach(() => {
   useWorkItemModal.getState().close();
+  useWorkItemStore.setState({ payload: null });
   act(() => root?.unmount());
   vi.useRealTimers();
   host?.remove();
@@ -140,6 +143,25 @@ describe("WatchesPanel", () => {
       const detail = useWorkItemModal.getState().detail;
       expect(detail?.item).toMatchObject({ provider: "github", key: "o/r#1" });
       expect(detail?.reference).toBe(true);
+    });
+
+    it("keeps the linked pull request URL on the stand-in of an uncached ticket", () => {
+      mount([pr]);
+      click(link(0));
+      const detail = useWorkItemModal.getState().detail;
+      expect(detail?.reference).toBe(true);
+      expect(detail?.item.url).toBe("https://github.com/o/r/pull/1");
+    });
+
+    it("opens the cached row, read at click time, when the ticket is in the inbox", () => {
+      mount([pr]);
+      const row = { id: "x", queryId: "q", provider: "github", kind: "pr", key: "o/r#1", title: "Cached PR", state: "open", url: "https://github.com/o/r/pull/1", assignee: "", labels: [], labelColors: {}, repo: "o/r", updatedAt: "" } as unknown as WorkItem;
+      // Arrives after the panel was drawn: the lookup must not be frozen at render.
+      act(() => useWorkItemStore.setState({ payload: { items: [row], queries: [], fetchedAt: "", running: false, sessions: [] } }));
+      click(link(0));
+      const detail = useWorkItemModal.getState().detail;
+      expect(detail?.reference).toBe(false);
+      expect(detail?.item.title).toBe("Cached PR");
     });
 
     it("opens a Bitbucket pull request the same way", () => {
