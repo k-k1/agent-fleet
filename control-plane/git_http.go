@@ -417,7 +417,8 @@ func (m *manager) gitDataRefused() *apiError {
 
 // logOrphanGitRepos writes the boot-time orphan report: one summary line and at most
 // orphanLogMax names. Nothing is deleted: the rows are the only record of what was lost,
-// and re-pushing from a member's clone restores a repository.
+// A push alone cannot restore one (create rejects the existing name, and there is no bare to
+// receive into): delete the row, re-create the repository, then push from a member's clone.
 func logOrphanGitRepos(ctx context.Context, st datadurable.Lister, root string) {
 	missing, err := datadurable.MissingGitRepos(ctx, st, root)
 	if err != nil {

@@ -174,7 +174,9 @@ type Lister interface {
 
 // MissingGitRepos lists the ledger repositories ("<slug>/<name>") whose bare repository
 // is absent from the data root, in tenant then name order. Nothing is deleted: the rows
-// are the only record of what was lost, and re-pushing from a member's clone restores one.
+// are the only record of what was lost. A push alone cannot restore one: create rejects the
+// existing name and git-http-backend has no repository to receive into, so recovery is to
+// delete the row and re-create the repository, then push from a member's clone.
 func MissingGitRepos(ctx context.Context, st Lister, root string) ([]string, error) {
 	tenants, err := st.ListTenants(ctx)
 	if err != nil {
