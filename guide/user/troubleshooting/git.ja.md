@@ -24,10 +24,10 @@ source_of_truth: "Console の設定 >「Git ホスティング」と、クロー
 
 ## セッションが「submodule がない・壊れている」と言う
 
-大きな submodule は、起動までに取得しきれないことがあります。取得は裏で続き、終わると通知が届きます。
+大きな submodule は、起動までに取得しきれないことがあります。取得はバックグラウンドで続き、終わると通知が届きます。
 
 - 途中で切れた submodule は、その作業コピーで次にセッションを起動したときに自動で直ります
-- 急ぐときは、端末でその作業コピーに入って `git submodule update --init --recursive` を実行します
+- 急ぐときは、ターミナルでその作業コピーに入って `git submodule update --init --recursive` を実行します
 
 詳しくは [リポジトリをクローンする](../code/clone.ja.md#困ったとき) にあります。
 

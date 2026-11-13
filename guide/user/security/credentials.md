@@ -15,7 +15,7 @@ Once each has its place, no secret slips into a prompt or a repository.
 |---|---|
 | Register connections to services in **⚙Settings** | Keeps the values inside your workspace and lets commands such as `git`, `gh`, `jira` and `af-aws-exec` use them |
 | Keep secrets out of prompts, instructions and repositories | Leaves connections out of the file it exports your settings to |
-| Use outward tokens only in clients on your own computer | Refuses to register this deployment's own `/mcp` for a session |
+| Use tokens for outside clients only in clients on your own computer, never in the workspace | Refuses to register this deployment's own `/mcp` for a session |
 | Remove or revoke connections you no longer need | Stops using a removed connection from the next call |
 
 ## Decide where each one lives
