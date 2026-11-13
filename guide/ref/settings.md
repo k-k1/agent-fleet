@@ -63,7 +63,7 @@ Open it with **⚙ Settings** in the account menu of the top bar. The left rail 
 | Cloud cost | your share of the deployment's cloud spend | [See running time and cloud cost](../user/workspace/cost.md#see-the-cloud-cost) |
 | Running time | when your workspace was running (a 24-hour x date heatmap) | [See running time and cloud cost](../user/workspace/cost.md#see-the-running-time) |
 | Machine | the instance your workspace runs on (kind, architecture, vCPU, memory, disk), its usage, and memory pressure (measured only) | [See your machine and its usage](../user/workspace/machine.md) |
-| Toolchains | JDK and other per-workspace toolchains | [Choose your toolchains](../user/workspace/toolchains.md) |
+| Toolchains | JDK and other per-workspace toolchains; agent CLI updates; start at sign-in (only where your tenant has it on); automatic image refresh | [Choose your toolchains](../user/workspace/toolchains.md), [Start your workspace when you sign in](../user/workspace/toolchains.md#start-your-workspace-when-you-sign-in), [Restart onto a new image automatically](../user/workspace/toolchains.md#restart-onto-a-new-image-automatically) |
 | Databases | this workspace's PostgreSQL / MySQL for database-backed tests (install, start, stop, create, reset) | [Run database-backed tests](../user/workspace/databases.md#manage-them-from-the-console) |
 | Preview subdomains | the URL that opens the app you are building (only where they are issued) | [Use preview subdomains](../user/preview/subdomains.md), [Try Google sign-in on a preview](../user/preview/dev-signin.md) |
 | Internal repos | repositories hosted by the deployment itself | [Use the built-in Git](../user/code/internal-git.md) |
@@ -76,7 +76,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 
 | Timing | What |
 |---|---|
-| Immediately | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh) |
+| Immediately | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh); start at sign-in and automatic image refresh on Toolchains |
 | From the next session you start | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, past-session search (turning it off also refuses running sessions' searches at once), Agent Fleet memory (likewise), image generation, MCP servers |
 | From the next chat message | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | After stopping and starting the workspace | Toolchains (time zone, language versions); Machine (a size or class your admin changed) |

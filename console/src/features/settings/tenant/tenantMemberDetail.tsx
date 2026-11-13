@@ -745,9 +745,10 @@ export function MemberView({
               <label className="admin-fld">
                 <span className="af-cap">{tr("admin.max_sessions_label")}</span>
                 <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} />
-                <span className="af-unit">{tr("admin.zero_unlimited")}</span>
+                <span className="af-unit">{tr("admin.max_sessions_zero")}</span>
               </label>
             </div>
+            <p className="admin-hint">{tr("admin.max_sessions_hint")}</p>
             <div className="le-actions">
               <button className="primary" onClick={saveLimit}>{tr("common.save")}</button>
               <button className="ghost" onClick={() => setLimitOpen(false)}>{tr("common.cancel")}</button>

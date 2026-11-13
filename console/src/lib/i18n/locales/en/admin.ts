@@ -341,7 +341,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.image_refresh_quiet": "Quiet time before an automatic image refresh",
   "admin.image_refresh_quiet_ph": "e.g. 15m (empty = 15m, 0 = never)",
   "admin.image_refresh_hint":
-    "Only members who switched on \u201cRestart automatically onto a new image\u201d are affected. A workspace with an outdated image is restarted (never recreated) once nothing has been active for this long: no working or waiting session, no open terminal, preview or browser pane, no recent request. At most one attempt per image.",
+    "Only members who switched on \u201cRestart automatically onto a new image\u201d are affected. A workspace with an outdated image is restarted (never recreated) once nothing has been active for this long: no session running a turn or background work or pinned awake, nobody typing in a terminal or using the browser pane, no recent request. A session waiting on an answer or a terminal left open does not hold it off. At most one attempt per image.",
   "admin.backup_title": "Keep a spare copy of each home",
   "admin.backup_every": "Copy every",
   "admin.backup_ph": "e.g. 24h (empty = deploy default)",
@@ -494,6 +494,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.home_resize_failed":
     "The home could not be grown. The setting is saved, so try saving again later (one volume can only be modified once every 6 hours): {detail}",
   "admin.max_sessions_label": "Max sessions",
+  // A member's 0 is not "unlimited": the tenant's max sessions applies (sessionQuotaExceeded).
+  "admin.max_sessions_zero": "0 = tenant's limit",
+  "admin.max_sessions_hint": "0 uses the tenant's max sessions.",
   "admin.ws_memory": "Workspace memory",
   "admin.eq_hint": "= {hint}",
   "admin.zero_deploy_default": "0 = deploy default",
