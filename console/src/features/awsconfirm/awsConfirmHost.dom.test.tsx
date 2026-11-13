@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+const listed = vi.hoisted(() => ({ commands: ["aws ec2 describe-instances"] }));
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
   getTenant: () => "",
@@ -15,6 +16,7 @@ vi.mock("../../core/api/client.ts", () => ({
               id: "r1",
               session: "s1",
               targets: [{ profile: "prod-admin", label: "", accountId: "123456789012", roleName: "Admin" }],
+              commands: [...listed.commands],
               firstAt: "2026-10-31T00:00:00Z",
               lastAt: "2026-10-31T00:00:00Z",
               expiresInSec: 900,
@@ -82,6 +84,18 @@ describe("where a confirmation request shows", () => {
     await render(false);
     expect(useAwsConfirmStore.getState().mirrors).toEqual({ s1: 1 });
     expect(toastShown()).toBe(false);
+  });
+  // Another operation joins the pending request under the same id: the toast already up must
+  // show it, or the member allows a write while the card names only the read.
+  it("shows a command that joined the request after the toast went up", async () => {
+    listed.commands = ["aws ec2 describe-instances"];
+    await render(true);
+    expect(document.body.textContent).not.toContain("aws ec2 terminate-instances");
+    listed.commands = ["aws ec2 describe-instances", "aws ec2 terminate-instances"];
+    await act(async () => useAwsConfirmStore.getState().refresh());
+    expect(document.body.textContent).toContain(
+      t("awsconfirm.commands", { commands: "aws ec2 describe-instances, aws ec2 terminate-instances" }),
+    );
   });
   it("displayed() sees display:none on an ancestor", () => {
     const outer = document.createElement("div");

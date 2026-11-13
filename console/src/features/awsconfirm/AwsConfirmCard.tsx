@@ -11,8 +11,12 @@ import "./awsConfirm.css";
 
 /** AwsConfirmCard asks the member whether a session may use a profile that asks for
  *  confirmation before use (ADR 0126). Everything it names comes from the Agent's list. */
-export function AwsConfirmCard({ r, showSession }: { r: AwsConfirmRequest; showSession?: boolean }) {
+export function AwsConfirmCard({ r: given, showSession }: { r: AwsConfirmRequest; showSession?: boolean }) {
   const tr = useT();
+  // A toast is shown once per request id and keeps the element it was given, while a run of
+  // another operation joins the same request: read the latest list so that a write asked for
+  // after a read is on the card before the member allows both.
+  const r = useAwsConfirmStore((s) => s.requests.find((x) => x.id === given.id)) ?? given;
   const toast = useToast();
   const answer = useAwsConfirmStore((s) => s.answer);
   const busy = useAwsConfirmStore((s) => !!s.answering[r.id]);
