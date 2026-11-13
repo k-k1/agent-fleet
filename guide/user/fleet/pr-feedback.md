@@ -94,6 +94,25 @@ Bitbucket Pipelines works the same way, with `source` set to `bitbucket` (a `bit
 - Bitbucket allows few requests an hour, so a workspace can hold at most 5 Pipelines watches, and a run is checked about once a minute while it runs (every 5 minutes while waiting for the next one). Your Bitbucket connection needs permission to read Pipelines; if it lacks it, the agent is told to reconnect
 - A new run is recognised from Bitbucket's own build numbers and timestamps, and the next 250 runs of the repository are searched for the branch; a branch that is quiet among very busy ones can be missed
 
+### GitHub releases and tags
+
+A session that waits for an upstream release (a fixed dependency, a new CLI version) can watch the repository instead of checking back by hand. The types are `github.release.published` (a new release) and `github.tag.created` (a new tag, for projects that tag without making releases); `github.release.*` and `github.tag.*` work too. Pull request and CI types are refused for these.
+
+| `ref` | Fires when |
+|---|---|
+| `o/r:releases`, or the URL `https://github.com/o/r/releases` | a release is published. Drafts never count (a draft that is published later does), and pre-releases are skipped |
+| `o/r:releases+pre` | the same, and pre-releases count too |
+| `o/r:releases@v2.*` | the same, only for a release whose tag matches the pattern (add `+pre` before the `@` for pre-releases too) |
+| `o/r:tags`, `o/r:tags@v2.*` | a tag is created (matching the pattern, if given). Tags have no pre-release state, so `+pre` is refused |
+
+- Only a release published, or a tag created, **after the watch was made** counts; one that already exists never fires. The line is drawn from GitHub's own answer when the watch is made, not this workspace's clock
+- The pattern is a simple glob on the tag name: letters, digits and `. _ - / + `, with `*` for any run of characters and `?` for one. It is at most 64 characters and anything else (spaces, brackets, non-ASCII) is refused when the agent asks. A tag name outside that set never matches a watch
+- GitHub does not list tags in time order, so a tag counts as new when its name was not there when the watch was made and has not been told. A reordered list is not news. A tag that is deleted and then created again with the same name counts as created again once it has been seen missing in two checks, and is told again; the same tag is never told twice without that. A release that was told is not told again even if a newer one is later turned back into a draft
+- A tags watch needs the whole list, so a repository with more than 300 tags is refused when the agent asks (watch its releases instead); if a tags watch later outgrows what it can track (2000 names), it ends with a notice saying so rather than guessing. Several tags created between two checks give one notice for the greatest name, and the others are listed as data
+- The notice says the repository and the tag. A release's name and notes are quoted data. The version is the release id (for a release) or the tag name
+- A repository your GitHub connection cannot read (a private one without access) is refused when the agent asks. A repository that is deleted or that you lose access to later ends the watch with a notice saying so
+- Reads use your own GitHub connection, are conditional (an unchanged list costs no request quota), about every 5 minutes, and count in the same limits as pull request watches. A public repository needs no extra permission
+
 ### Send the notices to the parent
 
 A child started by another session can have the notices go to its parent (`notify: parent`), so the session handing out the work hears about its children's pull requests.

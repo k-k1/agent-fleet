@@ -373,3 +373,48 @@ func TestWatchRoutesAnActionsReferenceToItsSource(t *testing.T) {
 		t.Fatalf("pr type on a run: %d", code)
 	}
 }
+
+type stubReleases struct {
+	stubSource
+	kind, subject, typ string
+}
+
+func (s stubReleases) Kind() string    { return s.kind }
+func (s stubReleases) Types() []string { return []string{s.typ} }
+func (s stubReleases) Resolve(context.Context, string, string) (watch.Resolved, error) {
+	return watch.Resolved{Subject: watch.SubjectID(s.subject)}, nil
+}
+
+// A releases or tags reference with the default source goes to its own source, so a releases
+// watch cannot be asked for a tag type; a pull request reference is left alone.
+func TestWatchRoutesAReleasesReferenceToItsSource(t *testing.T) {
+	newWatchFixture(t)
+	session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir()})
+	useWatchEngine(t, watch.New(watchDiskStore{}, newWatchSink(), stubSource{},
+		stubReleases{kind: watch.ReleasesKind, subject: "github:o/r/releases/after/1-2", typ: watch.EventReleasePublished},
+		stubReleases{kind: watch.TagsKind, subject: "github:o/r/tags/after/2", typ: watch.EventTagCreated}))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sessions/{name}/watches", HandleWatchCreate)
+	do := func(body string) (int, watch.Subscription) {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("POST", "/sessions/a/watches", strings.NewReader(body)))
+		var c struct{ Watch watch.Subscription }
+		_ = json.Unmarshal(rec.Body.Bytes(), &c)
+		return rec.Code, c.Watch
+	}
+	if code, w := do(`{"ref":"o/r:releases@v2.*","types":["github.release.published"]}`); code != 200 || w.Source != watch.ReleasesKind {
+		t.Fatalf("releases ref: %d %+v", code, w)
+	}
+	if code, w := do(`{"ref":"https://github.com/o/r/releases","types":["github.release.*"]}`); code != 200 || w.Source != watch.ReleasesKind {
+		t.Fatalf("releases url: %d %+v", code, w)
+	}
+	if code, w := do(`{"source":"github","ref":"o/r:tags@v*","types":["github.tag.created"]}`); code != 200 || w.Source != watch.TagsKind {
+		t.Fatalf("tags ref: %d %+v", code, w)
+	}
+	if code, _ := do(`{"ref":"o/r:releases","types":["github.tag.created"]}`); code == 200 {
+		t.Fatal("a releases watch accepted a tag event type")
+	}
+	if code, w := do(`{"ref":"o/r#1","types":["pr.merged"]}`); code != 200 || w.Source != "github" {
+		t.Fatalf("pr ref: %d %+v", code, w)
+	}
+}
