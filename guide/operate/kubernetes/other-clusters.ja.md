@@ -1,5 +1,5 @@
 ---
-audience: "GKE 以外の Kubernetes クラスターに Agent Fleet を建てる人（クラスターの管理権限を持つ SRE）"
+audience: "GKE 以外の Kubernetes クラスターに Agent Fleet を構築する人（クラスターの管理権限を持つ SRE）"
 source_of_truth: "`deploy/kubernetes/` のマニフェスト（食い違ったらそちらが正）"
 ---
 
@@ -8,16 +8,16 @@ source_of_truth: "`deploy/kubernetes/` のマニフェスト（食い違った�
 [English](other-clusters.md) | 日本語
 
 GKE 以外のクラスターに、汎用のオーバーレイ `deploy/kubernetes/overlays/generic` から Agent Fleet を建てます。
-このオーバーレイは、プロバイダ固有のものを何も足さない base そのものです。GKE なら Terraform が用意するものは、すべて自分で用意します。
+このオーバーレイは、プロバイダー固有のものを何も足さない base そのものです。GKE なら Terraform が用意するものは、すべて自分で用意します。
 
 ## 全体像
 
 | あなたがやること | 起きること |
 |---|---|
 | 前提条件 P1〜P14 を自分で満たし、範囲が P15 を満たすことを確かめる | クラスターがワークスペースを隔離できる状態になる。これらを代わりに確かめる仕組みはない |
-| `overlays/generic` をコピーして書き換えて適用し、`AF_DATABASE_URL` を入れた Secret を作る | 名前空間、CP、RBAC、NetworkPolicy ができ、CP が起動する |
+| `overlays/generic` をコピーして書き換えて適用し、`AF_DATABASE_URL` を入れた Secret を作る | Namespace、CP、RBAC、NetworkPolicy ができ、CP が起動する |
 | 自分の ingress を Service `af-cp` の前に置く | Console に外から届く |
-| 最初の適用の前に CP の名前空間の受信ポリシーを足し、`af-cp-data` のバックアップを用意する | CP の最初の起動から、GKE の構成と同じ保護が効く |
+| 最初の適用の前に CP の Namespace の受信ポリシーを足し、`af-cp-data` のバックアップを用意する | CP の最初の起動から、GKE の構成と同じ保護が効く |
 
 前提条件の一覧は [Kubernetes 構成の全体像](overview.ja.md#前提条件) にあります。
 
@@ -33,7 +33,7 @@ cp -r deploy/kubernetes/overlays/generic "$OVERLAY"
 ```
 
 1. コピーの `deployment.yaml` をクラスターに合わせます
-   - 名前空間 `cpNamespace` と `wsNamespace`（この配備だけの接頭辞つき）
+   - Namespace `cpNamespace` と `wsNamespace`（この配備だけの接頭辞つき）
    - P3 を満たす StorageClass
    - `workspaceImage` と、`kustomization.yaml` の `images:` の CP のタグ
    - Pod・Service・ノード・コントロールプレーンのアドレス範囲が P15 を満たすことも確かめます
@@ -44,20 +44,20 @@ cp -r deploy/kubernetes/overlays/generic "$OVERLAY"
 | ワークスペースを特定のノードで動かす | `cp.env` の `AF_K8S_NODE_SELECTOR` |
 | イメージにプルシークレットが要る | `cp.env` の `AF_K8S_IMAGE_PULL_SECRET`。シークレット自体は手順 5 で作る |
 
-3. **何かが起動する前に、CP への受信を絞ります。** base には CP の名前空間の受信ポリシーがないため、ポート 8099 に届く通信は、どのユーザーにでもなりすませます。`components/gke/cp-networkpolicy.yaml` をオーバーレイにコピーして書き換えます
-   - 8099 の規則の Google の `ipBlock` 2 つを、自分の ingress の送信元（コントローラーの Pod の名前空間とラベル、またはアドレス）に置き換えます
-   - 8098 の規則の `af-placeholder-ws` を、自分の `wsNamespace` にします（このラベルはオーバーレイが書き換えません。ポリシー自体の名前空間は書き換えます）
+3. **何かが起動する前に、CP への受信を絞ります。** base には CP の Namespace の受信ポリシーがないため、ポート 8099 に届く通信は、どのユーザーにでもなりすませます。`components/gke/cp-networkpolicy.yaml` をオーバーレイにコピーして書き換えます
+   - 8099 の規則の Google の `ipBlock` 2 つを、自分の ingress の送信元（コントローラーの Pod の Namespace とラベル、またはアドレス）に置き換えます
+   - 8098 の規則の `af-placeholder-ws` を、自分の `wsNamespace` にします（このラベルはオーバーレイが書き換えません。ポリシー自体の Namespace は書き換えます）
    ```bash
    cp deploy/kubernetes/components/gke/cp-networkpolicy.yaml "$OVERLAY/cp-networkpolicy.yaml"
    # edit it as above, add `- cp-networkpolicy.yaml` under resources: in kustomization.yaml, then:
    kubectl kustomize "$OVERLAY" | grep -A3 'name: cp-ingress'   # namespace: your cpNamespace
    ```
-4. オーバーレイを適用します。2 つの名前空間、CP、RBAC と、CP の受信ポリシーを含む NetworkPolicy ができます。CP の Pod は手順 5 まで `CreateContainerConfigError` のまま待ちます
+4. オーバーレイを適用します。2 つの Namespace、CP、RBAC と、CP の受信ポリシーを含む NetworkPolicy ができます。CP の Pod は手順 5 まで `CreateContainerConfigError` のまま待ちます
    ```bash
    kubectl config current-context                # the cluster you mean
    kubectl apply -k "$OVERLAY"
    ```
-5. CP の名前空間に CP の Secret を作ります。鍵に加えてストアの DSN を `AF_DATABASE_URL` として入れ、ロールアウトを待ちます。使うサインインの秘密（`GOOGLE_OAUTH_CLIENT_SECRET`、`AF_OIDC_<ID>_CLIENT_SECRET`、`GITHUB_OAUTH_CLIENT_SECRET`）も同じ Secret に入れます。鍵の要件は [配備の鍵を扱う](../secure/deployment-keys.ja.md) にあります。イメージにプルシークレットが要るなら、ここで `$WS_NS` に、`AF_K8S_IMAGE_PULL_SECRET` に書いた名前で作ります
+5. CP の Namespace に CP の Secret を作ります。キーに加えてストアの DSN を `AF_DATABASE_URL` として入れ、ロールアウトを待ちます。使うサインインのシークレット（`GOOGLE_OAUTH_CLIENT_SECRET`、`AF_OIDC_<ID>_CLIENT_SECRET`、`GITHUB_OAUTH_CLIENT_SECRET`）も同じ Secret に入れます。キーの要件は [配備の鍵を扱う](../secure/deployment-keys.ja.md) にあります。イメージにプルシークレットが要るなら、ここで `$WS_NS` に、`AF_K8S_IMAGE_PULL_SECRET` に書いた名前で作ります
    ```bash
    kubectl -n "$CP_NS" create secret generic af-cp-secrets \
      --from-literal=AF_MASTER_KEY="$(cat master-key)" \

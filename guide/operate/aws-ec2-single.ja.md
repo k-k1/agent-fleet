@@ -1,5 +1,5 @@
 ---
-audience: "AWS の EC2 1 台に、Docker Compose の配備を建てる人"
+audience: "AWS の EC2 1 台に、Docker Compose の配備を構築する人"
 source_of_truth: "`deploy/aws/ec2-single/cfn.yaml` と `deploy/compose/release.sh`（食い違ったらこのページのバグ）"
 ---
 
@@ -7,15 +7,15 @@ source_of_truth: "`deploy/aws/ec2-single/cfn.yaml` と `deploy/compose/release.s
 
 [English](aws-ec2-single.md) | 日本語
 
-CloudFormation で EC2 インスタンスを 1 台建て、その上で Docker Compose の配備を動かします。
+CloudFormation で EC2 インスタンスを 1 台構築し、その上で Docker Compose の配備を動かします。
 要るのは AWS CLI だけで、Terraform は使いません。片付けもコマンド 1 つです。
 
 ## 全体像
 
 | あなたがやること | 起きること |
 |---|---|
-| SSH の鍵を手元で作り、スタックをデプロイする | Ubuntu 24.04 のインスタンス（cloud-init で Docker 入り）、Elastic IP、Route 53 の A レコード、取り込んだキーペアができる |
-| 手元でリリースのバンドルとイメージを作り、インスタンスに送る | インスタンスで git をクローンせずに、バンドルだけで配備を建てられる |
+| SSH のキーを手元で作り、スタックをデプロイする | Ubuntu 24.04 のインスタンス（cloud-init で Docker 入り）、Elastic IP、Route 53 の A レコード、取り込んだキーペアができる |
+| 手元でリリースのバンドルとイメージを作り、インスタンスに送る | インスタンスで git をクローンせずに、バンドルだけで配備を構築できる |
 | インスタンスで `.env` を書き、`docker compose up -d` する | Caddy が Let's Encrypt の証明書を取り、Console が `https://<Fqdn>` で開く |
 | いらなくなったらスタックを消す | スタックの中のものがすべて消える |
 
@@ -30,9 +30,9 @@ ECS の配備ではなく、1 台の VM の上の Docker Compose です。ECS �
 | x86_64（amd64）のマシンの Docker | リリースのバンドルとイメージを作ります。インスタンスは amd64 なので、Apple Silicon などの arm64 のマシンで作ったイメージは動きません |
 | サインイン用の IdP のクライアント | [サインインの方法を設定する](signin/overview.ja.md) |
 
-## 1. スタックを建てる
+## 1. スタックを構築する
 
-SSH の鍵は手元で作ります。秘密鍵は手元から出ません。取り込むのは公開鍵だけなので、`ssm:PutParameter` の権限は要りません。
+SSH のキーは手元で作ります。秘密鍵は手元から出ません。取り込むのは公開鍵だけなので、`ssm:PutParameter` の権限は要りません。
 
 ```bash
 ssh-keygen -t ed25519 -N '' -f agent-fleet-test-key      # -> agent-fleet-test-key(.pub)
@@ -60,7 +60,7 @@ aws cloudformation describe-stacks --stack-name agent-fleet-test \
 | `SSHLocation` | `0.0.0.0/0` | SSH を許す CIDR。自分の `<ip>/32` にして絞ります |
 | `PublicKey` | （必須） | 取り込む SSH の公開鍵（`*.pub` の中身） |
 | `InstanceType` | `t3.large` | `t3.medium`・`t3.large`・`t3.xlarge`。`t3.medium`（4 GB）なら下の [メモリの小さいインスタンス](#メモリの小さいインスタンス) |
-| `VolumeSizeGb` | `30` | ルートボリュームの大きさ |
+| `VolumeSizeGb` | `30` | ルートボリュームのサイズ |
 | `LatestUbuntuAmi` | Canonical の SSM パラメータ | 最新の Ubuntu 24.04 の AMI。そのままにします。どのリージョンでも使えます |
 
 出力には `PublicIp`・`Fqdn`・`ConsoleUrl`・`OAuthRedirectUri`・`SshCommand` が出ます。セキュリティグループは 22 番を `SSHLocation` に、80 番と 443 番を全体に開きます。
@@ -86,7 +86,7 @@ scp -i deploy/aws/ec2-single/agent-fleet-test-key \
     ubuntu@<public-ip>:~
 ```
 
-`0.1.0` は例です。作る版に置き換えます。`--save` を付けると、バンドル（`agent-fleet-<版>.tar.gz`）に加えて、イメージを `docker save` した tar（`agent-fleet-images-<版>.tar.gz`）もできます。
+`0.1.0` は例です。作るバージョンに置き換えます。`--save` を付けると、バンドル（`agent-fleet-<版>.tar.gz`）に加えて、イメージを `docker save` した tar（`agent-fleet-images-<版>.tar.gz`）もできます。
 
 > [!IMPORTANT]
 > **x86_64（amd64）のマシンで実行してください。** `--save` は、実行したマシンのアーキテクチャのイメージだけを書き出します（複数のアーキテクチャを指定すると、`--save` は実行を拒否します）。テンプレートの AMI は amd64 の Ubuntu なので、arm64 のマシンで作ったイメージはインスタンスで動きません。
@@ -109,7 +109,7 @@ docker compose up -d
 docker compose logs -f caddy cp
 ```
 
-- `.env` の各値の意味と秘密の作り方は [Docker Compose で構築する](compose/install.ja.md#1-設定を書いてソースから起動する) と同じです
+- `.env` の各値の意味とシークレットの作り方は [Docker Compose で構築する](compose/install.ja.md#1-設定を書いてソースから起動する) と同じです
 - 80 番と 443 番が開いているので、Caddy が `<Fqdn>` の本物の Let's Encrypt の証明書を取ります
 - IdP のクライアントに `https://<Fqdn>/oauth2/callback` を登録します。有効にするどの IdP でも、この 1 つで足ります
 - `https://<Fqdn>` を開いてサインインします
@@ -130,7 +130,7 @@ docker compose logs -f caddy cp
 
 - テンプレートはインスタンスプロファイルを付けません。あとから付けた場合でも、ホストネットワークで動く Control Plane（1 ホップ）には届き、docker ブリッジ上のワークスペース（2 ホップ）には届かないようにするための設定です
 - ワークスペースは `AWS_EC2_METADATA_DISABLED=true` 付きで起動します。Control Plane に `AF_WS_WORKLOAD_AWS=1` があるときは付けませんが、ホップ数の制限は外れないので、どちらでもインスタンスプロファイルには届きません
-- このテンプレートは、配備が費用を払う Bedrock のルート（provided routes）を提供しません。Control Plane がルート用のロールを引き受けるための AWS の身元がないからです。代わりに ECS のスタックの `ProvidedRoutes=on` を使います
+- このテンプレートは、配備が費用を払う Bedrock のルート（provided routes）を提供しません。Control Plane がルート用のロールを引き受けるための AWS の ID がないからです。代わりに ECS のスタックの `ProvidedRoutes=on` を使います
 
 この設定より前に作ったスタックには、スタックを更新するのではなく、動いているインスタンスに直接適用します。`LatestUbuntuAmi` は更新のたびに解決し直され、新しい AMI ならインスタンスが作り直されるからです。
 
@@ -145,7 +145,7 @@ aws ec2 modify-instance-metadata-options --instance-id <id> \
 |---|---|---|
 | `echo ${AWS_EC2_METADATA_DISABLED:-unset}` | `true` と出る | `unset`（意図どおり） |
 | プロファイルなしの `aws sts get-caller-identity` | 「Unable to locate credentials」で失敗する | — |
-| 下のトークン要求 | `200` が出ない | `200` が出ない |
+| 下のトークンリクエスト | `200` が出ない | `200` が出ない |
 
 ```bash
 curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token
@@ -167,7 +167,7 @@ Elastic IP・セキュリティグループ・インスタンス・Route 53 の�
 
 ### キーペアが消えずに `DELETE_FAILED` になるとき
 
-`AWS::EC2::KeyPair` のハンドラは、取り込んだ鍵でも SSM の Parameter Store に触れます。デプロイしたユーザーに `ssm:*` がない（`AmazonSSMReadOnlyAccess` だけなど）と、キーペアが `InternalFailure` で消えず、スタックが `DELETE_FAILED` になります。
+`AWS::EC2::KeyPair` のハンドラーは、取り込んだキーでも SSM の Parameter Store に触れます。デプロイしたユーザーに `ssm:*` がない（`AmazonSSMReadOnlyAccess` だけなど）と、キーペアが `InternalFailure` で消えず、スタックが `DELETE_FAILED` になります。
 そのリソースだけ残してスタックを消し、キーペアを直接消します。
 
 ```bash

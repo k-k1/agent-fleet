@@ -57,7 +57,7 @@ AF_CP_INTERNAL_URL=http://host.docker.internal:8098
 
 - Agent が呼ぶルートだけです。それぞれメンバーシップごとの bearer トークンで守られます
 - Console・管理の API・サインイン・egress proxy のルートは 404 を返します
-- 本人を示すヘッダと、すべての転送ヘッダを捨てます
+- 本人を示すヘッダーと、すべての転送ヘッダーを捨てます
 - 人が開くリンクと `af-curl`・`af-shot` は、これまでどおり `PUBLIC_BASE_URL` を使います
 
 ## ホストの側で合わせること
@@ -79,7 +79,7 @@ AF_CP_INTERNAL_URL=http://host.docker.internal:8098
 | Docker Desktop | `host-gateway` が、Control Plane が待ち受けるエンジンではなく、デスクトップのマシンを指します |
 | rootless Docker | 確かめていません。docker0 は RootlessKit の名前空間にあり、Docker Engine 29.5 以降の `network_mode: host` は本当のホストの名前空間なので、そこにはそのアドレスがなく、Control Plane は bind に失敗します |
 
-Mac の重ね合わせ（`docker-compose.macos.yml`）は、この仕組みを最初から使います（[macOS（Apple Silicon）で動かす](macos.ja.md)）。
+Mac のオーバーレイ（`docker-compose.macos.yml`）は、この仕組みを最初から使います（[macOS（Apple Silicon）で動かす](macos.ja.md)）。
 
 ## うまくいかないとき
 

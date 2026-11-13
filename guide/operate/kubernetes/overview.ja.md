@@ -1,5 +1,5 @@
 ---
-audience: "Kubernetes クラスターに Agent Fleet を建てて運用する人（クラスターとクラウドの管理権限を持つ SRE）"
+audience: "Kubernetes クラスターに Agent Fleet を構築して運用する人（クラスターとクラウドの管理権限を持つ SRE）"
 source_of_truth: "`deploy/kubernetes/` のマニフェストと `deploy/gcp/gke/` の Terraform（食い違ったらそちらが正）"
 ---
 
@@ -17,17 +17,17 @@ Control Plane（CP）はクラスター内の Deployment として動きます�
 
 | あなたがやること | 起きること |
 |---|---|
-| `deploy/gcp/gke` で Terraform を適用する（GKE のとき） | VPC・サブネット・固定アドレスの Cloud NAT、クラスターと 2 つのノードプール、Secret を暗号化する KMS 鍵、Cloud SQL、ロードバランサのアドレス・証明書・DNS レコード、StorageClass、IAM の付与ができる |
-| オーバーレイを `kubectl apply -k` する | 2 つの名前空間、CP とその Service、CP 自身のディスク（`af-cp-data`）、RBAC、NetworkPolicy、クォータ、Gateway とそのポリシーができる |
+| `deploy/gcp/gke` で Terraform を適用する（GKE のとき） | VPC・サブネット・固定アドレスの Cloud NAT、クラスターと 2 つのノードプール、Secret を暗号化する KMS キー、Cloud SQL、ロードバランサーのアドレス・証明書・DNS レコード、StorageClass、IAM の付与ができる |
+| オーバーレイを `kubectl apply -k` する | 2 つの Namespace、CP とその Service、CP 自身のディスク（`af-cp-data`）、RBAC、NetworkPolicy、クォータ、Gateway とそのポリシーができる |
 | メンバーが Console でワークスペースを起動する | CP がワークスペースごとに StatefulSet・Service・Secret・claim 2 本を作る。ときどき、1 回限りの消去用 Pod も作る。どれにも `agent-fleet.io/workspace=<名前>` のラベルが付く |
 
 ## ディレクトリの中身
 
 | パス | 中身 |
 |---|---|
-| `deploy/kubernetes/base/` | どのクラスターでも使う素のマニフェスト。2 つの名前空間、CP の Deployment・Service・サービスアカウント・RBAC、ワークスペースの NetworkPolicy、ResourceQuota と LimitRange の例 |
-| `deploy/kubernetes/components/params/` | オーバーレイの `deployment.yaml` の値（名前空間、アドレス範囲、StorageClass、イメージ）をマニフェストに書き込む |
-| `deploy/kubernetes/components/gke/` | GKE で足すもの。Cloud SQL Auth Proxy のサイドカー、Workload Identity、ワークスペースのノードプール、グローバル外部アプリケーションロードバランサ（Gateway API）、CP の名前空間の受信ポリシー |
+| `deploy/kubernetes/base/` | どのクラスターでも使う素のマニフェスト。2 つの Namespace、CP の Deployment・Service・サービスアカウント・RBAC、ワークスペースの NetworkPolicy、ResourceQuota と LimitRange の例 |
+| `deploy/kubernetes/components/params/` | オーバーレイの `deployment.yaml` の値（Namespace、アドレス範囲、StorageClass、イメージ）をマニフェストに書き込む |
+| `deploy/kubernetes/components/gke/` | GKE で足すもの。Cloud SQL Auth Proxy のサイドカー、Workload Identity、ワークスペースのノードプール、グローバル外部アプリケーションロードバランサー（Gateway API）、CP の Namespace の受信ポリシー |
 | `deploy/kubernetes/overlays/gke/` | GKE の配備でコピーするオーバーレイ |
 | `deploy/kubernetes/overlays/generic/` | ほかのクラスターでコピーするオーバーレイ |
 | `deploy/gcp/gke/` | GKE クラスターのまわりに要るものを作る Terraform |
@@ -48,19 +48,19 @@ CP はどの項目も確かめられません。1 つでも欠けたクラスタ
 
 | # | 前提条件 | 欠けるとどうなるか |
 |---|---|---|
-| P1 | Kubernetes **1.33 以降**。Terraform はリリースチャンネルの既定の版でクラスターを作り、この下限（`min_master_version`）を plan のたびに確かめる | 破棄が頼る PersistentVolume の削除保護 finalizer は 1.33 で安定版になった |
+| P1 | Kubernetes **1.33 以降**。Terraform はリリースチャンネルの既定のバージョンでクラスターを作り、この下限（`min_master_version`）を plan のたびに確かめる | 破棄が頼る PersistentVolume の削除保護 finalizer は 1.33 で安定版になった |
 | P2 | **NetworkPolicy を強制する** CNI（GKE では Dataplane V2） | ポリシーは受け付けられても、何も止めない |
 | P3 | `volumeBindingMode: WaitForFirstConsumer`、`allowVolumeExpansion: true`、`reclaimPolicy: Delete` で、**ブロックストレージ**（NFS や Filestore ではない）を使う StorageClass | `Retain` だと、破棄のあともディスクとその請求が残る |
 | P4 | **Secret のアプリケーション層暗号化**（GKE では Cloud KMS） | 各ワークスペースの DEK とトークンは Secret に入っている |
 | P5 | コントロールプレーンのエンドポイントが**非公開か、Pod の範囲を含まない承認済みネットワークに限られている**。誰にでも開いた公開エンドポイントはサポートしない | ワークスペースから API サーバーに届く |
 | P6 | kubelet の**読み取り専用ポートが閉じている**（GKE の既定で、Terraform も閉じる）。ワークスペースのノードで **`hostNetwork` のサービスが動いていない** | Pod は自分のノードにはいつでも届く |
-| P7 | GKE では、**ワークスペースが動きうるノードプールはすべて `GKE_METADATA` を使い**、ワークスペースはそこにだけ置かれる（`AF_K8S_NODE_SELECTOR`） | ノードの資格情報にワークスペースから届く |
-| P8 | **ワークスペースの名前空間やそのサービスアカウントを名指しする IAM の付与がない**（`principalSet` 経由も含む）。名前空間の名前には、この配備だけの接頭辞が付いている | Workload Identity は、プロジェクト内のどのクラスターでも同じ名前を同じ身元として扱う |
-| P9 | **メンバーはワークスペースの名前空間の Kubernetes API に届かない** | そこで Pod を作れることは、全メンバーのホームと Secret を読めることと同じ |
+| P7 | GKE では、**ワークスペースが動きうるノードプールはすべて `GKE_METADATA` を使い**、ワークスペースはそこにだけ置かれる（`AF_K8S_NODE_SELECTOR`） | ノードの認証情報にワークスペースから届く |
+| P8 | **ワークスペースの Namespace やそのサービスアカウントを指定する IAM の付与がない**（`principalSet` 経由も含む）。Namespace の名前には、この配備だけの接頭辞が付いている | Workload Identity は、プロジェクト内のどのクラスターでも同じ名前を同じ ID として扱う |
+| P9 | **メンバーはワークスペースの Namespace の Kubernetes API に届かない** | そこで Pod を作れることは、全メンバーのホームディレクトリと Secret を読めることと同じ |
 | P10 | クラスターが **IPv4 のシングルスタック** | 外向きのポリシーは `::/0` を許可しないので、IPv6 の外向き通信は素通りではなく拒否になる |
 | P11 | **NodeLocal DNSCache がオフ**（GKE は新しいクラスターでオンにする。Terraform はオフにする）か、そのアドレス向けのポリシーを足してある | DNS のポリシーは `kube-dns` の Pod だけを許可し、`169.254.0.0/16` は拒否する。キャッシュがオンだと、ワークスペースからの名前解決がすべて失敗する |
 | P12 | 配備が用意する **Postgres**（GKE では Cloud SQL） | CP のデータベース |
-| P13 | Console の名前の **DNS ゾーン**と、Terraform の**ステート用バケット**。どちらも運用する人のもの | Terraform が証明書とステートに使う |
+| P13 | Console の名前の **DNS ゾーン**と、Terraform の**ステート用バケット**。どちらも運用担当者のもの | Terraform が証明書とステートに使う |
 | P14 | `AF_MASTER_KEY` を作り、**データベースとそのバックアップの外に**保管してある | ほかの形態と同じく、失うと暗号化したものが読めなくなる |
 | P15 | **ノード・Pod・Service・コントロールプレーンの範囲が RFC 1918 か `100.64.0.0/10` の中にある**（Terraform が plan のたびに確かめる） | 下記 |
 
@@ -70,7 +70,7 @@ P15 について:
 - Dataplane V2 では、ノードのアドレスを含むブロックを 1 つでも許可すると、ワークスペースから自分のノードにもほかのノードにも届きます。`except` では止まりません
 - 範囲がほかにあるクラスター（公開アドレスを内部で使っている、GKE の既定の Service 範囲 `34.118.224.0/20` など）は、その範囲を自分でブロックから外します
 
-P11 を既存のクラスターで切り替えると、約 10 分かかります。GKE の版によってはノードが作り直されます。1.35 で見たときは、`node-local-dns` の Pod が消えただけで、ノードの作り直しもワークスペースの再起動もありませんでした。
+P11 を既存のクラスターで切り替えると、約 10 分かかります。GKE のバージョンによってはノードが作り直されます。1.35 で見たときは、`node-local-dns` の Pod が消えただけで、ノードの作り直しもワークスペースの再起動もありませんでした。
 
 ## ディスクの割り当て（GKE）
 
@@ -133,11 +133,11 @@ gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project
 
 ## マニフェストを変えるときに守ること
 
-- **ワークスペースの名前空間に、ここにあるものより広い NetworkPolicy を足さないでください。** ポリシーは足し算です。「すべての Pod」により多くを許可するポリシーが 1 つでもあると、隔離が失われます。配備が必要とする内部の宛先（LAN の推論エンジン、社内の git ホストなど）には、宛先ごとにポリシーを 1 つ作ります。そのポリシーはワークスペースの Pod を選択し、宛先のアドレスとポートを名指しします
+- **ワークスペースの Namespace に、ここにあるものより広い NetworkPolicy を足さないでください。** ポリシーは足し算です。「すべての Pod」により多くを許可するポリシーが 1 つでもあると、隔離が失われます。配備が必要とする内部の宛先（LAN の推論エンジン、社内の git ホストなど）には、宛先ごとにポリシーを 1 つ作ります。そのポリシーはワークスペースの Pod を選択し、宛先のアドレスとポートを指定します
 - **CP の Role や ClusterRole を広げないでください。** Namespace や NetworkPolicy への権限も与えません。乗っ取られた CP は、そのロールが及ぶ範囲すべてに手が届きます
 - **メインのポート（8099）を `af-cp-internal` に足さないでください。** 内部の Service はワークスペースから CP への戻り経路で、ワークスペース専用のリスナーにしか届いてはいけません
-- **ワークスペースの名前空間の Pod Security のレベルを下げないでください。** `restricted` より多くの権限が要るワークスペースの機能は、この形態では提供しません（Chromium のサンドボックスの `SYS_ADMIN` がその 1 つです）
-- **ワークスペースの Pod を強制削除しないでください**（`--force --grace-period=0`）。プロセスが止まったことを確かめないまま名前を解放するので、2 つのエージェントが 1 つのホームを共有しかねません。応答しなくなったノードの扱いは [ノードを入れ替える・止まったノードに対処する](nodes.ja.md#応答しなくなったノード) にあります
+- **ワークスペースの Namespace の Pod Security のレベルを下げないでください。** `restricted` より多くの権限が要るワークスペースの機能は、この形態では提供しません（Chromium のサンドボックスの `SYS_ADMIN` がその 1 つです）
+- **ワークスペースの Pod を強制削除しないでください**（`--force --grace-period=0`）。プロセスが止まったことを確かめないまま名前を解放するので、2 つのエージェントが 1 つのホームディレクトリを共有しかねません。応答しなくなったノードの扱いは [ノードを入れ替える・止まったノードに対処する](nodes.ja.md#応答しなくなったノード) にあります
 
 ## このグループのページ
 
@@ -145,10 +145,10 @@ gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project
 
 | ページ | できること |
 |---|---|
-| [GKE に構築する](gke.ja.md) | Terraform からロードバランサの確認まで、GKE に建てる |
-| [ほかのクラスターに構築する](other-clusters.ja.md) | GKE 以外のクラスターで、汎用のオーバーレイから建てる |
-| [CP をアップグレードする](upgrade.ja.md) | バックアップを取って新しい版に上げ、必要なら戻す |
-| [バックアップ・復元する](backup.ja.md) | 残すべきものを知り、スナップショットの予定を入れ、復元を予行する |
+| [GKE に構築する](gke.ja.md) | Terraform からロードバランサーの確認まで、GKE に構築する |
+| [ほかのクラスターに構築する](other-clusters.ja.md) | GKE 以外のクラスターで、汎用のオーバーレイから構築する |
+| [CP をアップグレードする](upgrade.ja.md) | バックアップを取って新しいバージョンに上げ、必要なら戻す |
+| [バックアップ・復元する](backup.ja.md) | 残すべきものを知り、スナップショットの予定を入れ、復元をリハーサルする |
 | [アラートを設定する](alerts.ja.md) | Cloud Monitoring に監視を設定する |
 | [ノードを入れ替える・止まったノードに対処する](nodes.ja.md) | ノードを計画どおり入れ替え、応答しないノードから回復し、破棄が残したものを片付ける |
 | [一時停止する・費用を見る](pause.ja.md) | データを残したまま停止し、費用の内訳を知る |
