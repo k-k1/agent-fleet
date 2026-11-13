@@ -301,7 +301,7 @@ auto_relocate() {
   fi
   ln -s "$dest" "$target" 2>/dev/null || return 0
   record_link "${dest#"$SCRATCH/artifacts"}" || true
-  echo "af-scratch: $target -> $dest（Workspace 停止で消えます）"
+  echo "af-scratch: $target -> $dest（ワークスペース停止で消えます）"
 }
 
 if [ "$MODE" = "--auto" ]; then
@@ -364,6 +364,6 @@ for target in "$@"; do
   fi
   ln -s "$dest" "$target"
   record_link "${dest#"$SCRATCH/artifacts"}" || true
-  echo "af-scratch: $target -> $dest（Workspace 停止で消えます）"
+  echo "af-scratch: $target -> $dest（ワークスペース停止で消えます）"
 done
 exit "$status"

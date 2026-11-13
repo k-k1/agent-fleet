@@ -124,7 +124,7 @@ export const engineadmin = {
   "admin.engines_model_negative": "描かせないもの",
   // ADR 0081 決定 5。チェックポイントの「描かせないもの」と対になる、アダプタ側の 1 行。
   // 起動語の無い LoRA は読み込んでも絵が変わらず、取り込みの失敗と見分けが付かない。
-  "admin.engines_model_trigger": "起動語",
+  "admin.engines_model_trigger": "トリガー語",
   "admin.engines_negative_label": "全画像から除外する語",
   "admin.engines_negative_placeholder": "キーワードをカンマ区切りで",
   "admin.engines_negative_save": "保存",
@@ -267,7 +267,7 @@ export const engineadmin = {
   "admin.engines_refit_next_start": "反映は次にエンジンが起動したときからです（稼働中のインスタンスは起動時の窓のままです）。",
   "admin.engines_refit_stuck": "この段に合わせられなかったモデル:",
   "admin.catalog_edit_window_fit": "このクラスに収まる最大 {n} にする",
-  "admin.fit_kv_from": "KV は {f} のヘッダから読みました（同じ配布元でも版によって少し違います）。",
+  "admin.fit_kv_from": "KV は {f} のヘッダから読みました（同じ配布元でもバージョンによって少し違います）。",
   "admin.engines_ingest_ctx_ceiling": "上限 {n}",
   // --- 配布元のカード（ADR 0089）。量子化の梯子は 1 押しで開く（開くたびに上流を読むため）。
   "admin.repo_held_count": "取り込み済み {n} 件",
@@ -385,7 +385,7 @@ export const engineadmin = {
   "admin.engines_limit_unscanned": "ウイルススキャン未通過",
   "admin.engines_limit_pickle": "pickle 警告",
   // LoRA のトリガ語。これを入れずに使うと、読み込まれてはいるのに絵が変わらない。
-  "admin.engines_hit_trigger": "トリガ語",
+  "admin.engines_hit_trigger": "トリガー語",
   // 公開日と更新日は別の問いに答える（「新しいモデルか」と「まだ手が入っているか」）ので、
   // 同じ行に両方・それぞれラベル付きで出す。片方だけだと、1 年前に公開されて先週まで
   // 更新されているモデルと、先週公開されたモデルの区別がつかない。
@@ -471,7 +471,7 @@ export const engineadmin = {
   "admin.engines_comfy_lan_fallback_table": "ここで保存した URL を削除すると、画像はエンジン表の外部の行 {url} に戻ります。",
   "admin.engines_comfy_lan_fallback_remote": "ここで保存した URL を削除すると、画像は別の Agent Fleet から借りた {url} に戻ります。",
   "admin.engines_comfy_lan_fallback_borrow": "ここで保存した URL を削除すると、AF_REMOTE_ENGINE_URL の借用先が画像エンジンを提供していればそちらが引き継ぎます。画像生成が止まるとは限りません。",
-  "admin.engines_comfy_lan_fallback_none": "画像向けにほかの設定が無いため、ここで保存した URL を削除すると画像エンジンは無くなります。",
+  "admin.engines_comfy_lan_fallback_none": "画像向けにほかの設定がないため、ここで保存した URL を削除すると画像エンジンはなくなります。",
   "admin.engines_comfy_lan_note": "変更は Control Plane を再起動せずにすぐ反映されます。キーは暗号化して保存され、ここで保存した URL にだけ送られます（環境変数の AF_COMFY_API_KEY は使いません）。",
   "admin.engines_hf_token": "Hugging Face のトークン",
   "admin.engines_hf_token_field": "トークン",
@@ -533,9 +533,9 @@ export const engineadmin = {
   // 「取り上げられてもよい」と言う。🔴 文面が「インスタンスが止まってもよい」で終わらないのは、
   // 実際に同意しているのが 2 つだから——生成中の応答が失われることと、次の要求がコールド
   // スタートを待つこと。その 2 つを読んだ人だけがチェックを入れられる文面にする。
-  "admin.engines_spot_allow": "中断を許容する（Spot のインスタンスを買ってよい）",
+  "admin.engines_spot_allow": "中断を許容する（Spot インスタンスの調達を許可する）",
   "admin.engines_spot_note":
-    "Spot のインスタンスは AWS に取り上げられることがあります。取り上げられると、その時点で処理中の応答は失われ、次の要求はコールドスタート（llm 約 9 分・image 約 3 分）を待ちます。同じ提案が続けて 2 回取り上げられたら、その提案はその回の起動では飛ばされるので、最後は VRAM の合うオンデマンドが使われます。",
+    "Spot インスタンスは AWS に取り上げられることがあります。取り上げられると、その時点で処理中の応答は失われ、次の要求はコールドスタート（llm 約 9 分・image 約 3 分）を待ちます。同じ提案が続けて 2 回取り上げられたら、その提案はその回の起動では飛ばされるので、最後は VRAM の合うオンデマンドが使われます。",
   "admin.engines_spot_blocked": "中断の許容が要ります",
   "admin.engines_spot_pin_ignored":
     "固定している提案は Spot なので、いまは使われません（自動選択になっています）。中断を許容するか、別の提案を選んでください。",

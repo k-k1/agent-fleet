@@ -150,7 +150,7 @@ describe("ComfyLanPanel", () => {
       [{ ...base, fallback_source: "env", fallback_url: "http://192.0.2.10:8188" }, "http://192.0.2.10:8188（AF_COMFY_URL）"],
       [{ ...base, fallback_source: "table", fallback_url: "http://192.0.2.30:8188" }, "エンジン表の外部の行 http://192.0.2.30:8188"],
       [{ ...base, remote_configured: true }, "止まるとは限りません"],
-      [base, "画像エンジンは無くなります"],
+      [base, "画像エンジンはなくなります"],
     ];
     for (const [status, want] of cases) {
       await mount(<ComfyLanPanel status={status} />);

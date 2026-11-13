@@ -237,7 +237,7 @@ export const settings = {
   "backup.res_instructions_failed": "エージェントへの指示: 保存できませんでした（{msg}）",
   "backup.err_bad_json": "ファイルを読めませんでした（JSON ではありません）",
   "backup.err_bad_kind": "設定の書き出しファイルではありません",
-  "backup.err_bad_version": "この Console が知らない版のファイルです",
+  "backup.err_bad_version": "この Console が知らないバージョンのファイルです",
   "backup.err_empty": "取り込める内容がありません",
 
   // --- エージェント設定（features/settings/AgentsTab.tsx）---
@@ -260,7 +260,7 @@ export const settings = {
     "セッションが、同じワークスペースの別のセッションへ短いメッセージを送れるようにします。停止中の相手には、再開してから届けます。受け取った側には「利用者の指示ではない」と伝わります。次に起動するセッションから反映されます。既定ではオフです。",
   "agents.fleet_spawn": "セッションからのセッション起動",
   "agents.note_fleet_spawn":
-    "セッションが、別のセッションを起こして仕事を渡せるようにします。操作できるのは自分が起こした子だけで、一覧・出力の確認・停止・再開・名前の変更ができます。どのセッションに対しても、指示を足すことも、質問に代わって答えることも、削除やアーカイブもできません。子の本数は下で決めます（削除かアーカイブをした子は、上限の数から外れます）。孫と shell セッションは起こせません。子 1 本がエージェント 1 つ分のメモリと利用枠を使い、消費はあなたの請求に載ります。次に起動するセッションから反映されます。既定ではオフです。",
+    "セッションが、別のセッションを起動して仕事を渡せるようにします。操作できるのは自分が起動した子だけで、一覧・出力の確認・停止・再開・名前の変更ができます。どのセッションに対しても、指示を足すことも、質問に代わって答えることも、削除やアーカイブもできません。子の本数は下で決めます（削除かアーカイブをした子は、上限の数から外れます）。孫と shell セッションは起動できません。子 1 本がエージェント 1 つ分のメモリと利用枠を使い、消費はあなたの請求に載ります。次に起動するセッションから反映されます。既定ではオフです。",
   "agents.spawn_child_limit": "子セッションの同時本数",
   "agents.note_spawn_child_limit":
     "1 つのセッションが同時に持てる子の数です。ワークスペース全体ではなく親 1 つあたりなので、親が増えればその分だけ増えます。子 1 本がエージェント 1 つ分のメモリを使います。1〜10 の範囲で指定します。既定は 3 です。",
@@ -293,7 +293,7 @@ export const settings = {
     "このワークスペースのイメージはエージェント設定 API（rtk）に未対応です。イメージを再ビルドして「作り直す」と有効になります。",
   "agents.default_model_none": "選べるモデルがありません",
   "agents.default_model": "既定モデル",
-  "agents.default_effort": "既定 effort",
+  "agents.default_effort": "既定の推論の強さ",
   "agents.start_mode": "開始モード",
   // 権限確認をスキップするか（docs/log/76）。保存値は skipPermissions（既定は true＝従来どおりスキップ）。
   // 画面の「権限確認」はその反対で、オン＝許可を求める。
@@ -374,10 +374,10 @@ export const settings = {
   "agents.kiro_installing": "Kiro を導入中です…（約 855MB・数分かかります）。完了すると自動でログイン画面に切り替わります。",
   "agents.kiro_install_error": "導入に失敗しました。回線状況を確認して再試行してください。",
   "agents.kiro_install_failed": "Kiro の導入開始に失敗しました: {msg}",
-  "agents.kiro_update_avail": "新しい版が利用できます（導入済み {cur} → ピン {pin}）。更新しない間は導入済みの版が使われます。",
+  "agents.kiro_update_avail": "新しいバージョンが利用できます（導入済み {cur} → ピン {pin}）。更新しない間は導入済みのバージョンが使われます。",
   "agents.kiro_update": "Kiro を更新",
-  "agents.kiro_update_note": "ピン版（約 855MB）を再ダウンロードします。数分かかります。",
-  "agents.kiro_updating": "Kiro を更新中です…（約 855MB・数分かかります）。実行中の Kiro セッションはそのまま動き続けます（次回起動から新しい版になります）。",
+  "agents.kiro_update_note": "ピンされたバージョン（約 855MB）を再ダウンロードします。数分かかります。",
+  "agents.kiro_updating": "Kiro を更新中です…（約 855MB・数分かかります）。実行中の Kiro セッションはそのまま動き続けます（次回起動から新しいバージョンになります）。",
   // --- Muse Code（ADR 0095）---
   // 🔴 このカードは「接続済み」だけでは真実にならない。metered / env_key / API キーの拒否の
   // 3 つは、どれも利用者の請求に直接関わる（決定 9・P2-6 の実測）。
@@ -401,10 +401,10 @@ export const settings = {
   "agents.muse_installing": "Muse Code を導入中…（約 299MB・数分かかります）。終わると自動でログイン画面になります。",
   "agents.muse_install_error": "導入に失敗しました。接続を確認してやり直してください。",
   "agents.muse_install_failed": "Muse Code の導入を開始できませんでした: {msg}",
-  "agents.muse_update_avail": "新しい版があります（導入済み {cur} → ピン {pin}）。更新するまで導入済みの版が使われ続けます。",
+  "agents.muse_update_avail": "新しいバージョンがあります（導入済み {cur} → ピン {pin}）。更新するまで導入済みのバージョンが使われ続けます。",
   "agents.muse_update": "Muse Code を更新",
-  "agents.muse_update_note": "ピンされた版を再取得します（約 299MB・数分かかります）。",
-  "agents.muse_updating": "Muse Code を更新中…（約 299MB・数分かかります）。稼働中の muse セッションは再起動するまで古い版で動き続けます。",
+  "agents.muse_update_note": "ピンされたバージョンを再取得します（約 299MB・数分かかります）。",
+  "agents.muse_updating": "Muse Code を更新中…（約 299MB・数分かかります）。稼働中の muse セッションは再起動するまで古いバージョンで動き続けます。",
   "agents.muse_contributor": "contributor モード",
   "agents.muse_contributor_note":
     "オンにすると、Muse Code の会話（セッション間のメッセージを含む）が Meta の製品改善に使われることがあります（Muse Code の contributor モード）。既定はオフです。各セッションは作成時のモードを、停止・再開や Agent の再起動をまたいでも保ちます。変更は、以後に作成するセッションと、次回以降のアシスタント・AI 補助に反映されます。",

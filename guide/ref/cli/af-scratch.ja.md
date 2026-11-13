@@ -45,7 +45,7 @@ af-scratch --seed
 ```
 $ af-scratch target
 af-scratch: target を作業ディスクへ移しています…
-af-scratch: target -> /scratch/artifacts/home/dev/repos/shop/target（Workspace 停止で消えます）
+af-scratch: target -> /scratch/artifacts/home/dev/repos/shop/target（ワークスペース停止で消えます）
 ```
 
 停止したあともリンクは残りますが、リンク先はなくなっています。ビルドはリンクの先を作ってくれません。Gradle は

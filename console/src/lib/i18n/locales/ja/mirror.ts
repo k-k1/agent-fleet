@@ -40,7 +40,7 @@ export const mirror = {
   "mirror.attach_failed": "ファイルの添付に失敗しました",
   "mirror.attach_failed_net": "ファイルの添付に失敗しました（通信エラー）",
   // ヘッダ／実行設定
-  "mirror.exec_settings_edit": "モデル・推論 effort・モードを変更",
+  "mirror.exec_settings_edit": "モデル・推論の強さ・モードを変更",
   "mirror.exec_settings_after_resume": "再開後に実行設定を変更できます",
   "mirror.exec_settings": "実行設定",
   "mirror.plan_mode_note": "Plan モードです。承認するまで実装しません。",
@@ -163,7 +163,7 @@ export const mirror = {
   "mirror.viewing_history_ws_stopped": "履歴を閲覧中（ワークスペース停止中）",
   "mirror.select_in_terminal": "ターミナルで選択",
   "mirror.resume_choice_hint": "再開方法の選択待ち（コンテキスト維持は「2」）",
-  "mirror.skip_until_next": "次の版までスキップ",
+  "mirror.skip_until_next": "次のバージョンまでスキップ",
   "mirror.update_choice_hint": "アップデート確認の選択待ち",
   "mirror.resuming": "再開中… 準備ができると入力できます",
   // コンポーザ
@@ -213,7 +213,7 @@ export const mirror = {
   "mirror.toggle_mode": "モードを切り替え（Plan ⇄ 実装）",
   "mirror.pasted_image_zoom": "貼り付け画像（拡大）",
   // スキルピッカー（docs/log/50）
-  "mirror.skills_btn": "スキル / コマンド（入力欄の先頭でトリガ文字を打っても開く）",
+  "mirror.skills_btn": "スキル / コマンド（入力欄の先頭でトリガー文字を打っても開く）",
   "mirror.skills_loading": "スキルを読み込み中…",
   "mirror.skills_empty": "このセッションで使えるスキル / コマンドはありません",
   "mirror.skills_no_match": "一致するスキル / コマンドはありません",
@@ -382,9 +382,9 @@ export const mirror = {
   "mirror.from_operator": "オペレーターから",
   "mirror.from_operator_title": "フリート・オペレーター（アシスタント）が注入した指示です。あなたが入力したものではありません。",
   "mirror.from_schedule": "定時実行",
-  "mirror.from_schedule_title": "スケジュール（定時実行）が自動発火で投入したプロンプトです。あなたが入力したものではありません。",
-  "mirror.from_schedule_manual": "手動発火",
-  "mirror.from_schedule_manual_title": "スケジュールの手動発火（今すぐ発火）で投入されたプロンプトです。",
+  "mirror.from_schedule_title": "スケジュール（定時実行）が自動実行で投入したプロンプトです。あなたが入力したものではありません。",
+  "mirror.from_schedule_manual": "手動実行",
+  "mirror.from_schedule_manual_title": "スケジュールの手動実行（今すぐ実行）で投入されたプロンプトです。",
   "mirror.from_auto_resume": "自動再開",
   "mirror.from_auto_resume_title":
     "ターンが中断（接続断・一時的なレート制限など）したため、Agent が続きを実行するために自動で送ったプロンプトです。あなたもアシスタントも入力していません。",
@@ -406,7 +406,7 @@ export const mirror = {
   "mirror.from_spawn_title":
     "このセッションの最初のタスクは、あなたではなく別のセッションが書いたものです（create_session で起動されました）。エージェントには「セッションからの指示である」と伝えてあり、あなたの承認の代わりにはなりません。",
   "mirror.from_spawn_title_named":
-    "このセッションの最初のタスクは、あなたではなく別のセッションが書いたものです（{name} が create_session で起こしました）。エージェントには「セッションからの指示である」と伝えてあり、あなたの承認の代わりにはなりません。",
+    "このセッションの最初のタスクは、あなたではなく別のセッションが書いたものです（{name} が create_session で起動しました）。エージェントには「セッションからの指示である」と伝えてあり、あなたの承認の代わりにはなりません。",
   "mirror.peer_intent.request": "依頼",
   "mirror.peer_intent.question": "質問",
   "mirror.peer_intent.answer": "回答",
@@ -593,12 +593,12 @@ export const mirror = {
   "mirror.route_switch_progress": "API ルートへ切り替えています。自動再開の予約を取り消し、元のプロセスを止めて、API キーで起動し直します…",
   "mirror.route_switch_done": "API ルートに切り替えました。",
   "mirror.route_switch_carry_on": "利用上限で止まっていましたが、このセッションは API ルートに切り替わりました。止まったところから続けてください。",
-  "mirror.route_switch_carry_failed": "Agent が「続けて」のメッセージを断ったため、何も待ち行列に入っていません。メッセージを送って続けてください。",
+  "mirror.route_switch_carry_failed": "Agent が「続けて」のメッセージを断ったため、何もキューに入っていません。メッセージを送って続けてください。",
   "mirror.route_switch_cancel_pending": "自動再開の予約をまだ取り消せていません。取り消しは再試行され、先に実行されても無視されます。",
   "mirror.route_switch_incomplete": "切り替えが完了しませんでした: {detail}",
   "mirror.route_switch_refused": "何も変更していません: {detail}",
   "mirror.route_switch_carry_queued": "「続けて」のメッセージはセッションへ渡しましたが、入力されたかどうかは確認できません。しばらく返信が始まらなければ、メッセージを送ってください。",
   "mirror.route_switch_unknown": "切り替えへの応答が届かなかったため、切り替わったかどうかは分かりません: {detail} 再読み込みして、セッションがどの経路かを確認してから送ってください。",
-  "mirror.route_switch_carry_unknown": "「続けて」のメッセージがセッションに届いたか確認できませんでした。すでに待ち行列に入っているかもしれません。もう一度送る前に、会話にそのメッセージか返信がないか確認してください。",
+  "mirror.route_switch_carry_unknown": "「続けて」のメッセージがセッションに届いたか確認できませんでした。すでにキューに入っているかもしれません。もう一度送る前に、会話にそのメッセージか返信がないか確認してください。",
   "mirror.route_switch_carry_skipped": "「続けて」のメッセージを送る前にワークスペースを切り替えたため、送っていません。そのセッションを開いて、メッセージを送って続けてください。",
 };

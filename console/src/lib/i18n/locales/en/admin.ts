@@ -96,7 +96,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.delete_tenant_repo_hint": "⚠️ Delete the internal git repositories while a member is still on the roster: once the last one is removed, nobody can reach the screen that deletes them.",
   "admin.delete_tenant_confirm_title": "Delete the tenant {slug}?",
   "admin.delete_tenant_confirm": "Delete",
-  "admin.delete_tenant_body": "Deletes the tenant's settings (quotas, login rules, source-network restriction, sign-in methods, MCP distribution) and the rows of members already removed. This cannot be undone.",
+  "admin.delete_tenant_body": "Deletes the tenant's settings (quotas, sign-in rules, source-network restriction, sign-in methods, MCP distribution) and the rows of members already removed. This cannot be undone.",
   "admin.delete_tenant_kept": "The audit log, cloud cost and occupancy are kept (their tenant column will be blank).",
   // --- Tenant-distributed MCP servers (docs/log/48 P4, AdminTab's McpAdminView) ---
   "admin.mcp_intro":
@@ -546,7 +546,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // --- per-tenant login (docs/log/61 §61.9 · P3). The three rules look alike and are
   // not: reading "invite domains" as "domains that may use this tenant" is the
   // mistake that breaks the operation. ---
-  "admin.login_rules": "Login rules",
+  "admin.login_rules": "Sign-in rules",
   "admin.login_rules_note": "empty = no restriction",
   "admin.auto_join_domains": "Auto-join domains",
   "admin.auto_join_domains_unit": "joins this tenant on first sign-in",
@@ -683,7 +683,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.tab_limits": "Limits & idle",
   "tenant.group_login": "Sign-in",
   "tenant.tab_signin": "Sign-in methods",
-  "tenant.tab_rules": "Login rules",
+  "tenant.tab_rules": "Sign-in rules",
   "tenant.tab_network": "Allowed networks",
   "tenant.net_title": "Source networks",
   "tenant.net_on": "restricted",
@@ -781,7 +781,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.member_defaults_launch": "Launch defaults",
   "tenant.member_defaults_launch_note": "Prefill the launch dialog. A member's own choices win, and the Agent's own settings are never changed.",
   "tenant.member_defaults_model": "Model",
-  "tenant.member_defaults_driver": "Driver",
+  "tenant.member_defaults_driver": "Execution method",
   "tenant.member_defaults_driver_managed": "Managed",
   "tenant.member_defaults_driver_terminal": "Terminal (CLI)",
   "tenant.member_defaults_perm": "Permission prompts",

@@ -134,7 +134,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | Limits & idle | the limits in force (read-only; a deployment administrator sets them) |
 | Limit board | whether the tenant's members can publish their usage-limit state at all (on by default; each member is still hidden until they opt in) |
 | Sign-in methods | your own IdP or GitHub organisation as a way in (needs approval) |
-| Login rules | join mode and domains in force (read-only) |
+| Sign-in rules | join mode and domains in force (read-only) |
 | Allowed networks | where members may connect from; the same screen carries the **MCP OAuth** panel, which decides whether outside apps may connect to the tenant through OAuth ([Distribute an MCP server to everyone](../admin/mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth)) |
 | Integration OAuth apps | your tenant's own OAuth apps for GitHub / Bitbucket |
 | MCP distribution | integration servers handed to every member |

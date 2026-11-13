@@ -158,7 +158,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Which of the tenant's members may use the llm / image engines | tenant admin | Engine access | [Choose who may use the inference engines and which models](../admin/resources/engines.md#choose-the-members-who-may-use-them) |
 | Taking engine models in, when the tenant was granted it | tenant admin | Inference engine models | [Choose who may use the inference engines and which models](../admin/resources/engines.md#take-models-in) |
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
-| Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [Choose how people sign in](../admin/access/signin-methods.md) |
+| Sign-in methods and sign-in rules | tenant admin | Sign-in methods / Sign-in rules | [Choose how people sign in](../admin/access/signin-methods.md) |
 | Connection-source restriction | tenant admin | Allowed networks | [Limit the networks people sign in from](../admin/access/networks.md) |
 | Whether outside apps may connect to the tenant through MCP OAuth | tenant admin | Allowed networks → MCP OAuth | [Distribute an MCP server to everyone](../admin/mcp-distribute.md#stop-outside-apps-from-connecting-with-oauth) |
 | Integration app OAuth | tenant admin | Integration OAuth apps | [Choose the OAuth apps for integrations](../admin/access/oauth-apps.md) |
