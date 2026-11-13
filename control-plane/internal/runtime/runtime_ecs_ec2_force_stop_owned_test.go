@@ -48,9 +48,9 @@ func TestForceStopTakesTheRescueTokenAndReleasesItAfterTheStop(t *testing.T) {
 	if after, _ := h.rt.startGenNow(ctx); after != countAtDereg || after <= before {
 		t.Fatalf("count before %d, at the deregistration %d, after %d", before, countAtDereg, after)
 	}
-	if slotMarker(h) != "" || ec2TagValue(h.ec2.instances["i-wedge"].Tags, ec2TagWedgeAt) == "" {
+	if slotMarker(h) != "" || latestEpisode(h.ec2.instances["i-wedge"].Tags) == "" {
 		t.Fatalf("marker %q wedge-at %q: the episode must be recorded and the token released",
-			slotMarker(h), ec2TagValue(h.ec2.instances["i-wedge"].Tags, ec2TagWedgeAt))
+			slotMarker(h), latestEpisode(h.ec2.instances["i-wedge"].Tags))
 	}
 	if !res.Deregistered || stopsOnBox(h) != 1 || res.Predicate != "dark" {
 		t.Fatalf("res %+v stops %v", res, h.ec2.stopForce)

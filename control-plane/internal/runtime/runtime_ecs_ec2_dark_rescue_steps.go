@@ -42,6 +42,12 @@ func (e *ecsEC2Runtime) rescueSteps(ctx context.Context, slot string, m *rescueM
 			return err
 		}
 	}
+	if m.Phase.rank() < rescuePhaseDetaching.rank() {
+		// Rung L2, first trigger: the slot is out of the free list before its home is detached.
+		if err := e.rescueRepeatStage(ctx, slot, m); err != nil {
+			return err
+		}
+	}
 	if m.Phase.rank() < rescuePhaseDetached.rank() {
 		return e.rescueDetachStage(ctx, slot, m)
 	}

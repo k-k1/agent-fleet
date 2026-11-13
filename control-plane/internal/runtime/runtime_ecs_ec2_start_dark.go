@@ -75,7 +75,7 @@ type startAdmission struct {
 // admitStart is beginStart for a Start that may have to yield. With rescue off or `try`
 // exhausted it is exactly beginStart.
 func (e *ecsEC2Runtime) admitStart(ctx context.Context, mayRescue bool) (startAdmission, error) {
-	if e.pool.darkAction != darkActionRescue || e.pool.darkAfter <= 0 {
+	if !e.pool.darkActs() || e.pool.darkAfter <= 0 {
 		gen, err := e.beginStart(ctx)
 		return startAdmission{kind: admitStart, gen: gen}, err
 	}

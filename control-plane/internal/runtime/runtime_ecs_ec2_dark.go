@@ -22,10 +22,11 @@ const (
 	// a stamp from before a stop/start unusable: LaunchTime moves on every start.
 	ec2TagDarkSince = "af-dark-since"
 
-	// Values of AF_ECS_EC2_DARK_SLOT_ACTION. `quarantine` is not implemented.
-	darkActionOff    = "off"
-	darkActionDetect = "detect"
-	darkActionRescue = "rescue"
+	// Values of AF_ECS_EC2_DARK_SLOT_ACTION. `quarantine` is `rescue` plus rung L2.
+	darkActionOff        = "off"
+	darkActionDetect     = "detect"
+	darkActionRescue     = "rescue"
+	darkActionQuarantine = "quarantine"
 
 	darkStampDetected = "detected"
 )
@@ -41,14 +42,17 @@ type SlotDark struct {
 	// lasted darkAfter.
 	Since time.Time
 	// Action is what the event is: "" for the detection of an episode, "rescued" when the
-	// home was taken off a stopped slot, "blocked" when the rescue stopped at a bound.
+	// home was taken off a stopped slot, "blocked" when the rescue stopped at a bound,
+	// "quarantined" when rung L2 tagged the slot (Reason says why).
 	Action string
+	// Reason is the quarantine reason, as written to the box's tag; set with "quarantined".
+	Reason string
 }
 
-// parseDarkAction maps AF_ECS_EC2_DARK_SLOT_ACTION onto an implemented action. Unset is
-// detect, the ADR's first-release default. `quarantine` names a rung that does not exist yet;
-// it falls back to detect, which only writes a tag, rather than to off, so that an operator
-// who asked for more still gets the evidence the detect-only window exists to gather.
+// parseDarkAction maps AF_ECS_EC2_DARK_SLOT_ACTION onto an action. Unset is detect, the ADR's
+// first-release default; an unknown value falls back to detect, which only writes a tag,
+// rather than to off, so that an operator who asked for more still gets the evidence the
+// detect-only window exists to gather.
 func parseDarkAction(raw string) string {
 	switch v := strings.ToLower(strings.TrimSpace(raw)); v {
 	case "", darkActionDetect:
@@ -57,12 +61,19 @@ func parseDarkAction(raw string) string {
 		return darkActionOff
 	case darkActionRescue:
 		return darkActionRescue
-	case "quarantine":
-		log.Printf("ecs-ec2: AF_ECS_EC2_DARK_SLOT_ACTION=%s is not implemented yet; running detect-only", v)
+	case darkActionQuarantine:
+		return darkActionQuarantine
 	default:
-		log.Printf("ecs-ec2: AF_ECS_EC2_DARK_SLOT_ACTION=%q is not one of off|detect|rescue; running detect-only", raw)
+		log.Printf("ecs-ec2: AF_ECS_EC2_DARK_SLOT_ACTION=%q is not one of off|detect|rescue|quarantine; running detect-only", raw)
 	}
 	return darkActionDetect
+}
+
+// darkActs is whether the pool takes action on a dark slot: `rescue`, or `quarantine`, which
+// is the same ladder with rung L2 on top. Every place that used to compare with darkActionRescue
+// asks this, so that quarantine mode can never be a weaker rescue.
+func (p *ec2PoolConfig) darkActs() bool {
+	return p.darkAction == darkActionRescue || p.darkAction == darkActionQuarantine
 }
 
 // clampDark raises darkAfter to the floors ADR 0121 decision 1 names, so a misconfiguration
@@ -131,7 +142,7 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 	if (f.pool.darkAction != "" && f.pool.darkAction != darkActionOff) || f.pool.wedgedAction == wedgedActionRelease {
 		f.resumeRescues(ctx)
 	}
-	if (f.pool.darkAction != darkActionDetect && f.pool.darkAction != darkActionRescue) || f.pool.darkAfter <= 0 {
+	if (f.pool.darkAction != darkActionDetect && !f.pool.darkActs()) || f.pool.darkAfter <= 0 {
 		return
 	}
 	cmds, ok := f.ssmc.(ssmSlotCommands)
@@ -220,7 +231,7 @@ func (f *ecsEC2Factory) scanDarkSlot(ctx context.Context, cmds ssmSlotCommands, 
 	// moves the count the rescue's locked step compares against.
 	var gd int64
 	canRescue := false
-	if f.pool.darkAction == darkActionRescue {
+	if f.pool.darkActs() {
 		gd, canRescue = f.rescueStartCount(ctx, vol)
 	}
 	online, err := ssmOnline(ctx, cmds, id)

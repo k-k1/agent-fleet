@@ -5,6 +5,7 @@ import (
 	"log"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -63,8 +64,8 @@ type ec2SlotView struct {
 }
 
 // Values of ec2SlotView.Rung (ADR 0121 decision 5). Observing comes from the af-dark-since
-// stamp; rescuing, blocked and rescued from the af-rescue marker; quarantined is not produced
-// yet.
+// stamp; rescuing, blocked and rescued from the af-rescue marker; quarantined from a quarantined
+// box whose reason is rung L2's.
 const (
 	darkRungObserving   = "observing"
 	darkRungRescuing    = "rescuing"
@@ -83,6 +84,10 @@ const (
 // a recovery (scan off, home detached, a live claim, an AWS read that failed). A pure read; it
 // never writes.
 func darkView(inst ec2types.Instance) (since, rung string) {
+	// Rung L2: the reason prefix tells it from a mount-failure quarantine. It outranks the
+	// marker, which is still on the box while the rescue is retried or finishing.
+	quarantined := ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined &&
+		strings.HasPrefix(ec2TagValue(inst.Tags, ec2TagQuarantineReason), quarantineReasonPrefix)
 	// A marker speaks for the box in any state: a rescued box is stopped, and the rung says
 	// how far the rescue got.
 	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && !m.Wedged && !m.Operator {
@@ -97,7 +102,13 @@ func darkView(inst ec2types.Instance) (since, rung string) {
 		if st, ok := parseDarkStamp(ec2TagValue(inst.Tags, ec2TagDarkSince)); ok {
 			since = st.since.UTC().Format(time.RFC3339)
 		}
+		if quarantined {
+			rung = darkRungQuarantined
+		}
 		return since, rung
+	}
+	if quarantined {
+		return ec2TagValue(inst.Tags, ec2TagQuarantineAt), darkRungQuarantined
 	}
 	if inst.State == nil || inst.State.Name != ec2types.InstanceStateNameRunning || inst.LaunchTime == nil {
 		return "", ""

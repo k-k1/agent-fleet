@@ -165,8 +165,18 @@ func (w *rescueWorld) marker() string {
 	return ec2TagValue(w.h.ec2.instances["i-dark"].Tags, ec2TagRescue)
 }
 
+// wedgeAt is the latest episode record on the box (the maximum, as the repeat test reads it),
+// RFC 3339, or "" when there is none.
 func (w *rescueWorld) wedgeAt() string {
-	return ec2TagValue(w.h.ec2.instances["i-dark"].Tags, ec2TagWedgeAt)
+	return latestEpisode(w.h.ec2.instances["i-dark"].Tags)
+}
+
+func latestEpisode(tags []ec2types.Tag) string {
+	recs := episodeRecordsOf(tags)
+	if len(recs) == 0 {
+		return ""
+	}
+	return recs[len(recs)-1].at.UTC().Format(time.RFC3339)
 }
 
 // untouched asserts the destructive half of the ladder never ran: this phase has none.
@@ -712,7 +722,9 @@ func TestRescueFinalizerKeepsTheMarkerWhenItCannotRecordTheEpisode(t *testing.T)
 				return nil
 			}
 		},
-		"the tag write fails": func(w *rescueWorld) { w.h.ec2.createTagsErr = map[string]error{ec2TagWedgeAt: errBoom} },
+		"the tag write fails": func(w *rescueWorld) {
+			w.h.ec2.createTagsErr = map[string]error{ec2TagWedgeAtPrefix + began.Format(episodeKeyLayout): errBoom}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newRescueWorld(t, true)

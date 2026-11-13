@@ -124,7 +124,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.state_asleep": "asleep",
   "pool.state_quarantined": "quarantined",
   "pool.quarantined_hint":
-    "{n} slot(s) could not mount a home and were taken out of the pool, so nobody else lands on them. They are stopped, but their root volume stays and keeps billing: once you have taken what you need from the instance, remove it with “Terminate” at the end of its row.",
+    "{n} slot(s) were taken out of the pool, so nobody else lands on them: a home could not be mounted, or a dark slot went dark again or its rescue stayed blocked (the reason is in the tooltip). Their root volume stays and keeps billing: once you have taken what you need from the instance, remove it with “Terminate” at the end of its row. A slot that still holds a home cannot be terminated until the home is off it.",
   "pool.terminate": "Terminate",
   "pool.terminate_title": "Terminate slot {id}?",
   "pool.terminate_body":

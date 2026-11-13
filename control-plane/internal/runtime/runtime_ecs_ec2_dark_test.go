@@ -259,7 +259,7 @@ func TestDarkStampRoundTripAndClamp(t *testing.T) {
 	if off.darkAfter != 0 {
 		t.Fatal("0 must stay off")
 	}
-	for in, want := range map[string]string{"": "detect", "off": "off", "DETECT": "detect", "rescue": "rescue", "quarantine": "detect", "bogus": "detect"} {
+	for in, want := range map[string]string{"": "detect", "off": "off", "DETECT": "detect", "rescue": "rescue", "quarantine": "quarantine", "bogus": "detect"} {
 		if got := parseDarkAction(in); got != want {
 			t.Fatalf("parseDarkAction(%q) = %q, want %q", in, got, want)
 		}

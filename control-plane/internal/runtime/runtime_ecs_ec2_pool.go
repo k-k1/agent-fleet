@@ -206,6 +206,11 @@ type ec2PoolConfig struct {
 	// default 5). Zero means the default.
 	darkProbeBudget  time.Duration
 	darkProbeTimeout time.Duration
+	// darkRepeatWindow and rescueBlockedAfter are rung L2's two triggers
+	// (AF_ECS_EC2_DARK_REPEAT_WINDOW_SEC, default 86400; AF_ECS_EC2_RESCUE_BLOCKED_AFTER_SEC,
+	// default 1800), read through repeatWindow / blockedAfter so that zero means the default.
+	darkRepeatWindow   time.Duration
+	rescueBlockedAfter time.Duration
 	// wedgedAction / wedgedAfter configure the wedged-slot scan (ADR 0121, amendment of
 	// 2026-11-12): AF_ECS_EC2_WEDGED_SLOT_ACTION (off | detect, default detect) and
 	// AF_ECS_EC2_WEDGED_AFTER_SEC (default 600, 0 = off). A sibling of the dark flag, not the
@@ -365,15 +370,17 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		// Default ON, unlike the other timers here: this one does not change what the
 		// product does in the normal case, it only puts an end to a wait that was
 		// previously unbounded in practice. See the field comment for the incident.
-		slotLostAfter:    time.Duration(EnvInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
-		hostReserveMiB:   parseHostReserveMiB(envOr("AF_ECS_EC2_HOST_RESERVE_MB", "auto")),
-		darkAction:       parseDarkAction(os.Getenv("AF_ECS_EC2_DARK_SLOT_ACTION")),
-		darkAfter:        time.Duration(EnvInt("AF_ECS_EC2_DARK_AFTER_SEC", 600)) * time.Second,
-		darkBootGrace:    time.Duration(EnvInt("AF_ECS_EC2_DARK_BOOT_GRACE_SEC", 300)) * time.Second,
-		darkProbeBudget:  time.Duration(EnvInt("AF_ECS_EC2_DARK_PROBE_BUDGET_SEC", 30)) * time.Second,
-		darkProbeTimeout: time.Duration(EnvInt("AF_ECS_EC2_DARK_PROBE_TIMEOUT_SEC", 5)) * time.Second,
-		wedgedAction:     parseWedgedAction(os.Getenv("AF_ECS_EC2_WEDGED_SLOT_ACTION")),
-		wedgedAfter:      time.Duration(EnvInt("AF_ECS_EC2_WEDGED_AFTER_SEC", 600)) * time.Second,
+		slotLostAfter:      time.Duration(EnvInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
+		hostReserveMiB:     parseHostReserveMiB(envOr("AF_ECS_EC2_HOST_RESERVE_MB", "auto")),
+		darkAction:         parseDarkAction(os.Getenv("AF_ECS_EC2_DARK_SLOT_ACTION")),
+		darkAfter:          time.Duration(EnvInt("AF_ECS_EC2_DARK_AFTER_SEC", 600)) * time.Second,
+		darkBootGrace:      time.Duration(EnvInt("AF_ECS_EC2_DARK_BOOT_GRACE_SEC", 300)) * time.Second,
+		darkProbeBudget:    time.Duration(EnvInt("AF_ECS_EC2_DARK_PROBE_BUDGET_SEC", 30)) * time.Second,
+		darkProbeTimeout:   time.Duration(EnvInt("AF_ECS_EC2_DARK_PROBE_TIMEOUT_SEC", 5)) * time.Second,
+		darkRepeatWindow:   time.Duration(EnvInt("AF_ECS_EC2_DARK_REPEAT_WINDOW_SEC", 86400)) * time.Second,
+		rescueBlockedAfter: time.Duration(EnvInt("AF_ECS_EC2_RESCUE_BLOCKED_AFTER_SEC", 1800)) * time.Second,
+		wedgedAction:       parseWedgedAction(os.Getenv("AF_ECS_EC2_WEDGED_SLOT_ACTION")),
+		wedgedAfter:        time.Duration(EnvInt("AF_ECS_EC2_WEDGED_AFTER_SEC", 600)) * time.Second,
 	}
 	pool.clampDark()
 	pool.clampWedged()

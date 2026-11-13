@@ -129,7 +129,7 @@ func (m *manager) auditSlotAutoReplace(ctx context.Context, ev runtime.SlotAutoR
 
 // auditSlotDark records what the ecs-ec2 sweeper did about a slot with a home that went dark
 // (ADR 0121): the detection of an episode (nothing was done to the slot), a rescue that took the
-// home off a stopped instance, or a rescue blocked at a bound. The tenant is resolved from the membership the
+// home off a stopped instance, or a rescue blocked at a bound, or the quarantine of a slot (rung L2). The tenant is resolved from the membership the
 // sweeper read off the home's tags; when it cannot be (a removed member) the row is
 // deployment-wide rather than lost.
 func (m *manager) auditSlotDark(ctx context.Context, ev runtime.SlotDark) {
@@ -144,6 +144,9 @@ func (m *manager) auditSlotDark(ctx context.Context, ev runtime.SlotDark) {
 		action = "pool.slot_dark_rescued"
 	case "blocked":
 		action = "pool.slot_dark_blocked"
+	case "quarantined":
+		action = "pool.slot_dark_quarantined"
+		detail += " reason=" + ev.Reason
 	}
 	if err := m.store.InsertAudit(ctx, store.AuditLog{
 		ID: store.NewID(), TenantID: tenantID, ActorKind: "system", ActorID: "slot-dark",

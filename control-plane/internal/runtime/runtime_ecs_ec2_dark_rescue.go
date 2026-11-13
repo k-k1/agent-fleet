@@ -23,12 +23,6 @@ import (
 // answer, so there is nothing to prove with (ADR 0121, 2026-11-12 note on #3993). The check
 // runs under the claim lock, in rescuePrepare.
 
-const (
-	// ec2TagWedgeAt is the `began` of the latest episode that acted on the box, RFC 3339.
-	// Advisory (ADR 0121 Open question 8): nothing gates on it.
-	ec2TagWedgeAt = "af-wedge-at"
-)
-
 // Bounds on waiting for a lock. They are variables only so a test can shorten them.
 var (
 	// rescueClaimBudget bounds the wait for the claim lock; rescueMountBudget the wait for
@@ -116,7 +110,7 @@ func (e *ecsEC2Runtime) lockBounded(ctx context.Context, which, subject string, 
 
 // rescueDarkSlot is the entry from the dark scan for a slot that has been dark for darkAfter.
 func (f *ecsEC2Factory) rescueDarkSlot(ctx context.Context, d darkDecision) {
-	if f.pool.darkAction != darkActionRescue {
+	if !f.pool.darkActs() {
 		return
 	}
 	rt := f.rescueRuntime(d.vol)
@@ -434,6 +428,8 @@ func (e *ecsEC2Runtime) rescueContinue(ctx context.Context, cmds ssmSlotCommands
 		if blockedBefore.IsZero() || !blockedBefore.Equal(m.BlockedSince) {
 			e.reportEpisode(ctx, slot, m, "blocked")
 		}
+		// Rung L2, second trigger. The blocked rescue keeps being retried after it.
+		e.rescueBlockedQuarantine(ctx, slot, &m)
 	case errors.Is(err, errRescueOvertaken):
 		log.Printf("ecs-ec2 sweep: rescue of %s on %s overtaken: %v", e.base.name, slot, err)
 		e.finalizeRescue(ctx, slot, m.String(), m)
@@ -587,9 +583,9 @@ func (e *ecsEC2Runtime) rescueOwned(ctx context.Context, m rescueMarker, instanc
 
 // finalizeRescue is the finalizer of decision 4. It touches tags only, so it needs no count
 // or epoch match. A marker still at `begun` took no action on the box and is just removed;
-// any later phase may have acted on it, so it is an episode: af-wedge-at gets the marker's
-// `began` if that is later than what is there, under the per-instance lease, and then the
-// marker (matched on its exact value, raw) is removed. A lease not had, a read or a write
+// any later phase may have acted on it, so it is an episode: it gets its own record
+// (recordEpisode, under the per-instance lease), and then the marker (matched on its exact
+// value, raw) is removed. A lease not had, a read or a write
 // that fails leaves the marker for the next pass.
 func (e *ecsEC2Runtime) finalizeRescue(ctx context.Context, instanceID, raw string, m rescueMarker) {
 	if m.Phase != rescuePhaseBegun && m.Phase != rescuePhasePreparing {
@@ -607,20 +603,14 @@ func (e *ecsEC2Runtime) finalizeRescue(ctx context.Context, instanceID, raw stri
 		if inst == nil {
 			return // gone, and its tags with it
 		}
-		cur, err := time.Parse(time.RFC3339, ec2TagValue(inst.Tags, ec2TagWedgeAt))
-		if err != nil || m.Began.After(cur) {
-			// The clock decides, not the lease's timer callback.
-			if err := homeGuardOf(ctx).check(); err != nil {
-				log.Printf("ecs-ec2: finalizing the rescue of %s: lease lapsed, the marker stays: %v", instanceID, err)
-				return
-			}
-			if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
-				Resources: []string{instanceID},
-				Tags:      []ec2types.Tag{{Key: aws.String(ec2TagWedgeAt), Value: aws.String(m.Began.UTC().Format(time.RFC3339))}},
-			}); err != nil {
-				log.Printf("ecs-ec2: recording the episode on %s failed, the marker stays: %v", instanceID, err)
-				return
-			}
+		// The clock decides, not the lease's timer callback.
+		if err := homeGuardOf(ctx).check(); err != nil {
+			log.Printf("ecs-ec2: finalizing the rescue of %s: lease lapsed, the marker stays: %v", instanceID, err)
+			return
+		}
+		if err := e.recordEpisode(ctx, instanceID, inst.Tags, m); err != nil {
+			log.Printf("ecs-ec2: recording the episode on %s failed, the marker stays: %v", instanceID, err)
+			return
 		}
 	}
 	if m.Wedged {
@@ -744,7 +734,7 @@ func (f *ecsEC2Factory) canContinue(m rescueMarker) bool {
 	if m.Wedged {
 		return f.pool.wedgedAction == wedgedActionRelease
 	}
-	return f.pool.darkAction == darkActionRescue
+	return f.pool.darkActs()
 }
 
 // rescueMarkedInstances lists the boxes of this pool that carry a marker, in any live state.
