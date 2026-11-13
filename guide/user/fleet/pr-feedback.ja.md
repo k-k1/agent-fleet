@@ -88,7 +88,7 @@ Bitbucket Pipelines も同じ形で、`source` に `bitbucket` を指定しま�
 | `ref` | 知らせるとき |
 |---|---|
 | 実行の URL（`https://bitbucket.org/w/r/pipelines/results/123`）または `w/r:run/123` | その実行が終わったとき。すでに終わっている実行はすぐに伝えます |
-| `w/r:pipelines`、カスタムパイプラインなら `w/r:pipelines/nightly`、ブランチなら `w/r:pipelines@main`、両方なら `w/r:pipelines/nightly@main` | （そのカスタムパイプライン・ブランチの）次の実行が終わったとき。見張りを作ったあとに始まった実行、または作る前の 10 分以内に始まった実行が対象です（GitHub と同じ規則） |
+| `w/r:pipelines`、カスタムパイプラインなら `w/r:pipelines/nightly`、ブランチなら `w/r:pipelines@main`、両方なら `w/r:pipelines/nightly@main` | （そのカスタムパイプライン・ブランチの）次の実行が終わったとき。見張りを作ったあとに始まった実行、または作る前のおよそ 10 分以内（分単位に切り下げるので最大 11 分弱前まで）に始まった実行が対象です（通知の繰り返しや複数完了の扱いも GitHub と同じ規則） |
 
 - 停止（キャンセル）または期限切れの実行は、GitHub Actions のキャンセルと同じく失敗として扱います。知らせには実行番号と結果が入り、ブランチと失敗したステップの名前は引用符付きのデータです
 - Bitbucket は 1 時間あたりのリクエスト数が少ないため、1 つのワークスペースで持てる Pipelines の見張りは最大 5 件で、実行中はおよそ 1 分に 1 回、次の実行を待つあいだは 5 分に 1 回確認します。Bitbucket 接続に Pipelines を読む権限が必要で、足りないときはエージェントに再接続を促します
