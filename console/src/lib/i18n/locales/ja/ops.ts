@@ -140,6 +140,8 @@ export const ops = {
   "pool.force_stop_failed": "停止できませんでした: {msg}",
   "pool.force_stop_done":
     "{id} に停止を送りました。未実行のコマンド {cancelled} 件を取り消しました{failed}。{how}",
+  "pool.force_stop_in_progress":
+    "{id} の停止を受け付けました。Control Plane 側で実行中で、このページを閉じても最後まで進みます。結果はスロットの行の次の更新で確認できます。",
   "pool.force_stop_cancel_failed": "（{n} 件は取り消せず）",
   "pool.force_stop_graceful": "まず通常の停止を送り、{min} 分たっても止まらなければ Force 付きでもう一度送ります。停止処理中にもう一度押すと、すぐ Force で送ります。メンバーに Start してもらうのは、スロットの行が休止中（停止済み）になってからにしてください。早く Start すると、インスタンスの停止待ちで時間切れになり、claim が切れるまでワークスペースが「起動中」のままになることがあります。その場合はワークスペースを停止してからもう一度 Start してください。",
   "pool.force_stop_forced": "Force 付きで停止を送りました（すでに停止処理中だったため）。",

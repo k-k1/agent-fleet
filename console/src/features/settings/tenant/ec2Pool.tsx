@@ -163,6 +163,8 @@ type ForceStopReply = {
   forced: boolean;
   force_after_sec: number;
   stopping_task?: string;
+  /** 202: accepted, still running on the Control Plane. */
+  in_progress?: boolean;
 };
 type BulkReply = {
   reserved?: { instance_id: string }[];
@@ -420,7 +422,12 @@ export function PoolView() {
           </div>
         )}
         {reserveErr && <p className="warn-text">{reserveErr}</p>}
-        {stopped && (
+        {stopped?.in_progress && (
+          <p className="admin-hint" role="status">
+            {tr("pool.force_stop_in_progress", { id: stopped.instance_id })}
+          </p>
+        )}
+        {stopped && !stopped.in_progress && (
           <p className="admin-hint" role="status">
             {tr("pool.force_stop_done", {
               id: stopped.instance_id,

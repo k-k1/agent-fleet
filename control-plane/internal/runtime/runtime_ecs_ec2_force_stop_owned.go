@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -26,6 +27,26 @@ import (
 // take it over: a rescue that is merely slow is left to finish, one nobody carries on
 // (a CP that restarted with the action switched off) is not a reason to refuse for good.
 var forceStopAdoptAfter = 10 * time.Minute
+
+// ErrSlotForceStopInProgress: the request ended (or its time ran out) after the force-stop had
+// taken the rescue token. The work goes on to its own end and releases the token; this is the
+// answer to the one who stopped waiting, not a failure.
+var ErrSlotForceStopInProgress = errors.New("the force-stop is in progress; its result shows on the slot's next refresh")
+
+type forceStopLateKey struct{}
+
+// WithForceStopLate registers fn to receive the final answer of a force-stop whose caller
+// stopped waiting (ErrSlotForceStopInProgress). The value survives the detaching of the
+// context, which is the point: the audit outcome is written from here.
+func WithForceStopLate(ctx context.Context, fn func(SlotForceStop, error)) context.Context {
+	return context.WithValue(ctx, forceStopLateKey{}, fn)
+}
+
+// ForceStopLateFrom returns the callback WithForceStopLate registered on ctx, nil when none.
+func ForceStopLateFrom(ctx context.Context) func(SlotForceStop, error) {
+	fn, _ := ctx.Value(forceStopLateKey{}).(func(SlotForceStop, error))
+	return fn
+}
 
 // forceStopHealth is the health gate. The slot has to meet the dark predicate (both
 // cluster legs silent, the Agent does not answer) or the wedged predicate (ECS agent
@@ -143,15 +164,110 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 			return res, fmt.Errorf("not stopping %s: %w (the occupant's start is ended)", id, err)
 		}
 	}
-	if err := rescueStep(ctx, "prepared"); err != nil {
-		return res, err
+	// The token is taken. From here the work belongs to the CP, not to the request: a client
+	// that goes away (a closed Console page, the ingress idle timeout) must not leave the box
+	// deregistered but not stopped. The request's context only ends the wait for the answer.
+	return f.forceStopDetached(ctx, func(dctx context.Context) (SlotForceStop, error) {
+		return f.forceStopTokenHeld(dctx, bgCtx, cmds, inst, occ, m, ids, adopted, res)
+	}, res)
+}
+
+// forceStopDetached runs fn on a context the CP owns and returns its answer, or, when ctx
+// ends first, ErrSlotForceStopInProgress with what is known so far; fn is never interrupted
+// by that. When the caller gave up, the final answer goes to the ForceStopLate callback on
+// ctx (the audit outcome) or, with none, to the log.
+//
+// The detached context carries no deadline of the request's; it has its own forceStopBudget
+// from the moment the token was taken. It is not tied to the process: like every other
+// background step of the pool (backgroundWithin) it ends on its budget or with the process,
+// and a process that dies mid-way leaves the operator's marker, which ages out and is taken
+// over by the next press (forceStopAdoptAfter).
+func (f *ecsEC2Factory) forceStopDetached(ctx context.Context, fn func(context.Context) (SlotForceStop, error),
+	partial SlotForceStop) (SlotForceStop, error) {
+	type outcome struct {
+		res SlotForceStop
+		err error
 	}
+	late := ForceStopLateFrom(ctx)
+	var (
+		mu       sync.Mutex
+		gone     bool
+		finished bool
+	)
+	done := make(chan outcome, 1)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forceStopBudget)
+	go func() {
+		defer cancel()
+		// This goroutine is outside net/http's recovery: a panic here would end the whole CP
+		// and leave no audit outcome. It becomes the error of the one answer instead.
+		res, err := func() (res SlotForceStop, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					res, err = partial, fmt.Errorf("force-stop of %s panicked: %v", partial.InstanceID, r)
+				}
+			}()
+			return fn(dctx)
+		}()
+		mu.Lock()
+		finished = true
+		abandoned := gone
+		mu.Unlock()
+		if !abandoned {
+			done <- outcome{res, err}
+			return
+		}
+		if late != nil {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("ecs-ec2: force-stop of slot %s: outcome callback panicked: %v", res.InstanceID, r)
+					}
+				}()
+				late(res, err)
+			}()
+			return
+		}
+		log.Printf("ecs-ec2: force-stop of slot %s finished after its request ended: %v (%+v)", res.InstanceID, err, res)
+	}()
+	select {
+	case o := <-done:
+		return o.res, o.err
+	case <-ctx.Done():
+	}
+	mu.Lock()
+	if finished {
+		mu.Unlock()
+		o := <-done
+		return o.res, o.err
+	}
+	gone = true
+	mu.Unlock()
+	return partial, ErrSlotForceStopInProgress
+}
+
+// forceStopTokenHeld is the rest of the owned force-stop, after the token is taken, on the
+// CP's own context. Whatever way it ends the token is released (finalizeRescue, or giveUp
+// for a failure) and the answer is returned for the audit.
+func (f *ecsEC2Factory) forceStopTokenHeld(ctx, bgCtx context.Context, cmds ssmSlotCommands, inst *ec2types.Instance,
+	occ *ecsEC2Runtime, m rescueMarker, ids []string, adopted bool, res SlotForceStop) (out SlotForceStop, err error) {
+	id := aws.ToString(inst.InstanceId)
+	started := time.Now()
 	// What a failed attempt leaves behind: an operator marker nobody carries on. Removed, so
 	// it does not fence the home until it ages out.
 	giveUp := func() {
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*rescueWedgeBudget)
 		defer cancel()
 		occ.finalizeRescue(fctx, id, m.String(), m)
+	}
+	// A panic must not strand the token: release it (bounded) and answer with an error.
+	defer func() {
+		if r := recover(); r != nil {
+			giveUp()
+			out, err = res, fmt.Errorf("force-stop of %s panicked: %v", id, r)
+		}
+	}()
+	if err := rescueStep(ctx, "prepared"); err != nil {
+		return res, err
 	}
 
 	res.CancelledCommands, res.CancelFailed = cancelCommandIDs(ctx, cmds, id, ids)

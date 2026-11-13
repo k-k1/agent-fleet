@@ -455,3 +455,129 @@ func TestForceStopYoungBlockedOperatorMarkerIsRefused(t *testing.T) {
 		t.Fatalf("err %v stops %v", err, h.ec2.stopForce)
 	}
 }
+
+// The request ends right after the deregistration (a closed Console page). The work belongs to
+// the CP from the moment the token is taken, so the stop still goes out, the token is released
+// and the episode recorded; the caller only learns it is in progress, and the final answer
+// reaches the late callback that writes the audit outcome.
+func TestForceStopFinishesWhenTheRequestEndsAfterTheDeregistration(t *testing.T) {
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	defer cancelReq()
+	type late struct {
+		res SlotForceStop
+		err error
+	}
+	lateCh := make(chan late, 1)
+	ctx := WithForceStopLate(reqCtx, func(r SlotForceStop, err error) { lateCh <- late{r, err} })
+	// Hold the work at the hook until the caller has stopped waiting, so the order is certain.
+	released := make(chan struct{})
+	hookAt("deregistered", func() {
+		cancelReq()
+		<-released
+	})
+	defer func() { rescueStepHook = nil }()
+
+	res, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+	if !errors.Is(err, ErrSlotForceStopInProgress) {
+		t.Fatalf("ForceStopSlot after the request ended = %+v, %v; want ErrSlotForceStopInProgress", res, err)
+	}
+	close(released)
+	var got late
+	select {
+	case got = <-lateCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the force-stop never finished after its request ended")
+	}
+	if got.err != nil || !got.res.Deregistered || stopsOnBox(h) != 1 {
+		t.Fatalf("late answer %+v, %v; stops %v", got.res, got.err, h.ec2.stopForce)
+	}
+	if slotMarker(h) != "" || latestEpisode(h.ec2.instances["i-wedge"].Tags) == "" {
+		t.Fatalf("marker %q episode %q: the token must be released and the episode recorded",
+			slotMarker(h), latestEpisode(h.ec2.instances["i-wedge"].Tags))
+	}
+}
+
+// A request that ends before the token is taken refuses cleanly and touches nothing: no
+// deregistration, no stop, and the caller gets the failure, not "in progress".
+func TestForceStopRequestEndedBeforeTheTokenTouchesNothing(t *testing.T) {
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rescueStepHook = func(c context.Context, step string) error {
+		if step == "counted" { // inside the token's preparation, before it is complete
+			cancel()
+			return c.Err()
+		}
+		return nil
+	}
+	defer func() { rescueStepHook = nil }()
+
+	res, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+	if err == nil || errors.Is(err, ErrSlotForceStopInProgress) {
+		t.Fatalf("ForceStopSlot = %+v, %v; want a refusal", res, err)
+	}
+	if stopsOnBox(h) != 0 || res.Deregistered {
+		t.Fatalf("a request that ended before the token touched the box: res %+v stops %v", res, h.ec2.stopForce)
+	}
+}
+
+// A panic in the detached work must not end the process (the goroutine is outside net/http's
+// recovery) or strand the token: it becomes the one answer's error, and the marker is released.
+func TestForceStopPanicBecomesTheOneAnswerAndReleasesTheToken(t *testing.T) {
+	setup := func(t *testing.T, beforePanic func()) *ec2Harness {
+		h := wedgedSlot(t)
+		h.ec2.giveTaskENI("i-wedge")
+		hookAt("deregistered", func() {
+			beforePanic()
+			panic("boom")
+		})
+		t.Cleanup(func() { rescueStepHook = nil })
+		return h
+	}
+	t.Run("caller still waiting", func(t *testing.T) {
+		h := setup(t, func() {})
+		_, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false)
+		if err == nil || !strings.Contains(err.Error(), "panicked") {
+			t.Fatalf("err = %v, want the panic as an error", err)
+		}
+		if m := slotMarker(h); m != "" || stopsOnBox(h) != 0 {
+			t.Fatalf("marker %q stops %v: the token must be released", m, h.ec2.stopForce)
+		}
+	})
+	t.Run("caller gone", func(t *testing.T) {
+		reqCtx, cancelReq := context.WithCancel(context.Background())
+		defer cancelReq()
+		released := make(chan struct{})
+		// Hold the worker at the hook until ForceStopSlot has returned, so the caller is
+		// certainly gone before the panic fires.
+		h := setup(t, func() {
+			cancelReq()
+			<-released
+		})
+		calls := make(chan error, 2)
+		ctx := WithForceStopLate(reqCtx, func(_ SlotForceStop, err error) { calls <- err })
+		_, err := h.factory().ForceStopSlot(ctx, "i-wedge", false)
+		close(released)
+		if !errors.Is(err, ErrSlotForceStopInProgress) {
+			t.Fatalf("err = %v, want in progress", err)
+		}
+		select {
+		case err := <-calls:
+			if err == nil || !strings.Contains(err.Error(), "panicked") {
+				t.Fatalf("late err = %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("no late outcome after a panic")
+		}
+		time.Sleep(50 * time.Millisecond)
+		if len(calls) != 0 {
+			t.Fatal("more than one outcome")
+		}
+		if m := slotMarker(h); m != "" {
+			t.Fatalf("marker %q left behind", m)
+		}
+	})
+}
