@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -130,6 +131,33 @@ func TestGCloudExecProcess(t *testing.T) {
 		t.Errorf("no account: exit %d %q", code, msg)
 	}
 	// --no-login never asks the Console; it names the terminal login instead.
+	// The command is named in the row and on the login request by the words the pinned SDK
+	// knows; the filter's value reaches neither, nor any file, answer or notice.
+	const sentinel = "sentinel-secret-4036"
+	nCode, nOut, nMsg := run("--profile", "fresh", "--project", "fresh-project", "--", "gcloud", "compute", "instances", "list", "--filter=name="+sentinel)
+	if nCode != 3 || strings.Contains(nOut+nMsg, sentinel) {
+		t.Errorf("named login run: exit %d %q %q", nCode, nOut, nMsg)
+	}
+	named := false
+	_ = filepath.WalkDir(home, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return nil
+		}
+		b, _ := os.ReadFile(path)
+		if bytes.Contains(b, []byte(sentinel)) {
+			t.Errorf("%s holds the sentinel", path)
+		}
+		if bytes.Contains(b, []byte(`"gcloud compute instances list"`)) && !strings.Contains(path, "cloud-runs") {
+			named = true
+		}
+		return nil
+	})
+	if !named {
+		t.Error("the login request does not name `gcloud compute instances list`")
+	}
+	if code, _, msg := run("--profile", "fresh", "--project", "fresh-project", "--", "gcloud", "nosuchcommand-xyz", "--filter=name="+sentinel); code != 3 || strings.Contains(msg, sentinel) {
+		t.Errorf("unknown word: exit %d %q", code, msg)
+	}
 	if code, _, msg := run("--profile", "fresh", "--project", "fresh-project", "--no-login", "--", "true"); code != 3 || !strings.Contains(msg, "--login") ||
 		strings.Contains(msg, "Agent Fleet Console") {
 		t.Errorf("no account, --no-login: exit %d %q", code, msg)
@@ -161,17 +189,23 @@ func TestGCloudExecProcess(t *testing.T) {
 		t.Errorf("failing command: exit %d, want 5", code)
 	}
 	// Exactly one row per run that named a command, in order: no --project, the project
-	// mismatch, the two login-required runs, the run and the failing run. --list left none.
+	// mismatch, the login-required runs, the run and the failing run. --list left none.
 	rows := gcpRows(t, home)
-	if len(rows) != 6 {
-		t.Fatalf("rows = %d, want 6: %+v", len(rows), rows)
+	if len(rows) != 8 {
+		t.Fatalf("rows = %d, want 8: %+v", len(rows), rows)
 	}
-	for i, want := range []string{cloudruns.RefusedUsage, cloudruns.RefusedOther, cloudruns.RefusedLogin, cloudruns.RefusedLogin, "", ""} {
+	for i, want := range []string{cloudruns.RefusedUsage, cloudruns.RefusedOther, cloudruns.RefusedLogin, cloudruns.RefusedLogin, cloudruns.RefusedLogin, cloudruns.RefusedLogin, "", ""} {
 		if rows[i].Provider != "gcp" || rows[i].Refused != want {
 			t.Errorf("row %d = %+v, want refused %q", i, rows[i], want)
 		}
 	}
-	ok, failed := rows[4], rows[5]
+	if r := rows[3]; r.Program != "gcloud" || r.Service != "compute" || r.Operation != "instances list" {
+		t.Errorf("named row = %+v, want gcloud compute instances list", r)
+	}
+	if r := rows[4]; r.Program != "gcloud" || r.Service != "" || r.Operation != "" {
+		t.Errorf("unknown-word row = %+v, want gcloud alone", r)
+	}
+	ok, failed := rows[6], rows[7]
 	if ok.Provider != "gcp" || ok.Profile != "prod" || ok.Project != "prod-project" || ok.Principal != "dev@example.com" ||
 		ok.Program != "sh" || ok.Exit == nil || *ok.Exit != 0 || ok.Refused != "" {
 		t.Errorf("run row = %+v", ok)

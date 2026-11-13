@@ -66,6 +66,51 @@ func TestDescribeKeepsOnlyKnownServiceAndOperation(t *testing.T) {
 	}
 }
 
+func TestDescribeNamesTheLongestKnownGCloudPath(t *testing.T) {
+	for argv, want := range map[string]string{
+		"gcloud compute instances list --filter=name=SECRET":    "gcloud compute instances list",
+		"/usr/bin/gcloud projects delete my-secret-project":     "gcloud projects delete",
+		"gcloud compute instances list-secret-xyz":              "gcloud compute instances",
+		"gcloud compute SECRET instances list":                  "gcloud compute",
+		"gcloud --project p compute instances list":             "gcloud",
+		"gcloud SECRETWORD":                                     "gcloud",
+		"gcloud nosuchcommand-xyz --filter=a":                   "gcloud",
+		"gcloud":                                                "gcloud",
+		"gcloud beta run services describe svc --region=SECRET": "gcloud beta run services describe",
+	} {
+		got := Describe(strings.Fields(argv))
+		if got != want {
+			t.Errorf("Describe(%q) = %q, want %q", argv, got, want)
+		}
+		if strings.Contains(got, "SECRET") || strings.Contains(got, "secret") {
+			t.Errorf("Describe(%q) = %q leaks an argument", argv, got)
+		}
+	}
+	if p, s, o := describe([]string{"gcloud", "compute", "instances", "list"}); p != "gcloud" || s != "compute" || o != "instances list" {
+		t.Errorf("describe = %q %q %q", p, s, o)
+	}
+}
+
+// TestGCloudCommandsMatchPin fails when the embedded command table was read from another SDK
+// than the one workspace/Dockerfile pins: rerun gen_gcloud_commands.py.
+func TestGCloudCommandsMatchPin(t *testing.T) {
+	b, err := os.ReadFile("../../../Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^ARG GCLOUD_VERSION=(\S+)$`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("no GCLOUD_VERSION in workspace/Dockerfile")
+	}
+	cmds, version := gcloudCommands()
+	if version != string(m[1]) {
+		t.Fatalf("gcloud_commands.txt.gz is from SDK %q, the Dockerfile pins %q: run gen_gcloud_commands.py", version, m[1])
+	}
+	if len(cmds) < 10000 || !cmds["compute instances list"] || !cmds["projects"] || !cmds["config set"] {
+		t.Fatalf("command table looks wrong: %d paths", len(cmds))
+	}
+}
+
 func TestDescribeJoinsTheKeptWords(t *testing.T) {
 	for argv, want := range map[string]string{
 		"aws ec2 describe-instances --filters x --region ap-northeast-1": "aws ec2 describe-instances",
@@ -150,7 +195,7 @@ func TestGCPRowLifecycle(t *testing.T) {
 	g := ForSession("cr-gcp")[0]
 	if g.Provider != "gcp" || g.Project != "example.com:my-project" || g.Principal != "dev@example.com" ||
 		g.Impersonates != "deployer@my-project.iam.gserviceaccount.com" || g.Region != "asia-northeast1" ||
-		g.Program != "gcloud" || g.Service != "" || g.Operation != "" {
+		g.Program != "gcloud" || g.Service != "compute" || g.Operation != "instances list" {
 		t.Fatalf("row = %+v", g)
 	}
 	if g.EndedAt != "" || g.Exit != nil {

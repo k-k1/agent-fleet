@@ -152,6 +152,9 @@ Press "**Log in**" to open the same login window as above.
   leaves the request open
 - Logging in from the profile's row in Settings, or from the badge's list, settles the waiting request too
 
+For `gcloud` the toast and the run row show the command the SDK knows (`gcloud compute instances list`), for other
+programs only their name; arguments such as a `--filter` value are never shown.
+
 Each run is recorded in the session's conversation (without the command's arguments). Runs from every session are
 under "**Recent runs**" on the "Google Cloud" tab of Settings.
 
