@@ -23,6 +23,7 @@ type SubagentFolds[T any] struct {
 	mu   sync.Mutex
 	m    map[string]subagentFoldSession[T]
 	idle time.Duration
+	seq  uint64 // under mu; orders the calls by when they read their starting state
 }
 
 type subagentFoldEntry[T any] struct {
@@ -34,6 +35,7 @@ type subagentFoldSession[T any] struct {
 	createdAt string // a recreated name is a new session; never serve its predecessor's values
 	agents    map[string]subagentFoldEntry[T]
 	used      time.Time
+	seq       uint64 // the call that stored this; a call that started earlier never overwrites it
 }
 
 // NewSubagentFolds returns an empty cache that drops a session's entries once nobody has read
@@ -51,14 +53,13 @@ func (c *SubagentFolds[T]) Fold(m session.Meta, now time.Time, fold func([]trans
 	groups := SubagentLogs(m)
 	c.mu.Lock()
 	prev := c.m[m.Name]
+	c.seq++
+	seq := c.seq
 	c.mu.Unlock()
 	if prev.createdAt != m.CreatedAt {
 		prev.agents = nil
 	}
-	next := subagentFoldSession[T]{createdAt: m.CreatedAt, agents: make(map[string]subagentFoldEntry[T], len(groups)), used: now}
-	if prev.used.After(now) { // a concurrent call with a later clock reading wrote first
-		next.used = prev.used
-	}
+	next := subagentFoldSession[T]{createdAt: m.CreatedAt, agents: make(map[string]subagentFoldEntry[T], len(groups)), used: now, seq: seq}
 	var out []T
 	for _, paths := range groups {
 		// Stat before reading: a file that grows in between is read with more than the cached
@@ -96,9 +97,23 @@ func (c *SubagentFolds[T]) Fold(m session.Meta, now time.Time, fold func([]trans
 		out = append(out, e.val)
 	}
 	c.mu.Lock()
-	if len(next.agents) == 0 {
+	// Two calls on one session can overlap (the usage pass and a ?name= read, or the budget's
+	// own callers). The one that read its starting state later saw the files later, so a slower
+	// earlier call must not put back older stamps or drop agents found since; the idle clock is
+	// compared under the lock for the same reason, so it never moves backwards.
+	cur, had := c.m[m.Name]
+	switch {
+	case had && cur.seq > seq:
+		if now.After(cur.used) {
+			cur.used = now
+			c.m[m.Name] = cur
+		}
+	case len(next.agents) == 0:
 		delete(c.m, m.Name)
-	} else {
+	default:
+		if had && cur.used.After(next.used) {
+			next.used = cur.used
+		}
 		c.m[m.Name] = next
 	}
 	for name, s := range c.m {

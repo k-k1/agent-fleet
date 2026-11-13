@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // coldUsageFixture gives every session a FIFO for one transcript: reading it blocks until the test
@@ -122,6 +123,26 @@ func TestHandleSessionsUsageColdCallIsBounded(t *testing.T) {
 				t.Fatalf("cold call: sessions=%v pending=%d, want none and %d", names, pending, n)
 			}
 
+			// Asking again during the stall, as pending tells callers to, joins the one pass
+			// still running instead of starting another walk over the same stalled files.
+			usagePassMu.Lock()
+			first := usagePassCur
+			usagePassMu.Unlock()
+			if first == nil {
+				t.Fatal("no pass running during the stall")
+			}
+			for i := 0; i < 3; i++ {
+				if _, p, _ := callSessionsUsage(t, 3*time.Second); p != n {
+					t.Fatalf("repeat call %d: pending=%d, want %d", i, p, n)
+				}
+				usagePassMu.Lock()
+				cur := usagePassCur
+				usagePassMu.Unlock()
+				if cur != first {
+					t.Fatalf("repeat call %d started a second pass", i)
+				}
+			}
+
 			// The stall ends; the background work the cold call left fills the cache, and a later
 			// call reports every session.
 			release()
@@ -143,5 +164,63 @@ func TestHandleSessionsUsageColdCallIsBounded(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Two overlapping folds of one session: the call that started later stores first, and the slower,
+// earlier call must not put back its older view (a stale stamp, and no agent added since).
+func TestSubagentFoldsEarlierCallNeverOverwritesLater(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	m := session.Meta{Name: "cold3885order", Dir: t.TempDir(), Kind: session.KindClaude, CreatedAt: "2026-11-13T09:00:00Z"}
+	dir := filepath.Join(cfg, "projects", "p1", session.UUID(m.Dir, m.Name), "subagents")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a, added := filepath.Join(dir, "agent-a.jsonl"), filepath.Join(dir, "agent-c.jsonl")
+	if err := syscall.Mkfifo(a, 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	// A second name for the FIFO, to reach the slow call after a's path becomes a plain file.
+	held := filepath.Join(t.TempDir(), "held")
+	if err := os.Link(a, held); err != nil {
+		t.Skipf("link: %v", err)
+	}
+	c := NewSubagentFolds[int](time.Hour)
+	fold := func([]transcript.Turn) int { return 1 }
+
+	slow := make(chan struct{})
+	go func() {
+		defer close(slow)
+		c.Fold(m, time.Now(), fold) // blocks reading the FIFO
+	}()
+	// A blocking open for writing returns once the slow call has the FIFO open; holding the
+	// writer keeps that call blocked in its read.
+	w, err := os.OpenFile(held, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := func(p string) {
+		tmp := p + ".tmp"
+		if err := os.WriteFile(tmp, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plain(a)
+	plain(added)
+	if got := len(c.Fold(m, time.Now(), fold)); got != 2 {
+		t.Fatalf("later call folded %d agents, want 2", got)
+	}
+	w.Close()
+	select {
+	case <-slow:
+	case <-time.After(3 * time.Second):
+		t.Fatal("slow call never returned")
+	}
+	if _, ok := c.Cached(m.Name, added); !ok || c.Len(m.Name) != 2 {
+		t.Fatalf("the earlier call overwrote the later one: agent-c cached=%v, agents=%d, want true and 2", ok, c.Len(m.Name))
 	}
 }

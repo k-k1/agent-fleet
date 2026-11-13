@@ -172,21 +172,19 @@ const usageCacheIdle = 24 * time.Hour
 
 var mainUsage = newMainUsageCache(usageCacheIdle)
 
-var usageWarming atomic.Bool
-
-// WarmSessionUsage fills the usage read's caches (main transcript and subagents) for every
-// transcript-capable session, one at a time, so the first all-sessions read after an agent restart
-// or a cut-off cold read finds them warm. Only one pass runs at a time.
-func WarmSessionUsage() {
-	if !usageWarming.CompareAndSwap(false, true) {
-		return
-	}
-	defer usageWarming.Store(false)
+// usageMetas lists the sessions the usage read reports: not archived, and of a kind that keeps a
+// transcript (shell and ssm do not).
+func usageMetas() []session.Meta {
+	var out []session.Meta
 	for _, m := range session.ListMetas() {
-		if m.Archived || !AgentOf(m.Kind).Caps().CanTranscript {
-			continue
+		if !m.Archived && AgentOf(m.Kind).Caps().CanTranscript {
+			out = append(out, m)
 		}
-		u := mainUsage.get(m, time.Now())
-		addSubagentUsage(&u, m)
 	}
+	return out
 }
+
+// WarmSessionUsage starts filling the usage read's caches (main transcript and subagents) for every
+// transcript-capable session, so the first all-sessions read after an agent restart finds them
+// warm. It joins the running pass when there is one, and does not wait for it.
+func WarmSessionUsage() { joinUsagePass(usageMetas()) }
