@@ -102,8 +102,8 @@ Targets and `[SILENT]` apply to schedules that drive a session. A schedule that 
 With **Stop when done** on, the session stops when the run is done. Asking the operator, it is `stop_after_run`.
 
 - The report comes first and the stop after it. The stopped session can be resumed
-- A session woken at an hour nobody is watching does not keep holding memory afterwards
-- When the workspace itself stops does not change: a session that has finished its work already does not hold off the idle auto-stop
+- A session started at an hour nobody is watching does not keep holding memory after its run
+- The time the workspace itself stops does not change: a session that has finished its work already does not hold off the idle auto-stop
 
 ## Run only when a work item query has something new
 

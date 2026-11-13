@@ -16,7 +16,7 @@ Write its findings into the memories and agents read them as suspect.
 |---|---|
 | Check one scope's memories with the lint report | (Nothing. The report writes nothing) |
 | Write the findings into memory with `af-memory lint --apply` or Automatic lint marks | Gets a memory with findings as suspect, with its reasons, whenever it reads it |
-| Fix memories reported as stale or wrong | Reports a memory that failed it with `memory_feedback` |
+| Fix memories reported as stale or wrong | Reports a memory that turned out stale or wrong with `memory_feedback` |
 
 ## Read the lint report
 

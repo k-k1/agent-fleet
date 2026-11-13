@@ -38,7 +38,7 @@ Under "Session" in **⚙ Settings → Agents**, turn on **Messages between sessi
 - **To stopped sessions too.** The other session is resumed first, then the message is delivered
 - **Delivery is confirmed; being read or acted on is not.** A reply is not guaranteed either
 - **Only text goes across.** No conversation history, no files. To pass the context, use [Hand off to another session or agent](../sessions/handoff.md#choose-a-way)
-- **shell and ssm sessions can neither send nor receive.** A message would run as a command as it stands
+- **shell and ssm sessions can neither send nor receive.** Anything sent would run verbatim as a command
 
 ### When the other session is busy
 
@@ -61,7 +61,7 @@ Typed into the dialog, it would pick an option for you.
 - The sender is told the message is waiting, so it does not send it again
 - A message waits for up to 24 hours, 20 per session. It survives the session or the Agent stopping, and is dropped when the session is archived or deleted
 
-A session showing an expired login or the usage-limit menu still refuses, as before: that can last for hours, and the sender is better off knowing.
+A session showing an expired login or the usage-limit menu still refuses it: that can last for hours, and the sender is better off knowing.
 
 ## Kinds of message
 

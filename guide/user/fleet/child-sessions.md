@@ -99,7 +99,7 @@ About the stalled-tree notice:
 
 - **Children outlive their parent.** When the parent ends, its children keep running. The parent is told to list the children it leaves behind and their state before its last turn, so read that list
 - Only you can delete or archive a child. Once deleted or archived, it no longer counts towards Children per session
-- The same goes for a child left stopped and archived automatically when its time is up ([Stop and resume a session](../sessions/stop-resume.md#leave-a-session-stopped)). Merely stopping it does not free the slot
+- The same goes for a child left stopped and archived automatically when its time is up ([Stop and resume a session](../sessions/stop-resume.md#leave-a-session-stopped)). Merely stopping it does not take it out of the count
 - Each child is one agent: it uses the workspace's memory and spends that agent's usage from your share
 - In Settings' **Agent usage**, a child's spend shows separately as **Started by a session**. It is not added to the parent's figures
 

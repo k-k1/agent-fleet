@@ -180,7 +180,7 @@ Claude Code 自身のメモリをオンに戻したあとに使います。
 
 ## ターミナルから使う
 
-Claude Code と muse の取り込みと Claude Code への書き戻しは、ワークスペースの端末から `af-memory` でもできます。
+Claude Code と muse の取り込みと Claude Code への書き戻しは、ワークスペースのターミナルから `af-memory` でもできます。
 スイッチと秘密情報の検査は Console と同じです。
 
 ```sh
@@ -192,7 +192,7 @@ af-memory export --project <ID か名前> --dry-run  # 書き戻しのプレビ�
 
 すべてのサブコマンドとオプションは [af-memory](../../ref/cli/af-memory.ja.md) にあります。
 
-## うまくいかないとき
+## 困ったとき
 
 ### 「取り込む」が押せない
 

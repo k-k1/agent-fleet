@@ -83,7 +83,7 @@ GitHub Actions:
 - The notice says the run number, the attempt and the result. The workflow's name and the names and links of failed jobs are quoted data, as for check names
 - Reads are conditional (an unchanged run costs no request quota), quick while the run is queued or running, and count in the same limits as pull request watches
 
-Bitbucket Pipelines works the same way, with `source` set to `bitbucket` (a `bitbucket.org` run URL needs no source). The shapes are the Actions ones:
+Bitbucket Pipelines works the same way, with `source` set to `bitbucket` (a `bitbucket.org` run URL needs no source). The `ref` shapes follow the Actions ones:
 
 | `ref` | Fires when |
 |---|---|
@@ -92,7 +92,7 @@ Bitbucket Pipelines works the same way, with `source` set to `bitbucket` (a `bit
 
 - A stopped (cancelled) or expired run counts as failed, as a cancelled Actions run does. The notice says the run number and the result; the branch and the names of failed steps are quoted data
 - Bitbucket allows few requests an hour, so a workspace can hold at most 5 Pipelines watches, and a run is checked about once a minute while it runs (every 5 minutes while waiting for the next one). Your Bitbucket connection needs permission to read Pipelines; if it lacks it, the agent is told to reconnect
-- A new run is recognised from Bitbucket's own build numbers and timestamps, and the next 250 runs of the repository are searched for the branch; a branch that is quiet among very busy ones can be missed
+- A new run is recognised from Bitbucket's own build numbers and timestamps, and only the repository's latest 250 runs are searched for the branch; a quiet branch among very busy ones can be missed
 
 ### Send the notices to the parent
 
