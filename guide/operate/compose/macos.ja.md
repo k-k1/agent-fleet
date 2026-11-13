@@ -15,7 +15,7 @@ Docker のエンジン（colima・OrbStack・Docker Desktop）で動かすか、
 | あなたがやること | 起きること |
 |---|---|
 | `.env` に Mac 用の値を書く | Control Plane が 1 人用（`AUTH=dev`）で起動する |
-| 重ね合わせのファイル `docker-compose.macos.yml` を足して起動する | Control Plane がブリッジのネットワークで動き、`host.docker.internal` でワークスペースに届く |
+| 重ね合わせのファイル `docker-compose.macos.yml` を足して起動する | Control Plane がブリッジネットワークで動き、`host.docker.internal` でワークスペースに届く |
 | Mac のブラウザで `http://127.0.0.1:8099` を開く | Console が開き、ワークスペースを起動できる |
 
 対象と対象外は次のとおりです。
@@ -33,7 +33,7 @@ Docker のエンジン（colima・OrbStack・Docker Desktop）で動かすか、
 colima・OrbStack・Docker Desktop のそれぞれで、ワークスペースの起動、`linux/arm64`、共有ディレクトリの home の所有者と権限、headless Chromium、停止→起動で home が残ることを確かめてあります。
 
 - colima は `colima start --vm-type vz --mount-type virtiofs` で起動したものです
-- OrbStack と Docker Desktop は、ログインした画面から 1 回起動しておく必要があります。そのあとは、どの端末からでも下のコマンドが動きます
+- OrbStack と Docker Desktop は、Mac にログインした画面から 1 回起動しておく必要があります。そのあとは、どの端末からでも下のコマンドが動きます
 
 ### 1. `.env` を書く
 
@@ -74,11 +74,11 @@ Mac のブラウザで `http://127.0.0.1:8099` を開きます。
 
 | 制約 | Mac での扱い |
 |---|---|
-| A. ホストのネットワーク | Mac ではデーモンが Linux の VM の中で動くので、「ホスト」は VM です。重ね合わせは Control Plane をブリッジのネットワークに置き、`host.docker.internal`（`WS_AGENT_HOST`）でワークスペースに届きます。ワークスペースには同じ名前で [ワークスペース専用のリスナー](workspace-listener.ja.md) を渡します。ワークスペースの中の `127.0.0.1` はワークスペース自身だからです。2 つのポートは Mac のループバックにだけ公開されます |
+| A. ホストのネットワーク | Mac ではデーモンが Linux の VM の中で動くので、「ホスト」は VM です。重ね合わせは Control Plane をブリッジネットワークに置き、`host.docker.internal`（`WS_AGENT_HOST`）でワークスペースに届きます。ワークスペースの中の `127.0.0.1` はワークスペース自身を指すので、ワークスペースには同じ名前で [ワークスペース専用のリスナー](workspace-listener.ja.md) を渡します。2 つのポートは Mac のループバックにだけ公開されます |
 | B. `DATA_DIR` の絶対パス | home は、エンジンが VM と共有するディレクトリに置かれます。colima と virtiofs では、ファイルは uid 1000 と権限（`~/.ssh` は 700、新しいファイルは 600）を保ち、書き込みもコンテナ自身のディスクより遅くありませんでした。ほかのエンジンのファイル共有は振る舞いが違うことがあります |
 | C. ユーザーと docker グループ | 上の `DOCKER_GID` |
 
-確かめていない別の道もあります。Docker Desktop 4.34 以降はホストのネットワークを有効にでき（Settings → Resources → Network）、OrbStack は `network_mode: host` に対応しています。これを使えば、`docker-compose.yml` をそのまま使えるかもしれません。
+まだ確かめていない別の方法もあります。Docker Desktop 4.34 以降はホストネットワーキングを有効にでき（Settings → Resources → Network）、OrbStack は `network_mode: host` に対応しています。これを使えば、`docker-compose.yml` をそのまま使えるかもしれません。
 
 ## Linux の VM でネイティブパッケージを動かす
 
@@ -86,7 +86,7 @@ macOS には bubblewrap も Linux のユーザー名前空間もなく、ワー�
 
 1. Linux の VM を用意します（Lima、OrbStack のマシン（`orb create ubuntu`）など）
 2. VM の中で `linux-arm64` のパッケージを入れ、`af start` します（[ネイティブパッケージを入れる](../native/install.ja.md)）
-3. Mac のブラウザから、VM のポート転送で `http://localhost:8099` を開きます
+3. Mac のブラウザから、VM のポートフォワードで `http://localhost:8099` を開きます
 
 - Lima の Ubuntu LTS のテンプレートと、OrbStack のマシンで、インストール・起動・ワークスペースの起動・停止→起動を確かめてあります。OrbStack のマシンのポートは、Mac の `localhost` にも届きます
 - Ubuntu の VM は、ほかの Ubuntu 23.10 以降と同じく、特権のないユーザー名前空間を制限しています。先に [AppArmor の設定](../native/install.ja.md#ubuntu-2310-以降で-apparmor-が止めるとき) をしておきます
@@ -98,7 +98,7 @@ macOS には bubblewrap も Linux のユーザー名前空間もなく、ワー�
 | Control Plane が `AUTH=dev` を拒んで起動しない | `AF_ALLOW_INSECURE_DEV_AUTH=1` |
 | サインインしても、どのテナントにも入れない | `AF_PROVISION=auto` |
 | docker のソケットで permission denied | `DOCKER_GID` を、使っているエンジンで測り直したか |
-| エンジンを切り替えたら、前のデータが見える・ポートがぶつかる | エンジンごとに `DATA_DIR` を分け、前のエンジンを止めてから `docker context use <名前>` で切り替えます |
+| エンジンを切り替えたら、前のデータが見える・ポートが衝突する | エンジンごとに `DATA_DIR` を分け、前のエンジンを止めてから `docker context use <名前>` で切り替えます |
 
 ## 関連
 

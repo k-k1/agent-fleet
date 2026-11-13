@@ -8,14 +8,14 @@ source_of_truth: "管理 → 推論エンジンの「LAN の ComfyUI（画像エ
 [English](comfyui.md) | 日本語
 
 自分のネットワークで動いている ComfyUI を、`compose` / `native` / `docker` の配備から画像エンジンとして使わせます。
-セッションは Control Plane を通して使うので、ComfyUI の場所も鍵も知りません。
+セッションは Control Plane を通して使うので、ComfyUI の場所もキーも知りません。
 
 ## 全体像
 
 | あなたがやること | 起きること |
 |---|---|
 | GPU のあるマシンで ComfyUI を動かす（フリートと同じイメージを `comfyui-lan.sh` で起動できる） | ComfyUI がポートで待ち受ける |
-| 管理 → 推論エンジンのパネル、または `AF_COMFY_URL` に URL と鍵を入れる | Control Plane が画像エンジンの行を 1 本作り、セッションの画像生成をそこへ中継する |
+| 管理 → 推論エンジンのパネル、または `AF_COMFY_URL` に URL とキーを入れる | Control Plane が画像エンジンの行を 1 本作り、セッションの画像生成をそこへ中継する |
 | 推論エンジンの画面でモデルを手で登録する | メンバーとエージェントがそのモデルで画像を生成できる |
 | ComfyUI に Control Plane 以外が届かないようにする | セッションが Control Plane を迂回して ComfyUI を直接使うことを防ぐ |
 
@@ -43,7 +43,7 @@ ComfyUI がまだないなら、`deploy/comfyui-lan/comfyui-lan.sh` で、`ecs-e
 | `--models <dir>` | ComfyUI の `models/` として読み取り専用でマウントするフォルダ。種類のフォルダ（`checkpoints/`・`diffusion_models/`・`clip/`・`text_encoders/`・`vae/`・`loras/`）はなければ作ります。ファイルはダウンロードしません |
 | `--bind <addr>` | ポートを公開するアドレス。既定は `127.0.0.1` で、Control Plane が同じマシンにあるときだけ使えます。別のマシンなら LAN のアドレスを渡します。`0.0.0.0` は `--all-interfaces` を付けたときだけ受け付けます |
 | `--port <n>` | 公開するポート。既定は `8188` です |
-| `--api-key-file <file>` | bearer を確かめる proxy（Caddy）を ComfyUI の前に置き、ComfyUI 自体は公開しません。ファイルには 24 文字以上の鍵を 1 つ書き、所有者だけが読めるようにします |
+| `--api-key-file <file>` | Bearer キーを検証するリバースプロキシ（Caddy）を ComfyUI の前に置き、ComfyUI 自体は公開しません。ファイルには 24 文字以上のキーを 1 つ書き、所有者だけが読めるようにします |
 | `--pull` / `--digest sha256:…` / `--build` | イメージを取り直す、digest で固定する、取る代わりにマシンの上でビルドする |
 
 ほかのコマンド:
@@ -59,7 +59,7 @@ ComfyUI がまだないなら、`deploy/comfyui-lan/comfyui-lan.sh` で、`ecs-e
 - ComfyUI が書き出した画像はコンテナの中にあり、作り直すと消えます
 - コンテナは docker と一緒に再起動します（`--restart unless-stopped`）
 
-自分で立てた ComfyUI を使うときは、`--listen` を付けて起動し（付けないと loopback にしか応答しません）、Control Plane のマシンからそのポートへの着信をファイアウォールで許可します。
+自分で立てた ComfyUI を使うときは、`--listen` を付けて起動し（付けないとループバックにしか応答しません）、Control Plane のマシンからそのポートへの着信をファイアウォールで許可します。
 Windows の ComfyUI Desktop で `--listen` にあたる設定は確かめていません。
 
 ## Control Plane に ComfyUI の場所を教える
@@ -101,17 +101,17 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 
 | 順 | 出どころ | パネルの表示 |
 |---|---|---|
-| 1 | エンジンスタックが管理する `image` の行（AWS） | 入力欄は出ません。LAN の ComfyUI を使うには、スタックからこの役割を外します |
+| 1 | エンジンスタックが管理する `image` の行（AWS） | 入力欄は出ません。LAN の ComfyUI を使うには、スタックからこの役を外します |
 | 2 | パネルに保存した URL | 「使用中: …（このパネルで設定）」 |
 | 3 | `AF_COMFY_URL` | 「使用中: …（Control Plane の環境変数 AF_COMFY_URL）」 |
 | 4 | エンジン表の外部の行、または別の Agent Fleet から借りたエンジン | 「使用中: …（この配備のエンジン表）」など |
 
 「**パネルの設定を削除**」は、画像生成を止める操作ではありません。押すと、この順で次にあるものがすぐに引き継ぎます。
-画像生成を止めるには、推論エンジンの画面でエンジンを**オフ**にします。
+画像生成を止めるには、推論エンジンの画面でエンジンを「**無効**」にします。
 
 ## 画像エンジンを複数並べる
 
-画像エンジンはどれも、エンジン表の 1 行です。`AF_COMFY_URL` は、鍵 `image` の行を 1 本書く近道です。
+画像エンジンはどれも、エンジン表の 1 行です。`AF_COMFY_URL` は、キーが `image` の行を 1 本書く近道です。
 それ以外の行は、`compose` / `native` / `docker` なら Control Plane が起動のときに読む `AF_ENGINES_JSON` に書きます（行の形は下の例）。
 
 ```bash
@@ -127,19 +127,19 @@ AF_ENGINES_JSON='{"engines":[
 
 | やりたいこと | 書き方 |
 |---|---|
-| 借りた `image` の横に LAN の ComfyUI を置く | `AF_COMFY_URL` ではなく、表に `comfy-lan` のような自分の鍵で行を書く。同じ鍵の役は借りません |
+| 借りた `image` の横に LAN の ComfyUI を置く | `AF_COMFY_URL` ではなく、表に `comfy-lan` のような自分のキーで行を書く。この配備がすでに持っているキーの役は借りません |
 | OpenAI 互換の画像サーバーを使う | `external` の行に `provider: "openai-compat"` を書く。モデルの重みはサーバー側にあり、宣言するファイルはありません |
-| 行ごとの bearer を渡す | `AF_ENGINE_API_KEY_<KEY>` に書く。`<KEY>` は行の鍵を大文字にし、英数字以外を `_` にしたもの（鍵 `oai-image` なら `AF_ENGINE_API_KEY_OAI_IMAGE`） |
+| 行ごとの Bearer キーを渡す | `AF_ENGINE_API_KEY_<KEY>` に書く。`<KEY>` は行のキーを大文字にし、英数字以外を `_` にしたもの（キーが `oai-image` なら `AF_ENGINE_API_KEY_OAI_IMAGE`） |
 
 - どのエンジンを先に使うかはメンバーが決めます。設定 → エージェントの「**画像生成の優先順位**」に、エンジンがそれぞれの名前で並びます。失敗すると次のエンジンへ移ります（[セッションに画像を作らせる](../../user/images/from-session.ja.md)）
-- `generate_image` の `provider` に行の鍵を渡すと、そのエンジンだけを使います。失敗しても次へは移りません
+- `generate_image` の `provider` に行のキーを渡すと、そのエンジンだけを使います。失敗しても次へは移りません
 - Control Plane が使える provider は `comfy` と `openai-compat` です。それ以外の provider の行には、推論エンジンの画面で印が付き、名乗っている provider 名が出ます。行を向け直してください
 
 ## オンとオフ
 
-推論エンジンの画面では、この種のエンジンは「**外部管理**」として出ます。モードはオンとオフの 2 つだけで、オンデマンドはありません。
+推論エンジンの画面では、この種のエンジンは「**外部管理**」として出ます。モードは「**無効**」と「**常時稼働**」の 2 つだけで、オンデマンドはありません。
 
-- オフは経路を閉じるだけです。セッションにエンジンが出なくなりますが、ComfyUI は動き続けます。止めるときは、そのマシンで止めます
+- 「無効」は経路を閉じるだけです。セッションにエンジンが出なくなりますが、ComfyUI は動き続けます。止めるときは、そのマシンで止めます
 - 状態・希望台数・インスタンス・いつ止まるかの欄は出ません。配備はそれを知らないからです
 
 ## モデルを登録する
@@ -149,7 +149,7 @@ AF_ENGINES_JSON='{"engines":[
 | 項目 | 書くこと |
 |---|---|
 | id | メンバーに見せる名前 |
-| `base_model`（ファミリー） | どのワークフローを使うかを決める鍵です。間違えると、生成したときにだけ失敗します |
+| `base_model`（ファミリー） | どのワークフローを使うかを決めるキーです。間違えると、生成したときにだけ失敗します |
 | ファイル名 | ComfyUI の loader が列挙するとおりの綴り |
 
 ファイル名を調べるには、外部管理の ComfyUI の行で「**このエンジンのファイルを調べる**」を押します。
@@ -171,8 +171,8 @@ ComfyUI 自体には認証がなく、その API でプロンプトの投入や�
 
 | 方法 | 内容 |
 |---|---|
-| ComfyUI の前に reverse proxy を置く | bearer を要求し、その鍵は Control Plane にだけ渡します。`/system_stats`（ヘルスチェック）にも同じ bearer を要求します。`comfyui-lan.sh --api-key-file` がこの proxy を立てます。いま使えるのはこちらです |
-| 外向き通信の統制を enforce にする | 許可リストにないプライベートアドレスへの通信を落とします。ただし、ワークスペースの通信を proxy に通すことはまだ強制していません（[外向きの通信を制御する](../secure/egress.ja.md)） |
+| ComfyUI の前にリバースプロキシを置く | Bearer キーを要求し、そのキーは Control Plane にだけ渡します。`/system_stats`（ヘルスチェック）にも同じキーを要求します。`comfyui-lan.sh --api-key-file` がこのプロキシを立てます。いま使えるのはこちらです |
+| 外向き通信の統制を enforce にする | 許可リストにないプライベートアドレスへの通信を落とします。ただし、ワークスペースの通信をプロキシに通すことはまだ強制していません（[外向きの通信を制御する](../secure/egress.ja.md)） |
 
 どちらも取らないなら、この配備でセッションを使える人は誰でもその GPU を使えます。
 
@@ -180,13 +180,13 @@ ComfyUI 自体には認証がなく、その API でプロンプトの投入や�
 
 ### 画像の生成がすぐに失敗する
 
-Control Plane は自分が持っていないエンジンを待ちません。ComfyUI が答えないと、要求はすぐに `503 engine_unavailable` で断られます。本文には試した URL と health のパスが入ります。
+Control Plane は自分が持っていないエンジンを待ちません。ComfyUI が答えないと、要求はすぐに `503 engine_unavailable` で断られます。レスポンスの本文には、試した URL とヘルスチェックのパスが入ります。
 
 次の順に確かめます。
 
 1. そのマシンで ComfyUI が動いているか（`comfyui-lan.sh status`）
 2. Control Plane のマシンから、そのアドレスとポートに届くか
-3. 鍵を付けた proxy なら、Control Plane に同じ鍵を渡しているか
+3. キーを要求するプロキシなら、Control Plane に同じキーを渡しているか
 
 ### パネルに出るもの・出ないもの
 

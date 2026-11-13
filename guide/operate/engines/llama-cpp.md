@@ -42,7 +42,7 @@ llama-server -hf <repo>:<quant> --alias <model id> -c <window> -ngl 99 --jinja \
 
 | Argument | Why |
 |---|---|
-| `--alias` | Becomes the name in `/v1/models`. Without it the `-hf` / `-m` path appears as is, and an unreadable name stays in the launch menu and the records. Serving one model, it answers even when the request's `model` does not match. In router mode, which serves several models, a name that does not match does not arrive |
+| `--alias` | Becomes the name in `/v1/models`. Without it the `-hf` / `-m` path appears as is, and an unreadable name stays in the launch menu and the records. Serving one model, it answers even when the request's `model` does not match. In router mode, which serves several models, a request whose name does not match reaches no model |
 | `-c` | At least the `context_tokens` of the model you register. 8192 or more is a guide |
 | `--host 0.0.0.0` | Without it, it answers on loopback only |
 | `--port` | Set it explicitly. llama.cpp has announced a change to its default port |
@@ -111,7 +111,7 @@ The Control Plane does not wait for an engine it does not own. When llama-server
 Everything above is a deployment-wide setting. Separately, a member can connect straight to their own llama-server under Settings → Agents → llama.cpp, "**Your own connection**" ([Use lcpp](../../user/agents/lcpp.md)).
 
 - Once set, it wins over the deployment's `llm` engine for that member's sessions
-- It does not go through the Control Plane, so it is not stopped even when a tenant administrator has turned chat inference off. Like any other tool a member points at a server on their own network, this is intended
+- It does not go through the Control Plane, so it is not stopped even when a tenant administrator has turned chat inference off. This is intended: it is no different from a member pointing any other tool at a server on their own network
 
 ## Related
 

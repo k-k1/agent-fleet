@@ -7,7 +7,7 @@ source_of_truth: "the Admin modal's Read aloud (`console/src/features/settings/a
 
 English | [日本語](read-aloud.ja.md)
 
-Provide and run the speech engine (VOICEVOX's Zundamon) that members hear replies read aloud with.
+Provide and run the speech engine (VOICEVOX's Zundamon) that reads replies aloud to members.
 The reading dictionary that applies to every member is kept on the same screen.
 
 ## How it works
@@ -19,7 +19,7 @@ The reading dictionary that applies to every member is kept on the same screen.
 | Choose the engine's mode under **Read aloud** | The engine starts and stops. On demand, it follows the demand by itself |
 | Write readings into the **Tenant-wide reading dictionary** | Every member's read-aloud says that spelling with that reading |
 
-Whether to use read-aloud, and which voice, each member decides ([Use read-aloud](../../user/settings/read-aloud.md)).
+Each member decides whether to use read-aloud, and with which voice ([Use read-aloud](../../user/settings/read-aloud.md)).
 A speech engine cannot be borrowed from another deployment.
 
 ## Provide the engine

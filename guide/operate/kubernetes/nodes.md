@@ -19,7 +19,7 @@ The commands assume the shell variables of [Build on GKE](gke.md#shell-variables
 | A node stops answering | The CP does not replace the pod. The operator frees it after getting proof from Google Cloud that the VM stopped |
 | Destroy writes "NOT deleted" to the audit log | Check what is left and delete it by hand |
 
-The CP has no right over Nodes and needs none for any of this.
+The CP has no permissions on Nodes and needs none for any of this.
 
 ## Replace nodes as planned
 
@@ -72,7 +72,7 @@ The CP never replaces a pod on a node that stopped answering: that is the price 
 
 - The workspace stays starting, or stopped with a pod that blocks Start, Clean home and Destroy
 - Stop, Recreate and Clean home return errors
-- Recovery is the operator's, **and it starts with proof that the old process cannot run**
+- Recovery is the operator's job, **and it starts with proof that the old process cannot run**
 
 1. Find the VM behind the node, and confirm **from Google Cloud, not from Kubernetes**, that it is stopped or gone
    ```bash

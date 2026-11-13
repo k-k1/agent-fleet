@@ -15,16 +15,16 @@ Linux の rootful Docker で動く Docker Compose の配備が対象です。
 | あなたがやること | 起きること |
 |---|---|
 | docker0 のアドレスを調べ、`.env` に 2 つの変数を書く | Control Plane が、そのアドレスにワークスペース専用の 2 つ目のポートを開く |
-| `docker compose up -d` で Control Plane を上げ直す | 新しい設定で Control Plane が起動する |
+| `docker compose up -d` で Control Plane を起動し直す | 新しい設定で Control Plane が起動する |
 | 各ワークスペースを停止して起動する | ワークスペースの Agent が、公開 URL ではなくこのポートで Control Plane を呼ぶ |
 
 ## こんな症状のとき
 
-ワークスペースの Agent は、Control Plane を何度も呼び返します。ドキュメントの取得、ブランチ名の規則、テナントの MCP のレジストリ、AWS・Google Cloud のプロファイル、メモ、定期実行、Control Plane 経由の git です。
+ワークスペースの Agent は、さまざまな用途で Control Plane を呼び出します。ドキュメントの取得、ブランチ名の規則、テナントの MCP のレジストリ、AWS・Google Cloud のプロファイル、メモ、定期実行、Control Plane 経由の git です。
 
-既定では `PUBLIC_BASE_URL` に向けて呼ぶので、Docker のブリッジの NAT から出て、公開 URL を受けるものから入り直します。
+既定では `PUBLIC_BASE_URL` に向けて呼ぶので、通信は Docker ブリッジの NAT からいったん出て、公開 URL の前段から入り直します。
 
-- 公開 URL を受けるもの（トンネルのデーモンやリバースプロキシ）が Docker のブリッジからの接続を受けなくなると、これらが**一斉に**失敗します
+- この前段（トンネルのデーモンやリバースプロキシ）が Docker ブリッジからの接続を受け付けなくなると、これらが**一斉に**失敗します
 - Control Plane 自身は正常で、ホストやブラウザからは普通に届きます
 - 例として、トンネルのデーモンの `:443` のソケットがホストの 1 つのインターフェースに bind され、コンテナからだけすぐに RST が返ったことがあります
 
@@ -32,7 +32,7 @@ Linux の rootful Docker で動く Docker Compose の配備が対象です。
 
 1. docker0 のゲートウェイのアドレスを調べます（ふつうは `172.17.0.1`）
 2. `.env` に 2 つの変数を書きます
-3. `docker compose up -d` で Control Plane を上げ直します。Control Plane は 2 つとも `.env` から読みます
+3. `docker compose up -d` で Control Plane を起動し直します。Control Plane は 2 つとも `.env` から読みます
 4. 各ワークスペースを Console で停止して起動します。設定がワークスペースに届くのは、次の起動からです
 
 ```bash
@@ -57,7 +57,7 @@ AF_CP_INTERNAL_URL=http://host.docker.internal:8098
 
 - Agent が呼ぶルートだけです。それぞれメンバーシップごとの bearer トークンで守られます
 - Console・管理の API・サインイン・egress proxy のルートは 404 を返します
-- 本人を示すヘッダと、転送のヘッダはすべて捨てます
+- 本人を示すヘッダと、すべての転送ヘッダを捨てます
 - 人が開くリンクと `af-curl`・`af-shot` は、これまでどおり `PUBLIC_BASE_URL` を使います
 
 ## ホストの側で合わせること
@@ -65,9 +65,9 @@ AF_CP_INTERNAL_URL=http://host.docker.internal:8098
 | 項目 | やること |
 |---|---|
 | `host.docker.internal` | `AF_CP_INTERNAL_URL` がこの名前を使うと、Control Plane は各ワークスペースを `--add-host host.docker.internal:host-gateway` 付きで起動します（Docker Engine 20.10 以降）。`host-gateway` は docker0 のアドレスです。デーモンが `host-gateway-ip` を設定しているときは、そのアドレスに bind します。URL がほかのホスト名なら、DNS に任せます |
-| ホストのファイアウォール | INPUT のポリシーが落とす設定（ufw の既定）なら、Docker のネットワークから、そのアドレスとポートへの TCP を通します |
+| ホストのファイアウォール | INPUT チェインのポリシーが DROP（ufw の既定）なら、Docker のネットワークから、そのアドレスとポートへの TCP を通します |
 | egress proxy | `AF_EGRESS_PROXY_ADDR` を設定していると、`AF_CP_INTERNAL_URL` のホストがワークスペースの `NO_PROXY` に入ります。組み込みの egress の許可リストにも入っています |
-| LAN からの到達 | Linux は、どのインターフェースに届いたパケットでもそのアドレスあてなら受け取ります。docker0 の範囲をわざとこのホストへ経路づけた LAN のマシンからは届きえます。Docker のブリッジからだけこのポートを通すファイアウォールで、これも閉じられます |
+| LAN からの到達 | Linux は、どのインターフェースに届いたパケットでもそのアドレスあてなら受け取ります。docker0 の範囲をわざわざこのホストへルーティングしている LAN のマシンからは届く可能性があります。Docker ブリッジからだけこのポートを通すファイアウォールで、これも閉じられます |
 
 - 既定ではオフです。アドレスはホストの Docker の設定とファイアウォールで決まり、存在しないアドレスを指定すると Control Plane が止まるからです。設定しなければ 2 つ目のポートはなく、何も変わりません
 - Control Plane が起動したときに docker0 がないと、bind に失敗して Control Plane が終了します

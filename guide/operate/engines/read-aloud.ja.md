@@ -44,7 +44,7 @@ WSL や Linux の側に、音声の設定は要りません。**再生**はブ�
 | 方法 | やること |
 |---|---|
 | A. Windows の側で動かす（WSL2） | [VOICEVOX](https://voicevox.hiroshiba.jp/) の Windows アプリを起動すると、Windows の側の `127.0.0.1:50021` で同じ HTTP API が開きます |
-| B. WSL・Linux の中で直接動かす | [VOICEVOX ENGINE](https://github.com/VOICEVOX/voicevox_engine) の Linux（CPU）版を展開し、`./run` で起動します。既定は `127.0.0.1:50021` で、常駐で約 1 GB を使い、Docker は要りません。既定の URL と同じなので、`af start` はそのままで動きます |
+| B. WSL・Linux の中で直接動かす | [VOICEVOX ENGINE](https://github.com/VOICEVOX/voicevox_engine) の Linux（CPU）版を展開し、`./run` で起動します。既定は `127.0.0.1:50021` で、常駐メモリは約 1 GB で、Docker は要りません。既定の URL と同じなので、`af start` はそのままで動きます |
 
 A のとき、WSL2 のネットワークのモードで変わります。
 

@@ -159,7 +159,7 @@ deploy/local/run-dev.sh native
 | The Console build runs out of memory | `NODE_OPTIONS=--max-old-space-size=3072` (the script already sets it). Stop other builds when memory is tight |
 | `go` or `npm` is missing | Install them as in [1. Install the prerequisites](#1-install-the-prerequisites) and fix PATH (the script sources nvm by itself) |
 | Java is not found | `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk*`; if empty, `workspace-agent install-jdk <major>` |
-| `agy` is missing from the agent picker | The host CPU exposes no usable RDRAND (`grep -w rdrand /proc/cpuinfo` is empty) and the workaround did not take. agy is a FIPS build that needs the instruction; where the kernel has withdrawn it, the Agent masks it out of OpenSSL's detection and runs agy anyway. A hidden kind means the masked `agy --version` failed too, or `AF_AGY_RDRAND_MASK=0` refuses the mask |
+| `agy` is missing from the agent picker | The host CPU exposes no usable RDRAND (`grep -w rdrand /proc/cpuinfo` is empty) and the workaround did not take. agy is a FIPS build that needs the instruction; where the kernel has withdrawn it, the Agent masks it out of OpenSSL's detection and runs agy anyway. If it is still hidden, the masked `agy --version` failed too, or `AF_AGY_RDRAND_MASK=0` refuses the mask |
 
 ## Related
 

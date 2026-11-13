@@ -14,7 +14,7 @@ Windows の WSL2 で、Agent Fleet を 1 人で試せるように、コマンド
 
 | あなたがやること | 起きること |
 |---|---|
-| WSL2 のディストリビューションに Docker Engine・Go・Node を入れる | 起動のスクリプトがビルドできるようになる |
+| WSL2 のディストリビューションに Docker Engine・Go・Node を入れる | 起動スクリプトでビルドできるようになる |
 | `deploy/local/run-dev.sh wsl` を実行する | ワークスペースのイメージ・Console・Control Plane をビルドし、Control Plane をホストで起動する |
 | Windows のブラウザで `http://localhost:8099` を開く | サインインなしで Console が開く |
 
@@ -24,9 +24,9 @@ Windows の WSL2 で、Agent Fleet を 1 人で試せるように、コマンド
 
 | 項目 | この構成での扱い |
 |---|---|
-| サインイン | `AUTH=dev` の固定のユーザー `dev` です。サインインの画面も oauth2-proxy もなく、すべてのリクエストが `dev` になります。スクリプトが `AF_ALLOW_INSECURE_DEV_AUTH=1` も渡します |
+| サインイン | `AUTH=dev` の固定ユーザー `dev` です。サインインの画面も oauth2-proxy もなく、すべてのリクエストが `dev` になります。スクリプトが `AF_ALLOW_INSECURE_DEV_AUTH=1` も渡します |
 | テナント | `default` のテナントが内部で作られ、`dev` が自動で入ります。所属が 1 つなので、テナントを選ぶ画面は出ません |
-| 暗号化 | `AF_MASTER_KEY` を設定しないので、保存時の暗号化はオフです。秘密は平文の JSON で保存されます。個人で試すなら許せる範囲です |
+| 暗号化 | `AF_MASTER_KEY` を設定しないので、保存時の暗号化はオフです。秘密は平文の JSON で保存されます。個人で試すぶんには許容範囲です |
 | ランタイム | `AF_RUNTIME=local` です。ワークスペースのコンテナは WSL の中の Docker で起動し、本番の形態と同じくコンテナの隔離とワークスペースごとの cgroup の上限があります |
 
 コードを変える必要はありません。どれも `run-dev.sh wsl` の既定の振る舞いです。
@@ -39,7 +39,7 @@ Docker Desktop の連携でも動きますが、この構成はホストの Dock
 | 入れるもの | 補足 |
 |---|---|
 | Docker Engine（dockerd） | 下のコマンドで入れます |
-| cgroup v2 | `--memory` の上限と資源の表示がこれに頼ります。最近の WSL2 は既定で v2 です |
+| cgroup v2 | `--memory` の上限とリソースの表示がこれに依存します。最近の WSL2 は既定で v2 です |
 | Go | Control Plane をホストでビルドします。https://go.dev/dl/ から入れて PATH に足します |
 | Node | Console を Vite でビルドします。nvm をおすすめします |
 
@@ -72,17 +72,17 @@ deploy/local/run-dev.sh wsl        # the old wsl-quickstart.sh wraps this (still
 
 スクリプトがすることは次のとおりです。
 
-1. 事前の確認をします（docker に届くか、cgroup v2、go、npm）
+1. 事前チェックをします（docker に接続できるか、cgroup v2、go、npm）
 2. 共有の JDK を `~/.local/share/agent-fleet/shared/jvm` に 1 回だけ展開し、bind mount で渡します（`WS_JDK=0` で省けます）
 3. ワークスペースのイメージをビルドします
 4. Console（Vite）と Control Plane（Go）をビルドします
 5. `AUTH=dev`・`AF_RUNTIME=local` で Control Plane を起動します
 
 - 初回は、イメージのビルドと JDK の展開に時間がかかります
-- イメージはエージェントの CLI を含まない軽量版です。CLI は、ワークスペースの初回の起動で決められた版を入れます。`BAKE_AGENT_CLIS=1` を付けると、焼き込んで初回の起動を速くできます
+- イメージはエージェントの CLI を含まない軽量版です。CLI は、ワークスペースの初回の起動のときに決められた版が入ります。`BAKE_AGENT_CLIS=1` を付けると、焼き込んで初回の起動を速くできます
 - 古い `deploy/local/wsl-quickstart.sh` は、同じものを呼ぶだけの互換のためのスクリプトです
 
-`run-dev.sh` の使い分けは、サブコマンドで選びます。
+`run-dev.sh` は、サブコマンドで動作を選びます。
 
 | サブコマンド | 使いどころ |
 |---|---|
@@ -98,14 +98,14 @@ Control Plane は `http://localhost:8099` で待ち受けます。WSL2 の local
 
 ## GitHub とつなぐ
 
-GitHub のクローンとプッシュを OAuth のデバイスフローで通すには、GitHub の OAuth App の `client_id` を Console に登録します。環境変数は使いません。
+GitHub のクローンとプッシュを OAuth のデバイスフローで使うには、GitHub の OAuth App の `client_id` を Console に登録します。環境変数は使いません。
 
 1. GitHub（Settings → Developer settings → OAuth Apps）で OAuth App を作り、**Enable Device Flow をオン**にします
-2. Console のテナントの設定で、その `client_id` を登録します（[連携に使う OAuth アプリを選ぶ](../admin/access/oauth-apps.ja.md)）。`client_id` は秘密ではありません
+2. Console のテナント設定で、その `client_id` を登録します（[連携に使う OAuth アプリを選ぶ](../admin/access/oauth-apps.ja.md)）。`client_id` は秘密ではありません
 3. ワークスペースから GitHub の連携を始めます。デバイスコードと確認の URL が案内されます。`gh auth login` は要りません
 
 - この構成は 1 人に固定で、`AUTH` は常に `dev` です。`oauth.env` に `AUTH=oauth` と書いても使われません
-- 固定のユーザーは配備管理者（super_admin）なので、テナントの設定の画面に入れます
+- 固定ユーザーは配備管理者（super_admin）なので、テナント設定の画面に入れます
 - トークン（PAT）を貼り付けても動きます。そのときは何も登録しなくてかまいません
 
 ## rtk と JDK
@@ -123,7 +123,7 @@ workspace-agent install-jdk 21     # install the latest GA Temurin into ~/.local
 
 - Console の **設定 → ツールチェーン** で Java の版を選ぶと、足りない版を次のコンテナの起動で入れ、各セッションに `JAVA_HOME` を渡します（[ツールチェーンを選ぶ](../user/workspace/toolchains.ja.md)）
 - `WS_JDK=0` で起動すると、共有の JDK を用意せず、この入れ方だけに頼ります
-- エージェントの CLI と rtk を最新に追う設定も同じタブにあります（[エージェントの CLI を最新にする](../user/workspace/toolchains.ja.md#エージェントの-cli-を最新にする)）
+- エージェントの CLI と rtk を最新版に追従させる設定も同じタブにあります（[エージェントの CLI を最新にする](../user/workspace/toolchains.ja.md#エージェントの-cli-を最新にする)）
 
 ## 止める・消す・ビルドし直す
 
@@ -145,10 +145,10 @@ WSL2 にどうしても Docker を入れられないときは、ワークスペ�
 deploy/local/run-dev.sh native
 ```
 
-- コンテナの隔離・メモリの上限・エントリポイントの初期化（claude の自動インストールなど）はありません。わかったうえでのトレードオフです
+- コンテナの隔離・メモリの上限・エントリポイントの初期化（claude の自動インストールなど）はありません。承知のうえでのトレードオフです
 - ワークスペースの HOME は `~/.local/share/agent-fleet/dev/home` に分かれていて、自分の `~` には触れません。Windows のエクスプローラーから `\\wsl.localhost\<distro>\...` で見えます
 - Docker を使えるなら、[1. 必要なものを入れる](#1-必要なものを入れる) の構成を選びます
-- ビルドのツールを入れずに Docker なしで使うなら、[ネイティブパッケージ](native/install.ja.md) もあります
+- ビルドツールを入れずに Docker なしで使うなら、[ネイティブパッケージ](native/install.ja.md) もあります
 
 ## うまくいかないとき
 
@@ -159,7 +159,7 @@ deploy/local/run-dev.sh native
 | Console のビルドがメモリ不足で落ちる | `NODE_OPTIONS=--max-old-space-size=3072`（スクリプトが設定済みです）。メモリが厳しいときは、ほかのビルドを止めます |
 | `go`・`npm` がない | [1. 必要なものを入れる](#1-必要なものを入れる) のとおりに入れ、PATH を直します（スクリプトは nvm を自動で読み込みます） |
 | Java が見つからない | `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk*`。空なら `workspace-agent install-jdk <major>` |
-| エージェントの選択肢に `agy` がない | ホストの CPU が使える RDRAND を出しておらず（`grep -w rdrand /proc/cpuinfo` が空）、回避もうまくいきませんでした。agy は RDRAND が要る FIPS のビルドで、カーネルが命令を取り下げているときは Agent が OpenSSL の検出から外して動かします。それでも隠れているのは、外した状態の `agy --version` も失敗したか、`AF_AGY_RDRAND_MASK=0` で外すのを断っているからです |
+| エージェントの選択肢に `agy` がない | ホストの CPU が使える RDRAND を出しておらず（`grep -w rdrand /proc/cpuinfo` が空）、回避もうまくいきませんでした。agy は RDRAND が要る FIPS のビルドで、カーネルが命令を取り下げているときは Agent が OpenSSL の CPU 検出から外して動かします。それでも出ないのは、外した状態の `agy --version` も失敗したか、`AF_AGY_RDRAND_MASK=0` でこの回避を無効にしているからです |
 
 ## 関連
 
