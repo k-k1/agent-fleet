@@ -46,7 +46,7 @@ aws_secret_access_key = test
 
 | 確かめる場所 | 同じ名前があると |
 |---|---|
-| `aws configure list-profiles` / `~/.aws/credentials` | `~/.aws/credentials` の鍵が優先され、本物の資格情報がエミュレーターに送られます |
+| `aws configure list-profiles` / `~/.aws/credentials` | `~/.aws/credentials` のキーが優先され、本物の認証情報がエミュレーターに送られます |
 | `af-aws-exec --list`（設定画面のプロファイル） | 設定画面の同じ名前のプロファイルが、書き出されなくなります |
 
 ## 使う
@@ -67,7 +67,7 @@ MiniStack は `af-aws-exec` を通しては使いません。`af-aws-exec` は�
 - AWS SDK for Java 1.x、JavaScript v2、Go v1
 - 自分でエンドポイントを決めるツール
 
-これらは、ダミーの鍵のまま本物の AWS に向かいます。Terraform の `endpoints` ブロックや SDK のエンドポイント指定で、
+これらは、ダミーのキーのまま本物の AWS に向かいます。Terraform の `endpoints` ブロックや SDK のエンドポイント指定で、
 クライアント自身にエンドポイントを渡してください。
 
 シェルに `AWS_ENDPOINT_URL*` や `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` が `export` されていると、プロファイルの
@@ -76,15 +76,15 @@ MiniStack は `af-aws-exec` を通しては使いません。`af-aws-exec` は�
 ## 本物の AWS に向かわないようにする
 
 > [!WARNING]
-> **ダミーの鍵をシェルに `export` しないでください**（`AWS_ACCESS_KEY_ID=test` など）。すべてのコマンドがその鍵を持つので、
-> `--endpoint-url` を付け忘れたコマンドが本物の AWS にリクエストを送ります（ダミーの鍵なので拒否されます）。
+> **ダミーのキーをシェルに `export` しないでください**（`AWS_ACCESS_KEY_ID=test` など）。すべてのコマンドがそのキーを持つので、
+> `--endpoint-url` を付け忘れたコマンドが本物の AWS にリクエストを送ります（ダミーのキーなので拒否されます）。
 
 プロファイルを付け忘れたときにどうなるかは、ワークスペースによります。
 
 | ワークスペース | プロファイルを付け忘れたコマンド |
 |---|---|
-| ふつうの構成のワークスペース（AWS の身元を渡さない） | 「Unable to locate credentials」で止まります |
-| 管理者がワークスペース自身のロールを戻しているワークスペース、マシン自身の資格情報を持つネイティブのランタイム | その身元で、本物の AWS に対して動きます |
+| ふつうの構成のワークスペース（AWS の ID を渡さない） | 「Unable to locate credentials」で止まります |
+| 管理者がワークスペース自身のロールを戻しているワークスペース、コンテナを使わずにマシン上で直接動き、マシン自身の認証情報を持つワークスペース | その ID で、本物の AWS に対して動きます |
 
 2 行目のどちらの場合も、プロファイルを決して省かないでください。詳しくは
 [af-aws-exec](../../ref/cli/af-aws-exec.ja.md#プロファイルの指定が要る理由) にあります。
@@ -116,7 +116,7 @@ MiniStack は `af-aws-exec` を通しては使いません。`af-aws-exec` は�
 | `S3_PERSIST=1` | S3 のオブジェクトの中身 |
 
 どちらも、既定の置き場は `/tmp` の下です。`/tmp` はワークスペースを起動し直すと消えるので、`STATE_DIR` と `S3_DATA_DIR` を
-ホームの下のディレクトリにしてください。
+ホームディレクトリの下のディレクトリにしてください。
 
 ## 関連
 

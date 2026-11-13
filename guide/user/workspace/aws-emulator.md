@@ -84,7 +84,7 @@ What happens when you forget the profile depends on the workspace.
 | Workspace | A command without the profile |
 |---|---|
 | A workspace in the usual setup (no AWS identity handed in) | Stops with "Unable to locate credentials" |
-| A workspace whose administrator gave the workspace role back, or the native runtime with the machine's own credentials | Runs against real AWS as that identity |
+| A workspace whose administrator gave the workspace role back, or a workspace that runs directly on a machine, without a container, with the machine's own credentials | Runs against real AWS as that identity |
 
 In either case of the second row, never leave the profile out. The details are in
 [af-aws-exec](../../ref/cli/af-aws-exec.md#why-a-command-needs-a-profile).

@@ -84,7 +84,7 @@ confluence --help
 次のコマンドは、Atlassian が廃止した古い API を使っているため、失敗することがあります。
 
 - `move`・`delete`・`children`・`find`・`spaces`・`copy-tree`
-- ページの版、プロパティ（front matter）
+- ページのバージョン、プロパティ（front matter）
 
 フォルダは `create --type folder` で作れません。
 
