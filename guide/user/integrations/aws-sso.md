@@ -170,7 +170,8 @@ Press "**Export as ~/.aws/config**" below the list to download your profiles in 
 - **Turn on "Confirm before use"**: it is in the profile's form. When it is on, a session that is about to use the
   profile for the first time asks "**This session wants to use an AWS profile that asks for confirmation**". Press
   "**Allow for this session**", and the permission lasts 8 hours or until the session ends. Suits production
-  profiles.
+  profiles. The card names the command; for `aws` it shows the service and operation when the CLI knows them
+  (`aws s3 cp`), never the arguments. Shown as a notification, the card's session name opens that session.
 - **Add `--account`**: if the account ID differs, nothing runs. Put it in deploy runbooks and in instructions to
   agents.
 

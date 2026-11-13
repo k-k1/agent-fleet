@@ -1,6 +1,11 @@
+import type { ReactNode } from "react";
 import { useT } from "../../lib/i18n/index.ts";
+import { Trans } from "../../lib/i18n/Trans.tsx";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { openSessionFromList } from "../sessions/open.ts";
+import { useSessionsStore } from "../sessions/store.ts";
 import { useAwsConfirmStore, type AwsConfirmRequest } from "./store.ts";
 import "./awsConfirm.css";
 
@@ -19,7 +24,7 @@ export function AwsConfirmCard({ r, showSession }: { r: AwsConfirmRequest; showS
     <div className="aws-confirm" role="alert">
       <div className="aws-confirm-head">
         <Icon name="shield" />
-        <span>{showSession ? tr("awsconfirm.title_session", { session: r.session }) : tr("awsconfirm.title")}</span>
+        <span>{showSession ? <Trans k="awsconfirm.title_session" vars={{ session: r.session }} components={[<SessionLink name={r.session} />]} /> : tr("awsconfirm.title")}</span>
       </div>
       <ul className="aws-confirm-targets">
         {r.targets.map((t) => (
@@ -42,6 +47,30 @@ export function AwsConfirmCard({ r, showSession }: { r: AwsConfirmRequest; showS
         </button>
       </div>
     </div>
+  );
+}
+
+/** SessionLink opens the asking session the way its row in the left pane does. The text stays
+ *  the session's name, which the Agent vouches for; the title, which the session can set
+ *  itself, only goes in the tooltip so it cannot pass for another session. */
+function SessionLink({ name, children }: { name: string; children?: ReactNode }) {
+  const tr = useT();
+  const s = useSessionsStore((st) => st.sessions.find((x) => x.name === name));
+  const running = useWorkspaceStore((st) => st.state === "running");
+  const toast = useToast();
+  if (!s) return <>{children}</>;
+  const open = (split: boolean) => {
+    if (!openSessionFromList(s, split, running)) toast(tr("awsconfirm.open_failed"));
+  };
+  return (
+    <button
+      type="button"
+      className="linklike"
+      title={s.title ? s.title : undefined}
+      onClick={(e) => open(e.ctrlKey || e.metaKey)}
+    >
+      {children}
+    </button>
   );
 }
 

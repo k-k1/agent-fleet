@@ -1014,10 +1014,11 @@ export const sessions = {
   "sess.budget_children": "子 {spend}",
   "sess.budget_children_title": "create_session で起こした子セッションの推定費用。このセッションの予算には数えません",
   "awsconfirm.title": "このセッションが、確認付きの AWS プロファイルを使おうとしています",
-  "awsconfirm.title_session": "セッション {session} が、確認付きの AWS プロファイルを使おうとしています",
+  "awsconfirm.title_session": "セッション <0>{session}</0> が、確認付きの AWS プロファイルを使おうとしています",
   "awsconfirm.via": "{source} 経由",
   "awsconfirm.commands": "コマンド: {commands}",
   "awsconfirm.approve": "このセッションで許可",
+  "awsconfirm.open_failed": "このセッションは開けませんでした",
   "awsconfirm.deny": "拒否",
   "awsconfirm.answer_failed": "依頼に答えられませんでした（{code}）",
 };

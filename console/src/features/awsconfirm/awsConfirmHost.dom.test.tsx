@@ -54,7 +54,9 @@ afterEach(() => {
   host.remove();
 });
 
-const toastShown = () => document.body.textContent!.includes(t("awsconfirm.title_session", { session: "s1" }));
+// The catalog marks the session name as a slot (<0>…</0>); the page shows its text alone.
+const toastShown = () =>
+  document.body.textContent!.includes(t("awsconfirm.title_session", { session: "s1" }).replace(/<\/?\d+>/g, ""));
 
 async function render(hidden: boolean) {
   await act(async () =>
