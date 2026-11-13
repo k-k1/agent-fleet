@@ -574,6 +574,11 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   let osc52DeniedAt = 0;
   try {
     term.parser.registerOscHandler(52, (data) => {
+      // Replayed history and a replaced socket's leftovers (the reply gate is muted) hold
+      // copies the member made long ago: Claude Code writes a raw OSC 52 inside tmux, and
+      // pipe-pane records it. Acting on one would prompt on every re-attach, or write the
+      // clipboard silently inside an "allow for a minute" window.
+      if (it.replies?.muted) return true;
       // data is "<targets>;<base64>". "?" is a read request — never answered.
       const semi = data.indexOf(";");
       const b64 = semi >= 0 ? data.slice(semi + 1) : data;

@@ -18,7 +18,7 @@ vi.mock("../ui/confirmBridge.ts", () => ({
   },
 }));
 
-import { ensureTerm, disposeTerm, detach, OSC52_MAX_CHARS } from "./term.ts";
+import { ensureTerm, disposeTerm, detach, attach, OSC52_MAX_CHARS } from "./term.ts";
 import { setSetting } from "../lib/settings.ts";
 
 type KeyHandler = (e: KeyboardEvent) => boolean;
@@ -554,5 +554,94 @@ describe("terminal clipboard keys", () => {
     await vi.waitFor(() => expect(toasts.length).toBe(2));
     await new Promise<void>((r) => term.write("\x1b]52;c;?\x07", r));
     expect(toasts.length).toBe(2);
+  });
+});
+
+// #4077: the Agent replays recorded pane output on every attach, and that output holds the
+// raw OSC 52 of copies made long ago. Only live output may reach the consent flow.
+describe("OSC 52 in replayed output", () => {
+  class FakeWS {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
+    static all: FakeWS[] = [];
+    readyState = 0;
+    binaryType = "";
+    onopen: (() => void) | null = null;
+    onmessage: ((ev: { data: unknown }) => void) | null = null;
+    onclose: ((ev: { code: number; reason: string }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor() {
+      FakeWS.all.push(this);
+    }
+    send() {}
+    close() {
+      this.readyState = 3;
+    }
+    open() {
+      this.readyState = 1;
+      this.onopen?.();
+    }
+    output(s: string) {
+      // Copied into this realm's Uint8Array: term.ts checks `instanceof ArrayBuffer`.
+      this.onmessage?.({ data: Uint8Array.from(new TextEncoder().encode(s)).buffer });
+    }
+    replay(history: string) {
+      this.onmessage?.({ data: JSON.stringify({ type: "replay", bytes: new TextEncoder().encode(history).byteLength }) });
+      this.output(history);
+    }
+  }
+  const osc52 = (t: string) => `\x1b]52;c;${btoa(String.fromCharCode(...new TextEncoder().encode(t)))}\x07`;
+  const parsed = (term: any) => new Promise<void>((r) => term.write("", r));
+
+  function attached() {
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal("WebSocket", FakeWS);
+    const term = mount();
+    attach("clip", "sfake");
+    const ws = FakeWS.all[FakeWS.all.length - 1];
+    ws.open();
+    return { term, ws };
+  }
+
+  afterEach(() => {
+    FakeWS.all = [];
+    vi.unstubAllGlobals();
+  });
+
+  it("does not prompt for a copy in the replay; a live one still prompts", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { term, ws } = attached();
+    ws.replay(`$ claude\r\n${osc52("old copy")}done\r\n`);
+    await parsed(term);
+    await settle();
+    expect(confirms.length).toBe(0);
+    ws.output(osc52("the new copy"));
+    await parsed(term);
+    await settle();
+    expect(confirms.length).toBe(1);
+    expect(confirms[0].body).toContain("12"); // the live payload, not the replayed "old copy"
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("does not write a replayed copy inside an 'allow for a minute' window", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { term, ws } = attached();
+    confirmAnswers.push("minute");
+    ws.output(osc52("live"));
+    await parsed(term);
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("live"));
+    attach("clip", "sfake"); // re-attach, as recoverAll() does after a dropped socket
+    const again = FakeWS.all[FakeWS.all.length - 1];
+    again.open();
+    again.replay(osc52("old copy"));
+    await parsed(term);
+    await settle();
+    expect(writeText).not.toHaveBeenCalledWith("old copy");
+    expect(confirms.length).toBe(1);
   });
 });
