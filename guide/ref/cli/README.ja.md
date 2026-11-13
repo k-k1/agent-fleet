@@ -39,3 +39,5 @@ source_of_truth: "各コマンドの使いかたの表示"
 エージェントには、Bitbucket では MCP サーバーではなく `bkt` を、Jira では既定で `jira` を使うよう伝えてあります。
 CLI は呼び出しのたびに保存済みの接続を読むので、MCP のコネクタのように、ログインが切れてセッションを再起動することがありません。
 Jira で Atlassian の MCP ツールを優先させたいときは、[Jira を使う](../../user/integrations/jira.ja.md#atlassian-の-mcp-ツールを使わせたいとき)を見てください。
+
+ワークスペースに入っているほかのツールと、そのバージョンやライセンスは、[ワークスペースに入っているもの](../workspace-image.ja.md)にあります。

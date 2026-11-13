@@ -77,10 +77,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
           printf '%s\n\nAutomated by apt-pin-bump.yml: the pinned build is no longer the newest served on\nevery architecture. The PR body has the check output.\n' "$TITLE" > "$RUNNER_TEMP/msg.txt"
-          git commit -q -F "$RUNNER_TEMP/msg.txt" -- workspace/Dockerfile
+          # The guide's "What's in the workspace" prints these pins; docs-check fails the PR when it is stale.
+          python3 scripts/workspace_image.py
+          pages=(guide/ref/workspace-image.md guide/ref/workspace-image.ja.md)
+          git commit -q -F "$RUNNER_TEMP/msg.txt" -- workspace/Dockerfile "${pages[@]}"
 
           if git fetch -q "$remote" "refs/heads/$BRANCH" 2>/dev/null &&
-             git diff --quiet FETCH_HEAD HEAD -- workspace/Dockerfile; then
+             git diff --quiet FETCH_HEAD HEAD -- workspace/Dockerfile "${pages[@]}"; then
             echo "The bump branch already carries this edit; not re-pushed."
           else
             git push -q --force "$remote" "HEAD:refs/heads/$BRANCH"

@@ -104,6 +104,9 @@ jobs:
           export GH_TOKEN="$TOKEN"
           # What claude-route-overrides.sh may have edited; an unedited path commits nothing.
           route_files=(workspace/agent/internal/agents/claude/route.go workspace/agent/internal/agents/claude/route_bedrock_test.go)
+          # The guide's "What's in the workspace" prints these pins; docs-check fails the PR when it is stale.
+          python3 scripts/workspace_image.py
+          route_files+=(guide/ref/workspace-image.md guide/ref/workspace-image.ja.md)
           remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           # A human closed a PR carrying this exact edit without merging it: that is a

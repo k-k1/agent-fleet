@@ -191,3 +191,4 @@ The watch finding a new version and that version reaching the image are separate
 - [See your machine and its usage](machine.md): the architecture decides which tools are installed
 - [Run database-backed tests](databases.md)
 - [Recreate the workspace](recreate.md)
+- [What's in the workspace](../../ref/workspace-image.md): the tools in the image, their versions and licences
