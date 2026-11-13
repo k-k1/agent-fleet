@@ -178,6 +178,10 @@ func (p *usagePass) run(metas []session.Meta) {
 // session it did not list (created since) is pending until the next pass.
 func allSessionsUsage(metas []session.Meta, budget time.Duration) ([]sessionUsage, int) {
 	p := joinUsagePass(metas)
+	if budget <= 0 {
+		// A spent budget answers nothing, deterministically; the pass still warms the caches.
+		return nil, len(metas)
+	}
 	timer := time.NewTimer(budget)
 	defer timer.Stop()
 	select {

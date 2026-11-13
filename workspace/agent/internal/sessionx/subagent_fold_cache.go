@@ -50,12 +50,14 @@ func NewSubagentFolds[T any](idle time.Duration) *SubagentFolds[T] {
 // own context, so two agents must never share a logical turn. Only an agent whose copies changed
 // size or mtime since the last call is parsed again.
 func (c *SubagentFolds[T]) Fold(m session.Meta, now time.Time, fold func([]transcript.Turn) T) []T {
-	groups := SubagentLogs(m)
+	// The sequence number is taken before the listing: a call that lists later may have seen an
+	// agent this one has not, so it must be the one whose store stands.
 	c.mu.Lock()
 	prev := c.m[m.Name]
 	c.seq++
 	seq := c.seq
 	c.mu.Unlock()
+	groups := SubagentLogs(m)
 	if prev.createdAt != m.CreatedAt {
 		prev.agents = nil
 	}
