@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
@@ -568,5 +569,35 @@ func TestQuarantineSurvivesTheForceStopsTwoCounts(t *testing.T) {
 	}
 	if matches, _, _, _ := w.rt().slotTypeMatches(ctx, "i-dark"); matches {
 		t.Fatal("the next Start would reuse the held box")
+	}
+}
+
+// N5: the carry is a long AWS call before the bump. A lease that lapses during it must stop the
+// count, on both entrances (a Start and a Stop through beginStart, and admitStart/rescue through
+// bumpStartCount).
+func TestQuarantineCarryLeaseLapsingDuringItsCallStopsTheCount(t *testing.T) {
+	ctx := context.Background()
+	for name, enter := range map[string]func(w *rescueWorld) error{
+		"beginStart": func(w *rescueWorld) error { _, err := w.rt().beginStart(ctx); return err },
+		"admitStart": func(w *rescueWorld) error { _, err := w.rt().admitStart(ctx, true); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := quarantineWorld(t, true)
+			g := w.count()
+			w.setQuarantine(quarantineTag{Volume: "vol-1", Gen: g, Reason: "repeat: x", At: time.Now()})
+			w.h.ec2.onCreateTags = func(c context.Context, in *ec2.CreateTagsInput) {
+				for _, tg := range in.Tags {
+					if aws.ToString(tg.Key) == quarantineKey("vol-1", g+1) {
+						homeGuardOf(c).markLost() // the lease is gone while the write is in flight
+					}
+				}
+			}
+			if err := enter(w); err == nil {
+				t.Fatal("the count went ahead after the lease lapsed during the carry")
+			}
+			if w.count() != g {
+				t.Fatalf("count %d, want %d: a stale handler must not overtake a newer Start", w.count(), g)
+			}
+		})
 	}
 }

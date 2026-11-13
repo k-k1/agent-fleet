@@ -233,7 +233,12 @@ func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) error
 	if !e.pool.quarantines() {
 		return nil
 	}
+	// The lease is asked after every answer before it is acted on: each call is long enough to
+	// outlive it, and what comes back may describe a world a newer Start has since changed.
 	vol, err := e.homeVolume(ctx)
+	if err == nil {
+		err = homeGuardOf(ctx).check()
+	}
 	if err != nil {
 		return fmt.Errorf("carry the quarantine: home: %w", err)
 	}
@@ -245,6 +250,9 @@ func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) error
 		return nil
 	}
 	inst, err := e.slotInstance(ctx, slot)
+	if err == nil {
+		err = homeGuardOf(ctx).check()
+	}
 	if err != nil {
 		return fmt.Errorf("carry the quarantine: slot %s: %w", slot, err)
 	}
@@ -266,7 +274,7 @@ func (e *ecsEC2Runtime) carryQuarantine(ctx context.Context, newGen int64) error
 		}); err != nil {
 			return fmt.Errorf("carry the quarantine of %s to start %d: %w", slot, newGen, err)
 		}
-		return nil
+		return homeGuardOf(ctx).check() // the answer, too, is asked about before the count moves
 	}
 	return nil
 }

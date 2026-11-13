@@ -76,6 +76,11 @@ func (e *ecsEC2Runtime) beginStart(ctx context.Context) (int64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("count the start of %s: %w", e.base.name, err)
 		}
+		// The carry is a long AWS call before the bump: a lease that lapsed during it means a
+		// newer Start may already hold this count, and a bump now would overtake it.
+		if err := homeGuardOf(lctx).check(); err != nil {
+			return 0, fmt.Errorf("count the start of %s: %w", e.base.name, err)
+		}
 	}
 	if e.leases == nil {
 		return e.generation().Add(1), nil

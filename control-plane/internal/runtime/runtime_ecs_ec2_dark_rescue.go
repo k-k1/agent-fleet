@@ -315,6 +315,10 @@ func (e *ecsEC2Runtime) bumpStartCount(lctx context.Context) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		// See beginStart: the lease is asked again after the carry and before the bump.
+		if err := homeGuardOf(lctx).check(); err != nil {
+			return 0, err
+		}
 	}
 	if e.leases == nil {
 		return e.generation().Add(1), nil

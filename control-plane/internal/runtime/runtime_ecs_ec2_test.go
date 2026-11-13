@@ -81,8 +81,9 @@ type fakeEC2 struct {
 	// maxTags, when set, makes CreateTags refuse a request that leaves a resource with more tags
 	// (EC2's limit is 50); createTagsDeadline records the context deadline each key was sent with.
 	maxTags            int
-	createTagsFail     func(key, value string) error // fails a CreateTags by key and value
-	stopErr            error                         // makes StopInstances fail without stopping
+	onCreateTags       func(ctx context.Context, in *ec2.CreateTagsInput) // runs inside the call, before it applies
+	createTagsFail     func(key, value string) error                      // fails a CreateTags by key and value
+	stopErr            error                                              // makes StopInstances fail without stopping
 	createTagsDeadline map[string]time.Time
 	// deleteTagsErr makes DeleteTags fail, without deleting anything, for a request that
 	// names this tag key.
@@ -566,6 +567,11 @@ func (f *fakeEC2) DetachVolume(_ context.Context, in *ec2.DetachVolumeInput, _ .
 func (f *fakeEC2) CreateTags(ctx context.Context, in *ec2.CreateTagsInput, _ ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.onCreateTags != nil {
+		f.mu.Unlock()
+		f.onCreateTags(ctx, in)
+		f.mu.Lock()
+	}
 	if dl, ok := ctx.Deadline(); ok {
 		if f.createTagsDeadline == nil {
 			f.createTagsDeadline = map[string]time.Time{}
