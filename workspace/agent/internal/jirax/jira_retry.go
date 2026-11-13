@@ -68,6 +68,8 @@ func jiraTransportClass(err error) string {
 	var host x509.HostnameError
 	var ne net.Error
 	switch {
+	case errors.Is(err, errJiraRedirectRefused):
+		return "redirect to another origin refused"
 	case errors.Is(err, syscall.ECONNRESET):
 		return "connection reset"
 	case errors.Is(err, syscall.ECONNREFUSED):
@@ -141,6 +143,9 @@ func jiraDo(c *secrets.JiraCreds, method, u string, payload []byte) jiraCallResu
 		res.body, res.status, res.err = body, status, err
 		if err != nil {
 			res.err = jiraTransportError(err)
+		}
+		if errors.Is(err, errJiraRedirectRefused) {
+			return res
 		}
 		if !idem || n >= jiraRetryMax || (!transport && !jiraRetryableStatus(status)) {
 			return res

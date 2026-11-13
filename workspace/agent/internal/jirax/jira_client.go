@@ -7,8 +7,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +20,48 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-var jiraHTTPClient = &http.Client{Timeout: 20 * time.Second}
+// jiraHTTPClient carries every JSON REST call. Go's default redirect policy re-sends the
+// Authorization header to another port of the same host, to subdomains and across an HTTPS to
+// HTTP hop, so a 3xx could carry the credential off the API origin; jiraCheckRedirect closes that.
+var jiraHTTPClient = &http.Client{Timeout: 20 * time.Second, CheckRedirect: jiraCheckRedirect}
+
+// errJiraRedirectRefused marks a redirect that left the origin of the original request. It is
+// deterministic, so jiraDo never retries it.
+var errJiraRedirectRefused = errors.New("redirect refused")
+
+// jiraOrigin is scheme://host:port with the scheme's default port made explicit, so
+// "https://h" and "https://h:443" are one origin and nothing looser is.
+func jiraOrigin(u *url.URL) string {
+	scheme, port := strings.ToLower(u.Scheme), u.Port()
+	if port == "" {
+		switch scheme {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+}
+
+// jiraCheckRedirect follows a redirect only within the exact origin of the first request and
+// never from HTTPS to HTTP. Anything else fails the call instead of sending the Authorization
+// header there. No Jira Cloud call the Agent makes needs a cross-origin hop: site and
+// api.atlassian.com/ex/jira/<cloudId> answer in place, and attachment content is fetched with
+// redirect=false precisely so that no hop to the media host happens.
+func jiraCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	first := via[0].URL
+	if first.Scheme == "https" && req.URL.Scheme != "https" {
+		return errJiraRedirectRefused
+	}
+	if jiraOrigin(req.URL) != jiraOrigin(first) {
+		return errJiraRedirectRefused
+	}
+	return nil
+}
 
 // CloudAPIBase is Atlassian's OAuth-side API host. A var, not a const, for the same
 // reason bbTokenURL is one: the site resolution and the 3LO request path are real HTTP
