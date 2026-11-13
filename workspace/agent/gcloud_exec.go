@@ -105,7 +105,7 @@ func runGCloudExec(args []string) {
 		name := os.Getenv("AF_SESSION_NAME")
 		o.ConsoleLogin = true
 		o.ConsoleWait, o.TerminalConsole = consoleLoginWaitFor(name, o.Interactive)
-		o.Waiter = cloudlogin.Waiter{Session: name, Command: filepath.Base(o.Argv[0])}
+		o.Waiter = cloudlogin.Waiter{Session: name, Command: cloudruns.Describe(o.Argv)}
 	}
 	plan, err := gcpx.PlanRun(gcloudBin, os.Environ(), o)
 	if err != nil {

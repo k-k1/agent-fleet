@@ -358,3 +358,20 @@ does not see how `aws ssm start-session` ended. So:
   characters become `?`, 128 characters at most); it reaches the shell only as one quoted `printf '%s\n'`
   argument, so spaces, quotes and `$` print as they are.
 - **The gate is unchanged:** SSM stays outside it, as decision 3 says. Nothing here asks for a confirmation.
+
+## Note — gcloud runs name their command too (2026-11-13)
+
+Applies decision 1 to `af-gcloud-exec` (#4036). A gcp row used to keep the program alone, and the login card
+showed `gcloud`. The rule is the aws one: only names the pinned CLI knows, never an argument.
+
+- **The table** is `gcloud_commands.txt.gz`, one line per leaf command path of the pinned SDK's static completion
+  tree (`data/cli/gcloud_completions.py`), written by `gen_gcloud_commands.py`; the loader adds every prefix, so a
+  command group is known too. SDK 587.0.0: 17,372 commands, about 83 KB gzipped. `TestGCloudCommandsMatchPin`
+  fails while its header differs from `GCLOUD_VERSION` in `workspace/Dockerfile`. `cli-pin-bump.sh` bumps the agent
+  CLIs only, so regenerating this table (and the aws one) after a bump of that pin is by hand.
+- **The match** is the longest known path starting at `argv[1]`; the first word that is not part of a longer known
+  path (a flag, a resource name, a secret) ends it and is dropped. A first word starting with `-` (a global flag)
+  keeps `gcloud` alone.
+- **Where it shows.** The row stores the first word as `service` and the rest as `operation`
+  (`compute` / `instances list`); the login waiter's command is the joined words, which its cleaning keeps
+  as spaced words (#4034).

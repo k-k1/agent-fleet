@@ -144,8 +144,8 @@ func dirFor(sessionName string) string {
 }
 
 // Begin writes the row of a run that is about to start (or that the wrapper refuses, which
-// Refuse completes at once). argv is the command; only its program name and, for aws, a
-// service and operation the CLI knows are kept. A failure to write is not the run's
+// Refuse completes at once). argv is the command; only its program name and, for aws and
+// gcloud, the command words the pinned CLI knows are kept. A failure to write is not the run's
 // failure: the row is visibility, and the command still runs.
 func Begin(provider, sessionName, profile string, argv []string) *Run {
 	t := now()
@@ -348,32 +348,37 @@ func (r *Run) writeLocked(create bool) {
 }
 
 // describe keeps the program's base name and, for `aws <service> <operation>`, the two
-// names when the CLI knows both. A first argument that starts with "-" (a global option
-// before the service) keeps neither: its value may sit where a service would.
+// names when the CLI knows both; for `gcloud`, the longest command path the pinned SDK knows
+// (service is its first word, operation the rest). A first argument that starts with "-" (a
+// global option before the command) keeps nothing: its value may sit where a command would.
 func describe(argv []string) (program, service, operation string) {
 	if len(argv) == 0 {
 		return "", "", ""
 	}
 	program = keep(filepath.Base(argv[0]), programRe)
-	if program != "aws" || len(argv) < 3 || strings.HasPrefix(argv[1], "-") {
+	if len(argv) < 2 || strings.HasPrefix(argv[1], "-") {
 		return program, "", ""
 	}
-	if knownAWSCommand(argv[1], argv[2]) {
-		return program, argv[1], argv[2]
+	switch program {
+	case "aws":
+		if len(argv) >= 3 && knownAWSCommand(argv[1], argv[2]) {
+			return program, argv[1], argv[2]
+		}
+	case "gcloud":
+		if p := gcloudCommandPath(argv[1:]); len(p) > 0 {
+			return program, p[0], strings.Join(p[1:], " ")
+		}
 	}
 	return program, "", ""
 }
 
 // Describe is the command as describe keeps it, its words joined by spaces: "aws ec2
-// describe-instances", "aws" when the operation is not one the CLI knows, "terraform" for
-// another program, "" when the name is not plain characters. Nothing an argument holds besides
+// describe-instances", "gcloud compute instances list", "aws" when the operation is not one
+// the CLI knows, "terraform" for another program, "" when the name is not plain characters. Nothing an argument holds besides
 // those names gets through, so the result may be shown where only Settings' words are trusted.
 func Describe(argv []string) string {
 	program, service, operation := describe(argv)
-	if service == "" {
-		return program
-	}
-	return program + " " + service + " " + operation
+	return strings.TrimSpace(program + " " + service + " " + operation)
 }
 
 // prune keeps the newest rows of dir: perSession of them, or, for the workspace's spool,
