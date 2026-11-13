@@ -126,11 +126,15 @@ STUB_VAULT=None check 1
 says "NO daily EFS backup (no-vault)"
 says "--no-execute-changeset"
 says "never a Modify/Replacement of FileSystem or Db"
+says "adds the four"; saysnt "replaces) EfsBackupSelection"
 saysnt "execute-change-set"
 
 echo "== case 3: retain, vault but the plan selects nothing -- warns =="
 STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=None check 1
 says "(no-plan)"
+# with a plan in place the repair rewrites the selection; it adds no EfsBackup* resources
+says "modifies (or"; says "replaces) EfsBackupSelection"; saysnt "adds the four"
+says "never a Modify/Replacement of FileSystem or Db"
 
 echo "== case 4: retain, plan selects another file system / region -- warns =="
 STUB_VAULT=v STUB_PLAN=plan-1 STUB_SELECTIONS=sel-1 STUB_RESOURCES="arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-other" check 1

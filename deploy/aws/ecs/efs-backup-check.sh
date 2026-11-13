@@ -177,9 +177,18 @@ af_efs_backup_check() {
           echo "         The plan does not select ${arn:-the members file system}${cp_arn:+ and $cp_arn (the Control Plane) together}:"
           echo "         every file system it names must be listed by its exact ARN."
         fi
-        echo "         Read the change set (describe-change-set) and execute it only if it adds the four"
-        echo "         EfsBackup* resources, plus the five CpData* resources on a stack older than the Control"
-        echo "         Plane's file system, and nothing else — never a Modify/Replacement of FileSystem or Db."
+        # What a correct change set looks like depends on what is missing: a stack without the
+        # vault gains the four EfsBackup* resources; one with a plan only rewrites its selection.
+        if [ "$AF_EFS_BACKUP_VERDICT" = no-vault ]; then
+          echo "         Read the change set (describe-change-set) and execute it only if it adds the four"
+          echo "         EfsBackup* resources,"
+        else
+          echo "         Read the change set (describe-change-set) and execute it only if it modifies (or"
+          echo "         replaces) EfsBackupSelection,"
+        fi
+        echo "         plus the five CpData* resources on a stack older than the Control Plane's file system"
+        echo "         (copy its readable internal git repositories out first: guide/operate/aws-ecs/upgrade.md,"
+        echo "         \"The Control Plane's data root\"), and nothing else — never a Modify/Replacement of FileSystem or Db."
         echo "         guide/operate/aws-ecs/backup.md, \"Turn backups on for a running deployment\"."
       } >&2 ;;
   esac

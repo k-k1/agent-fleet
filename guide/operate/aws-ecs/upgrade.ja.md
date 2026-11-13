@@ -188,14 +188,28 @@ Control Plane は、内部 git のリポジトリとその LFS オブジェク�
 
 1. **バックアップを取る**（[上げる前に](#上げる前に)）
 2. **作業の時間帯を知らせる。** 手順 7 が終わるまで、内部リポジトリの作成・名前の変更・push をしないよう、メンバーに頼みます。止める仕組みはありません。手順 3 で写したあとの push は失われます。デプロイ中は、古いタスクと新しいタスクの両方が少しの間 `/git/` に応答します
-3. **まだ読めるリポジトリを全部外へ写す。** テナントごとに、そのテナントの管理者が、`git` と `git-lfs` のあるマシンから、Console に出る clone URL（設定 >「内部リポジトリ」）を使って行います。どれが答えて、どれが答えなかったかを控えておきます
+3. **まだ読めるリポジトリを全部外へ写す。** テナントごとに、そのテナントの管理者が、**そのテナントにある自分のワークスペースの中で**行います。そこでは git が内部 git に認証できるよう設定済みですが、外のマシンはそうではありません（認証エラーになるだけです）。ワークスペースを再起動しても残るホームの下のディレクトリで作業し、Console に出る clone URL（設定 >「内部リポジトリ」）を使います。どこかで失敗すれば関数は止まります。Control Plane が「not found」と答えたもの以外は、消えたものとして扱いません。やり直す前には、その `<name>.git` を消します
 
    ```bash
-   git ls-remote <clone URL> > /dev/null && echo readable || echo lost
-   git clone --mirror <clone URL> <name>.git
-   git -C <name>.git lfs fetch --all
-   git -C <name>.git for-each-ref | wc -l     # 手順 7 のために数を控える
+   refs() { awk '$2 != "HEAD" && $2 !~ /\^\{\}$/' | sort; }   # what ls-remote lists, minus HEAD and peeled tags
+   rescue() {   # rescue <name> <clone URL>
+     local name="$1" url="$2" out
+     if ! out="$(git ls-remote "$url" 2>&1)"; then
+       case "$out" in
+         *"not found"*) echo "$name: lost"; return 0 ;;
+         *) echo "$name: UNCONFIRMED: $out" >&2; return 1 ;;
+       esac
+     fi
+     printf '%s\n' "$out" | refs > "$name.refs"
+     git clone --mirror "$url" "$name.git" || return 1
+     git -C "$name.git" lfs fetch --all || return 1
+     git -C "$name.git" for-each-ref --format='%(objectname)%09%(refname)' | sort | diff "$name.refs" - || return 1
+     echo "$name: copied"
+   }
+   rescue <name> <clone URL>     # once per listed repository
    ```
+
+   **確認点: Console に並ぶすべてのリポジトリが `copied` か `lost` を出すまで、手順 4 に進みません。** `UNCONFIRMED`（認証エラー、タイムアウト、5xx）や、エラーで止まったものは、そのどちらでもありません。原因を調べて、もう一度実行します。ここまでは何も変えておらず、古いタスクがまだ唯一のコピーを持っています
 
 4. **`10-data` を変更セットで更新する。** パラメータは今のままです。どのコマンドにも同じ `--profile` と `--region` を付けます
 
@@ -220,16 +234,22 @@ Control Plane は、内部 git のリポジトリとその LFS オブジェク�
    ```
 
 5. **いつもどおり `update.sh` を実行する。** 新しい Control Plane のタスクは、空のファイルシステムで起動します
-6. **古い行を片付ける。** Console で、並んでいるリポジトリを 2 種類とも削除します。新しいファイルシステムにはどれもありませんし、データベースに名前が残っていると同じ名前では作れません（already exists）。削除すると、テナントの LFS の上限に数えられていた分も戻ります
-7. **写したものを戻す。** それぞれ元の名前で作り直し、写しを push します。Console で作ったリポジトリは `main` から始まります。元の既定ブランチが別だったなら、メンバーに伝えてください
+6. **古い行を片付ける。** Console で、手順 3 で `copied` か `lost` を出したリポジトリを削除します。新しいファイルシステムにはどれもありませんし、データベースに名前が残っていると同じ名前では作れません（already exists）。削除すると、テナントの LFS の上限に数えられていた分も戻ります
+7. **写したものを戻す。** 同じワークスペースで、`copied` のリポジトリをそれぞれ元の名前で作り直し、写しを push します。push のあとに Control Plane が返す ref（名前とオブジェクト ID）が手順 3 で保存したものと一致しなければ、関数は止まります。Console で作ったリポジトリは `main` から始まります。元の既定ブランチが別だったなら、メンバーに伝えてください
 
    ```bash
-   git -C <name>.git lfs push --all <clone URL>
-   git -C <name>.git push --mirror <clone URL>
-   git ls-remote <clone URL> | wc -l            # 手順 3 の数（HEAD の分だけずれることがある）
+   refs() { awk '$2 != "HEAD" && $2 !~ /\^\{\}$/' | sort; }
+   putback() {   # putback <name> <clone URL>
+     local name="$1" url="$2"
+     git -C "$name.git" lfs push --all "$url" || return 1
+     git -C "$name.git" push --mirror "$url" || return 1
+     git ls-remote "$url" | refs | diff "$name.refs" - || return 1
+     echo "$name: restored"
+   }
+   putback <name> <clone URL>
    ```
 
-手順 3 で答えなかったリポジトリは、配備からは戻せません。メンバーの手元に clone があれば、同じように作り直したリポジトリへ push できます。
+`lost` を出したリポジトリは、配備からは戻せません。メンバーの手元に clone があれば、同じように作り直したリポジトリへ push できます。
 
 ### 戻す
 

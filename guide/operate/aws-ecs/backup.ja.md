@@ -65,7 +65,13 @@ aws backup list-backup-plans --query "BackupPlansList[].BackupPlanName" \
 ```
 
 > [!WARNING]
-> 変更セットが追加するのが、`EfsBackup*` の 4 つのリソースと、Control Plane のファイルシステムより古いデータスタックでは `CpData*` の 5 つのリソースだけのときに実行します（[Control Plane のデータルート](upgrade.ja.md#control-plane-のデータルート)。そのアップグレードの前に、読めるリポジトリを外へ写してください）。特に `FileSystem` の `Modify` があってはいけません。スタックを更新すると、動いているファイルシステムのスループットモードが `EfsThroughputMode` の値に変わります（`10-data.yaml` の警告を参照）。`FileSystem` に `Replacement` があれば、新しい空のファイルシステムに置き換わります。
+> 変更セットが次のどれかの形で、それ以外を含まないときだけ実行します。特に `FileSystem` と `Db` の `Modify` や `Replacement` があってはいけません。
+>
+> - ボールトがまだない（`no-vault`）: `EfsBackup*` の 4 つのリソースの *Add*
+> - プランがすべてのファイルシステムを選んでいない（`no-plan`）: `EfsBackupSelection` の *Modify*（置き換えになることもあります。復旧ポイントはボールトに残ります）
+> - どちらの場合も、Control Plane のファイルシステムより古いデータスタックでは `CpData*` の 5 つのリソースの *Add* も出ます。そのアップグレードの前に、読めるリポジトリを外へ写してください（[Control Plane のデータルート](upgrade.ja.md#control-plane-のデータルート)）
+>
+> スタックを更新すると、動いているファイルシステムのスループットモードが `EfsThroughputMode` の値に変わります（`10-data.yaml` の警告を参照）。`FileSystem` に `Replacement` があれば、新しい空のファイルシステムに置き換わります。
 
 ### 管理画面の通知
 
@@ -137,15 +143,53 @@ aws backup describe-restore-job --restore-job-id <id>    # wait for COMPLETED
 
 ## Control Plane のリポジトリを戻す
 
-内部 git のリポジトリは `CpDataFileSystem` の `/cp-data/git/<tenant slug>/<repo>.git` にあります。上のメンバー向けの手順では届きません。このファイルシステムのマウントターゲットは Control Plane のセキュリティグループからの NFS しか受けず、マウントは必ずアクセスポイントを通す必要があり、Control Plane 自身の許可はそのアクセスポイント（`/cp-data`）だけに限られるからです。復元先の `/aws-backup-restore_<timestamp>/` はそのアクセスポイントの外なので、Control Plane からも見えません。
+内部 git のリポジトリは `CpDataFileSystem` の `/cp-data/git/<tenant slug>/<repo>.git` にあり、各リポジトリの LFS オブジェクトはその中（`lfs/objects/`）にあります。上のメンバー向けの手順では届きません。このファイルシステムのマウントターゲットは Control Plane のセキュリティグループからの NFS しか受けず、マウントは必ずアクセスポイントを通す必要があり、Control Plane 自身の許可はそのアクセスポイント（`/cp-data`）だけに限られるからです。復元先の `/aws-backup-restore_<timestamp>/` はそのアクセスポイントの外なので、Control Plane からも見えません。
 
-1. **Control Plane を止める。** リポジトリに何も書かれないようにします。`aws ecs update-service --cluster <cluster> --service af-<ingress stack>-cp --desired-count 0 --profile <p> --region <r>`。手順 5 まで Console は使えません
-2. **同じファイルシステムに復元する。** `"file-system-id"` はデータスタックの出力 `CpDataEfsId`、`ItemsToRestore` は `["/cp-data/git"]`、または `["/cp-data/git/<slug>/<repo>.git"]` のように 1 つずつ指定します
+リポジトリの一部は RDS にもあります。行、既定ブランチ、そして LFS オブジェクトをテナントの上限に数える台帳です。ファイルをそのまま写しても、これらは戻りません。そのため、次のように分けます。
+
+| リポジトリ | 戻しかた |
+|---|---|
+| まだ Console に並んでいる（行が RDS にある） | 下の手順でファイルを写し戻す |
+| 復旧ポイントのあとで削除した | 写し戻しでは戻せません。LFS オブジェクトが台帳の行なしでディスクに置かれ、二度と数えられなくなるからです。代わりに Control Plane を通して push し直します（[削除したリポジトリ](#削除したリポジトリ)） |
+
+写し戻したあとも、復旧ポイントより後にアップロードされたオブジェクトは台帳に数えられたままです。多めに数える側にずれるので、安全です。
+
+1. **Control Plane を止め、タスクが 1 つも動いていないことを確かめる。** リポジトリに何も書かれないようにします。手順 6 まで Console は使えません
+
+   ```bash
+   aws ecs update-service --cluster <cluster> --service af-<ingress stack>-cp --desired-count 0 --profile <p> --region <r>
+   aws ecs wait services-stable --cluster <cluster> --services af-<ingress stack>-cp --profile <p> --region <r>
+   aws ecs describe-services --cluster <cluster> --services af-<ingress stack>-cp \
+     --query 'services[0].runningCount' --output text --profile <p> --region <r>     # 0 であること
+   ```
+
+2. **同じファイルシステムに復元する。** `"file-system-id"` はデータスタックの出力 `CpDataEfsId`、`ItemsToRestore` は `["/cp-data/git"]`（全体）か、`["/cp-data/git/<slug>/<repo>.git"]` のように必要なリポジトリだけを指定します。`aws backup describe-restore-job --restore-job-id <id> --query Status` が `COMPLETED` になるまで待ち、それまでは何もコピーしません
 3. **コピーに届くようにする。** `CpDataFileSystem` に、ルートディレクトリ `/aws-backup-restore_<ts>/cp-data`、POSIX ユーザー `0:0` の一時的なアクセスポイントを作ります。あわせて、そのファイルシステムへの `elasticfilesystem:ClientMount`、`ClientWrite`、`ClientRootAccess` を許す一時的なタスクロールを作ります
-4. **使い捨ての Fargate タスクで戻す。** そのロールを使い、Control Plane のセキュリティグループ（`CpSgId`）とプライベートサブネットで動かします。EFS ボリュームは 2 つで、どちらも転送中の暗号化と IAM 認可をオンにします。一時的なアクセスポイントを `/restore` に、`CpDataAccessPointId` を `/cp-data` にマウントします。タスクの中で、今のツリーを退避し（`mv /cp-data/git /cp-data/git.before-restore`、または 1 リポジトリずつ）、`cp -a /restore/git /cp-data/` を実行します
-5. **Control Plane を起動し直し**（`--desired-count 1`）、リポジトリを確かめてから、`git.before-restore`、一時的なアクセスポイントの下に復元したファイル、そのアクセスポイント、タスク定義、ロールを消します。消すまでは、コピーに EFS の料金がかかります
+4. **使い捨ての Fargate タスクを起動する。** そのロールを使い、Control Plane のセキュリティグループ（`CpSgId`）とプライベートサブネットで動かします。EFS ボリュームは 2 つで、どちらも転送中の暗号化と IAM 認可をオンにします。一時的なアクセスポイントを `/restore` に、`CpDataAccessPointId` を `/cp-data` にマウントします
+5. **復元したものだけを写し戻す。** 復元したリポジトリごとに、次を実行します
 
-- 既定ブランチ、リポジトリの行、LFS の台帳は RDS にあり、この復元には含まれません。名前を指定して戻すリポジトリは、Console に並んでいる必要があります。その後で削除したものは、先に行を作り直します（手順 1 の前に Console で作成します）
+   ```bash
+   set -e
+   r=git/<slug>/<repo>.git
+   test -d "/restore/$r"
+   mv "/cp-data/$r" "/cp-data/$r.before-restore"
+   cp -a "/restore/$r" "/cp-data/$r"
+   ```
+
+   ツリー全体を入れ替えてよいのは、全体（`/cp-data/git`）を復元したときだけです: `mv /cp-data/git /cp-data/git.before-restore && cp -a /restore/git /cp-data/`。一部のリポジトリだけを復元したあとにツリーを入れ替えると、ほかのリポジトリがすべて Control Plane のパスから外れ、手順 6 で消えてしまいます
+
+6. **Control Plane を起動し直し**（`--desired-count 1`）、リポジトリを確かめてから、`.before-restore` のコピー、一時的なアクセスポイントの下に復元したファイル、そのアクセスポイント、タスク定義、ロールを消します。消すまでは、コピーに EFS の料金がかかります
+
+### 削除したリポジトリ
+
+1. 手順 1〜4 と同じように復元し、届くようにします（Control Plane のパスに何も写さないなら、Control Plane は動かしたままで構いません）
+2. 復元したディレクトリ `/restore/git/<slug>/<repo>.git` を、テナントの管理者に渡します。たとえば、使い捨てのタスクが tar にして、あなたが決めた S3 の場所に書き出します（その場合、タスクのロールにはそこへの `s3:PutObject` も要ります）
+3. 管理者は Console でリポジトリを作り直し、ワークスペースで展開して push します。LFS オブジェクトは、`git-lfs` がベアリポジトリで期待する場所（`lfs/objects/`）にあるので、アップロードは Control Plane を通り、台帳に数えられます
+
+   ```bash
+   git -C <repo>.git lfs push --all <clone URL> && git -C <repo>.git push --mirror <clone URL>
+   ```
+
 - 新しいファイルシステムへの復元は、`CpDataFileSystem` そのものを失ったときのためのものです。上と同じように、スタックが指すファイルシステムへツリーをコピーします。スタックの export を別のファイルシステムに向けることはできません
 
 ## 費用

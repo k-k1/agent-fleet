@@ -188,14 +188,28 @@ Until the upgrade, the repositories are on the running Control Plane task's own 
 
 1. **Back up** ([Before you upgrade](#before-you-upgrade))
 2. **Announce a window.** Ask members not to create, rename or push to internal repositories until step 7. Nothing enforces it: a push after its repository was copied in step 3 is lost, and during the deploy the old and new task both serve `/git/` for a moment
-3. **Copy out every repository that is still readable.** A tenant administrator of each tenant does it, from a machine with `git` and `git-lfs`, using the clone URLs the Console lists (Settings > "Internal repos"). Keep a list of which repositories answered and which did not
+3. **Copy out every repository that is still readable.** A tenant administrator of each tenant does it **in one of their own workspaces in that tenant**: git there is already set up to authenticate to the internal git, which an outside machine is not (it would only see authentication errors). Work in a directory under the home, which survives a workspace restart, and use the clone URLs the Console lists (Settings > "Internal repos"). Every failure stops the function with a non-zero status; nothing is classified as lost unless the Control Plane answered "not found". Before running one again, remove its `<name>.git`
 
    ```bash
-   git ls-remote <clone URL> > /dev/null && echo readable || echo lost
-   git clone --mirror <clone URL> <name>.git
-   git -C <name>.git lfs fetch --all
-   git -C <name>.git for-each-ref | wc -l     # keep this count for step 7
+   refs() { awk '$2 != "HEAD" && $2 !~ /\^\{\}$/' | sort; }   # what ls-remote lists, minus HEAD and peeled tags
+   rescue() {   # rescue <name> <clone URL>
+     local name="$1" url="$2" out
+     if ! out="$(git ls-remote "$url" 2>&1)"; then
+       case "$out" in
+         *"not found"*) echo "$name: lost"; return 0 ;;
+         *) echo "$name: UNCONFIRMED: $out" >&2; return 1 ;;
+       esac
+     fi
+     printf '%s\n' "$out" | refs > "$name.refs"
+     git clone --mirror "$url" "$name.git" || return 1
+     git -C "$name.git" lfs fetch --all || return 1
+     git -C "$name.git" for-each-ref --format='%(objectname)%09%(refname)' | sort | diff "$name.refs" - || return 1
+     echo "$name: copied"
+   }
+   rescue <name> <clone URL>     # once per listed repository
    ```
+
+   **Checkpoint: go on to step 4 only when every listed repository printed `copied` or `lost`.** An `UNCONFIRMED` one (an authentication error, a timeout, a 5xx) or one that stopped on an error is neither: find out why and run it again. Until then nothing has been changed, and the old task still holds the only copy
 
 4. **Update `10-data` through a change set**, with the parameters it already has. The same `--profile` and `--region` go on every command
 
@@ -220,16 +234,22 @@ Until the upgrade, the repositories are on the running Control Plane task's own 
    ```
 
 5. **Run `update.sh`** as usual. The new Control Plane task starts on the empty file system
-6. **Clear the old rows.** In the Console, delete every listed repository, both kinds: the new file system has none of them, and creating a repository under a name the database still lists is refused ("already exists"). Deleting one also releases the LFS bytes it counted toward the tenant's limit
-7. **Put back what you copied.** Create each repository again under its old name, then push the copy. A repository created in the Console starts on `main`; if the old default branch was another one, tell its members
+6. **Clear the old rows.** In the Console, delete every repository that printed `copied` or `lost` in step 3: the new file system has none of them, and creating a repository under a name the database still lists is refused ("already exists"). Deleting one also releases the LFS bytes it counted toward the tenant's limit
+7. **Put back what you copied.** In the same workspace, create each `copied` repository again under its old name, then push the copy. The function stops unless the refs the Control Plane lists afterwards, names and object IDs, equal the ones saved in step 3. A repository created in the Console starts on `main`; if the old default branch was another one, tell its members
 
    ```bash
-   git -C <name>.git lfs push --all <clone URL>
-   git -C <name>.git push --mirror <clone URL>
-   git ls-remote <clone URL> | wc -l            # the count from step 3, give or take HEAD
+   refs() { awk '$2 != "HEAD" && $2 !~ /\^\{\}$/' | sort; }
+   putback() {   # putback <name> <clone URL>
+     local name="$1" url="$2"
+     git -C "$name.git" lfs push --all "$url" || return 1
+     git -C "$name.git" push --mirror "$url" || return 1
+     git ls-remote "$url" | refs | diff "$name.refs" - || return 1
+     echo "$name: restored"
+   }
+   putback <name> <clone URL>
    ```
 
-Repositories that did not answer in step 3 cannot be recovered from the deployment. A member's own clone, if one exists, can be pushed into a re-created repository the same way.
+A repository that printed `lost` cannot be recovered from the deployment. A member's own clone, if one exists, can be pushed into a re-created repository the same way.
 
 ### Go back
 
