@@ -20,8 +20,8 @@ import (
 // cancels the CP's pending commands from the fixed set, runs the same ENI stage (deregister,
 // verify the task ENI is gone, both leases asked before every call), and only then sends the
 // stop, in the same guarded section. Unlike the rescue it does not detach the home and does
-// not wait for `stopped`: the member's next Start wakes this same slot, and the reply has to
-// fit one request. It is an operator action and is not behind the sweeper's action settings.
+// not wait for `stopped`; a slot it deregistered is reserved for replacement (#4086), any other
+// is woken by the member's next Start. It is an operator action and is not behind the sweeper's action settings.
 
 // forceStopAdoptAfter is how old a marker that is not blocked must be before an operator may
 // take it over: a rescue that is merely slow is left to finish, one nobody carries on
@@ -296,6 +296,9 @@ func (f *ecsEC2Factory) forceStopTokenHeld(ctx, bgCtx context.Context, cmds ssmS
 	if err := occ.rescueStopSend(ctx, id, &m, res.Forced); err != nil {
 		giveUp()
 		return res, f.forceStopErr(ctx, ctx, id, err)
+	}
+	if res.Deregistered {
+		res.Retired = f.retireDeregisteredSlot(ctx, id)
 	}
 	if !res.Forced {
 		res.ForceAfterSec = int(slotForceStopGrace.Seconds())

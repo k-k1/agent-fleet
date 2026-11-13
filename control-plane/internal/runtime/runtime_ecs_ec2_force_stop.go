@@ -86,6 +86,9 @@ type SlotForceStop struct {
 	// Deregistered: the slot held a task ENI, so its container instance was force-deregistered
 	// and the ENI waited out before the stop.
 	Deregistered bool `json:"deregistered,omitempty"`
+	// Retired: the deregistered slot was reserved for replacement, so no Start is placed on
+	// it and the occupant's next Start moves the home to a new slot (#4086).
+	Retired bool `json:"retired,omitempty"`
 	// StoppingTask is the ECS status of a task that is still STOPPING on the slot ("" = none).
 	StoppingTask string `json:"stopping_task,omitempty"`
 }
@@ -121,12 +124,14 @@ type SlotForceStop struct {
 // wedged predicate, the Start fence is the af-rescue marker and count, and the ENI stage is the
 // rescue's. The numbered steps above remain the direct path for a slot with no home.
 //
-// The slot is NOT quarantined and the home stays where it is: the member's next Start wakes
-// this same slot through the ordinary path (the home is attached, the instance is stopped).
-// The reboot clears whatever thrashed, and the slot's ECS agent reconnects and reports a
-// task still STOPPING on it (#2447). Keeping a box as evidence is quarantine's job, and
-// routing dark slots there is #2450. The container instance is deregistered only for the
-// task ENI (step 4), and the agent registers it again when the box restarts.
+// The slot is NOT quarantined and the home stays where it is. A slot that was NOT
+// deregistered is woken by the member's next Start through the ordinary path (the home is
+// attached, the instance is stopped); the reboot clears whatever thrashed, and the slot's ECS
+// agent reconnects and reports a task still STOPPING on it (#2447). A slot that WAS deregistered
+// (step 4) does not come back that way: its agent never re-registers, and the Start would
+// wait out the 5-minute lost-slot timeout. It is reserved for replacement instead
+// (retireDeregisteredSlot), so the next Start launches a new slot and moves the home there.
+// Keeping a box as evidence is quarantine's job, and routing dark slots there is #2450.
 func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (SlotForceStop, error) {
 	res := SlotForceStop{InstanceID: instanceID}
 	// bgCtx is what the background re-stop gets: the request's own, not the budgeted one,
@@ -261,6 +266,9 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	if stopErr != nil {
 		return res, fmt.Errorf("stop %s (its commands are already cancelled): %w", instanceID, stopErr)
 	}
+	if res.Deregistered {
+		res.Retired = f.retireDeregisteredSlot(ctx, instanceID)
+	}
 	if !res.Forced {
 		res.ForceAfterSec = int(slotForceStopGrace.Seconds())
 		launched := aws.ToTime(inst.LaunchTime)
@@ -272,6 +280,26 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	log.Printf("ecs-ec2: force-stop of slot %s sent (forced=%v, cancelled %d commands, %d failed, stopping task %q)",
 		instanceID, res.Forced, res.CancelledCommands, res.CancelFailed, res.StoppingTask)
 	return res, nil
+}
+
+// retireDeregisteredSlot reserves a slot whose container instance a force-stop deregistered.
+// The reservation is the operator's "replace this box" (ec2TagSlotReplace): placement skips
+// the slot, the occupant's next Start launches a new slot, detaches the home from this one
+// (after it has stopped) and moves it, and the sweeper retires the empty box. Without it
+// the next Start wakes this slot, which never registers again, and abandons it after the
+// lost-slot wait (#4086). Smallest change that reuses the tested replacement path; the home
+// is never touched here. Reports false when the tag could not be written: the stop has
+// already gone out, so that is logged, not an error of the stop.
+func (f *ecsEC2Factory) retireDeregisteredSlot(ctx context.Context, instanceID string) bool {
+	_, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotReplace), Value: aws.String(time.Now().UTC().Format(time.RFC3339))}},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2: could not reserve the deregistered slot %s for replacement (its next Start may wait for the lost-slot timeout): %v", instanceID, err)
+		return false
+	}
+	return true
 }
 
 // forceStopAfterGrace repeats the stop with Force when THIS stop has not finished. It acts
