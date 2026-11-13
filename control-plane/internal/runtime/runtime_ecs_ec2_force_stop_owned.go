@@ -289,6 +289,12 @@ func (f *ecsEC2Factory) forceStopTokenHeld(ctx, bgCtx context.Context, cmds ssmS
 			giveUp()
 			return res, f.forceStopErr(ctx, eniCtx, id, err)
 		}
+		// Reserved as soon as the deregistration stands and before the stop goes out: a Start
+		// can overtake the token as soon as the guarded stop returns, and one that reads the
+		// slot unreserved wakes a box that will never register again (#4086).
+		if res.Deregistered {
+			res.Retired = f.retireDeregisteredSlot(ctx, id)
+		}
 	}
 
 	// The stop, in the same guarded section as every destructive step.
@@ -296,9 +302,6 @@ func (f *ecsEC2Factory) forceStopTokenHeld(ctx, bgCtx context.Context, cmds ssmS
 	if err := occ.rescueStopSend(ctx, id, &m, res.Forced); err != nil {
 		giveUp()
 		return res, f.forceStopErr(ctx, ctx, id, err)
-	}
-	if res.Deregistered {
-		res.Retired = f.retireDeregisteredSlot(ctx, id)
 	}
 	if !res.Forced {
 		res.ForceAfterSec = int(slotForceStopGrace.Seconds())

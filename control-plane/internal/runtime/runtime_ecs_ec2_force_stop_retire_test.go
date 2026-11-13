@@ -87,3 +87,24 @@ func TestForceStopOfADeregisteredSlotWithoutAHomeRetiresIt(t *testing.T) {
 		t.Fatal("no reservation on the deregistered homeless slot")
 	}
 }
+
+// The reservation must already be on the box when the stop goes out: the token is overtaken by
+// any Start as soon as the guarded stop returns, and a Start that read the slot unreserved
+// would wake a box that never registers again.
+func TestForceStopReservesTheDeregisteredSlotBeforeTheStopIsSent(t *testing.T) {
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	var atStop string
+	var stopsAtHook int
+	hookAt("stopping", func() {
+		atStop = ec2TagValue(h.ec2.instances["i-wedge"].Tags, ec2TagSlotReplace)
+		stopsAtHook = stopsOnBox(h)
+	})
+	defer func() { rescueStepHook = nil }()
+	if _, err := h.factory().ForceStopSlot(context.Background(), "i-wedge", false); err != nil {
+		t.Fatalf("ForceStopSlot: %v", err)
+	}
+	if atStop == "" || stopsAtHook != 0 {
+		t.Fatalf("reservation %q with %d stops sent when the stop was about to go out; want it set first", atStop, stopsAtHook)
+	}
+}

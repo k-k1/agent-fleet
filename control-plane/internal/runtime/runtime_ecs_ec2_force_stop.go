@@ -253,7 +253,10 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 		return res, fmt.Errorf("not stopping %s: %w (its commands are already cancelled and the occupant's start is ended)", instanceID, eniErr)
 	}
 
-	// 5. stop.
+	// 5. stop. A deregistered slot is reserved first, so no Start can be handed it (#4086).
+	if res.Deregistered {
+		res.Retired = f.retireDeregisteredSlot(ctx, instanceID)
+	}
 	res.Forced = inst.State.Name == ec2types.InstanceStateNameStopping
 	var stopErr error
 	if !owned(ctx, func(c context.Context) {
@@ -265,9 +268,6 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 	}
 	if stopErr != nil {
 		return res, fmt.Errorf("stop %s (its commands are already cancelled): %w", instanceID, stopErr)
-	}
-	if res.Deregistered {
-		res.Retired = f.retireDeregisteredSlot(ctx, instanceID)
 	}
 	if !res.Forced {
 		res.ForceAfterSec = int(slotForceStopGrace.Seconds())
