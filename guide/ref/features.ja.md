@@ -180,7 +180,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
 | プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [開発用サインインを使う](../operate/secure/dev-signin.ja.md#開発用-oidc-idp-をオンオフする) |
 | AWS KMS による保存時の鍵と、ホームごとの専用鍵 | 配備管理者 | スタックのパラメータ、それからシェル | [保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)・[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md) |
-| この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数のデプロイを見分ける](../operate/run/deployment-label.ja.md) |
+| この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数の配備を見分ける](../operate/run/deployment-label.ja.md) |
 | 使わない間の配備の一時停止 | 配備管理者 | シェル | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
@@ -195,6 +195,6 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 検索先としての Civitai Red（NSFW の姉妹ドメイン）| 配備管理者（super_admin）、配備がそれを与えられている場合 | 管理 → API トークン | [推論エンジンにモデルを取り込む](../operate/engines/models.ja.md#トークンを登録する) |
 | 音声エンジンと共通の読み仮名辞書 | 配備管理者（super_admin）| 管理 → 読み上げ | [読み上げエンジンを動かす](../operate/engines/read-aloud.ja.md) |
 | 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| シェル、それから 管理 → 推論エンジン | [自前の ComfyUI で画像を生成する](../operate/engines/comfyui.ja.md) |
-| 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| シェルと、向こうの配備のメンバーシップ 1 つ | [別のデプロイのエンジンを借りる](../operate/engines/borrow.ja.md) |
+| 別の配備の llm / image エンジンを借りる | 配備管理者（super_admin）| シェルと、向こうの配備のメンバーシップ 1 つ | [別の配備のエンジンを借りる](../operate/engines/borrow.ja.md) |
 | 自前の llama.cpp でのチャット推論 | 配備管理者（super_admin）| シェル、それから 管理 → 推論エンジン | [LAN の llama.cpp でチャットする](../operate/engines/llama-cpp.ja.md) |
 | コンテナ内のユーザーガイド | — | 自動 | [roles.md](roles.ja.md) |

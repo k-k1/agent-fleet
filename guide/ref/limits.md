@@ -37,12 +37,12 @@ These do not vary by deployment.
 | Agent memory: Changes / Forgotten | the Console's Changes view shows the newest 100 and the memory history 300, and **Load older changes** pages back to the first change; `af-memory changes` lists 30 by default and `--limit` up to 300; the forgotten list shows 300 at a time with **Load older forgotten memories** | Nothing is out of reach in the Console; `af-memory changes` does not page |
 | Jumping to an older turn from a search hit | 8,000 transcript positions back, in at most 4 requests | The turn is not reached; a notice says it is too far back, and scrolling up loads it |
 
-> **Why the title limit is worth naming.** A limit enforced at different values in
-> different layers produces failures that appear only at one specific moment, which is
-> the hardest kind to diagnose. If a handoff proposal accepted a long title, showed it on
-> the card and in the launch dialog and let you edit it, and session creation alone then
-> refused it at 80, all you would see is "failed to start worktree: title is too long".
-> So there is one value, kept in one place.
+> **Why the title limit is worth naming.** It once differed per layer: a handoff
+> proposal accepted 512 bytes, showed it on the card and in the launch dialog and let
+> you edit it, and then session creation alone refused it at 80, surfacing only as
+> "failed to start worktree: title is too long". A limit enforced at different values
+> in different layers produces failures that appear only at one specific moment, which
+> is the hardest kind to diagnose. So there is one value, kept in one place.
 
 ## Set by the deployment
 
