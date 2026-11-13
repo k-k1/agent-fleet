@@ -57,16 +57,20 @@ A tool name on either server:
 1. **Carries no prefix.** No `af_`, no server name. The client adds `mcp__<server>__`; a second prefix is
    noise and, for `af_`, makes the name look like the server's.
 2. **Is lower-case ASCII `snake_case`**: `^[a-z][a-z0-9]*(_[a-z0-9]+)*$`. Every current name already is.
-3. **Is verb-first**: `<verb>_<object>` (`list_repos`, `stop_session`). A bare verb is allowed when the
-   object is the server itself (`watch`, `unwatch`). Use `list_` for a collection and `get_` for one
-   thing or one state.
+3. **Is verb-first**: `<verb>_<object>` (`list_repos`, `stop_session`). A bare verb is allowed only
+   where the verb alone names the operation and its subject is fixed (today `watch` and `unwatch`, which act on
+   the session's watches). Only the first-word test is mechanical. Using `list_` for a collection and `get_` for
+   one thing or one state is a convention for the reviewer, not for a check: today `get_schedule_runs` (a
+   history of runs), `get_session_usage` and `get_agent_usage` (one row per session or CLI) return several
+   rows under `get_`, and they are accepted as they are.
 4. **Means one operation on both servers.** The same operation has the same name and the same argument
    names wherever it is served. A narrower scope for one audience (children only) keeps the name and says
    so in the description; a target the narrower form cannot reach gets a qualifier after the verb
    (`send_to_peer_session`, `list_peer_sessions`). A name never means two different operations.
 5. **Is renamed only with an alias.** The old name stays callable, but is not listed, for at least one
-   release, so a session that started before the upgrade, and holds the old name in its prompt, still
-   works.
+   release, so a session that started before the upgrade and holds the old name in its prompt keeps
+   working for that period. The alias narrows the failure, it does not remove it (section 3, "Sessions
+   already running").
 
 Two families are grandfathered rather than renamed, because their names are the shared memory API
 (ADR 0022 / 0130) and a rename would reach every agent kind's memory prompt: the noun-first
@@ -128,6 +132,11 @@ Against the rule:
 
 The exceptions to hold in a check are therefore 12 names for rule 3 (`memory_*` ×8, `branch_name`,
 `skill_restore`, `af_report`, `af_stop_after_turn`) and 2 for rule 1 (the same two).
+These are the exceptions to what a check can test: the shape, the prefix and the first word. The
+meaning-level points are for the reviewer and are not in the allowlist: the `list_` / `get_` convention
+(deviations known today: `get_schedule_runs`, `get_session_usage`, `get_agent_usage`), the bare verbs
+`watch` / `unwatch`, rule 4's qualifier form (`peek_session_output`), and whether two tools are the same
+operation at all.
 
 ### 3. `af_report` and `af_stop_after_turn`: two options
 
@@ -165,8 +174,13 @@ Two of those rows matter more than their size.
 - **Sessions already running.** A session started before the upgrade holds the old name in its first
   prompt, and a client may cache its tool list. Without an alias that session calls a tool that is gone
   and never reports (`session_selfreport.go` says as much: "a session told to call `af_report` when it has
-  no such tool simply never reports"). The alias is what makes B safe, and it needs a removal date that is
-  a release, not a calendar day, because the Agent updates itself (ADR 0025).
+  no such tool simply never reports"). The alias covers these sessions only while it exists. A session that is resumed after the alias is
+  removed, or a client that keeps an old tool list past that point, still calls the old name and gets an
+  unknown-tool error, and the instruction it carried is never reported. Two conditions follow, and both are
+  part of B: (1) the removal is a release, not a calendar day, because the Agent updates itself (ADR 0025),
+  and it waits until the alias has logged no call for a whole release (the alias dispatch has to count its
+  calls, which today nothing does); (2) after removal the unknown-tool error for the old name says which
+  tool replaced it, so a resumed session can correct itself. Neither makes B risk-free.
 - **The repository can never drop the old name.** The 25 immutable ADR and journal files keep it, so
   `git grep af_report` stays non-empty after B, and the alias code needs a comment saying why.
 
@@ -176,8 +190,10 @@ Two of those rows matter more than their size.
    A loses no enforcement.
 2. B's cost is not the 213 lines, which are mostly mechanical, but the in-flight sessions and the alias
    it has to carry and later remove, for a change no agent or user would notice.
-3. The `af_` prefix is, by accident, the only thing in `af_stop_after_turn` that says "me, not a child"
-   (next to `stop_session_after_turn`). A rename has to invent a replacement for it.
+3. `af_` means "Agent Fleet", not "this session", and the description and schema are what a model reads to
+   pick between `af_stop_after_turn` and `stop_session_after_turn`. What the prefix may do is keep the two
+   names from colliding on sight; that is a possibility, not something measured here. A rename to
+   `stop_self_after_turn` would have to carry that distinction in the name some other way.
 
 Revisit B when a change that has to re-issue those two definitions anyway (a schema change, say) comes
 along, or when a third `af_` tool is proposed.
