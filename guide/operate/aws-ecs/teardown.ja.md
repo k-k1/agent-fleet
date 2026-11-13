@@ -14,7 +14,7 @@ ECS の配備を、途中で止まらない順番ですべて消します。
 
 | あなたがやること | 起きること |
 |---|---|
-| 先に `capture-env.sh` で記録する | 建て直すためのパラメータが残る |
+| 先に `capture-env.sh` で記録する | 再構築するためのパラメータが残る |
 | `teardown.sh` を実行する | 消えるものの一覧と計画が出る |
 | `teardown.sh --yes` を実行する | 下の手順 1〜11 を順に実行する |
 | `--purge-retained` / `--purge-secrets` を付ける | `retain` で残したものと `/af-cp/*` も消える |
@@ -87,11 +87,11 @@ EC2 のインスタンスが消えたあとも、クラスターがそれを一�
 
 ### 6. SSM の `/af-ws/*` を消す
 
-ワークスペースごとの DEK とトークンです。`/af-cp/*` は、`30-ingress` の前に自分で作った Control Plane のシークレットです。同じアカウントに建て直すなら残し、前提の準備から通しで試し直すなら消します。
+ワークスペースごとの DEK とトークンです。`/af-cp/*` は、`30-ingress` の前に自分で作った Control Plane のシークレットです。同じアカウントに再構築するなら残し、前提の準備から通しで試し直すなら消します。
 
 ### 7. ゴールデンスナップショットを消す
 
-`describe-snapshots --owner-ids self` で一覧し、1 つずつ消します。焼いたホームごとに 50 GiB で、イメージのタグごとに 1 つあります。`teardown.sh` は、休止とバックアップのスナップショットも消します。
+`describe-snapshots --owner-ids self` で一覧し、1 つずつ消します。ビルドしたホームごとに 50 GiB で、イメージのタグごとに 1 つあります。`teardown.sh` は、休止とバックアップのスナップショットも消します。
 
 ### 8. スタックを逆の順に 1 つずつ消す
 
@@ -126,7 +126,7 @@ done
 > **1 つずつ消して、待ちます。** CloudFormation は、export しているスタックの削除を、import しているスタックが残っているあいだは**取り消します**（`Cannot delete export … as it is in use by …`）。まとめて消すと、最後のほうは何も起きず、待つループだけが、もう取り消された削除を待ち続けます。
 
 - 順番は `teardown.sh` と同じです。ingress → 推論エンジン（`60-engines`）→ 読み上げ（`50-tts`）→ スロットのプール（`40-ec2-pool`）→ platform → data → network
-- 推論エンジン・読み上げ・プールのスタックは任意です。`af-ecs-engines` は推論エンジンを足したときだけ、`af-ecs-tts` は読み上げを有効にしたときだけ、`af-ecs-pool` は `ecs-ec2` のときだけあります。ループが飛ばすのは、CloudFormation が存在しないと答えたスタック（`does not exist`）だけです。それ以外の `describe-stacks` のエラー（資格情報の期限切れ・権限不足・通信の障害）は表示して止まるので、確かめていないスタックを「飛ばした」と報告することはありません
+- 推論エンジン・読み上げ・プールのスタックは任意です。`af-ecs-engines` は推論エンジンを足したときだけ、`af-ecs-tts` は読み上げを有効にしたときだけ、`af-ecs-pool` は `ecs-ec2` のときだけあります。ループが飛ばすのは、CloudFormation が存在しないと答えたスタック（`does not exist`）だけです。それ以外の `describe-stacks` のエラー（認証情報の期限切れ・権限不足・通信の障害）は表示して止まるので、確かめていないスタックを「飛ばした」と報告することはありません
 - 上の名前は既定の例です。実際のスタック名（`60-engines.yaml` / `50-tts.yaml` / `40-ec2-pool.yaml` などをデプロイしたときの名前）に置き換えます。`teardown.sh` は名前を配備から読みます
 - `50-tts` を消す前に、エンジンのサービスを 0 台にしておきます。タスクが登録されているあいだは Cloud Map のサービスを消せず、停止処理中のタスクもまだ登録されている扱いです
 - かかる時間は、`delete` で約 10 分、`retain` で約 16 分（RDS のスナップショットを取るため）です
@@ -148,7 +148,7 @@ done
 aws backup delete-backup-vault --backup-vault-name <vault>                            # once the points are gone
 ```
 
-`teardown.sh` は手順 8 の前に削除保護を外しますが、最後のスナップショット・EFS・バックアップのボールトは、`--purge-retained` を付けたときだけ消します。付けなければ、ボールトの復元ポイントは `EfsBackupRetentionDays` のとおりに自然に期限切れになります。
+`teardown.sh` は手順 8 の前に削除保護を外しますが、最後のスナップショット・EFS・バックアップのボールトは、`--purge-retained` を付けたときだけ消します。付けなければ、ボールトの復旧ポイントは `EfsBackupRetentionDays` のとおりに自然に期限切れになります。
 
 ### 10. タスク定義を消す
 
@@ -172,8 +172,8 @@ aws backup delete-backup-vault --backup-vault-name <vault>                      
 | 残るもの | 理由 |
 |---|---|
 | ホストゾーン | 配備のものではない |
-| `/af-cp/*` のシークレット（残したとき） | 同じアカウントに建て直すため。`--purge-secrets` で消える |
-| **NAT ゲートウェイの Elastic IP** | 建て直しても同じアドレスから外へ出られるようにするため（[外向きの IP アドレスを固定する](egress-ip.ja.md)） |
+| `/af-cp/*` のシークレット（残したとき） | 同じアカウントに再構築するため。`--purge-secrets` で消える |
+| **NAT ゲートウェイの Elastic IP** | 再構築しても同じアドレスから外へ出られるようにするため（[外向きの IP アドレスを固定する](egress-ip.ja.md)） |
 | **egress ゲートウェイの Elastic IP**（`GatewayEip`、`EgressRoute=gateway` でスタックが割り当てたとき） | 同上（[外向きの通信をゲートウェイで制御する](egress-gateway.ja.md#作り直しても残る)） |
 | **通信の記録の S3 Bucket**（`EgressArchiveBucket`、`EgressArchive=create` のとき） | 中身をスタックより長く残すため |
 | `60-engines` のモデルの S3 Bucket | 同上。大きなモデルを Hugging Face から取り直すと時間が読めない |
@@ -190,7 +190,7 @@ aws backup delete-backup-vault --backup-vault-name <vault>                      
 - 残りがないことを点検します: EC2 のインスタンス・ボリューム・スナップショット・AMI・EIP、ECS のクラスターとタスク定義、EFS、RDS のインスタンスと手動のスナップショット、ALB、ACM、NAT、ECR、Cloud Map の名前空間、`/af` のロググループ、`af-*` の IAM ロールとインスタンスプロファイル、デフォルトでない VPC
 
 > [!WARNING]
-> **ECR は残せません。** `af-control-plane` と `af-workspace` は `20-platform` のリソースで、`EmptyOnDelete: true` です。スタックを消すと、リポジトリと**その中のすべてのイメージ**が消えます。建て直すときは、`release-ecr.sh` か `crane copy` からやり直します。
+> **ECR は残せません。** `af-control-plane` と `af-workspace` は `20-platform` のリソースで、`EmptyOnDelete: true` です。スタックを消すと、リポジトリと**その中のすべてのイメージ**が消えます。再構築するときは、`release-ecr.sh` か `crane copy` からやり直します。
 
 ## 関連
 

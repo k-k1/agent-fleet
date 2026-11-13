@@ -8,7 +8,7 @@ source_of_truth: "`deploy/aws/ecs/cfn/30-ingress.yaml` のパラメータと、C
 [English](workspace-size.md) | 日本語
 
 ECS の配備で、すべてのワークスペースが既定で受け取る CPU・メモリ・作業ディスクを決めます。
-メンバーごとの大きさは、テナント管理者が Console で変えます（[ワークスペースの大きさを決める](../../admin/resources/workspace-size.ja.md)）。その値は、テナントの上限を超えないように切り詰められます。
+メンバーごとのサイズは、テナント管理者が Console で変えます（[ワークスペースの大きさを決める](../../admin/resources/workspace-size.ja.md)）。その値は、テナントの上限を超えないように切り詰められます。
 
 ## 全体像
 
@@ -24,7 +24,7 @@ ECS の配備で、すべてのワークスペースが既定で受け取る CPU
 |---|---|---|---|
 | `WsTaskCpu` | `AF_ECS_TASK_CPU` | `1024` | Fargate の単位。1024 が 1 vCPU |
 | `WsTaskMemory` | `AF_ECS_TASK_MEMORY` | `2048` | MiB |
-| `WsDiskGiB` | `AF_ECS_WS_DISK_GB` | `50` | 21〜200 で作業ディスク（エフェメラルストレージ）の大きさを指定する。0 では Fargate の無料の 20 GiB になる（キャッシュの移動もオフ） |
+| `WsDiskGiB` | `AF_ECS_WS_DISK_GB` | `50` | 21〜200 で作業ディスク（エフェメラルストレージ）のサイズを指定する。0 では Fargate の無料の 20 GiB になる（キャッシュの移動もオフ） |
 
 ## CPU とメモリの組
 
@@ -74,6 +74,6 @@ CloudFormation はパラメータの値を覚えています。`0` で作った�
 
 ## 関連
 
-- [ワークスペースの大きさを決める](../../admin/resources/workspace-size.ja.md)：メンバーごとの大きさ（テナント管理者）
+- [ワークスペースの大きさを決める](../../admin/resources/workspace-size.ja.md)：メンバーごとのサイズ（テナント管理者）
 - [費用を抑える](cost.ja.md)
 - [上限と既定値](../../ref/limits.ja.md)

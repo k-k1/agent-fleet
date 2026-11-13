@@ -186,7 +186,7 @@ A second checkpoint is the same call with another URL and key. Pick one that is 
 - **Override `environment` only, as above.** The containers have no `EntryPoint`; each `Command` is the script itself (`/opt/af/ingest-fetch.sh`, `/opt/af/ingest-upload.sh`). If you ever override `command`, it is an argv array (`["/opt/af/ingest-upload.sh"]`), not one shell string
 - **The fetch time is unpredictable; always give the checksum.** Through the same NAT, Hugging Face delivered anywhere between 4 and 236 MB/s, and nothing about the file or the path predicted which. S3 ran at 104–147 MB/s on every attempt, which is why models are staged there. A truncated 17 GB GGUF still loads, and then answers nonsense
 
-**A gated repository** (`gated: auto` on the Hugging Face API: FLUX.1-dev, SD 3.5) also needs the operator to have accepted the licence on Hugging Face and that account's token registered in the admin screen ([Take models into the inference engines](../engines/models.md#register-the-tokens)).
+**A gated repository** (`gated: auto` on the Hugging Face API: FLUX.1-dev, SD3.5) also needs the operator to have accepted the licence on Hugging Face and that account's token registered in the admin screen ([Take models into the inference engines](../engines/models.md#register-the-tokens)).
 
 - The Control Plane keeps the token sealed in its own database and writes it into a secret this stack always creates. No CloudFormation round trip
 - Only the **ingest task** reads the token; it never reaches an engine instance. The Control Plane cannot read back what it wrote (`PutSecretValue` without `GetSecretValue`)

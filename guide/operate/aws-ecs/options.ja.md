@@ -20,8 +20,8 @@ ECS の配備で、既定ではオフの機能をスタックのパラメータ�
 | パラメータ | スタック | オンにするもの |
 |---|---|---|
 | `PreviewDomain` | `30-ingress` | ワークスペースのサービスを、起動ごとのサブドメインのルートで見せる |
-| `CustodianKmsKey` / `CustodianKmsKeyArn` | `10-data` / `30-ingress` | Control Plane が保存する秘密を KMS の鍵で守る |
-| `WorkspaceDekRandom` | `30-ingress` | ホームごとに別の鍵を持たせる（KMS のときだけ） |
+| `CustodianKmsKey` / `CustodianKmsKeyArn` | `10-data` / `30-ingress` | Control Plane が保存するシークレットを KMS キーで守る |
+| `WorkspaceDekRandom` | `30-ingress` | ホームごとに別のキーを持たせる（KMS のときだけ） |
 | `McpEnabled` / `McpOAuth` | `30-ingress` | `/mcp` を公開し、外のクライアントを OAuth でサインインさせる |
 | `ProvidedRoutes` | `30-ingress` | 配備が費用を持つ Bedrock を、予算の中でメンバーに使わせる（受け入れの確認用） |
 | タイマー・GitHub サインイン・外部のエンジン | `30-ingress` | Control Plane の時間の設定、GitHub でのサインインの追加の設定、LAN や別の配備のエンジン |
@@ -90,7 +90,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 ## 保存時の鍵を KMS にする
 
-Control Plane が封じて保存する秘密を、`AF_MASTER_KEY` から導いた鍵ではなく KMS の鍵で守ります。何が変わり、何に気をつけるかは [保存時の鍵を AWS KMS にする](../keys/kms.ja.md) にあります。ここではパラメータだけを書きます。
+Control Plane が暗号化して保存するシークレットを、`AF_MASTER_KEY` から導出した鍵ではなく KMS キーで守ります。何が変わり、何に気をつけるかは [保存時の鍵を AWS KMS にする](../keys/kms.ja.md) にあります。ここではパラメータだけを書きます。
 
 ```bash
 # 10-data: make the key (it follows Persistence, like RDS)
@@ -99,7 +99,7 @@ Control Plane が封じて保存する秘密を、`AF_MASTER_KEY` から導い�
 --parameter-overrides CustodianKmsKeyArn=arn:aws:kms:<region>:<account>:key/<key-id> ...
 ```
 
-1. `10-data` を `CustodianKmsKey=create` でデプロイします。鍵は RDS と同じく `Persistence` に従います
+1. `10-data` を `CustodianKmsKey=create` でデプロイします。キーは RDS と同じく `Persistence` に従います
 2. `10-data` の出力 `CustodianKmsKeyArn` を、`30-ingress` の `CustodianKmsKeyArn` に渡します
 
 ### ホームごとに鍵を分ける
@@ -115,7 +115,7 @@ Control Plane が封じて保存する秘密を、`AF_MASTER_KEY` から導い�
 
 ### Control Plane のデータベースに対して `af-cp` を実行する
 
-`af-cp rewrap-keys`（KMS に切り替える前の値を封じ直す）と `af-cp home-dek-status`（ホームごとの鍵を数える・一覧する・消す）は、Control Plane と同じ環境で動かします。同じ `AF_MASTER_KEY`・`AF_KMS_KEY_ID`・データベースの設定・タスクロールが要ります。
+`af-cp rewrap-keys`（KMS に切り替える前の値を暗号化し直す）と `af-cp home-dek-status`（ホームごとのキーを数える・一覧する・消す）は、Control Plane と同じ環境で動かします。同じ `AF_MASTER_KEY`・`AF_KMS_KEY_ID`・データベースの設定・タスクロールが要ります。
 
 ECS では、Control Plane のタスク定義を使い、コマンドだけを差し替えた単発のタスクとして、Control Plane のサブネットとセキュリティグループで動かします。まず `--dry-run` で実行します。
 
@@ -191,7 +191,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 ### 秘密はスイッチで読む
 
-3 つの秘密は、それぞれのスイッチを `on` にしたときだけ、SSM の SecureString から読みます。**先に SSM パラメータを作ってから**スイッチをオンにします。存在しないパラメータを指していると、タスクが起動しません。
+3 つのシークレットは、それぞれのスイッチを `on` にしたときだけ、SSM の SecureString から読みます。**先に SSM パラメータを作ってから**スイッチをオンにします。存在しないパラメータを指していると、タスクが起動しません。
 
 | スイッチ（既定は `off`） | 読む SSM パラメータ |
 |---|---|
@@ -201,7 +201,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 - `SsmPrefix` の既定は `/af-cp` で、実行ロールはすでにこの下を読めます。`/af-cp/` と `/af-ws/` の外に変えたときは、実行ロールの `ssm-read` ポリシーをそのプレフィックスに広げます
 - LAN のエンジンには、VPC からの経路（VPN・ピアリング・Transit Gateway）が要ります。スタックは作りません
-- `WS_ENV` はあえて公開していません。タスク定義に平文で秘密が入るのを避けるためです
+- `WS_ENV` はあえて公開していません。タスク定義に平文でシークレットが入るのを避けるためです
 
 詳細は [`cfn/PARAMETERS.md` の「Control Plane timers, GitHub sign-in extras and LAN / borrowed engines」](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines) にあります。
 

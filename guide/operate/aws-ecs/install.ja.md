@@ -1,5 +1,5 @@
 ---
-audience: "AWS の ECS（`ecs` / `ecs-ec2`）に新しく配備を建てる配備管理者"
+audience: "AWS の ECS（`ecs` / `ecs-ec2`）に新しく配備を構築する配備管理者"
 source_of_truth: "テンプレートは `deploy/aws/ecs/cfn/*.yaml`、スクリプトは `deploy/aws/ecs/release-ecr.sh` と `standup.sh`、パラメータの詳細は `deploy/aws/ecs/cfn/PARAMETERS.md`"
 ---
 
@@ -7,7 +7,7 @@ source_of_truth: "テンプレートは `deploy/aws/ecs/cfn/*.yaml`、スクリ�
 
 [English](install.md) | 日本語
 
-AWS の ECS に Agent Fleet を建て、Control Plane を起動して、IdP でサインインできるところまで進めます。
+AWS の ECS に Agent Fleet を構築し、Control Plane を起動して、IdP でサインインできるところまで進めます。
 スタックの構成と順番は [ECS 構成の全体像](overview.ja.md) にあります。
 
 ## 全体像
@@ -18,11 +18,11 @@ AWS の ECS に Agent Fleet を建て、Control Plane を起動して、IdP で�
 | `00-network`・`10-data`・`20-platform` をデプロイする | ネットワーク、EFS と RDS、ECR・クラスター・IAM ロールができる |
 | イメージを ECR に push する | ECS がイメージを取れるようになる |
 | 使うなら、`40-ec2-pool`・`50-tts`・`60-engines` をデプロイする | スロットプール・読み上げ・自前の推論エンジンができる |
-| Control Plane の秘密を SSM に入れ、IdP にリダイレクト URI を登録する | Control Plane が秘密を読み、IdP がサインインを戻せるようになる |
+| Control Plane のシークレットを SSM に入れ、IdP にリダイレクト URI を登録する | Control Plane がシークレットを読み、IdP がサインインを戻せるようになる |
 | `30-ingress` をデプロイする | 証明書・ALB・DNS・Control Plane のサービスができ、Console にサインインできる |
 | 費用を分けるなら、構築した日にワークスペースを 1 つ起動する | Control Plane がタグを書き、AWS がキーを見つけたあと（最大 24 時間）、Control Plane がコスト配分タグを有効にする |
 
-コマンドは、リポジトリの `deploy/aws/ecs/` で実行します。`standup.sh` も同じ順番で建てますが、`capture-env.sh` で取っておいた既存の配備のパラメータ（`params/30-ingress` など）から**建て直す**ためのスクリプトです。そのパラメータがない新しい環境では、すぐに終了します。初めて建てるときは、このページの手順で建ててください。
+コマンドは、リポジトリの `deploy/aws/ecs/` で実行します。`standup.sh` も同じ順番で構築しますが、`capture-env.sh` で取っておいた既存の配備のパラメータ（`params/30-ingress` など）から**再構築する**ためのスクリプトです。そのパラメータがない新しい環境では、すぐに終了します。初めて構築するときは、このページの手順で構築してください。
 
 ## はじめる前に（アカウントごとに 1 回）
 
@@ -94,7 +94,7 @@ aws iam create-service-linked-role --aws-service-name spot.amazonaws.com || true
 
 ## イメージを ECR に push する
 
-ECR のリポジトリは `20-platform` が持っています。先に `20-platform` をデプロイしてください。スタックの外でリポジトリを先に作ると、あとで `20-platform` のデプロイが AlreadyExists で失敗します。
+ECR のリポジトリは `20-platform` が持っています。先に `20-platform` をデプロイしてください。スタックの外でリポジトリを先に作ると、あとで `20-platform` をデプロイすると AlreadyExists で失敗します。
 
 `release-ecr.sh` はリポジトリがあることを確かめるだけで、作りません。
 
@@ -107,7 +107,7 @@ VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region> \
 ```
 
 - 1 行目は、`deploy/release/build.sh` でビルドしたイメージがこのマシンにあるとき、2 行目は別のマシンで作ったイメージの tar から push するときです
-- `release-ecr.sh` が `af-engine-tools` を ECR に入れるのは、`60-engines` のスタックが**すでにある**ときだけです（アップグレード）。初めて `60-engines` を建てるときは、次の [任意のスタックをデプロイする](#任意のスタックをデプロイする) で自分で入れます
+- `release-ecr.sh` が `af-engine-tools` を ECR に入れるのは、`60-engines` のスタックが**すでにある**ときだけです（アップグレード）。初めて `60-engines` を構築するときは、次の [任意のスタックをデプロイする](#任意のスタックをデプロイする) で自分で入れます
 - `af-engine-tools` は GHCR にしかなく、ローカルでビルドも配布もしないので、タグを付けて push するのではなく、レジストリ間で `crane copy` します。ECR にも GHCR にもそのタグがないと、スクリプトは止まります。先に `engine-tools-image.yml` をそのタグで実行してください
 
 ### 手で push する
@@ -135,7 +135,7 @@ docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag>
   crane copy ghcr.io/k-k1/agent-fleet/engine-tools:<EngineToolsImageTag> <acct>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:<EngineToolsImageTag>
   ```
 
-- `standup.sh` はこの順番でイメージをコピーしてからデプロイしますが、取っておいたパラメータがあるときの建て直し専用です。初めて建てるときは手でコピーします。読み上げの `af-voicevox` は [日本語の読み上げを足す](tts.ja.md#有効にする) の「有効にする」、推論エンジンの `af-llamacpp`・`af-comfyui` は [推論エンジンを足す](engines.ja.md#有効にする) の「有効にする」の手順 3 にあります
+- `standup.sh` はこの順番でイメージをコピーしてからデプロイしますが、取っておいたパラメータがあるときの再構築専用です。初めて構築するときは手でコピーします。読み上げの `af-voicevox` は [日本語の読み上げを足す](tts.ja.md#有効にする) の「有効にする」、推論エンジンの `af-llamacpp`・`af-comfyui` は [推論エンジンを足す](engines.ja.md#有効にする) の「有効にする」の手順 3 にあります
 - 各スタックのパラメータとイメージは、[EC2 スロットプールを使い始める](slot-pool.ja.md)・[日本語の読み上げを足す](tts.ja.md)・[推論エンジンを足す](engines.ja.md) にあります
 
 ## Control Plane を起動する（`30-ingress`）
@@ -143,9 +143,9 @@ docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag>
 サインインは Control Plane 自身が行います（`AuthMode=oauth`）。Google、または任意の OIDC の IdP（Entra ID・Okta・Keycloak・Auth0・Cognito・GitLab）を使えます。ALB は TLS を終端するだけです。
 Control Plane の状態は RDS の Postgres に、ワークスペースのホームは EFS に置きます。どちらも `10-data` のエクスポートを参照して設定されるので、先に `10-data` をデプロイしておく必要があります。
 
-### 1. Control Plane の秘密を SSM に入れる
+### 1. Control Plane のシークレットを SSM に入れる
 
-秘密は SSM の SecureString に置き、実行ロールが読みます。平文の環境変数には入れません。
+シークレットは SSM の SecureString に置き、実行ロールが読みます。平文の環境変数には入れません。
 
 ```bash
 RG=ap-northeast-1
@@ -160,8 +160,8 @@ aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
   --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
 ```
 
-- IdP のシークレットは、使う IdP の分だけ入れます。値は自分の端末で入力し、共有の画面には出さないでください
-- `master-key` を `aws/ssm` ではなく自前の KMS 鍵で暗号化するときは、その `put-parameter` に `--key-id <鍵の ARN>` を足します。そのうえで、**先に** `20-platform` の `MasterKeyKmsKeyArn` を同じ ARN にしておきます。Control Plane のタスクが起動する前に、実行ロールに `kms:Decrypt` の権限が要るからです。詳しくは [保存時の鍵を AWS KMS にする](../keys/kms.ja.md#afmasterkey-のパラメータを自前の鍵で暗号化する) にあります
+- IdP のシークレットは、使う IdP の分だけ入れます。値は自分のターミナルで入力し、共有の画面には出さないでください
+- `master-key` を `aws/ssm` ではなく自前の KMS キーで暗号化するときは、その `put-parameter` に `--key-id <キーの ARN>` を足します。そのうえで、**先に** `20-platform` の `MasterKeyKmsKeyArn` を同じ ARN にしておきます。Control Plane のタスクが起動する前に、実行ロールに `kms:Decrypt` の権限が要るからです。詳しくは [保存時の鍵を AWS KMS にする](../keys/kms.ja.md#afmasterkey-のパラメータを自前の鍵で暗号化する) にあります
 
 GitHub と Bitbucket の OAuth アプリは、配備の設定ではありません。CloudFormation のパラメータも SSM の項目もなく、テナント管理者が Console で登録します（[連携に使う OAuth アプリを選ぶ](../../admin/access/oauth-apps.ja.md)）。
 
@@ -172,7 +172,7 @@ IdP ごとのクライアントの作りかたは [サインインの方法を�
 
 ### 3. `30-ingress` をデプロイする
 
-`30-ingress.yaml` の大きさは 51,200 バイトの上限のすぐ下で、上限を超えることも許容しています。将来のリリースで超えてもデプロイが止まらないよう、いつも `20-platform` が作った S3 Bucket を経由して渡します（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）。
+`30-ingress.yaml` のサイズは 51,200 バイトの上限のすぐ下で、上限を超えることも許容しています。将来のリリースで超えてもデプロイできなくならないよう、いつも `20-platform` が作った S3 Bucket を経由して渡します（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）。
 
 Google でサインインする配備では次のとおりです。
 
@@ -205,7 +205,7 @@ Microsoft Entra ID（や Okta・Keycloak など）の配備では、`GoogleClien
 | `OidcIssuer` | Entra ID ではテナントの GUID で固定します。`/common/` や `/organizations/` では世界中の Microsoft アカウントがサインインの画面まで進めてしまい、個人のアカウントは自分のメールアドレスを書き換えられます。そのため Control Plane は、`OidcAllowedTids` が設定されていないかぎり起動しません |
 | `ImageTag` | リリースのイメージでは `ImageTag=<v>` を足します。既定の `dev` は、開発用に push した `:dev` に合わせたものです |
 
-ACM の DNS 検証と Route 53 のエイリアスは自動で設定されます。最初のデプロイは、証明書の発行で数分長くかかります。
+ACM の DNS 検証と Route 53 のエイリアスは自動で設定されます。最初にデプロイするときは、証明書の発行で数分長くかかります。
 
 ### 4. 動いたことを確かめる
 

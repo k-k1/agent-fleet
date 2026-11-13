@@ -46,15 +46,15 @@ aws ec2 describe-addresses --allocation-ids "$alloc" --query "Addresses[0].Publi
 - `capture-env.sh` は、**取得した値が空のパラメータと同じ名前の出力があれば、その値を使います**
 - そのため ID はほかのパラメータと同じように取得した状態に入り、次の構築で渡されます
 
-### 古い取得結果から建てる前に確かめる
+### 古い取得結果から構築する前に確かめる
 
-この規則より前に取った取得結果には `NatEipAllocationId` の行がありません。そのまま建てると、2 つめの EIP が作られます。
+この規則より前に取った取得結果には `NatEipAllocationId` の行がありません。そのまま構築すると、2 つめの EIP が作られます。
 
 - パラメータが空なので EIP がもう一度作られ、保持していたアドレスは使われないまま残ります
 - 取引先が登録したアドレスが、知らないうちに変わります
 - 使われない EIP は 1 つあたり月 $3.6 ほどかかります
 
-建てる前に、取得した状態を見ます。
+構築する前に、取得した状態を見ます。
 
 ```bash
 grep '^NatEipAllocationId=' ~/.config/agent-fleet/deploy/<p>.<r>/params/00-network
@@ -83,7 +83,7 @@ aws ec2 describe-addresses --output text --query \
 # the row named af-<stack>-nat-eip with no association id is the one that was retained
 ```
 
-見つけた ID を、新しく建てるときに渡します。
+見つけた ID を、新しく構築するときに渡します。
 
 ```bash
 aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
@@ -97,7 +97,7 @@ aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-net
 
 - CloudFormation は、`AllocationId` の出どころが `!GetAtt NatEip.AllocationId` からパラメータに変わったと見て、**NAT ゲートウェイ**の置き換え（`ReplaceAndDelete`）を計画します
 - 同じ割り当てが古い NAT ゲートウェイに付いたままなので、外への通信が止まり、作成も成功しません。稼働中の配備で、変更セットを実行せずに確かめた結果です
-- このパラメータは、**新しく建てる**ときのためのものです。動いているスタックでは、保持だけでアドレスは守られます
+- このパラメータは、**新しく構築する**ときのためのものです。動いているスタックでは、保持だけでアドレスは守られます
 
 ## NAT ゲートウェイは 1 つの AZ にしかない
 
