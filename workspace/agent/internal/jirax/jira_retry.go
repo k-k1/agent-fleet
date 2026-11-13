@@ -69,7 +69,7 @@ func jiraTransportClass(err error) string {
 	var ne net.Error
 	switch {
 	case errors.Is(err, errJiraRedirectRefused):
-		return "redirect to another origin refused"
+		return "redirect refused"
 	case errors.Is(err, syscall.ECONNRESET):
 		return "connection reset"
 	case errors.Is(err, syscall.ECONNREFUSED):

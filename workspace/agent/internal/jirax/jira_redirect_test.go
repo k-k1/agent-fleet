@@ -146,3 +146,81 @@ func TestJiraOriginNormalisesDefaultPort(t *testing.T) {
 		}
 	}
 }
+
+// A write that a server redirects must not be re-sent as a GET: its 200 would read as success.
+func TestJiraRedirectedWriteIsRefused(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		for _, code := range []int{301, 302, 303, 307, 308} {
+			var hits atomic.Int32
+			src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				if r.URL.Path == "/old" {
+					http.Redirect(w, r, "/new", code)
+					return
+				}
+				w.WriteHeader(200)
+			}))
+			swapJiraClient(t, src.Client())
+			res := jiraDo(redirectCreds, method, src.URL+"/old", []byte(`{}`))
+			src.Close()
+			if res.err == nil || res.status == 200 {
+				t.Errorf("%s %d: status=%d err=%v", method, code, res.status, res.err)
+			}
+			if n := hits.Load(); n != 1 {
+				t.Errorf("%s %d: origin saw %d requests, want 1", method, code, n)
+			}
+		}
+	}
+}
+
+// An endless same-origin chain, and a hop to another origin at the 10th step, are both refused
+// without re-sending the chain, and the error never quotes the target URL.
+func TestJiraRedirectLimitIsNotRetried(t *testing.T) {
+	other := newSink(t, false)
+	var hits atomic.Int32
+	var toOther bool
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		if toOther && n%10 == 0 {
+			http.Redirect(w, r, other.URL+"/?token=redirect-secret", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/loop", http.StatusFound)
+	}))
+	defer src.Close()
+	swapJiraClient(t, src.Client())
+	for _, cross := range []bool{false, true} {
+		hits.Store(0)
+		toOther = cross
+		res := jiraDo(redirectCreds, http.MethodGet, src.URL+"/loop", nil)
+		if res.err == nil || !strings.Contains(res.err.Error(), "redirect refused") || strings.Contains(res.err.Error(), "redirect-secret") {
+			t.Errorf("cross=%v err = %v", cross, res.err)
+		}
+		if n := hits.Load(); n > 10 {
+			t.Errorf("cross=%v: chain was re-sent, origin saw %d requests", cross, n)
+		}
+		if other.hits.Load() != 0 {
+			t.Errorf("cross=%v: other origin was reached", cross)
+		}
+	}
+}
+
+func TestJiraOriginKeepsIPv6ZoneCase(t *testing.T) {
+	p := func(s string) *url.URL { u, _ := url.Parse(s); return u }
+	if jiraOrigin(p("http://[fe80::1%25ethA]/")) == jiraOrigin(p("http://[fe80::1%25etha]/")) {
+		t.Error("zones differing in case are different interfaces")
+	}
+	if jiraOrigin(p("http://[FE80::AB]/")) != jiraOrigin(p("http://[fe80::ab]/")) {
+		t.Error("IPv6 hex case must not matter")
+	}
+}
+
+func TestJiraOriginDoesNotFoldUnicodeHosts(t *testing.T) {
+	p := func(s string) *url.URL { u, _ := url.Parse(s); return u }
+	if jiraOrigin(p("http://\u0130.example.test/")) == jiraOrigin(p("http://i.example.test/")) {
+		t.Error("U+0130 must not fold onto ASCII i")
+	}
+	if jiraOrigin(p("https://EXAMPLE.test/")) != jiraOrigin(p("https://example.test/")) {
+		t.Error("ASCII case must fold")
+	}
+}

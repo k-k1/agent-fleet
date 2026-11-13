@@ -25,7 +25,7 @@ import (
 // HTTP hop, so a 3xx could carry the credential off the API origin; jiraCheckRedirect closes that.
 var jiraHTTPClient = &http.Client{Timeout: 20 * time.Second, CheckRedirect: jiraCheckRedirect}
 
-// errJiraRedirectRefused marks a redirect that left the origin of the original request. It is
+// errJiraRedirectRefused marks a redirect the policy refuses (another origin, a downgrade, a write, a loop). It is
 // deterministic, so jiraDo never retries it.
 var errJiraRedirectRefused = errors.New("redirect refused")
 
@@ -41,19 +41,38 @@ func jiraOrigin(u *url.URL) string {
 			port = "80"
 		}
 	}
-	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+	host := u.Hostname()
+	// Only ASCII letters are folded, and an IPv6 zone (case-sensitive, it names an interface) not
+	// at all. strings.ToLower would also map U+0130 to "i", merging two hosts the resolver tells
+	// apart; a Unicode and a punycode spelling of one host are refused instead (fail closed).
+	zone := ""
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host, zone = host[:i], host[i:]
+	}
+	host = strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, host) + zone
+	return scheme + "://" + net.JoinHostPort(host, port)
 }
 
-// jiraCheckRedirect follows a redirect only within the exact origin of the first request and
-// never from HTTPS to HTTP. Anything else fails the call instead of sending the Authorization
+// jiraCheckRedirect follows a redirect only for a GET or HEAD, only within the exact origin of
+// the first request, and never from HTTPS to HTTP. A write is never redirected: Go turns a
+// 301/302/303 POST/PUT/DELETE into a GET, whose 200 would read as the write having succeeded. Anything else fails the call instead of sending the Authorization
 // header there. No Jira Cloud call the Agent makes needs a cross-origin hop: site and
 // api.atlassian.com/ex/jira/<cloudId> answer in place, and attachment content is fetched with
 // redirect=false precisely so that no hop to the media host happens.
 func jiraCheckRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return errors.New("stopped after 10 redirects")
-	}
 	first := via[0].URL
+	if via[0].Method != http.MethodGet && via[0].Method != http.MethodHead {
+		return errJiraRedirectRefused
+	}
+	// Past the limit is refused with the same sentinel so that jiraDo does not re-send the chain.
+	if len(via) >= 10 {
+		return errJiraRedirectRefused
+	}
 	if first.Scheme == "https" && req.URL.Scheme != "https" {
 		return errJiraRedirectRefused
 	}
