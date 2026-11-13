@@ -236,6 +236,23 @@ func CleanWaiterText(s string) string {
 	return s
 }
 
+// CleanWaiterCommand is CleanWaiterText for a waiter's command, which may be several words
+// ("aws ec2 describe-instances"): each word is cleaned on its own, the words are joined by one
+// space, and the first word that cleans to nothing ends it.
+func CleanWaiterCommand(s string) string {
+	var words []string
+	n := 0
+	for _, f := range strings.Fields(s)[:min(len(strings.Fields(s)), 8)] {
+		w := CleanWaiterText(f)
+		if w == "" || n+len(w) > 96 {
+			break
+		}
+		words = append(words, w)
+		n += len(w) + 1
+	}
+	return strings.Join(words, " ")
+}
+
 // WaiterWire is one waiter as the Console shows it.
 type WaiterWire struct {
 	Session string `json:"session,omitempty"`
@@ -248,7 +265,7 @@ func RecentWaiters(ws []Waiter, n int) []WaiterWire {
 	seen := map[WaiterWire]bool{}
 	out := []WaiterWire{}
 	for i := len(ws) - 1; i >= 0 && len(out) < n; i-- {
-		ww := WaiterWire{Session: CleanWaiterText(ws[i].Session), Command: CleanWaiterText(ws[i].Command)}
+		ww := WaiterWire{Session: CleanWaiterText(ws[i].Session), Command: CleanWaiterCommand(ws[i].Command)}
 		if ww == (WaiterWire{}) {
 			continue
 		}
@@ -291,7 +308,7 @@ func (s *Store[S]) FileCancel(profile, key string, snap S, w Waiter, cancel <-ch
 	if s.Held(key, now) {
 		return Request[S]{}, false, ErrHeld
 	}
-	w.Session, w.Command, w.Profile = CleanWaiterText(w.Session), CleanWaiterText(w.Command), CleanWaiterText(w.Profile)
+	w.Session, w.Command, w.Profile = CleanWaiterText(w.Session), CleanWaiterCommand(w.Command), CleanWaiterText(w.Profile)
 	w.At = now.Format(time.RFC3339Nano)
 	r, exists := s.Read(key)
 	created := !exists || r.Target != w.Target

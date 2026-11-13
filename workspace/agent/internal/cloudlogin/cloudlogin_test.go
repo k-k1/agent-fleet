@@ -637,3 +637,29 @@ func TestExpiresInSecFollowsTheSweepRule(t *testing.T) {
 		t.Fatal("an ended attempt still hides the countdown")
 	}
 }
+
+func TestCleanWaiterCommandKeepsPlainWords(t *testing.T) {
+	for in, want := range map[string]string{
+		"aws ec2 describe-instances":    "aws ec2 describe-instances",
+		"  terraform  ":                 "terraform",
+		"aws s3 cp <b>x</b> y":          "aws s3 cp bx/b y",
+		"aws ec2 ** describe-instances": "aws ec2",
+		"a b c d e f g h i j":           "a b c d e f g h",
+		"":                              "",
+	} {
+		if got := CleanWaiterCommand(in); got != want {
+			t.Errorf("CleanWaiterCommand(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := CleanWaiterCommand(strings.Repeat("abcdefghij ", 20)); len(got) > 96 {
+		t.Errorf("CleanWaiterCommand kept %d bytes: %q", len(got), got)
+	}
+}
+
+// The list cleans what it reads, words included: any agent can write the request file.
+func TestRecentWaitersKeepTheCommandsWords(t *testing.T) {
+	got := RecentWaiters([]Waiter{{Session: "s1", Command: "aws ec2 describe-instances"}, {Session: "s1", Command: "aws\tsts  get-caller-identity;rm"}}, 5)
+	if len(got) != 2 || got[0].Command != "aws sts get-caller-identityrm" || got[1].Command != "aws ec2 describe-instances" {
+		t.Fatalf("waiters = %+v", got)
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -223,7 +222,8 @@ func runAWSExec(args []string) {
 		name := os.Getenv("AF_SESSION_NAME")
 		o.ConsoleLogin = true
 		o.ConsoleWait, o.TerminalConsole = consoleLoginWaitFor(name, o.Interactive)
-		o.Waiter = awsx.LoginWaiter{Session: name, Command: filepath.Base(o.Argv[0]), Profile: o.Profile}
+		// Named as on the confirmation card: "aws <service> <operation>" from known names only.
+		o.Waiter = awsx.LoginWaiter{Session: name, Command: cloudruns.Describe(o.Argv), Profile: o.Profile}
 	}
 	if gated {
 		// The wait for the member's confirmation can be long: the member's own files may define
