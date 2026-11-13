@@ -29,7 +29,7 @@ A workspace calls the Control Plane with three credentials:
 
 They reach a workspace as SSM SecureStrings on ECS, a mode-0600 env file on docker, or a Secret on Kubernetes. They are never in the task definition's `environment`.
 
-Each bridge token carries the membership's **epoch**, and only tokens of the current epoch verify. Rotating means advancing that epoch. With the deployment's Bedrock route on (`AF_PROVIDED_ROUTES=1`), the route issuing token `AF_ROUTE_ISSUE_TOKEN` travels the same way from 0.44.0 and is bound to the same epoch, so rotating retires it too.
+Each bridge token carries the membership's **epoch**, and only tokens of the current epoch verify. Rotating means advancing that epoch. With the deployment's Bedrock route on (`AF_PROVIDED_ROUTES=1`), the route issuing token `AF_ROUTE_ISSUE_TOKEN` travels the same way and is bound to the same epoch, so rotating retires it too.
 
 ## Rotate one member's tokens
 

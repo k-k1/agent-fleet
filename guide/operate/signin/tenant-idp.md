@@ -46,7 +46,7 @@ The same rows also open from **Admin → Tenants → the tenant → Sign-in meth
 
 | What to check | Why |
 |---|---|
-| The issuer is the company's own directory (not `common` or `organizations`) | With a multi-tenant issuer, anybody with a Microsoft account reaches the sign-in page |
+| The issuer is the company's own directory (not `common`, `organizations` or `consumers`) | With a multi-tenant issuer, anybody with a Microsoft account reaches the sign-in page |
 | On a GitHub row, the allowed organisations are the company's | GitHub's issuer is `github.com` for every tenant, so it tells you nothing |
 | The admitted email domains are the company's | Approval is given for this range of domains. Do not approve a row that claims a domain other people here use |
 

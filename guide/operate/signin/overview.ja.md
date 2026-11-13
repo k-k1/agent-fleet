@@ -1,5 +1,5 @@
 ---
-audience: "配備に IdP をつなぐ配備管理者（ホストの端末と `.env` を扱う人）"
+audience: "配備に IdP をつなぐ配備管理者（ホストのターミナルと `.env` を扱う人）"
 source_of_truth: "`.env` の読み込みは Control Plane のサインイン設定（記述がコードと食い違ったら、このページのバグ）"
 ---
 
@@ -58,7 +58,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 | どの方法があるか | `AF_OIDC_PROVIDERS`（Google と GitHub は専用のキー） | **サインイン方式** の 1 行が 1 つの方法 |
 | client_id・client_secret | `.env` | 入力欄。`AF_MASTER_KEY` で暗号化して保存し、画面には出さない |
 | issuer | `AF_OIDC_<ID>_ISSUER` | **issuer（発行者 URL）** |
-| メールアドレスを信じる理由 | `AF_OIDC_<ID>_TRUST`（既定値なし） | **email の信頼方法** |
+| メールアドレスを信頼する理由 | `AF_OIDC_<ID>_TRUST`（既定値なし） | **email の信頼方法** |
 | 誰が入れるか | `AF_OAUTH_ALLOWED_EMAILS`・`_DOMAINS`・`_EMAILS_FILE`、または IdP ごとの `AF_OIDC_<ID>_ALLOWED_*` | **受け入れるメールドメイン**（必須。配備共通の許可リストは使わない） |
 | GitHub の組織 | `AF_GITHUB_ALLOWED_ORGS` | **許可する GitHub 組織** |
 | Entra の tenant id | `AF_OIDC_<ID>_ALLOWED_TIDS` | **許可する tenant id（Entra の tid・任意）** |

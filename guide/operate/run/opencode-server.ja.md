@@ -1,5 +1,5 @@
 ---
-audience: "opencode のターミナルセッションのサーバーと版を管理する人"
+audience: "opencode のターミナルセッションのサーバーとバージョンを管理する人"
 source_of_truth: "Workspace Agent の opencode の起動のコード、`workspace/Dockerfile` の `OPENCODE_VERSION`"
 ---
 
@@ -8,7 +8,7 @@ source_of_truth: "Workspace Agent の opencode の起動のコード、`workspac
 [English](opencode-server.md) | 日本語
 
 opencode のターミナル（CLI）セッションは、ワークスペースごとに 1 つの共有サーバーにつながります。
-メモリ使用量より分離を優先したいときはセッションごとの専用サーバーに切り替えられ、版に問題があったときは以前の版に固定できます。
+メモリ使用量より分離を優先したいときはセッションごとの専用サーバーに切り替えられ、バージョンに問題があったときは以前のバージョンに固定できます。
 
 ## 全体像
 
@@ -16,7 +16,7 @@ opencode のターミナル（CLI）セッションは、ワークスペース�
 |---|---|
 | 何もしない | ターミナルのセッションは、Workspace Agent が動かす 1 つの opencode サーバーを共有する |
 | `AF_OPENCODE_TUI_STANDALONE=1` を設定して Workspace Agent を起動する | 以後に起動するターミナルのセッションが、それぞれ専用のサーバーで動く |
-| 2.x の以前の版を指定してイメージをビルドし直す | 問題のある版を避けられる |
+| 2.x の以前のバージョンを指定してイメージをビルドし直す | 問題のあるバージョンを避けられる |
 
 メンバーから見た違いは [OpenCode を接続する](../../user/agents/opencode.ja.md#知っておくこと) にあります。
 
@@ -33,14 +33,14 @@ AF_OPENCODE_TUI_STANDALONE=1
 - `AF_OPENCODE_SERVE_DISABLE=1`（マネージドの opencode を無効にする）でも、つなぐ共有サーバーがないので専用サーバーになります
 - 専用サーバーのペインでは、Console に質問カードが出ません。質問はそのペイン自身のサーバーにあり、Agent はそれを読まないためです。ターミナルで答えます
 
-## 以前の版に固定する
+## 以前のバージョンに固定する
 
-イメージは opencode 2 の版に固定されています（`workspace/Dockerfile` の `OPENCODE_VERSION`）。Agent Fleet がサポートするのは opencode 2 だけです。
+イメージは opencode 2 のバージョンに固定されています（`workspace/Dockerfile` の `OPENCODE_VERSION`）。Agent Fleet がサポートするのは opencode 2 だけです。
 
-1. 2.x の以前の版を指定して、イメージをビルドし直します（`--build-arg OPENCODE_VERSION=<2.x>`）
+1. 2.x の以前のバージョンを指定して、イメージをビルドし直します（`--build-arg OPENCODE_VERSION=<2.x>`）
 2. ワークスペースを停止して、起動します
 
-2.x の版は、どれも同じデータベースを読めます。
+2.x のバージョンは、どれも同じデータベースを読めます。
 
 > [!WARNING]
 > **opencode 1 には戻せません。** opencode 1 からは opencode 2 で作ったものが見えず、Agent Fleet も opencode 1 を扱いません。

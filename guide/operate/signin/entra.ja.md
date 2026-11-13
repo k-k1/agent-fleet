@@ -1,5 +1,5 @@
 ---
-audience: "配備に IdP をつなぐ配備管理者（ホストの端末と `.env` を扱う人）"
+audience: "配備に IdP をつなぐ配備管理者（ホストのターミナルと `.env` を扱う人）"
 source_of_truth: "`.env` の読み込みは Control Plane のサインイン設定（記述がコードと食い違ったら、このページのバグ）"
 ---
 
@@ -48,7 +48,7 @@ AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
 |---|---|
 | `AF_OIDC_PROVIDERS` | IdP の id の一覧。id がほかのキーの名前を決めます（`entra` なら `AF_OIDC_ENTRA_*`） |
 | `AF_OIDC_<ID>_ISSUER` | 自社のディレクトリの GUID を含む issuer |
-| `AF_OIDC_<ID>_TRUST` | メールアドレスを信じる理由。Entra では `issuer` |
+| `AF_OIDC_<ID>_TRUST` | メールアドレスを信頼する理由。Entra では `issuer` |
 | `AF_OIDC_<ID>_LABEL_JA`・`_LABEL_EN` | ボタンの文言 |
 
 - **id** に使えるのは `a-z 0-9 - _` で、32 文字以内、先頭は英数字です。キーの名前では `-` が `_` になります（`entra-id` なら `AF_OIDC_ENTRA_ID_*`）。テナントのサインイン方法の一覧にもこの id が出るので、短く変わらない値にします
