@@ -253,6 +253,10 @@ type Subscription struct {
 	Observed bool     `json:"observed,omitempty"`
 	// Tag is the feature's own key for the subject, for the sink.
 	Tag string `json:"tag,omitempty"`
+
+	// Existing is set only on the answer to a repeated watch call: the subscription returned is
+	// the one the session already held. It is never stored.
+	Existing bool `json:"existing,omitempty"`
 }
 
 // tokenRE is the header token set of ADR 0133 §5: nothing in it can close a notice header or

@@ -173,7 +173,7 @@ func TestDeadlineWatchDeliversEachNewVersionOnce(t *testing.T) {
 }
 
 func TestNotYetKeepsPendingAndOneNoticePerOwnerPerTick(t *testing.T) {
-	src := &fakeSource{events: []Event{ev("pr.checks.completed", "v1"), ev("pr.checks.failed", "v1")}, hint: Hint{After: time.Hour}}
+	src := &fakeSource{events: []Event{ev("pr.checks.completed", "v1"), ev("pr.checks.failed", "f1")}, hint: Hint{After: time.Hour}}
 	sink := &fakeSink{answer: Wait}
 	e, _, _ := newTestEngine(src, sink)
 	if _, err := e.Subscribe(context.Background(), Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.checks.*"}, Until: UntilDeadline}); err != nil {
@@ -197,12 +197,12 @@ func TestLimitsExpiryAndOwnerGone(t *testing.T) {
 	e, _, c := newTestEngine(src, sink)
 	ctx := context.Background()
 	for i := 0; i < MaxPerOwner; i++ {
-		if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+		if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#" + strconv.Itoa(i+1), Types: []string{"pr.merged"}}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var ref *ErrRefused
-	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); !errors.As(err, &ref) || !strings.Contains(ref.Reason, "20") {
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#99", Types: []string{"pr.merged"}}); !errors.As(err, &ref) || !strings.Contains(ref.Reason, "20") {
 		t.Fatalf("21st watch: %v", err)
 	}
 	if _, err := e.Subscribe(ctx, Request{Owner: "b", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}, Lifetime: time.Hour}); err != nil {
@@ -505,7 +505,7 @@ func TestLastUnwatchForgetsTheOwner(t *testing.T) {
 	e, _, _ := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, sink)
 	ctx := context.Background()
 	a, _ := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
-	b, _ := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+	b, _ := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#2", Types: []string{"pr.merged"}})
 	e.Unsubscribe("a", a.ID)
 	if len(sink.forgot) != 0 {
 		t.Fatal("forgot an owner that still has a watch")
@@ -536,13 +536,13 @@ func TestAChildCannotFillItsParentsLimit(t *testing.T) {
 	e, _, _ := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, &fakeSink{answer: Wait})
 	ctx := context.Background()
 	for i := 0; i < MaxPerOwner/2; i++ {
-		if _, err := e.Subscribe(ctx, Request{Owner: "p", Requester: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+		if _, err := e.Subscribe(ctx, Request{Owner: "p", Requester: "c", Source: "fake", Ref: "o/r#" + strconv.Itoa(i+100), Types: []string{"pr.merged"}}); err != nil {
 			t.Fatalf("watch %d: %v", i, err)
 		}
 	}
 	// The child's own watches and those it made for its parent share the child's limit.
 	for i := 0; ; i++ {
-		_, err := e.Subscribe(ctx, Request{Owner: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+		_, err := e.Subscribe(ctx, Request{Owner: "c", Source: "fake", Ref: "o/r#" + strconv.Itoa(i+200), Types: []string{"pr.merged"}})
 		if err != nil {
 			break
 		}
@@ -573,7 +573,7 @@ func TestAChildsOwnAndParentWatchesShareOneLimit(t *testing.T) {
 	e, _, _ := newTestEngine(&fakeSource{hint: Hint{After: time.Hour}}, &fakeSink{answer: Wait})
 	ctx := context.Background()
 	for i := 0; i < MaxPerOwner; i++ {
-		if _, err := e.Subscribe(ctx, Request{Owner: "p", Requester: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}}); err != nil {
+		if _, err := e.Subscribe(ctx, Request{Owner: "p", Requester: "c", Source: "fake", Ref: "o/r#" + strconv.Itoa(i+100), Types: []string{"pr.merged"}}); err != nil {
 			t.Fatalf("watch %d for the parent: %v", i, err)
 		}
 	}

@@ -172,11 +172,38 @@ func TestChecksPatternEndsOnFailingByDefaultAndDeadlineHearsBoth(t *testing.T) {
 	if told, live := run(UntilFirst); strings.Join(told, ",") != "a:pr.checks.failing:h1" || live != 0 {
 		t.Fatalf("default until: told %v, live %d", told, live)
 	}
+	// The completed/failed pair of one version is one notice (it collapses at delivery), so the
+	// final result comes once after the early failure.
 	told, live := run(UntilDeadline)
-	if len(told) != 3 || told[0] != "a:pr.checks.failing:h1" || live != 1 {
+	if len(told) != 2 || told[0] != "a:pr.checks.failing:h1" || !strings.HasPrefix(told[1], "a:pr.checks.") || told[1] == told[0] || live != 1 {
 		t.Fatalf("deadline: told %v, live %d", told, live)
 	}
-	if byName := strings.Join(told[1:], ","); !strings.Contains(byName, "pr.checks.completed") || !strings.Contains(byName, "pr.checks.failed") {
-		t.Fatalf("deadline missed the final result: %v", told)
+}
+
+// The twin collapse of one owner's watches merges a completed/failed pair of one version, never
+// failing: with the same version string on all three, failing is told once, and completed and
+// failed are still told after it, as one notice.
+func TestFailingIsNeitherSwallowedNorDoubledByTheTwinCollapse(t *testing.T) {
+	src := &fakeSource{events: []Event{ev("pr.checks.failing", "h1")}, hint: Hint{After: time.Minute}}
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(src, sink)
+	ctx := context.Background()
+	for _, types := range [][]string{{"pr.checks.failing"}, {"pr.checks.*"}} {
+		if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: types, Until: UntilDeadline}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.Tick(ctx)
+	if len(sink.told) != 1 || sink.told[0] != "a:pr.checks.failing:h1" {
+		t.Fatalf("two watches, one failing: told %v", sink.told)
+	}
+	src.events = []Event{ev("pr.checks.failing", "h1"), ev("pr.checks.completed", "h1"), ev("pr.checks.failed", "h1")}
+	for i := 0; i < 3; i++ {
+		c.add(2 * time.Minute)
+		e.Tick(ctx)
+	}
+	got := strings.Join(sink.told, ",")
+	if len(sink.told) != 2 || strings.Count(got, "pr.checks.failing") != 1 {
+		t.Fatalf("final result lost or failing doubled: %v", sink.told)
 	}
 }
