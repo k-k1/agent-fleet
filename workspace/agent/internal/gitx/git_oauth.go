@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -138,6 +139,9 @@ func refreshBitbucketGrantContext(ctx context.Context, c secrets.BitbucketCreds)
 		if err == nil {
 			return nc, nil
 		}
+		if errors.Is(err, redirectpolicy.ErrRefused) {
+			return c, err // a redirect refusal (ours, or the CP's upstream one) is final: no second grant
+		}
 		if c.Key == "" || c.Secret == "" {
 			return c, err // nothing to fall back to: report what actually failed
 		}
@@ -159,6 +163,15 @@ func LoadGitOAuthBridge() *secrets.CPBridge {
 	}
 	return s.GitOAuthBridge
 }
+
+// cpBridgeClient carries the calls to the CP's git-oauth bridge, which send the bridge bearer
+// token and a refresh_token body. It has no timeout of its own: RefreshOAuthViaCPContext is
+// bounded by the caller's context alone. The CP answers these in place, so no redirect is
+// followed off its origin.
+var cpBridgeClient = redirectpolicy.Client(0)
+
+// cpBridgeBoundedClient is the same policy with the 20 s bound refreshBitbucketViaCPContext needs.
+var cpBridgeBoundedClient = redirectpolicy.Client(20 * time.Second)
 
 // cpRefreshedToken is what the CP bridge answers with — the three fields worth storing.
 // The app's client id/secret are deliberately not among them (docs/log/71 §71.8).
@@ -202,6 +215,9 @@ func CPRefreshTransient(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, redirectpolicy.ErrRefused) {
+		return false // deterministic: the CP answered with a redirect, and asking again gets the same one
+	}
 	var se *CPRefreshStatusError
 	if errors.As(err, &se) {
 		return se.Status == http.StatusBadGateway || se.Status == http.StatusServiceUnavailable ||
@@ -231,8 +247,11 @@ func RefreshOAuthViaCPContext(ctx context.Context, b secrets.CPBridge, provider,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+b.Token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cpBridgeClient.Do(req)
 	if err != nil {
+		if errors.Is(err, redirectpolicy.ErrRefused) {
+			return cpRefreshedToken{}, err
+		}
 		return cpRefreshedToken{}, &cpRefreshNetError{err}
 	}
 	defer resp.Body.Close()
@@ -279,13 +298,23 @@ func refreshBitbucketViaCPContext(ctx context.Context, b secrets.CPBridge, c sec
 	// Bounded: this call sits in front of every git clone/fetch/push once the access
 	// token is near expiry, so a hung CP must fail rather than wedge git. The CP's own
 	// retries against bitbucket.org fit inside this budget.
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	resp, err := cpBridgeBoundedClient.Do(req)
 	if err != nil {
 		return c, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
+		// The CP reports a refused upstream redirect as <provider>_redirect_refused. It is
+		// final: the same refresh token must not be presented again through the direct grant.
+		var eb struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(raw, &eb) == nil && strings.HasSuffix(eb.Error.Code, "_redirect_refused") {
+			return c, fmt.Errorf("cp refresh: upstream %w", redirectpolicy.ErrRefused)
+		}
 		return c, fmt.Errorf("cp refresh failed: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var out struct {
@@ -328,7 +357,8 @@ func refreshBitbucketDirect(ctx context.Context, c secrets.BitbucketCreds) (secr
 	}
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {c.RefreshToken}}
 	// A bounded timeout (http.DefaultClient has none) so a hung refresh can't stall its caller.
-	client := &http.Client{Timeout: 15 * time.Second}
+	// The redirect policy keeps the Basic client credentials and the refresh_token body on bitbucket.org.
+	client := redirectpolicy.Client(15 * time.Second)
 	const attempts = 3
 	var lastErr error
 	for i := 0; i < attempts; i++ {
@@ -347,6 +377,9 @@ func refreshBitbucketDirect(ctx context.Context, c secrets.BitbucketCreds) (secr
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := client.Do(req)
 		if err != nil {
+			if errors.Is(err, redirectpolicy.ErrRefused) {
+				return c, err // deterministic, not a transport blip
+			}
 			lastErr = err // transport error: retry
 			continue
 		}

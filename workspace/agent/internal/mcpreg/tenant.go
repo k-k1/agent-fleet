@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 )
 
 // TenantPollInterval is how often the agent re-pulls the distributed set. Five minutes
@@ -81,7 +82,7 @@ func FetchTenant() (TenantFetchResult, error) {
 		return TenantFetchResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	resp, err := (redirectpolicy.Client(20 * time.Second)).Do(req)
 	if err != nil {
 		return TenantFetchResult{}, err
 	}

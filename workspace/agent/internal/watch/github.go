@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 )
 
 // GitHub event types this source produces over REST. pr.review.threads_unresolved needs
@@ -66,7 +68,7 @@ type GitHub struct {
 
 // NewGitHub returns the github.com source.
 func NewGitHub(token func() (string, error), renew func(string) (string, error)) *GitHub {
-	return &GitHub{Token: token, Renew: renew, API: "https://api.github.com", Client: &http.Client{Timeout: 20 * time.Second}}
+	return &GitHub{Token: token, Renew: renew, API: "https://api.github.com", Client: redirectpolicy.Client(20 * time.Second)}
 }
 
 func (g *GitHub) Kind() string { return "github" }
@@ -621,7 +623,7 @@ func (g *GitHub) do(ctx context.Context, path, etag, tok string) (*http.Response
 	}
 	client := g.Client
 	if client == nil {
-		client = http.DefaultClient
+		client = redirectpolicy.Client(0)
 	}
 	return client.Do(req)
 }

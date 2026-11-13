@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/redirectpolicy"
 	"html"
 	"io"
 	"net/http"
@@ -31,12 +32,24 @@ const bbAuthorizeURL = "https://bitbucket.org/site/oauth2/authorize"
 // the only honest way to pin that behaviour is to point it at a stub server.
 var bbTokenURL = "https://bitbucket.org/site/oauth2/access_token"
 
-// bbHTTPClient bounds the call OUT to bitbucket.org (http.DefaultClient has no
-// timeout — same reasoning as oidcHTTPClient). ★ It is not for the CP→Agent leg:
-// that one goes through agentHTTPClient, whose Transport carries the Cloud Map
+// bbHTTPClient bounds the call OUT to bitbucket.org and to Atlassian's token endpoint
+// (http.DefaultClient has no timeout — same reasoning as oidcHTTPClient). Those calls carry
+// client_secret, Basic client credentials and refresh_token bodies, so redirectpolicy keeps
+// them on the endpoint's own origin and refuses to re-send a POST. It is not for the CP→Agent
+// leg: that one goes through agentHTTPClient, whose Transport carries the Cloud Map
 // fallback (agent_dial.go). Using the default client there made the save fail with
 // "no such host" for every workspace created after the CP task started.
-var bbHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var bbHTTPClient = redirectpolicy.Client(20 * time.Second)
+
+// upstreamTokenErr maps a failed token-endpoint call to an apiError. A refused redirect is
+// deterministic, so it is answered 500, which the Agent does not retry (it retries 502/503/504
+// only); any other transport failure stays a 502 under unreachableCode.
+func upstreamTokenErr(unreachableCode, provider string, err error) *apiError {
+	if redirectpolicy.IsRefused(err) {
+		return &apiError{http.StatusInternalServerError, provider + "_redirect_refused", err.Error()}
+	}
+	return &apiError{http.StatusBadGateway, unreachableCode, err.Error()}
+}
 
 type bbState struct {
 	user   string // identity user key

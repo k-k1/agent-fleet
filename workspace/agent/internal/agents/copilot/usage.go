@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagestore"
 )
 
@@ -182,7 +183,7 @@ func fetchUsage(ctx context.Context, token string) (*usageResult, error) {
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Editor-Version", "CopilotCLI/agent-fleet")
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := redirectpolicy.Client(0).Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -43,7 +44,7 @@ func githubRefState(ctx context.Context, repo string, number int) (RefState, err
 		req.Header.Set("Authorization", "Bearer "+tok)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := redirectpolicy.Client(0).Do(req)
 		if err != nil {
 			return err
 		}

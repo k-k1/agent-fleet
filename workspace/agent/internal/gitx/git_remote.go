@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -229,7 +230,7 @@ func githubListBranches(token, repo string) ([]remoteBranch, string, error) {
 		`defaultBranchRef{name} refs(refPrefix:"refs/heads/",first:100,after:$cursor,` +
 		`orderBy:{field:TAG_COMMIT_DATE,direction:DESC}){nodes{name target{... on Commit{committedDate messageHeadline}}}` +
 		`pageInfo{hasNextPage endCursor}}}}`
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := redirectpolicy.Client(20 * time.Second)
 	out := []remoteBranch{}
 	def, cursor := "", ""
 	for page := 0; page < 10; page++ {
@@ -307,7 +308,7 @@ func githubListBranches(token, repo string) ([]remoteBranch, string, error) {
 // email (may be "" when the account hides it), via GET /user. Used to show the real
 // account in Connections instead of the "x-access-token" git-username placeholder.
 func GithubAccount(token string) (login, email string, err error) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := redirectpolicy.Client(10 * time.Second)
 	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
 	if err != nil {
 		return "", "", err
@@ -336,7 +337,7 @@ func GithubAccount(token string) (login, email string, err error) {
 // best-effort GET /2.0/user/emails (empty when the token lacks the email scope).
 // Requires the token's "account" scope; callers fall back to email/placeholder.
 func BitbucketAccount(auth string) (handle, email string, err error) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := redirectpolicy.Client(10 * time.Second)
 	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/user")
 	if err != nil {
 		return "", "", err
@@ -381,7 +382,7 @@ func GithubHeaders(req *http.Request, token string) {
 // githubListRepos returns repos the token can access (owner + collaborator + org
 // member), most-recently-updated first, following pagination up to a sane cap.
 func githubListRepos(token string) ([]remoteRepo, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := redirectpolicy.Client(15 * time.Second)
 	next := "https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member"
 	out := []remoteRepo{}
 	for page := 0; page < 10 && next != ""; page++ {
@@ -578,7 +579,7 @@ func BitbucketConnectCheck(user, token string) (warn, scopes string, err error) 
 
 // bitbucketConnectCheckAt is BitbucketConnectCheck with an overridable API base (tests).
 func bitbucketConnectCheckAt(base, user, token string) (warn, scopes string, err error) {
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := redirectpolicy.Client(12 * time.Second)
 	req, err := http.NewRequest("GET", base+"/2.0/user/workspaces?pagelen=1", nil)
 	if err != nil {
 		return "", "", nil // can't build the probe: don't block the connect
@@ -643,6 +644,9 @@ func BitbucketGetStatusHeader(client *http.Client, auth, url string) ([]byte, in
 		req.Header.Set("Accept", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
+			if errors.Is(err, redirectpolicy.ErrRefused) {
+				return nil, 0, nil, err // deterministic: another attempt repeats the same request
+			}
 			lastErr = err // transport error (timeout / reset / DNS): retry
 			continue
 		}
@@ -711,7 +715,7 @@ func retryBackoff(i int) time.Duration {
 // the user's workspaces and aggregate each workspace's repositories instead.
 func bitbucketListRepos(auth string) ([]remoteRepo, error) {
 	const maxRepos = 500
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := redirectpolicy.Client(15 * time.Second)
 	slugs, err := bitbucketWorkspaces(client, auth)
 	if err != nil {
 		return nil, err
@@ -812,7 +816,7 @@ func bitbucketRepoPage(client *http.Client, auth, url string) ([]remoteRepo, str
 // last-commit time and subject, ordered newest-commit-first. Bitbucket's branch
 // listing includes target.date/message, so one paged call (sort=-target.date) does it.
 func bitbucketListBranchesRich(auth, repo string) ([]remoteBranch, string, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := redirectpolicy.Client(15 * time.Second)
 	def := bitbucketDefaultBranch(client, auth, repo) // best-effort
 
 	next := "https://api.bitbucket.org/2.0/repositories/" + EscapeRepoPath(repo) +

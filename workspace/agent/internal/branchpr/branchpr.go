@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 )
 
 // PR is what a row shows. State is "open", "merged" or "closed"; Checks is "success",
@@ -216,7 +218,7 @@ func New(token func() (string, error)) *Cache {
 	c := &Cache{
 		Token:    token,
 		Endpoint: "https://api.github.com/graphql",
-		Client:   &http.Client{Timeout: 20 * time.Second},
+		Client:   redirectpolicy.Client(20 * time.Second),
 		Async:    func(f func()) { go f() },
 		entries:  map[Key]*entry{},
 		batch:    batchSize,

@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/limitepoch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagestore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagewin"
 )
@@ -210,7 +211,7 @@ func accountUsage(ctx context.Context) (usage, bool) {
 	if !c.fetched.IsZero() && time.Since(c.fetched) < accountUsageTTL {
 		return c.aged(), c.ok
 	}
-	val, got := getAccountUsage(ctx, http.DefaultClient, accountUsageURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)
+	val, got := getAccountUsage(ctx, redirectpolicy.Client(0), accountUsageURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)
 	now := time.Now()
 	if got {
 		c.val, c.ok, c.observed, c.account = val, true, now, auth.Tokens.AccountID
@@ -416,7 +417,7 @@ func fetchResetCredits(ctx context.Context) (resetCredits, bool) {
 	if !c.fetched.IsZero() && time.Since(c.fetched) < resetCreditsTTL {
 		return c.val, c.ok
 	}
-	val, got := getResetCredits(ctx, http.DefaultClient, resetCreditsURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)
+	val, got := getResetCredits(ctx, redirectpolicy.Client(0), resetCreditsURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)
 	if got {
 		c.val, c.ok = val, true
 	}

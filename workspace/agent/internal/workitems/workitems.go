@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -50,7 +51,7 @@ const (
 	workItemFetchQueries = 10
 )
 
-var workItemHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var workItemHTTPClient = redirectpolicy.Client(20 * time.Second)
 
 type workItemQueryIn struct {
 	ID       string `json:"id"`

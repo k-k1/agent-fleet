@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -27,7 +28,7 @@ import (
 
 var branchBitbucket = branchrule.NewBitbucketCache(fetchBranchingModel)
 
-var branchModelHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var branchModelHTTPClient = redirectpolicy.Client(20 * time.Second)
 
 // fetchBranchingModel reads Bitbucket's branching model with the member's connection.
 func fetchBranchingModel(_ context.Context, ws, repo string) ([]byte, error) {

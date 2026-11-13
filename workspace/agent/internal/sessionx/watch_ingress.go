@@ -15,6 +15,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
 )
 
@@ -137,7 +138,7 @@ func putWatchSubjectsOnce(ctx context.Context, subjects []string) (int, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := redirectpolicy.Client(0).Do(req)
 	if err != nil {
 		return 0, err
 	}

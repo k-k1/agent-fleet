@@ -19,6 +19,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/redirectpolicy"
 )
 
 // egress-proxy subcommand (docs/log/20 M2): a small HTTP forward proxy the workspace
@@ -89,7 +90,7 @@ func (p *egressProxy) pollPolicy(ctx context.Context, url, token string) {
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := redirectpolicy.Client(0).Do(req)
 		if err != nil {
 			log.Printf("egress-proxy: policy fetch failed: %v", err)
 			return
@@ -290,7 +291,7 @@ type egressBatcher struct {
 }
 
 func newEgressBatcher(url, token string) *egressBatcher {
-	return &egressBatcher{url: url, token: token, client: &http.Client{Timeout: egressReportTimeout}, counts: map[string]int{}}
+	return &egressBatcher{url: url, token: token, client: redirectpolicy.Client(egressReportTimeout), counts: map[string]int{}}
 }
 
 func (b *egressBatcher) add(host string, allowed bool) {
