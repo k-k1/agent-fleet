@@ -2,6 +2,8 @@ package watch
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -257,5 +259,107 @@ func TestFailedDeliveryReleasesTheTwins(t *testing.T) {
 	e.Tick(ctx)
 	if len(sink.told) != 1 || len(e.List("a")) != 0 {
 		t.Fatalf("told = %v, watches = %d", sink.told, len(e.List("a")))
+	}
+}
+
+// A failed CI result comes from the real sources as completed and failed with one version.
+func failedCI(version string) []Event {
+	c := ev("pr.checks.completed", version)
+	c.Failed = true
+	return []Event{c, ev("pr.checks.failed", version)}
+}
+
+func TestFailedCIOverlapIsOneNotice(t *testing.T) {
+	for _, order := range [][2]string{{"pr.checks.*", "pr.checks.failed"}, {"pr.checks.failed", "pr.checks.*"}} {
+		src := &fakeSource{events: failedCI("v1"), hint: Hint{After: time.Hour}}
+		sink := &fakeSink{answer: Ready}
+		e, _, _ := newTestEngine(src, sink)
+		ctx := context.Background()
+		e.Subscribe(ctx, subReq("a", order[0]))
+		e.Subscribe(ctx, subReq("a", order[1]))
+		e.Tick(ctx)
+		e.Tick(ctx)
+		if len(sink.told) != 1 {
+			t.Fatalf("%v: told = %v, want one notice for one failed run", order, sink.told)
+		}
+	}
+}
+
+func TestUnrelatedTypesWithOneVersionAreNotMerged(t *testing.T) {
+	src := &fakeSource{events: []Event{ev("pr.checks.completed", "v1"), ev("pr.merged", "v1")}, hint: Hint{After: time.Hour}}
+	sink := &fakeSink{answer: Ready}
+	e, _, _ := newTestEngine(src, sink)
+	ctx := context.Background()
+	e.Subscribe(ctx, subReq("a", "pr.checks.completed"))
+	e.Subscribe(ctx, subReq("a", "pr.merged"))
+	e.Tick(ctx)
+	e.Tick(ctx)
+	if len(sink.told) != 2 {
+		t.Fatalf("told = %v, want both", sink.told)
+	}
+}
+
+func TestADifferentMakerIsNotTheSameWatch(t *testing.T) {
+	e, _, _ := newTestEngine(&fakeSource{}, &fakeSink{answer: Ready})
+	ctx := context.Background()
+	child, _ := e.Subscribe(ctx, Request{Owner: "p", Requester: "c", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+	own, err := e.Subscribe(ctx, Request{Owner: "p", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+	if err != nil || own.Existing || own.ID == child.ID || own.Requester != "" {
+		t.Fatalf("own = %+v, %v", own, err)
+	}
+	// Ending the child's watch leaves the parent's own.
+	e.Unsubscribe("p", child.ID)
+	if got := e.List("p"); len(got) != 1 || got[0].ID != own.ID {
+		t.Fatalf("list = %+v", got)
+	}
+}
+
+func TestRepeatAtTheLimitReturnsTheExistingWatch(t *testing.T) {
+	e, _, _ := newTestEngine(&fakeSource{}, &fakeSink{answer: Ready})
+	ctx := context.Background()
+	var first Subscription
+	for i := 0; i < MaxPerOwner; i++ {
+		s, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#" + strconv.Itoa(i+1), Types: []string{"pr.merged"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = s
+		}
+	}
+	again, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}})
+	if err != nil || !again.Existing || again.ID != first.ID {
+		t.Fatalf("again = %+v, %v", again, err)
+	}
+	var ref *ErrRefused
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#99", Types: []string{"pr.merged"}}); !errors.As(err, &ref) {
+		t.Fatalf("a new ref at the limit: %v", err)
+	}
+	// Same reference but different terms is not a repeat and is still refused.
+	if _, err := e.Subscribe(ctx, Request{Owner: "a", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}, Until: UntilDeadline}); !errors.As(err, &ref) {
+		t.Fatalf("a different watch on a held ref at the limit: %v", err)
+	}
+}
+
+func TestExpiredWatchIsNotRevivedByARepeat(t *testing.T) {
+	src := &fakeSource{events: []Event{ev("pr.merged", "v1")}, hint: Hint{After: time.Minute}}
+	sink := &fakeSink{answer: Ready}
+	e, _, c := newTestEngine(src, sink)
+	ctx := context.Background()
+	r := subReq("a", "pr.merged")
+	r.Until, r.Lifetime = UntilDeadline, time.Hour
+	first, _ := e.Subscribe(ctx, r)
+	e.Tick(ctx)
+	c.add(2 * time.Hour) // expired, but no tick has swept it
+	second, err := e.Subscribe(ctx, r)
+	if err != nil || second.Existing || second.ID == first.ID {
+		t.Fatalf("second = %+v, %v", second, err)
+	}
+	e.Tick(ctx)
+	if len(sink.told) != 2 {
+		t.Fatalf("told = %v, a new watch hears the condition that holds", sink.told)
+	}
+	if len(e.List("a")) != 1 {
+		t.Fatalf("records = %d", len(e.List("a")))
 	}
 }

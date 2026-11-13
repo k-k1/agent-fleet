@@ -229,14 +229,18 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	if life < 0 || life > MaxLifetime {
 		return Subscription{}, &ErrRefused{fmt.Sprintf("a watch lives at most %d days", int(MaxLifetime/(24*time.Hour)))}
 	}
-	// The limits are checked before Resolve spends a request, and again after it.
-	if err := e.checkLimits(r.Owner); err != nil {
-		return Subscription{}, err
-	}
+	// The limits are checked before Resolve spends a request, and again after it. A call that
+	// repeats a watch the owner holds by the same reference skips the early check: it adds no
+	// record, and the later check still judges it if Resolve finds it is not a repeat.
 	e.mu.Lock()
-	err := e.requesterLimitLocked(r.maker())
-	if err == nil {
-		err = e.sourceLimitLocked(src)
+	e.load()
+	var err error
+	if !e.mayRepeatLocked(r, until) {
+		if err = e.limitsLocked(r.Owner); err == nil {
+			if err = e.requesterLimitLocked(r.maker()); err == nil {
+				err = e.sourceLimitLocked(src)
+			}
+		}
 	}
 	e.mu.Unlock()
 	if err != nil {
@@ -283,7 +287,7 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 	e.load()
 	// Checked under the lock that appends, so two concurrent identical calls end in one record.
 	// Before the limits: repeating a watch the session already holds is not a new watch.
-	if i := e.findSameLocked(sub); i >= 0 {
+	if i := e.findSameLocked(sub, now); i >= 0 {
 		existing, err := e.extendExistingLocked(i, sub.Expires)
 		e.mu.Unlock()
 		if sub.WakeID != "" {
@@ -295,6 +299,11 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 		return existing, err
 	}
 	defer e.mu.Unlock()
+	// An expired twin of this watch, not yet swept by a tick, is dropped: it neither counts
+	// against the limits nor lends its Told versions to the new watch.
+	e.state.Subs = slices.DeleteFunc(e.state.Subs, func(s Subscription) bool {
+		return s.Builtin == "" && !now.Before(s.Expires) && sameWatch(s, sub)
+	})
 	if err := e.limitsLocked(r.Owner); err != nil {
 		return Subscription{}, err
 	}
@@ -323,10 +332,12 @@ func (e *Engine) Subscribe(ctx context.Context, r Request) (Subscription, error)
 
 // sameWatch reports whether a and b are one watch asked for twice: the same owner on the same
 // subject through the same source, for the same canonical set of types, ending the same way,
-// with the same wake and (for a timer) due time. Requester is not part of it: the owner is who
-// hears the notices, so a parent's own call and a child's notify parent are the same watch.
+// with the same wake and (for a timer) due time, made by the same session. The maker is part of
+// it: a source's SubscriptionAuthorizer judges the maker for as long as the watch lives, so a
+// parent's own watch must not take over a child's notify parent watch and be ended with it.
+// Delivery (collapseTwinsLocked) still tells the owner once.
 func sameWatch(a, b Subscription) bool {
-	if a.Owner != b.Owner || a.Source != b.Source || a.Subject != b.Subject || a.Until != b.Until ||
+	if a.Owner != b.Owner || a.Requester != b.Requester || a.Source != b.Source || a.Subject != b.Subject || a.Until != b.Until ||
 		a.Wake != b.Wake || !a.Due.Equal(b.Due) {
 		return false
 	}
@@ -337,13 +348,29 @@ func sameWatch(a, b Subscription) bool {
 }
 
 // findSameLocked is the index of the live session watch that sub repeats, or -1.
-func (e *Engine) findSameLocked(sub Subscription) int {
+func (e *Engine) findSameLocked(sub Subscription, now time.Time) int {
 	for i, s := range e.state.Subs {
-		if !s.Done && s.Builtin == "" && !endedPending(s) && sameWatch(s, sub) {
+		if !s.Done && s.Builtin == "" && !endedPending(s) && now.Before(s.Expires) && sameWatch(s, sub) {
 			return i
 		}
 	}
 	return -1
+}
+
+// mayRepeatLocked is the cheap guess, before Resolve, that r repeats a watch its owner holds: the
+// same reference as given, with the same source, types, until, wake and maker. Only the early
+// limit check relies on it; whether it is a repeat is decided after Resolve.
+func (e *Engine) mayRepeatLocked(r Request, until string) bool {
+	probe := Subscription{Owner: r.Owner, Requester: r.Requester, Source: r.Source, Types: r.Types, Until: until, Wake: r.Wake}
+	for _, s := range e.state.Subs {
+		if s.Builtin == "" && !s.Done && !endedPending(s) && s.Ref == r.Ref {
+			probe.Subject, probe.Due = s.Subject, s.Due
+			if sameWatch(s, probe) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // extendExistingLocked answers a repeated watch call with the watch already held, its expiry
@@ -361,13 +388,6 @@ func (e *Engine) extendExistingLocked(i int, expires time.Time) (Subscription, e
 	out := cloneSub(*s)
 	out.Existing = true
 	return out, nil
-}
-
-func (e *Engine) checkLimits(owner string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.load()
-	return e.limitsLocked(owner)
 }
 
 // SourceLimiter is a source that bounds its own live subscriptions per workspace, because its
@@ -876,6 +896,28 @@ func (e *Engine) deliver(cands []candidate, now time.Time) {
 	}
 }
 
+// sameResult reports whether a and b tell a session the same thing. Equal type and version is
+// the same event. A failed CI result is also reported as X.completed and X.failed with one
+// version (pr.checks.*, ci.run.*), so those two are one result: a X.failed exists only when the
+// run failed, and the version names that run. Any other pair of types is never merged, however
+// equal the versions.
+func sameResult(a, b Event) bool {
+	if a.Subject != b.Subject || a.Version != b.Version {
+		return false
+	}
+	if a.Type == b.Type {
+		return true
+	}
+	pa, ca := strings.CutSuffix(a.Type, ".completed")
+	pb, fb := strings.CutSuffix(b.Type, ".failed")
+	if ca && fb && pa == pb {
+		return true
+	}
+	pa, fa := strings.CutSuffix(a.Type, ".failed")
+	pb, cb := strings.CutSuffix(b.Type, ".completed")
+	return fa && cb && pa == pb
+}
+
 // collapseTwinsLocked advances the owner's other session watches on the same subject that hold
 // one of evs (same type and version) as pending, because one notice already tells it: two watches
 // of one session on one PR (pr.checks.completed and pr.checks.*, or duplicates from before
@@ -893,8 +935,10 @@ func (e *Engine) collapseTwinsLocked(i int, evs []Event) []claimed {
 		}
 		var same []Event
 		for _, ev := range evs {
-			if slices.ContainsFunc(t.Pending, func(p Event) bool { return p.Type == ev.Type && p.Version == ev.Version }) {
-				same = append(same, ev)
+			for _, p := range t.Pending {
+				if sameResult(p, ev) && !slices.ContainsFunc(same, func(x Event) bool { return x.Type == p.Type }) {
+					same = append(same, p)
+				}
 			}
 		}
 		if len(same) == 0 {
