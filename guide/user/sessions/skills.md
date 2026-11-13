@@ -48,6 +48,25 @@ Skills written for another agent and left in the repository are listed too.
 Picking one inserts "Read ‹file› and follow that skill's instructions.",
 so even an agent with no skill mechanism of its own can use the content.
 
+## Skills Agent Fleet puts in
+
+The skills folders of claude, codex, opencode and muse hold skills whose names start with `af-`. They are the procedures of the workspace policy, turned into skills so that an agent can read the right one when it needs it. The agent reads them on its own judgement; they are not something you call from the list.
+
+| Skill | When the agent reads it |
+|---|---|
+| `af-environment` | Checking how the workspace behaves (what survives a stop or a recreate, the memory limit, tools that are not installed) |
+| `af-worktrees` | Touching another session's working copy, or sharing dependencies |
+| `af-build` | Running a JVM or Node build or test suite, or after one ran out of memory |
+| `af-browser` | Checking a screen, taking a screenshot, or handing a browser to you |
+| `af-aws` | Running an AWS command as your profile |
+| `af-gcp` | Running a Google Cloud command as your profile |
+| `af-agent-fleet` | Starting sessions, sending messages, handing off, adding MCP servers and similar |
+
+- Their content is the workspace policy itself. Read the policy under ⚙ Settings → "Agent instructions" → **"Read the policy"**
+- They are rewritten when the workspace starts and when you save your agent instructions. An edit is undone, so put the way you want things done in [your agent instructions](../agents/instructions.md)
+- Your own skills are left alone, including your own skills whose names start with `af-`
+- They are not the skills an agent writes itself (names starting with `afa-`); see the next section
+
 ## Bring back a skill the Agent archived
 
 Skills an agent wrote itself (folder names starting with `afa-`) can be archived by the Agent when nobody has used them for 30 days. This only happens when the skill curator is switched on, and it never touches skills you wrote. An archived skill is moved to `.archive/` inside the skills folder; nothing is deleted.
