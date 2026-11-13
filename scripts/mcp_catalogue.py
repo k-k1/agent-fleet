@@ -19,6 +19,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,6 +31,61 @@ GROUPS_TSV = "scripts/mcp-catalogue/groups.tsv"
 PAGES = {"en": "guide/ref/mcp/README.md", "ja": "guide/ref/mcp/README.ja.md"}
 
 GENERATOR = "scripts/mcp_catalogue.py"
+
+# The naming rule for tool names (docs/decisions/0135-mcp-tool-naming.md, rules 1 to 3): lower-case
+# snake_case, no `af_` prefix, a first word from a closed verb list. Rule 4 and the list_/get_
+# convention are for the reviewer and are not checked here.
+TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)*$")
+TOOL_VERBS = frozenset(
+    "add answer archive ask attach create delete detach flush generate get link list pause peek "
+    "propose purge rename request respond restore resume run search send set stop tail unwatch "
+    "update watch".split()
+)
+# A bare verb names its operation and its subject on its own only for these two (rule 3); any
+# other single word, `get` or `delete` say, leaves the object open.
+TOOL_BARE_VERBS = frozenset({"watch", "unwatch"})
+# Names that predate the rule and stay as they are: the shared memory API (noun-first), two
+# single exceptions, and the two af_ tools (ADR 0135 option A). A new tool never joins this list.
+TOOL_NAME_EXCEPTIONS = frozenset(
+    {
+        "af_report", "af_stop_after_turn", "branch_name", "skill_restore",
+        "memory_feedback", "memory_forget", "memory_index", "memory_patch",
+        "memory_projects", "memory_read", "memory_save", "memory_search",
+    }
+)
+
+
+def naming_problems(root: str) -> list[str]:
+    """Rule violations among the names the two goldens advertise (kept apart from problems(), which
+    the page generator also raises on: a bad name must fail the check, not stop a regeneration)."""
+    try:
+        return name_problems(golden_tools(root))
+    except CatalogueError as e:
+        return [str(e)]
+
+
+def name_problems(tools) -> list[str]:
+    """Names in `tools` that break rules 1 to 3 of ADR 0135 and are not grandfathered."""
+    out = []
+    for tool in sorted(tools):
+        if tool in TOOL_NAME_EXCEPTIONS:
+            continue
+        if not TOOL_NAME_RE.fullmatch(tool):
+            out.append(f"{tool}: not lower-case snake_case (docs/decisions/0135-mcp-tool-naming.md rule 2)")
+        elif tool.startswith("af_"):
+            out.append(f"{tool}: carries the af_ prefix (rule 1); clients already add mcp__<server>__")
+        elif "_" not in tool:
+            if tool not in TOOL_BARE_VERBS:
+                out.append(
+                    f"{tool}: a bare verb names no object (rule 3); name it <verb>_<object>, or add it to"
+                    f" TOOL_BARE_VERBS in {GENERATOR} if the verb alone fixes the subject"
+                )
+        elif tool.split("_")[0] not in TOOL_VERBS:
+            out.append(
+                f"{tool}: does not start with a known verb (rule 3); name it <verb>_<object>, or add the"
+                f" verb to TOOL_VERBS in {GENERATOR} if it is a new one"
+            )
+    return out
 
 
 class CatalogueError(Exception):

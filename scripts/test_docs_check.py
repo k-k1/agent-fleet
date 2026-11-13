@@ -1320,28 +1320,28 @@ class McpCatalogueTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(check, "ROOT", str(self.root)).start()
         self.cat = check._mcp_catalogue()
-        # alpha: every session and every assistant; peer_only: behind one session switch;
-        # remote: the Control Plane's /mcp only, for members with a read token.
+        # list_alpha: every session and every assistant; list_peer_only: behind one session switch;
+        # list_remote: the Control Plane's /mcp only, for members with a read token.
         ws = {a: [] for a in self.WS_AUDIENCES}
         for a in self.WS_AUDIENCES:
-            ws[a].append("alpha#1")
+            ws[a].append("list_alpha#1")
         for a in ("session-peer", "session-all", "session-all-write"):
-            ws[a].append("peer_only#1")
+            ws[a].append("list_peer_only#1")
         self.ws = {"audiences": ws, "tools": {
-            "alpha#1": {"name": "alpha", "inputSchema": {"required": ["name"]}},
-            "peer_only#1": {"name": "peer_only"},
+            "list_alpha#1": {"name": "list_alpha", "inputSchema": {"required": ["name"]}},
+            "list_peer_only#1": {"name": "list_peer_only"},
         }}
         cp = {}
         for ep in ("mcp", "memory"):
             for mem in ("false", "true"):
                 for role in ("member", "tenant_admin", "super_admin"):
                     for scope in ("read", "write", "admin:dangerous"):
-                        cp[f"{ep} memory={mem} {role} {scope}"] = ["remote"] if ep == "mcp" else []
-        self.cp = {"audiences": cp, "tools": {"remote": {"name": "remote"}}}
+                        cp[f"{ep} memory={mem} {role} {scope}"] = ["list_remote"] if ep == "mcp" else []
+        self.cp = {"audiences": cp, "tools": {"list_remote": {"name": "list_remote"}}}
         self.rows = {
-            "alpha": "Alpha\tアルファです",
-            "peer_only": "Peer\tピアです",
-            "remote": "Remote\tリモートです",
+            "list_alpha": "Alpha\tアルファです",
+            "list_peer_only": "Peer\tピアです",
+            "list_remote": "Remote\tリモートです",
         }
         self.write_inputs()
         self.generate()
@@ -1370,16 +1370,53 @@ class McpCatalogueTests(unittest.TestCase):
     def test_generated_pages_pass(self):
         self.assertEqual(self.errors(), "")
         page = (self.root / self.cat.PAGES["en"]).read_text()
-        self.assertIn('| `alpha` | Alpha | ✓ | ✓ AF read | — | `name` |', page)
-        self.assertIn('| `peer_only` | Peer | ✓ "Messages between sessions" | — | — | — |', page)
-        self.assertIn("| `remote` | Remote | — | — | ✓ `read` | — |", page)
-        self.assertIn("| `peer_only` | ピアです | ✓ 「セッション間メッセージ」 | — | — | — |",
+        self.assertIn('| `list_alpha` | Alpha | ✓ | ✓ AF read | — | `name` |', page)
+        self.assertIn('| `list_peer_only` | Peer | ✓ "Messages between sessions" | — | — | — |', page)
+        self.assertIn("| `list_remote` | Remote | — | — | ✓ `read` | — |", page)
+        self.assertIn("| `list_peer_only` | ピアです | ✓ 「セッション間メッセージ」 | — | — | — |",
                       (self.root / self.cat.PAGES["ja"]).read_text())
 
     def test_tool_without_a_row(self):
-        del self.rows["remote"]
+        del self.rows["list_remote"]
         self.write_inputs()
-        self.assertIn("remote is advertised by a server but has no description row", self.errors())
+        self.assertIn("list_remote is advertised by a server but has no description row", self.errors())
+
+    def add_cp_tool(self, name):
+        self.cp["tools"][name] = {"name": name}
+        for k in self.cp["audiences"]:
+            if k.startswith("mcp "):
+                self.cp["audiences"][k].append(name)
+        self.rows[name] = "New\t新規"
+        self.write_inputs()
+        self.generate()
+
+    def test_new_tool_names_that_break_the_rule(self):
+        # ADR 0135: no af_ prefix, lower-case snake_case, a known verb first.
+        for name, why in (
+            ("af_foo", "af_ prefix"),
+            ("listRepos", "snake_case"),
+            ("Get_thing", "snake_case"),
+            ("session_list", "known verb"),
+            ("delete", "bare verb"),
+            ("get", "bare verb"),
+        ):
+            with self.subTest(name=name):
+                self.add_cp_tool(name)
+                self.assertIn(f"mcp: {name}: ", self.errors())
+                self.assertIn(why, self.errors())
+                del self.cp["tools"][name]
+                for k in self.cp["audiences"]:
+                    if name in self.cp["audiences"][k]:
+                        self.cp["audiences"][k].remove(name)
+                del self.rows[name]
+
+    def test_a_trailing_newline_is_not_snake_case(self):
+        self.assertIn("snake_case", "".join(self.cat.name_problems(["list_foo\n"])))
+
+    def test_grandfathered_and_well_formed_names_pass(self):
+        for name in ("af_report", "memory_save", "branch_name", "list_new_thing", "watch"):
+            with self.subTest(name=name):
+                self.assertEqual(self.cat.name_problems([name]), [])
 
     def test_row_for_a_tool_no_golden_has(self):
         self.rows["ghost"] = "Ghost\tゴースト"
@@ -1387,19 +1424,19 @@ class McpCatalogueTests(unittest.TestCase):
         self.assertIn("ghost is in no golden tools/list", self.errors())
 
     def test_row_without_a_translation(self):
-        self.rows["alpha"] = "Alpha\t"
+        self.rows["list_alpha"] = "Alpha\t"
         self.write_inputs()
-        self.assertIn("alpha has no ja description", self.errors())
+        self.assertIn("list_alpha has no ja description", self.errors())
 
     def test_page_stale_against_the_golden(self):
         for aud, tools in self.cp["audiences"].items():
             if aud.endswith(" read"):
-                tools.clear()  # remote now needs a write token
+                tools.clear()  # list_remote now needs a write token
         self.write_inputs()
         self.assertIn(f"{self.cat.PAGES['en']} is stale", self.errors())
 
     def test_page_stale_against_the_description(self):
-        self.rows["alpha"] = "Alpha, reworded\tアルファです"
+        self.rows["list_alpha"] = "Alpha, reworded\tアルファです"
         self.write_inputs()
         err = self.errors()
         self.assertIn(f"{self.cat.PAGES['en']} is stale", err)
@@ -1411,7 +1448,7 @@ class McpCatalogueTests(unittest.TestCase):
         self.assertIn(f"{self.cat.PAGES['ja']} is stale", self.errors())
 
     def test_unknown_audience(self):
-        self.ws["audiences"]["session-newflag"] = ["alpha#1"]
+        self.ws["audiences"]["session-newflag"] = ["list_alpha#1"]
         self.write_inputs()
         self.assertIn("session-newflag are not known", self.errors())
 
@@ -1433,43 +1470,43 @@ class McpCatalogueTests(unittest.TestCase):
         )
 
     def test_cp_only_required_parameter_makes_the_page_stale(self):
-        self.cp["tools"]["remote"]["inputSchema"] = {"required": ["id"]}
+        self.cp["tools"]["list_remote"]["inputSchema"] = {"required": ["id"]}
         self.write_inputs()
         self.assertIn(f"{self.cat.PAGES['en']} is stale", self.errors())
 
     def test_required_parameters_shown_per_route_when_they_differ(self):
         for a in ("assistant-read", "assistant-read-nobrowser", "assistant-write", "assistant-write-nobrowser"):
-            self.ws["audiences"][a].append("remote#1")
-        self.ws["tools"]["remote#1"] = {"name": "remote"}
-        self.cp["tools"]["remote"]["inputSchema"] = {"required": ["id"]}
+            self.ws["audiences"][a].append("list_remote#1")
+        self.ws["tools"]["list_remote#1"] = {"name": "list_remote"}
+        self.cp["tools"]["list_remote"]["inputSchema"] = {"required": ["id"]}
         self.write_inputs()
         self.generate()
         self.assertEqual(self.errors(), "")
-        self.assertIn("| `remote` | Remote | — | ✓ AF read | ✓ `read` | Assistant: —; Outside: `id` |",
+        self.assertIn("| `list_remote` | Remote | — | ✓ AF read | ✓ `read` | Assistant: —; Outside: `id` |",
                       (self.root / self.cat.PAGES["en"]).read_text())
         self.assertIn("アシスタント: —; 外部: `id` |", (self.root / self.cat.PAGES["ja"]).read_text())
 
     def test_one_route_with_two_required_lists(self):
-        self.ws["tools"]["alpha#2"] = {"name": "alpha", "inputSchema": {"required": ["other"]}}
-        self.ws["audiences"]["session-peer"] = ["alpha#2" if k == "alpha#1" else k
+        self.ws["tools"]["list_alpha#2"] = {"name": "list_alpha", "inputSchema": {"required": ["other"]}}
+        self.ws["audiences"]["session-peer"] = ["list_alpha#2" if k == "list_alpha#1" else k
                                                 for k in self.ws["audiences"]["session-peer"]]
         self.write_inputs()
-        self.assertIn("alpha requires different parameters on audiences of the same route", self.errors())
+        self.assertIn("list_alpha requires different parameters on audiences of the same route", self.errors())
 
     def test_tool_in_no_audience(self):
         for keys in self.ws["audiences"].values():
-            keys.remove("alpha#1")
+            keys.remove("list_alpha#1")
         self.write_inputs()
-        self.assertIn("alpha#1 is in 'tools' but in no audience", self.errors())
+        self.assertIn("list_alpha#1 is in 'tools' but in no audience", self.errors())
 
     def test_cp_tool_in_no_audience(self):
         for keys in self.cp["audiences"].values():
             keys.clear()
         self.write_inputs()
-        self.assertIn("remote is in 'tools' but in no audience", self.errors())
+        self.assertIn("list_remote is in 'tools' but in no audience", self.errors())
 
     def test_tool_in_an_audience_the_rules_cannot_place(self):
         for a in ("session-all", "session-all-write"):
-            self.ws["audiences"][a].remove("peer_only#1")
+            self.ws["audiences"][a].remove("list_peer_only#1")
         self.write_inputs()
-        self.assertIn("peer_only is in audience 'session-peer' but", self.errors())
+        self.assertIn("list_peer_only is in audience 'session-peer' but", self.errors())

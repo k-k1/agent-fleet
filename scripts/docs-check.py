@@ -1773,6 +1773,8 @@ def check_mcp(f: Findings) -> None:
     errors: a hand-kept tool list is exactly what drifted before the catalogue was generated.
     """
     cat = _mcp_catalogue()
+    for p in cat.naming_problems(ROOT):
+        f.error(f"mcp: {p}")
     probs = cat.problems(ROOT)
     for p in probs:
         f.error(f"mcp: {p}")
