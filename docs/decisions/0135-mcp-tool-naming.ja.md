@@ -2,8 +2,9 @@
 
 [English](0135-mcp-tool-naming.md) | 日本語
 
-- Status: **proposed**（2026-11-13）。何も変えていません。ツールの改名・別名・説明の書き換えはなく、チェックも足していません。
-  規則（1 節）と選択肢（3 節）は利用者が決めます。
+- Status: **accepted**（2026-11-13）：1 節の規則と、3 節の**選択肢 A**（`af_report` と `af_stop_after_turn` は文書化した例外として名前を保つ）。
+  選択肢 B は退けた案です。ツールの改名・別名・説明の書き換えはありません。4 節のチェック（規則 1〜3）はこの受け入れとともに足し、
+  規則 4 は見ません。
 - Tracking: #3990。
 - See also: [0124](0124-second-refactor.ja.md)（この記録が読むツール表の等価性ゴールデン）／
   [0041](0041-cross-session-messaging.ja.md)（`send_to_peer_session`）／
@@ -177,8 +178,8 @@ B は、この 2 つの定義をどのみち出し直す変更（スキーマ変
 
 ### 4. 新しいツールに規則を強制する
 
-この変更では足しません。利用者がまだ受け入れていない規則を守らせるチェックは、決定より先に CI の法になるためです。小さく、A・B と独立なので、
-この記録を accepted にする PR で足せます。
+提案した変更では足しませんでした。利用者がまだ受け入れていない規則を守らせるチェックは、決定より先に CI の法になるためです。小さく、A・B と独立なので、
+この記録を accepted にする変更で足します（`scripts/mcp_catalogue.py` の `problems()`。`docs` ワークフローが走らせます）。
 
 - 置き場所：`scripts/mcp_catalogue.py` の `problems()`。`scripts/docs-check.py` の `check_mcp` がすでに 2 つのゴールデンに対して走らせています。
   テストは `scripts/test_docs_check.py` の `McpCatalogueTests`。

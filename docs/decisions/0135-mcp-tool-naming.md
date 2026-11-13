@@ -2,8 +2,10 @@
 
 English | [日本語](0135-mcp-tool-naming.ja.md)
 
-- Status: **proposed** (2026-11-13). Nothing is changed: no tool is renamed, aliased or re-described, and no
-  check is added. The user decides the rule (section 1) and the option (section 3).
+- Status: **accepted** (2026-11-13): the rule of section 1, and **option A** of section 3 (`af_report` and
+  `af_stop_after_turn` keep their names as the documented exception). Option B is the rejected alternative.
+  No tool is renamed, aliased or re-described. The check of section 4 (rules 1 to 3) is added with this
+  acceptance; rule 4 is not checked.
 - Tracking: #3990.
 - See also: [0124](0124-second-refactor.md) (the tool-table equivalence goldens this record reads) /
   [0041](0041-cross-session-messaging.md) (`send_to_peer_session`) /
@@ -200,9 +202,9 @@ along, or when a third `af_` tool is proposed.
 
 ### 4. Enforcing the rule for new tools
 
-Not added in this change: a check that holds a rule the user has not accepted yet would be CI law before
-the decision. It is small, and independent of A and B, so it can land in the PR that flips this record to
-accepted:
+Not added in the proposing change: a check that holds a rule the user has not accepted yet would be CI law
+before the decision. It is small, and independent of A and B, so it lands with the change that flips this
+record to accepted (`problems()` in `scripts/mcp_catalogue.py`, run by the `docs` workflow):
 
 - Where: `problems()` in `scripts/mcp_catalogue.py`, which `check_mcp` in `scripts/docs-check.py` already
   runs over both goldens. Its test is `McpCatalogueTests` in `scripts/test_docs_check.py`.
