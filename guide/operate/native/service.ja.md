@@ -7,14 +7,14 @@ source_of_truth: "`deploy/native/af` と配布リポジトリの `install.sh`（
 
 [English](service.md) | 日本語
 
-`af start` をフォアグラウンドで動かし続ける代わりに、systemd の**ユーザー**のサービスにします。
+`af start` をフォアグラウンドで動かし続ける代わりに、systemd の**ユーザー**サービスにします。
 落ちたら再起動し、シェルを閉じても動き続けます。WSL2 では systemd が既定で有効です。
 
 ## 全体像
 
 | あなたがやること | 起きること |
 |---|---|
-| unit のファイルを書く | `af start` がユーザーのサービスになる |
+| unit ファイルを書く | `af start` がユーザーサービスになる |
 | `systemctl --user enable --now` で有効にする | いますぐ起動し、ログインのたびに起動する |
 | 必要なら linger を有効にする | WSL のセッションを閉じても動き続ける |
 
@@ -37,8 +37,8 @@ Environment=AF_SYSTEMD_UNIT=%N
 WantedBy=default.target
 ```
 
-- `%h` はホームのディレクトリです。`ExecStart` のパスは、インストーラで入れたとき（`~/.local/bin/af` のリンク）のものです
-- tar を手で展開したときは、そのコピーを指します。例: `ExecStart=%h/agent-fleet-native-<v>-linux-<arch>/af start`。本当のパスは `readlink -f "$(command -v af)"` でわかります
+- `%h` はホームディレクトリです。`ExecStart` のパスは、インストーラで入れたとき（`~/.local/bin/af` のリンク）のものです
+- tar を手で展開したときは、展開した場所の `af` を指定します。例: `ExecStart=%h/agent-fleet-native-<v>-linux-<arch>/af start`。本当のパスは `readlink -f "$(command -v af)"` でわかります
 - `AF_SYSTEMD_UNIT` は、Console の「**再起動して適用**」がこの unit を見つけるためのものです（[ネイティブパッケージを更新する](update.ja.md#用意した版に切り替える)）
 - 読み上げ・画像・エンジンを借りるための環境変数は、`[Service]` に `Environment=` の行で足します（例: `Environment=AF_VOICEVOX_URL=...`）
 

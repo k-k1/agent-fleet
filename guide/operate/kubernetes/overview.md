@@ -34,7 +34,7 @@ The Control Plane (CP) runs as a Deployment in the cluster, and each workspace i
 
 ## No browser features
 
-Chromium's sandbox cannot start in a workspace pod (Pod Security `restricted`), and running it unsandboxed is not done either.
+Chromium's sandbox cannot start in a workspace pod (Pod Security `restricted`), and Agent Fleet does not run it unsandboxed either.
 
 - The CP says so for every workspace it starts here (`AF_BROWSER_UNAVAILABLE`)
 - The Console greys out the browser pane with the reason; the Agent's browser routes and the af browser tools answer `browser_unavailable`
@@ -44,7 +44,7 @@ Chromium's sandbox cannot start in a workspace pod (Pod Security `restricted`), 
 
 ## Preconditions
 
-None of these can be checked by the CP; a cluster that misses one runs, and is not isolated. On GKE, Terraform meets every item below.
+None of these can be checked by the CP; a cluster that misses one still runs, but its workspaces are not isolated. On GKE, Terraform meets every item below.
 
 | # | Precondition | What breaks without it |
 |---|---|---|
@@ -56,7 +56,7 @@ None of these can be checked by the CP; a cluster that misses one runs, and is n
 | P6 | The kubelet's **read-only port is off** (GKE's default, and Terraform sets it), and **no `hostNetwork` service** runs on workspace nodes | A pod can always reach its own node |
 | P7 | On GKE, **every node pool that can run a workspace uses `GKE_METADATA`**, and workspaces are scheduled only there (`AF_K8S_NODE_SELECTOR`) | Workspaces reach the node's credentials |
 | P8 | **No IAM grant names the workspace namespace or its service account**, directly or through a `principalSet`, and the namespace names carry this deployment's own prefix | Workload Identity treats equal names in any cluster of the project as one identity |
-| P9 | **Members have no Kubernetes API access** to the workspace namespace | Creating pods there is reading every member's home and Secret |
+| P9 | **Members have no Kubernetes API access** to the workspace namespace | Being able to create pods there amounts to reading every member's home and Secret |
 | P10 | The cluster is **IPv4 single-stack** | The egress policy allows no `::/0`, so IPv6 egress is denied rather than unfiltered |
 | P11 | **NodeLocal DNSCache is off** (GKE turns it on for new clusters; Terraform sets it off), or a policy for its address is added | The DNS policy allows `kube-dns` pods only and `169.254.0.0/16` is denied, so with the cache on every lookup from a workspace fails |
 | P12 | A **Postgres** the deployment provides (Cloud SQL on GKE) | The CP's database |
@@ -70,7 +70,7 @@ On P15:
 - On Dataplane V2 any allowed block that contains a node address lets workspaces reach every node, own and others, and an `except` does not stop it
 - A cluster with a range elsewhere (privately used public addresses, GKE's default `34.118.224.0/20` Service range) must cut that range out of the blocks itself
 
-Changing P11 on an existing cluster takes about 10 minutes and may recreate the nodes depending on the GKE version. On 1.35 it was seen to remove the `node-local-dns` pods and recreate no node and restart no workspace.
+Changing P11 on an existing cluster takes about 10 minutes and may recreate the nodes depending on the GKE version. On 1.35 it was seen only to remove the `node-local-dns` pods; no node was recreated and no workspace restarted.
 
 ## Disk quota (GKE)
 
@@ -97,7 +97,7 @@ Raise the quota before going live, or lower `workspace_max_nodes` / `workspace_b
 |---|---|
 | Node upgrades | Both pools upgrade automatically, and a surge upgrade adds a node per zone (GKE's default surge is one) with that pool's boot disk; with no room for it the upgrade fails with `QUOTA_EXCEEDED` |
 | Other disks | Other deployments and VMs in the region count against the same quota |
-| Stopped workspaces | They keep their claims, so count every workspace, not the running ones |
+| Stopped workspaces | They keep their claims, so count every workspace, not just the running ones |
 
 With another `storage_class_disk_type` the claims count against that type's quota instead (for example `pd-standard` against `DISKS_TOTAL_GB`).
 

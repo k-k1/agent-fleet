@@ -372,7 +372,7 @@ kubectl -n "$PREFIX-ws" exec <pod> -- getent hosts github.com     # an address, 
 
 ### No node answers a workspace
 
-No node answers a workspace, its own node included (P15). The pod itself reports `open` or `closed`.
+A workspace must reach no node, its own node included (P15). The pod itself reports `open` or `closed`.
 
 - Every node line must say `closed`, and the last line, the control, `open`
 - An `ERROR` line, or no node lines at all, means nothing was checked

@@ -32,7 +32,7 @@ Below the modes is what the engine is doing right now. **A line that is not ther
 | **Requests in the last N min** | How many requests arrived in that time |
 | **Last request** | When the last request arrived |
 | `(loaded)` after the model | The engine is warm enough to answer |
-| `(declared, not loaded yet)` after the model | It has just started and is still loading. This is the three minutes |
+| `(declared, not loaded yet)` after the model | It has just started and is still loading. This is where the three minutes or so go |
 
 - The request count lives in the Control Plane's own memory. It goes back to zero when the Control Plane is replaced. Until a full window has been counted, "(this control plane has only been counting for …)" is added
 - **Last request** is stored, so it stays correct across a replacement

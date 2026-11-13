@@ -66,7 +66,7 @@ cp -r deploy/kubernetes/overlays/generic "$OVERLAY"
      --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="$(cat google-client-secret)"
    kubectl -n "$CP_NS" rollout status deployment/af-cp
    ```
-6. Put your cluster's ingress in front of the Service `af-cp` (port 8099), from the source the policy of step 3 admits
+6. Put your cluster's ingress in front of the Service `af-cp` (port 8099), as the source the policy of step 3 admits
    - with WebSockets and a long idle timeout
    - set `AF_TRUSTED_PROXY_HOPS` to the number of proxies that append to `X-Forwarded-For`, counting a proxy only if the CP cannot be reached except through it (why: [Build on GKE](gke.md#7-know-the-load-balancer)), and apply the overlay again
 7. Give the claim `af-cp-data` a backup. What it looks like on GKE is in [Back up and restore](backup.md#what-has-to-survive)
@@ -76,5 +76,5 @@ The rules for changing the manifests are in [The Kubernetes deployment at a glan
 
 ## Related
 
-- [Build on GKE](gke.md): the checks in step 8 apply here too
+- [Build on GKE](gke.md): its step 8 checks apply here too
 - [Replace nodes and recover from a stopped node](nodes.md)

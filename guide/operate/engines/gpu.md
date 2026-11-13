@@ -8,7 +8,7 @@ source_of_truth: "the Admin modal's Inference engines item (`console/src/feature
 English | [日本語](gpu.ja.md)
 
 The deployment can run a chat engine (llm) and an image engine (image) on GPUs of its own.
-When a GPU instance is bought, when it stops and how large it is are decided in the Admin modal's **Inference engines**.
+In the Admin modal's **Inference engines** you decide when a GPU instance is bought, when it stops and how large it is.
 
 ## How it works
 
@@ -26,7 +26,7 @@ Which members of which tenant may use them is decided by the tenant administrato
 ## Before you start
 
 A GPU instance can be bought on an AWS ECS deployment that has the engine stack (`60-engines`).
-How to build the stack and its parameters are in the [Add inference engines](../aws-ecs/engines.md).
+How to build the stack, and its parameters, are in [Add inference engines](../aws-ecs/engines.md).
 
 A deployment without GPUs can list other engines on the same screen.
 
@@ -67,7 +67,7 @@ Choose one of three for each role.
 | **On demand** | A GPU instance is bought only when something asks, and it stops itself once nobody has used it for a while. This is the default |
 | **Always on** | The instance is never stopped. Answers are faster, but you are billed while nothing is using it |
 
-- The state badge shows what is actually running, not the mode you chose. Right after you press Disabled it says **Stopping**. The instance does not vanish at once; that is not a disagreement
+- The state badge shows what is actually running, not the mode you chose. Right after you press Disabled it says **Stopping**. The instance does not vanish at once, so the badge differing from the mode is not a fault
 - The first request to a stopped engine answers after about three minutes, the time it takes to buy an instance and load the model. The call completes in one go and nothing has to be retried
 - Before time-critical work you can warm it up with Always on. Switch back to On demand when you are done; until you do, the hourly rate keeps being billed
 
@@ -93,7 +93,7 @@ The selector is for moving to a larger GPU for a while, to try a model that need
 - **A replacement costs one cold start**: about 9 minutes for chat and about 3 minutes for images. The new instance fetches the models again, and it does not start until the old instance has left the cluster
 - **For a stopped engine, choosing costs nothing.** It applies to the next start, whenever someone next uses it
 - **A class other than the default keeps the higher hourly rate.** The **not the default** badge and **Back to the default** stay on screen while it does. Go back when you are done
-- **Changing the chat engine's class also rewrites each model's context window.** See [Switch to another size](models.md#switch-to-another-size-or-version)
+- **Changing the chat engine's class also rewrites each model's context window.** See [Switch to another size or version](models.md#switch-to-another-size-or-version)
 - Under the selector, the VRAM the largest enabled model needs is shown beside the class's VRAM ([Check whether a model fits](#check-whether-a-model-fits))
 
 ### Buy in the order of the offers

@@ -8,10 +8,10 @@ source_of_truth: "`deploy/kubernetes/` のマニフェストと `deploy/gcp/gke/
 [English](overview.md) | 日本語
 
 Kubernetes クラスターで Agent Fleet を動かす前に、何がどこに作られ、クラスターが何を満たしていなければならないかを確かめます。
-Control Plane（CP）はクラスター内の Deployment として動き、ワークスペースは 1 つずつ、レプリカ 0 か 1 の StatefulSet と PersistentVolumeClaim（claim）2 本になります。
+Control Plane（CP）はクラスター内の Deployment として動きます。各ワークスペースは、レプリカ数 0 または 1 の StatefulSet と、PersistentVolumeClaim（claim）2 本で構成されます。
 
 > [!WARNING]
-> **プレビューです。** GKE Standard のクラスターで受け入れを確かめていますが、本番での利用はまだサポートしていません。既知の制約は、このランタイムにブラウザ機能がないこと（下記）と、GKE のリージョンの SSD ディスク割り当て（[ディスクの割り当て（GKE）](#ディスクの割り当てgke)）です。
+> **プレビューです。** GKE Standard のクラスターで受け入れを確かめていますが、本番での利用はまだサポートしていません。既知の制約は、このランタイムではブラウザ機能が使えないこと（下記）と、GKE のリージョン単位の SSD ディスク割り当て（[ディスクの割り当て（GKE）](#ディスクの割り当てgke)）です。
 
 ## 全体像
 
@@ -19,7 +19,7 @@ Control Plane（CP）はクラスター内の Deployment として動き、ワ�
 |---|---|
 | `deploy/gcp/gke` で Terraform を適用する（GKE のとき） | VPC・サブネット・固定アドレスの Cloud NAT、クラスターと 2 つのノードプール、Secret を暗号化する KMS 鍵、Cloud SQL、ロードバランサのアドレス・証明書・DNS レコード、StorageClass、IAM の付与ができる |
 | オーバーレイを `kubectl apply -k` する | 2 つの名前空間、CP とその Service、CP 自身のディスク（`af-cp-data`）、RBAC、NetworkPolicy、クォータ、Gateway とそのポリシーができる |
-| メンバーが Console でワークスペースを起動する | CP がワークスペースごとに StatefulSet・Service・Secret・claim 2 本を作る。ときどき 1 回だけの消去用 Pod も作る。どれにも `agent-fleet.io/workspace=<名前>` のラベルが付く |
+| メンバーが Console でワークスペースを起動する | CP がワークスペースごとに StatefulSet・Service・Secret・claim 2 本を作る。ときどき、1 回限りの消去用 Pod も作る。どれにも `agent-fleet.io/workspace=<名前>` のラベルが付く |
 
 ## ディレクトリの中身
 
@@ -44,7 +44,7 @@ Control Plane（CP）はクラスター内の Deployment として動き、ワ�
 
 ## 前提条件
 
-CP はどれも確かめられません。1 つ欠けたクラスターでも動きますが、隔離されません。GKE では、下の項目はすべて Terraform が満たします。
+CP はどの項目も確かめられません。1 つでも欠けたクラスターでも Agent Fleet は動きますが、ワークスペースは隔離されません。GKE では、下の項目はすべて Terraform が満たします。
 
 | # | 前提条件 | 欠けるとどうなるか |
 |---|---|---|
@@ -78,7 +78,7 @@ P11 を既存のクラスターで切り替えると、約 10 分かかります
 
 使い切ると、オートスケーラーはノードを足せません。スケールアップは `QUOTA_EXCEEDED` で失敗し、ワークスペースの Pod は `Pending` のままになります。
 
-Terraform の変数（`deploy/gcp/gke/variables.tf`）、CP の claim の大きさ、既定の `pd-balanced` から見積もった、配備が届きうる量です。
+定常状態で配備が使いうる量を、Terraform の変数（`deploy/gcp/gke/variables.tf`）、CP の claim のサイズ、既定の `pd-balanced` から見積もると次のようになります。
 
 ```
 zones x (system_node_count x 100 + workspace_max_nodes x workspace_boot_disk_gb)
@@ -89,15 +89,15 @@ zones x (system_node_count x 100 + workspace_max_nodes x workspace_boot_disk_gb)
 
 - システムプールの 100 GB は GKE の既定のブートディスクで、Terraform は変えません
 - 既定値で 2 ゾーン（`system_node_count = 1`、ゾーンあたり `workspace_max_nodes = 4`、`workspace_boot_disk_gb = 200`）なら、ノードだけで 2 x (100 + 4 x 200) = 1800 GB に届きます
-- 新しいプロジェクトの 500 GB は、システムノード 2 台、ワークスペースノード 1 台、ワークスペース 1 つ（2 x 100 + 200 + 20 + 55 = 475 GB）でほぼなくなります。2 台めのワークスペースノードは来ません
+- 新しいプロジェクトの 500 GB は、システムノード 2 台、ワークスペースノード 1 台、ワークスペース 1 つ（2 x 100 + 200 + 20 + 55 = 475 GB）でほぼ使い切ります。2 台めのワークスペースノードは追加されません
 
 本番の前に割り当てを引き上げるか、`workspace_max_nodes` / `workspace_boot_disk_gb` を下げます。合計ちょうどではなく、余裕を残してください。
 
 | 余裕が要る理由 | 中身 |
 |---|---|
-| ノードのアップグレード | 両方のプールは自動でアップグレードされ、サージアップグレードはゾーンごとにノードを 1 台（GKE の既定のサージ）、そのプールのブートディスクつきで足す。余裕がないと `QUOTA_EXCEEDED` で失敗する |
+| ノードのアップグレード | 両方のプールが自動でアップグレードされる。サージアップグレードでは、そのプールのブートディスクを持つノードがゾーンごとに 1 台（GKE の既定のサージ数）追加される。余裕がないとアップグレードが `QUOTA_EXCEEDED` で失敗する |
 | ほかのディスク | 同じリージョンのほかの配備や VM のディスクも、同じ割り当てを使う |
-| 止まっているワークスペース | 停止中も claim は残る。動いているものではなく、すべてのワークスペースを数える |
+| 止まっているワークスペース | 停止中も claim は残る。動いているものだけでなく、すべてのワークスペースを数える |
 
 `storage_class_disk_type` をほかの種類にすると、claim はその種類の割り当てを使います（たとえば `pd-standard` なら `DISKS_TOTAL_GB`）。
 
@@ -126,22 +126,22 @@ gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project
 
 | ツール | 用途 |
 |---|---|
-| `gcloud` と `gke-gcloud-auth-plugin` コンポーネント | `kubectl` が GKE にサインインするのに要る（`gcloud components install gke-gcloud-auth-plugin`） |
+| `gcloud` と `gke-gcloud-auth-plugin` コンポーネント | `kubectl` が GKE に認証するのに要る（`gcloud components install gke-gcloud-auth-plugin`） |
 | `terraform` 1.6 以降 | `deploy/gcp/gke` |
 | `kubectl` | 組み込みの kustomize で足りる |
 | `psql` | 最初の 1 回だけのデータベースの権限付与 |
 
 ## マニフェストを変えるときに守ること
 
-- **ワークスペースの名前空間に、ここにあるものより広い NetworkPolicy を足さないでください。** ポリシーは足し算です。「すべての Pod」にもっと許すポリシーが 1 つあると、隔離がなくなります。配備が必要とする内部の宛先（LAN の推論エンジン、社内の git ホストなど）は、宛先ごとに 1 つ、ワークスペースの Pod を選び、そのアドレスとポートを名指しするポリシーにします
-- **CP の Role や ClusterRole を広げないでください。** Namespace や NetworkPolicy への権限も与えません。乗っ取られた CP は、そのロールが届く範囲に届きます
-- **メインのポート（8099）を `af-cp-internal` に足さないでください。** 内部の Service は、ワークスペースが CP に戻る道で、ワークスペース専用のリスナーにだけ届く必要があります
+- **ワークスペースの名前空間に、ここにあるものより広い NetworkPolicy を足さないでください。** ポリシーは足し算です。「すべての Pod」により多くを許可するポリシーが 1 つでもあると、隔離が失われます。配備が必要とする内部の宛先（LAN の推論エンジン、社内の git ホストなど）には、宛先ごとにポリシーを 1 つ作ります。そのポリシーはワークスペースの Pod を選択し、宛先のアドレスとポートを名指しします
+- **CP の Role や ClusterRole を広げないでください。** Namespace や NetworkPolicy への権限も与えません。乗っ取られた CP は、そのロールが及ぶ範囲すべてに手が届きます
+- **メインのポート（8099）を `af-cp-internal` に足さないでください。** 内部の Service はワークスペースから CP への戻り経路で、ワークスペース専用のリスナーにしか届いてはいけません
 - **ワークスペースの名前空間の Pod Security のレベルを下げないでください。** `restricted` より多くの権限が要るワークスペースの機能は、この形態では提供しません（Chromium のサンドボックスの `SYS_ADMIN` がその 1 つです）
-- **ワークスペースの Pod を強制削除しないでください**（`--force --grace-period=0`）。プロセスが止まった証拠なしに名前を空けるので、2 つのエージェントが 1 つのホームを共有しかねません。応答しなくなったノードの扱いは [ノードを入れ替える・止まったノードに対処する](nodes.ja.md#応答しなくなったノード) にあります
+- **ワークスペースの Pod を強制削除しないでください**（`--force --grace-period=0`）。プロセスが止まったことを確かめないまま名前を解放するので、2 つのエージェントが 1 つのホームを共有しかねません。応答しなくなったノードの扱いは [ノードを入れ替える・止まったノードに対処する](nodes.ja.md#応答しなくなったノード) にあります
 
 ## このグループのページ
 
-運用のページのコマンドは、GKE のページのシェル変数（`PROJECT`・`REGION`・`LOCATION`・`PREFIX`・`TF`・`OVERLAY`）が設定済みで、`kubectl config current-context` がこのクラスターであることを前提にしています（[GKE に構築する](gke.ja.md#3-kubectl-をこのクラスターに向ける)）。
+運用ページのコマンドは、GKE のページで設定するシェル変数（`PROJECT`・`REGION`・`LOCATION`・`PREFIX`・`TF`・`OVERLAY`）が設定済みで、`kubectl config current-context` がこのクラスターであることを前提にしています（[GKE に構築する](gke.ja.md#3-kubectl-をこのクラスターに向ける)）。
 
 | ページ | できること |
 |---|---|
@@ -149,9 +149,9 @@ gcloud beta quotas preferences describe <prefix>-ssd-total-gb --project <project
 | [ほかのクラスターに構築する](other-clusters.ja.md) | GKE 以外のクラスターで、汎用のオーバーレイから建てる |
 | [CP をアップグレードする](upgrade.ja.md) | バックアップを取って新しい版に上げ、必要なら戻す |
 | [バックアップ・復元する](backup.ja.md) | 残すべきものを知り、スナップショットの予定を入れ、復元を予行する |
-| [アラートを設定する](alerts.ja.md) | Cloud Monitoring に見張りを入れる |
-| [ノードを入れ替える・止まったノードに対処する](nodes.ja.md) | ノードを計画どおり入れ替え、応答しないノードから回復し、破棄の残りを片付ける |
-| [一時停止する・費用を見る](pause.ja.md) | データを残して眠らせ、費用の形を知る |
+| [アラートを設定する](alerts.ja.md) | Cloud Monitoring に監視を設定する |
+| [ノードを入れ替える・止まったノードに対処する](nodes.ja.md) | ノードを計画どおり入れ替え、応答しないノードから回復し、破棄が残したものを片付ける |
+| [一時停止する・費用を見る](pause.ja.md) | データを残したまま停止し、費用の内訳を知る |
 | [撤去する](teardown.ja.md) | 配備を消し、手で消すものを片付ける |
 
 ## 関連

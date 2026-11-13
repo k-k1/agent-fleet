@@ -7,7 +7,7 @@ source_of_truth: "`deploy/aws/ec2-single/cfn.yaml` と `deploy/compose/release.s
 
 [English](aws-ec2-single.md) | 日本語
 
-CloudFormation で EC2 のインスタンスを 1 台建て、その上で Docker Compose の配備を動かします。
+CloudFormation で EC2 インスタンスを 1 台建て、その上で Docker Compose の配備を動かします。
 要るのは AWS CLI だけで、Terraform は使いません。片付けもコマンド 1 つです。
 
 ## 全体像
@@ -25,7 +25,7 @@ ECS の配備ではなく、1 台の VM の上の Docker Compose です。ECS �
 
 | 用意するもの | 補足 |
 |---|---|
-| AWS CLI と、デプロイする IAM の権限 | EC2・Route 53・CloudFormation。SSM の書き込みも IAM の capability も要りません |
+| AWS CLI と、デプロイに使う IAM 権限 | EC2・Route 53・CloudFormation。SSM の書き込みも IAM の capability も要りません |
 | Route 53 のパブリックホストゾーン | ドメインがそのゾーンに委任されていないときは、下の [DNS の注意](#dns-の注意) |
 | x86_64（amd64）のマシンの Docker | リリースのバンドルとイメージを作ります。インスタンスは amd64 なので、Apple Silicon などの arm64 のマシンで作ったイメージは動きません |
 | サインイン用の IdP のクライアント | [サインインの方法を設定する](signin/overview.ja.md) |
@@ -67,8 +67,8 @@ aws cloudformation describe-stacks --stack-name agent-fleet-test \
 
 ### DNS の注意
 
-Route 53 の A レコードが効くのは、ドメインがそのホストゾーンに委任されているときだけです（レジストラの NS がゾーンの `awsdns-*` のサーバー）。
-ドメインがほかの DNS にあるときは、どちらかにします。
+Route 53 の A レコードが効くのは、ドメインがそのホストゾーンに委任されているときだけです（レジストラの NS レコードが、ゾーンの `awsdns-*` のサーバーを指している状態）。
+ドメインをほかの DNS で管理しているときは、次のどちらかにします。
 
 - その DNS に A レコードを足します
 - DNS を使わず、Elastic IP の **sslip.io** を使います。`Fqdn`・`PUBLIC_DOMAIN` を `<ダッシュ区切りの IP>.sslip.io`（例: `203-0-113-7.sslip.io`）にすると、設定なしでその IP に解決され、本物の Let's Encrypt の証明書も取れます
@@ -89,7 +89,7 @@ scp -i deploy/aws/ec2-single/agent-fleet-test-key \
 `0.1.0` は例です。作る版に置き換えます。`--save` を付けると、バンドル（`agent-fleet-<版>.tar.gz`）に加えて、イメージを `docker save` した tar（`agent-fleet-images-<版>.tar.gz`）もできます。
 
 > [!IMPORTANT]
-> **x86_64（amd64）のマシンで実行してください。** `--save` は、実行したマシンのアーキテクチャのイメージだけを書き出します（複数のアーキテクチャを指定すると `--save` は断ります）。テンプレートの AMI は amd64 の Ubuntu なので、arm64 のマシンで作ったイメージはインスタンスで動きません。
+> **x86_64（amd64）のマシンで実行してください。** `--save` は、実行したマシンのアーキテクチャのイメージだけを書き出します（複数のアーキテクチャを指定すると、`--save` は実行を拒否します）。テンプレートの AMI は amd64 の Ubuntu なので、arm64 のマシンで作ったイメージはインスタンスで動きません。
 
 ## 3. インスタンスで起動する
 
@@ -114,11 +114,11 @@ docker compose logs -f caddy cp
 - IdP のクライアントに `https://<Fqdn>/oauth2/callback` を登録します。有効にするどの IdP でも、この 1 つで足ります
 - `https://<Fqdn>` を開いてサインインします
 
-最初の管理者について:
+最初の管理者については次のとおりです。
 
 - 最初の管理者を通すのは `AF_OAUTH_ALLOWED_DOMAINS` です。そのあとは、管理パネルでテナントに招待した人は、そこに入っていなくてもサインインできます
 - テナント専用のサインインページは `https://<Fqdn>/login/<slug>` です
-- `SUPER_ADMIN_EMAILS` は起動のときに 1 回だけ読まれ、これだけが正です。アドレスを外して再起動すると、データベースのロールも外れます
+- `SUPER_ADMIN_EMAILS` は起動のときに 1 回だけ読まれ、配備管理者を決めるのはこの値だけです。アドレスを外して再起動すると、データベース上のロールも外れます
 
 ### メモリの小さいインスタンス
 
@@ -128,9 +128,9 @@ docker compose logs -f caddy cp
 
 インスタンスは、ホップ数 1 の IMDSv2 を必須にしています（`cfn.yaml` の `MetadataOptions`）。
 
-- テンプレートはインスタンスプロファイルを付けません。あとから付けたときに、ホストのネットワークの Control Plane（1 ホップ）には届き、docker のブリッジにいるワークスペース（2 ホップ）には届かないようにするための設定です
+- テンプレートはインスタンスプロファイルを付けません。あとから付けた場合でも、ホストネットワークで動く Control Plane（1 ホップ）には届き、docker ブリッジ上のワークスペース（2 ホップ）には届かないようにするための設定です
 - ワークスペースは `AWS_EC2_METADATA_DISABLED=true` 付きで起動します。Control Plane に `AF_WS_WORKLOAD_AWS=1` があるときは付けませんが、ホップ数の制限は外れないので、どちらでもインスタンスプロファイルには届きません
-- このテンプレートは、配備が費用を払う Bedrock の経路（provided routes）を提供しません。Control Plane が経路のロールを引き受けるための AWS の身元がないからです。ECS のスタックの `ProvidedRoutes=on` を使います
+- このテンプレートは、配備が費用を払う Bedrock のルート（provided routes）を提供しません。Control Plane がルート用のロールを引き受けるための AWS の身元がないからです。代わりに ECS のスタックの `ProvidedRoutes=on` を使います
 
 この設定より前に作ったスタックには、スタックを更新するのではなく、動いているインスタンスに直接適用します。`LatestUbuntuAmi` は更新のたびに解決し直され、新しい AMI ならインスタンスが作り直されるからです。
 
@@ -143,9 +143,9 @@ aws ec2 modify-instance-metadata-options --instance-id <id> \
 
 | 確かめること | `AF_WS_WORKLOAD_AWS` がオフ（既定） | `AF_WS_WORKLOAD_AWS=1` |
 |---|---|---|
-| `echo ${AWS_EC2_METADATA_DISABLED:-unset}` | `true` と出る | 意図して `unset` |
+| `echo ${AWS_EC2_METADATA_DISABLED:-unset}` | `true` と出る | `unset`（意図どおり） |
 | プロファイルなしの `aws sts get-caller-identity` | 「Unable to locate credentials」で失敗する | — |
-| 下のトークンの要求 | `200` が出ない | `200` が出ない |
+| 下のトークン要求 | `200` が出ない | `200` が出ない |
 
 ```bash
 curl -s -o /dev/null -m 3 -w '%{http_code}' -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token

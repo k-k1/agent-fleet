@@ -107,7 +107,7 @@ For the image role, the higher one wins. The panel shows which one is in use and
 | 4 | An external row of the engine table, or an engine borrowed from another Agent Fleet | "In effect: … (from this deployment's engine table)." and so on |
 
 "**Remove panel setting**" does not stop image generation. The next source in this order takes over at once.
-To stop image generation, turn the engine **off** on the Inference engines screen.
+To stop image generation, set the engine to "**Disabled**" on the Inference engines screen.
 
 ## Run more than one image engine
 
@@ -137,9 +137,9 @@ AF_ENGINES_JSON='{"engines":[
 
 ## On and off
 
-On the Inference engines screen this kind of engine appears as "**External**". It has two modes, on and off. There is no on-demand.
+On the Inference engines screen this kind of engine appears as "**External**". It has two modes, "**Disabled**" and "**Always on**". There is no on-demand.
 
-- Off only closes the route. Sessions stop seeing the engine, but ComfyUI keeps running. Stop it on its own machine
+- Disabled only closes the route. Sessions stop seeing the engine, but ComfyUI keeps running. Stop it on its own machine
 - State, desired count, instance and when it stops are not shown. The deployment does not know them
 
 ## Register the models

@@ -7,7 +7,7 @@ source_of_truth: "`deploy/native/af` の `update` と配布リポジトリの `i
 
 [English](update.md) | 日本語
 
-ネイティブパッケージを新しい版に上げます。新しい版を用意するところまでは自動で、切り替えるのは都合のよいときに自分で再起動したときです。
+ネイティブパッケージを新しい版に上げます。新しい版の用意までは自動で行われ、切り替えは都合のよいときに自分で再起動して行います。
 
 ## 全体像
 
@@ -15,7 +15,7 @@ source_of_truth: "`deploy/native/af` の `update` と配布リポジトリの `i
 |---|---|
 | 何もしない（インストーラがタイマーを有効にできたとき） | 毎日のタイマーが `af update` を実行し、新しい版を取得・検証して、今の版の隣に用意する。タイマーがなければ、自分で `af update` を実行する |
 | 都合のよいときに再起動する | 新しい版に切り替わる。動いていたセッションは中断される |
-| 版を固定したいときは `AF_VERSION` を書く | 自動の更新がその版より先に進まない |
+| 版を固定したいときは `AF_VERSION` を書く | 自動更新がその版より先に進まない |
 
 `WS_DATA` の下のデータには触れません。新しいワークスペースのイメージ（rootfs）は、次の起動のときに必要なら取得します。
 
@@ -29,16 +29,16 @@ af update --check   # report whether a newer release exists (no download)
 af update           # download + verify + stage the latest (or AF_VERSION-pinned)
 ```
 
-- `--yes` を付けると、取得してよいかを聞きません
-- `af update` は、インストーラで入れた配置（`~/.local/bin/af` のリンク）でだけ使えます。tar を手で展開したものでは断られるので、下の [tar で入れ替える](#tar-で入れ替える) にします
+- `--yes` を付けると、取得前の確認を省きます
+- `af update` は、インストーラで入れた配置（`~/.local/bin/af` のリンク）でだけ使えます。tar を手で展開したものでは実行を拒否されるので、下の [tar で入れ替える](#tar-で入れ替える) の手順を使います
 
 ### 毎日のタイマー
 
-インストーラは、`af update` を毎日実行する **ユーザーのタイマー**（`agent-fleet-update.timer`）を有効にします。用意するだけで、切り替えはしません。
+インストーラは、`af update` を毎日実行する **ユーザータイマー**（`agent-fleet-update.timer`）を有効にします。用意するだけで、切り替えはしません。
 
 - 有効にするのは、`systemctl` があり、ユーザーの systemd に接続できるときだけです。有効にできたときは、インストーラが `auto-update: daily 'af update' timer enabled` と表示します
 - 表示されなかったとき（WSL で systemd が無効など）は、タイマーはありません。上の `af update` を自分で実行して更新します。WSL で systemd を有効にする方法は [systemd でサービスとして動かす](service.ja.md#うまくいかないとき) にあります
-- インストールのときに断るなら `AF_NO_AUTOUPDATE=1` を付けます
+- インストール時に無効にしておくなら `AF_NO_AUTOUPDATE=1` を付けます
 - あとから止めるときや、次に動く時刻を見るときは次のとおりです
 
 ```bash
@@ -48,11 +48,11 @@ systemctl --user list-timers agent-fleet-update.timer     # when it next runs
 
 ## 用意した版に切り替える
 
-切り替えは、メインのサービスの再起動です。都合のよいときに、どちらかで行います。
+切り替えとは、メインのサービスを再起動することです。都合のよいときに、どちらかで行います。
 
 | 場所 | 操作 |
 |---|---|
-| Console | 新しい版が用意されると、**設定 → ツールチェーン** の「**Agent Fleet の更新**」に「**再起動して適用**」が出ます。再起動する前に、動いているセッションの数を示して確かめます |
+| Console | 新しい版が用意されると、**設定 → ツールチェーン** の「**Agent Fleet の更新**」に「**再起動して適用**」が出ます。再起動する前に、動いているセッションの数を示して確認を求めます |
 | シェル | `systemctl --user restart agent-fleet`。フォアグラウンドで動かしているなら Ctrl-C して `af start` |
 
 ![「Agent Fleet の更新」。実行中のバージョンは v0.43.0、適用待ちに v0.44.0 と「再起動で適用」のバッジがあり、「更新を適用」の行に「再起動して適用」のボタンがある](../../assets/native-update-ja-light.webp)
@@ -82,12 +82,12 @@ cd agent-fleet-native-<v'>-linux-<arch> && ./af start
 
 ## 手で持ち込む
 
-外に出られないホストでは、ファイルを手で持ち込みます。
+インターネットに出られないホストでは、ファイルを手で持ち込みます。
 
 | 方法 | 内容 |
 |---|---|
-| rootfs を同梱した版を使う | `--bundle-rootfs` で作った `-bundle` の tar は rootfs を含み、何も取得せずに起動します |
-| rootfs の tar を渡す | ふつうの版でも、別のホストで取った rootfs の tar を `./af start --rootfs <tar.zst>` で渡せます。同じ sha256 の検証を行います |
+| rootfs を同梱したパッケージを使う | `--bundle-rootfs` で作った `-bundle` の tar は rootfs を含み、何も取得せずに起動します |
+| rootfs の tar を渡す | 通常のパッケージでも、別のホストで取得した rootfs の tar を `./af start --rootfs <tar.zst>` で渡せます。同じ sha256 の検証を行います |
 
 - ネットワークが要るのは、初回のエージェントの CLI の自動インストールだけです
 - CLI まで完全にオフラインで使うなら、リポジトリの Dockerfile から `BAKE_AGENT_CLIS=1` で自分でビルドした Docker の形態を使います。CLI を焼き込んだビルドは、ライセンスの都合で配布できません

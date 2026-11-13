@@ -25,10 +25,10 @@ Docker のない 1 人用の Linux（WSL2 を含む）に Agent Fleet を入れ�
 
 | 要るもの | 補足 |
 |---|---|
-| Linux のカーネル（特権のないユーザー名前空間） | WSL2 の標準のカーネルは AppArmor が無効なので、そのまま動くはずです。Ubuntu 23.10 以降は下の設定が要ることがあります |
+| Linux のカーネル（特権のないユーザー名前空間） | WSL2 の標準カーネルは AppArmor が無効なので、そのまま動くはずです。Ubuntu 23.10 以降は下の設定が要ることがあります |
 | bash・coreutils・tar | 標準のものだけです。zstd は `bin/zstd` として同梱しているので、ホストには要りません |
 | curl か wget | 初回の rootfs の取得にだけ使います（[手で持ち込む](update.ja.md#手で持ち込む) も参照） |
-| （`agy` を使うなら）RDRAND を出す CPU | `agy`（Antigravity CLI）の FIPS のビルドは、RDRAND がないと止まります。カーネルが命令を取り下げているときは Agent が OpenSSL の検出から外して動かし、乱数はカーネルから取ります。`AF_AGY_RDRAND_MASK=0` にすると、それを断り、Console が `agy` を隠します |
+| （`agy` を使うなら）RDRAND を出す CPU | `agy`（Antigravity CLI）の FIPS のビルドは、RDRAND がないと止まります。カーネルが命令を取り下げているときは、Agent が OpenSSL の CPU 検出から RDRAND を外して動かし、乱数はカーネルから取ります。`AF_AGY_RDRAND_MASK=0` にするとこの回避を行わず、Console は `agy` を隠します |
 
 ユーザー名前空間がまったく無効なカーネルでは、ネイティブパッケージは動きません。Docker の形態（`agent-fleet-<v>.tar.gz`）を使います。
 macOS には、ネイティブパッケージはありません。Apple Silicon の Mac では Linux の VM の中で動かします（[macOS（Apple Silicon）で動かす](../compose/macos.ja.md#linux-の-vm-でネイティブパッケージを動かす)）。
@@ -71,12 +71,12 @@ cd agent-fleet-native-<v>-linux-<arch>
 ## 2. 起動して開く
 
 - 初回の `af start` は、`rootfs.json` に書かれた rootfs を URL と sha256 で取得します。**2 回目からはオフラインで起動できます**（展開した rootfs を使い回します）
-- `af start` はフォアグラウンドで動きます。止めるときは Ctrl-C です。サービスとして動かすときは [systemd でサービスとして動かす](service.ja.md) にします
+- `af start` はフォアグラウンドで動きます。止めるときは Ctrl-C です。サービスとして動かすときは [systemd でサービスとして動かす](service.ja.md) を参照してください
 - ブラウザで `http://localhost:8099` を開きます。WSL2 なら、Windows の側のブラウザからそのまま開けます
-- 動いているかは `af status` で確かめられます。Control Plane とワークスペースが動いているかを表示します
+- `af status` で、Control Plane とワークスペースが動いているかを確かめられます
 
 サインインの画面はありません。`AUTH=dev` の固定のユーザー 1 人で動き、そのユーザーは配備管理者（super_admin）です。
-テナントの設定の画面にも、`af start` の直後から入れます。
+テナント設定の画面にも、`af start` の直後から入れます。
 
 ### エージェントの CLI
 
@@ -116,7 +116,7 @@ cd agent-fleet-native-<v>-linux-<arch>
 
 | 違い | 内容 |
 |---|---|
-| 1 人だけ | `AUTH=dev` に固定です。コンテナの隔離はなく、すべてのワークスペースが同じ OS のユーザーの下で、bubblewrap のサンドボックスで動きます |
+| 1 人だけ | `AUTH=dev` に固定です。コンテナの隔離はなく、すべてのワークスペースが同じ OS ユーザーのまま、bubblewrap のサンドボックスで動きます |
 | メモリの上限がない | cgroup を使わないので、`WS_MEMORY` は効きません。重いビルドでホストごと落ちることがあります |
 | ブラウザペインの Chromium は初回に取得する | 決められた版を約 200 MB 取得します。下の「Chromium のサンドボックスが動かないとき」 |
 
@@ -129,7 +129,7 @@ WS_ENV=AF_CHROMIUM_NO_SANDBOX=1 af start
 ```
 
 - この変数は `WS_ENV`（カンマ区切りの `KEY=VAL` の並び）でワークスペースに渡します。`af start` にそのまま付けると、Control Plane にしか届きません
-- ローカルホストにしかつながないブラウザペインの用途なら許せるトレードオフです。信頼できないサイトを見るのには使わないでください
+- ブラウザペインは localhost にしかつながないので、この用途なら許容できるトレードオフです。信頼できないサイトを見るのには使わないでください
 
 ## 任意で足せるもの
 
@@ -140,7 +140,7 @@ WS_ENV=AF_CHROMIUM_NO_SANDBOX=1 af start
 | AWS の Agent Fleet の推論エンジンを借りる | [別のデプロイのエンジンを借りる](../engines/borrow.ja.md) |
 | LAN の llama.cpp でチャットする | [LAN の llama.cpp でチャットする](../engines/llama-cpp.ja.md) |
 
-どれも `af start` に環境変数を付けるか、systemd の unit の `Environment=` に書きます。`af` はシェルの環境を Control Plane にそのまま渡します。
+どれも `af start` に環境変数を付けるか、systemd unit の `Environment=` に書きます。`af` はシェルの環境を Control Plane にそのまま渡します。
 
 ## うまくいかないとき
 

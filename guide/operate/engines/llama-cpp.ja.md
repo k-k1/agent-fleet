@@ -15,7 +15,7 @@ source_of_truth: "Control Plane が起動時に読む環境変数。llama-server
 | あなたがやること | 起きること |
 |---|---|
 | GPU のあるマシンで llama-server を起動する | OpenAI 互換の API がポートで待ち受ける |
-| `AF_LLM_URL`（と鍵）を設定して Control Plane を再起動する | Control Plane が外部管理の `llm` の行を 1 本作り、セッションのチャットをそこへ中継する |
+| `AF_LLM_URL`（とキー）を設定して Control Plane を再起動する | Control Plane が外部管理の `llm` の行を 1 本作り、セッションのチャットをそこへ中継する |
 | 推論エンジンの画面でモデルを登録する | メンバーがそのモデルでセッションを起動できる |
 
 llama-server はあなたのもののままです。Control Plane は起動も停止もせず、費用も付けません。
@@ -42,16 +42,16 @@ llama-server -hf <repo>:<quant> --alias <モデルの id> -c <窓> -ngl 99 --jin
 
 | 引数 | 理由 |
 |---|---|
-| `--alias` | `/v1/models` に出る名前になります。付けないと `-hf` / `-m` のパスがそのまま出て、起動メニューや記録に読めない名前が残ります。1 つのモデルを出すときは、要求の `model` が合っていなくても答えます。複数のモデルを出す router モードでは、名前が合わないと届きません |
+| `--alias` | `/v1/models` に出る名前になります。付けないと `-hf` / `-m` のパスがそのまま出て、起動メニューや記録に読めない名前が残ります。1 つのモデルを出すときは、要求の `model` が合っていなくても答えます。複数のモデルを出すルーターモードでは、名前が合わない要求はモデルに届きません |
 | `-c` | 登録するモデルの `context_tokens` 以上にします。目安は 8192 以上です |
-| `--host 0.0.0.0` | 付けないと loopback にしか応答しません |
+| `--host 0.0.0.0` | 付けないとループバックにしか応答しません |
 | `--port` | 明示します。llama.cpp は既定のポートを変える予定を告知しています |
 | `--api-key` | **付けないと、LAN に認証なしで開きます** |
 | `--jinja` | 既定でオンですが、古いビルドのために明示します |
 
-- gated な Hugging Face のリポジトリには `HF_TOKEN=...`（または `-hft <token>`）が要ります
+- アクセス制限（gated）のある Hugging Face のリポジトリには `HF_TOKEN=...`（または `-hft <token>`）が要ります
 - `--sleep-idle-seconds <N>` で、使われていないときにモデルを降ろして VRAM を返せます
-- 動作を確かめたファミリーは Qwen3・GPT-OSS・Gemma です。`llama-3.1` は tool call が通らないので、ツールを使わない用途に限ってください
+- 動作を確かめたファミリーは Qwen3・GPT-OSS・Gemma です。`llama-3.1` はツール呼び出しが通らないので、ツールを使わない用途に限ってください
 
 ## Control Plane に場所を教える
 
@@ -68,7 +68,7 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 | native | `af start` の環境、または systemd unit の `Environment=`（[systemd でサービスとして動かす](../native/service.ja.md)） |
 
 - `AF_LLM_URL` は近道です。`AF_ENGINES_JSON`（AWS ならエンジンのスタックの表）に `lifecycle: "external"` の `llm` 行を自分で書いても同じになります
-- 鍵はどちらの書き方でも `AF_ENGINE_API_KEY_LLM` から読みます。`AF_LLM_API_KEY` という変数はありません
+- キーはどちらの書き方でも `AF_ENGINE_API_KEY_LLM` から読みます。`AF_LLM_API_KEY` という変数はありません
 
 ## モデルを登録する
 
@@ -77,7 +77,7 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 1. `AF_LLM_URL`（と `AF_ENGINE_API_KEY_LLM`）を設定して、Control Plane を再起動します。
 2. 管理 → 「**推論エンジン**」で、`llm` の行にモデルを登録します。**id** は `--alias` に渡した名前にします。
 
-ファイルを取り込む仕組みはありません。id・`base_model`・窓（`context_tokens`）を、llama-server の起動コマンドと合うように書きます。登録の画面は [推論エンジンにモデルを取り込む](models.ja.md) にあります。
+ファイルを取り込む仕組みはありません。id・`base_model`・コンテキストの長さ（`context_tokens`）を、llama-server の起動コマンドと合うように書きます。登録の画面は [推論エンジンにモデルを取り込む](models.ja.md) にあります。
 
 ## 借りていたエンジンから切り替えるとき
 
@@ -85,14 +85,14 @@ Control Plane が起動のときに 1 回だけ読みます。変えたら Contr
 
 | | 借りていたとき | LAN の llama.cpp |
 |---|---|---|
-| 認証 | メンバーシップごとのトークン。メンバーシップを消せば止まる | 共有の bearer 1 本。1 人だけを締め出す方法はなく、回転させると全員が締め出される |
-| 止まっているとき | 冷間起動を待つ。遅いがつながる | 待たない。すぐに `503 engine_unavailable` で失敗する |
+| 認証 | メンバーシップごとのトークン。メンバーシップを消せば止まる | 共有の Bearer キー 1 つ。1 人だけを締め出す方法はなく、回転させると全員が締め出される |
+| 止まっているとき | コールドスタートを待つ。遅いがつながる | 待たない。すぐに `503 engine_unavailable` で失敗する |
 
 ## 困ったとき
 
 ### チャットがすぐに失敗する
 
-Control Plane は自分が持っていないエンジンを待ちません。llama-server が答えないと、要求はすぐに `503 engine_unavailable` で断られます。本文には試した URL と health のパス（`/health`）が入ります。
+Control Plane は自分が持っていないエンジンを待ちません。llama-server が答えないと、要求はすぐに `503 engine_unavailable` で断られます。レスポンスの本文には、試した URL とヘルスチェックのパス（`/health`）が入ります。
 
 1. そのマシンで llama-server が動いているか
 2. Control Plane のマシンから、そのアドレスとポートに届くか

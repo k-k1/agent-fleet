@@ -50,7 +50,7 @@ deploy/gcp/gke/pause.sh --project "$PROJECT" --location "$LOCATION" --prefix "$P
 
 - **The workspace pool has no taint.** With the system pool at 0 the autoscaler would start a workspace node for kube-system's pending pods, so the script switches that pool's autoscaling off and resizes it to 0 itself
 - While paused, `terraform plan` shows the pool's autoscaling and the system pool's size as drift; `--up` closes it
-- The node counts (per zone) are read from the pools' instance groups and kept in one annotation step on the CP namespace (`agent-fleet.io/pause-*`). An existing record is never overwritten, so pausing again after an interruption keeps the original sizes
+- The node counts (per zone) are read from the pools' instance groups and recorded once in annotations on the CP namespace (`agent-fleet.io/pause-*`). An existing record is never overwritten, so pausing again after an interruption keeps the original sizes
 - `--up` restores them in full, finishing a half-done resize, and removes the record once the CP is back. If the namespace was deleted, `--up` needs `--system-nodes N` (and optionally `--workspace-min` / `--workspace-max`)
 
 ### What keeps billing while paused

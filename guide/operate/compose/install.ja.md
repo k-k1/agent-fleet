@@ -55,13 +55,13 @@ SAML しかない IdP（HENNGE One・TrustLogin・CloudGate など）は、oauth
 
 `agy`（Antigravity CLI）は FIPS のビルドで、CPU の RDRAND 命令がないと起動の時点で止まります。`grep -w rdrand /proc/cpuinfo` で確かめます。
 
-- カーネルが命令を取り下げているホスト（RDRAND が定数を返す AMD Ryzen Embedded など）では、Agent が OpenSSL の CPU の検出から RDRAND を外して agy を動かします。乱数は CPU ではなくカーネルから取ることになり、Console の agy のカードにそう出ます
-- FIPS モジュール自身の乱数の経路が必須の配備では、`AF_AGY_RDRAND_MASK=0` を設定します。そのときは、エージェントの選択肢から `agy` が消えます
+- カーネルが命令を取り下げているホスト（RDRAND が定数を返す AMD Ryzen Embedded など）では、Agent が OpenSSL の CPU 検出から RDRAND を外して agy を動かします。このとき乱数は CPU ではなくカーネルから取り、Console の agy のカードにそう出ます
+- FIPS モジュール自身のエントロピー源を必須とする配備では、`AF_AGY_RDRAND_MASK=0` を設定します。そのときは、エージェントの選択肢から `agy` が消えます
 
 ## 公開リリースから始めるとき
 
 [配布リポジトリ](https://github.com/k-k1/agent-fleet-dist) の `install-compose.sh` が、バンドルの取得・検証・展開と、GHCR からのイメージの取得までを行います。
-終わると、下の手順 1 の `cp .env.example .env` から続けられます。このページの手順は、手で（またはソースから）建てる道です。
+終わると、下の手順 1 の `cp .env.example .env` から続けられます。このページの手順は、手作業で（またはソースから）建てる場合のものです。
 
 ## 1. 設定を書いてソースから起動する
 
@@ -134,7 +134,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 2. `SUPER_ADMIN_EMAILS` に書いたアカウントでサインインします
 3. ワークスペースを起動します
 
-- `SUPER_ADMIN_EMAILS` は起動のときに 1 回だけ読まれ、これだけが正です。リストから外して再起動すると、その人の配備管理者のロールも外れます
+- `SUPER_ADMIN_EMAILS` は起動のときに 1 回だけ読まれ、配備管理者を決めるのはこの値だけです。リストから外して再起動すると、その人の配備管理者のロールも外れます
 - `.env.example` は `AF_PROVISION=invite` で始まります。管理者が追加するまで、ほかの人にはワークスペースができません。追加された人は、`AF_OAUTH_ALLOWED_*` に入っていなくてもサインインできます
 - テナント・メンバー・テナント専用のサインインページ（`<PUBLIC_BASE_URL>/login/<slug>`）の決め方は [テナントとプロビジョニングの方式を決める](../install-decisions.ja.md) にあります
 - 人を外す方法は [アクセスを取り消す・super_admin を引き継ぐ](../secure/offboarding.ja.md) にあります
