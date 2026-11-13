@@ -158,7 +158,8 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	giveUp := func() {
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*rescueWedgeBudget)
 		defer cancel()
-		if darkOrigin && occ.handBackRescue(fctx, id, &m, origBegan) {
+		if darkOrigin {
+			occ.handBackOrKeep(fctx, id, &m, origBegan)
 			return
 		}
 		occ.finalizeRescue(fctx, id, m.String(), m)
@@ -199,7 +200,9 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	// Done with the token: the episode is recorded and the marker goes, as after a rescue's
 	// last step. The home stays where it is.
 	fctx, cancelFin := context.WithTimeout(context.WithoutCancel(ctx), 3*rescueWedgeBudget)
-	if !darkOrigin || !occ.handBackRescue(fctx, id, &m, origBegan) {
+	if darkOrigin {
+		occ.handBackOrKeep(fctx, id, &m, origBegan)
+	} else {
 		occ.finalizeRescue(fctx, id, m.String(), m)
 	}
 	cancelFin()
@@ -211,10 +214,26 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 	return res, nil
 }
 
+// handBackOrKeep hands the rescue back, a few times if need be. When it cannot, the operator's
+// marker is KEPT, never finalized: the home is on an out-of-pool box that nothing but this
+// rescue will empty, so dropping the token would strand it. The resume scan converts a kept
+// operator marker on an L2-quarantined box once it has aged (resumeRescue).
+func (e *ecsEC2Runtime) handBackOrKeep(ctx context.Context, slot string, m *rescueMarker, began time.Time) {
+	for i := 0; i < 3; i++ {
+		if e.handBackRescue(ctx, slot, m, began) {
+			return
+		}
+		if ctx.Err() != nil || e.sleep(ctx, time.Second) != nil {
+			break
+		}
+	}
+	log.Printf("ecs-ec2: the operator marker on %s stays; the resume scan hands the rescue back once it has aged", slot)
+}
+
 // handBackRescue rewrites the operator's marker as the dark rescue's own (kind and began as
 // before, blocked_since cleared: a fresh attempt), in the guarded section, so that the resume
 // scan continues it from its phase to the detach. False when the write could not be made; the
-// caller then finalizes as before, which leaves the home on a stopped box for an operator.
+// caller keeps the marker (handBackOrKeep).
 func (e *ecsEC2Runtime) handBackRescue(ctx context.Context, slot string, m *rescueMarker, began time.Time) bool {
 	back := *m
 	back.Operator, back.Wedged = false, false

@@ -278,13 +278,16 @@ var (
 // This is NOT a fence, and nothing here can make it one. An EC2 tag write cannot be
 // conditional, and a request that was already sent cannot be taken back or bounded by a
 // client-side deadline: a late one can land after the leases are gone, after another replica
-// finalized the marker, and after an operator returned the slot. What this does is make a late
-// write unlikely and cheap: a deadline no later than either lease and the write budget, no SDK
-// retry, and, when the outcome is unknown, a wait of quarantineSettle that the cancellation of
-// the pass does not cut short. What a late write costs is bounded: the slot reads quarantined
-// until the next Start of a home on it re-places that home, or an operator returns it again.
-// The guarantee that a returned slot stays returned is operational, not code: the guide has the
-// operator switch the action off on every replica before returning a slot (ADR 0121, rung L2).
+// finalized the marker, after an operator returned the slot, and onto a slot that has since
+// been given a live home. The deadline, the missing SDK retry and the uncancellable settle make
+// that unlikely; they do not make it impossible.
+//
+// What a late write leaves is a running, healthy box that reads quarantined with a live home
+// and no rescue marker. Nothing in the product recovers that by itself: a Start cannot re-place
+// the home (releasing it needs SSM, which the role is not granted on a quarantined box), the
+// operator force-stop needs a marker, and Terminate refuses a box with a home. Recovery is
+// manual, with the operator's own credentials (guide, "Return it to service"). Whether that
+// residual is acceptable before `quarantine` is enabled on a deployment is the owner's decision.
 //
 // A box that is already quarantined is left alone and reported nothing: the decision is
 // once per box, not once per pass.

@@ -540,3 +540,52 @@ func TestForceStopOnAnL2QuarantinedRescueHandsItBackAndTheNextSweepDetaches(t *t
 		})
 	}
 }
+
+// If the hand-back cannot be written, the operator's marker must be kept (not finalized) and a
+// later sweep must hand the rescue back and finish it.
+func TestForceStopHandBackFailureKeepsTheMarkerAndTheResumeScanRecovers(t *testing.T) {
+	w := quarantineWorld(t, false)
+	shortBounds(t)
+	withENI(w)
+	w.h.ci.stickyENI = true
+	w.arm()
+	w.pass(w.f)
+	m, _ := parseRescueMarker(w.marker())
+	m.BlockedSince = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, m.String())
+	w.pass(w.f)
+	w.h.ci.stickyENI = false
+	w.h.ec2.dropTaskENIs("i-dark")
+	// Only the hand-back write (a non-operator marker past the stop) fails.
+	w.f.sleep = func(context.Context, time.Duration) error { return nil }
+	w.h.ec2.createTagsFail = func(key, value string) error {
+		if key == ec2TagRescue && strings.Contains(value, "/stopping/") && !strings.HasSuffix(value, "/operator") {
+			return errBoom
+		}
+		return nil
+	}
+	if _, err := w.f.ForceStopSlot(context.Background(), "i-dark", true); err != nil {
+		t.Fatalf("ForceStopSlot: %v", err)
+	}
+	kept, ok := parseRescueMarker(w.marker())
+	if !ok || !kept.Operator {
+		t.Fatalf("marker %q: the operator marker must be kept when the hand-back fails", w.marker())
+	}
+	// A young operator marker is its handler's; once aged, and with the failure gone, the sweep
+	// hands the rescue back and the next one detaches the home.
+	w.h.ec2.createTagsFail = nil
+	w.pass(w.f)
+	if m2, _ := parseRescueMarker(w.marker()); !m2.Operator || attachedInstance(w.vol()) != "i-dark" {
+		t.Fatalf("marker %q: a young operator marker is left alone", w.marker())
+	}
+	kept.Began = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, kept.String())
+	w.pass(w.f)
+	if back, _ := parseRescueMarker(w.marker()); back.Operator || w.marker() == "" {
+		t.Fatalf("marker %q: want the rescue handed back", w.marker())
+	}
+	w.pass(w.f)
+	if attachedInstance(w.vol()) != "" || w.marker() != "" || w.role() != ec2RoleQuarantined {
+		t.Fatalf("home on %q marker %q role %q", attachedInstance(w.vol()), w.marker(), w.role())
+	}
+}

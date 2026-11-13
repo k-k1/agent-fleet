@@ -215,12 +215,14 @@ With `AF_ECS_EC2_DARK_SLOT_ACTION=quarantine` the sweeper does everything `rescu
 
 **Terminate it.** Use "Terminate" at the end of the slot's row once the home is off it. It is refused while a home is attached to the slot or being placed on it. For a slot quarantined as blocked, use "Stop (force)" on it first: it is shown, and allowed, on a slot quarantined by this rung while its rescue marker is on the instance and it still holds a home. It takes the rescue over through the same checks as for any other slot and hands it back, so the next sweep waits for the instance to stop and then detaches the home on its next sweep, and Terminate works after that. Terminating also removes the evidence on the instance, so read the reason tag first or take it from the audit row.
 
-**Return it to service.** The Control Plane cannot do this: its role is not allowed to set `af-role=slot`. Do it with your own credentials, and **switch quarantine off first**. A tag write cannot be conditional, so a quarantine request that a Control Plane replica sent just before can still land after you return the slot and quarantine it again. The only way to be sure none is in flight is to stop every replica from writing:
+**Return it to service.** The Control Plane cannot do this: its role is not allowed to set `af-role=slot`. Do it with your own credentials. Before you do, switch quarantine off: set `AF_ECS_EC2_DARK_SLOT_ACTION` to `detect` (or `off`) on every Control Plane replica and wait until the rollout has finished. This keeps a replica from starting a new quarantine of the slot you are returning. It does **not** promise that no quarantine is still on its way: a tag write that a replica had already sent cannot be taken back, and the Control Plane has no way to see it land.
 
-1. Set `AF_ECS_EC2_DARK_SLOT_ACTION` to `detect` (or `off`) on every Control Plane replica and wait until the rollout has finished, so that no replica of the old setting is running
-2. Check that the slot holds no home
-3. On the instance, delete `af-rescue` if it is present (a rescue marker that stays would be resumed), `af-dark-since`, `af-quarantine-reason` and `af-quarantine-at`, and set `af-role=slot`
-4. Set the action back to `quarantine` when you want it
+1. Switch the action off as above
+2. On the instance, delete `af-rescue` if it is present (a rescue marker that stays would be resumed), `af-dark-since`, `af-quarantine-reason` and `af-quarantine-at`, and set `af-role=slot`
+3. Look at the instance again a few minutes later. If `af-role` reads `quarantined` again, a late write landed: repeat step 2
+4. Switch the action back on when you want it
+
+A slot that holds no home is the ordinary case. **A quarantined slot that still holds a home and has no `af-rescue` marker** is the one a late quarantine write can produce: the home was placed on the slot after it was returned or finished. Neither "Stop (force)" (it needs the marker) nor Terminate (it refuses a home) applies, and a start of that workspace cannot move the home. Return it the same way; the instance itself is healthy.
 
 If you leave the `af-wedge-at-*` tags in place, the next dark episode within the window quarantines the slot again once the action is back on; delete them to give it a clean history.
 
