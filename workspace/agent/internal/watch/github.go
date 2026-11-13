@@ -21,7 +21,7 @@ import (
 // GitHub event types this source produces over REST. pr.review.threads_unresolved needs
 // GraphQL (REST has no resolved state for a thread); it is offered only when Threads is set.
 var githubTypes = []string{
-	"pr.checks.completed", "pr.checks.failed",
+	"pr.checks.completed", "pr.checks.failing", "pr.checks.failed",
 	"pr.conflict", "pr.mergeable", "pr.ready",
 	"pr.merged", "pr.closed",
 	"pr.review.changes_requested",
@@ -280,6 +280,11 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 		switch {
 		case cs.pending:
 			busy, checksOK = true, false
+			if len(cs.failed) > 0 {
+				// Version is the head alone: a second failure on the same head is not told again.
+				events = append(events, ev(typeChecksFailing, head,
+					fmt.Sprintf("Checks on %s are failing on %s (%d failed so far), others still run.", ref, short(head), len(cs.failed)), cs.failed))
+			}
 		case cs.total > 0:
 			version := head + ":" + cs.fingerprint
 			result := "passed"

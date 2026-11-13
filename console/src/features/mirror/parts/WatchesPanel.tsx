@@ -83,6 +83,7 @@ export function sourceIcon(source: string): string {
 // text it is.
 const TYPE_KEYS = {
   "pr.checks.completed": "mirror.watch_type_checks_completed",
+  "pr.checks.failing": "mirror.watch_type_checks_failing",
   "pr.checks.failed": "mirror.watch_type_checks_failed",
   "pr.closed": "mirror.watch_type_closed",
   "pr.conflict": "mirror.watch_type_conflict",

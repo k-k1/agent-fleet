@@ -20,7 +20,7 @@ type fakeSource struct {
 
 func (f *fakeSource) Kind() string { return "fake" }
 func (f *fakeSource) Types() []string {
-	return []string{"pr.checks.completed", "pr.checks.failed", "pr.merged"}
+	return []string{"pr.checks.completed", "pr.checks.failing", "pr.checks.failed", "pr.merged"}
 }
 func (f *fakeSource) Resolve(_ context.Context, ref, _ string) (Resolved, error) {
 	if ref == "nope" {

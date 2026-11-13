@@ -424,6 +424,7 @@ func (t Tomb) standsFor(ev Event) bool {
 }
 
 const (
+	typeChecksFailing   = "pr.checks.failing"
 	typeChecksFailed    = "pr.checks.failed"
 	typeChecksCompleted = "pr.checks.completed"
 	typeReady           = "pr.ready"
@@ -441,6 +442,11 @@ func coverTypes(typ string) []string {
 // toldAs is the built-in type a watch's delivered event tells, "" for none: a completed run
 // stands for a failure only when it failed.
 func toldAs(ev Event) string {
+	if ev.Type == typeChecksFailing {
+		// No built-in tells it (the PR feedback notice names pr.checks.failed), so a tomb for
+		// it would never be taken.
+		return ""
+	}
 	if ev.Type == typeChecksCompleted {
 		if ev.Failed {
 			return typeChecksFailed

@@ -300,6 +300,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.watch_src_time": "Timer",
   "mirror.watch_src_run": "CI run",
   "mirror.watch_type_checks_completed": "CI finished",
+  "mirror.watch_type_checks_failing": "CI failing",
   "mirror.watch_type_checks_failed": "CI failed",
   "mirror.watch_type_closed": "closed",
   "mirror.watch_type_conflict": "conflict",

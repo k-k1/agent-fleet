@@ -41,10 +41,11 @@ func TestBitbucketPollReportsFromTheCache(t *testing.T) {
 		t.Fatalf("failed checks: %s %+v", types(evs), evs)
 	}
 
-	// Running checks and an unknown mergeability report nothing about either.
+	// Running checks and an unknown mergeability report nothing about either; the failure still
+	// standing is told as failing, not as finished.
 	pr.ChecksPending, pr.Mergeable = true, "UNKNOWN"
 	evs, cur, _, _ = b.Poll(context.Background(), "bitbucket:w/r#4", cur, nil)
-	if types(evs) != "" {
+	if types(evs) != "pr.checks.failing" {
 		t.Fatalf("pending: %s", types(evs))
 	}
 

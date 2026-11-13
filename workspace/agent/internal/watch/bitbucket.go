@@ -25,7 +25,7 @@ type Bitbucket struct {
 // resolved state for comment threads, and reading every comment page of every watched PR does
 // not fit the hourly budget, so pr.review.threads_unresolved is refused (ADR 0133 §3).
 var bitbucketTypes = []string{
-	"pr.checks.completed", "pr.checks.failed",
+	"pr.checks.completed", "pr.checks.failing", "pr.checks.failed",
 	"pr.conflict", "pr.mergeable", "pr.ready",
 	"pr.merged", "pr.closed",
 	"pr.review.changes_requested",
@@ -190,6 +190,14 @@ func (b *Bitbucket) Poll(ctx context.Context, subject SubjectID, raw json.RawMes
 	var events []Event
 	head := pr.Head
 	checksDone := !pr.ChecksPending && (pr.Checks == "success" || pr.Checks == "failure")
+	if pr.ChecksPending && pr.Checks == "failure" && len(pr.FailingChecks) > 0 && head != "" {
+		var data []DataItem
+		for _, c := range pr.FailingChecks {
+			data = append(data, DataItem{Text: c.Name, URL: c.URL})
+		}
+		events = append(events, ev(typeChecksFailing, head,
+			fmt.Sprintf("Checks on %s are failing on %s (%d failed so far), others still run.", ref, short(head), len(pr.FailingChecks)), data))
+	}
 	if checksDone && head != "" {
 		version := head + ":" + pr.ChecksDigest
 		var data []DataItem
