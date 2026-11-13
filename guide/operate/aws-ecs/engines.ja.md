@@ -186,7 +186,7 @@ aws ecs run-task --cluster <cluster> --launch-type FARGATE \
 - **上書きするのは、上の例のとおり `environment` だけです。** コンテナに `EntryPoint` はなく、`Command` はスクリプトそのもの（`/opt/af/ingest-fetch.sh`、`/opt/af/ingest-upload.sh`）です。`command` を上書きするときは、シェルの文字列 1 つではなく argv の配列（`["/opt/af/ingest-upload.sh"]`）で渡します
 - **取得の時間は読めません。sha256 も必ず渡します。** 同じ NAT を通しても、Hugging Face からは 4〜236 MB/s と幅があり、ファイルにも経路にも関係なく変わりました。S3 からはどの試行でも 104〜147 MB/s でした。モデルを S3 に置くのはこのためです。途中で切れた 17 GB の GGUF も読み込めてしまい、でたらめに答えます
 
-**ゲートのあるリポジトリ**（Hugging Face の API で `gated: auto`。FLUX.1-dev、SD 3.5 など）は、運用担当者が Hugging Face でライセンスに同意し、そのアカウントのトークンを管理画面に登録しておく必要があります（[推論エンジンにモデルを取り込む](../engines/models.ja.md#トークンを登録する)）。
+**ゲートのあるリポジトリ**（Hugging Face の API で `gated: auto`。FLUX.1-dev、SD3.5 など）は、運用担当者が Hugging Face でライセンスに同意し、そのアカウントのトークンを管理画面に登録しておく必要があります（[推論エンジンにモデルを取り込む](../engines/models.ja.md#トークンを登録する)）。
 
 - Control Plane はトークンを自分のデータベースに暗号化して保管し、このスタックが必ず作るシークレットに書きます。CloudFormation の操作は要りません
 - トークンを読むのは**取り込みのタスクだけ**で、エンジンのインスタンスには届きません。Control Plane も、書いた値を読み返せません（`PutSecretValue` だけで `GetSecretValue` がありません）
