@@ -90,7 +90,7 @@ AZ を移す方法と、AZ を失ったときの手順は [AZ を移す・失う
 | `Ec2SlotSleepSec` | `AF_ECS_EC2_SLOT_SLEEP_SEC` | `900` | タスクのないインスタンスを**停止**するまでの秒数。コンピューティングの課金が止まり、ルートボリュームの課金は続く。`0` で止めない |
 | `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0`（オフ） | 同じタイマーの次の段階。過ぎるとインスタンスを**終了**し、ルートボリュームも消える。`14400`（4 時間）がおすすめ |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | ユーザーごとのホームのボリューム（gp3）の GiB |
-| `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0`（オフ） | 使われないホームを退避するまでの、配備の既定（[ホームディレクトリの休止と予備のコピーを設定する](slot-homes.ja.md)） |
+| `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0`（オフ） | 使われないホームを退避するまでの、配備の既定（[ホームの休止と予備のコピーを設定する](slot-homes.ja.md)） |
 | `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | スロットのメモリのうち、ワークスペースに渡さない分（[ワークスペースが使えるメモリ](#ワークスペースが使えるメモリ)） |
 | — | `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` | `300` | EC2 では `running` なのにクラスターからエージェントに到達できないスロットを、あきらめてワークスペースをほかで作り直すまでの秒数。`0` で呼び出し側が許すかぎり待つ |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1`（オン） | golden snapshot を自動でビルドする（[golden snapshot](#golden-snapshot)） |
@@ -296,7 +296,7 @@ EBS のボリュームを別の AZ に動かす操作はありません。移す
 ## 関連
 
 - [スロットのマシンの種類を選ぶ](slot-types.ja.md)
-- [ホームディレクトリの休止と予備のコピーを設定する](slot-homes.ja.md)
+- [ホームの休止と予備のコピーを設定する](slot-homes.ja.md)
 - [スロットを入れ替える・止める](slot-maintenance.ja.md)
 - [スロットプールで困ったとき](slot-troubleshooting.ja.md)
 - [ワークスペースのサイズを決める](workspace-size.ja.md)：Fargate のサイズ

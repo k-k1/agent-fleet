@@ -39,7 +39,7 @@ ECS の配備で、構築・アップグレード・ワークスペースの起�
 |---|---|
 | `--parameter-overrides Key=` で空にしたのに「No changes」になる | この方法では空になりません。`clear-params.sh` を使います（[パラメータを空に戻す](upgrade.ja.md#パラメータを空に戻す)） |
 | `ComfyApiKey=on` などのスイッチを入れたら、Control Plane のタスクが起動しない | スイッチが読む SSM パラメータがありません。先に作ります（[シークレットはスイッチで読む](options.ja.md#シークレットはスイッチで読む)） |
-| `WorkspaceDekRandom=on` でデプロイするとロールバックする | `CustodianKmsKeyArn` がありません。両方を一緒に渡します（[ホームディレクトリごとにキーを分ける](options.ja.md#ホームディレクトリごとにキーを分ける)） |
+| `WorkspaceDekRandom=on` でデプロイするとロールバックする | `CustodianKmsKeyArn` がありません。両方を一緒に渡します（[ホームごとにキーを分ける](options.ja.md#ホームごとにキーを分ける)） |
 | 新しいリリースに上げたのに、新しいパラメータの機能がオンにならない | `update.sh` は、これらのパラメータに触りません。`30-ingress` を個別にデプロイします（[パラメータを変える](options.ja.md#パラメータを変える)） |
 
 ## アップグレードするとき

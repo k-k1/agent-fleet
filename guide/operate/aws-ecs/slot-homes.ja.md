@@ -3,7 +3,7 @@ audience: "ecs-ec2 の配備で、EBS のホームの費用と、AZ を失った
 source_of_truth: "Console の「管理」→ テナント →「上限・自動停止」、`deploy/aws/ecs/cfn/30-ingress.yaml` の `Ec2HibernateAfterSec`、Control Plane の ecs-ec2 アダプター（`control-plane/internal/runtime/runtime_ecs_ec2_backups.go` ほか）"
 ---
 
-# ホームディレクトリの休止と予備のコピーを設定する
+# ホームの休止と予備のコピーを設定する
 
 [English](slot-homes.md) | 日本語
 

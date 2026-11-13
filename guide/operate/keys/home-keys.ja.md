@@ -1,14 +1,14 @@
 ---
-audience: "メンバーの認証情報ストアを、ホームディレクトリごとのキーで守りたい AWS 上の配備管理者"
+audience: "メンバーの認証情報ストアを、ホームごとのキーで守りたい AWS 上の配備管理者"
 source_of_truth: "パラメータは `deploy/aws/ecs/cfn/30-ingress.yaml` と `deploy/aws/ecs/cfn/PARAMETERS.md`、コマンドは `af-cp home-dek-status --help`"
 ---
 
-# ホームディレクトリごとにキーを分ける
+# ホームごとにキーを分ける
 
 [English](home-keys.md) | 日本語
 
-AWS の配備（`ecs` / `ecs-ec2`）だけの機能です。メンバーのホームディレクトリごとにランダムなキーを作り、認証情報ストア（`secrets.enc`）をそのキーで暗号化します。
-`AF_MASTER_KEY` を持つ人でもストアを開けなくなり、KMS キーを無効にすればストアを読めなくできます。先に [保存時のキーを AWS KMS にする](kms.ja.md) が必要です。パラメータは [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#ホームディレクトリごとにキーを分ける) にあります。
+AWS の配備（`ecs` / `ecs-ec2`）だけの機能です。メンバーのホームごとにランダムなキーを作り、認証情報ストア（`secrets.enc`）をそのキーで暗号化します。
+`AF_MASTER_KEY` を持つ人でもストアを開けなくなり、KMS キーを無効にすればストアを読めなくできます。先に [保存時のキーを AWS KMS にする](kms.ja.md) が必要です。パラメータは [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#ホームごとにキーを分ける) にあります。
 
 ## 全体像
 
@@ -170,4 +170,4 @@ Control Plane より古いワークスペースイメージは、ストアがま
 
 - [保存時のキーを AWS KMS にする](kms.ja.md)
 - [ブリッジトークンを入れ替える](bridge-tokens.ja.md)
-- [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#ホームディレクトリごとにキーを分ける)
+- [パラメータで任意の機能をオンにする](../aws-ecs/options.ja.md#ホームごとにキーを分ける)
