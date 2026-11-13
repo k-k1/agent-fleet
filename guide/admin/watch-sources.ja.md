@@ -50,5 +50,5 @@ source_of_truth: "Console のテナント設定 →「運用」→「ウォッ�
 ## 関連
 
 - [セッションに MCP サーバーを追加する](../user/integrations/mcp-servers.ja.md#サーバーをウォッチのソースにする)：メンバーの側の設定
-- [PR のレビューをセッションに伝える](../user/fleet/pr-feedback.ja.md#セッションが自分で-pr-を見張る)：`watch` ツールの使われかた
+- [PR のレビューをセッションに伝える](../user/fleet/pr-feedback.ja.md#セッションが自分で-pr-をウォッチする)：`watch` ツールの使われかた
 - [MCP サーバーを全員に配る](mcp-distribute.ja.md)

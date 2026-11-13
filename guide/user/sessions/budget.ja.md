@@ -74,5 +74,5 @@ source_of_truth: "Console の起動画面の「予算（米ドル）」、セッ
 
 ## 関連
 
-- [終わったら止める・起こしたままにする](auto-stop.ja.md)
+- [終わったら止める・動かしたままにする](auto-stop.ja.md)
 - [セッションを止める・再開する](stop-resume.ja.md)

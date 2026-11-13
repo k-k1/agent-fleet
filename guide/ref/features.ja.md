@@ -18,11 +18,11 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
 | セッションの起動（エージェント・モデル・effort・開始モード）| メンバー | ワークスペース操作バー → Start | [セッションを始める](../user/sessions/start.ja.md) |
-| 新しい git worktree で動かす | メンバー | Start ダイアログ | [ワークツリーで並行して作業する](../user/sessions/worktrees.ja.md) |
+| 新しい git worktree で動かす | メンバー | Start ダイアログ | [worktree で並行して作業する](../user/sessions/worktrees.ja.md) |
 | チャットミラー — 実行中のエージェントを追う・操縦する | メンバー | メイン領域 | [セッションに返事をする](../user/sessions/reply.ja.md) |
 | 質問・プラン・権限確認に答える | メンバー | ミラー | [セッションに返事をする](../user/sessions/reply.ja.md)。どのエージェントが尋ねるかは [agents.md](agents.ja.md) |
 | 停止したセッションに残った質問とプランに答える | メンバー | ミラーの持ち越しカード | [セッションに返事をする](../user/sessions/reply.ja.md#止まったセッションに残ったカードに答える) |
-| ターン中の追撃を溜める（送信待ち）| メンバー | ミラーの入力欄 → 送信 ▾ → 送信待ちに追加、または Alt+Enter | [送る内容を待たせる・ターンを止める](../user/sessions/queue.ja.md#送信待ちに溜める) |
+| ターン中の追撃を溜める（送信待ち）| メンバー | ミラーの入力欄 → 送信 ▾ → 送信待ちに追加、または Alt+Enter | [送る内容を保留する・ターンを止める](../user/sessions/queue.ja.md#送信待ちに溜める) |
 | プランを別のセッションにレビューさせる | メンバー | プランのカード | [プランにコメントする・レビューさせる](../user/sessions/plans.ja.md#別のセッションにレビューさせる) |
 | スキル / コマンドのピッカー | メンバー | ミラーの入力欄 | [スキルやコマンドを呼び出す](../user/sessions/skills.ja.md)。対応するエージェントは [agents.md](agents.ja.md) |
 | セッションにつながった実ターミナル | メンバー | メイン領域 | [ターミナルを使う](../user/files/terminal.ja.md) |
@@ -96,7 +96,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 未読の通知があるセッションの赤いドット | メンバー | 左ペイン・タブ | [セッションの状態を読む](../user/sessions/status.ja.md#赤いドット) |
 | セッション行の作業項目リンク — ブランチのプルリクエストと紐づいたチケット | メンバー | 左ペイン、セッション行 | [Issue やチケットから始める](../user/sessions/from-issues.ja.md#セッションとチケットの紐づき)。どのプロバイダーが対象かは [repos.md](repos.ja.md) |
 | プルリクエストの通知 — マージ可能・マージ・クローズ | メンバー | 設定 → 通知 | [20 設定](../user/settings/notifications.ja.md) |
-| セッションがプルリクエストをウォッチする — チェックの完了・コンフリクト・マージを知らせる | メンバー | （エージェントのツール `watch`） | [PR のレビューをセッションに伝える](../user/fleet/pr-feedback.ja.md#セッションが自分で-pr-を見張る) |
+| セッションがプルリクエストをウォッチする — チェックの完了・コンフリクト・マージを知らせる | メンバー | （エージェントのツール `watch`） | [PR のレビューをセッションに伝える](../user/fleet/pr-feedback.ja.md#セッションが自分で-pr-をウォッチする) |
 | 応答なしバッジ — ワークスペースは起動しているが Agent が応答しない | メンバー | ワークスペースの電源ボタンの横 | [ワークスペースが起動しない・止まった](../user/troubleshooting/workspace.ja.md#電源ボタンの横に応答なしと出る) |
 | エンジンのピル — チャット / 画像のエンジンが起きているか | メンバー | 画面最上部のバー | [lcpp を使う](../user/agents/lcpp.ja.md) |
 | アシスタントチャット | メンバー | アシスタント | [アシスタントに質問する](../user/chat/assistant.ja.md) |
@@ -159,7 +159,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | ワークスペースのサイズ | 配備管理者 | — | [deploy-targets.md](deploy-targets.ja.md) |
 | サインイン方法とサインイン規則 | テナント管理者 | サインイン方式 / サインイン規則 | [サインインの方法を決める](../admin/access/signin-methods.ja.md) |
 | 接続元の制限 | テナント管理者 | 接続元の制限 | [サインインできるネットワークを絞る](../admin/access/networks.ja.md) |
-| 外のアプリが MCP OAuth でテナントに接続してよいか | テナント管理者 | 接続元の制限 → MCP OAuth | [MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外のアプリからの-oauth-接続を止める) |
+| 外のアプリが MCP OAuth でテナントに接続してよいか | テナント管理者 | 接続元の制限 → MCP OAuth | [MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外部のアプリからの-oauth-接続を止める) |
 | 連携アプリの OAuth | テナント管理者 | 連携アプリの OAuth | [連携に使う OAuth アプリを選ぶ](../admin/access/oauth-apps.ja.md) |
 | ブランチ命名ルール — チームの既定のブランチ名と起点 | テナント管理者 | ブランチ命名ルール | [ブランチ名の規則を決める](../admin/defaults/branch-rules.ja.md) |
 | メンバーの既定 — 新しいメンバーがつなぐエージェント | テナント管理者 | メンバーの既定 | [メンバーの既定値を決める](../admin/defaults/members.ja.md) |
@@ -179,7 +179,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [外向きの通信を制御する](../operate/secure/egress.ja.md) |
 | MCP OAuth が信頼するクライアントのホスト | 配備管理者（super_admin）| 管理 → MCP ログイン許可ホスト | [MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める) |
 | プレビュー URL 用の開発用 OIDC IdP | 配備管理者（super_admin）| 管理 → 開発用ログイン | [開発用サインインを使う](../operate/secure/dev-signin.ja.md#開発用-oidc-idp-をオンオフする) |
-| AWS KMS による保存時のキーと、ホームディレクトリごとの専用キー | 配備管理者 | スタックのパラメータ、それからシェル | [保存時の鍵を AWS KMS にする](../operate/keys/kms.ja.md)・[ホームごとに鍵を分ける](../operate/keys/home-keys.ja.md) |
+| AWS KMS による保存時のキーと、ホームディレクトリごとの専用キー | 配備管理者 | スタックのパラメータ、それからシェル | [保存時のキーを AWS KMS にする](../operate/keys/kms.ja.md)・[ホームディレクトリごとにキーを分ける](../operate/keys/home-keys.ja.md) |
 | この配備の色とラベル（見た目）| 配備管理者（super_admin）| 管理 → 見た目 | [複数の配備を見分ける](../operate/run/deployment-label.ja.md) |
 | 使わない間の配備の一時停止 | 配備管理者 | シェル | [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#使わないあいだ配備を一時停止する) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [監視ツールとつなぐ](../user/integrations/ops-monitoring.ja.md) |

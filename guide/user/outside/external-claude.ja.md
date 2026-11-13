@@ -112,7 +112,7 @@ claude mcp add --transport http --scope user agent-fleet https://<Console のア
 
 行の「**最近の呼び出し**」で、そのトークンで届いたリクエストを見られます（[接続できるのにツールが出ないとき](oauth-client.ja.md#接続できるのにツールが出ない)）。
 
-## このデプロイの /mcp をセッションにつながない
+## この配備の /mcp をセッションにつながない
 
 セッションがふだん使えるのは、自分専用の狭いツールだけです。自分の子セッションは動かせますが、何も削除できません。
 外向けの `/mcp` は違い、あなたのメンバーの権限そのままで動きます。
@@ -157,4 +157,4 @@ claude mcp add --transport http --scope user agent-fleet https://<Console のア
 - [リモートの MCP クライアントをサインインでつなぐ](oauth-client.ja.md)：トークンを使わずに、サインインしてつなぐ
 - [手元の Claude Code の作業をワークスペースに移す](move-work-in.ja.md)：手元の作業を、ワークスペースのセッションで続ける
 - [セッションに MCP サーバーを追加する](../integrations/mcp-servers.ja.md)：向きが逆の、セッションが使うサーバー
-- [資格情報を安全に扱う](../security/credentials.ja.md)：トークンをどこに置くか
+- [認証情報を安全に扱う](../security/credentials.ja.md)：トークンをどこに置くか

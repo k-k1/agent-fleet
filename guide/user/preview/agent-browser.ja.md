@@ -42,9 +42,9 @@ source_of_truth: "Console のエージェントの Chromium を映すペイン�
 ## 使えない配備
 
 ワークスペースを Kubernetes（プレビュー版）か ECS Fargate で動かす配備にはブラウザ機能がなく、エージェントからページを渡してもらうこともできません。
-理由は [ブラウザペイン — 利用契約](../../ref/browser-pane.ja.md#ブラウザペインが無い配備) にあります。
+理由は [ブラウザペインの仕様](../../ref/browser-pane.ja.md#ブラウザペインが無い配備) にあります。
 
 ## 関連
 
 - [起動した Web アプリを見る](browser-pane.ja.md)：自分で起動した Web アプリを開く
-- [ブラウザペイン — 利用契約](../../ref/browser-pane.ja.md)：ブラウザ機能の範囲
+- [ブラウザペインの仕様](../../ref/browser-pane.ja.md)：ブラウザ機能の範囲

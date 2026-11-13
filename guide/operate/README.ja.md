@@ -33,7 +33,7 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [全エージェントに指示を配る](run/fleet-policy.ja.md) | フリート方針で、すべてのエージェントに運用のルールを読ませる |
 | [opencode の共有サーバーを運用する](run/opencode-server.ja.md) | ターミナルのセッションのサーバーと opencode のバージョンを管理する |
 | [インターネットに公開する](run/public-internet.ja.md) | 探索が来たときに何が届くかを知り、受け口を絞る |
-| [複数のデプロイを見分ける](run/deployment-label.ja.md) | 配備ごとに色とラベルを付ける |
+| [複数の配備を見分ける](run/deployment-label.ja.md) | 配備ごとに色とラベルを付ける |
 | [アイドル停止と強制停止を使う](run/idle-stop.ja.md) | 自動停止の時間を決め、止まらないワークスペースを止め、配備を一時停止する |
 
 ## サインイン
@@ -59,7 +59,7 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | ページ | できること |
 |---|---|
 | [脅威モデルと残るリスクを知る](secure/threat-model.ja.md) | 隔離の境界がどこにあるかを知り、残るリスクに備え、脆弱性を報告する |
-| [配備の鍵を扱う](secure/deployment-keys.ja.md) | `AF_MASTER_KEY` と `AF_COOKIE_SECRET` の要件を満たし、キーのない配備にキーを入れ、古い値を暗号化する |
+| [配備のキーを扱う](secure/deployment-keys.ja.md) | `AF_MASTER_KEY` と `AF_COOKIE_SECRET` の要件を満たし、キーのない配備にキーを入れ、古い値を暗号化する |
 | [外向きの通信を制御する](secure/egress.ja.md) | ワークスペースの外向きの通信を観測し、許可リストで絞る |
 | [MCP と外部接続のサインインを運用する](secure/mcp.ja.md) | `/mcp` を OAuth で開き、信頼するクライアントのホストを決め、届いたものをログで読む |
 | [開発用サインインを使う](secure/dev-signin.ja.md) | `AUTH=dev` を使ってよい場所を知り、開発用 OIDC IdP をオン・オフする |
@@ -70,8 +70,8 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 
 | ページ | できること |
 |---|---|
-| [保存時の鍵を AWS KMS にする](keys/kms.ja.md) | AWS で、Control Plane が暗号化するものを KMS で守り、切り替える前の値を暗号化し直す |
-| [ホームごとに鍵を分ける](keys/home-keys.ja.md) | AWS で、メンバーの認証情報ストアをホームディレクトリごとのキーで暗号化する |
+| [保存時のキーを AWS KMS にする](keys/kms.ja.md) | AWS で、Control Plane が暗号化するものを KMS で守り、切り替える前の値を暗号化し直す |
+| [ホームディレクトリごとにキーを分ける](keys/home-keys.ja.md) | AWS で、メンバーの認証情報ストアをホームディレクトリごとのキーで暗号化する |
 | [ブリッジトークンを入れ替える](keys/bridge-tokens.ja.md) | ワークスペースのトークンを、1 人分または全員分まとめて無効にする |
 
 ## ECS
@@ -83,9 +83,9 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [パラメータで任意の機能をオンにする](aws-ecs/options.ja.md) | プレビュー用のサブドメイン・KMS・リモートの MCP・提供ルート・タイマーと外部のエンジン・WAF をオンにする |
 | [データベースに届かないときのアラームを設定する](aws-ecs/alarms.ja.md) | Control Plane がデータベースに届かなくなったら、メールで知らせを受け取る |
 | [アップグレードする](aws-ecs/upgrade.ja.md) | `update.sh` で新しいリリースに上げ、戻し、パラメータを空に戻す |
-| [テンプレートの大きさの上限に気をつける](aws-ecs/template-size.ja.md) | 51,200 バイトを超える `30-ingress` を S3 経由でデプロイする |
+| [テンプレートのサイズの上限に気をつける](aws-ecs/template-size.ja.md) | 51,200 バイトを超える `30-ingress` を S3 経由でデプロイする |
 | [デプロイに必要な IAM 権限](aws-ecs/iam.ja.md) | デプロイする人や CI に、サービスごとの最小の権限を与える |
-| [ワークスペースの大きさを決める](aws-ecs/workspace-size.ja.md) | 全ワークスペースの CPU・メモリ・作業ディスクの既定と、キャッシュを EFS から移す条件を決める |
+| [ワークスペースのサイズを決める](aws-ecs/workspace-size.ja.md) | 全ワークスペースの CPU・メモリ・作業ディスクの既定と、キャッシュを EFS から移す条件を決める |
 | [決まった時刻の起動を有効にする](aws-ecs/schedules.ja.md) | スケジューラーを止める、または起動の遅い配備で待ち時間を延ばす |
 | [外向きの IP アドレスを固定する](aws-ecs/egress-ip.ja.md) | 許可リストに載せるアドレスを調べ、作り直しても変わらないようにする |
 | [外向きの通信をゲートウェイで制御する](aws-ecs/egress-gateway.ja.md) | ワークスペースの通信を egress ゲートウェイに通し、アドレスを登録し、一時停止し、元に戻す |
@@ -97,7 +97,7 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [撤去する](aws-ecs/teardown.ja.md) | 止まらない順番ですべてを消し、残るものを知る |
 | [EC2 スロットプールを使い始める](aws-ecs/slot-pool.ja.md) | ワークスペースを EBS のホームディレクトリつきの EC2 スロット（`ecs-ec2`）に載せ、何が変わり何にお金がかかるかを知る |
 | [スロットのマシンの種類を選ぶ](aws-ecs/slot-types.ja.md) | 安い種類や Graviton など、スロットのクラスを用意し、既定を決める |
-| [ホームの休止と予備のコピーを設定する](aws-ecs/slot-homes.ja.md) | 使われないホームディレクトリを退避し、AZ の外にコピーを取り、そこから戻し、ワークスペースを破棄する |
+| [ホームディレクトリの休止と予備のコピーを設定する](aws-ecs/slot-homes.ja.md) | 使われないホームディレクトリを退避し、AZ の外にコピーを取り、そこから戻し、ワークスペースを破棄する |
 | [スロットを入れ替える・止める](aws-ecs/slot-maintenance.ja.md) | `ecs-ec2` で古いスロットを入れ替え、応答しないスロットに気づいて止める |
 | [スロットプールで困ったとき](aws-ecs/slot-troubleshooting.ja.md) | スロットとホームディレクトリのつまずきを症状から探し、隔離されたスロットを消す |
 | [ECS で困ったとき](aws-ecs/troubleshooting.ja.md) | 構築・アップグレード・起動のつまずきを、症状から探す |
@@ -111,7 +111,7 @@ Agent Fleet を自分の基盤で動かす人の「やりたいこと」を、1 
 | [推論エンジンの状態と履歴を見る](engines/status.ja.md) | いま動いているインスタンスとリクエストを読み、14 日の稼働実績を見る |
 | [読み上げエンジンを動かす](engines/read-aloud.ja.md) | VOICEVOX のエンジンを用意して動かし、共通の読み仮名辞書を作る |
 | [自前の ComfyUI で画像を生成する](engines/comfyui.ja.md) | 画像エンジンを自分のネットワークの ComfyUI に向け、モデルを登録し、届く経路を閉じる |
-| [別のデプロイのエンジンを借りる](engines/borrow.ja.md) | 自分のホストの配備から、AWS の Agent Fleet のチャットと画像のエンジンを使う。貸す側としてトークンを発行する |
+| [別の配備のエンジンを借りる](engines/borrow.ja.md) | 自分のホストの配備から、AWS の Agent Fleet のチャットと画像のエンジンを使う。貸す側としてトークンを発行する |
 | [LAN の llama.cpp でチャットする](engines/llama-cpp.ja.md) | チャットのエンジンを自分のネットワークの llama-server に向ける |
 
 ## Docker Compose

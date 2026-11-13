@@ -64,6 +64,6 @@ ECS では `af-cp` を Control Plane のタスク定義を使う単発のタス�
 
 ## 関連
 
-- [保存時の鍵を AWS KMS にする](kms.ja.md)
-- [ホームごとに鍵を分ける](home-keys.ja.md)
+- [保存時のキーを AWS KMS にする](kms.ja.md)
+- [ホームディレクトリごとにキーを分ける](home-keys.ja.md)
 - [アップグレードする](../run/upgrade.ja.md)

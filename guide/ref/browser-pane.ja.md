@@ -3,7 +3,7 @@ audience: "全員（とくに「動いている Web アプリを人に見せる�
 source_of_truth: "用語とペインにできること／できないことはこのファイル、状態と復旧は user/preview/browser-pane、数値は limits.ja.md、ボタンの名前は Console"
 ---
 
-# ブラウザペイン — 利用契約
+# ブラウザペインの仕様
 
 [English](browser-pane.md) | 日本語
 

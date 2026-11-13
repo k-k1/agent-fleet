@@ -151,5 +151,5 @@ NAT ゲートウェイと egress ゲートウェイの比べ方は [外向きの
 
 - [スクリプトで構築・一時停止・撤去する](lifecycle.ja.md)
 - [外向きの通信をゲートウェイで制御する](egress-gateway.ja.md)
-- [ワークスペースの大きさを決める](workspace-size.ja.md)
+- [ワークスペースのサイズを決める](workspace-size.ja.md)
 - [デプロイ先を選ぶ](../choose.ja.md)

@@ -137,7 +137,7 @@ WS_ENV=AF_CHROMIUM_NO_SANDBOX=1 af start
 |---|---|
 | 返信を読み上げる（VOICEVOX） | [読み上げエンジンを動かす](../engines/read-aloud.ja.md) |
 | 自分のネットワークの ComfyUI で画像を生成する | [自前の ComfyUI で画像を生成する](../engines/comfyui.ja.md) |
-| AWS の Agent Fleet の推論エンジンを借りる | [別のデプロイのエンジンを借りる](../engines/borrow.ja.md) |
+| AWS の Agent Fleet の推論エンジンを借りる | [別の配備のエンジンを借りる](../engines/borrow.ja.md) |
 | LAN の llama.cpp でチャットする | [LAN の llama.cpp でチャットする](../engines/llama-cpp.ja.md) |
 
 どれも `af start` に環境変数を付けるか、systemd unit の `Environment=` に書きます。`af` はシェルの環境を Control Plane にそのまま渡します。

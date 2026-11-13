@@ -161,7 +161,7 @@ aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
 ```
 
 - IdP のシークレットは、使う IdP の分だけ入れます。値は自分のターミナルで入力し、共有の画面には出さないでください
-- `master-key` を `aws/ssm` ではなく自前の KMS キーで暗号化するときは、その `put-parameter` に `--key-id <キーの ARN>` を足します。そのうえで、**先に** `20-platform` の `MasterKeyKmsKeyArn` を同じ ARN にしておきます。Control Plane のタスクが起動する前に、実行ロールに `kms:Decrypt` の権限が要るからです。詳しくは [保存時の鍵を AWS KMS にする](../keys/kms.ja.md#afmasterkey-のパラメータを自前の鍵で暗号化する) にあります
+- `master-key` を `aws/ssm` ではなく自前の KMS キーで暗号化するときは、その `put-parameter` に `--key-id <キーの ARN>` を足します。そのうえで、**先に** `20-platform` の `MasterKeyKmsKeyArn` を同じ ARN にしておきます。Control Plane のタスクが起動する前に、実行ロールに `kms:Decrypt` の権限が要るからです。詳しくは [保存時のキーを AWS KMS にする](../keys/kms.ja.md#afmasterkey-のパラメータを自前のキーで暗号化する) にあります
 
 GitHub と Bitbucket の OAuth アプリは、配備の設定ではありません。CloudFormation のパラメータも SSM の項目もなく、テナント管理者が Console で登録します（[連携に使う OAuth アプリを選ぶ](../../admin/access/oauth-apps.ja.md)）。
 
@@ -172,7 +172,7 @@ IdP ごとのクライアントの作りかたは [サインインの方法を�
 
 ### 3. `30-ingress` をデプロイする
 
-`30-ingress.yaml` のサイズは 51,200 バイトの上限のすぐ下で、上限を超えることも許容しています。将来のリリースで超えてもデプロイできなくならないよう、いつも `20-platform` が作った S3 Bucket を経由して渡します（[テンプレートの大きさの上限に気をつける](template-size.ja.md)）。
+`30-ingress.yaml` のサイズは 51,200 バイトの上限のすぐ下で、上限を超えることも許容しています。将来のリリースで超えてもデプロイできなくならないよう、いつも `20-platform` が作った S3 Bucket を経由して渡します（[テンプレートのサイズの上限に気をつける](template-size.ja.md)）。
 
 Google でサインインする配備では次のとおりです。
 

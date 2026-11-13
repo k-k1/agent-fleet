@@ -228,7 +228,7 @@ $TF output -raw kustomize_deployment > "$OVERLAY/deployment.yaml"
 
 | ファイル | 書き換えるもの |
 |---|---|
-| `cp.env` | `PUBLIC_BASE_URL` と `PUBLIC_DOMAIN`（`fqdn`）、`AF_PREVIEW_DOMAIN`（Terraform の `preview_domain`、または空）、サインインの設定、`SUPER_ADMIN_EMAILS`。`AF_TRUSTED_PROXY_HOPS=2` はそのまま（[7. ロードバランサを知る](#7-ロードバランサを知る)） |
+| `cp.env` | `PUBLIC_BASE_URL` と `PUBLIC_DOMAIN`（`fqdn`）、`AF_PREVIEW_DOMAIN`（Terraform の `preview_domain`、または空）、サインインの設定、`SUPER_ADMIN_EMAILS`。`AF_TRUSTED_PROXY_HOPS=2` はそのまま（[7. ロードバランサーを知る](#7-ロードバランサーを知る)） |
 | `kustomization.yaml` | `images:` の CP のイメージとリリースのタグ |
 | `base/cp-data.yaml` | CP 自身のディスクとして 20 GiB を要求する。内部の git プロバイダーにそれ以上のデータを置くなら、コピーの中でパッチを当てる |
 
@@ -291,9 +291,9 @@ kubectl -n "$PREFIX-cp" create secret generic af-cp-secrets \
 - ほかのサインインのシークレット（`AF_OIDC_<ID>_CLIENT_SECRET`、`GITHUB_OAUTH_CLIENT_SECRET`）も同じ Secret に入れます
 - 1 つを入れ替えるときは、`kubectl create secret … --dry-run=client -o yaml | kubectl apply -f -` のあと `kubectl -n "$PREFIX-cp" rollout restart deployment/af-cp` を実行します
 
-キーの要件は [配備の鍵を扱う](../secure/deployment-keys.ja.md) にあります。
+キーの要件は [配備のキーを扱う](../secure/deployment-keys.ja.md) にあります。
 
-## 7. ロードバランサを知る
+## 7. ロードバランサーを知る
 
 Gateway `af-cp`（`components/gke/gateway.yaml`）が、GKE に**グローバル外部**アプリケーションロードバランサーを作らせます。従来版のロードバランサーは、使用中の WebSocket でもバックエンドのタイムアウトで閉じるので使いません。ターミナル、ミラー、ブラウザペインは WebSocket なので、2 つの制限が効きます。
 
@@ -408,7 +408,7 @@ stat -c '%U:%G %A' /home/dev    # dev:dev drwxr-sr-x — no w for group or other
 | `curl https://<fqdn>/readyz` が `000` を返す | ロードバランサーの準備がまだ。数分かかるので、[8.](#8-確かめる) のループで待つ |
 | 証明書が `ACTIVE` にならない | DNS の承認レコードがまだ引けない。たいてい 1 時間以内 |
 | ワークスペースの Pod が `Pending` で、スケールアップが `QUOTA_EXCEEDED` | SSD の割り当て切れ。[ディスクの割り当て（GKE）](overview.ja.md#ディスクの割り当てgke) |
-| ワークスペースの Pod が `Init` で止まる | `kubectl logs <pod> -c home-layout` に理由が出る。以前のバージョンに戻したあとなら [ホームの配置より前の版に戻す](upgrade.ja.md#ホームの配置より前の版に戻す) |
+| ワークスペースの Pod が `Init` で止まる | `kubectl logs <pod> -c home-layout` に理由が出る。以前のバージョンに戻したあとなら [ホームディレクトリの配置より前のバージョンに戻す](upgrade.ja.md#ホームディレクトリの配置より前のバージョンに戻す) |
 | ワークスペースからの名前解決がすべて失敗する | NodeLocal DNSCache がオン（P11） |
 | `kubectl kustomize` が `new root '…' cannot be absolute` を返す | オーバーレイのパスが絶対パス。[クローンの外に置く](#クローンの外に置く) |
 

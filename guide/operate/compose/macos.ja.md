@@ -68,7 +68,7 @@ docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
 
 Mac のブラウザで `http://127.0.0.1:8099` を開きます。
 
-### 重ね合わせが変えること
+### オーバーレイが変えること
 
 [コンテナから Docker を動かす 3 つの制約](../diagnose/checklist.ja.md#コンテナから-docker-を動かす-3-つの制約) のうち、Mac で変わるところです。
 

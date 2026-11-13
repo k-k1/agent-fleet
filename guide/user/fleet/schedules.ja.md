@@ -128,4 +128,4 @@ source_of_truth: "Console の左ペイン「スケジュール」と、スケジ
 
 - [フリート・オペレーターに任せる](operator.ja.md)
 - [Discord・Slack とつなぐ](../integrations/chat-bridge.ja.md)
-- [終わったら止める・起こしたままにする](../sessions/auto-stop.ja.md)
+- [終わったら止める・動かしたままにする](../sessions/auto-stop.ja.md)

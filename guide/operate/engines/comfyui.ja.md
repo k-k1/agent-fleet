@@ -20,7 +20,7 @@ source_of_truth: "管理 → 推論エンジンの「LAN の ComfyUI（画像エ
 | ComfyUI に Control Plane 以外が届かないようにする | セッションが Control Plane を迂回して ComfyUI を直接使うことを防ぐ |
 
 ComfyUI はあなたのもののままです。Control Plane は起動も停止もせず、費用も付けません。
-AWS で別の Agent Fleet を運用しているなら、そちらのエンジンを借りることもできます（[別のデプロイのエンジンを借りる](borrow.ja.md)）。
+AWS で別の Agent Fleet を運用しているなら、そちらのエンジンを借りることもできます（[別の配備のエンジンを借りる](borrow.ja.md)）。
 
 > `comfyui-lan.sh` の docker の操作は代役に対して試験したもので、実際の GPU マシンでは確かめていません。OpenAI 互換の画像サーバーの行も、試験用の偽サーバーでしか試していません。
 
@@ -198,7 +198,7 @@ Control Plane は自分が持っていないエンジンを待ちません。Com
 
 ## 関連
 
-- [別のデプロイのエンジンを借りる](borrow.ja.md)
+- [別の配備のエンジンを借りる](borrow.ja.md)
 - [LAN の llama.cpp でチャットする](llama-cpp.ja.md)
 - [推論エンジンにモデルを取り込む](models.ja.md)：推論エンジンの画面とモデルの登録
 - [配備形態](../../ref/deploy-targets.ja.md)：どの形態が何に対応しているか

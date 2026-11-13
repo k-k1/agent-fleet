@@ -71,7 +71,7 @@ ECS のほうが安くなると思われがちですが、実際は逆です。�
 - ワークスペースは、NAT ゲートウェイの代わりに egress ゲートウェイから外へ出ることもできます（次の節）
 - 設定は [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) にあります
 
-### AWS の出口の経路を選ぶ
+### AWS の外向きの経路を選ぶ
 
 `00-network` の `EgressRoute` で、**ワークスペース** がインターネットへ出る経路を決めます。Control Plane と AWS のホストは、どちらを選んでも NAT ゲートウェイを使います。
 

@@ -3,7 +3,7 @@ audience: "同じリポジトリで、いくつもの作業を同時に進めた
 source_of_truth: "Console の「作業を始める」ダイアログの「場所」"
 ---
 
-# ワークツリーで並行して作業する
+# worktree で並行して作業する
 
 [English](worktrees.md) | 日本語
 

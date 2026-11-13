@@ -211,6 +211,6 @@ v0.34.x に戻すと、v0.34.x が知らないパラメータ（`GatewayEipAlloc
 
 - [アップグレードする](../run/upgrade.ja.md)：どの形態にも共通する注意
 - [ECS に構築する](install.ja.md)
-- [テンプレートの大きさの上限に気をつける](template-size.ja.md)
+- [テンプレートのサイズの上限に気をつける](template-size.ja.md)
 - [スロットを入れ替える・止める](slot-maintenance.ja.md)
 - [ECS で困ったとき](troubleshooting.ja.md)
