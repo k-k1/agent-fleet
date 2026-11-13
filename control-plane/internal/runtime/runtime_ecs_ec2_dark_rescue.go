@@ -502,7 +502,12 @@ func rescueMountGuard(ctx context.Context) *homeLockGuard {
 
 // rescueLeasesHeld asks the clock of both leases of a guarded section. Right before every AWS
 // side effect, never earlier: whatever waits between the check and the call is the risk.
+// A context that ended while the step waited (a lookup before the call, say) refuses the call
+// too: the leases alone do not notice it, and a fake or a slow client does not either.
 func rescueLeasesHeld(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
 	if err := rescueMountGuard(ctx).check(); err != nil {
 		return err
 	}
@@ -514,6 +519,12 @@ func rescueLeasesHeld(ctx context.Context) error {
 // A lock not taken, a count not readable and a lease that lapsed abort the step: the
 // unguarded fallback of ifOwned is deliberately not used.
 func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m *rescueMarker, instanceID string, fn func(context.Context) error) error {
+	// A step that starts on a context that has already ended must not run: the lock waits
+	// below select between a free lock and the done context and pick either, so without this
+	// the destructive call would sometimes go out past the deadline.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
 	mctx, unlockMount, err := e.lockBounded(ctx, homeLockMount, e.base.name, rescueMountBudget)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errRescueBusy, err)
@@ -544,6 +555,10 @@ func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m *rescueMarker, inst
 		return fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 	if err := homeGuardOf(cctx).check(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+	// The locks may have been waited for up to their budgets: ask again right before fn.
+	if err := cctx.Err(); err != nil {
 		return fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 	err = fn(cctx)
