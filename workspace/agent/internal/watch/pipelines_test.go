@@ -210,7 +210,9 @@ func TestResolvePipelineFloorComesFromBitbucketsAnswer(t *testing.T) {
 		plRunBody(30, "COMPLETED", "SUCCESSFUL", "2026-11-09T01:00:00Z", "2026-11-09T01:01:00Z", "main", "nightly"),
 	}}
 	p := newTestPipelines(t, f)
-	floorUnix := time.Date(2026, 11, 10, 1, 0, 0, 0, time.UTC).Unix()
+	// The grace window opens 10 minutes before Bitbucket's Date, to the minute; both runs are older.
+	f.headers.Set("Date", "Tue, 10 Nov 2026 03:00:30 GMT")
+	floorUnix := time.Date(2026, 11, 10, 2, 50, 0, 0, time.UTC).Unix()
 	res, err := p.Resolve(context.Background(), "w/r:pipelines/nightly@main", "")
 	want := SubjectID("bitbucket:w/r/pipelines/after/31-" + strconv.FormatInt(floorUnix, 10) + "/name/nightly/branch/main")
 	if err != nil || res.Subject != want || !TokenOK(string(res.Subject)) || !plPipSubjectRE.MatchString(string(res.Subject)) {
@@ -417,5 +419,40 @@ func TestOwnLinkIsCaseInsensitiveOnTheHostAndRefusesOthers(t *testing.T) {
 		if (p.ownLink(link) != "") != want {
 			t.Errorf("%q: want %v", link, want)
 		}
+	}
+}
+
+// The same grace window as for Actions: a run that started seconds before the watch was made is the
+// next run; one that started 11 minutes before is not.
+func TestPipelineWatchCountsARunStartedJustBeforeTheWatchOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name, created string
+		told          int
+	}{
+		{"23s before", "2026-11-13T01:11:47Z", 1},
+		{"11min before", "2026-11-13T01:01:10Z", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeGitHub()
+			f.headers.Set("Date", "Fri, 13 Nov 2026 01:12:10 GMT")
+			chained := plRunBody(41, "COMPLETED", "SUCCESSFUL", tc.created, "2026-11-13T01:12:31Z", "main", "")
+			older := plRunBody(40, "COMPLETED", "SUCCESSFUL", "2026-11-13T00:30:00Z", "2026-11-13T00:31:00Z", "main", "")
+			f.bodies[plList5] = map[string]any{"values": []any{chained, older}}
+			f.bodies[plList50] = map[string]any{"values": []any{chained, older}}
+			p := newTestPipelines(t, f)
+			sink := &fakeSink{answer: Ready}
+			e, _, clk := newTestEngine(p, sink)
+			ctx := context.Background()
+			if _, err := e.Subscribe(ctx, Request{Owner: "s", Source: PipelinesKind, Ref: "w/r:pipelines", Types: []string{EventRunCompleted}, Until: UntilDeadline}); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 3; i++ {
+				e.Tick(ctx)
+				clk.add(time.Hour)
+			}
+			if len(sink.told) != tc.told {
+				t.Fatalf("told %v, want %d", sink.told, tc.told)
+			}
+		})
 	}
 }

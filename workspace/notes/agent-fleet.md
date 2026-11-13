@@ -161,11 +161,14 @@ work you could simply do.
     ci.run.failed]` (or `ci.run.*`) on both providers; the old `github.workflow_run.*` names are
     aliases. GitHub Actions: `ref` a run URL (`https://github.com/o/r/actions/runs/<id>`,
     `/attempts/<n>` optional) or `o/r:run/<id>` (fires when that run completes, at once if it
-    already has; a re-run is told again), or `o/r:<file>.yml[@branch]` (the NEXT run: only a run
-    that started after the `watch` call counts; to follow a run you just started, watch the run).
+    already has; a re-run is told again), or `o/r:<file>.yml[@branch]` (the NEXT run: a run that
+    started after the `watch` call, or about 10 minutes before it (rounded down to the minute), counts, finished or not; a second watch made inside that window repeats the run; an
+    older one never does; to follow a run you just started, watch the run). **When what you wait
+    for is a PR the run opens, watch the PR (or the branch's PR), not the workflow's next run; when
+    a run is chained from one you just watched, run `gh run list` for it first.**
     Such a ref goes to `source: github_actions` by itself. Bitbucket Pipelines: `source: bitbucket`
     with `ref` a run URL (`https://bitbucket.org/w/r/pipelines/results/<n>`) or `w/r:run/<n>`, or
-    `w/r:pipelines[/<custom name>][@branch]` for the next run; it goes to
+    `w/r:pipelines[/<custom name>][@branch]` for the next run (same 10-minute window); it goes to
     `source: bitbucket_pipelines`. The workflow name / branch and failed jobs / steps arrive as
     quoted data. A run deleted or lost mid-watch ends the watch with a notice.
   - **GitHub releases and tags**: `github.release.published` / `github.tag.created`. `ref`
