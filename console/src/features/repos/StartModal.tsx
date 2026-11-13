@@ -7,7 +7,7 @@
 import { useEffectiveDefaults } from "../../core/store/uiState.ts";
 import type { TeamCloneTarget } from "./tenantLaunchDefaults.ts";
 import { teamCloneHost, teamCloneTargets, teamFirst } from "./tenantLaunchDefaults.ts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -117,7 +117,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
     return !q || r.name.toLocaleLowerCase().includes(q) || (r.branch || "").toLocaleLowerCase().includes(q);
   });
   // Team repositories not cloned yet, as shortcuts into the same clone flow. The host comes from
-  // the member's connected Git provider, so they wait for api/connections (cached copy first).
+  // the member's connected Git provider, so they wait for a fresh api/connections answer.
   // Only a fresh answer counts: a cached one may predate a connect / disconnect, and the host
   // decides what gets cloned.
   const [conns, setConns] = useState<ConnectionsStatus | null>(null);
@@ -179,15 +179,25 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
 
   // Re-reads the connections right before cloning: the host was inferred from them, so a
   // provider connected since the list was drawn must stop the clone instead of redirecting it.
+  // `busy` is state and still reads false in a second click's closure, so the lock is a ref taken
+  // before the first await; without it two clicks start two clone jobs for one repository.
+  const teamCloneLock = useRef(false);
   const cloneTeam = async (c: TeamCloneTarget) => {
-    if (busy) return;
-    const d = await api("api/connections").catch(() => null);
-    if (!d || d.error || teamCloneHost(d as ConnectionsStatus) !== c.host) {
-      setConns(d && !d.error ? (d as ConnectionsStatus) : null);
-      toast(tr("start.team_clone_host_changed"), { kind: "error" });
-      return;
+    if (busy || teamCloneLock.current) return;
+    teamCloneLock.current = true;
+    setBusy(true);
+    try {
+      const d = await api("api/connections").catch(() => null);
+      if (!d || d.error || teamCloneHost(d as ConnectionsStatus) !== c.host) {
+        setConns(d && !d.error ? (d as ConnectionsStatus) : null);
+        toast(tr("start.team_clone_host_changed"), { kind: "error" });
+        return;
+      }
+      await doClone(c.cloneUrl, "");
+    } finally {
+      setBusy(false);
+      teamCloneLock.current = false;
     }
-    await doClone(c.cloneUrl, "");
   };
 
   // --- newdir: start with no import source (create ~/repos/<name> and `git init`) ---

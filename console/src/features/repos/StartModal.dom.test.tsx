@@ -253,4 +253,25 @@ describe("StartModal — uncloned team repositories", () => {
     await click(rowFor("acme/docs"));
     expect(cloneRepo).not.toHaveBeenCalled();
   });
+
+  it("starts one clone for a double click while the connections check is still pending", async () => {
+    let release: (v: unknown) => void = () => {};
+    const slow = new Promise((r) => (release = r));
+    let gate = false;
+    apiGet.mockImplementation(async (path: string) => {
+      if (path !== "api/connections") return [];
+      return gate ? slow : { github: { connected: true } }; // the mount-time reads answer at once
+    });
+    await team(["acme/docs"]);
+    await remount();
+    gate = true;
+    cloneRepo.mockResolvedValue({ ok: false });
+    const row = rowFor("acme/docs");
+    await click(row);
+    await click(row);
+    await act(async () => release({ github: { connected: true } }));
+    expect(cloneRepo).toHaveBeenCalledTimes(1);
+    await click(rowFor("acme/docs")); // released again after the failed clone
+    expect(cloneRepo).toHaveBeenCalledTimes(2);
+  });
 });
