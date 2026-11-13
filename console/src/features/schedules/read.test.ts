@@ -248,10 +248,10 @@ describe("gateVerdictLine", () => {
   const now = Date.parse("2026-11-11T12:00:00Z");
   it("names the known verdicts and echoes an unknown one instead of throwing", () => {
     expect(gateVerdictLine({ last_verdict: "clear", last_eval_at: "2026-11-11T11:30:00Z" }, now).text).toBe("該当なし");
-    expect(gateVerdictLine({ last_verdict: "unchanged" }, now).text).toBe("前回の発火から変化なし");
-    expect(gateVerdictLine({ last_verdict: "fire" }, now).text).toBe("発火しました");
-    expect(gateVerdictLine({ last_verdict: "claimed" }, now).text).toBe("発火しました");
-    expect(gateVerdictLine({ last_verdict: "capped_day" }, now).text).toBe("変化ありですが発火上限で見送り");
+    expect(gateVerdictLine({ last_verdict: "unchanged" }, now).text).toBe("前回の実行から変化なし");
+    expect(gateVerdictLine({ last_verdict: "fire" }, now).text).toBe("実行しました");
+    expect(gateVerdictLine({ last_verdict: "claimed" }, now).text).toBe("実行しました");
+    expect(gateVerdictLine({ last_verdict: "capped_day" }, now).text).toBe("変化ありですが実行上限で見送り");
     expect(gateVerdictLine({ last_verdict: "brand_new_verdict" }, now).text).toBe("brand_new_verdict");
     expect(gateVerdictLine({ last_verdict: "error:gate:query gone" }, now).text).toContain("gate:query gone");
     expect(gateVerdictLine(undefined, now)).toEqual({ at: "", text: "" });

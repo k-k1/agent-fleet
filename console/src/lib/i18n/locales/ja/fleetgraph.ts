@@ -59,13 +59,13 @@ export const fleetgraph = {
   "fgraph.presence_live": "稼働中",
   "fgraph.presence_stopped": "停止中 — 再開できます",
   "fgraph.presence_archived": "アーカイブ済み — 復元できます",
-  "fgraph.presence_gone": "もう居ません",
+  "fgraph.presence_gone": "もういません",
   // 同じ 4 語のチップ版。ラベル列に入る長さにする（稼働中のセッションは stateInfo() の語が出る
   // ので、ここに来るのは一覧に載らないレーン＝アーカイブ済みと削除済みだけ）。
   "fgraph.presence_short_live": "稼働中",
   "fgraph.presence_short_stopped": "停止中",
   "fgraph.presence_short_archived": "アーカイブ",
-  "fgraph.presence_short_gone": "居ません",
+  "fgraph.presence_short_gone": "いません",
 
   // ×（run の終端）の tooltip。「終わった時刻」ではなく「初めて観測された時刻」。
   "fgraph.death_at": "停止が確認された時刻: {time}（実際に止まった時刻より遅れることがあります）",

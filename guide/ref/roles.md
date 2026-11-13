@@ -37,7 +37,7 @@ settings**. Only a deployment administrator sees the shield-icon **Admin** item.
 | Tenant-wide limits, sizing and idle auto-stop | — | —¹ | ✓ |
 | Register a sign-in method for the tenant | — | ✓² | ✓ |
 | Approve a sign-in method | — | — | ✓ |
-| Login rules (join mode, domains) | — | —¹ | ✓ |
+| Sign-in rules (join mode, domains) | — | —¹ | ✓ |
 | Restrict where members may connect from | — | ✓ | ✓ |
 | Register the tenant's integration app OAuth | — | ✓ | ✓ |
 | Distribute integration servers to the team | — | ✓ | ✓ |
@@ -77,7 +77,7 @@ Only a deployment administrator can make someone a tenant administrator.
 
 The split follows blast radius. Anything whose
 effect crosses tenants, or that could lock people out of the deployment, sits with the
-deployment administrator (creating tenants, granting rights, the login rules,
+deployment administrator (creating tenants, granting rights, the sign-in rules,
 approving a sign-in method, egress). Anything scoped to one team sits with its own
 administrator, including the whole offboarding sequence.
 

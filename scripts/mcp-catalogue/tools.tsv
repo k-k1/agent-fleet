@@ -65,7 +65,7 @@ generate_image	image	Generate an image from a prompt and return the file paths; 
 get_image_studio	image	Read the image studio draft you are working on together	利用者と一緒に作業しているスタジオの下書きを読みます
 set_image_draft	image	Change fields of the studio draft	スタジオの下書きの項目を変更します
 add_image_knowledge	image	Add a note to the studio's knowledge for its model or model family, only when you ask for it	スタジオのモデルや系統の知識メモに 1 行追記します（利用者が頼んだときだけ）
-run_image_trial	image	Make one trial image from the draft as it is; refused unless "Let the agent run a trial" is on in the studio	下書きのままテスト生成の画像を 1 枚作ります。スタジオで「エージェントの試走を許す」がオンでないと拒否されます
+run_image_trial	image	Make one trial image from the draft as it is; refused unless "Let the agent run a trial" is on in the studio	下書きのままテスト生成の画像を 1 枚作ります。スタジオで「エージェントのテスト生成を許す」がオンでないと拒否されます
 branch_name	work	Decide a branch name and its base from your branch naming rules; called before creating or renaming a branch	利用者のブランチ命名規則に沿ったブランチ名とベースを決めます。ブランチを作る・改名する前に呼びます
 link_work_item	work	Link this session to an issue, ticket or pull request, shown on its row in the Console	自分のセッションを Issue・チケット・PR に紐づけます。Console の行に表示されます
 watch	watch	Get a notice in this session when a pull request or another watched subject changes, instead of polling	PR などの監視対象が変わったときに、ポーリングせずにこのセッションで通知を受け取ります

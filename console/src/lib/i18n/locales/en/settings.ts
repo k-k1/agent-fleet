@@ -814,7 +814,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "instr.fleet_head": "Workspace guide",
   "instr.fleet_hint":
     "The operating policy baked into the container. It is the same for every user and cannot be changed from here; where it conflicts with your instructions, it wins.",
-  "instr.fleet_view": "Read the guide",
+  "instr.fleet_view": "Read the policy",
   "instr.ws_required_title": "The workspace is stopped",
   "instr.ws_required_hint": "Your instructions live in files inside the workspace, so they can only be edited while it runs.",
   "instr.start_ws": "Start the workspace",

@@ -103,7 +103,7 @@ export const common = {
   "common.count_ken_other": "{count} 件",
 
   // === P2 共有: セッション状態チップ（lib/sessionview.ts の stateInfo）===
-  "state.folder_missing": "フォルダ無し — 再開不可",
+  "state.folder_missing": "フォルダなし — 再開不可",
   "state.stopped": "停止中",
   "state.stopped_question": "停止中・質問あり",
   "state.stopped_plan": "停止中・承認待ち",

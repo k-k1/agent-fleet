@@ -39,7 +39,7 @@ Under the agent, the same screen has three more groups. Press **Save** once afte
 
 | Group | What members get |
 |---|---|
-| **Launch defaults** (model, driver, permission prompts, budget) | The start-work dialog opens with these values filled in, on the agent chosen above |
+| **Launch defaults** (model, execution method, permission prompts, budget) | The start-work dialog opens with these values filled in, on the agent chosen above |
 | **Team repositories** (one `owner/name` per line, up to 20) | **Start** lists these repositories first, marked "Team" |
 | **Operations settings** (Grafana URL, AWS SSO start URL, AWS account ID, AWS role name) | Stored for the operations views to read. Nothing in the Console uses them yet |
 

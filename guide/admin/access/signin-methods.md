@@ -1,6 +1,6 @@
 ---
 audience: "a tenant administrator who wants people to sign in to the tenant through the company's IdP or a GitHub organisation"
-source_of_truth: "the Console's tenant settings, Sign-in › Sign-in methods and Sign-in › Login rules"
+source_of_truth: "the Console's tenant settings, Sign-in › Sign-in methods and Sign-in › Sign-in rules"
 ---
 
 # Choose how people sign in
@@ -17,14 +17,14 @@ Once a deployment administrator approves it, it appears as a button on the tenan
 | Register your IdP or GitHub organisation under **Sign-in methods** | Marks it "Waiting for approval" when you register it |
 | | The deployment administrator checks it and approves it |
 | Give members the tenant's own sign-in URL | Shows a button for each approved method on that URL's sign-in page |
-| Read the domain rules in force under **Login rules** | Stops invitations and auto-joins that break the rules |
+| Read the domain rules in force under **Sign-in rules** | Stops invitations and auto-joins that break the rules |
 
 ## The two screens
 
 | Screen | What you can do |
 |---|---|
 | **Sign-in → Sign-in methods** | Register, edit, suspend and delete methods. A deployment administrator approves |
-| **Sign-in → Login rules** | Read only. A deployment administrator changes them |
+| **Sign-in → Sign-in rules** | Read only. A deployment administrator changes them |
 
 ## Register a sign-in method
 
@@ -104,7 +104,7 @@ Once at least one method is approved, the screen shows "Sign-in URL for this ten
 
 ## Read the login rules
 
-**Sign-in → Login rules** shows the rules in force, so you can see why an invitation was refused without asking anyone.
+**Sign-in → Sign-in rules** shows the rules in force, so you can see why an invitation was refused without asking anyone.
 
 | Rule | What it means |
 |---|---|

@@ -27,7 +27,7 @@ You can add someone who has never signed in yet.
 
 - You can add plain members (`member`) only. Adding administrators is the deployment administrator's job ([Roles and what they may do](../../ref/roles.md#adding-administrators))
 - Point the person you added at [Find what you want to do](../../user/README.md)
-- When the login rules set **Invite domains**, only addresses in those domains can be added. The refusal names the domains allowed
+- When the sign-in rules set **Invite domains**, only addresses in those domains can be added. The refusal names the domains allowed
 
 ## Email addresses and user keys
 
@@ -40,17 +40,17 @@ Internally a member is told apart by a **user key** (`user_key`). It is made fro
 
 ## Invite-only and auto-join
 
-How a new person gets into this tenant is decided by the deployment's settings and the login rules.
+How a new person gets into this tenant is decided by the deployment's settings and the sign-in rules.
 
 | Mechanism | Who gets in | Decided by |
 |---|---|---|
 | Invite-only (the default of a new install) | Only people added to the roster | deployment administrator |
 | Auto-join | Everyone allowed to sign in joins the default tenant at first sign-in | deployment administrator |
-| Auto-join domains (login rules) | People with an address in the domain join this tenant at first sign-in | deployment administrator |
+| Auto-join domains (sign-in rules) | People with an address in the domain join this tenant at first sign-in | deployment administrator |
 
 - Someone already on a roster gets in according to the roster, whatever the mechanism
 - Under invite-only, someone not added still signs in and sees a "You haven't been invited yet" page. It shows the address they signed in with; when they ask to be added, use that address. It is not necessarily their display name or the address they usually give out
-- Which mechanism applies can be read under **Tenant settings → Sign-in → Login rules**. It is read-only for you
+- Which mechanism applies can be read under **Tenant settings → Sign-in → Sign-in rules**. It is read-only for you
 - Which addresses may sign in at all is also the deployment administrator's decision. Someone outside that range cannot sign in even when you add them
 
 ## When it goes wrong

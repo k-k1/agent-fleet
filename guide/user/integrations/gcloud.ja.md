@@ -88,10 +88,10 @@ Google Cloud のプロファイルを登録してログインしておくと、�
 
 ### WS バーの Google Cloud バッジ
 
-ワークスペースが動いていて、プロファイルが 1 つ以上あると、画面上部の WS バーに Google Cloud のバッジが出ます。
+ワークスペースが動いていて、プロファイルが 1 つ以上あると、画面上部のワークスペース操作バーに Google Cloud のバッジが出ます。
 押すとプロファイルの一覧が開き、そこからもログイン・ログアウトできます。
 
-![WS バーの Google Cloud バッジを開いたところ。staging はログイン済み、analytics と prod は未ログインと表示されている](../../assets/gcp-badge-ja-light.webp)
+![ワークスペース操作バーの Google Cloud バッジを開いたところ。staging はログイン済み、analytics と prod は未ログインと表示されている](../../assets/gcp-badge-ja-light.webp)
 
 | バッジの表示 | 意味 |
 |---|---|

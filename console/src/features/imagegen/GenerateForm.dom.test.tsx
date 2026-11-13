@@ -535,7 +535,7 @@ describe("ADR 0081 決定 9: inpaint のマスク", () => {
   const enqueue = () =>
     [...host.querySelectorAll("button")].find((b) => b.className.includes("ui-btn-primary")) as HTMLButtonElement;
   const trial = () =>
-    [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("試")) as HTMLButtonElement | undefined;
+    [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("テスト生成")) as HTMLButtonElement | undefined;
 
   it("inpaint のときだけマスクの欄が出る", async () => {
     await render(SDXL, { op: "generate" });

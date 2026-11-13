@@ -385,6 +385,6 @@ describe("a retire item (#3788)", () => {
     setLocale("ja");
     await mount(<ProposalPreview view={viewOf("topic", [retire("flake-note")])} />);
     expect(summary()).toBe(t("mem.pv_sum_retire", { n: 1, list: "flake-note" }));
-    expect(summary()).toContain("退役");
+    expect(summary()).toContain("アーカイブ");
   });
 });
