@@ -5,7 +5,6 @@ import (
 	"log"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -86,8 +85,7 @@ const (
 func darkView(inst ec2types.Instance) (since, rung string) {
 	// Rung L2: the reason prefix tells it from a mount-failure quarantine. It outranks the
 	// marker, which is still on the box while the rescue is retried or finishing.
-	quarantined := ec2TagValue(inst.Tags, EC2TagRole) == ec2RoleQuarantined &&
-		strings.HasPrefix(ec2TagValue(inst.Tags, ec2TagQuarantineReason), quarantineReasonPrefix)
+	quarantined := isDarkQuarantine(inst.Tags)
 	// A marker speaks for the box in any state: a rescued box is stopped, and the rung says
 	// how far the rescue got.
 	if m, ok := parseRescueMarker(ec2TagValue(inst.Tags, ec2TagRescue)); ok && !m.Wedged && !m.Operator {

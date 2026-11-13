@@ -62,6 +62,12 @@ func (p *ec2PoolConfig) blockedAfter() time.Duration {
 	return defaultRescueBlockedAfter
 }
 
+// isDarkQuarantine is whether the box is quarantined by rung L2 (not by a failed mount).
+func isDarkQuarantine(tags []ec2types.Tag) bool {
+	return ec2TagValue(tags, EC2TagRole) == ec2RoleQuarantined &&
+		strings.HasPrefix(ec2TagValue(tags, ec2TagQuarantineReason), quarantineReasonPrefix)
+}
+
 // quarantines is whether rung L2 is on for this pool.
 func (p *ec2PoolConfig) quarantines() bool { return p.darkAction == darkActionQuarantine }
 
@@ -140,6 +146,9 @@ func lastDarkEpisodeBefore(tags []ec2types.Tag, before time.Time) (time.Time, bo
 	return last, found
 }
 
+// ec2TagLimit is EC2's limit of user tags on one resource.
+const ec2TagLimit = 50
+
 // recordEpisode writes the marker's episode as its own tag, `af-wedge-at-<began>`, and prunes
 // the records the repeat test can no longer see. Called under the per-instance lease by the
 // finalizer; tags is the box as the finalizer just read it.
@@ -150,35 +159,74 @@ func lastDarkEpisodeBefore(tags []ec2types.Tag, before time.Time) (time.Time, bo
 // the repeat test takes the maximum.
 //
 // Pruning is safe for the same reason: a record older than darkRepeatWindow can never be the
-// maximum of an episode that is within the window, so deleting one changes no decision. It
-// also keeps the box inside EC2's 50 tags per resource.
+// maximum of an episode that is within the window, so deleting one changes no decision.
+//
+// The box has EC2's 50 tags to share with every other af-* tag, so the deletes go out BEFORE
+// the write: a box that is full of expired records must still be able to record. When the
+// expired ones do not make room (records inside the window, or tags that are not ours, fill
+// it), the oldest records are dropped anyway, which at worst loses a repeat the window would
+// have seen: a missed escalation, never a wrong stop. When even that leaves no room the
+// episode is logged and not recorded, so the marker still goes: a finalizer that fails the
+// same way every sweep would hold the member's home for good.
 func (e *ecsEC2Runtime) recordEpisode(ctx context.Context, instanceID string, tags []ec2types.Tag, m rescueMarker) error {
 	key := ec2TagWedgeAtPrefix + m.Began.UTC().Format(episodeKeyLayout)
-	if ec2TagValue(tags, key) == "" {
-		if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
-			Resources: []string{instanceID},
-			Tags: []ec2types.Tag{{Key: aws.String(key),
-				Value: aws.String(m.Began.UTC().Format(time.RFC3339) + "/" + episodeKind(m))}},
-		}); err != nil {
-			return err
-		}
-	}
+	exists := ec2TagValue(tags, key) != ""
 	// The window is measured from now, not from this episode: a record is dead once no
 	// episode that is still to begin can be within the window of it.
 	cutoff := e.now().Add(-e.pool.repeatWindow())
-	var stale []ec2types.Tag
-	for _, r := range episodeRecordsOf(tags) {
-		if r.at.Before(cutoff) && r.key != key {
-			stale = append(stale, ec2types.Tag{Key: aws.String(r.key)})
+	total := 0
+	for _, t := range tags {
+		if !strings.HasPrefix(aws.ToString(t.Key), "aws:") {
+			total++
 		}
 	}
-	if len(stale) > 0 {
-		// Best effort: a record that stays is only one more row for the maximum to ignore.
-		if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{Resources: []string{instanceID}, Tags: stale}); err != nil {
+	if !exists {
+		total++
+	}
+	needRoom := total > ec2TagLimit
+	var drop []ec2types.Tag
+	dropped := map[string]bool{}
+	recs := episodeRecordsOf(tags) // oldest first
+	for _, r := range recs {
+		if r.at.Before(cutoff) && r.key != key {
+			drop = append(drop, ec2types.Tag{Key: aws.String(r.key)})
+			dropped[r.key] = true
+			total--
+		}
+	}
+	for _, r := range recs {
+		if total <= ec2TagLimit {
+			break
+		}
+		if !dropped[r.key] && r.key != key {
+			drop = append(drop, ec2types.Tag{Key: aws.String(r.key)})
+			dropped[r.key] = true
+			total--
+		}
+	}
+	if len(drop) > 0 {
+		if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{Resources: []string{instanceID}, Tags: drop}); err != nil {
+			if needRoom {
+				return fmt.Errorf("making room for the episode record: %w", err)
+			}
+			// Best effort otherwise: a record that stays is one more row for the maximum to ignore.
 			log.Printf("ecs-ec2: pruning the old episode records on %s: %v", instanceID, err)
 		}
 	}
-	return nil
+	if exists {
+		return nil
+	}
+	if total > ec2TagLimit {
+		log.Printf("ecs-ec2: %s carries %d tags and no episode record can be dropped; the episode of %s is not recorded",
+			instanceID, total, m.Began.UTC().Format(time.RFC3339))
+		return nil
+	}
+	_, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{instanceID},
+		Tags: []ec2types.Tag{{Key: aws.String(key),
+			Value: aws.String(m.Began.UTC().Format(time.RFC3339) + "/" + episodeKind(m))}},
+	})
+	return err
 }
 
 // quarantineDecision says why a box is to be quarantined, or that it is not.
@@ -215,13 +263,27 @@ func (e *ecsEC2Runtime) quarantineApplies(m rescueMarker) bool {
 	return e.pool.quarantines() && !m.Wedged && !m.Operator
 }
 
+// Bounds of the quarantine write (variables only so a test can shorten them).
+var (
+	// quarantineWriteBudget caps the one CreateTags (and so how long it can be in flight).
+	quarantineWriteBudget = 10 * time.Second
+	// quarantineSettle is how long a write whose outcome is unknown is waited out, locks held.
+	quarantineSettle = 5 * time.Second
+)
+
 // rescueQuarantine writes the quarantine tags if decide says so, inside the rescue's guarded
 // section: the mount lock outer, the token re-verified under the claim lock inside it, both
-// leases asked right before the write, and the box re-read there. It is the only way the
-// role is ever moved, so a write that is delayed or retried cannot outlive the rescue's
-// marker: once the marker is gone, an operator's return of the slot cannot be undone by it,
-// because rescueOwned fails and nothing is sent. The write is one CreateTags and is not
-// retried here; a failure aborts the step and the resume scan asks again.
+// leases asked right before the write, and the box re-read there.
+//
+// What this does and does not fence. A tag write cannot be conditional, so a request that was
+// already sent cannot be taken back, and checking the marker before sending proves nothing
+// about a request that is delayed afterwards. The protocol is instead that the request is
+// never in flight without the locks: it carries a deadline no later than either lease and
+// the write budget, is not retried by the SDK, and when its outcome is unknown (an error or
+// the deadline) the locks are kept for quarantineSettle more, so that whatever AWS received
+// has been applied before anybody else can finalize the marker, re-place the home or read
+// the box. It assumes an AWS request that has not been applied within that settle time
+// after its deadline is not applied later; the guide's return procedure waits longer.
 //
 // A box that is already quarantined is left alone and reported nothing: the decision is
 // once per box, not once per pass.
@@ -245,7 +307,18 @@ func (e *ecsEC2Runtime) rescueQuarantine(ctx context.Context, slot string, m *re
 		if err := rescueLeasesHeld(c); err != nil {
 			return fmt.Errorf("%w: %w", errRescueAborted, err)
 		}
-		if err := e.writeDarkQuarantine(c, slot, why); err != nil {
+		deadline := e.now().Add(quarantineWriteBudget)
+		for _, g := range []*homeLockGuard{rescueMountGuard(c), homeGuardOf(c)} {
+			if d := g.deadline(); !d.IsZero() && d.Before(deadline) {
+				deadline = d
+			}
+		}
+		wctx, cancel := context.WithDeadline(c, deadline)
+		err = e.writeDarkQuarantine(wctx, slot, why)
+		cancel()
+		if err != nil {
+			// Outcome unknown: keep the locks until a request that was received has landed.
+			_ = e.sleep(c, quarantineSettle)
 			return fmt.Errorf("%w: quarantine %s: %w", errRescueAborted, slot, err)
 		}
 		reason = why
@@ -276,7 +349,7 @@ func (e *ecsEC2Runtime) writeDarkQuarantine(ctx context.Context, instanceID, rea
 			{Key: aws.String(ec2TagQuarantineReason), Value: aws.String(reason)},
 			{Key: aws.String(ec2TagQuarantineAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
 		},
-	})
+	}, func(o *ec2.Options) { o.RetryMaxAttempts = 1 })
 	return err
 }
 

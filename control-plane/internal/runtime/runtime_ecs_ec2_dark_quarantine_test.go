@@ -326,3 +326,173 @@ func TestDarkActsCoversRescueAndQuarantineOnly(t *testing.T) {
 		t.Fatal(fmt.Sprint("defaults ", p.repeatWindow(), p.blockedAfter()))
 	}
 }
+
+// quarantinedRescue puts a live dark-rescue marker (phase stopped, the rescue's own count) and
+// the L2 quarantine tags on the box, the moment between the quarantine and the detach.
+func quarantinedRescue(w *rescueWorld, reason string) rescueMarker {
+	g := w.count()
+	m := rescueMarker{Volume: "vol-1", Epoch: aws.ToTime(w.h.ec2.instances["i-dark"].LaunchTime).UTC().Truncate(time.Second),
+		Phase: rescuePhaseStopped, Gen: g, Began: time.Now().UTC().Truncate(time.Second)}
+	w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, m.String())
+	w.h.ec2.setInstanceTag("i-dark", EC2TagRole, ec2RoleQuarantined)
+	w.h.ec2.setInstanceTag("i-dark", ec2TagQuarantineReason, reason)
+	return m
+}
+
+func TestStartYieldsToARescueOnAnL2QuarantinedBox(t *testing.T) {
+	w := quarantineWorld(t, false)
+	m := quarantinedRescue(w, quarantineReasonPrefix+"repeat: x")
+	adm, err := w.rt().admitStart(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adm.kind != admitYield || adm.marker.Gen != m.Gen || w.count() != m.Gen {
+		t.Fatalf("admission %+v count %d: a Start must yield to the rescue, not overtake it", adm, w.count())
+	}
+	// A quarantine of another kind is not a rescue the Start waits for.
+	w2 := quarantineWorld(t, false)
+	quarantinedRescue(w2, "mount failed")
+	adm, err = w2.rt().admitStart(context.Background(), true)
+	if err != nil || adm.kind != admitStart {
+		t.Fatalf("admission %+v err %v: a mount-failure quarantine keeps the old behaviour", adm, err)
+	}
+}
+
+func TestQuarantinedBlockedRescueIsStillResumedAfterAStartYields(t *testing.T) {
+	w := quarantineWorld(t, false)
+	shortBounds(t)
+	withENI(w)
+	w.h.ci.stickyENI = true
+	w.arm()
+	w.pass(w.f)
+	m, _ := parseRescueMarker(w.marker())
+	m.BlockedSince = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, m.String())
+	w.pass(w.f)
+	if w.role() != ec2RoleQuarantined {
+		t.Fatal("setup: not quarantined")
+	}
+	before := w.count()
+	adm, err := w.rt().admitStart(context.Background(), true)
+	if err != nil || adm.kind != admitYield || w.count() != before {
+		t.Fatalf("admission %+v err %v count %d->%d", adm, err, before, w.count())
+	}
+	w.h.ci.stickyENI = false
+	w.h.ec2.dropTaskENIs("i-dark")
+	w.pass(w.f)
+	w.rescued()
+}
+
+func TestForceStopTakesOverAnL2QuarantinedBlockedRescueButNotOtherQuarantines(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlot(t)
+	h.ec2.giveTaskENI("i-wedge")
+	g, _ := h.rt.startGenNow(ctx)
+	m := rescueMarker{Volume: "vol-1", Epoch: slotEpoch(h), Phase: rescuePhaseDeregistering, Gen: g,
+		Began: time.Now().Add(-time.Minute).UTC().Truncate(time.Second), BlockedSince: time.Now().UTC().Truncate(time.Second)}
+	h.ec2.setInstanceTag("i-wedge", ec2TagRescue, m.String())
+	h.ec2.setInstanceTag("i-wedge", EC2TagRole, ec2RoleQuarantined)
+	h.ec2.setInstanceTag("i-wedge", ec2TagQuarantineReason, "mount failed")
+	if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", true); !errors.Is(err, ErrSlotQuarantined) {
+		t.Fatalf("err = %v, want a mount-failure quarantine refused", err)
+	}
+	h.ec2.setInstanceTag("i-wedge", ec2TagQuarantineReason, quarantineReasonPrefix+"rescue-blocked: x")
+	if _, err := h.factory().ForceStopSlot(ctx, "i-wedge", true); err != nil {
+		t.Fatalf("ForceStopSlot on an L2 quarantine with a blocked rescue: %v", err)
+	}
+	if stopsOnBox(h) != 1 || slotMarker(h) != "" {
+		t.Fatalf("stops %v marker %q", h.ec2.stopForce, slotMarker(h))
+	}
+	// Without a marker there is nothing to finish: the box is for Terminate.
+	h2 := wedgedSlot(t)
+	h2.ec2.setInstanceTag("i-wedge", EC2TagRole, ec2RoleQuarantined)
+	h2.ec2.setInstanceTag("i-wedge", ec2TagQuarantineReason, quarantineReasonPrefix+"repeat: x")
+	if _, err := h2.factory().ForceStopSlot(ctx, "i-wedge", true); !errors.Is(err, ErrSlotQuarantined) {
+		t.Fatalf("err = %v, want refused without a rescue marker", err)
+	}
+}
+
+func TestQuarantineWriteIsBoundedAndSettlesWhenItsOutcomeIsUnknown(t *testing.T) {
+	w := quarantineWorld(t, true)
+	oldB, oldS := quarantineWriteBudget, quarantineSettle
+	quarantineWriteBudget, quarantineSettle = 2*time.Second, 40*time.Millisecond
+	t.Cleanup(func() { quarantineWriteBudget, quarantineSettle = oldB, oldS })
+	w.seedEpisode(time.Hour, episodeKindDark)
+	w.arm()
+	var slept []time.Duration
+	w.rt() // the factory's sleeper is shared by every runtime it builds
+	w.f.sleep = func(_ context.Context, d time.Duration) error {
+		slept = append(slept, d)
+		return nil
+	}
+	w.h.ec2.createTagsErr = map[string]error{ec2TagQuarantineReason: errBoom}
+	w.pass(w.f)
+	dl, ok := w.h.ec2.createTagsDeadline[ec2TagQuarantineReason]
+	if !ok || time.Until(dl) > 3*time.Second {
+		t.Fatalf("the write carried no short deadline (%v, %v): it must not be able to outlive its leases", dl, ok)
+	}
+	settled := false
+	for _, d := range slept {
+		settled = settled || d == quarantineSettle
+	}
+	if !settled {
+		t.Fatalf("sleeps %v: a write of unknown outcome must be waited out with the locks held", slept)
+	}
+	if w.detachCalls() != 0 {
+		t.Fatal("the detach ran after a quarantine write that failed")
+	}
+}
+
+func TestRecordEpisodeMakesRoomBeforeWritingOnAFullBox(t *testing.T) {
+	fill := func(w *rescueWorld, expired, recent int) {
+		n := len(w.h.ec2.instances["i-dark"].Tags)
+		for i := 0; i < expired; i++ {
+			w.seedEpisode(time.Duration(48+i)*time.Hour, episodeKindDark)
+		}
+		for i := 0; i < recent; i++ {
+			w.seedEpisode(time.Duration(i+1)*time.Minute+2*time.Hour, episodeKindWedged)
+		}
+		for i := 0; len(w.h.ec2.instances["i-dark"].Tags) < 50-n+n && i < 100; i++ {
+			w.h.ec2.setInstanceTag("i-dark", fmt.Sprintf("user-%d", i), "x")
+		}
+	}
+	began := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
+	m := rescueMarker{Volume: "vol-1", Epoch: began.Add(-time.Hour), Phase: rescuePhaseDetached, Gen: 9, Began: began}
+	key := ec2TagWedgeAtPrefix + began.Format(episodeKeyLayout)
+	t.Run("expired records make room", func(t *testing.T) {
+		w := newRescueWorld(t, false)
+		fill(w, 3, 0)
+		w.h.ec2.maxTags = 50
+		w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, m.String())
+		w.f.resumeRescues(context.Background())
+		if w.marker() != "" || ec2TagValue(w.h.ec2.instances["i-dark"].Tags, key) == "" {
+			t.Fatalf("marker %q: the record must be written after the expired ones went", w.marker())
+		}
+	})
+	t.Run("recent records fill the box: the oldest goes, progress is kept", func(t *testing.T) {
+		w := newRescueWorld(t, false)
+		fill(w, 0, 6)
+		w.h.ec2.maxTags = 50
+		w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, m.String())
+		w.f.resumeRescues(context.Background())
+		if w.marker() != "" || ec2TagValue(w.h.ec2.instances["i-dark"].Tags, key) == "" {
+			t.Fatalf("marker %q", w.marker())
+		}
+		if n := len(w.h.ec2.instances["i-dark"].Tags); n > 50 {
+			t.Fatalf("%d tags", n)
+		}
+	})
+	t.Run("nothing can be dropped: the episode is not recorded but the marker goes", func(t *testing.T) {
+		w := newRescueWorld(t, false)
+		fill(w, 0, 0)
+		for i := 0; len(w.h.ec2.instances["i-dark"].Tags) < 50; i++ {
+			w.h.ec2.setInstanceTag("i-dark", fmt.Sprintf("other-%d", i), "x")
+		}
+		w.h.ec2.maxTags = 50
+		w.h.ec2.setInstanceTag("i-dark", ec2TagRescue, m.String())
+		w.f.resumeRescues(context.Background())
+		if w.marker() != "" {
+			t.Fatalf("marker %q survived: a finalizer that cannot record must not hold the home", w.marker())
+		}
+	})
+}

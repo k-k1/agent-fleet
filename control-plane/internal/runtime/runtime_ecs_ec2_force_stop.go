@@ -163,10 +163,17 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 		return res, ErrSlotNotFound
 	}
 	role := ec2TagValue(inst.Tags, EC2TagRole)
+	// Rung L2 quarantines a box whose rescue is still running or blocked, with the home on it.
+	// Quarantine keeps new placements off the box; it is no reason to stop the operator from
+	// finishing the rescue through the same token, epoch, ENI and lease gates. That needs the
+	// rescue's marker and a home (checked below once the occupant is known).
+	l2Rescue := isDarkQuarantine(inst.Tags) && ec2TagValue(inst.Tags, ec2TagRescue) != ""
 	switch role {
 	case ec2RoleSlot:
 	case ec2RoleQuarantined:
-		return res, ErrSlotQuarantined
+		if !l2Rescue {
+			return res, ErrSlotQuarantined
+		}
 	default:
 		return res, ErrSlotNotFound // an engine box or something else in the pool tag
 	}
@@ -194,6 +201,10 @@ func (f *ecsEC2Factory) ForceStopSlot(ctx context.Context, instanceID string, ov
 			res.Workspace = ec2TagValue(home.Tags, EC2TagWorkspace)
 			occupant = f.rescueRuntime(home)
 		}
+	}
+
+	if role == ec2RoleQuarantined && occupant == nil {
+		return res, ErrSlotQuarantined // nothing to finish: the box is for Terminate
 	}
 
 	// 1. health: the dark or the wedged predicate of ADR 0121, or the operator's word.

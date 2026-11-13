@@ -115,8 +115,15 @@ func (e *ecsEC2Runtime) darkAdmission(lctx context.Context, g int64, mayRescue b
 		return startAdmission{}, false
 	}
 	inst, err := e.slotInstance(lctx, slot)
-	if err != nil || inst == nil || inst.State == nil || inst.LaunchTime == nil ||
-		ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleSlot {
+	if err != nil || inst == nil || inst.State == nil || inst.LaunchTime == nil {
+		return startAdmission{}, false
+	}
+	// A box rung L2 quarantined while its rescue is still running keeps its marker, and the
+	// Start must still yield to it: counting itself would overtake a rescue whose box the
+	// Start cannot release (SSM is not granted on a quarantined box). Any other role, and any
+	// other quarantine, is not a rescue the Start waits for.
+	role := ec2TagValue(inst.Tags, EC2TagRole)
+	if role != ec2RoleSlot && !isDarkQuarantine(inst.Tags) {
 		return startAdmission{}, false
 	}
 	volumeID := aws.ToString(vol.VolumeId)
@@ -135,7 +142,7 @@ func (e *ecsEC2Runtime) darkAdmission(lctx context.Context, g int64, mayRescue b
 		}
 		return startAdmission{}, false
 	}
-	if !mayRescue || inst.State.Name != ec2types.InstanceStateNameRunning {
+	if role != ec2RoleSlot || !mayRescue || inst.State.Name != ec2types.InstanceStateNameRunning {
 		return startAdmission{}, false
 	}
 	// The stamp must be of this launch epoch and past darkAfter. The sweep's other legs
