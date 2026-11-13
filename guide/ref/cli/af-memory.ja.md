@@ -66,11 +66,11 @@ af-memory changes [--limit N]
 ```
 
 1 行に、日時・操作・`<プロジェクト>/<名前>`（ユーザー全体のメモリは `user/<名前>`）・書き手の種類とセッションが並びます。
-秘密情報の検査に掛かった変更は表示せず、その件数を最後に出します。
+秘密情報の検査で引っかかった変更は表示せず、その件数を最後に出します。
 
 ## import-sources・import
 
-ワークスペースの Claude Code がプロジェクトごとに溜めたメモリを、Agent Fleet のメモリへ取り込みます。
+ワークスペースの Claude Code がプロジェクトごとにためたメモリを、Agent Fleet のメモリへ取り込みます。
 
 ```sh
 af-memory import-sources
@@ -95,10 +95,10 @@ af-memory import --project <slug>
 | 状態 | 意味 |
 |---|---|
 | `new` | 新しく取り込む |
-| `update` | Claude のファイルのほうが新しい。Agent Fleet 側の写しを上書きする |
+| `update` | Claude のファイルのほうが新しい。Agent Fleet 側のコピーを上書きする |
 | `unchanged` | 変わっていない |
 | `forgotten` | 忘れたメモリ。取り込まない |
-| `secret` | 秘密情報の疑い。取り込まない（検出したファイル・行と、伏せたヒントが出ます） |
+| `secret` | 秘密情報の疑い。取り込まない（検出したファイル・行と、マスクしたヒントが出ます） |
 | `invalid` | 取り込めない（理由が出ます） |
 
 ```
@@ -137,7 +137,7 @@ af-memory muse-import --scope personal --into-user [--dry-run]
 | `personal_project` | `~/.local/share/muse/memory/projects` の作業コピー別のフォルダ | `muse-import-sources` が表示する名前 | 対応する作業コピーのプロジェクト |
 | `personal` | `~/.local/share/muse/memory/personal` | なし | ユーザー全体のメモリ |
 
-- 状態は `import` と同じで、ほかに `diverged`（Agent Fleet 側に独自の版があり、取り込みません）があります
+- 状態は `import` と同じで、ほかに `diverged`（Agent Fleet 側に独自のバージョンがあり、取り込みません）があります
 - git が追跡しているファイルには `(shared: git tracks this file, teammates may have it)` と付きます
 - フロントマターのないメモには `(no frontmatter: …)` と付き、名前はファイル名、説明は最初の行になります
 - スイッチと秘密情報の検査は `import` と同じです
@@ -156,7 +156,7 @@ af-memory export --project <ID か名前> [--overwrite <名前>]...
 |---|---|
 | `--project <ID か名前>` | 書き戻すプロジェクト。必須です。`export-sources` の ID か名前を渡します。同じ名前が 2 つあるときは ID を渡します |
 | `--dry-run` | 何が起きるかを表示するだけで、何も書きません |
-| `--overwrite <名前>` | 競合（`conflict`）のファイルを、Agent Fleet の版で置き換えます。何度でも付けられます |
+| `--overwrite <名前>` | 競合（`conflict`）のファイルを、Agent Fleet 側のバージョンで置き換えます。何度でも付けられます |
 
 | 状態 | 意味 |
 |---|---|
@@ -223,9 +223,9 @@ af-memory lint [--user | --project <ID か名前>] [--json] [--apply]
 見つかったことを、メモリに書き込みます。
 
 - リンク・パス・シンボル・ADR・廃止した用語の指摘は、そのメモリの理由になります。メモリはどこで読まれても「要確認」として出ます。サイズの指摘は理由になりません
-- 既定ブランチで git の名前変更として動いたパスは、本文のそのパスだけを書き換えます。操作 `lint-rename` の、別の変更になります
+- 既定ブランチで git のリネームによって移動したパスは、本文のそのパスだけを書き換えます。これは操作 `lint-rename` の、独立した変更になります
 - 変更はメモリ 1 件ごとに、作成者 `lint` の 1 コミットになります。どれもメモリの「変更」の表示から元に戻せます
-- 1 回で書くのは最大 100 件です。もう一度実行すると続きをします
+- 1 回で書くのは最大 100 件です。もう一度実行すると、続きから書き込みます
 - 範囲ごとに `applied (…): N marked, N renamed, N moved since the check, N deferred` と表示し、そのあとのレポートは書き込んだあとの状態です
 - Agent Fleet のメモリのスイッチがオンである必要があります
-- 自動の実行や、ほかの `--apply` が動いている間は断られます。終わってから、もう一度実行してください
+- 定期実行や、ほかの `--apply` が動いている間は断られます。終わってから、もう一度実行してください

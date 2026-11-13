@@ -15,7 +15,7 @@ session never receives AWS credentials: a gateway in the workspace signs each mo
 Mark the profile "Model route" in its form under Settings > "AWS profiles/SSM".
 
 - **What the mark says**: that the profile's role carries only `bedrock:InvokeModel*` (the calls that run a model)
-  and nothing broader. It is only your statement: AF cannot read the role's permissions, so mark a profile only when
+  and nothing broader. It is only your statement: Agent Fleet cannot read the role's permissions, so mark a profile only when
   you have checked them.
 - **What the gateway does**: it runs inside the workspace, signs each model call with the profile's short-lived
   credentials and forwards it, so the session that makes the calls never receives AWS credentials.
@@ -40,7 +40,7 @@ Mark the profile "Model route" in its form under Settings > "AWS profiles/SSM".
   [the claude routes](agents.md#claude-the-api-key-route)). The option appears only when at least one of your
   profiles is marked. The route is not offered generally yet: for now it appears only on a workspace whose operator
   has turned it on.
-- **opencode**: a Terminal (CLI) session can choose it the same way, with one of the **amazon-bedrock/…** models
+- **opencode**: a Terminal (CLI) or Managed session can choose it the same way, with one of the **amazon-bedrock/…** models
   ([opencode: the Amazon Bedrock route](agents.md#opencode-the-amazon-bedrock-route)).
 
 ## Before the first Bedrock call
@@ -65,7 +65,7 @@ Bedrock console lists for the route's region and that your account has access to
 call, its subagents and claude's own small background calls included, and never falls back to another model; a call that
 names a different model is refused by the gateway (`route_model_not_selected`) before it reaches AWS. Tier aliases (Opus /
 Sonnet / Haiku), `claude-…` IDs and ARNs are refused at launch: with them claude picks Bedrock IDs of its own and, when
-the account lacks one, tries older models one after another, one gateway call (and one usage row) each. AF cannot check
+the account lacks one, tries older models one after another, one gateway call (and one usage row) each. Agent Fleet cannot check
 the ID against your account (the route's role may only invoke models), so an ID the account or region does not serve
 fails on the first turn with Bedrock's own answer, such as AccessDenied or `model_not_found`; start a new session with
 another ID. The dialog remembers the last ID per profile in this browser. Over the REST API or the af MCP tools, send the

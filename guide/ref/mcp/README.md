@@ -139,7 +139,7 @@ How to read a cell:
 |---|---|---|---|---|---|
 | `list_chromium_targets` | List the pages on a loopback Chromium debugging port | ✓ with a browser | ✓ AF read, with a browser | — | `port` |
 | `get_chromium_attachment` | Show a Chromium attachment's state, control mode and outcome | ✓ with a browser | ✓ AF read, with a browser | — | `attachment_id` |
-| `attach_chromium` | Attach to an existing page so you can see it and give input | ✓ with a browser | ✓ AF write, with a browser | — | `port`, `target_id` |
+| `attach_chromium` | Attach to an existing page so you can see it; it starts view-only, and input needs a control-mode switch | ✓ with a browser | ✓ AF write, with a browser | — | `port`, `target_id` |
 | `detach_chromium` | Drop the attachment only; the page and the browser stay open | ✓ with a browser | ✓ AF write, with a browser | — | `attachment_id` |
 | `request_browser_action` | Ask you to do something on the page, such as signing in, or update that request | ✓ with a browser | ✓ AF write, with a browser | — | `attachment_id`, `message` |
 | `get_browser_action_result` | Read what you reported for that request: done, cancelled or pending | ✓ with a browser | ✓ AF write, with a browser | — | `attachment_id` |
