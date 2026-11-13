@@ -13,6 +13,42 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.45.0](0.45.0.md) — 2026-11-13
+
+**CLI pins** — Claude Code 2.1.323, Codex 0.169.0, Copilot 1.0.111, OpenCode 2.3.0, Antigravity 1.5.8
+
+**New / Improved**
+
+- **[watch]** GitHub releases and tags as watch sources (`github.release.published`, `github.tag.created`) ([#3970](https://github.com/k-k1/agent-fleet/issues/3970))
+- **[watch]** `pr.checks.failing`: the first failing check while others still run, once per head; `pr.checks.*` hears it too ([#4054](https://github.com/k-k1/agent-fleet/issues/4054))
+- **[watch]** `fleet` source: a child or peer session going idle, stopping or getting its quota back ([#3969](https://github.com/k-k1/agent-fleet/issues/3969))
+- **[watch]** Repeated `watch` returns the existing watch, overlapping watches give one notice, workflow/pipeline watches count runs from ~10 min before ([#4051](https://github.com/k-k1/agent-fleet/issues/4051), [#4033](https://github.com/k-k1/agent-fleet/issues/4033))
+- **[mirror]** Live watches panel above the composer, watch count on the idle chip, PR watch links open the work item dialog ([#3947](https://github.com/k-k1/agent-fleet/issues/3947), [#3951](https://github.com/k-k1/agent-fleet/issues/3951), [#4010](https://github.com/k-k1/agent-fleet/issues/4010))
+- **[start flow]** Tenant launch defaults, team repositories and ops settings in Member defaults, with a member override; uncloned team repositories as clone shortcuts ([#3884](https://github.com/k-k1/agent-fleet/issues/3884), [#3976](https://github.com/k-k1/agent-fleet/issues/3976))
+- **[agents]** Hook-less kinds no longer take the previous turn's end for the new one; an input the CLI never took ends as "input not delivered" ([#4007](https://github.com/k-k1/agent-fleet/issues/4007), [#4047](https://github.com/k-k1/agent-fleet/issues/4047))
+- **[cloud]** gcloud command on `af-gcloud-exec` run rows and login cards; AWS confirmation card names the operation and links the asking session ([#4036](https://github.com/k-k1/agent-fleet/issues/4036), [#4034](https://github.com/k-k1/agent-fleet/issues/4034))
+- **[opencode]** Managed sessions can use the deployment's Bedrock route ([#4004](https://github.com/k-k1/agent-fleet/issues/4004))
+- **[security]** Credentialed HTTP clients refuse redirects to another origin or to plain HTTP ([#4070](https://github.com/k-k1/agent-fleet/issues/4070), [#3952](https://github.com/k-k1/agent-fleet/issues/3952))
+- **[jira]** `jira issue attachment add | list | download | delete` ([#3945](https://github.com/k-k1/agent-fleet/issues/3945))
+- **[disk]** Low-disk notice with a reclaimable estimate and the cleanup; `af-clean` from a terminal ([#3880](https://github.com/k-k1/agent-fleet/issues/3880), [#3882](https://github.com/k-k1/agent-fleet/issues/3882))
+- **[ecs-ec2]** Wedged-slot detection (default detect), dark/wedged time and rescue step on the pool view ([#3963](https://github.com/k-k1/agent-fleet/issues/3963), [#3962](https://github.com/k-k1/agent-fleet/issues/3962))
+- **[ecs-ec2]** Opt-in rescue: `AF_ECS_EC2_DARK_SLOT_ACTION=rescue|quarantine`, `AF_ECS_EC2_WEDGED_SLOT_ACTION=release` ([#3964](https://github.com/k-k1/agent-fleet/issues/3964), [#3965](https://github.com/k-k1/agent-fleet/issues/3965), [#3967](https://github.com/k-k1/agent-fleet/issues/3967), [#3991](https://github.com/k-k1/agent-fleet/issues/3991))
+- **[ecs-ec2]** Stop (force) on registered slots behind an acknowledgement; runs to the end if the page closes, after a deregistration the next Start launches a new slot and moves the home ([#3959](https://github.com/k-k1/agent-fleet/issues/3959), [#3966](https://github.com/k-k1/agent-fleet/issues/3966), [#4087](https://github.com/k-k1/agent-fleet/issues/4087), [#4086](https://github.com/k-k1/agent-fleet/issues/4086), [#4098](https://github.com/k-k1/agent-fleet/issues/4098))
+- **[console]** Guide links open agent-fleet.org/docs in a new tab; on-screen labels use the guide's wording ([#3463](https://github.com/k-k1/agent-fleet/issues/3463), [#4039](https://github.com/k-k1/agent-fleet/issues/4039))
+
+**Fixed**
+
+- **[agents]** Claude sign-in from the Console failed on a misread sign-in link ([#4056](https://github.com/k-k1/agent-fleet/issues/4056))
+- **[usage]** Session usage still timed out on the first call after a quiet spell ([#3885](https://github.com/k-k1/agent-fleet/issues/3885))
+- **[usage]** Long-context turns priced at the base rate; Haiku 5.5 read as 200k with no effort levels ([#3979](https://github.com/k-k1/agent-fleet/issues/3979), [#3977](https://github.com/k-k1/agent-fleet/issues/3977), [#3978](https://github.com/k-k1/agent-fleet/issues/3978))
+- **[terminal]** Stray `1;2c0;276;0c` typed into shell/SSM panes after attach; copy prompt with nothing copied ([#3981](https://github.com/k-k1/agent-fleet/issues/3981), [#4077](https://github.com/k-k1/agent-fleet/issues/4077))
+- **[preview]** Next.js `next dev` link navigation hung on "Rendering…" ([#4078](https://github.com/k-k1/agent-fleet/issues/4078))
+- **[mirror]** Every notice turn badged "Stalled-tree notice" ([#4060](https://github.com/k-k1/agent-fleet/issues/4060))
+- **[workspace]** Dangling `af-scratch` links not recreated after a stop; failed pip/uv arch reinstalls not retried ([#3987](https://github.com/k-k1/agent-fleet/issues/3987), [#3986](https://github.com/k-k1/agent-fleet/issues/3986))
+- **[guide]** Member guide pages missing from the guide copy in workspaces ([#3940](https://github.com/k-k1/agent-fleet/issues/3940))
+- **[bedrock route]** A refused route request told the member to refresh AWS credentials ([#3891](https://github.com/k-k1/agent-fleet/issues/3891))
+
+---
 ## [0.44.0](0.44.0.md) — 2026-11-12
 
 **CLI pins** — Claude Code 2.1.322, Codex 0.167.1, Copilot 1.0.109, OpenCode 2.2.7, Muse Code 1.4.15-R8339.1
