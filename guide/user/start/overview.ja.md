@@ -42,7 +42,7 @@ Agent Fleet は、Claude Code や Codex などのコーディングエージェ�
 | 言葉の意味を先に知りたい | [用語と全体像](concepts.ja.md) |
 | ターミナルを使わず、チャットや閲覧だけで使いたい | [ターミナルを使わない人のための入口](without-terminal.ja.md) |
 | チームのメンバーや上限を管理する | [テナントを管理する](../../admin/README.ja.md) |
-| 配備を建てて維持する | [配備を運用する](../../operate/README.ja.md) |
+| 配備を構築して維持する | [配備を運用する](../../operate/README.ja.md) |
 
 何ができて誰ができるかの一覧表は [リファレンス](../../ref/README.ja.md) に、リリースごとの変更は
 [更新履歴](../../../deploy/release/notes/SUMMARY.ja.md) にあります。

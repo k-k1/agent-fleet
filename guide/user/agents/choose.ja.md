@@ -28,7 +28,7 @@ Agent Fleet は、Claude・Codex・OpenCode など 9 種類のコーディング
 |---|---|---|
 | Anthropic（Claude）のアカウント | claude | [Claude を接続する](claude.ja.md) |
 | ChatGPT のサブスク、OpenAI の API キー | codex | [Codex を接続する](codex.ja.md) |
-| 複数の LLM プロバイダの API キー、opencode.ai | opencode | [OpenCode を接続する](opencode.ja.md) |
+| 複数の LLM プロバイダーの API キー、opencode.ai | opencode | [OpenCode を接続する](opencode.ja.md) |
 | GitHub Copilot のサブスク（Free を含む） | copilot | [GitHub Copilot を接続する](copilot.ja.md) |
 | Cursor のアカウント | cursor | [Cursor を接続する](cursor.ja.md) |
 | AWS Builder ID、Kiro のプラン | kiro | [Kiro を接続する](kiro.ja.md) |
@@ -43,7 +43,7 @@ Agent Fleet は、Claude・Codex・OpenCode など 9 種類のコーディング
 エージェントのいない種類も 2 つあります。
 
 - **shell**：ワークスペースの素のシェルです
-- **ssm**：AWS SSM で EC2 にログインする端末です（[SSM で EC2 にログインする](../integrations/aws-ssm.ja.md)）
+- **ssm**：AWS SSM で EC2 にログインするターミナルです（[SSM で EC2 にログインする](../integrations/aws-ssm.ja.md)）
 
 どちらもターミナルだけで、会話・状態・通知はありません。
 
@@ -103,8 +103,8 @@ claude・codex・Antigravity・Cursor・Kiro・Muse Code の接続済みのカ�
 エージェントはあなたの代わりにコマンドを実行し、ファイルを編集し、push します。
 定時実行は無人で動き、「権限確認」がオフのときは毎回確認せずに実行します。取り消せない操作もあります。
 
-- バックアップを取り、権限を絞った資格情報を使ってください
-- 確かめながら進めたい作業では「**権限確認**」をオンにします。編集やコマンドの実行のたびに、セッション画面の許可のカードか端末での承認を待つようになります。無人の定時実行には向きません
+- バックアップを取り、権限を絞った認証情報を使ってください
+- 確かめながら進めたい作業では「**権限確認**」をオンにします。編集やコマンドの実行のたびに、セッション画面の許可のカードかターミナルでの承認を待つようになります。無人の定時実行には向きません
 - muse のセッションは、ツールの承認を一度も求めません。shell と同じように何でも実行できるものとして扱ってください
 - shell と ssm のセッションは、送った文字列をそのまま実行します
 
