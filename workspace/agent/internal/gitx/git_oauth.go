@@ -139,6 +139,9 @@ func refreshBitbucketGrantContext(ctx context.Context, c secrets.BitbucketCreds)
 		if err == nil {
 			return nc, nil
 		}
+		if errors.Is(err, redirectpolicy.ErrRefused) {
+			return c, err // a redirect refusal (ours, or the CP's upstream one) is final: no second grant
+		}
 		if c.Key == "" || c.Secret == "" {
 			return c, err // nothing to fall back to: report what actually failed
 		}
@@ -302,6 +305,16 @@ func refreshBitbucketViaCPContext(ctx context.Context, b secrets.CPBridge, c sec
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
+		// The CP reports a refused upstream redirect as <provider>_redirect_refused. It is
+		// final: the same refresh token must not be presented again through the direct grant.
+		var eb struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(raw, &eb) == nil && strings.HasSuffix(eb.Error.Code, "_redirect_refused") {
+			return c, fmt.Errorf("cp refresh: upstream %w", redirectpolicy.ErrRefused)
+		}
 		return c, fmt.Errorf("cp refresh failed: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var out struct {

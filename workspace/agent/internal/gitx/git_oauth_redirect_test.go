@@ -8,7 +8,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -103,5 +105,66 @@ func TestBitbucketDirectRefreshRedirectIsRefusedAndNotRetried(t *testing.T) {
 		if n := first.Load(); n != 1 {
 			t.Errorf("%d: token endpoint saw %d requests, want 1 (not retried)", code, n)
 		}
+	}
+}
+
+// BitbucketGetStatus retries transport errors with a backoff; a refused redirect is not one.
+func TestBitbucketGetStatusRedirectRefusalIsNotRetried(t *testing.T) {
+	other := newCredSink(t)
+	var first atomic.Int32
+	bb := redirectingOrigin(t, 302, other.URL+"/stolen", &first)
+	_, _, err := BitbucketGetStatus(redirectpolicy.Client(5*time.Second), "Bearer secret", bb.URL+"/2.0/user")
+	if err == nil {
+		t.Fatal("a redirect off the origin was followed")
+	}
+	other.assertUntouched(t, "bitbucket GET")
+	if n := first.Load(); n != 1 {
+		t.Errorf("origin saw %d requests, want 1 (not retried)", n)
+	}
+}
+
+// With legacy client credentials still stored, a bridge failure falls back to the direct grant.
+// A redirect refusal (the CP's own 307, or the CP reporting its upstream one) must not: it would
+// present the same refresh token again.
+func TestBitbucketGrantDoesNotFallBackAfterRedirectRefusal(t *testing.T) {
+	var directHits atomic.Int32
+	direct := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		directHits.Add(1)
+		_, _ = w.Write([]byte(`{"access_token":"fresh","expires_in":7200}`))
+	}))
+	defer direct.Close()
+	old := bbTokenURL
+	bbTokenURL = direct.URL
+	defer func() { bbTokenURL = old }()
+
+	other := newCredSink(t)
+	cases := map[string]http.HandlerFunc{
+		"CP redirects": func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, other.URL+"/stolen", http.StatusTemporaryRedirect)
+		},
+		"CP reports upstream refusal": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"code":"bitbucket_redirect_refused","message":"x"}}`))
+		},
+	}
+	for name, h := range cases {
+		withAgentHome(t)
+		cp := httptest.NewServer(h)
+		if err := secrets.Update(func(cur *secrets.Data) error {
+			cur.GitOAuthBridge = &secrets.CPBridge{BaseURL: cp.URL, Token: "afo_tok"}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		directHits.Store(0)
+		_, err := refreshBitbucketGrant(secrets.BitbucketCreds{RefreshToken: "r0", Key: "k", Secret: "s"})
+		cp.Close()
+		if err == nil {
+			t.Errorf("%s: the grant succeeded", name)
+		}
+		if n := directHits.Load(); n != 0 {
+			t.Errorf("%s: direct grant ran %d time(s)", name, n)
+		}
+		other.assertUntouched(t, name)
 	}
 }

@@ -644,6 +644,9 @@ func BitbucketGetStatusHeader(client *http.Client, auth, url string) ([]byte, in
 		req.Header.Set("Accept", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
+			if errors.Is(err, redirectpolicy.ErrRefused) {
+				return nil, 0, nil, err // deterministic: another attempt repeats the same request
+			}
 			lastErr = err // transport error (timeout / reset / DNS): retry
 			continue
 		}
