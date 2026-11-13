@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.45.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.45.0) — 2026-11-13
+
+`watch` can now wait for GitHub releases and tags, a PR's first failing check, and another
+session going idle or stopping, and the mirror shows a session's live watches. Tenant
+administrators can set launch defaults and team repositories for Start, and the ECS EC2 pool gains
+wedged-slot detection, opt-in rescue steps for dark slots and a force-stop for registered slots.
+Read the Upgrade notes if your sign-in or Git provider sits behind a redirect to another host.
+
 ## [0.44.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.44.0) — 2026-11-12
 
 A schedule can now wait for a saved work item query to turn up something new before it starts a

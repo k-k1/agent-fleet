@@ -12,6 +12,42 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.45.0](0.45.0.ja.md) — 2026-11-13
+
+**CLI ピン** — Claude Code 2.1.323 / Codex 0.169.0 / Copilot 1.0.111 / OpenCode 2.3.0 / Antigravity 1.5.8
+
+**New / Improved**
+
+- **[ウォッチ]** GitHub のリリースとタグをウォッチのソースに（`github.release.published`、`github.tag.created`） ([#3970](https://github.com/k-k1/agent-fleet/issues/3970))
+- **[ウォッチ]** `pr.checks.failing`: ほかが動いている間の最初の失敗をヘッドごとに 1 回。`pr.checks.*` にも届く ([#4054](https://github.com/k-k1/agent-fleet/issues/4054))
+- **[ウォッチ]** `fleet` ソース: 子やピアのセッションの入力待ち・停止・クォータの回復 ([#3969](https://github.com/k-k1/agent-fleet/issues/3969))
+- **[ウォッチ]** 同じ `watch` は既存のものを返し、重なった通知は 1 つに。ワークフロー・パイプラインは約 10 分前からの実行も数える ([#4051](https://github.com/k-k1/agent-fleet/issues/4051), [#4033](https://github.com/k-k1/agent-fleet/issues/4033))
+- **[ミラー]** 入力欄の上に有効なウォッチのパネル、入力待ちのチップに件数、PR のウォッチのリンクは作業項目のダイアログで ([#3947](https://github.com/k-k1/agent-fleet/issues/3947), [#3951](https://github.com/k-k1/agent-fleet/issues/3951), [#4010](https://github.com/k-k1/agent-fleet/issues/4010))
+- **[スタート]** 「メンバーの既定」でテナントの起動の既定値・チームのリポジトリ・運用の設定、メンバーの上書き。未クローンのチームのリポジトリをクローンのショートカットに ([#3884](https://github.com/k-k1/agent-fleet/issues/3884), [#3976](https://github.com/k-k1/agent-fleet/issues/3976))
+- **[エージェント]** フックのない種類が前のターンの終わりを取り違えない。CLI が受け取らなかった入力は「入力が届かなかった」で終わる ([#4007](https://github.com/k-k1/agent-fleet/issues/4007), [#4047](https://github.com/k-k1/agent-fleet/issues/4047))
+- **[クラウド]** `af-gcloud-exec` の実行の行とログインのカードに gcloud のコマンド。AWS の確認カードに操作名と頼んだセッションへのリンク ([#4036](https://github.com/k-k1/agent-fleet/issues/4036), [#4034](https://github.com/k-k1/agent-fleet/issues/4034))
+- **[opencode]** マネージドのセッションでもデプロイの Bedrock ルート ([#4004](https://github.com/k-k1/agent-fleet/issues/4004))
+- **[セキュリティ]** 認証情報を載せた HTTP クライアントは、別のオリジンや平文の HTTP へのリダイレクトを拒否 ([#4070](https://github.com/k-k1/agent-fleet/issues/4070), [#3952](https://github.com/k-k1/agent-fleet/issues/3952))
+- **[jira]** `jira issue attachment add | list | download | delete` ([#3945](https://github.com/k-k1/agent-fleet/issues/3945))
+- **[ディスク]** 残量の通知に空けられる量の見込みと掃除。ターミナルから `af-clean` ([#3880](https://github.com/k-k1/agent-fleet/issues/3880), [#3882](https://github.com/k-k1/agent-fleet/issues/3882))
+- **[ecs-ec2]** 固着したスロットの検知（既定は detect）、プールの画面に dark・固着の時間と救出の段階 ([#3963](https://github.com/k-k1/agent-fleet/issues/3963), [#3962](https://github.com/k-k1/agent-fleet/issues/3962))
+- **[ecs-ec2]** オプトインの救出: `AF_ECS_EC2_DARK_SLOT_ACTION=rescue|quarantine`、`AF_ECS_EC2_WEDGED_SLOT_ACTION=release` ([#3964](https://github.com/k-k1/agent-fleet/issues/3964), [#3965](https://github.com/k-k1/agent-fleet/issues/3965), [#3967](https://github.com/k-k1/agent-fleet/issues/3967), [#3991](https://github.com/k-k1/agent-fleet/issues/3991))
+- **[ecs-ec2]** 登録済みのスロットにも確認付きの「停止（強制）」。ページを閉じても最後まで進み、登録を解除したスロットは次の Start で置き換え ([#3959](https://github.com/k-k1/agent-fleet/issues/3959), [#3966](https://github.com/k-k1/agent-fleet/issues/3966), [#4087](https://github.com/k-k1/agent-fleet/issues/4087), [#4086](https://github.com/k-k1/agent-fleet/issues/4086))
+- **[Console]** ガイドへのリンクは agent-fleet.org/docs を新しいタブで。画面の表示をガイドの言葉に ([#3463](https://github.com/k-k1/agent-fleet/issues/3463), [#4039](https://github.com/k-k1/agent-fleet/issues/4039))
+
+**Fixed**
+
+- **[エージェント]** Console からの Claude のサインインが、リンクの読み違いで失敗 ([#4056](https://github.com/k-k1/agent-fleet/issues/4056))
+- **[使用量]** 静かだった後の最初の呼び出しで、セッションの使用量がまだタイムアウト ([#3885](https://github.com/k-k1/agent-fleet/issues/3885))
+- **[使用量]** 長いコンテキストのターンを基本料金で見積もり、Haiku 5.5 を 200k・effort なしと扱っていた ([#3979](https://github.com/k-k1/agent-fleet/issues/3979), [#3977](https://github.com/k-k1/agent-fleet/issues/3977), [#3978](https://github.com/k-k1/agent-fleet/issues/3978))
+- **[ターミナル]** アタッチのあとシェル・SSM のペインに `1;2c0;276;0c` が入力される。コピーしていないのにコピーの確認 ([#3981](https://github.com/k-k1/agent-fleet/issues/3981), [#4077](https://github.com/k-k1/agent-fleet/issues/4077))
+- **[プレビュー]** Next.js の `next dev` でリンクの移動が「Rendering…」のまま ([#4078](https://github.com/k-k1/agent-fleet/issues/4078))
+- **[ミラー]** 通知のターンがすべて「停滞通知」と表示 ([#4060](https://github.com/k-k1/agent-fleet/issues/4060))
+- **[ワークスペース]** 停止で切れた `af-scratch` のリンクを作り直さず、失敗した pip・uv の再インストールを再試行しない ([#3987](https://github.com/k-k1/agent-fleet/issues/3987), [#3986](https://github.com/k-k1/agent-fleet/issues/3986))
+- **[ガイド]** ワークスペースの中のガイドにメンバー向けのページがない ([#3940](https://github.com/k-k1/agent-fleet/issues/3940))
+- **[Bedrock ルート]** 断った要求でメンバーに AWS の認証情報の更新を促していた ([#3891](https://github.com/k-k1/agent-fleet/issues/3891))
+
+---
 ## [0.44.0](0.44.0.ja.md) — 2026-11-12
 
 **CLI ピン** — Claude Code 2.1.322 / Codex 0.167.1 / Copilot 1.0.109 / OpenCode 2.2.7 / Muse Code 1.4.15-R8339.1
