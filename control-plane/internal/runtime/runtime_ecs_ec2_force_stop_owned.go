@@ -177,7 +177,7 @@ func (f *ecsEC2Factory) forceStopOwned(ctx, bgCtx context.Context, started time.
 // by that. When the caller gave up, the final answer goes to the ForceStopLate callback on
 // ctx (the audit outcome) or, with none, to the log.
 //
-// The detached context carries no deadline of the request's; it has its own forceStopBudget
+// The detached context carries no deadline of the request's; it has its own forceStopRunBudget
 // from the moment the token was taken. It is not tied to the process: like every other
 // background step of the pool (backgroundWithin) it ends on its budget or with the process,
 // and a process that dies mid-way leaves the operator's marker, which ages out and is taken
@@ -195,7 +195,7 @@ func (f *ecsEC2Factory) forceStopDetached(ctx context.Context, fn func(context.C
 		finished bool
 	)
 	done := make(chan outcome, 1)
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forceStopBudget)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forceStopRunBudget)
 	go func() {
 		defer cancel()
 		// This goroutine is outside net/http's recovery: a panic here would end the whole CP
@@ -216,6 +216,7 @@ func (f *ecsEC2Factory) forceStopDetached(ctx context.Context, fn func(context.C
 			done <- outcome{res, err}
 			return
 		}
+		log.Printf("ecs-ec2: force-stop of slot %s finished after its request ended: %v (%+v)", res.InstanceID, err, res)
 		if late != nil {
 			func() {
 				defer func() {
@@ -227,7 +228,6 @@ func (f *ecsEC2Factory) forceStopDetached(ctx context.Context, fn func(context.C
 			}()
 			return
 		}
-		log.Printf("ecs-ec2: force-stop of slot %s finished after its request ended: %v (%+v)", res.InstanceID, err, res)
 	}()
 	select {
 	case o := <-done:
@@ -274,7 +274,7 @@ func (f *ecsEC2Factory) forceStopTokenHeld(ctx, bgCtx context.Context, cmds ssmS
 
 	// The task ENI, on the rescue's stage: the override never skips it.
 	eniDeadline := started.Add(forceStopENIBudget)
-	if limit := started.Add(forceStopBudget - forceStopStopReserve); limit.Before(eniDeadline) {
+	if limit := started.Add(forceStopRunBudget - forceStopStopReserve); limit.Before(eniDeadline) {
 		eniDeadline = limit
 	}
 	eniCtx, cancelENI := context.WithDeadline(ctx, eniDeadline)
@@ -285,15 +285,18 @@ func (f *ecsEC2Factory) forceStopTokenHeld(ctx, bgCtx context.Context, cmds ssmS
 		if out, err := f.ec2.DescribeInstances(eniCtx, &ec2.DescribeInstancesInput{InstanceIds: []string{id}}); err == nil {
 			res.Deregistered = instancesHoldTaskENI(out)
 		}
-		if err := occ.rescueENIStage(eniCtx, id, &m); err != nil {
-			giveUp()
-			return res, f.forceStopErr(ctx, eniCtx, id, err)
-		}
-		// Reserved as soon as the deregistration stands and before the stop goes out: a Start
-		// can overtake the token as soon as the guarded stop returns, and one that reads the
-		// slot unreserved wakes a box that will never register again (#4086).
-		if res.Deregistered {
+		// Reserved the moment the deregistration call has returned, before the wait that can
+		// give up: a Start can overtake the token as soon as it is released, and one that reads
+		// the slot unreserved wakes a box that will never register again (#4086, #4098).
+		if err := occ.rescueENIStageWith(eniCtx, id, &m, forceStopENIPolls, func() {
 			res.Retired = f.retireDeregisteredSlot(ctx, id)
+		}); err != nil {
+			giveUp()
+			err = f.forceStopErr(ctx, eniCtx, id, err)
+			if res.Retired {
+				err = fmt.Errorf("%w (the slot is reserved for replacement: the next Start launches a new slot and moves the home there)", err)
+			}
+			return res, err
 		}
 	}
 

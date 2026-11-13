@@ -121,6 +121,13 @@ func (e *ecsEC2Runtime) readRescueBox(ctx context.Context, slot string, m *rescu
 // attached (so ECS lets go of it) and verify, bounded, that the ENI is physically gone.
 // Deregistration is assumed to do nothing else. A box with no task ENI is not deregistered.
 func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *rescueMarker) error {
+	return e.rescueENIStageWith(ctx, slot, m, rescueENIPolls, nil)
+}
+
+// rescueENIStageWith is rescueENIStage with the wait's poll cap and a hook. afterDereg runs
+// right after the deregistration call has returned and before any wait that can give up, so
+// whatever must hold for a deregistered box holds even when the wait fails.
+func (e *ecsEC2Runtime) rescueENIStageWith(ctx context.Context, slot string, m *rescueMarker, polls int, afterDereg func()) error {
 	// A context that has already ended (the force-stop's ENI deadline, spent by the steps before
 	// it) must not be left to the lock wait below: with a free lock and a done context a select
 	// picks either, and the deregistration would sometimes go out.
@@ -132,6 +139,17 @@ func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *resc
 		return fmt.Errorf("%w: ENIs of %s: %w", errRescueAborted, slot, err)
 	}
 	if instancesHoldTaskENI(out) {
+		// afterDereg is owed once the deregistration call has been sent, however the guarded
+		// section ends: a lease lost while the answer was in flight, an error, a panic. The
+		// box is deregistered all the same.
+		sent, fired := false, false
+		fire := func() {
+			if sent && !fired && afterDereg != nil {
+				fired = true
+				afterDereg()
+			}
+		}
+		defer fire()
 		err := e.rescueGuarded(ctx, m, slot, func(c context.Context) error {
 			if err := e.advanceRescue(c, slot, m, rescuePhaseDeregistering); err != nil {
 				return err
@@ -147,19 +165,26 @@ func (e *ecsEC2Runtime) rescueENIStage(ctx context.Context, slot string, m *resc
 				if err := rescueLeasesHeld(c); err != nil {
 					return fmt.Errorf("%w: %w", errRescueAborted, err)
 				}
+				sent = true
 				return nil
 			}); derr != nil {
 				log.Printf("ecs-ec2: rescue of %s: %v", e.base.name, derr)
+			} else {
+				// A clean answer without the pre-check having run means the container instance
+				// is not in the cluster any more: an earlier attempt already deregistered it and
+				// its task ENI is still here. That box is as deregistered as one sent now.
+				sent = true
 			}
 			return nil
 		})
+		fire()
 		if err != nil {
 			return err
 		}
 		if err := rescueStep(ctx, "deregistered-call"); err != nil {
 			return err
 		}
-		if err := e.waitTaskENIsGoneWithin(ctx, slot, rescueENIPolls); err != nil {
+		if err := e.waitTaskENIsGoneWithin(ctx, slot, polls); err != nil {
 			if ctx.Err() != nil {
 				return fmt.Errorf("%w: %w", errRescueAborted, ctx.Err())
 			}
