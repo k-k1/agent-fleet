@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,4 +130,22 @@ func TestUnreadableSourceDoesNotFlagNotDelivered(t *testing.T) {
 
 func truncateEvents(m session.Meta) error {
 	return os.WriteFile(copilot.EventsPath(copilot.SessionID(m)), []byte("\n"), 0o600)
+}
+
+// The source was replaced (a resumed CLI) and regrew past the mark's size: the new file's user
+// line lies BEFORE the old offset, which a size compare alone would read as "input not there".
+func TestReplacedSourceRegrownPastTheMarkIsNotFlagged(t *testing.T) {
+	m, sid, turnEnded := polledTurnEndFixture(t, "copilot_replaced")
+	turnEnded()
+	startTurn(m)
+	big := `{"type":"user.message","data":{"content":"` + strings.Repeat("y", 600) + `"}}`
+	if err := os.WriteFile(copilot.EventsPath(copilot.SessionID(m)), []byte(big+"\n"+`{"type":"assistant.turn_start"}`+"\n"+strings.Repeat(`{"type":"tool.x"}`+"\n", 50)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pastWindow(t)
+	wireSession(m, true)
+	DriveState(m, true, false)
+	if st, _ := status.Read(sid); st.InputNotDelivered || st.State != "working" {
+		t.Fatalf("a running turn on a replaced source was flagged: %+v", st)
+	}
 }
