@@ -32,7 +32,7 @@
 - **[ディスク]** 残量の通知に空けられる量の見込みと掃除。ターミナルから `af-clean` ([#3880](https://github.com/k-k1/agent-fleet/issues/3880), [#3882](https://github.com/k-k1/agent-fleet/issues/3882))
 - **[ecs-ec2]** 固着したスロットの検知（既定は detect）、プールの画面に dark・固着の時間と救出の段階 ([#3963](https://github.com/k-k1/agent-fleet/issues/3963), [#3962](https://github.com/k-k1/agent-fleet/issues/3962))
 - **[ecs-ec2]** オプトインの救出: `AF_ECS_EC2_DARK_SLOT_ACTION=rescue|quarantine`、`AF_ECS_EC2_WEDGED_SLOT_ACTION=release` ([#3964](https://github.com/k-k1/agent-fleet/issues/3964), [#3965](https://github.com/k-k1/agent-fleet/issues/3965), [#3967](https://github.com/k-k1/agent-fleet/issues/3967), [#3991](https://github.com/k-k1/agent-fleet/issues/3991))
-- **[ecs-ec2]** 登録済みのスロットにも確認付きの「停止（強制）」。ページを閉じても最後まで進み、登録を解除した場合は次の Start が新しいスロットを起動して home を移す ([#3959](https://github.com/k-k1/agent-fleet/issues/3959), [#3966](https://github.com/k-k1/agent-fleet/issues/3966), [#4087](https://github.com/k-k1/agent-fleet/issues/4087), [#4086](https://github.com/k-k1/agent-fleet/issues/4086))
+- **[ecs-ec2]** 登録済みのスロットにも確認付きの「停止（強制）」。ページを閉じても最後まで進み、登録を解除した場合は次の Start が新しいスロットを起動して home を移す ([#3959](https://github.com/k-k1/agent-fleet/issues/3959), [#3966](https://github.com/k-k1/agent-fleet/issues/3966), [#4087](https://github.com/k-k1/agent-fleet/issues/4087), [#4086](https://github.com/k-k1/agent-fleet/issues/4086), [#4098](https://github.com/k-k1/agent-fleet/issues/4098))
 - **[Console]** ガイドへのリンクは agent-fleet.org/docs を新しいタブで。画面の表示をガイドの言葉に ([#3463](https://github.com/k-k1/agent-fleet/issues/3463), [#4039](https://github.com/k-k1/agent-fleet/issues/4039))
 
 **Fixed**
