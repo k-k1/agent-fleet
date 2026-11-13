@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import type { SessionWatch } from "../../../core/api/client.ts";
+import { openWorkItemUrl } from "../../workitems/openUrl.ts";
 import { elapsedShort } from "./BackgroundShellsPanel.tsx";
 
 /** parseWatches keeps the well-formed entries of a messages payload's `watches`. */
@@ -33,6 +34,17 @@ export function parseWatches(v: unknown): SessionWatch[] {
  *  re-render the panel. */
 export function sameWatches(prev: SessionWatch[], next: SessionWatch[]): SessionWatch[] {
   return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
+/** Only a pull request watch has a work item behind its link; a CI run has none. */
+const isPullRequest = (source: string) => source === "github" || source === "bitbucket";
+
+/** A plain click opens the work item detail modal, as every other ticket link does. Ctrl/Cmd, Shift
+ *  and a non-primary button keep the anchor's own behaviour (the tracker page), and so does a URL
+ *  that does not name a ticket: the click is never swallowed without something opening. */
+function openPullRequest(e: MouseEvent<HTMLAnchorElement>, href: string) {
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  if (openWorkItemUrl(href)) e.preventDefault();
 }
 
 /** safeWatchUrl passes only an https URL on github.com or bitbucket.org. A watch's `url` comes
@@ -169,7 +181,14 @@ export function WatchesPanel({
             <li className={"mw-item" + (w.error ? " failing" : "")} key={w.id}>
               <Icon name={sourceIcon(w.source)} title={sourceLabel(w.source)} />
               {href ? (
-                <a className="mw-ref" href={href} target="_blank" rel="noopener noreferrer" title={ref}>
+                <a
+                  className="mw-ref"
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={ref}
+                  onClick={isPullRequest(w.source) ? (e) => openPullRequest(e, href) : undefined}
+                >
                   {ref}
                 </a>
               ) : (
