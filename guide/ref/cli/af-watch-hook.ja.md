@@ -33,7 +33,7 @@ af-watch-hook --help
 |---|---|---|
 | 本文 | JSON | JSON |
 | 署名 | `X-Hub-Signature-256`（フックの秘密による HMAC-SHA256） | `X-Hub-Signature`（同じ） |
-| 出来事 | `pull_request`、`pull_request_review`、`pull_request_review_comment`、`pull_request_review_thread`、`issue_comment`、`check_run`、`check_suite`、`workflow_run` | `pullrequest:*`（作成・更新・承認・マージ・却下・コメント・変更依頼） |
+| イベント | `pull_request`、`pull_request_review`、`pull_request_review_comment`、`pull_request_review_thread`、`issue_comment`、`check_run`、`check_suite`、`workflow_run` | `pullrequest:*`（作成・更新・承認・マージ・却下・コメント・変更依頼） |
 | 使う接続 | GitHub の接続 | Bitbucket の接続（OAuth または API トークン） |
 
 ## 動き

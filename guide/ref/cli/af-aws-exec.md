@@ -323,7 +323,7 @@ credentials in that account (and, for a role, as a session of that role).
   returns, not where it came from. When it fails, its output is not shown; run it yourself to see why.
 - Only temporary credentials are passed. A profile that resolves to long-lived keys is refused: use the keys to
   assume a role instead.
-- If the chain ends in an SSO profile whose login is missing, the command exits with code 3 and the `aws sso login`
+- If the chain ends in an SSO profile whose login is missing, the command exits with status 3 and the `aws sso login`
   command for that SSO profile (at a terminal it starts the login itself). The Console is not asked.
 - These profiles do not appear in `af-aws-exec --list`, and they cannot share a name with a Settings profile.
 - The source keys stay in your `~/.aws` files as before; `af-aws-exec` never hands them to the command.
@@ -344,7 +344,7 @@ profile you name that is its own `source_profile` and holds the keys itself.
 ## When the login is missing
 
 When a command needs the login (an agent's, or yours in a shell session's terminal), it asks you in the Console. This
-covers your Settings profiles; for a profile you defined yourself, or with `--no-login`, the command exits with code 3
+covers your Settings profiles; for a profile you defined yourself, or with `--no-login`, the command exits with status 3
 and the login command to run in a terminal.
 
 A toast at the bottom of the screen names the profile, its account and role from Settings, and the session that asks.
@@ -370,10 +370,10 @@ script in a shell session) and continues once you approve. If it has given up by
 
 - The command prints that it asked the Console and waits up to ten minutes, as long as the device code lives, for you
   to approve there, then carries on without a rerun.
-- **Ctrl-C** stops waiting: the command exits with code 3 and the request stays in the Console.
+- **Ctrl-C** stops waiting: the command exits with status 3 and the request stays in the Console.
 - `--login` runs the device-code login in that terminal instead (it prints the URL and code there). That is also what
   happens when the Console cannot be asked at all, and for the profiles the Console does not cover.
-- Outside a workspace, the terminal login starts at a terminal, and the command exits with code 3
+- Outside a workspace, the terminal login starts at a terminal, and the command exits with status 3
   without one.
 
 ## The config the command gets

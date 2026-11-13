@@ -120,7 +120,7 @@ portal **once** for all of them, instead of once per profile.
 | One of your sign-ins | The profile joins it. The start URL and SSO region are the sign-in's and are not entered again. |
 | New shared sign-in… | Creates a sign-in with the name you type and the start URL and SSO region you enter, and puts the profile in it. |
 
-A sign-in name is 1–61 letters, digits and `.` `@` `-`; the workspace calls its login `af-<name>`. Saving can be
+A sign-in name is 1–61 letters, digits and `.` `_` `@` `-`; the workspace calls its login `af-<name>`. Saving can be
 refused with a reason in words:
 
 - **another start URL or SSO region**: the sign-in you chose uses another portal. A profile in a sign-in always uses

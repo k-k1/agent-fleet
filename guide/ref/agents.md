@@ -76,7 +76,7 @@ route is what remains.
 instructions, so it is the one kind that cannot receive them. It still appears in the
 settings list, with that reason shown.
 
-⁹ lcpp (ADR 0093's own llama.cpp harness) and muse (Meta's Muse Code) have no Terminal
+⁹ lcpp (Agent Fleet's own llama.cpp harness) and muse (Meta's Muse Code) have no Terminal
 (CLI) route at all, by design. lcpp has no vendor CLI to put in a pane, only a managed
 runtime this process runs in-process; muse has one, but its session protocol already
 carries more than a pane would show, so Agent Fleet drives that instead. Creating a
@@ -346,7 +346,7 @@ at all, which is what makes them comfortable to run many of at once.
 
 ## lcpp: what hardware measurement found
 
-`lcpp` (ADR 0093) runs its own instance of the llama.cpp engine instead of a vendor's
+`lcpp` runs its own instance of the llama.cpp engine instead of a vendor's
 hosted API, and hardware measurement across sixteen live runs found costs
 worth knowing before your first session.
 

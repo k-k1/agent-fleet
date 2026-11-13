@@ -147,8 +147,7 @@ the last start. After Clean home the first start reinstalls the agent CLIs, as o
 On `kubernetes`, the workspace pod's Pod Security `restricted` level leaves Chromium's sandbox
 neither its setuid helper nor user namespaces. On `ecs` (Fargate), a task cannot be given
 `SYS_ADMIN`, so the default seccomp profile refuses the namespaces and the setuid helper has no
-capability to use. Running Chromium unsandboxed was decided against (ADR 0106, addendum
-2026-10-04). `ecs-ec2` does offer the browser: its task adds `SYS_ADMIN`, as `docker` does. The Console greys the entry points out and says why; the lightweight preview
+capability to use. Running Chromium unsandboxed was decided against. `ecs-ec2` does offer the browser: its task adds `SYS_ADMIN`, as `docker` does. The Console greys the entry points out and says why; the lightweight preview
 still works ([browser-pane.md](browser-pane.md#where-there-is-no-browser-pane)).
 
 ¹³ A member's Recreate and Clean home mark the home and return; the next start removes the files
