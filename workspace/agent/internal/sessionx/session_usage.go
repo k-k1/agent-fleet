@@ -11,6 +11,8 @@ import (
 	"encoding/hex"
 	"math"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -74,12 +76,7 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 	// consumption into the ledger (throttled to 60s). Piggybacking here rather than adding
 	// another resident timer.
 	maybeFoldSessionUsage()
-	out := []sessionUsage{}
-	pending := 0
-	var deadline time.Time
-	if nameFilter == "" {
-		deadline = time.Now().Add(mainUsageColdBudget)
-	}
+	var metas []session.Meta
 	for _, m := range session.ListMetas() {
 		if m.Archived || (nameFilter != "" && m.Name != nameFilter) {
 			continue
@@ -87,16 +84,20 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 		if !AgentOf(m.Kind).Caps().CanTranscript {
 			continue
 		}
-		u, ok := mainUsage.getBy(m, time.Now(), deadline)
-		if !ok {
-			pending++
-			continue
+		metas = append(metas, m)
+	}
+	var out []sessionUsage
+	pending := 0
+	if nameFilter != "" {
+		// One named session is read to the end: there is no partial answer to give for it.
+		for _, m := range metas {
+			out = append(out, completeUsage(m, mainUsage.get(m, time.Now())))
 		}
-		addSubagentUsage(&u, m)
-		u.Name, u.Display, u.Kind = m.Name, session.Display(m), string(m.Kind)
-		overlayKiroLiveUsage(m, &u)
-		overlayMuseLiveUsage(m, &u)
-		out = append(out, u)
+	} else {
+		out, pending = allSessionsUsage(metas, mainUsageColdBudget)
+	}
+	if out == nil {
+		out = []sessionUsage{}
 	}
 	if nameFilter != "" && len(out) == 0 {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found",
@@ -107,9 +108,72 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 	if pending > 0 {
 		// Sessions left out because their transcripts were not parsed yet; ask again shortly.
 		resp["pending"] = pending
-		go WarmMainUsage()
+		go WarmSessionUsage()
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// completeUsage turns a session's main-transcript fold into its entry in the usage read: the
+// subagent folds and the live overlays.
+func completeUsage(m session.Meta, u sessionUsage) sessionUsage {
+	addSubagentUsage(&u, m)
+	u.Name, u.Display, u.Kind = m.Name, session.Display(m), string(m.Kind)
+	overlayKiroLiveUsage(m, &u)
+	overlayMuseLiveUsage(m, &u)
+	return u
+}
+
+// allSessionsUsage reads the sessions' usage in a worker and answers when it finishes or budget
+// runs out, whichever is first; the sessions it has not finished by then are counted as pending.
+// The bound has to cover the whole of every session's work, not only the main-transcript parse: a
+// cold subagent fold ran after the budget check for every session and took a cold call to 28 s
+// against an 8 s budget, and a parse that has started cannot be cut short by any check between
+// files. Past the budget the worker finishes the session it is on, so that one is cached, and
+// starts no other; WarmSessionUsage carries on from there. The request waits on nothing but the
+// timer and a mutex held only to copy results, never on a cache lock or another caller's parse.
+func allSessionsUsage(metas []session.Meta, budget time.Duration) ([]sessionUsage, int) {
+	var (
+		mu     sync.Mutex
+		res    = make([]sessionUsage, len(metas))
+		done   = make([]bool, len(metas))
+		stop   atomic.Bool
+		finish = make(chan struct{})
+	)
+	deadline := time.Now().Add(budget)
+	go func() {
+		defer close(finish)
+		for i, m := range metas {
+			if stop.Load() {
+				return
+			}
+			// The main fold's own deadline keeps the worker from starting a parse the request
+			// can no longer wait for; a session cut off there is pending, not reported empty.
+			u, ok := mainUsage.getBy(m, time.Now(), deadline)
+			if !ok {
+				continue
+			}
+			u = completeUsage(m, u)
+			mu.Lock()
+			res[i], done[i] = u, true
+			mu.Unlock()
+		}
+	}()
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-finish:
+	case <-timer.C:
+		stop.Store(true)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	out := make([]sessionUsage, 0, len(metas))
+	for i, ok := range done {
+		if ok {
+			out = append(out, res[i])
+		}
+	}
+	return out, len(metas) - len(out)
 }
 
 // overlayKiroLiveUsage fills a running managed kiro session's context + credits from
@@ -242,7 +306,7 @@ func SubagentUsageSources(m session.Meta) []SubagentSource {
 
 // subagentUsageFolds caches each subagent's folded consumption for the all-sessions usage read
 // (see SubagentFolds).
-var subagentUsageFolds = NewSubagentFolds[cumulativeUsage](10 * time.Minute)
+var subagentUsageFolds = NewSubagentFolds[cumulativeUsage](usageCacheIdle)
 
 // addSubagentUsage adds the subagents' consumption to the session's cumulative figure and
 // reports it on its own as well. Each agent is folded alone: every event re-reports only its
