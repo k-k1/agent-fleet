@@ -952,7 +952,9 @@ func TestRescueGuardedNeverRunsOnAnEndedContext(t *testing.T) {
 }
 
 // The ENI stage on a context that has already ended (the force-stop's ENI deadline spent by
-// the steps before it) does not deregister the container instance.
+// the steps before it) does not deregister the container instance. The assertion on the
+// side effect sits inside the loop and does not depend on how the refusal is classified, so
+// a mutation that lets the call out is caught by the call itself.
 func TestRescueENIStageDoesNotDeregisterOnAnEndedContext(t *testing.T) {
 	bothModes(t, func(t *testing.T, w *rescueWorld) {
 		w.h.ec2.giveTaskENI("i-dark")
@@ -963,12 +965,35 @@ func TestRescueENIStageDoesNotDeregisterOnAnEndedContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		for i := 0; i < 200; i++ {
-			if err := w.rt().rescueENIStage(ctx, "i-dark", &m); !errors.Is(err, errRescueAborted) {
-				t.Fatalf("attempt %d: err = %v, want errRescueAborted", i, err)
+			err := w.rt().rescueENIStage(ctx, "i-dark", &m)
+			if len(w.h.ci.deregistered) != 0 {
+				t.Fatalf("attempt %d: deregistered %v on an ended context (err %v)", i, w.h.ci.deregistered, err)
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("attempt %d: err = %v, want a canceled error", i, err)
 			}
 		}
+	})
+}
+
+// A context that ends after the stage began (here while the container-instance lookup is in
+// flight) still stops the deregistration: the leases do not see it, the call site must.
+func TestRescueENIStageDoesNotDeregisterWhenTheContextEndsMidway(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		w.h.ec2.giveTaskENI("i-dark")
+		m, _, err := w.rt().rescuePrepare(context.Background(), w.h.ssmc, w.decision())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		w.h.ci.onDescribeCI = func() { cancel() }
+		err = w.rt().rescueENIStage(ctx, "i-dark", &m)
 		if len(w.h.ci.deregistered) != 0 {
-			t.Fatalf("deregistered %v on an ended context", w.h.ci.deregistered)
+			t.Fatalf("deregistered %v after the context ended (err %v)", w.h.ci.deregistered, err)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want a canceled error", err)
 		}
 	})
 }

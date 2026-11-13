@@ -502,7 +502,12 @@ func rescueMountGuard(ctx context.Context) *homeLockGuard {
 
 // rescueLeasesHeld asks the clock of both leases of a guarded section. Right before every AWS
 // side effect, never earlier: whatever waits between the check and the call is the risk.
+// A context that ended while the step waited (a lookup before the call, say) refuses the call
+// too: the leases alone do not notice it, and a fake or a slow client does not either.
 func rescueLeasesHeld(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
 	if err := rescueMountGuard(ctx).check(); err != nil {
 		return err
 	}
@@ -550,6 +555,10 @@ func (e *ecsEC2Runtime) rescueGuarded(ctx context.Context, m *rescueMarker, inst
 		return fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 	if err := homeGuardOf(cctx).check(); err != nil {
+		return fmt.Errorf("%w: %w", errRescueAborted, err)
+	}
+	// The locks may have been waited for up to their budgets: ask again right before fn.
+	if err := cctx.Err(); err != nil {
 		return fmt.Errorf("%w: %w", errRescueAborted, err)
 	}
 	err = fn(cctx)
