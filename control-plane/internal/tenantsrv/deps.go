@@ -135,6 +135,10 @@ type CP interface {
 	// quarantined, so the audit entry outlives the instance and its tags. ok=false
 	// where there is no pool, exactly as PoolStatus reports it.
 	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, ok bool, err error)
+	// ReturnQuarantinedSlot lifts the rung-L2 hold named by token (the value the pool view
+	// showed). ok=false where there is no pool. The result comes back with an error too, for
+	// the audit line.
+	ReturnQuarantinedSlot(ctx context.Context, instanceID, token string) (res runtime.SlotReturn, ok bool, err error)
 	// ReserveSlotReplacement sets or clears a slot's replacement reservation (#1473);
 	// onlyOutdated refuses a slot that is not below the launch template's $Latest. ok=false
 	// where there is no pool.

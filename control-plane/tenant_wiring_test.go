@@ -85,6 +85,7 @@ var cpTenantDelegates = map[string]string{
 	"HasSlotPool":                   "hasSlotPool",
 	"TerminateQuarantinedSlot":      "terminateQuarantinedSlot",
 	"ReserveSlotReplacement":        "reserveSlotReplacement",
+	"ReturnQuarantinedSlot":         "returnQuarantinedSlot",
 	"ForceStopSlot":                 "forceStopSlot",
 	"TenantAdminFor":                "tenantAdminFor",
 	"TenantAdminAccessOK":           "checkTenantAdminAccess",

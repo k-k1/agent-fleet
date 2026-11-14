@@ -387,6 +387,9 @@ INVENTORY = [
                     "vol-home:8/repeat: x/2026-11-13T00:00:00Z"})]),
     ("internal/runtime/runtime_ecs_ec2_dark_quarantine.go", "clearVoidQuarantine", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-quarantine-vol-home-6": "vol-home:6/repeat: x/2026-11-13T00:00:00Z"})]),
+    # The operator's return of an L2 slot (#4019): the same value-matched delete, on a slot that keeps af-role=slot.
+    ("internal/runtime/runtime_ecs_ec2_quarantine_return.go", "deleteQuarantineRecord", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-quarantine-vol-home-6": "vol-home:6/repeat: x/2026-11-13T00:00:00Z"})]),
     ("internal/runtime/runtime_ecs_ec2_volumes.go", "clearSlotFree", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-idle-since": None})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "CreateTags", 1, [

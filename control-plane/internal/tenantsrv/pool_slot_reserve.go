@@ -158,6 +158,80 @@ func orDash(s string) string {
 	return s
 }
 
+// ReturnPoolSlot (POST /api/admin/ec2-pool/slots/{id}/return, body {"token": "<value>"}) returns
+// a slot held by rung L2 of ADR 0121 to the pool (#4019). super_admin only, like Terminate:
+// slots are shared across tenants, so no tenant_admin owns one.
+//
+// The token is the af-quarantine value the pool view showed, and the adapter deletes that record
+// by its exact value, so a slot re-quarantined since the screen loaded is refused (409), not
+// returned. The refusals are answers, not faults: an unknown id (404), a role-quarantined slot
+// (409 slot_terminable: Terminate's kind), a slot with no such record (409), a Start placing
+// a home on it or a lock that was busy (409).
+func (a Admin) ReturnPoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "instance id required"})
+		return
+	}
+	if !a.cp.HasSlotPool() {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Token) == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", `body {"token": "<quarantine token>"} required`})
+		return
+	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: "", ActorKind: "admin", ActorID: ident.ID,
+		Action: "pool.slot_return", Target: id,
+	})
+	if !ok {
+		return
+	}
+	res, ok, err := a.cp.ReturnQuarantinedSlot(r.Context(), id, body.Token)
+	if !ok {
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
+		return
+	}
+	// The record is deleted, so its reason is kept here, as Terminate keeps it.
+	detail := fmt.Sprintf("workspace=%s count_bumped=%t other_records=%d reason=%s",
+		orDash(res.Workspace), res.CountBumped, res.OtherRecords, orDash(res.Reason))
+	if aerr := returnSlotAPIError(err); aerr != nil {
+		in.Done(r.Context(), "error "+aerr.Code+": "+aerr.Message+" ("+detail+")", aerr.Status)
+		writeAPIErr(w, aerr)
+		return
+	}
+	in.Done(r.Context(), detail, http.StatusOK)
+	writeJSON(w, http.StatusOK, res)
+}
+
+// returnSlotAPIError maps the adapter's answers onto the API's; nil for success.
+func returnSlotAPIError(err error) *APIError {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, runtime.ErrSlotQuarantineToken):
+		return &APIError{http.StatusBadRequest, "bad_token", err.Error()}
+	case errors.Is(err, runtime.ErrSlotNotFound):
+		return &APIError{http.StatusNotFound, "no_such_slot", err.Error()}
+	case errors.Is(err, runtime.ErrSlotRoleQuarantined):
+		return &APIError{http.StatusConflict, "slot_terminable", err.Error()}
+	case errors.Is(err, runtime.ErrSlotNotQuarantined):
+		return &APIError{http.StatusConflict, "slot_not_quarantined", err.Error()}
+	case errors.Is(err, runtime.ErrSlotQuarantineChanged):
+		return &APIError{http.StatusConflict, "quarantine_changed", err.Error()}
+	case errors.Is(err, runtime.ErrSlotPlacing):
+		return &APIError{http.StatusConflict, "slot_placing", err.Error()}
+	case errors.Is(err, runtime.ErrSlotBusy):
+		return &APIError{http.StatusConflict, "slot_busy", err.Error()}
+	default:
+		return internalErr(err)
+	}
+}
+
 // ForceStopPoolSlot (POST /api/admin/ec2-pool/slots/{id}/force-stop, optional body
 // {"override_healthy": true}) stops a wedged slot (#2449). super_admin
 // only: slots are shared across tenants, so no tenant_admin owns one.

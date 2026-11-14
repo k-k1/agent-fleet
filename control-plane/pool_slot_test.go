@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -269,5 +270,112 @@ func TestForceStopPoolSlotOnARuntimeWithNoPool(t *testing.T) {
 	_, adm := poolSlotFixture(t, &destroyingFactory{})
 	if w := callForceStop(adm, "i-x", "boss@acme.co.jp", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("force-stop on a poolless runtime = %d, want 404", w.Code)
+	}
+}
+
+// POST /api/admin/ec2-pool/slots/{id}/return (#4019) lifts a rung-L2 hold. Pinned: the token
+// from the body reaches the adapter untouched (the delete is by that exact value), the
+// adapter's refusals are answers, and the quarantine reason lands in the audit row because the
+// record that held it is deleted.
+
+type returnSlotFactory struct {
+	slotPoolFactory
+	res    runtime.SlotReturn
+	retErr error
+	tokens []string
+}
+
+func (f *returnSlotFactory) ReturnQuarantinedSlot(_ context.Context, id, token string) (runtime.SlotReturn, error) {
+	f.asked = append(f.asked, id)
+	f.tokens = append(f.tokens, token)
+	return f.res, f.retErr
+}
+
+func callReturnSlot(adm adminAPI, id, email, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/ec2-pool/slots/"+id+"/return", strings.NewReader(body))
+	r.SetPathValue("id", id)
+	r.Header.Set("X-Forwarded-Email", email)
+	w := httptest.NewRecorder()
+	adm.withSuperAdmin(adm.returnPoolSlot)(w, r)
+	return w
+}
+
+func TestReturnPoolSlotPassesTheTokenAndAuditsTheReason(t *testing.T) {
+	f := &returnSlotFactory{res: runtime.SlotReturn{InstanceID: "i-held", Workspace: "ws-1", Reason: "repeat: dark again", CountBumped: true}}
+	st, adm := poolSlotFixture(t, f)
+	const token = "vol-1:7/repeat: dark again/2026-11-13T00:00:00Z"
+	w := callReturnSlot(adm, "i-held", "boss@acme.co.jp", `{"token":"`+token+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("return = %d %s", w.Code, w.Body.String())
+	}
+	if len(f.tokens) != 1 || f.tokens[0] != token || f.asked[0] != "i-held" {
+		t.Fatalf("adapter asked %v %v", f.asked, f.tokens)
+	}
+	rows, _ := st.ListAuditByTenant(context.Background(), "", 10)
+	var found bool
+	for _, a := range rows {
+		if a.Action == "pool.slot_return" && a.Target == "i-held" && a.HTTPStatus == http.StatusOK &&
+			strings.Contains(a.Detail, "reason=repeat: dark again") && strings.Contains(a.Detail, "count_bumped=true") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no audit row carrying the reason: %+v", rows)
+	}
+}
+
+func TestReturnPoolSlotRefusalsAreAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"unknown id", runtime.ErrSlotNotFound, http.StatusNotFound},
+		{"bad token", runtime.ErrSlotQuarantineToken, http.StatusBadRequest},
+		{"role quarantined", runtime.ErrSlotRoleQuarantined, http.StatusConflict},
+		{"not quarantined", runtime.ErrSlotNotQuarantined, http.StatusConflict},
+		{"re-quarantined", runtime.ErrSlotQuarantineChanged, http.StatusConflict},
+		{"a start is placing", runtime.ErrSlotPlacing, http.StatusConflict},
+		{"lock busy", runtime.ErrSlotBusy, http.StatusConflict},
+		{"AWS failed", errors.New("boom"), http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, adm := poolSlotFixture(t, &returnSlotFactory{retErr: tc.err})
+			if w := callReturnSlot(adm, "i-x", "boss@acme.co.jp", `{"token":"t"}`); w.Code != tc.want {
+				t.Fatalf("return = %d %s, want %d", w.Code, w.Body.String(), tc.want)
+			}
+			rows, _ := st.ListAuditByTenant(context.Background(), "", 10)
+			for _, a := range rows {
+				if a.Action == "pool.slot_return" && (a.HTTPStatus != tc.want || !strings.HasPrefix(a.Detail, "error ")) {
+					t.Fatalf("a refused return was audited as one: %+v", a)
+				}
+			}
+		})
+	}
+}
+
+func TestReturnPoolSlotNeedsATokenAndASuperAdmin(t *testing.T) {
+	f := &returnSlotFactory{}
+	st, adm := poolSlotFixture(t, f)
+	for _, body := range []string{"", "{}", `{"token":"  "}`, "not json"} {
+		if w := callReturnSlot(adm, "i-x", "boss@acme.co.jp", body); w.Code != http.StatusBadRequest {
+			t.Fatalf("body %q = %d, want 400", body, w.Code)
+		}
+	}
+	if _, err := st.UpsertIdentity(context.Background(), "ta@acme.co.jp", "ta-acme-co-jp", "member"); err != nil {
+		t.Fatal(err)
+	}
+	if w := callReturnSlot(adm, "i-x", "ta@acme.co.jp", `{"token":"t"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("a non-super-admin = %d, want 403", w.Code)
+	}
+	if len(f.asked) != 0 {
+		t.Fatalf("the adapter was reached: %v", f.asked)
+	}
+}
+
+func TestReturnPoolSlotOnARuntimeWithNoPool(t *testing.T) {
+	_, adm := poolSlotFixture(t, &destroyingFactory{})
+	if w := callReturnSlot(adm, "i-x", "boss@acme.co.jp", `{"token":"t"}`); w.Code != http.StatusNotFound {
+		t.Fatalf("return on a poolless runtime = %d, want 404", w.Code)
 	}
 }
