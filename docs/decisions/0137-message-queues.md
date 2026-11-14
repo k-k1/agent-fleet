@@ -245,14 +245,17 @@ children still make progress is not retired.
 2. *Wake and wait*, the scheduler's path.
 3. *Send*: reserve the durable idempotency key `q_<delivery>` on the Agent; move the delivery from `claimed` to
    `sending` with a conditional write on its state, and only a fire whose write succeeds may go on; then create the
-   session under that key, with the delivery id stamped on it, the queue's consumer settings, the `queue` source,
-   and a **new worktree off the queue's repository** unless the queue says otherwise (two sessions in one working
-   copy corrupt each other). When the answer arrives the delivery becomes `open` with the session's name.
+   session under that key with `idempotency_durable` set, the delivery id stamped on it, the queue's consumer
+   settings, the `queue` source, and a **new worktree off the queue's repository** unless the queue says otherwise
+   (two sessions in one working copy corrupt each other). When the answer arrives the delivery becomes `open` with
+   the session's name.
 
-The durable key is what the Agent already has for the Control Plane's own launches
-(`workspace/agent/internal/sessionx/session_idempotency.go:14-23`; the member inbox launches with it,
-`control-plane/inbox_launch.go`): its record is on disk, a key that was abandoned refuses a create that arrives
-later, and only a reserved, abandoned or refused record answers "not created".
+The durable key is what the Agent already has for the launch from a handoff offer
+(`workspace/agent/internal/sessionx/session_idempotency.go:14-23`; `control-plane/session_handoff.go:811-813` and
+`reserveHandoffCreate` beside it). Its record is on disk. A key is reserved before its create is sent, and abandon
+settles a reserved key under the same lock a create begins under: either the create began first and is reported, or
+it is refused afterwards. The launch from the member inbox (`control-plane/inbox_launch.go`) is not the model: it
+uses a plain key and a lookup.
 
 What happens when a step does not complete:
 
@@ -269,16 +272,19 @@ and older than a fire's own time budget, so that a restart leaves nothing behind
 - `claimed`: close it as not sent, with the same conditional write on its state. If that write wins, the messages
   return to `pending`. If a slow fire's write to `sending` won instead, nothing is returned. Elapsed time alone
   never proves that an old worker will not send; the conditional write does.
-- `sending`: look the key up on the Agent.
-  - Done: the delivery becomes `open` with the session the record names.
-  - Reserved: abandon the key, which is atomic with the start of a create, so a create still on its way is refused.
-    Abandoned or refused, then or already: nothing was created and nothing will be. The delivery closes as not sent
-    and the messages return to `pending`.
-  - In flight in the running Agent: leave it for the next tick.
-  - Unknown (no record, an unreadable one, or one left in flight by an Agent process that is gone): look for a
+- `sending`: abandon the key on the Agent (`POST /sessions-idempotency/{key}/abandon`) and act on its answer. A
+  lookup is not enough: it answers the same `not_found` for a key that is only reserved and for one it has no record
+  of, and a create under a reserved key may still begin
+  (`workspace/agent/internal/sessionx/session_handlers.go:879-889`).
+  - 200, the create is done: the delivery becomes `open` with the session the answer names.
+  - 202, a create is in flight: the delivery keeps its slot; look again at the next tick.
+  - 404 `not_created`, the key is abandoned or refused: nothing was created and nothing will be. The delivery closes
+    as not sent and the messages return to `pending`.
+  - 503 `create_outcome_unknown` (no record, an unreadable one, or a create cut off by an Agent restart): look for a
     session stamped with the delivery id. Found: the delivery becomes `open`. Not found: the delivery closes as
     unknown and the messages become `unconfirmed`. They are shown to the person and never fired again by
     themselves; a duplicate implements an issue twice.
+  - No answer: nothing is decided, and the delivery keeps its slot.
 - While the workspace is stopped a `sending` delivery cannot be resolved, and it keeps its slot: its session may
   exist and hold a watch or a booked resume. When such a delivery is all that keeps an open queue with `pending`
   messages from firing, the dispatcher wakes the workspace to resolve it. That wake counts against the queue's
