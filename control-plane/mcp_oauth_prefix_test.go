@@ -16,6 +16,7 @@ import (
 const prefixCB = "https://claude.ai/api/mcp/auth_callback"
 
 func TestMCPOAuthRedirectMatchesURLPrefixOnParsedURL(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	trusted := trustedHosts{prefixCB: true, "chatgpt.com": true, "https://mcp.corp.example/oauth/": true}
 	for raw, want := range map[string]redirectClass{
@@ -63,6 +64,7 @@ func TestMCPOAuthRedirectMatchesURLPrefixOnParsedURL(t *testing.T) {
 }
 
 func TestMCPOAuthTrustedEntryValidation(t *testing.T) {
+	t.Parallel()
 	for _, ok := range []string{"claude.ai", prefixCB, "https://Claude.ai/Api/x/", "https://a.example/x/y"} {
 		if _, err := parseTrustedEntry(ok); err != nil {
 			t.Errorf("%q refused: %v", ok, err)
@@ -91,6 +93,7 @@ func TestMCPOAuthTrustedEntryValidation(t *testing.T) {
 // Scheme and host are folded to lower case; the path keeps its spelling, so a case-sensitive
 // callback path matches only itself.
 func TestMCPOAuthTrustedPrefixPathIsCaseSensitive(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	got, err := validateTrustedClientHosts([]string{"HTTPS://Example.COM/OAuth/CallBack"})
 	if err != nil || len(got) != 1 || got[0] != "https://example.com/OAuth/CallBack" {
@@ -116,6 +119,7 @@ func TestMCPOAuthTrustedPrefixPathIsCaseSensitive(t *testing.T) {
 // The built-in default pins claude.ai to its callback path and the shipped defaults for the other
 // two hosts stay host-only.
 func TestMCPOAuthDefaultsPinClaudeAI(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	tr := mustTrusted(e.api)
 	if got := e.api.classifyRedirect(tr, "https://claude.ai/something/else"); got != redirectRefused {
@@ -129,6 +133,7 @@ func TestMCPOAuthDefaultsPinClaudeAI(t *testing.T) {
 }
 
 func TestMCPOAuthRegisterAndAuthorizeRefuseOutsidePrefix(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	body := `{"redirect_uris":["https://claude.ai/other/path"]}`
 	rec := e.do(http.MethodPost, mcpOAuthRegister, body, map[string]string{"Content-Type": "application/json"})
@@ -157,6 +162,7 @@ func TestMCPOAuthRegisterAndAuthorizeRefuseOutsidePrefix(t *testing.T) {
 }
 
 func TestMCPOAuthPrefixOnlyListStillFetchesCIMDAndRefreshesGrants(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	tr := trustedHosts{prefixCB: true}
 	if !tr.hostTrusted("claude.ai") || tr.hostTrusted("claude.com") {
@@ -172,6 +178,7 @@ func TestMCPOAuthPrefixOnlyListStillFetchesCIMDAndRefreshesGrants(t *testing.T) 
 }
 
 func TestMCPOAuthGrantAuditRecordsPathAndRegistration(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(prefixCB)
 	_ = e.connect(id, prefixCB, "read")
@@ -192,6 +199,7 @@ func TestMCPOAuthGrantAuditRecordsPathAndRegistration(t *testing.T) {
 }
 
 func TestMCPOAuthConsentShowsFullRedirectAndRegistrationKind(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	_, challenge := pkcePair()
 	id := e.registerClient(prefixCB)
@@ -211,6 +219,7 @@ func TestMCPOAuthConsentShowsFullRedirectAndRegistrationKind(t *testing.T) {
 }
 
 func TestMCPOAuthRegisterSourceGroupsIPv6By64(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		a, b string
 		same bool
@@ -240,6 +249,7 @@ func TestMCPOAuthRegisterSourceGroupsIPv6By64(t *testing.T) {
 }
 
 func TestMCPOAuthRegistrationCapEvictsOldestGrantlessAndWarns(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	st := e.mgr.store
@@ -279,6 +289,7 @@ func TestMCPOAuthRegistrationCapEvictsOldestGrantlessAndWarns(t *testing.T) {
 }
 
 func TestMCPOAuthGrantlessRegistrationExpiresAfterADay(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	if mcpOAuthClientTTL > 24*time.Hour {
 		t.Fatalf("grant-less registration lifetime %v", mcpOAuthClientTTL)

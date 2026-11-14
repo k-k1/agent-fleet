@@ -14,7 +14,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// captureMCPLog returns what the standard logger writes until the test ends.
+// captureMCPLog returns what the standard logger writes until the test ends. It swaps the
+// process-wide logger, so every test that calls it stays serial.
 func captureMCPLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer

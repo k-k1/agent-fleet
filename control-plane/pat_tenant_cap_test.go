@@ -15,6 +15,7 @@ import (
 // applies at issuance and on every use of an existing token.
 
 func TestPATIssuanceUsesTheLowerOfDeploymentAndTenantCap(t *testing.T) {
+	t.Parallel()
 	f := newAccessFixture(t)
 	f.mgr.patMaxDays = 30
 	if err := f.st.SetTenantLimits(context.Background(), f.beta.ID, `{"pat_max_days":10}`); err != nil {
@@ -57,6 +58,7 @@ func TestPATIssuanceUsesTheLowerOfDeploymentAndTenantCap(t *testing.T) {
 }
 
 func TestPATUseHonorsTheTenantCapOfTheTokensOwnTenant(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	other, err := e.mgr.store.CreateTenant(ctx, "other", "Other")
@@ -118,6 +120,7 @@ func TestPATUseHonorsTheTenantCapOfTheTokensOwnTenant(t *testing.T) {
 }
 
 func TestSetTenantLimitsValidatesAndKeepsPATMaxDays(t *testing.T) {
+	t.Parallel()
 	_, mgr := budgetFixture(t, 30, map[string]int{"acme": 4})
 	for _, bad := range []string{`{"pat_max_days":-1}`, `{"pat_max_days":3651}`} {
 		if w := putLimits(mgr, "acme", bad); w.Code != 400 || !strings.Contains(w.Body.String(), "pat_max_days") {
@@ -149,6 +152,7 @@ func (failTenantLookup) PATTenantID(context.Context, string) (string, error) {
 
 // When the cap cannot be resolved the token must be refused, not honored uncapped.
 func TestPATIsRefusedWhenItsCapCannotBeResolved(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	tok, h := newPATToken()
 	if err := e.mgr.store.CreatePAT(context.Background(), store.PAT{ID: "p", IdentityID: e.ident.ID, MembershipID: e.membershipID(),

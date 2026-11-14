@@ -14,6 +14,7 @@ import (
 )
 
 func TestMCPOAuthConnectedOwnershipAndWire(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	registerPATRoutes(e.mux, config{mgr: e.mgr})
 	client := e.registerClient(loopbackCB)
@@ -68,6 +69,7 @@ func TestMCPOAuthConnectedOwnershipAndWire(t *testing.T) {
 }
 
 func TestMCPOAuthTenantGateEveryPath(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	client := e.registerClient(loopbackCB)
@@ -120,6 +122,7 @@ func (s *tokenInsertHold) InsertMCPOAuthToken(ctx context.Context, tok store.MCP
 }
 
 func TestMCPOAuthTenantDisableDuringRefresh(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	client := e.registerClient(loopbackCB)
 	tk := e.connect(client, loopbackCB, "read")
@@ -139,6 +142,7 @@ func TestMCPOAuthTenantDisableDuringRefresh(t *testing.T) {
 }
 
 func TestMCPOAuthTenantDisableDuringCodeExchange(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	client := e.registerClient(loopbackCB)
 	verifier, challenge := pkcePair()
@@ -172,6 +176,7 @@ func TestMCPOAuthTenantDisableDuringCodeExchange(t *testing.T) {
 }
 
 func TestMCPOAuthTenantAdminScope(t *testing.T) {
+	t.Parallel()
 	st, mgr, tn, _, _ := networkFixture(t)
 	other, err := st.CreateTenant(context.Background(), "other", "Other")
 	if err != nil {
@@ -197,6 +202,7 @@ func TestMCPOAuthTenantAdminScope(t *testing.T) {
 }
 
 func TestMCPOAuthConsentOmitsOnlyDisabledTenants(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	disabledMembership := e.membershipID()
@@ -219,6 +225,7 @@ func TestMCPOAuthConsentOmitsOnlyDisabledTenants(t *testing.T) {
 }
 
 func TestMCPOAuthTenantGateMemberAndSuperAdmin(t *testing.T) {
+	t.Parallel()
 	st, mgr, tn, _, member := networkFixture(t)
 	ctx := context.Background()
 	if _, err := st.UpsertIdentity(ctx, "super@example.com", "super-example-com", "super_admin"); err != nil {
@@ -253,6 +260,7 @@ func (s ownedRevokeHold) RevokeMCPOAuthGrantOf(ctx context.Context, id, identity
 }
 
 func TestMCPOAuthConnectedRevokeRaceReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	e := newMCPOAuthEnv(t)
 	registerPATRoutes(e.mux, config{mgr: e.mgr})
 	client := e.registerClient(loopbackCB)
