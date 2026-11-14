@@ -1,4 +1,4 @@
-# ComfyUI, pinned — the fleet's own image (ADR 0072 decision 4, phase P2; ADR 0072 "未解決の点" 8).
+# ComfyUI, pinned — the fleet's own image (ADR 0072 decision 4, phase P2; ADR 0072 open question 8).
 #
 # The community image measured for ADR 0072 (ghcr.io/lecode-official/comfyui-docker) bakes
 # ComfyUI v0.8.2 and checks out v0.34.0 at CONTAINER START, which cost 20-26 seconds of NAT-

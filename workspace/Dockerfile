@@ -1,8 +1,8 @@
 # Workspace image: git + tmux + Workspace Agent + Claude CLI.
-# Claude CLI はイメージに焼く（/usr/local、高速・オフライン起動）。ユーザー home の
-# ~/.local に claude があれば PATH 優先で、entrypoint が自動更新する（焼いた版は固定の
-# フォールバック / 新規 home の既定）。ツール本体は /usr/local、ユーザーデータは home(volume)。
-# docs/11-phase1-plan.md / docs/09-portability.md 参照。
+# The Claude CLI is baked in (/usr/local, for a fast, offline start). A claude in the user's
+# ~/.local takes PATH precedence and the entrypoint keeps it updated; the baked one is the
+# pinned fallback and the default for a fresh home. Tools live in /usr/local, user data in
+# the home volume. See docs/11-phase1-plan.md / docs/09-portability.md.
 
 # Pins shared by the build stages below; the runtime stage redeclares them (no value) to inherit.
 ARG GO_VERSION=1.26.10
@@ -150,12 +150,12 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # them uv drops a managed interpreter into root's home, unreadable by the
 # runtime user. The venv + entrypoint under /usr/local are root-owned and
 # world-readable, which is all the runtime user needs.
-# `test -x` では捕まらない壊れ方があるので import まで踏む: 0.1.4 の依存宣言は
-# `mcp[cli]>=1.23.0` と上限が無く、mcp 2.0.0 が出た今ビルドすると 2.0.0 が入って
-# `mcp.server.fastmcp` を失い、実行時に ModuleNotFoundError で即死した（実測）。
-# 0.1.8 は `<2.0.0` で上限を持ち 1.x に留まる。0.2.0 以降は逆に `>=2.0.0,<3.0.0` へ移り、
-# mcp 2.x 側の API へ移植済み（0.2.1 は system python 3.13 + mcp 2.2.0 の解決で下の
-# import が通ることを bump 時に実測）。ピンは版だけでなく解決結果まで含めて検証する。
+# The check goes as far as an import because some breakage gets past `test -x`: 0.1.4
+# declares `mcp[cli]>=1.23.0` with no upper bound, so a build now resolves mcp 2.0.0, loses
+# `mcp.server.fastmcp` and dies at runtime with ModuleNotFoundError (measured). 0.1.8 caps
+# it at `<2.0.0` and stays on 1.x; 0.2.0 and later require `>=2.0.0,<3.0.0` and are ported
+# to the mcp 2.x API (measured on bump: 0.2.1 resolves to system python 3.13 + mcp 2.2.0 and
+# the import below passes). Verify a pin by what it resolves to, not just its version.
 ARG CLOUDWATCH_MCP_VERSION=0.2.1
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
@@ -171,10 +171,10 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # SigV4. Worth baking rather than leaving to uvx: the dependency tree is botocore +
 # awscrt (~20MB of wheels), so a cold fetch is the difference between an MCP server
 # that starts and one the CLI gives up on.
-# ⚠️ cloudwatch と同じく import まで踏む。この venv の `bin/python` は python3.13 ではなく
-# `/usr/bin/python3` へのリンクなので、interpreter の major が動いた日に**リンクは切れず、
-# 黙って新しい python で起動して site-packages を見失う**——`test -x` は通ってしまう型で
-# ある（docs/decisions/0068 決定 4）。import 名は実インストールで確認済み。
+# Import-checked like cloudwatch. This venv's `bin/python` links to `/usr/bin/python3`, not
+# python3.13, so the day the interpreter's version moves the link does not break: it
+# silently starts the new python, which cannot see the site-packages, and `test -x` still
+# passes (docs/decisions/0068 decision 4). The import name was checked on a real install.
 ARG AWS_MCP_PROXY_VERSION=1.7.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
@@ -195,25 +195,25 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # deploy/local/apt-pin-check.sh checks the pin against both architectures' indexes and
 # prints the version to bump to; cli-drift.yml runs it every 2 hours and goes red when the
 # pin is gone for either architecture, and apt-pin-bump.yml opens the PR that moves it.
-# ⚠ trixie-security は「現行ビルドだけ」を持ち、古い版はミラーから消える。ピンを
-# 放置すると、この層のキャッシュが破れた次のビルドで `Version ... was not found` と
-# 落ちる（＝別の ARG を触った瞬間に無関係に見える形で発火する）。上流のセキュリティ
-# 更新に追随して bump すること。現行版は
-# `curl -fsSL http://security.debian.org/debian-security/dists/trixie-security/main/binary-<arch>/Packages.xz | xz -dc | grep -A5 '^Package: chromium$'` で確認できる。
-# ⚠⚠ 版を比べるときは**左右で同じ索引を読むこと**（docs/decisions/0068 決定 3）。security
-# スイートと main スイートは別の版を指すので、片方を security・片方を main で読むと
-# **存在しない版差が出る**。実際それで「trixie にすると chromium が下がる」という誤った
-# 代償が 1 度記録され、ベース更新の判断を狂わせた。ここに書くのは常に security の版。
+# trixie-security carries only the current build; older versions vanish from the mirror. A
+# stale pin fails the next build that misses this layer's cache with `Version ... was not
+# found` — triggered by touching some unrelated ARG, so it looks unrelated. Follow upstream
+# security updates. The current version:
+# `curl -fsSL http://security.debian.org/debian-security/dists/trixie-security/main/binary-<arch>/Packages.xz | xz -dc | grep -A5 '^Package: chromium$'`
+# When comparing versions, read the same index on both sides (docs/decisions/0068 decision 3):
+# the security and main suites point at different versions, so reading one side from each
+# invents a version gap — that once recorded a false "trixie downgrades chromium" cost and
+# skewed the base-image decision. The pin here is always the security suite's version.
 ARG CHROMIUM_VERSION=156.0.8078.79-1~deb13u1
-# BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
-# オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
-# その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
-# （docs/log/35 §35.7.1-5。ライブラリ一覧は playwright の chromium deps 準拠）。
-# ⚠ `…t64` は誤記ではない。Debian の 64-bit time_t 移行で 6 個が改名されており
-# （libasound2 / libatk-bridge2.0-0 / libatk1.0-0 / libatspi2.0-0 / libcups2 /
-# libglib2.0-0）、trixie には旧名が存在しない。**t64 を外すとこの枝だけが落ちる**——
-# しかも e2e.yml は BAKE_OPTIONAL_TOOLS=1 の枝しかビルドしないので e2e は緑のまま。
-# 検証は BAKE_OPTIONAL_TOOLS=0 のビルドを別に 1 本回すこと（docs/decisions/0068）。
+# BAKE_OPTIONAL_TOOLS=0 (the native lean rootfs) bakes neither chromium nor the CJK fonts and
+# leaves them to the on-demand download (install-chromium, pinned by CHROMIUM_DL_VERSION), but
+# the runtime libraries that download needs, plus fontconfig/DejaVu, are installed here
+# (docs/log/35 §35.7.1-5; the library list follows playwright's chromium deps).
+# The `…t64` names are not typos: Debian's 64-bit time_t transition renamed six of them
+# (libasound2 / libatk-bridge2.0-0 / libatk1.0-0 / libatspi2.0-0 / libcups2 / libglib2.0-0)
+# and trixie has no old names. Dropping t64 breaks only this branch, and e2e.yml builds only
+# BAKE_OPTIONAL_TOOLS=1, so e2e stays green. Verify with a separate BAKE_OPTIONAL_TOOLS=0
+# build (docs/decisions/0068).
 RUN apt-get update \
  && if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then \
       apt-get install -y --no-install-recommends \
@@ -241,9 +241,9 @@ RUN apt-get update \
 # live once on the host (provisioned by deploy/local/provision-jvm.sh) and the
 # Control Plane bind-mounts that dir read-only at /usr/lib/jvm into every workspace
 # (WS_JVM_DIR), so they're shared. The entrypoint picks JAVA_HOME from there.
-# ── 重い・滅多に変わらないレイヤを先に置く（Go toolchain / agent CLI / リネーム）。
-# entrypoint や workspace-notes など変更頻度の高い COPY はこの後ろに集約し、小修正で
-# これらがキャッシュ無効化されないようにする（layer ordering = ビルド時間最適化）。
+# ── Heavy, rarely changing layers come first (Go toolchain / agent CLIs / user rename).
+# Frequently changing COPYs (entrypoint, workspace-notes, …) are grouped after them so a
+# small edit does not invalidate these layers' cache (layer ordering = build time).
 
 # Go toolchain from the official pinned tarball (decoupled from the agent builder
 # image; arch auto-detected). Pure-Go builds work as-is; cgo / node-gyp / native
@@ -265,8 +265,8 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # terminal) + `aws ssm start-session` against their OWN AWS account. NO AWS credentials
 # are baked or stored anywhere — auth is per-session via SSO and cached in the home
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
-# 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/log/35
-# §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
+# Versions are pinned by ARG through versioned URLs (docs/log/35 §35.9-7(c)); bump the ARGs
+# below and rebuild.
 ARG AWSCLI_VERSION=2.36.46
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
@@ -288,10 +288,10 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # GitHub CLI (gh) from the official pinned release (arch auto-detected). Baked into the
 # image so `gh` (PR/issue ops, `gh auth`, API) is available on a fresh container without a
 # per-home download. Bump GH_VERSION to upgrade.
-# 実体は /usr/local/libexec/gh に置き、/usr/local/bin/gh は透過認証ラッパー
-# (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
-# からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
-# （docs/build/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
+# The real binary goes to /usr/local/libexec/gh and /usr/local/bin/gh is the transparent-auth
+# wrapper (gh-auth-wrapper.sh): on every call it takes the token from the same credential
+# helper git uses and injects it as GH_TOKEN, so gh works without `gh auth login`
+# (docs/build/08 §8.3). The wrapper itself is COPY'd with the frequently changing COPYs at the end.
 ARG GH_VERSION=2.103.3
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -406,10 +406,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # (opencode auth login) and sessions persist under ~/.local/share/opencode (home).
 # codex: OpenAI Codex CLI (kind="codex"); auth (codex login --with-api-key /
 # --device-auth) writes ~/.codex/auth.json and sessions land in ~/.codex (home).
-# 版は ARG でピン止め（GH_VERSION / GO_VERSION と同じ流儀）。bump は下の ARG を書き
-# 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
-# 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
-# ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
+# Versions are pinned by ARG (same idiom as GH_VERSION / GO_VERSION): bump the ARGs below,
+# rebuild, then Stop→Start each Workspace. Check latest with `npm view <pkg> version`.
+# Without a pin the unchanged RUN line hits the layer cache and a rebuild keeps the old
+# version; changing the ARG is what reliably busts the cache.
 ARG CLAUDE_CODE_VERSION=2.1.325
 ARG OPENCODE_VERSION=2.3.0
 ARG CODEX_VERSION=0.169.0
@@ -425,23 +425,23 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       && claude --version && opencode --version && codex --version && copilot --version; \
     fi
 
-# copilot（kind="copilot"、docs/log/36）: 自己更新は既定 ON（CI env 検出時のみ自動 OFF）
-# — フリートの版管理はイメージ再ビルドが正なので明示的に封殺する（claude の
-# DISABLE_AUTOUPDATER・agy の AGY_CLI_DISABLE_AUTO_UPDATE と同じ理屈。ユーザーの
-# 明示的な `copilot update` は可能なまま）。
+# copilot (kind="copilot", docs/log/36) self-updates by default (off only when it detects a
+# CI env). The fleet's versions are owned by image rebuilds, so turn it off explicitly — the
+# same reasoning as claude's DISABLE_AUTOUPDATER and agy's AGY_CLI_DISABLE_AUTO_UPDATE. An
+# explicit `copilot update` by the user still works.
 ENV COPILOT_AUTO_UPDATE=false
 
-# Antigravity CLI（kind="agy"、docs/decisions/0008 / docs/log/32）。npm でなく Go バイナリ
-# 配布なので別 RUN。かつては install.sh（常に latest manifest・版ピン不可）だったが、
-# 1.1.7以降は GitHub Releases が追随しないため、公式installerが返す不変のGCS
-# object（version-build-idを含むURL）を直接取得する。sha256 はその公式manifestの
-# sha512検証済みアーカイブから計算して二重に固定する。bump は AGY_VERSION、
-# AGY_RELEASE_BUILD と両archのshaを揃えて書き換える。
-# 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 でカーネルが RDRAND を取り下げた
-# ホストだと起動即 SIGABRT する（0008: Ryzen Embedded R2514）。そこは Agent が全 spawn に
-# 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
-# --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
-# バイナリを走らせられるとは限らない）。
+# Antigravity CLI (kind="agy", docs/decisions/0008 / docs/log/32). A Go binary rather than an
+# npm package, hence its own RUN. install.sh always takes the latest manifest and cannot pin,
+# and GitHub Releases stopped tracking versions after 1.1.7, so this fetches the immutable GCS
+# object the official installer points at (its URL carries the version and build id). The
+# sha256 is computed from that archive after checking it against the official manifest's
+# sha512, pinning it twice. Bump AGY_VERSION, AGY_RELEASE_BUILD and both arches' sha together.
+# agy is a Go BoringCrypto (FIPS) build and SIGABRTs at start on an x86 host whose kernel has
+# withdrawn RDRAND (0008: Ryzen Embedded R2514). There it is checked under the same
+# OPENSSL_ia32cap mask the Agent applies to every spawn (0008, decision of 2026-09-07), so
+# only a non-x86 build host skips the --version check (an arm64 cross-build cannot always
+# run the binary).
 ARG AGY_VERSION=1.5.9
 ARG AGY_RELEASE_BUILD=4515810895593472
 ARG AGY_SHA256_X64=8b1f5e56779f2434a0af36f1b715a8392a084de550f8c68bc79821f95fabf3fa
@@ -463,32 +463,34 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       else echo "skip agy --version check (non-x86 build host)"; fi; \
     fi
 
-# agy はインストール済みバイナリを通常実行中にバックグラウンド自己更新する
-# （install.sh の明記仕様）。版はイメージ再ビルドで管理するので封じる — claude の
-# DISABLE_AUTOUPDATER と同じ理屈（明示的な `agy update` は引き続き可能）。
+# agy self-updates its installed binary in the background during normal runs (documented
+# in install.sh). Versions are owned by image rebuilds, so turn it off — same reasoning as
+# claude's DISABLE_AUTOUPDATER (an explicit `agy update` still works).
 ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
-# Cursor CLI（kind="cursor"、docs/log/40 / docs/decisions/0023）。npm でも単一 Go バイナリ
-# でもなく、版付き tarball の Node.js バンドル（bundled node ＋ webpack chunk 群 ＋
-# node_sqlite3/pty/ripgrep 同梱）。上流 `curl cursor.com/install | bash` は版ピンされた
-# スクリプトを配り、`downloads.cursor.com/lab/<版>/linux/<arch>/agent-cli-package.tar.gz`
-# を `~/.local/share/cursor-agent/versions/<版>/` へ `tar --strip-components=1` 展開し、
-# `~/.local/bin/{agent,cursor-agent}` へ symlink する（wrapper は realpath で自分の版
-# ディレクトリの node/index.js を解決）。焼き込みは同レイアウトを /usr/local に置いて
-# root 所有にする（dev ユーザは書けない）。バレ名 `agent` は PATH 衝突しやすいので
-# /usr/local/bin には `cursor-agent` だけを張る（AF は cursor-agent のみ呼ぶ）。
+# Cursor CLI (kind="cursor", docs/log/40 / docs/decisions/0023). Neither npm nor a single Go
+# binary: a versioned tarball of a Node.js bundle (bundled node + webpack chunks +
+# node_sqlite3/pty/ripgrep). Upstream's `curl cursor.com/install | bash` serves a
+# version-pinned script that unpacks
+# `downloads.cursor.com/lab/<version>/linux/<arch>/agent-cli-package.tar.gz` into
+# `~/.local/share/cursor-agent/versions/<version>/` with `tar --strip-components=1` and
+# symlinks `~/.local/bin/{agent,cursor-agent}` (the wrapper resolves node/index.js in its own
+# version directory through realpath). Baking puts the same layout under /usr/local, root-owned
+# (the dev user cannot write it). The bare name `agent` collides easily on PATH, so only
+# `cursor-agent` is linked into /usr/local/bin (AF calls only cursor-agent).
 #
-# 版数は日付形式（2026.07.20-8cc9c0b）で semver でない — 版比較ロジックは要注意
-# （rtk-always-baked と同類。e2e-smoke は版文字列を丸ごと突き合わせる）。上流は
-# チェックサムを公開しないので sha256 は両 arch とも bake 時に自前計算してピン
-# （改竄検知）。bump は CURSOR_VERSION と両 sha を揃えて書き換える（`curl -fsSL
-# https://cursor.com/install | grep -oE 'versions/[0-9.]+-[a-f0-9]+'` で最新版、
-# tarball を落として sha256sum で digest）。
+# The version is date-shaped (2026.07.20-8cc9c0b), not semver — careful with any version
+# comparison (like rtk-always-baked; e2e-smoke compares the whole version string). Upstream
+# publishes no checksums, so the sha256 for both arches is computed at bake time and pinned
+# (tamper detection). Bump CURSOR_VERSION and both shas together (latest version:
+# `curl -fsSL https://cursor.com/install | grep -oE 'versions/[0-9.]+-[a-f0-9]+'`; digest:
+# download the tarball and sha256sum it).
 #
-# 自己更新は公式に無効化できる（バンドル解析: 背景更新は起動2秒後の
-# setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
-# 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
-# cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
+# Self-update can be disabled officially (from reading the bundle: the background update runs
+# from a setTimeout(...).unref() 2 s after start but skips on
+# `disableAutoUpdate || channel==="static"`). The baked CLI is held twice: AF's launch flag
+# `--disable-auto-update` (every path) plus the entrypoint re-pinning `channel:"static"` in
+# cli-config.json (details: docs/log/40 Track B).
 ARG CURSOR_VERSION=2026.10.22-27dcf5f
 ARG CURSOR_SHA256_X64=85296944e4600a83c4b764f578d1502bf9c416db200d33a593e8f3ecabfdc294
 ARG CURSOR_SHA256_ARM64=22a36df9720830668ccd4d707e5190204ab9c8a0efb2f068cc914895f804d3ec
@@ -509,61 +511,62 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       cursor-agent --disable-auto-update --version; \
     fi
 
-# Kiro CLI（kind="kiro"、docs/log/43 / docs/decisions/0026）。旧 Amazon Q Developer CLI
-# の版付きネイティブバイナリ配布（bundled kiro-cli + kiro-cli-chat + kiro-cli-term）。
-# 公式 manifest（prod.download.cli.kiro.dev/stable/latest/manifest.json）が版付き URL
-# ＋ sha256 を掲載しており、agy と同じ「版付き URL ＋ sha256 ピン」で焼ける。zip 内は
-# `kirocli/{BUILD-INFO,bin/*,install.sh}` で、同梱 install.sh を Q_INSTALL_GLOBAL=1
-# Q_SKIP_SETUP=1 で回すと 3 バイナリだけを /usr/local/bin へ入れる（integrations/setup は
-# 走らない）。展開後 ~855MB と桁違いに巨大なので、既定（BAKE_AGENT_CLIS=0）では焼かず
-# オンデマンド導入（workspace-agent install-kiro／初回起動時の自動導入・§4-2 決定）に回し、
-# BAKE_AGENT_CLIS=1（覚悟のノブ）でのみ焼く。
+# Kiro CLI (kind="kiro", docs/log/43 / docs/decisions/0026), the former Amazon Q Developer CLI,
+# shipped as versioned native binaries (bundled kiro-cli + kiro-cli-chat + kiro-cli-term). The
+# official manifest (prod.download.cli.kiro.dev/stable/latest/manifest.json) lists versioned
+# URLs with sha256, so it bakes the same way as agy: versioned URL + sha256 pin. The zip holds
+# `kirocli/{BUILD-INFO,bin/*,install.sh}`. Unpacked it is ~855MB, an order of magnitude larger
+# than the rest, so the default (BAKE_AGENT_CLIS=0) does not bake it and leaves it to the
+# on-demand install (workspace-agent install-kiro / automatic install on first start, §4-2
+# decision); only BAKE_AGENT_CLIS=1, the knob you set knowing the cost, bakes it.
 #
-# arch 別アセット: x86_64 は gnu 版（install.sh の glibc 下限 2.34・Debian 13 は 2.41 で
-# 充足）、aarch64 は **musl 版**（gnu は glibc 2.39 要求で、旧 Debian 12 ベースでは動かな
-# かった — 実測）。⚠️ Debian 13（glibc 2.41）なら gnu 版も要求を満たすが、**musl のまま
-# 据え置く**。現に動いていて検証済みの経路を、ベース更新と同じ変更で入れ替えると、
-# 何かが壊れたときに二分できなくなる（docs/decisions/0068 決定 6）。
-# sha256 は manifest 掲載値をそのまま ARG に写す（bump は KIRO_VERSION と両 arch の sha を
-# 揃えて書き換え。値は `curl -fsSL .../stable/latest/manifest.json | jq` で確認）。
+# Per-arch assets: x86_64 uses the gnu build (install.sh needs glibc >= 2.34; Debian 13 has
+# 2.41), aarch64 the musl build (the gnu one needs glibc 2.39 and did not run on the old
+# Debian 12 base — measured). Debian 13 (glibc 2.41) would satisfy the gnu build too, but it
+# stays on musl: swapping a working, verified path in the same change as a base update leaves
+# nothing to bisect when something breaks (docs/decisions/0068 decision 6).
+# The sha256 values are copied from the manifest as they are (bump KIRO_VERSION and both
+# arches' sha together; read them with `curl -fsSL .../stable/latest/manifest.json | jq`).
 #
-# 自己更新（既定 ON）はビルド時 ENV 相当のノブが無く、~/.kiro/settings/cli.json の
-# `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
-# ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
-# では止められない）。
+# Self-update (on by default) has no build-time ENV knob: it is a setting,
+# `app.disableAutoupdates` in ~/.kiro/settings/cli.json, so it is held at runtime (the
+# entrypoint re-pins it on every start, plus the per-kind ensureSettings). Unlike copilot's
+# COPILOT_AUTO_UPDATE, a build ENV cannot stop it.
 ARG KIRO_VERSION=3.3.0
 ARG KIRO_SHA256_X64=018e7d19124ebf5088bc33b12dcafa5c7e8de745ae491df024afebcd19f36b62
 ARG KIRO_SHA256_ARM64=0218b5440cbdb11418887ad3f7a7cf00054effd47979fd6b0ca37cfc5d8a2d20
-# Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
-# 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
-# per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
-# versions.json に書き出してその取得版として使われる。BAKE_AGENT_CLIS=1（覚悟のノブ）の
-# ときだけ /usr/local/bin へ焼く。
+# Muse Code (kind="muse", ADR 0095 decision 8). Proprietary, so it is not in the distributed
+# image (BAKE_AGENT_CLIS=0 by default; the reasons are under "Distribution knobs" above and in
+# NOTICE). The default path is the per-user on-demand install (workspace-agent install-muse),
+# which takes this pin from versions.json as the version to fetch. Only BAKE_AGENT_CLIS=1 (the
+# knob you set knowing the cost) bakes it into /usr/local/bin.
 #
-# 落とすのは**バイナリそのもの**で、ベンダの bash ランチャではない。ランチャは既定で
-# チャンネルを毎時見て自分を書き換えるが（MUSE_UPDATE_INTERVAL_SECONDS=3600・実測）、
-# manifest の artifact は単体で動き自己更新経路を持たない。だからピンが意味を持つ。
+# What is downloaded is the binary itself, not the vendor's bash launcher. The launcher checks
+# the channel hourly by default and rewrites itself (MUSE_UPDATE_INTERVAL_SECONDS=3600,
+# measured); the manifest's artifact runs standalone with no self-update path, which is what
+# makes the pin mean anything.
 #
-# 版とアセットは版指定の release manifest から取る:
-#   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url（匿名）
+# Version and assets come from the version-specific release manifest:
+#   curl -s 'https://api.meta.ai/muse-code/channels/muse-stable'      # version + manifest_url (anonymous)
 #   curl -s "<manifest_url>" | jq .artifacts.x86_linux,.artifacts.aarch64_linux
-# sha256 は `artifacts.{x86_linux,aarch64_linux}.checksum` をそのまま写す（bump は
-# MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
-# ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
-# agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（agents/muse/install.go）。
+# Copy the sha256 from `artifacts.{x86_linux,aarch64_linux}.checksum` as is (bump MUSE_VERSION
+# and both arches' sha together). Measured 362,440,920 B / 323,360,856 B (1.4.1-R4503.1).
+# The version string is `Muse Code 1.3.0 (1.3.0-R3401.1)`: the build id in parentheses is what
+# is matched against the pin. agy's `tr -dc '0-9.'` approach would drop `-R3401.1` and never
+# match (agents/muse/install.go).
 ARG MUSE_VERSION=1.4.20-R8619.1
 ARG MUSE_SHA256_X64=3685b023d45a1a07c8c559da00088bdf59564920b13a85adad11e13ad6f4d181
 ARG MUSE_SHA256_ARM64=7159d6431fc5ff4c9dea32c62d0b771f5089d14389ec672ae903755bd39374dc
-# Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
-# sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
-# 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
+# Postgres supply pin (ADR 0086 P0 supply lane): hash of the Zonky embedded-postgres 17.11.0 jar,
+# checked with `curl -sfL <jar-url> | sha256sum`.
+# For the other majors (16/17/18) install-postgres fetches Maven Central's .sha256 sidecar at run time.
 ARG POSTGRES_VERSION=17.11.0
 ARG POSTGRES_SHA256_X64=0dd7b72b6f335b8ecfb355fa24c5781e8a93edd09880bb77eb52ebbf29b3e96d
 ARG POSTGRES_SHA256_ARM64=8b042e0ea418b1927d95399207950da0734d27fe01e29503ade3bdc464ad4c2b
-# MySQL供給ピン（ADR 0086 P1 供給レーン）: 公式 tarball のハッシュ。
-# x86_64: minimal tarball (66,009,936 bytes) sha256 は実物から計算。
-# arm64:  フル tarball (909,017,708 bytes) sha256 は実物から計算（minimal は存在しない）。
-# 両 sha は cdn.mysql.com/archives/mysql-8.4/ からダウンロードして sha256sum で確認。
+# MySQL supply pin (ADR 0086 P1 supply lane): hashes of the official tarballs.
+# x86_64: the minimal tarball (66,009,936 bytes), sha256 computed from the file.
+# arm64:  the full tarball (909,017,708 bytes), sha256 computed from the file (no minimal exists).
+# Both downloaded from cdn.mysql.com/archives/mysql-8.4/ and checked with sha256sum.
 ARG MYSQL_VERSION=8.4.6
 ARG MYSQL_SHA256_X64=f284b17b9e038adbe77f0dd5fb11ed30262286b23a390b8b4e367abc3574c42e
 ARG MYSQL_SHA256_ARM64=ab2c553ee4349a6bbe62325d4efcb427204e389264c4759ca32a92eae9aa2abc
@@ -587,10 +590,10 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       kiro-cli --version; \
     fi
 
-# Muse Code の焼き込み（BAKE_AGENT_CLIS=1 のときだけ）。artifact は単体で動くバイナリなので
-# 版付きディレクトリもランチャも要らず、/usr/local/bin/muse へ 1 本置くだけで済む。
-# `--version` ゲートは truncated／arch 不一致を焼き込まないためで、オンデマンド側の
-# museSanityCheck と同じ役割（ただしこちらはビルドを落とす）。
+# Muse Code bake (BAKE_AGENT_CLIS=1 only). The artifact is a standalone binary, so it needs no
+# versioned directory or launcher: one file at /usr/local/bin/muse. The `--version` gate keeps
+# a truncated or wrong-arch binary out of the image, the same job as the on-demand side's
+# museSanityCheck (except that here it fails the build).
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -606,45 +609,43 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       muse --version; \
     fi
 
-# ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
-# 設定 UI「ツールのバージョン」の「ピン vs 実体」表示・スモークの検証材料に加え、
-# lean variant（BAKE_AGENT_CLIS=0 / BAKE_OPTIONAL_TOOLS=0）では entrypoint の
-# boot-install とオンデマンド導入（P2）がこのピンを取得版として使う（docs/log/35 §35.4.1）。
-# BAKE ノブに関わらず常に全ピンを書き出す。
-# chromium_cft は amd64 のオンデマンド chromium ピン = Chrome for Testing の
-# browser version（playwright 1.61 同梱 build 1228 と同一実体。playwright は 1.61 で
-# x64 を builds/chromium から CfT 配布へ移行済み — docs/log/35 §35.9-7(a) の P4 実測）。
-# chromium_dl は arm64 が使う旧 builds/chromium レイアウトの build 番号ピン。
-# noto_cjk は install-chromium が CJK フォントを取る notofonts/noto-cjk のタグピン
-# （lean rootfs のオンデマンド導入用 — docs/log/35 §35.7.2-4）。
+# Write the build-time pins into the container (ARGs are gone after the build and cannot be
+# read at runtime). They feed the "pin vs installed" view of the settings UI's tool versions
+# and the smoke checks, and in the lean variant (BAKE_AGENT_CLIS=0 / BAKE_OPTIONAL_TOOLS=0)
+# the entrypoint's boot-install and the on-demand installs use them as the versions to fetch
+# (docs/log/35 §35.4.1). Every pin is written regardless of the BAKE knobs.
+# chromium_cft is amd64's on-demand chromium pin, a Chrome for Testing browser version (the
+# same build as playwright 1.61's bundled build 1228; playwright 1.61 moved x64 from
+# builds/chromium to CfT — measured in P4, docs/log/35 §35.9-7(a)).
+# chromium_dl is the build-number pin for the older builds/chromium layout arm64 uses.
+# noto_cjk is the notofonts/noto-cjk tag install-chromium takes the CJK fonts from
+# (for the lean rootfs's on-demand install — docs/log/35 §35.7.2-4).
 ARG CHROMIUM_CFT_VERSION=149.0.7827.55
 ARG CHROMIUM_DL_VERSION=1228
 ARG NOTO_CJK_VERSION=Sans2.004
-# bind マウントポイントを rootfs に焼く: docker は -v 先のディレクトリを実行時に自動
-# 作成するが、native rootfs モード（bwrap --ro-bind で / が read-only — docs/log/35
-# §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。4 箇所とも空のまま焼く。
+# Bake the bind mount points into the rootfs: docker creates a -v target directory at run
+# time, but in native rootfs mode (/ is read-only under bwrap --ro-bind — docs/log/35
+# §35.7.2) bwrap cannot mkdir the target and the start dies at once. All four are baked empty.
 RUN mkdir -p /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs /usr/lib/jvm
-# claude / keep / docs は dev 所有にする: claude auth login が CLAUDE_CONFIG_DIR に
-# .credentials.json / settings.json を書く（claude/auth.go）。docker / native は
-# この上に host bind か EFS 直マウントが被さるので所有者は関係ないが、ECS の EFS
-# アクセスポイントは PosixUser を付けられず（ensureAccessPoint のコメント参照）
-# Docker が「イメージ側パスの所有権をフレッシュボリュームへコピーする」動作に頼る
-# ため、イメージ側が root 所有のままだと dev（uid 1000）が一切書き込めなくなる
-# （実機（開発配備）で EACCES: permission denied を確認、2026-08-19）。この
-# ロジックが効くのは「そのアクセスポイントの root が初めて中身を持つ瞬間」だけなので、
-# 既存の（既に root 所有で初期化済みの）EFS ディレクトリはイメージを直しても直らない
-# ——実機では `docker exec -u root … chown -R 1000:1000 /var/lib/af/claude` で別途
-# 復旧した。keep（/var/lib/af/keep）はこれまでイメージに焼かれておらず、常に「初めて
-# 中身を持つ」側だったため元から dev 所有——このRUNは今後 keep 用アクセスポイントが
-# 新規作成される場合（決定 3-6）に同じ穴を未然に防ぐためのもの。
-# docs は ECS に bind-mount する経路が無く、Agent が CP からロール別 docs を
-# 取得してここへ展開する（docs/build/04 §4.9・agent docs_sync.go）。
+# claude / keep / docs are owned by dev: claude auth login writes .credentials.json /
+# settings.json into CLAUDE_CONFIG_DIR (claude/auth.go). On docker / native a host bind or a
+# direct EFS mount covers these, so the owner does not matter; but an ECS EFS access point
+# cannot carry a PosixUser (see the comment on ensureAccessPoint) and relies on Docker copying
+# the image path's ownership onto a fresh volume, so a root-owned image path leaves dev
+# (uid 1000) unable to write anything (seen on the dev deployment as EACCES: permission
+# denied). That copy happens only the first time the access point's root gets content, so an
+# existing EFS directory already initialised as root is not fixed by a corrected image — it
+# needs `docker exec -u root … chown -R 1000:1000 /var/lib/af/claude`. keep (/var/lib/af/keep)
+# was always on the first-content side and so already dev-owned; chowning it here keeps a
+# newly created keep access point (decision 3-6) from hitting the same hole.
+# docs has no bind-mount path on ECS: the Agent fetches the role's docs from the CP and
+# unpacks them here (docs/build/04 §4.9, agent docs_sync.go).
 RUN chown 1000:1000 /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs
-# /scratch = タスクローカルの作業ディスク（ADR 0044 決定 3）。ECS では ephemeral
-# storage 上の素のディレクトリ（>200 GiB のときだけ EBS のマウント先）で、entrypoint が
-# ここへ小ファイルの山（go-build / uv / go module）を逃がす。dev が書けないと意味が
-# 無いので所有者を渡しておく。docker / native では CP が AF_WS_SCRATCH を注入しない
-# ので空のまま使われない。
+# /scratch is the task-local work disk (ADR 0044 decision 3). On ECS it is a plain directory
+# on ephemeral storage (an EBS mount point only above 200 GiB), and the entrypoint moves the
+# piles of small files (go-build / uv / go modules) there. It is useless unless dev can write
+# it, hence the chown. On docker / native the CP does not inject AF_WS_SCRATCH, so it stays
+# empty and unused.
 RUN mkdir -p /scratch && chown 1000:1000 /scratch
 # Google Cloud SDK pin (ADR 0107 decision 4). Never baked: it unpacks to ~486 MB, which every
 # cold image pull would pay for a tool a fraction of members use. `workspace-agent
@@ -688,16 +689,16 @@ ENV DISABLE_AUTOUPDATER=1
 # same thing (`"disable"`), which entrypoint.sh seeds.
 ENV OPENCODE_DISABLE_AUTOUPDATE=true
 
-# Muse Code の自己更新封殺（ADR 0095 決定 8）。**配布イメージは muse を配らない**
-# （プロプライエタリ・BAKE_AGENT_CLIS=0 既定）。AF が置くのは manifest の**バイナリ**で
-# 自己更新経路を持たないので、この行が効くのは別の相手である: 利用者がベンダの install.sh を
-# 自分で走らせると `~/.local/bin/muse` に bash ランチャが載り、既定でチャンネルを毎時見て
-# 自分を書き換える（MUSE_UPDATE_INTERVAL_SECONDS=3600・実測 2026-09-20）。管理外の
-# 自己更新バイナリが黙って育つのを止める 1 行。
+# Muse Code self-update off (ADR 0095 decision 8). The distributed image does not ship muse
+# (proprietary, BAKE_AGENT_CLIS=0 by default), and what AF installs is the manifest's binary,
+# which has no self-update path. This line is for something else: a user who runs the vendor's
+# install.sh gets a bash launcher at `~/.local/bin/muse` that checks the channel hourly by
+# default and rewrites itself (MUSE_UPDATE_INTERVAL_SECONDS=3600, measured). It stops an
+# unmanaged self-updating binary from quietly drifting.
 #
-# 影そのものの検知と修復は agents/muse/install.go の Check が持つ——**パスではなく版一致**で
-# 判定する（ベンダの既定の置き場は AF と同じ `~/.local/bin/muse` なので、パスで見ると AF 自身の
-# バイナリを影と報告してしまう）。
+# Detecting and repairing that shadow is the job of Check in agents/muse/install.go, which
+# decides by version match, not by path: the vendor's default location is the same
+# `~/.local/bin/muse` AF uses, so a path check would report AF's own binary as the shadow.
 ENV MUSE_NO_AUTO_UPDATE=1
 
 # NEVER let git fall back to an interactive /dev/tty credential prompt. This fixes a
@@ -744,7 +745,7 @@ ENV GIT_TERMINAL_PROMPT=0 \
 # (permissions.deny on the two tools + crossSessionInbound:"refuse", docs/log/58 §58.17).
 # It is code, so it takes effect on an Agent restart rather than an image rebuild — which
 # is also why it is no longer here. Keep these vars anyway: they still do what the
-# paragraph above says about optional/background traffic. ADR 0041 決定1 is unchanged
+# paragraph above says about optional/background traffic. ADR 0041 decision 1 is unchanged
 # (the native path stays off); only the mechanism moved.
 #
 # NONESSENTIAL_TRAFFIC also turns off feature-flag evaluation, and Remote Control will not
@@ -767,32 +768,33 @@ ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
 # and fail to write this root-owned tree, is separately silenced by DISABLE_AUTOUPDATER
 # above.)
 
-# UTF-8 ロケール。未設定(POSIX)だと tmux が UTF-8 を無効化し日本語等が化ける。
-# C.UTF-8 は locale 生成不要で Debian に存在する。
+# UTF-8 locale. Unset (POSIX), tmux disables UTF-8 and Japanese and other non-ASCII text
+# turns to garbage. C.UTF-8 ships with Debian and needs no locale generation.
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-# tmux: attach したクライアントを1セッションに閉じ込める設定。/etc は bind mount で
-# 上書きされない(=home と違い確実に残る)ため /etc/tmux.conf に置く。agent が最初に
-# tmux を叩いてサーバ起動する時点で読まれる。
+# tmux: confines an attached client to one session. It goes in /etc/tmux.conf because /etc
+# is not covered by a bind mount (unlike home, it always survives). It is read when the agent
+# first runs tmux and starts the server.
 COPY tmux.conf /etc/tmux.conf
 
-# node:22 の既定ユーザー node（uid/gid=1000）を dev にリネーム。Node.js と紛らわしい
-# ため改名するが uid/gid=1000 は維持（ホストの uid 1000 と一致 → bind mount 素通し）。
-# -m で home を /home/node → /home/dev へ移設（実行時は home が bind mount で上書きされる）。
+# Rename node:22's default user node (uid/gid=1000) to dev, since "node" is easily confused
+# with Node.js. uid/gid stay 1000 (matching the host's uid 1000, so bind mounts pass through).
+# -m moves home from /home/node to /home/dev (at run time a bind mount covers home anyway).
 RUN usermod -l dev -d /home/dev -m node && groupmod -n dev node
 
-# claude は ~/.local/bin に入る。docker exec 等の既定 PATH に追加（非ログインシェル/Agent用）。
-# Go は /usr/local/go/bin（go 本体）と ~/go/bin（go install 先）を前置。
+# claude installs into ~/.local/bin; add it to the default PATH for docker exec and the like
+# (non-login shells, the Agent). Go prepends /usr/local/go/bin (go itself) and ~/go/bin
+# (`go install` target).
 ENV PATH="/home/dev/.local/bin:/home/dev/go/bin:/usr/local/go/bin:${PATH}"
-# ログインシェル(bash -l)は /etc/profile で PATH を上書きするため、端末で claude / go を
-# 確実に見つけられるよう profile.d でも前置する。
+# A login shell (bash -l) overwrites PATH in /etc/profile, so prepend in profile.d too, or a
+# terminal may not find claude / go.
 RUN echo 'export PATH="$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:$PATH"' > /etc/profile.d/claude-path.sh
 
-# ── ここから下は変更頻度の高い入力（COPY 主体・低コスト）。上の go/npm レイヤを
-# 無効化しないよう末尾に集約する。すべて root 操作なので USER dev の前に置く。
+# ── From here on: frequently changing, cheap inputs (mostly COPY), grouped at the end so
+# they do not invalidate the go/npm layers above. All run as root, so before USER dev.
 COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-# gh 透過認証ラッパー（実体は /usr/local/libexec/gh）。§8.3 参照。
+# gh transparent-auth wrapper (real binary in /usr/local/libexec/gh); see docs/build/08 §8.3.
 COPY gh-auth-wrapper.sh /usr/local/bin/gh
 # bkt (Bitbucket CLI) transparent-auth wrapper, same idea (real binary in /usr/local/libexec/bkt).
 COPY bkt-auth-wrapper.sh /usr/local/bin/bkt
@@ -807,18 +809,19 @@ COPY confluence-auth-wrapper.sh /usr/local/bin/confluence
 # `svn update` typed in a session authenticates like the Console's own update button
 # (docs/log/41 amendment).
 COPY svn-auth-wrapper.sh /usr/local/bin/svn
-# ビルド生成物をタスクローカルの作業ディスクへ逃がすヘルパー（ADR 0044 決定 3）。
+# Helper that moves build output onto the task-local work disk (ADR 0044 decision 3).
 COPY af-scratch.sh /usr/local/bin/af-scratch
-# ADR 0086 P0 シム: workspace-agent af-db へ転送する /usr/local/bin/af-db。
-# af-scratch と同じ形——実装は workspace-agent 側（L2 レーン）が持つ。
+# ADR 0086 P0 shim: /usr/local/bin/af-db forwards to `workspace-agent af-db`. Same shape as
+# af-scratch; the implementation lives in workspace-agent (L2 lane).
 COPY af-db.sh /usr/local/bin/af-db
 # AF agent memory from the command line (ADR 0108): same shape as af-db, the implementation is
 # `workspace-agent af-memory`.
 COPY af-memory.sh /usr/local/bin/af-memory
 # The Console's low-disk cleanup from a terminal (#3882): same shape, `workspace-agent af-clean`.
 COPY af-clean.sh /usr/local/bin/af-clean
-# アーキ変更後に利用者自身の ~/.local 導入物を同じ版で戻す（entrypoint から呼ばれる）。
-# entrypoint に埋めず別ファイルにしてあるのは、単体で走らせて検証できるようにするため。
+# After an architecture change, reinstalls the user's own ~/.local installs at the same
+# versions (called from the entrypoint). A separate file rather than part of the entrypoint
+# so it can be run and tested on its own.
 COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
 # Runs one command under one SSO profile's short-lived credentials, never the workload
 # role (issue #998). Same shape as af-db: the implementation is `workspace-agent aws-exec`.
@@ -849,8 +852,8 @@ RUN mkdir -p /etc/claude-code \
 # root-owned setuid helper can create its PID/network namespaces. Keep that path
 # exclusive: the normal USER dev process has no effective capabilities, and no
 # unrelated setuid/setgid utility may acquire the enlarged bounding set.
-# BAKE_OPTIONAL_TOOLS=0 は chromium 不在なので sandbox helper の存在前提を外し、
-# 「setuid/setgid が一切残っていない」ことだけを見る（docs/log/35 §35.7.1-5）。
+# With BAKE_OPTIONAL_TOOLS=0 there is no chromium, so the sandbox helper is not expected and
+# the check is only that no setuid/setgid file remains (docs/log/35 §35.7.1-5).
 RUN find / -xdev -type f -perm /6000 ! -path /usr/lib/chromium/chrome-sandbox \
       -exec chmod a-s {} + \
  && if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then \
@@ -874,7 +877,7 @@ USER dev
 WORKDIR /home/dev
 EXPOSE 7700
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-# 絶対パスで名指すこと。`workspace-agent` だけだと PATH 解決になり、`~/.local/bin` に
-# 誰かが置いた（recreate でも消えない）ビルドがイメージのバイナリを恒久的に乗っ取る
-# ——実機で Agent が P0 世代の手元ビルドとして動き続けていた（ADR 0086 実機の節）。
+# Name it by absolute path. A bare `workspace-agent` goes through PATH, and a build someone
+# left in `~/.local/bin` (which survives a recreate) permanently hijacks the image's binary —
+# seen live, with the Agent still running an old local P0-era build (ADR 0086, the on-hardware section).
 CMD ["/usr/local/bin/workspace-agent"]

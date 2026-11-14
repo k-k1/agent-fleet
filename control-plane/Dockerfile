@@ -1,4 +1,4 @@
-# Control Plane image (P3-10 段1). Multi-stage, self-contained:
+# Control Plane image (P3-10 stage 1). Multi-stage, self-contained:
 #   1. console  — builds the Vite + React Console into /app/console (served no-store)
 #   2. build    — compiles the CP into a static binary (CGO off; modernc/sqlite is pure Go)
 #   3. docs     — stages the user guide (deploy/release/stage-docs.sh)
