@@ -655,10 +655,11 @@ var initialDeliveries sync.WaitGroup
 func WaitInitialDeliveries() { initialDeliveries.Wait() }
 
 func deliverInitialPromptAsync(name, prompt string) {
+	run := initialInputOrder.enqueue(name, func() { deliverInitialPrompt(name, prompt) })
 	initialDeliveries.Add(1)
 	go func() {
 		defer initialDeliveries.Done()
-		deliverInitialPrompt(name, prompt)
+		run()
 	}()
 }
 
