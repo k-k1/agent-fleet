@@ -104,7 +104,7 @@ CP をそのバージョンより前に戻すときは、次のようにしま�
    V=/v R=/s/wipe/layout
    set -eu
    cd "$V"
-   # 最後の移動のあとで止まっていた: 記録を消すだけ
+   # Stopped after the last move: only the record is left to remove.
    if [ "$(cat -- "$R" 2>/dev/null)" = reverting ] && [ ! -e .af-home ] && [ ! -L .af-home ]; then rm -f -- "$R"; exit 0; fi
    [ -d .af-home ] && [ ! -L .af-home ] || { echo ".af-home is missing or not a directory"; exit 1; }
    [ -f "$R" ] && [ ! -L "$R" ] || { echo "no layout record at $R"; exit 1; }
@@ -115,7 +115,7 @@ CP をそのバージョンより前に戻すときは、次のようにしま�
          [ -e "$e" ] || [ -L "$e" ] || continue
          case "$e" in .af-home|lost+found) ;; *) echo "the root holds $e besides the home: see step 3"; exit 1;; esac
        done ;;
-     reverting) ;;  # 途中で止まった実行: そのまま続ける
+     reverting) ;;  # a run stopped halfway: carry on
      *) echo "the layout record is not done or reverting"; exit 1 ;;
    esac
    for e in .af-home/.[!.]* .af-home/..?* .af-home/*; do
@@ -124,7 +124,7 @@ CP をそのバージョンより前に戻すときは、次のようにしま�
      case "$n" in .af-home|lost+found) echo "the home holds $n, a name the root keeps"; exit 1;; esac
      if [ -e "$n" ] || [ -L "$n" ]; then echo "$n is both in the home and on the root"; exit 1; fi
    done
-   # 確認がすべて通ってから、移動を記録する。ファイルは丸ごと置き換え、途中で切らない
+   # Only now, with every check passed, mark the move; replaced whole, never truncated.
    if [ "$st" = done ]; then
      if [ -e "$R.tmp" ] || [ -L "$R.tmp" ]; then echo "$R.tmp is in the way"; exit 1; fi
      { echo reverting > "$R.tmp" && mv -fT -- "$R.tmp" "$R"; } || { echo "cannot mark $R"; exit 1; }
@@ -132,7 +132,7 @@ CP をそのバージョンより前に戻すときは、次のようにしま�
    for e in .af-home/.[!.]* .af-home/..?* .af-home/*; do
      [ -e "$e" ] || [ -L "$e" ] || continue
      n=${e#.af-home/}; ro=
-     # ディレクトリを移すと ".." が書き換わるので、そのディレクトリへの書き込み権限が要る
+     # Moving a directory rewrites its "..", which needs write permission on it.
      if [ -d "$e" ] && [ ! -L "$e" ] && [ ! -w "$e" ]; then chmod u+w -- "$e"; ro=1; fi
      mv -T -- "$e" "$n"
      [ -z "$ro" ] || chmod u-w -- "$n"
