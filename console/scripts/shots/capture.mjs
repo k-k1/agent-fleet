@@ -187,11 +187,15 @@ const SCENES = [
       items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
       // 30 days: the bars are capped at 34px and left-aligned by design, so the 7-day
       // preset leaves most of the plot empty — 30 daily buckets fill it.
-      await new Promise((r) => setTimeout(r, 1200));
-      const btns = [...document.querySelectorAll("button")];
-      btns.find((el) => /^(30日|30 days)$/.test((el.textContent || "").trim()))?.click();
+      const sel = '.usage-controls button[data-range-hours="720"]';
+      for (let i = 0; i < 40 && !document.querySelector(sel); i++) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      document.querySelector(sel)?.click();
     })()`,
     settle: 2500,
+    verify: `document.querySelector('.usage-controls button[data-range-hours="720"]')?.getAttribute("aria-pressed") === "true" &&
+      !!document.querySelector('.usage-stage[data-shown-hours="720"]') && !document.querySelector(".usage-board .form-err")`,
   },
   {
     // Settings › Agent memory, for the features page: the memories every agent kind shares,
@@ -1887,11 +1891,16 @@ const SCENES = [
       await new Promise((r) => setTimeout(r, 500));
       const items = [...document.querySelectorAll(".acct-item")];
       items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
-      await new Promise((r) => setTimeout(r, 1500));
-      const btns = [...document.querySelectorAll("button")];
-      btns.find((el) => /^(30 ?日|30 days)$/.test((el.textContent || "").trim()))?.click();
+      // The range buttons appear only once the view is up; wait for them instead of a fixed delay.
+      const sel = '.usage-controls button[data-range-hours="720"]';
+      for (let i = 0; i < 40 && !document.querySelector(sel); i++) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      document.querySelector(sel)?.click();
     })()`,
     settle: 2500,
+    verify: `document.querySelector('.usage-controls button[data-range-hours="720"]')?.getAttribute("aria-pressed") === "true" &&
+      !!document.querySelector('.usage-stage[data-shown-hours="720"]') && !document.querySelector(".usage-board .form-err")`,
   },
   {
     // Settings › Skills with Claude's skills under its real config folder, one shadowed.
@@ -3466,6 +3475,22 @@ try {
     if (scene.action) {
       await cdp.send("Runtime.evaluate", { expression: scene.action, awaitPromise: true });
       await sleep(scene.settle || 800);
+    }
+    // scene.verify names the state the action was meant to reach. An action that misses its
+    // target does nothing and still yields a plausible picture of the default state, so the run
+    // fails instead of writing it. It is polled, bounded like `ready`, because the state can
+    // depend on a fetch the action started; a picture taken the moment it turns true can still
+    // be mid-transition, hence the short pause after a late success.
+    if (scene.verify) {
+      let ok = false;
+      let i = 0;
+      for (; i < 40 && !ok; i++) {
+        const r = await cdp.send("Runtime.evaluate", { expression: scene.verify, returnByValue: true });
+        ok = !!r.result?.value;
+        if (!ok) await sleep(500);
+      }
+      if (!ok) throw new Error(`scene ${scene.name} failed verify after 20 s: ${scene.verify}`);
+      if (i > 1) await sleep(800);
     }
     // The way to settle a question about appearance without judging it by eye (docs/log/80
     // §80.18.7): an expression in scene.measure has its result printed to stdout. Whether

@@ -148,6 +148,9 @@ export function UsageView() {
   const [reloadTick, setReloadTick] = useState(0);
 
   const [series, setSeries] = useState<UsageSeries | null>(null);
+  // The range the data on screen was fetched for. A range change keeps the previous series up
+  // until the new one arrives, so the pressed button alone does not say what the chart shows.
+  const [shownHours, setShownHours] = useState(0);
   const [featModel, setFeatModel] = useState<UsageSeries | null>(null);
   const [kindModel, setKindModel] = useState<UsageSeries | null>(null);
   const [err, setErr] = useState("");
@@ -194,6 +197,7 @@ export function UsageView() {
       }
       setErr("");
       setSeries(a as UsageSeries);
+      setShownHours(hours);
       setFeatModel(b as UsageSeries);
       setKindModel(c as UsageSeries);
       setFolding([a, b, c].some((r) => (r as UsageSeries).folding));
@@ -284,6 +288,9 @@ export function UsageView() {
             <button
               key={r.hours}
               type="button"
+              // A locale-independent handle: the guide's screenshot harness selects the range by
+              // it, and a label match silently leaves the default range on screen when it misses.
+              data-range-hours={r.hours}
               className={"uc-seg" + (hours === r.hours ? " active" : "")}
               aria-pressed={hours === r.hours}
               onClick={() => setHours(r.hours)}
@@ -352,7 +359,7 @@ export function UsageView() {
       ) : empty ? (
         <EmptyState icon="graph" title={tr("usage.empty_title")} hint={tr("usage.empty_hint")} />
       ) : (
-        <div className={"usage-stage" + (loading ? " reloading" : "")}>
+        <div className={"usage-stage" + (loading ? " reloading" : "")} data-shown-hours={shownHours}>
           <KpiRow totals={totals} unmeasured={series?.unmeasured_calls || 0} />
 
           <section className="usage-card">
