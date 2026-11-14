@@ -42,7 +42,7 @@ af update           # 最新版（または AF_VERSION の版）を取得・検�
 - あとから止めるときや、次に動く時刻を見るときは次のとおりです
 
 ```bash
-systemctl --user disable --now agent-fleet-update.timer   # 自動の用意を止める
+systemctl --user disable --now agent-fleet-update.timer   # 新しいバージョンの自動取得を止める
 systemctl --user list-timers agent-fleet-update.timer     # 次に動く時刻
 ```
 

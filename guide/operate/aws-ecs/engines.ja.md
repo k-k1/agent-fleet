@@ -60,7 +60,7 @@ Fargate には GPU がないので、エンジンは EC2 のインスタンス�
 
    ```bash
    crane copy ghcr.io/ggml-org/llama.cpp:server-cuda <acct>.dkr.ecr.<region>.amazonaws.com/af-llamacpp:server-cuda
-   # 画像のロール:
+   # `image` の役:
    crane copy ghcr.io/k-k1/agent-fleet/comfyui:v0.37.0 <acct>.dkr.ecr.<region>.amazonaws.com/af-comfyui:v0.37.0
    ```
 
