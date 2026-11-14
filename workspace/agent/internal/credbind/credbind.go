@@ -157,13 +157,14 @@ func Named(route, name string) string { return route + "@" + name }
 // replaces or removes the login. A token refresh writes no generation and keeps the binding. A
 // login made by hand outside the Agent's flows is not seen, and keeps the generation it found.
 //
-// "" (unproven) whenever the state cannot be trusted: unreadable or malformed, or a Bump of this
-// login that failed to persist in this process. Reading such a state as generation zero would
-// hand a replaced login its predecessor's binding.
+// "" (unproven) whenever the state cannot be trusted: unreadable or malformed, a login change
+// begun (Begin) and not yet bumped, which survives a restart, or a Bump of this login that failed
+// to persist in this process. Reading such a state as generation zero, or as the generation
+// before the change, would hand a replaced login its predecessor's binding.
 func Generation(login string) string {
 	genMu.Lock()
 	defer genMu.Unlock()
-	if genPoisoned[login] {
+	if genPoisoned[login] || !markerAbsent(login) {
 		return ""
 	}
 	st, ok := readGenerations()
@@ -198,9 +199,8 @@ func AccountOrGeneration(login, accountID string) string {
 var (
 	genMu sync.Mutex
 	// genPoisoned holds the logins whose Bump failed to persist: their generation on disk is the
-	// replaced login's, so it is not served until a Bump succeeds. In memory only; Bump also
-	// removes the state file so a restart starts a fresh epoch, and only when that removal fails
-	// too can a restart serve the old generation (#4189).
+	// replaced login's, so it is not served until a Bump succeeds. The durable half is the pending
+	// marker Begin wrote before the change, which a failed Bump leaves in place.
 	genPoisoned = map[string]bool{}
 )
 
@@ -240,6 +240,52 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// pendingPrefix names a login's pending marker in the Agent config directory: written by Begin
+// before the Agent changes the login, removed by the Bump that records the change.
+const pendingPrefix = "route-generation-pending."
+
+func markerPath(login string) string {
+	return filepath.Join(paths.AgentConfigDir(), pendingPrefix+login)
+}
+
+// markerAbsent reports that login has no pending marker; a marker that cannot be checked is not
+// proven absent.
+func markerAbsent(login string) bool {
+	_, err := os.Stat(markerPath(login))
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// Begin records, durably and before anything changes, that the Agent is about to replace or
+// remove each login. Until the Bump that records the change succeeds, the login's generation is
+// unproven, across an Agent restart too: a change whose new generation could not be persisted
+// can then never be read back as the old one. An error means nothing could be recorded,
+// and the caller must not change the login: proceeding would leave a replaced login nothing to
+// tell it from its predecessor but process memory.
+//
+// A flow that is begun and then abandoned leaves its marker, so the login's generation stays
+// unproven until its next completed change: unknown is the safe answer when it cannot be told
+// whether the file was replaced.
+func Begin(logins ...string) error {
+	dir := paths.AgentConfigDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for _, l := range logins {
+		f, err := os.OpenFile(markerPath(l), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Bump moves each login to a new generation. Called by the Agent's own login, key and disconnect
 // handlers when they replace or remove the credential, never on a refresh. An unreadable state is
 // rebuilt under a new epoch (every login's generation moves); a state that cannot be written
@@ -252,9 +298,9 @@ func Bump(logins ...string) {
 		for _, l := range logins {
 			genPoisoned[l] = true
 		}
-		// The state on disk now holds the replaced logins' generations. Removing it makes the
-		// next read start a fresh epoch, which survives a restart where the in-memory mark does
-		// not; when even that fails, a restart can serve the old generation (#4189).
+		// The state on disk now holds the replaced logins' generations. The pending marker Begin
+		// wrote keeps them unproven across a restart; removing the state as well makes the next
+		// read start a fresh epoch for a caller that did not Begin.
 		if rerr := os.Remove(filepath.Join(paths.AgentConfigDir(), genFile)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 			log.Printf("credbind: removing the generation state after a failed bump: %v", rerr)
 		}
@@ -262,6 +308,11 @@ func Bump(logins ...string) {
 	}
 	for _, l := range logins {
 		delete(genPoisoned, l)
+		// The change is recorded; a marker that cannot be removed leaves the login unproven,
+		// never wrong.
+		if err := os.Remove(markerPath(l)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("credbind: clearing the pending mark of %s: %v; its binding stays unproven", l, err)
+		}
 	}
 }
 

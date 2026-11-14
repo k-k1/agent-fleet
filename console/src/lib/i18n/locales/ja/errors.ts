@@ -325,6 +325,7 @@ export const errors = {
   "err.no_selector": "エージェントがログイン方式の選択肢を表示しませんでした",
   "err.serve_unavailable": "エージェントのサービスを起動できませんでした",
   "err.login_failed": "ログインが完了しませんでした",
+  "err.login_change_unrecorded": "このログインの変更を Agent が設定フォルダに記録できなかったため、変更しませんでした。ワークスペースのディスクが満杯や読み取り専用になっていないか確かめてから、もう一度お試しください",
   "err.bad_method": "ログイン方式の指定が不正です",
   "err.method_unsupported": "このログイン方式はまだ使えません",
   "err.opencode_unsupported": "opencode が見つかりません（イメージが古い可能性があります）",

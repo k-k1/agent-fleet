@@ -115,6 +115,9 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	_ = os.MkdirAll(loginDir, 0o700)
 	EnsureWorkspaceTrusted(loginDir)
 
+	if !agents.BeginLoginChange(w, routes.RouteAgyLogin) {
+		return
+	}
 	cmd := exec.Command("agy")
 	cmd.Dir = loginDir
 	cmd.Env = Env(append(os.Environ(), "TERM=xterm-256color"))
@@ -266,6 +269,9 @@ func driveOnboarding(f *agents.Flow, timeout time.Duration) error {
 // only), and in a keyring-less container /logout amounts to deleting the token
 // file — so that's what we do. DELETE /connections/agy.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
+	if !agents.BeginLoginChange(w, routes.RouteAgyLogin) {
+		return
+	}
 	if err := os.Remove(tokenPath()); err != nil && !os.IsNotExist(err) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "logout_failed", err.Error())
 		return

@@ -130,6 +130,9 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginFlows.Reap()
+	if !agents.BeginLoginChange(w, routes.RouteCursorLogin) {
+		return
+	}
 	cmd := exec.Command(bin(), disableAutoUpdateFlag, "login")
 	cmd.Env = EnvWithoutCI(append(os.Environ(), "TERM=xterm-256color", "NO_OPEN_BROWSER=1")) // CI is stripped (ci_env.go)
 	f, err := agents.StartFlow(cmd)
@@ -195,6 +198,9 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// logout can hit the network — without a timeout the handler blocks indefinitely.
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	if !agents.BeginLoginChange(w, routes.RouteCursorLogin) {
+		return
+	}
 	_ = probeCmd(ctx, disableAutoUpdateFlag, "logout").Run()
 	invalidateStatus()
 	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).

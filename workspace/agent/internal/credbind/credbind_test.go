@@ -183,3 +183,75 @@ func TestGenerationAfterTheStateIsLost(t *testing.T) {
 		t.Errorf("the fresh epoch was not persisted: %v", err)
 	}
 }
+
+// A login change whose new generation cannot be persisted, and whose state cannot be
+// removed either, must not come back after an Agent restart as the replaced login's binding. The
+// pending marker Begin wrote before the change keeps it unproven until a Bump succeeds.
+func TestGenerationAfterAFailedPersistAndARestart(t *testing.T) {
+	freshHome(t)
+	dir := paths.AgentConfigDir()
+	old := Generation("muse-login")
+	if old == "" {
+		t.Fatal("no starting generation")
+	}
+	if err := Begin("muse-login"); err != nil {
+		t.Fatal(err)
+	}
+	if g := Generation("muse-login"); g != "" {
+		t.Errorf("between Begin and Bump: %q, want unproven", g)
+	}
+	// The directory turns read-only: the state stays readable (it still holds the old
+	// generation), but it can be neither rewritten nor removed.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	Bump("muse-login")
+	if _, err := os.Stat(filepath.Join(dir, genFile)); err != nil {
+		t.Fatalf("positive control: the state should still be on disk: %v", err)
+	}
+	if st, ok := readGenerations(); !ok || st.Epoch == "" {
+		t.Fatalf("positive control: the old state should still be readable: %+v %v", st, ok)
+	}
+	// A restart: the in-memory mark is gone, the files are what they were.
+	genMu.Lock()
+	genPoisoned = map[string]bool{}
+	genMu.Unlock()
+	ResetForTest()
+	if g := Generation("muse-login"); g != "" {
+		t.Errorf("after a failed persist and a restart: %q, want unproven (the old one was %q)", g, old)
+	}
+	// The directory recovers and the next completed change records a fresh generation.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	Bump("muse-login")
+	if g := Generation("muse-login"); g == "" || g == old {
+		t.Errorf("after a successful bump: %q (old %q)", g, old)
+	}
+	if !markerAbsent("muse-login") {
+		t.Error("the successful bump left the pending marker")
+	}
+}
+
+// Begin refuses when it cannot record the change, so the caller does not make it; and a begun,
+// completed change clears its marker.
+func TestBegin(t *testing.T) {
+	freshHome(t)
+	g0 := Generation("agy-login")
+	if err := Begin("agy-login"); err != nil {
+		t.Fatal(err)
+	}
+	Bump("agy-login")
+	if g := Generation("agy-login"); g == "" || g == g0 || !markerAbsent("agy-login") {
+		t.Errorf("begin then bump: %q (was %q), marker absent %v", g, g0, markerAbsent("agy-login"))
+	}
+	dir := paths.AgentConfigDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := Begin("kiro-login"); err == nil {
+		t.Error("Begin succeeded in a directory it cannot write")
+	}
+}

@@ -48,6 +48,9 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	// Real subscription login (writes .credentials.json with a refresh token).
 	// CLAUDE_CONFIG_DIR is inherited from os.Environ() so creds land where sessions
 	// read them. Same authorize URL as setup-token (claude.com/cai/oauth/authorize).
+	if !agents.BeginLoginChange(w, routes.RouteAnthropicSubscription) {
+		return
+	}
 	cmd := exec.Command("claude", "auth", "login", "--claudeai")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	f, err := agents.StartFlow(cmd)
@@ -123,6 +126,9 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 // HandleDisconnect logs claude out via the CLI. DELETE /connections/claude.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// claude owns its credentials; log out via the CLI so it clears them properly.
+	if !agents.BeginLoginChange(w, routes.RouteAnthropicSubscription) {
+		return
+	}
 	_ = exec.Command("claude", "auth", "logout").Run()
 	resetCredCache()
 	// Best-effort: drop any legacy stored token from the encrypted store too.

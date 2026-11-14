@@ -200,6 +200,9 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginFlows.Reap()
+	if !agents.BeginLoginChange(w, routes.RouteMuseLogin) {
+		return
+	}
 	cmd := exec.Command(Bin(), "login")
 	// The pin is AF's, not the launcher's, on the login path too (decision 8).
 	cmd.Env = append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1")
@@ -276,6 +279,9 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// logout reaches the network, so without a timeout this handler blocks indefinitely.
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	if !agents.BeginLoginChange(w, routes.RouteMuseLogin) {
+		return
+	}
 	out, err := exec.CommandContext(ctx, Bin(), "logout").CombinedOutput()
 	// The credential is the outcome that matters: a non-zero exit with the entry gone is a
 	// disconnect, and a zero exit with it still there is not.
@@ -321,6 +327,9 @@ func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
 	if c := readCredential(); c.Present && c.Mechanism == mechanismAccount {
 		httpx.WriteErr(w, http.StatusConflict, "account_login_present",
 			"an account sign-in is stored; an API key would replace it and move this workspace onto metered billing — disconnect first")
+		return
+	}
+	if !agents.BeginLoginChange(w, routes.RouteMuseLogin) {
 		return
 	}
 	cmd := exec.Command(Bin(), "auth", "set", "--api-key-stdin")

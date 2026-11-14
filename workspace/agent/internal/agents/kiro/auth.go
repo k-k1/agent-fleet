@@ -140,6 +140,9 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginFlows.Reap()
+	if !agents.BeginLoginChange(w, routes.RouteKiroLogin) {
+		return
+	}
 	cmd := exec.Command(bin(), "login", "--license", "free", "--use-device-flow")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	f, err := agents.StartFlow(cmd)
@@ -194,6 +197,9 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// logout can reach the network, so without a timeout this handler blocks indefinitely.
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	if !agents.BeginLoginChange(w, routes.RouteKiroLogin) {
+		return
+	}
 	_ = exec.CommandContext(ctx, bin(), "logout").Run()
 	invalidateStatus()
 	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
