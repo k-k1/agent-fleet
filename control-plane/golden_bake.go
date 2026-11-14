@@ -61,7 +61,7 @@ import (
 // warns about in its own header) — but they are named so that nobody mistakes them for
 // people, and they live in their own tenant so they never appear in anyone's picker.
 const (
-	goldenTenantSlug = "af-golden"
+	goldenTenantSlug = runtime.GoldenTenantSlug
 	goldenTenantName = "golden snapshot (system)"
 )
 

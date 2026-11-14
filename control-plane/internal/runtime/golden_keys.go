@@ -14,6 +14,11 @@ const (
 	GoldenProbeKey = "af-golden-probe"
 )
 
+// GoldenTenantSlug is the system tenant the two reserved members live in. A bake
+// workspace is named af-ws-<slug>-<key> (workspaceNames), so identifying one from a tag
+// needs the slug as well as the key.
+const GoldenTenantSlug = "af-golden"
+
 // ArchKey names the reserved workspace for one architecture.
 //
 // x86_64 keeps the ORIGINAL, unsuffixed keys. Every deployment that has ever baked

@@ -127,6 +127,10 @@ func (f *ecsEC2Factory) sweepWedgedSlots(ctx context.Context, homes []ec2types.V
 		if inst == "" || probe.claimLive(vol) {
 			continue
 		}
+		if isBakeHome(vol) {
+			f.skipBakeSlot(ctx, inst)
+			continue
+		}
 		if _, seen := byInstance[inst]; !seen {
 			ids = append(ids, inst)
 		}

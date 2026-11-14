@@ -360,6 +360,10 @@ INVENTORY = [
     # The wedged release's finalizer drops the same stamp (ADR 0121, wedged release).
     ("internal/runtime/runtime_ecs_ec2_wedged.go", "clearWedgedStampOn", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-wedged-since": None})]),
+    # Both scans drop the stamps they find on a golden bake slot (an af-role=slot box holding
+    # the seed or probe home) so a later member does not inherit them.
+    ("internal/runtime/runtime_ecs_ec2_golden.go", "skipBakeSlot", "DeleteTags", 1, [
+        on_existing("ec2:DeleteTags", "instance", SLOT, {"af-dark-since": None, "af-wedged-since": None})]),
     # Rung L1 (ADR 0121): the rescue marker and the episode time, both on a running or stopped slot.
     ("internal/runtime/runtime_ecs_ec2_dark_rescue.go", "writeRescueMarker", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-rescue": T})]),
