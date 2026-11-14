@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
 // agy auth is WebUI-driven like claude's: the interactive TUI login (Google
@@ -210,6 +212,8 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 	// Belt and braces on top of the ToS-screen toggle: pin the Interactions
 	// data-collection opt-out in settings.json (agy is closed by then).
 	enforceTelemetryOff()
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteAgyLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": true})
 }
 
@@ -267,6 +271,8 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	removeAccount()
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteAgyLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "agy"})
 }
 

@@ -55,6 +55,9 @@ export interface Session {
   // The explicit model route selection (ADR 0128), absent for a session with none: the route id and
   // a stable reference to the connection it runs on.
   route?: { route: string; connection?: string };
+  // What the session was launched on (ADR 0138 D11): the route its create resolved to and a
+  // non-secret binding of the credential. Absent for a session created before the record existed.
+  launchRoute?: { route?: string; binding?: string };
   // claude.ai Remote Control URL, set only while RC is bridged (agents/claude: RemoteSessionURL).
   // NOT the working copy's clone URL — the repository a session runs in is identified through
   // its working copy (repos: remote + remotePath).

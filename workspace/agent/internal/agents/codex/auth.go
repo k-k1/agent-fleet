@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
 // Codex auth is driven from the WebUI, like Claude: codex owns its credential file
@@ -152,6 +154,8 @@ func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "codex login failed: "+strings.TrimSpace(string(out)))
 		return
 	}
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteChatGPTSubscription)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
@@ -220,6 +224,8 @@ func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 		if f := flows.Take(req.FlowID); f != nil {
 			f.Close()
 			stored = true
+			// The flow that saw the sign-in finish: a new credential instance (ADR 0138 D5b).
+			credbind.Bump(routes.RouteChatGPTSubscription)
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
 		return
@@ -231,6 +237,8 @@ func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 // DELETE /connections/codex.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	_ = exec.Command("codex", "logout").Run()
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteChatGPTSubscription)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "codex"})
 }
 

@@ -1108,6 +1108,8 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	// The driver is inherited: forking a managed session stays managed (copied through the
 	// runtime's fork API, docs/log/27 P2), while tui keeps the CLI fork launch.
 	meta := forkMeta(src, forkName, title, forkFrom, forkAt)
+	// A fork is a launch of its own: it records what it starts on now (ADR 0138 D11).
+	meta.LaunchRoute = launchRouteOf(meta)
 
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title, meta.Name)
@@ -1598,6 +1600,8 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
 	}
+	// The new slot is a new launch, recorded on what it starts on now (ADR 0138 D11).
+	newMeta.LaunchRoute = launchRouteOf(newMeta)
 	// The new slot takes the studio over before it launches, for the same reason as a create;
 	// a launch that fails hands it back to the old slot.
 	rebindStudioOnRecreate(&newMeta, m.Name)

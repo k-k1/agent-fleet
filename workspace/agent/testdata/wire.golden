@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 204
+# count: 208
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -39,6 +39,7 @@ kindCatalog.kinds[].caps.canForkAt bool
 kindCatalog.kinds[].caps.canTranscript bool
 kindCatalog.kinds[].caps.permissionChoice bool
 kindCatalog.kinds[].caps.usesLabel bool
+kindCatalog.kinds[].fixedRoutes [string],omitempty
 kindCatalog.kinds[].instructionDelivery string,omitempty
 kindCatalog.kinds[].instructions string
 kindCatalog.kinds[].instructionsReason string,omitempty
@@ -47,6 +48,7 @@ kindCatalog.kinds[].managedDefault bool
 kindCatalog.kinds[].managedOnly bool
 kindCatalog.kinds[].mcpClient string
 kindCatalog.kinds[].routes [string],omitempty
+kindCatalog.kinds[].usableRoutes [string],omitempty
 notice.Event.createdAt string
 notice.Event.displayName string
 notice.Event.id string
@@ -132,6 +134,8 @@ session.Session.kind string
 session.Session.label string
 session.Session.lastSay string,omitempty
 session.Session.lastTurnEndAt string,omitempty
+session.Session.launchRoute.binding string,omitempty
+session.Session.launchRoute.route string,omitempty
 session.Session.links[].at string,omitempty
 session.Session.links[].key string
 session.Session.links[].provider string

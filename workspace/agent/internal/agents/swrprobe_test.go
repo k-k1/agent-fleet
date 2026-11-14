@@ -159,3 +159,29 @@ func TestSWRColdFailureStored(t *testing.T) {
 		t.Fatalf("probes = %d, want 1 (cold failure is an answer)", n)
 	}
 }
+
+// Peek never waits: cold it answers ok=false at once and starts the probe, whose answer the next
+// Peek serves.
+func TestSWRPeekNeverWaits(t *testing.T) {
+	var calls atomic.Int32
+	release := make(chan step)
+	p := &SWRProbe[int]{TTL: time.Hour, ColdBudget: time.Hour, Probe: gated(&calls, release)}
+	start := time.Now()
+	if v, ok := p.Peek(); ok || v != 0 || time.Since(start) > time.Second {
+		t.Fatalf("cold Peek = %d %v after %v", v, ok, time.Since(start))
+	}
+	release <- step{7, true}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if v, ok := p.Peek(); ok && v == 7 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the probe's answer never reached Peek")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("probes = %d, want 1", calls.Load())
+	}
+}

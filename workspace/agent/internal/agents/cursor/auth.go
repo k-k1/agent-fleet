@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
 // statusOut is the shape of `cursor-agent status --format json` (measured on v2026.07.20).
@@ -177,6 +179,8 @@ func HandlePoll(w http.ResponseWriter, r *http.Request) {
 		if f := loginFlows.Take(req.FlowID); f != nil {
 			f.Close()
 			stored = true
+			// The flow that saw the sign-in finish: a new credential instance (ADR 0138 D5b).
+			credbind.Bump(routes.RouteCursorLogin)
 		}
 		invalidateStatus()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
@@ -193,6 +197,8 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	_ = probeCmd(ctx, disableAutoUpdateFlag, "logout").Run()
 	invalidateStatus()
+	// A login replaced or removed by this flow is a new credential instance (ADR 0138 D5b).
+	credbind.Bump(routes.RouteCursorLogin)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "cursor"})
 }
 

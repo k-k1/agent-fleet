@@ -49,6 +49,13 @@ type Selection struct {
 	Connection string `json:"connection,omitempty"`
 }
 
+// Launch is a session's launch-time route record (ADR 0138 D11), mirroring the Agent's
+// routes.Launch wire shape: the route and a non-secret binding of the credential.
+type Launch struct {
+	Route   string `json:"route,omitempty"`
+	Binding string `json:"binding,omitempty"`
+}
+
 // Refusal codes, equal to the Agent's routes.Code* values.
 const (
 	CodeBadRoute         = "bad_route"

@@ -60,6 +60,18 @@ func (s *SWRProbe[T]) Get() T {
 	return s.val
 }
 
+// Peek returns the cached answer, however old, without ever waiting: ok=false when there is
+// none yet. A missing or stale answer starts a background refresh, as Get does. It is for paths
+// that must not pay the CLI's latency at all (a create's launch record).
+func (s *SWRProbe[T]) Peek() (val T, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.have || time.Since(s.at) >= s.TTL {
+		s.startLocked()
+	}
+	return s.val, s.have
+}
+
 // Warm starts a refresh if the answer is missing or stale, without waiting for it.
 func (s *SWRProbe[T]) Warm() {
 	s.mu.Lock()

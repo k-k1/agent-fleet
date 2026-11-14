@@ -49,6 +49,30 @@ func FixedRoutesOf(a Agent) []string {
 	return nil
 }
 
+// CredentialResolver is the execution-time half of FixedRouter (ADR 0138 D2, D5b, D11): which of
+// its fixed routes the kind runs on now, and with which credential instance. A kind with more
+// than one login mode resolves per mode from the credential itself (codex's auth_mode, muse's
+// mechanism), never from the kind.
+type CredentialResolver interface {
+	// ResolveLaunch says what a session with NO explicit selection runs on if it is launched now:
+	// one of FixedRoutes and the binding of the credential behind it (credbind.Key,
+	// credbind.Account). It must read no secret into the result. An empty Route is "cannot
+	// tell"; an empty Binding is a route whose credential instance cannot be identified.
+	ResolveLaunch(m session.Meta) routes.Launch
+	// UsableRoutes are the routes, selectable or fixed, whose credential this Workspace holds
+	// now, for the kind catalog. Cheap: it reads files and cached probes, never the network.
+	UsableRoutes() []string
+}
+
+// LaunchBinder is an optional capability of a CredentialResolver: the launch record's binding of
+// an explicit selection, where the stored connection does not identify the credential instance
+// (a subscription selection names no connection) or is not fit to travel (a plain key
+// fingerprint, credbind). handled=false leaves the stored connection as the record's binding;
+// handled=true makes the answer authoritative, so "" there is unproven, never the stored form.
+type LaunchBinder interface {
+	LaunchBinding(sel RouteSelection) (binding string, handled bool)
+}
+
 // RoutePlan is what ApplyRoute adds to a launch.
 type RoutePlan struct {
 	// Env is KEY=VALUE pairs for this session's process only (LaunchPlan.Env).

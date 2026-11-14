@@ -80,6 +80,21 @@ type RouteOffering interface {
 	Offered(route string) bool
 }
 
+// RouteHolding is an optional capability of the gateway: whether the Workspace holds a
+// credential the gateway can serve route with now (a marked AWS profile in the last Settings
+// list for bedrock, the Control Plane's grant for a provided route), from cached state only. For
+// the kind catalog's usable routes (ADR 0138 M0), which an acceptance gate alone does not prove.
+type RouteHolding interface {
+	Holds(route string) bool
+}
+
+// GatewayHolds asks the current gateway whether it holds route; false without a gateway or
+// without the capability.
+func GatewayHolds(route string) bool {
+	h, ok := CurrentRouteGateway().(RouteHolding)
+	return ok && h.Holds(route)
+}
+
 // RuntimeRootsFunc names the root processes of a session's runtime that is not a launch pane: a
 // Managed harness that runs a private server for one session's route. The gateway serves a route
 // token only to a process in its owner's tree (routegw/peer.go), and a Managed session has no pane

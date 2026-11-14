@@ -38,6 +38,7 @@ import (
 	"net/url"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -183,7 +184,10 @@ func daemonJSON[T any](method, addr, path string, body any, out *envelope[T]) er
 type oauthState struct {
 	connected bool
 	label     string
-	known     bool // whether the daemon was ever read successfully (drives stale-if-error)
+	// id is the Console-account credential's id: a new sign-in is a new credential, a token
+	// refresh keeps it, so it is what the opencode-account binding hashes (ADR 0138 D5b).
+	id    string
+	known bool // whether the daemon was ever read successfully (drives stale-if-error)
 }
 
 var (
@@ -202,6 +206,42 @@ func invalidateOAuthStatus() {
 	oauthMu.Lock()
 	oauthAt = time.Time{}
 	oauthMu.Unlock()
+}
+
+// oauthCached is the Console-account view for a create's launch record, which must not wait on
+// the daemon: the last view read, only while it is current (read within oauthStatusTTL and not
+// invalidated by a login or a disconnect since). Anything else is unknown (known=false), never
+// the stale-if-error view the Connections card keeps showing, which could name the previous
+// account or call a new one signed out. A view that is not current starts one refresh in the
+// background for the next create; one that is being refreshed right now (the lock is held over
+// the daemon call) is unknown too.
+func oauthCached() oauthState {
+	if !oauthMu.TryLock() {
+		return oauthState{}
+	}
+	current := !oauthAt.IsZero() && time.Since(oauthAt) < oauthStatusTTL
+	st := oauthCache
+	oauthMu.Unlock()
+	if !current {
+		refreshOAuthAsync()
+		return oauthState{}
+	}
+	return st
+}
+
+// oauthRefreshing keeps refreshOAuthAsync to one refresh at a time.
+var oauthRefreshing atomic.Bool
+
+// refreshOAuthAsync reads the daemon's view in the background (oauthStatus), at most one at a
+// time. A seam for tests.
+var refreshOAuthAsync = func() {
+	if !oauthRefreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer oauthRefreshing.Store(false)
+		oauthStatus()
+	}()
 }
 
 // oauthStatus reports the Console-account connection for Status(). When no daemon is running
@@ -234,6 +274,7 @@ func oauthStatus() oauthState {
 		if c.Type == "credential" {
 			st.connected = true
 			st.label = c.Label
+			st.id = c.ID
 			break
 		}
 	}

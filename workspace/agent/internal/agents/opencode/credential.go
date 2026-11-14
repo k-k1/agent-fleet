@@ -1,0 +1,189 @@
+package opencode
+
+import (
+	"encoding/json"
+	"os"
+	"slices"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
+
+var _ agents.CredentialResolver = agentImpl{}
+
+// providerKeys maps opencode's provider ids to the route and the stored key (Settings >
+// Connections, secrets.Data.Opencode) a call on that provider is paid by. The names are the
+// Console's presets (OpencodeCard.tsx OC_PRESETS). Which provider id opencode gives Sakana is
+// not measured; a provider missing here resolves to custom-api.
+var providerKeys = map[string]struct{ route, key string }{
+	"anthropic":  {routes.RouteAnthropicAPI, "ANTHROPIC_API_KEY"},
+	"openai":     {routes.RouteOpenAIAPI, "OPENAI_API_KEY"},
+	"openrouter": {routes.RouteOpenRouterAPI, "OPENROUTER_API_KEY"},
+	"google":     {routes.RouteGeminiAPI, "GEMINI_API_KEY"},
+	"sakana":     {routes.RouteSakanaAPI, "SAKANA_API_KEY"},
+}
+
+// keyRoutes is providerKeys the other way round: the route a stored key opens.
+func keyRoutes() map[string]string {
+	out := map[string]string{}
+	for _, p := range providerKeys {
+		out[p.key] = p.route
+	}
+	return out
+}
+
+// credentialView is what the resolution reads: the stored keys, the billing choice and the
+// opencode.ai account as last seen (no daemon round trip). A seam for tests.
+var credentialView = func() (keys map[string]string, pref string, account oauthState) {
+	if s, err := secrets.Load(); err == nil {
+		keys = s.Opencode
+	}
+	return keys, UsagePref(), oauthCached()
+}
+
+// ResolveLaunch implements agents.CredentialResolver: the route of the model the session is
+// launched on, from its provider id (ADR 0138 D2), and the credential the stored keys or the
+// account login give that provider. A session can change model later; this is the launch. A
+// launch on opencode's own default model (no model named), or on a provider whose payer cannot
+// be told, resolves to nothing rather than to a guess.
+func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
+	keys, pref, acct := credentialView()
+	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs())
+}
+
+func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string) routes.Launch {
+	prov, _, ok := splitModel(model)
+	if !ok || pref == UsageOff {
+		return routes.Launch{}
+	}
+	if slices.Contains(engines, prov) {
+		return routes.Launch{Route: routes.RouteAFEngineLLM, Binding: credbind.Named(routes.RouteAFEngineLLM, "llm")}
+	}
+	if p, ok := providerKeys[prov]; ok {
+		if keys[p.key] == "" {
+			// No stored key: opencode's own auth store may hold a login for the provider (its
+			// `auth login`), which would be another class altogether.
+			return routes.Launch{}
+		}
+		return routes.Launch{Route: p.route, Binding: credbind.Key(p.key, keys[p.key])}
+	}
+	switch prov {
+	case "opencode", "opencode-go":
+		return resolveOpencodeAI(prov, keys, pref, acct)
+	case bedrockProvider:
+		// Bedrock runs only on an explicit selection (the route's own launch); without one the
+		// AWS credential chain decides, which cannot be told.
+		return routes.Launch{}
+	}
+	return routes.Launch{Route: routes.RouteCustomAPI}
+}
+
+// resolveOpencodeAI resolves a model on opencode.ai's own providers. Who pays is proven only
+// when exactly one payer can be: the Zen/Go key alone (the account known to be signed out), or
+// the Console account alone (no key on the launch). The account state comes from the cached view
+// (oauthCached), never a daemon round trip; an unknown state, both payers at once (opencode
+// gates paid models on the OR of the two, and which one pays is not measured), or a billing
+// choice that keeps opencode.ai out resolves to nothing, route included, since the two payers
+// are different classes.
+func resolveOpencodeAI(prov string, keys map[string]string, pref string, acct oauthState) routes.Launch {
+	route := routes.RouteOpencodeZen
+	if prov == "opencode-go" {
+		route = routes.RouteOpencodeGo
+	}
+	if pref == UsageOwn || !acct.known {
+		return routes.Launch{}
+	}
+	key := keys[opencodeKeyEnv]
+	if pref == UsageFree {
+		key = "" // the launch drops it (keyEnv)
+	}
+	signedIn := acct.connected
+	switch {
+	case key != "" && signedIn:
+		return routes.Launch{}
+	case key != "":
+		return routes.Launch{Route: route, Binding: credbind.Key(opencodeKeyEnv, key)}
+	case signedIn && acct.id != "":
+		return routes.Launch{Route: routes.RouteOpencodeAccount, Binding: credbind.Account(routes.RouteOpencodeAccount, acct.id)}
+	case signedIn:
+		return routes.Launch{}
+	case prov == "opencode":
+		// No credential at all: a free model, which still goes to opencode.ai and which the
+		// ledger files under Zen.
+		return routes.Launch{Route: routes.RouteOpencodeZen}
+	}
+	return routes.Launch{}
+}
+
+// engineProviderIDs are the provider ids of the deployment's engines in opencode's config (the
+// entries af wrote, carrying engineProviderMarker).
+func engineProviderIDs() []string {
+	b, err := os.ReadFile(engineConfigPath())
+	if err != nil {
+		return nil
+	}
+	var root struct {
+		Providers map[string]map[string]any `json:"provider"`
+	}
+	if json.Unmarshal(b, &root) != nil {
+		return nil
+	}
+	var out []string
+	for id, p := range root.Providers {
+		if p[engineProviderMarker] == true {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// UsableRoutes implements agents.CredentialResolver: every route the stored keys, the account
+// login, the billing choice and the engine config open now, and bedrock while it is offered and
+// the gateway holds a marked profile for it.
+func (a agentImpl) UsableRoutes() []string {
+	keys, pref, acct := credentialView()
+	out := usableOf(keys, pref, acct, HasEngineProviders())
+	for _, r := range a.OfferedRoutes() {
+		if agents.GatewayHolds(r) {
+			out = append(out, r)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+func usableOf(keys map[string]string, pref string, acct oauthState, engine bool) []string {
+	if pref == UsageOff {
+		return nil
+	}
+	var out []string
+	byKey := keyRoutes()
+	noOpencodeAI := pref == UsageFree || pref == UsageOwn
+	for name, v := range keys {
+		switch {
+		case v == "":
+		case name == opencodeKeyEnv:
+			if !noOpencodeAI {
+				out = append(out, routes.RouteOpencodeZen, routes.RouteOpencodeGo)
+			}
+		case byKey[name] != "":
+			out = append(out, byKey[name])
+		default:
+			out = append(out, routes.RouteCustomAPI)
+		}
+	}
+	if acct.connected && !noOpencodeAI {
+		out = append(out, routes.RouteOpencodeAccount)
+	}
+	if pref == UsageFree {
+		out = append(out, routes.RouteOpencodeZen)
+	}
+	if engine {
+		out = append(out, routes.RouteAFEngineLLM)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}

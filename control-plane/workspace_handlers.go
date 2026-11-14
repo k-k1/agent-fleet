@@ -805,7 +805,11 @@ type sessionWire struct {
 	// mirror has no column, so it is known only from a live Agent answer: a scheduled fire to an
 	// existing session reads it there.
 	Route *agentroutes.Selection `json:"route,omitempty"`
-	Dir   string                 `json:"dir"`
+	// LaunchRoute is what the session was launched on (ADR 0138 D11): the route its create
+	// resolved to and the binding of the credential behind it, as the Agent recorded it. Absent
+	// for a session created before the record existed. Same relay caveat as Route.
+	LaunchRoute *agentroutes.Launch `json:"launchRoute,omitempty"`
+	Dir         string              `json:"dir"`
 	// Subdir: the folder BENEATH Dir the agent actually runs in ("" = Dir itself).
 	// Same relay caveat as the fields around it — absent here, the Console never sees
 	// which folder a session was launched in. The DB mirror has no column for it, so it is

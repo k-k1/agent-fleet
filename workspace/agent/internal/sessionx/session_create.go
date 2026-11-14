@@ -638,6 +638,9 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		MuseContributorMode: contributorModeOn(c.kind),
 	}
 	applyCreateLinks(&meta, req)
+	// After the route has been checked and bound (checkRoute), before anything starts: the record
+	// is what the session launches on.
+	meta.LaunchRoute = launchRouteOf(meta)
 	if req.QueueDelivery != nil {
 		meta.QueueDelivery = req.QueueDelivery.ID
 	}
