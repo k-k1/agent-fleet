@@ -135,9 +135,12 @@ func waitFor(f *agents.Flow, marker string, timeout time.Duration) bool {
 
 // freePlanRe matches the /model banner shown when explicit model selection is
 // plan-gated (measured on v1.0.73: "Your Copilot Free plan currently includes only Auto,
-// which automatically selects ..."). The plan name is left out so a small rewording upstream
-// still matches.
-var freePlanRe = regexp.MustCompile(`plan currently includes only Auto`)
+// which automatically selects ..."; v1.0.111: "... includes only Copilot Fusion, ..."). The
+// plan name and the routing product's name are both left out: a renamed Auto otherwise lets
+// the Free picker's rows through, and every one of them fails at launch with "Model ... is
+// not available" (#4082). A Free plan also offers no other way to tell rows apart — they are
+// drawn the same as a paid plan's.
+var freePlanRe = regexp.MustCompile(`plan currently includes only\s`)
 
 // modelRowRe matches one picker row's model id (measured vocabulary: gpt-5.6-sol /
 // claude-sonnet-4.6 / gemini-3.1-pro-preview / kimi-k2.7-code …). A row stripped of the

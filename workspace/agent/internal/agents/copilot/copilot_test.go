@@ -198,6 +198,28 @@ const modelPickerFree = `   Auto routes based on your task, real-time system hea
  ❯  Search models…
  ↑/↓ to navigate · enter to select · esc to cancel`
 
+// fixture: an abridged capture of the v1.0.111 /model picker on a Free plan. Auto is now
+// "Copilot Fusion" and the banner names it; the rows below it are drawn but unusable on this
+// plan (--model claude-haiku-5.5 fails with "Model ... is not available" — measured, #4082).
+const modelPickerFreeFusion = `   Copilot Fusion chooses models and workflows based on your task. Learn more
+   Optimize for
+ Standard — Prioritizes versatile models for efficient everyday coding.
+ High — Prioritizes capable models for challenging tasks and deeper reasoning. Unavailable: This tier is not available for the user's Copilot plan.
+Session only. Copilot Fusion chooses a model; it does not change Autopilot or Assisted Permissions. Use ` + "`/config model`" + ` for future sessions.
+ Your Copilot Free plan currently includes only Copilot Fusion, which automatically selects the best available model for each task.
+                         Tier              ┃
+❯ Copilot Fusion ✓      ← Standard →
+                    ┃
+gpt-6.1-sol┃
+gpt-5.6-luna┃
+claude-haiku-5.5┃
+mai-code-1.1-flash┃
+gemini-3.8-flash┃
+ ─
+ ❯  Search models…
+ ─
+ ● Scanning local providers · ↑/↓ to navigate · ←/→ routing profile · shift+tab group: recommended · enter to select · esc to cancel`
+
 const modelPickerPaid = `   Auto routes based on your task, real-time system health, and model performance. Learn More
    Model
  ❯ Auto ✓                                                                                                   █
@@ -215,6 +237,10 @@ func TestParseModelPicker(t *testing.T) {
 	// A Free-family banner → Auto only (an empty, non-nil list).
 	if got := parseModelPicker(modelPickerFree); len(got) != 0 {
 		t.Errorf("free plan must yield empty catalog, got %+v", got)
+	}
+	// The same banner after Auto was renamed Copilot Fusion: still Auto only.
+	if got := parseModelPicker(modelPickerFreeFusion); len(got) != 0 {
+		t.Errorf("free plan (Copilot Fusion banner) must yield empty catalog, got %+v", got)
 	}
 	// No banner → the picker rows are the catalog (Auto, decoration and footer excluded).
 	got := parseModelPicker(modelPickerPaid)
