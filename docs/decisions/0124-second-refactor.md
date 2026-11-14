@@ -678,3 +678,18 @@ unknown kinds). `kindLiteralCeiling` 74 → 71. Behaviour unchanged; not verifie
 fleet.
 
 Follow-ups: #2925.
+
+## Note (2026-11-14): One CLI manifest (#3892, Phase 6)
+
+Every pinned CLI is one line of `workspace/agent/internal/climanifest/cli-manifest.psv`: name,
+Dockerfile ARG, release source and locator, contract workflow, install method, dispatch mode,
+`latest` input, CI secret names, flags. `deploy/local/cli-manifest.sh` reads it for the drift check,
+pin bump, release edges, update issues, contract report, the new `cli-dispatch.sh` and the
+`setup-agent-cli` action; the Go package `internal/climanifest` embeds the same file (no copy), and
+`TestCLIManifestToolSpecs` ties the agent's `toolSpecs` rows to it. What a script cannot derive (the
+Dockerfile ARG and `versions.json` key, `tools.tsv`, the workflows' secret bindings, `toolSpecs`) is
+checked by `deploy/local/cli-drift-check.sh --tables`, which CI runs; `cli-manifest-stub-test.sh`
+seeds each kind of drift. Behaviour unchanged except two cosmetic ones: the drift table lists codex
+before opencode, and a missing-secret warning in the watcher reads differently. Not verified live:
+the watcher, drift and pin-bump workflows run on cron and were exercised only through their scripts
+with stubs. The reusable contract workflow (#3893) and the boot-install move (#3894) are separate.

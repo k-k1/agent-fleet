@@ -59,7 +59,7 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 | MCP | `internal/mcpreg`: CLI が設定ファイルを読むなら `writerTable` への 1 行（`MaterializedKinds()` はここから導出）、別経路（ワイヤ上・プロセス内）で渡るなら `ServedKinds`。`Caps().MCPClient`。`knownKinds` は `ServedKinds` から、CP の `mcpKnownKinds` は kind カタログのスナップショット（§20.7）から導出される | CLI ごとに設定の形もプレースホルダ方言も違う。設定ファイル型で CLI を CI で動かせる種別は `mcp-config-contract.yml` にも足す |
 | エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または Agent の `agents.InstructionsUnsupported`（理由コードを返す 1 行のメソッド。`cursor/instructions.go`） | Console の配布先一覧は `instrSupportedKinds` とレジストリの `InstructionsUnsupported` の答えから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしている。こうした種別も `instrSupportedKinds` に載せ、配信方式 `prompt`・パス無し・`Applied` は true とする（行のスイッチがハーネスの読む値そのものになる）。プレビューの case も足す |
 | Console の descriptor | `console/src/agents/kindTable.ts` の行（順序・カタログの事実・色）と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。driver に関する事実（`managedDriver`、`terminalDriver`）はカタログから読み、読み込み前は kind 表から導いた `FALLBACK_KIND_FACTS` が答える。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
-| 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、`deploy/local/cli-drift-check.sh` の行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
+| 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、CLI マニフェスト `workspace/agent/internal/climanifest/cli-manifest.psv` の 1 行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
 | contract ワークフロー | `.github/workflows/` の下に専用ファイル（ワークスペースイメージが CLI やホストをピンする種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。lcpp はイメージで何もピンせず、代わりに手動の検査を持つ（§20.5）|
 
 この表は kind 名が現れる場所の完全な一覧ではありません。手で持っている一覧がまだあります。
@@ -151,11 +151,17 @@ lcpp は例外です。ベンダーの CLI を動かさず、話し相手の lla
 ビルドタグ `contract_manual`）です。
 
 2 時間ごとのリリース監視 `cli-release-watch.yml` に登録し、公開版が変わったら dispatch されるようにします。
-`cli-drift.yml` はピンの遅れを報告するだけで、何も dispatch しません。登録は 4 か所です。
+`cli-drift.yml` はピンの遅れを報告するだけで、何も dispatch しません。種別は **CLI マニフェスト
+（`workspace/agent/internal/climanifest/cli-manifest.psv`、列の意味は先頭のコメント）の 1 行**です。
+Dockerfile の ARG、latest の読み先、contract ワークフロー、`setup-agent-cli` の入れ方、watcher が
+dispatch するか、必要な secret がそこに入り、ドリフト検知・版上げ・リリース監視・更新 issue・
+contract レポート・action はすべてその行を読むので、足すべき一覧はありません。マニフェストに入らない
+ものは `deploy/local/cli-drift-check.sh --tables`（CI が実行し、`cli-manifest-stub-test.sh` が各種の
+ドリフトを仕込んで確かめる）が検査します: Dockerfile の ARG と `versions.json` のキー、`tools.tsv` の行、
+`env_tool_versions.go` の `toolSpecs` の行、`cli-release-watch.yml` の secret 束縛と `cli-drift.yml` の
+`CRED_<KIND>`、npm 以外なら drift check の読み取り・action の分岐・`resolve_<kind>`。足りないものは
+1 つずつ名指しされます。その 1 行のほかに contract に要るのは次です。
 
-- `deploy/local/cli-release-edges.sh` の `KINDS` に種別を足す。
-- `deploy/local/cli-drift-check.sh` に行を足す。
-- ワークフローの状態・エッジ・dispatch の各ステップに行を足す。
 - contract 自身に、成功時に `deploy/local/cli-release-state.sh set tested <kind> <version>` を
   走らせるステップを置く。**これが無いと、監視はそのリリースを実行のたびに新しいと見て、2 時間ごとに dispatch します。** 無人で dispatch される contract は、失敗も `cli-contract-report.sh failure <kind> <version>` で報告してください（ほかの contract を参照）。赤い版の再 dispatch を止めるのがこれです。
   記録する版は、監視がその種別の最新として読む版と同じ形にします。muse の版はビルド ID を含む
@@ -163,16 +169,13 @@ lcpp は例外です。ベンダーの CLI を動かさず、話し相手の lla
 
 その contract が通ったあとピンを自動で上げさせる
 （[10 §10.2.2](10-development.ja.md#1022-エージェント-cli-の版上げの自動化cli-pin-bumpyml)）には、
-`deploy/local/cli-pin-bump.sh` の `KINDS` に種別を足し（チェックサムをピンするなら、それを取得・
-照合する `resolve_<kind>` も）、`cli-pin-bump.yml` の `workflow_run` の一覧に contract の
-`name:` を足します。
+npm の CLI ならマニフェストの 1 行で足ります。それ以外の入手元は、チェックサムを取得・照合する
+`resolve_<kind>` を `deploy/local/cli-pin-bump.sh` に足します。`cli-pin-bump.yml` の `workflow_run` の
+一覧には contract の `name:` を足します。
 
-人が要るときに更新 issue が開くように（10 §10.2.2）、`deploy/local/cli-update-issues.sh` の
-`ALL_KINDS`、`deploy/local/cli-contract-report.sh` の `prune` の種別一覧（watcher が無人で
-dispatch するなら `RED_KINDS` も）に種別を足し、`cli-drift.yml` の streak のループに contract を
-足します。contract のファイル名が `<kind>-contract.yml` でない、または `cli_version` 入力を
-取らないなら、`cli-update-issues.sh` の `workflow_of` と `dispatch_cmd` も広げます。これが無いと
-その種別はずっと `waiting` のままで、issue は開きません。
+人が動くときの更新 issue（10 §10.2.2）、contract レポートの `prune` と `RED_KINDS`、`cli-drift.yml` の
+streak のループも、マニフェストの行から決まります（contract のファイル名、`input` 列の `latest` 入力、
+`secrets` 列、`dispatch` 列の `auto` / `manual`）。
 
 無人で dispatch するのは、資格情報を無人で供給できる場合だけです。**対話的な refresh で回転する
 資格情報のものは手で dispatch**します。資格情報が未設定のうちに来たリリースも同じ扱いです。

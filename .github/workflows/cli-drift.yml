@@ -74,19 +74,14 @@ jobs:
       # smallest count that says "not this version". Cancelled runs do not count either way.
       - name: contract health (stale rows, consecutive red runs)
         env:
-          LATEST_CLAUDE: ${{ steps.check.outputs.latest_claude }}
-          LATEST_CODEX: ${{ steps.check.outputs.latest_codex }}
-          LATEST_OPENCODE: ${{ steps.check.outputs.latest_opencode }}
-          LATEST_COPILOT: ${{ steps.check.outputs.latest_copilot }}
-          LATEST_AGY: ${{ steps.check.outputs.latest_agy }}
-          LATEST_CURSOR: ${{ steps.check.outputs.latest_cursor }}
-          LATEST_KIRO: ${{ steps.check.outputs.latest_kiro }}
-          LATEST_MUSE: ${{ steps.check.outputs.latest_muse }}
+          VERSIONS_JSON: ${{ toJSON(steps.check.outputs) }}
         run: |
           # A reporting failure must not turn the drift check itself red.
           deploy/local/cli-contract-report.sh prune || echo "::warning::could not prune the red-contract rows"
-          for wf in claude-tui-contract codex-contract opencode-contract copilot-contract \
-                    agy-contract cursor-contract kiro-contract muse-contract; do
+          . deploy/local/cli-manifest.sh
+          manifest_load
+          for kind in $(manifest_tested_kinds); do
+            wf="${M_contract[$kind]%.yml}"
             deploy/local/cli-contract-report.sh streak "$wf" 2 || echo "::warning::streak check failed for $wf"
           done
 

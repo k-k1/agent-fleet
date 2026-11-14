@@ -55,7 +55,12 @@ set -euo pipefail
 BEGIN='<!-- cli-contract-failures:begin -->'
 END='<!-- cli-contract-failures:end -->'
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RED_KINDS="${RED_KINDS:-claude codex opencode copilot agy muse}"
+# shellcheck source=cli-manifest.sh
+. "$HERE/cli-manifest.sh"
+manifest_load || exit 1
+RED_KINDS="${RED_KINDS:-$(manifest_auto_kinds)}"
+# The workflow passes cli-drift-check.sh's step outputs as one JSON object (LATEST_<KIND>).
+[ -z "${VERSIONS_JSON:-}" ] || manifest_import_outputs LATEST_ "$VERSIONS_JSON" latest_
 RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
 
 tmp="$(mktemp)"
@@ -71,7 +76,15 @@ issue_number() { "$ISSUES" number "$1"; }
 # KNOWN_ISSUE: its own list lookup lags just after a creation and would open a second issue.
 MUTATED_NUM=""
 
-kind_of_workflow() { case "$1" in claude-tui-contract) echo claude ;; *) echo "${1%-contract}" ;; esac; }
+# The kind whose contract workflow is <wf> (no .yml), from the manifest; an unknown workflow
+# falls back to the name with `-contract` cut, as before.
+kind_of_workflow() {
+  local n
+  for n in "${M_NAMES[@]}"; do
+    [ "${M_contract[$n]}" != "$1.yml" ] || { echo "$n"; return; }
+  done
+  echo "${1%-contract}"
+}
 
 # The rows (list lines) of the section in a body, one per line.
 rows_of() { sed -n "\\|^$BEGIN\$|,\\|^$END\$|{/^- /p}"; }
@@ -266,7 +279,7 @@ case "$cmd" in
         printf '%s\n' "$line"
       done < "$1"
     }
-    for kind in claude codex opencode copilot agy cursor kiro muse; do
+    for kind in $(manifest_tested_kinds); do
       mutate "$kind" prune_rows
     done
     ;;

@@ -53,6 +53,9 @@ on:
       - "workspace/Dockerfile"
       - ".github/workflows/opencode-contract.yml"
       - ".github/actions/setup-agent-cli/action.yml"
+      # The action reads the CLI manifest (arg, package, install method) through this reader.
+      - "deploy/local/cli-manifest.sh"
+      - "workspace/agent/internal/climanifest/cli-manifest.psv"
   schedule:
     # Mondays 6:30 JST — catch upstream opencode breakage even with no code changes
     - cron: "30 21 * * 0"

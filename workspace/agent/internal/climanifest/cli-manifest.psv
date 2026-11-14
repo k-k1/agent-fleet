@@ -1,0 +1,41 @@
+# The CLI manifest: the one list of every CLI Agent Fleet pins, watches and contract-tests.
+#
+# Read by deploy/local/cli-manifest.sh (the drift check, pin bump, release watcher, update
+# issues, contract report and the setup-agent-cli action) and, embedded, by the Go package
+# internal/climanifest. `deploy/local/cli-drift-check.sh --tables` fails when a hand-kept
+# table somewhere else (Dockerfile, tools.tsv, workflows, the agent's toolSpecs) disagrees.
+#
+# Adding a CLI = one line here, then the pieces that are code rather than a list: its
+# `ARG`s and `versions.json` key in workspace/Dockerfile, a contract workflow, and (for a
+# non-npm source) a branch in the drift check / the action / a resolver in cli-pin-bump.sh.
+# `--tables` names whatever is still missing. No hosts of a deployment and no credentials
+# belong here: only public release endpoints and the NAMES of CI secrets.
+#
+# One CLI per line, `|` separated, `-` for "none". Order is the order the tools print rows in.
+#
+#  1 name         the kind; also the versions.json key, the watcher-state key, LATEST_<NAME>
+#  2 arg          the Dockerfile `ARG` that pins its version
+#  3 source       where "latest" is read: npm | github | agy | cursor | kiro | muse
+#  4 locator      the npm package, GitHub repo or release endpoint for that source
+#  5 contract     the contract workflow (.github/workflows/); `-` = none gates this CLI
+#  6 install      how setup-agent-cli installs it: npm (package = locator) | agy | cursor | kiro
+#                 | `-` = not installed by the action (muse-contract.yml installs the artifact
+#                 itself: verifying the release manifest's own checksum IS that contract)
+#  7 dispatch     auto = the watcher dispatches the contract | manual = never unattended (the
+#                 credential rotates; a person is asked) | `-` = no contract
+#  8 input        the workflow_dispatch input that takes `latest`; `-` = the workflow has none
+#  9 secrets      CI secrets whose presence lets the contract run (any one of, `,` separated);
+#                 `-` = needs none. Their bindings stay in the workflows (GitHub's model).
+# 10 secret_hint  extra words after the secret names in the update issue
+# 11 flags        `,` separated: major-manual (a new major is never bumped automatically)
+#
+# name|arg|source|locator|contract|install|dispatch|input|secrets|secret_hint|flags
+claude|CLAUDE_CODE_VERSION|npm|@anthropic-ai/claude-code|claude-tui-contract.yml|npm|auto|cli_version|E2E_CLAUDE_OAUTH_TOKEN,E2E_ANTHROPIC_API_KEY|-|-
+codex|CODEX_VERSION|npm|@openai/codex|codex-contract.yml|npm|auto|-|-|-|-
+opencode|OPENCODE_VERSION|npm|@opencode/cli|opencode-contract.yml|npm|auto|-|-|-|major-manual
+copilot|COPILOT_VERSION|npm|@github/copilot|copilot-contract.yml|npm|auto|cli_version|E2E_COPILOT_GITHUB_TOKEN|-|-
+agy|AGY_VERSION|agy|https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json|agy-contract.yml|agy|auto|cli_version|E2E_AGY_OAUTH_TOKEN|-|-
+cursor|CURSOR_VERSION|cursor|https://cursor.com/install|cursor-contract.yml|cursor|manual|cli_version|E2E_CURSOR_AUTH_JSON|-|-
+kiro|KIRO_VERSION|kiro|https://prod.download.cli.kiro.dev/stable/latest/manifest.json|kiro-contract.yml|kiro|manual|cli_version|E2E_KIRO_AUTH_DB_B64_1..8|(`deploy/local/set-kiro-ci-auth.sh`)|-
+muse|MUSE_VERSION|muse|https://api.meta.ai/muse-code/channels/muse-stable|muse-contract.yml|-|auto|version|-|-|-
+rtk|RTK_VERSION|github|rtk-ai/rtk|-|-|-|-|-|-|-

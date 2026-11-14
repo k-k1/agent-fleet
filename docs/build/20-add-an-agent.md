@@ -62,7 +62,7 @@ unless they name another tree.
 | MCP | `internal/mcpreg`: one row in `writerTable` when the CLI reads a config file (`MaterializedKinds()` is derived from it); `ServedKinds` when servers reach it another way (on the wire, or in-process); `Caps().MCPClient`. `knownKinds` is derived from `ServedKinds`, and the CP's `mcpKnownKinds` from the kind catalog snapshot (§20.7) | Each CLI has its own config shape and placeholder dialect. A config-file kind whose CLI can run in CI goes into `mcp-config-contract.yml` too |
 | Agent instructions | `agents.Instructions` on the Agent (an `instructions_ops.go` in your package: shape, apply functions) and the kind in `instrSupportedKinds` (display order), or `agents.InstructionsUnsupported` on the Agent (a one-line method returning the reason code; `cursor/instructions.go`) | The Console's list of targets is built from `instrSupportedKinds` and the registry's `InstructionsUnsupported` answers; `agent_instructions.go` has no per-kind switch left. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead (lcpp does, each turn, through `harness.SystemPrompt`): `prompt` delivery, no path, no apply functions |
 | Console descriptor | a row in `console/src/agents/kindTable.ts` (order, catalog facts, colour), and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances; the driver facts (`managedDriver`, `terminalDriver`) are read from the catalog, with `FALLBACK_KIND_FACTS`, derived from the kind table, answering until it loads. Some screens still switch on the kind name, so grep them (below) |
-| Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
+| Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and one line in the CLI manifest, `workspace/agent/internal/climanifest/cli-manifest.psv` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
 | A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
 The table is not a complete list of where kind names appear. The Agent's measured-per-kind
@@ -165,11 +165,19 @@ by hand against a real engine (`internal/harness/live_contract_test.go`, build t
 
 Register it with the release watcher (every 2 hours), `cli-release-watch.yml`, so that a published
 version change dispatches it. `cli-drift.yml` only reports pins that fall behind; it
-dispatches nothing. Registering takes four places:
+dispatches nothing. The kind is **one line in the CLI manifest**
+(`workspace/agent/internal/climanifest/cli-manifest.psv`; its header explains the columns): the
+Dockerfile ARG, where `latest` is read, the contract workflow, how `setup-agent-cli` installs it,
+whether the watcher dispatches it and with which secrets. The drift check, pin bump, release
+watcher, update issues, contract report and the action all read that line, so none of them has a
+list to extend. What the manifest cannot hold is checked by
+`deploy/local/cli-drift-check.sh --tables` (CI runs it, and `cli-manifest-stub-test.sh` seeds each
+kind of drift): the ARG and the `versions.json` key in the Dockerfile, a `tools.tsv` row, a
+`toolSpecs` row in `env_tool_versions.go`, the secret bindings in `cli-release-watch.yml` and
+`CRED_<KIND>` in `cli-drift.yml`, and, for a non-npm source, a reader in the drift check, a branch
+in the action and a `resolve_<kind>` in the pin bump. The check names each one that is missing.
+Beyond that one line, a contract needs:
 
-- the kind in `KINDS` of `deploy/local/cli-release-edges.sh`;
-- its row in `deploy/local/cli-drift-check.sh`;
-- its lines in the workflow's state, edge and dispatch steps;
 - in the contract itself, a success step that runs
   `deploy/local/cli-release-state.sh set tested <kind> <version>`. **Without it, the
   watcher sees the release as new on every run and dispatches it every 2 hours.** A contract that dispatches unattended should also report its failure (`cli-contract-report.sh failure <kind> <version>`, see the other contracts), which is what stops that loop for a red version.
@@ -177,18 +185,15 @@ dispatches nothing. Registering takes four places:
   carries its build id (`1.4.0-R4302.1`), so cutting it to `1.4.0` leaves the edge open.
 
 For the pin to be bumped automatically once that contract passes
-([10 §10.2.2](10-development.md#1022-automated-agent-cli-bumps-cli-pin-bumpyml)), add the
-kind to `KINDS` in `deploy/local/cli-pin-bump.sh` (plus a `resolve_<kind>` that fetches
-and checks its checksums, if it pins any) and its contract's `name:` to the
-`workflow_run` list of `cli-pin-bump.yml`.
+([10 §10.2.2](10-development.md#1022-automated-agent-cli-bumps-cli-pin-bumpyml)), the manifest
+line is enough for an npm CLI; any other source needs a `resolve_<kind>` in
+`deploy/local/cli-pin-bump.sh` that fetches and checks its checksums. Add its contract's `name:`
+to the `workflow_run` list of `cli-pin-bump.yml`.
 
-For the kind to get an update issue when a person is needed (10 §10.2.2), add it to
-`ALL_KINDS` in `deploy/local/cli-update-issues.sh`, to the kind list of `prune` in
-`deploy/local/cli-contract-report.sh` (and to its `RED_KINDS` when the watcher dispatches it
-unattended), and its contract to the streak loop of `cli-drift.yml`. If the contract file is
-not `<kind>-contract.yml` or takes no `cli_version` input, extend `workflow_of` and
-`dispatch_cmd` in `cli-update-issues.sh`. Without these the kind falls into the `waiting`
-state forever and never opens an issue.
+The update issue a person is asked to act on (10 §10.2.2), the contract report's `prune` and
+`RED_KINDS` and the streak loop of `cli-drift.yml` all follow from the manifest line as well: the
+contract file, its `latest` input (the `input` column) and the secrets (`secrets`, with the
+`dispatch` column choosing `auto` or `manual`) are what they read.
 
 Dispatch unattended only when the credential can be supplied unattended. **A credential
 that rotates through an interactive refresh is dispatched by hand**, and so is a release

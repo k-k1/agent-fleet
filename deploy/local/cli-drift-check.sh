@@ -27,33 +27,29 @@
 # Usage:
 #   deploy/local/cli-drift-check.sh            # check all agent CLIs
 #   deploy/local/cli-drift-check.sh claude     # just one
+#   deploy/local/cli-drift-check.sh --tables   # no network: does a hand-kept table disagree
+#                                              # with the manifest? (exit 1 = yes, listed)
 # Exit codes: 0 = pins match latest / 1 = drift / 2 = no row could be read at all
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DOCKERFILE="$ROOT/workspace/Dockerfile"
 
-# name|ARG name|release source|package / endpoint
-TARGETS=(
-  "claude|CLAUDE_CODE_VERSION|npm|@anthropic-ai/claude-code"
-  "opencode|OPENCODE_VERSION|npm|@opencode/cli"
-  "codex|CODEX_VERSION|npm|@openai/codex"
-  "copilot|COPILOT_VERSION|npm|@github/copilot"
-  "agy|AGY_VERSION|agy|https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json"
-  "cursor|CURSOR_VERSION|cursor|https://cursor.com/install"
-  "kiro|KIRO_VERSION|kiro|https://prod.download.cli.kiro.dev/stable/latest/manifest.json"
-  # muse (ADR 0095): the stable channel endpoint publishes the version and the manifest URL
-  # anonymously, which is what lets this row exist for a proprietary CLI at all.
-  #
-  # Deliberately the one row with NO matching branch in .github/actions/setup-agent-cli: its
-  # contract (muse-contract.yml) installs the artifact itself, because verifying the release
-  # manifest's own checksum and fingerprint IS the check — handing that to a shared installer
-  # would move the thing under test out of the test.
-  "muse|MUSE_VERSION|muse|https://api.meta.ai/muse-code/channels/muse-stable"
-  # rtk is not an agent CLI but is baked/self-updated the same way (ARG pin +
-  # entrypoint shadow), so its drift is just as invisible without this row.
-  "rtk|RTK_VERSION|github|rtk-ai/rtk"
-)
+if [ "${1:-}" = --tables ]; then
+  exec "$(dirname "${BASH_SOURCE[0]}")/cli-tables-check.sh"
+fi
+
+# The rows come from the CLI manifest (cli-manifest.sh): name, ARG, release source, locator.
+# The muse row exists for a proprietary CLI because its stable channel endpoint publishes the
+# version anonymously (ADR 0095); rtk is not an agent CLI but is baked and self-updated the same
+# way, so its drift is just as invisible without a row (it has no contract: see the manifest).
+# shellcheck source=cli-manifest.sh
+. "$(dirname "${BASH_SOURCE[0]}")/cli-manifest.sh"
+manifest_load || exit 2
+TARGETS=()
+for _n in "${M_NAMES[@]}"; do
+  TARGETS+=("$_n|${M_arg[$_n]}|${M_source[$_n]}|${M_locator[$_n]}")
+done
 
 CURL_RETRY=(--retry 3 --retry-delay 1 --retry-all-errors)
 

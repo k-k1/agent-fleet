@@ -52,7 +52,9 @@ jobs:
         run: |
           set -euo pipefail
           deploy/local/cli-release-state.sh ensure watcher ok
-          for name in claude codex opencode copilot agy cursor kiro muse; do
+          . deploy/local/cli-manifest.sh
+          manifest_load
+          for name in $(manifest_tested_kinds); do
             echo "tested_$name=$(deploy/local/cli-release-state.sh get tested "$name")" >> "$GITHUB_OUTPUT"
             echo "red_$name=$(deploy/local/cli-release-state.sh get red "$name")" >> "$GITHUB_OUTPUT"
           done
@@ -74,30 +76,8 @@ jobs:
         if: steps.versions.outputs.unusable != 'true'
         env:
           FAILED: ${{ steps.versions.outputs.failed }}
-          TESTED_CLAUDE: ${{ steps.state.outputs.tested_claude }}
-          RED_CLAUDE: ${{ steps.state.outputs.red_claude }}
-          TESTED_CODEX: ${{ steps.state.outputs.tested_codex }}
-          RED_CODEX: ${{ steps.state.outputs.red_codex }}
-          TESTED_OPENCODE: ${{ steps.state.outputs.tested_opencode }}
-          RED_OPENCODE: ${{ steps.state.outputs.red_opencode }}
-          TESTED_COPILOT: ${{ steps.state.outputs.tested_copilot }}
-          RED_COPILOT: ${{ steps.state.outputs.red_copilot }}
-          TESTED_AGY: ${{ steps.state.outputs.tested_agy }}
-          RED_AGY: ${{ steps.state.outputs.red_agy }}
-          TESTED_CURSOR: ${{ steps.state.outputs.tested_cursor }}
-          RED_CURSOR: ${{ steps.state.outputs.red_cursor }}
-          TESTED_KIRO: ${{ steps.state.outputs.tested_kiro }}
-          RED_KIRO: ${{ steps.state.outputs.red_kiro }}
-          TESTED_MUSE: ${{ steps.state.outputs.tested_muse }}
-          RED_MUSE: ${{ steps.state.outputs.red_muse }}
-          LATEST_CLAUDE: ${{ steps.versions.outputs.latest_claude }}
-          LATEST_CODEX: ${{ steps.versions.outputs.latest_codex }}
-          LATEST_OPENCODE: ${{ steps.versions.outputs.latest_opencode }}
-          LATEST_COPILOT: ${{ steps.versions.outputs.latest_copilot }}
-          LATEST_AGY: ${{ steps.versions.outputs.latest_agy }}
-          LATEST_CURSOR: ${{ steps.versions.outputs.latest_cursor }}
-          LATEST_KIRO: ${{ steps.versions.outputs.latest_kiro }}
-          LATEST_MUSE: ${{ steps.versions.outputs.latest_muse }}
+          STATE_JSON: ${{ toJSON(steps.state.outputs) }}
+          VERSIONS_JSON: ${{ toJSON(steps.versions.outputs) }}
         run: deploy/local/cli-release-edges.sh
 
       # Before any dispatch, and on the unusable path too: the point of this record is
@@ -121,59 +101,21 @@ jobs:
           fi
           deploy/local/cli-release-state.sh set watcher at "$at"
 
+      # Which contracts, with which `latest` input and which secrets, is the CLI manifest's
+      # (deploy/local/cli-dispatch.sh); only the secret bindings live here, because a workflow
+      # can bind a secret to the environment only by name. `cli-drift-check.sh --tables` fails
+      # when this list and the manifest disagree. cursor and kiro are never dispatched from
+      # here: Cursor's auth.json is a refreshable interactive credential and kiro's
+      # device-flow DB rotates, so their update issue asks a person.
       - name: dispatch latest TUI / mirror contracts when auth is configured
         if: steps.changed.outputs.count != '' && steps.changed.outputs.count != '0'
         env:
-          CLAUDE_CHANGED: ${{ steps.changed.outputs.claude }}
-          CODEX_CHANGED: ${{ steps.changed.outputs.codex }}
-          OPENCODE_CHANGED: ${{ steps.changed.outputs.opencode }}
-          COPILOT_CHANGED: ${{ steps.changed.outputs.copilot }}
-          AGY_CHANGED: ${{ steps.changed.outputs.agy }}
-          MUSE_CHANGED: ${{ steps.changed.outputs.muse }}
-          CLAUDE_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
-          CLAUDE_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
-          COPILOT_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}
-          AGY_TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ "$CLAUDE_CHANGED" = true ]; then
-            if [ -n "$CLAUDE_KEY" ] || [ -n "$CLAUDE_TOKEN" ]; then
-              gh workflow run claude-tui-contract.yml -f cli_version=latest
-            else
-              echo "::warning::Claude changed but no TUI-contract credential is configured"
-            fi
-          fi
-          if [ "$CODEX_CHANGED" = true ]; then
-            gh workflow run codex-contract.yml
-          fi
-          if [ "$OPENCODE_CHANGED" = true ]; then
-            gh workflow run opencode-contract.yml
-          fi
-          if [ "$COPILOT_CHANGED" = true ]; then
-            if [ -n "$COPILOT_TOKEN" ]; then
-              gh workflow run copilot-contract.yml -f cli_version=latest
-            else
-              echo "::warning::Copilot changed but E2E_COPILOT_GITHUB_TOKEN is not configured"
-            fi
-          fi
-          if [ "$AGY_CHANGED" = true ]; then
-            if [ -n "$AGY_TOKEN" ]; then
-              gh workflow run agy-contract.yml -f cli_version=latest
-            else
-              echo "::warning::agy changed but E2E_AGY_OAUTH_TOKEN is not configured"
-            fi
-          fi
-          # cursor and kiro are never dispatched from here. Cursor's auth.json is a
-          # refreshable interactive credential, and kiro's device-flow DB rotates; an
-          # unattended run must never spend either. Their update issue asks a person to
-          # dispatch the contract.
-          if [ "$MUSE_CHANGED" = true ]; then
-            # muse is the one kind whose release contract needs NO credential: it checks the
-            # MSP schema fingerprint and the shape of `muse --version`, both free (ADR 0095
-            # decision 8). So this dispatches unattended, unlike cursor/kiro. A turn is what
-            # would cost a member's subscription, and muse-contract.yml never runs one.
-            gh workflow run muse-contract.yml -f version=latest
-          fi
+          CHANGED_JSON: ${{ toJSON(steps.changed.outputs) }}
+          E2E_ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          E2E_CLAUDE_OAUTH_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
+          E2E_COPILOT_GITHUB_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}
+          E2E_AGY_OAUTH_TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}
+        run: deploy/local/cli-dispatch.sh
 
       # Last, so the watcher state is already written when it runs. Every source failing
       # is not release news, it is the check being unable to run at all — the one case

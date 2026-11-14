@@ -41,12 +41,12 @@ mkdir -p "$STUB" "$PINS"
 
 # The checker resolves workspace/Dockerfile from its own location, so "in sync" means
 # "the stub answered the pin that is really in the tree". Read the same name -> ARG
-# mapping out of the checker's own TARGETS table: a row whose ARG was renamed then
+# mapping out of the CLI manifest the checker reads: a row whose ARG was renamed then
 # shows up as the ARG-not-found failure it is, instead of as a passing fixture.
 while read -r name arg; do
   found="$(sed -n "s/^ARG $arg=//p" "$ROOT/workspace/Dockerfile")"
   printf '%s' "${found%%$'\n'*}" > "$PINS/$name"
-done < <(sed -n 's/^  "\([a-z][a-z]*\)|\([A-Z_][A-Z_]*\)|.*/\1 \2/p' "$CHECK")
+done < <(. "$ROOT/deploy/local/cli-manifest.sh" && manifest_load && for n in "${M_NAMES[@]}"; do echo "$n ${M_arg[$n]}"; done)
 
 fail() {
   echo "NG: $1"
@@ -153,8 +153,8 @@ code_is()   { [ "$rc" = "$1" ] || fail "expected exit $1, got $rc"; }
 
 # If the real script grows a row, this test must grow with it rather than quietly
 # exercise fewer rows than it claims.
-ROWS="$(grep -cE '^  "[a-z]+\|' "$CHECK")"
-[ "$ROWS" = 9 ] || fail "cli-drift-check.sh has $ROWS target rows, the stubs answer 9"
+ROWS="$(. "$ROOT/deploy/local/cli-manifest.sh" && manifest_load && echo "${#M_NAMES[@]}")"
+[ "$ROWS" = 9 ] || fail "the CLI manifest has $ROWS rows, the stubs answer 9"
 
 echo "== case 1: nothing fails and every pin matches -> exit 0, no failed rows =="
 STUB_FAIL="" STUB_DRIFT="" run_check
@@ -183,9 +183,9 @@ err_has "cli-drift-check: warning: rtk:"
 sum_has "could not be read"
 
 echo "== case 3: every source fails -> exit 2 (the control for case 2) =="
-STUB_FAIL="claude,opencode,codex,copilot,agy,cursor,kiro,muse,rtk" STUB_DRIFT="" run_check
+STUB_FAIL="claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk" STUB_DRIFT="" run_check
 code_is 2
-out_has '^failed=claude,opencode,codex,copilot,agy,cursor,kiro,muse,rtk$'
+out_has '^failed=claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk$'
 err_has "No release source could be read."
 
 echo "== case 4: two rows fail and a third drifts -> still exit 1, both named =="

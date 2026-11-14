@@ -48,7 +48,10 @@ RELEASE_STATE="${RELEASE_STATE:-$HERE/cli-release-state.sh}"
 REPORT="${REPORT:-$HERE/cli-contract-report.sh}"
 LABEL=cli-drift
 BUMP_BRANCH=automation/cli-pin-bump
-ALL_KINDS=(claude codex opencode copilot agy cursor kiro muse rtk)
+# shellcheck source=cli-manifest.sh
+. "$HERE/cli-manifest.sh"
+manifest_load || exit 1
+ALL_KINDS=("${M_NAMES[@]}")
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -62,28 +65,15 @@ number() {
     --jq "[.[] | select((.title | startswith(\"$1 CLI: \")) and .author.login == \"app/github-actions\") | .number] | first // empty"
 }
 
-workflow_of() { case "$1" in claude) echo claude-tui-contract.yml ;; *) echo "$1-contract.yml" ;; esac; }
+workflow_of() { echo "${M_contract[$1]}"; }
 
 dispatch_cmd() {
-  local wf; wf="$(workflow_of "$1")"
-  case "$1" in
-    codex|opencode) echo "gh workflow run $wf --ref main" ;;
-    muse)           echo "gh workflow run $wf --ref main -f version=latest" ;;
-    *)              echo "gh workflow run $wf --ref main -f cli_version=latest" ;;
-  esac
+  local args; args="$(manifest_dispatch_args "$1")"
+  echo "gh workflow run ${M_contract[$1]} --ref main${args:+ $args}"
 }
 
 # Markdown for the issue body; the backticks are literal.
-# shellcheck disable=SC2016
-secret_of() {
-  case "$1" in
-    claude)  echo '`E2E_CLAUDE_OAUTH_TOKEN` or `E2E_ANTHROPIC_API_KEY`' ;;
-    copilot) echo '`E2E_COPILOT_GITHUB_TOKEN`' ;;
-    agy)     echo '`E2E_AGY_OAUTH_TOKEN`' ;;
-    cursor)  echo '`E2E_CURSOR_AUTH_JSON`' ;;
-    kiro)    echo '`E2E_KIRO_AUTH_DB_B64_1..8` (`deploy/local/set-kiro-ci-auth.sh`)' ;;
-  esac
-}
+secret_of() { manifest_secret_text "$1"; }
 
 # The open bump PR that carries <kind> at <latest>, read from its evidence table row
 # (`| kiro | `2.29.1` → `2.30.0` | …`). Best effort: a token without pull-requests:read
@@ -124,8 +114,8 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
   elif [ "$pin" = "$latest" ]; then state=current
   elif [ "$kind" = rtk ]; then state=manual
   elif [ "$tested" = "$latest" ]; then state=merge
-  elif [ "$kind" = cursor ] || [ "$kind" = kiro ]; then state=dispatch
-  elif [ "$cred" = false ] && case "$kind" in claude|copilot|agy) true ;; *) false ;; esac; then state=credential
+  elif [ "${M_dispatch[$kind]}" = manual ]; then state=dispatch
+  elif [ "$cred" = false ] && [ "${M_secrets[$kind]}" != - ]; then state=credential
   else state=waiting
   fi
 
