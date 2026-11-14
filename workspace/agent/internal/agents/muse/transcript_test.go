@@ -1052,6 +1052,14 @@ func TestNewKindsSummariseFromTypedMembersWithoutFallbackText(t *testing.T) {
 			i.NoticeSubject = &msp.NoticeSubject{ID: "h-1", Label: &lbl}
 		}, msp.ItemKindSystemNotice, "error notice: lint hook"},
 		{"notice without members", func(*msp.Item) {}, msp.ItemKindSystemNotice, ""},
+		{"bodyCompletion", func(i *msp.Item) {
+			i.TaskID = sp("task-9")
+			i.BodyCompletion = &msp.BodyCompletionMembers{Status: "failed", ResultSummary: "task failed", Correlation: msp.BodyCompletionCorrelationUnresolved, Receipt: true}
+		}, msp.ItemKindBodyCompletion, "background task failed: task failed (origin unresolved, task task-9)"},
+		{"bodyCompletion resolved", func(i *msp.Item) {
+			i.BodyCompletion = &msp.BodyCompletionMembers{Status: "completed", Correlation: msp.BodyCompletionCorrelationResolved}
+		}, msp.ItemKindBodyCompletion, "background task completed"},
+		{"bodyCompletion without member", func(*msp.Item) {}, msp.ItemKindBodyCompletion, ""},
 		{"peer without member", func(*msp.Item) {}, msp.ItemKindPeerMessage, ""},
 	}
 	for _, c := range cases {

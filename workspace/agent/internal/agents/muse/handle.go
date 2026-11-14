@@ -810,7 +810,7 @@ func (h *threadHandle) finishTurn(p msp.TurnCompletedParams) {
 	failure := ""
 	var limit *usageLimit
 	if p.Error != nil {
-		failure = p.Error.Message
+		failure = turnFailureText(p.Error)
 		if p.Error.Kind == museAuthRequired {
 			st = agents.TurnAborted
 		}
@@ -861,6 +861,26 @@ func (h *threadHandle) settleHeadLocked() {
 // the failure a fresh deployment hits first, and it is recoverable by signing in, so it must
 // not read as a completed turn.
 const museAuthRequired = "authRequired"
+
+// turnFailureText is the reason shown for a failed turn: the host's own message, with a short
+// next step appended for the kinds the member can act on. Kinds are an open enum, so an
+// unknown one (an older or newer host) simply keeps its message; the hint is added only for
+// kinds this driver knows, and a blank message still yields a readable line instead of "".
+func turnFailureText(e *msp.TurnError) string {
+	var hint string
+	switch e.Kind {
+	case msp.TurnErrorKindContextOverflow:
+		hint = "The conversation no longer fits the model's context window. Compact it or start a new session, then resend."
+	case msp.TurnErrorKindReasoningReplayRefused:
+		hint = "The model provider refused to replay the earlier reasoning. Start a new session or switch model, then resend."
+	default:
+		return e.Message
+	}
+	if strings.TrimSpace(e.Message) == "" {
+		return hint
+	}
+	return e.Message + " — " + hint
+}
 
 // --- approvals and questions -------------------------------------------------
 
