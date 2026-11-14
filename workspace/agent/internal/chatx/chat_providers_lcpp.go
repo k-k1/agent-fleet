@@ -74,6 +74,8 @@ func (lcppChat) Send(ctx context.Context, c *ChatConversation, prompt string) (s
 	if !ok {
 		return "", errors.New("lcpp: no self-hosted chat engine is reachable")
 	}
+	// What served the call, as the engine seam resolved it (ADR 0138 D2, D5b).
+	call.Route, call.Connection = conn.Route, conn.Binding
 
 	turn, err := harness.NewClient(conn, model).Send(ctx, lcppMessages(c, prompt), nil)
 	if err != nil {

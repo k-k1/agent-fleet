@@ -231,8 +231,11 @@ func (g *Gateway) record(c *call, modelID, op string, resp *http.Response, obs *
 		Kind:    c.meta.Kind,
 		Model:   modelID, ModelRaw: modelID, ModelSrc: usagex.ModelReported,
 		Route: route, Billing: usagex.BillingMetered,
-		Ref: c.b.Session,
-		In:  u.In, Out: u.Out, CacheRead: u.CacheRead, CacheCreate: u.CacheCreate,
+		// The binding the session's selection was bound to: the profile's or the provided
+		// source's identity fingerprint, no secret (ADR 0138 D5b).
+		Connection: c.b.Connection,
+		Ref:        c.b.Session,
+		In:         u.In, Out: u.Out, CacheRead: u.CacheRead, CacheCreate: u.CacheCreate,
 		Spend: usagex.Spend(u.In, u.CacheCreate, u.Out),
 		MS:    int(g.d.Now().Sub(start) / time.Millisecond),
 		OK:    ok, Measured: measured,

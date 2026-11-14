@@ -768,31 +768,33 @@ func TestTranscriptModelPerTurn(t *testing.T) {
 func TestTranscriptRecordsServingRoute(t *testing.T) {
 	testHome(t)
 	s := Open("route3280")
-	ask := func(route string) {
+	ask := func(route, binding string) {
 		t.Helper()
 		if _, err := s.AppendUser("q"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.AppendMessageOn(harness.Message{Role: harness.RoleAssistant, Content: "a"}, "m", route); err != nil {
+		if _, err := s.AppendMessageOn(harness.Message{Role: harness.RoleAssistant, Content: "a"}, "m", route, binding); err != nil {
 			t.Fatal(err)
 		}
 	}
-	ask(usagex.RouteAFEngineLLM)
-	ask(usagex.RouteMemberLcpp)
-	ask("") // as AppendMessageFrom writes it: no evidence
+	ask(usagex.RouteAFEngineLLM, "af-engine-llm@llm")
+	ask(usagex.RouteMemberLcpp, "member-llamacpp@e1")
+	ask("", "") // as AppendMessageFrom writes it: no evidence
 	turns, err := s.TranscriptFor("m")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var routes, billings []string
+	var routes, billings, conns []string
 	for _, tn := range turns {
 		if tn.Role == "assistant" {
-			routes, billings = append(routes, tn.Route), append(billings, tn.Billing)
+			routes, billings, conns = append(routes, tn.Route), append(billings, tn.Billing), append(conns, tn.Connection)
 		}
 	}
 	wantR := []string{usagex.RouteAFEngineLLM, usagex.RouteMemberLcpp, ""}
 	wantB := []string{usagex.BillingSelfHosted, usagex.BillingSelfHosted, ""}
-	if !slices.Equal(routes, wantR) || !slices.Equal(billings, wantB) {
-		t.Fatalf("routes = %v billings = %v, want %v / %v", routes, billings, wantR, wantB)
+	// The binding of the connection rides with its route (ADR 0138 D5b).
+	wantC := []string{"af-engine-llm@llm", "member-llamacpp@e1", ""}
+	if !slices.Equal(routes, wantR) || !slices.Equal(billings, wantB) || !slices.Equal(conns, wantC) {
+		t.Fatalf("routes = %v billings = %v conns = %v, want %v / %v / %v", routes, billings, conns, wantR, wantB, wantC)
 	}
 }

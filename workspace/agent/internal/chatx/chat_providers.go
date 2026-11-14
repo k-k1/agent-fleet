@@ -361,6 +361,7 @@ func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	// exactly one row is left whichever path is taken — success, an error result, a failed
 	// exec or a parse failure.
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
+	call.Route, call.Connection = chatLaunch(session.KindClaude, "")
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
@@ -464,6 +465,7 @@ func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt st
 	c.StartTurn()
 	// Usage ledger (ADR 0029 §3) — as in Send, exactly one record on every path.
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
+	call.Route, call.Connection = chatLaunch(session.KindClaude, "")
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
@@ -609,6 +611,7 @@ func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (
 	// requested only when -m was passed and degrades to default_unknown otherwise.
 	model := chatModelFor(c, session.KindCodex) // a pin on another kind resolves via this CLI's config
 	call := usagex.Call{Kind: session.KindCodex, ModelReq: model}
+	call.Route, call.Connection = chatLaunch(session.KindCodex, model)
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	// The default read-only sandbox is exactly the chat contract (no file writes, no
 	// state mutation) — the claude side enforces the same via --disallowedTools. Global
@@ -803,6 +806,7 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 	c.StartTurn()
 	pinned := chatModelFor(c, session.KindOpencode)                   // a pin on another kind resolves via this CLI's config
 	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // usage ledger (ADR 0029 §3)
+	call.Route, call.Connection = chatLaunch(session.KindOpencode, pinned)
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	dir := opencodeChatDir(c)
 	args := opencodeRunArgs()
@@ -1244,6 +1248,7 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	// Usage ledger (ADR 0029 §3): agy returns plain text only, so measured=none — the tokens
 	// are "not measured" rather than 0, and only the call count is recorded.
 	call := usagex.Call{Kind: session.KindAgy, ModelReq: chatModelFor(c, session.KindAgy), Measured: usagex.MeasuredNone}
+	call.Route, call.Connection = chatLaunch(session.KindAgy, "")
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
@@ -1614,6 +1619,7 @@ func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	// Usage ledger (ADR 0029 §3). Measured: cursor puts no model on its result, so this stops
 	// at requested. "auto" passes no --model, so the resolved model is unknown = default_unknown.
 	call := usagex.Call{Kind: session.KindCursor}
+	call.Route, call.Connection = chatLaunch(session.KindCursor, "")
 	pinned := chatModelFor(c, session.KindCursor) // a pin on another kind resolves via this CLI's config
 	if pinned != "" && pinned != "auto" {
 		call.ModelReq = pinned
@@ -2333,6 +2339,7 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 		call.Kind = kind
 		return "", "", "", fmt.Errorf("AI assist cannot run on %q", kind)
 	}
+	call.Route, call.Connection = chatLaunch(kind, selected)
 	out, e := r.runOneShot(ctx, &call, run)
 	return out, "", "", e
 }

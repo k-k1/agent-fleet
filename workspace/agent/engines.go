@@ -37,6 +37,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
@@ -1322,7 +1323,8 @@ func lcppMemberCacheReset() {
 func harnessEngineToken(ctx context.Context, key, session string) (harness.EngineConn, bool) {
 	if key == "llm" {
 		if conn, ok := harnessMemberConn(); ok {
-			return harness.EngineConn{BaseURL: lcppMemberBase(conn.URL) + "/v1", Token: conn.APIKey, Route: usagex.RouteMemberLcpp}, true
+			return harness.EngineConn{BaseURL: lcppMemberBase(conn.URL) + "/v1", Token: conn.APIKey, Route: usagex.RouteMemberLcpp,
+				Binding: credbind.Endpoint(usagex.RouteMemberLcpp, conn.URL, conn.APIKey)}, true
 		}
 	}
 	base := cpurl.Request()
@@ -1333,7 +1335,11 @@ func harnessEngineToken(ctx context.Context, key, session string) (harness.Engin
 	if tok == "" {
 		return harness.EngineConn{}, false
 	}
-	return harness.EngineConn{BaseURL: base + "/engine/" + key + "/v1", Token: tok, Route: engineRouteOf(key)}, true
+	ec := harness.EngineConn{BaseURL: base + "/engine/" + key + "/v1", Token: tok, Route: engineRouteOf(key)}
+	if ec.Route != "" {
+		ec.Binding = credbind.Named(ec.Route, key)
+	}
+	return ec, true
 }
 
 // engineRouteOf is the ledger route of a call served by the deployment's engine for one

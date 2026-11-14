@@ -24,3 +24,24 @@ func TestProviderRoutes(t *testing.T) {
 		}
 	}
 }
+
+// An image call is recorded on a route its provider declares.
+func TestProviderLaunchIsADeclaredRoute(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, id := range []string{ProviderOpenAICompat, ProviderComfy, ProviderAgy} {
+		l := providerLaunch(id)
+		if !slices.Contains(providerRoutes[id], l.Route) {
+			t.Errorf("%s launches on %q, not one of %v", id, l.Route, providerRoutes[id])
+		}
+	}
+	if l := providerLaunch(ProviderComfy); l.Binding != "af-engine-image@comfy" {
+		t.Errorf("comfy binding = %q", l.Binding)
+	}
+	// codex with no login resolves to nothing rather than to a guess.
+	if l := providerLaunch(ProviderCodex); l != (routes.Launch{}) {
+		t.Errorf("codex without auth.json = %+v", l)
+	}
+	if l := providerLaunch("someone-elses"); l != (routes.Launch{}) {
+		t.Errorf("an unknown provider = %+v", l)
+	}
+}

@@ -27,6 +27,10 @@ func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 	return resolveDefault(os.Getenv, append(userSettingFiles(), projectSettingFiles(m)...), accountID)
 }
 
+// DefaultLaunch is ResolveLaunch for a claude run outside any session (the assistant chat and the
+// one-shots), which reads the user settings but no project's.
+func DefaultLaunch() routes.Launch { return resolveDefault(os.Getenv, userSettingFiles(), accountID) }
+
 func resolveDefault(getenv func(string) string, settingFiles []string, account func() string) routes.Launch {
 	key, tok := strings.TrimSpace(getenv("ANTHROPIC_API_KEY")), strings.TrimSpace(getenv("CLAUDE_CODE_OAUTH_TOKEN"))
 	for _, n := range routeOverrides {

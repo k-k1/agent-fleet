@@ -186,6 +186,9 @@ type EngineConn struct {
 	// RouteMemberLcpp), so the caller can record on each call what served it. "" = the
 	// resolver did not say.
 	Route string
+	// Binding is the non-secret binding of the connection behind Route (ADR 0138 D5b): the
+	// member's endpoint and key, or the engine's catalogue key. "" = not resolved.
+	Binding string
 }
 
 // EngineToken mints (or reuses) a connection scoped to one engine key ("llm" for chat)

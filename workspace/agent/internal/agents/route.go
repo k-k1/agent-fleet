@@ -64,6 +64,14 @@ type CredentialResolver interface {
 	UsableRoutes() []string
 }
 
+// PerCallRouter marks a kind whose calls within one session may run on routes other than the
+// one it was launched on (opencode: the route follows the model's provider, and the model can be
+// changed mid-session). The ledger never fills such a call's missing route from the session's
+// launch record.
+type PerCallRouter interface {
+	RoutesPerCall()
+}
+
 // LaunchBinder is an optional capability of a CredentialResolver: the launch record's binding of
 // an explicit selection, where the stored connection does not identify the credential instance
 // (a subscription selection names no connection) or is not fit to travel (a plain key

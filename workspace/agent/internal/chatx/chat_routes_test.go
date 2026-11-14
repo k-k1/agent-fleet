@@ -24,3 +24,18 @@ func TestChatBackendRoutes(t *testing.T) {
 		}
 	}
 }
+
+// Every chat backend's calls are stamped with what they run on: a resolver per kind, except lcpp,
+// whose call records what the engine seam answered.
+func TestEveryChatBackendResolvesItsLaunch(t *testing.T) {
+	for _, k := range chatBackendKinds() {
+		if _, ok := chatLaunches[k]; ok == (k == lcppKind) {
+			t.Errorf("chat backend %q: resolver present = %v", k, ok)
+		}
+	}
+	for k := range chatLaunches {
+		if backend(k) == nil {
+			t.Errorf("resolver for %q, which has no chat backend", k)
+		}
+	}
+}

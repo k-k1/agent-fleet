@@ -171,8 +171,13 @@ type Record struct {
 	// written before they existed.
 	Route   string `json:"route,omitempty"`
 	Billing string `json:"billing,omitempty"`
-	Ref     string `json:"ref,omitempty"`  // session name or conversation id
-	Verb    string `json:"verb,omitempty"` // sub-dimension of assistant.chat (translate|summarize)
+	// Connection is the non-secret binding of the credential instance the call ran on (ADR 0138
+	// D5b, internal/credbind): two keys, or two accounts, on one route are two connections. A
+	// dimension like Route, captured when the call runs; empty = not recorded (rows written
+	// before it existed, or a call whose credential cannot be identified).
+	Connection string `json:"connection,omitempty"`
+	Ref        string `json:"ref,omitempty"`  // session name or conversation id
+	Verb       string `json:"verb,omitempty"` // sub-dimension of assistant.chat (translate|summarize)
 	// Sidechain is a sub-dimension of feature=session (subagent / Workflow consumption).
 	Sidechain bool `json:"sidechain,omitempty"`
 	// Idx is the running number of a feature=session logical turn (1-based). The writer's

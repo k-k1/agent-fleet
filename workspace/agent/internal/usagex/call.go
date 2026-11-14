@@ -64,6 +64,11 @@ type Call struct {
 	// model was, and they are copied onto the FIRST row so the count is never doubled.
 	Images int
 	Pixels int
+	// Route and Connection are what the call runs on and the binding of its credential (ADR
+	// 0138 D2, D5b), resolved by the caller when the call starts, never when it is recorded: a
+	// login replaced in between must not relabel the call. Empty = not resolved.
+	Route      string
+	Connection string
 }
 
 // SetTotals is the recording entry for providers with no per-model breakdown
@@ -122,6 +127,8 @@ func RecordCall(ctx context.Context, c *Call, started time.Time) {
 		ModelReq:   c.ModelReq,
 		Ref:        tag.Ref,
 		Verb:       tag.Verb,
+		Route:      c.Route,
+		Connection: c.Connection,
 		MS:         int(time.Since(started).Milliseconds()),
 		OK:         c.OK,
 	}

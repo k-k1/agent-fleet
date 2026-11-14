@@ -38,6 +38,9 @@ const (
 	usageDimMeasured   = "measured"
 	usageDimRoute      = "route"
 	usageDimBilling    = "billing"
+	// usageDimConnection splits by the credential instance a call ran on (ADR 0138 D5):
+	// spend per credential. Empty reads as not recorded.
+	usageDimConnection = "connection"
 )
 
 // usageDimValue takes one dimension's value out of the dimension tuple. Reject unknown
@@ -67,6 +70,8 @@ func usageDimValue(k usageKey, dim string) string {
 	case usageDimBilling:
 		// A row with no billing recorded reads as unknown, never as included.
 		return usagex.BillingOrUnknown(k.Billing)
+	case usageDimConnection:
+		return k.Connection
 	}
 	return ""
 }
@@ -75,7 +80,7 @@ func validUsageDim(dim string) bool {
 	switch dim {
 	case usageDimFeature, usageDimKind, usageDimModel, usageDimTrigger, usageDimOrigin,
 		usageDimOriginConv, usageDimVerb, usageDimModelSrc, usageDimMeasured,
-		usageDimRoute, usageDimBilling:
+		usageDimRoute, usageDimBilling, usageDimConnection:
 		return true
 	}
 	return false
