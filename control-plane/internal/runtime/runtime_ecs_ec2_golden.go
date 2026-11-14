@@ -420,12 +420,12 @@ func findBakeHome(homes map[string]ec2BakeHome, key, arch string) (string, ec2Ba
 }
 
 // isBakeHome reports whether a home volume belongs to a golden bake's reserved seed or
-// probe workspace, for any architecture. The marker is the volume's own workspace tag
-// (the same one findBakeHome reads), so it is true only while that home is what sits on the
-// slot: once the bake releases the home and a member's home attaches, the slot is an
-// ordinary one again and the sweeps must see it. A bake box runs no member Agent, so the
-// dark and wedged scans' Agent probe says nothing about it and they must neither stamp nor
-// act on it.
+// probe workspace, for any architecture. The marker is the volume's own workspace tag,
+// compared with the FULL name the golden tenant gives them (af-ws-<tenant>-<key>): a
+// suffix match would also exempt an ordinary tenant's member whose key merely ends in
+// af-golden-seed. It is true only while that home is what sits on the slot: once the bake
+// releases it and a member's home attaches, the slot is an ordinary one again. A bake box
+// runs no member Agent, so the dark and wedged scans' Agent probe says nothing about it.
 func isBakeHome(vol *ec2types.Volume) bool {
 	ws := ec2TagValue(vol.Tags, EC2TagWorkspace)
 	if ws == "" {
@@ -433,13 +433,27 @@ func isBakeHome(vol *ec2types.Volume) bool {
 	}
 	for _, base := range []string{GoldenSeedKey, GoldenProbeKey} {
 		for _, arch := range []string{EC2ArchX86, EC2ArchArm} {
-			want := ArchKey(base, arch)
-			if ws == want || strings.HasSuffix(ws, "-"+want) {
+			if ws == "af-ws-"+GoldenTenantSlug+"-"+ArchKey(base, arch) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// skipBakeSlot is what both sweeps do with a slot holding a bake home: leave it alone and
+// drop any observation stamp written before the guard existed, or by a previous tenancy.
+// releaseSlot does not clear them, so a stale stamp would otherwise carry its old first
+// observation (or "detected") onto the member home that takes the slot next, skipping the
+// wait. Deleting an absent tag is a no-op.
+func (f *ecsEC2Factory) skipBakeSlot(ctx context.Context, instanceID string) {
+	f.wedgedBlocked.Delete(instanceID)
+	if _, err := f.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagDarkSince)}, {Key: aws.String(ec2TagWedgedSince)}},
+	}); err != nil {
+		log.Printf("ecs-ec2 sweep: clearing stale stamps on bake slot %s failed: %v", instanceID, err)
+	}
 }
 
 // snapshotProgress turns EBS's "63%" into 63. An unreadable value is 0, which the

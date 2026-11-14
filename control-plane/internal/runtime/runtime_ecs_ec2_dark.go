@@ -158,7 +158,11 @@ func (f *ecsEC2Factory) sweepDarkSlots(ctx context.Context, homes []ec2types.Vol
 	for i := range homes {
 		vol := &homes[i]
 		inst := attachedInstance(vol)
-		if inst == "" || probe.claimLive(vol) || isBakeHome(vol) {
+		if inst == "" || probe.claimLive(vol) {
+			continue
+		}
+		if isBakeHome(vol) {
+			f.skipBakeSlot(ctx, inst)
 			continue
 		}
 		if _, seen := byInstance[inst]; !seen {

@@ -410,7 +410,7 @@ func TestLastAgentProbeDoesNotOutliveThePassWithDarkOff(t *testing.T) {
 
 func TestSweepWedgedSlotSkipsBakeOwnedSlot(t *testing.T) {
 	ctx := context.Background()
-	for _, ws := range []string{"af-ws-golden-" + GoldenProbeKey, "af-ws-golden-" + GoldenSeedKey + "-arm64"} {
+	for _, ws := range []string{"af-ws-" + GoldenTenantSlug + "-" + GoldenProbeKey, "af-ws-" + GoldenTenantSlug + "-" + GoldenSeedKey + "-arm64"} {
 		h, f, events, _ := wedgedHarness(t)
 		f.pool.wedgedAction = wedgedActionRelease
 		bakeSlotHarness(t, h, ws)

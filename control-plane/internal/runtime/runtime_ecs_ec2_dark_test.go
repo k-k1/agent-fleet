@@ -661,7 +661,7 @@ func TestSweepDarkSlotSkipsBakeOwnedSlot(t *testing.T) {
 	h, f, events := darkHarness(t)
 	h.rt.pool.darkAction = darkActionQuarantine
 	f.pool.darkAction = darkActionQuarantine
-	bakeSlotHarness(t, h, "af-ws-golden-"+GoldenSeedKey)
+	bakeSlotHarness(t, h, "af-ws-"+GoldenTenantSlug+"-"+GoldenSeedKey)
 	_ = f.sweep(ctx)
 	if darkStampOf(h) != "" || len(*events) != 0 {
 		t.Fatalf("bake slot was stamped/reported: %q %v", darkStampOf(h), *events)
@@ -672,5 +672,60 @@ func TestSweepDarkSlotSkipsBakeOwnedSlot(t *testing.T) {
 	_ = f.sweep(ctx)
 	if darkStampOf(h) == "" {
 		t.Fatal("a slot that left the bake must be swept again")
+	}
+}
+
+func TestIsBakeHomeIsExactNotASuffix(t *testing.T) {
+	cases := map[string]bool{
+		"af-ws-af-golden-af-golden-seed":       true,
+		"af-ws-af-golden-af-golden-probe":      true,
+		"af-ws-af-golden-af-golden-seed-arm64": true,
+		"af-ws-acme-af-golden-seed":            false, // another tenant's member
+		"af-ws-acme-af-golden-probe":           false,
+		"af-ws-af-golden-x-af-golden-seed":     false,
+		"af-ws-af-golden-af-golden-seed-extra": false,
+		"af-ws-acme-alice":                     false,
+		"":                                     false,
+	}
+	for ws, want := range cases {
+		v := &ec2types.Volume{Tags: []ec2types.Tag{{Key: aws.String(EC2TagWorkspace), Value: aws.String(ws)}}}
+		if got := isBakeHome(v); got != want {
+			t.Errorf("isBakeHome(%q) = %v, want %v", ws, got, want)
+		}
+	}
+}
+
+// A stamp written before the slot went to the bake (or by an earlier tenancy) must not
+// survive the bake and shorten a member's wait afterwards.
+func TestBakeSlotStaleStampsDoNotCarryOverToTheNextMember(t *testing.T) {
+	ctx := context.Background()
+	h, f, _, _ := wedgedHarness(t)
+	h.rt.pool.darkAction = darkActionDetect
+	f.pool.darkAction = darkActionDetect
+	f.pool.darkAfter = 10 * time.Minute
+
+	_ = f.sweep(ctx) // member home: the wedged stamp is written
+	if wedgedStampOf(h) == "" {
+		t.Fatal("setup: no wedged stamp")
+	}
+	// The harness's agents answer, so the dark scan has no episode; plant an old stamp.
+	old := darkStamp{since: time.Now().Add(-3 * time.Hour), launch: h.ec2.instances["i-dark"].LaunchTime.UTC().Truncate(time.Second), detected: true}
+	h.ec2.setInstanceTag("i-dark", ec2TagDarkSince, old.String())
+	backdateWedged(t, h, 3*time.Hour)
+
+	bakeSlotHarness(t, h, "af-ws-"+GoldenTenantSlug+"-"+GoldenSeedKey)
+	_ = f.sweep(ctx)
+	if darkStampOf(h) != "" || wedgedStampOf(h) != "" {
+		t.Fatalf("stale stamps survived on a bake slot: %q %q", darkStampOf(h), wedgedStampOf(h))
+	}
+
+	bakeSlotHarness(t, h, "af-ws-acme-alice")
+	_ = f.sweep(ctx)
+	st, ok := parseDarkStamp(wedgedStampOf(h))
+	if !ok || time.Since(st.since) > time.Hour || st.detected {
+		t.Fatalf("wedged stamp carried the old observation: %q", wedgedStampOf(h))
+	}
+	if darkStampOf(h) != "" {
+		t.Fatalf("dark stamp came back: %q", darkStampOf(h))
 	}
 }
