@@ -301,54 +301,54 @@
 ## read update_memo full {"body":"v","category":"v","id":"v","position":2,"refPath":"v","repo":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: update_memo"}}
 ## write add_memo absent
--> MEMO-CREATE ["","","","",""]
+-> MEMO-CREATE ["pat1","","","","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for add_memo","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write add_memo full {"body":"v","category":"v","kind":"v","refPath":"v","repo":"v"}
--> MEMO-CREATE ["v","v","v","v","v"]
+-> MEMO-CREATE ["pat1","v","v","v","v","v"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind= {"kind":""}
--> MEMO-CREATE ["","","","",""]
+-> MEMO-CREATE ["pat1","","","","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=claude {"kind":"claude"}
--> MEMO-CREATE ["","","claude","",""]
+-> MEMO-CREATE ["pat1","","","claude","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=codex {"kind":"codex"}
--> MEMO-CREATE ["","","codex","",""]
+-> MEMO-CREATE ["pat1","","","codex","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=opencode {"kind":"opencode"}
--> MEMO-CREATE ["","","opencode","",""]
+-> MEMO-CREATE ["pat1","","","opencode","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=agy {"kind":"agy"}
--> MEMO-CREATE ["","","agy","",""]
+-> MEMO-CREATE ["pat1","","","agy","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=copilot {"kind":"copilot"}
--> MEMO-CREATE ["","","copilot","",""]
+-> MEMO-CREATE ["pat1","","","copilot","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=cursor {"kind":"cursor"}
--> MEMO-CREATE ["","","cursor","",""]
+-> MEMO-CREATE ["pat1","","","cursor","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=kiro {"kind":"kiro"}
--> MEMO-CREATE ["","","kiro","",""]
+-> MEMO-CREATE ["pat1","","","kiro","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=lcpp {"kind":"lcpp"}
--> MEMO-CREATE ["","","lcpp","",""]
+-> MEMO-CREATE ["pat1","","","lcpp","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=muse {"kind":"muse"}
--> MEMO-CREATE ["","","muse","",""]
+-> MEMO-CREATE ["pat1","","","muse","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=shell {"kind":"shell"}
--> MEMO-CREATE ["","","shell","",""]
+-> MEMO-CREATE ["pat1","","","shell","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=ssm {"kind":"ssm"}
--> MEMO-CREATE ["","","ssm","",""]
+-> MEMO-CREATE ["pat1","","","ssm","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=Codex {"kind":"Codex"}
--> MEMO-CREATE ["","","Codex","",""]
+-> MEMO-CREATE ["pat1","","","Codex","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=nope {"kind":"nope"}
--> MEMO-CREATE ["","","nope","",""]
+-> MEMO-CREATE ["pat1","","","nope","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write archive_session absent
 -> AGENT ["POST","/sessions//archive",""]
@@ -414,10 +414,12 @@
 -> AGENT ["DELETE","/repos/v/branch?branch=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write delete_memo absent
+-> MEMO-DELETE [""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write delete_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for delete_memo","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write delete_memo full {"id":"v"}
+-> MEMO-DELETE ["v"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write delete_session absent
 -> SCHEDULE-GUARD ["",""]
@@ -668,54 +670,54 @@
 -> MEMO-UPDATE ["v","v","v","v","v",2]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo absent
--> MEMO-CREATE ["","","","",""]
+-> MEMO-CREATE ["pat1","","","","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for add_memo","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous add_memo full {"body":"v","category":"v","kind":"v","refPath":"v","repo":"v"}
--> MEMO-CREATE ["v","v","v","v","v"]
+-> MEMO-CREATE ["pat1","v","v","v","v","v"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind= {"kind":""}
--> MEMO-CREATE ["","","","",""]
+-> MEMO-CREATE ["pat1","","","","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=claude {"kind":"claude"}
--> MEMO-CREATE ["","","claude","",""]
+-> MEMO-CREATE ["pat1","","","claude","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=codex {"kind":"codex"}
--> MEMO-CREATE ["","","codex","",""]
+-> MEMO-CREATE ["pat1","","","codex","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=opencode {"kind":"opencode"}
--> MEMO-CREATE ["","","opencode","",""]
+-> MEMO-CREATE ["pat1","","","opencode","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=agy {"kind":"agy"}
--> MEMO-CREATE ["","","agy","",""]
+-> MEMO-CREATE ["pat1","","","agy","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=copilot {"kind":"copilot"}
--> MEMO-CREATE ["","","copilot","",""]
+-> MEMO-CREATE ["pat1","","","copilot","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=cursor {"kind":"cursor"}
--> MEMO-CREATE ["","","cursor","",""]
+-> MEMO-CREATE ["pat1","","","cursor","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=kiro {"kind":"kiro"}
--> MEMO-CREATE ["","","kiro","",""]
+-> MEMO-CREATE ["pat1","","","kiro","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=lcpp {"kind":"lcpp"}
--> MEMO-CREATE ["","","lcpp","",""]
+-> MEMO-CREATE ["pat1","","","lcpp","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=muse {"kind":"muse"}
--> MEMO-CREATE ["","","muse","",""]
+-> MEMO-CREATE ["pat1","","","muse","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=shell {"kind":"shell"}
--> MEMO-CREATE ["","","shell","",""]
+-> MEMO-CREATE ["pat1","","","shell","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=ssm {"kind":"ssm"}
--> MEMO-CREATE ["","","ssm","",""]
+-> MEMO-CREATE ["pat1","","","ssm","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=Codex {"kind":"Codex"}
--> MEMO-CREATE ["","","Codex","",""]
+-> MEMO-CREATE ["pat1","","","Codex","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=nope {"kind":"nope"}
--> MEMO-CREATE ["","","nope","",""]
+-> MEMO-CREATE ["pat1","","","nope","",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous archive_session absent
 -> AGENT ["POST","/sessions//archive",""]
@@ -781,10 +783,12 @@
 -> AGENT ["DELETE","/repos/v/branch?branch=v",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous delete_memo absent
+-> MEMO-DELETE [""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous delete_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for delete_memo","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous delete_memo full {"id":"v"}
+-> MEMO-DELETE ["v"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous delete_session absent
 -> SCHEDULE-GUARD ["",""]

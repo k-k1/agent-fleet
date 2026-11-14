@@ -133,7 +133,7 @@ func (c testCP) MemoList(context.Context, string) (any, error) {
 	return nil, nil
 }
 
-func (c testCP) MemoCreate(context.Context, store.MembershipView, string, string, string, string, string) (any, error) {
+func (c testCP) MemoCreate(context.Context, store.MembershipView, string, string, string, string, string, string) (any, error) {
 	unwired("MemoCreate")
 	return nil, nil
 }
@@ -146,6 +146,11 @@ func (c testCP) MemoUpdate(context.Context, string, string, *string, *string, *s
 func (c testCP) MemoFlush(context.Context, runtime.Runtime, string, string, []string) (map[string]any, error) {
 	unwired("MemoFlush")
 	return nil, nil
+}
+
+func (c testCP) MemoDelete(context.Context, string, string) error {
+	unwired("MemoDelete")
+	return nil
 }
 
 func (c testCP) TenantLimits(string) (int, int) { unwired("TenantLimits"); return 0, 0 }

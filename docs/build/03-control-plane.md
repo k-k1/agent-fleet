@@ -261,6 +261,21 @@ Memos you accumulate and send to a session in one go (the tables are
   `AF_MEMO_TOKEN`.
 - **Retention**: sent memos are kept for 7 days and swept lazily when the list is
   fetched, rather than deleted on send.
+- **Queues** ([decisions/0137](../decisions/0137-message-queues.md), step 1a): a category
+  with settings (`GET /api/memo-queues`, `PUT` / `DELETE /api/memo-queues/{categoryId}`)
+  is a queue, and a `PUT` is refused while the tenant switch
+  (`/api/admin/tenants/{slug}/memo-queues`, off by default) is off. Turn it on only after
+  every CP runs this binary ([06](06-data.md)). A queue's memos are messages with a
+  state. The face a request arrived by —
+  the Console, the token face, `/mcp` — is fixed where the route is registered and decides
+  the provenance and the entering state (`pending` only for the member's own note through
+  the Console, `held` otherwise). `POST /api/memos/release` moves held messages to
+  `pending`, all or none, each with a conditional write on its own row that also requires
+  the content hash the card showed. Settings and release are Console only; on the token
+  face and `/mcp` a message in a queue is not flushed or deleted, an edit of a released one
+  puts it back to `held`, a queue is not renamed, merged or deleted, and a create into a
+  queue is bounded (16 KiB, no `[agent-fleet:` prefix, an identical waiting message
+  answered instead, 30 a minute). Nothing here starts a session yet.
 
 ## 3.7 Background jobs
 

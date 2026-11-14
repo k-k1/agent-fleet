@@ -165,11 +165,14 @@ func (s *SQL) TakeInInboxRecipe(ctx context.Context, itemID, membershipID string
 			return false, err
 		}
 		m.MembershipID, m.OriginItemID = membershipID, itemID
+		// A taken-in memo's provenance is inbox whatever the caller set, and it enters as a
+		// plain note: ADR 0137 refuses an inbox memo in a queue.
+		m.Provenance, m.State, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt = MemoProvenanceInbox, "", "", "", "", ""
 		if _, err := tx.ExecContext(ctx, `INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, attachments,
-			position, created_at, sent_at, origin_item_id, origin_sender_membership_id, origin_sender_key)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			position, created_at, sent_at, origin_item_id, origin_sender_membership_id, origin_sender_key, provenance)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
-			m.OriginItemID, m.OriginSenderMembershipID, m.OriginSenderKey); err != nil {
+			m.OriginItemID, m.OriginSenderMembershipID, m.OriginSenderKey, m.Provenance); err != nil {
 			return false, err
 		}
 		memo = m
