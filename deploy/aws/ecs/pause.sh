@@ -143,6 +143,49 @@ ws_tasks_alive() {
   done
 }
 
+# golden_bake — what a golden bake still holds, for --status only. ws_services counts desired>0,
+# which says nothing about a seed or probe whose service was just lowered to 0 while its task
+# is still running (or whose task outlived its service). Looks at golden services with
+# runningCount>0 and at not-yet-STOPPED Workspace tasks (ws_tasks_alive) whose service is a
+# golden one. Always prints one line and returns 0: a read that fails says "cannot tell", never
+# "none", and the answer must not move --status's exit code.
+golden_bake() {
+  local arns a got out="" alive t pfx="af-ws-af-golden-af-golden-"
+  local -a names=() batch=() tasks=()
+  if ! arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null)"; then
+    echo "(cannot tell: the service list could not be read)"; return 0
+  fi
+  case "$arns" in None) arns="" ;; esac
+  for a in $arns; do
+    case "${a##*/}" in "$pfx"seed*|"$pfx"probe*) names+=("${a##*/}") ;; esac
+  done
+  while [ ${#names[@]} -gt 0 ]; do
+    batch=("${names[@]:0:10}"); names=("${names[@]:10}")
+    # shellcheck disable=SC2016  # backticks are JMESPath literals
+    if ! got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
+        --query 'services[?runningCount>`0`].serviceName' --output text 2>/dev/null)"; then
+      echo "(cannot tell: the golden services could not be read)"; return 0
+    fi
+    case "$got" in None) got="" ;; esac
+    for a in $got; do out="$out $a (service running)"; done
+  done
+  if ! alive="$(ws_tasks_alive 2>/dev/null)"; then
+    echo "(cannot tell: the cluster's tasks could not be read)${out:+ —$out}"; return 0
+  fi
+  # shellcheck disable=SC2206  # word splitting is the batching
+  tasks=($alive)
+  while [ ${#tasks[@]} -gt 0 ]; do
+    batch=("${tasks[@]:0:100}"); tasks=("${tasks[@]:100}")
+    if ! got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks "${batch[@]}" \
+        --query "tasks[?starts_with(group,'service:$pfx')].group" --output text 2>/dev/null)"; then
+      echo "(cannot tell: the golden tasks could not be read)${out:+ —$out}"; return 0
+    fi
+    case "$got" in None) got="" ;; esac
+    for t in $got; do out="$out ${t#service:} (task not STOPPED)"; done
+  done
+  echo "${out:-(none)}"
+}
+
 # ws_tasks_wait — until no Workspace task is left (AF_WS_TASK_WAIT_SEC, default 600). Fails on
 # timeout and when the tasks cannot be read.
 ws_tasks_wait() {
@@ -406,9 +449,12 @@ ws_subnets_check() {
 }
 
 status() {
-  local running stopped ws boxes helpers db cp nat gw gwi eni restop
+  local running stopped ws golden boxes helpers db cp nat gw gwi eni restop
   running="$(slots pending running | tr '\t' ' ')"; stopped="$(slots stopping stopped | tr '\t' ' ')"
   ws="$(ws_services | tr '\n' ' ')"
+  # Only for an explicit --status: the pause plan prints this report first, and the extra task
+  # reads would land before the sweep that the pause tests order its own reads against.
+  golden=""; [ "${1:-}" != --golden ] || golden="$(golden_bake)"
   boxes="$(engine_boxes | tr '\t' ' ')"; helpers="$(helpers_up)"
   db="$(db_status)"; cp="$(cp_counts | tr '\t' '/')"
   nat="$(nat_enabled)"
@@ -421,6 +467,7 @@ status() {
   echo "==> $AF_FQDN (profile=$AF_PROFILE region=$AF_REGION)"
   echo "    control plane : desired/running = $cp"
   echo "    workspaces up : ${ws:-(none)}"
+  [ "${1:-}" != --golden ] || echo "    golden bake   : $golden"
   echo "    slots running : ${running:-(none)}"
   echo "    slots stopped : ${stopped:-(none)}"
   echo "    engine boxes  : ${boxes:-(none)}"
@@ -457,7 +504,7 @@ status() {
 
 case "$MODE" in
   status)
-    status
+    status --golden
     exit 0
     ;;
 

@@ -411,7 +411,14 @@ case "$args" in
   *"cloudformation describe-stacks"*) echo "STACK" ;;
   *"ecs list-services"*)
     [ "${STUB_LIST_SERVICES_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
-    echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" ;;
+    echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice"
+    # STUB_GOLDEN=service: a bake's seed service exists.
+    [ "${STUB_GOLDEN:-0}" = service ] && echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-af-golden-af-golden-seed"
+    : ;;
+  # --status's golden-bake read: golden services with runningCount>0 (STUB_GOLDEN=service: desired
+  # 0, running 1). Before the CP-stop wait's runningCount branch below, which would swallow it.
+  *"ecs describe-services"*"[?runningCount>"*)
+    [ "${STUB_GOLDEN:-0}" = service ] && echo "af-ws-af-golden-af-golden-seed" || echo "" ;;
   # Do not confuse the runningCount query (waiting for the CP to stop) with the listing of
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
@@ -499,6 +506,10 @@ case "$args" in
     esac ;;
   *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
   *"ecs list-tasks"*) echo "None" ;;
+  # --status's golden-bake read of the tasks ws_tasks_alive found. STUB_GOLDEN=task: one of them
+  # belongs to the seed's service, which no longer exists.
+  *"ecs describe-tasks"*"starts_with(group,'service:af-ws-af-golden"*)
+    [ "${STUB_GOLDEN:-0}" = task ] && echo "service:af-ws-af-golden-af-golden-probe" || echo "" ;;
   # update.sh's closing hint: the subnet of each running workspace task's ENI.
   # [failures, tasks, subnet]. STUB_TASK_FAILURES=1: answered 200 with the task in failures[].
   *"ecs describe-tasks"*"subnetId"*)
@@ -2618,6 +2629,28 @@ STUB_NAT_ENABLED=false STUB_RESTOP=t-data-RestopFunction-1 \
 grep -q "nat gateway   : deleted" "$WORK/out4k" || fail "status did not say the NAT is deleted"
 grep -q "re-stop Lambda t-data-RestopFunction-1" "$WORK/out4k" || fail "status did not name the re-stop Lambda"
 hasnt "cloudformation deploy"; hasnt "add-tags-to-resource"
+
+echo "== case 4k2: --status shows a golden bake that workspaces-up cannot see =="
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2a" 2>&1 </dev/null
+grep -q "golden bake   : (none)" "$WORK/out4k2a" || fail "status did not say no golden bake is running"
+: > "$LOG"
+STUB_GOLDEN=service \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2b" 2>&1 </dev/null \
+  || fail "status exited non-zero with a golden service running"
+grep -q "golden bake   : .*af-ws-af-golden-af-golden-seed (service running)" "$WORK/out4k2b" || fail "status did not show the golden seed service"
+grep -q "workspaces up : af-ws-alice *$" "$WORK/out4k2b" || fail "the workspaces-up line changed"
+: > "$LOG"
+STUB_GOLDEN=task STUB_WS_TASKS=stuck \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2c" 2>&1 </dev/null \
+  || fail "status exited non-zero with a golden task alive"
+grep -q "golden bake   : .*af-ws-af-golden-af-golden-probe (task not STOPPED)" "$WORK/out4k2c" || fail "status did not show the golden task"
+: > "$LOG"
+STUB_WS_TASKS=fail \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2d" 2>&1 </dev/null \
+  || fail "status exited non-zero when the tasks could not be read"
+grep -q "golden bake   : (cannot tell" "$WORK/out4k2d" || fail "an unreadable task list was reported as none"
+hasnt "update-service"; hasnt "stop-instances"
 
 echo "== case 4l: a capture taken while paused (NatEnabled=false) still stands up WITH a NAT =="
 STATE6="$AF_DEPLOY_STATE_DIR/p6.ap-northeast-1.t-ingress"
