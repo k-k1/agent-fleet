@@ -74,7 +74,7 @@ func permissionKeys(sid, name, choice, detail, command, cwd string) (keys []stri
 	// hook rewrites the payload (#3359). Only a dialog that shows the payload's target is the one
 	// the card or button was drawn for.
 	check, ambiguous := m.CheckTargetCommandWrap(detail, cwd, command)
-	if check == claude.TargetDiffers || newerCallMayBeShown(sid, detail, command, ambiguous) {
+	if check == claude.TargetDiffers || newerCallMayBeShown(sid, ambiguous) {
 		return nil, "target_mismatch"
 	}
 	if k, found := m.Key(choice); found {
@@ -91,25 +91,25 @@ func permissionKeys(sid, name, choice, detail, command, cwd string) (keys []stri
 // Q with a real newline at that wrap draw the same screen, so the screen alone matches Q for P
 // (CheckTargetCommandWrap). An unambiguous match pins the dialog to P's exact text.
 //
-// The evidence is the permtool PreToolUse record (last-tool). Claude Code runs PreToolUse before
-// its permission check (the hook's decision can allow, deny or ask), so Q's record exists while Q
-// is drawn, and a permission_prompt retires it only after publishing Q's payload (the token
-// re-check then refuses). Any record other than the pending call's own counts, whether or not it
-// matches the screen: the single slot can be overwritten, so an unrelated record (a background
-// subagent's tool) may have replaced Q's. A record that cannot be read counts too. Either costs a
-// refusal, and the user answers in the terminal.
+// The evidence is the permtool PreToolUse record (last-tool), which publishing never removes.
+// Claude Code runs PreToolUse before its permission check (the hook's decision can allow, deny
+// or ask), so while Q is drawn the record is Q's or a still later call's. The answer goes
+// through only when the record is the pending call itself, by tool_use id: the text cannot
+// tell, since a background call may run the very same command. An unknown id on either side, a
+// missing record or one that cannot be read refuses too; the user then answers in the terminal.
 //
 // Left open: a PreToolUse hook that never recorded Q (it failed or timed out, and claude goes on
-// to the dialog) leaves nothing to find.
-func newerCallMayBeShown(sid, detail, command string, ambiguous bool) bool {
+// to the dialog) leaves P's record in place, which reads as P.
+func newerCallMayBeShown(sid string, ambiguous bool) bool {
 	if !ambiguous {
 		return false
 	}
-	d, c, present, err := status.LastToolRecord(sid)
-	if err != nil {
+	_, _, id, present, err := status.LastToolRecord(sid)
+	if err != nil || !present || id == "" {
 		return true
 	}
-	return present && (d != detail || c != command)
+	pending, ok := status.ReadPendingPermissionToolUseID(sid)
+	return !ok || pending != id
 }
 
 // permissionChoices is what the poll reports beside pendingPermission, so the card offers only

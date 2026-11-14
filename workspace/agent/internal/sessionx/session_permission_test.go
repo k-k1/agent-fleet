@@ -659,10 +659,39 @@ func TestPendingPermissionKeepsTheToolUseID(t *testing.T) {
 	}
 }
 
+// wrappedPermission sets up session name with a wrap-ambiguous dialog: one 65-column line and a
+// 20-column word that would not have fitted after it, so the screen reads both as p (the wrap
+// swallowed a blank) and as q (a real newline). P is published by the hook path, record first.
+func wrappedPermission(t *testing.T, name string) (sid, p, q string) {
+	t.Helper()
+	short := "echo " + strings.Repeat("a", 60)
+	next := strings.Repeat("b", 20)
+	stubPane(t, replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+short+"\n "+next+"\n"))
+	sid = permissionSession(t, name)
+	p, q = short+" "+next, short+"\n"+next
+	status.WriteLastToolCall(sid, "Bash · "+short, p, "toolu_p")
+	status.PublishPermissionPrompt(sid, "")
+	return sid, p, q
+}
+
+// refusedEverywhere asserts that neither the bridge button nor the card answers the prompt.
+func refusedEverywhere(t *testing.T, label, name, tok string) {
+	t.Helper()
+	meta, _ := session.ReadMeta(name)
+	for _, c := range []string{claude.PermAllow, claude.PermDeny} {
+		if out, err := answerClaudePermission(meta, c, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
+			t.Errorf("%s button %s: %q %v", label, c, out, err)
+		}
+	}
+	if rec := postPermission(name, `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+		t.Errorf("%s card: %d %s", label, rec.Code, rec.Body.String())
+	}
+}
+
 // #3521: P wrapped by the terminal and Q with a real newline at that wrap draw the same screen,
-// so the screen alone matches Q for P. Q's PreToolUse record, written before Q's dialog and
-// before Q's Notification rewrites the payload, is what tells them apart: an answer for P is
-// refused while that record also matches the screen.
+// so the screen alone matches Q for P. Q's PreToolUse record, written before Q's dialog and before
+// Q's Notification rewrites the payload, is what tells them apart: an answer for P is refused
+// unless the record is P's own call.
 func TestPermissionAnswerRefusesNewlineVariantOfTheNewerCall(t *testing.T) {
 	logPath := fakeTmux(t)
 	withTempHome(t)
@@ -681,63 +710,55 @@ func TestPermissionAnswerRefusesNewlineVariantOfTheNewerCall(t *testing.T) {
 		name := "nlq" + strconv.Itoa(i)
 		stubPane(t, replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+l.first+"\n "+l.second+"\n"))
 		sid := permissionSession(t, name)
-		status.WritePendingPermissionCommand(sid, "Bash · "+l.first, l.p)
-		tok := permissionToken(sid)
-		meta, _ := session.ReadMeta(name)
+		status.WriteLastToolCall(sid, "Bash · "+l.first, l.p, "toolu_p")
+		status.PublishPermissionPrompt(sid, "")
 		m, _ := readPermissionMenu(name)
 		if m.CheckTargetCommand("Bash · "+l.first, "", l.p) != claude.TargetMatches || m.CheckTargetCommand("Bash · "+l.first, "", l.q) != claude.TargetMatches {
 			t.Fatalf("%s: the screen no longer reads as both P and Q", l.name)
 		}
 		status.WriteLastToolCall(sid, "Bash · "+l.first, l.q, "toolu_q")
-		for _, c := range []string{claude.PermAllow, claude.PermDeny} {
-			if out, err := answerClaudePermission(meta, c, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
-				t.Errorf("%s button %s: %q %v", l.name, c, out, err)
-			}
-		}
-		if rec := postPermission(name, `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
-			t.Errorf("%s card: %d %s", l.name, rec.Code, rec.Body.String())
-		}
+		refusedEverywhere(t, l.name, name, permissionToken(sid))
 	}
 	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
 		t.Fatalf("an answer for P was sent to a dialog that may be Q:\n%s", b)
 	}
-
-	// The wrapped P still answers when no newer call is recorded and when the record is P itself.
-	for i, last := range [][2]string{{"", ""}, {"Bash · " + short, short + " " + next}} {
-		name := "nlp" + strconv.Itoa(i)
-		stubPane(t, replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+short+"\n "+next+"\n"))
-		sid := permissionSession(t, name)
-		status.WritePendingPermissionCommand(sid, "Bash · "+short, short+" "+next)
-		if last[0] != "" {
-			status.WriteLastToolCall(sid, last[0], last[1], "toolu_p")
-		}
-		if rec := postPermission(name, `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
-			t.Errorf("last-tool %q: %d %s", last[0], rec.Code, rec.Body.String())
-		}
+	// The wrapped P answers while the record is P's own call.
+	sid, _, _ := wrappedPermission(t, "nlp")
+	if rec := postPermission("nlp", `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
+		t.Errorf("P's own record: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
-// Review round 1 of #4125: the evidence of a newer call must not be lost on the way.
-//   - Q recorded, then a background call R (not on screen) overwrites the single slot.
-//   - The record cannot be read (here: the path is a directory, EISDIR).
-//
-// Both refuse a wrap-ambiguous dialog; an unambiguous one still answers, since the screen then
-// pins the dialog to P's exact text.
+// The single last-tool slot can lose Q's record, and the text cannot say whose record it is.
+// Every case where the record is not provably the pending call refuses a wrap-ambiguous dialog;
+// an unambiguous one still answers, since the screen then pins the dialog to P's exact text.
 func TestPermissionAnswerRefusesWhenNewerCallEvidenceIsLost(t *testing.T) {
 	logPath := fakeTmux(t)
 	withTempHome(t)
-	short := "echo " + strings.Repeat("a", 60)
-	next := strings.Repeat("b", 20)
-	wrapped := replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+short+"\n "+next+"\n")
-	p, q := short+" "+next, short+"\n"+next
-	setups := map[string]func(sid string){
-		"overwritten by R": func(sid string) {
-			status.WriteLastToolCall(sid, "Bash · "+short, q, "toolu_q")
+	setups := map[string]func(sid, p, q string){
+		// Q recorded, then a background call R (not on screen) overwrites the slot.
+		"overwritten by R": func(sid, p, q string) {
+			status.WriteLastToolCall(sid, "Bash · x", q, "toolu_q")
 			status.WriteLastToolCall(sid, "Bash · ls -la", "ls -la", "toolu_r")
 		},
-		"unrelated Edit": func(sid string) { status.WriteLastToolCall(sid, "Edit · /tmp/x.go", "", "toolu_r") },
-		"unreadable": func(sid string) {
-			if err := os.MkdirAll(filepath.Join(paths.AgentStateDir(), "pending-perm", sid+".tool"), 0o700); err != nil {
+		// R runs P's very text: equal detail and command, another call.
+		"same text, other call": func(sid, p, q string) {
+			status.WriteLastToolCall(sid, "Bash · x", q, "toolu_q")
+			d, _, _ := status.ReadPendingPermissionCommand(sid)
+			status.WriteLastToolCall(sid, d, p, "toolu_r")
+		},
+		"unrelated Edit": func(sid, p, q string) { status.WriteLastToolCall(sid, "Edit · /tmp/x.go", "", "toolu_r") },
+		"record without id": func(sid, p, q string) {
+			d, _, _ := status.ReadPendingPermissionCommand(sid)
+			status.WriteLastToolCommand(sid, d, p)
+		},
+		"no record": func(sid, p, q string) { status.RemoveLastTool(sid) },
+		"unreadable": func(sid, p, q string) {
+			path := filepath.Join(paths.AgentStateDir(), "pending-perm", sid+".tool")
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(path, 0o700); err != nil {
 				t.Fatal(err)
 			}
 		},
@@ -746,54 +767,70 @@ func TestPermissionAnswerRefusesWhenNewerCallEvidenceIsLost(t *testing.T) {
 	for name, setup := range setups {
 		sess := "nle" + strconv.Itoa(i)
 		i++
-		stubPane(t, wrapped)
-		sid := permissionSession(t, sess)
-		status.WritePendingPermissionCommand(sid, "Bash · "+short, p)
-		setup(sid)
-		tok := permissionToken(sid)
-		meta, _ := session.ReadMeta(sess)
-		if out, err := answerClaudePermission(meta, claude.PermAllow, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
-			t.Errorf("%s button: %q %v", name, out, err)
-		}
-		if rec := postPermission(sess, `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
-			t.Errorf("%s card: %d %s", name, rec.Code, rec.Body.String())
-		}
+		sid, p, q := wrappedPermission(t, sess)
+		setup(sid, p, q)
+		refusedEverywhere(t, name, sess, permissionToken(sid))
 	}
 	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
 		t.Fatalf("an answer was sent while the newer call's evidence was lost:\n%s", b)
 	}
-	// The same records beside an unambiguous dialog (one short line) refuse nothing.
+	// The same states beside an unambiguous dialog (one short line) refuse nothing.
 	j := 0
 	for name, setup := range setups {
 		sess := "nlu" + strconv.Itoa(j)
 		j++
 		stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
 		sid := permissionSession(t, sess)
-		setup(sid)
+		status.WriteLastToolCall(sid, "Bash · echo live-check-3357", "echo live-check-3357", "toolu_p")
+		status.PublishPermissionPrompt(sid, "")
+		setup(sid, "echo live-check-3357", "echo live-check-3357")
 		if rec := postPermission(sess, `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
 			t.Errorf("%s, unambiguous: %d %s", name, rec.Code, rec.Body.String())
 		}
 	}
 }
 
-// Q's Notification completing while the answer for P reads the pane: the record is retired only
-// after Q's payload is published, so the answer sees either Q's record or Q's token, never
-// neither.
+// Q's Notification fails to write Q's payload: P stays pending while Q is drawn, and Q's record,
+// already written by its PreToolUse, still refuses the answer for P.
+func TestPermissionAnswerAfterAFailedPublish(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	sid, _, q := wrappedPermission(t, "nlf")
+	tok := permissionToken(sid)
+	d, _, _ := status.ReadPendingPermissionCommand(sid)
+	status.WriteLastToolCall(sid, d, q, "toolu_q")
+	staging := filepath.Join(paths.AgentStateDir(), "pending-perm", ".staging")
+	if err := os.Chmod(staging, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	status.PublishPermissionPrompt(sid, "")
+	if err := os.Chmod(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if permissionToken(sid) != tok {
+		t.Fatal("the publish was expected to fail")
+	}
+	refusedEverywhere(t, "failed publish", "nlf", tok)
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("keys sent:\n%s", b)
+	}
+}
+
+// Q's Notification completing while the answer for P reads the pane: the answer sees either Q's
+// record or Q's token.
 func TestPermissionAnswerRacingThePublish(t *testing.T) {
 	logPath := fakeTmux(t)
 	withTempHome(t)
-	short := "echo " + strings.Repeat("a", 60)
-	next := strings.Repeat("b", 20)
-	wrapped := replaceCommandLine(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+short+"\n "+next+"\n")
-	sid := permissionSession(t, "nlr")
-	status.WritePendingPermissionCommand(sid, "Bash · "+short, short+" "+next)
-	status.WriteLastToolCall(sid, "Bash · "+short, short+"\n"+next, "toolu_q")
+	sid, _, q := wrappedPermission(t, "nlr")
+	d, _, _ := status.ReadPendingPermissionCommand(sid)
+	status.WriteLastToolCall(sid, d, q, "toolu_q")
 	tok := permissionToken(sid)
+	pane := capturePermissionPane("nlr")
 	prev := readPermissionMenu
 	readPermissionMenu = func(string) (claude.PermissionMenu, bool) {
 		time.Sleep(10 * time.Millisecond) // a later mtime for Q's payload
 		status.PublishPermissionPrompt(sid, "")
-		return claude.ParsePermissionMenu(wrapped)
+		return claude.ParsePermissionMenu(pane)
 	}
 	t.Cleanup(func() { readPermissionMenu = prev })
 	if rec := postPermission("nlr", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict {

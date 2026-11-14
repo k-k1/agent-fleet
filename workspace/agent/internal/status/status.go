@@ -14,7 +14,6 @@ import (
 	"log"
 	"math/rand/v2"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -113,6 +112,8 @@ var (
 	planFiles        = fstore.Strings(paths.AgentStateDir, "plan-file", ".txt")
 	pendingPerms     = fstore.Strings(paths.AgentStateDir, "pending-perm", ".txt")
 	lastTools        = fstore.Strings(paths.AgentStateDir, "pending-perm", ".tool")
+	// publishedTools is the last-tool record a permission prompt last published (PublishPermissionPrompt).
+	publishedTools   = fstore.Strings(paths.AgentStateDir, "pending-perm", ".published")
 	pendingTexts     = fstore.Strings(paths.AgentStateDir, "pending-text", ".txt")
 	carriedFiles     = fstore.JSON[Carried](paths.AgentStateDir, "carried-interaction", ".json")
 	restoreNoteFiles = fstore.JSON[RestoreNotes](paths.AgentStateDir, "transcript-restore-notes", ".json")
@@ -428,6 +429,8 @@ func Remove(sid string) {
 	RemovePendingQuestion(sid)
 	RemovePendingPlan(sid)
 	RemovePendingPermission(sid)
+	lastTools.Remove(sid)
+	publishedTools.Remove(sid)
 	planFiles.Remove(sid)
 }
 
@@ -570,58 +573,40 @@ func ReadLastToolCall(sid string) (detail, command, toolUseID string, ok bool) {
 	return detail, command, toolUseID, true
 }
 
-// LastToolRecord is the raw last-tool record for an answer path that must not mistake a failed
-// read for an absent record: present is false only when the file does not exist, and err is set
-// for any other failure, an empty file included (Write never stores one).
-func LastToolRecord(sid string) (detail, command string, present bool, err error) {
+// LastToolRecord is the last-tool record for an answer path that must not mistake a failed read
+// for an absent record: present is false only when the file does not exist, and err is set for
+// any other failure, an empty file included (Write never stores one).
+func LastToolRecord(sid string) (detail, command, toolUseID string, present bool, err error) {
 	b, err := os.ReadFile(lastTools.Path(sid))
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
 	if err == nil && len(b) == 0 {
 		err = errors.New("empty last-tool record")
 	}
 	if err != nil {
-		return "", "", true, err
+		return "", "", "", true, err
 	}
-	detail, command, _ = splitCall(string(b))
-	return detail, command, true, nil
-}
-
-// retireLastToolIf removes the last-tool record only while it still holds want, the record a
-// permission_prompt just published. The permtool hook writes without the sid lock, so a plain
-// remove could delete a newer call's record that landed in between, and that record is the only
-// evidence an answer path has of a dialog drawn ahead of its payload. The record is taken
-// atomically (rename), and anything else is put back with link, which never replaces a record
-// written after the take.
-func retireLastToolIf(sid, want string) {
-	path := lastTools.Path(sid)
-	staging := filepath.Join(lastTools.Dir(), fstore.StagingSubdir)
-	if err := os.MkdirAll(staging, 0o700); err != nil {
-		return
-	}
-	f, err := os.CreateTemp(staging, sid+".retire.*")
-	if err != nil {
-		return
-	}
-	taken := f.Name()
-	_ = f.Close()
-	defer os.Remove(taken)
-	if err := os.Rename(path, taken); err != nil {
-		return
-	}
-	if b, err := os.ReadFile(taken); err == nil && string(b) == want {
-		return
-	}
-	_ = os.Link(taken, path)
+	detail, command, toolUseID = splitCall(string(b))
+	return detail, command, toolUseID, true, nil
 }
 
 // PublishPermissionPrompt turns the call the last permtool hook recorded into the pending
-// payload (message is the fallback when none was recorded), then retires that record. The order
-// matters: an answer path that finds no record must also find the new payload, so the record
-// outlives the old payload and is retired only while it is still the one published.
+// payload (message is the fallback when none was recorded).
+//
+// The record itself is never removed or rewritten here. It is the evidence an answer path has of
+// a call whose dialog is drawn ahead of its payload, and any remove-then-restore, or a remove
+// after a failed publish, opens a moment where that evidence is missing while the old payload is
+// still pending. The answer path tells the published call from a newer one by tool_use id.
+// Instead, the published record is remembered (publishedTools), so a later prompt from a tool
+// with no permtool hook does not inherit it; it is remembered only once the payload was written.
 func PublishPermissionPrompt(sid, message string) {
 	raw, ok := lastTools.Read(sid)
+	if ok {
+		if prev, done := publishedTools.Read(sid); done && prev == raw {
+			ok = false
+		}
+	}
 	command, toolUseID := "", ""
 	if ok {
 		if d, c, id := splitCall(raw); d != "" {
@@ -631,15 +616,11 @@ func PublishPermissionPrompt(sid, message string) {
 	if message == "" {
 		message = "Claude needs your permission"
 	}
-	WritePendingPermissionCall(sid, message, command, toolUseID)
-	if ok {
-		beforeRetireLastTool()
-		retireLastToolIf(sid, raw)
+	if err := pendingPerms.Write(sid, joinCall(message, command, toolUseID)); err != nil || !ok {
+		return
 	}
+	_ = publishedTools.Write(sid, raw)
 }
-
-// beforeRetireLastTool runs between publishing a prompt and retiring its record; tests stall it.
-var beforeRetireLastTool = func() {}
 
 // WritePendingPermissionCommand publishes the payload together with the command it stands for.
 func WritePendingPermissionCommand(sid, message, command string) {
