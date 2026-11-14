@@ -110,6 +110,8 @@ export const errors = {
   "err.cli_install_network": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。ネットワークエラーです。ワークスペースを再起動してもう一度お試しください。",
   "err.cli_install_checksum": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。ダウンロードがチェックサムと一致しませんでした。ワークスペースを再起動してもう一度お試しください。",
   "err.cli_install_other": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。設定 › ツールチェーンとワークスペースのログを確認してください。",
+  // Appended by errDetail() after a launch failure whose message is copilot's "Model … is not available".
+  "err.model_not_available_hint": "Copilot のプランにこのモデルが含まれていない可能性があります（Free プランは Auto のみ）。モデルを「既定」にして起動し直してください（トラブルシューティング › エージェント を参照）。",
   "err.runtime_failed": "エージェントを起動できませんでした。しばらく待ってから再試行してください。",
   // ↑ は「待てば直る」失敗のための文言。共有 daemon が未認証で起こされなかった場合は
   // 待っても直らないので、runtime_failed に潰さず専用コードで出す（workspace/agent の
