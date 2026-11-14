@@ -146,7 +146,8 @@ A GitHub or Bitbucket pull request that the connection can merge gets a **Merge*
 
 1. Press **Merge** to open a confirmation with the pull request, base ← head and the merge method
 2. The methods are the ones the repository allows. On GitHub the first available of merge commit, squash and rebase is
-   preselected; on Bitbucket, the destination branch's default merge strategy
+   preselected; on Bitbucket, the destination branch's default merge strategy, or the first allowed one when the default
+   is not among them
 3. On Bitbucket, **Close source branch** is also there, ticked or not as the pull request is set
 4. Press **Merge** in the confirmation to merge it on GitHub or Bitbucket at once
 
@@ -158,7 +159,8 @@ A GitHub or Bitbucket pull request that the connection can merge gets a **Merge*
   the detail again later to see the result
 - A GitHub branch is not deleted after the merge. A Bitbucket source branch is closed only when **Close source branch** is ticked
 - Agents can merge a Bitbucket pull request too when you ask, with `bkt pr merge`, as far as the connection's pull request
-  write permission and your account allow ([Use the Bitbucket CLI](../integrations/bitbucket-cli.md#scopes))
+  write permission and your account allow ([Use the Bitbucket CLI](../integrations/bitbucket-cli.md#scopes)). Unlike the
+  checkbox, `bkt pr merge` closes the source branch by default; ask for `--close-source=false` to keep it
 
 ### Start a review
 

@@ -46,7 +46,7 @@ Bitbucket Cloud を接続しておくと、エージェントが `bkt`（[Bitbuc
 | プルリクエストを作る | `bkt pr create` |
 | プルリクエストを一覧する・読む | `bkt pr list`、`bkt pr view 123` |
 | コメントを読む | `bkt pr comments 123` |
-| 頼まれたときにプルリクエストをマージする | `bkt pr merge 123` |
+| 頼まれたときにプルリクエストをマージする | `bkt pr merge 123`（`--close-source=false` を付けない限り、ソースブランチを閉じます） |
 | パイプラインを見る | `bkt pipeline` |
 
 - **書き込みはあなたの名前で残ります。** できることは、あなたのアカウントと接続に許されている範囲までです

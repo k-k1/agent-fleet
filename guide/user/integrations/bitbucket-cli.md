@@ -46,7 +46,7 @@ Agents can do things like these:
 | Create a pull request | `bkt pr create` |
 | List and read pull requests | `bkt pr list`, `bkt pr view 123` |
 | Read comments | `bkt pr comments 123` |
-| Merge a pull request, when you ask | `bkt pr merge 123` |
+| Merge a pull request, when you ask | `bkt pr merge 123` (closes the source branch unless `--close-source=false` is given) |
 | Check pipelines | `bkt pipeline` |
 
 - **What they write is recorded under your name.** They can do only what your account and the connection allow
