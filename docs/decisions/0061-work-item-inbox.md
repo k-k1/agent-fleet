@@ -649,3 +649,10 @@ Follow-ups: #3729
 
 Not measured against a real merge: the shape of the 200/202/409 answers is from the documentation; the mergeability
 checks and the branch's strategies were read from a real pull request.
+
+## Note (2026-11-14, ADR 0137): a queue may hold a reference to an item
+
+[ADR 0137](0137-message-queues.md) amends decision 8 in one respect. The work-item section stays its own section and
+its items stay read-only, as decided. A message in a queue may carry a reference to an item (provider, key and URL;
+never the body, so decisions 2 and 5 hold), and the Console may offer "add to queue" on an item (0137 §4). Nothing of
+0137 is built yet (#4150).
