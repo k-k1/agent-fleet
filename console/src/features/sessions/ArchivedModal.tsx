@@ -191,7 +191,7 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir, session: sco
 
   const delOld = async () => {
     const now = Date.now();
-    const old = (items || []).filter((s) => isOld(s, now));
+    const old = filtered.filter((s) => isOld(s, now));
     if (old.length === 0) return;
     const ok = await askConfirm({
       title: tr("arch.bulk_title"),
@@ -213,12 +213,14 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir, session: sco
     }
   };
 
+  // The bulk actions act on the rows on screen — the session or folder scope and the filter —
+  // never on archives the user cannot see.
   const oldCount = useMemo(() => {
     const now = Date.now();
-    return (items || []).filter((s) => isOld(s, now)).length;
-  }, [items]);
+    return filtered.filter((s) => isOld(s, now)).length;
+  }, [filtered]);
 
-  const restorable = useMemo(() => (items || []).filter((s) => s.resumable !== false), [items]);
+  const restorable = useMemo(() => filtered.filter((s) => s.resumable !== false), [filtered]);
 
   const restoreAll = async () => {
     if (restorable.length === 0) return;

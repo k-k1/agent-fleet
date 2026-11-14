@@ -6,9 +6,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
+const raw = vi.fn();
 vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
-  return { ...real, api: (...a: unknown[]) => api(...a) };
+  return { ...real, api: (...a: unknown[]) => api(...a), raw: (...a: unknown[]) => raw(...a) };
 });
 
 const { ArchivedModal } = await import("./ArchivedModal.tsx");
@@ -27,6 +28,7 @@ afterEach(() => {
   root = null;
   document.body.innerHTML = "";
   api.mockReset();
+  raw.mockReset();
   useSessionsStore.setState({ sessions: [] });
 });
 
@@ -71,6 +73,9 @@ describe("ArchivedModal folder scope", () => {
   });
 });
 
+const bulk = (label: RegExp) =>
+  [...document.querySelectorAll<HTMLButtonElement>(".ui-modal button")].find((b) => label.test(b.textContent || ""));
+
 describe("ArchivedModal session scope", () => {
   // Same title on purpose: the search hit's title alone cannot pick the row.
   const shelf = [
@@ -93,5 +98,21 @@ describe("ArchivedModal session scope", () => {
     const names = await shown([], shelf, { session: "gone999" });
     expect(names).toEqual([]);
     expect(document.querySelector(".arch-scope")?.textContent).toMatch(/gone999/);
+    // Nothing on screen, so nothing for the bulk actions either.
+    expect(bulk(/すべて復帰|Restore all/)?.disabled).toBe(true);
+    expect(bulk(/古いものを削除|Delete old/)?.disabled).toBe(true);
+  });
+
+  it("counts only the narrowed session's old archive for Delete old", async () => {
+    const old = "2020-01-01T00:00:00Z";
+    await shown([], shelf.map((x) => ({ ...x, createdAt: old })), { session: "def5678" });
+    expect(bulk(/古いものを削除|Delete old/)?.textContent).toMatch(/[(（]1[)）]/);
+  });
+
+  it("restores only the narrowed session from Restore all", async () => {
+    await shown([], shelf, { session: "def5678" });
+    raw.mockResolvedValue({ ok: true });
+    await act(async () => bulk(/すべて復帰|Restore all/)!.click());
+    expect(raw.mock.calls.map((c) => c[0])).toEqual(["api/sessions/def5678/restore"]);
   });
 });

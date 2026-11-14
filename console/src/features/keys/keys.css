@@ -431,10 +431,16 @@
   color: var(--muted);
 }
 .cp-talk-slug {
-  flex: none;
+  flex: 0 1 auto;
+  max-width: 50%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--mono);
 }
 .cp-talk-place {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
