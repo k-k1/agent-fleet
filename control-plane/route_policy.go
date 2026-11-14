@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -136,20 +137,39 @@ func layerOf(row store.RoutePolicyRow) (policyLayerWire, error) {
 	return policyLayerWire{Rule: r, Revision: row.Revision, UpdatedAt: row.UpdatedAt}, nil
 }
 
+// errCeilingUnsettled: the stored ceiling kept differing from this CP's own after re-recording
+// it, which happens only while Control Planes with different ceilings write it in turn. Nothing
+// is served rather than an answer whose revision another CP labels with other content.
+var errCeilingUnsettled = errors.New("route policy: the recorded operator ceiling keeps changing under this Control Plane (Control Planes with different ceilings?)")
+
 // tenantPolicy reads every layer a tenant's members are judged by, in one snapshot, and labels it
-// with that snapshot's revision. The ceiling's rule is the recorded one (syncRoutePolicyCeiling),
-// so rule and revision come from the same read.
+// with that snapshot's revision. The ceiling evaluated is always this CP's own, from its
+// environment (D9c: it holds even if the database is edited). A stored ceiling that differs from
+// it (a database edit, or another CP with another ceiling) is re-recorded first, under a new
+// revision, and the layers read again, so the answer's revision is the one its ceiling was
+// recorded at and never a revision another reading labels with a looser rule.
 func tenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantPolicyWire, error) {
-	rows, err := st.GetRoutePolicyLayers(ctx, tenantID)
+	c := currentCeiling()
+	want, err := json.Marshal(c.rule)
 	if err != nil {
 		return tenantPolicyWire{}, err
 	}
-	out := tenantPolicyWire{Ceiling: ceilingView(), Revision: rows.Revision()}
-	ceiling, err := layerOf(rows.Ceiling)
-	if err != nil {
-		return out, err
+	var rows store.RoutePolicyLayers
+	for attempt := 0; ; attempt++ {
+		if rows, err = st.GetRoutePolicyLayers(ctx, tenantID); err != nil {
+			return tenantPolicyWire{}, err
+		}
+		if rows.Ceiling.Rule == string(want) || rows.Ceiling.Revision == 0 && !c.rule.Restricted() {
+			break
+		}
+		if attempt == 3 {
+			return tenantPolicyWire{}, errCeilingUnsettled
+		}
+		if err := syncRoutePolicyCeiling(ctx, st); err != nil {
+			return tenantPolicyWire{}, err
+		}
 	}
-	out.Ceiling.Rule = ceiling.Rule
+	out := tenantPolicyWire{Ceiling: ceilingView(), Revision: rows.Revision()}
 	for _, l := range []struct {
 		row  store.RoutePolicyRow
 		into *policyLayerWire
@@ -158,7 +178,7 @@ func tenantPolicy(ctx context.Context, st store.Store, tenantID string) (tenantP
 			return out, err
 		}
 	}
-	layers := routepolicy.Layers{Ceiling: out.Ceiling.Rule, Deployment: out.Deployment.Rule, TenantCap: out.Cap.Rule, Tenant: out.Tenant.Rule}
+	layers := routepolicy.Layers{Ceiling: c.rule, Deployment: out.Deployment.Rule, TenantCap: out.Cap.Rule, Tenant: out.Tenant.Rule}
 	out.Restricted = layers.Restricted()
 	out.Routes = []routeDecisionWire{}
 	for _, rt := range agentroutes.Routes() {

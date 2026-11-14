@@ -288,3 +288,63 @@ func TestRoutePolicyCeilingChangeTakesARevision(t *testing.T) {
 		t.Errorf("ceiling sync audit rows = %d, want 2", len(rows))
 	}
 }
+
+// The ceiling enforced is this CP's own, from its environment: a database edit of the recorded
+// ceiling, or another CP recording a looser one, never widens what this CP answers. It re-records
+// its own first, so the revision it answers at is the one its ceiling was recorded at (D9c).
+func TestRoutePolicyStoredCeilingCannotWidenTheEnvironment(t *testing.T) {
+	st, mux, tn := routePolicyFixture(t, "classes=provided")
+	ctx := context.Background()
+	get := func() tenantPolicyWire {
+		t.Helper()
+		w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss@x", "")
+		if w.Code != 200 {
+			t.Fatalf("get: %d %s", w.Code, w.Body)
+		}
+		return decodePolicy(t, w.Body.String())
+	}
+	for _, loosen := range []struct{ name, actor string }{{"a database edit", "someone"}, {"another CP's ceiling", "operator"}} {
+		_, edited, err := st.PutRoutePolicy(ctx, store.RoutePolicyCeiling, "", "{}", loosen.actor, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := get()
+		if ok, by := routeAllowed(v, "openai-api"); ok || len(by) == 0 || by[0] != routepolicy.LayerCeiling {
+			t.Errorf("after %s: openai-api allowed %v (by %v)", loosen.name, ok, by)
+		}
+		if v.Revision <= edited.Revision || !v.Restricted {
+			t.Errorf("after %s: revision %d (the loosening was %d), restricted %v", loosen.name, v.Revision, edited.Revision, v.Restricted)
+		}
+		if row, _ := st.GetRoutePolicy(ctx, store.RoutePolicyCeiling, ""); row.Rule != `{"classes":["provided"]}` {
+			t.Errorf("after %s: the recorded ceiling was not restored: %+v", loosen.name, row)
+		}
+	}
+}
+
+// fightingCeilingStore records a looser ceiling after every ceiling this CP records, as a CP with
+// another ceiling starting and reading in turn would.
+type fightingCeilingStore struct {
+	store.Store
+	inner *store.SQL
+}
+
+func (s fightingCeilingStore) PutRoutePolicy(ctx context.Context, scope, tenantID, rule, actor string,
+	audit func(before, after store.RoutePolicyRow) store.AuditLog) (store.RoutePolicyRow, store.RoutePolicyRow, error) {
+	b, a, err := s.inner.PutRoutePolicy(ctx, scope, tenantID, rule, actor, audit)
+	if err == nil && scope == store.RoutePolicyCeiling {
+		_, _, err = s.inner.PutRoutePolicy(ctx, scope, tenantID, "{}", "other-cp", nil)
+	}
+	return b, a, err
+}
+
+// When the recorded ceiling never settles on this CP's own, nothing is answered rather than an
+// answer labelled with a revision another CP gives other content.
+func TestRoutePolicyUnsettledCeilingAnswersNothing(t *testing.T) {
+	st, mux, tn, _ := routePolicyFixtureMgr(t, "classes=provided", func(st *store.SQL) store.Store { return fightingCeilingStore{st, st} })
+	if _, _, err := st.PutRoutePolicy(context.Background(), store.RoutePolicyCeiling, "", "{}", "other-cp", nil); err != nil {
+		t.Fatal(err)
+	}
+	if w := routeAdminDo(mux, "GET", "/api/admin/tenants/"+tn.Slug+"/route-policy", "boss@x", ""); w.Code != http.StatusInternalServerError {
+		t.Errorf("unsettled ceiling: %d %s, want a refusal", w.Code, w.Body)
+	}
+}

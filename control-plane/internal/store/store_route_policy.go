@@ -13,8 +13,9 @@ import (
 
 // Route policy scopes.
 const (
-	// RoutePolicyCeiling is the operator ceiling as recorded by the last Control Plane to start;
-	// its environment, not this row, is the source of truth (D9c).
+	// RoutePolicyCeiling is the operator ceiling as a Control Plane last recorded it, so that a
+	// change of it takes a revision. Each CP's environment, not this row, is what it enforces
+	// (D9c); a CP that finds the row differing from its own re-records it before answering.
 	RoutePolicyCeiling    = "ceiling"
 	RoutePolicyDeployment = "deployment"
 	RoutePolicyTenantCap  = "tenant_cap"
