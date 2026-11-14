@@ -63,7 +63,7 @@ unless they name another tree.
 | Agent instructions | `agents.Instructions` on the Agent (an `instructions_ops.go` in your package: shape, apply functions) and the kind in `instrSupportedKinds` (display order), or `agents.InstructionsUnsupported` on the Agent (a one-line method returning the reason code; `cursor/instructions.go`) | The Console's list of targets is built from `instrSupportedKinds` and the registry's `InstructionsUnsupported` answers; `agent_instructions.go` has no per-kind switch left. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead (lcpp does, each turn, through `harness.SystemPrompt`): `prompt` delivery, no path, no apply functions |
 | Console descriptor | a row in `console/src/agents/kindTable.ts` (order, catalog facts, colour), and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances; the driver facts (`managedDriver`, `terminalDriver`) are read from the catalog, with `FALLBACK_KIND_FACTS`, derived from the kind table, answering until it loads. Some screens still switch on the kind name, so grep them (below) |
 | Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and one line in the CLI manifest, `workspace/agent/internal/climanifest/cli-manifest.psv` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
-| A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
+| A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. For a CLI the action installs it is a thin caller of `cli-contract.yml` (the reusable workflow: install, `tested` / red-contract bookkeeping, the caps probe's reporting); copy the closest caller and change its triggers, credential guard and test scripts. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
 The table is not a complete list of where kind names appear. The Agent's measured-per-kind
 answers (usage accuracy, move target, one-shot) are each declared by the kind and read back by exact
@@ -154,7 +154,7 @@ breakage").
 So a kind whose CLI or host the workspace image pins needs a **contract workflow of its
 own**. What it can check depends on the kind. Most drive the real CLI with a test
 credential. `muse-contract.yml` needs none: it checks the host's protocol schema and the
-shape of its version line, and never runs a turn.
+shape of its version line, and never runs a turn; it installs its own artifact and does not call the reusable workflow.
 
 lcpp is the exception. It runs no vendor CLI, and the llama.cpp server it talks to comes
 with the engine — the deployment's, or the member's own server

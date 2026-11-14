@@ -2,6 +2,9 @@
 # launch-seed readiness signal that prevents the first mirror prompt being consumed by
 # its boot/login screen. The probe is intentionally turn-free; Google OAuth is required
 # only to reach the real composer.
+#
+# A thin caller of cli-contract.yml: triggers, the credential and the test scripts live here,
+# everything else (install, bookkeeping, the failure-report condition) is shared.
 name: agy-contract
 
 on:
@@ -27,32 +30,27 @@ concurrency:
 
 jobs:
   pane-drift:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      AGY_CLI_DISABLE_AUTO_UPDATE: "true"
-    steps:
-      - uses: actions/checkout@v7
-      - name: guard signed-in composer credential
-        env:
-          TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}
-        run: |
-          set -euo pipefail
-          [ -n "$TOKEN" ] || { echo '::error::register secrets.E2E_AGY_OAUTH_TOKEN'; exit 1; }
-          install -d -m 700 "$HOME/.gemini/antigravity-cli"
-          umask 077
-          printf '%s' "$TOKEN" > "$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
-      - uses: ./.github/actions/setup-agent-cli
-        id: cli
-        with:
-          agent: agy
-          version: ${{ inputs.cli_version }}
-      - name: real TUI pane drift contract
-        id: contract_0
-        working-directory: workspace/agent
-        env:
-          E2E_REQUIRE: "1"
-        run: go test -tags contract -run '^TestDriftAgyPaneMode$' -count=1 -v -timeout 12m ./...
+    uses: ./.github/workflows/cli-contract.yml
+    secrets:
+      E2E_AGY_OAUTH_TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}
+    with:
+      cli: agy
+      version: ${{ inputs.cli_version }}
+      timeout_minutes: 20
+      job_env: |
+        AGY_CLI_DISABLE_AUTO_UPDATE=true
+      guard: |
+        set -euo pipefail
+        TOKEN="$E2E_AGY_OAUTH_TOKEN"
+        [ -n "$TOKEN" ] || { echo '::error::register secrets.E2E_AGY_OAUTH_TOKEN'; exit 1; }
+        install -d -m 700 "$HOME/.gemini/antigravity-cli"
+        umask 077
+        printf '%s' "$TOKEN" > "$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+      test_0_name: real TUI pane drift contract
+      test_0_env: |
+        E2E_REQUIRE=1
+      test_0: |
+        go test -tags contract -run '^TestDriftAgyPaneMode$' -count=1 -v -timeout 12m ./...
 
       # The contract for the scrape path. The pane contract above only exercises
       # BuildLaunch, so nothing put the /usage scrape (pre-trusting the scratch dir → TUI
@@ -60,68 +58,40 @@ jobs:
       # against a real CLI that covers the reply to the trust prompt
       # (internal/agents/agy/trustprompt.go): while the pre-trust works no prompt appears,
       # and this goes red on the day it stops working.
-      - name: real /usage scrape contract
-        id: contract_1
-        working-directory: workspace/agent
-        env:
-          AF_AGY_LIVE: "1"
-        # -v keeps the panel contents in the log, but the test also prints the account
-        # line, which must not go raw into a public repository's logs. pipefail is required:
-        # the default `bash -e` does not set it, so piping through sed makes a failing
-        # `go test` look green.
-        run: |
-          set -euo pipefail
-          go test -run '^TestScrapeUsageLive$' -count=1 -v -timeout 5m ./internal/agents/agy/ \
-            | sed -E 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<redacted-email>/g'
+      #
+      # -v keeps the panel contents in the log, but the test also prints the account
+      # line, which must not go raw into a public repository's logs. pipefail is required:
+      # the default `bash -e` does not set it, so piping through sed makes a failing
+      # `go test` look green.
+      test_1_name: real /usage scrape contract
+      test_1_env: |
+        AF_AGY_LIVE=1
+      test_1: |
+        set -euo pipefail
+        go test -run '^TestScrapeUsageLive$' -count=1 -v -timeout 5m ./internal/agents/agy/ \
+          | sed -E 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<redacted-email>/g'
 
       # The catalog contract. Watching only the pane footer meant nothing detected `agy
       # models` changing from "display name only" to "id<TAB>display name" in 1.1.19
       # (docs/log/70 §70.14.8) — and that breakage means the session still runs but
       # silently on a different model, visible nowhere except one warning line in the real
       # TUI. A separate concern from the pane contract above, hence a separate step.
-      - name: real models catalog drift contract
-        id: contract_2
-        working-directory: workspace/agent
-        env:
-          E2E_REQUIRE: "1"
-        run: go test -tags contract -run '^TestDriftAgyModelsCatalog$' -count=1 -v -timeout 5m ./...
+      test_2_name: real models catalog drift contract
+      test_2_env: |
+        E2E_REQUIRE=1
+      test_2: |
+        go test -tags contract -run '^TestDriftAgyModelsCatalog$' -count=1 -v -timeout 5m ./...
 
       # The hooks contract. The steps above run agy without our hooks.json entry, so none saw
       # agy 1.4.4 deny every tool call when the PreToolUse hook printed "{}" (#2470): the session
       # starts and answers, and no tool ever runs. This runs one real turn that calls a tool with
       # the Agent's entry installed, and fails unless the tool ran and the hook fired.
-      - name: real tool-call hooks contract
-        id: contract_3
-        working-directory: workspace/agent
-        env:
-          E2E_REQUIRE: "1"
-          AF_AGY_CONTRACT_MODEL: ${{ inputs.model }}
-        run: go test -tags contract -run '^TestDriftAgyToolHooks$' -count=1 -v -timeout 8m ./...
-      - name: remember successfully tested latest
-        if: success() && inputs.cli_version == 'latest'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EFFECTIVE: ${{ steps.cli.outputs.version }}
-        run: |
-          version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
-          [ -n "$version" ]
-          deploy/local/cli-release-state.sh set tested agy "$version"
-          deploy/local/cli-contract-report.sh success agy || echo "::warning::could not clear the red-contract row"
-
-      # A red run of `latest` is written into that CLI's update issue and, for kinds the
-      # watcher dispatches by itself, stops it re-dispatching this version every 2 hours
-      # (deploy/local/cli-contract-report.sh). A cancelled or timed-out run is not
-      # `failure()`, so it leaves no marker and the version is retried. Only a failed contract
-      # step counts: a setup or credential-guard failure ran no test and spent no quota, so it
-      # is retried by the next watcher run instead of being held until a human acts.
-      - name: report failed contract for latest
-        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.contract_1.conclusion == 'failure' || steps.contract_2.conclusion == 'failure' || steps.contract_3.conclusion == 'failure') && inputs.cli_version == 'latest'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EFFECTIVE: ${{ steps.cli.outputs.version }}
-        run: |
-          version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
-          deploy/local/cli-contract-report.sh failure agy "${version:-unknown}"
+      test_3_name: real tool-call hooks contract
+      test_3_env: |
+        E2E_REQUIRE=1
+        AF_AGY_CONTRACT_MODEL=${{ inputs.model }}
+      test_3: |
+        go test -tags contract -run '^TestDriftAgyToolHooks$' -count=1 -v -timeout 8m ./...
 
   # The `tested` this run may have recorded is what a bump waits for; see cli-pin-bump.yml's
   # `on:` for why this dispatches it instead of relying on `workflow_run`. A job of its own,

@@ -1,0 +1,426 @@
+# The shared body of the per-CLI contract workflows (claude-tui, codex, opencode, copilot, agy,
+# cursor, kiro): credential guard, CLI install through setup-agent-cli, the contract steps, and
+# the "tested" / red-contract bookkeeping. Each *-contract.yml is a thin caller that supplies
+# its triggers, its credentials and its test scripts. muse-contract.yml is not a caller: it
+# installs the release artifact itself (the action refuses muse; see the CLI manifest) and has
+# no credential or caps probe to share.
+#
+# What a caller passes:
+#   cli, version      the manifest kind and `pinned` | `latest` | a number
+#   guard             a script run before the install: the credential guard / restore
+#   seed              a script run after the install (non-secret CLI state)
+#   test_0..test_3    the contract steps, in order, each stopping the job on failure; an empty
+#                     slot is skipped
+#   caps              the advisory capability-drift probe (cursor, copilot, kiro), or empty
+#   secrets           only that CLI's own secrets, by name. Never `secrets: inherit`: a step of
+#                     one CLI must not see another's credential.
+#
+# The "report only when a contract step failed" condition is kept: the failure report runs only
+# when one of contract_0..contract_3 or caps_probe concluded `failure`. A setup or credential
+# guard failure ran no test and spent no quota, so the next watcher run retries it instead of
+# holding the version until a human acts. Test and caps steps see the secrets only when the
+# caller sets tests_need_secrets (claude and copilot hand a credential to the CLI itself).
+#
+# Permissions: a called job can only keep or narrow what its caller job grants, so this file
+# asks for exactly what the old workflows had at the top level. The `actions: write` of the
+# pin-bump dispatch stays in the caller, in a job of its own.
+name: cli-contract
+
+on:
+  workflow_call:
+    inputs:
+      cli:
+        description: "CLI kind in the CLI manifest (also the setup-agent-cli agent and the tested-state key)"
+        type: string
+        required: true
+      version:
+        description: "pinned | latest | an explicit version"
+        type: string
+        required: true
+      timeout_minutes:
+        type: number
+        default: 40
+      job_env:
+        description: "KEY=VALUE lines exported to every step (the old job-level env)"
+        type: string
+        default: ""
+      guard:
+        description: "Script run before the install: credential guard / restore"
+        type: string
+        default: ""
+      seed:
+        description: "Script run after the install: non-secret CLI state"
+        type: string
+        default: ""
+      test_0:
+        description: "Shell script of contract step 0; empty = no such step. Runs in workspace/agent with `bash -e`."
+        type: string
+        default: ""
+      test_0_name:
+        description: "Display name of contract step 0"
+        type: string
+        default: "contract"
+      test_0_env:
+        description: "KEY=VALUE lines exported before contract step 0 (data, never interpreted as shell)"
+        type: string
+        default: ""
+      test_1:
+        description: "Shell script of contract step 1; empty = no such step. Runs in workspace/agent with `bash -e`."
+        type: string
+        default: ""
+      test_1_name:
+        description: "Display name of contract step 1"
+        type: string
+        default: "contract"
+      test_1_env:
+        description: "KEY=VALUE lines exported before contract step 1 (data, never interpreted as shell)"
+        type: string
+        default: ""
+      test_2:
+        description: "Shell script of contract step 2; empty = no such step. Runs in workspace/agent with `bash -e`."
+        type: string
+        default: ""
+      test_2_name:
+        description: "Display name of contract step 2"
+        type: string
+        default: "contract"
+      test_2_env:
+        description: "KEY=VALUE lines exported before contract step 2 (data, never interpreted as shell)"
+        type: string
+        default: ""
+      test_3:
+        description: "Shell script of contract step 3; empty = no such step. Runs in workspace/agent with `bash -e`."
+        type: string
+        default: ""
+      test_3_name:
+        description: "Display name of contract step 3"
+        type: string
+        default: "contract"
+      test_3_env:
+        description: "KEY=VALUE lines exported before contract step 3 (data, never interpreted as shell)"
+        type: string
+        default: ""
+      tests_need_secrets:
+        description: "Pass the declared secrets to the contract and caps steps (they hand a credential to the CLI)"
+        type: boolean
+        default: false
+      caps:
+        description: "Script of the advisory caps drift probe; empty = none"
+        type: string
+        default: ""
+      version_pattern:
+        description: "How the tested version is read from `--version`: semver (first dotted number) | raw (first line)"
+        type: string
+        default: semver
+      post:
+        description: "Script run after the contract steps even on failure (log redaction)"
+        type: string
+        default: ""
+      artifact_name:
+        description: "Upload artifact_path under this name after post; empty = no upload"
+        type: string
+        default: ""
+      artifact_path:
+        type: string
+        default: ""
+    secrets:
+      E2E_ANTHROPIC_API_KEY:
+        required: false
+      E2E_CLAUDE_OAUTH_TOKEN:
+        required: false
+      E2E_COPILOT_GITHUB_TOKEN:
+        required: false
+      E2E_AGY_OAUTH_TOKEN:
+        required: false
+      E2E_CURSOR_AUTH_JSON:
+        required: false
+      E2E_KIRO_AUTH_DB_B64_1:
+        required: false
+      E2E_KIRO_AUTH_DB_B64_2:
+        required: false
+      E2E_KIRO_AUTH_DB_B64_3:
+        required: false
+      E2E_KIRO_AUTH_DB_B64_4:
+        required: false
+      E2E_KIRO_AUTH_DB_B64_5:
+        required: false
+      E2E_KIRO_AUTH_DB_B64_6:
+        required: false
+      E2E_KIRO_AUTH_DB_B64_7:
+        required: false
+      E2E_KIRO_AUTH_DB_B64_8:
+        required: false
+
+permissions:
+  actions: read # the failure report lists this run's failed steps
+  contents: read
+  issues: write
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: export job env
+        if: inputs.job_env != ''
+        env:
+          JOB_ENV: ${{ inputs.job_env }}
+        run: printf '%s\n' "$JOB_ENV" >> "$GITHUB_ENV"
+
+      - name: credential guard
+        if: inputs.guard != ''
+        env:
+          SLOT: ${{ inputs.guard }}
+          E2E_ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          E2E_CLAUDE_OAUTH_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
+          E2E_COPILOT_GITHUB_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}
+          E2E_AGY_OAUTH_TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}
+          E2E_CURSOR_AUTH_JSON: ${{ secrets.E2E_CURSOR_AUTH_JSON }}
+          E2E_KIRO_AUTH_DB_B64_1: ${{ secrets.E2E_KIRO_AUTH_DB_B64_1 }}
+          E2E_KIRO_AUTH_DB_B64_2: ${{ secrets.E2E_KIRO_AUTH_DB_B64_2 }}
+          E2E_KIRO_AUTH_DB_B64_3: ${{ secrets.E2E_KIRO_AUTH_DB_B64_3 }}
+          E2E_KIRO_AUTH_DB_B64_4: ${{ secrets.E2E_KIRO_AUTH_DB_B64_4 }}
+          E2E_KIRO_AUTH_DB_B64_5: ${{ secrets.E2E_KIRO_AUTH_DB_B64_5 }}
+          E2E_KIRO_AUTH_DB_B64_6: ${{ secrets.E2E_KIRO_AUTH_DB_B64_6 }}
+          E2E_KIRO_AUTH_DB_B64_7: ${{ secrets.E2E_KIRO_AUTH_DB_B64_7 }}
+          E2E_KIRO_AUTH_DB_B64_8: ${{ secrets.E2E_KIRO_AUTH_DB_B64_8 }}
+        run: bash -e -c "$SLOT"
+
+      - uses: ./.github/actions/setup-agent-cli
+        id: cli
+        with:
+          agent: ${{ inputs.cli }}
+          version: ${{ inputs.version }}
+
+      - name: seed CLI state
+        if: inputs.seed != ''
+        env:
+          SLOT: ${{ inputs.seed }}
+        run: bash -e -c "$SLOT"
+
+      - name: ${{ inputs.test_0_name }}
+        id: contract_0
+        if: inputs.test_0 != ''
+        working-directory: workspace/agent
+        env:
+          SLOT: ${{ inputs.test_0 }}
+          SLOT_ENV: ${{ inputs.test_0_env }}
+          E2E_ANTHROPIC_API_KEY: ${{ inputs.tests_need_secrets && secrets.E2E_ANTHROPIC_API_KEY || '' }}
+          E2E_CLAUDE_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_CLAUDE_OAUTH_TOKEN || '' }}
+          E2E_COPILOT_GITHUB_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_COPILOT_GITHUB_TOKEN || '' }}
+          E2E_AGY_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_AGY_OAUTH_TOKEN || '' }}
+          E2E_CURSOR_AUTH_JSON: ${{ inputs.tests_need_secrets && secrets.E2E_CURSOR_AUTH_JSON || '' }}
+          E2E_KIRO_AUTH_DB_B64_1: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_1 || '' }}
+          E2E_KIRO_AUTH_DB_B64_2: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_2 || '' }}
+          E2E_KIRO_AUTH_DB_B64_3: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_3 || '' }}
+          E2E_KIRO_AUTH_DB_B64_4: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_4 || '' }}
+          E2E_KIRO_AUTH_DB_B64_5: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_5 || '' }}
+          E2E_KIRO_AUTH_DB_B64_6: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_6 || '' }}
+          E2E_KIRO_AUTH_DB_B64_7: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_7 || '' }}
+          E2E_KIRO_AUTH_DB_B64_8: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_8 || '' }}
+        run: |
+          # shellcheck disable=SC2163 # `export "KEY=VALUE"` is the point
+          while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$SLOT_ENV"
+          bash -e -c "$SLOT"
+
+      - name: ${{ inputs.test_1_name }}
+        id: contract_1
+        if: inputs.test_1 != ''
+        working-directory: workspace/agent
+        env:
+          SLOT: ${{ inputs.test_1 }}
+          SLOT_ENV: ${{ inputs.test_1_env }}
+          E2E_ANTHROPIC_API_KEY: ${{ inputs.tests_need_secrets && secrets.E2E_ANTHROPIC_API_KEY || '' }}
+          E2E_CLAUDE_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_CLAUDE_OAUTH_TOKEN || '' }}
+          E2E_COPILOT_GITHUB_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_COPILOT_GITHUB_TOKEN || '' }}
+          E2E_AGY_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_AGY_OAUTH_TOKEN || '' }}
+          E2E_CURSOR_AUTH_JSON: ${{ inputs.tests_need_secrets && secrets.E2E_CURSOR_AUTH_JSON || '' }}
+          E2E_KIRO_AUTH_DB_B64_1: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_1 || '' }}
+          E2E_KIRO_AUTH_DB_B64_2: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_2 || '' }}
+          E2E_KIRO_AUTH_DB_B64_3: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_3 || '' }}
+          E2E_KIRO_AUTH_DB_B64_4: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_4 || '' }}
+          E2E_KIRO_AUTH_DB_B64_5: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_5 || '' }}
+          E2E_KIRO_AUTH_DB_B64_6: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_6 || '' }}
+          E2E_KIRO_AUTH_DB_B64_7: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_7 || '' }}
+          E2E_KIRO_AUTH_DB_B64_8: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_8 || '' }}
+        run: |
+          # shellcheck disable=SC2163 # `export "KEY=VALUE"` is the point
+          while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$SLOT_ENV"
+          bash -e -c "$SLOT"
+
+      - name: ${{ inputs.test_2_name }}
+        id: contract_2
+        if: inputs.test_2 != ''
+        working-directory: workspace/agent
+        env:
+          SLOT: ${{ inputs.test_2 }}
+          SLOT_ENV: ${{ inputs.test_2_env }}
+          E2E_ANTHROPIC_API_KEY: ${{ inputs.tests_need_secrets && secrets.E2E_ANTHROPIC_API_KEY || '' }}
+          E2E_CLAUDE_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_CLAUDE_OAUTH_TOKEN || '' }}
+          E2E_COPILOT_GITHUB_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_COPILOT_GITHUB_TOKEN || '' }}
+          E2E_AGY_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_AGY_OAUTH_TOKEN || '' }}
+          E2E_CURSOR_AUTH_JSON: ${{ inputs.tests_need_secrets && secrets.E2E_CURSOR_AUTH_JSON || '' }}
+          E2E_KIRO_AUTH_DB_B64_1: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_1 || '' }}
+          E2E_KIRO_AUTH_DB_B64_2: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_2 || '' }}
+          E2E_KIRO_AUTH_DB_B64_3: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_3 || '' }}
+          E2E_KIRO_AUTH_DB_B64_4: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_4 || '' }}
+          E2E_KIRO_AUTH_DB_B64_5: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_5 || '' }}
+          E2E_KIRO_AUTH_DB_B64_6: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_6 || '' }}
+          E2E_KIRO_AUTH_DB_B64_7: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_7 || '' }}
+          E2E_KIRO_AUTH_DB_B64_8: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_8 || '' }}
+        run: |
+          # shellcheck disable=SC2163 # `export "KEY=VALUE"` is the point
+          while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$SLOT_ENV"
+          bash -e -c "$SLOT"
+
+      - name: ${{ inputs.test_3_name }}
+        id: contract_3
+        if: inputs.test_3 != ''
+        working-directory: workspace/agent
+        env:
+          SLOT: ${{ inputs.test_3 }}
+          SLOT_ENV: ${{ inputs.test_3_env }}
+          E2E_ANTHROPIC_API_KEY: ${{ inputs.tests_need_secrets && secrets.E2E_ANTHROPIC_API_KEY || '' }}
+          E2E_CLAUDE_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_CLAUDE_OAUTH_TOKEN || '' }}
+          E2E_COPILOT_GITHUB_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_COPILOT_GITHUB_TOKEN || '' }}
+          E2E_AGY_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_AGY_OAUTH_TOKEN || '' }}
+          E2E_CURSOR_AUTH_JSON: ${{ inputs.tests_need_secrets && secrets.E2E_CURSOR_AUTH_JSON || '' }}
+          E2E_KIRO_AUTH_DB_B64_1: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_1 || '' }}
+          E2E_KIRO_AUTH_DB_B64_2: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_2 || '' }}
+          E2E_KIRO_AUTH_DB_B64_3: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_3 || '' }}
+          E2E_KIRO_AUTH_DB_B64_4: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_4 || '' }}
+          E2E_KIRO_AUTH_DB_B64_5: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_5 || '' }}
+          E2E_KIRO_AUTH_DB_B64_6: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_6 || '' }}
+          E2E_KIRO_AUTH_DB_B64_7: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_7 || '' }}
+          E2E_KIRO_AUTH_DB_B64_8: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_8 || '' }}
+        run: |
+          # shellcheck disable=SC2163 # `export "KEY=VALUE"` is the point
+          while IFS= read -r kv; do [ -z "$kv" ] || export "$kv"; done <<< "$SLOT_ENV"
+          bash -e -c "$SLOT"
+
+      - name: post-process logs
+        if: always() && inputs.post != ''
+        env:
+          SLOT: ${{ inputs.post }}
+        run: bash -e -c "$SLOT"
+
+      - name: upload observed log
+        if: always() && inputs.artifact_name != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.artifact_path }}
+          if-no-files-found: ignore
+
+      # `tested` is what a pin bump waits for. Only a passing run of `latest` outside a pull
+      # request records it.
+      - name: remember successfully tested latest
+        if: success() && inputs.version == 'latest' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+          VERSION_PATTERN: ${{ inputs.version_pattern }}
+          CLI: ${{ inputs.cli }}
+        run: |
+          if [ "$VERSION_PATTERN" = raw ]; then
+            version="$(printf '%s' "$EFFECTIVE" | head -1)"
+          else
+            version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          fi
+          [ -n "$version" ]
+          deploy/local/cli-release-state.sh set tested "$CLI" "$version"
+
+      # Declared Caps against observed behaviour. Placed after "remember" on purpose: a
+      # capability that drifted is a finding for the update issue, not a reason to call the
+      # mirror contract of this version untested.
+      #
+      # ADVISORY until the repository variable CAPS_PROBES_BLOCKING is 'true' (the one switch for
+      # the cursor, copilot and kiro callers; docs/build/10-development.md, "Promoting the caps
+      # drift probes"). Advisory: a DRIFT or probe error leaves this step `outcome: failure` but
+      # `conclusion: success`, so the job stays green, `failure()` stays false and the
+      # red-contract report never sees it; "report caps probe outcome" records it without the
+      # watcher's `red` marker. Blocking: the step fails the job and is reported as a red contract.
+      - name: caps drift probes
+        id: caps_probe
+        if: inputs.caps != ''
+        continue-on-error: ${{ vars.CAPS_PROBES_BLOCKING != 'true' }}
+        working-directory: workspace/agent
+        env:
+          SLOT: ${{ inputs.caps }}
+          E2E_ANTHROPIC_API_KEY: ${{ inputs.tests_need_secrets && secrets.E2E_ANTHROPIC_API_KEY || '' }}
+          E2E_CLAUDE_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_CLAUDE_OAUTH_TOKEN || '' }}
+          E2E_COPILOT_GITHUB_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_COPILOT_GITHUB_TOKEN || '' }}
+          E2E_AGY_OAUTH_TOKEN: ${{ inputs.tests_need_secrets && secrets.E2E_AGY_OAUTH_TOKEN || '' }}
+          E2E_CURSOR_AUTH_JSON: ${{ inputs.tests_need_secrets && secrets.E2E_CURSOR_AUTH_JSON || '' }}
+          E2E_KIRO_AUTH_DB_B64_1: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_1 || '' }}
+          E2E_KIRO_AUTH_DB_B64_2: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_2 || '' }}
+          E2E_KIRO_AUTH_DB_B64_3: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_3 || '' }}
+          E2E_KIRO_AUTH_DB_B64_4: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_4 || '' }}
+          E2E_KIRO_AUTH_DB_B64_5: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_5 || '' }}
+          E2E_KIRO_AUTH_DB_B64_6: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_6 || '' }}
+          E2E_KIRO_AUTH_DB_B64_7: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_7 || '' }}
+          E2E_KIRO_AUTH_DB_B64_8: ${{ inputs.tests_need_secrets && secrets.E2E_KIRO_AUTH_DB_B64_8 || '' }}
+        run: bash -e -c "$SLOT"
+
+      # Advisory findings only. Never writes or clears the `red` marker or the red-contract row:
+      # those belong to the mirror contract. A pass clears this kind's advisory row. Skipped when
+      # the probes did not run, were cancelled, or are blocking and failed.
+      - name: report caps probe outcome
+        if: ${{ !cancelled() && inputs.caps != '' && (steps.caps_probe.outcome == 'success' || (steps.caps_probe.outcome == 'failure' && steps.caps_probe.conclusion == 'success')) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.caps_probe.outcome }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+          CLI_VERSION: ${{ inputs.version }}
+          VERSION_PATTERN: ${{ inputs.version_pattern }}
+          CLI: ${{ inputs.cli }}
+        run: |
+          if [ "$VERSION_PATTERN" = raw ]; then
+            version="$(printf '%s' "$EFFECTIVE" | head -1 || true)"
+          else
+            version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
+          fi
+          if [ "$OUTCOME" = failure ]; then
+            echo "::warning title=$CLI caps drift probes::DRIFT or probe error (advisory, job not failed). Set repository variable CAPS_PROBES_BLOCKING=true to gate on it."
+            {
+              echo "### $CLI caps drift probes: DRIFT or probe error (advisory)"
+              echo
+              echo "The mirror contract result stands; no red-contract row or marker was written. Read the \`caps drift probes\` step log for the \`DRIFT\` lines."
+            } >> "$GITHUB_STEP_SUMMARY"
+            [ "$CLI_VERSION" = latest ] || exit 0
+            deploy/local/cli-contract-report.sh advisory "$CLI" "${version:-unknown}" || echo "::warning::could not record the advisory caps finding"
+          elif [ "$CLI_VERSION" = latest ]; then
+            deploy/local/cli-contract-report.sh advisory-clear "$CLI" || echo "::warning::could not clear the advisory caps row"
+          fi
+
+      # Clearing the red-contract row waits for the probes: when they block, a success before
+      # them would drop the previous run's row (and, when pin == latest, let the sync close the
+      # update issue) only for a red probe to open a new one on every re-run of the same version.
+      # An advisory probe failure does not stop this step (the step's conclusion is success).
+      - name: clear red-contract row
+        if: success() && inputs.version == 'latest' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLI: ${{ inputs.cli }}
+        run: deploy/local/cli-contract-report.sh success "$CLI" || echo "::warning::could not clear the red-contract row"
+
+      # A red run of `latest` is written into that CLI's update issue and, for kinds the watcher
+      # dispatches by itself, stops it re-dispatching this version every 2 hours
+      # (deploy/local/cli-contract-report.sh). A cancelled or timed-out run is not `failure()`,
+      # so it leaves no marker and the version is retried. Only a failed contract step counts.
+      - name: report failed contract for latest
+        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.contract_1.conclusion == 'failure' || steps.contract_2.conclusion == 'failure' || steps.contract_3.conclusion == 'failure' || steps.caps_probe.conclusion == 'failure') && inputs.version == 'latest' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+          VERSION_PATTERN: ${{ inputs.version_pattern }}
+          CLI: ${{ inputs.cli }}
+        run: |
+          if [ "$VERSION_PATTERN" = raw ]; then
+            version="$(printf '%s' "$EFFECTIVE" | head -1 || true)"
+          else
+            version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
+          fi
+          deploy/local/cli-contract-report.sh failure "$CLI" "${version:-unknown}"
