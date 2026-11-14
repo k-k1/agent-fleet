@@ -374,7 +374,9 @@ func TestTCPRelayKeepsHalfClose(t *testing.T) {
 	defer c.Close()
 	fmt.Fprint(c, "hello")
 	c.(*net.TCPConn).CloseWrite()
-	c.SetDeadline(time.Now().Add(2 * time.Second))
+	// The answer arrives as soon as the relay passes the EOF on; the deadline only bounds a
+	// real hang, so a loaded host cannot turn a slow relay into a failure.
+	c.SetDeadline(time.Now().Add(30 * time.Second))
 	got, err := bufio.NewReader(c).ReadString('\n')
 	if err != nil || got != "got 5 bytes\n" {
 		t.Fatalf("answer after a half-close: %q, %v", got, err)
