@@ -46,6 +46,7 @@ Bitbucket Cloud を接続しておくと、エージェントが `bkt`（[Bitbuc
 | プルリクエストを作る | `bkt pr create` |
 | プルリクエストを一覧する・読む | `bkt pr list`、`bkt pr view 123` |
 | コメントを読む | `bkt pr comments 123` |
+| 頼まれたときにプルリクエストをマージする | `bkt pr merge 123`（`--close-source=false` を付けない限り、ソースブランチを閉じます） |
 | パイプラインを見る | `bkt pipeline` |
 
 - **書き込みはあなたの名前で残ります。** できることは、あなたのアカウントと接続に許されている範囲までです
@@ -59,7 +60,7 @@ Bitbucket Cloud を接続しておくと、エージェントが `bkt`（[Bitbuc
 
 | やること | OAuth で接続したとき | API トークンで接続したとき |
 |---|---|---|
-| プルリクエスト（作成・コメント） | Pull requests: Read and Write | `read:pullrequest:bitbucket`、`write:pullrequest:bitbucket` |
+| プルリクエスト（作成・コメント・マージ） | Pull requests: Read and Write | `read:pullrequest:bitbucket`、`write:pullrequest:bitbucket` |
 | パイプラインを見る | Pipelines: Read | `read:pipeline:bitbucket` |
 | パイプラインを開始・停止する | Pipelines: Write | `write:pipeline:bitbucket` |
 
@@ -67,6 +68,8 @@ Bitbucket Cloud を接続しておくと、エージェントが `bkt`（[Bitbuc
 - **API トークンのスコープは、トークンを作るときに**付けます。write は read を含みません。足りないときは、スコープを付けた新しいトークンを貼り直します
 - 同じ権限で、課題管理の詳細から Bitbucket のプルリクエストに「**作業の報告をコメントする**」が使えます。
   このボタンは、接続にプルリクエストの書き込み権限があると確認できているときだけ出ます
+- マージには、あなたのアカウントがマージ先ブランチにマージできることも要ります。同じ権限で、詳細から Bitbucket のプルリクエストを
+  「**マージ**」できます（[マージする](../sessions/from-issues.ja.md#マージする)）
 
 ## 自分の設定で使う
 
