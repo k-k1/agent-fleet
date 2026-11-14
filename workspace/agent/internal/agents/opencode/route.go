@@ -82,6 +82,17 @@ func bedrockModel(model string) bool {
 // Routes implements agents.RouteAdapter.
 func (agentImpl) Routes() []string { return []string{RouteBedrock} }
 
+// FixedRoutes implements agents.FixedRouter (ADR 0138 D2). With no selection opencode runs on
+// whatever its configuration and the stored keys reach: the opencode.ai account login its serve
+// holds, the Zen/Go key, every provider key in the store (keyEnv hands all of them to the shared
+// serve) and the deployment's engine provider. Which one a call ran on is the provider id
+// opencode wrote on it.
+func (agentImpl) FixedRoutes() []string {
+	return []string{routes.RouteAFEngineLLM, routes.RouteAnthropicAPI, routes.RouteCustomAPI, routes.RouteGeminiAPI,
+		routes.RouteOpenAIAPI, routes.RouteOpenRouterAPI, routes.RouteOpencodeAccount, routes.RouteOpencodeGo,
+		routes.RouteOpencodeZen, routes.RouteSakanaAPI}
+}
+
 // OfferedRoutes implements agents.RouteOfferer: bedrock only while its gate is open.
 func (agentImpl) OfferedRoutes() []string {
 	if bedrockOpen() {
