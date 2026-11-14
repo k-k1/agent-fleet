@@ -4,6 +4,7 @@ English | [日本語](0137-message-queues.ja.md)
 
 - Status: **proposed** (2026-11-14). Nothing is built. Every `file:line` was read on `7ab3e1141`. Limit values are
   provisional.
+- Tracking: #4145.
 - Related: [0021](0021-scheduled-execution.md) (scheduled execution; this record amends its decision 10 and its
   2026-10-03 addendum) / [0061](0061-work-item-inbox.md) (work-item inbox; amends decision 8) /
   [0111](0111-member-collaboration.md) (member collaboration) / [0113](0113-member-origin-mark.md) (member-origin
