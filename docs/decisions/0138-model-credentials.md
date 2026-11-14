@@ -8,7 +8,7 @@ English | [日本語](0138-model-credentials.ja.md)
   Workspace or deployment, and no AWS call was made. What a vendor's CLI or endpoint does (which host a login talks
   to, whether a CLI can be pointed at another credential file) is **not measured** unless a cited ADR measured it,
   and is marked so where a decision rests on it. Reviewed 2026-11-14 by a separate session (codex `gpt-6.1-sol`):
-  round 1, 13 findings, each checked against the tree and folded into this text.
+  round 1, 13 findings; round 2, 5 findings; each checked against the tree and folded into this text.
 - Tracking: #4159. Refs #3282.
 - Follow-ups: none filed yet. The phases (§8) depend on which options the owner takes, so their issues are filed when
   the decisions are accepted; until then the open questions (§10) are tracked on #4159.
@@ -170,8 +170,12 @@ Two attributes of a route make the policy writable by a person:
 - **A destination is only as good as the endpoint it is pinned to.** The member's llama.cpp connection accepts any
   `http(s)` URL, with an optional key (`connections.go:629-641`), so a vendor or a proxy can be entered there and
   would be mislabelled `self-hosted`. Under any destination restriction, a member endpoint is therefore
-  `unclassified`, unless its host is on a list of approved self-hosted endpoints that the tenant_admin or super_admin
-  keeps; it is then `self-hosted` with that destination, and the connection binds to the host it was approved for.
+  `unclassified`, unless its host is an **approved self-hosted endpoint**; it is then `self-hosted` with that
+  destination, and the connection binds to the host it was approved for. Approval follows the same intersection as
+  the policy (D7): the operator ceiling names the host patterns that may be approved at all (none when unset under a
+  ceiling that restricts destinations), the super_admin narrows that set per deployment and per tenant, and the
+  tenant_admin approves only hosts inside what is left. A host that matches a vendor destination's hosts in the
+  catalogue can never be approved as self-hosted at any layer, so an excluded vendor cannot be relabelled.
   The same rule holds for any credential whose endpoint can be overridden: a vendor key keeps its vendor's
   destination only while the harness pins the vendor's endpoint (as claude's routes pin `ANTHROPIC_BASE_URL` and
   refuse a settings file that sets it, ADR 0128 notes of 2026-11-04 and 2026-11-05); an override makes it
@@ -197,7 +201,10 @@ control.
 - **D1b. Route id.** Exact, and it is what every check evaluates. As the admin's unit it is a list of a dozen ids
   that grows with every harness row, and a new id is either allowed by surprise or denied by surprise.
 - **D1c. Credential class × destination, evaluated on route ids** *(recommended)*. The catalogue assigns every route
-  id exactly one class and one destination (D2). A policy layer is a set of allowed classes and a set of allowed
+  id exactly one class and one destination (D2), except the routes it marks **per-connection** (`member-llamacpp`,
+  `custom-api`, and any route whose endpoint the member can set), whose class and destination come from the
+  validated endpoint the connection is bound to (§2). The unit evaluated is therefore the route id plus, for those
+  routes, its endpoint binding. A policy layer is a set of allowed classes and a set of allowed
   destinations, each defaulting to "all"; a route is allowed when its class and its destination are both allowed at
   every layer. The configurations are short: "no subscriptions" removes one class and one destination (§6);
   "Bedrock only" keeps one destination; "provided only" keeps one class. A route id added later inherits the rule through its class and
@@ -265,7 +272,7 @@ started with until it stops; opencode's `serve` keeps its environment until rest
   shared daemons without the credential** *(recommended)*. Removing a credential extends `RouteWatcher`
   (`SweepRouteGuards`, `internal/sessionx/session_route.go:147`) to "the bound credential is gone or replaced"; the
   session is halted (resumable, as the route guard already does) and the notice names the credential. A shared
-  `serve` or app-server is restarted without it.
+  `serve` or app-server is replaced by D12's **security restart**, not by the ordinary one.
 - The delete and replace dialogs say what will happen before it does: "Used by claude (2 stored sessions), opencode
   (shared server)". A replacement is a new fingerprint: bound sessions are refused, never moved (ADR 0128 decision 3).
 - Revocation at the vendor (a key revoked in the vendor's console) is not visible until a call fails with an
@@ -327,8 +334,13 @@ grant stays the only per-member control, for provided routes.
   grants them and a tenant_admin gives a budget. The two rules do not conflict: the policy says what is permitted,
   the grant says what is offered.
 - **The policy is not stored in `tenantLimits`.** That handler rewrites the whole blob and writes no audit row (ADR
-  0084 decision 7, `control-plane/internal/tenantsrv/tenants.go`). The policy gets its own rows (deployment, per tenant) and endpoints, each
-  write audited, as ADR 0129's grant and budget writes are.
+  0084 decision 7, `control-plane/internal/tenantsrv/tenants.go`). The policy gets its own rows and endpoints, each
+  write audited, as ADR 0129's grant and budget writes are. **The three administered values are kept apart**: the
+  deployment-wide rule (super_admin), each tenant's cap (super_admin) and each tenant's own rule (tenant_admin) are
+  separate rows with separate, role-scoped endpoints, and the approved self-hosted endpoints of §2 likewise per
+  layer. A tenant_admin writing or clearing the tenant's rule never touches the super_admin's cap for that tenant,
+  and the reverse; the effective policy is computed from all of them at read time. That separation is what makes
+  D7's intersection hold in storage.
 - The engine's tenant gate (`allow_engine_llm`, `limits.go:135`) stays where it is. It is read as part of the
   `self-hosted` class for the deployment's engine: allowed only if both say so.
 
@@ -392,9 +404,20 @@ replaces them must not move a member onto a metered bill they did not choose.
   when it is named (directly or as the member's default route). This record adds the policy condition and changes
   nothing else in pi's rule.
 
-A stored session with an empty selection, started after a restriction appears, is checked on the route its kind
-would resolve to by the same rule; where that cannot be known (claude without a selection), the start is refused with
-the reason and the member picks a route.
+**A session that already exists is judged on launch-time evidence, never by re-running the create rule.** Re-resolving
+it from today's credential or default could change who pays: a codex session that ran on ChatGPT with no route, whose
+login was later replaced by an API key, would resolve to `openai-api`; an lcpp session would move between the
+member's endpoint and the deployment's engine when the connection changes; a changed default route would move a
+legacy session. So:
+
+- From M0 on, every launch records the route it resolved to and its binding (D5) in the session, even when the
+  selection is empty. That record, not the current credential, is what the policy judges at resume, and a resume
+  whose current credential no longer matches it is a replacement (D4): refused, never moved.
+- A session launched before M0 has no such record. Under a restriction its resume is refused with the reason, and the
+  member either chooses a route explicitly, which is a recorded transition with the same steps and consent as the
+  route switch (ADR 0128 decision 10), or recreates the session. With no restriction, it resumes as today.
+- A **running** session follows the same rule on the sweep: judged on its recorded route and binding; with no record,
+  halted under a restriction, since it cannot be proven.
 
 ### D12. Where the policy is enforced
 
@@ -411,8 +434,9 @@ image generation, shared daemons) is inside this rule; D13's exception covers on
   endpoint, like `/internal/route/check` (ADR 0129, Q1 part 2), **at least every 30 seconds**. The CP also says in
   the answer whether any layer restricts anything for this member, and sends the deployment's ceiling separately.
 - **The maximum restriction delay**, with the CP reachable, is one pull interval (30 s) for new work and one pull
-  interval plus one reconciler tick for running work (the tick's interval is not measured here). That figure is
-  what the policy page states.
+  interval plus one reconciler tick for running work (the tick's interval is not measured here). For a shared daemon
+  it adds the time to stop the old daemon after the abort (below), not the 60 s drain of an ordinary restart. That
+  figure is what the policy page states.
 - **When pulls fail**: if the last held policy restricts anything, or the deployment has a ceiling, and no pull has
   succeeded for 15 minutes (the route gateway's rule for its Settings pull, ADR 0128 note of 2026-11-05, P2a), new
   work is refused with "the policy cannot be confirmed" until a pull succeeds; running sessions are left alone. If
@@ -431,7 +455,7 @@ image generation, shared daemons) is inside this rule; D13's exception covers on
 | Schedules: new, reused, rotated | at save: kind (`checkScheduleKind`, `control-plane/schedule.go:198`) and static route (`scheduleRouteError`, `:212`); provided grants and budget **at fire only** (`scheduler_wake.go:90-93`) | the policy at save (a forbidden route is not saved) and at fire (a tightening after save refuses the fire and sends a notice) |
 | Agent create, every path | `createRun.checkRoute` (`internal/sessionx/session_route.go:102`); a session's `create_session` arrives here only (`internal/mcpx/mcp_client.go:270`) | plus the policy; **the authoritative check** inside the Workspace |
 | Start and resume of a stored session, Terminal and Managed, a driver switch | `startRefusalOf` (`session_route.go:130`) | plus the policy (D11 for empty selections) |
-| A session already running | `SweepRouteGuards` (`session_route.go:147`) for settings files; it skips every session with no route (`:150`) | the sweep covers **every** live session, with or without a stored route: a nil-route session is judged on its resolved route (D11) and halted when that is forbidden or cannot be known under a restriction. Halted means resumable, with a `route-stopped` notice naming the layer |
+| A session already running | `SweepRouteGuards` (`session_route.go:147`) for settings files; it skips every session with no route (`:150`) | the sweep covers **every** live session, with or without a stored route: a nil-route session is judged on its launch-time record (D11) and halted when that is forbidden, or when there is no record under a restriction. Halted means resumable, with a `route-stopped` notice naming the layer |
 | Input to a live Managed runtime | the send gate | each delivered message (member, peer, scheduled, queued) re-checks the policy; on a forbidden route the message is held and the member told why, never delivered to a runtime about to be halted |
 | Route switch (ADR 0128 decision 10; ADR 0129 D6) | `checkRouteSwitch` (`internal/sessionx/session_route_switch.go:142`), target from `RouteSwitcher.SwitchTarget` (`claude/route.go:591`) | the target is filtered by the policy; no allowed target means no offer. **Never** a fallback to another route |
 | Fork, move, recreate | the inherited selection is re-validated (ADR 0128 decision 13) | the re-validation includes the policy |
@@ -452,7 +476,20 @@ the menu). So every utility call is treated as a launch:
   credential variables, pin the endpoint, and for opencode an inline configuration whose `enabled_providers` lists
   only allowed providers, with a file that sets `enabled_providers` refused as opencode's route already refuses it).
 - **Isolate** shared daemons the same way: the shared opencode `serve` and codex app-server run with only the
-  credentials and providers the policy and "Use for" allow, and are restarted when either narrows.
+  credentials and providers the policy and "Use for" allow, and are replaced when either narrows.
+- **A security restart, not the ordinary one.** The ordinary restart drains before stopping, waits up to 60 s and
+  then aborts every turn still running (`opencode/serve.go:569-601`, `drain` at `:641-676`), and an adopted daemon,
+  which the Agent did not start, is not replaced at all (`Restart` returns false when `cmd` is nil) and keeps its old
+  environment. None of that is a revocation. When a credential, a provider or a "Use for" entry is withdrawn from a
+  shared daemon: admission of new turns to it closes at once; the turns of sessions using the withdrawn credential
+  are aborted at once, without a drain; the daemon is stopped and replaced by one started with the narrowed
+  credentials, tagged with a credential generation; a daemon of an older or unknown generation (an adopted one
+  included) is never adopted or reused under a restriction but stopped; and if it cannot be stopped or the
+  replacement fails, the harness is unavailable, with the reason, until it succeeds. Because one `serve` carries one
+  set of keys (ADR 0128 decision 5), **the other sessions on that daemon are interrupted too**: their turn ends as
+  interrupted by a credential change, they stay on their own route, and they continue on the new daemon. A daemon per
+  credential, which would leave them untouched, is the alternative ADR 0128 decision 5 already names; it is not
+  taken here because its memory cost is not measured.
 - **Re-check** on every model or provider change and on every fallback: the chat's send-time fallback
   (`chat_providers.go:57-60`) and the image provider order (`imagegen/imagegen.go:527-528`) move only to a backend
   whose resolved route is allowed; none left is an error the member sees.
@@ -557,11 +594,11 @@ their limit, PR feedback, session search.
 credentials, not a credential and not a harness.
 
 **Tenant settings > Model access** (new; manage group). The tenant policy (classes, destinations) with what the
-deployment allows shown above it; provided routes (ADR 0129's tenant view, budgets, member grants); the presence
+deployment allows shown above it; approved self-hosted endpoints within the deployment's set (§2); provided routes (ADR 0129's tenant view, budgets, member grants); the presence
 report and flagged turns (D13, D15).
 
 **Admin > Model access** (new; deployment group). The ceiling, read-only with its source; the deployment-wide policy;
-per-tenant policy and provided-route grants; the deployment source (ADR 0129).
+per-tenant caps and provided-route grants; approved self-hosted endpoints; the deployment source (ADR 0129).
 
 **The launch dialog** picks the harness, then the route, then the model:
 
@@ -606,10 +643,10 @@ that page, not stubbed.
 
 | Phase | Content | Verified live | Negative control |
 |---|---|---|---|
-| M0 | Route ids for every credential path, resolved per login mode (D2); class and destination in the catalogue; the stable connection binding on ledger rows (D5) and its rollup migration; the kind catalog reports which routes are usable now. No behaviour change | One turn per kind on a dev Workspace writes the expected route and binding, muse and codex in both login modes; one call of each chat backend and image provider does too; the rollup keeps two Anthropic keys apart | A login replaced by another account (or a new key) changes the binding, while a token refresh does not; nothing a member could launch before is refused |
-| M1 | The policy: CP store, REST, audit rows, revisions; the operator variable and CFN parameter (D9); the Agent's pull and freshness rules; every point of D12 **except "Use for"**, including the utilities' resolve-bind-isolate and the shared daemons; credential entry and in-flight logins (D12, D14); the empty-selection rule (D11) | On a dev deployment, tenant A on "No subscriptions": a claude subscription launch is refused from the Console, REST, the hosted MCP tool, a session's `create_session` and a schedule (at save, and at fire after a later tightening), each naming the layer; claude on `anthropic-api` starts; an empty claude create is refused, not moved to the API; muse and codex on API-key logins start, on account logins are refused; the assistant chat answers on an allowed backend or says none is left; image generation skips a ChatGPT-mode codex and agy; a running subscription session, one with an explicit route and one with none, is halted within the stated delay and its resume refused; a queued message to a live Managed runtime is held; the switch offer lists no forbidden target | Tenant B, unrestricted, launches the same sessions. The CP made unreachable for over 15 minutes refuses new work for A and not for an unrestricted member; a replayed older policy revision is ignored; loosening A works within the stated delay without a restart; with the ceiling at `classes=provided`, a super_admin's REST call to widen it is refused; a GitHub git login still works under "No subscriptions" |
+| M0 | Route ids for every credential path, resolved per login mode (D2); class and destination in the catalogue, with per-connection routes; the stable connection binding on ledger rows (D5) and its rollup migration; the launch-time route and binding recorded in every session (D11); the kind catalog reports which routes are usable now. No behaviour change | One turn per kind on a dev Workspace writes the expected route and binding, and the session records them, muse and codex in both login modes; one call of each chat backend and image provider does too; the rollup keeps two Anthropic keys apart | A login replaced by another account (or a new key) changes the binding, while a token refresh does not; nothing a member could launch before is refused |
+| M1 | The policy: CP store, REST, audit rows, revisions; the operator variable and CFN parameter (D9); the Agent's pull and freshness rules; every point of D12 **except "Use for"**, including the utilities' resolve-bind-isolate and the shared daemons; credential entry and in-flight logins (D12, D14); the empty-selection rule (D11) | On a dev deployment, tenant A on "No subscriptions": a claude subscription launch is refused from the Console, REST, the hosted MCP tool, a session's `create_session` and a schedule (at save, and at fire after a later tightening), each naming the layer; claude on `anthropic-api` starts; an empty claude create is refused, not moved to the API; muse and codex on API-key logins start, on account logins are refused; the assistant chat answers on an allowed backend or says none is left; image generation skips a ChatGPT-mode codex and agy; a running subscription session, one with an explicit route and one with none, is halted within the stated delay and its resume refused; a queued message to a live Managed runtime is held; the switch offer lists no forbidden target. **Retained-auth isolation**: a Workspace holding both an allowed Anthropic API key and a retained claude subscription login, and an allowed OpenRouter key beside a retained opencode.ai account login with opencode.ai forbidden, forces the chat, the title and small-model calls and the backend fallback; the ledger rows show the allowed route and binding every time. Image generation with codex in API-key mode succeeds. A chat call and an image call in flight when A is tightened are cancelled within the stated delay. A pre-M0 nil-route codex session whose login was replaced by an API key is refused on resume, not resumed on `openai-api` | Tenant B, unrestricted, launches the same sessions. The CP made unreachable for over 15 minutes refuses new work for A and not for an unrestricted member; a replayed older policy revision is ignored; loosening A works within the stated delay without a restart; with the ceiling at `classes=provided`, a super_admin's REST call to widen it is refused; a GitHub git login still works under "No subscriptions". With the allowed key removed, the chat refuses rather than using the retained login. A tenant_admin clearing the tenant's rule leaves the super_admin's cap in force; a tenant_admin approving a host the ceiling excludes, or a vendor host, as self-hosted is refused |
 | M2 | The Console: Model credentials, Agents (with default route), Sessions, Image generation; tenant and admin Model access pages with policy, ceiling and provided routes (ADR 0129's Q2 screens can land here); the launch dialog's harness → route → model with reasons; claude's availability by route | Headless Chromium on a dev deployment in each configuration of §6, screenshots kept with the PR; a member with only an Anthropic key launches claude from the dialog | A forbidden route shown disabled cannot be submitted by editing the request (the Agent refuses it, M1); an unrestricted member sees no reason labels |
-| M3 | Sharing: "Use for" per credential (D3) and its enforcement; the Anthropic key shown under Anthropic (the store slot unchanged first; a provider-keyed store with a migration after); delete and replace dialogs with "used by"; revocation of D4 | Remove the Anthropic key with one claude and one opencode session running: claude is halted with the reason and refused on resume, opencode's serve restarts without the key. Replace the key: bound sessions refused, new ones bound to the new fingerprint. Remove opencode from the key's "Use for": opencode loses it, claude keeps it | An unrelated key (OpenRouter) and its opencode sessions are untouched by all three; nothing moves to another route; per-credential spend matches the ledger |
+| M3 | Sharing: "Use for" per credential (D3) and its enforcement; the Anthropic key shown under Anthropic (the store slot unchanged first; a provider-keyed store with a migration after); delete and replace dialogs with "used by"; revocation of D4 | Remove the Anthropic key with one claude and one opencode session running: claude is halted with the reason and refused on resume; opencode's serve is replaced by the security restart, the session using the key is aborted at once and refused, and the removed key is unusable within the stated delay. Replace the key: bound sessions refused, new ones bound to the new fingerprint. Remove opencode from the key's "Use for": opencode loses it, claude keeps it | A long OpenRouter turn on the same serve is interrupted visibly (not silently lost), stays on its route and continues on the new serve; claude sessions on other keys are untouched; an adopted serve is stopped, not reused; a forced replacement failure leaves opencode unavailable with the reason, never on the old daemon; nothing moves to another route; per-credential spend matches the ledger |
 | M4 | Detection and network: the presence report with retained and new states (D13), flagged turns, their sections on the admin and tenant pages; egress's final deny filter from the ceiling | A hand `codex login` in a shell under "No subscriptions" appears as *new* within one report interval; on an egress-enforced sandbox with the ceiling at Bedrock only, a hand vendor login fails at the network while a Bedrock route turn answers (needs real AWS; an acceptance run, not CI) | A credential kept from before the restriction shows as *retained*, not as a finding; a super_admin allowlist entry re-adding an excluded vendor host has no effect; whether a connection opened before the filter survives it is measured and written down |
 
 pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of their own here.
@@ -629,6 +666,9 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
 - **Filtering menus or dropping keys as the enforcement for utilities and daemons** (D12): the forbidden login is
   still on disk, and the CLI picks its own provider.
 - **Taking excluded hosts out of the egress built-ins only** (D13): the admin allowlist is added after them.
+- **Re-resolving an existing session from today's credential or default** (D11): it can change who pays.
+- **The ordinary daemon restart as a revocation** (D12): it drains for up to 60 s and leaves an adopted daemon on its
+  old environment.
 
 ## 10. Open questions
 
