@@ -311,6 +311,8 @@ func (s *SQL) DeleteTenant(ctx context.Context, tenantID string) error {
 		`DELETE FROM provided_route_source WHERE tenant_id=?`,
 		`DELETE FROM provided_route_grant WHERE tenant_id=?`,
 		`DELETE FROM provided_route_member WHERE tenant_id=?`,
+		// Credential policy: the tenant's cap and its own rule (ADR 0138 D8).
+		`DELETE FROM route_policy WHERE tenant_id=?`,
 		`DELETE FROM tenant_branch_rules WHERE tenant_id=?`,
 		`DELETE FROM tenant_member_defaults WHERE tenant_id=?`,
 		`DELETE FROM limit_board_tenant WHERE tenant_id=?`,

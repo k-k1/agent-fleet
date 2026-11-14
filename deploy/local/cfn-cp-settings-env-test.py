@@ -53,6 +53,7 @@ PLAIN = {
     "ComfyUrl": "AF_COMFY_URL",
     "RemoteEngineUrl": "AF_REMOTE_ENGINE_URL",
     "RemoteEngineKeys": "AF_REMOTE_ENGINE_KEYS",
+    "ModelRouteCeiling": "AF_MODEL_ROUTE_CEILING",
 }
 # switch parameter -> (variable, SSM leaf under SsmPrefix)
 SECRETS = {

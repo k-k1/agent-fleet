@@ -1060,6 +1060,28 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 AWS identity from its environment for this (the task role here). `ec2-single` has none and does
 not offer provided routes (`guide/operate/aws-ec2-single.md`, "Protect the instance metadata").
 
+### `ModelRouteCeiling`
+
+Empty by default, and empty adds nothing: no environment entry, so an existing stack is
+unchanged. A value becomes `AF_MODEL_ROUTE_CEILING`, the operator's credential ceiling (ADR 0138
+D9): the outermost layer of the policy on which model routes members may use. Administrators can
+only narrow it from the Console, never widen it. The value is `key=value` pairs separated by `;`,
+with list values separated by `,`:
+
+| Key | Value |
+|---|---|
+| `classes` | credential classes allowed (`member-key,provided`), or every class but those listed, each prefixed with `-` (`-subscription`) |
+| `destinations` | destinations allowed (`aws-bedrock`), or every one but those listed with `-` (`-opencode.ai`) |
+| `except` | route ids allowed although the classes or destinations above would not (`copilot-login`) |
+| `deny` | route ids forbidden although they would be allowed |
+
+For example, `classes=-subscription;destinations=-opencode.ai` is "No subscriptions", and
+`destinations=aws-bedrock` is "Bedrock only". An unparsable value, an unknown class,
+destination or route id, or a per-connection route (`member-llamacpp`, `custom-api`) in
+`except` stops the Control Plane at start instead of reading as "allow all": a failed
+deployment rolls back rather than running unrestricted. The ceiling is shown read-only to
+super_admins, with its source.
+
 ### `SessionTtl` / `CookiePurposeKeys` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
 
 Pass-throughs for CP variables the operator guide calls configurable and that had no ECS

@@ -35,6 +35,7 @@ func buildMux(cfg config) *http.ServeMux {
 	// through cfg rather than each building (and running) its own.
 	cfg.engineReg = registerEngineRoutes(mux, cfg)
 	registerProvidedRouteRoutes(mux, cfg)
+	registerRoutePolicyRoutes(mux, cfg)
 	registerEventsRoutes(mux, cfg)
 	registerSessionRoutes(mux, cfg)
 	registerAgentRelays(mux, cfg)

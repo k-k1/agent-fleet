@@ -312,6 +312,10 @@ Parameters:
     Default: "off"
     AllowedValues: ["off", "on"]
     Description: on = AF_PROVIDED_ROUTES=1 (ADR 0129), the route role and the internal CP path. PARAMETERS.md.
+  ModelRouteCeiling:
+    Type: String
+    Default: ""
+    Description: AF_MODEL_ROUTE_CEILING, the operator's credential ceiling (ADR 0138 D9). Empty = none. A bad value stops the CP. PARAMETERS.md.
   SessionTtl:
     Type: String
     Default: ""
@@ -458,6 +462,7 @@ Conditions:
   McpOAuthOn: !Equals [!Ref McpOAuth, "on"]
   HasMcpTrustedHosts: !Not [!Equals [!Ref McpOAuthTrustedHosts, ""]]
   ProvidedRoutesOn: !Equals [!Ref ProvidedRoutes, "on"]
+  HasModelRouteCeiling: !Not [!Equals [!Ref ModelRouteCeiling, ""]]
   HasSessionIdleTimeout: !Not [!Equals [!Ref SessionIdleTimeout, ""]]
   HasInteractionIdleTimeout: !Not [!Equals [!Ref InteractionIdleTimeout, ""]]
   HasWsIdleTimeout: !Not [!Equals [!Ref WsIdleTimeout, ""]]
@@ -921,6 +926,7 @@ Resources:
             - !If [ProvidedRoutesOn, {Name: AF_PROVIDED_ROUTE_DEADLINE, Value: 15m}, !Ref "AWS::NoValue"]
             - !If [ProvidedRoutesOn, {Name: AF_CP_INTERNAL_LISTEN, Value: "0.0.0.0:8098"}, !Ref "AWS::NoValue"]
             - !If [ProvidedRoutesOn, {Name: AF_CP_INTERNAL_URL, Value: "http://af-cp-internal:8098"}, !Ref "AWS::NoValue"]
+            - !If [HasModelRouteCeiling, {Name: AF_MODEL_ROUTE_CEILING, Value: !Ref ModelRouteCeiling}, !Ref "AWS::NoValue"]
             - !If [HasSessionIdleTimeout, {Name: AF_SESSION_IDLE_TIMEOUT, Value: !Ref SessionIdleTimeout}, !Ref "AWS::NoValue"]
             - !If [HasInteractionIdleTimeout, {Name: AF_INTERACTION_IDLE_TIMEOUT, Value: !Ref InteractionIdleTimeout}, !Ref "AWS::NoValue"]
             - !If [HasWsIdleTimeout, {Name: AF_WS_IDLE_TIMEOUT, Value: !Ref WsIdleTimeout}, !Ref "AWS::NoValue"]

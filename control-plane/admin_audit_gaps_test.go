@@ -283,6 +283,11 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"PUT /api/admin/tenants/{slug}/provided-routes/deployment/grant":   {marker: `provided_route.deployment_grant`},
 	"PUT /api/admin/tenants/{slug}/provided-routes/deployment/policy":  {marker: `provided_route.deployment_policy`},
 	"PUT /api/admin/tenants/{slug}/provided-routes/deployment/members": {marker: `provided_route.deployment_member`},
+
+	// The credential policy's three administered layers (route_policy.go, ADR 0138 D15).
+	"PUT /api/admin/route-policy":                    {marker: `route_policy.`},
+	"PUT /api/admin/tenants/{slug}/route-policy":     {marker: `route_policy.`},
+	"PUT /api/admin/tenants/{slug}/route-policy/cap": {marker: `route_policy.`},
 }
 
 // roleRaceStore lets another change land between the handler's read of the membership and its
