@@ -155,7 +155,7 @@ ws_tasks_wait() {
     fi
     [ -n "${left//[[:space:]]/}" ] || return 0
     if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo "    still running: $(printf '%s\n' "$left" | tr -s '[:space:]' ' ')" >&2
+      echo "    still not STOPPED: $(printf '%s\n' "$left" | tr -s '[:space:]' ' ')" >&2
       return 1
     fi
     sleep "${AF_GATEWAY_POLL_SEC:-15}"
@@ -166,7 +166,7 @@ ws_tasks_wait() {
 # with entries in failures[], is an error and not "nothing is running". Empty output with rc 0
 # is the only way to say nothing is left.
 ws_services_checked() {
-  local arns a got nfail
+  local arns a got
   local -a names=() batch=()
   arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text)" || return 1
   case "$arns" in None) arns="" ;; esac
@@ -176,13 +176,15 @@ ws_services_checked() {
   while [ ${#names[@]} -gt 0 ]; do
     batch=("${names[@]:0:10}")
     names=("${names[@]:10}")
-    # The first field is the number of failures[] entries, then the names above 0.
+    # Two plain queries, each a flat list: a mixed dict or nested list prints labels and line
+    # breaks in --output text, which would read as names.
+    got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
+      --query 'failures[].arn' --output text)" || return 1
+    case "$got" in ''|None) ;; *) return 1 ;; esac
     # shellcheck disable=SC2016  # backticks are JMESPath literals
     got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
-      --query '{f: length(failures), s: services[?desiredCount>`0`].serviceName}' --output text)" || return 1
-    nfail="${got%%[[:space:]]*}"
-    [ "$nfail" = 0 ] || return 1
-    got="${got#0}"
+      --query 'services[?desiredCount>`0`].serviceName' --output text)" || return 1
+    case "$got" in None) got="" ;; esac
     # shellcheck disable=SC2086
     for a in $got; do echo "$a"; done
   done
@@ -201,7 +203,7 @@ slots_checked() {
 # task in STOPPING still runs its shutdown, and the golden bake can still write to ECS from it.
 # Fails on timeout and when the tasks cannot be read: unknown is not stopped.
 cp_tasks_wait() {
-  local deadline st arns all left cnt
+  local deadline st arns all left cnt got
   deadline=$(( $(date +%s) + ${AF_CP_TASK_WAIT_SEC:-600} ))
   while :; do
     all=""
@@ -217,10 +219,14 @@ cp_tasks_wait() {
       # shellcheck disable=SC2086
       cnt=$(set -- $all; echo $#)
       [ "$cnt" -le 100 ] || { echo "    $cnt tasks listed for $CP_SERVICE; cannot read them in one call" >&2; return 1; }
-      # shellcheck disable=SC2086,SC2016
+      # shellcheck disable=SC2086
+      got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $all \
+        --query 'failures[].arn' --output text)" || return 1
+      case "$got" in ''|None) ;; *) echo "    describe-tasks reported failures for $CP_SERVICE's tasks" >&2; return 1 ;; esac
+      # shellcheck disable=SC2086
       left="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $all \
-        --query "{f: length(failures), t: tasks[?lastStatus!='STOPPED'].taskArn}" --output text)" || return 1
-      case "${left%%[[:space:]]*}" in 0) left="${left#0}" ;; *) echo "    describe-tasks reported failures for $CP_SERVICE's tasks" >&2; return 1 ;; esac
+        --query "tasks[?lastStatus!='STOPPED'].taskArn" --output text)" || return 1
+      case "$left" in None) left="" ;; esac
     fi
     [ -n "${left//[[:space:]]/}" ] || return 0
     if [ "$(date +%s)" -ge "$deadline" ]; then

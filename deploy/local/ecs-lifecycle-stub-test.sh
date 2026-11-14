@@ -108,7 +108,7 @@ args="$*"
 # its task has been read as STOPPED: late resources appear only then.
 cp_gone() {
   grep -q "af-t-ingress-cp --desired-count 0" "$STUB_LOG" || return 1
-  [ "${STUB_CP_TASK:-none}" != stopping ] || [ "$(grep -c "describe-tasks.*cptask1" "$STUB_LOG")" -ge 2 ]
+  [ "${STUB_CP_TASK:-none}" != stopping ] || [ "$(grep -c "describe-tasks.*cptask1.*lastStatus" "$STUB_LOG")" -ge 2 ]
 }
 # af_cfn_clear_params (env.sh) reads every value back after its change set. A stack's live value
 # is "None" once such a change set ran on it, unless STUB_CLEAR_STICKS=1 (CloudFormation kept
@@ -416,15 +416,12 @@ case "$args" in
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
   *"ecs describe-services"*"runningCount"*) echo "0" ;;
+  # The sweep's checked reads, one flat list each (a dict or nested list would print labels in
+  # the real CLI's text output). STUB_WS_FAILURES=1: a service describe-services could not return.
+  *"ecs describe-services"*"--query failures[].arn"*)
+    [ "${STUB_WS_FAILURES:-0}" = 1 ] && echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" || echo "None" ;;
   # update.sh's listing: [failures, services, names above desired 0]. STUB_SVC_FAILURES=1 answers
   # 200 with the service in failures[]; STUB_SVC_PARTIAL=1 answers 200 with it simply missing.
-  # The sweep's checked read: [failures, names above 0]. STUB_WS_FAILURES=1: a service the
-  # describe call could not return.
-  *"ecs describe-services"*"{f: length(failures)"*)
-    if [ "${STUB_WS_FAILURES:-0}" = 1 ]; then printf '1\n'
-    elif [ "${STUB_WS_LATE:-0}" = 1 ]; then cp_gone && printf '0\taf-ws-probe\n' || printf '0\n'
-    elif [ "${STUB_WS_DESIRED0:-0}" = 1 ]; then printf '0\n'
-    else printf '0\taf-ws-alice\n'; fi ;;
   *"ecs describe-services"*"length(failures), length(services)"*)
     if [ "${STUB_SVC_FAILURES:-0}" = 1 ]; then printf '1\t0\t\n'
     elif [ "${STUB_SVC_PARTIAL:-0}" = 1 ]; then printf '0\t0\t\n'
@@ -494,10 +491,11 @@ case "$args" in
       *) echo "arn:aws:ecs:x:1:task/t-cluster/cptask1" ;;
     esac ;;
   *"ecs list-tasks"*"--service-name af-t-ingress-cp"*) echo "None" ;;
+  *"ecs describe-tasks"*"cptask1"*"failures[].arn"*) echo "None" ;;
   *"ecs describe-tasks"*"cptask1"*)
     case "${STUB_CP_TASK:-none}" in
-      stopping) [ "$(grep -c "describe-tasks.*cptask1" "$STUB_LOG")" -ge 2 ] && printf '0\n' || printf '0\tarn:aws:ecs:x:1:task/t-cluster/cptask1\n' ;;
-      *) printf '0\tarn:aws:ecs:x:1:task/t-cluster/cptask1\n' ;;
+      stopping) [ "$(grep -c "describe-tasks.*cptask1.*lastStatus" "$STUB_LOG")" -ge 2 ] && echo "None" || echo "arn:aws:ecs:x:1:task/t-cluster/cptask1" ;;
+      *) echo "arn:aws:ecs:x:1:task/t-cluster/cptask1" ;;
     esac ;;
   *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
   *"ecs list-tasks"*) echo "None" ;;
@@ -2245,10 +2243,10 @@ echo "== case 4c2b: the sweep waits until the CP's task is STOPPED, not just unt
 : > "$LOG"
 STUB_CP_TASK=stopping STUB_WS_LATE=1 STUB_SLOTS_LATE=1 \
   "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4c2b" </dev/null
-[ "$(grep -c "describe-tasks.*cptask1" "$LOG")" -ge 2 ] || fail "the CP's task was not read until STOPPED"
-a="$(lineno_last "describe-tasks --cluster t-cluster --tasks arn:aws:ecs:x:1:task/t-cluster/cptask1")"; b="$(lineno "service af-ws-probe --desired-count 0")"
+[ "$(grep -c "describe-tasks.*cptask1.*lastStatus" "$LOG")" -ge 2 ] || fail "the CP's task was not read until STOPPED"
+a="$(lineno_last "cptask1 --query tasks[?lastStatus")"; b="$(lineno "service af-ws-probe --desired-count 0")"
 [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || fail "the sweep ran before the CP's task was STOPPED"
-order "describe-tasks --cluster t-cluster --tasks arn:aws:ecs:x:1:task/t-cluster/cptask1" "ec2 stop-instances --instance-ids i-late-slot"
+order "cptask1 --query tasks[?lastStatus" "ec2 stop-instances --instance-ids i-late-slot"
 for knob in STUB_CP_TASK=stuck STUB_CP_TASK=fail; do
   : > "$LOG"
   if env "$knob" AF_CP_TASK_WAIT_SEC=0 \
