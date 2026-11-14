@@ -437,7 +437,8 @@ func TestMemoQueueReleaseBoundToContentHash(t *testing.T) {
 }
 
 // A workspace edit racing the member's release can never leave a pending message whose
-// release does not match its content: the release is one conditional write on the row.
+// release does not match its content: the release is one conditional write on the row. Both
+// requests must answer as one of the two orders allows, and the edit always lands.
 func TestMemoQueueReleaseRacesAnEdit(t *testing.T) {
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
 		e.queue(e.category("r", "q"))
@@ -445,16 +446,25 @@ func TestMemoQueueReleaseRacesAnEdit(t *testing.T) {
 		for i := 0; i < 15; i++ {
 			_, m := tok.create(textMemo("r", "q", fmt.Sprintf("race %d", i)))
 			var wg sync.WaitGroup
+			var rel, edit *httptest.ResponseRecorder
 			wg.Add(2)
-			go func() { defer wg.Done(); _ = e.release(m.ID, m.ContentHash) }()
+			go func() { defer wg.Done(); rel = e.release(m.ID, m.ContentHash) }()
 			go func() {
 				defer wg.Done()
-				_ = e.memoTokenDo("a", "PATCH", "/internal/memos/"+m.ID, map[string]any{"body": fmt.Sprintf("edited %d", i)})
+				edit = e.memoTokenDo("a", "PATCH", "/internal/memos/"+m.ID, map[string]any{"body": fmt.Sprintf("edited %d", i)})
 			}()
 			wg.Wait()
+			if edit.Code != http.StatusOK {
+				t.Fatalf("edit %d: %d %s", i, edit.Code, edit.Body.String())
+			}
+			// Release first: 200, then the edit puts it back to held. Edit first: the hash
+			// is stale, 409 memo_release_stale. Either way the row is held with the edit.
+			if rel.Code != http.StatusOK && !(rel.Code == http.StatusConflict && decode[errResp](t, rel).Error.Code == errCodeMemoReleaseStale) {
+				t.Fatalf("release %d: %d %s", i, rel.Code, rel.Body.String())
+			}
 			got := e.memoRow(m.ID)
-			if got.State == store.MemoStatePending && got.Body != m.Body {
-				t.Fatalf("an edited body is pending under the release of the old one: %+v", got)
+			if got.Body != fmt.Sprintf("edited %d", i) || got.State != store.MemoStateHeld || got.ReleaseHash != "" {
+				t.Fatalf("after the race %d: %+v", i, got)
 			}
 		}
 		e.assertPendingReleaseMatches()
@@ -789,6 +799,247 @@ func TestMemoQueueCreateBounds(t *testing.T) {
 		}
 		if code, _ := tok.create(textMemo("r", "", "plain is not rate limited")); code != http.StatusCreated {
 			t.Fatalf("plain after the rate: %d", code)
+		}
+	})
+}
+
+// hookAgent answers a memo send and runs onTurn while it holds the request, which is the
+// window between the flush's check and its answer. status is the answer's status (0 = 200).
+type hookAgent struct {
+	srv     *httptest.Server
+	mu      sync.Mutex
+	onTurn  func()
+	status  int
+	prompts []string
+}
+
+// useHookAgent puts a hookAgent behind member "a"'s workspace runtime.
+func (e *inboxEnv) useHookAgent() *hookAgent {
+	e.t.Helper()
+	h := &hookAgent{}
+	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		h.mu.Lock()
+		p, _ := body["prompt"].(string)
+		h.prompts = append(h.prompts, p)
+		f, status := h.onTurn, h.status
+		h.onTurn = nil
+		h.mu.Unlock()
+		if f != nil {
+			f()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if status != 0 {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"error":{"code":"not_running","message":"down"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	e.t.Cleanup(h.srv.Close)
+	e.workspaceFor("a", newCapturingAgent(e.t))
+	c := e.mgr.rts[e.members["a"]]
+	c.rt = stubRuntime{endpoint: h.srv.URL, token: "tok"}
+	e.mgr.rts[e.members["a"]] = c
+	return h
+}
+
+// A flush checks and stamps the rows it sends in one transaction before the send. A note a
+// session sends and that is moved into a queue while the send is in flight enters the queue
+// as delivered, never as a message that can still be released and fired; and a queue message
+// the member sends cannot be rewritten while it is in flight and then counted as sent.
+func TestMemoQueueFlushReservesWhatItSends(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		h := e.useHookAgent()
+		console, tok := memoFaceClient{"console", e}, memoFaceClient{"token", e}
+
+		for _, f := range workspaceFaces(e) {
+			_, m := console.create(textMemo("r", "plain", "sent by "+f.name+", then moved"))
+			var moved int
+			h.onTurn = func() { moved, _ = tok.update(m.ID, map[string]any{"category": "q"}) }
+			if code := f.flush(m.ID); code != http.StatusOK {
+				t.Fatalf("%s flush of a plain note: %d", f.name, code)
+			}
+			got := e.memoRow(m.ID)
+			if moved != http.StatusOK || got.Category != "q" || got.State != store.MemoStateDelivered || got.SentAt == "" {
+				t.Fatalf("%s: moved=%d, row %+v, want it in the queue as delivered", f.name, moved, got)
+			}
+		}
+
+		_, m := tok.create(textMemo("r", "q", "the body the member sends"))
+		var edited int
+		h.onTurn = func() { edited, _ = tok.update(m.ID, map[string]any{"body": "a body nobody sent"}) }
+		if code := console.flush(m.ID); code != http.StatusOK {
+			t.Fatalf("console flush: %d", code)
+		}
+		got := e.memoRow(m.ID)
+		if edited != http.StatusConflict || got.Body != "the body the member sends" || got.State != store.MemoStateDelivered {
+			t.Fatalf("edit during the send: %d, row %+v", edited, got)
+		}
+		if last := h.prompts[len(h.prompts)-1]; !strings.Contains(last, "the body the member sends") {
+			t.Fatalf("sent %q", last)
+		}
+	})
+}
+
+// A send that fails takes the stamp back off: a note is unsent again, a pending message is
+// pending again under its release, a held one held.
+func TestMemoQueueFailedFlushUndoesTheStamp(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		h := e.useHookAgent()
+		console, tok := memoFaceClient{"console", e}, memoFaceClient{"token", e}
+		_, plain := console.create(textMemo("r", "", "a note"))
+		_, pending := console.create(textMemo("r", "q", "released"))
+		_, held := tok.create(textMemo("r", "q", "waiting"))
+		h.status = http.StatusConflict
+		if code := console.flush(plain.ID, pending.ID, held.ID); code != http.StatusConflict {
+			t.Fatalf("failed flush: %d", code)
+		}
+		if got := e.memoRow(plain.ID); got.SentAt != "" || got.State != "" {
+			t.Fatalf("plain after a failed send: %+v", got)
+		}
+		if got := e.memoRow(pending.ID); got.SentAt != "" || got.State != store.MemoStatePending || got.ReleaseHash != pending.ContentHash {
+			t.Fatalf("pending after a failed send: %+v", got)
+		}
+		if got := e.memoRow(held.ID); got.SentAt != "" || got.State != store.MemoStateHeld {
+			t.Fatalf("held after a failed send: %+v", got)
+		}
+		e.assertPendingReleaseMatches()
+	})
+}
+
+// A claimed message belongs to its delivery: the Console neither deletes nor sends it.
+func TestMemoQueueClaimedIsNotDeletedOrSent(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		h := e.useHookAgent()
+		for _, f := range faces(e) {
+			_, m := memoFaceClient{"console", e}.create(textMemo("r", "q", "claimed for "+f.name))
+			e.setState(m.ID, store.MemoStateClaimed)
+			if code := f.del(m.ID); code != http.StatusConflict {
+				t.Fatalf("%s delete of a claimed message: %d", f.name, code)
+			}
+			if code := f.flush(m.ID); code != http.StatusConflict {
+				t.Fatalf("%s flush of a claimed message: %d", f.name, code)
+			}
+			if got := e.memoRow(m.ID); got.State != store.MemoStateClaimed || got.SentAt != "" {
+				t.Fatalf("%s: %+v", f.name, got)
+			}
+		}
+		if len(h.prompts) != 0 {
+			t.Fatalf("a claimed message reached a session: %q", h.prompts)
+		}
+	})
+}
+
+// During a rollout a Control Plane that predates migration 0131 still writes memos with its
+// own statements, which set the content and never the state. Against a pending message they
+// are refused by the database, so what the member released cannot change under it; against a
+// held message or a plain note they work as before.
+func TestMemoQueueOlderWriterCannotChangeAPendingMessage(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		console, tok := memoFaceClient{"console", e}, memoFaceClient{"token", e}
+		_, pending := console.create(textMemo("r", "q", "member released"))
+		_, held := tok.create(textMemo("r", "q", "waiting"))
+		_, plain := console.create(textMemo("r", "", "note"))
+		mid := e.members["a"]
+		ctx := context.Background()
+		// The statements of the binaries before this change (store_memo.go UpdateMemo and
+		// ReassignMemoCategory on origin/main), verbatim.
+		olderUpdate := func(id, body string) error {
+			_, err := e.st.DB().ExecContext(ctx, `UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?
+		   WHERE id=? AND membership_id=?`, "r", e.memoRow(id).Category, "text", body, "", "", 0, id, mid)
+			return err
+		}
+		olderReassign := func(from, to string) error {
+			_, err := e.st.DB().ExecContext(ctx, `UPDATE memo SET category=? WHERE membership_id=? AND repo=? AND category=?`, to, mid, "r", from)
+			return err
+		}
+		if err := olderUpdate(pending.ID, "older token writer"); err == nil {
+			t.Fatal("an older binary changed the content of a pending message")
+		}
+		if err := olderReassign("q", "elsewhere"); err == nil {
+			t.Fatal("an older binary moved a pending message out of its queue")
+		}
+		if got := e.memoRow(pending.ID); got.Body != "member released" || got.Category != "q" {
+			t.Fatalf("pending after the older writes: %+v", got)
+		}
+		if err := olderUpdate(held.ID, "older edit of a held one"); err != nil {
+			t.Fatalf("older edit of a held message: %v", err)
+		}
+		if err := olderUpdate(plain.ID, "older edit of a note"); err != nil {
+			t.Fatalf("older edit of a note: %v", err)
+		}
+		e.assertPendingReleaseMatches()
+		// The new paths keep the release columns in step: a Console edit, a release and a
+		// Console rename of the queue all still go through.
+		if code, _ := console.update(pending.ID, map[string]any{"body": "member edited"}); code != 200 {
+			t.Fatalf("console edit of a pending message: %d", code)
+		}
+		if r := e.release(held.ID, memoContentHash(e.memoRow(held.ID))); r.Code != 200 {
+			t.Fatalf("release: %d %s", r.Code, r.Body.String())
+		}
+		cat := decode[[]memoCategoryDTO](t, e.do("a", "GET", "/api/memo-categories", nil))[0].ID
+		if r := e.do("a", "PATCH", "/api/memo-categories/"+cat, map[string]any{"name": "q2"}); r.Code != 200 {
+			t.Fatalf("console rename: %d %s", r.Code, r.Body.String())
+		}
+		e.assertPendingReleaseMatches()
+	})
+}
+
+// The rate bound counts creates, not the messages still in a queue: moving a message out, or
+// deleting it, does not give its create back.
+func TestMemoQueueRateCountsCreates(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		tok := memoFaceClient{"token", e}
+		for i := 0; i < memoQueueRatePerMinute; i++ {
+			code, m := tok.create(textMemo("r", "q", fmt.Sprintf("create %d", i)))
+			if code != http.StatusCreated {
+				t.Fatalf("create %d: %d", i, code)
+			}
+			if code, _ := tok.update(m.ID, map[string]any{"category": "plain"}); code != 200 {
+				t.Fatalf("move %d: %d", i, code)
+			}
+			if i%2 == 0 && tok.del(m.ID) != http.StatusNoContent {
+				t.Fatalf("delete %d", i)
+			}
+		}
+		if code, _ := tok.create(textMemo("r", "q", "one too many")); code != http.StatusTooManyRequests {
+			t.Fatalf("create after %d creates: %d", memoQueueRatePerMinute, code)
+		}
+	})
+}
+
+// Concurrent creates cannot pass the bound together: the count and the log are in the
+// transaction that holds the membership lock.
+func TestMemoQueueRateHoldsUnderConcurrentCreates(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		created := 0
+		for i := 0; i < memoQueueRatePerMinute+10; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				r := e.memoTokenDo("a", "POST", "/internal/memos", textMemo("r", "q", fmt.Sprintf("c%d", i)))
+				if r.Code == http.StatusCreated {
+					mu.Lock()
+					created++
+					mu.Unlock()
+				} else if r.Code != http.StatusTooManyRequests {
+					t.Errorf("create %d: %d %s", i, r.Code, r.Body.String())
+				}
+			}(i)
+		}
+		wg.Wait()
+		if created != memoQueueRatePerMinute {
+			t.Fatalf("%d creates passed, want %d", created, memoQueueRatePerMinute)
 		}
 	})
 }

@@ -123,29 +123,44 @@ func (s *SQL) CreateMemo(ctx context.Context, m Memo) error {
 }
 
 func insertMemo(ctx context.Context, q memoQuerier, m Memo) error {
+	rel := releasedContent(m)
 	_, err := q.ExecContext(ctx,
 		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at,
-		   state, provenance, producer, producer_origin, release_hash, released_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   state, provenance, producer, producer_origin, release_hash, released_at,
+		   release_repo, release_category, release_kind, release_body, release_ref_path, release_attachments)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
-		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt)
+		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt,
+		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5])
 	return err
 }
 
-// UpdateMemo writes the editable columns and the message state of an owned row. Provenance,
-// producer and origin are not among them: they are fixed at the insert.
+// releasedContent is what the release_* columns hold: the content of a pending message, and
+// nothing otherwise. The CHECK of migration 0131 requires it for every pending row.
+func releasedContent(m Memo) [6]string {
+	if m.State != MemoStatePending {
+		return [6]string{}
+	}
+	return [6]string{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments}
+}
+
+// UpdateMemo writes the editable columns, sent_at and the message state of an owned row.
+// Provenance, producer and origin are not among them: they are fixed at the insert. Pass a
+// row read in the same MemoTx: a stale one writes back stale columns.
 func (s *SQL) UpdateMemo(ctx context.Context, m Memo) error {
 	return writeMemo(ctx, s.db, m)
 }
 
 func writeMemo(ctx context.Context, q memoQuerier, m Memo) error {
+	rel := releasedContent(m)
 	// membership_id in the WHERE so a member can only update their own row.
 	_, err := q.ExecContext(ctx,
-		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?,
-		   state=?, release_hash=?, released_at=?
+		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?, sent_at=?,
+		   state=?, release_hash=?, released_at=?,
+		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?
 		   WHERE id=? AND membership_id=?`,
-		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position,
-		m.State, m.ReleaseHash, m.ReleasedAt, m.ID, m.MembershipID)
+		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.SentAt,
+		m.State, m.ReleaseHash, m.ReleasedAt, rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], m.ID, m.MembershipID)
 	return err
 }
 

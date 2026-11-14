@@ -102,8 +102,12 @@ func memoContentHash(m store.Memo) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// memoEffectiveProvenance reads an existing row's empty provenance as workspace.
+// memoEffectiveProvenance reads an empty provenance as workspace, except on a row with an
+// inbox origin: a binary that predates the column takes memos in without writing it.
 func memoEffectiveProvenance(m store.Memo) string {
+	if m.Provenance == "" && m.OriginItemID != "" {
+		return store.MemoProvenanceInbox
+	}
 	if m.Provenance == "" {
 		return store.MemoProvenanceWorkspace
 	}
@@ -241,7 +245,7 @@ func memoCreateBounds(tx store.MemoTxOps, m store.Memo) (*store.Memo, *apiError,
 			return &rows[i], nil, nil
 		}
 	}
-	n, err := tx.CountQueueCreatesSince(time.Now().UTC().Add(-time.Minute).Format(time.RFC3339))
+	n, err := tx.CountQueueIntakeSince(time.Now().UTC().Add(-time.Minute).Format(time.RFC3339))
 	if err != nil {
 		return nil, nil, err
 	}

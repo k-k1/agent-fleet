@@ -68,9 +68,11 @@ type MemoTxOps interface {
 	// row itself: a guard elsewhere (an EXISTS on the same table) lets concurrent writers
 	// on Postgres both pass. False means nothing was written.
 	ReleaseMemo(seen Memo, hash, at string) (bool, error)
-	// CountQueueCreatesSince counts the messages a token or /mcp face created at or after
-	// since that are still in a queue: the rate bound of a create into a queue.
-	CountQueueCreatesSince(since string) (int, error)
+	// CountQueueIntakeSince counts the creates into a queue from inside the workspace or
+	// /mcp logged at or after since, dropping older entries. Moving or deleting a message
+	// does not take its create off the log.
+	CountQueueIntakeSince(since string) (int, error)
+	RecordQueueIntake(at string) error
 
 	GetCategory(id string) (MemoCategory, bool, error)
 	FindCategory(repo, name string) (MemoCategory, bool, error)
@@ -156,19 +158,29 @@ func (t memoTx) DeleteMemo(id string) error {
 
 func (t memoTx) ReleaseMemo(seen Memo, hash, at string) (bool, error) {
 	return affected(t.q.ExecContext(t.ctx,
-		`UPDATE memo SET state=?, release_hash=?, released_at=?
+		`UPDATE memo SET state=?, release_hash=?, released_at=?,
+		   release_repo=repo, release_category=category, release_kind=kind, release_body=body,
+		   release_ref_path=ref_path, release_attachments=attachments
 		   WHERE id=? AND membership_id=? AND state=?
 		     AND repo=? AND category=? AND kind=? AND body=? AND ref_path=? AND attachments=?`,
 		MemoStatePending, hash, at, seen.ID, t.mid, MemoStateHeld,
 		seen.Repo, seen.Category, seen.Kind, seen.Body, seen.RefPath, seen.Attachments))
 }
 
-func (t memoTx) CountQueueCreatesSince(since string) (int, error) {
+func (t memoTx) CountQueueIntakeSince(since string) (int, error) {
+	if _, err := t.q.ExecContext(t.ctx, `DELETE FROM memo_queue_intake WHERE membership_id=? AND created_at<?`, t.mid, since); err != nil {
+		return 0, err
+	}
 	var n int
-	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo
-		WHERE membership_id=? AND provenance IN (?,?) AND state<>'' AND created_at>=?`,
-		t.mid, MemoProvenanceWorkspace, MemoProvenanceMCP, since).Scan(&n)
+	err := t.q.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM memo_queue_intake WHERE membership_id=? AND created_at>=?`,
+		t.mid, since).Scan(&n)
 	return n, err
+}
+
+func (t memoTx) RecordQueueIntake(at string) error {
+	_, err := t.q.ExecContext(t.ctx, `INSERT INTO memo_queue_intake(id, membership_id, created_at) VALUES(?,?,?)`,
+		NewID(), t.mid, at)
+	return err
 }
 
 func (t memoTx) GetCategory(id string) (MemoCategory, bool, error) {

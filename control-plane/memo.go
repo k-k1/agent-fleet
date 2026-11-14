@@ -252,6 +252,11 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		if m, aerr = memoQueueMove(m, m, false, inQ, via); aerr != nil {
 			return memoTxFail(aerr)
 		}
+		if inQ && via.fromWorkspace() {
+			if err := tx.RecordQueueIntake(m.CreatedAt); err != nil {
+				return err
+			}
+		}
 		return tx.InsertMemo(m)
 	})
 	if aerr := memoTxResult(err); aerr != nil {
@@ -509,19 +514,20 @@ func (a memoAPI) delete(via memoVia) func(http.ResponseWriter, *http.Request, st
 	}
 }
 
-// memoDeleteFor deletes an owned memo. Shared core. From inside the workspace and /mcp a
-// message in a queue is not deleted: that stays with the Console. An unknown id is a no-op.
+// memoDeleteFor deletes an owned memo. Shared core. A claimed message belongs to its delivery
+// and is deleted by nobody. From inside the workspace and /mcp a message in a queue is not
+// deleted either: that stays with the Console. An unknown id is a no-op.
 func memoDeleteFor(ctx context.Context, st store.MemoStore, membershipID, id string, via memoVia) *apiError {
-	if !via.fromWorkspace() {
-		if err := st.DeleteMemo(ctx, id, membershipID); err != nil {
-			return internalErr(err)
-		}
-		return nil
-	}
 	return memoTxResult(st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
 		m, ok, err := tx.GetMemo(id)
 		if err != nil || !ok {
 			return err
+		}
+		if m.State == store.MemoStateClaimed {
+			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoLocked, "this message has been taken by a delivery"})
+		}
+		if !via.fromWorkspace() {
+			return tx.DeleteMemo(id)
 		}
 		inQ, err := memoInQueue(tx, m.Repo, m.Category)
 		if err != nil {
@@ -758,6 +764,13 @@ func (a memoAPI) deleteCategory(via memoVia) func(http.ResponseWriter, *http.Req
 // runtime, and stamps sent_at on those memos. Returns the flush summary. Shared core
 // between the session HTTP handler, the internal operator-token bridge, and the CP MCP
 // tool — every face funnels through this so the "send once + mark sent" stays atomic.
+//
+// The memos are read, checked and stamped sent (a queue message delivered) in one MemoTx
+// before the send, and the stamp is undone if the send fails. Checking first and stamping
+// after the send let a concurrent move or edit slip between the two: a workspace flush sent a
+// note that had just entered a queue, and the stamp marked an edit nobody sent as delivered.
+// With the stamp first, a later edit of a queue message meets a delivered one and is refused,
+// and a sent note moved into a queue enters it delivered.
 func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, membershipID, sessionName string, ids []string, textOverride string, via memoVia) (map[string]any, *apiError) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
@@ -766,34 +779,41 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	if len(ids) == 0 {
 		return nil, &apiError{http.StatusBadRequest, "no_ids", "ids is required"}
 	}
-	// Resolve the requested ids to owned memos (foreign/unknown ids are dropped).
-	memos := make([]store.Memo, 0, len(ids))
-	for _, id := range ids {
-		m, found, err := st.GetMemo(ctx, id)
-		if err != nil {
-			return nil, internalErr(err)
+	sentAt := store.NowTS()
+	var memos []store.Memo
+	before := map[string]store.Memo{} // each stamped row as it was, for the undo
+	err := st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
+		memos = make([]store.Memo, 0, len(ids))
+		// Resolve the requested ids to owned memos (foreign/unknown ids are dropped).
+		for _, id := range ids {
+			m, found, err := tx.GetMemo(id)
+			if err != nil {
+				return err
+			}
+			if found {
+				memos = append(memos, m)
+			}
 		}
-		if found && m.MembershipID == membershipID {
-			memos = append(memos, m)
+		if len(memos) == 0 {
+			return memoTxFail(&apiError{http.StatusNotFound, "no_memos", "no owned memos for the given ids"})
 		}
-	}
-	if len(memos) == 0 {
-		return nil, &apiError{http.StatusNotFound, "no_memos", "no owned memos for the given ids"}
-	}
-	// A memo taken in from the inbox goes on its own, with its origin (ADR 0111 decision 3):
-	// concatenated with the member's own memos, a colleague's text would read as theirs. The
-	// rule holds for an edited text too, which is why it is decided here and not by the
-	// Console that composed it.
-	for _, m := range memos {
-		if m.OriginItemID != "" && len(memos) > 1 {
-			return nil, &apiError{http.StatusConflict, errCodeMemoOriginAlone, "a memo taken in from the inbox is sent on its own"}
+		// A memo taken in from the inbox goes on its own, with its origin (ADR 0111 decision 3):
+		// concatenated with the member's own memos, a colleague's text would read as theirs. The
+		// rule holds for an edited text too, which is why it is decided here and not by the
+		// Console that composed it.
+		for _, m := range memos {
+			if m.OriginItemID != "" && len(memos) > 1 {
+				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoOriginAlone, "a memo taken in from the inbox is sent on its own"})
+			}
 		}
-	}
-	// A message in a queue is sent from the Console only (ADR 0137 section 3): a send from
-	// inside the workspace or /mcp is the unattended path the queue's release guards.
-	if via.fromWorkspace() {
-		if aerr := memoTxResult(st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
-			for _, m := range memos {
+		for _, m := range memos {
+			// A claimed message belongs to its delivery: nobody sends it by hand.
+			if m.State == store.MemoStateClaimed {
+				return memoTxFail(&apiError{http.StatusConflict, errCodeMemoLocked, "this message has been taken by a delivery"})
+			}
+			// A message in a queue is sent from the Console only (ADR 0137 section 3): a send
+			// from inside the workspace or /mcp is the unattended path the release guards.
+			if via.fromWorkspace() {
 				inQ, err := memoInQueue(tx, m.Repo, m.Category)
 				if err != nil {
 					return err
@@ -802,12 +822,27 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 					return memoTxFail(&apiError{http.StatusConflict, errCodeMemoInQueue, "a message in a queue is sent from the Console only"})
 				}
 			}
-			return nil
-		})); aerr != nil {
-			return nil, aerr
 		}
+		for _, m := range memos {
+			if _, done := before[m.ID]; done {
+				continue
+			}
+			before[m.ID] = m
+			next := m
+			next.SentAt = sentAt
+			if next.State != "" {
+				next.State = store.MemoStateDelivered
+			}
+			if err := tx.WriteMemo(next); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if aerr := memoTxResult(err); aerr != nil {
+		return nil, aerr
 	}
-	// Group by category (stable within-category order preserved from ListMemos).
+	// Group by category (stable within-category order preserved from the request).
 	sort.SliceStable(memos, func(i, j int) bool { return memos[i].Category < memos[j].Category })
 
 	// Use the caller's edited text when provided; otherwise compose from the memos.
@@ -819,6 +854,9 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 		message = memoOriginLine(o) + "\n\n" + message
 	}
 	if aerr := sendMemoPrompt(ctx, rt, sessionName, message); aerr != nil {
+		if err := memoUndoSent(context.WithoutCancel(ctx), st, membershipID, sentAt, before); err != nil {
+			log.Printf("memo flush: undo of the sent stamp failed after a failed send session=%s: %v", sessionName, err)
+		}
 		return nil, aerr
 	}
 
@@ -826,15 +864,44 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	for i, m := range memos {
 		sentIDs[i] = m.ID
 	}
-	sentAt := store.NowTS()
-	if err := st.MarkMemosSent(ctx, membershipID, sentIDs, sentAt); err != nil {
-		// The message itself was already delivered. Answering 500 here would make the
-		// client retry and send the same text twice, so this is logged and reported as
-		// success; the memos simply stay marked unsent.
-		log.Printf("memo flush: mark sent failed (message already delivered) session=%s ids=%v: %v",
-			sessionName, sentIDs, err)
-	}
 	return map[string]any{"sent": len(sentIDs), "sentAt": sentAt, "ids": sentIDs}, nil
+}
+
+// memoUndoSent takes the stamp of a failed send off each row that still carries it. A queue
+// message goes back to what it was when it is still where it was released, and to held
+// otherwise: it may have moved while it looked delivered, and a release covers one place.
+func memoUndoSent(ctx context.Context, st store.MemoStore, membershipID, sentAt string, before map[string]store.Memo) error {
+	return st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
+		for id, prev := range before {
+			cur, ok, err := tx.GetMemo(id)
+			if err != nil {
+				return err
+			}
+			if !ok || cur.SentAt != sentAt {
+				continue
+			}
+			next := cur
+			next.SentAt = prev.SentAt
+			if cur.State == store.MemoStateDelivered && prev.State != store.MemoStateDelivered {
+				inQ, err := memoInQueue(tx, cur.Repo, cur.Category)
+				if err != nil {
+					return err
+				}
+				switch {
+				case !inQ:
+					next.State, next.ReleaseHash, next.ReleasedAt = "", "", ""
+				case prev.State == store.MemoStatePending && memoContentHash(cur) == memoContentHash(prev):
+					next.State, next.ReleaseHash, next.ReleasedAt = prev.State, prev.ReleaseHash, prev.ReleasedAt
+				default:
+					next.State, next.ReleaseHash, next.ReleasedAt = store.MemoStateHeld, "", ""
+				}
+			}
+			if err := tx.WriteMemo(next); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // sendMemoPrompt uses the same semantic turn endpoint as Console chat. /input is

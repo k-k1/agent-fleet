@@ -6,6 +6,14 @@ ALTER TABLE memo ADD COLUMN IF NOT EXISTS producer TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo ADD COLUMN IF NOT EXISTS producer_origin TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo ADD COLUMN IF NOT EXISTS release_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE memo ADD COLUMN IF NOT EXISTS released_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo ADD COLUMN IF NOT EXISTS release_repo TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo ADD COLUMN IF NOT EXISTS release_kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo ADD COLUMN IF NOT EXISTS release_body TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo ADD COLUMN IF NOT EXISTS release_ref_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo ADD COLUMN IF NOT EXISTS release_attachments TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo ADD COLUMN IF NOT EXISTS release_category TEXT NOT NULL DEFAULT '' CHECK (state <> 'pending' OR (release_repo = repo
+  AND release_category = category AND release_kind = kind AND release_body = body AND release_ref_path = ref_path
+  AND release_attachments = attachments));
 UPDATE memo SET provenance='inbox' WHERE origin_item_id<>'' AND provenance='';
 CREATE TABLE IF NOT EXISTS memo_queue(
   category_id   TEXT PRIMARY KEY,
@@ -24,4 +32,10 @@ CREATE TABLE IF NOT EXISTS memo_queue(
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_memo_queue_ms ON memo_queue(membership_id)
+CREATE INDEX IF NOT EXISTS idx_memo_queue_ms ON memo_queue(membership_id);
+CREATE TABLE IF NOT EXISTS memo_queue_intake(
+  id            TEXT PRIMARY KEY,
+  membership_id TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memo_queue_intake_ms ON memo_queue_intake(membership_id, created_at)
