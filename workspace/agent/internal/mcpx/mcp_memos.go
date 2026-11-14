@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
 )
@@ -40,7 +41,7 @@ func memoTools() []toolSpec {
 				}
 			},
 			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
-				out, err := agentGET("/memos")
+				out, err := agentDoTimeout(http.MethodGet, "/memos", nil, memoAgentTimeout)
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
@@ -120,7 +121,7 @@ func memoTools() []toolSpec {
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
 				}
-				out, err := AgentPOST("/memos", body)
+				out, err := agentDoTimeout(http.MethodPost, "/memos", body, memoAgentTimeout)
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
@@ -184,7 +185,7 @@ func memoTools() []toolSpec {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（メモ id）が必要です")
 				}
-				out, err := agentDo(http.MethodPatch, "/memos/"+url.PathEscape(a.ID), memoArgsObject(p.Args))
+				out, err := agentDoTimeout(http.MethodPatch, "/memos/"+url.PathEscape(a.ID), memoArgsObject(p.Args), memoAgentTimeout)
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
@@ -256,6 +257,11 @@ func memoTools() []toolSpec {
 		},
 	}
 }
+
+// memoAgentTimeout is how long a memo tool waits for the Agent's relay: longer than the relay's
+// two Control Plane calls of GET /memos together, so its partial answer (memos without
+// categories) arrives instead of a timeout here.
+const memoAgentTimeout = 2*memorelay.CPTimeoutDefault + 5*time.Second
 
 // memoArgsObject is a call's arguments as a JSON object body: an absent argument list is {}.
 func memoArgsObject(args json.RawMessage) []byte {

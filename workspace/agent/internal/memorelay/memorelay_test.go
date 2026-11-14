@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -208,5 +209,37 @@ func TestRelayWithoutTheBridge(t *testing.T) {
 		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), UnavailableMessage) {
 			t.Errorf("%s %s answered %d %s", h.method, h.target, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// A Control Plane that does not answer the categories read in time still leaves the memos to
+// answer with. The relay's own bound is what makes that happen, not the caller's.
+func TestListAnswersMemosWhenCategoriesHang(t *testing.T) {
+	newFakeCP(t)
+	prev := CPTimeout
+	CPTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { CPTimeout = prev })
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/memo-categories" {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		_, _ = io.WriteString(w, `[{"id":"m1"}]`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	start := time.Now()
+	rec := serve(HandleList, http.MethodGet, "/memos", "")
+	got := decode(t, rec.Body.String())
+	if rec.Code != http.StatusOK || got["memos"] == nil || got["categoriesError"] == nil {
+		t.Errorf("list = %d %s, want the memos and a categoriesError", rec.Code, rec.Body.String())
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("list took %v with a 200ms CP bound", d)
 	}
 }

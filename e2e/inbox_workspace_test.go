@@ -47,12 +47,15 @@ func toolText(t *testing.T, r mcpResponse, what string) string {
 
 func (m *member) listMemos(session string) []memoView {
 	m.t.Helper()
-	var out []memoView
+	// list_memos answers {"memos": [...], "categories": [...]} through the Agent's relay.
+	var out struct {
+		Memos []memoView `json:"memos"`
+	}
 	text := toolText(m.t, m.mcp(session, sessionToolFlags, mcpTool("list_memos", nil))[2], "list_memos")
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		m.t.Fatalf("list_memos: %v: %s", err, text)
 	}
-	return out
+	return out.Memos
 }
 
 // memoBridge calls the CP's memo bridge from inside the workspace with the workspace's own

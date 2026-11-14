@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
 )
 
 // callTool runs one tools/call through the stdio dispatcher.
@@ -76,5 +78,13 @@ func TestMemoRelayErrKeepsTheUnavailableWording(t *testing.T) {
 	err = &agentHTTPError{StatusCode: 409, Body: `{"error":{"code":"memo_locked"}}`}
 	if got := memoRelayErr(err); !strings.Contains(got, "409") || !strings.Contains(got, "memo_locked") {
 		t.Errorf("a CP refusal lost its status or code: %q", got)
+	}
+}
+
+// A memo tool waits longer than the relay's two CP calls of GET /memos, or the relay's partial
+// answer (memos without categories) never reaches it.
+func TestMemoToolOutwaitsTheRelay(t *testing.T) {
+	if memoAgentTimeout <= 2*memorelay.CPTimeoutDefault {
+		t.Errorf("memoAgentTimeout %v is not longer than two CP calls (%v)", memoAgentTimeout, 2*memorelay.CPTimeoutDefault)
 	}
 }

@@ -13,6 +13,7 @@ package memorelay
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -81,6 +82,14 @@ type ListResponse struct {
 // ProducerOperator is the producer stamped for the operator assistant, which is no session.
 const ProducerOperator = "operator"
 
+// CPTimeout bounds one Control Plane call. GET /memos makes two in a row, so a caller of the
+// relay has to wait longer than twice this (mcpx's memoAgentTimeout) or it gives up before the
+// relay answers with what it has.
+var CPTimeout = CPTimeoutDefault
+
+// CPTimeoutDefault is CPTimeout's value outside tests.
+const CPTimeoutDefault = 20 * time.Second
+
 // cpDoFn is the Control Plane call behind a seam for tests.
 var cpDoFn = cpDo
 
@@ -93,7 +102,7 @@ type cpResult struct {
 // errUnavailable is cpDo's answer when the bridge is not configured.
 var errUnavailable = fmt.Errorf("%s", UnavailableMessage)
 
-func cpDo(method, path string, body []byte) (cpResult, error) {
+func cpDo(ctx context.Context, method, path string, body []byte) (cpResult, error) {
 	base := cpurl.Request()
 	tok := os.Getenv("AF_MEMO_TOKEN")
 	if base == "" || tok == "" {
@@ -103,7 +112,9 @@ func cpDo(method, path string, body []byte) (cpResult, error) {
 	if body != nil {
 		rdr = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, base+path, rdr)
+	ctx, cancel := context.WithTimeout(ctx, CPTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, base+path, rdr)
 	if err != nil {
 		return cpResult{}, err
 	}
@@ -111,7 +122,7 @@ func cpDo(method, path string, body []byte) (cpResult, error) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return cpResult{}, err
 	}
@@ -138,13 +149,13 @@ func relay(w http.ResponseWriter, res cpResult, err error) {
 
 // HandleList is GET /memos.
 func HandleList(w http.ResponseWriter, r *http.Request) {
-	memos, err := cpDoFn(http.MethodGet, "/internal/memos", nil)
+	memos, err := cpDoFn(r.Context(), http.MethodGet, "/internal/memos", nil)
 	if err != nil || memos.status >= 300 || !json.Valid(memos.body) {
 		relay(w, memos, err)
 		return
 	}
 	out := ListResponse{Memos: memos.body}
-	cats, err := cpDoFn(http.MethodGet, "/internal/memo-categories", nil)
+	cats, err := cpDoFn(r.Context(), http.MethodGet, "/internal/memo-categories", nil)
 	switch {
 	case err != nil:
 		out.CategoriesError = err.Error()
@@ -173,7 +184,7 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "encode_failed", err.Error())
 		return
 	}
-	res, err := cpDoFn(http.MethodPost, "/internal/memos", body)
+	res, err := cpDoFn(r.Context(), http.MethodPost, "/internal/memos", body)
 	relay(w, res, err)
 }
 
@@ -212,6 +223,6 @@ func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "encode_failed", err.Error())
 		return
 	}
-	res, err := cpDoFn(http.MethodPatch, "/internal/memos/"+url.PathEscape(id), body)
+	res, err := cpDoFn(r.Context(), http.MethodPatch, "/internal/memos/"+url.PathEscape(id), body)
 	relay(w, res, err)
 }

@@ -465,3 +465,23 @@ func TestRefusedHeldIsAdoptedAheadOfTheNextInput(t *testing.T) {
 	DeliverHeld("tq", h)
 	sameIDs(t, "queue after another Resume", h.q.Items(), "p1", "p2", "caller")
 }
+
+// A queue's first prompt is held like an operator's: accepted and not yet handed to the runtime,
+// it survives a teardown and runs once at the next start, with the queue origin kept. The
+// Control Plane has already counted the delivery as sent, so nothing else would fire it again.
+func TestHeldQueueInputSurvivesTeardown(t *testing.T) {
+	q := newQ(t, LedgerAtAccept)
+	q.Accept(TurnInput{Prompt: "[agent-fleet:queue queue=c delivery=d reply=none] task",
+		ClientMessageID: "queue-task", Origin: Origin{Kind: OriginQueue}})
+	if got := len(heldFiles(t, "tq")); got != 1 {
+		t.Fatalf("held files = %d, want 1 (the queue's first prompt)", got)
+	}
+	q.DropAll()
+	h := &queueHandle{q: NewTurnQueue("tq", q.ledger, LedgerAtAccept)}
+	DeliverHeld("tq", h)
+	DeliverHeld("tq", h)
+	sameIDs(t, "queue after restart", h.q.Items(), "queue-task")
+	if got := h.q.Items()[0].Origin.Kind; got != OriginQueue {
+		t.Errorf("restored origin = %q, want %q", got, OriginQueue)
+	}
+}
