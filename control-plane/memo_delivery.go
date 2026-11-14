@@ -265,8 +265,11 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	now := store.DeliveryTS(time.Now())
 	d := store.MemoDelivery{ID: store.NewID(), QueueID: c.ID, State: store.DeliveryClaimed, MessageIDs: []string{},
 		CreatedAt: now, UpdatedAt: now}
+	// Pick the batch and check every message of it before anything is claimed: a refusal
+	// commits (the holds below stay), so a claim made before it would be left with no delivery.
+	var batch []store.Memo
 	for _, m := range rows {
-		if len(d.MessageIDs) >= q.Batch {
+		if len(batch) >= q.Batch {
 			break
 		}
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
@@ -285,6 +288,9 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 			return none, &apiError{http.StatusConflict, errCodeMemoQueueItemInvalid,
 				fmt.Sprintf("message %s cannot be sent to a session: %s", m.ID, why)}, nil
 		}
+		batch = append(batch, m)
+	}
+	for _, m := range batch {
 		won, err := tx.ClaimMemo(m, d.ID)
 		if err != nil {
 			return none, nil, err

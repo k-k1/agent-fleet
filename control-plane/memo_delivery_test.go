@@ -1047,6 +1047,18 @@ func TestMemoDeliveryFireRefusesAnItemTheAgentWouldRefuse(t *testing.T) {
 		if agent.createCount() != 1 {
 			t.Fatalf("%d creates", agent.createCount())
 		}
+
+		// A message the Agent would refuse behind one it would take: the refusal claims
+		// neither, so nothing is left claimed without a delivery.
+		good := e.pending("app", "impl", "good")
+		bad := e.pending("app", "impl", strings.Repeat("y", memoDeliveryItemBodyMax+1))
+		e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET state='closed'`)
+		if rec := e.fire(q); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), bad.ID) {
+			t.Fatalf("fire of good then bad: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := e.memoRow(good.ID); got.State != store.MemoStatePending || got.DeliveryID != "" {
+			t.Fatalf("the good message after a refused press: %+v", got)
+		}
 	})
 }
 
