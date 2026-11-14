@@ -24,11 +24,22 @@ import (
 //go:embed catalog.json
 var catalogJSON []byte
 
-// Route is one catalogue entry.
+// Route is one catalogue entry. Class and Destination are what ADR 0138's policy judges; a
+// PerConnection route's real pair comes from the endpoint its connection is bound to, and the
+// catalogue's pair is what it reads as until that endpoint is approved.
 type Route struct {
-	ID         string `json:"id"`
-	Wire       string `json:"wire"`
-	Credential string `json:"credential"`
+	ID            string `json:"id"`
+	Wire          string `json:"wire"`
+	Credential    string `json:"credential"`
+	Class         string `json:"class"`
+	Destination   string `json:"destination"`
+	PerConnection bool   `json:"perConnection,omitempty"`
+}
+
+// owner is a chat backend (by kind) or an image provider (by id) and the routes it runs on.
+type owner struct {
+	ID     string   `json:"id"`
+	Routes []string `json:"routes"`
 }
 
 // Selection is a session's explicit route choice as it rides a create: the route id and a stable
@@ -50,7 +61,10 @@ var snapshot = func() (c struct {
 	Kinds  []struct {
 		Kind   string   `json:"kind"`
 		Routes []string `json:"routes"`
+		Fixed  []string `json:"fixed"`
 	} `json:"kinds"`
+	Chat     []owner `json:"chat"`
+	Imagegen []owner `json:"imagegen"`
 }) {
 	// A snapshot that does not parse is a build defect, not a runtime condition.
 	if err := json.Unmarshal(catalogJSON, &c); err != nil {
@@ -71,6 +85,47 @@ func RoutesOf(kind string) []string {
 	for _, k := range snapshot.Kinds {
 		if k.Kind == kind {
 			return slices.Clone(k.Routes)
+		}
+	}
+	return nil
+}
+
+// Lookup finds a route by its exact id.
+func Lookup(id string) (Route, bool) {
+	for _, r := range snapshot.Routes {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	return Route{}, false
+}
+
+// FixedRoutesOf returns the routes a session of the kind runs on with no explicit selection, the
+// ones its own rules resolve to (ADR 0138 D2); nil for a kind that runs no model. They are never
+// selectable: a create that names one is judged by RoutesOf alone.
+func FixedRoutesOf(kind string) []string {
+	if kind == "" {
+		kind = "claude"
+	}
+	for _, k := range snapshot.Kinds {
+		if k.Kind == kind {
+			return slices.Clone(k.Fixed)
+		}
+	}
+	return nil
+}
+
+// ChatRoutesOf returns the routes the assistant chat's backend of the kind runs on; nil for a
+// kind with no chat backend.
+func ChatRoutesOf(kind string) []string { return ownerRoutes(snapshot.Chat, kind) }
+
+// ImagegenRoutesOf returns the routes the image provider runs on; nil for an unknown provider.
+func ImagegenRoutesOf(provider string) []string { return ownerRoutes(snapshot.Imagegen, provider) }
+
+func ownerRoutes(owners []owner, id string) []string {
+	for _, o := range owners {
+		if o.ID == id {
+			return slices.Clone(o.Routes)
 		}
 	}
 	return nil

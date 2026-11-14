@@ -1028,6 +1028,12 @@ type sessionWire struct {
 	// No DB-mirror column: every action on them needs the running Agent.
 	Moving  string `json:"moving,omitempty"`
 	MovedTo string `json:"movedTo,omitempty"`
+	// QueueDelivery: the queue delivery whose fire created this session (ADR 0137, the Agent's
+	// meta). Reconciliation looks a delivery's session up by it when the Agent cannot say what
+	// became of the create (memo_delivery.go), and the Console links the row to its delivery.
+	// Dropped here, a create whose answer was lost is closed as unknown although its session
+	// exists. No DB-mirror column: that lookup only happens with the Agent answering.
+	QueueDelivery string `json:"queueDelivery,omitempty"`
 }
 
 // sessionRows turns the Agent's session list into DB mirror rows. Every writer of the
@@ -1408,17 +1414,23 @@ func checkCreateRoute(kind string, p routeSelectionPeek) *apiError {
 	return nil
 }
 
+// sessionLimit is the member's concurrent-session cap: the member's own, else the tenant's
+// max sessions, 0 for none. A queue fire reads it too (memo_delivery.go).
+func (m *manager) sessionLimit(ctx context.Context, res *resolved) int {
+	if ul, ok, _ := m.store.GetUserLimit(ctx, res.mv.MembershipID); ok && ul.MaxSessions > 0 {
+		return ul.MaxSessions
+	}
+	if t, err := m.store.GetTenant(ctx, res.ws.TenantID); err == nil {
+		return parseLimits(t.Limits).MaxSessions
+	}
+	return 0
+}
+
 func (a workspaceAPI) sessionQuotaExceeded(ctx context.Context, res *resolved, createKind string) *apiError {
 	if a.mgr.nativeRuntime || isUnmeteredKind(createKind) {
 		return nil
 	}
-	lim := 0
-	if ul, ok, _ := a.mgr.store.GetUserLimit(ctx, res.mv.MembershipID); ok && ul.MaxSessions > 0 {
-		lim = ul.MaxSessions
-	} else if t, err := a.mgr.store.GetTenant(ctx, res.ws.TenantID); err == nil {
-		lim = parseLimits(t.Limits).MaxSessions
-	}
-	if lim > 0 {
+	if lim := a.mgr.sessionLimit(ctx, res); lim > 0 {
 		if n, err := a.mgr.countSessions(ctx, res.rt); err == nil && n >= lim {
 			// Developer-facing fallback; the Console localizes by `code` (quota_sessions).
 			return &apiError{http.StatusTooManyRequests, errCodeQuotaSessions,

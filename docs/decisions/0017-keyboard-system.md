@@ -40,7 +40,11 @@ depended heavily on the mouse and could not be completed from the keyboard alone
 4. **Escape is not taken in the capture phase.** Closing an overlay is escLayer's job in the
    bubble phase by design, so stopping Escape during capture would break Esc for every modal and
    menu. The only exception is while a leader key is pending. While an overlay is open the
-   dispatcher itself is deactivated (`escLayer.hasOpenOverlay()`).
+   dispatcher itself is deactivated (`escLayer.hasOpenOverlay()`). Deactivated still cancels the
+   browser default of the leader and palette chords (preventDefault only, the key still reaches
+   the overlay), as it does on auto-repeat, during IME composition and when a terminal is yielded
+   the chord: otherwise Ctrl/⌘+P behind a modal opens the browser's print dialog. A sandboxed
+   frame that holds focus (the drawio viewer) cancels those chords itself and hands them back.
 
 5. **Layering**: pure logic lives in `lib/keys/` (`chords.ts`, `registry.ts` — importing neither
    the store nor the DOM, and covered by vitest); store coupling lives in `features/keys/`. The

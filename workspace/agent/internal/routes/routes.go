@@ -27,6 +27,11 @@ const (
 	WireVertex            Wire = "vertex"
 	// WirePerModel: the harness picks the protocol per model (opencode's Zen and Go).
 	WirePerModel Wire = "per-model"
+	// WireOpenAIImages: the OpenAI Images API (image generation on the deployment's engine).
+	WireOpenAIImages Wire = "openai-images"
+	// WireVendor: a CLI-locked login or key whose CLI speaks its vendor's own protocol; Agent
+	// Fleet never sees the calls.
+	WireVendor Wire = "vendor"
 )
 
 // Tier says who owns a route's credential, in ADR 0069's layering. It does not say which
@@ -48,11 +53,104 @@ const (
 	TierDeployment Tier = "deployment"
 )
 
+// Class is a route's credential class (ADR 0138 D1): what kind of credential pays for its calls.
+// The policy of ADR 0138 judges a route by its class and destination, never by the harness.
+type Class string
+
+const (
+	// ClassSubscription: a plan or account login, CLI-locked or not.
+	ClassSubscription Class = "subscription"
+	// ClassMemberKey: a metered key the member holds.
+	ClassMemberKey Class = "member-key"
+	// ClassMemberCloud: the member's own cloud account (a marked AWS profile).
+	ClassMemberCloud Class = "member-cloud"
+	// ClassProvided: a credential the tenant or the deployment holds and pays for (ADR 0129).
+	ClassProvided Class = "provided"
+	// ClassSelfHosted: the deployment's engine, or an approved self-hosted endpoint.
+	ClassSelfHosted Class = "self-hosted"
+)
+
+// Destination is who receives a route's prompts (ADR 0138 §2). It is what a data-residency rule
+// is about, so a vendor key keeps its vendor's destination only while the harness pins the
+// vendor's endpoint.
+type Destination string
+
+const (
+	DestAnthropic  Destination = "anthropic"
+	DestOpenAI     Destination = "openai"
+	DestGoogle     Destination = "google"
+	DestMeta       Destination = "meta"
+	DestGitHub     Destination = "github"
+	DestCursor     Destination = "cursor"
+	DestKiro       Destination = "kiro"
+	DestOpencodeAI Destination = "opencode.ai"
+	DestOpenRouter Destination = "openrouter"
+	DestSakana     Destination = "sakana"
+	// DestAWSBedrock: Amazon Bedrock in an AWS account (the member's, the tenant's or the
+	// deployment's; the class says whose).
+	DestAWSBedrock Destination = "aws-bedrock"
+	// DestAFEngine: this deployment's own inference engine.
+	DestAFEngine Destination = "af-engine"
+	// DestUnclassified: a destination Agent Fleet cannot vouch for. Wherever any restriction is
+	// set it is refused (fail closed).
+	DestUnclassified Destination = "unclassified"
+)
+
+// Classes is every class, in the order ADR 0138 D1 lists them.
+func Classes() []Class {
+	return []Class{ClassSubscription, ClassMemberKey, ClassMemberCloud, ClassProvided, ClassSelfHosted}
+}
+
+// Destinations is every destination, unclassified last.
+func Destinations() []Destination {
+	return []Destination{DestAnthropic, DestOpenAI, DestGoogle, DestMeta, DestGitHub, DestCursor, DestKiro,
+		DestOpencodeAI, DestOpenRouter, DestSakana, DestAWSBedrock, DestAFEngine, DestUnclassified}
+}
+
+// Route ids. Existing ids keep their names; a new one names the credential, not the harness:
+// <destination>-<subscription|api> for a vendor plan or key, <harness>-login only where the login
+// exists for one harness and its plan is not a separable product (ADR 0138 D2).
+const (
+	RouteAFEngineLLM           = "af-engine-llm"
+	RouteAFEngineImage         = "af-engine-image"
+	RouteAgyLogin              = "agy-login"
+	RouteAnthropicAPI          = "anthropic-api"
+	RouteAnthropicSubscription = "anthropic-subscription"
+	RouteBedrock               = "bedrock"
+	RouteBedrockDeployment     = "bedrock-deployment"
+	RouteBedrockTenant         = "bedrock-tenant"
+	RouteChatGPTSubscription   = "chatgpt-subscription"
+	RouteCopilotLogin          = "copilot-login"
+	RouteCursorLogin           = "cursor-login"
+	RouteCustomAPI             = "custom-api"
+	RouteGeminiAPI             = "gemini-api"
+	RouteKiroLogin             = "kiro-login"
+	RouteMemberLlamacpp        = "member-llamacpp"
+	RouteMetaAPI               = "meta-api"
+	RouteMuseLogin             = "muse-login"
+	RouteOpenAIAPI             = "openai-api"
+	RouteOpencodeAccount       = "opencode-account"
+	RouteOpencodeGo            = "opencode-go"
+	RouteOpencodeZen           = "opencode-zen"
+	RouteOpenRouterAPI         = "openrouter-api"
+	RouteSakanaAPI             = "sakana-api"
+	RouteVertex                = "vertex"
+)
+
 // Route is one catalogue entry.
 type Route struct {
 	ID         string `json:"id"`
 	Wire       Wire   `json:"wire"`
 	Credential Tier   `json:"credential"`
+	// Class and Destination are what a policy judges (ADR 0138 D1c). Every route has exactly one
+	// of each. For a PerConnection route they are what the route reads as while its connection's
+	// endpoint is not an approved one: the endpoint the member set decides the real pair.
+	Class       Class       `json:"class"`
+	Destination Destination `json:"destination"`
+	// PerConnection marks a route whose endpoint the member can set (a llama.cpp URL, a custom
+	// opencode provider). Its class and destination come from the validated endpoint its
+	// connection is bound to, so a per-route exception can never name it (ADR 0138 D1d).
+	PerConnection bool `json:"perConnection,omitempty"`
 }
 
 // catalogue is sorted by id. The ids are the vocabulary the usage ledger already records
@@ -63,19 +161,39 @@ type Route struct {
 // separate ids so "who pays" is in every ledger rollup key without a new field. A provided id is
 // catalogued before any harness declares it, so a selection naming one is refused like any route
 // a harness does not accept.
+//
+// opencode-zen is member-key although its tier is existing-connection: Zen bills the key per call
+// (a priced Zen call is metered, usagex.BillingOfOpencodeCall), while Go is a plan. opencode's
+// free models are filed under opencode-zen by the ledger and follow its class and destination.
+//
+// member-llamacpp reads as member-key and unclassified until its endpoint is approved: the
+// connection accepts any URL, so a vendor or a proxy entered there must not pass as self-hosted
+// (ADR 0138 §2).
 var catalogue = []Route{
-	{"af-engine-llm", WireOpenAIChat, TierDeployment},
-	{"anthropic-api", WireAnthropicMessages, TierMemberKey},
-	{"anthropic-subscription", WireAnthropicMessages, TierExistingConnection},
-	{"bedrock", WireBedrock, TierAWSProfile},
-	{"bedrock-deployment", WireBedrock, TierDeployment},
-	{"bedrock-tenant", WireBedrock, TierTenantKey},
-	{"chatgpt-subscription", WireOpenAIResponses, TierExistingConnection},
-	{"member-llamacpp", WireOpenAIChat, TierMemberKey},
-	{"openai-api", WireOpenAIResponses, TierMemberKey},
-	{"opencode-go", WirePerModel, TierExistingConnection},
-	{"opencode-zen", WirePerModel, TierExistingConnection},
-	{"vertex", WireVertex, TierTenantKey},
+	{ID: RouteAFEngineImage, Wire: WireOpenAIImages, Credential: TierDeployment, Class: ClassSelfHosted, Destination: DestAFEngine},
+	{ID: RouteAFEngineLLM, Wire: WireOpenAIChat, Credential: TierDeployment, Class: ClassSelfHosted, Destination: DestAFEngine},
+	{ID: RouteAgyLogin, Wire: WireVendor, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestGoogle},
+	{ID: RouteAnthropicAPI, Wire: WireAnthropicMessages, Credential: TierMemberKey, Class: ClassMemberKey, Destination: DestAnthropic},
+	{ID: RouteAnthropicSubscription, Wire: WireAnthropicMessages, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestAnthropic},
+	{ID: RouteBedrock, Wire: WireBedrock, Credential: TierAWSProfile, Class: ClassMemberCloud, Destination: DestAWSBedrock},
+	{ID: RouteBedrockDeployment, Wire: WireBedrock, Credential: TierDeployment, Class: ClassProvided, Destination: DestAWSBedrock},
+	{ID: RouteBedrockTenant, Wire: WireBedrock, Credential: TierTenantKey, Class: ClassProvided, Destination: DestAWSBedrock},
+	{ID: RouteChatGPTSubscription, Wire: WireOpenAIResponses, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestOpenAI},
+	{ID: RouteCopilotLogin, Wire: WireVendor, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestGitHub},
+	{ID: RouteCursorLogin, Wire: WireVendor, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestCursor},
+	{ID: RouteCustomAPI, Wire: WirePerModel, Credential: TierMemberKey, Class: ClassMemberKey, Destination: DestUnclassified, PerConnection: true},
+	{ID: RouteGeminiAPI, Wire: WirePerModel, Credential: TierMemberKey, Class: ClassMemberKey, Destination: DestGoogle},
+	{ID: RouteKiroLogin, Wire: WireVendor, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestKiro},
+	{ID: RouteMemberLlamacpp, Wire: WireOpenAIChat, Credential: TierMemberKey, Class: ClassMemberKey, Destination: DestUnclassified, PerConnection: true},
+	{ID: RouteMetaAPI, Wire: WireVendor, Credential: TierMemberKey, Class: ClassMemberKey, Destination: DestMeta},
+	{ID: RouteMuseLogin, Wire: WireVendor, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestMeta},
+	{ID: RouteOpenAIAPI, Wire: WireOpenAIResponses, Credential: TierMemberKey, Class: ClassMemberKey, Destination: DestOpenAI},
+	{ID: RouteOpencodeAccount, Wire: WirePerModel, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestOpencodeAI},
+	{ID: RouteOpencodeGo, Wire: WirePerModel, Credential: TierExistingConnection, Class: ClassSubscription, Destination: DestOpencodeAI},
+	{ID: RouteOpencodeZen, Wire: WirePerModel, Credential: TierExistingConnection, Class: ClassMemberKey, Destination: DestOpencodeAI},
+	{ID: RouteOpenRouterAPI, Wire: WirePerModel, Credential: TierMemberKey, Class: ClassMemberKey, Destination: DestOpenRouter},
+	{ID: RouteSakanaAPI, Wire: WirePerModel, Credential: TierMemberKey, Class: ClassMemberKey, Destination: DestSakana},
+	{ID: RouteVertex, Wire: WireVertex, Credential: TierTenantKey, Class: ClassProvided, Destination: DestGoogle},
 }
 
 // Catalogue returns every route, sorted by id.

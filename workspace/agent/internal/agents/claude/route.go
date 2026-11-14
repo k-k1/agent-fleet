@@ -129,6 +129,11 @@ func (agentImpl) Routes() []string {
 	return []string{RouteAPI, RouteBedrock, RouteBedrockDeployment, RouteSubscription}
 }
 
+// FixedRoutes implements agents.FixedRouter (ADR 0138 D2): with no selection a pane runs on the
+// subscription login in claude's own credentials file, because the Agent's environment never
+// carries an Anthropic credential.
+func (agentImpl) FixedRoutes() []string { return []string{RouteSubscription} }
+
 // bedrockGateEnv opens the bedrock route on this Agent. ADR 0128 decision 14 ships a harness ×
 // route row only after live turns and negative controls have been recorded, and the bedrock row
 // has not had them: until then it is declared (stored selections and the Control Plane's

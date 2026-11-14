@@ -617,6 +617,10 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/memo-queues", memo.withMembership(memo.listQueues))
 	mux.HandleFunc("PUT /api/memo-queues/{categoryId}", memo.withMembership(memo.putQueue))
 	mux.HandleFunc("DELETE /api/memo-queues/{categoryId}", memo.withMembership(memo.deleteQueue))
+	// Fire now and the delivery ledger (ADR 0137 section 6): Console only. The fire is a
+	// person's press, through the same reservation and claim as an automatic fire.
+	mux.HandleFunc("POST /api/memo-queues/{categoryId}/fire", memo.withResolved(memo.fire))
+	mux.HandleFunc("GET /api/memo-queues/{categoryId}/deliveries", memo.withMembership(memo.listDeliveries))
 
 	// Internal (operator-token) face: an in-container fleet operator has no
 	// gateway session, so it hits these with its AF_MEMO_TOKEN Bearer (memo_bridge.go).

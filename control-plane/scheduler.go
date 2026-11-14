@@ -163,6 +163,8 @@ type scheduler struct {
 	// gated schedule is never fired.
 	gateStore  schedGateStore
 	gateRunner schedGateRunner
+	// queue is the message queues' work (memo_delivery.go). Unset, the tick does none.
+	queue memoQueueTick
 }
 
 func newScheduler(st scheduleStore, firer scheduleFirer, interval time.Duration) *scheduler {
@@ -200,11 +202,19 @@ const schedulerMaxConcurrentFires = 4
 // a schedule can never double-fire — the next tick only lists rows whose ledger
 // this one has already advanced, or (scheduleRetryWindow) deliberately left where it
 // was for a re-attempt, which cannot start until this tick's attempt has returned.
+//
+// The message queues ride the same tick (ADR 0137 section 6): their reconciliation runs first,
+// bounded by its own deadline, and their sends take at most memoQueueSendsPerTick of the fire
+// slots, after the schedules have been handed theirs.
 func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
+	var sends []store.MemoDelivery
+	if sc.queue != nil {
+		sends = sc.queue.settle(ctx, now)
+	}
 	due, err := sc.store.ListDueSchedules(ctx, now.Format(time.RFC3339))
 	if err != nil {
 		log.Printf("scheduler: list due: %v", err)
-		return
+		due = nil
 	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, schedulerMaxConcurrentFires)
@@ -226,6 +236,14 @@ func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 			defer func() { <-sem; wg.Done() }()
 			sc.fireOne(ctx, sch, now)
 		}(sch)
+	}
+	for _, d := range sends {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(d store.MemoDelivery) {
+			defer func() { <-sem; wg.Done() }()
+			sc.queue.send(ctx, d)
+		}(d)
 	}
 	wg.Wait()
 }

@@ -96,7 +96,7 @@ func TestWorkspaceListenerServesOnlyWorkspaceRoutes(t *testing.T) {
 		{"GET", "/api/whoami"},
 		{"POST", "/internal/egress"},
 		{"GET", "/internal/egress/policy"},
-		{"GET", "/internal/memo-categories"},
+		{"POST", "/internal/memo-categories"},
 		{"GET", "/mcp"},
 		{"DELETE", "/internal/docs"}, // a listed path under a method it is not listed for
 	} {
@@ -241,6 +241,7 @@ func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 		{"GET", "/internal/mcp-servers"},
 		{"GET", "/internal/aws-profiles"},
 		{"GET", "/internal/gcp-profiles"},
+		{"GET", "/internal/memo-categories"},
 		{"GET", "/internal/memos"},
 		{"POST", "/internal/memos"},
 		{"POST", "/internal/memos/flush"},

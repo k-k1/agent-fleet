@@ -61,6 +61,7 @@ type MemoQueueStore interface {
 	// takes back the member's stale send reservations, so f never sees one. f's error
 	// rolls the transaction back and is returned as is.
 	MemoTx(ctx context.Context, membershipID string, f func(MemoTxOps) error) error
+	MemoDeliveryStore
 }
 
 // MemoTxOps are the reads and writes a MemoTx may make, all scoped to its membership.
@@ -93,6 +94,8 @@ type MemoTxOps interface {
 	QueueOf(repo, category string) (MemoQueue, bool, error)
 	PutQueue(q MemoQueue) error
 	DeleteQueue(categoryID string) error
+
+	MemoDeliveryTxOps
 }
 
 // memoQuerier is what *sqlDB and *sqlTx have in common.

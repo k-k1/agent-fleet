@@ -73,6 +73,9 @@ func wireGoldenTypes() []struct {
 		// Memo queue / scheduled execution.
 		{"memoDTO", reflect.TypeOf(memoDTO{})},
 		{"scheduleDTO", reflect.TypeOf(scheduleDTO{})},
+		// A queue's deliveries (ADR 0137): the Console slice draws them against this wire while
+		// the Control Plane slice that writes it is built in parallel.
+		{"memoDeliveryDTO", reflect.TypeOf(memoDeliveryDTO{})},
 		// Member inbox (ADR 0111). The Console draws the card and the badge from these.
 		{"inboxItemWire", reflect.TypeOf(inboxItemWire{})},
 		{"inboxMailboxWire", reflect.TypeOf(inboxMailboxWire{})},

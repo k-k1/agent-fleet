@@ -1,70 +1,183 @@
 {
   "routes": [
     {
+      "id": "af-engine-image",
+      "wire": "openai-images",
+      "credential": "deployment",
+      "class": "self-hosted",
+      "destination": "af-engine"
+    },
+    {
       "id": "af-engine-llm",
       "wire": "openai-chat",
-      "credential": "deployment"
+      "credential": "deployment",
+      "class": "self-hosted",
+      "destination": "af-engine"
+    },
+    {
+      "id": "agy-login",
+      "wire": "vendor",
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "google"
     },
     {
       "id": "anthropic-api",
       "wire": "anthropic-messages",
-      "credential": "member-key"
+      "credential": "member-key",
+      "class": "member-key",
+      "destination": "anthropic"
     },
     {
       "id": "anthropic-subscription",
       "wire": "anthropic-messages",
-      "credential": "existing-connection"
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "anthropic"
     },
     {
       "id": "bedrock",
       "wire": "bedrock",
-      "credential": "aws-profile-ref"
+      "credential": "aws-profile-ref",
+      "class": "member-cloud",
+      "destination": "aws-bedrock"
     },
     {
       "id": "bedrock-deployment",
       "wire": "bedrock",
-      "credential": "deployment"
+      "credential": "deployment",
+      "class": "provided",
+      "destination": "aws-bedrock"
     },
     {
       "id": "bedrock-tenant",
       "wire": "bedrock",
-      "credential": "tenant-key"
+      "credential": "tenant-key",
+      "class": "provided",
+      "destination": "aws-bedrock"
     },
     {
       "id": "chatgpt-subscription",
       "wire": "openai-responses",
-      "credential": "existing-connection"
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "openai"
+    },
+    {
+      "id": "copilot-login",
+      "wire": "vendor",
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "github"
+    },
+    {
+      "id": "cursor-login",
+      "wire": "vendor",
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "cursor"
+    },
+    {
+      "id": "custom-api",
+      "wire": "per-model",
+      "credential": "member-key",
+      "class": "member-key",
+      "destination": "unclassified",
+      "perConnection": true
+    },
+    {
+      "id": "gemini-api",
+      "wire": "per-model",
+      "credential": "member-key",
+      "class": "member-key",
+      "destination": "google"
+    },
+    {
+      "id": "kiro-login",
+      "wire": "vendor",
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "kiro"
     },
     {
       "id": "member-llamacpp",
       "wire": "openai-chat",
-      "credential": "member-key"
+      "credential": "member-key",
+      "class": "member-key",
+      "destination": "unclassified",
+      "perConnection": true
+    },
+    {
+      "id": "meta-api",
+      "wire": "vendor",
+      "credential": "member-key",
+      "class": "member-key",
+      "destination": "meta"
+    },
+    {
+      "id": "muse-login",
+      "wire": "vendor",
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "meta"
     },
     {
       "id": "openai-api",
       "wire": "openai-responses",
-      "credential": "member-key"
+      "credential": "member-key",
+      "class": "member-key",
+      "destination": "openai"
+    },
+    {
+      "id": "opencode-account",
+      "wire": "per-model",
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "opencode.ai"
     },
     {
       "id": "opencode-go",
       "wire": "per-model",
-      "credential": "existing-connection"
+      "credential": "existing-connection",
+      "class": "subscription",
+      "destination": "opencode.ai"
     },
     {
       "id": "opencode-zen",
       "wire": "per-model",
-      "credential": "existing-connection"
+      "credential": "existing-connection",
+      "class": "member-key",
+      "destination": "opencode.ai"
+    },
+    {
+      "id": "openrouter-api",
+      "wire": "per-model",
+      "credential": "member-key",
+      "class": "member-key",
+      "destination": "openrouter"
+    },
+    {
+      "id": "sakana-api",
+      "wire": "per-model",
+      "credential": "member-key",
+      "class": "member-key",
+      "destination": "sakana"
     },
     {
       "id": "vertex",
       "wire": "vertex",
-      "credential": "tenant-key"
+      "credential": "tenant-key",
+      "class": "provided",
+      "destination": "google"
     }
   ],
   "kinds": [
     {
       "kind": "agy",
-      "routes": []
+      "routes": [],
+      "fixed": [
+        "agy-login"
+      ]
     },
     {
       "kind": "claude",
@@ -73,45 +186,166 @@
         "anthropic-subscription",
         "bedrock",
         "bedrock-deployment"
+      ],
+      "fixed": [
+        "anthropic-subscription"
       ]
     },
     {
       "kind": "codex",
-      "routes": []
+      "routes": [],
+      "fixed": [
+        "chatgpt-subscription",
+        "openai-api"
+      ]
     },
     {
       "kind": "copilot",
-      "routes": []
+      "routes": [],
+      "fixed": [
+        "copilot-login"
+      ]
     },
     {
       "kind": "cursor",
-      "routes": []
+      "routes": [],
+      "fixed": [
+        "cursor-login"
+      ]
     },
     {
       "kind": "kiro",
-      "routes": []
+      "routes": [],
+      "fixed": [
+        "kiro-login"
+      ]
     },
     {
       "kind": "lcpp",
-      "routes": []
+      "routes": [],
+      "fixed": [
+        "af-engine-llm",
+        "member-llamacpp"
+      ]
     },
     {
       "kind": "muse",
-      "routes": []
+      "routes": [],
+      "fixed": [
+        "meta-api",
+        "muse-login"
+      ]
     },
     {
       "kind": "opencode",
       "routes": [
         "bedrock"
+      ],
+      "fixed": [
+        "af-engine-llm",
+        "anthropic-api",
+        "custom-api",
+        "gemini-api",
+        "openai-api",
+        "opencode-account",
+        "opencode-go",
+        "opencode-zen",
+        "openrouter-api",
+        "sakana-api"
       ]
     },
     {
       "kind": "shell",
-      "routes": []
+      "routes": [],
+      "fixed": []
     },
     {
       "kind": "ssm",
-      "routes": []
+      "routes": [],
+      "fixed": []
+    }
+  ],
+  "chat": [
+    {
+      "id": "agy",
+      "routes": [
+        "agy-login"
+      ]
+    },
+    {
+      "id": "claude",
+      "routes": [
+        "anthropic-subscription"
+      ]
+    },
+    {
+      "id": "codex",
+      "routes": [
+        "chatgpt-subscription",
+        "openai-api"
+      ]
+    },
+    {
+      "id": "cursor",
+      "routes": [
+        "cursor-login"
+      ]
+    },
+    {
+      "id": "lcpp",
+      "routes": [
+        "af-engine-llm",
+        "member-llamacpp"
+      ]
+    },
+    {
+      "id": "muse",
+      "routes": [
+        "meta-api",
+        "muse-login"
+      ]
+    },
+    {
+      "id": "opencode",
+      "routes": [
+        "af-engine-llm",
+        "anthropic-api",
+        "custom-api",
+        "gemini-api",
+        "openai-api",
+        "opencode-account",
+        "opencode-go",
+        "opencode-zen",
+        "openrouter-api",
+        "sakana-api"
+      ]
+    }
+  ],
+  "imagegen": [
+    {
+      "id": "agy",
+      "routes": [
+        "agy-login"
+      ]
+    },
+    {
+      "id": "codex",
+      "routes": [
+        "chatgpt-subscription",
+        "openai-api"
+      ]
+    },
+    {
+      "id": "comfy",
+      "routes": [
+        "af-engine-image"
+      ]
+    },
+    {
+      "id": "openai-compat",
+      "routes": [
+        "af-engine-image"
+      ]
     }
   ]
 }

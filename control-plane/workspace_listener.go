@@ -41,13 +41,15 @@ var workspaceRoutes = map[string]bool{
 	"GET /internal/aws-profiles": true,
 	// Google Cloud profiles (AF_GCP_PROFILES_TOKEN).
 	"GET /internal/gcp-profiles": true,
-	// Memo queue (AF_MEMO_TOKEN). The /internal/memo-categories face is not listed: no
-	// Agent code calls it.
-	"GET /internal/memos":         true,
-	"POST /internal/memos":        true,
-	"POST /internal/memos/flush":  true,
-	"PATCH /internal/memos/{id}":  true,
-	"DELETE /internal/memos/{id}": true,
+	// Memo queue (AF_MEMO_TOKEN). Of the /internal/memo-categories face only the list is
+	// listed: the Agent's memo relay (list_memos marks which categories are queues) calls it,
+	// and no Agent code writes a category.
+	"GET /internal/memo-categories": true,
+	"GET /internal/memos":           true,
+	"POST /internal/memos":          true,
+	"POST /internal/memos/flush":    true,
+	"PATCH /internal/memos/{id}":    true,
+	"DELETE /internal/memos/{id}":   true,
 	// Schedules (AF_SCHEDULE_TOKEN).
 	"GET /internal/schedules":               true,
 	"POST /internal/schedules":              true,

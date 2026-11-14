@@ -29,11 +29,53 @@ func TestSnapshotShape(t *testing.T) {
 		}
 	}
 	for _, e := range snapshot.Kinds {
-		for _, id := range e.Routes {
+		for _, id := range append(slices.Clone(e.Routes), e.Fixed...) {
 			if !slices.Contains(ids, id) {
 				t.Errorf("kind %q declares %q, which is not a route", e.Kind, id)
 			}
 		}
+	}
+	for _, o := range append(slices.Clone(snapshot.Chat), snapshot.Imagegen...) {
+		if len(o.Routes) == 0 {
+			t.Errorf("%q declares no route", o.ID)
+		}
+		for _, id := range o.Routes {
+			if !slices.Contains(ids, id) {
+				t.Errorf("%q declares %q, which is not a route", o.ID, id)
+			}
+		}
+	}
+	for _, r := range Routes() {
+		if r.Class == "" || r.Destination == "" {
+			t.Errorf("%s: class %q destination %q, both required (ADR 0138 D1c)", r.ID, r.Class, r.Destination)
+		}
+	}
+}
+
+// A fixed route says what a kind runs on by itself; it never makes an explicit selection valid,
+// so declaring them changes nothing a create accepts (ADR 0138 M0: no behaviour change).
+func TestFixedRoutesAreNotSelectable(t *testing.T) {
+	for _, k := range agentkinds.All() {
+		for _, id := range FixedRoutesOf(k.Kind) {
+			if slices.Contains(RoutesOf(k.Kind), id) {
+				continue
+			}
+			if code, _ := CheckCreateRoute(k.Kind, &Selection{Route: id}); code != CodeRouteUnsupported {
+				t.Errorf("%s on its fixed route %q: code %q, want %s", k.Kind, id, code, CodeRouteUnsupported)
+			}
+		}
+	}
+	if got := FixedRoutesOf("codex"); !slices.Equal(got, []string{"chatgpt-subscription", "openai-api"}) {
+		t.Errorf("codex fixed routes = %v", got)
+	}
+	if got := ChatRoutesOf("muse"); !slices.Equal(got, []string{"meta-api", "muse-login"}) {
+		t.Errorf("muse chat routes = %v", got)
+	}
+	if got := ImagegenRoutesOf("codex"); !slices.Equal(got, []string{"chatgpt-subscription", "openai-api"}) {
+		t.Errorf("codex image routes = %v", got)
+	}
+	if r, ok := Lookup("member-llamacpp"); !ok || !r.PerConnection || r.Destination != "unclassified" {
+		t.Errorf("member-llamacpp = %+v %v, want per-connection and unclassified", r, ok)
 	}
 }
 

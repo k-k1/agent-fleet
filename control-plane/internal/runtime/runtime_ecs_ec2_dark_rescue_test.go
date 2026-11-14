@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -302,6 +305,85 @@ func TestRescueNeverTakesAServiceThatIsUp(t *testing.T) {
 		}
 		w.untouched()
 	})
+}
+
+func TestRescueSkippedForAServiceThatIsUpIsLoggedOncePerEpisode(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		defer log.SetOutput(os.Stderr)
+		skips := func() int { return strings.Count(buf.String(), "skipped: its workspace service is up") }
+
+		w.h.ecs.services[rescueWorkspace] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+		w.h.ci.running = append(w.h.ci.running, runningTask(rescueWorkspace, "i-dark"))
+		w.arm()
+		w.pass(w.f)
+		if skips() != 1 {
+			t.Fatalf("first acting sweep logged %d skips, want 1:\n%s", skips(), buf.String())
+		}
+		w.pass(w.f)
+		w.pass(w.f)
+		if skips() != 1 {
+			t.Fatalf("later sweeps of the same episode logged %d skips, want 1:\n%s", skips(), buf.String())
+		}
+
+		// The episode ends (the slot answers, the stamp clears) and a new one starts: it is
+		// told again.
+		clearDark := func() {
+			w.h.ec2.instances["i-dark"].Tags = withoutTag(w.h.ec2.instances["i-dark"].Tags, ec2TagDarkSince)
+		}
+		clearDark()
+		w.pass(w.f)
+		backdateDark(t, w.h, 45*time.Minute) // a different first observation: a different episode
+		w.pass(w.f)
+		if skips() != 2 {
+			t.Fatalf("a new episode logged %d skips in total, want 2:\n%s", skips(), buf.String())
+		}
+	})
+}
+
+func TestRescueSkipMemoryIsDroppedWhenTheSlotLeavesTheScan(t *testing.T) {
+	bothModes(t, func(t *testing.T, w *rescueWorld) {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		defer log.SetOutput(os.Stderr)
+		w.h.ecs.services[rescueWorkspace] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+		w.h.ci.running = append(w.h.ci.running, runningTask(rescueWorkspace, "i-dark"))
+		w.arm()
+		w.pass(w.f)
+		if _, ok := w.f.rescueSkipLogged.Load("i-dark"); !ok {
+			t.Fatal("no skip remembered")
+		}
+		// A Start's transient claim takes the slot out of the scan for a while; the episode
+		// (same stamp) continues after it, and must not be logged again.
+		w.h.ec2.setTag("vol-1", EC2TagClaim, "i-dark")
+		w.h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+		w.pass(w.f)
+		if _, ok := w.f.rescueSkipLogged.Load("i-dark"); !ok {
+			t.Fatal("a live claim wiped the memory of the episode")
+		}
+		w.h.ec2.setTag("vol-1", EC2TagClaim, "")
+		w.h.ec2.setTag("vol-1", ec2TagClaimAt, "")
+		w.pass(w.f)
+		if n := strings.Count(buf.String(), "skipped: its workspace service is up"); n != 1 {
+			t.Fatalf("claim taken and released inside one episode: %d skip lines, want 1", n)
+		}
+		w.h.ec2.detach("vol-1") // the slot no longer holds a home: out of the scan population
+		w.pass(w.f)
+		if _, ok := w.f.rescueSkipLogged.Load("i-dark"); ok {
+			t.Fatal("the memory of a slot that left the scan survived")
+		}
+	})
+}
+
+func withoutTag(tags []ec2types.Tag, key string) []ec2types.Tag {
+	var out []ec2types.Tag
+	for _, tg := range tags {
+		if aws.ToString(tg.Key) != key {
+			out = append(out, tg)
+		}
+	}
+	return out
 }
 
 func TestRescueStepsAsideWhenTheDecisionIsStale(t *testing.T) {
