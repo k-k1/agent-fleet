@@ -24,24 +24,6 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Error codes of the queue rules. They stay out of errcodes.go until the Console slice adds
-// their err.<code> catalog entries: TestCPEmittedErrCodesHaveConsoleCatalogEntry requires one
-// for every code declared there.
-const (
-	errCodeMemoLocked             = "memo_locked"
-	errCodeMemoSending            = "memo_sending"
-	errCodeMemoInQueue            = "memo_in_queue"
-	errCodeMemoQueueCategory      = "memo_queue_category"
-	errCodeMemoInboxInQueue       = "memo_inbox_in_queue"
-	errCodeMemoReleaseStale       = "memo_release_stale"
-	errCodeMemoTooLarge           = "memo_too_large"
-	errCodeMemoEnvelope           = "memo_envelope"
-	errCodeMemoRateLimited        = "memo_rate_limited"
-	errCodeMemoQueueNoInstruction = "memo_queue_no_instruction"
-	errCodeMemoQueueBadSettings   = "memo_queue_bad_settings"
-	errCodeMemoQueuesDisabled     = "memo_queues_disabled"
-)
-
 // Bounds on a create into a queue from the token face or /mcp (ADR 0137 section 3). The
 // values are provisional (ADR 0137 open question 1).
 const (

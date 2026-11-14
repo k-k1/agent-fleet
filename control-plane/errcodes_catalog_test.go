@@ -114,17 +114,20 @@ func TestCPEmittedErrCodesHaveConsoleCatalogEntry(t *testing.T) {
 		}
 	}
 
-	catalog := cpConsoleCatalog(t, "ja")
 	codes := make([]string, 0, len(emitted))
 	for code := range emitted {
 		codes = append(codes, code)
 	}
 	sort.Strings(codes)
-	for _, code := range codes {
-		if !consoleCatalogHasKeyCP(catalog, "err."+code) {
-			t.Errorf("%s = %q is emitted, but the Console catalog has no \"err.%s\". "+
-				"Add it to console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time",
-				emitted[code], code, code)
+	// Both locales: a code with only a ja entry shows the developer message to an English user.
+	for _, locale := range []string{"ja", "en"} {
+		catalog := cpConsoleCatalog(t, locale)
+		for _, code := range codes {
+			if !consoleCatalogHasKeyCP(catalog, "err."+code) {
+				t.Errorf("%s = %q is emitted, but the Console %s catalog has no \"err.%s\". "+
+					"Add it to console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time",
+					emitted[code], code, locale, code)
+			}
 		}
 	}
 }

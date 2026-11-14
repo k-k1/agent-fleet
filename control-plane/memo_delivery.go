@@ -35,16 +35,6 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Error codes of a fire. Kept out of errcodes.go like the codes of memo_queue.go, until the
-// Console slice adds their catalog entries.
-const (
-	errCodeMemoQueueNothingPending = "memo_queue_nothing_pending"
-	errCodeMemoQueueNoSlot         = "memo_queue_no_slot"
-	errCodeMemoQueueMemberLimit    = "memo_queue_member_limit"
-	errCodeMemoQueueBadRepo        = "memo_queue_bad_repo"
-	errCodeMemoQueueItemInvalid    = "memo_queue_item_invalid"
-)
-
 const (
 	// memoQueueMemberLimit bounds the deliveries that are not closed across all of a member's
 	// queues (ADR 0137 section 7, provisional).
