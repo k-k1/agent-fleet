@@ -17,7 +17,13 @@ func TestRunEndToEnd(t *testing.T) {
 	}
 	dir := t.TempDir()
 	policy := &fakeCP{allowlist: []string{".github.com"}}
-	ingest := &ingestCP{}
+	posted := make(chan struct{}, 1)
+	ingest := &ingestCP{onPost: func() {
+		select {
+		case posted <- struct{}{}:
+		default:
+		}
+	}}
 	mux := http.NewServeMux()
 	mux.Handle("/internal/egress/policy", policy)
 	mux.Handle("/internal/egress", ingest)
@@ -35,15 +41,20 @@ func TestRunEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() { errc <- Run(ctx, cfg) }()
-	deadline := time.Now().Add(5 * time.Second)
+	// Wait on the ingest handler's own signal instead of polling a wall clock: the signal fires
+	// per request, ids() takes the handler's lock so it observes the request's events once the
+	// handler returns. The timeout only bounds a real hang; it is not the pass condition.
+	timeout := time.After(60 * time.Second)
 	for {
 		if _, n := ingest.ids(); n >= 2 {
 			break
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-posted:
+		case <-timeout:
+			cancel()
 			t.Fatal("events were not shipped")
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	cancel()
 	if err := <-errc; err != nil {
