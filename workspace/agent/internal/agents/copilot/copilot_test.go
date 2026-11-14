@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestBuildProgram(t *testing.T) {
@@ -330,5 +331,62 @@ func TestBuildProgramPermissionsOn(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("permissions-on program %q lacks %q", got, want)
 		}
+	}
+}
+
+// A turn that dies with session.error before any output (recorded shape, #4083) must show the
+// provider's text as an error part; the --model fallback notice must not.
+const sessionErrorFixture = `{"type":"user.message","data":{"content":"hello"},"timestamp":"2026-11-13T01:00:00Z"}
+{"type":"session.error","data":{"message":"Model \"gpt-9\" from --model flag is not available. Using \"auto\" instead.","errorType":"model"},"timestamp":"2026-11-13T01:00:01Z"}
+{"type":"assistant.turn_start","data":{"turnId":"0","model":"auto"},"timestamp":"2026-11-13T01:00:02Z"}
+{"type":"assistant.message","data":{"content":"hi","model":"auto"},"timestamp":"2026-11-13T01:00:03Z"}
+{"type":"assistant.turn_end","data":{"turnId":"0"},"timestamp":"2026-11-13T01:00:04Z"}
+{"type":"user.message","data":{"content":"again"},"timestamp":"2026-11-13T01:01:00Z"}
+{"type":"session.error","data":{"message":"Execution failed: Model \"gpt-9\" is not available. token=ghp_abcdefghijklmnopqrstuvwxyz0123456789","errorType":"model"},"timestamp":"2026-11-13T01:01:01Z"}
+`
+
+func TestParseEventsSessionError(t *testing.T) {
+	turns := parseEvents(writeFixture(t, sessionErrorFixture))
+	if len(turns) != 4 { // user / assistant "hi" / user / error turn
+		t.Fatalf("want 4 turns, got %d: %+v", len(turns), turns)
+	}
+	for _, p := range turns[1].Parts {
+		if p.Kind == "error" {
+			t.Errorf("fallback notice shown as a failure: %+v", p)
+		}
+	}
+	e := turns[3]
+	if e.Role != "assistant" || len(e.Parts) != 1 || e.Parts[0].Kind != "error" ||
+		!strings.Contains(e.Parts[0].Text, `Execution failed: Model "gpt-9" is not available.`) {
+		t.Fatalf("error turn wrong: %+v", e)
+	}
+	if strings.Contains(e.Parts[0].Text, "ghp_abcdef") || strings.Contains(e.Text, "ghp_abcdef") {
+		t.Errorf("token leaked: %+v", e)
+	}
+	if !strings.HasPrefix(e.Text, "[error] Execution failed") {
+		t.Errorf("flattened text = %q", e.Text)
+	}
+}
+
+func TestParseEventsErrorAfterAnswerFlattened(t *testing.T) {
+	turns := parseEvents(writeFixture(t, `{"type":"user.message","data":{"content":"q"},"timestamp":"2026-11-13T01:00:00Z"}
+{"type":"assistant.turn_start","data":{"turnId":"0","model":"auto"},"timestamp":"2026-11-13T01:00:01Z"}
+{"type":"assistant.message","data":{"content":"partial answer","model":"auto"},"timestamp":"2026-11-13T01:00:02Z"}
+{"type":"session.error","data":{"message":"stream died","errorType":"query"},"timestamp":"2026-11-13T01:00:03Z"}
+`))
+	if len(turns) != 2 || turns[1].Text != "partial answer\n\n[error] stream died" {
+		t.Fatalf("flattened text wrong: %+v", turns)
+	}
+}
+
+func TestClipKeepsUTF8(t *testing.T) {
+	// "あ" is 3 bytes; 2 leading bytes put a rune across the 4000-byte boundary.
+	in := "xx" + strings.Repeat("あ", 2000)
+	out := clip(in)
+	if !utf8.ValidString(out) {
+		t.Fatalf("clip split a rune: invalid UTF-8")
+	}
+	if !strings.HasSuffix(out, "\n…（省略）") {
+		t.Fatalf("missing marker")
 	}
 }
