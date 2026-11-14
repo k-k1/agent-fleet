@@ -75,8 +75,14 @@ codex, opencode, copilot, cursor, kiro, agy, lcpp and muse fetch their model lis
 |---|---|
 | **"Every model is excluded in settings …"** | Review **"Models to exclude"** on that agent's card |
 | **"The current billing choice leaves no model to pick …"** | Review **"opencode.ai billing"** on the opencode card ([Connect OpenCode](../agents/opencode.md)) |
-| **"Only the default model is available (check this agent's connection and plan)."** | The agent returned an empty list. Check the connection and plan on its card. On a GitHub Copilot Free plan this is normal: that plan offers Auto alone |
+| **"Only the default model is available (check this agent's connection and plan)."** | The agent returned an empty list. Check the connection and plan on its card. On a GitHub Copilot Free plan this is normal: that plan offers Auto (Copilot Fusion) alone |
 | **"Couldn't fetch the model list — the workspace may have only just started …"** | The list could not be fetched. Right after a start the Agent is not listening yet: wait half a minute and open the dialog again |
+
+## A GitHub Copilot session ends every turn with "Model … is not available"
+
+The model picked at launch is not in your Copilot plan. Your GitHub connection is working: copilot signs in with it, and the plan decides which models it may use.
+A Copilot Free plan offers only Auto, which copilot now calls **Copilot Fusion**. Its `/model` list still shows the other models, but every one of them fails like this.
+Start the session again with **"Default"** as the model. To pick a specific model, the GitHub account needs a paid Copilot plan.
 
 ## An opencode session stays "working" and nothing comes back
 
