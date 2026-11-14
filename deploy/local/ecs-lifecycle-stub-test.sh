@@ -414,11 +414,23 @@ case "$args" in
     echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice"
     # STUB_GOLDEN=service: a bake's seed service exists.
     [ "${STUB_GOLDEN:-0}" = service ] && echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-af-golden-af-golden-seed"
+    # STUB_GOLDEN=lookalike: services that merely start like a bake (running, but not one).
+    if [ "${STUB_GOLDEN:-0}" = lookalike ]; then
+      echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-af-golden-af-golden-seed-extra"
+      echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-af-golden-af-golden-other"
+    fi
+    # STUB_GOLDEN=arm: the arm64 probe.
+    [ "${STUB_GOLDEN:-0}" = arm ] && echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-af-golden-af-golden-probe-arm64"
     : ;;
   # --status's golden-bake read: golden services with runningCount>0 (STUB_GOLDEN=service: desired
   # 0, running 1). Before the CP-stop wait's runningCount branch below, which would swallow it.
   *"ecs describe-services"*"[?runningCount>"*)
-    [ "${STUB_GOLDEN:-0}" = service ] && echo "af-ws-af-golden-af-golden-seed" || echo "" ;;
+    case "${STUB_GOLDEN:-0}" in
+      service) echo "af-ws-af-golden-af-golden-seed" ;;
+      arm) echo "af-ws-af-golden-af-golden-probe-arm64" ;;
+      lookalike) echo "af-ws-af-golden-af-golden-seed-extra af-ws-af-golden-af-golden-other" ;;
+      *) echo "" ;;
+    esac ;;
   # Do not confuse the runningCount query (waiting for the CP to stop) with the listing of
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
@@ -506,10 +518,18 @@ case "$args" in
     esac ;;
   *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
   *"ecs list-tasks"*) echo "None" ;;
+  # A task describe-tasks answers 200 for but lists in failures[] (STUB_TASK_FAILED=1).
+  *"ecs describe-tasks"*"--query failures[].arn"*)
+    [ "${STUB_TASK_FAILED:-0}" = 1 ] && echo "arn:aws:ecs:x:1:task/t-cluster/t1" || echo "None" ;;
   # --status's golden-bake read of the tasks ws_tasks_alive found. STUB_GOLDEN=task: one of them
   # belongs to the seed's service, which no longer exists.
-  *"ecs describe-tasks"*"starts_with(group,'service:af-ws-af-golden"*)
-    [ "${STUB_GOLDEN:-0}" = task ] && echo "service:af-ws-af-golden-af-golden-probe" || echo "" ;;
+  *"ecs describe-tasks"*"--query tasks[].group"*)
+    case "${STUB_GOLDEN:-0}" in
+      task) echo "service:af-ws-af-golden-af-golden-probe" ;;
+      armtask) echo "service:af-ws-af-golden-af-golden-seed-arm64" ;;
+      lookalike) echo "service:af-ws-af-golden-af-golden-seed-extra service:af-ws-af-golden-af-golden-other" ;;
+      *) echo "" ;;
+    esac ;;
   # update.sh's closing hint: the subnet of each running workspace task's ENI.
   # [failures, tasks, subnet]. STUB_TASK_FAILURES=1: answered 200 with the task in failures[].
   *"ecs describe-tasks"*"subnetId"*)
@@ -2650,6 +2670,23 @@ STUB_WS_TASKS=fail \
   "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2d" 2>&1 </dev/null \
   || fail "status exited non-zero when the tasks could not be read"
 grep -q "golden bake   : (cannot tell" "$WORK/out4k2d" || fail "an unreadable task list was reported as none"
+for g in arm; do
+  : > "$LOG"
+  STUB_GOLDEN=$g "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2e" 2>&1 </dev/null
+  grep -q "golden bake   : .*af-ws-af-golden-af-golden-probe-arm64 (service running)" "$WORK/out4k2e" || fail "status missed the arm64 probe service"
+done
+: > "$LOG"
+STUB_GOLDEN=armtask STUB_WS_TASKS=stuck "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2f" 2>&1 </dev/null
+grep -q "golden bake   : .*af-ws-af-golden-af-golden-seed-arm64 (task not STOPPED)" "$WORK/out4k2f" || fail "status missed the arm64 seed task"
+: > "$LOG"
+STUB_GOLDEN=lookalike STUB_WS_TASKS=stuck "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2g" 2>&1 </dev/null
+grep -q "golden bake   : (none)" "$WORK/out4k2g" || fail "status named a service or task that only starts like a bake"
+: > "$LOG"
+STUB_GOLDEN=service STUB_WS_FAILURES=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2h" 2>&1 </dev/null
+grep -q "golden bake   : (cannot tell" "$WORK/out4k2h" || fail "a service in failures[] was reported as not running"
+: > "$LOG"
+STUB_GOLDEN=task STUB_WS_TASKS=stuck STUB_TASK_FAILED=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k2i" 2>&1 </dev/null
+grep -q "golden bake   : (cannot tell" "$WORK/out4k2i" || fail "a task in failures[] was reported as stopped"
 hasnt "update-service"; hasnt "stop-instances"
 
 echo "== case 4l: a capture taken while paused (NatEnabled=false) still stands up WITH a NAT =="

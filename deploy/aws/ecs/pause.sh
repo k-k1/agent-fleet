@@ -135,12 +135,28 @@ ws_tasks_alive() {
   while [ $# -gt 0 ]; do
     batch=""; i=0
     while [ $# -gt 0 ] && [ $i -lt 100 ]; do batch="$batch $1"; shift; i=$((i + 1)); done
+    # A 200 can carry a task in failures[]; a task that cannot be read is not a task that is gone.
+    # shellcheck disable=SC2086
+    got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $batch \
+      --query 'failures[].arn' --output text)" || return 1
+    case "$got" in ''|None) ;; *) return 1 ;; esac
     # shellcheck disable=SC2086
     got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks $batch \
       --query "tasks[?starts_with(group,'service:af-ws-') && lastStatus!='STOPPED'].taskArn" --output text)" || return 1
     case "$got" in None) got="" ;; esac
     [ -z "$got" ] || echo "$got"
   done
+}
+
+# golden_name — exactly the four reserved bake workspaces: seed and probe, each with its arm64
+# twin (control-plane/internal/runtime/golden_keys.go: af-ws-<slug>-<key>). Not a prefix: an
+# ordinary member whose key merely starts with one of them is not a bake.
+golden_name() {
+  case "$1" in
+    af-ws-af-golden-af-golden-seed|af-ws-af-golden-af-golden-seed-arm64) ;;
+    af-ws-af-golden-af-golden-probe|af-ws-af-golden-af-golden-probe-arm64) ;;
+    *) return 1 ;;
+  esac
 }
 
 # golden_bake — what a golden bake still holds, for --status only. ws_services counts desired>0,
@@ -150,17 +166,23 @@ ws_tasks_alive() {
 # golden one. Always prints one line and returns 0: a read that fails says "cannot tell", never
 # "none", and the answer must not move --status's exit code.
 golden_bake() {
-  local arns a got out="" alive t pfx="af-ws-af-golden-af-golden-"
+  local arns a got out="" alive t
   local -a names=() batch=() tasks=()
   if ! arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null)"; then
     echo "(cannot tell: the service list could not be read)"; return 0
   fi
   case "$arns" in None) arns="" ;; esac
   for a in $arns; do
-    case "${a##*/}" in "$pfx"seed*|"$pfx"probe*) names+=("${a##*/}") ;; esac
+    ! golden_name "${a##*/}" || names+=("${a##*/}")
   done
   while [ ${#names[@]} -gt 0 ]; do
     batch=("${names[@]:0:10}"); names=("${names[@]:10}")
+    # A 200 can still carry the service in failures[]: that is "cannot tell", not "not running".
+    if ! got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
+        --query 'failures[].arn' --output text 2>/dev/null)"; then
+      echo "(cannot tell: the golden services could not be read)"; return 0
+    fi
+    case "$got" in ''|None) ;; *) echo "(cannot tell: the golden services could not be read)"; return 0 ;; esac
     # shellcheck disable=SC2016  # backticks are JMESPath literals
     if ! got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "${batch[@]}" \
         --query 'services[?runningCount>`0`].serviceName' --output text 2>/dev/null)"; then
@@ -177,11 +199,11 @@ golden_bake() {
   while [ ${#tasks[@]} -gt 0 ]; do
     batch=("${tasks[@]:0:100}"); tasks=("${tasks[@]:100}")
     if ! got="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks "${batch[@]}" \
-        --query "tasks[?starts_with(group,'service:$pfx')].group" --output text 2>/dev/null)"; then
+        --query 'tasks[].group' --output text 2>/dev/null)"; then
       echo "(cannot tell: the golden tasks could not be read)${out:+ —$out}"; return 0
     fi
     case "$got" in None) got="" ;; esac
-    for t in $got; do out="$out ${t#service:} (task not STOPPED)"; done
+    for t in $got; do ! golden_name "${t#service:}" || out="$out ${t#service:} (task not STOPPED)"; done
   done
   echo "${out:-(none)}"
 }
